@@ -1,0 +1,10 @@
+clickhouse:
+  user:
+  password:
+  host:
+  port:
+s3:
+  access_key:
+  secret_key:
+  bucket:
+  path:
