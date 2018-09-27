@@ -4,6 +4,7 @@ import (
 	"log"
 	"mime"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -16,23 +17,35 @@ import (
 type S3 struct {
 	session *session.Session
 	Config  *S3Config
+	DryRun  bool
 }
 
 func (s3 *S3) Connect() (err error) {
-	s3.session, err = session.NewSession(&aws.Config{
-		Credentials: credentials.NewStaticCredentials(s3.Config.AccessKey, s3.Config.SecretKey, ""),
-		Region:      &s3.Config.Region,
-		Endpoint:    &s3.Config.URL,
-	})
+	s3.session, err = session.NewSession(
+		&aws.Config{
+			Credentials:      credentials.NewStaticCredentials(s3.Config.AccessKey, s3.Config.SecretKey, ""),
+			Region:           aws.String(s3.Config.Region),
+			Endpoint:         aws.String(s3.Config.Endpoint),
+			DisableSSL:       aws.Bool(s3.Config.DisableSSL),
+			S3ForcePathStyle: aws.Bool(s3.Config.ForcePathStyle),
+		},
+	)
 	return
 }
 
-func (s3 *S3) Upload(localPath string, s3Path string) error {
+func (s3 *S3) Upload(localPath string, dstPath string) error {
 	uploader := s3manager.NewUploader(s3.session)
-
-	iter := NewSyncFolderIterator(localPath, s3Path)
+	iter, err := s3.newSyncFolderIterator(localPath, dstPath)
+	if err != nil {
+		return err
+	}
+	log.Printf("Ready for upload %d files", len(iter.fileInfos))
+	if s3.DryRun {
+		log.Printf("... skip because dry-dun")
+		return nil
+	}
 	if err := uploader.UploadWithIterator(aws.BackgroundContext(), iter); err != nil {
-		log.Printf("unexpected error has occured: %v", err)
+		return err
 	}
 
 	return iter.Err()
@@ -48,6 +61,8 @@ type SyncFolderIterator struct {
 	bucket    string
 	fileInfos []fileInfo
 	err       error
+	acl       string
+	s3path    string
 }
 
 type fileInfo struct {
@@ -55,25 +70,25 @@ type fileInfo struct {
 	fullpath string
 }
 
-// NewSyncFolderIterator will walk the path, and store the key and full path
-// of the object to be uploaded. This will return a new SyncFolderIterator
-// with the data provided from walking the path.
-func NewSyncFolderIterator(path, bucket string) *SyncFolderIterator {
+func (s3 *S3) newSyncFolderIterator(localPath, dstPath string) (*SyncFolderIterator, error) {
 	metadata := []fileInfo{}
-	filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
-		if !info.IsDir() {
-			key := strings.TrimPrefix(p, path)
-			metadata = append(metadata, fileInfo{key, p})
+	err := filepath.Walk(localPath, func(filePath string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
 		}
-
+		if !info.IsDir() {
+			key := strings.TrimPrefix(filePath, localPath)
+			metadata = append(metadata, fileInfo{key, filePath})
+		}
 		return nil
 	})
 
 	return &SyncFolderIterator{
-		bucket,
-		metadata,
-		nil,
-	}
+		bucket:    s3.Config.Bucket,
+		fileInfos: metadata,
+		acl:       s3.Config.ACL,
+		s3path:    path.Join(s3.Config.Path, dstPath),
+	}, err
 }
 
 // Next will determine whether or not there is any remaining files to
@@ -103,10 +118,11 @@ func (iter *SyncFolderIterator) UploadObject() s3manager.BatchUploadObject {
 	if mimeType == "" {
 		mimeType = "binary/octet-stream"
 	}
-
+	key := path.Join(iter.s3path, fi.key)
 	input := s3manager.UploadInput{
+		ACL:         &iter.acl,
 		Bucket:      &iter.bucket,
-		Key:         &fi.key,
+		Key:         &key,
 		Body:        body,
 		ContentType: &mimeType,
 	}

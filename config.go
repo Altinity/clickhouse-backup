@@ -15,11 +15,15 @@ type Config struct {
 
 // S3Config - s3 settings section
 type S3Config struct {
-	AccessKey string `yaml:"access_key"`
-	SecretKey string `yaml:"secret_key"`
-	Bucket    string `yaml:"bucket"`
-	URL       string `yaml:"url"`
-	Region    string `yaml:"region"`
+	AccessKey      string `yaml:"access_key"`
+	SecretKey      string `yaml:"secret_key"`
+	Bucket         string `yaml:"bucket"`
+	Endpoint       string `yaml:"endpoint"`
+	Region         string `yaml:"region"`
+	ACL            string `yaml:"acl"`
+	ForcePathStyle bool   `yaml:"force_path_style"`
+	Path           string `yaml:"path"`
+	DisableSSL     bool   `yaml:"disable_ssl"`
 }
 
 // ClickHouseConfig - clickhouse settings section
@@ -60,6 +64,10 @@ func defaultConfig() *Config {
 			Host:     "localhost",
 			Port:     9000,
 		},
-		S3: S3Config{},
+		S3: S3Config{
+			Region:     "us-east-1",
+			DisableSSL: false,
+			ACL:        "private",
+		},
 	}
 }

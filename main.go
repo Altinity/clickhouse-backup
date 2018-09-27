@@ -1,10 +1,10 @@
 package main
 
 import (
-	"path"
 	"fmt"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 
 	"github.com/urfave/cli"
@@ -31,7 +31,7 @@ func main() {
 			Usage: "Only show what should be uploaded or downloaded but don't actually do it. May still perform S3 requests to get bucket listings and other information though (only for file transfer commands)",
 		},
 	}
-	cliapp.CommandNotFound = func(c *cli.Context, command string){
+	cliapp.CommandNotFound = func(c *cli.Context, command string) {
 		fmt.Printf("Error. Unknown command: '%s'\n\n", command)
 		cli.ShowAppHelpAndExit(c, 1)
 	}
@@ -42,8 +42,8 @@ func main() {
 	}
 	cliapp.Commands = []cli.Command{
 		{
-			Name:  "backup",
-			Usage: "Freeze tables",
+			Name:      "backup",
+			Usage:     "Freeze tables",
 			UsageText: "You can set specific tables like db*.tables[1-2]",
 			Action: func(c *cli.Context) error {
 				return backup(*config, c.Args(), c.Bool("dry-run") || c.GlobalBool("dry-run"))
@@ -51,12 +51,12 @@ func main() {
 			Flags: cliapp.Flags,
 		},
 		{
-			Name:   "upload",
-			Usage:  "Upload freezed tables to s3",
+			Name:  "upload",
+			Usage: "Upload freezed tables to s3",
 			Action: func(c *cli.Context) error {
 				return upload(*config, c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
-			Flags:  cliapp.Flags,
+			Flags: cliapp.Flags,
 		},
 		{
 			Name:   "download",
@@ -71,12 +71,12 @@ func main() {
 			Flags:  cliapp.Flags,
 		},
 		{
-			Name:   "default-config",
-			Usage:  "Print default config and exit",
+			Name:  "default-config",
+			Usage: "Print default config and exit",
 			Action: func(*cli.Context) {
 				PrintDefaultConfig()
 			},
-			Flags:  cliapp.Flags,
+			Flags: cliapp.Flags,
 		},
 	}
 	if err := cliapp.Run(os.Args); err != nil {
@@ -111,7 +111,7 @@ func backup(config Config, args []string, dryRun bool) error {
 
 	allTables, err := ch.GetTables()
 	if err != nil {
-		return  fmt.Errorf("can't get tables with: %v", err)
+		return fmt.Errorf("can't get tables with: %v", err)
 	}
 	backupTables := allTables
 	if len(args) > 0 {
@@ -149,17 +149,18 @@ func upload(config Config, dryRun bool) error {
 		}
 	}
 	s3 := &S3{
+		DryRun: dryRun,
 		Config: &config.S3,
 	}
 	if err := s3.Connect(); err != nil {
 		return fmt.Errorf("can't connect to s3 with: %v", err)
 	}
 	log.Printf("upload metadata")
-	if err := s3.Upload(path.Join(dataPath,"metadata"), "metadata"); err != nil {
+	if err := s3.Upload(path.Join(dataPath, "metadata"), "metadata"); err != nil {
 		return fmt.Errorf("can't upload metadata to s3 with: %v", err)
 	}
 	log.Printf("upload data")
-	if err := s3.Upload(path.Join(dataPath,"shadow"), "metadata"); err != nil {
+	if err := s3.Upload(path.Join(dataPath, "shadow"), "metadata"); err != nil {
 		return fmt.Errorf("can't upload metadata to s3 with: %v", err)
 	}
 	return nil
