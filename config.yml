@@ -3,8 +3,15 @@ clickhouse:
   password: ""
   host: localhost
   port: 9000
+  data_path: ""
 s3:
   access_key: ""
   secret_key: ""
   bucket: ""
-  url: ""
+  endpoint: ""
+  region: us-east-1
+  acl: private
+  force_path_style: false
+  path: ""
+  disable_ssl: false
+  disable_progress_bar: false

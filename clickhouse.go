@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"log"
+	"path"
+	"strings"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/kshvakov/clickhouse"
@@ -37,7 +39,17 @@ func (ch *ClickHouse) Connect() error {
 }
 
 func (ch *ClickHouse) GetDataPath() (string, error) {
-	return "/var/lib/clickhouse", nil
+	var result []struct {
+		MetadataPath string `db:"metadata_path"`
+	}
+	if err := ch.conn.Select(result, "SELECT metadata_path FROM system.tables WHERE database == 'system' LIMIT 1;"); err != nil {
+		return "", err
+	}
+
+	metadataPath := result[0].MetadataPath
+	dataPathArray := strings.Split(metadataPath, "/")
+	clickhouseData := path.Join(dataPathArray[:len(dataPathArray)-3]...)
+	return path.Join("/", clickhouseData), nil
 }
 
 // Close - close connection to clickhouse

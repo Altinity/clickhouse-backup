@@ -11,7 +11,7 @@ NAME:
    clickhouse-backup - Backup ClickHouse to s3
 
 USAGE:
-   clickhouse-backup.exe [global options] command [command options] [arguments...]
+   clickhouse-backup [global options] command [command options] [arguments...]
 
 VERSION:
    0.0.1
@@ -42,6 +42,11 @@ s3:
   access_key: ""
   secret_key: ""
   bucket: ""
-  url: ""
-  region: ""
+  endpoint: ""
+  region: us-east-1
+  acl: private
+  force_path_style: false
+  path: ""
+  disable_ssl: false
+  disable_progress_bar: false
 ```

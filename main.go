@@ -10,9 +10,7 @@ import (
 	"github.com/urfave/cli"
 )
 
-func CmdNotImplemented(*cli.Context) error {
-	return fmt.Errorf("Command not implemented")
-}
+var config *Config
 
 func main() {
 
@@ -21,9 +19,9 @@ func main() {
 	cliapp.Usage = "Backup ClickHouse to s3"
 	cliapp.Version = "0.0.1"
 	cliapp.Flags = []cli.Flag{
-		cli.StringSliceFlag{
+		cli.StringFlag{
 			Name:  "config, c",
-			Value: &cli.StringSlice{"config.yml"},
+			Value: "config.yml",
 			Usage: "Config `FILE` name.",
 		},
 		cli.BoolFlag{
@@ -36,10 +34,15 @@ func main() {
 		cli.ShowAppHelpAndExit(c, 1)
 	}
 
-	config, err := LoadConfig("config.yml")
-	if err != nil {
-		log.Fatal(err)
+	cliapp.Before = func(c *cli.Context) error {
+		var err error
+		config, err = LoadConfig(c.String("config"))
+		if err != nil {
+			log.Fatal(err)
+		}
+		return nil
 	}
+
 	cliapp.Commands = []cli.Command{
 		{
 			Name:      "backup",
@@ -96,6 +99,10 @@ func parseArgs(tables []Table, args []string) ([]Table, error) {
 		}
 	}
 	return result, nil
+}
+
+func CmdNotImplemented(*cli.Context) error {
+	return fmt.Errorf("Command not implemented")
 }
 
 func backup(config Config, args []string, dryRun bool) error {
