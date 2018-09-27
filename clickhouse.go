@@ -30,10 +30,14 @@ func (ch *ClickHouse) Connect() error {
 		ch.Config.Host, ch.Config.Port, ch.Config.Username, ch.Config.Password)
 	var err error
 	if ch.conn, err = sqlx.Open("clickhouse", connectionString); err != nil {
-		return fmt.Errorf("can't connect to clickouse with: %v", err)
+		return err
 	}
 
 	return ch.conn.Ping()
+}
+
+func (ch *ClickHouse) GetDataPath() (string, error) {
+	return "/var/lib/clickhouse", nil
 }
 
 // Close - close connection to clickhouse
@@ -45,7 +49,7 @@ func (ch *ClickHouse) Close() error {
 func (ch *ClickHouse) GetTables() ([]Table, error) {
 	var tables []Table
 	if err := ch.conn.Select(&tables, "SELECT database, name, is_temporary, data_path, metadata_path FROM system.tables WHERE database != 'system';"); err != nil {
-		return nil, fmt.Errorf("can't get tables with: %v", err)
+		return nil, err
 	}
 	return tables, nil
 }
@@ -60,13 +64,14 @@ func (ch *ClickHouse) FreezeTable(table Table) error {
 		return fmt.Errorf("can't get partitions for \"%s.%s\" with %v", table.Database, table.Name, err)
 	}
 
-	log.Printf("Freeze %v.%v", table.Database, table.Name)
+	log.Printf("Freeze '%v.%v'", table.Database, table.Name)
 
 	for _, item := range partitions {
-		log.Printf("  partition %v", item.Partition)
 		if ch.DryRun {
+			log.Printf("  partition '%v'   ...skip becose dry-run", item.Partition)
 			continue
 		}
+		log.Printf("  partition '%v'", item.Partition)
 		if _, err := ch.conn.Exec(
 			fmt.Sprintf(
 				"ALTER TABLE %v.%v FREEZE PARTITION %v;",
@@ -74,7 +79,7 @@ func (ch *ClickHouse) FreezeTable(table Table) error {
 				table.Name,
 				item.Partition,
 			)); err != nil {
-			return fmt.Errorf("can't freze partiotion '%s' on '%s.%s' with %v", item.Partition, table.Database, table.Name, err)
+			return fmt.Errorf("can't freze partiotion '%s' on '%s.%s' with: %v", item.Partition, table.Database, table.Name, err)
 		}
 	}
 	return nil

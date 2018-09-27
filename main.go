@@ -1,48 +1,90 @@
 package main
 
 import (
+	"path"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+
+	"github.com/urfave/cli"
 )
 
-func help() {
-	fmt.Println("clickhouse-backup backup [db[.table]]")
-	fmt.Println("TODO: clickhouse-backup restore [db[.table]]")
-	fmt.Println("TODO: clickhouse-backup upload [db[.table]]")
-	fmt.Println("TODO: clickhouse-backup download [db[.table]]")
-
-	fmt.Println("--dry-run")
+func CmdNotImplemented(*cli.Context) error {
+	return fmt.Errorf("Command not implemented")
 }
 
 func main() {
 
-	args := os.Args
-	if len(args) < 1 {
-		help()
-		os.Exit(1)
+	cliapp := cli.NewApp()
+	cliapp.Name = "clickhouse-backup"
+	cliapp.Usage = "Backup ClickHouse to s3"
+	cliapp.Version = "0.0.1"
+	cliapp.Flags = []cli.Flag{
+		cli.StringSliceFlag{
+			Name:  "config, c",
+			Value: &cli.StringSlice{"config.yml"},
+			Usage: "Config `FILE` name.",
+		},
+		cli.BoolFlag{
+			Name:  "dry-run",
+			Usage: "Only show what should be uploaded or downloaded but don't actually do it. May still perform S3 requests to get bucket listings and other information though (only for file transfer commands)",
+		},
+	}
+	cliapp.CommandNotFound = func(c *cli.Context, command string){
+		fmt.Printf("Error. Unknown command: '%s'\n\n", command)
+		cli.ShowAppHelpAndExit(c, 1)
 	}
 
 	config, err := LoadConfig("config.yml")
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	if args[1] != "backup" {
-		help()
-		os.Exit(1)
+	cliapp.Commands = []cli.Command{
+		{
+			Name:  "backup",
+			Usage: "Freeze tables",
+			UsageText: "You can set specific tables like db*.tables[1-2]",
+			Action: func(c *cli.Context) error {
+				return backup(*config, c.Args(), c.Bool("dry-run") || c.GlobalBool("dry-run"))
+			},
+			Flags: cliapp.Flags,
+		},
+		{
+			Name:   "upload",
+			Usage:  "Upload freezed tables to s3",
+			Action: func(c *cli.Context) error {
+				return upload(*config, c.Bool("dry-run") || c.GlobalBool("dry-run"))
+			},
+			Flags:  cliapp.Flags,
+		},
+		{
+			Name:   "download",
+			Usage:  "NOT IMPLEMENTED! Download tables from s3 to rigth path",
+			Action: CmdNotImplemented,
+			Flags:  cliapp.Flags,
+		},
+		{
+			Name:   "restore",
+			Usage:  "NOT IMPLEMENTED! Restore downloaded data",
+			Action: CmdNotImplemented,
+			Flags:  cliapp.Flags,
+		},
+		{
+			Name:   "default-config",
+			Usage:  "Print default config and exit",
+			Action: func(*cli.Context) {
+				PrintDefaultConfig()
+			},
+			Flags:  cliapp.Flags,
+		},
 	}
-	if err := backup(*config, args[2:]); err != nil {
+	if err := cliapp.Run(os.Args); err != nil {
 		log.Fatal(err)
 	}
-
 }
 
 func parseArgs(tables []Table, args []string) ([]Table, error) {
-	// empty or * - all tables of all databases
-	// db or db.*- all tables in specific database
-	// db.table - specific table
 	var result []Table
 	for _, arg := range args {
 		for _, t := range tables {
@@ -50,25 +92,26 @@ func parseArgs(tables []Table, args []string) ([]Table, error) {
 				result = append(result, t)
 				continue
 			}
-			return nil, fmt.Errorf("\"%s\" not found", arg)
+			return nil, fmt.Errorf("table '%s' not found", arg)
 		}
 	}
 	return result, nil
 }
 
-func backup(config Config, args []string) error {
+func backup(config Config, args []string, dryRun bool) error {
 	ch := &ClickHouse{
-		DryRun: false,
+		DryRun: dryRun,
 		Config: &config.ClickHouse,
 	}
 
 	if err := ch.Connect(); err != nil {
-		return err
+		return fmt.Errorf("can't connect to clickouse with: %v", err)
 	}
+	defer ch.Close()
 
 	allTables, err := ch.GetTables()
 	if err != nil {
-		return err
+		return  fmt.Errorf("can't get tables with: %v", err)
 	}
 	backupTables := allTables
 	if len(args) > 0 {
@@ -89,18 +132,35 @@ func backup(config Config, args []string) error {
 	return nil
 }
 
-type S3 struct {
-	Config *S3Config
-}
-
-func (s3 *S3) Connect() error {
-	return nil
-}
-
-func (s3 *S3) Upload(localPath string, s3Path string) error {
-	return nil
-}
-
-func (s3 *S3) Download(s3Path string, localPath string) error {
+func upload(config Config, dryRun bool) error {
+	dataPath := config.ClickHouse.DataPath
+	if dataPath == "" {
+		ch := &ClickHouse{
+			DryRun: dryRun,
+			Config: &config.ClickHouse,
+		}
+		if err := ch.Connect(); err != nil {
+			return fmt.Errorf("can't connect to clickouse for get data path with: %v\nyou can set clickhouse.data_path in config", err)
+		}
+		defer ch.Close()
+		var err error
+		if dataPath, err = ch.GetDataPath(); err != nil || dataPath == "" {
+			return fmt.Errorf("can't get data path from clickhouse with: %v\nyou can set data_path in config file", err)
+		}
+	}
+	s3 := &S3{
+		Config: &config.S3,
+	}
+	if err := s3.Connect(); err != nil {
+		return fmt.Errorf("can't connect to s3 with: %v", err)
+	}
+	log.Printf("upload metadata")
+	if err := s3.Upload(path.Join(dataPath,"metadata"), "metadata"); err != nil {
+		return fmt.Errorf("can't upload metadata to s3 with: %v", err)
+	}
+	log.Printf("upload data")
+	if err := s3.Upload(path.Join(dataPath,"shadow"), "metadata"); err != nil {
+		return fmt.Errorf("can't upload metadata to s3 with: %v", err)
+	}
 	return nil
 }

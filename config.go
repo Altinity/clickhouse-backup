@@ -16,9 +16,10 @@ type Config struct {
 // S3Config - s3 settings section
 type S3Config struct {
 	AccessKey string `yaml:"access_key"`
-	SecretKey string `yaml:"secret_key:"`
+	SecretKey string `yaml:"secret_key"`
 	Bucket    string `yaml:"bucket"`
 	URL       string `yaml:"url"`
+	Region    string `yaml:"region"`
 }
 
 // ClickHouseConfig - clickhouse settings section
@@ -27,6 +28,7 @@ type ClickHouseConfig struct {
 	Password string `yaml:"password"`
 	Host     string `yaml:"host"`
 	Port     uint   `yaml:"port"`
+	DataPath string `yaml:"data_path"`
 }
 
 // LoadConfig - load config from file

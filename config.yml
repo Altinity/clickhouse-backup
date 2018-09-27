@@ -1,10 +1,10 @@
 clickhouse:
-  user:
-  password:
-  host:
-  port:
+  username: default
+  password: ""
+  host: localhost
+  port: 9000
 s3:
-  access_key:
-  secret_key:
-  bucket:
-  path:
+  access_key: ""
+  secret_key: ""
+  bucket: ""
+  url: ""
