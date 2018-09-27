@@ -160,7 +160,7 @@ func upload(config Config, dryRun bool) error {
 		return fmt.Errorf("can't upload metadata to s3 with: %v", err)
 	}
 	log.Printf("upload data")
-	if err := s3.Upload(path.Join(dataPath, "shadow"), "metadata"); err != nil {
+	if err := s3.Upload(path.Join(dataPath, "shadow"), "shadow"); err != nil {
 		return fmt.Errorf("can't upload metadata to s3 with: %v", err)
 	}
 	return nil

@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"gopkg.in/cheggaaa/pb.v1"
 )
 
 type S3 struct {
@@ -34,21 +35,56 @@ func (s3 *S3) Connect() (err error) {
 }
 
 func (s3 *S3) Upload(localPath string, dstPath string) error {
-	uploader := s3manager.NewUploader(s3.session)
 	iter, err := s3.newSyncFolderIterator(localPath, dstPath)
 	if err != nil {
 		return err
 	}
-	log.Printf("Ready for upload %d files", len(iter.fileInfos))
 	if s3.DryRun {
 		log.Printf("... skip because dry-dun")
 		return nil
 	}
-	if err := uploader.UploadWithIterator(aws.BackgroundContext(), iter); err != nil {
-		return err
+	var bar pb.ProgressBar
+	if !s3.Config.DisableProgressBar {
+		bar := pb.StartNew(len(iter.fileInfos))
+		defer bar.FinishPrint("Done.")
 	}
 
+	uploader := s3manager.NewUploader(s3.session)
+	var errs []s3manager.Error
+	for iter.Next() {
+		object := iter.UploadObject()
+		if _, err := uploader.UploadWithContext(aws.BackgroundContext(), object.Object); err != nil {
+			s3Err := s3manager.Error{
+				OrigErr: err,
+				Bucket:  object.Object.Bucket,
+				Key:     object.Object.Key,
+			}
+
+			errs = append(errs, s3Err)
+		}
+		if !s3.Config.DisableProgressBar {
+			bar.Increment()
+		}
+		if object.After == nil {
+			continue
+		}
+
+		if err := object.After(); err != nil {
+			s3Err := s3manager.Error{
+				OrigErr: err,
+				Bucket:  object.Object.Bucket,
+				Key:     object.Object.Key,
+			}
+
+			errs = append(errs, s3Err)
+		}
+	}
+
+	if len(errs) > 0 {
+		return s3manager.NewBatchError("BatchedUploadIncomplete", "some objects have failed to upload.", errs)
+	}
 	return iter.Err()
+
 }
 
 func (s3 *S3) Download(s3Path string, localPath string) error {

@@ -15,15 +15,16 @@ type Config struct {
 
 // S3Config - s3 settings section
 type S3Config struct {
-	AccessKey      string `yaml:"access_key"`
-	SecretKey      string `yaml:"secret_key"`
-	Bucket         string `yaml:"bucket"`
-	Endpoint       string `yaml:"endpoint"`
-	Region         string `yaml:"region"`
-	ACL            string `yaml:"acl"`
-	ForcePathStyle bool   `yaml:"force_path_style"`
-	Path           string `yaml:"path"`
-	DisableSSL     bool   `yaml:"disable_ssl"`
+	AccessKey          string `yaml:"access_key"`
+	SecretKey          string `yaml:"secret_key"`
+	Bucket             string `yaml:"bucket"`
+	Endpoint           string `yaml:"endpoint"`
+	Region             string `yaml:"region"`
+	ACL                string `yaml:"acl"`
+	ForcePathStyle     bool   `yaml:"force_path_style"`
+	Path               string `yaml:"path"`
+	DisableSSL         bool   `yaml:"disable_ssl"`
+	DisableProgressBar bool   `yaml:"disable_progress_bar"`
 }
 
 // ClickHouseConfig - clickhouse settings section
