@@ -43,9 +43,9 @@ func (s3 *S3) Upload(localPath string, dstPath string) error {
 		log.Printf("... skip because dry-dun")
 		return nil
 	}
-	var bar pb.ProgressBar
+	var bar *pb.ProgressBar
 	if !s3.Config.DisableProgressBar {
-		bar := pb.StartNew(len(iter.fileInfos))
+		bar = pb.StartNew(len(iter.fileInfos))
 		defer bar.FinishPrint("Done.")
 	}
 
