@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"mime"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"gopkg.in/cheggaaa/pb.v1"
 )
@@ -21,36 +23,36 @@ type S3 struct {
 	DryRun  bool
 }
 
-func (s3 *S3) Connect() (err error) {
-	s3.session, err = session.NewSession(
+func (s *S3) Connect() (err error) {
+	s.session, err = session.NewSession(
 		&aws.Config{
-			Credentials:      credentials.NewStaticCredentials(s3.Config.AccessKey, s3.Config.SecretKey, ""),
-			Region:           aws.String(s3.Config.Region),
-			Endpoint:         aws.String(s3.Config.Endpoint),
-			DisableSSL:       aws.Bool(s3.Config.DisableSSL),
-			S3ForcePathStyle: aws.Bool(s3.Config.ForcePathStyle),
+			Credentials:      credentials.NewStaticCredentials(s.Config.AccessKey, s.Config.SecretKey, ""),
+			Region:           aws.String(s.Config.Region),
+			Endpoint:         aws.String(s.Config.Endpoint),
+			DisableSSL:       aws.Bool(s.Config.DisableSSL),
+			S3ForcePathStyle: aws.Bool(s.Config.ForcePathStyle),
 		},
 	)
 	return
 }
 
-func (s3 *S3) Upload(localPath string, dstPath string) error {
+func (s *S3) Upload(localPath string, dstPath string) error {
 	// TODO: upload only changed files and delete not exists
-	iter, err := s3.newSyncFolderIterator(localPath, dstPath)
+	iter, err := s.newSyncFolderIterator(localPath, dstPath)
 	if err != nil {
 		return err
 	}
-	if s3.DryRun {
+	if s.DryRun {
 		log.Printf("... skip because dry-dun")
 		return nil
 	}
 	var bar *pb.ProgressBar
-	if !s3.Config.DisableProgressBar {
+	if !s.Config.DisableProgressBar {
 		bar = pb.StartNew(len(iter.fileInfos))
 		defer bar.FinishPrint("Done.")
 	}
 
-	uploader := s3manager.NewUploader(s3.session)
+	uploader := s3manager.NewUploader(s.session)
 	var errs []s3manager.Error
 	for iter.Next() {
 		object := iter.UploadObject()
@@ -63,7 +65,7 @@ func (s3 *S3) Upload(localPath string, dstPath string) error {
 
 			errs = append(errs, s3Err)
 		}
-		if !s3.Config.DisableProgressBar {
+		if !s.Config.DisableProgressBar {
 			bar.Increment()
 		}
 		if object.After == nil {
@@ -88,7 +90,19 @@ func (s3 *S3) Upload(localPath string, dstPath string) error {
 
 }
 
-func (s3 *S3) Download(s3Path string, localPath string) error {
+func (s *S3) Download(s3Path string, localPath string) error {
+	s.remotePager("", false, func(page *s3.ListObjectsV2Output) {
+		for _, c := range page.Contents {
+			fmt.Printf("%v\tsize:%d\tetag:%v\t%v\n", c.LastModified.Format("2006-01-02 15:04:05"), *c.Size, *c.ETag, *c.Key)
+		}
+	})
+	// TODO: skip exitsh files
+	// downloader := s3manager.NewDownloader(s.session)
+	// params := &s3.GetObjectInput{
+	// 	Bucket: aws.String(s.Config.Bucket),
+	// 	Key:    src.Key(),
+	// }
+	// a, err := downloader.DownloadWithContext(aws.BackgroundContext())
 	return nil
 }
 
@@ -107,7 +121,7 @@ type fileInfo struct {
 	fullpath string
 }
 
-func (s3 *S3) newSyncFolderIterator(localPath, dstPath string) (*SyncFolderIterator, error) {
+func (s *S3) newSyncFolderIterator(localPath, dstPath string) (*SyncFolderIterator, error) {
 	metadata := []fileInfo{}
 	err := filepath.Walk(localPath, func(filePath string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -121,11 +135,32 @@ func (s3 *S3) newSyncFolderIterator(localPath, dstPath string) (*SyncFolderItera
 	})
 
 	return &SyncFolderIterator{
-		bucket:    s3.Config.Bucket,
+		bucket:    s.Config.Bucket,
 		fileInfos: metadata,
-		acl:       s3.Config.ACL,
-		s3path:    path.Join(s3.Config.Path, dstPath),
+		acl:       s.Config.ACL,
+		s3path:    path.Join(s.Config.Path, dstPath),
 	}, err
+}
+
+func (s *S3) remotePager(s3Path string, delim bool, pager func(page *s3.ListObjectsV2Output)) error {
+	params := &s3.ListObjectsV2Input{
+		Bucket:  aws.String(s.Config.Bucket), // Required
+		MaxKeys: aws.Int64(1000),
+
+	}
+	if s3Path != "" && s3Path != "/" {
+		params.Prefix = aws.String(s3Path)
+	}
+	if delim {
+		params.Delimiter = aws.String("/")
+	}
+
+	wrapper := func(page *s3.ListObjectsV2Output, lastPage bool) bool {
+		pager(page)
+		return true
+	}
+
+	return s3.New(s.session).ListObjectsV2Pages(params, wrapper)
 }
 
 // Next will determine whether or not there is any remaining files to

@@ -64,7 +64,16 @@ func main() {
 		{
 			Name:   "download",
 			Usage:  "NOT IMPLEMENTED! Download tables from s3 to rigth path",
-			Action: CmdNotImplemented,
+			Action: func(c *cli.Context) error {
+				s3 := &S3{
+					DryRun: c.Bool("dry-run") || c.GlobalBool("dry-run"),
+					Config: &config.S3,
+				}
+				if err := s3.Connect(); err != nil {
+					return fmt.Errorf("can't connect to s3 with: %v", err)
+				}
+				return s3.Download(c.Args().First(), "")
+			},
 			Flags:  cliapp.Flags,
 		},
 		{

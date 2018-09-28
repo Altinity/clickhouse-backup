@@ -96,3 +96,21 @@ func (ch *ClickHouse) FreezeTable(table Table) error {
 	}
 	return nil
 }
+
+func (ch *ClickHouse) AttachPatrition(table string) error {
+
+	return nil
+}
+
+func (ch *ClickHouse) GetClickHouseUser() (string, string, error) {
+	return "", "", nil
+}
+
+func (ch *ClickHouse) CreateDatabase (database string) error {
+	return nil
+}
+
+func (ch *ClickHouse) CreateTable(query string) error {
+	return nil
+}
+
