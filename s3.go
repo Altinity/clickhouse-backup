@@ -35,6 +35,7 @@ func (s3 *S3) Connect() (err error) {
 }
 
 func (s3 *S3) Upload(localPath string, dstPath string) error {
+	// TODO: upload only changed files and delete not exists
 	iter, err := s3.newSyncFolderIterator(localPath, dstPath)
 	if err != nil {
 		return err

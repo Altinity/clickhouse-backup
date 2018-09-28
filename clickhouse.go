@@ -42,8 +42,8 @@ func (ch *ClickHouse) GetDataPath() (string, error) {
 	var result []struct {
 		MetadataPath string `db:"metadata_path"`
 	}
-	if err := ch.conn.Select(result, "SELECT metadata_path FROM system.tables WHERE database == 'system' LIMIT 1;"); err != nil {
-		return "", err
+	if err := ch.conn.Select(&result, "SELECT metadata_path FROM system.tables WHERE database == 'system' LIMIT 1;"); err != nil {
+		return "/var/lib/clickhouse", err
 	}
 
 	metadataPath := result[0].MetadataPath
@@ -80,7 +80,7 @@ func (ch *ClickHouse) FreezeTable(table Table) error {
 
 	for _, item := range partitions {
 		if ch.DryRun {
-			log.Printf("  partition '%v'   ...skip becose dry-run", item.Partition)
+			log.Printf("  partition '%v'   ...skip becouse dry-run", item.Partition)
 			continue
 		}
 		log.Printf("  partition '%v'", item.Partition)
