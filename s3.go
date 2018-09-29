@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/md5"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"mime"
 	"os"
@@ -15,6 +17,10 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"gopkg.in/cheggaaa/pb.v1"
+)
+
+const (
+	PART_SIZE = 5 * 1024 * 1024
 )
 
 type S3 struct {
@@ -37,8 +43,7 @@ func (s *S3) Connect() (err error) {
 }
 
 func (s *S3) Upload(localPath string, dstPath string) error {
-	// TODO: upload only changed files and delete not exists
-	iter, err := s.newSyncFolderIterator(localPath, dstPath)
+	iter, filesForDelete, err := s.newSyncFolderIterator(localPath, dstPath)
 	if err != nil {
 		return err
 	}
@@ -53,6 +58,7 @@ func (s *S3) Upload(localPath string, dstPath string) error {
 	}
 
 	uploader := s3manager.NewUploader(s.session)
+	uploader.PartSize = PART_SIZE
 	var errs []s3manager.Error
 	for iter.Next() {
 		object := iter.UploadObject()
@@ -86,16 +92,27 @@ func (s *S3) Upload(localPath string, dstPath string) error {
 	if len(errs) > 0 {
 		return s3manager.NewBatchError("BatchedUploadIncomplete", "some objects have failed to upload.", errs)
 	}
-	return iter.Err()
+	if err := iter.Err(); err != nil {
+		return err
+	}
+	return s.Delete(filesForDelete)
+}
 
+func (s S3) Delete(files map[string]fileInfo) error {
+	for _, file := range files {
+		log.Printf("File '%s' must be deleted", file.key)
+	}
+	return nil
 }
 
 func (s *S3) Download(s3Path string, localPath string) error {
-	s.remotePager("", false, func(page *s3.ListObjectsV2Output) {
+	s.remotePager(s.Config.Path, false, func(page *s3.ListObjectsV2Output) {
 		for _, c := range page.Contents {
 			fmt.Printf("%v\tsize:%d\tetag:%v\t%v\n", c.LastModified.Format("2006-01-02 15:04:05"), *c.Size, *c.ETag, *c.Key)
 		}
 	})
+	etag, _ := GetEtag("c:\\test\\metadata\\clojure.djvu")
+	fmt.Println(etag)
 	// TODO: skip exitsh files
 	// downloader := s3manager.NewDownloader(s.session)
 	// params := &s3.GetObjectInput{
@@ -119,17 +136,46 @@ type SyncFolderIterator struct {
 type fileInfo struct {
 	key      string
 	fullpath string
+	size     int64
+	etag     string
 }
 
-func (s *S3) newSyncFolderIterator(localPath, dstPath string) (*SyncFolderIterator, error) {
+func (s *S3) newSyncFolderIterator(localPath, dstPath string) (*SyncFolderIterator, map[string]fileInfo, error) {
+	existsFiles := make(map[string]fileInfo)
+	s.remotePager(s.Config.Path, false, func(page *s3.ListObjectsV2Output) {
+		for _, c := range page.Contents {
+			key := strings.TrimPrefix(*c.Key, path.Join(s.Config.Path, dstPath))
+			existsFiles[key] = fileInfo{
+				key: *c.Key,
+				size: *c.Size,
+				etag: *c.ETag,
+			}
+		}
+	})
+
 	metadata := []fileInfo{}
 	err := filepath.Walk(localPath, func(filePath string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if !info.IsDir() {
+			filePath := filepath.ToSlash(filePath) // fix fucking Windows slashes
 			key := strings.TrimPrefix(filePath, localPath)
-			metadata = append(metadata, fileInfo{key, filePath})
+			if existFile, ok := existsFiles[key]; ok {
+				delete(existsFiles, key)
+				if existFile.size == info.Size() {
+					etag, _ := GetEtag(filePath)
+					if existFile.etag == etag {
+						log.Printf("File '%s' already uploaded and has the same size and etag. Skip", key)
+						return nil
+					}
+				}
+			}
+			metadata = append(metadata, fileInfo{
+				key:      key,
+				fullpath: filePath,
+				size:     info.Size(),
+			})
 		}
 		return nil
 	})
@@ -139,14 +185,13 @@ func (s *S3) newSyncFolderIterator(localPath, dstPath string) (*SyncFolderIterat
 		fileInfos: metadata,
 		acl:       s.Config.ACL,
 		s3path:    path.Join(s.Config.Path, dstPath),
-	}, err
+	}, existsFiles, err
 }
 
 func (s *S3) remotePager(s3Path string, delim bool, pager func(page *s3.ListObjectsV2Output)) error {
 	params := &s3.ListObjectsV2Input{
 		Bucket:  aws.String(s.Config.Bucket), // Required
 		MaxKeys: aws.Int64(1000),
-
 	}
 	if s3Path != "" && s3Path != "/" {
 		params.Prefix = aws.String(s3Path)
@@ -186,7 +231,6 @@ func (iter *SyncFolderIterator) UploadObject() s3manager.BatchUploadObject {
 
 	extension := filepath.Ext(fi.key)
 	mimeType := mime.TypeByExtension(extension)
-
 	if mimeType == "" {
 		mimeType = "binary/octet-stream"
 	}
@@ -203,4 +247,30 @@ func (iter *SyncFolderIterator) UploadObject() s3manager.BatchUploadObject {
 		&input,
 		nil,
 	}
+}
+func GetEtag(path string) (string, error) {
+	content, err := ioutil.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	size := len(content)
+	if size <= PART_SIZE {
+		hash := md5.Sum(content)
+		return fmt.Sprintf("\"%x\"", hash), nil
+	}
+	parts := 0
+	pos := 0
+	contentToHash := make([]byte, 0)
+	for size > pos {
+		endpos := pos + PART_SIZE
+		if endpos >= size {
+			endpos = size
+		}
+		hash := md5.Sum(content[pos:endpos])
+		contentToHash = append(contentToHash, hash[:]...)
+		pos += PART_SIZE
+		parts += 1
+	}
+	hash := md5.Sum(contentToHash)
+	return fmt.Sprintf("\"%x-%d\"", hash, parts), nil
 }
