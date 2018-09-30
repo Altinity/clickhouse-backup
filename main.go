@@ -72,7 +72,7 @@ func main() {
 				if err := s3.Connect(); err != nil {
 					return fmt.Errorf("can't connect to s3 with: %v", err)
 				}
-				return s3.Download(c.Args().First(), "")
+				return s3.Download("metadata", path.Join(config.ClickHouse.DataPath, "metadata"))
 			},
 			Flags:  cliapp.Flags,
 		},

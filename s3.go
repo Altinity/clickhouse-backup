@@ -106,20 +106,53 @@ func (s S3) Delete(files map[string]fileInfo) error {
 }
 
 func (s *S3) Download(s3Path string, localPath string) error {
-	s.remotePager(s.Config.Path, false, func(page *s3.ListObjectsV2Output) {
-		for _, c := range page.Contents {
-			fmt.Printf("%v\tsize:%d\tetag:%v\t%v\n", c.LastModified.Format("2006-01-02 15:04:05"), *c.Size, *c.ETag, *c.Key)
+	localFiles, err := s.getLocalFiles(localPath, s3Path)
+	if err != nil {
+		return fmt.Errorf("can't open '%s' with %v", localPath, err)
+	}
+	s3Files, err := s.getS3Files(localPath, s3Path)
+	if err != nil {
+		return err
+	}
+	var bar *pb.ProgressBar
+	if !s.Config.DisableProgressBar {
+		bar = pb.StartNew(len(s3Files))
+		defer bar.FinishPrint("Done.")
+	}
+	downloader := s3manager.NewDownloader(s.session)
+	for _, s3File := range s3Files {
+		bar.Increment()
+		if existsFile, ok := localFiles[s3File.key]; ok {
+			if existsFile.size == s3File.size {
+				if s3File.etag == GetEtag(existsFile.fullpath) {
+					log.Printf("Skip download file '%s' already exists", s3File.key)
+					// Skip download file
+					continue
+				}
+			}
 		}
-	})
-	etag := GetEtag("c:\\test\\metadata\\clojure.djvu")
-	fmt.Println(etag)
-	// TODO: skip exitsh files
-	// downloader := s3manager.NewDownloader(s.session)
-	// params := &s3.GetObjectInput{
-	// 	Bucket: aws.String(s.Config.Bucket),
-	// 	Key:    src.Key(),
-	// }
-	// a, err := downloader.DownloadWithContext(aws.BackgroundContext())
+
+		params := &s3.GetObjectInput{
+			Bucket: aws.String(s.Config.Bucket),
+			Key:    aws.String(path.Join(s.Config.Path, s3Path, s3File.key)),
+		}
+		log.Printf("Download '%s'", s3File.key)
+		newFilePath := filepath.Join(localPath, s3File.key)
+		newPath := filepath.Dir(newFilePath)
+		if s.DryRun {
+			continue
+		}
+		if err := os.MkdirAll(newPath, 0755); err != nil {
+			return fmt.Errorf("can't create '%s' with: %v", newPath, err)
+		}
+		f, err := os.Create(newFilePath)
+		if err != nil {
+			return fmt.Errorf("can't open '%s' with %v", newFilePath, err)
+		}
+		if _, err := downloader.DownloadWithContext(aws.BackgroundContext(), f, params); err != nil {
+			return fmt.Errorf("can't download '%s' with %v", s3File.key, err)
+		}
+	}
 	return nil
 }
 
@@ -141,6 +174,43 @@ type fileInfo struct {
 	etag     string
 }
 
+func (s *S3) getLocalFiles(localPath, s3Path string) (localFiles map[string]fileInfo, err error) {
+	localFiles = make(map[string]fileInfo)
+	err = filepath.Walk(localPath, func(filePath string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			filePath := filepath.ToSlash(filePath) // fix fucking Windows slashes
+			key := strings.TrimPrefix(filePath, localPath)
+			localFiles[key] = fileInfo{
+				key:      key,
+				fullpath: filePath,
+				size:     info.Size(),
+			}
+		}
+		return nil
+	})
+	return
+}
+
+func (s *S3) getS3Files(localPath, s3Path string) (s3Files map[string]fileInfo, err error) {
+	s3Files = make(map[string]fileInfo)
+	s.remotePager(s.Config.Path, false, func(page *s3.ListObjectsV2Output) {
+		for _, c := range page.Contents {
+			key := strings.TrimPrefix(*c.Key, path.Join(s.Config.Path, s3Path))
+			if !strings.HasSuffix(key, "/") {
+				s3Files[key] = fileInfo{
+					key:  key,
+					size: *c.Size,
+					etag: *c.ETag,
+				}
+			}
+		}
+	})
+	return
+}
+
 func (s *S3) newSyncFolderIterator(localPath, dstPath string) (*SyncFolderIterator, map[string]fileInfo, error) {
 	existsFiles := make(map[string]fileInfo)
 	s.remotePager(s.Config.Path, false, func(page *s3.ListObjectsV2Output) {
@@ -154,7 +224,7 @@ func (s *S3) newSyncFolderIterator(localPath, dstPath string) (*SyncFolderIterat
 		}
 	})
 
-	metadata := []fileInfo{}
+	localFiles := []fileInfo{}
 	skipFilesCount := 0
 	err := filepath.Walk(localPath, func(filePath string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -173,7 +243,7 @@ func (s *S3) newSyncFolderIterator(localPath, dstPath string) (*SyncFolderIterat
 					}
 				}
 			}
-			metadata = append(metadata, fileInfo{
+			localFiles = append(localFiles, fileInfo{
 				key:      key,
 				fullpath: filePath,
 				size:     info.Size(),
@@ -184,7 +254,7 @@ func (s *S3) newSyncFolderIterator(localPath, dstPath string) (*SyncFolderIterat
 
 	return &SyncFolderIterator{
 		bucket:         s.Config.Bucket,
-		fileInfos:      metadata,
+		fileInfos:      localFiles,
 		acl:            s.Config.ACL,
 		s3path:         path.Join(s.Config.Path, dstPath),
 		skipFilesCount: skipFilesCount,
