@@ -53,7 +53,8 @@ func (s *S3) Upload(localPath string, dstPath string) error {
 	}
 	var bar *pb.ProgressBar
 	if !s.Config.DisableProgressBar {
-		bar = pb.StartNew(len(iter.fileInfos))
+		bar = pb.StartNew(len(iter.fileInfos) + iter.skipFilesCount)
+		bar.Set(iter.skipFilesCount)
 		defer bar.FinishPrint("Done.")
 	}
 
@@ -88,7 +89,6 @@ func (s *S3) Upload(localPath string, dstPath string) error {
 			errs = append(errs, s3Err)
 		}
 	}
-
 	if len(errs) > 0 {
 		return s3manager.NewBatchError("BatchedUploadIncomplete", "some objects have failed to upload.", errs)
 	}
@@ -111,7 +111,7 @@ func (s *S3) Download(s3Path string, localPath string) error {
 			fmt.Printf("%v\tsize:%d\tetag:%v\t%v\n", c.LastModified.Format("2006-01-02 15:04:05"), *c.Size, *c.ETag, *c.Key)
 		}
 	})
-	etag, _ := GetEtag("c:\\test\\metadata\\clojure.djvu")
+	etag := GetEtag("c:\\test\\metadata\\clojure.djvu")
 	fmt.Println(etag)
 	// TODO: skip exitsh files
 	// downloader := s3manager.NewDownloader(s.session)
@@ -126,11 +126,12 @@ func (s *S3) Download(s3Path string, localPath string) error {
 // SyncFolderIterator is used to upload a given folder
 // to Amazon S3.
 type SyncFolderIterator struct {
-	bucket    string
-	fileInfos []fileInfo
-	err       error
-	acl       string
-	s3path    string
+	bucket         string
+	fileInfos      []fileInfo
+	err            error
+	acl            string
+	s3path         string
+	skipFilesCount int
 }
 
 type fileInfo struct {
@@ -146,7 +147,7 @@ func (s *S3) newSyncFolderIterator(localPath, dstPath string) (*SyncFolderIterat
 		for _, c := range page.Contents {
 			key := strings.TrimPrefix(*c.Key, path.Join(s.Config.Path, dstPath))
 			existsFiles[key] = fileInfo{
-				key: *c.Key,
+				key:  *c.Key,
 				size: *c.Size,
 				etag: *c.ETag,
 			}
@@ -154,6 +155,7 @@ func (s *S3) newSyncFolderIterator(localPath, dstPath string) (*SyncFolderIterat
 	})
 
 	metadata := []fileInfo{}
+	skipFilesCount := 0
 	err := filepath.Walk(localPath, func(filePath string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -164,9 +166,9 @@ func (s *S3) newSyncFolderIterator(localPath, dstPath string) (*SyncFolderIterat
 			if existFile, ok := existsFiles[key]; ok {
 				delete(existsFiles, key)
 				if existFile.size == info.Size() {
-					etag, _ := GetEtag(filePath)
-					if existFile.etag == etag {
-						log.Printf("File '%s' already uploaded and has the same size and etag. Skip", key)
+					if existFile.etag == GetEtag(filePath) {
+						// log.Printf("File '%s' already uploaded and has the same size and etag. Skip", key)
+						skipFilesCount++
 						return nil
 					}
 				}
@@ -181,10 +183,11 @@ func (s *S3) newSyncFolderIterator(localPath, dstPath string) (*SyncFolderIterat
 	})
 
 	return &SyncFolderIterator{
-		bucket:    s.Config.Bucket,
-		fileInfos: metadata,
-		acl:       s.Config.ACL,
-		s3path:    path.Join(s.Config.Path, dstPath),
+		bucket:         s.Config.Bucket,
+		fileInfos:      metadata,
+		acl:            s.Config.ACL,
+		s3path:         path.Join(s.Config.Path, dstPath),
+		skipFilesCount: skipFilesCount,
 	}, existsFiles, err
 }
 
@@ -248,15 +251,15 @@ func (iter *SyncFolderIterator) UploadObject() s3manager.BatchUploadObject {
 		nil,
 	}
 }
-func GetEtag(path string) (string, error) {
+func GetEtag(path string) string {
 	content, err := ioutil.ReadFile(path)
 	if err != nil {
-		return "", err
+		return "unknown"
 	}
 	size := len(content)
 	if size <= PART_SIZE {
 		hash := md5.Sum(content)
-		return fmt.Sprintf("\"%x\"", hash), nil
+		return fmt.Sprintf("\"%x\"", hash)
 	}
 	parts := 0
 	pos := 0
@@ -272,5 +275,5 @@ func GetEtag(path string) (string, error) {
 		parts += 1
 	}
 	hash := md5.Sum(contentToHash)
-	return fmt.Sprintf("\"%x-%d\"", hash, parts), nil
+	return fmt.Sprintf("\"%x-%d\"", hash, parts)
 }
