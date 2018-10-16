@@ -45,7 +45,7 @@ func main() {
 
 	cliapp.Commands = []cli.Command{
 		{
-			Name:      "backup",
+			Name:      "freeze",
 			Usage:     "Freeze tables",
 			UsageText: "You can set specific tables like db*.tables[1-2]",
 			Action: func(c *cli.Context) error {
@@ -54,8 +54,8 @@ func main() {
 			Flags: cliapp.Flags,
 		},
 		{
-			Name:  "upload",
-			Usage: "Upload freezed tables to s3",
+			Name:  "sync",
+			Usage: "Syncronize metadata and shadows directories to s3. Extra files on s3 will be deleted",
 			Action: func(c *cli.Context) error {
 				return upload(*config, c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
@@ -63,7 +63,7 @@ func main() {
 		},
 		{
 			Name:   "download",
-			Usage:  "NOT IMPLEMENTED! Download tables from s3 to rigth path",
+			Usage:  "Download metadata and shawows from s3 to clickhouse/s3 path",
 			Action: func(c *cli.Context) error {
 				s3 := &S3{
 					DryRun: c.Bool("dry-run") || c.GlobalBool("dry-run"),
@@ -77,8 +77,14 @@ func main() {
 			Flags:  cliapp.Flags,
 		},
 		{
+			Name:   "create-tables",
+			Usage:  "NOT IMPLEMENTED! Create tables from backup metadata",
+			Action: CmdNotImplemented,
+			Flags:  cliapp.Flags,
+		},
+		{
 			Name:   "restore",
-			Usage:  "NOT IMPLEMENTED! Restore downloaded data",
+			Usage:  "NOT IMPLEMENTED! Move backup data to deatach folder and execute ATTACH",
 			Action: CmdNotImplemented,
 			Flags:  cliapp.Flags,
 		},

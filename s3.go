@@ -47,10 +47,6 @@ func (s *S3) Upload(localPath string, dstPath string) error {
 	if err != nil {
 		return err
 	}
-	if s.DryRun {
-		log.Printf("... skip because dry-dun")
-		return nil
-	}
 	var bar *pb.ProgressBar
 	if !s.Config.DisableProgressBar {
 		bar = pb.StartNew(len(iter.fileInfos) + iter.skipFilesCount)
@@ -63,14 +59,15 @@ func (s *S3) Upload(localPath string, dstPath string) error {
 	var errs []s3manager.Error
 	for iter.Next() {
 		object := iter.UploadObject()
-		if _, err := uploader.UploadWithContext(aws.BackgroundContext(), object.Object); err != nil {
-			s3Err := s3manager.Error{
-				OrigErr: err,
-				Bucket:  object.Object.Bucket,
-				Key:     object.Object.Key,
+		if !s.DryRun {
+			if _, err := uploader.UploadWithContext(aws.BackgroundContext(), object.Object); err != nil {
+				s3Err := s3manager.Error{
+					OrigErr: err,
+					Bucket:  object.Object.Bucket,
+					Key:     object.Object.Key,
+				}
+				errs = append(errs, s3Err)
 			}
-
-			errs = append(errs, s3Err)
 		}
 		if !s.Config.DisableProgressBar {
 			bar.Increment()
@@ -78,14 +75,12 @@ func (s *S3) Upload(localPath string, dstPath string) error {
 		if object.After == nil {
 			continue
 		}
-
 		if err := object.After(); err != nil {
 			s3Err := s3manager.Error{
 				OrigErr: err,
 				Bucket:  object.Object.Bucket,
 				Key:     object.Object.Key,
 			}
-
 			errs = append(errs, s3Err)
 		}
 	}
@@ -95,15 +90,36 @@ func (s *S3) Upload(localPath string, dstPath string) error {
 	if err := iter.Err(); err != nil {
 		return err
 	}
-	return s.Delete(filesForDelete)
+	return s.Delete(dstPath, filesForDelete)
 }
 
-func (s S3) Delete(files map[string]fileInfo) error {
+func (s S3) Delete(s3Path string, files map[string]fileInfo) error {
+	svc := s3.New(s.session)
 	for _, file := range files {
-		log.Printf("File '%s' must be deleted", file.key)
+		s3File := file.key
+		if s.DryRun {
+			log.Printf("Delete '%s'", s3File)
+			continue
+		}
+		deleteObjects := s3.DeleteObjectsInput{
+			Bucket: aws.String(s.Config.Bucket),
+			Delete: &s3.Delete{
+				Objects: []*s3.ObjectIdentifier{
+					{
+						Key: aws.String(s3File),
+					},
+				},
+				Quiet: aws.Bool(false),
+			},
+		}
+		if _, err := svc.DeleteObjectsWithContext(aws.BackgroundContext(), &deleteObjects);err != nil {
+			log.Printf("can't delete %s with %v", s3File, err)
+			// return fmt.Errorf("can't delete %s with %v", s3File, err)
+		}
 	}
 	return nil
 }
+
 
 func (s *S3) Download(s3Path string, localPath string) error {
 	localFiles, err := s.getLocalFiles(localPath, s3Path)
@@ -215,11 +231,13 @@ func (s *S3) newSyncFolderIterator(localPath, dstPath string) (*SyncFolderIterat
 	existsFiles := make(map[string]fileInfo)
 	s.remotePager(s.Config.Path, false, func(page *s3.ListObjectsV2Output) {
 		for _, c := range page.Contents {
-			key := strings.TrimPrefix(*c.Key, path.Join(s.Config.Path, dstPath))
-			existsFiles[key] = fileInfo{
-				key:  *c.Key,
-				size: *c.Size,
-				etag: *c.ETag,
+			if strings.HasPrefix(*c.Key, path.Join(s.Config.Path, dstPath)) {
+				key := strings.TrimPrefix(*c.Key, path.Join(s.Config.Path, dstPath))
+				existsFiles[key] = fileInfo{
+					key:  *c.Key,
+					size: *c.Size,
+					etag: *c.ETag,
+				}
 			}
 		}
 	})
