@@ -49,32 +49,25 @@ func main() {
 			Usage:     "Freeze tables",
 			UsageText: "You can set specific tables like db*.tables[1-2]",
 			Action: func(c *cli.Context) error {
-				return backup(*config, c.Args(), c.Bool("dry-run") || c.GlobalBool("dry-run"))
+				return freeze(*config, c.Args(), c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
 			Flags: cliapp.Flags,
 		},
 		{
-			Name:  "sync",
-			Usage: "Syncronize metadata and shadows directories to s3. Extra files on s3 will be deleted",
+			Name:  "upload",
+			Usage: "Upload metadata and shadows directories to s3. Extra files on s3 will be deleted",
 			Action: func(c *cli.Context) error {
 				return upload(*config, c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
 			Flags: cliapp.Flags,
 		},
 		{
-			Name:   "download",
-			Usage:  "Download metadata and shawows from s3 to clickhouse/s3 path",
+			Name:  "download",
+			Usage: "Download metadata and shawows from s3 to clickhouse/s3 path",
 			Action: func(c *cli.Context) error {
-				s3 := &S3{
-					DryRun: c.Bool("dry-run") || c.GlobalBool("dry-run"),
-					Config: &config.S3,
-				}
-				if err := s3.Connect(); err != nil {
-					return fmt.Errorf("can't connect to s3 with: %v", err)
-				}
-				return s3.Download("metadata", path.Join(config.ClickHouse.DataPath, "metadata"))
+				return download(*config, c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
-			Flags:  cliapp.Flags,
+			Flags: cliapp.Flags,
 		},
 		{
 			Name:   "create-tables",
@@ -120,7 +113,7 @@ func CmdNotImplemented(*cli.Context) error {
 	return fmt.Errorf("Command not implemented")
 }
 
-func backup(config Config, args []string, dryRun bool) error {
+func freeze(config Config, args []string, dryRun bool) error {
 	ch := &ClickHouse{
 		DryRun: dryRun,
 		Config: &config.ClickHouse,
@@ -184,6 +177,38 @@ func upload(config Config, dryRun bool) error {
 	log.Printf("upload data")
 	if err := s3.Upload(path.Join(dataPath, "shadow"), "shadow"); err != nil {
 		return fmt.Errorf("can't upload metadata to s3 with: %v", err)
+	}
+	return nil
+}
+
+func download(config Config, dryRun bool) error {
+	dataPath := config.ClickHouse.DataPath
+	if dataPath == "" {
+		ch := &ClickHouse{
+			DryRun: dryRun,
+			Config: &config.ClickHouse,
+		}
+		if err := ch.Connect(); err != nil {
+			return fmt.Errorf("can't connect to clickouse for get data path with: %v\nyou can set clickhouse.data_path in config", err)
+		}
+		defer ch.Close()
+		var err error
+		if dataPath, err = ch.GetDataPath(); err != nil || dataPath == "" {
+			return fmt.Errorf("can't get data path from clickhouse with: %v\nyou can set data_path in config file", err)
+		}
+	}
+	s3 := &S3{
+		DryRun: dryRun,
+		Config: &config.S3,
+	}
+	if err := s3.Connect(); err != nil {
+		return fmt.Errorf("can't connect to s3 with: %v", err)
+	}
+	if err := s3.Download("metadata", path.Join(dataPath, "backup", "metadata")); err != nil {
+		return fmt.Errorf("cat't download metadata from s3 with %v", err)
+	}
+	if err := s3.Download("shadow", path.Join(dataPath, "backup", "shadow")); err != nil {
+		return fmt.Errorf("can't download shadow from s3 with %v", err)
 	}
 	return nil
 }

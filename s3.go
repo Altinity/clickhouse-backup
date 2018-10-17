@@ -98,7 +98,7 @@ func (s *S3) Upload(localPath string, dstPath string) error {
 		objects = append(objects, s3manager.BatchDeleteObject{
 			Object: &s3.DeleteObjectInput{
 				Bucket: aws.String(s.Config.Bucket),
-				Key: aws.String(file.key),
+				Key:    aws.String(file.key),
 			},
 		})
 	}
@@ -137,6 +137,9 @@ func (s *S3) Upload(localPath string, dstPath string) error {
 // }
 
 func (s *S3) Download(s3Path string, localPath string) error {
+	if err := os.MkdirAll(localPath, 0755); err != nil {
+		return fmt.Errorf("can't create '%s' with: %v", localPath, err)
+	}
 	localFiles, err := s.getLocalFiles(localPath, s3Path)
 	if err != nil {
 		return fmt.Errorf("can't open '%s' with %v", localPath, err)
@@ -162,15 +165,14 @@ func (s *S3) Download(s3Path string, localPath string) error {
 				}
 			}
 		}
-
 		params := &s3.GetObjectInput{
 			Bucket: aws.String(s.Config.Bucket),
 			Key:    aws.String(path.Join(s.Config.Path, s3Path, s3File.key)),
 		}
-		log.Printf("Download '%s'", s3File.key)
 		newFilePath := filepath.Join(localPath, s3File.key)
 		newPath := filepath.Dir(newFilePath)
 		if s.DryRun {
+			log.Printf("Download '%s' to '%s'", s3File.key, newFilePath)
 			continue
 		}
 		if err := os.MkdirAll(newPath, 0755); err != nil {
@@ -181,7 +183,7 @@ func (s *S3) Download(s3Path string, localPath string) error {
 			return fmt.Errorf("can't open '%s' with %v", newFilePath, err)
 		}
 		if _, err := downloader.DownloadWithContext(aws.BackgroundContext(), f, params); err != nil {
-			return fmt.Errorf("can't download '%s' with %v", s3File.key, err)
+			return fmt.Errorf("can't download file '%s' with %v", s3File.key, err)
 		}
 	}
 	return nil
@@ -229,12 +231,14 @@ func (s *S3) getS3Files(localPath, s3Path string) (s3Files map[string]fileInfo, 
 	s3Files = make(map[string]fileInfo)
 	s.remotePager(s.Config.Path, false, func(page *s3.ListObjectsV2Output) {
 		for _, c := range page.Contents {
-			key := strings.TrimPrefix(*c.Key, path.Join(s.Config.Path, s3Path))
-			if !strings.HasSuffix(key, "/") {
-				s3Files[key] = fileInfo{
-					key:  key,
-					size: *c.Size,
-					etag: *c.ETag,
+			if strings.HasPrefix(*c.Key, path.Join(s.Config.Path, s3Path)) {
+				key := strings.TrimPrefix(*c.Key, path.Join(s.Config.Path, s3Path))
+				if !strings.HasSuffix(key, "/") {
+					s3Files[key] = fileInfo{
+						key:  key,
+						size: *c.Size,
+						etag: *c.ETag,
+					}
 				}
 			}
 		}
@@ -334,26 +338,22 @@ func (iter *SyncFolderIterator) UploadObject() s3manager.BatchUploadObject {
 	if err != nil {
 		iter.err = err
 	}
-
 	extension := filepath.Ext(fi.key)
 	mimeType := mime.TypeByExtension(extension)
 	if mimeType == "" {
 		mimeType = "binary/octet-stream"
 	}
-	key := path.Join(iter.s3path, fi.key)
-	input := s3manager.UploadInput{
-		ACL:         &iter.acl,
-		Bucket:      &iter.bucket,
-		Key:         &key,
-		Body:        body,
-		ContentType: &mimeType,
-	}
-
 	return s3manager.BatchUploadObject{
-		&input,
-		nil,
+		Object: &s3manager.UploadInput{
+			ACL:         aws.String(iter.acl),
+			Bucket:      aws.String(iter.bucket),
+			Key:         aws.String(path.Join(iter.s3path, fi.key)),
+			Body:        body,
+			ContentType: aws.String(mimeType),
+		},
 	}
 }
+
 func GetEtag(path string) string {
 	content, err := ioutil.ReadFile(path)
 	if err != nil {
@@ -375,7 +375,7 @@ func GetEtag(path string) string {
 		hash := md5.Sum(content[pos:endpos])
 		contentToHash = append(contentToHash, hash[:]...)
 		pos += PART_SIZE
-		parts += 1
+		parts++
 	}
 	hash := md5.Sum(contentToHash)
 	return fmt.Sprintf("\"%x-%d\"", hash, parts)
