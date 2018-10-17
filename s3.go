@@ -90,36 +90,51 @@ func (s *S3) Upload(localPath string, dstPath string) error {
 	if err := iter.Err(); err != nil {
 		return err
 	}
-	return s.Delete(dstPath, filesForDelete)
-}
 
-func (s S3) Delete(s3Path string, files map[string]fileInfo) error {
-	svc := s3.New(s.session)
-	for _, file := range files {
-		s3File := file.key
-		if s.DryRun {
-			log.Printf("Delete '%s'", s3File)
-			continue
-		}
-		deleteObjects := s3.DeleteObjectsInput{
-			Bucket: aws.String(s.Config.Bucket),
-			Delete: &s3.Delete{
-				Objects: []*s3.ObjectIdentifier{
-					{
-						Key: aws.String(s3File),
-					},
-				},
-				Quiet: aws.Bool(false),
+	// Delete
+	batcher := s3manager.NewBatchDelete(s.session)
+	objects := []s3manager.BatchDeleteObject{}
+	for _, file := range filesForDelete {
+		objects = append(objects, s3manager.BatchDeleteObject{
+			Object: &s3.DeleteObjectInput{
+				Bucket: aws.String(s.Config.Bucket),
+				Key: aws.String(file.key),
 			},
-		}
-		if _, err := svc.DeleteObjectsWithContext(aws.BackgroundContext(), &deleteObjects);err != nil {
-			log.Printf("can't delete %s with %v", s3File, err)
-			// return fmt.Errorf("can't delete %s with %v", s3File, err)
-		}
+		})
+	}
+
+	if err := batcher.Delete(aws.BackgroundContext(), &s3manager.DeleteObjectsIterator{Objects: objects}); err != nil {
+		log.Printf("can't delete objects with: %v", err)
 	}
 	return nil
 }
 
+// func (s S3) Delete(s3Path string, files map[string]fileInfo) error {
+// 	svc := s3.New(s.session)
+// 	for _, file := range files {
+// 		s3File := file.key
+// 		if s.DryRun {
+// 			log.Printf("Delete '%s'", s3File)
+// 			continue
+// 		}
+// 		deleteObjects := s3.DeleteObjectsInput{
+// 			Bucket: aws.String(s.Config.Bucket),
+// 			Delete: &s3.Delete{
+// 				Objects: []*s3.ObjectIdentifier{
+// 					{
+// 						Key: aws.String(s3File),
+// 					},
+// 				},
+// 				Quiet: aws.Bool(false),
+// 			},
+// 		}
+// 		if _, err := svc.DeleteObjectsWithContext(aws.BackgroundContext(), &deleteObjects);err != nil {
+// 			log.Printf("can't delete %s with %v", s3File, err)
+// 			// return fmt.Errorf("can't delete %s with %v", s3File, err)
+// 		}
+// 	}
+// 	return nil
+// }
 
 func (s *S3) Download(s3Path string, localPath string) error {
 	localFiles, err := s.getLocalFiles(localPath, s3Path)
