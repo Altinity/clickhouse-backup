@@ -77,7 +77,7 @@ func main() {
 		},
 		{
 			Name:   "restore",
-			Usage:  "NOT IMPLEMENTED! Move backup data to deatach folder and execute ATTACH",
+			Usage:  "NOT IMPLEMENTED! Move backup data to \"detached\" folder and execute ATTACH",
 			Action: CmdNotImplemented,
 			Flags:  cliapp.Flags,
 		},
