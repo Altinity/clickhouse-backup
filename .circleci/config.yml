@@ -3,7 +3,9 @@ jobs:
   build:
     docker:
       - image: circleci/golang:1.11
-    working_directory: /go/src/github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}
+        environment:
+          GO111MODULE: "ON"
+    working_directory: /go/src/github.com/AlexAkulov/clickhouse-backup
     steps:
       - checkout
       - run: go get .
