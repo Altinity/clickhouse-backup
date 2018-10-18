@@ -1,8 +1,9 @@
 version: 2
 jobs:
   build:
-    docker: circleci/golang:1.11
-    working_directory: ~/app
+    docker:
+      - image: circleci/golang:1.11
+    working_directory: app
     steps:
       - checkout
       - run: go get .
