@@ -38,6 +38,7 @@ func (ch *ClickHouse) Connect() error {
 	return ch.conn.Ping()
 }
 
+// GetDataPath - return clickhouse data_path
 func (ch *ClickHouse) GetDataPath() (string, error) {
 	var result []struct {
 		MetadataPath string `db:"metadata_path"`
@@ -94,6 +95,10 @@ func (ch *ClickHouse) FreezeTable(table Table) error {
 			return fmt.Errorf("can't freze partiotion '%s' on '%s.%s' with: %v", item.Partition, table.Database, table.Name, err)
 		}
 	}
+	return nil
+}
+
+func (ch *ClickHouse) CopyData(table string) error {
 	return nil
 }
 
