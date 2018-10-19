@@ -5,7 +5,6 @@ jobs:
       - image: circleci/golang:1.11
     steps:
       - checkout
-      - run: go get .
       - run: go build
 
 workflows:
