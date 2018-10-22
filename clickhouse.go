@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/jmoiron/sqlx"
@@ -35,7 +36,7 @@ type BackupPartition struct {
 }
 
 type BackupTable struct {
-	Increment  string
+	Increment  int
 	Database   string
 	Name       string
 	Partitions []BackupPartition
@@ -50,7 +51,6 @@ func (ch *ClickHouse) Connect() error {
 	if ch.conn, err = sqlx.Open("clickhouse", connectionString); err != nil {
 		return err
 	}
-
 	return ch.conn.Ping()
 }
 
@@ -62,7 +62,6 @@ func (ch *ClickHouse) GetDataPath() (string, error) {
 	if err := ch.conn.Select(&result, "SELECT metadata_path FROM system.tables WHERE database == 'system' LIMIT 1;"); err != nil {
 		return "/var/lib/clickhouse", err
 	}
-
 	metadataPath := result[0].MetadataPath
 	dataPathArray := strings.Split(metadataPath, "/")
 	clickhouseData := path.Join(dataPathArray[:len(dataPathArray)-3]...)
@@ -92,9 +91,7 @@ func (ch *ClickHouse) FreezeTable(table Table) error {
 	if err := ch.conn.Select(&partitions, q); err != nil {
 		return fmt.Errorf("can't get partitions for \"%s.%s\" with %v", table.Database, table.Name, err)
 	}
-
 	log.Printf("Freeze '%v.%v'", table.Database, table.Name)
-
 	for _, item := range partitions {
 		if ch.DryRun {
 			log.Printf("  partition '%v'   ...skip becouse dry-run", item.Partition)
@@ -124,28 +121,35 @@ func (ch *ClickHouse) GetBackupTables() (map[string]BackupTable, error) {
 	}
 	backupShadowPath := filepath.Join(dataPath, "backup", "shadow")
 	result := make(map[string]BackupTable)
-	err = filepath.Walk(backupShadowPath, func(filePath string, info os.FileInfo, err error) error {
+	if err := filepath.Walk(backupShadowPath, func(filePath string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if info.IsDir() {
 			filePath = filepath.ToSlash(filePath) // fix fucking Windows slashes
-			relativePath := strings.TrimPrefix(filePath, backupShadowPath)
-			parts := filepath.SplitList(relativePath)
-			if len(parts) < 4 {
-				return fmt.Errorf("Unknown path '%s'", filePath)
+			relativePath := strings.Trim(strings.TrimPrefix(filePath, backupShadowPath), "/")
+			parts := strings.Split(relativePath, "/")
+			if len(parts) != 5 {
+				// /var/lib/clickhouse/backup/shadow/6/data/testdb/test2/all_1_3_1
+				// fmt.Printf("Skip path '%v'\n", parts)
+				return nil
 			}
 			partition := BackupPartition{
-				Name: parts[3],
+				Name: parts[4],
 				Path: filePath,
 			}
+			increment, err := strconv.Atoi(parts[0])
+			if err != nil {
+				// fmt.Printf("Skip path '%v'\n", parts)
+				return nil
+			}
 			table := BackupTable{
-				Increment:  parts[0],
-				Database:   parts[1],
-				Name:       parts[2],
+				Increment:  increment,
+				Database:   parts[2],
+				Name:       parts[3],
 				Partitions: []BackupPartition{partition},
 			}
-			fullTableName := fmt.Sprintf("%s.%s-%s", table.Database, table.Name, table.Increment)
+			fullTableName := fmt.Sprintf("%s.%s-%d", table.Database, table.Name, table.Increment)
 			if t, ok := result[fullTableName]; ok {
 				t.Partitions = append(t.Partitions, partition)
 				result[fullTableName] = t
@@ -155,31 +159,37 @@ func (ch *ClickHouse) GetBackupTables() (map[string]BackupTable, error) {
 			return nil
 		}
 		return nil
-	})
+	}); err != nil {
+		return nil, err
+	}
 	return result, nil
+}
+
+func (ch *ClickHouse) Chown(name string) error {
+	// TODO: fix this
+	uid := 984
+	gid := 979
+	return os.Chown(name, uid, gid)
 }
 
 func (ch *ClickHouse) CopyData(table BackupTable) error {
 	// /var/lib/clickhouse/shadow/[N]/[db]/[table]/[part]
 	// /var/lib/clickhouse/backup/shadow/[N]/[db]/[table]/[part]
 	// /var/lib/clickhouse/data/[bd]/[table]/detached/[part]
+	fmt.Printf("copy %s.%s inscrement %d\n", table.Database, table.Name, table.Increment)
 	dataPath, err := ch.GetDataPath()
 	if err != nil {
 		return err
 	}
 	for _, partition := range table.Partitions {
-		detachedPath := filepath.Join(dataPath, table.Database, table.Name, "detached", partition.Name)
+		detachedPath := filepath.Join(dataPath, "data", table.Database, table.Name, "detached", partition.Name)
 		info, err := os.Stat(detachedPath)
 		if err != nil {
-			if os.IsNotExist(err) {
+			if !os.IsNotExist(err) {
 				return fmt.Errorf("%v", err)
 			}
-		}
-		if !info.IsDir() {
+		} else if !info.IsDir() {
 			return fmt.Errorf("'%s' must be not exists", detachedPath)
-		}
-		if err := os.MkdirAll(detachedPath, 0750); err != nil {
-			return err
 		}
 		if err := filepath.Walk(partition.Path, func(filePath string, info os.FileInfo, err error) error {
 			if err != nil {
@@ -190,6 +200,12 @@ func (ch *ClickHouse) CopyData(table BackupTable) error {
 			if err != nil {
 				return err
 			}
+			_, filename := filepath.Split(filePath)
+			dstFilePath := filepath.Join(detachedPath, filename)
+			if srcFileStat.IsDir() {
+				os.MkdirAll(dstFilePath, 0750)
+				return ch.Chown(dstFilePath)
+			}
 			if !srcFileStat.Mode().IsRegular() {
 				return fmt.Errorf("'%s' is not a regular file", filePath)
 			}
@@ -198,15 +214,15 @@ func (ch *ClickHouse) CopyData(table BackupTable) error {
 				return err
 			}
 			defer srcFile.Close()
-			_, filename := filepath.Split(filePath)
-			dstFilePath := filepath.Join(detachedPath, filename)
 			dstFile, err := os.Create(dstFilePath)
 			if err != nil {
 				return err
 			}
 			defer dstFile.Close()
-			_, err = io.Copy(dstFile, srcFile)
-			return err
+			if _, err = io.Copy(dstFile, srcFile); err != nil {
+				return err
+			}
+			return ch.Chown(dstFilePath)
 		}); err != nil {
 			return err
 		}
@@ -215,7 +231,9 @@ func (ch *ClickHouse) CopyData(table BackupTable) error {
 }
 
 func (ch *ClickHouse) AttachPatritions(table BackupTable) error {
-
+	for _, p := range table.Partitions {
+		log.Printf("  ATTACH partition %s for %s.%s increment %d", p.Name, table.Database, table.Name, table.Increment)
+	}
 	return nil
 }
 

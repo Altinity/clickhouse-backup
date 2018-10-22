@@ -13,7 +13,6 @@ import (
 var config *Config
 
 func main() {
-
 	cliapp := cli.NewApp()
 	cliapp.Name = "clickhouse-backup"
 	cliapp.Usage = "Backup ClickHouse to s3"
@@ -73,10 +72,12 @@ func main() {
 			Flags: cliapp.Flags,
 		},
 		{
-			Name:   "create-tables",
-			Usage:  "NOT IMPLEMENTED! Create tables from backup metadata",
-			Action: CmdNotImplemented,
-			Flags:  cliapp.Flags,
+			Name:  "create-tables",
+			Usage: "NOT IMPLEMENTED! Create tables from backup metadata",
+			Action: func(c *cli.Context) error {
+				return fmt.Errorf("NOT IMPLEMENTED!")
+			},
+			Flags: cliapp.Flags,
 		},
 		{
 			Name:        "restore",
@@ -119,25 +120,27 @@ func parseArgsForFreeze(tables []Table, args []string) ([]Table, error) {
 	return result, nil
 }
 
-func parseArgsForRestore(tables map[string]BackupTable, args []string) ([]BackupTable, error) {
-	if len(args) > 0 {
+func parseArgsForRestore(tables map[string]BackupTable, args []string) (map[string]BackupTable, error) {
+	if len(args) == 0 {
 		args = []string{"*"}
 	}
-	var result []BackupTable
+	result := map[string]BackupTable{}
 	for _, arg := range args {
 		for _, t := range tables {
-			if matched, _ := filepath.Match(arg, fmt.Sprintf("%s.%s", t.Database, t.Name)); matched {
-				result = append(result, t)
+			tableName := fmt.Sprintf("%s.%s", t.Database, t.Name)
+			if matched, _ := filepath.Match(arg, tableName); matched {
+				if oldt, ok := result[tableName]; ok {
+					if oldt.Increment > t.Increment {
+						continue
+					}
+				}
+				result[tableName] = t
 				continue
 			}
 			return nil, fmt.Errorf("table '%s' not found", arg)
 		}
 	}
 	return result, nil
-}
-
-func CmdNotImplemented(*cli.Context) error {
-	return fmt.Errorf("Command not implemented")
 }
 
 func freeze(config Config, args []string, dryRun bool) error {
@@ -193,7 +196,7 @@ func restore(config Config, args []string, dryRun bool) error {
 	}
 	for _, table := range restoreTables {
 		if err := ch.CopyData(table); err != nil {
-			return fmt.Errorf("can't restore %s.%s increment %s with %v", table.Database, table.Name, table.Increment, err)
+			return fmt.Errorf("can't restore %s.%s increment %d with %v", table.Database, table.Name, table.Increment, err)
 		}
 		if err := ch.AttachPatritions(table); err != nil {
 			return fmt.Errorf("can't attach partitions for table %s.%s with %v", table.Database, table.Name, err)
