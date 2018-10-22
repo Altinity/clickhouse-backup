@@ -2,8 +2,11 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
+	"os"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/jmoiron/sqlx"
@@ -24,6 +27,19 @@ type Table struct {
 	DataPath     string `db:"data_path"`
 	MetadataPath string `db:"metadata_path"`
 	IsTemporary  bool   `db:"is_temporary"`
+}
+
+type BackupPartition struct {
+	Name string
+	Path string
+}
+
+type BackupTable struct {
+	Increment  string
+	Database   string
+	Name       string
+	Partitions []BackupPartition
+	Path       string
 }
 
 // Connect - connect to clickhouse
@@ -98,11 +114,107 @@ func (ch *ClickHouse) FreezeTable(table Table) error {
 	return nil
 }
 
-func (ch *ClickHouse) CopyData(table string) error {
+func (ch *ClickHouse) GetBackupTables() (map[string]BackupTable, error) {
+	// /var/lib/clickhouse/shadow/[N]/[db]/[table]/[part]
+	// /var/lib/clickhouse/backup/shadow/[N]/[db]/[table]/[part]
+	// /var/lib/clickhouse/data/[bd]/[table]/detached/[part]
+	dataPath, err := ch.GetDataPath()
+	if err != nil {
+		return nil, err
+	}
+	backupShadowPath := filepath.Join(dataPath, "backup", "shadow")
+	result := make(map[string]BackupTable)
+	err = filepath.Walk(backupShadowPath, func(filePath string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			filePath = filepath.ToSlash(filePath) // fix fucking Windows slashes
+			relativePath := strings.TrimPrefix(filePath, backupShadowPath)
+			parts := filepath.SplitList(relativePath)
+			if len(parts) < 4 {
+				return fmt.Errorf("Unknown path '%s'", filePath)
+			}
+			partition := BackupPartition{
+				Name: parts[3],
+				Path: filePath,
+			}
+			table := BackupTable{
+				Increment:  parts[0],
+				Database:   parts[1],
+				Name:       parts[2],
+				Partitions: []BackupPartition{partition},
+			}
+			fullTableName := fmt.Sprintf("%s.%s-%s", table.Database, table.Name, table.Increment)
+			if t, ok := result[fullTableName]; ok {
+				t.Partitions = append(t.Partitions, partition)
+				result[fullTableName] = t
+				return nil
+			}
+			result[fullTableName] = table
+			return nil
+		}
+		return nil
+	})
+	return result, nil
+}
+
+func (ch *ClickHouse) CopyData(table BackupTable) error {
+	// /var/lib/clickhouse/shadow/[N]/[db]/[table]/[part]
+	// /var/lib/clickhouse/backup/shadow/[N]/[db]/[table]/[part]
+	// /var/lib/clickhouse/data/[bd]/[table]/detached/[part]
+	dataPath, err := ch.GetDataPath()
+	if err != nil {
+		return err
+	}
+	for _, partition := range table.Partitions {
+		detachedPath := filepath.Join(dataPath, table.Database, table.Name, "detached", partition.Name)
+		info, err := os.Stat(detachedPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return fmt.Errorf("%v", err)
+			}
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("'%s' must be not exists", detachedPath)
+		}
+		if err := os.MkdirAll(detachedPath, 0750); err != nil {
+			return err
+		}
+		if err := filepath.Walk(partition.Path, func(filePath string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			filePath = filepath.ToSlash(filePath) // fix fucking Windows slashes
+			srcFileStat, err := os.Stat(filePath)
+			if err != nil {
+				return err
+			}
+			if !srcFileStat.Mode().IsRegular() {
+				return fmt.Errorf("'%s' is not a regular file", filePath)
+			}
+			srcFile, err := os.Open(filePath)
+			if err != nil {
+				return err
+			}
+			defer srcFile.Close()
+			_, filename := filepath.Split(filePath)
+			dstFilePath := filepath.Join(detachedPath, filename)
+			dstFile, err := os.Create(dstFilePath)
+			if err != nil {
+				return err
+			}
+			defer dstFile.Close()
+			_, err = io.Copy(dstFile, srcFile)
+			return err
+		}); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
-func (ch *ClickHouse) AttachPatrition(table string) error {
+func (ch *ClickHouse) AttachPatritions(table BackupTable) error {
 
 	return nil
 }
@@ -111,11 +223,10 @@ func (ch *ClickHouse) GetClickHouseUser() (string, string, error) {
 	return "", "", nil
 }
 
-func (ch *ClickHouse) CreateDatabase (database string) error {
+func (ch *ClickHouse) CreateDatabase(database string) error {
 	return nil
 }
 
 func (ch *ClickHouse) CreateTable(query string) error {
 	return nil
 }
-

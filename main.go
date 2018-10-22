@@ -45,25 +45,28 @@ func main() {
 
 	cliapp.Commands = []cli.Command{
 		{
-			Name:      "freeze",
-			Usage:     "Freeze tables",
-			UsageText: "You can set specific tables like db*.tables[1-2]",
+			Name:        "freeze",
+			Usage:       "clickhouse-backup freeze [db].[table]",
+			UsageText:   "You can set specific tables like db*.tables[1-2]",
+			Description: "Freeze tables",
 			Action: func(c *cli.Context) error {
 				return freeze(*config, c.Args(), c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
 			Flags: cliapp.Flags,
 		},
 		{
-			Name:  "upload",
-			Usage: "Upload metadata and shadows directories to s3. Extra files on s3 will be deleted",
+			Name:        "upload",
+			Usage:       "clickhouse-backup upload",
+			Description: "Upload metadata and shadows directories to s3. Extra files on s3 will be deleted",
 			Action: func(c *cli.Context) error {
 				return upload(*config, c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
 			Flags: cliapp.Flags,
 		},
 		{
-			Name:  "download",
-			Usage: "Download metadata and shawows from s3 to clickhouse/s3 path",
+			Name:        "download",
+			Usage:       "clickhouse-backup download",
+			Description: "Download metadata and shadows from s3 to /var/lib/clickhouse/backup",
 			Action: func(c *cli.Context) error {
 				return download(*config, c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
@@ -76,10 +79,14 @@ func main() {
 			Flags:  cliapp.Flags,
 		},
 		{
-			Name:   "restore",
-			Usage:  "NOT IMPLEMENTED! Move backup data to \"detached\" folder and execute ATTACH",
-			Action: CmdNotImplemented,
-			Flags:  cliapp.Flags,
+			Name:        "restore",
+			Usage:       "clickhouse-backup restore [db].[table]",
+			UsageText:   "You can set specific tables like db*.tables[1-2]",
+			Description: "Copy data to \"detached\" folder and execute ATTACH",
+			Action: func(c *cli.Context) error {
+				return restore(*config, c.Args(), c.Bool("dry-run") || c.GlobalBool("dry-run"))
+			},
+			Flags: cliapp.Flags,
 		},
 		{
 			Name:  "default-config",
@@ -95,8 +102,28 @@ func main() {
 	}
 }
 
-func parseArgs(tables []Table, args []string) ([]Table, error) {
+func parseArgsForFreeze(tables []Table, args []string) ([]Table, error) {
+	if len(args) == 0 {
+		return tables, nil
+	}
 	var result []Table
+	for _, arg := range args {
+		for _, t := range tables {
+			if matched, _ := filepath.Match(arg, fmt.Sprintf("%s.%s", t.Database, t.Name)); matched {
+				result = append(result, t)
+				continue
+			}
+			return nil, fmt.Errorf("table '%s' not found", arg)
+		}
+	}
+	return result, nil
+}
+
+func parseArgsForRestore(tables map[string]BackupTable, args []string) ([]BackupTable, error) {
+	if len(args) > 0 {
+		args = []string{"*"}
+	}
+	var result []BackupTable
 	for _, arg := range args {
 		for _, t := range tables {
 			if matched, _ := filepath.Match(arg, fmt.Sprintf("%s.%s", t.Database, t.Name)); matched {
@@ -128,20 +155,48 @@ func freeze(config Config, args []string, dryRun bool) error {
 	if err != nil {
 		return fmt.Errorf("can't get tables with: %v", err)
 	}
-	backupTables := allTables
-	if len(args) > 0 {
-		if backupTables, err = parseArgs(allTables, args); err != nil {
-			return err
-		}
+	backupTables, err := parseArgsForFreeze(allTables, args)
+	if err != nil {
+		return err
 	}
 	if len(backupTables) == 0 {
 		return fmt.Errorf("no have tables for backup")
 	}
-
 	for _, table := range backupTables {
 		err := ch.FreezeTable(table)
 		if err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func restore(config Config, args []string, dryRun bool) error {
+	ch := &ClickHouse{
+		DryRun: dryRun,
+		Config: &config.ClickHouse,
+	}
+	if err := ch.Connect(); err != nil {
+		return fmt.Errorf("can't connect to clickouse with: %v", err)
+	}
+	defer ch.Close()
+	allTables, err := ch.GetBackupTables()
+	if err != nil {
+		return err
+	}
+	restoreTables, err := parseArgsForRestore(allTables, args)
+	if err != nil {
+		return err
+	}
+	if len(restoreTables) == 0 {
+		return fmt.Errorf("no have tables for restore")
+	}
+	for _, table := range restoreTables {
+		if err := ch.CopyData(table); err != nil {
+			return fmt.Errorf("can't restore %s.%s increment %s with %v", table.Database, table.Name, table.Increment, err)
+		}
+		if err := ch.AttachPatritions(table); err != nil {
+			return fmt.Errorf("can't attach partitions for table %s.%s with %v", table.Database, table.Name, err)
 		}
 	}
 	return nil
