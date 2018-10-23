@@ -159,7 +159,7 @@ func (s *S3) Download(s3Path string, localPath string) error {
 		if existsFile, ok := localFiles[s3File.key]; ok {
 			if existsFile.size == s3File.size {
 				if s3File.etag == GetEtag(existsFile.fullpath) {
-					log.Printf("Skip download file '%s' already exists", s3File.key)
+					// log.Printf("Skip download file '%s' already exists", s3File.key)
 					// Skip download file
 					continue
 				}
@@ -186,6 +186,8 @@ func (s *S3) Download(s3Path string, localPath string) error {
 			return fmt.Errorf("can't download file '%s' with %v", s3File.key, err)
 		}
 	}
+
+	// TODO: Delete extra files
 	return nil
 }
 

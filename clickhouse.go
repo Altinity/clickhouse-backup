@@ -87,7 +87,7 @@ func (ch *ClickHouse) FreezeTable(table Table) error {
 	var partitions []struct {
 		Partition string `db:"partition"`
 	}
-	q := fmt.Sprintf("select DISTINCT partition FROM system.parts WHERE database='%v' AND table='%v'", table.Database, table.Name)
+	q := fmt.Sprintf("SELECT DISTINCT partition FROM system.parts WHERE database='%v' AND table='%v'", table.Database, table.Name)
 	if err := ch.conn.Select(&partitions, q); err != nil {
 		return fmt.Errorf("can't get partitions for \"%s.%s\" with %v", table.Database, table.Name, err)
 	}
@@ -200,7 +200,7 @@ func (ch *ClickHouse) CopyData(table BackupTable) error {
 			if err != nil {
 				return err
 			}
-			_, filename := filepath.Split(filePath)
+			filename := strings.Trim(strings.TrimPrefix(filePath, partition.Path), "/")
 			dstFilePath := filepath.Join(detachedPath, filename)
 			if srcFileStat.IsDir() {
 				os.MkdirAll(dstFilePath, 0750)
@@ -231,8 +231,17 @@ func (ch *ClickHouse) CopyData(table BackupTable) error {
 }
 
 func (ch *ClickHouse) AttachPatritions(table BackupTable) error {
-	for _, p := range table.Partitions {
-		log.Printf("  ATTACH partition %s for %s.%s increment %d", p.Name, table.Database, table.Name, table.Increment)
+	// for _, p := range table.Partitions {
+	// 	log.Printf("  ATTACH partition %s for %s.%s increment %d", p.Name, table.Database, table.Name, table.Increment)
+	// 	// q := fmt.Sprintf("ALTER TABLE %v.%v ATTACH PARTITION %v", table.Database, table.Name, p.Name)
+	// 	q := fmt.Sprintf("ALTER TABLE %v.%v ATTACH PARTITION tuple()", table.Database, table.Name)
+	// 	if _, err := ch.conn.Exec(q); err != nil {
+	// 		return fmt.Errorf("can't attach partition %v for \"%s.%s\" with %v", p.Name, table.Database, table.Name, err)
+	// 	}
+	// }
+	log.Printf("ATTACH partitions for %s.%s increment %d", table.Database, table.Name, table.Increment)
+	if _, err := ch.conn.Exec(fmt.Sprintf("ALTER TABLE %v.%v ATTACH PARTITION tuple()", table.Database, table.Name)); err != nil {
+		return fmt.Errorf("can't attach partitions for \"%s.%s\" with %v", table.Database, table.Name, err)
 	}
 	return nil
 }
