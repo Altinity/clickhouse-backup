@@ -33,6 +33,10 @@ func main() {
 		cli.ShowAppHelpAndExit(c, 1)
 	}
 
+	cli.VersionPrinter = func(c *cli.Context) {
+		fmt.Println(c.App.Version)
+	}
+
 	cliapp.Before = func(c *cli.Context) error {
 		var err error
 		config, err = LoadConfig(c.String("config"))

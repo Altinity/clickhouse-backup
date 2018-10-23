@@ -5,10 +5,30 @@ jobs:
       - image: circleci/golang:1.11
     steps:
       - checkout
-      - run: go build
+      - run: mkdir build
+      - run: go build -o clickhouse-backup/clickhouse-backup
+      - run: ./clickhouse-backup/clickhouse-backup default-config > clickhouse-backup/config.yml
+      - run: VERSION=$(./clickhouse-backup/clickhouse-backup --version)
+      - run: tar -czvf clickhouse-backup.tar.gz clickhouse-backup
+
+  github-release:
+    docker:
+      - image: circleci/golang:1.11
+    steps:
+      - run: go get github.com/tcnksm/ghr
+      - run: ghr -t ${GITHUB_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} -c ${CIRCLE_SHA1} -delete ${VERSION} clickhouse-backup.tar.gz
 
 workflows:
   version: 2
-  build:
+  main:
     jobs:
       - build
+      - github-release:
+          requires:
+            - build
+          filters:
+            branches:
+              only: master
+            tags:
+              only: /^\d+\.\d+\.\d+$/
+
