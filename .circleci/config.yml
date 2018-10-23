@@ -10,7 +10,7 @@ jobs:
       - run: VERSION=$(./clickhouse-backup/clickhouse-backup --version)
       - run: tar -czvf clickhouse-backup.tar.gz clickhouse-backup
       - store_artifacts:
-        path: clickhouse-backup.tar.gz
+          path: clickhouse-backup.tar.gz
 
   github-release:
     docker:
