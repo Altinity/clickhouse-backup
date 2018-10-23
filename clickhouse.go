@@ -119,6 +119,7 @@ func (ch *ClickHouse) FreezeTable(table Table) error {
 	return nil
 }
 
+// GetBackupTables - returns list of backups of tables can be restored
 func (ch *ClickHouse) GetBackupTables() (map[string]BackupTable, error) {
 	dataPath, err := ch.GetDataPath()
 	if err != nil {
@@ -135,8 +136,6 @@ func (ch *ClickHouse) GetBackupTables() (map[string]BackupTable, error) {
 			relativePath := strings.Trim(strings.TrimPrefix(filePath, backupShadowPath), "/")
 			parts := strings.Split(relativePath, "/")
 			if len(parts) != 5 {
-				// /var/lib/clickhouse/backup/shadow/6/data/testdb/test2/all_1_3_1
-				// fmt.Printf("Skip path '%v'\n", parts)
 				return nil
 			}
 			partition := BackupPartition{
@@ -145,7 +144,6 @@ func (ch *ClickHouse) GetBackupTables() (map[string]BackupTable, error) {
 			}
 			increment, err := strconv.Atoi(parts[0])
 			if err != nil {
-				// fmt.Printf("Skip path '%v'\n", parts)
 				return nil
 			}
 			table := BackupTable{
@@ -170,6 +168,7 @@ func (ch *ClickHouse) GetBackupTables() (map[string]BackupTable, error) {
 	return result, nil
 }
 
+// Chown - set owner and group to clickhouse user
 func (ch *ClickHouse) Chown(name string) error {
 	var (
 		dataPath string
@@ -192,6 +191,7 @@ func (ch *ClickHouse) Chown(name string) error {
 	return os.Chown(name, *ch.uid, *ch.gid)
 }
 
+// CopyData - copy partitions for specific table to detached folder
 func (ch *ClickHouse) CopyData(table BackupTable) error {
 	fmt.Printf("copy %s.%s inscrement %d\n", table.Database, table.Name, table.Increment)
 	dataPath, err := ch.GetDataPath()
@@ -247,6 +247,7 @@ func (ch *ClickHouse) CopyData(table BackupTable) error {
 	return nil
 }
 
+// AttachPatritions - execute ATTACH command for specific table
 func (ch *ClickHouse) AttachPatritions(table BackupTable) error {
 	// for _, p := range table.Partitions {
 	// 	log.Printf("  ATTACH partition %s for %s.%s increment %d", p.Name, table.Database, table.Name, table.Increment)
@@ -263,10 +264,12 @@ func (ch *ClickHouse) AttachPatritions(table BackupTable) error {
 	return nil
 }
 
+// CreateDatabase - create specific database from metadata in backup folder
 func (ch *ClickHouse) CreateDatabase(database string) error {
 	return nil
 }
 
+// CreateTable - create specific table from metadata in backup folder
 func (ch *ClickHouse) CreateTable(query string) error {
 	return nil
 }

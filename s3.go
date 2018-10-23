@@ -20,15 +20,18 @@ import (
 )
 
 const (
+	// PART_SIZE - default s3 part size for calculing ETag
 	PART_SIZE = 5 * 1024 * 1024
 )
 
+// S3 - presents methods for manipulate data on s3
 type S3 struct {
 	session *session.Session
 	Config  *S3Config
 	DryRun  bool
 }
 
+// Connect - connect to s3
 func (s *S3) Connect() (err error) {
 	s.session, err = session.NewSession(
 		&aws.Config{
@@ -42,7 +45,9 @@ func (s *S3) Connect() (err error) {
 	return
 }
 
+// Upload - synchronize localPath to dstPath on s3
 func (s *S3) Upload(localPath string, dstPath string) error {
+	// TODO: it must be refactored like as Download() method
 	iter, filesForDelete, err := s.newSyncFolderIterator(localPath, dstPath)
 	if err != nil {
 		return err
@@ -109,6 +114,7 @@ func (s *S3) Upload(localPath string, dstPath string) error {
 	return nil
 }
 
+// Download - download files from s3Path to localPath
 func (s *S3) Download(s3Path string, localPath string) error {
 	if err := os.MkdirAll(localPath, 0755); err != nil {
 		return fmt.Errorf("can't create '%s' with: %v", localPath, err)
@@ -164,8 +170,7 @@ func (s *S3) Download(s3Path string, localPath string) error {
 	return nil
 }
 
-// SyncFolderIterator is used to upload a given folder
-// to Amazon S3.
+// SyncFolderIterator is used to upload a given folder to Amazon S3.
 type SyncFolderIterator struct {
 	bucket         string
 	fileInfos      []fileInfo
@@ -238,6 +243,7 @@ func (s *S3) newSyncFolderIterator(localPath, dstPath string) (*SyncFolderIterat
 
 	localFiles := []fileInfo{}
 	skipFilesCount := 0
+	// TODO: it can be very slow, should add Progres Bar here
 	err := filepath.Walk(localPath, func(filePath string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -293,8 +299,7 @@ func (s *S3) remotePager(s3Path string, delim bool, pager func(page *s3.ListObje
 	return s3.New(s.session).ListObjectsV2Pages(params, wrapper)
 }
 
-// Next will determine whether or not there is any remaining files to
-// be uploaded.
+// Next will determine whether or not there is any remaining files to be uploaded.
 func (iter *SyncFolderIterator) Next() bool {
 	return len(iter.fileInfos) > 0
 }
@@ -329,6 +334,7 @@ func (iter *SyncFolderIterator) UploadObject() s3manager.BatchUploadObject {
 	}
 }
 
+// GetEtag - calculate ETag for file
 func GetEtag(path string) string {
 	content, err := ioutil.ReadFile(path)
 	if err != nil {
