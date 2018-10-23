@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/kshvakov/clickhouse"
@@ -19,6 +20,8 @@ type ClickHouse struct {
 	DryRun bool
 	Config *ClickHouseConfig
 	conn   *sqlx.DB
+	uid    *int
+	gid    *int
 }
 
 // Table - table struct
@@ -30,11 +33,13 @@ type Table struct {
 	IsTemporary  bool   `db:"is_temporary"`
 }
 
+// BackupPartition -
 type BackupPartition struct {
 	Name string
 	Path string
 }
 
+// BackupTable -
 type BackupTable struct {
 	Increment  int
 	Database   string
@@ -56,6 +61,9 @@ func (ch *ClickHouse) Connect() error {
 
 // GetDataPath - return clickhouse data_path
 func (ch *ClickHouse) GetDataPath() (string, error) {
+	if ch.Config.DataPath != "" {
+		return ch.Config.DataPath, nil
+	}
 	var result []struct {
 		MetadataPath string `db:"metadata_path"`
 	}
@@ -112,9 +120,6 @@ func (ch *ClickHouse) FreezeTable(table Table) error {
 }
 
 func (ch *ClickHouse) GetBackupTables() (map[string]BackupTable, error) {
-	// /var/lib/clickhouse/shadow/[N]/[db]/[table]/[part]
-	// /var/lib/clickhouse/backup/shadow/[N]/[db]/[table]/[part]
-	// /var/lib/clickhouse/data/[bd]/[table]/detached/[part]
 	dataPath, err := ch.GetDataPath()
 	if err != nil {
 		return nil, err
@@ -166,16 +171,28 @@ func (ch *ClickHouse) GetBackupTables() (map[string]BackupTable, error) {
 }
 
 func (ch *ClickHouse) Chown(name string) error {
-	// TODO: fix this
-	uid := 984
-	gid := 979
-	return os.Chown(name, uid, gid)
+	var (
+		dataPath string
+		err      error
+	)
+	if ch.uid == nil || ch.gid == nil {
+		if dataPath, err = ch.GetDataPath(); err != nil {
+			return err
+		}
+		info, err := os.Stat(path.Join(dataPath, "data"))
+		if err != nil {
+			return err
+		}
+		stat := info.Sys().(*syscall.Stat_t)
+		uid := int(stat.Uid)
+		gid := int(stat.Gid)
+		ch.uid = &uid
+		ch.gid = &gid
+	}
+	return os.Chown(name, *ch.uid, *ch.gid)
 }
 
 func (ch *ClickHouse) CopyData(table BackupTable) error {
-	// /var/lib/clickhouse/shadow/[N]/[db]/[table]/[part]
-	// /var/lib/clickhouse/backup/shadow/[N]/[db]/[table]/[part]
-	// /var/lib/clickhouse/data/[bd]/[table]/detached/[part]
 	fmt.Printf("copy %s.%s inscrement %d\n", table.Database, table.Name, table.Increment)
 	dataPath, err := ch.GetDataPath()
 	if err != nil {
@@ -244,10 +261,6 @@ func (ch *ClickHouse) AttachPatritions(table BackupTable) error {
 		return fmt.Errorf("can't attach partitions for \"%s.%s\" with %v", table.Database, table.Name, err)
 	}
 	return nil
-}
-
-func (ch *ClickHouse) GetClickHouseUser() (string, string, error) {
-	return "", "", nil
 }
 
 func (ch *ClickHouse) CreateDatabase(database string) error {
