@@ -109,33 +109,6 @@ func (s *S3) Upload(localPath string, dstPath string) error {
 	return nil
 }
 
-// func (s S3) Delete(s3Path string, files map[string]fileInfo) error {
-// 	svc := s3.New(s.session)
-// 	for _, file := range files {
-// 		s3File := file.key
-// 		if s.DryRun {
-// 			log.Printf("Delete '%s'", s3File)
-// 			continue
-// 		}
-// 		deleteObjects := s3.DeleteObjectsInput{
-// 			Bucket: aws.String(s.Config.Bucket),
-// 			Delete: &s3.Delete{
-// 				Objects: []*s3.ObjectIdentifier{
-// 					{
-// 						Key: aws.String(s3File),
-// 					},
-// 				},
-// 				Quiet: aws.Bool(false),
-// 			},
-// 		}
-// 		if _, err := svc.DeleteObjectsWithContext(aws.BackgroundContext(), &deleteObjects);err != nil {
-// 			log.Printf("can't delete %s with %v", s3File, err)
-// 			// return fmt.Errorf("can't delete %s with %v", s3File, err)
-// 		}
-// 	}
-// 	return nil
-// }
-
 func (s *S3) Download(s3Path string, localPath string) error {
 	if err := os.MkdirAll(localPath, 0755); err != nil {
 		return fmt.Errorf("can't create '%s' with: %v", localPath, err)

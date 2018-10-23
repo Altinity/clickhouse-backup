@@ -14,13 +14,14 @@ USAGE:
    clickhouse-backup [global options] command [command options] [arguments...]
 
 VERSION:
-   0.0.1
+   0.0.2
 
 COMMANDS:
-     backup          Freeze tables
-     upload          Upload freezed tables to s3
-     download        NOT IMPLEMENTED! Download tables from s3 to rigth path
-     restore         NOT IMPLEMENTED! Restore downloaded data
+     freeze          Freeze all or specific tables. You may use this syntax for specify tables [db].[table]
+     upload          Upload 'metadata' and 'shadows' directories to s3. Extra files on s3 will be deleted
+     download        Download 'metadata' and 'shadows' from s3 to backup folder
+     create-tables   NOT IMPLEMENTED! Create tables from backup metadata
+     restore         Copy data from 'backup' to 'detached' folder and execute ATTACH. You may use this syntax for specify tables [db].[table]
      default-config  Print default config and exit
      help, h         Shows a list of commands or help for one command
 
@@ -30,6 +31,7 @@ GLOBAL OPTIONS:
    --help, -h              show help
    --version, -v           print the version
 ```
+
 ### Default Config
 ```
 clickhouse:

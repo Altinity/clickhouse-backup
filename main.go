@@ -16,7 +16,7 @@ func main() {
 	cliapp := cli.NewApp()
 	cliapp.Name = "clickhouse-backup"
 	cliapp.Usage = "Backup ClickHouse to s3"
-	cliapp.Version = "0.0.1"
+	cliapp.Version = "0.0.2"
 	cliapp.Flags = []cli.Flag{
 		cli.StringFlag{
 			Name:  "config, c",
@@ -45,8 +45,7 @@ func main() {
 	cliapp.Commands = []cli.Command{
 		{
 			Name:        "freeze",
-			Usage:       "clickhouse-backup freeze [db].[table]",
-			UsageText:   "You can set specific tables like db*.tables[1-2]",
+			Usage:       "Freeze all or specific tables. You may use this syntax for specify tables [db].[table]",
 			Description: "Freeze tables",
 			Action: func(c *cli.Context) error {
 				return freeze(*config, c.Args(), c.Bool("dry-run") || c.GlobalBool("dry-run"))
@@ -54,18 +53,16 @@ func main() {
 			Flags: cliapp.Flags,
 		},
 		{
-			Name:        "upload",
-			Usage:       "clickhouse-backup upload",
-			Description: "Upload metadata and shadows directories to s3. Extra files on s3 will be deleted",
+			Name:  "upload",
+			Usage: "Upload 'metadata' and 'shadows' directories to s3. Extra files on s3 will be deleted",
 			Action: func(c *cli.Context) error {
 				return upload(*config, c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
 			Flags: cliapp.Flags,
 		},
 		{
-			Name:        "download",
-			Usage:       "clickhouse-backup download",
-			Description: "Download metadata and shadows from s3 to /var/lib/clickhouse/backup",
+			Name:  "download",
+			Usage: "Download 'metadata' and 'shadows' from s3 to backup folder",
 			Action: func(c *cli.Context) error {
 				return download(*config, c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
@@ -80,10 +77,8 @@ func main() {
 			Flags: cliapp.Flags,
 		},
 		{
-			Name:        "restore",
-			Usage:       "clickhouse-backup restore [db].[table]",
-			UsageText:   "You can set specific tables like db*.tables[1-2]",
-			Description: "Copy data to \"detached\" folder and execute ATTACH",
+			Name:  "restore",
+			Usage: "Copy data from 'backup' to 'detached' folder and execute ATTACH. You may use this syntax for specify tables [db].[table]",
 			Action: func(c *cli.Context) error {
 				return restore(*config, c.Args(), c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
