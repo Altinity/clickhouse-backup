@@ -193,7 +193,11 @@ func (ch *ClickHouse) Chown(name string) error {
 
 // CopyData - copy partitions for specific table to detached folder
 func (ch *ClickHouse) CopyData(table BackupTable) error {
-	fmt.Printf("copy %s.%s inscrement %d\n", table.Database, table.Name, table.Increment)
+	if ch.DryRun {
+		log.Printf("copy %s.%s inscrement %d  ...scip dry-run", table.Database, table.Name, table.Increment)
+		return nil
+	}
+	log.Printf("copy %s.%s inscrement %d", table.Database, table.Name, table.Increment)
 	dataPath, err := ch.GetDataPath()
 	if err != nil {
 		return err
@@ -257,6 +261,10 @@ func (ch *ClickHouse) AttachPatritions(table BackupTable) error {
 	// 		return fmt.Errorf("can't attach partition %v for \"%s.%s\" with %v", p.Name, table.Database, table.Name, err)
 	// 	}
 	// }
+	if ch.DryRun {
+		log.Printf("ATTACH partitions for %s.%s increment %d ...skip dry-run", table.Database, table.Name, table.Increment)
+		return nil
+	}
 	log.Printf("ATTACH partitions for %s.%s increment %d", table.Database, table.Name, table.Increment)
 	if _, err := ch.conn.Exec(fmt.Sprintf("ALTER TABLE %v.%v ATTACH PARTITION tuple()", table.Database, table.Name)); err != nil {
 		return fmt.Errorf("can't attach partitions for \"%s.%s\" with %v", table.Database, table.Name, err)

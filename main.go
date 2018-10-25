@@ -20,7 +20,7 @@ func main() {
 	cliapp.Flags = []cli.Flag{
 		cli.StringFlag{
 			Name:  "config, c",
-			Value: "config.yml",
+			Value: "/etc/clickhouse-backup/config.yml",
 			Usage: "Config `FILE` name.",
 		},
 		cli.BoolFlag{
@@ -92,7 +92,7 @@ func main() {
 			Name:  "restore",
 			Usage: "Copy data from 'backup' to 'detached' folder and execute ATTACH. You may use this syntax for specify tables [db].[table]",
 			Action: func(c *cli.Context) error {
-				return restore(*config, c.Args(), c.Bool("dry-run") || c.GlobalBool("dry-run"))
+				return restore(*config, c.Args(), c.Bool("dry-run") || c.GlobalBool("dry-run"), c.IntSlice("i"))
 			},
 			Flags: cliapp.Flags,
 		},
@@ -125,7 +125,7 @@ func parseArgsForFreeze(tables []Table, args []string) ([]Table, error) {
 	return result, nil
 }
 
-func parseArgsForRestore(tables map[string]BackupTable, args []string) (map[string]BackupTable, error) {
+func parseArgsForRestore(tables map[string]BackupTable, args []string, increments []int) (map[string]BackupTable, error) {
 	if len(args) == 0 {
 		args = []string{"*"}
 	}
@@ -134,12 +134,16 @@ func parseArgsForRestore(tables map[string]BackupTable, args []string) (map[stri
 		for _, t := range tables {
 			tableName := fmt.Sprintf("%s.%s", t.Database, t.Name)
 			if matched, _ := filepath.Match(arg, tableName); matched {
-				if oldt, ok := result[tableName]; ok {
-					if oldt.Increment > t.Increment {
-						continue
+				if len(increments) == 0 {
+					result[tableName] = t
+					continue
+				}
+				for _, n := range increments {
+					if n == t.Increment {
+						result[tableName] = t
+						break
 					}
 				}
-				result[tableName] = t
 			}
 		}
 	}
@@ -197,7 +201,7 @@ func freeze(config Config, args []string, dryRun bool) error {
 	return nil
 }
 
-func restore(config Config, args []string, dryRun bool) error {
+func restore(config Config, args []string, dryRun bool, increments []int) error {
 	ch := &ClickHouse{
 		DryRun: dryRun,
 		Config: &config.ClickHouse,
@@ -210,7 +214,7 @@ func restore(config Config, args []string, dryRun bool) error {
 	if err != nil {
 		return err
 	}
-	restoreTables, err := parseArgsForRestore(allTables, args)
+	restoreTables, err := parseArgsForRestore(allTables, args, increments)
 	if err != nil {
 		return err
 	}
