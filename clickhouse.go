@@ -253,20 +253,18 @@ func (ch *ClickHouse) CopyData(table BackupTable) error {
 
 // AttachPatritions - execute ATTACH command for specific table
 func (ch *ClickHouse) AttachPatritions(table BackupTable) error {
-	// for _, p := range table.Partitions {
-	// 	log.Printf("  ATTACH partition %s for %s.%s increment %d", p.Name, table.Database, table.Name, table.Increment)
-	// 	// q := fmt.Sprintf("ALTER TABLE %v.%v ATTACH PARTITION %v", table.Database, table.Name, p.Name)
-	// 	q := fmt.Sprintf("ALTER TABLE %v.%v ATTACH PARTITION tuple()", table.Database, table.Name)
-	// 	if _, err := ch.conn.Exec(q); err != nil {
-	// 		return fmt.Errorf("can't attach partition %v for \"%s.%s\" with %v", p.Name, table.Database, table.Name, err)
-	// 	}
-	// }
+	// TODO: Fix these
+	partitionName := "tuple()"
+	if len(strings.Split(table.Partitions[0].Name, "_")) == 5 {
+		partitionName = table.Partitions[0].Name[:6]
+	}
+
 	if ch.DryRun {
 		log.Printf("ATTACH partitions for %s.%s increment %d ...skip dry-run", table.Database, table.Name, table.Increment)
 		return nil
 	}
 	log.Printf("ATTACH partitions for %s.%s increment %d", table.Database, table.Name, table.Increment)
-	if _, err := ch.conn.Exec(fmt.Sprintf("ALTER TABLE %v.%v ATTACH PARTITION tuple()", table.Database, table.Name)); err != nil {
+	if _, err := ch.conn.Exec(fmt.Sprintf("ALTER TABLE %v.%v ATTACH PARTITION %s", table.Database, table.Name, partitionName)); err != nil {
 		return fmt.Errorf("can't attach partitions for \"%s.%s\" with %v", table.Database, table.Name, err)
 	}
 	return nil
