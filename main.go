@@ -48,6 +48,14 @@ func main() {
 
 	cliapp.Commands = []cli.Command{
 		{
+			Name:  "tables",
+			Usage: "Print all tables and exit",
+			Action: func(c *cli.Context) error {
+				return getTables(*config, c.Args())
+			},
+			Flags: cliapp.Flags,
+		},
+		{
 			Name:        "freeze",
 			Usage:       "Freeze all or specific tables. You may use this syntax for specify tables [db].[table]",
 			Description: "Freeze tables",
@@ -136,6 +144,26 @@ func parseArgsForRestore(tables map[string]BackupTable, args []string) (map[stri
 		}
 	}
 	return result, nil
+}
+
+func getTables(config Config, args []string) error {
+	ch := &ClickHouse{
+		Config: &config.ClickHouse,
+	}
+
+	if err := ch.Connect(); err != nil {
+		return fmt.Errorf("can't connect to clickouse with: %v", err)
+	}
+	defer ch.Close()
+
+	allTables, err := ch.GetTables()
+	if err != nil {
+		return fmt.Errorf("can't get tables with: %v", err)
+	}
+	for _, table := range allTables {
+		fmt.Printf("%s.%s\n", table.Database, table.Name)
+	}
+	return nil
 }
 
 func freeze(config Config, args []string, dryRun bool) error {
