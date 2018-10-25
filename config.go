@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"fmt"
 	"io/ioutil"
 
@@ -40,6 +41,9 @@ type ClickHouseConfig struct {
 func LoadConfig(configLocation string) (*Config, error) {
 	config := defaultConfig()
 	configYaml, err := ioutil.ReadFile(configLocation)
+	if os.IsNotExist(err) {
+		return config, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("can't read with: %v", err)
 	}
