@@ -90,11 +90,16 @@ func main() {
 		},
 		{
 			Name:  "restore",
-			Usage: "Copy data from 'backup' to 'detached' folder and execute ATTACH. You may use this syntax for specify tables [db].[table]",
+			Usage: "Copy data from 'backup' to 'detached' folder and execute ATTACH. You can specify tables [db].[table] and increments via -i flag",
 			Action: func(c *cli.Context) error {
 				return restore(*config, c.Args(), c.Bool("dry-run") || c.GlobalBool("dry-run"), c.IntSlice("i"))
 			},
-			Flags: cliapp.Flags,
+			Flags: append(cliapp.Flags,
+				cli.IntSliceFlag{
+					Name:   "increments, i",
+					Hidden: false,
+				},
+			),
 		},
 		{
 			Name:  "default-config",
@@ -125,22 +130,22 @@ func parseArgsForFreeze(tables []Table, args []string) ([]Table, error) {
 	return result, nil
 }
 
-func parseArgsForRestore(tables map[string]BackupTable, args []string, increments []int) (map[string]BackupTable, error) {
+func parseArgsForRestore(tables map[string]BackupTable, args []string, increments []int) ([]BackupTable, error) {
 	if len(args) == 0 {
 		args = []string{"*"}
 	}
-	result := map[string]BackupTable{}
+	result := []BackupTable{}
 	for _, arg := range args {
 		for _, t := range tables {
 			tableName := fmt.Sprintf("%s.%s", t.Database, t.Name)
 			if matched, _ := filepath.Match(arg, tableName); matched {
 				if len(increments) == 0 {
-					result[tableName] = t
+					result = append(result, t)
 					continue
 				}
 				for _, n := range increments {
 					if n == t.Increment {
-						result[tableName] = t
+						result = append(result, t)
 						break
 					}
 				}
