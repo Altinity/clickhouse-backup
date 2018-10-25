@@ -12,7 +12,7 @@ jobs:
       - store_artifacts:
           path: clickhouse-backup.tar.gz
       - run: go get github.com/tcnksm/ghr
-      - run: ghr -t ${GITHUB_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} -recreate -name v${VERSION} ${VERSION} clickhouse-backup.tar.gz
+      - run: ghr -t ${GITHUB_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} -recreate -name v0.0.2 0.0.2 clickhouse-backup.tar.gz
 
 workflows:
   version: 2
