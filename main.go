@@ -111,9 +111,7 @@ func parseArgsForFreeze(tables []Table, args []string) ([]Table, error) {
 		for _, t := range tables {
 			if matched, _ := filepath.Match(arg, fmt.Sprintf("%s.%s", t.Database, t.Name)); matched {
 				result = append(result, t)
-				continue
 			}
-			return nil, fmt.Errorf("table '%s' not found", arg)
 		}
 	}
 	return result, nil
@@ -134,9 +132,7 @@ func parseArgsForRestore(tables map[string]BackupTable, args []string) (map[stri
 					}
 				}
 				result[tableName] = t
-				continue
 			}
-			return nil, fmt.Errorf("table '%s' not found", arg)
 		}
 	}
 	return result, nil
