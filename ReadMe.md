@@ -54,4 +54,5 @@ s3:
   path: ""
   disable_ssl: false
   disable_progress_bar: false
+  prefix_key: ""
 ```

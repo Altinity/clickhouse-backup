@@ -267,11 +267,11 @@ func upload(config Config, dryRun bool) error {
 		return fmt.Errorf("can't connect to s3 with: %v", err)
 	}
 	log.Printf("upload metadata")
-	if err := s3.Upload(path.Join(dataPath, "metadata"), "metadata"); err != nil {
+	if err := s3.Upload(path.Join(dataPath, "metadata"), path.Join(config.S3.PrefixKey, "metadata")); err != nil {
 		return fmt.Errorf("can't upload metadata to s3 with: %v", err)
 	}
 	log.Printf("upload data")
-	if err := s3.Upload(path.Join(dataPath, "shadow"), "shadow"); err != nil {
+	if err := s3.Upload(path.Join(dataPath, "shadow"), path.Join(config.S3.PrefixKey, "shadow")); err != nil {
 		return fmt.Errorf("can't upload metadata to s3 with: %v", err)
 	}
 	return nil
@@ -300,10 +300,10 @@ func download(config Config, dryRun bool) error {
 	if err := s3.Connect(); err != nil {
 		return fmt.Errorf("can't connect to s3 with: %v", err)
 	}
-	if err := s3.Download("metadata", path.Join(dataPath, "backup", "metadata")); err != nil {
+	if err := s3.Download(path.Join(config.S3.PrefixKey, "metadata"), path.Join(dataPath, "backup", "metadata")); err != nil {
 		return fmt.Errorf("cat't download metadata from s3 with %v", err)
 	}
-	if err := s3.Download("shadow", path.Join(dataPath, "backup", "shadow")); err != nil {
+	if err := s3.Download(path.Join(config.S3.PrefixKey, "shadow"), path.Join(dataPath, "backup", "shadow")); err != nil {
 		return fmt.Errorf("can't download shadow from s3 with %v", err)
 	}
 	return nil

@@ -26,6 +26,7 @@ type S3Config struct {
 	Path               string `yaml:"path"`
 	DisableSSL         bool   `yaml:"disable_ssl"`
 	DisableProgressBar bool   `yaml:"disable_progress_bar"`
+	PrefixKey          string `yaml:"prefix_key"`
 }
 
 // ClickHouseConfig - clickhouse settings section
