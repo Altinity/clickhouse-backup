@@ -92,12 +92,17 @@ func main() {
 			Name:  "restore",
 			Usage: "Copy data from 'backup' to 'detached' folder and execute ATTACH. You can specify tables [db].[table] and increments via -i flag",
 			Action: func(c *cli.Context) error {
-				return restore(*config, c.Args(), c.Bool("dry-run") || c.GlobalBool("dry-run"), c.IntSlice("i"))
+				return restore(*config, c.Args(), c.Bool("dry-run") || c.GlobalBool("dry-run"), c.IntSlice("i"), c.Bool("d"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.IntSliceFlag{
 					Name:   "increments, i",
 					Hidden: false,
+				},
+				cli.BoolFlag{
+					Name: "depricated, d",
+					Hidden: false,
+					Usage: "Set this flag if Table was created of deprecated method: ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)",
 				},
 			),
 		},
@@ -206,7 +211,7 @@ func freeze(config Config, args []string, dryRun bool) error {
 	return nil
 }
 
-func restore(config Config, args []string, dryRun bool, increments []int) error {
+func restore(config Config, args []string, dryRun bool, increments []int, depricatedCreation bool) error {
 	ch := &ClickHouse{
 		DryRun: dryRun,
 		Config: &config.ClickHouse,
@@ -227,10 +232,11 @@ func restore(config Config, args []string, dryRun bool, increments []int) error 
 		return fmt.Errorf("no have tables for restore")
 	}
 	for _, table := range restoreTables {
+		// TODO: Use move instead copy
 		if err := ch.CopyData(table); err != nil {
 			return fmt.Errorf("can't restore %s.%s increment %d with %v", table.Database, table.Name, table.Increment, err)
 		}
-		if err := ch.AttachPatritions(table); err != nil {
+		if err := ch.AttachPatritions(table, depricatedCreation); err != nil {
 			return fmt.Errorf("can't attach partitions for table %s.%s with %v", table.Database, table.Name, err)
 		}
 	}

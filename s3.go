@@ -137,6 +137,7 @@ func (s *S3) Download(s3Path string, localPath string) error {
 		bar.Increment()
 		if existsFile, ok := localFiles[s3File.key]; ok {
 			if existsFile.size == s3File.size {
+				// TODO: calculate Etag must be disabled via config
 				if s3File.etag == GetEtag(existsFile.fullpath) {
 					// log.Printf("Skip download file '%s' already exists", s3File.key)
 					// Skip download file
@@ -254,6 +255,7 @@ func (s *S3) newSyncFolderIterator(localPath, dstPath string) (*SyncFolderIterat
 			if existFile, ok := existsFiles[key]; ok {
 				delete(existsFiles, key)
 				if existFile.size == info.Size() {
+					// TODO: calculate Etag must be disabled via config
 					if existFile.etag == GetEtag(filePath) {
 						// log.Printf("File '%s' already uploaded and has the same size and etag. Skip", key)
 						skipFilesCount++

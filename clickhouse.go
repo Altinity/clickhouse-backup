@@ -106,9 +106,13 @@ func (ch *ClickHouse) FreezeTable(table Table) error {
 			continue
 		}
 		log.Printf("  partition '%v'", item.Partition)
+		query := "ALTER TABLE %v.%v FREEZE PARTITION '%v';"
+		if item.Partition == "tuple()" {
+			query = "ALTER TABLE %v.%v FREEZE PARTITION %v;"
+		}
 		if _, err := ch.conn.Exec(
 			fmt.Sprintf(
-				"ALTER TABLE %v.%v FREEZE PARTITION %v;",
+				query,
 				table.Database,
 				table.Name,
 				item.Partition,
@@ -251,16 +255,29 @@ func (ch *ClickHouse) CopyData(table BackupTable) error {
 	return nil
 }
 
-// AttachPatritions - execute ATTACH command for specific table
-func (ch *ClickHouse) AttachPatritions(table BackupTable) error {
-	// TODO: Fix these
-	partitionName := "tuple()"
-	if len(strings.Split(table.Partitions[0].Name, "_")) == 5 {
-		partitionName = table.Partitions[0].Name[:6]
+func convertPartition(deatachedTableFoler string, depricatedCreation bool) string {
+	// TODO: rewrite this magic
+	begin := strings.Split(deatachedTableFoler, "_")[0]
+	if begin == "all" {
+		// ENGINE = MergeTree ORDER BY id
+		return "tuple()"
 	}
+	if depricatedCreation {
+		// Deprecated Method for Creating a Table
+		// ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)
+		return begin[:6]
+	}
+	// ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp
+	return fmt.Sprintf("toDate('%s-%s-%s')", begin[:4], begin[4:6], begin[6:])
 
+}
+
+// AttachPatritions - execute ATTACH command for specific table
+func (ch *ClickHouse) AttachPatritions(table BackupTable, depricatedCreation bool) error {
+	// TODO: need tests
+	partitionName := convertPartition(table.Partitions[0].Name, depricatedCreation)
 	if ch.DryRun {
-		log.Printf("ATTACH partitions for %s.%s increment %d ...skip dry-run", table.Database, table.Name, table.Increment)
+		log.Printf("ATTACH partition '%s' for %s.%s increment %d ...skip dry-run", partitionName, table.Database, table.Name, table.Increment)
 		return nil
 	}
 	log.Printf("ATTACH partitions for %s.%s increment %d", table.Database, table.Name, table.Increment)
