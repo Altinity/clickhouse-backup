@@ -100,9 +100,9 @@ func main() {
 					Hidden: false,
 				},
 				cli.BoolFlag{
-					Name: "depricated, d",
+					Name:   "deprecated, d",
 					Hidden: false,
-					Usage: "Set this flag if Table was created of deprecated method: ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)",
+					Usage:  "Set this flag if Table was created of deprecated method: ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)",
 				},
 			),
 		},
@@ -211,7 +211,7 @@ func freeze(config Config, args []string, dryRun bool) error {
 	return nil
 }
 
-func restore(config Config, args []string, dryRun bool, increments []int, depricatedCreation bool) error {
+func restore(config Config, args []string, dryRun bool, increments []int, deprecatedCreation bool) error {
 	ch := &ClickHouse{
 		DryRun: dryRun,
 		Config: &config.ClickHouse,
@@ -236,7 +236,7 @@ func restore(config Config, args []string, dryRun bool, increments []int, depric
 		if err := ch.CopyData(table); err != nil {
 			return fmt.Errorf("can't restore %s.%s increment %d with %v", table.Database, table.Name, table.Increment, err)
 		}
-		if err := ch.AttachPatritions(table, depricatedCreation); err != nil {
+		if err := ch.AttachPatritions(table, deprecatedCreation); err != nil {
 			return fmt.Errorf("can't attach partitions for table %s.%s with %v", table.Database, table.Name, err)
 		}
 	}

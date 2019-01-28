@@ -259,6 +259,7 @@ func (s *S3) newSyncFolderIterator(localPath, dstPath string) (*SyncFolderIterat
 				if existFile.size == info.Size() {
 					switch s.Config.OverwriteStrategy {
 					case "skip":
+						skipFilesCount++
 						return nil
 					case "etag":
 						if existFile.etag == GetEtag(filePath) {

@@ -55,13 +55,15 @@ func LoadConfig(configLocation string) (*Config, error) {
 	return config, validateConfig(config)
 }
 
-func validateConfig (config *Config) error {
+func validateConfig(config *Config) error {
 	switch config.S3.OverwriteStrategy {
-		case
+	case
 		"skip",
 		"etag",
-		"always": break
-		default: return fmt.Errorf("unknown s3.overwrite_strategy it can be 'skip', 'etag', 'always'")
+		"always":
+		break
+	default:
+		return fmt.Errorf("unknown s3.overwrite_strategy it can be 'skip', 'etag', 'always'")
 	}
 	return nil
 }
@@ -82,9 +84,9 @@ func defaultConfig() *Config {
 			Port:     9000,
 		},
 		S3: S3Config{
-			Region:     "us-east-1",
-			DisableSSL: false,
-			ACL:        "private",
+			Region:            "us-east-1",
+			DisableSSL:        false,
+			ACL:               "private",
 			OverwriteStrategy: "always",
 		},
 	}

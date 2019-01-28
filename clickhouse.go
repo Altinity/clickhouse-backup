@@ -255,14 +255,14 @@ func (ch *ClickHouse) CopyData(table BackupTable) error {
 	return nil
 }
 
-func convertPartition(deatachedTableFoler string, depricatedCreation bool) string {
+func convertPartition(deatachedTableFoler string, deprecatedCreation bool) string {
 	// TODO: rewrite this magic
 	begin := strings.Split(deatachedTableFoler, "_")[0]
 	if begin == "all" {
 		// ENGINE = MergeTree ORDER BY id
 		return "tuple()"
 	}
-	if depricatedCreation {
+	if deprecatedCreation {
 		// Deprecated Method for Creating a Table
 		// ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)
 		return begin[:6]
@@ -273,9 +273,9 @@ func convertPartition(deatachedTableFoler string, depricatedCreation bool) strin
 }
 
 // AttachPatritions - execute ATTACH command for specific table
-func (ch *ClickHouse) AttachPatritions(table BackupTable, depricatedCreation bool) error {
+func (ch *ClickHouse) AttachPatritions(table BackupTable, deprecatedCreation bool) error {
 	// TODO: need tests
-	partitionName := convertPartition(table.Partitions[0].Name, depricatedCreation)
+	partitionName := convertPartition(table.Partitions[0].Name, deprecatedCreation)
 	if ch.DryRun {
 		log.Printf("ATTACH partition '%s' for %s.%s increment %d ...skip dry-run", partitionName, table.Database, table.Name, table.Increment)
 		return nil
