@@ -1,11 +1,11 @@
 package main
 
 import (
-	"os"
 	"fmt"
 	"io/ioutil"
+	"os"
 
-	"gopkg.in/yaml.v2"
+	yaml "gopkg.in/yaml.v2"
 )
 
 // Config - config file format
@@ -26,6 +26,7 @@ type S3Config struct {
 	Path               string `yaml:"path"`
 	DisableSSL         bool   `yaml:"disable_ssl"`
 	DisableProgressBar bool   `yaml:"disable_progress_bar"`
+	OverwriteStrategy  string `yaml:"overwrite_strategy"`
 }
 
 // ClickHouseConfig - clickhouse settings section
@@ -51,7 +52,18 @@ func LoadConfig(configLocation string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("can't parse with: %v", err)
 	}
-	return config, nil
+	return config, validateConfig(config)
+}
+
+func validateConfig (config *Config) error {
+	switch config.S3.OverwriteStrategy {
+		case
+		"skip",
+		"etag",
+		"always": break
+		default: return fmt.Errorf("unknown s3.overwrite_strategy it can be 'skip', 'etag', 'always'")
+	}
+	return nil
 }
 
 // PrintDefaultConfig - print default config to stdout
@@ -73,6 +85,7 @@ func defaultConfig() *Config {
 			Region:     "us-east-1",
 			DisableSSL: false,
 			ACL:        "private",
+			OverwriteStrategy: "always",
 		},
 	}
 }

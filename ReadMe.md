@@ -54,4 +54,8 @@ s3:
   path: ""
   disable_ssl: false
   disable_progress_bar: false
+  # Define behavior for rewrite exists files with the same size. Must set to "skip", "etag" or "always"
+  # "skip" - the fastest but can make backup inconsistently
+  # "etag" - calculate etag for local files, set this if your network is very slow
+  overwrite_strategy: "always"
 ```

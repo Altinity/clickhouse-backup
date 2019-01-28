@@ -16,7 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
-	"gopkg.in/cheggaaa/pb.v1"
+	pb "gopkg.in/cheggaaa/pb.v1"
 )
 
 const (
@@ -137,11 +137,13 @@ func (s *S3) Download(s3Path string, localPath string) error {
 		bar.Increment()
 		if existsFile, ok := localFiles[s3File.key]; ok {
 			if existsFile.size == s3File.size {
-				// TODO: calculate Etag must be disabled via config
-				if s3File.etag == GetEtag(existsFile.fullpath) {
-					// log.Printf("Skip download file '%s' already exists", s3File.key)
-					// Skip download file
+				switch s.Config.OverwriteStrategy {
+				case "skip":
 					continue
+				case "etag":
+					if s3File.etag == GetEtag(existsFile.fullpath) {
+						continue
+					}
 				}
 			}
 		}
@@ -255,11 +257,15 @@ func (s *S3) newSyncFolderIterator(localPath, dstPath string) (*SyncFolderIterat
 			if existFile, ok := existsFiles[key]; ok {
 				delete(existsFiles, key)
 				if existFile.size == info.Size() {
-					// TODO: calculate Etag must be disabled via config
-					if existFile.etag == GetEtag(filePath) {
-						// log.Printf("File '%s' already uploaded and has the same size and etag. Skip", key)
-						skipFilesCount++
+					switch s.Config.OverwriteStrategy {
+					case "skip":
 						return nil
+					case "etag":
+						if existFile.etag == GetEtag(filePath) {
+							// log.Printf("File '%s' already uploaded and has the same size and etag. Skip", key)
+							skipFilesCount++
+							return nil
+						}
 					}
 				}
 			}
