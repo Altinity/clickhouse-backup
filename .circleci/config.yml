@@ -10,13 +10,17 @@ jobs:
       - run: ./clickhouse-backup/clickhouse-backup default-config > clickhouse-backup/config.yml
       - run: export VERSION=$(./clickhouse-backup/clickhouse-backup --version)
       - run: tar -czvf clickhouse-backup.tar.gz clickhouse-backup
-      - store_artifacts:
-          path: clickhouse-backup.tar.gz
+      - persist_to_workspace:
+          root: .
+          paths:
+            - clickhouse-backup.tar.gz
 
   publish-master:
     docker:
       - image: circleci/golang:1.11
     steps:
+      - attach_workspace:
+          at: clickhouse-backup.tar.gz
       - run: go get github.com/tcnksm/ghr
       - run: ghr -t ${GITHUB_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} -prerelease -recreate master clickhouse-backup.tar.gz
 
@@ -24,6 +28,8 @@ jobs:
     docker:
       - image: circleci/golang:1.11
     steps:
+      - attach_workspace:
+          at: clickhouse-backup.tar.gz
       - run: go get github.com/tcnksm/ghr
       - run: ghr -t ${GITHUB_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} ${CIRCLE_TAG} clickhouse-backup.tar.gz
 
