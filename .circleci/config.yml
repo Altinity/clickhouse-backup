@@ -11,20 +11,27 @@ jobs:
       - run: tar -czvf clickhouse-backup.tar.gz clickhouse-backup
       - store_artifacts:
           path: clickhouse-backup.tar.gz
+  publish-master:
       - run: go get github.com/tcnksm/ghr
-      - run: ghr -t ${GITHUB_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} -recreate v0.0.2 clickhouse-backup.tar.gz
+      - run: ghr -t ${GITHUB_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} -prerelease -recreate master clickhouse-backup.tar.gz
+  publish-release:
+      - run: go get github.com/tcnksm/ghr
+      - run: ghr -t ${GITHUB_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} ${CIRCLE_TAG} clickhouse-backup.tar.gz
 
 workflows:
   version: 2
   main:
     jobs:
       - build
-      # - github-release:
-      #     requires:
-      #       - build
-      #     filters:
-      #       branches:
-      #         only: master
-      #       tags:
-      #         only: /^\d+\.\d+\.\d+$/
-
+      - publish-master:
+          requires:
+            - build
+          filters:
+            branches:
+              only: master
+      - publish-release:
+          requires:
+            - build
+          filters:
+            tags:
+              only: /^v\d+\.\d+\.\d+$/
