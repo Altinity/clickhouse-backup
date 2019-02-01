@@ -93,31 +93,40 @@ func (ch *ClickHouse) GetTables() ([]Table, error) {
 // FreezeTable - freze all partitions for table
 func (ch *ClickHouse) FreezeTable(table Table) error {
 	var partitions []struct {
-		Partition string `db:"partition"`
+		PartitionID string `db:"partition_id"`
 	}
-	q := fmt.Sprintf("SELECT DISTINCT partition FROM system.parts WHERE database='%v' AND table='%v'", table.Database, table.Name)
+	q := fmt.Sprintf("SELECT DISTINCT partition_id FROM system.parts WHERE database='%v' AND table='%v'", table.Database, table.Name)
 	if err := ch.conn.Select(&partitions, q); err != nil {
 		return fmt.Errorf("can't get partitions for \"%s.%s\" with %v", table.Database, table.Name, err)
 	}
 	log.Printf("Freeze '%v.%v'", table.Database, table.Name)
 	for _, item := range partitions {
 		if ch.DryRun {
-			log.Printf("  partition '%v'   ...skip becouse dry-run", item.Partition)
+			log.Printf("  partition '%v'   ...skip becouse dry-run", item.PartitionID)
 			continue
 		}
-		log.Printf("  partition '%v'", item.Partition)
-		query := "ALTER TABLE %v.%v FREEZE PARTITION '%v';"
-		if item.Partition == "tuple()" {
-			query = "ALTER TABLE %v.%v FREEZE PARTITION %v;"
+		log.Printf("  partition '%v'", item.PartitionID)
+		// TODO: find out this magic
+		if item.PartitionID == "all" {
+			item.PartitionID = "tuple()"
 		}
 		if _, err := ch.conn.Exec(
 			fmt.Sprintf(
-				query,
+				"ALTER TABLE %v.%v FREEZE PARTITION %v;",
 				table.Database,
 				table.Name,
-				item.Partition,
+				item.PartitionID,
+			)); err == nil {
+			continue
+		}
+		if _, err := ch.conn.Exec(
+			fmt.Sprintf(
+				"ALTER TABLE %v.%v FREEZE PARTITION '%v';",
+				table.Database,
+				table.Name,
+				item.PartitionID,
 			)); err != nil {
-			return fmt.Errorf("can't freze partiotion '%s' on '%s.%s' with: %v", item.Partition, table.Database, table.Name, err)
+			return fmt.Errorf("can't freze partiotion '%s' on '%s.%s' with: %v", item.PartitionID, table.Database, table.Name, err)
 		}
 	}
 	return nil
