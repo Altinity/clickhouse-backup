@@ -22,7 +22,7 @@ jobs:
       - attach_workspace:
           at: clickhouse-backup.tar.gz
       - run: go get github.com/tcnksm/ghr
-      - run: ghr -t ${GITHUB_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} -prerelease -recreate master clickhouse-backup.tar.gz
+      - run: ghr -t ${GITHUB_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} -prerelease -recreate latest clickhouse-backup.tar.gz
 
   publish-release:
     docker:
