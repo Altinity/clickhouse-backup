@@ -46,7 +46,7 @@ func (s *S3) Connect() (err error) {
 }
 
 // Upload - synchronize localPath to dstPath on s3
-func (s *S3) Upload(localPath string, dstPath string) error {
+func (s *S3) UploadDirectory(localPath string, dstPath string) error {
 	// TODO: it must be refactored like as Download() method
 	iter, filesForDelete, err := s.newSyncFolderIterator(localPath, dstPath)
 	if err != nil {
@@ -114,8 +114,33 @@ func (s *S3) Upload(localPath string, dstPath string) error {
 	return nil
 }
 
+// Upload - synchronize localPath to dstPath on s3
+func (s *S3) UploadFile(localPath string, dstPath string) error {
+
+	uploader := s3manager.NewUploader(s.session)
+	uploader.PartSize = PART_SIZE
+
+	file, err := os.Open(localPath)
+	if err != nil {
+		return fmt.Errorf("error opening file %v: %v", localPath, err)
+	}
+	if !s.DryRun {
+		_, err := uploader.UploadWithContext(aws.BackgroundContext(), &s3manager.UploadInput{
+			ACL:    aws.String(config.S3.ACL),
+			Bucket: aws.String(config.S3.Bucket),
+			Key:    aws.String(path.Join(s.Config.Path, dstPath)),
+			Body:   file,
+		})
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // Download - download files from s3Path to localPath
-func (s *S3) Download(s3Path string, localPath string) error {
+func (s *S3) DownloadTree(s3Path string, localPath string) error {
 	if err := os.MkdirAll(localPath, 0755); err != nil {
 		return fmt.Errorf("can't create '%s' with: %v", localPath, err)
 	}
@@ -170,6 +195,36 @@ func (s *S3) Download(s3Path string, localPath string) error {
 	}
 
 	// TODO: Delete extra files
+	return nil
+}
+
+// Download - download files from s3Path to localPath
+func (s *S3) DownloadArchive(s3Path string, localPath string) error {
+	if err := os.MkdirAll(localPath, 0755); err != nil {
+		return fmt.Errorf("can't create '%s' with: %v", localPath, err)
+	}
+	downloader := s3manager.NewDownloader(s.session)
+	params := &s3.GetObjectInput{
+		Bucket: aws.String(s.Config.Bucket),
+		Key:    aws.String(path.Join(s.Config.Path, s3Path)),
+	}
+	newFilePath := filepath.Join(localPath, filepath.Base(s3Path))
+	newPath := filepath.Dir(newFilePath)
+	if s.DryRun {
+		log.Printf("Download '%s' to '%s'", s3Path, newFilePath)
+		return nil
+	}
+	if err := os.MkdirAll(newPath, 0644); err != nil {
+		return fmt.Errorf("can't create '%s' with: %v", newPath, err)
+	}
+	f, err := os.Create(newFilePath)
+	if err != nil {
+		return fmt.Errorf("can't open '%s' with %v", newFilePath, err)
+	}
+	if _, err := downloader.DownloadWithContext(aws.BackgroundContext(), f, params); err != nil {
+		return fmt.Errorf("can't download file '%s' with %v", s3Path, err)
+	}
+
 	return nil
 }
 
@@ -369,4 +424,36 @@ func GetEtag(path string) string {
 	}
 	hash := md5.Sum(contentToHash)
 	return fmt.Sprintf("\"%x-%d\"", hash, parts)
+}
+
+// ListObjects - get list of objects from s3
+func (s *S3) ListObjects(s3Path string) ([]*s3.Object, error) {
+	params := &s3.ListObjectsInput{
+		Bucket: aws.String(s.Config.Bucket),
+	}
+	resp, err := s3.New(s.session).ListObjects(params)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Contents, nil
+}
+
+// ListObjects - get list of objects from s3
+func (s *S3) DeleteObjects(objects []*s3.Object) error {
+	batcher := s3manager.NewBatchDelete(s.session)
+	batchObjects := make([]s3manager.BatchDeleteObject, len(objects))
+	for i, obj := range objects {
+		batchObjects[i] = s3manager.BatchDeleteObject{
+			Object: &s3.DeleteObjectInput{
+				Key:    obj.Key,
+				Bucket: aws.String(s.Config.Bucket),
+			},
+		}
+	}
+	if err := batcher.Delete(aws.BackgroundContext(), &s3manager.DeleteObjectsIterator{
+		Objects: batchObjects,
+	}); err != nil {
+		return err
+	}
+	return nil
 }

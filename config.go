@@ -12,6 +12,7 @@ import (
 type Config struct {
 	ClickHouse ClickHouseConfig `yaml:"clickhouse"`
 	S3         S3Config         `yaml:"s3"`
+	Backup     BackupConfig     `yaml:"backup"`
 }
 
 // S3Config - s3 settings section
@@ -36,6 +37,12 @@ type ClickHouseConfig struct {
 	Host     string `yaml:"host"`
 	Port     uint   `yaml:"port"`
 	DataPath string `yaml:"data_path"`
+}
+
+// BackupConfig - backup specific settings
+type BackupConfig struct {
+	Strategy      string `yaml:"strategy"`
+	BackupsToKeep int    `yaml:"backups_to_keep"`
 }
 
 // LoadConfig - load config from file
@@ -88,6 +95,10 @@ func defaultConfig() *Config {
 			DisableSSL:        false,
 			ACL:               "private",
 			OverwriteStrategy: "always",
+		},
+		Backup: BackupConfig{
+			Strategy:      "tree",
+			BackupsToKeep: 10,
 		},
 	}
 }
