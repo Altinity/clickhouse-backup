@@ -15,3 +15,6 @@ s3:
   path: ""
   disable_ssl: false
   disable_progress_bar: false
+backup:
+  strategy: "archive"
+  backups_to_keep: 10
