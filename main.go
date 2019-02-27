@@ -245,7 +245,7 @@ func restore(config Config, args []string, dryRun bool, increments []int, deprec
 		return err
 	}
 	if len(restoreTables) == 0 {
-		return fmt.Errorf("no have tables for restore")
+		return fmt.Errorf("didn't find tables to restore")
 	}
 	for _, table := range restoreTables {
 		// TODO: Use move instead copy

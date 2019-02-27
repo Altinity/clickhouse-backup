@@ -12,6 +12,7 @@ import (
 	"time"
 )
 
+// TarDirs - add bunch of directories to tarball
 func TarDirs(w io.Writer, dirs ...string) error {
 	tw := tarArchive.NewWriter(w)
 	defer tw.Close()
@@ -23,6 +24,7 @@ func TarDirs(w io.Writer, dirs ...string) error {
 	return nil
 }
 
+// TarDir - add directory to tarball
 func TarDir(tw *tarArchive.Writer, dir string) error {
 	return tarDir(tw, dir)
 }
@@ -114,6 +116,7 @@ func tarDir(tw *tarArchive.Writer, dir string) (err error) {
 	return nil
 }
 
+// Untar - extract contents of tarball to specified destination
 func Untar(r io.Reader, dir string) (err error) {
 	t0 := time.Now()
 	nFiles := 0

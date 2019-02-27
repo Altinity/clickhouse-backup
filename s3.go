@@ -45,7 +45,7 @@ func (s *S3) Connect() (err error) {
 	return
 }
 
-// Upload - synchronize localPath to dstPath on s3
+// UploadDirectory - synchronize localPath to dstPath on s3
 func (s *S3) UploadDirectory(localPath string, dstPath string) error {
 	// TODO: it must be refactored like as Download() method
 	iter, filesForDelete, err := s.newSyncFolderIterator(localPath, dstPath)
@@ -114,7 +114,7 @@ func (s *S3) UploadDirectory(localPath string, dstPath string) error {
 	return nil
 }
 
-// Upload - synchronize localPath to dstPath on s3
+// UploadFile - synchronize localPath to dstPath on s3
 func (s *S3) UploadFile(localPath string, dstPath string) error {
 
 	uploader := s3manager.NewUploader(s.session)
@@ -139,7 +139,7 @@ func (s *S3) UploadFile(localPath string, dstPath string) error {
 	return nil
 }
 
-// Download - download files from s3Path to localPath
+// DownloadTree - download files from s3Path to localPath
 func (s *S3) DownloadTree(s3Path string, localPath string) error {
 	if err := os.MkdirAll(localPath, 0755); err != nil {
 		return fmt.Errorf("can't create '%s' with: %v", localPath, err)
@@ -198,7 +198,7 @@ func (s *S3) DownloadTree(s3Path string, localPath string) error {
 	return nil
 }
 
-// Download - download files from s3Path to localPath
+// DownloadArchive - download files from s3Path to localPath
 func (s *S3) DownloadArchive(s3Path string, localPath string) error {
 	if err := os.MkdirAll(localPath, 0755); err != nil {
 		return fmt.Errorf("can't create '%s' with: %v", localPath, err)
@@ -438,7 +438,7 @@ func (s *S3) ListObjects(s3Path string) ([]*s3.Object, error) {
 	return resp.Contents, nil
 }
 
-// ListObjects - get list of objects from s3
+// DeleteObjects - delete list of objects from s3
 func (s *S3) DeleteObjects(objects []*s3.Object) error {
 	batcher := s3manager.NewBatchDelete(s.session)
 	batchObjects := make([]s3manager.BatchDeleteObject, len(objects))
