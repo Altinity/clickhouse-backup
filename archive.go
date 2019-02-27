@@ -77,7 +77,7 @@ func tarDir(tw *tarArchive.Writer, dir string) (err error) {
 
 		st := fi.Sys().(*syscall.Stat_t)
 		di := devino{
-			Dev: st.Dev,
+			Dev: uint64(st.Dev),
 			Ino: st.Ino,
 		}
 		orig, ok := seen[di]
@@ -113,7 +113,6 @@ func tarDir(tw *tarArchive.Writer, dir string) (err error) {
 
 		return nil
 	})
-	return nil
 }
 
 // Untar - extract contents of tarball to specified destination
