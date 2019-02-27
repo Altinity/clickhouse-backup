@@ -48,10 +48,30 @@ type BackupTable struct {
 	Path       string
 }
 
+// RestoreTable - struct to store information needed during restore
+type RestoreTable struct {
+	Database string
+	Query    string
+}
+
 // Connect - connect to clickhouse
 func (ch *ClickHouse) Connect() error {
 	connectionString := fmt.Sprintf("tcp://%v:%v?username=%v&password=%v&compress=true",
 		ch.Config.Host, ch.Config.Port, ch.Config.Username, ch.Config.Password)
+	var err error
+	if ch.conn, err = sqlx.Open("clickhouse", connectionString); err != nil {
+		return err
+	}
+	return ch.conn.Ping()
+}
+
+// ConnectDatabase - connect to clickhouse to specified database
+func (ch *ClickHouse) ConnectDatabase(database string) error {
+	if database == "" {
+		database = "default"
+	}
+	connectionString := fmt.Sprintf("tcp://%v:%v?username=%v&password=%v&database=%v&compress=true",
+		ch.Config.Host, ch.Config.Port, ch.Config.Username, ch.Config.Password, database)
 	var err error
 	if ch.conn, err = sqlx.Open("clickhouse", connectionString); err != nil {
 		return err
@@ -312,10 +332,30 @@ func (ch *ClickHouse) AttachPatritions(table BackupTable, deprecatedCreation boo
 
 // CreateDatabase - create specific database from metadata in backup folder
 func (ch *ClickHouse) CreateDatabase(database string) error {
+	createQuery := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", database)
+	if ch.DryRun {
+		log.Printf("DRY-RUN: creating database with query: %s", createQuery)
+		return nil
+	}
+	log.Printf("creating database:\n%s", database)
+	_, err := ch.conn.Exec(createQuery)
+	if err != nil {
+		return fmt.Errorf("can't create database: %v", err)
+	}
 	return nil
 }
 
 // CreateTable - create specific table from metadata in backup folder
-func (ch *ClickHouse) CreateTable(query string) error {
+func (ch *ClickHouse) CreateTable(table RestoreTable) error {
+	if ch.DryRun {
+		log.Printf("DRY-RUN: creating table with query: %s", table.Query)
+		return nil
+	}
+	ch.ConnectDatabase(table.Database)
+	log.Printf("creating table:\n%s", table.Query)
+	_, err := ch.conn.Exec(table.Query)
+	if err != nil {
+		return fmt.Errorf("can't create table: %v", err)
+	}
 	return nil
 }
