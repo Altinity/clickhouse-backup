@@ -215,8 +215,13 @@ func (ch *ClickHouse) CopyData(table BackupTable) error {
 	if err != nil {
 		return err
 	}
+
+	detachedParentDir := filepath.Join(dataPath, "data", table.Database, table.Name, "detached")
+	os.MkdirAll(detachedParentDir, 0750)
+	ch.Chown(detachedParentDir)
+
 	for _, partition := range table.Partitions {
-		detachedPath := filepath.Join(dataPath, "data", table.Database, table.Name, "detached", partition.Name)
+		detachedPath := filepath.Join(detachedParentDir, partition.Name)
 		info, err := os.Stat(detachedPath)
 		if err != nil {
 			if !os.IsNotExist(err) {
@@ -264,34 +269,43 @@ func (ch *ClickHouse) CopyData(table BackupTable) error {
 	return nil
 }
 
-func convertPartition(deatachedTableFoler string, deprecatedCreation bool) string {
-	// TODO: rewrite this magic
-	begin := strings.Split(deatachedTableFoler, "_")[0]
+func convertPartition(detachedTableFolder string, deprecatedCreation bool) (string, error) {
+	// TODO: need tests
+	begin := strings.Split(detachedTableFolder, "_")[0]
 	if begin == "all" {
+		// table is not partitioned at all
 		// ENGINE = MergeTree ORDER BY id
-		return "tuple()"
+		return "tuple()", nil
 	}
 	if deprecatedCreation {
-		// Deprecated Method for Creating a Table
+		// legacy partitioning based on month: toYYYYMM(date_column)
+		// in this case we return YYYYMM
 		// ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)
-		return begin[:6]
+		if len(begin) < 6 {
+			return "", fmt.Errorf("deprecated type of partitioning was requested, but partition name of table does not correspond that")
+		}
+		return begin[:6], nil
 	}
-	// ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp
-	return fmt.Sprintf("toDate('%s-%s-%s')", begin[:4], begin[4:6], begin[6:])
-
+	// in case a custom partitioning key is used this is a partition name
+	// same as in system.parts table, it may be used in ALTER TABLE queries
+	// https://clickhouse.yandex/docs/en/operations/table_engines/custom_partitioning_key/
+	return begin, nil
 }
 
 // AttachPatritions - execute ATTACH command for specific table
 func (ch *ClickHouse) AttachPatritions(table BackupTable, deprecatedCreation bool) error {
 	// TODO: need tests
-	partitionName := convertPartition(table.Partitions[0].Name, deprecatedCreation)
+	partitionName, err := convertPartition(table.Partitions[0].Name, deprecatedCreation)
+	if err != nil {
+		return err
+	}
 	if ch.DryRun {
 		log.Printf("ATTACH partition '%s' for %s.%s increment %d ...skip dry-run", partitionName, table.Database, table.Name, table.Increment)
 		return nil
 	}
 	log.Printf("ATTACH partitions for %s.%s increment %d", table.Database, table.Name, table.Increment)
 	if _, err := ch.conn.Exec(fmt.Sprintf("ALTER TABLE %v.%v ATTACH PARTITION %s", table.Database, table.Name, partitionName)); err != nil {
-		return fmt.Errorf("can't attach partitions for \"%s.%s\" with %v", table.Database, table.Name, err)
+		return err
 	}
 	return nil
 }
