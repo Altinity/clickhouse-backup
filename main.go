@@ -454,6 +454,10 @@ func cleanDir(dir string) error {
 }
 
 func removeOldBackups(config Config, s3 *S3) error {
+	if config.Backup.BackupsToKeep < 1 {
+		log.Printf("Cleaning old backups is not enabled.")
+		return nil
+	}
 	objects, err := s3.ListObjects(config.S3.Path)
 	if err != nil {
 		return err

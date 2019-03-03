@@ -16,5 +16,5 @@ s3:
   disable_ssl: false
   disable_progress_bar: false
 backup:
-  strategy: "archive"
-  backups_to_keep: 10
+  strategy: tree
+  backups_to_keep: 0

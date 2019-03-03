@@ -61,5 +61,5 @@ s3:
   overwrite_strategy: "always"
 backup:
   strategy: tree
-  backups_to_keep: 10
+  backups_to_keep: 0
 ```

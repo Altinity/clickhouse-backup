@@ -98,7 +98,7 @@ func defaultConfig() *Config {
 		},
 		Backup: BackupConfig{
 			Strategy:      "tree",
-			BackupsToKeep: 10,
+			BackupsToKeep: 0,
 		},
 	}
 }
