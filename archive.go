@@ -12,6 +12,7 @@ import (
 	"time"
 )
 
+// TarDirs - add bunch of directories to tarball
 func TarDirs(w io.Writer, dirs ...string) error {
 	tw := tarArchive.NewWriter(w)
 	defer tw.Close()
@@ -23,6 +24,7 @@ func TarDirs(w io.Writer, dirs ...string) error {
 	return nil
 }
 
+// TarDir - add directory to tarball
 func TarDir(tw *tarArchive.Writer, dir string) error {
 	return tarDir(tw, dir)
 }
@@ -50,7 +52,7 @@ func tarDir(tw *tarArchive.Writer, dir string) (err error) {
 		return fmt.Errorf("unable to tar files - %v", err.Error())
 	}
 	if !fi.IsDir() {
-		return fmt.Errorf("data path is not a directory - %v", err.Error())
+		return fmt.Errorf("data path is not a directory - %s", dir)
 	}
 
 	seen := make(map[devino]string)

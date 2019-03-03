@@ -24,7 +24,7 @@ type ClickHouse struct {
 	gid    *int
 }
 
-// Table - table struct
+// Table - Clickhouse table struct
 type Table struct {
 	Database     string `db:"database"`
 	Name         string `db:"name"`
@@ -33,13 +33,13 @@ type Table struct {
 	IsTemporary  bool   `db:"is_temporary"`
 }
 
-// BackupPartition -
+// BackupPartition - struct representing Clickhouse partition
 type BackupPartition struct {
 	Name string
 	Path string
 }
 
-// BackupTable -
+// BackupTable - struct to store additional information on partitions
 type BackupTable struct {
 	Increment  int
 	Database   string
@@ -90,7 +90,7 @@ func (ch *ClickHouse) GetTables() ([]Table, error) {
 	return tables, nil
 }
 
-// FreezeTable - freze all partitions for table
+// FreezeTable - freeze all partitions for table
 func (ch *ClickHouse) FreezeTable(table Table) error {
 	var partitions []struct {
 		PartitionID string `db:"partition_id"`
@@ -102,7 +102,7 @@ func (ch *ClickHouse) FreezeTable(table Table) error {
 	log.Printf("Freeze '%v.%v'", table.Database, table.Name)
 	for _, item := range partitions {
 		if ch.DryRun {
-			log.Printf("  partition '%v'   ...skip becouse dry-run", item.PartitionID)
+			log.Printf("  partition '%v'   ...skip because dry-run", item.PartitionID)
 			continue
 		}
 		log.Printf("  partition '%v'", item.PartitionID)
@@ -126,13 +126,13 @@ func (ch *ClickHouse) FreezeTable(table Table) error {
 				table.Name,
 				item.PartitionID,
 			)); err != nil {
-			return fmt.Errorf("can't freze partiotion '%s' on '%s.%s' with: %v", item.PartitionID, table.Database, table.Name, err)
+			return fmt.Errorf("can't freeze partition '%s' on '%s.%s' with: %v", item.PartitionID, table.Database, table.Name, err)
 		}
 	}
 	return nil
 }
 
-// GetBackupTables - returns list of backups of tables can be restored
+// GetBackupTables - return list of backups of tables that can be restored
 func (ch *ClickHouse) GetBackupTables() (map[string]BackupTable, error) {
 	dataPath, err := ch.GetDataPath()
 	if err != nil {
@@ -207,10 +207,10 @@ func (ch *ClickHouse) Chown(name string) error {
 // CopyData - copy partitions for specific table to detached folder
 func (ch *ClickHouse) CopyData(table BackupTable) error {
 	if ch.DryRun {
-		log.Printf("copy %s.%s inscrement %d  ...scip dry-run", table.Database, table.Name, table.Increment)
+		log.Printf("copy %s.%s increment %d  ...skip dry-run", table.Database, table.Name, table.Increment)
 		return nil
 	}
-	log.Printf("copy %s.%s inscrement %d", table.Database, table.Name, table.Increment)
+	log.Printf("copy %s.%s increment %d", table.Database, table.Name, table.Increment)
 	dataPath, err := ch.GetDataPath()
 	if err != nil {
 		return err
@@ -223,7 +223,7 @@ func (ch *ClickHouse) CopyData(table BackupTable) error {
 				return fmt.Errorf("%v", err)
 			}
 		} else if !info.IsDir() {
-			return fmt.Errorf("'%s' must be not exists", detachedPath)
+			return fmt.Errorf("'%s' should be directory or absent", detachedPath)
 		}
 		if err := filepath.Walk(partition.Path, func(filePath string, info os.FileInfo, err error) error {
 			if err != nil {
@@ -258,7 +258,7 @@ func (ch *ClickHouse) CopyData(table BackupTable) error {
 			}
 			return ch.Chown(dstFilePath)
 		}); err != nil {
-			return err
+			return fmt.Errorf("Error during filepath.Walk for partition %s: %v", partition.Path, err)
 		}
 	}
 	return nil
