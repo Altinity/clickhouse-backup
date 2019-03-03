@@ -59,6 +59,7 @@ s3:
   # "skip" - the fastest but can make backup inconsistently
   # "etag" - calculate etag for local files, set this if your network is very slow
   overwrite_strategy: "always"
+  part_size: 5242880
 backup:
   strategy: tree
   backups_to_keep: 0
