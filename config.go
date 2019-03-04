@@ -28,6 +28,7 @@ type S3Config struct {
 	DisableSSL         bool   `yaml:"disable_ssl"`
 	DisableProgressBar bool   `yaml:"disable_progress_bar"`
 	OverwriteStrategy  string `yaml:"overwrite_strategy"`
+	PartSize           int64  `yaml:"part_size"`
 }
 
 // ClickHouseConfig - clickhouse settings section
@@ -95,10 +96,11 @@ func defaultConfig() *Config {
 			DisableSSL:        false,
 			ACL:               "private",
 			OverwriteStrategy: "always",
+			PartSize:          5 * 1024 * 1024,
 		},
 		Backup: BackupConfig{
 			Strategy:      "tree",
-			BackupsToKeep: 10,
+			BackupsToKeep: 0,
 		},
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"time"
 )
 
+// TarDirs - add bunch of directories to tarball
 func TarDirs(w io.Writer, dirs ...string) error {
 	tw := tarArchive.NewWriter(w)
 	defer tw.Close()
@@ -23,6 +24,7 @@ func TarDirs(w io.Writer, dirs ...string) error {
 	return nil
 }
 
+// TarDir - add directory to tarball
 func TarDir(tw *tarArchive.Writer, dir string) error {
 	return tarDir(tw, dir)
 }
@@ -50,7 +52,7 @@ func tarDir(tw *tarArchive.Writer, dir string) (err error) {
 		return fmt.Errorf("unable to tar files - %v", err.Error())
 	}
 	if !fi.IsDir() {
-		return fmt.Errorf("data path is not a directory - %v", err.Error())
+		return fmt.Errorf("data path is not a directory - %s", dir)
 	}
 
 	seen := make(map[devino]string)
@@ -101,33 +103,35 @@ func tarDir(tw *tarArchive.Writer, dir string) (err error) {
 		if err != nil {
 			return err
 		}
+		defer f.Close()
 
 		io.Copy(tw, f)
-
-		f.Close()
 
 		seen[di] = filename
 		nFiles++
 
 		return nil
 	})
-	return nil
 }
 
-func Untar(r io.Reader, dir string) (err error) {
+// Untar - extract contents of tarball to specified destination
+func Untar(r io.Reader, extractDir string) (err error) {
 	t0 := time.Now()
 	nFiles := 0
 	madeDir := map[string]bool{}
 	defer func() {
 		td := time.Since(t0)
 		if err == nil {
-			log.Printf("extracted tarball into %s: %d files, %d dirs (%v)", dir, nFiles, len(madeDir), td)
+			log.Printf("extracted tarball into %s: %d files, %d dirs (%v)", extractDir, nFiles, len(madeDir), td)
 		} else {
-			log.Printf("error extracting tarball into %s after %d files, %d dirs, %v: %v", dir, nFiles, len(madeDir), td, err)
+			log.Printf("error extracting tarball into %s after %d files, %d dirs, %v: %v", extractDir, nFiles, len(madeDir), td, err)
 		}
 	}()
 	tr := tarArchive.NewReader(r)
 	loggedChtimesError := false
+
+	seen := make(map[string]string)
+
 	for {
 		f, err := tr.Next()
 		if err == io.EOF {
@@ -140,8 +144,9 @@ func Untar(r io.Reader, dir string) (err error) {
 		if !validRelPath(f.Name) {
 			return fmt.Errorf("tar contained invalid name error %q", f.Name)
 		}
+
 		rel := filepath.FromSlash(f.Name)
-		abs := filepath.Join(dir, rel)
+		abs := filepath.Join(extractDir, rel)
 
 		fi := f.FileInfo()
 		mode := fi.Mode()
@@ -158,6 +163,13 @@ func Untar(r io.Reader, dir string) (err error) {
 				}
 				madeDir[dir] = true
 			}
+
+			if f.Size == 0 && f.Linkname != "" {
+				// this is a hard link for another file. save it and create at the end
+				seen[abs] = filepath.Join(extractDir, f.Linkname)
+				continue
+			}
+
 			wf, err := os.OpenFile(abs, os.O_RDWR|os.O_CREATE|os.O_TRUNC, mode.Perm())
 			if err != nil {
 				return err
@@ -199,6 +211,12 @@ func Untar(r io.Reader, dir string) (err error) {
 			madeDir[abs] = true
 		default:
 			return fmt.Errorf("tar file entry %s contained unsupported file type %v", f.Name, mode)
+		}
+	}
+
+	for abs, target := range seen {
+		if err := os.Link(target, abs); err != nil {
+			return fmt.Errorf("failed to create hard link from %s to %s: %v", abs, target, err)
 		}
 	}
 	return nil

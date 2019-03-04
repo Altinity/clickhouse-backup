@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"path"
@@ -24,7 +23,7 @@ type ClickHouse struct {
 	gid    *int
 }
 
-// Table - table struct
+// Table - Clickhouse table struct
 type Table struct {
 	Database     string `db:"database"`
 	Name         string `db:"name"`
@@ -33,13 +32,13 @@ type Table struct {
 	IsTemporary  bool   `db:"is_temporary"`
 }
 
-// BackupPartition -
+// BackupPartition - struct representing Clickhouse partition
 type BackupPartition struct {
 	Name string
 	Path string
 }
 
-// BackupTable -
+// BackupTable - struct to store additional information on partitions
 type BackupTable struct {
 	Increment  int
 	Database   string
@@ -48,10 +47,30 @@ type BackupTable struct {
 	Path       string
 }
 
+// RestoreTable - struct to store information needed during restore
+type RestoreTable struct {
+	Database string
+	Query    string
+}
+
 // Connect - connect to clickhouse
 func (ch *ClickHouse) Connect() error {
 	connectionString := fmt.Sprintf("tcp://%v:%v?username=%v&password=%v&compress=true",
 		ch.Config.Host, ch.Config.Port, ch.Config.Username, ch.Config.Password)
+	var err error
+	if ch.conn, err = sqlx.Open("clickhouse", connectionString); err != nil {
+		return err
+	}
+	return ch.conn.Ping()
+}
+
+// ConnectDatabase - connect to clickhouse to specified database
+func (ch *ClickHouse) ConnectDatabase(database string) error {
+	if database == "" {
+		database = "default"
+	}
+	connectionString := fmt.Sprintf("tcp://%v:%v?username=%v&password=%v&database=%v&compress=true",
+		ch.Config.Host, ch.Config.Port, ch.Config.Username, ch.Config.Password, database)
 	var err error
 	if ch.conn, err = sqlx.Open("clickhouse", connectionString); err != nil {
 		return err
@@ -90,7 +109,7 @@ func (ch *ClickHouse) GetTables() ([]Table, error) {
 	return tables, nil
 }
 
-// FreezeTable - freze all partitions for table
+// FreezeTable - freeze all partitions for table
 func (ch *ClickHouse) FreezeTable(table Table) error {
 	var partitions []struct {
 		PartitionID string `db:"partition_id"`
@@ -102,7 +121,7 @@ func (ch *ClickHouse) FreezeTable(table Table) error {
 	log.Printf("Freeze '%v.%v'", table.Database, table.Name)
 	for _, item := range partitions {
 		if ch.DryRun {
-			log.Printf("  partition '%v'   ...skip becouse dry-run", item.PartitionID)
+			log.Printf("  partition '%v'   ...skip because dry-run", item.PartitionID)
 			continue
 		}
 		log.Printf("  partition '%v'", item.PartitionID)
@@ -126,13 +145,13 @@ func (ch *ClickHouse) FreezeTable(table Table) error {
 				table.Name,
 				item.PartitionID,
 			)); err != nil {
-			return fmt.Errorf("can't freze partiotion '%s' on '%s.%s' with: %v", item.PartitionID, table.Database, table.Name, err)
+			return fmt.Errorf("can't freeze partition '%s' on '%s.%s' with: %v", item.PartitionID, table.Database, table.Name, err)
 		}
 	}
 	return nil
 }
 
-// GetBackupTables - returns list of backups of tables can be restored
+// GetBackupTables - return list of backups of tables that can be restored
 func (ch *ClickHouse) GetBackupTables() (map[string]BackupTable, error) {
 	dataPath, err := ch.GetDataPath()
 	if err != nil {
@@ -205,103 +224,141 @@ func (ch *ClickHouse) Chown(name string) error {
 }
 
 // CopyData - copy partitions for specific table to detached folder
-func (ch *ClickHouse) CopyData(table BackupTable) error {
+func (ch *ClickHouse) CopyData(table BackupTable, move bool) error {
 	if ch.DryRun {
-		log.Printf("copy %s.%s inscrement %d  ...scip dry-run", table.Database, table.Name, table.Increment)
+		log.Printf("copy %s.%s increment %d  ...skip dry-run", table.Database, table.Name, table.Increment)
 		return nil
 	}
-	log.Printf("copy %s.%s inscrement %d", table.Database, table.Name, table.Increment)
+	log.Printf("copy %s.%s increment %d", table.Database, table.Name, table.Increment)
 	dataPath, err := ch.GetDataPath()
 	if err != nil {
 		return err
 	}
+
+	detachedParentDir := filepath.Join(dataPath, "data", table.Database, table.Name, "detached")
+	os.MkdirAll(detachedParentDir, 0750)
+	ch.Chown(detachedParentDir)
+
 	for _, partition := range table.Partitions {
-		detachedPath := filepath.Join(dataPath, "data", table.Database, table.Name, "detached", partition.Name)
+		detachedPath := filepath.Join(detachedParentDir, partition.Name)
 		info, err := os.Stat(detachedPath)
 		if err != nil {
-			if !os.IsNotExist(err) {
-				return fmt.Errorf("%v", err)
+			if os.IsNotExist(err) {
+				// partition dir does not exist, creating
+				os.MkdirAll(detachedPath, 0750)
+			} else {
+				return err
 			}
 		} else if !info.IsDir() {
-			return fmt.Errorf("'%s' must be not exists", detachedPath)
+			return fmt.Errorf("'%s' should be directory or absent", detachedPath)
 		}
+		ch.Chown(detachedPath)
+
+		log.Printf("Walking through partition %s", partition.Path)
 		if err := filepath.Walk(partition.Path, func(filePath string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err
 			}
-			filePath = filepath.ToSlash(filePath) // fix fucking Windows slashes
-			srcFileStat, err := os.Stat(filePath)
-			if err != nil {
-				return err
-			}
+			filePath = filepath.ToSlash(filePath) // fix Windows slashes
 			filename := strings.Trim(strings.TrimPrefix(filePath, partition.Path), "/")
 			dstFilePath := filepath.Join(detachedPath, filename)
-			if srcFileStat.IsDir() {
+			if info.IsDir() {
+				log.Printf("Creating directory %s", dstFilePath)
 				os.MkdirAll(dstFilePath, 0750)
 				return ch.Chown(dstFilePath)
 			}
-			if !srcFileStat.Mode().IsRegular() {
-				return fmt.Errorf("'%s' is not a regular file", filePath)
+			if !info.Mode().IsRegular() {
+				log.Printf("'%s' is not a regular file, skipping.", filePath)
+				return nil
 			}
-			srcFile, err := os.Open(filePath)
-			if err != nil {
-				return err
-			}
-			defer srcFile.Close()
-			dstFile, err := os.Create(dstFilePath)
-			if err != nil {
-				return err
-			}
-			defer dstFile.Close()
-			if _, err = io.Copy(dstFile, srcFile); err != nil {
-				return err
+			if move {
+				err := moveFile(filePath, dstFilePath)
+				if err != nil {
+					return fmt.Errorf("Failed to move %s file: %v", filePath, err)
+				}
+			} else {
+				err := copyFile(filePath, dstFilePath)
+				if err != nil {
+					return fmt.Errorf("Failed to copy %s file: %v", filePath, err)
+				}
 			}
 			return ch.Chown(dstFilePath)
 		}); err != nil {
-			return err
+			return fmt.Errorf("Error during filepath.Walk for partition %s: %v", partition.Path, err)
 		}
 	}
 	return nil
 }
 
-func convertPartition(deatachedTableFoler string, deprecatedCreation bool) string {
-	// TODO: rewrite this magic
-	begin := strings.Split(deatachedTableFoler, "_")[0]
+func convertPartition(detachedTableFolder string, deprecatedCreation bool) (string, error) {
+	// TODO: need tests
+	begin := strings.Split(detachedTableFolder, "_")[0]
 	if begin == "all" {
+		// table is not partitioned at all
 		// ENGINE = MergeTree ORDER BY id
-		return "tuple()"
+		return "tuple()", nil
 	}
 	if deprecatedCreation {
-		// Deprecated Method for Creating a Table
+		// legacy partitioning based on month: toYYYYMM(date_column)
+		// in this case we return YYYYMM
 		// ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)
-		return begin[:6]
+		if len(begin) < 6 {
+			return "", fmt.Errorf("deprecated type of partitioning was requested, but partition name of table does not correspond that")
+		}
+		return begin[:6], nil
 	}
-	// ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp
-	return fmt.Sprintf("toDate('%s-%s-%s')", begin[:4], begin[4:6], begin[6:])
-
+	// in case a custom partitioning key is used this is a partition name
+	// same as in system.parts table, it may be used in ALTER TABLE queries
+	// https://clickhouse.yandex/docs/en/operations/table_engines/custom_partitioning_key/
+	return begin, nil
 }
 
 // AttachPatritions - execute ATTACH command for specific table
 func (ch *ClickHouse) AttachPatritions(table BackupTable, deprecatedCreation bool) error {
 	// TODO: need tests
-	partitionName := convertPartition(table.Partitions[0].Name, deprecatedCreation)
+	partitionName, err := convertPartition(table.Partitions[0].Name, deprecatedCreation)
+	if err != nil {
+		return err
+	}
 	if ch.DryRun {
-		log.Printf("ATTACH partition '%s' for %s.%s increment %d ...skip dry-run", partitionName, table.Database, table.Name, table.Increment)
+		log.Printf("Attach partition '%s' for %s.%s increment %d ...skip dry-run", partitionName, table.Database, table.Name, table.Increment)
 		return nil
 	}
-	log.Printf("ATTACH partitions for %s.%s increment %d", table.Database, table.Name, table.Increment)
-	if _, err := ch.conn.Exec(fmt.Sprintf("ALTER TABLE %v.%v ATTACH PARTITION %s", table.Database, table.Name, partitionName)); err != nil {
-		return fmt.Errorf("can't attach partitions for \"%s.%s\" with %v", table.Database, table.Name, err)
+	log.Printf("Attach partitions for %s.%s increment %d:", table.Database, table.Name, table.Increment)
+	query := fmt.Sprintf("ALTER TABLE %v.%v ATTACH PARTITION %s", table.Database, table.Name, partitionName)
+	log.Printf(query)
+	if _, err := ch.conn.Exec(query); err != nil {
+		return err
 	}
 	return nil
 }
 
 // CreateDatabase - create specific database from metadata in backup folder
 func (ch *ClickHouse) CreateDatabase(database string) error {
+	createQuery := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", database)
+	if ch.DryRun {
+		log.Printf("DRY-RUN: creating database with query: %s", createQuery)
+		return nil
+	}
+	log.Printf("Creating database %s", database)
+	_, err := ch.conn.Exec(createQuery)
+	if err != nil {
+		return fmt.Errorf("can't create database: %v", err)
+	}
 	return nil
 }
 
 // CreateTable - create specific table from metadata in backup folder
-func (ch *ClickHouse) CreateTable(query string) error {
+func (ch *ClickHouse) CreateTable(table RestoreTable) error {
+	if ch.DryRun {
+		log.Printf("DRY-RUN: creating table with query: %s", table.Query)
+		return nil
+	}
+	ch.ConnectDatabase(table.Database)
+	log.Printf("Creating table:\n%s", table.Query)
+	_, err := ch.conn.Exec(table.Query)
+	if err != nil {
+		return fmt.Errorf("can't create table: %v", err)
+	}
 	return nil
 }

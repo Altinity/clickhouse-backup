@@ -19,11 +19,6 @@ import (
 	pb "gopkg.in/cheggaaa/pb.v1"
 )
 
-const (
-	// PART_SIZE - default s3 part size for calculing ETag
-	PART_SIZE = 5 * 1024 * 1024
-)
-
 // S3 - presents methods for manipulate data on s3
 type S3 struct {
 	session *session.Session
@@ -45,7 +40,7 @@ func (s *S3) Connect() (err error) {
 	return
 }
 
-// Upload - synchronize localPath to dstPath on s3
+// UploadDirectory - synchronize localPath to dstPath on s3
 func (s *S3) UploadDirectory(localPath string, dstPath string) error {
 	// TODO: it must be refactored like as Download() method
 	iter, filesForDelete, err := s.newSyncFolderIterator(localPath, dstPath)
@@ -60,7 +55,7 @@ func (s *S3) UploadDirectory(localPath string, dstPath string) error {
 	}
 
 	uploader := s3manager.NewUploader(s.session)
-	uploader.PartSize = PART_SIZE
+	uploader.PartSize = config.S3.PartSize
 	var errs []s3manager.Error
 	for iter.Next() {
 		object := iter.UploadObject()
@@ -114,11 +109,11 @@ func (s *S3) UploadDirectory(localPath string, dstPath string) error {
 	return nil
 }
 
-// Upload - synchronize localPath to dstPath on s3
+// UploadFile - synchronize localPath to dstPath on s3
 func (s *S3) UploadFile(localPath string, dstPath string) error {
 
 	uploader := s3manager.NewUploader(s.session)
-	uploader.PartSize = PART_SIZE
+	uploader.PartSize = config.S3.PartSize
 
 	file, err := os.Open(localPath)
 	if err != nil {
@@ -139,7 +134,7 @@ func (s *S3) UploadFile(localPath string, dstPath string) error {
 	return nil
 }
 
-// Download - download files from s3Path to localPath
+// DownloadTree - download files from s3Path to localPath
 func (s *S3) DownloadTree(s3Path string, localPath string) error {
 	if err := os.MkdirAll(localPath, 0755); err != nil {
 		return fmt.Errorf("can't create '%s' with: %v", localPath, err)
@@ -166,7 +161,7 @@ func (s *S3) DownloadTree(s3Path string, localPath string) error {
 				case "skip":
 					continue
 				case "etag":
-					if s3File.etag == GetEtag(existsFile.fullpath) {
+					if s3File.etag == GetEtag(existsFile.fullpath, s.Config.PartSize) {
 						continue
 					}
 				}
@@ -198,7 +193,7 @@ func (s *S3) DownloadTree(s3Path string, localPath string) error {
 	return nil
 }
 
-// Download - download files from s3Path to localPath
+// DownloadArchive - download files from s3Path to localPath
 func (s *S3) DownloadArchive(s3Path string, localPath string) error {
 	if err := os.MkdirAll(localPath, 0755); err != nil {
 		return fmt.Errorf("can't create '%s' with: %v", localPath, err)
@@ -317,7 +312,7 @@ func (s *S3) newSyncFolderIterator(localPath, dstPath string) (*SyncFolderIterat
 						skipFilesCount++
 						return nil
 					case "etag":
-						if existFile.etag == GetEtag(filePath) {
+						if existFile.etag == GetEtag(filePath, s.Config.PartSize) {
 							// log.Printf("File '%s' already uploaded and has the same size and etag. Skip", key)
 							skipFilesCount++
 							return nil
@@ -399,27 +394,27 @@ func (iter *SyncFolderIterator) UploadObject() s3manager.BatchUploadObject {
 }
 
 // GetEtag - calculate ETag for file
-func GetEtag(path string) string {
+func GetEtag(path string, partSize int64) string {
 	content, err := ioutil.ReadFile(path)
 	if err != nil {
 		return "unknown"
 	}
-	size := len(content)
-	if size <= PART_SIZE {
+	size := int64(len(content))
+	if size <= partSize {
 		hash := md5.Sum(content)
 		return fmt.Sprintf("\"%x\"", hash)
 	}
 	parts := 0
-	pos := 0
+	var pos int64
 	contentToHash := make([]byte, 0)
 	for size > pos {
-		endpos := pos + PART_SIZE
+		endpos := pos + partSize
 		if endpos >= size {
 			endpos = size
 		}
 		hash := md5.Sum(content[pos:endpos])
 		contentToHash = append(contentToHash, hash[:]...)
-		pos += PART_SIZE
+		pos += partSize
 		parts++
 	}
 	hash := md5.Sum(contentToHash)
@@ -438,7 +433,7 @@ func (s *S3) ListObjects(s3Path string) ([]*s3.Object, error) {
 	return resp.Contents, nil
 }
 
-// ListObjects - get list of objects from s3
+// DeleteObjects - delete list of objects from s3
 func (s *S3) DeleteObjects(objects []*s3.Object) error {
 	batcher := s3manager.NewBatchDelete(s.session)
 	batchObjects := make([]s3manager.BatchDeleteObject, len(objects))

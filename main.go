@@ -2,13 +2,15 @@ package main
 
 import (
 	"fmt"
-	"github.com/urfave/cli"
 	"io/ioutil"
 	"log"
 	"os"
 	"path"
 	"path/filepath"
 	"sort"
+	"strings"
+
+	"github.com/urfave/cli"
 )
 
 var config *Config
@@ -83,9 +85,9 @@ func main() {
 		},
 		{
 			Name:  "create-tables",
-			Usage: "NOT IMPLEMENTED! Create tables from backup metadata",
+			Usage: "Create databases and tables from backup metadata",
 			Action: func(c *cli.Context) error {
-				return fmt.Errorf("NOT IMPLEMENTED!")
+				return createTables(*config, c.Args(), c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
 			Flags: cliapp.Flags,
 		},
@@ -93,7 +95,7 @@ func main() {
 			Name:  "restore",
 			Usage: "Copy data from 'backup' to 'detached' folder and execute ATTACH. You can specify tables [db].[table] and increments via -i flag",
 			Action: func(c *cli.Context) error {
-				return restore(*config, c.Args(), c.Bool("dry-run") || c.GlobalBool("dry-run"), c.IntSlice("i"), c.Bool("d"))
+				return restore(*config, c.Args(), c.Bool("dry-run") || c.GlobalBool("dry-run"), c.IntSlice("i"), c.Bool("d"), c.Bool("m"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.IntSliceFlag{
@@ -104,6 +106,11 @@ func main() {
 					Name:   "deprecated, d",
 					Hidden: false,
 					Usage:  "Set this flag if Table was created of deprecated method: ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)",
+				},
+				cli.BoolFlag{
+					Name:   "move, m",
+					Hidden: false,
+					Usage:  "Set this flag to move backup data during partition attach instead of copy. This will reduce disk usage.",
 				},
 			),
 		},
@@ -196,6 +203,96 @@ func getTables(config Config, args []string) error {
 	return nil
 }
 
+func createTables(config Config, args []string, dryRun bool) error {
+	ch := &ClickHouse{
+		DryRun: dryRun,
+		Config: &config.ClickHouse,
+	}
+
+	if err := ch.Connect(); err != nil {
+		return fmt.Errorf("can't connect to clickouse with: %v", err)
+	}
+	defer ch.Close()
+
+	dataPath := config.ClickHouse.DataPath
+	if dataPath == "" {
+		if err := ch.Connect(); err != nil {
+			return fmt.Errorf("can't connect to clickhouse for get data path with: %v\nyou can set clickhouse.data_path in config", err)
+		}
+		defer ch.Close()
+		var err error
+		if dataPath, err = ch.GetDataPath(); err != nil || dataPath == "" {
+			return fmt.Errorf("can't get data path from clickhouse with: %v\nyou can set data_path in config file", err)
+		}
+	}
+	log.Printf("Found clickhouse data path: %s", dataPath)
+
+	metadataPath := path.Join(dataPath, "backup", "metadata")
+	log.Printf("Will analyze restored metadata from here: %s", metadataPath)
+
+	// for each dir in metadataPath (database name)
+	// except system execute scripts
+	files, err := ioutil.ReadDir(metadataPath)
+	if err != nil {
+		return fmt.Errorf("can't read metadata directory for creating tables: %v", err)
+	}
+
+	var distributedTables []RestoreTable
+	for _, file := range files {
+		if file.IsDir() {
+			databaseName := file.Name()
+			if databaseName == "system" {
+				// do not touch system database
+				continue
+			}
+			log.Printf("Found metadata files for database: %s", databaseName)
+			ch.CreateDatabase(databaseName)
+			databaseDir := path.Join(metadataPath, databaseName)
+			log.Printf("Will analyze table information from here: %s", databaseDir)
+			tableFiles, err := ioutil.ReadDir(databaseDir)
+			if err != nil {
+				return fmt.Errorf("can't read database directory in metadata dir: %v", err)
+			}
+			for _, table := range tableFiles {
+				if strings.HasSuffix(table.Name(), "sql") {
+					tablePath := path.Join(databaseDir, table.Name())
+					log.Printf("Found table: %s", tablePath)
+					dat, err := ioutil.ReadFile(tablePath)
+					if err != nil {
+						return fmt.Errorf("can't read file %s: %v", tablePath, err)
+					}
+					tableCreateQuery := strings.Replace(string(dat), "ATTACH", "CREATE", 1)
+
+					if strings.Contains(tableCreateQuery, "ENGINE = Distributed") {
+						// distributed engine tables should be created last
+						// because they are based on real tables
+						log.Printf("This is a distributed table, saving for later")
+						distributedTables = append(distributedTables, RestoreTable{
+							Database: databaseName,
+							Query:    tableCreateQuery,
+						})
+					} else {
+						if err := ch.CreateTable(RestoreTable{
+							Database: databaseName,
+							Query:    tableCreateQuery,
+						}); err != nil {
+							log.Printf("ERROR Table creation failed: %v", err)
+							// continue to other tables
+						}
+					}
+				}
+			}
+		}
+	}
+	log.Printf("Creating distributed tables")
+	for _, table := range distributedTables {
+		if err := ch.CreateTable(table); err != nil {
+			log.Printf("ERROR Table creation failed: %v", err) // continue to other tables
+		}
+	}
+	return nil
+}
+
 func freeze(config Config, args []string, dryRun bool) error {
 	ch := &ClickHouse{
 		DryRun: dryRun,
@@ -227,7 +324,7 @@ func freeze(config Config, args []string, dryRun bool) error {
 	return nil
 }
 
-func restore(config Config, args []string, dryRun bool, increments []int, deprecatedCreation bool) error {
+func restore(config Config, args []string, dryRun bool, increments []int, deprecatedCreation bool, move bool) error {
 	ch := &ClickHouse{
 		DryRun: dryRun,
 		Config: &config.ClickHouse,
@@ -245,11 +342,11 @@ func restore(config Config, args []string, dryRun bool, increments []int, deprec
 		return err
 	}
 	if len(restoreTables) == 0 {
-		return fmt.Errorf("no have tables for restore")
+		return fmt.Errorf("didn't find tables to restore")
 	}
 	for _, table := range restoreTables {
 		// TODO: Use move instead copy
-		if err := ch.CopyData(table); err != nil {
+		if err := ch.CopyData(table, move); err != nil {
 			return fmt.Errorf("can't restore %s.%s increment %d with %v", table.Database, table.Name, table.Increment, err)
 		}
 		if err := ch.AttachPatritions(table, deprecatedCreation); err != nil {
@@ -403,7 +500,7 @@ func downloadArchive(s3 *S3, dataPath string, filename string) error {
 		return fmt.Errorf("error opening archive: %v", err)
 	}
 	if err := Untar(archiveFile, dstPath); err != nil {
-		return fmt.Errorf("error unarchiving %v", err)
+		return fmt.Errorf("error unarchiving: %v", err)
 	}
 	return nil
 }
@@ -454,6 +551,10 @@ func cleanDir(dir string) error {
 }
 
 func removeOldBackups(config Config, s3 *S3) error {
+	if config.Backup.BackupsToKeep < 1 {
+		log.Printf("Cleaning old backups is not enabled.")
+		return nil
+	}
 	objects, err := s3.ListObjects(config.S3.Path)
 	if err != nil {
 		return err
