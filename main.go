@@ -214,16 +214,9 @@ func createTables(config Config, args []string, dryRun bool) error {
 	}
 	defer ch.Close()
 
-	dataPath := config.ClickHouse.DataPath
-	if dataPath == "" {
-		if err := ch.Connect(); err != nil {
-			return fmt.Errorf("can't connect to clickhouse for get data path with: %v\nyou can set clickhouse.data_path in config", err)
-		}
-		defer ch.Close()
-		var err error
-		if dataPath, err = ch.GetDataPath(); err != nil || dataPath == "" {
-			return fmt.Errorf("can't get data path from clickhouse with: %v\nyou can set data_path in config file", err)
-		}
+	dataPath, err := ch.GetDataPath()
+	if err != nil || dataPath == "" {
+		return fmt.Errorf("can't get data path from clickhouse with: %v\nyou can set data_path in config file", err)
 	}
 	log.Printf("Found clickhouse data path: %s", dataPath)
 
@@ -304,16 +297,33 @@ func freeze(config Config, args []string, dryRun bool) error {
 	}
 	defer ch.Close()
 
+	dataPath, err := ch.GetDataPath()
+	if err != nil || dataPath == "" {
+		return fmt.Errorf("can't get data path from clickhouse with: %v\nyou can set data_path in config file", err)
+	}
+	log.Printf("Found clickhouse data path: %s", dataPath)
+
+	shadowPath := filepath.Join(dataPath, "shadow")
+	files, err := ioutil.ReadDir(shadowPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("can't read %s directory: %v", shadowPath, err)
+		}
+	} else if len(files) > 0 {
+		return fmt.Errorf("%s is not empty, won't execute freeze", shadowPath)
+	}
+
 	allTables, err := ch.GetTables()
 	if err != nil {
-		return fmt.Errorf("can't get tables with: %v", err)
+		return fmt.Errorf("can't get Clickhouse tables with: %v", err)
 	}
 	backupTables, err := parseArgsForFreeze(allTables, args)
 	if err != nil {
 		return err
 	}
 	if len(backupTables) == 0 {
-		return fmt.Errorf("no have tables for backup")
+		log.Printf("There are no tables in Clickhouse, create something to freeze.")
+		return nil
 	}
 	for _, table := range backupTables {
 		err := ch.FreezeTable(table)
@@ -342,10 +352,10 @@ func restore(config Config, args []string, dryRun bool, increments []int, deprec
 		return err
 	}
 	if len(restoreTables) == 0 {
-		return fmt.Errorf("didn't find tables to restore")
+		log.Printf("Backup doesn't have tables to restore, nothing to do.")
+		return nil
 	}
 	for _, table := range restoreTables {
-		// TODO: Use move instead copy
 		if err := ch.CopyData(table, move); err != nil {
 			return fmt.Errorf("can't restore %s.%s increment %d with %v", table.Database, table.Name, table.Increment, err)
 		}
