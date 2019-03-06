@@ -522,29 +522,14 @@ func clean(config Config, dryRun bool) error {
 		}
 	}
 	shadowDir := path.Join(dataPath, "shadow")
+	if _, err := os.Stat(shadowDir); os.IsNotExist(err) {
+		log.Printf("%s directory does not exist, nothing to do", shadowDir)
+		return nil
+	}
 	log.Printf("remove contents from directory %v", shadowDir)
 	if !dryRun {
 		if err := cleanDir(shadowDir); err != nil {
 			return fmt.Errorf("can't remove contents from directory %v: %v", shadowDir, err)
-		}
-	}
-	return nil
-}
-
-func cleanDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	names, err := d.Readdirnames(-1)
-	if err != nil {
-		return err
-	}
-	for _, name := range names {
-		err = os.RemoveAll(filepath.Join(dir, name))
-		if err != nil {
-			return err
 		}
 	}
 	return nil
