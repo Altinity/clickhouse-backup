@@ -13,7 +13,21 @@ jobs:
       - persist_to_workspace:
           root: .
           paths:
+            - clickhouse-backup
             - clickhouse-backup.tar.gz
+
+  integration-test:
+    docker:
+      - image: circleci/golang:1.11
+    steps:
+      - checkout
+      - setup_remote_docker
+      - attach_workspace:
+          at: clickhouse-backup
+      - curl -L https://github.com/docker/compose/releases/download/1.23.2/docker-compose-`uname -s`-`uname -m` -o /usr/local/bin/docker-compose
+      - chmod +x /usr/local/bin/docker-compose
+      - /usr/local/bin/docker-compose -f integration-test/docker-compose.yml up --detach
+      - go test -tags integration
 
   publish-master:
     docker:
@@ -38,15 +52,18 @@ workflows:
   main:
     jobs:
       - build
-      - publish-master:
+      - integration-test:
           requires:
             - build
+      - publish-master:
+          requires:
+            - integration-test
           filters:
             branches:
               only: master
       - publish-release:
           requires:
-            - build
+            - integration-test
           filters:
             tags:
               only: /^v\d+\.\d+\.\d+$/

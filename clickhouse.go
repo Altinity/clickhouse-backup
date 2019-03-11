@@ -125,26 +125,18 @@ func (ch *ClickHouse) FreezeTable(table Table) error {
 			continue
 		}
 		log.Printf("  partition '%v'", item.PartitionID)
-		// TODO: find out this magic
+		query := fmt.Sprintf(
+			"ALTER TABLE %v.%v FREEZE PARTITION ID '%v';",
+			table.Database,
+			table.Name,
+			item.PartitionID)
 		if item.PartitionID == "all" {
-			item.PartitionID = "tuple()"
-		}
-		if _, err := ch.conn.Exec(
-			fmt.Sprintf(
-				"ALTER TABLE %v.%v FREEZE PARTITION %v;",
+			query = fmt.Sprintf(
+				"ALTER TABLE %v.%v FREEZE PARTITION tuple();",
 				table.Database,
-				table.Name,
-				item.PartitionID,
-			)); err == nil {
-			continue
+				table.Name)
 		}
-		if _, err := ch.conn.Exec(
-			fmt.Sprintf(
-				"ALTER TABLE %v.%v FREEZE PARTITION '%v';",
-				table.Database,
-				table.Name,
-				item.PartitionID,
-			)); err != nil {
+		if _, err := ch.conn.Exec(query); err != nil {
 			return fmt.Errorf("can't freeze partition '%s' on '%s.%s' with: %v", item.PartitionID, table.Database, table.Name, err)
 		}
 	}
@@ -290,42 +282,33 @@ func (ch *ClickHouse) CopyData(table BackupTable, move bool) error {
 	return nil
 }
 
-func convertPartition(detachedTableFolder string, deprecatedCreation bool) (string, error) {
-	// TODO: need tests
-	begin := strings.Split(detachedTableFolder, "_")[0]
-	if begin == "all" {
+func convertPartition(detachedTableFolder string) string {
+	parts := strings.Split(detachedTableFolder, "_")
+	if parts[0] == "all" {
 		// table is not partitioned at all
 		// ENGINE = MergeTree ORDER BY id
-		return "tuple()", nil
+		return "tuple()"
 	}
-	if deprecatedCreation {
+	if len(parts) == 5 {
 		// legacy partitioning based on month: toYYYYMM(date_column)
 		// in this case we return YYYYMM
 		// ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)
-		if len(begin) < 6 {
-			return "", fmt.Errorf("deprecated type of partitioning was requested, but partition name of table does not correspond that")
-		}
-		return begin[:6], nil
+		return parts[0][:6]
 	}
 	// in case a custom partitioning key is used this is a partition name
 	// same as in system.parts table, it may be used in ALTER TABLE queries
 	// https://clickhouse.yandex/docs/en/operations/table_engines/custom_partitioning_key/
-	return begin, nil
+	return fmt.Sprintf("ID '%s'", parts[0])
 }
 
 // AttachPatritions - execute ATTACH command for specific table
-func (ch *ClickHouse) AttachPatritions(table BackupTable, deprecatedCreation bool) error {
-	// TODO: need tests
-	partitionName, err := convertPartition(table.Partitions[0].Name, deprecatedCreation)
-	if err != nil {
-		return err
-	}
+func (ch *ClickHouse) AttachPatritions(table BackupTable) error {
 	if ch.DryRun {
-		log.Printf("Attach partition '%s' for %s.%s increment %d ...skip dry-run", partitionName, table.Database, table.Name, table.Increment)
+		log.Printf("Attach partition '%s' for %s.%s increment %d ...skip dry-run", table.Partitions[0].Name, table.Database, table.Name, table.Increment)
 		return nil
 	}
 	log.Printf("Attach partitions for %s.%s increment %d:", table.Database, table.Name, table.Increment)
-	query := fmt.Sprintf("ALTER TABLE %v.%v ATTACH PARTITION %s", table.Database, table.Name, partitionName)
+	query := fmt.Sprintf("ALTER TABLE %v.%v ATTACH PARTITION %s", table.Database, table.Name, convertPartition(table.Partitions[0].Name))
 	log.Printf(query)
 	if _, err := ch.conn.Exec(query); err != nil {
 		return err
@@ -341,8 +324,7 @@ func (ch *ClickHouse) CreateDatabase(database string) error {
 		return nil
 	}
 	log.Printf("Creating database %s", database)
-	_, err := ch.conn.Exec(createQuery)
-	if err != nil {
+	if _, err := ch.conn.Exec(createQuery); err != nil {
 		return fmt.Errorf("can't create database: %v", err)
 	}
 	return nil
@@ -356,8 +338,7 @@ func (ch *ClickHouse) CreateTable(table RestoreTable) error {
 	}
 	ch.ConnectDatabase(table.Database)
 	log.Printf("Creating table:\n%s", table.Query)
-	_, err := ch.conn.Exec(table.Query)
-	if err != nil {
+	if _, err := ch.conn.Exec(table.Query); err != nil {
 		return fmt.Errorf("can't create table: %v", err)
 	}
 	return nil

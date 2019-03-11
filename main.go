@@ -95,7 +95,7 @@ func main() {
 			Name:  "restore",
 			Usage: "Copy data from 'backup' to 'detached' folder and execute ATTACH. You can specify tables [db].[table] and increments via -i flag",
 			Action: func(c *cli.Context) error {
-				return restore(*config, c.Args(), c.Bool("dry-run") || c.GlobalBool("dry-run"), c.IntSlice("i"), c.Bool("d"), c.Bool("m"))
+				return restore(*config, c.Args(), c.Bool("dry-run") || c.GlobalBool("dry-run"), c.IntSlice("i"), c.Bool("m"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.IntSliceFlag{
@@ -236,8 +236,7 @@ func createTables(config Config, args []string, dryRun bool) error {
 			databaseName := file.Name()
 			if databaseName == "system" {
 				// do not touch system database
-				continue
-			}
+				continue			}
 			log.Printf("Found metadata files for database: %s", databaseName)
 			ch.CreateDatabase(databaseName)
 			databaseDir := path.Join(metadataPath, databaseName)
@@ -331,10 +330,13 @@ func freeze(config Config, args []string, dryRun bool) error {
 			return err
 		}
 	}
+
+	// move shadow to backup/timestamp/
+
 	return nil
 }
 
-func restore(config Config, args []string, dryRun bool, increments []int, deprecatedCreation bool, move bool) error {
+func restore(config Config, args []string, dryRun bool, increments []int, move bool) error {
 	ch := &ClickHouse{
 		DryRun: dryRun,
 		Config: &config.ClickHouse,
@@ -359,7 +361,7 @@ func restore(config Config, args []string, dryRun bool, increments []int, deprec
 		if err := ch.CopyData(table, move); err != nil {
 			return fmt.Errorf("can't restore %s.%s increment %d with %v", table.Database, table.Name, table.Increment, err)
 		}
-		if err := ch.AttachPatritions(table, deprecatedCreation); err != nil {
+		if err := ch.AttachPatritions(table); err != nil {
 			return fmt.Errorf("can't attach partitions for table %s.%s with %v", table.Database, table.Name, err)
 		}
 	}

@@ -154,7 +154,9 @@ func (s *S3) DownloadTree(s3Path string, localPath string) error {
 	}
 	downloader := s3manager.NewDownloader(s.session)
 	for _, s3File := range s3Files {
-		bar.Increment()
+		if !s.Config.DisableProgressBar {
+			bar.Increment()
+		}
 		if existsFile, ok := localFiles[s3File.key]; ok {
 			if existsFile.size == s3File.size {
 				switch s.Config.OverwriteStrategy {

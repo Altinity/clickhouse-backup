@@ -17,18 +17,12 @@ func copyFile(srcFile string, dstFile string) error {
 		return err
 	}
 	defer dst.Close()
-	if _, err = io.Copy(dst, src); err != nil {
-		return err
-	}
-	return nil
+	_, err = io.Copy(dst, src)
+	return err
 }
 
 func moveFile(srcFile string, dstFile string) error {
-	err := os.Rename(srcFile, dstFile)
-	if err != nil {
-		return err
-	}
-	return nil
+	return os.Rename(srcFile, dstFile)
 }
 
 func cleanDir(dir string) error {
