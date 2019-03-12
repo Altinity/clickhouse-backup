@@ -13,13 +13,19 @@ import (
 	"github.com/urfave/cli"
 )
 
-var config *Config
+var (
+	config    *Config
+	version   = "unknown"
+	gitCommit = "unknown"
+	buildDate = "unknown"
+)
 
 func main() {
 	cliapp := cli.NewApp()
 	cliapp.Name = "clickhouse-backup"
 	cliapp.Usage = "Backup ClickHouse to s3"
-	cliapp.Version = "0.0.2"
+	cliapp.Version = version
+
 	cliapp.Flags = []cli.Flag{
 		cli.StringFlag{
 			Name:  "config, c",
@@ -37,7 +43,9 @@ func main() {
 	}
 
 	cli.VersionPrinter = func(c *cli.Context) {
-		fmt.Println(c.App.Version)
+		fmt.Println("Version:\t", c.App.Version)
+		fmt.Println("Git Commit:\t", gitCommit)
+		fmt.Println("Build Date:\t", buildDate)
 	}
 
 	cliapp.Before = func(c *cli.Context) error {
@@ -236,7 +244,8 @@ func createTables(config Config, args []string, dryRun bool) error {
 			databaseName := file.Name()
 			if databaseName == "system" {
 				// do not touch system database
-				continue			}
+				continue
+			}
 			log.Printf("Found metadata files for database: %s", databaseName)
 			ch.CreateDatabase(databaseName)
 			databaseDir := path.Join(metadataPath, databaseName)
@@ -325,8 +334,7 @@ func freeze(config Config, args []string, dryRun bool) error {
 		return nil
 	}
 	for _, table := range backupTables {
-		err := ch.FreezeTable(table)
-		if err != nil {
+		if err := ch.FreezeTable(table); err != nil {
 			return err
 		}
 	}
