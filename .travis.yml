@@ -12,7 +12,7 @@ install:
 script:
   - go build -o clickhouse-backup/clickhouse-backup
   - ./clickhouse-backup/clickhouse-backup default-config > clickhouse-backup/config.yml
-  - docker-compose -f integration-test/docker-compose.yml up --detach
+  - docker-compose -f integration-test/docker-compose.yml up -d --force-recreate
   - go test -tags integration
 after_success:
   - tar -czvf clickhouse-backup.tar.gz clickhouse-backup
