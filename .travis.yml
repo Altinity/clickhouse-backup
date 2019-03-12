@@ -1,0 +1,18 @@
+language: go
+sudo: required
+go:
+  - 1.11.4
+env:
+  - GO111MODULE=on
+services:
+  - docker
+install:
+  - gem install fpm
+  - npm install -g snyk
+script:
+  - go build -o clickhouse-backup/clickhouse-backup
+  - ./clickhouse-backup/clickhouse-backup default-config > clickhouse-backup/config.yml
+  - docker-compose -f integration-test/docker-compose.yml up --detach
+  - go test -tags integration
+after_success:
+  - tar -czvf clickhouse-backup.tar.gz clickhouse-backup
