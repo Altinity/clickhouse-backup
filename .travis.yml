@@ -18,15 +18,7 @@ deploy:
     api_key: "${GITHUB_TOKEN}"
     file: clickhouse-backup.tar.gz
     skip_cleanup: true
-    name: latest
-    prerelease: true
     overwrite: true
-    on:
-      tags: false
-      branch: master
-  - provider: releases
-    api_key: "${GITHUB_TOKEN}"
-    file: clickhouse-backup.tar.gz
-    skip_cleanup: true
+
     on:
       tags: true
