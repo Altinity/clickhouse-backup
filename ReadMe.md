@@ -1,7 +1,7 @@
 
 # clickhouse-backup
 
-[![CircleCI](https://circleci.com/gh/AlexAkulov/clickhouse-backup.svg?style=svg)](https://circleci.com/gh/AlexAkulov/clickhouse-backup)
+[![Build Status](https://travis-ci.org/AlexAkulov/clickhouse-backup.svg?branch=master)](https://travis-ci.org/AlexAkulov/clickhouse-backup)
 
 Tool for backup ClickHouse to s3
 
@@ -33,7 +33,7 @@ COMMANDS:
 
 GLOBAL OPTIONS:
    --config FILE, -c FILE  Config FILE name. (default: "/etc/clickhouse-backup/config.yml")
-   --dry-run               Only show what should be uploaded or downloaded but don't actually do it. 
+   --dry-run               Only show what should be uploaded or downloaded but don't actually do it.
                            May still perform S3 requests to get bucket listings and other information
                            though (only for file transfer commands)
    --help, -h              show help

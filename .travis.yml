@@ -6,9 +6,6 @@ env:
   - GO111MODULE=on
 services:
   - docker
-install:
-  - gem install fpm
-  - npm install -g snyk
 script:
   - go build -o clickhouse-backup/clickhouse-backup
   - ./clickhouse-backup/clickhouse-backup default-config > clickhouse-backup/config.yml
@@ -16,3 +13,20 @@ script:
   - go test -tags integration
 after_success:
   - tar -czvf clickhouse-backup.tar.gz clickhouse-backup
+deploy:
+  - provider: releases
+    api_key: "${GITHUB_TOKEN}"
+    file: clickhouse-backup.tar.gz
+    skip_cleanup: true
+    name: latest
+    prerelease: true
+    overwrite: true
+    on:
+      tags: false
+      branch: master
+  - provider: releases
+    api_key: "${GITHUB_TOKEN}"
+    file: clickhouse-backup.tar.gz
+    skip_cleanup: true
+    on:
+      tags: true
