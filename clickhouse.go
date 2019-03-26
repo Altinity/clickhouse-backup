@@ -216,7 +216,7 @@ func (ch *ClickHouse) Chown(name string) error {
 }
 
 // CopyData - copy partitions for specific table to detached folder
-func (ch *ClickHouse) CopyData(table BackupTable, move bool) error {
+func (ch *ClickHouse) CopyData(table BackupTable) error {
 	if ch.DryRun {
 		log.Printf("copy %s.%s increment %d  ...skip dry-run", table.Database, table.Name, table.Increment)
 		return nil
@@ -263,16 +263,8 @@ func (ch *ClickHouse) CopyData(table BackupTable, move bool) error {
 				log.Printf("'%s' is not a regular file, skipping.", filePath)
 				return nil
 			}
-			if move {
-				err := moveFile(filePath, dstFilePath)
-				if err != nil {
-					return fmt.Errorf("Failed to move %s file: %v", filePath, err)
-				}
-			} else {
-				err := copyFile(filePath, dstFilePath)
-				if err != nil {
-					return fmt.Errorf("Failed to copy %s file: %v", filePath, err)
-				}
+			if err := os.Link(filePath, dstFilePath); err != nil {
+				return fmt.Errorf("Failed to crete hard link %s -> %s with %v", filePath, dstFilePath, err)
 			}
 			return ch.Chown(dstFilePath)
 		}); err != nil {

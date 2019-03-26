@@ -103,17 +103,12 @@ func main() {
 			Name:  "restore",
 			Usage: "Copy data from 'backup' to 'detached' folder and execute ATTACH. You can specify tables [db].[table] and increments via -i flag",
 			Action: func(c *cli.Context) error {
-				return restore(*config, c.Args(), c.Bool("dry-run") || c.GlobalBool("dry-run"), c.IntSlice("i"), c.Bool("m"))
+				return restore(*config, c.Args(), c.Bool("dry-run") || c.GlobalBool("dry-run"), c.IntSlice("i"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.IntSliceFlag{
 					Name:   "increments, i",
 					Hidden: false,
-				},
-				cli.BoolFlag{
-					Name:   "move, m",
-					Hidden: false,
-					Usage:  "Set this flag to move backup data during partition attach instead of copy. This will reduce disk usage.",
 				},
 			),
 		},
@@ -339,7 +334,7 @@ func freeze(config Config, args []string, dryRun bool) error {
 	return nil
 }
 
-func restore(config Config, args []string, dryRun bool, increments []int, move bool) error {
+func restore(config Config, args []string, dryRun bool, increments []int) error {
 	ch := &ClickHouse{
 		DryRun: dryRun,
 		Config: &config.ClickHouse,
@@ -361,7 +356,7 @@ func restore(config Config, args []string, dryRun bool, increments []int, move b
 		return nil
 	}
 	for _, table := range restoreTables {
-		if err := ch.CopyData(table, move); err != nil {
+		if err := ch.CopyData(table); err != nil {
 			return fmt.Errorf("can't restore %s.%s increment %d with %v", table.Database, table.Name, table.Increment, err)
 		}
 		if err := ch.AttachPatritions(table); err != nil {
