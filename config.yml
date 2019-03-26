@@ -17,6 +17,7 @@ s3:
   disable_progress_bar: false
   overwrite_strategy: always
   part_size: 5242880
+  delete_extra_files: true
 backup:
   strategy: tree
   backups_to_keep: 0

@@ -29,6 +29,7 @@ type S3Config struct {
 	DisableProgressBar bool   `yaml:"disable_progress_bar"`
 	OverwriteStrategy  string `yaml:"overwrite_strategy"`
 	PartSize           int64  `yaml:"part_size"`
+	DeleteExtraFiles   bool   `yaml:"delete_extra_files"`
 }
 
 // ClickHouseConfig - clickhouse settings section
@@ -97,6 +98,7 @@ func defaultConfig() *Config {
 			ACL:               "private",
 			OverwriteStrategy: "always",
 			PartSize:          5 * 1024 * 1024,
+			DeleteExtraFiles:  true,
 		},
 		Backup: BackupConfig{
 			Strategy:      "tree",

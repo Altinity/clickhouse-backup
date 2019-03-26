@@ -65,6 +65,7 @@ s3:
   # "etag" - calculate etag for local files, set this if your network is very slow
   overwrite_strategy: "always"
   part_size: 5242880
+  delete_extra_files: true
 backup:
   strategy: tree
   backups_to_keep: 0

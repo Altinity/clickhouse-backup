@@ -58,23 +58,18 @@ func tarDir(tw *tarArchive.Writer, dir string) (err error) {
 	seen := make(map[devino]string)
 
 	return filepath.Walk(dir, func(file string, fi os.FileInfo, err error) error {
-
 		if err != nil {
 			return err
 		}
-
 		if fi.IsDir() {
 			return nil
 		}
-
 		header, err := tarArchive.FileInfoHeader(fi, "")
 		if err != nil {
 			return err
 		}
-
 		filename := strings.TrimPrefix(strings.Replace(file, dir, filepath.Base(dir), -1), string(filepath.Separator))
 		header.Name = filename
-
 		st := fi.Sys().(*syscall.Stat_t)
 		di := devino{
 			Dev: st.Dev,
@@ -85,31 +80,23 @@ func tarDir(tw *tarArchive.Writer, dir string) (err error) {
 			header.Typeflag = tarArchive.TypeLink
 			header.Linkname = orig
 			header.Size = 0
-
-			err = tw.WriteHeader(header)
-			if err != nil {
+			if err := tw.WriteHeader(header); err != nil {
 				return err
 			}
-
 			hLinks++
 			return nil
 		}
-
 		if err := tw.WriteHeader(header); err != nil {
 			return err
 		}
-
 		f, err := os.Open(file)
 		if err != nil {
 			return err
 		}
 		defer f.Close()
-
 		io.Copy(tw, f)
-
 		seen[di] = filename
 		nFiles++
-
 		return nil
 	})
 }
@@ -138,8 +125,7 @@ func Untar(r io.Reader, extractDir string) (err error) {
 			break
 		}
 		if err != nil {
-			log.Printf("tar reading error: %v", err)
-			return fmt.Errorf("tar error: %v", err)
+			return fmt.Errorf("tar reading error with %v", err)
 		}
 		if !validRelPath(f.Name) {
 			return fmt.Errorf("tar contained invalid name error %q", f.Name)

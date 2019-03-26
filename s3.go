@@ -55,7 +55,7 @@ func (s *S3) UploadDirectory(localPath string, dstPath string) error {
 	}
 
 	uploader := s3manager.NewUploader(s.session)
-	uploader.PartSize = config.S3.PartSize
+	uploader.PartSize = s.Config.PartSize
 	var errs []s3manager.Error
 	for iter.Next() {
 		object := iter.UploadObject()
@@ -91,6 +91,9 @@ func (s *S3) UploadDirectory(localPath string, dstPath string) error {
 		return err
 	}
 
+	if !s.Config.DeleteExtraFiles {
+		return nil
+	}
 	// Delete
 	batcher := s3manager.NewBatchDelete(s.session)
 	objects := []s3manager.BatchDeleteObject{}

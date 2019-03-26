@@ -111,11 +111,6 @@ func main() {
 					Hidden: false,
 				},
 				cli.BoolFlag{
-					Name:   "deprecated, d",
-					Hidden: false,
-					Usage:  "Set this flag if Table was created of deprecated method: ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)",
-				},
-				cli.BoolFlag{
 					Name:   "move, m",
 					Hidden: false,
 					Usage:  "Set this flag to move backup data during partition attach instead of copy. This will reduce disk usage.",
