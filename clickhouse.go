@@ -144,12 +144,21 @@ func (ch *ClickHouse) FreezeTable(table Table) error {
 }
 
 // GetBackupTables - return list of backups of tables that can be restored
-func (ch *ClickHouse) GetBackupTables() (map[string]BackupTable, error) {
+func (ch *ClickHouse) GetBackupTables(backupName string) (map[string]BackupTable, error) {
 	dataPath, err := ch.GetDataPath()
 	if err != nil {
 		return nil, err
 	}
-	backupShadowPath := filepath.Join(dataPath, "backup", "shadow")
+	backupShadowPath := filepath.Join(dataPath, "backup", backupName, "shadow")
+
+	fi, err := os.Stat(backupShadowPath)
+	if err != nil {
+		return nil, fmt.Errorf("can't get tables, %v", err)
+	}
+	if !fi.IsDir() {
+		return nil, fmt.Errorf("can't get tables, %s is not a dir", backupShadowPath)
+	}
+
 	result := make(map[string]BackupTable)
 	if err := filepath.Walk(backupShadowPath, func(filePath string, info os.FileInfo, err error) error {
 		if err != nil {

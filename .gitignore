@@ -2,3 +2,4 @@
 *.exe
 debug
 go.sum
+clickhouse-backup

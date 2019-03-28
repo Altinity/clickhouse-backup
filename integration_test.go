@@ -92,10 +92,11 @@ func TestMain(t *testing.T) {
 	}
 
 	time.Sleep(time.Second * 5)
-
-	fmt.Println("Freeze partitions")
+	backupName := NewBackupName()
+	backupArchiveName := fmt.Sprintf("%s.tar", backupName)
+	fmt.Println("Create backup")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	out, err := exec.CommandContext(ctx, "docker", "exec", "clickhouse", "clickhouse-backup", "freeze").CombinedOutput()
+	out, err := exec.CommandContext(ctx, "docker", "exec", "clickhouse", "clickhouse-backup", "create").CombinedOutput()
 	fmt.Println(string(out))
 	if err != nil {
 		panic(err)
@@ -104,7 +105,7 @@ func TestMain(t *testing.T) {
 
 	fmt.Println("Upload")
 	ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
-	out, err = exec.CommandContext(ctx, "docker", "exec", "clickhouse", "clickhouse-backup", "upload").CombinedOutput()
+	out, err = exec.CommandContext(ctx, "docker", "exec", "clickhouse", "clickhouse-backup", "upload", backupArchiveName).CombinedOutput()
 	fmt.Println(string(out))
 	if err != nil {
 		panic(err)
@@ -117,7 +118,16 @@ func TestMain(t *testing.T) {
 
 	fmt.Println("Download")
 	ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
-	out, err = exec.CommandContext(ctx, "docker", "exec", "clickhouse", "clickhouse-backup", "download").CombinedOutput()
+	out, err = exec.CommandContext(ctx, "docker", "exec", "clickhouse", "clickhouse-backup", "download", backupArchiveName).CombinedOutput()
+	fmt.Println(string(out))
+	if err != nil {
+		panic(err)
+	}
+	cancel()
+
+	fmt.Println("Extract archive")
+	ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
+	out, err = exec.Command("docker", "exec", "clickhouse", "clickhouse-backup", "extract", backupArchiveName).CombinedOutput()
 	fmt.Println(string(out))
 	if err != nil {
 		panic(err)
@@ -126,7 +136,7 @@ func TestMain(t *testing.T) {
 
 	fmt.Println("Create tables")
 	ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
-	out, err = exec.Command("docker", "exec", "clickhouse", "clickhouse-backup", "create-tables").CombinedOutput()
+	out, err = exec.Command("docker", "exec", "clickhouse", "clickhouse-backup", "restore-schema", backupName).CombinedOutput()
 	fmt.Println(string(out))
 	if err != nil {
 		panic(err)
@@ -135,7 +145,7 @@ func TestMain(t *testing.T) {
 
 	fmt.Println("Restore")
 	ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
-	out, err = exec.CommandContext(ctx, "docker", "exec", "clickhouse", "clickhouse-backup", "restore").CombinedOutput()
+	out, err = exec.CommandContext(ctx, "docker", "exec", "clickhouse", "clickhouse-backup", "restore-data", backupName).CombinedOutput()
 	fmt.Println(string(out))
 	if err != nil {
 		panic(err)

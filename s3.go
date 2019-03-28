@@ -284,6 +284,41 @@ func (s *S3) getS3Files(localPath, s3Path string) (s3Files map[string]fileInfo, 
 	return
 }
 
+func (s *S3) BackupList() ([]string, error) {
+	type s3Backup struct {
+		Metadata bool
+		Shadow   bool
+		Tar      bool
+	}
+	s3Files := map[string]s3Backup{}
+	s.remotePager(s.Config.Path, false, func(page *s3.ListObjectsV2Output) {
+		for _, c := range page.Contents {
+			if strings.HasPrefix(*c.Key, s.Config.Path) {
+				key := strings.TrimPrefix(*c.Key, s.Config.Path)
+				key = strings.TrimPrefix(key, "/")
+				parts := strings.Split(key, "/")
+				if strings.HasSuffix(parts[0], ".tar") {
+					s3Files[parts[0]] = s3Backup{Tar: true}
+				}
+				if len(parts) > 1 {
+					b := s3Files[parts[0]]
+					s3Files[parts[0]] = s3Backup{
+						Metadata: b.Metadata || parts[1] == "metadata",
+						Shadow:   b.Shadow || parts[1] == "shadow",
+					}
+				}
+			}
+		}
+	})
+	result := []string{}
+	for name, e := range s3Files {
+		if e.Metadata && e.Shadow || e.Tar {
+			result = append(result, name)
+		}
+	}
+	return result, nil
+}
+
 func (s *S3) newSyncFolderIterator(localPath, dstPath string) (*SyncFolderIterator, map[string]fileInfo, error) {
 	existsFiles := make(map[string]fileInfo)
 	s.remotePager(s.Config.Path, false, func(page *s3.ListObjectsV2Output) {
