@@ -114,7 +114,6 @@ func (s *S3) UploadDirectory(localPath string, dstPath string) error {
 
 // UploadFile - synchronize localPath to dstPath on s3
 func (s *S3) UploadFile(localPath string, dstPath string) error {
-
 	uploader := s3manager.NewUploader(s.session)
 	uploader.PartSize = config.S3.PartSize
 
@@ -284,6 +283,75 @@ func (s *S3) getS3Files(localPath, s3Path string) (s3Files map[string]fileInfo, 
 	return
 }
 
+func (s *S3) BackupList() ([]string, error) {
+	type s3Backup struct {
+		Metadata bool
+		Shadow   bool
+		Tar      bool
+	}
+	s3Files := map[string]s3Backup{}
+	s.remotePager(s.Config.Path, false, func(page *s3.ListObjectsV2Output) {
+		for _, c := range page.Contents {
+			if strings.HasPrefix(*c.Key, s.Config.Path) {
+				key := strings.TrimPrefix(*c.Key, s.Config.Path)
+				key = strings.TrimPrefix(key, "/")
+				parts := strings.Split(key, "/")
+				if strings.HasSuffix(parts[0], ".tar") {
+					s3Files[parts[0]] = s3Backup{Tar: true}
+				}
+				if len(parts) > 1 {
+					b := s3Files[parts[0]]
+					s3Files[parts[0]] = s3Backup{
+						Metadata: b.Metadata || parts[1] == "metadata",
+						Shadow:   b.Shadow || parts[1] == "shadow",
+					}
+				}
+			}
+		}
+	})
+	result := []string{}
+	for name, e := range s3Files {
+		if e.Metadata && e.Shadow || e.Tar {
+			result = append(result, name)
+		}
+	}
+	return result, nil
+}
+
+func (s *S3) RemoveOldBackups(keep int) error {
+	if keep < 1 {
+		return nil
+	}
+	backupList, err := s.BackupList()
+	if err != nil {
+		return err
+	}
+	backupsToDelete := GetBackupsToDelete(backupList, keep)
+	objects := []s3manager.BatchDeleteObject{}
+	s.remotePager(s.Config.Path, false, func(page *s3.ListObjectsV2Output) {
+		for _, c := range page.Contents {
+			for _, backupToDelete := range backupsToDelete {
+				if strings.HasPrefix(*c.Key, path.Join(s.Config.Path, backupToDelete)) {
+					objects = append(objects, s3manager.BatchDeleteObject{
+						Object: &s3.DeleteObjectInput{
+							Bucket: aws.String(s.Config.Bucket),
+							Key:    c.Key,
+						},
+					})
+				}
+			}
+		}
+	})
+	if s.DryRun {
+		for _, o := range objects {
+			log.Println("Delete", *o.Object.Key)
+		}
+		return nil
+	}
+	batcher := s3manager.NewBatchDelete(s.session)
+	return batcher.Delete(aws.BackgroundContext(), &s3manager.DeleteObjectsIterator{Objects: objects})
+}
+
 func (s *S3) newSyncFolderIterator(localPath, dstPath string) (*SyncFolderIterator, map[string]fileInfo, error) {
 	existsFiles := make(map[string]fileInfo)
 	s.remotePager(s.Config.Path, false, func(page *s3.ListObjectsV2Output) {
@@ -424,36 +492,4 @@ func GetEtag(path string, partSize int64) string {
 	}
 	hash := md5.Sum(contentToHash)
 	return fmt.Sprintf("\"%x-%d\"", hash, parts)
-}
-
-// ListObjects - get list of objects from s3
-func (s *S3) ListObjects(s3Path string) ([]*s3.Object, error) {
-	params := &s3.ListObjectsInput{
-		Bucket: aws.String(s.Config.Bucket),
-	}
-	resp, err := s3.New(s.session).ListObjects(params)
-	if err != nil {
-		return nil, err
-	}
-	return resp.Contents, nil
-}
-
-// DeleteObjects - delete list of objects from s3
-func (s *S3) DeleteObjects(objects []*s3.Object) error {
-	batcher := s3manager.NewBatchDelete(s.session)
-	batchObjects := make([]s3manager.BatchDeleteObject, len(objects))
-	for i, obj := range objects {
-		batchObjects[i] = s3manager.BatchDeleteObject{
-			Object: &s3.DeleteObjectInput{
-				Key:    obj.Key,
-				Bucket: aws.String(s.Config.Bucket),
-			},
-		}
-	}
-	if err := batcher.Delete(aws.BackgroundContext(), &s3manager.DeleteObjectsIterator{
-		Objects: batchObjects,
-	}); err != nil {
-		return err
-	}
-	return nil
 }

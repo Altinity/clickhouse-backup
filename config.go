@@ -43,8 +43,9 @@ type ClickHouseConfig struct {
 
 // BackupConfig - backup specific settings
 type BackupConfig struct {
-	Strategy      string `yaml:"strategy"`
-	BackupsToKeep int    `yaml:"backups_to_keep"`
+	Strategy           string `yaml:"strategy"`
+	BackupsToKeepLocal int    `yaml:"backups_to_keep_local"`
+	BackupsToKeepS3    int    `yaml:"backups_to_keep_s3"`
 }
 
 // LoadConfig - load config from file
@@ -101,8 +102,9 @@ func defaultConfig() *Config {
 			DeleteExtraFiles:  true,
 		},
 		Backup: BackupConfig{
-			Strategy:      "tree",
-			BackupsToKeep: 0,
+			Strategy:           "tree",
+			BackupsToKeepLocal: 0,
+			BackupsToKeepS3:    0,
 		},
 	}
 }

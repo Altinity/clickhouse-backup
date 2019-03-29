@@ -41,7 +41,7 @@ func tarDir(tw *tarArchive.Writer, dir string) (err error) {
 	defer func() {
 		td := time.Since(t0)
 		if err == nil {
-			log.Printf("added to tarball with: %d files, %d hard links (%v)", nFiles, hLinks, td)
+			log.Printf("  done. added to tarball %d files, %d hard links (%v)", nFiles, hLinks, td)
 		} else {
 			log.Printf("error adding to tarball after %d files, %d hard links, %v: %v", nFiles, hLinks, td, err)
 		}
@@ -72,7 +72,7 @@ func tarDir(tw *tarArchive.Writer, dir string) (err error) {
 		header.Name = filename
 		st := fi.Sys().(*syscall.Stat_t)
 		di := devino{
-			Dev: st.Dev,
+			Dev: uint64(st.Dev),
 			Ino: st.Ino,
 		}
 		orig, ok := seen[di]

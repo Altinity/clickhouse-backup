@@ -10,7 +10,8 @@ script:
   - go build -ldflags "-X main.version=${TRAVIS_TAG} -X main.gitCommit=${TRAVIS_COMMIT} -X main.buildDate=$(date --iso-8601)" -o clickhouse-backup/clickhouse-backup
   - ./clickhouse-backup/clickhouse-backup default-config > clickhouse-backup/config.yml
   - docker-compose -f integration-test/docker-compose-travis.yml up -d --force-recreate
-  - go test -tags integration
+  - go test -v
+  - go test -tags=integration
 after_success:
   - tar -czvf clickhouse-backup.tar.gz clickhouse-backup
 deploy:

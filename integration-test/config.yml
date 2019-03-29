@@ -13,5 +13,6 @@ s3:
   disable_progress_bar: true
   overwrite_strategy: always
 backup:
-  strategy: tree
-  backups_to_keep: 0
+  strategy: archive
+  backups_to_keep_local: 1
+  backups_to_keep_s3: 2
