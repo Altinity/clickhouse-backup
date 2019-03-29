@@ -17,26 +17,25 @@ USAGE:
    clickhouse-backup [global options] command [command options] [arguments...]
 
 VERSION:
-   0.0.2
+   unknown
 
 COMMANDS:
      tables          Print all tables and exit
-     freeze          Freeze all or specific tables. You may use this syntax for specify tables [db].[table]
-     upload          Upload 'metadata' and 'shadows' directories to s3. Extra files on s3 will be deleted
-     download        Download 'metadata' and 'shadows' from s3 to backup folder. Pass filename for archive strategy
-     create-tables   Create databases and tables from backup metadata
-     restore         Copy data from 'backup' to 'detached' folder and execute ATTACH.
-                     You can specify tables [db].[table] and increments via -i flag. -d flag
-                     to use legacy partitioning key. -m flag to move files instead of copy.
+     list            Print backups list and exit
+     freeze          Freeze all or specific tables. You can specify tables via flag -t db.[table]
+     create          Create new backup of all or specific tables. You can specify tables via flag -t [db].[table]
+     upload          Upload backup to s3.
+     download        Download backup from s3 to backup folder
+     restore-schema  Create databases and tables from backup metadata
+     restore-data    Copy data from 'backup' to 'detached' folder and execute ATTACH. You can specify tables like 'db.[table]' via flag -t and increments via -i flag
      default-config  Print default config and exit
-     clean           Remove contents from 'shadow' directory
+     clean           Clean backup data from shadow folder
+     extract         Extract archive
      help, h         Shows a list of commands or help for one command
 
 GLOBAL OPTIONS:
    --config FILE, -c FILE  Config FILE name. (default: "/etc/clickhouse-backup/config.yml")
-   --dry-run               Only show what should be uploaded or downloaded but don't actually do it.
-                           May still perform S3 requests to get bucket listings and other information
-                           though (only for file transfer commands)
+   --dry-run               Only show what should be uploaded or downloaded but don't actually do it. May still perform S3 requests to get bucket listings and other information though (only for file transfer commands)
    --help, -h              show help
    --version, -v           print the version
 ```
@@ -68,5 +67,6 @@ s3:
   delete_extra_files: true
 backup:
   strategy: tree
-  backups_to_keep: 0
+  backups_to_keep_local: 0
+  backups_to_keep_s3: 0
 ```

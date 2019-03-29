@@ -50,6 +50,7 @@ type BackupTable struct {
 // RestoreTable - struct to store information needed during restore
 type RestoreTable struct {
 	Database string
+	Table    string
 	Query    string
 }
 
@@ -319,12 +320,11 @@ func (ch *ClickHouse) AttachPatritions(table BackupTable) error {
 func (ch *ClickHouse) CreateDatabase(database string) error {
 	createQuery := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", database)
 	if ch.DryRun {
-		log.Printf("DRY-RUN: creating database with query: %s", createQuery)
+		log.Printf("DRY-RUN: %s", createQuery)
 		return nil
 	}
-	log.Printf("Creating database %s", database)
 	if _, err := ch.conn.Exec(createQuery); err != nil {
-		return fmt.Errorf("can't create database: %v", err)
+		return err
 	}
 	return nil
 }
@@ -332,13 +332,15 @@ func (ch *ClickHouse) CreateDatabase(database string) error {
 // CreateTable - create specific table from metadata in backup folder
 func (ch *ClickHouse) CreateTable(table RestoreTable) error {
 	if ch.DryRun {
-		log.Printf("DRY-RUN: creating table with query: %s", table.Query)
+		log.Printf("DRY-RUN: Create table '%s.%s'", table.Database, table.Table)
 		return nil
 	}
-	ch.ConnectDatabase(table.Database)
-	log.Printf("Creating table:\n%s", table.Query)
+	if _, err := ch.conn.Exec(fmt.Sprintf("USE %s", table.Database)); err != nil {
+		return err
+	}
+	log.Printf("Create table '%s.%s'", table.Database, table.Table)
 	if _, err := ch.conn.Exec(table.Query); err != nil {
-		return fmt.Errorf("can't create table: %v", err)
+		return err
 	}
 	return nil
 }

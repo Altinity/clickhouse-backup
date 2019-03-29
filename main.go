@@ -225,6 +225,46 @@ func parseTablePatternForRestoreData(tables map[string]BackupTable, tablePattern
 	return result, nil
 }
 
+func parseTablePatternForRestoreSchema(metadataPath, tablePattern string) ([]RestoreTable, error) {
+	regularTables := []RestoreTable{}
+	distributedTables := []RestoreTable{}
+	filepath.Walk(metadataPath, func(filePath string, info os.FileInfo, err error) error {
+		if !strings.HasSuffix(filePath, ".sql") || !info.Mode().IsRegular() {
+			return nil
+		}
+		p := filepath.ToSlash(filePath)
+		p = strings.Trim(strings.TrimPrefix(strings.TrimSuffix(p, ".sql"), metadataPath), "/")
+		parts := strings.Split(p, "/")
+		if len(parts) != 2 {
+			return nil
+		}
+		database, table := parts[0], parts[1]
+		if database == "system" {
+			return nil
+		}
+		tableName := fmt.Sprintf("%s.%s", database, table)
+		if matched, _ := filepath.Match(tablePattern, tableName); !matched {
+			return nil
+		}
+		data, err := ioutil.ReadFile(filePath)
+		if err != nil {
+			return err
+		}
+		restoreTable := RestoreTable{
+			Database: database,
+			Table:    table,
+			Query:    strings.Replace(string(data), "ATTACH", "CREATE", 1),
+		}
+		if strings.Contains(restoreTable.Query, "ENGINE = Distributed") {
+			distributedTables = append(distributedTables, restoreTable)
+			return nil
+		}
+		regularTables = append(regularTables, restoreTable)
+		return nil
+	})
+	return append(regularTables, distributedTables...), nil
+}
+
 func getTables(config Config) error {
 	ch := &ClickHouse{
 		Config: &config.ClickHouse,
@@ -245,86 +285,53 @@ func getTables(config Config) error {
 	return nil
 }
 
-func restoreSchema(config Config, backupName string, tablePatten string, dryRun bool) error {
+func restoreSchema(config Config, backupName string, tablePattern string, dryRun bool) error {
+	if backupName == "" {
+		fmt.Println("Select backup for restore:")
+		printLocalBackups(config, "tree")
+		os.Exit(1)
+	}
 	if strings.HasSuffix(backupName, ".tar") {
 		return fmt.Errorf("extract archive before")
 	}
+
+	dataPath := getDataPath(config)
+	if dataPath == "" {
+		return ErrUnknownClickhouseDataPath
+	}
+	if tablePattern == "" {
+		tablePattern = "*"
+	}
+	metadataPath := path.Join(dataPath, "backup", backupName, "metadata")
+	info, err := os.Stat(metadataPath)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s is not a dir", metadataPath)
+	}
+
+	tablesForRestore, err := parseTablePatternForRestoreSchema(metadataPath, tablePattern)
+	if err != nil {
+		return err
+	}
+	if len(tablesForRestore) == 0 {
+		return fmt.Errorf("No have found schemas by %s in %s", tablePattern, backupName)
+	}
+
 	ch := &ClickHouse{
 		DryRun: dryRun,
 		Config: &config.ClickHouse,
 	}
-
 	if err := ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickouse with: %v", err)
 	}
 	defer ch.Close()
 
-	dataPath, err := ch.GetDataPath()
-	if err != nil || dataPath == "" {
-		return fmt.Errorf("can't get data path from clickhouse with: %v\nyou can set data_path in config file", err)
-	}
-
-	metadataPath := path.Join(dataPath, "backup", backupName, "metadata")
-	log.Printf("Will analyze restored metadata from here: %s", metadataPath)
-
-	// for each dir in metadataPath (database name)
-	// except system execute scripts
-	files, err := ioutil.ReadDir(metadataPath)
-	if err != nil {
-		return fmt.Errorf("can't read metadata directory for creating tables: %v", err)
-	}
-
-	var distributedTables []RestoreTable
-	for _, file := range files {
-		if file.IsDir() {
-			databaseName := file.Name()
-			if databaseName == "system" {
-				// do not touch system database
-				continue
-			}
-			log.Printf("Found metadata files for database: %s", databaseName)
-			ch.CreateDatabase(databaseName)
-			databaseDir := path.Join(metadataPath, databaseName)
-			log.Printf("Will analyze table information from here: %s", databaseDir)
-			tableFiles, err := ioutil.ReadDir(databaseDir)
-			if err != nil {
-				return fmt.Errorf("can't read database directory in metadata dir: %v", err)
-			}
-			for _, table := range tableFiles {
-				if strings.HasSuffix(table.Name(), "sql") {
-					tablePath := path.Join(databaseDir, table.Name())
-					log.Printf("Found table: %s", tablePath)
-					dat, err := ioutil.ReadFile(tablePath)
-					if err != nil {
-						return fmt.Errorf("can't read file %s: %v", tablePath, err)
-					}
-					tableCreateQuery := strings.Replace(string(dat), "ATTACH", "CREATE", 1)
-
-					if strings.Contains(tableCreateQuery, "ENGINE = Distributed") {
-						// distributed engine tables should be created last
-						// because they are based on real tables
-						log.Printf("This is a distributed table, saving for later")
-						distributedTables = append(distributedTables, RestoreTable{
-							Database: databaseName,
-							Query:    tableCreateQuery,
-						})
-					} else {
-						if err := ch.CreateTable(RestoreTable{
-							Database: databaseName,
-							Query:    tableCreateQuery,
-						}); err != nil {
-							log.Printf("ERROR Table creation failed: %v", err)
-							// continue to other tables
-						}
-					}
-				}
-			}
-		}
-	}
-	log.Printf("Creating distributed tables")
-	for _, table := range distributedTables {
-		if err := ch.CreateTable(table); err != nil {
-			log.Printf("ERROR Table creation failed: %v", err) // continue to other tables
+	for _, schema := range tablesForRestore {
+		ch.CreateDatabase(schema.Database)
+		if err := ch.CreateTable(schema); err != nil {
+			return fmt.Errorf("can't create table '%s.%s' %v", schema.Database, schema.Table, err)
 		}
 	}
 	return nil

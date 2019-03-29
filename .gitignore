@@ -3,3 +3,4 @@
 debug
 go.sum
 clickhouse-backup
+config.yml
