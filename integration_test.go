@@ -103,24 +103,28 @@ func TestIntegration(t *testing.T) {
 	}
 
 	time.Sleep(time.Second * 5)
-	backupName := NewBackupName()
-	backupArchiveName := fmt.Sprintf("%s.tar", backupName)
 	fmt.Println("Create backup")
 	r.NoError(dockerExec("clickhouse-backup", "create"))
 
+	out, _ := dockerExecOut("clickhouse-backup", "upload")
+	r.True(strings.HasPrefix(out, "Select backup for upload:"))
+	backupFileName := strings.Split(out, "\n")[1]
+	backupName := strings.TrimSuffix(backupFileName, ".tar")
+
 	fmt.Println("Upload")
-	r.NoError(dockerExec("clickhouse-backup", "upload", backupArchiveName))
+	r.NoError(dockerExec("clickhouse-backup", "upload", backupFileName))
 
 	fmt.Println("Drop database")
 	r.NoError(ch.dropDatabase("testdb"))
+
 	fmt.Println("Delete backup")
-	r.NoError(dockerExec("rm", fmt.Sprintf("/var/lib/clickhouse/backup/%s", backupArchiveName)))
+	r.NoError(dockerExec("rm", fmt.Sprintf("/var/lib/clickhouse/backup/%s", backupFileName)))
 
 	fmt.Println("Download")
-	r.NoError(dockerExec("clickhouse-backup", "download", backupArchiveName))
+	r.NoError(dockerExec("clickhouse-backup", "download", backupFileName))
 
 	fmt.Println("Extract archive")
-	r.NoError(dockerExec("clickhouse-backup", "extract", backupArchiveName))
+	r.NoError(dockerExec("clickhouse-backup", "extract", backupFileName))
 
 	fmt.Println("Create tables")
 	r.NoError(dockerExec("clickhouse-backup", "restore-schema", backupName))
@@ -140,6 +144,7 @@ func (ch *ClickHouse) createTestData(data TestDataStuct) error {
 	}
 	if err := ch.CreateTable(RestoreTable{
 		Database: data.Database,
+		Table:    data.Table,
 		Query:    fmt.Sprintf("CREATE TABLE %s.%s %s", data.Database, data.Table, data.Schema),
 	}); err != nil {
 		return err
@@ -193,13 +198,18 @@ func (ch *ClickHouse) checkData(t *testing.T, data TestDataStuct) error {
 }
 
 func dockerExec(cmd ...string) error {
+	out, err := dockerExecOut(cmd...)
+	fmt.Println(string(out))
+	return err
+}
+
+func dockerExecOut(cmd ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	dcmd := []string{"exec", "clickhouse"}
 	dcmd = append(dcmd, cmd...)
 	out, err := exec.CommandContext(ctx, "docker", dcmd...).CombinedOutput()
-	fmt.Println(string(out))
 	cancel()
-	return err
+	return string(out), err
 }
 
 func toDate(s string) time.Time {
