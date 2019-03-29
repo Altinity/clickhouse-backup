@@ -5,7 +5,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 )
 
 func cleanDir(dir string) error {
@@ -71,4 +73,31 @@ func copyFile(srcFile string, dstFile string) error {
 	defer dst.Close()
 	_, err = io.Copy(dst, src)
 	return err
+}
+
+func GetBackupsToDelete(backups []string, keep int) []string {
+	type parsedBackup struct {
+		name string
+		time time.Time
+	}
+	backupList := []parsedBackup{}
+	for _, backupName := range backups {
+		t, err := time.Parse(BackupTimeFormat, strings.TrimSuffix(backupName, ".tar"))
+		if err == nil {
+			backupList = append(backupList, parsedBackup{
+				name: backupName,
+				time: t,
+			})
+		}
+	}
+	sort.SliceStable(backupList, func(i, j int) bool {
+		return backupList[i].time.Before(backupList[j].time)
+	})
+	result := []string{}
+	if len(backupList) > keep {
+		for i := 0; i < len(backupList)-keep; i++ {
+			result = append(result, backupList[i].name)
+		}
+	}
+	return result
 }

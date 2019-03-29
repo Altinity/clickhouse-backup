@@ -1,3 +1,5 @@
+// +build integration
+
 package main
 
 import (
@@ -10,6 +12,7 @@ import (
 
 	_ "github.com/kshvakov/clickhouse"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type TestDataStuct struct {
@@ -67,94 +70,67 @@ var testData = []TestDataStuct{
 		Fields:  []string{"TimeStamp", "Item"},
 		OrderBy: "TimeStamp",
 	},
+	TestDataStuct{
+		Database: "testdb",
+		Table:    "table4",
+		Schema:   "(id UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY id ORDER BY (id, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192",
+		Rows: func() []map[string]interface{} {
+			result := []map[string]interface{}{}
+			for i := 0; i < 100; i++ {
+				result = append(result, map[string]interface{}{"id": uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
+			}
+			return result
+		}(),
+		Fields:  []string{"id", "Col1", "Col2", "Col3", "Col4", "Col5"},
+		OrderBy: "id",
+	},
 }
 
-func TestMain(t *testing.T) {
+func TestIntegration(t *testing.T) {
 	ch := &ClickHouse{
 		Config: &ClickHouseConfig{
 			Host: "localhost",
 			Port: 9000,
 		},
 	}
+	r := require.New(t)
+	r.NoError(ch.Connect())
+	r.NoError(ch.dropDatabase("testdb"))
 
-	if err := ch.Connect(); err != nil {
-		panic(err)
-	}
-
-	if err := ch.dropDatabase("testdb"); err != nil {
-		panic(err)
-	}
 	fmt.Println("Generate test data")
 	for _, data := range testData {
-		if err := ch.createTestData(data); err != nil {
-			panic(err)
-		}
+		r.NoError(ch.createTestData(data))
 	}
 
 	time.Sleep(time.Second * 5)
 	backupName := NewBackupName()
 	backupArchiveName := fmt.Sprintf("%s.tar", backupName)
 	fmt.Println("Create backup")
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	out, err := exec.CommandContext(ctx, "docker", "exec", "clickhouse", "clickhouse-backup", "create").CombinedOutput()
-	fmt.Println(string(out))
-	if err != nil {
-		panic(err)
-	}
-	cancel()
+	r.NoError(dockerExec("clickhouse-backup", "create"))
 
 	fmt.Println("Upload")
-	ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
-	out, err = exec.CommandContext(ctx, "docker", "exec", "clickhouse", "clickhouse-backup", "upload", backupArchiveName).CombinedOutput()
-	fmt.Println(string(out))
-	if err != nil {
-		panic(err)
-	}
-	cancel()
+	r.NoError(dockerExec("clickhouse-backup", "upload", backupArchiveName))
 
-	if err := ch.dropDatabase("testdb"); err != nil {
-		panic(err)
-	}
+	fmt.Println("Drop database")
+	r.NoError(ch.dropDatabase("testdb"))
+	fmt.Println("Delete backup")
+	r.NoError(dockerExec("rm", fmt.Sprintf("/var/lib/clickhouse/backup/%s", backupArchiveName)))
 
 	fmt.Println("Download")
-	ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
-	out, err = exec.CommandContext(ctx, "docker", "exec", "clickhouse", "clickhouse-backup", "download", backupArchiveName).CombinedOutput()
-	fmt.Println(string(out))
-	if err != nil {
-		panic(err)
-	}
-	cancel()
+	r.NoError(dockerExec("clickhouse-backup", "download", backupArchiveName))
 
 	fmt.Println("Extract archive")
-	ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
-	out, err = exec.Command("docker", "exec", "clickhouse", "clickhouse-backup", "extract", backupArchiveName).CombinedOutput()
-	fmt.Println(string(out))
-	if err != nil {
-		panic(err)
-	}
-	cancel()
+	r.NoError(dockerExec("clickhouse-backup", "extract", backupArchiveName))
 
 	fmt.Println("Create tables")
-	ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
-	out, err = exec.Command("docker", "exec", "clickhouse", "clickhouse-backup", "restore-schema", backupName).CombinedOutput()
-	fmt.Println(string(out))
-	if err != nil {
-		panic(err)
-	}
-	cancel()
+	r.NoError(dockerExec("clickhouse-backup", "restore-schema", backupName))
 
 	fmt.Println("Restore")
-	ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
-	out, err = exec.CommandContext(ctx, "docker", "exec", "clickhouse", "clickhouse-backup", "restore-data", backupName).CombinedOutput()
-	fmt.Println(string(out))
-	if err != nil {
-		panic(err)
-	}
-	cancel()
+	r.NoError(dockerExec("clickhouse-backup", "restore-data", backupName))
 
 	fmt.Println("Check data")
 	for i := range testData {
-		assert.NoError(t, ch.checkData(t, testData[i]))
+		r.NoError(ch.checkData(t, testData[i]))
 	}
 }
 
@@ -214,6 +190,16 @@ func (ch *ClickHouse) checkData(t *testing.T, data TestDataStuct) error {
 		assert.EqualValues(t, data.Rows[i], result[i])
 	}
 	return nil
+}
+
+func dockerExec(cmd ...string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	dcmd := []string{"exec", "clickhouse"}
+	dcmd = append(dcmd, cmd...)
+	out, err := exec.CommandContext(ctx, "docker", dcmd...).CombinedOutput()
+	fmt.Println(string(out))
+	cancel()
+	return err
 }
 
 func toDate(s string) time.Time {

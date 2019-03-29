@@ -14,4 +14,5 @@ s3:
   overwrite_strategy: always
 backup:
   strategy: archive
-  backups_to_keep: 0
+  backups_to_keep_local: 1
+  backups_to_keep_s3: 2

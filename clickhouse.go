@@ -255,7 +255,6 @@ func (ch *ClickHouse) CopyData(table BackupTable) error {
 		}
 		ch.Chown(detachedPath)
 
-		log.Printf("Walking through partition %s", partition.Path)
 		if err := filepath.Walk(partition.Path, func(filePath string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err
@@ -264,7 +263,6 @@ func (ch *ClickHouse) CopyData(table BackupTable) error {
 			filename := strings.Trim(strings.TrimPrefix(filePath, partition.Path), "/")
 			dstFilePath := filepath.Join(detachedPath, filename)
 			if info.IsDir() {
-				log.Printf("Creating directory %s", dstFilePath)
 				os.MkdirAll(dstFilePath, 0750)
 				return ch.Chown(dstFilePath)
 			}
