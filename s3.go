@@ -1,8 +1,10 @@
 package main
 
 import (
+	"archive/tar"
 	"crypto/md5"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"mime"
@@ -10,34 +12,156 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/AlexAkulov/s3gof3r"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/mholt/archiver"
+
 	pb "gopkg.in/cheggaaa/pb.v1"
 )
 
 // S3 - presents methods for manipulate data on s3
 type S3 struct {
-	session *session.Session
-	Config  *S3Config
-	DryRun  bool
+	session        *session.Session
+	s3Stream       *s3gof3r.Bucket
+	Config         *S3Config
+	DryRun         bool
+	s3StreamConfig *s3gof3r.Config
 }
 
 // Connect - connect to s3
-func (s *S3) Connect() (err error) {
-	s.session, err = session.NewSession(
+func (s *S3) Connect() error {
+	var err error
+	if s.session, err = session.NewSession(
 		&aws.Config{
 			Credentials:      credentials.NewStaticCredentials(s.Config.AccessKey, s.Config.SecretKey, ""),
 			Region:           aws.String(s.Config.Region),
 			Endpoint:         aws.String(s.Config.Endpoint),
 			DisableSSL:       aws.Bool(s.Config.DisableSSL),
 			S3ForcePathStyle: aws.Bool(s.Config.ForcePathStyle),
-		},
-	)
-	return
+		}); err != nil {
+		return err
+	}
+	endpoint := strings.TrimPrefix(s.Config.Endpoint, "https://")
+	endpoint = strings.TrimPrefix(endpoint, "http://")
+	httpSchema := "https"
+	if s.Config.DisableSSL {
+		httpSchema = "http"
+	}
+	s.s3StreamConfig = &s3gof3r.Config{
+		Client:      s3gof3r.ClientWithTimeout(5 * time.Second),
+		Concurrency: 10,
+		PartSize:    s.Config.PartSize,
+		NTry:        3,
+		Scheme:      httpSchema,
+		PathStyle:   s.Config.ForcePathStyle,
+	}
+	s3StreamClient := s3gof3r.New(endpoint, s.Config.Region, s3gof3r.Keys{
+		AccessKey: s.Config.AccessKey,
+		SecretKey: s.Config.SecretKey,
+	})
+	s.s3Stream = s3StreamClient.Bucket(s.Config.Bucket)
+
+	return nil
+}
+
+func (s *S3) CompressedStreamDownload(s3Path, localPath string) error {
+	archiveName := path.Join(s.Config.Path, fmt.Sprintf("%s.%s", s3Path, getExtension(s.Config.CompressionFormat)))
+	r, _, err := s.s3Stream.GetReader(archiveName, s.s3StreamConfig)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	z, _ := getArchiveReader(s.Config.CompressionFormat)
+
+	if err := z.Open(r, 0); err != nil {
+		return err
+	}
+	defer z.Close()
+	for {
+		file, err := z.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		header, ok := file.Header.(*tar.Header)
+		if !ok {
+			return fmt.Errorf("expected header to be *tar.Header but was %T", file.Header)
+		}
+		extractFile := filepath.Join(localPath, header.Name)
+		extractDir := filepath.Dir(extractFile)
+		if _, err := os.Stat(extractDir); os.IsNotExist(err) {
+			os.MkdirAll(extractDir, os.ModePerm)
+		}
+		dst, err := os.Create(extractFile)
+		if err != nil {
+			return err
+		}
+		if _, err = io.Copy(dst, file); err != nil {
+			return err
+		}
+		if err := dst.Close(); err != nil {
+			return err
+		}
+		if err := file.Close(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *S3) CompressedStreamUpload(localPath, s3Path string) error {
+	var bar *pb.ProgressBar
+	if !s.Config.DisableProgressBar {
+		var filesCount int
+		filepath.Walk(localPath, func(filePath string, info os.FileInfo, err error) error {
+			if info.Mode().IsRegular() {
+				filesCount++
+			}
+			return nil
+		})
+		bar = pb.StartNew(filesCount)
+		defer bar.FinishPrint("Done")
+	}
+	archiveName := path.Join(s.Config.Path, fmt.Sprintf("%s.%s", s3Path, getExtension(s.Config.CompressionFormat)))
+	w, err := s.s3Stream.PutWriter(archiveName, nil, s.s3StreamConfig)
+	if err != nil {
+		return err
+	}
+	defer w.Close()
+	z, _ := getArchiveWriter(s.Config.CompressionFormat, s.Config.CompressionLevel)
+	if err := z.Create(w); err != nil {
+		return err
+	}
+	defer z.Close()
+
+	return filepath.Walk(localPath, func(filePath string, info os.FileInfo, err error) error {
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		if !s.Config.DisableProgressBar {
+			bar.Increment()
+		}
+		file, err := os.Open(filePath)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		return z.Write(archiver.File{
+			FileInfo: archiver.FileInfo{
+				FileInfo:   info,
+				CustomName: strings.TrimPrefix(filePath, localPath),
+			},
+			ReadCloser: file,
+		})
+	})
 }
 
 // UploadDirectory - synchronize localPath to dstPath on s3
@@ -122,13 +246,12 @@ func (s *S3) UploadFile(localPath string, dstPath string) error {
 		return fmt.Errorf("error opening file %v: %v", localPath, err)
 	}
 	if !s.DryRun {
-		_, err := uploader.UploadWithContext(aws.BackgroundContext(), &s3manager.UploadInput{
+		if _, err := uploader.UploadWithContext(aws.BackgroundContext(), &s3manager.UploadInput{
 			ACL:    aws.String(config.S3.ACL),
 			Bucket: aws.String(config.S3.Bucket),
 			Key:    aws.String(path.Join(s.Config.Path, dstPath)),
 			Body:   file,
-		})
-		if err != nil {
+		}); err != nil {
 			return err
 		}
 	}

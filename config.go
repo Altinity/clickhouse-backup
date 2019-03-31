@@ -12,7 +12,6 @@ import (
 type Config struct {
 	ClickHouse ClickHouseConfig `yaml:"clickhouse"`
 	S3         S3Config         `yaml:"s3"`
-	Backup     BackupConfig     `yaml:"backup"`
 }
 
 // S3Config - s3 settings section
@@ -30,6 +29,11 @@ type S3Config struct {
 	OverwriteStrategy  string `yaml:"overwrite_strategy"`
 	PartSize           int64  `yaml:"part_size"`
 	DeleteExtraFiles   bool   `yaml:"delete_extra_files"`
+	Strategy           string `yaml:"strategy"`
+	BackupsToKeepLocal int    `yaml:"backups_to_keep_local"`
+	BackupsToKeepS3    int    `yaml:"backups_to_keep_s3"`
+	CompressionLevel   int    `yaml:"compression_level"`
+	CompressionFormat  string `yaml:"compression_format"`
 }
 
 // ClickHouseConfig - clickhouse settings section
@@ -39,13 +43,6 @@ type ClickHouseConfig struct {
 	Host     string `yaml:"host"`
 	Port     uint   `yaml:"port"`
 	DataPath string `yaml:"data_path"`
-}
-
-// BackupConfig - backup specific settings
-type BackupConfig struct {
-	Strategy           string `yaml:"strategy"`
-	BackupsToKeepLocal int    `yaml:"backups_to_keep_local"`
-	BackupsToKeepS3    int    `yaml:"backups_to_keep_s3"`
 }
 
 // LoadConfig - load config from file
@@ -75,7 +72,8 @@ func validateConfig(config *Config) error {
 	default:
 		return fmt.Errorf("unknown s3.overwrite_strategy it can be 'skip', 'etag', 'always'")
 	}
-	return nil
+	_, err := getArchiveWriter(config.S3.CompressionFormat, config.S3.CompressionLevel)
+	return err
 }
 
 // PrintDefaultConfig - print default config to stdout
@@ -94,17 +92,17 @@ func defaultConfig() *Config {
 			Port:     9000,
 		},
 		S3: S3Config{
-			Region:            "us-east-1",
-			DisableSSL:        false,
-			ACL:               "private",
-			OverwriteStrategy: "always",
-			PartSize:          5 * 1024 * 1024,
-			DeleteExtraFiles:  true,
-		},
-		Backup: BackupConfig{
-			Strategy:           "tree",
+			Region:             "us-east-1",
+			DisableSSL:         false,
+			ACL:                "private",
+			OverwriteStrategy:  "always",
+			PartSize:           5 * 1024 * 1024,
+			DeleteExtraFiles:   true,
+			Strategy:           "archive",
 			BackupsToKeepLocal: 0,
 			BackupsToKeepS3:    0,
+			CompressionLevel:   1,
+			CompressionFormat:  "lz4",
 		},
 	}
 }

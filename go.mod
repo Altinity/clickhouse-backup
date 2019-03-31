@@ -1,27 +1,25 @@
 module github.com/AlexAkulov/clickhouse-backup
 
 require (
-	github.com/Azure/go-ansiterm v0.0.0-20170929234023-d6e3b3328b78 // indirect
-	github.com/Microsoft/go-winio v0.4.11 // indirect
-	github.com/Nvveen/Gotty v0.0.0-20120604004816-cd527374f1e5 // indirect
+	github.com/AlexAkulov/s3gof3r v0.5.1-0.20190330231828-175f3bece152
 	github.com/aws/aws-sdk-go v1.15.58
-	github.com/cenkalti/backoff v2.0.0+incompatible // indirect
-	github.com/containerd/continuity v0.0.0-20181003075958-be9bd761db19 // indirect
-	github.com/docker/go-connections v0.4.0 // indirect
-	github.com/docker/go-units v0.3.3 // indirect
+	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/dsnet/compress v0.0.1 // indirect
+	github.com/fatih/color v1.7.0 // indirect
+	github.com/golang/snappy v0.0.1 // indirect
 	github.com/jmoiron/sqlx v1.2.0
 	github.com/kshvakov/clickhouse v1.3.4
+	github.com/mattn/go-colorable v0.1.1 // indirect
 	github.com/mattn/go-runewidth v0.0.3 // indirect
-	github.com/opencontainers/go-digest v1.0.0-rc1 // indirect
-	github.com/opencontainers/image-spec v1.0.1 // indirect
-	github.com/opencontainers/runc v0.1.1 // indirect
-	github.com/ory/dockertest v3.3.2+incompatible
-	github.com/pkg/errors v0.8.0 // indirect
-	github.com/sirupsen/logrus v1.1.1 // indirect
+	github.com/mholt/archiver v3.1.1+incompatible
+	github.com/nwaples/rardecode v1.0.0 // indirect
+	github.com/pierrec/lz4 v2.0.5+incompatible // indirect
+	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/smartystreets/goconvey v0.0.0-20190330032615-68dc04aab96a // indirect
 	github.com/stretchr/testify v1.2.2
 	github.com/urfave/cli v1.20.0
-	golang.org/x/net v0.0.0-20181017193950-04a2e542c03f // indirect
-	golang.org/x/sys v0.0.0-20181019084534-8f1d3d21f81b // indirect
+	github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8 // indirect
+	google.golang.org/appengine v1.5.0 // indirect
 	gopkg.in/cheggaaa/pb.v1 v1.0.26
 	gopkg.in/yaml.v2 v2.2.1
 )

@@ -118,13 +118,10 @@ func TestIntegration(t *testing.T) {
 	r.NoError(ch.dropDatabase("testdb"))
 
 	fmt.Println("Delete backup")
-	r.NoError(dockerExec("rm", fmt.Sprintf("/var/lib/clickhouse/backup/%s", backupFileName)))
+	r.NoError(dockerExec("rm", "-rf", fmt.Sprintf("/var/lib/clickhouse/backup/%s", backupFileName)))
 
 	fmt.Println("Download")
 	r.NoError(dockerExec("clickhouse-backup", "download", backupFileName))
-
-	fmt.Println("Extract archive")
-	r.NoError(dockerExec("clickhouse-backup", "extract", backupFileName))
 
 	fmt.Println("Create tables")
 	r.NoError(dockerExec("clickhouse-backup", "restore-schema", backupName))

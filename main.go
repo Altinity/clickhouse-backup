@@ -14,9 +14,7 @@ import (
 	"github.com/urfave/cli"
 )
 
-const (
-	BackupTimeFormat = "2006-01-02T15-04-05"
-)
+const BackupTimeFormat = "2006-01-02T15-04-05"
 
 var (
 	config    *Config
@@ -78,7 +76,7 @@ func main() {
 			Usage: "Print backups list and exit",
 			Action: func(c *cli.Context) error {
 				fmt.Println("Local backups:")
-				printLocalBackups(*config, "any")
+				printLocalBackups(*config)
 				fmt.Println("Backups on S3:")
 				printS3Backups(*config)
 				return nil
@@ -115,7 +113,7 @@ func main() {
 		},
 		{
 			Name:  "upload",
-			Usage: "Upload backup to s3.",
+			Usage: "Upload backup to s3",
 			Action: func(c *cli.Context) error {
 				return upload(*config, c.Args().First(), c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
@@ -172,14 +170,6 @@ func main() {
 			Usage: "Clean backup data from shadow folder",
 			Action: func(c *cli.Context) error {
 				return clean(*config, c.Bool("dry-run") || c.GlobalBool("dry-run"))
-			},
-			Flags: cliapp.Flags,
-		},
-		{
-			Name:  "extract",
-			Usage: "Extract archive",
-			Action: func(c *cli.Context) error {
-				return extract(*config, c.Args().First(), c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
 			Flags: cliapp.Flags,
 		},
@@ -288,7 +278,7 @@ func getTables(config Config) error {
 func restoreSchema(config Config, backupName string, tablePattern string, dryRun bool) error {
 	if backupName == "" {
 		fmt.Println("Select backup for restore:")
-		printLocalBackups(config, "tree")
+		printLocalBackups(config)
 		os.Exit(1)
 	}
 	if strings.HasSuffix(backupName, ".tar") {
@@ -337,7 +327,7 @@ func restoreSchema(config Config, backupName string, tablePattern string, dryRun
 	return nil
 }
 
-func printLocalBackups(config Config, backupType string) error {
+func printLocalBackups(config Config) error {
 	names, err := listLocalBackups(config)
 	if err != nil && !os.IsNotExist(err) {
 		return err
@@ -346,18 +336,7 @@ func printLocalBackups(config Config, backupType string) error {
 		fmt.Println("No backups found")
 	}
 	for _, name := range names {
-		switch backupType {
-		case "tree":
-			if !strings.HasSuffix(name, ".tar") {
-				fmt.Println(name)
-			}
-		case "archive":
-			if strings.HasSuffix(name, ".tar") {
-				fmt.Println(name)
-			}
-		default:
-			fmt.Println(name)
-		}
+		fmt.Println(name)
 	}
 	return nil
 }
@@ -493,56 +472,18 @@ func createBackup(config Config, tablePattern string, dryRun bool) error {
 			return err
 		}
 	}
+	if err := removeOldBackupsLocal(config, dryRun); err != nil {
+		return err
+	}
 	log.Println("  done")
-
-	if config.Backup.Strategy == "archive" {
-		log.Printf("Create '%s.tar'", backupName)
-		file, err := os.Create(fmt.Sprintf("%s.tar", backupPath))
-		if err != nil {
-			return err
-		}
-		defer file.Close()
-		if err := TarDirs(file, backupPath); err != nil {
-			return fmt.Errorf("error achiving data with: %v", err)
-		}
-		if err := os.RemoveAll(backupPath); err != nil {
-			return err
-		}
-	}
-	return removeOldBackupsLocal(config, dryRun)
-}
-
-func extract(config Config, backupName string, dryRun bool) error {
-	if backupName == "" {
-		fmt.Println("Select backup for extract:")
-		printLocalBackups(config, "archive")
-		os.Exit(1)
-	}
-	dataPath := getDataPath(config)
-	if dataPath == "" {
-		return ErrUnknownClickhouseDataPath
-	}
-	backupArchivePath := path.Join(dataPath, "backup", backupName)
-	backupName = strings.TrimSuffix(backupName, ".tar")
-	archiveFile, err := os.Open(backupArchivePath)
-	if err != nil {
-		return fmt.Errorf("error opening archive: %v", err)
-	}
-	defer archiveFile.Close()
-	if err := Untar(archiveFile, path.Join(dataPath, "backup")); err != nil {
-		return fmt.Errorf("error unarchiving: %v", err)
-	}
 	return nil
 }
 
 func restoreData(config Config, backupName string, tablePattern string, dryRun bool, increments []int) error {
 	if backupName == "" {
 		fmt.Println("Select backup for restore:")
-		printLocalBackups(config, "tree")
+		printLocalBackups(config)
 		os.Exit(1)
-	}
-	if strings.HasSuffix(backupName, ".tar") {
-		return fmt.Errorf("extract archive before")
 	}
 	dataPath := getDataPath(config)
 	if dataPath == "" {
@@ -615,10 +556,9 @@ func getLocalBackup(config Config, backupName string) error {
 func upload(config Config, backupName string, dryRun bool) error {
 	if backupName == "" {
 		fmt.Println("Select backup for upload:")
-		printLocalBackups(config, "any")
+		printLocalBackups(config)
 		os.Exit(1)
 	}
-
 	dataPath := getDataPath(config)
 	if dataPath == "" {
 		return ErrUnknownClickhouseDataPath
@@ -634,15 +574,19 @@ func upload(config Config, backupName string, dryRun bool) error {
 		return fmt.Errorf("can't upload with %s", err)
 	}
 	log.Printf("Upload backup '%s'", backupName)
-	if err := s3.UploadDirectory(path.Join(dataPath, "backup", backupName), backupName); err != nil {
-		return fmt.Errorf("can't upload with %v", err)
+	if config.S3.Strategy == "archive" {
+		if err := s3.CompressedStreamUpload(path.Join(dataPath, "backup", backupName), backupName); err != nil {
+			return fmt.Errorf("can't upload with %v", err)
+		}
+	} else {
+		if err := s3.UploadDirectory(path.Join(dataPath, "backup", backupName), backupName); err != nil {
+			return fmt.Errorf("can't upload with %v", err)
+		}
 	}
-
-	if err := s3.RemoveOldBackups(config.Backup.BackupsToKeepS3); err != nil {
+	if err := s3.RemoveOldBackups(config.S3.BackupsToKeepS3); err != nil {
 		return fmt.Errorf("can't remove old backups: %v", err)
 	}
 	log.Println("  done")
-
 	return nil
 }
 
@@ -663,13 +607,10 @@ func download(config Config, backupName string, dryRun bool) error {
 	if err := s3.Connect(); err != nil {
 		return fmt.Errorf("can't connect to s3 with: %v", err)
 	}
-	if strings.HasSuffix(backupName, ".tar") {
-		return s3.DownloadArchive(backupName, path.Join(dataPath, "backup"))
+	if config.S3.Strategy == "archive" {
+		return s3.CompressedStreamDownload(backupName, path.Join(dataPath, "backup", backupName))
 	}
-	if err := s3.DownloadTree(backupName, path.Join(dataPath, "backup", backupName)); err != nil {
-		return fmt.Errorf("cat't download '%s' from s3 with %v", backupName, err)
-	}
-	return nil
+	return s3.DownloadTree(backupName, path.Join(dataPath, "backup", backupName))
 }
 
 func clean(config Config, dryRun bool) error {
@@ -692,7 +633,7 @@ func clean(config Config, dryRun bool) error {
 }
 
 func removeOldBackupsLocal(config Config, dryRun bool) error {
-	if config.Backup.BackupsToKeepLocal < 1 {
+	if config.S3.BackupsToKeepLocal < 1 {
 		return nil
 	}
 	backupList, err := listLocalBackups(config)
@@ -703,7 +644,7 @@ func removeOldBackupsLocal(config Config, dryRun bool) error {
 	if dataPath == "" {
 		return ErrUnknownClickhouseDataPath
 	}
-	backupsToDelete := GetBackupsToDelete(backupList, config.Backup.BackupsToKeepLocal)
+	backupsToDelete := GetBackupsToDelete(backupList, config.S3.BackupsToKeepLocal)
 	for _, backupName := range backupsToDelete {
 		backupPath := path.Join(dataPath, "backup", backupName)
 		if dryRun {
