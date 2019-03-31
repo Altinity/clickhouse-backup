@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"log"
 	"mime"
+	"net/http"
 	"os"
 	"path"
 	"path/filepath"
@@ -21,7 +22,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/mholt/archiver"
-
 	pb "gopkg.in/cheggaaa/pb.v1"
 )
 
@@ -131,7 +131,7 @@ func (s *S3) CompressedStreamUpload(localPath, s3Path string) error {
 		defer bar.FinishPrint("Done")
 	}
 	archiveName := path.Join(s.Config.Path, fmt.Sprintf("%s.%s", s3Path, getExtension(s.Config.CompressionFormat)))
-	w, err := s.s3Stream.PutWriter(archiveName, nil, s.s3StreamConfig)
+	w, err := s.s3Stream.PutWriter(archiveName, http.Header{"X-Amz-Acl": []string{s.Config.ACL}}, s.s3StreamConfig)
 	if err != nil {
 		return err
 	}
