@@ -26,6 +26,7 @@ var (
 )
 
 func main() {
+	log.SetOutput(os.Stdout)
 	cliapp := cli.NewApp()
 	cliapp.Name = "clickhouse-backup"
 	cliapp.Usage = "Backup ClickHouse to s3"
