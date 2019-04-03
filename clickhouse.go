@@ -56,7 +56,7 @@ type RestoreTable struct {
 
 // Connect - connect to clickhouse
 func (ch *ClickHouse) Connect() error {
-	connectionString := fmt.Sprintf("tcp://%v:%v?username=%v&password=%v&compress=true",
+	connectionString := fmt.Sprintf("tcp://%v:%v?username=%v&password=%v&database=system&compress=true",
 		ch.Config.Host, ch.Config.Port, ch.Config.Username, ch.Config.Password)
 	var err error
 	if ch.conn, err = sqlx.Open("clickhouse", connectionString); err != nil {

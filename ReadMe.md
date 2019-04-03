@@ -24,13 +24,12 @@ COMMANDS:
      list            Print backups list and exit
      freeze          Freeze all or specific tables. You can specify tables via flag -t db.[table]
      create          Create new backup of all or specific tables. You can specify tables via flag -t [db].[table]
-     upload          Upload backup to s3.
+     upload          Upload backup to s3
      download        Download backup from s3 to backup folder
      restore-schema  Create databases and tables from backup metadata
      restore-data    Copy data from 'backup' to 'detached' folder and execute ATTACH. You can specify tables like 'db.[table]' via flag -t and increments via -i flag
      default-config  Print default config and exit
      clean           Clean backup data from shadow folder
-     extract         Extract archive
      help, h         Shows a list of commands or help for one command
 
 GLOBAL OPTIONS:
@@ -62,11 +61,12 @@ s3:
   # Define behavior for rewrite exists files with the same size. Must set to "skip", "etag" or "always"
   # "skip" - the fastest but can make backup inconsistently
   # "etag" - calculate etag for local files, set this if your network is very slow
-  overwrite_strategy: "always"
+  overwrite_strategy: always
   part_size: 5242880
   delete_extra_files: true
-backup:
-  strategy: tree
+  strategy: archive
   backups_to_keep_local: 0
   backups_to_keep_s3: 0
+  compression_level: 1
+  compression_format: lz4
 ```
