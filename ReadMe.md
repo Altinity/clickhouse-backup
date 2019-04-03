@@ -4,30 +4,32 @@
 [![Build Status](https://travis-ci.org/AlexAkulov/clickhouse-backup.svg?branch=master)](https://travis-ci.org/AlexAkulov/clickhouse-backup)
 [![Telegram](https://img.shields.io/badge/telegram-join%20chat-3796cd.svg)](https://t.me/clickhousebackup)
 
-Tool for backup ClickHouse to s3
-
+Tool for easy backup of ClickHouse with S3 support
 
 ## Usage
 
 ```
 NAME:
-   clickhouse-backup - Backup ClickHouse to s3
+   clickhouse-backup - Tool for easy backup of ClickHouse with S3 support
 
 USAGE:
-   clickhouse-backup [global options] command [command options] [arguments...]
+   clickhouse-backup <command> [--dry-run] [--table=<db>.<table>] <backup_name>
 
 VERSION:
    unknown
 
+DESCRIPTION:
+   Run as root or clickhouse user
+
 COMMANDS:
-     tables          Print all tables and exit
-     list            Print backups list and exit
-     freeze          Freeze all or specific tables. You can specify tables via flag -t db.[table]
-     create          Create new backup of all or specific tables. You can specify tables via flag -t [db].[table]
+     tables          Print list of tables and exit
+     list            Print list of backups and exit
+     freeze          Freeze all or specific tables
+     create          Create new backup of all or specific tables
      upload          Upload backup to s3
      download        Download backup from s3 to backup folder
      restore-schema  Create databases and tables from backup metadata
-     restore-data    Copy data from 'backup' to 'detached' folder and execute ATTACH. You can specify tables like 'db.[table]' via flag -t and increments via -i flag
+     restore-data    Copy data to 'detached' folder and execute ATTACH
      default-config  Print default config and exit
      clean           Clean backup data from shadow folder
      help, h         Shows a list of commands or help for one command

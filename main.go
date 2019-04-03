@@ -29,7 +29,9 @@ func main() {
 	log.SetOutput(os.Stdout)
 	cliapp := cli.NewApp()
 	cliapp.Name = "clickhouse-backup"
-	cliapp.Usage = "Backup ClickHouse to s3"
+	cliapp.Usage = "Tool for easy backup of ClickHouse with S3 support"
+	cliapp.UsageText = "clickhouse-backup <command> [--dry-run] [--table=<db>.<table>] <backup_name>"
+	cliapp.Description = "Run as root or clickhouse user"
 	cliapp.Version = version
 
 	cliapp.Flags = []cli.Flag{
@@ -65,16 +67,18 @@ func main() {
 
 	cliapp.Commands = []cli.Command{
 		{
-			Name:  "tables",
-			Usage: "Print all tables and exit",
+			Name:      "tables",
+			Usage:     "Print list of tables and exit",
+			UsageText: "clickhouse-backup tables",
 			Action: func(c *cli.Context) error {
 				return getTables(*config)
 			},
 			Flags: cliapp.Flags,
 		},
 		{
-			Name:  "list",
-			Usage: "Print backups list and exit",
+			Name:      "list",
+			Usage:     "Print list of backups and exit",
+			UsageText: "clickhouse-backup list",
 			Action: func(c *cli.Context) error {
 				fmt.Println("Local backups:")
 				printLocalBackups(*config)
@@ -86,7 +90,8 @@ func main() {
 		},
 		{
 			Name:        "freeze",
-			Usage:       "Freeze all or specific tables. You can specify tables via flag -t db.[table]",
+			Usage:       "Freeze all or specific tables",
+			UsageText:   "clickhouse-backup freeze [--dry-run] [--table=<db>.<table>] <backup_name>",
 			Description: "Freeze tables",
 			Action: func(c *cli.Context) error {
 				return freeze(*config, c.String("t"), c.Bool("dry-run") || c.GlobalBool("dry-run"))
@@ -100,10 +105,11 @@ func main() {
 		},
 		{
 			Name:        "create",
-			Usage:       "Create new backup of all or specific tables. You can specify tables via flag -t [db].[table]",
+			Usage:       "Create new backup of all or specific tables",
+			UsageText:   "clickhouse-backup create [--dry-run] [--table=<db>.<table>] <backup_name>",
 			Description: "Create new backup",
 			Action: func(c *cli.Context) error {
-				return createBackup(*config, c.String("t"), c.Bool("dry-run") || c.GlobalBool("dry-run"))
+				return createBackup(*config, c.Args().Get(0), c.String("t"), c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -113,24 +119,27 @@ func main() {
 			),
 		},
 		{
-			Name:  "upload",
-			Usage: "Upload backup to s3",
+			Name:      "upload",
+			Usage:     "Upload backup to s3",
+			UsageText: "clickhouse-backup upload [--dry-run] <backup_name>",
 			Action: func(c *cli.Context) error {
 				return upload(*config, c.Args().First(), c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
 			Flags: cliapp.Flags,
 		},
 		{
-			Name:  "download",
-			Usage: "Download backup from s3 to backup folder",
+			Name:      "download",
+			Usage:     "Download backup from s3 to backup folder",
+			UsageText: "clickhouse-backup download [--dry-run] <backup_name>",
 			Action: func(c *cli.Context) error {
 				return download(*config, c.Args().First(), c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
 			Flags: cliapp.Flags,
 		},
 		{
-			Name:  "restore-schema",
-			Usage: "Create databases and tables from backup metadata",
+			Name:      "restore-schema",
+			Usage:     "Create databases and tables from backup metadata",
+			UsageText: "clickhouse-backup restore-schema [--dry-run] [--table=<db>.<table>] <backup_name>",
 			Action: func(c *cli.Context) error {
 				return restoreSchema(*config, c.Args().First(), c.String("t"), c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
@@ -142,8 +151,9 @@ func main() {
 			),
 		},
 		{
-			Name:  "restore-data",
-			Usage: "Copy data from 'backup' to 'detached' folder and execute ATTACH. You can specify tables like 'db.[table]' via flag -t and increments via -i flag",
+			Name:      "restore-data",
+			Usage:     "Copy data to 'detached' folder and execute ATTACH",
+			UsageText: "clickhouse-backup restore-data [--dry-run] [--table=<db>.<table>] <backup_name>",
 			Action: func(c *cli.Context) error {
 				return restoreData(*config, c.Args().First(), c.String("t"), c.Bool("dry-run") || c.GlobalBool("dry-run"), c.IntSlice("i"))
 			},
@@ -425,8 +435,10 @@ func NewBackupName() string {
 	return time.Now().UTC().Format(BackupTimeFormat)
 }
 
-func createBackup(config Config, tablePattern string, dryRun bool) error {
-	backupName := NewBackupName()
+func createBackup(config Config, backupName, tablePattern string, dryRun bool) error {
+	if backupName == "" {
+		backupName = NewBackupName()
+	}
 	log.Printf("Create backup '%s'", backupName)
 	if err := freeze(config, tablePattern, dryRun); err != nil {
 		return err

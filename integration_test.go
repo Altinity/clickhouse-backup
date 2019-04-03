@@ -104,30 +104,27 @@ func TestIntegration(t *testing.T) {
 
 	time.Sleep(time.Second * 5)
 	fmt.Println("Create backup")
-	r.NoError(dockerExec("clickhouse-backup", "create"))
-
-	out, _ := dockerExecOut("clickhouse-backup", "upload")
-	r.True(strings.HasPrefix(out, "Select backup for upload:"))
-	backupFileName := strings.Split(out, "\n")[1]
-	backupName := strings.TrimSuffix(backupFileName, ".tar")
+	r.NoError(dockerExec("clickhouse-backup", "create", "test_backup"))
 
 	fmt.Println("Upload")
-	r.NoError(dockerExec("clickhouse-backup", "upload", backupFileName))
+	r.NoError(dockerExec("clickhouse-backup", "upload", "test_backup"))
 
 	fmt.Println("Drop database")
 	r.NoError(ch.dropDatabase("testdb"))
 
+	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
 	fmt.Println("Delete backup")
-	r.NoError(dockerExec("rm", "-rf", fmt.Sprintf("/var/lib/clickhouse/backup/%s", backupFileName)))
+	r.NoError(dockerExec("/bin/rm", "-rf", "/var/lib/clickhouse/backup/test_backup"))
+	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
 
 	fmt.Println("Download")
-	r.NoError(dockerExec("clickhouse-backup", "download", backupFileName))
+	r.NoError(dockerExec("clickhouse-backup", "download", "test_backup"))
 
 	fmt.Println("Create tables")
-	r.NoError(dockerExec("clickhouse-backup", "restore-schema", backupName))
+	r.NoError(dockerExec("clickhouse-backup", "restore-schema", "test_backup"))
 
 	fmt.Println("Restore")
-	r.NoError(dockerExec("clickhouse-backup", "restore-data", backupName))
+	r.NoError(dockerExec("clickhouse-backup", "restore-data", "test_backup"))
 
 	fmt.Println("Check data")
 	for i := range testData {
