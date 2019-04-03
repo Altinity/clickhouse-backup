@@ -70,5 +70,6 @@ s3:
   backups_to_keep_local: 0
   backups_to_keep_s3: 0
   compression_level: 1
+  # supported: 'tar', 'lz4', 'bzip2', 'gzip', 'sz', 'xz'
   compression_format: lz4
 ```

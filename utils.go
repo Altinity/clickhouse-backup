@@ -107,6 +107,8 @@ func GetBackupsToDelete(backups []string, keep int) []string {
 
 func getArchiveWriter(format string, level int) (archiver.Writer, error) {
 	switch format {
+	case "tar":
+		return &archiver.Tar{}, nil
 	case "lz4":
 		return &archiver.TarLz4{CompressionLevel: level, Tar: archiver.NewTar()}, nil
 	case "bzip2":
@@ -123,6 +125,8 @@ func getArchiveWriter(format string, level int) (archiver.Writer, error) {
 
 func getExtension(format string) string {
 	switch format {
+	case "tar":
+		return "tar"
 	case "lz4":
 		return "tar.lz4"
 	case "bzip2":
@@ -139,6 +143,8 @@ func getExtension(format string) string {
 
 func getArchiveReader(format string) (archiver.Reader, error) {
 	switch format {
+	case "tar":
+		return archiver.NewTar(), nil
 	case "lz4":
 		return archiver.NewTarLz4(), nil
 	case "bzip2":
@@ -150,5 +156,5 @@ func getArchiveReader(format string) (archiver.Reader, error) {
 	case "xz":
 		return archiver.NewTarXz(), nil
 	}
-	return nil, fmt.Errorf("wrong compression_format, supported: 'lz4', 'bzip2', 'gzip', 'sz', 'xz'")
+	return nil, fmt.Errorf("wrong compression_format, supported: 'tar', 'lz4', 'bzip2', 'gzip', 'sz', 'xz'")
 }
