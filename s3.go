@@ -237,7 +237,7 @@ func (s *S3) UploadDirectory(localPath string, dstPath string) error {
 }
 
 // UploadFile - synchronize localPath to dstPath on s3
-func (s *S3) UploadFile(localPath string, dstPath string) error {
+func (s *S3) UploadFile(config *Config, localPath string, dstPath string) error {
 	uploader := s3manager.NewUploader(s.session)
 	uploader.PartSize = config.S3.PartSize
 
