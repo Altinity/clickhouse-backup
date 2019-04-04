@@ -38,11 +38,12 @@ type S3Config struct {
 
 // ClickHouseConfig - clickhouse settings section
 type ClickHouseConfig struct {
-	Username string `yaml:"username"`
-	Password string `yaml:"password"`
-	Host     string `yaml:"host"`
-	Port     uint   `yaml:"port"`
-	DataPath string `yaml:"data_path"`
+	Username   string   `yaml:"username"`
+	Password   string   `yaml:"password"`
+	Host       string   `yaml:"host"`
+	Port       uint     `yaml:"port"`
+	DataPath   string   `yaml:"data_path"`
+	SkipTables []string `yaml:"skip_tables"`
 }
 
 // LoadConfig - load config from file
@@ -90,6 +91,9 @@ func defaultConfig() *Config {
 			Password: "",
 			Host:     "localhost",
 			Port:     9000,
+			SkipTables: []string{
+				"system.*",
+			},
 		},
 		S3: S3Config{
 			Region:             "us-east-1",

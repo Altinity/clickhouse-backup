@@ -120,10 +120,10 @@ func TestIntegration(t *testing.T) {
 	fmt.Println("Download")
 	r.NoError(dockerExec("clickhouse-backup", "download", "test_backup"))
 
-	fmt.Println("Create tables")
+	fmt.Println("Restore schema")
 	r.NoError(dockerExec("clickhouse-backup", "restore-schema", "test_backup"))
 
-	fmt.Println("Restore")
+	fmt.Println("Restore data")
 	r.NoError(dockerExec("clickhouse-backup", "restore-data", "test_backup"))
 
 	fmt.Println("Check data")

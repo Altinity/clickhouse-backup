@@ -49,6 +49,8 @@ clickhouse:
   host: localhost
   port: 9000
   data_path: ""
+  skip_tables:
+    - system.*
 s3:
   access_key: ""
   secret_key: ""

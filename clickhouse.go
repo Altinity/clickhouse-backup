@@ -30,6 +30,7 @@ type Table struct {
 	DataPath     string `db:"data_path"`
 	MetadataPath string `db:"metadata_path"`
 	IsTemporary  bool   `db:"is_temporary"`
+	Skip         bool
 }
 
 // BackupPartition - struct representing Clickhouse partition
@@ -104,8 +105,17 @@ func (ch *ClickHouse) Close() error {
 // GetTables - get all tables info
 func (ch *ClickHouse) GetTables() ([]Table, error) {
 	var tables []Table
-	if err := ch.conn.Select(&tables, "SELECT database, name, is_temporary, data_path, metadata_path FROM system.tables WHERE database != 'system';"); err != nil {
+	if err := ch.conn.Select(&tables, "SELECT database, name, is_temporary, data_path, metadata_path FROM system.tables WHERE data_path != '' AND is_temporary = 0;"); err != nil {
 		return nil, err
+	}
+	for i, t := range tables {
+		for _, filter := range ch.Config.SkipTables {
+			if matched, _ := filepath.Match(filter, fmt.Sprintf("%s.%s", t.Database, t.Name)); matched {
+				t.Skip = true
+				tables[i] = t
+				break
+			}
+		}
 	}
 	return tables, nil
 }

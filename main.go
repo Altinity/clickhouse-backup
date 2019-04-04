@@ -281,7 +281,11 @@ func getTables(config Config) error {
 		return fmt.Errorf("can't get tables with: %v", err)
 	}
 	for _, table := range allTables {
-		fmt.Printf("%s.%s\n", table.Database, table.Name)
+		if table.Skip {
+			fmt.Printf("%s.%s\t(ignored)\n", table.Database, table.Name)
+		} else {
+			fmt.Printf("%s.%s\n", table.Database, table.Name)
+		}
 	}
 	return nil
 }
@@ -424,6 +428,10 @@ func freeze(config Config, tablePattern string, dryRun bool) error {
 		return nil
 	}
 	for _, table := range backupTables {
+		if table.Skip {
+			fmt.Printf("%s.%s\t(ignored)\n", table.Database, table.Name)
+			continue
+		}
 		if err := ch.FreezeTable(table); err != nil {
 			return err
 		}
