@@ -1,7 +1,7 @@
 module github.com/AlexAkulov/clickhouse-backup
 
 require (
-	github.com/AlexAkulov/s3gof3r v0.5.1-0.20190330231828-175f3bece152
+	github.com/AlexAkulov/s3gof3r v0.5.1-0.20190404084829-b595531d7b71
 	github.com/aws/aws-sdk-go v1.15.58
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dsnet/compress v0.0.1 // indirect
