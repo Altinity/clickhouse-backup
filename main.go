@@ -423,7 +423,7 @@ func freeze(config Config, tablePattern string, dryRun bool) error {
 	}
 	for _, table := range backupTables {
 		if table.Skip {
-			fmt.Printf("%s.%s\t(ignored)\n", table.Database, table.Name)
+			log.Printf("Skip '%s.%s'", table.Database, table.Name)
 			continue
 		}
 		if err := ch.FreezeTable(table); err != nil {
