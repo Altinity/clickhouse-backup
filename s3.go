@@ -237,9 +237,9 @@ func (s *S3) UploadDirectory(localPath string, dstPath string) error {
 }
 
 // UploadFile - synchronize localPath to dstPath on s3
-func (s *S3) UploadFile(config *Config, localPath string, dstPath string) error {
+func (s *S3) UploadFile(localPath string, dstPath string) error {
 	uploader := s3manager.NewUploader(s.session)
-	uploader.PartSize = config.S3.PartSize
+	uploader.PartSize = s.Config.PartSize
 
 	file, err := os.Open(localPath)
 	if err != nil {
@@ -247,8 +247,8 @@ func (s *S3) UploadFile(config *Config, localPath string, dstPath string) error 
 	}
 	if !s.DryRun {
 		if _, err := uploader.UploadWithContext(aws.BackgroundContext(), &s3manager.UploadInput{
-			ACL:    aws.String(config.S3.ACL),
-			Bucket: aws.String(config.S3.Bucket),
+			ACL:    aws.String(s.Config.ACL),
+			Bucket: aws.String(s.Config.Bucket),
 			Key:    aws.String(path.Join(s.Config.Path, dstPath)),
 			Body:   file,
 		}); err != nil {

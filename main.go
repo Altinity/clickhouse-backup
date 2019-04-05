@@ -14,7 +14,10 @@ import (
 	"github.com/urfave/cli"
 )
 
-const BackupTimeFormat = "2006-01-02T15-04-05"
+const (
+	BackupTimeFormat  = "2006-01-02T15-04-05"
+	defaultConfigPath = "/etc/clickhouse-backup/config.yml"
+)
 
 var (
 	version   = "unknown"
@@ -22,10 +25,6 @@ var (
 	buildDate = "unknown"
 
 	ErrUnknownClickhouseDataPath = errors.New("clickhouse data path is unknown, you can set data_path in config file")
-)
-
-const (
-	defaultConfigPath = "/etc/clickhouse-backup/config.yml"
 )
 
 func main() {
