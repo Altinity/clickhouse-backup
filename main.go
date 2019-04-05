@@ -17,12 +17,15 @@ import (
 const BackupTimeFormat = "2006-01-02T15-04-05"
 
 var (
-	config    *Config
 	version   = "unknown"
 	gitCommit = "unknown"
 	buildDate = "unknown"
 
 	ErrUnknownClickhouseDataPath = errors.New("clickhouse data path is unknown, you can set data_path in config file")
+)
+
+const (
+	defaultConfigPath = "/etc/clickhouse-backup/config.yml"
 )
 
 func main() {
@@ -37,7 +40,7 @@ func main() {
 	cliapp.Flags = []cli.Flag{
 		cli.StringFlag{
 			Name:  "config, c",
-			Value: "/etc/clickhouse-backup/config.yml",
+			Value: defaultConfigPath,
 			Usage: "Config `FILE` name.",
 		},
 		cli.BoolFlag{
@@ -56,22 +59,13 @@ func main() {
 		fmt.Println("Build Date:\t", buildDate)
 	}
 
-	cliapp.Before = func(c *cli.Context) error {
-		var err error
-		config, err = LoadConfig(c.String("config"))
-		if err != nil {
-			log.Fatal(err)
-		}
-		return nil
-	}
-
 	cliapp.Commands = []cli.Command{
 		{
 			Name:      "tables",
 			Usage:     "Print list of tables and exit",
 			UsageText: "clickhouse-backup tables",
 			Action: func(c *cli.Context) error {
-				return getTables(*config)
+				return getTables(*getConfig(c))
 			},
 			Flags: cliapp.Flags,
 		},
@@ -80,6 +74,7 @@ func main() {
 			Usage:     "Print list of backups and exit",
 			UsageText: "clickhouse-backup list",
 			Action: func(c *cli.Context) error {
+				config := getConfig(c)
 				fmt.Println("Local backups:")
 				printLocalBackups(*config)
 				fmt.Println("Backups on S3:")
@@ -94,7 +89,7 @@ func main() {
 			UsageText:   "clickhouse-backup freeze [--dry-run] [--table=<db>.<table>] <backup_name>",
 			Description: "Freeze tables",
 			Action: func(c *cli.Context) error {
-				return freeze(*config, c.String("t"), c.Bool("dry-run") || c.GlobalBool("dry-run"))
+				return freeze(*getConfig(c), c.String("t"), c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -109,7 +104,7 @@ func main() {
 			UsageText:   "clickhouse-backup create [--dry-run] [--table=<db>.<table>] <backup_name>",
 			Description: "Create new backup",
 			Action: func(c *cli.Context) error {
-				return createBackup(*config, c.Args().Get(0), c.String("t"), c.Bool("dry-run") || c.GlobalBool("dry-run"))
+				return createBackup(*getConfig(c), c.Args().Get(0), c.String("t"), c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -123,7 +118,7 @@ func main() {
 			Usage:     "Upload backup to s3",
 			UsageText: "clickhouse-backup upload [--dry-run] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return upload(*config, c.Args().First(), c.Bool("dry-run") || c.GlobalBool("dry-run"))
+				return upload(*getConfig(c), c.Args().First(), c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
 			Flags: cliapp.Flags,
 		},
@@ -132,7 +127,7 @@ func main() {
 			Usage:     "Download backup from s3 to backup folder",
 			UsageText: "clickhouse-backup download [--dry-run] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return download(*config, c.Args().First(), c.Bool("dry-run") || c.GlobalBool("dry-run"))
+				return download(*getConfig(c), c.Args().First(), c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
 			Flags: cliapp.Flags,
 		},
@@ -141,7 +136,7 @@ func main() {
 			Usage:     "Create databases and tables from backup metadata",
 			UsageText: "clickhouse-backup restore-schema [--dry-run] [--table=<db>.<table>] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return restoreSchema(*config, c.Args().First(), c.String("t"), c.Bool("dry-run") || c.GlobalBool("dry-run"))
+				return restoreSchema(*getConfig(c), c.Args().First(), c.String("t"), c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -155,7 +150,7 @@ func main() {
 			Usage:     "Copy data to 'detached' folder and execute ATTACH",
 			UsageText: "clickhouse-backup restore-data [--dry-run] [--table=<db>.<table>] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return restoreData(*config, c.Args().First(), c.String("t"), c.Bool("dry-run") || c.GlobalBool("dry-run"), c.IntSlice("i"))
+				return restoreData(*getConfig(c), c.Args().First(), c.String("t"), c.Bool("dry-run") || c.GlobalBool("dry-run"), c.IntSlice("i"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -180,7 +175,7 @@ func main() {
 			Name:  "clean",
 			Usage: "Clean backup data from shadow folder",
 			Action: func(c *cli.Context) error {
-				return clean(*config, c.Bool("dry-run") || c.GlobalBool("dry-run"))
+				return clean(*getConfig(c), c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
 			Flags: cliapp.Flags,
 		},
@@ -675,4 +670,18 @@ func removeOldBackupsLocal(config Config, dryRun bool) error {
 		os.RemoveAll(backupPath)
 	}
 	return nil
+}
+
+func getConfig(ctx *cli.Context) *Config {
+	configPath := ctx.String("config")
+	if configPath == defaultConfigPath {
+		configPath = ctx.GlobalString("config")
+	}
+
+	config, err := LoadConfig(configPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return config
 }
