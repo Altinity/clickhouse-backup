@@ -86,6 +86,57 @@ var testData = []TestDataStuct{
 	},
 }
 
+var incrementData = []TestDataStuct{
+	TestDataStuct{
+		Database: "testdb",
+		Table:    "table1",
+		Schema:   "(Date Date, TimeStamp DateTime, Log String) ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)",
+		Rows: []map[string]interface{}{
+			map[string]interface{}{"Date": toDate("2019-10-26"), "TimeStamp": toTS("2019-01-25 07:37:19"), "Log": "Six"},
+		},
+		Fields:  []string{"Date", "TimeStamp", "Log"},
+		OrderBy: "TimeStamp",
+	},
+	TestDataStuct{
+		Database: "testdb",
+		Table:    "table2",
+		Schema:   "(id UInt64, User String) ENGINE = MergeTree ORDER BY id SETTINGS index_granularity = 8192",
+		Rows: []map[string]interface{}{
+			map[string]interface{}{"id": uint64(7), "User": "Alice"},
+			map[string]interface{}{"id": uint64(8), "User": "Bob"},
+			map[string]interface{}{"id": uint64(9), "User": "John"},
+			map[string]interface{}{"id": uint64(10), "User": "Frank"},
+		},
+		Fields:  []string{"id", "User"},
+		OrderBy: "id",
+	},
+	TestDataStuct{
+		Database: "testdb",
+		Table:    "table3",
+		Schema:   "(TimeStamp DateTime, Item String, Date Date MATERIALIZED toDate(TimeStamp)) ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp SETTINGS index_granularity = 8192",
+		Rows: []map[string]interface{}{
+			map[string]interface{}{"TimeStamp": toTS("2019-01-26 07:37:18"), "Item": "Five"},
+			map[string]interface{}{"TimeStamp": toTS("2019-01-27 07:37:19"), "Item": "Six"},
+		},
+		Fields:  []string{"TimeStamp", "Item"},
+		OrderBy: "TimeStamp",
+	},
+	TestDataStuct{
+		Database: "testdb",
+		Table:    "table4",
+		Schema:   "(id UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY id ORDER BY (id, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192",
+		Rows: func() []map[string]interface{} {
+			result := []map[string]interface{}{}
+			for i := 200; i < 220; i++ {
+				result = append(result, map[string]interface{}{"id": uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
+			}
+			return result
+		}(),
+		Fields:  []string{"id", "Col1", "Col2", "Col3", "Col4", "Col5"},
+		OrderBy: "id",
+	},
+}
+
 func TestIntegration(t *testing.T) {
 	ch := &ClickHouse{
 		Config: &ClickHouseConfig{
@@ -96,25 +147,30 @@ func TestIntegration(t *testing.T) {
 	r := require.New(t)
 	r.NoError(ch.Connect())
 	r.NoError(ch.dropDatabase("testdb"))
-
 	fmt.Println("Generate test data")
 	for _, data := range testData {
 		r.NoError(ch.createTestData(data))
 	}
-
 	time.Sleep(time.Second * 5)
 	fmt.Println("Create backup")
 	r.NoError(dockerExec("clickhouse-backup", "create", "test_backup"))
+	fmt.Println("Generate increment test data")
+	for _, data := range incrementData {
+		r.NoError(ch.createTestData(data))
+	}
+	time.Sleep(time.Second * 5)
+	r.NoError(dockerExec("clickhouse-backup", "create", "increment"))
 
 	fmt.Println("Upload")
 	r.NoError(dockerExec("clickhouse-backup", "upload", "test_backup"))
+	r.NoError(dockerExec("clickhouse-backup", "upload", "increment", "--diff-from", "test_backup"))
 
 	fmt.Println("Drop database")
 	r.NoError(ch.dropDatabase("testdb"))
 
 	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
 	fmt.Println("Delete backup")
-	r.NoError(dockerExec("/bin/rm", "-rf", "/var/lib/clickhouse/backup/test_backup"))
+	r.NoError(dockerExec("/bin/rm", "-rf", "/var/lib/clickhouse/backup/test_backup", "/var/lib/clickhouse/backup/increment"))
 	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
 
 	fmt.Println("Download")
@@ -130,6 +186,30 @@ func TestIntegration(t *testing.T) {
 	for i := range testData {
 		r.NoError(ch.checkData(t, testData[i]))
 	}
+	// test increment
+	fmt.Println("Drop database")
+	r.NoError(ch.dropDatabase("testdb"))
+
+	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
+	fmt.Println("Delete backup")
+	r.NoError(dockerExec("/bin/rm", "-rf", "/var/lib/clickhouse/backup/test_backup", "/var/lib/clickhouse/backup/increment"))
+	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
+
+	fmt.Println("Download increment")
+	r.NoError(dockerExec("clickhouse-backup", "download", "increment"))
+
+	fmt.Println("Restore schema")
+	r.NoError(dockerExec("clickhouse-backup", "restore-schema", "increment"))
+
+	fmt.Println("Restore data")
+	r.NoError(dockerExec("clickhouse-backup", "restore-data", "increment"))
+
+	fmt.Println("Check increment data")
+	for i := range testData {
+		ti := testData[i]
+		ti.Rows = append(ti.Rows, incrementData[i].Rows...)
+		r.NoError(ch.checkData(t, ti))
+	}
 }
 
 func (ch *ClickHouse) createTestData(data TestDataStuct) error {
@@ -139,7 +219,7 @@ func (ch *ClickHouse) createTestData(data TestDataStuct) error {
 	if err := ch.CreateTable(RestoreTable{
 		Database: data.Database,
 		Table:    data.Table,
-		Query:    fmt.Sprintf("CREATE TABLE %s.%s %s", data.Database, data.Table, data.Schema),
+		Query:    fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s.%s %s", data.Database, data.Table, data.Schema),
 	}); err != nil {
 		return err
 	}
@@ -172,6 +252,7 @@ func (ch *ClickHouse) dropDatabase(database string) error {
 }
 
 func (ch *ClickHouse) checkData(t *testing.T, data TestDataStuct) error {
+	fmt.Printf("Check '%d' rows in '%s.%s'\n", len(data.Rows), data.Database, data.Table)
 	rows, err := ch.conn.Queryx(fmt.Sprintf("SELECT * FROM %s.%s ORDER BY %s", data.Database, data.Table, data.OrderBy))
 	if err != nil {
 		return err
