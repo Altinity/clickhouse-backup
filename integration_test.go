@@ -92,7 +92,7 @@ var incrementData = []TestDataStuct{
 		Table:    "table1",
 		Schema:   "(Date Date, TimeStamp DateTime, Log String) ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)",
 		Rows: []map[string]interface{}{
-			map[string]interface{}{"Date": toDate("2019-10-26"), "TimeStamp": toTS("2019-01-25 07:37:19"), "Log": "Six"},
+			map[string]interface{}{"Date": toDate("2019-10-26"), "TimeStamp": toTS("2019-01-26 07:37:19"), "Log": "Seven"},
 		},
 		Fields:  []string{"Date", "TimeStamp", "Log"},
 		OrderBy: "TimeStamp",
@@ -115,8 +115,8 @@ var incrementData = []TestDataStuct{
 		Table:    "table3",
 		Schema:   "(TimeStamp DateTime, Item String, Date Date MATERIALIZED toDate(TimeStamp)) ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
-			map[string]interface{}{"TimeStamp": toTS("2019-01-26 07:37:18"), "Item": "Five"},
-			map[string]interface{}{"TimeStamp": toTS("2019-01-27 07:37:19"), "Item": "Six"},
+			map[string]interface{}{"TimeStamp": toTS("2019-01-26 07:37:18"), "Item": "Seven"},
+			map[string]interface{}{"TimeStamp": toTS("2019-01-27 07:37:19"), "Item": "Eight"},
 		},
 		Fields:  []string{"TimeStamp", "Item"},
 		OrderBy: "TimeStamp",
