@@ -79,6 +79,9 @@ func (s *S3) Connect() error {
 }
 
 func (s *S3) CompressedStreamDownload(s3Path, localPath string) error {
+	if err := os.Mkdir(localPath, os.ModeDir); err != nil {
+		return err
+	}
 	archiveName := path.Join(s.Config.Path, fmt.Sprintf("%s.%s", s3Path, getExtension(s.Config.CompressionFormat)))
 	r, _, err := s.s3Stream.GetReader(archiveName, s.s3StreamConfig)
 	if err != nil {
@@ -135,9 +138,11 @@ func (s *S3) CompressedStreamDownload(s3Path, localPath string) error {
 	}
 	if metafile.RequiredBackup != "" {
 		log.Printf("Backup '%s' required '%s'. Downloading.", s3Path, metafile.RequiredBackup)
-		if err := s.CompressedStreamDownload(metafile.RequiredBackup, filepath.Join(filepath.Dir(localPath), metafile.RequiredBackup)); err != nil {
+		err := s.CompressedStreamDownload(metafile.RequiredBackup, filepath.Join(filepath.Dir(localPath), metafile.RequiredBackup))
+		if err != nil && !os.IsExist(err) {
 			return fmt.Errorf("can't download '%s' with %v", metafile.RequiredBackup, err)
 		}
+		log.Printf("  Done.")
 	}
 	for _, hardlink := range metafile.Hardlinks {
 		newname := filepath.Join(localPath, hardlink)
@@ -164,7 +169,7 @@ func (s *S3) CompressedStreamUpload(localPath, s3Path, diffFromPath string) erro
 			return nil
 		})
 		bar = pb.StartNew(filesCount)
-		defer bar.FinishPrint("Done")
+		defer bar.FinishPrint("Done.")
 	}
 	hardlinks := []string{}
 	archiveName := path.Join(s.Config.Path, fmt.Sprintf("%s.%s", s3Path, getExtension(s.Config.CompressionFormat)))
@@ -192,8 +197,10 @@ func (s *S3) CompressedStreamUpload(localPath, s3Path, diffFromPath string) erro
 		}
 		defer file.Close()
 		relativePath := strings.TrimPrefix(strings.TrimPrefix(filePath, localPath), "/")
-		//diffBackupName := filepath.Base(diffFromPath)
 		if diffFromPath != "" {
+			if isClickhouseShadow(filepath.Join(diffFromPath, "shadow")) {
+				return fmt.Errorf("'%s' is old format backup and doesn't supports diff", filepath.Base(diffFromPath))
+			}
 			diffFromFile, err := os.Stat(filepath.Join(diffFromPath, relativePath))
 			if err == nil {
 				if os.SameFile(info, diffFromFile) {
@@ -425,7 +432,7 @@ func (s *S3) DownloadArchive(s3Path string, localPath string) error {
 		log.Printf("Download '%s' to '%s'", s3Path, newFilePath)
 		return nil
 	}
-	if err := os.MkdirAll(newPath, 0644); err != nil {
+	if err := os.MkdirAll(newPath, os.ModeDir); err != nil {
 		return fmt.Errorf("can't create '%s' with: %v", newPath, err)
 	}
 	f, err := os.Create(newFilePath)

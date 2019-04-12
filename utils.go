@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +33,27 @@ func cleanDir(dir string) error {
 	return nil
 }
 
+func isClickhouseShadow(path string) bool {
+	d, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer d.Close()
+	names, err := d.Readdirnames(-1)
+	if err != nil {
+		return false
+	}
+	for _, name := range names {
+		if name == "increment.txt" {
+			continue
+		}
+		if _, err := strconv.Atoi(name); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
 func moveShadow(shadowPath, backupPath string) error {
 	if err := filepath.Walk(shadowPath, func(filePath string, info os.FileInfo, err error) error {
 		relativePath := strings.Trim(strings.TrimPrefix(filePath, shadowPath), "/")
@@ -47,7 +69,6 @@ func moveShadow(shadowPath, backupPath string) error {
 			log.Printf("'%s' is not a regular file, skipping", filePath)
 			return nil
 		}
-		// log.Printf("move '%s' -> '%s'", filePath, dstFilePath )
 		return os.Rename(filePath, dstFilePath)
 	}); err != nil {
 		return err

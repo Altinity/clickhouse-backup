@@ -445,7 +445,7 @@ func createBackup(config Config, backupName, tablePattern string, dryRun bool) e
 	if err := copyPath(path.Join(dataPath, "metadata"), path.Join(backupPath, "metadata"), dryRun); err != nil {
 		return fmt.Errorf("can't backup metadata with %v", err)
 	}
-	log.Println("  Done")
+	log.Println("  Done.")
 
 	log.Println("Move shadow")
 	backupShadowDir := path.Join(backupPath, "shadow")
@@ -461,7 +461,7 @@ func createBackup(config Config, backupName, tablePattern string, dryRun bool) e
 	if err := removeOldBackupsLocal(config, dryRun); err != nil {
 		return err
 	}
-	log.Println("  Done")
+	log.Println("  Done.")
 	return nil
 }
 
@@ -576,7 +576,7 @@ func upload(config Config, backupName string, diffFrom string, dryRun bool) erro
 	if err := s3.RemoveOldBackups(config.S3.BackupsToKeepS3); err != nil {
 		return fmt.Errorf("can't remove old backups: %v", err)
 	}
-	log.Println("  done")
+	log.Println("  Done.")
 	return nil
 }
 

@@ -159,7 +159,16 @@ func (ch *ClickHouse) GetBackupTables(backupName string) (map[string]BackupTable
 		return nil, err
 	}
 	backupShadowPath := filepath.Join(dataPath, "backup", backupName, "shadow")
-
+	dbNum := 0
+	tableNum := 1
+	partNum := 2
+	totalNum := 3
+	if isClickhouseShadow(backupShadowPath) {
+		dbNum = 2
+		tableNum = 3
+		partNum = 4
+		totalNum = 5
+	}
 	fi, err := os.Stat(backupShadowPath)
 	if err != nil {
 		return nil, fmt.Errorf("can't get tables, %v", err)
@@ -177,16 +186,16 @@ func (ch *ClickHouse) GetBackupTables(backupName string) (map[string]BackupTable
 			filePath = filepath.ToSlash(filePath) // fix fucking Windows slashes
 			relativePath := strings.Trim(strings.TrimPrefix(filePath, backupShadowPath), "/")
 			parts := strings.Split(relativePath, "/")
-			if len(parts) != 3 {
+			if len(parts) != totalNum {
 				return nil
 			}
 			partition := BackupPartition{
-				Name: parts[2],
+				Name: parts[partNum],
 				Path: filePath,
 			}
 			table := BackupTable{
-				Database:   parts[0],
-				Name:       parts[1],
+				Database:   parts[dbNum],
+				Name:       parts[tableNum],
 				Partitions: []BackupPartition{partition},
 			}
 			fullTableName := fmt.Sprintf("%s.%s", table.Database, table.Name)
@@ -230,6 +239,7 @@ func (ch *ClickHouse) Chown(name string) error {
 
 // CopyData - copy partitions for specific table to detached folder
 func (ch *ClickHouse) CopyData(table BackupTable) error {
+	// TODO: we need to support legacy backup format here
 	if ch.DryRun {
 		log.Printf("Prepare data for restoring '%s.%s'  ...skip dry-run", table.Database, table.Name)
 		return nil
