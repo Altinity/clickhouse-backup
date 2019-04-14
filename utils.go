@@ -7,11 +7,17 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mholt/archiver"
 )
+
+type Backup struct {
+	Name string
+	Date time.Time
+}
 
 func cleanDir(dir string) error {
 	d, err := os.Open(dir)
@@ -32,11 +38,51 @@ func cleanDir(dir string) error {
 	return nil
 }
 
+func isClickhouseShadow(path string) bool {
+	d, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer d.Close()
+	names, err := d.Readdirnames(-1)
+	if err != nil {
+		return false
+	}
+	for _, name := range names {
+		if name == "increment.txt" {
+			continue
+		}
+		if _, err := strconv.Atoi(name); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func moveShadow(shadowPath, backupPath string) error {
+	if err := filepath.Walk(shadowPath, func(filePath string, info os.FileInfo, err error) error {
+		relativePath := strings.Trim(strings.TrimPrefix(filePath, shadowPath), "/")
+		pathParts := strings.SplitN(relativePath, "/", 3)
+		if len(pathParts) != 3 {
+			return nil
+		}
+		dstFilePath := filepath.Join(backupPath, pathParts[2])
+		if info.IsDir() {
+			return os.MkdirAll(dstFilePath, os.ModePerm)
+		}
+		if !info.Mode().IsRegular() {
+			log.Printf("'%s' is not a regular file, skipping", filePath)
+			return nil
+		}
+		return os.Rename(filePath, dstFilePath)
+	}); err != nil {
+		return err
+	}
+	return cleanDir(shadowPath)
+}
+
 func copyPath(src, dst string, dryRun bool) error {
 	return filepath.Walk(src, func(filePath string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
 		filePath = filepath.ToSlash(filePath) // fix Windows slashes
 		filename := strings.Trim(strings.TrimPrefix(filePath, src), "/")
 		dstFilePath := filepath.Join(dst, filename)
@@ -78,31 +124,14 @@ func copyFile(srcFile string, dstFile string) error {
 	return err
 }
 
-func GetBackupsToDelete(backups []string, keep int) []string {
-	type parsedBackup struct {
-		name string
-		time time.Time
+func GetBackupsToDelete(backups []Backup, keep int) []Backup {
+	if len(backups) > keep {
+		sort.SliceStable(backups, func(i, j int) bool {
+			return backups[i].Date.Before(backups[j].Date)
+		})
+		return backups[keep:]
 	}
-	backupList := []parsedBackup{}
-	for _, backupName := range backups {
-		t, err := time.Parse(BackupTimeFormat, strings.TrimSuffix(backupName, ".tar"))
-		if err == nil {
-			backupList = append(backupList, parsedBackup{
-				name: backupName,
-				time: t,
-			})
-		}
-	}
-	sort.SliceStable(backupList, func(i, j int) bool {
-		return backupList[i].time.Before(backupList[j].time)
-	})
-	result := []string{}
-	if len(backupList) > keep {
-		for i := 0; i < len(backupList)-keep; i++ {
-			result = append(result, backupList[i].name)
-		}
-	}
-	return result
+	return []Backup{}
 }
 
 func getArchiveWriter(format string, level int) (archiver.Writer, error) {

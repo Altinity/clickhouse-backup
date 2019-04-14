@@ -15,5 +15,5 @@ s3:
   compression_level: 1
   compression_format: lz4
   strategy: archive
-  backups_to_keep_local: 1
-  backups_to_keep_s3: 2
+  backups_to_keep_local: 10
+  backups_to_keep_s3: 10

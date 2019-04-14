@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -103,7 +104,7 @@ func main() {
 			UsageText:   "clickhouse-backup create [--dry-run] [--table=<db>.<table>] <backup_name>",
 			Description: "Create new backup",
 			Action: func(c *cli.Context) error {
-				return createBackup(*getConfig(c), c.Args().Get(0), c.String("t"), c.Bool("dry-run") || c.GlobalBool("dry-run"))
+				return createBackup(*getConfig(c), c.Args().First(), c.String("t"), c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -115,11 +116,16 @@ func main() {
 		{
 			Name:      "upload",
 			Usage:     "Upload backup to s3",
-			UsageText: "clickhouse-backup upload [--dry-run] <backup_name>",
+			UsageText: "clickhouse-backup upload [--dry-run] [--diff-from=<backup_name>] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return upload(*getConfig(c), c.Args().First(), c.Bool("dry-run") || c.GlobalBool("dry-run"))
+				return upload(*getConfig(c), c.Args().First(), c.String("diff-from"), c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
-			Flags: cliapp.Flags,
+			Flags: append(cliapp.Flags,
+				cli.StringFlag{
+					Name:   "diff-from",
+					Hidden: false,
+				},
+			),
 		},
 		{
 			Name:      "download",
@@ -149,15 +155,11 @@ func main() {
 			Usage:     "Copy data to 'detached' folder and execute ATTACH",
 			UsageText: "clickhouse-backup restore-data [--dry-run] [--table=<db>.<table>] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return restoreData(*getConfig(c), c.Args().First(), c.String("t"), c.Bool("dry-run") || c.GlobalBool("dry-run"), c.IntSlice("i"))
+				return restoreData(*getConfig(c), c.Args().First(), c.String("t"), c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
 					Name:   "tables, t",
-					Hidden: false,
-				},
-				cli.IntSliceFlag{
-					Name:   "increments, i",
 					Hidden: false,
 				},
 			),
@@ -197,7 +199,7 @@ func parseTablePatternForFreeze(tables []Table, tablePattern string) ([]Table, e
 	return result, nil
 }
 
-func parseTablePatternForRestoreData(tables map[string]BackupTable, tablePattern string, increments []int) ([]BackupTable, error) {
+func parseTablePatternForRestoreData(tables map[string]BackupTable, tablePattern string) ([]BackupTable, error) {
 	if tablePattern == "" {
 		tablePattern = "*"
 	}
@@ -205,16 +207,7 @@ func parseTablePatternForRestoreData(tables map[string]BackupTable, tablePattern
 	for _, t := range tables {
 		tableName := fmt.Sprintf("%s.%s", t.Database, t.Name)
 		if matched, _ := filepath.Match(tablePattern, tableName); matched {
-			if len(increments) == 0 {
-				result = append(result, t)
-				continue
-			}
-			for _, n := range increments {
-				if n == t.Increment {
-					result = append(result, t)
-					break
-				}
-			}
+			result = append(result, t)
 		}
 	}
 	return result, nil
@@ -290,10 +283,6 @@ func restoreSchema(config Config, backupName string, tablePattern string, dryRun
 		printLocalBackups(config)
 		os.Exit(1)
 	}
-	if strings.HasSuffix(backupName, ".tar") {
-		return fmt.Errorf("extract archive before")
-	}
-
 	dataPath := getDataPath(config)
 	if dataPath == "" {
 		return ErrUnknownClickhouseDataPath
@@ -309,7 +298,6 @@ func restoreSchema(config Config, backupName string, tablePattern string, dryRun
 	if !info.IsDir() {
 		return fmt.Errorf("%s is not a dir", metadataPath)
 	}
-
 	tablesForRestore, err := parseTablePatternForRestoreSchema(metadataPath, tablePattern)
 	if err != nil {
 		return err
@@ -317,13 +305,12 @@ func restoreSchema(config Config, backupName string, tablePattern string, dryRun
 	if len(tablesForRestore) == 0 {
 		return fmt.Errorf("No have found schemas by %s in %s", tablePattern, backupName)
 	}
-
 	ch := &ClickHouse{
 		DryRun: dryRun,
 		Config: &config.ClickHouse,
 	}
 	if err := ch.Connect(); err != nil {
-		return fmt.Errorf("can't connect to clickouse with: %v", err)
+		return fmt.Errorf("can't connect to clickouse with %v", err)
 	}
 	defer ch.Close()
 
@@ -337,20 +324,20 @@ func restoreSchema(config Config, backupName string, tablePattern string, dryRun
 }
 
 func printLocalBackups(config Config) error {
-	names, err := listLocalBackups(config)
+	backupList, err := listLocalBackups(config)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if len(names) == 0 {
+	if len(backupList) == 0 {
 		fmt.Println("No backups found")
 	}
-	for _, name := range names {
-		fmt.Println(name)
+	for _, backup := range backupList {
+		fmt.Printf("- '%s' (created at %s)\n", backup.Name, backup.Date.Format("02-01-2006 15:04:05"))
 	}
 	return nil
 }
 
-func listLocalBackups(config Config) ([]string, error) {
+func listLocalBackups(config Config) ([]Backup, error) {
 	dataPath := getDataPath(config)
 	if dataPath == "" {
 		return nil, ErrUnknownClickhouseDataPath
@@ -361,7 +348,28 @@ func listLocalBackups(config Config) ([]string, error) {
 		return nil, err
 	}
 	defer d.Close()
-	return d.Readdirnames(-1)
+	result := []Backup{}
+	names, err := d.Readdirnames(-1)
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range names {
+		info, err := os.Stat(path.Join(backupsPath, name))
+		if err != nil {
+			continue
+		}
+		if !info.IsDir() {
+			continue
+		}
+		result = append(result, Backup{
+			Name: name,
+			Date: info.ModTime(),
+		})
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		return result[i].Date.Before(result[j].Date)
+	})
+	return result, nil
 }
 
 func printS3Backups(config Config) error {
@@ -369,16 +377,15 @@ func printS3Backups(config Config) error {
 	if err := s3.Connect(); err != nil {
 		return fmt.Errorf("can't connect to s3 with %v", err)
 	}
-
-	names, err := s3.BackupList()
+	backupList, err := s3.BackupList()
 	if err != nil {
 		return err
 	}
-	if len(names) == 0 {
+	if len(backupList) == 0 {
 		fmt.Println("No backups found")
 	}
-	for _, name := range names {
-		fmt.Println(name)
+	for _, backup := range backupList {
+		fmt.Printf("- '%s' (uploaded at %s)\n", backup.Name, backup.Date.Format("02-01-2006 15:04:05"))
 	}
 	return nil
 }
@@ -459,7 +466,7 @@ func createBackup(config Config, backupName, tablePattern string, dryRun bool) e
 	if err := copyPath(path.Join(dataPath, "metadata"), path.Join(backupPath, "metadata"), dryRun); err != nil {
 		return fmt.Errorf("can't backup metadata with %v", err)
 	}
-	log.Println("  done")
+	log.Println("  Done.")
 
 	log.Println("Move shadow")
 	backupShadowDir := path.Join(backupPath, "shadow")
@@ -467,34 +474,19 @@ func createBackup(config Config, backupName, tablePattern string, dryRun bool) e
 		if err := os.MkdirAll(backupShadowDir, os.ModePerm); err != nil {
 			return err
 		}
-	}
-	shadowDir := path.Join(dataPath, "shadow")
-	d, err := os.Open(shadowDir)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	names, err := d.Readdirnames(-1)
-	if err != nil {
-		return err
-	}
-	for _, name := range names {
-		if dryRun {
-			continue
-		}
-		err := os.Rename(filepath.Join(shadowDir, name), filepath.Join(backupShadowDir, name))
-		if err != nil {
+		shadowDir := path.Join(dataPath, "shadow")
+		if err := moveShadow(shadowDir, backupShadowDir); err != nil {
 			return err
 		}
 	}
 	if err := removeOldBackupsLocal(config, dryRun); err != nil {
 		return err
 	}
-	log.Println("  done")
+	log.Println("  Done.")
 	return nil
 }
 
-func restoreData(config Config, backupName string, tablePattern string, dryRun bool, increments []int) error {
+func restoreData(config Config, backupName string, tablePattern string, dryRun bool) error {
 	if backupName == "" {
 		fmt.Println("Select backup for restore:")
 		printLocalBackups(config)
@@ -517,20 +509,19 @@ func restoreData(config Config, backupName string, tablePattern string, dryRun b
 	if err != nil {
 		return err
 	}
-	restoreTables, err := parseTablePatternForRestoreData(allTables, tablePattern, increments)
+	restoreTables, err := parseTablePatternForRestoreData(allTables, tablePattern)
 	if err != nil {
 		return err
 	}
 	if len(restoreTables) == 0 {
-		log.Printf("Backup doesn't have tables to restore, nothing to do.")
-		return nil
+		return fmt.Errorf("Backup doesn't have tables to restore")
 	}
 	for _, table := range restoreTables {
 		if err := ch.CopyData(table); err != nil {
-			return fmt.Errorf("can't restore %s.%s increment %d with %v", table.Database, table.Name, table.Increment, err)
+			return fmt.Errorf("can't restore '%s.%s' with %v", table.Database, table.Name, err)
 		}
 		if err := ch.AttachPatritions(table); err != nil {
-			return fmt.Errorf("can't attach partitions for table %s.%s with %v", table.Database, table.Name, err)
+			return fmt.Errorf("can't attach partitions for table '%s.%s' with %v", table.Database, table.Name, err)
 		}
 	}
 	return nil
@@ -560,15 +551,15 @@ func getLocalBackup(config Config, backupName string) error {
 	if err != nil {
 		return err
 	}
-	for _, name := range backupList {
-		if name == backupName {
+	for _, backup := range backupList {
+		if backup.Name == backupName {
 			return nil
 		}
 	}
-	return fmt.Errorf("backup '%s' is not found", backupName)
+	return fmt.Errorf("backup '%s' not found", backupName)
 }
 
-func upload(config Config, backupName string, dryRun bool) error {
+func upload(config Config, backupName string, diffFrom string, dryRun bool) error {
 	if backupName == "" {
 		fmt.Println("Select backup for upload:")
 		printLocalBackups(config)
@@ -588,20 +579,28 @@ func upload(config Config, backupName string, dryRun bool) error {
 	if err := getLocalBackup(config, backupName); err != nil {
 		return fmt.Errorf("can't upload with %s", err)
 	}
+	backupPath := path.Join(dataPath, "backup", backupName)
 	log.Printf("Upload backup '%s'", backupName)
+	diffFromPath := ""
 	if config.S3.Strategy == "archive" {
-		if err := s3.CompressedStreamUpload(path.Join(dataPath, "backup", backupName), backupName); err != nil {
+		if diffFrom != "" {
+			diffFromPath = path.Join(dataPath, "backup", diffFrom)
+		}
+		if err := s3.CompressedStreamUpload(backupPath, backupName, diffFromPath); err != nil {
 			return fmt.Errorf("can't upload with %v", err)
 		}
 	} else {
-		if err := s3.UploadDirectory(path.Join(dataPath, "backup", backupName), backupName); err != nil {
+		if diffFrom != "" {
+			return fmt.Errorf("strategy 'tree' doesn't support diff backups")
+		}
+		if err := s3.UploadDirectory(backupPath, backupName); err != nil {
 			return fmt.Errorf("can't upload with %v", err)
 		}
 	}
 	if err := s3.RemoveOldBackups(config.S3.BackupsToKeepS3); err != nil {
 		return fmt.Errorf("can't remove old backups: %v", err)
 	}
-	log.Println("  done")
+	log.Println("  Done.")
 	return nil
 }
 
@@ -660,8 +659,8 @@ func removeOldBackupsLocal(config Config, dryRun bool) error {
 		return ErrUnknownClickhouseDataPath
 	}
 	backupsToDelete := GetBackupsToDelete(backupList, config.S3.BackupsToKeepLocal)
-	for _, backupName := range backupsToDelete {
-		backupPath := path.Join(dataPath, "backup", backupName)
+	for _, backup := range backupsToDelete {
+		backupPath := path.Join(dataPath, "backup", backup.Name)
 		if dryRun {
 			log.Println("Remove ", backupPath)
 			continue
