@@ -239,7 +239,6 @@ func (ch *ClickHouse) Chown(name string) error {
 
 // CopyData - copy partitions for specific table to detached folder
 func (ch *ClickHouse) CopyData(table BackupTable) error {
-	// TODO: we need to support legacy backup format here
 	if ch.DryRun {
 		log.Printf("Prepare data for restoring '%s.%s'  ...skip dry-run", table.Database, table.Name)
 		return nil

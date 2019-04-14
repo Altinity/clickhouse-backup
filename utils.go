@@ -14,6 +14,11 @@ import (
 	"github.com/mholt/archiver"
 )
 
+type Backup struct {
+	Name string
+	Date time.Time
+}
+
 func cleanDir(dir string) error {
 	d, err := os.Open(dir)
 	if err != nil {
@@ -119,31 +124,14 @@ func copyFile(srcFile string, dstFile string) error {
 	return err
 }
 
-func GetBackupsToDelete(backups []string, keep int) []string {
-	type parsedBackup struct {
-		name string
-		time time.Time
+func GetBackupsToDelete(backups []Backup, keep int) []Backup {
+	if len(backups) > keep {
+		sort.SliceStable(backups, func(i, j int) bool {
+			return backups[i].Date.Before(backups[j].Date)
+		})
+		return backups[keep:]
 	}
-	backupList := []parsedBackup{}
-	for _, backupName := range backups {
-		t, err := time.Parse(BackupTimeFormat, strings.TrimSuffix(backupName, ".tar"))
-		if err == nil {
-			backupList = append(backupList, parsedBackup{
-				name: backupName,
-				time: t,
-			})
-		}
-	}
-	sort.SliceStable(backupList, func(i, j int) bool {
-		return backupList[i].time.Before(backupList[j].time)
-	})
-	result := []string{}
-	if len(backupList) > keep {
-		for i := 0; i < len(backupList)-keep; i++ {
-			result = append(result, backupList[i].name)
-		}
-	}
-	return result
+	return []Backup{}
 }
 
 func getArchiveWriter(format string, level int) (archiver.Writer, error) {

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -504,11 +505,12 @@ func (s *S3) getS3Files(localPath, s3Path string) (s3Files map[string]fileInfo, 
 	return
 }
 
-func (s *S3) BackupList() ([]string, error) {
+func (s *S3) BackupList() ([]Backup, error) {
 	type s3Backup struct {
 		Metadata bool
 		Shadow   bool
 		Tar      bool
+		Date     time.Time
 	}
 	s3Files := map[string]s3Backup{}
 	s.remotePager(s.Config.Path, false, func(page *s3.ListObjectsV2Output) {
@@ -523,24 +525,34 @@ func (s *S3) BackupList() ([]string, error) {
 					strings.HasSuffix(parts[0], ".tar.gz") ||
 					strings.HasSuffix(parts[0], ".tar.sz") ||
 					strings.HasSuffix(parts[0], ".tar.xz") {
-					s3Files[parts[0]] = s3Backup{Tar: true}
+					s3Files[parts[0]] = s3Backup{
+						Tar:  true,
+						Date: *c.LastModified,
+					}
 				}
 				if len(parts) > 1 {
 					b := s3Files[parts[0]]
 					s3Files[parts[0]] = s3Backup{
 						Metadata: b.Metadata || parts[1] == "metadata",
 						Shadow:   b.Shadow || parts[1] == "shadow",
+						Date:     b.Date,
 					}
 				}
 			}
 		}
 	})
-	result := []string{}
+	result := []Backup{}
 	for name, e := range s3Files {
 		if e.Metadata && e.Shadow || e.Tar {
-			result = append(result, name)
+			result = append(result, Backup{
+				Name: name,
+				Date: e.Date,
+			})
 		}
 	}
+	sort.SliceStable(result, func(i, j int) bool {
+		return result[i].Date.Before(result[j].Date)
+	})
 	return result, nil
 }
 
@@ -557,7 +569,7 @@ func (s *S3) RemoveOldBackups(keep int) error {
 	s.remotePager(s.Config.Path, false, func(page *s3.ListObjectsV2Output) {
 		for _, c := range page.Contents {
 			for _, backupToDelete := range backupsToDelete {
-				if strings.HasPrefix(*c.Key, path.Join(s.Config.Path, backupToDelete)) {
+				if strings.HasPrefix(*c.Key, path.Join(s.Config.Path, backupToDelete.Name)) {
 					objects = append(objects, s3manager.BatchDeleteObject{
 						Object: &s3.DeleteObjectInput{
 							Bucket: aws.String(s.Config.Bucket),

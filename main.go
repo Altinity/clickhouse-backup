@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -323,20 +324,20 @@ func restoreSchema(config Config, backupName string, tablePattern string, dryRun
 }
 
 func printLocalBackups(config Config) error {
-	names, err := listLocalBackups(config)
+	backupList, err := listLocalBackups(config)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if len(names) == 0 {
+	if len(backupList) == 0 {
 		fmt.Println("No backups found")
 	}
-	for _, name := range names {
-		fmt.Println(name)
+	for _, backup := range backupList {
+		fmt.Printf("- '%s' (created at %s)\n", backup.Name, backup.Date.Format("02-01-2006 15:04:05"))
 	}
 	return nil
 }
 
-func listLocalBackups(config Config) ([]string, error) {
+func listLocalBackups(config Config) ([]Backup, error) {
 	dataPath := getDataPath(config)
 	if dataPath == "" {
 		return nil, ErrUnknownClickhouseDataPath
@@ -347,7 +348,28 @@ func listLocalBackups(config Config) ([]string, error) {
 		return nil, err
 	}
 	defer d.Close()
-	return d.Readdirnames(-1)
+	result := []Backup{}
+	names, err := d.Readdirnames(-1)
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range names {
+		info, err := os.Stat(path.Join(backupsPath, name))
+		if err != nil {
+			continue
+		}
+		if !info.IsDir() {
+			continue
+		}
+		result = append(result, Backup{
+			Name: name,
+			Date: info.ModTime(),
+		})
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		return result[i].Date.Before(result[j].Date)
+	})
+	return result, nil
 }
 
 func printS3Backups(config Config) error {
@@ -355,16 +377,15 @@ func printS3Backups(config Config) error {
 	if err := s3.Connect(); err != nil {
 		return fmt.Errorf("can't connect to s3 with %v", err)
 	}
-
-	names, err := s3.BackupList()
+	backupList, err := s3.BackupList()
 	if err != nil {
 		return err
 	}
-	if len(names) == 0 {
+	if len(backupList) == 0 {
 		fmt.Println("No backups found")
 	}
-	for _, name := range names {
-		fmt.Println(name)
+	for _, backup := range backupList {
+		fmt.Printf("- '%s' (uploaded at %s)\n", backup.Name, backup.Date.Format("02-01-2006 15:04:05"))
 	}
 	return nil
 }
@@ -530,12 +551,12 @@ func getLocalBackup(config Config, backupName string) error {
 	if err != nil {
 		return err
 	}
-	for _, name := range backupList {
-		if name == backupName {
+	for _, backup := range backupList {
+		if backup.Name == backupName {
 			return nil
 		}
 	}
-	return fmt.Errorf("backup '%s' is not found", backupName)
+	return fmt.Errorf("backup '%s' not found", backupName)
 }
 
 func upload(config Config, backupName string, diffFrom string, dryRun bool) error {
@@ -560,8 +581,8 @@ func upload(config Config, backupName string, diffFrom string, dryRun bool) erro
 	}
 	backupPath := path.Join(dataPath, "backup", backupName)
 	log.Printf("Upload backup '%s'", backupName)
+	diffFromPath := ""
 	if config.S3.Strategy == "archive" {
-		diffFromPath := ""
 		if diffFrom != "" {
 			diffFromPath = path.Join(dataPath, "backup", diffFrom)
 		}
@@ -569,6 +590,9 @@ func upload(config Config, backupName string, diffFrom string, dryRun bool) erro
 			return fmt.Errorf("can't upload with %v", err)
 		}
 	} else {
+		if diffFrom != "" {
+			return fmt.Errorf("strategy 'tree' doesn't support diff backups")
+		}
 		if err := s3.UploadDirectory(backupPath, backupName); err != nil {
 			return fmt.Errorf("can't upload with %v", err)
 		}
@@ -635,8 +659,8 @@ func removeOldBackupsLocal(config Config, dryRun bool) error {
 		return ErrUnknownClickhouseDataPath
 	}
 	backupsToDelete := GetBackupsToDelete(backupList, config.S3.BackupsToKeepLocal)
-	for _, backupName := range backupsToDelete {
-		backupPath := path.Join(dataPath, "backup", backupName)
+	for _, backup := range backupsToDelete {
+		backupPath := path.Join(dataPath, "backup", backup.Name)
 		if dryRun {
 			log.Println("Remove ", backupPath)
 			continue
