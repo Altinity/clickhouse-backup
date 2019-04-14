@@ -322,9 +322,9 @@ func (ch *ClickHouse) AttachPatritions(table BackupTable) error {
 		if _, ok := attachedParts[partName]; ok {
 			continue
 		}
-		query := fmt.Sprintf("ALTER TABLE %v.%v ATTACH PARTITION %s", table.Database, table.Name, partName)
+		query := fmt.Sprintf("ALTER TABLE %s.%s ATTACH PARTITION %s", table.Database, table.Name, partName)
 		attachedParts[partName] = struct{}{}
-		log.Printf(query)
+		log.Println(query)
 		if ch.DryRun {
 			continue
 		}
