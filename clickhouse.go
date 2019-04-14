@@ -316,13 +316,18 @@ func convertPartition(detachedTableFolder string) string {
 
 // AttachPatritions - execute ATTACH command for specific table
 func (ch *ClickHouse) AttachPatritions(table BackupTable) error {
-	if ch.DryRun {
-		log.Printf("Attach partition '%s' for '%s.%s' ...skip dry-run", table.Partitions[0].Name, table.Database, table.Name)
-		return nil
-	}
+	attachedParts := make(map[string]struct{})
 	for _, partition := range table.Partitions {
-		query := fmt.Sprintf("ALTER TABLE %v.%v ATTACH PARTITION %s", table.Database, table.Name, convertPartition(partition.Name))
+		partName := convertPartition(partition.Name)
+		if _, ok := attachedParts[partName]; ok {
+			continue
+		}
+		query := fmt.Sprintf("ALTER TABLE %v.%v ATTACH PARTITION %s", table.Database, table.Name, partName)
+		attachedParts[partName] = struct{}{}
 		log.Printf(query)
+		if ch.DryRun {
+			continue
+		}
 		if _, err := ch.conn.Exec(query); err != nil {
 			return err
 		}
