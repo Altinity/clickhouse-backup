@@ -173,6 +173,13 @@ func (s *S3) CompressedStreamUpload(localPath, s3Path, diffFromPath string) erro
 		defer bar.FinishPrint("Done.")
 	}
 	if diffFromPath != "" {
+		fi, err := os.Stat(diffFromPath)
+		if err != nil {
+			return err
+		}
+		if !fi.IsDir() {
+			return fmt.Errorf("'%s' is not a directory", diffFromPath)
+		}
 		if isClickhouseShadow(filepath.Join(diffFromPath, "shadow")) {
 			return fmt.Errorf("'%s' is old format backup and doesn't supports diff", filepath.Base(diffFromPath))
 		}
