@@ -137,6 +137,59 @@ var incrementData = []TestDataStuct{
 	},
 }
 
+func TestRestoreLegacyBackupFormat(t *testing.T) {
+	ch := &ClickHouse{
+		Config: &ClickHouseConfig{
+			Host: "localhost",
+			Port: 9000,
+		},
+	}
+	r := require.New(t)
+	r.NoError(ch.Connect())
+	r.NoError(ch.dropDatabase("testdb"))
+	fmt.Println("Generate test data")
+	for _, data := range testData {
+		r.NoError(ch.createTestData(data))
+	}
+	time.Sleep(time.Second * 5)
+	fmt.Println("Create backup")
+	r.NoError(dockerExec("clickhouse-backup", "freeze"))
+	dockerExec("mkdir", "-p", "/var/lib/clickhouse/backup/old_format")
+	r.NoError(dockerExec("cp","-r", "/var/lib/clickhouse/metadata", "/var/lib/clickhouse/backup/old_format/"))
+	r.NoError(dockerExec("mv", "/var/lib/clickhouse/shadow", "/var/lib/clickhouse/backup/old_format/"))
+	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup/old_format/")
+
+	fmt.Println("Upload")
+	r.NoError(dockerExec("clickhouse-backup", "upload", "old_format"))
+
+	fmt.Println("Create backup")
+	r.NoError(dockerExec("clickhouse-backup", "create", "increment_old_format"))
+	fmt.Println("Upload increment")
+	r.Error(dockerExec("clickhouse-backup", "upload", "increment_old_format", "--diff-from", "old_format"))
+
+	fmt.Println("Drop database")
+	r.NoError(ch.dropDatabase("testdb"))
+
+	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
+	fmt.Println("Delete backup")
+	r.NoError(dockerExec("/bin/rm", "-rf", "/var/lib/clickhouse/backup/old_format"))
+	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
+
+	fmt.Println("Download")
+	r.NoError(dockerExec("clickhouse-backup", "download", "old_format"))
+
+	fmt.Println("Restore schema")
+	r.NoError(dockerExec("clickhouse-backup", "restore-schema", "old_format"))
+
+	fmt.Println("Restore data")
+	r.NoError(dockerExec("clickhouse-backup", "restore-data", "old_format"))
+
+	fmt.Println("Check data")
+	for i := range testData {
+		r.NoError(ch.checkData(t, testData[i]))
+	}
+}
+
 func TestIntegration(t *testing.T) {
 	ch := &ClickHouse{
 		Config: &ClickHouseConfig{

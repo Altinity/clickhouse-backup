@@ -171,6 +171,11 @@ func (s *S3) CompressedStreamUpload(localPath, s3Path, diffFromPath string) erro
 		bar = pb.StartNew(filesCount)
 		defer bar.FinishPrint("Done.")
 	}
+	if diffFromPath != "" {
+		if isClickhouseShadow(filepath.Join(diffFromPath, "shadow")) {
+			return fmt.Errorf("'%s' is old format backup and doesn't supports diff", filepath.Base(diffFromPath))
+		}
+	}
 	hardlinks := []string{}
 	archiveName := path.Join(s.Config.Path, fmt.Sprintf("%s.%s", s3Path, getExtension(s.Config.CompressionFormat)))
 	w, err := s.s3Stream.PutWriter(archiveName, http.Header{"X-Amz-Acl": []string{s.Config.ACL}}, s.s3StreamConfig)
@@ -198,9 +203,6 @@ func (s *S3) CompressedStreamUpload(localPath, s3Path, diffFromPath string) erro
 		defer file.Close()
 		relativePath := strings.TrimPrefix(strings.TrimPrefix(filePath, localPath), "/")
 		if diffFromPath != "" {
-			if isClickhouseShadow(filepath.Join(diffFromPath, "shadow")) {
-				return fmt.Errorf("'%s' is old format backup and doesn't supports diff", filepath.Base(diffFromPath))
-			}
 			diffFromFile, err := os.Stat(filepath.Join(diffFromPath, relativePath))
 			if err == nil {
 				if os.SameFile(info, diffFromFile) {
