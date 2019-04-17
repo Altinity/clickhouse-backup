@@ -41,6 +41,12 @@ GLOBAL OPTIONS:
    --version, -v           print the version
 ```
 
+## Usage in Docker
+
+```
+docker run --rm -it --network host -v "/var/lib/clickhouse:/var/lib/clickhouse" -e CLICKHOUSE_PASSWORD=password -e S3_ACCESS_KEY=access_key -e S3_SECRET_KEY=secret alexakulov/clickhouse-backup --help
+```
+
 ### Default Config
 ```
 clickhouse:

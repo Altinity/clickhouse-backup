@@ -4,14 +4,16 @@ go:
   - 1.11.4
 env:
   - GO111MODULE=on
+  - CGO_ENABLED=0
 services:
   - docker
 script:
-  - go build -ldflags "-X main.version=${TRAVIS_TAG} -X main.gitCommit=${TRAVIS_COMMIT} -X main.buildDate=$(date --iso-8601)" -o clickhouse-backup/clickhouse-backup
+  - go build -ldflags "-w -s -X main.version=${TRAVIS_TAG} -X main.gitCommit=${TRAVIS_COMMIT} -X main.buildDate=$(date --iso-8601)" -o clickhouse-backup/clickhouse-backup
   - ./clickhouse-backup/clickhouse-backup default-config > clickhouse-backup/config.yml
   - docker-compose -f integration-test/docker-compose-travis.yml up -d --force-recreate
   - go test -v
   - go test -tags=integration
+  - docker build alexakulov/clickkhouse-backup .
 after_success:
   - tar -czvf clickhouse-backup.tar.gz clickhouse-backup
 deploy:
@@ -22,3 +24,7 @@ deploy:
     overwrite: true
     on:
       tags: true
+  - provider: script
+    script: |
+      echo "${DOCKER_PASSWORD}" | docker login -u "${DOCKER_USERNAME}" --password-stdin
+      docker push alexakulov/clickkhouse-backup

@@ -8,6 +8,7 @@ require (
 	github.com/fatih/color v1.7.0 // indirect
 	github.com/golang/snappy v0.0.1 // indirect
 	github.com/jmoiron/sqlx v1.2.0
+	github.com/kelseyhightower/envconfig v1.3.0
 	github.com/kshvakov/clickhouse v1.3.4
 	github.com/mattn/go-colorable v0.1.1 // indirect
 	github.com/mattn/go-runewidth v0.0.3 // indirect

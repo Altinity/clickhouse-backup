@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"os"
 
+	"github.com/kelseyhightower/envconfig"
 	yaml "gopkg.in/yaml.v2"
 )
 
@@ -51,14 +52,17 @@ func LoadConfig(configLocation string) (*Config, error) {
 	config := defaultConfig()
 	configYaml, err := ioutil.ReadFile(configLocation)
 	if os.IsNotExist(err) {
-		return config, nil
+		err := envconfig.Process("", config)
+		return config, err
 	}
 	if err != nil {
-		return nil, fmt.Errorf("can't read with: %v", err)
+		return nil, fmt.Errorf("can't open with %v", err)
 	}
-	err = yaml.Unmarshal(configYaml, &config)
-	if err != nil {
-		return nil, fmt.Errorf("can't parse with: %v", err)
+	if err := yaml.Unmarshal(configYaml, &config); err != nil {
+		return nil, fmt.Errorf("can't parse with %v", err)
+	}
+	if err := envconfig.Process("", config); err != nil {
+		return nil, err
 	}
 	return config, validateConfig(config)
 }
