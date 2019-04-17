@@ -6,7 +6,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 
@@ -41,7 +40,6 @@ type BackupPartition struct {
 
 // BackupTable - struct to store additional information on partitions
 type BackupTable struct {
-	Increment  int
 	Database   string
 	Name       string
 	Partitions []BackupPartition
@@ -161,7 +159,16 @@ func (ch *ClickHouse) GetBackupTables(backupName string) (map[string]BackupTable
 		return nil, err
 	}
 	backupShadowPath := filepath.Join(dataPath, "backup", backupName, "shadow")
-
+	dbNum := 0
+	tableNum := 1
+	partNum := 2
+	totalNum := 3
+	if isClickhouseShadow(backupShadowPath) {
+		dbNum = 2
+		tableNum = 3
+		partNum = 4
+		totalNum = 5
+	}
 	fi, err := os.Stat(backupShadowPath)
 	if err != nil {
 		return nil, fmt.Errorf("can't get tables, %v", err)
@@ -179,24 +186,19 @@ func (ch *ClickHouse) GetBackupTables(backupName string) (map[string]BackupTable
 			filePath = filepath.ToSlash(filePath) // fix fucking Windows slashes
 			relativePath := strings.Trim(strings.TrimPrefix(filePath, backupShadowPath), "/")
 			parts := strings.Split(relativePath, "/")
-			if len(parts) != 5 {
+			if len(parts) != totalNum {
 				return nil
 			}
 			partition := BackupPartition{
-				Name: parts[4],
+				Name: parts[partNum],
 				Path: filePath,
 			}
-			increment, err := strconv.Atoi(parts[0])
-			if err != nil {
-				return nil
-			}
 			table := BackupTable{
-				Increment:  increment,
-				Database:   parts[2],
-				Name:       parts[3],
+				Database:   parts[dbNum],
+				Name:       parts[tableNum],
 				Partitions: []BackupPartition{partition},
 			}
-			fullTableName := fmt.Sprintf("%s.%s-%d", table.Database, table.Name, table.Increment)
+			fullTableName := fmt.Sprintf("%s.%s", table.Database, table.Name)
 			if t, ok := result[fullTableName]; ok {
 				t.Partitions = append(t.Partitions, partition)
 				result[fullTableName] = t
@@ -238,10 +240,10 @@ func (ch *ClickHouse) Chown(name string) error {
 // CopyData - copy partitions for specific table to detached folder
 func (ch *ClickHouse) CopyData(table BackupTable) error {
 	if ch.DryRun {
-		log.Printf("copy %s.%s increment %d  ...skip dry-run", table.Database, table.Name, table.Increment)
+		log.Printf("Prepare data for restoring '%s.%s'  ...skip dry-run", table.Database, table.Name)
 		return nil
 	}
-	log.Printf("copy %s.%s increment %d", table.Database, table.Name, table.Increment)
+	log.Printf("Prepare data for restoring '%s.%s'", table.Database, table.Name)
 	dataPath, err := ch.GetDataPath()
 	if err != nil {
 		return err
@@ -313,15 +315,21 @@ func convertPartition(detachedTableFolder string) string {
 
 // AttachPatritions - execute ATTACH command for specific table
 func (ch *ClickHouse) AttachPatritions(table BackupTable) error {
-	if ch.DryRun {
-		log.Printf("Attach partition '%s' for %s.%s increment %d ...skip dry-run", table.Partitions[0].Name, table.Database, table.Name, table.Increment)
-		return nil
-	}
-	log.Printf("Attach partitions for %s.%s increment %d:", table.Database, table.Name, table.Increment)
-	query := fmt.Sprintf("ALTER TABLE %v.%v ATTACH PARTITION %s", table.Database, table.Name, convertPartition(table.Partitions[0].Name))
-	log.Printf(query)
-	if _, err := ch.conn.Exec(query); err != nil {
-		return err
+	attachedParts := make(map[string]struct{})
+	for _, partition := range table.Partitions {
+		partName := convertPartition(partition.Name)
+		if _, ok := attachedParts[partName]; ok {
+			continue
+		}
+		query := fmt.Sprintf("ALTER TABLE %s.%s ATTACH PARTITION %s", table.Database, table.Name, partName)
+		attachedParts[partName] = struct{}{}
+		log.Println(query)
+		if ch.DryRun {
+			continue
+		}
+		if _, err := ch.conn.Exec(query); err != nil {
+			return err
+		}
 	}
 	return nil
 }
