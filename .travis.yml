@@ -12,7 +12,7 @@ script:
   - docker-compose -f integration-test/docker-compose-travis.yml up -d --force-recreate
   - go test -v
   - go test -tags=integration
-  - docker build -t alexakulov/clickkhouse-backup .
+  - docker build -t alexakulov/clickhouse-backup .
 after_success:
   - tar -czvf clickhouse-backup.tar.gz clickhouse-backup
 deploy:
@@ -24,6 +24,6 @@ deploy:
     on:
       tags: true
   - provider: script
-    script: |
-      echo "${DOCKER_PASSWORD}" | docker login -u alexakulov --password-stdin
-      docker push alexakulov/clickkhouse-backup
+    script:
+      - echo "${DOCKER_PASSWORD}" | docker login -u alexakulov --password-stdin
+      - docker push alexakulov/clickhouse-backup
