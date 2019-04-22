@@ -425,8 +425,7 @@ func freeze(config Config, tablePattern string, dryRun bool) error {
 		return err
 	}
 	if len(backupTables) == 0 {
-		log.Printf("There are no tables in Clickhouse, create something to freeze.")
-		return nil
+		return fmt.Errorf("There are no tables in Clickhouse, create something to freeze")
 	}
 	for _, table := range backupTables {
 		if table.Skip {

@@ -82,6 +82,9 @@ func moveShadow(shadowPath, backupPath string) error {
 }
 
 func copyPath(src, dst string, dryRun bool) error {
+	if _, err := os.Stat(src); err != nil {
+		return err
+	}
 	return filepath.Walk(src, func(filePath string, info os.FileInfo, err error) error {
 		filePath = filepath.ToSlash(filePath) // fix Windows slashes
 		filename := strings.Trim(strings.TrimPrefix(filePath, src), "/")
