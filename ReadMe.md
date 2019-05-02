@@ -7,6 +7,35 @@
 
 Tool for easy ClickHouse backup and restore with S3 support
 
+## Features
+
+- Easy creating and restoring backups of all or specific tables
+- Most efficient AWS S3 uploading and downloading with streaming archiving and extracting
+- Support of incremental backups on S3
+
+## Download
+
+- Grab the latest binary from the [releases](https://github.com/AlexAkulov/clickhouse-backup/releases) page and decompress with:
+
+```shell
+tar -zxvf clickhouse-backup.tar.gz
+```
+
+
+- Or use the official tiny Docker image and run it like:
+
+```shell
+docker run --rm -it --network host -v "/var/lib/clickhouse:/var/lib/clickhouse" \
+   -e CLICKHOUSE_PASSWORD=password -e S3_ACCESS_KEY=access_key -e S3_SECRET_KEY=secret \
+   alexakulov/clickhouse-backup --help
+```
+
+- Or get from the sources:
+
+```shell
+go get github.com/AlexAkulov/clickhouse-backup
+```
+
 ## Usage
 
 ```
@@ -42,14 +71,9 @@ GLOBAL OPTIONS:
    --version, -v           print the version
 ```
 
-## Usage in Docker
-
-```
-docker run --rm -it --network host -v "/var/lib/clickhouse:/var/lib/clickhouse" -e CLICKHOUSE_PASSWORD=password -e S3_ACCESS_KEY=access_key -e S3_SECRET_KEY=secret alexakulov/clickhouse-backup --help
-```
-
 ### Default Config
-```
+
+```yaml
 clickhouse:
   username: default
   password: ""
@@ -81,4 +105,56 @@ s3:
   compression_level: 1
   # supported: 'tar', 'lz4', 'bzip2', 'gzip', 'sz', 'xz'
   compression_format: lz4
+```
+
+## Examples
+
+### Simple cron script for daily backup and uploading
+```bash
+#!/bin/bash
+BACKUP_NAME=my_backup_$(date -u +%Y-%m-%dT%H-%M-%S)
+clickhouse-backup create $BACKUP_NAME
+clickhouse-backup upload $BACKUP_NAME
+```
+
+### Ansible script for backup sharded cluster
+You can use this playbook for daily backup of sharded cluster. 
+On the first day of month full backup will be uploaded and increment on the other days.
+Use https://healthchecks.io for monitoring creating and uploading of backups. 
+
+```yaml
+- hosts: clickhouse-cluster
+  become: yes
+  vars:
+    healthchecksio_clickhouse_backup_id: "get on https://healthchecks.io"
+    healthchecksio_clickhouse_upload_id: "..."
+  roles:
+    - clickhouse-backup
+  tasks:
+    - block:
+        - uri: url="https://hc-ping.com/{{ healthchecksio_clickhouse_backup_id }}/start"
+        - set_fact: backup_name="{{ lookup('pipe','date -u +%Y-%m-%d') }}-{{ clickhouse_shard }}"
+        - set_fact: yesterday_backup_name="{{ lookup('pipe','date --date=yesterday -u +%Y-%m-%d') }}-{{ clickhouse_shard }}"
+        - set_fact: current_day="{{ lookup('pipe','date -u +%d') }}"
+        - name: create new backup
+          shell: "clickhouse-backup create {{ backup_name }}"
+          register: out
+        - debug: var=out.stdout_lines
+        - uri: url="https://hc-ping.com/{{ healthchecksio_clickhouse_backup_id }}"
+      rescue:
+        - uri: url="https://hc-ping.com/{{ healthchecksio_clickhouse_backup_id }}/fail"
+    - block:
+        - uri: url="https://hc-ping.com/{{ healthchecksio_clickhouse_upload_id }}/start"
+        - name: upload full backup
+          shell: "clickhouse-backup upload {{ backup_name }}"
+          register: out
+          when: current_day == '01'
+        - name: upload diff backup
+          shell: "clickhouse-backup upload {{ backup_name }} --diff-from {{ yesterday_backup_name }}"
+          register: out
+          when: current_day != '01'
+        - debug: var=out.stdout_lines
+        - uri: url="https://hc-ping.com/{{ healthchecksio_clickhouse_upload_id }}"
+      rescue:
+        - uri: url="https://hc-ping.com/{{ healthchecksio_clickhouse_upload_id }}/fail"
 ```
