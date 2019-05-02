@@ -80,7 +80,7 @@ func (s *S3) Connect() error {
 }
 
 func (s *S3) CompressedStreamDownload(s3Path, localPath string) error {
-	if err := os.Mkdir(localPath, os.ModeDir); err != nil {
+	if err := os.Mkdir(localPath, os.ModePerm); err != nil {
 		return err
 	}
 	archiveName := path.Join(s.Config.Path, fmt.Sprintf("%s.%s", s3Path, getExtension(s.Config.CompressionFormat)))
@@ -367,7 +367,7 @@ func (s *S3) UploadFile(localPath string, dstPath string) error {
 
 // DownloadTree - download files from s3Path to localPath
 func (s *S3) DownloadTree(s3Path string, localPath string) error {
-	if err := os.MkdirAll(localPath, 0755); err != nil {
+	if err := os.MkdirAll(localPath, os.ModePerm); err != nil {
 		return fmt.Errorf("can't create '%s' with: %v", localPath, err)
 	}
 	localFiles, err := s.getLocalFiles(localPath, s3Path)
@@ -410,7 +410,7 @@ func (s *S3) DownloadTree(s3Path string, localPath string) error {
 			log.Printf("Download '%s' to '%s'", s3File.key, newFilePath)
 			continue
 		}
-		if err := os.MkdirAll(newPath, 0755); err != nil {
+		if err := os.MkdirAll(newPath, os.ModePerm); err != nil {
 			return fmt.Errorf("can't create '%s' with: %v", newPath, err)
 		}
 		f, err := os.Create(newFilePath)
@@ -428,7 +428,7 @@ func (s *S3) DownloadTree(s3Path string, localPath string) error {
 
 // DownloadArchive - download files from s3Path to localPath
 func (s *S3) DownloadArchive(s3Path string, localPath string) error {
-	if err := os.MkdirAll(localPath, 0755); err != nil {
+	if err := os.MkdirAll(localPath, os.ModePerm); err != nil {
 		return fmt.Errorf("can't create '%s' with: %v", localPath, err)
 	}
 	downloader := s3manager.NewDownloader(s.session)
@@ -442,7 +442,7 @@ func (s *S3) DownloadArchive(s3Path string, localPath string) error {
 		log.Printf("Download '%s' to '%s'", s3Path, newFilePath)
 		return nil
 	}
-	if err := os.MkdirAll(newPath, os.ModeDir); err != nil {
+	if err := os.MkdirAll(newPath, os.ModePerm); err != nil {
 		return fmt.Errorf("can't create '%s' with: %v", newPath, err)
 	}
 	f, err := os.Create(newFilePath)
