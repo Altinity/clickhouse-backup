@@ -45,7 +45,7 @@ func main() {
 		},
 		cli.BoolFlag{
 			Name:  "dry-run",
-			Usage: "Only show what should be uploaded or downloaded but don't actually do it. May still perform S3 requests to get bucket listings and other information though (only for file transfer commands)",
+			Usage: "[DEPRECATED] Only show what should be uploaded or downloaded but don't actually do it. May still perform S3 requests to get bucket listings and other information though (only for file transfer commands)",
 		},
 	}
 	cliapp.CommandNotFound = func(c *cli.Context, command string) {
@@ -278,6 +278,9 @@ func getTables(config Config) error {
 }
 
 func restoreSchema(config Config, backupName string, tablePattern string, dryRun bool) error {
+	if dryRun {
+		log.Printf("WARNING! The 'dry-run' flag is deprecated and it will be removed in the future version")
+	}
 	if backupName == "" {
 		fmt.Println("Select backup for restore:")
 		printLocalBackups(config)
@@ -391,6 +394,9 @@ func printS3Backups(config Config) error {
 }
 
 func freeze(config Config, tablePattern string, dryRun bool) error {
+	if dryRun {
+		log.Printf("WARNING! The 'dry-run' flag is deprecated and it will be removed in the future version")
+	}
 	ch := &ClickHouse{
 		DryRun: dryRun,
 		Config: &config.ClickHouse,
@@ -444,6 +450,9 @@ func NewBackupName() string {
 }
 
 func createBackup(config Config, backupName, tablePattern string, dryRun bool) error {
+	if dryRun {
+		log.Printf("WARNING! The 'dry-run' flag is deprecated and it will be removed in the future version")
+	}
 	if backupName == "" {
 		backupName = NewBackupName()
 	}
@@ -486,6 +495,9 @@ func createBackup(config Config, backupName, tablePattern string, dryRun bool) e
 }
 
 func restoreData(config Config, backupName string, tablePattern string, dryRun bool) error {
+	if dryRun {
+		log.Printf("WARNING! The 'dry-run' flag is deprecated and it will be removed in the future version")
+	}
 	if backupName == "" {
 		fmt.Println("Select backup for restore:")
 		printLocalBackups(config)
@@ -559,6 +571,9 @@ func getLocalBackup(config Config, backupName string) error {
 }
 
 func upload(config Config, backupName string, diffFrom string, dryRun bool) error {
+	if dryRun {
+		log.Printf("WARNING! The 'dry-run' flag is deprecated and it will be removed in the future version")
+	}
 	if backupName == "" {
 		fmt.Println("Select backup for upload:")
 		printLocalBackups(config)
@@ -604,6 +619,9 @@ func upload(config Config, backupName string, diffFrom string, dryRun bool) erro
 }
 
 func download(config Config, backupName string, dryRun bool) error {
+	if dryRun {
+		log.Printf("WARNING! The 'dry-run' flag is deprecated and it will be removed in the future version")
+	}
 	if backupName == "" {
 		fmt.Println("Select backup for download:")
 		printS3Backups(config)
@@ -627,6 +645,9 @@ func download(config Config, backupName string, dryRun bool) error {
 }
 
 func clean(config Config, dryRun bool) error {
+	if dryRun {
+		log.Printf("WARNING! The 'dry-run' flag is deprecated and it will be removed in the future version")
+	}
 	dataPath := getDataPath(config)
 	if dataPath == "" {
 		return ErrUnknownClickhouseDataPath
@@ -646,6 +667,9 @@ func clean(config Config, dryRun bool) error {
 }
 
 func removeOldBackupsLocal(config Config, dryRun bool) error {
+	if dryRun {
+		log.Printf("WARNING! The 'dry-run' flag is deprecated and it will be removed in the future version")
+	}
 	if config.S3.BackupsToKeepLocal < 1 {
 		return nil
 	}
@@ -679,6 +703,8 @@ func getConfig(ctx *cli.Context) *Config {
 	if err != nil {
 		log.Fatal(err)
 	}
-
+	if config.S3.Strategy == "tree" {
+		log.Println("WARNING! The 'tree' strategy is deprecated and it will be removed in the future version")
+	}
 	return config
 }
