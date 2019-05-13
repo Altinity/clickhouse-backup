@@ -456,19 +456,22 @@ func createBackup(config Config, backupName, tablePattern string, dryRun bool) e
 	if backupName == "" {
 		backupName = NewBackupName()
 	}
-	log.Printf("Create backup '%s'", backupName)
-	if err := freeze(config, tablePattern, dryRun); err != nil {
-		return err
-	}
 	dataPath := getDataPath(config)
 	if dataPath == "" {
 		return ErrUnknownClickhouseDataPath
 	}
 	backupPath := path.Join(dataPath, "backup", backupName)
+	if _, err := os.Stat(backupPath); err == nil || !os.IsNotExist(err) {
+		return fmt.Errorf("can't create backup with '%s' already exists", backupPath)
+	}
 	if !dryRun {
 		if err := os.MkdirAll(backupPath, os.ModePerm); err != nil {
-			return err
+			return fmt.Errorf("can't create backup with %v", err)
 		}
+	}
+	log.Printf("Create backup '%s'", backupName)
+	if err := freeze(config, tablePattern, dryRun); err != nil {
+		return err
 	}
 	log.Println("Copy metadata")
 	if err := copyPath(path.Join(dataPath, "metadata"), path.Join(backupPath, "metadata"), dryRun); err != nil {

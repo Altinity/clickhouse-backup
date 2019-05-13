@@ -20,6 +20,7 @@ import (
 
 	"github.com/AlexAkulov/s3gof3r"
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
@@ -169,6 +170,20 @@ func (s *S3) CompressedStreamDownload(s3Path, localPath string) error {
 }
 
 func (s *S3) CompressedStreamUpload(localPath, s3Path, diffFromPath string) error {
+	archiveName := path.Join(s.Config.Path, fmt.Sprintf("%s.%s", s3Path, getExtension(s.Config.CompressionFormat)))
+	svc := s3.New(s.session)
+	if head, err := svc.HeadObject(&s3.HeadObjectInput{
+		Bucket: aws.String(s.Config.Bucket),
+		Key:    aws.String(archiveName),
+	}); err != nil {
+		aerr, ok := err.(awserr.Error)
+		if ok && aerr.Code() != "NotFound" {
+			return err
+		}
+	} else if err == nil && *head.ContentLength > 0 {
+		return fmt.Errorf("'%s' already uploaded", archiveName)
+	}
+
 	var totalBytes int64
 	filepath.Walk(localPath, func(filePath string, info os.FileInfo, err error) error {
 		if info.Mode().IsRegular() {
@@ -190,7 +205,6 @@ func (s *S3) CompressedStreamUpload(localPath, s3Path, diffFromPath string) erro
 		}
 	}
 	hardlinks := []string{}
-	archiveName := path.Join(s.Config.Path, fmt.Sprintf("%s.%s", s3Path, getExtension(s.Config.CompressionFormat)))
 	w, err := s.s3Stream.PutWriter(archiveName, http.Header{"X-Amz-Acl": []string{s.Config.ACL}}, s.s3StreamConfig)
 	if err != nil {
 		return err
