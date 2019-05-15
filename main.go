@@ -33,7 +33,7 @@ func main() {
 	cliapp := cli.NewApp()
 	cliapp.Name = "clickhouse-backup"
 	cliapp.Usage = "Tool for easy backup of ClickHouse with S3 support"
-	cliapp.UsageText = "clickhouse-backup <command> [--dry-run] [--table=<db>.<table>] <backup_name>"
+	cliapp.UsageText = "clickhouse-backup <command> [--dry-run] [-t, --tables=<db>.<table>] <backup_name>"
 	cliapp.Description = "Run as root or clickhouse user"
 	cliapp.Version = version
 
@@ -86,14 +86,14 @@ func main() {
 		{
 			Name:        "freeze",
 			Usage:       "Freeze all or specific tables",
-			UsageText:   "clickhouse-backup freeze [--dry-run] [--table=<db>.<table>] <backup_name>",
+			UsageText:   "clickhouse-backup freeze [--dry-run] [-t, --tables=<db>.<table>] <backup_name>",
 			Description: "Freeze tables",
 			Action: func(c *cli.Context) error {
 				return freeze(*getConfig(c), c.String("t"), c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
-					Name:   "tables, t",
+					Name:   "table, tables, t",
 					Hidden: false,
 				},
 			),
@@ -101,14 +101,14 @@ func main() {
 		{
 			Name:        "create",
 			Usage:       "Create new backup of all or specific tables",
-			UsageText:   "clickhouse-backup create [--dry-run] [--table=<db>.<table>] <backup_name>",
+			UsageText:   "clickhouse-backup create [--dry-run] [-t, --tables=<db>.<table>] <backup_name>",
 			Description: "Create new backup",
 			Action: func(c *cli.Context) error {
 				return createBackup(*getConfig(c), c.Args().First(), c.String("t"), c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
-					Name:   "tables, t",
+					Name:   "table, tables, t",
 					Hidden: false,
 				},
 			),
@@ -139,13 +139,13 @@ func main() {
 		{
 			Name:      "restore-schema",
 			Usage:     "Create databases and tables from backup metadata",
-			UsageText: "clickhouse-backup restore-schema [--dry-run] [--table=<db>.<table>] <backup_name>",
+			UsageText: "clickhouse-backup restore-schema [--dry-run] [-t, --tables=<db>.<table>] <backup_name>",
 			Action: func(c *cli.Context) error {
 				return restoreSchema(*getConfig(c), c.Args().First(), c.String("t"), c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
-					Name:   "tables, t",
+					Name:   "table, tables, t",
 					Hidden: false,
 				},
 			),
@@ -153,13 +153,13 @@ func main() {
 		{
 			Name:      "restore-data",
 			Usage:     "Copy data to 'detached' folder and execute ATTACH",
-			UsageText: "clickhouse-backup restore-data [--dry-run] [--table=<db>.<table>] <backup_name>",
+			UsageText: "clickhouse-backup restore-data [--dry-run] [-t, --tables=<db>.<table>] <backup_name>",
 			Action: func(c *cli.Context) error {
 				return restoreData(*getConfig(c), c.Args().First(), c.String("t"), c.Bool("dry-run") || c.GlobalBool("dry-run"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
-					Name:   "tables, t",
+					Name:   "table, tables, t",
 					Hidden: false,
 				},
 			),

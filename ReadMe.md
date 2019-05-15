@@ -43,7 +43,7 @@ NAME:
    clickhouse-backup - Tool for easy backup of ClickHouse with S3 support
 
 USAGE:
-   clickhouse-backup <command> [--dry-run] [--table=<db>.<table>] <backup_name>
+   clickhouse-backup <command> [--dry-run] [-t, --tables=<db>.<table>] <backup_name>
 
 VERSION:
    unknown
