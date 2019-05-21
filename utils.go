@@ -130,7 +130,7 @@ func copyFile(srcFile string, dstFile string) error {
 func GetBackupsToDelete(backups []Backup, keep int) []Backup {
 	if len(backups) > keep {
 		sort.SliceStable(backups, func(i, j int) bool {
-			return backups[i].Date.Before(backups[j].Date)
+			return backups[i].Date.After(backups[j].Date)
 		})
 		return backups[keep:]
 	}
