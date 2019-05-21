@@ -135,13 +135,13 @@ func (ch *ClickHouse) FreezeTable(table Table) error {
 		}
 		log.Printf("  partition '%v'", item.PartitionID)
 		query := fmt.Sprintf(
-			"ALTER TABLE %v.%v FREEZE PARTITION ID '%v';",
+			"ALTER TABLE `%v`.`%v` FREEZE PARTITION ID '%v';",
 			table.Database,
 			table.Name,
 			item.PartitionID)
 		if item.PartitionID == "all" {
 			query = fmt.Sprintf(
-				"ALTER TABLE %v.%v FREEZE PARTITION tuple();",
+				"ALTER TABLE `%v`.`%v` FREEZE PARTITION tuple();",
 				table.Database,
 				table.Name)
 		}
@@ -321,7 +321,7 @@ func (ch *ClickHouse) AttachPatritions(table BackupTable) error {
 		if _, ok := attachedParts[partName]; ok {
 			continue
 		}
-		query := fmt.Sprintf("ALTER TABLE %s.%s ATTACH PARTITION %s", table.Database, table.Name, partName)
+		query := fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PARTITION %s", table.Database, table.Name, partName)
 		attachedParts[partName] = struct{}{}
 		log.Println(query)
 		if ch.DryRun {
@@ -336,7 +336,7 @@ func (ch *ClickHouse) AttachPatritions(table BackupTable) error {
 
 // CreateDatabase - create specific database from metadata in backup folder
 func (ch *ClickHouse) CreateDatabase(database string) error {
-	createQuery := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", database)
+	createQuery := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", database)
 	if ch.DryRun {
 		log.Printf("DRY-RUN: %s", createQuery)
 		return nil
@@ -353,7 +353,7 @@ func (ch *ClickHouse) CreateTable(table RestoreTable) error {
 		log.Printf("DRY-RUN: Create table '%s.%s'", table.Database, table.Table)
 		return nil
 	}
-	if _, err := ch.conn.Exec(fmt.Sprintf("USE %s", table.Database)); err != nil {
+	if _, err := ch.conn.Exec(fmt.Sprintf("USE `%s`", table.Database)); err != nil {
 		return err
 	}
 	log.Printf("Create table '%s.%s'", table.Database, table.Table)

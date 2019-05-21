@@ -15,6 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const dbName = "testdb"
+
 type TestDataStuct struct {
 	Database string
 	Table    string
@@ -26,7 +28,7 @@ type TestDataStuct struct {
 
 var testData = []TestDataStuct{
 	TestDataStuct{
-		Database: "testdb",
+		Database: dbName,
 		Table:    "table1",
 		Schema:   "(Date Date, TimeStamp DateTime, Log String) ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)",
 		Rows: []map[string]interface{}{
@@ -41,7 +43,7 @@ var testData = []TestDataStuct{
 		OrderBy: "TimeStamp",
 	},
 	TestDataStuct{
-		Database: "testdb",
+		Database: dbName,
 		Table:    "table2",
 		Schema:   "(id UInt64, User String) ENGINE = MergeTree ORDER BY id SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
@@ -56,7 +58,7 @@ var testData = []TestDataStuct{
 		OrderBy: "id",
 	},
 	TestDataStuct{
-		Database: "testdb",
+		Database: dbName,
 		Table:    "table3",
 		Schema:   "(TimeStamp DateTime, Item String, Date Date MATERIALIZED toDate(TimeStamp)) ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
@@ -71,7 +73,7 @@ var testData = []TestDataStuct{
 		OrderBy: "TimeStamp",
 	},
 	TestDataStuct{
-		Database: "testdb",
+		Database: dbName,
 		Table:    "table4",
 		Schema:   "(id UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY id ORDER BY (id, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192",
 		Rows: func() []map[string]interface{} {
@@ -88,7 +90,7 @@ var testData = []TestDataStuct{
 
 var incrementData = []TestDataStuct{
 	TestDataStuct{
-		Database: "testdb",
+		Database: dbName,
 		Table:    "table1",
 		Schema:   "(Date Date, TimeStamp DateTime, Log String) ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)",
 		Rows: []map[string]interface{}{
@@ -98,7 +100,7 @@ var incrementData = []TestDataStuct{
 		OrderBy: "TimeStamp",
 	},
 	TestDataStuct{
-		Database: "testdb",
+		Database: dbName,
 		Table:    "table2",
 		Schema:   "(id UInt64, User String) ENGINE = MergeTree ORDER BY id SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
@@ -111,7 +113,7 @@ var incrementData = []TestDataStuct{
 		OrderBy: "id",
 	},
 	TestDataStuct{
-		Database: "testdb",
+		Database: dbName,
 		Table:    "table3",
 		Schema:   "(TimeStamp DateTime, Item String, Date Date MATERIALIZED toDate(TimeStamp)) ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
@@ -122,7 +124,7 @@ var incrementData = []TestDataStuct{
 		OrderBy: "TimeStamp",
 	},
 	TestDataStuct{
-		Database: "testdb",
+		Database: dbName,
 		Table:    "table4",
 		Schema:   "(id UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY id ORDER BY (id, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192",
 		Rows: func() []map[string]interface{} {
@@ -146,7 +148,7 @@ func TestRestoreLegacyBackupFormat(t *testing.T) {
 	}
 	r := require.New(t)
 	r.NoError(ch.Connect())
-	r.NoError(ch.dropDatabase("testdb"))
+	r.NoError(ch.dropDatabase(dbName))
 	fmt.Println("Generate test data")
 	for _, data := range testData {
 		r.NoError(ch.createTestData(data))
@@ -155,7 +157,7 @@ func TestRestoreLegacyBackupFormat(t *testing.T) {
 	fmt.Println("Create backup")
 	r.NoError(dockerExec("clickhouse-backup", "freeze"))
 	dockerExec("mkdir", "-p", "/var/lib/clickhouse/backup/old_format")
-	r.NoError(dockerExec("cp","-r", "/var/lib/clickhouse/metadata", "/var/lib/clickhouse/backup/old_format/"))
+	r.NoError(dockerExec("cp", "-r", "/var/lib/clickhouse/metadata", "/var/lib/clickhouse/backup/old_format/"))
 	r.NoError(dockerExec("mv", "/var/lib/clickhouse/shadow", "/var/lib/clickhouse/backup/old_format/"))
 	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup/old_format/")
 
@@ -168,7 +170,7 @@ func TestRestoreLegacyBackupFormat(t *testing.T) {
 	r.Error(dockerExec("clickhouse-backup", "upload", "increment_old_format", "--diff-from", "old_format"))
 
 	fmt.Println("Drop database")
-	r.NoError(ch.dropDatabase("testdb"))
+	r.NoError(ch.dropDatabase(dbName))
 
 	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
 	fmt.Println("Delete backup")
@@ -199,7 +201,7 @@ func TestIntegration(t *testing.T) {
 	}
 	r := require.New(t)
 	r.NoError(ch.Connect())
-	r.NoError(ch.dropDatabase("testdb"))
+	r.NoError(ch.dropDatabase(dbName))
 	fmt.Println("Generate test data")
 	for _, data := range testData {
 		r.NoError(ch.createTestData(data))
@@ -219,7 +221,7 @@ func TestIntegration(t *testing.T) {
 	r.NoError(dockerExec("clickhouse-backup", "upload", "increment", "--diff-from", "test_backup"))
 
 	fmt.Println("Drop database")
-	r.NoError(ch.dropDatabase("testdb"))
+	r.NoError(ch.dropDatabase(dbName))
 
 	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
 	fmt.Println("Delete backup")
@@ -241,7 +243,7 @@ func TestIntegration(t *testing.T) {
 	}
 	// test increment
 	fmt.Println("Drop database")
-	r.NoError(ch.dropDatabase("testdb"))
+	r.NoError(ch.dropDatabase(dbName))
 
 	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
 	fmt.Println("Delete backup")
@@ -272,7 +274,7 @@ func (ch *ClickHouse) createTestData(data TestDataStuct) error {
 	if err := ch.CreateTable(RestoreTable{
 		Database: data.Database,
 		Table:    data.Table,
-		Query:    fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s.%s %s", data.Database, data.Table, data.Schema),
+		Query:    fmt.Sprintf("CREATE TABLE IF NOT EXISTS `%s`.`%s` %s", data.Database, data.Table, data.Schema),
 	}); err != nil {
 		return err
 	}
@@ -283,7 +285,7 @@ func (ch *ClickHouse) createTestData(data TestDataStuct) error {
 			return fmt.Errorf("can't begin transaction with: %v", err)
 		}
 		if _, err := tx.NamedExec(
-			fmt.Sprintf("INSERT INTO %s.%s (%s) VALUES (:%s)",
+			fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES (:%s)",
 				data.Database,
 				data.Table,
 				strings.Join(data.Fields, ","),
@@ -300,13 +302,13 @@ func (ch *ClickHouse) createTestData(data TestDataStuct) error {
 
 func (ch *ClickHouse) dropDatabase(database string) error {
 	fmt.Println("DROP DATABASE IF EXISTS ", database)
-	_, err := ch.conn.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", database))
+	_, err := ch.conn.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", database))
 	return err
 }
 
 func (ch *ClickHouse) checkData(t *testing.T, data TestDataStuct) error {
 	fmt.Printf("Check '%d' rows in '%s.%s'\n", len(data.Rows), data.Database, data.Table)
-	rows, err := ch.conn.Queryx(fmt.Sprintf("SELECT * FROM %s.%s ORDER BY %s", data.Database, data.Table, data.OrderBy))
+	rows, err := ch.conn.Queryx(fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY %s", data.Database, data.Table, data.OrderBy))
 	if err != nil {
 		return err
 	}
