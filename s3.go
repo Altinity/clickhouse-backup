@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"crypto/md5"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -21,7 +22,7 @@ import (
 	"github.com/AlexAkulov/s3gof3r"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/credentials"
+
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
@@ -52,7 +53,6 @@ func (s *S3) Connect() error {
 	var err error
 	if s.session, err = session.NewSession(
 		&aws.Config{
-			Credentials:      credentials.NewStaticCredentials(s.Config.AccessKey, s.Config.SecretKey, ""),
 			Region:           aws.String(s.Config.Region),
 			Endpoint:         aws.String(s.Config.Endpoint),
 			DisableSSL:       aws.Bool(s.Config.DisableSSL),
@@ -74,10 +74,11 @@ func (s *S3) Connect() error {
 		Scheme:      httpSchema,
 		PathStyle:   s.Config.ForcePathStyle,
 	}
-	s3StreamClient := s3gof3r.New(endpoint, s.Config.Region, s3gof3r.Keys{
-		AccessKey: s.Config.AccessKey,
-		SecretKey: s.Config.SecretKey,
-	})
+	keys, err := s.getAWSKeys()
+	if err != nil {
+		return err
+	}
+	s3StreamClient := s3gof3r.New(endpoint, s.Config.Region, keys)
 	s.s3Stream = s3StreamClient.Bucket(s.Config.Bucket)
 
 	return nil
@@ -760,4 +761,25 @@ func GetEtag(path string, partSize int64) string {
 	}
 	hash := md5.Sum(contentToHash)
 	return fmt.Sprintf("\"%x-%d\"", hash, parts)
+}
+
+func (s *S3) getAWSKeys() (keys s3gof3r.Keys, err error) {
+
+	if s.Config.AccessKey != "" && s.Config.SecretKey != "" {
+		return s3gof3r.Keys{
+			AccessKey: s.Config.AccessKey,
+			SecretKey: s.Config.SecretKey,
+		}, nil
+	}
+
+	keys, err = s3gof3r.EnvKeys()
+	if err == nil {
+		return
+	}
+	keys, err = s3gof3r.InstanceKeys()
+	if err == nil {
+		return
+	}
+	err = errors.New("no AWS keys found")
+	return
 }
