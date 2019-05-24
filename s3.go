@@ -22,6 +22,8 @@ import (
 	"github.com/AlexAkulov/s3gof3r"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/defaults"
 
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
@@ -51,8 +53,21 @@ type MetaFile struct {
 // Connect - connect to s3
 func (s *S3) Connect() error {
 	var err error
+	awsDefaults := defaults.Get()
+	defaultCredProviders := defaults.CredProviders(awsDefaults.Config, awsDefaults.Handlers)
+
+	// Define custom static cred provider
+	staticCreds := &credentials.StaticProvider{Value: credentials.Value{
+		AccessKeyID:     s.Config.AccessKey,
+		SecretAccessKey: s.Config.SecretKey,
+	}}
+
+	// Append static creds to the defaults
+	customCredProviders := append([]credentials.Provider{staticCreds}, defaultCredProviders...)
+	creds := credentials.NewChainCredentials(customCredProviders)
 	if s.session, err = session.NewSession(
 		&aws.Config{
+			Credentials:      creds,
 			Region:           aws.String(s.Config.Region),
 			Endpoint:         aws.String(s.Config.Endpoint),
 			DisableSSL:       aws.Bool(s.Config.DisableSSL),
