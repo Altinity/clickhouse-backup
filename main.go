@@ -72,13 +72,50 @@ func main() {
 		{
 			Name:      "list",
 			Usage:     "Print list of backups and exit",
-			UsageText: "clickhouse-backup list",
+			UsageText: "clickhouse-backup list [all|local|s3] [latest|penult]",
 			Action: func(c *cli.Context) error {
 				config := getConfig(c)
-				fmt.Println("Local backups:")
-				printLocalBackups(*config)
-				fmt.Println("Backups on S3:")
-				printS3Backups(*config)
+				switch c.Args().Get(0) {
+				case "local":
+					return printLocalBackups(*config, c.Args().Get(1))
+				case "s3":
+					return printS3Backups(*config, c.Args().Get(1))
+				case "all", "":
+					fmt.Println("Local backups:")
+					if err := printLocalBackups(*config, c.Args().Get(1)); err != nil {
+						return err
+					}
+					fmt.Println("Backups on S3:")
+					if err := printS3Backups(*config, c.Args().Get(1)); err != nil {
+						return err
+					}
+				default:
+					fmt.Fprintf(os.Stderr, "Unknown command '%s'\n", c.Args().Get(0))
+					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
+				}
+				return nil
+			},
+			Flags: cliapp.Flags,
+		},
+		{
+			Name: "delete",
+			Usage: "Delete specific backup",
+			UsageText: "clickhouse-backup delete <local|s3> <backup_name>",
+			Action: func(c *cli.Context) error {
+				config := getConfig(c)
+				if c.Args().Get(1) == "" {
+					fmt.Fprintln(os.Stderr, "Backup name must be defined")
+					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
+				}
+				switch c.Args().Get(0) {
+				case "local":
+					return removeBackupLocal(*config, c.Args().Get(1))
+				case "s3":
+					return removeBackupS3(*config, c.Args().Get(1))
+				default:
+					fmt.Fprintf(os.Stderr, "Unknown command '%s'\n", c.Args().Get(0))
+					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
+				}
 				return nil
 			},
 			Flags: cliapp.Flags,
@@ -283,7 +320,7 @@ func restoreSchema(config Config, backupName string, tablePattern string, dryRun
 	}
 	if backupName == "" {
 		fmt.Println("Select backup for restore:")
-		printLocalBackups(config)
+		printLocalBackups(config, "all")
 		os.Exit(1)
 	}
 	dataPath := getDataPath(config)
@@ -326,18 +363,37 @@ func restoreSchema(config Config, backupName string, tablePattern string, dryRun
 	return nil
 }
 
-func printLocalBackups(config Config) error {
+func printBackups(backupList []Backup, format string) error {
+	switch format {
+	case "latest", "last", "l":
+		if len(backupList) < 1 {
+			return fmt.Errorf("No backups found")
+		}
+		fmt.Println(backupList[len(backupList)-1].Name)
+	case "penult", "prev", "previous", "p":
+		if len(backupList) < 2 {
+			return fmt.Errorf("No penult backup is found")
+		}
+		fmt.Println(backupList[len(backupList)-2].Name)
+	case "all", "":
+		if len(backupList) == 0 {
+			fmt.Println("No backups found")
+		}
+		for _, backup := range backupList {
+			fmt.Printf("- '%s' (created at %s)\n", backup.Name, backup.Date.Format("02-01-2006 15:04:05"))
+		}
+	default:
+		return fmt.Errorf("'%s' undefined", format)
+	}
+	return nil
+}
+
+func printLocalBackups(config Config, format string) error {
 	backupList, err := listLocalBackups(config)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if len(backupList) == 0 {
-		fmt.Println("No backups found")
-	}
-	for _, backup := range backupList {
-		fmt.Printf("- '%s' (created at %s)\n", backup.Name, backup.Date.Format("02-01-2006 15:04:05"))
-	}
-	return nil
+	return printBackups(backupList, format)
 }
 
 func listLocalBackups(config Config) ([]Backup, error) {
@@ -375,7 +431,7 @@ func listLocalBackups(config Config) ([]Backup, error) {
 	return result, nil
 }
 
-func printS3Backups(config Config) error {
+func printS3Backups(config Config, format string) error {
 	s3 := &S3{Config: &config.S3}
 	if err := s3.Connect(); err != nil {
 		return fmt.Errorf("can't connect to s3 with %v", err)
@@ -384,13 +440,7 @@ func printS3Backups(config Config) error {
 	if err != nil {
 		return err
 	}
-	if len(backupList) == 0 {
-		fmt.Println("No backups found")
-	}
-	for _, backup := range backupList {
-		fmt.Printf("- '%s' (uploaded at %s)\n", backup.Name, backup.Date.Format("02-01-2006 15:04:05"))
-	}
-	return nil
+	return printBackups(backupList, format)
 }
 
 func freeze(config Config, tablePattern string, dryRun bool) error {
@@ -503,7 +553,7 @@ func restoreData(config Config, backupName string, tablePattern string, dryRun b
 	}
 	if backupName == "" {
 		fmt.Println("Select backup for restore:")
-		printLocalBackups(config)
+		printLocalBackups(config, "all")
 		os.Exit(1)
 	}
 	dataPath := getDataPath(config)
@@ -579,7 +629,7 @@ func upload(config Config, backupName string, diffFrom string, dryRun bool) erro
 	}
 	if backupName == "" {
 		fmt.Println("Select backup for upload:")
-		printLocalBackups(config)
+		printLocalBackups(config, "all")
 		os.Exit(1)
 	}
 	dataPath := getDataPath(config)
@@ -627,7 +677,7 @@ func download(config Config, backupName string, dryRun bool) error {
 	}
 	if backupName == "" {
 		fmt.Println("Select backup for download:")
-		printS3Backups(config)
+		printS3Backups(config, "all")
 		os.Exit(1)
 	}
 	dataPath := getDataPath(config)
@@ -695,6 +745,45 @@ func removeOldBackupsLocal(config Config, dryRun bool) error {
 	}
 	return nil
 }
+
+func removeBackupLocal(config Config, backupName string) error {
+	backupList, err := listLocalBackups(config)
+	if err != nil {
+		return err
+	}
+	dataPath := getDataPath(config)
+	if dataPath == "" {
+		return ErrUnknownClickhouseDataPath
+	}
+	for _, backup := range backupList {
+		if backup.Name == backupName {
+			return os.RemoveAll(path.Join(dataPath, "backup", backupName))
+		}
+	}
+	return fmt.Errorf("backup '%s' not found", backupName)
+}
+
+func removeBackupS3(config Config, backupName string) error {
+	dataPath := getDataPath(config)
+	if dataPath == "" {
+		return ErrUnknownClickhouseDataPath
+	}
+	s3 := &S3{Config: &config.S3}
+	if err := s3.Connect(); err != nil {
+		return fmt.Errorf("can't connect to s3 with: %v", err)
+	}
+	backupList, err := s3.BackupList()
+	if err != nil {
+		return err
+	}
+	for _, backup := range backupList {
+		if backup.Name == backupName {
+			return s3.RemoveBackup(backupName)
+		}
+	}
+	return fmt.Errorf("backup '%s' not found on s3", backupName)
+}
+
 
 func getConfig(ctx *cli.Context) *Config {
 	configPath := ctx.String("config")

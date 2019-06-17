@@ -586,6 +586,25 @@ func (s *S3) BackupList() ([]Backup, error) {
 	return result, nil
 }
 
+func (s *S3) RemoveBackup(backupName string) error {
+	objects := []s3manager.BatchDeleteObject{}
+	s.remotePager(s.Config.Path, false, func(page *s3.ListObjectsV2Output) {
+		for _, c := range page.Contents {
+			if strings.HasPrefix(*c.Key, path.Join(s.Config.Path, backupName)) {
+				objects = append(objects, s3manager.BatchDeleteObject{
+					Object: &s3.DeleteObjectInput{
+						Bucket: aws.String(s.Config.Bucket),
+						Key:    c.Key,
+					},
+				})
+			}
+		}
+	})
+	batcher := s3manager.NewBatchDelete(s.session)
+	return batcher.Delete(aws.BackgroundContext(),
+		&s3manager.DeleteObjectsIterator{Objects: objects})
+}
+
 func (s *S3) RemoveOldBackups(keep int) error {
 	if keep < 1 {
 		return nil
@@ -595,29 +614,16 @@ func (s *S3) RemoveOldBackups(keep int) error {
 		return err
 	}
 	backupsToDelete := GetBackupsToDelete(backupList, keep)
-	objects := []s3manager.BatchDeleteObject{}
-	s.remotePager(s.Config.Path, false, func(page *s3.ListObjectsV2Output) {
-		for _, c := range page.Contents {
-			for _, backupToDelete := range backupsToDelete {
-				if strings.HasPrefix(*c.Key, path.Join(s.Config.Path, backupToDelete.Name)) {
-					objects = append(objects, s3manager.BatchDeleteObject{
-						Object: &s3.DeleteObjectInput{
-							Bucket: aws.String(s.Config.Bucket),
-							Key:    c.Key,
-						},
-					})
-				}
-			}
+	for _, backupToDelete := range backupsToDelete {
+		if s.DryRun {
+			log.Printf("Delete '%s'\n", backupToDelete.Name)
+			continue
 		}
-	})
-	if s.DryRun {
-		for _, o := range objects {
-			log.Println("Delete", *o.Object.Key)
+		if err := s.RemoveBackup(backupToDelete.Name); err != nil {
+			return err
 		}
-		return nil
 	}
-	batcher := s3manager.NewBatchDelete(s.session)
-	return batcher.Delete(aws.BackgroundContext(), &s3manager.DeleteObjectsIterator{Objects: objects})
+	return nil
 }
 
 func (s *S3) newSyncFolderIterator(localPath, dstPath string) (*SyncFolderIterator, map[string]fileInfo, error) {
