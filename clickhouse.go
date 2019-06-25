@@ -135,7 +135,7 @@ func (ch *ClickHouse) FreezeTable(table Table) error {
 		}
 		log.Printf("  partition '%v'", item.PartitionID)
 		query := fmt.Sprintf(
-			"ALTER TABLE `%v`.`%v` FREEZE PARTITION ID '%v';",
+			"ALTER TABLE `%v`.`%v` FREEZE PARTITION %v;",
 			table.Database,
 			table.Name,
 			item.PartitionID)
