@@ -310,7 +310,7 @@ func convertPartition(detachedTableFolder string) string {
 	// in case a custom partitioning key is used this is a partition name
 	// same as in system.parts table, it may be used in ALTER TABLE queries
 	// https://clickhouse.yandex/docs/en/operations/table_engines/custom_partitioning_key/
-	return fmt.Sprintf("ID '%s'", parts[0])
+	return parts[0]
 }
 
 // AttachPatritions - execute ATTACH command for specific table
