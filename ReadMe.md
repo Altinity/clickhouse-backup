@@ -13,6 +13,16 @@ Tool for easy ClickHouse backup and restore with S3 support
 - Most efficient AWS S3 uploading and downloading with streaming archiving and extracting
 - Support of incremental backups on S3
 
+## Compatibility
+
+ClickHouse: above 1.1.54390 below 19.4.4.33
+
+S3 providers:
+- Minio
+- AWS
+- Mail.Cloud
+- Yandex.Cloud (don't work)
+
 ## Download
 
 - Grab the latest binary from the [releases](https://github.com/AlexAkulov/clickhouse-backup/releases) page and decompress with:
@@ -118,9 +128,9 @@ clickhouse-backup upload $BACKUP_NAME
 ```
 
 ### Ansible script for backup sharded cluster
-You can use this playbook for daily backup of sharded cluster. 
+You can use this playbook for daily backup of sharded cluster.
 On the first day of month full backup will be uploaded and increment on the other days.
-Use https://healthchecks.io for monitoring creating and uploading of backups. 
+Use https://healthchecks.io for monitoring creating and uploading of backups.
 
 ```yaml
 - hosts: clickhouse-cluster
