@@ -17,34 +17,34 @@ type Config struct {
 
 // S3Config - s3 settings section
 type S3Config struct {
-	AccessKey          string `yaml:"access_key"`
-	SecretKey          string `yaml:"secret_key"`
-	Bucket             string `yaml:"bucket"`
-	Endpoint           string `yaml:"endpoint"`
-	Region             string `yaml:"region"`
-	ACL                string `yaml:"acl"`
-	ForcePathStyle     bool   `yaml:"force_path_style"`
-	Path               string `yaml:"path"`
-	DisableSSL         bool   `yaml:"disable_ssl"`
-	DisableProgressBar bool   `yaml:"disable_progress_bar"`
+	AccessKey          string `yaml:"access_key" envconfig:"S3_ACCESS_KEY"`
+	SecretKey          string `yaml:"secret_key" envconfig:"S3_SECRET_KEY"`
+	Bucket             string `yaml:"bucket" envconfig:"S3_BUCKET"`
+	Endpoint           string `yaml:"endpoint" envconfig:"S3_ENDPOINT"`
+	Region             string `yaml:"region" envconfig:"S3_REGION"`
+	ACL                string `yaml:"acl" envconfig:"S3_ACL"`
+	ForcePathStyle     bool   `yaml:"force_path_style" envconfig:"S3_FORCE_PATH_STYLE"`
+	Path               string `yaml:"path" envconfig:"S3_PATH"`
+	DisableSSL         bool   `yaml:"disable_ssl" envconfig:"S3_DISABLE_SSL"`
+	DisableProgressBar bool   `yaml:"disable_progress_bar" envconfig:"DISABLE_PROGRESS_BAR"`
 	OverwriteStrategy  string `yaml:"overwrite_strategy"`
-	PartSize           int64  `yaml:"part_size"`
+	PartSize           int64  `yaml:"part_size" envconfig:"S3_PART_SIZE"`
 	DeleteExtraFiles   bool   `yaml:"delete_extra_files"`
 	Strategy           string `yaml:"strategy"`
-	BackupsToKeepLocal int    `yaml:"backups_to_keep_local"`
-	BackupsToKeepS3    int    `yaml:"backups_to_keep_s3"`
-	CompressionLevel   int    `yaml:"compression_level"`
-	CompressionFormat  string `yaml:"compression_format"`
+	BackupsToKeepLocal int    `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL"`
+	BackupsToKeepS3    int    `yaml:"backups_to_keep_s3" envconfig:"BACKUPS_TO_KEEP_S3"`
+	CompressionLevel   int    `yaml:"compression_level" envconfig:"S3_COMPRESSION_LEVEL"`
+	CompressionFormat  string `yaml:"compression_format" envconfig:"S3_COMPRESSION_FORMAT"`
 }
 
 // ClickHouseConfig - clickhouse settings section
 type ClickHouseConfig struct {
-	Username   string   `yaml:"username"`
-	Password   string   `yaml:"password"`
-	Host       string   `yaml:"host"`
-	Port       uint     `yaml:"port"`
-	DataPath   string   `yaml:"data_path"`
-	SkipTables []string `yaml:"skip_tables"`
+	Username   string   `yaml:"username" envconfig:"CLICKHOUSE_USERNAME"`
+	Password   string   `yaml:"password" envconfig:"CLICKHOUSE_PASSWORD"`
+	Host       string   `yaml:"host" envconfig:"CLICKHOUSE_HOST"`
+	Port       uint     `yaml:"port" envconfig:"CLICKHOUSE_PORT"`
+	DataPath   string   `yaml:"data_path" envconfig:"CLICKHOUSE_DATA_PATH"`
+	SkipTables []string `yaml:"skip_tables" envconfig:"CLICKHOUSE_SKIP_TABLES"`
 }
 
 // LoadConfig - load config from file

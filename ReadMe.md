@@ -82,39 +82,34 @@ GLOBAL OPTIONS:
 ```
 
 ### Default Config
+All options can be overwritten via environment variables
 
 ```yaml
 clickhouse:
-  username: default
-  password: ""
-  host: localhost
-  port: 9000
-  data_path: ""
-  skip_tables:
+  username: default            # CLICKHOUSE_USERNAME
+  password: ""                 # CLICKHOUSE_PASSWORD
+  host: localhost              # CLICKHOUSE_HOST
+  port: 9000                   # CLICKHOUSE_PORT
+  data_path: ""                # CLICKHOUSE_DATA_PATH
+  skip_tables:                 # CLICKHOUSE_SKIP_TABLES
     - system.*
 s3:
-  access_key: ""
-  secret_key: ""
-  bucket: ""
-  endpoint: ""
-  region: us-east-1
-  acl: private
-  force_path_style: false
-  path: ""
-  disable_ssl: false
-  disable_progress_bar: false
-  # Define behavior for rewrite exists files with the same size. Must set to "skip", "etag" or "always"
-  # "skip" - the fastest but can make backup inconsistently
-  # "etag" - calculate etag for local files, set this if your network is very slow
-  overwrite_strategy: always
-  part_size: 5242880
-  delete_extra_files: true
-  strategy: archive
-  backups_to_keep_local: 0
-  backups_to_keep_s3: 0
-  compression_level: 1
+  access_key: ""               # S3_ACCESS_KEY
+  secret_key: ""               # S3_SECRET_KEY
+  bucket: ""                   # S3_BUCKET
+  endpoint: ""                 # S3_ENDPOINT
+  region: us-east-1            # S3_REGION
+  acl: private                 # S3_ACL
+  force_path_style: false      # S3_FORCE_PATH_STYLE
+  path: ""                     # S3_PATH
+  disable_ssl: false           # S3_DISABLE_SSL
+  disable_progress_bar: false  # DISABLE_PROGRESS_BAR
+  part_size: 5242880           # S3_PART_SIZE
+  backups_to_keep_local: 0     # BACKUPS_TO_KEEP_LOCAL
+  backups_to_keep_s3: 0        # BACKUPS_TO_KEEP_S3
+  compression_level: 1         # S3_COMPRESSION_LEVEL
   # supported: 'tar', 'lz4', 'bzip2', 'gzip', 'sz', 'xz'
-  compression_format: lz4
+  compression_format: lz4      # S3_COMPRESSION_FORMAT
 ```
 
 ## Examples
