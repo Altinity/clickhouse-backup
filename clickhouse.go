@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strconv"
 	"fmt"
 	"log"
 	"os"
@@ -118,12 +119,24 @@ func (ch *ClickHouse) GetTables() ([]Table, error) {
 	return tables, nil
 }
 
-// FreezeTable - freeze all partitions for table
-func (ch *ClickHouse) FreezeTable(table Table) error {
+func (ch *ClickHouse) getVersion() (int, error) {
+	var result []string
+	q := fmt.Sprintf("SELECT value FROM `system`.`build_options` where name='VERSION_INTEGER'")
+	if err := ch.conn.Select(&result, q); err != nil {
+		return 0, fmt.Errorf("can't get ClickHouse version with %v", err)
+	}
+	if len(result) == 0 {
+		return 0, nil
+	}
+	return strconv.Atoi(result[0])
+}
+
+// FreezeTableOldWay - freeze table for versions below 19.1
+func (ch *ClickHouse) FreezeTableOldWay(table Table) error {
 	var partitions []struct {
 		PartitionID string `db:"partition_id"`
 	}
-	q := fmt.Sprintf("SELECT DISTINCT partition_id FROM system.parts WHERE database='%v' AND table='%v'", table.Database, table.Name)
+	q := fmt.Sprintf("SELECT DISTINCT partition_id FROM `system`.`parts` WHERE database='%v' AND table='%v'", table.Database, table.Name)
 	if err := ch.conn.Select(&partitions, q); err != nil {
 		return fmt.Errorf("can't get partitions for \"%s.%s\" with %v", table.Database, table.Name, err)
 	}
@@ -148,6 +161,23 @@ func (ch *ClickHouse) FreezeTable(table Table) error {
 		if _, err := ch.conn.Exec(query); err != nil {
 			return fmt.Errorf("can't freeze partition '%s' on '%s.%s' with: %v", item.PartitionID, table.Database, table.Name, err)
 		}
+	}
+	return nil
+}
+
+// FreezeTable - freeze all partitions for table
+func (ch *ClickHouse) FreezeTable(table Table) error {
+	version, err := ch.getVersion()
+	if err != nil {
+		return err
+	}
+	if version < 19001005 {
+		return ch.FreezeTableOldWay(table)
+	}
+	log.Printf("Freeze '%v.%v'", table.Database, table.Name)
+	query := fmt.Sprintf("ALTER TABLE `%v`.`%v` FREEZE;", table.Database, table.Name)
+	if _, err := ch.conn.Exec(query); err != nil {
+		return fmt.Errorf("can't freeze '%s.%s' with: %v", table.Database, table.Name, err)
 	}
 	return nil
 }
