@@ -12,7 +12,7 @@ script:
   - docker-compose -f integration-test/docker-compose-travis.yml up -d --force-recreate
   - go test -v
   - go test -tags=integration
-  - docker build -t alexakulov/clickhouse-backup .
+  - docker build -t alexakulov/clickhouse-backup:${TRAVIS_TAG//v} -t alexakulov/clickhouse-backup:latest .
 after_success:
   - tar -czvf clickhouse-backup.tar.gz clickhouse-backup
 deploy:
@@ -27,3 +27,7 @@ deploy:
     script: bash docker_push.sh
     on:
       branch: master
+  - provider: script
+    script: bash docker_push.sh release
+    on:
+      tags: true
