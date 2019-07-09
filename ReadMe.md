@@ -112,6 +112,13 @@ s3:
   compression_format: lz4      # S3_COMPRESSION_FORMAT
 ```
 
+## ATTENTION!
+
+Never change files permissions in `/var/lib/clickhouse/backup`.
+This path contains hard links. Permissions on all hard links to the same data on disk are always identical.
+That means that if you change the permissions/owner/attributes on a hard link in backup path, permissions on files with which ClickHouse works will be changed too.
+That might lead to data corruption.
+
 ## Examples
 
 ### Simple cron script for daily backup and uploading
