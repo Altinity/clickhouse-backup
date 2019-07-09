@@ -98,8 +98,8 @@ func main() {
 			Flags: cliapp.Flags,
 		},
 		{
-			Name: "delete",
-			Usage: "Delete specific backup",
+			Name:      "delete",
+			Usage:     "Delete specific backup",
 			UsageText: "clickhouse-backup delete <local|s3> <backup_name>",
 			Action: func(c *cli.Context) error {
 				config := getConfig(c)
@@ -223,36 +223,73 @@ func main() {
 	}
 }
 
+func addTable(tables []Table, table Table) []Table {
+	for _, t := range tables {
+		if (t.Database == table.Database) && (t.Name == table.Name) {
+			return tables
+		}
+	}
+	return append(tables, table)
+}
+
+func addBackupTable(tables []BackupTable, table BackupTable) []BackupTable {
+	for _, t := range tables {
+		if (t.Database == table.Database) && (t.Name == table.Name) {
+			return tables
+		}
+	}
+	return append(tables, table)
+}
+
+func addRestoreTable(tables []RestoreTable, table RestoreTable) []RestoreTable {
+	for _, t := range tables {
+		if (t.Database == table.Database) && (t.Table == table.Table) {
+			return tables
+		}
+	}
+	return append(tables, table)
+}
+
 func parseTablePatternForFreeze(tables []Table, tablePattern string) ([]Table, error) {
 	if tablePattern == "" {
 		return tables, nil
 	}
+	tablePatterns := strings.Split(tablePattern, ",")
 	var result []Table
 	for _, t := range tables {
-		if matched, _ := filepath.Match(tablePattern, fmt.Sprintf("%s.%s", t.Database, t.Name)); matched {
-			result = append(result, t)
+		for _, pattern := range tablePatterns {
+			if matched, _ := filepath.Match(pattern, fmt.Sprintf("%s.%s", t.Database, t.Name)); matched {
+				result = addTable(result, t)
+			}
 		}
 	}
 	return result, nil
 }
 
 func parseTablePatternForRestoreData(tables map[string]BackupTable, tablePattern string) ([]BackupTable, error) {
-	if tablePattern == "" {
-		tablePattern = "*"
+	tablePatterns := []string{"*"}
+	if tablePattern != "" {
+		tablePatterns = strings.Split(tablePattern, ",")
 	}
 	result := []BackupTable{}
 	for _, t := range tables {
-		tableName := fmt.Sprintf("%s.%s", t.Database, t.Name)
-		if matched, _ := filepath.Match(tablePattern, tableName); matched {
-			result = append(result, t)
+		for _, pattern := range tablePatterns {
+			tableName := fmt.Sprintf("%s.%s", t.Database, t.Name)
+			if matched, _ := filepath.Match(pattern, tableName); matched {
+				result = addBackupTable(result, t)
+			}
 		}
 	}
 	return result, nil
 }
 
-func parseTablePatternForRestoreSchema(metadataPath, tablePattern string) ([]RestoreTable, error) {
+func parseTablePatternForRestoreSchema(metadataPath string, tablePattern string) ([]RestoreTable, error) {
 	regularTables := []RestoreTable{}
 	distributedTables := []RestoreTable{}
+	tablePatterns := []string{"*"}
+	if tablePattern != "" {
+		tablePatterns = strings.Split(tablePattern, ",")
+	}
 	filepath.Walk(metadataPath, func(filePath string, info os.FileInfo, err error) error {
 		if !strings.HasSuffix(filePath, ".sql") || !info.Mode().IsRegular() {
 			return nil
@@ -268,23 +305,25 @@ func parseTablePatternForRestoreSchema(metadataPath, tablePattern string) ([]Res
 			return nil
 		}
 		tableName := fmt.Sprintf("%s.%s", database, table)
-		if matched, _ := filepath.Match(tablePattern, tableName); !matched {
-			return nil
+		for _, p := range tablePatterns {
+			if matched, _ := filepath.Match(p, tableName); matched {
+				data, err := ioutil.ReadFile(filePath)
+				if err != nil {
+					return err
+				}
+				restoreTable := RestoreTable{
+					Database: database,
+					Table:    table,
+					Query:    strings.Replace(string(data), "ATTACH", "CREATE", 1),
+				}
+				if strings.Contains(restoreTable.Query, "ENGINE = Distributed") {
+					distributedTables = addRestoreTable(distributedTables, restoreTable)
+					return nil
+				}
+				regularTables = addRestoreTable(regularTables, restoreTable)
+				return nil
+			}
 		}
-		data, err := ioutil.ReadFile(filePath)
-		if err != nil {
-			return err
-		}
-		restoreTable := RestoreTable{
-			Database: database,
-			Table:    table,
-			Query:    strings.Replace(string(data), "ATTACH", "CREATE", 1),
-		}
-		if strings.Contains(restoreTable.Query, "ENGINE = Distributed") {
-			distributedTables = append(distributedTables, restoreTable)
-			return nil
-		}
-		regularTables = append(regularTables, restoreTable)
 		return nil
 	})
 	return append(regularTables, distributedTables...), nil
@@ -326,9 +365,6 @@ func restoreSchema(config Config, backupName string, tablePattern string, dryRun
 	dataPath := getDataPath(config)
 	if dataPath == "" {
 		return ErrUnknownClickhouseDataPath
-	}
-	if tablePattern == "" {
-		tablePattern = "*"
 	}
 	metadataPath := path.Join(dataPath, "backup", backupName, "metadata")
 	info, err := os.Stat(metadataPath)
@@ -569,16 +605,37 @@ func restoreData(config Config, backupName string, tablePattern string, dryRun b
 	}
 	defer ch.Close()
 
-	allTables, err := ch.GetBackupTables(backupName)
+	allBackupTables, err := ch.GetBackupTables(backupName)
 	if err != nil {
 		return err
 	}
-	restoreTables, err := parseTablePatternForRestoreData(allTables, tablePattern)
+	restoreTables, err := parseTablePatternForRestoreData(allBackupTables, tablePattern)
+	if err != nil {
+		return err
+	}
+	chTables, err := ch.GetTables()
 	if err != nil {
 		return err
 	}
 	if len(restoreTables) == 0 {
 		return fmt.Errorf("Backup doesn't have tables to restore")
+	}
+	allTablesCreated := true
+	for _, restoreTable := range restoreTables {
+		found := false
+		for _, chTable := range chTables {
+			if (restoreTable.Database == chTable.Database) && (restoreTable.Name == chTable.Name) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			log.Printf("Table '%s.%s' is not created", restoreTable.Database, restoreTable.Name)
+			allTablesCreated = false
+		}
+	}
+	if !allTablesCreated {
+		return fmt.Errorf("Run 'restore-schema' first")
 	}
 	for _, table := range restoreTables {
 		if err := ch.CopyData(table); err != nil {
@@ -783,7 +840,6 @@ func removeBackupS3(config Config, backupName string) error {
 	}
 	return fmt.Errorf("backup '%s' not found on s3", backupName)
 }
-
 
 func getConfig(ctx *cli.Context) *Config {
 	configPath := ctx.String("config")
