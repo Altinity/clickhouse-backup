@@ -7,12 +7,12 @@ env:
 services:
   - docker
 script:
+  - docker build --build-arg "TRAVIS_TAG=${TRAVIS_TAG}" --build-arg "TRAVIS_COMMIT=${TRAVIS_COMMIT}" -t alexakulov/clickhouse-backup:latest .
   - CGO_ENABLED=0 go build -ldflags "-w -s -X main.version=${TRAVIS_TAG} -X main.gitCommit=${TRAVIS_COMMIT} -X main.buildDate=$(date --iso-8601)" -o clickhouse-backup/clickhouse-backup
   - ./clickhouse-backup/clickhouse-backup default-config > clickhouse-backup/config.yml
   - docker-compose -f integration-test/docker-compose-travis.yml up -d --force-recreate
   - go test -v
   - go test -tags=integration
-  - docker build -t alexakulov/clickhouse-backup:latest .
 after_success:
   - tar -czvf clickhouse-backup.tar.gz clickhouse-backup
 deploy:
