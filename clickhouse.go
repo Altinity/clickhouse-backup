@@ -104,7 +104,7 @@ func (ch *ClickHouse) Close() error {
 // GetTables - get all tables info
 func (ch *ClickHouse) GetTables() ([]Table, error) {
 	var tables []Table
-	if err := ch.conn.Select(&tables, "SELECT database, name, is_temporary, data_path, metadata_path FROM system.tables WHERE data_path != '' AND is_temporary = 0;"); err != nil {
+	if err := ch.conn.Select(&tables, "SELECT database, name, is_temporary, data_path, metadata_path FROM system.tables WHERE data_path != '' AND is_temporary = 0 AND engine LIKE '%MergeTree';"); err != nil {
 		return nil, err
 	}
 	for i, t := range tables {
