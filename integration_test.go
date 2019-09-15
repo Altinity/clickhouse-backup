@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const dbName = "testdb"
+const dbName = "_test.ДБ_"
 
 type TestDataStuct struct {
 	Database string
@@ -29,7 +29,7 @@ type TestDataStuct struct {
 var testData = []TestDataStuct{
 	TestDataStuct{
 		Database: dbName,
-		Table:    "table1",
+		Table:    ".inner.table1",
 		Schema:   "(Date Date, TimeStamp DateTime, Log String) ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)",
 		Rows: []map[string]interface{}{
 			map[string]interface{}{"Date": toDate("2018-10-23"), "TimeStamp": toTS("2018-10-23 07:37:14"), "Log": "One"},
@@ -44,7 +44,7 @@ var testData = []TestDataStuct{
 	},
 	TestDataStuct{
 		Database: dbName,
-		Table:    "table2",
+		Table:    "Таблица 2",
 		Schema:   "(id UInt64, User String) ENGINE = MergeTree ORDER BY id SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
 			map[string]interface{}{"id": uint64(1), "User": "Alice"},
@@ -91,7 +91,7 @@ var testData = []TestDataStuct{
 var incrementData = []TestDataStuct{
 	TestDataStuct{
 		Database: dbName,
-		Table:    "table1",
+		Table:    ".inner.table1",
 		Schema:   "(Date Date, TimeStamp DateTime, Log String) ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)",
 		Rows: []map[string]interface{}{
 			map[string]interface{}{"Date": toDate("2019-10-26"), "TimeStamp": toTS("2019-01-26 07:37:19"), "Log": "Seven"},
@@ -101,7 +101,7 @@ var incrementData = []TestDataStuct{
 	},
 	TestDataStuct{
 		Database: dbName,
-		Table:    "table2",
+		Table:    "Таблица 2",
 		Schema:   "(id UInt64, User String) ENGINE = MergeTree ORDER BY id SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
 			map[string]interface{}{"id": uint64(7), "User": "Alice"},

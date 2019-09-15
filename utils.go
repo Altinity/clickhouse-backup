@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -201,4 +202,8 @@ func FormatBytes(i int64) (result string) {
 		result = fmt.Sprintf("%d B", i)
 	}
 	return
+}
+
+func TablePathEncode(str string) string {
+	return strings.ReplaceAll(url.PathEscape(str), ".", "%2E")
 }

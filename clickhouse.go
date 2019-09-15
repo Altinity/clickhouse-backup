@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -43,7 +44,6 @@ type BackupTable struct {
 	Database   string
 	Name       string
 	Partitions []BackupPartition
-	Path       string
 }
 
 // RestoreTable - struct to store information needed during restore
@@ -169,10 +169,10 @@ func (ch *ClickHouse) FreezeTable(table Table) error {
 	if version < 19001005 {
 		return ch.FreezeTableOldWay(table)
 	}
-	log.Printf("Freeze '%v.%v'", table.Database, table.Name)
+	log.Printf("Freeze `%s`.`%s`", table.Database, table.Name)
 	query := fmt.Sprintf("ALTER TABLE `%v`.`%v` FREEZE;", table.Database, table.Name)
 	if _, err := ch.conn.Exec(query); err != nil {
-		return fmt.Errorf("can't freeze '%s.%s' with: %v", table.Database, table.Name, err)
+		return fmt.Errorf("can't freeze `%s`.`%s` with: %v", table.Database, table.Name, err)
 	}
 	return nil
 }
@@ -218,18 +218,19 @@ func (ch *ClickHouse) GetBackupTables(backupName string) (map[string]BackupTable
 				Name: parts[partNum],
 				Path: filePath,
 			}
-			table := BackupTable{
-				Database:   parts[dbNum],
-				Name:       parts[tableNum],
-				Partitions: []BackupPartition{partition},
-			}
-			fullTableName := fmt.Sprintf("%s.%s", table.Database, table.Name)
+			tDB, _ := url.PathUnescape(parts[dbNum])
+			tName, _ := url.PathUnescape(parts[tableNum])
+			fullTableName := fmt.Sprintf("%s.%s", tDB, tName)
 			if t, ok := result[fullTableName]; ok {
 				t.Partitions = append(t.Partitions, partition)
 				result[fullTableName] = t
 				return nil
 			}
-			result[fullTableName] = table
+			result[fullTableName] = BackupTable{
+				Database:   tDB,
+				Name:       tName,
+				Partitions: []BackupPartition{partition},
+			}
 			return nil
 		}
 		return nil
@@ -264,13 +265,12 @@ func (ch *ClickHouse) Chown(name string) error {
 
 // CopyData - copy partitions for specific table to detached folder
 func (ch *ClickHouse) CopyData(table BackupTable) error {
-	log.Printf("Prepare data for restoring '%s.%s'", table.Database, table.Name)
+	log.Printf("Prepare data for restoring `%s`.`%s`", table.Database, table.Name)
 	dataPath, err := ch.GetDataPath()
 	if err != nil {
 		return err
 	}
-
-	detachedParentDir := filepath.Join(dataPath, "data", table.Database, table.Name, "detached")
+	detachedParentDir := filepath.Join(dataPath, "data", TablePathEncode(table.Database), TablePathEncode(table.Name), "detached")
 	os.MkdirAll(detachedParentDir, 0750)
 	ch.Chown(detachedParentDir)
 
@@ -305,11 +305,11 @@ func (ch *ClickHouse) CopyData(table BackupTable) error {
 				return nil
 			}
 			if err := os.Link(filePath, dstFilePath); err != nil {
-				return fmt.Errorf("Failed to crete hard link %s -> %s with %v", filePath, dstFilePath, err)
+				return fmt.Errorf("Failed to crete hard link '%s' -> '%s' with %v", filePath, dstFilePath, err)
 			}
 			return ch.Chown(dstFilePath)
 		}); err != nil {
-			return fmt.Errorf("Error during filepath.Walk for partition %s: %v", partition.Path, err)
+			return fmt.Errorf("Error during filepath.Walk for partition '%s' with %v", partition.Path, err)
 		}
 	}
 	return nil
@@ -364,7 +364,7 @@ func (ch *ClickHouse) CreateTable(table RestoreTable) error {
 	if _, err := ch.conn.Exec(fmt.Sprintf("USE `%s`", table.Database)); err != nil {
 		return err
 	}
-	log.Printf("Create table '%s.%s'", table.Database, table.Table)
+	log.Printf("Create table `%s`.`%s`", table.Database, table.Table)
 	if _, err := ch.conn.Exec(table.Query); err != nil {
 		return err
 	}

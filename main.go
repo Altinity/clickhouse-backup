@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -297,7 +298,8 @@ func parseTablePatternForRestoreSchema(metadataPath string, tablePattern string)
 		if len(parts) != 2 {
 			return nil
 		}
-		database, table := parts[0], parts[1]
+		database, _ := url.PathUnescape(parts[0])
+		table, _ := url.PathUnescape(parts[1])
 		if database == "system" {
 			return nil
 		}
@@ -386,7 +388,7 @@ func restoreSchema(config Config, backupName string, tablePattern string) error 
 	for _, schema := range tablesForRestore {
 		ch.CreateDatabase(schema.Database)
 		if err := ch.CreateTable(schema); err != nil {
-			return fmt.Errorf("can't create table '%s.%s' %v", schema.Database, schema.Table, err)
+			return fmt.Errorf("can't create table `%s`.`%s` %v", schema.Database, schema.Table, err)
 		}
 	}
 	return nil
@@ -513,7 +515,7 @@ func freeze(config Config, tablePattern string) error {
 	}
 	for _, table := range backupTables {
 		if table.Skip {
-			log.Printf("Skip '%s.%s'", table.Database, table.Name)
+			log.Printf("Skip `%s`.`%s`", table.Database, table.Name)
 			continue
 		}
 		if err := ch.FreezeTable(table); err != nil {
@@ -611,16 +613,16 @@ func restoreData(config Config, backupName string, tablePattern string) error {
 			}
 		}
 		if !found {
-			log.Printf("Table '%s.%s' is not created", restoreTable.Database, restoreTable.Name)
+			log.Printf("`%s`.`%s` is not created", restoreTable.Database, restoreTable.Name)
 			allTablesCreated = false
 		}
 	}
 	if !allTablesCreated {
-		return fmt.Errorf("Run 'restore-schema' first")
+		return fmt.Errorf("run 'restore-schema' first")
 	}
 	for _, table := range restoreTables {
 		if err := ch.CopyData(table); err != nil {
-			return fmt.Errorf("can't restore '%s.%s' with %v", table.Database, table.Name, err)
+			return fmt.Errorf("can't restore `%s`.`%s` with %v", table.Database, table.Name, err)
 		}
 		if err := ch.AttachPatritions(table); err != nil {
 			return fmt.Errorf("can't attach partitions for table '%s.%s' with %v", table.Database, table.Name, err)
