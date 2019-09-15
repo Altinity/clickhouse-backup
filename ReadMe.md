@@ -53,7 +53,7 @@ NAME:
    clickhouse-backup - Tool for easy backup of ClickHouse with S3 support
 
 USAGE:
-   clickhouse-backup <command> [--dry-run] [-t, --tables=<db>.<table>] <backup_name>
+   clickhouse-backup <command> [-t, --tables=<db>.<table>] <backup_name>
 
 VERSION:
    unknown
@@ -76,7 +76,6 @@ COMMANDS:
 
 GLOBAL OPTIONS:
    --config FILE, -c FILE  Config FILE name. (default: "/etc/clickhouse-backup/config.yml")
-   --dry-run               [DEPRECATED] Only show what should be uploaded or downloaded but don't actually do it. May still perform S3 requests to get bucket listings and other information though (only for file transfer commands)
    --help, -h              show help
    --version, -v           print the version
 ```
@@ -104,11 +103,11 @@ s3:
   path: ""                     # S3_PATH
   disable_ssl: false           # S3_DISABLE_SSL
   disable_progress_bar: false  # DISABLE_PROGRESS_BAR
-  part_size: 5242880           # S3_PART_SIZE
+  part_size: 104857600         # S3_PART_SIZE
   backups_to_keep_local: 0     # BACKUPS_TO_KEEP_LOCAL
   backups_to_keep_s3: 0        # BACKUPS_TO_KEEP_S3
   compression_level: 1         # S3_COMPRESSION_LEVEL
-  # supported: 'tar', 'lz4', 'bzip2', 'gzip', 'sz', 'xz'
+  # supports 'tar', 'lz4', 'bzip2', 'gzip', 'sz', 'xz'
   compression_format: lz4      # S3_COMPRESSION_FORMAT
 ```
 

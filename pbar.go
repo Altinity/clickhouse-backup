@@ -34,9 +34,9 @@ func StartNewBar(show bool, total int) *Bar {
 	}
 }
 
-func (b *Bar) FinishPrint(str string) {
+func (b *Bar) Finish() {
 	if b.show {
-		b.pb.FinishPrint(str)
+		b.pb.Finish()
 	}
 }
 

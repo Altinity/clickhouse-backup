@@ -16,6 +16,7 @@ import (
 
 type Backup struct {
 	Name string
+	Size int64
 	Date time.Time
 }
 
@@ -81,7 +82,7 @@ func moveShadow(shadowPath, backupPath string) error {
 	return cleanDir(shadowPath)
 }
 
-func copyPath(src, dst string, dryRun bool) error {
+func copyPath(src, dst string) error {
 	if _, err := os.Stat(src); err != nil {
 		return err
 	}
@@ -89,18 +90,6 @@ func copyPath(src, dst string, dryRun bool) error {
 		filePath = filepath.ToSlash(filePath) // fix Windows slashes
 		filename := strings.Trim(strings.TrimPrefix(filePath, src), "/")
 		dstFilePath := filepath.Join(dst, filename)
-		if dryRun {
-			if info.IsDir() {
-				log.Printf("make path %s", dstFilePath)
-				return nil
-			}
-			if !info.Mode().IsRegular() {
-				log.Printf("'%s' is not a regular file, skipping", filePath)
-				return nil
-			}
-			log.Printf("copy %s -> %s", filePath, dstFilePath)
-			return nil
-		}
 		if info.IsDir() {
 			return os.MkdirAll(dstFilePath, os.ModePerm)
 		}
@@ -189,4 +178,27 @@ func getArchiveReader(format string) (archiver.Reader, error) {
 		return archiver.NewTarXz(), nil
 	}
 	return nil, fmt.Errorf("wrong compression_format, supported: 'tar', 'lz4', 'bzip2', 'gzip', 'sz', 'xz'")
+}
+
+// FormatBytes - Convert bytes to human readable string
+func FormatBytes(i int64) (result string) {
+	const (
+		KiB = 1024
+		MiB = 1048576
+		GiB = 1073741824
+		TiB = 1099511627776
+	)
+	switch {
+	case i >= TiB:
+		result = fmt.Sprintf("%.02f TiB", float64(i)/TiB)
+	case i >= GiB:
+		result = fmt.Sprintf("%.02f GiB", float64(i)/GiB)
+	case i >= MiB:
+		result = fmt.Sprintf("%.02f MiB", float64(i)/MiB)
+	case i >= KiB:
+		result = fmt.Sprintf("%.02f KiB", float64(i)/KiB)
+	default:
+		result = fmt.Sprintf("%d B", i)
+	}
+	return
 }

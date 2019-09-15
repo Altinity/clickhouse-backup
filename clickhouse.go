@@ -1,12 +1,12 @@
 package main
 
 import (
-	"strconv"
 	"fmt"
 	"log"
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -16,7 +16,6 @@ import (
 
 // ClickHouse - provide info and freeze tables
 type ClickHouse struct {
-	DryRun bool
 	Config *ClickHouseConfig
 	conn   *sqlx.DB
 	uid    *int
@@ -142,10 +141,6 @@ func (ch *ClickHouse) FreezeTableOldWay(table Table) error {
 	}
 	log.Printf("Freeze '%v.%v'", table.Database, table.Name)
 	for _, item := range partitions {
-		if ch.DryRun {
-			log.Printf("  partition '%v'   ...skip because dry-run", item.PartitionID)
-			continue
-		}
 		log.Printf("  partition '%v'", item.PartitionID)
 		query := fmt.Sprintf(
 			"ALTER TABLE `%v`.`%v` FREEZE PARTITION ID '%v';",
@@ -269,10 +264,6 @@ func (ch *ClickHouse) Chown(name string) error {
 
 // CopyData - copy partitions for specific table to detached folder
 func (ch *ClickHouse) CopyData(table BackupTable) error {
-	if ch.DryRun {
-		log.Printf("Prepare data for restoring '%s.%s'  ...skip dry-run", table.Database, table.Name)
-		return nil
-	}
 	log.Printf("Prepare data for restoring '%s.%s'", table.Database, table.Name)
 	dataPath, err := ch.GetDataPath()
 	if err != nil {
@@ -354,9 +345,6 @@ func (ch *ClickHouse) AttachPatritions(table BackupTable) error {
 		query := fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PARTITION %s", table.Database, table.Name, partName)
 		attachedParts[partName] = struct{}{}
 		log.Println(query)
-		if ch.DryRun {
-			continue
-		}
 		if _, err := ch.conn.Exec(query); err != nil {
 			return err
 		}
@@ -367,22 +355,12 @@ func (ch *ClickHouse) AttachPatritions(table BackupTable) error {
 // CreateDatabase - create specific database from metadata in backup folder
 func (ch *ClickHouse) CreateDatabase(database string) error {
 	createQuery := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", database)
-	if ch.DryRun {
-		log.Printf("DRY-RUN: %s", createQuery)
-		return nil
-	}
-	if _, err := ch.conn.Exec(createQuery); err != nil {
-		return err
-	}
-	return nil
+	_, err := ch.conn.Exec(createQuery)
+	return err
 }
 
 // CreateTable - create specific table from metadata in backup folder
 func (ch *ClickHouse) CreateTable(table RestoreTable) error {
-	if ch.DryRun {
-		log.Printf("DRY-RUN: Create table '%s.%s'", table.Database, table.Table)
-		return nil
-	}
 	if _, err := ch.conn.Exec(fmt.Sprintf("USE `%s`", table.Database)); err != nil {
 		return err
 	}

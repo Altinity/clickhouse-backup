@@ -27,9 +27,7 @@ type S3Config struct {
 	Path               string `yaml:"path" envconfig:"S3_PATH"`
 	DisableSSL         bool   `yaml:"disable_ssl" envconfig:"S3_DISABLE_SSL"`
 	DisableProgressBar bool   `yaml:"disable_progress_bar" envconfig:"DISABLE_PROGRESS_BAR"`
-	OverwriteStrategy  string `yaml:"overwrite_strategy"`
 	PartSize           int64  `yaml:"part_size" envconfig:"S3_PART_SIZE"`
-	DeleteExtraFiles   bool   `yaml:"delete_extra_files"`
 	Strategy           string `yaml:"strategy"`
 	BackupsToKeepLocal int    `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL"`
 	BackupsToKeepS3    int    `yaml:"backups_to_keep_s3" envconfig:"BACKUPS_TO_KEEP_S3"`
@@ -68,14 +66,8 @@ func LoadConfig(configLocation string) (*Config, error) {
 }
 
 func validateConfig(config *Config) error {
-	switch config.S3.OverwriteStrategy {
-	case
-		"skip",
-		"etag",
-		"always":
-		break
-	default:
-		return fmt.Errorf("unknown s3.overwrite_strategy it can be 'skip', 'etag', 'always'")
+	if config.S3.Strategy == "tree" {
+		return fmt.Errorf("The 'tree' strategy support has been removed in v0.4.0")
 	}
 	_, err := getArchiveWriter(config.S3.CompressionFormat, config.S3.CompressionLevel)
 	return err
@@ -103,10 +95,7 @@ func defaultConfig() *Config {
 			Region:             "us-east-1",
 			DisableSSL:         false,
 			ACL:                "private",
-			OverwriteStrategy:  "always",
-			PartSize:           5 * 1024 * 1024,
-			DeleteExtraFiles:   true,
-			Strategy:           "archive",
+			PartSize:           100 * 1024 * 1024,
 			BackupsToKeepLocal: 0,
 			BackupsToKeepS3:    0,
 			CompressionLevel:   1,

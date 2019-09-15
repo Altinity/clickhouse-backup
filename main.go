@@ -16,6 +16,7 @@ import (
 )
 
 const (
+	// BackupTimeFormat - default backup name
 	BackupTimeFormat  = "2006-01-02T15-04-05"
 	defaultConfigPath = "/etc/clickhouse-backup/config.yml"
 )
@@ -24,7 +25,7 @@ var (
 	version   = "unknown"
 	gitCommit = "unknown"
 	buildDate = "unknown"
-
+	// ErrUnknownClickhouseDataPath -
 	ErrUnknownClickhouseDataPath = errors.New("clickhouse data path is unknown, you can set data_path in config file")
 )
 
@@ -33,7 +34,7 @@ func main() {
 	cliapp := cli.NewApp()
 	cliapp.Name = "clickhouse-backup"
 	cliapp.Usage = "Tool for easy backup of ClickHouse with S3 support"
-	cliapp.UsageText = "clickhouse-backup <command> [--dry-run] [-t, --tables=<db>.<table>] <backup_name>"
+	cliapp.UsageText = "clickhouse-backup <command> [-t, --tables=<db>.<table>] <backup_name>"
 	cliapp.Description = "Run as root or clickhouse user"
 	cliapp.Version = version
 
@@ -42,10 +43,6 @@ func main() {
 			Name:  "config, c",
 			Value: defaultConfigPath,
 			Usage: "Config `FILE` name.",
-		},
-		cli.BoolFlag{
-			Name:  "dry-run",
-			Usage: "[DEPRECATED] Only show what should be uploaded or downloaded but don't actually do it. May still perform S3 requests to get bucket listings and other information though (only for file transfer commands)",
 		},
 	}
 	cliapp.CommandNotFound = func(c *cli.Context, command string) {
@@ -123,10 +120,10 @@ func main() {
 		{
 			Name:        "freeze",
 			Usage:       "Freeze all or specific tables",
-			UsageText:   "clickhouse-backup freeze [--dry-run] [-t, --tables=<db>.<table>] <backup_name>",
+			UsageText:   "clickhouse-backup freeze [-t, --tables=<db>.<table>] <backup_name>",
 			Description: "Freeze tables",
 			Action: func(c *cli.Context) error {
-				return freeze(*getConfig(c), c.String("t"), c.Bool("dry-run") || c.GlobalBool("dry-run"))
+				return freeze(*getConfig(c), c.String("t"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -138,10 +135,10 @@ func main() {
 		{
 			Name:        "create",
 			Usage:       "Create new backup of all or specific tables",
-			UsageText:   "clickhouse-backup create [--dry-run] [-t, --tables=<db>.<table>] <backup_name>",
+			UsageText:   "clickhouse-backup create [-t, --tables=<db>.<table>] <backup_name>",
 			Description: "Create new backup",
 			Action: func(c *cli.Context) error {
-				return createBackup(*getConfig(c), c.Args().First(), c.String("t"), c.Bool("dry-run") || c.GlobalBool("dry-run"))
+				return createBackup(*getConfig(c), c.Args().First(), c.String("t"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -153,9 +150,9 @@ func main() {
 		{
 			Name:      "upload",
 			Usage:     "Upload backup to s3",
-			UsageText: "clickhouse-backup upload [--dry-run] [--diff-from=<backup_name>] <backup_name>",
+			UsageText: "clickhouse-backup upload [--diff-from=<backup_name>] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return upload(*getConfig(c), c.Args().First(), c.String("diff-from"), c.Bool("dry-run") || c.GlobalBool("dry-run"))
+				return upload(*getConfig(c), c.Args().First(), c.String("diff-from"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -167,18 +164,18 @@ func main() {
 		{
 			Name:      "download",
 			Usage:     "Download backup from s3 to backup folder",
-			UsageText: "clickhouse-backup download [--dry-run] <backup_name>",
+			UsageText: "clickhouse-backup download <backup_name>",
 			Action: func(c *cli.Context) error {
-				return download(*getConfig(c), c.Args().First(), c.Bool("dry-run") || c.GlobalBool("dry-run"))
+				return download(*getConfig(c), c.Args().First())
 			},
 			Flags: cliapp.Flags,
 		},
 		{
 			Name:      "restore-schema",
 			Usage:     "Create databases and tables from backup metadata",
-			UsageText: "clickhouse-backup restore-schema [--dry-run] [-t, --tables=<db>.<table>] <backup_name>",
+			UsageText: "clickhouse-backup restore-schema [-t, --tables=<db>.<table>] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return restoreSchema(*getConfig(c), c.Args().First(), c.String("t"), c.Bool("dry-run") || c.GlobalBool("dry-run"))
+				return restoreSchema(*getConfig(c), c.Args().First(), c.String("t"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -190,9 +187,9 @@ func main() {
 		{
 			Name:      "restore-data",
 			Usage:     "Copy data to 'detached' folder and execute ATTACH",
-			UsageText: "clickhouse-backup restore-data [--dry-run] [-t, --tables=<db>.<table>] <backup_name>",
+			UsageText: "clickhouse-backup restore-data [-t, --tables=<db>.<table>] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return restoreData(*getConfig(c), c.Args().First(), c.String("t"), c.Bool("dry-run") || c.GlobalBool("dry-run"))
+				return restoreData(*getConfig(c), c.Args().First(), c.String("t"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -213,7 +210,7 @@ func main() {
 			Name:  "clean",
 			Usage: "Clean backup data from shadow folder",
 			Action: func(c *cli.Context) error {
-				return clean(*getConfig(c), c.Bool("dry-run") || c.GlobalBool("dry-run"))
+				return clean(*getConfig(c))
 			},
 			Flags: cliapp.Flags,
 		},
@@ -353,10 +350,7 @@ func getTables(config Config) error {
 	return nil
 }
 
-func restoreSchema(config Config, backupName string, tablePattern string, dryRun bool) error {
-	if dryRun {
-		log.Printf("WARNING! The 'dry-run' flag is deprecated and it will be removed in the future version")
-	}
+func restoreSchema(config Config, backupName string, tablePattern string) error {
 	if backupName == "" {
 		fmt.Println("Select backup for restore:")
 		printLocalBackups(config, "all")
@@ -382,7 +376,6 @@ func restoreSchema(config Config, backupName string, tablePattern string, dryRun
 		return fmt.Errorf("No have found schemas by %s in %s", tablePattern, backupName)
 	}
 	ch := &ClickHouse{
-		DryRun: dryRun,
 		Config: &config.ClickHouse,
 	}
 	if err := ch.Connect(); err != nil {
@@ -399,7 +392,7 @@ func restoreSchema(config Config, backupName string, tablePattern string, dryRun
 	return nil
 }
 
-func printBackups(backupList []Backup, format string) error {
+func printBackups(backupList []Backup, format string, printSize bool) error {
 	switch format {
 	case "latest", "last", "l":
 		if len(backupList) < 1 {
@@ -416,7 +409,11 @@ func printBackups(backupList []Backup, format string) error {
 			fmt.Println("No backups found")
 		}
 		for _, backup := range backupList {
-			fmt.Printf("- '%s' (created at %s)\n", backup.Name, backup.Date.Format("02-01-2006 15:04:05"))
+			if printSize {
+				fmt.Printf("- '%s'\t%s\t(created at %s)\n", backup.Name, FormatBytes(backup.Size), backup.Date.Format("02-01-2006 15:04:05"))
+			} else {
+				fmt.Printf("- '%s'\t(created at %s)\n", backup.Name, backup.Date.Format("02-01-2006 15:04:05"))
+			}
 		}
 	default:
 		return fmt.Errorf("'%s' undefined", format)
@@ -429,7 +426,7 @@ func printLocalBackups(config Config, format string) error {
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	return printBackups(backupList, format)
+	return printBackups(backupList, format, false)
 }
 
 func listLocalBackups(config Config) ([]Backup, error) {
@@ -476,18 +473,13 @@ func printS3Backups(config Config, format string) error {
 	if err != nil {
 		return err
 	}
-	return printBackups(backupList, format)
+	return printBackups(backupList, format, true)
 }
 
-func freeze(config Config, tablePattern string, dryRun bool) error {
-	if dryRun {
-		log.Printf("WARNING! The 'dry-run' flag is deprecated and it will be removed in the future version")
-	}
+func freeze(config Config, tablePattern string) error {
 	ch := &ClickHouse{
-		DryRun: dryRun,
 		Config: &config.ClickHouse,
 	}
-
 	if err := ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickouse with: %v", err)
 	}
@@ -535,10 +527,7 @@ func NewBackupName() string {
 	return time.Now().UTC().Format(BackupTimeFormat)
 }
 
-func createBackup(config Config, backupName, tablePattern string, dryRun bool) error {
-	if dryRun {
-		log.Printf("WARNING! The 'dry-run' flag is deprecated and it will be removed in the future version")
-	}
+func createBackup(config Config, backupName, tablePattern string) error {
 	if backupName == "" {
 		backupName = NewBackupName()
 	}
@@ -550,43 +539,36 @@ func createBackup(config Config, backupName, tablePattern string, dryRun bool) e
 	if _, err := os.Stat(backupPath); err == nil || !os.IsNotExist(err) {
 		return fmt.Errorf("can't create backup with '%s' already exists", backupPath)
 	}
-	if !dryRun {
-		if err := os.MkdirAll(backupPath, os.ModePerm); err != nil {
-			return fmt.Errorf("can't create backup with %v", err)
-		}
+	if err := os.MkdirAll(backupPath, os.ModePerm); err != nil {
+		return fmt.Errorf("can't create backup with %v", err)
 	}
 	log.Printf("Create backup '%s'", backupName)
-	if err := freeze(config, tablePattern, dryRun); err != nil {
+	if err := freeze(config, tablePattern); err != nil {
 		return err
 	}
 	log.Println("Copy metadata")
-	if err := copyPath(path.Join(dataPath, "metadata"), path.Join(backupPath, "metadata"), dryRun); err != nil {
+	if err := copyPath(path.Join(dataPath, "metadata"), path.Join(backupPath, "metadata")); err != nil {
 		return fmt.Errorf("can't backup metadata with %v", err)
 	}
 	log.Println("  Done.")
 
 	log.Println("Move shadow")
 	backupShadowDir := path.Join(backupPath, "shadow")
-	if !dryRun {
-		if err := os.MkdirAll(backupShadowDir, os.ModePerm); err != nil {
-			return err
-		}
-		shadowDir := path.Join(dataPath, "shadow")
-		if err := moveShadow(shadowDir, backupShadowDir); err != nil {
-			return err
-		}
+	if err := os.MkdirAll(backupShadowDir, os.ModePerm); err != nil {
+		return err
 	}
-	if err := removeOldBackupsLocal(config, dryRun); err != nil {
+	shadowDir := path.Join(dataPath, "shadow")
+	if err := moveShadow(shadowDir, backupShadowDir); err != nil {
+		return err
+	}
+	if err := removeOldBackupsLocal(config); err != nil {
 		return err
 	}
 	log.Println("  Done.")
 	return nil
 }
 
-func restoreData(config Config, backupName string, tablePattern string, dryRun bool) error {
-	if dryRun {
-		log.Printf("WARNING! The 'dry-run' flag is deprecated and it will be removed in the future version")
-	}
+func restoreData(config Config, backupName string, tablePattern string) error {
 	if backupName == "" {
 		fmt.Println("Select backup for restore:")
 		printLocalBackups(config, "all")
@@ -597,7 +579,6 @@ func restoreData(config Config, backupName string, tablePattern string, dryRun b
 		return ErrUnknownClickhouseDataPath
 	}
 	ch := &ClickHouse{
-		DryRun: dryRun,
 		Config: &config.ClickHouse,
 	}
 	if err := ch.Connect(); err != nil {
@@ -680,10 +661,7 @@ func getLocalBackup(config Config, backupName string) error {
 	return fmt.Errorf("backup '%s' not found", backupName)
 }
 
-func upload(config Config, backupName string, diffFrom string, dryRun bool) error {
-	if dryRun {
-		log.Printf("WARNING! The 'dry-run' flag is deprecated and it will be removed in the future version")
-	}
+func upload(config Config, backupName string, diffFrom string) error {
 	if backupName == "" {
 		fmt.Println("Select backup for upload:")
 		printLocalBackups(config, "all")
@@ -694,7 +672,6 @@ func upload(config Config, backupName string, diffFrom string, dryRun bool) erro
 		return ErrUnknownClickhouseDataPath
 	}
 	s3 := &S3{
-		DryRun: dryRun,
 		Config: &config.S3,
 	}
 	if err := s3.Connect(); err != nil {
@@ -706,20 +683,11 @@ func upload(config Config, backupName string, diffFrom string, dryRun bool) erro
 	backupPath := path.Join(dataPath, "backup", backupName)
 	log.Printf("Upload backup '%s'", backupName)
 	diffFromPath := ""
-	if config.S3.Strategy == "archive" {
-		if diffFrom != "" {
-			diffFromPath = path.Join(dataPath, "backup", diffFrom)
-		}
-		if err := s3.CompressedStreamUpload(backupPath, backupName, diffFromPath); err != nil {
-			return fmt.Errorf("can't upload with %v", err)
-		}
-	} else {
-		if diffFrom != "" {
-			return fmt.Errorf("strategy 'tree' doesn't support diff backups")
-		}
-		if err := s3.UploadDirectory(backupPath, backupName); err != nil {
-			return fmt.Errorf("can't upload with %v", err)
-		}
+	if diffFrom != "" {
+		diffFromPath = path.Join(dataPath, "backup", diffFrom)
+	}
+	if err := s3.CompressedStreamUpload(backupPath, backupName, diffFromPath); err != nil {
+		return fmt.Errorf("can't upload with %v", err)
 	}
 	if err := s3.RemoveOldBackups(config.S3.BackupsToKeepS3); err != nil {
 		return fmt.Errorf("can't remove old backups: %v", err)
@@ -728,10 +696,7 @@ func upload(config Config, backupName string, diffFrom string, dryRun bool) erro
 	return nil
 }
 
-func download(config Config, backupName string, dryRun bool) error {
-	if dryRun {
-		log.Printf("WARNING! The 'dry-run' flag is deprecated and it will be removed in the future version")
-	}
+func download(config Config, backupName string) error {
 	if backupName == "" {
 		fmt.Println("Select backup for download:")
 		printS3Backups(config, "all")
@@ -742,22 +707,20 @@ func download(config Config, backupName string, dryRun bool) error {
 		return ErrUnknownClickhouseDataPath
 	}
 	s3 := &S3{
-		DryRun: dryRun,
 		Config: &config.S3,
 	}
 	if err := s3.Connect(); err != nil {
 		return fmt.Errorf("can't connect to s3 with: %v", err)
 	}
-	if config.S3.Strategy == "archive" {
-		return s3.CompressedStreamDownload(backupName, path.Join(dataPath, "backup", backupName))
+	err := s3.CompressedStreamDownload(backupName, path.Join(dataPath, "backup", backupName))
+	if err != nil {
+		return err
 	}
-	return s3.DownloadTree(backupName, path.Join(dataPath, "backup", backupName))
+	log.Println("  Done.")
+	return nil
 }
 
-func clean(config Config, dryRun bool) error {
-	if dryRun {
-		log.Printf("WARNING! The 'dry-run' flag is deprecated and it will be removed in the future version")
-	}
+func clean(config Config) error {
 	dataPath := getDataPath(config)
 	if dataPath == "" {
 		return ErrUnknownClickhouseDataPath
@@ -768,18 +731,13 @@ func clean(config Config, dryRun bool) error {
 		return nil
 	}
 	log.Printf("Clean %s", shadowDir)
-	if !dryRun {
-		if err := cleanDir(shadowDir); err != nil {
-			return fmt.Errorf("can't remove contents from directory %v: %v", shadowDir, err)
-		}
+	if err := cleanDir(shadowDir); err != nil {
+		return fmt.Errorf("can't remove contents from directory %v: %v", shadowDir, err)
 	}
 	return nil
 }
 
-func removeOldBackupsLocal(config Config, dryRun bool) error {
-	if dryRun {
-		log.Printf("WARNING! The 'dry-run' flag is deprecated and it will be removed in the future version")
-	}
+func removeOldBackupsLocal(config Config) error {
 	if config.S3.BackupsToKeepLocal < 1 {
 		return nil
 	}
@@ -794,10 +752,6 @@ func removeOldBackupsLocal(config Config, dryRun bool) error {
 	backupsToDelete := GetBackupsToDelete(backupList, config.S3.BackupsToKeepLocal)
 	for _, backup := range backupsToDelete {
 		backupPath := path.Join(dataPath, "backup", backup.Name)
-		if dryRun {
-			log.Println("Remove ", backupPath)
-			continue
-		}
 		os.RemoveAll(backupPath)
 	}
 	return nil
@@ -851,8 +805,6 @@ func getConfig(ctx *cli.Context) *Config {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if config.S3.Strategy == "tree" {
-		log.Println("WARNING! The 'tree' strategy is deprecated and it will be removed in the future version")
-	}
+
 	return config
 }
