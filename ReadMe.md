@@ -21,7 +21,7 @@ S3 providers:
 - Minio
 - AWS
 - Mail.Cloud
-- Yandex.Cloud (don't work)
+- Yandex.Cloud
 
 ## Download
 

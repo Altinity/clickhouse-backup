@@ -11,9 +11,7 @@ s3:
   path: backup
   disable_ssl: true
   disable_progress_bar: true
-  overwrite_strategy: always
   compression_level: 1
   compression_format: lz4
-  strategy: archive
   backups_to_keep_local: 10
   backups_to_keep_s3: 10
