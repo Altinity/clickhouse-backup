@@ -99,7 +99,7 @@ func defaultConfig() *Config {
 			BackupsToKeepLocal: 0,
 			BackupsToKeepS3:    0,
 			CompressionLevel:   1,
-			CompressionFormat:  "lz4",
+			CompressionFormat:  "gzip",
 		},
 	}
 }

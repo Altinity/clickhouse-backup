@@ -12,6 +12,6 @@ s3:
   disable_ssl: true
   disable_progress_bar: true
   compression_level: 1
-  compression_format: lz4
+  compression_format: gzip
   backups_to_keep_local: 10
   backups_to_keep_s3: 10

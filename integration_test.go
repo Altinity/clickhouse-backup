@@ -44,7 +44,7 @@ var testData = []TestDataStuct{
 	},
 	TestDataStuct{
 		Database: dbName,
-		Table:    "Таблица 2",
+		Table:    "2. Таблица №2",
 		Schema:   "(id UInt64, User String) ENGINE = MergeTree ORDER BY id SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
 			map[string]interface{}{"id": uint64(1), "User": "Alice"},
@@ -101,7 +101,7 @@ var incrementData = []TestDataStuct{
 	},
 	TestDataStuct{
 		Database: dbName,
-		Table:    "Таблица 2",
+		Table:    "2. Таблица №2",
 		Schema:   "(id UInt64, User String) ENGINE = MergeTree ORDER BY id SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
 			map[string]interface{}{"id": uint64(7), "User": "Alice"},

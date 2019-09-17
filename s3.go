@@ -2,7 +2,6 @@ package main
 
 import (
 	"archive/tar"
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,11 +22,13 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/mholt/archiver"
+	"gopkg.in/djherbis/buffer.v1"
+	"gopkg.in/djherbis/nio.v2"
 )
 
 const (
 	MetaFileName = "meta.json"
-	BufferSize   = 1024 * 1024 * 100
+	BufferSize   = 4 * 1024 * 1024
 )
 
 // S3 - presents methods for manipulate data on s3
@@ -89,8 +90,9 @@ func (s *S3) CompressedStreamDownload(s3Path, localPath string) error {
 		return err
 	}
 	bar := StartNewByteBar(!s.Config.DisableProgressBar, filesize)
-	buffer := bufio.NewReaderSize(resp.Body, BufferSize)
-	proxyReader := bar.NewProxyReader(buffer)
+	buf := buffer.New(BufferSize)
+	bufReader := nio.NewReader(resp.Body, buf)
+	proxyReader := bar.NewProxyReader(bufReader)
 	z, _ := getArchiveReader(s.Config.CompressionFormat)
 	if err := z.Open(proxyReader, 0); err != nil {
 		return err
@@ -196,19 +198,14 @@ func (s *S3) CompressedStreamUpload(localPath, s3Path, diffFromPath string) erro
 		}
 	}
 	hardlinks := []string{}
-	body, w := io.Pipe()
+
+	buf := buffer.New(BufferSize)
+	body, w := nio.Pipe(buf)
 	go func() (ferr error) {
-		defer func() {
-			if ferr != nil {
-				w.CloseWithError(ferr)
-				return
-			}
-			w.Close()
-		}()
-		b := bufio.NewWriterSize(w, BufferSize)
-		defer b.Flush()
+		defer w.CloseWithError(ferr)
+		iobuf := buffer.New(BufferSize)
 		z, _ := getArchiveWriter(s.Config.CompressionFormat, s.Config.CompressionLevel)
-		if ferr = z.Create(b); ferr != nil {
+		if ferr = z.Create(w); ferr != nil {
 			return
 		}
 		defer z.Close()
@@ -232,12 +229,14 @@ func (s *S3) CompressedStreamUpload(localPath, s3Path, diffFromPath string) erro
 					}
 				}
 			}
+			bfile := nio.NewReader(file, iobuf)
+			defer bfile.Close()
 			return z.Write(archiver.File{
 				FileInfo: archiver.FileInfo{
 					FileInfo:   info,
 					CustomName: relativePath,
 				},
-				ReadCloser: file,
+				ReadCloser: bfile,
 			})
 		}); ferr != nil {
 			return
