@@ -51,6 +51,7 @@ type RestoreTable struct {
 	Database string
 	Table    string
 	Query    string
+	Path     string
 }
 
 // Connect - connect to clickhouse

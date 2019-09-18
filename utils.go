@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -83,26 +84,10 @@ func moveShadow(shadowPath, backupPath string) error {
 	return cleanDir(shadowPath)
 }
 
-func copyPath(src, dst string) error {
-	if _, err := os.Stat(src); err != nil {
+func copyFile(srcFile string, dstFile string) error {
+	if err := os.MkdirAll(path.Dir(dstFile), os.ModePerm); err != nil {
 		return err
 	}
-	return filepath.Walk(src, func(filePath string, info os.FileInfo, err error) error {
-		filePath = filepath.ToSlash(filePath) // fix Windows slashes
-		filename := strings.Trim(strings.TrimPrefix(filePath, src), "/")
-		dstFilePath := filepath.Join(dst, filename)
-		if info.IsDir() {
-			return os.MkdirAll(dstFilePath, os.ModePerm)
-		}
-		if !info.Mode().IsRegular() {
-			log.Printf("'%s' is not a regular file, skipping", filePath)
-			return nil
-		}
-		return copyFile(filePath, dstFilePath)
-	})
-}
-
-func copyFile(srcFile string, dstFile string) error {
 	src, err := os.Open(srcFile)
 	if err != nil {
 		return err

@@ -281,7 +281,7 @@ func parseTablePatternForRestoreData(tables map[string]BackupTable, tablePattern
 	return result, nil
 }
 
-func parseTablePatternForRestoreSchema(metadataPath string, tablePattern string) ([]RestoreTable, error) {
+func parseSchemaPattern(metadataPath string, tablePattern string) ([]RestoreTable, error) {
 	regularTables := []RestoreTable{}
 	distributedTables := []RestoreTable{}
 	tablePatterns := []string{"*"}
@@ -300,9 +300,6 @@ func parseTablePatternForRestoreSchema(metadataPath string, tablePattern string)
 		}
 		database, _ := url.PathUnescape(parts[0])
 		table, _ := url.PathUnescape(parts[1])
-		if database == "system" {
-			return nil
-		}
 		tableName := fmt.Sprintf("%s.%s", database, table)
 		for _, p := range tablePatterns {
 			if matched, _ := filepath.Match(p, tableName); matched {
@@ -314,6 +311,7 @@ func parseTablePatternForRestoreSchema(metadataPath string, tablePattern string)
 					Database: database,
 					Table:    table,
 					Query:    strings.Replace(string(data), "ATTACH", "CREATE", 1),
+					Path:     filePath,
 				}
 				if strings.Contains(restoreTable.Query, "ENGINE = Distributed") {
 					distributedTables = addRestoreTable(distributedTables, restoreTable)
@@ -370,7 +368,7 @@ func restoreSchema(config Config, backupName string, tablePattern string) error 
 	if !info.IsDir() {
 		return fmt.Errorf("%s is not a dir", metadataPath)
 	}
-	tablesForRestore, err := parseTablePatternForRestoreSchema(metadataPath, tablePattern)
+	tablesForRestore, err := parseSchemaPattern(metadataPath, tablePattern)
 	if err != nil {
 		return err
 	}
@@ -549,8 +547,26 @@ func createBackup(config Config, backupName, tablePattern string) error {
 		return err
 	}
 	log.Println("Copy metadata")
-	if err := copyPath(path.Join(dataPath, "metadata"), path.Join(backupPath, "metadata")); err != nil {
-		return fmt.Errorf("can't backup metadata with %v", err)
+	schemaList, err := parseSchemaPattern(path.Join(dataPath, "metadata"), tablePattern)
+	if err != nil {
+		return err
+	}
+	for _, schema := range schemaList {
+		skip := false
+		for _, filter := range config.ClickHouse.SkipTables {
+			if matched, _ := filepath.Match(filter, fmt.Sprintf("%s.%s", schema.Database, schema.Table)); matched {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+		relativePath := strings.Trim(strings.TrimPrefix(schema.Path, path.Join(dataPath, "metadata")), "/")
+		newPath := path.Join(backupPath, "metadata", relativePath)
+		if err := copyFile(schema.Path, newPath); err != nil {
+			return fmt.Errorf("can't backup metadata with %v", err)
+		}
 	}
 	log.Println("  Done.")
 
