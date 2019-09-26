@@ -10,7 +10,8 @@ Tool for easy ClickHouse backup and restore with S3 support
 ## Features
 
 - Easy creating and restoring backups of all or specific tables
-- Most efficient AWS S3 uploading and downloading with streaming archiving and extracting
+- Efficient storing of multiple backups on the file system
+- Most efficient AWS S3 uploading and downloading with streaming compression
 - Support of incremental backups on S3
 
 ## Compatibility
@@ -108,7 +109,7 @@ s3:
   backups_to_keep_s3: 0        # BACKUPS_TO_KEEP_S3
   compression_level: 1         # S3_COMPRESSION_LEVEL
   # supports 'tar', 'lz4', 'bzip2', 'gzip', 'sz', 'xz'
-  compression_format: lz4      # S3_COMPRESSION_FORMAT
+  compression_format: gzip      # S3_COMPRESSION_FORMAT
 ```
 
 ## ATTENTION!
