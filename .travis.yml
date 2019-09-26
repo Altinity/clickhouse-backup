@@ -12,7 +12,7 @@ script:
   - docker-compose -f integration-test/docker-compose-travis.yml up -d --force-recreate
   - go test -v
   - go test -tags=integration
-  - docker build -t alexakulov/clickhouse-backup:latest .
+  - docker build -t alexakulov/clickhouse-backup:master .
 after_success:
   - tar -czvf clickhouse-backup.tar.gz clickhouse-backup
 deploy:
