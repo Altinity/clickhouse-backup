@@ -72,7 +72,7 @@ func (s *S3) Connect() error {
 }
 
 func (s *S3) CompressedStreamDownload(s3Path, localPath string) error {
-	if err := os.Mkdir(localPath, os.ModePerm); err != nil {
+	if err := os.MkdirAll(localPath, os.ModePerm); err != nil {
 		return err
 	}
 	archiveName := path.Join(s.Config.Path, fmt.Sprintf("%s.%s", s3Path, getExtension(s.Config.CompressionFormat)))
