@@ -173,7 +173,7 @@ func (s *S3) CompressedStreamUpload(localPath, s3Path, diffFromPath string) erro
 		if ok && aerr.Code() != "NotFound" {
 			return err
 		}
-	} else if err == nil && *head.ContentLength > 0 {
+	} else if *head.ContentLength > 0 {
 		return fmt.Errorf("'%s' already uploaded", archiveName)
 	}
 
@@ -290,11 +290,16 @@ func (s *S3) CompressedStreamUpload(localPath, s3Path, diffFromPath string) erro
 	uploader := s3manager.NewUploader(s.session)
 	uploader.Concurrency = 10
 	uploader.PartSize = s.Config.PartSize
+	var sse *string
+	if s.Config.SSE != "" {
+		sse = aws.String(s.Config.SSE)
+	}
 	if _, err := uploader.Upload(&s3manager.UploadInput{
-		ACL:    aws.String(s.Config.ACL),
-		Bucket: aws.String(s.Config.Bucket),
-		Key:    aws.String(archiveName),
-		Body:   body,
+		ACL:                  aws.String(s.Config.ACL),
+		Bucket:               aws.String(s.Config.Bucket),
+		Key:                  aws.String(archiveName),
+		Body:                 body,
+		ServerSideEncryption: sse,
 	}); err != nil {
 		return err
 	}

@@ -33,6 +33,7 @@ type S3Config struct {
 	BackupsToKeepS3    int    `yaml:"backups_to_keep_s3" envconfig:"BACKUPS_TO_KEEP_S3"`
 	CompressionLevel   int    `yaml:"compression_level" envconfig:"S3_COMPRESSION_LEVEL"`
 	CompressionFormat  string `yaml:"compression_format" envconfig:"S3_COMPRESSION_FORMAT"`
+	SSE                string `yaml:"sse" envconfig:"S3_SSE"`
 }
 
 // ClickHouseConfig - clickhouse settings section
@@ -100,6 +101,7 @@ func defaultConfig() *Config {
 			BackupsToKeepS3:    0,
 			CompressionLevel:   1,
 			CompressionFormat:  "gzip",
+			SSE:                "",
 		},
 	}
 }
