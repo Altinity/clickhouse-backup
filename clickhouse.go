@@ -25,12 +25,9 @@ type ClickHouse struct {
 
 // Table - Clickhouse table struct
 type Table struct {
-	Database     string `db:"database"`
-	Name         string `db:"name"`
-	DataPath     string `db:"data_path"`
-	MetadataPath string `db:"metadata_path"`
-	IsTemporary  bool   `db:"is_temporary"`
-	Skip         bool
+	Database string `db:"database"`
+	Name     string `db:"name"`
+	Skip     bool
 }
 
 // BackupPartition - struct representing Clickhouse partition
@@ -104,7 +101,7 @@ func (ch *ClickHouse) Close() error {
 // GetTables - get all tables info
 func (ch *ClickHouse) GetTables() ([]Table, error) {
 	var tables []Table
-	if err := ch.conn.Select(&tables, "SELECT database, name, is_temporary, data_path, metadata_path FROM system.tables WHERE data_path != '' AND is_temporary = 0 AND engine LIKE '%MergeTree';"); err != nil {
+	if err := ch.conn.Select(&tables, "SELECT database, name FROM system.tables WHERE is_temporary = 0 AND engine LIKE '%MergeTree';"); err != nil {
 		return nil, err
 	}
 	for i, t := range tables {
