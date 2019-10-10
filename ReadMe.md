@@ -16,7 +16,7 @@ Tool for easy ClickHouse backup and restore with S3 support
 
 ## Compatibility
 
-ClickHouse: above 1.1.54390
+ClickHouse: above 1.1.54390 and below 19.15.3.6
 
 S3 providers:
 - Minio
