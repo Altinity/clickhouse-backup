@@ -14,15 +14,12 @@ Tool for easy ClickHouse backup and restore with S3 support
 - Most efficient AWS S3 uploading and downloading with streaming compression
 - Support of incremental backups on S3
 
-## Compatibility
+## Supports
 
-ClickHouse: above 1.1.54390
-
-S3 providers:
-- Minio
-- AWS
-- Mail.Cloud
-- Yandex.Cloud
+- ClickHouse above 1.1.54390
+- MergeTree family tables engines
+- S3-compatible object storages
+- Tiered storage (`storage_policy`) IS NOT SUPPORTED!
 
 ## Download
 
