@@ -70,7 +70,7 @@ func main() {
 		{
 			Name:      "list",
 			Usage:     "Print list of backups and exit",
-			UsageText: "clickhouse-backup list [all|local|s3] [latest|penult]",
+			UsageText: "clickhouse-backup list [all|local|s3|gcs] [latest|penult]",
 			Action: func(c *cli.Context) error {
 				config := getConfig(c)
 				switch c.Args().Get(0) {
@@ -78,6 +78,8 @@ func main() {
 					return printLocalBackups(*config, c.Args().Get(1))
 				case "s3":
 					return printS3Backups(*config, c.Args().Get(1))
+				case "gcs":
+					return printGCSBackups(*config, c.Args().Get(1))
 				case "all", "":
 					fmt.Println("Local backups:")
 					if err := printLocalBackups(*config, c.Args().Get(1)); err != nil {
@@ -85,6 +87,10 @@ func main() {
 					}
 					fmt.Println("Backups on S3:")
 					if err := printS3Backups(*config, c.Args().Get(1)); err != nil {
+						return err
+					}
+					fmt.Println("Backups on GCS:")
+					if err := printGCSBackups(*config, c.Args().Get(1)); err != nil {
 						return err
 					}
 				default:
@@ -98,7 +104,7 @@ func main() {
 		{
 			Name:      "delete",
 			Usage:     "Delete specific backup",
-			UsageText: "clickhouse-backup delete <local|s3> <backup_name>",
+			UsageText: "clickhouse-backup delete <local|s3|gcs> <backup_name>",
 			Action: func(c *cli.Context) error {
 				config := getConfig(c)
 				if c.Args().Get(1) == "" {
@@ -110,6 +116,8 @@ func main() {
 					return removeBackupLocal(*config, c.Args().Get(1))
 				case "s3":
 					return removeBackupS3(*config, c.Args().Get(1))
+				case "gcs":
+					return removeBackupGCS(*config, c.Args().Get(1))
 				default:
 					fmt.Fprintf(os.Stderr, "Unknown command '%s'\n", c.Args().Get(0))
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
@@ -151,8 +159,11 @@ func main() {
 		{
 			Name:      "upload",
 			Usage:     "Upload backup to s3",
-			UsageText: "clickhouse-backup upload [--diff-from=<backup_name>] <backup_name>",
+			UsageText: "clickhouse-backup upload [--diff-from=<backup_name>] [--dest=<gcs|aws>] <backup_name>",
 			Action: func(c *cli.Context) error {
+				if c.String("dest") == "gcs" {
+					return uploadGCS(*getConfig(c), c.Args().First(), c.String("diff-from"))
+				}
 				return upload(*getConfig(c), c.Args().First(), c.String("diff-from"))
 			},
 			Flags: append(cliapp.Flags,
@@ -160,16 +171,28 @@ func main() {
 					Name:   "diff-from",
 					Hidden: false,
 				},
+				cli.StringFlag{
+					Name:   "dest",
+					Hidden: false,
+				},
 			),
 		},
 		{
 			Name:      "download",
 			Usage:     "Download backup from s3 to backup folder",
-			UsageText: "clickhouse-backup download <backup_name>",
+			UsageText: "clickhouse-backup download [--src=<gcs|aws>] <backup_name>",
 			Action: func(c *cli.Context) error {
+				if c.String("src") == "gcs" {
+					return downloadGCS(*getConfig(c), c.Args().First())
+				}
 				return download(*getConfig(c), c.Args().First())
 			},
-			Flags: cliapp.Flags,
+			Flags: append(cliapp.Flags,
+				cli.StringFlag{
+					Name:   "src",
+					Hidden: false,
+				},
+			),
 		},
 		{
 			Name:      "restore-schema",
@@ -476,6 +499,18 @@ func printS3Backups(config Config, format string) error {
 	return printBackups(backupList, format, true)
 }
 
+func printGCSBackups(config Config, format string) error {
+	gcs := &GCS{Config: &config.GCS}
+	if err := gcs.Connect(); err != nil {
+		return fmt.Errorf("can't connect to GCS with %v", err)
+	}
+	backupList, err := gcs.BackupList()
+	if err != nil {
+		return err
+	}
+	return printBackups(backupList, format, true)
+}
+
 func freeze(config Config, tablePattern string) error {
 	ch := &ClickHouse{
 		Config: &config.ClickHouse,
@@ -679,6 +714,41 @@ func getLocalBackup(config Config, backupName string) error {
 	return fmt.Errorf("backup '%s' not found", backupName)
 }
 
+func uploadGCS(config Config, backupName string, diffFrom string) error {
+	if backupName == "" {
+		fmt.Println("Select backup for upload:")
+		printLocalBackups(config, "all")
+		os.Exit(1)
+	}
+	dataPath := getDataPath(config)
+	if dataPath == "" {
+		return ErrUnknownClickhouseDataPath
+	}
+	gcs := &GCS{
+		Config: &config.GCS,
+	}
+	if err := gcs.Connect(); err != nil {
+		return fmt.Errorf("can't connect to GCS with: %v", err)
+	}
+	if err := getLocalBackup(config, backupName); err != nil {
+		return fmt.Errorf("can't upload with %s", err)
+	}
+	backupPath := path.Join(dataPath, "backup", backupName)
+	log.Printf("Upload backup '%s'", backupName)
+	diffFromPath := ""
+	if diffFrom != "" {
+		diffFromPath = path.Join(dataPath, "backup", diffFrom)
+	}
+	if err := gcs.CompressedStreamUpload(backupPath, backupName, diffFromPath); err != nil {
+		return fmt.Errorf("can't upload with %v", err)
+	}
+	// if err := gcs.RemoveOldBackups(config.S3.BackupsToKeepS3); err != nil {
+	// 	return fmt.Errorf("can't remove old backups: %v", err)
+	// }
+	log.Println("  Done.")
+	return nil
+}
+
 func upload(config Config, backupName string, diffFrom string) error {
 	if backupName == "" {
 		fmt.Println("Select backup for upload:")
@@ -731,6 +801,30 @@ func download(config Config, backupName string) error {
 		return fmt.Errorf("can't connect to s3 with: %v", err)
 	}
 	err := s3.CompressedStreamDownload(backupName, path.Join(dataPath, "backup", backupName))
+	if err != nil {
+		return err
+	}
+	log.Println("  Done.")
+	return nil
+}
+
+func downloadGCS(config Config, backupName string) error {
+	if backupName == "" {
+		fmt.Println("Select backup for download:")
+		printGCSBackups(config, "all")
+		os.Exit(1)
+	}
+	dataPath := getDataPath(config)
+	if dataPath == "" {
+		return ErrUnknownClickhouseDataPath
+	}
+	gcs := &GCS{
+		Config: &config.GCS,
+	}
+	if err := gcs.Connect(); err != nil {
+		return fmt.Errorf("can't connect to GCS with: %v", err)
+	}
+	err := gcs.CompressedStreamDownload(backupName, path.Join(dataPath, "backup", backupName))
 	if err != nil {
 		return err
 	}
@@ -811,6 +905,27 @@ func removeBackupS3(config Config, backupName string) error {
 		}
 	}
 	return fmt.Errorf("backup '%s' not found on s3", backupName)
+}
+
+func removeBackupGCS(config Config, backupName string) error {
+	dataPath := getDataPath(config)
+	if dataPath == "" {
+		return ErrUnknownClickhouseDataPath
+	}
+	gcs := &GCS{Config: &config.GCS}
+	if err := gcs.Connect(); err != nil {
+		return fmt.Errorf("can't connect to GCS with: %v", err)
+	}
+	backupList, err := gcs.BackupList()
+	if err != nil {
+		return err
+	}
+	for _, backup := range backupList {
+		if backup.Name == backupName {
+			return gcs.RemoveBackup(backupName)
+		}
+	}
+	return fmt.Errorf("backup '%s' not found on GCS", backupName)
 }
 
 func getConfig(ctx *cli.Context) *Config {

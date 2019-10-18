@@ -21,6 +21,7 @@ services:
     volumes:
       - ../clickhouse-backup:/usr/bin/clickhouse-backup
       - ./config.yml:/etc/clickhouse-backup/config.yml
+      - ./credentials.json:/etc/clickhouse-backup/credentials.json
     ports:
       - 9000:9000
     networks:
