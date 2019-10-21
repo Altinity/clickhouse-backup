@@ -278,6 +278,9 @@ func parseTablePatternForRestoreData(tables map[string]BackupTable, tablePattern
 			}
 		}
 	}
+	sort.Slice(result, func(i, j int) bool {
+		return (result[i].Database < result[j].Database) || (result[i].Database == result[j].Database && result[i].Name < result[j].Name)
+	})
 	return result, nil
 }
 
@@ -323,7 +326,11 @@ func parseSchemaPattern(metadataPath string, tablePattern string) ([]RestoreTabl
 		}
 		return nil
 	})
-	return append(regularTables, distributedTables...), nil
+	result := append(regularTables, distributedTables...)
+	sort.Slice(result, func(i, j int) bool {
+		return (result[i].Database < result[j].Database) || (result[i].Database == result[j].Database && result[i].Table < result[j].Table)
+	})
+	return result, nil
 }
 
 func getTables(config Config) error {
