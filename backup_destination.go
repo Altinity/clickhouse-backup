@@ -54,9 +54,10 @@ type RemoteStorage interface {
 
 type BackupDestination struct {
 	RemoteStorage
-	path              string
-	compressionFormat string
-	compressionLevel  int
+	path               string
+	compressionFormat  string
+	compressionLevel   int
+	disableProgressBar bool
 }
 
 func (bd *BackupDestination) RemoveOldBackups(keep int) error {
@@ -78,7 +79,6 @@ func (bd *BackupDestination) RemoveOldBackups(keep int) error {
 
 func (bd *BackupDestination) RemoveBackup(backupName string) error {
 	objects := []string{}
-	// bd.Walk(bd.path, false, func(f RemoteFile) {
 	if err := bd.Walk(bd.path, func(f RemoteFile) {
 		if strings.HasPrefix(f.Name(), path.Join(bd.path, backupName)) {
 			objects = append(objects, f.Name())
@@ -171,8 +171,7 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 	}
 	filesize := file.Size()
 
-	disableProgressBar := false
-	bar := StartNewByteBar(!disableProgressBar, filesize)
+	bar := StartNewByteBar(!bd.disableProgressBar, filesize)
 	buf := buffer.New(BufferSize)
 	bufReader := nio.NewReader(reader, buf)
 	proxyReader := bar.NewProxyReader(bufReader)
@@ -261,8 +260,7 @@ func (bd *BackupDestination) CompressedStreamUpload(localPath, remotePath, diffF
 		}
 		return nil
 	})
-	disableProgressBar := false
-	bar := StartNewByteBar(!disableProgressBar, totalBytes)
+	bar := StartNewByteBar(!bd.disableProgressBar, totalBytes)
 	if diffFromPath != "" {
 		fi, err := os.Stat(diffFromPath)
 		if err != nil {
@@ -380,10 +378,10 @@ func NewBackupDestination(config Config) (*BackupDestination, error) {
 	switch t := config.RemoteStorage; t {
 	case "s3":
 		s3 := &S3{Config: &config.S3}
-		return &BackupDestination{s3, config.S3.Path, config.S3.CompressionFormat, config.S3.CompressionLevel}, nil
+		return &BackupDestination{s3, config.S3.Path, config.S3.CompressionFormat, config.S3.CompressionLevel, config.S3.DisableProgressBar}, nil
 	case "gcs":
 		gcs := &GCS{Config: &config.GCS}
-		return &BackupDestination{gcs, config.GCS.Path, config.GCS.CompressionFormat, config.GCS.CompressionLevel}, nil
+		return &BackupDestination{gcs, config.GCS.Path, config.GCS.CompressionFormat, config.GCS.CompressionLevel, config.S3.DisableProgressBar}, nil
 	default:
 		return nil, fmt.Errorf("storage type '%s' not supported", t)
 	}
