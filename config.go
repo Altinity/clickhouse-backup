@@ -11,9 +11,10 @@ import (
 
 // Config - config file format
 type Config struct {
-	ClickHouse ClickHouseConfig `yaml:"clickhouse"`
-	S3         S3Config         `yaml:"s3"`
-	GCS        GCSConfig        `yaml:"gcs"`
+	ClickHouse    ClickHouseConfig `yaml:"clickhouse"`
+	RemoteStorage string           `yaml:"remote_storage" envconfig:"REMOTE_STORAGE"`
+	S3            S3Config         `yaml:"s3"`
+	GCS           GCSConfig        `yaml:"gcs"`
 }
 
 // GCSConfig - GCS settings section
@@ -120,6 +121,16 @@ func defaultConfig() *Config {
 			PartSize:           100 * 1024 * 1024,
 			BackupsToKeepLocal: 0,
 			BackupsToKeepS3:    0,
+			CompressionLevel:   1,
+			CompressionFormat:  "gzip",
+			SSE:                "",
+		},
+		GCS: GCSConfig{
+			Region:             "us-east-1",
+			DisableSSL:         false,
+			ACL:                "private",
+			PartSize:           100 * 1024 * 1024,
+			BackupsToKeepLocal: 0,
 			CompressionLevel:   1,
 			CompressionFormat:  "gzip",
 			SSE:                "",

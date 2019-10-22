@@ -159,6 +159,7 @@ func TestRestoreLegacyBackupFormat(t *testing.T) {
 	r.NoError(dockerExec("clickhouse-backup", "freeze"))
 	dockerExec("mkdir", "-p", "/var/lib/clickhouse/backup/old_format")
 	r.NoError(dockerExec("cp", "-r", "/var/lib/clickhouse/metadata", "/var/lib/clickhouse/backup/old_format/"))
+	r.NoError(dockerExec("cp", "/etc/clickhouse-backup/config-aws.yml", "/etc/clickhouse-backup/config.yml"))
 	r.NoError(dockerExec("mv", "/var/lib/clickhouse/shadow", "/var/lib/clickhouse/backup/old_format/"))
 	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup/old_format/")
 
@@ -297,6 +298,7 @@ func TestIntegrationGCS(t *testing.T) {
 	}
 	time.Sleep(time.Second * 5)
 	fmt.Println("Create backup")
+	r.NoError(dockerExec("cp", "/etc/clickhouse-backup/config-gcp.yml", "/etc/clickhouse-backup/config.yml"))
 	r.NoError(dockerExec("clickhouse-backup", "create", "test_backup"))
 	fmt.Println("Generate increment test data")
 	for _, data := range incrementData {
@@ -356,8 +358,8 @@ func TestIntegrationGCS(t *testing.T) {
 	}
 
 	fmt.Println("Remove remote backups")
-	r.NoError(dockerExec("clickhouse-backup", "delete", "gcs", "test_backup.tar.gz"))
-	r.NoError(dockerExec("clickhouse-backup", "delete", "gcs", "increment.tar.gz"))
+	r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "test_backup.tar.gz"))
+	r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "increment.tar.gz"))
 
 	fmt.Println("Delete backup")
 	r.NoError(dockerExec("/bin/rm", "-rf", "/var/lib/clickhouse/backup/test_backup", "/var/lib/clickhouse/backup/increment"))

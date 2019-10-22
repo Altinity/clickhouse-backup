@@ -20,7 +20,8 @@ services:
       TZ: UTC
     volumes:
       - ../clickhouse-backup:/usr/bin/clickhouse-backup
-      - ./config.yml:/etc/clickhouse-backup/config.yml
+      - ./config-aws.yml:/etc/clickhouse-backup/config-aws.yml
+      - ./config-gcp.yml:/etc/clickhouse-backup/config-gcp.yml
       - ./credentials.json:/etc/clickhouse-backup/credentials.json
     ports:
       - 9000:9000

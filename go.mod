@@ -16,6 +16,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.3 // indirect
 	github.com/mholt/archiver v1.1.3-0.20190812163345-2d1449806793
 	github.com/pierrec/lz4 v2.3.1-0.20190907084430-0554902aa74a+incompatible // indirect
+	github.com/pkg/errors v0.8.1
 	github.com/stretchr/testify v1.3.0
 	github.com/urfave/cli v1.20.0
 	golang.org/x/tools/gopls v0.1.7 // indirect

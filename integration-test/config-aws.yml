@@ -1,6 +1,7 @@
 clickhouse:
   host: localhost
   port: 9000
+remote_storage: s3
 s3:
   access_key: access-key
   secret_key: it-is-my-super-secret-key
@@ -15,14 +16,3 @@ s3:
   compression_format: gzip
   backups_to_keep_local: 10
   backups_to_keep_s3: 10
-gcs:
-  credentials_file: /etc/clickhouse-backup/credentials.json
-  bucket: clickhouse
-  force_path_style: true
-  path: backup
-  disable_progress_bar: true
-  strategy: ""
-  backups_to_keep_local: 0
-  backups_to_keep_gcs: 0
-  compression_level: 1
-  compression_format: gzip
