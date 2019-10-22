@@ -19,9 +19,20 @@ type GCS struct {
 // Connect - connect to GCS
 func (gcs *GCS) Connect() error {
 	var err error
+	var clientOption option.ClientOption
 
 	ctx := context.Background()
-	gcs.client, err = storage.NewClient(ctx, option.WithCredentialsFile(gcs.Config.CredentialsFile))
+
+	if gcs.Config.CredentialsJSON != "" {
+		clientOption = option.WithCredentialsJSON([]byte(gcs.Config.CredentialsJSON))
+		gcs.client, err = storage.NewClient(ctx, clientOption)
+	} else if gcs.Config.CredentialsFile != "" {
+		clientOption = option.WithCredentialsFile(gcs.Config.CredentialsFile)
+		gcs.client, err = storage.NewClient(ctx, clientOption)
+	} else {
+		gcs.client, err = storage.NewClient(ctx)
+	}
+
 	if err != nil {
 		return err
 	}
@@ -100,22 +111,6 @@ func (gcs *GCS) DeleteFile(key string) error {
 	ctx := context.Background()
 	object := gcs.client.Bucket(gcs.Config.Bucket).Object(key)
 	return object.Delete(ctx)
-}
-
-func (gcs *GCS) remoteIterator(gcsPath string, delim bool, process func(*storage.ObjectAttrs)) error {
-	ctx := context.Background()
-	it := gcs.client.Bucket(gcs.Config.Bucket).Objects(ctx, nil)
-	for {
-		object, err := it.Next()
-		switch err {
-		case nil:
-			process(object)
-		case iterator.Done:
-			return nil
-		default:
-			return err
-		}
-	}
 }
 
 type gcsFile struct {

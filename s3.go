@@ -49,22 +49,8 @@ func (s *S3) Connect() error {
 	return nil
 }
 
-func (s *S3) remotePager(s3Path string, delim bool, pager func(page *s3.ListObjectsV2Output)) error {
-	params := &s3.ListObjectsV2Input{
-		Bucket:  aws.String(s.Config.Bucket), // Required
-		MaxKeys: aws.Int64(1000),
-	}
-	if s3Path != "" && s3Path != "/" {
-		params.Prefix = aws.String(s3Path)
-	}
-	if delim {
-		params.Delimiter = aws.String("/")
-	}
-	wrapper := func(page *s3.ListObjectsV2Output, lastPage bool) bool {
-		pager(page)
-		return true
-	}
-	return s3.New(s.session).ListObjectsV2Pages(params, wrapper)
+func (s *S3) Kind() string {
+	return "S3"
 }
 
 func (s *S3) GetFileReader(key string) (io.ReadCloser, error) {
@@ -108,7 +94,7 @@ func (s *S3) DeleteFile(key string) error {
 
 	_, err := s3.New(s.session).DeleteObject(params)
 	if err != nil {
-		return errors.Wrapf(err, "RemoveItem, deleting object %+v", params)
+		return errors.Wrapf(err, "DeleteFile, deleting object %+v", params)
 	}
 	return nil
 }
@@ -137,8 +123,22 @@ func (s *S3) Walk(s3Path string, process func(r RemoteFile)) error {
 	})
 }
 
-func (s *S3) Kind() string {
-	return "S3"
+func (s *S3) remotePager(s3Path string, delim bool, pager func(page *s3.ListObjectsV2Output)) error {
+	params := &s3.ListObjectsV2Input{
+		Bucket:  aws.String(s.Config.Bucket), // Required
+		MaxKeys: aws.Int64(1000),
+	}
+	if s3Path != "" && s3Path != "/" {
+		params.Prefix = aws.String(s3Path)
+	}
+	if delim {
+		params.Delimiter = aws.String("/")
+	}
+	wrapper := func(page *s3.ListObjectsV2Output, lastPage bool) bool {
+		pager(page)
+		return true
+	}
+	return s3.New(s.session).ListObjectsV2Pages(params, wrapper)
 }
 
 type s3File struct {

@@ -20,21 +20,14 @@ type Config struct {
 // GCSConfig - GCS settings section
 type GCSConfig struct {
 	CredentialsFile    string `yaml:"credentials_file" envconfig:"GCS_CREDENTIALS_FILE"`
+	CredentialsJSON    string `yaml:"credentials_json" envconfig:"GCS_CREDENTIALS_JSON"`
 	Bucket             string `yaml:"bucket" envconfig:"GCS_BUCKET"`
-	Endpoint           string `yaml:"endpoint" envconfig:"GCS_ENDPOINT"`
-	Region             string `yaml:"region" envconfig:"GCS_REGION"`
-	ACL                string `yaml:"acl" envconfig:"GCS_ACL"`
-	ForcePathStyle     bool   `yaml:"force_path_style" envconfig:"GCS_FORCE_PATH_STYLE"`
 	Path               string `yaml:"path" envconfig:"GCS_PATH"`
-	DisableSSL         bool   `yaml:"disable_ssl" envconfig:"GCS_DISABLE_SSL"`
 	DisableProgressBar bool   `yaml:"disable_progress_bar" envconfig:"DISABLE_PROGRESS_BAR"`
-	PartSize           int64  `yaml:"part_size" envconfig:"GCS_PART_SIZE"`
-	Strategy           string `yaml:"strategy"`
 	BackupsToKeepLocal int    `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL"`
 	BackupsToKeepGCS   int    `yaml:"backups_to_keep_gcs" envconfig:"BACKUPS_TO_KEEP_GCS"`
 	CompressionLevel   int    `yaml:"compression_level" envconfig:"GCS_COMPRESSION_LEVEL"`
 	CompressionFormat  string `yaml:"compression_format" envconfig:"GCS_COMPRESSION_FORMAT"`
-	SSE                string `yaml:"sse" envconfig:"GCS_SSE"`
 }
 
 // S3Config - s3 settings section
@@ -114,6 +107,7 @@ func defaultConfig() *Config {
 				"system.*",
 			},
 		},
+		RemoteStorage: "s3",
 		S3: S3Config{
 			Region:             "us-east-1",
 			DisableSSL:         false,
@@ -126,14 +120,9 @@ func defaultConfig() *Config {
 			SSE:                "",
 		},
 		GCS: GCSConfig{
-			Region:             "us-east-1",
-			DisableSSL:         false,
-			ACL:                "private",
-			PartSize:           100 * 1024 * 1024,
 			BackupsToKeepLocal: 0,
 			CompressionLevel:   1,
 			CompressionFormat:  "gzip",
-			SSE:                "",
 		},
 	}
 }

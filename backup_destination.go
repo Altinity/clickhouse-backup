@@ -53,7 +53,7 @@ type RemoteStorage interface {
 }
 
 type BackupDestination struct {
-	storage           RemoteStorage
+	RemoteStorage
 	path              string
 	compressionFormat string
 	compressionLevel  int
@@ -79,13 +79,15 @@ func (bd *BackupDestination) RemoveOldBackups(keep int) error {
 func (bd *BackupDestination) RemoveBackup(backupName string) error {
 	objects := []string{}
 	// bd.Walk(bd.path, false, func(f RemoteFile) {
-	bd.storage.Walk(bd.path, func(f RemoteFile) {
+	if err := bd.Walk(bd.path, func(f RemoteFile) {
 		if strings.HasPrefix(f.Name(), path.Join(bd.path, backupName)) {
 			objects = append(objects, f.Name())
 		}
-	})
+	}); err != nil {
+		return err
+	}
 	for _, key := range objects {
-		err := bd.storage.DeleteFile(key)
+		err := bd.DeleteFile(key)
 		if err != nil {
 			return err
 		}
@@ -103,7 +105,7 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 	}
 	files := map[string]ClickhouseBackup{}
 	path := bd.path
-	err := bd.storage.Walk(path, func(o RemoteFile) {
+	err := bd.Walk(path, func(o RemoteFile) {
 		if strings.HasPrefix(o.Name(), path) {
 			key := strings.TrimPrefix(o.Name(), path)
 			key = strings.TrimPrefix(key, "/")
@@ -155,15 +157,15 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 		return err
 	}
 	archiveName := path.Join(bd.path, fmt.Sprintf("%s.%s", remotePath, getExtension(bd.compressionFormat)))
-	if err := bd.storage.Connect(); err != nil {
+	if err := bd.Connect(); err != nil {
 		return err
 	}
 
-	reader, err := bd.storage.GetFileReader(archiveName)
+	reader, err := bd.GetFileReader(archiveName)
 	if err != nil {
 		return err
 	}
-	file, err := bd.storage.GetFile(archiveName)
+	file, err := bd.GetFile(archiveName)
 	if err != nil {
 		return err
 	}
@@ -246,7 +248,7 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 func (bd *BackupDestination) CompressedStreamUpload(localPath, remotePath, diffFromPath string) error {
 	archiveName := path.Join(bd.path, fmt.Sprintf("%s.%s", remotePath, getExtension(bd.compressionFormat)))
 
-	if _, err := bd.storage.GetFile(archiveName); err != nil {
+	if _, err := bd.GetFile(archiveName); err != nil {
 		if err != ErrNotFound {
 			return err
 		}
@@ -255,7 +257,7 @@ func (bd *BackupDestination) CompressedStreamUpload(localPath, remotePath, diffF
 	var totalBytes int64
 	filepath.Walk(localPath, func(filePath string, info os.FileInfo, err error) error {
 		if info.Mode().IsRegular() {
-			totalBytes = totalBytes + info.Size()
+			totalBytes += info.Size()
 		}
 		return nil
 	})
@@ -286,6 +288,9 @@ func (bd *BackupDestination) CompressedStreamUpload(localPath, remotePath, diffF
 		}
 		defer z.Close()
 		if ferr = filepath.Walk(localPath, func(filePath string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
 			if !info.Mode().IsRegular() {
 				return nil
 			}
@@ -364,7 +369,7 @@ func (bd *BackupDestination) CompressedStreamUpload(localPath, remotePath, diffF
 		return
 	}()
 
-	if err := bd.storage.PutFile(archiveName, body); err != nil {
+	if err := bd.PutFile(archiveName, body); err != nil {
 		return err
 	}
 	bar.Finish()

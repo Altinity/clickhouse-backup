@@ -484,7 +484,7 @@ func printRemoteBackups(config Config, format string) error {
 	if err != nil {
 		return err
 	}
-	err = bd.storage.Connect()
+	err = bd.Connect()
 	if err != nil {
 		return err
 	}
@@ -715,9 +715,9 @@ func upload(config Config, backupName string, diffFrom string) error {
 		return err
 	}
 
-	err = bd.storage.Connect()
+	err = bd.Connect()
 	if err != nil {
-		return fmt.Errorf("can't connect to %s with : %v", bd.storage.Kind(), err)
+		return fmt.Errorf("can't connect to %s with : %v", bd.Kind(), err)
 	}
 
 	if err := getLocalBackup(config, backupName); err != nil {
@@ -754,7 +754,7 @@ func download(config Config, backupName string) error {
 		return err
 	}
 
-	err = bd.storage.Connect()
+	err = bd.Connect()
 	if err != nil {
 		return err
 	}
@@ -830,7 +830,7 @@ func removeBackupRemote(config Config, backupName string) error {
 	if err != nil {
 		return err
 	}
-	if err := bd.storage.Connect(); err != nil {
+	if err := bd.Connect(); err != nil {
 		return fmt.Errorf("can't connect to remote storage with: %v", err)
 	}
 	backupList, err := bd.BackupList()
