@@ -19,7 +19,7 @@ require (
 	github.com/pkg/errors v0.8.1
 	github.com/stretchr/testify v1.3.0
 	github.com/urfave/cli v1.20.0
-	golang.org/x/tools/gopls v0.1.7 // indirect
+	golang.org/x/tools v0.0.0-20190918214516-5a1a30219888 // indirect
 	google.golang.org/api v0.9.0
 	gopkg.in/cheggaaa/pb.v1 v1.0.28
 	gopkg.in/djherbis/buffer.v1 v1.1.0
