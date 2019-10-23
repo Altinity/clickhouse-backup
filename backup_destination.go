@@ -58,6 +58,7 @@ type BackupDestination struct {
 	compressionFormat  string
 	compressionLevel   int
 	disableProgressBar bool
+	backupsToKeep      int
 }
 
 func (bd *BackupDestination) RemoveOldBackups(keep int) error {
@@ -93,6 +94,10 @@ func (bd *BackupDestination) RemoveBackup(backupName string) error {
 		}
 	}
 	return nil
+}
+
+func (bd *BackupDestination) BackupsToKeep() int {
+	return bd.backupsToKeep
 }
 
 func (bd *BackupDestination) BackupList() ([]Backup, error) {
@@ -378,10 +383,10 @@ func NewBackupDestination(config Config) (*BackupDestination, error) {
 	switch t := config.RemoteStorage; t {
 	case "s3":
 		s3 := &S3{Config: &config.S3}
-		return &BackupDestination{s3, config.S3.Path, config.S3.CompressionFormat, config.S3.CompressionLevel, config.S3.DisableProgressBar}, nil
+		return &BackupDestination{s3, config.S3.Path, config.S3.CompressionFormat, config.S3.CompressionLevel, config.S3.DisableProgressBar, config.S3.BackupsToKeepS3}, nil
 	case "gcs":
 		gcs := &GCS{Config: &config.GCS}
-		return &BackupDestination{gcs, config.GCS.Path, config.GCS.CompressionFormat, config.GCS.CompressionLevel, config.S3.DisableProgressBar}, nil
+		return &BackupDestination{gcs, config.GCS.Path, config.GCS.CompressionFormat, config.GCS.CompressionLevel, config.GCS.DisableProgressBar, config.GCS.BackupsToKeepGCS}, nil
 	default:
 		return nil, fmt.Errorf("storage type '%s' not supported", t)
 	}

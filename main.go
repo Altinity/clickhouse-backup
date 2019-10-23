@@ -739,9 +739,9 @@ func upload(config Config, backupName string, diffFrom string) error {
 	if err := bd.CompressedStreamUpload(backupPath, backupName, diffFromPath); err != nil {
 		return fmt.Errorf("can't upload with %v", err)
 	}
-	// if err := r.RemoveOldBackups(config.S3.BackupsToKeepS3); err != nil {
-	// 	return fmt.Errorf("can't remove old backups: %v", err)
-	// }
+	if err := bd.RemoveOldBackups(bd.BackupsToKeep()); err != nil {
+		return fmt.Errorf("can't remove old backups: %v", err)
+	}
 	log.Println("  Done.")
 	return nil
 }
