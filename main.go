@@ -34,7 +34,7 @@ func main() {
 	log.SetOutput(os.Stdout)
 	cliapp := cli.NewApp()
 	cliapp.Name = "clickhouse-backup"
-	cliapp.Usage = "Tool for easy backup of ClickHouse with S3 support"
+	cliapp.Usage = "Tool for easy backup of ClickHouse with cloud backup support"
 	cliapp.UsageText = "clickhouse-backup <command> [-t, --tables=<db>.<table>] <backup_name>"
 	cliapp.Description = "Run as root or clickhouse user"
 	cliapp.Version = version
@@ -70,21 +70,24 @@ func main() {
 		{
 			Name:      "list",
 			Usage:     "Print list of backups and exit",
-			UsageText: "clickhouse-backup list [all|local|s3] [latest|penult]",
+			UsageText: "clickhouse-backup list [all|local|remote] [latest|penult]",
 			Action: func(c *cli.Context) error {
 				config := getConfig(c)
 				switch c.Args().Get(0) {
 				case "local":
 					return printLocalBackups(*config, c.Args().Get(1))
 				case "s3":
-					return printS3Backups(*config, c.Args().Get(1))
+					fmt.Println("s3 flag is depracated. Please use 'remote' flag and set remote_type in your config.")
+					fallthrough
+				case "remote":
+					return printRemoteBackups(*config, c.Args().Get(1))
 				case "all", "":
 					fmt.Println("Local backups:")
 					if err := printLocalBackups(*config, c.Args().Get(1)); err != nil {
 						return err
 					}
-					fmt.Println("Backups on S3:")
-					if err := printS3Backups(*config, c.Args().Get(1)); err != nil {
+					fmt.Println("Remote backups:")
+					if err := printRemoteBackups(*config, c.Args().Get(1)); err != nil {
 						return err
 					}
 				default:
@@ -98,7 +101,7 @@ func main() {
 		{
 			Name:      "delete",
 			Usage:     "Delete specific backup",
-			UsageText: "clickhouse-backup delete <local|s3> <backup_name>",
+			UsageText: "clickhouse-backup delete <local|remote> <backup_name>",
 			Action: func(c *cli.Context) error {
 				config := getConfig(c)
 				if c.Args().Get(1) == "" {
@@ -109,7 +112,10 @@ func main() {
 				case "local":
 					return removeBackupLocal(*config, c.Args().Get(1))
 				case "s3":
-					return removeBackupS3(*config, c.Args().Get(1))
+					fmt.Println("s3 flag is depracated. Please use 'remote' flag and set 'remote_type: s3' in your config.")
+					fallthrough
+				case "remote":
+					return removeBackupRemote(*config, c.Args().Get(1))
 				default:
 					fmt.Fprintf(os.Stderr, "Unknown command '%s'\n", c.Args().Get(0))
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
@@ -160,16 +166,25 @@ func main() {
 					Name:   "diff-from",
 					Hidden: false,
 				},
+				cli.StringFlag{
+					Name:   "dest",
+					Hidden: false,
+				},
 			),
 		},
 		{
 			Name:      "download",
-			Usage:     "Download backup from s3 to backup folder",
+			Usage:     "Download backup from remote location to backup folder",
 			UsageText: "clickhouse-backup download <backup_name>",
 			Action: func(c *cli.Context) error {
 				return download(*getConfig(c), c.Args().First())
 			},
-			Flags: cliapp.Flags,
+			Flags: append(cliapp.Flags,
+				cli.StringFlag{
+					Name:   "src",
+					Hidden: false,
+				},
+			),
 		},
 		{
 			Name:      "restore-schema",
@@ -471,12 +486,17 @@ func listLocalBackups(config Config) ([]Backup, error) {
 	return result, nil
 }
 
-func printS3Backups(config Config, format string) error {
-	s3 := &S3{Config: &config.S3}
-	if err := s3.Connect(); err != nil {
-		return fmt.Errorf("can't connect to s3 with %v", err)
+func printRemoteBackups(config Config, format string) error {
+	bd, err := NewBackupDestination(config)
+	if err != nil {
+		return err
 	}
-	backupList, err := s3.BackupList()
+	err = bd.Connect()
+	if err != nil {
+		return err
+	}
+
+	backupList, err := bd.BackupList()
 	if err != nil {
 		return err
 	}
@@ -696,12 +716,17 @@ func upload(config Config, backupName string, diffFrom string) error {
 	if dataPath == "" {
 		return ErrUnknownClickhouseDataPath
 	}
-	s3 := &S3{
-		Config: &config.S3,
+
+	bd, err := NewBackupDestination(config)
+	if err != nil {
+		return err
 	}
-	if err := s3.Connect(); err != nil {
-		return fmt.Errorf("can't connect to s3 with: %v", err)
+
+	err = bd.Connect()
+	if err != nil {
+		return fmt.Errorf("can't connect to %s with : %v", bd.Kind(), err)
 	}
+
 	if err := getLocalBackup(config, backupName); err != nil {
 		return fmt.Errorf("can't upload with %s", err)
 	}
@@ -711,10 +736,10 @@ func upload(config Config, backupName string, diffFrom string) error {
 	if diffFrom != "" {
 		diffFromPath = path.Join(dataPath, "backup", diffFrom)
 	}
-	if err := s3.CompressedStreamUpload(backupPath, backupName, diffFromPath); err != nil {
+	if err := bd.CompressedStreamUpload(backupPath, backupName, diffFromPath); err != nil {
 		return fmt.Errorf("can't upload with %v", err)
 	}
-	if err := s3.RemoveOldBackups(config.S3.BackupsToKeepS3); err != nil {
+	if err := bd.RemoveOldBackups(bd.BackupsToKeep()); err != nil {
 		return fmt.Errorf("can't remove old backups: %v", err)
 	}
 	log.Println("  Done.")
@@ -724,20 +749,23 @@ func upload(config Config, backupName string, diffFrom string) error {
 func download(config Config, backupName string) error {
 	if backupName == "" {
 		fmt.Println("Select backup for download:")
-		printS3Backups(config, "all")
+		printRemoteBackups(config, "all")
 		os.Exit(1)
 	}
 	dataPath := getDataPath(config)
 	if dataPath == "" {
 		return ErrUnknownClickhouseDataPath
 	}
-	s3 := &S3{
-		Config: &config.S3,
+	bd, err := NewBackupDestination(config)
+	if err != nil {
+		return err
 	}
-	if err := s3.Connect(); err != nil {
-		return fmt.Errorf("can't connect to s3 with: %v", err)
+
+	err = bd.Connect()
+	if err != nil {
+		return err
 	}
-	err := s3.CompressedStreamDownload(backupName, path.Join(dataPath, "backup", backupName))
+	err = bd.CompressedStreamDownload(backupName, path.Join(dataPath, "backup", backupName))
 	if err != nil {
 		return err
 	}
@@ -799,25 +827,29 @@ func removeBackupLocal(config Config, backupName string) error {
 	return fmt.Errorf("backup '%s' not found", backupName)
 }
 
-func removeBackupS3(config Config, backupName string) error {
+func removeBackupRemote(config Config, backupName string) error {
 	dataPath := getDataPath(config)
 	if dataPath == "" {
 		return ErrUnknownClickhouseDataPath
 	}
-	s3 := &S3{Config: &config.S3}
-	if err := s3.Connect(); err != nil {
-		return fmt.Errorf("can't connect to s3 with: %v", err)
+
+	bd, err := NewBackupDestination(config)
+	if err != nil {
+		return err
 	}
-	backupList, err := s3.BackupList()
+	if err := bd.Connect(); err != nil {
+		return fmt.Errorf("can't connect to remote storage with: %v", err)
+	}
+	backupList, err := bd.BackupList()
 	if err != nil {
 		return err
 	}
 	for _, backup := range backupList {
 		if backup.Name == backupName {
-			return s3.RemoveBackup(backupName)
+			return bd.RemoveBackup(backupName)
 		}
 	}
-	return fmt.Errorf("backup '%s' not found on s3", backupName)
+	return fmt.Errorf("backup '%s' not found on remote storage", backupName)
 }
 
 func getConfig(ctx *cli.Context) *Config {

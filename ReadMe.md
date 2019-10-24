@@ -5,14 +5,14 @@
 [![Telegram](https://img.shields.io/badge/telegram-join%20chat-3796cd.svg)](https://t.me/clickhousebackup)
 [![Docker Image](https://img.shields.io/docker/pulls/alexakulov/clickhouse-backup.svg)](https://hub.docker.com/r/alexakulov/clickhouse-backup)
 
-Tool for easy ClickHouse backup and restore with S3 support
+Tool for easy ClickHouse backup and restore with S3 and GCS support
 
 ## Features
 
 - Easy creating and restoring backups of all or specific tables
 - Efficient storing of multiple backups on the file system
-- Most efficient AWS S3 uploading and downloading with streaming compression
-- Support of incremental backups on S3
+- Most efficient AWS S3/GCS uploading and downloading with streaming compression
+- Support of incremental backups on S3 and GCS
 
 ## Supports
 

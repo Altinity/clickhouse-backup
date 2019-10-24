@@ -11,8 +11,23 @@ import (
 
 // Config - config file format
 type Config struct {
-	ClickHouse ClickHouseConfig `yaml:"clickhouse"`
-	S3         S3Config         `yaml:"s3"`
+	ClickHouse    ClickHouseConfig `yaml:"clickhouse"`
+	RemoteStorage string           `yaml:"remote_storage" envconfig:"REMOTE_STORAGE"`
+	S3            S3Config         `yaml:"s3"`
+	GCS           GCSConfig        `yaml:"gcs"`
+}
+
+// GCSConfig - GCS settings section
+type GCSConfig struct {
+	CredentialsFile    string `yaml:"credentials_file" envconfig:"GCS_CREDENTIALS_FILE"`
+	CredentialsJSON    string `yaml:"credentials_json" envconfig:"GCS_CREDENTIALS_JSON"`
+	Bucket             string `yaml:"bucket" envconfig:"GCS_BUCKET"`
+	Path               string `yaml:"path" envconfig:"GCS_PATH"`
+	DisableProgressBar bool   `yaml:"disable_progress_bar" envconfig:"DISABLE_PROGRESS_BAR"`
+	BackupsToKeepLocal int    `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL"`
+	BackupsToKeepGCS   int    `yaml:"backups_to_keep_gcs" envconfig:"BACKUPS_TO_KEEP_GCS"`
+	CompressionLevel   int    `yaml:"compression_level" envconfig:"GCS_COMPRESSION_LEVEL"`
+	CompressionFormat  string `yaml:"compression_format" envconfig:"GCS_COMPRESSION_FORMAT"`
 }
 
 // S3Config - s3 settings section
@@ -92,6 +107,7 @@ func defaultConfig() *Config {
 				"system.*",
 			},
 		},
+		RemoteStorage: "s3",
 		S3: S3Config{
 			Region:             "us-east-1",
 			DisableSSL:         false,
@@ -102,6 +118,11 @@ func defaultConfig() *Config {
 			CompressionLevel:   1,
 			CompressionFormat:  "gzip",
 			SSE:                "",
+		},
+		GCS: GCSConfig{
+			BackupsToKeepLocal: 0,
+			CompressionLevel:   1,
+			CompressionFormat:  "gzip",
 		},
 	}
 }

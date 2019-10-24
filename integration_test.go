@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -158,6 +159,7 @@ func TestRestoreLegacyBackupFormat(t *testing.T) {
 	r.NoError(dockerExec("clickhouse-backup", "freeze"))
 	dockerExec("mkdir", "-p", "/var/lib/clickhouse/backup/old_format")
 	r.NoError(dockerExec("cp", "-r", "/var/lib/clickhouse/metadata", "/var/lib/clickhouse/backup/old_format/"))
+	r.NoError(dockerExec("cp", "/etc/clickhouse-backup/config-s3.yml", "/etc/clickhouse-backup/config.yml"))
 	r.NoError(dockerExec("mv", "/var/lib/clickhouse/shadow", "/var/lib/clickhouse/backup/old_format/"))
 	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup/old_format/")
 
@@ -192,7 +194,29 @@ func TestRestoreLegacyBackupFormat(t *testing.T) {
 	}
 }
 
-func TestIntegration(t *testing.T) {
+func TestIntegrationS3(t *testing.T) {
+	r := require.New(t)
+	r.NoError(dockerExec("cp", "/etc/clickhouse-backup/config-s3.yml", "/etc/clickhouse-backup/config.yml"))
+	testIntegration(t)
+}
+
+func TestIntegrationGCS(t *testing.T) {
+	test := os.Getenv("GCS_TESTS")
+	if !(len(test) > 0) {
+		t.Skip("Skipping GCS integration tests...")
+		return
+	}
+
+	r := require.New(t)
+
+	r.NoError(dockerExec("apt-get", "-y", "update"))
+	r.NoError(dockerExec("apt-get", "-y", "install", "ca-certificates"))
+	r.NoError(dockerExec("cp", "/etc/clickhouse-backup/config-gcs.yml", "/etc/clickhouse-backup/config.yml"))
+	testIntegration(t)
+
+}
+
+func testIntegration(t *testing.T) {
 	ch := &ClickHouse{
 		Config: &ClickHouseConfig{
 			Host: "localhost",
@@ -265,6 +289,14 @@ func TestIntegration(t *testing.T) {
 		ti.Rows = append(ti.Rows, incrementData[i].Rows...)
 		r.NoError(ch.checkData(t, ti))
 	}
+
+	fmt.Println("Delete backup")
+	r.NoError(dockerExec("/bin/rm", "-rf", "/var/lib/clickhouse/backup/test_backup", "/var/lib/clickhouse/backup/increment"))
+	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
+
+	fmt.Println("Remove remote backups")
+	r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "test_backup.tar.gz"))
+	r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "increment.tar.gz"))
 }
 
 func (ch *ClickHouse) createTestData(data TestDataStuct) error {
