@@ -1,4 +1,4 @@
-package main
+package chbackup
 
 import (
 	progressbar "gopkg.in/cheggaaa/pb.v1"
