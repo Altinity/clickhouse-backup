@@ -44,6 +44,7 @@ func main() {
 			Name:  "config, c",
 			Value: defaultConfigPath,
 			Usage: "Config `FILE` name.",
+			EnvVar: "CLICKHOUSE_BACKUP_CONFIG",
 		},
 	}
 	cliapp.CommandNotFound = func(c *cli.Context, command string) {

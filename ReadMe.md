@@ -81,6 +81,9 @@ GLOBAL OPTIONS:
 ```
 
 ### Default Config
+
+Config file location can be defined by ```$CLICKHOUSE_BACKUP_CONFIG```
+
 All options can be overwritten via environment variables
 
 ```yaml

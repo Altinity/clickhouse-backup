@@ -4,7 +4,8 @@ go:
   - 1.13
 env:
   - CLICKHOUSE_VERSION=1.1.54390
-  - CLICKHOUSE_VERSION=19.15.3.6
+  - CLICKHOUSE_VERSION=19.4.4.33
+  - CLICKHOUSE_VERSION=19.15.3.6 GCS_TESTS=yes DEPLOY_ARTIFACTS=yes
 services:
   - docker
 script:
@@ -32,14 +33,14 @@ deploy:
     overwrite: true
     on:
       tags: true
-      condition: $CLICKHOUSE_VERSION = "19.15.3.6"
+      condition: -n $DEPLOY_ARTIFACTS
   - provider: script
     script: bash docker_push.sh
     on:
       branch: master
-      condition: $CLICKHOUSE_VERSION = "19.15.3.6"
+      condition: -n $DEPLOY_ARTIFACTS
   - provider: script
     script: bash docker_push.sh release
     on:
       tags: true
-      condition: $CLICKHOUSE_VERSION = "19.15.3.6"
+      condition: -n $DEPLOY_ARTIFACTS
