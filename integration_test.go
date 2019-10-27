@@ -182,15 +182,18 @@ func testRestoreLegacyBackupFormat(t *testing.T) {
 	r.NoError(dockerExec("clickhouse-backup", "download", "old_format"))
 
 	fmt.Println("Restore schema")
-	r.NoError(dockerExec("clickhouse-backup", "restore-schema", "old_format"))
+	r.NoError(dockerExec("clickhouse-backup", "restore-schema", "-t", dbName+".*", "old_format"))
 
 	fmt.Println("Restore data")
-	r.NoError(dockerExec("clickhouse-backup", "restore-data", "old_format"))
+	r.NoError(dockerExec("clickhouse-backup", "restore-data", "-t", dbName+".*", "old_format"))
 
 	fmt.Println("Check data")
 	for i := range testData {
 		r.NoError(ch.checkData(t, testData[i]))
 	}
+	fmt.Println("Clean")
+	r.NoError(dockerExec("/bin/rm", "-rf", "/var/lib/clickhouse/backup/old_format", "/var/lib/clickhouse/backup/increment_old_format", "/var/lib/clickhouse/shadow"))
+	r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "old_format.tar.gz"))
 }
 
 func TestIntegrationS3(t *testing.T) {
@@ -288,11 +291,8 @@ func testCommon(t *testing.T) {
 		r.NoError(ch.checkData(t, ti))
 	}
 
-	fmt.Println("Delete backup")
+	fmt.Println("Clean")
 	r.NoError(dockerExec("/bin/rm", "-rf", "/var/lib/clickhouse/backup/test_backup", "/var/lib/clickhouse/backup/increment"))
-	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
-
-	fmt.Println("Remove remote backups")
 	r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "test_backup.tar.gz"))
 	r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "increment.tar.gz"))
 }

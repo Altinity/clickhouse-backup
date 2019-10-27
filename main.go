@@ -289,7 +289,7 @@ func parseSchemaPattern(metadataPath string, tablePattern string) (RestoreTables
 	if tablePattern != "" {
 		tablePatterns = strings.Split(tablePattern, ",")
 	}
-	filepath.Walk(metadataPath, func(filePath string, info os.FileInfo, err error) error {
+	if err := filepath.Walk(metadataPath, func(filePath string, info os.FileInfo, err error) error {
 		if !strings.HasSuffix(filePath, ".sql") || !info.Mode().IsRegular() {
 			return nil
 		}
@@ -323,7 +323,9 @@ func parseSchemaPattern(metadataPath string, tablePattern string) (RestoreTables
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		return nil, err
+	}
 	regularTables.Sort()
 	distributedTables.Sort()
 	result := append(regularTables, distributedTables...)

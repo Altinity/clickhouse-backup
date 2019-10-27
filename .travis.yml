@@ -3,17 +3,25 @@ sudo: required
 go:
   - 1.13
 env:
+  - CLICKHOUSE_VERSION=1.1.54390
   - CLICKHOUSE_VERSION=19.15.3.6
 services:
   - docker
-script:
-  - CGO_ENABLED=0 go build -ldflags "-w -s -X main.version=${TRAVIS_TAG} -X main.gitCommit=${TRAVIS_COMMIT} -X main.buildDate=$(date --iso-8601)" -o clickhouse-backup/clickhouse-backup
-  - ./clickhouse-backup/clickhouse-backup default-config > clickhouse-backup/config.yml
-  - go test -v
-  - openssl enc -base64 -aes-256-cbc -d -in credentials.json.enc -out credentials.json -k ${VAULT_PASSWORD}
-  - docker-compose -f integration-test/docker-compose-travis.yml up -d --force-recreate
-  - go test -tags=integration
-  - docker build -t alexakulov/clickhouse-backup:master .
+script: >-
+  # Building executable file
+  CGO_ENABLED=0 go build -ldflags "-w -s -X main.version=${TRAVIS_TAG} -X main.gitCommit=${TRAVIS_COMMIT} -X main.buildDate=$(date --iso-8601)" -o clickhouse-backup/clickhouse-backup && \
+  # Creating default config
+  ./clickhouse-backup/clickhouse-backup default-config > clickhouse-backup/config.yml && \
+  # Running unit tests
+  go test -v && \
+  # Decrypting credentials for Google Cloud Storage
+  openssl enc -base64 -aes-256-cbc -d -in integration-test/credentials.json.enc -out integration-test/credentials.json -k ${VAULT_PASSWORD} && \
+  # Preparing to integration tests
+  docker-compose -f integration-test/docker-compose-travis.yml up -d --force-recreate && \
+  # Running integration tests
+  go test -tags=integration && \
+  # Building docker image
+  docker build -t alexakulov/clickhouse-backup:master .
 after_success:
   - tar -czvf clickhouse-backup.tar.gz clickhouse-backup
 deploy:
