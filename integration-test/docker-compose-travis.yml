@@ -20,7 +20,7 @@ services:
       TZ: UTC
     volumes:
       - ../clickhouse-backup/clickhouse-backup:/usr/bin/clickhouse-backup
-      - .:/etc/clickhouse-backup/
+      - ./credentials.json:/etc/clickhouse-backup/credentials.json
     ports:
       - 9000:9000
     networks:

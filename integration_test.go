@@ -198,7 +198,7 @@ func testRestoreLegacyBackupFormat(t *testing.T) {
 
 func TestIntegrationS3(t *testing.T) {
 	r := require.New(t)
-	r.NoError(dockerExec("cp", "-r", "/etc/clickhouse-backup/config-s3.yml", "/etc/clickhouse-backup/config.yml"))
+	r.NoError(dockerCP("./integration-test/config-s3.yml", "/etc/clickhouse-backup/config.yml"))
 	testRestoreLegacyBackupFormat(t)
 	testCommon(t)
 }
@@ -210,7 +210,7 @@ func TestIntegrationGCS(t *testing.T) {
 		return
 	}
 	r := require.New(t)
-	r.NoError(dockerExec("cp", "-r", "/etc/clickhouse-backup/config-gcs.yml", "/etc/clickhouse-backup/config.yml"))
+	r.NoError(dockerCP("./integration-test/config-gcs.yml", "/etc/clickhouse-backup/config.yml"))
 	r.NoError(dockerExec("apt-get", "-y", "update"))
 	r.NoError(dockerExec("apt-get", "-y", "install", "ca-certificates"))
 	testRestoreLegacyBackupFormat(t)
@@ -370,6 +370,15 @@ func dockerExecOut(cmd ...string) (string, error) {
 	out, err := exec.CommandContext(ctx, "docker", dcmd...).CombinedOutput()
 	cancel()
 	return string(out), err
+}
+
+func dockerCP(src, dst string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	dcmd := []string{"cp", src, "clickhouse:"+dst}
+	out, err := exec.CommandContext(ctx, "docker", dcmd...).CombinedOutput()
+	fmt.Println(string(out))
+	cancel()
+	return err
 }
 
 func toDate(s string) time.Time {
