@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -43,12 +44,32 @@ type BackupTable struct {
 	Partitions []BackupPartition
 }
 
+// BackupTables - slice of BackupTable
+type BackupTables []BackupTable
+
+// Sort - sort BackupTables slice by name
+func (bt BackupTables) Sort() {
+	sort.Slice(bt, func(i, j int) bool {
+		return (bt[i].Database < bt[j].Database) || (bt[i].Database == bt[j].Database && bt[i].Name < bt[j].Name)
+	})
+}
+
 // RestoreTable - struct to store information needed during restore
 type RestoreTable struct {
 	Database string
 	Table    string
 	Query    string
 	Path     string
+}
+
+// RestoreTables - slice of RestoreTable
+type RestoreTables []RestoreTable
+
+// Sort - sort RestoreTables slice by name
+func (rt RestoreTables) Sort() {
+	sort.Slice(rt, func(i, j int) bool {
+		return (rt[i].Database < rt[j].Database) || (rt[i].Database == rt[j].Database && rt[i].Table < rt[j].Table)
+	})
 }
 
 // Connect - connect to clickhouse

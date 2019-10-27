@@ -380,14 +380,28 @@ func (bd *BackupDestination) CompressedStreamUpload(localPath, remotePath, diffF
 }
 
 func NewBackupDestination(config Config) (*BackupDestination, error) {
-	switch t := config.RemoteStorage; t {
+	switch config.General.RemoteStorage {
 	case "s3":
 		s3 := &S3{Config: &config.S3}
-		return &BackupDestination{s3, config.S3.Path, config.S3.CompressionFormat, config.S3.CompressionLevel, config.S3.DisableProgressBar, config.S3.BackupsToKeepS3}, nil
+		return &BackupDestination{
+			s3,
+			config.S3.Path,
+			config.S3.CompressionFormat,
+			config.S3.CompressionLevel,
+			config.General.DisableProgressBar,
+			config.General.BackupsToKeepRemote,
+		}, nil
 	case "gcs":
 		gcs := &GCS{Config: &config.GCS}
-		return &BackupDestination{gcs, config.GCS.Path, config.GCS.CompressionFormat, config.GCS.CompressionLevel, config.GCS.DisableProgressBar, config.GCS.BackupsToKeepGCS}, nil
+		return &BackupDestination{
+			gcs,
+			config.GCS.Path,
+			config.GCS.CompressionFormat,
+			config.GCS.CompressionLevel,
+			config.General.DisableProgressBar,
+			config.General.BackupsToKeepRemote,
+		}, nil
 	default:
-		return nil, fmt.Errorf("storage type '%s' not supported", t)
+		return nil, fmt.Errorf("storage type '%s' not supported", config.General.RemoteStorage)
 	}
 }

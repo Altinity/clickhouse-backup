@@ -19,6 +19,7 @@ Tool for easy ClickHouse backup and restore with S3 and GCS support
 - ClickHouse above 1.1.54390
 - MergeTree family tables engines
 - S3-compatible object storages
+- Google Cloud Storage
 - Tiered storage (`storage_policy`) IS NOT SUPPORTED!
 
 ## Download
@@ -48,7 +49,7 @@ go get github.com/AlexAkulov/clickhouse-backup
 
 ```
 NAME:
-   clickhouse-backup - Tool for easy backup of ClickHouse with S3 support
+   clickhouse-backup - Tool for easy backup of ClickHouse with cloud support
 
 USAGE:
    clickhouse-backup <command> [-t, --tables=<db>.<table>] <backup_name>
@@ -57,19 +58,20 @@ VERSION:
    unknown
 
 DESCRIPTION:
-   Run as root or clickhouse user
+   Run as 'root' or 'clickhouse' user
 
 COMMANDS:
-     tables          Print list of tables and exit
-     list            Print list of backups and exit
-     freeze          Freeze all or specific tables
-     create          Create new backup of all or specific tables
-     upload          Upload backup to s3
-     download        Download backup from s3 to backup folder
+     tables          Print list of tables
+     list            Print list of backups
+     delete          Delete specific backup
+     freeze          Freeze tables
+     create          Create new backup
+     upload          Upload backup to remote storage
+     download        Download backup from remote storage
      restore-schema  Create databases and tables from backup metadata
      restore-data    Copy data to 'detached' folder and execute ATTACH
-     default-config  Print default config and exit
-     clean           Clean backup data from shadow folder
+     default-config  Print default config
+     clean           Remove data in 'shadow' folder
      help, h         Shows a list of commands or help for one command
 
 GLOBAL OPTIONS:
@@ -82,6 +84,11 @@ GLOBAL OPTIONS:
 All options can be overwritten via environment variables
 
 ```yaml
+general:
+  remote_storage: s3           # REMOTE_STORAGE
+  disable_progress_bar: false  # DISABLE_PROGRESS_BAR
+  backups_to_keep_local: 0     # BACKUPS_TO_KEEP_LOCAL
+  backups_to_keep_remote: 0    # BACKUPS_TO_KEEP_S3
 clickhouse:
   username: default            # CLICKHOUSE_USERNAME
   password: ""                 # CLICKHOUSE_PASSWORD
@@ -100,15 +107,19 @@ s3:
   force_path_style: false      # S3_FORCE_PATH_STYLE
   path: ""                     # S3_PATH
   disable_ssl: false           # S3_DISABLE_SSL
-  disable_progress_bar: false  # DISABLE_PROGRESS_BAR
   part_size: 104857600         # S3_PART_SIZE
-  backups_to_keep_local: 0     # BACKUPS_TO_KEEP_LOCAL
-  backups_to_keep_s3: 0        # BACKUPS_TO_KEEP_S3
   compression_level: 1         # S3_COMPRESSION_LEVEL
   # supports 'tar', 'lz4', 'bzip2', 'gzip', 'sz', 'xz'
   compression_format: gzip     # S3_COMPRESSION_FORMAT
   # empty (default), AES256, or aws:kms
   sse: AES256                  # S3_SSE
+gcs:
+  credentials_file: /etc/clickhouse-backup/credentials.json # GCS_CREDENTIALS_FILE
+  credentials_json: ""         # GCS_CREDENTIALS_JSON
+  bucket: ""                   # GCS_BUCKET
+  path: ""                     # GCS_PATH
+  compression_level: 1         # GCS_COMPRESSION_LEVEL
+  compression_format: gzip     # GCS_COMPRESSION_FORMAT
 ```
 
 ## ATTENTION!

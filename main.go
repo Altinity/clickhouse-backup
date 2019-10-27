@@ -34,9 +34,9 @@ func main() {
 	log.SetOutput(os.Stdout)
 	cliapp := cli.NewApp()
 	cliapp.Name = "clickhouse-backup"
-	cliapp.Usage = "Tool for easy backup of ClickHouse with cloud backup support"
+	cliapp.Usage = "Tool for easy backup of ClickHouse with cloud support"
 	cliapp.UsageText = "clickhouse-backup <command> [-t, --tables=<db>.<table>] <backup_name>"
-	cliapp.Description = "Run as root or clickhouse user"
+	cliapp.Description = "Run as 'root' or 'clickhouse' user"
 	cliapp.Version = version
 
 	cliapp.Flags = []cli.Flag{
@@ -60,7 +60,7 @@ func main() {
 	cliapp.Commands = []cli.Command{
 		{
 			Name:      "tables",
-			Usage:     "Print list of tables and exit",
+			Usage:     "Print list of tables",
 			UsageText: "clickhouse-backup tables",
 			Action: func(c *cli.Context) error {
 				return getTables(*getConfig(c))
@@ -69,16 +69,13 @@ func main() {
 		},
 		{
 			Name:      "list",
-			Usage:     "Print list of backups and exit",
+			Usage:     "Print list of backups",
 			UsageText: "clickhouse-backup list [all|local|remote] [latest|penult]",
 			Action: func(c *cli.Context) error {
 				config := getConfig(c)
 				switch c.Args().Get(0) {
 				case "local":
 					return printLocalBackups(*config, c.Args().Get(1))
-				case "s3":
-					fmt.Println("s3 flag is depracated. Please use 'remote' flag and set remote_type in your config.")
-					fallthrough
 				case "remote":
 					return printRemoteBackups(*config, c.Args().Get(1))
 				case "all", "":
@@ -111,9 +108,6 @@ func main() {
 				switch c.Args().Get(0) {
 				case "local":
 					return removeBackupLocal(*config, c.Args().Get(1))
-				case "s3":
-					fmt.Println("s3 flag is depracated. Please use 'remote' flag and set 'remote_type: s3' in your config.")
-					fallthrough
 				case "remote":
 					return removeBackupRemote(*config, c.Args().Get(1))
 				default:
@@ -126,7 +120,7 @@ func main() {
 		},
 		{
 			Name:        "freeze",
-			Usage:       "Freeze all or specific tables",
+			Usage:       "Freeze tables",
 			UsageText:   "clickhouse-backup freeze [-t, --tables=<db>.<table>] <backup_name>",
 			Description: "Freeze tables",
 			Action: func(c *cli.Context) error {
@@ -141,7 +135,7 @@ func main() {
 		},
 		{
 			Name:        "create",
-			Usage:       "Create new backup of all or specific tables",
+			Usage:       "Create new backup",
 			UsageText:   "clickhouse-backup create [-t, --tables=<db>.<table>] <backup_name>",
 			Description: "Create new backup",
 			Action: func(c *cli.Context) error {
@@ -156,7 +150,7 @@ func main() {
 		},
 		{
 			Name:      "upload",
-			Usage:     "Upload backup to s3",
+			Usage:     "Upload backup to remote storage",
 			UsageText: "clickhouse-backup upload [--diff-from=<backup_name>] <backup_name>",
 			Action: func(c *cli.Context) error {
 				return upload(*getConfig(c), c.Args().First(), c.String("diff-from"))
@@ -166,25 +160,16 @@ func main() {
 					Name:   "diff-from",
 					Hidden: false,
 				},
-				cli.StringFlag{
-					Name:   "dest",
-					Hidden: false,
-				},
 			),
 		},
 		{
 			Name:      "download",
-			Usage:     "Download backup from remote location to backup folder",
+			Usage:     "Download backup from remote storage",
 			UsageText: "clickhouse-backup download <backup_name>",
 			Action: func(c *cli.Context) error {
 				return download(*getConfig(c), c.Args().First())
 			},
-			Flags: append(cliapp.Flags,
-				cli.StringFlag{
-					Name:   "src",
-					Hidden: false,
-				},
-			),
+			Flags: cliapp.Flags,
 		},
 		{
 			Name:      "restore-schema",
@@ -216,7 +201,7 @@ func main() {
 		},
 		{
 			Name:  "default-config",
-			Usage: "Print default config and exit",
+			Usage: "Print default config",
 			Action: func(*cli.Context) {
 				PrintDefaultConfig()
 			},
@@ -224,7 +209,7 @@ func main() {
 		},
 		{
 			Name:  "clean",
-			Usage: "Clean backup data from shadow folder",
+			Usage: "Remove data in 'shadow' folder",
 			Action: func(c *cli.Context) error {
 				return clean(*getConfig(c))
 			},
@@ -245,7 +230,7 @@ func addTable(tables []Table, table Table) []Table {
 	return append(tables, table)
 }
 
-func addBackupTable(tables []BackupTable, table BackupTable) []BackupTable {
+func addBackupTable(tables BackupTables, table BackupTable) BackupTables {
 	for _, t := range tables {
 		if (t.Database == table.Database) && (t.Name == table.Name) {
 			return tables
@@ -254,7 +239,7 @@ func addBackupTable(tables []BackupTable, table BackupTable) []BackupTable {
 	return append(tables, table)
 }
 
-func addRestoreTable(tables []RestoreTable, table RestoreTable) []RestoreTable {
+func addRestoreTable(tables RestoreTables, table RestoreTable) RestoreTables {
 	for _, t := range tables {
 		if (t.Database == table.Database) && (t.Table == table.Table) {
 			return tables
@@ -284,7 +269,7 @@ func parseTablePatternForRestoreData(tables map[string]BackupTable, tablePattern
 	if tablePattern != "" {
 		tablePatterns = strings.Split(tablePattern, ",")
 	}
-	result := []BackupTable{}
+	result := BackupTables{}
 	for _, t := range tables {
 		for _, pattern := range tablePatterns {
 			tableName := fmt.Sprintf("%s.%s", t.Database, t.Name)
@@ -293,15 +278,13 @@ func parseTablePatternForRestoreData(tables map[string]BackupTable, tablePattern
 			}
 		}
 	}
-	sort.Slice(result, func(i, j int) bool {
-		return (result[i].Database < result[j].Database) || (result[i].Database == result[j].Database && result[i].Name < result[j].Name)
-	})
+	result.Sort()
 	return result, nil
 }
 
-func parseSchemaPattern(metadataPath string, tablePattern string) ([]RestoreTable, error) {
-	regularTables := []RestoreTable{}
-	distributedTables := []RestoreTable{}
+func parseSchemaPattern(metadataPath string, tablePattern string) (RestoreTables, error) {
+	regularTables := RestoreTables{}
+	distributedTables := RestoreTables{}
 	tablePatterns := []string{"*"}
 	if tablePattern != "" {
 		tablePatterns = strings.Split(tablePattern, ",")
@@ -341,10 +324,9 @@ func parseSchemaPattern(metadataPath string, tablePattern string) ([]RestoreTabl
 		}
 		return nil
 	})
+	regularTables.Sort()
+	distributedTables.Sort()
 	result := append(regularTables, distributedTables...)
-	sort.Slice(result, func(i, j int) bool {
-		return (result[i].Database < result[j].Database) || (result[i].Database == result[j].Database && result[i].Table < result[j].Table)
-	})
 	return result, nil
 }
 
@@ -791,7 +773,7 @@ func clean(config Config) error {
 }
 
 func removeOldBackupsLocal(config Config) error {
-	if config.S3.BackupsToKeepLocal < 1 {
+	if config.General.BackupsToKeepLocal < 1 {
 		return nil
 	}
 	backupList, err := listLocalBackups(config)
@@ -802,7 +784,7 @@ func removeOldBackupsLocal(config Config) error {
 	if dataPath == "" {
 		return ErrUnknownClickhouseDataPath
 	}
-	backupsToDelete := GetBackupsToDelete(backupList, config.S3.BackupsToKeepLocal)
+	backupsToDelete := GetBackupsToDelete(backupList, config.General.BackupsToKeepLocal)
 	for _, backup := range backupsToDelete {
 		backupPath := path.Join(dataPath, "backup", backup.Name)
 		os.RemoveAll(backupPath)

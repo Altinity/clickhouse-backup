@@ -74,16 +74,14 @@ func (s *S3) PutFile(key string, r io.ReadCloser) error {
 	if s.Config.SSE != "" {
 		sse = aws.String(s.Config.SSE)
 	}
-	if _, err := uploader.Upload(&s3manager.UploadInput{
+	_, err := uploader.Upload(&s3manager.UploadInput{
 		ACL:                  aws.String(s.Config.ACL),
 		Bucket:               aws.String(s.Config.Bucket),
 		Key:                  aws.String(key),
 		Body:                 r,
 		ServerSideEncryption: sse,
-	}); err != nil {
-		return err
-	}
-	return nil
+	})
+	return err
 }
 
 func (s *S3) DeleteFile(key string) error {

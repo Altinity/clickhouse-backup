@@ -99,12 +99,10 @@ func (gcs *GCS) GetFile(key string) (RemoteFile, error) {
 	if err != nil {
 		if err == storage.ErrObjectNotExist {
 			return nil, ErrNotFound
-		} else {
-			return nil, err
 		}
-	} else {
-		return &gcsFile{objAttr}, nil
+		return nil, err
 	}
+	return &gcsFile{objAttr}, nil
 }
 
 func (gcs *GCS) DeleteFile(key string) error {

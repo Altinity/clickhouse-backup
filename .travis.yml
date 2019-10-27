@@ -4,13 +4,14 @@ go:
   - 1.13
 env:
   - GO111MODULE=on
+  - GCS_TESTS=yes
 services:
   - docker
 script:
   - CGO_ENABLED=0 go build -ldflags "-w -s -X main.version=${TRAVIS_TAG} -X main.gitCommit=${TRAVIS_COMMIT} -X main.buildDate=$(date --iso-8601)" -o clickhouse-backup/clickhouse-backup
   - ./clickhouse-backup/clickhouse-backup default-config > clickhouse-backup/config.yml
-  - docker-compose -f integration-test/docker-compose-travis.yml up -d --force-recreate
   - go test -v
+  - docker-compose -f integration-test/docker-compose-travis.yml up -d --force-recreate
   - go test -tags=integration
   - docker build -t alexakulov/clickhouse-backup:master .
 after_success:

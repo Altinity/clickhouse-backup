@@ -140,7 +140,7 @@ var incrementData = []TestDataStuct{
 	},
 }
 
-func TestRestoreLegacyBackupFormat(t *testing.T) {
+func testRestoreLegacyBackupFormat(t *testing.T) {
 	ch := &ClickHouse{
 		Config: &ClickHouseConfig{
 			Host: "localhost",
@@ -159,7 +159,6 @@ func TestRestoreLegacyBackupFormat(t *testing.T) {
 	r.NoError(dockerExec("clickhouse-backup", "freeze"))
 	dockerExec("mkdir", "-p", "/var/lib/clickhouse/backup/old_format")
 	r.NoError(dockerExec("cp", "-r", "/var/lib/clickhouse/metadata", "/var/lib/clickhouse/backup/old_format/"))
-	r.NoError(dockerExec("cp", "/etc/clickhouse-backup/config-s3.yml", "/etc/clickhouse-backup/config.yml"))
 	r.NoError(dockerExec("mv", "/var/lib/clickhouse/shadow", "/var/lib/clickhouse/backup/old_format/"))
 	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup/old_format/")
 
@@ -196,27 +195,26 @@ func TestRestoreLegacyBackupFormat(t *testing.T) {
 
 func TestIntegrationS3(t *testing.T) {
 	r := require.New(t)
-	r.NoError(dockerExec("cp", "/etc/clickhouse-backup/config-s3.yml", "/etc/clickhouse-backup/config.yml"))
-	testIntegration(t)
+	r.NoError(dockerExec("cp", "-r", "/etc/clickhouse-backup/config-s3.yml", "/etc/clickhouse-backup/config.yml"))
+	testRestoreLegacyBackupFormat(t)
+	testCommon(t)
 }
 
 func TestIntegrationGCS(t *testing.T) {
 	test := os.Getenv("GCS_TESTS")
-	if !(len(test) > 0) {
+	if len(test) == 0 {
 		t.Skip("Skipping GCS integration tests...")
 		return
 	}
-
 	r := require.New(t)
-
+	r.NoError(dockerExec("cp", "-r", "/etc/clickhouse-backup/config-gcs.yml", "/etc/clickhouse-backup/config.yml"))
 	r.NoError(dockerExec("apt-get", "-y", "update"))
 	r.NoError(dockerExec("apt-get", "-y", "install", "ca-certificates"))
-	r.NoError(dockerExec("cp", "/etc/clickhouse-backup/config-gcs.yml", "/etc/clickhouse-backup/config.yml"))
-	testIntegration(t)
-
+	testRestoreLegacyBackupFormat(t)
+	testCommon(t)
 }
 
-func testIntegration(t *testing.T) {
+func testCommon(t *testing.T) {
 	ch := &ClickHouse{
 		Config: &ClickHouseConfig{
 			Host: "localhost",
