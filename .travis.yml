@@ -7,21 +7,21 @@ env:
   - CLICKHOUSE_VERSION=19.15.3.6
 services:
   - docker
-script: >-
+script:
   # Building executable file
-  CGO_ENABLED=0 go build -ldflags "-w -s -X main.version=${TRAVIS_TAG} -X main.gitCommit=${TRAVIS_COMMIT} -X main.buildDate=$(date --iso-8601)" -o clickhouse-backup/clickhouse-backup && \
+  - CGO_ENABLED=0 go build -ldflags "-w -s -X main.version=${TRAVIS_TAG} -X main.gitCommit=${TRAVIS_COMMIT} -X main.buildDate=$(date --iso-8601)" -o clickhouse-backup/clickhouse-backup || travis_terminate 1;
   # Creating default config
-  ./clickhouse-backup/clickhouse-backup default-config > clickhouse-backup/config.yml && \
+  - ./clickhouse-backup/clickhouse-backup default-config > clickhouse-backup/config.yml || travis_terminate 1;
   # Running unit tests
-  go test -v && \
+  - go test -v || travis_terminate 1;
   # Decrypting credentials for Google Cloud Storage
-  openssl enc -base64 -aes-256-cbc -d -in integration-test/credentials.json.enc -out integration-test/credentials.json -k ${VAULT_PASSWORD} && \
+  - openssl enc -base64 -aes-256-cbc -d -in integration-test/credentials.json.enc -out integration-test/credentials.json -k ${VAULT_PASSWORD} || travis_terminate 1;
   # Preparing to integration tests
-  docker-compose -f integration-test/docker-compose-travis.yml up -d --force-recreate && \
+  - docker-compose -f integration-test/docker-compose-travis.yml up -d --force-recreate || travis_terminate 1;
   # Running integration tests
-  go test -tags=integration && \
+  - go test -tags=integration || travis_terminate 1;
   # Building docker image
-  docker build -t alexakulov/clickhouse-backup:master .
+  - docker build -t alexakulov/clickhouse-backup:master .
 after_success:
   - tar -czvf clickhouse-backup.tar.gz clickhouse-backup
 deploy:
@@ -32,11 +32,14 @@ deploy:
     overwrite: true
     on:
       tags: true
+      condition: $CLICKHOUSE_VERSION = "19.15.3.6"
   - provider: script
     script: bash docker_push.sh
     on:
       branch: master
+      condition: $CLICKHOUSE_VERSION = "19.15.3.6"
   - provider: script
     script: bash docker_push.sh release
     on:
       tags: true
+      condition: $CLICKHOUSE_VERSION = "19.15.3.6"
