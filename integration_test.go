@@ -181,11 +181,8 @@ func testRestoreLegacyBackupFormat(t *testing.T) {
 	fmt.Println("Download")
 	r.NoError(dockerExec("clickhouse-backup", "download", "old_format"))
 
-	fmt.Println("Restore schema")
-	r.NoError(dockerExec("clickhouse-backup", "restore-schema", "-t", dbName+".*", "old_format"))
-
-	fmt.Println("Restore data")
-	r.NoError(dockerExec("clickhouse-backup", "restore-data", "-t", dbName+".*", "old_format"))
+	fmt.Println("Restore")
+	r.NoError(dockerExec("clickhouse-backup", "restore", "-t", dbName+".*", "old_format"))
 
 	fmt.Println("Check data")
 	for i := range testData {
@@ -257,10 +254,10 @@ func testCommon(t *testing.T) {
 	r.NoError(dockerExec("clickhouse-backup", "download", "test_backup"))
 
 	fmt.Println("Restore schema")
-	r.NoError(dockerExec("clickhouse-backup", "restore-schema", "test_backup"))
+	r.NoError(dockerExec("clickhouse-backup", "restore", "--schema", "test_backup"))
 
 	fmt.Println("Restore data")
-	r.NoError(dockerExec("clickhouse-backup", "restore-data", "test_backup"))
+	r.NoError(dockerExec("clickhouse-backup", "restore", "--data", "test_backup"))
 
 	fmt.Println("Check data")
 	for i := range testData {
@@ -278,11 +275,8 @@ func testCommon(t *testing.T) {
 	fmt.Println("Download increment")
 	r.NoError(dockerExec("clickhouse-backup", "download", "increment"))
 
-	fmt.Println("Restore schema")
-	r.NoError(dockerExec("clickhouse-backup", "restore-schema", "increment"))
-
-	fmt.Println("Restore data")
-	r.NoError(dockerExec("clickhouse-backup", "restore-data", "increment"))
+	fmt.Println("Restore")
+	r.NoError(dockerExec("clickhouse-backup", "restore", "--schema", "--data", "increment"))
 
 	fmt.Println("Check increment data")
 	for i := range testData {
@@ -359,7 +353,7 @@ func (ch *ClickHouse) checkData(t *testing.T, data TestDataStuct) error {
 
 func dockerExec(cmd ...string) error {
 	out, err := dockerExecOut(cmd...)
-	fmt.Println(string(out))
+	fmt.Print(string(out))
 	return err
 }
 
@@ -374,7 +368,7 @@ func dockerExecOut(cmd ...string) (string, error) {
 
 func dockerCP(src, dst string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	dcmd := []string{"cp", src, "clickhouse:"+dst}
+	dcmd := []string{"cp", src, "clickhouse:" + dst}
 	out, err := exec.CommandContext(ctx, "docker", dcmd...).CombinedOutput()
 	fmt.Println(string(out))
 	cancel()

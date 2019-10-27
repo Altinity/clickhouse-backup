@@ -41,9 +41,9 @@ func main() {
 
 	cliapp.Flags = []cli.Flag{
 		cli.StringFlag{
-			Name:  "config, c",
-			Value: defaultConfigPath,
-			Usage: "Config `FILE` name.",
+			Name:   "config, c",
+			Value:  defaultConfigPath,
+			Usage:  "Config `FILE` name.",
 			EnvVar: "CLICKHOUSE_BACKUP_CONFIG",
 		},
 	}
@@ -67,72 +67,6 @@ func main() {
 				return getTables(*getConfig(c))
 			},
 			Flags: cliapp.Flags,
-		},
-		{
-			Name:      "list",
-			Usage:     "Print list of backups",
-			UsageText: "clickhouse-backup list [all|local|remote] [latest|penult]",
-			Action: func(c *cli.Context) error {
-				config := getConfig(c)
-				switch c.Args().Get(0) {
-				case "local":
-					return printLocalBackups(*config, c.Args().Get(1))
-				case "remote":
-					return printRemoteBackups(*config, c.Args().Get(1))
-				case "all", "":
-					fmt.Println("Local backups:")
-					if err := printLocalBackups(*config, c.Args().Get(1)); err != nil {
-						return err
-					}
-					fmt.Println("Remote backups:")
-					if err := printRemoteBackups(*config, c.Args().Get(1)); err != nil {
-						return err
-					}
-				default:
-					fmt.Fprintf(os.Stderr, "Unknown command '%s'\n", c.Args().Get(0))
-					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
-				}
-				return nil
-			},
-			Flags: cliapp.Flags,
-		},
-		{
-			Name:      "delete",
-			Usage:     "Delete specific backup",
-			UsageText: "clickhouse-backup delete <local|remote> <backup_name>",
-			Action: func(c *cli.Context) error {
-				config := getConfig(c)
-				if c.Args().Get(1) == "" {
-					fmt.Fprintln(os.Stderr, "Backup name must be defined")
-					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
-				}
-				switch c.Args().Get(0) {
-				case "local":
-					return removeBackupLocal(*config, c.Args().Get(1))
-				case "remote":
-					return removeBackupRemote(*config, c.Args().Get(1))
-				default:
-					fmt.Fprintf(os.Stderr, "Unknown command '%s'\n", c.Args().Get(0))
-					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
-				}
-				return nil
-			},
-			Flags: cliapp.Flags,
-		},
-		{
-			Name:        "freeze",
-			Usage:       "Freeze tables",
-			UsageText:   "clickhouse-backup freeze [-t, --tables=<db>.<table>] <backup_name>",
-			Description: "Freeze tables",
-			Action: func(c *cli.Context) error {
-				return freeze(*getConfig(c), c.String("t"))
-			},
-			Flags: append(cliapp.Flags,
-				cli.StringFlag{
-					Name:   "table, tables, t",
-					Hidden: false,
-				},
-			),
 		},
 		{
 			Name:        "create",
@@ -164,6 +98,34 @@ func main() {
 			),
 		},
 		{
+			Name:      "list",
+			Usage:     "Print list of backups",
+			UsageText: "clickhouse-backup list [all|local|remote] [latest|penult]",
+			Action: func(c *cli.Context) error {
+				config := getConfig(c)
+				switch c.Args().Get(0) {
+				case "local":
+					return printLocalBackups(*config, c.Args().Get(1))
+				case "remote":
+					return printRemoteBackups(*config, c.Args().Get(1))
+				case "all", "":
+					fmt.Println("Local backups:")
+					if err := printLocalBackups(*config, c.Args().Get(1)); err != nil {
+						return err
+					}
+					fmt.Println("Remote backups:")
+					if err := printRemoteBackups(*config, c.Args().Get(1)); err != nil {
+						return err
+					}
+				default:
+					fmt.Fprintf(os.Stderr, "Unknown command '%s'\n", c.Args().Get(0))
+					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
+				}
+				return nil
+			},
+			Flags: cliapp.Flags,
+		},
+		{
 			Name:      "download",
 			Usage:     "Download backup from remote storage",
 			UsageText: "clickhouse-backup download <backup_name>",
@@ -173,32 +135,51 @@ func main() {
 			Flags: cliapp.Flags,
 		},
 		{
-			Name:      "restore-schema",
-			Usage:     "Create databases and tables from backup metadata",
-			UsageText: "clickhouse-backup restore-schema [-t, --tables=<db>.<table>] <backup_name>",
+			Name:      "restore",
+			Usage:     "Create schema and restore data from backup",
+			UsageText: "clickhouse-backup restore [--schema] [--data] [-t, --tables=<db>.<table>] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return restoreSchema(*getConfig(c), c.Args().First(), c.String("t"))
+				return restore(*getConfig(c), c.Args().First(), c.String("t"), c.Bool("s"), c.Bool("d"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
 					Name:   "table, tables, t",
 					Hidden: false,
+				},
+				cli.BoolFlag{
+					Name:   "schema, s",
+					Hidden: false,
+					Usage:  "Restore schema only",
+				},
+				cli.BoolFlag{
+					Name:   "data, d",
+					Hidden: false,
+					Usage:  "Restore data only",
 				},
 			),
 		},
 		{
-			Name:      "restore-data",
-			Usage:     "Copy data to 'detached' folder and execute ATTACH",
-			UsageText: "clickhouse-backup restore-data [-t, --tables=<db>.<table>] <backup_name>",
+			Name:      "delete",
+			Usage:     "Delete specific backup",
+			UsageText: "clickhouse-backup delete <local|remote> <backup_name>",
 			Action: func(c *cli.Context) error {
-				return restoreData(*getConfig(c), c.Args().First(), c.String("t"))
+				config := getConfig(c)
+				if c.Args().Get(1) == "" {
+					fmt.Fprintln(os.Stderr, "Backup name must be defined")
+					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
+				}
+				switch c.Args().Get(0) {
+				case "local":
+					return removeBackupLocal(*config, c.Args().Get(1))
+				case "remote":
+					return removeBackupRemote(*config, c.Args().Get(1))
+				default:
+					fmt.Fprintf(os.Stderr, "Unknown command '%s'\n", c.Args().Get(0))
+					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
+				}
+				return nil
 			},
-			Flags: append(cliapp.Flags,
-				cli.StringFlag{
-					Name:   "table, tables, t",
-					Hidden: false,
-				},
-			),
+			Flags: cliapp.Flags,
 		},
 		{
 			Name:  "default-config",
@@ -207,6 +188,21 @@ func main() {
 				PrintDefaultConfig()
 			},
 			Flags: cliapp.Flags,
+		},
+		{
+			Name:        "freeze",
+			Usage:       "Freeze tables",
+			UsageText:   "clickhouse-backup freeze [-t, --tables=<db>.<table>] <backup_name>",
+			Description: "Freeze tables",
+			Action: func(c *cli.Context) error {
+				return freeze(*getConfig(c), c.String("t"))
+			},
+			Flags: append(cliapp.Flags,
+				cli.StringFlag{
+					Name:   "table, tables, t",
+					Hidden: false,
+				},
+			),
 		},
 		{
 			Name:  "clean",
@@ -595,6 +591,22 @@ func createBackup(config Config, backupName, tablePattern string) error {
 		return err
 	}
 	log.Println("  Done.")
+	return nil
+}
+
+func restore(config Config, backupName string, tablePattern string, schemaOnly bool, dataOnly bool) error {
+	if schemaOnly || (schemaOnly == dataOnly) {
+		err := restoreSchema(config, backupName, tablePattern)
+		if err != nil {
+			return err
+		}
+	}
+	if dataOnly || (schemaOnly == dataOnly) {
+		err := restoreData(config, backupName, tablePattern)
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
