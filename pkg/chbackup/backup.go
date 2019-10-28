@@ -1,22 +1,22 @@
 package chbackup
 
 import (
-  "errors"
-  "fmt"
-  "io/ioutil"
-  "log"
-  "net/url"
-  "os"
-  "path"
-  "path/filepath"
-  "sort"
-  "strings"
-  "time"
+	"errors"
+	"fmt"
+	"io/ioutil"
+	"log"
+	"net/url"
+	"os"
+	"path"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
 )
 
 const (
 	// BackupTimeFormat - default backup name
-	BackupTimeFormat  = "2006-01-02T15-04-05"
+	BackupTimeFormat = "2006-01-02T15-04-05"
 )
 
 var (
@@ -161,7 +161,7 @@ func GetTables(config Config) error {
 func restoreSchema(config Config, backupName string, tablePattern string) error {
 	if backupName == "" {
 		fmt.Println("Select backup for restore:")
-    _ = PrintLocalBackups(config, "all")
+		PrintLocalBackups(config, "all")
 		os.Exit(1)
 	}
 	dataPath := getDataPath(config)
@@ -551,7 +551,7 @@ func Upload(config Config, backupName string, diffFrom string) error {
 func Download(config Config, backupName string) error {
 	if backupName == "" {
 		fmt.Println("Select backup for download:")
-    _ = PrintRemoteBackups(config, "all")
+		PrintRemoteBackups(config, "all")
 		os.Exit(1)
 	}
 	dataPath := getDataPath(config)

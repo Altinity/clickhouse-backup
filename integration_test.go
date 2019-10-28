@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AlexAkulov/clickhouse-backup/pkg/chbackup"
+
 	_ "github.com/kshvakov/clickhouse"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -141,14 +143,9 @@ var incrementData = []TestDataStuct{
 }
 
 func testRestoreLegacyBackupFormat(t *testing.T) {
-	ch := &ClickHouse{
-		Config: &ClickHouseConfig{
-			Host: "localhost",
-			Port: 9000,
-		},
-	}
+	ch := &TestClickHouse{}
 	r := require.New(t)
-	r.NoError(ch.Connect())
+	r.NoError(ch.connect())
 	r.NoError(ch.dropDatabase(dbName))
 	fmt.Println("Generate test data")
 	for _, data := range testData {
@@ -214,14 +211,9 @@ func TestIntegrationGCS(t *testing.T) {
 }
 
 func testCommon(t *testing.T) {
-	ch := &ClickHouse{
-		Config: &ClickHouseConfig{
-			Host: "localhost",
-			Port: 9000,
-		},
-	}
+	ch := &TestClickHouse{}
 	r := require.New(t)
-	r.NoError(ch.Connect())
+	r.NoError(ch.connect())
 	r.NoError(ch.dropDatabase(dbName))
 	fmt.Println("Generate test data")
 	for _, data := range testData {
@@ -290,11 +282,25 @@ func testCommon(t *testing.T) {
 	r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "increment.tar.gz"))
 }
 
-func (ch *ClickHouse) createTestData(data TestDataStuct) error {
-	if err := ch.CreateDatabase(data.Database); err != nil {
+type TestClickHouse struct {
+	chbackup *chbackup.ClickHouse
+}
+
+func (ch *TestClickHouse) connect() error {
+	ch.chbackup = &chbackup.ClickHouse{
+		Config: &chbackup.ClickHouseConfig{
+			Host: "localhost",
+			Port: 9000,
+		},
+	}
+	return ch.chbackup.Connect()
+}
+
+func (ch *TestClickHouse) createTestData(data TestDataStuct) error {
+	if err := ch.chbackup.CreateDatabase(data.Database); err != nil {
 		return err
 	}
-	if err := ch.CreateTable(RestoreTable{
+	if err := ch.chbackup.CreateTable(chbackup.RestoreTable{
 		Database: data.Database,
 		Table:    data.Table,
 		Query:    fmt.Sprintf("CREATE TABLE IF NOT EXISTS `%s`.`%s` %s", data.Database, data.Table, data.Schema),
@@ -303,7 +309,7 @@ func (ch *ClickHouse) createTestData(data TestDataStuct) error {
 	}
 
 	for _, row := range data.Rows {
-		tx, err := ch.conn.Beginx()
+		tx, err := ch.chbackup.GetConn().Beginx()
 		if err != nil {
 			return fmt.Errorf("can't begin transaction with: %v", err)
 		}
@@ -323,15 +329,15 @@ func (ch *ClickHouse) createTestData(data TestDataStuct) error {
 	return nil
 }
 
-func (ch *ClickHouse) dropDatabase(database string) error {
+func (ch *TestClickHouse) dropDatabase(database string) error {
 	fmt.Println("DROP DATABASE IF EXISTS ", database)
-	_, err := ch.conn.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", database))
+	_, err := ch.chbackup.GetConn().Exec(fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", database))
 	return err
 }
 
-func (ch *ClickHouse) checkData(t *testing.T, data TestDataStuct) error {
+func (ch *TestClickHouse) checkData(t *testing.T, data TestDataStuct) error {
 	fmt.Printf("Check '%d' rows in '%s.%s'\n", len(data.Rows), data.Database, data.Table)
-	rows, err := ch.conn.Queryx(fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY %s", data.Database, data.Table, data.OrderBy))
+	rows, err := ch.chbackup.GetConn().Queryx(fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY %s", data.Database, data.Table, data.OrderBy))
 	if err != nil {
 		return err
 	}

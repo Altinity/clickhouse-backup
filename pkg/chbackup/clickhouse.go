@@ -83,20 +83,6 @@ func (ch *ClickHouse) Connect() error {
 	return ch.conn.Ping()
 }
 
-// ConnectDatabase - connect to clickhouse to specified database
-func (ch *ClickHouse) ConnectDatabase(database string) error {
-	if database == "" {
-		database = "default"
-	}
-	connectionString := fmt.Sprintf("tcp://%v:%v?username=%v&password=%v&database=%v&compress=true",
-		ch.Config.Host, ch.Config.Port, ch.Config.Username, ch.Config.Password, database)
-	var err error
-	if ch.conn, err = sqlx.Open("clickhouse", connectionString); err != nil {
-		return err
-	}
-	return ch.conn.Ping()
-}
-
 // GetDataPath - return clickhouse data_path
 func (ch *ClickHouse) GetDataPath() (string, error) {
 	if ch.Config.DataPath != "" {
@@ -388,4 +374,9 @@ func (ch *ClickHouse) CreateTable(table RestoreTable) error {
 		return err
 	}
 	return nil
+}
+
+// GetConn - return current connection
+func (ch *ClickHouse) GetConn() *sqlx.DB {
+	return ch.conn
 }

@@ -1,11 +1,13 @@
 package main
 
 import (
-  "fmt"
-  "github.com/AlexAkulov/clickhouse-backup/pkg/chbackup"
-  "github.com/urfave/cli"
-  "log"
-  "os"
+	"fmt"
+	"log"
+	"os"
+
+	"github.com/AlexAkulov/clickhouse-backup/pkg/chbackup"
+
+	"github.com/urfave/cli"
 )
 
 const (
@@ -107,7 +109,7 @@ func main() {
 						return err
 					}
 				default:
-          _, _ = fmt.Fprintf(os.Stderr, "Unknown command '%s'\n", c.Args().Get(0))
+					fmt.Fprintf(os.Stderr, "Unknown command '%s'\n", c.Args().Get(0))
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
 				}
 				return nil
@@ -154,7 +156,7 @@ func main() {
 			Action: func(c *cli.Context) error {
 				config := getConfig(c)
 				if c.Args().Get(1) == "" {
-          _, _ = fmt.Fprintln(os.Stderr, "Backup name must be defined")
+					fmt.Fprintln(os.Stderr, "Backup name must be defined")
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
 				}
 				switch c.Args().Get(0) {
@@ -163,7 +165,7 @@ func main() {
 				case "remote":
 					return chbackup.RemoveBackupRemote(*config, c.Args().Get(1))
 				default:
-          _, _ = fmt.Fprintf(os.Stderr, "Unknown command '%s'\n", c.Args().Get(0))
+					fmt.Fprintf(os.Stderr, "Unknown command '%s'\n", c.Args().Get(0))
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
 				}
 				return nil
@@ -174,7 +176,7 @@ func main() {
 			Name:  "default-config",
 			Usage: "Print default config",
 			Action: func(*cli.Context) {
-        chbackup.PrintDefaultConfig()
+				chbackup.PrintDefaultConfig()
 			},
 			Flags: cliapp.Flags,
 		},
