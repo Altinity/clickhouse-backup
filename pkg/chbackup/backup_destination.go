@@ -1,24 +1,24 @@
-package main
+package chbackup
 
 import (
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"io/ioutil"
-	"log"
-	"os"
-	"path"
-	"path/filepath"
-	"sort"
-	"strings"
-	"time"
+  "encoding/json"
+  "errors"
+  "fmt"
+  "io"
+  "io/ioutil"
+  "log"
+  "os"
+  "path"
+  "path/filepath"
+  "sort"
+  "strings"
+  "time"
 
-	"archive/tar"
+  "archive/tar"
 
-	"github.com/mholt/archiver"
-	"gopkg.in/djherbis/buffer.v1"
-	"gopkg.in/djherbis/nio.v2"
+  "github.com/mholt/archiver"
+  "gopkg.in/djherbis/buffer.v1"
+  "gopkg.in/djherbis/nio.v2"
 )
 
 const (

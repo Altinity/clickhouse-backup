@@ -1,4 +1,4 @@
-package main
+package chbackup
 
 import (
 	"fmt"
@@ -64,7 +64,7 @@ type ClickHouseConfig struct {
 
 // LoadConfig - load config from file
 func LoadConfig(configLocation string) (*Config, error) {
-	config := defaultConfig()
+	config := DefaultConfig()
 	configYaml, err := ioutil.ReadFile(configLocation)
 	if os.IsNotExist(err) {
 		err := envconfig.Process("", config)
@@ -92,12 +92,12 @@ func validateConfig(config *Config) error {
 
 // PrintDefaultConfig - print default config to stdout
 func PrintDefaultConfig() {
-	c := defaultConfig()
+	c := DefaultConfig()
 	d, _ := yaml.Marshal(&c)
 	fmt.Print(string(d))
 }
 
-func defaultConfig() *Config {
+func DefaultConfig() *Config {
 	return &Config{
 		General: GeneralConfig{
 			RemoteStorage:       "s3",
