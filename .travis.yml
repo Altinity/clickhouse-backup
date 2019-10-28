@@ -16,7 +16,7 @@ script:
   # Running unit tests
   - go test -v || travis_terminate 1;
   # Decrypting credentials for Google Cloud Storage
-  - if [ "$TRAVIS_PULL_REQUEST" != "false" ]; then
+  - if [ "$TRAVIS_PULL_REQUEST" == "false" ]; then
         openssl enc -base64 -aes-256-cbc -d -in integration-test/credentials.json.enc -out integration-test/credentials.json -k ${VAULT_PASSWORD} || travis_terminate 1;
     fi
   # Preparing to integration tests

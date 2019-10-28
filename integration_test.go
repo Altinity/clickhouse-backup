@@ -201,7 +201,7 @@ func TestIntegrationS3(t *testing.T) {
 }
 
 func TestIntegrationGCS(t *testing.T) {
-	if os.Getenv("GCS_TESTS") == "" || os.Getenv("TRAVIS_PULL_REQUEST") != "false" {
+	if os.Getenv("GCS_TESTS") == "" || os.Getenv("TRAVIS_PULL_REQUEST") == "true" {
 		t.Skip("Skipping GCS integration tests...")
 		return
 	}
