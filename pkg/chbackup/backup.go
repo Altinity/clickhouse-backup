@@ -15,11 +15,12 @@ import (
 )
 
 const (
-	// BackupTimeFormat - default backup name
+	// BackupTimeFormat - default backup name format
 	BackupTimeFormat = "2006-01-02T15-04-05"
 )
 
 var (
+	// ErrUnknownClickhouseDataPath -
 	ErrUnknownClickhouseDataPath = errors.New("clickhouse data path is unknown, you can set data_path in config file")
 )
 
@@ -134,7 +135,8 @@ func parseSchemaPattern(metadataPath string, tablePattern string) (RestoreTables
 	return result, nil
 }
 
-func GetTables(config Config) error {
+// PrintTables - print all tables suitable for backup
+func PrintTables(config Config) error {
 	ch := &ClickHouse{
 		Config: &config.ClickHouse,
 	}
@@ -229,6 +231,7 @@ func printBackups(backupList []Backup, format string, printSize bool) error {
 	return nil
 }
 
+// PrintLocalBackups - print all backups stored locally
 func PrintLocalBackups(config Config, format string) error {
 	backupList, err := ListLocalBackups(config)
 	if err != nil && !os.IsNotExist(err) {
@@ -237,6 +240,7 @@ func PrintLocalBackups(config Config, format string) error {
 	return printBackups(backupList, format, false)
 }
 
+// ListLocalBackups - return slice of all backups stored locally
 func ListLocalBackups(config Config) ([]Backup, error) {
 	dataPath := getDataPath(config)
 	if dataPath == "" {
@@ -272,6 +276,7 @@ func ListLocalBackups(config Config) ([]Backup, error) {
 	return result, nil
 }
 
+// PrintRemoteBackups - print all backups stored on remote storage
 func PrintRemoteBackups(config Config, format string) error {
 	bd, err := NewBackupDestination(config)
 	if err != nil {
@@ -289,33 +294,34 @@ func PrintRemoteBackups(config Config, format string) error {
 	return printBackups(backupList, format, true)
 }
 
+// Freeze - freeze tables by tablePattern
 func Freeze(config Config, tablePattern string) error {
 	ch := &ClickHouse{
 		Config: &config.ClickHouse,
 	}
 	if err := ch.Connect(); err != nil {
-		return fmt.Errorf("can't connect to clickouse with: %v", err)
+		return fmt.Errorf("Can't connect to clickouse with: %v", err)
 	}
 	defer ch.Close()
 
 	dataPath, err := ch.GetDataPath()
 	if err != nil || dataPath == "" {
-		return fmt.Errorf("can't get data path from clickhouse with: %v\nyou can set data_path in config file", err)
+		return fmt.Errorf("Can't get data path from clickhouse with: %v\nyou can set data_path in config file", err)
 	}
 
 	shadowPath := filepath.Join(dataPath, "shadow")
 	files, err := ioutil.ReadDir(shadowPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			return fmt.Errorf("can't read %s directory: %v", shadowPath, err)
+			return fmt.Errorf("Can't read %s directory: %v", shadowPath, err)
 		}
 	} else if len(files) > 0 {
-		return fmt.Errorf("%s is not empty, won't execute freeze", shadowPath)
+		return fmt.Errorf("'%s' is not empty, execute 'clean' command first", shadowPath)
 	}
 
 	allTables, err := ch.GetTables()
 	if err != nil {
-		return fmt.Errorf("can't get Clickhouse tables with: %v", err)
+		return fmt.Errorf("Can't get Clickhouse tables with: %v", err)
 	}
 	backupTables, err := parseTablePatternForFreeze(allTables, tablePattern)
 	if err != nil {
@@ -336,10 +342,13 @@ func Freeze(config Config, tablePattern string) error {
 	return nil
 }
 
+// NewBackupName - return default backup name
 func NewBackupName() string {
 	return time.Now().UTC().Format(BackupTimeFormat)
 }
 
+// CreateBackup - create new backup of all tables matched by tablePattern
+// If backupName is empty string will use default backup name
 func CreateBackup(config Config, backupName, tablePattern string) error {
 	if backupName == "" {
 		backupName = NewBackupName()
@@ -399,6 +408,7 @@ func CreateBackup(config Config, backupName, tablePattern string) error {
 	return nil
 }
 
+// Restore - restore tables matched by tablePattern from backupName
 func Restore(config Config, backupName string, tablePattern string, schemaOnly bool, dataOnly bool) error {
 	if schemaOnly || (schemaOnly == dataOnly) {
 		err := restoreSchema(config, backupName, tablePattern)
@@ -415,6 +425,7 @@ func Restore(config Config, backupName string, tablePattern string, schemaOnly b
 	return nil
 }
 
+// RestoreData - restore data for tables matched by tablePattern from backupName
 func RestoreData(config Config, backupName string, tablePattern string) error {
 	if backupName == "" {
 		fmt.Println("Select backup for restore:")
@@ -429,7 +440,7 @@ func RestoreData(config Config, backupName string, tablePattern string) error {
 		Config: &config.ClickHouse,
 	}
 	if err := ch.Connect(); err != nil {
-		return fmt.Errorf("can't connect to clickouse with: %v", err)
+		return fmt.Errorf("Can't connect to clickouse with: %v", err)
 	}
 	defer ch.Close()
 
@@ -448,7 +459,7 @@ func RestoreData(config Config, backupName string, tablePattern string) error {
 	if len(restoreTables) == 0 {
 		return fmt.Errorf("Backup doesn't have tables to restore")
 	}
-	allTablesCreated := true
+	missingTables := []string{}
 	for _, restoreTable := range restoreTables {
 		found := false
 		for _, chTable := range chTables {
@@ -458,19 +469,18 @@ func RestoreData(config Config, backupName string, tablePattern string) error {
 			}
 		}
 		if !found {
-			log.Printf("`%s`.`%s` is not created", restoreTable.Database, restoreTable.Name)
-			allTablesCreated = false
+			missingTables = append(missingTables, fmt.Sprintf("'%s.%s'", restoreTable.Database, restoreTable.Name))
 		}
 	}
-	if !allTablesCreated {
-		return fmt.Errorf("run 'restore-schema' first")
+	if len(missingTables) > 0 {
+		return fmt.Errorf("%s is not created. Restore schema first or create missing tables mannualy", strings.Join(missingTables, ", ") )
 	}
 	for _, table := range restoreTables {
 		if err := ch.CopyData(table); err != nil {
-			return fmt.Errorf("can't restore `%s`.`%s` with %v", table.Database, table.Name, err)
+			return fmt.Errorf("Can't restore `%s`.`%s` with %v", table.Database, table.Name, err)
 		}
 		if err := ch.AttachPatritions(table); err != nil {
-			return fmt.Errorf("can't attach partitions for table '%s.%s' with %v", table.Database, table.Name, err)
+			return fmt.Errorf("Can't attach partitions for table '%s.%s' with %v", table.Database, table.Name, err)
 		}
 	}
 	return nil
@@ -575,6 +585,7 @@ func Download(config Config, backupName string) error {
 	return nil
 }
 
+// Clean - removed all data in shadow folder
 func Clean(config Config) error {
 	dataPath := getDataPath(config)
 	if dataPath == "" {
@@ -592,6 +603,7 @@ func Clean(config Config) error {
 	return nil
 }
 
+//
 func RemoveOldBackupsLocal(config Config) error {
 	if config.General.BackupsToKeepLocal < 1 {
 		return nil

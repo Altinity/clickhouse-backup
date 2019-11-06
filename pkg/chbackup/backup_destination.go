@@ -1,6 +1,7 @@
 package chbackup
 
 import (
+	"archive/tar"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,18 +15,20 @@ import (
 	"strings"
 	"time"
 
-	"archive/tar"
-
 	"github.com/mholt/archiver"
 	"gopkg.in/djherbis/buffer.v1"
 	"gopkg.in/djherbis/nio.v2"
 )
 
 const (
+	// MetaFileName - meta file name
 	MetaFileName = "meta.json"
+	// BufferSize - size of ring buffer between stream handlers
 	BufferSize   = 4 * 1024 * 1024
 )
 
+// MetaFile - structure describe meta file that will be added to incremental backups archive.
+// Contains info of required files in backup and files
 type MetaFile struct {
 	RequiredBackup string   `json:"required_backup"`
 	Hardlinks      []string `json:"hardlinks"`
@@ -36,12 +39,14 @@ var (
 	ErrNotFound = errors.New("file not found")
 )
 
+// RemoteFile - interface describe file on remote storage
 type RemoteFile interface {
 	Size() int64
 	Name() string
 	LastModified() time.Time
 }
 
+// RemoteStorage -
 type RemoteStorage interface {
 	Kind() string
 	GetFile(string) (RemoteFile, error)

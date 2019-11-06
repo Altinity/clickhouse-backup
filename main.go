@@ -11,7 +11,6 @@ import (
 )
 
 const (
-	// BackupTimeFormat - default backup name
 	defaultConfigPath = "/etc/clickhouse-backup/config.yml"
 )
 
@@ -55,7 +54,7 @@ func main() {
 			Usage:     "Print list of tables",
 			UsageText: "clickhouse-backup tables",
 			Action: func(c *cli.Context) error {
-				return chbackup.GetTables(*getConfig(c))
+				return chbackup.PrintTables(*getConfig(c))
 			},
 			Flags: cliapp.Flags,
 		},

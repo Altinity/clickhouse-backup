@@ -2,6 +2,7 @@
 # clickhouse-backup
 
 [![Build Status](https://travis-ci.org/AlexAkulov/clickhouse-backup.svg?branch=master)](https://travis-ci.org/AlexAkulov/clickhouse-backup)
+[![GoDoc](https://godoc.org/github.com/AlexAkulov/clickhouse-backup?status.svg)](http://godoc.org/github.com/AlexAkulov/clickhouse-backup)
 [![Telegram](https://img.shields.io/badge/telegram-join%20chat-3796cd.svg)](https://t.me/clickhousebackup)
 [![Docker Image](https://img.shields.io/docker/pulls/alexakulov/clickhouse-backup.svg)](https://hub.docker.com/r/alexakulov/clickhouse-backup)
 
@@ -30,12 +31,14 @@ Tool for easy ClickHouse backup and restore with S3 and GCS support
 tar -zxvf clickhouse-backup.tar.gz
 ```
 
-
 - Or use the official tiny Docker image and run it like:
 
 ```shell
 docker run --rm -it --network host -v "/var/lib/clickhouse:/var/lib/clickhouse" \
-   -e CLICKHOUSE_PASSWORD=password -e S3_ACCESS_KEY=access_key -e S3_SECRET_KEY=secret \
+   -e CLICKHOUSE_PASSWORD="password" \
+   -e S3_BUCKET="clickhouse-backup" \
+   -e S3_ACCESS_KEY="access_key" \
+   -e S3_SECRET_KEY="secret" \
    alexakulov/clickhouse-backup --help
 ```
 
@@ -74,7 +77,7 @@ COMMANDS:
      help, h         Shows a list of commands or help for one command
 
 GLOBAL OPTIONS:
-   --config FILE, -c FILE  Config FILE name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --config FILE, -c FILE  Config FILE name. (default: "/etc/clickhouse-backup/config.yml")
    --help, -h              show help
    --version, -v           print the version
 ```
@@ -90,7 +93,7 @@ general:
   remote_storage: s3           # REMOTE_STORAGE
   disable_progress_bar: false  # DISABLE_PROGRESS_BAR
   backups_to_keep_local: 0     # BACKUPS_TO_KEEP_LOCAL
-  backups_to_keep_remote: 0    # BACKUPS_TO_KEEP_S3
+  backups_to_keep_remote: 0    # BACKUPS_TO_KEEP_REMOTE
 clickhouse:
   username: default            # CLICKHOUSE_USERNAME
   password: ""                 # CLICKHOUSE_PASSWORD
