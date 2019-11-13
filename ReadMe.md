@@ -45,7 +45,7 @@ docker run --rm -it --network host -v "/var/lib/clickhouse:/var/lib/clickhouse" 
 - Or get from the sources:
 
 ```shell
-go get github.com/AlexAkulov/clickhouse-backup
+GO111MODULE=on go get github.com/AlexAkulov/clickhouse-backup
 ```
 
 ## Usage
