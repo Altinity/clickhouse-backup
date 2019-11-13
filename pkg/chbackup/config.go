@@ -122,7 +122,6 @@ func DefaultConfig() *Config {
 			CompressionFormat: "gzip",
 		},
 		GCS: GCSConfig{
-			CredentialsFile:   "/etc/clickhouse-backup/credentials.json",
 			CompressionLevel:  1,
 			CompressionFormat: "gzip",
 		},

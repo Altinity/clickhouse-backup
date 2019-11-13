@@ -13,15 +13,15 @@ Tool for easy ClickHouse backup and restore with S3 and GCS support
 - Easy creating and restoring backups of all or specific tables
 - Efficient storing of multiple backups on the file system
 - Most efficient AWS S3/GCS uploading and downloading with streaming compression
-- Support of incremental backups on S3 and GCS
+- Support of incremental backups on remote storages
 
-## Supports
+## Limitations
 
-- ClickHouse above 1.1.54390
-- MergeTree family tables engines
-- S3-compatible object storages
-- Google Cloud Storage
-- Tiered storage (`storage_policy`) IS NOT SUPPORTED!
+- ClickHouse above 1.1.54390 is supported
+- Only MergeTree family tables engines
+- Backup of 'Tiered storage' or `storage_policy` IS NOT SUPPORTED!
+- Maximum backup size on remote storages is 5TB
+- Maximum number of parts on AWS S3 is 10,000
 
 ## Download
 
@@ -119,7 +119,7 @@ s3:
   # empty (default), AES256, or aws:kms
   sse: AES256                  # S3_SSE
 gcs:
-  credentials_file: /etc/clickhouse-backup/credentials.json # GCS_CREDENTIALS_FILE
+  credentials_file: ""         # GCS_CREDENTIALS_FILE
   credentials_json: ""         # GCS_CREDENTIALS_JSON
   bucket: ""                   # GCS_BUCKET
   path: ""                     # GCS_PATH
