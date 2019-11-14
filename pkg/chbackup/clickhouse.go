@@ -330,12 +330,6 @@ func convertPartition(detachedTableFolder string) string {
 		// ENGINE = MergeTree ORDER BY id
 		return "tuple()"
 	}
-	if len(parts) == 5 {
-		// legacy partitioning based on month: toYYYYMM(date_column)
-		// in this case we return YYYYMM
-		// ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)
-		return parts[0][:6]
-	}
 	// in case a custom partitioning key is used this is a partition name
 	// same as in system.parts table, it may be used in ALTER TABLE queries
 	// https://clickhouse.yandex/docs/en/operations/table_engines/custom_partitioning_key/
