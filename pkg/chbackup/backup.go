@@ -88,6 +88,7 @@ func parseTablePatternForRestoreData(tables map[string]BackupTable, tablePattern
 func parseSchemaPattern(metadataPath string, tablePattern string) (RestoreTables, error) {
 	regularTables := RestoreTables{}
 	distributedTables := RestoreTables{}
+	viewTables := RestoreTables{}
 	tablePatterns := []string{"*"}
 	if tablePattern != "" {
 		tablePatterns = strings.Split(tablePattern, ",")
@@ -121,6 +122,11 @@ func parseSchemaPattern(metadataPath string, tablePattern string) (RestoreTables
 					distributedTables = addRestoreTable(distributedTables, restoreTable)
 					return nil
 				}
+				if strings.HasPrefix(restoreTable.Query, "CREATE VIEW") ||
+					strings.HasPrefix(restoreTable.Query, "CREATE MATERIALIZED VIEW") {
+					viewTables = addRestoreTable(viewTables, restoreTable)
+					return nil
+				}
 				regularTables = addRestoreTable(regularTables, restoreTable)
 				return nil
 			}
@@ -131,7 +137,9 @@ func parseSchemaPattern(metadataPath string, tablePattern string) (RestoreTables
 	}
 	regularTables.Sort()
 	distributedTables.Sort()
+	viewTables.Sort()
 	result := append(regularTables, distributedTables...)
+	result = append(result, viewTables...)
 	return result, nil
 }
 
@@ -473,7 +481,7 @@ func RestoreData(config Config, backupName string, tablePattern string) error {
 		}
 	}
 	if len(missingTables) > 0 {
-		return fmt.Errorf("%s is not created. Restore schema first or create missing tables mannualy", strings.Join(missingTables, ", ") )
+		return fmt.Errorf("%s is not created. Restore schema first or create missing tables manually", strings.Join(missingTables, ", "))
 	}
 	for _, table := range restoreTables {
 		if err := ch.CopyData(table); err != nil {
