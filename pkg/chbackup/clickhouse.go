@@ -323,35 +323,10 @@ func (ch *ClickHouse) CopyData(table BackupTable) error {
 	return nil
 }
 
-func convertPartition(detachedTableFolder string) string {
-	parts := strings.Split(detachedTableFolder, "_")
-	if parts[0] == "all" {
-		// table is not partitioned at all
-		// ENGINE = MergeTree ORDER BY id
-		return "tuple()"
-	}
-	if len(parts) == 5 {
-		// legacy partitioning based on month: toYYYYMM(date_column)
-		// in this case we return YYYYMM
-		// ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)
-		return parts[0][:6]
-	}
-	// in case a custom partitioning key is used this is a partition name
-	// same as in system.parts table, it may be used in ALTER TABLE queries
-	// https://clickhouse.yandex/docs/en/operations/table_engines/custom_partitioning_key/
-	return fmt.Sprintf("ID '%s'", parts[0])
-}
-
 // AttachPatritions - execute ATTACH command for specific table
 func (ch *ClickHouse) AttachPatritions(table BackupTable) error {
-	attachedParts := make(map[string]struct{})
 	for _, partition := range table.Partitions {
-		partName := convertPartition(partition.Name)
-		if _, ok := attachedParts[partName]; ok {
-			continue
-		}
-		query := fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PARTITION %s", table.Database, table.Name, partName)
-		attachedParts[partName] = struct{}{}
+		query := fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PART '%s'", table.Database, table.Name, partition.Name)
 		log.Println(query)
 		if _, err := ch.conn.Exec(query); err != nil {
 			return err
