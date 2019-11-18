@@ -192,7 +192,7 @@ func testRestoreLegacyBackupFormat(t *testing.T) {
 
 func TestIntegrationS3(t *testing.T) {
 	r := require.New(t)
-	r.NoError(dockerCP("./integration-test/config-s3.yml", "/etc/clickhouse-backup/config.yml"))
+	r.NoError(dockerCP("config-s3.yml", "/etc/clickhouse-backup/config.yml"))
 	testRestoreLegacyBackupFormat(t)
 	testCommon(t)
 }
@@ -203,7 +203,7 @@ func TestIntegrationGCS(t *testing.T) {
 		return
 	}
 	r := require.New(t)
-	r.NoError(dockerCP("./integration-test/config-gcs.yml", "/etc/clickhouse-backup/config.yml"))
+	r.NoError(dockerCP("config-gcs.yml", "/etc/clickhouse-backup/config.yml"))
 	r.NoError(dockerExec("apt-get", "-y", "update"))
 	r.NoError(dockerExec("apt-get", "-y", "install", "ca-certificates"))
 	testRestoreLegacyBackupFormat(t)

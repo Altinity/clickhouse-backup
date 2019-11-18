@@ -17,12 +17,12 @@ script:
   - go test -v ./pkg/...  || travis_terminate 1;
   # Decrypting credentials for Google Cloud Storage
   - if [ "$TRAVIS_PULL_REQUEST" == "false" ]; then
-        openssl enc -base64 -aes-256-cbc -d -in integration-test/credentials.json.enc -out integration-test/credentials.json -k ${VAULT_PASSWORD} || travis_terminate 1;
+        openssl enc -base64 -aes-256-cbc -d -in test/integration/credentials.json.enc -out test/integration/credentials.json -k ${VAULT_PASSWORD} || travis_terminate 1;
     fi
   # Preparing to integration tests
-  - docker-compose -f integration-test/docker-compose-travis.yml up -d --force-recreate || travis_terminate 1;
+  - CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup" docker-compose -f test/integration/docker-compose.yml up -d --force-recreate || travis_terminate 1;
   # Running integration tests
-  - go test -tags=integration || travis_terminate 1;
+  - go test -tags=integration test/integration/integration_test.go || travis_terminate 1;
   # Building docker image
   - docker build -t alexakulov/clickhouse-backup:master .
 after_success:

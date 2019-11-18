@@ -4,5 +4,5 @@ debug
 go.sum
 clickhouse-backup
 config.yml
-integration-test/credentials.json
+credentials.json
 .idea
