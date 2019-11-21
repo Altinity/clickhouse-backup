@@ -1,7 +1,9 @@
 package chbackup
 
 import (
+	"crypto/tls"
 	"io"
+	"net/http"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -23,6 +25,7 @@ type S3 struct {
 // Connect - connect to s3
 func (s *S3) Connect() error {
 	var err error
+
 	awsDefaults := defaults.Get()
 	defaultCredProviders := defaults.CredProviders(awsDefaults.Config, awsDefaults.Handlers)
 
@@ -35,15 +38,24 @@ func (s *S3) Connect() error {
 	// Append static creds to the defaults
 	customCredProviders := append([]credentials.Provider{staticCreds}, defaultCredProviders...)
 	creds := credentials.NewChainCredentials(customCredProviders)
-	if s.session, err = session.NewSession(
-		&aws.Config{
-			Credentials:      creds,
-			Region:           aws.String(s.Config.Region),
-			Endpoint:         aws.String(s.Config.Endpoint),
-			DisableSSL:       aws.Bool(s.Config.DisableSSL),
-			S3ForcePathStyle: aws.Bool(s.Config.ForcePathStyle),
-			MaxRetries:       aws.Int(30),
-		}); err != nil {
+
+	var awsConfig = &aws.Config{
+		Credentials:      creds,
+		Region:           aws.String(s.Config.Region),
+		Endpoint:         aws.String(s.Config.Endpoint),
+		DisableSSL:       aws.Bool(s.Config.DisableSSL),
+		S3ForcePathStyle: aws.Bool(s.Config.ForcePathStyle),
+		MaxRetries:       aws.Int(30),
+	};
+
+	if s.Config.DisableCertVerification {
+		tr := &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+		awsConfig.HTTPClient = &http.Client{Transport: tr}
+	}
+
+	if s.session, err = session.NewSession(awsConfig); err != nil {
 		return err
 	}
 	return nil
