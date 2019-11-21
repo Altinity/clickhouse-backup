@@ -103,21 +103,22 @@ clickhouse:
   skip_tables:                 # CLICKHOUSE_SKIP_TABLES
     - system.*
 s3:
-  access_key: ""               # S3_ACCESS_KEY
-  secret_key: ""               # S3_SECRET_KEY
-  bucket: ""                   # S3_BUCKET
-  endpoint: ""                 # S3_ENDPOINT
-  region: us-east-1            # S3_REGION
-  acl: private                 # S3_ACL
-  force_path_style: false      # S3_FORCE_PATH_STYLE
-  path: ""                     # S3_PATH
-  disable_ssl: false           # S3_DISABLE_SSL
-  part_size: 104857600         # S3_PART_SIZE
-  compression_level: 1         # S3_COMPRESSION_LEVEL
+  access_key: ""                  # S3_ACCESS_KEY
+  secret_key: ""                  # S3_SECRET_KEY
+  bucket: ""                      # S3_BUCKET
+  endpoint: ""                    # S3_ENDPOINT
+  region: us-east-1               # S3_REGION
+  acl: private                    # S3_ACL
+  force_path_style: false         # S3_FORCE_PATH_STYLE
+  path: ""                        # S3_PATH
+  disable_ssl: false              # S3_DISABLE_SSL
+  part_size: 104857600            # S3_PART_SIZE
+  compression_level: 1            # S3_COMPRESSION_LEVEL
   # supports 'tar', 'lz4', 'bzip2', 'gzip', 'sz', 'xz'
-  compression_format: gzip     # S3_COMPRESSION_FORMAT
+  compression_format: gzip        # S3_COMPRESSION_FORMAT
   # empty (default), AES256, or aws:kms
-  sse: AES256                  # S3_SSE
+  sse: AES256                     # S3_SSE
+  disable_cert_verification: true # S3_DISABLE_CERT_VERIFICATION
 gcs:
   credentials_file: ""         # GCS_CREDENTIALS_FILE
   credentials_json: ""         # GCS_CREDENTIALS_JSON

@@ -37,19 +37,20 @@ type GCSConfig struct {
 
 // S3Config - s3 settings section
 type S3Config struct {
-	AccessKey         string `yaml:"access_key" envconfig:"S3_ACCESS_KEY"`
-	SecretKey         string `yaml:"secret_key" envconfig:"S3_SECRET_KEY"`
-	Bucket            string `yaml:"bucket" envconfig:"S3_BUCKET"`
-	Endpoint          string `yaml:"endpoint" envconfig:"S3_ENDPOINT"`
-	Region            string `yaml:"region" envconfig:"S3_REGION"`
-	ACL               string `yaml:"acl" envconfig:"S3_ACL"`
-	ForcePathStyle    bool   `yaml:"force_path_style" envconfig:"S3_FORCE_PATH_STYLE"`
-	Path              string `yaml:"path" envconfig:"S3_PATH"`
-	DisableSSL        bool   `yaml:"disable_ssl" envconfig:"S3_DISABLE_SSL"`
-	PartSize          int64  `yaml:"part_size" envconfig:"S3_PART_SIZE"`
-	CompressionLevel  int    `yaml:"compression_level" envconfig:"S3_COMPRESSION_LEVEL"`
-	CompressionFormat string `yaml:"compression_format" envconfig:"S3_COMPRESSION_FORMAT"`
-	SSE               string `yaml:"sse" envconfig:"S3_SSE"`
+	AccessKey               string `yaml:"access_key" envconfig:"S3_ACCESS_KEY"`
+	SecretKey               string `yaml:"secret_key" envconfig:"S3_SECRET_KEY"`
+	Bucket                  string `yaml:"bucket" envconfig:"S3_BUCKET"`
+	Endpoint                string `yaml:"endpoint" envconfig:"S3_ENDPOINT"`
+	Region                  string `yaml:"region" envconfig:"S3_REGION"`
+	ACL                     string `yaml:"acl" envconfig:"S3_ACL"`
+	ForcePathStyle          bool   `yaml:"force_path_style" envconfig:"S3_FORCE_PATH_STYLE"`
+	Path                    string `yaml:"path" envconfig:"S3_PATH"`
+	DisableSSL              bool   `yaml:"disable_ssl" envconfig:"S3_DISABLE_SSL"`
+	PartSize                int64  `yaml:"part_size" envconfig:"S3_PART_SIZE"`
+	CompressionLevel        int    `yaml:"compression_level" envconfig:"S3_COMPRESSION_LEVEL"`
+	CompressionFormat       string `yaml:"compression_format" envconfig:"S3_COMPRESSION_FORMAT"`
+	SSE                     string `yaml:"sse" envconfig:"S3_SSE"`
+	DisableCertVerification bool   `yaml:"disable_cert_verification" envconfig:"S3_DISABLE_CERT_VERIFICATION"`
 }
 
 // ClickHouseConfig - clickhouse settings section
@@ -114,12 +115,13 @@ func DefaultConfig() *Config {
 			},
 		},
 		S3: S3Config{
-			Region:            "us-east-1",
-			DisableSSL:        false,
-			ACL:               "private",
-			PartSize:          100 * 1024 * 1024,
-			CompressionLevel:  1,
-			CompressionFormat: "gzip",
+			Region:                  "us-east-1",
+			DisableSSL:              false,
+			ACL:                     "private",
+			PartSize:                100 * 1024 * 1024,
+			CompressionLevel:        1,
+			CompressionFormat:       "gzip",
+			DisableCertVerification: false,
 		},
 		GCS: GCSConfig{
 			CompressionLevel:  1,
