@@ -145,12 +145,7 @@ clickhouse-backup create $BACKUP_NAME
 clickhouse-backup upload $BACKUP_NAME
 ```
 
-### Ansible script for backup sharded cluster
-You can use this playbook for daily backup of sharded cluster.
-On the first day of month full backup will be uploaded and increment on the other days.
-Use https://healthchecks.io for monitoring creating and uploading of backups.
-
-### More usecases for 'clickhouse-backup'
+### More use cases of clickhouse-backup
 - [How to convert MergeTree to ReplicatedMegreTree](Examples.md#how-to-convert-mergetree-to-replicatedmegretree)
 - [How to store backups on NFS or another server](Examples.md#how-to-store-backups-on-nfs-or-another-server)
 - [How to move data to another clickhouse server](Examples.md#how-to-move-data-to-another-clickhouse-server)
