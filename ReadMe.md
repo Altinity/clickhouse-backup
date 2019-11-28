@@ -150,39 +150,12 @@ You can use this playbook for daily backup of sharded cluster.
 On the first day of month full backup will be uploaded and increment on the other days.
 Use https://healthchecks.io for monitoring creating and uploading of backups.
 
-```yaml
-- hosts: clickhouse-cluster
-  become: yes
-  vars:
-    healthchecksio_clickhouse_backup_id: "get on https://healthchecks.io"
-    healthchecksio_clickhouse_upload_id: "..."
-  roles:
-    - clickhouse-backup
-  tasks:
-    - block:
-        - uri: url="https://hc-ping.com/{{ healthchecksio_clickhouse_backup_id }}/start"
-        - set_fact: backup_name="{{ lookup('pipe','date -u +%Y-%m-%d') }}-{{ clickhouse_shard }}"
-        - set_fact: yesterday_backup_name="{{ lookup('pipe','date --date=yesterday -u +%Y-%m-%d') }}-{{ clickhouse_shard }}"
-        - set_fact: current_day="{{ lookup('pipe','date -u +%d') }}"
-        - name: create new backup
-          shell: "clickhouse-backup create {{ backup_name }}"
-          register: out
-        - debug: var=out.stdout_lines
-        - uri: url="https://hc-ping.com/{{ healthchecksio_clickhouse_backup_id }}"
-      rescue:
-        - uri: url="https://hc-ping.com/{{ healthchecksio_clickhouse_backup_id }}/fail"
-    - block:
-        - uri: url="https://hc-ping.com/{{ healthchecksio_clickhouse_upload_id }}/start"
-        - name: upload full backup
-          shell: "clickhouse-backup upload {{ backup_name }}"
-          register: out
-          when: current_day == '01'
-        - name: upload diff backup
-          shell: "clickhouse-backup upload {{ backup_name }} --diff-from {{ yesterday_backup_name }}"
-          register: out
-          when: current_day != '01'
-        - debug: var=out.stdout_lines
-        - uri: url="https://hc-ping.com/{{ healthchecksio_clickhouse_upload_id }}"
-      rescue:
-        - uri: url="https://hc-ping.com/{{ healthchecksio_clickhouse_upload_id }}/fail"
-```
+### More usecases for 'clickhouse-backup'
+- [How to convert MergeTree to ReplicatedMegreTree](Examples.md#how-to-convert-mergetree-to-replicatedmegretree)
+- [How to store backups on NFS or another server](Examples.md#how-to-store-backups-on-nfs-or-another-server)
+- [How to move data to another clickhouse server](Examples.md#how-to-move-data-to-another-clickhouse-server)
+- [How to reduce number of partitions](Examples.md#How-to-reduce-number-of-partitions)
+- [How to monitor that backups created and uploaded correctly](Examples.md#how-to-monitor-that-backups-created-and-uploaded-correctly)
+- [How to backup sharded with Ansible](Examples.md#how-to-backup-sharded-with-ansible)
+- [How to backup database with several terabytes of data](Examples.md#how-to-backup-database-with-several-terabytes-of-data)
+- [How to use clickhouse-backup in Kubernetes](Examples.md#how-to-use-clickhouse-backup-in-kubernetes)
