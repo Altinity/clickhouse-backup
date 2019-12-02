@@ -20,7 +20,7 @@ import (
 
 const dbName = "_test.ДБ_"
 
-type TestDataStuct struct {
+type TestDataStruct struct {
 	Database string
 	Table    string
 	Schema   string
@@ -29,53 +29,53 @@ type TestDataStuct struct {
 	OrderBy  string
 }
 
-var testData = []TestDataStuct{
-	TestDataStuct{
+var testData = []TestDataStruct{
+	TestDataStruct{
 		Database: dbName,
 		Table:    ".inner.table1",
 		Schema:   "(Date Date, TimeStamp DateTime, Log String) ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)",
 		Rows: []map[string]interface{}{
-			map[string]interface{}{"Date": toDate("2018-10-23"), "TimeStamp": toTS("2018-10-23 07:37:14"), "Log": "One"},
-			map[string]interface{}{"Date": toDate("2018-10-23"), "TimeStamp": toTS("2018-10-23 07:37:15"), "Log": "Two"},
-			map[string]interface{}{"Date": toDate("2018-10-24"), "TimeStamp": toTS("2018-10-24 07:37:16"), "Log": "Three"},
-			map[string]interface{}{"Date": toDate("2018-10-24"), "TimeStamp": toTS("2018-10-24 07:37:17"), "Log": "Four"},
-			map[string]interface{}{"Date": toDate("2019-10-25"), "TimeStamp": toTS("2019-01-25 07:37:18"), "Log": "Five"},
-			map[string]interface{}{"Date": toDate("2019-10-25"), "TimeStamp": toTS("2019-01-25 07:37:19"), "Log": "Six"},
+			{"Date": toDate("2018-10-23"), "TimeStamp": toTS("2018-10-23 07:37:14"), "Log": "One"},
+			{"Date": toDate("2018-10-23"), "TimeStamp": toTS("2018-10-23 07:37:15"), "Log": "Two"},
+			{"Date": toDate("2018-10-24"), "TimeStamp": toTS("2018-10-24 07:37:16"), "Log": "Three"},
+			{"Date": toDate("2018-10-24"), "TimeStamp": toTS("2018-10-24 07:37:17"), "Log": "Four"},
+			{"Date": toDate("2019-10-25"), "TimeStamp": toTS("2019-01-25 07:37:18"), "Log": "Five"},
+			{"Date": toDate("2019-10-25"), "TimeStamp": toTS("2019-01-25 07:37:19"), "Log": "Six"},
 		},
 		Fields:  []string{"Date", "TimeStamp", "Log"},
 		OrderBy: "TimeStamp",
 	},
-	TestDataStuct{
+	TestDataStruct{
 		Database: dbName,
 		Table:    "2. Таблица №2",
 		Schema:   "(id UInt64, User String) ENGINE = MergeTree ORDER BY id SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
-			map[string]interface{}{"id": uint64(1), "User": "Alice"},
-			map[string]interface{}{"id": uint64(2), "User": "Bob"},
-			map[string]interface{}{"id": uint64(3), "User": "John"},
-			map[string]interface{}{"id": uint64(4), "User": "Frank"},
-			map[string]interface{}{"id": uint64(5), "User": "Nancy"},
-			map[string]interface{}{"id": uint64(6), "User": "Brandon"},
+			{"id": uint64(1), "User": "Alice"},
+			{"id": uint64(2), "User": "Bob"},
+			{"id": uint64(3), "User": "John"},
+			{"id": uint64(4), "User": "Frank"},
+			{"id": uint64(5), "User": "Nancy"},
+			{"id": uint64(6), "User": "Brandon"},
 		},
 		Fields:  []string{"id", "User"},
 		OrderBy: "id",
 	},
-	TestDataStuct{
+	TestDataStruct{
 		Database: dbName,
 		Table:    "table3",
 		Schema:   "(TimeStamp DateTime, Item String, Date Date MATERIALIZED toDate(TimeStamp)) ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
-			map[string]interface{}{"TimeStamp": toTS("2018-10-23 07:37:14"), "Item": "One"},
-			map[string]interface{}{"TimeStamp": toTS("2018-10-23 07:37:15"), "Item": "Two"},
-			map[string]interface{}{"TimeStamp": toTS("2018-10-24 07:37:16"), "Item": "Three"},
-			map[string]interface{}{"TimeStamp": toTS("2018-10-24 07:37:17"), "Item": "Four"},
-			map[string]interface{}{"TimeStamp": toTS("2019-01-25 07:37:18"), "Item": "Five"},
-			map[string]interface{}{"TimeStamp": toTS("2019-01-25 07:37:19"), "Item": "Six"},
+			{"TimeStamp": toTS("2018-10-23 07:37:14"), "Item": "One"},
+			{"TimeStamp": toTS("2018-10-23 07:37:15"), "Item": "Two"},
+			{"TimeStamp": toTS("2018-10-24 07:37:16"), "Item": "Three"},
+			{"TimeStamp": toTS("2018-10-24 07:37:17"), "Item": "Four"},
+			{"TimeStamp": toTS("2019-01-25 07:37:18"), "Item": "Five"},
+			{"TimeStamp": toTS("2019-01-25 07:37:19"), "Item": "Six"},
 		},
 		Fields:  []string{"TimeStamp", "Item"},
 		OrderBy: "TimeStamp",
 	},
-	TestDataStuct{
+	TestDataStruct{
 		Database: dbName,
 		Table:    "table4",
 		Schema:   "(id UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY id ORDER BY (id, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192",
@@ -89,44 +89,77 @@ var testData = []TestDataStuct{
 		Fields:  []string{"id", "Col1", "Col2", "Col3", "Col4", "Col5"},
 		OrderBy: "id",
 	},
+	TestDataStruct{
+		Database: dbName,
+		Table:    "yuzhichang_table2",
+		Schema:   "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMM(order_time) ORDER BY (order_time, order_id)",
+		Rows: []map[string]interface{}{
+			{"order_id": "1", "order_time": toTS("2010-01-01 00:00:00"), "amount": 1.0},
+			{"order_id": "2", "order_time": toTS("2010-02-01 00:00:00"), "amount": 2.0},
+		},
+		Fields:  []string{"order_id", "order_time", "amount"},
+		OrderBy: "order_id",
+	},
+	TestDataStruct{
+		Database: dbName,
+		Table:    "yuzhichang_table3",
+		Schema:   "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMMDD(order_time) ORDER BY (order_time, order_id)",
+		Rows: []map[string]interface{}{
+			{"order_id": "1", "order_time": toTS("2010-01-01 00:00:00"), "amount": 1.0},
+			{"order_id": "2", "order_time": toTS("2010-02-01 00:00:00"), "amount": 2.0},
+		},
+		Fields:  []string{"order_id", "order_time", "amount"},
+		OrderBy: "order_id",
+	},
+	TestDataStruct{
+		Database: dbName,
+		Table:    "yuzhichang_table4",
+		Schema:   "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() ORDER BY (order_time, order_id)",
+		Rows: []map[string]interface{}{
+			{"order_id": "1", "order_time": toTS("2010-01-01 00:00:00"), "amount": 1.0},
+			{"order_id": "2", "order_time": toTS("2010-02-01 00:00:00"), "amount": 2.0},
+		},
+		Fields:  []string{"order_id", "order_time", "amount"},
+		OrderBy: "order_id",
+	},
 }
 
-var incrementData = []TestDataStuct{
-	TestDataStuct{
+var incrementData = []TestDataStruct{
+	TestDataStruct{
 		Database: dbName,
 		Table:    ".inner.table1",
 		Schema:   "(Date Date, TimeStamp DateTime, Log String) ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)",
 		Rows: []map[string]interface{}{
-			map[string]interface{}{"Date": toDate("2019-10-26"), "TimeStamp": toTS("2019-01-26 07:37:19"), "Log": "Seven"},
+			{"Date": toDate("2019-10-26"), "TimeStamp": toTS("2019-01-26 07:37:19"), "Log": "Seven"},
 		},
 		Fields:  []string{"Date", "TimeStamp", "Log"},
 		OrderBy: "TimeStamp",
 	},
-	TestDataStuct{
+	TestDataStruct{
 		Database: dbName,
 		Table:    "2. Таблица №2",
 		Schema:   "(id UInt64, User String) ENGINE = MergeTree ORDER BY id SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
-			map[string]interface{}{"id": uint64(7), "User": "Alice"},
-			map[string]interface{}{"id": uint64(8), "User": "Bob"},
-			map[string]interface{}{"id": uint64(9), "User": "John"},
-			map[string]interface{}{"id": uint64(10), "User": "Frank"},
+			{"id": uint64(7), "User": "Alice"},
+			{"id": uint64(8), "User": "Bob"},
+			{"id": uint64(9), "User": "John"},
+			{"id": uint64(10), "User": "Frank"},
 		},
 		Fields:  []string{"id", "User"},
 		OrderBy: "id",
 	},
-	TestDataStuct{
+	TestDataStruct{
 		Database: dbName,
 		Table:    "table3",
 		Schema:   "(TimeStamp DateTime, Item String, Date Date MATERIALIZED toDate(TimeStamp)) ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
-			map[string]interface{}{"TimeStamp": toTS("2019-01-26 07:37:18"), "Item": "Seven"},
-			map[string]interface{}{"TimeStamp": toTS("2019-01-27 07:37:19"), "Item": "Eight"},
+			{"TimeStamp": toTS("2019-01-26 07:37:18"), "Item": "Seven"},
+			{"TimeStamp": toTS("2019-01-27 07:37:19"), "Item": "Eight"},
 		},
 		Fields:  []string{"TimeStamp", "Item"},
 		OrderBy: "TimeStamp",
 	},
-	TestDataStuct{
+	TestDataStruct{
 		Database: dbName,
 		Table:    "table4",
 		Schema:   "(id UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY id ORDER BY (id, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192",
@@ -139,6 +172,39 @@ var incrementData = []TestDataStuct{
 		}(),
 		Fields:  []string{"id", "Col1", "Col2", "Col3", "Col4", "Col5"},
 		OrderBy: "id",
+	},
+	TestDataStruct{
+		Database: dbName,
+		Table:    "yuzhichang_table2",
+		Schema:   "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMM(order_time) ORDER BY (order_time, order_id)",
+		Rows: []map[string]interface{}{
+			{"order_id": "3", "order_time": toTS("2010-03-01 00:00:00"), "amount": 3.0},
+			{"order_id": "4", "order_time": toTS("2010-04-01 00:00:00"), "amount": 4.0},
+		},
+		Fields:  []string{"order_id", "order_time", "amount"},
+		OrderBy: "order_id",
+	},
+	TestDataStruct{
+		Database: dbName,
+		Table:    "yuzhichang_table3",
+		Schema:   "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMMDD(order_time) ORDER BY (order_time, order_id)",
+		Rows: []map[string]interface{}{
+			{"order_id": "3", "order_time": toTS("2010-03-01 00:00:00"), "amount": 3.0},
+			{"order_id": "4", "order_time": toTS("2010-04-01 00:00:00"), "amount": 4.0},
+		},
+		Fields:  []string{"order_id", "order_time", "amount"},
+		OrderBy: "order_id",
+	},
+	TestDataStruct{
+		Database: dbName,
+		Table:    "yuzhichang_table4",
+		Schema:   "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() ORDER BY (order_time, order_id)",
+		Rows: []map[string]interface{}{
+			{"order_id": "3", "order_time": toTS("2010-03-01 00:00:00"), "amount": 3.0},
+			{"order_id": "4", "order_time": toTS("2010-04-01 00:00:00"), "amount": 4.0},
+		},
+		Fields:  []string{"order_id", "order_time", "amount"},
+		OrderBy: "order_id",
 	},
 }
 
@@ -296,7 +362,7 @@ func (ch *TestClickHouse) connect() error {
 	return ch.chbackup.Connect()
 }
 
-func (ch *TestClickHouse) createTestData(data TestDataStuct) error {
+func (ch *TestClickHouse) createTestData(data TestDataStruct) error {
 	if err := ch.chbackup.CreateDatabase(data.Database); err != nil {
 		return err
 	}
@@ -335,7 +401,7 @@ func (ch *TestClickHouse) dropDatabase(database string) error {
 	return err
 }
 
-func (ch *TestClickHouse) checkData(t *testing.T, data TestDataStuct) error {
+func (ch *TestClickHouse) checkData(t *testing.T, data TestDataStruct) error {
 	fmt.Printf("Check '%d' rows in '%s.%s'\n", len(data.Rows), data.Database, data.Table)
 	rows, err := ch.chbackup.GetConn().Queryx(fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY %s", data.Database, data.Table, data.OrderBy))
 	if err != nil {

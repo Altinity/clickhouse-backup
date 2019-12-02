@@ -143,8 +143,8 @@ func (ch *ClickHouse) FreezeTableOldWay(table Table) error {
 	var partitions []struct {
 		PartitionID string `db:"partition_id"`
 	}
-	q := "SELECT DISTINCT partition_id FROM `system`.`parts` WHERE database='?' AND table='?'"
-	if err := ch.conn.Select(&partitions, q, table.Database, table.Name); err != nil {
+	q := fmt.Sprintf("SELECT DISTINCT partition_id FROM `system`.`parts` WHERE database='%s' AND table='%s'", table.Database, table.Name)
+	if err := ch.conn.Select(&partitions, q); err != nil {
 		return fmt.Errorf("can't get partitions for \"%s.%s\" with %v", table.Database, table.Name, err)
 	}
 	log.Printf("Freeze '%v.%v'", table.Database, table.Name)
