@@ -46,7 +46,7 @@ func (s *S3) Connect() error {
 		DisableSSL:       aws.Bool(s.Config.DisableSSL),
 		S3ForcePathStyle: aws.Bool(s.Config.ForcePathStyle),
 		MaxRetries:       aws.Int(30),
-	};
+	}
 
 	if s.Config.DisableCertVerification {
 		tr := &http.Transport{

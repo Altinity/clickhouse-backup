@@ -24,7 +24,7 @@ const (
 	// MetaFileName - meta file name
 	MetaFileName = "meta.json"
 	// BufferSize - size of ring buffer between stream handlers
-	BufferSize   = 4 * 1024 * 1024
+	BufferSize = 4 * 1024 * 1024
 )
 
 // MetaFile - structure describe meta file that will be added to incremental backups archive.

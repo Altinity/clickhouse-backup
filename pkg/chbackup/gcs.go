@@ -54,7 +54,6 @@ func (gcs *GCS) Walk(gcsPath string, process func(r RemoteFile)) error {
 			return err
 		}
 	}
-
 }
 
 func (gcs *GCS) Kind() string {

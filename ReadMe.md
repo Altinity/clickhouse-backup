@@ -21,17 +21,17 @@ Tool for easy ClickHouse backup and restore with S3 and GCS support
 - Only MergeTree family tables engines
 - Backup of 'Tiered storage' or `storage_policy` IS NOT SUPPORTED!
 - Maximum backup size on remote storages is 5TB
-- Maximum number of parts on AWS S3 is 10,000
+- Maximum number of parts on AWS S3 is 10,000 (increase part_size if your database is more than 1TB)
 
 ## Download
 
-- Grab the latest binary from the [releases](https://github.com/AlexAkulov/clickhouse-backup/releases) page and decompress with:
+- Download the latest binary from the [releases](https://github.com/AlexAkulov/clickhouse-backup/releases) page and decompress with:
 
 ```shell
 tar -zxvf clickhouse-backup.tar.gz
 ```
 
-- Or use the official tiny Docker image and run it like:
+- Use the official tiny Docker image and run it like:
 
 ```shell
 docker run --rm -it --network host -v "/var/lib/clickhouse:/var/lib/clickhouse" \
@@ -42,7 +42,7 @@ docker run --rm -it --network host -v "/var/lib/clickhouse:/var/lib/clickhouse" 
    alexakulov/clickhouse-backup --help
 ```
 
-- Or get from the sources:
+- Bulid from the sources:
 
 ```shell
 GO111MODULE=on go get github.com/AlexAkulov/clickhouse-backup
@@ -151,6 +151,6 @@ clickhouse-backup upload $BACKUP_NAME
 - [How to move data to another clickhouse server](Examples.md#how-to-move-data-to-another-clickhouse-server)
 - [How to reduce number of partitions](Examples.md#How-to-reduce-number-of-partitions)
 - [How to monitor that backups created and uploaded correctly](Examples.md#how-to-monitor-that-backups-created-and-uploaded-correctly)
-- [How to backup sharded with Ansible](Examples.md#how-to-backup-sharded-with-ansible)
+- [How to backup sharded cluster with Ansible](Examples.md#how-to-backup-sharded-cluster-with-ansible)
 - [How to backup database with several terabytes of data](Examples.md#how-to-backup-database-with-several-terabytes-of-data)
 - [How to use clickhouse-backup in Kubernetes](Examples.md#how-to-use-clickhouse-backup-in-kubernetes)

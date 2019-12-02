@@ -143,8 +143,8 @@ func (ch *ClickHouse) FreezeTableOldWay(table Table) error {
 	var partitions []struct {
 		PartitionID string `db:"partition_id"`
 	}
-	q := fmt.Sprintf("SELECT DISTINCT partition_id FROM `system`.`parts` WHERE database='%v' AND table='%v'", table.Database, table.Name)
-	if err := ch.conn.Select(&partitions, q); err != nil {
+	q := "SELECT DISTINCT partition_id FROM `system`.`parts` WHERE database='?' AND table='?'"
+	if err := ch.conn.Select(&partitions, q, table.Database, table.Name); err != nil {
 		return fmt.Errorf("can't get partitions for \"%s.%s\" with %v", table.Database, table.Name, err)
 	}
 	log.Printf("Freeze '%v.%v'", table.Database, table.Name)
@@ -169,7 +169,7 @@ func (ch *ClickHouse) FreezeTableOldWay(table Table) error {
 }
 
 // FreezeTable - freeze all partitions for table
-// This way avaliable for ClickHouse sience v19.1
+// This way available for ClickHouse sience v19.1
 func (ch *ClickHouse) FreezeTable(table Table) error {
 	version, err := ch.GetVersion()
 	if err != nil {
@@ -248,7 +248,7 @@ func (ch *ClickHouse) GetBackupTables(backupName string) (map[string]BackupTable
 }
 
 // Chown - set permission on file to clickhouse user
-// This is necessary that the СlickHouse will be able to read parts files on restore
+// This is necessary that the ClickHouse will be able to read parts files on restore
 func (ch *ClickHouse) Chown(filename string) error {
 	var (
 		dataPath string
@@ -313,11 +313,11 @@ func (ch *ClickHouse) CopyData(table BackupTable) error {
 				return nil
 			}
 			if err := os.Link(filePath, dstFilePath); err != nil {
-				return fmt.Errorf("Failed to crete hard link '%s' -> '%s' with %v", filePath, dstFilePath, err)
+				return fmt.Errorf("failed to crete hard link '%s' -> '%s' with %v", filePath, dstFilePath, err)
 			}
 			return ch.Chown(dstFilePath)
 		}); err != nil {
-			return fmt.Errorf("Error during filepath.Walk for partition '%s' with %v", partition.Path, err)
+			return fmt.Errorf("error during filepath.Walk for partition '%s' with %v", partition.Path, err)
 		}
 	}
 	return nil

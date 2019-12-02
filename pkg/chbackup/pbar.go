@@ -1,8 +1,9 @@
 package chbackup
 
 import (
-	progressbar "gopkg.in/cheggaaa/pb.v1"
 	"io"
+
+	progressbar "gopkg.in/cheggaaa/pb.v1"
 )
 
 type Bar struct {
