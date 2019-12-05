@@ -19,7 +19,7 @@ require (
 	github.com/mattn/go-colorable v0.1.1 // indirect
 	github.com/mattn/go-runewidth v0.0.7 // indirect
 	github.com/mholt/archiver v1.1.3-0.20190812163345-2d1449806793
-	github.com/pierrec/lz4 v2.3.1-0.20190907084430-0554902aa74a+incompatible // indirect
+	github.com/pierrec/lz4 v2.3.1-0.20191115212037-9085dacd1e1e+incompatible // indirect
 	github.com/pkg/errors v0.8.1
 	github.com/stretchr/testify v1.4.0
 	github.com/urfave/cli v1.22.2
