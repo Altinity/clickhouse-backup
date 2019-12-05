@@ -12,8 +12,8 @@ import (
 	"strings"
 	"syscall"
 
+	_ "github.com/ClickHouse/clickhouse-go"
 	"github.com/jmoiron/sqlx"
-	_ "github.com/kshvakov/clickhouse"
 )
 
 // ClickHouse - provide

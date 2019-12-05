@@ -13,7 +13,7 @@ import (
 
 	"github.com/AlexAkulov/clickhouse-backup/pkg/chbackup"
 
-	_ "github.com/kshvakov/clickhouse"
+	_ "github.com/ClickHouse/clickhouse-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
