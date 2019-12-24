@@ -305,7 +305,7 @@ func PrintRemoteBackups(config Config, format string) error {
 }
 
 // Freeze - freeze tables by tablePattern
-func Freeze(config Config, tablePattern string) error {
+func Freeze(config Config, tablePattern, name string) error {
 	ch := &ClickHouse{
 		Config: &config.ClickHouse,
 	}
@@ -325,9 +325,11 @@ func Freeze(config Config, tablePattern string) error {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("can't read %s directory: %v", shadowPath, err)
 		}
-	} else if len(files) > 0 {
+	}
+	/*else if len(files) > 0 {
 		return fmt.Errorf("'%s' is not empty, execute 'clean' command first", shadowPath)
 	}
+	*/
 
 	allTables, err := ch.GetTables()
 	if err != nil {
@@ -342,7 +344,7 @@ func Freeze(config Config, tablePattern string) error {
 			log.Printf("Skip `%s`.`%s`", table.Database, table.Name)
 			continue
 		}
-		if err := ch.FreezeTable(table); err != nil {
+		if err := ch.FreezeTable(table, name); err != nil {
 			return err
 		}
 	}
@@ -372,7 +374,7 @@ func CreateBackup(config Config, backupName, tablePattern string) error {
 		return fmt.Errorf("can't create backup with %v", err)
 	}
 	log.Printf("Create backup '%s'", backupName)
-	if err := Freeze(config, tablePattern); err != nil {
+	if err := Freeze(config, tablePattern, backupName); err != nil {
 		return err
 	}
 	log.Println("Copy metadata")
@@ -485,6 +487,9 @@ func RestoreData(config Config, backupName string, tablePattern string) error {
 		}
 		if err := ch.AttachPatritions(table); err != nil {
 			return fmt.Errorf("can't attach partitions for table '%s.%s' with %v", table.Database, table.Name, err)
+		}
+		if err := ch.CheckData(table); err != nil {
+			return fmt.Errorf("data in the '%s' is corrupted with %v", table.Database, err)
 		}
 	}
 	return nil
