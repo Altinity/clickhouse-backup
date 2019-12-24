@@ -3,6 +3,7 @@ package chbackup
 import (
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/url"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/btcsuite/btcutil/base58"
 	"github.com/mholt/archiver"
 )
 
@@ -62,7 +64,23 @@ func isClickhouseShadow(path string) bool {
 	return true
 }
 
-func moveShadow(shadowPath, backupPath string) error {
+func moveShadow(shadowPath, backupPath, backupName string, version int) error {
+	switch {
+	//	case version < 19001005:
+	case version < 19010001: // 19.10
+		data, err := ioutil.ReadFile(fmt.Sprintf("%s%c%s", shadowPath, os.PathSeparator, "increment.txt"))
+		if err != nil {
+			return err
+		}
+		data = data[:len(data)-1]
+		idx, err := strconv.Atoi(string(data))
+		if err != nil {
+			return err
+		}
+		shadowPath = fmt.Sprintf("%s%c%d", shadowPath, os.PathSeparator, idx)
+	default:
+		shadowPath = fmt.Sprintf("%s%c%s", shadowPath, os.PathSeparator, base58.Encode([]byte(backupName)))
+	}
 	if err := filepath.Walk(shadowPath, func(filePath string, info os.FileInfo, err error) error {
 		relativePath := strings.Trim(strings.TrimPrefix(filePath, shadowPath), "/")
 		pathParts := strings.SplitN(relativePath, "/", 3)
