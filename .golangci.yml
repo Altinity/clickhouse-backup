@@ -1,0 +1,126 @@
+run:
+  concurrency: 4
+  timeout: 1m
+  issues-exit-code: 1
+  tests: true
+  build-tags: []
+  skip-dirs:
+    - test/integration
+  skip-dirs-use-default: true
+  skip-files: []
+  modules-download-mode: readonly
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+linters-settings:
+  govet:
+    check-shadowing: false
+    settings:
+      printf:
+        funcs:
+          - (github.com/golangci/golangci-lint/pkg/logutils.Log).Infof
+          - (github.com/golangci/golangci-lint/pkg/logutils.Log).Warnf
+          - (github.com/golangci/golangci-lint/pkg/logutils.Log).Errorf
+          - (github.com/golangci/golangci-lint/pkg/logutils.Log).Fatalf
+    enable:
+      - atomicalign
+    enable-all: false
+    disable:
+      - shadow
+    disable-all: false
+  golint:
+    min-confidence: 0.8
+  gofmt:
+    simplify: true
+  gocyclo:
+    min-complexity: 30
+  gocognit:
+    min-complexity: 30
+  dupl:
+    threshold: 150
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+  misspell:
+    locale: US
+    ignore-words: []
+  unused:
+    check-exported: false
+  unparam:
+    check-exported: false
+  nakedret:
+    max-func-lines: 30
+  prealloc:
+    simple: true
+    range-loops: true # Report preallocation suggestions on range loops, true by default
+    for-loops: false # Report preallocation suggestions on for loops, false by default
+  gocritic:
+    enabled-checks: []
+    disabled-checks: []
+    enabled-tags:
+      - performance
+    settings: # settings passed to gocritic
+      captLocal: # must be valid enabled check name
+        paramsOnly: true
+      rangeValCopy:
+        sizeThreshold: 32
+  dogsled:
+    max-blank-identifiers: 2
+
+  whitespace:
+    multi-if: false   # Enforces newlines (or comments) after every multi-line if statement
+    multi-func: false # Enforces newlines (or comments) after every multi-line function signature
+
+linters:
+  enable:
+    - dupl
+    - megacheck
+    - govet
+    - gofmt
+    - goimports
+    - misspell
+    - prealloc
+    - stylecheck
+    - unconvert
+    - whitespace
+  disable:
+    - maligned
+    - errcheck
+    - scopelint
+    - gosec
+  disable-all: false
+  presets:
+    - bugs
+    - unused
+  fast: true
+
+issues:
+  exclude: []
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - gocyclo
+        - errcheck
+        - dupl
+        - gosec
+
+    - path: internal/hmac/
+      text: "weak cryptographic primitive"
+      linters:
+        - gosec
+    - linters:
+        - staticcheck
+      text: "SA9003:"
+    - linters:
+        - gosec
+      text: "G104:"
+    - linters:
+        - lll
+      source: "^//go:generate "
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  new: false
+  new-from-rev:
+  new-from-patch:

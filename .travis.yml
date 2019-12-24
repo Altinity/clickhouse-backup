@@ -3,15 +3,27 @@ sudo: required
 go:
   - 1.13
 env:
-  - GO111MODULE=on
+  - CLICKHOUSE_VERSION=1.1.54390
+  - CLICKHOUSE_VERSION=19.4.4.33
+  - CLICKHOUSE_VERSION=19.15.3.6 GCS_TESTS=yes DEPLOY_ARTIFACTS=yes
 services:
   - docker
 script:
-  - CGO_ENABLED=0 go build -ldflags "-w -s -X main.version=${TRAVIS_TAG} -X main.gitCommit=${TRAVIS_COMMIT} -X main.buildDate=$(date --iso-8601)" -o clickhouse-backup/clickhouse-backup
-  - ./clickhouse-backup/clickhouse-backup default-config > clickhouse-backup/config.yml
-  - docker-compose -f integration-test/docker-compose-travis.yml up -d --force-recreate
-  - go test -v
-  - go test -tags=integration
+  # Building executable file
+  - CGO_ENABLED=0 go build -ldflags "-w -s -X main.version=${TRAVIS_TAG} -X main.gitCommit=${TRAVIS_COMMIT} -X main.buildDate=$(date --iso-8601)" -o clickhouse-backup/clickhouse-backup || travis_terminate 1;
+  # Creating default config
+  - ./clickhouse-backup/clickhouse-backup default-config > clickhouse-backup/config.yml || travis_terminate 1;
+  # Running unit tests
+  - go test -v ./pkg/...  || travis_terminate 1;
+  # Decrypting credentials for Google Cloud Storage
+  - if [ "$TRAVIS_PULL_REQUEST" == "false" ]; then
+        openssl enc -base64 -aes-256-cbc -d -in test/integration/credentials.json.enc -out test/integration/credentials.json -k ${VAULT_PASSWORD} || travis_terminate 1;
+    fi
+  # Preparing to integration tests
+  - CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup" docker-compose -f test/integration/docker-compose.yml up -d --force-recreate || travis_terminate 1;
+  # Running integration tests
+  - go test -tags=integration test/integration/integration_test.go || travis_terminate 1;
+  # Building docker image
   - docker build -t alexakulov/clickhouse-backup:master .
 after_success:
   - tar -czvf clickhouse-backup.tar.gz clickhouse-backup
@@ -23,11 +35,14 @@ deploy:
     overwrite: true
     on:
       tags: true
+      condition: -n $DEPLOY_ARTIFACTS
   - provider: script
     script: bash docker_push.sh
     on:
       branch: master
+      condition: -n $DEPLOY_ARTIFACTS
   - provider: script
     script: bash docker_push.sh release
     on:
       tags: true
+      condition: -n $DEPLOY_ARTIFACTS

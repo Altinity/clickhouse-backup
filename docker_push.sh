@@ -1,5 +1,10 @@
 #!/bin/bash
 
+if [ "$TRAVIS_PULL_REQUEST" != "false" ]; then
+    echo "Skip. It's Pull Request"
+    exit 0
+fi
+
 echo "${DOCKER_PASSWORD}" | docker login -u alexakulov --password-stdin
 
 docker push "alexakulov/clickhouse-backup:master"

@@ -1,4 +1,4 @@
-package main
+package chbackup
 
 import (
 	"fmt"
@@ -7,15 +7,16 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
 
+	_ "github.com/ClickHouse/clickhouse-go"
 	"github.com/jmoiron/sqlx"
-	_ "github.com/kshvakov/clickhouse"
 )
 
-// ClickHouse - provide info and freeze tables
+// ClickHouse - provide
 type ClickHouse struct {
 	Config *ClickHouseConfig
 	conn   *sqlx.DB
@@ -23,7 +24,7 @@ type ClickHouse struct {
 	gid    *int
 }
 
-// Table - Clickhouse table struct
+// Table - ClickHouse table struct
 type Table struct {
 	Database string `db:"database"`
 	Name     string `db:"name"`
@@ -43,6 +44,16 @@ type BackupTable struct {
 	Partitions []BackupPartition
 }
 
+// BackupTables - slice of BackupTable
+type BackupTables []BackupTable
+
+// Sort - sorting BackupTables slice orderly by name
+func (bt BackupTables) Sort() {
+	sort.Slice(bt, func(i, j int) bool {
+		return (bt[i].Database < bt[j].Database) || (bt[i].Database == bt[j].Database && bt[i].Name < bt[j].Name)
+	})
+}
+
 // RestoreTable - struct to store information needed during restore
 type RestoreTable struct {
 	Database string
@@ -51,7 +62,17 @@ type RestoreTable struct {
 	Path     string
 }
 
-// Connect - connect to clickhouse
+// RestoreTables - slice of RestoreTable
+type RestoreTables []RestoreTable
+
+// Sort - sorting BackupTables slice orderly by name
+func (rt RestoreTables) Sort() {
+	sort.Slice(rt, func(i, j int) bool {
+		return (rt[i].Database < rt[j].Database) || (rt[i].Database == rt[j].Database && rt[i].Table < rt[j].Table)
+	})
+}
+
+// Connect - establish connection to ClickHouse
 func (ch *ClickHouse) Connect() error {
 	connectionString := fmt.Sprintf("tcp://%v:%v?username=%v&password=%v&database=system&compress=true",
 		ch.Config.Host, ch.Config.Port, ch.Config.Username, ch.Config.Password)
@@ -62,21 +83,7 @@ func (ch *ClickHouse) Connect() error {
 	return ch.conn.Ping()
 }
 
-// ConnectDatabase - connect to clickhouse to specified database
-func (ch *ClickHouse) ConnectDatabase(database string) error {
-	if database == "" {
-		database = "default"
-	}
-	connectionString := fmt.Sprintf("tcp://%v:%v?username=%v&password=%v&database=%v&compress=true",
-		ch.Config.Host, ch.Config.Port, ch.Config.Username, ch.Config.Password, database)
-	var err error
-	if ch.conn, err = sqlx.Open("clickhouse", connectionString); err != nil {
-		return err
-	}
-	return ch.conn.Ping()
-}
-
-// GetDataPath - return clickhouse data_path
+// GetDataPath - return ClickHouse data_path
 func (ch *ClickHouse) GetDataPath() (string, error) {
 	if ch.Config.DataPath != "" {
 		return ch.Config.DataPath, nil
@@ -93,12 +100,12 @@ func (ch *ClickHouse) GetDataPath() (string, error) {
 	return path.Join("/", clickhouseData), nil
 }
 
-// Close - close connection to clickhouse
+// Close - closing connection to ClickHouse
 func (ch *ClickHouse) Close() error {
 	return ch.conn.Close()
 }
 
-// GetTables - get all tables info
+// GetTables - return slice of all tables suitable for backup
 func (ch *ClickHouse) GetTables() ([]Table, error) {
 	var tables []Table
 	if err := ch.conn.Select(&tables, "SELECT database, name FROM system.tables WHERE is_temporary = 0 AND engine LIKE '%MergeTree';"); err != nil {
@@ -116,7 +123,9 @@ func (ch *ClickHouse) GetTables() ([]Table, error) {
 	return tables, nil
 }
 
-func (ch *ClickHouse) getVersion() (int, error) {
+// GetVersion - returned ClickHouse version in number format
+// Example value: 19001005
+func (ch *ClickHouse) GetVersion() (int, error) {
 	var result []string
 	q := fmt.Sprintf("SELECT value FROM `system`.`build_options` where name='VERSION_INTEGER'")
 	if err := ch.conn.Select(&result, q); err != nil {
@@ -128,12 +137,13 @@ func (ch *ClickHouse) getVersion() (int, error) {
 	return strconv.Atoi(result[0])
 }
 
-// FreezeTableOldWay - freeze table for versions below 19.1
+// FreezeTableOldWay - freeze all partitions in table one by one
+// This way using for ClickHouse below v19.1
 func (ch *ClickHouse) FreezeTableOldWay(table Table) error {
 	var partitions []struct {
 		PartitionID string `db:"partition_id"`
 	}
-	q := fmt.Sprintf("SELECT DISTINCT partition_id FROM `system`.`parts` WHERE database='%v' AND table='%v'", table.Database, table.Name)
+	q := fmt.Sprintf("SELECT DISTINCT partition_id FROM `system`.`parts` WHERE database='%s' AND table='%s'", table.Database, table.Name)
 	if err := ch.conn.Select(&partitions, q); err != nil {
 		return fmt.Errorf("can't get partitions for \"%s.%s\" with %v", table.Database, table.Name, err)
 	}
@@ -159,8 +169,9 @@ func (ch *ClickHouse) FreezeTableOldWay(table Table) error {
 }
 
 // FreezeTable - freeze all partitions for table
+// This way available for ClickHouse sience v19.1
 func (ch *ClickHouse) FreezeTable(table Table) error {
-	version, err := ch.getVersion()
+	version, err := ch.GetVersion()
 	if err != nil {
 		return err
 	}
@@ -201,7 +212,7 @@ func (ch *ClickHouse) GetBackupTables(backupName string) (map[string]BackupTable
 	}
 
 	result := make(map[string]BackupTable)
-	if err := filepath.Walk(backupShadowPath, func(filePath string, info os.FileInfo, err error) error {
+	err = filepath.Walk(backupShadowPath, func(filePath string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -232,14 +243,13 @@ func (ch *ClickHouse) GetBackupTables(backupName string) (map[string]BackupTable
 			return nil
 		}
 		return nil
-	}); err != nil {
-		return nil, err
-	}
-	return result, nil
+	})
+	return result, err
 }
 
-// Chown - set owner and group to clickhouse user
-func (ch *ClickHouse) Chown(name string) error {
+// Chown - set permission on file to clickhouse user
+// This is necessary that the ClickHouse will be able to read parts files on restore
+func (ch *ClickHouse) Chown(filename string) error {
 	var (
 		dataPath string
 		err      error
@@ -258,7 +268,7 @@ func (ch *ClickHouse) Chown(name string) error {
 		ch.uid = &uid
 		ch.gid = &gid
 	}
-	return os.Chown(name, *ch.uid, *ch.gid)
+	return os.Chown(filename, *ch.uid, *ch.gid)
 }
 
 // CopyData - copy partitions for specific table to detached folder
@@ -303,45 +313,20 @@ func (ch *ClickHouse) CopyData(table BackupTable) error {
 				return nil
 			}
 			if err := os.Link(filePath, dstFilePath); err != nil {
-				return fmt.Errorf("Failed to crete hard link '%s' -> '%s' with %v", filePath, dstFilePath, err)
+				return fmt.Errorf("failed to crete hard link '%s' -> '%s' with %v", filePath, dstFilePath, err)
 			}
 			return ch.Chown(dstFilePath)
 		}); err != nil {
-			return fmt.Errorf("Error during filepath.Walk for partition '%s' with %v", partition.Path, err)
+			return fmt.Errorf("error during filepath.Walk for partition '%s' with %v", partition.Path, err)
 		}
 	}
 	return nil
 }
 
-func convertPartition(detachedTableFolder string) string {
-	parts := strings.Split(detachedTableFolder, "_")
-	if parts[0] == "all" {
-		// table is not partitioned at all
-		// ENGINE = MergeTree ORDER BY id
-		return "tuple()"
-	}
-	if len(parts) == 5 {
-		// legacy partitioning based on month: toYYYYMM(date_column)
-		// in this case we return YYYYMM
-		// ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)
-		return parts[0][:6]
-	}
-	// in case a custom partitioning key is used this is a partition name
-	// same as in system.parts table, it may be used in ALTER TABLE queries
-	// https://clickhouse.yandex/docs/en/operations/table_engines/custom_partitioning_key/
-	return fmt.Sprintf("ID '%s'", parts[0])
-}
-
 // AttachPatritions - execute ATTACH command for specific table
 func (ch *ClickHouse) AttachPatritions(table BackupTable) error {
-	attachedParts := make(map[string]struct{})
 	for _, partition := range table.Partitions {
-		partName := convertPartition(partition.Name)
-		if _, ok := attachedParts[partName]; ok {
-			continue
-		}
-		query := fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PARTITION %s", table.Database, table.Name, partName)
-		attachedParts[partName] = struct{}{}
+		query := fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PART '%s'", table.Database, table.Name, partition.Name)
 		log.Println(query)
 		if _, err := ch.conn.Exec(query); err != nil {
 			return err
@@ -350,14 +335,14 @@ func (ch *ClickHouse) AttachPatritions(table BackupTable) error {
 	return nil
 }
 
-// CreateDatabase - create specific database from metadata in backup folder
+// CreateDatabase - create ClickHouse database
 func (ch *ClickHouse) CreateDatabase(database string) error {
 	createQuery := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", database)
 	_, err := ch.conn.Exec(createQuery)
 	return err
 }
 
-// CreateTable - create specific table from metadata in backup folder
+// CreateTable - create ClickHouse table
 func (ch *ClickHouse) CreateTable(table RestoreTable) error {
 	if _, err := ch.conn.Exec(fmt.Sprintf("USE `%s`", table.Database)); err != nil {
 		return err
@@ -367,4 +352,9 @@ func (ch *ClickHouse) CreateTable(table RestoreTable) error {
 		return err
 	}
 	return nil
+}
+
+// GetConn - return current connection
+func (ch *ClickHouse) GetConn() *sqlx.DB {
+	return ch.conn
 }

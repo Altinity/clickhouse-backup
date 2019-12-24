@@ -14,13 +14,13 @@ services:
       - clickhouse-backup
 
   clickhouse:
-    image: yandex/clickhouse-server:19.15.3.6
+    image: yandex/clickhouse-server:${CLICKHOUSE_VERSION:-19.15.3.6}
     container_name: clickhouse
     environment:
       TZ: UTC
     volumes:
-      - ../clickhouse-backup:/usr/bin/clickhouse-backup
-      - ./config.yml:/etc/clickhouse-backup/config.yml
+      - ${CLICKHOUSE_BACKUP_BIN:-../../clickhouse-backup}:/usr/bin/clickhouse-backup
+      - ./credentials.json:/etc/clickhouse-backup/credentials.json
     ports:
       - 9000:9000
     networks:

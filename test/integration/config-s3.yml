@@ -1,3 +1,6 @@
+general:
+  disable_progress_bar: true
+  remote_storage: s3
 clickhouse:
   host: localhost
   port: 9000
@@ -10,8 +13,3 @@ s3:
   force_path_style: true
   path: backup
   disable_ssl: true
-  disable_progress_bar: true
-  compression_level: 1
-  compression_format: gzip
-  backups_to_keep_local: 10
-  backups_to_keep_s3: 10

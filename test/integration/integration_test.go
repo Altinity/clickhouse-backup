@@ -5,19 +5,22 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
 	"time"
 
-	_ "github.com/kshvakov/clickhouse"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/chbackup"
+
+	_ "github.com/ClickHouse/clickhouse-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 const dbName = "_test.ДБ_"
 
-type TestDataStuct struct {
+type TestDataStruct struct {
 	Database string
 	Table    string
 	Schema   string
@@ -26,53 +29,53 @@ type TestDataStuct struct {
 	OrderBy  string
 }
 
-var testData = []TestDataStuct{
-	TestDataStuct{
+var testData = []TestDataStruct{
+	TestDataStruct{
 		Database: dbName,
 		Table:    ".inner.table1",
 		Schema:   "(Date Date, TimeStamp DateTime, Log String) ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)",
 		Rows: []map[string]interface{}{
-			map[string]interface{}{"Date": toDate("2018-10-23"), "TimeStamp": toTS("2018-10-23 07:37:14"), "Log": "One"},
-			map[string]interface{}{"Date": toDate("2018-10-23"), "TimeStamp": toTS("2018-10-23 07:37:15"), "Log": "Two"},
-			map[string]interface{}{"Date": toDate("2018-10-24"), "TimeStamp": toTS("2018-10-24 07:37:16"), "Log": "Three"},
-			map[string]interface{}{"Date": toDate("2018-10-24"), "TimeStamp": toTS("2018-10-24 07:37:17"), "Log": "Four"},
-			map[string]interface{}{"Date": toDate("2019-10-25"), "TimeStamp": toTS("2019-01-25 07:37:18"), "Log": "Five"},
-			map[string]interface{}{"Date": toDate("2019-10-25"), "TimeStamp": toTS("2019-01-25 07:37:19"), "Log": "Six"},
+			{"Date": toDate("2018-10-23"), "TimeStamp": toTS("2018-10-23 07:37:14"), "Log": "One"},
+			{"Date": toDate("2018-10-23"), "TimeStamp": toTS("2018-10-23 07:37:15"), "Log": "Two"},
+			{"Date": toDate("2018-10-24"), "TimeStamp": toTS("2018-10-24 07:37:16"), "Log": "Three"},
+			{"Date": toDate("2018-10-24"), "TimeStamp": toTS("2018-10-24 07:37:17"), "Log": "Four"},
+			{"Date": toDate("2019-10-25"), "TimeStamp": toTS("2019-01-25 07:37:18"), "Log": "Five"},
+			{"Date": toDate("2019-10-25"), "TimeStamp": toTS("2019-01-25 07:37:19"), "Log": "Six"},
 		},
 		Fields:  []string{"Date", "TimeStamp", "Log"},
 		OrderBy: "TimeStamp",
 	},
-	TestDataStuct{
+	TestDataStruct{
 		Database: dbName,
 		Table:    "2. Таблица №2",
 		Schema:   "(id UInt64, User String) ENGINE = MergeTree ORDER BY id SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
-			map[string]interface{}{"id": uint64(1), "User": "Alice"},
-			map[string]interface{}{"id": uint64(2), "User": "Bob"},
-			map[string]interface{}{"id": uint64(3), "User": "John"},
-			map[string]interface{}{"id": uint64(4), "User": "Frank"},
-			map[string]interface{}{"id": uint64(5), "User": "Nancy"},
-			map[string]interface{}{"id": uint64(6), "User": "Brandon"},
+			{"id": uint64(1), "User": "Alice"},
+			{"id": uint64(2), "User": "Bob"},
+			{"id": uint64(3), "User": "John"},
+			{"id": uint64(4), "User": "Frank"},
+			{"id": uint64(5), "User": "Nancy"},
+			{"id": uint64(6), "User": "Brandon"},
 		},
 		Fields:  []string{"id", "User"},
 		OrderBy: "id",
 	},
-	TestDataStuct{
+	TestDataStruct{
 		Database: dbName,
 		Table:    "table3",
 		Schema:   "(TimeStamp DateTime, Item String, Date Date MATERIALIZED toDate(TimeStamp)) ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
-			map[string]interface{}{"TimeStamp": toTS("2018-10-23 07:37:14"), "Item": "One"},
-			map[string]interface{}{"TimeStamp": toTS("2018-10-23 07:37:15"), "Item": "Two"},
-			map[string]interface{}{"TimeStamp": toTS("2018-10-24 07:37:16"), "Item": "Three"},
-			map[string]interface{}{"TimeStamp": toTS("2018-10-24 07:37:17"), "Item": "Four"},
-			map[string]interface{}{"TimeStamp": toTS("2019-01-25 07:37:18"), "Item": "Five"},
-			map[string]interface{}{"TimeStamp": toTS("2019-01-25 07:37:19"), "Item": "Six"},
+			{"TimeStamp": toTS("2018-10-23 07:37:14"), "Item": "One"},
+			{"TimeStamp": toTS("2018-10-23 07:37:15"), "Item": "Two"},
+			{"TimeStamp": toTS("2018-10-24 07:37:16"), "Item": "Three"},
+			{"TimeStamp": toTS("2018-10-24 07:37:17"), "Item": "Four"},
+			{"TimeStamp": toTS("2019-01-25 07:37:18"), "Item": "Five"},
+			{"TimeStamp": toTS("2019-01-25 07:37:19"), "Item": "Six"},
 		},
 		Fields:  []string{"TimeStamp", "Item"},
 		OrderBy: "TimeStamp",
 	},
-	TestDataStuct{
+	TestDataStruct{
 		Database: dbName,
 		Table:    "table4",
 		Schema:   "(id UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY id ORDER BY (id, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192",
@@ -86,44 +89,77 @@ var testData = []TestDataStuct{
 		Fields:  []string{"id", "Col1", "Col2", "Col3", "Col4", "Col5"},
 		OrderBy: "id",
 	},
+	TestDataStruct{
+		Database: dbName,
+		Table:    "yuzhichang_table2",
+		Schema:   "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMM(order_time) ORDER BY (order_time, order_id)",
+		Rows: []map[string]interface{}{
+			{"order_id": "1", "order_time": toTS("2010-01-01 00:00:00"), "amount": 1.0},
+			{"order_id": "2", "order_time": toTS("2010-02-01 00:00:00"), "amount": 2.0},
+		},
+		Fields:  []string{"order_id", "order_time", "amount"},
+		OrderBy: "order_id",
+	},
+	TestDataStruct{
+		Database: dbName,
+		Table:    "yuzhichang_table3",
+		Schema:   "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMMDD(order_time) ORDER BY (order_time, order_id)",
+		Rows: []map[string]interface{}{
+			{"order_id": "1", "order_time": toTS("2010-01-01 00:00:00"), "amount": 1.0},
+			{"order_id": "2", "order_time": toTS("2010-02-01 00:00:00"), "amount": 2.0},
+		},
+		Fields:  []string{"order_id", "order_time", "amount"},
+		OrderBy: "order_id",
+	},
+	TestDataStruct{
+		Database: dbName,
+		Table:    "yuzhichang_table4",
+		Schema:   "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() ORDER BY (order_time, order_id)",
+		Rows: []map[string]interface{}{
+			{"order_id": "1", "order_time": toTS("2010-01-01 00:00:00"), "amount": 1.0},
+			{"order_id": "2", "order_time": toTS("2010-02-01 00:00:00"), "amount": 2.0},
+		},
+		Fields:  []string{"order_id", "order_time", "amount"},
+		OrderBy: "order_id",
+	},
 }
 
-var incrementData = []TestDataStuct{
-	TestDataStuct{
+var incrementData = []TestDataStruct{
+	TestDataStruct{
 		Database: dbName,
 		Table:    ".inner.table1",
 		Schema:   "(Date Date, TimeStamp DateTime, Log String) ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)",
 		Rows: []map[string]interface{}{
-			map[string]interface{}{"Date": toDate("2019-10-26"), "TimeStamp": toTS("2019-01-26 07:37:19"), "Log": "Seven"},
+			{"Date": toDate("2019-10-26"), "TimeStamp": toTS("2019-01-26 07:37:19"), "Log": "Seven"},
 		},
 		Fields:  []string{"Date", "TimeStamp", "Log"},
 		OrderBy: "TimeStamp",
 	},
-	TestDataStuct{
+	TestDataStruct{
 		Database: dbName,
 		Table:    "2. Таблица №2",
 		Schema:   "(id UInt64, User String) ENGINE = MergeTree ORDER BY id SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
-			map[string]interface{}{"id": uint64(7), "User": "Alice"},
-			map[string]interface{}{"id": uint64(8), "User": "Bob"},
-			map[string]interface{}{"id": uint64(9), "User": "John"},
-			map[string]interface{}{"id": uint64(10), "User": "Frank"},
+			{"id": uint64(7), "User": "Alice"},
+			{"id": uint64(8), "User": "Bob"},
+			{"id": uint64(9), "User": "John"},
+			{"id": uint64(10), "User": "Frank"},
 		},
 		Fields:  []string{"id", "User"},
 		OrderBy: "id",
 	},
-	TestDataStuct{
+	TestDataStruct{
 		Database: dbName,
 		Table:    "table3",
 		Schema:   "(TimeStamp DateTime, Item String, Date Date MATERIALIZED toDate(TimeStamp)) ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
-			map[string]interface{}{"TimeStamp": toTS("2019-01-26 07:37:18"), "Item": "Seven"},
-			map[string]interface{}{"TimeStamp": toTS("2019-01-27 07:37:19"), "Item": "Eight"},
+			{"TimeStamp": toTS("2019-01-26 07:37:18"), "Item": "Seven"},
+			{"TimeStamp": toTS("2019-01-27 07:37:19"), "Item": "Eight"},
 		},
 		Fields:  []string{"TimeStamp", "Item"},
 		OrderBy: "TimeStamp",
 	},
-	TestDataStuct{
+	TestDataStruct{
 		Database: dbName,
 		Table:    "table4",
 		Schema:   "(id UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY id ORDER BY (id, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192",
@@ -137,17 +173,45 @@ var incrementData = []TestDataStuct{
 		Fields:  []string{"id", "Col1", "Col2", "Col3", "Col4", "Col5"},
 		OrderBy: "id",
 	},
+	TestDataStruct{
+		Database: dbName,
+		Table:    "yuzhichang_table2",
+		Schema:   "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMM(order_time) ORDER BY (order_time, order_id)",
+		Rows: []map[string]interface{}{
+			{"order_id": "3", "order_time": toTS("2010-03-01 00:00:00"), "amount": 3.0},
+			{"order_id": "4", "order_time": toTS("2010-04-01 00:00:00"), "amount": 4.0},
+		},
+		Fields:  []string{"order_id", "order_time", "amount"},
+		OrderBy: "order_id",
+	},
+	TestDataStruct{
+		Database: dbName,
+		Table:    "yuzhichang_table3",
+		Schema:   "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMMDD(order_time) ORDER BY (order_time, order_id)",
+		Rows: []map[string]interface{}{
+			{"order_id": "3", "order_time": toTS("2010-03-01 00:00:00"), "amount": 3.0},
+			{"order_id": "4", "order_time": toTS("2010-04-01 00:00:00"), "amount": 4.0},
+		},
+		Fields:  []string{"order_id", "order_time", "amount"},
+		OrderBy: "order_id",
+	},
+	TestDataStruct{
+		Database: dbName,
+		Table:    "yuzhichang_table4",
+		Schema:   "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() ORDER BY (order_time, order_id)",
+		Rows: []map[string]interface{}{
+			{"order_id": "3", "order_time": toTS("2010-03-01 00:00:00"), "amount": 3.0},
+			{"order_id": "4", "order_time": toTS("2010-04-01 00:00:00"), "amount": 4.0},
+		},
+		Fields:  []string{"order_id", "order_time", "amount"},
+		OrderBy: "order_id",
+	},
 }
 
-func TestRestoreLegacyBackupFormat(t *testing.T) {
-	ch := &ClickHouse{
-		Config: &ClickHouseConfig{
-			Host: "localhost",
-			Port: 9000,
-		},
-	}
+func testRestoreLegacyBackupFormat(t *testing.T) {
+	ch := &TestClickHouse{}
 	r := require.New(t)
-	r.NoError(ch.Connect())
+	r.NoError(ch.connect())
 	r.NoError(ch.dropDatabase(dbName))
 	fmt.Println("Generate test data")
 	for _, data := range testData {
@@ -180,27 +244,42 @@ func TestRestoreLegacyBackupFormat(t *testing.T) {
 	fmt.Println("Download")
 	r.NoError(dockerExec("clickhouse-backup", "download", "old_format"))
 
-	fmt.Println("Restore schema")
-	r.NoError(dockerExec("clickhouse-backup", "restore-schema", "old_format"))
-
-	fmt.Println("Restore data")
-	r.NoError(dockerExec("clickhouse-backup", "restore-data", "old_format"))
+	fmt.Println("Restore")
+	r.NoError(dockerExec("clickhouse-backup", "restore", "-t", dbName+".*", "old_format"))
 
 	fmt.Println("Check data")
 	for i := range testData {
 		r.NoError(ch.checkData(t, testData[i]))
 	}
+	fmt.Println("Clean")
+	r.NoError(dockerExec("/bin/rm", "-rf", "/var/lib/clickhouse/backup/old_format", "/var/lib/clickhouse/backup/increment_old_format", "/var/lib/clickhouse/shadow"))
+	r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "old_format.tar.gz"))
 }
 
-func TestIntegration(t *testing.T) {
-	ch := &ClickHouse{
-		Config: &ClickHouseConfig{
-			Host: "localhost",
-			Port: 9000,
-		},
+func TestIntegrationS3(t *testing.T) {
+	r := require.New(t)
+	r.NoError(dockerCP("config-s3.yml", "/etc/clickhouse-backup/config.yml"))
+	testRestoreLegacyBackupFormat(t)
+	testCommon(t)
+}
+
+func TestIntegrationGCS(t *testing.T) {
+	if os.Getenv("GCS_TESTS") == "" || os.Getenv("TRAVIS_PULL_REQUEST") != "false" {
+		t.Skip("Skipping GCS integration tests...")
+		return
 	}
 	r := require.New(t)
-	r.NoError(ch.Connect())
+	r.NoError(dockerCP("config-gcs.yml", "/etc/clickhouse-backup/config.yml"))
+	r.NoError(dockerExec("apt-get", "-y", "update"))
+	r.NoError(dockerExec("apt-get", "-y", "install", "ca-certificates"))
+	testRestoreLegacyBackupFormat(t)
+	testCommon(t)
+}
+
+func testCommon(t *testing.T) {
+	ch := &TestClickHouse{}
+	r := require.New(t)
+	r.NoError(ch.connect())
 	r.NoError(ch.dropDatabase(dbName))
 	fmt.Println("Generate test data")
 	for _, data := range testData {
@@ -232,10 +311,10 @@ func TestIntegration(t *testing.T) {
 	r.NoError(dockerExec("clickhouse-backup", "download", "test_backup"))
 
 	fmt.Println("Restore schema")
-	r.NoError(dockerExec("clickhouse-backup", "restore-schema", "test_backup"))
+	r.NoError(dockerExec("clickhouse-backup", "restore", "--schema", "test_backup"))
 
 	fmt.Println("Restore data")
-	r.NoError(dockerExec("clickhouse-backup", "restore-data", "test_backup"))
+	r.NoError(dockerExec("clickhouse-backup", "restore", "--data", "test_backup"))
 
 	fmt.Println("Check data")
 	for i := range testData {
@@ -253,11 +332,8 @@ func TestIntegration(t *testing.T) {
 	fmt.Println("Download increment")
 	r.NoError(dockerExec("clickhouse-backup", "download", "increment"))
 
-	fmt.Println("Restore schema")
-	r.NoError(dockerExec("clickhouse-backup", "restore-schema", "increment"))
-
-	fmt.Println("Restore data")
-	r.NoError(dockerExec("clickhouse-backup", "restore-data", "increment"))
+	fmt.Println("Restore")
+	r.NoError(dockerExec("clickhouse-backup", "restore", "--schema", "--data", "increment"))
 
 	fmt.Println("Check increment data")
 	for i := range testData {
@@ -265,13 +341,32 @@ func TestIntegration(t *testing.T) {
 		ti.Rows = append(ti.Rows, incrementData[i].Rows...)
 		r.NoError(ch.checkData(t, ti))
 	}
+
+	fmt.Println("Clean")
+	r.NoError(dockerExec("/bin/rm", "-rf", "/var/lib/clickhouse/backup/test_backup", "/var/lib/clickhouse/backup/increment"))
+	r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "test_backup.tar.gz"))
+	r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "increment.tar.gz"))
 }
 
-func (ch *ClickHouse) createTestData(data TestDataStuct) error {
-	if err := ch.CreateDatabase(data.Database); err != nil {
+type TestClickHouse struct {
+	chbackup *chbackup.ClickHouse
+}
+
+func (ch *TestClickHouse) connect() error {
+	ch.chbackup = &chbackup.ClickHouse{
+		Config: &chbackup.ClickHouseConfig{
+			Host: "localhost",
+			Port: 9000,
+		},
+	}
+	return ch.chbackup.Connect()
+}
+
+func (ch *TestClickHouse) createTestData(data TestDataStruct) error {
+	if err := ch.chbackup.CreateDatabase(data.Database); err != nil {
 		return err
 	}
-	if err := ch.CreateTable(RestoreTable{
+	if err := ch.chbackup.CreateTable(chbackup.RestoreTable{
 		Database: data.Database,
 		Table:    data.Table,
 		Query:    fmt.Sprintf("CREATE TABLE IF NOT EXISTS `%s`.`%s` %s", data.Database, data.Table, data.Schema),
@@ -280,7 +375,7 @@ func (ch *ClickHouse) createTestData(data TestDataStuct) error {
 	}
 
 	for _, row := range data.Rows {
-		tx, err := ch.conn.Beginx()
+		tx, err := ch.chbackup.GetConn().Beginx()
 		if err != nil {
 			return fmt.Errorf("can't begin transaction with: %v", err)
 		}
@@ -300,15 +395,15 @@ func (ch *ClickHouse) createTestData(data TestDataStuct) error {
 	return nil
 }
 
-func (ch *ClickHouse) dropDatabase(database string) error {
+func (ch *TestClickHouse) dropDatabase(database string) error {
 	fmt.Println("DROP DATABASE IF EXISTS ", database)
-	_, err := ch.conn.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", database))
+	_, err := ch.chbackup.GetConn().Exec(fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", database))
 	return err
 }
 
-func (ch *ClickHouse) checkData(t *testing.T, data TestDataStuct) error {
+func (ch *TestClickHouse) checkData(t *testing.T, data TestDataStruct) error {
 	fmt.Printf("Check '%d' rows in '%s.%s'\n", len(data.Rows), data.Database, data.Table)
-	rows, err := ch.conn.Queryx(fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY %s", data.Database, data.Table, data.OrderBy))
+	rows, err := ch.chbackup.GetConn().Queryx(fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY %s", data.Database, data.Table, data.OrderBy))
 	if err != nil {
 		return err
 	}
@@ -329,7 +424,7 @@ func (ch *ClickHouse) checkData(t *testing.T, data TestDataStuct) error {
 
 func dockerExec(cmd ...string) error {
 	out, err := dockerExecOut(cmd...)
-	fmt.Println(string(out))
+	fmt.Print(string(out))
 	return err
 }
 
@@ -340,6 +435,15 @@ func dockerExecOut(cmd ...string) (string, error) {
 	out, err := exec.CommandContext(ctx, "docker", dcmd...).CombinedOutput()
 	cancel()
 	return string(out), err
+}
+
+func dockerCP(src, dst string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	dcmd := []string{"cp", src, "clickhouse:" + dst}
+	out, err := exec.CommandContext(ctx, "docker", dcmd...).CombinedOutput()
+	fmt.Println(string(out))
+	cancel()
+	return err
 }
 
 func toDate(s string) time.Time {
