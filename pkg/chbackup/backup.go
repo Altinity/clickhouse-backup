@@ -320,17 +320,12 @@ func Freeze(config Config, tablePattern, name string) error {
 	}
 
 	shadowPath := filepath.Join(dataPath, "shadow")
-	files, err := ioutil.ReadDir(shadowPath)
+	_, err = ioutil.ReadDir(shadowPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("can't read %s directory: %v", shadowPath, err)
 		}
 	}
-	/*else if len(files) > 0 {
-		return fmt.Errorf("'%s' is not empty, execute 'clean' command first", shadowPath)
-	}
-	*/
-
 	allTables, err := ch.GetTables()
 	if err != nil {
 		return fmt.Errorf("can't get Clickhouse tables with: %v", err)
