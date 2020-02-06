@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	_ "github.com/ClickHouse/clickhouse-go"
 	"github.com/jmoiron/sqlx"
@@ -74,9 +75,13 @@ func (rt RestoreTables) Sort() {
 
 // Connect - establish connection to ClickHouse
 func (ch *ClickHouse) Connect() error {
-	connectionString := fmt.Sprintf("tcp://%v:%v?username=%v&password=%v&database=system&compress=true",
-		ch.Config.Host, ch.Config.Port, ch.Config.Username, ch.Config.Password)
-	var err error
+	timeout, err := time.ParseDuration(ch.Config.Timeout)
+	if err != nil {
+		return err
+	}
+	timeoutSeconds := int(timeout.Seconds())
+	connectionString := fmt.Sprintf("tcp://%v:%v?username=%v&password=%v&database=system&compress=true&receive_timeout=%d&send_timeout=%d",
+		ch.Config.Host, ch.Config.Port, ch.Config.Username, ch.Config.Password, timeoutSeconds, timeoutSeconds)
 	if ch.conn, err = sqlx.Open("clickhouse", connectionString); err != nil {
 		return err
 	}

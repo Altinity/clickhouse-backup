@@ -99,6 +99,7 @@ clickhouse:
   password: ""                 # CLICKHOUSE_PASSWORD
   host: localhost              # CLICKHOUSE_HOST
   port: 9000                   # CLICKHOUSE_PORT
+  timeout: 5m                  # CLICKHOUSE_TIMEOUT
   data_path: ""                # CLICKHOUSE_DATA_PATH
   skip_tables:                 # CLICKHOUSE_SKIP_TABLES
     - system.*

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"time"
 
 	"github.com/kelseyhightower/envconfig"
 	yaml "gopkg.in/yaml.v2"
@@ -61,6 +62,7 @@ type ClickHouseConfig struct {
 	Port       uint     `yaml:"port" envconfig:"CLICKHOUSE_PORT"`
 	DataPath   string   `yaml:"data_path" envconfig:"CLICKHOUSE_DATA_PATH"`
 	SkipTables []string `yaml:"skip_tables" envconfig:"CLICKHOUSE_SKIP_TABLES"`
+	Timeout    string   `yaml:"timeout" envconfig:"CLICKHOUSE_TIMEOUT"`
 }
 
 // LoadConfig - load config from file
@@ -87,8 +89,13 @@ func validateConfig(config *Config) error {
 	if _, err := getArchiveWriter(config.S3.CompressionFormat, config.S3.CompressionLevel); err != nil {
 		return err
 	}
-	_, err := getArchiveWriter(config.GCS.CompressionFormat, config.GCS.CompressionLevel)
-	return err
+	if _, err := getArchiveWriter(config.GCS.CompressionFormat, config.GCS.CompressionLevel); err != nil {
+		return err
+	}
+	if _, err := time.ParseDuration(config.ClickHouse.Timeout); err != nil {
+		return err
+	}
+	return nil
 }
 
 // PrintDefaultConfig - print default config to stdout
@@ -113,6 +120,7 @@ func DefaultConfig() *Config {
 			SkipTables: []string{
 				"system.*",
 			},
+			Timeout: "5m",
 		},
 		S3: S3Config{
 			Region:                  "us-east-1",

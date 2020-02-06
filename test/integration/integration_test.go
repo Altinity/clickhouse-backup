@@ -355,8 +355,9 @@ type TestClickHouse struct {
 func (ch *TestClickHouse) connect() error {
 	ch.chbackup = &chbackup.ClickHouse{
 		Config: &chbackup.ClickHouseConfig{
-			Host: "localhost",
-			Port: 9000,
+			Host:    "localhost",
+			Port:    9000,
+			Timeout: "5m",
 		},
 	}
 	return ch.chbackup.Connect()
