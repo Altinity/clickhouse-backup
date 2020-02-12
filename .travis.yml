@@ -8,6 +8,11 @@ env:
   - CLICKHOUSE_VERSION=19.15.3.6 GCS_TESTS=yes DEPLOY_ARTIFACTS=yes
 services:
   - docker
+addons:
+  apt:
+    packages: rpm
+install:
+  - gem install fpm
 script:
   # Building executable file
   - make build || travis_terminate 1;
@@ -27,9 +32,6 @@ script:
   - docker build -t alexakulov/clickhouse-backup:master .
 after_success:
   - tar -czvf clickhouse-backup.tar.gz clickhouse-backup
-before_deploy:
-  - sudo apt-get install -y rpm ruby ruby-dev
-  - gem install fpm
   - CGO_ENABLED=0 make packages
 deploy:
   - provider: releases
