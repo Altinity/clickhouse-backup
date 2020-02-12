@@ -6,3 +6,4 @@ clickhouse-backup
 config.yml
 credentials.json
 .idea
+build/

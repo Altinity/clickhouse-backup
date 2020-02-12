@@ -10,11 +10,11 @@ services:
   - docker
 script:
   # Building executable file
-  - CGO_ENABLED=0 go build -ldflags "-w -s -X main.version=${TRAVIS_TAG} -X main.gitCommit=${TRAVIS_COMMIT} -X main.buildDate=$(date --iso-8601)" -o clickhouse-backup/clickhouse-backup || travis_terminate 1;
+  - make build || travis_terminate 1;
   # Creating default config
-  - ./clickhouse-backup/clickhouse-backup default-config > clickhouse-backup/config.yml || travis_terminate 1;
+  - make config || travis_terminate 1;
   # Running unit tests
-  - go test -v ./pkg/...  || travis_terminate 1;
+  - make test || travis_terminate 1;
   # Decrypting credentials for Google Cloud Storage
   - if [ "$TRAVIS_PULL_REQUEST" == "false" ]; then
         openssl enc -base64 -aes-256-cbc -d -in test/integration/credentials.json.enc -out test/integration/credentials.json -k ${VAULT_PASSWORD} || travis_terminate 1;
@@ -27,10 +27,18 @@ script:
   - docker build -t alexakulov/clickhouse-backup:master .
 after_success:
   - tar -czvf clickhouse-backup.tar.gz clickhouse-backup
+before_deploy:
+  - sudo apt-get install -y rpm ruby ruby-dev
+  - gem install fpm
+  - CGO_ENABLED=0 make packages
 deploy:
   - provider: releases
     api_key: "${GITHUB_TOKEN}"
-    file: clickhouse-backup.tar.gz
+    file_glob: true
+    file:
+      - clickhouse-backup.tar.gz
+      - build/clickhouse-backup_*.deb
+      - build/clickhouse-backup-*.rpm
     skip_cleanup: true
     overwrite: true
     on:
