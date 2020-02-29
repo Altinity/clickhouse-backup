@@ -192,3 +192,20 @@ func FormatBytes(i int64) (result string) {
 func TablePathEncode(str string) string {
 	return strings.ReplaceAll(url.PathEscape(str), ".", "%2E")
 }
+
+func parseTime(text string) (t time.Time, err error) {
+	timeFormats := []string{
+		"Mon, 02 Jan 2006 15:04:05 GMT",
+		time.RFC850,
+		time.ANSIC,
+		time.RFC3339,
+	}
+
+	for _, layout := range timeFormats {
+		t, err = time.Parse(layout, text)
+		if err == nil {
+			return
+		}
+	}
+	return
+}

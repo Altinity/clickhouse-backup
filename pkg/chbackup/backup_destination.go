@@ -406,6 +406,16 @@ func NewBackupDestination(config Config) (*BackupDestination, error) {
 			config.General.DisableProgressBar,
 			config.General.BackupsToKeepRemote,
 		}, nil
+	case "cos":
+		cos := &COS{Config: &config.COS}
+		return &BackupDestination{
+			cos,
+			config.COS.Path,
+			config.COS.CompressionFormat,
+			config.COS.CompressionLevel,
+			config.General.DisableProgressBar,
+			config.General.BackupsToKeepRemote,
+		}, nil
 	default:
 		return nil, fmt.Errorf("storage type '%s' not supported", config.General.RemoteStorage)
 	}

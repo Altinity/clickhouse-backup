@@ -106,9 +106,6 @@ func parseSchemaPattern(metadataPath string, tablePattern string) (RestoreTables
 		database, _ := url.PathUnescape(parts[0])
 		table, _ := url.PathUnescape(parts[1])
 		tableName := fmt.Sprintf("%s.%s", database, table)
-		if strings.Contains(table, ".inner.") {
-			return nil
-		}
 		for _, p := range tablePatterns {
 			if matched, _ := filepath.Match(p, tableName); matched {
 				data, err := ioutil.ReadFile(filePath)
