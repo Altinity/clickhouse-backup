@@ -16,6 +16,7 @@ type Config struct {
 	ClickHouse ClickHouseConfig `yaml:"clickhouse"`
 	S3         S3Config         `yaml:"s3"`
 	GCS        GCSConfig        `yaml:"gcs"`
+	COS        COSConfig        `yaml:"cos"`
 }
 
 // GeneralConfig - general setting section
@@ -52,6 +53,18 @@ type S3Config struct {
 	CompressionFormat       string `yaml:"compression_format" envconfig:"S3_COMPRESSION_FORMAT"`
 	SSE                     string `yaml:"sse" envconfig:"S3_SSE"`
 	DisableCertVerification bool   `yaml:"disable_cert_verification" envconfig:"S3_DISABLE_CERT_VERIFICATION"`
+}
+
+// COSConfig - cos settings section
+type COSConfig struct {
+	RowUrl            string `yaml:"url" envconfig:"COS_URL"`
+	Timeout           int    `yaml:"timeout" envconfig:"COS_TIMEOUT"`
+	SecretID          string `yaml:"secret_id" envconfig:"COS_SECRET_ID"`
+	SecretKey         string `yaml:"secret_key" envconfig:"COS_SECRET_KEY"`
+	Path              string `yaml:"path" envconfig:"COS_PATH"`
+	CompressionFormat string `yaml:"compression_format" envconfig:"COS_COMPRESSION_FORMAT"`
+	CompressionLevel  int    `yaml:"compression_level" envconfig:"COS_COMPRESSION_LEVEL"`
+	Debug             bool   `yaml:"debug" envconfig:"COS_DEBUG"`
 }
 
 // ClickHouseConfig - clickhouse settings section
@@ -134,6 +147,16 @@ func DefaultConfig() *Config {
 		GCS: GCSConfig{
 			CompressionLevel:  1,
 			CompressionFormat: "gzip",
+		},
+		COS: COSConfig{
+			RowUrl:            "",
+			Timeout:           100,
+			SecretID:          "",
+			SecretKey:         "",
+			Path:              "",
+			CompressionFormat: "gzip",
+			CompressionLevel:  1,
+			Debug: false,
 		},
 	}
 }
