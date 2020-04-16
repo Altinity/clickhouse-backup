@@ -57,7 +57,7 @@ type S3Config struct {
 
 // COSConfig - cos settings section
 type COSConfig struct {
-	RowUrl            string `yaml:"url" envconfig:"COS_URL"`
+	RowURL            string `yaml:"url" envconfig:"COS_URL"`
 	Timeout           int    `yaml:"timeout" envconfig:"COS_TIMEOUT"`
 	SecretID          string `yaml:"secret_id" envconfig:"COS_SECRET_ID"`
 	SecretKey         string `yaml:"secret_key" envconfig:"COS_SECRET_KEY"`
@@ -149,14 +149,14 @@ func DefaultConfig() *Config {
 			CompressionFormat: "gzip",
 		},
 		COS: COSConfig{
-			RowUrl:            "",
+			RowURL:            "",
 			Timeout:           100,
 			SecretID:          "",
 			SecretKey:         "",
 			Path:              "",
 			CompressionFormat: "gzip",
 			CompressionLevel:  1,
-			Debug: false,
+			Debug:             false,
 		},
 	}
 }

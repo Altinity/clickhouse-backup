@@ -2,12 +2,13 @@ package chbackup
 
 import (
 	"context"
-	"github.com/tencentyun/cos-go-sdk-v5"
-	"github.com/tencentyun/cos-go-sdk-v5/debug"
 	"io"
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/tencentyun/cos-go-sdk-v5"
+	"github.com/tencentyun/cos-go-sdk-v5/debug"
 )
 
 type COS struct {
@@ -17,7 +18,7 @@ type COS struct {
 
 // Connect - connect to cos
 func (c *COS) Connect() error {
-	u, _ := url.Parse(c.Config.RowUrl)
+	u, _ := url.Parse(c.Config.RowURL)
 	b := &cos.BaseURL{BucketURL: u}
 	c.client = cos.NewClient(b, &http.Client{
 		Timeout: time.Duration(c.Config.Timeout) * time.Second,
@@ -35,10 +36,7 @@ func (c *COS) Connect() error {
 	})
 	// check bucket exists
 	_, err := c.client.Bucket.Head(context.Background())
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 func (c *COS) Kind() string {
@@ -49,26 +47,23 @@ func (c *COS) GetFile(key string) (RemoteFile, error) {
 	// file max size is 5Gb
 	resp, err := c.client.Object.Get(context.Background(), key, nil)
 	if err != nil {
-		cosErr,ok := err.(*cos.ErrorResponse)
+		cosErr, ok := err.(*cos.ErrorResponse)
 		if ok && cosErr.Code == "NoSuchKey" {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	modifiedTime,_ := parseTime(resp.Response.Header.Get("Date"))
+	modifiedTime, _ := parseTime(resp.Response.Header.Get("Date"))
 	return &cosFile{
-		size:resp.Response.ContentLength,
-		name:resp.Request.URL.Path,
+		size:         resp.Response.ContentLength,
+		name:         resp.Request.URL.Path,
 		lastModified: modifiedTime,
 	}, nil
 }
 
 func (c *COS) DeleteFile(key string) error {
 	_, err := c.client.Object.Delete(context.Background(), key)
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 func (c *COS) Walk(path string, process func(RemoteFile)) error {
@@ -79,11 +74,11 @@ func (c *COS) Walk(path string, process func(RemoteFile)) error {
 		return err
 	}
 	for _, v := range res.Contents {
-		modifiedTime,_ := parseTime(v.LastModified)
+		modifiedTime, _ := parseTime(v.LastModified)
 		process(&cosFile{
-			name:v.Key,
+			name:         v.Key,
 			lastModified: modifiedTime,
-			size: int64(v.Size),
+			size:         int64(v.Size),
 		})
 	}
 	return nil
@@ -99,10 +94,7 @@ func (c *COS) GetFileReader(key string) (io.ReadCloser, error) {
 
 func (c *COS) PutFile(key string, r io.ReadCloser) error {
 	_, err := c.client.Object.Put(context.Background(), key, r, nil)
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 type cosFile struct {
@@ -122,5 +114,3 @@ func (f *cosFile) Name() string {
 func (f *cosFile) LastModified() time.Time {
 	return f.lastModified
 }
-
-

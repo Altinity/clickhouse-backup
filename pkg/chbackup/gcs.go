@@ -32,12 +32,7 @@ func (gcs *GCS) Connect() error {
 	} else {
 		gcs.client, err = storage.NewClient(ctx)
 	}
-
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return err
 }
 
 func (gcs *GCS) Walk(gcsPath string, process func(r RemoteFile)) error {
@@ -67,7 +62,6 @@ func (gcs *GCS) GetFileReader(key string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	return reader, nil
 }
 
@@ -81,15 +75,10 @@ func (gcs *GCS) PutFile(key string, r io.ReadCloser) error {
 	ctx := context.Background()
 	obj := gcs.client.Bucket(gcs.Config.Bucket).Object(key)
 	writer := obj.NewWriter(ctx)
-
 	if _, err := io.Copy(writer, r); err != nil {
 		return err
 	}
-
-	if err := writer.Close(); err != nil {
-		return err
-	}
-	return nil
+	return writer.Close()
 }
 
 func (gcs *GCS) GetFile(key string) (RemoteFile, error) {
