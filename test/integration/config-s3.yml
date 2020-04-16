@@ -4,6 +4,8 @@ general:
 clickhouse:
   host: localhost
   port: 9000
+  username: backup
+  password: meow=& 123?*%# МЯУ
 s3:
   access_key: access-key
   secret_key: it-is-my-super-secret-key

@@ -79,9 +79,16 @@ func (ch *ClickHouse) Connect() error {
 	if err != nil {
 		return err
 	}
-	timeoutSeconds := int(timeout.Seconds())
-	connectionString := fmt.Sprintf("tcp://%v:%v?username=%v&password=%v&database=system&compress=true&receive_timeout=%d&send_timeout=%d",
-		ch.Config.Host, ch.Config.Port, ch.Config.Username, ch.Config.Password, timeoutSeconds, timeoutSeconds)
+
+	timeoutSeconds := fmt.Sprintf("%d", int(timeout.Seconds()))
+	params := url.Values{}
+	params.Add("username", ch.Config.Username)
+	params.Add("password", ch.Config.Password)
+	params.Add("database", "system")
+	params.Add("receive_timeout", timeoutSeconds)
+	params.Add("send_timeout", timeoutSeconds)
+
+	connectionString := fmt.Sprintf("tcp://%v:%v?%s", ch.Config.Host, ch.Config.Port, params.Encode())
 	if ch.conn, err = sqlx.Open("clickhouse", connectionString); err != nil {
 		return err
 	}
