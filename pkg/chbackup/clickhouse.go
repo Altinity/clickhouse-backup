@@ -187,7 +187,7 @@ func (ch *ClickHouse) FreezeTable(table Table) error {
 	if err != nil {
 		return err
 	}
-	if version < 19001005 {
+	if version < 19001005 || ch.Config.FreezeByPart {
 		return ch.FreezeTableOldWay(table)
 	}
 	log.Printf("Freeze `%s`.`%s`", table.Database, table.Name)
