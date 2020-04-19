@@ -58,7 +58,7 @@ type S3Config struct {
 // COSConfig - cos settings section
 type COSConfig struct {
 	RowURL            string `yaml:"url" envconfig:"COS_URL"`
-	Timeout           int    `yaml:"timeout" envconfig:"COS_TIMEOUT"`
+	Timeout           string `yaml:"timeout" envconfig:"COS_TIMEOUT"`
 	SecretID          string `yaml:"secret_id" envconfig:"COS_SECRET_ID"`
 	SecretKey         string `yaml:"secret_key" envconfig:"COS_SECRET_KEY"`
 	Path              string `yaml:"path" envconfig:"COS_PATH"`
@@ -109,6 +109,9 @@ func validateConfig(config *Config) error {
 	if _, err := time.ParseDuration(config.ClickHouse.Timeout); err != nil {
 		return err
 	}
+	if _, err := time.ParseDuration(config.COS.Timeout); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -151,7 +154,7 @@ func DefaultConfig() *Config {
 		},
 		COS: COSConfig{
 			RowURL:            "",
-			Timeout:           100,
+			Timeout:           "2m",
 			SecretID:          "",
 			SecretKey:         "",
 			Path:              "",

@@ -103,23 +103,25 @@ clickhouse:
   data_path: ""                # CLICKHOUSE_DATA_PATH
   skip_tables:                 # CLICKHOUSE_SKIP_TABLES
     - system.*
+  timeout: 5m                  # CLICKHOUSE_TIMEOUT
+  freeze_by_part: false        # CLICKHOUSE_FREEZE_BY_PART
 s3:
-  access_key: ""                  # S3_ACCESS_KEY
-  secret_key: ""                  # S3_SECRET_KEY
-  bucket: ""                      # S3_BUCKET
-  endpoint: ""                    # S3_ENDPOINT
-  region: us-east-1               # S3_REGION
-  acl: private                    # S3_ACL
-  force_path_style: false         # S3_FORCE_PATH_STYLE
-  path: ""                        # S3_PATH
-  disable_ssl: false              # S3_DISABLE_SSL
-  part_size: 104857600            # S3_PART_SIZE
-  compression_level: 1            # S3_COMPRESSION_LEVEL
+  access_key: ""                   # S3_ACCESS_KEY
+  secret_key: ""                   # S3_SECRET_KEY
+  bucket: ""                       # S3_BUCKET
+  endpoint: ""                     # S3_ENDPOINT
+  region: us-east-1                # S3_REGION
+  acl: private                     # S3_ACL
+  force_path_style: false          # S3_FORCE_PATH_STYLE
+  path: ""                         # S3_PATH
+  disable_ssl: false               # S3_DISABLE_SSL
+  part_size: 104857600             # S3_PART_SIZE
+  compression_level: 1             # S3_COMPRESSION_LEVEL
   # supports 'tar', 'lz4', 'bzip2', 'gzip', 'sz', 'xz'
-  compression_format: gzip        # S3_COMPRESSION_FORMAT
+  compression_format: gzip         # S3_COMPRESSION_FORMAT
   # empty (default), AES256, or aws:kms
-  sse: AES256                     # S3_SSE
-  disable_cert_verification: true # S3_DISABLE_CERT_VERIFICATION
+  sse: AES256                      # S3_SSE
+  disable_cert_verification: false # S3_DISABLE_CERT_VERIFICATION
 gcs:
   credentials_file: ""         # GCS_CREDENTIALS_FILE
   credentials_json: ""         # GCS_CREDENTIALS_JSON
@@ -127,6 +129,15 @@ gcs:
   path: ""                     # GCS_PATH
   compression_level: 1         # GCS_COMPRESSION_LEVEL
   compression_format: gzip     # GCS_COMPRESSION_FORMAT
+cos:
+  url: ""                      # COS_URL
+  timeout: 2m                  # COS_TIMEOUT
+  secret_id: ""                # COS_SECRET_ID
+  secret_key: ""               # COS_SECRET_KEY
+  path: ""                     # COS_PATH
+  compression_format: gzip     # COS_COMPRESSION_FORMAT
+  compression_level: 1         # COS_COMPRESSION_LEVEL
+  debug: false                 # COS_DEBUG
 ```
 
 ## ATTENTION!

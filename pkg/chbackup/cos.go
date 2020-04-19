@@ -18,10 +18,17 @@ type COS struct {
 
 // Connect - connect to cos
 func (c *COS) Connect() error {
-	u, _ := url.Parse(c.Config.RowURL)
+	u, err := url.Parse(c.Config.RowURL)
+	if err != nil {
+		return err
+	}
 	b := &cos.BaseURL{BucketURL: u}
+	timeout, err := time.ParseDuration(c.Config.Timeout)
+	if err != nil {
+		return err
+	}
 	c.client = cos.NewClient(b, &http.Client{
-		Timeout: time.Duration(c.Config.Timeout) * time.Second,
+		Timeout: timeout,
 		Transport: &cos.AuthorizationTransport{
 			SecretID:  c.Config.SecretID,
 			SecretKey: c.Config.SecretKey,
@@ -35,7 +42,7 @@ func (c *COS) Connect() error {
 		},
 	})
 	// check bucket exists
-	_, err := c.client.Bucket.Head(context.Background())
+	_, err = c.client.Bucket.Head(context.Background())
 	return err
 }
 
