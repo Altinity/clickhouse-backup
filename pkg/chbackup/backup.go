@@ -366,10 +366,10 @@ func CreateBackup(config Config, backupName, tablePattern string) error {
 	}
 	backupPath := path.Join(dataPath, "backup", backupName)
 	if _, err := os.Stat(backupPath); err == nil || !os.IsNotExist(err) {
-		return fmt.Errorf("can't create backup with '%s' already exists", backupPath)
+		return fmt.Errorf("can't create backup '%s': %v", backupPath, err)
 	}
 	if err := os.MkdirAll(backupPath, os.ModePerm); err != nil {
-		return fmt.Errorf("can't create backup with %v", err)
+		return fmt.Errorf("can't create '%s': %v", backupPath, err)
 	}
 	log.Printf("Create backup '%s'", backupName)
 	if err := Freeze(config, tablePattern); err != nil {
