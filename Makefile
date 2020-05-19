@@ -1,7 +1,7 @@
 # Origin: https://github.com/innogames/graphite-ch-optimizer/blob/master/Makefile
 # MIT License
 NAME = clickhouse-backup
-VERSION = $(shell git describe --long --tags 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/c\1/;s/-/./g')
+VERSION = $(shell git describe --always --tags --abbrev=0 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/c\1/;s/-/./g')
 GIT_COMMIT = $(shell git rev-parse HEAD)
 DATE = $(shell date +%F)
 VENDOR = "Alexander Akulov <alexakulov86@gmail.com>"
