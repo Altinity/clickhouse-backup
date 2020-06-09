@@ -42,7 +42,7 @@ docker run --rm -it --network host -v "/var/lib/clickhouse:/var/lib/clickhouse" 
    alexakulov/clickhouse-backup --help
 ```
 
-- Bulid from the sources:
+- Build from the sources:
 
 ```shell
 GO111MODULE=on go get github.com/AlexAkulov/clickhouse-backup
@@ -158,7 +158,7 @@ clickhouse-backup upload $BACKUP_NAME
 ```
 
 ### More use cases of clickhouse-backup
-- [How to convert MergeTree to ReplicatedMegreTree](Examples.md#how-to-convert-mergetree-to-replicatedmegretree)
+- [How to convert MergeTree to ReplicatedMergeTree](Examples.md#how-to-convert-mergetree-to-replicatedmegretree)
 - [How to store backups on NFS or another server](Examples.md#how-to-store-backups-on-nfs-or-another-server)
 - [How to move data to another clickhouse server](Examples.md#how-to-move-data-to-another-clickhouse-server)
 - [How to reduce number of partitions](Examples.md#How-to-reduce-number-of-partitions)
