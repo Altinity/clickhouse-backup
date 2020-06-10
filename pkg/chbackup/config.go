@@ -77,6 +77,7 @@ type ClickHouseConfig struct {
 	SkipTables   []string `yaml:"skip_tables" envconfig:"CLICKHOUSE_SKIP_TABLES"`
 	Timeout      string   `yaml:"timeout" envconfig:"CLICKHOUSE_TIMEOUT"`
 	FreezeByPart bool     `yaml:"freeze_by_part" envconfig:"CLICKHOUSE_FREEZE_BY_PART"`
+	BackupPath   string   `yaml:"backup_path" envconfig:"CLICKHOUSE_BACKUP_PATH"`
 }
 
 // LoadConfig - load config from file

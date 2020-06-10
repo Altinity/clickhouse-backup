@@ -220,10 +220,10 @@ func testRestoreLegacyBackupFormat(t *testing.T) {
 	time.Sleep(time.Second * 5)
 	fmt.Println("Create backup")
 	r.NoError(dockerExec("clickhouse-backup", "freeze"))
-	dockerExec("mkdir", "-p", "/var/lib/clickhouse/backup/old_format")
-	r.NoError(dockerExec("cp", "-r", "/var/lib/clickhouse/metadata", "/var/lib/clickhouse/backup/old_format/"))
-	r.NoError(dockerExec("mv", "/var/lib/clickhouse/shadow", "/var/lib/clickhouse/backup/old_format/"))
-	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup/old_format/")
+	dockerExec("mkdir", "-p", "/opt/chbkp/backup/old_format")
+	r.NoError(dockerExec("cp", "-r", "/var/lib/clickhouse/metadata", "/opt/chbkp/backup/old_format/"))
+	r.NoError(dockerExec("mv", "/var/lib/clickhouse/shadow", "/opt/chbkp/backup/old_format/"))
+	dockerExec("ls", "-lha", "/opt/chbkp/backup/old_format/")
 
 	fmt.Println("Upload")
 	r.NoError(dockerExec("clickhouse-backup", "upload", "old_format"))
@@ -236,10 +236,10 @@ func testRestoreLegacyBackupFormat(t *testing.T) {
 	fmt.Println("Drop database")
 	r.NoError(ch.dropDatabase(dbName))
 
-	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
+	dockerExec("ls", "-lha", "/opt/chbkp/backup")
 	fmt.Println("Delete backup")
-	r.NoError(dockerExec("/bin/rm", "-rf", "/var/lib/clickhouse/backup/old_format"))
-	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
+	r.NoError(dockerExec("/bin/rm", "-rf", "/opt/chbkp/backup/old_format"))
+	dockerExec("ls", "-lha", "/opt/chbkp/backup")
 
 	fmt.Println("Download")
 	r.NoError(dockerExec("clickhouse-backup", "download", "old_format"))
@@ -252,7 +252,7 @@ func testRestoreLegacyBackupFormat(t *testing.T) {
 		r.NoError(ch.checkData(t, testData[i]))
 	}
 	fmt.Println("Clean")
-	r.NoError(dockerExec("/bin/rm", "-rf", "/var/lib/clickhouse/backup/old_format", "/var/lib/clickhouse/backup/increment_old_format", "/var/lib/clickhouse/shadow"))
+	r.NoError(dockerExec("/bin/rm", "-rf", "/opt/chbkp/backup/old_format", "/opt/chbkp/backup/increment_old_format", "/var/lib/clickhouse/shadow"))
 	r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "old_format.tar.gz"))
 }
 
@@ -302,10 +302,10 @@ func testCommon(t *testing.T) {
 	fmt.Println("Drop database")
 	r.NoError(ch.dropDatabase(dbName))
 
-	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
+	dockerExec("ls", "-lha", "/opt/chbkp/backup")
 	fmt.Println("Delete backup")
-	r.NoError(dockerExec("/bin/rm", "-rf", "/var/lib/clickhouse/backup/test_backup", "/var/lib/clickhouse/backup/increment"))
-	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
+	r.NoError(dockerExec("/bin/rm", "-rf", "/opt/chbkp/backup/test_backup", "/opt/chbkp/backup/increment"))
+	dockerExec("ls", "-lha", "/opt/chbkp/backup")
 
 	fmt.Println("Download")
 	r.NoError(dockerExec("clickhouse-backup", "download", "test_backup"))
@@ -324,10 +324,10 @@ func testCommon(t *testing.T) {
 	fmt.Println("Drop database")
 	r.NoError(ch.dropDatabase(dbName))
 
-	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
+	dockerExec("ls", "-lha", "/opt/chbkp/backup")
 	fmt.Println("Delete backup")
-	r.NoError(dockerExec("/bin/rm", "-rf", "/var/lib/clickhouse/backup/test_backup", "/var/lib/clickhouse/backup/increment"))
-	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
+	r.NoError(dockerExec("/bin/rm", "-rf", "/opt/chbkp/backup/test_backup", "/opt/chbkp/backup/increment"))
+	dockerExec("ls", "-lha", "/opt/chbkp/backup")
 
 	fmt.Println("Download increment")
 	r.NoError(dockerExec("clickhouse-backup", "download", "increment"))
@@ -343,7 +343,7 @@ func testCommon(t *testing.T) {
 	}
 
 	fmt.Println("Clean")
-	r.NoError(dockerExec("/bin/rm", "-rf", "/var/lib/clickhouse/backup/test_backup", "/var/lib/clickhouse/backup/increment"))
+	r.NoError(dockerExec("/bin/rm", "-rf", "/opt/chbkp/backup/test_backup", "/opt/chbkp/backup/increment"))
 	r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "test_backup.tar.gz"))
 	r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "increment.tar.gz"))
 }

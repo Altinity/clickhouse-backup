@@ -178,7 +178,7 @@ func restoreSchema(config Config, backupName string, tablePattern string) error 
 	if dataPath == "" {
 		return ErrUnknownClickhouseDataPath
 	}
-	metadataPath := path.Join(dataPath, "backup", backupName, "metadata")
+	metadataPath := path.Join(getBackupPath(config.ClickHouse.BackupPath), "backup", backupName, "metadata")
 	info, err := os.Stat(metadataPath)
 	if err != nil {
 		return err
@@ -256,7 +256,7 @@ func ListLocalBackups(config Config) ([]Backup, error) {
 	if dataPath == "" {
 		return nil, ErrUnknownClickhouseDataPath
 	}
-	backupsPath := path.Join(dataPath, "backup")
+	backupsPath := path.Join(getBackupPath(config.ClickHouse.BackupPath), "backup")
 	d, err := os.Open(backupsPath)
 	if err != nil {
 		return nil, err
@@ -364,7 +364,7 @@ func CreateBackup(config Config, backupName, tablePattern string) error {
 	if dataPath == "" {
 		return ErrUnknownClickhouseDataPath
 	}
-	backupPath := path.Join(dataPath, "backup", backupName)
+	backupPath := path.Join(getBackupPath(config.ClickHouse.BackupPath), "backup", backupName)
 	if _, err := os.Stat(backupPath); err == nil || !os.IsNotExist(err) {
 		return fmt.Errorf("can't create backup '%s': %v", backupPath, err)
 	}
@@ -506,6 +506,12 @@ func getDataPath(config Config) string {
 	return dataPath
 }
 
+func getBackupPath(backupPath string) string {
+	if backupPath == "" {
+		return "/opt/chbkp"
+	}
+	return backupPath
+}
 func GetLocalBackup(config Config, backupName string) error {
 	if backupName == "" {
 		return fmt.Errorf("backup name is required")
@@ -546,11 +552,11 @@ func Upload(config Config, backupName string, diffFrom string) error {
 	if err := GetLocalBackup(config, backupName); err != nil {
 		return fmt.Errorf("can't upload with %s", err)
 	}
-	backupPath := path.Join(dataPath, "backup", backupName)
+	backupPath := path.Join(getBackupPath(config.ClickHouse.BackupPath), "backup", backupName)
 	log.Printf("Upload backup '%s'", backupName)
 	diffFromPath := ""
 	if diffFrom != "" {
-		diffFromPath = path.Join(dataPath, "backup", diffFrom)
+		diffFromPath = path.Join(getBackupPath(config.ClickHouse.BackupPath), "backup", diffFrom)
 	}
 	if err := bd.CompressedStreamUpload(backupPath, backupName, diffFromPath); err != nil {
 		return fmt.Errorf("can't upload with %v", err)
@@ -581,7 +587,7 @@ func Download(config Config, backupName string) error {
 	if err != nil {
 		return err
 	}
-	err = bd.CompressedStreamDownload(backupName, path.Join(dataPath, "backup", backupName))
+	err = bd.CompressedStreamDownload(backupName, path.Join(getBackupPath(config.ClickHouse.BackupPath), "backup", backupName))
 	if err != nil {
 		return err
 	}
@@ -622,7 +628,7 @@ func RemoveOldBackupsLocal(config Config) error {
 	}
 	backupsToDelete := GetBackupsToDelete(backupList, config.General.BackupsToKeepLocal)
 	for _, backup := range backupsToDelete {
-		backupPath := path.Join(dataPath, "backup", backup.Name)
+		backupPath := path.Join(getBackupPath(config.ClickHouse.BackupPath), "backup", backup.Name)
 		os.RemoveAll(backupPath)
 	}
 	return nil
@@ -639,7 +645,7 @@ func RemoveBackupLocal(config Config, backupName string) error {
 	}
 	for _, backup := range backupList {
 		if backup.Name == backupName {
-			return os.RemoveAll(path.Join(dataPath, "backup", backupName))
+			return os.RemoveAll(path.Join(getBackupPath(config.ClickHouse.BackupPath), "backup", backupName))
 		}
 	}
 	return fmt.Errorf("backup '%s' not found", backupName)

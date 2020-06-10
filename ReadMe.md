@@ -101,6 +101,7 @@ clickhouse:
   port: 9000                   # CLICKHOUSE_PORT
   timeout: 5m                  # CLICKHOUSE_TIMEOUT
   data_path: ""                # CLICKHOUSE_DATA_PATH
+  backup_path: "/opt/chbkp/"   # CLICKHOUSE_BACKUP_PATH
   skip_tables:                 # CLICKHOUSE_SKIP_TABLES
     - system.*
   timeout: 5m                  # CLICKHOUSE_TIMEOUT
