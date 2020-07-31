@@ -64,8 +64,7 @@ func main() {
 			UsageText:   "clickhouse-backup create [-t, --tables=<db>.<table>] <backup_name>",
 			Description: "Create new backup",
 			Action: func(c *cli.Context) error {
-				_, err := chbackup.CreateBackup(*getConfig(c), c.Args().First(), c.String("t"))
-				return err
+				return chbackup.CreateBackup(*getConfig(c), c.Args().First(), c.String("t"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{

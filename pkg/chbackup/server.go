@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"os"
+	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -23,7 +25,43 @@ type APIServer struct {
 	lock    *semaphore.Weighted
 	server  *http.Server
 	restart chan bool
+	status  AsyncStatus
 	metrics Metrics
+}
+
+type AsyncStatus struct {
+	active map[string]AsyncInfo
+	sync.RWMutex
+}
+
+type AsyncInfo struct {
+	Command string
+	Name    string
+	Started int64
+}
+
+func (status *AsyncStatus) start(command, name string) string {
+	status.Lock()
+	defer status.Unlock()
+	id := uuid.New().String()
+	status.active[id] = AsyncInfo{
+		Command: command,
+		Name:    name,
+		Started: time.Now().Unix(),
+	}
+	return id
+}
+
+func (status *AsyncStatus) stop(id string) {
+	status.Lock()
+	defer status.Unlock()
+	delete(status.active, id)
+}
+
+func (status *AsyncStatus) status() map[string]AsyncInfo {
+	status.RLock()
+	defer status.RUnlock()
+	return status.active
 }
 
 type APIResult struct {
@@ -52,7 +90,15 @@ var (
 
 // Server - expose CLI commands as REST API
 func Server(config Config) error {
-	api := APIServer{config: config, lock: semaphore.NewWeighted(1), restart: make(chan bool)}
+	api := APIServer{
+		config:  config,
+		lock:    semaphore.NewWeighted(1),
+		restart: make(chan bool),
+		status: AsyncStatus{
+			map[string]AsyncInfo{},
+			sync.RWMutex{},
+		},
+	}
 	api.metrics = setupMetrics()
 
 	for {
@@ -112,6 +158,9 @@ func (api *APIServer) setupAPIServer(config Config) *http.Server {
 	r.HandleFunc("/backup/config", func(w http.ResponseWriter, r *http.Request) {
 		api.httpConfigUpdateHandler(w, r, config)
 	}).Methods("POST", "GET")
+	r.HandleFunc("/backup/status", func(w http.ResponseWriter, r *http.Request) {
+		api.httpBackupStatusHandler(w, r, config)
+	}).Methods("GET")
 
 	registerMetricsHandlers(r, config.API.EnableMetrics, config.API.EnablePprof)
 
@@ -278,17 +327,17 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request, 
 		desiredName = dn[0]
 	}
 
-	backup_name, err := CreateBackup(c, desiredName, tablePattern)
-	if err != nil {
-		api.metrics.FailedBackups.Inc()
-		api.metrics.LastBackupSuccess.Set(0)
-		log.Printf("CreateBackup error: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		out, _ := json.Marshal(APIResult{Type: "error", Message: err.Error()})
-		fmt.Fprintf(w, string(out))
-		return
-	}
-	out, err := json.Marshal(APIResult{Type: "success", Message: backup_name})
+	go func() {
+		id := api.status.start("create", desiredName)
+		defer api.status.stop(id)
+		if err := CreateBackup(c, desiredName, tablePattern); err != nil {
+			api.metrics.FailedBackups.Inc()
+			api.metrics.LastBackupSuccess.Set(0)
+			log.Printf("CreateBackup error: %v", err)
+			return
+		}
+	}()
+	out, err := json.Marshal(APIResult{Type: "success", Message: ""})
 	if err != nil {
 		api.metrics.FailedBackups.Inc()
 		api.metrics.LastBackupSuccess.Set(0)
@@ -376,13 +425,15 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request, 
 	if df, exist := query["diff-from"]; exist {
 		diffFrom = df[0]
 	}
-	if err := Upload(c, vars["name"], diffFrom); err != nil {
-		log.Printf("Upload error: %+v\n", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		out, _ := json.Marshal(APIResult{Type: "error", Message: err.Error()})
-		fmt.Fprintf(w, string(out))
-		return
-	}
+	name := vars["name"]
+	go func() {
+		id := api.status.start("upload", name)
+		defer api.status.stop(id)
+		if err := Upload(c, name, diffFrom); err != nil {
+			log.Printf("Upload error: %+v\n", err)
+			return
+		}
+	}()
 	out, err := json.Marshal(APIResult{Type: "success"})
 	if err != nil {
 		e := fmt.Sprintf("marshal error: %v", err)
@@ -445,13 +496,15 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request,
 // httpDownloadHandler - download a backup from remote to local storage
 func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request, c Config) {
 	vars := mux.Vars(r)
-	if err := Download(c, vars["name"]); err != nil {
-		log.Printf("Download error: %+v\n", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		out, _ := json.Marshal(APIResult{Type: "error", Message: err.Error()})
-		fmt.Fprintf(w, string(out))
-		return
-	}
+	name := vars["name"]
+	go func() {
+		id := api.status.start("download", name)
+		defer api.status.stop(id)
+		if err := Download(c, name); err != nil {
+			log.Printf("Download error: %+v\n", err)
+			return
+		}
+	}()
 	out, err := json.Marshal(APIResult{Type: "success"})
 	if err != nil {
 		e := fmt.Sprintf("marshal error: %v", err)
@@ -501,6 +554,21 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	out, err := json.Marshal(APIResult{Type: "success"})
+	if err != nil {
+		e := fmt.Sprintf("marshal error: %v", err)
+		log.Println(e)
+		w.WriteHeader(http.StatusInternalServerError)
+		out, _ := json.Marshal(APIResult{Type: "error", Message: e})
+		fmt.Fprintf(w, string(out))
+		return
+	}
+	fmt.Fprintf(w, string(out))
+	return
+}
+
+func (api *APIServer) httpBackupStatusHandler(w http.ResponseWriter, r *http.Request, c Config) {
+	s := api.status.status()
+	out, err := json.Marshal(api.status.status())
 	if err != nil {
 		e := fmt.Sprintf("marshal error: %v", err)
 		log.Println(e)

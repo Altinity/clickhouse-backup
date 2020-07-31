@@ -378,29 +378,29 @@ func NewBackupName() string {
 
 // CreateBackup - create new backup of all tables matched by tablePattern
 // If backupName is empty string will use default backup name
-func CreateBackup(config Config, backupName, tablePattern string) (string, error) {
+func CreateBackup(config Config, backupName, tablePattern string) error {
 	if backupName == "" {
 		backupName = NewBackupName()
 	}
 	dataPath := getDataPath(config)
 	if dataPath == "" {
-		return backupName, ErrUnknownClickhouseDataPath
+		return ErrUnknownClickhouseDataPath
 	}
 	backupPath := path.Join(dataPath, "backup", backupName)
 	if _, err := os.Stat(backupPath); err == nil || !os.IsNotExist(err) {
-		return backupName, fmt.Errorf("can't create backup with '%s' already exists", backupPath)
+		return fmt.Errorf("can't create backup with '%s' already exists", backupPath)
 	}
 	if err := os.MkdirAll(backupPath, os.ModePerm); err != nil {
-		return backupName, fmt.Errorf("can't create backup with %v", err)
+		return fmt.Errorf("can't create backup with %v", err)
 	}
 	log.Printf("Create backup '%s'", backupName)
 	if err := Freeze(config, tablePattern); err != nil {
-		return backupName, err
+		return err
 	}
 	log.Println("Copy metadata")
 	schemaList, err := parseSchemaPattern(path.Join(dataPath, "metadata"), tablePattern)
 	if err != nil {
-		return backupName, err
+		return err
 	}
 	for _, schema := range schemaList {
 		skip := false
@@ -416,7 +416,7 @@ func CreateBackup(config Config, backupName, tablePattern string) (string, error
 		relativePath := strings.Trim(strings.TrimPrefix(schema.Path, path.Join(dataPath, "metadata")), "/")
 		newPath := path.Join(backupPath, "metadata", relativePath)
 		if err := copyFile(schema.Path, newPath); err != nil {
-			return backupName, fmt.Errorf("can't backup metadata with %v", err)
+			return fmt.Errorf("can't backup metadata with %v", err)
 		}
 	}
 	log.Println("  Done.")
@@ -424,17 +424,17 @@ func CreateBackup(config Config, backupName, tablePattern string) (string, error
 	log.Println("Move shadow")
 	backupShadowDir := path.Join(backupPath, "shadow")
 	if err := os.MkdirAll(backupShadowDir, os.ModePerm); err != nil {
-		return backupName, err
+		return err
 	}
 	shadowDir := path.Join(dataPath, "shadow")
 	if err := moveShadow(shadowDir, backupShadowDir); err != nil {
-		return backupName, err
+		return err
 	}
 	if err := RemoveOldBackupsLocal(config); err != nil {
-		return backupName, err
+		return err
 	}
 	log.Println("  Done.")
-	return backupName, nil
+	return nil
 }
 
 // Restore - restore tables matched by tablePattern from backupName
