@@ -168,10 +168,14 @@ Create new backup: `curl -s localhost:7171/backup/create -X POST | jq .`
 * Optional query argument `name` works the same as specifying a backup name with the CLI.
 * Full example: `curl -s 'localhost:7171/backup/create?table=default.billing&name=billing_test&freeze_one_by_one' -X POST`
 
+Note: this operation is async, so the API will return once the operation has been started.
+
 > **POST /backup/upload**
 
 Upload backup to remote storage: `curl -s localhost:7171/backup/upload/<BACKUP_NAME> -X POST | jq .`
 * Optional query argument `diff-from` works the same as the `--diff-from` CLI argument.
+
+Note: this operation is async, so the API will return once the operation has been started.
 
 > **GET /backup/list**
 
@@ -182,6 +186,8 @@ Note: The `Size` field is not populated for local backups.
 > **POST /backup/download**
 
 Download backup from remote storage: `curl -s localhost:7171/backup/download/<BACKUP_NAME> -X POST | jq .`
+
+Note: this operation is async, so the API will return once the operation has been started.
 
 > **POST /backup/restore**
 
@@ -203,6 +209,10 @@ Freeze tables: `curl -s localhost:7171/backup/freeze -X POST | jq .`
 > **POST /backup/clean**
 
 Remove data in 'shadow' folder: `curl -s localhost:7171/backup/clean -X POST | jq .`
+
+> **GET /backup/status**
+
+Display list of current async operations: `curl -s localhost:7171/backup/status | jq .`
 
 ### API Configuration
 
