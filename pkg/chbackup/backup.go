@@ -143,20 +143,29 @@ func parseSchemaPattern(metadataPath string, tablePattern string) (RestoreTables
 	return result, nil
 }
 
-// PrintTables - print all tables suitable for backup
-func PrintTables(config Config) error {
+// getTables - get all tables for use by PrintTables and API
+func getTables(config Config) ([]Table, error) {
 	ch := &ClickHouse{
 		Config: &config.ClickHouse,
 	}
 
 	if err := ch.Connect(); err != nil {
-		return fmt.Errorf("can't connect to clickouse with: %v", err)
+		return []Table{}, fmt.Errorf("can't connect to clickouse with: %v", err)
 	}
 	defer ch.Close()
 
 	allTables, err := ch.GetTables()
 	if err != nil {
-		return fmt.Errorf("can't get tables with: %v", err)
+		return []Table{}, fmt.Errorf("can't get tables with: %v", err)
+	}
+	return allTables, nil
+}
+
+// PrintTables - print all tables suitable for backup
+func PrintTables(config Config) error {
+	allTables, err := getTables(config)
+	if err != nil {
+		return err
 	}
 	for _, table := range allTables {
 		if table.Skip {
@@ -286,18 +295,31 @@ func ListLocalBackups(config Config) ([]Backup, error) {
 	return result, nil
 }
 
-// PrintRemoteBackups - print all backups stored on remote storage
-func PrintRemoteBackups(config Config, format string) error {
+// getRemoteBackups - get all backups stored on remote storage
+func getRemoteBackups(config Config) ([]Backup, error) {
+	if config.General.RemoteStorage == "none" {
+		fmt.Println("PrintRemoteBackups aborted: RemoteStorage set to \"none\"")
+		return []Backup{}, nil
+	}
 	bd, err := NewBackupDestination(config)
 	if err != nil {
-		return err
+		return []Backup{}, err
 	}
 	err = bd.Connect()
 	if err != nil {
-		return err
+		return []Backup{}, err
 	}
 
 	backupList, err := bd.BackupList()
+	if err != nil {
+		return []Backup{}, err
+	}
+	return backupList, err
+}
+
+// PrintRemoteBackups - print all backups stored on remote storage
+func PrintRemoteBackups(config Config, format string) error {
+	backupList, err := getRemoteBackups(config)
 	if err != nil {
 		return err
 	}
@@ -356,29 +378,29 @@ func NewBackupName() string {
 
 // CreateBackup - create new backup of all tables matched by tablePattern
 // If backupName is empty string will use default backup name
-func CreateBackup(config Config, backupName, tablePattern string) error {
+func CreateBackup(config Config, backupName, tablePattern string) (string, error) {
 	if backupName == "" {
 		backupName = NewBackupName()
 	}
 	dataPath := getDataPath(config)
 	if dataPath == "" {
-		return ErrUnknownClickhouseDataPath
+		return backupName, ErrUnknownClickhouseDataPath
 	}
 	backupPath := path.Join(dataPath, "backup", backupName)
 	if _, err := os.Stat(backupPath); err == nil || !os.IsNotExist(err) {
-		return fmt.Errorf("can't create backup '%s': %v", backupPath, err)
+		return backupName, fmt.Errorf("can't create backup with '%s' already exists", backupPath)
 	}
 	if err := os.MkdirAll(backupPath, os.ModePerm); err != nil {
-		return fmt.Errorf("can't create '%s': %v", backupPath, err)
+		return backupName, fmt.Errorf("can't create backup with %v", err)
 	}
 	log.Printf("Create backup '%s'", backupName)
 	if err := Freeze(config, tablePattern); err != nil {
-		return err
+		return backupName, err
 	}
 	log.Println("Copy metadata")
 	schemaList, err := parseSchemaPattern(path.Join(dataPath, "metadata"), tablePattern)
 	if err != nil {
-		return err
+		return backupName, err
 	}
 	for _, schema := range schemaList {
 		skip := false
@@ -394,7 +416,7 @@ func CreateBackup(config Config, backupName, tablePattern string) error {
 		relativePath := strings.Trim(strings.TrimPrefix(schema.Path, path.Join(dataPath, "metadata")), "/")
 		newPath := path.Join(backupPath, "metadata", relativePath)
 		if err := copyFile(schema.Path, newPath); err != nil {
-			return fmt.Errorf("can't backup metadata with %v", err)
+			return backupName, fmt.Errorf("can't backup metadata with %v", err)
 		}
 	}
 	log.Println("  Done.")
@@ -402,17 +424,17 @@ func CreateBackup(config Config, backupName, tablePattern string) error {
 	log.Println("Move shadow")
 	backupShadowDir := path.Join(backupPath, "shadow")
 	if err := os.MkdirAll(backupShadowDir, os.ModePerm); err != nil {
-		return err
+		return backupName, err
 	}
 	shadowDir := path.Join(dataPath, "shadow")
 	if err := moveShadow(shadowDir, backupShadowDir); err != nil {
-		return err
+		return backupName, err
 	}
 	if err := RemoveOldBackupsLocal(config); err != nil {
-		return err
+		return backupName, err
 	}
 	log.Println("  Done.")
-	return nil
+	return backupName, nil
 }
 
 // Restore - restore tables matched by tablePattern from backupName
@@ -523,6 +545,10 @@ func GetLocalBackup(config Config, backupName string) error {
 }
 
 func Upload(config Config, backupName string, diffFrom string) error {
+	if config.General.RemoteStorage == "none" {
+		fmt.Println("Upload aborted: RemoteStorage set to \"none\"")
+		return nil
+	}
 	if backupName == "" {
 		fmt.Println("Select backup for upload:")
 		PrintLocalBackups(config, "all")
@@ -563,6 +589,10 @@ func Upload(config Config, backupName string, diffFrom string) error {
 }
 
 func Download(config Config, backupName string) error {
+	if config.General.RemoteStorage == "none" {
+		fmt.Println("Download aborted: RemoteStorage set to \"none\"")
+		return nil
+	}
 	if backupName == "" {
 		fmt.Println("Select backup for download:")
 		PrintRemoteBackups(config, "all")
@@ -646,6 +676,10 @@ func RemoveBackupLocal(config Config, backupName string) error {
 }
 
 func RemoveBackupRemote(config Config, backupName string) error {
+	if config.General.RemoteStorage == "none" {
+		fmt.Println("RemoveBackupRemote aborted: RemoteStorage set to \"none\"")
+		return nil
+	}
 	dataPath := getDataPath(config)
 	if dataPath == "" {
 		return ErrUnknownClickhouseDataPath
