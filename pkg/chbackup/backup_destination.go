@@ -175,6 +175,7 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 	if err != nil {
 		return err
 	}
+	defer reader.Close()
 	file, err := bd.GetFile(archiveName)
 	if err != nil {
 		return err

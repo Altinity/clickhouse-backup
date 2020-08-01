@@ -55,6 +55,10 @@ func (s *S3) Connect() error {
 		awsConfig.HTTPClient = &http.Client{Transport: tr}
 	}
 
+	if s.Config.Debug {
+		awsConfig.LogLevel = aws.LogLevel(aws.LogDebugWithRequestErrors)
+	}
+
 	if s.session, err = session.NewSession(awsConfig); err != nil {
 		return err
 	}

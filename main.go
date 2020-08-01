@@ -103,9 +103,11 @@ func main() {
 					if err := chbackup.PrintLocalBackups(*config, c.Args().Get(1)); err != nil {
 						return err
 					}
-					fmt.Println("Remote backups:")
-					if err := chbackup.PrintRemoteBackups(*config, c.Args().Get(1)); err != nil {
-						return err
+					if config.General.RemoteStorage != "none" {
+						fmt.Println("Remote backups:")
+						if err := chbackup.PrintRemoteBackups(*config, c.Args().Get(1)); err != nil {
+							return err
+						}
 					}
 				default:
 					fmt.Fprintf(os.Stderr, "Unknown command '%s'\n", c.Args().Get(0))
@@ -202,6 +204,14 @@ func main() {
 			},
 			Flags: cliapp.Flags,
 		},
+		{
+			Name:  "server",
+			Usage: "Run API server",
+			Action: func(c *cli.Context) error {
+				return chbackup.Server(*getConfig(c))
+			},
+			Flags: cliapp.Flags,
+		},
 	}
 	if err := cliapp.Run(os.Args); err != nil {
 		log.Fatal(err)
@@ -218,6 +228,5 @@ func getConfig(ctx *cli.Context) *chbackup.Config {
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	return config
 }

@@ -17,6 +17,7 @@ type Config struct {
 	S3         S3Config         `yaml:"s3"`
 	GCS        GCSConfig        `yaml:"gcs"`
 	COS        COSConfig        `yaml:"cos"`
+	API        APIConfig        `yaml:"api"`
 }
 
 // GeneralConfig - general setting section
@@ -53,6 +54,7 @@ type S3Config struct {
 	CompressionFormat       string `yaml:"compression_format" envconfig:"S3_COMPRESSION_FORMAT"`
 	SSE                     string `yaml:"sse" envconfig:"S3_SSE"`
 	DisableCertVerification bool   `yaml:"disable_cert_verification" envconfig:"S3_DISABLE_CERT_VERIFICATION"`
+	Debug                   bool   `yaml:"debug" envconfig:"S3_DEBUG"`
 }
 
 // COSConfig - cos settings section
@@ -77,6 +79,12 @@ type ClickHouseConfig struct {
 	SkipTables   []string `yaml:"skip_tables" envconfig:"CLICKHOUSE_SKIP_TABLES"`
 	Timeout      string   `yaml:"timeout" envconfig:"CLICKHOUSE_TIMEOUT"`
 	FreezeByPart bool     `yaml:"freeze_by_part" envconfig:"CLICKHOUSE_FREEZE_BY_PART"`
+}
+
+type APIConfig struct {
+	ListenAddr    string `yaml:"listen_addr" envconfig:"API_LISTEN_ADDR"`
+	EnableMetrics bool   `yaml:"enable_metrics" envconfig:"ENABLE_METRICS"`
+	EnablePprof   bool   `yaml:"enable_pprof" envconfig:"ENABLE_PPROF"`
 }
 
 // LoadConfig - load config from file
@@ -161,6 +169,9 @@ func DefaultConfig() *Config {
 			CompressionFormat: "gzip",
 			CompressionLevel:  1,
 			Debug:             false,
+		},
+		API: APIConfig{
+			ListenAddr: "localhost:7171",
 		},
 	}
 }

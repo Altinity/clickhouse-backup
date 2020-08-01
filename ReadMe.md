@@ -74,6 +74,7 @@ COMMANDS:
      default-config  Print default config
      freeze          Freeze tables
      clean           Remove data in 'shadow' folder
+     server          Run API server
      help, h         Shows a list of commands or help for one command
 
 GLOBAL OPTIONS:
@@ -122,6 +123,7 @@ s3:
   # empty (default), AES256, or aws:kms
   sse: AES256                      # S3_SSE
   disable_cert_verification: false # S3_DISABLE_CERT_VERIFICATION
+  debug: false                     # S3_DEBUG
 gcs:
   credentials_file: ""         # GCS_CREDENTIALS_FILE
   credentials_json: ""         # GCS_CREDENTIALS_JSON
@@ -138,6 +140,10 @@ cos:
   compression_format: gzip     # COS_COMPRESSION_FORMAT
   compression_level: 1         # COS_COMPRESSION_LEVEL
   debug: false                 # COS_DEBUG
+api:
+  listen_addr: "localhost:7171"  # API_LISTEN_ADDR
+  enable_metrics: false          # ENABLE_METRICS
+  enable_pprof: false            # ENABLE_PPROF
 ```
 
 ## ATTENTION!
@@ -146,6 +152,83 @@ Never change files permissions in `/var/lib/clickhouse/backup`.
 This path contains hard links. Permissions on all hard links to the same data on disk are always identical.
 That means that if you change the permissions/owner/attributes on a hard link in backup path, permissions on files with which ClickHouse works will be changed too.
 That might lead to data corruption.
+
+## API
+Use the `clickhouse-backup server` command to run as a REST API server. In general, the API attempts to mirror the CLI commands.
+
+> **GET /backup/tables**
+
+Print list of tables: `curl -s localhost:7171/backup/tables | jq .`
+
+> **POST /backup/create**
+
+Create new backup: `curl -s localhost:7171/backup/create -X POST | jq .`
+* Optional query argument `table` works the same as the `--table value` CLI argument.
+* Optional query argument `freeze_one_by_one` works the same the `--freeze-one-by-one` CLI argument.
+* Optional query argument `name` works the same as specifying a backup name with the CLI.
+* Full example: `curl -s 'localhost:7171/backup/create?table=default.billing&name=billing_test&freeze_one_by_one' -X POST`
+
+Note: this operation is async, so the API will return once the operation has been started.
+
+> **POST /backup/upload**
+
+Upload backup to remote storage: `curl -s localhost:7171/backup/upload/<BACKUP_NAME> -X POST | jq .`
+* Optional query argument `diff-from` works the same as the `--diff-from` CLI argument.
+
+Note: this operation is async, so the API will return once the operation has been started.
+
+> **GET /backup/list**
+
+Print list of backups: `curl -s localhost:7171/backup/list | jq .`
+
+Note: The `Size` field is not populated for local backups.
+
+> **POST /backup/download**
+
+Download backup from remote storage: `curl -s localhost:7171/backup/download/<BACKUP_NAME> -X POST | jq .`
+
+Note: this operation is async, so the API will return once the operation has been started.
+
+> **POST /backup/restore**
+
+Create schema and restore data from backup: `curl -s localhost:7171/backup/restore/<BACKUP_NAME> -X POST | jq .`
+* Optional query argument `table` works the same as the `--table value` CLI argument.
+* Optional query argument `schema` works the same the `--schema` CLI argument (restore schema only).
+* Optional query argument `data` works the same the `--data` CLI argument (restore data only).
+
+> **POST /backup/delete**
+
+Delete specific remote backup: `curl -s localhost:7171/backup/delete/remote/<BACKUP_NAME> -X POST | jq .`
+
+Delete specific local backup: `curl -s localhost:7171/backup/delete/local/<BACKUP_NAME> -X POST | jq .`
+
+> **POST /backup/freeze**
+
+Freeze tables: `curl -s localhost:7171/backup/freeze -X POST | jq .`
+
+> **POST /backup/clean**
+
+Remove data in 'shadow' folder: `curl -s localhost:7171/backup/clean -X POST | jq .`
+
+> **GET /backup/status**
+
+Display list of current async operations: `curl -s localhost:7171/backup/status | jq .`
+
+### API Configuration
+
+> **GET /backup/config**
+
+Get the current running configuration: `curl -s localhost:7171/backup/config | jq -r .Result > current_config.yml`
+
+> **GET /backup/config/default**
+
+Get the default configuration: `curl -s localhost:7171/backup/config/default | jq -r .Result > default_config.yml`
+
+> **POST /backup/config**
+
+Update the current running configuration: `curl -v localhost:7171/backup/config -X POST --data-binary '@new_config.yml'`
+
+Be sure to check return code for config parsing/validation errors.
 
 ## Examples
 
