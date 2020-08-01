@@ -100,6 +100,7 @@ func Server(config Config) error {
 		},
 	}
 	api.metrics = setupMetrics()
+	// TODO: Should add a configuration check
 
 	for {
 		api.server = api.setupAPIServer(api.config)
@@ -110,7 +111,8 @@ func Server(config Config) error {
 				os.Exit(1)
 			}
 		}()
-		_ = <-api.restart
+		<-api.restart
+		// TODO: Should add shutdown
 		api.server.Close()
 		log.Printf("Reloading config and restarting API server.")
 	}
@@ -184,7 +186,7 @@ func httpConfigDefaultHandler(w http.ResponseWriter, r *http.Request, c Config) 
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		out, _ := json.Marshal(APIResult{Type: "error", Message: err.Error()})
-		fmt.Fprintf(w, string(out))
+		fmt.Fprint(w, string(out))
 		return
 	}
 	fmt.Fprintln(w, string(out))
@@ -197,7 +199,7 @@ func httpConfigHandler(w http.ResponseWriter, r *http.Request, c Config) {
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		out, _ := json.Marshal(APIResult{Type: "error", Message: err.Error()})
-		fmt.Fprintf(w, string(out))
+		fmt.Fprint(w, string(out))
 		return
 	}
 	fmt.Fprintln(w, string(out))
@@ -209,7 +211,7 @@ func (api *APIServer) httpConfigUpdateHandler(w http.ResponseWriter, r *http.Req
 		log.Println(ErrAPILocked)
 		w.WriteHeader(http.StatusServiceUnavailable)
 		out, _ := json.Marshal(APIResult{Type: "error", Message: ErrAPILocked.Error()})
-		fmt.Fprintf(w, string(out))
+		fmt.Fprint(w, string(out))
 		return
 	}
 	defer api.lock.Release(1)
@@ -218,7 +220,7 @@ func (api *APIServer) httpConfigUpdateHandler(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		out, _ := json.Marshal(APIResult{Type: "error", Message: fmt.Sprintf("Error parsing POST form: %v", err.Error())})
-		fmt.Fprintf(w, string(out))
+		fmt.Fprint(w, string(out))
 		return
 	}
 
@@ -226,20 +228,19 @@ func (api *APIServer) httpConfigUpdateHandler(w http.ResponseWriter, r *http.Req
 	if err := yaml.Unmarshal(body, &newConfig); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		out, _ := json.Marshal(APIResult{Type: "error", Message: fmt.Sprintf("Error parsing new config: %v", err.Error())})
-		fmt.Fprintf(w, string(out))
+		fmt.Fprint(w, string(out))
 		return
 	}
 
 	if err := validateConfig(newConfig); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		out, _ := json.Marshal(APIResult{Type: "error", Message: fmt.Sprintf("Error validating new config: %v", err.Error())})
-		fmt.Fprintf(w, string(out))
+		fmt.Fprint(w, string(out))
 		return
 	}
 	log.Printf("Applying new valid config.")
 	api.config = *newConfig
 	api.restart <- true
-	return
 }
 
 // httpTablesHandler - displaylist of tables
@@ -248,7 +249,7 @@ func httpTablesHandler(w http.ResponseWriter, r *http.Request, c Config) {
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		out, _ := json.Marshal(APIResult{Type: "error", Message: err.Error()})
-		fmt.Fprintf(w, string(out))
+		fmt.Fprint(w, string(out))
 		return
 	}
 	for _, table := range tables {
@@ -256,7 +257,7 @@ func httpTablesHandler(w http.ResponseWriter, r *http.Request, c Config) {
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			out, _ := json.Marshal(APIResult{Type: "error", Message: err.Error()})
-			fmt.Fprintf(w, string(out))
+			fmt.Fprint(w, string(out))
 			return
 		}
 		fmt.Fprintln(w, string(out))
@@ -269,7 +270,7 @@ func httpListHandler(w http.ResponseWriter, r *http.Request, c Config) {
 	if err != nil && !os.IsNotExist(err) {
 		w.WriteHeader(http.StatusInternalServerError)
 		out, _ := json.Marshal(APIResult{Type: "error", Message: err.Error()})
-		fmt.Fprintf(w, string(out))
+		fmt.Fprint(w, string(out))
 		return
 	}
 	backups := []APIListResult{}
@@ -281,7 +282,7 @@ func httpListHandler(w http.ResponseWriter, r *http.Request, c Config) {
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			out, _ := json.Marshal(APIResult{Type: "error", Message: err.Error()})
-			fmt.Fprintf(w, string(out))
+			fmt.Fprint(w, string(out))
 			return
 		}
 		for _, backup := range remoteBackups {
@@ -294,7 +295,7 @@ func httpListHandler(w http.ResponseWriter, r *http.Request, c Config) {
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			out, _ := json.Marshal(APIResult{Type: "error", Message: err.Error()})
-			fmt.Fprintf(w, string(out))
+			fmt.Fprint(w, string(out))
 			return
 		}
 		fmt.Fprintln(w, string(out))
@@ -307,7 +308,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request, 
 		log.Println(ErrAPILocked)
 		w.WriteHeader(http.StatusServiceUnavailable)
 		out, _ := json.Marshal(APIResult{Type: "error", Message: ErrAPILocked.Error()})
-		fmt.Fprintf(w, string(out))
+		fmt.Fprint(w, string(out))
 		return
 	}
 	defer api.lock.Release(1)
@@ -345,13 +346,12 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request, 
 		log.Println(e)
 		w.WriteHeader(http.StatusInternalServerError)
 		out, _ := json.Marshal(APIResult{Type: "error", Message: e})
-		fmt.Fprintf(w, string(out))
+		fmt.Fprint(w, string(out))
 		return
 	}
 	api.metrics.SuccessfulBackups.Inc()
 	api.metrics.LastBackupSuccess.Set(1)
-	fmt.Fprintf(w, string(out))
-	return
+	fmt.Fprint(w, string(out))
 }
 
 // httpFreezeHandler - freeze tables
@@ -360,7 +360,7 @@ func (api *APIServer) httpFreezeHandler(w http.ResponseWriter, r *http.Request, 
 		log.Println(ErrAPILocked)
 		w.WriteHeader(http.StatusServiceUnavailable)
 		out, _ := json.Marshal(APIResult{Type: "error", Message: ErrAPILocked.Error()})
-		fmt.Fprintf(w, string(out))
+		fmt.Fprint(w, string(out))
 		return
 	}
 	defer api.lock.Release(1)
@@ -370,7 +370,7 @@ func (api *APIServer) httpFreezeHandler(w http.ResponseWriter, r *http.Request, 
 		log.Printf("Freeze error: = %+v\n", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		out, _ := json.Marshal(APIResult{Type: "error", Message: err.Error()})
-		fmt.Fprintf(w, string(out))
+		fmt.Fprint(w, string(out))
 		return
 	}
 	out, err := json.Marshal(APIResult{Type: "success"})
@@ -379,11 +379,10 @@ func (api *APIServer) httpFreezeHandler(w http.ResponseWriter, r *http.Request, 
 		log.Println(e)
 		w.WriteHeader(http.StatusInternalServerError)
 		out, _ := json.Marshal(APIResult{Type: "error", Message: e})
-		fmt.Fprintf(w, string(out))
+		fmt.Fprint(w, string(out))
 		return
 	}
-	fmt.Fprintf(w, string(out))
-	return
+	fmt.Fprint(w, string(out))
 }
 
 // httpCleanHandler - clean ./shadow directory
@@ -392,7 +391,7 @@ func (api *APIServer) httpCleanHandler(w http.ResponseWriter, r *http.Request, c
 		log.Println(ErrAPILocked)
 		w.WriteHeader(http.StatusServiceUnavailable)
 		out, _ := json.Marshal(APIResult{Type: "error", Message: ErrAPILocked.Error()})
-		fmt.Fprintf(w, string(out))
+		fmt.Fprint(w, string(out))
 		return
 	}
 	defer api.lock.Release(1)
@@ -401,7 +400,7 @@ func (api *APIServer) httpCleanHandler(w http.ResponseWriter, r *http.Request, c
 		log.Printf("Clean error: = %+v\n", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		out, _ := json.Marshal(APIResult{Type: "error", Message: err.Error()})
-		fmt.Fprintf(w, string(out))
+		fmt.Fprint(w, string(out))
 		return
 	}
 	out, err := json.Marshal(APIResult{Type: "success"})
@@ -410,11 +409,10 @@ func (api *APIServer) httpCleanHandler(w http.ResponseWriter, r *http.Request, c
 		log.Println(e)
 		w.WriteHeader(http.StatusInternalServerError)
 		out, _ := json.Marshal(APIResult{Type: "error", Message: e})
-		fmt.Fprintf(w, string(out))
+		fmt.Fprint(w, string(out))
 		return
 	}
-	fmt.Fprintf(w, string(out))
-	return
+	fmt.Fprint(w, string(out))
 }
 
 // httpUploadHandler - upload a backup to remote storage
@@ -440,11 +438,10 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request, 
 		log.Println(e)
 		w.WriteHeader(http.StatusInternalServerError)
 		out, _ := json.Marshal(APIResult{Type: "error", Message: e})
-		fmt.Fprintf(w, string(out))
+		fmt.Fprint(w, string(out))
 		return
 	}
-	fmt.Fprintf(w, string(out))
-	return
+	fmt.Fprint(w, string(out))
 }
 
 // httpRestoreHandler - restore a backup from local storage
@@ -453,7 +450,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request,
 		log.Println(ErrAPILocked)
 		w.WriteHeader(http.StatusServiceUnavailable)
 		out, _ := json.Marshal(APIResult{Type: "error", Message: ErrAPILocked.Error()})
-		fmt.Fprintf(w, string(out))
+		fmt.Fprint(w, string(out))
 		return
 	}
 	defer api.lock.Release(1)
@@ -477,7 +474,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request,
 		log.Printf("Download error: %+v\n", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		out, _ := json.Marshal(APIResult{Type: "error", Message: err.Error()})
-		fmt.Fprintf(w, string(out))
+		fmt.Fprint(w, string(out))
 		return
 	}
 	out, err := json.Marshal(APIResult{Type: "success"})
@@ -486,11 +483,10 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request,
 		log.Println(e)
 		w.WriteHeader(http.StatusInternalServerError)
 		out, _ := json.Marshal(APIResult{Type: "error", Message: e})
-		fmt.Fprintf(w, string(out))
+		fmt.Fprint(w, string(out))
 		return
 	}
-	fmt.Fprintf(w, string(out))
-	return
+	fmt.Fprint(w, string(out))
 }
 
 // httpDownloadHandler - download a backup from remote to local storage
@@ -511,11 +507,10 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		log.Println(e)
 		w.WriteHeader(http.StatusInternalServerError)
 		out, _ := json.Marshal(APIResult{Type: "error", Message: e})
-		fmt.Fprintf(w, string(out))
+		fmt.Fprint(w, string(out))
 		return
 	}
-	fmt.Fprintf(w, string(out))
-	return
+	fmt.Fprint(w, string(out))
 }
 
 // httpDeleteHandler - delete a backup from local or remote storage
@@ -524,7 +519,7 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request, 
 		log.Println(ErrAPILocked)
 		w.WriteHeader(http.StatusServiceUnavailable)
 		out, _ := json.Marshal(APIResult{Type: "error", Message: ErrAPILocked.Error()})
-		fmt.Fprintf(w, string(out))
+		fmt.Fprint(w, string(out))
 		return
 	}
 	defer api.lock.Release(1)
@@ -536,7 +531,7 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request, 
 			log.Printf("RemoveBackupLocal error: %+v\n", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			out, _ := json.Marshal(APIResult{Type: "error", Message: err.Error()})
-			fmt.Fprintf(w, string(out))
+			fmt.Fprint(w, string(out))
 			return
 		}
 	case "remote":
@@ -544,13 +539,13 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request, 
 			log.Printf("RemoveBackupRemote error: %+v\n", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			out, _ := json.Marshal(APIResult{Type: "error", Message: err.Error()})
-			fmt.Fprintf(w, string(out))
+			fmt.Fprint(w, string(out))
 			return
 		}
 	default:
 		w.WriteHeader(http.StatusInternalServerError)
 		out, _ := json.Marshal(APIResult{Type: "error", Message: "Backup location must be 'local' or 'remote'."})
-		fmt.Fprintf(w, string(out))
+		fmt.Fprint(w, string(out))
 		return
 	}
 	out, err := json.Marshal(APIResult{Type: "success"})
@@ -559,26 +554,23 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request, 
 		log.Println(e)
 		w.WriteHeader(http.StatusInternalServerError)
 		out, _ := json.Marshal(APIResult{Type: "error", Message: e})
-		fmt.Fprintf(w, string(out))
+		fmt.Fprint(w, string(out))
 		return
 	}
-	fmt.Fprintf(w, string(out))
-	return
+	fmt.Fprint(w, string(out))
 }
 
 func (api *APIServer) httpBackupStatusHandler(w http.ResponseWriter, r *http.Request, c Config) {
-	s := api.status.status()
 	out, err := json.Marshal(api.status.status())
 	if err != nil {
 		e := fmt.Sprintf("marshal error: %v", err)
 		log.Println(e)
 		w.WriteHeader(http.StatusInternalServerError)
 		out, _ := json.Marshal(APIResult{Type: "error", Message: e})
-		fmt.Fprintf(w, string(out))
+		fmt.Fprint(w, string(out))
 		return
 	}
-	fmt.Fprintf(w, string(out))
-	return
+	fmt.Fprint(w, string(out))
 }
 
 const rootHtml = `<html><body>

@@ -1,7 +1,7 @@
 language: go
 sudo: required
 go:
-  - 1.13
+  - 1.14
 env:
   - CLICKHOUSE_VERSION=1.1.54390
   - CLICKHOUSE_VERSION=19.4.4.33

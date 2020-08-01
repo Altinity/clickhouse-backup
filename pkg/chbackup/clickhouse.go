@@ -139,7 +139,7 @@ func (ch *ClickHouse) GetTables() ([]Table, error) {
 // Example value: 19001005
 func (ch *ClickHouse) GetVersion() (int, error) {
 	var result []string
-	q := fmt.Sprintf("SELECT value FROM `system`.`build_options` where name='VERSION_INTEGER'")
+	q := "SELECT value FROM `system`.`build_options` where name='VERSION_INTEGER'"
 	if err := ch.conn.Select(&result, q); err != nil {
 		return 0, fmt.Errorf("can't get ClickHouse version with %v", err)
 	}
