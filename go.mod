@@ -13,6 +13,7 @@ require (
 	github.com/golang/groupcache v0.0.0-20191027212112-611e8accdfc9 // indirect
 	github.com/google/uuid v1.1.1
 	github.com/gorilla/mux v1.7.4
+	github.com/jlaffaye/ftp v0.0.0-20200730135723-c2ee4fa2503b
 	github.com/jmoiron/sqlx v1.2.0
 	github.com/jstemmer/go-junit-report v0.9.1 // indirect
 	github.com/kelseyhightower/envconfig v1.4.0
@@ -23,7 +24,7 @@ require (
 	github.com/pierrec/lz4 v2.3.1-0.20191115212037-9085dacd1e1e+incompatible // indirect
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.7.1
-	github.com/stretchr/testify v1.5.1
+	github.com/stretchr/testify v1.6.1
 	github.com/tencentyun/cos-go-sdk-v5 v0.0.0-20200120023323-87ff3bc489ac
 	github.com/urfave/cli v1.22.2
 	go.opencensus.io v0.22.2 // indirect
