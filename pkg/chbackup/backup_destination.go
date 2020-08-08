@@ -115,11 +115,14 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 	}
 	files := map[string]ClickhouseBackup{}
 	path := bd.path
+
 	err := bd.Walk(path, func(o RemoteFile) {
+
 		if strings.HasPrefix(o.Name(), path) {
 			key := strings.TrimPrefix(o.Name(), path)
 			key = strings.TrimPrefix(key, "/")
 			parts := strings.Split(key, "/")
+
 			if strings.HasSuffix(parts[0], ".tar") ||
 				strings.HasSuffix(parts[0], ".tar.lz4") ||
 				strings.HasSuffix(parts[0], ".tar.bz2") ||
@@ -132,6 +135,7 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 					Size: o.Size(),
 				}
 			}
+
 			if len(parts) > 1 {
 				b := files[parts[0]]
 				files[parts[0]] = ClickhouseBackup{
@@ -171,15 +175,18 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 		return err
 	}
 
-	reader, err := bd.GetFileReader(archiveName)
-	if err != nil {
-		return err
-	}
+	// get this first as GetFileReader blocks the ftp control channel
 	file, err := bd.GetFile(archiveName)
 	if err != nil {
 		return err
 	}
 	filesize := file.Size()
+
+	reader, err := bd.GetFileReader(archiveName)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
 
 	bar := StartNewByteBar(!bd.disableProgressBar, filesize)
 	buf := buffer.New(BufferSize)
@@ -413,6 +420,16 @@ func NewBackupDestination(config Config) (*BackupDestination, error) {
 			config.COS.Path,
 			config.COS.CompressionFormat,
 			config.COS.CompressionLevel,
+			config.General.DisableProgressBar,
+			config.General.BackupsToKeepRemote,
+		}, nil
+	case "ftp":
+		ftp := &FTP{Config: &config.FTP}
+		return &BackupDestination{
+			ftp,
+			config.FTP.Path,
+			config.FTP.CompressionFormat,
+			config.FTP.CompressionLevel,
 			config.General.DisableProgressBar,
 			config.General.BackupsToKeepRemote,
 		}, nil
