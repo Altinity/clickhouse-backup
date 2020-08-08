@@ -18,6 +18,7 @@ type Config struct {
 	GCS        GCSConfig        `yaml:"gcs"`
 	COS        COSConfig        `yaml:"cos"`
 	API        APIConfig        `yaml:"api"`
+	FTP        FTPConfig        `yaml:"ftp"`
 }
 
 // GeneralConfig - general setting section
@@ -69,6 +70,19 @@ type COSConfig struct {
 	Debug             bool   `yaml:"debug" envconfig:"COS_DEBUG"`
 }
 
+// FTPConfig - ftp settings section
+type FTPConfig struct {
+	Address           string `yaml:"address" envconfig:"FTP_ADDRESS"`
+	Timeout           string `yaml:"timeout" envconfig:"FTP_TIMEOUT"`
+	Username          string `yaml:"username" envconfig:"FTP_USERNAME"`
+	Password          string `yaml:"password" envconfig:"FTP_PASSWORD"`
+	TLS               bool   `yaml:"tls" envconfig:"FTP_TLS"`
+	Path              string `yaml:"path" envconfig:"FTP_PATH"`
+	CompressionFormat string `yaml:"compression_format" envconfig:"FTP_COMPRESSION_FORMAT"`
+	CompressionLevel  int    `yaml:"compression_level" envconfig:"FTP_COMPRESSION_LEVEL"`
+	Debug             bool   `yaml:"debug" envconfig:"FTP_DEBUG"`
+}
+
 // ClickHouseConfig - clickhouse settings section
 type ClickHouseConfig struct {
 	Username     string   `yaml:"username" envconfig:"CLICKHOUSE_USERNAME"`
@@ -118,6 +132,9 @@ func validateConfig(config *Config) error {
 		return err
 	}
 	if _, err := time.ParseDuration(config.COS.Timeout); err != nil {
+		return err
+	}
+	if _, err := time.ParseDuration(config.FTP.Timeout); err != nil {
 		return err
 	}
 	return nil
@@ -172,6 +189,16 @@ func DefaultConfig() *Config {
 		},
 		API: APIConfig{
 			ListenAddr: "localhost:7171",
+		},
+		FTP: FTPConfig{
+			Address:           "",
+			Timeout:           "2m",
+			Username:          "",
+			Password:          "",
+			TLS:               false,
+			CompressionFormat: "gzip",
+			CompressionLevel:  1,
+			Debug:             false,
 		},
 	}
 }
