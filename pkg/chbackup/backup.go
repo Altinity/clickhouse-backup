@@ -150,7 +150,7 @@ func getTables(config Config) ([]Table, error) {
 	}
 
 	if err := ch.Connect(); err != nil {
-		return []Table{}, fmt.Errorf("can't connect to clickouse with: %v", err)
+		return []Table{}, fmt.Errorf("can't connect to clickhouse with: %v", err)
 	}
 	defer ch.Close()
 
@@ -206,7 +206,7 @@ func restoreSchema(config Config, backupName string, tablePattern string) error 
 		Config: &config.ClickHouse,
 	}
 	if err := ch.Connect(); err != nil {
-		return fmt.Errorf("can't connect to clickouse with %v", err)
+		return fmt.Errorf("can't connect to clickhouse with %v", err)
 	}
 	defer ch.Close()
 
@@ -332,7 +332,7 @@ func Freeze(config Config, tablePattern string) error {
 		Config: &config.ClickHouse,
 	}
 	if err := ch.Connect(); err != nil {
-		return fmt.Errorf("can't connect to clickouse with: %v", err)
+		return fmt.Errorf("can't connect to clickhouse with: %v", err)
 	}
 	defer ch.Close()
 
@@ -469,7 +469,7 @@ func RestoreData(config Config, backupName string, tablePattern string) error {
 		Config: &config.ClickHouse,
 	}
 	if err := ch.Connect(); err != nil {
-		return fmt.Errorf("can't connect to clickouse with: %v", err)
+		return fmt.Errorf("can't connect to clickhouse with: %v", err)
 	}
 	defer ch.Close()
 
