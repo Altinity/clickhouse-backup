@@ -110,7 +110,7 @@ func main() {
 						}
 					}
 				default:
-					fmt.Fprintf(os.Stderr, "Unknown command '%s'\n", c.Args().Get(0))
+					log.Printf("Unknown command '%s'\n", c.Args().Get(0))
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
 				}
 				return nil
@@ -157,7 +157,7 @@ func main() {
 			Action: func(c *cli.Context) error {
 				config := getConfig(c)
 				if c.Args().Get(1) == "" {
-					fmt.Fprintln(os.Stderr, "Backup name must be defined")
+					log.Println("Backup name must be defined")
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
 				}
 				switch c.Args().Get(0) {
@@ -166,7 +166,7 @@ func main() {
 				case "remote":
 					return chbackup.RemoveBackupRemote(*config, c.Args().Get(1))
 				default:
-					fmt.Fprintf(os.Stderr, "Unknown command '%s'\n", c.Args().Get(0))
+					log.Printf("Unknown command '%s'\n", c.Args().Get(0))
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
 				}
 				return nil

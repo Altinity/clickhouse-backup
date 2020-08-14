@@ -164,9 +164,8 @@ Print list of tables: `curl -s localhost:7171/backup/tables | jq .`
 
 Create new backup: `curl -s localhost:7171/backup/create -X POST | jq .`
 * Optional query argument `table` works the same as the `--table value` CLI argument.
-* Optional query argument `freeze_one_by_one` works the same the `--freeze-one-by-one` CLI argument.
 * Optional query argument `name` works the same as specifying a backup name with the CLI.
-* Full example: `curl -s 'localhost:7171/backup/create?table=default.billing&name=billing_test&freeze_one_by_one' -X POST`
+* Full example: `curl -s 'localhost:7171/backup/create?table=default.billing&name=billing_test' -X POST`
 
 Note: this operation is async, so the API will return once the operation has been started.
 

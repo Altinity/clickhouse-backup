@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -39,8 +41,8 @@ type CommandInfo struct {
 	BackupName string `json:"backup_name"`
 	Status     string `json:"status"`
 	Progress   string `json:"progress,omitempty"`
-	Started    int64  `json:"started,omitempty"`
-	Finished   int64  `json:"finished,omitempty"`
+	Start      string `json:"start,omitempty"`
+	Finish     string `json:"finish,omitempty"`
 	Error      string `json:"error,omitempty"`
 }
 
@@ -50,7 +52,7 @@ func (status *AsyncStatus) start(command string, backupName string) {
 	status.commands = append(status.commands, CommandInfo{
 		Command:    command,
 		BackupName: backupName,
-		Started:    time.Now().Unix(),
+		Start:      time.Now().Format(BackupTimeFormat),
 		Status:     "executing",
 	})
 }
@@ -64,7 +66,7 @@ func (status *AsyncStatus) stop(err error) {
 		status.commands[len(status.commands)-1].Error = err.Error()
 	}
 	status.commands[len(status.commands)-1].Status = s
-	status.commands[len(status.commands)-1].Finished = time.Now().Unix()
+	status.commands[len(status.commands)-1].Finish = time.Now().Format(BackupTimeFormat)
 }
 
 func (status *AsyncStatus) status() *CommandInfo {
@@ -89,23 +91,34 @@ func Server(config Config) error {
 		status:  &AsyncStatus{},
 	}
 	api.metrics = setupMetrics()
-	// TODO: Should add a configuration check
+	sigterm := make(chan os.Signal, 1)
+	signal.Notify(sigterm, os.Interrupt, syscall.SIGTERM)
+	sighup := make(chan os.Signal, 1)
+	signal.Notify(sighup, os.Interrupt, syscall.SIGHUP)
 
 	for {
 		api.server = api.setupAPIServer(api.config)
 		go func() {
 			log.Printf("Starting API server on %s", api.config.API.ListenAddr)
 			if err := api.server.ListenAndServe(); err != http.ErrServerClosed {
-				log.Printf("Error starting API server: %v", err)
+				log.Printf("error starting API server: %v", err)
 				os.Exit(1)
 			}
 		}()
-		<-api.restart
-		// TODO: Should add shutdown
-		api.server.Close()
-		log.Printf("Reloading config and restarting API server.")
+		select {
+		case <-api.restart:
+			log.Println("Reloading config and restarting API server")
+			api.server.Close()
+			continue
+		case <-sighup:
+			log.Println("Reloading config and restarting API server")
+			api.server.Close()
+			continue
+		case <-sigterm:
+			log.Println("Stopping API server")
+			return api.server.Close()
+		}
 	}
-	return nil
 }
 
 // setupAPIServer - resister API routes
@@ -312,9 +325,11 @@ func (api *APIServer) httpFreezeHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer api.lock.Release(1)
-
+	query := r.URL.Query()
 	tablePattern := ""
-	// TODO: args
+	if tp, exist := query["table"]; exist {
+		tablePattern = tp[0]
+	}
 	if err := Freeze(api.config, tablePattern); err != nil {
 		log.Printf("Freeze error: = %+v\n", err)
 		writeError(w, http.StatusInternalServerError, "freeze", err)
@@ -331,7 +346,6 @@ func (api *APIServer) httpCleanHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer api.lock.Release(1)
-
 	if err := Clean(api.config); err != nil {
 		log.Printf("Clean error: = %+v\n", err)
 		writeError(w, http.StatusInternalServerError, "clean", err)
