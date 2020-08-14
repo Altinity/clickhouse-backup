@@ -1,9 +1,11 @@
 package chbackup
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"net/url"
 	"os"
 	"path"
@@ -208,4 +210,32 @@ func parseTime(text string) (t time.Time, err error) {
 		}
 	}
 	return
+}
+
+func writeError(w http.ResponseWriter, statusCode int, operation string, err error) {
+	w.WriteHeader(statusCode)
+	w.Header().Set("Content-Type", "application/json")
+	out, _ := json.Marshal(struct {
+		Status    string `json:"status"`
+		Operation string `json:"operation,omitempty"`
+		Error     string `json:"error"`
+	}{
+		Status:    "error",
+		Operation: operation,
+		Error:     err.Error(),
+	})
+	fmt.Fprint(w, string(out))
+}
+
+func writeSuccess(w http.ResponseWriter, statusCode int, operation string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	out, _ := json.Marshal(struct {
+		Status    string `json:"status"`
+		Operation string `json:"operation,omitempty"`
+	}{
+		Status:    "success",
+		Operation: operation,
+	})
+	fmt.Fprint(w, string(out))
 }

@@ -115,9 +115,7 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 	}
 	files := map[string]ClickhouseBackup{}
 	path := bd.path
-
 	err := bd.Walk(path, func(o RemoteFile) {
-
 		if strings.HasPrefix(o.Name(), path) {
 			key := strings.TrimPrefix(o.Name(), path)
 			key = strings.TrimPrefix(key, "/")

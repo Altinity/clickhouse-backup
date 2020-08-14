@@ -27,9 +27,9 @@ type ClickHouse struct {
 
 // Table - ClickHouse table struct
 type Table struct {
-	Database string `db:"database"`
-	Name     string `db:"name"`
-	Skip     bool
+	Database string `db:"database" json:"database"`
+	Name     string `db:"name" json:"table"`
+	Skip     bool   `json:"skip"`
 }
 
 // BackupPartition - struct representing Clickhouse partition
@@ -119,7 +119,7 @@ func (ch *ClickHouse) Close() error {
 
 // GetTables - return slice of all tables suitable for backup
 func (ch *ClickHouse) GetTables() ([]Table, error) {
-	var tables []Table
+	tables := make([]Table, 0)
 	if err := ch.conn.Select(&tables, "SELECT database, name FROM system.tables WHERE is_temporary = 0 AND engine LIKE '%MergeTree';"); err != nil {
 		return nil, err
 	}

@@ -12,7 +12,7 @@ import (
 
 // Config - config file format
 type Config struct {
-	General    GeneralConfig    `yaml:"general"`
+	General    GeneralConfig    `yaml:"general" json:"general"`
 	ClickHouse ClickHouseConfig `yaml:"clickhouse"`
 	S3         S3Config         `yaml:"s3"`
 	GCS        GCSConfig        `yaml:"gcs"`
@@ -96,9 +96,11 @@ type ClickHouseConfig struct {
 }
 
 type APIConfig struct {
-	ListenAddr    string `yaml:"listen_addr" envconfig:"API_LISTEN_ADDR"`
-	EnableMetrics bool   `yaml:"enable_metrics" envconfig:"ENABLE_METRICS"`
-	EnablePprof   bool   `yaml:"enable_pprof" envconfig:"ENABLE_PPROF"`
+	ListenAddr    string `yaml:"listen" envconfig:"API_LISTEN"`
+	EnableMetrics bool   `yaml:"enable_metrics" envconfig:"API_ENABLE_METRICS"`
+	EnablePprof   bool   `yaml:"enable_pprof" envconfig:"API_ENABLE_PPROF"`
+	Username      string `yaml:"username" envconfig:"API_USERNAME"`
+	Password      string `yaml:"password" envconfig:"API_PASSWORD"`
 }
 
 // LoadConfig - load config from file
