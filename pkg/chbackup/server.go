@@ -1,6 +1,7 @@
 package chbackup
 
 import (
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -121,6 +122,7 @@ func Server(config Config) error {
 // setupAPIServer - resister API routes
 func (api *APIServer) setupAPIServer(config Config) *http.Server {
 	r := mux.NewRouter()
+	r.Use(api.basicAuthMidleware)
 	r.HandleFunc("/", api.httpRootHandler).Methods("GET")
 
 	r.HandleFunc("/backup/tables", api.httpTablesHandler).Methods("GET")
@@ -153,6 +155,22 @@ func (api *APIServer) setupAPIServer(config Config) *http.Server {
 		Handler: r,
 	}
 	return srv
+}
+
+func (api *APIServer) basicAuthMidleware(next http.Handler) http.Handler {
+	if api.config.API.Username == "" && api.config.API.Password == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, pass, ok := r.BasicAuth()
+		if !ok || subtle.ConstantTimeCompare([]byte(user), []byte(api.config.API.Username)) != 1 || subtle.ConstantTimeCompare([]byte(pass), []byte(api.config.API.Password)) != 1 {
+			w.Header().Set("WWW-Authenticate", "Basic realm=\"Provide username and password\"")
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte("401 Unauthorized\n"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // httpRootHandler - display API index
