@@ -76,3 +76,6 @@ In addition you may create instance of ClickHouse on another DC and have it fres
 
 ## How to use clickhouse-backup in Kubernetes
 ...
+
+## How do incremental backups work to remote storage
+This is described in detail in [this issue](https://github.com/AlexAkulov/clickhouse-backup/issues/81).

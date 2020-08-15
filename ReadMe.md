@@ -6,21 +6,22 @@
 [![Telegram](https://img.shields.io/badge/telegram-join%20chat-3796cd.svg)](https://t.me/clickhousebackup)
 [![Docker Image](https://img.shields.io/docker/pulls/alexakulov/clickhouse-backup.svg)](https://hub.docker.com/r/alexakulov/clickhouse-backup)
 
-Tool for easy ClickHouse backup and restore with S3 and GCS support
+Tool for easy ClickHouse backup and restore with cloud storages support
 
 ## Features
 
 - Easy creating and restoring backups of all or specific tables
 - Efficient storing of multiple backups on the file system
-- Most efficient AWS S3/GCS uploading and downloading with streaming compression
+- Uploading and downloading with streaming compression
 - Support of incremental backups on remote storages
+- Works with AWS, GCS, Tencent COS, FTP
 
 ## Limitations
 
 - ClickHouse above 1.1.54390 is supported
 - Only MergeTree family tables engines
 - Backup of 'Tiered storage' or `storage_policy` IS NOT SUPPORTED!
-- Maximum backup size on remote storages is 5TB
+- Maximum backup size on cloud storages is 5TB
 - Maximum number of parts on AWS S3 is 10,000 (increase part_size if your database is more than 1TB)
 
 ## Download
@@ -141,9 +142,21 @@ cos:
   compression_level: 1         # COS_COMPRESSION_LEVEL
   debug: false                 # COS_DEBUG
 api:
-  listen_addr: "localhost:7171"  # API_LISTEN_ADDR
-  enable_metrics: false          # ENABLE_METRICS
-  enable_pprof: false            # ENABLE_PPROF
+  listen: "localhost:7171"     # API_LISTEN_ADDR
+  enable_metrics: false        # API_ENABLE_METRICS
+  enable_pprof: false          # API_ENABLE_PPROF
+  username: ""                 # API_USERNAME
+  password: ""                 # API_PASSWORD
+ftp:
+  address: ""                  # FTP_ADDRESS
+  timeout: 2m                  # FTP_TIMEOUT
+  username: ""                 # FTP_USERNAME
+  password: ""                 # FTP_PASSWORD
+  tls: false                   # FTP_TLS
+  path: ""                     # FTP_PATH
+  compression_format: gzip     # FTP_COMPRESSION_FORMAT
+  compression_level: 1         # FTP_COMPRESSION_LEVEL
+  debug: false                 # FTP_DEBUG
 ```
 
 ## ATTENTION!
@@ -248,3 +261,4 @@ clickhouse-backup upload $BACKUP_NAME
 - [How to backup sharded cluster with Ansible](Examples.md#how-to-backup-sharded-cluster-with-ansible)
 - [How to backup database with several terabytes of data](Examples.md#how-to-backup-database-with-several-terabytes-of-data)
 - [How to use clickhouse-backup in Kubernetes](Examples.md#how-to-use-clickhouse-backup-in-kubernetes)
+- [How do incremental backups work to remote storage](Examples.md#how_do_incremental_backups_work_to_remote_storage)
