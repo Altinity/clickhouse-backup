@@ -241,7 +241,7 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 		log.Printf("Backup '%s' required '%s'. Downloading.", remotePath, metafile.RequiredBackup)
 		err := bd.CompressedStreamDownload(metafile.RequiredBackup, filepath.Join(filepath.Dir(localPath), metafile.RequiredBackup))
 		if err != nil && !os.IsExist(err) {
-			return fmt.Errorf("can't download '%s' with %v", metafile.RequiredBackup, err)
+			return fmt.Errorf("can't download '%s': %v", metafile.RequiredBackup, err)
 		}
 	}
 	for _, hardlink := range metafile.Hardlinks {
@@ -342,16 +342,16 @@ func (bd *BackupDestination) CompressedStreamUpload(localPath, remotePath, diffF
 			}
 			content, err := json.MarshalIndent(&metafile, "", "\t")
 			if err != nil {
-				ferr = fmt.Errorf("can't marshal json with %v", err)
+				ferr = fmt.Errorf("can't marshal json: %v", err)
 				return
 			}
 			tmpfile, err := ioutil.TempFile("", MetaFileName)
 			if err != nil {
-				ferr = fmt.Errorf("can't create meta.info with %v", err)
+				ferr = fmt.Errorf("can't create meta.info: %v", err)
 				return
 			}
 			if _, err := tmpfile.Write(content); err != nil {
-				ferr = fmt.Errorf("can't write to meta.info with %v", err)
+				ferr = fmt.Errorf("can't write to meta.info: %v", err)
 				return
 			}
 			tmpfile.Close()
@@ -359,7 +359,7 @@ func (bd *BackupDestination) CompressedStreamUpload(localPath, remotePath, diffF
 			defer os.Remove(tmpFileName)
 			info, err := os.Stat(tmpFileName)
 			if err != nil {
-				ferr = fmt.Errorf("can't get stat with %v", err)
+				ferr = fmt.Errorf("can't get stat: %v", err)
 				return
 			}
 			mf, err := os.Open(tmpFileName)
@@ -375,7 +375,7 @@ func (bd *BackupDestination) CompressedStreamUpload(localPath, remotePath, diffF
 				},
 				ReadCloser: mf,
 			}); err != nil {
-				ferr = fmt.Errorf("can't add mata.json to archive with %v", err)
+				ferr = fmt.Errorf("can't add mata.json to archive: %v", err)
 				return
 			}
 		}

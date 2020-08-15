@@ -141,7 +141,7 @@ func (ch *ClickHouse) GetVersion() (int, error) {
 	var result []string
 	q := "SELECT value FROM `system`.`build_options` where name='VERSION_INTEGER'"
 	if err := ch.conn.Select(&result, q); err != nil {
-		return 0, fmt.Errorf("can't get ClickHouse version with %v", err)
+		return 0, fmt.Errorf("can't get сlickHouse version: %v", err)
 	}
 	if len(result) == 0 {
 		return 0, nil
@@ -157,7 +157,7 @@ func (ch *ClickHouse) FreezeTableOldWay(table Table) error {
 	}
 	q := fmt.Sprintf("SELECT DISTINCT partition_id FROM `system`.`parts` WHERE database='%s' AND table='%s'", table.Database, table.Name)
 	if err := ch.conn.Select(&partitions, q); err != nil {
-		return fmt.Errorf("can't get partitions for \"%s.%s\" with %v", table.Database, table.Name, err)
+		return fmt.Errorf("can't get partitions for '%s.%s': %v", table.Database, table.Name, err)
 	}
 	log.Printf("Freeze '%v.%v'", table.Database, table.Name)
 	for _, item := range partitions {
@@ -174,7 +174,7 @@ func (ch *ClickHouse) FreezeTableOldWay(table Table) error {
 				table.Name)
 		}
 		if _, err := ch.conn.Exec(query); err != nil {
-			return fmt.Errorf("can't freeze partition '%s' on '%s.%s' with: %v", item.PartitionID, table.Database, table.Name, err)
+			return fmt.Errorf("can't freeze partition '%s' on '%s.%s': %v", item.PartitionID, table.Database, table.Name, err)
 		}
 	}
 	return nil
@@ -190,10 +190,10 @@ func (ch *ClickHouse) FreezeTable(table Table) error {
 	if version < 19001005 || ch.Config.FreezeByPart {
 		return ch.FreezeTableOldWay(table)
 	}
-	log.Printf("Freeze `%s`.`%s`", table.Database, table.Name)
+	log.Printf("Freeze '%s.%s'", table.Database, table.Name)
 	query := fmt.Sprintf("ALTER TABLE `%v`.`%v` FREEZE;", table.Database, table.Name)
 	if _, err := ch.conn.Exec(query); err != nil {
-		return fmt.Errorf("can't freeze `%s`.`%s` with: %v", table.Database, table.Name, err)
+		return fmt.Errorf("can't freeze '%s.%s': %v", table.Database, table.Name, err)
 	}
 	return nil
 }
@@ -285,7 +285,7 @@ func (ch *ClickHouse) Chown(filename string) error {
 
 // CopyData - copy partitions for specific table to detached folder
 func (ch *ClickHouse) CopyData(table BackupTable) error {
-	log.Printf("Prepare data for restoring `%s`.`%s`", table.Database, table.Name)
+	log.Printf("Prepare data for restoring '%s.%s'", table.Database, table.Name)
 	dataPath, err := ch.GetDataPath()
 	if err != nil {
 		return err
@@ -325,11 +325,11 @@ func (ch *ClickHouse) CopyData(table BackupTable) error {
 				return nil
 			}
 			if err := os.Link(filePath, dstFilePath); err != nil {
-				return fmt.Errorf("failed to crete hard link '%s' -> '%s' with %v", filePath, dstFilePath, err)
+				return fmt.Errorf("failed to crete hard link '%s' -> '%s': %v", filePath, dstFilePath, err)
 			}
 			return ch.Chown(dstFilePath)
 		}); err != nil {
-			return fmt.Errorf("error during filepath.Walk for partition '%s' with %v", partition.Path, err)
+			return fmt.Errorf("error during filepath.Walk for partition '%s': %v", partition.Path, err)
 		}
 	}
 	return nil
@@ -359,7 +359,7 @@ func (ch *ClickHouse) CreateTable(table RestoreTable) error {
 	if _, err := ch.conn.Exec(fmt.Sprintf("USE `%s`", table.Database)); err != nil {
 		return err
 	}
-	log.Printf("Create table `%s`.`%s`", table.Database, table.Table)
+	log.Printf("Create table '%s.%s'", table.Database, table.Table)
 	if _, err := ch.conn.Exec(table.Query); err != nil {
 		return err
 	}

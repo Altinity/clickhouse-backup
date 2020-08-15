@@ -150,13 +150,13 @@ func getTables(config Config) ([]Table, error) {
 	}
 
 	if err := ch.Connect(); err != nil {
-		return []Table{}, fmt.Errorf("can't connect to clickhouse with: %v", err)
+		return []Table{}, fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
 	defer ch.Close()
 
 	allTables, err := ch.GetTables()
 	if err != nil {
-		return []Table{}, fmt.Errorf("can't get tables with: %v", err)
+		return []Table{}, fmt.Errorf("can't get tables: %v", err)
 	}
 	return allTables, nil
 }
@@ -206,16 +206,16 @@ func restoreSchema(config Config, backupName string, tablePattern string) error 
 		Config: &config.ClickHouse,
 	}
 	if err := ch.Connect(); err != nil {
-		return fmt.Errorf("can't connect to clickhouse with %v", err)
+		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
 	defer ch.Close()
 
 	for _, schema := range tablesForRestore {
 		if err := ch.CreateDatabase(schema.Database); err != nil {
-			return fmt.Errorf("can't create database `%s` %v", schema.Database, err)
+			return fmt.Errorf("can't create database '%s': %v", schema.Database, err)
 		}
 		if err := ch.CreateTable(schema); err != nil {
-			return fmt.Errorf("can't create table `%s`.`%s` %v", schema.Database, schema.Table, err)
+			return fmt.Errorf("can't create table '%s.%s': %v", schema.Database, schema.Table, err)
 		}
 	}
 	return nil
@@ -332,13 +332,13 @@ func Freeze(config Config, tablePattern string) error {
 		Config: &config.ClickHouse,
 	}
 	if err := ch.Connect(); err != nil {
-		return fmt.Errorf("can't connect to clickhouse with: %v", err)
+		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
 	defer ch.Close()
 
 	dataPath, err := ch.GetDataPath()
 	if err != nil || dataPath == "" {
-		return fmt.Errorf("can't get data path from clickhouse with: %v\nyou can set data_path in config file", err)
+		return fmt.Errorf("can't get data path from clickhouse: %v\nyou can set data_path in config file", err)
 	}
 
 	shadowPath := filepath.Join(dataPath, "shadow")
@@ -353,15 +353,15 @@ func Freeze(config Config, tablePattern string) error {
 
 	allTables, err := ch.GetTables()
 	if err != nil {
-		return fmt.Errorf("can't get Clickhouse tables with: %v", err)
+		return fmt.Errorf("can't get tables from clickhouse: %v", err)
 	}
 	backupTables := parseTablePatternForFreeze(allTables, tablePattern)
 	if len(backupTables) == 0 {
-		return fmt.Errorf("there are no tables in Clickhouse, create something to freeze")
+		return fmt.Errorf("there are no tables in clickhouse, create something to freeze")
 	}
 	for _, table := range backupTables {
 		if table.Skip {
-			log.Printf("Skip `%s`.`%s`", table.Database, table.Name)
+			log.Printf("Skip '%s.%s'", table.Database, table.Name)
 			continue
 		}
 		if err := ch.FreezeTable(table); err != nil {
@@ -388,10 +388,10 @@ func CreateBackup(config Config, backupName, tablePattern string) error {
 	}
 	backupPath := path.Join(dataPath, "backup", backupName)
 	if _, err := os.Stat(backupPath); err == nil || !os.IsNotExist(err) {
-		return fmt.Errorf("can't create backup with '%s' already exists", backupPath)
+		return fmt.Errorf("can't create backup '%s' already exists", backupPath)
 	}
 	if err := os.MkdirAll(backupPath, os.ModePerm); err != nil {
-		return fmt.Errorf("can't create backup with %v", err)
+		return fmt.Errorf("can't create backup: %v", err)
 	}
 	log.Printf("Create backup '%s'", backupName)
 	if err := Freeze(config, tablePattern); err != nil {
@@ -416,7 +416,7 @@ func CreateBackup(config Config, backupName, tablePattern string) error {
 		relativePath := strings.Trim(strings.TrimPrefix(schema.Path, path.Join(dataPath, "metadata")), "/")
 		newPath := path.Join(backupPath, "metadata", relativePath)
 		if err := copyFile(schema.Path, newPath); err != nil {
-			return fmt.Errorf("can't backup metadata with %v", err)
+			return fmt.Errorf("can't backup metadata: %v", err)
 		}
 	}
 	log.Println("  Done.")
@@ -469,7 +469,7 @@ func RestoreData(config Config, backupName string, tablePattern string) error {
 		Config: &config.ClickHouse,
 	}
 	if err := ch.Connect(); err != nil {
-		return fmt.Errorf("can't connect to clickhouse with: %v", err)
+		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
 	defer ch.Close()
 
@@ -503,10 +503,10 @@ func RestoreData(config Config, backupName string, tablePattern string) error {
 	}
 	for _, table := range restoreTables {
 		if err := ch.CopyData(table); err != nil {
-			return fmt.Errorf("can't restore `%s`.`%s` with %v", table.Database, table.Name, err)
+			return fmt.Errorf("can't restore '%s.%s': %v", table.Database, table.Name, err)
 		}
 		if err := ch.AttachPatritions(table); err != nil {
-			return fmt.Errorf("can't attach partitions for table '%s.%s' with %v", table.Database, table.Name, err)
+			return fmt.Errorf("can't attach partitions for table '%s.%s': %v", table.Database, table.Name, err)
 		}
 	}
 	return nil
@@ -566,11 +566,11 @@ func Upload(config Config, backupName string, diffFrom string) error {
 
 	err = bd.Connect()
 	if err != nil {
-		return fmt.Errorf("can't connect to %s with : %v", bd.Kind(), err)
+		return fmt.Errorf("can't connect to %s: %v", bd.Kind(), err)
 	}
 
 	if err := GetLocalBackup(config, backupName); err != nil {
-		return fmt.Errorf("can't upload with %s", err)
+		return fmt.Errorf("can't upload: %v", err)
 	}
 	backupPath := path.Join(dataPath, "backup", backupName)
 	log.Printf("Upload backup '%s'", backupName)
@@ -579,7 +579,7 @@ func Upload(config Config, backupName string, diffFrom string) error {
 		diffFromPath = path.Join(dataPath, "backup", diffFrom)
 	}
 	if err := bd.CompressedStreamUpload(backupPath, backupName, diffFromPath); err != nil {
-		return fmt.Errorf("can't upload with %v", err)
+		return fmt.Errorf("can't upload: %v", err)
 	}
 	if err := bd.RemoveOldBackups(bd.BackupsToKeep()); err != nil {
 		return fmt.Errorf("can't remove old backups: %v", err)
@@ -632,7 +632,7 @@ func Clean(config Config) error {
 	}
 	log.Printf("Clean %s", shadowDir)
 	if err := cleanDir(shadowDir); err != nil {
-		return fmt.Errorf("can't remove contents from directory %v: %v", shadowDir, err)
+		return fmt.Errorf("can't clean '%s': %v", shadowDir, err)
 	}
 	return nil
 }
@@ -691,7 +691,7 @@ func RemoveBackupRemote(config Config, backupName string) error {
 	}
 	err = bd.Connect()
 	if err != nil {
-		return fmt.Errorf("can't connect to remote storage with: %v", err)
+		return fmt.Errorf("can't connect to remote storage: %v", err)
 	}
 	backupList, err := bd.BackupList()
 	if err != nil {

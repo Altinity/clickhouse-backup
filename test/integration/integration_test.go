@@ -30,7 +30,7 @@ type TestDataStruct struct {
 }
 
 var testData = []TestDataStruct{
-	TestDataStruct{
+	{
 		Database: dbName,
 		Table:    ".inner.table1",
 		Schema:   "(Date Date, TimeStamp DateTime, Log String) ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)",
@@ -44,8 +44,7 @@ var testData = []TestDataStruct{
 		},
 		Fields:  []string{"Date", "TimeStamp", "Log"},
 		OrderBy: "TimeStamp",
-	},
-	TestDataStruct{
+	}, {
 		Database: dbName,
 		Table:    "2. Таблица №2",
 		Schema:   "(id UInt64, User String) ENGINE = MergeTree ORDER BY id SETTINGS index_granularity = 8192",
@@ -59,8 +58,7 @@ var testData = []TestDataStruct{
 		},
 		Fields:  []string{"id", "User"},
 		OrderBy: "id",
-	},
-	TestDataStruct{
+	}, {
 		Database: dbName,
 		Table:    "table3",
 		Schema:   "(TimeStamp DateTime, Item String, Date Date MATERIALIZED toDate(TimeStamp)) ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp SETTINGS index_granularity = 8192",
@@ -74,8 +72,7 @@ var testData = []TestDataStruct{
 		},
 		Fields:  []string{"TimeStamp", "Item"},
 		OrderBy: "TimeStamp",
-	},
-	TestDataStruct{
+	}, {
 		Database: dbName,
 		Table:    "table4",
 		Schema:   "(id UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY id ORDER BY (id, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192",
@@ -88,8 +85,7 @@ var testData = []TestDataStruct{
 		}(),
 		Fields:  []string{"id", "Col1", "Col2", "Col3", "Col4", "Col5"},
 		OrderBy: "id",
-	},
-	TestDataStruct{
+	}, {
 		Database: dbName,
 		Table:    "yuzhichang_table2",
 		Schema:   "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMM(order_time) ORDER BY (order_time, order_id)",
@@ -99,8 +95,7 @@ var testData = []TestDataStruct{
 		},
 		Fields:  []string{"order_id", "order_time", "amount"},
 		OrderBy: "order_id",
-	},
-	TestDataStruct{
+	}, {
 		Database: dbName,
 		Table:    "yuzhichang_table3",
 		Schema:   "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMMDD(order_time) ORDER BY (order_time, order_id)",
@@ -110,8 +105,7 @@ var testData = []TestDataStruct{
 		},
 		Fields:  []string{"order_id", "order_time", "amount"},
 		OrderBy: "order_id",
-	},
-	TestDataStruct{
+	}, {
 		Database: dbName,
 		Table:    "yuzhichang_table4",
 		Schema:   "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() ORDER BY (order_time, order_id)",
@@ -125,7 +119,7 @@ var testData = []TestDataStruct{
 }
 
 var incrementData = []TestDataStruct{
-	TestDataStruct{
+	{
 		Database: dbName,
 		Table:    ".inner.table1",
 		Schema:   "(Date Date, TimeStamp DateTime, Log String) ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)",
@@ -134,8 +128,7 @@ var incrementData = []TestDataStruct{
 		},
 		Fields:  []string{"Date", "TimeStamp", "Log"},
 		OrderBy: "TimeStamp",
-	},
-	TestDataStruct{
+	}, {
 		Database: dbName,
 		Table:    "2. Таблица №2",
 		Schema:   "(id UInt64, User String) ENGINE = MergeTree ORDER BY id SETTINGS index_granularity = 8192",
@@ -147,8 +140,7 @@ var incrementData = []TestDataStruct{
 		},
 		Fields:  []string{"id", "User"},
 		OrderBy: "id",
-	},
-	TestDataStruct{
+	}, {
 		Database: dbName,
 		Table:    "table3",
 		Schema:   "(TimeStamp DateTime, Item String, Date Date MATERIALIZED toDate(TimeStamp)) ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp SETTINGS index_granularity = 8192",
@@ -158,8 +150,7 @@ var incrementData = []TestDataStruct{
 		},
 		Fields:  []string{"TimeStamp", "Item"},
 		OrderBy: "TimeStamp",
-	},
-	TestDataStruct{
+	}, {
 		Database: dbName,
 		Table:    "table4",
 		Schema:   "(id UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY id ORDER BY (id, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192",
@@ -172,8 +163,7 @@ var incrementData = []TestDataStruct{
 		}(),
 		Fields:  []string{"id", "Col1", "Col2", "Col3", "Col4", "Col5"},
 		OrderBy: "id",
-	},
-	TestDataStruct{
+	}, {
 		Database: dbName,
 		Table:    "yuzhichang_table2",
 		Schema:   "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMM(order_time) ORDER BY (order_time, order_id)",
@@ -183,8 +173,7 @@ var incrementData = []TestDataStruct{
 		},
 		Fields:  []string{"order_id", "order_time", "amount"},
 		OrderBy: "order_id",
-	},
-	TestDataStruct{
+	}, {
 		Database: dbName,
 		Table:    "yuzhichang_table3",
 		Schema:   "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMMDD(order_time) ORDER BY (order_time, order_id)",
@@ -194,8 +183,7 @@ var incrementData = []TestDataStruct{
 		},
 		Fields:  []string{"order_id", "order_time", "amount"},
 		OrderBy: "order_id",
-	},
-	TestDataStruct{
+	}, {
 		Database: dbName,
 		Table:    "yuzhichang_table4",
 		Schema:   "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() ORDER BY (order_time, order_id)",
@@ -378,7 +366,7 @@ func (ch *TestClickHouse) createTestData(data TestDataStruct) error {
 	for _, row := range data.Rows {
 		tx, err := ch.chbackup.GetConn().Beginx()
 		if err != nil {
-			return fmt.Errorf("can't begin transaction with: %v", err)
+			return fmt.Errorf("can't begin transaction: %v", err)
 		}
 		if _, err := tx.NamedExec(
 			fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES (:%s)",
@@ -387,10 +375,10 @@ func (ch *TestClickHouse) createTestData(data TestDataStruct) error {
 				strings.Join(data.Fields, ","),
 				strings.Join(data.Fields, ",:"),
 			), row); err != nil {
-			return fmt.Errorf("can't add insert to transaction with: %v", err)
+			return fmt.Errorf("can't add insert to transaction: %v", err)
 		}
 		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("can't commit with: %v", err)
+			return fmt.Errorf("can't commit: %v", err)
 		}
 	}
 	return nil

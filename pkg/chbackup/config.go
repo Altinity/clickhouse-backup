@@ -112,10 +112,10 @@ func LoadConfig(configLocation string) (*Config, error) {
 		return config, err
 	}
 	if err != nil {
-		return nil, fmt.Errorf("can't open with %v", err)
+		return nil, fmt.Errorf("can't open config file: %v", err)
 	}
 	if err := yaml.Unmarshal(configYaml, &config); err != nil {
-		return nil, fmt.Errorf("can't parse with %v", err)
+		return nil, fmt.Errorf("can't parse config file: %v", err)
 	}
 	if err := envconfig.Process("", config); err != nil {
 		return nil, err
