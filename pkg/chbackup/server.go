@@ -1,7 +1,6 @@
 package chbackup
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -60,22 +59,20 @@ func (status *AsyncStatus) start(command string, backupName string) {
 func (status *AsyncStatus) stop(err error) {
 	status.Lock()
 	defer status.Unlock()
+	n := len(status.commands) - 1
 	s := "success"
 	if err != nil {
 		s = "error"
-		status.commands[len(status.commands)-1].Error = err.Error()
+		status.commands[n].Error = err.Error()
 	}
-	status.commands[len(status.commands)-1].Status = s
-	status.commands[len(status.commands)-1].Finish = time.Now().Format(BackupTimeFormat)
+	status.commands[n].Status = s
+	status.commands[n].Finish = time.Now().Format(BackupTimeFormat)
 }
 
-func (status *AsyncStatus) status() *CommandInfo {
+func (status *AsyncStatus) status() []CommandInfo {
 	status.RLock()
 	defer status.RUnlock()
-	if len(status.commands) == 0 {
-		return nil
-	}
-	return &status.commands[len(status.commands)-1]
+	return status.commands
 }
 
 var (
@@ -169,28 +166,13 @@ func (api *APIServer) httpRootHandler(w http.ResponseWriter, r *http.Request) {
 
 // httpConfigDefaultHandler - display the default config. Same as CLI: clickhouse-backup default-config
 func httpConfigDefaultHandler(w http.ResponseWriter, r *http.Request) {
-	defaultConfig := DefaultConfig()
-	out, err := json.Marshal(defaultConfig)
-	if err != nil {
-		log.Println(err)
-		writeError(w, http.StatusInternalServerError, "", err)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintln(w, string(out))
+	sendResponse(w, http.StatusOK, DefaultConfig())
 }
 
 // httpConfigDefaultHandler - display the currently running config
 func (api *APIServer) httpConfigHandler(w http.ResponseWriter, r *http.Request) {
 	// TODO: sanitaze passwords
-	w.Header().Set("Content-Type", "application/json")
-	out, err := json.Marshal(api.config)
-	if err != nil {
-		log.Println(err)
-		writeError(w, http.StatusInternalServerError, "", err)
-		return
-	}
-	fmt.Fprintln(w, string(out))
+	sendResponse(w, http.StatusOK, &api.config)
 }
 
 // httpConfigDefaultHandler - update the currently running config
@@ -230,9 +212,7 @@ func (api *APIServer) httpTablesHandler(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "tables", err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	out, _ := json.Marshal(tables)
-	fmt.Fprintln(w, string(out))
+	sendResponse(w, http.StatusOK, tables)
 }
 
 // httpTablesHandler - display list of all backups stored locally and remotely
@@ -272,9 +252,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	out, _ := json.Marshal(&backups)
-	fmt.Fprint(w, string(out))
+	sendResponse(w, http.StatusOK, &backups)
 }
 
 // httpCreateHandler - create a backup
@@ -303,9 +281,9 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 
 	go func() {
 		api.status.start("create", backupName)
-		var err error
+		err := CreateBackup(api.config, backupName, tablePattern)
 		defer api.status.stop(err)
-		if err = CreateBackup(api.config, backupName, tablePattern); err != nil {
+		if err != nil {
 			api.metrics.FailedBackups.Inc()
 			api.metrics.LastBackupSuccess.Set(0)
 			log.Printf("CreateBackup error: %v", err)
@@ -314,7 +292,15 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	}()
 	api.metrics.SuccessfulBackups.Inc()
 	api.metrics.LastBackupSuccess.Set(1)
-	writeSuccess(w, http.StatusCreated, "create")
+	sendResponse(w, http.StatusCreated, struct {
+		Status     string `json:"status"`
+		Operation  string `json:"operation"`
+		BackupName string `json:"backup_name"`
+	}{
+		Status:     "acknowledged",
+		Operation:  "create",
+		BackupName: backupName,
+	})
 }
 
 // httpFreezeHandler - freeze tables
@@ -335,7 +321,13 @@ func (api *APIServer) httpFreezeHandler(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "freeze", err)
 		return
 	}
-	writeSuccess(w, http.StatusCreated, "freeze")
+	sendResponse(w, http.StatusOK, struct {
+		Status    string `json:"status"`
+		Operation string `json:"operation"`
+	}{
+		Status:    "success",
+		Operation: "freeze",
+	})
 }
 
 // httpCleanHandler - clean ./shadow directory
@@ -351,7 +343,13 @@ func (api *APIServer) httpCleanHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "clean", err)
 		return
 	}
-	writeSuccess(w, http.StatusOK, "clean")
+	sendResponse(w, http.StatusOK, struct {
+		Status    string `json:"status"`
+		Operation string `json:"operation"`
+	}{
+		Status:    "success",
+		Operation: "clean",
+	})
 }
 
 // httpUploadHandler - upload a backup to remote storage
@@ -365,15 +363,14 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	name := vars["name"]
 	go func() {
 		api.status.start("upload", name)
-		var err error
+		err := Upload(api.config, name, diffFrom)
 		defer api.status.stop(err)
-		if err = Upload(api.config, name, diffFrom); err != nil {
+		if err != nil {
 			log.Printf("Upload error: %+v\n", err)
 			return
 		}
 	}()
-	w.Header().Set("Content-Type", "application/json")
-	out, _ := json.Marshal(struct {
+	sendResponse(w, http.StatusOK, struct {
 		Status     string `json:"status"`
 		Operation  string `json:"operation"`
 		BackupName string `json:"backup_name"`
@@ -386,7 +383,6 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		BackupFrom: diffFrom,
 		Diff:       diffFrom != "",
 	})
-	fmt.Fprint(w, string(out))
 }
 
 // httpRestoreHandler - restore a backup from local storage
@@ -418,8 +414,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "restore", err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	out, _ := json.Marshal(struct {
+	sendResponse(w, http.StatusOK, struct {
 		Status     string `json:"status"`
 		Operation  string `json:"operation"`
 		BackupName string `json:"backup_name"`
@@ -428,7 +423,6 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		Operation:  "restore",
 		BackupName: vars["name"],
 	})
-	fmt.Fprint(w, string(out))
 }
 
 // httpDownloadHandler - download a backup from remote to local storage
@@ -437,15 +431,14 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	name := vars["name"]
 	go func() {
 		api.status.start("download", name)
-		var err error
+		err := Download(api.config, name)
 		defer api.status.stop(err)
-		if err = Download(api.config, name); err != nil {
+		if err != nil {
 			log.Printf("Download error: %+v\n", err)
 			return
 		}
 	}()
-	w.Header().Set("Content-Type", "application/json")
-	out, _ := json.Marshal(struct {
+	sendResponse(w, http.StatusOK, struct {
 		Status     string `json:"status"`
 		Operation  string `json:"operation"`
 		BackupName string `json:"backup_name"`
@@ -454,7 +447,6 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		Operation:  "download",
 		BackupName: name,
 	})
-	fmt.Fprint(w, string(out))
 }
 
 // httpDeleteHandler - delete a backup from local or remote storage
@@ -484,8 +476,7 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "delete", fmt.Errorf("Backup location must be 'local' or 'remote'"))
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	out, _ := json.Marshal(struct {
+	sendResponse(w, http.StatusOK, struct {
 		Status     string `json:"status"`
 		Operation  string `json:"operation"`
 		BackupName string `json:"backup_name"`
@@ -496,18 +487,19 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 		BackupName: vars["name"],
 		Location:   vars["where"],
 	})
-	fmt.Fprint(w, string(out))
 }
 
 func (api *APIServer) httpBackupStatusHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	out, _ := json.Marshal(api.status.status())
-	fmt.Fprint(w, string(out))
+	sendResponse(w, http.StatusOK, api.status.status())
 }
 
 func registerMetricsHandlers(r *mux.Router, enablemetrics bool, enablepprof bool) {
 	r.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintln(w, "OK")
+		sendResponse(w, http.StatusOK, struct {
+			Status string `json:"status"`
+		}{
+			Status: "OK",
+		})
 	})
 	if enablemetrics {
 		r.Handle("/metrics", promhttp.Handler())

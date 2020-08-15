@@ -224,18 +224,12 @@ func writeError(w http.ResponseWriter, statusCode int, operation string, err err
 		Operation: operation,
 		Error:     err.Error(),
 	})
-	fmt.Fprint(w, string(out))
+	fmt.Fprintln(w, string(out))
 }
 
-func writeSuccess(w http.ResponseWriter, statusCode int, operation string) {
+func sendResponse(w http.ResponseWriter, statusCode int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	out, _ := json.Marshal(struct {
-		Status    string `json:"status"`
-		Operation string `json:"operation,omitempty"`
-	}{
-		Status:    "success",
-		Operation: operation,
-	})
-	fmt.Fprint(w, string(out))
+	out, _ := json.Marshal(&v)
+	fmt.Fprintln(w, string(out))
 }
