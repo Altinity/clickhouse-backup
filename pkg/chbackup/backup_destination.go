@@ -391,6 +391,16 @@ func (bd *BackupDestination) CompressedStreamUpload(localPath, remotePath, diffF
 
 func NewBackupDestination(config Config) (*BackupDestination, error) {
 	switch config.General.RemoteStorage {
+	case "azblob":
+		azblob := &AzureBlob{Config: &config.AzureBlob}
+		return &BackupDestination{
+			azblob,
+			config.AzureBlob.Path,
+			config.AzureBlob.CompressionFormat,
+			config.AzureBlob.CompressionLevel,
+			config.General.DisableProgressBar,
+			config.General.BackupsToKeepRemote,
+		}, nil
 	case "s3":
 		s3 := &S3{Config: &config.S3}
 		return &BackupDestination{

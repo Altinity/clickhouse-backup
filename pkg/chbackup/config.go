@@ -19,6 +19,7 @@ type Config struct {
 	COS        COSConfig        `yaml:"cos"`
 	API        APIConfig        `yaml:"api"`
 	FTP        FTPConfig        `yaml:"ftp"`
+	AzureBlob  AzureBlobConfig  `yaml:"azblob"`
 }
 
 // GeneralConfig - general setting section
@@ -37,6 +38,18 @@ type GCSConfig struct {
 	Path              string `yaml:"path" envconfig:"GCS_PATH"`
 	CompressionLevel  int    `yaml:"compression_level" envconfig:"GCS_COMPRESSION_LEVEL"`
 	CompressionFormat string `yaml:"compression_format" envconfig:"GCS_COMPRESSION_FORMAT"`
+}
+
+// AzureBlobConfig - Azure Blob settings section
+type AzureBlobConfig struct {
+	EndpointSuffix          string `yaml:"endpoint_suffix" envconfig:"AZBLOB_ENDPOINT_SUFFIX"`
+	AccountName             string `yaml:"account_name" envconfig:"AZBLOB_ACCOUNT_NAME"`
+	AccountKey              string `yaml:"account_key" envconfig:"AZBLOB_ACCOUNT_KEY"`
+	SharedAccessSignature   string `yaml:"sas" envconfig:"AZBLOB_SAS"`
+	Container               string `yaml:"container" envconfig:"AZBLOB_CONTAINER"`
+	Path                    string `yaml:"path" envconfig:"AZBLOB_PATH"`
+	CompressionLevel        int    `yaml:"compression_level" envconfig:"AZBLOB_COMPRESSION_LEVEL"`
+	CompressionFormat       string `yaml:"compression_format" envconfig:"AZBLOB_COMPRESSION_FORMAT"`
 }
 
 // S3Config - s3 settings section
@@ -165,6 +178,10 @@ func DefaultConfig() *Config {
 				"system.*",
 			},
 			Timeout: "5m",
+		},
+		AzureBlob: AzureBlobConfig{
+			CompressionLevel:  1,
+			CompressionFormat: "gzip",
 		},
 		S3: S3Config{
 			Region:                  "us-east-1",

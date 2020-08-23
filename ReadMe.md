@@ -14,7 +14,7 @@ Tool for easy ClickHouse backup and restore with cloud storages support
 - Efficient storing of multiple backups on the file system
 - Uploading and downloading with streaming compression
 - Support of incremental backups on remote storages
-- Works with AWS, GCS, Tencent COS, FTP
+- Works with AWS, Azure, GCS, Tencent COS, FTP
 
 ## Limitations
 
@@ -107,6 +107,15 @@ clickhouse:
     - system.*
   timeout: 5m                  # CLICKHOUSE_TIMEOUT
   freeze_by_part: false        # CLICKHOUSE_FREEZE_BY_PART
+azblob:
+  endpoint_suffix: ""          # AZBLOB_ENDPOINT_SUFFIX
+  account_name: ""             # AZBLOB_ACCOUNT_NAME
+  account_key: ""              # AZBLOB_ACCOUNT_KEY
+  sas: ""                      # AZBLOB_SAS
+  container: ""                # AZBLOB_CONTAINER
+  path: ""                     # AZBLOB_PATH
+  compression_level: 1         # AZBLOB_COMPRESSION_LEVEL
+  compression_format: gzip     # AZBLOB_COMPRESSION_FORMAT
 s3:
   access_key: ""                   # S3_ACCESS_KEY
   secret_key: ""                   # S3_SECRET_KEY
