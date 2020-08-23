@@ -61,8 +61,8 @@ func (s *AzureBlob) Connect() error {
 		}
 	}
 
-	if s.Config.SSE != "" {
-		key, err := base64.StdEncoding.DecodeString(s.Config.SSE)
+	if s.Config.SSEKey != "" {
+		key, err := base64.StdEncoding.DecodeString(s.Config.SSEKey)
 		if err != nil {
 			return errors.Wrapf(err, "azblob: malformed SSE key, must be base64-encoded 256-bit key")
 		} else if len(key) != 32 {
@@ -70,7 +70,7 @@ func (s *AzureBlob) Connect() error {
 		}
 
 		// grrr
-		b64key := s.Config.SSE
+		b64key := s.Config.SSEKey
 		shakey := sha256.Sum256(key)
 		b64sha := base64.StdEncoding.EncodeToString(shakey[:])
 		s.CPK   = NewClientProvidedKeyOptions(&b64key, &b64sha, nil)

@@ -108,7 +108,7 @@ clickhouse:
   timeout: 5m                  # CLICKHOUSE_TIMEOUT
   freeze_by_part: false        # CLICKHOUSE_FREEZE_BY_PART
 azblob:
-  endpoint_suffix: ""          # AZBLOB_ENDPOINT_SUFFIX
+  endpoint_suffix: "core.windows.net" # AZBLOB_ENDPOINT_SUFFIX
   account_name: ""             # AZBLOB_ACCOUNT_NAME
   account_key: ""              # AZBLOB_ACCOUNT_KEY
   sas: ""                      # AZBLOB_SAS
@@ -116,6 +116,7 @@ azblob:
   path: ""                     # AZBLOB_PATH
   compression_level: 1         # AZBLOB_COMPRESSION_LEVEL
   compression_format: gzip     # AZBLOB_COMPRESSION_FORMAT
+  sse_key: ""                  # AZBLOB_SSE_KEY
 s3:
   access_key: ""                   # S3_ACCESS_KEY
   secret_key: ""                   # S3_SECRET_KEY
