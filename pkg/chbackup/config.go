@@ -181,6 +181,7 @@ func DefaultConfig() *Config {
 			Timeout: "5m",
 		},
 		AzureBlob: AzureBlobConfig{
+			EndpointSuffix:    "core.windows.net",
 			CompressionLevel:  1,
 			CompressionFormat: "gzip",
 		},

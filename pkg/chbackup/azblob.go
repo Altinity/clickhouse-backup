@@ -29,6 +29,8 @@ func (s *AzureBlob) Connect() error {
 		credential Credential
 	)
 	switch {
+	case s.Config.EndpointSuffix == "":
+		return fmt.Errorf("azblob: endpoint suffix not set")
 	case s.Config.Container == "":
 		return fmt.Errorf("azblob: container name not set")
 	case s.Config.AccountName == "":
