@@ -1,4 +1,4 @@
-module github.com/oneiq/clickhouse-backup
+module github.com/AlexAkulov/clickhouse-backup
 
 require (
 	cloud.google.com/go v0.49.0 // indirect

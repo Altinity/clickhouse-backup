@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/oneiq/clickhouse-backup/pkg/chbackup"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/chbackup"
 
 	"github.com/urfave/cli"
 )

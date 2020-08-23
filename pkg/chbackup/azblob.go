@@ -10,7 +10,7 @@ import (
 	"time"
 
 	. "github.com/Azure/azure-storage-blob-go/azblob"
-	x "github.com/oneiq/clickhouse-backup/pkg/azblob"
+	x "github.com/AlexAkulov/clickhouse-backup/pkg/azblob"
 	"github.com/pkg/errors"
 )
 
