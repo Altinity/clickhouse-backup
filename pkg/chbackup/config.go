@@ -50,6 +50,7 @@ type AzureBlobConfig struct {
 	Path                    string `yaml:"path" envconfig:"AZBLOB_PATH"`
 	CompressionLevel        int    `yaml:"compression_level" envconfig:"AZBLOB_COMPRESSION_LEVEL"`
 	CompressionFormat       string `yaml:"compression_format" envconfig:"AZBLOB_COMPRESSION_FORMAT"`
+	SSE                     string `yaml:"sse" envconfig:"AZBLOB_SSE"`
 }
 
 // S3Config - s3 settings section

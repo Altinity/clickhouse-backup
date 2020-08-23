@@ -3,7 +3,8 @@ module github.com/oneiq/clickhouse-backup
 require (
 	cloud.google.com/go v0.49.0 // indirect
 	cloud.google.com/go/storage v1.4.0
-	github.com/Azure/azure-storage-blob-go v0.10.0
+	github.com/Azure/azure-pipeline-go v0.2.2
+	github.com/Azure/azure-storage-blob-go v0.10.1-0.20200807102407-24fe552e0870
 	github.com/ClickHouse/clickhouse-go v1.3.12
 	github.com/andybalholm/brotli v1.0.0 // indirect
 	github.com/aws/aws-sdk-go v1.33.7
