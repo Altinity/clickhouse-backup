@@ -1,7 +1,6 @@
 package chbackup
 
 import (
-	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -10,6 +9,7 @@ import (
 	"net/http/pprof"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -17,11 +17,18 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/urfave/cli"
 	"golang.org/x/sync/semaphore"
 	yaml "gopkg.in/yaml.v2"
 )
 
+const (
+	// APITimeFormat - clickhouse compatibility time format
+	APITimeFormat = "2006-01-02 15:04:05"
+)
+
 type APIServer struct {
+	c       *cli.App
 	config  Config
 	lock    *semaphore.Weighted
 	server  *http.Server
@@ -46,14 +53,13 @@ type CommandInfo struct {
 	Error      string `json:"error,omitempty"`
 }
 
-func (status *AsyncStatus) start(command string, backupName string) {
+func (status *AsyncStatus) start(command string) {
 	status.Lock()
 	defer status.Unlock()
 	status.commands = append(status.commands, CommandInfo{
-		Command:    command,
-		BackupName: backupName,
-		Start:      time.Now().Format(BackupTimeFormat),
-		Status:     "executing",
+		Command: command,
+		Start:   time.Now().Format(APITimeFormat),
+		Status:  "in progress",
 	})
 }
 
@@ -67,7 +73,7 @@ func (status *AsyncStatus) stop(err error) {
 		status.commands[n].Error = err.Error()
 	}
 	status.commands[n].Status = s
-	status.commands[n].Finish = time.Now().Format(BackupTimeFormat)
+	status.commands[n].Finish = time.Now().Format(APITimeFormat)
 }
 
 func (status *AsyncStatus) status() []CommandInfo {
@@ -81,8 +87,9 @@ var (
 )
 
 // Server - expose CLI commands as REST API
-func Server(config Config) error {
+func Server(c *cli.App, config Config) error {
 	api := APIServer{
+		c:       c,
 		config:  config,
 		lock:    semaphore.NewWeighted(1),
 		restart: make(chan struct{}),
@@ -127,17 +134,23 @@ func (api *APIServer) setupAPIServer(config Config) *http.Server {
 
 	r.HandleFunc("/backup/tables", api.httpTablesHandler).Methods("GET")
 	r.HandleFunc("/backup/list", api.httpListHandler).Methods("GET")
-	r.HandleFunc("/backup/create", api.httpCreateHandler).Methods("POST", "GET") // NOTE: these routes allow GET to support access from ClickHouse itself
-	r.HandleFunc("/backup/clean", api.httpCleanHandler).Methods("POST", "GET")
-	r.HandleFunc("/backup/freeze", api.httpFreezeHandler).Methods("POST", "GET")
-	r.HandleFunc("/backup/upload/{name}", api.httpUploadHandler).Methods("POST", "GET")
-	r.HandleFunc("/backup/download/{name}", api.httpDownloadHandler).Methods("POST", "GET")
-	r.HandleFunc("/backup/restore/{name}", api.httpRestoreHandler).Methods("POST", "GET")
-	r.HandleFunc("/backup/delete/{where}/{name}", api.httpDeleteHandler).Methods("POST", "GET")
+	r.HandleFunc("/backup/create", api.httpCreateHandler).Methods("POST")
+	r.HandleFunc("/backup/clean", api.httpCleanHandler).Methods("POST")
+	r.HandleFunc("/backup/freeze", api.httpFreezeHandler).Methods("POST")
+	r.HandleFunc("/backup/upload/{name}", api.httpUploadHandler).Methods("POST")
+	r.HandleFunc("/backup/download/{name}", api.httpDownloadHandler).Methods("POST")
+	r.HandleFunc("/backup/restore/{name}", api.httpRestoreHandler).Methods("POST")
+	r.HandleFunc("/backup/delete/{where}/{name}", api.httpDeleteHandler).Methods("POST")
 	r.HandleFunc("/backup/config/default", httpConfigDefaultHandler).Methods("GET")
 	r.HandleFunc("/backup/config", api.httpConfigHandler).Methods("GET")
 	r.HandleFunc("/backup/config", api.httpConfigUpdateHandler).Methods("POST")
 	r.HandleFunc("/backup/status", api.httpBackupStatusHandler).Methods("GET")
+
+	r.HandleFunc("/integration/actions", api.integrationBackupLog).Methods("GET")
+	r.HandleFunc("/integration/list", api.httpListHandler).Methods("GET")
+
+	r.HandleFunc("/integration/actions", api.integrationPost).Methods("POST")
+
 	var routes []string
 	r.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
 		t, err := route.GetPathTemplate()
@@ -162,8 +175,16 @@ func (api *APIServer) basicAuthMidleware(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user, pass, ok := r.BasicAuth()
-		if !ok || subtle.ConstantTimeCompare([]byte(user), []byte(api.config.API.Username)) != 1 || subtle.ConstantTimeCompare([]byte(pass), []byte(api.config.API.Password)) != 1 {
+		user, pass, _ := r.BasicAuth()
+		query := r.URL.Query()
+		log.Println("query", query)
+		if u, exist := query["user"]; exist {
+			user = u[0]
+		}
+		if p, exist := query["pass"]; exist {
+			pass = p[0]
+		}
+		if (user != api.config.API.Username) || (pass != api.config.API.Password) {
 			w.Header().Set("WWW-Authenticate", "Basic realm=\"Provide username and password\"")
 			w.WriteHeader(http.StatusUnauthorized)
 			w.Write([]byte("401 Unauthorized\n"))
@@ -173,9 +194,101 @@ func (api *APIServer) basicAuthMidleware(next http.Handler) http.Handler {
 	})
 }
 
+// CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String) ENGINE=URL('http://127.0.0.1:7171/integration/actions', TSVWithNames)
+// INSERT INTO system.backup_actions (command) VALUES ('create backup_name')
+// INSERT INTO system.backup_actions (command) VALUES ('upload backup_name')
+func (api *APIServer) integrationPost(w http.ResponseWriter, r *http.Request) {
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	lines := strings.Split(string(body), "\n")
+	if len(lines) < 2 {
+		http.Error(w, "use TSVWithNames format", http.StatusBadRequest)
+		return
+	}
+	columns := strings.Split(lines[1], "\t")
+	commands := strings.Split(columns[0], " ")
+	log.Println(commands)
+
+	switch commands[0] {
+	case "create", "upload", "download":
+		if locked := api.lock.TryAcquire(1); !locked {
+			log.Println(ErrAPILocked)
+			http.Error(w, ErrAPILocked.Error(), http.StatusLocked)
+			return
+		}
+		defer api.lock.Release(1)
+		start := time.Now()
+		api.metrics.LastBackupStart.Set(float64(start.Unix()))
+		defer api.metrics.LastBackupDuration.Set(float64(time.Since(start).Nanoseconds()))
+		defer api.metrics.LastBackupEnd.Set(float64(time.Now().Unix()))
+
+		go func() {
+			api.status.start(columns[0])
+			err := api.c.Run(append([]string{"clickhouse-backup"}, commands...))
+			defer api.status.stop(err)
+			if err != nil {
+				api.metrics.FailedBackups.Inc()
+				api.metrics.LastBackupSuccess.Set(0)
+				log.Println(err)
+				return
+			}
+		}()
+		api.metrics.SuccessfulBackups.Inc()
+		api.metrics.LastBackupSuccess.Set(1)
+		fmt.Fprintln(w, "acknowledged")
+		return
+	case "delete", "freeze", "clean":
+		if locked := api.lock.TryAcquire(1); !locked {
+			log.Println(ErrAPILocked)
+			http.Error(w, ErrAPILocked.Error(), http.StatusLocked)
+			return
+		}
+		defer api.lock.Release(1)
+		start := time.Now()
+		api.metrics.LastBackupStart.Set(float64(start.Unix()))
+		defer api.metrics.LastBackupDuration.Set(float64(time.Since(start).Nanoseconds()))
+		defer api.metrics.LastBackupEnd.Set(float64(time.Now().Unix()))
+
+		api.status.start(columns[0])
+		err := api.c.Run(append([]string{"clickhouse-backup"}, commands...))
+		defer api.status.stop(err)
+		if err != nil {
+			api.metrics.FailedBackups.Inc()
+			api.metrics.LastBackupSuccess.Set(0)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			log.Println(err)
+			return
+		}
+		api.metrics.SuccessfulBackups.Inc()
+		api.metrics.LastBackupSuccess.Set(1)
+		fmt.Fprintln(w, "OK")
+		log.Println("OK")
+		return
+	default:
+		http.Error(w, fmt.Sprintf("bad operation '%s'", columns[0]), http.StatusBadRequest)
+	}
+}
+
+// CREATE TABLE system.backup_list (name String, created DateTime, size Int64, location String) ENGINE=URL('http://127.0.0.1:7171/integration/list', TSVWithNames)
+// ??? INSERT INTO system.backup_list (name,location) VALUES ('backup_name', 'remote') - upload backup
+// ??? INSERT INTO system.backup_list (name) VALUES ('backup_name') - create backup
+func (api *APIServer) integrationBackupLog(w http.ResponseWriter, r *http.Request) {
+	commands := api.status.status()
+	fmt.Fprintln(w, "command\tstart\tfinish\tstatus\terror")
+	for _, c := range commands {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", c.Command, c.Start, c.Finish, c.Status, c.Error)
+	}
+}
+
 // httpRootHandler - display API index
 func (api *APIServer) httpRootHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("Content-Type", "text/plain; charset=UTF-8")
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+
 	fmt.Fprintln(w, "Documentation: https://github.com/AlexAkulov/clickhouse-backup#api-configuration")
 	for _, r := range api.routes {
 		fmt.Fprintln(w, r)
@@ -184,13 +297,34 @@ func (api *APIServer) httpRootHandler(w http.ResponseWriter, r *http.Request) {
 
 // httpConfigDefaultHandler - display the default config. Same as CLI: clickhouse-backup default-config
 func httpConfigDefaultHandler(w http.ResponseWriter, r *http.Request) {
-	sendResponse(w, http.StatusOK, DefaultConfig())
+	defaultConfig := DefaultConfig()
+	body, err := yaml.Marshal(defaultConfig)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "default-config", err)
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=UTF-8")
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	fmt.Fprintln(w, string(body))
 }
 
 // httpConfigDefaultHandler - display the currently running config
 func (api *APIServer) httpConfigHandler(w http.ResponseWriter, r *http.Request) {
-	// TODO: sanitaze passwords
-	sendResponse(w, http.StatusOK, &api.config)
+	config := api.config
+	config.ClickHouse.Password = "***"
+	config.API.Password = "***"
+	config.S3.SecretKey = "***"
+	config.GCS.CredentialsJSON = "***"
+	config.COS.SecretKey = "***"
+	config.FTP.Password = "***"
+	body, err := yaml.Marshal(&config)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "config", err)
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=UTF-8")
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	fmt.Fprintln(w, string(body))
 }
 
 // httpConfigDefaultHandler - update the currently running config
@@ -251,7 +385,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 	for _, b := range localBackups {
 		backups = append(backups, backup{
 			Name:     b.Name,
-			Created:  b.Date.Format(BackupTimeFormat),
+			Created:  b.Date.Format(APITimeFormat),
 			Location: "local",
 		})
 	}
@@ -264,13 +398,20 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 		for _, b := range remoteBackups {
 			backups = append(backups, backup{
 				Name:     b.Name,
-				Created:  b.Date.Format(BackupTimeFormat),
+				Created:  b.Date.Format(APITimeFormat),
 				Size:     b.Size,
 				Location: "remote",
 			})
 		}
 	}
-	sendResponse(w, http.StatusOK, &backups)
+	if r.URL.Path == "/backup/list" {
+		sendResponse(w, http.StatusOK, &backups)
+		return
+	}
+	fmt.Fprintln(w, "name\tcreated\tsize\tlocation")
+	for _, b := range backups {
+		fmt.Fprintf(w, "%s\t%s\t%d\t%s\n", b.Name, b.Created, b.Size, b.Location)
+	}
 }
 
 // httpCreateHandler - create a backup
@@ -298,7 +439,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	go func() {
-		api.status.start("create", backupName)
+		api.status.start("create")
 		err := CreateBackup(api.config, backupName, tablePattern)
 		defer api.status.stop(err)
 		if err != nil {
@@ -329,6 +470,8 @@ func (api *APIServer) httpFreezeHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer api.lock.Release(1)
+	api.status.start("freeze")
+
 	query := r.URL.Query()
 	tablePattern := ""
 	if tp, exist := query["table"]; exist {
@@ -356,7 +499,10 @@ func (api *APIServer) httpCleanHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer api.lock.Release(1)
-	if err := Clean(api.config); err != nil {
+	api.status.start("clean")
+	err := Clean(api.config)
+	api.status.stop(err)
+	if err != nil {
 		log.Printf("Clean error: = %+v\n", err)
 		writeError(w, http.StatusInternalServerError, "clean", err)
 		return
@@ -380,9 +526,9 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	name := vars["name"]
 	go func() {
-		api.status.start("upload", name)
+		api.status.start("upload")
 		err := Upload(api.config, name, diffFrom)
-		defer api.status.stop(err)
+		api.status.stop(err)
 		if err != nil {
 			log.Printf("Upload error: %+v\n", err)
 			return
@@ -427,7 +573,10 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	if _, exist := query["data"]; exist {
 		dataOnly = true
 	}
-	if err := Restore(api.config, vars["name"], tablePattern, schemaOnly, dataOnly); err != nil {
+	api.status.start("restore")
+	err := Restore(api.config, vars["name"], tablePattern, schemaOnly, dataOnly)
+	api.status.stop(err)
+	if err != nil {
 		log.Printf("Download error: %+v\n", err)
 		writeError(w, http.StatusInternalServerError, "restore", err)
 		return
@@ -448,9 +597,9 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	vars := mux.Vars(r)
 	name := vars["name"]
 	go func() {
-		api.status.start("download", name)
+		api.status.start("download")
 		err := Download(api.config, name)
-		defer api.status.stop(err)
+		api.status.stop(err)
 		if err != nil {
 			log.Printf("Download error: %+v\n", err)
 			return
@@ -475,23 +624,21 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer api.lock.Release(1)
-
+	api.status.start("delete")
+	var err error
 	vars := mux.Vars(r)
 	switch vars["where"] {
 	case "local":
-		if err := RemoveBackupLocal(api.config, vars["name"]); err != nil {
-			log.Printf("RemoveBackupLocal error: %+v\n", err)
-			writeError(w, http.StatusInternalServerError, "delete", err)
-			return
-		}
+		err = RemoveBackupLocal(api.config, vars["name"])
 	case "remote":
-		if err := RemoveBackupRemote(api.config, vars["name"]); err != nil {
-			log.Printf("RemoveBackupRemote error: %+v\n", err)
-			writeError(w, http.StatusInternalServerError, "delete", err)
-			return
-		}
+		err = RemoveBackupRemote(api.config, vars["name"])
 	default:
-		writeError(w, http.StatusBadRequest, "delete", fmt.Errorf("Backup location must be 'local' or 'remote'"))
+		err = fmt.Errorf("Backup location must be 'local' or 'remote'")
+	}
+	api.status.stop(err)
+	if err != nil {
+		log.Printf("delete backup error: %+v\n", err)
+		writeError(w, http.StatusInternalServerError, "delete", err)
 		return
 	}
 	sendResponse(w, http.StatusOK, struct {

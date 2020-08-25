@@ -214,7 +214,9 @@ func parseTime(text string) (t time.Time, err error) {
 
 func writeError(w http.ResponseWriter, statusCode int, operation string, err error) {
 	w.WriteHeader(statusCode)
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
 	out, _ := json.Marshal(struct {
 		Status    string `json:"status"`
 		Operation string `json:"operation,omitempty"`
@@ -228,7 +230,9 @@ func writeError(w http.ResponseWriter, statusCode int, operation string, err err
 }
 
 func sendResponse(w http.ResponseWriter, statusCode int, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
 	w.WriteHeader(statusCode)
 	out, _ := json.Marshal(&v)
 	fmt.Fprintln(w, string(out))
