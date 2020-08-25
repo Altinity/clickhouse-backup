@@ -208,7 +208,7 @@ func main() {
 			Name:  "server",
 			Usage: "Run API server",
 			Action: func(c *cli.Context) error {
-				return chbackup.Server(*getConfig(c))
+				return chbackup.Server(cliapp, *getConfig(c))
 			},
 			Flags: cliapp.Flags,
 		},

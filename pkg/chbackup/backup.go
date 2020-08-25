@@ -179,9 +179,8 @@ func PrintTables(config Config) error {
 
 func restoreSchema(config Config, backupName string, tablePattern string) error {
 	if backupName == "" {
-		fmt.Println("Select backup for restore:")
 		PrintLocalBackups(config, "all")
-		os.Exit(1)
+		return fmt.Errorf("select backup for restore")
 	}
 	dataPath := getDataPath(config)
 	if dataPath == "" {
@@ -457,9 +456,8 @@ func Restore(config Config, backupName string, tablePattern string, schemaOnly b
 // RestoreData - restore data for tables matched by tablePattern from backupName
 func RestoreData(config Config, backupName string, tablePattern string) error {
 	if backupName == "" {
-		fmt.Println("Select backup for restore:")
 		PrintLocalBackups(config, "all")
-		os.Exit(1)
+		return fmt.Errorf("select backup for restore")
 	}
 	dataPath := getDataPath(config)
 	if dataPath == "" {
@@ -550,9 +548,8 @@ func Upload(config Config, backupName string, diffFrom string) error {
 		return nil
 	}
 	if backupName == "" {
-		fmt.Println("Select backup for upload:")
 		PrintLocalBackups(config, "all")
-		os.Exit(1)
+		return fmt.Errorf("select backup for upload")
 	}
 	dataPath := getDataPath(config)
 	if dataPath == "" {
@@ -594,9 +591,8 @@ func Download(config Config, backupName string) error {
 		return nil
 	}
 	if backupName == "" {
-		fmt.Println("Select backup for download:")
 		PrintRemoteBackups(config, "all")
-		os.Exit(1)
+		return fmt.Errorf("select backup for download")
 	}
 	dataPath := getDataPath(config)
 	if dataPath == "" {

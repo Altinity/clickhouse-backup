@@ -12,7 +12,7 @@ import (
 
 // Config - config file format
 type Config struct {
-	General    GeneralConfig    `yaml:"general" json:"general"`
+	General    GeneralConfig    `yaml:"general"`
 	ClickHouse ClickHouseConfig `yaml:"clickhouse"`
 	S3         S3Config         `yaml:"s3"`
 	GCS        GCSConfig        `yaml:"gcs"`
@@ -42,15 +42,15 @@ type GCSConfig struct {
 
 // AzureBlobConfig - Azure Blob settings section
 type AzureBlobConfig struct {
-	EndpointSuffix          string `yaml:"endpoint_suffix" envconfig:"AZBLOB_ENDPOINT_SUFFIX"`
-	AccountName             string `yaml:"account_name" envconfig:"AZBLOB_ACCOUNT_NAME"`
-	AccountKey              string `yaml:"account_key" envconfig:"AZBLOB_ACCOUNT_KEY"`
-	SharedAccessSignature   string `yaml:"sas" envconfig:"AZBLOB_SAS"`
-	Container               string `yaml:"container" envconfig:"AZBLOB_CONTAINER"`
-	Path                    string `yaml:"path" envconfig:"AZBLOB_PATH"`
-	CompressionLevel        int    `yaml:"compression_level" envconfig:"AZBLOB_COMPRESSION_LEVEL"`
-	CompressionFormat       string `yaml:"compression_format" envconfig:"AZBLOB_COMPRESSION_FORMAT"`
-	SSEKey                  string `yaml:"sse_key" envconfig:"AZBLOB_SSE_KEY"`
+	EndpointSuffix        string `yaml:"endpoint_suffix" envconfig:"AZBLOB_ENDPOINT_SUFFIX"`
+	AccountName           string `yaml:"account_name" envconfig:"AZBLOB_ACCOUNT_NAME"`
+	AccountKey            string `yaml:"account_key" envconfig:"AZBLOB_ACCOUNT_KEY"`
+	SharedAccessSignature string `yaml:"sas" envconfig:"AZBLOB_SAS"`
+	Container             string `yaml:"container" envconfig:"AZBLOB_CONTAINER"`
+	Path                  string `yaml:"path" envconfig:"AZBLOB_PATH"`
+	CompressionLevel      int    `yaml:"compression_level" envconfig:"AZBLOB_COMPRESSION_LEVEL"`
+	CompressionFormat     string `yaml:"compression_format" envconfig:"AZBLOB_COMPRESSION_FORMAT"`
+	SSEKey                string `yaml:"sse_key" envconfig:"AZBLOB_SSE_KEY"`
 }
 
 // S3Config - s3 settings section
