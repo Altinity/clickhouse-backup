@@ -13,14 +13,14 @@ import (
 
 	guuid "github.com/google/uuid"
 
-	. "github.com/Azure/azure-storage-blob-go/azblob"
+	azb "github.com/Azure/azure-storage-blob-go/azblob"
 )
 
 // blockWriter provides methods to upload blocks that represent a file to a server and commit them.
 // This allows us to provide a local implementation that fakes the server for hermetic testing.
 type blockWriter interface {
-	StageBlock(context.Context, string, io.ReadSeeker, LeaseAccessConditions, []byte, ClientProvidedKeyOptions) (*BlockBlobStageBlockResponse, error)
-	CommitBlockList(context.Context, []string, BlobHTTPHeaders, Metadata, BlobAccessConditions, ClientProvidedKeyOptions) (*BlockBlobCommitBlockListResponse, error)
+	StageBlock(context.Context, string, io.ReadSeeker, azb.LeaseAccessConditions, []byte, azb.ClientProvidedKeyOptions) (*azb.BlockBlobStageBlockResponse, error)
+	CommitBlockList(context.Context, []string, azb.BlobHTTPHeaders, azb.Metadata, azb.BlobAccessConditions, azb.ClientProvidedKeyOptions) (*azb.BlockBlobCommitBlockListResponse, error)
 }
 
 // copyFromReader copies a source io.Reader to blob storage using concurrent uploads.
@@ -31,7 +31,7 @@ type blockWriter interface {
 // well, 4 MiB or 8 MiB, and autoscale to as many goroutines within the memory limit. This gives a single dial to tweak and we can
 // choose a max value for the memory setting based on internal transfers within Azure (which will give us the maximum throughput model).
 // We can even provide a utility to dial this number in for customer networks to optimize their copies.
-func copyFromReader(ctx context.Context, from io.Reader, to blockWriter, o UploadStreamToBlockBlobOptions, cpk ClientProvidedKeyOptions) (*BlockBlobCommitBlockListResponse, error) {
+func copyFromReader(ctx context.Context, from io.Reader, to blockWriter, o azb.UploadStreamToBlockBlobOptions, cpk azb.ClientProvidedKeyOptions) (*azb.BlockBlobCommitBlockListResponse, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -91,10 +91,10 @@ type copier struct {
 	// to is the location we are writing our chunks to.
 	to blockWriter
 	// server-side encryption options
-	cpk ClientProvidedKeyOptions
+	cpk azb.ClientProvidedKeyOptions
 
 	id *id
-	o  UploadStreamToBlockBlobOptions
+	o  azb.UploadStreamToBlockBlobOptions
 
 	// num is the current chunk we are on.
 	num int32
@@ -108,7 +108,7 @@ type copier struct {
 	buffers sync.Pool
 
 	// result holds the final result from blob storage after we have submitted all chunks.
-	result *BlockBlobCommitBlockListResponse
+	result *azb.BlockBlobCommitBlockListResponse
 }
 
 type copierChunk struct {
@@ -188,7 +188,7 @@ func (c *copier) write(chunk copierChunk) error {
 		return err
 	}
 
-	_, err := c.to.StageBlock(c.ctx, chunk.id, bytes.NewReader(chunk.buffer), LeaseAccessConditions{}, nil, c.cpk)
+	_, err := c.to.StageBlock(c.ctx, chunk.id, bytes.NewReader(chunk.buffer), azb.LeaseAccessConditions{}, nil, c.cpk)
 	if err != nil {
 		return fmt.Errorf("write error: %w", err)
 	}

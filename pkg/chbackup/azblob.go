@@ -4,20 +4,20 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
-	"io"
 	"fmt"
+	"io"
 	"net/url"
 	"time"
 
-	. "github.com/Azure/azure-storage-blob-go/azblob"
 	x "github.com/AlexAkulov/clickhouse-backup/pkg/azblob"
+	"github.com/Azure/azure-storage-blob-go/azblob"
 	"github.com/pkg/errors"
 )
 
 // AzureBlob - presents methods for manipulate data on Azure
 type AzureBlob struct {
-	Container ContainerURL
-	CPK       ClientProvidedKeyOptions
+	Container azblob.ContainerURL
+	CPK       azblob.ClientProvidedKeyOptions
 	Config    *AzureBlobConfig
 }
 
@@ -26,7 +26,7 @@ func (s *AzureBlob) Connect() error {
 	var (
 		err        error
 		urlString  string
-		credential Credential
+		credential azblob.Credential
 	)
 	switch {
 	case s.Config.EndpointSuffix == "":
@@ -36,14 +36,14 @@ func (s *AzureBlob) Connect() error {
 	case s.Config.AccountName == "":
 		return fmt.Errorf("azblob: account name not set")
 	case s.Config.AccountKey != "":
-		credential, err = NewSharedKeyCredential(s.Config.AccountName, s.Config.AccountKey)
+		credential, err = azblob.NewSharedKeyCredential(s.Config.AccountName, s.Config.AccountKey)
 		if err != nil {
-	    	return err
+			return err
 		}
-        urlString  = fmt.Sprintf("https://%s.blob.%s", s.Config.AccountName, s.Config.EndpointSuffix)
+		urlString = fmt.Sprintf("https://%s.blob.%s", s.Config.AccountName, s.Config.EndpointSuffix)
 	case s.Config.SharedAccessSignature != "":
-		credential = NewAnonymousCredential()
-        urlString  = fmt.Sprintf("https://%s.blob.%s?%s", s.Config.AccountName, s.Config.EndpointSuffix, s.Config.SharedAccessSignature)
+		credential = azblob.NewAnonymousCredential()
+		urlString = fmt.Sprintf("https://%s.blob.%s?%s", s.Config.AccountName, s.Config.EndpointSuffix, s.Config.SharedAccessSignature)
 	default:
 		return fmt.Errorf("azblob: account key or SAS must be set")
 	}
@@ -52,11 +52,11 @@ func (s *AzureBlob) Connect() error {
 		return err
 	}
 
-	container := NewServiceURL(*u, NewPipeline(credential, PipelineOptions{})).NewContainerURL(s.Config.Container)
-	context   := context.Background()
+	container := azblob.NewServiceURL(*u, azblob.NewPipeline(credential, azblob.PipelineOptions{})).NewContainerURL(s.Config.Container)
+	context := context.Background()
 
-	if _, err  = container.Create(context, Metadata{}, PublicAccessContainer); err != nil {
-		if se, ok := err.(StorageError); !ok || se.ServiceCode() != ServiceCodeContainerAlreadyExists {
+	if _, err = container.Create(context, azblob.Metadata{}, azblob.PublicAccessContainer); err != nil {
+		if se, ok := err.(azblob.StorageError); !ok || se.ServiceCode() != azblob.ServiceCodeContainerAlreadyExists {
 			return errors.Wrapf(err, "azblob: failed to create container %s", s.Config.Container)
 		}
 	}
@@ -73,7 +73,7 @@ func (s *AzureBlob) Connect() error {
 		b64key := s.Config.SSEKey
 		shakey := sha256.Sum256(key)
 		b64sha := base64.StdEncoding.EncodeToString(shakey[:])
-		s.CPK   = NewClientProvidedKeyOptions(&b64key, &b64sha, nil)
+		s.CPK = azblob.NewClientProvidedKeyOptions(&b64key, &b64sha, nil)
 	}
 
 	s.Container = container
@@ -85,58 +85,58 @@ func (s *AzureBlob) Kind() string {
 }
 
 func (s *AzureBlob) GetFileReader(key string) (io.ReadCloser, error) {
-	ctx  := context.Background()
+	ctx := context.Background()
 	blob := s.Container.NewBlockBlobURL(key)
 
-	r, err := blob.Download(ctx, 0, CountToEnd, BlobAccessConditions{}, false, s.CPK)
+	r, err := blob.Download(ctx, 0, azblob.CountToEnd, azblob.BlobAccessConditions{}, false, s.CPK)
 	if err != nil {
 		return nil, err
 	}
 
-	return r.Body(RetryReaderOptions{}), nil
+	return r.Body(azblob.RetryReaderOptions{}), nil
 }
 
 func (s *AzureBlob) PutFile(key string, r io.ReadCloser) error {
-	ctx  := context.Background()
+	ctx := context.Background()
 	blob := s.Container.NewBlockBlobURL(key)
 
 	bufferSize := 2 * 1024 * 1024 // Configure the size of the rotating buffers that are used when uploading
 	maxBuffers := 3               // Configure the number of rotating buffers that are used when uploading
-	_, err := x.UploadStreamToBlockBlob(ctx, r, blob, UploadStreamToBlockBlobOptions{ BufferSize: bufferSize, MaxBuffers: maxBuffers }, s.CPK)
+	_, err := x.UploadStreamToBlockBlob(ctx, r, blob, azblob.UploadStreamToBlockBlobOptions{BufferSize: bufferSize, MaxBuffers: maxBuffers}, s.CPK)
 	return err
 }
 
 func (s *AzureBlob) DeleteFile(key string) error {
-	ctx  := context.Background()
+	ctx := context.Background()
 	blob := s.Container.NewBlockBlobURL(key)
 
-	_, err := blob.Delete(ctx, DeleteSnapshotsOptionInclude, BlobAccessConditions{})
+	_, err := blob.Delete(ctx, azblob.DeleteSnapshotsOptionInclude, azblob.BlobAccessConditions{})
 	return err
 }
 
 func (s *AzureBlob) GetFile(key string) (RemoteFile, error) {
-	ctx  := context.Background()
+	ctx := context.Background()
 	blob := s.Container.NewBlockBlobURL(key)
 
-	r, err := blob.GetProperties(ctx, BlobAccessConditions{}, s.CPK)
+	r, err := blob.GetProperties(ctx, azblob.BlobAccessConditions{}, s.CPK)
 	if err != nil {
-		if se, ok := err.(StorageError); !ok || se.ServiceCode() != ServiceCodeBlobNotFound {
+		if se, ok := err.(azblob.StorageError); !ok || se.ServiceCode() != azblob.ServiceCodeBlobNotFound {
 			return nil, err
 		}
 		return nil, ErrNotFound
 	}
 
 	return &azureBlobFile{
-   		name: key,
-   		size: r.ContentLength(),
-   		lastModified: r.LastModified(),
-   	}, nil
+		name:         key,
+		size:         r.ContentLength(),
+		lastModified: r.LastModified(),
+	}, nil
 }
 
 func (s *AzureBlob) Walk(_ string, process func(r RemoteFile)) error {
 	ctx := context.Background()
-	opt := ListBlobsSegmentOptions{ Prefix: s.Config.Path }
-	mrk := Marker{}
+	opt := azblob.ListBlobsSegmentOptions{Prefix: s.Config.Path}
+	mrk := azblob.Marker{}
 
 	for mrk.NotDone() {
 		r, err := s.Container.ListBlobsFlatSegment(ctx, mrk, opt)
@@ -151,8 +151,8 @@ func (s *AzureBlob) Walk(_ string, process func(r RemoteFile)) error {
 				size = 0
 			}
 			process(&azureBlobFile{
-				name: blob.Name,
-				size: size,
+				name:         blob.Name,
+				size:         size,
 				lastModified: blob.Properties.LastModified,
 			})
 		}
