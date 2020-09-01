@@ -152,7 +152,7 @@ cos:
   compression_level: 1         # COS_COMPRESSION_LEVEL
   debug: false                 # COS_DEBUG
 api:
-  listen: "localhost:7171"     # API_LISTEN_ADDR
+  listen: "localhost:7171"     # API_LISTEN
   enable_metrics: false        # API_ENABLE_METRICS
   enable_pprof: false          # API_ENABLE_PPROF
   username: ""                 # API_USERNAME
