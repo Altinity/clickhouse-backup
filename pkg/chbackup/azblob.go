@@ -11,6 +11,7 @@ import (
 	"time"
 
 	x "github.com/AlexAkulov/clickhouse-backup/pkg/azblob"
+	"github.com/Azure/azure-pipeline-go/pipeline"
 	"github.com/Azure/azure-storage-blob-go/azblob"
 	"github.com/pkg/errors"
 )
@@ -52,6 +53,9 @@ func (s *AzureBlob) Connect() error {
 	if err != nil {
 		return err
 	}
+
+	// don't pollute syslog with expected 404's and other garbage logs
+	pipeline.SetForceLogEnabled(false)
 
 	container := azblob.NewServiceURL(*u, azblob.NewPipeline(credential, azblob.PipelineOptions{})).NewContainerURL(s.Config.Container)
 	test_name := make([]byte, 16)
