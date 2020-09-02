@@ -2,6 +2,7 @@ package chbackup
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
@@ -53,11 +54,15 @@ func (s *AzureBlob) Connect() error {
 	}
 
 	container := azblob.NewServiceURL(*u, azblob.NewPipeline(credential, azblob.PipelineOptions{})).NewContainerURL(s.Config.Container)
-	context := context.Background()
+	test_name := make([]byte, 16)
+	if _, err := rand.Read(test_name); err != nil {
+		return errors.Wrapf(err, "azblob: failed to generate test blob name")
+	}
 
-	if _, err = container.Create(context, azblob.Metadata{}, azblob.PublicAccessContainer); err != nil {
-		if se, ok := err.(azblob.StorageError); !ok || se.ServiceCode() != azblob.ServiceCodeContainerAlreadyExists {
-			return errors.Wrapf(err, "azblob: failed to create container %s", s.Config.Container)
+	test_blob := container.NewBlockBlobURL(base64.URLEncoding.EncodeToString(test_name))
+	if _, err = test_blob.GetProperties(context.Background(), azblob.BlobAccessConditions{}, azblob.ClientProvidedKeyOptions{}); err != nil {
+		if se, ok := err.(azblob.StorageError); !ok || se.ServiceCode() != azblob.ServiceCodeBlobNotFound {
+			return errors.Wrapf(err, "azblob: failed to access container %s", s.Config.Container)
 		}
 	}
 
