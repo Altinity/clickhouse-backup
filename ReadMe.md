@@ -71,6 +71,7 @@ COMMANDS:
      list            Print list of backups
      download        Download backup from remote storage
      restore         Create schema and restore data from backup
+     flashback       Flashback database or tables to backup
      delete          Delete specific backup
      default-config  Print default config
      freeze          Freeze tables

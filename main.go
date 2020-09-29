@@ -24,7 +24,7 @@ func main() {
 	log.SetOutput(os.Stdout)
 	cliapp := cli.NewApp()
 	cliapp.Name = "clickhouse-backup"
-	cliapp.Usage = "Tool for easy backup of ClickHouse with cloud support"
+	cliapp.Usage = "Tool for easy backup of ClickHouse with cloud support(NBE)"
 	cliapp.UsageText = "clickhouse-backup <command> [-t, --tables=<db>.<table>] <backup_name>"
 	cliapp.Description = "Run as 'root' or 'clickhouse' user"
 	cliapp.Version = version
@@ -147,6 +147,20 @@ func main() {
 					Name:   "data, d",
 					Hidden: false,
 					Usage:  "Restore data only",
+				},
+			),
+		},
+		{
+			Name:      "flashback",
+			Usage:     "flashback to backup",
+			UsageText: "clickhouse-backup flashback [-t, --tables=<db>.<table>] <backup_name>",
+			Action: func(c *cli.Context) error {
+				return chbackup.Flashback(*getConfig(c), c.Args().First(), c.String("t"))
+			},
+			Flags: append(cliapp.Flags,
+				cli.StringFlag{
+					Name:   "table, tables, t",
+					Hidden: false,
 				},
 			),
 		},
