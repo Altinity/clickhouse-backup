@@ -151,6 +151,20 @@ func main() {
 			),
 		},
 		{
+			Name:      "flashback",
+			Usage:     "flashback to backup",
+			UsageText: "clickhouse-backup flashback [-t, --tables=<db>.<table>] <backup_name>",
+			Action: func(c *cli.Context) error {
+				return chbackup.Flashback(*getConfig(c), c.Args().First(), c.String("t"))
+			},
+			Flags: append(cliapp.Flags,
+				cli.StringFlag{
+					Name:   "table, tables, t",
+					Hidden: false,
+				},
+			),
+		},
+		{
 			Name:      "delete",
 			Usage:     "Delete specific backup",
 			UsageText: "clickhouse-backup delete <local|remote> <backup_name>",
