@@ -258,18 +258,18 @@ func (ch *ClickHouse) GetBackupTables(backupName string) (map[string]BackupTable
 		return nil, fmt.Errorf("can't get tables, %s is not a dir", backupShadowPath)
 	}
 
-	//NBE TODO
 	var allpartsBackup map[string][]Partition
 	hashPath := path.Join(dataPath, "backup", backupName, hashfile)
 	log.Printf("Reading part hashes %s", hashPath)
 	bytes, err := ioutil.ReadFile(hashPath)
 	if err != nil {
-		return nil, fmt.Errorf("Unable to read hash file %s", hashPath)
-	}
-
-	err = json.Unmarshal(bytes, &allpartsBackup)
-	if err != nil {
-		return nil, fmt.Errorf("issue occured while reading hash file %s", hashPath)
+		log.Printf("Unable to read hash file %s", hashPath)
+		//return nil, fmt.Errorf("Unable to read hash file %s", hashPath)
+	} else {
+		err = json.Unmarshal(bytes, &allpartsBackup)
+		if err != nil {
+			return nil, fmt.Errorf("issue occured while reading hash file %s", hashPath)
+		}
 	}
 
 	result := make(map[string]BackupTable)
