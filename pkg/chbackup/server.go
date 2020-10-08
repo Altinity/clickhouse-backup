@@ -45,7 +45,6 @@ type AsyncStatus struct {
 
 type CommandInfo struct {
 	Command    string `json:"command"`
-	BackupName string `json:"backup_name"`
 	Status     string `json:"status"`
 	Progress   string `json:"progress,omitempty"`
 	Start      string `json:"start,omitempty"`
@@ -194,7 +193,7 @@ func (api *APIServer) basicAuthMidleware(next http.Handler) http.Handler {
 	})
 }
 
-// CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String) ENGINE=URL('http://127.0.0.1:7171/integration/actions', TSVWithNames)
+// CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String) ENGINE=URL('http://127.0.0.1:7171/integration/actions?user=user&pass=pass', TSVWithNames)
 // INSERT INTO system.backup_actions (command) VALUES ('create backup_name')
 // INSERT INTO system.backup_actions (command) VALUES ('upload backup_name')
 func (api *APIServer) integrationPost(w http.ResponseWriter, r *http.Request) {
@@ -268,11 +267,11 @@ func (api *APIServer) integrationPost(w http.ResponseWriter, r *http.Request) {
 		log.Println("OK")
 		return
 	default:
-		http.Error(w, fmt.Sprintf("bad operation '%s'", columns[0]), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("bad command '%s'", columns[0]), http.StatusBadRequest)
 	}
 }
 
-// CREATE TABLE system.backup_list (name String, created DateTime, size Int64, location String) ENGINE=URL('http://127.0.0.1:7171/integration/list', TSVWithNames)
+// CREATE TABLE system.backup_list (name String, created DateTime, size Int64, location String) ENGINE=URL('http://127.0.0.1:7171/integration/list?user=user&pass=pass', TSVWithNames)
 // ??? INSERT INTO system.backup_list (name,location) VALUES ('backup_name', 'remote') - upload backup
 // ??? INSERT INTO system.backup_list (name) VALUES ('backup_name') - create backup
 func (api *APIServer) integrationBackupLog(w http.ResponseWriter, r *http.Request) {
@@ -562,6 +561,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	tablePattern := ""
 	schemaOnly := false
 	dataOnly := false
+	dropTable := false
 
 	query := r.URL.Query()
 	if tp, exist := query["table"]; exist {
@@ -573,8 +573,14 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	if _, exist := query["data"]; exist {
 		dataOnly = true
 	}
+	if _, exist := query["drop"]; exist {
+		dropTable = true
+	}
+	if _, exist := query["rm"]; exist {
+		dropTable = true
+	}
 	api.status.start("restore")
-	err := Restore(api.config, vars["name"], tablePattern, schemaOnly, dataOnly)
+	err := Restore(api.config, vars["name"], tablePattern, schemaOnly, dataOnly, dropTable)
 	api.status.stop(err)
 	if err != nil {
 		log.Printf("Download error: %+v\n", err)

@@ -191,7 +191,7 @@ func (ch *ClickHouse) FreezeTable(table Table) error {
 		return ch.FreezeTableOldWay(table)
 	}
 	log.Printf("Freeze '%s.%s'", table.Database, table.Name)
-	query := fmt.Sprintf("ALTER TABLE `%v`.`%v` FREEZE;", table.Database, table.Name)
+	query := fmt.Sprintf("ALTER TABLE `%s`.`%s` FREEZE;", table.Database, table.Name)
 	if _, err := ch.conn.Exec(query); err != nil {
 		return fmt.Errorf("can't freeze '%s.%s': %v", table.Database, table.Name, err)
 	}
@@ -355,11 +355,17 @@ func (ch *ClickHouse) CreateDatabase(database string) error {
 }
 
 // CreateTable - create ClickHouse table
-func (ch *ClickHouse) CreateTable(table RestoreTable) error {
+func (ch *ClickHouse) CreateTable(table RestoreTable, dropTable bool) error {
 	if _, err := ch.conn.Exec(fmt.Sprintf("USE `%s`", table.Database)); err != nil {
 		return err
 	}
 	log.Printf("Create table '%s.%s'", table.Database, table.Table)
+	if dropTable {
+		dropQuery := fmt.Sprintf("DROP TABLE IF EXISTS `%s`.`%s`", table.Database, table.Table)
+		if _, err := ch.conn.Exec(dropQuery); err != nil {
+			return err
+		}
+	}
 	if _, err := ch.conn.Exec(table.Query); err != nil {
 		return err
 	}

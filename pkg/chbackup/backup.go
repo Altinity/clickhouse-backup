@@ -177,7 +177,7 @@ func PrintTables(config Config) error {
 	return nil
 }
 
-func restoreSchema(config Config, backupName string, tablePattern string) error {
+func restoreSchema(config Config, backupName string, tablePattern string, dropTable bool) error {
 	if backupName == "" {
 		PrintLocalBackups(config, "all")
 		return fmt.Errorf("select backup for restore")
@@ -213,7 +213,7 @@ func restoreSchema(config Config, backupName string, tablePattern string) error 
 		if err := ch.CreateDatabase(schema.Database); err != nil {
 			return fmt.Errorf("can't create database '%s': %v", schema.Database, err)
 		}
-		if err := ch.CreateTable(schema); err != nil {
+		if err := ch.CreateTable(schema, dropTable); err != nil {
 			return fmt.Errorf("can't create table '%s.%s': %v", schema.Database, schema.Table, err)
 		}
 	}
@@ -437,16 +437,14 @@ func CreateBackup(config Config, backupName, tablePattern string) error {
 }
 
 // Restore - restore tables matched by tablePattern from backupName
-func Restore(config Config, backupName string, tablePattern string, schemaOnly bool, dataOnly bool) error {
+func Restore(config Config, backupName string, tablePattern string, schemaOnly bool, dataOnly bool, dropTable bool) error {
 	if schemaOnly || (schemaOnly == dataOnly) {
-		err := restoreSchema(config, backupName, tablePattern)
-		if err != nil {
+		if err := restoreSchema(config, backupName, tablePattern, dropTable); err != nil {
 			return err
 		}
 	}
 	if dataOnly || (schemaOnly == dataOnly) {
-		err := RestoreData(config, backupName, tablePattern)
-		if err != nil {
+		if err := RestoreData(config, backupName, tablePattern); err != nil {
 			return err
 		}
 	}

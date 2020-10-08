@@ -359,7 +359,7 @@ func (ch *TestClickHouse) createTestData(data TestDataStruct) error {
 		Database: data.Database,
 		Table:    data.Table,
 		Query:    fmt.Sprintf("CREATE TABLE IF NOT EXISTS `%s`.`%s` %s", data.Database, data.Table, data.Schema),
-	}); err != nil {
+	}, false); err != nil {
 		return err
 	}
 
