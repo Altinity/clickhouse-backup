@@ -192,7 +192,8 @@ func FormatBytes(i int64) (result string) {
 }
 
 func TablePathEncode(str string) string {
-	return strings.ReplaceAll(url.PathEscape(str), ".", "%2E")
+	return strings.ReplaceAll(
+		strings.ReplaceAll(url.PathEscape(str), ".", "%2E"), "-", "%2D")
 }
 
 func parseTime(text string) (t time.Time, err error) {

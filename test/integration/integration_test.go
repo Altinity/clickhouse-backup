@@ -60,7 +60,7 @@ var testData = []TestDataStruct{
 		OrderBy: "id",
 	}, {
 		Database: dbName,
-		Table:    "table3",
+		Table:    "-table-3-",
 		Schema:   "(TimeStamp DateTime, Item String, Date Date MATERIALIZED toDate(TimeStamp)) ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
 			{"TimeStamp": toTS("2018-10-23 07:37:14"), "Item": "One"},
@@ -142,7 +142,7 @@ var incrementData = []TestDataStruct{
 		OrderBy: "id",
 	}, {
 		Database: dbName,
-		Table:    "table3",
+		Table:    "-table-3-",
 		Schema:   "(TimeStamp DateTime, Item String, Date Date MATERIALIZED toDate(TimeStamp)) ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
 			{"TimeStamp": toTS("2019-01-26 07:37:18"), "Item": "Seven"},
