@@ -1,6 +1,7 @@
 package chbackup
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -17,6 +18,10 @@ import (
 const (
 	// BackupTimeFormat - default backup name format
 	BackupTimeFormat = "2006-01-02T15-04-05"
+)
+
+const (
+	hashfile = "parts.hash"
 )
 
 var (
@@ -90,6 +95,8 @@ func parseSchemaPattern(metadataPath string, tablePattern string) (RestoreTables
 	distributedTables := RestoreTables{}
 	viewTables := RestoreTables{}
 	tablePatterns := []string{"*"}
+
+	//log.Printf("tp1 = %s", tablePattern)
 	if tablePattern != "" {
 		tablePatterns = strings.Split(tablePattern, ",")
 	}
@@ -98,7 +105,9 @@ func parseSchemaPattern(metadataPath string, tablePattern string) (RestoreTables
 			return nil
 		}
 		p := filepath.ToSlash(filePath)
+		//log.Printf("p1 = %s", p)
 		p = strings.Trim(strings.TrimPrefix(strings.TrimSuffix(p, ".sql"), metadataPath), "/")
+		//log.Printf("p2 = %s", p)
 		parts := strings.Split(p, "/")
 		if len(parts) != 2 {
 			return nil
@@ -107,6 +116,7 @@ func parseSchemaPattern(metadataPath string, tablePattern string) (RestoreTables
 		table, _ := url.PathUnescape(parts[1])
 		tableName := fmt.Sprintf("%s.%s", database, table)
 		for _, p := range tablePatterns {
+			//log.Printf("p3 = %s", p)
 			if matched, _ := filepath.Match(p, tableName); matched {
 				data, err := ioutil.ReadFile(filePath)
 				if err != nil {
@@ -130,6 +140,9 @@ func parseSchemaPattern(metadataPath string, tablePattern string) (RestoreTables
 				regularTables = addRestoreTable(regularTables, restoreTable)
 				return nil
 			}
+			/*else {
+				log.Printf("No match %s %s", p, tableName)
+			}*/
 		}
 		return nil
 	}); err != nil {
@@ -370,6 +383,56 @@ func Freeze(config Config, tablePattern string) error {
 	return nil
 }
 
+// CopyPartHashes - Copy data parts hashes by tablePattern
+func CopyPartHashes(config Config, tablePattern string, backupName string) error {
+	var allparts map[string][]Partition
+	allparts = make(map[string][]Partition)
+
+	ch := &ClickHouse{
+		Config: &config.ClickHouse,
+	}
+	if err := ch.Connect(); err != nil {
+		return fmt.Errorf("can't connect to clickhouse: %v", err)
+	}
+	defer ch.Close()
+
+	dataPath, err := ch.GetDataPath()
+	if err != nil || dataPath == "" {
+		return fmt.Errorf("can't get data path from clickhouse: %v\nyou can set data_path in config file", err)
+	}
+
+	allTables, err := ch.GetTables()
+	if err != nil {
+		return fmt.Errorf("can't get tables from clickhouse: %v", err)
+	}
+	backupTables := parseTablePatternForFreeze(allTables, tablePattern)
+	if len(backupTables) == 0 {
+		return fmt.Errorf("there are no tables in clickhouse, create something to freeze")
+	}
+	for _, table := range backupTables {
+		if table.Skip {
+			log.Printf("Skip '%s.%s'", table.Database, table.Name)
+			continue
+		}
+
+		parts, err := ch.GetPartitions(table)
+		if err != nil {
+			return err
+		}
+		allparts[table.Database+"."+table.Name] = parts
+
+	}
+	log.Println("Writing part hashes")
+	byteArray, err := json.MarshalIndent(allparts, "", " ")
+	if err != nil {
+		log.Fatal(err)
+	}
+	hashPartsPath := path.Join(dataPath, "backup", backupName, hashfile)
+	_ = ioutil.WriteFile(hashPartsPath, byteArray, 0644)
+
+	return nil
+}
+
 // NewBackupName - return default backup name
 func NewBackupName() string {
 	return time.Now().UTC().Format(BackupTimeFormat)
@@ -392,10 +455,17 @@ func CreateBackup(config Config, backupName, tablePattern string) error {
 	if err := os.MkdirAll(backupPath, os.ModePerm); err != nil {
 		return fmt.Errorf("can't create backup: %v", err)
 	}
+
 	log.Printf("Create backup '%s'", backupName)
 	if err := Freeze(config, tablePattern); err != nil {
 		return err
 	}
+
+	log.Printf("Copy part hashes")
+	if err := CopyPartHashes(config, tablePattern, backupName); err != nil {
+		return err
+	}
+
 	log.Println("Copy metadata")
 	schemaList, err := parseSchemaPattern(path.Join(dataPath, "metadata"), tablePattern)
 	if err != nil {
@@ -451,6 +521,104 @@ func Restore(config Config, backupName string, tablePattern string, schemaOnly b
 	return nil
 }
 
+// Flashback - restore tables matched by tablePattern from backupName by restroing only modified parts.
+func Flashback(config Config, backupName string, tablePattern string) error {
+	/*if schemaOnly || (schemaOnly == dataOnly) {
+		err := restoreSchema(config, backupName, tablePattern)
+		if err != nil {
+			return err
+		}
+	}
+	if dataOnly || (schemaOnly == dataOnly) {
+		err := RestoreData(config, backupName, tablePattern)
+		if err != nil {
+			return err
+		}
+	}*/
+
+	err := FlashBackData(config, backupName, tablePattern)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// FlashBackData - restore data for tables matched by tablePattern from backupName
+func FlashBackData(config Config, backupName string, tablePattern string) error {
+	if backupName == "" {
+		PrintLocalBackups(config, "all")
+		return fmt.Errorf("select backup for restore")
+	}
+
+	dataPath := getDataPath(config)
+
+	if dataPath == "" {
+		return ErrUnknownClickhouseDataPath
+	}
+	ch := &ClickHouse{
+		Config: &config.ClickHouse,
+	}
+	if err := ch.Connect(); err != nil {
+		return fmt.Errorf("can't connect to clickhouse: %v", err)
+	}
+	defer ch.Close()
+
+	allBackupTables, err := ch.GetBackupTables(backupName)
+	if err != nil {
+		return err
+	}
+
+	restoreTables := parseTablePatternForRestoreData(allBackupTables, tablePattern)
+
+	liveTables, err := ch.GetTables()
+
+	if err != nil {
+		return err
+	}
+	if len(restoreTables) == 0 {
+		return fmt.Errorf("backup doesn't have tables to restore")
+	}
+
+	missingTables := []string{}
+
+	for _, restoreTable := range restoreTables {
+		found := false
+		for _, liveTable := range liveTables {
+			if (restoreTable.Database == liveTable.Database) && (restoreTable.Name == liveTable.Name) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			missingTables = append(missingTables, fmt.Sprintf("%s.%s", restoreTable.Database, restoreTable.Name))
+
+			for _, newtable := range missingTables {
+				//log.Printf("newtable=%s", newtable)
+				err := restoreSchema(config, backupName, newtable)
+				if err != nil {
+					return err
+				}
+			}
+
+			FlashBackData(config, backupName, tablePattern)
+			return nil
+		}
+	}
+
+	diffInfos, _ := ch.ComputePartitionsDelta(restoreTables, liveTables)
+	for _, tableDiff := range diffInfos {
+
+		if err := ch.CopyDataDiff(tableDiff); err != nil {
+			return fmt.Errorf("can't restore '%s.%s': %v", tableDiff.btable.Database, tableDiff.btable.Name, err)
+		}
+
+		if err := ch.ApplyPartitionsChanges(tableDiff); err != nil {
+			return fmt.Errorf("can't attach partitions for table '%s.%s': %v", tableDiff.btable.Database, tableDiff.btable.Name, err)
+		}
+	}
+	return nil
+}
+
 // RestoreData - restore data for tables matched by tablePattern from backupName
 func RestoreData(config Config, backupName string, tablePattern string) error {
 	if backupName == "" {
@@ -501,7 +669,7 @@ func RestoreData(config Config, backupName string, tablePattern string) error {
 		if err := ch.CopyData(table); err != nil {
 			return fmt.Errorf("can't restore '%s.%s': %v", table.Database, table.Name, err)
 		}
-		if err := ch.AttachPatritions(table); err != nil {
+		if err := ch.AttachPartitions(table); err != nil {
 			return fmt.Errorf("can't attach partitions for table '%s.%s': %v", table.Database, table.Name, err)
 		}
 	}
