@@ -594,7 +594,7 @@ func FlashBackData(config Config, backupName string, tablePattern string) error 
 
 			for _, newtable := range missingTables {
 				//log.Printf("newtable=%s", newtable)
-				err := restoreSchema(config, backupName, newtable)
+				err := restoreSchema(config, backupName, newtable, true)
 				if err != nil {
 					return err
 				}
