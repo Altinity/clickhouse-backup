@@ -30,7 +30,7 @@ script:
   # Preparing to integration tests
   - CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup" docker-compose -f test/integration/docker-compose.yml up -d --force-recreate || travis_terminate 1;
   # Running integration tests
-  - go test -tags=integration test/integration/integration_test.go || travis_terminate 1;
+  - go test -tags=integration -v test/integration/integration_test.go || travis_terminate 1;
   # Building docker image
   - docker build -t alexakulov/clickhouse-backup:master .
 after_success:
