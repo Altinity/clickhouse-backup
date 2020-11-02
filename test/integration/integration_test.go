@@ -11,7 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AlexAkulov/clickhouse-backup/pkg/chbackup"
+	"github.com/AlexAkulov/clickhouse-backup/config"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 
 	_ "github.com/ClickHouse/clickhouse-go"
 	"github.com/stretchr/testify/assert"
@@ -337,12 +338,12 @@ func testCommon(t *testing.T) {
 }
 
 type TestClickHouse struct {
-	chbackup *chbackup.ClickHouse
+	chbackup *clickhouse.ClickHouse
 }
 
 func (ch *TestClickHouse) connect() error {
-	ch.chbackup = &chbackup.ClickHouse{
-		Config: &chbackup.ClickHouseConfig{
+	ch.chbackup = &clickhouse.ClickHouse{
+		Config: &config.ClickHouseConfig{
 			Host:    "localhost",
 			Port:    9000,
 			Timeout: "5m",
@@ -355,11 +356,10 @@ func (ch *TestClickHouse) createTestData(data TestDataStruct) error {
 	if err := ch.chbackup.CreateDatabase(data.Database); err != nil {
 		return err
 	}
-	if err := ch.chbackup.CreateTable(chbackup.RestoreTable{
+	if err := ch.chbackup.CreateTable(clickhouse.Table{
 		Database: data.Database,
-		Table:    data.Table,
-		Query:    fmt.Sprintf("CREATE TABLE IF NOT EXISTS `%s`.`%s` %s", data.Database, data.Table, data.Schema),
-	}, false); err != nil {
+		Name:     data.Table,
+	}, fmt.Sprintf("CREATE TABLE IF NOT EXISTS `%s`.`%s` %s", data.Database, data.Table, data.Schema), false); err != nil {
 		return err
 	}
 

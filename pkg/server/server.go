@@ -1,4 +1,4 @@
-package chbackup
+package server
 
 import (
 	"errors"
@@ -13,6 +13,9 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/AlexAkulov/clickhouse-backup/config"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/backup"
 
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
@@ -29,7 +32,7 @@ const (
 
 type APIServer struct {
 	c       *cli.App
-	config  Config
+	config  *config.Config
 	lock    *semaphore.Weighted
 	server  *http.Server
 	restart chan struct{}
@@ -44,12 +47,12 @@ type AsyncStatus struct {
 }
 
 type CommandInfo struct {
-	Command    string `json:"command"`
-	Status     string `json:"status"`
-	Progress   string `json:"progress,omitempty"`
-	Start      string `json:"start,omitempty"`
-	Finish     string `json:"finish,omitempty"`
-	Error      string `json:"error,omitempty"`
+	Command  string `json:"command"`
+	Status   string `json:"status"`
+	Progress string `json:"progress,omitempty"`
+	Start    string `json:"start,omitempty"`
+	Finish   string `json:"finish,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
 
 func (status *AsyncStatus) start(command string) {
@@ -86,10 +89,10 @@ var (
 )
 
 // Server - expose CLI commands as REST API
-func Server(c *cli.App, config Config) error {
+func Server(c *cli.App, cfg *config.Config) error {
 	api := APIServer{
 		c:       c,
-		config:  config,
+		config:  cfg,
 		lock:    semaphore.NewWeighted(1),
 		restart: make(chan struct{}),
 		status:  &AsyncStatus{},
@@ -126,7 +129,7 @@ func Server(c *cli.App, config Config) error {
 }
 
 // setupAPIServer - resister API routes
-func (api *APIServer) setupAPIServer(config Config) *http.Server {
+func (api *APIServer) setupAPIServer(cfg *config.Config) *http.Server {
 	r := mux.NewRouter()
 	r.Use(api.basicAuthMidleware)
 	r.HandleFunc("/", api.httpRootHandler).Methods("GET")
@@ -160,10 +163,10 @@ func (api *APIServer) setupAPIServer(config Config) *http.Server {
 		return nil
 	})
 	api.routes = routes
-	registerMetricsHandlers(r, config.API.EnableMetrics, config.API.EnablePprof)
+	registerMetricsHandlers(r, cfg.API.EnableMetrics, cfg.API.EnablePprof)
 
 	srv := &http.Server{
-		Addr:    config.API.ListenAddr,
+		Addr:    cfg.API.ListenAddr,
 		Handler: r,
 	}
 	return srv
@@ -296,7 +299,7 @@ func (api *APIServer) httpRootHandler(w http.ResponseWriter, r *http.Request) {
 
 // httpConfigDefaultHandler - display the default config. Same as CLI: clickhouse-backup default-config
 func httpConfigDefaultHandler(w http.ResponseWriter, r *http.Request) {
-	defaultConfig := DefaultConfig()
+	defaultConfig := config.DefaultConfig()
 	body, err := yaml.Marshal(defaultConfig)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "default-config", err)
@@ -341,24 +344,24 @@ func (api *APIServer) httpConfigUpdateHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	newConfig := DefaultConfig()
+	newConfig := config.DefaultConfig()
 	if err := yaml.Unmarshal(body, &newConfig); err != nil {
 		writeError(w, http.StatusBadRequest, "update", fmt.Errorf("error parsing new config: %v", err))
 		return
 	}
 
-	if err := validateConfig(newConfig); err != nil {
+	if err := config.ValidateConfig(newConfig); err != nil {
 		writeError(w, http.StatusBadRequest, "update", fmt.Errorf("error validating new config: %v", err))
 		return
 	}
 	log.Printf("Applying new valid config")
-	api.config = *newConfig
+	api.config = newConfig
 	api.restart <- struct{}{}
 }
 
 // httpTablesHandler - displaylist of tables
 func (api *APIServer) httpTablesHandler(w http.ResponseWriter, r *http.Request) {
-	tables, err := getTables(api.config)
+	tables, err := backup.GetTables(*api.config)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "tables", err)
 		return
@@ -368,34 +371,34 @@ func (api *APIServer) httpTablesHandler(w http.ResponseWriter, r *http.Request) 
 
 // httpTablesHandler - display list of all backups stored locally and remotely
 func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
-	type backup struct {
+	type backupJSON struct {
 		Name     string `json:"name"`
 		Created  string `json:"created"`
 		Size     int64  `json:"size,omitempty"`
 		Location string `json:"location"`
 	}
-	backups := make([]backup, 0)
-	localBackups, err := ListLocalBackups(api.config)
+	backupsJSON := make([]backupJSON, 0)
+	localBackups, err := backup.ListLocalBackups(*api.config)
 	if err != nil && !os.IsNotExist(err) {
 		writeError(w, http.StatusInternalServerError, "list", err)
 		return
 	}
 
 	for _, b := range localBackups {
-		backups = append(backups, backup{
+		backupsJSON = append(backupsJSON, backupJSON{
 			Name:     b.Name,
 			Created:  b.Date.Format(APITimeFormat),
 			Location: "local",
 		})
 	}
 	if api.config.General.RemoteStorage != "none" {
-		remoteBackups, err := getRemoteBackups(api.config)
+		remoteBackups, err := backup.GetRemoteBackups(*api.config)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "list", err)
 			return
 		}
 		for _, b := range remoteBackups {
-			backups = append(backups, backup{
+			backupsJSON = append(backupsJSON, backupJSON{
 				Name:     b.Name,
 				Created:  b.Date.Format(APITimeFormat),
 				Size:     b.Size,
@@ -404,11 +407,11 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if r.URL.Path == "/backup/list" {
-		sendResponse(w, http.StatusOK, &backups)
+		sendResponse(w, http.StatusOK, &backupsJSON)
 		return
 	}
 	fmt.Fprintln(w, "name\tcreated\tsize\tlocation")
-	for _, b := range backups {
+	for _, b := range backupsJSON {
 		fmt.Fprintf(w, "%s\t%s\t%d\t%s\n", b.Name, b.Created, b.Size, b.Location)
 	}
 }
@@ -427,7 +430,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	defer api.metrics.LastBackupEnd.Set(float64(time.Now().Unix()))
 
 	tablePattern := ""
-	backupName := NewBackupName()
+	backupName := backup.NewBackupName()
 
 	query := r.URL.Query()
 	if tp, exist := query["table"]; exist {
@@ -439,7 +442,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 
 	go func() {
 		api.status.start("create")
-		err := CreateBackup(api.config, backupName, tablePattern)
+		err := backup.CreateBackup(*api.config, backupName, tablePattern)
 		defer api.status.stop(err)
 		if err != nil {
 			api.metrics.FailedBackups.Inc()
@@ -476,7 +479,7 @@ func (api *APIServer) httpFreezeHandler(w http.ResponseWriter, r *http.Request) 
 	if tp, exist := query["table"]; exist {
 		tablePattern = tp[0]
 	}
-	if err := Freeze(api.config, tablePattern); err != nil {
+	if err := backup.Freeze(*api.config, tablePattern); err != nil {
 		log.Printf("Freeze error: = %+v\n", err)
 		writeError(w, http.StatusInternalServerError, "freeze", err)
 		return
@@ -499,7 +502,7 @@ func (api *APIServer) httpCleanHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer api.lock.Release(1)
 	api.status.start("clean")
-	err := Clean(api.config)
+	err := backup.Clean(*api.config)
 	api.status.stop(err)
 	if err != nil {
 		log.Printf("Clean error: = %+v\n", err)
@@ -526,7 +529,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	name := vars["name"]
 	go func() {
 		api.status.start("upload")
-		err := Upload(api.config, name, diffFrom)
+		err := backup.Upload(*api.config, name, diffFrom)
 		api.status.stop(err)
 		if err != nil {
 			log.Printf("Upload error: %+v\n", err)
@@ -580,7 +583,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		dropTable = true
 	}
 	api.status.start("restore")
-	err := Restore(api.config, vars["name"], tablePattern, schemaOnly, dataOnly, dropTable)
+	err := backup.Restore(*api.config, vars["name"], tablePattern, schemaOnly, dataOnly, dropTable)
 	api.status.stop(err)
 	if err != nil {
 		log.Printf("Download error: %+v\n", err)
@@ -604,7 +607,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	name := vars["name"]
 	go func() {
 		api.status.start("download")
-		err := Download(api.config, name)
+		err := backup.Download(*api.config, name)
 		api.status.stop(err)
 		if err != nil {
 			log.Printf("Download error: %+v\n", err)
@@ -635,9 +638,9 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 	vars := mux.Vars(r)
 	switch vars["where"] {
 	case "local":
-		err = RemoveBackupLocal(api.config, vars["name"])
+		err = backup.RemoveBackupLocal(*api.config, vars["name"])
 	case "remote":
-		err = RemoveBackupRemote(api.config, vars["name"])
+		err = backup.RemoveBackupRemote(*api.config, vars["name"])
 	default:
 		err = fmt.Errorf("Backup location must be 'local' or 'remote'")
 	}

@@ -1,7 +1,7 @@
 .vscode
 *.exe
 debug
-clickhouse-backup
+/clickhouse-backup
 config.yml
 credentials.json
 .idea

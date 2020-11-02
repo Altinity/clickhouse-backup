@@ -5,7 +5,9 @@ import (
 	"log"
 	"os"
 
-	"github.com/AlexAkulov/clickhouse-backup/pkg/chbackup"
+	"github.com/AlexAkulov/clickhouse-backup/config"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/backup"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/server"
 
 	"github.com/urfave/cli"
 )
@@ -54,7 +56,7 @@ func main() {
 			Usage:     "Print list of tables",
 			UsageText: "clickhouse-backup tables",
 			Action: func(c *cli.Context) error {
-				return chbackup.PrintTables(*getConfig(c))
+				return backup.PrintTables(*getConfig(c))
 			},
 			Flags: cliapp.Flags,
 		},
@@ -64,7 +66,7 @@ func main() {
 			UsageText:   "clickhouse-backup create [-t, --tables=<db>.<table>] <backup_name>",
 			Description: "Create new backup",
 			Action: func(c *cli.Context) error {
-				return chbackup.CreateBackup(*getConfig(c), c.Args().First(), c.String("t"))
+				return backup.CreateBackup(*getConfig(c), c.Args().First(), c.String("t"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -78,7 +80,7 @@ func main() {
 			Usage:     "Upload backup to remote storage",
 			UsageText: "clickhouse-backup upload [--diff-from=<backup_name>] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return chbackup.Upload(*getConfig(c), c.Args().First(), c.String("diff-from"))
+				return backup.Upload(*getConfig(c), c.Args().First(), c.String("diff-from"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -95,17 +97,17 @@ func main() {
 				config := getConfig(c)
 				switch c.Args().Get(0) {
 				case "local":
-					return chbackup.PrintLocalBackups(*config, c.Args().Get(1))
+					return backup.PrintLocalBackups(*config, c.Args().Get(1))
 				case "remote":
-					return chbackup.PrintRemoteBackups(*config, c.Args().Get(1))
+					return backup.PrintRemoteBackups(*config, c.Args().Get(1))
 				case "all", "":
 					fmt.Println("Local backups:")
-					if err := chbackup.PrintLocalBackups(*config, c.Args().Get(1)); err != nil {
+					if err := backup.PrintLocalBackups(*config, c.Args().Get(1)); err != nil {
 						return err
 					}
 					if config.General.RemoteStorage != "none" {
 						fmt.Println("Remote backups:")
-						if err := chbackup.PrintRemoteBackups(*config, c.Args().Get(1)); err != nil {
+						if err := backup.PrintRemoteBackups(*config, c.Args().Get(1)); err != nil {
 							return err
 						}
 					}
@@ -122,7 +124,7 @@ func main() {
 			Usage:     "Download backup from remote storage",
 			UsageText: "clickhouse-backup download <backup_name>",
 			Action: func(c *cli.Context) error {
-				return chbackup.Download(*getConfig(c), c.Args().First())
+				return backup.Download(*getConfig(c), c.Args().First())
 			},
 			Flags: cliapp.Flags,
 		},
@@ -131,7 +133,7 @@ func main() {
 			Usage:     "Create schema and restore data from backup",
 			UsageText: "clickhouse-backup restore [--schema] [--data] [-t, --tables=<db>.<table>] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return chbackup.Restore(*getConfig(c), c.Args().First(), c.String("t"), c.Bool("s"), c.Bool("d"), c.Bool("rm"))
+				return backup.Restore(*getConfig(c), c.Args().First(), c.String("t"), c.Bool("s"), c.Bool("d"), c.Bool("rm"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -160,7 +162,7 @@ func main() {
 			Usage:     "flashback to backup",
 			UsageText: "clickhouse-backup flashback [-t, --tables=<db>.<table>] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return chbackup.Flashback(*getConfig(c), c.Args().First(), c.String("t"))
+				return backup.Flashback(*getConfig(c), c.Args().First(), c.String("t"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -174,16 +176,16 @@ func main() {
 			Usage:     "Delete specific backup",
 			UsageText: "clickhouse-backup delete <local|remote> <backup_name>",
 			Action: func(c *cli.Context) error {
-				config := getConfig(c)
+				cfg := getConfig(c)
 				if c.Args().Get(1) == "" {
 					log.Println("Backup name must be defined")
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
 				}
 				switch c.Args().Get(0) {
 				case "local":
-					return chbackup.RemoveBackupLocal(*config, c.Args().Get(1))
+					return backup.RemoveBackupLocal(*cfg, c.Args().Get(1))
 				case "remote":
-					return chbackup.RemoveBackupRemote(*config, c.Args().Get(1))
+					return backup.RemoveBackupRemote(*cfg, c.Args().Get(1))
 				default:
 					log.Printf("Unknown command '%s'\n", c.Args().Get(0))
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
@@ -196,7 +198,7 @@ func main() {
 			Name:  "default-config",
 			Usage: "Print default config",
 			Action: func(*cli.Context) {
-				chbackup.PrintDefaultConfig()
+				config.PrintDefaultConfig()
 			},
 			Flags: cliapp.Flags,
 		},
@@ -206,7 +208,7 @@ func main() {
 			UsageText:   "clickhouse-backup freeze [-t, --tables=<db>.<table>] <backup_name>",
 			Description: "Freeze tables",
 			Action: func(c *cli.Context) error {
-				return chbackup.Freeze(*getConfig(c), c.String("t"))
+				return backup.Freeze(*getConfig(c), c.String("t"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -219,7 +221,7 @@ func main() {
 			Name:  "clean",
 			Usage: "Remove data in 'shadow' folder",
 			Action: func(c *cli.Context) error {
-				return chbackup.Clean(*getConfig(c))
+				return backup.Clean(*getConfig(c))
 			},
 			Flags: cliapp.Flags,
 		},
@@ -227,7 +229,7 @@ func main() {
 			Name:  "server",
 			Usage: "Run API server",
 			Action: func(c *cli.Context) error {
-				return chbackup.Server(cliapp, *getConfig(c))
+				return server.Server(cliapp, getConfig(c))
 			},
 			Flags: cliapp.Flags,
 		},
@@ -237,13 +239,13 @@ func main() {
 	}
 }
 
-func getConfig(ctx *cli.Context) *chbackup.Config {
+func getConfig(ctx *cli.Context) *config.Config {
 	configPath := ctx.String("config")
 	if configPath == defaultConfigPath {
 		configPath = ctx.GlobalString("config")
 	}
 
-	config, err := chbackup.LoadConfig(configPath)
+	config, err := config.LoadConfig(configPath)
 	if err != nil {
 		log.Fatal(err)
 	}

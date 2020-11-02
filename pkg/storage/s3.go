@@ -1,10 +1,12 @@
-package chbackup
+package storage
 
 import (
 	"crypto/tls"
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/AlexAkulov/clickhouse-backup/config"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -19,7 +21,7 @@ import (
 // S3 - presents methods for manipulate data on s3
 type S3 struct {
 	session *session.Session
-	Config  *S3Config
+	Config  *config.S3Config
 }
 
 // Connect - connect to s3

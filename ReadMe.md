@@ -18,9 +18,10 @@ Tool for easy ClickHouse backup and restore with cloud storages support
 
 ## Limitations
 
-- ClickHouse above 1.1.54390 is supported
+- ClickHouse above 1.1.54390 and before 20.10 is supported
 - Only MergeTree family tables engines
 - Backup of 'Tiered storage' or `storage_policy` IS NOT SUPPORTED!
+- 'Atomic' database engine enabled by default in ClickHouse 20.10 IS NOT SUPPORTED!
 - Maximum backup size on cloud storages is 5TB
 - Maximum number of parts on AWS S3 is 10,000 (increase part_size if your database is more than 1TB)
 

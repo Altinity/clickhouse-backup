@@ -1,4 +1,4 @@
-package chbackup
+package progressbar
 
 import (
 	"io"

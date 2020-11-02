@@ -1,9 +1,8 @@
-package chbackup
+package storage
 
 import (
 	"archive/tar"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -14,6 +13,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/AlexAkulov/clickhouse-backup/config"
+	"github.com/AlexAkulov/clickhouse-backup/internal/progressbar"
 
 	"github.com/mholt/archiver"
 	"gopkg.in/djherbis/buffer.v1"
@@ -27,34 +29,17 @@ const (
 	BufferSize = 4 * 1024 * 1024
 )
 
+type Backup struct {
+	Name string
+	Size int64
+	Date time.Time
+}
+
 // MetaFile - structure describe meta file that will be added to incremental backups archive.
 // Contains info of required files in backup and files
 type MetaFile struct {
 	RequiredBackup string   `json:"required_backup"`
 	Hardlinks      []string `json:"hardlinks"`
-}
-
-var (
-	// ErrNotFound is returned when file/object cannot be found
-	ErrNotFound = errors.New("file not found")
-)
-
-// RemoteFile - interface describe file on remote storage
-type RemoteFile interface {
-	Size() int64
-	Name() string
-	LastModified() time.Time
-}
-
-// RemoteStorage -
-type RemoteStorage interface {
-	Kind() string
-	GetFile(string) (RemoteFile, error)
-	DeleteFile(string) error
-	Connect() error
-	Walk(string, func(RemoteFile)) error
-	GetFileReader(key string) (io.ReadCloser, error)
-	PutFile(key string, r io.ReadCloser) error
 }
 
 type BackupDestination struct {
@@ -186,7 +171,7 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 	}
 	defer reader.Close()
 
-	bar := StartNewByteBar(!bd.disableProgressBar, filesize)
+	bar := progressbar.StartNewByteBar(!bd.disableProgressBar, filesize)
 	buf := buffer.New(BufferSize)
 	bufReader := nio.NewReader(reader, buf)
 	proxyReader := bar.NewProxyReader(bufReader)
@@ -275,7 +260,7 @@ func (bd *BackupDestination) CompressedStreamUpload(localPath, remotePath, diffF
 		}
 		return nil
 	})
-	bar := StartNewByteBar(!bd.disableProgressBar, totalBytes)
+	bar := progressbar.StartNewByteBar(!bd.disableProgressBar, totalBytes)
 	if diffFromPath != "" {
 		fi, err := os.Stat(diffFromPath)
 		if err != nil {
@@ -283,9 +268,6 @@ func (bd *BackupDestination) CompressedStreamUpload(localPath, remotePath, diffF
 		}
 		if !fi.IsDir() {
 			return fmt.Errorf("'%s' is not a directory", diffFromPath)
-		}
-		if isClickhouseShadow(filepath.Join(diffFromPath, "shadow")) {
-			return fmt.Errorf("'%s' is old format backup and doesn't supports diff", filepath.Base(diffFromPath))
 		}
 	}
 	hardlinks := []string{}
@@ -389,59 +371,59 @@ func (bd *BackupDestination) CompressedStreamUpload(localPath, remotePath, diffF
 	return nil
 }
 
-func NewBackupDestination(config Config) (*BackupDestination, error) {
-	switch config.General.RemoteStorage {
+func NewBackupDestination(cfg config.Config) (*BackupDestination, error) {
+	switch cfg.General.RemoteStorage {
 	case "azblob":
-		azblob := &AzureBlob{Config: &config.AzureBlob}
+		azblobStorage := &AzureBlob{Config: &cfg.AzureBlob}
 		return &BackupDestination{
-			azblob,
-			config.AzureBlob.Path,
-			config.AzureBlob.CompressionFormat,
-			config.AzureBlob.CompressionLevel,
-			config.General.DisableProgressBar,
-			config.General.BackupsToKeepRemote,
+			azblobStorage,
+			cfg.AzureBlob.Path,
+			cfg.AzureBlob.CompressionFormat,
+			cfg.AzureBlob.CompressionLevel,
+			cfg.General.DisableProgressBar,
+			cfg.General.BackupsToKeepRemote,
 		}, nil
 	case "s3":
-		s3 := &S3{Config: &config.S3}
+		s3Storage := &S3{Config: &cfg.S3}
 		return &BackupDestination{
-			s3,
-			config.S3.Path,
-			config.S3.CompressionFormat,
-			config.S3.CompressionLevel,
-			config.General.DisableProgressBar,
-			config.General.BackupsToKeepRemote,
+			s3Storage,
+			cfg.S3.Path,
+			cfg.S3.CompressionFormat,
+			cfg.S3.CompressionLevel,
+			cfg.General.DisableProgressBar,
+			cfg.General.BackupsToKeepRemote,
 		}, nil
 	case "gcs":
-		gcs := &GCS{Config: &config.GCS}
+		googleCloudStorage := &GCS{Config: &cfg.GCS}
 		return &BackupDestination{
-			gcs,
-			config.GCS.Path,
-			config.GCS.CompressionFormat,
-			config.GCS.CompressionLevel,
-			config.General.DisableProgressBar,
-			config.General.BackupsToKeepRemote,
+			googleCloudStorage,
+			cfg.GCS.Path,
+			cfg.GCS.CompressionFormat,
+			cfg.GCS.CompressionLevel,
+			cfg.General.DisableProgressBar,
+			cfg.General.BackupsToKeepRemote,
 		}, nil
 	case "cos":
-		cos := &COS{Config: &config.COS}
+		tencentStorage := &COS{Config: &cfg.COS}
 		return &BackupDestination{
-			cos,
-			config.COS.Path,
-			config.COS.CompressionFormat,
-			config.COS.CompressionLevel,
-			config.General.DisableProgressBar,
-			config.General.BackupsToKeepRemote,
+			tencentStorage,
+			cfg.COS.Path,
+			cfg.COS.CompressionFormat,
+			cfg.COS.CompressionLevel,
+			cfg.General.DisableProgressBar,
+			cfg.General.BackupsToKeepRemote,
 		}, nil
 	case "ftp":
-		ftp := &FTP{Config: &config.FTP}
+		ftpStorage := &FTP{Config: &cfg.FTP}
 		return &BackupDestination{
-			ftp,
-			config.FTP.Path,
-			config.FTP.CompressionFormat,
-			config.FTP.CompressionLevel,
-			config.General.DisableProgressBar,
-			config.General.BackupsToKeepRemote,
+			ftpStorage,
+			cfg.FTP.Path,
+			cfg.FTP.CompressionFormat,
+			cfg.FTP.CompressionLevel,
+			cfg.General.DisableProgressBar,
+			cfg.General.BackupsToKeepRemote,
 		}, nil
 	default:
-		return nil, fmt.Errorf("storage type '%s' not supported", config.General.RemoteStorage)
+		return nil, fmt.Errorf("storage type '%s' not supported", cfg.General.RemoteStorage)
 	}
 }

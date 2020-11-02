@@ -2,7 +2,7 @@
 set -x
 set -e
 
-GOOS=linux GOARCH=amd64 go build
+GOOS=linux GOARCH=amd64 go build ./cmd/clickhouse-backup
 docker-compose -f test/integration/docker-compose.yml down
 docker-compose -f test/integration/docker-compose.yml up -d
 

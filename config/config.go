@@ -1,4 +1,4 @@
-package chbackup
+package config
 
 import (
 	"fmt"
@@ -119,38 +119,38 @@ type APIConfig struct {
 
 // LoadConfig - load config from file
 func LoadConfig(configLocation string) (*Config, error) {
-	config := DefaultConfig()
+	cfg := DefaultConfig()
 	configYaml, err := ioutil.ReadFile(configLocation)
 	if os.IsNotExist(err) {
-		err := envconfig.Process("", config)
-		return config, err
+		err := envconfig.Process("", cfg)
+		return cfg, err
 	}
 	if err != nil {
 		return nil, fmt.Errorf("can't open config file: %v", err)
 	}
-	if err := yaml.Unmarshal(configYaml, &config); err != nil {
+	if err := yaml.Unmarshal(configYaml, &cfg); err != nil {
 		return nil, fmt.Errorf("can't parse config file: %v", err)
 	}
-	if err := envconfig.Process("", config); err != nil {
+	if err := envconfig.Process("", cfg); err != nil {
 		return nil, err
 	}
-	return config, validateConfig(config)
+	return cfg, ValidateConfig(cfg)
 }
 
-func validateConfig(config *Config) error {
-	if _, err := getArchiveWriter(config.S3.CompressionFormat, config.S3.CompressionLevel); err != nil {
+func ValidateConfig(cfg *Config) error {
+	if _, err := getArchiveWriter(cfg.S3.CompressionFormat, cfg.S3.CompressionLevel); err != nil {
 		return err
 	}
-	if _, err := getArchiveWriter(config.GCS.CompressionFormat, config.GCS.CompressionLevel); err != nil {
+	if _, err := getArchiveWriter(cfg.GCS.CompressionFormat, cfg.GCS.CompressionLevel); err != nil {
 		return err
 	}
-	if _, err := time.ParseDuration(config.ClickHouse.Timeout); err != nil {
+	if _, err := time.ParseDuration(cfg.ClickHouse.Timeout); err != nil {
 		return err
 	}
-	if _, err := time.ParseDuration(config.COS.Timeout); err != nil {
+	if _, err := time.ParseDuration(cfg.COS.Timeout); err != nil {
 		return err
 	}
-	if _, err := time.ParseDuration(config.FTP.Timeout); err != nil {
+	if _, err := time.ParseDuration(cfg.FTP.Timeout); err != nil {
 		return err
 	}
 	return nil

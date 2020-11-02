@@ -43,10 +43,10 @@ $(NAME)/config.yml: $(NAME)/$(NAME)
 	./$(NAME)/$(NAME) default-config > $@
 
 $(NAME)/$(NAME): $(GO_FILES)
-	$(GO_BUILD) -o $@ .
+	$(GO_BUILD) -o $@ ./cmd/$(NAME)
 
 build/$(NAME): $(GO_FILES)
-	GOOS=linux GOARCH=amd64 $(GO_BUILD) -o $@ .
+	GOOS=linux GOARCH=amd64 $(GO_BUILD) -o $@ ./cmd/$(NAME)
 
 packages: $(PKG_FILES)
 

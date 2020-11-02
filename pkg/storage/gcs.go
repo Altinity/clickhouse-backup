@@ -1,9 +1,11 @@
-package chbackup
+package storage
 
 import (
 	"context"
 	"io"
 	"time"
+
+	"github.com/AlexAkulov/clickhouse-backup/config"
 
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/iterator"
@@ -13,7 +15,7 @@ import (
 // GCS - presents methods for manipulate data on GCS
 type GCS struct {
 	client *storage.Client
-	Config *GCSConfig
+	Config *config.GCSConfig
 }
 
 // Connect - connect to GCS

@@ -1,4 +1,4 @@
-package chbackup
+package storage
 
 import (
 	"context"
@@ -7,13 +7,15 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/AlexAkulov/clickhouse-backup/config"
+
 	"github.com/tencentyun/cos-go-sdk-v5"
 	"github.com/tencentyun/cos-go-sdk-v5/debug"
 )
 
 type COS struct {
 	client *cos.Client
-	Config *COSConfig
+	Config *config.COSConfig
 }
 
 // Connect - connect to cos
@@ -120,4 +122,21 @@ func (f *cosFile) Name() string {
 
 func (f *cosFile) LastModified() time.Time {
 	return f.lastModified
+}
+
+func parseTime(text string) (t time.Time, err error) {
+	timeFormats := []string{
+		"Mon, 02 Jan 2006 15:04:05 GMT",
+		time.RFC850,
+		time.ANSIC,
+		time.RFC3339,
+	}
+
+	for _, layout := range timeFormats {
+		t, err = time.Parse(layout, text)
+		if err == nil {
+			return
+		}
+	}
+	return
 }

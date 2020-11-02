@@ -1,4 +1,4 @@
-package chbackup
+package storage
 
 import (
 	"context"
@@ -9,7 +9,9 @@ import (
 	"net/url"
 	"time"
 
-	x "github.com/AlexAkulov/clickhouse-backup/pkg/azblob"
+	x "github.com/AlexAkulov/clickhouse-backup/pkg/storage/azblob"
+	"github.com/AlexAkulov/clickhouse-backup/config"
+
 	"github.com/Azure/azure-storage-blob-go/azblob"
 	"github.com/pkg/errors"
 )
@@ -18,7 +20,7 @@ import (
 type AzureBlob struct {
 	Container azblob.ContainerURL
 	CPK       azblob.ClientProvidedKeyOptions
-	Config    *AzureBlobConfig
+	Config    *config.AzureBlobConfig
 }
 
 // Connect - connect to Azure

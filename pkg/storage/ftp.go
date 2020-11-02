@@ -1,4 +1,4 @@
-package chbackup
+package storage
 
 import (
 	"crypto/tls"
@@ -7,12 +7,14 @@ import (
 	"path"
 	"time"
 
+	"github.com/AlexAkulov/clickhouse-backup/config"
+
 	"github.com/jlaffaye/ftp"
 )
 
 type FTP struct {
 	client *ftp.ServerConn
-	Config *FTPConfig
+	Config *config.FTPConfig
 }
 
 func (f *FTP) Connect() error {
