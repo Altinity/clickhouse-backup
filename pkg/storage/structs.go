@@ -28,4 +28,3 @@ type RemoteStorage interface {
 	GetFileReader(key string) (io.ReadCloser, error)
 	PutFile(key string, r io.ReadCloser) error
 }
-

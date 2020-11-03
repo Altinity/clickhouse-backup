@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/kelseyhightower/envconfig"
 	yaml "gopkg.in/yaml.v2"
 )
@@ -70,6 +72,7 @@ type S3Config struct {
 	SSE                     string `yaml:"sse" envconfig:"S3_SSE"`
 	DisableCertVerification bool   `yaml:"disable_cert_verification" envconfig:"S3_DISABLE_CERT_VERIFICATION"`
 	Debug                   bool   `yaml:"debug" envconfig:"S3_DEBUG"`
+	StorageClass            string `yaml:"storage_class" envconfig:"S3_STORAGE_CLASS"`
 }
 
 // COSConfig - cos settings section
@@ -153,6 +156,17 @@ func ValidateConfig(cfg *Config) error {
 	if _, err := time.ParseDuration(cfg.FTP.Timeout); err != nil {
 		return err
 	}
+	storageClassOk := false
+	for _, storageClass := range s3.StorageClass_Values() {
+		if strings.ToUpper(cfg.S3.StorageClass) == storageClass {
+			storageClassOk = true
+			break
+		}
+	}
+	if !storageClassOk {
+		return fmt.Errorf("'%s' is bad S3_STORAGE_CLASS, change one of: %s",
+			cfg.S3.StorageClass, strings.Join(s3.StorageClass_Values(), ", "))
+	}
 	return nil
 }
 
@@ -193,6 +207,7 @@ func DefaultConfig() *Config {
 			CompressionLevel:        1,
 			CompressionFormat:       "gzip",
 			DisableCertVerification: false,
+			StorageClass:            s3.StorageClassStandard,
 		},
 		GCS: GCSConfig{
 			CompressionLevel:  1,

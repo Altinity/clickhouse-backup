@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
@@ -98,6 +99,7 @@ func (s *S3) PutFile(key string, r io.ReadCloser) error {
 		Key:                  aws.String(key),
 		Body:                 r,
 		ServerSideEncryption: sse,
+		StorageClass:         aws.String(strings.ToUpper(s.Config.StorageClass)),
 	})
 	return err
 }
