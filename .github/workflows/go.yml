@@ -21,15 +21,14 @@ jobs:
           - '20.6.3.28'
     steps:
       - name: Integration test
-        uses: actions/checkout@v2
-        uses: actions/setup-go@v2
+      - uses: actions/checkout@v2
+      - uses: actions/setup-go@v2
         with:
-            go-version: '^1.14'
-        - run: make build
-        - run: make config
-        - run: make test
-      
-        - env:
+          go-version: '^1.14'
+      - run: make build
+      - run: make config
+      - run: make test
+      - env:
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
-          run: echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"
-
+        run: echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"
+        
