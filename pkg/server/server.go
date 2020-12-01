@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -42,23 +44,22 @@ type APIServer struct {
 }
 
 type AsyncStatus struct {
-	commands []CommandInfo
+	commands []ActionRow
 	sync.RWMutex
 }
 
-type CommandInfo struct {
-	Command  string `json:"command"`
-	Status   string `json:"status"`
-	Progress string `json:"progress,omitempty"`
-	Start    string `json:"start,omitempty"`
-	Finish   string `json:"finish,omitempty"`
-	Error    string `json:"error,omitempty"`
+type ActionRow struct {
+	Command string `json:"command"`
+	Status  string `json:"status"`
+	Start   string `json:"start,omitempty"`
+	Finish  string `json:"finish,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
 
 func (status *AsyncStatus) start(command string) {
 	status.Lock()
 	defer status.Unlock()
-	status.commands = append(status.commands, CommandInfo{
+	status.commands = append(status.commands, ActionRow{
 		Command: command,
 		Start:   time.Now().Format(APITimeFormat),
 		Status:  "in progress",
@@ -78,7 +79,7 @@ func (status *AsyncStatus) stop(err error) {
 	status.commands[n].Finish = time.Now().Format(APITimeFormat)
 }
 
-func (status *AsyncStatus) status() []CommandInfo {
+func (status *AsyncStatus) status() []ActionRow {
 	status.RLock()
 	defer status.RUnlock()
 	return status.commands
@@ -132,6 +133,13 @@ func Server(c *cli.App, cfg *config.Config) error {
 func (api *APIServer) setupAPIServer(cfg *config.Config) *http.Server {
 	r := mux.NewRouter()
 	r.Use(api.basicAuthMidleware)
+	r.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, http.StatusNotFound, "", fmt.Errorf("404 Not Found"))
+	})
+	r.MethodNotAllowedHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, http.StatusMethodNotAllowed, "", fmt.Errorf("405 Method Not Allowed"))
+	})
+
 	r.HandleFunc("/", api.httpRootHandler).Methods("GET")
 
 	r.HandleFunc("/backup/tables", api.httpTablesHandler).Methods("GET")
@@ -148,10 +156,8 @@ func (api *APIServer) setupAPIServer(cfg *config.Config) *http.Server {
 	r.HandleFunc("/backup/config", api.httpConfigUpdateHandler).Methods("POST")
 	r.HandleFunc("/backup/status", api.httpBackupStatusHandler).Methods("GET")
 
-	r.HandleFunc("/integration/actions", api.integrationBackupLog).Methods("GET")
-	r.HandleFunc("/integration/list", api.httpListHandler).Methods("GET")
-
-	r.HandleFunc("/integration/actions", api.integrationPost).Methods("POST")
+	r.HandleFunc("/backup/actions", api.actionsLog).Methods("GET")
+	r.HandleFunc("/backup/actions", api.actions).Methods("POST")
 
 	var routes []string
 	r.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
@@ -173,13 +179,9 @@ func (api *APIServer) setupAPIServer(cfg *config.Config) *http.Server {
 }
 
 func (api *APIServer) basicAuthMidleware(next http.Handler) http.Handler {
-	if api.config.API.Username == "" && api.config.API.Password == "" {
-		return next
-	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, pass, _ := r.BasicAuth()
 		query := r.URL.Query()
-		log.Println("query", query)
 		if u, exist := query["user"]; exist {
 			user = u[0]
 		}
@@ -196,93 +198,104 @@ func (api *APIServer) basicAuthMidleware(next http.Handler) http.Handler {
 	})
 }
 
-// CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String) ENGINE=URL('http://127.0.0.1:7171/integration/actions?user=user&pass=pass', TSVWithNames)
+// CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String) ENGINE=URL('http://127.0.0.1:7171/backup/actions?user=user&pass=pass', JSONEachRow)
 // INSERT INTO system.backup_actions (command) VALUES ('create backup_name')
 // INSERT INTO system.backup_actions (command) VALUES ('upload backup_name')
-func (api *APIServer) integrationPost(w http.ResponseWriter, r *http.Request) {
+func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "", err)
 		return
 	}
-	lines := strings.Split(string(body), "\n")
-	if len(lines) < 2 {
-		http.Error(w, "use TSVWithNames format", http.StatusBadRequest)
+	if len(body) == 0 {
+		writeError(w, http.StatusBadRequest, "", fmt.Errorf("empty request"))
 		return
 	}
-	columns := strings.Split(lines[1], "\t")
-	commands := strings.Split(columns[0], " ")
-	log.Println(commands)
-
-	switch commands[0] {
-	case "create", "upload", "download":
-		if locked := api.lock.TryAcquire(1); !locked {
-			log.Println(ErrAPILocked)
-			http.Error(w, ErrAPILocked.Error(), http.StatusLocked)
+	lines := bytes.Split(body, []byte("\n"))
+	for _, line := range lines {
+		row := ActionRow{}
+		if err := json.Unmarshal(line, &row); err != nil {
+			writeError(w, http.StatusBadRequest, "", err)
 			return
 		}
-		defer api.lock.Release(1)
-		start := time.Now()
-		api.metrics.LastBackupStart.Set(float64(start.Unix()))
-		defer api.metrics.LastBackupDuration.Set(float64(time.Since(start).Nanoseconds()))
-		defer api.metrics.LastBackupEnd.Set(float64(time.Now().Unix()))
+		log.Println(row.Command)
+		commands := strings.Split(row.Command, " ")
+		switch commands[0] {
+		case "create", "upload", "download":
+			if locked := api.lock.TryAcquire(1); !locked {
+				log.Println(ErrAPILocked)
+				writeError(w, http.StatusLocked, row.Command, ErrAPILocked)
+				return
+			}
+			defer api.lock.Release(1)
+			start := time.Now()
+			api.metrics.LastBackupStart.Set(float64(start.Unix()))
+			defer api.metrics.LastBackupDuration.Set(float64(time.Since(start).Nanoseconds()))
+			defer api.metrics.LastBackupEnd.Set(float64(time.Now().Unix()))
 
-		go func() {
-			api.status.start(columns[0])
+			go func() {
+				api.status.start(row.Command)
+				err := api.c.Run(append([]string{"clickhouse-backup"}, commands...))
+				defer api.status.stop(err)
+				if err != nil {
+					api.metrics.FailedBackups.Inc()
+					api.metrics.LastBackupSuccess.Set(0)
+					log.Println(err)
+					return
+				}
+			}()
+			api.metrics.SuccessfulBackups.Inc()
+			api.metrics.LastBackupSuccess.Set(1)
+			sendJSONEachRow(w, http.StatusCreated, struct {
+				Status    string `json:"status"`
+				Operation string `json:"operation"`
+			}{
+				Status:    "acknowledged",
+				Operation: row.Command,
+			})
+			return
+		case "delete", "freeze", "clean":
+			if locked := api.lock.TryAcquire(1); !locked {
+				log.Println(ErrAPILocked)
+				writeError(w, http.StatusLocked, row.Command, ErrAPILocked)
+				return
+			}
+			defer api.lock.Release(1)
+			start := time.Now()
+			api.metrics.LastBackupStart.Set(float64(start.Unix()))
+			defer api.metrics.LastBackupDuration.Set(float64(time.Since(start).Nanoseconds()))
+			defer api.metrics.LastBackupEnd.Set(float64(time.Now().Unix()))
+
+			api.status.start(row.Command)
 			err := api.c.Run(append([]string{"clickhouse-backup"}, commands...))
 			defer api.status.stop(err)
 			if err != nil {
 				api.metrics.FailedBackups.Inc()
 				api.metrics.LastBackupSuccess.Set(0)
+				writeError(w, http.StatusBadRequest, row.Command, err)
 				log.Println(err)
 				return
 			}
-		}()
-		api.metrics.SuccessfulBackups.Inc()
-		api.metrics.LastBackupSuccess.Set(1)
-		fmt.Fprintln(w, "acknowledged")
-		return
-	case "delete", "freeze", "clean":
-		if locked := api.lock.TryAcquire(1); !locked {
-			log.Println(ErrAPILocked)
-			http.Error(w, ErrAPILocked.Error(), http.StatusLocked)
+			api.metrics.SuccessfulBackups.Inc()
+			api.metrics.LastBackupSuccess.Set(1)
+			log.Println("OK")
+			sendJSONEachRow(w, http.StatusCreated, struct {
+				Status    string `json:"status"`
+				Operation string `json:"operation"`
+			}{
+				Status:    "ok",
+				Operation: row.Command,
+			})
+			return
+		default:
+			writeError(w, http.StatusBadRequest, row.Command, fmt.Errorf("unknown command"))
 			return
 		}
-		defer api.lock.Release(1)
-		start := time.Now()
-		api.metrics.LastBackupStart.Set(float64(start.Unix()))
-		defer api.metrics.LastBackupDuration.Set(float64(time.Since(start).Nanoseconds()))
-		defer api.metrics.LastBackupEnd.Set(float64(time.Now().Unix()))
-
-		api.status.start(columns[0])
-		err := api.c.Run(append([]string{"clickhouse-backup"}, commands...))
-		defer api.status.stop(err)
-		if err != nil {
-			api.metrics.FailedBackups.Inc()
-			api.metrics.LastBackupSuccess.Set(0)
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			log.Println(err)
-			return
-		}
-		api.metrics.SuccessfulBackups.Inc()
-		api.metrics.LastBackupSuccess.Set(1)
-		fmt.Fprintln(w, "OK")
-		log.Println("OK")
-		return
-	default:
-		http.Error(w, fmt.Sprintf("bad command '%s'", columns[0]), http.StatusBadRequest)
 	}
 }
 
-// CREATE TABLE system.backup_list (name String, created DateTime, size Int64, location String) ENGINE=URL('http://127.0.0.1:7171/integration/list?user=user&pass=pass', TSVWithNames)
-// ??? INSERT INTO system.backup_list (name,location) VALUES ('backup_name', 'remote') - upload backup
-// ??? INSERT INTO system.backup_list (name) VALUES ('backup_name') - create backup
-func (api *APIServer) integrationBackupLog(w http.ResponseWriter, r *http.Request) {
-	commands := api.status.status()
-	fmt.Fprintln(w, "command\tstart\tfinish\tstatus\terror")
-	for _, c := range commands {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", c.Command, c.Start, c.Finish, c.Status, c.Error)
-	}
+func (api *APIServer) actionsLog(w http.ResponseWriter, r *http.Request) {
+	sendJSONEachRow(w, http.StatusOK, api.status.status())
 }
 
 // httpRootHandler - display API index
@@ -366,10 +379,13 @@ func (api *APIServer) httpTablesHandler(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "tables", err)
 		return
 	}
-	sendResponse(w, http.StatusOK, tables)
+	sendJSONEachRow(w, http.StatusOK, tables)
 }
 
 // httpTablesHandler - display list of all backups stored locally and remotely
+// CREATE TABLE system.backup_list (name String, created DateTime, size Int64, location String) ENGINE=URL('http://127.0.0.1:7171/backup/list?user=user&pass=pass', JSONEachRow)
+// ??? INSERT INTO system.backup_list (name,location) VALUES ('backup_name', 'remote') - upload backup
+// ??? INSERT INTO system.backup_list (name) VALUES ('backup_name') - create backup
 func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 	type backupJSON struct {
 		Name     string `json:"name"`
@@ -383,7 +399,6 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "list", err)
 		return
 	}
-
 	for _, b := range localBackups {
 		backupsJSON = append(backupsJSON, backupJSON{
 			Name:     b.Name,
@@ -406,14 +421,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-	if r.URL.Path == "/backup/list" {
-		sendResponse(w, http.StatusOK, &backupsJSON)
-		return
-	}
-	fmt.Fprintln(w, "name\tcreated\tsize\tlocation")
-	for _, b := range backupsJSON {
-		fmt.Fprintf(w, "%s\t%s\t%d\t%s\n", b.Name, b.Created, b.Size, b.Location)
-	}
+	sendJSONEachRow(w, http.StatusOK, backupsJSON)
 }
 
 // httpCreateHandler - create a backup
@@ -453,7 +461,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	}()
 	api.metrics.SuccessfulBackups.Inc()
 	api.metrics.LastBackupSuccess.Set(1)
-	sendResponse(w, http.StatusCreated, struct {
+	sendJSONEachRow(w, http.StatusCreated, struct {
 		Status     string `json:"status"`
 		Operation  string `json:"operation"`
 		BackupName string `json:"backup_name"`
@@ -484,7 +492,7 @@ func (api *APIServer) httpFreezeHandler(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "freeze", err)
 		return
 	}
-	sendResponse(w, http.StatusOK, struct {
+	sendJSONEachRow(w, http.StatusOK, struct {
 		Status    string `json:"status"`
 		Operation string `json:"operation"`
 	}{
@@ -509,7 +517,7 @@ func (api *APIServer) httpCleanHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "clean", err)
 		return
 	}
-	sendResponse(w, http.StatusOK, struct {
+	sendJSONEachRow(w, http.StatusOK, struct {
 		Status    string `json:"status"`
 		Operation string `json:"operation"`
 	}{
@@ -536,7 +544,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}()
-	sendResponse(w, http.StatusOK, struct {
+	sendJSONEachRow(w, http.StatusOK, struct {
 		Status     string `json:"status"`
 		Operation  string `json:"operation"`
 		BackupName string `json:"backup_name"`
@@ -590,7 +598,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "restore", err)
 		return
 	}
-	sendResponse(w, http.StatusOK, struct {
+	sendJSONEachRow(w, http.StatusOK, struct {
 		Status     string `json:"status"`
 		Operation  string `json:"operation"`
 		BackupName string `json:"backup_name"`
@@ -614,7 +622,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}()
-	sendResponse(w, http.StatusOK, struct {
+	sendJSONEachRow(w, http.StatusOK, struct {
 		Status     string `json:"status"`
 		Operation  string `json:"operation"`
 		BackupName string `json:"backup_name"`
@@ -650,7 +658,7 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "delete", err)
 		return
 	}
-	sendResponse(w, http.StatusOK, struct {
+	sendJSONEachRow(w, http.StatusOK, struct {
 		Status     string `json:"status"`
 		Operation  string `json:"operation"`
 		BackupName string `json:"backup_name"`
@@ -664,12 +672,12 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 }
 
 func (api *APIServer) httpBackupStatusHandler(w http.ResponseWriter, r *http.Request) {
-	sendResponse(w, http.StatusOK, api.status.status())
+	sendJSONEachRow(w, http.StatusOK, api.status.status())
 }
 
 func registerMetricsHandlers(r *mux.Router, enablemetrics bool, enablepprof bool) {
 	r.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		sendResponse(w, http.StatusOK, struct {
+		sendJSONEachRow(w, http.StatusOK, struct {
 			Status string `json:"status"`
 		}{
 			Status: "OK",

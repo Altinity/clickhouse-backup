@@ -15,3 +15,5 @@ s3:
   force_path_style: true
   path: backup
   disable_ssl: true
+api:
+  listen: :7171
