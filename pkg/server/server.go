@@ -11,7 +11,6 @@ import (
 	"net/http/pprof"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -19,6 +18,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/backup"
 
+	"github.com/google/shlex"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -33,14 +33,15 @@ const (
 )
 
 type APIServer struct {
-	c       *cli.App
-	config  *config.Config
-	lock    *semaphore.Weighted
-	server  *http.Server
-	restart chan struct{}
-	status  *AsyncStatus
-	metrics Metrics
-	routes  []string
+	c          *cli.App
+	configPath string
+	config     *config.Config
+	lock       *semaphore.Weighted
+	server     *http.Server
+	restart    chan struct{}
+	status     *AsyncStatus
+	metrics    Metrics
+	routes     []string
 }
 
 type AsyncStatus struct {
@@ -90,13 +91,14 @@ var (
 )
 
 // Server - expose CLI commands as REST API
-func Server(c *cli.App, cfg *config.Config) error {
+func Server(c *cli.App, cfg *config.Config, configPath string) error {
 	api := APIServer{
-		c:       c,
-		config:  cfg,
-		lock:    semaphore.NewWeighted(1),
-		restart: make(chan struct{}),
-		status:  &AsyncStatus{},
+		c:          c,
+		configPath: configPath,
+		config:     cfg,
+		lock:       semaphore.NewWeighted(1),
+		restart:    make(chan struct{}),
+		status:     &AsyncStatus{},
 	}
 	api.metrics = setupMetrics()
 	sigterm := make(chan os.Signal, 1)
@@ -219,8 +221,12 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		log.Println(row.Command)
-		commands := strings.Split(row.Command, " ")
-		switch commands[0] {
+		args, err := shlex.Split(row.Command)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "", err)
+			return
+		}
+		switch args[0] {
 		case "create", "upload", "download":
 			if locked := api.lock.TryAcquire(1); !locked {
 				log.Println(ErrAPILocked)
@@ -235,7 +241,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 
 			go func() {
 				api.status.start(row.Command)
-				err := api.c.Run(append([]string{"clickhouse-backup"}, commands...))
+				err := api.c.Run(append([]string{"clickhouse-backup", "-c", api.configPath}, args...))
 				defer api.status.stop(err)
 				if err != nil {
 					api.metrics.FailedBackups.Inc()
@@ -267,7 +273,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 			defer api.metrics.LastBackupEnd.Set(float64(time.Now().Unix()))
 
 			api.status.start(row.Command)
-			err := api.c.Run(append([]string{"clickhouse-backup"}, commands...))
+			err := api.c.Run(append([]string{"clickhouse-backup", "-c", api.configPath}, args...))
 			defer api.status.stop(err)
 			if err != nil {
 				api.metrics.FailedBackups.Inc()

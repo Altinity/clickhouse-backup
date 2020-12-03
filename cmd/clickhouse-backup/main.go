@@ -229,7 +229,7 @@ func main() {
 			Name:  "server",
 			Usage: "Run API server",
 			Action: func(c *cli.Context) error {
-				return server.Server(cliapp, getConfig(c))
+				return server.Server(cliapp, getConfig(c), getConfigPath(c))
 			},
 			Flags: cliapp.Flags,
 		},
@@ -240,14 +240,20 @@ func main() {
 }
 
 func getConfig(ctx *cli.Context) *config.Config {
-	configPath := ctx.String("config")
-	if configPath == defaultConfigPath {
-		configPath = ctx.GlobalString("config")
-	}
-
-	config, err := config.LoadConfig(configPath)
+	config, err := config.LoadConfig(getConfigPath(ctx))
 	if err != nil {
 		log.Fatal(err)
 	}
 	return config
+}
+
+func getConfigPath(ctx *cli.Context) string {
+	configPath := ctx.String("config")
+	if configPath == defaultConfigPath {
+		configPath = ctx.GlobalString("config")
+	}
+	if configPath == defaultConfigPath {
+		configPath = os.Getenv("CLICKHOUSE_BACKUP_CONFIG")
+	}
+	return configPath
 }

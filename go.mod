@@ -10,6 +10,7 @@ require (
 	github.com/djherbis/buffer v1.1.0 // indirect
 	github.com/fatih/color v1.9.0 // indirect
 	github.com/frankban/quicktest v1.10.0 // indirect
+	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/google/uuid v1.1.1
 	github.com/gorilla/mux v1.7.4
 	github.com/jlaffaye/ftp v0.0.0-20200730135723-c2ee4fa2503b
