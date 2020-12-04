@@ -240,7 +240,8 @@ func main() {
 }
 
 func getConfig(ctx *cli.Context) *config.Config {
-	config, err := config.LoadConfig(getConfigPath(ctx))
+	configPath := getConfigPath(ctx)
+	config, err := config.LoadConfig(configPath)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -248,12 +249,14 @@ func getConfig(ctx *cli.Context) *config.Config {
 }
 
 func getConfigPath(ctx *cli.Context) string {
-	configPath := ctx.String("config")
-	if configPath == defaultConfigPath {
-		configPath = ctx.GlobalString("config")
+	if ctx.String("config") != defaultConfigPath {
+		return ctx.String("config")
 	}
-	if configPath == defaultConfigPath {
-		configPath = os.Getenv("CLICKHOUSE_BACKUP_CONFIG")
+	if ctx.GlobalString("config") != defaultConfigPath {
+		return ctx.GlobalString("config")
 	}
-	return configPath
+	if os.Getenv("CLICKHOUSE_BACKUP_CONFIG") != "" {
+		return os.Getenv("CLICKHOUSE_BACKUP_CONFIG")
+	}
+	return defaultConfigPath
 }
