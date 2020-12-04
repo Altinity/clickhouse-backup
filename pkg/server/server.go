@@ -227,7 +227,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch args[0] {
-		case "create", "upload", "download":
+		case "create", "restore", "upload", "download":
 			if locked := api.lock.TryAcquire(1); !locked {
 				log.Println(ErrAPILocked)
 				writeError(w, http.StatusLocked, row.Command, ErrAPILocked)

@@ -1,7 +1,7 @@
 
 # clickhouse-backup
 
-[![Build Status](https://travis-ci.org/AlexAkulov/clickhouse-backup.svg?branch=master)](https://travis-ci.org/AlexAkulov/clickhouse-backup)
+[![Build Status](https://travis-ci.com/AlexAkulov/clickhouse-backup.svg?branch=master)](https://travis-ci.com/AlexAkulov/clickhouse-backup)
 [![GoDoc](https://godoc.org/github.com/AlexAkulov/clickhouse-backup?status.svg)](http://godoc.org/github.com/AlexAkulov/clickhouse-backup)
 [![Telegram](https://img.shields.io/badge/telegram-join%20chat-3796cd.svg)](https://t.me/clickhousebackup)
 [![Docker Image](https://img.shields.io/docker/pulls/alexakulov/clickhouse-backup.svg)](https://hub.docker.com/r/alexakulov/clickhouse-backup)
@@ -47,7 +47,7 @@ docker run --rm -it --network host -v "/var/lib/clickhouse:/var/lib/clickhouse" 
 - Build from the sources:
 
 ```shell
-GO111MODULE=on go get github.com/AlexAkulov/clickhouse-backup
+GO111MODULE=on go get github.com/AlexAkulov/clickhouse-backup/cmd/clickhouse-backup
 ```
 
 ## Usage
