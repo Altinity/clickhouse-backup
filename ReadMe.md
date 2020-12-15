@@ -108,6 +108,8 @@ clickhouse:
     - system.*
   timeout: 5m                  # CLICKHOUSE_TIMEOUT
   freeze_by_part: false        # CLICKHOUSE_FREEZE_BY_PART
+  secure: false                # CLICKHOUSE_SECURE
+  skip_verify: false           # CLICKHOUSE_SKIP_VERIFY
 azblob:
   endpoint_suffix: "core.windows.net" # AZBLOB_ENDPOINT_SUFFIX
   account_name: ""             # AZBLOB_ACCOUNT_NAME
@@ -159,6 +161,9 @@ api:
   enable_pprof: false          # API_ENABLE_PPROF
   username: ""                 # API_USERNAME
   password: ""                 # API_PASSWORD
+  secure: false                # API_SECURE
+  certificate_file: ""         # API_CERTIFICATE_FILE
+  private_key_file: ""         # API_PRIVATE_KEY_FILE
 ftp:
   address: ""                  # FTP_ADDRESS
   timeout: 2m                  # FTP_TIMEOUT

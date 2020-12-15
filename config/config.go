@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/tls"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -110,14 +111,19 @@ type ClickHouseConfig struct {
 	SkipTables   []string `yaml:"skip_tables" envconfig:"CLICKHOUSE_SKIP_TABLES"`
 	Timeout      string   `yaml:"timeout" envconfig:"CLICKHOUSE_TIMEOUT"`
 	FreezeByPart bool     `yaml:"freeze_by_part" envconfig:"CLICKHOUSE_FREEZE_BY_PART"`
+	Secure       bool     `yaml:"secure" envconfig:"CLICKHOUSE_SECURE"`
+	SkipVerify   bool     `yaml:"skip_verify" envconfig:"CLICKHOUSE_SKIP_VERIFY"`
 }
 
 type APIConfig struct {
-	ListenAddr    string `yaml:"listen" envconfig:"API_LISTEN"`
-	EnableMetrics bool   `yaml:"enable_metrics" envconfig:"API_ENABLE_METRICS"`
-	EnablePprof   bool   `yaml:"enable_pprof" envconfig:"API_ENABLE_PPROF"`
-	Username      string `yaml:"username" envconfig:"API_USERNAME"`
-	Password      string `yaml:"password" envconfig:"API_PASSWORD"`
+	ListenAddr      string `yaml:"listen" envconfig:"API_LISTEN"`
+	EnableMetrics   bool   `yaml:"enable_metrics" envconfig:"API_ENABLE_METRICS"`
+	EnablePprof     bool   `yaml:"enable_pprof" envconfig:"API_ENABLE_PPROF"`
+	Username        string `yaml:"username" envconfig:"API_USERNAME"`
+	Password        string `yaml:"password" envconfig:"API_PASSWORD"`
+	Secure          bool   `yaml:"secure" envconfig:"API_SECURE"`
+	CertificateFile string `yaml:"certificate_file" envconfig:"API_CERTIFICATE_FILE"`
+	PrivateKeyFile  string `yaml:"private_key_file" envconfig:"API_PRIVATE_KEY_FILE"`
 }
 
 // LoadConfig - load config from file
@@ -166,6 +172,12 @@ func ValidateConfig(cfg *Config) error {
 	if !storageClassOk {
 		return fmt.Errorf("'%s' is bad S3_STORAGE_CLASS, change one of: %s",
 			cfg.S3.StorageClass, strings.Join(s3.StorageClass_Values(), ", "))
+	}
+	if cfg.API.Secure {
+		_, err := tls.LoadX509KeyPair(cfg.API.CertificateFile, cfg.API.PrivateKeyFile)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }

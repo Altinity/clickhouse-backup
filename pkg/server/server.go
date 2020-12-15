@@ -105,30 +105,50 @@ func Server(c *cli.App, cfg *config.Config, configPath string) error {
 	signal.Notify(sigterm, os.Interrupt, syscall.SIGTERM)
 	sighup := make(chan os.Signal, 1)
 	signal.Notify(sighup, os.Interrupt, syscall.SIGHUP)
+	log.Printf("Starting API server on %s", api.config.API.ListenAddr)
+	if err := api.Restart(); err != nil {
+		return err
+	}
 
 	for {
-		api.server = api.setupAPIServer(api.config)
-		go func() {
-			log.Printf("Starting API server on %s", api.config.API.ListenAddr)
-			if err := api.server.ListenAndServe(); err != http.ErrServerClosed {
-				log.Printf("error starting API server: %v", err)
-				os.Exit(1)
-			}
-		}()
 		select {
 		case <-api.restart:
-			log.Println("Reloading config and restarting API server")
-			api.server.Close()
-			continue
+			if err := api.Restart(); err != nil {
+				log.Printf("Failed to restarting API server: %v", err)
+				continue
+			}
+			log.Println("Reloaded by HTTP")
 		case <-sighup:
-			log.Println("Reloading config and restarting API server")
-			api.server.Close()
-			continue
+			newCfg, err := config.LoadConfig(configPath)
+			if err != nil {
+				log.Printf("Failed to read config: %v", err)
+				continue
+			}
+			api.config = newCfg
+			if err := api.Restart(); err != nil {
+				log.Printf("Failed to restarting API server: %v", err)
+				continue
+			}
+			log.Println("Reloaded by SYSHUP")
 		case <-sigterm:
 			log.Println("Stopping API server")
 			return api.server.Close()
 		}
 	}
+}
+
+func (api *APIServer) Restart() error {
+	server := api.setupAPIServer(api.config)
+	if api.server != nil {
+		api.server.Close()
+	}
+	api.server = server
+	if api.config.API.Secure {
+		go api.server.ListenAndServeTLS(api.config.API.CertificateFile, api.config.API.PrivateKeyFile)
+		return nil
+	}
+	go api.server.ListenAndServe()
+	return nil
 }
 
 // setupAPIServer - resister API routes
@@ -172,10 +192,9 @@ func (api *APIServer) setupAPIServer(cfg *config.Config) *http.Server {
 	})
 	api.routes = routes
 	registerMetricsHandlers(r, cfg.API.EnableMetrics, cfg.API.EnablePprof)
-
 	srv := &http.Server{
-		Addr:    cfg.API.ListenAddr,
-		Handler: r,
+		Addr:      cfg.API.ListenAddr,
+		Handler:   r,
 	}
 	return srv
 }

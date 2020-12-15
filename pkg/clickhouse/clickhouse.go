@@ -94,7 +94,10 @@ func (ch *ClickHouse) Connect() error {
 	params.Add("database", "system")
 	params.Add("receive_timeout", timeoutSeconds)
 	params.Add("send_timeout", timeoutSeconds)
-
+	if ch.Config.Secure {
+		params.Add("secure", "true")
+		params.Add("skip_verify", strconv.FormatBool(ch.Config.SkipVerify))
+	}
 	connectionString := fmt.Sprintf("tcp://%v:%v?%s", ch.Config.Host, ch.Config.Port, params.Encode())
 	if ch.conn, err = sqlx.Open("clickhouse", connectionString); err != nil {
 		return err
