@@ -66,12 +66,17 @@ func main() {
 			UsageText:   "clickhouse-backup create [-t, --tables=<db>.<table>] <backup_name>",
 			Description: "Create new backup",
 			Action: func(c *cli.Context) error {
-				return backup.CreateBackup(*getConfig(c), c.Args().First(), c.String("t"))
+				return backup.CreateBackup(*getConfig(c), c.Bool("s"), c.Args().First(), c.String("t"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
 					Name:   "table, tables, t",
 					Hidden: false,
+				},
+				cli.BoolFlag{
+					Name:   "sync, s",
+					Hidden: false,
+					Usage:  "Sync replicated tables before backup",
 				},
 			),
 		},
@@ -208,12 +213,17 @@ func main() {
 			UsageText:   "clickhouse-backup freeze [-t, --tables=<db>.<table>] <backup_name>",
 			Description: "Freeze tables",
 			Action: func(c *cli.Context) error {
-				return backup.Freeze(*getConfig(c), c.String("t"))
+				return backup.Freeze(*getConfig(c), c.Bool("s"), c.String("t"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
 					Name:   "table, tables, t",
 					Hidden: false,
+				},
+				cli.BoolFlag{
+					Name:   "sync, s",
+					Hidden: false,
+					Usage:  "Sync replicated tables before backup",
 				},
 			),
 		},

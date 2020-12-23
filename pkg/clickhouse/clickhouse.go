@@ -32,6 +32,7 @@ type Table struct {
 	Database string `db:"database" json:"database"`
 	Name     string `db:"name" json:"table"`
 	Skip     bool   `json:"skip"`
+	Engine   string `json:"engine"`
 }
 
 // BackupPartition - struct representing Clickhouse partition
@@ -152,7 +153,7 @@ func (ch *ClickHouse) Close() error {
 // GetTables - return slice of all tables suitable for backup
 func (ch *ClickHouse) GetTables() ([]Table, error) {
 	tables := make([]Table, 0)
-	if err := ch.conn.Select(&tables, "SELECT database, name FROM system.tables WHERE is_temporary = 0 AND engine LIKE '%MergeTree';"); err != nil {
+	if err := ch.conn.Select(&tables, "SELECT database, name, engine FROM system.tables WHERE is_temporary = 0 AND engine LIKE '%MergeTree';"); err != nil {
 		return nil, err
 	}
 	for i, t := range tables {
@@ -224,13 +225,20 @@ func (ch *ClickHouse) FreezeTableOldWay(table Table) error {
 
 // FreezeTable - freeze all partitions for table
 // This way available for ClickHouse sience v19.1
-func (ch *ClickHouse) FreezeTable(table Table) error {
+func (ch *ClickHouse) FreezeTable(syncReplicatedTables bool, table Table) error {
 	version, err := ch.GetVersion()
 	if err != nil {
 		return err
 	}
 	if version < 19001005 || ch.Config.FreezeByPart {
 		return ch.FreezeTableOldWay(table)
+	}
+	if strings.HasPrefix(table.Engine, "Replicated") && syncReplicatedTables {
+		log.Printf("Sync '%s.%s'", table.Database, table.Name)
+		query := fmt.Sprintf("SYSTEM SYNC REPLICA `%s`.`%s`;", table.Database, table.Name)
+		if _, err := ch.conn.Exec(query); err != nil {
+			return fmt.Errorf("can't sync '%s.%s': %v", table.Database, table.Name, err)
+		}
 	}
 	log.Printf("Freeze '%s.%s'", table.Database, table.Name)
 	query := fmt.Sprintf("ALTER TABLE `%s`.`%s` FREEZE;", table.Database, table.Name)
