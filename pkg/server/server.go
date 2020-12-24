@@ -11,7 +11,6 @@ import (
 	"net/http/pprof"
 	"os"
 	"os/signal"
-	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -194,8 +193,8 @@ func (api *APIServer) setupAPIServer(cfg *config.Config) *http.Server {
 	api.routes = routes
 	registerMetricsHandlers(r, cfg.API.EnableMetrics, cfg.API.EnablePprof)
 	srv := &http.Server{
-		Addr:      cfg.API.ListenAddr,
-		Handler:   r,
+		Addr:    cfg.API.ListenAddr,
+		Handler: r,
 	}
 	return srv
 }
@@ -465,7 +464,6 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 
 	tablePattern := ""
 	backupName := backup.NewBackupName()
-	syncReplicatedTables := false
 
 	query := r.URL.Query()
 	if tp, exist := query["table"]; exist {
@@ -474,17 +472,10 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	if name, exist := query["name"]; exist {
 		backupName = name[0]
 	}
-	if sync, exist := query["sync"]; exist {
-		var err error
-		syncReplicatedTables, err = strconv.ParseBool(sync[0])
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "create", fmt.Errorf("can't parse sync value"))
-		}
-	}
 
 	go func() {
 		api.status.start("create")
-		err := backup.CreateBackup(*api.config, syncReplicatedTables, backupName, tablePattern)
+		err := backup.CreateBackup(*api.config, backupName, tablePattern)
 		defer api.status.stop(err)
 		if err != nil {
 			api.metrics.FailedBackups.Inc()
@@ -518,19 +509,11 @@ func (api *APIServer) httpFreezeHandler(w http.ResponseWriter, r *http.Request) 
 
 	query := r.URL.Query()
 	tablePattern := ""
-	syncReplicatedTables := false
 
 	if tp, exist := query["table"]; exist {
 		tablePattern = tp[0]
 	}
-	if sync, exist := query["sync"]; exist {
-		var err error
-		syncReplicatedTables, err = strconv.ParseBool(sync[0])
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "create", fmt.Errorf("can't parse sync value"))
-		}
-	}
-	if err := backup.Freeze(*api.config, syncReplicatedTables, tablePattern); err != nil {
+	if err := backup.Freeze(*api.config, tablePattern); err != nil {
 		log.Printf("Freeze error: = %+v\n", err)
 		writeError(w, http.StatusInternalServerError, "freeze", err)
 		return

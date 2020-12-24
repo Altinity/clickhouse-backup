@@ -225,7 +225,7 @@ func (ch *ClickHouse) FreezeTableOldWay(table Table) error {
 
 // FreezeTable - freeze all partitions for table
 // This way available for ClickHouse sience v19.1
-func (ch *ClickHouse) FreezeTable(syncReplicatedTables bool, table Table) error {
+func (ch *ClickHouse) FreezeTable(table Table) error {
 	version, err := ch.GetVersion()
 	if err != nil {
 		return err
@@ -233,7 +233,7 @@ func (ch *ClickHouse) FreezeTable(syncReplicatedTables bool, table Table) error 
 	if version < 19001005 || ch.Config.FreezeByPart {
 		return ch.FreezeTableOldWay(table)
 	}
-	if strings.HasPrefix(table.Engine, "Replicated") && syncReplicatedTables {
+	if strings.HasPrefix(table.Engine, "Replicated") && ch.Config.SyncReplicatedTables {
 		log.Printf("Sync '%s.%s'", table.Database, table.Name)
 		query := fmt.Sprintf("SYSTEM SYNC REPLICA `%s`.`%s`;", table.Database, table.Name)
 		if _, err := ch.conn.Exec(query); err != nil {

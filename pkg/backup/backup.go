@@ -361,7 +361,7 @@ func PrintRemoteBackups(cfg config.Config, format string) error {
 }
 
 // Freeze - freeze tables by tablePattern
-func Freeze(cfg config.Config, syncReplicatedTables bool, tablePattern string) error {
+func Freeze(cfg config.Config, tablePattern string) error {
 	ch := &clickhouse.ClickHouse{
 		Config: &cfg.ClickHouse,
 	}
@@ -398,7 +398,7 @@ func Freeze(cfg config.Config, syncReplicatedTables bool, tablePattern string) e
 			log.Printf("Skip '%s.%s'", table.Database, table.Name)
 			continue
 		}
-		if err := ch.FreezeTable(syncReplicatedTables, table); err != nil {
+		if err := ch.FreezeTable(table); err != nil {
 			return err
 		}
 	}
@@ -462,7 +462,7 @@ func NewBackupName() string {
 
 // CreateBackup - create new backup of all tables matched by tablePattern
 // If backupName is empty string will use default backup name
-func CreateBackup(cfg config.Config, syncReplicatedTables bool, backupName, tablePattern string) error {
+func CreateBackup(cfg config.Config, backupName, tablePattern string) error {
 	if backupName == "" {
 		backupName = NewBackupName()
 	}
@@ -479,7 +479,7 @@ func CreateBackup(cfg config.Config, syncReplicatedTables bool, backupName, tabl
 	}
 
 	log.Printf("Create backup '%s'", backupName)
-	if err := Freeze(cfg, syncReplicatedTables, tablePattern); err != nil {
+	if err := Freeze(cfg, tablePattern); err != nil {
 		return err
 	}
 

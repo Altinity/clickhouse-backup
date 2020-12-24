@@ -93,23 +93,25 @@ All options can be overwritten via environment variables
 
 ```yaml
 general:
-  remote_storage: s3           # REMOTE_STORAGE
-  disable_progress_bar: false  # DISABLE_PROGRESS_BAR
-  backups_to_keep_local: 0     # BACKUPS_TO_KEEP_LOCAL
-  backups_to_keep_remote: 0    # BACKUPS_TO_KEEP_REMOTE
+  remote_storage: s3             # REMOTE_STORAGE
+  disable_progress_bar: false    # DISABLE_PROGRESS_BAR
+  backups_to_keep_local: 0       # BACKUPS_TO_KEEP_LOCAL
+  backups_to_keep_remote: 0      # BACKUPS_TO_KEEP_REMOTE
 clickhouse:
-  username: default            # CLICKHOUSE_USERNAME
-  password: ""                 # CLICKHOUSE_PASSWORD
-  host: localhost              # CLICKHOUSE_HOST
-  port: 9000                   # CLICKHOUSE_PORT
-  timeout: 5m                  # CLICKHOUSE_TIMEOUT
-  data_path: ""                # CLICKHOUSE_DATA_PATH
-  skip_tables:                 # CLICKHOUSE_SKIP_TABLES
+  username: default              # CLICKHOUSE_USERNAME
+  password: ""                   # CLICKHOUSE_PASSWORD
+  host: localhost                # CLICKHOUSE_HOST
+  port: 9000                     # CLICKHOUSE_PORT
+  timeout: 5m                    # CLICKHOUSE_TIMEOUT
+  data_path: ""                  # CLICKHOUSE_DATA_PATH
+  skip_tables:                   # CLICKHOUSE_SKIP_TABLES
     - system.*
-  timeout: 5m                  # CLICKHOUSE_TIMEOUT
-  freeze_by_part: false        # CLICKHOUSE_FREEZE_BY_PART
-  secure: false                # CLICKHOUSE_SECURE
-  skip_verify: false           # CLICKHOUSE_SKIP_VERIFY
+  timeout: 5m                    # CLICKHOUSE_TIMEOUT
+  freeze_by_part: false          # CLICKHOUSE_FREEZE_BY_PART
+  secure: false                  # CLICKHOUSE_SECURE
+  skip_verify: false             # CLICKHOUSE_SKIP_VERIFY
+  sync_replicated_tables: false  # CLICKHOUSE_SYNC_REPLICATED_TABLES
+
 azblob:
   endpoint_suffix: "core.windows.net" # AZBLOB_ENDPOINT_SUFFIX
   account_name: ""             # AZBLOB_ACCOUNT_NAME
