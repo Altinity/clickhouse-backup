@@ -5,6 +5,7 @@ require (
 	github.com/Azure/azure-storage-blob-go v0.10.1-0.20200807102407-24fe552e0870
 	github.com/ClickHouse/clickhouse-go v1.4.3
 	github.com/andybalholm/brotli v1.0.0 // indirect
+	github.com/apex/log v1.9.0
 	github.com/aws/aws-sdk-go v1.34.10
 	github.com/cpuguy83/go-md2man/v2 v2.0.0 // indirect
 	github.com/djherbis/buffer v1.1.0 // indirect

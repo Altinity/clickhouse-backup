@@ -29,10 +29,24 @@ type ClickHouse struct {
 
 // Table - ClickHouse table struct
 type Table struct {
-	Database string `db:"database" json:"database"`
-	Name     string `db:"name" json:"table"`
-	Skip     bool   `json:"skip"`
-	Engine   string `json:"engine"`
+	Database             string   `db:"database" json:"database"`
+	Name                 string   `db:"name" json:"table"`
+	DataPaths            []string `db:"data_paths" json:"data_paths"`
+	MetadataPath         string   `db:"metadata_path" json:"metadata_path"`
+	Engine               string   `db:"engine" json:"engine"`
+	UUID                 string   `db:"uuid" json:"uuid"`
+	StoragePolicy        string   `db:"storage_policy" json:"storage_policy"`
+	CreateTableQuery     string   `db:"create_table_query" json:"create_table_query"`
+	Skip                 bool     `json:"skip"`
+	TotalBytes           *int64   `db:"total_bytes" json:"total_bytes"`
+	DependencesTable     string   `db:"dependencies_table" json:"dependencies_table"`
+	DependenciesDatabase string   `db:"dependencies_database" json:"dependencies_database"`
+}
+
+type Disk struct {
+	Name string `db:"name"`
+	Path string `db:"path"`
+	Type string `db:"type"`
 }
 
 // BackupPartition - struct representing Clickhouse partition
@@ -44,6 +58,8 @@ type BackupPartition struct {
 	HashOfUncompressedFiles           string `json:"hash_of_uncompressed_files"`
 	UncompressedHashOfCompressedFiles string `json:"uncompressed_hash_of_compressed_files"`
 	Active                            uint8  `json:"active"`
+	DiskName                          string `json:"disk_name"`
+	PartitionID                       string `json:"partition_id"`
 }
 
 // BackupTable - struct to store additional information on partitions
@@ -106,14 +122,11 @@ func (ch *ClickHouse) Connect() error {
 	return ch.conn.Ping()
 }
 
-// GetDataPath - return ClickHouse data_path
-func (ch *ClickHouse) GetDataPath() (string, error) {
-	if ch.Config.DataPath != "" {
-		return ch.Config.DataPath, nil
-	}
+// GetDisks - return data from system.disks table
+func (ch *ClickHouse) GetDisks() ([]Disk, error) {
 	version, err := ch.GetVersion()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if version < 19015000 {
 		return ch.getDataPathFromSystemSettings()
@@ -121,28 +134,65 @@ func (ch *ClickHouse) GetDataPath() (string, error) {
 	return ch.getDataPathFromSystemDisks()
 }
 
-func (ch *ClickHouse) getDataPathFromSystemSettings() (string, error) {
+func (ch *ClickHouse) GetDefaultPath() (string, error) {
+	disks, err := ch.GetDisks()
+	if err != nil {
+		return "", err
+	}
+	defaultPath := "/var/lib/clickhouse"
+	for _, d := range disks {
+		if d.Name == "default" {
+			defaultPath = d.Path
+			break
+		}
+	}
+	return defaultPath, nil
+}
+
+func (ch *ClickHouse) GetDiskByPath(dataPath string) string {
+	disks, err := ch.GetDisks()
+	if err != nil {
+		return "unknown"
+	}
+	for _, disk := range disks {
+		if strings.HasPrefix(dataPath, disk.Path) {
+			return disk.Name
+		}
+	}
+	return "unknown"
+}
+
+func (ch *ClickHouse) GetDisksByPats(dataPaths []string) []string {
+	result := []string{}
+	for _, dataPath := range dataPaths {
+		result = append(result, ch.GetDiskByPath(dataPath))
+	}
+	return result
+}
+
+
+func (ch *ClickHouse) getDataPathFromSystemSettings() ([]Disk, error) {
 	var result []struct {
 		MetadataPath string `db:"metadata_path"`
 	}
 	if err := ch.conn.Select(&result, "SELECT metadata_path FROM system.tables WHERE database == 'system' LIMIT 1;"); err != nil {
-		return "/var/lib/clickhouse", err
+		return nil, err
 	}
 	metadataPath := result[0].MetadataPath
 	dataPathArray := strings.Split(metadataPath, "/")
 	clickhouseData := path.Join(dataPathArray[:len(dataPathArray)-3]...)
-	return path.Join("/", clickhouseData), nil
+	return []Disk{{
+		Name: "default",
+		Path: path.Join("/", clickhouseData),
+		Type: "local",
+	}}, nil
 }
 
-func (ch *ClickHouse) getDataPathFromSystemDisks() (string, error) {
-	var result []struct {
-		Path string `db:"path"`
-	}
-	query := "SELECT path FROM system.disks WHERE name == 'default' LIMIT 1;"
-	if err := ch.conn.Select(&result, query); err != nil {
-		return "/var/lib/clickhouse", err
-	}
-	return result[0].Path, nil
+func (ch *ClickHouse) getDataPathFromSystemDisks() ([]Disk, error) {
+	var result []Disk
+	query := "SELECT name, path, type FROM system.disks;"
+	err := ch.conn.Select(&result, query)
+	return result, err
 }
 
 // Close - closing connection to ClickHouse
@@ -153,7 +203,8 @@ func (ch *ClickHouse) Close() error {
 // GetTables - return slice of all tables suitable for backup
 func (ch *ClickHouse) GetTables() ([]Table, error) {
 	tables := make([]Table, 0)
-	if err := ch.conn.Select(&tables, "SELECT database, name, engine FROM system.tables WHERE is_temporary = 0 AND engine LIKE '%MergeTree';"); err != nil {
+	err := ch.conn.Select(&tables, "SELECT database, name, data_paths, metadata_path, engine, uuid, storage_policy, create_table_query, total_bytes FROM system.tables WHERE is_temporary = 0;")
+	if err != nil {
 		return nil, err
 	}
 	for i, t := range tables {
@@ -168,14 +219,14 @@ func (ch *ClickHouse) GetTables() ([]Table, error) {
 	return tables, nil
 }
 
-// GetPartitions - return slice of all partitions for a table
-func (ch *ClickHouse) GetPartitions(table Table) ([]Partition, error) {
-	partitions := make([]Partition, 0)
-	if err := ch.conn.Select(&partitions, fmt.Sprintf("select partition, name, path, active, hash_of_all_files,hash_of_uncompressed_files,uncompressed_hash_of_compressed_files from system.parts where database='%s' and table='%s';", table.Database, table.Name)); err != nil {
+// GetTables - return slice of all tables suitable for backup
+func (ch *ClickHouse) GetTable(database, name string) (*Table, error) {
+	tables := make([]Table, 0)
+	err := ch.conn.Select(&tables, fmt.Sprintf("SELECT database, name, data_paths, metadata_path, engine, uuid, storage_policy, create_table_query, total_bytes FROM system.tables WHERE is_temporary = 0 AND database = '%s' AND name = '%s';", database, name))
+	if err != nil {
 		return nil, err
 	}
-
-	return partitions, nil
+	return &tables[0], nil
 }
 
 // GetVersion - returned ClickHouse version in number format
@@ -194,7 +245,7 @@ func (ch *ClickHouse) GetVersion() (int, error) {
 
 // FreezeTableOldWay - freeze all partitions in table one by one
 // This way using for ClickHouse below v19.1
-func (ch *ClickHouse) FreezeTableOldWay(table Table) error {
+func (ch *ClickHouse) FreezeTableOldWay(table *Table) error {
 	var partitions []struct {
 		PartitionID string `db:"partition_id"`
 	}
@@ -225,7 +276,7 @@ func (ch *ClickHouse) FreezeTableOldWay(table Table) error {
 
 // FreezeTable - freeze all partitions for table
 // This way available for ClickHouse sience v19.1
-func (ch *ClickHouse) FreezeTable(table Table) error {
+func (ch *ClickHouse) FreezeTable(table *Table) error {
 	version, err := ch.GetVersion()
 	if err != nil {
 		return err
@@ -250,7 +301,7 @@ func (ch *ClickHouse) FreezeTable(table Table) error {
 
 // GetBackupTables - return list of backups of tables that can be restored
 func (ch *ClickHouse) GetBackupTables(backupName string) (map[string]BackupTable, error) {
-	dataPath, err := ch.GetDataPath()
+	dataPath, err := ch.GetDefaultPath()
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +337,7 @@ func (ch *ClickHouse) GetBackupTables(backupName string) (map[string]BackupTable
 	// 		return nil, fmt.Errorf("issue occurred while reading hash file %s", hashPath)
 	// 	}
 	// }
-
+	// TODO: нам больше не нужно заполнять Partitions из файла теперь их можно взять из таблицы detached
 	result := make(map[string]BackupTable)
 	err = filepath.Walk(backupShadowPath, func(filePath string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -347,10 +398,10 @@ func (ch *ClickHouse) Chown(filename string) error {
 		err      error
 	)
 	if ch.uid == nil || ch.gid == nil {
-		if dataPath, err = ch.GetDataPath(); err != nil {
+		if dataPath, err = ch.GetDefaultPath(); err != nil {
 			return err
 		}
-		info, err := os.Stat(path.Join(dataPath, "data"))
+		info, err := os.Stat(dataPath)
 		if err != nil {
 			return err
 		}
@@ -363,244 +414,66 @@ func (ch *ClickHouse) Chown(filename string) error {
 	return os.Chown(filename, *ch.uid, *ch.gid)
 }
 
-// ComputePartitionsDelta - computes the data partitions to be added and removed between live and backup tables
-func (ch *ClickHouse) ComputePartitionsDelta(restoreTables []BackupTable, liveTables []Table) ([]PartDiff, error) {
-	var ftables []PartDiff
-	var partitions []Partition
-	log.Printf("Compute partitions discrepancies")
-	for _, rtable := range restoreTables {
-		var partsToAdd []Partition
-		var partsToRemove []Partition
-		for _, rpartition := range rtable.Partitions {
-			bfound := false
-			for _, liveTable := range liveTables {
-				if liveTable.Database == rtable.Database && liveTable.Name == rtable.Name {
-					livePartitions, _ := ch.GetPartitions(liveTable)
-					for _, livePartition := range livePartitions {
-						if livePartition.HashOfAllFiles == rpartition.HashOfAllFiles && livePartition.HashOfUncompressedFiles == rpartition.HashOfUncompressedFiles && livePartition.UncompressedHashOfCompressedFiles == rpartition.UncompressedHashOfCompressedFiles {
-							bfound = true
-							break
-						}
-					}
-				}
-			}
-			if !bfound {
-				partsToAdd = append(partsToAdd, Partition{Name: rpartition.Name, Path: rpartition.Path})
-			}
-		}
-
-		for _, ltable := range liveTables {
-			if ltable.Name == rtable.Name {
-				partitions, _ = ch.GetPartitions(ltable)
-				for _, livepart := range partitions {
-					bfound := false
-					for _, backuppart := range rtable.Partitions {
-						if livepart.HashOfAllFiles == backuppart.HashOfAllFiles && livepart.HashOfUncompressedFiles == backuppart.HashOfUncompressedFiles && livepart.UncompressedHashOfCompressedFiles == backuppart.UncompressedHashOfCompressedFiles {
-							bfound = true
-							break
-						}
-					}
-					if !bfound {
-						partsToRemove = append(partsToRemove, livepart)
-					}
-				}
-			}
-		}
-		log.Printf("[%s.%s] Backup data parts to attach : %v ", rtable.Database, rtable.Name, partsToAdd)
-		log.Printf("[%s.%s] Live data parts to detach : %v ", rtable.Database, rtable.Name, partsToRemove)
-		ftables = append(ftables, PartDiff{rtable, partsToAdd, partsToRemove})
-	}
-	log.Printf("Compute partitions discrepancies. Done")
-
-	return ftables, nil
-}
-
-// CopyDataDiff - copy only partitions that will be attached to "detached" folder
-func (ch *ClickHouse) CopyDataDiff(diff PartDiff) error {
-	log.Printf("Prepare data for restoring '%s.%s'", diff.BTable.Database, diff.BTable.Name)
-	dataPath, err := ch.GetDataPath()
-	if err != nil {
-		return err
-	}
-	detachedParentDir := filepath.Join(dataPath, "data", TablePathEncode(diff.BTable.Database), TablePathEncode(diff.BTable.Name), "detached")
-	os.MkdirAll(detachedParentDir, 0750)
-	ch.Chown(detachedParentDir)
-
-	for _, partition := range diff.PartitionsAdd {
-		log.Printf("Processing partition %s (%s)", partition.Name, partition.Path)
-		detachedPath := filepath.Join(detachedParentDir, partition.Name)
-		info, err := os.Stat(detachedPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				// partition dir does not exist, creating
-				os.MkdirAll(detachedPath, 0750)
-			} else {
-				return err
-			}
-		} else if !info.IsDir() {
-			return fmt.Errorf("'%s' should be directory or absent", detachedPath)
-		}
-		ch.Chown(detachedPath)
-
-		if err := filepath.Walk(partition.Path, func(filePath string, info os.FileInfo, err error) error {
-			if err != nil {
-				return err
-			}
-			filePath = filepath.ToSlash(filePath) // fix Windows slashes
-			filename := strings.Trim(strings.TrimPrefix(filePath, partition.Path), "/")
-			dstFilePath := filepath.Join(detachedPath, filename)
-			if info.IsDir() {
-				os.MkdirAll(dstFilePath, 0750)
-				return ch.Chown(dstFilePath)
-			}
-			if !info.Mode().IsRegular() {
-				log.Printf("'%s' is not a regular file, skipping.", filePath)
-				return nil
-			}
-			if err := os.Link(filePath, dstFilePath); err != nil {
-				return fmt.Errorf("failed to crete hard link '%s' -> '%s': %v", filePath, dstFilePath, err)
-			}
-			return ch.Chown(dstFilePath)
-		}); err != nil {
-			return fmt.Errorf("error during filepath.Walk for partition '%s': %v", partition.Path, err)
-		}
-	}
-	log.Printf("Prepare data for restoring '%s.%s'. DONE", diff.BTable.Database, diff.BTable.Name)
-	return nil
-}
-
 // CopyData - copy partitions for specific table to detached folder
-func (ch *ClickHouse) CopyData(table BackupTable) error {
+func (ch *ClickHouse) CopyData(table BackupTable, diskPattern []string) error {
+	// TODO: проверить если диск есть в бэкапе но нет в кликхаусе
 	log.Printf("Prepare data for restoring '%s.%s'", table.Database, table.Name)
-	dataPath, err := ch.GetDataPath()
+	to, err := ch.GetTable(table.Database, table.Name)
 	if err != nil {
 		return err
 	}
-	detachedParentDir := filepath.Join(dataPath, "data", TablePathEncode(table.Database), TablePathEncode(table.Name), "detached")
-	os.MkdirAll(detachedParentDir, 0750)
-	ch.Chown(detachedParentDir)
 
-	for _, partition := range table.Partitions {
-		// log.Printf("partition name is %s (%s)", partition.Name, partition.Path)
-		detachedPath := filepath.Join(detachedParentDir, partition.Name)
-		info, err := os.Stat(detachedPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				// partition dir does not exist, creating
-				os.MkdirAll(detachedPath, 0750)
-			} else {
-				return err
-			}
-		} else if !info.IsDir() {
-			return fmt.Errorf("'%s' should be directory or absent", detachedPath)
-		}
-		ch.Chown(detachedPath)
+	for _, dataPath := range to.DataPaths {
+		detachedParentDir := filepath.Join(dataPath, "data", TablePathEncode(table.Database), TablePathEncode(table.Name), "detached")
+		os.MkdirAll(detachedParentDir, 0750)
+		ch.Chown(detachedParentDir)
 
-		if err := filepath.Walk(partition.Path, func(filePath string, info os.FileInfo, err error) error {
-			if err != nil {
-				return err
-			}
-			filePath = filepath.ToSlash(filePath) // fix Windows slashes
-			filename := strings.Trim(strings.TrimPrefix(filePath, partition.Path), "/")
-			dstFilePath := filepath.Join(detachedPath, filename)
-			if info.IsDir() {
-				os.MkdirAll(dstFilePath, 0750)
-				return ch.Chown(dstFilePath)
-			}
-			if !info.Mode().IsRegular() {
-				log.Printf("'%s' is not a regular file, skipping.", filePath)
-				return nil
-			}
-			if err := os.Link(filePath, dstFilePath); err != nil {
-				return fmt.Errorf("failed to crete hard link '%s' -> '%s': %v", filePath, dstFilePath, err)
-			}
-			return ch.Chown(dstFilePath)
-		}); err != nil {
-			return fmt.Errorf("error during filepath.Walk for partition '%s': %v", partition.Path, err)
-		}
-	}
-	return nil
-}
-
-// ApplyPartitionsChanges - add/remove partitions to/from the live table
-func (ch *ClickHouse) ApplyPartitionsChanges(table PartDiff) error {
-	var query string
-	dataPath, err := ch.GetDataPath()
-	if err != nil {
-		return err
-	}
-	for _, partition := range table.PartitionsAdd {
-		query = fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PART '%s'", table.BTable.Database, table.BTable.Name, partition.Name)
-		log.Println(query)
-		if _, err := ch.conn.Exec(query); err != nil {
-			return err
-		}
-	}
-
-	if len(table.PartitionsRemove) > 0 {
-		partList := make(map[string]struct{})
-
-		for _, partition := range table.PartitionsRemove {
-			log.Printf("Removing %s", partition.Path)
-
-			//partitionName := partition.Name[:strings.IndexByte(partition.Name, '_')]
-			partitionName := partition.Partition
-
-			if _, ok := partList[partitionName]; !ok {
-				partList[partitionName] = struct{}{}
-			}
-		}
-
-		for partname := range partList {
-			/*if partname == "all" {
-				query = fmt.Sprintf("DETACH TABLE `%s`.`%s`", table.btable.Database, table.btable.Name)
-			} else {*/
-			query = fmt.Sprintf("ALTER TABLE `%s`.`%s` DETACH PARTITION %s", table.BTable.Database, table.BTable.Name, partname)
-			//}
-			log.Println(query)
-			if _, err := ch.conn.Exec(query); err != nil {
-				return err
-			}
-		}
-
-		detachedParentDir := filepath.Join(dataPath, "data", TablePathEncode(table.BTable.Database), TablePathEncode(table.BTable.Name), "detached")
-
-		for _, partition := range table.PartitionsRemove {
+		for _, partition := range table.Partitions {
+			// log.Printf("partition name is %s (%s)", partition.Name, partition.Path)
 			detachedPath := filepath.Join(detachedParentDir, partition.Name)
-			log.Printf("[%s.%s] Removing %s", table.BTable.Database, table.BTable.Name, detachedPath)
-			e := os.RemoveAll(detachedPath)
-			if e != nil {
-				return e
+			info, err := os.Stat(detachedPath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					// partition dir does not exist, creating
+					os.MkdirAll(detachedPath, 0750)
+				} else {
+					return err
+				}
+			} else if !info.IsDir() {
+				return fmt.Errorf("'%s' should be directory or absent", detachedPath)
+			}
+			ch.Chown(detachedPath)
+
+			if err := filepath.Walk(partition.Path, func(filePath string, info os.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+				filePath = filepath.ToSlash(filePath) // fix Windows slashes
+				filename := strings.Trim(strings.TrimPrefix(filePath, partition.Path), "/")
+				dstFilePath := filepath.Join(detachedPath, filename)
+				if info.IsDir() {
+					os.MkdirAll(dstFilePath, 0750)
+					return ch.Chown(dstFilePath)
+				}
+				if !info.Mode().IsRegular() {
+					log.Printf("'%s' is not a regular file, skipping.", filePath)
+					return nil
+				}
+				if err := os.Link(filePath, dstFilePath); err != nil {
+					return fmt.Errorf("failed to crete hard link '%s' -> '%s': %v", filePath, dstFilePath, err)
+				}
+				return ch.Chown(dstFilePath)
+			}); err != nil {
+				return fmt.Errorf("error during filepath.Walk for partition '%s': %v", partition.Path, err)
 			}
 		}
-
-		for partname := range partList {
-			if partname == "all" {
-				query = fmt.Sprintf("ATTACH TABLE `%s`.`%s`", table.BTable.Database, table.BTable.Name)
-			} else {
-				query = fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PARTITION %s", table.BTable.Database, table.BTable.Name, partname)
-			}
-			log.Println(query)
-			if _, err := ch.conn.Exec(query); err != nil {
-				return err
-			}
-		}
-		/*e := os.RemoveAll(partition.Path)
-		if e != nil {
-			return e
-		}*/
-
-		/*query = fmt.Sprintf("ATTACH TABLE `%s`.`%s`", table.btable.Database, table.btable.Name)
-		log.Println(query)
-		if _, err := ch.conn.Exec(query); err != nil {
-			return err
-		}*/
 	}
 	return nil
 }
 
 // AttachPartitions - execute ATTACH command for specific table
 func (ch *ClickHouse) AttachPartitions(table BackupTable) error {
+	// TODO: список партиций в detached можно посмотреть в таблице, это нужно для более надёжного восстановления
 	for _, partition := range table.Partitions {
 		query := fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PART '%s'", table.Database, table.Name, partition.Name)
 		log.Println(query)
@@ -613,7 +486,7 @@ func (ch *ClickHouse) AttachPartitions(table BackupTable) error {
 
 // CreateDatabase - create ClickHouse database
 func (ch *ClickHouse) CreateDatabase(database string) error {
-	createQuery := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s` ENGINE = Ordinary", database)
+	createQuery := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", database)
 	_, err := ch.conn.Exec(createQuery)
 	return err
 }

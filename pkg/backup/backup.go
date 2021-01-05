@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"log"
-	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -18,12 +16,15 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/storage"
 	"github.com/AlexAkulov/clickhouse-backup/utils"
+
+	"github.com/apex/log"
 )
 
 const (
 	// BackupTimeFormat - default backup name format
 	BackupTimeFormat = "2006-01-02T15-04-05"
 	hashfile         = "parts.hash"
+	MetaFileName     = "metadata.json"
 )
 
 var (
@@ -75,7 +76,7 @@ func addRestoreTable(tables RestoreTables, table RestoreTable) RestoreTables {
 	return append(tables, table)
 }
 
-func parseTablePatternForFreeze(tables []clickhouse.Table, tablePattern string) []clickhouse.Table {
+func filterTablesByPattern(tables []clickhouse.Table, tablePattern string) []clickhouse.Table {
 	if tablePattern == "" {
 		return tables
 	}
@@ -109,72 +110,6 @@ func parseTablePatternForRestoreData(tables map[string]clickhouse.BackupTable, t
 	return result
 }
 
-func parseSchemaPattern(metadataPath string, tablePattern string) (RestoreTables, error) {
-	regularTables := RestoreTables{}
-	distributedTables := RestoreTables{}
-	viewTables := RestoreTables{}
-	tablePatterns := []string{"*"}
-
-	//log.Printf("tp1 = %s", tablePattern)
-	if tablePattern != "" {
-		tablePatterns = strings.Split(tablePattern, ",")
-	}
-	if err := filepath.Walk(metadataPath, func(filePath string, info os.FileInfo, err error) error {
-		if !strings.HasSuffix(filePath, ".sql") || !info.Mode().IsRegular() {
-			return nil
-		}
-		p := filepath.ToSlash(filePath)
-		//log.Printf("p1 = %s", p)
-		p = strings.Trim(strings.TrimPrefix(strings.TrimSuffix(p, ".sql"), metadataPath), "/")
-		//log.Printf("p2 = %s", p)
-		parts := strings.Split(p, "/")
-		if len(parts) != 2 {
-			return nil
-		}
-		database, _ := url.PathUnescape(parts[0])
-		table, _ := url.PathUnescape(parts[1])
-		tableName := fmt.Sprintf("%s.%s", database, table)
-		for _, p := range tablePatterns {
-			//log.Printf("p3 = %s", p)
-			if matched, _ := filepath.Match(p, tableName); matched {
-				data, err := ioutil.ReadFile(filePath)
-				if err != nil {
-					return err
-				}
-				restoreTable := RestoreTable{
-					Database: database,
-					Table:    table,
-					Query:    strings.Replace(string(data), "ATTACH", "CREATE", 1),
-					Path:     filePath,
-				}
-				if strings.Contains(restoreTable.Query, "ENGINE = Distributed") {
-					distributedTables = addRestoreTable(distributedTables, restoreTable)
-					return nil
-				}
-				if strings.HasPrefix(restoreTable.Query, "CREATE VIEW") ||
-					strings.HasPrefix(restoreTable.Query, "CREATE MATERIALIZED VIEW") {
-					viewTables = addRestoreTable(viewTables, restoreTable)
-					return nil
-				}
-				regularTables = addRestoreTable(regularTables, restoreTable)
-				return nil
-			}
-			/*else {
-				log.Printf("No match %s %s", p, tableName)
-			}*/
-		}
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-	regularTables.Sort()
-	distributedTables.Sort()
-	viewTables.Sort()
-	result := append(regularTables, distributedTables...)
-	result = append(result, viewTables...)
-	return result, nil
-}
-
 // getTables - get all tables for use by PrintTables and API
 func GetTables(cfg config.Config) ([]clickhouse.Table, error) {
 	ch := &clickhouse.ClickHouse{
@@ -194,16 +129,26 @@ func GetTables(cfg config.Config) ([]clickhouse.Table, error) {
 }
 
 // PrintTables - print all tables suitable for backup
-func PrintTables(cfg config.Config) error {
+func PrintTables(cfg config.Config, printAll bool) error {
+	ch := &clickhouse.ClickHouse{
+		Config: &cfg.ClickHouse,
+	}
+	if err := ch.Connect(); err != nil {
+		return err
+	}
+	defer ch.Close()
+
 	allTables, err := GetTables(cfg)
 	if err != nil {
 		return err
 	}
 	for _, table := range allTables {
-		if table.Skip {
-			fmt.Printf("%s.%s\t(ignored)\n", table.Database, table.Name)
-		} else {
-			fmt.Printf("%s.%s\n", table.Database, table.Name)
+		if table.Skip && printAll {
+			fmt.Printf("skip\t%s.%s\t%s\t%v\n", table.Database, table.Name, utils.FormatBytes(table.TotalBytes), strings.Join(ch.GetDisksByPats(table.DataPaths), ", "))
+			continue
+		}
+		if !table.Skip {
+			fmt.Printf("%s.%s\t%s\t%v\n", table.Database, table.Name, utils.FormatBytes(table.TotalBytes), strings.Join(ch.GetDisksByPats(table.DataPaths), ", "))
 		}
 	}
 	return nil
@@ -214,12 +159,22 @@ func RestoreSchema(cfg config.Config, backupName string, tablePattern string, dr
 		PrintLocalBackups(cfg, "all")
 		return fmt.Errorf("select backup for restore")
 	}
-	dataPath := getDataPath(cfg)
-	if dataPath == "" {
+	ch := &clickhouse.ClickHouse{
+		Config: &cfg.ClickHouse,
+	}
+	if err := ch.Connect(); err != nil {
+		return fmt.Errorf("can't connect to clickhouse: %v", err)
+	}
+	defer ch.Close()
+
+	dataPath, err := ch.GetDefaultPath()
+	if err != nil {
 		return ErrUnknownClickhouseDataPath
 	}
+
 	metadataPath := path.Join(dataPath, "backup", backupName, "metadata")
 	info, err := os.Stat(metadataPath)
+	// TODO: check metadata.json
 	if err != nil {
 		return err
 	}
@@ -233,13 +188,6 @@ func RestoreSchema(cfg config.Config, backupName string, tablePattern string, dr
 	if len(tablesForRestore) == 0 {
 		return fmt.Errorf("no have found schemas by %s in %s", tablePattern, backupName)
 	}
-	ch := &clickhouse.ClickHouse{
-		Config: &cfg.ClickHouse,
-	}
-	if err := ch.Connect(); err != nil {
-		return fmt.Errorf("can't connect to clickhouse: %v", err)
-	}
-	defer ch.Close()
 
 	for _, schema := range tablesForRestore {
 		if err := ch.CreateDatabase(schema.Database); err != nil {
@@ -273,7 +221,7 @@ func printBackups(backupList []storage.Backup, format string, printSize bool) er
 		}
 		for _, backup := range backupList {
 			if printSize {
-				fmt.Printf("- '%s'\t%s\t(created at %s)\n", backup.Name, utils.FormatBytes(backup.Size), backup.Date.Format("02-01-2006 15:04:05"))
+				fmt.Printf("- '%s'\t%s\t(created at %s)\n", backup.Name, utils.FormatBytes(&backup.Size), backup.Date.Format("02-01-2006 15:04:05"))
 			} else {
 				fmt.Printf("- '%s'\t(created at %s)\n", backup.Name, backup.Date.Format("02-01-2006 15:04:05"))
 			}
@@ -295,10 +243,19 @@ func PrintLocalBackups(cfg config.Config, format string) error {
 
 // ListLocalBackups - return slice of all backups stored locally
 func ListLocalBackups(cfg config.Config) ([]storage.Backup, error) {
-	dataPath := getDataPath(cfg)
-	if dataPath == "" {
-		return nil, ErrUnknownClickhouseDataPath
+	ch := &clickhouse.ClickHouse{
+		Config: &cfg.ClickHouse,
 	}
+	if err := ch.Connect(); err != nil {
+		return nil, fmt.Errorf("can't connect to clickhouse: %v", err)
+	}
+	defer ch.Close()
+
+	dataPath, err := ch.GetDefaultPath()
+	if err != nil {
+		return nil, err
+	}
+
 	backupsPath := path.Join(dataPath, "backup")
 	d, err := os.Open(backupsPath)
 	if err != nil {
@@ -370,88 +327,39 @@ func Freeze(cfg config.Config, tablePattern string) error {
 	}
 	defer ch.Close()
 
-	dataPath, err := ch.GetDataPath()
-	if err != nil || dataPath == "" {
-		return fmt.Errorf("can't get data path from clickhouse: %v\nyou can set data_path in config file", err)
-	}
-
-	shadowPath := filepath.Join(dataPath, "shadow")
-	files, err := ioutil.ReadDir(shadowPath)
+	disks, err := ch.GetDisks()
 	if err != nil {
-		if !os.IsNotExist(err) {
-			return fmt.Errorf("can't read %s directory: %v", shadowPath, err)
-		}
-	} else if len(files) > 0 {
-		return fmt.Errorf("'%s' is not empty, execute 'clean' command first", shadowPath)
+		return err
 	}
-
-	allTables, err := ch.GetTables()
-	if err != nil {
-		return fmt.Errorf("can't get tables from clickhouse: %v", err)
-	}
-	backupTables := parseTablePatternForFreeze(allTables, tablePattern)
-	if len(backupTables) == 0 {
-		return fmt.Errorf("there are no tables in clickhouse, create something to freeze")
-	}
-	for _, table := range backupTables {
-		if table.Skip {
-			log.Printf("Skip '%s.%s'", table.Database, table.Name)
-			continue
-		}
-		if err := ch.FreezeTable(table); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// CopyPartHashes - Copy data parts hashes by tablePattern
-func CopyPartHashes(cfg config.Config, tablePattern string, backupName string) error {
-	var allparts map[string][]clickhouse.Partition
-	allparts = make(map[string][]clickhouse.Partition)
-
-	ch := &clickhouse.ClickHouse{
-		Config: &cfg.ClickHouse,
-	}
-	if err := ch.Connect(); err != nil {
-		return fmt.Errorf("can't connect to clickhouse: %v", err)
-	}
-	defer ch.Close()
-
-	dataPath, err := ch.GetDataPath()
-	if err != nil || dataPath == "" {
-		return fmt.Errorf("can't get data path from clickhouse: %v\nyou can set data_path in config file", err)
-	}
-
-	allTables, err := ch.GetTables()
-	if err != nil {
-		return fmt.Errorf("can't get tables from clickhouse: %v", err)
-	}
-	backupTables := parseTablePatternForFreeze(allTables, tablePattern)
-	if len(backupTables) == 0 {
-		return fmt.Errorf("there are no tables in clickhouse, create something to freeze")
-	}
-	for _, table := range backupTables {
-		if table.Skip {
-			log.Printf("Skip '%s.%s'", table.Database, table.Name)
-			continue
-		}
-
-		parts, err := ch.GetPartitions(table)
+	for _, disk := range disks {
+		shadowPath := filepath.Join(disk.Path, "shadow")
+		files, err := ioutil.ReadDir(shadowPath)
 		if err != nil {
+			if !os.IsNotExist(err) {
+				return fmt.Errorf("can't read '%s': %v", shadowPath, err)
+			}
+		}
+		if len(files) > 0 {
+			return fmt.Errorf("'%s' is not empty, execute 'clean' command first", shadowPath)
+		}
+	}
+	allTables, err := ch.GetTables()
+	if err != nil {
+		return fmt.Errorf("can't get tables from clickhouse: %v", err)
+	}
+	backupTables := filterTablesByPattern(allTables, tablePattern)
+	if len(backupTables) == 0 {
+		return fmt.Errorf("there are no tables in clickhouse, create something to freeze")
+	}
+	for _, table := range backupTables {
+		if table.Skip {
+			log.Infof("Skip '%s.%s'", table.Database, table.Name)
+			continue
+		}
+		if err := ch.FreezeTable(&table); err != nil {
 			return err
 		}
-		allparts[table.Database+"."+table.Name] = parts
-
 	}
-	log.Println("Writing part hashes")
-	byteArray, err := json.MarshalIndent(allparts, "", " ")
-	if err != nil {
-		log.Fatal(err)
-	}
-	hashPartsPath := path.Join(dataPath, "backup", backupName, hashfile)
-	_ = ioutil.WriteFile(hashPartsPath, byteArray, 0644)
-
 	return nil
 }
 
@@ -466,65 +374,184 @@ func CreateBackup(cfg config.Config, backupName, tablePattern string) error {
 	if backupName == "" {
 		backupName = NewBackupName()
 	}
-	dataPath := getDataPath(cfg)
-	if dataPath == "" {
-		return ErrUnknownClickhouseDataPath
+	ctx := log.WithFields(log.Fields{
+		"backup":    backupName,
+		"operation": "create",
+	})
+	ch := &clickhouse.ClickHouse{
+		Config: &cfg.ClickHouse,
 	}
-	backupPath := path.Join(dataPath, "backup", backupName)
-	if _, err := os.Stat(backupPath); err == nil || !os.IsNotExist(err) {
-		return fmt.Errorf("can't create backup '%s' already exists", backupPath)
+	if err := ch.Connect(); err != nil {
+		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
-	if err := os.MkdirAll(backupPath, os.ModePerm); err != nil {
-		return fmt.Errorf("can't create backup: %v", err)
-	}
+	defer ch.Close()
 
-	log.Printf("Create backup '%s'", backupName)
-	if err := Freeze(cfg, tablePattern); err != nil {
-		return err
-	}
-
-	log.Printf("Copy part hashes")
-	if err := CopyPartHashes(cfg, tablePattern, backupName); err != nil {
-		log.Println(err)
-	}
-
-	log.Println("Copy metadata")
-	schemaList, err := parseSchemaPattern(path.Join(dataPath, "metadata"), tablePattern)
+	allTables, err := ch.GetTables()
 	if err != nil {
-		return err
+		return fmt.Errorf("cat't get tables from clickhouse: %v", err)
 	}
-	for _, schema := range schemaList {
-		skip := false
-		for _, filter := range cfg.ClickHouse.SkipTables {
-			if matched, _ := filepath.Match(filter, fmt.Sprintf("%s.%s", schema.Database, schema.Table)); matched {
-				skip = true
-				break
-			}
-		}
-		if skip {
+	tables := filterTablesByPattern(allTables, tablePattern)
+	i := 0
+	for _, table := range tables {
+		if table.Skip {
 			continue
 		}
-		relativePath := strings.Trim(strings.TrimPrefix(schema.Path, path.Join(dataPath, "metadata")), "/")
-		newPath := path.Join(backupPath, "metadata", relativePath)
-		if err := copyFile(schema.Path, newPath); err != nil {
-			return fmt.Errorf("can't backup metadata: %v", err)
+		i++
+		ctx.Infof("%s.%s", table.Database, table.Name)
+		if err := AddTableToBackup(ch, backupName, &table); err != nil {
+			ctx.Errorf("error=%v", err)
+			ctx.Info("error")
+			continue
 		}
 	}
-	log.Println("  Done.")
+	if i == 0 {
+		return fmt.Errorf("no tables for backup")
+	}
 
-	log.Println("Move shadow")
-	backupShadowDir := path.Join(backupPath, "shadow")
-	if err := os.MkdirAll(backupShadowDir, os.ModePerm); err != nil {
-		return err
-	}
-	shadowDir := path.Join(dataPath, "shadow")
-	if err := moveShadow(shadowDir, backupShadowDir); err != nil {
-		return err
-	}
 	if err := RemoveOldBackupsLocal(cfg); err != nil {
 		return err
 	}
-	log.Println("  Done.")
+	ctx.Info("done")
+	return nil
+}
+
+func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *clickhouse.Table) error {
+	ctx := log.WithFields(log.Fields{
+		"backup":    backupName,
+		"operation": "create",
+		"table":     fmt.Sprintf("%s.%s", table.Database, table.Name),
+	})
+	if backupName == "" {
+		return fmt.Errorf("backupName is not defined")
+	}
+	defaultPath, err := ch.GetDefaultPath()
+	if err != nil {
+		return fmt.Errorf("can't get default data path: %v", err)
+	}
+	diskList, err := ch.GetDisks()
+	if err != nil {
+		return fmt.Errorf("can't get clickhouse disk list: %v", err)
+	}
+	relevantBackupPath := path.Join("backup", backupName)
+
+	diskPathList := []string{defaultPath}
+	for _, dataPath := range table.DataPaths {
+		for _, disk := range diskList {
+			if disk.Path == defaultPath {
+				continue
+			}
+			if strings.HasPrefix(dataPath, disk.Path) {
+				diskPathList = append(diskPathList, disk.Path)
+				break
+			}
+		}
+	}
+
+	for _, diskPath := range diskPathList {
+		backupPath := path.Join(diskPath, relevantBackupPath, table.Database, table.Name)
+		if _, err := os.Stat(backupPath); err == nil || !os.IsNotExist(err) {
+			return err
+		}
+		if err := os.Mkdir(backupPath, os.ModePerm); err != nil {
+			return err
+		}
+	}
+	ctx.Debug("create metadata")
+	backupPath := path.Join(defaultPath, "backup", backupName)
+	if err := createMetadata(ch, backupPath, table); err != nil {
+		return err
+	}
+	// backup data
+	if !strings.HasSuffix(table.Engine, "MergeTree") {
+		return nil
+	}
+	ctx.Debug("freeze")
+	if err := ch.FreezeTable(table); err != nil {
+		for _, diskPath := range diskPathList {
+			// Remove failed backup
+			os.RemoveAll(path.Join(diskPath, relevantBackupPath))
+		}
+		return err
+	}
+
+	// log.Printf("Copy part hashes")
+	// if err := CopyPartHashes(cfg, tablePattern, backupName); err != nil {
+	// 	log.Println(err)
+	// }
+
+	// log.Println("Copy metadata")
+	// schemaList, err := parseSchemaPattern(path.Join(dataPath, "metadata"), tablePattern)
+	// if err != nil {
+	// 	return err
+	// }
+	// for _, schema := range schemaList {
+	// 	skip := false
+	// 	for _, filter := range cfg.ClickHouse.SkipTables {
+	// 		if matched, _ := filepath.Match(filter, fmt.Sprintf("%s.%s", schema.Database, schema.Table)); matched {
+	// 			skip = true
+	// 			break
+	// 		}
+	// 	}
+	// 	if skip {
+	// 		continue
+	// 	}
+	// 	relativePath := strings.Trim(strings.TrimPrefix(schema.Path, path.Join(dataPath, "metadata")), "/")
+	// 	newPath := path.Join(backupPath, "metadata", relativePath)
+	// 	if err := copyFile(schema.Path, newPath); err != nil {
+	// 		return fmt.Errorf("can't backup metadata: %v", err)
+	// 	}
+	// }
+	// log.Println("  Done.")
+
+	ctx.Debug("move shadow")
+	for _, diskPath := range diskPathList {
+		backupPath := path.Join(diskPath, "backup", backupName, table.Database, table.Name)
+		backupShadowPath := path.Join(backupPath, "shadow")
+
+		if err := os.MkdirAll(backupShadowPath, os.ModePerm); err != nil {
+			return err
+		}
+		shadowPath := path.Join(diskPath, "shadow")
+		if err := moveShadow(shadowPath, backupShadowPath); err != nil {
+			return err
+		}
+	}
+	// if err := RemoveOldBackupsLocal(cfg); err != nil {
+	// 	return err
+	// }
+	return nil
+}
+
+func createMetadata(ch *clickhouse.ClickHouse, backupPath string, table *clickhouse.Table) error {
+	diskList, err := ch.GetDisks()
+	if err != nil {
+		return fmt.Errorf("can't get clickhouse disk list: %v", err)
+	}
+	diskMap := map[string]string{}
+	for _, disk := range diskList {
+		diskMap[disk.Name] = disk.Path
+	}
+	metadata := &Metadata{
+		Table:    table.Name,
+		Database: table.Database,
+		Query:    table.CreateTableQuery,
+		Disks:    diskMap,
+	}
+	metadataPath := path.Join(backupPath, "metadata")
+	if err := os.Mkdir(metadataPath, 0750); err != nil && !os.IsExist(err) {
+		return err
+	}
+	if err := ch.Chown(metadataPath); err != nil {
+		return err
+	}
+	metadataFile := path.Join(metadataPath, fmt.Sprintf("%s.%s.json", table.Database, table.Name))
+	metadataBody, err := json.MarshalIndent(metadata, "", " ")
+	if err != nil {
+		return fmt.Errorf("can't marshal %s: %v", MetaFileName, err)
+	}
+	if err := ioutil.WriteFile(metadataFile, metadataBody, 0644); err != nil {
+		return fmt.Errorf("can't create %s: %v", MetaFileName, err)
+	}
 	return nil
 }
 
@@ -543,112 +570,11 @@ func Restore(cfg config.Config, backupName string, tablePattern string, schemaOn
 	return nil
 }
 
-// Flashback - restore tables matched by tablePattern from backupName by restroing only modified parts.
-func Flashback(cfg config.Config, backupName string, tablePattern string) error {
-	/*if schemaOnly || (schemaOnly == dataOnly) {
-		err := restoreSchema(config, backupName, tablePattern)
-		if err != nil {
-			return err
-		}
-	}
-	if dataOnly || (schemaOnly == dataOnly) {
-		err := RestoreData(config, backupName, tablePattern)
-		if err != nil {
-			return err
-		}
-	}*/
-
-	err := FlashBackData(cfg, backupName, tablePattern)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// FlashBackData - restore data for tables matched by tablePattern from backupName
-func FlashBackData(cfg config.Config, backupName string, tablePattern string) error {
-	if backupName == "" {
-		PrintLocalBackups(cfg, "all")
-		return fmt.Errorf("select backup for restore")
-	}
-
-	dataPath := getDataPath(cfg)
-
-	if dataPath == "" {
-		return ErrUnknownClickhouseDataPath
-	}
-	ch := &clickhouse.ClickHouse{
-		Config: &cfg.ClickHouse,
-	}
-	if err := ch.Connect(); err != nil {
-		return fmt.Errorf("can't connect to clickhouse: %v", err)
-	}
-	defer ch.Close()
-
-	allBackupTables, err := ch.GetBackupTables(backupName)
-	if err != nil {
-		return err
-	}
-
-	restoreTables := parseTablePatternForRestoreData(allBackupTables, tablePattern)
-
-	liveTables, err := ch.GetTables()
-
-	if err != nil {
-		return err
-	}
-	if len(restoreTables) == 0 {
-		return fmt.Errorf("backup doesn't have tables to restore")
-	}
-
-	missingTables := []string{}
-
-	for _, restoreTable := range restoreTables {
-		found := false
-		for _, liveTable := range liveTables {
-			if (restoreTable.Database == liveTable.Database) && (restoreTable.Name == liveTable.Name) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			missingTables = append(missingTables, fmt.Sprintf("%s.%s", restoreTable.Database, restoreTable.Name))
-
-			for _, newtable := range missingTables {
-				//log.Printf("newtable=%s", newtable)
-				if err := RestoreSchema(cfg, backupName, newtable, true); err != nil {
-					return err
-				}
-			}
-
-			FlashBackData(cfg, backupName, tablePattern)
-			return nil
-		}
-	}
-
-	diffInfos, _ := ch.ComputePartitionsDelta(restoreTables, liveTables)
-	for _, tableDiff := range diffInfos {
-
-		if err := ch.CopyDataDiff(tableDiff); err != nil {
-			return fmt.Errorf("can't restore '%s.%s': %v", tableDiff.BTable.Database, tableDiff.BTable.Name, err)
-		}
-
-		if err := ch.ApplyPartitionsChanges(tableDiff); err != nil {
-			return fmt.Errorf("can't attach partitions for table '%s.%s': %v", tableDiff.BTable.Database, tableDiff.BTable.Name, err)
-		}
-	}
-	return nil
-}
-
 // RestoreData - restore data for tables matched by tablePattern from backupName
 func RestoreData(cfg config.Config, backupName string, tablePattern string) error {
 	if backupName == "" {
 		PrintLocalBackups(cfg, "all")
 		return fmt.Errorf("select backup for restore")
-	}
-	dataPath := getDataPath(cfg)
-	if dataPath == "" {
-		return ErrUnknownClickhouseDataPath
 	}
 	ch := &clickhouse.ClickHouse{
 		Config: &cfg.ClickHouse,
@@ -687,7 +613,7 @@ func RestoreData(cfg config.Config, backupName string, tablePattern string) erro
 		return fmt.Errorf("%s is not created. Restore schema first or create missing tables manually", strings.Join(missingTables, ", "))
 	}
 	for _, table := range restoreTables {
-		if err := ch.CopyData(table); err != nil {
+		if err := ch.CopyData(table, []string{}); err != nil {
 			return fmt.Errorf("can't restore '%s.%s': %v", table.Database, table.Name, err)
 		}
 		if err := ch.AttachPartitions(table); err != nil {
@@ -695,22 +621,6 @@ func RestoreData(cfg config.Config, backupName string, tablePattern string) erro
 		}
 	}
 	return nil
-}
-
-func getDataPath(cfg config.Config) string {
-	if cfg.ClickHouse.DataPath != "" {
-		return cfg.ClickHouse.DataPath
-	}
-	ch := &clickhouse.ClickHouse{Config: &cfg.ClickHouse}
-	if err := ch.Connect(); err != nil {
-		return ""
-	}
-	defer ch.Close()
-	dataPath, err := ch.GetDataPath()
-	if err != nil {
-		return ""
-	}
-	return dataPath
 }
 
 func GetLocalBackup(cfg config.Config, backupName string) error {
@@ -738,18 +648,24 @@ func Upload(cfg config.Config, backupName string, diffFrom string) error {
 		PrintLocalBackups(cfg, "all")
 		return fmt.Errorf("select backup for upload")
 	}
-	dataPath := getDataPath(cfg)
-	if dataPath == "" {
-		return ErrUnknownClickhouseDataPath
+	ch := &clickhouse.ClickHouse{
+		Config: &cfg.ClickHouse,
+	}
+	if err := ch.Connect(); err != nil {
+		return fmt.Errorf("can't connect to clickhouse: %v", err)
+	}
+	defer ch.Close()
+
+	dataPath, err := ch.GetDefaultPath()
+	if err != nil {
+		return err
 	}
 
 	bd, err := storage.NewBackupDestination(cfg)
 	if err != nil {
 		return err
 	}
-
-	err = bd.Connect()
-	if err != nil {
+	if err := bd.Connect(); err != nil {
 		return fmt.Errorf("can't connect to %s: %v", bd.Kind(), err)
 	}
 
@@ -757,7 +673,7 @@ func Upload(cfg config.Config, backupName string, diffFrom string) error {
 		return fmt.Errorf("can't upload: %v", err)
 	}
 	backupPath := path.Join(dataPath, "backup", backupName)
-	log.Printf("Upload backup '%s'", backupName)
+	log.Infof("Upload backup '%s'", backupName)
 	diffFromPath := ""
 	if diffFrom != "" {
 		diffFromPath = path.Join(dataPath, "backup", diffFrom)
@@ -771,7 +687,7 @@ func Upload(cfg config.Config, backupName string, diffFrom string) error {
 	if err := bd.RemoveOldBackups(bd.BackupsToKeep()); err != nil {
 		return fmt.Errorf("can't remove old backups: %v", err)
 	}
-	log.Println("  Done.")
+	log.Infof("  Done.")
 	return nil
 }
 
@@ -784,9 +700,17 @@ func Download(cfg config.Config, backupName string) error {
 		PrintRemoteBackups(cfg, "all")
 		return fmt.Errorf("select backup for download")
 	}
-	dataPath := getDataPath(cfg)
-	if dataPath == "" {
-		return ErrUnknownClickhouseDataPath
+
+	ch := &clickhouse.ClickHouse{
+		Config: &cfg.ClickHouse,
+	}
+	if err := ch.Connect(); err != nil {
+		return fmt.Errorf("can't connect to clickhouse: %v", err)
+	}
+	defer ch.Close()
+	dataPath, err := ch.GetDefaultPath()
+	if err != nil {
+		return err
 	}
 	bd, err := storage.NewBackupDestination(cfg)
 	if err != nil {
@@ -800,24 +724,30 @@ func Download(cfg config.Config, backupName string) error {
 		path.Join(dataPath, "backup", backupName)); err != nil {
 		return err
 	}
-	log.Println("  Done.")
+	log.Info("  Done.")
 	return nil
 }
 
 // Clean - removed all data in shadow folder
 func Clean(cfg config.Config) error {
-	dataPath := getDataPath(cfg)
-	if dataPath == "" {
-		return ErrUnknownClickhouseDataPath
+	ch := &clickhouse.ClickHouse{
+		Config: &cfg.ClickHouse,
 	}
-	shadowDir := path.Join(dataPath, "shadow")
-	if _, err := os.Stat(shadowDir); os.IsNotExist(err) {
-		log.Printf("%s directory does not exist, nothing to do", shadowDir)
-		return nil
+	if err := ch.Connect(); err != nil {
+		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
-	log.Printf("Clean %s", shadowDir)
-	if err := cleanDir(shadowDir); err != nil {
-		return fmt.Errorf("can't clean '%s': %v", shadowDir, err)
+	defer ch.Close()
+
+	disks, err := ch.GetDisks()
+	if err != nil {
+		return err
+	}
+	for _, disk := range disks {
+		shadowDir := path.Join(disk.Path, "shadow")
+		log.Infof("Clean %s", shadowDir)
+		if err := cleanDir(shadowDir); err != nil {
+			return fmt.Errorf("can't clean '%s': %v", shadowDir, err)
+		}
 	}
 	return nil
 }
@@ -831,14 +761,11 @@ func RemoveOldBackupsLocal(cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	dataPath := getDataPath(cfg)
-	if dataPath == "" {
-		return ErrUnknownClickhouseDataPath
-	}
 	backupsToDelete := storage.GetBackupsToDelete(backupList, cfg.General.BackupsToKeepLocal)
 	for _, backup := range backupsToDelete {
-		backupPath := path.Join(dataPath, "backup", backup.Name)
-		os.RemoveAll(backupPath)
+		if err := RemoveBackupLocal(cfg, backup.Name); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -848,16 +775,30 @@ func RemoveBackupLocal(cfg config.Config, backupName string) error {
 	if err != nil {
 		return err
 	}
-	dataPath := getDataPath(cfg)
-	if dataPath == "" {
-		return ErrUnknownClickhouseDataPath
+	ch := &clickhouse.ClickHouse{
+		Config: &cfg.ClickHouse,
 	}
+	if err := ch.Connect(); err != nil {
+		return fmt.Errorf("can't connect to clickhouse: %v", err)
+	}
+	defer ch.Close()
+
+	disks, err := ch.GetDisks()
+	if err != nil {
+		return err
+	}
+
 	for _, backup := range backupList {
 		if backup.Name == backupName {
-			return os.RemoveAll(path.Join(dataPath, "backup", backupName))
+			for _, disk := range disks {
+				err := os.RemoveAll(path.Join(disk.Path, "backup", backupName))
+				if err != nil {
+					return err
+				}
+			}
 		}
 	}
-	return fmt.Errorf("backup '%s' not found", backupName)
+	return nil
 }
 
 func RemoveBackupRemote(cfg config.Config, backupName string) error {

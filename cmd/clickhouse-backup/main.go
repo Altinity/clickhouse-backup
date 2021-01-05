@@ -56,9 +56,14 @@ func main() {
 			Usage:     "Print list of tables",
 			UsageText: "clickhouse-backup tables",
 			Action: func(c *cli.Context) error {
-				return backup.PrintTables(*getConfig(c))
+				return backup.PrintTables(*getConfig(c), c.Bool("a"))
 			},
-			Flags: cliapp.Flags,
+			Flags: append(cliapp.Flags,
+				cli.BoolFlag{
+					Name:   "all, a",
+					Hidden: false,
+				},
+			),
 		},
 		{
 			Name:        "create",

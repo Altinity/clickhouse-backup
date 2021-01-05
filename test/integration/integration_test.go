@@ -198,6 +198,7 @@ var incrementData = []TestDataStruct{
 }
 
 func testRestoreLegacyBackupFormat(t *testing.T) {
+	time.Sleep(time.Second * 5)
 	ch := &TestClickHouse{}
 	r := require.New(t)
 	r.NoError(ch.connect())
@@ -206,7 +207,6 @@ func testRestoreLegacyBackupFormat(t *testing.T) {
 	for _, data := range testData {
 		r.NoError(ch.createTestData(data))
 	}
-	time.Sleep(time.Second * 5)
 	fmt.Println("Create backup")
 	r.NoError(dockerExec("clickhouse-backup", "freeze"))
 	dockerExec("mkdir", "-p", "/var/lib/clickhouse/backup/old_format")
@@ -248,7 +248,7 @@ func testRestoreLegacyBackupFormat(t *testing.T) {
 func TestIntegrationS3(t *testing.T) {
 	r := require.New(t)
 	r.NoError(dockerCP("config-s3.yml", "/etc/clickhouse-backup/config.yml"))
-	testRestoreLegacyBackupFormat(t)
+	// testRestoreLegacyBackupFormat(t)
 	testCommon(t)
 }
 
@@ -266,6 +266,7 @@ func TestIntegrationGCS(t *testing.T) {
 }
 
 func testCommon(t *testing.T) {
+	time.Sleep(time.Second * 5)
 	ch := &TestClickHouse{}
 	r := require.New(t)
 	r.NoError(ch.connect())
@@ -274,7 +275,6 @@ func testCommon(t *testing.T) {
 	for _, data := range testData {
 		r.NoError(ch.createTestData(data))
 	}
-	time.Sleep(time.Second * 5)
 	fmt.Println("Create backup")
 	r.NoError(dockerExec("clickhouse-backup", "create", "test_backup"))
 	fmt.Println("Generate increment test data")
