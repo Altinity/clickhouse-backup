@@ -378,6 +378,7 @@ func CreateBackup(cfg config.Config, backupName, tablePattern string) error {
 		"backup":    backupName,
 		"operation": "create",
 	})
+	log.SetLevel(log.DebugLevel)
 	ch := &clickhouse.ClickHouse{
 		Config: &cfg.ClickHouse,
 	}
@@ -397,15 +398,22 @@ func CreateBackup(cfg config.Config, backupName, tablePattern string) error {
 			continue
 		}
 		i++
-		ctx.Infof("%s.%s", table.Database, table.Name)
-		if err := AddTableToBackup(ch, backupName, &table); err != nil {
-			ctx.Errorf("error=%v", err)
-			ctx.Info("error")
-			continue
-		}
 	}
 	if i == 0 {
 		return fmt.Errorf("no tables for backup")
+	}
+
+
+
+	for _, table := range tables {
+		if table.Skip {
+			continue
+		}
+		ctx.Infof("%s.%s", table.Database, table.Name)
+		if err := AddTableToBackup(ch, backupName, &table); err != nil {
+			ctx.Errorf("error=\"%v\"", err)
+			continue
+		}
 	}
 
 	if err := RemoveOldBackupsLocal(cfg); err != nil {
@@ -538,19 +546,26 @@ func createMetadata(ch *clickhouse.ClickHouse, backupPath string, table *clickho
 		Disks:    diskMap,
 	}
 	metadataPath := path.Join(backupPath, "metadata")
-	if err := os.Mkdir(metadataPath, 0750); err != nil && !os.IsExist(err) {
+	if err := ch.Mkdir(metadataPath); err != nil && !os.IsExist(err) {
 		return err
 	}
-	if err := ch.Chown(metadataPath); err != nil {
+	metadataDatabasePath := path.Join(metadataPath, table.Database)
+	if err := os.Mkdir(metadataDatabasePath, 0750); err != nil && !os.IsExist(err) {
 		return err
 	}
-	metadataFile := path.Join(metadataPath, fmt.Sprintf("%s.%s.json", table.Database, table.Name))
+	if err := ch.Chown(metadataDatabasePath); err != nil {
+		return err
+	}
+	metadataFile := path.Join(metadataDatabasePath, fmt.Sprintf("%s.json", table.Name))
 	metadataBody, err := json.MarshalIndent(metadata, "", " ")
 	if err != nil {
 		return fmt.Errorf("can't marshal %s: %v", MetaFileName, err)
 	}
 	if err := ioutil.WriteFile(metadataFile, metadataBody, 0644); err != nil {
 		return fmt.Errorf("can't create %s: %v", MetaFileName, err)
+	}
+	if err := ch.Chown(metadataFile); err != nil {
+		return err
 	}
 	return nil
 }

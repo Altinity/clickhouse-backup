@@ -414,6 +414,16 @@ func (ch *ClickHouse) Chown(filename string) error {
 	return os.Chown(filename, *ch.uid, *ch.gid)
 }
 
+func (ch *ClickHouse) Mkdir(name string) error {
+	if err := os.Mkdir(name, 0750); err != nil && !os.IsExist(err) {
+		return err
+	}
+	if err := ch.Chown(name); err != nil {
+		return err
+	}
+	return nil
+}
+
 // CopyData - copy partitions for specific table to detached folder
 func (ch *ClickHouse) CopyData(table BackupTable, diskPattern []string) error {
 	// TODO: проверить если диск есть в бэкапе но нет в кликхаусе
