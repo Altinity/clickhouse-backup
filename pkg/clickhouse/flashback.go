@@ -1,37 +1,60 @@
 package clickhouse
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
-	"fmt"
+
+	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 )
+
 // GetPartitions - return slice of all partitions for a table
-func (ch *ClickHouse) GetPartitions(table Table) ([]Partition, error) {
-	partitions := make([]Partition, 0)
-	err := ch.conn.Select(&partitions, fmt.Sprintf("select partition, name, path, active, hash_of_all_files,hash_of_uncompressed_files,uncompressed_hash_of_compressed_files from system.parts where database='%s' and table='%s';", table.Database, table.Name))
+func (ch *ClickHouse) GetPartitions(table Table) (map[string][]metadata.Part, error) {
+	disks, err := ch.GetDisks()
 	if err != nil {
 		return nil, err
 	}
-
-	return partitions, nil
+	result := map[string][]metadata.Part{}
+	for _, disk := range disks {
+		partitions := make([]partition, 0)
+		err := ch.conn.Select(&partitions, fmt.Sprintf("select partition, partition_id, name, path, hash_of_all_files, hash_of_uncompressed_files, uncompressed_hash_of_compressed_files from system.parts where database='%s' and table='%s' and disk_name='%s' and active=1;", table.Database, table.Name, disk.Name))
+		if err != nil {
+			return nil, err
+		}
+		if len(partitions) > 0 {
+			parts := make([]metadata.Part,len(partitions))
+			for i := range partitions {
+				parts[i] = metadata.Part{
+					Partition: partitions[i].Partition,
+					Name: partitions[i].Name,
+					Path: partitions[i].Path,
+					HashOfAllFiles: partitions[i].HashOfAllFiles,
+					HashOfUncompressedFiles: partitions[i].HashOfUncompressedFiles,
+					UncompressedHashOfCompressedFiles: partitions[i].UncompressedHashOfCompressedFiles,
+					PartitionID: partitions[i].PartitionID,
+				}
+			}
+			result[disk.Name] = parts
+		}
+	}
+	return result, nil
 }
 
 // ComputePartitionsDelta - computes the data partitions to be added and removed between live and backup tables
-func (ch *ClickHouse) ComputePartitionsDelta(restoreTables []BackupTable, liveTables []Table) ([]PartDiff, error) {
+func (ch *ClickHouse) ComputePartitionsDelta(restoreTables []metadata.TableMetadata, liveTables []Table) ([]PartDiff, error) {
 	var ftables []PartDiff
-	var partitions []Partition
 	log.Printf("Compute partitions discrepancies")
 	for _, rtable := range restoreTables {
-		var partsToAdd []Partition
-		var partsToRemove []Partition
-		for _, rpartition := range rtable.Partitions {
+		var partsToAdd []metadata.Part
+		var partsToRemove []metadata.Part
+		for _, rpartition := range rtable.Parts["default"] {
 			bfound := false
 			for _, liveTable := range liveTables {
-				if liveTable.Database == rtable.Database && liveTable.Name == rtable.Name {
+				if liveTable.Database == rtable.Database && liveTable.Name == rtable.Table {
 					livePartitions, _ := ch.GetPartitions(liveTable)
-					for _, livePartition := range livePartitions {
+					for _, livePartition := range livePartitions["default"] {
 						if livePartition.HashOfAllFiles == rpartition.HashOfAllFiles && livePartition.HashOfUncompressedFiles == rpartition.HashOfUncompressedFiles && livePartition.UncompressedHashOfCompressedFiles == rpartition.UncompressedHashOfCompressedFiles {
 							bfound = true
 							break
@@ -40,16 +63,16 @@ func (ch *ClickHouse) ComputePartitionsDelta(restoreTables []BackupTable, liveTa
 				}
 			}
 			if !bfound {
-				partsToAdd = append(partsToAdd, Partition{Name: rpartition.Name, Path: rpartition.Path})
+				partsToAdd = append(partsToAdd, metadata.Part{Name: rpartition.Name, Path: rpartition.Path})
 			}
 		}
 
 		for _, ltable := range liveTables {
-			if ltable.Name == rtable.Name {
-				partitions, _ = ch.GetPartitions(ltable)
-				for _, livepart := range partitions {
+			if ltable.Name == rtable.Table {
+				partitions, _ := ch.GetPartitions(ltable)
+				for _, livepart := range partitions["default"] {
 					bfound := false
-					for _, backuppart := range rtable.Partitions {
+					for _, backuppart := range rtable.Parts["default"] {
 						if livepart.HashOfAllFiles == backuppart.HashOfAllFiles && livepart.HashOfUncompressedFiles == backuppart.HashOfUncompressedFiles && livepart.UncompressedHashOfCompressedFiles == backuppart.UncompressedHashOfCompressedFiles {
 							bfound = true
 							break
@@ -61,8 +84,8 @@ func (ch *ClickHouse) ComputePartitionsDelta(restoreTables []BackupTable, liveTa
 				}
 			}
 		}
-		log.Printf("[%s.%s] Backup data parts to attach : %v ", rtable.Database, rtable.Name, partsToAdd)
-		log.Printf("[%s.%s] Live data parts to detach : %v ", rtable.Database, rtable.Name, partsToRemove)
+		log.Printf("[%s.%s] Backup data parts to attach : %v ", rtable.Database, rtable.Table, partsToAdd)
+		log.Printf("[%s.%s] Live data parts to detach : %v ", rtable.Database, rtable.Table, partsToRemove)
 		ftables = append(ftables, PartDiff{rtable, partsToAdd, partsToRemove})
 	}
 	log.Printf("Compute partitions discrepancies. Done")
@@ -72,12 +95,12 @@ func (ch *ClickHouse) ComputePartitionsDelta(restoreTables []BackupTable, liveTa
 
 // CopyDataDiff - copy only partitions that will be attached to "detached" folder
 func (ch *ClickHouse) CopyDataDiff(diff PartDiff) error {
-	log.Printf("Prepare data for restoring '%s.%s'", diff.BTable.Database, diff.BTable.Name)
+	log.Printf("Prepare data for restoring '%s.%s'", diff.BTable.Database, diff.BTable.Table)
 	dataPath, err := ch.GetDefaultPath()
 	if err != nil {
 		return err
 	}
-	detachedParentDir := filepath.Join(dataPath, "data", TablePathEncode(diff.BTable.Database), TablePathEncode(diff.BTable.Name), "detached")
+	detachedParentDir := filepath.Join(dataPath, "data", TablePathEncode(diff.BTable.Database), TablePathEncode(diff.BTable.Table), "detached")
 	os.MkdirAll(detachedParentDir, 0750)
 	ch.Chown(detachedParentDir)
 
@@ -120,7 +143,7 @@ func (ch *ClickHouse) CopyDataDiff(diff PartDiff) error {
 			return fmt.Errorf("error during filepath.Walk for partition '%s': %v", partition.Path, err)
 		}
 	}
-	log.Printf("Prepare data for restoring '%s.%s'. DONE", diff.BTable.Database, diff.BTable.Name)
+	log.Printf("Prepare data for restoring '%s.%s'. DONE", diff.BTable.Database, diff.BTable.Table)
 	return nil
 }
 
@@ -132,7 +155,7 @@ func (ch *ClickHouse) ApplyPartitionsChanges(table PartDiff) error {
 		return err
 	}
 	for _, partition := range table.PartitionsAdd {
-		query = fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PART '%s'", table.BTable.Database, table.BTable.Name, partition.Name)
+		query = fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PART '%s'", table.BTable.Database, table.BTable.Table, partition.Name)
 		log.Println(query)
 		if _, err := ch.conn.Exec(query); err != nil {
 			return err
@@ -157,7 +180,7 @@ func (ch *ClickHouse) ApplyPartitionsChanges(table PartDiff) error {
 			/*if partname == "all" {
 				query = fmt.Sprintf("DETACH TABLE `%s`.`%s`", table.btable.Database, table.btable.Name)
 			} else {*/
-			query = fmt.Sprintf("ALTER TABLE `%s`.`%s` DETACH PARTITION %s", table.BTable.Database, table.BTable.Name, partname)
+			query = fmt.Sprintf("ALTER TABLE `%s`.`%s` DETACH PARTITION %s", table.BTable.Database, table.BTable.Table, partname)
 			//}
 			log.Println(query)
 			if _, err := ch.conn.Exec(query); err != nil {
@@ -165,11 +188,11 @@ func (ch *ClickHouse) ApplyPartitionsChanges(table PartDiff) error {
 			}
 		}
 
-		detachedParentDir := filepath.Join(dataPath, "data", TablePathEncode(table.BTable.Database), TablePathEncode(table.BTable.Name), "detached")
+		detachedParentDir := filepath.Join(dataPath, "data", TablePathEncode(table.BTable.Database), TablePathEncode(table.BTable.Table), "detached")
 
 		for _, partition := range table.PartitionsRemove {
 			detachedPath := filepath.Join(detachedParentDir, partition.Name)
-			log.Printf("[%s.%s] Removing %s", table.BTable.Database, table.BTable.Name, detachedPath)
+			log.Printf("[%s.%s] Removing %s", table.BTable.Database, table.BTable.Table, detachedPath)
 			e := os.RemoveAll(detachedPath)
 			if e != nil {
 				return e
@@ -178,9 +201,9 @@ func (ch *ClickHouse) ApplyPartitionsChanges(table PartDiff) error {
 
 		for partname := range partList {
 			if partname == "all" {
-				query = fmt.Sprintf("ATTACH TABLE `%s`.`%s`", table.BTable.Database, table.BTable.Name)
+				query = fmt.Sprintf("ATTACH TABLE `%s`.`%s`", table.BTable.Database, table.BTable.Table)
 			} else {
-				query = fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PARTITION %s", table.BTable.Database, table.BTable.Name, partname)
+				query = fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PARTITION %s", table.BTable.Database, table.BTable.Table, partname)
 			}
 			log.Println(query)
 			if _, err := ch.conn.Exec(query); err != nil {

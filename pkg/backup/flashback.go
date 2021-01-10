@@ -8,15 +8,14 @@ import (
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 
 	"github.com/apex/log"
 )
 
 // CopyPartHashes - Copy data parts hashes by tablePattern
 func CopyPartHashes(cfg config.Config, tablePattern string, backupName string) error {
-	var allparts map[string][]clickhouse.Partition
-	allparts = make(map[string][]clickhouse.Partition)
-
+	allparts := map[string][]metadata.Part{}
 	ch := &clickhouse.ClickHouse{
 		Config: &cfg.ClickHouse,
 	}
@@ -48,7 +47,7 @@ func CopyPartHashes(cfg config.Config, tablePattern string, backupName string) e
 		if err != nil {
 			return err
 		}
-		allparts[table.Database+"."+table.Name] = parts
+		allparts[table.Database+"."+table.Name] = parts["default"]
 
 	}
 	log.Debug("Writing part hashes")
@@ -97,7 +96,7 @@ func FlashBackData(cfg config.Config, backupName string, tablePattern string) er
 	}
 	defer ch.Close()
 
-	allBackupTables, err := ch.GetBackupTables(backupName)
+	allBackupTables, err := ch.GetBackupTablesLegacy(backupName)
 	if err != nil {
 		return err
 	}
@@ -118,13 +117,13 @@ func FlashBackData(cfg config.Config, backupName string, tablePattern string) er
 	for _, restoreTable := range restoreTables {
 		found := false
 		for _, liveTable := range liveTables {
-			if (restoreTable.Database == liveTable.Database) && (restoreTable.Name == liveTable.Name) {
+			if (restoreTable.Database == liveTable.Database) && (restoreTable.Table == liveTable.Name) {
 				found = true
 				break
 			}
 		}
 		if !found {
-			missingTables = append(missingTables, fmt.Sprintf("%s.%s", restoreTable.Database, restoreTable.Name))
+			missingTables = append(missingTables, fmt.Sprintf("%s.%s", restoreTable.Database, restoreTable.Table))
 
 			for _, newtable := range missingTables {
 				//log.Printf("newtable=%s", newtable)
@@ -142,11 +141,11 @@ func FlashBackData(cfg config.Config, backupName string, tablePattern string) er
 	for _, tableDiff := range diffInfos {
 
 		if err := ch.CopyDataDiff(tableDiff); err != nil {
-			return fmt.Errorf("can't restore '%s.%s': %v", tableDiff.BTable.Database, tableDiff.BTable.Name, err)
+			return fmt.Errorf("can't restore '%s.%s': %v", tableDiff.BTable.Database, tableDiff.BTable.Table, err)
 		}
 
 		if err := ch.ApplyPartitionsChanges(tableDiff); err != nil {
-			return fmt.Errorf("can't attach partitions for table '%s.%s': %v", tableDiff.BTable.Database, tableDiff.BTable.Name, err)
+			return fmt.Errorf("can't attach partitions for table '%s.%s': %v", tableDiff.BTable.Database, tableDiff.BTable.Table, err)
 		}
 	}
 	return nil

@@ -1,32 +1,40 @@
 package backup
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 )
 
 func parseSchemaPattern(metadataPath string, tablePattern string) (RestoreTables, error) {
-	regularTables := RestoreTables{}
-	distributedTables := RestoreTables{}
-	viewTables := RestoreTables{}
+	result := RestoreTables{}
 	tablePatterns := []string{"*"}
 
-	//log.Printf("tp1 = %s", tablePattern)
 	if tablePattern != "" {
 		tablePatterns = strings.Split(tablePattern, ",")
 	}
 	if err := filepath.Walk(metadataPath, func(filePath string, info os.FileInfo, err error) error {
-		if !strings.HasSuffix(filePath, ".sql") || !info.Mode().IsRegular() {
+		if !strings.HasSuffix(filePath, ".sql") &&
+			!strings.HasSuffix(filePath, ".json") &&
+			!info.Mode().IsRegular() {
 			return nil
 		}
 		p := filepath.ToSlash(filePath)
-		//log.Printf("p1 = %s", p)
-		p = strings.Trim(strings.TrimPrefix(strings.TrimSuffix(p, ".sql"), metadataPath), "/")
-		//log.Printf("p2 = %s", p)
+		legacy := false
+		if strings.HasSuffix(p, ".sql") {
+			legacy = true
+			p = strings.TrimSuffix(p, ".sql")
+		} else {
+			p = strings.TrimSuffix(p, ".json")
+		}
+		p = strings.Trim(strings.TrimPrefix(p, metadataPath), "/")
 		parts := strings.Split(p, "/")
 		if len(parts) != 2 {
 			return nil
@@ -35,42 +43,62 @@ func parseSchemaPattern(metadataPath string, tablePattern string) (RestoreTables
 		table, _ := url.PathUnescape(parts[1])
 		tableName := fmt.Sprintf("%s.%s", database, table)
 		for _, p := range tablePatterns {
-			//log.Printf("p3 = %s", p)
-			if matched, _ := filepath.Match(p, tableName); matched {
-				data, err := ioutil.ReadFile(filePath)
-				if err != nil {
-					return err
-				}
-				restoreTable := RestoreTable{
+			if matched, _ := filepath.Match(p, tableName); !matched {
+				continue
+			}
+			data, err := ioutil.ReadFile(filePath)
+			if err != nil {
+				return err
+			}
+			if legacy {
+				result = addRestoreTable(result, metadata.TableMetadata{
 					Database: database,
 					Table:    table,
 					Query:    strings.Replace(string(data), "ATTACH", "CREATE", 1),
-					Path:     filePath,
-				}
-				if strings.Contains(restoreTable.Query, "ENGINE = Distributed") {
-					distributedTables = addRestoreTable(distributedTables, restoreTable)
-					return nil
-				}
-				if strings.HasPrefix(restoreTable.Query, "CREATE VIEW") ||
-					strings.HasPrefix(restoreTable.Query, "CREATE MATERIALIZED VIEW") {
-					viewTables = addRestoreTable(viewTables, restoreTable)
-					return nil
-				}
-				regularTables = addRestoreTable(regularTables, restoreTable)
+					// Path:     filePath,
+				})
 				return nil
 			}
-			/*else {
-				log.Printf("No match %s %s", p, tableName)
-			}*/
+			var t metadata.TableMetadata
+			if err := json.Unmarshal(data, &t); err != nil {
+				return err
+			}
+			result = addRestoreTable(result, t)
+			return nil
 		}
 		return nil
 	}); err != nil {
 		return nil, err
 	}
-	regularTables.Sort()
-	distributedTables.Sort()
-	viewTables.Sort()
-	result := append(regularTables, distributedTables...)
-	result = append(result, viewTables...)
+	result.Sort()
 	return result, nil
+}
+
+func getOrderByEngine(query string) int64 {
+	if strings.Contains(query, "ENGINE = Distributed") {
+		return 1
+	}
+	if strings.HasPrefix(query, "CREATE VIEW") ||
+		strings.HasPrefix(query, "CREATE MATERIALIZED VIEW") {
+		return 2
+	}
+	return 0
+}
+
+func parseTablePatternForRestoreData(tables map[string]metadata.TableMetadata, tablePattern string) clickhouse.BackupTables {
+	tablePatterns := []string{"*"}
+	if tablePattern != "" {
+		tablePatterns = strings.Split(tablePattern, ",")
+	}
+	result := clickhouse.BackupTables{}
+	for _, t := range tables {
+		for _, pattern := range tablePatterns {
+			tableName := fmt.Sprintf("%s.%s", t.Database, t.Table)
+			if matched, _ := filepath.Match(pattern, tableName); matched {
+				result = addBackupTable(result, t)
+			}
+		}
+	}
+	result.Sort()
+	return result
 }
