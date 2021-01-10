@@ -116,6 +116,19 @@ var testData = []TestDataStruct{
 		},
 		Fields:  []string{"order_id", "order_time", "amount"},
 		OrderBy: "order_id",
+	}, {
+		Database: dbName,
+		Table:    "jbod",
+		Schema:   "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 'jbod'",
+		Rows: func() []map[string]interface{} {
+			result := []map[string]interface{}{}
+			for i := 0; i < 100; i++ {
+				result = append(result, map[string]interface{}{"id": uint64(i)})
+			}
+			return result
+		}(),
+		Fields:  []string{"id"},
+		OrderBy: "id",
 	},
 }
 
@@ -194,6 +207,19 @@ var incrementData = []TestDataStruct{
 		},
 		Fields:  []string{"order_id", "order_time", "amount"},
 		OrderBy: "order_id",
+	}, {
+		Database: dbName,
+		Table:    "jbod",
+		Schema:   "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 'jbod'",
+		Rows: func() []map[string]interface{} {
+			result := []map[string]interface{}{}
+			for i := 100; i < 200; i++ {
+				result = append(result, map[string]interface{}{"id": uint64(i)})
+			}
+			return result
+		}(),
+		Fields:  []string{"id"},
+		OrderBy: "id",
 	},
 }
 
