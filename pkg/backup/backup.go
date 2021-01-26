@@ -381,8 +381,14 @@ func Freeze(cfg config.Config, tablePattern string) error {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("can't read %s directory: %v", shadowPath, err)
 		}
-	} else if len(files) > 0 {
-		return fmt.Errorf("'%s' is not empty, execute 'clean' command first", shadowPath)
+	}
+	if len(files) > 0 {
+		if !cfg.ClickHouse.AutoCleanShadow {
+			return fmt.Errorf("'%s' is not empty, execute 'clean' command first", shadowPath)
+		}
+		if err := Clean(cfg); err != nil {
+			return err
+		}
 	}
 
 	allTables, err := ch.GetTables()

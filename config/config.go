@@ -114,6 +114,7 @@ type ClickHouseConfig struct {
 	Secure               bool     `yaml:"secure" envconfig:"CLICKHOUSE_SECURE"`
 	SkipVerify           bool     `yaml:"skip_verify" envconfig:"CLICKHOUSE_SKIP_VERIFY"`
 	SyncReplicatedTables bool     `yaml:"sync_replicated_tables" envconfig:"CLICKHOUSE_SYNC_REPLICATED_TABLES"`
+	AutoCleanShadow      bool     `yaml:"auto_clean_shadow" envconfig:"CLICKHOUSE_AUTO_CLEAN_SHADOW"`
 }
 
 type APIConfig struct {
@@ -205,7 +206,9 @@ func DefaultConfig() *Config {
 			SkipTables: []string{
 				"system.*",
 			},
-			Timeout: "5m",
+			Timeout:              "5m",
+			SyncReplicatedTables: true,
+			AutoCleanShadow:      true,
 		},
 		AzureBlob: AzureBlobConfig{
 			EndpointSuffix:    "core.windows.net",
