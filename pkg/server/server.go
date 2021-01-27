@@ -254,7 +254,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch args[0] {
-		case "create", "restore", "upload", "download":
+		case "create", "restore", "upload", "download", "create_remote", "restore_remote":
 			if api.status.inProgress() {
 				log.Println(ErrAPILocked)
 				writeError(w, http.StatusLocked, row.Command, ErrAPILocked)

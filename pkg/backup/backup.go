@@ -635,11 +635,9 @@ func FlashBackData(cfg config.Config, backupName string, tablePattern string) er
 
 	diffInfos, _ := ch.ComputePartitionsDelta(restoreTables, liveTables)
 	for _, tableDiff := range diffInfos {
-
 		if err := ch.CopyDataDiff(tableDiff); err != nil {
 			return fmt.Errorf("can't restore '%s.%s': %v", tableDiff.BTable.Database, tableDiff.BTable.Name, err)
 		}
-
 		if err := ch.ApplyPartitionsChanges(tableDiff); err != nil {
 			return fmt.Errorf("can't attach partitions for table '%s.%s': %v", tableDiff.BTable.Database, tableDiff.BTable.Name, err)
 		}
@@ -891,4 +889,27 @@ func RemoveBackupRemote(cfg config.Config, backupName string) error {
 		}
 	}
 	return fmt.Errorf("backup '%s' not found on remote storage", backupName)
+}
+
+func CreateToRemote(cfg config.Config, backupName, tablePattern, diffFrom string, removeBackup bool) error {
+	if backupName == "" {
+		backupName = NewBackupName()
+	}
+	if err := CreateBackup(cfg, backupName, tablePattern); err != nil {
+		return err
+	}
+	if err := Upload(cfg, backupName, diffFrom); err != nil {
+		return err
+	}
+	if removeBackup {
+		return RemoveBackupLocal(cfg, backupName)
+	}
+	return nil
+}
+
+func RestoreFromRemote(cfg config.Config, backupName string, tablePattern string, schemaOnly bool, dataOnly bool, dropTable bool) error {
+	if err := Download(cfg, backupName); err != nil {
+		return err
+	}
+	return Restore(cfg, backupName, tablePattern, schemaOnly, dataOnly, dropTable)
 }
