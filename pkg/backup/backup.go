@@ -439,7 +439,6 @@ func CopyPartHashes(cfg config.Config, tablePattern string, backupName string) e
 	}
 	for _, table := range backupTables {
 		if table.Skip {
-			log.Printf("Skip '%s.%s'", table.Database, table.Name)
 			continue
 		}
 
@@ -448,9 +447,7 @@ func CopyPartHashes(cfg config.Config, tablePattern string, backupName string) e
 			return err
 		}
 		allparts[table.Database+"."+table.Name] = parts
-
 	}
-	log.Println("Writing part hashes")
 	byteArray, err := json.MarshalIndent(allparts, "", " ")
 	if err != nil {
 		log.Fatal(err)
@@ -480,25 +477,11 @@ func CreateBackup(cfg config.Config, backupName, tablePattern string) error {
 	if _, err := os.Stat(backupPath); err == nil || !os.IsNotExist(err) {
 		return fmt.Errorf("can't create backup '%s' already exists", backupPath)
 	}
-	if err := os.MkdirAll(backupPath, os.ModePerm); err != nil {
-		return fmt.Errorf("can't create backup: %v", err)
-	}
-
-	log.Printf("Create backup '%s'", backupName)
-	if err := Freeze(cfg, tablePattern); err != nil {
-		return err
-	}
-
-	log.Printf("Copy part hashes")
-	if err := CopyPartHashes(cfg, tablePattern, backupName); err != nil {
-		log.Println(err)
-	}
-
-	log.Println("Copy metadata")
 	schemaList, err := parseSchemaPattern(path.Join(dataPath, "metadata"), tablePattern)
 	if err != nil {
 		return err
 	}
+	schemaForBackup := []RestoreTable{}
 	for _, schema := range schemaList {
 		skip := false
 		for _, filter := range cfg.ClickHouse.SkipTables {
@@ -510,6 +493,17 @@ func CreateBackup(cfg config.Config, backupName, tablePattern string) error {
 		if skip {
 			continue
 		}
+		schemaForBackup = append(schemaForBackup, schema)
+	}
+	if len(schemaForBackup) == 0 {
+		return fmt.Errorf("no tables for backup, create something first or check 'skip_tables'")
+	}
+	log.Printf("Create backup '%s'", backupName)
+	if err := os.MkdirAll(backupPath, os.ModePerm); err != nil {
+		return fmt.Errorf("can't create backup: %v", err)
+	}
+	log.Println("Copy metadata")
+	for _, schema := range schemaForBackup {
 		relativePath := strings.Trim(strings.TrimPrefix(schema.Path, path.Join(dataPath, "metadata")), "/")
 		newPath := path.Join(backupPath, "metadata", relativePath)
 		if err := copyFile(schema.Path, newPath); err != nil {
@@ -518,6 +512,13 @@ func CreateBackup(cfg config.Config, backupName, tablePattern string) error {
 	}
 	log.Println("  Done.")
 
+	if err := Freeze(cfg, tablePattern); err != nil {
+		return err
+	}
+	// log.Printf("Copy part hashes")
+	if err := CopyPartHashes(cfg, tablePattern, backupName); err != nil {
+		log.Println(err)
+	}
 	log.Println("Move shadow")
 	backupShadowDir := path.Join(backupPath, "shadow")
 	if err := os.MkdirAll(backupShadowDir, os.ModePerm); err != nil {
