@@ -378,7 +378,7 @@ func createMetadata(ch *clickhouse.ClickHouse, backupPath string, table *clickho
 		Query:      table.CreateTableQuery,
 		Disks:      clickhouse.GetDisksByPaths(diskList, table.DataPaths),
 		UUID:       table.UUID,
-		TotalBytes: table.TotalBytes,
+		TotalBytes: table.TotalBytes.Int64,
 		Parts:      parts,
 	}
 	metadataPath := path.Join(backupPath, "metadata")

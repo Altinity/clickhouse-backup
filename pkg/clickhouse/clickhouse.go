@@ -1,6 +1,7 @@
 package clickhouse
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"net/url"
@@ -39,9 +40,9 @@ type Table struct {
 	StoragePolicy        string   `db:"storage_policy"`
 	CreateTableQuery     string   `db:"create_table_query"`
 	Skip                 bool
-	TotalBytes           int64    `db:"total_bytes,omitempty"`
-	DependencesTable     []string `db:"dependencies_table"`
-	DependenciesDatabase []string `db:"dependencies_database"`
+	TotalBytes           sql.NullInt64 `db:"total_bytes,omitempty"`
+	DependencesTable     []string      `db:"dependencies_table"`
+	DependenciesDatabase []string      `db:"dependencies_database"`
 }
 
 type Disk struct {

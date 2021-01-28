@@ -231,6 +231,9 @@ func testRestoreLegacyBackupFormat(t *testing.T) {
 	r.NoError(ch.dropDatabase(dbName))
 	fmt.Println("Generate test data")
 	for _, data := range testData {
+		if (os.Getenv("COMPOSE_FILE") == "docker-compose.yml") && (data.Table == "jbod") {
+			continue
+		}
 		r.NoError(ch.createTestData(data))
 	}
 	fmt.Println("Create backup")
@@ -264,6 +267,9 @@ func testRestoreLegacyBackupFormat(t *testing.T) {
 
 	fmt.Println("Check data")
 	for i := range testData {
+		if (os.Getenv("COMPOSE_FILE") == "docker-compose.yml") && (testData[i].Table == "jbod") {
+			continue
+		}
 		r.NoError(ch.checkData(t, testData[i]))
 	}
 	fmt.Println("Clean")
@@ -299,12 +305,18 @@ func testCommon(t *testing.T) {
 	r.NoError(ch.dropDatabase(dbName))
 	fmt.Println("Generate test data")
 	for _, data := range testData {
+		if (os.Getenv("COMPOSE_FILE") == "docker-compose.yml") && (data.Table == "jbod") {
+			continue
+		}
 		r.NoError(ch.createTestData(data))
 	}
 	fmt.Println("Create backup")
 	r.NoError(dockerExec("clickhouse-backup", "create", "test_backup"))
 	fmt.Println("Generate increment test data")
 	for _, data := range incrementData {
+		if (os.Getenv("COMPOSE_FILE") == "docker-compose.yml") && (data.Table == "jbod") {
+			continue
+		}
 		r.NoError(ch.createTestData(data))
 	}
 	time.Sleep(time.Second * 5)
@@ -333,6 +345,9 @@ func testCommon(t *testing.T) {
 
 	fmt.Println("Check data")
 	for i := range testData {
+		if (os.Getenv("COMPOSE_FILE") == "docker-compose.yml") && (testData[i].Table == "jbod") {
+			continue
+		}
 		r.NoError(ch.checkData(t, testData[i]))
 	}
 	// test increment
@@ -352,6 +367,9 @@ func testCommon(t *testing.T) {
 
 	fmt.Println("Check increment data")
 	for i := range testData {
+		if (os.Getenv("COMPOSE_FILE") == "docker-compose.yml") && (testData[i].Table == "jbod") {
+			continue
+		}
 		ti := testData[i]
 		ti.Rows = append(ti.Rows, incrementData[i].Rows...)
 		r.NoError(ch.checkData(t, ti))
