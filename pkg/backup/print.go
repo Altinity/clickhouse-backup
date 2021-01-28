@@ -31,7 +31,7 @@ func printBackups(backupList []storage.Backup, format string, printSize bool) er
 		}
 		for _, backup := range backupList {
 			if printSize {
-				fmt.Printf("- '%s'\t%s\t(created at %s)\n", backup.Name, utils.FormatBytes(&backup.Size), backup.Date.Format("02-01-2006 15:04:05"))
+				fmt.Printf("- '%s'\t%s\t(created at %s)\n", backup.Name, utils.FormatBytes(backup.Size), backup.Date.Format("02-01-2006 15:04:05"))
 			} else {
 				fmt.Printf("- '%s'\t(created at %s)\n", backup.Name, backup.Date.Format("02-01-2006 15:04:05"))
 			}

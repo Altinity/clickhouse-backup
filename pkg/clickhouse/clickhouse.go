@@ -30,18 +30,18 @@ type ClickHouse struct {
 
 // Table - ClickHouse table struct
 type Table struct {
-	Database             string   `db:"database" json:"database"`
-	Name                 string   `db:"name" json:"table"`
-	DataPaths            []string `db:"data_paths" json:"data_paths"`
-	MetadataPath         string   `db:"metadata_path" json:"metadata_path"`
-	Engine               string   `db:"engine" json:"engine"`
-	UUID                 string   `db:"uuid" json:"uuid"`
-	StoragePolicy        string   `db:"storage_policy" json:"storage_policy"`
-	CreateTableQuery     string   `db:"create_table_query" json:"create_table_query"`
-	Skip                 bool     `json:"skip"`
-	TotalBytes           *int64   `db:"total_bytes" json:"total_bytes"`
-	DependencesTable     string   `db:"dependencies_table" json:"dependencies_table"`
-	DependenciesDatabase string   `db:"dependencies_database" json:"dependencies_database"`
+	Database             string   `db:"database"`
+	Name                 string   `db:"name"`
+	DataPaths            []string `db:"data_paths"`
+	MetadataPath         string   `db:"metadata_path"`
+	Engine               string   `db:"engine"`
+	UUID                 string   `db:"uuid,omitempty"`
+	StoragePolicy        string   `db:"storage_policy"`
+	CreateTableQuery     string   `db:"create_table_query"`
+	Skip                 bool
+	TotalBytes           int64    `db:"total_bytes,omitempty"`
+	DependencesTable     []string `db:"dependencies_table"`
+	DependenciesDatabase []string `db:"dependencies_database"`
 }
 
 type Disk struct {
@@ -172,8 +172,8 @@ func (ch *ClickHouse) getDataPathFromSystemSettings() ([]Disk, error) {
 
 func (ch *ClickHouse) getDataPathFromSystemDisks() ([]Disk, error) {
 	var result []Disk
-	query := "SELECT name, path, type FROM system.disks;"
-	err := ch.conn.Select(&result, query)
+	query := "SELECT * FROM system.disks;"
+	err := ch.softSelect(&result, query)
 	return result, err
 }
 
@@ -185,8 +185,7 @@ func (ch *ClickHouse) Close() error {
 // GetTables - return slice of all tables suitable for backup
 func (ch *ClickHouse) GetTables() ([]Table, error) {
 	tables := make([]Table, 0)
-	err := ch.conn.Select(&tables, "SELECT database, name, data_paths, metadata_path, engine, uuid, storage_policy, create_table_query, total_bytes FROM system.tables WHERE is_temporary = 0;")
-	if err != nil {
+	if err := ch.softSelect(&tables, "SELECT * FROM system.tables WHERE is_temporary = 0;"); err != nil {
 		return nil, err
 	}
 	for i, t := range tables {
@@ -201,10 +200,10 @@ func (ch *ClickHouse) GetTables() ([]Table, error) {
 	return tables, nil
 }
 
-// GetTables - return slice of all tables suitable for backup
+// GetTable - return table
 func (ch *ClickHouse) GetTable(database, name string) (*Table, error) {
 	tables := make([]Table, 0)
-	err := ch.conn.Select(&tables, fmt.Sprintf("SELECT database, name, data_paths, metadata_path, engine, uuid, storage_policy, create_table_query, total_bytes FROM system.tables WHERE is_temporary = 0 AND database = '%s' AND name = '%s';", database, name))
+	err := ch.softSelect(&tables, fmt.Sprintf("SELECT * FROM system.tables WHERE is_temporary = 0 AND database = '%s' AND name = '%s';", database, name))
 	if err != nil {
 		return nil, err
 	}
@@ -344,7 +343,11 @@ func (ch *ClickHouse) CopyData(backupName string, backupTable metadata.TableMeta
 				return fmt.Errorf("'%s' should be directory or absent", detachedPath)
 			}
 			ch.Chown(detachedPath)
-			partitionPath := path.Join(backupDisk.Path, "backup", backupName, "shadow", backupTable.UUID[0:3], backupTable.UUID, partition.Name)
+			uuid := path.Join(TablePathEncode(backupTable.Database), TablePathEncode(backupTable.Table))
+			if backupTable.UUID != "" {
+				uuid = path.Join(backupTable.UUID[0:3], backupTable.UUID)
+			}
+			partitionPath := path.Join(backupDisk.Path, "backup", backupName, "shadow", uuid, partition.Name)
 			if err := filepath.Walk(partitionPath, func(filePath string, info os.FileInfo, err error) error {
 				if err != nil {
 					return err
