@@ -33,6 +33,7 @@ type ClickHouse struct {
 type Table struct {
 	Database             string   `db:"database"`
 	Name                 string   `db:"name"`
+	DataPath             string   `db:"data_path"` // For legacy support
 	DataPaths            []string `db:"data_paths"`
 	MetadataPath         string   `db:"metadata_path"`
 	Engine               string   `db:"engine"`
@@ -190,13 +191,16 @@ func (ch *ClickHouse) GetTables() ([]Table, error) {
 		return nil, err
 	}
 	for i, t := range tables {
+		if t.DataPath != "" { // fix versions before 19.15
+			t.DataPaths = []string{t.DataPath}
+		}
 		for _, filter := range ch.Config.SkipTables {
 			if matched, _ := filepath.Match(filter, fmt.Sprintf("%s.%s", t.Database, t.Name)); matched {
 				t.Skip = true
-				tables[i] = t
 				break
 			}
 		}
+		tables[i] = t
 	}
 	return tables, nil
 }
@@ -208,7 +212,11 @@ func (ch *ClickHouse) GetTable(database, name string) (*Table, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &tables[0], nil
+	result := tables[0]
+	if result.DataPath != "" { // fix versions before 19.15
+		result.DataPaths = []string{result.DataPath}
+	}
+	return &result, nil
 }
 
 // GetVersion - returned ClickHouse version in number format

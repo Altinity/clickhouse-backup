@@ -372,12 +372,17 @@ func createMetadata(ch *clickhouse.ClickHouse, backupPath string, table *clickho
 	if err != nil {
 		return err
 	}
+	// version 20.6.3.28 has zero UUID
+	uuid := table.UUID
+	if uuid == "00000000-0000-0000-0000-000000000000" {
+		uuid = ""
+	}
 	metadata := &metadata.TableMetadata{
 		Table:      table.Name,
 		Database:   table.Database,
 		Query:      table.CreateTableQuery,
 		Disks:      clickhouse.GetDisksByPaths(diskList, table.DataPaths),
-		UUID:       table.UUID,
+		UUID:       uuid,
 		TotalBytes: table.TotalBytes.Int64,
 		Parts:      parts,
 	}

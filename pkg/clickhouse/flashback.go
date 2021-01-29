@@ -19,21 +19,28 @@ func (ch *ClickHouse) GetPartitions(table Table) (map[string][]metadata.Part, er
 	result := map[string][]metadata.Part{}
 	for _, disk := range disks {
 		partitions := make([]partition, 0)
-		err := ch.conn.Select(&partitions, fmt.Sprintf("select partition, partition_id, name, path, hash_of_all_files, hash_of_uncompressed_files, uncompressed_hash_of_compressed_files from system.parts where database='%s' and table='%s' and disk_name='%s' and active=1;", table.Database, table.Name, disk.Name))
-		if err != nil {
-			return nil, err
+		if len(disks) == 1 {
+			if err := ch.softSelect(&partitions,
+				fmt.Sprintf("select * from `system`.`parts` where database='%s' and table='%s' and active=1;", table.Database, table.Name)); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := ch.softSelect(&partitions,
+				fmt.Sprintf("select * from `system`.`parts` where database='%s' and table='%s' and disk_name='%s' and active=1;", table.Database, table.Name, disk.Name)); err != nil {
+				return nil, err
+			}
 		}
 		if len(partitions) > 0 {
-			parts := make([]metadata.Part,len(partitions))
+			parts := make([]metadata.Part, len(partitions))
 			for i := range partitions {
 				parts[i] = metadata.Part{
-					Partition: partitions[i].Partition,
-					Name: partitions[i].Name,
-					Path: partitions[i].Path,
-					HashOfAllFiles: partitions[i].HashOfAllFiles,
-					HashOfUncompressedFiles: partitions[i].HashOfUncompressedFiles,
+					Partition:                         partitions[i].Partition,
+					Name:                              partitions[i].Name,
+					Path:                              partitions[i].Path,
+					HashOfAllFiles:                    partitions[i].HashOfAllFiles,
+					HashOfUncompressedFiles:           partitions[i].HashOfUncompressedFiles,
 					UncompressedHashOfCompressedFiles: partitions[i].UncompressedHashOfCompressedFiles,
-					PartitionID: partitions[i].PartitionID,
+					PartitionID:                       partitions[i].PartitionID,
 				}
 			}
 			result[disk.Name] = parts
