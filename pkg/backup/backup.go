@@ -372,17 +372,12 @@ func createMetadata(ch *clickhouse.ClickHouse, backupPath string, table *clickho
 	if err != nil {
 		return err
 	}
-	// version 20.6.3.28 has zero UUID
-	uuid := table.UUID
-	if uuid == "00000000-0000-0000-0000-000000000000" {
-		uuid = ""
-	}
 	metadata := &metadata.TableMetadata{
 		Table:      table.Name,
 		Database:   table.Database,
 		Query:      table.CreateTableQuery,
 		Disks:      clickhouse.GetDisksByPaths(diskList, table.DataPaths),
-		UUID:       uuid,
+		UUID:       table.UUID,
 		TotalBytes: table.TotalBytes.Int64,
 		Parts:      parts,
 	}
@@ -441,7 +436,9 @@ func RestoreData(cfg config.Config, backupName string, tablePattern string) erro
 	if err != nil {
 		return ErrUnknownClickhouseDataPath
 	}
-
+	if clickhouse.IsClickhouseShadow(path.Join(defaulDataPath, "backup", backupName, "shadow")) {
+		return fmt.Errorf("backups created in v0.0.1 is not supported now")
+	}
 	metadataPath := path.Join(defaulDataPath, "backup", backupName, "metadata")
 	tablesForRestore, err := parseSchemaPattern(metadataPath, tablePattern)
 	if err != nil {

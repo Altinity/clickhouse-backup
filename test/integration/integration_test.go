@@ -293,7 +293,7 @@ func TestIntegrationGCS(t *testing.T) {
 	r.NoError(dockerCP("config-gcs.yml", "/etc/clickhouse-backup/config.yml"))
 	r.NoError(dockerExec("apt-get", "-y", "update"))
 	r.NoError(dockerExec("apt-get", "-y", "install", "ca-certificates"))
-	testRestoreLegacyBackupFormat(t)
+	// testRestoreLegacyBackupFormat(t)
 	testCommon(t)
 }
 

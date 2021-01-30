@@ -191,16 +191,13 @@ func (ch *ClickHouse) GetTables() ([]Table, error) {
 		return nil, err
 	}
 	for i, t := range tables {
-		if t.DataPath != "" { // fix versions before 19.15
-			t.DataPaths = []string{t.DataPath}
-		}
 		for _, filter := range ch.Config.SkipTables {
 			if matched, _ := filepath.Match(filter, fmt.Sprintf("%s.%s", t.Database, t.Name)); matched {
 				t.Skip = true
 				break
 			}
 		}
-		tables[i] = t
+		tables[i] = ch.fixVariousVersions(t)
 	}
 	return tables, nil
 }
@@ -212,11 +209,24 @@ func (ch *ClickHouse) GetTable(database, name string) (*Table, error) {
 	if err != nil {
 		return nil, err
 	}
-	result := tables[0]
-	if result.DataPath != "" { // fix versions before 19.15
-		result.DataPaths = []string{result.DataPath}
-	}
+	result := ch.fixVariousVersions(tables[0])
 	return &result, nil
+}
+
+func (ch *ClickHouse) fixVariousVersions(t Table) Table {
+	// versions before 19.15 contain data_path in a different column
+	if t.DataPath != "" {
+		t.DataPaths = []string{t.DataPath}
+	}
+	// version 20.6.3.28 has zero UUID
+	if t.UUID == "00000000-0000-0000-0000-000000000000" {
+		t.UUID = ""
+	}
+	// version 1.1.54390 no has query column
+	if strings.TrimSpace(t.CreateTableQuery) == "" {
+		t.CreateTableQuery = ch.ShowCreateTable(t.Database, t.Name)
+	}
+	return t
 }
 
 // GetVersion - returned ClickHouse version in number format
@@ -395,6 +405,17 @@ func (ch *ClickHouse) AttachPartitions(table metadata.TableMetadata, disks []Dis
 		}
 	}
 	return nil
+}
+
+func (ch *ClickHouse) ShowCreateTable(database, name string) string {
+	var result []struct {
+		Statement string `db:"statement"`
+	}
+	query := fmt.Sprintf("SHOW CREATE TABLE `%s`.`%s`;", database, name)
+	if err := ch.conn.Select(&result, query); err != nil {
+		return ""
+	}
+	return result[0].Statement
 }
 
 // CreateDatabase - create ClickHouse database
