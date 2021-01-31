@@ -385,11 +385,11 @@ func createMetadata(ch *clickhouse.ClickHouse, backupPath string, table *clickho
 	if err := ch.Mkdir(metadataPath); err != nil {
 		return err
 	}
-	metadataDatabasePath := path.Join(metadataPath, table.Database)
+	metadataDatabasePath := path.Join(metadataPath, clickhouse.TablePathEncode(table.Database))
 	if err := ch.Mkdir(metadataDatabasePath); err != nil {
 		return err
 	}
-	metadataFile := path.Join(metadataDatabasePath, fmt.Sprintf("%s.json", table.Name))
+	metadataFile := path.Join(metadataDatabasePath, fmt.Sprintf("%s.json", clickhouse.TablePathEncode(table.Name)))
 	metadataBody, err := json.MarshalIndent(metadata, "", " ")
 	if err != nil {
 		return fmt.Errorf("can't marshal %s: %v", MetaFileName, err)
