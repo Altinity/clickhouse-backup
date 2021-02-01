@@ -509,7 +509,6 @@ func (api *APIServer) httpFreezeHandler(w http.ResponseWriter, r *http.Request) 
 
 	query := r.URL.Query()
 	tablePattern := ""
-
 	if tp, exist := query["table"]; exist {
 		tablePattern = tp[0]
 	}
@@ -561,9 +560,13 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		diffFrom = df[0]
 	}
 	name := vars["name"]
+	tablePattern := ""
+	if tp, exist := query["table"]; exist {
+		tablePattern = tp[0]
+	}
 	go func() {
 		api.status.start("upload")
-		err := backup.Upload(*api.config, name, diffFrom)
+		err := backup.Upload(*api.config, name, tablePattern, diffFrom)
 		api.status.stop(err)
 		if err != nil {
 			log.Printf("Upload error: %+v\n", err)

@@ -20,8 +20,8 @@ type TableMetadata struct {
 	Query       string            `json:"query"`
 	UUID        string            `json:"uuid"`
 	// Macros ???
-	Size                 map[string]int64 `json:"size"`
-	TotalBytes           int64            `json:"total_bytes,omitempty"`
+	Size                 map[string]int64 `json:"size"` // сколько занимает бэкап на каждом диске
+	TotalBytes           int64            `json:"total_bytes,omitempty"` // общий объём бэкапа
 	DependencesTable     string           `json:"dependencies_table"`
 	DependenciesDatabase string           `json:"dependencies_database"`
 }
@@ -29,7 +29,7 @@ type TableMetadata struct {
 type Part struct {
 	Partition                         string `json:"partition"`
 	Name                              string `json:"name"`
-	Path                              string `json:"path"`
+	Path                              string `json:"path"` // TODO: должен быть относительный путь вообще непонятно зачем он, его можно из name получить
 	HashOfAllFiles                    string `json:"hash_of_all_files"`
 	HashOfUncompressedFiles           string `json:"hash_of_uncompressed_files"`
 	UncompressedHashOfCompressedFiles string `json:"uncompressed_hash_of_compressed_files"`

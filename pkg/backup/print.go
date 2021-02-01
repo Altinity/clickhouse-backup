@@ -9,11 +9,11 @@ import (
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/storage"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/new_storage"
 	"github.com/AlexAkulov/clickhouse-backup/utils"
 )
 
-func printBackups(backupList []storage.Backup, format string, printSize bool) error {
+func printBackups(backupList []new_storage.Backup, format string, printSize bool) error {
 	switch format {
 	case "latest", "last", "l":
 		if len(backupList) < 1 {
@@ -52,7 +52,7 @@ func PrintLocalBackups(cfg config.Config, format string) error {
 }
 
 // ListLocalBackups - return slice of all backups stored locally
-func ListLocalBackups(cfg config.Config) ([]storage.Backup, error) {
+func ListLocalBackups(cfg config.Config) ([]new_storage.Backup, error) {
 	ch := &clickhouse.ClickHouse{
 		Config: &cfg.ClickHouse,
 	}
@@ -72,7 +72,7 @@ func ListLocalBackups(cfg config.Config) ([]storage.Backup, error) {
 		return nil, err
 	}
 	defer d.Close()
-	result := []storage.Backup{}
+	result := []new_storage.Backup{}
 	names, err := d.Readdirnames(-1)
 	if err != nil {
 		return nil, err
@@ -85,7 +85,7 @@ func ListLocalBackups(cfg config.Config) ([]storage.Backup, error) {
 		if !info.IsDir() {
 			continue
 		}
-		result = append(result, storage.Backup{
+		result = append(result, new_storage.Backup{
 			Name: name,
 			Date: info.ModTime(),
 		})
@@ -122,23 +122,23 @@ func GetLocalBackup(cfg config.Config, backupName string) error {
 }
 
 // GetRemoteBackups - get all backups stored on remote storage
-func GetRemoteBackups(cfg config.Config) ([]storage.Backup, error) {
+func GetRemoteBackups(cfg config.Config) ([]new_storage.Backup, error) {
 	if cfg.General.RemoteStorage == "none" {
 		fmt.Println("PrintRemoteBackups aborted: RemoteStorage set to \"none\"")
-		return []storage.Backup{}, nil
+		return []new_storage.Backup{}, nil
 	}
-	bd, err := storage.NewBackupDestination(cfg)
+	bd, err := new_storage.NewBackupDestination(cfg)
 	if err != nil {
-		return []storage.Backup{}, err
+		return []new_storage.Backup{}, err
 	}
 	err = bd.Connect()
 	if err != nil {
-		return []storage.Backup{}, err
+		return []new_storage.Backup{}, err
 	}
 
 	backupList, err := bd.BackupList()
 	if err != nil {
-		return []storage.Backup{}, err
+		return []new_storage.Backup{}, err
 	}
 	return backupList, err
 }

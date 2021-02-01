@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
@@ -10,6 +9,9 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/server"
 
 	"github.com/urfave/cli"
+	"github.com/apex/log"
+	// "github.com/apex/log/handlers/logfmt"
+	logcli "github.com/apex/log/handlers/cli"
 )
 
 const (
@@ -23,7 +25,9 @@ var (
 )
 
 func main() {
-	log.SetOutput(os.Stdout)
+	// log.SetHandler(logfmt.New(os.Stderr))
+	log.SetHandler(logcli.New(os.Stdout))
+	log.SetLevel(log.DebugLevel)
 	cliapp := cli.NewApp()
 	cliapp.Name = "clickhouse-backup"
 	cliapp.Usage = "Tool for easy backup of ClickHouse with cloud support"
@@ -83,13 +87,17 @@ func main() {
 		{
 			Name:      "upload",
 			Usage:     "Upload backup to remote storage",
-			UsageText: "clickhouse-backup upload [--diff-from=<backup_name>] <backup_name>",
+			UsageText: "clickhouse-backup upload [-t, --tables=<db>.<table>, --diff-from=<backup_name>] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return backup.Upload(*getConfig(c), c.Args().First(), c.String("diff-from"))
+				return backup.Upload(*getConfig(c), c.Args().First(), c.String("t"), c.String("diff-from"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
 					Name:   "diff-from",
+					Hidden: false,
+				},
+				cli.StringFlag{
+					Name:   "table, tables, t",
 					Hidden: false,
 				},
 			),
@@ -117,7 +125,7 @@ func main() {
 						}
 					}
 				default:
-					log.Printf("Unknown command '%s'\n", c.Args().Get(0))
+					log.Errorf("Unknown command '%s'\n", c.Args().Get(0))
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
 				}
 				return nil
@@ -183,7 +191,7 @@ func main() {
 			Action: func(c *cli.Context) error {
 				cfg := getConfig(c)
 				if c.Args().Get(1) == "" {
-					log.Println("Backup name must be defined")
+					log.Errorf("Backup name must be defined")
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
 				}
 				switch c.Args().Get(0) {
@@ -192,7 +200,7 @@ func main() {
 				case "remote":
 					return backup.RemoveBackupRemote(*cfg, c.Args().Get(1))
 				default:
-					log.Printf("Unknown command '%s'\n", c.Args().Get(0))
+					log.Errorf("Unknown command '%s'\n", c.Args().Get(0))
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
 				}
 				return nil
@@ -240,7 +248,7 @@ func main() {
 		},
 	}
 	if err := cliapp.Run(os.Args); err != nil {
-		log.Fatal(err)
+		log.Fatal(err.Error())
 	}
 }
 
@@ -248,7 +256,7 @@ func getConfig(ctx *cli.Context) *config.Config {
 	configPath := getConfigPath(ctx)
 	config, err := config.LoadConfig(configPath)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(err.Error())
 	}
 	return config
 }

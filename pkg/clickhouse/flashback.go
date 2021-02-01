@@ -36,7 +36,7 @@ func (ch *ClickHouse) GetPartitions(table Table) (map[string][]metadata.Part, er
 				parts[i] = metadata.Part{
 					Partition:                         partitions[i].Partition,
 					Name:                              partitions[i].Name,
-					Path:                              partitions[i].Path,
+					Path:                              partitions[i].Path, // TODO: ???
 					HashOfAllFiles:                    partitions[i].HashOfAllFiles,
 					HashOfUncompressedFiles:           partitions[i].HashOfUncompressedFiles,
 					UncompressedHashOfCompressedFiles: partitions[i].UncompressedHashOfCompressedFiles,
