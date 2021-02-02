@@ -554,13 +554,13 @@ func Upload(cfg config.Config, backupName string, tablePattern string, diffFrom 
 		metdataFiles := map[string][]string{}
 		for disk := range table.Parts {
 			backupPath := path.Join(table.Disks[disk], "backup", backupName, "shadow", uuid)
-			parts, err := separateParts(backupPath, table.Parts[disk], 10*1024)
+			parts, err := separateParts(backupPath, table.Parts[disk], cfg.General.MaxFileSize)
 			if err != nil {
 				return err
 			}
 			log.Infof("Upload table: %s.%s, disk: %s, num files: %d, num dst files: %d", table.Database, table.Table, disk, len(table.Parts[disk]), len(parts))
 			for i, p := range parts {
-				fileName := fmt.Sprintf("%s_%d.%s", disk, i, cfg.S3.CompressionFormat)
+				fileName := fmt.Sprintf("%s_%d.%s", disk, i+1, cfg.S3.CompressionFormat) // TODO: fix this
 				metdataFiles[disk] = append(metdataFiles[disk], fileName)
 				remoteDataFile := path.Join(backupName, "shadow", clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table), fileName)
 				log.Infof("upload %d to %s", len(p), remoteDataFile)
@@ -583,10 +583,18 @@ func Upload(cfg config.Config, backupName string, tablePattern string, diffFrom 
 			return fmt.Errorf("can't upload: %v", err)
 		}
 	}
+	t := []metadata.TableTitle{}
+	for i := range tablesForUpload {
+		t = append(t, metadata.TableTitle{
+			Database: tablesForUpload[i].Database,
+			Table: tablesForUpload[i].Table,
+		})
+	}
 	// заливаем метадату для бэкапа
 	backupMetafile := metadata.BackupMetadata{
 		BackupName: backupName,
 		ClickhouseBackupVersion: "unknown",
+		Tables: t,
 	}
 	content, err := json.MarshalIndent(&backupMetafile, "", "\t")
 	if err != nil {
@@ -632,7 +640,7 @@ func separateParts(basePath string, parts []metadata.Part, maxSize int64) ([][]s
 	return result, nil
 }
 
-func Download(cfg config.Config, backupName string) error {
+func Download(cfg config.Config, backupName string, tablePattern string, schemaOnly bool) error {
 	if cfg.General.RemoteStorage == "none" {
 		fmt.Println("Download aborted: RemoteStorage set to \"none\"")
 		return nil
@@ -649,7 +657,7 @@ func Download(cfg config.Config, backupName string) error {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
 	defer ch.Close()
-	dataPath, err := ch.GetDefaultPath()
+	defaultDataPath, err := ch.GetDefaultPath()
 	if err != nil {
 		return err
 	}
@@ -657,13 +665,72 @@ func Download(cfg config.Config, backupName string) error {
 	if err != nil {
 		return err
 	}
-
+	disks, err := ch.GetDisks()
+	if err != nil {
+		return err
+	}
+	diskMap := map[string]string{}
+	for _, disk := range disks {
+		diskMap[disk.Name] = disk.Path
+	}
 	if err := bd.Connect(); err != nil {
 		return err
 	}
-	if err := bd.CompressedStreamDownload(backupName,
-		path.Join(dataPath, "backup", backupName)); err != nil {
+	backupMetafileReader, err := bd.GetFileReader(path.Join(backupName, "metadata.json"))
+	if err != nil {
 		return err
+	}
+	tbBody, err := ioutil.ReadAll(backupMetafileReader)
+	if err != nil {
+		return err
+	}
+	var backupMetadata metadata.BackupMetadata
+	if err := json.Unmarshal(tbBody, &backupMetadata); err != nil {
+		return err
+	}
+	tablesForDownload := parseTablePatternForDownload(backupMetadata.Tables, tablePattern)
+	for _, t := range tablesForDownload {
+		remoteTableMetadata := path.Join(backupName, "metadata", clickhouse.TablePathEncode(t.Database), fmt.Sprintf("%s.json", clickhouse.TablePathEncode(t.Table)))
+		tmReader, err := bd.GetFileReader(remoteTableMetadata)
+		if err != nil {
+			return err
+		}
+		tmBody, err := ioutil.ReadAll(tmReader)
+		if err != nil {
+			return err
+		}
+		var tableMetadata metadata.TableMetadata
+		if err := json.Unmarshal(tmBody, &tableMetadata); err != nil {
+			return err
+		}
+		// save metadata
+		metadataBase := path.Join(defaultDataPath, "backup", backupName, "metadata", clickhouse.TablePathEncode(t.Database))
+		if err := os.MkdirAll(metadataBase, 0750); err != nil {
+			return err
+		}
+		metadataLocalFile := path.Join(metadataBase, fmt.Sprintf("%s.json", clickhouse.TablePathEncode(t.Table)))
+		if err:= ioutil.WriteFile(metadataLocalFile, tmBody, 0660); err != nil {
+			return err
+		}
+		if schemaOnly {
+			continue
+		}
+		// download data
+		for disk := range tableMetadata.Files {
+			uuid := path.Join(clickhouse.TablePathEncode(tableMetadata.Database), clickhouse.TablePathEncode(tableMetadata.Table))
+			if tableMetadata.UUID != "" {
+				uuid = path.Join(tableMetadata.UUID[0:3], tableMetadata.UUID)
+			}
+			tableLocalDir := path.Join(diskMap[disk], "backup", backupName, "shadow", uuid)
+
+			for _, archiveFile := range tableMetadata.Files[disk] {
+				tableRemoteFile := path.Join(backupName, "shadow", clickhouse.TablePathEncode(t.Database), clickhouse.TablePathEncode(t.Table), archiveFile)
+				log.Infof("tableRemoteFile: %s", tableRemoteFile)
+				if err := bd.CompressedStreamDownload(tableRemoteFile, tableLocalDir); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	log.Info("  Done.")
 	return nil
@@ -704,7 +771,7 @@ func RemoveOldBackupsLocal(cfg config.Config) error {
 	}
 	backupsToDelete := new_storage.GetBackupsToDelete(backupList, cfg.General.BackupsToKeepLocal)
 	for _, backup := range backupsToDelete {
-		if err := RemoveBackupLocal(cfg, backup.Name); err != nil {
+		if err := RemoveBackupLocal(cfg, backup.BackupName); err != nil {
 			return err
 		}
 	}
@@ -730,7 +797,7 @@ func RemoveBackupLocal(cfg config.Config, backupName string) error {
 	}
 
 	for _, backup := range backupList {
-		if backup.Name == backupName {
+		if backup.BackupName == backupName {
 			for _, disk := range disks {
 				err := os.RemoveAll(path.Join(disk.Path, "backup", backupName))
 				if err != nil {
@@ -761,7 +828,7 @@ func RemoveBackupRemote(cfg config.Config, backupName string) error {
 		return err
 	}
 	for _, backup := range backupList {
-		if backup.Name == backupName {
+		if backup.BackupName == backupName {
 			return bd.RemoveBackup(backupName)
 		}
 	}

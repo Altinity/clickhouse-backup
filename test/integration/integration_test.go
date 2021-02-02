@@ -377,8 +377,8 @@ func testCommon(t *testing.T) {
 
 	fmt.Println("Clean")
 	r.NoError(dockerExec("/bin/rm", "-rf", "/var/lib/clickhouse/backup/test_backup", "/var/lib/clickhouse/backup/increment"))
-	r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "test_backup.tar.gz"))
-	r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "increment.tar.gz"))
+	r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "test_backup"))
+	r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "increment"))
 }
 
 type TestClickHouse struct {

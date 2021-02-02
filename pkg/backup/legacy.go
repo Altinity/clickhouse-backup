@@ -102,3 +102,21 @@ func parseTablePatternForRestoreData(tables map[string]metadata.TableMetadata, t
 	result.Sort()
 	return result
 }
+
+func parseTablePatternForDownload(tables []metadata.TableTitle, tablePattern string) []metadata.TableTitle {
+	tablePatterns := []string{"*"}
+	if tablePattern != "" {
+		tablePatterns = strings.Split(tablePattern, ",")
+	}
+	result := []metadata.TableTitle{}
+	for _, t := range tables {
+		for _, pattern := range tablePatterns {
+			tableName := fmt.Sprintf("%s.%s", t.Database, t.Table)
+			if matched, _ := filepath.Match(pattern, tableName); matched {
+				result = append(result, t)
+				break
+			}
+		}
+	}
+	return result
+}

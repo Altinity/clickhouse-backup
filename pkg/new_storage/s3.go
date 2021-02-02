@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"io"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 
@@ -76,7 +77,7 @@ func (s *S3) GetFileReader(key string) (io.ReadCloser, error) {
 	svc := s3.New(s.session)
 	req, resp := svc.GetObjectRequest(&s3.GetObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
-		Key:    aws.String(key),
+		Key:    aws.String(path.Join(s.Config.Path ,key)),
 	})
 	if err := req.Send(); err != nil {
 		return nil, err
@@ -96,7 +97,7 @@ func (s *S3) PutFile(key string, r io.ReadCloser) error {
 	_, err := uploader.Upload(&s3manager.UploadInput{
 		ACL:                  aws.String(s.Config.ACL),
 		Bucket:               aws.String(s.Config.Bucket),
-		Key:                  aws.String(key),
+		Key:                  aws.String(path.Join(s.Config.Path ,key)),
 		Body:                 r,
 		ServerSideEncryption: sse,
 		StorageClass:         aws.String(strings.ToUpper(s.Config.StorageClass)),
@@ -107,7 +108,7 @@ func (s *S3) PutFile(key string, r io.ReadCloser) error {
 func (s *S3) DeleteFile(key string) error {
 	params := &s3.DeleteObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
-		Key:    aws.String(key),
+		Key:    aws.String(path.Join(s.Config.Path ,key)),
 	}
 
 	_, err := s3.New(s.session).DeleteObject(params)
@@ -121,7 +122,7 @@ func (s *S3) GetFile(key string) (RemoteFile, error) {
 	svc := s3.New(s.session)
 	head, err := svc.HeadObject(&s3.HeadObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
-		Key:    aws.String(key),
+		Key:    aws.String(path.Join(s.Config.Path ,key)),
 	})
 	if err != nil {
 		aerr, ok := err.(awserr.Error)
@@ -133,10 +134,14 @@ func (s *S3) GetFile(key string) (RemoteFile, error) {
 	return &s3File{*head.ContentLength, *head.LastModified, key}, nil
 }
 
-func (s *S3) Walk(s3Path string, process func(r RemoteFile)) error {
+func (s *S3) Walk(s3Path string, process func(r RemoteFile) error) error {
 	return s.remotePager(s.Config.Path, false, func(page *s3.ListObjectsV2Output) {
 		for _, c := range page.Contents {
-			process(&s3File{*c.Size, *c.LastModified, *c.Key})
+			process(&s3File{
+				*c.Size,
+				*c.LastModified,
+				strings.TrimPrefix(*c.Key, s.Config.Path),
+			})
 		}
 	})
 }

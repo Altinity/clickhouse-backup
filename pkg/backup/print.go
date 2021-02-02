@@ -9,6 +9,7 @@ import (
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/new_storage"
 	"github.com/AlexAkulov/clickhouse-backup/utils"
 )
@@ -19,21 +20,21 @@ func printBackups(backupList []new_storage.Backup, format string, printSize bool
 		if len(backupList) < 1 {
 			return fmt.Errorf("no backups found")
 		}
-		fmt.Println(backupList[len(backupList)-1].Name)
+		fmt.Println(backupList[len(backupList)-1].BackupName)
 	case "penult", "prev", "previous", "p":
 		if len(backupList) < 2 {
 			return fmt.Errorf("no penult backup is found")
 		}
-		fmt.Println(backupList[len(backupList)-2].Name)
+		fmt.Println(backupList[len(backupList)-2].BackupName)
 	case "all", "":
 		if len(backupList) == 0 {
 			fmt.Println("no backups found")
 		}
 		for _, backup := range backupList {
 			if printSize {
-				fmt.Printf("- '%s'\t%s\t(created at %s)\n", backup.Name, utils.FormatBytes(backup.Size), backup.Date.Format("02-01-2006 15:04:05"))
+				fmt.Printf("- '%s'\t%s\t(created at %s)\n", backup.BackupName, utils.FormatBytes(backup.Size), backup.CreationDate.Format("02-01-2006 15:04:05"))
 			} else {
-				fmt.Printf("- '%s'\t(created at %s)\n", backup.Name, backup.Date.Format("02-01-2006 15:04:05"))
+				fmt.Printf("- '%s'\t(created at %s)\n", backup.BackupName, backup.CreationDate.Format("02-01-2006 15:04:05"))
 			}
 		}
 	default:
@@ -85,13 +86,17 @@ func ListLocalBackups(cfg config.Config) ([]new_storage.Backup, error) {
 		if !info.IsDir() {
 			continue
 		}
+		// TODO: detect legacy and non legacy
 		result = append(result, new_storage.Backup{
-			Name: name,
-			Date: info.ModTime(),
+			metadata.BackupMetadata{
+			BackupName:   name,
+			CreationDate: info.ModTime(),
+			}, true,
 		})
+
 	}
 	sort.SliceStable(result, func(i, j int) bool {
-		return result[i].Date.Before(result[j].Date)
+		return result[i].CreationDate.Before(result[j].CreationDate)
 	})
 	return result, nil
 }
@@ -114,7 +119,7 @@ func GetLocalBackup(cfg config.Config, backupName string) error {
 		return err
 	}
 	for _, backup := range backupList {
-		if backup.Name == backupName {
+		if backup.BackupName == backupName {
 			return nil
 		}
 	}
@@ -131,8 +136,7 @@ func GetRemoteBackups(cfg config.Config) ([]new_storage.Backup, error) {
 	if err != nil {
 		return []new_storage.Backup{}, err
 	}
-	err = bd.Connect()
-	if err != nil {
+	if err := bd.Connect(); err != nil {
 		return []new_storage.Backup{}, err
 	}
 

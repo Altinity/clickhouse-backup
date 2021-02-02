@@ -426,8 +426,8 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, b := range localBackups {
 		backupsJSON = append(backupsJSON, backupJSON{
-			Name:     b.Name,
-			Created:  b.Date.Format(APITimeFormat),
+			Name:     b.BackupName,
+			Created:  b.CreationDate.Format(APITimeFormat),
 			Location: "local",
 		})
 	}
@@ -439,8 +439,8 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, b := range remoteBackups {
 			backupsJSON = append(backupsJSON, backupJSON{
-				Name:     b.Name,
-				Created:  b.Date.Format(APITimeFormat),
+				Name:     b.BackupName,
+				Created:  b.CreationDate.Format(APITimeFormat),
 				Size:     b.Size,
 				Location: "remote",
 			})
@@ -642,9 +642,18 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	name := vars["name"]
+	query := r.URL.Query()
+	tablePattern := ""
+	schemaOnly := false
+	if tp, exist := query["table"]; exist {
+		tablePattern = tp[0]
+	}
+	if _, exist := query["schema"]; exist {
+		schemaOnly = true
+	}
 	go func() {
 		api.status.start("download")
-		err := backup.Download(*api.config, name)
+		err := backup.Download(*api.config, name, tablePattern, schemaOnly)
 		api.status.stop(err)
 		if err != nil {
 			log.Printf("Download error: %+v\n", err)

@@ -1,12 +1,22 @@
 package metadata
 
+import "time"
+
+type TableTitle struct {
+	Database string `json:"database"`
+	Table    string `json:"table"`
+}
+
 type BackupMetadata struct {
 	BackupName              string            `json:"backup_name"`
 	Disks                   map[string]string `json:"disks"` // "default": "/var/lib/clickhouse"
 	ClickhouseBackupVersion string            `json:"version"`
-	CreationDate            string
-	Tags                    string // "type=manual", "type=sheduled", "hostname": "", "shard="
-	ClickHouseVersion       string `json:"clickhouse_version,omitempty"`
+	CreationDate            time.Time         `json:"creation_date"`
+	Tags                    string            // "type=manual", "type=sheduled", "hostname": "", "shard="
+	ClickHouseVersion       string            `json:"clickhouse_version,omitempty"`
+	Size                    int64
+	CompressedSize          int64
+	Tables                  []TableTitle `json:"tables"`
 }
 
 type TableMetadata struct {
@@ -14,13 +24,12 @@ type TableMetadata struct {
 	Disks       map[string]string   `json:"disks"`           // "default": "/var/lib/clickhouse"
 	Table       string              `json:"table"`
 	Database    string              `json:"database"`
-	Tags        string              // "type=manual", "type=sheduled", "hostname": "", "shard="
 	IncrementOf string
 	Parts       map[string][]Part // "default": [] `json:"parts"`
 	Query       string            `json:"query"`
 	UUID        string            `json:"uuid"`
 	// Macros ???
-	Size                 map[string]int64 `json:"size"` // сколько занимает бэкап на каждом диске
+	Size                 map[string]int64 `json:"size"`                  // сколько занимает бэкап на каждом диске
 	TotalBytes           int64            `json:"total_bytes,omitempty"` // общий объём бэкапа
 	DependencesTable     string           `json:"dependencies_table"`
 	DependenciesDatabase string           `json:"dependencies_database"`

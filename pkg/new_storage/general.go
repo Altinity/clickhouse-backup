@@ -6,16 +6,15 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"os"
 	"path"
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/internal/progressbar"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 
 	"github.com/mholt/archiver"
 	"gopkg.in/djherbis/buffer.v1"
@@ -30,9 +29,8 @@ const (
 )
 
 type Backup struct {
-	Name string
-	Size int64
-	Date time.Time
+	metadata.BackupMetadata
+	Legacy bool
 }
 
 // MetaFile - structure describe meta file that will be added to incremental backups archive.
@@ -61,7 +59,7 @@ func (bd *BackupDestination) RemoveOldBackups(keep int) error {
 	}
 	backupsToDelete := GetBackupsToDelete(backupList, keep)
 	for _, backupToDelete := range backupsToDelete {
-		if err := bd.RemoveBackup(backupToDelete.Name); err != nil {
+		if err := bd.RemoveBackup(backupToDelete.BackupName); err != nil {
 			return err
 		}
 	}
@@ -70,10 +68,11 @@ func (bd *BackupDestination) RemoveOldBackups(keep int) error {
 
 func (bd *BackupDestination) RemoveBackup(backupName string) error {
 	objects := []string{}
-	if err := bd.Walk(bd.path, func(f RemoteFile) {
+	if err := bd.Walk(bd.path, func(f RemoteFile) error {
 		if strings.HasPrefix(f.Name(), path.Join(bd.path, backupName)) {
 			objects = append(objects, f.Name())
 		}
+		return nil
 	}); err != nil {
 		return err
 	}
@@ -91,60 +90,53 @@ func (bd *BackupDestination) BackupsToKeep() int {
 }
 
 func (bd *BackupDestination) BackupList() ([]Backup, error) {
-	type ClickhouseBackup struct {
-		Metadata bool
-		Shadow   bool
-		Tar      bool
-		Size     int64
-		Date     time.Time
-	}
-	files := map[string]ClickhouseBackup{}
-	path := bd.path
-	err := bd.Walk(path, func(o RemoteFile) {
-		if strings.HasPrefix(o.Name(), path) {
-			key := strings.TrimPrefix(o.Name(), path)
-			key = strings.TrimPrefix(key, "/")
-			parts := strings.Split(key, "/")
-
-			if strings.HasSuffix(parts[0], ".tar") ||
-				strings.HasSuffix(parts[0], ".tar.lz4") ||
-				strings.HasSuffix(parts[0], ".tar.bz2") ||
-				strings.HasSuffix(parts[0], ".tar.gz") ||
-				strings.HasSuffix(parts[0], ".tar.sz") ||
-				strings.HasSuffix(parts[0], ".tar.xz") {
-				files[parts[0]] = ClickhouseBackup{
-					Tar:  true,
-					Date: o.LastModified(),
-					Size: o.Size(),
-				}
-			}
-
-			if len(parts) > 1 {
-				b := files[parts[0]]
-				files[parts[0]] = ClickhouseBackup{
-					Metadata: b.Metadata || parts[1] == "metadata",
-					Shadow:   b.Shadow || parts[1] == "shadow",
-					Date:     b.Date,
-					Size:     b.Size,
-				}
-			}
+	result := []Backup{}
+	if err := bd.Walk("/", func(o RemoteFile) error {
+		pathParts := strings.Split(strings.Trim(o.Name(), "/"), "/")
+		// Legacy backup
+		if strings.HasSuffix(pathParts[0], ".tar") ||
+			strings.HasSuffix(pathParts[0], ".tar.lz4") ||
+			strings.HasSuffix(pathParts[0], ".tar.bz2") ||
+			strings.HasSuffix(pathParts[0], ".tar.gz") ||
+			strings.HasSuffix(pathParts[0], ".tar.sz") ||
+			strings.HasSuffix(pathParts[0], ".tar.xz") {
+			result = append(result, Backup{
+				metadata.BackupMetadata{
+					BackupName:   pathParts[0],
+					CreationDate: o.LastModified(),
+					Size:         o.Size(),
+				},
+				true,
+			})
+			return nil
 		}
-	})
-	if err != nil {
+		if len(pathParts) < 2 {
+			return nil
+		}
+		if pathParts[1] != "metadata.json" {
+			return nil
+		}
+		r, err := bd.GetFileReader(o.Name())
+		if err != nil {
+			return err
+		}
+		b, err := ioutil.ReadAll(r)
+		if err != nil {
+			return err
+		}
+		var m metadata.BackupMetadata
+		if err := json.Unmarshal(b, &m); err != nil {
+			return err
+		}
+		result = append(result, Backup{
+			m, false,
+		})
+		return nil
+	}); err != nil {
 		return nil, err
 	}
-	result := []Backup{}
-	for name, e := range files {
-		if e.Metadata && e.Shadow || e.Tar {
-			result = append(result, Backup{
-				Name: name,
-				Date: e.Date,
-				Size: e.Size,
-			})
-		}
-	}
 	sort.SliceStable(result, func(i, j int) bool {
-		return result[i].Date.Before(result[j].Date)
+		return result[i].CreationDate.Before(result[j].CreationDate)
 	})
 	return result, nil
 }
@@ -153,19 +145,14 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 	if err := os.MkdirAll(localPath, os.ModePerm); err != nil {
 		return err
 	}
-	archiveName := path.Join(bd.path, fmt.Sprintf("%s.%s", remotePath, getExtension(bd.compressionFormat)))
-	if err := bd.Connect(); err != nil {
-		return err
-	}
-
 	// get this first as GetFileReader blocks the ftp control channel
-	file, err := bd.GetFile(archiveName)
+	file, err := bd.GetFile(remotePath)
 	if err != nil {
 		return err
 	}
 	filesize := file.Size()
 
-	reader, err := bd.GetFileReader(archiveName)
+	reader, err := bd.GetFileReader(remotePath)
 	if err != nil {
 		return err
 	}
@@ -180,7 +167,6 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 		return err
 	}
 	defer z.Close()
-	var metafile MetaFile
 	for {
 		file, err := z.Read()
 		if err == io.EOF {
@@ -192,16 +178,6 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 		header, ok := file.Header.(*tar.Header)
 		if !ok {
 			return fmt.Errorf("expected header to be *tar.Header but was %T", file.Header)
-		}
-		if header.Name == MetaFileName {
-			b, err := ioutil.ReadAll(file)
-			if err != nil {
-				return fmt.Errorf("can't read %s", MetaFileName)
-			}
-			if err := json.Unmarshal(b, &metafile); err != nil {
-				return err
-			}
-			continue
 		}
 		extractFile := filepath.Join(localPath, header.Name)
 		extractDir := filepath.Dir(extractFile)
@@ -222,24 +198,6 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 			return err
 		}
 	}
-	if metafile.RequiredBackup != "" {
-		log.Printf("Backup '%s' required '%s'. Downloading.", remotePath, metafile.RequiredBackup)
-		err := bd.CompressedStreamDownload(metafile.RequiredBackup, filepath.Join(filepath.Dir(localPath), metafile.RequiredBackup))
-		if err != nil && !os.IsExist(err) {
-			return fmt.Errorf("can't download '%s': %v", metafile.RequiredBackup, err)
-		}
-	}
-	for _, hardlink := range metafile.Hardlinks {
-		newname := filepath.Join(localPath, hardlink)
-		extractDir := filepath.Dir(newname)
-		oldname := filepath.Join(filepath.Dir(localPath), metafile.RequiredBackup, hardlink)
-		if _, err := os.Stat(extractDir); os.IsNotExist(err) {
-			os.MkdirAll(extractDir, os.ModePerm)
-		}
-		if err := os.Link(oldname, newname); err != nil {
-			return err
-		}
-	}
 	bar.Finish()
 	return nil
 }
@@ -250,7 +208,6 @@ func (bd *BackupDestination) CompressedStreamUpload(baseLocalPath string, files 
 			return err
 		}
 	}
-
 	var totalBytes int64
 	for _, filename := range files {
 		finfo, err := os.Stat(path.Join(baseLocalPath, filename))
@@ -290,7 +247,7 @@ func (bd *BackupDestination) CompressedStreamUpload(baseLocalPath string, files 
 			defer file.Close()
 			bfile := nio.NewReader(file, iobuf)
 			defer bfile.Close()
-			if err :=  z.Write(archiver.File{
+			if err := z.Write(archiver.File{
 				FileInfo: archiver.FileInfo{
 					FileInfo:   info,
 					CustomName: f,
@@ -307,6 +264,10 @@ func (bd *BackupDestination) CompressedStreamUpload(baseLocalPath string, files 
 		return err
 	}
 	return nil
+}
+
+func (bd *BackupDestination) Path() string {
+	return bd.path
 }
 
 func NewBackupDestination(cfg config.Config) (*BackupDestination, error) {

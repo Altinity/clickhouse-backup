@@ -28,6 +28,7 @@ type Config struct {
 // GeneralConfig - general setting section
 type GeneralConfig struct {
 	RemoteStorage       string `yaml:"remote_storage" envconfig:"REMOTE_STORAGE"`
+	MaxFileSize         int64  `yaml:"max_file_size" envconfig:"MAX_FILE_SIZE"`
 	DisableProgressBar  bool   `yaml:"disable_progress_bar" envconfig:"DISABLE_PROGRESS_BAR"`
 	BackupsToKeepLocal  int    `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL"`
 	BackupsToKeepRemote int    `yaml:"backups_to_keep_remote" envconfig:"BACKUPS_TO_KEEP_REMOTE"`
@@ -194,6 +195,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		General: GeneralConfig{
 			RemoteStorage:       "s3",
+			MaxFileSize:         1024 * 1024 * 1024 * 1024, // 1TB
 			BackupsToKeepLocal:  0,
 			BackupsToKeepRemote: 0,
 		},

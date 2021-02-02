@@ -24,7 +24,7 @@ type RemoteStorage interface {
 	GetFile(string) (RemoteFile, error)
 	DeleteFile(string) error
 	Connect() error
-	Walk(string, func(RemoteFile)) error
+	Walk(string, func(RemoteFile) error) error
 	GetFileReader(key string) (io.ReadCloser, error)
 	PutFile(key string, r io.ReadCloser) error
 }

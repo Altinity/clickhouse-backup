@@ -10,7 +10,7 @@ import (
 func GetBackupsToDelete(backups []Backup, keep int) []Backup {
 	if len(backups) > keep {
 		sort.SliceStable(backups, func(i, j int) bool {
-			return backups[i].Date.After(backups[j].Date)
+			return backups[i].CreationDate.After(backups[j].CreationDate)
 		})
 		return backups[keep:]
 	}

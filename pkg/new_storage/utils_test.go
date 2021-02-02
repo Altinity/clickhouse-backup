@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -18,15 +19,15 @@ func timeParse(s string) time.Time {
 
 func TestGetBackupsToDelete(t *testing.T) {
 	testData := []Backup{
-		{Name: "three", Date: timeParse("2019-03-28T19-50-12")},
-		{Name: "one", Date: timeParse("2019-01-28T19-50-12")},
-		{Name: "five", Date: timeParse("2019-05-28T19-50-12")},
-		{Name: "two", Date: timeParse("2019-02-28T19-50-12")},
-		{Name: "four", Date: timeParse("2019-04-28T19-50-12")},
+		metadata.BackupMetadata{BackupName: "three", CreationDate: timeParse("2019-03-28T19-50-12")},
+		{BackupName: "one", CreationDate: timeParse("2019-01-28T19-50-12")},
+		{BackupName: "five", CreationDate: timeParse("2019-05-28T19-50-12")},
+		{BackupName: "two", CreationDate: timeParse("2019-02-28T19-50-12")},
+		{BackupName: "four", CreationDate: timeParse("2019-04-28T19-50-12")},
 	}
 	expectedData := []Backup{
-		{Name: "two", Date: timeParse("2019-02-28T19-50-12")},
-		{Name: "one", Date: timeParse("2019-01-28T19-50-12")},
+		{BackupName: "two", CreationDate: timeParse("2019-02-28T19-50-12")},
+		{BackupName: "one", CreationDate: timeParse("2019-01-28T19-50-12")},
 	}
 	assert.Equal(t, expectedData, GetBackupsToDelete(testData, 3))
 	assert.Equal(t, []Backup{}, GetBackupsToDelete([]Backup{testData[0]}, 3))
