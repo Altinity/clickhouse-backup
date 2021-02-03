@@ -114,12 +114,10 @@ func main() {
 				case "remote":
 					return backup.PrintRemoteBackups(*config, c.Args().Get(1))
 				case "all", "":
-					fmt.Println("Local backups:")
 					if err := backup.PrintLocalBackups(*config, c.Args().Get(1)); err != nil {
 						return err
 					}
 					if config.General.RemoteStorage != "none" {
-						fmt.Println("Remote backups:")
 						if err := backup.PrintRemoteBackups(*config, c.Args().Get(1)); err != nil {
 							return err
 						}
@@ -222,29 +220,6 @@ func main() {
 			Usage: "Print default config",
 			Action: func(*cli.Context) {
 				config.PrintDefaultConfig()
-			},
-			Flags: cliapp.Flags,
-		},
-		{
-			Name:        "freeze",
-			Usage:       "Freeze tables",
-			UsageText:   "clickhouse-backup freeze [-t, --tables=<db>.<table>] <backup_name>",
-			Description: "Freeze tables",
-			Action: func(c *cli.Context) error {
-				return backup.Freeze(*getConfig(c), c.String("t"))
-			},
-			Flags: append(cliapp.Flags,
-				cli.StringFlag{
-					Name:   "table, tables, t",
-					Hidden: false,
-				},
-			),
-		},
-		{
-			Name:  "clean",
-			Usage: "Remove data in 'shadow' folder",
-			Action: func(c *cli.Context) error {
-				return backup.Clean(*getConfig(c))
 			},
 			Flags: cliapp.Flags,
 		},

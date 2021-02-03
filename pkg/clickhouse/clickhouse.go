@@ -199,18 +199,42 @@ func (ch *ClickHouse) GetTables() ([]Table, error) {
 		}
 		tables[i] = ch.fixVariousVersions(t)
 	}
+	if len(tables) == 0 {
+		return tables, nil
+	}
+	if !tables[0].TotalBytes.Valid {
+		tables = ch.getTableSizeFromParts(tables)
+	}
 	return tables, nil
 }
 
-// GetTable - return table
-func (ch *ClickHouse) GetTable(database, name string) (*Table, error) {
-	tables := make([]Table, 0)
-	err := ch.softSelect(&tables, fmt.Sprintf("SELECT * FROM system.tables WHERE is_temporary = 0 AND database = '%s' AND name = '%s';", database, name))
-	if err != nil {
-		return nil, err
+func (ch *ClickHouse) getTableSizeFromParts(tables []Table) []Table {
+	var tablesSize []struct {
+		Database string `db:"database"`
+		Table    string `db:"table"`
+		Size     int64  `db:"size"`
 	}
-	result := ch.fixVariousVersions(tables[0])
-	return &result, nil
+	ch.softSelect(&tablesSize, fmt.Sprintf("SELECT database, table, sum(bytes_on_disk) as size FROM system.parts GROUP BY (database, table)"))
+	tableMap := map[metadata.TableTitle]int64{}
+	for i := range tablesSize {
+		tableMap[metadata.TableTitle{
+			Database: tablesSize[i].Database,
+			Table:    tablesSize[i].Table,
+		}] = tablesSize[i].Size
+	}
+	for i, t := range tables {
+		if t.TotalBytes.Valid {
+			continue
+		}
+		t.TotalBytes = sql.NullInt64{
+			Int64: tableMap[metadata.TableTitle{
+				Database: t.Database,
+				Table:    t.Name}],
+			Valid: true,
+		}
+		tables[i] = t
+	}
+	return tables
 }
 
 func (ch *ClickHouse) fixVariousVersions(t Table) Table {
@@ -334,13 +358,9 @@ func (ch *ClickHouse) Mkdir(name string) error {
 }
 
 // CopyData - copy partitions for specific table to detached folder
-func (ch *ClickHouse) CopyData(backupName string, backupTable metadata.TableMetadata, disks []Disk) error {
+func (ch *ClickHouse) CopyData(backupName string, backupTable metadata.TableMetadata, disks []Disk, tableDataPaths []string) error {
 	// TODO: проверить если диск есть в бэкапе но нет в кликхаусе
-	dstTable, err := ch.GetTable(backupTable.Database, backupTable.Table)
-	if err != nil {
-		return err
-	}
-	dstDataPaths := GetDisksByPaths(disks, dstTable.DataPaths)
+	dstDataPaths := GetDisksByPaths(disks, tableDataPaths)
 	for _, backupDisk := range disks {
 		if len(backupTable.Parts[backupDisk.Name]) == 0 {
 			continue

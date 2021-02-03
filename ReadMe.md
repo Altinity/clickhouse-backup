@@ -13,17 +13,19 @@ Tool for easy ClickHouse backup and restore with cloud storages support
 - Easy creating and restoring backups of all or specific tables
 - Efficient storing of multiple backups on the file system
 - Uploading and downloading with streaming compression
+- Works with AWS
+- **Support of Atomic Database Engine**
+- **Support of multi disks installations**
+
+TODO:
+- Works with Azure, GCS, Tencent COS, FTP
 - Support of incremental backups on remote storages
-- Works with AWS, Azure, GCS, Tencent COS, FTP
+- Smart restore for replicated tables
 
 ## Limitations
 
-- ClickHouse above 1.1.54390 and before 20.10 is supported
+- ClickHouse above 1.1.54390 is supported
 - Only MergeTree family tables engines
-- Backup of 'Tiered storage' or `storage_policy` IS NOT SUPPORTED!
-- 'Atomic' database engine enabled by default in ClickHouse 20.10 IS NOT SUPPORTED!
-- Maximum backup size on cloud storages is 5TB
-- Maximum number of parts on AWS S3 is 10,000 (increase part_size if your database is more than 1TB)
 
 ## Download
 

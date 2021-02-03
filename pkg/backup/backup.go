@@ -140,52 +140,6 @@ func RestoreSchema(cfg config.Config, backupName string, tablePattern string, dr
 	return nil
 }
 
-// Freeze - freeze tables by tablePattern
-func Freeze(cfg config.Config, tablePattern string) error {
-	ch := &clickhouse.ClickHouse{
-		Config: &cfg.ClickHouse,
-	}
-	if err := ch.Connect(); err != nil {
-		return fmt.Errorf("can't connect to clickhouse: %v", err)
-	}
-	defer ch.Close()
-
-	disks, err := ch.GetDisks()
-	if err != nil {
-		return err
-	}
-	for _, disk := range disks {
-		shadowPath := filepath.Join(disk.Path, "shadow")
-		files, err := ioutil.ReadDir(shadowPath)
-		if err != nil {
-			if !os.IsNotExist(err) {
-				return fmt.Errorf("can't read '%s': %v", shadowPath, err)
-			}
-		}
-		if len(files) > 0 {
-			return fmt.Errorf("'%s' is not empty, execute 'clean' command first", shadowPath)
-		}
-	}
-	allTables, err := ch.GetTables()
-	if err != nil {
-		return fmt.Errorf("can't get tables from clickhouse: %v", err)
-	}
-	backupTables := filterTablesByPattern(allTables, tablePattern)
-	if len(backupTables) == 0 {
-		return fmt.Errorf("there are no tables in clickhouse, create something to freeze")
-	}
-	for _, table := range backupTables {
-		if table.Skip {
-			log.Infof("Skip '%s.%s'", table.Database, table.Name)
-			continue
-		}
-		if err := ch.FreezeTable(&table); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // NewBackupName - return default backup name
 func NewBackupName() string {
 	return time.Now().UTC().Format(BackupTimeFormat)
@@ -483,6 +437,13 @@ func RestoreData(cfg config.Config, backupName string, tablePattern string) erro
 	if err != nil {
 		return err
 	}
+	dstTablesMap := map[metadata.TableTitle]clickhouse.Table{}
+	for i := range chTables {
+		dstTablesMap[metadata.TableTitle{
+			Database: chTables[i].Database,
+			Table:    chTables[i].Name,
+		}] = chTables[i]
+	}
 	if len(tablesForRestore) == 0 {
 		return fmt.Errorf("backup doesn't have tables to restore")
 	}
@@ -507,7 +468,10 @@ func RestoreData(cfg config.Config, backupName string, tablePattern string) erro
 		return err
 	}
 	for _, table := range tablesForRestore {
-		if err := ch.CopyData(backupName, table, disks); err != nil {
+		dstTableDataPaths := dstTablesMap[metadata.TableTitle{
+			Database: table.Database,
+			Table:    table.Table}].DataPaths
+		if err := ch.CopyData(backupName, table, disks, dstTableDataPaths); err != nil {
 			return fmt.Errorf("can't restore '%s.%s': %v", table.Database, table.Table, err)
 		}
 		if err := ch.AttachPartitions(table, disks); err != nil {
@@ -751,30 +715,6 @@ func Download(cfg config.Config, backupName string, tablePattern string, schemaO
 		}
 	}
 	log.Info("  Done.")
-	return nil
-}
-
-// Clean - removed all data in shadow folder
-func Clean(cfg config.Config) error {
-	ch := &clickhouse.ClickHouse{
-		Config: &cfg.ClickHouse,
-	}
-	if err := ch.Connect(); err != nil {
-		return fmt.Errorf("can't connect to clickhouse: %v", err)
-	}
-	defer ch.Close()
-
-	disks, err := ch.GetDisks()
-	if err != nil {
-		return err
-	}
-	for _, disk := range disks {
-		shadowDir := path.Join(disk.Path, "shadow")
-		log.Infof("Clean %s", shadowDir)
-		if err := cleanDir(shadowDir); err != nil {
-			return fmt.Errorf("can't clean '%s': %v", shadowDir, err)
-		}
-	}
 	return nil
 }
 

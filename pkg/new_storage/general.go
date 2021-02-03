@@ -266,10 +266,6 @@ func (bd *BackupDestination) CompressedStreamUpload(baseLocalPath string, files 
 	return nil
 }
 
-func (bd *BackupDestination) Path() string {
-	return bd.path
-}
-
 func NewBackupDestination(cfg config.Config) (*BackupDestination, error) {
 	switch cfg.General.RemoteStorage {
 	case "s3":
@@ -279,6 +275,16 @@ func NewBackupDestination(cfg config.Config) (*BackupDestination, error) {
 			cfg.S3.Path,
 			cfg.S3.CompressionFormat,
 			cfg.S3.CompressionLevel,
+			cfg.General.DisableProgressBar,
+			cfg.General.BackupsToKeepRemote,
+		}, nil
+	case "gcs":
+		googleCloudStorage := &GCS{Config: &cfg.GCS}
+		return &BackupDestination{
+			googleCloudStorage,
+			cfg.GCS.Path,
+			cfg.GCS.CompressionFormat,
+			cfg.GCS.CompressionLevel,
 			cfg.General.DisableProgressBar,
 			cfg.General.BackupsToKeepRemote,
 		}, nil

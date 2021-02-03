@@ -167,8 +167,6 @@ func (api *APIServer) setupAPIServer(cfg *config.Config) *http.Server {
 	r.HandleFunc("/backup/tables", api.httpTablesHandler).Methods("GET")
 	r.HandleFunc("/backup/list", api.httpListHandler).Methods("GET")
 	r.HandleFunc("/backup/create", api.httpCreateHandler).Methods("POST")
-	r.HandleFunc("/backup/clean", api.httpCleanHandler).Methods("POST")
-	r.HandleFunc("/backup/freeze", api.httpFreezeHandler).Methods("POST")
 	r.HandleFunc("/backup/upload/{name}", api.httpUploadHandler).Methods("POST")
 	r.HandleFunc("/backup/download/{name}", api.httpDownloadHandler).Methods("POST")
 	r.HandleFunc("/backup/restore/{name}", api.httpRestoreHandler).Methods("POST")
@@ -494,60 +492,6 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		Status:     "acknowledged",
 		Operation:  "create",
 		BackupName: backupName,
-	})
-}
-
-// httpFreezeHandler - freeze tables
-func (api *APIServer) httpFreezeHandler(w http.ResponseWriter, r *http.Request) {
-	if locked := api.lock.TryAcquire(1); !locked {
-		log.Println(ErrAPILocked)
-		writeError(w, http.StatusLocked, "freeze", ErrAPILocked)
-		return
-	}
-	defer api.lock.Release(1)
-	api.status.start("freeze")
-
-	query := r.URL.Query()
-	tablePattern := ""
-	if tp, exist := query["table"]; exist {
-		tablePattern = tp[0]
-	}
-	if err := backup.Freeze(*api.config, tablePattern); err != nil {
-		log.Printf("Freeze error: = %+v\n", err)
-		writeError(w, http.StatusInternalServerError, "freeze", err)
-		return
-	}
-	sendJSONEachRow(w, http.StatusOK, struct {
-		Status    string `json:"status"`
-		Operation string `json:"operation"`
-	}{
-		Status:    "success",
-		Operation: "freeze",
-	})
-}
-
-// httpCleanHandler - clean ./shadow directory
-func (api *APIServer) httpCleanHandler(w http.ResponseWriter, r *http.Request) {
-	if locked := api.lock.TryAcquire(1); !locked {
-		log.Println(ErrAPILocked)
-		writeError(w, http.StatusLocked, "clean", ErrAPILocked)
-		return
-	}
-	defer api.lock.Release(1)
-	api.status.start("clean")
-	err := backup.Clean(*api.config)
-	api.status.stop(err)
-	if err != nil {
-		log.Printf("Clean error: = %+v\n", err)
-		writeError(w, http.StatusInternalServerError, "clean", err)
-		return
-	}
-	sendJSONEachRow(w, http.StatusOK, struct {
-		Status    string `json:"status"`
-		Operation string `json:"operation"`
-	}{
-		Status:    "success",
-		Operation: "clean",
 	})
 }
 

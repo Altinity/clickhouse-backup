@@ -6,6 +6,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
@@ -14,7 +15,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/utils"
 )
 
-func printBackups(backupList []new_storage.Backup, format string, printSize bool) error {
+func printBackups(backupList []new_storage.Backup, format, location string) error {
 	switch format {
 	case "latest", "last", "l":
 		if len(backupList) < 1 {
@@ -27,16 +28,14 @@ func printBackups(backupList []new_storage.Backup, format string, printSize bool
 		}
 		fmt.Println(backupList[len(backupList)-2].BackupName)
 	case "all", "":
-		if len(backupList) == 0 {
-			fmt.Println("no backups found")
-		}
+		// if len(backupList) == 0 {
+		// 	fmt.Println("no backups found")
+		// }
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', tabwriter.DiscardEmptyColumns)
 		for _, backup := range backupList {
-			if printSize {
-				fmt.Printf("- '%s'\t%s\t(created at %s)\n", backup.BackupName, utils.FormatBytes(backup.Size), backup.CreationDate.Format("02-01-2006 15:04:05"))
-			} else {
-				fmt.Printf("- '%s'\t(created at %s)\n", backup.BackupName, backup.CreationDate.Format("02-01-2006 15:04:05"))
-			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", backup.BackupName, utils.FormatBytes(backup.Size), backup.CreationDate.Format("02-01-2006 15:04:05"), location)
 		}
+		w.Flush()
 	default:
 		return fmt.Errorf("'%s' undefined", format)
 	}
@@ -49,7 +48,7 @@ func PrintLocalBackups(cfg config.Config, format string) error {
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	return printBackups(backupList, format, false)
+	return printBackups(backupList, format, "local")
 }
 
 // ListLocalBackups - return slice of all backups stored locally
@@ -107,7 +106,7 @@ func PrintRemoteBackups(cfg config.Config, format string) error {
 	if err != nil {
 		return err
 	}
-	return printBackups(backupList, format, true)
+	return printBackups(backupList, format, "remote")
 }
 
 func GetLocalBackup(cfg config.Config, backupName string) error {
@@ -183,6 +182,7 @@ func PrintTables(cfg config.Config, printAll bool) error {
 	if err != nil {
 		return err
 	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', tabwriter.DiscardEmptyColumns)
 	for _, table := range allTables {
 		if table.Skip && !printAll {
 			continue
@@ -192,10 +192,11 @@ func PrintTables(cfg config.Config, printAll bool) error {
 			tableDisks = append(tableDisks, disk)
 		}
 		if table.Skip {
-			fmt.Printf("skip\t%s.%s\t%s\t%v\n", table.Database, table.Name, utils.FormatBytes(table.TotalBytes.Int64), strings.Join(tableDisks, ","))
+			fmt.Fprintf(w, "%s.%s\t%s\t%v\tskip\n", table.Database, table.Name, utils.FormatBytes(table.TotalBytes.Int64), strings.Join(tableDisks, ","))
 			continue
 		}
-		fmt.Printf("%s.%s\t%s\t%v\n", table.Database, table.Name, utils.FormatBytes(table.TotalBytes.Int64), strings.Join(tableDisks, ","))
+		fmt.Fprintf(w, "%s.%s\t%s\t%v\t\n", table.Database, table.Name, utils.FormatBytes(table.TotalBytes.Int64), strings.Join(tableDisks, ","))
 	}
+	w.Flush()
 	return nil
 }
