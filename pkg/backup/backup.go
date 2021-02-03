@@ -346,12 +346,27 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *click
 
 	ctx.Debug("move shadow")
 	for _, diskPath := range diskPathList {
-		// backupPath := path.Join(diskPath, "backup", backupName, table.Database, table.Name)
 		backupPath := path.Join(diskPath, "backup", backupName)
-
 		shadowPath := path.Join(diskPath, "shadow")
 		backupShadowPath := path.Join(backupPath, "shadow")
 		if err := moveShadow(shadowPath, backupShadowPath); err != nil {
+			return err
+		}
+		// fix 19.15.3.6
+		badTablePath := path.Join(backupShadowPath, table.Database, table.Name)
+		if _, err := os.Stat(badTablePath); os.IsNotExist(err) {
+			continue
+		}
+		encodedDBPath := path.Join(backupShadowPath, clickhouse.TablePathEncode(table.Database))
+		if err := ch.Mkdir(encodedDBPath); err != nil {
+			return err
+		}
+		encodedTablePath := path.Join(encodedDBPath, clickhouse.TablePathEncode(table.Name))
+		if err := os.Rename(badTablePath, encodedTablePath); err != nil {
+			return err
+		}
+		badDBPath := path.Join(path.Join(backupShadowPath, table.Database))
+		if err := os.Remove(badDBPath); err != nil {
 			return err
 		}
 	}
@@ -587,14 +602,14 @@ func Upload(cfg config.Config, backupName string, tablePattern string, diffFrom 
 	for i := range tablesForUpload {
 		t = append(t, metadata.TableTitle{
 			Database: tablesForUpload[i].Database,
-			Table: tablesForUpload[i].Table,
+			Table:    tablesForUpload[i].Table,
 		})
 	}
 	// заливаем метадату для бэкапа
 	backupMetafile := metadata.BackupMetadata{
-		BackupName: backupName,
+		BackupName:              backupName,
 		ClickhouseBackupVersion: "unknown",
-		Tables: t,
+		Tables:                  t,
 	}
 	content, err := json.MarshalIndent(&backupMetafile, "", "\t")
 	if err != nil {
@@ -620,6 +635,9 @@ func separateParts(basePath string, parts []metadata.Part, maxSize int64) ([][]s
 	for i := range parts {
 		partPath := path.Join(basePath, parts[i].Name)
 		filepath.Walk(partPath, func(filePath string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
 			if !info.Mode().IsRegular() {
 				return nil
 			}
@@ -709,7 +727,7 @@ func Download(cfg config.Config, backupName string, tablePattern string, schemaO
 			return err
 		}
 		metadataLocalFile := path.Join(metadataBase, fmt.Sprintf("%s.json", clickhouse.TablePathEncode(t.Table)))
-		if err:= ioutil.WriteFile(metadataLocalFile, tmBody, 0660); err != nil {
+		if err := ioutil.WriteFile(metadataLocalFile, tmBody, 0660); err != nil {
 			return err
 		}
 		if schemaOnly {
