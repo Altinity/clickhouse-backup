@@ -1,7 +1,9 @@
 package backup
 
 import (
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path"
 	"sort"
@@ -33,7 +35,7 @@ func printBackups(backupList []new_storage.Backup, format, location string) erro
 		// }
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', tabwriter.DiscardEmptyColumns)
 		for _, backup := range backupList {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", backup.BackupName, utils.FormatBytes(backup.Size), backup.CreationDate.Format("02-01-2006 15:04:05"), location)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", backup.BackupName, utils.FormatBytes(backup.Size), backup.CreationDate.Format("02-01-2006T15:04:05"), location)
 		}
 		w.Flush()
 	default:
@@ -85,14 +87,27 @@ func ListLocalBackups(cfg config.Config) ([]new_storage.Backup, error) {
 		if !info.IsDir() {
 			continue
 		}
-		// TODO: detect legacy and non legacy
+		backupMetafilePath := path.Join(backupsPath, name, "metadata.json")
+		backupMetadataBody, err := ioutil.ReadFile(backupMetafilePath)
+		if os.IsNotExist(err) {
+			// Legacy backup
+			result = append(result, new_storage.Backup{
+				BackupMetadata: metadata.BackupMetadata{
+					BackupName:   name,
+					CreationDate: info.ModTime(),
+				},
+				Legacy: true,
+			})
+			continue
+		}
+		var backupMetadata metadata.BackupMetadata
+		if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
+			return nil, err
+		}
 		result = append(result, new_storage.Backup{
-			metadata.BackupMetadata{
-			BackupName:   name,
-			CreationDate: info.ModTime(),
-			}, true,
+			BackupMetadata: backupMetadata,
+			Legacy:         false,
 		})
-
 	}
 	sort.SliceStable(result, func(i, j int) bool {
 		return result[i].CreationDate.Before(result[j].CreationDate)

@@ -135,12 +135,12 @@ func (s *S3) GetFile(key string) (RemoteFile, error) {
 }
 
 func (s *S3) Walk(s3Path string, process func(r RemoteFile) error) error {
-	return s.remotePager(s.Config.Path, false, func(page *s3.ListObjectsV2Output) {
+	return s.remotePager(path.Join(s.Config.Path, s3Path), false, func(page *s3.ListObjectsV2Output) {
 		for _, c := range page.Contents {
 			process(&s3File{
 				*c.Size,
 				*c.LastModified,
-				strings.TrimPrefix(*c.Key, s.Config.Path),
+				strings.TrimPrefix(*c.Key, path.Join(s.Config.Path, s3Path)),
 			})
 		}
 	})

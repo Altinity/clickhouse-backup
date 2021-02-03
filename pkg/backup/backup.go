@@ -193,7 +193,8 @@ func CreateBackup(cfg config.Config, backupName, tablePattern string) error {
 			return fmt.Errorf("'%s' already exists", backupPath)
 		}
 	}
-
+	var backupSize int64
+	t := []metadata.TableTitle{}
 	for _, table := range tables {
 		if table.Skip {
 			continue
@@ -203,7 +204,33 @@ func CreateBackup(cfg config.Config, backupName, tablePattern string) error {
 			ctx.Errorf("error=\"%v\"", err)
 			continue
 		}
+		t = append(t, metadata.TableTitle{
+			Database: table.Database,
+			Table:    table.Name,
+		})
+		backupSize += table.TotalBytes.Int64
 	}
+	backupMetafile := metadata.BackupMetadata{
+		BackupName:              backupName,
+		CreationDate:            time.Now().UTC(),
+		Size:                    backupSize,
+		ClickhouseBackupVersion: "unknown",
+		// ClickHouseVersion: ch.GetVersion(),
+		Tables: t,
+	}
+	content, err := json.MarshalIndent(&backupMetafile, "", "\t")
+	if err != nil {
+		return fmt.Errorf("can't marshal backup metafile json: %v", err)
+	}
+	defaultPath, err := ch.GetDefaultPath()
+	if err != nil {
+		return err
+	}
+	backupMetaFile := path.Join(defaultPath, "backup", backupName, "metadata.json")
+	if err := ioutil.WriteFile(backupMetaFile, content, 0640); err != nil {
+		return err
+	}
+	ch.Chown(backupMetaFile)
 
 	if err := RemoveOldBackupsLocal(cfg); err != nil {
 		return err
@@ -515,15 +542,14 @@ func Upload(cfg config.Config, backupName string, tablePattern string, diffFrom 
 		return ErrUnknownClickhouseDataPath
 	}
 
-	// проверяем существует ли бэкап на удалённом стораге
-	// вычисляем какие таблички нужно заливать
+	// TODO: проверяем существует ли бэкап на удалённом сторадже
 	metadataPath := path.Join(defaulDataPath, "backup", backupName, "metadata")
 	if _, err := os.Stat(metadataPath); err != nil {
 		return err
 	}
 	tablesForUpload, err := parseSchemaPattern(metadataPath, tablePattern)
 
-	log.Infof("Num tables for upload: %d", len(tablesForUpload))
+	log.Debugf("Num tables for upload: %d", len(tablesForUpload))
 
 	for _, table := range tablesForUpload {
 		uuid := path.Join(clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table))
@@ -542,7 +568,6 @@ func Upload(cfg config.Config, backupName string, tablePattern string, diffFrom 
 				fileName := fmt.Sprintf("%s_%d.%s", disk, i+1, cfg.S3.CompressionFormat) // TODO: fix this
 				metdataFiles[disk] = append(metdataFiles[disk], fileName)
 				remoteDataFile := path.Join(backupName, "shadow", clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table), fileName)
-				log.Infof("upload %d to %s", len(p), remoteDataFile)
 				err := bd.CompressedStreamUpload(backupPath, p, remoteDataFile)
 				if err != nil {
 					return fmt.Errorf("can't upload: %v", err)
@@ -570,18 +595,14 @@ func Upload(cfg config.Config, backupName string, tablePattern string, diffFrom 
 		})
 	}
 	// заливаем метадату для бэкапа
-	backupMetafile := metadata.BackupMetadata{
-		BackupName:              backupName,
-		ClickhouseBackupVersion: "unknown",
-		Tables:                  t,
-	}
-	content, err := json.MarshalIndent(&backupMetafile, "", "\t")
+	backupMetadataPath := path.Join(defaulDataPath, "backup", backupName, "metadata.json")
+	backupMetadataBody, err := ioutil.ReadFile(backupMetadataPath)
 	if err != nil {
-		return fmt.Errorf("can't marshal backup metafile json: %v", err)
+		return err
 	}
 	remoteBackupMetaFile := path.Join(backupName, "metadata.json")
 	if err := bd.PutFile(remoteBackupMetaFile,
-		ioutil.NopCloser(bytes.NewReader(content))); err != nil {
+		ioutil.NopCloser(bytes.NewReader(backupMetadataBody))); err != nil {
 		return fmt.Errorf("can't upload: %v", err)
 	}
 
@@ -753,7 +774,6 @@ func RemoveBackupLocal(cfg config.Config, backupName string) error {
 	if err != nil {
 		return err
 	}
-
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
 			for _, disk := range disks {
@@ -762,9 +782,10 @@ func RemoveBackupLocal(cfg config.Config, backupName string) error {
 					return err
 				}
 			}
+			return nil
 		}
 	}
-	return nil
+	return fmt.Errorf("backup '%s' not found on local storage", backupName)
 }
 
 func RemoveBackupRemote(cfg config.Config, backupName string) error {

@@ -33,13 +33,6 @@ type Backup struct {
 	Legacy bool
 }
 
-// MetaFile - structure describe meta file that will be added to incremental backups archive.
-// Contains info of required files in backup and files
-type MetaFile struct {
-	RequiredBackup string   `json:"required_backup"`
-	Hardlinks      []string `json:"hardlinks"`
-}
-
 type BackupDestination struct {
 	RemoteStorage
 	path               string
@@ -67,22 +60,9 @@ func (bd *BackupDestination) RemoveOldBackups(keep int) error {
 }
 
 func (bd *BackupDestination) RemoveBackup(backupName string) error {
-	objects := []string{}
-	if err := bd.Walk(bd.path, func(f RemoteFile) error {
-		if strings.HasPrefix(f.Name(), path.Join(bd.path, backupName)) {
-			objects = append(objects, f.Name())
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-	for _, key := range objects {
-		err := bd.DeleteFile(key)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	return bd.Walk(backupName+"/", func(f RemoteFile) error {
+		return bd.DeleteFile(path.Join(backupName, f.Name()))
+	})
 }
 
 func (bd *BackupDestination) BackupsToKeep() int {
