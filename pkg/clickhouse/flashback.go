@@ -10,45 +10,6 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 )
 
-// GetPartitions - return slice of all partitions for a table
-func (ch *ClickHouse) GetPartitions(table Table) (map[string][]metadata.Part, error) {
-	disks, err := ch.GetDisks()
-	if err != nil {
-		return nil, err
-	}
-	result := map[string][]metadata.Part{}
-	for _, disk := range disks {
-		partitions := make([]partition, 0)
-		if len(disks) == 1 {
-			if err := ch.softSelect(&partitions,
-				fmt.Sprintf("select * from `system`.`parts` where database='%s' and table='%s' and active=1;", table.Database, table.Name)); err != nil {
-				return nil, err
-			}
-		} else {
-			if err := ch.softSelect(&partitions,
-				fmt.Sprintf("select * from `system`.`parts` where database='%s' and table='%s' and disk_name='%s' and active=1;", table.Database, table.Name, disk.Name)); err != nil {
-				return nil, err
-			}
-		}
-		if len(partitions) > 0 {
-			parts := make([]metadata.Part, len(partitions))
-			for i := range partitions {
-				parts[i] = metadata.Part{
-					Partition:                         partitions[i].Partition,
-					Name:                              partitions[i].Name,
-					Path:                              partitions[i].Path, // TODO: ???
-					HashOfAllFiles:                    partitions[i].HashOfAllFiles,
-					HashOfUncompressedFiles:           partitions[i].HashOfUncompressedFiles,
-					UncompressedHashOfCompressedFiles: partitions[i].UncompressedHashOfCompressedFiles,
-					PartitionID:                       partitions[i].PartitionID,
-				}
-			}
-			result[disk.Name] = parts
-		}
-	}
-	return result, nil
-}
-
 // ComputePartitionsDelta - computes the data partitions to be added and removed between live and backup tables
 func (ch *ClickHouse) ComputePartitionsDelta(restoreTables []metadata.TableMetadata, liveTables []Table) ([]PartDiff, error) {
 	var ftables []PartDiff

@@ -193,6 +193,10 @@ func CreateBackup(cfg config.Config, backupName, tablePattern string) error {
 			return fmt.Errorf("'%s' already exists", backupPath)
 		}
 	}
+	diskMap := map[string]string{}
+	for _, disk := range disks {
+		diskMap[disk.Name] = disk.Path
+	}
 	var backupSize int64
 	t := []metadata.TableTitle{}
 	for _, table := range tables {
@@ -202,6 +206,7 @@ func CreateBackup(cfg config.Config, backupName, tablePattern string) error {
 		ctx.Infof("%s.%s", table.Database, table.Name)
 		if err := AddTableToBackup(ch, backupName, &table); err != nil {
 			ctx.Errorf("error=\"%v\"", err)
+			// TODO: clean bad backup
 			continue
 		}
 		t = append(t, metadata.TableTitle{
@@ -212,10 +217,13 @@ func CreateBackup(cfg config.Config, backupName, tablePattern string) error {
 	}
 	backupMetafile := metadata.BackupMetadata{
 		BackupName:              backupName,
-		CreationDate:            time.Now().UTC(),
-		Size:                    backupSize,
+		Disks:                   diskMap,
 		ClickhouseBackupVersion: "unknown",
+		CreationDate:            time.Now().UTC(),
+		// Tags: ,
 		// ClickHouseVersion: ch.GetVersion(),
+		Size: backupSize,
+		// CompressedSize: ,
 		Tables: t,
 	}
 	content, err := json.MarshalIndent(&backupMetafile, "", "\t")
@@ -271,13 +279,13 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *click
 			}
 		}
 	}
-
 	for _, diskPath := range diskPathList {
 		backupPath := path.Join(diskPath, relevantBackupPath)
 		if err := ch.Mkdir(backupPath); err != nil {
 			return err
 		}
 	}
+
 	ctx.Debug("create metadata")
 	backupPath := path.Join(defaultPath, "backup", backupName)
 	if err := createMetadata(ch, backupPath, table); err != nil {
@@ -296,44 +304,12 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *click
 		return err
 	}
 
-	// log.Printf("Copy part hashes")
-	// if err := CopyPartHashes(cfg, tablePattern, backupName); err != nil {
-	// 	log.Println(err)
-	// }
-
-	// log.Println("Copy metadata")
-	// schemaList, err := parseSchemaPattern(path.Join(dataPath, "metadata"), tablePattern)
-	// if err != nil {
-	// 	return err
-	// }
-	// for _, schema := range schemaList {
-	// 	skip := false
-	// 	for _, filter := range cfg.ClickHouse.SkipTables {
-	// 		if matched, _ := filepath.Match(filter, fmt.Sprintf("%s.%s", schema.Database, schema.Table)); matched {
-	// 			skip = true
-	// 			break
-	// 		}
-	// 	}
-	// 	if skip {
-	// 		continue
-	// 	}
-	// 	relativePath := strings.Trim(strings.TrimPrefix(schema.Path, path.Join(dataPath, "metadata")), "/")
-	// 	newPath := path.Join(backupPath, "metadata", relativePath)
-	// 	if err := copyFile(schema.Path, newPath); err != nil {
-	// 		return fmt.Errorf("can't backup metadata: %v", err)
-	// 	}
-	// }
-	// log.Println("  Done.")
-
 	ctx.Debug("move shadow")
 	for _, diskPath := range diskPathList {
 		backupPath := path.Join(diskPath, "backup", backupName)
 		shadowPath := path.Join(diskPath, "shadow")
 		backupShadowPath := path.Join(backupPath, "shadow")
 		if err := moveShadow(shadowPath, backupShadowPath); err != nil {
-			return err
-		}
-		if err := ch.CleanShadow(); err != nil {
 			return err
 		}
 		// fix 19.15.3.6
@@ -354,39 +330,21 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *click
 			return err
 		}
 	}
-	// if err := RemoveOldBackupsLocal(cfg); err != nil {
-	// 	return err
-	// }
+	if err := ch.CleanShadow(); err != nil {
+		return err
+	}
 	return nil
 }
 
 func createMetadata(ch *clickhouse.ClickHouse, backupPath string, table *clickhouse.Table) error {
-	diskList, err := ch.GetDisks()
-	if err != nil {
-		return fmt.Errorf("can't get clickhouse disk list: %v", err)
-	}
-	// diskMap := map[string]string{}
-	// for _, disk := range diskList {
-	// 	diskMap[disk.Name] = disk.Path
-	// }
 	parts, err := ch.GetPartitions(*table)
 	if err != nil {
 		return err
-	}
-	diskMap := map[string]string{}
-	for diskWithParts := range parts {
-		for _, disk := range diskList {
-			if diskWithParts == disk.Name {
-				diskMap[disk.Name] = disk.Path
-				break
-			}
-		}
 	}
 	metadata := &metadata.TableMetadata{
 		Table:      table.Name,
 		Database:   table.Database,
 		Query:      table.CreateTableQuery,
-		Disks:      diskMap,
 		UUID:       table.UUID,
 		TotalBytes: table.TotalBytes.Int64,
 		Parts:      parts,
@@ -458,11 +416,6 @@ func RestoreData(cfg config.Config, backupName string, tablePattern string) erro
 		return fmt.Errorf("no have found schemas by %s in %s", tablePattern, backupName)
 	}
 
-	// allBackupTables, err := ch.GetBackupTables(backupName)
-	// if err != nil {
-	// 	return err
-	// }
-	// restoreTables := parseTablePatternForRestoreData(allBackupTables, tablePattern)
 	chTables, err := ch.GetTables()
 	if err != nil {
 		return err
@@ -544,15 +497,20 @@ func Upload(cfg config.Config, backupName string, tablePattern string, diffFrom 
 	if err != nil {
 		return ErrUnknownClickhouseDataPath
 	}
-
+	disks, err := ch.GetDisks()
+	if err != nil {
+		return err
+	}
+	diskMap := map[string]string{}
+	for _, disk := range disks {
+		diskMap[disk.Name] = disk.Path
+	}
 	// TODO: проверяем существует ли бэкап на удалённом сторадже
 	metadataPath := path.Join(defaulDataPath, "backup", backupName, "metadata")
 	if _, err := os.Stat(metadataPath); err != nil {
 		return err
 	}
 	tablesForUpload, err := parseSchemaPattern(metadataPath, tablePattern)
-
-	log.Debugf("Num tables for upload: %d", len(tablesForUpload))
 
 	for _, table := range tablesForUpload {
 		uuid := path.Join(clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table))
@@ -561,7 +519,7 @@ func Upload(cfg config.Config, backupName string, tablePattern string, diffFrom 
 		}
 		metdataFiles := map[string][]string{}
 		for disk := range table.Parts {
-			backupPath := path.Join(table.Disks[disk], "backup", backupName, "shadow", uuid)
+			backupPath := path.Join(diskMap[disk], "backup", backupName, "shadow", uuid)
 			parts, err := separateParts(backupPath, table.Parts[disk], cfg.General.MaxFileSize)
 			if err != nil {
 				return err

@@ -7,7 +7,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -27,80 +26,6 @@ type ClickHouse struct {
 	conn   *sqlx.DB
 	uid    *int
 	gid    *int
-}
-
-// Table - ClickHouse table struct
-type Table struct {
-	Database             string   `db:"database"`
-	Name                 string   `db:"name"`
-	DataPath             string   `db:"data_path"` // For legacy support
-	DataPaths            []string `db:"data_paths"`
-	MetadataPath         string   `db:"metadata_path"`
-	Engine               string   `db:"engine"`
-	UUID                 string   `db:"uuid,omitempty"`
-	StoragePolicy        string   `db:"storage_policy"`
-	CreateTableQuery     string   `db:"create_table_query"`
-	Skip                 bool
-	TotalBytes           sql.NullInt64 `db:"total_bytes,omitempty"`
-	DependencesTable     []string      `db:"dependencies_table"`
-	DependenciesDatabase []string      `db:"dependencies_database"`
-}
-
-type Disk struct {
-	Name string `db:"name"`
-	Path string `db:"path"`
-	Type string `db:"type"`
-}
-
-// BackupPartition - struct representing Clickhouse partition
-type BackupPartition struct {
-	Partition                         string `json:"Partition"`
-	Name                              string `json:"Name"`
-	Path                              string `json:"Path"`
-	HashOfAllFiles                    string `json:"hash_of_all_files"`
-	HashOfUncompressedFiles           string `json:"hash_of_uncompressed_files"`
-	UncompressedHashOfCompressedFiles string `json:"uncompressed_hash_of_compressed_files"`
-	Active                            uint8  `json:"active"`
-	DiskName                          string `json:"disk_name"`
-	PartitionID                       string `json:"partition_id"`
-}
-
-// // BackupTable - struct to store additional information on partitions
-// type BackupTable struct {
-// 	Database   string
-// 	Name       string
-// 	Partitions map[string][]metadata.Part
-// 	DataPaths  map[string]string
-// }
-
-// BackupTables - slice of BackupTable
-type BackupTables []metadata.TableMetadata
-
-// Sort - sorting BackupTables slice orderly by name
-func (bt BackupTables) Sort() {
-	sort.Slice(bt, func(i, j int) bool {
-		return (bt[i].Database < bt[j].Database) || (bt[i].Database == bt[j].Database && bt[i].Table < bt[j].Table)
-	})
-}
-
-// Partition - partition info from system.parts
-type partition struct {
-	Partition                         string `db:"partition"`
-	PartitionID                       string `db:"partition_id"`
-	Name                              string `db:"name"`
-	Path                              string `db:"path"`
-	HashOfAllFiles                    string `db:"hash_of_all_files"`
-	HashOfUncompressedFiles           string `db:"hash_of_uncompressed_files"`
-	UncompressedHashOfCompressedFiles string `db:"uncompressed_hash_of_compressed_files"`
-	Active                            uint8  `db:"active"`
-	DiskName                          string `db:"disk_name"`
-}
-
-// PartDiff - Data part discrepancies infos
-type PartDiff struct {
-	BTable           metadata.TableMetadata
-	PartitionsAdd    []metadata.Part
-	PartitionsRemove []metadata.Part
 }
 
 // Connect - establish connection to ClickHouse
@@ -159,7 +84,8 @@ func (ch *ClickHouse) getDataPathFromSystemSettings() ([]Disk, error) {
 	var result []struct {
 		MetadataPath string `db:"metadata_path"`
 	}
-	if err := ch.conn.Select(&result, "SELECT metadata_path FROM system.tables WHERE database == 'system' LIMIT 1;"); err != nil {
+	query := "SELECT metadata_path FROM system.tables WHERE database == 'system' LIMIT 1;"
+	if err := ch.conn.Select(&result, query); err != nil {
 		return nil, err
 	}
 	metadataPath := result[0].MetadataPath
@@ -214,7 +140,8 @@ func (ch *ClickHouse) getTableSizeFromParts(tables []Table) []Table {
 		Table    string `db:"table"`
 		Size     int64  `db:"size"`
 	}
-	ch.softSelect(&tablesSize, fmt.Sprintf("SELECT database, table, sum(bytes_on_disk) as size FROM system.parts GROUP BY (database, table)"))
+	query := "SELECT database, table, sum(bytes_on_disk) as size FROM system.parts GROUP BY (database, table);"
+	ch.softSelect(&tablesSize, query)
 	tableMap := map[metadata.TableTitle]int64{}
 	for i := range tablesSize {
 		tableMap[metadata.TableTitle{
@@ -257,8 +184,8 @@ func (ch *ClickHouse) fixVariousVersions(t Table) Table {
 // Example value: 19001005
 func (ch *ClickHouse) GetVersion() (int, error) {
 	var result []string
-	q := "SELECT value FROM `system`.`build_options` where name='VERSION_INTEGER'"
-	if err := ch.conn.Select(&result, q); err != nil {
+	query := "SELECT value FROM `system`.`build_options` where name='VERSION_INTEGER'"
+	if err := ch.conn.Select(&result, query); err != nil {
 		return 0, fmt.Errorf("can't get сlickHouse version: %v", err)
 	}
 	if len(result) == 0 {
@@ -328,8 +255,7 @@ func (ch *ClickHouse) CleanShadow() error {
 	}
 	for _, disk := range disks {
 		shadowDir := path.Join(disk.Path, "shadow")
-		log.Debugf("clean %s", shadowDir)
-		if err := cleanDir(shadowDir); err != nil {
+		if err := cleanDir(shadowDir); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("can't clean '%s': %v", shadowDir, err)
 		}
 	}
@@ -427,7 +353,6 @@ func (ch *ClickHouse) CopyData(backupName string, backupTable metadata.TableMeta
 
 // AttachPartitions - execute ATTACH command for specific table
 func (ch *ClickHouse) AttachPartitions(table metadata.TableMetadata, disks []Disk) error {
-	// TODO: список партиций в detached можно посмотреть в таблице, это нужно для более надёжного восстановления
 	for _, disk := range disks {
 		for _, partition := range table.Parts[disk.Name] {
 			query := fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PART '%s'", table.Database, table.Table, partition.Name)
@@ -453,8 +378,8 @@ func (ch *ClickHouse) ShowCreateTable(database, name string) string {
 
 // CreateDatabase - create ClickHouse database
 func (ch *ClickHouse) CreateDatabase(database string) error {
-	createQuery := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", database)
-	_, err := ch.conn.Exec(createQuery)
+	query := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", database)
+	_, err := ch.conn.Exec(query)
 	return err
 }
 
@@ -464,9 +389,9 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable bool) err
 		return err
 	}
 	if dropTable {
-		dropQuery := fmt.Sprintf("DROP TABLE IF EXISTS `%s`.`%s`", table.Database, table.Name)
-		log.Debugf(dropQuery)
-		if _, err := ch.conn.Exec(dropQuery); err != nil {
+		query := fmt.Sprintf("DROP TABLE IF EXISTS `%s`.`%s`", table.Database, table.Name)
+		log.Debugf(query)
+		if _, err := ch.conn.Exec(query); err != nil {
 			return err
 		}
 	}
@@ -506,4 +431,45 @@ func IsClickhouseShadow(path string) bool {
 func TablePathEncode(str string) string {
 	return strings.ReplaceAll(
 		strings.ReplaceAll(url.PathEscape(str), ".", "%2E"), "-", "%2D")
+}
+
+// GetPartitions - return slice of all partitions for a table
+func (ch *ClickHouse) GetPartitions(table Table) (map[string][]metadata.Part, error) {
+	disks, err := ch.GetDisks()
+	if err != nil {
+		return nil, err
+	}
+	result := map[string][]metadata.Part{}
+	for _, disk := range disks {
+		partitions := make([]partition, 0)
+		if len(disks) == 1 {
+			if err := ch.softSelect(&partitions,
+				fmt.Sprintf("select * from `system`.`parts` where database='%s' and table='%s' and active=1;", table.Database, table.Name)); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := ch.softSelect(&partitions,
+				fmt.Sprintf("select * from `system`.`parts` where database='%s' and table='%s' and disk_name='%s' and active=1;", table.Database, table.Name, disk.Name)); err != nil {
+				return nil, err
+			}
+		}
+		if len(partitions) > 0 {
+			parts := make([]metadata.Part, len(partitions))
+			for i := range partitions {
+				parts[i] = metadata.Part{
+					Partition:                         partitions[i].Partition,
+					Name:                              partitions[i].Name,
+					Path:                              partitions[i].Path, // TODO: ???
+					HashOfAllFiles:                    partitions[i].HashOfAllFiles,
+					HashOfUncompressedFiles:           partitions[i].HashOfUncompressedFiles,
+					UncompressedHashOfCompressedFiles: partitions[i].UncompressedHashOfCompressedFiles,
+					PartitionID:                       partitions[i].PartitionID,
+					ModificationTime:                  partitions[i].ModificationTime,
+					Size:                              partitions[i].DataUncompressedBytes,
+				}
+			}
+			result[disk.Name] = parts
+		}
+	}
+	return result, nil
 }
