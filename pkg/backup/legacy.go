@@ -13,6 +13,15 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 )
 
+func addRestoreTable(tables RestoreTables, table metadata.TableMetadata) RestoreTables {
+	for _, t := range tables {
+		if (t.Database == table.Database) && (t.Table == table.Table) {
+			return tables
+		}
+	}
+	return append(tables, table)
+}
+
 func parseSchemaPattern(metadataPath string, tablePattern string) (RestoreTables, error) {
 	result := RestoreTables{}
 	tablePatterns := []string{"*"}
