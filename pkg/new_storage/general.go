@@ -22,8 +22,6 @@ import (
 )
 
 const (
-	// MetaFileName - meta file name
-	MetaFileName = "meta.json"
 	// BufferSize - size of ring buffer between stream handlers
 	BufferSize = 4 * 1024 * 1024
 )
@@ -269,6 +267,6 @@ func NewBackupDestination(cfg config.Config) (*BackupDestination, error) {
 			cfg.General.BackupsToKeepRemote,
 		}, nil
 	default:
-		return nil, fmt.Errorf("storage type '%s' not supported", cfg.General.RemoteStorage)
+		return nil, fmt.Errorf("storage type '%s' is not supported", cfg.General.RemoteStorage)
 	}
 }

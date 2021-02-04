@@ -47,7 +47,7 @@ func (gcs *GCS) Walk(gcsPath string, process func(r RemoteFile) error) error {
 		switch err {
 		case nil:
 			f := &gcsFile{object}
-			f.objAttr.Name = strings.TrimPrefix(f.objAttr.Name, gcs.Config.Path)
+			f.objAttr.Name = strings.TrimPrefix(f.objAttr.Name, path.Join(gcs.Config.Path, gcsPath))
 			process(f)
 		case iterator.Done:
 			return nil

@@ -13,6 +13,16 @@ import (
 	yaml "gopkg.in/yaml.v2"
 )
 
+// ArchiveExtensions - list of availiable compression formats and associated file extensions
+var ArchiveExtensions = map[string]string{
+	"tar":   "tar",
+	"lz4":   "tar.lz4",
+	"bzip2": "tar.bz2",
+	"gzip":  "tar.gz",
+	"sz":    "tar.sz",
+	"xz":    "tar.xz",
+}
+
 // Config - config file format
 type Config struct {
 	General    GeneralConfig    `yaml:"general"`
@@ -149,11 +159,27 @@ func LoadConfig(configLocation string) (*Config, error) {
 }
 
 func ValidateConfig(cfg *Config) error {
-	if _, err := getArchiveWriter(cfg.S3.CompressionFormat, cfg.S3.CompressionLevel); err != nil {
-		return err
+	compressionFormat := ""
+	switch cfg.General.RemoteStorage {
+	case "s3":
+		compressionFormat = cfg.S3.CompressionFormat
+	case "gcs":
+		compressionFormat = cfg.GCS.CompressionFormat
+	case "cos":
+		compressionFormat = cfg.COS.CompressionFormat
+	case "ftp":
+		compressionFormat = cfg.FTP.CompressionFormat
+	case "azblob":
+		compressionFormat = cfg.AzureBlob.CompressionFormat
+	case "none":
+		compressionFormat = "none"
+	default:
+		return fmt.Errorf("'%s' is unsupported remote storage", cfg.General.RemoteStorage)
 	}
-	if _, err := getArchiveWriter(cfg.GCS.CompressionFormat, cfg.GCS.CompressionLevel); err != nil {
-		return err
+	if compressionFormat != "none" {
+		if _, ok := ArchiveExtensions[compressionFormat]; !ok {
+			return fmt.Errorf("'%s' is unsupported compression format", compressionFormat)
+		}
 	}
 	if _, err := time.ParseDuration(cfg.ClickHouse.Timeout); err != nil {
 		return err
@@ -172,7 +198,7 @@ func ValidateConfig(cfg *Config) error {
 		}
 	}
 	if !storageClassOk {
-		return fmt.Errorf("'%s' is bad S3_STORAGE_CLASS, change one of: %s",
+		return fmt.Errorf("'%s' is bad S3_STORAGE_CLASS, select one of: %s",
 			cfg.S3.StorageClass, strings.Join(s3.StorageClass_Values(), ", "))
 	}
 	if cfg.API.Secure {
@@ -207,7 +233,7 @@ func DefaultConfig() *Config {
 			SkipTables: []string{
 				"system.*",
 			},
-			Timeout: "5m",
+			Timeout:              "5m",
 			SyncReplicatedTables: true,
 		},
 		AzureBlob: AzureBlobConfig{

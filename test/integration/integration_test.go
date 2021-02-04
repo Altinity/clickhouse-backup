@@ -258,15 +258,15 @@ func testCommon(t *testing.T) {
 	}
 	fmt.Println("Create backup")
 	r.NoError(dockerExec("clickhouse-backup", "create", "test_backup"))
-	fmt.Println("Generate increment test data")
-	for _, data := range incrementData {
-		if (os.Getenv("COMPOSE_FILE") == "docker-compose.yml") && (data.Table == "jbod") {
-			continue
-		}
-		r.NoError(ch.createTestData(data))
-	}
-	time.Sleep(time.Second * 5)
-	r.NoError(dockerExec("clickhouse-backup", "create", "increment"))
+	// fmt.Println("Generate increment test data")
+	// for _, data := range incrementData {
+	// 	if (os.Getenv("COMPOSE_FILE") == "docker-compose.yml") && (data.Table == "jbod") {
+	// 		continue
+	// 	}
+	// 	r.NoError(ch.createTestData(data))
+	// }
+	// time.Sleep(time.Second * 5)
+	// r.NoError(dockerExec("clickhouse-backup", "create", "increment"))
 
 	fmt.Println("Upload")
 	r.NoError(dockerExec("clickhouse-backup", "upload", "test_backup"))
@@ -278,8 +278,7 @@ func testCommon(t *testing.T) {
 	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
 	// TODO: тут надо проверять что дейсвительно два бэкапа
 	fmt.Println("Delete backup")
-	// TODO: тут нужно удалять бэкапы через clickhouse-backup
-	r.NoError(dockerExec("/bin/rm", "-rf", "/var/lib/clickhouse/backup/test_backup", "/var/lib/clickhouse/backup/increment"))
+	r.NoError(dockerExec("clickhouse-backup", "delete", "local", "test_backup"))
 	// TODO: тут нужно проверять что бэкапы дейсвительно удалились
 	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
 
@@ -300,13 +299,13 @@ func testCommon(t *testing.T) {
 		r.NoError(ch.checkData(t, testData[i]))
 	}
 	// test increment
-	fmt.Println("Drop database")
-	r.NoError(ch.dropDatabase(dbName))
+	// fmt.Println("Drop database")
+	// r.NoError(ch.dropDatabase(dbName))
 
-	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
-	fmt.Println("Delete backup")
-	r.NoError(dockerExec("/bin/rm", "-rf", "/var/lib/clickhouse/backup/test_backup", "/var/lib/clickhouse/backup/increment"))
-	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
+	// dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
+	// fmt.Println("Delete backup")
+	// r.NoError(dockerExec("/bin/rm", "-rf", "/var/lib/clickhouse/backup/test_backup", "/var/lib/clickhouse/backup/increment"))
+	// dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
 
 	// fmt.Println("Download increment")
 	// r.NoError(dockerExec("clickhouse-backup", "download", "increment"))
@@ -325,9 +324,11 @@ func testCommon(t *testing.T) {
 	// }
 
 	fmt.Println("Clean")
-	r.NoError(dockerExec("/bin/rm", "-rf", "/var/lib/clickhouse/backup/test_backup", "/var/lib/clickhouse/backup/increment"))
 	r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "test_backup"))
+	r.NoError(dockerExec("clickhouse-backup", "delete", "local", "test_backup"))
 	// r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "increment"))
+	// r.NoError(dockerExec("clickhouse-backup", "delete", "local", "increment"))
+
 }
 
 type TestClickHouse struct {

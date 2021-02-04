@@ -78,6 +78,16 @@ func RemoveBackupRemote(cfg config.Config, backupName string) error {
 		return err
 	}
 	for _, backup := range backupList {
+		if backup.Legacy {
+			for _, ext := range config.ArchiveExtensions {
+				archiveName := fmt.Sprintf("%s.%s", backupName, ext)
+				if backup.BackupName == archiveName {
+					bd.DeleteFile(archiveName)
+					return nil
+				}
+			}
+			continue
+		}
 		if backup.BackupName == backupName {
 			return bd.RemoveBackup(backupName)
 		}
