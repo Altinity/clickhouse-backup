@@ -23,20 +23,19 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/urfave/cli"
-	"golang.org/x/sync/semaphore"
 	yaml "gopkg.in/yaml.v2"
 )
 
 const (
 	// APITimeFormat - clickhouse compatibility time format
-	APITimeFormat = "2006-01-02 15:04:05"
+	APITimeFormat  = "2006-01-02 15:04:05"
+	InProgressText = "in progress"
 )
 
 type APIServer struct {
 	c          *cli.App
 	configPath string
 	config     *config.Config
-	lock       *semaphore.Weighted
 	server     *http.Server
 	restart    chan struct{}
 	status     *AsyncStatus
@@ -63,8 +62,18 @@ func (status *AsyncStatus) start(command string) {
 	status.commands = append(status.commands, ActionRow{
 		Command: command,
 		Start:   time.Now().Format(APITimeFormat),
-		Status:  "in progress",
+		Status:  InProgressText,
 	})
+}
+
+func (status *AsyncStatus) inProgress() bool {
+	status.RLock()
+	defer status.RUnlock()
+	n := len(status.commands) - 1
+	if n < 0 {
+		return false
+	}
+	return status.commands[n].Status == InProgressText
 }
 
 func (status *AsyncStatus) stop(err error) {
@@ -96,7 +105,6 @@ func Server(c *cli.App, cfg *config.Config, configPath string) error {
 		c:          c,
 		configPath: configPath,
 		config:     cfg,
-		lock:       semaphore.NewWeighted(1),
 		restart:    make(chan struct{}),
 		status:     &AsyncStatus{},
 	}
@@ -245,12 +253,11 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 		}
 		switch args[0] {
 		case "create", "restore", "upload", "download":
-			if locked := api.lock.TryAcquire(1); !locked {
+			if api.status.inProgress() {
 				log.Println(ErrAPILocked)
 				writeError(w, http.StatusLocked, row.Command, ErrAPILocked)
 				return
 			}
-			defer api.lock.Release(1)
 			start := time.Now()
 			api.metrics.LastBackupStart.Set(float64(start.Unix()))
 			defer api.metrics.LastBackupDuration.Set(float64(time.Since(start).Nanoseconds()))
@@ -278,12 +285,11 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		case "delete", "freeze", "clean":
-			if locked := api.lock.TryAcquire(1); !locked {
+			if api.status.inProgress() {
 				log.Println(ErrAPILocked)
 				writeError(w, http.StatusLocked, row.Command, ErrAPILocked)
 				return
 			}
-			defer api.lock.Release(1)
 			start := time.Now()
 			api.metrics.LastBackupStart.Set(float64(start.Unix()))
 			defer api.metrics.LastBackupDuration.Set(float64(time.Since(start).Nanoseconds()))
@@ -367,12 +373,11 @@ func (api *APIServer) httpConfigHandler(w http.ResponseWriter, r *http.Request) 
 
 // httpConfigDefaultHandler - update the currently running config
 func (api *APIServer) httpConfigUpdateHandler(w http.ResponseWriter, r *http.Request) {
-	if locked := api.lock.TryAcquire(1); !locked {
+	if api.status.inProgress() {
 		log.Println(ErrAPILocked)
 		writeError(w, http.StatusServiceUnavailable, "update", ErrAPILocked)
 		return
 	}
-	defer api.lock.Release(1)
 
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
@@ -449,12 +454,11 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 
 // httpCreateHandler - create a backup
 func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) {
-	if locked := api.lock.TryAcquire(1); !locked {
+	if api.status.inProgress() {
 		log.Println(ErrAPILocked)
 		writeError(w, http.StatusLocked, "create", ErrAPILocked)
 		return
 	}
-	defer api.lock.Release(1)
 	start := time.Now()
 	api.metrics.LastBackupStart.Set(float64(start.Unix()))
 	defer api.metrics.LastBackupDuration.Set(float64(time.Since(start).Nanoseconds()))
@@ -534,12 +538,11 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 
 // httpRestoreHandler - restore a backup from local storage
 func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request) {
-	if locked := api.lock.TryAcquire(1); !locked {
+	if api.status.inProgress() {
 		log.Println(ErrAPILocked)
 		writeError(w, http.StatusLocked, "restore", ErrAPILocked)
 		return
 	}
-	defer api.lock.Release(1)
 
 	vars := mux.Vars(r)
 	tablePattern := ""
@@ -617,12 +620,11 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 
 // httpDeleteHandler - delete a backup from local or remote storage
 func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) {
-	if locked := api.lock.TryAcquire(1); !locked {
+	if api.status.inProgress() {
 		log.Println(ErrAPILocked)
 		writeError(w, http.StatusLocked, "delete", ErrAPILocked)
 		return
 	}
-	defer api.lock.Release(1)
 	api.status.start("delete")
 	var err error
 	vars := mux.Vars(r)
