@@ -27,6 +27,9 @@ func Upload(cfg config.Config, backupName string, tablePattern string, diffFrom 
 		PrintLocalBackups(cfg, "all")
 		return fmt.Errorf("select backup for upload")
 	}
+	if diffFrom != "" {
+		return fmt.Errorf("diff-from is not supported yet")
+	}
 	ch := &clickhouse.ClickHouse{
 		Config: &cfg.ClickHouse,
 	}

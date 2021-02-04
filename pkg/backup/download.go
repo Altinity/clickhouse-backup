@@ -64,6 +64,7 @@ func Download(cfg config.Config, backupName string, tablePattern string, schemaO
 		return err
 	}
 	tablesForDownload := parseTablePatternForDownload(backupMetadata.Tables, tablePattern)
+
 	for _, t := range tablesForDownload {
 		remoteTableMetadata := path.Join(backupName, "metadata", clickhouse.TablePathEncode(t.Database), fmt.Sprintf("%s.json", clickhouse.TablePathEncode(t.Table)))
 		tmReader, err := bd.GetFileReader(remoteTableMetadata)
@@ -84,7 +85,7 @@ func Download(cfg config.Config, backupName string, tablePattern string, schemaO
 			return err
 		}
 		metadataLocalFile := path.Join(metadataBase, fmt.Sprintf("%s.json", clickhouse.TablePathEncode(t.Table)))
-		if err := ioutil.WriteFile(metadataLocalFile, tmBody, 0660); err != nil {
+		if err := ioutil.WriteFile(metadataLocalFile, tmBody, 0640); err != nil {
 			return err
 		}
 		if schemaOnly {
@@ -107,7 +108,13 @@ func Download(cfg config.Config, backupName string, tablePattern string, schemaO
 			}
 		}
 	}
+	// TODO: merge with exists tables
+	// backupMetadata.Tables = tablesForDownload
+	backupMetafileLocalPath := path.Join(defaultDataPath, "backup", backupName, "metadata.json")
+	if err := ioutil.WriteFile(backupMetafileLocalPath, tbBody, 0640); err != nil {
+		return err
+	}
+
 	log.Info("  Done.")
 	return nil
 }
-
