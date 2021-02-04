@@ -112,7 +112,7 @@ clickhouse:
   freeze_by_part: false          # CLICKHOUSE_FREEZE_BY_PART
   secure: false                  # CLICKHOUSE_SECURE
   skip_verify: false             # CLICKHOUSE_SKIP_VERIFY
-  sync_replicated_tables: false  # CLICKHOUSE_SYNC_REPLICATED_TABLES
+  sync_replicated_tables: true   # CLICKHOUSE_SYNC_REPLICATED_TABLES
 
 azblob:
   endpoint_suffix: "core.windows.net" # AZBLOB_ENDPOINT_SUFFIX

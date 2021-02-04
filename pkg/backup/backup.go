@@ -333,6 +333,9 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *click
 		if err := moveShadow(shadowPath, backupShadowPath); err != nil {
 			return err
 		}
+		if err := ch.CleanShadow(); err != nil {
+			return err
+		}
 		// fix 19.15.3.6
 		badTablePath := path.Join(backupShadowPath, table.Database, table.Name)
 		if _, err := os.Stat(badTablePath); os.IsNotExist(err) {

@@ -3,7 +3,6 @@ package clickhouse
 import (
 	"database/sql"
 	"fmt"
-	"log"
 	"net/url"
 	"os"
 	"path"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
+	"github.com/apex/log"
 
 	_ "github.com/ClickHouse/clickhouse-go"
 	"github.com/jmoiron/sqlx"
@@ -277,9 +277,8 @@ func (ch *ClickHouse) FreezeTableOldWay(table *Table) error {
 	if err := ch.conn.Select(&partitions, q); err != nil {
 		return fmt.Errorf("can't get partitions for '%s.%s': %v", table.Database, table.Name, err)
 	}
-	log.Printf("Freeze '%v.%v'", table.Database, table.Name)
 	for _, item := range partitions {
-		log.Printf("  partition '%v'", item.PartitionID)
+		log.Debugf("  partition '%v'", item.PartitionID)
 		query := fmt.Sprintf(
 			"ALTER TABLE `%v`.`%v` FREEZE PARTITION ID '%v';",
 			table.Database,
@@ -305,20 +304,34 @@ func (ch *ClickHouse) FreezeTable(table *Table) error {
 	if err != nil {
 		return err
 	}
-	if version < 19001005 || ch.Config.FreezeByPart {
-		return ch.FreezeTableOldWay(table)
-	}
 	if strings.HasPrefix(table.Engine, "Replicated") && ch.Config.SyncReplicatedTables {
-		log.Printf("Sync '%s.%s'", table.Database, table.Name)
+		log.Debugf("Sync '%s.%s'", table.Database, table.Name)
 		query := fmt.Sprintf("SYSTEM SYNC REPLICA `%s`.`%s`;", table.Database, table.Name)
 		if _, err := ch.conn.Exec(query); err != nil {
 			return fmt.Errorf("can't sync '%s.%s': %v", table.Database, table.Name, err)
 		}
 	}
-	log.Printf("Freeze '%s.%s'", table.Database, table.Name)
+	if version < 19001005 || ch.Config.FreezeByPart {
+		return ch.FreezeTableOldWay(table)
+	}
 	query := fmt.Sprintf("ALTER TABLE `%s`.`%s` FREEZE;", table.Database, table.Name)
 	if _, err := ch.conn.Exec(query); err != nil {
 		return fmt.Errorf("can't freeze '%s.%s': %v", table.Database, table.Name, err)
+	}
+	return nil
+}
+
+func (ch *ClickHouse) CleanShadow() error {
+	disks, err := ch.GetDisks()
+	if err != nil {
+		return err
+	}
+	for _, disk := range disks {
+		shadowDir := path.Join(disk.Path, "shadow")
+		log.Debugf("clean %s", shadowDir)
+		if err := cleanDir(shadowDir); err != nil {
+			return fmt.Errorf("can't clean '%s': %v", shadowDir, err)
+		}
 	}
 	return nil
 }
@@ -368,7 +381,7 @@ func (ch *ClickHouse) CopyData(backupName string, backupTable metadata.TableMeta
 		detachedParentDir := filepath.Join(dstDataPaths[backupDisk.Name], "detached")
 		// os.MkdirAll(detachedParentDir, 0750)
 		// ch.Chown(detachedParentDir)
-		log.Printf("Restore data on '%s' disk", backupDisk.Name)
+		log.Infof("Restore data on '%s' disk", backupDisk.Name)
 		for _, partition := range backupTable.Parts[backupDisk.Name] {
 			detachedPath := filepath.Join(detachedParentDir, partition.Name)
 			info, err := os.Stat(detachedPath)
@@ -397,7 +410,7 @@ func (ch *ClickHouse) CopyData(backupName string, backupTable metadata.TableMeta
 					return ch.Mkdir(dstFilePath)
 				}
 				if !info.Mode().IsRegular() {
-					log.Printf("'%s' is not a regular file, skipping.", filePath)
+					log.Debugf("'%s' is not a regular file, skipping.", filePath)
 					return nil
 				}
 				if err := os.Link(filePath, dstFilePath); err != nil {
@@ -418,7 +431,7 @@ func (ch *ClickHouse) AttachPartitions(table metadata.TableMetadata, disks []Dis
 	for _, disk := range disks {
 		for _, partition := range table.Parts[disk.Name] {
 			query := fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PART '%s'", table.Database, table.Table, partition.Name)
-			log.Println(query)
+			log.Debug(query)
 			if _, err := ch.conn.Exec(query); err != nil {
 				return err
 			}
@@ -450,13 +463,14 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable bool) err
 	if _, err := ch.conn.Exec(fmt.Sprintf("USE `%s`", table.Database)); err != nil {
 		return err
 	}
-	log.Printf("Create table '%s.%s'", table.Database, table.Name)
 	if dropTable {
 		dropQuery := fmt.Sprintf("DROP TABLE IF EXISTS `%s`.`%s`", table.Database, table.Name)
+		log.Debugf(dropQuery)
 		if _, err := ch.conn.Exec(dropQuery); err != nil {
 			return err
 		}
 	}
+	log.Infof("Create table '%s.%s'", table.Database, table.Name)
 	if _, err := ch.conn.Exec(query); err != nil {
 		return err
 	}

@@ -9,27 +9,8 @@ import (
 	"strings"
 )
 
-func cleanDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	names, err := d.Readdirnames(-1)
-	if err != nil {
-		return err
-	}
-	for _, name := range names {
-		err = os.RemoveAll(filepath.Join(dir, name))
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func moveShadow(shadowPath, backupPath string) error {
-	if err := filepath.Walk(shadowPath, func(filePath string, info os.FileInfo, err error) error {
+	return filepath.Walk(shadowPath, func(filePath string, info os.FileInfo, err error) error {
 		relativePath := strings.Trim(strings.TrimPrefix(filePath, shadowPath), "/")
 		pathParts := strings.SplitN(relativePath, "/", 3)
 		if len(pathParts) != 3 {
@@ -44,10 +25,7 @@ func moveShadow(shadowPath, backupPath string) error {
 			return nil
 		}
 		return os.Rename(filePath, dstFilePath)
-	}); err != nil {
-		return err
-	}
-	return cleanDir(shadowPath)
+	})
 }
 
 func copyFile(srcFile string, dstFile string) error {

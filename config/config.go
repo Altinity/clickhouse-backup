@@ -208,6 +208,7 @@ func DefaultConfig() *Config {
 				"system.*",
 			},
 			Timeout: "5m",
+			SyncReplicatedTables: true,
 		},
 		AzureBlob: AzureBlobConfig{
 			EndpointSuffix:    "core.windows.net",
