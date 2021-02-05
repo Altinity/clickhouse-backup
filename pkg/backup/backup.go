@@ -239,7 +239,8 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *click
 		// fix 19.15.3.6
 		badTablePath := path.Join(backupShadowPath, table.Database, table.Name)
 		encodedDBPath := path.Join(backupShadowPath, clickhouse.TablePathEncode(table.Database))
-		if badTablePath == encodedDBPath {
+		encodedTablePath := path.Join(encodedDBPath, clickhouse.TablePathEncode(table.Name))
+		if badTablePath == encodedTablePath {
 			continue
 		}
 		if _, err := os.Stat(badTablePath); os.IsNotExist(err) {
@@ -248,7 +249,6 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *click
 		if err := ch.Mkdir(encodedDBPath); err != nil {
 			return err
 		}
-		encodedTablePath := path.Join(encodedDBPath, clickhouse.TablePathEncode(table.Name))
 		if err := os.Rename(badTablePath, encodedTablePath); err != nil {
 			return err
 		}
