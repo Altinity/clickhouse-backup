@@ -72,7 +72,7 @@ func main() {
 		{
 			Name:        "create",
 			Usage:       "Create new backup",
-			UsageText:   "clickhouse-backup create [-t, --tables=<db>.<table>] <backup_name>",
+			UsageText:   "clickhouse-backup create [-t, --tables=<db>.<table>] [-s, --schema] <backup_name>",
 			Description: "Create new backup",
 			Action: func(c *cli.Context) error {
 				return backup.CreateBackup(*getConfig(c), c.Args().First(), c.String("t"), c.Bool("s"))
@@ -92,7 +92,7 @@ func main() {
 		{
 			Name:      "upload",
 			Usage:     "Upload backup to remote storage",
-			UsageText: "clickhouse-backup upload [-t, --tables=<db>.<table>, --diff-from=<backup_name>] <backup_name>",
+			UsageText: "clickhouse-backup upload [-t, --tables=<db>.<table>] [-s, --schema] [--diff-from=<backup_name>] <backup_name>",
 			Action: func(c *cli.Context) error {
 				return backup.Upload(*getConfig(c), c.Args().First(), c.String("t"), c.String("diff-from"), c.Bool("s"))
 			},
@@ -143,7 +143,7 @@ func main() {
 		{
 			Name:      "download",
 			Usage:     "Download backup from remote storage",
-			UsageText: "clickhouse-backup download <backup_name>",
+			UsageText: "clickhouse-backup download [-t, --tables=<db>.<table>] [-s, --schema] <backup_name>",
 			Action: func(c *cli.Context) error {
 				return backup.Download(*getConfig(c), c.Args().First(), c.String("t"), c.Bool("s"))
 			},
@@ -162,7 +162,7 @@ func main() {
 		{
 			Name:      "restore",
 			Usage:     "Create schema and restore data from backup",
-			UsageText: "clickhouse-backup restore [--schema] [--data] [-t, --tables=<db>.<table>] <backup_name>",
+			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-s, --schema] [-d, --data] [--rm, --drop] <backup_name>",
 			Action: func(c *cli.Context) error {
 				return backup.Restore(*getConfig(c), c.Args().First(), c.String("t"), c.Bool("s"), c.Bool("d"), c.Bool("rm"))
 			},
