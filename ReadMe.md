@@ -13,7 +13,7 @@ Tool for easy ClickHouse backup and restore with cloud storages support
 - Easy creating and restoring backups of all or specific tables
 - Efficient storing of multiple backups on the file system
 - Uploading and downloading with streaming compression
-- Works with AWS
+- Works with AWS, GCS
 - **Support of Atomic Database Engine**
 - **Support of multi disks installations**
 

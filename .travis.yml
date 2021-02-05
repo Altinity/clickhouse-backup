@@ -8,7 +8,7 @@ env:
   - CLICKHOUSE_VERSION=19.15.3.6 COMPOSE_FILE=docker-compose.yml
   - CLICKHOUSE_VERSION=20.1.3.7 COMPOSE_FILE=docker-compose_storage-policy.yml
   - CLICKHOUSE_VERSION=20.6.3.28 COMPOSE_FILE=docker-compose_storage-policy.yml
-  - CLICKHOUSE_VERSION=20.11.4.13 COMPOSE_FILE=docker-compose_storage-policy.yml
+  - CLICKHOUSE_VERSION=20.11.4.13 COMPOSE_FILE=docker-compose_storage-policy.yml DEPLOY_ARTIFACTS=true GCS_TESTS=true
 services:
   - docker
 addons:
@@ -24,7 +24,7 @@ script:
   # Running unit tests
   - make test || travis_terminate 1;
   # Decrypting credentials for Google Cloud Storage
-  - if [ "$TRAVIS_PULL_REQUEST" == "false" ]; then
+  - if [ "${TRAVIS_PULL_REQUEST}" == "false" ]; then
         openssl enc -base64 -aes-256-cbc -d -in test/integration/credentials.json.enc -out test/integration/credentials.json -k ${VAULT_PASSWORD} || travis_terminate 1;
     fi
   # Preparing to integration tests
@@ -32,7 +32,7 @@ script:
   # Running integration tests
   - go test -tags=integration -v test/integration/integration_test.go || travis_terminate 1;
   # Building docker image
-  - docker build -t alexakulov/clickhouse-backup:master .
+  - docker build -t alexakulov/clickhouse-backup:${TRAVIS_BRANCH} .
 after_success:
   - tar -czvf clickhouse-backup.tar.gz clickhouse-backup
   - CGO_ENABLED=0 make packages
@@ -48,14 +48,14 @@ deploy:
     overwrite: true
     on:
       tags: true
-      condition: -n $DEPLOY_ARTIFACTS
+      condition: -n "${DEPLOY_ARTIFACTS}"
   - provider: script
     script: bash docker_push.sh
     on:
-      branch: master
-      condition: -n $DEPLOY_ARTIFACTS
+      all_branches: true
+      condition: -n "${DEPLOY_ARTIFACTS}" && "${TRAVIS_PULL_REQUEST}" == "false" && "${TRAVIS_BRANCH}" != "${TRAVIS_TAG}"
   - provider: script
     script: bash docker_push.sh release
     on:
       tags: true
-      condition: -n $DEPLOY_ARTIFACTS
+      condition: -n "${DEPLOY_ARTIFACTS}"
