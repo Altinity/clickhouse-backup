@@ -8,8 +8,8 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/backup"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/server"
 
-	"github.com/urfave/cli"
 	"github.com/apex/log"
+	"github.com/urfave/cli"
 	// "github.com/apex/log/handlers/logfmt"
 	logcli "github.com/apex/log/handlers/cli"
 )
@@ -75,12 +75,17 @@ func main() {
 			UsageText:   "clickhouse-backup create [-t, --tables=<db>.<table>] <backup_name>",
 			Description: "Create new backup",
 			Action: func(c *cli.Context) error {
-				return backup.CreateBackup(*getConfig(c), c.Args().First(), c.String("t"))
+				return backup.CreateBackup(*getConfig(c), c.Args().First(), c.String("t"), c.Bool("s"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
 					Name:   "table, tables, t",
 					Hidden: false,
+				},
+				cli.BoolFlag{
+					Name:   "schema, s",
+					Hidden: false,
+					Usage:  "Backup schemas only",
 				},
 			),
 		},
@@ -89,7 +94,7 @@ func main() {
 			Usage:     "Upload backup to remote storage",
 			UsageText: "clickhouse-backup upload [-t, --tables=<db>.<table>, --diff-from=<backup_name>] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return backup.Upload(*getConfig(c), c.Args().First(), c.String("t"), c.String("diff-from"))
+				return backup.Upload(*getConfig(c), c.Args().First(), c.String("t"), c.String("diff-from"), c.Bool("s"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -99,6 +104,11 @@ func main() {
 				cli.StringFlag{
 					Name:   "table, tables, t",
 					Hidden: false,
+				},
+				cli.BoolFlag{
+					Name:   "schema, s",
+					Hidden: false,
+					Usage:  "Upload schemas only",
 				},
 			),
 		},
@@ -145,7 +155,7 @@ func main() {
 				cli.BoolFlag{
 					Name:   "schema, s",
 					Hidden: false,
-					Usage:  "Restore schema only",
+					Usage:  "Download schema only",
 				},
 			),
 		},

@@ -18,7 +18,7 @@ import (
 	"github.com/apex/log"
 )
 
-func Upload(cfg config.Config, backupName string, tablePattern string, diffFrom string) error {
+func Upload(cfg config.Config, backupName string, tablePattern string, diffFrom string, schemaOnly bool) error {
 	if cfg.General.RemoteStorage == "none" {
 		fmt.Println("Upload aborted: RemoteStorage set to \"none\"")
 		return nil
@@ -75,20 +75,22 @@ func Upload(cfg config.Config, backupName string, tablePattern string, diffFrom 
 			uuid = path.Join(table.UUID[0:3], table.UUID)
 		}
 		metdataFiles := map[string][]string{}
-		for disk := range table.Parts {
-			backupPath := path.Join(diskMap[disk], "backup", backupName, "shadow", uuid)
-			parts, err := separateParts(backupPath, table.Parts[disk], cfg.General.MaxFileSize)
-			if err != nil {
-				return err
-			}
-			log.Infof("Upload table: %s.%s, disk: %s, num files: %d, num dst files: %d", table.Database, table.Table, disk, len(table.Parts[disk]), len(parts))
-			for i, p := range parts {
-				fileName := fmt.Sprintf("%s_%d.%s", disk, i+1, cfg.S3.CompressionFormat) // TODO: fix this
-				metdataFiles[disk] = append(metdataFiles[disk], fileName)
-				remoteDataFile := path.Join(backupName, "shadow", clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table), fileName)
-				err := bd.CompressedStreamUpload(backupPath, p, remoteDataFile)
+		if !schemaOnly {
+			for disk := range table.Parts {
+				backupPath := path.Join(diskMap[disk], "backup", backupName, "shadow", uuid)
+				parts, err := separateParts(backupPath, table.Parts[disk], cfg.General.MaxFileSize)
 				if err != nil {
-					return fmt.Errorf("can't upload: %v", err)
+					return err
+				}
+				log.Infof("Upload table: %s.%s, disk: %s, num files: %d, num dst files: %d", table.Database, table.Table, disk, len(table.Parts[disk]), len(parts))
+				for i, p := range parts {
+					fileName := fmt.Sprintf("%s_%d.%s", disk, i+1, cfg.S3.CompressionFormat) // TODO: fix this
+					metdataFiles[disk] = append(metdataFiles[disk], fileName)
+					remoteDataFile := path.Join(backupName, "shadow", clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table), fileName)
+					err := bd.CompressedStreamUpload(backupPath, p, remoteDataFile)
+					if err != nil {
+						return fmt.Errorf("can't upload: %v", err)
+					}
 				}
 			}
 		}

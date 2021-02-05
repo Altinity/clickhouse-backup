@@ -71,7 +71,7 @@ func NewBackupName() string {
 
 // CreateBackup - create new backup of all tables matched by tablePattern
 // If backupName is empty string will use default backup name
-func CreateBackup(cfg config.Config, backupName, tablePattern string) error {
+func CreateBackup(cfg config.Config, backupName, tablePattern string, schemaOnly bool) error {
 	if backupName == "" {
 		backupName = NewBackupName()
 	}
@@ -124,7 +124,7 @@ func CreateBackup(cfg config.Config, backupName, tablePattern string) error {
 	var backupSize int64
 	t := []metadata.TableTitle{}
 	for _, table := range tables {
-		if table.Skip {
+		if table.Skip || schemaOnly {
 			continue
 		}
 		ctx.Infof("%s.%s", table.Database, table.Name)

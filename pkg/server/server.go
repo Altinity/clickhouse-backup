@@ -11,6 +11,7 @@ import (
 	"net/http/pprof"
 	"os"
 	"os/signal"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -466,6 +467,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 
 	tablePattern := ""
 	backupName := backup.NewBackupName()
+	schemaOnly := false
 
 	query := r.URL.Query()
 	if tp, exist := query["table"]; exist {
@@ -474,10 +476,13 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	if name, exist := query["name"]; exist {
 		backupName = name[0]
 	}
+	if schema, exist := query["schema"]; exist {
+		schemaOnly, _ = strconv.ParseBool(schema[0])
+	}
 
 	go func() {
 		api.status.start("create")
-		err := backup.CreateBackup(*api.config, backupName, tablePattern)
+		err := backup.CreateBackup(*api.config, backupName, tablePattern, schemaOnly)
 		defer api.status.stop(err)
 		if err != nil {
 			api.metrics.FailedBackups.Inc()
@@ -509,12 +514,16 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	name := vars["name"]
 	tablePattern := ""
+	schemaOnly := false
 	if tp, exist := query["table"]; exist {
 		tablePattern = tp[0]
 	}
+	if schema, exist := query["schema"]; exist {
+		schemaOnly, _ = strconv.ParseBool(schema[0])
+	}
 	go func() {
 		api.status.start("upload")
-		err := backup.Upload(*api.config, name, tablePattern, diffFrom)
+		err := backup.Upload(*api.config, name, tablePattern, diffFrom, schemaOnly)
 		api.status.stop(err)
 		if err != nil {
 			log.Printf("Upload error: %+v\n", err)
