@@ -5,13 +5,13 @@ import (
 	"os"
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
+	"github.com/AlexAkulov/clickhouse-backup/internal/logcli"
+	"github.com/AlexAkulov/clickhouse-backup/internal/logfmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/backup"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/server"
 
 	"github.com/apex/log"
 	"github.com/urfave/cli"
-	// "github.com/apex/log/handlers/logfmt"
-	logcli "github.com/apex/log/handlers/cli"
 )
 
 const (
@@ -25,8 +25,9 @@ var (
 )
 
 func main() {
-	// log.SetHandler(logfmt.New(os.Stderr))
-	log.SetHandler(logcli.New(os.Stdout))
+	log.SetHandler(logfmt.New(os.Stdout))
+	log.SetHandler(logcli.New(os.Stderr))
+
 	log.SetLevel(log.DebugLevel)
 	cliapp := cli.NewApp()
 	cliapp.Name = "clickhouse-backup"

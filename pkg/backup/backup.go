@@ -108,14 +108,22 @@ func CreateBackup(cfg config.Config, backupName, tablePattern string, schemaOnly
 	if err != nil {
 		return err
 	}
+	// create backup dir on all clickhouse disks
 	for _, disk := range disks {
 		if err := ch.Mkdir(path.Join(disk.Path, "backup")); err != nil {
 			return err
 		}
-		backupPath := path.Join(disk.Path, "backup", backupName)
-		if _, err := os.Stat(backupPath); err == nil || !os.IsNotExist(err) {
-			return fmt.Errorf("'%s' already exists", backupPath)
-		}
+	}
+	defaultPath, err := ch.GetDefaultPath()
+	if err != nil {
+		return err
+	}
+	backupPath := path.Join(defaultPath, "backup", backupName)
+	if _, err := os.Stat(path.Join(backupPath, "metadata.json")); err == nil || !os.IsNotExist(err) {
+		return fmt.Errorf("'%s' already exists", backupName)
+	}
+	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
+		ch.Mkdir(backupPath)
 	}
 	diskMap := map[string]string{}
 	for _, disk := range disks {
@@ -124,20 +132,27 @@ func CreateBackup(cfg config.Config, backupName, tablePattern string, schemaOnly
 	var backupSize int64
 	t := []metadata.TableTitle{}
 	for _, table := range tables {
-		if table.Skip || schemaOnly {
+		if table.Skip {
 			continue
 		}
 		ctx.Infof("%s.%s", table.Database, table.Name)
-		if err := AddTableToBackup(ch, backupName, &table); err != nil {
-			ctx.Errorf("error=\"%v\"", err)
-			// TODO: clean bad backup
-			continue
+		ctx.Debug("create metadata")
+		backupPath := path.Join(defaultPath, "backup", backupName)
+		if err := createMetadata(ch, backupPath, &table); err != nil {
+			return err
+		}
+		if !schemaOnly {
+			if err := AddTableToBackup(ch, backupName, &table); err != nil {
+				ctx.Errorf("error=\"%v\"", err)
+				// TODO: clean bad backup
+				continue
+			}
+			backupSize += table.TotalBytes.Int64
 		}
 		t = append(t, metadata.TableTitle{
 			Database: table.Database,
 			Table:    table.Name,
 		})
-		backupSize += table.TotalBytes.Int64
 	}
 	backupMetafile := metadata.BackupMetadata{
 		BackupName:              backupName,
@@ -153,10 +168,6 @@ func CreateBackup(cfg config.Config, backupName, tablePattern string, schemaOnly
 	content, err := json.MarshalIndent(&backupMetafile, "", "\t")
 	if err != nil {
 		return fmt.Errorf("can't marshal backup metafile json: %v", err)
-	}
-	defaultPath, err := ch.GetDefaultPath()
-	if err != nil {
-		return err
 	}
 	backupMetaFile := path.Join(defaultPath, "backup", backupName, "metadata.json")
 	if err := ioutil.WriteFile(backupMetaFile, content, 0640); err != nil {
@@ -175,7 +186,8 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *click
 	ctx := log.WithFields(log.Fields{
 		"backup":    backupName,
 		"operation": "create",
-		"table":     fmt.Sprintf("%s.%s", table.Database, table.Name),
+		"database:": table.Database,
+		"table":     table.Name,
 	})
 	if backupName == "" {
 		return fmt.Errorf("backupName is not defined")
@@ -208,12 +220,6 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *click
 		if err := ch.Mkdir(backupPath); err != nil {
 			return err
 		}
-	}
-
-	ctx.Debug("create metadata")
-	backupPath := path.Join(defaultPath, "backup", backupName)
-	if err := createMetadata(ch, backupPath, table); err != nil {
-		return err
 	}
 	// backup data
 	if !strings.HasSuffix(table.Engine, "MergeTree") {

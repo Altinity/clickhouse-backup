@@ -2,18 +2,18 @@ package clickhouse
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
+	"github.com/apex/log"
 )
 
 // ComputePartitionsDelta - computes the data partitions to be added and removed between live and backup tables
 func (ch *ClickHouse) ComputePartitionsDelta(restoreTables []metadata.TableMetadata, liveTables []Table) ([]PartDiff, error) {
 	var ftables []PartDiff
-	log.Printf("Compute partitions discrepancies")
+	log.Debugf("Compute partitions discrepancies")
 	for _, rtable := range restoreTables {
 		var partsToAdd []metadata.Part
 		var partsToRemove []metadata.Part
@@ -52,18 +52,18 @@ func (ch *ClickHouse) ComputePartitionsDelta(restoreTables []metadata.TableMetad
 				}
 			}
 		}
-		log.Printf("[%s.%s] Backup data parts to attach : %v ", rtable.Database, rtable.Table, partsToAdd)
-		log.Printf("[%s.%s] Live data parts to detach : %v ", rtable.Database, rtable.Table, partsToRemove)
+		log.Debugf("[%s.%s] Backup data parts to attach : %v ", rtable.Database, rtable.Table, partsToAdd)
+		log.Debugf("[%s.%s] Live data parts to detach : %v ", rtable.Database, rtable.Table, partsToRemove)
 		ftables = append(ftables, PartDiff{rtable, partsToAdd, partsToRemove})
 	}
-	log.Printf("Compute partitions discrepancies. Done")
+	log.Debugf("Compute partitions discrepancies. Done")
 
 	return ftables, nil
 }
 
 // CopyDataDiff - copy only partitions that will be attached to "detached" folder
 func (ch *ClickHouse) CopyDataDiff(diff PartDiff) error {
-	log.Printf("Prepare data for restoring '%s.%s'", diff.BTable.Database, diff.BTable.Table)
+	log.Debugf("Prepare data for restoring '%s.%s'", diff.BTable.Database, diff.BTable.Table)
 	dataPath, err := ch.GetDefaultPath()
 	if err != nil {
 		return err
@@ -73,7 +73,7 @@ func (ch *ClickHouse) CopyDataDiff(diff PartDiff) error {
 	ch.Chown(detachedParentDir)
 
 	for _, partition := range diff.PartitionsAdd {
-		log.Printf("Processing partition %s (%s)", partition.Name, partition.Path)
+		log.Debugf("Processing partition %s (%s)", partition.Name, partition.Path)
 		detachedPath := filepath.Join(detachedParentDir, partition.Name)
 		info, err := os.Stat(detachedPath)
 		if err != nil {
@@ -100,7 +100,7 @@ func (ch *ClickHouse) CopyDataDiff(diff PartDiff) error {
 				return ch.Chown(dstFilePath)
 			}
 			if !info.Mode().IsRegular() {
-				log.Printf("'%s' is not a regular file, skipping.", filePath)
+				log.Debugf("'%s' is not a regular file, skipping.", filePath)
 				return nil
 			}
 			if err := os.Link(filePath, dstFilePath); err != nil {
@@ -111,7 +111,7 @@ func (ch *ClickHouse) CopyDataDiff(diff PartDiff) error {
 			return fmt.Errorf("error during filepath.Walk for partition '%s': %v", partition.Path, err)
 		}
 	}
-	log.Printf("Prepare data for restoring '%s.%s'. DONE", diff.BTable.Database, diff.BTable.Table)
+	log.Debugf("Prepare data for restoring '%s.%s'. DONE", diff.BTable.Database, diff.BTable.Table)
 	return nil
 }
 
@@ -124,7 +124,7 @@ func (ch *ClickHouse) ApplyPartitionsChanges(table PartDiff) error {
 	}
 	for _, partition := range table.PartitionsAdd {
 		query = fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PART '%s'", table.BTable.Database, table.BTable.Table, partition.Name)
-		log.Println(query)
+		log.Debug(query)
 		if _, err := ch.conn.Exec(query); err != nil {
 			return err
 		}
@@ -134,7 +134,7 @@ func (ch *ClickHouse) ApplyPartitionsChanges(table PartDiff) error {
 		partList := make(map[string]struct{})
 
 		for _, partition := range table.PartitionsRemove {
-			log.Printf("Removing %s", partition.Path)
+			log.Debugf("Removing %s", partition.Path)
 
 			//partitionName := partition.Name[:strings.IndexByte(partition.Name, '_')]
 			partitionName := partition.Partition
@@ -150,7 +150,7 @@ func (ch *ClickHouse) ApplyPartitionsChanges(table PartDiff) error {
 			} else {*/
 			query = fmt.Sprintf("ALTER TABLE `%s`.`%s` DETACH PARTITION %s", table.BTable.Database, table.BTable.Table, partname)
 			//}
-			log.Println(query)
+			log.Debugf(query)
 			if _, err := ch.conn.Exec(query); err != nil {
 				return err
 			}
@@ -160,7 +160,7 @@ func (ch *ClickHouse) ApplyPartitionsChanges(table PartDiff) error {
 
 		for _, partition := range table.PartitionsRemove {
 			detachedPath := filepath.Join(detachedParentDir, partition.Name)
-			log.Printf("[%s.%s] Removing %s", table.BTable.Database, table.BTable.Table, detachedPath)
+			log.Debugf("[%s.%s] Removing %s", table.BTable.Database, table.BTable.Table, detachedPath)
 			e := os.RemoveAll(detachedPath)
 			if e != nil {
 				return e
@@ -173,7 +173,7 @@ func (ch *ClickHouse) ApplyPartitionsChanges(table PartDiff) error {
 			} else {
 				query = fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PARTITION %s", table.BTable.Database, table.BTable.Table, partname)
 			}
-			log.Println(query)
+			log.Debugf(query)
 			if _, err := ch.conn.Exec(query); err != nil {
 				return err
 			}

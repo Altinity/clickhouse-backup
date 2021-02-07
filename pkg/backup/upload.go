@@ -120,6 +120,7 @@ func Upload(cfg config.Config, backupName string, tablePattern string, diffFrom 
 	if err != nil {
 		return err
 	}
+	// TODO: тут нужно менять размер если заливаем только схему или часть таблиц
 	remoteBackupMetaFile := path.Join(backupName, "metadata.json")
 	if err := bd.PutFile(remoteBackupMetaFile,
 		ioutil.NopCloser(bytes.NewReader(backupMetadataBody))); err != nil {

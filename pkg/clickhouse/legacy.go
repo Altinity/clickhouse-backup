@@ -2,13 +2,13 @@ package clickhouse
 
 import (
 	"fmt"
-	"log"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
+	"github.com/apex/log"
 )
 
 // // GetBackupTables - return list of backups of tables that can be restored
@@ -154,9 +154,9 @@ func (ch *ClickHouse) GetBackupTablesLegacy(backupName string) (map[string]metad
 				return nil
 			}
 			result[fullTableName] = metadata.TableMetadata{
-				Database:   tDB,
-				Table:       tName,
-				Parts: map[string][]metadata.Part{"default": {partition}},
+				Database: tDB,
+				Table:    tName,
+				Parts:    map[string][]metadata.Part{"default": {partition}},
 			}
 			return nil
 		}
@@ -167,7 +167,6 @@ func (ch *ClickHouse) GetBackupTablesLegacy(backupName string) (map[string]metad
 
 // CopyData - copy partitions for specific table to detached folder
 func (ch *ClickHouse) CopyDataLegacy(table metadata.TableMetadata) error {
-	log.Printf("Prepare data for restoring '%s.%s'", table.Database, table.Table)
 	dataPath, err := ch.GetDefaultPath()
 	if err != nil {
 		return err
@@ -204,7 +203,7 @@ func (ch *ClickHouse) CopyDataLegacy(table metadata.TableMetadata) error {
 				return ch.Chown(dstFilePath)
 			}
 			if !info.Mode().IsRegular() {
-				log.Printf("'%s' is not a regular file, skipping.", filePath)
+				log.Debugf("'%s' is not a regular file, skipping.", filePath)
 				return nil
 			}
 			if err := os.Link(filePath, dstFilePath); err != nil {

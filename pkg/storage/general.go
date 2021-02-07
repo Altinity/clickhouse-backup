@@ -384,7 +384,10 @@ func NewBackupDestination(cfg config.Config) (*BackupDestination, error) {
 			cfg.General.BackupsToKeepRemote,
 		}, nil
 	case "s3":
-		s3Storage := &S3{Config: &cfg.S3}
+		s3Storage := &S3{
+			Config: &cfg.S3,
+			Debug:  cfg.General.LogLevel == "debug",
+		}
 		return &BackupDestination{
 			s3Storage,
 			cfg.S3.Path,
@@ -404,7 +407,10 @@ func NewBackupDestination(cfg config.Config) (*BackupDestination, error) {
 			cfg.General.BackupsToKeepRemote,
 		}, nil
 	case "cos":
-		tencentStorage := &COS{Config: &cfg.COS}
+		tencentStorage := &COS{
+			Config: &cfg.COS,
+			Debug:  cfg.General.LogLevel == "debug",
+		}
 		return &BackupDestination{
 			tencentStorage,
 			cfg.COS.Path,
@@ -414,7 +420,10 @@ func NewBackupDestination(cfg config.Config) (*BackupDestination, error) {
 			cfg.General.BackupsToKeepRemote,
 		}, nil
 	case "ftp":
-		ftpStorage := &FTP{Config: &cfg.FTP}
+		ftpStorage := &FTP{
+			Config: &cfg.FTP,
+			Debug:  cfg.General.LogLevel == "debug",
+		}
 		return &BackupDestination{
 			ftpStorage,
 			cfg.FTP.Path,

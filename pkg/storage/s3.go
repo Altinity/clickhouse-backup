@@ -23,6 +23,7 @@ import (
 type S3 struct {
 	session *session.Session
 	Config  *config.S3Config
+	Debug   bool
 }
 
 // Connect - connect to s3
@@ -58,7 +59,7 @@ func (s *S3) Connect() error {
 		awsConfig.HTTPClient = &http.Client{Transport: tr}
 	}
 
-	if s.Config.Debug {
+	if s.Debug {
 		awsConfig.LogLevel = aws.LogLevel(aws.LogDebugWithRequestErrors)
 	}
 

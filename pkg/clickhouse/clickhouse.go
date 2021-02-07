@@ -307,7 +307,6 @@ func (ch *ClickHouse) CopyData(backupName string, backupTable metadata.TableMeta
 		detachedParentDir := filepath.Join(dstDataPaths[backupDisk.Name], "detached")
 		// os.MkdirAll(detachedParentDir, 0750)
 		// ch.Chown(detachedParentDir)
-		log.Infof("Restore data on '%s' disk", backupDisk.Name)
 		for _, partition := range backupTable.Parts[backupDisk.Name] {
 			detachedPath := filepath.Join(detachedParentDir, partition.Name)
 			info, err := os.Stat(detachedPath)

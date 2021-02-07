@@ -25,8 +25,6 @@ func (rt RestoreTables) Sort() {
 	})
 }
 
-
-
 // Restore - restore tables matched by tablePattern from backupName
 func Restore(cfg config.Config, backupName string, tablePattern string, schemaOnly bool, dataOnly bool, dropTable bool) error {
 	if schemaOnly || (schemaOnly == dataOnly) {
@@ -128,6 +126,11 @@ func RestoreData(cfg config.Config, backupName string, tablePattern string) erro
 	if err != nil {
 		return err
 	}
+	disks, err := ch.GetDisks()
+	if err != nil {
+		return err
+	}
+	// TODO: проверить все ли диски в КХ которые в бэкапе
 	dstTablesMap := map[metadata.TableTitle]clickhouse.Table{}
 	for i := range chTables {
 		dstTablesMap[metadata.TableTitle{
@@ -138,6 +141,7 @@ func RestoreData(cfg config.Config, backupName string, tablePattern string) erro
 	if len(tablesForRestore) == 0 {
 		return fmt.Errorf("backup doesn't have tables to restore")
 	}
+
 	missingTables := []string{}
 	for _, restoreTable := range tablesForRestore {
 		found := false
@@ -154,10 +158,7 @@ func RestoreData(cfg config.Config, backupName string, tablePattern string) erro
 	if len(missingTables) > 0 {
 		return fmt.Errorf("%s is not created. Restore schema first or create missing tables manually", strings.Join(missingTables, ", "))
 	}
-	disks, err := ch.GetDisks()
-	if err != nil {
-		return err
-	}
+
 	for _, table := range tablesForRestore {
 		dstTableDataPaths := dstTablesMap[metadata.TableTitle{
 			Database: table.Database,

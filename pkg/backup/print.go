@@ -33,9 +33,17 @@ func printBackups(backupList []new_storage.Backup, format, location string) erro
 		// if len(backupList) == 0 {
 		// 	fmt.Println("no backups found")
 		// }
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', tabwriter.DiscardEmptyColumns)
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', tabwriter.DiscardEmptyColumns)
 		for _, backup := range backupList {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", backup.BackupName, utils.FormatBytes(backup.Size), backup.CreationDate.Format("02-01-2006T15:04:05"), location)
+			size := utils.FormatBytes(backup.Size)
+			oldFormatLabel := ""
+			if backup.Legacy {
+				if location == "local" {
+					size = ""
+				}
+				oldFormatLabel = "old-format"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", backup.BackupName, size, backup.CreationDate.Format("02/01/2006 15:04:05"), location, oldFormatLabel)
 		}
 		w.Flush()
 	default:

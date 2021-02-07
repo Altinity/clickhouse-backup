@@ -15,6 +15,7 @@ import (
 type FTP struct {
 	client *ftp.ServerConn
 	Config *config.FTPConfig
+	Debug  bool
 }
 
 func (f *FTP) Connect() error {
@@ -28,7 +29,7 @@ func (f *FTP) Connect() error {
 	options = append(options, ftp.DialWithTimeout(timeout))
 	options = append(options, ftp.DialWithDisabledEPSV(true))
 
-	if f.Config.Debug {
+	if f.Debug {
 		options = append(options, ftp.DialWithDebugOutput(os.Stdout))
 	}
 

@@ -42,6 +42,7 @@ type GeneralConfig struct {
 	DisableProgressBar  bool   `yaml:"disable_progress_bar" envconfig:"DISABLE_PROGRESS_BAR"`
 	BackupsToKeepLocal  int    `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL"`
 	BackupsToKeepRemote int    `yaml:"backups_to_keep_remote" envconfig:"BACKUPS_TO_KEEP_REMOTE"`
+	LogLevel            string `yaml:"log_level" envconfig:"LOG_LEVEL"`
 }
 
 // GCSConfig - GCS settings section
@@ -83,7 +84,6 @@ type S3Config struct {
 	CompressionFormat       string `yaml:"compression_format" envconfig:"S3_COMPRESSION_FORMAT"`
 	SSE                     string `yaml:"sse" envconfig:"S3_SSE"`
 	DisableCertVerification bool   `yaml:"disable_cert_verification" envconfig:"S3_DISABLE_CERT_VERIFICATION"`
-	Debug                   bool   `yaml:"debug" envconfig:"S3_DEBUG"`
 	StorageClass            string `yaml:"storage_class" envconfig:"S3_STORAGE_CLASS"`
 }
 
@@ -96,7 +96,6 @@ type COSConfig struct {
 	Path              string `yaml:"path" envconfig:"COS_PATH"`
 	CompressionFormat string `yaml:"compression_format" envconfig:"COS_COMPRESSION_FORMAT"`
 	CompressionLevel  int    `yaml:"compression_level" envconfig:"COS_COMPRESSION_LEVEL"`
-	Debug             bool   `yaml:"debug" envconfig:"COS_DEBUG"`
 }
 
 // FTPConfig - ftp settings section
@@ -109,7 +108,6 @@ type FTPConfig struct {
 	Path              string `yaml:"path" envconfig:"FTP_PATH"`
 	CompressionFormat string `yaml:"compression_format" envconfig:"FTP_COMPRESSION_FORMAT"`
 	CompressionLevel  int    `yaml:"compression_level" envconfig:"FTP_COMPRESSION_LEVEL"`
-	Debug             bool   `yaml:"debug" envconfig:"FTP_DEBUG"`
 }
 
 // ClickHouseConfig - clickhouse settings section
@@ -118,7 +116,7 @@ type ClickHouseConfig struct {
 	Password             string            `yaml:"password" envconfig:"CLICKHOUSE_PASSWORD"`
 	Host                 string            `yaml:"host" envconfig:"CLICKHOUSE_HOST"`
 	Port                 uint              `yaml:"port" envconfig:"CLICKHOUSE_PORT"`
-	Disks                map[string]string `yaml:"disks" envconfig:"CLICKHOUSE_DISKS"`
+	DiskMapping          map[string]string `yaml:"disk_mapping" envconfig:"CLICKHOUSE_DISKS"`
 	SkipTables           []string          `yaml:"skip_tables" envconfig:"CLICKHOUSE_SKIP_TABLES"`
 	Timeout              string            `yaml:"timeout" envconfig:"CLICKHOUSE_TIMEOUT"`
 	FreezeByPart         bool              `yaml:"freeze_by_part" envconfig:"CLICKHOUSE_FREEZE_BY_PART"`
@@ -263,7 +261,6 @@ func DefaultConfig() *Config {
 			Path:              "",
 			CompressionFormat: "gzip",
 			CompressionLevel:  1,
-			Debug:             false,
 		},
 		API: APIConfig{
 			ListenAddr: "localhost:7171",
@@ -276,7 +273,6 @@ func DefaultConfig() *Config {
 			TLS:               false,
 			CompressionFormat: "gzip",
 			CompressionLevel:  1,
-			Debug:             false,
 		},
 	}
 }

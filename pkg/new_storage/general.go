@@ -247,7 +247,10 @@ func (bd *BackupDestination) CompressedStreamUpload(baseLocalPath string, files 
 func NewBackupDestination(cfg config.Config) (*BackupDestination, error) {
 	switch cfg.General.RemoteStorage {
 	case "s3":
-		s3Storage := &S3{Config: &cfg.S3}
+		s3Storage := &S3{
+			Config: &cfg.S3,
+			Debug:  cfg.General.LogLevel == "debug",
+		}
 		return &BackupDestination{
 			s3Storage,
 			cfg.S3.Path,

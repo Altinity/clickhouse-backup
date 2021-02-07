@@ -17,8 +17,7 @@ import (
 
 func Download(cfg config.Config, backupName string, tablePattern string, schemaOnly bool) error {
 	if cfg.General.RemoteStorage == "none" {
-		fmt.Println("Download aborted: RemoteStorage set to \"none\"")
-		return nil
+		return fmt.Errorf("Remote storage is 'none'")
 	}
 	if backupName == "" {
 		PrintRemoteBackups(cfg, "all")
@@ -63,6 +62,7 @@ func Download(cfg config.Config, backupName string, tablePattern string, schemaO
 	if err := json.Unmarshal(tbBody, &backupMetadata); err != nil {
 		return err
 	}
+	tableMetadataForDownload := []metadata.TableMetadata{}
 	tablesForDownload := parseTablePatternForDownload(backupMetadata.Tables, tablePattern)
 
 	for _, t := range tablesForDownload {
@@ -79,6 +79,8 @@ func Download(cfg config.Config, backupName string, tablePattern string, schemaO
 		if err := json.Unmarshal(tmBody, &tableMetadata); err != nil {
 			return err
 		}
+		tableMetadataForDownload = append(tableMetadataForDownload, tableMetadata)
+
 		// save metadata
 		metadataBase := path.Join(defaultDataPath, "backup", backupName, "metadata", clickhouse.TablePathEncode(t.Database))
 		if err := os.MkdirAll(metadataBase, 0750); err != nil {
@@ -88,22 +90,29 @@ func Download(cfg config.Config, backupName string, tablePattern string, schemaO
 		if err := ioutil.WriteFile(metadataLocalFile, tmBody, 0640); err != nil {
 			return err
 		}
-		if schemaOnly {
-			continue
-		}
-		// download data
-		for disk := range tableMetadata.Files {
-			uuid := path.Join(clickhouse.TablePathEncode(tableMetadata.Database), clickhouse.TablePathEncode(tableMetadata.Table))
-			if tableMetadata.UUID != "" {
-				uuid = path.Join(tableMetadata.UUID[0:3], tableMetadata.UUID)
-			}
-			tableLocalDir := path.Join(diskMap[disk], "backup", backupName, "shadow", uuid)
-
-			for _, archiveFile := range tableMetadata.Files[disk] {
-				tableRemoteFile := path.Join(backupName, "shadow", clickhouse.TablePathEncode(t.Database), clickhouse.TablePathEncode(t.Table), archiveFile)
-				log.Infof("tableRemoteFile: %s", tableRemoteFile)
-				if err := bd.CompressedStreamDownload(tableRemoteFile, tableLocalDir); err != nil {
+	}
+	if !schemaOnly {
+		for _, t := range tableMetadataForDownload {
+			for disk := range t.Parts {
+				if _, err := getPathByDiskName(cfg.ClickHouse.DiskMapping, diskMap, disk); err != nil {
 					return err
+				}
+			}
+		}
+		for _, tableMetadata := range tableMetadataForDownload {
+			// download data
+			for disk := range tableMetadata.Files {
+				uuid := path.Join(clickhouse.TablePathEncode(tableMetadata.Database), clickhouse.TablePathEncode(tableMetadata.Table))
+				if tableMetadata.UUID != "" {
+					uuid = path.Join(tableMetadata.UUID[0:3], tableMetadata.UUID)
+				}
+				diskPath, _ := getPathByDiskName(cfg.ClickHouse.DiskMapping, diskMap, disk)
+				tableLocalDir := path.Join(diskPath, "backup", backupName, "shadow", uuid)
+				for _, archiveFile := range tableMetadata.Files[disk] {
+					tableRemoteFile := path.Join(backupName, "shadow", clickhouse.TablePathEncode(tableMetadata.Database), clickhouse.TablePathEncode(tableMetadata.Table), archiveFile)
+					if err := bd.CompressedStreamDownload(tableRemoteFile, tableLocalDir); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -115,6 +124,6 @@ func Download(cfg config.Config, backupName string, tablePattern string, schemaO
 		return err
 	}
 
-	log.Info("  Done.")
+	log.Info("done")
 	return nil
 }

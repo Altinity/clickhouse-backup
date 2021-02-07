@@ -1,12 +1,14 @@
 package backup
 
 import (
+	"fmt"
 	"io"
-	"log"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/apex/log"
 )
 
 func moveShadow(shadowPath, backupPath string) error {
@@ -21,7 +23,7 @@ func moveShadow(shadowPath, backupPath string) error {
 			return os.MkdirAll(dstFilePath, os.ModePerm)
 		}
 		if !info.Mode().IsRegular() {
-			log.Printf("'%s' is not a regular file, skipping", filePath)
+			log.Debugf("'%s' is not a regular file, skipping", filePath)
 			return nil
 		}
 		return os.Rename(filePath, dstFilePath)
@@ -46,3 +48,12 @@ func copyFile(srcFile string, dstFile string) error {
 	return err
 }
 
+func getPathByDiskName(diskMapConfig map[string]string, chDiskMap map[string]string, diskName string) (string, error) {
+	if p, ok := diskMapConfig[diskName]; ok {
+		return p, nil
+	}
+	if p, ok := chDiskMap[diskName]; ok {
+		return p, nil
+	}
+	return "", fmt.Errorf("disk '%s' not found in clickhouse, you can add nonexistent disks to disk_mapping config", diskName)
+}
