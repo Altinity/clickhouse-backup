@@ -99,11 +99,9 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 		Date     time.Time
 	}
 	files := map[string]ClickhouseBackup{}
-	path := bd.path
-	err := bd.Walk(path, func(o RemoteFile) {
-		if strings.HasPrefix(o.Name(), path) {
-			key := strings.TrimPrefix(o.Name(), path)
-			key = strings.TrimPrefix(key, "/")
+	err := bd.Walk(bd.path, func(o RemoteFile) {
+		if strings.HasPrefix(o.Name(), bd.path) {
+			key := strings.TrimPrefix(o.Name(), bd.path)
 			parts := strings.Split(key, "/")
 
 			if strings.HasSuffix(parts[0], ".tar") ||

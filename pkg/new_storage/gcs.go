@@ -30,18 +30,22 @@ func (gcs *GCS) Connect() error {
 	if gcs.Config.CredentialsJSON != "" {
 		clientOption = option.WithCredentialsJSON([]byte(gcs.Config.CredentialsJSON))
 		gcs.client, err = storage.NewClient(ctx, clientOption)
-	} else if gcs.Config.CredentialsFile != "" {
+		return err
+	}
+	if gcs.Config.CredentialsFile != "" {
 		clientOption = option.WithCredentialsFile(gcs.Config.CredentialsFile)
 		gcs.client, err = storage.NewClient(ctx, clientOption)
-	} else {
-		gcs.client, err = storage.NewClient(ctx)
+		return err
 	}
+	gcs.client, err = storage.NewClient(ctx)
 	return err
 }
 
 func (gcs *GCS) Walk(gcsPath string, process func(r RemoteFile) error) error {
 	ctx := context.Background()
-	it := gcs.client.Bucket(gcs.Config.Bucket).Objects(ctx, nil)
+	it := gcs.client.Bucket(gcs.Config.Bucket).Objects(ctx, &storage.Query{
+		Prefix: path.Join(gcs.Config.Path, gcsPath) + "/",
+	})
 	for {
 		object, err := it.Next()
 		switch err {

@@ -56,7 +56,7 @@ func RemoveBackupLocal(cfg *config.Config, backupName string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("backup '%s' not found on local storage", backupName)
+	return fmt.Errorf("'%s' is not found on local storage", backupName)
 }
 
 func RemoveBackupRemote(cfg *config.Config, backupName string) error {
@@ -78,19 +78,13 @@ func RemoveBackupRemote(cfg *config.Config, backupName string) error {
 		return err
 	}
 	for _, backup := range backupList {
-		if backup.Legacy {
-			for _, ext := range config.ArchiveExtensions {
-				archiveName := fmt.Sprintf("%s.%s", backupName, ext)
-				if backup.BackupName == archiveName {
-					bd.DeleteFile(archiveName)
-					return nil
-				}
-			}
-			continue
-		}
 		if backup.BackupName == backupName {
+			if backup.Legacy {
+				archiveName := fmt.Sprintf("%s.%s", backup.BackupName, backup.FileExtension)
+				return bd.DeleteFile(archiveName)
+			}
 			return bd.RemoveBackup(backupName)
 		}
 	}
-	return fmt.Errorf("backup '%s' not found on remote storage", backupName)
+	return fmt.Errorf("'%s' is not found on remote storage", backupName)
 }

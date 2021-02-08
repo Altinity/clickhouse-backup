@@ -153,7 +153,7 @@ func (s *S3) remotePager(s3Path string, delim bool, pager func(page *s3.ListObje
 		MaxKeys: aws.Int64(1000),
 	}
 	if s3Path != "" && s3Path != "/" {
-		params.Prefix = aws.String(s3Path)
+		params.Prefix = aws.String(s3Path + "/")
 	}
 	if delim {
 		params.Delimiter = aws.String("/")
