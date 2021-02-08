@@ -239,6 +239,7 @@ func DefaultConfig() *Config {
 			MaxFileSize:         1024 * 1024 * 1024 * 1024, // 1TB
 			BackupsToKeepLocal:  0,
 			BackupsToKeepRemote: 0,
+			LogLevel:            "info",
 		},
 		ClickHouse: ClickHouseConfig{
 			Username: "default",

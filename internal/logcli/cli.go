@@ -23,7 +23,7 @@ var Strings = [...]string{
 	log.InfoLevel:  " info",
 	log.WarnLevel:  " warn",
 	log.ErrorLevel: "error",
-	log.FatalLevel: "fatal",
+	log.FatalLevel: "error",
 }
 
 // Handler implementation.

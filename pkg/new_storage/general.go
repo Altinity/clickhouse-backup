@@ -70,8 +70,8 @@ func (bd *BackupDestination) BackupsToKeep() int {
 
 func isLegacyBackup(backupName string) (bool, string, string) {
 	for _, suffix := range config.ArchiveExtensions {
-		if strings.HasSuffix(backupName, suffix) {
-			return true, strings.TrimSuffix(backupName, suffix), suffix
+		if strings.HasSuffix(backupName, "."+suffix) {
+			return true, strings.TrimSuffix(backupName, "."+suffix), suffix
 		}
 	}
 	return false, backupName, ""

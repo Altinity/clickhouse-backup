@@ -71,7 +71,7 @@ func NewBackupName() string {
 
 // CreateBackup - create new backup of all tables matched by tablePattern
 // If backupName is empty string will use default backup name
-func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnly bool) error {
+func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnly bool, version string) error {
 	if backupName == "" {
 		backupName = NewBackupName()
 	}
@@ -79,7 +79,6 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 		"backup":    backupName,
 		"operation": "create",
 	})
-	log.SetLevel(log.DebugLevel)
 	ch := &clickhouse.ClickHouse{
 		Config: &cfg.ClickHouse,
 	}
@@ -143,7 +142,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 		}
 		if !schemaOnly {
 			if err := AddTableToBackup(ch, backupName, &table); err != nil {
-				ctx.Errorf("error=\"%v\"", err)
+				ctx.Error(err.Error())
 				// TODO: clean bad backup
 				continue
 			}
@@ -157,11 +156,11 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 	backupMetafile := metadata.BackupMetadata{
 		BackupName:              backupName,
 		Disks:                   diskMap,
-		ClickhouseBackupVersion: "unknown",
+		ClickhouseBackupVersion: version,
 		CreationDate:            time.Now().UTC(),
 		// Tags: ,
-		// ClickHouseVersion: ch.GetVersion(),
-		Size: backupSize,
+		ClickHouseVersion: ch.GetVersionDescribe(),
+		Size:              backupSize,
 		// CompressedSize: ,
 		Tables: t,
 	}

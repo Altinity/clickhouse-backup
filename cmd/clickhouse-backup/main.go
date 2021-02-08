@@ -27,8 +27,6 @@ var (
 func main() {
 	log.SetHandler(logfmt.New(os.Stdout))
 	log.SetHandler(logcli.New(os.Stderr))
-
-	log.SetLevel(log.DebugLevel)
 	cliapp := cli.NewApp()
 	cliapp.Name = "clickhouse-backup"
 	cliapp.Usage = "Tool for easy backup of ClickHouse with cloud support"
@@ -76,7 +74,7 @@ func main() {
 			UsageText:   "clickhouse-backup create [-t, --tables=<db>.<table>] [-s, --schema] <backup_name>",
 			Description: "Create new backup",
 			Action: func(c *cli.Context) error {
-				return backup.CreateBackup(getConfig(c), c.Args().First(), c.String("t"), c.Bool("s"))
+				return backup.CreateBackup(getConfig(c), c.Args().First(), c.String("t"), c.Bool("s"), version)
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -190,20 +188,6 @@ func main() {
 			),
 		},
 		{
-			Name:      "flashback",
-			Usage:     "flashback to backup",
-			UsageText: "clickhouse-backup flashback [-t, --tables=<db>.<table>] <backup_name>",
-			Action: func(c *cli.Context) error {
-				return backup.Flashback(getConfig(c), c.Args().First(), c.String("t"))
-			},
-			Flags: append(cliapp.Flags,
-				cli.StringFlag{
-					Name:   "table, tables, t",
-					Hidden: false,
-				},
-			),
-		},
-		{
 			Name:      "delete",
 			Usage:     "Delete specific backup",
 			UsageText: "clickhouse-backup delete <local|remote> <backup_name>",
@@ -238,7 +222,7 @@ func main() {
 			Name:  "server",
 			Usage: "Run API server",
 			Action: func(c *cli.Context) error {
-				return server.Server(cliapp, getConfig(c), getConfigPath(c))
+				return server.Server(cliapp, getConfig(c), getConfigPath(c), version)
 			},
 			Flags: cliapp.Flags,
 		},
@@ -254,6 +238,7 @@ func getConfig(ctx *cli.Context) *config.Config {
 	if err != nil {
 		log.Fatal(err.Error())
 	}
+	log.SetLevelFromString(config.General.LogLevel)
 	return config
 }
 

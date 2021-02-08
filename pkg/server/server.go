@@ -34,14 +34,15 @@ const (
 )
 
 type APIServer struct {
-	c          *cli.App
-	configPath string
-	config     *config.Config
-	server     *http.Server
-	restart    chan struct{}
-	status     *AsyncStatus
-	metrics    Metrics
-	routes     []string
+	c                       *cli.App
+	configPath              string
+	config                  *config.Config
+	server                  *http.Server
+	restart                 chan struct{}
+	status                  *AsyncStatus
+	metrics                 Metrics
+	routes                  []string
+	clickhouseBackupVersion string
 }
 
 type AsyncStatus struct {
@@ -101,13 +102,14 @@ var (
 )
 
 // Server - expose CLI commands as REST API
-func Server(c *cli.App, cfg *config.Config, configPath string) error {
+func Server(c *cli.App, cfg *config.Config, configPath string, clickhouseBackupVersion string) error {
 	api := APIServer{
-		c:          c,
-		configPath: configPath,
-		config:     cfg,
-		restart:    make(chan struct{}),
-		status:     &AsyncStatus{},
+		c:                       c,
+		configPath:              configPath,
+		config:                  cfg,
+		restart:                 make(chan struct{}),
+		status:                  &AsyncStatus{},
+		clickhouseBackupVersion: clickhouseBackupVersion,
 	}
 	api.metrics = setupMetrics()
 	sigterm := make(chan os.Signal, 1)
@@ -482,7 +484,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 
 	go func() {
 		api.status.start("create")
-		err := backup.CreateBackup(api.config, backupName, tablePattern, schemaOnly)
+		err := backup.CreateBackup(api.config, backupName, tablePattern, schemaOnly, api.clickhouseBackupVersion)
 		defer api.status.stop(err)
 		if err != nil {
 			api.metrics.FailedBackups.Inc()

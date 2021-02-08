@@ -194,6 +194,15 @@ func (ch *ClickHouse) GetVersion() (int, error) {
 	return strconv.Atoi(result[0])
 }
 
+func (ch *ClickHouse) GetVersionDescribe() string {
+	var result []string
+	query := "SELECT value FROM `system`.`build_options` where name='VERSION_DESCRIBE'"
+	if err := ch.conn.Select(&result, query); err != nil {
+		return ""
+	}
+	return result[0]
+}
+
 // FreezeTableOldWay - freeze all partitions in table one by one
 // This way using for ClickHouse below v19.1
 func (ch *ClickHouse) FreezeTableOldWay(table *Table) error {
