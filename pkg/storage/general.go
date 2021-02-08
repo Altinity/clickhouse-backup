@@ -220,6 +220,7 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 			return err
 		}
 	}
+	bar.Finish()
 	if metafile.RequiredBackup != "" {
 		log.Printf("Backup '%s' required '%s'. Downloading.", remotePath, metafile.RequiredBackup)
 		err := bd.CompressedStreamDownload(metafile.RequiredBackup, filepath.Join(filepath.Dir(localPath), metafile.RequiredBackup))
@@ -238,7 +239,7 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 			return err
 		}
 	}
-	bar.Finish()
+
 	return nil
 }
 

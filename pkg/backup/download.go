@@ -82,6 +82,7 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 		if schemaOnly {
 			return fmt.Errorf("'%s' is old format backup and doesn't supports download of schema only", backupName)
 		}
+		log.Debugf("'%s' is old-format backup")
 		return legacyDownload(cfg, defaultDataPath, backupName)
 	}
 	disks, err := ch.GetDisks()

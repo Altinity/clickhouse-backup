@@ -144,6 +144,7 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 
 	bar := progressbar.StartNewByteBar(!bd.disableProgressBar, filesize)
 	buf := buffer.New(BufferSize)
+	defer bar.Finish()
 	bufReader := nio.NewReader(reader, buf)
 	proxyReader := bar.NewProxyReader(bufReader)
 	z, _ := getArchiveReader(bd.compressionFormat)
@@ -182,7 +183,6 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 			return err
 		}
 	}
-	bar.Finish()
 	return nil
 }
 
