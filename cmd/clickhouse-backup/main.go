@@ -76,7 +76,7 @@ func main() {
 			UsageText:   "clickhouse-backup create [-t, --tables=<db>.<table>] [-s, --schema] <backup_name>",
 			Description: "Create new backup",
 			Action: func(c *cli.Context) error {
-				return backup.CreateBackup(*getConfig(c), c.Args().First(), c.String("t"), c.Bool("s"))
+				return backup.CreateBackup(getConfig(c), c.Args().First(), c.String("t"), c.Bool("s"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -95,7 +95,7 @@ func main() {
 			Usage:     "Upload backup to remote storage",
 			UsageText: "clickhouse-backup upload [-t, --tables=<db>.<table>] [-s, --schema] [--diff-from=<backup_name>] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return backup.Upload(*getConfig(c), c.Args().First(), c.String("t"), c.String("diff-from"), c.Bool("s"))
+				return backup.Upload(getConfig(c), c.Args().First(), c.String("t"), c.String("diff-from"), c.Bool("s"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -121,15 +121,15 @@ func main() {
 				config := getConfig(c)
 				switch c.Args().Get(0) {
 				case "local":
-					return backup.PrintLocalBackups(*config, c.Args().Get(1))
+					return backup.PrintLocalBackups(config, c.Args().Get(1))
 				case "remote":
-					return backup.PrintRemoteBackups(*config, c.Args().Get(1))
+					return backup.PrintRemoteBackups(config, c.Args().Get(1))
 				case "all", "":
-					if err := backup.PrintLocalBackups(*config, c.Args().Get(1)); err != nil {
+					if err := backup.PrintLocalBackups(config, c.Args().Get(1)); err != nil {
 						return err
 					}
 					if config.General.RemoteStorage != "none" {
-						if err := backup.PrintRemoteBackups(*config, c.Args().Get(1)); err != nil {
+						if err := backup.PrintRemoteBackups(config, c.Args().Get(1)); err != nil {
 							return err
 						}
 					}
@@ -146,7 +146,7 @@ func main() {
 			Usage:     "Download backup from remote storage",
 			UsageText: "clickhouse-backup download [-t, --tables=<db>.<table>] [-s, --schema] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return backup.Download(*getConfig(c), c.Args().First(), c.String("t"), c.Bool("s"))
+				return backup.Download(getConfig(c), c.Args().First(), c.String("t"), c.Bool("s"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -165,7 +165,7 @@ func main() {
 			Usage:     "Create schema and restore data from backup",
 			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-s, --schema] [-d, --data] [--rm, --drop] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return backup.Restore(*getConfig(c), c.Args().First(), c.String("t"), c.Bool("s"), c.Bool("d"), c.Bool("rm"))
+				return backup.Restore(getConfig(c), c.Args().First(), c.String("t"), c.Bool("s"), c.Bool("d"), c.Bool("rm"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -194,7 +194,7 @@ func main() {
 			Usage:     "flashback to backup",
 			UsageText: "clickhouse-backup flashback [-t, --tables=<db>.<table>] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return backup.Flashback(*getConfig(c), c.Args().First(), c.String("t"))
+				return backup.Flashback(getConfig(c), c.Args().First(), c.String("t"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -215,9 +215,9 @@ func main() {
 				}
 				switch c.Args().Get(0) {
 				case "local":
-					return backup.RemoveBackupLocal(*cfg, c.Args().Get(1))
+					return backup.RemoveBackupLocal(cfg, c.Args().Get(1))
 				case "remote":
-					return backup.RemoveBackupRemote(*cfg, c.Args().Get(1))
+					return backup.RemoveBackupRemote(cfg, c.Args().Get(1))
 				default:
 					log.Errorf("Unknown command '%s'\n", c.Args().Get(0))
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)

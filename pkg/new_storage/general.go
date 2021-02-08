@@ -28,7 +28,8 @@ const (
 
 type Backup struct {
 	metadata.BackupMetadata
-	Legacy bool
+	Legacy        bool
+	FileExtension string
 }
 
 type BackupDestination struct {
@@ -67,24 +68,29 @@ func (bd *BackupDestination) BackupsToKeep() int {
 	return bd.backupsToKeep
 }
 
+func isLegacyBackup(backupName string) (bool, string, string) {
+	for _, suffix := range config.ArchiveExtensions {
+		if strings.HasSuffix(backupName, suffix) {
+			return true, strings.TrimSuffix(backupName, suffix), suffix
+		}
+	}
+	return false, backupName, ""
+}
+
 func (bd *BackupDestination) BackupList() ([]Backup, error) {
 	result := []Backup{}
 	if err := bd.Walk("/", func(o RemoteFile) error {
 		pathParts := strings.Split(strings.Trim(o.Name(), "/"), "/")
 		// Legacy backup
-		if strings.HasSuffix(pathParts[0], ".tar") ||
-			strings.HasSuffix(pathParts[0], ".tar.lz4") ||
-			strings.HasSuffix(pathParts[0], ".tar.bz2") ||
-			strings.HasSuffix(pathParts[0], ".tar.gz") ||
-			strings.HasSuffix(pathParts[0], ".tar.sz") ||
-			strings.HasSuffix(pathParts[0], ".tar.xz") {
+		if ok, backupName, fileExtension := isLegacyBackup(pathParts[0]); ok {
 			result = append(result, Backup{
 				metadata.BackupMetadata{
-					BackupName:   pathParts[0],
+					BackupName:   backupName,
 					CreationDate: o.LastModified(),
 					Size:         o.Size(),
 				},
 				true,
+				fileExtension,
 			})
 			return nil
 		}
@@ -107,7 +113,7 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 			return err
 		}
 		result = append(result, Backup{
-			m, false,
+			m, false, "",
 		})
 		return nil
 	}); err != nil {
@@ -244,7 +250,7 @@ func (bd *BackupDestination) CompressedStreamUpload(baseLocalPath string, files 
 	return nil
 }
 
-func NewBackupDestination(cfg config.Config) (*BackupDestination, error) {
+func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 	switch cfg.General.RemoteStorage {
 	case "s3":
 		s3Storage := &S3{

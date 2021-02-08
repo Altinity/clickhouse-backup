@@ -18,7 +18,7 @@ import (
 	"github.com/apex/log"
 )
 
-func Upload(cfg config.Config, backupName string, tablePattern string, diffFrom string, schemaOnly bool) error {
+func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom string, schemaOnly bool) error {
 	if cfg.General.RemoteStorage == "none" {
 		fmt.Println("Upload aborted: RemoteStorage set to \"none\"")
 		return nil
@@ -84,7 +84,7 @@ func Upload(cfg config.Config, backupName string, tablePattern string, diffFrom 
 				}
 				log.Infof("Upload table: %s.%s, disk: %s, num files: %d, num dst files: %d", table.Database, table.Table, disk, len(table.Parts[disk]), len(parts))
 				for i, p := range parts {
-					fileName := fmt.Sprintf("%s_%d.%s", disk, i+1, cfg.S3.CompressionFormat) // TODO: fix this
+					fileName := fmt.Sprintf("%s_%d.%s", disk, i+1, cfg.GetArchiveExtension())
 					metdataFiles[disk] = append(metdataFiles[disk], fileName)
 					remoteDataFile := path.Join(backupName, "shadow", clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table), fileName)
 					err := bd.CompressedStreamUpload(backupPath, p, remoteDataFile)

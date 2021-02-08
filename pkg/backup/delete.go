@@ -11,7 +11,7 @@ import (
 )
 
 //
-func RemoveOldBackupsLocal(cfg config.Config) error {
+func RemoveOldBackupsLocal(cfg *config.Config) error {
 	if cfg.General.BackupsToKeepLocal < 1 {
 		return nil
 	}
@@ -28,7 +28,7 @@ func RemoveOldBackupsLocal(cfg config.Config) error {
 	return nil
 }
 
-func RemoveBackupLocal(cfg config.Config, backupName string) error {
+func RemoveBackupLocal(cfg *config.Config, backupName string) error {
 	backupList, err := ListLocalBackups(cfg)
 	if err != nil {
 		return err
@@ -59,7 +59,7 @@ func RemoveBackupLocal(cfg config.Config, backupName string) error {
 	return fmt.Errorf("backup '%s' not found on local storage", backupName)
 }
 
-func RemoveBackupRemote(cfg config.Config, backupName string) error {
+func RemoveBackupRemote(cfg *config.Config, backupName string) error {
 	if cfg.General.RemoteStorage == "none" {
 		fmt.Println("RemoveBackupRemote aborted: RemoteStorage set to \"none\"")
 		return nil

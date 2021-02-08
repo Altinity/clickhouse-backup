@@ -60,7 +60,7 @@ func CopyPartHashes(cfg config.Config, tablePattern string, backupName string) e
 }
 
 // Flashback - restore tables matched by tablePattern from backupName by restroing only modified parts.
-func Flashback(cfg config.Config, backupName string, tablePattern string) error {
+func Flashback(cfg *config.Config, backupName string, tablePattern string) error {
 	/*if schemaOnly || (schemaOnly == dataOnly) {
 		err := restoreSchema(config, backupName, tablePattern)
 		if err != nil {
@@ -82,7 +82,7 @@ func Flashback(cfg config.Config, backupName string, tablePattern string) error 
 }
 
 // FlashBackData - restore data for tables matched by tablePattern from backupName
-func FlashBackData(cfg config.Config, backupName string, tablePattern string) error {
+func FlashBackData(cfg *config.Config, backupName string, tablePattern string) error {
 	if backupName == "" {
 		PrintLocalBackups(cfg, "all")
 		return fmt.Errorf("select backup for restore")

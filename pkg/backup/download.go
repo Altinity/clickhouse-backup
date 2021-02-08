@@ -11,11 +11,28 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/new_storage"
+	legacyStorage "github.com/AlexAkulov/clickhouse-backup/pkg/storage"
 
 	"github.com/apex/log"
 )
 
-func Download(cfg config.Config, backupName string, tablePattern string, schemaOnly bool) error {
+func legacyDownload(cfg *config.Config, defaultDataPath, backupName string) error {
+	bd, err := legacyStorage.NewBackupDestination(cfg)
+	if err != nil {
+		return err
+	}
+	if err := bd.Connect(); err != nil {
+		return err
+	}
+	if err := bd.CompressedStreamDownload(backupName,
+		path.Join(defaultDataPath, "backup", backupName)); err != nil {
+		return err
+	}
+	log.Info("done")
+	return nil
+}
+
+func Download(cfg *config.Config, backupName string, tablePattern string, schemaOnly bool) error {
 	if cfg.General.RemoteStorage == "none" {
 		return fmt.Errorf("Remote storage is 'none'")
 	}
@@ -31,13 +48,41 @@ func Download(cfg config.Config, backupName string, tablePattern string, schemaO
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
 	defer ch.Close()
+	bd, err := new_storage.NewBackupDestination(cfg)
+	if err != nil {
+		return err
+	}
+	if err := bd.Connect(); err != nil {
+		return err
+	}
+	remoteBackups, err := bd.BackupList()
+	if err != nil {
+		return err
+	}
+	found := false
+	var remoteBackup new_storage.Backup
+	for _, b := range remoteBackups {
+		if backupName == b.BackupName {
+			remoteBackup = b
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("'%s' is not found on remote storage", backupName)
+	}
 	defaultDataPath, err := ch.GetDefaultPath()
 	if err != nil {
 		return err
 	}
-	bd, err := new_storage.NewBackupDestination(cfg)
-	if err != nil {
-		return err
+	if remoteBackup.Legacy {
+		if tablePattern != "" {
+			return fmt.Errorf("'%s' is old format backup and doesn't supports download of specific tables", backupName)
+		}
+		if schemaOnly {
+			return fmt.Errorf("'%s' is old format backup and doesn't supports download of schema only", backupName)
+		}
+		return legacyDownload(cfg, defaultDataPath, backupName)
 	}
 	disks, err := ch.GetDisks()
 	if err != nil {
@@ -47,23 +92,20 @@ func Download(cfg config.Config, backupName string, tablePattern string, schemaO
 	for _, disk := range disks {
 		diskMap[disk.Name] = disk.Path
 	}
-	if err := bd.Connect(); err != nil {
-		return err
-	}
-	backupMetafileReader, err := bd.GetFileReader(path.Join(backupName, "metadata.json"))
-	if err != nil {
-		return err
-	}
-	tbBody, err := ioutil.ReadAll(backupMetafileReader)
-	if err != nil {
-		return err
-	}
-	var backupMetadata metadata.BackupMetadata
-	if err := json.Unmarshal(tbBody, &backupMetadata); err != nil {
-		return err
-	}
+	// backupMetafileReader, err := bd.GetFileReader(path.Join(backupName, "metadata.json"))
+	// if err != nil {
+	// 	return err
+	// }
+	// tbBody, err := ioutil.ReadAll(backupMetafileReader)
+	// if err != nil {
+	// 	return err
+	// }
+	// var backupMetadata metadata.BackupMetadata
+	// if err := json.Unmarshal(tbBody, &backupMetadata); err != nil {
+	// 	return err
+	// }
 	tableMetadataForDownload := []metadata.TableMetadata{}
-	tablesForDownload := parseTablePatternForDownload(backupMetadata.Tables, tablePattern)
+	tablesForDownload := parseTablePatternForDownload(remoteBackup.Tables, tablePattern)
 
 	for _, t := range tablesForDownload {
 		remoteTableMetadata := path.Join(backupName, "metadata", clickhouse.TablePathEncode(t.Database), fmt.Sprintf("%s.json", clickhouse.TablePathEncode(t.Table)))
@@ -117,8 +159,12 @@ func Download(cfg config.Config, backupName string, tablePattern string, schemaO
 			}
 		}
 	}
-	// TODO: merge with exists tables
-	// backupMetadata.Tables = tablesForDownload
+	backupMetadata := remoteBackup.BackupMetadata
+	backupMetadata.Tables = tablesForDownload
+	tbBody, err := json.MarshalIndent(&backupMetadata, "", "\t")
+	if err != nil {
+		return err
+	}
 	backupMetafileLocalPath := path.Join(defaultDataPath, "backup", backupName, "metadata.json")
 	if err := ioutil.WriteFile(backupMetafileLocalPath, tbBody, 0640); err != nil {
 		return err

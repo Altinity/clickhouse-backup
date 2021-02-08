@@ -136,6 +136,23 @@ type APIConfig struct {
 	PrivateKeyFile  string `yaml:"private_key_file" envconfig:"API_PRIVATE_KEY_FILE"`
 }
 
+func (cfg *Config) GetArchiveExtension() string {
+	switch cfg.General.RemoteStorage {
+	case "s3":
+		return ArchiveExtensions[cfg.S3.CompressionFormat]
+	case "gcs":
+		return ArchiveExtensions[cfg.GCS.CompressionFormat]
+	case "cos":
+		return ArchiveExtensions[cfg.COS.CompressionFormat]
+	case "ftp":
+		return ArchiveExtensions[cfg.FTP.CompressionFormat]
+	case "azblob":
+		return ArchiveExtensions[cfg.AzureBlob.CompressionFormat]
+	default:
+		return ""
+	}
+}
+
 // LoadConfig - load config from file
 func LoadConfig(configLocation string) (*Config, error) {
 	cfg := DefaultConfig()

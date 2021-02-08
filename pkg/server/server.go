@@ -423,7 +423,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 		Location string `json:"location"`
 	}
 	backupsJSON := make([]backupJSON, 0)
-	localBackups, err := backup.ListLocalBackups(*api.config)
+	localBackups, err := backup.ListLocalBackups(api.config)
 	if err != nil && !os.IsNotExist(err) {
 		writeError(w, http.StatusInternalServerError, "list", err)
 		return
@@ -436,7 +436,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	if api.config.General.RemoteStorage != "none" {
-		remoteBackups, err := backup.GetRemoteBackups(*api.config)
+		remoteBackups, err := backup.GetRemoteBackups(api.config)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "list", err)
 			return
@@ -482,7 +482,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 
 	go func() {
 		api.status.start("create")
-		err := backup.CreateBackup(*api.config, backupName, tablePattern, schemaOnly)
+		err := backup.CreateBackup(api.config, backupName, tablePattern, schemaOnly)
 		defer api.status.stop(err)
 		if err != nil {
 			api.metrics.FailedBackups.Inc()
@@ -523,7 +523,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	go func() {
 		api.status.start("upload")
-		err := backup.Upload(*api.config, name, tablePattern, diffFrom, schemaOnly)
+		err := backup.Upload(api.config, name, tablePattern, diffFrom, schemaOnly)
 		api.status.stop(err)
 		if err != nil {
 			log.Errorf("Upload error: %+v\n", err)
@@ -576,7 +576,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		dropTable = true
 	}
 	api.status.start("restore")
-	err := backup.Restore(*api.config, vars["name"], tablePattern, schemaOnly, dataOnly, dropTable)
+	err := backup.Restore(api.config, vars["name"], tablePattern, schemaOnly, dataOnly, dropTable)
 	api.status.stop(err)
 	if err != nil {
 		log.Errorf("Download error: %+v\n", err)
@@ -609,7 +609,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	}
 	go func() {
 		api.status.start("download")
-		err := backup.Download(*api.config, name, tablePattern, schemaOnly)
+		err := backup.Download(api.config, name, tablePattern, schemaOnly)
 		api.status.stop(err)
 		if err != nil {
 			log.Errorf("Download error: %+v\n", err)
@@ -639,9 +639,9 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 	vars := mux.Vars(r)
 	switch vars["where"] {
 	case "local":
-		err = backup.RemoveBackupLocal(*api.config, vars["name"])
+		err = backup.RemoveBackupLocal(api.config, vars["name"])
 	case "remote":
-		err = backup.RemoveBackupRemote(*api.config, vars["name"])
+		err = backup.RemoveBackupRemote(api.config, vars["name"])
 	default:
 		err = fmt.Errorf("Backup location must be 'local' or 'remote'")
 	}

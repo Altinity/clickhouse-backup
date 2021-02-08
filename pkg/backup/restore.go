@@ -26,7 +26,7 @@ func (rt RestoreTables) Sort() {
 }
 
 // Restore - restore tables matched by tablePattern from backupName
-func Restore(cfg config.Config, backupName string, tablePattern string, schemaOnly bool, dataOnly bool, dropTable bool) error {
+func Restore(cfg *config.Config, backupName string, tablePattern string, schemaOnly bool, dataOnly bool, dropTable bool) error {
 	if schemaOnly || (schemaOnly == dataOnly) {
 		if err := RestoreSchema(cfg, backupName, tablePattern, dropTable); err != nil {
 			return err
@@ -41,7 +41,7 @@ func Restore(cfg config.Config, backupName string, tablePattern string, schemaOn
 }
 
 // RestoreSchema - restore schemas matched by tablePattern from backupName
-func RestoreSchema(cfg config.Config, backupName string, tablePattern string, dropTable bool) error {
+func RestoreSchema(cfg *config.Config, backupName string, tablePattern string, dropTable bool) error {
 	if backupName == "" {
 		PrintLocalBackups(cfg, "all")
 		return fmt.Errorf("select backup for restore")
@@ -93,7 +93,7 @@ func RestoreSchema(cfg config.Config, backupName string, tablePattern string, dr
 }
 
 // RestoreData - restore data for tables matched by tablePattern from backupName
-func RestoreData(cfg config.Config, backupName string, tablePattern string) error {
+func RestoreData(cfg *config.Config, backupName string, tablePattern string) error {
 	if backupName == "" {
 		PrintLocalBackups(cfg, "all")
 		return fmt.Errorf("select backup for restore")
