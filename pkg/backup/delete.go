@@ -15,7 +15,7 @@ func RemoveOldBackupsLocal(cfg *config.Config) error {
 	if cfg.General.BackupsToKeepLocal < 1 {
 		return nil
 	}
-	backupList, err := ListLocalBackups(cfg)
+	backupList, err := GetLocalBackups(cfg)
 	if err != nil {
 		return err
 	}
@@ -29,7 +29,7 @@ func RemoveOldBackupsLocal(cfg *config.Config) error {
 }
 
 func RemoveBackupLocal(cfg *config.Config, backupName string) error {
-	backupList, err := ListLocalBackups(cfg)
+	backupList, err := GetLocalBackups(cfg)
 	if err != nil {
 		return err
 	}

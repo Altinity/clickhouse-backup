@@ -112,6 +112,9 @@ func Server(c *cli.App, cfg *config.Config, configPath string, clickhouseBackupV
 		clickhouseBackupVersion: clickhouseBackupVersion,
 	}
 	api.metrics = setupMetrics()
+	if err := api.updateSizeOfLastBackup(); err != nil {
+		return err
+	}
 	sigterm := make(chan os.Signal, 1)
 	signal.Notify(sigterm, os.Interrupt, syscall.SIGTERM)
 	sighup := make(chan os.Signal, 1)
@@ -276,6 +279,9 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 					log.Error(err.Error())
 					return
 				}
+				if err := api.updateSizeOfLastBackup(); err != nil {
+					log.Errorf("update size: %v", err)
+				}
 			}()
 			api.metrics.SuccessfulBackups.Inc()
 			api.metrics.LastBackupSuccess.Set(1)
@@ -287,7 +293,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 				Operation: row.Command,
 			})
 			return
-		case "delete", "freeze", "clean":
+		case "delete":
 			if api.status.inProgress() {
 				log.Info(ErrAPILocked.Error())
 				writeError(w, http.StatusLocked, row.Command, ErrAPILocked)
@@ -311,6 +317,9 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 			api.metrics.SuccessfulBackups.Inc()
 			api.metrics.LastBackupSuccess.Set(1)
 			log.Info("OK")
+			if err := api.updateSizeOfLastBackup(); err != nil {
+				log.Errorf("update size: %v", err)
+			}
 			sendJSONEachRow(w, http.StatusCreated, struct {
 				Status    string `json:"status"`
 				Operation string `json:"operation"`
@@ -425,7 +434,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 		Location string `json:"location"`
 	}
 	backupsJSON := make([]backupJSON, 0)
-	localBackups, err := backup.ListLocalBackups(api.config)
+	localBackups, err := backup.GetLocalBackups(api.config)
 	if err != nil && !os.IsNotExist(err) {
 		writeError(w, http.StatusInternalServerError, "list", err)
 		return
@@ -492,6 +501,9 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 			log.Errorf("CreateBackup error: %v", err)
 			return
 		}
+		if err := api.updateSizeOfLastBackup(); err != nil {
+			log.Errorf("update size: %v", err)
+		}
 	}()
 	api.metrics.SuccessfulBackups.Inc()
 	api.metrics.LastBackupSuccess.Set(1)
@@ -530,6 +542,9 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			log.Errorf("Upload error: %+v\n", err)
 			return
+		}
+		if err := api.updateSizeOfLastBackup(); err != nil {
+			log.Errorf("update size: %v", err)
 		}
 	}()
 	sendJSONEachRow(w, http.StatusOK, struct {
@@ -617,6 +632,9 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 			log.Errorf("Download error: %+v\n", err)
 			return
 		}
+		if err := api.updateSizeOfLastBackup(); err != nil {
+			log.Errorf("update size: %v", err)
+		}
 	}()
 	sendJSONEachRow(w, http.StatusOK, struct {
 		Status     string `json:"status"`
@@ -653,6 +671,9 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "delete", err)
 		return
 	}
+	if err := api.updateSizeOfLastBackup(); err != nil {
+		log.Errorf("update size: %v", err)
+	}
 	sendJSONEachRow(w, http.StatusOK, struct {
 		Status     string `json:"status"`
 		Operation  string `json:"operation"`
@@ -668,6 +689,34 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 
 func (api *APIServer) httpBackupStatusHandler(w http.ResponseWriter, r *http.Request) {
 	sendJSONEachRow(w, http.StatusOK, api.status.status())
+}
+
+func (api *APIServer) updateSizeOfLastBackup() error {
+	if !api.config.API.EnableMetrics {
+		return nil
+	}
+	localBackups, err := backup.GetLocalBackups(api.config)
+	if err != nil {
+		return err
+	}
+	if len(localBackups) > 0 {
+		api.metrics.LastBackupSizeLocal.Set(float64(localBackups[len(localBackups)-1].Size))
+	} else {
+		api.metrics.LastBackupSizeLocal.Set(0)
+	}
+	if api.config.General.RemoteStorage == "none" {
+		return nil
+	}
+	remoteBackups, err := backup.GetRemoteBackups(api.config)
+	if err != nil {
+		return err
+	}
+	if len(remoteBackups) > 0 {
+		api.metrics.LastBackupSizeRemote.Set(float64(remoteBackups[len(remoteBackups)-1].Size))
+	} else {
+		api.metrics.LastBackupSizeRemote.Set(0)
+	}
+	return nil
 }
 
 func registerMetricsHandlers(r *mux.Router, enablemetrics bool, enablepprof bool) {
@@ -695,12 +744,14 @@ func registerMetricsHandlers(r *mux.Router, enablemetrics bool, enablepprof bool
 }
 
 type Metrics struct {
-	LastBackupSuccess  prometheus.Gauge
-	LastBackupStart    prometheus.Gauge
-	LastBackupEnd      prometheus.Gauge
-	LastBackupDuration prometheus.Gauge
-	SuccessfulBackups  prometheus.Counter
-	FailedBackups      prometheus.Counter
+	LastBackupSuccess    prometheus.Gauge
+	LastBackupStart      prometheus.Gauge
+	LastBackupEnd        prometheus.Gauge
+	LastBackupDuration   prometheus.Gauge
+	SuccessfulBackups    prometheus.Counter
+	FailedBackups        prometheus.Counter
+	LastBackupSizeLocal  prometheus.Gauge
+	LastBackupSizeRemote prometheus.Gauge
 }
 
 // setupMetrics - resister prometheus metrics
@@ -736,6 +787,17 @@ func setupMetrics() Metrics {
 		Name:      "failed_backups",
 		Help:      "Number of Failed Backups.",
 	})
+	m.LastBackupSizeLocal = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "clickhouse_backup",
+		Name:      "last_backup_size_local",
+		Help:      "Last local backup size in bytes",
+	})
+	m.LastBackupSizeRemote = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "clickhouse_backup",
+		Name:      "last_backup_size_remote",
+		Help:      "Last remote backup size in bytes",
+	})
+
 	prometheus.MustRegister(
 		m.LastBackupDuration,
 		m.LastBackupStart,
@@ -743,6 +805,8 @@ func setupMetrics() Metrics {
 		m.LastBackupSuccess,
 		m.SuccessfulBackups,
 		m.FailedBackups,
+		m.LastBackupSizeLocal,
+		m.LastBackupSizeRemote,
 	)
 	m.LastBackupSuccess.Set(2) // 0=failed, 1=success, 2=unknown
 	return m

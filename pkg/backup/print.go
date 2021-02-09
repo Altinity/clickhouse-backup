@@ -54,15 +54,15 @@ func printBackups(backupList []new_storage.Backup, format, location string) erro
 
 // PrintLocalBackups - print all backups stored locally
 func PrintLocalBackups(cfg *config.Config, format string) error {
-	backupList, err := ListLocalBackups(cfg)
+	backupList, err := GetLocalBackups(cfg)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return printBackups(backupList, format, "local")
 }
 
-// ListLocalBackups - return slice of all backups stored locally
-func ListLocalBackups(cfg *config.Config) ([]new_storage.Backup, error) {
+// GetLocalBackups - return slice of all backups stored locally
+func GetLocalBackups(cfg *config.Config) ([]new_storage.Backup, error) {
 	ch := &clickhouse.ClickHouse{
 		Config: &cfg.ClickHouse,
 	}
@@ -132,11 +132,11 @@ func PrintRemoteBackups(cfg *config.Config, format string) error {
 	return printBackups(backupList, format, "remote")
 }
 
-func GetLocalBackup(cfg *config.Config, backupName string) error {
+func checkLocalBackup(cfg *config.Config, backupName string) error {
 	if backupName == "" {
 		return fmt.Errorf("backup name is required")
 	}
-	backupList, err := ListLocalBackups(cfg)
+	backupList, err := GetLocalBackups(cfg)
 	if err != nil {
 		return err
 	}
@@ -145,14 +145,13 @@ func GetLocalBackup(cfg *config.Config, backupName string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("backup '%s' not found", backupName)
+	return fmt.Errorf("backup '%s' is not found", backupName)
 }
 
 // GetRemoteBackups - get all backups stored on remote storage
 func GetRemoteBackups(cfg *config.Config) ([]new_storage.Backup, error) {
 	if cfg.General.RemoteStorage == "none" {
-		fmt.Println("PrintRemoteBackups aborted: RemoteStorage set to \"none\"")
-		return []new_storage.Backup{}, nil
+		return nil, fmt.Errorf("remote_storage is 'none'")
 	}
 	bd, err := new_storage.NewBackupDestination(cfg)
 	if err != nil {

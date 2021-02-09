@@ -113,6 +113,9 @@ func RestoreData(cfg *config.Config, backupName string, tablePattern string) err
 	if clickhouse.IsClickhouseShadow(path.Join(defaulDataPath, "backup", backupName, "shadow")) {
 		return fmt.Errorf("backups created in v0.0.1 is not supported now")
 	}
+	if err := checkLocalBackup(cfg, backupName); err != nil {
+		return fmt.Errorf("can't restore: %v", err)
+	}
 	metadataPath := path.Join(defaulDataPath, "backup", backupName, "metadata")
 	tablesForRestore, err := parseSchemaPattern(metadataPath, tablePattern)
 	if err != nil {
