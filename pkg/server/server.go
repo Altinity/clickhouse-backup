@@ -257,7 +257,8 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "", err)
 			return
 		}
-		switch args[0] {
+		command := args[0]
+		switch command {
 		case "create", "restore", "upload", "download":
 			if api.status.inProgress() {
 				log.Info(ErrAPILocked.Error())
@@ -265,26 +266,24 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			start := time.Now()
-			api.metrics.LastBackupStart.Set(float64(start.Unix()))
-			defer api.metrics.LastBackupDuration.Set(float64(time.Since(start).Nanoseconds()))
-			defer api.metrics.LastBackupEnd.Set(float64(time.Now().Unix()))
+			api.metrics.LastStart[command].Set(float64(start.Unix()))
+			defer api.metrics.LastDuration[command].Set(float64(time.Since(start).Nanoseconds()))
+			defer api.metrics.LastFinish[command].Set(float64(time.Now().Unix()))
 
 			go func() {
 				api.status.start(row.Command)
 				err := api.c.Run(append([]string{"clickhouse-backup", "-c", api.configPath}, args...))
 				defer api.status.stop(err)
 				if err != nil {
-					api.metrics.FailedBackups.Inc()
-					api.metrics.LastBackupSuccess.Set(0)
+					api.metrics.FailedCounter[command].Inc()
 					log.Error(err.Error())
 					return
 				}
 				if err := api.updateSizeOfLastBackup(); err != nil {
 					log.Errorf("update size: %v", err)
 				}
+				api.metrics.SuccessfulCounter[command].Inc()
 			}()
-			api.metrics.SuccessfulBackups.Inc()
-			api.metrics.LastBackupSuccess.Set(1)
 			sendJSONEachRow(w, http.StatusCreated, struct {
 				Status    string `json:"status"`
 				Operation string `json:"operation"`
@@ -299,23 +298,14 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusLocked, row.Command, ErrAPILocked)
 				return
 			}
-			start := time.Now()
-			api.metrics.LastBackupStart.Set(float64(start.Unix()))
-			defer api.metrics.LastBackupDuration.Set(float64(time.Since(start).Nanoseconds()))
-			defer api.metrics.LastBackupEnd.Set(float64(time.Now().Unix()))
-
 			api.status.start(row.Command)
 			err := api.c.Run(append([]string{"clickhouse-backup", "-c", api.configPath}, args...))
 			defer api.status.stop(err)
 			if err != nil {
-				api.metrics.FailedBackups.Inc()
-				api.metrics.LastBackupSuccess.Set(0)
 				writeError(w, http.StatusBadRequest, row.Command, err)
 				log.Error(err.Error())
 				return
 			}
-			api.metrics.SuccessfulBackups.Inc()
-			api.metrics.LastBackupSuccess.Set(1)
 			log.Info("OK")
 			if err := api.updateSizeOfLastBackup(); err != nil {
 				log.Errorf("update size: %v", err)
@@ -471,11 +461,6 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusLocked, "create", ErrAPILocked)
 		return
 	}
-	start := time.Now()
-	api.metrics.LastBackupStart.Set(float64(start.Unix()))
-	defer api.metrics.LastBackupDuration.Set(float64(time.Since(start).Nanoseconds()))
-	defer api.metrics.LastBackupEnd.Set(float64(time.Now().Unix()))
-
 	tablePattern := ""
 	backupName := backup.NewBackupName()
 	schemaOnly := false
@@ -493,20 +478,22 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 
 	go func() {
 		api.status.start("create")
+		start := time.Now()
+		api.metrics.LastStart["create"].Set(float64(start.Unix()))
+		defer api.metrics.LastDuration["create"].Set(float64(time.Since(start).Nanoseconds()))
+		defer api.metrics.LastFinish["create"].Set(float64(time.Now().Unix()))
 		err := backup.CreateBackup(api.config, backupName, tablePattern, schemaOnly, api.clickhouseBackupVersion)
 		defer api.status.stop(err)
 		if err != nil {
-			api.metrics.FailedBackups.Inc()
-			api.metrics.LastBackupSuccess.Set(0)
+			api.metrics.FailedCounter["create"].Inc()
 			log.Errorf("CreateBackup error: %v", err)
 			return
 		}
 		if err := api.updateSizeOfLastBackup(); err != nil {
 			log.Errorf("update size: %v", err)
 		}
+		api.metrics.SuccessfulCounter["create"].Inc()
 	}()
-	api.metrics.SuccessfulBackups.Inc()
-	api.metrics.LastBackupSuccess.Set(1)
 	sendJSONEachRow(w, http.StatusCreated, struct {
 		Status     string `json:"status"`
 		Operation  string `json:"operation"`
@@ -520,6 +507,11 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 
 // httpUploadHandler - upload a backup to remote storage
 func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) {
+	if api.status.inProgress() {
+		log.Info(ErrAPILocked.Error())
+		writeError(w, http.StatusLocked, "upload", ErrAPILocked)
+		return
+	}
 	vars := mux.Vars(r)
 	diffFrom := ""
 	query := r.URL.Query()
@@ -537,15 +529,21 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	go func() {
 		api.status.start("upload")
+		start := time.Now()
+		api.metrics.LastStart["upload"].Set(float64(start.Unix()))
+		defer api.metrics.LastDuration["upload"].Set(float64(time.Since(start).Nanoseconds()))
+		defer api.metrics.LastFinish["upload"].Set(float64(time.Now().Unix()))
 		err := backup.Upload(api.config, name, tablePattern, diffFrom, schemaOnly)
 		api.status.stop(err)
 		if err != nil {
 			log.Errorf("Upload error: %+v\n", err)
+			api.metrics.FailedCounter["upload"].Inc()
 			return
 		}
 		if err := api.updateSizeOfLastBackup(); err != nil {
 			log.Errorf("update size: %v", err)
 		}
+		api.metrics.SuccessfulCounter["upload"].Inc()
 	}()
 	sendJSONEachRow(w, http.StatusOK, struct {
 		Status     string `json:"status"`
@@ -592,20 +590,27 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	if _, exist := query["rm"]; exist {
 		dropTable = true
 	}
-	api.status.start("restore")
-	err := backup.Restore(api.config, vars["name"], tablePattern, schemaOnly, dataOnly, dropTable)
-	api.status.stop(err)
-	if err != nil {
-		log.Errorf("Download error: %+v\n", err)
-		writeError(w, http.StatusInternalServerError, "restore", err)
-		return
-	}
+	go func() {
+		api.status.start("restore")
+		start := time.Now()
+		api.metrics.LastStart["restore"].Set(float64(start.Unix()))
+		defer api.metrics.LastDuration["restore"].Set(float64(time.Since(start).Nanoseconds()))
+		defer api.metrics.LastFinish["restore"].Set(float64(time.Now().Unix()))
+		err := backup.Restore(api.config, vars["name"], tablePattern, schemaOnly, dataOnly, dropTable)
+		api.status.stop(err)
+		if err != nil {
+			log.Errorf("Download error: %+v\n", err)
+			api.metrics.FailedCounter["restore"].Inc()
+			return
+		}
+		api.metrics.SuccessfulCounter["restore"].Inc()
+	}()
 	sendJSONEachRow(w, http.StatusOK, struct {
 		Status     string `json:"status"`
 		Operation  string `json:"operation"`
 		BackupName string `json:"backup_name"`
 	}{
-		Status:     "success",
+		Status:     "acknowledged",
 		Operation:  "restore",
 		BackupName: vars["name"],
 	})
@@ -613,6 +618,11 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 
 // httpDownloadHandler - download a backup from remote to local storage
 func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request) {
+	if api.status.inProgress() {
+		log.Info(ErrAPILocked.Error())
+		writeError(w, http.StatusLocked, "download", ErrAPILocked)
+		return
+	}
 	vars := mux.Vars(r)
 	name := vars["name"]
 	query := r.URL.Query()
@@ -626,15 +636,21 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	}
 	go func() {
 		api.status.start("download")
+		start := time.Now()
+		api.metrics.LastStart["download"].Set(float64(start.Unix()))
+		defer api.metrics.LastDuration["download"].Set(float64(time.Since(start).Nanoseconds()))
+		defer api.metrics.LastFinish["download"].Set(float64(time.Now().Unix()))
 		err := backup.Download(api.config, name, tablePattern, schemaOnly)
 		api.status.stop(err)
 		if err != nil {
 			log.Errorf("Download error: %+v\n", err)
+			api.metrics.FailedCounter["download"].Inc()
 			return
 		}
 		if err := api.updateSizeOfLastBackup(); err != nil {
 			log.Errorf("update size: %v", err)
 		}
+		api.metrics.SuccessfulCounter["download"].Inc()
 	}()
 	sendJSONEachRow(w, http.StatusOK, struct {
 		Status     string `json:"status"`
@@ -744,12 +760,12 @@ func registerMetricsHandlers(r *mux.Router, enablemetrics bool, enablepprof bool
 }
 
 type Metrics struct {
-	LastBackupSuccess    prometheus.Gauge
-	LastBackupStart      prometheus.Gauge
-	LastBackupEnd        prometheus.Gauge
-	LastBackupDuration   prometheus.Gauge
-	SuccessfulBackups    prometheus.Counter
-	FailedBackups        prometheus.Counter
+	SuccessfulCounter map[string]prometheus.Counter
+	FailedCounter     map[string]prometheus.Counter
+	LastStart         map[string]prometheus.Gauge
+	LastFinish        map[string]prometheus.Gauge
+	LastDuration      map[string]prometheus.Gauge
+
 	LastBackupSizeLocal  prometheus.Gauge
 	LastBackupSizeRemote prometheus.Gauge
 }
@@ -757,36 +773,46 @@ type Metrics struct {
 // setupMetrics - resister prometheus metrics
 func setupMetrics() Metrics {
 	m := Metrics{}
-	m.LastBackupDuration = prometheus.NewGauge(prometheus.GaugeOpts{
-		Namespace: "clickhouse_backup",
-		Name:      "last_backup_duration",
-		Help:      "Backup duration in nanoseconds.",
-	})
-	m.LastBackupSuccess = prometheus.NewGauge(prometheus.GaugeOpts{
-		Namespace: "clickhouse_backup",
-		Name:      "last_backup_success",
-		Help:      "Last backup success boolean: 0=failed, 1=success, 2=unknown.",
-	})
-	m.LastBackupStart = prometheus.NewGauge(prometheus.GaugeOpts{
-		Namespace: "clickhouse_backup",
-		Name:      "last_backup_start",
-		Help:      "Last backup start timestamp.",
-	})
-	m.LastBackupEnd = prometheus.NewGauge(prometheus.GaugeOpts{
-		Namespace: "clickhouse_backup",
-		Name:      "last_backup_end",
-		Help:      "Last backup end timestamp.",
-	})
-	m.SuccessfulBackups = prometheus.NewCounter(prometheus.CounterOpts{
-		Namespace: "clickhouse_backup",
-		Name:      "successful_backups",
-		Help:      "Number of Successful Backups.",
-	})
-	m.FailedBackups = prometheus.NewCounter(prometheus.CounterOpts{
-		Namespace: "clickhouse_backup",
-		Name:      "failed_backups",
-		Help:      "Number of Failed Backups.",
-	})
+	successfulCounter := map[string]prometheus.Counter{}
+	failedCounter := map[string]prometheus.Counter{}
+	lastStart := map[string]prometheus.Gauge{}
+	lastFinish := map[string]prometheus.Gauge{}
+	lastDuration := map[string]prometheus.Gauge{}
+
+	for _, command := range []string{"create", "upload", "download", "restore"} {
+		successfulCounter[command] = prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: "clickhouse_backup",
+			Name:      fmt.Sprintf("successful_%ss", command),
+			Help:      fmt.Sprintf("Counter of successful %ss backup", command),
+		})
+		failedCounter[command] = prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: "clickhouse_backup",
+			Name:      fmt.Sprintf("failed_%ss", command),
+			Help:      fmt.Sprintf("Counter of failed %ss backup", command),
+		})
+		lastStart[command] = prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: "clickhouse_backup",
+			Name:      fmt.Sprintf("last_%s_start", command),
+			Help:      fmt.Sprintf("Last backup %s start timestamp", command),
+		})
+		lastFinish[command] = prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: "clickhouse_backup",
+			Name:      fmt.Sprintf("last_%s_finish", command),
+			Help:      fmt.Sprintf("Last backup %s finish timestamp", command),
+		})
+		lastDuration[command] = prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: "clickhouse_backup",
+			Name:      fmt.Sprintf("last_%s_duration", command),
+			Help:      fmt.Sprintf("Backup %s duration in nanoseconds", command),
+		})
+	}
+
+	m.SuccessfulCounter = successfulCounter
+	m.FailedCounter = failedCounter
+	m.LastStart = lastStart
+	m.LastFinish = lastFinish
+	m.LastDuration = lastDuration
+
 	m.LastBackupSizeLocal = prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace: "clickhouse_backup",
 		Name:      "last_backup_size_local",
@@ -799,15 +825,32 @@ func setupMetrics() Metrics {
 	})
 
 	prometheus.MustRegister(
-		m.LastBackupDuration,
-		m.LastBackupStart,
-		m.LastBackupEnd,
-		m.LastBackupSuccess,
-		m.SuccessfulBackups,
-		m.FailedBackups,
+		m.SuccessfulCounter["create"],
+		m.FailedCounter["create"],
+		m.LastStart["create"],
+		m.LastFinish["create"],
+		m.LastDuration["create"],
+
+		m.SuccessfulCounter["upload"],
+		m.FailedCounter["upload"],
+		m.LastStart["upload"],
+		m.LastFinish["upload"],
+		m.LastDuration["upload"],
+
+		m.SuccessfulCounter["download"],
+		m.FailedCounter["download"],
+		m.LastStart["download"],
+		m.LastFinish["download"],
+		m.LastDuration["download"],
+
+		m.SuccessfulCounter["restore"],
+		m.FailedCounter["restore"],
+		m.LastStart["restore"],
+		m.LastFinish["restore"],
+		m.LastDuration["restore"],
+
 		m.LastBackupSizeLocal,
 		m.LastBackupSizeRemote,
 	)
-	m.LastBackupSuccess.Set(2) // 0=failed, 1=success, 2=unknown
 	return m
 }

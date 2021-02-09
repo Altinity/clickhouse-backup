@@ -281,7 +281,8 @@ func DefaultConfig() *Config {
 			CompressionLevel:  1,
 		},
 		API: APIConfig{
-			ListenAddr: "localhost:7171",
+			ListenAddr:    "localhost:7171",
+			EnableMetrics: true,
 		},
 		FTP: FTPConfig{
 			Address:           "",
