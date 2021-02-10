@@ -11,8 +11,9 @@ import (
 	"github.com/apex/log"
 )
 
-func moveShadow(shadowPath, backupPath string) error {
-	return filepath.Walk(shadowPath, func(filePath string, info os.FileInfo, err error) error {
+func moveShadow(shadowPath, backupPath string) (int64, error) {
+	size := int64(0)
+	err := filepath.Walk(shadowPath, func(filePath string, info os.FileInfo, err error) error {
 		relativePath := strings.Trim(strings.TrimPrefix(filePath, shadowPath), "/")
 		pathParts := strings.SplitN(relativePath, "/", 3)
 		if len(pathParts) != 3 {
@@ -26,8 +27,10 @@ func moveShadow(shadowPath, backupPath string) error {
 			log.Debugf("'%s' is not a regular file, skipping", filePath)
 			return nil
 		}
+		size += info.Size()
 		return os.Rename(filePath, dstFilePath)
 	})
+	return size, err
 }
 
 func copyFile(srcFile string, dstFile string) error {

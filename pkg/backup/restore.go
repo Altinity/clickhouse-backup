@@ -10,6 +10,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
+	apexLog "github.com/apex/log"
 )
 
 // RestoreTables - slice of RestoreTable
@@ -98,6 +99,10 @@ func RestoreData(cfg *config.Config, backupName string, tablePattern string) err
 		PrintLocalBackups(cfg, "all")
 		return fmt.Errorf("select backup for restore")
 	}
+	log := apexLog.WithFields(apexLog.Fields{
+		"backup":    backupName,
+		"operation": "restore",
+	})
 	ch := &clickhouse.ClickHouse{
 		Config: &cfg.ClickHouse,
 	}
@@ -124,7 +129,7 @@ func RestoreData(cfg *config.Config, backupName string, tablePattern string) err
 	if len(tablesForRestore) == 0 {
 		return fmt.Errorf("no have found schemas by %s in %s", tablePattern, backupName)
 	}
-
+	log.Debugf("found %d tables with data in backup", len(tablesForRestore))
 	chTables, err := ch.GetTables()
 	if err != nil {
 		return err
@@ -140,9 +145,6 @@ func RestoreData(cfg *config.Config, backupName string, tablePattern string) err
 			Database: chTables[i].Database,
 			Table:    chTables[i].Name,
 		}] = chTables[i]
-	}
-	if len(tablesForRestore) == 0 {
-		return fmt.Errorf("backup doesn't have tables to restore")
 	}
 
 	missingTables := []string{}
@@ -166,9 +168,11 @@ func RestoreData(cfg *config.Config, backupName string, tablePattern string) err
 		dstTableDataPaths := dstTablesMap[metadata.TableTitle{
 			Database: table.Database,
 			Table:    table.Table}].DataPaths
+		log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).Debugf("copy data")
 		if err := ch.CopyData(backupName, table, disks, dstTableDataPaths); err != nil {
 			return fmt.Errorf("can't restore '%s.%s': %v", table.Database, table.Table, err)
 		}
+		log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).Debugf("attach parts")
 		if err := ch.AttachPartitions(table, disks); err != nil {
 			return fmt.Errorf("can't attach partitions for table '%s.%s': %v", table.Database, table.Table, err)
 		}
