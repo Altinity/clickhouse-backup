@@ -464,20 +464,23 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	tablePattern := ""
 	backupName := backup.NewBackupName()
 	schemaOnly := false
-
+	fullCommand := "create"
 	query := r.URL.Query()
 	if tp, exist := query["table"]; exist {
 		tablePattern = tp[0]
-	}
-	if name, exist := query["name"]; exist {
-		backupName = name[0]
+		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tp)
 	}
 	if schema, exist := query["schema"]; exist {
 		schemaOnly, _ = strconv.ParseBool(schema[0])
+		fullCommand = fmt.Sprintf("%s --schema", fullCommand)
+	}
+	if name, exist := query["name"]; exist {
+		backupName = name[0]
+		fullCommand = fmt.Sprintf("%s %s", fullCommand, backupName)
 	}
 
 	go func() {
-		api.status.start("create")
+		api.status.start(fullCommand)
 		start := time.Now()
 		api.metrics.LastStart["create"].Set(float64(start.Unix()))
 		defer api.metrics.LastDuration["create"].Set(float64(time.Since(start).Nanoseconds()))
@@ -515,20 +518,27 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	vars := mux.Vars(r)
 	diffFrom := ""
 	query := r.URL.Query()
-	if df, exist := query["diff-from"]; exist {
-		diffFrom = df[0]
-	}
 	name := vars["name"]
 	tablePattern := ""
 	schemaOnly := false
+	fullCommand := "upload"
+
+	if df, exist := query["diff-from"]; exist {
+		diffFrom = df[0]
+		fullCommand = fmt.Sprintf("%s --diff-from=%s", fullCommand, diffFrom)
+	}
 	if tp, exist := query["table"]; exist {
 		tablePattern = tp[0]
+		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
 	}
 	if schema, exist := query["schema"]; exist {
 		schemaOnly, _ = strconv.ParseBool(schema[0])
+		fullCommand += " --schema"
 	}
+	fullCommand = fmt.Sprint(fullCommand, " ", name)
+
 	go func() {
-		api.status.start("upload")
+		api.status.start(fullCommand)
 		start := time.Now()
 		api.metrics.LastStart["upload"].Set(float64(start.Unix()))
 		defer api.metrics.LastDuration["upload"].Set(float64(time.Since(start).Nanoseconds()))
@@ -573,30 +583,39 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	schemaOnly := false
 	dataOnly := false
 	dropTable := false
+	fullCommand := "restore"
 
 	query := r.URL.Query()
 	if tp, exist := query["table"]; exist {
 		tablePattern = tp[0]
+		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
 	}
 	if _, exist := query["schema"]; exist {
 		schemaOnly = true
+		fullCommand += " --schema"
 	}
 	if _, exist := query["data"]; exist {
 		dataOnly = true
+		fullCommand += " --data"
 	}
 	if _, exist := query["drop"]; exist {
 		dropTable = true
+		fullCommand += " --drop"
 	}
 	if _, exist := query["rm"]; exist {
 		dropTable = true
+		fullCommand += " --rm"
 	}
+	name := vars["name"]
+	fullCommand = fmt.Sprintf(fullCommand, " ", name)
+
 	go func() {
-		api.status.start("restore")
+		api.status.start(fullCommand)
 		start := time.Now()
 		api.metrics.LastStart["restore"].Set(float64(start.Unix()))
 		defer api.metrics.LastDuration["restore"].Set(float64(time.Since(start).Nanoseconds()))
 		defer api.metrics.LastFinish["restore"].Set(float64(time.Now().Unix()))
-		err := backup.Restore(api.config, vars["name"], tablePattern, schemaOnly, dataOnly, dropTable)
+		err := backup.Restore(api.config, name, tablePattern, schemaOnly, dataOnly, dropTable)
 		api.status.stop(err)
 		if err != nil {
 			log.Errorf("Download error: %+v\n", err)
@@ -612,7 +631,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	}{
 		Status:     "acknowledged",
 		Operation:  "restore",
-		BackupName: vars["name"],
+		BackupName: name,
 	})
 }
 
@@ -628,14 +647,20 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	query := r.URL.Query()
 	tablePattern := ""
 	schemaOnly := false
+	fullCommand := "download"
+
 	if tp, exist := query["table"]; exist {
 		tablePattern = tp[0]
+		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
 	}
 	if _, exist := query["schema"]; exist {
 		schemaOnly = true
+		fullCommand += " --schema"
 	}
+	fullCommand = fmt.Sprintf(fullCommand, " ", name)
+
 	go func() {
-		api.status.start("download")
+		api.status.start(fullCommand)
 		start := time.Now()
 		api.metrics.LastStart["download"].Set(float64(start.Unix()))
 		defer api.metrics.LastDuration["download"].Set(float64(time.Since(start).Nanoseconds()))
@@ -670,9 +695,11 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusLocked, "delete", ErrAPILocked)
 		return
 	}
-	api.status.start("delete")
 	var err error
 	vars := mux.Vars(r)
+	fullCommand := fmt.Sprintf("delete %s %s", vars["where"], vars["name"])
+	api.status.start(fullCommand)
+
 	switch vars["where"] {
 	case "local":
 		err = backup.RemoveBackupLocal(api.config, vars["name"])
@@ -744,6 +771,9 @@ func registerMetricsHandlers(r *mux.Router, enablemetrics bool, enablepprof bool
 		})
 	})
 	if enablemetrics {
+		// prom := prometheus.NewRegistry()
+		// prom.MustRegister(api.metrics)
+		// r.Handle("/metrics", promhttp.HandlerFor(prom, promhttp.HandlerOpts{}))
 		r.Handle("/metrics", promhttp.Handler())
 	}
 	if enablepprof {
