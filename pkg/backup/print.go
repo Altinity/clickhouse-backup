@@ -132,20 +132,20 @@ func PrintRemoteBackups(cfg *config.Config, format string) error {
 	return printBackups(backupList, format, "remote")
 }
 
-func checkLocalBackup(cfg *config.Config, backupName string) error {
+func getLocalBackup(cfg *config.Config, backupName string) (*new_storage.Backup, error) {
 	if backupName == "" {
-		return fmt.Errorf("backup name is required")
+		return nil, fmt.Errorf("backup name is required")
 	}
 	backupList, err := GetLocalBackups(cfg)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
-			return nil
+			return &backup, nil
 		}
 	}
-	return fmt.Errorf("backup '%s' is not found", backupName)
+	return nil, fmt.Errorf("backup '%s' is not found", backupName)
 }
 
 // GetRemoteBackups - get all backups stored on remote storage

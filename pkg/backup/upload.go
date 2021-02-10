@@ -46,7 +46,7 @@ func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom
 		return fmt.Errorf("can't connect to %s: %v", bd.Kind(), err)
 	}
 
-	if err := checkLocalBackup(cfg, backupName); err != nil {
+	if _, err := getLocalBackup(cfg, backupName); err != nil {
 		return fmt.Errorf("can't upload: %v", err)
 	}
 	log.Infof("Upload backup '%s'", backupName)

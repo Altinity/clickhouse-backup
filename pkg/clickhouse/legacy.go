@@ -75,7 +75,7 @@ import (
 // }
 
 // GetBackupTablesLegacy - return list of backups of tables that can be restored
-func (ch *ClickHouse) GetBackupTablesLegacy(backupName string) (map[string]metadata.TableMetadata, error) {
+func (ch *ClickHouse) GetBackupTablesLegacy(backupName string) ([]metadata.TableMetadata, error) {
 	dataPath, err := ch.GetDefaultPath()
 	if err != nil {
 		return nil, err
@@ -113,7 +113,7 @@ func (ch *ClickHouse) GetBackupTablesLegacy(backupName string) (map[string]metad
 	// 	}
 	// }
 	// TODO: нам больше не нужно заполнять Partitions из файла теперь их можно взять из таблицы detached
-	result := make(map[string]metadata.TableMetadata)
+	tables := make(map[string]metadata.TableMetadata)
 	err = filepath.Walk(backupShadowPath, func(filePath string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -148,12 +148,12 @@ func (ch *ClickHouse) GetBackupTablesLegacy(backupName string) (map[string]metad
 				UncompressedHashOfCompressedFiles: uhocf,
 			}
 
-			if t, ok := result[fullTableName]; ok {
+			if t, ok := tables[fullTableName]; ok {
 				t.Parts["default"] = append(t.Parts["default"], partition)
-				result[fullTableName] = t
+				tables[fullTableName] = t
 				return nil
 			}
-			result[fullTableName] = metadata.TableMetadata{
+			tables[fullTableName] = metadata.TableMetadata{
 				Database: tDB,
 				Table:    tName,
 				Parts:    map[string][]metadata.Part{"default": {partition}},
@@ -162,6 +162,10 @@ func (ch *ClickHouse) GetBackupTablesLegacy(backupName string) (map[string]metad
 		}
 		return nil
 	})
+	result := []metadata.TableMetadata{}
+	for i := range tables {
+		result = append(result, tables[i])
+	}
 	return result, err
 }
 

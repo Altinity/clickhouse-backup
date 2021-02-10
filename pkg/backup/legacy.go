@@ -94,7 +94,7 @@ func getOrderByEngine(query string) int64 {
 	return 0
 }
 
-func parseTablePatternForRestoreData(tables map[string]metadata.TableMetadata, tablePattern string) clickhouse.BackupTables {
+func parseTablePatternForRestoreData(tables []metadata.TableMetadata, tablePattern string) clickhouse.BackupTables {
 	tablePatterns := []string{"*"}
 	if tablePattern != "" {
 		tablePatterns = strings.Split(tablePattern, ",")
