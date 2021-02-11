@@ -276,6 +276,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 				defer api.status.stop(err)
 				if err != nil {
 					api.metrics.FailedCounter[command].Inc()
+					api.metrics.LastStatus[command].Set(0)
 					log.Error(err.Error())
 					return
 				}
@@ -283,6 +284,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 					log.Errorf("update size: %v", err)
 				}
 				api.metrics.SuccessfulCounter[command].Inc()
+				api.metrics.LastStatus[command].Set(1)
 			}()
 			sendJSONEachRow(w, http.StatusCreated, struct {
 				Status    string `json:"status"`
@@ -489,6 +491,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		defer api.status.stop(err)
 		if err != nil {
 			api.metrics.FailedCounter["create"].Inc()
+			api.metrics.LastStatus["create"].Set(0)
 			log.Errorf("CreateBackup error: %v", err)
 			return
 		}
@@ -496,6 +499,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 			log.Errorf("update size: %v", err)
 		}
 		api.metrics.SuccessfulCounter["create"].Inc()
+		api.metrics.LastStatus["create"].Set(1)
 	}()
 	sendJSONEachRow(w, http.StatusCreated, struct {
 		Status     string `json:"status"`
@@ -548,12 +552,14 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			log.Errorf("Upload error: %+v\n", err)
 			api.metrics.FailedCounter["upload"].Inc()
+			api.metrics.LastStatus["upload"].Set(0)
 			return
 		}
 		if err := api.updateSizeOfLastBackup(); err != nil {
 			log.Errorf("update size: %v", err)
 		}
 		api.metrics.SuccessfulCounter["upload"].Inc()
+		api.metrics.LastStatus["upload"].Set(1)
 	}()
 	sendJSONEachRow(w, http.StatusOK, struct {
 		Status     string `json:"status"`
@@ -620,9 +626,11 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		if err != nil {
 			log.Errorf("Download error: %+v\n", err)
 			api.metrics.FailedCounter["restore"].Inc()
+			api.metrics.LastStatus["restore"].Set(0)
 			return
 		}
 		api.metrics.SuccessfulCounter["restore"].Inc()
+		api.metrics.LastStatus["restore"].Set(1)
 	}()
 	sendJSONEachRow(w, http.StatusOK, struct {
 		Status     string `json:"status"`
@@ -670,12 +678,14 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		if err != nil {
 			log.Errorf("Download error: %+v\n", err)
 			api.metrics.FailedCounter["download"].Inc()
+			api.metrics.LastStatus["download"].Set(0)
 			return
 		}
 		if err := api.updateSizeOfLastBackup(); err != nil {
 			log.Errorf("update size: %v", err)
 		}
 		api.metrics.SuccessfulCounter["download"].Inc()
+		api.metrics.LastStatus["download"].Set(1)
 	}()
 	sendJSONEachRow(w, http.StatusOK, struct {
 		Status     string `json:"status"`
@@ -795,6 +805,7 @@ type Metrics struct {
 	LastStart         map[string]prometheus.Gauge
 	LastFinish        map[string]prometheus.Gauge
 	LastDuration      map[string]prometheus.Gauge
+	LastStatus        map[string]prometheus.Gauge
 
 	LastBackupSizeLocal  prometheus.Gauge
 	LastBackupSizeRemote prometheus.Gauge
@@ -808,6 +819,7 @@ func setupMetrics() Metrics {
 	lastStart := map[string]prometheus.Gauge{}
 	lastFinish := map[string]prometheus.Gauge{}
 	lastDuration := map[string]prometheus.Gauge{}
+	lastStatus := map[string]prometheus.Gauge{}
 
 	for _, command := range []string{"create", "upload", "download", "restore"} {
 		successfulCounter[command] = prometheus.NewCounter(prometheus.CounterOpts{
@@ -835,6 +847,11 @@ func setupMetrics() Metrics {
 			Name:      fmt.Sprintf("last_%s_duration", command),
 			Help:      fmt.Sprintf("Backup %s duration in nanoseconds", command),
 		})
+		lastStatus[command] = prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: "clickhouse_backup",
+			Name:      fmt.Sprintf("last_%s_status", command),
+			Help:      fmt.Sprintf("Last backup %s status: 0=failed, 1=success, 2=unknown", command),
+		})
 	}
 
 	m.SuccessfulCounter = successfulCounter
@@ -860,27 +877,36 @@ func setupMetrics() Metrics {
 		m.LastStart["create"],
 		m.LastFinish["create"],
 		m.LastDuration["create"],
+		m.LastStatus["create"],
 
 		m.SuccessfulCounter["upload"],
 		m.FailedCounter["upload"],
 		m.LastStart["upload"],
 		m.LastFinish["upload"],
 		m.LastDuration["upload"],
+		m.LastStatus["upload"],
 
 		m.SuccessfulCounter["download"],
 		m.FailedCounter["download"],
 		m.LastStart["download"],
 		m.LastFinish["download"],
 		m.LastDuration["download"],
+		m.LastStatus["download"],
 
 		m.SuccessfulCounter["restore"],
 		m.FailedCounter["restore"],
 		m.LastStart["restore"],
 		m.LastFinish["restore"],
 		m.LastDuration["restore"],
+		m.LastStatus["restore"],
 
 		m.LastBackupSizeLocal,
 		m.LastBackupSizeRemote,
 	)
+	m.LastStatus["create"].Set(2) // 0=failed, 1=success, 2=unknown
+	m.LastStatus["upload"].Set(2)
+	m.LastStatus["download"].Set(2)
+	m.LastStatus["restore"].Set(2)
+
 	return m
 }
