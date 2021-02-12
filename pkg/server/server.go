@@ -859,6 +859,7 @@ func setupMetrics() Metrics {
 	m.LastStart = lastStart
 	m.LastFinish = lastFinish
 	m.LastDuration = lastDuration
+	m.LastStatus = lastStatus
 
 	m.LastBackupSizeLocal = prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace: "clickhouse_backup",
