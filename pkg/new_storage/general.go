@@ -34,7 +34,6 @@ type Backup struct {
 
 type BackupDestination struct {
 	RemoteStorage
-	path               string
 	compressionFormat  string
 	compressionLevel   int
 	disableProgressBar bool
@@ -256,7 +255,6 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 		azblobStorage := &AzureBlob{Config: &cfg.AzureBlob}
 		return &BackupDestination{
 			azblobStorage,
-			cfg.AzureBlob.Path,
 			cfg.AzureBlob.CompressionFormat,
 			cfg.AzureBlob.CompressionLevel,
 			cfg.General.DisableProgressBar,
@@ -269,7 +267,6 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 		}
 		return &BackupDestination{
 			s3Storage,
-			cfg.S3.Path,
 			cfg.S3.CompressionFormat,
 			cfg.S3.CompressionLevel,
 			cfg.General.DisableProgressBar,
@@ -279,9 +276,32 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 		googleCloudStorage := &GCS{Config: &cfg.GCS}
 		return &BackupDestination{
 			googleCloudStorage,
-			cfg.GCS.Path,
 			cfg.GCS.CompressionFormat,
 			cfg.GCS.CompressionLevel,
+			cfg.General.DisableProgressBar,
+			cfg.General.BackupsToKeepRemote,
+		}, nil
+	case "cos":
+		tencentStorage := &COS{
+			Config: &cfg.COS,
+			Debug:  cfg.General.LogLevel == "debug",
+		}
+		return &BackupDestination{
+			tencentStorage,
+			cfg.COS.CompressionFormat,
+			cfg.COS.CompressionLevel,
+			cfg.General.DisableProgressBar,
+			cfg.General.BackupsToKeepRemote,
+		}, nil
+	case "ftp":
+		ftpStorage := &FTP{
+			Config: &cfg.FTP,
+			Debug:  cfg.General.LogLevel == "debug",
+		}
+		return &BackupDestination{
+			ftpStorage,
+			cfg.FTP.CompressionFormat,
+			cfg.FTP.CompressionLevel,
 			cfg.General.DisableProgressBar,
 			cfg.General.BackupsToKeepRemote,
 		}, nil

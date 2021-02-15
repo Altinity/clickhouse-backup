@@ -13,12 +13,11 @@ Tool for easy ClickHouse backup and restore with cloud storages support
 - Easy creating and restoring backups of all or specific tables
 - Efficient storing of multiple backups on the file system
 - Uploading and downloading with streaming compression
-- Works with AWS, GCS, Azure
+- Works with AWS, GCS, Azure, Tencent COS, FTP
 - **Support of Atomic Database Engine**
 - **Support of multi disks installations**
 
 TODO:
-- Works with Tencent COS, FTP
 - Support of incremental backups on remote storages
 - Smart restore for replicated tables
 
