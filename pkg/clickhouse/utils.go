@@ -2,32 +2,11 @@ package clickhouse
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 
 	"github.com/jmoiron/sqlx/reflectx"
 )
-
-func cleanDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	names, err := d.Readdirnames(-1)
-	if err != nil {
-		return err
-	}
-	for _, name := range names {
-		err = os.RemoveAll(filepath.Join(dir, name))
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 func GetDiskByPath(disks []Disk, dataPath string) string {
 	for _, disk := range disks {

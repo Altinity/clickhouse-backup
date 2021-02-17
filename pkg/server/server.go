@@ -448,7 +448,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 			backupsJSON = append(backupsJSON, backupJSON{
 				Name:     b.BackupName,
 				Created:  b.CreationDate.Format(APITimeFormat),
-				Size:     b.Size,
+				Size:     b.DataSize,
 				Location: "remote",
 			})
 		}
@@ -753,7 +753,7 @@ func (api *APIServer) updateSizeOfLastBackup() error {
 		return err
 	}
 	if len(localBackups) > 0 {
-		api.metrics.LastBackupSizeLocal.Set(float64(localBackups[len(localBackups)-1].Size))
+		api.metrics.LastBackupSizeLocal.Set(float64(localBackups[len(localBackups)-1].DataSize))
 	} else {
 		api.metrics.LastBackupSizeLocal.Set(0)
 	}
@@ -765,7 +765,7 @@ func (api *APIServer) updateSizeOfLastBackup() error {
 		return err
 	}
 	if len(remoteBackups) > 0 {
-		api.metrics.LastBackupSizeRemote.Set(float64(remoteBackups[len(remoteBackups)-1].Size))
+		api.metrics.LastBackupSizeRemote.Set(float64(remoteBackups[len(remoteBackups)-1].DataSize))
 	} else {
 		api.metrics.LastBackupSizeRemote.Set(0)
 	}

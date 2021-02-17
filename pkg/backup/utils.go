@@ -33,6 +33,35 @@ func moveShadow(shadowPath, backupPath string) (int64, error) {
 	return size, err
 }
 
+func moveShadowNew(shadowPath, backupPath string) error {
+	shadow, err := os.Open(shadowPath)
+	if err != nil {
+		return err
+	}
+	dataDirs, err := shadow.Readdirnames(-1)
+	if err != nil {
+		return err
+	}
+	shadow.Close()
+	for _, dataDir := range dataDirs {
+		d, err := os.Open(path.Join(shadowPath, dataDir))
+		if err != nil {
+			return err
+		}
+		tablesDir, err := d.Readdirnames(-1)
+		if err != nil {
+			return err
+		}
+		d.Close()
+		for _, tableDir := range tablesDir {
+			if err := os.Rename(path.Join(shadowPath, dataDir, tableDir), path.Join(backupPath, tableDir)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func copyFile(srcFile string, dstFile string) error {
 	if err := os.MkdirAll(path.Dir(dstFile), os.ModePerm); err != nil {
 		return err

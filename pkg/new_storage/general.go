@@ -86,7 +86,7 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 				metadata.BackupMetadata{
 					BackupName:   backupName,
 					CreationDate: o.LastModified(),
-					Size:         o.Size(),
+					DataSize:         o.Size(),
 				},
 				true,
 				fileExtension,
@@ -263,7 +263,6 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 	case "s3":
 		s3Storage := &S3{
 			Config: &cfg.S3,
-			Debug:  cfg.General.LogLevel == "debug",
 		}
 		return &BackupDestination{
 			s3Storage,

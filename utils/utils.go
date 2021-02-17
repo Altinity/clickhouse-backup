@@ -5,7 +5,7 @@ import (
 )
 
 // FormatBytes - Convert bytes to human readable string
-func FormatBytes(i int64) (result string) {
+func FormatBytes(i int64) string {
 	const (
 		KiB = 1024
 		MiB = 1048576
@@ -14,15 +14,14 @@ func FormatBytes(i int64) (result string) {
 	)
 	switch {
 	case i >= TiB:
-		result = fmt.Sprintf("%.02fTiB", float64(i)/TiB)
+		return fmt.Sprintf("%.02fTiB", float64(i)/TiB)
 	case i >= GiB:
-		result = fmt.Sprintf("%.02fGiB", float64(i)/GiB)
+		return fmt.Sprintf("%.02fGiB", float64(i)/GiB)
 	case i >= MiB:
-		result = fmt.Sprintf("%.02fMiB", float64(i)/MiB)
+		return fmt.Sprintf("%.02fMiB", float64(i)/MiB)
 	case i >= KiB:
-		result = fmt.Sprintf("%.02fKiB", float64(i)/KiB)
+		return fmt.Sprintf("%.02fKiB", float64(i)/KiB)
 	default:
-		result = fmt.Sprintf("%dB", i)
+		return fmt.Sprintf("%dB", i)
 	}
-	return
 }

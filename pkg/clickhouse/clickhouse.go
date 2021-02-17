@@ -26,6 +26,7 @@ type ClickHouse struct {
 	conn   *sqlx.DB
 	uid    *int
 	gid    *int
+	disks  []Disk
 }
 
 // Connect - establish connection to ClickHouse
@@ -55,6 +56,9 @@ func (ch *ClickHouse) Connect() error {
 
 // GetDisks - return data from system.disks table
 func (ch *ClickHouse) GetDisks() ([]Disk, error) {
+	if ch.disks != nil {
+		return ch.disks, nil
+	}
 	version, err := ch.GetVersion()
 	if err != nil {
 		return nil, err
@@ -205,7 +209,7 @@ func (ch *ClickHouse) GetVersionDescribe() string {
 
 // FreezeTableOldWay - freeze all partitions in table one by one
 // This way using for ClickHouse below v19.1
-func (ch *ClickHouse) FreezeTableOldWay(table *Table) error {
+func (ch *ClickHouse) FreezeTableOldWay(table *Table, name string) error {
 	var partitions []struct {
 		PartitionID string `db:"partition_id"`
 	}
@@ -213,18 +217,26 @@ func (ch *ClickHouse) FreezeTableOldWay(table *Table) error {
 	if err := ch.conn.Select(&partitions, q); err != nil {
 		return fmt.Errorf("can't get partitions for '%s.%s': %v", table.Database, table.Name, err)
 	}
+	withNameQuery := ""
+	if name != "" {
+		withNameQuery = fmt.Sprintf("WITH NAME '%s'", name)
+	}
 	for _, item := range partitions {
 		log.Debugf("  partition '%v'", item.PartitionID)
 		query := fmt.Sprintf(
-			"ALTER TABLE `%v`.`%v` FREEZE PARTITION ID '%v';",
+			"ALTER TABLE `%v`.`%v` FREEZE PARTITION ID '%v' %s;",
 			table.Database,
 			table.Name,
-			item.PartitionID)
+			item.PartitionID,
+			withNameQuery,
+		)
 		if item.PartitionID == "all" {
 			query = fmt.Sprintf(
-				"ALTER TABLE `%v`.`%v` FREEZE PARTITION tuple();",
+				"ALTER TABLE `%v`.`%v` FREEZE PARTITION tuple() %s;",
 				table.Database,
-				table.Name)
+				table.Name,
+				withNameQuery,
+			)
 		}
 		if _, err := ch.conn.Exec(query); err != nil {
 			return fmt.Errorf("can't freeze partition '%s' on '%s.%s': %v", item.PartitionID, table.Database, table.Name, err)
@@ -235,7 +247,7 @@ func (ch *ClickHouse) FreezeTableOldWay(table *Table) error {
 
 // FreezeTable - freeze all partitions for table
 // This way available for ClickHouse sience v19.1
-func (ch *ClickHouse) FreezeTable(table *Table) error {
+func (ch *ClickHouse) FreezeTable(table *Table, name string) error {
 	version, err := ch.GetVersion()
 	if err != nil {
 		return err
@@ -248,24 +260,28 @@ func (ch *ClickHouse) FreezeTable(table *Table) error {
 		}
 	}
 	if version < 19001005 || ch.Config.FreezeByPart {
-		return ch.FreezeTableOldWay(table)
+		return ch.FreezeTableOldWay(table, name)
 	}
-	query := fmt.Sprintf("ALTER TABLE `%s`.`%s` FREEZE;", table.Database, table.Name)
+	withNameQuery := ""
+	if name != "" {
+		withNameQuery = fmt.Sprintf("WITH NAME '%s'", name)
+	}
+	query := fmt.Sprintf("ALTER TABLE `%s`.`%s` FREEZE %s;", table.Database, table.Name, withNameQuery)
 	if _, err := ch.conn.Exec(query); err != nil {
 		return fmt.Errorf("can't freeze '%s.%s': %v", table.Database, table.Name, err)
 	}
 	return nil
 }
 
-func (ch *ClickHouse) CleanShadow() error {
+func (ch *ClickHouse) CleanShadow(name string) error {
 	disks, err := ch.GetDisks()
 	if err != nil {
 		return err
 	}
 	for _, disk := range disks {
-		shadowDir := path.Join(disk.Path, "shadow")
-		if err := cleanDir(shadowDir); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("can't clean '%s': %v", shadowDir, err)
+		shadowDir := path.Join(disk.Path, "shadow", name)
+		if err := os.RemoveAll(shadowDir); err != nil {
+			return err
 		}
 	}
 	return nil
