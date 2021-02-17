@@ -123,14 +123,7 @@ func main() {
 				case "remote":
 					return backup.PrintRemoteBackups(config, c.Args().Get(1))
 				case "all", "":
-					if err := backup.PrintLocalBackups(config, c.Args().Get(1)); err != nil {
-						return err
-					}
-					if config.General.RemoteStorage != "none" {
-						if err := backup.PrintRemoteBackups(config, c.Args().Get(1)); err != nil {
-							return err
-						}
-					}
+					return backup.PrintAllBackups(config, c.Args().Get(1))
 				default:
 					log.Errorf("Unknown command '%s'\n", c.Args().Get(0))
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)

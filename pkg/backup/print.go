@@ -3,6 +3,7 @@ package backup
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"path"
@@ -17,7 +18,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/utils"
 )
 
-func printBackups(backupList []new_storage.Backup, format, location string) error {
+func printBackups(w io.Writer, backupList []new_storage.Backup, format, location string) error {
 	switch format {
 	case "latest", "last", "l":
 		if len(backupList) < 1 {
@@ -33,19 +34,17 @@ func printBackups(backupList []new_storage.Backup, format, location string) erro
 		// if len(backupList) == 0 {
 		// 	fmt.Println("no backups found")
 		// }
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', tabwriter.DiscardEmptyColumns)
 		for _, backup := range backupList {
 			size := utils.FormatBytes(backup.Size)
 			oldFormatLabel := ""
 			if backup.Legacy {
 				if location == "local" {
-					size = ""
+					size = "???"
 				}
 				oldFormatLabel = "old-format"
 			}
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", backup.BackupName, size, backup.CreationDate.Format("02/01/2006 15:04:05"), location, oldFormatLabel)
 		}
-		w.Flush()
 	default:
 		return fmt.Errorf("'%s' undefined", format)
 	}
@@ -54,11 +53,13 @@ func printBackups(backupList []new_storage.Backup, format, location string) erro
 
 // PrintLocalBackups - print all backups stored locally
 func PrintLocalBackups(cfg *config.Config, format string) error {
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', tabwriter.DiscardEmptyColumns)
+	defer w.Flush()
 	backupList, err := GetLocalBackups(cfg)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	return printBackups(backupList, format, "local")
+	return printBackups(w, backupList, format, "local")
 }
 
 // GetLocalBackups - return slice of all backups stored locally
@@ -123,13 +124,34 @@ func GetLocalBackups(cfg *config.Config) ([]new_storage.Backup, error) {
 	return result, nil
 }
 
+func PrintAllBackups(cfg *config.Config, format string) error {
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', tabwriter.DiscardEmptyColumns)
+	defer w.Flush()
+	localBackups, err := GetLocalBackups(cfg)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	printBackups(w, localBackups, format, "local")
+
+	if cfg.General.RemoteStorage != "none" {
+		remoteBackups, err := GetRemoteBackups(cfg)
+		if err != nil {
+			return err
+		}
+		printBackups(w, remoteBackups, format, "remote")
+	}
+	return nil
+}
+
 // PrintRemoteBackups - print all backups stored on remote storage
 func PrintRemoteBackups(cfg *config.Config, format string) error {
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', tabwriter.DiscardEmptyColumns)
+	defer w.Flush()
 	backupList, err := GetRemoteBackups(cfg)
 	if err != nil {
 		return err
 	}
-	return printBackups(backupList, format, "remote")
+	return printBackups(w, backupList, format, "remote")
 }
 
 func getLocalBackup(cfg *config.Config, backupName string) (*new_storage.Backup, error) {
