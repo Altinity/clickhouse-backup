@@ -157,11 +157,7 @@ func (cfg *Config) GetArchiveExtension() string {
 func LoadConfig(configLocation string) (*Config, error) {
 	cfg := DefaultConfig()
 	configYaml, err := ioutil.ReadFile(configLocation)
-	if os.IsNotExist(err) {
-		err := envconfig.Process("", cfg)
-		return cfg, err
-	}
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("can't open config file: %v", err)
 	}
 	if err := yaml.Unmarshal(configYaml, &cfg); err != nil {

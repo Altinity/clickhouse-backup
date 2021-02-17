@@ -27,52 +27,55 @@ type AzureBlob struct {
 
 // Connect - connect to Azure
 func (s *AzureBlob) Connect() error {
+	if s.Config.EndpointSuffix == "" {
+		return fmt.Errorf("endpoint suffix not set")
+	}
+	if s.Config.Container == "" {
+		return fmt.Errorf("container name not set")
+	}
+	if s.Config.AccountName == "" {
+		return fmt.Errorf("account name not set")
+	}
+	if s.Config.AccountKey == "" || s.Config.SharedAccessSignature == "" {
+		return fmt.Errorf("account key or SAS must be set")
+	}
 	var (
 		err        error
 		urlString  string
 		credential azblob.Credential
 	)
-	switch {
-	case s.Config.EndpointSuffix == "":
-		return fmt.Errorf("azblob: endpoint suffix not set")
-	case s.Config.Container == "":
-		return fmt.Errorf("azblob: container name not set")
-	case s.Config.AccountName == "":
-		return fmt.Errorf("azblob: account name not set")
-	case s.Config.AccountKey != "":
+	if s.Config.AccountKey != "" {
 		credential, err = azblob.NewSharedKeyCredential(s.Config.AccountName, s.Config.AccountKey)
 		if err != nil {
 			return err
 		}
 		urlString = fmt.Sprintf("https://%s.blob.%s", s.Config.AccountName, s.Config.EndpointSuffix)
-	case s.Config.SharedAccessSignature != "":
+	}
+	if s.Config.SharedAccessSignature != "" {
 		credential = azblob.NewAnonymousCredential()
 		urlString = fmt.Sprintf("https://%s.blob.%s?%s", s.Config.AccountName, s.Config.EndpointSuffix, s.Config.SharedAccessSignature)
-	default:
-		return fmt.Errorf("azblob: account key or SAS must be set")
 	}
+
 	u, err := url.Parse(urlString)
 	if err != nil {
 		return err
 	}
 
-	container := azblob.NewServiceURL(*u, azblob.NewPipeline(credential, azblob.PipelineOptions{})).NewContainerURL(s.Config.Container)
+	s.Container = azblob.NewServiceURL(*u, azblob.NewPipeline(credential, azblob.PipelineOptions{})).NewContainerURL(s.Config.Container)
 
 	if s.Config.SSEKey != "" {
 		key, err := base64.StdEncoding.DecodeString(s.Config.SSEKey)
 		if err != nil {
-			return errors.Wrapf(err, "azblob: malformed SSE key, must be base64-encoded 256-bit key")
+			return errors.Wrapf(err, "malformed SSE key, must be base64-encoded 256-bit key")
 		}
 		if len(key) != 32 {
-			return fmt.Errorf("azblob: malformed SSE key, must be base64-encoded 256-bit key")
+			return fmt.Errorf("malformed SSE key, must be base64-encoded 256-bit key")
 		}
 		b64key := s.Config.SSEKey
 		shakey := sha256.Sum256(key)
 		b64sha := base64.StdEncoding.EncodeToString(shakey[:])
 		s.CPK = azblob.NewClientProvidedKeyOptions(&b64key, &b64sha, nil)
 	}
-
-	s.Container = container
 	return nil
 }
 
@@ -83,19 +86,16 @@ func (s *AzureBlob) Kind() string {
 func (s *AzureBlob) GetFileReader(key string) (io.ReadCloser, error) {
 	ctx := context.Background()
 	blob := s.Container.NewBlockBlobURL(path.Join(s.Config.Path, key))
-
 	r, err := blob.Download(ctx, 0, azblob.CountToEnd, azblob.BlobAccessConditions{}, false, s.CPK)
 	if err != nil {
 		return nil, err
 	}
-
 	return r.Body(azblob.RetryReaderOptions{}), nil
 }
 
 func (s *AzureBlob) PutFile(key string, r io.ReadCloser) error {
 	ctx := context.Background()
 	blob := s.Container.NewBlockBlobURL(path.Join(s.Config.Path, key))
-
 	bufferSize := 2 * 1024 * 1024 // Configure the size of the rotating buffers that are used when uploading
 	maxBuffers := 3               // Configure the number of rotating buffers that are used when uploading
 	_, err := x.UploadStreamToBlockBlob(ctx, r, blob, azblob.UploadStreamToBlockBlobOptions{BufferSize: bufferSize, MaxBuffers: maxBuffers}, s.CPK)
@@ -105,7 +105,6 @@ func (s *AzureBlob) PutFile(key string, r io.ReadCloser) error {
 func (s *AzureBlob) DeleteFile(key string) error {
 	ctx := context.Background()
 	blob := s.Container.NewBlockBlobURL(path.Join(s.Config.Path, key))
-
 	_, err := blob.Delete(ctx, azblob.DeleteSnapshotsOptionInclude, azblob.BlobAccessConditions{})
 	return err
 }
@@ -113,7 +112,6 @@ func (s *AzureBlob) DeleteFile(key string) error {
 func (s *AzureBlob) GetFile(key string) (RemoteFile, error) {
 	ctx := context.Background()
 	blob := s.Container.NewBlockBlobURL(path.Join(s.Config.Path, key))
-
 	r, err := blob.GetProperties(ctx, azblob.BlobAccessConditions{}, s.CPK)
 	if err != nil {
 		if se, ok := err.(azblob.StorageError); !ok || se.ServiceCode() != azblob.ServiceCodeBlobNotFound {
@@ -121,7 +119,6 @@ func (s *AzureBlob) GetFile(key string) (RemoteFile, error) {
 		}
 		return nil, ErrNotFound
 	}
-
 	return &azureBlobFile{
 		name:         key,
 		size:         r.ContentLength(),
@@ -152,10 +149,8 @@ func (s *AzureBlob) Walk(prefix string, process func(r RemoteFile) error) error 
 				lastModified: blob.Properties.LastModified,
 			})
 		}
-
 		mrk = r.NextMarker
 	}
-
 	return nil
 }
 
