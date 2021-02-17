@@ -257,7 +257,7 @@ func DefaultConfig() *Config {
 			Region:                  "us-east-1",
 			DisableSSL:              false,
 			ACL:                     "private",
-			PartSize:                100 * 1024 * 1024,
+			PartSize:                512 * 1024 * 1024,
 			CompressionLevel:        1,
 			CompressionFormat:       "gzip",
 			DisableCertVerification: false,
