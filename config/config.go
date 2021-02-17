@@ -251,7 +251,7 @@ func DefaultConfig() *Config {
 		AzureBlob: AzureBlobConfig{
 			EndpointSuffix:    "core.windows.net",
 			CompressionLevel:  1,
-			CompressionFormat: "gzip",
+			CompressionFormat: "tar",
 		},
 		S3: S3Config{
 			Region:                  "us-east-1",
@@ -265,7 +265,7 @@ func DefaultConfig() *Config {
 		},
 		GCS: GCSConfig{
 			CompressionLevel:  1,
-			CompressionFormat: "gzip",
+			CompressionFormat: "tar",
 		},
 		COS: COSConfig{
 			RowURL:            "",
@@ -273,7 +273,7 @@ func DefaultConfig() *Config {
 			SecretID:          "",
 			SecretKey:         "",
 			Path:              "",
-			CompressionFormat: "gzip",
+			CompressionFormat: "tar",
 			CompressionLevel:  1,
 		},
 		API: APIConfig{
@@ -281,12 +281,8 @@ func DefaultConfig() *Config {
 			EnableMetrics: true,
 		},
 		FTP: FTPConfig{
-			Address:           "",
 			Timeout:           "2m",
-			Username:          "",
-			Password:          "",
-			TLS:               false,
-			CompressionFormat: "gzip",
+			CompressionFormat: "tar",
 			CompressionLevel:  1,
 		},
 	}
