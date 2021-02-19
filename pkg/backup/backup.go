@@ -137,19 +137,21 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 		if table.Skip {
 			continue
 		}
-		log.Debug("create metadata")
 		backupPath := path.Join(defaultPath, "backup", backupName)
 		if !schemaOnly {
+			log.Debug("create data")
 			if err := AddTableToBackup(ch, backupName, &table); err != nil {
 				log.Error(err.Error())
-				// TODO: clean bad backup
+				os.RemoveAll(backupPath)
 				// continue
 				return err
 			}
 			backupDataSize += table.TotalBytes.Int64
 		}
+		log.Debug("create metadata")
 		metadataSize, err := createMetadata(ch, backupPath, &table)
 		if err != nil {
+			os.RemoveAll(backupPath)
 			return err
 			// continue
 		}
@@ -175,10 +177,12 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 	}
 	content, err := json.MarshalIndent(&backupMetafile, "", "\t")
 	if err != nil {
+		os.RemoveAll(backupPath)
 		return fmt.Errorf("can't marshal backup metafile json: %v", err)
 	}
 	backupMetaFile := path.Join(defaultPath, "backup", backupName, "metadata.json")
 	if err := ioutil.WriteFile(backupMetaFile, content, 0640); err != nil {
+		os.RemoveAll(backupPath)
 		return err
 	}
 	ch.Chown(backupMetaFile)
@@ -277,7 +281,7 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *click
 			return err
 		}
 		badDBPath := path.Join(path.Join(backupShadowPath, table.Database))
-		if err := os.Remove(badDBPath); err != nil {
+		if err := os.RemoveAll(badDBPath); err != nil {
 			return err
 		}
 	}

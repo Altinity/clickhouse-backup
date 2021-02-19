@@ -44,18 +44,34 @@ func moveShadowNew(shadowPath, backupPath string) error {
 	}
 	shadow.Close()
 	for _, dataDir := range dataDirs {
-		d, err := os.Open(path.Join(shadowPath, dataDir))
+		dbDirF, err := os.Open(path.Join(shadowPath, dataDir))
 		if err != nil {
 			return err
 		}
-		tablesDir, err := d.Readdirnames(-1)
+		dbDirs, err := dbDirF.Readdirnames(-1)
 		if err != nil {
 			return err
 		}
-		d.Close()
-		for _, tableDir := range tablesDir {
-			if err := os.Rename(path.Join(shadowPath, dataDir, tableDir), path.Join(backupPath, tableDir)); err != nil {
+		dbDirF.Close()
+		for _, dbDir := range dbDirs {
+			if err := os.Mkdir(path.Join(backupPath, dbDir), 750); err != nil && !os.IsExist(err) {
 				return err
+			}
+			tableDirF, err := os.Open(path.Join(shadowPath, dataDir, dbDir))
+			if err != nil {
+				return err
+			}
+			tableDirs, err := tableDirF.Readdirnames(-1)
+			if err != nil {
+				return err
+			}
+			tableDirF.Close()
+			for _, tableDir := range tableDirs {
+				oldPath := path.Join(shadowPath, dataDir, dbDir, tableDir)
+				newPath := path.Join(backupPath, dbDir, tableDir)
+				if err := os.Rename(oldPath, newPath); err != nil {
+					return err
+				}
 			}
 		}
 	}
