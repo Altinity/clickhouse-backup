@@ -15,7 +15,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 
-	"github.com/apex/log"
+	apexLog "github.com/apex/log"
 	"github.com/google/uuid"
 )
 
@@ -76,7 +76,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 	if backupName == "" {
 		backupName = NewBackupName()
 	}
-	ctx := log.WithFields(log.Fields{
+	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "create",
 	})
@@ -133,16 +133,15 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 
 	t := []metadata.TableTitle{}
 	for _, table := range tables {
+		log := log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Name))
 		if table.Skip {
 			continue
 		}
-		ctx.Infof("%s.%s", table.Database, table.Name)
-		ctx.Debug("create metadata")
+		log.Debug("create metadata")
 		backupPath := path.Join(defaultPath, "backup", backupName)
 		if !schemaOnly {
-			err = AddTableToBackup(ch, backupName, &table)
-			if err != nil {
-				ctx.Error(err.Error())
+			if err := AddTableToBackup(ch, backupName, &table); err != nil {
+				log.Error(err.Error())
 				// TODO: clean bad backup
 				// continue
 				return err
@@ -159,6 +158,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 			Database: table.Database,
 			Table:    table.Name,
 		})
+		log.Infof("done")
 	}
 	backupMetafile := metadata.BackupMetadata{
 		// TODO: надо помечать какие таблички зафейлились либо фейлить весь бэкап
@@ -186,16 +186,15 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 	if err := RemoveOldBackupsLocal(cfg); err != nil {
 		return err
 	}
-	ctx.Info("done")
+	log.Info("done")
 	return nil
 }
 
 func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *clickhouse.Table) error {
-	ctx := log.WithFields(log.Fields{
+	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "create",
-		"database:": table.Database,
-		"table":     table.Name,
+		"table":     fmt.Sprintf("%s.%s", table.Database, table.Name),
 	})
 	if backupName == "" {
 		return fmt.Errorf("backupName is not defined")
@@ -231,7 +230,7 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *click
 	}
 	// backup data
 	if !strings.HasSuffix(table.Engine, "MergeTree") {
-		ctx.WithField("engine", table.Engine).Debug("skipped")
+		log.WithField("engine", table.Engine).Debug("skipped")
 		return nil
 	}
 	backupId := strings.ReplaceAll(uuid.New().String(), "-", "")
@@ -242,7 +241,7 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *click
 		}
 		return err
 	}
-	ctx.Debug("freezed")
+	log.Debug("freezed")
 
 	for _, diskPath := range diskPathList {
 		shadowPath := path.Join(diskPath, "shadow", backupId)
@@ -258,7 +257,7 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *click
 		if err != nil {
 			return err
 		}
-		ctx.WithField("disk", diskPath).Debug("shadow moved")
+		log.WithField("disk", diskPath).Debug("shadow moved")
 		// realSize[diskPath] = size
 		// fix 19.15.3.6
 		badTablePath := path.Join(backupShadowPath, table.Database, table.Name)
@@ -274,7 +273,7 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *click
 			return err
 		}
 		if err := os.Rename(badTablePath, encodedTablePath); err != nil {
-			ctx.Debug("bad paths fixed")
+			log.Debug("bad paths fixed")
 			return err
 		}
 		badDBPath := path.Join(path.Join(backupShadowPath, table.Database))
@@ -285,7 +284,7 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *click
 	if err := ch.CleanShadow(backupId); err != nil {
 		return err
 	}
-	ctx.Debug("shadow cleaned")
+	log.Debug("done")
 	return nil
 }
 

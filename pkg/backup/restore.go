@@ -171,17 +171,20 @@ func RestoreData(cfg *config.Config, backupName string, tablePattern string) err
 	}
 
 	for _, table := range tablesForRestore {
+		log := log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table))
 		dstTableDataPaths := dstTablesMap[metadata.TableTitle{
 			Database: table.Database,
 			Table:    table.Table}].DataPaths
-		log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).Debugf("copy data")
 		if err := ch.CopyData(backupName, table, disks, dstTableDataPaths); err != nil {
 			return fmt.Errorf("can't restore '%s.%s': %v", table.Database, table.Table, err)
 		}
-		log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).Debugf("attach parts")
+		log.Debugf("copied data to 'detached'")
 		if err := ch.AttachPartitions(table, disks); err != nil {
 			return fmt.Errorf("can't attach partitions for table '%s.%s': %v", table.Database, table.Table, err)
 		}
+		log.Debugf("attached parts")
+		log.Info("done")
 	}
+	log.Info("done")
 	return nil
 }

@@ -13,10 +13,14 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/new_storage"
 	legacyStorage "github.com/AlexAkulov/clickhouse-backup/pkg/storage"
 
-	"github.com/apex/log"
+	apexLog "github.com/apex/log"
 )
 
 func legacyDownload(cfg *config.Config, defaultDataPath, backupName string) error {
+	log := apexLog.WithFields(apexLog.Fields{
+		"backup":    backupName,
+		"operation": "download",
+	})
 	bd, err := legacyStorage.NewBackupDestination(cfg)
 	if err != nil {
 		return err
@@ -33,6 +37,10 @@ func legacyDownload(cfg *config.Config, defaultDataPath, backupName string) erro
 }
 
 func Download(cfg *config.Config, backupName string, tablePattern string, schemaOnly bool) error {
+	log := apexLog.WithFields(apexLog.Fields{
+		"backup":    backupName,
+		"operation": "download",
+	})
 	if cfg.General.RemoteStorage == "none" {
 		return fmt.Errorf("Remote storage is 'none'")
 	}
@@ -109,6 +117,7 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 	tablesForDownload := parseTablePatternForDownload(remoteBackup.Tables, tablePattern)
 
 	for _, t := range tablesForDownload {
+		log := log.WithField("table", fmt.Sprintf("%s.%s", t.Database, t.Table))
 		remoteTableMetadata := path.Join(backupName, "metadata", clickhouse.TablePathEncode(t.Database), fmt.Sprintf("%s.json", clickhouse.TablePathEncode(t.Table)))
 		tmReader, err := bd.GetFileReader(remoteTableMetadata)
 		if err != nil {
@@ -133,6 +142,7 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 		if err := ioutil.WriteFile(metadataLocalFile, tmBody, 0640); err != nil {
 			return err
 		}
+		log.Info("done")
 	}
 	if !schemaOnly {
 		for _, t := range tableMetadataForDownload {
@@ -144,6 +154,7 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 		}
 		for _, tableMetadata := range tableMetadataForDownload {
 			// download data
+			log := log.WithField("table", fmt.Sprintf("%s.%s", tableMetadata.Database, tableMetadata.Table))
 			for disk := range tableMetadata.Files {
 				uuid := path.Join(clickhouse.TablePathEncode(tableMetadata.Database), clickhouse.TablePathEncode(tableMetadata.Table))
 				if tableMetadata.UUID != "" {
@@ -158,6 +169,7 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 					}
 				}
 			}
+			log.Info("done")
 		}
 	}
 	backupMetadata := remoteBackup.BackupMetadata

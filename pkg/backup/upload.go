@@ -15,7 +15,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/new_storage"
 
-	"github.com/apex/log"
+	apexLog "github.com/apex/log"
 )
 
 func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom string, schemaOnly bool) error {
@@ -30,6 +30,10 @@ func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom
 	if diffFrom != "" {
 		return fmt.Errorf("diff-from is not supported yet")
 	}
+	log := apexLog.WithFields(apexLog.Fields{
+		"backup":    backupName,
+		"operation": "upload",
+	})
 	ch := &clickhouse.ClickHouse{
 		Config: &cfg.ClickHouse,
 	}
@@ -49,7 +53,6 @@ func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom
 	if _, err := getLocalBackup(cfg, backupName); err != nil {
 		return fmt.Errorf("can't upload: %v", err)
 	}
-	log.Infof("Upload backup '%s'", backupName)
 	defaulDataPath, err := ch.GetDefaultPath()
 	if err != nil {
 		return ErrUnknownClickhouseDataPath
@@ -82,7 +85,6 @@ func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom
 				if err != nil {
 					return err
 				}
-				log.Infof("Upload table: %s.%s, disk: %s, num files: %d, num dst files: %d", table.Database, table.Table, disk, len(table.Parts[disk]), len(parts))
 				for i, p := range parts {
 					fileName := fmt.Sprintf("%s_%d.%s", disk, i+1, cfg.GetArchiveExtension())
 					metdataFiles[disk] = append(metdataFiles[disk], fileName)
@@ -106,6 +108,7 @@ func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom
 			ioutil.NopCloser(bytes.NewReader(content))); err != nil {
 			return fmt.Errorf("can't upload: %v", err)
 		}
+		log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).Info("done")
 	}
 	t := []metadata.TableTitle{}
 	for i := range tablesForUpload {
@@ -130,7 +133,7 @@ func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom
 	if err := bd.RemoveOldBackups(bd.BackupsToKeep()); err != nil {
 		return fmt.Errorf("can't remove old backups: %v", err)
 	}
-	log.Infof("  Done.")
+	log.Infof("done")
 	return nil
 }
 

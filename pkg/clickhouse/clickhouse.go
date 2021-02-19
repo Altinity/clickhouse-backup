@@ -419,7 +419,6 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable bool) err
 			return err
 		}
 	}
-	log.Infof("Create table '%s.%s'", table.Database, table.Name)
 	if _, err := ch.conn.Exec(query); err != nil {
 		return err
 	}
