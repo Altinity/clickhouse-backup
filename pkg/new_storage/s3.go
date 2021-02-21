@@ -23,7 +23,10 @@ import (
 // S3 - presents methods for manipulate data on s3
 type S3 struct {
 	session *session.Session
+	uploader *s3manager.Uploader
 	Config  *config.S3Config
+	Concurence int
+	BufferSize int
 }
 
 // Connect - connect to s3
@@ -61,6 +64,12 @@ func (s *S3) Connect() error {
 	if s.session, err = session.NewSession(awsConfig); err != nil {
 		return err
 	}
+
+	s.uploader = s3manager.NewUploader(s.session)
+	s.uploader.Concurrency = s.Concurence
+	s.uploader.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(s.BufferSize)
+	s.uploader.PartSize = s.Config.PartSize
+
 	return nil
 }
 
@@ -69,6 +78,18 @@ func (s *S3) Kind() string {
 }
 
 func (s *S3) GetFileReader(key string) (io.ReadCloser, error) {
+	// downloader := s3manager.NewDownloader(s.session)
+	// downloader.Concurrency = s.Concurence
+	// downloader.BufferProvider = s3manager.NewPooledBufferedWriterReadFromProvider(s.BufferSize)
+	// w:= aws.NewWriteAt()
+	// downloader.
+	// downloader.Download(w, &s3.GetObjectInput{
+	// 	Bucket: aws.String(s.Config.Bucket),
+	// 	Key:    aws.String(path.Join(s.Config.Path, key)),
+	// }
+
+	// )
+
 	svc := s3.New(s.session)
 	req, resp := svc.GetObjectRequest(&s3.GetObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
@@ -82,14 +103,11 @@ func (s *S3) GetFileReader(key string) (io.ReadCloser, error) {
 }
 
 func (s *S3) PutFile(key string, r io.ReadCloser) error {
-	uploader := s3manager.NewUploader(s.session)
-	uploader.Concurrency = 10
-	uploader.PartSize = s.Config.PartSize
 	var sse *string
 	if s.Config.SSE != "" {
 		sse = aws.String(s.Config.SSE)
 	}
-	_, err := uploader.Upload(&s3manager.UploadInput{
+	_, err := s.uploader.Upload(&s3manager.UploadInput{
 		ACL:                  aws.String(s.Config.ACL),
 		Bucket:               aws.String(s.Config.Bucket),
 		Key:                  aws.String(path.Join(s.Config.Path, key)),
@@ -113,7 +131,7 @@ func (s *S3) DeleteFile(key string) error {
 	return nil
 }
 
-func (s *S3) GetFile(key string) (RemoteFile, error) {
+func (s *S3) StatFile(key string) (RemoteFile, error) {
 	svc := s3.New(s.session)
 	head, err := svc.HeadObject(&s3.HeadObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
