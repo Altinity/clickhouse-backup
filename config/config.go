@@ -263,6 +263,7 @@ func DefaultConfig() *Config {
 			CompressionFormat:       "gzip",
 			DisableCertVerification: false,
 			StorageClass:            s3.StorageClassStandard,
+			Archive:                 true,
 		},
 		GCS: GCSConfig{
 			CompressionLevel:  1,
