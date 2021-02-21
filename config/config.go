@@ -85,6 +85,7 @@ type S3Config struct {
 	SSE                     string `yaml:"sse" envconfig:"S3_SSE"`
 	DisableCertVerification bool   `yaml:"disable_cert_verification" envconfig:"S3_DISABLE_CERT_VERIFICATION"`
 	StorageClass            string `yaml:"storage_class" envconfig:"S3_STORAGE_CLASS"`
+	Archive                 bool
 }
 
 // COSConfig - cos settings section

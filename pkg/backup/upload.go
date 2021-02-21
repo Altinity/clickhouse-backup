@@ -74,13 +74,13 @@ func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom
 
 	for _, table := range tablesForUpload {
 		uuid := path.Join(clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table))
-		if table.UUID != "" {
-			uuid = path.Join(table.UUID[0:3], table.UUID)
-		}
+		// if table.UUID != "" {
+		// 	uuid = path.Join(table.UUID[0:3], table.UUID)
+		// }
 		metdataFiles := map[string][]string{}
 		if !schemaOnly {
 			for disk := range table.Parts {
-				backupPath := path.Join(diskMap[disk], "backup", backupName, "shadow", disk, uuid)
+				backupPath := path.Join(diskMap[disk], "backup", backupName, "shadow", uuid, disk)
 				parts, err := separateParts(backupPath, table.Parts[disk], cfg.General.MaxFileSize)
 				if err != nil {
 					return err
@@ -89,7 +89,12 @@ func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom
 					fileName := fmt.Sprintf("%s_%d.%s", disk, i+1, cfg.GetArchiveExtension())
 					metdataFiles[disk] = append(metdataFiles[disk], fileName)
 					remoteDataFile := path.Join(backupName, "shadow", clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table), fileName)
-					err := bd.CompressedStreamUpload(backupPath, p, remoteDataFile)
+					var err error
+					if cfg.S3.Archive {
+						err = bd.CompressedStreamUpload(backupPath, p, remoteDataFile)
+					} else {
+						err = bd.UploadPath(backupPath, p, remoteDataFile)
+					}
 					if err != nil {
 						return fmt.Errorf("can't upload: %v", err)
 					}

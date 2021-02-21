@@ -157,11 +157,11 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 			log := log.WithField("table", fmt.Sprintf("%s.%s", tableMetadata.Database, tableMetadata.Table))
 			for disk := range tableMetadata.Files {
 				uuid := path.Join(clickhouse.TablePathEncode(tableMetadata.Database), clickhouse.TablePathEncode(tableMetadata.Table))
-				if tableMetadata.UUID != "" {
-					uuid = path.Join(tableMetadata.UUID[0:3], tableMetadata.UUID)
-				}
+				// if tableMetadata.UUID != "" {
+				// 	uuid = path.Join(tableMetadata.UUID[0:3], tableMetadata.UUID)
+				// }
 				diskPath, _ := getPathByDiskName(cfg.ClickHouse.DiskMapping, diskMap, disk)
-				tableLocalDir := path.Join(diskPath, "backup", backupName, "shadow", disk, uuid)
+				tableLocalDir := path.Join(diskPath, "backup", backupName, "shadow", uuid, disk)
 				for _, archiveFile := range tableMetadata.Files[disk] {
 					tableRemoteFile := path.Join(backupName, "shadow", clickhouse.TablePathEncode(tableMetadata.Database), clickhouse.TablePathEncode(tableMetadata.Table), archiveFile)
 					if err := bd.CompressedStreamDownload(tableRemoteFile, tableLocalDir); err != nil {

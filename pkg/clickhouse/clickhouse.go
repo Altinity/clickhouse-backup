@@ -388,10 +388,10 @@ func (ch *ClickHouse) CopyData(backupName string, backupTable metadata.TableMeta
 				return fmt.Errorf("'%s' should be directory or absent", detachedPath)
 			}
 			uuid := path.Join(TablePathEncode(backupTable.Database), TablePathEncode(backupTable.Table))
-			if backupTable.UUID != "" {
-				uuid = path.Join(backupTable.UUID[0:3], backupTable.UUID)
-			}
-			partitionPath := path.Join(backupDisk.Path, "backup", backupName, "shadow", backupDisk.Name, uuid, partition.Name)
+			// if backupTable.UUID != "" {
+			// 	uuid = path.Join(backupTable.UUID[0:3], backupTable.UUID)
+			// }
+			partitionPath := path.Join(backupDisk.Path, "backup", backupName, "shadow", uuid, backupDisk.Name, partition.Name)
 			// Legacy backup support
 			if _, err := os.Stat(partitionPath); os.IsNotExist(err) {
 				partitionPath = path.Join(backupDisk.Path, "backup", backupName, "shadow", uuid, partition.Name)

@@ -129,7 +129,7 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 		return err
 	}
 	// get this first as GetFileReader blocks the ftp control channel
-	file, err := bd.GetFile(remotePath)
+	file, err := bd.StatFile(remotePath)
 	if err != nil {
 		return err
 	}
@@ -186,7 +186,7 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 }
 
 func (bd *BackupDestination) CompressedStreamUpload(baseLocalPath string, files []string, remotePath string) error {
-	if _, err := bd.GetFile(remotePath); err != nil {
+	if _, err := bd.StatFile(remotePath); err != nil {
 		if err != ErrNotFound {
 			return err
 		}
@@ -249,17 +249,44 @@ func (bd *BackupDestination) CompressedStreamUpload(baseLocalPath string, files 
 	return nil
 }
 
+func (bd *BackupDestination) UploadPath(baseLocalPath string, files []string, remotePath string) error {
+	var totalBytes int64
+	for _, filename := range files {
+		finfo, err := os.Stat(path.Join(baseLocalPath, filename))
+		if err != nil {
+			return err
+		}
+		if finfo.Mode().IsRegular() {
+			totalBytes += finfo.Size()
+		}
+	}
+	bar := progressbar.StartNewByteBar(!bd.disableProgressBar, totalBytes)
+	defer bar.Finish()
+
+	for _, filename := range files {
+		f, err := os.Open(path.Join(baseLocalPath, filename))
+		if err != nil {
+			return err
+		}
+		if err := bd.PutFile(path.Join(remotePath, filename), f); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 	switch cfg.General.RemoteStorage {
-	case "azblob":
-		azblobStorage := &AzureBlob{Config: &cfg.AzureBlob}
-		return &BackupDestination{
-			azblobStorage,
-			cfg.AzureBlob.CompressionFormat,
-			cfg.AzureBlob.CompressionLevel,
-			cfg.General.DisableProgressBar,
-			cfg.General.BackupsToKeepRemote,
-		}, nil
+	// case "azblob":
+	// 	azblobStorage := &AzureBlob{Config: &cfg.AzureBlob}
+	// 	return &BackupDestination{
+	// 		azblobStorage,
+	// 		cfg.AzureBlob.CompressionFormat,
+	// 		cfg.AzureBlob.CompressionLevel,
+	// 		cfg.General.DisableProgressBar,
+	// 		cfg.General.BackupsToKeepRemote,
+	// 	}, nil
 	case "s3":
 		s3Storage := &S3{
 			Config: &cfg.S3,
@@ -271,39 +298,39 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 			cfg.General.DisableProgressBar,
 			cfg.General.BackupsToKeepRemote,
 		}, nil
-	case "gcs":
-		googleCloudStorage := &GCS{Config: &cfg.GCS}
-		return &BackupDestination{
-			googleCloudStorage,
-			cfg.GCS.CompressionFormat,
-			cfg.GCS.CompressionLevel,
-			cfg.General.DisableProgressBar,
-			cfg.General.BackupsToKeepRemote,
-		}, nil
-	case "cos":
-		tencentStorage := &COS{
-			Config: &cfg.COS,
-			Debug:  cfg.General.LogLevel == "debug",
-		}
-		return &BackupDestination{
-			tencentStorage,
-			cfg.COS.CompressionFormat,
-			cfg.COS.CompressionLevel,
-			cfg.General.DisableProgressBar,
-			cfg.General.BackupsToKeepRemote,
-		}, nil
-	case "ftp":
-		ftpStorage := &FTP{
-			Config: &cfg.FTP,
-			Debug:  cfg.General.LogLevel == "debug",
-		}
-		return &BackupDestination{
-			ftpStorage,
-			cfg.FTP.CompressionFormat,
-			cfg.FTP.CompressionLevel,
-			cfg.General.DisableProgressBar,
-			cfg.General.BackupsToKeepRemote,
-		}, nil
+	// case "gcs":
+	// 	googleCloudStorage := &GCS{Config: &cfg.GCS}
+	// 	return &BackupDestination{
+	// 		googleCloudStorage,
+	// 		cfg.GCS.CompressionFormat,
+	// 		cfg.GCS.CompressionLevel,
+	// 		cfg.General.DisableProgressBar,
+	// 		cfg.General.BackupsToKeepRemote,
+	// 	}, nil
+	// case "cos":
+	// 	tencentStorage := &COS{
+	// 		Config: &cfg.COS,
+	// 		Debug:  cfg.General.LogLevel == "debug",
+	// 	}
+	// 	return &BackupDestination{
+	// 		tencentStorage,
+	// 		cfg.COS.CompressionFormat,
+	// 		cfg.COS.CompressionLevel,
+	// 		cfg.General.DisableProgressBar,
+	// 		cfg.General.BackupsToKeepRemote,
+	// 	}, nil
+	// case "ftp":
+	// 	ftpStorage := &FTP{
+	// 		Config: &cfg.FTP,
+	// 		Debug:  cfg.General.LogLevel == "debug",
+	// 	}
+	// 	return &BackupDestination{
+	// 		ftpStorage,
+	// 		cfg.FTP.CompressionFormat,
+	// 		cfg.FTP.CompressionLevel,
+	// 		cfg.General.DisableProgressBar,
+	// 		cfg.General.BackupsToKeepRemote,
+	// 	}, nil
 	default:
 		return nil, fmt.Errorf("storage type '%s' is not supported", cfg.General.RemoteStorage)
 	}

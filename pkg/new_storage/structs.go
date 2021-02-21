@@ -21,7 +21,7 @@ type RemoteFile interface {
 // RemoteStorage -
 type RemoteStorage interface {
 	Kind() string
-	GetFile(string) (RemoteFile, error)
+	StatFile(string) (RemoteFile, error)
 	DeleteFile(string) error
 	Connect() error
 	Walk(string, func(RemoteFile) error) error

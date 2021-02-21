@@ -249,7 +249,8 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *click
 			continue
 		}
 		backupPath := path.Join(disk.Path, "backup", backupName)
-		backupShadowPath := path.Join(backupPath, "shadow", disk.Name)
+		encodedTablePath := path.Join(clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Name))
+		backupShadowPath := path.Join(backupPath, "shadow", encodedTablePath, disk.Name)
 		if err := ch.MkdirAll(backupShadowPath); err != nil && !os.IsExist(err) {
 			return err
 		}
@@ -260,24 +261,24 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *click
 		log.WithField("disk", disk.Name).Debug("shadow moved")
 		// realSize[diskPath] = size
 		// fix 19.15.3.6
-		badTablePath := path.Join(backupShadowPath, table.Database, table.Name)
-		encodedDBPath := path.Join(backupShadowPath, clickhouse.TablePathEncode(table.Database))
-		encodedTablePath := path.Join(encodedDBPath, clickhouse.TablePathEncode(table.Name))
-		if badTablePath == encodedTablePath {
-			continue
-		}
-		if _, err := os.Stat(badTablePath); os.IsNotExist(err) {
-			continue
-		}
-		if err := ch.Mkdir(encodedDBPath); err != nil {
-			return err
-		}
-		if err := os.Rename(badTablePath, encodedTablePath); err != nil {
-			log.Debug("bad paths fixed")
-			return err
-		}
-		badDBPath := path.Join(path.Join(backupShadowPath, table.Database))
-		if err := os.RemoveAll(badDBPath); err != nil {
+		// badTablePath := path.Join(backupShadowPath, table.Database, table.Name)
+		// encodedDBPath := path.Join(backupShadowPath, clickhouse.TablePathEncode(table.Database))
+		// encodedTablePath := path.Join(encodedDBPath, clickhouse.TablePathEncode(table.Name))
+		// if badTablePath == encodedTablePath {
+		// 	continue
+		// }
+		// if _, err := os.Stat(badTablePath); os.IsNotExist(err) {
+		// 	continue
+		// }
+		// if err := ch.Mkdir(encodedDBPath); err != nil {
+		// 	return err
+		// }
+		// if err := os.Rename(badTablePath, encodedTablePath); err != nil {
+		// 	log.Debug("bad paths fixed")
+		// 	return err
+		// }
+		// badDBPath := path.Join(path.Join(backupShadowPath, table.Database))
+		if err := os.RemoveAll(shadowPath); err != nil {
 			return err
 		}
 	}
