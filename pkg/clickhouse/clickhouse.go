@@ -239,7 +239,7 @@ func (ch *ClickHouse) FreezeTableOldWay(table *Table, name string) error {
 			)
 		}
 		if _, err := ch.conn.Exec(query); err != nil {
-			return fmt.Errorf("can't freeze partition '%s' on '%s.%s': %v", item.PartitionID, table.Database, table.Name, err)
+			return fmt.Errorf("can't freeze partition '%s': %v", item.PartitionID, err)
 		}
 	}
 	return nil
@@ -253,11 +253,11 @@ func (ch *ClickHouse) FreezeTable(table *Table, name string) error {
 		return err
 	}
 	if strings.HasPrefix(table.Engine, "Replicated") && ch.Config.SyncReplicatedTables {
-		log.Debugf("Sync '%s.%s'", table.Database, table.Name)
 		query := fmt.Sprintf("SYSTEM SYNC REPLICA `%s`.`%s`;", table.Database, table.Name)
 		if _, err := ch.conn.Exec(query); err != nil {
-			return fmt.Errorf("can't sync '%s.%s': %v", table.Database, table.Name, err)
+			return err
 		}
+		log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Debugf("replica synced")
 	}
 	if version < 19001005 || ch.Config.FreezeByPart {
 		return ch.FreezeTableOldWay(table, name)
@@ -268,7 +268,7 @@ func (ch *ClickHouse) FreezeTable(table *Table, name string) error {
 	}
 	query := fmt.Sprintf("ALTER TABLE `%s`.`%s` FREEZE %s;", table.Database, table.Name, withNameQuery)
 	if _, err := ch.conn.Exec(query); err != nil {
-		return fmt.Errorf("can't freeze '%s.%s': %v", table.Database, table.Name, err)
+		return err
 	}
 	return nil
 }
@@ -321,6 +321,49 @@ func (ch *ClickHouse) Mkdir(name string) error {
 	return nil
 }
 
+func (ch *ClickHouse) MkdirAll(path string) error {
+	// Fast path: if we can tell whether path is a directory or file, stop with success or error.
+	dir, err := os.Stat(path)
+	if err == nil {
+		if dir.IsDir() {
+			return nil
+		}
+		return &os.PathError{"mkdir", path, syscall.ENOTDIR}
+	}
+
+	// Slow path: make sure parent exists and then call Mkdir for path.
+	i := len(path)
+	for i > 0 && os.IsPathSeparator(path[i-1]) { // Skip trailing path separator.
+		i--
+	}
+
+	j := i
+	for j > 0 && !os.IsPathSeparator(path[j-1]) { // Scan backward over element.
+		j--
+	}
+
+	if j > 1 {
+		// Create parent.
+		err = ch.MkdirAll(path[:j-1])
+		if err != nil {
+			return err
+		}
+	}
+
+	// Parent now exists; invoke Mkdir and use its result.
+	err = ch.Mkdir(path)
+	if err != nil {
+		// Handle arguments like "foo/." by
+		// double-checking that directory doesn't exist.
+		dir, err1 := os.Lstat(path)
+		if err1 == nil && dir.IsDir() {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
 // CopyData - copy partitions for specific table to detached folder
 func (ch *ClickHouse) CopyData(backupName string, backupTable metadata.TableMetadata, disks []Disk, tableDataPaths []string) error {
 	// TODO: проверить если диск есть в бэкапе но нет в кликхаусе
@@ -337,19 +380,22 @@ func (ch *ClickHouse) CopyData(backupName string, backupTable metadata.TableMeta
 			info, err := os.Stat(detachedPath)
 			if err != nil {
 				if os.IsNotExist(err) {
-					os.MkdirAll(detachedPath, 0750)
+					ch.MkdirAll(detachedPath)
 				} else {
 					return err
 				}
 			} else if !info.IsDir() {
 				return fmt.Errorf("'%s' should be directory or absent", detachedPath)
 			}
-			ch.Chown(detachedPath)
 			uuid := path.Join(TablePathEncode(backupTable.Database), TablePathEncode(backupTable.Table))
 			if backupTable.UUID != "" {
 				uuid = path.Join(backupTable.UUID[0:3], backupTable.UUID)
 			}
-			partitionPath := path.Join(backupDisk.Path, "backup", backupName, "shadow", uuid, partition.Name)
+			partitionPath := path.Join(backupDisk.Path, "backup", backupName, "shadow", backupDisk.Name, uuid, partition.Name)
+			// Legacy backup support
+			if _, err := os.Stat(partitionPath); os.IsNotExist(err) {
+				partitionPath = path.Join(backupDisk.Path, "backup", backupName, "shadow", uuid, partition.Name)
+			}
 			if err := filepath.Walk(partitionPath, func(filePath string, info os.FileInfo, err error) error {
 				if err != nil {
 					return err
@@ -380,10 +426,10 @@ func (ch *ClickHouse) AttachPartitions(table metadata.TableMetadata, disks []Dis
 	for _, disk := range disks {
 		for _, partition := range table.Parts[disk.Name] {
 			query := fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PART '%s'", table.Database, table.Table, partition.Name)
-			log.Debug(query)
 			if _, err := ch.conn.Exec(query); err != nil {
 				return err
 			}
+			log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).WithField("disk", disk.Name).WithField("part", partition.Name).Debug("attached")
 		}
 	}
 	return nil

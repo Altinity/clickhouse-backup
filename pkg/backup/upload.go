@@ -80,7 +80,7 @@ func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom
 		metdataFiles := map[string][]string{}
 		if !schemaOnly {
 			for disk := range table.Parts {
-				backupPath := path.Join(diskMap[disk], "backup", backupName, "shadow", uuid)
+				backupPath := path.Join(diskMap[disk], "backup", backupName, "shadow", disk, uuid)
 				parts, err := separateParts(backupPath, table.Parts[disk], cfg.General.MaxFileSize)
 				if err != nil {
 					return err

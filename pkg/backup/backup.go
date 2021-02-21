@@ -142,7 +142,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 			log.Debug("create data")
 			if err := AddTableToBackup(ch, backupName, &table); err != nil {
 				log.Error(err.Error())
-				os.RemoveAll(backupPath)
+				RemoveBackupLocal(cfg, backupName)
 				// continue
 				return err
 			}
@@ -151,7 +151,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 		log.Debug("create metadata")
 		metadataSize, err := createMetadata(ch, backupPath, &table)
 		if err != nil {
-			os.RemoveAll(backupPath)
+			RemoveBackupLocal(cfg, backupName)
 			return err
 			// continue
 		}
@@ -177,12 +177,12 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 	}
 	content, err := json.MarshalIndent(&backupMetafile, "", "\t")
 	if err != nil {
-		os.RemoveAll(backupPath)
+		RemoveBackupLocal(cfg, backupName)
 		return fmt.Errorf("can't marshal backup metafile json: %v", err)
 	}
 	backupMetaFile := path.Join(defaultPath, "backup", backupName, "metadata.json")
 	if err := ioutil.WriteFile(backupMetaFile, content, 0640); err != nil {
-		os.RemoveAll(backupPath)
+		RemoveBackupLocal(cfg, backupName)
 		return err
 	}
 	ch.Chown(backupMetaFile)
@@ -203,35 +203,35 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *click
 	if backupName == "" {
 		return fmt.Errorf("backupName is not defined")
 	}
-	defaultPath, err := ch.GetDefaultPath()
-	if err != nil {
-		return fmt.Errorf("can't get default data path: %v", err)
-	}
+	// defaultPath, err := ch.GetDefaultPath()
+	// if err != nil {
+	// 	return fmt.Errorf("can't get default data path: %v", err)
+	// }
 	diskList, err := ch.GetDisks()
 	if err != nil {
 		return fmt.Errorf("can't get clickhouse disk list: %v", err)
 	}
-	relevantBackupPath := path.Join("backup", backupName)
+	// relevantBackupPath := path.Join("backup", backupName)
 
 	//  TODO: дичь какая-то
-	diskPathList := []string{defaultPath}
-	for _, dataPath := range table.DataPaths {
-		for _, disk := range diskList {
-			if disk.Path == defaultPath {
-				continue
-			}
-			if strings.HasPrefix(dataPath, disk.Path) {
-				diskPathList = append(diskPathList, disk.Path)
-				break
-			}
-		}
-	}
-	for _, diskPath := range diskPathList {
-		backupPath := path.Join(diskPath, relevantBackupPath)
-		if err := ch.Mkdir(backupPath); err != nil {
-			return err
-		}
-	}
+	// diskPathList := []string{defaultPath}
+	// for _, dataPath := range table.DataPaths {
+	// 	for _, disk := range diskList {
+	// 		if disk.Path == defaultPath {
+	// 			continue
+	// 		}
+	// 		if strings.HasPrefix(dataPath, disk.Path) {
+	// 			diskPathList = append(diskPathList, disk.Path)
+	// 			break
+	// 		}
+	// 	}
+	// }
+	// for _, diskPath := range diskPathList {
+	// 	backupPath := path.Join(diskPath, relevantBackupPath)
+	// 	if err := ch.Mkdir(backupPath); err != nil {
+	// 		return err
+	// 	}
+	// }
 	// backup data
 	if !strings.HasSuffix(table.Engine, "MergeTree") {
 		log.WithField("engine", table.Engine).Debug("skipped")
@@ -239,29 +239,25 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *click
 	}
 	backupId := strings.ReplaceAll(uuid.New().String(), "-", "")
 	if err := ch.FreezeTable(table, backupId); err != nil {
-		for _, diskPath := range diskPathList {
-			// Remove failed backup
-			os.RemoveAll(path.Join(diskPath, relevantBackupPath))
-		}
 		return err
 	}
 	log.Debug("freezed")
 
-	for _, diskPath := range diskPathList {
-		shadowPath := path.Join(diskPath, "shadow", backupId)
+	for _, disk := range diskList {
+		shadowPath := path.Join(disk.Path, "shadow", backupId)
 		if _, err := os.Stat(shadowPath); err != nil && os.IsNotExist(err) {
 			continue
 		}
-		backupPath := path.Join(diskPath, "backup", backupName)
-		backupShadowPath := path.Join(backupPath, "shadow")
-		if err := ch.Mkdir(backupShadowPath); err != nil && !os.IsExist(err) {
+		backupPath := path.Join(disk.Path, "backup", backupName)
+		backupShadowPath := path.Join(backupPath, "shadow", disk.Name)
+		if err := ch.MkdirAll(backupShadowPath); err != nil && !os.IsExist(err) {
 			return err
 		}
 		err := moveShadowNew(shadowPath, backupShadowPath)
 		if err != nil {
 			return err
 		}
-		log.WithField("disk", diskPath).Debug("shadow moved")
+		log.WithField("disk", disk.Name).Debug("shadow moved")
 		// realSize[diskPath] = size
 		// fix 19.15.3.6
 		badTablePath := path.Join(backupShadowPath, table.Database, table.Name)
