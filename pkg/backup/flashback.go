@@ -43,7 +43,7 @@ func CopyPartHashes(cfg config.Config, tablePattern string, backupName string) e
 			continue
 		}
 
-		parts, err := ch.GetPartitions(table)
+		parts, err := ch.GetPartitions(table.Database, table.Name)
 		if err != nil {
 			return err
 		}

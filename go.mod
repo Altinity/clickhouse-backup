@@ -6,12 +6,13 @@ require (
 	github.com/ClickHouse/clickhouse-go v1.4.3
 	github.com/andybalholm/brotli v1.0.0 // indirect
 	github.com/apex/log v1.9.0
-	github.com/aws/aws-sdk-go v1.34.10
+	github.com/aws/aws-sdk-go v1.37.15
 	github.com/cpuguy83/go-md2man/v2 v2.0.0 // indirect
 	github.com/djherbis/buffer v1.1.0 // indirect
 	github.com/fatih/color v1.9.0 // indirect
 	github.com/frankban/quicktest v1.10.0 // indirect
 	github.com/go-logfmt/logfmt v0.4.0
+	github.com/go-sql-driver/mysql v1.5.0 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/google/uuid v1.1.1
 	github.com/gorilla/mux v1.7.4

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"os"
 	"path"
 	"path/filepath"
@@ -58,7 +59,7 @@ func (bd *BackupDestination) RemoveOldBackups(keep int) error {
 }
 
 func (bd *BackupDestination) RemoveBackup(backupName string) error {
-	return bd.Walk(backupName+"/", func(f RemoteFile) error {
+	return bd.Walk(backupName+"/", true, func(f RemoteFile) error {
 		return bd.DeleteFile(path.Join(backupName, f.Name()))
 	})
 }
@@ -78,28 +79,21 @@ func isLegacyBackup(backupName string) (bool, string, string) {
 
 func (bd *BackupDestination) BackupList() ([]Backup, error) {
 	result := []Backup{}
-	if err := bd.Walk("/", func(o RemoteFile) error {
-		pathParts := strings.Split(strings.Trim(o.Name(), "/"), "/")
+	if err := bd.Walk("/", false, func(o RemoteFile) error {
 		// Legacy backup
-		if ok, backupName, fileExtension := isLegacyBackup(pathParts[0]); ok {
+		if ok, backupName, fileExtension := isLegacyBackup(o.Name()); ok {
 			result = append(result, Backup{
 				metadata.BackupMetadata{
 					BackupName:   backupName,
 					CreationDate: o.LastModified(),
-					DataSize:         o.Size(),
+					DataSize:     o.Size(),
 				},
 				true,
 				fileExtension,
 			})
 			return nil
 		}
-		if len(pathParts) < 2 {
-			return nil
-		}
-		if pathParts[1] != "metadata.json" {
-			return nil
-		}
-		r, err := bd.GetFileReader(o.Name())
+		r, err := bd.GetFileReader(path.Join(o.Name(), "metadata.json"))
 		if err != nil {
 			return err
 		}
@@ -125,7 +119,7 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 }
 
 func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPath string) error {
-	if err := os.MkdirAll(localPath, os.ModePerm); err != nil {
+	if err := os.MkdirAll(localPath, 0750); err != nil {
 		return err
 	}
 	// get this first as GetFileReader blocks the ftp control channel
@@ -166,7 +160,7 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 		extractFile := filepath.Join(localPath, header.Name)
 		extractDir := filepath.Dir(extractFile)
 		if _, err := os.Stat(extractDir); os.IsNotExist(err) {
-			os.MkdirAll(extractDir, os.ModePerm)
+			os.MkdirAll(extractDir, 0750)
 		}
 		dst, err := os.Create(extractFile)
 		if err != nil {
@@ -249,6 +243,40 @@ func (bd *BackupDestination) CompressedStreamUpload(baseLocalPath string, files 
 	return nil
 }
 
+func (bd *BackupDestination) DownloadPath(remotePath string, localPath string) error {
+	return bd.Walk(remotePath, true, func(f RemoteFile) error {
+		r, err := bd.GetFileReader(path.Join(remotePath, f.Name()))
+		if err != nil {
+			log.Panic(err)
+			return err
+		}
+		dstFilePath := path.Join(localPath, f.Name())
+		dstDirPath, _ := path.Split(dstFilePath)
+		if err := os.MkdirAll(dstDirPath, 0750); err != nil {
+			log.Panic(err)
+			return err
+		}
+		dst, err := os.Create(dstFilePath)
+		if err != nil {
+			log.Panic(err)
+			return err
+		}
+		if _, err := io.CopyBuffer(dst, r, nil); err != nil {
+			log.Panic(err)
+			return err
+		}
+		if err := dst.Close(); err != nil {
+			log.Panic(err)
+			return err
+		}
+		if err := r.Close(); err != nil {
+			log.Panic(err)
+			return err
+		}
+		return nil
+	})
+}
+
 func (bd *BackupDestination) UploadPath(baseLocalPath string, files []string, remotePath string) error {
 	var totalBytes int64
 	for _, filename := range files {
@@ -271,6 +299,11 @@ func (bd *BackupDestination) UploadPath(baseLocalPath string, files []string, re
 		if err := bd.PutFile(path.Join(remotePath, filename), f); err != nil {
 			return err
 		}
+		fi, err := f.Stat()
+		if err != nil {
+			return err
+		}
+		bar.Add64(fi.Size())
 	}
 
 	return nil

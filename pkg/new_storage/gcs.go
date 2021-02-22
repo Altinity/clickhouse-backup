@@ -91,7 +91,7 @@ func (gcs *GCS) PutFile(key string, r io.ReadCloser) error {
 	return writer.Close()
 }
 
-func (gcs *GCS) GetFile(key string) (RemoteFile, error) {
+func (gcs *GCS) StatFile(key string) (RemoteFile, error) {
 	ctx := context.Background()
 	objAttr, err := gcs.client.Bucket(gcs.Config.Bucket).Object(path.Join(gcs.Config.Path, key)).Attrs(ctx)
 	if err != nil {

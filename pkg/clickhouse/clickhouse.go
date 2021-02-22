@@ -503,7 +503,7 @@ func TablePathEncode(str string) string {
 }
 
 // GetPartitions - return slice of all partitions for a table
-func (ch *ClickHouse) GetPartitions(table Table) (map[string][]metadata.Part, error) {
+func (ch *ClickHouse) GetPartitions(database, table string) (map[string][]metadata.Part, error) {
 	disks, err := ch.GetDisks()
 	if err != nil {
 		return nil, err
@@ -513,12 +513,12 @@ func (ch *ClickHouse) GetPartitions(table Table) (map[string][]metadata.Part, er
 		partitions := make([]partition, 0)
 		if len(disks) == 1 {
 			if err := ch.softSelect(&partitions,
-				fmt.Sprintf("select * from `system`.`parts` where database='%s' and table='%s' and active=1;", table.Database, table.Name)); err != nil {
+				fmt.Sprintf("select * from `system`.`parts` where database='%s' and table='%s' and active=1;", database, table)); err != nil {
 				return nil, err
 			}
 		} else {
 			if err := ch.softSelect(&partitions,
-				fmt.Sprintf("select * from `system`.`parts` where database='%s' and table='%s' and disk_name='%s' and active=1;", table.Database, table.Name, disk.Name)); err != nil {
+				fmt.Sprintf("select * from `system`.`parts` where database='%s' and table='%s' and disk_name='%s' and active=1;", database, table, disk.Name)); err != nil {
 				return nil, err
 			}
 		}

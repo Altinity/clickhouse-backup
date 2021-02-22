@@ -86,14 +86,15 @@ func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom
 					return err
 				}
 				for i, p := range parts {
-					fileName := fmt.Sprintf("%s_%d.%s", disk, i+1, cfg.GetArchiveExtension())
-					metdataFiles[disk] = append(metdataFiles[disk], fileName)
-					remoteDataFile := path.Join(backupName, "shadow", clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table), fileName)
+					remoteDataPath := path.Join(backupName, "shadow", clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table))
 					var err error
 					if cfg.S3.Archive {
+						fileName := fmt.Sprintf("%s_%d.%s", disk, i+1, cfg.GetArchiveExtension())
+						metdataFiles[disk] = append(metdataFiles[disk], fileName)
+						remoteDataFile := path.Join(remoteDataPath, fileName)
 						err = bd.CompressedStreamUpload(backupPath, p, remoteDataFile)
 					} else {
-						err = bd.UploadPath(backupPath, p, remoteDataFile)
+						err = bd.UploadPath(backupPath, p, path.Join(remoteDataPath, disk))
 					}
 					if err != nil {
 						return fmt.Errorf("can't upload: %v", err)
@@ -129,9 +130,22 @@ func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom
 		return err
 	}
 	// TODO: тут нужно менять размер если заливаем только схему или часть таблиц
+	backupMetadata := metadata.BackupMetadata{}
+	if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
+		return err
+	}
+	if cfg.S3.Archive {
+		backupMetadata.DataFormat = "archive"
+	} else {
+		backupMetadata.DataFormat = "as-is"
+	}
+	newBackupMetadataBody, err := json.MarshalIndent(backupMetadata, "", "\t")
+	if err != nil {
+		return err
+	}
 	remoteBackupMetaFile := path.Join(backupName, "metadata.json")
 	if err := bd.PutFile(remoteBackupMetaFile,
-		ioutil.NopCloser(bytes.NewReader(backupMetadataBody))); err != nil {
+		ioutil.NopCloser(bytes.NewReader(newBackupMetadataBody))); err != nil {
 		return fmt.Errorf("can't upload: %v", err)
 	}
 

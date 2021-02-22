@@ -50,7 +50,7 @@ func (f *FTP) Kind() string {
 	return "FTP"
 }
 
-func (f *FTP) GetFile(key string) (RemoteFile, error) {
+func (f *FTP) StatFile(key string) (RemoteFile, error) {
 	// cant list files, so check the dir
 	dir := path.Dir(path.Join(f.Config.Path, key))
 	entries, err := f.client.List(dir)

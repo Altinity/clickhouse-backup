@@ -55,7 +55,7 @@ func (c *COS) Kind() string {
 	return "COS"
 }
 
-func (c *COS) GetFile(key string) (RemoteFile, error) {
+func (c *COS) StatFile(key string) (RemoteFile, error) {
 	// file max size is 5Gb
 	resp, err := c.client.Object.Get(context.Background(), path.Join(c.Config.Path, key), nil)
 	if err != nil {

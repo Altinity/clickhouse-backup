@@ -8,7 +8,7 @@ import (
 
 var (
 	// ErrNotFound is returned when file/object cannot be found
-	ErrNotFound = errors.New("file not found")
+	ErrNotFound = errors.New("key not found")
 )
 
 // RemoteFile - interface describe file on remote storage
@@ -21,10 +21,10 @@ type RemoteFile interface {
 // RemoteStorage -
 type RemoteStorage interface {
 	Kind() string
-	StatFile(string) (RemoteFile, error)
-	DeleteFile(string) error
+	StatFile(key string) (RemoteFile, error)
+	DeleteFile(key string) error
 	Connect() error
-	Walk(string, func(RemoteFile) error) error
+	Walk(prefix string, recursive bool, fn func(RemoteFile) error) error
 	GetFileReader(key string) (io.ReadCloser, error)
 	PutFile(key string, r io.ReadCloser) error
 }

@@ -18,6 +18,7 @@ type BackupMetadata struct {
 	MetadataSize            int64             `json:"metadata_size"`
 	CompressedSize          int64             `json:"compressed_size,omitempty"`
 	Tables                  []TableTitle      `json:"tables"`
+	DataFormat              string            `json:"data_format"`
 }
 
 type TableMetadata struct {
@@ -35,6 +36,7 @@ type TableMetadata struct {
 	RealSize             int64
 	DependencesTable     string `json:"dependencies_table,omitempty"`
 	DependenciesDatabase string `json:"dependencies_database,omitempty"`
+	MetadataOnly         bool   `json:"metadata_only"`
 }
 
 type Part struct {

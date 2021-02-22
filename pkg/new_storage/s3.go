@@ -22,9 +22,9 @@ import (
 
 // S3 - presents methods for manipulate data on s3
 type S3 struct {
-	session *session.Session
-	uploader *s3manager.Uploader
-	Config  *config.S3Config
+	session    *session.Session
+	uploader   *s3manager.Uploader
+	Config     *config.S3Config
 	Concurence int
 	BufferSize int
 }
@@ -147,8 +147,13 @@ func (s *S3) StatFile(key string) (RemoteFile, error) {
 	return &s3File{*head.ContentLength, *head.LastModified, key}, nil
 }
 
-func (s *S3) Walk(s3Path string, process func(r RemoteFile) error) error {
-	return s.remotePager(path.Join(s.Config.Path, s3Path), false, func(page *s3.ListObjectsV2Output) {
+func (s *S3) Walk(s3Path string, recursive bool, process func(r RemoteFile) error) error {
+	return s.remotePager(path.Join(s.Config.Path, s3Path), recursive, func(page *s3.ListObjectsV2Output) {
+		for _, cp := range page.CommonPrefixes {
+			process(&s3File{
+				name: strings.TrimPrefix(*cp.Prefix, path.Join(s.Config.Path, s3Path)),
+			})
+		}
 		for _, c := range page.Contents {
 			process(&s3File{
 				*c.Size,
@@ -159,16 +164,14 @@ func (s *S3) Walk(s3Path string, process func(r RemoteFile) error) error {
 	})
 }
 
-func (s *S3) remotePager(s3Path string, delim bool, pager func(page *s3.ListObjectsV2Output)) error {
+func (s *S3) remotePager(s3Path string, recursive bool, pager func(page *s3.ListObjectsV2Output)) error {
 	params := &s3.ListObjectsV2Input{
 		Bucket:  aws.String(s.Config.Bucket), // Required
 		MaxKeys: aws.Int64(1000),
+		Prefix:  aws.String(s3Path + "/"),
 	}
-	if s3Path != "" && s3Path != "/" {
-		params.Prefix = aws.String(s3Path + "/")
-	}
-	if delim {
-		params.Delimiter = aws.String("/")
+	if !recursive {
+		params.SetDelimiter("/")
 	}
 	wrapper := func(page *s3.ListObjectsV2Output, lastPage bool) bool {
 		pager(page)

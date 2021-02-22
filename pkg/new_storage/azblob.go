@@ -109,7 +109,7 @@ func (s *AzureBlob) DeleteFile(key string) error {
 	return err
 }
 
-func (s *AzureBlob) GetFile(key string) (RemoteFile, error) {
+func (s *AzureBlob) StatFile(key string) (RemoteFile, error) {
 	ctx := context.Background()
 	blob := s.Container.NewBlockBlobURL(path.Join(s.Config.Path, key))
 	r, err := blob.GetProperties(ctx, azblob.BlobAccessConditions{}, s.CPK)

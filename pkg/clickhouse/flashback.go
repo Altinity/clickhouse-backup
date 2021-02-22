@@ -21,7 +21,7 @@ func (ch *ClickHouse) ComputePartitionsDelta(restoreTables []metadata.TableMetad
 			bfound := false
 			for _, liveTable := range liveTables {
 				if liveTable.Database == rtable.Database && liveTable.Name == rtable.Table {
-					livePartitions, _ := ch.GetPartitions(liveTable)
+					livePartitions, _ := ch.GetPartitions(liveTable.Database, liveTable.Name)
 					for _, livePartition := range livePartitions["default"] {
 						if livePartition.HashOfAllFiles == rpartition.HashOfAllFiles && livePartition.HashOfUncompressedFiles == rpartition.HashOfUncompressedFiles && livePartition.UncompressedHashOfCompressedFiles == rpartition.UncompressedHashOfCompressedFiles {
 							bfound = true
@@ -37,7 +37,7 @@ func (ch *ClickHouse) ComputePartitionsDelta(restoreTables []metadata.TableMetad
 
 		for _, ltable := range liveTables {
 			if ltable.Name == rtable.Table {
-				partitions, _ := ch.GetPartitions(ltable)
+				partitions, _ := ch.GetPartitions(ltable.Database, ltable.Name)
 				for _, livepart := range partitions["default"] {
 					bfound := false
 					for _, backuppart := range rtable.Parts["default"] {
