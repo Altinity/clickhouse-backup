@@ -159,7 +159,7 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 			// download data
 			uuid := path.Join(clickhouse.TablePathEncode(tableMetadata.Database), clickhouse.TablePathEncode(tableMetadata.Table))
 			log := log.WithField("table", fmt.Sprintf("%s.%s", tableMetadata.Database, tableMetadata.Table))
-			if remoteBackup.DataFormat == "archive" {
+			if remoteBackup.DataFormat != "directory" {
 				for disk := range tableMetadata.Files {
 					diskPath, _ := getPathByDiskName(cfg.ClickHouse.DiskMapping, diskMap, disk)
 					tableLocalDir := path.Join(diskPath, "backup", backupName, "shadow", uuid, disk)
@@ -176,7 +176,7 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 				tableRemotePath := path.Join(backupName, "shadow", uuid, disk)
 				diskPath, _ := getPathByDiskName(cfg.ClickHouse.DiskMapping, diskMap, disk)
 				tableLocalDir := path.Join(diskPath, "backup", backupName, "shadow", uuid, disk)
-				if err := bd.DownloadPath(tableRemotePath, tableLocalDir); err != nil {
+				if err := bd.DownloadPath(0, tableRemotePath, tableLocalDir); err != nil {
 					return err
 				}
 			}
@@ -185,6 +185,7 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 	}
 	backupMetadata := remoteBackup.BackupMetadata
 	backupMetadata.Tables = tablesForDownload
+	backupMetadata.DataFormat = ""
 	tbBody, err := json.MarshalIndent(&backupMetadata, "", "\t")
 	if err != nil {
 		return err

@@ -94,7 +94,7 @@ func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom
 						remoteDataFile := path.Join(remoteDataPath, fileName)
 						err = bd.CompressedStreamUpload(backupPath, p, remoteDataFile)
 					} else {
-						err = bd.UploadPath(backupPath, p, path.Join(remoteDataPath, disk))
+						err = bd.UploadPath(0, backupPath, p, path.Join(remoteDataPath, disk))
 					}
 					if err != nil {
 						return fmt.Errorf("can't upload: %v", err)
@@ -135,9 +135,9 @@ func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom
 		return err
 	}
 	if cfg.S3.Archive {
-		backupMetadata.DataFormat = "archive"
+		backupMetadata.DataFormat = cfg.S3.CompressionFormat
 	} else {
-		backupMetadata.DataFormat = "as-is"
+		backupMetadata.DataFormat = "directory"
 	}
 	newBackupMetadataBody, err := json.MarshalIndent(backupMetadata, "", "\t")
 	if err != nil {

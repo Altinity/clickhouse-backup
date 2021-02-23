@@ -36,14 +36,14 @@ func printBackups(w io.Writer, backupList []new_storage.Backup, format, location
 		// }
 		for _, backup := range backupList {
 			size := utils.FormatBytes(backup.DataSize+backup.MetadataSize)
-			oldFormatLabel := ""
+			backupFormat := backup.DataFormat
 			if backup.Legacy {
 				if location == "local" {
 					size = "???"
 				}
-				oldFormatLabel = "old-format"
+				backupFormat = "old-format"
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", backup.BackupName, size, backup.CreationDate.Format("02/01/2006 15:04:05"), location, oldFormatLabel)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", backup.BackupName, size, backup.CreationDate.Format("02/01/2006 15:04:05"), location, backupFormat)
 		}
 	default:
 		return fmt.Errorf("'%s' undefined", format)

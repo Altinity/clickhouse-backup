@@ -243,7 +243,18 @@ func (bd *BackupDestination) CompressedStreamUpload(baseLocalPath string, files 
 	return nil
 }
 
-func (bd *BackupDestination) DownloadPath(remotePath string, localPath string) error {
+func (bd *BackupDestination) DownloadPath(size int64, remotePath string, localPath string) error {
+	totalBytes := size
+	if size == 0 {
+		if err := bd.Walk(remotePath, true, func(f RemoteFile) error {
+			totalBytes += f.Size()
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+	bar := progressbar.StartNewByteBar(!bd.disableProgressBar, totalBytes)
+	defer bar.Finish()
 	return bd.Walk(remotePath, true, func(f RemoteFile) error {
 		r, err := bd.GetFileReader(path.Join(remotePath, f.Name()))
 		if err != nil {
@@ -273,19 +284,22 @@ func (bd *BackupDestination) DownloadPath(remotePath string, localPath string) e
 			log.Panic(err)
 			return err
 		}
+		bar.Add64(f.Size())
 		return nil
 	})
 }
 
-func (bd *BackupDestination) UploadPath(baseLocalPath string, files []string, remotePath string) error {
-	var totalBytes int64
-	for _, filename := range files {
-		finfo, err := os.Stat(path.Join(baseLocalPath, filename))
-		if err != nil {
-			return err
-		}
-		if finfo.Mode().IsRegular() {
-			totalBytes += finfo.Size()
+func (bd *BackupDestination) UploadPath(size int64, baseLocalPath string, files []string, remotePath string) error {
+	totalBytes := size
+	if size == 0 {
+		for _, filename := range files {
+			finfo, err := os.Stat(path.Join(baseLocalPath, filename))
+			if err != nil {
+				return err
+			}
+			if finfo.Mode().IsRegular() {
+				totalBytes += finfo.Size()
+			}
 		}
 	}
 	bar := progressbar.StartNewByteBar(!bd.disableProgressBar, totalBytes)
