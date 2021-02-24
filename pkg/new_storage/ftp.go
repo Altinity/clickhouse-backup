@@ -76,8 +76,23 @@ func (f *FTP) DeleteFile(key string) error {
 	return f.client.Delete(path.Join(f.Config.Path, key))
 }
 
-func (f *FTP) Walk(ftpPath string, process func(RemoteFile) error) error {
-	walker := f.client.Walk(path.Join(f.Config.Path, ftpPath))
+func (f *FTP) Walk(ftpPath string, recirsive bool, process func(RemoteFile) error) error {
+	prefix := path.Join(f.Config.Path, ftpPath)
+	if !recirsive {
+		entries, err := f.client.List(prefix)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			process(&ftpFile{
+				size:         int64(entry.Size),
+				lastModified: entry.Time,
+				name:         entry.Name,
+			})
+		}
+		return nil
+	}
+	walker := f.client.Walk(prefix)
 	for walker.Next() {
 		if err := walker.Err(); err != nil {
 			return err
@@ -89,7 +104,7 @@ func (f *FTP) Walk(ftpPath string, process func(RemoteFile) error) error {
 		process(&ftpFile{
 			size:         int64(entry.Size),
 			lastModified: entry.Time,
-			name:         strings.Trim(walker.Path(), path.Join(f.Config.Path, ftpPath)),
+			name:         strings.Trim(walker.Path(), prefix),
 		})
 	}
 	return nil

@@ -78,17 +78,28 @@ func (c *COS) DeleteFile(key string) error {
 	return err
 }
 
-func (c *COS) Walk(cosPath string, process func(RemoteFile) error) error {
+func (c *COS) Walk(cosPath string, recursuve bool, process func(RemoteFile) error) error {
+	prefix := path.Join(c.Config.Path, cosPath)
+	delimiter := ""
+	if !recursuve {
+		delimiter = "/"
+	}
 	res, _, err := c.client.Bucket.Get(context.Background(), &cos.BucketGetOptions{
-		Prefix: path.Join(c.Config.Path, cosPath),
+		Delimiter: delimiter,
+		Prefix: prefix,
 	})
 	if err != nil {
 		return err
 	}
+	for _, dir := range res.CommonPrefixes {
+		process(&cosFile{
+			name: strings.TrimPrefix(dir, prefix),
+		})
+	}
 	for _, v := range res.Contents {
 		modifiedTime, _ := parseTime(v.LastModified)
 		process(&cosFile{
-			name:         strings.TrimPrefix(v.Key, path.Join(c.Config.Path, cosPath)),
+			name:         strings.TrimPrefix(v.Key, prefix),
 			lastModified: modifiedTime,
 			size:         int64(v.Size),
 		})

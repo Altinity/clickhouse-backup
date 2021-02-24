@@ -36,7 +36,7 @@ func (s *AzureBlob) Connect() error {
 	if s.Config.AccountName == "" {
 		return fmt.Errorf("account name not set")
 	}
-	if s.Config.AccountKey == "" || s.Config.SharedAccessSignature == "" {
+	if s.Config.AccountKey == "" && s.Config.SharedAccessSignature == "" {
 		return fmt.Errorf("account key or SAS must be set")
 	}
 	var (
@@ -126,15 +126,27 @@ func (s *AzureBlob) StatFile(key string) (RemoteFile, error) {
 	}, nil
 }
 
-func (s *AzureBlob) Walk(prefix string, process func(r RemoteFile) error) error {
+func (s *AzureBlob) Walk(azPath string, recursive bool, process func(r RemoteFile) error) error {
 	ctx := context.Background()
-	opt := azblob.ListBlobsSegmentOptions{Prefix: path.Join(s.Config.Path, prefix) + "/"}
+	prefix := path.Join(s.Config.Path, azPath)
+	opt := azblob.ListBlobsSegmentOptions{
+		Prefix:  prefix + "/",
+	}
 	mrk := azblob.Marker{}
-
+	delimiter := ""
+	if !recursive {
+		delimiter = "/"
+	}
 	for mrk.NotDone() {
-		r, err := s.Container.ListBlobsFlatSegment(ctx, mrk, opt)
+		// r, err := s.Container.ListBlobsFlatSegment(ctx, mrk, opt)
+		r, err := s.Container.ListBlobsHierarchySegment(ctx, mrk, delimiter, opt)
 		if err != nil {
 			return err
+		}
+		for _, p := range r.Segment.BlobPrefixes {
+			process(&azureBlobFile{
+				name:         strings.TrimPrefix(p.Name, prefix),
+			})
 		}
 		for _, blob := range r.Segment.BlobItems {
 			var size int64
@@ -144,7 +156,7 @@ func (s *AzureBlob) Walk(prefix string, process func(r RemoteFile) error) error 
 				size = 0
 			}
 			process(&azureBlobFile{
-				name:         strings.TrimPrefix(blob.Name, path.Join(s.Config.Path, prefix)+"/"),
+				name:         strings.TrimPrefix(blob.Name, prefix),
 				size:         size,
 				lastModified: blob.Properties.LastModified,
 			})

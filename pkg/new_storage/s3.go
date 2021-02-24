@@ -148,23 +148,28 @@ func (s *S3) StatFile(key string) (RemoteFile, error) {
 }
 
 func (s *S3) Walk(s3Path string, recursive bool, process func(r RemoteFile) error) error {
-	return s.remotePager(path.Join(s.Config.Path, s3Path), recursive, func(page *s3.ListObjectsV2Output) {
+	return s.remotePager(path.Join(s.Config.Path, s3Path), recursive, func(page *s3.ListObjectsV2Output) error {
 		for _, cp := range page.CommonPrefixes {
-			process(&s3File{
+			if err := process(&s3File{
 				name: strings.TrimPrefix(*cp.Prefix, path.Join(s.Config.Path, s3Path)),
-			})
+			}); err != nil {
+				return err
+			}
 		}
 		for _, c := range page.Contents {
-			process(&s3File{
+			if err := process(&s3File{
 				*c.Size,
 				*c.LastModified,
 				strings.TrimPrefix(*c.Key, path.Join(s.Config.Path, s3Path)),
-			})
+			}); err != nil {
+				return err
+			}
 		}
+		return nil
 	})
 }
 
-func (s *S3) remotePager(s3Path string, recursive bool, pager func(page *s3.ListObjectsV2Output)) error {
+func (s *S3) remotePager(s3Path string, recursive bool, pager func(page *s3.ListObjectsV2Output) error) error {
 	params := &s3.ListObjectsV2Input{
 		Bucket:  aws.String(s.Config.Bucket), // Required
 		MaxKeys: aws.Int64(1000),

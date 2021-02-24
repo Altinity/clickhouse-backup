@@ -85,7 +85,6 @@ type S3Config struct {
 	SSE                     string `yaml:"sse" envconfig:"S3_SSE"`
 	DisableCertVerification bool   `yaml:"disable_cert_verification" envconfig:"S3_DISABLE_CERT_VERIFICATION"`
 	StorageClass            string `yaml:"storage_class" envconfig:"S3_STORAGE_CLASS"`
-	Archive                 bool
 }
 
 // COSConfig - cos settings section
@@ -154,6 +153,25 @@ func (cfg *Config) GetArchiveExtension() string {
 	}
 }
 
+ func (cfg *Config) GetCompressionFormat() string {
+	switch cfg.General.RemoteStorage {
+	case "s3":
+		return cfg.S3.CompressionFormat
+	case "gcs":
+		return cfg.GCS.CompressionFormat
+	case "cos":
+		return cfg.COS.CompressionFormat
+	case "ftp":
+		return cfg.FTP.CompressionFormat
+	case "azblob":
+		return cfg.AzureBlob.CompressionFormat
+	case "none":
+		return "none"
+	default:
+		return "unknown"
+	}
+ }
+
 // LoadConfig - load config from file
 func LoadConfig(configLocation string) (*Config, error) {
 	cfg := DefaultConfig()
@@ -171,26 +189,9 @@ func LoadConfig(configLocation string) (*Config, error) {
 }
 
 func ValidateConfig(cfg *Config) error {
-	compressionFormat := ""
-	switch cfg.General.RemoteStorage {
-	case "s3":
-		compressionFormat = cfg.S3.CompressionFormat
-	case "gcs":
-		compressionFormat = cfg.GCS.CompressionFormat
-	case "cos":
-		compressionFormat = cfg.COS.CompressionFormat
-	case "ftp":
-		compressionFormat = cfg.FTP.CompressionFormat
-	case "azblob":
-		compressionFormat = cfg.AzureBlob.CompressionFormat
-	case "none":
-		compressionFormat = "none"
-	default:
-		return fmt.Errorf("'%s' is unsupported remote storage", cfg.General.RemoteStorage)
-	}
-	if compressionFormat != "none" {
-		if _, ok := ArchiveExtensions[compressionFormat]; !ok {
-			return fmt.Errorf("'%s' is unsupported compression format", compressionFormat)
+	if cfg.GetCompressionFormat() != "none" {
+		if _, ok := ArchiveExtensions[cfg.GetCompressionFormat()]; !ok {
+			return fmt.Errorf("'%s' is unsupported compression format", cfg.GetCompressionFormat())
 		}
 	}
 	if _, err := time.ParseDuration(cfg.ClickHouse.Timeout); err != nil {
@@ -260,10 +261,9 @@ func DefaultConfig() *Config {
 			ACL:                     "private",
 			PartSize:                512 * 1024 * 1024,
 			CompressionLevel:        1,
-			CompressionFormat:       "gzip",
+			CompressionFormat:       "tar",
 			DisableCertVerification: false,
 			StorageClass:            s3.StorageClassStandard,
-			Archive:                 true,
 		},
 		GCS: GCSConfig{
 			CompressionLevel:  1,
