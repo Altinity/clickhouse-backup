@@ -246,22 +246,6 @@ Remove data in 'shadow' folder: `curl -s localhost:7171/backup/clean -X POST | j
 
 Display list of current async operations: `curl -s localhost:7171/backup/status | jq .`
 
-### API Configuration
-
-> **GET /backup/config**
-
-Get the current running configuration: `curl -s localhost:7171/backup/config | jq -r .Result > current_config.yml`
-
-> **GET /backup/config/default**
-
-Get the default configuration: `curl -s localhost:7171/backup/config/default | jq -r .Result > default_config.yml`
-
-> **POST /backup/config**
-
-Update the current running configuration: `curl -v localhost:7171/backup/config -X POST --data-binary '@new_config.yml'`
-
-Be sure to check return code for config parsing/validation errors.
-
 ## Examples
 
 ### Simple cron script for daily backup and uploading
