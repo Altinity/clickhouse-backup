@@ -28,7 +28,7 @@ jobs:
       - run: make config
       - run: make test
       - name: Integration test
-      - env:
+        env:
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
         run: echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"
 

@@ -743,6 +743,10 @@ func Upload(cfg config.Config, backupName string, diffFrom string) error {
 		PrintLocalBackups(cfg, "all")
 		return fmt.Errorf("select backup for upload")
 	}
+	if backupName == diffFrom {
+		return fmt.Errorf("You can't upload diff from the same backup")
+	}
+
 	dataPath := getDataPath(cfg)
 	if dataPath == "" {
 		return ErrUnknownClickhouseDataPath
