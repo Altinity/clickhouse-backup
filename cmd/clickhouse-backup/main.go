@@ -277,7 +277,7 @@ func main() {
 			Name:  "server",
 			Usage: "Run API server",
 			Action: func(c *cli.Context) error {
-				return server.Server(cliapp, getConfig(c), getConfigPath(c))
+				return server.Server(cliapp, getConfigPath(c))
 			},
 			Flags: cliapp.Flags,
 		},
