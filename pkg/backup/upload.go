@@ -88,13 +88,13 @@ func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom
 				for i, p := range parts {
 					remoteDataPath := path.Join(backupName, "shadow", clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table))
 					var err error
-					if cfg.S3.Archive {
+					if cfg.GetCompressionFormat() == "none" {
+						err = bd.UploadPath(0, backupPath, p, path.Join(remoteDataPath, disk))
+					} else {
 						fileName := fmt.Sprintf("%s_%d.%s", disk, i+1, cfg.GetArchiveExtension())
 						metdataFiles[disk] = append(metdataFiles[disk], fileName)
 						remoteDataFile := path.Join(remoteDataPath, fileName)
 						err = bd.CompressedStreamUpload(backupPath, p, remoteDataFile)
-					} else {
-						err = bd.UploadPath(backupPath, p, path.Join(remoteDataPath, disk))
 					}
 					if err != nil {
 						return fmt.Errorf("can't upload: %v", err)
@@ -134,10 +134,10 @@ func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom
 	if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
 		return err
 	}
-	if cfg.S3.Archive {
-		backupMetadata.DataFormat = "archive"
+	if cfg.GetCompressionFormat() != "none" {
+		backupMetadata.DataFormat = cfg.GetCompressionFormat()
 	} else {
-		backupMetadata.DataFormat = "as-is"
+		backupMetadata.DataFormat = "directory"
 	}
 	newBackupMetadataBody, err := json.MarshalIndent(backupMetadata, "", "\t")
 	if err != nil {
