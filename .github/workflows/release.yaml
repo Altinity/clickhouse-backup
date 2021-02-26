@@ -1,0 +1,66 @@
+name: Build
+
+on:
+  push:
+    tags:
+      - '*.*.*' # Run workflow on version tags, e.g. v1.0.0.
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v2
+
+      - name: Setup golang
+        id: setup-go
+        uses: actions/setup-go@v2
+        with:
+          go-version: '^1.14'
+
+
+      - name: Cache golang
+        id: cache-golang
+        uses: actions/cache@v2
+        with:
+          path: /github/home/go/pkg/mod
+          key: ${{ runner.os }}-${{ matrix.golang-version }}-golang-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.golang-version }}-golang-
+
+      - name: Install golang dependencies
+        run: go mod download -x
+        if: |
+          steps.cache-golang.outputs.cache-hit != 'true'
+
+      - name: Setup make
+        run: |
+          apt-get update
+          apt-get install --no-install-recommends -y make
+
+      - run: make build
+      - run: make config
+      - run: make test
+
+      - name: Branch name
+        id: branch_name
+        run: |
+          echo ::set-output name=SOURCE_NAME::${GITHUB_REF#refs/*/}
+          echo ::set-output name=SOURCE_BRANCH::${GITHUB_REF#refs/heads/}
+          echo ::set-output name=SOURCE_TAG::${GITHUB_REF#refs/tags/}
+
+      - name: Building docker image
+        env:
+          DOCKER_REPO: ${{ secrets.DOCKER_REPO }}
+          DOCKER_TOKEN: ${{ secrets.DOCKER_TOKEN }}
+          DOCKER_USER: ${{ secrets.DOCKER_USER }}
+          DOCKER_TAG: ${{ steps.branch_name.outputs.SOURCE_TAG }}
+          DOCKER_BRANCH: ${{ steps.branch_name.outputs.SOURCE_BRANCH }}
+        run: |
+          set +x
+          echo ${DOCKER_BRANCH} ${DOCKER_TAG} ${DOCKER_REPO}
+          echo ${DOCKER_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin docker.io
+          docker build -t ${DOCKER_REPO}:${DOCKER_TAG:-${DOCKER_BRANCH:-unknown}} .
+          docker push ${DOCKER_REPO}:${DOCKER_TAG:-${DOCKER_BRANCH:-unknown}}
+
