@@ -76,14 +76,16 @@ func GetLocalBackups(cfg *config.Config) ([]new_storage.Backup, error) {
 	if err != nil {
 		return nil, err
 	}
-
+	result := []new_storage.Backup{}
 	backupsPath := path.Join(dataPath, "backup")
 	d, err := os.Open(backupsPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return result, nil
+		}
 		return nil, err
 	}
 	defer d.Close()
-	result := []new_storage.Backup{}
 	names, err := d.Readdirnames(-1)
 	if err != nil {
 		return nil, err
