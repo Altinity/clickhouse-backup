@@ -40,6 +40,14 @@ jobs:
         if: |
           steps.cache-golang.outputs.cache-hit != 'true'
 
+      - name: Extract DOCKER_TAG version
+        id: docker_tag
+        run: |
+          export DOCKER_TAG=${GITHUB_REF##*/}
+          export DOCKER_TAG=${DOCKER_TAG##*\\}
+          echo "::set-output name=docker_tag::${DOCKER_TAG:-dev}"
+
+
       - run: make build
       - run: make config
       - run: make test
@@ -47,15 +55,13 @@ jobs:
       - name: Building deb, rpm and tar.gz packages
         id: make_packages
         run: |
-          tar -czvf clickhouse-backup.tar.gz clickhouse-backup
-          CGO_ENABLED=0 make packages
-
-          export NAME=clickhouse_backup
+          export NAME=clickhouse-backup
           export VERSION=$(git describe --always --tags --abbrev=0 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/c\1/;s/-/./g')
-
+          tar -czvf ${NAME}.tar.gz ${NAME}
+          CGO_ENABLED=0 make packages
           echo "::set-output name=rpm::${NAME}-${VERSION}-1.x86_64.rpm"
           echo "::set-output name=deb::${NAME}_${VERSION}_amd64.deb"
-          echo "::set-output name=tgz::clickhouse-backup.tag.gz"
+          echo "::set-output name=tgz::${NAME}.tar.gz"
 
       - name: Prepare release notes
         id: release_notes
@@ -69,10 +75,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ github.ref }}
-          release_name: ${{ github.ref }}
+          tag_name: ${{ steps.docker_tag.outputs.docker_tag }}
+          release_name: ${{ steps.docker_tag.outputs.docker_tag }}
           body_path: ${{ steps.release_notes.outputs.path }}
-          target_un
           draft: true
 
       - name: Add rpm to github release
@@ -86,6 +91,7 @@ jobs:
           asset_name: ${{ steps.make_packages.outputs.rpm }}
           asset_content_type: application/octet-stream
 
+
       - name: Add deb to github release
         id: upload-release-asset
         uses: actions/upload-release-asset@v1
@@ -97,6 +103,17 @@ jobs:
           asset_name: ${{ steps.make_packages.outputs.deb }}
           asset_content_type: application/octet-stream
 
+      - name: Add tar.gz to github release
+        id: upload-release-asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ steps.make_packages.outputs.tgz }}
+          asset_name: ${{ steps.make_packages.outputs.tgz }}
+          asset_content_type: application/octet-stream
+
       - name: Building docker image
         env:
           DOCKER_REPO: ${{ secrets.DOCKER_REPO }}
@@ -104,8 +121,7 @@ jobs:
           DOCKER_TOKEN: ${{ secrets.DOCKER_TOKEN }}
           DOCKER_USER: ${{ secrets.DOCKER_USER }}
           DOCKER_REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
-
-          DOCKER_TAG: ${{ github.event.release.tag_name }}
+          DOCKER_TAG: ${{ steps.docker_tag.outputs.docker_tag }}
         run: |
           echo ${DOCKER_BRANCH} ${DOCKER_TAG} ${DOCKER_REPO}
           echo ${DOCKER_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin
