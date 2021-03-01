@@ -1,4 +1,4 @@
-name: Build
+name: Pull request handler
 
 on:
   pull_request:
@@ -7,17 +7,17 @@ on:
       - dev
 
 jobs:
-  build:
+  pull_request:
     name: Build
     runs-on: ubuntu-latest
     strategy:
       matrix:
         clickhouse:
-#          - '1.1.54390'
-#          - '19.11.12.69'
-#          - '19.16.19.85'
-#          - '20.3'
-#          - '20.8'
+          - '1.1.54390'
+          - '19.11.12.69'
+          - '19.16.19.85'
+          - '20.3'
+          - '20.8'
           - '21.2'
     steps:
       - name: Checkout project

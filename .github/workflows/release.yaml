@@ -1,9 +1,8 @@
 name: Build
 
 on:
-  push:
-    tags:
-      - '*.*.*' # Run workflow on version tags, e.g. v1.0.0.
+  release:
+    types: [published, created, edited]
 
 jobs:
   release:
@@ -20,19 +19,24 @@ jobs:
           go-version: '^1.14'
 
 
-      - name: Cache golang
-        id: cache-golang
-        uses: actions/cache@v2
-        with:
-          path: /github/home/go/pkg/mod
-          key: ${{ runner.os }}-${{ matrix.golang-version }}-golang-${{ hashFiles('go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.golang-version }}-golang-
+#      - name: Cache golang
+#        id: cache-golang
+#        uses: actions/cache@v2
+#        with:
+#          path: /github/home/go/pkg/mod
+#          key: ${{ runner.os }}-${{ matrix.golang-version }}-golang-${{ hashFiles('go.sum') }}
+#          restore-keys: |
+#            ${{ runner.os }}-${{ matrix.golang-version }}-golang-
+#
+#      - name: Install golang dependencies
+#        run: go mod download -x
+#        if: |
+#          steps.cache-golang.outputs.cache-hit != 'true'
 
-      - name: Install golang dependencies
-        run: go mod download -x
-        if: |
-          steps.cache-golang.outputs.cache-hit != 'true'
+      - name: Setup fpm
+        run: |
+          apt-get install -y --no-install-recommends ruby ruby-dev gcc g++ rpm
+          gem install --no-document fpm
 
       - name: Setup make
         run: |
@@ -43,24 +47,53 @@ jobs:
       - run: make config
       - run: make test
 
-      - name: Branch name
-        id: branch_name
+
+      - name: Building deb, rpm and tar.gz packages
         run: |
-          echo ::set-output name=SOURCE_NAME::${GITHUB_REF#refs/*/}
-          echo ::set-output name=SOURCE_BRANCH::${GITHUB_REF#refs/heads/}
-          echo ::set-output name=SOURCE_TAG::${GITHUB_REF#refs/tags/}
+          tar -czvf clickhouse-backup.tar.gz clickhouse-backup
+          CGO_ENABLED=0 make packages
+
+
+      - name: Create release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: ${{ github.ref }}
+          body_path: ${{ steps.changelog.outputs.path }}
+          draft: true
+
+      - name: Add plugin to release
+        id: upload-plugin-asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: /tmp/${{ steps.metadata.outputs.archive }}
+          asset_name: ${{ steps.metadata.outputs.archive }}
+          asset_content_type: application/zip
 
       - name: Building docker image
         env:
           DOCKER_REPO: ${{ secrets.DOCKER_REPO }}
+          DOCKER_IMAGE: ${{ secrets.DOCKER_IMAGE }}
           DOCKER_TOKEN: ${{ secrets.DOCKER_TOKEN }}
           DOCKER_USER: ${{ secrets.DOCKER_USER }}
-          DOCKER_TAG: ${{ steps.branch_name.outputs.SOURCE_TAG }}
-          DOCKER_BRANCH: ${{ steps.branch_name.outputs.SOURCE_BRANCH }}
+          DOCKER_REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
+
+          DOCKER_TAG: ${{ github.event.release.tag_name }}
         run: |
-          set +x
           echo ${DOCKER_BRANCH} ${DOCKER_TAG} ${DOCKER_REPO}
-          echo ${DOCKER_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin docker.io
-          docker build -t ${DOCKER_REPO}:${DOCKER_TAG:-${DOCKER_BRANCH:-unknown}} .
-          docker push ${DOCKER_REPO}:${DOCKER_TAG:-${DOCKER_BRANCH:-unknown}}
+          echo ${DOCKER_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin
+
+          docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG:-dev} .
+          docker image tag ${DOCKER_IMAGE}:${DOCKER_TAG:-dev} $DOCKER_REGISTRY/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG:-dev}
+          docker push ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG:-dev}
+
+          echo "Successfull pushed ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG:-dev}"
+
+
 
