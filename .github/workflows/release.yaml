@@ -1,8 +1,9 @@
 name: Build
 
 on:
-  release:
-    types: [published, created, edited]
+  push:
+    tags:
+      - v*.*.*
 
 jobs:
   release:
@@ -18,41 +19,49 @@ jobs:
         with:
           go-version: '^1.14'
 
-
-#      - name: Cache golang
-#        id: cache-golang
-#        uses: actions/cache@v2
-#        with:
-#          path: /github/home/go/pkg/mod
-#          key: ${{ runner.os }}-${{ matrix.golang-version }}-golang-${{ hashFiles('go.sum') }}
-#          restore-keys: |
-#            ${{ runner.os }}-${{ matrix.golang-version }}-golang-
-#
-#      - name: Install golang dependencies
-#        run: go mod download -x
-#        if: |
-#          steps.cache-golang.outputs.cache-hit != 'true'
-
-      - name: Setup fpm
-        run: |
-          apt-get install -y --no-install-recommends ruby ruby-dev gcc g++ rpm
-          gem install --no-document fpm
-
-      - name: Setup make
+      - name: Setup fpm and make
         run: |
           apt-get update
+          apt-get install -y --no-install-recommends ruby ruby-dev gcc g++ rpm
           apt-get install --no-install-recommends -y make
+          gem install --no-document fpm
+
+      - name: Cache golang
+        id: cache-golang
+        uses: actions/cache@v2
+        with:
+          path: /github/home/go/pkg/mod
+          key: ${{ runner.os }}-${{ matrix.golang-version }}-golang-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.golang-version }}-golang-
+
+      - name: Install golang dependencies
+        run: go mod download -x
+        if: |
+          steps.cache-golang.outputs.cache-hit != 'true'
 
       - run: make build
       - run: make config
       - run: make test
 
-
       - name: Building deb, rpm and tar.gz packages
+        id: make_packages
         run: |
           tar -czvf clickhouse-backup.tar.gz clickhouse-backup
           CGO_ENABLED=0 make packages
 
+          export NAME=clickhouse_backup
+          export VERSION=$(git describe --always --tags --abbrev=0 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/c\1/;s/-/./g')
+
+          echo "::set-output name=rpm::${NAME}-${VERSION}-1.x86_64.rpm"
+          echo "::set-output name=deb::${NAME}_${VERSION}_amd64.deb"
+          echo "::set-output name=tgz::clickhouse-backup.tag.gz"
+
+      - name: Prepare release notes
+        id: release_notes
+        run: |
+          awk '/^# / {s++} s == 1 {print}' ChangeLog.md > /tmp/release_notes.md
+          echo "::set-output name=path::/tmp/release_notes.md"
 
       - name: Create release
         id: create_release
@@ -62,19 +71,31 @@ jobs:
         with:
           tag_name: ${{ github.ref }}
           release_name: ${{ github.ref }}
-          body_path: ${{ steps.changelog.outputs.path }}
+          body_path: ${{ steps.release_notes.outputs.path }}
+          target_un
           draft: true
 
-      - name: Add plugin to release
-        id: upload-plugin-asset
+      - name: Add rpm to github release
+        id: upload-release-asset
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: /tmp/${{ steps.metadata.outputs.archive }}
-          asset_name: ${{ steps.metadata.outputs.archive }}
-          asset_content_type: application/zip
+          asset_path: build/${{ steps.make_packages.outputs.rpm }}
+          asset_name: ${{ steps.make_packages.outputs.rpm }}
+          asset_content_type: application/octet-stream
+
+      - name: Add deb to github release
+        id: upload-release-asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: build/${{ steps.make_packages.outputs.deb }}
+          asset_name: ${{ steps.make_packages.outputs.deb }}
+          asset_content_type: application/octet-stream
 
       - name: Building docker image
         env:

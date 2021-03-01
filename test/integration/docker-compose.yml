@@ -14,7 +14,7 @@ services:
       - clickhouse-backup
 
   clickhouse:
-    image: yandex/clickhouse-server:${CLICKHOUSE_VERSION:-20.10.3.30}
+    image: yandex/clickhouse-server:${CLICKHOUSE_VERSION:-20.10.7.4}
     container_name: clickhouse
     environment:
       TZ: UTC
