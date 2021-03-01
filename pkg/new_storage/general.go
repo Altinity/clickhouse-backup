@@ -81,7 +81,7 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 	result := []Backup{}
 	if err := bd.Walk("/", false, func(o RemoteFile) error {
 		// Legacy backup
-		if ok, backupName, fileExtension := isLegacyBackup(o.Name()); ok {
+		if ok, backupName, fileExtension := isLegacyBackup(strings.TrimPrefix(o.Name(), "/")); ok {
 			result = append(result, Backup{
 				metadata.BackupMetadata{
 					BackupName:   backupName,
