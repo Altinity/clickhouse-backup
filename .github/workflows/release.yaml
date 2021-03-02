@@ -43,8 +43,9 @@ jobs:
       - name: Extract DOCKER_TAG version
         id: docker_tag
         run: |
-          export DOCKER_TAG=${GITHUB_REF##*/}
-          export DOCKER_TAG=${DOCKER_TAG##*\\}
+          DOCKER_TAG=${GITHUB_REF##*/}
+          DOCKER_TAG=${DOCKER_TAG##*\\}
+          export DOCKER_TAG=${DOCKER_TAG//v}
           echo "::set-output name=docker_tag::${DOCKER_TAG:-dev}"
 
 
@@ -126,11 +127,11 @@ jobs:
           echo ${DOCKER_BRANCH} ${DOCKER_TAG} ${DOCKER_REPO}
           echo ${DOCKER_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin
 
-          docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG:-dev} .
-          docker image tag ${DOCKER_IMAGE}:${DOCKER_TAG:-dev} $DOCKER_REGISTRY/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG:-dev}
-          docker push ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG:-dev}
-
-          echo "Successfull pushed ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG:-dev}"
+          docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
+          docker image tag ${DOCKER_IMAGE}:${DOCKER_TAG} $DOCKER_REGISTRY/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}
+          docker image tag ${DOCKER_IMAGE}:${DOCKER_TAG} $DOCKER_REGISTRY/${DOCKER_REPO}/${DOCKER_IMAGE}:latest
+          docker push ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}
+          docker push ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:latest
 
 
 
