@@ -51,11 +51,11 @@ jobs:
 
       - name: Setup docker-compose
         run: |
-          apt-get update
-          apt-get install --no-install-recommends -y make python3-pip
-          python3 -m pip install -U pip
-          pip3 install --prefer-binary -U setuptools
-          pip3 install --prefer-binary -U docker-compose
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y make python3-pip
+          sudo python3 -m pip install -U pip
+          sudo pip3 install --prefer-binary -U setuptools
+          sudo pip3 install --prefer-binary -U docker-compose
 
       - run: make build
       - run: make config
