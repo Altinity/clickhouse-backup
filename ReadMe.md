@@ -95,16 +95,18 @@ All options can be overwritten via environment variables
 ```yaml
 general:
   remote_storage: s3             # REMOTE_STORAGE
+  max_file_size: 1099511627776   # MAX_FILE_SIZE
   disable_progress_bar: false    # DISABLE_PROGRESS_BAR
   backups_to_keep_local: 0       # BACKUPS_TO_KEEP_LOCAL
   backups_to_keep_remote: 0      # BACKUPS_TO_KEEP_REMOTE
+  log_level: info                # LOG_LEVEL
 clickhouse:
   username: default              # CLICKHOUSE_USERNAME
   password: ""                   # CLICKHOUSE_PASSWORD
   host: localhost                # CLICKHOUSE_HOST
   port: 9000                     # CLICKHOUSE_PORT
   timeout: 5m                    # CLICKHOUSE_TIMEOUT
-  data_path: ""                  # CLICKHOUSE_DATA_PATH
+  disk_mapping: {}               # CLICKHOUSE_DISK_MAPPING
   skip_tables:                   # CLICKHOUSE_SKIP_TABLES
     - system.*
   timeout: 5m                    # CLICKHOUSE_TIMEOUT
@@ -121,7 +123,7 @@ azblob:
   container: ""                # AZBLOB_CONTAINER
   path: ""                     # AZBLOB_PATH
   compression_level: 1         # AZBLOB_COMPRESSION_LEVEL
-  compression_format: gzip     # AZBLOB_COMPRESSION_FORMAT
+  compression_format: tar      # AZBLOB_COMPRESSION_FORMAT
   sse_key: ""                  # AZBLOB_SSE_KEY
 s3:
   access_key: ""                   # S3_ACCESS_KEY
@@ -133,14 +135,13 @@ s3:
   force_path_style: false          # S3_FORCE_PATH_STYLE
   path: ""                         # S3_PATH
   disable_ssl: false               # S3_DISABLE_SSL
-  part_size: 104857600             # S3_PART_SIZE
+  part_size: 536870912             # S3_PART_SIZE
   compression_level: 1             # S3_COMPRESSION_LEVEL
-  # supports 'tar', 'lz4', 'bzip2', 'gzip', 'sz', 'xz'
-  compression_format: gzip         # S3_COMPRESSION_FORMAT
+  # supports 'none', 'tar', 'lz4', 'bzip2', 'gzip', 'sz', 'xz'
+  compression_format: tar          # S3_COMPRESSION_FORMAT
   # empty (default), AES256, or aws:kms
   sse: AES256                      # S3_SSE
   disable_cert_verification: false # S3_DISABLE_CERT_VERIFICATION
-  debug: false                     # S3_DEBUG
   storage_class: STANDARD          # S3_STORAGE_CLASS
 gcs:
   credentials_file: ""         # GCS_CREDENTIALS_FILE
@@ -148,19 +149,18 @@ gcs:
   bucket: ""                   # GCS_BUCKET
   path: ""                     # GCS_PATH
   compression_level: 1         # GCS_COMPRESSION_LEVEL
-  compression_format: gzip     # GCS_COMPRESSION_FORMAT
+  compression_format: tar      # GCS_COMPRESSION_FORMAT
 cos:
   url: ""                      # COS_URL
   timeout: 2m                  # COS_TIMEOUT
   secret_id: ""                # COS_SECRET_ID
   secret_key: ""               # COS_SECRET_KEY
   path: ""                     # COS_PATH
-  compression_format: gzip     # COS_COMPRESSION_FORMAT
+  compression_format: tar      # COS_COMPRESSION_FORMAT
   compression_level: 1         # COS_COMPRESSION_LEVEL
-  debug: false                 # COS_DEBUG
 api:
   listen: "localhost:7171"     # API_LISTEN
-  enable_metrics: false        # API_ENABLE_METRICS
+  enable_metrics: true         # API_ENABLE_METRICS
   enable_pprof: false          # API_ENABLE_PPROF
   username: ""                 # API_USERNAME
   password: ""                 # API_PASSWORD
@@ -174,7 +174,7 @@ ftp:
   password: ""                 # FTP_PASSWORD
   tls: false                   # FTP_TLS
   path: ""                     # FTP_PATH
-  compression_format: gzip     # FTP_COMPRESSION_FORMAT
+  compression_format: tar      # FTP_COMPRESSION_FORMAT
   compression_level: 1         # FTP_COMPRESSION_LEVEL
   debug: false                 # FTP_DEBUG
 ```
