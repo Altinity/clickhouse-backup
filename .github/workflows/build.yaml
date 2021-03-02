@@ -64,19 +64,21 @@ jobs:
 
       # be carefull with encrypt with old OpenSSL - https://habr.com/ru/post/535140/
       - name: Decrypting credentials for Google Cloud Storage
+        id: secrets
         env:
           VAULT_PASSWORD: ${{ secrets.VAULT_PASSWORD }}
         run: |
-          echo "::set-env name=GCS_TESTS::$(if [ -z "${{ secrets.VAULT_PASSWORD }}" ]; then echo "false"; else echo "true"; fi)"
           if [[ !-z "${VAULT_PASSWORD}" ]]; then
             openssl version
             openssl enc -base64 -aes-256-cbc -d -in test/integration/credentials.json.enc -out test/integration/credentials.json -md md5 -k ${VAULT_PASSWORD}
           fi
+          echo "::set-output name=GCS_TESTS::$(if [ -z "${{ secrets.VAULT_PASSWORD }}" ]; then echo "false"; else echo "true"; fi)"
 
       - name: Running integration tests
         env:
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
           CGO_ENABLED: 0
+          GCS_TESTS: ${{ steps.secrets.outputs.GCS_TESTS }}
         run: |
           set -x
           echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"
