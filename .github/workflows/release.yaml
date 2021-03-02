@@ -21,10 +21,10 @@ jobs:
 
       - name: Setup fpm and make
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends ruby ruby-dev gcc g++ rpm
-          apt-get install --no-install-recommends -y make
-          gem install --no-document fpm
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ruby ruby-dev gcc g++ rpm
+          sudo apt-get install --no-install-recommends -y make
+          sudo gem install --no-document fpm
 
       - name: Cache golang
         id: cache-golang
