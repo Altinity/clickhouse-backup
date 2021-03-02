@@ -100,7 +100,7 @@ func (gcs *GCS) PutFile(key string, r io.ReadCloser) error {
 	obj := gcs.client.Bucket(gcs.Config.Bucket).Object(path.Join(gcs.Config.Path, key))
 	writer := obj.NewWriter(ctx)
 	defer writer.Close()
-	_, err :=  io.CopyBuffer(writer, r, gcs.buffer)
+	_, err := io.CopyBuffer(writer, r, gcs.buffer)
 	return err
 }
 

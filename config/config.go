@@ -153,7 +153,7 @@ func (cfg *Config) GetArchiveExtension() string {
 	}
 }
 
- func (cfg *Config) GetCompressionFormat() string {
+func (cfg *Config) GetCompressionFormat() string {
 	switch cfg.General.RemoteStorage {
 	case "s3":
 		return cfg.S3.CompressionFormat
@@ -170,7 +170,7 @@ func (cfg *Config) GetArchiveExtension() string {
 	default:
 		return "unknown"
 	}
- }
+}
 
 // LoadConfig - load config from file
 func LoadConfig(configLocation string) (*Config, error) {

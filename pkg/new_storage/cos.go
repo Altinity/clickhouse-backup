@@ -86,7 +86,7 @@ func (c *COS) Walk(cosPath string, recursuve bool, process func(RemoteFile) erro
 	}
 	res, _, err := c.client.Bucket.Get(context.Background(), &cos.BucketGetOptions{
 		Delimiter: delimiter,
-		Prefix: prefix,
+		Prefix:    prefix,
 	})
 	if err != nil {
 		return err

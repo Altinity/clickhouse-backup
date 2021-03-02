@@ -33,9 +33,9 @@ type TableMetadata struct {
 	// Macros ???
 	Size                 map[string]int64 `json:"size"`                  // сколько занимает бэкап на каждом диске
 	TotalBytes           int64            `json:"total_bytes,omitempty"` // общий объём бэкапа
-	DependencesTable     string `json:"dependencies_table,omitempty"`
-	DependenciesDatabase string `json:"dependencies_database,omitempty"`
-	MetadataOnly         bool   `json:"metadata_only"`
+	DependencesTable     string           `json:"dependencies_table,omitempty"`
+	DependenciesDatabase string           `json:"dependencies_database,omitempty"`
+	MetadataOnly         bool             `json:"metadata_only"`
 }
 
 type Part struct {

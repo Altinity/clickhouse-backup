@@ -130,7 +130,7 @@ func (s *AzureBlob) Walk(azPath string, recursive bool, process func(r RemoteFil
 	ctx := context.Background()
 	prefix := path.Join(s.Config.Path, azPath)
 	opt := azblob.ListBlobsSegmentOptions{
-		Prefix:  prefix + "/",
+		Prefix: prefix + "/",
 	}
 	mrk := azblob.Marker{}
 	delimiter := ""
@@ -145,7 +145,7 @@ func (s *AzureBlob) Walk(azPath string, recursive bool, process func(r RemoteFil
 		}
 		for _, p := range r.Segment.BlobPrefixes {
 			process(&azureBlobFile{
-				name:         strings.TrimPrefix(p.Name, prefix),
+				name: strings.TrimPrefix(p.Name, prefix),
 			})
 		}
 		for _, blob := range r.Segment.BlobItems {
