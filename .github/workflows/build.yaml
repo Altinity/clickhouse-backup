@@ -1,7 +1,12 @@
-name: Pull request handler
+name: Build
 
 on:
   pull_request:
+    branches:
+      - master
+      - dev
+
+  push:
     branches:
       - master
       - dev
@@ -22,14 +27,6 @@ jobs:
     steps:
       - name: Checkout project
         uses: actions/checkout@v2
-
-      # be carefull with encrypt with old OpenSSL - https://habr.com/ru/post/535140/
-      - name: Decrypting credentials for Google Cloud Storage
-        env:
-          VAULT_PASSWORD: ${{ secrets.VAULT_PASSWORD }}
-        run: |
-          openssl version
-          openssl enc -base64 -aes-256-cbc -d -in test/integration/credentials.json.enc -out test/integration/credentials.json -md md5 -k ${VAULT_PASSWORD}
 
       - name: Setup golang
         id: setup-go
@@ -65,14 +62,25 @@ jobs:
       - run: make test
 
 
+      # be carefull with encrypt with old OpenSSL - https://habr.com/ru/post/535140/
+      - name: Decrypting credentials for Google Cloud Storage
+        env:
+          VAULT_PASSWORD: ${{ secrets.VAULT_PASSWORD }}
+        run: |
+          echo "::set-env name=GCS_TESTS::$(if [ -z "${{ secrets.VAULT_PASSWORD }}" ]; then echo "false"; else echo "true"; fi)"
+          if [[ !-z "${VAULT_PASSWORD}" ]]; then
+            openssl version
+            openssl enc -base64 -aes-256-cbc -d -in test/integration/credentials.json.enc -out test/integration/credentials.json -md md5 -k ${VAULT_PASSWORD}
+          fi
+
       - name: Running integration tests
         env:
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
-          GCS_TESTS: true
           CGO_ENABLED: 0
         run: |
           set -x
           echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"
+          echo "GCS_TESTS=${GCS_TESTS}"
           if [[ "${CLICKHOUSE_VERSION}" == 2* ]]; then
             export COMPOSE_FILE=docker-compose_storage-policy.yml
           else
