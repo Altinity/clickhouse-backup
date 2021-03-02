@@ -1,6 +1,7 @@
 # v0.6.5
 
 IMPROVEMENTS
+
 - add Atomic Database Engine support
 - add Multi Volumes support
 - improve prometheus metrics
