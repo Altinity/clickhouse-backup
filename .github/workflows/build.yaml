@@ -1,0 +1,97 @@
+name: Build
+
+on:
+  pull_request:
+    branches:
+      - master
+      - dev
+
+  push:
+    branches:
+      - master
+      - dev
+
+jobs:
+  pull_request:
+    name: Build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        clickhouse:
+          - '1.1.54390'
+          - '19.11.12.69'
+          - '19.16.19.85'
+          - '20.3'
+          - '20.8'
+          - '21.2'
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v2
+
+      - name: Setup golang
+        id: setup-go
+        uses: actions/setup-go@v2
+        with:
+          go-version: '^1.14'
+
+
+      - name: Cache golang
+        id: cache-golang
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-${{ matrix.golang-version }}-golang-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.golang-version }}-golang-
+
+      - name: Install golang dependencies
+        run: go mod download -x
+        if: |
+          steps.cache-golang.outputs.cache-hit != 'true'
+
+      - name: Setup docker-compose
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y make python3-pip
+          sudo python3 -m pip install -U pip
+          sudo pip3 install --prefer-binary -U setuptools
+          sudo pip3 install --prefer-binary -U docker-compose
+
+      - run: make build
+      - run: make config
+      - run: make test
+
+
+      # be carefull with encrypt with old OpenSSL - https://habr.com/ru/post/535140/
+      - name: Decrypting credentials for Google Cloud Storage
+        id: secrets
+        env:
+          VAULT_PASSWORD: ${{ secrets.VAULT_PASSWORD }}
+        run: |
+          if [[ "" != "${VAULT_PASSWORD}" ]]; then
+            openssl version
+            openssl enc -base64 -aes-256-cbc -d -in test/integration/credentials.json.enc -out test/integration/credentials.json -md md5 -k ${VAULT_PASSWORD}
+          fi
+          echo "::set-output name=GCS_TESTS::$(if [ -z "${{ secrets.VAULT_PASSWORD }}" ]; then echo "false"; else echo "true"; fi)"
+
+      - name: Running integration tests
+        env:
+          CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
+          CGO_ENABLED: 0
+          GCS_TESTS: ${{ steps.secrets.outputs.GCS_TESTS }}
+        run: |
+          set -x
+          echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"
+          echo "GCS_TESTS=${GCS_TESTS}"
+          if [[ "${CLICKHOUSE_VERSION}" == 2* ]]; then
+            export COMPOSE_FILE=docker-compose_storage-policy.yml
+          else
+            export COMPOSE_FILE=docker-compose.yml
+          fi
+          export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup"
+          docker-compose -f test/integration/${COMPOSE_FILE} up -d --force-recreate
+          docker-compose -f test/integration/${COMPOSE_FILE} ps -a
+          go test -tags=integration -v test/integration/integration_test.go
+
