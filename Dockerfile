@@ -7,7 +7,7 @@ RUN addgroup -S -g 101 clickhouse \
     && chown -R clickhouse:clickhouse /var/lib/clickhouse \
     && chmod ugo+Xrw -R /var/lib/clickhouse /etc/clickhouse-backup
 
-RUN apk update && apk add --no-cache su-exec ca-certificates tzdata bash && update-ca-certificates
+RUN apk update && apk add --no-cache ca-certificates tzdata bash curl && update-ca-certificates
 
 COPY clickhouse-backup/clickhouse-backup /bin/clickhouse-backup
 RUN chmod +x /bin/clickhouse-backup
