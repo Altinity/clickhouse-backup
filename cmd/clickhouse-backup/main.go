@@ -116,14 +116,14 @@ func main() {
 			Usage:     "Print list of backups",
 			UsageText: "clickhouse-backup list [all|local|remote] [latest|penult]",
 			Action: func(c *cli.Context) error {
-				config := getConfig(c)
+				cfg := getConfig(c)
 				switch c.Args().Get(0) {
 				case "local":
-					return backup.PrintLocalBackups(config, c.Args().Get(1))
+					return backup.PrintLocalBackups(cfg, c.Args().Get(1))
 				case "remote":
-					return backup.PrintRemoteBackups(config, c.Args().Get(1))
+					return backup.PrintRemoteBackups(cfg, c.Args().Get(1))
 				case "all", "":
-					return backup.PrintAllBackups(config, c.Args().Get(1))
+					return backup.PrintAllBackups(cfg, c.Args().Get(1))
 				default:
 					log.Errorf("Unknown command '%s'\n", c.Args().Get(0))
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
@@ -215,7 +215,7 @@ func main() {
 			Name:  "server",
 			Usage: "Run API server",
 			Action: func(c *cli.Context) error {
-				return server.Server(cliapp, getConfig(c), getConfigPath(c), version)
+				return server.Server(cliapp, getConfigPath(c), version)
 			},
 			Flags: cliapp.Flags,
 		},
@@ -227,12 +227,12 @@ func main() {
 
 func getConfig(ctx *cli.Context) *config.Config {
 	configPath := getConfigPath(ctx)
-	config, err := config.LoadConfig(configPath)
+	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		log.Fatal(err.Error())
 	}
-	log.SetLevelFromString(config.General.LogLevel)
-	return config
+	log.SetLevelFromString(cfg.General.LogLevel)
+	return cfg
 }
 
 func getConfigPath(ctx *cli.Context) string {
