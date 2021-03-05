@@ -383,6 +383,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, _ *http.Request) {
 		backupsJSON = append(backupsJSON, backupJSON{
 			Name:     b.BackupName,
 			Created:  b.CreationDate.Format(APITimeFormat),
+			Size:     b.DataSize + b.MetadataSize,
 			Location: "local",
 		})
 	}
@@ -396,7 +397,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, _ *http.Request) {
 			backupsJSON = append(backupsJSON, backupJSON{
 				Name:     b.BackupName,
 				Created:  b.CreationDate.Format(APITimeFormat),
-				Size:     b.DataSize,
+				Size:     b.DataSize + b.MetadataSize,
 				Location: "remote",
 			})
 		}
