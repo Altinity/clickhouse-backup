@@ -5,8 +5,8 @@ import (
 	"os"
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
+	// "github.com/AlexAkulov/clickhouse-backup/internal/logfmt"
 	"github.com/AlexAkulov/clickhouse-backup/internal/logcli"
-	"github.com/AlexAkulov/clickhouse-backup/internal/logfmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/backup"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/server"
 
@@ -25,8 +25,8 @@ var (
 )
 
 func main() {
-	log.SetHandler(logfmt.New(os.Stdout))
-	log.SetHandler(logcli.New(os.Stderr))
+	// log.SetHandler(logfmt.New(os.Stdout))
+	log.SetHandler(logcli.New(os.Stdout))
 	cliapp := cli.NewApp()
 	cliapp.Name = "clickhouse-backup"
 	cliapp.Usage = "Tool for easy backup of ClickHouse with cloud support"
