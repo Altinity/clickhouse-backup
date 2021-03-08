@@ -107,6 +107,7 @@ jobs:
 
       - name: Building docker image
         env:
+          CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
           DOCKER_REPO: ${{ secrets.DOCKER_REPO }}
           DOCKER_IMAGE: ${{ secrets.DOCKER_IMAGE }}
           DOCKER_TOKEN: ${{ secrets.DOCKER_TOKEN }}
