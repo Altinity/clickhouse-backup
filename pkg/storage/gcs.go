@@ -39,7 +39,7 @@ func (gcs *GCS) Connect() error {
 
 func (gcs *GCS) Walk(gcsPath string, process func(r RemoteFile)) error {
 	ctx := context.Background()
-	it := gcs.client.Bucket(gcs.Config.Bucket).Objects(ctx, nil)
+	it := gcs.client.Bucket(gcs.Config.Bucket).Objects(ctx, &storage.Query{Prefix: gcsPath})
 	for {
 		object, err := it.Next()
 		switch err {
