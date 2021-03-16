@@ -15,14 +15,14 @@ import (
 
 // Config - config file format
 type Config struct {
-	General    GeneralConfig    `yaml:"general"`
-	ClickHouse ClickHouseConfig `yaml:"clickhouse"`
-	S3         S3Config         `yaml:"s3"`
-	GCS        GCSConfig        `yaml:"gcs"`
-	COS        COSConfig        `yaml:"cos"`
-	API        APIConfig        `yaml:"api"`
-	FTP        FTPConfig        `yaml:"ftp"`
-	AzureBlob  AzureBlobConfig  `yaml:"azblob"`
+	General    GeneralConfig    `yaml:"general" envconfig:"_"`
+	ClickHouse ClickHouseConfig `yaml:"clickhouse" envconfig:"_"`
+	S3         S3Config         `yaml:"s3" envconfig:"_"`
+	GCS        GCSConfig        `yaml:"gcs" envconfig:"_"`
+	COS        COSConfig        `yaml:"cos" envconfig:"_"`
+	API        APIConfig        `yaml:"api" envconfig:"_"`
+	FTP        FTPConfig        `yaml:"ftp" envconfig:"_"`
+	AzureBlob  AzureBlobConfig  `yaml:"azblob" envconfig:"_"`
 }
 
 // GeneralConfig - general setting section
