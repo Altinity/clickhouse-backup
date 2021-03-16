@@ -1,4 +1,3 @@
-#FROM scratch
 FROM alpine:3.12
 
 RUN addgroup -S -g 101 clickhouse \

@@ -47,9 +47,8 @@ jobs:
         run: |
           DOCKER_TAG=${GITHUB_REF##*/}
           DOCKER_TAG=${DOCKER_TAG##*\\}
-          export DOCKER_TAG=${DOCKER_TAG//v}
+          export DOCKER_TAG=${DOCKER_TAG#v}
           echo "::set-output name=docker_tag::${DOCKER_TAG:-dev}"
-
 
       - run: make build
       - run: make config
@@ -130,10 +129,10 @@ jobs:
           echo ${DOCKER_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin
 
           docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
-          docker image tag ${DOCKER_IMAGE}:${DOCKER_TAG} $DOCKER_REGISTRY/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}
-          docker image tag ${DOCKER_IMAGE}:${DOCKER_TAG} $DOCKER_REGISTRY/${DOCKER_REPO}/${DOCKER_IMAGE}:latest
-          docker push ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}
-          docker push ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:latest
+          docker image tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_REGISTRY}${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}
+          docker image tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_REGISTRY}${DOCKER_REPO}/${DOCKER_IMAGE}:latest
+          docker push ${DOCKER_REGISTRY}${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}
+          docker push ${DOCKER_REGISTRY}${DOCKER_REPO}/${DOCKER_IMAGE}:latest
 
 
 
