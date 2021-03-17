@@ -150,9 +150,6 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 }
 
 func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPath string) error {
-	if err := os.MkdirAll(localPath, os.ModePerm); err != nil {
-		return err
-	}
 	archiveName := path.Join(bd.path, fmt.Sprintf("%s.%s", remotePath, getExtension(bd.compressionFormat)))
 	if err := bd.Connect(); err != nil {
 		return err
