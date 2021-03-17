@@ -61,6 +61,13 @@ jobs:
           sudo pip3 install --prefer-binary -U setuptools
           sudo pip3 install --prefer-binary -U docker-compose
 
+      - name: Extract DOCKER_TAG version
+        id: docker_tag
+        run: |
+          DOCKER_TAG=${GITHUB_REF##*/}
+          export DOCKER_TAG=${DOCKER_TAG##*\\}
+          echo "::set-output name=docker_tag::${DOCKER_TAG:-dev}"
+
       - run: make build
       - run: make config
       - run: make test
@@ -97,24 +104,9 @@ jobs:
           docker-compose -f test/integration/${COMPOSE_FILE} ps -a
           go test -tags=integration -v test/integration/integration_test.go
 
-# run docker only if build successfull
-  docker:
-    name: Docker after build
-    runs-on: ubuntu-latest
-    needs: [build]
-    steps:
-      - name: Checkout project
-        uses: actions/checkout@v2
-
-      - name: Extract DOCKER_TAG version
-        id: docker_tag
-        run: |
-          DOCKER_TAG=${GITHUB_REF##*/}
-          export DOCKER_TAG=${DOCKER_TAG##*\\}
-          echo "::set-output name=docker_tag::${DOCKER_TAG:-dev}"
-
-      - name: Publish docker image
+      - name: Building docker image
         env:
+          CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
           DOCKER_REPO: ${{ secrets.DOCKER_REPO }}
           DOCKER_IMAGE: ${{ secrets.DOCKER_IMAGE }}
           DOCKER_TOKEN: ${{ secrets.DOCKER_TOKEN }}
@@ -122,7 +114,8 @@ jobs:
           DOCKER_REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
           DOCKER_TAG: ${{ steps.docker_tag.outputs.docker_tag }}
         run: |
-          if [[ "${DOCKER_TOKEN}" != "" ]]; then
+          if [[ "${CLICKHOUSE_VERSION}" == "21.3" && "${DOCKER_TOKEN}" != "" ]]; then
+            echo ${DOCKER_BRANCH} ${DOCKER_TAG} ${DOCKER_REPO}
             echo ${DOCKER_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin
 
             docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
