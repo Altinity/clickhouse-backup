@@ -103,6 +103,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build]
     steps:
+      - name: Checkout project
+        uses: actions/checkout@v2
+
       - name: Extract DOCKER_TAG version
         id: docker_tag
         run: |
