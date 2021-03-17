@@ -111,7 +111,7 @@ jobs:
           DOCKER_IMAGE: ${{ secrets.DOCKER_IMAGE }}
           DOCKER_TOKEN: ${{ secrets.DOCKER_TOKEN }}
           DOCKER_USER: ${{ secrets.DOCKER_USER }}
-          DOCKER_REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
+          DOCKER_REGISTRY: ${{ secrets.DOCKER_REGISTRY }}/
           DOCKER_TAG: ${{ steps.docker_tag.outputs.docker_tag }}
         run: |
           if [[ "${CLICKHOUSE_VERSION}" == "21.3" && "${DOCKER_TOKEN}" != "" ]]; then
