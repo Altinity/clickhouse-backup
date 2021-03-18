@@ -26,7 +26,7 @@ TODO:
 - ClickHouse above 1.1.54390 is supported
 - Only MergeTree family tables engines
 
-## Download
+## Installation
 
 - Download the latest binary from the [releases](https://github.com/AlexAkulov/clickhouse-backup/releases) page and decompress with:
 
@@ -34,10 +34,10 @@ TODO:
 tar -zxvf clickhouse-backup.tar.gz
 ```
 
-- Use the official tiny Docker image and run it like:
+- Use the official tiny Docker image and run it on host where installed `clickhouse-server`:
 
 ```shell
-docker run --rm -it --network host -v "/var/lib/clickhouse:/var/lib/clickhouse" \
+docker run -u $(id -u clickhouse) --rm -it --network host -v "/var/lib/clickhouse:/var/lib/clickhouse" \
    -e CLICKHOUSE_PASSWORD="password" \
    -e S3_BUCKET="clickhouse-backup" \
    -e S3_ACCESS_KEY="access_key" \
@@ -105,7 +105,6 @@ clickhouse:
   password: ""                   # CLICKHOUSE_PASSWORD
   host: localhost                # CLICKHOUSE_HOST
   port: 9000                     # CLICKHOUSE_PORT
-  timeout: 5m                    # CLICKHOUSE_TIMEOUT
   disk_mapping: {}               # CLICKHOUSE_DISK_MAPPING
   skip_tables:                   # CLICKHOUSE_SKIP_TABLES
     - system.*

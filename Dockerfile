@@ -8,10 +8,12 @@ RUN addgroup -S -g 101 clickhouse \
 
 RUN apk update && apk add --no-cache ca-certificates tzdata bash curl && update-ca-certificates
 
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 COPY clickhouse-backup/clickhouse-backup /bin/clickhouse-backup
 RUN chmod +x /bin/clickhouse-backup
 
 USER clickhouse
 
-ENTRYPOINT [ "/bin/bash" ]
-CMD [ "-c", "/bin/clickhouse-backup --help" ]
+ENTRYPOINT ["/entrypoint.sh"]
+CMD [ "clickhouse-backup", "--help" ]

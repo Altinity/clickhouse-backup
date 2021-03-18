@@ -122,10 +122,9 @@ jobs:
           DOCKER_IMAGE: ${{ secrets.DOCKER_IMAGE }}
           DOCKER_TOKEN: ${{ secrets.DOCKER_TOKEN }}
           DOCKER_USER: ${{ secrets.DOCKER_USER }}
-          DOCKER_REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
+          DOCKER_REGISTRY: ${{ secrets.DOCKER_REGISTRY }}/
           DOCKER_TAG: ${{ steps.docker_tag.outputs.docker_tag }}
         run: |
-          echo ${DOCKER_BRANCH} ${DOCKER_TAG} ${DOCKER_REPO}
           echo ${DOCKER_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin
 
           docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
