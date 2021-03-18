@@ -127,8 +127,12 @@ Vagrant.configure(2) do |config|
     # export DOCKER_IMAGE=altinity/clickhouse-backup:latest
     export DOCKER_IMAGE=clickhousepro/clickhouse-backup:dev
 
+    pwd
+    cd /vagrant/
     make build
     mv -v clickhouse-backup/clickhouse-backup /bin/
+
+    clickhouse-backup list local
 
     docker pull $DOCKER_IMAGE
     docker run -u $(id -u clickhouse) --rm --network host -v "/var/lib/clickhouse:/var/lib/clickhouse" \
