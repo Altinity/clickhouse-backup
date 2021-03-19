@@ -25,7 +25,7 @@ jobs:
           - '19.16.19.85'
           - '20.3'
           - '20.8'
-          - '21.2'
+          - '21.3'
     steps:
       - name: Checkout project
         uses: actions/checkout@v2
@@ -114,11 +114,11 @@ jobs:
           DOCKER_REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
           DOCKER_TAG: ${{ steps.docker_tag.outputs.docker_tag }}
         run: |
-          if [[ "${CLICKHOUSE_VERSION}" == "21.2" && "${DOCKER_TOKEN}" != "" ]]; then
-            echo ${DOCKER_BRANCH} ${DOCKER_TAG} ${DOCKER_REPO}
-            echo ${DOCKER_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin
+          if [[ "${CLICKHOUSE_VERSION}" == "21.3" && "${DOCKER_TOKEN}" != "" ]]; then
+            export DOCKER_REGISTRY=${DOCKER_REGISTRY:-docker.io}
+            echo ${DOCKER_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin ${DOCKER_REGISTRY}
 
             docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
-            docker image tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_REGISTRY}${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}
-            docker push ${DOCKER_REGISTRY}${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}
+            docker image tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}
+            docker push ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}
           fi
