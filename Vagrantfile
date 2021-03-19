@@ -125,7 +125,7 @@ Vagrant.configure(2) do |config|
     systemctl restart clickhouse-server
     export DOCKER_IMAGE=alexakulov/clickhouse-backup
     # export DOCKER_IMAGE=altinity/clickhouse-backup:latest
-    export DOCKER_IMAGE=clickhousepro/clickhouse-backup:dev
+    # export DOCKER_IMAGE=clickhousepro/clickhouse-backup:dev
 
     pwd
     cd /vagrant/

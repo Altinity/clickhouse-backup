@@ -1,10 +1,7 @@
 FROM alpine:3.12
 
 RUN addgroup -S -g 101 clickhouse \
-    && adduser -S -h /var/lib/clickhouse -s /bin/bash -G clickhouse -g "ClickHouse server" -u 101 clickhouse \
-    && mkdir -p /var/lib/clickhouse/backup /etc/clickhouse-backup \
-    && chown -R clickhouse:clickhouse /var/lib/clickhouse \
-    && chmod ugo+Xrw -R /var/lib/clickhouse /etc/clickhouse-backup
+    && adduser -S -h /var/lib/clickhouse -s /bin/bash -G clickhouse -g "ClickHouse server" -u 101 clickhouse
 
 RUN apk update && apk add --no-cache ca-certificates tzdata bash curl && update-ca-certificates
 
