@@ -43,6 +43,7 @@ type GeneralConfig struct {
 	BackupsToKeepLocal  int    `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL"`
 	BackupsToKeepRemote int    `yaml:"backups_to_keep_remote" envconfig:"BACKUPS_TO_KEEP_REMOTE"`
 	LogLevel            string `yaml:"log_level" envconfig:"LOG_LEVEL"`
+	AllowEmptyBackups   bool   `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
 }
 
 // GCSConfig - GCS settings section
@@ -126,14 +127,15 @@ type ClickHouseConfig struct {
 }
 
 type APIConfig struct {
-	ListenAddr      string `yaml:"listen" envconfig:"API_LISTEN"`
-	EnableMetrics   bool   `yaml:"enable_metrics" envconfig:"API_ENABLE_METRICS"`
-	EnablePprof     bool   `yaml:"enable_pprof" envconfig:"API_ENABLE_PPROF"`
-	Username        string `yaml:"username" envconfig:"API_USERNAME"`
-	Password        string `yaml:"password" envconfig:"API_PASSWORD"`
-	Secure          bool   `yaml:"secure" envconfig:"API_SECURE"`
-	CertificateFile string `yaml:"certificate_file" envconfig:"API_CERTIFICATE_FILE"`
-	PrivateKeyFile  string `yaml:"private_key_file" envconfig:"API_PRIVATE_KEY_FILE"`
+	ListenAddr              string `yaml:"listen" envconfig:"API_LISTEN"`
+	EnableMetrics           bool   `yaml:"enable_metrics" envconfig:"API_ENABLE_METRICS"`
+	EnablePprof             bool   `yaml:"enable_pprof" envconfig:"API_ENABLE_PPROF"`
+	Username                string `yaml:"username" envconfig:"API_USERNAME"`
+	Password                string `yaml:"password" envconfig:"API_PASSWORD"`
+	Secure                  bool   `yaml:"secure" envconfig:"API_SECURE"`
+	CertificateFile         string `yaml:"certificate_file" envconfig:"API_CERTIFICATE_FILE"`
+	PrivateKeyFile          string `yaml:"private_key_file" envconfig:"API_PRIVATE_KEY_FILE"`
+	CreateIntegrationTables bool   `yaml:"create_integration_tables" envconfig:"API_CREATE_INTEGRATION_TABLES"`
 }
 
 func (cfg *Config) GetArchiveExtension() string {
@@ -215,6 +217,12 @@ func ValidateConfig(cfg *Config) error {
 			cfg.S3.StorageClass, strings.Join(s3.StorageClass_Values(), ", "))
 	}
 	if cfg.API.Secure {
+		if cfg.API.CertificateFile == "" {
+			return fmt.Errorf("api.certificate_file must be defined")
+		}
+		if cfg.API.PrivateKeyFile == "" {
+			return fmt.Errorf("api.private_key_file must be defined")
+		}
 		_, err := tls.LoadX509KeyPair(cfg.API.CertificateFile, cfg.API.PrivateKeyFile)
 		if err != nil {
 			return err

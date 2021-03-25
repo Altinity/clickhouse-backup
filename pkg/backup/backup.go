@@ -100,7 +100,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 		}
 		i++
 	}
-	if i == 0 {
+	if i == 0 && !cfg.General.AllowEmptyBackups {
 		return fmt.Errorf("no tables for backup")
 	}
 
