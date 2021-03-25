@@ -10,7 +10,7 @@ RUN chmod +x /entrypoint.sh
 COPY clickhouse-backup/clickhouse-backup /bin/clickhouse-backup
 RUN chmod +x /bin/clickhouse-backup
 
-USER clickhouse
+# USER clickhouse
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD [ "clickhouse-backup", "--help" ]
