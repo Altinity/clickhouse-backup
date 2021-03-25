@@ -150,6 +150,7 @@ func (s *S3) StatFile(key string) (RemoteFile, error) {
 func (s *S3) Walk(s3Path string, recursive bool, process func(r RemoteFile) error) error {
 	return s.remotePager(path.Join(s.Config.Path, s3Path), recursive, func(page *s3.ListObjectsV2Output) error {
 		for _, cp := range page.CommonPrefixes {
+			// TODO: тут нельзя просто делать return, нужно собрать все ошибки в канал или ещё как-то
 			if err := process(&s3File{
 				name: strings.TrimPrefix(*cp.Prefix, path.Join(s.Config.Path, s3Path)),
 			}); err != nil {
@@ -179,6 +180,7 @@ func (s *S3) remotePager(s3Path string, recursive bool, pager func(page *s3.List
 		params.SetDelimiter("/")
 	}
 	wrapper := func(page *s3.ListObjectsV2Output, lastPage bool) bool {
+		// TODO: fix check error here
 		pager(page)
 		return true
 	}

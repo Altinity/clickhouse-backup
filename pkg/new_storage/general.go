@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"os"
 	"path"
 	"path/filepath"
@@ -17,6 +16,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/internal/progressbar"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 
+	apexLog "github.com/apex/log"
 	"github.com/mholt/archiver"
 	"gopkg.in/djherbis/buffer.v1"
 	"gopkg.in/djherbis/nio.v2"
@@ -31,6 +31,7 @@ type Backup struct {
 	metadata.BackupMetadata
 	Legacy        bool
 	FileExtension string
+	Broken        string
 }
 
 type BackupDestination struct {
@@ -79,7 +80,7 @@ func isLegacyBackup(backupName string) (bool, string, string) {
 
 func (bd *BackupDestination) BackupList() ([]Backup, error) {
 	result := []Backup{}
-	if err := bd.Walk("/", false, func(o RemoteFile) error {
+	err := bd.Walk("/", false, func(o RemoteFile) error {
 		// Legacy backup
 		if ok, backupName, fileExtension := isLegacyBackup(strings.TrimPrefix(o.Name(), "/")); ok {
 			result = append(result, Backup{
@@ -90,32 +91,47 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 				},
 				true,
 				fileExtension,
+				"",
 			})
 			return nil
 		}
 		r, err := bd.GetFileReader(path.Join(o.Name(), "metadata.json"))
 		if err != nil {
-			return err
+			result = append(result, Backup{
+				metadata.BackupMetadata{
+					BackupName: strings.Trim(o.Name(), "/"),
+				}, false, "", "broken (not found metadata.json)",
+			})
+			// TODO: после того как Walk будет нормально обрабатывать ошибки тут и дальше нужно вернуть err или залогировать их тут
+			return nil
 		}
 		b, err := ioutil.ReadAll(r)
 		if err != nil {
-			return err
+			result = append(result, Backup{
+				metadata.BackupMetadata{
+					BackupName: strings.Trim(o.Name(), "/"),
+				}, false, "", "broken (can't get metadata.json)",
+			})
+			return nil
 		}
 		var m metadata.BackupMetadata
 		if err := json.Unmarshal(b, &m); err != nil {
-			return err
+			result = append(result, Backup{
+				metadata.BackupMetadata{
+					BackupName: strings.Trim(o.Name(), "/"),
+				}, false, "", "broken (bad metadata.json)",
+			})
+			return nil
 		}
 		result = append(result, Backup{
-			m, false, "",
+			m, false, "", "",
 		})
 		return nil
-	}); err != nil {
-		return nil, err
-	}
+	})
 	sort.SliceStable(result, func(i, j int) bool {
 		return result[i].CreationDate.Before(result[j].CreationDate)
 	})
-	return result, nil
+	return result, err
 }
 
 func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPath string) error {
@@ -255,33 +271,38 @@ func (bd *BackupDestination) DownloadPath(size int64, remotePath string, localPa
 	}
 	bar := progressbar.StartNewByteBar(!bd.disableProgressBar, totalBytes)
 	defer bar.Finish()
+	log := apexLog.WithFields(apexLog.Fields{
+		"path":      remotePath,
+		"operation": "download",
+	})
 	return bd.Walk(remotePath, true, func(f RemoteFile) error {
+		// TODO: return err приостанавливает загрузку, нужно научить Walk обратывать ошибки или добавить какие-то ретраи
 		r, err := bd.GetFileReader(path.Join(remotePath, f.Name()))
 		if err != nil {
-			log.Panic(err)
+			log.Error(err.Error())
 			return err
 		}
 		dstFilePath := path.Join(localPath, f.Name())
 		dstDirPath, _ := path.Split(dstFilePath)
 		if err := os.MkdirAll(dstDirPath, 0750); err != nil {
-			log.Panic(err)
+			log.Error(err.Error())
 			return err
 		}
 		dst, err := os.Create(dstFilePath)
 		if err != nil {
-			log.Panic(err)
+			log.Error(err.Error())
 			return err
 		}
 		if _, err := io.CopyBuffer(dst, r, nil); err != nil {
-			log.Panic(err)
+			log.Error(err.Error())
 			return err
 		}
 		if err := dst.Close(); err != nil {
-			log.Panic(err)
+			log.Error(err.Error())
 			return err
 		}
 		if err := r.Close(); err != nil {
-			log.Panic(err)
+			log.Error(err.Error())
 			return err
 		}
 		bar.Add64(f.Size())

@@ -358,7 +358,7 @@ func (api *APIServer) httpTablesHandler(w http.ResponseWriter, _ *http.Request) 
 }
 
 // httpTablesHandler - display list of all backups stored locally and remotely
-// CREATE TABLE system.backup_list (name String, created DateTime, size Int64, location String) ENGINE=URL('http://127.0.0.1:7171/backup/list?user=user&pass=pass', JSONEachRow)
+// CREATE TABLE system.backup_list (name String, created DateTime, size Int64, location String, desc String) ENGINE=URL('http://127.0.0.1:7171/backup/list?user=user&pass=pass', JSONEachRow)
 // ??? INSERT INTO system.backup_list (name,location) VALUES ('backup_name', 'remote') - upload backup
 // ??? INSERT INTO system.backup_list (name) VALUES ('backup_name') - create backup
 func (api *APIServer) httpListHandler(w http.ResponseWriter, _ *http.Request) {
@@ -367,6 +367,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, _ *http.Request) {
 		Created  string `json:"created"`
 		Size     int64  `json:"size,omitempty"`
 		Location string `json:"location"`
+		Desc     string `json:"desc"`
 	}
 	backupsJSON := make([]backupJSON, 0)
 	cfg, err := config.LoadConfig(api.configPath)
@@ -380,11 +381,19 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	for _, b := range localBackups {
+		description := b.DataFormat
+		if b.Legacy {
+			description = "old-format"
+		}
+		if b.Broken != "" {
+			description = b.Broken
+		}
 		backupsJSON = append(backupsJSON, backupJSON{
 			Name:     b.BackupName,
 			Created:  b.CreationDate.Format(APITimeFormat),
 			Size:     b.DataSize + b.MetadataSize,
 			Location: "local",
+			Desc:     description,
 		})
 	}
 	if cfg.General.RemoteStorage != "none" {
@@ -394,11 +403,19 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, _ *http.Request) {
 			return
 		}
 		for _, b := range remoteBackups {
+			description := b.DataFormat
+			if b.Legacy {
+				description = "old-format"
+			}
+			if b.Broken != "" {
+				description = b.Broken
+			}
 			backupsJSON = append(backupsJSON, backupJSON{
 				Name:     b.BackupName,
 				Created:  b.CreationDate.Format(APITimeFormat),
 				Size:     b.DataSize + b.MetadataSize,
 				Location: "remote",
+				Desc:     description,
 			})
 		}
 	}
