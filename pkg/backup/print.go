@@ -36,14 +36,18 @@ func printBackups(w io.Writer, backupList []new_storage.Backup, format, location
 		// }
 		for _, backup := range backupList {
 			size := utils.FormatBytes(backup.DataSize + backup.MetadataSize)
-			backupFormat := backup.DataFormat
+			description := backup.DataFormat
 			if backup.Legacy {
 				if location == "local" {
 					size = "???"
 				}
-				backupFormat = "old-format"
+				description = "old-format"
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", backup.BackupName, size, backup.CreationDate.Format("02/01/2006 15:04:05"), location, backupFormat)
+			if backup.Broken != "" {
+				description = backup.Broken
+				size = "???"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", backup.BackupName, size, backup.CreationDate.Format("02/01/2006 15:04:05"), location, description)
 		}
 	default:
 		return fmt.Errorf("'%s' undefined", format)
@@ -68,7 +72,7 @@ func GetLocalBackups(cfg *config.Config) ([]new_storage.Backup, error) {
 		Config: &cfg.ClickHouse,
 	}
 	if err := ch.Connect(); err != nil {
-		return nil, fmt.Errorf("can't connect to clickhouse: %v", err)
+		return nil, fmt.Errorf("can't connect to clickhouse: %w", err)
 	}
 	defer ch.Close()
 

@@ -190,7 +190,7 @@ func (ch *ClickHouse) GetVersion() (int, error) {
 	var result []string
 	query := "SELECT value FROM `system`.`build_options` where name='VERSION_INTEGER'"
 	if err := ch.conn.Select(&result, query); err != nil {
-		return 0, fmt.Errorf("can't get сlickHouse version: %v", err)
+		return 0, fmt.Errorf("can't get сlickHouse version: %w", err)
 	}
 	if len(result) == 0 {
 		return 0, nil
@@ -215,7 +215,7 @@ func (ch *ClickHouse) FreezeTableOldWay(table *Table, name string) error {
 	}
 	q := fmt.Sprintf("SELECT DISTINCT partition_id FROM `system`.`parts` WHERE database='%s' AND table='%s'", table.Database, table.Name)
 	if err := ch.conn.Select(&partitions, q); err != nil {
-		return fmt.Errorf("can't get partitions for '%s.%s': %v", table.Database, table.Name, err)
+		return fmt.Errorf("can't get partitions for '%s.%s': %w", table.Database, table.Name, err)
 	}
 	withNameQuery := ""
 	if name != "" {
@@ -239,7 +239,7 @@ func (ch *ClickHouse) FreezeTableOldWay(table *Table, name string) error {
 			)
 		}
 		if _, err := ch.conn.Exec(query); err != nil {
-			return fmt.Errorf("can't freeze partition '%s': %v", item.PartitionID, err)
+			return fmt.Errorf("can't freeze partition '%s': %w", item.PartitionID, err)
 		}
 	}
 	return nil
@@ -410,11 +410,11 @@ func (ch *ClickHouse) CopyData(backupName string, backupTable metadata.TableMeta
 					return nil
 				}
 				if err := os.Link(filePath, dstFilePath); err != nil {
-					return fmt.Errorf("failed to crete hard link '%s' -> '%s': %v", filePath, dstFilePath, err)
+					return fmt.Errorf("failed to crete hard link '%s' -> '%s': %w", filePath, dstFilePath, err)
 				}
 				return ch.Chown(dstFilePath)
 			}); err != nil {
-				return fmt.Errorf("error during filepath.Walk for partition '%s': %v", partition.Path, err)
+				return fmt.Errorf("error during filepath.Walk for partition '%s': %w", partition.Name, err)
 			}
 		}
 	}
