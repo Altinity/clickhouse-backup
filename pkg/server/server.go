@@ -8,17 +8,20 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/http/pprof"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/backup"
-	"github.com/apex/log"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 
+	apexLog "github.com/apex/log"
 	"github.com/google/shlex"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
@@ -122,27 +125,33 @@ func Server(c *cli.App, configPath string, clickhouseBackupVersion string) error
 	signal.Notify(sigterm, os.Interrupt, syscall.SIGTERM)
 	sighup := make(chan os.Signal, 1)
 	signal.Notify(sighup, os.Interrupt, syscall.SIGHUP)
-	log.Infof("Starting API server on %s", api.config.API.ListenAddr)
+	apexLog.Infof("Starting API server on %s", api.config.API.ListenAddr)
 	if err := api.Restart(); err != nil {
 		return err
+	}
+	if cfg.API.CreateIntegrationTables {
+		apexLog.Infof("Create integration tables")
+		if err := api.CreateIntegrationTables(); err != nil {
+			return err
+		}
 	}
 
 	for {
 		select {
 		case <-api.restart:
 			if err := api.Restart(); err != nil {
-				log.Errorf("Failed to restarting API server: %v", err)
+				apexLog.Errorf("Failed to restarting API server: %v", err)
 				continue
 			}
-			log.Infof("Reloaded by HTTP")
+			apexLog.Infof("Reloaded by HTTP")
 		case <-sighup:
 			if err := api.Restart(); err != nil {
-				log.Errorf("Failed to restarting API server: %v", err)
+				apexLog.Errorf("Failed to restarting API server: %v", err)
 				continue
 			}
-			log.Info("Reloaded by SIGHUP")
+			apexLog.Info("Reloaded by SIGHUP")
 		case <-sigterm:
-			log.Info("Stopping API server")
+			apexLog.Info("Stopping API server")
 			return api.server.Close()
 		}
 	}
@@ -250,7 +259,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "", err)
 			return
 		}
-		log.Infof(row.Command)
+		apexLog.Infof(row.Command)
 		args, err := shlex.Split(row.Command)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "", err)
@@ -260,7 +269,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 		switch command {
 		case "create", "restore", "upload", "download":
 			if api.status.inProgress() {
-				log.Info(ErrAPILocked.Error())
+				apexLog.Info(ErrAPILocked.Error())
 				writeError(w, http.StatusLocked, row.Command, ErrAPILocked)
 				return
 			}
@@ -276,11 +285,11 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 				if err != nil {
 					api.metrics.FailedCounter[command].Inc()
 					api.metrics.LastStatus[command].Set(0)
-					log.Error(err.Error())
+					apexLog.Error(err.Error())
 					return
 				}
 				if err := api.updateSizeOfLastBackup(); err != nil {
-					log.Errorf("update size: %v", err)
+					apexLog.Errorf("update size: %v", err)
 				}
 				api.metrics.SuccessfulCounter[command].Inc()
 				api.metrics.LastStatus[command].Set(1)
@@ -295,7 +304,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 			return
 		case "delete":
 			if api.status.inProgress() {
-				log.Info(ErrAPILocked.Error())
+				apexLog.Info(ErrAPILocked.Error())
 				writeError(w, http.StatusLocked, row.Command, ErrAPILocked)
 				return
 			}
@@ -304,12 +313,12 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 			defer api.status.stop(err)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, row.Command, err)
-				log.Error(err.Error())
+				apexLog.Error(err.Error())
 				return
 			}
-			log.Info("OK")
+			apexLog.Info("OK")
 			if err := api.updateSizeOfLastBackup(); err != nil {
-				log.Errorf("update size: %v", err)
+				apexLog.Errorf("update size: %v", err)
 			}
 			sendJSONEachRow(w, http.StatusCreated, struct {
 				Status    string `json:"status"`
@@ -425,7 +434,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, _ *http.Request) {
 // httpCreateHandler - create a backup
 func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) {
 	if api.status.inProgress() {
-		log.Info(ErrAPILocked.Error())
+		apexLog.Info(ErrAPILocked.Error())
 		writeError(w, http.StatusLocked, "create", ErrAPILocked)
 		return
 	}
@@ -463,11 +472,11 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			api.metrics.FailedCounter["create"].Inc()
 			api.metrics.LastStatus["create"].Set(0)
-			log.Errorf("CreateBackup error: %v", err)
+			apexLog.Errorf("CreateBackup error: %v", err)
 			return
 		}
 		if err := api.updateSizeOfLastBackup(); err != nil {
-			log.Errorf("update size: %v", err)
+			apexLog.Errorf("update size: %v", err)
 		}
 		api.metrics.SuccessfulCounter["create"].Inc()
 		api.metrics.LastStatus["create"].Set(1)
@@ -486,7 +495,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 // httpUploadHandler - upload a backup to remote storage
 func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) {
 	if api.status.inProgress() {
-		log.Info(ErrAPILocked.Error())
+		apexLog.Info(ErrAPILocked.Error())
 		writeError(w, http.StatusLocked, "upload", ErrAPILocked)
 		return
 	}
@@ -526,13 +535,13 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		err := backup.Upload(cfg, name, tablePattern, diffFrom, schemaOnly)
 		api.status.stop(err)
 		if err != nil {
-			log.Errorf("Upload error: %+v\n", err)
+			apexLog.Errorf("Upload error: %+v\n", err)
 			api.metrics.FailedCounter["upload"].Inc()
 			api.metrics.LastStatus["upload"].Set(0)
 			return
 		}
 		if err := api.updateSizeOfLastBackup(); err != nil {
-			log.Errorf("update size: %v", err)
+			apexLog.Errorf("update size: %v", err)
 		}
 		api.metrics.SuccessfulCounter["upload"].Inc()
 		api.metrics.LastStatus["upload"].Set(1)
@@ -555,7 +564,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 // httpRestoreHandler - restore a backup from local storage
 func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request) {
 	if api.status.inProgress() {
-		log.Info(ErrAPILocked.Error())
+		apexLog.Info(ErrAPILocked.Error())
 		writeError(w, http.StatusLocked, "restore", ErrAPILocked)
 		return
 	}
@@ -604,7 +613,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		err := backup.Restore(cfg, name, tablePattern, schemaOnly, dataOnly, dropTable)
 		api.status.stop(err)
 		if err != nil {
-			log.Errorf("Download error: %+v\n", err)
+			apexLog.Errorf("Download error: %+v\n", err)
 			api.metrics.FailedCounter["restore"].Inc()
 			api.metrics.LastStatus["restore"].Set(0)
 			return
@@ -626,7 +635,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 // httpDownloadHandler - download a backup from remote to local storage
 func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request) {
 	if api.status.inProgress() {
-		log.Info(ErrAPILocked.Error())
+		apexLog.Info(ErrAPILocked.Error())
 		writeError(w, http.StatusLocked, "download", ErrAPILocked)
 		return
 	}
@@ -661,13 +670,13 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		err := backup.Download(cfg, name, tablePattern, schemaOnly)
 		api.status.stop(err)
 		if err != nil {
-			log.Errorf("Download error: %+v\n", err)
+			apexLog.Errorf("Download error: %+v\n", err)
 			api.metrics.FailedCounter["download"].Inc()
 			api.metrics.LastStatus["download"].Set(0)
 			return
 		}
 		if err := api.updateSizeOfLastBackup(); err != nil {
-			log.Errorf("update size: %v", err)
+			apexLog.Errorf("update size: %v", err)
 		}
 		api.metrics.SuccessfulCounter["download"].Inc()
 		api.metrics.LastStatus["download"].Set(1)
@@ -686,7 +695,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 // httpDeleteHandler - delete a backup from local or remote storage
 func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	if api.status.inProgress() {
-		log.Info(ErrAPILocked.Error())
+		apexLog.Info(ErrAPILocked.Error())
 		writeError(w, http.StatusLocked, "delete", ErrAPILocked)
 		return
 	}
@@ -709,12 +718,12 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	api.status.stop(err)
 	if err != nil {
-		log.Errorf("delete backup error: %+v\n", err)
+		apexLog.Errorf("delete backup error: %+v\n", err)
 		writeError(w, http.StatusInternalServerError, "delete", err)
 		return
 	}
 	if err := api.updateSizeOfLastBackup(); err != nil {
-		log.Errorf("update size: %v", err)
+		apexLog.Errorf("update size: %v", err)
 	}
 	sendJSONEachRow(w, http.StatusOK, struct {
 		Status     string `json:"status"`
@@ -896,4 +905,35 @@ func setupMetrics() Metrics {
 	m.LastStatus["restore"].Set(2)
 
 	return m
+}
+
+func (api *APIServer) CreateIntegrationTables() error {
+	ch := &clickhouse.ClickHouse{
+		Config: &api.config.ClickHouse,
+	}
+	if err := ch.Connect(); err != nil {
+		return fmt.Errorf("can't connect to clickhouse: %w", err)
+	}
+	defer ch.Close()
+	port := strings.Split(api.config.API.ListenAddr, ":")[1]
+	auth := ""
+	if api.config.API.Username != "" || api.config.API.Password != "" {
+		params := url.Values{}
+		params.Add("user", api.config.API.Username)
+		params.Add("pass", api.config.API.Password)
+		auth = fmt.Sprintf("?%s", params.Encode())
+	}
+	schema := "http"
+	if api.config.API.Secure {
+		schema = "https"
+	}
+	query := fmt.Sprintf("CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String) ENGINE=URL('%s://127.0.0.1:%s/backup/actions%s', JSONEachRow)", schema, port, auth)
+	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_actions"}, query, true); err != nil {
+		return err
+	}
+	query = fmt.Sprintf("CREATE TABLE system.backup_list (name String, created DateTime, size Int64, location String, desc String) ENGINE=URL('%s://127.0.0.1:%s/backup/list%s', JSONEachRow)", schema, port, auth)
+	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_list"}, query, true); err != nil {
+		return err
+	}
+	return nil
 }
