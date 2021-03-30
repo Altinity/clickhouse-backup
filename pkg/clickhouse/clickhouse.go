@@ -294,6 +294,9 @@ func (ch *ClickHouse) Chown(filename string) error {
 		dataPath string
 		err      error
 	)
+	if os.Getuid() != 0 {
+		return nil
+	}
 	if ch.uid == nil || ch.gid == nil {
 		if dataPath, err = ch.GetDefaultPath(); err != nil {
 			return err
