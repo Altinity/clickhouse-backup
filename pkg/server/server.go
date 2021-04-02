@@ -118,22 +118,28 @@ func Server(c *cli.App, configPath string, clickhouseBackupVersion string) error
 		clickhouseBackupVersion: clickhouseBackupVersion,
 	}
 	api.metrics = setupMetrics()
+	apexLog.Infof("Starting API server on %s", api.config.API.ListenAddr)
+
+	if cfg.API.CreateIntegrationTables {
+		apexLog.Infof("Create integration tables")
+		for {
+			if err := api.CreateIntegrationTables(); err != nil {
+				apexLog.Error(err.Error())
+				time.Sleep(5 * time.Second)
+				continue
+			}
+			break
+		}
+	}
 	if err := api.updateSizeOfLastBackup(); err != nil {
-		return err
+		apexLog.Error(err.Error())
 	}
 	sigterm := make(chan os.Signal, 1)
 	signal.Notify(sigterm, os.Interrupt, syscall.SIGTERM)
 	sighup := make(chan os.Signal, 1)
 	signal.Notify(sighup, os.Interrupt, syscall.SIGHUP)
-	apexLog.Infof("Starting API server on %s", api.config.API.ListenAddr)
 	if err := api.Restart(); err != nil {
 		return err
-	}
-	if cfg.API.CreateIntegrationTables {
-		apexLog.Infof("Create integration tables")
-		if err := api.CreateIntegrationTables(); err != nil {
-			return err
-		}
 	}
 
 	for {
