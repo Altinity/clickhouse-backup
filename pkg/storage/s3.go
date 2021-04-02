@@ -54,6 +54,7 @@ func (s *S3) Connect() error {
 	if s.Config.DisableCertVerification {
 		tr := &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			Proxy:           http.ProxyFromEnvironment,
 		}
 		awsConfig.HTTPClient = &http.Client{Transport: tr}
 	}
