@@ -105,9 +105,28 @@ var (
 
 // Server - expose CLI commands as REST API
 func Server(c *cli.App, configPath string, clickhouseBackupVersion string) error {
-	cfg, err := config.LoadConfig(configPath)
-	if err != nil {
-		return err
+	var (
+		cfg *config.Config
+		err error
+	)
+	apexLog.Debug("Wait for ClickHouse")
+	for {
+		cfg, err = config.LoadConfig(configPath)
+		if err != nil {
+			apexLog.Error(err.Error())
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		ch := clickhouse.ClickHouse{
+			Config: &cfg.ClickHouse,
+		}
+		if err := ch.Connect(); err != nil {
+			apexLog.Error(err.Error())
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		ch.GetConn().Close()
+		break
 	}
 	api := APIServer{
 		c:                       c,
@@ -117,23 +136,18 @@ func Server(c *cli.App, configPath string, clickhouseBackupVersion string) error
 		status:                  &AsyncStatus{},
 		clickhouseBackupVersion: clickhouseBackupVersion,
 	}
-	api.metrics = setupMetrics()
-	apexLog.Infof("Starting API server on %s", api.config.API.ListenAddr)
-
 	if cfg.API.CreateIntegrationTables {
 		apexLog.Infof("Create integration tables")
-		for {
-			if err := api.CreateIntegrationTables(); err != nil {
-				apexLog.Error(err.Error())
-				time.Sleep(5 * time.Second)
-				continue
-			}
-			break
+		if err := api.CreateIntegrationTables(); err != nil {
+			apexLog.Error(err.Error())
 		}
 	}
+	api.metrics = setupMetrics()
+	apexLog.Debug("Update last backup size metrics")
 	if err := api.updateSizeOfLastBackup(); err != nil {
 		apexLog.Error(err.Error())
 	}
+	apexLog.Infof("Starting API server on %s", api.config.API.ListenAddr)
 	sigterm := make(chan os.Signal, 1)
 	signal.Notify(sigterm, os.Interrupt, syscall.SIGTERM)
 	sighup := make(chan os.Signal, 1)
