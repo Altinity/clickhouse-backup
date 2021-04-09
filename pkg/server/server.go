@@ -293,12 +293,14 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusLocked, row.Command, ErrAPILocked)
 				return
 			}
-			start := time.Now()
-			api.metrics.LastStart[command].Set(float64(start.Unix()))
-			defer api.metrics.LastDuration[command].Set(float64(time.Since(start).Nanoseconds()))
-			defer api.metrics.LastFinish[command].Set(float64(time.Now().Unix()))
-
 			go func() {
+				start := time.Now()
+				api.metrics.LastStart[command].Set(float64(start.Unix()))
+				defer func() {
+					api.metrics.LastDuration[command].Set(float64(time.Since(start).Nanoseconds()))
+					api.metrics.LastFinish[command].Set(float64(time.Now().Unix()))
+				}()
+
 				api.status.start(row.Command)
 				err := api.c.Run(append([]string{"clickhouse-backup", "-c", api.configPath}, args...))
 				defer api.status.stop(err)
