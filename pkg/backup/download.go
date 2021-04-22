@@ -119,6 +119,7 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 	for _, t := range tablesForDownload {
 		log := log.WithField("table", fmt.Sprintf("%s.%s", t.Database, t.Table))
 		remoteTableMetadata := path.Join(backupName, "metadata", clickhouse.TablePathEncode(t.Database), fmt.Sprintf("%s.json", clickhouse.TablePathEncode(t.Table)))
+		log.Debug(remoteTableMetadata)
 		tmReader, err := bd.GetFileReader(remoteTableMetadata)
 		if err != nil {
 			return err
@@ -127,6 +128,7 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 		if err != nil {
 			return err
 		}
+		tmReader.Close()
 		var tableMetadata metadata.TableMetadata
 		if err := json.Unmarshal(tmBody, &tableMetadata); err != nil {
 			return err

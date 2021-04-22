@@ -17,6 +17,7 @@ type FTP struct {
 	client *ftp.ServerConn
 	Config *config.FTPConfig
 	Debug  bool
+	dirCache map[string]struct{}
 }
 
 func (f *FTP) Connect() error {
@@ -43,6 +44,7 @@ func (f *FTP) Connect() error {
 		return err
 	}
 	f.client = c
+	f.dirCache = map[string]struct{}{}
 	return nil
 }
 
@@ -115,7 +117,9 @@ func (f *FTP) GetFileReader(key string) (io.ReadCloser, error) {
 }
 
 func (f *FTP) PutFile(key string, r io.ReadCloser) error {
-	return f.client.Stor(path.Join(f.Config.Path, key), r)
+	k := path.Join(f.Config.Path, key)
+	f.MkdirAll(path.Dir(k))
+	return f.client.Stor(k, r)
 }
 
 type ftpFile struct {
@@ -134,4 +138,18 @@ func (f *ftpFile) LastModified() time.Time {
 
 func (f *ftpFile) Name() string {
 	return f.name
+}
+
+func (f *FTP) MkdirAll(key string) error {
+	dirs := strings.Split(key, "/")
+	f.client.ChangeDir("/")
+	for i := range dirs {
+		d := path.Join(dirs[:i+1]...)
+		if _, ok := f.dirCache[d]; ok {
+			continue
+		}
+		f.client.MakeDir(d)
+		f.dirCache[d] = struct{}{}
+	}
+	return nil
 }

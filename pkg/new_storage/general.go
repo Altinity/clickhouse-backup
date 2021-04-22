@@ -105,6 +105,7 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 			// TODO: после того как Walk будет нормально обрабатывать ошибки тут и дальше нужно вернуть err или залогировать их тут
 			return nil
 		}
+		defer r.Close()
 		b, err := ioutil.ReadAll(r)
 		if err != nil {
 			result = append(result, Backup{
