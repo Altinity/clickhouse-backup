@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"os"
 	"path"
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
@@ -48,7 +47,15 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 		PrintRemoteBackups(cfg, "all")
 		return fmt.Errorf("select backup for download")
 	}
-
+	localBackups, err := GetLocalBackups(cfg)
+	if err != nil {
+		return err
+	}
+	for i := range localBackups {
+		if backupName == localBackups[i].BackupName {
+			return fmt.Errorf("'%s' already exists", backupName)
+		}
+	}
 	ch := &clickhouse.ClickHouse{
 		Config: &cfg.ClickHouse,
 	}
@@ -101,20 +108,10 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 	for _, disk := range disks {
 		diskMap[disk.Name] = disk.Path
 	}
-	// backupMetafileReader, err := bd.GetFileReader(path.Join(backupName, "metadata.json"))
-	// if err != nil {
-	// 	return err
-	// }
-	// tbBody, err := ioutil.ReadAll(backupMetafileReader)
-	// if err != nil {
-	// 	return err
-	// }
-	// var backupMetadata metadata.BackupMetadata
-	// if err := json.Unmarshal(tbBody, &backupMetadata); err != nil {
-	// 	return err
-	// }
 	tableMetadataForDownload := []metadata.TableMetadata{}
 	tablesForDownload := parseTablePatternForDownload(remoteBackup.Tables, tablePattern)
+	dataSize := int64(0)
+	metadataSize := int64(0)
 
 	for _, t := range tablesForDownload {
 		log := log.WithField("table", fmt.Sprintf("%s.%s", t.Database, t.Table))
@@ -136,16 +133,15 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 		tableMetadataForDownload = append(tableMetadataForDownload, tableMetadata)
 
 		// save metadata
-		metadataBase := path.Join(defaultDataPath, "backup", backupName, "metadata", clickhouse.TablePathEncode(t.Database))
-		if err := os.MkdirAll(metadataBase, 0750); err != nil {
+		metadataLocalFile := path.Join(defaultDataPath, "backup", backupName, "metadata", clickhouse.TablePathEncode(t.Database), fmt.Sprintf("%s.json", clickhouse.TablePathEncode(t.Table)))
+		size, err := tableMetadata.Save(metadataLocalFile, schemaOnly)
+		if err != nil {
 			return err
 		}
-		metadataLocalFile := path.Join(metadataBase, fmt.Sprintf("%s.json", clickhouse.TablePathEncode(t.Table)))
-		if err := ioutil.WriteFile(metadataLocalFile, tmBody, 0640); err != nil {
-			return err
-		}
+		metadataSize += int64(size)
 		log.Info("done")
 	}
+
 	if !schemaOnly {
 		for _, t := range tableMetadataForDownload {
 			for disk := range t.Parts {
@@ -158,6 +154,7 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 			if tableMetadata.MetadataOnly {
 				continue
 			}
+			dataSize += tableMetadata.TotalBytes
 			// download data
 			uuid := path.Join(clickhouse.TablePathEncode(tableMetadata.Database), clickhouse.TablePathEncode(tableMetadata.Table))
 			log := log.WithField("table", fmt.Sprintf("%s.%s", tableMetadata.Database, tableMetadata.Table))
@@ -187,6 +184,8 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 	}
 	backupMetadata := remoteBackup.BackupMetadata
 	backupMetadata.Tables = tablesForDownload
+	backupMetadata.DataSize = dataSize
+	backupMetadata.MetadataSize = metadataSize
 	backupMetadata.DataFormat = ""
 	tbBody, err := json.MarshalIndent(&backupMetadata, "", "\t")
 	if err != nil {

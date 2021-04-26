@@ -1,6 +1,12 @@
 package metadata
 
-import "time"
+import (
+	"encoding/json"
+	"io/ioutil"
+	"os"
+	"path"
+	"time"
+)
 
 type TableTitle struct {
 	Database string `json:"database"`
@@ -29,13 +35,39 @@ type TableMetadata struct {
 	IncrementOf string            `json:"increment_of,omitempty"`
 	Parts       map[string][]Part `json:"parts"`
 	Query       string            `json:"query"`
-	UUID        string            `json:"uuid,omitempty"`
+	// UUID        string            `json:"uuid,omitempty"`
 	// Macros ???
 	Size                 map[string]int64 `json:"size"`                  // сколько занимает бэкап на каждом диске
 	TotalBytes           int64            `json:"total_bytes,omitempty"` // общий объём бэкапа
 	DependencesTable     string           `json:"dependencies_table,omitempty"`
 	DependenciesDatabase string           `json:"dependencies_database,omitempty"`
 	MetadataOnly         bool             `json:"metadata_only"`
+}
+
+func (tm *TableMetadata) Save(location string, metadataOnly bool) (int, error) {
+	newTM := TableMetadata{
+		Table: tm.Table,
+		Database: tm.Database,
+		IncrementOf: tm.IncrementOf,
+		Query: tm.Query,
+		DependencesTable: tm.DependencesTable,
+		DependenciesDatabase: tm.DependenciesDatabase,
+		MetadataOnly: true,
+	}
+	if !metadataOnly {
+		newTM.Parts = tm.Parts
+		newTM.Size = tm.Size
+		newTM.TotalBytes = tm.TotalBytes
+		newTM.MetadataOnly = false
+	}
+	if err := os.MkdirAll(path.Dir(location), 0750); err != nil {
+		return 0, err
+	}
+	body, err := json.MarshalIndent(&newTM, "", "\t")
+	if err != nil {
+		return 0, err
+	}
+	return len(body), ioutil.WriteFile(location, body, 0640)
 }
 
 type Part struct {

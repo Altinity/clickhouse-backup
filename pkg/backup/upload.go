@@ -71,7 +71,8 @@ func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom
 		return err
 	}
 	tablesForUpload, err := parseSchemaPattern(metadataPath, tablePattern)
-
+	dataSize := int64(0)
+	metadataSize := int64(0)
 	for _, table := range tablesForUpload {
 		uuid := path.Join(clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table))
 		// if table.UUID != "" {
@@ -79,6 +80,7 @@ func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom
 		// }
 		metdataFiles := map[string][]string{}
 		if !schemaOnly {
+			dataSize += table.TotalBytes
 			for disk := range table.Parts {
 				backupPath := path.Join(diskMap[disk], "backup", backupName, "shadow", uuid, disk)
 				parts, err := separateParts(backupPath, table.Parts[disk], cfg.General.MaxFileSize)
@@ -109,6 +111,7 @@ func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom
 		if err != nil {
 			return fmt.Errorf("can't marshal json: %v", err)
 		}
+		metadataSize += int64(len(content))
 		remoteTableMetaFile := path.Join(backupName, "metadata", clickhouse.TablePathEncode(table.Database), fmt.Sprintf("%s.%s", clickhouse.TablePathEncode(table.Table), "json"))
 		if err := bd.PutFile(remoteTableMetaFile,
 			ioutil.NopCloser(bytes.NewReader(content))); err != nil {
@@ -116,24 +119,27 @@ func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom
 		}
 		log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).Info("done")
 	}
-	t := []metadata.TableTitle{}
-	for i := range tablesForUpload {
-		t = append(t, metadata.TableTitle{
-			Database: tablesForUpload[i].Database,
-			Table:    tablesForUpload[i].Table,
-		})
-	}
+
 	// заливаем метадату для бэкапа
 	backupMetadataPath := path.Join(defaulDataPath, "backup", backupName, "metadata.json")
 	backupMetadataBody, err := ioutil.ReadFile(backupMetadataPath)
 	if err != nil {
 		return err
 	}
-	// TODO: тут нужно менять размер если заливаем только схему или часть таблиц
 	backupMetadata := metadata.BackupMetadata{}
 	if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
 		return err
 	}
+	backupMetadata.DataSize = dataSize
+	backupMetadata.MetadataSize = metadataSize
+	tt := []metadata.TableTitle{}
+	for i := range tablesForUpload {
+		tt = append(tt, metadata.TableTitle{
+			Database: tablesForUpload[i].Database,
+			Table:    tablesForUpload[i].Table,
+		})
+	}
+	backupMetadata.Tables = tt
 	if cfg.GetCompressionFormat() != "none" {
 		backupMetadata.DataFormat = cfg.GetCompressionFormat()
 	} else {

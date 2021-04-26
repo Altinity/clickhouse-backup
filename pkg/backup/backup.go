@@ -155,7 +155,6 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 			Table:      table.Name,
 			Database:   table.Database,
 			Query:      table.CreateTableQuery,
-			UUID:       table.UUID,
 			TotalBytes: table.TotalBytes.Int64,
 			Size:       realSize,
 		})
