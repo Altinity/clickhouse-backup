@@ -144,7 +144,17 @@ func RestoreData(cfg *config.Config, backupName string, tablePattern string) err
 	if err != nil {
 		return err
 	}
-	// TODO: проверить все ли диски в КХ которые в бэкапе
+	diskMap := map[string]string{}
+	for _, disk := range disks {
+		diskMap[disk.Name] = disk.Path
+	}
+	for _, t := range tablesForRestore {
+		for disk := range t.Parts {
+			if _, ok := diskMap[disk]; !ok {
+				return fmt.Errorf("table '%s.%s' require disk '%s' that not found in clickhouse, you can add nonexistent disks to disk_mapping config", t.Database, t.Table, disk)
+			}
+		}
+	}
 	dstTablesMap := map[metadata.TableTitle]clickhouse.Table{}
 	for i := range chTables {
 		dstTablesMap[metadata.TableTitle{

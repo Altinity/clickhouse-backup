@@ -60,93 +60,93 @@ func CopyPartHashes(cfg config.Config, tablePattern string, backupName string) e
 }
 
 // Flashback - restore tables matched by tablePattern from backupName by restroing only modified parts.
-func Flashback(cfg *config.Config, backupName string, tablePattern string) error {
-	/*if schemaOnly || (schemaOnly == dataOnly) {
-		err := restoreSchema(config, backupName, tablePattern)
-		if err != nil {
-			return err
-		}
-	}
-	if dataOnly || (schemaOnly == dataOnly) {
-		err := RestoreData(config, backupName, tablePattern)
-		if err != nil {
-			return err
-		}
-	}*/
+// func Flashback(cfg *config.Config, backupName string, tablePattern string) error {
+// 	/*if schemaOnly || (schemaOnly == dataOnly) {
+// 		err := restoreSchema(config, backupName, tablePattern)
+// 		if err != nil {
+// 			return err
+// 		}
+// 	}
+// 	if dataOnly || (schemaOnly == dataOnly) {
+// 		err := RestoreData(config, backupName, tablePattern)
+// 		if err != nil {
+// 			return err
+// 		}
+// 	}*/
 
-	err := FlashBackData(cfg, backupName, tablePattern)
-	if err != nil {
-		return err
-	}
-	return nil
-}
+// 	err := FlashBackData(cfg, backupName, tablePattern)
+// 	if err != nil {
+// 		return err
+// 	}
+// 	return nil
+// }
 
 // FlashBackData - restore data for tables matched by tablePattern from backupName
-func FlashBackData(cfg *config.Config, backupName string, tablePattern string) error {
-	if backupName == "" {
-		PrintLocalBackups(cfg, "all")
-		return fmt.Errorf("select backup for restore")
-	}
+// func FlashBackData(cfg *config.Config, backupName string, tablePattern string) error {
+// 	if backupName == "" {
+// 		PrintLocalBackups(cfg, "all")
+// 		return fmt.Errorf("select backup for restore")
+// 	}
 
-	ch := &clickhouse.ClickHouse{
-		Config: &cfg.ClickHouse,
-	}
-	if err := ch.Connect(); err != nil {
-		return fmt.Errorf("can't connect to clickhouse: %v", err)
-	}
-	defer ch.Close()
+// 	ch := &clickhouse.ClickHouse{
+// 		Config: &cfg.ClickHouse,
+// 	}
+// 	if err := ch.Connect(); err != nil {
+// 		return fmt.Errorf("can't connect to clickhouse: %v", err)
+// 	}
+// 	defer ch.Close()
 
-	allBackupTables, err := ch.GetBackupTablesLegacy(backupName)
-	if err != nil {
-		return err
-	}
+// 	allBackupTables, err := ch.GetBackupTablesLegacy(backupName)
+// 	if err != nil {
+// 		return err
+// 	}
 
-	restoreTables := parseTablePatternForRestoreData(allBackupTables, tablePattern)
+// 	restoreTables := parseTablePatternForRestoreData(allBackupTables, tablePattern)
 
-	liveTables, err := ch.GetTables()
+// 	liveTables, err := ch.GetTables()
 
-	if err != nil {
-		return err
-	}
-	if len(restoreTables) == 0 {
-		return fmt.Errorf("backup doesn't have tables to restore")
-	}
+// 	if err != nil {
+// 		return err
+// 	}
+// 	if len(restoreTables) == 0 {
+// 		return fmt.Errorf("backup doesn't have tables to restore")
+// 	}
 
-	missingTables := []string{}
+// 	missingTables := []string{}
 
-	for _, restoreTable := range restoreTables {
-		found := false
-		for _, liveTable := range liveTables {
-			if (restoreTable.Database == liveTable.Database) && (restoreTable.Table == liveTable.Name) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			missingTables = append(missingTables, fmt.Sprintf("%s.%s", restoreTable.Database, restoreTable.Table))
+// 	for _, restoreTable := range restoreTables {
+// 		found := false
+// 		for _, liveTable := range liveTables {
+// 			if (restoreTable.Database == liveTable.Database) && (restoreTable.Table == liveTable.Name) {
+// 				found = true
+// 				break
+// 			}
+// 		}
+// 		if !found {
+// 			missingTables = append(missingTables, fmt.Sprintf("%s.%s", restoreTable.Database, restoreTable.Table))
 
-			for _, newtable := range missingTables {
-				//log.Printf("newtable=%s", newtable)
-				if err := RestoreSchema(cfg, backupName, newtable, true); err != nil {
-					return err
-				}
-			}
+// 			for _, newtable := range missingTables {
+// 				//log.Printf("newtable=%s", newtable)
+// 				if err := RestoreSchema(cfg, backupName, newtable, true); err != nil {
+// 					return err
+// 				}
+// 			}
 
-			FlashBackData(cfg, backupName, tablePattern)
-			return nil
-		}
-	}
+// 			FlashBackData(cfg, backupName, tablePattern)
+// 			return nil
+// 		}
+// 	}
 
-	diffInfos, _ := ch.ComputePartitionsDelta(restoreTables, liveTables)
-	for _, tableDiff := range diffInfos {
+// 	diffInfos, _ := ch.ComputePartitionsDelta(restoreTables, liveTables)
+// 	for _, tableDiff := range diffInfos {
 
-		if err := ch.CopyDataDiff(tableDiff); err != nil {
-			return fmt.Errorf("can't restore '%s.%s': %v", tableDiff.BTable.Database, tableDiff.BTable.Table, err)
-		}
+// 		if err := ch.CopyDataDiff(tableDiff); err != nil {
+// 			return fmt.Errorf("can't restore '%s.%s': %v", tableDiff.BTable.Database, tableDiff.BTable.Table, err)
+// 		}
 
-		if err := ch.ApplyPartitionsChanges(tableDiff); err != nil {
-			return fmt.Errorf("can't attach partitions for table '%s.%s': %v", tableDiff.BTable.Database, tableDiff.BTable.Table, err)
-		}
-	}
-	return nil
-}
+// 		if err := ch.ApplyPartitionsChanges(tableDiff); err != nil {
+// 			return fmt.Errorf("can't attach partitions for table '%s.%s': %v", tableDiff.BTable.Database, tableDiff.BTable.Table, err)
+// 		}
+// 	}
+// 	return nil
+// }

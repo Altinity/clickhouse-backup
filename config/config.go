@@ -117,7 +117,7 @@ type ClickHouseConfig struct {
 	Password             string            `yaml:"password" envconfig:"CLICKHOUSE_PASSWORD"`
 	Host                 string            `yaml:"host" envconfig:"CLICKHOUSE_HOST"`
 	Port                 uint              `yaml:"port" envconfig:"CLICKHOUSE_PORT"`
-	DiskMapping          map[string]string `yaml:"disk_mapping" envconfig:"CLICKHOUSE_DISKS"`
+	DiskMapping          map[string]string `yaml:"disk_mapping" envconfig:"CLICKHOUSE_DISK_MAPPING"`
 	SkipTables           []string          `yaml:"skip_tables" envconfig:"CLICKHOUSE_SKIP_TABLES"`
 	Timeout              string            `yaml:"timeout" envconfig:"CLICKHOUSE_TIMEOUT"`
 	FreezeByPart         bool              `yaml:"freeze_by_part" envconfig:"CLICKHOUSE_FREEZE_BY_PART"`

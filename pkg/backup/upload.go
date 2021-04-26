@@ -49,9 +49,17 @@ func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom
 	if err := bd.Connect(); err != nil {
 		return fmt.Errorf("can't connect to %s: %v", bd.Kind(), err)
 	}
-
 	if _, err := getLocalBackup(cfg, backupName); err != nil {
 		return fmt.Errorf("can't upload: %v", err)
+	}
+	remoteBackups, err := bd.BackupList()
+	if err != nil {
+		return err
+	}
+	for i := range remoteBackups {
+		if backupName == remoteBackups[i].BackupName {
+			return fmt.Errorf("'%s' already exists on remote", backupName)
+		}
 	}
 	defaulDataPath, err := ch.GetDefaultPath()
 	if err != nil {
@@ -65,7 +73,6 @@ func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom
 	for _, disk := range disks {
 		diskMap[disk.Name] = disk.Path
 	}
-	// TODO: проверяем существует ли бэкап на удалённом сторадже
 	metadataPath := path.Join(defaulDataPath, "backup", backupName, "metadata")
 	if _, err := os.Stat(metadataPath); err != nil {
 		return err

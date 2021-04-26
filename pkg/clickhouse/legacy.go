@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
-	"github.com/apex/log"
 )
 
 // // GetBackupTables - return list of backups of tables that can be restored
@@ -142,7 +141,7 @@ func (ch *ClickHouse) GetBackupTablesLegacy(backupName string) ([]metadata.Table
 
 			partition := metadata.Part{
 				Name:                              parts[partNum],
-				Path:                              filePath,
+				// Path:                              filePath,
 				HashOfAllFiles:                    hoaf,
 				HashOfUncompressedFiles:           houf,
 				UncompressedHashOfCompressedFiles: uhocf,
@@ -167,56 +166,4 @@ func (ch *ClickHouse) GetBackupTablesLegacy(backupName string) ([]metadata.Table
 		result = append(result, tables[i])
 	}
 	return result, err
-}
-
-// CopyData - copy partitions for specific table to detached folder
-func (ch *ClickHouse) CopyDataLegacy(table metadata.TableMetadata) error {
-	dataPath, err := ch.GetDefaultPath()
-	if err != nil {
-		return err
-	}
-	detachedParentDir := filepath.Join(dataPath, "data", TablePathEncode(table.Database), TablePathEncode(table.Table), "detached")
-	os.MkdirAll(detachedParentDir, 0750)
-	ch.Chown(detachedParentDir)
-
-	for _, partition := range table.Parts["default"] {
-		// log.Printf("partition name is %s (%s)", partition.Name, partition.Path)
-		detachedPath := filepath.Join(detachedParentDir, partition.Name)
-		info, err := os.Stat(detachedPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				// partition dir does not exist, creating
-				os.MkdirAll(detachedPath, 0750)
-			} else {
-				return err
-			}
-		} else if !info.IsDir() {
-			return fmt.Errorf("'%s' should be directory or absent", detachedPath)
-		}
-		ch.Chown(detachedPath)
-
-		if err := filepath.Walk(partition.Path, func(filePath string, info os.FileInfo, err error) error {
-			if err != nil {
-				return err
-			}
-			filePath = filepath.ToSlash(filePath) // fix Windows slashes
-			filename := strings.Trim(strings.TrimPrefix(filePath, partition.Path), "/")
-			dstFilePath := filepath.Join(detachedPath, filename)
-			if info.IsDir() {
-				os.MkdirAll(dstFilePath, 0750)
-				return ch.Chown(dstFilePath)
-			}
-			if !info.Mode().IsRegular() {
-				log.Debugf("'%s' is not a regular file, skipping.", filePath)
-				return nil
-			}
-			if err := os.Link(filePath, dstFilePath); err != nil {
-				return fmt.Errorf("failed to crete hard link '%s' -> '%s': %v", filePath, dstFilePath, err)
-			}
-			return ch.Chown(dstFilePath)
-		}); err != nil {
-			return fmt.Errorf("error during filepath.Walk for partition '%s': %v", partition.Path, err)
-		}
-	}
-	return nil
 }

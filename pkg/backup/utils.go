@@ -1,7 +1,6 @@
 package backup
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"path"
@@ -50,14 +49,4 @@ func copyFile(srcFile string, dstFile string) error {
 	defer dst.Close()
 	_, err = io.Copy(dst, src)
 	return err
-}
-
-func getPathByDiskName(diskMapConfig map[string]string, chDiskMap map[string]string, diskName string) (string, error) {
-	if p, ok := diskMapConfig[diskName]; ok {
-		return p, nil
-	}
-	if p, ok := chDiskMap[diskName]; ok {
-		return p, nil
-	}
-	return "", fmt.Errorf("disk '%s' not found in clickhouse, you can add nonexistent disks to disk_mapping config", diskName)
 }

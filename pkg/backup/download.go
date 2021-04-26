@@ -145,8 +145,8 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 	if !schemaOnly {
 		for _, t := range tableMetadataForDownload {
 			for disk := range t.Parts {
-				if _, err := getPathByDiskName(cfg.ClickHouse.DiskMapping, diskMap, disk); err != nil {
-					return err
+				if _, ok := diskMap[disk]; !ok {
+					return fmt.Errorf("table '%s.%s' require disk '%s' that not found in clickhouse, you can add nonexistent disks to disk_mapping config", t.Database, t.Table, disk)
 				}
 			}
 		}
@@ -160,7 +160,7 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 			log := log.WithField("table", fmt.Sprintf("%s.%s", tableMetadata.Database, tableMetadata.Table))
 			if remoteBackup.DataFormat != "directory" {
 				for disk := range tableMetadata.Files {
-					diskPath, _ := getPathByDiskName(cfg.ClickHouse.DiskMapping, diskMap, disk)
+					diskPath := diskMap[disk]
 					tableLocalDir := path.Join(diskPath, "backup", backupName, "shadow", uuid, disk)
 					for _, archiveFile := range tableMetadata.Files[disk] {
 						tableRemoteFile := path.Join(backupName, "shadow", clickhouse.TablePathEncode(tableMetadata.Database), clickhouse.TablePathEncode(tableMetadata.Table), archiveFile)
@@ -173,7 +173,7 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 			}
 			for disk := range tableMetadata.Parts {
 				tableRemotePath := path.Join(backupName, "shadow", uuid, disk)
-				diskPath, _ := getPathByDiskName(cfg.ClickHouse.DiskMapping, diskMap, disk)
+				diskPath := diskMap[disk]
 				tableLocalDir := path.Join(diskPath, "backup", backupName, "shadow", uuid, disk)
 				if err := bd.DownloadPath(0, tableRemotePath, tableLocalDir); err != nil {
 					return err

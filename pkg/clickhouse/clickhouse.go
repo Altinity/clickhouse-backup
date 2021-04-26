@@ -56,17 +56,40 @@ func (ch *ClickHouse) Connect() error {
 
 // GetDisks - return data from system.disks table
 func (ch *ClickHouse) GetDisks() ([]Disk, error) {
-	if ch.disks != nil {
-		return ch.disks, nil
-	}
 	version, err := ch.GetVersion()
 	if err != nil {
 		return nil, err
 	}
+	var disks []Disk
 	if version < 19015000 {
-		return ch.getDataPathFromSystemSettings()
+		disks, err = ch.getDataPathFromSystemSettings()
+	} else {
+		disks, err = ch.getDataPathFromSystemDisks()
 	}
-	return ch.getDataPathFromSystemDisks()
+	if err != nil {
+		return nil, err
+	}
+	if len(ch.Config.DiskMapping) == 0 {
+		return disks, nil
+	}
+	dm := map[string]string{}
+	for k, v := range ch.Config.DiskMapping {
+		dm[k] = v
+	}
+	for i := range disks {
+		if p, ok := dm[disks[i].Name]; ok {
+			disks[i].Path = p
+			delete(dm, disks[i].Name)
+		}
+	}
+	for k, v := range dm {
+		disks = append(disks, Disk{
+			Name: k,
+			Path: v,
+			Type: "local",
+		})
+	}
+	return disks, nil
 }
 
 func (ch *ClickHouse) GetDefaultPath() (string, error) {
@@ -531,7 +554,6 @@ func (ch *ClickHouse) GetPartitions(database, table string) (map[string][]metada
 				parts[i] = metadata.Part{
 					Partition:                         partitions[i].Partition,
 					Name:                              partitions[i].Name,
-					Path:                              partitions[i].Path, // TODO: ???
 					HashOfAllFiles:                    partitions[i].HashOfAllFiles,
 					HashOfUncompressedFiles:           partitions[i].HashOfUncompressedFiles,
 					UncompressedHashOfCompressedFiles: partitions[i].UncompressedHashOfCompressedFiles,
