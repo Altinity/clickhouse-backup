@@ -1,0 +1,138 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - v*.*.*
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v2
+
+      - name: Setup golang
+        id: setup-go
+        uses: actions/setup-go@v2
+        with:
+          go-version: '^1.14'
+
+      - name: Setup fpm and make
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ruby ruby-dev gcc g++ rpm
+          sudo apt-get install --no-install-recommends -y make
+          sudo gem install --no-document fpm
+
+      - name: Cache golang
+        id: cache-golang
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-${{ matrix.golang-version }}-golang-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.golang-version }}-golang-
+
+      - name: Install golang dependencies
+        run: go mod download -x
+        if: |
+          steps.cache-golang.outputs.cache-hit != 'true'
+
+      - name: Extract DOCKER_TAG version
+        id: docker_tag
+        run: |
+          DOCKER_TAG=${GITHUB_REF##*/}
+          DOCKER_TAG=${DOCKER_TAG##*\\}
+          export DOCKER_TAG=${DOCKER_TAG#v}
+          echo "::set-output name=docker_tag::${DOCKER_TAG:-dev}"
+
+      - run: make build
+      - run: make config
+      - run: make test
+
+      - name: Building deb, rpm and tar.gz packages
+        id: make_packages
+        run: |
+          export NAME=clickhouse-backup
+          export VERSION=$(git describe --always --tags --abbrev=0 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/c\1/;s/-/./g')
+          tar -czvf ${NAME}.tar.gz ${NAME}
+          CGO_ENABLED=0 make packages
+          echo "::set-output name=rpm::${NAME}-${VERSION}-1.x86_64.rpm"
+          echo "::set-output name=deb::${NAME}_${VERSION}_amd64.deb"
+          echo "::set-output name=tgz::${NAME}.tar.gz"
+
+      - name: Prepare release notes
+        id: release_notes
+        run: |
+          awk '/^# / {s++} s == 1 {print}' ChangeLog.md > /tmp/release_notes.md
+          echo "::set-output name=path::/tmp/release_notes.md"
+
+      - name: Create release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.docker_tag.outputs.docker_tag }}
+          release_name: ${{ steps.docker_tag.outputs.docker_tag }}
+          body_path: ${{ steps.release_notes.outputs.path }}
+          draft: true
+
+      - name: Add rpm to github release
+        id: upload-release-rpm
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: build/${{ steps.make_packages.outputs.rpm }}
+          asset_name: ${{ steps.make_packages.outputs.rpm }}
+          asset_content_type: application/octet-stream
+
+
+      - name: Add deb to github release
+        id: upload-release-deb
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: build/${{ steps.make_packages.outputs.deb }}
+          asset_name: ${{ steps.make_packages.outputs.deb }}
+          asset_content_type: application/octet-stream
+
+      - name: Add tar.gz to github release
+        id: upload-release-tgz
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ steps.make_packages.outputs.tgz }}
+          asset_name: ${{ steps.make_packages.outputs.tgz }}
+          asset_content_type: application/octet-stream
+
+      - name: Building docker image
+        env:
+          DOCKER_REPO: ${{ secrets.DOCKER_REPO }}
+          DOCKER_IMAGE: ${{ secrets.DOCKER_IMAGE }}
+          DOCKER_TOKEN: ${{ secrets.DOCKER_TOKEN }}
+          DOCKER_USER: ${{ secrets.DOCKER_USER }}
+          DOCKER_REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
+          DOCKER_TAG: ${{ steps.docker_tag.outputs.docker_tag }}
+        run: |
+          export DOCKER_REGISTRY=${DOCKER_REGISTRY:-docker.io}
+          echo ${DOCKER_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin ${DOCKER_REGISTRY}
+
+          docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
+          docker image tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}
+          docker image tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:latest
+          docker push ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}
+          docker push ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:latest
+
+
+

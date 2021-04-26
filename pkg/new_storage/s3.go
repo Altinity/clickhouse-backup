@@ -1,9 +1,10 @@
-package storage
+package new_storage
 
 import (
 	"crypto/tls"
 	"io"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 
@@ -21,9 +22,11 @@ import (
 
 // S3 - presents methods for manipulate data on s3
 type S3 struct {
-	session *session.Session
-	Config  *config.S3Config
-	Debug   bool
+	session    *session.Session
+	uploader   *s3manager.Uploader
+	Config     *config.S3Config
+	Concurence int
+	BufferSize int
 }
 
 // Connect - connect to s3
@@ -55,18 +58,18 @@ func (s *S3) Connect() error {
 	if s.Config.DisableCertVerification {
 		tr := &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-			Proxy:           http.ProxyFromEnvironment,
 		}
 		awsConfig.HTTPClient = &http.Client{Transport: tr}
 	}
-
-	if s.Debug {
-		awsConfig.LogLevel = aws.LogLevel(aws.LogDebugWithRequestErrors)
-	}
-
 	if s.session, err = session.NewSession(awsConfig); err != nil {
 		return err
 	}
+
+	s.uploader = s3manager.NewUploader(s.session)
+	s.uploader.Concurrency = s.Concurence
+	s.uploader.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(s.BufferSize)
+	s.uploader.PartSize = s.Config.PartSize
+
 	return nil
 }
 
@@ -75,10 +78,22 @@ func (s *S3) Kind() string {
 }
 
 func (s *S3) GetFileReader(key string) (io.ReadCloser, error) {
+	// downloader := s3manager.NewDownloader(s.session)
+	// downloader.Concurrency = s.Concurence
+	// downloader.BufferProvider = s3manager.NewPooledBufferedWriterReadFromProvider(s.BufferSize)
+	// w:= aws.NewWriteAt()
+	// downloader.
+	// downloader.Download(w, &s3.GetObjectInput{
+	// 	Bucket: aws.String(s.Config.Bucket),
+	// 	Key:    aws.String(path.Join(s.Config.Path, key)),
+	// }
+
+	// )
+
 	svc := s3.New(s.session)
 	req, resp := svc.GetObjectRequest(&s3.GetObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
-		Key:    aws.String(key),
+		Key:    aws.String(path.Join(s.Config.Path, key)),
 	})
 	if err := req.Send(); err != nil {
 		return nil, err
@@ -88,17 +103,14 @@ func (s *S3) GetFileReader(key string) (io.ReadCloser, error) {
 }
 
 func (s *S3) PutFile(key string, r io.ReadCloser) error {
-	uploader := s3manager.NewUploader(s.session)
-	uploader.Concurrency = 10
-	uploader.PartSize = s.Config.PartSize
 	var sse *string
 	if s.Config.SSE != "" {
 		sse = aws.String(s.Config.SSE)
 	}
-	_, err := uploader.Upload(&s3manager.UploadInput{
+	_, err := s.uploader.Upload(&s3manager.UploadInput{
 		ACL:                  aws.String(s.Config.ACL),
 		Bucket:               aws.String(s.Config.Bucket),
-		Key:                  aws.String(key),
+		Key:                  aws.String(path.Join(s.Config.Path, key)),
 		Body:                 r,
 		ServerSideEncryption: sse,
 		StorageClass:         aws.String(strings.ToUpper(s.Config.StorageClass)),
@@ -109,7 +121,7 @@ func (s *S3) PutFile(key string, r io.ReadCloser) error {
 func (s *S3) DeleteFile(key string) error {
 	params := &s3.DeleteObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
-		Key:    aws.String(key),
+		Key:    aws.String(path.Join(s.Config.Path, key)),
 	}
 
 	_, err := s3.New(s.session).DeleteObject(params)
@@ -119,11 +131,11 @@ func (s *S3) DeleteFile(key string) error {
 	return nil
 }
 
-func (s *S3) GetFile(key string) (RemoteFile, error) {
+func (s *S3) StatFile(key string) (RemoteFile, error) {
 	svc := s3.New(s.session)
 	head, err := svc.HeadObject(&s3.HeadObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
-		Key:    aws.String(key),
+		Key:    aws.String(path.Join(s.Config.Path, key)),
 	})
 	if err != nil {
 		aerr, ok := err.(awserr.Error)
@@ -135,26 +147,40 @@ func (s *S3) GetFile(key string) (RemoteFile, error) {
 	return &s3File{*head.ContentLength, *head.LastModified, key}, nil
 }
 
-func (s *S3) Walk(s3Path string, process func(r RemoteFile)) error {
-	return s.remotePager(s.Config.Path, false, func(page *s3.ListObjectsV2Output) {
-		for _, c := range page.Contents {
-			process(&s3File{*c.Size, *c.LastModified, *c.Key})
+func (s *S3) Walk(s3Path string, recursive bool, process func(r RemoteFile) error) error {
+	return s.remotePager(path.Join(s.Config.Path, s3Path), recursive, func(page *s3.ListObjectsV2Output) error {
+		for _, cp := range page.CommonPrefixes {
+			// TODO: тут нельзя просто делать return, нужно собрать все ошибки в канал или ещё как-то
+			if err := process(&s3File{
+				name: strings.TrimPrefix(*cp.Prefix, path.Join(s.Config.Path, s3Path)),
+			}); err != nil {
+				return err
+			}
 		}
+		for _, c := range page.Contents {
+			if err := process(&s3File{
+				*c.Size,
+				*c.LastModified,
+				strings.TrimPrefix(*c.Key, path.Join(s.Config.Path, s3Path)),
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 
-func (s *S3) remotePager(s3Path string, delim bool, pager func(page *s3.ListObjectsV2Output)) error {
+func (s *S3) remotePager(s3Path string, recursive bool, pager func(page *s3.ListObjectsV2Output) error) error {
 	params := &s3.ListObjectsV2Input{
 		Bucket:  aws.String(s.Config.Bucket), // Required
 		MaxKeys: aws.Int64(1000),
+		Prefix:  aws.String(s3Path + "/"),
 	}
-	if s3Path != "" && s3Path != "/" {
-		params.Prefix = aws.String(s3Path)
-	}
-	if delim {
-		params.Delimiter = aws.String("/")
+	if !recursive {
+		params.SetDelimiter("/")
 	}
 	wrapper := func(page *s3.ListObjectsV2Output, lastPage bool) bool {
+		// TODO: fix check error here
 		pager(page)
 		return true
 	}

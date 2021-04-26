@@ -2,52 +2,35 @@ package backup
 
 import (
 	"io"
-	"log"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+
+	apexLog "github.com/apex/log"
 )
 
-func cleanDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	names, err := d.Readdirnames(-1)
-	if err != nil {
-		return err
-	}
-	for _, name := range names {
-		err = os.RemoveAll(filepath.Join(dir, name))
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func moveShadow(shadowPath, backupPath string) error {
-	if err := filepath.Walk(shadowPath, func(filePath string, info os.FileInfo, err error) error {
+func moveShadow(shadowPath, backupPartsPath string) (int64, error) {
+	size := int64(0)
+	err := filepath.Walk(shadowPath, func(filePath string, info os.FileInfo, err error) error {
 		relativePath := strings.Trim(strings.TrimPrefix(filePath, shadowPath), "/")
-		pathParts := strings.SplitN(relativePath, "/", 3)
-		if len(pathParts) != 3 {
+		pathParts := strings.SplitN(relativePath, "/", 4)
+		// [store 1f9 1f9dc899-0de9-41f8-b95c-26c1f0d67d93 20181023_2_2_0/partition.dat]
+		if len(pathParts) != 4 {
 			return nil
 		}
-		dstFilePath := filepath.Join(backupPath, pathParts[2])
+		dstFilePath := filepath.Join(backupPartsPath, pathParts[3])
 		if info.IsDir() {
-			return os.MkdirAll(dstFilePath, os.ModePerm)
+			return os.MkdirAll(dstFilePath, 0750)
 		}
 		if !info.Mode().IsRegular() {
-			log.Printf("'%s' is not a regular file, skipping", filePath)
+			apexLog.Debugf("'%s' is not a regular file, skipping", filePath)
 			return nil
 		}
+		size += info.Size()
 		return os.Rename(filePath, dstFilePath)
-	}); err != nil {
-		return err
-	}
-	return cleanDir(shadowPath)
+	})
+	return size, err
 }
 
 func copyFile(srcFile string, dstFile string) error {
@@ -67,4 +50,3 @@ func copyFile(srcFile string, dstFile string) error {
 	_, err = io.Copy(dst, src)
 	return err
 }
-

@@ -1,10 +1,21 @@
-package config
+package new_storage
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/mholt/archiver"
 )
+
+func GetBackupsToDelete(backups []Backup, keep int) []Backup {
+	if len(backups) > keep {
+		sort.SliceStable(backups, func(i, j int) bool {
+			return backups[i].CreationDate.After(backups[j].CreationDate)
+		})
+		return backups[keep:]
+	}
+	return []Backup{}
+}
 
 func getArchiveWriter(format string, level int) (archiver.Writer, error) {
 	switch format {
