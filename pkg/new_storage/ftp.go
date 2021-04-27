@@ -1,10 +1,11 @@
-package storage
+package new_storage
 
 import (
 	"crypto/tls"
 	"io"
 	"os"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
@@ -13,9 +14,10 @@ import (
 )
 
 type FTP struct {
-	client *ftp.ServerConn
-	Config *config.FTPConfig
-	Debug  bool
+	client   *ftp.ServerConn
+	Config   *config.FTPConfig
+	Debug    bool
+	dirCache map[string]struct{}
 }
 
 func (f *FTP) Connect() error {
@@ -23,32 +25,26 @@ func (f *FTP) Connect() error {
 	if err != nil {
 		return err
 	}
-
-	options := make([]ftp.DialOption, 0)
-
-	options = append(options, ftp.DialWithTimeout(timeout))
-	options = append(options, ftp.DialWithDisabledEPSV(true))
-
+	options := []ftp.DialOption{
+		ftp.DialWithTimeout(timeout),
+		ftp.DialWithDisabledEPSV(true),
+	}
 	if f.Debug {
 		options = append(options, ftp.DialWithDebugOutput(os.Stdout))
 	}
-
 	if f.Config.TLS {
 		tlsConfig := tls.Config{}
 		options = append(options, ftp.DialWithTLS(&tlsConfig))
 	}
-
 	c, err := ftp.Dial(f.Config.Address, options...)
 	if err != nil {
 		return err
 	}
-
 	if err := c.Login(f.Config.Username, f.Config.Password); err != nil {
 		return err
 	}
-
 	f.client = c
-
+	f.dirCache = map[string]struct{}{}
 	return nil
 }
 
@@ -56,17 +52,14 @@ func (f *FTP) Kind() string {
 	return "FTP"
 }
 
-func (f *FTP) GetFile(key string) (RemoteFile, error) {
+func (f *FTP) StatFile(key string) (RemoteFile, error) {
 	// cant list files, so check the dir
-	dir := path.Dir(key)
-
+	dir := path.Dir(path.Join(f.Config.Path, key))
 	entries, err := f.client.List(dir)
 	if err != nil {
 		return nil, err
 	}
-
-	file := path.Base(key)
-
+	file := path.Base(path.Join(f.Config.Path, key))
 	for i := range entries {
 		if file == entries[i].Name {
 			// file found, return it
@@ -82,42 +75,51 @@ func (f *FTP) GetFile(key string) (RemoteFile, error) {
 }
 
 func (f *FTP) DeleteFile(key string) error {
-	if err := f.client.Delete(key); err != nil {
-		return err
-	}
-	return nil
+	return f.client.Delete(path.Join(f.Config.Path, key))
 }
 
-func (f *FTP) Walk(root string, process func(RemoteFile)) error {
-	walker := f.client.Walk(root)
-
+func (f *FTP) Walk(ftpPath string, recirsive bool, process func(RemoteFile) error) error {
+	prefix := path.Join(f.Config.Path, ftpPath)
+	if !recirsive {
+		entries, err := f.client.List(prefix)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			process(&ftpFile{
+				size:         int64(entry.Size),
+				lastModified: entry.Time,
+				name:         entry.Name,
+			})
+		}
+		return nil
+	}
+	walker := f.client.Walk(prefix)
 	for walker.Next() {
 		if err := walker.Err(); err != nil {
 			return err
 		}
-
 		entry := walker.Stat()
-
 		if entry == nil {
 			continue
 		}
-
 		process(&ftpFile{
 			size:         int64(entry.Size),
 			lastModified: entry.Time,
-			name:         walker.Path(),
+			name:         strings.Trim(walker.Path(), prefix),
 		})
 	}
-
 	return nil
 }
 
 func (f *FTP) GetFileReader(key string) (io.ReadCloser, error) {
-	return f.client.Retr(key)
+	return f.client.Retr(path.Join(f.Config.Path, key))
 }
 
 func (f *FTP) PutFile(key string, r io.ReadCloser) error {
-	return f.client.Stor(key, r)
+	k := path.Join(f.Config.Path, key)
+	f.MkdirAll(path.Dir(k))
+	return f.client.Stor(k, r)
 }
 
 type ftpFile struct {
@@ -136,4 +138,18 @@ func (f *ftpFile) LastModified() time.Time {
 
 func (f *ftpFile) Name() string {
 	return f.name
+}
+
+func (f *FTP) MkdirAll(key string) error {
+	dirs := strings.Split(key, "/")
+	f.client.ChangeDir("/")
+	for i := range dirs {
+		d := path.Join(dirs[:i+1]...)
+		if _, ok := f.dirCache[d]; ok {
+			continue
+		}
+		f.client.MakeDir(d)
+		f.dirCache[d] = struct{}{}
+	}
+	return nil
 }

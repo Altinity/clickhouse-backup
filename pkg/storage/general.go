@@ -99,11 +99,9 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 		Date     time.Time
 	}
 	files := map[string]ClickhouseBackup{}
-	path := bd.path
-	err := bd.Walk(path, func(o RemoteFile) {
-		if strings.HasPrefix(o.Name(), path) {
-			key := strings.TrimPrefix(o.Name(), path)
-			key = strings.TrimPrefix(key, "/")
+	err := bd.Walk(bd.path, func(o RemoteFile) {
+		if strings.HasPrefix(o.Name(), bd.path) {
+			key := strings.TrimPrefix(o.Name(), bd.path)
 			parts := strings.Split(key, "/")
 
 			if strings.HasSuffix(parts[0], ".tar") ||
@@ -150,9 +148,6 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 }
 
 func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPath string) error {
-	if err := os.MkdirAll(localPath, os.ModePerm); err != nil {
-		return err
-	}
 	archiveName := path.Join(bd.path, fmt.Sprintf("%s.%s", remotePath, getExtension(bd.compressionFormat)))
 	if err := bd.Connect(); err != nil {
 		return err
@@ -180,6 +175,9 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 		return err
 	}
 	defer z.Close()
+	if err := os.MkdirAll(localPath, os.ModePerm); err != nil {
+		return err
+	}
 	var metafile MetaFile
 	for {
 		file, err := z.Read()
@@ -222,6 +220,7 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 			return err
 		}
 	}
+	bar.Finish()
 	if metafile.RequiredBackup != "" {
 		log.Printf("Backup '%s' required '%s'. Downloading.", remotePath, metafile.RequiredBackup)
 		err := bd.CompressedStreamDownload(metafile.RequiredBackup, filepath.Join(filepath.Dir(localPath), metafile.RequiredBackup))
@@ -240,7 +239,7 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 			return err
 		}
 	}
-	bar.Finish()
+
 	return nil
 }
 
@@ -371,7 +370,7 @@ func (bd *BackupDestination) CompressedStreamUpload(localPath, remotePath, diffF
 	return nil
 }
 
-func NewBackupDestination(cfg config.Config) (*BackupDestination, error) {
+func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 	switch cfg.General.RemoteStorage {
 	case "azblob":
 		azblobStorage := &AzureBlob{Config: &cfg.AzureBlob}
@@ -384,7 +383,10 @@ func NewBackupDestination(cfg config.Config) (*BackupDestination, error) {
 			cfg.General.BackupsToKeepRemote,
 		}, nil
 	case "s3":
-		s3Storage := &S3{Config: &cfg.S3}
+		s3Storage := &S3{
+			Config: &cfg.S3,
+			Debug:  cfg.General.LogLevel == "debug",
+		}
 		return &BackupDestination{
 			s3Storage,
 			cfg.S3.Path,
@@ -404,7 +406,10 @@ func NewBackupDestination(cfg config.Config) (*BackupDestination, error) {
 			cfg.General.BackupsToKeepRemote,
 		}, nil
 	case "cos":
-		tencentStorage := &COS{Config: &cfg.COS}
+		tencentStorage := &COS{
+			Config: &cfg.COS,
+			Debug:  cfg.General.LogLevel == "debug",
+		}
 		return &BackupDestination{
 			tencentStorage,
 			cfg.COS.Path,
@@ -414,7 +419,10 @@ func NewBackupDestination(cfg config.Config) (*BackupDestination, error) {
 			cfg.General.BackupsToKeepRemote,
 		}, nil
 	case "ftp":
-		ftpStorage := &FTP{Config: &cfg.FTP}
+		ftpStorage := &FTP{
+			Config: &cfg.FTP,
+			Debug:  cfg.General.LogLevel == "debug",
+		}
 		return &BackupDestination{
 			ftpStorage,
 			cfg.FTP.Path,

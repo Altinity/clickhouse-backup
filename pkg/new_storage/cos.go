@@ -1,10 +1,12 @@
-package storage
+package new_storage
 
 import (
 	"context"
 	"io"
 	"net/http"
 	"net/url"
+	"path"
+	"strings"
 	"time"
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
@@ -53,9 +55,9 @@ func (c *COS) Kind() string {
 	return "COS"
 }
 
-func (c *COS) GetFile(key string) (RemoteFile, error) {
+func (c *COS) StatFile(key string) (RemoteFile, error) {
 	// file max size is 5Gb
-	resp, err := c.client.Object.Get(context.Background(), key, nil)
+	resp, err := c.client.Object.Get(context.Background(), path.Join(c.Config.Path, key), nil)
 	if err != nil {
 		cosErr, ok := err.(*cos.ErrorResponse)
 		if ok && cosErr.Code == "NoSuchKey" {
@@ -72,21 +74,32 @@ func (c *COS) GetFile(key string) (RemoteFile, error) {
 }
 
 func (c *COS) DeleteFile(key string) error {
-	_, err := c.client.Object.Delete(context.Background(), key)
+	_, err := c.client.Object.Delete(context.Background(), path.Join(c.Config.Path, key))
 	return err
 }
 
-func (c *COS) Walk(path string, process func(RemoteFile)) error {
+func (c *COS) Walk(cosPath string, recursuve bool, process func(RemoteFile) error) error {
+	prefix := path.Join(c.Config.Path, cosPath)
+	delimiter := ""
+	if !recursuve {
+		delimiter = "/"
+	}
 	res, _, err := c.client.Bucket.Get(context.Background(), &cos.BucketGetOptions{
-		Prefix: c.Config.Path,
+		Delimiter: delimiter,
+		Prefix:    prefix,
 	})
 	if err != nil {
 		return err
 	}
+	for _, dir := range res.CommonPrefixes {
+		process(&cosFile{
+			name: strings.TrimPrefix(dir, prefix),
+		})
+	}
 	for _, v := range res.Contents {
 		modifiedTime, _ := parseTime(v.LastModified)
 		process(&cosFile{
-			name:         v.Key,
+			name:         strings.TrimPrefix(v.Key, prefix),
 			lastModified: modifiedTime,
 			size:         int64(v.Size),
 		})
@@ -95,7 +108,7 @@ func (c *COS) Walk(path string, process func(RemoteFile)) error {
 }
 
 func (c *COS) GetFileReader(key string) (io.ReadCloser, error) {
-	resp, err := c.client.Object.Get(context.Background(), key, nil)
+	resp, err := c.client.Object.Get(context.Background(), path.Join(c.Config.Path, key), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +116,7 @@ func (c *COS) GetFileReader(key string) (io.ReadCloser, error) {
 }
 
 func (c *COS) PutFile(key string, r io.ReadCloser) error {
-	_, err := c.client.Object.Put(context.Background(), key, r, nil)
+	_, err := c.client.Object.Put(context.Background(), path.Join(c.Config.Path, key), r, nil)
 	return err
 }
 

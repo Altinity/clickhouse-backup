@@ -1,0 +1,10 @@
+general:
+  disable_progress_bar: true
+  remote_storage: azblob
+clickhouse:
+  host: localhost
+  port: 9000
+azblob:
+  account_name: clickhousebackuptest
+  container: container1
+  path: backup

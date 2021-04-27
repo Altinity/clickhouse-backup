@@ -5,11 +5,14 @@ require (
 	github.com/Azure/azure-storage-blob-go v0.10.1-0.20200807102407-24fe552e0870
 	github.com/ClickHouse/clickhouse-go v1.4.3
 	github.com/andybalholm/brotli v1.0.0 // indirect
-	github.com/aws/aws-sdk-go v1.34.10
+	github.com/apex/log v1.9.0
+	github.com/aws/aws-sdk-go v1.37.15
 	github.com/cpuguy83/go-md2man/v2 v2.0.0 // indirect
 	github.com/djherbis/buffer v1.1.0 // indirect
 	github.com/fatih/color v1.9.0 // indirect
 	github.com/frankban/quicktest v1.10.0 // indirect
+	github.com/go-logfmt/logfmt v0.4.0
+	github.com/go-sql-driver/mysql v1.5.0 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/google/uuid v1.1.1
 	github.com/gorilla/mux v1.7.4
@@ -26,7 +29,6 @@ require (
 	github.com/stretchr/testify v1.6.1
 	github.com/tencentyun/cos-go-sdk-v5 v0.0.0-20200120023323-87ff3bc489ac
 	github.com/urfave/cli v1.22.2
-	golang.org/x/sync v0.0.0-20200317015054-43a5402ce75a
 	google.golang.org/api v0.28.0
 	gopkg.in/cheggaaa/pb.v1 v1.0.28
 	gopkg.in/djherbis/buffer.v1 v1.1.0

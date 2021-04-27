@@ -1,8 +1,10 @@
-package storage
+package new_storage
 
 import (
 	"context"
 	"io"
+	"path"
+	"strings"
 	"time"
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
@@ -16,35 +18,55 @@ import (
 type GCS struct {
 	client *storage.Client
 	Config *config.GCSConfig
+	buffer []byte
 }
 
 // Connect - connect to GCS
 func (gcs *GCS) Connect() error {
 	var err error
 	var clientOption option.ClientOption
-
+	gcs.buffer = make([]byte, 4*1024*1024)
 	ctx := context.Background()
 
 	if gcs.Config.CredentialsJSON != "" {
 		clientOption = option.WithCredentialsJSON([]byte(gcs.Config.CredentialsJSON))
 		gcs.client, err = storage.NewClient(ctx, clientOption)
-	} else if gcs.Config.CredentialsFile != "" {
+		return err
+	}
+	if gcs.Config.CredentialsFile != "" {
 		clientOption = option.WithCredentialsFile(gcs.Config.CredentialsFile)
 		gcs.client, err = storage.NewClient(ctx, clientOption)
-	} else {
-		gcs.client, err = storage.NewClient(ctx)
+		return err
 	}
+	gcs.client, err = storage.NewClient(ctx)
 	return err
 }
 
-func (gcs *GCS) Walk(gcsPath string, process func(r RemoteFile)) error {
+func (gcs *GCS) Walk(gcsPath string, recursive bool, process func(r RemoteFile) error) error {
 	ctx := context.Background()
-	it := gcs.client.Bucket(gcs.Config.Bucket).Objects(ctx, &storage.Query{Prefix: gcsPath})
+	delimiter := ""
+	if !recursive {
+		delimiter = "/"
+	}
+	it := gcs.client.Bucket(gcs.Config.Bucket).Objects(ctx, &storage.Query{
+		Prefix:    path.Join(gcs.Config.Path, gcsPath) + "/",
+		Delimiter: delimiter,
+	})
 	for {
 		object, err := it.Next()
 		switch err {
 		case nil:
-			process(&gcsFile{object})
+			if object.Prefix != "" {
+				process(&gcsFile{
+					name: strings.TrimPrefix(object.Prefix, path.Join(gcs.Config.Path, gcsPath)),
+				})
+				continue
+			}
+			process(&gcsFile{
+				size:         object.Size,
+				lastModified: object.Updated,
+				name:         strings.TrimPrefix(object.Name, path.Join(gcs.Config.Path, gcsPath)),
+			})
 		case iterator.Done:
 			return nil
 		default:
@@ -59,7 +81,7 @@ func (gcs *GCS) Kind() string {
 
 func (gcs *GCS) GetFileReader(key string) (io.ReadCloser, error) {
 	ctx := context.Background()
-	obj := gcs.client.Bucket(gcs.Config.Bucket).Object(key)
+	obj := gcs.client.Bucket(gcs.Config.Bucket).Object(path.Join(gcs.Config.Path, key))
 	reader, err := obj.NewReader(ctx)
 	if err != nil {
 		return nil, err
@@ -69,50 +91,55 @@ func (gcs *GCS) GetFileReader(key string) (io.ReadCloser, error) {
 
 func (gcs *GCS) GetFileWriter(key string) io.WriteCloser {
 	ctx := context.Background()
-	obj := gcs.client.Bucket(gcs.Config.Bucket).Object(key)
+	obj := gcs.client.Bucket(gcs.Config.Bucket).Object(path.Join(gcs.Config.Path, key))
 	return obj.NewWriter(ctx)
 }
 
 func (gcs *GCS) PutFile(key string, r io.ReadCloser) error {
 	ctx := context.Background()
-	obj := gcs.client.Bucket(gcs.Config.Bucket).Object(key)
+	obj := gcs.client.Bucket(gcs.Config.Bucket).Object(path.Join(gcs.Config.Path, key))
 	writer := obj.NewWriter(ctx)
-	if _, err := io.Copy(writer, r); err != nil {
-		return err
-	}
-	return writer.Close()
+	defer writer.Close()
+	_, err := io.CopyBuffer(writer, r, gcs.buffer)
+	return err
 }
 
-func (gcs *GCS) GetFile(key string) (RemoteFile, error) {
+func (gcs *GCS) StatFile(key string) (RemoteFile, error) {
 	ctx := context.Background()
-	objAttr, err := gcs.client.Bucket(gcs.Config.Bucket).Object(key).Attrs(ctx)
+	objAttr, err := gcs.client.Bucket(gcs.Config.Bucket).Object(path.Join(gcs.Config.Path, key)).Attrs(ctx)
 	if err != nil {
 		if err == storage.ErrObjectNotExist {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	return &gcsFile{objAttr}, nil
+	return &gcsFile{
+		size:         objAttr.Size,
+		lastModified: objAttr.Updated,
+		name:         objAttr.Name,
+	}, nil
 }
 
 func (gcs *GCS) DeleteFile(key string) error {
 	ctx := context.Background()
-	object := gcs.client.Bucket(gcs.Config.Bucket).Object(key)
+	object := gcs.client.Bucket(gcs.Config.Bucket).Object(path.Join(gcs.Config.Path, key))
 	return object.Delete(ctx)
 }
 
 type gcsFile struct {
-	objAttr *storage.ObjectAttrs
+	size         int64
+	lastModified time.Time
+	name         string
 }
 
 func (f *gcsFile) Size() int64 {
-	return f.objAttr.Size
+	return f.size
 }
 
 func (f *gcsFile) Name() string {
-	return f.objAttr.Name
+	return f.name
 }
 
 func (f *gcsFile) LastModified() time.Time {
-	return f.objAttr.Updated
+	return f.lastModified
 }

@@ -1,7 +1,7 @@
 
 # clickhouse-backup
 
-[![Build Status](https://travis-ci.com/AlexAkulov/clickhouse-backup.svg?branch=master)](https://travis-ci.com/AlexAkulov/clickhouse-backup)
+[![Build](https://github.com/AlexAkulov/clickhouse-backup/actions/workflows/build.yaml/badge.svg?branch=dev)](https://github.com/AlexAkulov/clickhouse-backup/actions/workflows/build.yaml)
 [![GoDoc](https://godoc.org/github.com/AlexAkulov/clickhouse-backup?status.svg)](http://godoc.org/github.com/AlexAkulov/clickhouse-backup)
 [![Telegram](https://img.shields.io/badge/telegram-join%20chat-3796cd.svg)](https://t.me/clickhousebackup)
 [![Docker Image](https://img.shields.io/docker/pulls/alexakulov/clickhouse-backup.svg)](https://hub.docker.com/r/alexakulov/clickhouse-backup)
@@ -13,19 +13,20 @@ Tool for easy ClickHouse backup and restore with cloud storages support
 - Easy creating and restoring backups of all or specific tables
 - Efficient storing of multiple backups on the file system
 - Uploading and downloading with streaming compression
+- Works with AWS, GCS, Azure, Tencent COS, FTP
+- **Support of Atomic Database Engine**
+- **Support of multi disks installations**
+
+TODO:
 - Support of incremental backups on remote storages
-- Works with AWS, Azure, GCS, Tencent COS, FTP
+- Smart restore for replicated tables
 
 ## Limitations
 
-- ClickHouse above 1.1.54390 and before 20.10 is supported
+- ClickHouse above 1.1.54390 is supported
 - Only MergeTree family tables engines
-- Backup of 'Tiered storage' or `storage_policy` IS NOT SUPPORTED!
-- 'Atomic' database engine enabled by default in ClickHouse 20.10 IS NOT SUPPORTED!
-- Maximum backup size on cloud storages is 5TB
-- Maximum number of parts on AWS S3 is 10,000 (increase part_size if your database is more than 1TB)
 
-## Download
+## Installation
 
 - Download the latest binary from the [releases](https://github.com/AlexAkulov/clickhouse-backup/releases) page and decompress with:
 
@@ -33,10 +34,10 @@ Tool for easy ClickHouse backup and restore with cloud storages support
 tar -zxvf clickhouse-backup.tar.gz
 ```
 
-- Use the official tiny Docker image and run it like:
+- Use the official tiny Docker image and run it on host where installed `clickhouse-server`:
 
 ```shell
-docker run --rm -it --network host -v "/var/lib/clickhouse:/var/lib/clickhouse" \
+docker run -u $(id -u clickhouse) --rm -it --network host -v "/var/lib/clickhouse:/var/lib/clickhouse" \
    -e CLICKHOUSE_PASSWORD="password" \
    -e S3_BUCKET="clickhouse-backup" \
    -e S3_ACCESS_KEY="access_key" \
@@ -94,16 +95,17 @@ All options can be overwritten via environment variables
 ```yaml
 general:
   remote_storage: s3             # REMOTE_STORAGE
+  max_file_size: 1099511627776   # MAX_FILE_SIZE
   disable_progress_bar: false    # DISABLE_PROGRESS_BAR
   backups_to_keep_local: 0       # BACKUPS_TO_KEEP_LOCAL
   backups_to_keep_remote: 0      # BACKUPS_TO_KEEP_REMOTE
+  log_level: info                # LOG_LEVEL
 clickhouse:
   username: default              # CLICKHOUSE_USERNAME
   password: ""                   # CLICKHOUSE_PASSWORD
   host: localhost                # CLICKHOUSE_HOST
   port: 9000                     # CLICKHOUSE_PORT
-  timeout: 5m                    # CLICKHOUSE_TIMEOUT
-  data_path: ""                  # CLICKHOUSE_DATA_PATH
+  disk_mapping: {}               # CLICKHOUSE_DISK_MAPPING
   skip_tables:                   # CLICKHOUSE_SKIP_TABLES
     - system.*
   timeout: 5m                    # CLICKHOUSE_TIMEOUT
@@ -111,7 +113,6 @@ clickhouse:
   secure: false                  # CLICKHOUSE_SECURE
   skip_verify: false             # CLICKHOUSE_SKIP_VERIFY
   sync_replicated_tables: true   # CLICKHOUSE_SYNC_REPLICATED_TABLES
-  auto_clean_shadow: true        # CLICKHOUSE_AUTO_CLEAN_SHADOW
 
 azblob:
   endpoint_suffix: "core.windows.net" # AZBLOB_ENDPOINT_SUFFIX
@@ -121,7 +122,7 @@ azblob:
   container: ""                # AZBLOB_CONTAINER
   path: ""                     # AZBLOB_PATH
   compression_level: 1         # AZBLOB_COMPRESSION_LEVEL
-  compression_format: gzip     # AZBLOB_COMPRESSION_FORMAT
+  compression_format: tar      # AZBLOB_COMPRESSION_FORMAT
   sse_key: ""                  # AZBLOB_SSE_KEY
 s3:
   access_key: ""                   # S3_ACCESS_KEY
@@ -133,14 +134,13 @@ s3:
   force_path_style: false          # S3_FORCE_PATH_STYLE
   path: ""                         # S3_PATH
   disable_ssl: false               # S3_DISABLE_SSL
-  part_size: 104857600             # S3_PART_SIZE
+  part_size: 536870912             # S3_PART_SIZE
   compression_level: 1             # S3_COMPRESSION_LEVEL
-  # supports 'tar', 'lz4', 'bzip2', 'gzip', 'sz', 'xz'
-  compression_format: gzip         # S3_COMPRESSION_FORMAT
+  # supports 'none', 'tar', 'lz4', 'bzip2', 'gzip', 'sz', 'xz'
+  compression_format: tar          # S3_COMPRESSION_FORMAT
   # empty (default), AES256, or aws:kms
   sse: AES256                      # S3_SSE
   disable_cert_verification: false # S3_DISABLE_CERT_VERIFICATION
-  debug: false                     # S3_DEBUG
   storage_class: STANDARD          # S3_STORAGE_CLASS
 gcs:
   credentials_file: ""         # GCS_CREDENTIALS_FILE
@@ -148,19 +148,18 @@ gcs:
   bucket: ""                   # GCS_BUCKET
   path: ""                     # GCS_PATH
   compression_level: 1         # GCS_COMPRESSION_LEVEL
-  compression_format: gzip     # GCS_COMPRESSION_FORMAT
+  compression_format: tar      # GCS_COMPRESSION_FORMAT
 cos:
   url: ""                      # COS_URL
   timeout: 2m                  # COS_TIMEOUT
   secret_id: ""                # COS_SECRET_ID
   secret_key: ""               # COS_SECRET_KEY
   path: ""                     # COS_PATH
-  compression_format: gzip     # COS_COMPRESSION_FORMAT
+  compression_format: tar      # COS_COMPRESSION_FORMAT
   compression_level: 1         # COS_COMPRESSION_LEVEL
-  debug: false                 # COS_DEBUG
 api:
   listen: "localhost:7171"     # API_LISTEN
-  enable_metrics: false        # API_ENABLE_METRICS
+  enable_metrics: true         # API_ENABLE_METRICS
   enable_pprof: false          # API_ENABLE_PPROF
   username: ""                 # API_USERNAME
   password: ""                 # API_PASSWORD
@@ -174,7 +173,7 @@ ftp:
   password: ""                 # FTP_PASSWORD
   tls: false                   # FTP_TLS
   path: ""                     # FTP_PATH
-  compression_format: gzip     # FTP_COMPRESSION_FORMAT
+  compression_format: tar      # FTP_COMPRESSION_FORMAT
   compression_level: 1         # FTP_COMPRESSION_LEVEL
   debug: false                 # FTP_DEBUG
 ```
@@ -245,6 +244,22 @@ Remove data in 'shadow' folder: `curl -s localhost:7171/backup/clean -X POST | j
 > **GET /backup/status**
 
 Display list of current async operations: `curl -s localhost:7171/backup/status | jq .`
+
+### API Configuration
+
+> **GET /backup/config**
+
+Get the current running configuration: `curl -s localhost:7171/backup/config | jq -r .Result > current_config.yml`
+
+> **GET /backup/config/default**
+
+Get the default configuration: `curl -s localhost:7171/backup/config/default | jq -r .Result > default_config.yml`
+
+> **POST /backup/config**
+
+Update the current running configuration: `curl -v localhost:7171/backup/config -X POST --data-binary '@new_config.yml'`
+
+Be sure to check return code for config parsing/validation errors.
 
 ## Examples
 
