@@ -47,6 +47,9 @@ func (ch *ClickHouse) Connect() error {
 		params.Add("secure", "true")
 		params.Add("skip_verify", strconv.FormatBool(ch.Config.SkipVerify))
 	}
+	if !ch.Config.LogSQLQueries {
+		params.Add("log_queries", "0")
+	}
 	connectionString := fmt.Sprintf("tcp://%v:%v?%s", ch.Config.Host, ch.Config.Port, params.Encode())
 	if ch.conn, err = sqlx.Open("clickhouse", connectionString); err != nil {
 		return err
@@ -589,8 +592,9 @@ func (ch *ClickHouse) Select(dest interface{}, query string, args ...interface{}
 
 func (ch *ClickHouse) LogQuery(query string) string {
 	if !ch.Config.LogSQLQueries {
-		query += " SETTINGS log_queries=0"
+		log.Debug(query)
+	} else {
+		log.Info(query)
 	}
-	log.Infof(query)
 	return query
 }
