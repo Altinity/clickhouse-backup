@@ -112,7 +112,7 @@ func (ch *ClickHouse) getDataPathFromSystemSettings() ([]Disk, error) {
 		MetadataPath string `db:"metadata_path"`
 	}
 	query := "SELECT metadata_path FROM system.tables WHERE database == 'system' LIMIT 1;"
-	if err := ch.conn.Select(&result, query); err != nil {
+	if err := ch.Select(&result, query); err != nil {
 		return nil, err
 	}
 	metadataPath := result[0].MetadataPath
@@ -168,7 +168,9 @@ func (ch *ClickHouse) getTableSizeFromParts(tables []Table) []Table {
 		Size     int64  `db:"size"`
 	}
 	query := "SELECT database, table, sum(bytes_on_disk) as size FROM system.parts GROUP BY (database, table);"
-	ch.softSelect(&tablesSize, query)
+	if err := ch.softSelect(&tablesSize, query); err != nil {
+		log.Warnf("error parsing tablesSize: %w", err)
+	}
 	tableMap := map[metadata.TableTitle]int64{}
 	for i := range tablesSize {
 		tableMap[metadata.TableTitle{
@@ -212,7 +214,7 @@ func (ch *ClickHouse) fixVariousVersions(t Table) Table {
 func (ch *ClickHouse) GetVersion() (int, error) {
 	var result []string
 	query := "SELECT value FROM `system`.`build_options` where name='VERSION_INTEGER'"
-	if err := ch.conn.Select(&result, query); err != nil {
+	if err := ch.Select(&result, query); err != nil {
 		return 0, fmt.Errorf("can't get сlickHouse version: %w", err)
 	}
 	if len(result) == 0 {
@@ -224,7 +226,7 @@ func (ch *ClickHouse) GetVersion() (int, error) {
 func (ch *ClickHouse) GetVersionDescribe() string {
 	var result []string
 	query := "SELECT value FROM `system`.`build_options` where name='VERSION_DESCRIBE'"
-	if err := ch.conn.Select(&result, query); err != nil {
+	if err := ch.Select(&result, query); err != nil {
 		return ""
 	}
 	return result[0]
@@ -261,7 +263,7 @@ func (ch *ClickHouse) FreezeTableOldWay(table *Table, name string) error {
 				withNameQuery,
 			)
 		}
-		if _, err := ch.conn.Exec(query); err != nil {
+		if _, err := ch.Query(query); err != nil {
 			return fmt.Errorf("can't freeze partition '%s': %w", item.PartitionID, err)
 		}
 	}
@@ -269,7 +271,7 @@ func (ch *ClickHouse) FreezeTableOldWay(table *Table, name string) error {
 }
 
 // FreezeTable - freeze all partitions for table
-// This way available for ClickHouse sience v19.1
+// This way available for ClickHouse since v19.1
 func (ch *ClickHouse) FreezeTable(table *Table, name string) error {
 	version, err := ch.GetVersion()
 	if err != nil {
@@ -277,7 +279,7 @@ func (ch *ClickHouse) FreezeTable(table *Table, name string) error {
 	}
 	if strings.HasPrefix(table.Engine, "Replicated") && ch.Config.SyncReplicatedTables {
 		query := fmt.Sprintf("SYSTEM SYNC REPLICA `%s`.`%s`;", table.Database, table.Name)
-		if _, err := ch.conn.Exec(query); err != nil {
+		if _, err := ch.Query(query); err != nil {
 			return err
 		}
 		log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Debugf("replica synced")
@@ -290,7 +292,7 @@ func (ch *ClickHouse) FreezeTable(table *Table, name string) error {
 		withNameQuery = fmt.Sprintf("WITH NAME '%s'", name)
 	}
 	query := fmt.Sprintf("ALTER TABLE `%s`.`%s` FREEZE %s;", table.Database, table.Name, withNameQuery)
-	if _, err := ch.conn.Exec(query); err != nil {
+	if _, err := ch.Query(query); err != nil {
 		return err
 	}
 	return nil
@@ -354,7 +356,7 @@ func (ch *ClickHouse) MkdirAll(path string) error {
 		if dir.IsDir() {
 			return nil
 		}
-		return &os.PathError{"mkdir", path, syscall.ENOTDIR}
+		return &os.PathError{Op: "mkdir", Path: path, Err: syscall.ENOTDIR}
 	}
 
 	// Slow path: make sure parent exists and then call Mkdir for path.
@@ -406,7 +408,9 @@ func (ch *ClickHouse) CopyData(backupName string, backupTable metadata.TableMeta
 			info, err := os.Stat(detachedPath)
 			if err != nil {
 				if os.IsNotExist(err) {
-					ch.MkdirAll(detachedPath)
+					if mkdirErr := ch.MkdirAll(detachedPath); mkdirErr != nil {
+						log.Warnf("error during Mkdir %w", mkdirErr)
+					}
 				} else {
 					return err
 				}
@@ -452,7 +456,7 @@ func (ch *ClickHouse) AttachPartitions(table metadata.TableMetadata, disks []Dis
 	for _, disk := range disks {
 		for _, partition := range table.Parts[disk.Name] {
 			query := fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PART '%s'", table.Database, table.Table, partition.Name)
-			if _, err := ch.conn.Exec(query); err != nil {
+			if _, err := ch.Query(query); err != nil {
 				return err
 			}
 			log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).WithField("disk", disk.Name).WithField("part", partition.Name).Debug("attached")
@@ -475,23 +479,22 @@ func (ch *ClickHouse) ShowCreateTable(database, name string) string {
 // CreateDatabase - create ClickHouse database
 func (ch *ClickHouse) CreateDatabase(database string) error {
 	query := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", database)
-	_, err := ch.conn.Exec(query)
+	_, err := ch.Query(query)
 	return err
 }
 
 // CreateTable - create ClickHouse table
 func (ch *ClickHouse) CreateTable(table Table, query string, dropTable bool) error {
-	if _, err := ch.conn.Exec(fmt.Sprintf("USE `%s`", table.Database)); err != nil {
+	if _, err := ch.Query(fmt.Sprintf("USE `%s`", table.Database)); err != nil {
 		return err
 	}
 	if dropTable {
 		query := fmt.Sprintf("DROP TABLE IF EXISTS `%s`.`%s`", table.Database, table.Name)
-		log.Debugf(query)
-		if _, err := ch.conn.Exec(query); err != nil {
+		if _, err := ch.Query(query); err != nil {
 			return err
 		}
 	}
-	if _, err := ch.conn.Exec(query); err != nil {
+	if _, err := ch.Query(query); err != nil {
 		return err
 	}
 	return nil
@@ -507,7 +510,11 @@ func IsClickhouseShadow(path string) bool {
 	if err != nil {
 		return false
 	}
-	defer d.Close()
+	defer func() {
+		if err := d.Close(); err != nil {
+			log.Warnf("can't close directory %w", err)
+		}
+	}()
 	names, err := d.Readdirnames(-1)
 	if err != nil {
 		return false
@@ -566,4 +573,24 @@ func (ch *ClickHouse) GetPartitions(database, table string) (map[string][]metada
 		}
 	}
 	return result, nil
+}
+
+func (ch *ClickHouse) Query(query string, args ...interface{}) (sql.Result, error) {
+	return ch.conn.Exec(ch.LogQuery(query), args...)
+}
+
+func (ch *ClickHouse) Queryx(query string, args ...interface{}) (*sqlx.Rows, error) {
+	return ch.conn.Queryx(ch.LogQuery(query), args...)
+}
+
+func (ch *ClickHouse) Select(dest interface{}, query string, args ...interface{}) error {
+	return ch.conn.Select(dest, ch.LogQuery(query), args...)
+}
+
+func (ch *ClickHouse) LogQuery(query string) string {
+	if !ch.Config.LogSQLQueries {
+		query += " SETTINGS log_queries=0"
+	}
+	log.Infof(query)
+	return query
 }

@@ -124,6 +124,7 @@ type ClickHouseConfig struct {
 	Secure               bool              `yaml:"secure" envconfig:"CLICKHOUSE_SECURE"`
 	SkipVerify           bool              `yaml:"skip_verify" envconfig:"CLICKHOUSE_SKIP_VERIFY"`
 	SyncReplicatedTables bool              `yaml:"sync_replicated_tables" envconfig:"CLICKHOUSE_SYNC_REPLICATED_TABLES"`
+	LogSQLQueries        bool              `yaml:"log_sql_queries" envconfig:"CLICKHOUSE_LOG_SQL_QUERIES"`
 }
 
 type APIConfig struct {
@@ -257,6 +258,7 @@ func DefaultConfig() *Config {
 			},
 			Timeout:              "5m",
 			SyncReplicatedTables: true,
+			LogSQLQueries:        false,
 		},
 		AzureBlob: AzureBlobConfig{
 			EndpointSuffix:    "core.windows.net",
