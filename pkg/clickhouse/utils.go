@@ -26,7 +26,7 @@ func GetDisksByPaths(disks []Disk, dataPaths []string) map[string]string {
 }
 
 func (ch *ClickHouse) softSelect(dest interface{}, query string) error {
-	rows, err := ch.conn.Queryx(query)
+	rows, err := ch.Queryx(query)
 	if err != nil {
 		return err
 	}

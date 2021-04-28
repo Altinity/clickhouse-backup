@@ -243,7 +243,7 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *click
 	// backup data
 	if !strings.HasSuffix(table.Engine, "MergeTree") {
 		log.WithField("engine", table.Engine).Debug("skipped")
-		return nil,nil
+		return nil, nil
 	}
 	backupId := strings.ReplaceAll(uuid.New().String(), "-", "")
 	if err := ch.FreezeTable(table, backupId); err != nil {

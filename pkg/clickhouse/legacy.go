@@ -140,7 +140,7 @@ func (ch *ClickHouse) GetBackupTablesLegacy(backupName string) ([]metadata.Table
 			}
 
 			partition := metadata.Part{
-				Name:                              parts[partNum],
+				Name: parts[partNum],
 				// Path:                              filePath,
 				HashOfAllFiles:                    hoaf,
 				HashOfUncompressedFiles:           houf,

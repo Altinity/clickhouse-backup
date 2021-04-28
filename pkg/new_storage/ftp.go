@@ -14,9 +14,9 @@ import (
 )
 
 type FTP struct {
-	client *ftp.ServerConn
-	Config *config.FTPConfig
-	Debug  bool
+	client   *ftp.ServerConn
+	Config   *config.FTPConfig
+	Debug    bool
 	dirCache map[string]struct{}
 }
 
