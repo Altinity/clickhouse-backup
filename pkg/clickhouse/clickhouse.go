@@ -492,7 +492,7 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable bool) err
 		return err
 	}
 	if dropTable {
-		query := fmt.Sprintf("DROP TABLE IF EXISTS `%s`.`%s`", table.Database, table.Name)
+		query := fmt.Sprintf("DROP TABLE IF EXISTS `%s`.`%s` NO DELAY", table.Database, table.Name)
 		if _, err := ch.Query(query); err != nil {
 			return err
 		}
