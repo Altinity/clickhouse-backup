@@ -1,7 +1,7 @@
 version: "3.3"
 services:
   minio:
-    image: minio/minio:latest
+    image: minio/minio:${MINIO_VERSION:-latest}
     container_name: minio
     environment:
       MINIO_ACCESS_KEY: access-key
@@ -13,8 +13,14 @@ services:
     networks:
       - clickhouse-backup
 
+  zookeeper:
+    image: zookeeper:${ZOOKEEPER_VERSION:-latest}
+    container_name: zookeeper
+    networks:
+      - clickhouse-backup
+
   clickhouse:
-    image: yandex/clickhouse-server:${CLICKHOUSE_VERSION:-20.10.7.4}
+    image: yandex/clickhouse-server:${CLICKHOUSE_VERSION:-21.3}
     container_name: clickhouse
     environment:
       TZ: UTC
@@ -26,6 +32,7 @@ services:
       - ./server.key:/etc/clickhouse-server/server.key
       - ./dhparam.pem:/etc/clickhouse-server/dhparam.pem
       - ./ssl.xml:/etc/clickhouse-server/config.d/ssl.xml
+      - ./cluster.xml:/etc/clickhouse-server/config.d/cluster.xml
     ports:
       - 9000:9000
       - 7171:7171

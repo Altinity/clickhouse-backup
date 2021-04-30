@@ -1,10 +1,11 @@
-#/bin/bash
+#!/bin/bash
 set -x
 set -e
 
-GOOS=linux GOARCH=amd64 go build ./cmd/clickhouse-backup
+make all
+export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup"
 docker-compose -f test/integration/${COMPOSE_FILE:-docker-compose_storage-policy.yml} down
-docker-compose -f test/integration/${COMPOSE_FILE:-docker-compose_storage-policy.yml} up -d
+docker-compose -f test/integration/${COMPOSE_FILE:-docker-compose_storage-policy.yml} up -d --force-recreate
 
 # To run integration tests including GCS tests set GCS_TESTS environment variable:
 # GCS_TESTS=true go test -tags=integration -v
