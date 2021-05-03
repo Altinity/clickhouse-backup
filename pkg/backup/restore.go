@@ -19,10 +19,7 @@ type RestoreTables []metadata.TableMetadata
 // Sort - sorting BackupTables slice orderly by name
 func (rt RestoreTables) Sort() {
 	sort.Slice(rt, func(i, j int) bool {
-		if getOrderByEngine(rt[i].Table) < getOrderByEngine(rt[j].Table) {
-			return true
-		}
-		return (rt[i].Database < rt[j].Database) || (rt[i].Database == rt[j].Database && rt[i].Table < rt[j].Table)
+		return getOrderByEngine(rt[i].Query) < getOrderByEngine(rt[j].Query)
 	})
 }
 
@@ -83,6 +80,10 @@ func RestoreSchema(cfg *config.Config, backupName string, tablePattern string, d
 		if err := ch.CreateDatabase(schema.Database); err != nil {
 			return fmt.Errorf("can't create database '%s': %v", schema.Database, err)
 		}
+		//materialized views should restore via ATTACH
+		schema.Query = strings.Replace(
+			schema.Query, "CREATE MATERIALIZED VIEW", "ATTACH MATERIALIZED VIEW", 1,
+		)
 		if err := ch.CreateTable(clickhouse.Table{
 			Database: schema.Database,
 			Name:     schema.Table,

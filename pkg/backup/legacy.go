@@ -84,20 +84,21 @@ func parseSchemaPattern(metadataPath string, tablePattern string) (RestoreTables
 }
 
 func getOrderByEngine(query string) int64 {
-	if strings.HasPrefix(query, "CREATE DICTIONARY") {
-		return 0
+	if strings.Contains(query, "ENGINE = Distributed") || strings.Contains(query, "ENGINE = Kafka") || strings.Contains(query, "ENGINE = RabbitMQ") {
+		return 4
 	}
-	if strings.Contains(query, "ENGINE = Distributed") {
+	if strings.HasPrefix(query, "CREATE DICTIONARY") {
 		return 3
 	}
 	if strings.HasPrefix(query, "CREATE VIEW") ||
-		strings.HasPrefix(query, "CREATE MATERIALIZED VIEW") {
-			if strings.Contains(query, " TO ") {
-				return 4
-			}
+		strings.HasPrefix(query, "CREATE MATERIALIZED VIEW") ||
+		strings.HasPrefix(query, "ATTACH MATERIALIZED VIEW") {
+		return 2
+	}
+	if strings.HasPrefix(query, "CREATE TABLE") && strings.Contains(query, ".inner_id.") {
 		return 1
 	}
-	return 2
+	return 0
 }
 
 func parseTablePatternForRestoreData(tables []metadata.TableMetadata, tablePattern string) clickhouse.BackupTables {

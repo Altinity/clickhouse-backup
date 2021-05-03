@@ -142,8 +142,17 @@ func (ch *ClickHouse) Close() error {
 
 // GetTables - return slice of all tables suitable for backup
 func (ch *ClickHouse) GetTables() ([]Table, error) {
+	var err error
 	tables := make([]Table, 0)
-	if err := ch.softSelect(&tables, "SELECT * FROM system.tables WHERE is_temporary = 0;"); err != nil {
+	isUUIDPresent := make([]int, 0)
+	if err = ch.Select(&isUUIDPresent, "SELECT count() FROM system.settings WHERE name = 'show_table_uuid_in_table_create_query_if_not_nil'"); err != nil {
+		return nil, err
+	}
+	allTablesSQL := "SELECT * FROM system.tables WHERE is_temporary = 0"
+	if len(isUUIDPresent) > 0 && isUUIDPresent[0] > 0 {
+		allTablesSQL += " SETTINGS show_table_uuid_in_table_create_query_if_not_nil=1"
+	}
+	if err = ch.softSelect(&tables, allTablesSQL); err != nil {
 		return nil, err
 	}
 	for i, t := range tables {
@@ -208,6 +217,12 @@ func (ch *ClickHouse) fixVariousVersions(t Table) Table {
 	// version 1.1.54390 no has query column
 	if strings.TrimSpace(t.CreateTableQuery) == "" {
 		t.CreateTableQuery = ch.ShowCreateTable(t.Database, t.Name)
+	}
+	// materialized views should properly restore via attach
+	if t.Engine == "MaterializedView" {
+		t.CreateTableQuery = strings.Replace(
+			t.CreateTableQuery, "CREATE MATERIALIZED VIEW", "ATTACH MATERIALIZED VIEW", 1,
+		)
 	}
 	return t
 }
