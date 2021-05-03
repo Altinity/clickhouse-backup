@@ -24,6 +24,7 @@ services:
     container_name: clickhouse
     environment:
       TZ: UTC
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
       - ./backup-user.xml:/etc/clickhouse-server/users.d/backup-user.xml
       - ${CLICKHOUSE_BACKUP_BIN:-../../clickhouse-backup}:/usr/bin/clickhouse-backup

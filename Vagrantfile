@@ -127,7 +127,7 @@ Vagrant.configure(2) do |config|
 
     pwd
     cd /vagrant/
-    make build
+    make clean build
     mv -v clickhouse-backup/clickhouse-backup /bin/
 
     clickhouse-backup list local

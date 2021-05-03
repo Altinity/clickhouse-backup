@@ -11,6 +11,7 @@ import (
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
+	"github.com/apex/log"
 
 	_ "github.com/ClickHouse/clickhouse-go"
 	"github.com/stretchr/testify/assert"
@@ -274,6 +275,14 @@ var incrementData = []TestDataStruct{
 	},
 }
 
+func init() {
+	logLevel := "info"
+	if os.Getenv("LOG_LEVEL") != "" {
+		logLevel = os.Getenv("LOG_LEVEL")
+	}
+	log.SetLevelFromString(logLevel)
+}
+
 func TestIntegrationS3(t *testing.T) {
 	r := require.New(t)
 	r.NoError(dockerCP("config-s3.yml", "/etc/clickhouse-backup/config.yml"))
@@ -307,21 +316,26 @@ func TestIntegrationAzure(t *testing.T) {
 }
 
 func testCommon(t *testing.T) {
+	var out, version string
+	var err error
+
 	time.Sleep(time.Second * 5)
 	ch := &TestClickHouse{}
 	r := require.New(t)
+	version, err = dockerExecOut("clickhouse-client", "-q", "SELECT version()")
+	r.NoError(err)
 	r.NoError(ch.connect())
-	r.NoError(ch.dropDatabase(dbName))
-	fmt.Println("Generate test data")
+	r.NoError(ch.dropDatabase(dbName, version))
+	log.Info("Generate test data")
 	for _, data := range testData {
 		if (os.Getenv("COMPOSE_FILE") == "docker-compose.yml") && (data.Table == "jbod") {
 			continue
 		}
 		r.NoError(ch.createTestData(data))
 	}
-	fmt.Println("Create backup")
+	log.Info("Create backup")
 	r.NoError(dockerExec("clickhouse-backup", "create", "test_backup"))
-	// fmt.Println("Generate increment test data")
+	// log.Info("Generate increment test data")
 	// for _, data := range incrementData {
 	// 	if (os.Getenv("COMPOSE_FILE") == "docker-compose.yml") && (data.Table == "jbod") {
 	// 		continue
@@ -331,33 +345,31 @@ func testCommon(t *testing.T) {
 	// time.Sleep(time.Second * 5)
 	// r.NoError(dockerExec("clickhouse-backup", "create", "increment"))
 
-	fmt.Println("Upload")
+	log.Info("Upload")
 	r.NoError(dockerExec("clickhouse-backup", "upload", "test_backup"))
 	// r.NoError(dockerExec("clickhouse-backup", "upload", "increment", "--diff-from", "test_backup"))
 
-	fmt.Println("Drop database")
-	r.NoError(ch.dropDatabase(dbName))
-	var out string
-	var err error
+	log.Info("Drop database")
+	r.NoError(ch.dropDatabase(dbName, version))
 	out, err = dockerExecOut("ls", "-lha", "/var/lib/clickhouse/backup")
 	r.NoError(err)
-	r.Equal(len(strings.Split(out, "\n")), 4, "expect two backup exists in backup directory")
-	fmt.Println("Delete backup")
+	r.Equal(4, len(strings.Split(strings.Trim(out, " \t\r\n"), "\n")), "expect one backup exists in backup directory")
+	log.Info("Delete backup")
 	r.NoError(dockerExec("clickhouse-backup", "delete", "local", "test_backup"))
 	out, err = dockerExecOut("ls", "-lha", "/var/lib/clickhouse/backup")
 	r.NoError(err)
-	r.Equal(len(strings.Split(out, "\n")), 2, "expect no backup exists in backup directory")
+	r.Equal(3, len(strings.Split(strings.Trim(out, " \t\r\n"), "\n")), "expect no backup exists in backup directory")
 
-	fmt.Println("Download")
+	log.Info("Download")
 	r.NoError(dockerExec("clickhouse-backup", "download", "test_backup"))
 
-	fmt.Println("Restore schema")
+	log.Info("Restore schema")
 	r.NoError(dockerExec("clickhouse-backup", "restore", "--schema", "test_backup"))
 
-	fmt.Println("Restore data")
+	log.Info("Restore data")
 	r.NoError(dockerExec("clickhouse-backup", "restore", "--data", "test_backup"))
 
-	fmt.Println("Check data")
+	log.Info("Check data")
 	for i := range testData {
 		if (os.Getenv("COMPOSE_FILE") == "docker-compose.yml") && (testData[i].Table == "jbod") {
 			continue
@@ -365,21 +377,21 @@ func testCommon(t *testing.T) {
 		r.NoError(ch.checkData(t, testData[i]))
 	}
 	// test increment
-	// fmt.Println("Drop database")
+	// log.Info("Drop database")
 	// r.NoError(ch.dropDatabase(dbName))
 
 	// dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
-	// fmt.Println("Delete backup")
+	// log.Info("Delete backup")
 	// r.NoError(dockerExec("/bin/rm", "-rf", "/var/lib/clickhouse/backup/test_backup", "/var/lib/clickhouse/backup/increment"))
 	// dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
 
-	// fmt.Println("Download increment")
+	// log.Info("Download increment")
 	// r.NoError(dockerExec("clickhouse-backup", "download", "increment"))
 
-	// fmt.Println("Restore")
+	// log.Info("Restore")
 	// r.NoError(dockerExec("clickhouse-backup", "restore", "--schema", "--data", "increment"))
 
-	// fmt.Println("Check increment data")
+	// log.Info("Check increment data")
 	// for i := range testData {
 	// 	if (os.Getenv("COMPOSE_FILE") == "docker-compose.yml") && (testData[i].Table == "jbod") {
 	// 		continue
@@ -389,7 +401,7 @@ func testCommon(t *testing.T) {
 	// 	r.NoError(ch.checkData(t, ti))
 	// }
 
-	fmt.Println("Clean")
+	log.Info("Clean")
 	r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "test_backup"))
 	r.NoError(dockerExec("clickhouse-backup", "delete", "local", "test_backup"))
 	// r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "increment"))
@@ -426,7 +438,7 @@ func (ch *TestClickHouse) createTestData(data TestDataStruct) error {
 	}
 	createSQL += fmt.Sprintf(" IF NOT EXISTS `%s`.`%s` ", data.Database, data.Table)
 	createSQL += data.Schema
-	fmt.Println(createSQL)
+	log.Debug(createSQL)
 	err := ch.chbackup.CreateTable(
 		clickhouse.Table{
 			Database: data.Database,
@@ -444,13 +456,16 @@ func (ch *TestClickHouse) createTestData(data TestDataStruct) error {
 		if err != nil {
 			return fmt.Errorf("can't begin transaction: %v", err)
 		}
-		if _, err := tx.NamedExec(
-			fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES (:%s)",
-				data.Database,
-				data.Table,
-				strings.Join(data.Fields, ","),
-				strings.Join(data.Fields, ",:"),
-			), row); err != nil {
+		insertSQL := fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES (:%s)",
+			data.Database,
+			data.Table,
+			strings.Join(data.Fields, ","),
+			strings.Join(data.Fields, ",:"),
+		)
+
+		log.Debugf(insertSQL, row)
+
+		if _, err := tx.NamedExec(insertSQL, row); err != nil {
 			return fmt.Errorf("can't add insert to transaction: %v", err)
 		}
 		if err := tx.Commit(); err != nil {
@@ -460,15 +475,18 @@ func (ch *TestClickHouse) createTestData(data TestDataStruct) error {
 	return nil
 }
 
-func (ch *TestClickHouse) dropDatabase(database string) error {
-	dropDatabaseSql := fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", database)
-	fmt.Println(dropDatabaseSql)
-	_, err := ch.chbackup.GetConn().Exec(dropDatabaseSql)
+func (ch *TestClickHouse) dropDatabase(database, version string) error {
+	dropDatabaseSQL := fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", database)
+	if strings.HasPrefix(version, "22.") || strings.HasPrefix(version, "21.") || strings.HasPrefix(version, "20.") {
+		dropDatabaseSQL += " SYNC"
+	}
+	log.Debugf(dropDatabaseSQL)
+	_, err := ch.chbackup.GetConn().Exec(dropDatabaseSQL)
 	return err
 }
 
 func (ch *TestClickHouse) checkData(t *testing.T, data TestDataStruct) error {
-	fmt.Printf("Check '%d' rows in '%s.%s'\n", len(data.Rows), data.Database, data.Table)
+	log.Infof("Check '%d' rows in '%s.%s'\n", len(data.Rows), data.Database, data.Table)
 	rows, err := ch.chbackup.GetConn().Queryx(fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY %s", data.Database, data.Table, data.OrderBy))
 	if err != nil {
 		return err
@@ -490,7 +508,7 @@ func (ch *TestClickHouse) checkData(t *testing.T, data TestDataStruct) error {
 
 func dockerExec(cmd ...string) error {
 	out, err := dockerExecOut(cmd...)
-	fmt.Print(out)
+	log.Debug(out)
 	return err
 }
 
@@ -498,6 +516,7 @@ func dockerExecOut(cmd ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	dcmd := []string{"exec", "clickhouse"}
 	dcmd = append(dcmd, cmd...)
+	log.Info(strings.Join(dcmd, " "))
 	out, err := exec.CommandContext(ctx, "docker", dcmd...).CombinedOutput()
 	cancel()
 	return string(out), err
@@ -507,7 +526,7 @@ func dockerCP(src, dst string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	dcmd := []string{"cp", src, "clickhouse:" + dst}
 	out, err := exec.CommandContext(ctx, "docker", dcmd...).CombinedOutput()
-	fmt.Println(string(out))
+	log.Info(string(out))
 	cancel()
 	return err
 }
