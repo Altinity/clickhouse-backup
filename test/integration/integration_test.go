@@ -477,13 +477,18 @@ func (ch *TestClickHouse) createTestData(data TestDataStruct) error {
 	return nil
 }
 
-func (ch *TestClickHouse) dropDatabase(database, version string) error {
+func (ch *TestClickHouse) dropDatabase(database, version string) (err error) {
 	dropDatabaseSQL := fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", database)
-	if strings.HasPrefix(version, "22.") || strings.HasPrefix(version, "21.") || strings.HasPrefix(version, "20.") {
-		dropDatabaseSQL += " SYNC"
+	isUUIDPresent := make([]int, 0)
+	if err = ch.chbackup.Select(&isUUIDPresent, "SELECT count() FROM system.settings WHERE name = 'show_table_uuid_in_table_create_query_if_not_nil'"); err != nil {
+		return err
+	}
+
+	if len(isUUIDPresent) > 0 && isUUIDPresent[0] > 0 {
+		dropDatabaseSQL += " NO DELAY"
 	}
 	log.Debugf(dropDatabaseSQL)
-	_, err := ch.chbackup.GetConn().Exec(dropDatabaseSQL)
+	_, err = ch.chbackup.GetConn().Exec(dropDatabaseSQL)
 	return err
 }
 
