@@ -412,7 +412,7 @@ func (ch *ClickHouse) MkdirAll(path string) error {
 
 // CopyData - copy partitions for specific table to detached folder
 func (ch *ClickHouse) CopyData(backupName string, backupTable metadata.TableMetadata, disks []Disk, tableDataPaths []string) error {
-	// TODO: проверить если диск есть в бэкапе но нет в кликхаусе
+	// TODO: проверить если диск есть в бэкапе но нет в ClickHouse
 	dstDataPaths := GetDisksByPaths(disks, tableDataPaths)
 	for _, backupDisk := range disks {
 		if len(backupTable.Parts[backupDisk.Name]) == 0 {
@@ -503,11 +503,16 @@ func (ch *ClickHouse) CreateDatabase(database string) error {
 
 // CreateTable - create ClickHouse table
 func (ch *ClickHouse) CreateTable(table Table, query string, dropTable bool) error {
-	if _, err := ch.Query(fmt.Sprintf("USE `%s`", table.Database)); err != nil {
+	var isAtomic bool
+	var err error
+	if isAtomic, err = ch.IsAtomic(table.Database); err != nil {
 		return err
 	}
 	if dropTable {
-		query := fmt.Sprintf("DROP TABLE IF EXISTS `%s`.`%s` NO DELAY", table.Database, table.Name)
+		query := fmt.Sprintf("DROP TABLE IF EXISTS `%s`.`%s`", table.Database, table.Name)
+		if isAtomic {
+			query += " SYNC"
+		}
 		if _, err := ch.Query(query); err != nil {
 			return err
 		}
@@ -612,4 +617,12 @@ func (ch *ClickHouse) LogQuery(query string) string {
 		log.Info(query)
 	}
 	return query
+}
+
+func (ch *ClickHouse) IsAtomic(database string) (bool, error) {
+	var isDatabaseAtomic []string
+	if err := ch.Select(&isDatabaseAtomic, fmt.Sprintf("SELECT engine FROM system.databases WHERE name = '%s'", database)); err != nil {
+		return false, err
+	}
+	return len(isDatabaseAtomic) > 0 && isDatabaseAtomic[0] == "Atomic", nil
 }

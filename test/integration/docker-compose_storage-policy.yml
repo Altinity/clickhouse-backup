@@ -36,8 +36,6 @@ services:
       - ./storage_configuration.xml:/etc/clickhouse-server/config.d/storage_configuration.xml
       - ./cluster.xml:/etc/clickhouse-server/config.d/cluster.xml
       - ./init.sh:/docker-entrypoint-initdb.d/init.sh
-      - ./clickhouse-server.err.log:/var/log/clickhouse-server/clickhouse-server.err.log
-      - ./clickhouse-server.log:/var/log/clickhouse-server/clickhouse-server.log
     # look like 21.x+ check volumes in storage policy is exists, so we need create it before first run `clickhouse-server`
     entrypoint:
       - /bin/bash

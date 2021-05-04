@@ -17,9 +17,9 @@ import (
 type RestoreTables []metadata.TableMetadata
 
 // Sort - sorting BackupTables slice orderly by name
-func (rt RestoreTables) Sort() {
+func (rt RestoreTables) Sort(dropTable bool) {
 	sort.Slice(rt, func(i, j int) bool {
-		return getOrderByEngine(rt[i].Query) < getOrderByEngine(rt[j].Query)
+		return getOrderByEngine(rt[i].Query, dropTable) < getOrderByEngine(rt[j].Query, dropTable)
 	})
 }
 
@@ -68,7 +68,7 @@ func RestoreSchema(cfg *config.Config, backupName string, tablePattern string, d
 	if tablePattern == "" {
 		tablePattern = "*"
 	}
-	tablesForRestore, err := parseSchemaPattern(metadataPath, tablePattern)
+	tablesForRestore, err := parseSchemaPattern(metadataPath, tablePattern, dropTable)
 	if err != nil {
 		return err
 	}
@@ -128,7 +128,7 @@ func RestoreData(cfg *config.Config, backupName string, tablePattern string) err
 		tablesForRestore, err = ch.GetBackupTablesLegacy(backupName)
 	} else {
 		metadataPath := path.Join(defaulDataPath, "backup", backupName, "metadata")
-		tablesForRestore, err = parseSchemaPattern(metadataPath, tablePattern)
+		tablesForRestore, err = parseSchemaPattern(metadataPath, tablePattern, false)
 	}
 	if err != nil {
 		return err

@@ -175,7 +175,7 @@ var testData = []TestDataStruct{
 		Database:           dbName,
 		IsMaterializedView: true,
 		Table:              "mv_max_with_dst",
-		Schema:             fmt.Sprintf(" TO `%s`.`mv_dst_table` AS SELECT max(id) AS id FROM mv_src_table", dbName),
+		Schema:             fmt.Sprintf(" TO `%s`.`mv_dst_table` AS SELECT max(id) AS id FROM `%s`.mv_src_table", dbName, dbName),
 		Rows: func() []map[string]interface{} {
 			return []map[string]interface{}{
 				{"id": uint64(99)},
@@ -318,16 +318,14 @@ func TestIntegrationAzure(t *testing.T) {
 }
 
 func testCommon(t *testing.T) {
-	var out, version string
+	var out string
 	var err error
 
 	time.Sleep(time.Second * 5)
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	version, err = dockerExecOut("clickhouse-client", "-q", "SELECT version()")
-	r.NoError(err)
 	r.NoError(ch.connect())
-	r.NoError(ch.dropDatabase(dbName, version))
+	r.NoError(ch.dropDatabase(dbName))
 	log.Info("Generate test data")
 	for _, data := range testData {
 		if (os.Getenv("COMPOSE_FILE") == "docker-compose.yml") && (data.Table == "jbod") {
@@ -352,7 +350,7 @@ func testCommon(t *testing.T) {
 	// r.NoError(dockerExec("clickhouse-backup", "upload", "increment", "--diff-from", "test_backup"))
 
 	log.Info("Drop database")
-	r.NoError(ch.dropDatabase(dbName, version))
+	r.NoError(ch.dropDatabase(dbName))
 	out, err = dockerExecOut("ls", "-lha", "/var/lib/clickhouse/backup")
 	r.NoError(err)
 	r.Equal(4, len(strings.Split(strings.Trim(out, " \t\r\n"), "\n")), "expect one backup exists in backup directory")
@@ -370,6 +368,9 @@ func testCommon(t *testing.T) {
 
 	log.Info("Restore data")
 	r.NoError(dockerExec("clickhouse-backup", "restore", "--data", "test_backup"))
+
+	log.Info("Full restore with rm")
+	r.NoError(dockerExec("clickhouse-backup", "restore", "--rm", "test_backup"))
 
 	log.Info("Check data")
 	for i := range testData {
@@ -440,7 +441,15 @@ func (ch *TestClickHouse) createTestData(data TestDataStruct) error {
 	}
 	createSQL += fmt.Sprintf(" IF NOT EXISTS `%s`.`%s` ", data.Database, data.Table)
 	createSQL += data.Schema
-	log.Debug(createSQL)
+	// old 1.x clickhouse versions doesn't contains {table} and {database} macros
+	var isMacrosExists []int
+	if err := ch.chbackup.Select(&isMacrosExists, "SELECT count() FROM system.functions WHERE name='getMacro'"); err != nil {
+		return err
+	}
+	if len(isMacrosExists) == 0 || isMacrosExists[0] == 0 {
+		createSQL = strings.Replace(createSQL, "{table}", data.Table, -1)
+		createSQL = strings.Replace(createSQL, "{database}", data.Database, -1)
+	}
 	err := ch.chbackup.CreateTable(
 		clickhouse.Table{
 			Database: data.Database,
@@ -477,18 +486,15 @@ func (ch *TestClickHouse) createTestData(data TestDataStruct) error {
 	return nil
 }
 
-func (ch *TestClickHouse) dropDatabase(database, version string) (err error) {
+func (ch *TestClickHouse) dropDatabase(database string) (err error) {
+	var isAtomic bool
 	dropDatabaseSQL := fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", database)
-	isUUIDPresent := make([]int, 0)
-	if err = ch.chbackup.Select(&isUUIDPresent, "SELECT count() FROM system.settings WHERE name = 'show_table_uuid_in_table_create_query_if_not_nil'"); err != nil {
+	if isAtomic, err = ch.chbackup.IsAtomic(database); isAtomic {
+		dropDatabaseSQL += " SYNC"
+	} else if err != nil {
 		return err
 	}
-
-	if len(isUUIDPresent) > 0 && isUUIDPresent[0] > 0 {
-		dropDatabaseSQL += " NO DELAY"
-	}
-	log.Debugf(dropDatabaseSQL)
-	_, err = ch.chbackup.GetConn().Exec(dropDatabaseSQL)
+	_, err = ch.chbackup.Query(dropDatabaseSQL)
 	return err
 }
 

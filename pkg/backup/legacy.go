@@ -22,7 +22,7 @@ func addRestoreTable(tables RestoreTables, table metadata.TableMetadata) Restore
 	return append(tables, table)
 }
 
-func parseSchemaPattern(metadataPath string, tablePattern string) (RestoreTables, error) {
+func parseSchemaPattern(metadataPath string, tablePattern string, dropTable bool) (RestoreTables, error) {
 	result := RestoreTables{}
 	tablePatterns := []string{"*"}
 
@@ -79,11 +79,11 @@ func parseSchemaPattern(metadataPath string, tablePattern string) (RestoreTables
 	}); err != nil {
 		return nil, err
 	}
-	result.Sort()
+	result.Sort(dropTable)
 	return result, nil
 }
 
-func getOrderByEngine(query string) int64 {
+func getOrderByEngine(query string, dropTable bool) int64 {
 	if strings.Contains(query, "ENGINE = Distributed") || strings.Contains(query, "ENGINE = Kafka") || strings.Contains(query, "ENGINE = RabbitMQ") {
 		return 4
 	}
@@ -93,10 +93,20 @@ func getOrderByEngine(query string) int64 {
 	if strings.HasPrefix(query, "CREATE VIEW") ||
 		strings.HasPrefix(query, "CREATE MATERIALIZED VIEW") ||
 		strings.HasPrefix(query, "ATTACH MATERIALIZED VIEW") {
-		return 2
+		if dropTable {
+			return 1
+		} else {
+			return 2
+		}
 	}
-	if strings.HasPrefix(query, "CREATE TABLE") && strings.Contains(query, ".inner_id.") {
-		return 1
+
+	if strings.HasPrefix(query, "CREATE TABLE") &&
+		(strings.Contains(query, ".inner_id.") || strings.Contains(query, ".inner.")) {
+		if dropTable {
+			return 2
+		} else {
+			return 1
+		}
 	}
 	return 0
 }
