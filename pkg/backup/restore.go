@@ -17,12 +17,9 @@ import (
 type RestoreTables []metadata.TableMetadata
 
 // Sort - sorting BackupTables slice orderly by name
-func (rt RestoreTables) Sort() {
+func (rt RestoreTables) Sort(dropTable bool) {
 	sort.Slice(rt, func(i, j int) bool {
-		if getOrderByEngine(rt[i].Table) < getOrderByEngine(rt[j].Table) {
-			return true
-		}
-		return (rt[i].Database < rt[j].Database) || (rt[i].Database == rt[j].Database && rt[i].Table < rt[j].Table)
+		return getOrderByEngine(rt[i].Query, dropTable) < getOrderByEngine(rt[j].Query, dropTable)
 	})
 }
 
@@ -71,7 +68,7 @@ func RestoreSchema(cfg *config.Config, backupName string, tablePattern string, d
 	if tablePattern == "" {
 		tablePattern = "*"
 	}
-	tablesForRestore, err := parseSchemaPattern(metadataPath, tablePattern)
+	tablesForRestore, err := parseSchemaPattern(metadataPath, tablePattern, dropTable)
 	if err != nil {
 		return err
 	}
@@ -83,6 +80,10 @@ func RestoreSchema(cfg *config.Config, backupName string, tablePattern string, d
 		if err := ch.CreateDatabase(schema.Database); err != nil {
 			return fmt.Errorf("can't create database '%s': %v", schema.Database, err)
 		}
+		//materialized views should restore via ATTACH
+		schema.Query = strings.Replace(
+			schema.Query, "CREATE MATERIALIZED VIEW", "ATTACH MATERIALIZED VIEW", 1,
+		)
 		if err := ch.CreateTable(clickhouse.Table{
 			Database: schema.Database,
 			Name:     schema.Table,
@@ -127,7 +128,7 @@ func RestoreData(cfg *config.Config, backupName string, tablePattern string) err
 		tablesForRestore, err = ch.GetBackupTablesLegacy(backupName)
 	} else {
 		metadataPath := path.Join(defaulDataPath, "backup", backupName, "metadata")
-		tablesForRestore, err = parseSchemaPattern(metadataPath, tablePattern)
+		tablesForRestore, err = parseSchemaPattern(metadataPath, tablePattern, false)
 	}
 	if err != nil {
 		return err

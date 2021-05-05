@@ -142,8 +142,17 @@ func (ch *ClickHouse) Close() error {
 
 // GetTables - return slice of all tables suitable for backup
 func (ch *ClickHouse) GetTables() ([]Table, error) {
+	var err error
 	tables := make([]Table, 0)
-	if err := ch.softSelect(&tables, "SELECT * FROM system.tables WHERE is_temporary = 0;"); err != nil {
+	isUUIDPresent := make([]int, 0)
+	if err = ch.Select(&isUUIDPresent, "SELECT count() FROM system.settings WHERE name = 'show_table_uuid_in_table_create_query_if_not_nil'"); err != nil {
+		return nil, err
+	}
+	allTablesSQL := "SELECT * FROM system.tables WHERE is_temporary = 0"
+	if len(isUUIDPresent) > 0 && isUUIDPresent[0] > 0 {
+		allTablesSQL += " SETTINGS show_table_uuid_in_table_create_query_if_not_nil=1"
+	}
+	if err = ch.softSelect(&tables, allTablesSQL); err != nil {
 		return nil, err
 	}
 	for i, t := range tables {
@@ -208,6 +217,12 @@ func (ch *ClickHouse) fixVariousVersions(t Table) Table {
 	// version 1.1.54390 no has query column
 	if strings.TrimSpace(t.CreateTableQuery) == "" {
 		t.CreateTableQuery = ch.ShowCreateTable(t.Database, t.Name)
+	}
+	// materialized views should properly restore via attach
+	if t.Engine == "MaterializedView" {
+		t.CreateTableQuery = strings.Replace(
+			t.CreateTableQuery, "CREATE MATERIALIZED VIEW", "ATTACH MATERIALIZED VIEW", 1,
+		)
 	}
 	return t
 }
@@ -397,7 +412,7 @@ func (ch *ClickHouse) MkdirAll(path string) error {
 
 // CopyData - copy partitions for specific table to detached folder
 func (ch *ClickHouse) CopyData(backupName string, backupTable metadata.TableMetadata, disks []Disk, tableDataPaths []string) error {
-	// TODO: проверить если диск есть в бэкапе но нет в кликхаусе
+	// TODO: проверить если диск есть в бэкапе но нет в ClickHouse
 	dstDataPaths := GetDisksByPaths(disks, tableDataPaths)
 	for _, backupDisk := range disks {
 		if len(backupTable.Parts[backupDisk.Name]) == 0 {
@@ -488,11 +503,16 @@ func (ch *ClickHouse) CreateDatabase(database string) error {
 
 // CreateTable - create ClickHouse table
 func (ch *ClickHouse) CreateTable(table Table, query string, dropTable bool) error {
-	if _, err := ch.Query(fmt.Sprintf("USE `%s`", table.Database)); err != nil {
+	var isAtomic bool
+	var err error
+	if isAtomic, err = ch.IsAtomic(table.Database); err != nil {
 		return err
 	}
 	if dropTable {
-		query := fmt.Sprintf("DROP TABLE IF EXISTS `%s`.`%s` NO DELAY", table.Database, table.Name)
+		query := fmt.Sprintf("DROP TABLE IF EXISTS `%s`.`%s`", table.Database, table.Name)
+		if isAtomic {
+			query += " NO DELAY"
+		}
 		if _, err := ch.Query(query); err != nil {
 			return err
 		}
@@ -597,4 +617,12 @@ func (ch *ClickHouse) LogQuery(query string) string {
 		log.Info(query)
 	}
 	return query
+}
+
+func (ch *ClickHouse) IsAtomic(database string) (bool, error) {
+	var isDatabaseAtomic []string
+	if err := ch.Select(&isDatabaseAtomic, fmt.Sprintf("SELECT engine FROM system.databases WHERE name = '%s'", database)); err != nil {
+		return false, err
+	}
+	return len(isDatabaseAtomic) > 0 && isDatabaseAtomic[0] == "Atomic", nil
 }

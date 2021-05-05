@@ -77,7 +77,7 @@ func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom
 	if _, err := os.Stat(metadataPath); err != nil {
 		return err
 	}
-	tablesForUpload, err := parseSchemaPattern(metadataPath, tablePattern)
+	tablesForUpload, err := parseSchemaPattern(metadataPath, tablePattern, false)
 	dataSize := int64(0)
 	metadataSize := int64(0)
 	for _, table := range tablesForUpload {

@@ -50,8 +50,6 @@ Vagrant.configure(2) do |config|
   end
 
   config.vm.provider "hyperv" do |hv|
-    # hv.gui = false
-    # hv.default_nic_type = "virtio"
     hv.cpus = total_cpus
     hv.maxmemory = "2048"
     hv.memory = "2048"
@@ -66,11 +64,11 @@ Vagrant.configure(2) do |config|
     clickhouse_backup.vm.network "private_network", ip: "172.16.2.109", nic_type: "virtio"
     # port forwarding works only when pair with kubectl port-forward
     # clickhouse-server
-    clickhouse_backup.vm.network "forwarded_port", guest_ip: "172.16.2.109", guest: 3000, host_ip: "127.0.0.1", host: 8123
-    clickhouse_backup.vm.network "forwarded_port", guest_ip: "172.16.2.109", guest: 3000, host_ip: "127.0.0.1", host: 9000
+    clickhouse_backup.vm.network "forwarded_port", guest_ip: "172.16.2.109", guest: 8123, host_ip: "127.0.0.1", host: 8123
+    clickhouse_backup.vm.network "forwarded_port", guest_ip: "172.16.2.109", guest: 9000, host_ip: "127.0.0.1", host: 9000
 
     # clickhouse-backup
-    clickhouse_backup.vm.network "forwarded_port", guest_ip: "172.16.2.109", guest: 8888, host_ip: "127.0.0.1", host: 7171
+    clickhouse_backup.vm.network "forwarded_port", guest_ip: "172.16.2.109", guest: 7171, host_ip: "127.0.0.1", host: 7171
 
     clickhouse_backup.vm.host_name = "local-clickhouse-backup"
     # vagrant plugin install vagrant-disksize
@@ -91,7 +89,7 @@ Vagrant.configure(2) do |config|
 
     apt-get update
     apt-get install --no-install-recommends -y apt-transport-https ca-certificates software-properties-common curl
-    apt-get install --no-install-recommends -y htop ethtool mc curl wget jq socat git make
+    apt-get install --no-install-recommends -y htop ethtool mc curl wget jq socat git make gcc libc-dev
 
     # clickhouse
     apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv E0C56BD4
@@ -129,7 +127,7 @@ Vagrant.configure(2) do |config|
 
     pwd
     cd /vagrant/
-    make build
+    make clean build
     mv -v clickhouse-backup/clickhouse-backup /bin/
 
     clickhouse-backup list local
