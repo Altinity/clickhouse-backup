@@ -171,10 +171,14 @@ func (s *S3) Walk(s3Path string, recursive bool, process func(r RemoteFile) erro
 }
 
 func (s *S3) remotePager(s3Path string, recursive bool, pager func(page *s3.ListObjectsV2Output) error) error {
+	prefix := s3Path + "/"
+	if s3Path == "" || s3Path == "/" {
+		prefix = ""
+	}
 	params := &s3.ListObjectsV2Input{
 		Bucket:  aws.String(s.Config.Bucket), // Required
 		MaxKeys: aws.Int64(1000),
-		Prefix:  aws.String(s3Path + "/"),
+		Prefix:  aws.String(prefix),
 	}
 	if !recursive {
 		params.SetDelimiter("/")
