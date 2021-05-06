@@ -71,14 +71,14 @@ func (tm *TableMetadata) Save(location string, metadataOnly bool) (int, error) {
 }
 
 type Part struct {
-	Partition string `json:"partition"`
+	Partition string `json:"partition,omitempty"`
 	Name      string `json:"name"`
 	// Path                              string    `json:"path"`              // TODO: должен быть относительный путь вообще непонятно зачем он, его можно из name получить
-	HashOfAllFiles                    string    `json:"hash_of_all_files"` // ???
-	HashOfUncompressedFiles           string    `json:"hash_of_uncompressed_files"`
-	UncompressedHashOfCompressedFiles string    `json:"uncompressed_hash_of_compressed_files"` // ???
-	PartitionID                       string    `json:"partition_id"`
-	ModificationTime                  time.Time `json:"modification_time"`
-	Size                              int64     `json:"size"`
+	HashOfAllFiles                    string     `json:"hash_of_all_files,omitempty"` // ???
+	HashOfUncompressedFiles           string     `json:"hash_of_uncompressed_files,omitempty"`
+	UncompressedHashOfCompressedFiles string     `json:"uncompressed_hash_of_compressed_files,omitempty"` // ???
+	PartitionID                       string     `json:"partition_id,omitempty"`
+	ModificationTime                  *time.Time `json:"modification_time,omitempty"`
+	Size                              int64      `json:"size,omitempty"`
 	// bytes_on_disk, data_compressed_bytes, data_uncompressed_bytes
 }

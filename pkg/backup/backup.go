@@ -139,9 +139,10 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 		}
 		backupPath := path.Join(defaultPath, "backup", backupName)
 		var realSize map[string]int64
+		var partitions map[string][]metadata.Part
 		if !schemaOnly {
 			log.Debug("create data")
-			realSize, err = AddTableToBackup(ch, backupName, &table)
+			partitions, realSize, err = AddTableToBackup(ch, backupName, &table)
 			if err != nil {
 				log.Error(err.Error())
 				RemoveBackupLocal(cfg, backupName)
@@ -157,6 +158,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 			Query:      table.CreateTableQuery,
 			TotalBytes: table.TotalBytes.Int64,
 			Size:       realSize,
+			Parts:      partitions,
 		})
 		if err != nil {
 			RemoveBackupLocal(cfg, backupName)
@@ -202,14 +204,14 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 	return nil
 }
 
-func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *clickhouse.Table) (map[string]int64, error) {
+func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *clickhouse.Table) (map[string][]metadata.Part, map[string]int64, error) {
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "create",
 		"table":     fmt.Sprintf("%s.%s", table.Database, table.Name),
 	})
 	if backupName == "" {
-		return nil, fmt.Errorf("backupName is not defined")
+		return nil, nil, fmt.Errorf("backupName is not defined")
 	}
 	// defaultPath, err := ch.GetDefaultPath()
 	// if err != nil {
@@ -217,7 +219,7 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *click
 	// }
 	diskList, err := ch.GetDisks()
 	if err != nil {
-		return nil, fmt.Errorf("can't get clickhouse disk list: %v", err)
+		return nil, nil, fmt.Errorf("can't get clickhouse disk list: %v", err)
 	}
 	// relevantBackupPath := path.Join("backup", backupName)
 
@@ -243,16 +245,17 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *click
 	// backup data
 	if !strings.HasSuffix(table.Engine, "MergeTree") {
 		log.WithField("engine", table.Engine).Debug("skipped")
-		return nil, nil
+		return nil, nil, nil
 	}
-	backupId := strings.ReplaceAll(uuid.New().String(), "-", "")
-	if err := ch.FreezeTable(table, backupId); err != nil {
-		return nil, err
+	backupID := strings.ReplaceAll(uuid.New().String(), "-", "")
+	if err := ch.FreezeTable(table, backupID); err != nil {
+		return nil, nil, err
 	}
 	log.Debug("freezed")
 	realSize := map[string]int64{}
+	partitions := map[string][]metadata.Part{}
 	for _, disk := range diskList {
-		shadowPath := path.Join(disk.Path, "shadow", backupId)
+		shadowPath := path.Join(disk.Path, "shadow", backupID)
 		if _, err := os.Stat(shadowPath); err != nil && os.IsNotExist(err) {
 			continue
 		}
@@ -260,13 +263,14 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *click
 		encodedTablePath := path.Join(clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Name))
 		backupShadowPath := path.Join(backupPath, "shadow", encodedTablePath, disk.Name)
 		if err := ch.MkdirAll(backupShadowPath); err != nil && !os.IsExist(err) {
-			return nil, err
+			return nil, nil, err
 		}
-		size, err := moveShadow(shadowPath, backupShadowPath)
+		parts, size, err := moveShadow(shadowPath, backupShadowPath)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		realSize[disk.Name] = size
+		partitions[disk.Name] = parts
 		log.WithField("disk", disk.Name).Debug("shadow moved")
 		// realSize[diskPath] = size
 		// fix 19.15.3.6
@@ -288,22 +292,22 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *click
 		// }
 		// badDBPath := path.Join(path.Join(backupShadowPath, table.Database))
 		if err := os.RemoveAll(shadowPath); err != nil {
-			return realSize, err
+			return partitions, realSize, err
 		}
 	}
-	if err := ch.CleanShadow(backupId); err != nil {
-		return realSize, err
+	if err := ch.CleanShadow(backupID); err != nil {
+		return partitions, realSize, err
 	}
 	log.Debug("done")
-	return realSize, nil
+	return partitions, realSize, nil
 }
 
 func createMetadata(ch *clickhouse.ClickHouse, backupPath string, table metadata.TableMetadata) (int, error) {
-	parts, err := ch.GetPartitions(table.Database, table.Table)
-	if err != nil {
-		return 0, err
-	}
-	table.Parts = parts
+	// parts, err := ch.GetPartitions(table.Database, table.Table)
+	// if err != nil {
+	// 	return 0, err
+	// }
+	// table.Parts = parts
 	metadataPath := path.Join(backupPath, "metadata")
 	if err := ch.Mkdir(metadataPath); err != nil {
 		return 0, err
