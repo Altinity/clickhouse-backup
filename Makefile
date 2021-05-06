@@ -17,6 +17,8 @@ GO_FILES = $(shell find -name '*.go')
 GO_BUILD = go build -ldflags "-X 'main.version=$(VERSION)' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)'"
 PKG_FILES = build/$(NAME)_$(VERSION)_amd64.deb build/$(NAME)-$(VERSION)-1.x86_64.rpm
 export CGO_ENABLED = 0
+export GOOS = linux
+export GOARCH = amd64
 
 .PHONY: clean all version test
 
