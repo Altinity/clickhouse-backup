@@ -588,7 +588,7 @@ func (ch *ClickHouse) GetPartitions(database, table string) (map[string][]metada
 					HashOfUncompressedFiles:           partitions[i].HashOfUncompressedFiles,
 					UncompressedHashOfCompressedFiles: partitions[i].UncompressedHashOfCompressedFiles,
 					PartitionID:                       partitions[i].PartitionID,
-					ModificationTime:                  partitions[i].ModificationTime,
+					ModificationTime:                  &partitions[i].ModificationTime,
 					Size:                              partitions[i].DataUncompressedBytes,
 				}
 			}
