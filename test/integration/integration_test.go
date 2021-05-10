@@ -31,6 +31,7 @@ type TestDataStruct struct {
 	OrderBy            string
 	IsMaterializedView bool
 	IsDictionary       bool
+	SkipInsert         bool
 }
 
 var testData = []TestDataStruct{
@@ -147,11 +148,13 @@ var testData = []TestDataStruct{
 		OrderBy: "id",
 	},
 	{
-		Database: dbName,
-		Table:    "mv_dst_table",
-		Schema:   "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{database}/{table}','replica1') ORDER BY id",
+		Database:   dbName,
+		Table:      "mv_dst_table",
+		Schema:     "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{database}/{table}','replica1') ORDER BY id",
+		SkipInsert: true,
 		Rows: func() []map[string]interface{} {
 			return []map[string]interface{}{
+				{"id": uint64(0)},
 				{"id": uint64(99)},
 			}
 		}(),
@@ -163,6 +166,7 @@ var testData = []TestDataStruct{
 		IsMaterializedView: true,
 		Table:              "mv_max_with_inner",
 		Schema:             fmt.Sprintf("(id UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/{database}/{table}','replica1') ORDER BY id AS SELECT max(id) AS id FROM `%s`.`mv_src_table`", dbName),
+		SkipInsert:         true,
 		Rows: func() []map[string]interface{} {
 			return []map[string]interface{}{
 				{"id": uint64(99)},
@@ -176,10 +180,47 @@ var testData = []TestDataStruct{
 		IsMaterializedView: true,
 		Table:              "mv_max_with_dst",
 		Schema:             fmt.Sprintf(" TO `%s`.`mv_dst_table` AS SELECT max(id) AS id FROM `%s`.mv_src_table", dbName, dbName),
+		SkipInsert:         true,
 		Rows: func() []map[string]interface{} {
 			return []map[string]interface{}{
+				{"id": uint64(0)},
 				{"id": uint64(99)},
 			}
+		}(),
+		Fields:  []string{"id"},
+		OrderBy: "id",
+	},
+	{
+		Database:           dbName,
+		IsMaterializedView: true,
+		Table:              "mv_min_with_nested_depencency",
+		Schema:             fmt.Sprintf(" TO `%s`.`mv_dst_table` AS SELECT min(id) * 2 AS id FROM `%s`.mv_src_table", dbName, dbName),
+		SkipInsert:         true,
+		Rows: func() []map[string]interface{} {
+			return []map[string]interface{}{
+				{"id": uint64(0)},
+				{"id": uint64(99)},
+			}
+		}(),
+		Fields:  []string{"id"},
+		OrderBy: "id",
+	},
+	{
+		Database:     dbName,
+		IsDictionary: true,
+		Table:        "dict_example",
+		Schema: fmt.Sprintf(
+			" (id UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) PRIMARY KEY id "+
+				" SOURCE(CLICKHOUSE(host 'localhost' database '%s' table 'table4'))"+
+				" LAYOUT(HASHED()) LIFETIME(60)",
+			dbName),
+		SkipInsert: true,
+		Rows: func() []map[string]interface{} {
+			var result []map[string]interface{}
+			for i := 0; i < 100; i++ {
+				result = append(result, map[string]interface{}{"id": uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
+			}
+			return result
 		}(),
 		Fields:  []string{"id"},
 		OrderBy: "id",
@@ -331,8 +372,15 @@ func testCommon(t *testing.T) {
 		if (os.Getenv("COMPOSE_FILE") == "docker-compose.yml") && (data.Table == "jbod") {
 			continue
 		}
+		r.NoError(ch.createTestSchema(data))
+	}
+	for _, data := range testData {
+		if (os.Getenv("COMPOSE_FILE") == "docker-compose.yml") && (data.Table == "jbod") {
+			continue
+		}
 		r.NoError(ch.createTestData(data))
 	}
+
 	log.Info("Create backup")
 	r.NoError(dockerExec("clickhouse-backup", "create", "test_backup"))
 	// log.Info("Generate increment test data")
@@ -427,7 +475,7 @@ func (ch *TestClickHouse) connect() error {
 	return ch.chbackup.Connect()
 }
 
-func (ch *TestClickHouse) createTestData(data TestDataStruct) error {
+func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {
 	if err := ch.chbackup.CreateDatabase(data.Database); err != nil {
 		return err
 	}
@@ -458,30 +506,43 @@ func (ch *TestClickHouse) createTestData(data TestDataStruct) error {
 		createSQL,
 		false,
 	)
-	if err != nil {
-		return err
+	return err
+}
+
+func (ch *TestClickHouse) createTestData(data TestDataStruct) error {
+	if data.SkipInsert {
+		return nil
 	}
+	tx, err := ch.chbackup.GetConn().Beginx()
+	if err != nil {
+		return fmt.Errorf("can't begin transaction: %v", err)
+	}
+	insertSQL := fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES (:%s)",
+		data.Database,
+		data.Table,
+		strings.Join(data.Fields, ","),
+		strings.Join(data.Fields, ",:"),
+	)
+	log.Debug(insertSQL)
+	statement, err := tx.PrepareNamed(insertSQL)
+	if err != nil {
+		return fmt.Errorf("can't prepare %s: %v", insertSQL, err)
+	}
+	defer func() {
+		err = statement.Close()
+		if err != nil {
+			log.Warnf("can't close SQL statement")
+		}
+	}()
 
 	for _, row := range data.Rows {
-		tx, err := ch.chbackup.GetConn().Beginx()
-		if err != nil {
-			return fmt.Errorf("can't begin transaction: %v", err)
-		}
-		insertSQL := fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES (:%s)",
-			data.Database,
-			data.Table,
-			strings.Join(data.Fields, ","),
-			strings.Join(data.Fields, ",:"),
-		)
-
-		log.Debugf(insertSQL, row)
-
-		if _, err := tx.NamedExec(insertSQL, row); err != nil {
+		log.Debugf("%#v", row)
+		if _, err := statement.Exec(row); err != nil {
 			return fmt.Errorf("can't add insert to transaction: %v", err)
 		}
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("can't commit: %v", err)
-		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("can't commit transaction: %v", err)
 	}
 	return nil
 }
@@ -500,7 +561,9 @@ func (ch *TestClickHouse) dropDatabase(database string) (err error) {
 
 func (ch *TestClickHouse) checkData(t *testing.T, data TestDataStruct) error {
 	log.Infof("Check '%d' rows in '%s.%s'\n", len(data.Rows), data.Database, data.Table)
-	rows, err := ch.chbackup.GetConn().Queryx(fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY %s", data.Database, data.Table, data.OrderBy))
+	selectSQL := fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY %s", data.Database, data.Table, data.OrderBy)
+	log.Debug(selectSQL)
+	rows, err := ch.chbackup.GetConn().Queryx(selectSQL)
 	if err != nil {
 		return err
 	}
