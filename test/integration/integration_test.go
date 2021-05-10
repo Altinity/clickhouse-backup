@@ -369,13 +369,13 @@ func testCommon(t *testing.T) {
 	r.NoError(ch.dropDatabase(dbName))
 	log.Info("Generate test data")
 	for _, data := range testData {
-		if (os.Getenv("COMPOSE_FILE") == "docker-compose.yml") && (data.Table == "jbod") {
+		if isTableSkip(data) {
 			continue
 		}
 		r.NoError(ch.createTestSchema(data))
 	}
 	for _, data := range testData {
-		if (os.Getenv("COMPOSE_FILE") == "docker-compose.yml") && (data.Table == "jbod") {
+		if isTableSkip(data) {
 			continue
 		}
 		r.NoError(ch.createTestData(data))
@@ -385,7 +385,7 @@ func testCommon(t *testing.T) {
 	r.NoError(dockerExec("clickhouse-backup", "create", "test_backup"))
 	// log.Info("Generate increment test data")
 	// for _, data := range incrementData {
-	// 	if (os.Getenv("COMPOSE_FILE") == "docker-compose.yml") && (data.Table == "jbod") {
+	// 	if isTableSkip(data) {
 	// 		continue
 	// 	}
 	// 	r.NoError(ch.createTestData(data))
@@ -422,7 +422,7 @@ func testCommon(t *testing.T) {
 
 	log.Info("Check data")
 	for i := range testData {
-		if (os.Getenv("COMPOSE_FILE") == "docker-compose.yml") && (testData[i].Table == "jbod") {
+		if isTableSkip(testData[i]) {
 			continue
 		}
 		r.NoError(ch.checkData(t, testData[i]))
@@ -444,7 +444,7 @@ func testCommon(t *testing.T) {
 
 	// log.Info("Check increment data")
 	// for i := range testData {
-	// 	if (os.Getenv("COMPOSE_FILE") == "docker-compose.yml") && (testData[i].Table == "jbod") {
+	// 	if isTableSkip(testData[i]) {
 	// 		continue
 	// 	}
 	// 	ti := testData[i]
@@ -458,6 +458,10 @@ func testCommon(t *testing.T) {
 	// r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "increment"))
 	// r.NoError(dockerExec("clickhouse-backup", "delete", "local", "increment"))
 
+}
+
+func isTableSkip(data TestDataStruct) bool {
+	return (os.Getenv("COMPOSE_FILE") == "docker-compose.yml") && (data.Table == "jbod" || data.Table == "dict_example")
 }
 
 type TestClickHouse struct {
