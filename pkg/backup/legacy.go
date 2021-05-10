@@ -30,6 +30,9 @@ func parseSchemaPattern(metadataPath string, tablePattern string, dropTable bool
 		tablePatterns = strings.Split(tablePattern, ",")
 	}
 	if err := filepath.Walk(metadataPath, func(filePath string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
 		if !strings.HasSuffix(filePath, ".sql") &&
 			!strings.HasSuffix(filePath, ".json") &&
 			!info.Mode().IsRegular() {
