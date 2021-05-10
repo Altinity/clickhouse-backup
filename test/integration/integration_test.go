@@ -211,7 +211,7 @@ var testData = []TestDataStruct{
 		Table:        "dict_example",
 		Schema: fmt.Sprintf(
 			" (id UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) PRIMARY KEY id "+
-				" SOURCE(CLICKHOUSE(host 'localhost' database '%s' table 'table4'))"+
+				" SOURCE(CLICKHOUSE(host 'localhost' port 9000 database '%s' table 'table4' user 'default' password ''))"+
 				" LAYOUT(HASHED()) LIFETIME(60)",
 			dbName),
 		SkipInsert: true,
@@ -369,13 +369,13 @@ func testCommon(t *testing.T) {
 	r.NoError(ch.dropDatabase(dbName))
 	log.Info("Generate test data")
 	for _, data := range testData {
-		if isTableSkip(data) {
+		if isTableSkip(ch, data, false) {
 			continue
 		}
 		r.NoError(ch.createTestSchema(data))
 	}
 	for _, data := range testData {
-		if isTableSkip(data) {
+		if isTableSkip(ch, data, false) {
 			continue
 		}
 		r.NoError(ch.createTestData(data))
@@ -422,7 +422,7 @@ func testCommon(t *testing.T) {
 
 	log.Info("Check data")
 	for i := range testData {
-		if isTableSkip(testData[i]) {
+		if isTableSkip(ch, testData[i], true) {
 			continue
 		}
 		r.NoError(ch.checkData(t, testData[i]))
@@ -458,10 +458,6 @@ func testCommon(t *testing.T) {
 	// r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "increment"))
 	// r.NoError(dockerExec("clickhouse-backup", "delete", "local", "increment"))
 
-}
-
-func isTableSkip(data TestDataStruct) bool {
-	return (os.Getenv("COMPOSE_FILE") == "docker-compose.yml") && (data.Table == "jbod" || data.Table == "dict_example")
 }
 
 type TestClickHouse struct {
@@ -619,4 +615,17 @@ func toDate(s string) time.Time {
 func toTS(s string) time.Time {
 	result, _ := time.Parse("2006-01-02 15:04:05", s)
 	return result
+}
+
+func isTableSkip(ch *TestClickHouse, data TestDataStruct, dataExists bool) bool {
+	if data.IsDictionary && os.Getenv("COMPOSE_FILE") != "docker-compose.yml" && dataExists {
+		var dictEngines []string
+		dictSQL := fmt.Sprintf(
+			"SELECT engine FROM system.tables WHERE name='%s' AND database='%s'",
+			data.Table, data.Database,
+		)
+		ch.chbackup.Select(&dictEngines, dictSQL)
+		return len(dictEngines) == 0
+	}
+	return (os.Getenv("COMPOSE_FILE") == "docker-compose.yml") && (data.Table == "jbod" || data.IsDictionary)
 }
