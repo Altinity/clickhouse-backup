@@ -624,7 +624,7 @@ func isTableSkip(ch *TestClickHouse, data TestDataStruct, dataExists bool) bool 
 			"SELECT engine FROM system.tables WHERE name='%s' AND database='%s'",
 			data.Table, data.Database,
 		)
-		ch.chbackup.Select(&dictEngines, dictSQL)
+		_ = ch.chbackup.Select(&dictEngines, dictSQL)
 		return len(dictEngines) == 0
 	}
 	return (os.Getenv("COMPOSE_FILE") == "docker-compose.yml") && (data.Table == "jbod" || data.IsDictionary)
