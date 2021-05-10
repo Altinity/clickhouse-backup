@@ -73,11 +73,26 @@ func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom
 	for _, disk := range disks {
 		diskMap[disk.Name] = disk.Path
 	}
-	metadataPath := path.Join(defaulDataPath, "backup", backupName, "metadata")
-	if _, err := os.Stat(metadataPath); err != nil {
+	backupMetadataPath := path.Join(defaulDataPath, "backup", backupName, "metadata.json")
+	backupMetadataBody, err := ioutil.ReadFile(backupMetadataPath)
+	if err != nil {
 		return err
 	}
-	tablesForUpload, err := parseSchemaPattern(metadataPath, tablePattern, false)
+	backupMetadata := metadata.BackupMetadata{}
+	if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
+		return err
+	}
+	if len(backupMetadata.Tables) == 0 && !cfg.General.AllowEmptyBackups {
+		return fmt.Errorf("'%s' is empty backup", backupName)
+	}
+	var tablesForUpload RestoreTables
+	if len(backupMetadata.Tables) != 0 {
+		metadataPath := path.Join(defaulDataPath, "backup", backupName, "metadata")
+		tablesForUpload, err = parseSchemaPattern(metadataPath, tablePattern, false)
+		if err != nil {
+			return err
+		}
+	}
 	dataSize := int64(0)
 	metadataSize := int64(0)
 	for _, table := range tablesForUpload {
@@ -128,15 +143,6 @@ func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom
 	}
 
 	// заливаем метадату для бэкапа
-	backupMetadataPath := path.Join(defaulDataPath, "backup", backupName, "metadata.json")
-	backupMetadataBody, err := ioutil.ReadFile(backupMetadataPath)
-	if err != nil {
-		return err
-	}
-	backupMetadata := metadata.BackupMetadata{}
-	if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
-		return err
-	}
 	backupMetadata.DataSize = dataSize
 	backupMetadata.MetadataSize = metadataSize
 	tt := []metadata.TableTitle{}

@@ -1,7 +1,9 @@
 package backup
 
 import (
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path"
 	"sort"
@@ -25,6 +27,32 @@ func (rt RestoreTables) Sort(dropTable bool) {
 
 // Restore - restore tables matched by tablePattern from backupName
 func Restore(cfg *config.Config, backupName string, tablePattern string, schemaOnly bool, dataOnly bool, dropTable bool) error {
+	ch := &clickhouse.ClickHouse{
+		Config: &cfg.ClickHouse,
+	}
+	if err := ch.Connect(); err != nil {
+		return fmt.Errorf("can't connect to clickhouse: %v", err)
+	}
+	defer ch.Close()
+	defaultDataPath, err := ch.GetDefaultPath()
+	if err != nil {
+		return ErrUnknownClickhouseDataPath
+	}
+	backupMetafileLocalPath := path.Join(defaultDataPath, "backup", backupName, "metadata.json")
+	backupMetadataBody, err := ioutil.ReadFile(backupMetafileLocalPath)
+	if err == nil {
+		backupMetadata := metadata.BackupMetadata{}
+		if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
+			return err
+		}
+		if len(backupMetadata.Tables) == 0 {
+			apexLog.Infof("'%s' is empty backup, nothing to do", backupName)
+			return nil
+		}
+	} else if !os.IsNotExist(err) { // Legacy backups don't contain metadata.json
+		return err
+	}
+
 	if schemaOnly || (schemaOnly == dataOnly) {
 		if err := RestoreSchema(cfg, backupName, tablePattern, dropTable); err != nil {
 			return err
@@ -56,7 +84,6 @@ func RestoreSchema(cfg *config.Config, backupName string, tablePattern string, d
 	if err != nil {
 		return ErrUnknownClickhouseDataPath
 	}
-
 	metadataPath := path.Join(defaulDataPath, "backup", backupName, "metadata")
 	info, err := os.Stat(metadataPath)
 	if err != nil {

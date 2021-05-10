@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"path"
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
@@ -41,7 +42,7 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 		"operation": "download",
 	})
 	if cfg.General.RemoteStorage == "none" {
-		return fmt.Errorf("Remote storage is 'none'")
+		return fmt.Errorf("remote storage is 'none'")
 	}
 	if backupName == "" {
 		PrintRemoteBackups(cfg, "all")
@@ -86,6 +87,9 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 	if !found {
 		return fmt.Errorf("'%s' is not found on remote storage", backupName)
 	}
+	if len(remoteBackup.Tables) == 0 && !cfg.General.AllowEmptyBackups {
+		return fmt.Errorf("'%s' is empty backup", backupName)
+	}
 	defaultDataPath, err := ch.GetDefaultPath()
 	if err != nil {
 		return err
@@ -112,7 +116,10 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 	tablesForDownload := parseTablePatternForDownload(remoteBackup.Tables, tablePattern)
 	dataSize := int64(0)
 	metadataSize := int64(0)
-
+	err = os.MkdirAll(path.Join(defaultDataPath, "backup", backupName), 0750)
+	if err != nil {
+		return err
+	}
 	for _, t := range tablesForDownload {
 		log := log.WithField("table", fmt.Sprintf("%s.%s", t.Database, t.Table))
 		remoteTableMetadata := path.Join(backupName, "metadata", clickhouse.TablePathEncode(t.Database), fmt.Sprintf("%s.json", clickhouse.TablePathEncode(t.Table)))
@@ -189,11 +196,11 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 	backupMetadata.DataFormat = ""
 	tbBody, err := json.MarshalIndent(&backupMetadata, "", "\t")
 	if err != nil {
-		return err
+		return fmt.Errorf("can't marshall backup metadata: %v", err)
 	}
 	backupMetafileLocalPath := path.Join(defaultDataPath, "backup", backupName, "metadata.json")
 	if err := ioutil.WriteFile(backupMetafileLocalPath, tbBody, 0640); err != nil {
-		return err
+		return fmt.Errorf("can't save backup metadata: %v", err)
 	}
 
 	log.Info("done")
