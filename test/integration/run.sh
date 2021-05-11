@@ -13,7 +13,7 @@ fi
 
 docker-compose -f test/integration/${COMPOSE_FILE} down
 make clean
-make all
+make build
 docker-compose -f test/integration/${COMPOSE_FILE} up -d --force-recreate
 
 # To run integration tests including GCS tests set GCS_TESTS environment variable:
