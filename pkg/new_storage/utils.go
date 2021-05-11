@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/mholt/archiver"
+	"github.com/mholt/archiver/v3"
 )
 
 func GetBackupsToDelete(backups []Backup, keep int) []Backup {
@@ -31,8 +31,12 @@ func getArchiveWriter(format string, level int) (archiver.Writer, error) {
 		return &archiver.TarSz{Tar: archiver.NewTar()}, nil
 	case "xz":
 		return &archiver.TarXz{Tar: archiver.NewTar()}, nil
+	case "br", "brotli":
+		return &archiver.TarBrotli{Quality: level, Tar: archiver.NewTar()}, nil
+	case "zstd":
+		return &archiver.TarZstd{Tar: archiver.NewTar()}, nil
 	}
-	return nil, fmt.Errorf("wrong compression_format, supported: 'lz4', 'bzip2', 'gzip', 'sz', 'xz'")
+	return nil, fmt.Errorf("wrong compression_format, supported: 'bzip2', 'gzip', 'sz', 'xz', 'br', 'zstd'")
 }
 
 func getExtension(format string) string {
@@ -49,6 +53,10 @@ func getExtension(format string) string {
 		return "tar.sz"
 	case "xz":
 		return "tar.xz"
+	case "br", "brotli":
+		return "tar.br"
+	case "zstd":
+		return "tar.zstd"
 	}
 	return ""
 }
@@ -67,6 +75,10 @@ func getArchiveReader(format string) (archiver.Reader, error) {
 		return archiver.NewTarSz(), nil
 	case "xz":
 		return archiver.NewTarXz(), nil
+	case "br", "brotli":
+		return &archiver.TarBrotli{}, nil
+	case "zstd":
+		return &archiver.TarZstd{}, nil
 	}
-	return nil, fmt.Errorf("wrong compression_format, supported: 'tar', 'lz4', 'bzip2', 'gzip', 'sz', 'xz'")
+	return nil, fmt.Errorf("wrong compression_format, supported: 'tar', 'bzip2', 'gzip', 'sz', 'xz', 'br', 'zstd'")
 }
