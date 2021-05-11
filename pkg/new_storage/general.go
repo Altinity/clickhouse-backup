@@ -17,7 +17,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 
 	apexLog "github.com/apex/log"
-	"github.com/mholt/archiver"
+	"github.com/mholt/archiver/v3"
 	"gopkg.in/djherbis/buffer.v1"
 	"gopkg.in/djherbis/nio.v2"
 )

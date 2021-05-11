@@ -15,12 +15,15 @@ import (
 
 // ArchiveExtensions - list of availiable compression formats and associated file extensions
 var ArchiveExtensions = map[string]string{
-	"tar":   "tar",
-	"lz4":   "tar.lz4",
-	"bzip2": "tar.bz2",
-	"gzip":  "tar.gz",
-	"sz":    "tar.sz",
-	"xz":    "tar.xz",
+	"tar":    "tar",
+	"lz4":    "tar.lz4",
+	"bzip2":  "tar.bz2",
+	"gzip":   "tar.gz",
+	"sz":     "tar.sz",
+	"xz":     "tar.xz",
+	"br":     "tar.br",
+	"brotli": "tar.br",
+	"zstd":   "tar.zstd",
 }
 
 // Config - config file format
@@ -192,6 +195,9 @@ func LoadConfig(configLocation string) (*Config, error) {
 }
 
 func ValidateConfig(cfg *Config) error {
+	if cfg.GetCompressionFormat() == "lz4" {
+		return fmt.Errorf("clickhouse already compressed data by lz4")
+	}
 	if cfg.GetCompressionFormat() != "none" {
 		if _, ok := ArchiveExtensions[cfg.GetCompressionFormat()]; !ok {
 			return fmt.Errorf("'%s' is unsupported compression format", cfg.GetCompressionFormat())
