@@ -509,11 +509,15 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable bool) err
 		return err
 	}
 	if dropTable {
-		query := fmt.Sprintf("DROP TABLE IF EXISTS `%s`.`%s`", table.Database, table.Name)
-		if isAtomic {
-			query += " NO DELAY"
+		kind := "TABLE"
+		if strings.HasPrefix(query, "CREATE DICTIONARY") {
+			kind = "DICTIONARY"
 		}
-		if _, err := ch.Query(query); err != nil {
+		dropQuery := fmt.Sprintf("DROP %s IF EXISTS `%s`.`%s`", kind, table.Database, table.Name)
+		if isAtomic {
+			dropQuery += " NO DELAY"
+		}
+		if _, err := ch.Query(dropQuery); err != nil {
 			return err
 		}
 	}

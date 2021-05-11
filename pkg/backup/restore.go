@@ -103,19 +103,42 @@ func RestoreSchema(cfg *config.Config, backupName string, tablePattern string, d
 		return fmt.Errorf("no have found schemas by %s in %s", tablePattern, backupName)
 	}
 
-	for _, schema := range tablesForRestore {
-		if err := ch.CreateDatabase(schema.Database); err != nil {
-			return fmt.Errorf("can't create database '%s': %v", schema.Database, err)
+	totalRetries := len(tablesForRestore)
+	restoreRetries := 0
+	var notRestoredTables RestoreTables
+	var restoreErr error
+	for restoreRetries < totalRetries {
+		for _, schema := range tablesForRestore {
+			if err = ch.CreateDatabase(schema.Database); err != nil {
+				return fmt.Errorf("can't create database '%s': %v", schema.Database, err)
+			}
+			//materialized views should restore via ATTACH
+			schema.Query = strings.Replace(
+				schema.Query, "CREATE MATERIALIZED VIEW", "ATTACH MATERIALIZED VIEW", 1,
+			)
+			restoreErr = ch.CreateTable(clickhouse.Table{
+				Database: schema.Database,
+				Name:     schema.Table,
+			}, schema.Query, dropTable)
+
+			if restoreErr != nil {
+				restoreRetries++
+				if restoreRetries >= totalRetries {
+					return fmt.Errorf(
+						"can't create table `%s`.`%s`: %v after %d times, please check your schema depencncies",
+						schema.Database, schema.Table, restoreErr, restoreRetries,
+					)
+				} else {
+					apexLog.Warnf(
+						"can't create table '%s.%s': %v, will try again", schema.Database, schema.Table, err,
+					)
+				}
+				notRestoredTables = append(notRestoredTables, schema)
+			}
 		}
-		//materialized views should restore via ATTACH
-		schema.Query = strings.Replace(
-			schema.Query, "CREATE MATERIALIZED VIEW", "ATTACH MATERIALIZED VIEW", 1,
-		)
-		if err := ch.CreateTable(clickhouse.Table{
-			Database: schema.Database,
-			Name:     schema.Table,
-		}, schema.Query, dropTable); err != nil {
-			return fmt.Errorf("can't create table '%s.%s': %v", schema.Database, schema.Table, err)
+		tablesForRestore = notRestoredTables
+		if len(tablesForRestore) == 0 {
+			break
 		}
 	}
 	return nil
