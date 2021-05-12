@@ -250,8 +250,8 @@ func DefaultConfig() *Config {
 		General: GeneralConfig{
 			RemoteStorage:       "s3",
 			MaxFileSize:         1024 * 1024 * 1024 * 1024, // 1TB
-			BackupsToKeepLocal:  -1,
-			BackupsToKeepRemote: -1,
+			BackupsToKeepLocal:  0,
+			BackupsToKeepRemote: 0,
 			LogLevel:            "info",
 		},
 		ClickHouse: ClickHouseConfig{

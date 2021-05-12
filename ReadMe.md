@@ -97,8 +97,8 @@ general:
   remote_storage: s3             # REMOTE_STORAGE
   max_file_size: 1099511627776   # MAX_FILE_SIZE
   disable_progress_bar: false    # DISABLE_PROGRESS_BAR
-  backups_to_keep_local: -1      # BACKUPS_TO_KEEP_LOCAL
-  backups_to_keep_remote: -1     # BACKUPS_TO_KEEP_REMOTE
+  backups_to_keep_local: 0       # BACKUPS_TO_KEEP_LOCAL
+  backups_to_keep_remote: 0      # BACKUPS_TO_KEEP_REMOTE
   log_level: info                # LOG_LEVEL
 clickhouse:
   username: default              # CLICKHOUSE_USERNAME

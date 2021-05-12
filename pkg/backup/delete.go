@@ -15,10 +15,10 @@ import (
 //
 func RemoveOldBackupsLocal(cfg *config.Config, keepLastBackup bool) error {
 	keep := cfg.General.BackupsToKeepLocal
-	if keep < 0 {
+	if keep == 0 {
 		return nil
 	}
-	if keepLastBackup && keep == 0 {
+	if keepLastBackup && keep < 0 {
 		keep = 1
 	}
 	backupList, err := GetLocalBackups(cfg)
