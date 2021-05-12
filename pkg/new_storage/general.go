@@ -52,6 +52,7 @@ func (bd *BackupDestination) RemoveOldBackups(keep int) error {
 	}
 	backupsToDelete := GetBackupsToDelete(backupList, keep)
 	for _, backupToDelete := range backupsToDelete {
+		apexLog.Infof("remove '%s'", backupToDelete.BackupName)
 		if err := bd.RemoveBackup(backupToDelete.BackupName); err != nil {
 			return err
 		}

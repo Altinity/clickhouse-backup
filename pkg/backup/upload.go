@@ -171,6 +171,9 @@ func Upload(cfg *config.Config, backupName string, tablePattern string, diffFrom
 	if err := bd.RemoveOldBackups(bd.BackupsToKeep()); err != nil {
 		return fmt.Errorf("can't remove old backups: %v", err)
 	}
+	if err := RemoveOldBackupsLocal(cfg, false); err != nil {
+		return fmt.Errorf("can't remove old local backups: %v", err)
+	}
 	log.Infof("done")
 	return nil
 }

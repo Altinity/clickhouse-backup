@@ -287,7 +287,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 		}
 		command := args[0]
 		switch command {
-		case "create", "restore", "upload", "download":
+		case "create", "restore", "upload", "download", "create_remote", "restore_remote":
 			if api.status.inProgress() {
 				apexLog.Info(ErrAPILocked.Error())
 				writeError(w, http.StatusLocked, row.Command, ErrAPILocked)
@@ -838,7 +838,7 @@ func setupMetrics() Metrics {
 	lastDuration := map[string]prometheus.Gauge{}
 	lastStatus := map[string]prometheus.Gauge{}
 
-	for _, command := range []string{"create", "upload", "download", "restore"} {
+	for _, command := range []string{"create", "upload", "download", "restore", "create_remote", "restore_remote"} {
 		successfulCounter[command] = prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: "clickhouse_backup",
 			Name:      fmt.Sprintf("successful_%ss", command),
@@ -918,6 +918,20 @@ func setupMetrics() Metrics {
 		m.LastDuration["restore"],
 		m.LastStatus["restore"],
 
+		m.SuccessfulCounter["create_remote"],
+		m.FailedCounter["create_remote"],
+		m.LastStart["create_remote"],
+		m.LastFinish["create_remote"],
+		m.LastDuration["create_remote"],
+		m.LastStatus["create_remote"],
+
+		m.SuccessfulCounter["restore_remote"],
+		m.FailedCounter["restore_remote"],
+		m.LastStart["restore_remote"],
+		m.LastFinish["restore_remote"],
+		m.LastDuration["restore_remote"],
+		m.LastStatus["restore_remote"],
+
 		m.LastBackupSizeLocal,
 		m.LastBackupSizeRemote,
 	)
@@ -925,6 +939,8 @@ func setupMetrics() Metrics {
 	m.LastStatus["upload"].Set(2)
 	m.LastStatus["download"].Set(2)
 	m.LastStatus["restore"].Set(2)
+	m.LastStatus["create_remote"].Set(2)
+	m.LastStatus["restore_remote"].Set(2)
 
 	return m
 }

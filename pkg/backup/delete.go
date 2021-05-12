@@ -8,18 +8,24 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/new_storage"
+
+	apexLog "github.com/apex/log"
 )
 
 //
-func RemoveOldBackupsLocal(cfg *config.Config) error {
-	if cfg.General.BackupsToKeepLocal < 1 {
+func RemoveOldBackupsLocal(cfg *config.Config, keepLastBackup bool) error {
+	keep := cfg.General.BackupsToKeepLocal
+	if keep < 0 {
 		return nil
+	}
+	if keepLastBackup && keep == 0 {
+		keep = 1
 	}
 	backupList, err := GetLocalBackups(cfg)
 	if err != nil {
 		return err
 	}
-	backupsToDelete := new_storage.GetBackupsToDelete(backupList, cfg.General.BackupsToKeepLocal)
+	backupsToDelete := new_storage.GetBackupsToDelete(backupList, keep)
 	for _, backup := range backupsToDelete {
 		if err := RemoveBackupLocal(cfg, backup.BackupName); err != nil {
 			return err
@@ -48,6 +54,7 @@ func RemoveBackupLocal(cfg *config.Config, backupName string) error {
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
 			for _, disk := range disks {
+				apexLog.Infof("remove '%s'", backupName)
 				err := os.RemoveAll(path.Join(disk.Path, "backup", backupName))
 				if err != nil {
 					return err

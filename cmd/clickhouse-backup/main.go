@@ -89,6 +89,30 @@ func main() {
 			),
 		},
 		{
+			Name:        "create_remote",
+			Usage:       "Create and upload",
+			UsageText:   "clickhouse-backup create_remote [-t, --tables=<db>.<table>] [--diff-from=<backup_name>] [--delete] <backup_name>",
+			Description: "Create and upload",
+			Action: func(c *cli.Context) error {
+				return backup.CreateToRemote(getConfig(c), c.Args().First(), c.String("t"), c.String("diff-from"), c.Bool("s"), version)
+			},
+			Flags: append(cliapp.Flags,
+				cli.StringFlag{
+					Name:   "table, tables, t",
+					Hidden: false,
+				},
+				cli.StringFlag{
+					Name:   "diff-from",
+					Hidden: false,
+				},
+				cli.BoolFlag{
+					Name:   "schema, s",
+					Hidden: false,
+					Usage:  "Schemas only",
+				},
+			),
+		},
+		{
 			Name:      "upload",
 			Usage:     "Upload backup to remote storage",
 			UsageText: "clickhouse-backup upload [-t, --tables=<db>.<table>] [-s, --schema] [--diff-from=<backup_name>] <backup_name>",
@@ -157,6 +181,35 @@ func main() {
 			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-s, --schema] [-d, --data] [--rm, --drop] <backup_name>",
 			Action: func(c *cli.Context) error {
 				return backup.Restore(getConfig(c), c.Args().First(), c.String("t"), c.Bool("s"), c.Bool("d"), c.Bool("rm"))
+			},
+			Flags: append(cliapp.Flags,
+				cli.StringFlag{
+					Name:   "table, tables, t",
+					Hidden: false,
+				},
+				cli.BoolFlag{
+					Name:   "schema, s",
+					Hidden: false,
+					Usage:  "Restore schema only",
+				},
+				cli.BoolFlag{
+					Name:   "data, d",
+					Hidden: false,
+					Usage:  "Restore data only",
+				},
+				cli.BoolFlag{
+					Name:   "rm, drop",
+					Hidden: false,
+					Usage:  "Drop table before restore",
+				},
+			),
+		},
+		{
+			Name:      "restore_remote",
+			Usage:     "Download and restore",
+			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] <backup_name>",
+			Action: func(c *cli.Context) error {
+				return backup.RestoreFromRemote(getConfig(c), c.Args().First(), c.String("t"), c.Bool("s"), c.Bool("d"), c.Bool("rm"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{

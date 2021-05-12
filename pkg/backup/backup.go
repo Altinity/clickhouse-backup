@@ -197,7 +197,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 	}
 	ch.Chown(backupMetaFile)
 
-	if err := RemoveOldBackupsLocal(cfg); err != nil {
+	if err := RemoveOldBackupsLocal(cfg, true); err != nil {
 		return err
 	}
 	log.Info("done")
