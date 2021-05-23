@@ -94,7 +94,8 @@ func main() {
 			UsageText:   "clickhouse-backup create_remote [-t, --tables=<db>.<table>] [--diff-from=<backup_name>] [--delete] <backup_name>",
 			Description: "Create and upload",
 			Action: func(c *cli.Context) error {
-				return backup.CreateToRemote(getConfig(c), c.Args().First(), c.String("t"), c.String("diff-from"), c.Bool("s"), version)
+				b := backup.NewBackuper(getConfig(c))
+				return b.CreateToRemote(c.Args().First(), c.String("t"), c.String("diff-from"), c.Bool("s"), version)
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -117,7 +118,8 @@ func main() {
 			Usage:     "Upload backup to remote storage",
 			UsageText: "clickhouse-backup upload [-t, --tables=<db>.<table>] [-s, --schema] [--diff-from=<backup_name>] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return backup.Upload(getConfig(c), c.Args().First(), c.String("t"), c.String("diff-from"), c.Bool("s"))
+				b := backup.NewBackuper(getConfig(c))
+				return b.Upload(c.Args().First(), c.String("t"), c.String("diff-from"), c.Bool("s"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{

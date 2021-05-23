@@ -25,6 +25,7 @@ type BackupMetadata struct {
 	CompressedSize          int64             `json:"compressed_size,omitempty"`
 	Tables                  []TableTitle      `json:"tables"`
 	DataFormat              string            `json:"data_format"`
+	RequiredBackup          string            `json:"required_backup,omitempty"`
 }
 
 type TableMetadata struct {
@@ -73,6 +74,7 @@ func (tm *TableMetadata) Save(location string, metadataOnly bool) (int, error) {
 type Part struct {
 	Partition string `json:"partition,omitempty"`
 	Name      string `json:"name"`
+	Required  bool   `json:"required,omitempty"`
 	// Path                              string    `json:"path"`              // TODO: должен быть относительный путь вообще непонятно зачем он, его можно из name получить
 	HashOfAllFiles                    string     `json:"hash_of_all_files,omitempty"` // ???
 	HashOfUncompressedFiles           string     `json:"hash_of_uncompressed_files,omitempty"`
