@@ -690,7 +690,8 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		api.metrics.LastStart["download"].Set(float64(start.Unix()))
 		defer api.metrics.LastDuration["download"].Set(float64(time.Since(start).Nanoseconds()))
 		defer api.metrics.LastFinish["download"].Set(float64(time.Now().Unix()))
-		err := backup.Download(cfg, name, tablePattern, schemaOnly)
+		b := backup.NewBackuper(cfg)
+		err := b.Download(name, tablePattern, schemaOnly)
 		api.status.stop(err)
 		if err != nil {
 			apexLog.Errorf("Download error: %+v\n", err)

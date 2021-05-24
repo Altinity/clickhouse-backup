@@ -383,30 +383,30 @@ func testCommon(t *testing.T) {
 
 	log.Info("Create backup")
 	r.NoError(dockerExec("clickhouse-backup", "create", "test_backup"))
-	// log.Info("Generate increment test data")
-	// for _, data := range incrementData {
-	// 	if isTableSkip(data) {
-	// 		continue
-	// 	}
-	// 	r.NoError(ch.createTestData(data))
-	// }
-	// time.Sleep(time.Second * 5)
-	// r.NoError(dockerExec("clickhouse-backup", "create", "increment"))
+	log.Info("Generate increment test data")
+	for _, data := range incrementData {
+		if isTableSkip(ch, data, false) {
+			continue
+		}
+		r.NoError(ch.createTestData(data))
+	}
+	time.Sleep(time.Second * 5)
+	r.NoError(dockerExec("clickhouse-backup", "create", "increment"))
 
 	log.Info("Upload")
 	r.NoError(dockerExec("clickhouse-backup", "upload", "test_backup"))
-	// r.NoError(dockerExec("clickhouse-backup", "upload", "increment", "--diff-from", "test_backup"))
+	r.NoError(dockerExec("clickhouse-backup", "upload", "increment", "--diff-from", "test_backup"))
 
 	log.Info("Drop database")
 	r.NoError(ch.dropDatabase(dbName))
 	out, err = dockerExecOut("ls", "-lha", "/var/lib/clickhouse/backup")
 	r.NoError(err)
-	r.Equal(4, len(strings.Split(strings.Trim(out, " \t\r\n"), "\n")), "expect one backup exists in backup directory")
+	r.Equal(5, len(strings.Split(strings.Trim(out, " \t\r\n"), "\n")), "expect one backup exists in backup directory")
 	log.Info("Delete backup")
 	r.NoError(dockerExec("clickhouse-backup", "delete", "local", "test_backup"))
 	out, err = dockerExecOut("ls", "-lha", "/var/lib/clickhouse/backup")
 	r.NoError(err)
-	r.Equal(3, len(strings.Split(strings.Trim(out, " \t\r\n"), "\n")), "expect no backup exists in backup directory")
+	r.Equal(4, len(strings.Split(strings.Trim(out, " \t\r\n"), "\n")), "expect no backup exists in backup directory")
 
 	log.Info("Download")
 	r.NoError(dockerExec("clickhouse-backup", "download", "test_backup"))
@@ -428,35 +428,38 @@ func testCommon(t *testing.T) {
 		r.NoError(ch.checkData(t, testData[i]))
 	}
 	// test increment
-	// log.Info("Drop database")
-	// r.NoError(ch.dropDatabase(dbName))
+	log.Info("Drop database")
+	r.NoError(ch.dropDatabase(dbName))
 
-	// dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
-	// log.Info("Delete backup")
-	// r.NoError(dockerExec("/bin/rm", "-rf", "/var/lib/clickhouse/backup/test_backup", "/var/lib/clickhouse/backup/increment"))
-	// dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
+	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
+	log.Info("Delete backup")
+	r.NoError(dockerExec("clickhouse-backup", "delete", "local", "test_backup"))
+	r.NoError(dockerExec("clickhouse-backup", "delete", "local", "increment"))
+	dockerExec("ls", "-lha", "/var/lib/clickhouse/backup")
 
-	// log.Info("Download increment")
-	// r.NoError(dockerExec("clickhouse-backup", "download", "increment"))
+	log.Info("Download increment")
+	r.NoError(dockerExec("clickhouse-backup", "download", "increment"))
 
-	// log.Info("Restore")
-	// r.NoError(dockerExec("clickhouse-backup", "restore", "--schema", "--data", "increment"))
+	log.Info("Restore")
+	r.NoError(dockerExec("clickhouse-backup", "restore", "--schema", "--data", "increment"))
 
-	// log.Info("Check increment data")
-	// for i := range testData {
-	// 	if isTableSkip(testData[i]) {
-	// 		continue
-	// 	}
-	// 	ti := testData[i]
-	// 	ti.Rows = append(ti.Rows, incrementData[i].Rows...)
-	// 	r.NoError(ch.checkData(t, ti))
-	// }
+	log.Info("Check increment data")
+	for i := range testData {
+		if isTableSkip(ch, testData[i], true) || testData[i].IsDictionary {
+			continue
+		}
+		ti := testData[i]
+		if len(incrementData) > i {
+			ti.Rows = append(ti.Rows, incrementData[i].Rows...)
+		}
+		r.NoError(ch.checkData(t, ti))
+	}
 
 	log.Info("Clean")
 	r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "test_backup"))
 	r.NoError(dockerExec("clickhouse-backup", "delete", "local", "test_backup"))
-	// r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "increment"))
-	// r.NoError(dockerExec("clickhouse-backup", "delete", "local", "increment"))
+	r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "increment"))
+	r.NoError(dockerExec("clickhouse-backup", "delete", "local", "increment"))
 
 }
 

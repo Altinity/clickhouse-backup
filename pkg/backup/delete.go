@@ -53,8 +53,9 @@ func RemoveBackupLocal(cfg *config.Config, backupName string) error {
 	}
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
+			apexLog.Infof("delete '%s'", backupName)
 			for _, disk := range disks {
-				apexLog.Infof("remove '%s'", backupName)
+				apexLog.WithField("path", disk.Path).Debugf("remove '%s'", backupName)
 				err := os.RemoveAll(path.Join(disk.Path, "backup", backupName))
 				if err != nil {
 					return err

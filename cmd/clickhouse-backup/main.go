@@ -163,7 +163,8 @@ func main() {
 			Usage:     "Download backup from remote storage",
 			UsageText: "clickhouse-backup download [-t, --tables=<db>.<table>] [-s, --schema] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return backup.Download(getConfig(c), c.Args().First(), c.String("t"), c.Bool("s"))
+				b := backup.NewBackuper(getConfig(c))
+				return b.Download(c.Args().First(), c.String("t"), c.Bool("s"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -211,7 +212,8 @@ func main() {
 			Usage:     "Download and restore",
 			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return backup.RestoreFromRemote(getConfig(c), c.Args().First(), c.String("t"), c.Bool("s"), c.Bool("d"), c.Bool("rm"))
+				b := backup.NewBackuper(getConfig(c))
+				return b.RestoreFromRemote(c.Args().First(), c.String("t"), c.Bool("s"), c.Bool("d"), c.Bool("rm"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{

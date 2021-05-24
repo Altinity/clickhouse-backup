@@ -157,16 +157,14 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 		}
 		for i, p := range parts {
 			remoteDataPath := path.Join(backupName, "shadow", clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table))
-			var err error
-			if b.cfg.GetCompressionFormat() == "none" {
-				err = b.dst.UploadPath(0, backupPath, p, path.Join(remoteDataPath, disk))
-			} else {
-				fileName := fmt.Sprintf("%s_%d.%s", disk, i+1, b.cfg.GetArchiveExtension())
-				metdataFiles[disk] = append(metdataFiles[disk], fileName)
-				remoteDataFile := path.Join(remoteDataPath, fileName)
-				err = b.dst.CompressedStreamUpload(backupPath, p, remoteDataFile)
-			}
-			if err != nil {
+			// Disabled temporary
+			// if b.cfg.GetCompressionFormat() == "none" {
+			// 	err = b.dst.UploadPath(0, backupPath, p, path.Join(remoteDataPath, disk))
+			// } else {
+			fileName := fmt.Sprintf("%s_%d.%s", disk, i+1, b.cfg.GetArchiveExtension())
+			metdataFiles[disk] = append(metdataFiles[disk], fileName)
+			remoteDataFile := path.Join(remoteDataPath, fileName)
+			if err := b.dst.CompressedStreamUpload(backupPath, p, remoteDataFile); err != nil {
 				return nil, fmt.Errorf("can't upload: %v", err)
 			}
 		}

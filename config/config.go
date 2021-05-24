@@ -198,10 +198,8 @@ func ValidateConfig(cfg *Config) error {
 	if cfg.GetCompressionFormat() == "lz4" {
 		return fmt.Errorf("clickhouse already compressed data by lz4")
 	}
-	if cfg.GetCompressionFormat() != "none" {
-		if _, ok := ArchiveExtensions[cfg.GetCompressionFormat()]; !ok {
-			return fmt.Errorf("'%s' is unsupported compression format", cfg.GetCompressionFormat())
-		}
+	if _, ok := ArchiveExtensions[cfg.GetCompressionFormat()]; !ok {
+		return fmt.Errorf("'%s' is unsupported compression format", cfg.GetCompressionFormat())
 	}
 	if _, err := time.ParseDuration(cfg.ClickHouse.Timeout); err != nil {
 		return err
