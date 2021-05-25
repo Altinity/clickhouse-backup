@@ -25,6 +25,9 @@ func (b *Backuper) Upload(backupName string, tablePattern string, diffFrom strin
 		PrintLocalBackups(b.cfg, "all")
 		return fmt.Errorf("select backup for upload")
 	}
+	if backupName == diffFrom {
+		return fmt.Errorf("you cannot upload diff from the same backup")
+	}
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "upload",
@@ -70,6 +73,7 @@ func (b *Backuper) Upload(backupName string, tablePattern string, diffFrom strin
 			return err
 		}
 		if len(diffFromBackup.Tables) != 0 {
+			backupMetadata.RequiredBackup = diffFrom
 			metadataPath := path.Join(b.DefaultDataPath, "backup", diffFrom, "metadata")
 			diffTablesList, err := parseSchemaPattern(metadataPath, tablePattern, false)
 			if err != nil {
@@ -92,7 +96,7 @@ func (b *Backuper) Upload(backupName string, tablePattern string, diffFrom strin
 				Database: table.Database,
 				Table:    table.Table,
 			}]; ok {
-				markDuplicatedDiskParts(diffTable.Parts, table.Parts)
+				b.markDuplicatedParts(backupMetadata, &diffTable, &table)
 			}
 			dataSize += table.TotalBytes
 			metadataFiles, err := b.uploadTableData(backupName, table)
@@ -120,7 +124,6 @@ func (b *Backuper) Upload(backupName string, tablePattern string, diffFrom strin
 		})
 	}
 	backupMetadata.Tables = tt
-	backupMetadata.RequiredBackup = diffFrom
 	if b.cfg.GetCompressionFormat() != "none" {
 		backupMetadata.DataFormat = b.cfg.GetCompressionFormat()
 	} else {
@@ -187,26 +190,70 @@ func (b *Backuper) uploadTableMetadata(backupName string, table metadata.TableMe
 	return int64(len(content)), nil
 }
 
-func markDuplicatedDiskParts(partsFromExistsBackup, partsFromNewBackup map[string][]metadata.Part) {
-	for disk := range partsFromNewBackup {
-		if _, ok := partsFromExistsBackup[disk]; ok {
-			markDuplicatedParts(partsFromExistsBackup[disk], partsFromNewBackup[disk])
+func (b *Backuper) markDuplicatedParts(backup *metadata.BackupMetadata, existsTable *metadata.TableMetadata, newTable *metadata.TableMetadata) {
+	for disk, newParts := range newTable.Parts {
+		if _, ok := existsTable.Parts[disk]; ok {
+			if len(existsTable.Parts[disk]) == 0 {
+				continue
+			}
+			existsPartsMap := map[string]struct{}{}
+			for _, p := range existsTable.Parts[disk] {
+				existsPartsMap[p.Name] = struct{}{}
+			}
+			for i := range newParts {
+				if _, ok := existsPartsMap[newParts[i].Name]; !ok {
+					continue
+				}
+				uuid := path.Join(clickhouse.TablePathEncode(existsTable.Database), clickhouse.TablePathEncode(existsTable.Table))
+				existsPath := path.Join(b.DiskMap[disk], "backup", backup.RequiredBackup, "shadow", uuid, disk, newParts[i].Name)
+				newPath := path.Join(b.DiskMap[disk], "backup", backup.BackupName, "shadow", uuid, disk, newParts[i].Name)
+
+				if err := isDuplicatedParts(existsPath, newPath); err != nil {
+					apexLog.Errorf("part '%s' and '%s' must be the same: %v", existsPath, newPath, err)
+					continue
+				}
+				newParts[i].Required = true
+			}
 		}
 	}
 }
 
-func markDuplicatedParts(old, new []metadata.Part) {
-	if len(old) == 0 {
-		return
+func isDuplicatedParts(part1, part2 string) error {
+	p1, err := os.Open(part1)
+	if err != nil {
+		return err
 	}
-	oldMap := map[string]struct{}{}
-	for i := range old {
-		oldMap[old[i].Name] = struct{}{}
+	defer p1.Close()
+	p2, err := os.Open(part2)
+	if err != nil {
+		return err
 	}
-	for i := range new {
-		_, ok := oldMap[new[i].Name]
-		new[i].Required = ok
+	defer p2.Close()
+	pf1, err := p1.Readdirnames(-1)
+	if err != nil {
+		return err
 	}
+	pf2, err := p2.Readdirnames(-1)
+	if err != nil {
+		return err
+	}
+	if len(pf1) != len(pf2) {
+		return fmt.Errorf("files count in parts is different")
+	}
+	for _, f := range pf1 {
+		part1File, err := os.Stat(path.Join(part1, f))
+		if err != nil {
+			return err
+		}
+		part2File, err := os.Stat(path.Join(part2, f))
+		if err != nil {
+			return err
+		}
+		if !os.SameFile(part1File, part2File) {
+			return fmt.Errorf("file '%s' is different", f)
+		}
+	}
+	return nil
 }
 
 func (b *Backuper) ReadBackupMetadata(backupName string) (*metadata.BackupMetadata, error) {
