@@ -16,9 +16,9 @@ Tool for easy ClickHouse backup and restore with cloud storages support
 - Works with AWS, GCS, Azure, Tencent COS, FTP
 - **Support of Atomic Database Engine**
 - **Support of multi disks installations**
+- Support of incremental backups on remote storages
 
 TODO:
-- Support of incremental backups on remote storages
 - Smart restore for replicated tables
 
 ## Limitations
@@ -136,7 +136,7 @@ s3:
   disable_ssl: false               # S3_DISABLE_SSL
   part_size: 536870912             # S3_PART_SIZE
   compression_level: 1             # S3_COMPRESSION_LEVEL
-  # supports 'none', 'tar', 'lz4', 'bzip2', 'gzip', 'sz', 'xz'
+  # supports 'tar', 'gzip', 'zstd', 'brotli'
   compression_format: tar          # S3_COMPRESSION_FORMAT
   # empty (default), AES256, or aws:kms
   sse: AES256                      # S3_SSE

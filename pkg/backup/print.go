@@ -43,6 +43,9 @@ func printBackups(w io.Writer, backupList []new_storage.Backup, format, location
 				}
 				description = "old-format"
 			}
+			if backup.RequiredBackup != "" {
+				description = "required " + backup.RequiredBackup
+			}
 			if backup.Broken != "" {
 				description = backup.Broken
 				size = "???"

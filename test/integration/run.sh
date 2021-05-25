@@ -5,7 +5,7 @@ set -e
 export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup"
 export LOG_LEVEL=${LOG_LEVEL:-info}
 
-if [[ "${CLICKHOUSE_VERSION}" == 2* ]]; then
+if [[ "${CLICKHOUSE_VERSION:-21.3}" == 2* ]]; then
   export COMPOSE_FILE=docker-compose_storage-policy.yml
 else
   export COMPOSE_FILE=docker-compose.yml

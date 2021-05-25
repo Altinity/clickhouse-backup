@@ -1,10 +1,6 @@
 package metadata
 
 import (
-	"encoding/json"
-	"io/ioutil"
-	"os"
-	"path"
 	"time"
 )
 
@@ -25,6 +21,7 @@ type BackupMetadata struct {
 	CompressedSize          int64             `json:"compressed_size,omitempty"`
 	Tables                  []TableTitle      `json:"tables"`
 	DataFormat              string            `json:"data_format"`
+	RequiredBackup          string            `json:"required_backup,omitempty"`
 }
 
 type TableMetadata struct {
@@ -44,35 +41,10 @@ type TableMetadata struct {
 	MetadataOnly         bool             `json:"metadata_only"`
 }
 
-func (tm *TableMetadata) Save(location string, metadataOnly bool) (int, error) {
-	newTM := TableMetadata{
-		Table:                tm.Table,
-		Database:             tm.Database,
-		IncrementOf:          tm.IncrementOf,
-		Query:                tm.Query,
-		DependencesTable:     tm.DependencesTable,
-		DependenciesDatabase: tm.DependenciesDatabase,
-		MetadataOnly:         true,
-	}
-	if !metadataOnly {
-		newTM.Parts = tm.Parts
-		newTM.Size = tm.Size
-		newTM.TotalBytes = tm.TotalBytes
-		newTM.MetadataOnly = false
-	}
-	if err := os.MkdirAll(path.Dir(location), 0750); err != nil {
-		return 0, err
-	}
-	body, err := json.MarshalIndent(&newTM, "", "\t")
-	if err != nil {
-		return 0, err
-	}
-	return len(body), ioutil.WriteFile(location, body, 0640)
-}
-
 type Part struct {
 	Partition string `json:"partition,omitempty"`
 	Name      string `json:"name"`
+	Required  bool   `json:"required,omitempty"`
 	// Path                              string    `json:"path"`              // TODO: должен быть относительный путь вообще непонятно зачем он, его можно из name получить
 	HashOfAllFiles                    string     `json:"hash_of_all_files,omitempty"` // ???
 	HashOfUncompressedFiles           string     `json:"hash_of_uncompressed_files,omitempty"`

@@ -36,29 +36,7 @@ func getArchiveWriter(format string, level int) (archiver.Writer, error) {
 	case "zstd":
 		return &archiver.TarZstd{Tar: archiver.NewTar()}, nil
 	}
-	return nil, fmt.Errorf("wrong compression_format, supported: 'bzip2', 'gzip', 'sz', 'xz', 'br', 'zstd'")
-}
-
-func getExtension(format string) string {
-	switch format {
-	case "tar":
-		return "tar"
-	case "lz4":
-		return "tar.lz4"
-	case "bzip2":
-		return "tar.bz2"
-	case "gzip":
-		return "tar.gz"
-	case "sz":
-		return "tar.sz"
-	case "xz":
-		return "tar.xz"
-	case "br", "brotli":
-		return "tar.br"
-	case "zstd":
-		return "tar.zstd"
-	}
-	return ""
+	return nil, fmt.Errorf("wrong compression_format, supported: 'tar', 'gzip', 'zstd'")
 }
 
 func getArchiveReader(format string) (archiver.Reader, error) {
@@ -80,5 +58,5 @@ func getArchiveReader(format string) (archiver.Reader, error) {
 	case "zstd":
 		return &archiver.TarZstd{}, nil
 	}
-	return nil, fmt.Errorf("wrong compression_format, supported: 'tar', 'bzip2', 'gzip', 'sz', 'xz', 'br', 'zstd'")
+	return nil, fmt.Errorf("wrong compression_format, supported: 'tar', 'gzip', 'zstd'")
 }

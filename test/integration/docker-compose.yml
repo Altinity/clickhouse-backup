@@ -27,7 +27,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
       - ./backup-user.xml:/etc/clickhouse-server/users.d/backup-user.xml
-      - ${CLICKHOUSE_BACKUP_BIN:-../../clickhouse-backup}:/usr/bin/clickhouse-backup
+      - ${CLICKHOUSE_BACKUP_BIN:-../../clickhouse-backup/clickhouse-backup}:/usr/bin/clickhouse-backup
       - ./credentials.json:/etc/clickhouse-backup/credentials.json
       - ./server.crt:/etc/clickhouse-server/server.crt
       - ./server.key:/etc/clickhouse-server/server.key
