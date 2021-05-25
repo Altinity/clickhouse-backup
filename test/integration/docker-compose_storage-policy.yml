@@ -27,7 +27,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
       - ./backup-user.xml:/etc/clickhouse-server/users.d/backup-user.xml
-      - ${CLICKHOUSE_BACKUP_BIN:-../../clickhouse-backup}:/usr/bin/clickhouse-backup
+      - ${CLICKHOUSE_BACKUP_BIN:-../../clickhouse-backup/clickhouse-backup}:/usr/bin/clickhouse-backup
       - ./credentials.json:/etc/clickhouse-backup/credentials.json
       - ./server.crt:/etc/clickhouse-server/server.crt
       - ./server.key:/etc/clickhouse-server/server.key
@@ -36,12 +36,6 @@ services:
       - ./storage_configuration.xml:/etc/clickhouse-server/config.d/storage_configuration.xml
       - ./cluster.xml:/etc/clickhouse-server/config.d/cluster.xml
       - ./init.sh:/docker-entrypoint-initdb.d/init.sh
-    # look like 21.x+ check volumes in storage policy is exists, so we need create it before first run `clickhouse-server`
-    entrypoint:
-      - /bin/bash
-    command:
-      - -c
-      - "bash -x /docker-entrypoint-initdb.d/init.sh && bash -x /entrypoint.sh"
     ports:
       - 9000:9000
       - 7171:7171
