@@ -32,6 +32,7 @@ type Config struct {
 	COS        COSConfig        `yaml:"cos" envconfig:"_"`
 	API        APIConfig        `yaml:"api" envconfig:"_"`
 	FTP        FTPConfig        `yaml:"ftp" envconfig:"_"`
+	SSH        SSHConfig        `yaml:"ssh" envconfig:"_"`
 	AzureBlob  AzureBlobConfig  `yaml:"azblob" envconfig:"_"`
 }
 
@@ -111,6 +112,17 @@ type FTPConfig struct {
 	CompressionLevel  int    `yaml:"compression_level" envconfig:"FTP_COMPRESSION_LEVEL"`
 }
 
+// SSHConfig - ssh settings section
+type SSHConfig struct {
+	Address           string `yaml:"address" envconfig:"SSH_ADDRESS"`
+	Username          string `yaml:"username" envconfig:"SSH_USERNAME"`
+	Password          string `yaml:"password" envconfig:"SSH_PASSWORD"`
+	Key               string `yaml:"key" envconfig:"SSH_PASSWORD"`
+	Path              string `yaml:"path" envconfig:"SSH_PATH"`
+	CompressionFormat string `yaml:"compression_format" envconfig:"SSH_COMPRESSION_FORMAT"`
+	CompressionLevel  int    `yaml:"compression_level" envconfig:"SSH_COMPRESSION_LEVEL"`
+}
+
 // ClickHouseConfig - clickhouse settings section
 type ClickHouseConfig struct {
 	Username             string            `yaml:"username" envconfig:"CLICKHOUSE_USERNAME"`
@@ -148,6 +160,8 @@ func (cfg *Config) GetArchiveExtension() string {
 		return ArchiveExtensions[cfg.COS.CompressionFormat]
 	case "ftp":
 		return ArchiveExtensions[cfg.FTP.CompressionFormat]
+	case "ssh":
+		return ArchiveExtensions[cfg.SSH.CompressionFormat]
 	case "azblob":
 		return ArchiveExtensions[cfg.AzureBlob.CompressionFormat]
 	default:
@@ -165,6 +179,8 @@ func (cfg *Config) GetCompressionFormat() string {
 		return cfg.COS.CompressionFormat
 	case "ftp":
 		return cfg.FTP.CompressionFormat
+	case "ssh":
+		return cfg.SSH.CompressionFormat
 	case "azblob":
 		return cfg.AzureBlob.CompressionFormat
 	case "none":
@@ -292,6 +308,10 @@ func DefaultConfig() *Config {
 		},
 		FTP: FTPConfig{
 			Timeout:           "2m",
+			CompressionFormat: "tar",
+			CompressionLevel:  1,
+		},
+		SSH: SSHConfig{
 			CompressionFormat: "tar",
 			CompressionLevel:  1,
 		},

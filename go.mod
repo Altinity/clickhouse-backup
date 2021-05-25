@@ -25,10 +25,12 @@ require (
 	github.com/mholt/archiver v1.1.3-0.20190812163345-2d1449806793
 	github.com/pierrec/lz4 v2.5.2+incompatible // indirect
 	github.com/pkg/errors v0.9.1
+	github.com/pkg/sftp v1.13.0
 	github.com/prometheus/client_golang v1.7.1
 	github.com/stretchr/testify v1.6.1
 	github.com/tencentyun/cos-go-sdk-v5 v0.0.0-20200120023323-87ff3bc489ac
 	github.com/urfave/cli v1.22.2
+	golang.org/x/crypto v0.0.0-20201221181555-eec23a3978ad
 	google.golang.org/api v0.28.0
 	gopkg.in/cheggaaa/pb.v1 v1.0.28
 	gopkg.in/djherbis/buffer.v1 v1.1.0

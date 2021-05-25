@@ -60,6 +60,9 @@ func (bd *BackupDestination) RemoveOldBackups(keep int) error {
 }
 
 func (bd *BackupDestination) RemoveBackup(backupName string) error {
+  if bd.Kind() == "SSH" {
+    return bd.DeleteFile(backupName)
+	}
 	return bd.Walk(backupName+"/", true, func(f RemoteFile) error {
 		return bd.DeleteFile(path.Join(backupName, f.Name()))
 	})
@@ -198,7 +201,7 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 
 func (bd *BackupDestination) CompressedStreamUpload(baseLocalPath string, files []string, remotePath string) error {
 	if _, err := bd.StatFile(remotePath); err != nil {
-		if err != ErrNotFound {
+		if err != ErrNotFound && !os.IsNotExist(err) {
 			return err
 		}
 	}
@@ -400,6 +403,17 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 			ftpStorage,
 			cfg.FTP.CompressionFormat,
 			cfg.FTP.CompressionLevel,
+			cfg.General.DisableProgressBar,
+			cfg.General.BackupsToKeepRemote,
+		}, nil
+	case "ssh":
+		sshStorage := &SSH{
+			Config: &cfg.SSH,
+		}
+		return &BackupDestination{
+			sshStorage,
+			cfg.SSH.CompressionFormat,
+			cfg.SSH.CompressionLevel,
 			cfg.General.DisableProgressBar,
 			cfg.General.BackupsToKeepRemote,
 		}, nil
