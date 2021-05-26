@@ -66,6 +66,10 @@ func (s *AzureBlob) Connect() error {
 	pipeline.SetForceLogEnabled(false)
 
 	s.Container = azblob.NewServiceURL(*u, azblob.NewPipeline(credential, azblob.PipelineOptions{})).NewContainerURL(s.Config.Container)
+	_, err = s.Container.Create(context.Background(), azblob.Metadata{}, azblob.PublicAccessNone)
+	if err != nil && !isContainerAlreadyExists(err) {
+		return err
+	}
 	test_name := make([]byte, 16)
 	if _, err := rand.Read(test_name); err != nil {
 		return errors.Wrapf(err, "azblob: failed to generate test blob name")
@@ -143,8 +147,13 @@ func (s *AzureBlob) StatFile(key string) (RemoteFile, error) {
 func (s *AzureBlob) Walk(azPath string, recursive bool, process func(r RemoteFile) error) error {
 	ctx := context.Background()
 	prefix := path.Join(s.Config.Path, azPath)
+	if prefix == "" || prefix == "/" {
+		prefix = ""
+	} else {
+		prefix += "/"
+	}
 	opt := azblob.ListBlobsSegmentOptions{
-		Prefix: prefix + "/",
+		Prefix: prefix,
 	}
 	mrk := azblob.Marker{}
 	delimiter := ""
@@ -196,4 +205,16 @@ func (f *azureBlobFile) Name() string {
 
 func (f *azureBlobFile) LastModified() time.Time {
 	return f.lastModified
+}
+
+func isContainerAlreadyExists(err error) bool {
+	if err != nil {
+		if serr, ok := err.(azblob.StorageError); ok { // This error is a Service-specific
+			switch serr.ServiceCode() { // Compare serviceCode to ServiceCodeXxx constants
+			case azblob.ServiceCodeContainerAlreadyExists:
+				return true
+			}
+		}
+	}
+	return false
 }

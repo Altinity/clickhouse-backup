@@ -191,6 +191,7 @@ func LoadConfig(configLocation string) (*Config, error) {
 	if err := envconfig.Process("", cfg); err != nil {
 		return nil, err
 	}
+	cfg.AzureBlob.Path = strings.TrimPrefix(cfg.AzureBlob.Path, "/")
 	return cfg, ValidateConfig(cfg)
 }
 
