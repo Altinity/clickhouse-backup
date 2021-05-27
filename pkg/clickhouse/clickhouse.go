@@ -185,10 +185,13 @@ func (ch *ClickHouse) GetDatabases() ([]Database, error) {
 	for i, db := range allDatabases {
 		showDatabaseSQL := fmt.Sprintf("SHOW CREATE DATABASE `%s`", db.Name)
 		var result []string
+		// 19.4 doesn't have /var/lib/clickhouse/metadata/default.sql
 		if err := ch.Select(&result, showDatabaseSQL); err != nil {
-			return nil, fmt.Errorf("can't get create database query: %v", err)
+			log.Warnf("can't get create database query: %v", err)
+			allDatabases[i].Query = fmt.Sprintf("CREATE DATABASE `%s` ENGINE = %s", db.Name, db.Engine)
+		} else {
+			allDatabases[i].Query = result[0]
 		}
-		allDatabases[i].Query = result[0]
 	}
 	return allDatabases, nil
 }
