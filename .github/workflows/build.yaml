@@ -95,7 +95,7 @@ jobs:
           echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"
           echo "GCS_TESTS=${GCS_TESTS}"
           if [[ "${CLICKHOUSE_VERSION}" == 2* ]]; then
-            export COMPOSE_FILE=docker-compose_storage-policy.yml
+            export COMPOSE_FILE=docker-compose_advanced.yml
           else
             export COMPOSE_FILE=docker-compose.yml
           fi

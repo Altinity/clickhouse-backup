@@ -19,9 +19,16 @@ type BackupMetadata struct {
 	DataSize                int64             `json:"data_size,omitempty"`
 	MetadataSize            int64             `json:"metadata_size"`
 	CompressedSize          int64             `json:"compressed_size,omitempty"`
+	Databases               []DatabasesMeta   `json:"databases,omitempty"`
 	Tables                  []TableTitle      `json:"tables"`
 	DataFormat              string            `json:"data_format"`
 	RequiredBackup          string            `json:"required_backup,omitempty"`
+}
+
+type DatabasesMeta struct {
+	Name   string `json:"name"`
+	Engine string `json:"engine"`
+	Query  string `json:"query"`
 }
 
 type TableMetadata struct {

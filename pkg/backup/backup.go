@@ -14,16 +14,15 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
-
 	apexLog "github.com/apex/log"
 	"github.com/google/uuid"
 )
 
 const (
-	// BackupTimeFormat - default backup name format
-	BackupTimeFormat = "2006-01-02T15-04-05"
-	hashfile         = "parts.hash"
-	MetaFileName     = "metadata.json"
+	// TimeFormatForBackup - default backup name format
+	TimeFormatForBackup = "2006-01-02T15-04-05"
+	hashfile            = "parts.hash"
+	MetaFileName        = "metadata.json"
 )
 
 var (
@@ -67,7 +66,7 @@ func filterTablesByPattern(tables []clickhouse.Table, tablePattern string) []cli
 
 // NewBackupName - return default backup name
 func NewBackupName() string {
-	return time.Now().UTC().Format(BackupTimeFormat)
+	return time.Now().UTC().Format(TimeFormatForBackup)
 }
 
 // CreateBackup - create new backup of all tables matched by tablePattern
@@ -87,6 +86,11 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
 	defer ch.Close()
+
+	allDatabases, err := ch.GetDatabases()
+	if err != nil {
+		return fmt.Errorf("cat't get database engines from clickhouse: %v", err)
+	}
 
 	allTables, err := ch.GetTables()
 	if err != nil {
@@ -123,7 +127,9 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 		return fmt.Errorf("'%s' already exists", backupName)
 	}
 	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
-		ch.Mkdir(backupPath)
+		if err = ch.Mkdir(backupPath); err != nil {
+			log.Errorf("can't create diretory %s: %v", backupPath, err)
+		}
 	}
 	diskMap := map[string]string{}
 	for _, disk := range disks {
@@ -131,7 +137,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 	}
 	var backupDataSize, backupMetadataSize int64
 
-	t := []metadata.TableTitle{}
+	var t []metadata.TableTitle
 	for _, table := range tables {
 		log := log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Name))
 		if table.Skip {
@@ -145,7 +151,9 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 			partitions, realSize, err = AddTableToBackup(ch, backupName, &table)
 			if err != nil {
 				log.Error(err.Error())
-				RemoveBackupLocal(cfg, backupName)
+				if removeBackupErr := RemoveBackupLocal(cfg, backupName); removeBackupErr != nil {
+					log.Error(removeBackupErr.Error())
+				}
 				// continue
 				return err
 			}
@@ -161,7 +169,9 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 			Parts:      partitions,
 		})
 		if err != nil {
-			RemoveBackupLocal(cfg, backupName)
+			if removeBackupErr := RemoveBackupLocal(cfg, backupName); removeBackupErr != nil {
+				log.Error(removeBackupErr.Error())
+			}
 			return err
 			// continue
 		}
@@ -172,7 +182,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 		})
 		log.Infof("done")
 	}
-	backupMetafile := metadata.BackupMetadata{
+	backupMetadata := metadata.BackupMetadata{
 		// TODO: надо помечать какие таблички зафейлились либо фейлить весь бэкап
 		BackupName:              backupName,
 		Disks:                   diskMap,
@@ -183,19 +193,25 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 		DataSize:          backupDataSize,
 		MetadataSize:      backupMetadataSize,
 		// CompressedSize: ,
-		Tables: t,
+		Tables:    t,
+		Databases: []metadata.DatabasesMeta{},
 	}
-	content, err := json.MarshalIndent(&backupMetafile, "", "\t")
+	for _, database := range allDatabases {
+		backupMetadata.Databases = append(backupMetadata.Databases, metadata.DatabasesMeta(database))
+	}
+	content, err := json.MarshalIndent(&backupMetadata, "", "\t")
 	if err != nil {
-		RemoveBackupLocal(cfg, backupName)
+		_ = RemoveBackupLocal(cfg, backupName)
 		return fmt.Errorf("can't marshal backup metafile json: %v", err)
 	}
 	backupMetaFile := path.Join(defaultPath, "backup", backupName, "metadata.json")
 	if err := ioutil.WriteFile(backupMetaFile, content, 0640); err != nil {
-		RemoveBackupLocal(cfg, backupName)
+		_ = RemoveBackupLocal(cfg, backupName)
 		return err
 	}
-	ch.Chown(backupMetaFile)
+	if err := ch.Chown(backupMetaFile); err != nil {
+		log.Warnf("can't chown %s: %v", backupMetaFile, err)
+	}
 
 	if err := RemoveOldBackupsLocal(cfg, true); err != nil {
 		return err

@@ -136,8 +136,10 @@ func (ch *ClickHouse) getDataPathFromSystemDisks() ([]Disk, error) {
 }
 
 // Close - closing connection to ClickHouse
-func (ch *ClickHouse) Close() error {
-	return ch.conn.Close()
+func (ch *ClickHouse) Close() {
+	if err := ch.conn.Close(); err != nil {
+		log.Warnf("can't close clickhouse connection: %v", err)
+	}
 }
 
 // GetTables - return slice of all tables suitable for backup
@@ -171,6 +173,24 @@ func (ch *ClickHouse) GetTables() ([]Table, error) {
 		tables = ch.getTableSizeFromParts(tables)
 	}
 	return tables, nil
+}
+
+// GetDatabases - return slice of all non system databases for backup
+func (ch *ClickHouse) GetDatabases() ([]Database, error) {
+	allDatabases := make([]Database, 0)
+	allDatabasesSQL := "SELECT name, engine FROM system.databases WHERE name != 'system'"
+	if err := ch.softSelect(&allDatabases, allDatabasesSQL); err != nil {
+		return nil, err
+	}
+	for i, db := range allDatabases {
+		showDatabaseSQL := fmt.Sprintf("SHOW CREATE DATABASE `%s`", db.Name)
+		var result []string
+		if err := ch.Select(&result, showDatabaseSQL); err != nil {
+			return nil, fmt.Errorf("can't get create database query: %v", err)
+		}
+		allDatabases[i].Query = result[0]
+	}
+	return allDatabases, nil
 }
 
 func (ch *ClickHouse) getTableSizeFromParts(tables []Table) []Table {
@@ -497,6 +517,20 @@ func (ch *ClickHouse) ShowCreateTable(database, name string) string {
 // CreateDatabase - create ClickHouse database
 func (ch *ClickHouse) CreateDatabase(database string) error {
 	query := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", database)
+	_, err := ch.Query(query)
+	return err
+}
+
+func (ch *ClickHouse) CreateDatabaseWithEngine(database string, engine string) error {
+	query := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s` ENGINE=%s", database, engine)
+	_, err := ch.Query(query)
+	return err
+}
+
+func (ch *ClickHouse) CreateDatabaseFromQuery(query string) error {
+	if !strings.HasPrefix(query, "CREATE DATABASE IF NOT EXISTS") {
+		query = strings.Replace(query, "CREATE DATABASE", "CREATE DATABASE IF NOT EXISTS", 1)
+	}
 	_, err := ch.Query(query)
 	return err
 }

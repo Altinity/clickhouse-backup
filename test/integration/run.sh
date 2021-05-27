@@ -6,12 +6,12 @@ export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup"
 export LOG_LEVEL=${LOG_LEVEL:-info}
 
 if [[ "${CLICKHOUSE_VERSION:-21.3}" == 2* ]]; then
-  export COMPOSE_FILE=docker-compose_storage-policy.yml
+  export COMPOSE_FILE=docker-compose_advanced.yml
 else
   export COMPOSE_FILE=docker-compose.yml
 fi
 
-docker-compose -f test/integration/${COMPOSE_FILE} down
+docker-compose -f test/integration/${COMPOSE_FILE} down --remove-orphans
 make clean
 make build
 docker-compose -f test/integration/${COMPOSE_FILE} up -d --force-recreate
