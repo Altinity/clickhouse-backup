@@ -14,6 +14,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/apex/log"
+	"golang.org/x/mod/semver"
 
 	_ "github.com/ClickHouse/clickhouse-go"
 	"github.com/stretchr/testify/assert"
@@ -507,12 +508,12 @@ func (ch *TestClickHouse) connect() error {
 }
 
 func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {
-	if os.Getenv("CLICKHOUSE_VERSION") == "docker-compose.yml" {
-		if err := ch.chbackup.CreateDatabase(data.Database); err != nil {
+	if semver.Compare(os.Getenv("CLICKHOUSE_VERSION"), "20.3") == 1 {
+		if err := ch.chbackup.CreateDatabaseWithEngine(data.Database, data.DatabaseEngine); err != nil {
 			return err
 		}
 	} else {
-		if err := ch.chbackup.CreateDatabaseWithEngine(data.Database, data.DatabaseEngine); err != nil {
+		if err := ch.chbackup.CreateDatabase(data.Database); err != nil {
 			return err
 		}
 	}
