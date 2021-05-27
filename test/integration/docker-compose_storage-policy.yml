@@ -1,5 +1,17 @@
 version: "3.3"
 services:
+  sshd:
+    image: panubo/sshd:latest
+    container_name: sshd
+    environment:
+      SSH_ENABLE_ROOT: "true"
+    volumes:
+      - ./ssh/clickhouse-backup_rsa.pub:/root/.ssh/authorized_keys
+    ports:
+      - 22:22
+    networks:
+      - clickhouse-backup
+
   minio:
     image: minio/minio:latest
     container_name: minio
@@ -28,6 +40,7 @@ services:
       - ./ssl.xml:/etc/clickhouse-server/config.d/ssl.xml
       - ./storage_configuration.xml:/etc/clickhouse-server/config.d/storage_configuration.xml
       - ./init.sh:/docker-entrypoint-initdb.d/init.sh
+      - ./ssh/clickhouse-backup_rsa:/root/.ssh/id_rsa
     ports:
       - 9000:9000
       - 7171:7171

@@ -1,0 +1,20 @@
+general:
+  disable_progress_bar: true
+  remote_storage: ssh
+clickhouse:
+  host: localhost
+  port: 9440
+  username: backup
+  password: meow=& 123?*%# МЯУ
+  secure: true
+  skip_verify: true
+ssh:
+  address: "sshd"
+  username: "root"
+  password: ""
+  key: "/root/.ssh/id_rsa"
+  path: "/root"
+  compression_format: tar
+  compression_level: 1
+api:
+  listen: :7171

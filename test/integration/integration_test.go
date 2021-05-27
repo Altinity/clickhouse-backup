@@ -242,6 +242,7 @@ func TestIntegrationGCS(t *testing.T) {
 	// testRestoreLegacyBackupFormat(t)
 	testCommon(t)
 }
+
 func TestIntegrationAzure(t *testing.T) {
 	if os.Getenv("AZURE_TESTS") == "" || os.Getenv("TRAVIS_PULL_REQUEST") != "false" {
 		t.Skip("Skipping Azure integration tests...")
@@ -252,6 +253,18 @@ func TestIntegrationAzure(t *testing.T) {
 	r.NoError(dockerExec("apt-get", "-y", "update"))
 	r.NoError(dockerExec("apt-get", "-y", "install", "ca-certificates"))
 	// testRestoreLegacyBackupFormat(t)
+	testCommon(t)
+}
+
+func TestIntegrationSSH(t *testing.T) {
+	//if os.Getenv("SSH_TESTS") == "" || os.Getenv("TRAVIS_PULL_REQUEST") != "false" {
+	//	t.Skip("Skipping Azure integration tests...")
+	//	return
+	//}
+	r := require.New(t)
+	r.NoError(dockerCP("config-ssh.yml", "/etc/clickhouse-backup/config.yml"))
+	//r.NoError(dockerExec("apt-get", "-y", "update"))
+	//r.NoError(dockerExec("apt-get", "-y", "install", "ca-certificates"))
 	testCommon(t)
 }
 
