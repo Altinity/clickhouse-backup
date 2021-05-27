@@ -49,7 +49,8 @@ services:
       - ./storage_configuration.xml:/etc/clickhouse-server/config.d/storage_configuration.xml
       - ./cluster.xml:/etc/clickhouse-server/config.d/cluster.xml
       - ./init.sh:/docker-entrypoint-initdb.d/init.sh
-      - ./clickhouse-server.log:/var/log/clickhouse-server/clickhouse-server.log
+      # uncomment only for debug
+      # - ./clickhouse-server.log:/var/log/clickhouse-server/clickhouse-server.log
     ports:
       - 9000:9000
       - 7171:7171
