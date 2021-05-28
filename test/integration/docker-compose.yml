@@ -5,8 +5,7 @@ services:
     container_name: sshd
     environment:
       SSH_ENABLE_ROOT: "true"
-    volumes:
-      - ./sftp/clickhouse-backup_rsa.pub:/root/.ssh/authorized_keys
+    command: sh -c 'echo "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAAgQCuWwcrj1FnZ5QhuUHSq4QOJUocWr+MJ4aOX7eEvZEgTcJBZByTOyDUhjd2kAkGTJTgV0WVyI6oMx49PwF7xVjOznmsSDST47iyqyiFh3Jh6ztYB1grkTY84sFCJX8S4F5WGlCocb69H88kPAZySjOSGljr/uyxt9SvzZ1+COy6bw== clickhouse-backup@sshd" > /root/.ssh/authorized_keys && /usr/sbin/sshd -D -e -f /etc/ssh/sshd_config'
     ports:
       - 22:22
     networks:
