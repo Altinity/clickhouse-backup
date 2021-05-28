@@ -60,7 +60,7 @@ func (bd *BackupDestination) RemoveOldBackups(keep int) error {
 }
 
 func (bd *BackupDestination) RemoveBackup(backupName string) error {
-  if bd.Kind() == "SSH" {
+  if bd.Kind() == "SFTP" {
     return bd.DeleteFile(backupName)
 	}
 	return bd.Walk(backupName+"/", true, func(f RemoteFile) error {
@@ -406,14 +406,14 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 			cfg.General.DisableProgressBar,
 			cfg.General.BackupsToKeepRemote,
 		}, nil
-	case "ssh":
-		sshStorage := &SSH{
-			Config: &cfg.SSH,
+	case "sftp":
+		sftpStorage := &SFTP{
+			Config: &cfg.SFTP,
 		}
 		return &BackupDestination{
-			sshStorage,
-			cfg.SSH.CompressionFormat,
-			cfg.SSH.CompressionLevel,
+			sftpStorage,
+			cfg.SFTP.CompressionFormat,
+			cfg.SFTP.CompressionLevel,
 			cfg.General.DisableProgressBar,
 			cfg.General.BackupsToKeepRemote,
 		}, nil

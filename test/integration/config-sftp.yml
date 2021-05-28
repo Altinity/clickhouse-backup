@@ -1,6 +1,6 @@
 general:
   disable_progress_bar: true
-  remote_storage: ssh
+  remote_storage: sftp
 clickhouse:
   host: localhost
   port: 9440
@@ -8,7 +8,7 @@ clickhouse:
   password: meow=& 123?*%# МЯУ
   secure: true
   skip_verify: true
-ssh:
+sftp:
   address: "sshd"
   username: "root"
   password: ""
