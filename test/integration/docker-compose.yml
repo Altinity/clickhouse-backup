@@ -20,7 +20,7 @@ services:
       - clickhouse-backup
 
   clickhouse:
-    image: yandex/clickhouse-server:${CLICKHOUSE_VERSION:-21.3}
+    image: yandex/clickhouse-server:${CLICKHOUSE_VERSION:-1.1.54390}
     container_name: clickhouse
     environment:
       TZ: UTC
@@ -39,6 +39,9 @@ services:
       - 7171:7171
     networks:
       - clickhouse-backup
+    depends_on:
+      - zookeeper
+      - minio
 
 networks:
   clickhouse-backup:

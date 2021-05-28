@@ -45,6 +45,11 @@ func Restore(cfg *config.Config, backupName string, tablePattern string, schemaO
 		if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
 			return err
 		}
+		for _, database := range backupMetadata.Databases {
+			if err := ch.CreateDatabaseFromQuery(database.Query); err != nil {
+				return err
+			}
+		}
 		if len(backupMetadata.Tables) == 0 {
 			apexLog.Infof("'%s' is empty backup, nothing to do", backupName)
 			return nil
@@ -69,7 +74,7 @@ func Restore(cfg *config.Config, backupName string, tablePattern string, schemaO
 // RestoreSchema - restore schemas matched by tablePattern from backupName
 func RestoreSchema(cfg *config.Config, backupName string, tablePattern string, dropTable bool) error {
 	if backupName == "" {
-		PrintLocalBackups(cfg, "all")
+		_ = PrintLocalBackups(cfg, "all")
 		return fmt.Errorf("select backup for restore")
 	}
 	ch := &clickhouse.ClickHouse{
@@ -80,11 +85,11 @@ func RestoreSchema(cfg *config.Config, backupName string, tablePattern string, d
 	}
 	defer ch.Close()
 
-	defaulDataPath, err := ch.GetDefaultPath()
+	defaultDataPath, err := ch.GetDefaultPath()
 	if err != nil {
 		return ErrUnknownClickhouseDataPath
 	}
-	metadataPath := path.Join(defaulDataPath, "backup", backupName, "metadata")
+	metadataPath := path.Join(defaultDataPath, "backup", backupName, "metadata")
 	info, err := os.Stat(metadataPath)
 	if err != nil {
 		return err
@@ -109,6 +114,7 @@ func RestoreSchema(cfg *config.Config, backupName string, tablePattern string, d
 	var restoreErr error
 	for restoreRetries < totalRetries {
 		for _, schema := range tablesForRestore {
+			// if metadata.json doesn't contains "databases", we will re-create tables with default engine
 			if err = ch.CreateDatabase(schema.Database); err != nil {
 				return fmt.Errorf("can't create database '%s': %v", schema.Database, err)
 			}
@@ -147,7 +153,7 @@ func RestoreSchema(cfg *config.Config, backupName string, tablePattern string, d
 // RestoreData - restore data for tables matched by tablePattern from backupName
 func RestoreData(cfg *config.Config, backupName string, tablePattern string) error {
 	if backupName == "" {
-		PrintLocalBackups(cfg, "all")
+		_ = PrintLocalBackups(cfg, "all")
 		return fmt.Errorf("select backup for restore")
 	}
 	log := apexLog.WithFields(apexLog.Fields{
@@ -214,7 +220,7 @@ func RestoreData(cfg *config.Config, backupName string, tablePattern string) err
 		}] = chTables[i]
 	}
 
-	missingTables := []string{}
+	var missingTables []string
 	for _, restoreTable := range tablesForRestore {
 		found := false
 		for _, chTable := range chTables {

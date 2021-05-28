@@ -31,6 +31,13 @@ type Disk struct {
 	Type string `db:"type"`
 }
 
+// Database - Clickhouse system.databases struct
+type Database struct {
+	Name   string `db:"name"`
+	Engine string `db:"engine"`
+	Query  string `db:"query"`
+}
+
 // BackupPartition - struct representing Clickhouse partition
 // type BackupPartition struct {
 // 	Partition                         string `json:"partition"`

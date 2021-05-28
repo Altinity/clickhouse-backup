@@ -13,6 +13,19 @@ services:
     networks:
       - clickhouse-backup
 
+# for future support database engine MaterializeMySQL and PostgreSQL
+#  mysql:
+#    image: mysql:${MYSQL_VERSION:-latest}
+#    command: --default_authentication_plugin='mysql_native_password'
+#    container_name: mysql
+#    environment:
+#      MYSQL_USER: user
+#      MYSQL_PASSWORD: password
+#      MYSQL_DATABASE: database
+#      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+#    networks:
+#      - clickhouse-backup
+
   zookeeper:
     image: zookeeper:${ZOOKEEPER_VERSION:-latest}
     container_name: zookeeper
@@ -36,11 +49,16 @@ services:
       - ./storage_configuration.xml:/etc/clickhouse-server/config.d/storage_configuration.xml
       - ./cluster.xml:/etc/clickhouse-server/config.d/cluster.xml
       - ./init.sh:/docker-entrypoint-initdb.d/init.sh
+      # uncomment only for debug
+      # - ./clickhouse-server.log:/var/log/clickhouse-server/clickhouse-server.log
     ports:
       - 9000:9000
       - 7171:7171
     networks:
       - clickhouse-backup
+    depends_on:
+      - zookeeper
+      - minio
 
 networks:
   clickhouse-backup:
