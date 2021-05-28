@@ -43,11 +43,15 @@ func printBackups(w io.Writer, backupList []new_storage.Backup, format, location
 				}
 				description = "old-format"
 			}
+			required := ""
+			if backup.RequiredBackup != "" {
+				required = "+" + backup.RequiredBackup
+			}
 			if backup.Broken != "" {
 				description = backup.Broken
 				size = "???"
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", backup.BackupName, size, backup.CreationDate.Format("02/01/2006 15:04:05"), location, description)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", backup.BackupName, size, backup.CreationDate.Format("02/01/2006 15:04:05"), location, required, description)
 		}
 	default:
 		return fmt.Errorf("'%s' undefined", format)

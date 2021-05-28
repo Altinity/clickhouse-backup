@@ -7,11 +7,13 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 	apexLog "github.com/apex/log"
 )
 
-func moveShadow(shadowPath, backupPartsPath string) (int64, error) {
+func moveShadow(shadowPath, backupPartsPath string) ([]metadata.Part, int64, error) {
 	size := int64(0)
+	partitions := []metadata.Part{}
 	err := filepath.Walk(shadowPath, func(filePath string, info os.FileInfo, err error) error {
 		relativePath := strings.Trim(strings.TrimPrefix(filePath, shadowPath), "/")
 		pathParts := strings.SplitN(relativePath, "/", 4)
@@ -21,6 +23,9 @@ func moveShadow(shadowPath, backupPartsPath string) (int64, error) {
 		}
 		dstFilePath := filepath.Join(backupPartsPath, pathParts[3])
 		if info.IsDir() {
+			partitions = append(partitions, metadata.Part{
+				Name: pathParts[3],
+			})
 			return os.MkdirAll(dstFilePath, 0750)
 		}
 		if !info.Mode().IsRegular() {
@@ -30,7 +35,7 @@ func moveShadow(shadowPath, backupPartsPath string) (int64, error) {
 		size += info.Size()
 		return os.Rename(filePath, dstFilePath)
 	})
-	return size, err
+	return partitions, size, err
 }
 
 func copyFile(srcFile string, dstFile string) error {

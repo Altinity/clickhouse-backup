@@ -2,6 +2,7 @@ package new_storage
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	x "github.com/AlexAkulov/clickhouse-backup/pkg/new_storage/azblob"
 
+	"github.com/Azure/azure-pipeline-go/pipeline"
 	"github.com/Azure/azure-storage-blob-go/azblob"
 	"github.com/pkg/errors"
 )
@@ -60,8 +62,24 @@ func (s *AzureBlob) Connect() error {
 	if err != nil {
 		return err
 	}
+	// don't pollute syslog with expected 404's and other garbage logs
+	pipeline.SetForceLogEnabled(false)
 
 	s.Container = azblob.NewServiceURL(*u, azblob.NewPipeline(credential, azblob.PipelineOptions{})).NewContainerURL(s.Config.Container)
+	_, err = s.Container.Create(context.Background(), azblob.Metadata{}, azblob.PublicAccessNone)
+	if err != nil && !isContainerAlreadyExists(err) {
+		return err
+	}
+	test_name := make([]byte, 16)
+	if _, err := rand.Read(test_name); err != nil {
+		return errors.Wrapf(err, "azblob: failed to generate test blob name")
+	}
+	test_blob := s.Container.NewBlockBlobURL(base64.URLEncoding.EncodeToString(test_name))
+	if _, err = test_blob.GetProperties(context.Background(), azblob.BlobAccessConditions{}, azblob.ClientProvidedKeyOptions{}); err != nil {
+		if se, ok := err.(azblob.StorageError); !ok || se.ServiceCode() != azblob.ServiceCodeBlobNotFound {
+			return errors.Wrapf(err, "azblob: failed to access container %s", s.Config.Container)
+		}
+	}
 
 	if s.Config.SSEKey != "" {
 		key, err := base64.StdEncoding.DecodeString(s.Config.SSEKey)
@@ -129,8 +147,13 @@ func (s *AzureBlob) StatFile(key string) (RemoteFile, error) {
 func (s *AzureBlob) Walk(azPath string, recursive bool, process func(r RemoteFile) error) error {
 	ctx := context.Background()
 	prefix := path.Join(s.Config.Path, azPath)
+	if prefix == "" || prefix == "/" {
+		prefix = ""
+	} else {
+		prefix += "/"
+	}
 	opt := azblob.ListBlobsSegmentOptions{
-		Prefix: prefix + "/",
+		Prefix: prefix,
 	}
 	mrk := azblob.Marker{}
 	delimiter := ""
@@ -182,4 +205,16 @@ func (f *azureBlobFile) Name() string {
 
 func (f *azureBlobFile) LastModified() time.Time {
 	return f.lastModified
+}
+
+func isContainerAlreadyExists(err error) bool {
+	if err != nil {
+		if serr, ok := err.(azblob.StorageError); ok { // This error is a Service-specific
+			switch serr.ServiceCode() { // Compare serviceCode to ServiceCodeXxx constants
+			case azblob.ServiceCodeContainerAlreadyExists:
+				return true
+			}
+		}
+	}
+	return false
 }

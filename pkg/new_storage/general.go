@@ -17,7 +17,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 
 	apexLog "github.com/apex/log"
-	"github.com/mholt/archiver"
+	"github.com/mholt/archiver/v3"
 	"gopkg.in/djherbis/buffer.v1"
 	"gopkg.in/djherbis/nio.v2"
 )
@@ -52,6 +52,7 @@ func (bd *BackupDestination) RemoveOldBackups(keep int) error {
 	}
 	backupsToDelete := GetBackupsToDelete(backupList, keep)
 	for _, backupToDelete := range backupsToDelete {
+		apexLog.Infof("remove '%s'", backupToDelete.BackupName)
 		if err := bd.RemoveBackup(backupToDelete.BackupName); err != nil {
 			return err
 		}

@@ -6,3 +6,5 @@ config.yml
 credentials.json
 .idea
 build/
+.env
+*.log

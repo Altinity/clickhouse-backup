@@ -22,7 +22,7 @@ func addRestoreTable(tables RestoreTables, table metadata.TableMetadata) Restore
 	return append(tables, table)
 }
 
-func parseSchemaPattern(metadataPath string, tablePattern string) (RestoreTables, error) {
+func parseSchemaPattern(metadataPath string, tablePattern string, dropTable bool) (RestoreTables, error) {
 	result := RestoreTables{}
 	tablePatterns := []string{"*"}
 
@@ -30,6 +30,9 @@ func parseSchemaPattern(metadataPath string, tablePattern string) (RestoreTables
 		tablePatterns = strings.Split(tablePattern, ",")
 	}
 	if err := filepath.Walk(metadataPath, func(filePath string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
 		if !strings.HasSuffix(filePath, ".sql") &&
 			!strings.HasSuffix(filePath, ".json") &&
 			!info.Mode().IsRegular() {
@@ -79,25 +82,36 @@ func parseSchemaPattern(metadataPath string, tablePattern string) (RestoreTables
 	}); err != nil {
 		return nil, err
 	}
-	result.Sort()
+	result.Sort(dropTable)
 	return result, nil
 }
 
-func getOrderByEngine(query string) int64 {
-	if strings.HasPrefix(query, "CREATE DICTIONARY") {
-		return 0
+func getOrderByEngine(query string, dropTable bool) int64 {
+	if strings.Contains(query, "ENGINE = Distributed") || strings.Contains(query, "ENGINE = Kafka") || strings.Contains(query, "ENGINE = RabbitMQ") {
+		return 4
 	}
-	if strings.Contains(query, "ENGINE = Distributed") {
+	if strings.HasPrefix(query, "CREATE DICTIONARY") {
 		return 3
 	}
 	if strings.HasPrefix(query, "CREATE VIEW") ||
-		strings.HasPrefix(query, "CREATE MATERIALIZED VIEW") {
-			if strings.Contains(query, " TO ") {
-				return 4
-			}
-		return 1
+		strings.HasPrefix(query, "CREATE MATERIALIZED VIEW") ||
+		strings.HasPrefix(query, "ATTACH MATERIALIZED VIEW") {
+		if dropTable {
+			return 1
+		} else {
+			return 2
+		}
 	}
-	return 2
+
+	if strings.HasPrefix(query, "CREATE TABLE") &&
+		(strings.Contains(query, ".inner_id.") || strings.Contains(query, ".inner.")) {
+		if dropTable {
+			return 2
+		} else {
+			return 1
+		}
+	}
+	return 0
 }
 
 func parseTablePatternForRestoreData(tables []metadata.TableMetadata, tablePattern string) clickhouse.BackupTables {

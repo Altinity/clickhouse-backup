@@ -15,12 +15,15 @@ import (
 
 // ArchiveExtensions - list of availiable compression formats and associated file extensions
 var ArchiveExtensions = map[string]string{
-	"tar":   "tar",
-	"lz4":   "tar.lz4",
-	"bzip2": "tar.bz2",
-	"gzip":  "tar.gz",
-	"sz":    "tar.sz",
-	"xz":    "tar.xz",
+	"tar":    "tar",
+	"lz4":    "tar.lz4",
+	"bzip2":  "tar.bz2",
+	"gzip":   "tar.gz",
+	"sz":     "tar.sz",
+	"xz":     "tar.xz",
+	"br":     "tar.br",
+	"brotli": "tar.br",
+	"zstd":   "tar.zstd",
 }
 
 // Config - config file format
@@ -136,6 +139,7 @@ type ClickHouseConfig struct {
 	Secure               bool              `yaml:"secure" envconfig:"CLICKHOUSE_SECURE"`
 	SkipVerify           bool              `yaml:"skip_verify" envconfig:"CLICKHOUSE_SKIP_VERIFY"`
 	SyncReplicatedTables bool              `yaml:"sync_replicated_tables" envconfig:"CLICKHOUSE_SYNC_REPLICATED_TABLES"`
+	LogSQLQueries        bool              `yaml:"log_sql_queries" envconfig:"CLICKHOUSE_LOG_SQL_QUERIES"`
 }
 
 type APIConfig struct {
@@ -203,14 +207,16 @@ func LoadConfig(configLocation string) (*Config, error) {
 	if err := envconfig.Process("", cfg); err != nil {
 		return nil, err
 	}
+	cfg.AzureBlob.Path = strings.TrimPrefix(cfg.AzureBlob.Path, "/")
 	return cfg, ValidateConfig(cfg)
 }
 
 func ValidateConfig(cfg *Config) error {
-	if cfg.GetCompressionFormat() != "none" {
-		if _, ok := ArchiveExtensions[cfg.GetCompressionFormat()]; !ok {
-			return fmt.Errorf("'%s' is unsupported compression format", cfg.GetCompressionFormat())
-		}
+	if cfg.GetCompressionFormat() == "lz4" {
+		return fmt.Errorf("clickhouse already compressed data by lz4")
+	}
+	if _, ok := ArchiveExtensions[cfg.GetCompressionFormat()]; !ok {
+		return fmt.Errorf("'%s' is unsupported compression format", cfg.GetCompressionFormat())
 	}
 	if _, err := time.ParseDuration(cfg.ClickHouse.Timeout); err != nil {
 		return err
@@ -273,6 +279,7 @@ func DefaultConfig() *Config {
 			},
 			Timeout:              "5m",
 			SyncReplicatedTables: true,
+			LogSQLQueries:        false,
 		},
 		AzureBlob: AzureBlobConfig{
 			EndpointSuffix:    "core.windows.net",

@@ -2,8 +2,10 @@ package backup
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"path"
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
@@ -13,6 +15,9 @@ import (
 	legacyStorage "github.com/AlexAkulov/clickhouse-backup/pkg/storage"
 
 	apexLog "github.com/apex/log"
+)
+var (
+	ErrBackupIsAlreadyExists = errors.New("backup is already exists")
 )
 
 func legacyDownload(cfg *config.Config, defaultDataPath, backupName string) error {
@@ -35,42 +40,35 @@ func legacyDownload(cfg *config.Config, defaultDataPath, backupName string) erro
 	return nil
 }
 
-func Download(cfg *config.Config, backupName string, tablePattern string, schemaOnly bool) error {
+func (b *Backuper) Download(backupName string, tablePattern string, schemaOnly bool) error {
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "download",
 	})
-	if cfg.General.RemoteStorage == "none" {
-		return fmt.Errorf("Remote storage is 'none'")
+	if b.cfg.General.RemoteStorage == "none" {
+		return fmt.Errorf("remote storage is 'none'")
 	}
 	if backupName == "" {
-		PrintRemoteBackups(cfg, "all")
+		PrintRemoteBackups(b.cfg, "all")
 		return fmt.Errorf("select backup for download")
 	}
-	localBackups, err := GetLocalBackups(cfg)
+	localBackups, err := GetLocalBackups(b.cfg)
 	if err != nil {
 		return err
 	}
 	for i := range localBackups {
 		if backupName == localBackups[i].BackupName {
-			return fmt.Errorf("'%s' already exists", backupName)
+			return ErrBackupIsAlreadyExists
 		}
 	}
-	ch := &clickhouse.ClickHouse{
-		Config: &cfg.ClickHouse,
-	}
-	if err := ch.Connect(); err != nil {
+	if err := b.ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
-	defer ch.Close()
-	bd, err := new_storage.NewBackupDestination(cfg)
-	if err != nil {
+	defer b.ch.Close()
+	if err := b.init(); err != nil {
 		return err
 	}
-	if err := bd.Connect(); err != nil {
-		return err
-	}
-	remoteBackups, err := bd.BackupList()
+	remoteBackups, err := b.dst.BackupList()
 	if err != nil {
 		return err
 	}
@@ -86,9 +84,8 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 	if !found {
 		return fmt.Errorf("'%s' is not found on remote storage", backupName)
 	}
-	defaultDataPath, err := ch.GetDefaultPath()
-	if err != nil {
-		return err
+	if len(remoteBackup.Tables) == 0 && !b.cfg.General.AllowEmptyBackups {
+		return fmt.Errorf("'%s' is empty backup", backupName)
 	}
 	if remoteBackup.Legacy {
 		if tablePattern != "" {
@@ -98,26 +95,29 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 			return fmt.Errorf("'%s' is old format backup and doesn't supports download of schema only", backupName)
 		}
 		log.Debugf("'%s' is old-format backup", backupName)
-		return legacyDownload(cfg, defaultDataPath, backupName)
-	}
-	disks, err := ch.GetDisks()
-	if err != nil {
-		return err
-	}
-	diskMap := map[string]string{}
-	for _, disk := range disks {
-		diskMap[disk.Name] = disk.Path
+		return legacyDownload(b.cfg, b.DefaultDataPath, backupName)
 	}
 	tableMetadataForDownload := []metadata.TableMetadata{}
 	tablesForDownload := parseTablePatternForDownload(remoteBackup.Tables, tablePattern)
+
+	if !schemaOnly && remoteBackup.RequiredBackup != "" {
+		err := b.Download(remoteBackup.RequiredBackup, tablePattern, schemaOnly)
+		if err != nil && err != ErrBackupIsAlreadyExists {
+			return err
+		}
+	}
+
 	dataSize := int64(0)
 	metadataSize := int64(0)
-
+	err = os.MkdirAll(path.Join(b.DefaultDataPath, "backup", backupName), 0750)
+	if err != nil {
+		return err
+	}
 	for _, t := range tablesForDownload {
 		log := log.WithField("table", fmt.Sprintf("%s.%s", t.Database, t.Table))
 		remoteTableMetadata := path.Join(backupName, "metadata", clickhouse.TablePathEncode(t.Database), fmt.Sprintf("%s.json", clickhouse.TablePathEncode(t.Table)))
 		log.Debug(remoteTableMetadata)
-		tmReader, err := bd.GetFileReader(remoteTableMetadata)
+		tmReader, err := b.dst.GetFileReader(remoteTableMetadata)
 		if err != nil {
 			return err
 		}
@@ -133,7 +133,7 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 		tableMetadataForDownload = append(tableMetadataForDownload, tableMetadata)
 
 		// save metadata
-		metadataLocalFile := path.Join(defaultDataPath, "backup", backupName, "metadata", clickhouse.TablePathEncode(t.Database), fmt.Sprintf("%s.json", clickhouse.TablePathEncode(t.Table)))
+		metadataLocalFile := path.Join(b.DefaultDataPath, "backup", backupName, "metadata", clickhouse.TablePathEncode(t.Database), fmt.Sprintf("%s.json", clickhouse.TablePathEncode(t.Table)))
 		size, err := tableMetadata.Save(metadataLocalFile, schemaOnly)
 		if err != nil {
 			return err
@@ -145,7 +145,7 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 	if !schemaOnly {
 		for _, t := range tableMetadataForDownload {
 			for disk := range t.Parts {
-				if _, ok := diskMap[disk]; !ok {
+				if _, ok := b.DiskMap[disk]; !ok {
 					return fmt.Errorf("table '%s.%s' require disk '%s' that not found in clickhouse, you can add nonexistent disks to disk_mapping config", t.Database, t.Table, disk)
 				}
 			}
@@ -155,29 +155,9 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 				continue
 			}
 			dataSize += tableMetadata.TotalBytes
-			// download data
-			uuid := path.Join(clickhouse.TablePathEncode(tableMetadata.Database), clickhouse.TablePathEncode(tableMetadata.Table))
 			log := log.WithField("table", fmt.Sprintf("%s.%s", tableMetadata.Database, tableMetadata.Table))
-			if remoteBackup.DataFormat != "directory" {
-				for disk := range tableMetadata.Files {
-					diskPath := diskMap[disk]
-					tableLocalDir := path.Join(diskPath, "backup", backupName, "shadow", uuid, disk)
-					for _, archiveFile := range tableMetadata.Files[disk] {
-						tableRemoteFile := path.Join(backupName, "shadow", clickhouse.TablePathEncode(tableMetadata.Database), clickhouse.TablePathEncode(tableMetadata.Table), archiveFile)
-						if err := bd.CompressedStreamDownload(tableRemoteFile, tableLocalDir); err != nil {
-							return err
-						}
-					}
-				}
-				continue
-			}
-			for disk := range tableMetadata.Parts {
-				tableRemotePath := path.Join(backupName, "shadow", uuid, disk)
-				diskPath := diskMap[disk]
-				tableLocalDir := path.Join(diskPath, "backup", backupName, "shadow", uuid, disk)
-				if err := bd.DownloadPath(0, tableRemotePath, tableLocalDir); err != nil {
-					return err
-				}
+			if err := b.downloadTableData(remoteBackup.BackupMetadata, tableMetadata); err != nil {
+				return err
 			}
 			log.Info("done")
 		}
@@ -187,15 +167,72 @@ func Download(cfg *config.Config, backupName string, tablePattern string, schema
 	backupMetadata.DataSize = dataSize
 	backupMetadata.MetadataSize = metadataSize
 	backupMetadata.DataFormat = ""
-	tbBody, err := json.MarshalIndent(&backupMetadata, "", "\t")
+	backupMetadata.RequiredBackup = ""
+
+	backupMetafileLocalPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata.json")
+	if err := backupMetadata.Save(backupMetafileLocalPath); err != nil {
+		return err
+	}
+	log.Info("done")
+	return nil
+}
+
+func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table metadata.TableMetadata) error {
+	uuid := path.Join(clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table))
+	if remoteBackup.DataFormat != "directory" {
+		for disk := range table.Files {
+			diskPath := b.DiskMap[disk]
+			tableLocalDir := path.Join(diskPath, "backup", remoteBackup.BackupName, "shadow", uuid, disk)
+			for _, archiveFile := range table.Files[disk] {
+				tableRemoteFile := path.Join(remoteBackup.BackupName, "shadow", clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table), archiveFile)
+				if err := b.dst.CompressedStreamDownload(tableRemoteFile, tableLocalDir); err != nil {
+					return err
+				}
+			}
+		}
+	} else {
+		for disk := range table.Parts {
+			tableRemotePath := path.Join(remoteBackup.BackupName, "shadow", uuid, disk)
+			diskPath := b.DiskMap[disk]
+			tableLocalDir := path.Join(diskPath, "backup", remoteBackup.BackupName, "shadow", uuid, disk)
+			if err := b.dst.DownloadPath(0, tableRemotePath, tableLocalDir); err != nil {
+				return err
+			}
+		}
+	}
+	// Create symlink for exsists parts
+	for disk, parts := range table.Parts {
+		for _, p := range parts {
+			if !p.Required {
+				continue
+			}
+			existsPath := path.Join(b.DiskMap[disk], "backup", remoteBackup.RequiredBackup, "shadow", uuid, disk, p.Name)
+			newPath := path.Join(b.DiskMap[disk], "backup", remoteBackup.BackupName, "shadow", uuid, disk, p.Name)
+			if err := duplicatePart(existsPath, newPath); err != nil {
+				return fmt.Errorf("can't to add exists part: %s", err)
+			}
+		}
+	}
+	return nil
+}
+
+func duplicatePart(exists, new string) error {
+	ex, err := os.Open(exists)
 	if err != nil {
 		return err
 	}
-	backupMetafileLocalPath := path.Join(defaultDataPath, "backup", backupName, "metadata.json")
-	if err := ioutil.WriteFile(backupMetafileLocalPath, tbBody, 0640); err != nil {
+	defer ex.Close()
+	files, err := ex.Readdirnames(-1)
+	if err != nil {
 		return err
 	}
-
-	log.Info("done")
+	if err := os.MkdirAll(new, 0750); err != nil {
+		return err
+	}
+	for _, f := range files {
+		if err := os.Link(path.Join(exists, f), path.Join(new, f)); err != nil {
+			return err
+		}
+	}
 	return nil
 }

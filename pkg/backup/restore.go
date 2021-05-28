@@ -1,7 +1,9 @@
 package backup
 
 import (
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path"
 	"sort"
@@ -17,17 +19,45 @@ import (
 type RestoreTables []metadata.TableMetadata
 
 // Sort - sorting BackupTables slice orderly by name
-func (rt RestoreTables) Sort() {
+func (rt RestoreTables) Sort(dropTable bool) {
 	sort.Slice(rt, func(i, j int) bool {
-		if getOrderByEngine(rt[i].Table) < getOrderByEngine(rt[j].Table) {
-			return true
-		}
-		return (rt[i].Database < rt[j].Database) || (rt[i].Database == rt[j].Database && rt[i].Table < rt[j].Table)
+		return getOrderByEngine(rt[i].Query, dropTable) < getOrderByEngine(rt[j].Query, dropTable)
 	})
 }
 
 // Restore - restore tables matched by tablePattern from backupName
 func Restore(cfg *config.Config, backupName string, tablePattern string, schemaOnly bool, dataOnly bool, dropTable bool) error {
+	ch := &clickhouse.ClickHouse{
+		Config: &cfg.ClickHouse,
+	}
+	if err := ch.Connect(); err != nil {
+		return fmt.Errorf("can't connect to clickhouse: %v", err)
+	}
+	defer ch.Close()
+	defaultDataPath, err := ch.GetDefaultPath()
+	if err != nil {
+		return ErrUnknownClickhouseDataPath
+	}
+	backupMetafileLocalPath := path.Join(defaultDataPath, "backup", backupName, "metadata.json")
+	backupMetadataBody, err := ioutil.ReadFile(backupMetafileLocalPath)
+	if err == nil {
+		backupMetadata := metadata.BackupMetadata{}
+		if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
+			return err
+		}
+		for _, database := range backupMetadata.Databases {
+			if err := ch.CreateDatabaseFromQuery(database.Query); err != nil {
+				return err
+			}
+		}
+		if len(backupMetadata.Tables) == 0 {
+			apexLog.Infof("'%s' is empty backup, nothing to do", backupName)
+			return nil
+		}
+	} else if !os.IsNotExist(err) { // Legacy backups don't contain metadata.json
+		return err
+	}
+
 	if schemaOnly || (schemaOnly == dataOnly) {
 		if err := RestoreSchema(cfg, backupName, tablePattern, dropTable); err != nil {
 			return err
@@ -44,7 +74,7 @@ func Restore(cfg *config.Config, backupName string, tablePattern string, schemaO
 // RestoreSchema - restore schemas matched by tablePattern from backupName
 func RestoreSchema(cfg *config.Config, backupName string, tablePattern string, dropTable bool) error {
 	if backupName == "" {
-		PrintLocalBackups(cfg, "all")
+		_ = PrintLocalBackups(cfg, "all")
 		return fmt.Errorf("select backup for restore")
 	}
 	ch := &clickhouse.ClickHouse{
@@ -55,12 +85,11 @@ func RestoreSchema(cfg *config.Config, backupName string, tablePattern string, d
 	}
 	defer ch.Close()
 
-	defaulDataPath, err := ch.GetDefaultPath()
+	defaultDataPath, err := ch.GetDefaultPath()
 	if err != nil {
 		return ErrUnknownClickhouseDataPath
 	}
-
-	metadataPath := path.Join(defaulDataPath, "backup", backupName, "metadata")
+	metadataPath := path.Join(defaultDataPath, "backup", backupName, "metadata")
 	info, err := os.Stat(metadataPath)
 	if err != nil {
 		return err
@@ -71,7 +100,7 @@ func RestoreSchema(cfg *config.Config, backupName string, tablePattern string, d
 	if tablePattern == "" {
 		tablePattern = "*"
 	}
-	tablesForRestore, err := parseSchemaPattern(metadataPath, tablePattern)
+	tablesForRestore, err := parseSchemaPattern(metadataPath, tablePattern, dropTable)
 	if err != nil {
 		return err
 	}
@@ -79,15 +108,43 @@ func RestoreSchema(cfg *config.Config, backupName string, tablePattern string, d
 		return fmt.Errorf("no have found schemas by %s in %s", tablePattern, backupName)
 	}
 
-	for _, schema := range tablesForRestore {
-		if err := ch.CreateDatabase(schema.Database); err != nil {
-			return fmt.Errorf("can't create database '%s': %v", schema.Database, err)
+	totalRetries := len(tablesForRestore)
+	restoreRetries := 0
+	var notRestoredTables RestoreTables
+	var restoreErr error
+	for restoreRetries < totalRetries {
+		for _, schema := range tablesForRestore {
+			// if metadata.json doesn't contains "databases", we will re-create tables with default engine
+			if err = ch.CreateDatabase(schema.Database); err != nil {
+				return fmt.Errorf("can't create database '%s': %v", schema.Database, err)
+			}
+			//materialized views should restore via ATTACH
+			schema.Query = strings.Replace(
+				schema.Query, "CREATE MATERIALIZED VIEW", "ATTACH MATERIALIZED VIEW", 1,
+			)
+			restoreErr = ch.CreateTable(clickhouse.Table{
+				Database: schema.Database,
+				Name:     schema.Table,
+			}, schema.Query, dropTable)
+
+			if restoreErr != nil {
+				restoreRetries++
+				if restoreRetries >= totalRetries {
+					return fmt.Errorf(
+						"can't create table `%s`.`%s`: %v after %d times, please check your schema depencncies",
+						schema.Database, schema.Table, restoreErr, restoreRetries,
+					)
+				} else {
+					apexLog.Warnf(
+						"can't create table '%s.%s': %v, will try again", schema.Database, schema.Table, err,
+					)
+				}
+				notRestoredTables = append(notRestoredTables, schema)
+			}
 		}
-		if err := ch.CreateTable(clickhouse.Table{
-			Database: schema.Database,
-			Name:     schema.Table,
-		}, schema.Query, dropTable); err != nil {
-			return fmt.Errorf("can't create table '%s.%s': %v", schema.Database, schema.Table, err)
+		tablesForRestore = notRestoredTables
+		if len(tablesForRestore) == 0 {
+			break
 		}
 	}
 	return nil
@@ -96,7 +153,7 @@ func RestoreSchema(cfg *config.Config, backupName string, tablePattern string, d
 // RestoreData - restore data for tables matched by tablePattern from backupName
 func RestoreData(cfg *config.Config, backupName string, tablePattern string) error {
 	if backupName == "" {
-		PrintLocalBackups(cfg, "all")
+		_ = PrintLocalBackups(cfg, "all")
 		return fmt.Errorf("select backup for restore")
 	}
 	log := apexLog.WithFields(apexLog.Fields{
@@ -127,7 +184,7 @@ func RestoreData(cfg *config.Config, backupName string, tablePattern string) err
 		tablesForRestore, err = ch.GetBackupTablesLegacy(backupName)
 	} else {
 		metadataPath := path.Join(defaulDataPath, "backup", backupName, "metadata")
-		tablesForRestore, err = parseSchemaPattern(metadataPath, tablePattern)
+		tablesForRestore, err = parseSchemaPattern(metadataPath, tablePattern, false)
 	}
 	if err != nil {
 		return err
@@ -163,7 +220,7 @@ func RestoreData(cfg *config.Config, backupName string, tablePattern string) err
 		}] = chTables[i]
 	}
 
-	missingTables := []string{}
+	var missingTables []string
 	for _, restoreTable := range tablesForRestore {
 		found := false
 		for _, chTable := range chTables {
