@@ -1,5 +1,16 @@
 version: "3.3"
 services:
+  sshd:
+    image: panubo/sshd:latest
+    container_name: sshd
+    environment:
+      SSH_ENABLE_ROOT: "true"
+    command: sh -c 'echo "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAAgQCuWwcrj1FnZ5QhuUHSq4QOJUocWr+MJ4aOX7eEvZEgTcJBZByTOyDUhjd2kAkGTJTgV0WVyI6oMx49PwF7xVjOznmsSDST47iyqyiFh3Jh6ztYB1grkTY84sFCJX8S4F5WGlCocb69H88kPAZySjOSGljr/uyxt9SvzZ1+COy6bw== clickhouse-backup@sshd" > /root/.ssh/authorized_keys && /usr/sbin/sshd -D -e -f /etc/ssh/sshd_config'
+    ports:
+      - 22:22
+    networks:
+      - clickhouse-backup
+
   minio:
     image: minio/minio:${MINIO_VERSION:-latest}
     container_name: minio
@@ -34,6 +45,7 @@ services:
       - ./dhparam.pem:/etc/clickhouse-server/dhparam.pem
       - ./ssl.xml:/etc/clickhouse-server/config.d/ssl.xml
       - ./cluster.xml:/etc/clickhouse-server/config.d/cluster.xml
+      - ./sftp/clickhouse-backup_rsa:/root/.ssh/id_rsa
     ports:
       - 9000:9000
       - 7171:7171

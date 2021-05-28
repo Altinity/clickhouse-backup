@@ -35,6 +35,7 @@ type Config struct {
 	COS        COSConfig        `yaml:"cos" envconfig:"_"`
 	API        APIConfig        `yaml:"api" envconfig:"_"`
 	FTP        FTPConfig        `yaml:"ftp" envconfig:"_"`
+	SFTP        SFTPConfig      `yaml:"sftp" envconfig:"_"`
 	AzureBlob  AzureBlobConfig  `yaml:"azblob" envconfig:"_"`
 }
 
@@ -114,6 +115,17 @@ type FTPConfig struct {
 	CompressionLevel  int    `yaml:"compression_level" envconfig:"FTP_COMPRESSION_LEVEL"`
 }
 
+// SFTPConfig - sftp settings section
+type SFTPConfig struct {
+	Address           string `yaml:"address" envconfig:"SFTP_ADDRESS"`
+	Username          string `yaml:"username" envconfig:"SFTP_USERNAME"`
+	Password          string `yaml:"password" envconfig:"SFTP_PASSWORD"`
+	Key               string `yaml:"key" envconfig:"SFTP_PASSWORD"`
+	Path              string `yaml:"path" envconfig:"SFTP_PATH"`
+	CompressionFormat string `yaml:"compression_format" envconfig:"SFTP_COMPRESSION_FORMAT"`
+	CompressionLevel  int    `yaml:"compression_level" envconfig:"SFTP_COMPRESSION_LEVEL"`
+}
+
 // ClickHouseConfig - clickhouse settings section
 type ClickHouseConfig struct {
 	Username             string            `yaml:"username" envconfig:"CLICKHOUSE_USERNAME"`
@@ -152,6 +164,8 @@ func (cfg *Config) GetArchiveExtension() string {
 		return ArchiveExtensions[cfg.COS.CompressionFormat]
 	case "ftp":
 		return ArchiveExtensions[cfg.FTP.CompressionFormat]
+	case "sftp":
+		return ArchiveExtensions[cfg.SFTP.CompressionFormat]
 	case "azblob":
 		return ArchiveExtensions[cfg.AzureBlob.CompressionFormat]
 	default:
@@ -169,6 +183,8 @@ func (cfg *Config) GetCompressionFormat() string {
 		return cfg.COS.CompressionFormat
 	case "ftp":
 		return cfg.FTP.CompressionFormat
+	case "sftp":
+		return cfg.SFTP.CompressionFormat
 	case "azblob":
 		return cfg.AzureBlob.CompressionFormat
 	case "none":
@@ -299,6 +315,10 @@ func DefaultConfig() *Config {
 		},
 		FTP: FTPConfig{
 			Timeout:           "2m",
+			CompressionFormat: "tar",
+			CompressionLevel:  1,
+		},
+		SFTP: SFTPConfig{
 			CompressionFormat: "tar",
 			CompressionLevel:  1,
 		},
