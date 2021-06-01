@@ -22,19 +22,24 @@ type SFTP struct {
 }
 
 func (sftp *SFTP) Connect() error {
-  f_sftp_key, err := ioutil.ReadFile(sftp.Config.Key)
-  if err != nil {
-    return err
-  }
-  sftp_key, err := ssh.ParsePrivateKey(f_sftp_key)
-  if err != nil {
-    return err
-  }
+	auth_methods := []ssh.AuthMethod{}
+
+	if sftp.Config.Key != "" {
+    f_sftp_key, err := ioutil.ReadFile(sftp.Config.Key)
+    if err != nil { return err }
+    sftp_key, err := ssh.ParsePrivateKey(f_sftp_key)
+    if err != nil { return err }
+
+		auth_methods = append(auth_methods, ssh.PublicKeys(sftp_key))
+	}
+
+	if sftp.Config.Password != "" {
+	  auth_methods = append(auth_methods, ssh.Password(sftp.Config.Password))
+	}
+
   sftp_config := &ssh.ClientConfig{
     User: sftp.Config.Username,
-    Auth: []ssh.AuthMethod{
-      ssh.PublicKeys(sftp_key),
-    },
+    Auth: auth_methods,
     HostKeyCallback: ssh.InsecureIgnoreHostKey(),
   }
 

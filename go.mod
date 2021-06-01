@@ -31,6 +31,7 @@ require (
 	github.com/tencentyun/cos-go-sdk-v5 v0.0.0-20200120023323-87ff3bc489ac
 	github.com/urfave/cli v1.22.2
 	golang.org/x/crypto v0.0.0-20201221181555-eec23a3978ad
+	golang.org/x/mod v0.3.0
 	google.golang.org/api v0.28.0
 	gopkg.in/cheggaaa/pb.v1 v1.0.28
 	gopkg.in/djherbis/buffer.v1 v1.1.0

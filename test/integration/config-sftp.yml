@@ -11,8 +11,9 @@ clickhouse:
 sftp:
   address: "sshd"
   username: "root"
-  password: ""
-  key: "/root/.ssh/id_rsa"
+  password: "JFzMHfVpvTgEd74XXPq6wARA2Qg3AutJ"
+  #key: "/id_rsa"
+  key: ""
   path: "/root"
   compression_format: tar
   compression_level: 1
