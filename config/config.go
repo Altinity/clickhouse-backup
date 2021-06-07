@@ -35,7 +35,7 @@ type Config struct {
 	COS        COSConfig        `yaml:"cos" envconfig:"_"`
 	API        APIConfig        `yaml:"api" envconfig:"_"`
 	FTP        FTPConfig        `yaml:"ftp" envconfig:"_"`
-	SFTP        SFTPConfig      `yaml:"sftp" envconfig:"_"`
+	SFTP       SFTPConfig       `yaml:"sftp" envconfig:"_"`
 	AzureBlob  AzureBlobConfig  `yaml:"azblob" envconfig:"_"`
 }
 
@@ -118,6 +118,7 @@ type FTPConfig struct {
 // SFTPConfig - sftp settings section
 type SFTPConfig struct {
 	Address           string `yaml:"address" envconfig:"SFTP_ADDRESS"`
+	Port              uint   `yaml:"port" envconfig:"SFTP_PORT"`
 	Username          string `yaml:"username" envconfig:"SFTP_USERNAME"`
 	Password          string `yaml:"password" envconfig:"SFTP_PASSWORD"`
 	Key               string `yaml:"key" envconfig:"SFTP_PASSWORD"`
@@ -319,6 +320,7 @@ func DefaultConfig() *Config {
 			CompressionLevel:  1,
 		},
 		SFTP: SFTPConfig{
+			Port:              22,
 			CompressionFormat: "tar",
 			CompressionLevel:  1,
 		},
