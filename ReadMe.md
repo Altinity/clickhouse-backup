@@ -13,7 +13,7 @@ Tool for easy ClickHouse backup and restore with cloud storages support
 - Easy creating and restoring backups of all or specific tables
 - Efficient storing of multiple backups on the file system
 - Uploading and downloading with streaming compression
-- Works with AWS, GCS, Azure, Tencent COS, FTP
+- Works with AWS, GCS, Azure, Tencent COS, FTP, SFTP
 - **Support of Atomic Database Engine**
 - **Support of multi disks installations**
 - Support of incremental backups on remote storages
@@ -176,6 +176,14 @@ ftp:
   compression_format: tar      # FTP_COMPRESSION_FORMAT
   compression_level: 1         # FTP_COMPRESSION_LEVEL
   debug: false                 # FTP_DEBUG
+sftp:
+  address: ""                  # SFTP_ADDRESS
+  username: ""                 # SFTP_USERNAME
+  password: ""                 # SFTP_PASSWORD
+  key: ""                      # SFTP_KEY
+  path: ""                     # SFTP_PATH
+  compression_format: tar      # SFTP_COMPRESSION_FORMAT
+  compression_level: 1         # SFTP_COMPRESSION_LEVEL
 ```
 
 ## ATTENTION!

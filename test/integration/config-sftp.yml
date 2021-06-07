@@ -1,0 +1,20 @@
+general:
+  disable_progress_bar: true
+  remote_storage: sftp
+clickhouse:
+  host: localhost
+  port: 9440
+  username: backup
+  password: meow=& 123?*%# МЯУ
+  secure: true
+  skip_verify: true
+sftp:
+  address: "sshd"
+  username: "root"
+  password: ""
+  key: "/id_rsa"
+  path: "/root"
+  compression_format: tar
+  compression_level: 1
+api:
+  listen: :7171
