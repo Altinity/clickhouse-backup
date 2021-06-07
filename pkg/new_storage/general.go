@@ -2,6 +2,7 @@ package new_storage
 
 import (
 	"archive/tar"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/internal/progressbar"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
+	"golang.org/x/sync/errgroup"
 
 	apexLog "github.com/apex/log"
 	"github.com/mholt/archiver/v3"
@@ -61,8 +63,8 @@ func (bd *BackupDestination) RemoveOldBackups(keep int) error {
 }
 
 func (bd *BackupDestination) RemoveBackup(backupName string) error {
-  if bd.Kind() == "SFTP" {
-    return bd.DeleteFile(backupName)
+	if bd.Kind() == "SFTP" {
+		return bd.DeleteFile(backupName)
 	}
 	return bd.Walk(backupName+"/", true, func(f RemoteFile) error {
 		return bd.DeleteFile(path.Join(backupName, f.Name()))
@@ -220,12 +222,14 @@ func (bd *BackupDestination) CompressedStreamUpload(baseLocalPath string, files 
 	defer bar.Finish()
 	buf := buffer.New(BufferSize)
 	body, w := nio.Pipe(buf)
-	go func() (err error) {
-		defer w.CloseWithError(err)
+	g, _ := errgroup.WithContext(context.Background())
+
+	g.Go(func() error {
+		defer w.Close()
 		iobuf := buffer.New(BufferSize)
 		z, _ := getArchiveWriter(bd.compressionFormat, bd.compressionLevel)
-		if err = z.Create(w); err != nil {
-			return
+		if err := z.Create(w); err != nil {
+			return err
 		}
 		defer z.Close()
 		for _, f := range files {
@@ -255,13 +259,12 @@ func (bd *BackupDestination) CompressedStreamUpload(baseLocalPath string, files 
 				return err
 			}
 		}
-		return
-	}()
-
-	if err := bd.PutFile(remotePath, body); err != nil {
-		return err
-	}
-	return nil
+		return nil
+	})
+	g.Go(func() error {
+		return bd.PutFile(remotePath, body)
+	})
+	return g.Wait()
 }
 
 func (bd *BackupDestination) DownloadPath(size int64, remotePath string, localPath string) error {

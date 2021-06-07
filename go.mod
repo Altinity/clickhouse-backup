@@ -32,6 +32,7 @@ require (
 	github.com/urfave/cli v1.22.2
 	golang.org/x/crypto v0.0.0-20201221181555-eec23a3978ad
 	golang.org/x/mod v0.3.0
+	golang.org/x/sync v0.0.0-20200317015054-43a5402ce75a
 	google.golang.org/api v0.28.0
 	gopkg.in/cheggaaa/pb.v1 v1.0.28
 	gopkg.in/djherbis/buffer.v1 v1.1.0
