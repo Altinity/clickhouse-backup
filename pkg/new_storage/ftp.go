@@ -86,11 +86,13 @@ func (f *FTP) Walk(ftpPath string, recirsive bool, process func(RemoteFile) erro
 			return err
 		}
 		for _, entry := range entries {
-			process(&ftpFile{
+			if err := process(&ftpFile{
 				size:         int64(entry.Size),
 				lastModified: entry.Time,
 				name:         entry.Name,
-			})
+			}); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
@@ -103,11 +105,13 @@ func (f *FTP) Walk(ftpPath string, recirsive bool, process func(RemoteFile) erro
 		if entry == nil {
 			continue
 		}
-		process(&ftpFile{
+		if err := process(&ftpFile{
 			size:         int64(entry.Size),
 			lastModified: entry.Time,
 			name:         strings.Trim(walker.Path(), prefix),
-		})
+		}); err != nil {
+			return err
+		}
 	}
 	return nil
 }
