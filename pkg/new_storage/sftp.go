@@ -1,7 +1,7 @@
 package new_storage
 
 import (
-	"fmt"
+	"errors"
 	"io"
 	"io/ioutil"
 	"path"
@@ -23,6 +23,10 @@ type SFTP struct {
 
 func (sftp *SFTP) Connect() error {
 	authMethods := []ssh.AuthMethod{}
+
+	if sftp.Config.Key == "" && sftp.Config.Password == "" {
+		return errors.New("please specify sftp.key or sftp.password for authentification")
+	}
 
 	if sftp.Config.Key != "" {
 		fSftpKey, err := ioutil.ReadFile(sftp.Config.Key)
