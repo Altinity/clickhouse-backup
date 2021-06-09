@@ -61,8 +61,8 @@ func (bd *BackupDestination) RemoveOldBackups(keep int) error {
 }
 
 func (bd *BackupDestination) RemoveBackup(backupName string) error {
-  if bd.Kind() == "SFTP" {
-    return bd.DeleteFile(backupName)
+	if bd.Kind() == "SFTP" {
+		return bd.DeleteFile(backupName)
 	}
 	return bd.Walk(backupName+"/", true, func(f RemoteFile) error {
 		return bd.DeleteFile(path.Join(backupName, f.Name()))

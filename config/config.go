@@ -35,7 +35,7 @@ type Config struct {
 	COS        COSConfig        `yaml:"cos" envconfig:"_"`
 	API        APIConfig        `yaml:"api" envconfig:"_"`
 	FTP        FTPConfig        `yaml:"ftp" envconfig:"_"`
-	SFTP        SFTPConfig      `yaml:"sftp" envconfig:"_"`
+	SFTP       SFTPConfig       `yaml:"sftp" envconfig:"_"`
 	AzureBlob  AzureBlobConfig  `yaml:"azblob" envconfig:"_"`
 }
 
