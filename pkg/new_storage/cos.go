@@ -92,17 +92,21 @@ func (c *COS) Walk(cosPath string, recursuve bool, process func(RemoteFile) erro
 		return err
 	}
 	for _, dir := range res.CommonPrefixes {
-		process(&cosFile{
+		if err := process(&cosFile{
 			name: strings.TrimPrefix(dir, prefix),
-		})
+		}); err != nil {
+			return err
+		}
 	}
 	for _, v := range res.Contents {
 		modifiedTime, _ := parseTime(v.LastModified)
-		process(&cosFile{
+		if err := process(&cosFile{
 			name:         strings.TrimPrefix(v.Key, prefix),
 			lastModified: modifiedTime,
 			size:         int64(v.Size),
-		})
+		}); err != nil {
+			return err
+		}
 	}
 	return nil
 }
