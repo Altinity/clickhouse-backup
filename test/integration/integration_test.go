@@ -380,15 +380,15 @@ func TestIntegrationAzure(t *testing.T) {
 	testCommon(t)
 }
 
-func TestIntegrationSFTP(t *testing.T) {
-	//if os.Getenv("SFTP_TESTS") == "" || os.Getenv("TRAVIS_PULL_REQUEST") != "false" {
-	//	t.Skip("Skipping Azure integration tests...")
-	//	return
-	//}
+func TestIntegrationSFTPAuthPassword(t *testing.T) {
 	r := require.New(t)
-	r.NoError(dockerCP("config-sftp.yml", "/etc/clickhouse-backup/config.yml"))
-	//r.NoError(dockerExec("apt-get", "-y", "update"))
-	//r.NoError(dockerExec("apt-get", "-y", "install", "ca-certificates"))
+	r.NoError(dockerCP("config-sftp-auth-password.yaml", "/etc/clickhouse-backup/config.yml"))
+	testCommon(t)
+}
+
+func TestIntegrationSFTPAuthKey (t *testing.T) {
+	r := require.New(t)
+	r.NoError(dockerCP("config-sftp-auth-key.yaml", "/etc/clickhouse-backup/config.yml"))
 	testCommon(t)
 }
 
