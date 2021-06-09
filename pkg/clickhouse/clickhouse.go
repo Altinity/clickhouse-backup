@@ -321,7 +321,7 @@ func (ch *ClickHouse) FreezeTable(table *Table, name string) error {
 	if strings.HasPrefix(table.Engine, "Replicated") && ch.Config.SyncReplicatedTables {
 		query := fmt.Sprintf("SYSTEM SYNC REPLICA `%s`.`%s`;", table.Database, table.Name)
 		if _, err := ch.Query(query); err != nil {
-			return err
+			return fmt.Errorf("can't sync replica: %v", err)
 		}
 		log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Debugf("replica synced")
 	}
@@ -334,7 +334,7 @@ func (ch *ClickHouse) FreezeTable(table *Table, name string) error {
 	}
 	query := fmt.Sprintf("ALTER TABLE `%s`.`%s` FREEZE %s;", table.Database, table.Name, withNameQuery)
 	if _, err := ch.Query(query); err != nil {
-		return err
+		return fmt.Errorf("can't freeze table: %v", err)
 	}
 	return nil
 }

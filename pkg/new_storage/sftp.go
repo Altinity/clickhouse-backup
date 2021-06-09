@@ -1,6 +1,7 @@
 package new_storage
 
 import (
+	"fmt"
 	"io"
 	"io/ioutil"
 	"path"
@@ -56,6 +57,7 @@ func (sftp *SFTP) Connect() error {
 	// defer sftpConnection.Close()
 
 	sftp.client = sftpConnection
+
 	sftp.dirCache = map[string]struct{}{}
 	return nil
 }
@@ -162,20 +164,15 @@ func (sftp *SFTP) GetFileReader(key string) (io.ReadCloser, error) {
 
 func (sftp *SFTP) PutFile(key string, localFile io.ReadCloser) error {
 	filePath := path.Join(sftp.Config.Path, key)
-
 	sftp.client.MkdirAll(path.Dir(filePath))
-
 	remoteFile, err := sftp.client.Create(filePath)
 	if err != nil {
 		return err
 	}
 	defer remoteFile.Close()
-
-	_, err = remoteFile.ReadFrom(localFile)
-	if err != nil {
+	if _, err = remoteFile.ReadFrom(localFile); err != nil {
 		return err
 	}
-
 	return nil
 }
 

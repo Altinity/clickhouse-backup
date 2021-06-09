@@ -1,6 +1,7 @@
 package new_storage
 
 import (
+	"context"
 	"crypto/tls"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -123,9 +125,7 @@ func (s *S3) DeleteFile(key string) error {
 		Bucket: aws.String(s.Config.Bucket),
 		Key:    aws.String(path.Join(s.Config.Path, key)),
 	}
-
-	_, err := s3.New(s.session).DeleteObject(params)
-	if err != nil {
+	if _, err := s3.New(s.session).DeleteObject(params); err != nil {
 		return errors.Wrapf(err, "DeleteFile, deleting object %+v", params)
 	}
 	return nil
@@ -148,29 +148,37 @@ func (s *S3) StatFile(key string) (RemoteFile, error) {
 }
 
 func (s *S3) Walk(s3Path string, recursive bool, process func(r RemoteFile) error) error {
-	return s.remotePager(path.Join(s.Config.Path, s3Path), recursive, func(page *s3.ListObjectsV2Output) error {
-		for _, cp := range page.CommonPrefixes {
-			// TODO: тут нельзя просто делать return, нужно собрать все ошибки в канал или ещё как-то
-			if err := process(&s3File{
-				name: strings.TrimPrefix(*cp.Prefix, path.Join(s.Config.Path, s3Path)),
-			}); err != nil {
-				return err
+	g, _ := errgroup.WithContext(context.Background())
+	s3Files := make(chan *s3File)
+	g.Go(func() error {
+		defer close(s3Files)
+		return s.remotePager(path.Join(s.Config.Path, s3Path), recursive, func(page *s3.ListObjectsV2Output) {
+			for _, cp := range page.CommonPrefixes {
+				s3Files <- &s3File{
+					name: strings.TrimPrefix(*cp.Prefix, path.Join(s.Config.Path, s3Path)),
+				}
 			}
-		}
-		for _, c := range page.Contents {
-			if err := process(&s3File{
-				*c.Size,
-				*c.LastModified,
-				strings.TrimPrefix(*c.Key, path.Join(s.Config.Path, s3Path)),
-			}); err != nil {
+			for _, c := range page.Contents {
+				s3Files <- &s3File{
+					*c.Size,
+					*c.LastModified,
+					strings.TrimPrefix(*c.Key, path.Join(s.Config.Path, s3Path)),
+				}
+			}
+		})
+	})
+	g.Go(func() error {
+		for s3File := range s3Files {
+			if err := process(s3File); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
+	return g.Wait()
 }
 
-func (s *S3) remotePager(s3Path string, recursive bool, pager func(page *s3.ListObjectsV2Output) error) error {
+func (s *S3) remotePager(s3Path string, recursive bool, pager func(page *s3.ListObjectsV2Output)) error {
 	prefix := s3Path + "/"
 	if s3Path == "" || s3Path == "/" {
 		prefix = ""
@@ -184,9 +192,8 @@ func (s *S3) remotePager(s3Path string, recursive bool, pager func(page *s3.List
 		params.SetDelimiter("/")
 	}
 	wrapper := func(page *s3.ListObjectsV2Output, lastPage bool) bool {
-		// TODO: fix check error here
 		pager(page)
-		return true
+		return !lastPage
 	}
 	return s3.New(s.session).ListObjectsV2Pages(params, wrapper)
 }

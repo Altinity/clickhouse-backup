@@ -167,9 +167,11 @@ func (s *AzureBlob) Walk(azPath string, recursive bool, process func(r RemoteFil
 			return err
 		}
 		for _, p := range r.Segment.BlobPrefixes {
-			process(&azureBlobFile{
+			if err := process(&azureBlobFile{
 				name: strings.TrimPrefix(p.Name, prefix),
-			})
+			}); err != nil {
+				return err
+			}
 		}
 		for _, blob := range r.Segment.BlobItems {
 			var size int64
@@ -178,11 +180,13 @@ func (s *AzureBlob) Walk(azPath string, recursive bool, process func(r RemoteFil
 			} else {
 				size = 0
 			}
-			process(&azureBlobFile{
+			if err := process(&azureBlobFile{
 				name:         strings.TrimPrefix(blob.Name, prefix),
 				size:         size,
 				lastModified: blob.Properties.LastModified,
-			})
+			}); err != nil {
+				return err
+			}
 		}
 		mrk = r.NextMarker
 	}

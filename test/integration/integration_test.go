@@ -401,6 +401,11 @@ func testCommon(t *testing.T) {
 	r := require.New(t)
 	r.NoError(ch.connect())
 
+	log.Info("Clean before start")
+	dockerExec("clickhouse-backup", "delete", "remote", "test_backup")
+	dockerExec("clickhouse-backup", "delete", "local", "test_backup")
+	dockerExec("clickhouse-backup", "delete", "remote", "increment")
+	dockerExec("clickhouse-backup", "delete", "local", "increment")
 	dropAllDatabases(r, ch)
 
 	log.Info("Generate test data")

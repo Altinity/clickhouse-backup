@@ -57,16 +57,20 @@ func (gcs *GCS) Walk(gcsPath string, recursive bool, process func(r RemoteFile) 
 		switch err {
 		case nil:
 			if object.Prefix != "" {
-				process(&gcsFile{
+				if err := process(&gcsFile{
 					name: strings.TrimPrefix(object.Prefix, path.Join(gcs.Config.Path, gcsPath)),
-				})
+				}); err != nil {
+					return err
+				}
 				continue
 			}
-			process(&gcsFile{
+			if err := process(&gcsFile{
 				size:         object.Size,
 				lastModified: object.Updated,
 				name:         strings.TrimPrefix(object.Name, path.Join(gcs.Config.Path, gcsPath)),
-			})
+			}); err != nil {
+				return err
+			}
 		case iterator.Done:
 			return nil
 		default:
