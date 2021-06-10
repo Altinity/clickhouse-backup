@@ -1,7 +1,7 @@
 package new_storage
 
 import (
-	"fmt"
+	"errors"
 	"io"
 	"io/ioutil"
 	"path"
@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
-
 	lib_sftp "github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 )
 
+// SFTP Implement RemoteStorage
 type SFTP struct {
 	client   *lib_sftp.Client
 	Config   *config.SFTPConfig
@@ -22,33 +22,45 @@ type SFTP struct {
 }
 
 func (sftp *SFTP) Connect() error {
-	privateKeyBytes, err := ioutil.ReadFile(sftp.Config.Key)
-	if err != nil {
-		return err
+	authMethods := []ssh.AuthMethod{}
+
+	if sftp.Config.Key == "" && sftp.Config.Password == "" {
+		return errors.New("please specify sftp.key or sftp.password for authentification")
 	}
-	privateKey, err := ssh.ParsePrivateKey(privateKeyBytes)
-	if err != nil {
-		return err
+
+	if sftp.Config.Key != "" {
+		fSftpKey, err := ioutil.ReadFile(sftp.Config.Key)
+		if err != nil {
+			return err
+		}
+		sftpKey, err := ssh.ParsePrivateKey(fSftpKey)
+		if err != nil {
+			return err
+		}
+
+		authMethods = append(authMethods, ssh.PublicKeys(sftpKey))
 	}
+
+	if sftp.Config.Password != "" {
+		authMethods = append(authMethods, ssh.Password(sftp.Config.Password))
+	}
+
 	sftpConfig := &ssh.ClientConfig{
-		User: sftp.Config.Username,
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(privateKey),
-		},
+		User:            sftp.Config.Username,
+		Auth:            authMethods,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
-	addr := fmt.Sprintf("%s:%d", sftp.Config.Address, sftp.Config.Port)
-	sshClient, err := ssh.Dial("tcp", addr, sftpConfig)
-	if err != nil {
-		return fmt.Errorf("can't connect to %s: %v", addr, err)
-	}
-	// defer sftp_connection.Close()
 
-	sftp.client, err = lib_sftp.NewClient(sshClient)
+	sshConnection, _ := ssh.Dial("tcp", sftp.Config.Address+":22", sftpConfig)
+	// defer sftpConnection.Close()
+
+	sftpConnection, err := lib_sftp.NewClient(sshConnection)
 	if err != nil {
 		return err
 	}
-	// defer sftp_connection.Close()
+	// defer sftpConnection.Close()
+
+	sftp.client = sftpConnection
 
 	sftp.dirCache = map[string]struct{}{}
 	return nil
