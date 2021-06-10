@@ -2,6 +2,7 @@ package new_storage
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"path"
@@ -50,8 +51,8 @@ func (sftp *SFTP) Connect() error {
 		Auth:            authMethods,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
-
-	sshConnection, _ := ssh.Dial("tcp", sftp.Config.Address+":22", sftpConfig)
+	addr := fmt.Sprintf("%s:%d", sftp.Config.Address, sftp.Config.Port)
+	sshConnection, _ := ssh.Dial("tcp", addr, sftpConfig)
 	// defer sftpConnection.Close()
 
 	sftpConnection, err := lib_sftp.NewClient(sshConnection)
