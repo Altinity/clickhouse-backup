@@ -108,10 +108,8 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 					BackupName: strings.Trim(o.Name(), "/"),
 				}, false, "", "broken (not found metadata.json)",
 			})
-			// TODO: после того как Walk будет нормально обрабатывать ошибки тут и дальше нужно вернуть err или залогировать их тут
 			return nil
 		}
-		defer r.Close()
 		b, err := ioutil.ReadAll(r)
 		if err != nil {
 			result = append(result, Backup{
@@ -120,6 +118,9 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 				}, false, "", "broken (can't get metadata.json)",
 			})
 			return nil
+		}
+		if err := r.Close(); err != nil { // Never use defer in loops
+			return err
 		}
 		var m metadata.BackupMetadata
 		if err := json.Unmarshal(b, &m); err != nil {
