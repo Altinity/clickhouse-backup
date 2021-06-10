@@ -349,7 +349,7 @@ func init() {
 
 func TestIntegrationS3(t *testing.T) {
 	r := require.New(t)
-	r.NoError(dockerCP("config-s3.yml", "/etc/clickhouse-backup/config.yml"))
+	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	testCommon(t)
 }
 
@@ -359,9 +359,9 @@ func TestIntegrationGCS(t *testing.T) {
 		return
 	}
 	r := require.New(t)
-	r.NoError(dockerCP("config-gcs.yml", "/etc/clickhouse-backup/config.yml"))
-	r.NoError(dockerExec("apt-get", "-y", "update"))
-	r.NoError(dockerExec("apt-get", "-y", "install", "ca-certificates"))
+	r.NoError(dockerCP("config-gcs.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	r.NoError(dockerExec("clickhouse", "apt-get", "-y", "update"))
+	r.NoError(dockerExec("clickhouse", "apt-get", "-y", "install", "ca-certificates"))
 	testCommon(t)
 }
 
@@ -371,21 +371,29 @@ func TestIntegrationAzure(t *testing.T) {
 		return
 	}
 	r := require.New(t)
-	r.NoError(dockerCP("config-azblob.yml", "/etc/clickhouse-backup/config.yml"))
-	r.NoError(dockerExec("apt-get", "-y", "update"))
-	r.NoError(dockerExec("apt-get", "-y", "install", "ca-certificates"))
+	r.NoError(dockerCP("config-azblob.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	r.NoError(dockerExec("clickhouse", "apt-get", "-y", "update"))
+	r.NoError(dockerExec("clickhouse", "apt-get", "-y", "install", "ca-certificates"))
 	testCommon(t)
 }
 
 func TestIntegrationSFTPAuthPassword(t *testing.T) {
 	r := require.New(t)
-	r.NoError(dockerCP("config-sftp-auth-password.yaml", "/etc/clickhouse-backup/config.yml"))
+	r.NoError(dockerCP("config-sftp-auth-password.yaml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	testCommon(t)
 }
 
 func TestIntegrationSFTPAuthKey(t *testing.T) {
 	r := require.New(t)
-	r.NoError(dockerCP("config-sftp-auth-key.yaml", "/etc/clickhouse-backup/config.yml"))
+	r.NoError(dockerCP("config-sftp-auth-key.yaml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+
+	r.NoError(dockerCP("sftp/clickhouse-backup_rsa", "clickhouse:/id_rsa"))
+	r.NoError(dockerExec("clickhouse", "chmod", "-v", "0600", "/id_rsa"))
+
+	r.NoError(dockerCP("sftp/clickhouse-backup_rsa.pub", "sshd:/root/.ssh/authorized_keys"))
+	r.NoError(dockerExec("sshd", "chown", "-v", "root:root", "/root/.ssh/authorized_keys"))
+	r.NoError(dockerExec("sshd", "chmod", "-v", "0600", "/root/.ssh/authorized_keys"))
+
 	testCommon(t)
 }
 
@@ -396,7 +404,7 @@ func TestSyncReplicaTimeout(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
 	r.NoError(ch.connect())
-	r.NoError(dockerCP("config-s3.yml", "/etc/clickhouse-backup/config.yml"))
+	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 
 	for _, table := range []string{"repl1", "repl2"} {
 		query := "DROP TABLE IF EXISTS default." + table
@@ -416,10 +424,10 @@ func TestSyncReplicaTimeout(t *testing.T) {
 
 	ch.queryWithNoError(r, "INSERT INTO default.repl1 SELECT number FROM numbers(100)")
 
-	r.NoError(dockerExec("clickhouse-backup", "create", "--tables=default.repl*", "test_not_synced_backup"))
-	r.NoError(dockerExec("clickhouse-backup", "upload", "test_not_synced_backup"))
-	r.NoError(dockerExec("clickhouse-backup", "delete", "local", "test_not_synced_backup"))
-	r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "test_not_synced_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "--tables=default.repl*", "test_not_synced_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "upload", "test_not_synced_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_not_synced_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", "test_not_synced_backup"))
 
 	ch.queryWithNoError(r, "SYSTEM START REPLICATED SENDS default.repl1")
 	ch.queryWithNoError(r, "SYSTEM START FETCHES default.repl2")
@@ -435,15 +443,15 @@ func testCommon(t *testing.T) {
 	r.NoError(ch.connect())
 
 	log.Info("Clean before start")
-	_ = dockerExec("clickhouse-backup", "delete", "remote", "test_backup")
-	_ = dockerExec("clickhouse-backup", "delete", "local", "test_backup")
-	_ = dockerExec("clickhouse-backup", "delete", "remote", "increment")
-	_ = dockerExec("clickhouse-backup", "delete", "local", "increment")
+	_ = dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", "test_backup")
+	_ = dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_backup")
+	_ = dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", "increment")
+	_ = dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "increment")
 	dropAllDatabases(r, ch)
 	generateTestData(ch, r)
 
 	log.Info("Create backup")
-	r.NoError(dockerExec("clickhouse-backup", "create", "test_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "test_backup"))
 	log.Info("Generate increment test data")
 	for _, data := range incrementData {
 		if isTableSkip(ch, data, false) {
@@ -452,34 +460,34 @@ func testCommon(t *testing.T) {
 		r.NoError(ch.createTestData(data))
 	}
 	time.Sleep(time.Second * 5)
-	r.NoError(dockerExec("clickhouse-backup", "create", "increment"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "increment"))
 
 	log.Info("Upload")
-	r.NoError(dockerExec("clickhouse-backup", "upload", "test_backup"))
-	r.NoError(dockerExec("clickhouse-backup", "upload", "increment", "--diff-from", "test_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "upload", "test_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "upload", "increment", "--diff-from", "test_backup"))
 
 	dropAllDatabases(r, ch)
 
-	out, err = dockerExecOut("ls", "-lha", "/var/lib/clickhouse/backup")
+	out, err = dockerExecOut("clickhouse", "ls", "-lha", "/var/lib/clickhouse/backup")
 	r.NoError(err)
 	r.Equal(5, len(strings.Split(strings.Trim(out, " \t\r\n"), "\n")), "expect one backup exists in backup directory")
 	log.Info("Delete backup")
-	r.NoError(dockerExec("clickhouse-backup", "delete", "local", "test_backup"))
-	out, err = dockerExecOut("ls", "-lha", "/var/lib/clickhouse/backup")
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_backup"))
+	out, err = dockerExecOut("clickhouse", "ls", "-lha", "/var/lib/clickhouse/backup")
 	r.NoError(err)
 	r.Equal(4, len(strings.Split(strings.Trim(out, " \t\r\n"), "\n")), "expect no backup exists in backup directory")
 
 	log.Info("Download")
-	r.NoError(dockerExec("clickhouse-backup", "download", "test_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", "test_backup"))
 
 	log.Info("Restore schema")
-	r.NoError(dockerExec("clickhouse-backup", "restore", "--schema", "test_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--schema", "test_backup"))
 
 	log.Info("Restore data")
-	r.NoError(dockerExec("clickhouse-backup", "restore", "--data", "test_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--data", "test_backup"))
 
 	log.Info("Full restore with rm")
-	r.NoError(dockerExec("clickhouse-backup", "restore", "--rm", "test_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--rm", "test_backup"))
 
 	log.Info("Check data")
 	for i := range testData {
@@ -490,17 +498,17 @@ func testCommon(t *testing.T) {
 	}
 	// test increment
 	dropAllDatabases(r, ch)
-	r.NoError(dockerExec("ls", "-lha", "/var/lib/clickhouse/backup"))
+	r.NoError(dockerExec("clickhouse", "ls", "-lha", "/var/lib/clickhouse/backup"))
 	log.Info("Delete backup")
-	r.NoError(dockerExec("clickhouse-backup", "delete", "local", "test_backup"))
-	r.NoError(dockerExec("clickhouse-backup", "delete", "local", "increment"))
-	r.NoError(dockerExec("ls", "-lha", "/var/lib/clickhouse/backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "increment"))
+	r.NoError(dockerExec("clickhouse", "ls", "-lha", "/var/lib/clickhouse/backup"))
 
 	log.Info("Download increment")
-	r.NoError(dockerExec("clickhouse-backup", "download", "increment"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", "increment"))
 
 	log.Info("Restore")
-	r.NoError(dockerExec("clickhouse-backup", "restore", "--schema", "--data", "increment"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--schema", "--data", "increment"))
 
 	log.Info("Check increment data")
 	for i := range testData {
@@ -517,10 +525,10 @@ func testCommon(t *testing.T) {
 	}
 
 	log.Info("Clean")
-	r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "test_backup"))
-	r.NoError(dockerExec("clickhouse-backup", "delete", "local", "test_backup"))
-	r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "increment"))
-	r.NoError(dockerExec("clickhouse-backup", "delete", "local", "increment"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", "test_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", "increment"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "increment"))
 
 }
 
@@ -681,17 +689,17 @@ func (ch *TestClickHouse) queryWithNoError(r *require.Assertions, query string, 
 	r.NoError(err)
 }
 
-func dockerExec(cmd ...string) error {
-	out, err := dockerExecOut(cmd...)
+func dockerExec(container string, cmd ...string) error {
+	out, err := dockerExecOut(container, cmd...)
 	log.Debug(out)
 	return err
 }
 
-func dockerExecOut(cmd ...string) (string, error) {
+func dockerExecOut(container string, cmd ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	dcmd := []string{"exec", "clickhouse"}
+	dcmd := []string{"exec", container}
 	dcmd = append(dcmd, cmd...)
-	log.Info(strings.Join(dcmd, " "))
+	log.Infof("docker %s", strings.Join(dcmd, " "))
 	out, err := exec.CommandContext(ctx, "docker", dcmd...).CombinedOutput()
 	cancel()
 	return string(out), err
@@ -699,7 +707,8 @@ func dockerExecOut(cmd ...string) (string, error) {
 
 func dockerCP(src, dst string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	dcmd := []string{"cp", src, "clickhouse:" + dst}
+	dcmd := []string{"cp", src, dst}
+	log.Infof("docker %s", strings.Join(dcmd, " "))
 	out, err := exec.CommandContext(ctx, "docker", dcmd...).CombinedOutput()
 	log.Info(string(out))
 	cancel()

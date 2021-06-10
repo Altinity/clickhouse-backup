@@ -7,8 +7,6 @@ services:
       SSH_ENABLE_ROOT: "true"
       SSH_ENABLE_PASSWORD_AUTH: "true"
     command: sh -c 'echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && echo "root:JFzMHfVpvTgEd74XXPq6wARA2Qg3AutJ" | chpasswd && /usr/sbin/sshd -D -e -f /etc/ssh/sshd_config'
-    volumes:
-      - ./sftp/clickhouse-backup_rsa.pub:/root/.ssh/authorized_keys
     ports:
       - 22:22
     networks:
@@ -48,7 +46,6 @@ services:
       - ./dhparam.pem:/etc/clickhouse-server/dhparam.pem
       - ./ssl.xml:/etc/clickhouse-server/config.d/ssl.xml
       - ./cluster.xml:/etc/clickhouse-server/config.d/cluster.xml
-      - ./sftp/clickhouse-backup_rsa:/id_rsa
     ports:
       - 9000:9000
       - 7171:7171
