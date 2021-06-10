@@ -321,9 +321,10 @@ func (ch *ClickHouse) FreezeTable(table *Table, name string) error {
 	if strings.HasPrefix(table.Engine, "Replicated") && ch.Config.SyncReplicatedTables {
 		query := fmt.Sprintf("SYSTEM SYNC REPLICA `%s`.`%s`;", table.Database, table.Name)
 		if _, err := ch.Query(query); err != nil {
-			return fmt.Errorf("can't sync replica: %v", err)
+			log.Warnf("can't sync replica: %v", err)
+		} else {
+			log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Debugf("replica synced")
 		}
-		log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Debugf("replica synced")
 	}
 	if version < 19001005 || ch.Config.FreezeByPart {
 		return ch.FreezeTableOldWay(table, name)

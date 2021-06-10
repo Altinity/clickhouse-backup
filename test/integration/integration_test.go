@@ -350,7 +350,6 @@ func init() {
 func TestIntegrationS3(t *testing.T) {
 	r := require.New(t)
 	r.NoError(dockerCP("config-s3.yml", "/etc/clickhouse-backup/config.yml"))
-	// testRestoreLegacyBackupFormat(t)
 	testCommon(t)
 }
 
@@ -363,7 +362,6 @@ func TestIntegrationGCS(t *testing.T) {
 	r.NoError(dockerCP("config-gcs.yml", "/etc/clickhouse-backup/config.yml"))
 	r.NoError(dockerExec("apt-get", "-y", "update"))
 	r.NoError(dockerExec("apt-get", "-y", "install", "ca-certificates"))
-	// testRestoreLegacyBackupFormat(t)
 	testCommon(t)
 }
 
@@ -376,13 +374,12 @@ func TestIntegrationAzure(t *testing.T) {
 	r.NoError(dockerCP("config-azblob.yml", "/etc/clickhouse-backup/config.yml"))
 	r.NoError(dockerExec("apt-get", "-y", "update"))
 	r.NoError(dockerExec("apt-get", "-y", "install", "ca-certificates"))
-	// testRestoreLegacyBackupFormat(t)
 	testCommon(t)
 }
 
 func TestIntegrationSFTP(t *testing.T) {
 	//if os.Getenv("SFTP_TESTS") == "" || os.Getenv("TRAVIS_PULL_REQUEST") != "false" {
-	//	t.Skip("Skipping Azure integration tests...")
+	//	t.Skip("Skipping SFTP integration tests...")
 	//	return
 	//}
 	r := require.New(t)
@@ -390,6 +387,42 @@ func TestIntegrationSFTP(t *testing.T) {
 	//r.NoError(dockerExec("apt-get", "-y", "update"))
 	//r.NoError(dockerExec("apt-get", "-y", "install", "ca-certificates"))
 	testCommon(t)
+}
+
+func TestSyncReplicaTimeout(t *testing.T) {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.11") == -1 {
+		t.Skipf("Test skipped, SYNC REPLICA ignore receive_timeout for %s version", os.Getenv("CLICKHOUSE_VERSION"))
+	}
+	ch := &TestClickHouse{}
+	r := require.New(t)
+	r.NoError(ch.connect())
+	r.NoError(dockerCP("config-s3.yml", "/etc/clickhouse-backup/config.yml"))
+
+	for _, table := range []string{"repl1", "repl2"} {
+		query := "DROP TABLE IF EXISTS default." + table
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.3") == 1 {
+			query += " NO DELAY"
+		}
+		ch.queryWithNoError(r, query)
+	}
+
+	ch.queryWithNoError(r, "CREATE TABLE default.repl1 (v UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/default/repl','repl1') ORDER BY tuple()")
+	ch.queryWithNoError(r, "CREATE TABLE default.repl2 (v UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/default/repl','repl2') ORDER BY tuple()")
+
+	ch.queryWithNoError(r, "INSERT INTO default.repl1 SELECT number FROM numbers(10)")
+
+	ch.queryWithNoError(r, "SYSTEM STOP REPLICATED SENDS default.repl1")
+	ch.queryWithNoError(r, "SYSTEM STOP FETCHES default.repl2")
+
+	ch.queryWithNoError(r, "INSERT INTO default.repl1 SELECT number FROM numbers(100)")
+
+	r.NoError(dockerExec("clickhouse-backup", "create", "--tables=default.repl*", "test_not_synced_backup"))
+	r.NoError(dockerExec("clickhouse-backup", "upload", "test_not_synced_backup"))
+	r.NoError(dockerExec("clickhouse-backup", "delete", "local", "test_not_synced_backup"))
+	r.NoError(dockerExec("clickhouse-backup", "delete", "remote", "test_not_synced_backup"))
+
+	ch.queryWithNoError(r, "SYSTEM START REPLICATED SENDS default.repl1")
+	ch.queryWithNoError(r, "SYSTEM START FETCHES default.repl2")
 }
 
 func testCommon(t *testing.T) {
@@ -407,20 +440,7 @@ func testCommon(t *testing.T) {
 	dockerExec("clickhouse-backup", "delete", "remote", "increment")
 	dockerExec("clickhouse-backup", "delete", "local", "increment")
 	dropAllDatabases(r, ch)
-
-	log.Info("Generate test data")
-	for _, data := range testData {
-		if isTableSkip(ch, data, false) {
-			continue
-		}
-		r.NoError(ch.createTestSchema(data))
-	}
-	for _, data := range testData {
-		if isTableSkip(ch, data, false) {
-			continue
-		}
-		r.NoError(ch.createTestData(data))
-	}
+	generateTestData(ch, r)
 
 	log.Info("Create backup")
 	r.NoError(dockerExec("clickhouse-backup", "create", "test_backup"))
@@ -504,6 +524,22 @@ func testCommon(t *testing.T) {
 
 }
 
+func generateTestData(ch *TestClickHouse, r *require.Assertions) {
+	log.Info("Generate test data")
+	for _, data := range testData {
+		if isTableSkip(ch, data, false) {
+			continue
+		}
+		r.NoError(ch.createTestSchema(data))
+	}
+	for _, data := range testData {
+		if isTableSkip(ch, data, false) {
+			continue
+		}
+		r.NoError(ch.createTestData(data))
+	}
+}
+
 func dropAllDatabases(r *require.Assertions, ch *TestClickHouse) {
 	log.Info("Drop all databases")
 	r.NoError(ch.dropDatabase(dbNameOrdinary))
@@ -526,7 +562,7 @@ func (ch *TestClickHouse) connect() error {
 }
 
 func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {
-	if semver.Compare(os.Getenv("CLICKHOUSE_VERSION"), "20.3") == 1 {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.3") == 1 {
 		if err := ch.chbackup.CreateDatabaseWithEngine(data.Database, data.DatabaseEngine); err != nil {
 			return err
 		}
@@ -640,6 +676,11 @@ func (ch *TestClickHouse) checkData(t *testing.T, data TestDataStruct) error {
 	return nil
 }
 
+func (ch *TestClickHouse) queryWithNoError(r *require.Assertions, query string, args ...interface{}) {
+	_, err := ch.chbackup.Query(query, args...)
+	r.NoError(err)
+}
+
 func dockerExec(cmd ...string) error {
 	out, err := dockerExecOut(cmd...)
 	log.Debug(out)
@@ -686,4 +727,13 @@ func isTableSkip(ch *TestClickHouse, data TestDataStruct, dataExists bool) bool 
 		return len(dictEngines) == 0
 	}
 	return os.Getenv("COMPOSE_FILE") == "docker-compose.yml" && (data.Table == "jbod" || data.IsDictionary)
+}
+
+func compareVersion(v1, v2 string) int {
+	v1 = "v" + v1
+	v2 = "v" + v2
+	if strings.Count(v1, ".") > 2 {
+		v1 = strings.Join(strings.Split(v1, ".")[0:2], ".")
+	}
+	return semver.Compare(v1, v2)
 }

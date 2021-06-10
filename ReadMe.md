@@ -101,18 +101,19 @@ general:
   backups_to_keep_remote: 0      # BACKUPS_TO_KEEP_REMOTE
   log_level: info                # LOG_LEVEL
 clickhouse:
-  username: default              # CLICKHOUSE_USERNAME
-  password: ""                   # CLICKHOUSE_PASSWORD
-  host: localhost                # CLICKHOUSE_HOST
-  port: 9000                     # CLICKHOUSE_PORT
-  disk_mapping: {}               # CLICKHOUSE_DISK_MAPPING
-  skip_tables:                   # CLICKHOUSE_SKIP_TABLES
+  username: default                # CLICKHOUSE_USERNAME
+  password: ""                     # CLICKHOUSE_PASSWORD
+  host: localhost                  # CLICKHOUSE_HOST
+  port: 9000                       # CLICKHOUSE_PORT
+  disk_mapping: {}                 # CLICKHOUSE_DISK_MAPPING
+  skip_tables:                     # CLICKHOUSE_SKIP_TABLES
     - system.*
-  timeout: 5m                    # CLICKHOUSE_TIMEOUT
-  freeze_by_part: false          # CLICKHOUSE_FREEZE_BY_PART
-  secure: false                  # CLICKHOUSE_SECURE
-  skip_verify: false             # CLICKHOUSE_SKIP_VERIFY
-  sync_replicated_tables: true   # CLICKHOUSE_SYNC_REPLICATED_TABLES
+  timeout: 5m                      # CLICKHOUSE_TIMEOUT
+  freeze_by_part: false            # CLICKHOUSE_FREEZE_BY_PART
+  secure: false                    # CLICKHOUSE_SECURE
+  skip_verify: false               # CLICKHOUSE_SKIP_VERIFY
+  sync_replicated_tables: true     # CLICKHOUSE_SYNC_REPLICATED_TABLES
+  skip_sync_replica_timeouts: true # CLICKHOUSE_SKIP_SYNC_REPLICA_TIMEOUTS
 
 azblob:
   endpoint_suffix: "core.windows.net" # AZBLOB_ENDPOINT_SUFFIX
