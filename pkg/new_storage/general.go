@@ -246,9 +246,7 @@ func (bd *BackupDestination) CompressedStreamUpload(baseLocalPath string, files 
 			if err != nil {
 				return err
 			}
-			defer file.Close()
 			bfile := nio.NewReader(file, iobuf)
-			defer bfile.Close()
 			if err := z.Write(archiver.File{
 				FileInfo: archiver.FileInfo{
 					FileInfo:   info,
@@ -256,6 +254,12 @@ func (bd *BackupDestination) CompressedStreamUpload(baseLocalPath string, files 
 				},
 				ReadCloser: bfile,
 			}); err != nil {
+				return err
+			}
+			if err := bfile.Close(); err != nil { // No use defer for this
+				return err
+			}
+			if err := file.Close(); err != nil { // No use defer for this too
 				return err
 			}
 		}

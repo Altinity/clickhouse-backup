@@ -377,15 +377,15 @@ func TestIntegrationAzure(t *testing.T) {
 	testCommon(t)
 }
 
-func TestIntegrationSFTP(t *testing.T) {
-	//if os.Getenv("SFTP_TESTS") == "" || os.Getenv("TRAVIS_PULL_REQUEST") != "false" {
-	//	t.Skip("Skipping SFTP integration tests...")
-	//	return
-	//}
+func TestIntegrationSFTPAuthPassword(t *testing.T) {
 	r := require.New(t)
-	r.NoError(dockerCP("config-sftp.yml", "/etc/clickhouse-backup/config.yml"))
-	//r.NoError(dockerExec("apt-get", "-y", "update"))
-	//r.NoError(dockerExec("apt-get", "-y", "install", "ca-certificates"))
+	r.NoError(dockerCP("config-sftp-auth-password.yaml", "/etc/clickhouse-backup/config.yml"))
+	testCommon(t)
+}
+
+func TestIntegrationSFTPAuthKey(t *testing.T) {
+	r := require.New(t)
+	r.NoError(dockerCP("config-sftp-auth-key.yaml", "/etc/clickhouse-backup/config.yml"))
 	testCommon(t)
 }
 
@@ -435,10 +435,10 @@ func testCommon(t *testing.T) {
 	r.NoError(ch.connect())
 
 	log.Info("Clean before start")
-	dockerExec("clickhouse-backup", "delete", "remote", "test_backup")
-	dockerExec("clickhouse-backup", "delete", "local", "test_backup")
-	dockerExec("clickhouse-backup", "delete", "remote", "increment")
-	dockerExec("clickhouse-backup", "delete", "local", "increment")
+	_ = dockerExec("clickhouse-backup", "delete", "remote", "test_backup")
+	_ = dockerExec("clickhouse-backup", "delete", "local", "test_backup")
+	_ = dockerExec("clickhouse-backup", "delete", "remote", "increment")
+	_ = dockerExec("clickhouse-backup", "delete", "local", "increment")
 	dropAllDatabases(r, ch)
 	generateTestData(ch, r)
 
