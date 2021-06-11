@@ -166,6 +166,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, schemaOnly b
 	backupMetadata.Tables = tablesForDownload
 	backupMetadata.DataSize = dataSize
 	backupMetadata.MetadataSize = metadataSize
+	backupMetadata.CompressedSize = 0
 	backupMetadata.DataFormat = ""
 	backupMetadata.RequiredBackup = ""
 

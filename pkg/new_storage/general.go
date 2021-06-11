@@ -164,7 +164,10 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 	defer bar.Finish()
 	bufReader := nio.NewReader(reader, buf)
 	proxyReader := bar.NewProxyReader(bufReader)
-	z, _ := getArchiveReader(bd.compressionFormat)
+	z, err := getArchiveReader(bd.compressionFormat)
+	if err != nil {
+		return err
+	}
 	if err := z.Open(proxyReader, 0); err != nil {
 		return err
 	}

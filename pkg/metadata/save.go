@@ -18,8 +18,19 @@ func (tm *TableMetadata) Save(location string, metadataOnly bool) (int, error) {
 		DependenciesDatabase: tm.DependenciesDatabase,
 		MetadataOnly:         true,
 	}
+	parts := map[string][]Part{}
+	for disk, p := range tm.Parts {
+		newp := make([]Part, len(p))
+		for i := range p {
+			newp[i] = Part{
+				Name: p[i].Name,
+			}
+		}
+		parts[disk] = newp
+	}
+
 	if !metadataOnly {
-		newTM.Parts = tm.Parts
+		newTM.Parts = parts
 		newTM.Size = tm.Size
 		newTM.TotalBytes = tm.TotalBytes
 		newTM.MetadataOnly = false

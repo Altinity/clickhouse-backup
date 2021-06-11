@@ -36,6 +36,9 @@ func printBackups(w io.Writer, backupList []new_storage.Backup, format, location
 		// }
 		for _, backup := range backupList {
 			size := utils.FormatBytes(backup.DataSize + backup.MetadataSize)
+			if backup.CompressedSize > 0 {
+				size = utils.FormatBytes(backup.CompressedSize + backup.MetadataSize)
+			}
 			description := backup.DataFormat
 			if backup.Legacy {
 				if location == "local" {
