@@ -54,9 +54,9 @@ func getArchiveReader(format string) (archiver.Reader, error) {
 	case "xz":
 		return archiver.NewTarXz(), nil
 	case "br", "brotli":
-		return &archiver.TarBrotli{}, nil
+		return archiver.NewTarBrotli(), nil
 	case "zstd":
-		return &archiver.TarZstd{}, nil
+		return archiver.NewTarZstd(), nil
 	}
 	return nil, fmt.Errorf("wrong compression_format, supported: 'tar', 'gzip', 'zstd'")
 }
