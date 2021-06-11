@@ -41,7 +41,6 @@ type BackupDestination struct {
 	compressionFormat  string
 	compressionLevel   int
 	disableProgressBar bool
-	backupsToKeep      int
 }
 
 func (bd *BackupDestination) RemoveOldBackups(keep int) error {
@@ -69,10 +68,6 @@ func (bd *BackupDestination) RemoveBackup(backupName string) error {
 	return bd.Walk(backupName+"/", true, func(f RemoteFile) error {
 		return bd.DeleteFile(path.Join(backupName, f.Name()))
 	})
-}
-
-func (bd *BackupDestination) BackupsToKeep() int {
-	return bd.backupsToKeep
 }
 
 func isLegacyBackup(backupName string) (bool, string, string) {
@@ -370,7 +365,6 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 			cfg.AzureBlob.CompressionFormat,
 			cfg.AzureBlob.CompressionLevel,
 			cfg.General.DisableProgressBar,
-			cfg.General.BackupsToKeepRemote,
 		}, nil
 	case "s3":
 		s3Storage := &S3{
@@ -383,7 +377,6 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 			cfg.S3.CompressionFormat,
 			cfg.S3.CompressionLevel,
 			cfg.General.DisableProgressBar,
-			cfg.General.BackupsToKeepRemote,
 		}, nil
 	case "gcs":
 		googleCloudStorage := &GCS{Config: &cfg.GCS}
@@ -392,7 +385,6 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 			cfg.GCS.CompressionFormat,
 			cfg.GCS.CompressionLevel,
 			cfg.General.DisableProgressBar,
-			cfg.General.BackupsToKeepRemote,
 		}, nil
 	case "cos":
 		tencentStorage := &COS{
@@ -404,7 +396,6 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 			cfg.COS.CompressionFormat,
 			cfg.COS.CompressionLevel,
 			cfg.General.DisableProgressBar,
-			cfg.General.BackupsToKeepRemote,
 		}, nil
 	case "ftp":
 		ftpStorage := &FTP{
@@ -416,7 +407,6 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 			cfg.FTP.CompressionFormat,
 			cfg.FTP.CompressionLevel,
 			cfg.General.DisableProgressBar,
-			cfg.General.BackupsToKeepRemote,
 		}, nil
 	case "sftp":
 		sftpStorage := &SFTP{
@@ -427,7 +417,6 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 			cfg.SFTP.CompressionFormat,
 			cfg.SFTP.CompressionLevel,
 			cfg.General.DisableProgressBar,
-			cfg.General.BackupsToKeepRemote,
 		}, nil
 	default:
 		return nil, fmt.Errorf("storage type '%s' is not supported", cfg.General.RemoteStorage)

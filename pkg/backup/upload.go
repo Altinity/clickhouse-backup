@@ -149,7 +149,7 @@ func (b *Backuper) Upload(backupName string, tablePattern string, diffFrom strin
 		return fmt.Errorf("can't upload: %v", err)
 	}
 
-	if err := b.dst.RemoveOldBackups(b.dst.BackupsToKeep()); err != nil {
+	if err := b.dst.RemoveOldBackups(b.cfg.General.BackupsToKeepRemote); err != nil {
 		return fmt.Errorf("can't remove old backups: %v", err)
 	}
 	if err := RemoveOldBackupsLocal(b.cfg, false); err != nil {
