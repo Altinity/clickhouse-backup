@@ -9,9 +9,11 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
+	"github.com/AlexAkulov/clickhouse-backup/utils"
 
 	apexLog "github.com/apex/log"
 )
@@ -32,6 +34,7 @@ func (b *Backuper) Upload(backupName string, tablePattern string, diffFrom strin
 		"backup":    backupName,
 		"operation": "upload",
 	})
+	startUpload := time.Now()
 	if err := b.ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
@@ -91,6 +94,8 @@ func (b *Backuper) Upload(backupName string, tablePattern string, diffFrom strin
 		// if table.UUID != "" {
 		// 	uuid = path.Join(table.UUID[0:3], table.UUID)
 		// }
+		start := time.Now()
+		var uploadedBytes int64
 		if !schemaOnly {
 			if diffTable, ok := tablesForUploadFromDiff[metadata.TableTitle{
 				Database: table.Database,
@@ -98,7 +103,8 @@ func (b *Backuper) Upload(backupName string, tablePattern string, diffFrom strin
 			}]; ok {
 				b.markDuplicatedParts(backupMetadata, &diffTable, &table)
 			}
-			files, uploadedBytes, err := b.uploadTableData(backupName, table)
+			var files map[string][]string
+			files, uploadedBytes, err = b.uploadTableData(backupName, table)
 			if err != nil {
 				return err
 			}
@@ -110,7 +116,11 @@ func (b *Backuper) Upload(backupName string, tablePattern string, diffFrom strin
 			return err
 		}
 		metadataSize += tableMetadataSize
-		log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).Info("done")
+		log.
+			WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).
+			WithField("duration", utils.HumanizeDuration(time.Since(start))).
+			WithField("size", utils.FormatBytes(uploadedBytes+tableMetadataSize)).
+			Info("done")
 	}
 
 	// заливаем метадату для бэкапа
@@ -145,7 +155,10 @@ func (b *Backuper) Upload(backupName string, tablePattern string, diffFrom strin
 	if err := RemoveOldBackupsLocal(b.cfg, false); err != nil {
 		return fmt.Errorf("can't remove old local backups: %v", err)
 	}
-	log.Infof("done")
+	log.
+		WithField("duration", utils.HumanizeDuration(time.Since(startUpload))).
+		WithField("size", utils.FormatBytes(compressedDataSize+metadataSize+int64(len(newBackupMetadataBody)))).
+		Info("done")
 	return nil
 }
 

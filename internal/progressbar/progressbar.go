@@ -1,6 +1,7 @@
 package progressbar
 
 import (
+	"fmt"
 	"io"
 
 	progressbar "gopkg.in/cheggaaa/pb.v1"
@@ -38,6 +39,7 @@ func StartNewBar(show bool, total int) *Bar {
 func (b *Bar) Finish() {
 	if b.show {
 		b.pb.Finish()
+		fmt.Print("\033[A") // move the cursor up
 	}
 }
 
