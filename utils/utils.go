@@ -2,6 +2,13 @@ package utils
 
 import (
 	"fmt"
+	"strings"
+	"time"
+)
+
+const (
+	day  = time.Minute * 60 * 24
+	year = 365 * day
 )
 
 // FormatBytes - Convert bytes to human readable string
@@ -24,4 +31,20 @@ func FormatBytes(i int64) string {
 	default:
 		return fmt.Sprintf("%dB", i)
 	}
+}
+
+func HumanizeDuration(d time.Duration) string {
+	if d < day {
+		return d.Round(time.Millisecond).String()
+	}
+	var b strings.Builder
+	if d >= year {
+		years := d / year
+		fmt.Fprintf(&b, "%dy", years)
+		d -= years * year
+	}
+	days := d / day
+	d -= days * day
+	fmt.Fprintf(&b, "%dd%s", days, d)
+	return b.String()
 }

@@ -9,9 +9,11 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
+	"github.com/AlexAkulov/clickhouse-backup/utils"
 
 	apexLog "github.com/apex/log"
 )
@@ -32,6 +34,7 @@ func (b *Backuper) Upload(backupName string, tablePattern string, diffFrom strin
 		"backup":    backupName,
 		"operation": "upload",
 	})
+	startUpload := time.Now()
 	if err := b.ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
@@ -63,7 +66,7 @@ func (b *Backuper) Upload(backupName string, tablePattern string, diffFrom strin
 			return err
 		}
 	}
-	dataSize := int64(0)
+	compressedDataSize := int64(0)
 	metadataSize := int64(0)
 	var diffFromBackup *metadata.BackupMetadata
 	tablesForUploadFromDiff := map[metadata.TableTitle]metadata.TableMetadata{}
@@ -91,6 +94,8 @@ func (b *Backuper) Upload(backupName string, tablePattern string, diffFrom strin
 		// if table.UUID != "" {
 		// 	uuid = path.Join(table.UUID[0:3], table.UUID)
 		// }
+		start := time.Now()
+		var uploadedBytes int64
 		if !schemaOnly {
 			if diffTable, ok := tablesForUploadFromDiff[metadata.TableTitle{
 				Database: table.Database,
@@ -98,23 +103,28 @@ func (b *Backuper) Upload(backupName string, tablePattern string, diffFrom strin
 			}]; ok {
 				b.markDuplicatedParts(backupMetadata, &diffTable, &table)
 			}
-			dataSize += table.TotalBytes
-			metadataFiles, err := b.uploadTableData(backupName, table)
+			var files map[string][]string
+			files, uploadedBytes, err = b.uploadTableData(backupName, table)
 			if err != nil {
 				return err
 			}
-			table.Files = metadataFiles
+			compressedDataSize += uploadedBytes
+			table.Files = files
 		}
 		tableMetadataSize, err := b.uploadTableMetadata(backupName, table)
 		if err != nil {
 			return err
 		}
 		metadataSize += tableMetadataSize
-		log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).Info("done")
+		log.
+			WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).
+			WithField("duration", utils.HumanizeDuration(time.Since(start))).
+			WithField("size", utils.FormatBytes(uploadedBytes+tableMetadataSize)).
+			Info("done")
 	}
 
 	// заливаем метадату для бэкапа
-	backupMetadata.DataSize = dataSize
+	backupMetadata.CompressedSize = compressedDataSize
 	backupMetadata.MetadataSize = metadataSize
 	tt := []metadata.TableTitle{}
 	for i := range tablesForUpload {
@@ -139,24 +149,28 @@ func (b *Backuper) Upload(backupName string, tablePattern string, diffFrom strin
 		return fmt.Errorf("can't upload: %v", err)
 	}
 
-	if err := b.dst.RemoveOldBackups(b.dst.BackupsToKeep()); err != nil {
+	if err := b.dst.RemoveOldBackups(b.cfg.General.BackupsToKeepRemote); err != nil {
 		return fmt.Errorf("can't remove old backups: %v", err)
 	}
 	if err := RemoveOldBackupsLocal(b.cfg, false); err != nil {
 		return fmt.Errorf("can't remove old local backups: %v", err)
 	}
-	log.Infof("done")
+	log.
+		WithField("duration", utils.HumanizeDuration(time.Since(startUpload))).
+		WithField("size", utils.FormatBytes(compressedDataSize+metadataSize+int64(len(newBackupMetadataBody)))).
+		Info("done")
 	return nil
 }
 
-func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetadata) (map[string][]string, error) {
+func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetadata) (map[string][]string, int64, error) {
 	uuid := path.Join(clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table))
 	metdataFiles := map[string][]string{}
+	var uploadedBytes int64
 	for disk := range table.Parts {
 		backupPath := path.Join(b.DiskMap[disk], "backup", backupName, "shadow", uuid, disk)
 		parts, err := separateParts(backupPath, table.Parts[disk], b.cfg.General.MaxFileSize)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		for i, p := range parts {
 			remoteDataPath := path.Join(backupName, "shadow", clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table))
@@ -168,11 +182,16 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 			metdataFiles[disk] = append(metdataFiles[disk], fileName)
 			remoteDataFile := path.Join(remoteDataPath, fileName)
 			if err := b.dst.CompressedStreamUpload(backupPath, p, remoteDataFile); err != nil {
-				return nil, fmt.Errorf("can't upload: %v", err)
+				return nil, 0, fmt.Errorf("can't upload: %v", err)
 			}
+			remoteFile, err := b.dst.StatFile(remoteDataFile)
+			if err != nil {
+				return nil, 0, fmt.Errorf("can't check uploaded file: %v", err)
+			}
+			uploadedBytes += remoteFile.Size()
 		}
 	}
-	return metdataFiles, nil
+	return metdataFiles, uploadedBytes, nil
 }
 
 func (b *Backuper) uploadTableMetadata(backupName string, table metadata.TableMetadata) (int64, error) {
@@ -209,7 +228,7 @@ func (b *Backuper) markDuplicatedParts(backup *metadata.BackupMetadata, existsTa
 				newPath := path.Join(b.DiskMap[disk], "backup", backup.BackupName, "shadow", uuid, disk, newParts[i].Name)
 
 				if err := isDuplicatedParts(existsPath, newPath); err != nil {
-					apexLog.Errorf("part '%s' and '%s' must be the same: %v", existsPath, newPath, err)
+					apexLog.Debugf("part '%s' and '%s' must be the same: %v", existsPath, newPath, err)
 					continue
 				}
 				newParts[i].Required = true

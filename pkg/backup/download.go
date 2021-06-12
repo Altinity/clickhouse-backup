@@ -7,12 +7,14 @@ import (
 	"io/ioutil"
 	"os"
 	"path"
+	"time"
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/new_storage"
 	legacyStorage "github.com/AlexAkulov/clickhouse-backup/pkg/storage"
+	"github.com/AlexAkulov/clickhouse-backup/utils"
 
 	apexLog "github.com/apex/log"
 )
@@ -61,6 +63,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, schemaOnly b
 			return ErrBackupIsAlreadyExists
 		}
 	}
+	startDownload := time.Now()
 	if err := b.ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
@@ -155,17 +158,22 @@ func (b *Backuper) Download(backupName string, tablePattern string, schemaOnly b
 				continue
 			}
 			dataSize += tableMetadata.TotalBytes
-			log := log.WithField("table", fmt.Sprintf("%s.%s", tableMetadata.Database, tableMetadata.Table))
+			start := time.Now()
 			if err := b.downloadTableData(remoteBackup.BackupMetadata, tableMetadata); err != nil {
 				return err
 			}
-			log.Info("done")
+			log.
+				WithField("table", fmt.Sprintf("%s.%s", tableMetadata.Database, tableMetadata.Table)).
+				WithField("duration", utils.HumanizeDuration(time.Since(start))).
+				WithField("size", utils.FormatBytes(metadataSize+tableMetadata.TotalBytes)).
+				Info("done")
 		}
 	}
 	backupMetadata := remoteBackup.BackupMetadata
 	backupMetadata.Tables = tablesForDownload
 	backupMetadata.DataSize = dataSize
 	backupMetadata.MetadataSize = metadataSize
+	backupMetadata.CompressedSize = 0
 	backupMetadata.DataFormat = ""
 	backupMetadata.RequiredBackup = ""
 
@@ -173,7 +181,10 @@ func (b *Backuper) Download(backupName string, tablePattern string, schemaOnly b
 	if err := backupMetadata.Save(backupMetafileLocalPath); err != nil {
 		return err
 	}
-	log.Info("done")
+	log.
+		WithField("duration", utils.HumanizeDuration(time.Since(startDownload))).
+		WithField("size", utils.FormatBytes(dataSize+metadataSize)).
+		Info("done")
 	return nil
 }
 
