@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
+	"github.com/apex/log"
 	lib_sftp "github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 )
@@ -52,14 +53,16 @@ func (sftp *SFTP) Connect() error {
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
 	addr := fmt.Sprintf("%s:%d", sftp.Config.Address, sftp.Config.Port)
-	sshConnection, _ := ssh.Dial("tcp", addr, sftpConfig)
-	// defer sftpConnection.Close()
+	log.Debugf("try connect to tcp://%s", addr)
+	sshConnection, err := ssh.Dial("tcp", addr, sftpConfig)
+	if err != nil {
+		return err
+	}
 
 	sftpConnection, err := lib_sftp.NewClient(sshConnection)
 	if err != nil {
 		return err
 	}
-	// defer sftpConnection.Close()
 
 	sftp.client = sftpConnection
 

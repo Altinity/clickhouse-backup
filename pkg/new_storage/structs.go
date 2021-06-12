@@ -8,7 +8,7 @@ import (
 
 var (
 	// ErrNotFound is returned when file/object cannot be found
-	ErrNotFound = errors.New("key not found")
+	ErrNotFound         = errors.New("key not found")
 	ErrFileDoesNotExist = errors.New("file does not exist")
 )
 

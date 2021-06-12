@@ -136,7 +136,7 @@ func RestoreSchema(cfg *config.Config, backupName string, tablePattern string, d
 					)
 				} else {
 					apexLog.Warnf(
-						"can't create table '%s.%s': %v, will try again", schema.Database, schema.Table, err,
+						"can't create table '%s.%s': %v, will try again", schema.Database, schema.Table, restoreErr,
 					)
 				}
 				notRestoredTables = append(notRestoredTables, schema)

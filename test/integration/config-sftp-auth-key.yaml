@@ -12,7 +12,7 @@ sftp:
   address: "sshd"
   username: "root"
   password: ""
-  key: "/id_rsa"
+  key: "/tmp/id_rsa"
   path: "/root"
   compression_format: tar
   compression_level: 1

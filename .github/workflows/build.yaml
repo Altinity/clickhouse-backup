@@ -102,7 +102,7 @@ jobs:
           export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup"
           docker-compose -f test/integration/${COMPOSE_FILE} up -d --force-recreate
           docker-compose -f test/integration/${COMPOSE_FILE} ps -a
-          go test -tags=integration -v test/integration/integration_test.go
+          go test -failfast -tags=integration -v test/integration/integration_test.go
 
       - name: Building docker image
         env:
