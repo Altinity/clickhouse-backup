@@ -440,7 +440,16 @@ func testCommon(t *testing.T) {
 	time.Sleep(time.Second * 5)
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	r.NoError(ch.connect())
+	for i := 1; i < 11; i++ {
+		err := ch.connect()
+		if i == 10 {
+			r.NoError(err)
+		}
+		if err != nil {
+			log.Warnf("clickhouse not ready, wait %d seconds", i*2)
+			time.Sleep(time.Second * time.Duration(i*2))
+		}
+	}
 
 	log.Info("Clean before start")
 	_ = dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", "test_backup")
@@ -570,7 +579,8 @@ func (ch *TestClickHouse) connect() error {
 }
 
 func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.3") == 1 {
+	// 20.8 doesn't respect DROP TABLE .. NO DELAY, so Atomic works but --rm is not applicable
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") == 1 {
 		if err := ch.chbackup.CreateDatabaseWithEngine(data.Database, data.DatabaseEngine); err != nil {
 			return err
 		}
