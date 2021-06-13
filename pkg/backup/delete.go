@@ -53,13 +53,16 @@ func RemoveBackupLocal(cfg *config.Config, backupName string) error {
 	}
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
-			apexLog.Infof("delete '%s'", backupName)
 			for _, disk := range disks {
 				apexLog.WithField("path", disk.Path).Debugf("remove '%s'", backupName)
 				err := os.RemoveAll(path.Join(disk.Path, "backup", backupName))
 				if err != nil {
 					return err
 				}
+				apexLog.WithField("operation", "delete").
+					WithField("location", "local").
+					WithField("backup", backupName).
+					Info("done")
 			}
 			return nil
 		}
@@ -87,11 +90,7 @@ func RemoveBackupRemote(cfg *config.Config, backupName string) error {
 	}
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
-			if backup.Legacy {
-				archiveName := fmt.Sprintf("%s.%s", backup.BackupName, backup.FileExtension)
-				return bd.DeleteFile(archiveName)
-			}
-			return bd.RemoveBackup(backupName)
+			return bd.RemoveBackup(backup)
 		}
 	}
 	return fmt.Errorf("'%s' is not found on remote storage", backupName)

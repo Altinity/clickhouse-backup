@@ -212,11 +212,12 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 	if err := ch.Chown(backupMetaFile); err != nil {
 		log.Warnf("can't chown %s: %v", backupMetaFile, err)
 	}
+	log.Info("done")
 
+	// Clean
 	if err := RemoveOldBackupsLocal(cfg, true); err != nil {
 		return err
 	}
-	log.Info("done")
 	return nil
 }
 
