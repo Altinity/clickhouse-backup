@@ -26,8 +26,8 @@ func TestGetBackupsToDelete(t *testing.T) {
 		{metadata.BackupMetadata{BackupName: "four"}, false, "", "", timeParse("2019-03-28T19-50-14")},
 	}
 	expectedData := []Backup{
-		{metadata.BackupMetadata{BackupName: "one"}, false, "", "", timeParse("2019-03-28T19-50-11")},
 		{metadata.BackupMetadata{BackupName: "two"}, false, "", "", timeParse("2019-03-28T19-50-12")},
+		{metadata.BackupMetadata{BackupName: "one"}, false, "", "", timeParse("2019-03-28T19-50-11")},
 	}
 	assert.Equal(t, expectedData, GetBackupsToDelete(testData, 3))
 	assert.Equal(t, []Backup{}, GetBackupsToDelete([]Backup{testData[0]}, 3))
