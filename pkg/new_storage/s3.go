@@ -27,7 +27,7 @@ type S3 struct {
 	session    *session.Session
 	uploader   *s3manager.Uploader
 	Config     *config.S3Config
-	Concurence int
+	Concurrency int
 	BufferSize int
 }
 
@@ -68,7 +68,7 @@ func (s *S3) Connect() error {
 	}
 
 	s.uploader = s3manager.NewUploader(s.session)
-	s.uploader.Concurrency = s.Concurence
+	s.uploader.Concurrency = s.Concurrency
 	s.uploader.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(s.BufferSize)
 	s.uploader.PartSize = s.Config.PartSize
 
@@ -81,7 +81,7 @@ func (s *S3) Kind() string {
 
 func (s *S3) GetFileReader(key string) (io.ReadCloser, error) {
 	// downloader := s3manager.NewDownloader(s.session)
-	// downloader.Concurrency = s.Concurence
+	// downloader.Concurrency = s.Concurrency
 	// downloader.BufferProvider = s3manager.NewPooledBufferedWriterReadFromProvider(s.BufferSize)
 	// w:= aws.NewWriteAt()
 	// downloader.
