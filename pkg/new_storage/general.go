@@ -105,6 +105,19 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 			})
 			return nil
 		}
+		mf, err := bd.StatFile(path.Join(o.Name(), "metadata.json"))
+		if err != nil {
+			result = append(result, Backup{
+				metadata.BackupMetadata{
+					BackupName: strings.Trim(o.Name(), "/"),
+				},
+				false,
+				"",
+				"broken (can't stat metadata.json)",
+				o.LastModified(), // folder
+			})
+			return nil
+		}
 		r, err := bd.GetFileReader(path.Join(o.Name(), "metadata.json"))
 		if err != nil {
 			result = append(result, Backup{
@@ -114,7 +127,7 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 				false,
 				"",
 				"broken (not found metadata.json)",
-				o.LastModified(),
+				o.LastModified(), // folder
 			})
 			return nil
 		}
@@ -127,7 +140,7 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 				false,
 				"",
 				"broken (can't get metadata.json)",
-				o.LastModified(),
+				o.LastModified(), // folder
 			})
 			return nil
 		}
@@ -143,12 +156,12 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 				false,
 				"",
 				"broken (bad metadata.json)",
-				o.LastModified(),
+				o.LastModified(), // folder
 			})
 			return nil
 		}
 		result = append(result, Backup{
-			m, false, "", "", o.LastModified(),
+			m, false, "", "", mf.LastModified(),
 		})
 		return nil
 	})

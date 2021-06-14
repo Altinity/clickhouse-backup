@@ -5,6 +5,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
@@ -54,4 +55,14 @@ func copyFile(srcFile string, dstFile string) error {
 	defer dst.Close()
 	_, err = io.Copy(dst, src)
 	return err
+}
+
+func GetBackupsToDelete(backups []BackupLocal, keep int) []BackupLocal {
+	if len(backups) > keep {
+		sort.SliceStable(backups, func(i, j int) bool {
+			return backups[i].CreationDate.After(backups[j].CreationDate)
+		})
+		return backups[keep:]
+	}
+	return []BackupLocal{}
 }

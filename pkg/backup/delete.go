@@ -25,7 +25,7 @@ func RemoveOldBackupsLocal(cfg *config.Config, keepLastBackup bool) error {
 	if err != nil {
 		return err
 	}
-	backupsToDelete := new_storage.GetBackupsToDelete(backupList, keep)
+	backupsToDelete := GetBackupsToDelete(backupList, keep)
 	for _, backup := range backupsToDelete {
 		if err := RemoveBackupLocal(cfg, backup.BackupName); err != nil {
 			return err
@@ -59,11 +59,11 @@ func RemoveBackupLocal(cfg *config.Config, backupName string) error {
 				if err != nil {
 					return err
 				}
-				apexLog.WithField("operation", "delete").
-					WithField("location", "local").
-					WithField("backup", backupName).
-					Info("done")
 			}
+			apexLog.WithField("operation", "delete").
+				WithField("location", "local").
+				WithField("backup", backupName).
+				Info("done")
 			return nil
 		}
 	}
