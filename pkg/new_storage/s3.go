@@ -24,11 +24,11 @@ import (
 
 // S3 - presents methods for manipulate data on s3
 type S3 struct {
-	session    *session.Session
-	uploader   *s3manager.Uploader
-	Config     *config.S3Config
+	session     *session.Session
+	uploader    *s3manager.Uploader
+	Config      *config.S3Config
 	Concurrency int
-	BufferSize int
+	BufferSize  int
 }
 
 // Connect - connect to s3

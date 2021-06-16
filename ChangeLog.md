@@ -1,3 +1,10 @@
+# v1.0.0
+
+BUG FIXES
+- Fixed silent cancel uploading when table has more than 4k files  (fix [#203](https://github.com/AlexAkulov/clickhouse-backup/issues/203), [#163](https://github.com/AlexAkulov/clickhouse-backup/issues/163). Thanks [mastertheknife](https://github.com/mastertheknife))
+- Fixed download error for `zstd` and `brotli` compression formats
+- Fixed bug when old-format backups hadn't cleared
+
 # v1.0.0-beta2
 
 IMPROVEMENTS
