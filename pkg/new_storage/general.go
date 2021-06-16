@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/internal/progressbar"
@@ -34,6 +35,7 @@ type Backup struct {
 	Legacy        bool
 	FileExtension string
 	Broken        string
+	UploadDate    time.Time
 }
 
 type BackupDestination struct {
@@ -53,20 +55,27 @@ func (bd *BackupDestination) RemoveOldBackups(keep int) error {
 	}
 	backupsToDelete := GetBackupsToDelete(backupList, keep)
 	for _, backupToDelete := range backupsToDelete {
-		apexLog.Infof("remove '%s'", backupToDelete.BackupName)
-		if err := bd.RemoveBackup(backupToDelete.BackupName); err != nil {
+		if err := bd.RemoveBackup(backupToDelete); err != nil {
 			return err
 		}
+		apexLog.WithField("operation", "delete").
+			WithField("location", "remote").
+			WithField("backup", backupToDelete.BackupName).
+			Info("done")
 	}
 	return nil
 }
 
-func (bd *BackupDestination) RemoveBackup(backupName string) error {
+func (bd *BackupDestination) RemoveBackup(backup Backup) error {
 	if bd.Kind() == "SFTP" {
-		return bd.DeleteFile(backupName)
+		return bd.DeleteFile(backup.BackupName)
 	}
-	return bd.Walk(backupName+"/", true, func(f RemoteFile) error {
-		return bd.DeleteFile(path.Join(backupName, f.Name()))
+	if backup.Legacy {
+		archiveName := fmt.Sprintf("%s.%s", backup.BackupName, backup.FileExtension)
+		return bd.DeleteFile(archiveName)
+	}
+	return bd.Walk(backup.BackupName+"/", true, func(f RemoteFile) error {
+		return bd.DeleteFile(path.Join(backup.BackupName, f.Name()))
 	})
 }
 
@@ -86,13 +95,26 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 		if ok, backupName, fileExtension := isLegacyBackup(strings.TrimPrefix(o.Name(), "/")); ok {
 			result = append(result, Backup{
 				metadata.BackupMetadata{
-					BackupName:   backupName,
-					CreationDate: o.LastModified(),
-					DataSize:     o.Size(),
+					BackupName: backupName,
+					DataSize:   o.Size(),
 				},
 				true,
 				fileExtension,
 				"",
+				o.LastModified(),
+			})
+			return nil
+		}
+		mf, err := bd.StatFile(path.Join(o.Name(), "metadata.json"))
+		if err != nil {
+			result = append(result, Backup{
+				metadata.BackupMetadata{
+					BackupName: strings.Trim(o.Name(), "/"),
+				},
+				false,
+				"",
+				"broken (can't stat metadata.json)",
+				o.LastModified(), // folder
 			})
 			return nil
 		}
@@ -101,7 +123,11 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 			result = append(result, Backup{
 				metadata.BackupMetadata{
 					BackupName: strings.Trim(o.Name(), "/"),
-				}, false, "", "broken (not found metadata.json)",
+				},
+				false,
+				"",
+				"broken (not found metadata.json)",
+				o.LastModified(), // folder
 			})
 			return nil
 		}
@@ -110,7 +136,11 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 			result = append(result, Backup{
 				metadata.BackupMetadata{
 					BackupName: strings.Trim(o.Name(), "/"),
-				}, false, "", "broken (can't get metadata.json)",
+				},
+				false,
+				"",
+				"broken (can't get metadata.json)",
+				o.LastModified(), // folder
 			})
 			return nil
 		}
@@ -122,17 +152,21 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 			result = append(result, Backup{
 				metadata.BackupMetadata{
 					BackupName: strings.Trim(o.Name(), "/"),
-				}, false, "", "broken (bad metadata.json)",
+				},
+				false,
+				"",
+				"broken (bad metadata.json)",
+				o.LastModified(), // folder
 			})
 			return nil
 		}
 		result = append(result, Backup{
-			m, false, "", "",
+			m, false, "", "", mf.LastModified(),
 		})
 		return nil
 	})
 	sort.SliceStable(result, func(i, j int) bool {
-		return result[i].CreationDate.Before(result[j].CreationDate)
+		return result[i].UploadDate.Before(result[j].UploadDate)
 	})
 	return result, err
 }
@@ -368,9 +402,9 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 		}, nil
 	case "s3":
 		s3Storage := &S3{
-			Config:     &cfg.S3,
-			Concurence: 1,
-			BufferSize: 1024 * 1024,
+			Config:      &cfg.S3,
+			Concurrency: 1,
+			BufferSize:  1024 * 1024,
 		}
 		return &BackupDestination{
 			s3Storage,

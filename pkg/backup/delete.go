@@ -25,7 +25,7 @@ func RemoveOldBackupsLocal(cfg *config.Config, keepLastBackup bool) error {
 	if err != nil {
 		return err
 	}
-	backupsToDelete := new_storage.GetBackupsToDelete(backupList, keep)
+	backupsToDelete := GetBackupsToDelete(backupList, keep)
 	for _, backup := range backupsToDelete {
 		if err := RemoveBackupLocal(cfg, backup.BackupName); err != nil {
 			return err
@@ -53,7 +53,6 @@ func RemoveBackupLocal(cfg *config.Config, backupName string) error {
 	}
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
-			apexLog.Infof("delete '%s'", backupName)
 			for _, disk := range disks {
 				apexLog.WithField("path", disk.Path).Debugf("remove '%s'", backupName)
 				err := os.RemoveAll(path.Join(disk.Path, "backup", backupName))
@@ -61,6 +60,10 @@ func RemoveBackupLocal(cfg *config.Config, backupName string) error {
 					return err
 				}
 			}
+			apexLog.WithField("operation", "delete").
+				WithField("location", "local").
+				WithField("backup", backupName).
+				Info("done")
 			return nil
 		}
 	}
@@ -87,11 +90,7 @@ func RemoveBackupRemote(cfg *config.Config, backupName string) error {
 	}
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
-			if backup.Legacy {
-				archiveName := fmt.Sprintf("%s.%s", backup.BackupName, backup.FileExtension)
-				return bd.DeleteFile(archiveName)
-			}
-			return bd.RemoveBackup(backupName)
+			return bd.RemoveBackup(backup)
 		}
 	}
 	return fmt.Errorf("'%s' is not found on remote storage", backupName)

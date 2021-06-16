@@ -148,17 +148,15 @@ func (b *Backuper) Upload(backupName string, tablePattern string, diffFrom strin
 		ioutil.NopCloser(bytes.NewReader(newBackupMetadataBody))); err != nil {
 		return fmt.Errorf("can't upload: %v", err)
 	}
-
-	if err := b.dst.RemoveOldBackups(b.cfg.General.BackupsToKeepRemote); err != nil {
-		return fmt.Errorf("can't remove old backups: %v", err)
-	}
-	if err := RemoveOldBackupsLocal(b.cfg, false); err != nil {
-		return fmt.Errorf("can't remove old local backups: %v", err)
-	}
 	log.
 		WithField("duration", utils.HumanizeDuration(time.Since(startUpload))).
 		WithField("size", utils.FormatBytes(compressedDataSize+metadataSize+int64(len(newBackupMetadataBody)))).
 		Info("done")
+
+	// Clean
+	if err := b.dst.RemoveOldBackups(b.cfg.General.BackupsToKeepRemote); err != nil {
+		return fmt.Errorf("can't remove old backups on remote storage: %v", err)
+	}
 	return nil
 }
 

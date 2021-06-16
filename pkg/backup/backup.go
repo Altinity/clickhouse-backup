@@ -30,6 +30,12 @@ var (
 	ErrUnknownClickhouseDataPath = errors.New("clickhouse data path is unknown, you can set data_path in config file")
 )
 
+type BackupLocal struct {
+	metadata.BackupMetadata
+	Legacy bool
+	Broken string
+}
+
 func addTable(tables []clickhouse.Table, table clickhouse.Table) []clickhouse.Table {
 	for _, t := range tables {
 		if (t.Database == table.Database) && (t.Name == table.Name) {
@@ -212,11 +218,12 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 	if err := ch.Chown(backupMetaFile); err != nil {
 		log.Warnf("can't chown %s: %v", backupMetaFile, err)
 	}
+	log.Info("done")
 
+	// Clean
 	if err := RemoveOldBackupsLocal(cfg, true); err != nil {
 		return err
 	}
-	log.Info("done")
 	return nil
 }
 

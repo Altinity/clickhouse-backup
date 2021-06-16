@@ -18,7 +18,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/utils"
 )
 
-func printBackups(w io.Writer, backupList []new_storage.Backup, format, location string) error {
+func printBackupsRemote(w io.Writer, backupList []new_storage.Backup, format string) error {
 	switch format {
 	case "latest", "last", "l":
 		if len(backupList) < 1 {
@@ -40,10 +40,8 @@ func printBackups(w io.Writer, backupList []new_storage.Backup, format, location
 				size = utils.FormatBytes(backup.CompressedSize + backup.MetadataSize)
 			}
 			description := backup.DataFormat
+			uploadDate := backup.UploadDate.Format("02/01/2006 15:04:05")
 			if backup.Legacy {
-				if location == "local" {
-					size = "???"
-				}
 				description = "old-format"
 			}
 			required := ""
@@ -54,7 +52,49 @@ func printBackups(w io.Writer, backupList []new_storage.Backup, format, location
 				description = backup.Broken
 				size = "???"
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", backup.BackupName, size, backup.CreationDate.Format("02/01/2006 15:04:05"), location, required, description)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", backup.BackupName, size, uploadDate, "remote", required, description)
+		}
+	default:
+		return fmt.Errorf("'%s' undefined", format)
+	}
+	return nil
+}
+
+func printBackupsLocal(w io.Writer, backupList []BackupLocal, format string) error {
+	switch format {
+	case "latest", "last", "l":
+		if len(backupList) < 1 {
+			return fmt.Errorf("no backups found")
+		}
+		fmt.Println(backupList[len(backupList)-1].BackupName)
+	case "penult", "prev", "previous", "p":
+		if len(backupList) < 2 {
+			return fmt.Errorf("no penult backup is found")
+		}
+		fmt.Println(backupList[len(backupList)-2].BackupName)
+	case "all", "":
+		// if len(backupList) == 0 {
+		// 	fmt.Println("no backups found")
+		// }
+		for _, backup := range backupList {
+			size := utils.FormatBytes(backup.DataSize + backup.MetadataSize)
+			if backup.CompressedSize > 0 {
+				size = utils.FormatBytes(backup.CompressedSize + backup.MetadataSize)
+			}
+			description := backup.DataFormat
+			creationDate := backup.CreationDate.Format("02/01/2006 15:04:05")
+			if backup.Legacy {
+				size = "???"
+			}
+			required := ""
+			if backup.RequiredBackup != "" {
+				required = "+" + backup.RequiredBackup
+			}
+			if backup.Broken != "" {
+				description = backup.Broken
+				size = "???"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", backup.BackupName, size, creationDate, "local", required, description)
 		}
 	default:
 		return fmt.Errorf("'%s' undefined", format)
@@ -70,11 +110,11 @@ func PrintLocalBackups(cfg *config.Config, format string) error {
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	return printBackups(w, backupList, format, "local")
+	return printBackupsLocal(w, backupList, format)
 }
 
 // GetLocalBackups - return slice of all backups stored locally
-func GetLocalBackups(cfg *config.Config) ([]new_storage.Backup, error) {
+func GetLocalBackups(cfg *config.Config) ([]BackupLocal, error) {
 	ch := &clickhouse.ClickHouse{
 		Config: &cfg.ClickHouse,
 	}
@@ -87,7 +127,7 @@ func GetLocalBackups(cfg *config.Config) ([]new_storage.Backup, error) {
 	if err != nil {
 		return nil, err
 	}
-	result := []new_storage.Backup{}
+	result := []BackupLocal{}
 	backupsPath := path.Join(dataPath, "backup")
 	d, err := os.Open(backupsPath)
 	if err != nil {
@@ -113,7 +153,7 @@ func GetLocalBackups(cfg *config.Config) ([]new_storage.Backup, error) {
 		backupMetadataBody, err := ioutil.ReadFile(backupMetafilePath)
 		if os.IsNotExist(err) {
 			// Legacy backup
-			result = append(result, new_storage.Backup{
+			result = append(result, BackupLocal{
 				BackupMetadata: metadata.BackupMetadata{
 					BackupName:   name,
 					CreationDate: info.ModTime(),
@@ -126,7 +166,7 @@ func GetLocalBackups(cfg *config.Config) ([]new_storage.Backup, error) {
 		if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
 			return nil, err
 		}
-		result = append(result, new_storage.Backup{
+		result = append(result, BackupLocal{
 			BackupMetadata: backupMetadata,
 			Legacy:         false,
 		})
@@ -144,14 +184,14 @@ func PrintAllBackups(cfg *config.Config, format string) error {
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	printBackups(w, localBackups, format, "local")
+	printBackupsLocal(w, localBackups, format)
 
 	if cfg.General.RemoteStorage != "none" {
 		remoteBackups, err := GetRemoteBackups(cfg)
 		if err != nil {
 			return err
 		}
-		printBackups(w, remoteBackups, format, "remote")
+		printBackupsRemote(w, remoteBackups, format)
 	}
 	return nil
 }
@@ -164,10 +204,10 @@ func PrintRemoteBackups(cfg *config.Config, format string) error {
 	if err != nil {
 		return err
 	}
-	return printBackups(w, backupList, format, "remote")
+	return printBackupsRemote(w, backupList, format)
 }
 
-func getLocalBackup(cfg *config.Config, backupName string) (*new_storage.Backup, error) {
+func getLocalBackup(cfg *config.Config, backupName string) (*BackupLocal, error) {
 	if backupName == "" {
 		return nil, fmt.Errorf("backup name is required")
 	}
