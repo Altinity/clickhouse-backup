@@ -22,7 +22,7 @@ You can create daily backup by clickhouse-backup and sync backup folder to mount
 `rsync -a -H --delete --progress --numeric-ids --update /var/lib/clickhouse/backup/ /mnt/data/clickhouse-backup/` or similar for sync over ssh. In this case rsync will copy only difference between backups.
 
 ## How to move data to another clickhouse server
-See abowe
+See above
 
 ## How to reduce number of partitions
 ...
