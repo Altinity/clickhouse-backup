@@ -52,6 +52,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
       - ./backup-user.xml:/etc/clickhouse-server/users.d/backup-user.xml
+      - ./enable-access_management.xml:/etc/clickhouse-server/users.d/enable-access_management.xml
       - ${CLICKHOUSE_BACKUP_BIN:-../../clickhouse-backup/clickhouse-backup}:/usr/bin/clickhouse-backup
       - ./credentials.json:/etc/clickhouse-backup/credentials.json
       - ./server.crt:/etc/clickhouse-server/server.crt
@@ -62,7 +63,7 @@ services:
       - ./cluster.xml:/etc/clickhouse-server/config.d/cluster.xml
       - ./init.sh:/docker-entrypoint-initdb.d/init.sh
       # uncomment only for debug
-      # - ./clickhouse-server.log:/var/log/clickhouse-server/clickhouse-server.log
+      - ./clickhouse-server.log:/var/log/clickhouse-server/clickhouse-server.log
     ports:
       - 9000:9000
       - 7171:7171

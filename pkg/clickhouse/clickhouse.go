@@ -378,6 +378,7 @@ func (ch *ClickHouse) Chown(filename string) error {
 		ch.uid = &uid
 		ch.gid = &gid
 	}
+	log.Debugf("chown %s to %d:%d", filename, *ch.uid, *ch.gid)
 	return os.Chown(filename, *ch.uid, *ch.gid)
 }
 
@@ -667,4 +668,27 @@ func (ch *ClickHouse) IsAtomic(database string) (bool, error) {
 		return false, err
 	}
 	return len(isDatabaseAtomic) > 0 && isDatabaseAtomic[0] == "Atomic", nil
+}
+
+func (ch *ClickHouse) GetAccessManagementPath(disks []Disk) (string, error) {
+	accessPath := "/var/lib/clickhouse/access"
+	var rows []string
+	if err := ch.Select(&rows, "SELECT JSONExtractString(params,'path') AS access_path FROM system.user_directories WHERE type='local directory'"); err != nil || len(rows) == 0 {
+		if disks == nil {
+			disks, err = ch.GetDisks()
+			if err != nil {
+				return "", err
+			}
+		}
+
+		for _, disk := range disks {
+			if _, err := os.Stat(path.Join(disk.Path, "access")); !os.IsNotExist(err) {
+				accessPath = path.Join(disk.Path, "access")
+				break
+			}
+		}
+	} else {
+		accessPath = rows[0]
+	}
+	return accessPath, nil
 }

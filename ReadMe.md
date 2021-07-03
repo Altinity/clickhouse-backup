@@ -114,6 +114,9 @@ clickhouse:
   skip_verify: false               # CLICKHOUSE_SKIP_VERIFY
   sync_replicated_tables: true     # CLICKHOUSE_SYNC_REPLICATED_TABLES
   skip_sync_replica_timeouts: true # CLICKHOUSE_SKIP_SYNC_REPLICA_TIMEOUTS
+  
+  config_dir:      "/etc/clickhouse-server"              # CLICKHOUSE_CONFIG_DIR
+  restart_command: "systemctl restart clickhouse-server" # CLICKHOUSE_RESTART_COMMAND
 
 azblob:
   endpoint_suffix: "core.windows.net" # AZBLOB_ENDPOINT_SUFFIX
