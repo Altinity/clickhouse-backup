@@ -512,7 +512,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 }
 
 func TestDoRestoreConfigs(t *testing.T) {
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "1.1.60") == -1 {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "1.1.54391") == -1 {
 		t.Skipf("Test skipped, users.d is not available for %s version", os.Getenv("CLICKHOUSE_VERSION"))
 	}
 	ch := &TestClickHouse{}
