@@ -696,7 +696,9 @@ func (ch *TestClickHouse) connectWithWait(r *require.Assertions) {
 			r.NoError(err)
 		}
 		if err != nil {
-			log.Warnf("clickhouse not ready, wait %d seconds", i*2)
+			log.Warnf("clickhouse not ready %v, wait %d seconds", err, i*2)
+			r.NoError(execCmd("docker", "ps", "-a"))
+			r.NoError(execCmd("docker", "logs", "clickhouse"))
 			time.Sleep(time.Second * time.Duration(i*2))
 		}
 	}
@@ -844,6 +846,12 @@ func dockerExecOut(container string, cmd ...string) (string, error) {
 	dcmd := []string{"exec", container}
 	dcmd = append(dcmd, cmd...)
 	return execCmdOut("docker", dcmd...)
+}
+
+func execCmd(cmd string, args ...string) error {
+	out, err := execCmdOut(cmd, args...)
+	log.Info(string(out))
+	return err
 }
 
 func execCmdOut(cmd string, args ...string) (string, error) {
