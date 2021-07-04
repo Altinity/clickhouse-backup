@@ -1,6 +1,12 @@
 #!/bin/bash
-mkdir /hdd1_data /hdd2_data
-chown clickhouse:clickhouse /hdd1_data /hdd2_data
+if [[ ! -d /hdd1_data ]]; then
+  mkdir -pv /hdd1_data
+fi
+
+if [[ ! -d /hdd2_data ]]; then
+  mkdir -pv /hdd2_data
+fi
+chown -v clickhouse:clickhouse /hdd1_data /hdd2_data
 cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration.xml
 <yandex>
   <storage_configuration>
