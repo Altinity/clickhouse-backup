@@ -705,7 +705,7 @@ func (ch *TestClickHouse) connectWithWait(r *require.Assertions) {
 func (ch *TestClickHouse) connect() error {
 	ch.chbackup = &clickhouse.ClickHouse{
 		Config: &config.ClickHouseConfig{
-			Host:    "localhost",
+			Host:    "127.0.0.1",
 			Port:    9000,
 			Timeout: "5m",
 		},
