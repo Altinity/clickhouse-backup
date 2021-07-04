@@ -13,6 +13,7 @@ else
 fi
 
 docker-compose -f test/integration/${COMPOSE_FILE} down --remove-orphans
+docker volume prune -f
 make clean
 make build
 docker-compose -f test/integration/${COMPOSE_FILE} up -d --force-recreate
