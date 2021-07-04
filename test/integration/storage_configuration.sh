@@ -1,3 +1,7 @@
+#!/bin/bash
+mkdir /hdd1_data /hdd2_data
+chown clickhouse:clickhouse /hdd1_data /hdd2_data
+cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration.xml
 <yandex>
   <storage_configuration>
     <disks>
@@ -31,3 +35,4 @@
     </policies>
   </storage_configuration>
 </yandex>
+EOT
