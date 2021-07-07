@@ -141,13 +141,24 @@ func restoreRBAC(ch *clickhouse.ClickHouse, backupName string) error {
 		return err
 	}
 	markFile := path.Join(accessPath, "need_rebuild_lists.mark")
-	apexLog.Debugf("create %s", markFile)
+	apexLog.Infof("create %s for properly rebuild RBAC after restart clickhouse-server", markFile)
 	file, err := os.Create(markFile)
 	if err != nil {
 		return err
 	}
 	_ = file.Close()
 	ch.Chown(markFile)
+	listFilesPattern := path.Join(accessPath, "*.list")
+	apexLog.Infof("remove %s for properly rebuild RBAC after restart clickhouse-server")
+	if listFiles, err := filepathx.Glob(listFilesPattern); err != nil {
+		return err
+	} else {
+		for _, f := range listFiles {
+			if err := os.Remove(f); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -270,11 +281,11 @@ func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName strin
 		"backup":    backupName,
 		"operation": "restore",
 	})
-	defaulDataPath, err := ch.GetDefaultPath()
+	defaultDataPath, err := ch.GetDefaultPath()
 	if err != nil {
 		return ErrUnknownClickhouseDataPath
 	}
-	if clickhouse.IsClickhouseShadow(path.Join(defaulDataPath, "backup", backupName, "shadow")) {
+	if clickhouse.IsClickhouseShadow(path.Join(defaultDataPath, "backup", backupName, "shadow")) {
 		return fmt.Errorf("backups created in v0.0.1 is not supported now")
 	}
 	backup, err := getLocalBackup(cfg, backupName)
@@ -285,7 +296,7 @@ func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName strin
 	if backup.Legacy {
 		tablesForRestore, err = ch.GetBackupTablesLegacy(backupName)
 	} else {
-		metadataPath := path.Join(defaulDataPath, "backup", backupName, "metadata")
+		metadataPath := path.Join(defaultDataPath, "backup", backupName, "metadata")
 		tablesForRestore, err = parseSchemaPattern(metadataPath, tablePattern, false)
 	}
 	if err != nil {
