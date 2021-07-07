@@ -192,13 +192,13 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 	backupRBACSize, err := createRBACBackup(doBackupRBAC, ch, backupPath, disks)
 	if err != nil {
 		log.Errorf("error during do RBAC backup: %v", err)
-	} else {
+	} else if doBackupRBAC {
 		log.WithField("size", utils.FormatBytes(backupRBACSize)).Info("done createRBACBackup")
 	}
 	backupConfigSize, err := createConfigBackup(doBackupConfig, cfg, backupPath)
 	if err != nil {
 		log.Errorf("error during do CONFIG backup: %v", err)
-	} else {
+	} else if doBackupConfig {
 		log.WithField("size", utils.FormatBytes(backupConfigSize)).Info("done createConfigBackup")
 	}
 
