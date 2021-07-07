@@ -496,6 +496,17 @@ func TestDoRestoreRBAC(t *testing.T) {
 	for rbacType, expectedValue := range rbacTypes {
 		rbacRows := []string{}
 		ch.chbackup.Select(&rbacRows, fmt.Sprintf("SHOW %s", rbacType))
+		found := false
+		for _, row := range rbacRows {
+			if row == expectedValue {
+				found = true
+				break
+			}
+		}
+		if !found {
+			_, err := execCmdOut("docker", "logs", "clickhouse")
+			r.NoError(err)
+		}
 		r.Contains(rbacRows, expectedValue, "Invalid result for SHOW %s", rbacType)
 	}
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_rbac_backup"))
@@ -838,7 +849,7 @@ func (ch *TestClickHouse) queryWithNoError(r *require.Assertions, query string, 
 
 func dockerExec(container string, cmd ...string) error {
 	out, err := dockerExecOut(container, cmd...)
-	log.Debug(out)
+	log.Info(out)
 	return err
 }
 
