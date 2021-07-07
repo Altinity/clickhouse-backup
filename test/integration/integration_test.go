@@ -478,11 +478,12 @@ func TestDoRestoreRBAC(t *testing.T) {
 	startTime := time.Now()
 	log.Info("restore")
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", "test_rbac_backup"))
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--rm", "--do-restore-rbac", "test_rbac_backup"))
 	endTime := time.Now()
 	waitBeforeRestore := 65*time.Second - endTime.Sub(startTime)
 	log.Infof("wait %f to rebuild access/*.list", waitBeforeRestore.Seconds())
 	time.Sleep(waitBeforeRestore)
+
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--rm", "--do-restore-rbac", "test_rbac_backup"))
 	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
 
 	// we can't restart clickhouse inside container, we need restart container
