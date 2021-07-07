@@ -14,6 +14,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
+	"github.com/AlexAkulov/clickhouse-backup/utils"
 	apexLog "github.com/apex/log"
 	"github.com/google/uuid"
 	"github.com/otiai10/copy"
@@ -188,13 +189,17 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 		})
 		log.Infof("done")
 	}
-	backupRBACSize, err := createRBAC(doBackupRBAC, ch, backupPath, disks)
+	backupRBACSize, err := createRBACBackup(doBackupRBAC, ch, backupPath, disks)
 	if err != nil {
 		log.Errorf("error during do RBAC backup: %v", err)
+	} else {
+		log.WithField("size", utils.FormatBytes(backupRBACSize)).Info("done createRBACBackup")
 	}
 	backupConfigSize, err := createConfigBackup(doBackupConfig, cfg, backupPath)
 	if err != nil {
 		log.Errorf("error during do CONFIG backup: %v", err)
+	} else {
+		log.WithField("size", utils.FormatBytes(backupConfigSize)).Info("done createConfigBackup")
 	}
 
 	backupMetadata := metadata.BackupMetadata{
@@ -256,7 +261,7 @@ func createConfigBackup(doBackupConfig bool, cfg *config.Config, backupPath stri
 	return backupConfigSize, copyErr
 }
 
-func createRBAC(doBackupRBAC bool, ch *clickhouse.ClickHouse, backupPath string, disks []clickhouse.Disk) (int64, error) {
+func createRBACBackup(doBackupRBAC bool, ch *clickhouse.ClickHouse, backupPath string, disks []clickhouse.Disk) (int64, error) {
 	rbacDataSize := int64(0)
 	if !doBackupRBAC {
 		return rbacDataSize, nil

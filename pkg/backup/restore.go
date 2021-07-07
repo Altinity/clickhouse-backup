@@ -149,7 +149,7 @@ func restoreRBAC(ch *clickhouse.ClickHouse, backupName string) error {
 	_ = file.Close()
 	ch.Chown(markFile)
 	listFilesPattern := path.Join(accessPath, "*.list")
-	apexLog.Infof("remove %s for properly rebuild RBAC after restart clickhouse-server")
+	apexLog.Infof("remove %s for properly rebuild RBAC after restart clickhouse-server", listFilesPattern)
 	if listFiles, err := filepathx.Glob(listFilesPattern); err != nil {
 		return err
 	} else {

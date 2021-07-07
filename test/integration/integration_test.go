@@ -456,6 +456,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 	ch.queryWithNoError(r, "DROP ROLE IF EXISTS test_rbac")
 	ch.queryWithNoError(r, "DROP USER IF EXISTS test_rbac")
 
+	log.Info("create RBAC related objects")
 	ch.queryWithNoError(r, "CREATE SETTINGS PROFILE test_rbac SETTINGS max_execution_time=60")
 	ch.queryWithNoError(r, "CREATE ROLE test_rbac SETTINGS PROFILE 'test_rbac'")
 	ch.queryWithNoError(r, "CREATE USER test_rbac IDENTIFIED BY 'test_rbac' DEFAULT ROLE test_rbac")
@@ -465,7 +466,9 @@ func TestDoRestoreRBAC(t *testing.T) {
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "--backup-rbac", "test_rbac_backup"))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "upload", "test_rbac_backup"))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_rbac_backup"))
+	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
 
+	log.Info("drop all RBAC related objects after backup")
 	ch.queryWithNoError(r, "DROP SETTINGS PROFILE test_rbac")
 	ch.queryWithNoError(r, "DROP QUOTA test_rbac")
 	ch.queryWithNoError(r, "DROP ROW POLICY test_rbac ON default.test_rbac")
@@ -473,6 +476,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 	ch.queryWithNoError(r, "DROP USER test_rbac")
 	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
 
+	log.Info("restore")
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", "test_rbac_backup"))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--rm", "--do-restore-rbac", "test_rbac_backup"))
 
