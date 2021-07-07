@@ -508,8 +508,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 			}
 		}
 		if !found {
-			_, err := execCmdOut("docker", "logs", "clickhouse")
-			r.NoError(err)
+			r.NoError(dockerExec("clickhouse", "cat", " /var/log/clickhouse-server/clickhouse-server.log"))
 		}
 		r.Contains(rbacRows, expectedValue, "Invalid result for SHOW %s", rbacType)
 	}
