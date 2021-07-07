@@ -508,7 +508,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 			}
 		}
 		if !found {
-			r.NoError(dockerExec("clickhouse", "cat", " /var/log/clickhouse-server/clickhouse-server.log"))
+			r.NoError(dockerExec("clickhouse", "cat", "/var/log/clickhouse-server/clickhouse-server.log"))
 		}
 		r.Contains(rbacRows, expectedValue, "Invalid result for SHOW %s", rbacType)
 	}
@@ -712,7 +712,6 @@ func (ch *TestClickHouse) connectWithWait(r *require.Assertions) {
 		if err != nil {
 			log.Warnf("clickhouse not ready %v, wait %d seconds", err, i*2)
 			r.NoError(execCmd("docker", "ps", "-a"))
-			r.NoError(execCmd("docker", "logs", "clickhouse"))
 			time.Sleep(time.Second * time.Duration(i*2))
 		}
 	}
