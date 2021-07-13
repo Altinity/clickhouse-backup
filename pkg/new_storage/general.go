@@ -171,7 +171,11 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 	return result, err
 }
 
-func (bd *BackupDestination) BackupFolderList(backupName string) ([]Backup, error) {
+// use this function only for gcs
+func (bd *BackupDestination) BackupFolderList(backupName string, remoteStorage string) ([]Backup, error) {
+	if remoteStorage != "gcs" {
+		return bd.BackupList()
+	}
 	result := []Backup{}
 	err := bd.Walk(backupName, false, func(o RemoteFile) error {
 		// Legacy backup
