@@ -189,17 +189,21 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 		})
 		log.Infof("done")
 	}
-	backupRBACSize, err := createRBACBackup(doBackupRBAC, ch, backupPath, disks)
-	if err != nil {
-		log.Errorf("error during do RBAC backup: %v", err)
-	} else if doBackupRBAC {
-		log.WithField("size", utils.FormatBytes(backupRBACSize)).Info("done createRBACBackup")
+	backupRBACSize, backupConfigSize := int64(0), int64(0)
+
+	if doBackupRBAC {
+		if backupRBACSize, err = createRBACBackup(ch, backupPath, disks); err != nil {
+			log.Errorf("error during do RBAC backup: %v", err)
+		} else {
+			log.WithField("size", utils.FormatBytes(backupRBACSize)).Info("done createRBACBackup")
+		}
 	}
-	backupConfigSize, err := createConfigBackup(doBackupConfig, cfg, backupPath)
-	if err != nil {
-		log.Errorf("error during do CONFIG backup: %v", err)
-	} else if doBackupConfig {
-		log.WithField("size", utils.FormatBytes(backupConfigSize)).Info("done createConfigBackup")
+	if doBackupConfig {
+		if backupConfigSize, err = createConfigBackup(cfg, backupPath); err != nil {
+			log.Errorf("error during do CONFIG backup: %v", err)
+		} else {
+			log.WithField("size", utils.FormatBytes(backupConfigSize)).Info("done createConfigBackup")
+		}
 	}
 
 	backupMetadata := metadata.BackupMetadata{
@@ -243,12 +247,9 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 	return nil
 }
 
-func createConfigBackup(doBackupConfig bool, cfg *config.Config, backupPath string) (int64, error) {
+func createConfigBackup(cfg *config.Config, backupPath string) (int64, error) {
 	backupConfigSize := int64(0)
 	configBackupPath := path.Join(backupPath, "configs")
-	if !doBackupConfig {
-		return backupConfigSize, nil
-	}
 	apexLog.Debugf("copy %s -> %s", cfg.ClickHouse.ConfigDir, configBackupPath)
 	copyErr := copy.Copy(cfg.ClickHouse.ConfigDir, configBackupPath, copy.Options{
 		Skip: func(src string) (bool, error) {
@@ -261,11 +262,8 @@ func createConfigBackup(doBackupConfig bool, cfg *config.Config, backupPath stri
 	return backupConfigSize, copyErr
 }
 
-func createRBACBackup(doBackupRBAC bool, ch *clickhouse.ClickHouse, backupPath string, disks []clickhouse.Disk) (int64, error) {
+func createRBACBackup(ch *clickhouse.ClickHouse, backupPath string, disks []clickhouse.Disk) (int64, error) {
 	rbacDataSize := int64(0)
-	if !doBackupRBAC {
-		return rbacDataSize, nil
-	}
 	rbacBackup := path.Join(backupPath, "access")
 	accessPath, err := ch.GetAccessManagementPath(disks)
 	if err != nil {
