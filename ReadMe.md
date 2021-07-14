@@ -100,6 +100,7 @@ general:
   backups_to_keep_local: 0       # BACKUPS_TO_KEEP_LOCAL
   backups_to_keep_remote: 0      # BACKUPS_TO_KEEP_REMOTE
   log_level: info                # LOG_LEVEL
+  allow_empty_backups: false     # ALLOW_EMPTY_BACKUPS
 clickhouse:
   username: default                # CLICKHOUSE_USERNAME
   password: ""                     # CLICKHOUSE_PASSWORD
@@ -114,7 +115,7 @@ clickhouse:
   skip_verify: false               # CLICKHOUSE_SKIP_VERIFY
   sync_replicated_tables: true     # CLICKHOUSE_SYNC_REPLICATED_TABLES
   skip_sync_replica_timeouts: true # CLICKHOUSE_SKIP_SYNC_REPLICA_TIMEOUTS
-
+  log_sql_queries: true            # CLICKHOUSE_LOG_SQL_QUERIES
 azblob:
   endpoint_suffix: "core.windows.net" # AZBLOB_ENDPOINT_SUFFIX
   account_name: ""             # AZBLOB_ACCOUNT_NAME
@@ -167,6 +168,7 @@ api:
   secure: false                # API_SECURE
   certificate_file: ""         # API_CERTIFICATE_FILE
   private_key_file: ""         # API_PRIVATE_KEY_FILE
+  create_integration_tables: false # API_CREATE_INTEGRATION_TABLES
 ftp:
   address: ""                  # FTP_ADDRESS
   timeout: 2m                  # FTP_TIMEOUT
