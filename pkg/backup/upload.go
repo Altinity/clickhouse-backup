@@ -159,7 +159,7 @@ func (b *Backuper) Upload(backupName string, tablePattern string, diffFrom strin
 	}
 	log.
 		WithField("duration", utils.HumanizeDuration(time.Since(startUpload))).
-		WithField("size", utils.FormatBytes(compressedDataSize+metadataSize+int64(len(newBackupMetadataBody)))).
+		WithField("size", utils.FormatBytes(compressedDataSize+metadataSize+int64(len(newBackupMetadataBody))+backupMetadata.RBACSize+backupMetadata.ConfigSize)).
 		Info("done")
 
 	// Clean

@@ -80,6 +80,7 @@ func NewBackupName() string {
 // CreateBackup - create new backup of all tables matched by tablePattern
 // If backupName is empty string will use default backup name
 func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnly, doBackupRBAC, doBackupConfig bool, version string) error {
+	startBackup := time.Now()
 	if backupName == "" {
 		backupName = NewBackupName()
 	}
@@ -238,7 +239,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 	if err := ch.Chown(backupMetaFile); err != nil {
 		log.Warnf("can't chown %s: %v", backupMetaFile, err)
 	}
-	log.Info("done")
+	log.WithField("duration", utils.HumanizeDuration(time.Since(startBackup))).Info("done")
 
 	// Clean
 	if err := RemoveOldBackupsLocal(cfg, true); err != nil {

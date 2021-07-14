@@ -15,6 +15,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
+	"github.com/AlexAkulov/clickhouse-backup/utils"
 	apexLog "github.com/apex/log"
 	"github.com/mattn/go-shellwords"
 	"github.com/otiai10/copy"
@@ -277,6 +278,7 @@ func RestoreSchema(ch *clickhouse.ClickHouse, backupName string, tablePattern st
 
 // RestoreData - restore data for tables matched by tablePattern from backupName
 func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName string, tablePattern string) error {
+	startRestore := time.Now()
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "restore",
@@ -365,5 +367,6 @@ func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName strin
 		log.Debugf("attached parts")
 		log.Info("done")
 	}
+	log.WithField("duration", utils.HumanizeDuration(time.Since(startRestore))).Info("done")
 	return nil
 }
