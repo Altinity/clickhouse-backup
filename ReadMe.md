@@ -100,6 +100,7 @@ general:
   backups_to_keep_local: 0       # BACKUPS_TO_KEEP_LOCAL
   backups_to_keep_remote: 0      # BACKUPS_TO_KEEP_REMOTE
   log_level: info                # LOG_LEVEL
+  allow_empty_backups: false     # ALLOW_EMPTY_BACKUPS
 clickhouse:
   username: default                # CLICKHOUSE_USERNAME
   password: ""                     # CLICKHOUSE_PASSWORD
@@ -114,6 +115,7 @@ clickhouse:
   skip_verify: false               # CLICKHOUSE_SKIP_VERIFY
   sync_replicated_tables: true     # CLICKHOUSE_SYNC_REPLICATED_TABLES
   skip_sync_replica_timeouts: true # CLICKHOUSE_SKIP_SYNC_REPLICA_TIMEOUTS
+  log_sql_queries: true            # CLICKHOUSE_LOG_SQL_QUERIES
   
   config_dir:      "/etc/clickhouse-server"              # CLICKHOUSE_CONFIG_DIR
   restart_command: "systemctl restart clickhouse-server" # CLICKHOUSE_RESTART_COMMAND
@@ -170,6 +172,7 @@ api:
   secure: false                # API_SECURE
   certificate_file: ""         # API_CERTIFICATE_FILE
   private_key_file: ""         # API_PRIVATE_KEY_FILE
+  create_integration_tables: false # API_CREATE_INTEGRATION_TABLES
 ftp:
   address: ""                  # FTP_ADDRESS
   timeout: 2m                  # FTP_TIMEOUT
@@ -285,11 +288,11 @@ clickhouse-backup upload $BACKUP_NAME
 
 ### More use cases of clickhouse-backup
 - [How to convert MergeTree to ReplicatedMergeTree](Examples.md#how-to-convert-mergetree-to-replicatedmegretree)
-- [How to store backups on NFS or another server](Examples.md#how-to-store-backups-on-nfs-or-another-server)
+- [How to store backups on NFS or another server](Examples.md#how-to-store-backups-on-nfs-backup-drive-or-another-server-via-sftp)
 - [How to move data to another clickhouse server](Examples.md#how-to-move-data-to-another-clickhouse-server)
 - [How to reduce number of partitions](Examples.md#How-to-reduce-number-of-partitions)
 - [How to monitor that backups created and uploaded correctly](Examples.md#how-to-monitor-that-backups-created-and-uploaded-correctly)
 - [How to backup sharded cluster with Ansible](Examples.md#how-to-backup-sharded-cluster-with-ansible)
 - [How to backup database with several terabytes of data](Examples.md#how-to-backup-database-with-several-terabytes-of-data)
 - [How to use clickhouse-backup in Kubernetes](Examples.md#how-to-use-clickhouse-backup-in-kubernetes)
-- [How do incremental backups work to remote storage](Examples.md#how_do_incremental_backups_work_to_remote_storage)
+- [How do incremental backups work to remote storage](Examples.md#how-do-incremental-backups-work-to-remote-storage)
