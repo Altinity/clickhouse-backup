@@ -61,27 +61,27 @@ USAGE:
    clickhouse-backup <command> [-t, --tables=<db>.<table>] <backup_name>
 
 VERSION:
-   unknown
+   1.0.0
 
 DESCRIPTION:
    Run as 'root' or 'clickhouse' user
 
 COMMANDS:
-     tables          Print list of tables
-     create          Create new backup
-     upload          Upload backup to remote storage
-     list            Print list of backups
-     download        Download backup from remote storage
-     restore         Create schema and restore data from backup
-     delete          Delete specific backup
-     default-config  Print default config
-     freeze          Freeze tables
-     clean           Remove data in 'shadow' folder
-     server          Run API server
-     help, h         Shows a list of commands or help for one command
+   tables          Print list of tables
+   create          Create new backup
+   create_remote   Create and upload
+   upload          Upload backup to remote storage
+   list            Print list of backups
+   download        Download backup from remote storage
+   restore         Create schema and restore data from backup
+   restore_remote  Download and restore
+   delete          Delete specific backup
+   default-config  Print default config
+   server          Run API server
+   help, h         Shows a list of commands or help for one command
 
 GLOBAL OPTIONS:
-   --config FILE, -c FILE  Config FILE name. (default: "/etc/clickhouse-backup/config.yml")
+   --config FILE, -c FILE  Config FILE name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --help, -h              show help
    --version, -v           print the version
 ```
