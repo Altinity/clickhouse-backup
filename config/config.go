@@ -129,21 +129,20 @@ type SFTPConfig struct {
 
 // ClickHouseConfig - clickhouse settings section
 type ClickHouseConfig struct {
-	Username                string            `yaml:"username" envconfig:"CLICKHOUSE_USERNAME"`
-	Password                string            `yaml:"password" envconfig:"CLICKHOUSE_PASSWORD"`
-	Host                    string            `yaml:"host" envconfig:"CLICKHOUSE_HOST"`
-	Port                    uint              `yaml:"port" envconfig:"CLICKHOUSE_PORT"`
-	DiskMapping             map[string]string `yaml:"disk_mapping" envconfig:"CLICKHOUSE_DISK_MAPPING"`
-	SkipTables              []string          `yaml:"skip_tables" envconfig:"CLICKHOUSE_SKIP_TABLES"`
-	Timeout                 string            `yaml:"timeout" envconfig:"CLICKHOUSE_TIMEOUT"`
-	FreezeByPart            bool              `yaml:"freeze_by_part" envconfig:"CLICKHOUSE_FREEZE_BY_PART"`
-	Secure                  bool              `yaml:"secure" envconfig:"CLICKHOUSE_SECURE"`
-	SkipVerify              bool              `yaml:"skip_verify" envconfig:"CLICKHOUSE_SKIP_VERIFY"`
-	SyncReplicatedTables    bool              `yaml:"sync_replicated_tables" envconfig:"CLICKHOUSE_SYNC_REPLICATED_TABLES"`
-	SkipSyncReplicaTimeouts bool              `yaml:"skip_sync_replica_timeouts" envconfig:"CLICKHOUSE_SKIP_SYNC_REPLICA_TIMEOUTS"`
-	LogSQLQueries           bool              `yaml:"log_sql_queries" envconfig:"CLICKHOUSE_LOG_SQL_QUERIES"`
-	ConfigDir               string            `yaml:"config_dir" envconfig:"CLICKHOUSE_CONFIG_DIR"`
-	RestartCommand          string            `yaml:"restart_command" evnconfig:"CLICKHOUSE_RESTART_COMMAND"`
+	Username             string            `yaml:"username" envconfig:"CLICKHOUSE_USERNAME"`
+	Password             string            `yaml:"password" envconfig:"CLICKHOUSE_PASSWORD"`
+	Host                 string            `yaml:"host" envconfig:"CLICKHOUSE_HOST"`
+	Port                 uint              `yaml:"port" envconfig:"CLICKHOUSE_PORT"`
+	DiskMapping          map[string]string `yaml:"disk_mapping" envconfig:"CLICKHOUSE_DISK_MAPPING"`
+	SkipTables           []string          `yaml:"skip_tables" envconfig:"CLICKHOUSE_SKIP_TABLES"`
+	Timeout              string            `yaml:"timeout" envconfig:"CLICKHOUSE_TIMEOUT"`
+	FreezeByPart         bool              `yaml:"freeze_by_part" envconfig:"CLICKHOUSE_FREEZE_BY_PART"`
+	Secure               bool              `yaml:"secure" envconfig:"CLICKHOUSE_SECURE"`
+	SkipVerify           bool              `yaml:"skip_verify" envconfig:"CLICKHOUSE_SKIP_VERIFY"`
+	SyncReplicatedTables bool              `yaml:"sync_replicated_tables" envconfig:"CLICKHOUSE_SYNC_REPLICATED_TABLES"`
+	LogSQLQueries        bool              `yaml:"log_sql_queries" envconfig:"CLICKHOUSE_LOG_SQL_QUERIES"`
+	ConfigDir            string            `yaml:"config_dir" envconfig:"CLICKHOUSE_CONFIG_DIR"`
+	RestartCommand       string            `yaml:"restart_command" evnconfig:"CLICKHOUSE_RESTART_COMMAND"`
 }
 
 type APIConfig struct {
@@ -281,12 +280,11 @@ func DefaultConfig() *Config {
 			SkipTables: []string{
 				"system.*",
 			},
-			Timeout:                 "5m",
-			ConfigDir:               "/etc/clickhouse-server/",
-			RestartCommand:          "systemctl restart clickhouse-server",
-			SyncReplicatedTables:    true,
-			SkipSyncReplicaTimeouts: true,
-			LogSQLQueries:           false,
+			Timeout:              "5m",
+			ConfigDir:            "/etc/clickhouse-server/",
+			RestartCommand:       "systemctl restart clickhouse-server",
+			SyncReplicatedTables: true,
+			LogSQLQueries:        false,
 		},
 		AzureBlob: AzureBlobConfig{
 			EndpointSuffix:    "core.windows.net",
