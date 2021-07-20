@@ -104,7 +104,7 @@ package clickhouse
 // 				return nil
 // 			}
 // 			if err := os.Link(filePath, dstFilePath); err != nil {
-// 				return fmt.Errorf("failed to crete hard link '%s' -> '%s': %v", filePath, dstFilePath, err)
+// 				return fmt.Errorf("failed to create hard link '%s' -> '%s': %v", filePath, dstFilePath, err)
 // 			}
 // 			return ch.Chown(dstFilePath)
 // 		}); err != nil {

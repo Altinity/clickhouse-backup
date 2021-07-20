@@ -439,15 +439,16 @@ func (ch *ClickHouse) MkdirAll(path string) error {
 func (ch *ClickHouse) CopyData(backupName string, backupTable metadata.TableMetadata, disks []Disk, tableDataPaths []string) error {
 	// TODO: проверить если диск есть в бэкапе но нет в ClickHouse
 	dstDataPaths := GetDisksByPaths(disks, tableDataPaths)
+	log.Debugf("dstDataPaths=%v disks=%v tableDataPaths=%v", dstDataPaths, disks, tableDataPaths)
 	for _, backupDisk := range disks {
 		if len(backupTable.Parts[backupDisk.Name]) == 0 {
 			continue
 		}
 		detachedParentDir := filepath.Join(dstDataPaths[backupDisk.Name], "detached")
-		// os.MkdirAll(detachedParentDir, 0750)
-		// ch.Chown(detachedParentDir)
+		log.Debugf("detachedParentDir=%s", detachedParentDir)
 		for _, partition := range backupTable.Parts[backupDisk.Name] {
 			detachedPath := filepath.Join(detachedParentDir, partition.Name)
+			log.Debugf("detachedPath=%s", detachedPath)
 			info, err := os.Stat(detachedPath)
 			if err != nil {
 				if os.IsNotExist(err) {
@@ -461,9 +462,6 @@ func (ch *ClickHouse) CopyData(backupName string, backupTable metadata.TableMeta
 				return fmt.Errorf("'%s' should be directory or absent", detachedPath)
 			}
 			uuid := path.Join(TablePathEncode(backupTable.Database), TablePathEncode(backupTable.Table))
-			// if backupTable.UUID != "" {
-			// 	uuid = path.Join(backupTable.UUID[0:3], backupTable.UUID)
-			// }
 			partitionPath := path.Join(backupDisk.Path, "backup", backupName, "shadow", uuid, backupDisk.Name, partition.Name)
 			// Legacy backup support
 			if _, err := os.Stat(partitionPath); os.IsNotExist(err) {
@@ -483,7 +481,7 @@ func (ch *ClickHouse) CopyData(backupName string, backupTable metadata.TableMeta
 					return nil
 				}
 				if err := os.Link(filePath, dstFilePath); err != nil {
-					return fmt.Errorf("failed to crete hard link '%s' -> '%s': %w", filePath, dstFilePath, err)
+					return fmt.Errorf("failed to create hard link '%s' -> '%s': %w", filePath, dstFilePath, err)
 				}
 				return ch.Chown(dstFilePath)
 			}); err != nil {
