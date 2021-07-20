@@ -164,6 +164,10 @@ func (ch *ClickHouse) GetTables() ([]Table, error) {
 				break
 			}
 		}
+		if t.Skip {
+			tables[i] = t
+			continue
+		}
 		tables[i] = ch.fixVariousVersions(t)
 	}
 	if len(tables) == 0 {
