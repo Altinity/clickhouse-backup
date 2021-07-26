@@ -137,7 +137,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 	}
 	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
 		if err = ch.Mkdir(backupPath); err != nil {
-			log.Errorf("can't create diretory %s: %v", backupPath, err)
+			log.Errorf("can't create directory %s: %v", backupPath, err)
 		}
 	}
 	diskMap := map[string]string{}
