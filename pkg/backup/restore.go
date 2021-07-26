@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/mattn/go-shellwords"
 	"io/ioutil"
 	"os"
 	"os/exec"
@@ -17,7 +18,6 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 	"github.com/AlexAkulov/clickhouse-backup/utils"
 	apexLog "github.com/apex/log"
-	"github.com/mattn/go-shellwords"
 	"github.com/otiai10/copy"
 	"github.com/yargevad/filepathx"
 )
@@ -33,7 +33,13 @@ func (rt RestoreTables) Sort(dropTable bool) {
 }
 
 // Restore - restore tables matched by tablePattern from backupName
-func Restore(cfg *config.Config, backupName string, tablePattern string, schemaOnly, dataOnly, dropTable, doRestoreRBAC, doRestoreConfigs bool) error {
+func Restore(cfg *config.Config, backupName string, tablePattern string, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly, skipRBAC, skipConfigs bool) error {
+	log := apexLog.WithFields(apexLog.Fields{
+		"backup":    backupName,
+		"operation": "restore",
+	})
+	doFullRestore := !schemaOnly && !dataOnly && !rbacOnly && !configsOnly
+
 	ch := &clickhouse.ClickHouse{
 		Config: &cfg.ClickHouse,
 	}
@@ -51,12 +57,12 @@ func Restore(cfg *config.Config, backupName string, tablePattern string, schemaO
 	}
 	backupMetafileLocalPath := path.Join(defaultDataPath, "backup", backupName, "metadata.json")
 	backupMetadataBody, err := ioutil.ReadFile(backupMetafileLocalPath)
-	if err == nil {
+	if err != nil {
 		backupMetadata := metadata.BackupMetadata{}
 		if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
 			return err
 		}
-		if schemaOnly || (schemaOnly == dataOnly) {
+		if schemaOnly || doFullRestore {
 			for _, database := range backupMetadata.Databases {
 				if err := ch.CreateDatabaseFromQuery(database.Query); err != nil {
 					return err
@@ -64,70 +70,57 @@ func Restore(cfg *config.Config, backupName string, tablePattern string, schemaO
 			}
 		}
 		if len(backupMetadata.Tables) == 0 {
-			apexLog.Infof("'%s' is empty backup, nothing to do", backupName)
-			return nil
+			log.Warnf("'%s' doesn't contains tables for restore", backupName)
+			if (!rbacOnly || skipRBAC) && (!configsOnly || skipConfigs) {
+				return nil
+			}
 		}
 	} else if !os.IsNotExist(err) { // Legacy backups don't contain metadata.json
 		return err
 	}
+	needRestart := false
+	if (rbacOnly || doFullRestore) && !skipRBAC {
+		if err := restoreRBAC(ch, backupName); err != nil {
+			return err
+		}
+		needRestart = true
+	}
+	if (configsOnly || doFullRestore) && !skipConfigs {
+		if err := restoreConfigs(ch, backupName); err != nil {
+			return err
+		}
+		needRestart = true
+	}
 
-	if schemaOnly || (schemaOnly == dataOnly) {
+	if needRestart {
+		log.Warnf("%s contains `access` or `configs` directory, so we need exec %s", backupName, ch.Config.RestartCommand)
+		cmd, err := shellwords.Parse(ch.Config.RestartCommand)
+		if err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+		log.Infof("run %s", ch.Config.RestartCommand)
+		var out []byte
+		if len(cmd) > 1 {
+			out, err = exec.CommandContext(ctx, cmd[0], cmd[1:]...).CombinedOutput()
+		} else {
+			out, err = exec.CommandContext(ctx, cmd[0]).CombinedOutput()
+		}
+		cancel()
+		log.Debug(string(out))
+		return err
+	}
+
+	if schemaOnly || doFullRestore {
 		if err := RestoreSchema(ch, backupName, tablePattern, dropTable); err != nil {
 			return err
 		}
 	}
-	if dataOnly || (schemaOnly == dataOnly) {
+	if dataOnly || doFullRestore {
 		if err := RestoreData(cfg, ch, backupName, tablePattern); err != nil {
 			return err
 		}
 	}
-	if doRestoreRBAC {
-		if err := restoreRBAC(ch, backupName); err != nil {
-			return err
-		}
-	}
-	if doRestoreConfigs {
-		if err := restoreConfigs(ch, backupName); err != nil {
-			return err
-		}
-	}
-
-	if doRestoreConfigs || doRestoreRBAC {
-		backupContainsDir := map[string]bool{
-			"configs": false,
-			"access":  false,
-		}
-		for prefix := range backupContainsDir {
-			configRelatedBackupDir := path.Join(defaultDataPath, "backup", backupName, prefix)
-			info, err := os.Stat(configRelatedBackupDir)
-			backupContainsDir[prefix] = !os.IsNotExist(err) && info.IsDir()
-
-			apexLog.Warnf("%s contains `%s` directory, so we need exec %s", backupName, prefix, ch.Config.RestartCommand)
-
-		}
-		if backupContainsDir["configs"] || backupContainsDir["access"] {
-			cmd, err := shellwords.Parse(ch.Config.RestartCommand)
-			if err != nil {
-				return err
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
-			apexLog.Infof("run %s", ch.Config.RestartCommand)
-			var out []byte
-			if len(cmd) > 1 {
-				out, err = exec.CommandContext(ctx, cmd[0], cmd[1:]...).CombinedOutput()
-			} else {
-				out, err = exec.CommandContext(ctx, cmd[0]).CombinedOutput()
-			}
-			cancel()
-			apexLog.Debug(string(out))
-			return err
-		}
-
-	}
-	log := apexLog.WithFields(apexLog.Fields{
-		"backup":    backupName,
-		"operation": "restore",
-	})
 	log.Info("done")
 	return nil
 }
@@ -148,7 +141,7 @@ func restoreRBAC(ch *clickhouse.ClickHouse, backupName string) error {
 		return err
 	}
 	_ = file.Close()
-	ch.Chown(markFile)
+	_ = ch.Chown(markFile)
 	listFilesPattern := path.Join(accessPath, "*.list")
 	apexLog.Infof("remove %s for properly rebuild RBAC after restart clickhouse-server", listFilesPattern)
 	if listFiles, err := filepathx.Glob(listFilesPattern); err != nil {

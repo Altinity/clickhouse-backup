@@ -70,10 +70,10 @@ func main() {
 		{
 			Name:        "create",
 			Usage:       "Create new backup",
-			UsageText:   "clickhouse-backup create [-t, --tables=<db>.<table>] [-s, --schema] [--do-backup-rbac] [--do-backup-configs] <backup_name>",
+			UsageText:   "clickhouse-backup create [-t, --tables=<db>.<table>] [-s, --schema] [--rbac] [--configs] <backup_name>",
 			Description: "Create new backup",
 			Action: func(c *cli.Context) error {
-				return backup.CreateBackup(getConfig(c), c.Args().First(), c.String("t"), c.Bool("s"), c.Bool("rbac"), c.Bool("backup-configs"), version)
+				return backup.CreateBackup(getConfig(c), c.Args().First(), c.String("t"), c.Bool("s"), c.Bool("rbac"), c.Bool("configs"), version)
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -88,23 +88,23 @@ func main() {
 				cli.BoolFlag{
 					Name:   "rbac, backup-rbac, do-backup-rbac",
 					Hidden: false,
-					Usage:  "Backup RBAC related objects",
+					Usage:  "Backup RBAC related objects only",
 				},
 				cli.BoolFlag{
-					Name:   "backup-configs, do-backup-configs",
+					Name:   "configs, backup-configs, do-backup-configs",
 					Hidden: false,
-					Usage:  "Backup ClickHouse server configuration files",
+					Usage:  "Backup ClickHouse server configuration files only",
 				},
 			),
 		},
 		{
 			Name:        "create_remote",
 			Usage:       "Create and upload",
-			UsageText:   "clickhouse-backup create_remote [-t, --tables=<db>.<table>] [--diff-from=<backup_name>] [--delete] [--schema] [--do-backup-rbac] [--do-backup-configs] <backup_name>",
+			UsageText:   "clickhouse-backup create_remote [-t, --tables=<db>.<table>] [--diff-from=<backup_name>] [--delete] [--schema] [--rbac] [--configs] <backup_name>",
 			Description: "Create and upload",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(getConfig(c))
-				return b.CreateToRemote(c.Args().First(), c.String("t"), c.String("diff-from"), c.Bool("s"), c.Bool("do-backup-rbac"), c.Bool("do-backup-configs"), version)
+				return b.CreateToRemote(c.Args().First(), c.String("t"), c.String("diff-from"), c.Bool("s"), c.Bool("rbac"), c.Bool("configs"), version)
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -123,12 +123,12 @@ func main() {
 				cli.BoolFlag{
 					Name:   "rbac, backup-rbac, do-backup-rbac",
 					Hidden: false,
-					Usage:  "Backup RBAC related objects",
+					Usage:  "Backup RBAC related objects only",
 				},
 				cli.BoolFlag{
-					Name:   "backup-configs, do-backup-configs",
+					Name:   "configs, backup-configs, do-backup-configs",
 					Hidden: false,
-					Usage:  "Backup ClickHouse server configuration files",
+					Usage:  "Backup ClickHouse server configuration files only",
 				},
 			),
 		},
@@ -200,9 +200,9 @@ func main() {
 		{
 			Name:      "restore",
 			Usage:     "Create schema and restore data from backup",
-			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-s, --schema] [-d, --data] [--rm, --drop] [--do-restore-rbac] [--do-restore-configs] <backup_name>",
+			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-s, --schema] [-d, --data] [--rm, --drop] [--rbac] [--configs] [--skip-rbac] [--skip-configs] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return backup.Restore(getConfig(c), c.Args().First(), c.String("t"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("do-restore-rbac"), c.Bool("do-restore-configs"))
+				return backup.Restore(getConfig(c), c.Args().First(), c.String("t"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("rbac"), c.Bool("configs"), c.Bool("skip-rbac"), c.Bool("skip-configs"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -227,22 +227,32 @@ func main() {
 				cli.BoolFlag{
 					Name:   "rbac, restore-rbac, do-restore-rbac",
 					Hidden: false,
-					Usage:  "Restore RBAC related objects",
+					Usage:  "Restore RBAC related objects only",
 				},
 				cli.BoolFlag{
-					Name:   "do-restore-configs",
+					Name:   "configs, restore-configs, do-restore-configs",
 					Hidden: false,
-					Usage:  "Restore CONFIG related files",
+					Usage:  "Restore CONFIG related files only",
+				},
+				cli.BoolFlag{
+					Name:   "skip-rbac",
+					Hidden: false,
+					Usage:  "Skip restore RBAC related objects",
+				},
+				cli.BoolFlag{
+					Name:   "skip-configs",
+					Hidden: false,
+					Usage:  "Skip restore CONFIG related files",
 				},
 			),
 		},
 		{
 			Name:      "restore_remote",
 			Usage:     "Download and restore",
-			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [--rm, --drop] [--do-restore-rbac] [--do-restore-configs] <backup_name>",
+			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [--rm, --drop] [--rbac] [--configs] [--skip-rbac] [--skip-configs] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(getConfig(c))
-				return b.RestoreFromRemote(c.Args().First(), c.String("t"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("do-restore-rbac"), c.Bool("do-restore-configs"))
+				return b.RestoreFromRemote(c.Args().First(), c.String("t"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("rbac"), c.Bool("configs"), c.Bool("skip-rbac"), c.Bool("skip-configs"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -267,12 +277,22 @@ func main() {
 				cli.BoolFlag{
 					Name:   "rbac, restore-rbac, do-restore-rbac",
 					Hidden: false,
-					Usage:  "Restore RBAC related objects",
+					Usage:  "Restore RBAC related objects only",
 				},
 				cli.BoolFlag{
-					Name:   "do-restore-configs",
+					Name:   "configs, restore-configs, do-restore-configs",
 					Hidden: false,
-					Usage:  "Restore CONFIGS related files",
+					Usage:  "Restore CONFIG related files only",
+				},
+				cli.BoolFlag{
+					Name:   "skip-rbac",
+					Hidden: false,
+					Usage:  "Skip restore RBAC related objects",
+				},
+				cli.BoolFlag{
+					Name:   "skip-configs",
+					Hidden: false,
+					Usage:  "Skip restore CONFIG related files",
 				},
 			),
 		},

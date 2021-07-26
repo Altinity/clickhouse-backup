@@ -218,6 +218,7 @@ func (b *Backuper) downloadBackupRelatedDir(remoteBackup new_storage.Backup, pre
 	localDir := path.Join(b.DefaultDataPath, "backup", remoteBackup.BackupName, prefix)
 	remoteFileInfo, err := b.dst.StatFile(remoteFile)
 	if err != nil {
+		apexLog.Debugf("%s not exists on remote storage, skip download", remoteFile)
 		return 0, nil
 	}
 	if err = b.dst.CompressedStreamDownload(remoteFile, localDir); err != nil {

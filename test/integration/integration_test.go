@@ -483,7 +483,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 	log.Infof("wait %f to rebuild access/*.list", waitBeforeRestore.Seconds())
 	time.Sleep(waitBeforeRestore)
 
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--rm", "--do-restore-rbac", "test_rbac_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--rm", "--rbac", "test_rbac_backup"))
 	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
 
 	// we can't restart clickhouse inside container, we need restart container
@@ -542,7 +542,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	r.NoError(dockerExec("clickhouse", "bash", "-c", "echo '<yandex><profiles><default><empty_result_for_aggregation_by_empty_set>1</empty_result_for_aggregation_by_empty_set></default></profiles></yandex>' > /etc/clickhouse-server/users.d/test_config.xml"))
 
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "--do-backup-configs", "test_configs_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "--configs", "test_configs_backup"))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "upload", "test_configs_backup"))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_configs_backup"))
 
@@ -565,7 +565,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 	r.NoError(ch.chbackup.Select(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
 	r.Equal([]string{"0"}, settings, "expect empty_result_for_aggregation_by_empty_set=0")
 
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--rm", "--do-restore-configs", "test_configs_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--rm", "--configs", "test_configs_backup"))
 
 	ch.chbackup.Close()
 	time.Sleep(2 * time.Second)
