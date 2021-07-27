@@ -189,15 +189,11 @@ func (api *APIServer) Restart() error {
 	}
 	api.server = server
 	if api.config.API.Secure {
-		go func() {
-			err = api.server.ListenAndServeTLS(api.config.API.CertificateFile, api.config.API.PrivateKeyFile)
-		}()
-	} else {
-		go func() {
-			err = api.server.ListenAndServe()
-		}()
+		go api.server.ListenAndServeTLS(api.config.API.CertificateFile, api.config.API.PrivateKeyFile)
+		return nil
 	}
-	return err
+	go api.server.ListenAndServe()
+	return nil
 }
 
 // setupAPIServer - resister API routes
@@ -261,7 +257,7 @@ func (api *APIServer) basicAuthMidleware(next http.Handler) http.Handler {
 			w.Header().Set("WWW-Authenticate", "Basic realm=\"Provide username and password\"")
 			w.WriteHeader(http.StatusUnauthorized)
 			if _, err := w.Write([]byte("401 Unauthorized\n")); err != nil {
-				apexLog.Errorf("RequestWriter.Write retun error: %v", err)
+				apexLog.Errorf("RequestWriter.Write return error: %v", err)
 			}
 			return
 		}
