@@ -90,6 +90,7 @@ type S3Config struct {
 	SSE                     string `yaml:"sse" envconfig:"S3_SSE"`
 	DisableCertVerification bool   `yaml:"disable_cert_verification" envconfig:"S3_DISABLE_CERT_VERIFICATION"`
 	StorageClass            string `yaml:"storage_class" envconfig:"S3_STORAGE_CLASS"`
+	Concurrency             int    `yaml:"concurrency" envconfig:"S3_CONCURRENCY"`
 }
 
 // COSConfig - cos settings section
@@ -281,10 +282,10 @@ func DefaultConfig() *Config {
 				"system.*",
 			},
 			Timeout:              "5m",
+			SyncReplicatedTables: false,
+			LogSQLQueries:        false,
 			ConfigDir:            "/etc/clickhouse-server/",
 			RestartCommand:       "systemctl restart clickhouse-server",
-			SyncReplicatedTables: true,
-			LogSQLQueries:        false,
 		},
 		AzureBlob: AzureBlobConfig{
 			EndpointSuffix:    "core.windows.net",
@@ -300,6 +301,7 @@ func DefaultConfig() *Config {
 			CompressionFormat:       "tar",
 			DisableCertVerification: false,
 			StorageClass:            s3.StorageClassStandard,
+			Concurrency:             1,
 		},
 		GCS: GCSConfig{
 			CompressionLevel:  1,

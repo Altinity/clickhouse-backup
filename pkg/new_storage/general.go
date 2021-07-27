@@ -403,7 +403,7 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 	case "s3":
 		s3Storage := &S3{
 			Config:      &cfg.S3,
-			Concurrency: 1,
+			Concurrency: cfg.S3.Concurrency,
 			BufferSize:  1024 * 1024,
 		}
 		return &BackupDestination{
