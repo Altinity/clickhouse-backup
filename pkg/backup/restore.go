@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/mattn/go-shellwords"
 	"io/ioutil"
 	"os"
 	"os/exec"
@@ -12,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/mattn/go-shellwords"
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
@@ -57,7 +58,7 @@ func Restore(cfg *config.Config, backupName string, tablePattern string, schemaO
 	}
 	backupMetafileLocalPath := path.Join(defaultDataPath, "backup", backupName, "metadata.json")
 	backupMetadataBody, err := ioutil.ReadFile(backupMetafileLocalPath)
-	if err != nil {
+	if err == nil {
 		backupMetadata := metadata.BackupMetadata{}
 		if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
 			return err
@@ -131,34 +132,40 @@ func restoreRBAC(ch *clickhouse.ClickHouse, backupName string) error {
 	if err != nil {
 		return err
 	}
-	if err = restoreBackupRelatedDir(ch, backupName, "access", accessPath); err != nil {
-		return err
-	}
-	markFile := path.Join(accessPath, "need_rebuild_lists.mark")
-	apexLog.Infof("create %s for properly rebuild RBAC after restart clickhouse-server", markFile)
-	file, err := os.Create(markFile)
-	if err != nil {
-		return err
-	}
-	_ = file.Close()
-	_ = ch.Chown(markFile)
-	listFilesPattern := path.Join(accessPath, "*.list")
-	apexLog.Infof("remove %s for properly rebuild RBAC after restart clickhouse-server", listFilesPattern)
-	if listFiles, err := filepathx.Glob(listFilesPattern); err != nil {
-		return err
-	} else {
-		for _, f := range listFiles {
-			if err := os.Remove(f); err != nil {
-				return err
+	if err = restoreBackupRelatedDir(ch, backupName, "access", accessPath); err == nil {
+		markFile := path.Join(accessPath, "need_rebuild_lists.mark")
+		apexLog.Infof("create %s for properly rebuild RBAC after restart clickhouse-server", markFile)
+		file, err := os.Create(markFile)
+		if err != nil {
+			return err
+		}
+		_ = file.Close()
+		_ = ch.Chown(markFile)
+		listFilesPattern := path.Join(accessPath, "*.list")
+		apexLog.Infof("remove %s for properly rebuild RBAC after restart clickhouse-server", listFilesPattern)
+		if listFiles, err := filepathx.Glob(listFilesPattern); err != nil {
+			return err
+		} else {
+			for _, f := range listFiles {
+				if err := os.Remove(f); err != nil {
+					return err
+				}
 			}
 		}
+	}
+	if !os.IsNotExist(err) {
+		return err
 	}
 	return nil
 }
 
 // restoreConfigs - copy backup_name/configs folder to /etc/clickhouse-server/
 func restoreConfigs(ch *clickhouse.ClickHouse, backupName string) error {
-	return restoreBackupRelatedDir(ch, backupName, "configs", ch.Config.ConfigDir)
+	if err := restoreBackupRelatedDir(ch, backupName, "configs", ch.Config.ConfigDir); err != nil && os.IsNotExist(err) {
+		return nil
+	} else {
+		return err
+	}
 }
 
 func restoreBackupRelatedDir(ch *clickhouse.ClickHouse, backupName, backupPrefixDir, destinationDir string) error {
@@ -168,30 +175,29 @@ func restoreBackupRelatedDir(ch *clickhouse.ClickHouse, backupName, backupPrefix
 	}
 	srcBackupDir := path.Join(defaultDataPath, "backup", backupName, backupPrefixDir)
 	info, err := os.Stat(srcBackupDir)
-	if err != nil && !os.IsNotExist(err) {
+	if err != nil {
 		return err
 	}
-	if !os.IsNotExist(err) {
-		if !info.IsDir() {
-			return fmt.Errorf("%s is not a dir", srcBackupDir)
-		}
-		apexLog.Debugf("copy %s -> %s", srcBackupDir, destinationDir)
-		copyOptions := copy.Options{OnDirExists: func(src, dest string) copy.DirExistsAction {
-			return copy.Merge
-		}}
-		if err := copy.Copy(srcBackupDir, destinationDir, copyOptions); err != nil {
-			return err
-		}
 
-		files, err := filepathx.Glob(path.Join(destinationDir, "**"))
-		if err != nil {
+	if !info.IsDir() {
+		return fmt.Errorf("%s is not a dir", srcBackupDir)
+	}
+	apexLog.Debugf("copy %s -> %s", srcBackupDir, destinationDir)
+	copyOptions := copy.Options{OnDirExists: func(src, dest string) copy.DirExistsAction {
+		return copy.Merge
+	}}
+	if err := copy.Copy(srcBackupDir, destinationDir, copyOptions); err != nil {
+		return err
+	}
+
+	files, err := filepathx.Glob(path.Join(destinationDir, "**"))
+	if err != nil {
+		return err
+	}
+	files = append(files, destinationDir)
+	for _, localFile := range files {
+		if err := ch.Chown(localFile); err != nil {
 			return err
-		}
-		files = append(files, destinationDir)
-		for _, localFile := range files {
-			if err := ch.Chown(localFile); err != nil {
-				return err
-			}
 		}
 	}
 	return nil

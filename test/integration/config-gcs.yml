@@ -4,6 +4,7 @@ general:
 clickhouse:
   host: 127.0.0.1
   port: 9000
+  restart_command: bash -c 'echo "FAKE RESTART"'
 gcs:
   bucket: clickhouse-backup-test-gcs
   path: backup

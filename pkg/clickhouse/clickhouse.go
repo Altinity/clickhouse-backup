@@ -672,6 +672,7 @@ func (ch *ClickHouse) IsAtomic(database string) (bool, error) {
 	return len(isDatabaseAtomic) > 0 && isDatabaseAtomic[0] == "Atomic", nil
 }
 
+// GetAccessManagementPath @todo think about how to properly extract access_management_path from /etc/clickhouse-server/
 func (ch *ClickHouse) GetAccessManagementPath(disks []Disk) (string, error) {
 	accessPath := "/var/lib/clickhouse/access"
 	var rows []string
