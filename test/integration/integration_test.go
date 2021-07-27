@@ -503,7 +503,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 	}
 	for rbacType, expectedValue := range rbacTypes {
 		rbacRows := []string{}
-		ch.chbackup.Select(&rbacRows, fmt.Sprintf("SHOW %s", rbacType))
+		_ = ch.chbackup.Select(&rbacRows, fmt.Sprintf("SHOW %s", rbacType))
 		found := false
 		for _, row := range rbacRows {
 			if row == expectedValue {

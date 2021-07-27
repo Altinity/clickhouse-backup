@@ -34,6 +34,7 @@ services:
   clickhouse:
     image: yandex/clickhouse-server:${CLICKHOUSE_VERSION:-1.1.54390}
     container_name: clickhouse
+    user: root
     environment:
       TZ: UTC
       LOG_LEVEL: ${LOG_LEVEL:-info}
