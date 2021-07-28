@@ -115,6 +115,10 @@ clickhouse:
   skip_verify: false               # CLICKHOUSE_SKIP_VERIFY
   sync_replicated_tables: true     # CLICKHOUSE_SYNC_REPLICATED_TABLES
   log_sql_queries: true            # CLICKHOUSE_LOG_SQL_QUERIES
+  
+  config_dir:      "/etc/clickhouse-server"              # CLICKHOUSE_CONFIG_DIR
+  restart_command: "systemctl restart clickhouse-server" # CLICKHOUSE_RESTART_COMMAND
+
 azblob:
   endpoint_suffix: "core.windows.net" # AZBLOB_ENDPOINT_SUFFIX
   account_name: ""             # AZBLOB_ACCOUNT_NAME
@@ -207,6 +211,9 @@ Print list of tables: `curl -s localhost:7171/backup/tables | jq .`
 Create new backup: `curl -s localhost:7171/backup/create -X POST | jq .`
 * Optional query argument `table` works the same as the `--table value` CLI argument.
 * Optional query argument `name` works the same as specifying a backup name with the CLI.
+* Optional query argument `schema` works the same the `--schema` CLI argument (backup schema only).
+* Optional query argument `rbac` works the same the `--rbac` CLI argument (backup RBAC only).
+* Optional query argument `configs` works the same the `--configs` CLI argument (backup configs only).
 * Full example: `curl -s 'localhost:7171/backup/create?table=default.billing&name=billing_test' -X POST`
 
 Note: this operation is async, so the API will return once the operation has been started.
@@ -236,6 +243,8 @@ Create schema and restore data from backup: `curl -s localhost:7171/backup/resto
 * Optional query argument `table` works the same as the `--table value` CLI argument.
 * Optional query argument `schema` works the same the `--schema` CLI argument (restore schema only).
 * Optional query argument `data` works the same the `--data` CLI argument (restore data only).
+* Optional query argument `rbac` works the same the `--rbac` CLI argument (restore RBAC only).
+* Optional query argument `configs` works the same the `--configs` CLI argument (restore configs only).
 
 > **POST /backup/delete**
 
@@ -243,33 +252,17 @@ Delete specific remote backup: `curl -s localhost:7171/backup/delete/remote/<BAC
 
 Delete specific local backup: `curl -s localhost:7171/backup/delete/local/<BACKUP_NAME> -X POST | jq .`
 
-> **POST /backup/freeze**
-
-Freeze tables: `curl -s localhost:7171/backup/freeze -X POST | jq .`
-
-> **POST /backup/clean**
-
-Remove data in 'shadow' folder: `curl -s localhost:7171/backup/clean -X POST | jq .`
-
 > **GET /backup/status**
 
 Display list of current async operations: `curl -s localhost:7171/backup/status | jq .`
 
-### API Configuration
+> **POST /backup/actions**
 
-> **GET /backup/config**
+Execute multiple backup actions: `curl -X POST -d '{"command":"create test_backup"}' -s localhost:7171/backup/actions` 
 
-Get the current running configuration: `curl -s localhost:7171/backup/config | jq -r .Result > current_config.yml`
+> **GET /backup/actions**
 
-> **GET /backup/config/default**
-
-Get the default configuration: `curl -s localhost:7171/backup/config/default | jq -r .Result > default_config.yml`
-
-> **POST /backup/config**
-
-Update the current running configuration: `curl -v localhost:7171/backup/config -X POST --data-binary '@new_config.yml'`
-
-Be sure to check return code for config parsing/validation errors.
+Display list of current async operations: `curl -s localhost:7171/backup/status | jq .`
 
 ## Examples
 
@@ -277,17 +270,24 @@ Be sure to check return code for config parsing/validation errors.
 ```bash
 #!/bin/bash
 BACKUP_NAME=my_backup_$(date -u +%Y-%m-%dT%H-%M-%S)
-clickhouse-backup create $BACKUP_NAME
-clickhouse-backup upload $BACKUP_NAME
+clickhouse-backup create $BACKUP_NAME >> /var/log/clickhouse-backup.log
+if [[ $? != 0 ]]; then
+  echo "clickhouse-backup create $BACKUP_NAME FAILED and return $? exit code"
+fi
+  
+clickhouse-backup upload $BACKUP_NAME >> /var/log/clickhouse-backup.log
+if [[ $? != 0 ]]; then
+  echo "clickhouse-backup upload $BACKUP_NAME FAILED and return $? exit code"
+fi
 ```
 
 ### More use cases of clickhouse-backup
 - [How to convert MergeTree to ReplicatedMergeTree](Examples.md#how-to-convert-mergetree-to-replicatedmegretree)
-- [How to store backups on NFS or another server](Examples.md#how-to-store-backups-on-nfs-or-another-server)
+- [How to store backups on NFS or another server](Examples.md#how-to-store-backups-on-nfs-backup-drive-or-another-server-via-sftp)
 - [How to move data to another clickhouse server](Examples.md#how-to-move-data-to-another-clickhouse-server)
 - [How to reduce number of partitions](Examples.md#How-to-reduce-number-of-partitions)
 - [How to monitor that backups created and uploaded correctly](Examples.md#how-to-monitor-that-backups-created-and-uploaded-correctly)
 - [How to backup sharded cluster with Ansible](Examples.md#how-to-backup-sharded-cluster-with-ansible)
 - [How to backup database with several terabytes of data](Examples.md#how-to-backup-database-with-several-terabytes-of-data)
 - [How to use clickhouse-backup in Kubernetes](Examples.md#how-to-use-clickhouse-backup-in-kubernetes)
-- [How do incremental backups work to remote storage](Examples.md#how_do_incremental_backups_work_to_remote_storage)
+- [How do incremental backups work to remote storage](Examples.md#how-do-incremental-backups-work-to-remote-storage)

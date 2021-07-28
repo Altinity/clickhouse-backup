@@ -125,7 +125,7 @@ func Server(c *cli.App, configPath string, clickhouseBackupVersion string) error
 			time.Sleep(5 * time.Second)
 			continue
 		}
-		ch.GetConn().Close()
+		_ = ch.GetConn().Close()
 		break
 	}
 	api := APIServer{
@@ -185,7 +185,7 @@ func (api *APIServer) Restart() error {
 	api.config = cfg
 	server := api.setupAPIServer()
 	if api.server != nil {
-		api.server.Close()
+		_ = api.server.Close()
 	}
 	api.server = server
 	if api.config.API.Secure {
@@ -222,14 +222,18 @@ func (api *APIServer) setupAPIServer() *http.Server {
 	r.HandleFunc("/backup/actions", api.actions).Methods("POST")
 
 	var routes []string
-	r.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
+	if err := r.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
 		t, err := route.GetPathTemplate()
 		if err != nil {
 			return err
 		}
 		routes = append(routes, t)
 		return nil
-	})
+	}); err != nil {
+		apexLog.Errorf("mux.Router.Walk return error: %v", err)
+		return nil
+	}
+
 	api.routes = routes
 	registerMetricsHandlers(r, api.config.API.EnableMetrics, api.config.API.EnablePprof)
 	srv := &http.Server{
@@ -252,7 +256,9 @@ func (api *APIServer) basicAuthMidleware(next http.Handler) http.Handler {
 		if (user != api.config.API.Username) || (pass != api.config.API.Password) {
 			w.Header().Set("WWW-Authenticate", "Basic realm=\"Provide username and password\"")
 			w.WriteHeader(http.StatusUnauthorized)
-			w.Write([]byte("401 Unauthorized\n"))
+			if _, err := w.Write([]byte("401 Unauthorized\n")); err != nil {
+				apexLog.Errorf("RequestWriter.Write return error: %v", err)
+			}
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -332,7 +338,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 			}
 			api.status.start(row.Command)
 			err := api.c.Run(append([]string{"clickhouse-backup", "-c", api.configPath}, args...))
-			defer api.status.stop(err)
+			api.status.stop(err)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, row.Command, err)
 				apexLog.Error(err.Error())
@@ -367,9 +373,9 @@ func (api *APIServer) httpRootHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
 
-	fmt.Fprintln(w, "Documentation: https://github.com/AlexAkulov/clickhouse-backup#api-configuration")
+	_, _ = fmt.Fprintln(w, "Documentation: https://github.com/AlexAkulov/clickhouse-backup#api-configuration")
 	for _, r := range api.routes {
-		fmt.Fprintln(w, r)
+		_, _ = fmt.Fprintln(w, r)
 	}
 }
 
@@ -468,6 +474,8 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	tablePattern := ""
 	backupName := backup.NewBackupName()
 	schemaOnly := false
+	rbacOnly := false
+	configsOnly := false
 	fullCommand := "create"
 	query := r.URL.Query()
 	if tp, exist := query["table"]; exist {
@@ -477,6 +485,14 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	if schema, exist := query["schema"]; exist {
 		schemaOnly, _ = strconv.ParseBool(schema[0])
 		fullCommand = fmt.Sprintf("%s --schema", fullCommand)
+	}
+	if schema, exist := query["rbac"]; exist {
+		rbacOnly, _ = strconv.ParseBool(schema[0])
+		fullCommand = fmt.Sprintf("%s --rbac", fullCommand)
+	}
+	if schema, exist := query["backupConfig"]; exist {
+		configsOnly, _ = strconv.ParseBool(schema[0])
+		fullCommand = fmt.Sprintf("%s --configs", fullCommand)
 	}
 	if name, exist := query["name"]; exist {
 		backupName = name[0]
@@ -489,7 +505,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		api.metrics.LastStart["create"].Set(float64(start.Unix()))
 		defer api.metrics.LastDuration["create"].Set(float64(time.Since(start).Nanoseconds()))
 		defer api.metrics.LastFinish["create"].Set(float64(time.Now().Unix()))
-		err := backup.CreateBackup(cfg, backupName, tablePattern, schemaOnly, api.clickhouseBackupVersion)
+		err := backup.CreateBackup(cfg, backupName, tablePattern, schemaOnly, rbacOnly, configsOnly, api.clickhouseBackupVersion)
 		defer api.status.stop(err)
 		if err != nil {
 			api.metrics.FailedCounter["create"].Inc()
@@ -601,6 +617,8 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	schemaOnly := false
 	dataOnly := false
 	dropTable := false
+	rbacOnly := false
+	configsOnly := false
 	fullCommand := "restore"
 
 	query := r.URL.Query()
@@ -624,6 +642,17 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		dropTable = true
 		fullCommand += " --rm"
 	}
+
+	if _, exist := query["rbac"]; exist {
+		rbacOnly = true
+		fullCommand += " --rbac"
+	}
+
+	if _, exist := query["configs"]; exist {
+		configsOnly = true
+		fullCommand += " --configs"
+	}
+
 	name := vars["name"]
 	fullCommand = fmt.Sprintf(fullCommand, " ", name)
 
@@ -633,7 +662,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		api.metrics.LastStart["restore"].Set(float64(start.Unix()))
 		defer api.metrics.LastDuration["restore"].Set(float64(time.Since(start).Nanoseconds()))
 		defer api.metrics.LastFinish["restore"].Set(float64(time.Now().Unix()))
-		err := backup.Restore(cfg, name, tablePattern, schemaOnly, dataOnly, dropTable)
+		err := backup.Restore(cfg, name, tablePattern, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly)
 		api.status.stop(err)
 		if err != nil {
 			apexLog.Errorf("Download error: %+v\n", err)

@@ -382,6 +382,7 @@ func (ch *ClickHouse) Chown(filename string) error {
 		ch.uid = &uid
 		ch.gid = &gid
 	}
+	log.Debugf("chown %s to %d:%d", filename, *ch.uid, *ch.gid)
 	return os.Chown(filename, *ch.uid, *ch.gid)
 }
 
@@ -442,15 +443,16 @@ func (ch *ClickHouse) MkdirAll(path string) error {
 func (ch *ClickHouse) CopyData(backupName string, backupTable metadata.TableMetadata, disks []Disk, tableDataPaths []string) error {
 	// TODO: проверить если диск есть в бэкапе но нет в ClickHouse
 	dstDataPaths := GetDisksByPaths(disks, tableDataPaths)
+	log.Debugf("dstDataPaths=%v disks=%v tableDataPaths=%v", dstDataPaths, disks, tableDataPaths)
 	for _, backupDisk := range disks {
 		if len(backupTable.Parts[backupDisk.Name]) == 0 {
 			continue
 		}
 		detachedParentDir := filepath.Join(dstDataPaths[backupDisk.Name], "detached")
-		// os.MkdirAll(detachedParentDir, 0750)
-		// ch.Chown(detachedParentDir)
+		log.Debugf("detachedParentDir=%s", detachedParentDir)
 		for _, partition := range backupTable.Parts[backupDisk.Name] {
 			detachedPath := filepath.Join(detachedParentDir, partition.Name)
+			log.Debugf("detachedPath=%s", detachedPath)
 			info, err := os.Stat(detachedPath)
 			if err != nil {
 				if os.IsNotExist(err) {
@@ -464,9 +466,6 @@ func (ch *ClickHouse) CopyData(backupName string, backupTable metadata.TableMeta
 				return fmt.Errorf("'%s' should be directory or absent", detachedPath)
 			}
 			uuid := path.Join(TablePathEncode(backupTable.Database), TablePathEncode(backupTable.Table))
-			// if backupTable.UUID != "" {
-			// 	uuid = path.Join(backupTable.UUID[0:3], backupTable.UUID)
-			// }
 			partitionPath := path.Join(backupDisk.Path, "backup", backupName, "shadow", uuid, backupDisk.Name, partition.Name)
 			// Legacy backup support
 			if _, err := os.Stat(partitionPath); os.IsNotExist(err) {
@@ -486,7 +485,7 @@ func (ch *ClickHouse) CopyData(backupName string, backupTable metadata.TableMeta
 					return nil
 				}
 				if err := os.Link(filePath, dstFilePath); err != nil {
-					return fmt.Errorf("failed to crete hard link '%s' -> '%s': %w", filePath, dstFilePath, err)
+					return fmt.Errorf("failed to create hard link '%s' -> '%s': %w", filePath, dstFilePath, err)
 				}
 				return ch.Chown(dstFilePath)
 			}); err != nil {
@@ -671,4 +670,28 @@ func (ch *ClickHouse) IsAtomic(database string) (bool, error) {
 		return false, err
 	}
 	return len(isDatabaseAtomic) > 0 && isDatabaseAtomic[0] == "Atomic", nil
+}
+
+// GetAccessManagementPath @todo think about how to properly extract access_management_path from /etc/clickhouse-server/
+func (ch *ClickHouse) GetAccessManagementPath(disks []Disk) (string, error) {
+	accessPath := "/var/lib/clickhouse/access"
+	var rows []string
+	if err := ch.Select(&rows, "SELECT JSONExtractString(params,'path') AS access_path FROM system.user_directories WHERE type='local directory'"); err != nil || len(rows) == 0 {
+		if disks == nil {
+			disks, err = ch.GetDisks()
+			if err != nil {
+				return "", err
+			}
+		}
+
+		for _, disk := range disks {
+			if _, err := os.Stat(path.Join(disk.Path, "access")); !os.IsNotExist(err) {
+				accessPath = path.Join(disk.Path, "access")
+				break
+			}
+		}
+	} else {
+		accessPath = rows[0]
+	}
+	return accessPath, nil
 }
