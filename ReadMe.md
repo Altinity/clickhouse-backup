@@ -252,33 +252,17 @@ Delete specific remote backup: `curl -s localhost:7171/backup/delete/remote/<BAC
 
 Delete specific local backup: `curl -s localhost:7171/backup/delete/local/<BACKUP_NAME> -X POST | jq .`
 
-> **POST /backup/freeze**
-
-Freeze tables: `curl -s localhost:7171/backup/freeze -X POST | jq .`
-
-> **POST /backup/clean**
-
-Remove data in 'shadow' folder: `curl -s localhost:7171/backup/clean -X POST | jq .`
-
 > **GET /backup/status**
 
 Display list of current async operations: `curl -s localhost:7171/backup/status | jq .`
 
-### API Configuration
+> **POST /backup/actions**
 
-> **GET /backup/config**
+Execute multiple backup actions: `curl -X POST -d '{"command":"create test_backup"}' -s localhost:7171/backup/actions` 
 
-Get the current running configuration: `curl -s localhost:7171/backup/config | jq -r .Result > current_config.yml`
+> **GET /backup/actions**
 
-> **GET /backup/config/default**
-
-Get the default configuration: `curl -s localhost:7171/backup/config/default | jq -r .Result > default_config.yml`
-
-> **POST /backup/config**
-
-Update the current running configuration: `curl -v localhost:7171/backup/config -X POST --data-binary '@new_config.yml'`
-
-Be sure to check return code for config parsing/validation errors.
+Display list of current async operations: `curl -s localhost:7171/backup/status | jq .`
 
 ## Examples
 
@@ -286,8 +270,15 @@ Be sure to check return code for config parsing/validation errors.
 ```bash
 #!/bin/bash
 BACKUP_NAME=my_backup_$(date -u +%Y-%m-%dT%H-%M-%S)
-clickhouse-backup create $BACKUP_NAME
-clickhouse-backup upload $BACKUP_NAME
+clickhouse-backup create $BACKUP_NAME >> /var/log/clickhouse-backup.log
+if [[ $? != 0 ]]; then
+  echo "clickhouse-backup create $BACKUP_NAME FAILED and return $? exit code"
+fi
+  
+clickhouse-backup upload $BACKUP_NAME >> /var/log/clickhouse-backup.log
+if [[ $? != 0 ]]; then
+  echo "clickhouse-backup upload $BACKUP_NAME FAILED and return $? exit code"
+fi
 ```
 
 ### More use cases of clickhouse-backup
