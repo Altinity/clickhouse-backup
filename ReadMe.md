@@ -211,6 +211,9 @@ Print list of tables: `curl -s localhost:7171/backup/tables | jq .`
 Create new backup: `curl -s localhost:7171/backup/create -X POST | jq .`
 * Optional query argument `table` works the same as the `--table value` CLI argument.
 * Optional query argument `name` works the same as specifying a backup name with the CLI.
+* Optional query argument `schema` works the same the `--schema` CLI argument (backup schema only).
+* Optional query argument `rbac` works the same the `--rbac` CLI argument (backup RBAC only).
+* Optional query argument `configs` works the same the `--configs` CLI argument (backup configs only).
 * Full example: `curl -s 'localhost:7171/backup/create?table=default.billing&name=billing_test' -X POST`
 
 Note: this operation is async, so the API will return once the operation has been started.
@@ -240,6 +243,8 @@ Create schema and restore data from backup: `curl -s localhost:7171/backup/resto
 * Optional query argument `table` works the same as the `--table value` CLI argument.
 * Optional query argument `schema` works the same the `--schema` CLI argument (restore schema only).
 * Optional query argument `data` works the same the `--data` CLI argument (restore data only).
+* Optional query argument `rbac` works the same the `--rbac` CLI argument (restore RBAC only).
+* Optional query argument `configs` works the same the `--configs` CLI argument (restore configs only).
 
 > **POST /backup/delete**
 

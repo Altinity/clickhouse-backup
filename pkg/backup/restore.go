@@ -34,12 +34,12 @@ func (rt RestoreTables) Sort(dropTable bool) {
 }
 
 // Restore - restore tables matched by tablePattern from backupName
-func Restore(cfg *config.Config, backupName string, tablePattern string, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly, skipRBAC, skipConfigs bool) error {
+func Restore(cfg *config.Config, backupName string, tablePattern string, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly bool) error {
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "restore",
 	})
-	doFullRestore := !schemaOnly && !dataOnly && !rbacOnly && !configsOnly
+	doRestoreData := !schemaOnly || dataOnly
 
 	ch := &clickhouse.ClickHouse{
 		Config: &cfg.ClickHouse,
@@ -63,7 +63,7 @@ func Restore(cfg *config.Config, backupName string, tablePattern string, schemaO
 		if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
 			return err
 		}
-		if schemaOnly || doFullRestore {
+		if schemaOnly || doRestoreData {
 			for _, database := range backupMetadata.Databases {
 				if err := ch.CreateDatabaseFromQuery(database.Query); err != nil {
 					return err
@@ -72,7 +72,7 @@ func Restore(cfg *config.Config, backupName string, tablePattern string, schemaO
 		}
 		if len(backupMetadata.Tables) == 0 {
 			log.Warnf("'%s' doesn't contains tables for restore", backupName)
-			if (!rbacOnly || skipRBAC) && (!configsOnly || skipConfigs) {
+			if (!rbacOnly) && (!configsOnly) {
 				return nil
 			}
 		}
@@ -80,13 +80,13 @@ func Restore(cfg *config.Config, backupName string, tablePattern string, schemaO
 		return err
 	}
 	needRestart := false
-	if (rbacOnly || doFullRestore) && !skipRBAC {
+	if rbacOnly {
 		if err := restoreRBAC(ch, backupName); err != nil {
 			return err
 		}
 		needRestart = true
 	}
-	if (configsOnly || doFullRestore) && !skipConfigs {
+	if configsOnly {
 		if err := restoreConfigs(ch, backupName); err != nil {
 			return err
 		}
@@ -112,12 +112,13 @@ func Restore(cfg *config.Config, backupName string, tablePattern string, schemaO
 		return err
 	}
 
-	if schemaOnly || doFullRestore {
+	if schemaOnly || (schemaOnly == dataOnly) {
+
 		if err := RestoreSchema(ch, backupName, tablePattern, dropTable); err != nil {
 			return err
 		}
 	}
-	if dataOnly || doFullRestore {
+	if dataOnly || (schemaOnly == dataOnly) {
 		if err := RestoreData(cfg, ch, backupName, tablePattern); err != nil {
 			return err
 		}

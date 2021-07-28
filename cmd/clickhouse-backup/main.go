@@ -200,9 +200,9 @@ func main() {
 		{
 			Name:      "restore",
 			Usage:     "Create schema and restore data from backup",
-			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-s, --schema] [-d, --data] [--rm, --drop] [--rbac] [--configs] [--skip-rbac] [--skip-configs] <backup_name>",
+			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-s, --schema] [-d, --data] [--rm, --drop] [--rbac] [--configs] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return backup.Restore(getConfig(c), c.Args().First(), c.String("t"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("rbac"), c.Bool("configs"), c.Bool("skip-rbac"), c.Bool("skip-configs"))
+				return backup.Restore(getConfig(c), c.Args().First(), c.String("t"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("rbac"), c.Bool("configs"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -233,16 +233,6 @@ func main() {
 					Name:   "configs, restore-configs, do-restore-configs",
 					Hidden: false,
 					Usage:  "Restore CONFIG related files only",
-				},
-				cli.BoolFlag{
-					Name:   "skip-rbac",
-					Hidden: false,
-					Usage:  "Skip restore RBAC related objects",
-				},
-				cli.BoolFlag{
-					Name:   "skip-configs",
-					Hidden: false,
-					Usage:  "Skip restore CONFIG related files",
 				},
 			),
 		},
@@ -252,7 +242,7 @@ func main() {
 			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [--rm, --drop] [--rbac] [--configs] [--skip-rbac] [--skip-configs] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(getConfig(c))
-				return b.RestoreFromRemote(c.Args().First(), c.String("t"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("rbac"), c.Bool("configs"), c.Bool("skip-rbac"), c.Bool("skip-configs"))
+				return b.RestoreFromRemote(c.Args().First(), c.String("t"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("rbac"), c.Bool("configs"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -283,16 +273,6 @@ func main() {
 					Name:   "configs, restore-configs, do-restore-configs",
 					Hidden: false,
 					Usage:  "Restore CONFIG related files only",
-				},
-				cli.BoolFlag{
-					Name:   "skip-rbac",
-					Hidden: false,
-					Usage:  "Skip restore RBAC related objects",
-				},
-				cli.BoolFlag{
-					Name:   "skip-configs",
-					Hidden: false,
-					Usage:  "Skip restore CONFIG related files",
 				},
 			),
 		},

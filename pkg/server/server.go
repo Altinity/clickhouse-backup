@@ -619,8 +619,6 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	dropTable := false
 	rbacOnly := false
 	configsOnly := false
-	skipRBAC := false
-	skipConfigs := false
 	fullCommand := "restore"
 
 	query := r.URL.Query()
@@ -655,16 +653,6 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		fullCommand += " --configs"
 	}
 
-	if _, exist := query["skip-rbac"]; exist {
-		rbacOnly = true
-		fullCommand += " --skip-rbac"
-	}
-
-	if _, exist := query["skip-configs"]; exist {
-		configsOnly = true
-		fullCommand += " --skip-configs"
-	}
-
 	name := vars["name"]
 	fullCommand = fmt.Sprintf(fullCommand, " ", name)
 
@@ -674,7 +662,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		api.metrics.LastStart["restore"].Set(float64(start.Unix()))
 		defer api.metrics.LastDuration["restore"].Set(float64(time.Since(start).Nanoseconds()))
 		defer api.metrics.LastFinish["restore"].Set(float64(time.Now().Unix()))
-		err := backup.Restore(cfg, name, tablePattern, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly, skipRBAC, skipConfigs)
+		err := backup.Restore(cfg, name, tablePattern, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly)
 		api.status.stop(err)
 		if err != nil {
 			apexLog.Errorf("Download error: %+v\n", err)

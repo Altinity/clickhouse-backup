@@ -81,7 +81,7 @@ func NewBackupName() string {
 // If backupName is empty string will use default backup name
 func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnly, rbacOnly, configsOnly bool, version string) error {
 	startBackup := time.Now()
-	doFullBackup := !schemaOnly && !rbacOnly && !configsOnly
+	doBackupData := !schemaOnly
 	if backupName == "" {
 		backupName = NewBackupName()
 	}
@@ -155,7 +155,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 		}
 		var realSize map[string]int64
 		var partitions map[string][]metadata.Part
-		if doFullBackup {
+		if doBackupData {
 			log.Debug("create data")
 			partitions, realSize, err = AddTableToBackup(ch, backupName, &table)
 			if err != nil {
@@ -193,14 +193,14 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 	}
 	backupRBACSize, backupConfigSize := int64(0), int64(0)
 
-	if rbacOnly || doFullBackup {
+	if rbacOnly {
 		if backupRBACSize, err = createRBACBackup(ch, backupPath, disks); err != nil {
 			log.Errorf("error during do RBAC backup: %v", err)
 		} else {
 			log.WithField("size", utils.FormatBytes(backupRBACSize)).Info("done createRBACBackup")
 		}
 	}
-	if configsOnly || doFullBackup {
+	if configsOnly {
 		if backupConfigSize, err = createConfigBackup(cfg, backupPath); err != nil {
 			log.Errorf("error during do CONFIG backup: %v", err)
 		} else {
