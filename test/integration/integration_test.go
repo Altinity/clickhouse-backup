@@ -733,6 +733,19 @@ func (ch *TestClickHouse) connectWithWait(r *require.Assertions) {
 			log.Warnf("clickhouse not ready %v, wait %d seconds", err, i*2)
 			r.NoError(execCmd("docker", "ps", "-a"))
 			time.Sleep(time.Second * time.Duration(i*2))
+		} else {
+			if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") == 1 {
+				var rows []string
+				err = ch.chbackup.Select(&rows, "SELECT count() FROM mysql('mysql:3306','mysql','user','root','root')")
+				if err == nil {
+					break
+				} else {
+					log.Warnf("mysql not ready %v, wait %d seconds", err, i)
+					time.Sleep(time.Second * time.Duration(i))
+				}
+			} else {
+				break
+			}
 		}
 	}
 }
@@ -870,6 +883,9 @@ func (ch *TestClickHouse) checkData(t *testing.T, data TestDataStruct) error {
 }
 
 func (ch *TestClickHouse) checkDatabaseEngine(t *testing.T, data TestDataStruct) error {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") <= 0 {
+		return nil
+	}
 	selectSQL := fmt.Sprintf("SELECT engine FROM system.databases WHERE name='%s'", data.Database)
 	log.Debug(selectSQL)
 	rows, err := ch.chbackup.GetConn().Queryx(selectSQL)
@@ -880,7 +896,7 @@ func (ch *TestClickHouse) checkDatabaseEngine(t *testing.T, data TestDataStruct)
 		}
 		assert.True(
 			t, strings.HasPrefix(data.DatabaseEngine, row["engine"].(string)),
-			fmt.Sprintf("expect '%s' has prefix '%s'", data.DatabaseEngine, row["engine"].(string)),
+			fmt.Sprintf("expect '%s' have prefix '%s'", data.DatabaseEngine, row["engine"].(string)),
 		)
 	}
 	return nil
