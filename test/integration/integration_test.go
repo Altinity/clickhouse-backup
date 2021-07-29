@@ -23,6 +23,7 @@ import (
 
 const dbNameAtomic = "_test.ДБ_atomic_"
 const dbNameOrdinary = "_test.ДБ_ordinary_"
+const dbNameMySQL = "mysql_db"
 
 type TestDataStruct struct {
 	Database           string
@@ -35,6 +36,7 @@ type TestDataStruct struct {
 	IsMaterializedView bool
 	IsDictionary       bool
 	SkipInsert         bool
+	CheckDatabaseOnly  bool
 }
 
 var testData = []TestDataStruct{
@@ -245,6 +247,10 @@ var testData = []TestDataStruct{
 		}(),
 		Fields:  []string{"id"},
 		OrderBy: "id",
+	},
+	{
+		Database: dbNameMySQL, DatabaseEngine: "MySQL('mysql:3306','mysql','root','root')",
+		CheckDatabaseOnly: true,
 	},
 }
 
@@ -502,7 +508,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 		"USERS":    "test_rbac",
 	}
 	for rbacType, expectedValue := range rbacTypes {
-		rbacRows := []string{}
+		var rbacRows []string
 		_ = ch.chbackup.Select(&rbacRows, fmt.Sprintf("SHOW %s", rbacType))
 		found := false
 		for _, row := range rbacRows {
@@ -550,7 +556,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 	time.Sleep(2 * time.Second)
 	ch.connectWithWait(r)
 
-	settings := []string{}
+	var settings []string
 	r.NoError(ch.chbackup.Select(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
 	r.Equal([]string{"1"}, settings, "expect empty_result_for_aggregation_by_empty_set=1")
 
@@ -639,10 +645,14 @@ func testCommon(t *testing.T) {
 
 	log.Info("Check data")
 	for i := range testData {
-		if isTableSkip(ch, testData[i], true) {
-			continue
+		if testData[i].CheckDatabaseOnly {
+			r.NoError(ch.checkDatabaseEngine(t, testData[i]))
+		} else {
+			if isTableSkip(ch, testData[i], true) {
+				continue
+			}
+			r.NoError(ch.checkData(t, testData[i]))
 		}
-		r.NoError(ch.checkData(t, testData[i]))
 	}
 	// test increment
 	dropAllDatabases(r, ch)
@@ -669,7 +679,12 @@ func testCommon(t *testing.T) {
 				testDataItem.Rows = append(testDataItem.Rows, incrementDataItem.Rows...)
 			}
 		}
-		r.NoError(ch.checkData(t, testDataItem))
+		if testDataItem.CheckDatabaseOnly {
+			r.NoError(ch.checkDatabaseEngine(t, testDataItem))
+		} else {
+			r.NoError(ch.checkData(t, testDataItem))
+		}
+
 	}
 
 	log.Info("Clean")
@@ -699,8 +714,9 @@ func generateTestData(ch *TestClickHouse, r *require.Assertions) {
 
 func dropAllDatabases(r *require.Assertions, ch *TestClickHouse) {
 	log.Info("Drop all databases")
-	r.NoError(ch.dropDatabase(dbNameOrdinary))
-	r.NoError(ch.dropDatabase(dbNameAtomic))
+	for _, db := range []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL} {
+		r.NoError(ch.dropDatabase(db))
+	}
 }
 
 type TestClickHouse struct {
@@ -743,6 +759,9 @@ func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {
 			return err
 		}
 	}
+	if data.CheckDatabaseOnly {
+		return nil
+	}
 	createSQL := "CREATE "
 	if data.IsMaterializedView {
 		createSQL += " MATERIALIZED VIEW "
@@ -754,13 +773,15 @@ func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {
 	createSQL += fmt.Sprintf(" IF NOT EXISTS `%s`.`%s` ", data.Database, data.Table)
 	createSQL += data.Schema
 	// old 1.x clickhouse versions doesn't contains {table} and {database} macros
-	var isMacrosExists []int
-	if err := ch.chbackup.Select(&isMacrosExists, "SELECT count() FROM system.functions WHERE name='getMacro'"); err != nil {
-		return err
-	}
-	if len(isMacrosExists) == 0 || isMacrosExists[0] == 0 {
-		createSQL = strings.Replace(createSQL, "{table}", data.Table, -1)
-		createSQL = strings.Replace(createSQL, "{database}", data.Database, -1)
+	if strings.Contains(createSQL, "{table}") || strings.Contains(createSQL, "{database}") {
+		var isMacrosExists []int
+		if err := ch.chbackup.Select(&isMacrosExists, "SELECT count() FROM system.functions WHERE name='getMacro'"); err != nil {
+			return err
+		}
+		if len(isMacrosExists) == 0 || isMacrosExists[0] == 0 {
+			createSQL = strings.Replace(createSQL, "{table}", data.Table, -1)
+			createSQL = strings.Replace(createSQL, "{database}", data.Database, -1)
+		}
 	}
 	err := ch.chbackup.CreateTable(
 		clickhouse.Table{
@@ -774,7 +795,7 @@ func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {
 }
 
 func (ch *TestClickHouse) createTestData(data TestDataStruct) error {
-	if data.SkipInsert {
+	if data.SkipInsert || data.CheckDatabaseOnly {
 		return nil
 	}
 	tx, err := ch.chbackup.GetConn().Beginx()
@@ -835,7 +856,7 @@ func (ch *TestClickHouse) checkData(t *testing.T, data TestDataStruct) error {
 	var result []map[string]interface{}
 	for rows.Next() {
 		row := map[string]interface{}{}
-		if rows.MapScan(row) != nil {
+		if err = rows.MapScan(row); err != nil {
 			return err
 		}
 		result = append(result, row)
@@ -844,6 +865,23 @@ func (ch *TestClickHouse) checkData(t *testing.T, data TestDataStruct) error {
 	for i := range data.Rows {
 		//goland:noinspection GoNilness
 		assert.EqualValues(t, data.Rows[i], result[i])
+	}
+	return nil
+}
+
+func (ch *TestClickHouse) checkDatabaseEngine(t *testing.T, data TestDataStruct) error {
+	selectSQL := fmt.Sprintf("SELECT engine FROM system.databases WHERE name='%s'", data.Database)
+	log.Debug(selectSQL)
+	rows, err := ch.chbackup.GetConn().Queryx(selectSQL)
+	for rows.Next() {
+		row := map[string]interface{}{}
+		if err = rows.MapScan(row); err != nil {
+			return err
+		}
+		assert.True(
+			t, strings.HasPrefix(data.DatabaseEngine, row["engine"].(string)),
+			fmt.Sprintf("expect '%s' has prefix '%s'", data.DatabaseEngine, row["engine"].(string)),
+		)
 	}
 	return nil
 }
@@ -867,7 +905,7 @@ func dockerExecOut(container string, cmd ...string) (string, error) {
 
 func execCmd(cmd string, args ...string) error {
 	out, err := execCmdOut(cmd, args...)
-	log.Info(string(out))
+	log.Info(out)
 	return err
 }
 
