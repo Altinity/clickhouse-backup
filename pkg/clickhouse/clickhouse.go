@@ -22,11 +22,12 @@ import (
 
 // ClickHouse - provide
 type ClickHouse struct {
-	Config *config.ClickHouseConfig
-	conn   *sqlx.DB
-	uid    *int
-	gid    *int
-	disks  []Disk
+	Config  *config.ClickHouseConfig
+	conn    *sqlx.DB
+	uid     *int
+	gid     *int
+	disks   []Disk
+	version int
 }
 
 // Connect - establish connection to ClickHouse
@@ -263,11 +264,9 @@ func (ch *ClickHouse) fixVariousVersions(t Table) Table {
 
 // GetVersion - returned ClickHouse version in number format
 // Example value: 19001005
-var cachedVersion int
-
 func (ch *ClickHouse) GetVersion() (int, error) {
-	if cachedVersion != 0 {
-		return cachedVersion, nil
+	if ch.version != 0 {
+		return ch.version, nil
 	}
 	var result []string
 	var err error
@@ -278,8 +277,8 @@ func (ch *ClickHouse) GetVersion() (int, error) {
 	if len(result) == 0 {
 		return 0, nil
 	}
-	cachedVersion, err = strconv.Atoi(result[0])
-	return cachedVersion, err
+	ch.version, err = strconv.Atoi(result[0])
+	return ch.version, err
 }
 
 func (ch *ClickHouse) GetVersionDescribe() string {
