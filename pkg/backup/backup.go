@@ -157,7 +157,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 		var partitions map[string][]metadata.Part
 		if doBackupData {
 			log.Debug("create data")
-			partitions, realSize, err = AddTableToBackup(ch, backupName, &table)
+			partitions, realSize, err = AddTableToBackup(ch, backupName, disks, &table)
 			if err != nil {
 				log.Error(err.Error())
 				if removeBackupErr := RemoveBackupLocal(cfg, backupName); removeBackupErr != nil {
@@ -283,7 +283,7 @@ func createRBACBackup(ch *clickhouse.ClickHouse, backupPath string, disks []clic
 	return rbacDataSize, copyErr
 }
 
-func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *clickhouse.Table) (map[string][]metadata.Part, map[string]int64, error) {
+func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, diskList []clickhouse.Disk, table *clickhouse.Table) (map[string][]metadata.Part, map[string]int64, error) {
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "create",
@@ -292,14 +292,10 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, table *click
 	if backupName == "" {
 		return nil, nil, fmt.Errorf("backupName is not defined")
 	}
-	diskList, err := ch.GetDisks()
-	if err != nil {
-		return nil, nil, fmt.Errorf("can't get clickhouse disk list: %v", err)
-	}
 
 	// backup data
 	if !strings.HasSuffix(table.Engine, "MergeTree") {
-		log.WithField("engine", table.Engine).Debug("skipped")
+		log.WithField("engine", table.Engine).Debug("skip table backup")
 		return nil, nil, nil
 	}
 	backupID := strings.ReplaceAll(uuid.New().String(), "-", "")

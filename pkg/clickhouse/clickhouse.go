@@ -22,11 +22,12 @@ import (
 
 // ClickHouse - provide
 type ClickHouse struct {
-	Config *config.ClickHouseConfig
-	conn   *sqlx.DB
-	uid    *int
-	gid    *int
-	disks  []Disk
+	Config  *config.ClickHouseConfig
+	conn    *sqlx.DB
+	uid     *int
+	gid     *int
+	disks   []Disk
+	version int
 }
 
 // Connect - establish connection to ClickHouse
@@ -142,7 +143,7 @@ func (ch *ClickHouse) Close() {
 	}
 }
 
-// GetTables - return slice of all tables suitable for backup
+// GetTables - return slice of all tables suitable for backup, MySQL and PostgreSQL database engine shall be skipped
 func (ch *ClickHouse) GetTables() ([]Table, error) {
 	var err error
 	tables := make([]Table, 0)
@@ -150,7 +151,14 @@ func (ch *ClickHouse) GetTables() ([]Table, error) {
 	if err = ch.Select(&isUUIDPresent, "SELECT count() FROM system.settings WHERE name = 'show_table_uuid_in_table_create_query_if_not_nil'"); err != nil {
 		return nil, err
 	}
+	skipDatabases := make([]string, 0)
+	if err = ch.Select(&skipDatabases, "SELECT name FROM system.databases WHERE engine IN ('MySQL','PostgreSQL')"); err != nil {
+		return nil, err
+	}
 	allTablesSQL := "SELECT * FROM system.tables WHERE is_temporary = 0"
+	if len(skipDatabases) > 0 {
+		allTablesSQL += fmt.Sprintf(" AND database NOT IN ('%s')", strings.Join(skipDatabases, "','"))
+	}
 	if len(isUUIDPresent) > 0 && isUUIDPresent[0] > 0 {
 		allTablesSQL += " SETTINGS show_table_uuid_in_table_create_query_if_not_nil=1"
 	}
@@ -206,7 +214,7 @@ func (ch *ClickHouse) getTableSizeFromParts(tables []Table) []Table {
 		Table    string `db:"table"`
 		Size     int64  `db:"size"`
 	}
-	query := "SELECT database, table, sum(bytes_on_disk) as size FROM system.parts GROUP BY (database, table);"
+	query := "SELECT database, table, sum(bytes_on_disk) as size FROM system.parts GROUP BY database, table;"
 	if err := ch.softSelect(&tablesSize, query); err != nil {
 		log.Warnf("error parsing tablesSize: %w", err)
 	}
@@ -257,15 +265,20 @@ func (ch *ClickHouse) fixVariousVersions(t Table) Table {
 // GetVersion - returned ClickHouse version in number format
 // Example value: 19001005
 func (ch *ClickHouse) GetVersion() (int, error) {
+	if ch.version != 0 {
+		return ch.version, nil
+	}
 	var result []string
+	var err error
 	query := "SELECT value FROM `system`.`build_options` where name='VERSION_INTEGER'"
-	if err := ch.Select(&result, query); err != nil {
+	if err = ch.Select(&result, query); err != nil {
 		return 0, fmt.Errorf("can't get сlickHouse version: %w", err)
 	}
 	if len(result) == 0 {
 		return 0, nil
 	}
-	return strconv.Atoi(result[0])
+	ch.version, err = strconv.Atoi(result[0])
+	return ch.version, err
 }
 
 func (ch *ClickHouse) GetVersionDescribe() string {
@@ -382,7 +395,6 @@ func (ch *ClickHouse) Chown(filename string) error {
 		ch.uid = &uid
 		ch.gid = &gid
 	}
-	log.Debugf("chown %s to %d:%d", filename, *ch.uid, *ch.gid)
 	return os.Chown(filename, *ch.uid, *ch.gid)
 }
 
