@@ -91,6 +91,7 @@ type S3Config struct {
 	DisableCertVerification bool   `yaml:"disable_cert_verification" envconfig:"S3_DISABLE_CERT_VERIFICATION"`
 	StorageClass            string `yaml:"storage_class" envconfig:"S3_STORAGE_CLASS"`
 	Concurrency             int    `yaml:"concurrency" envconfig:"S3_CONCURRENCY"`
+	Debug                   bool   `yaml:"debug" envconfig:"S3_DEBUG"`
 }
 
 // COSConfig - cos settings section

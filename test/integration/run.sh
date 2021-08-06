@@ -2,9 +2,12 @@
 set -x
 set -e
 
+export CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION:-20.3}
 export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup"
 export LOG_LEVEL=${LOG_LEVEL:-info}
-export CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION:-20.3}
+export GCS_TESTS=${GCS_TESTS:-}
+export AZURE_TESTS=${AZURE_TESTS:-}
+export S3_DEBUG=${S3_DEBUG:-false}
 
 if [[ "${CLICKHOUSE_VERSION}" == 2* ]]; then
   export COMPOSE_FILE=docker-compose_advanced.yml
@@ -17,6 +20,4 @@ docker volume prune -f
 make clean
 make build
 docker-compose -f test/integration/${COMPOSE_FILE} up -d --force-recreate
-# To run integration tests including GCS tests set GCS_TESTS environment variable:
-# GCS_TESTS=true go test -tags=integration -v test/integration/integration_test.go
 go test  -timeout 30m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go

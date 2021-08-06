@@ -147,6 +147,7 @@ s3:
   sse: AES256                      # S3_SSE
   disable_cert_verification: false # S3_DISABLE_CERT_VERIFICATION
   storage_class: STANDARD          # S3_STORAGE_CLASS
+  debug: false                     # S3_DEBUG
 gcs:
   credentials_file: ""         # GCS_CREDENTIALS_FILE
   credentials_json: ""         # GCS_CREDENTIALS_JSON

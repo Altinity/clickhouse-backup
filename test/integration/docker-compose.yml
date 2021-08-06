@@ -8,7 +8,7 @@ services:
       SSH_ENABLE_PASSWORD_AUTH: "true"
     command: sh -c 'echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && echo "root:JFzMHfVpvTgEd74XXPq6wARA2Qg3AutJ" | chpasswd && /usr/sbin/sshd -D -e -f /etc/ssh/sshd_config'
     ports:
-      - 22:22
+      - "2222:22"
     networks:
       - clickhouse-backup
 
@@ -21,7 +21,7 @@ services:
     entrypoint: sh
     command: -c 'mkdir -p doc_gen_minio/export/clickhouse && minio server doc_gen_minio/export'
     ports:
-      - 9010:9000
+      - "9010:9000"
     networks:
       - clickhouse-backup
 
@@ -38,6 +38,7 @@ services:
     environment:
       TZ: UTC
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      S3_DEBUG: ${S3_DEBUG:-false}
     volumes:
       - ./backup-user.xml:/etc/clickhouse-server/users.d/backup-user.xml
       - ${CLICKHOUSE_BACKUP_BIN:-../../clickhouse-backup/clickhouse-backup}:/usr/bin/clickhouse-backup
@@ -48,9 +49,9 @@ services:
       - ./ssl.xml:/etc/clickhouse-server/config.d/ssl.xml
       - ./cluster.xml:/etc/clickhouse-server/config.d/cluster.xml
     ports:
-      - 8123:8123
-      - 9000:9000
-      - 7171:7171
+      - "8123:8123"
+      - "9000:9000"
+      - "7171:7171"
     networks:
       - clickhouse-backup
     depends_on:
