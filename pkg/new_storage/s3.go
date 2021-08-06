@@ -12,6 +12,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/apex/log"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -21,6 +22,20 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/pkg/errors"
 )
+
+type S3LogToApexLogAdapter struct {
+	apexLog *log.Logger
+}
+
+func newS3Logger() *S3LogToApexLogAdapter {
+	return &S3LogToApexLogAdapter{
+		apexLog: log.Log.(*log.Logger),
+	}
+}
+
+func (S3LogToApexLogAdapter *S3LogToApexLogAdapter) Log(args ...interface{}) {
+	S3LogToApexLogAdapter.apexLog.Infof(args[0].(string), args[1:]...)
+}
 
 // S3 - presents methods for manipulate data on s3
 type S3 struct {
@@ -55,6 +70,10 @@ func (s *S3) Connect() error {
 		DisableSSL:       aws.Bool(s.Config.DisableSSL),
 		S3ForcePathStyle: aws.Bool(s.Config.ForcePathStyle),
 		MaxRetries:       aws.Int(30),
+	}
+	if s.Config.Debug {
+		awsConfig.Logger = newS3Logger()
+		awsConfig.LogLevel = aws.LogLevel(aws.LogDebug)
 	}
 
 	if s.Config.DisableCertVerification {
