@@ -48,6 +48,8 @@ type GeneralConfig struct {
 	BackupsToKeepRemote int    `yaml:"backups_to_keep_remote" envconfig:"BACKUPS_TO_KEEP_REMOTE"`
 	LogLevel            string `yaml:"log_level" envconfig:"LOG_LEVEL"`
 	AllowEmptyBackups   bool   `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
+	DownloadConcurrency uint8  `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
+	UploadConcurrency   uint8  `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
 }
 
 // GCSConfig - GCS settings section
@@ -273,6 +275,8 @@ func DefaultConfig() *Config {
 			BackupsToKeepLocal:  0,
 			BackupsToKeepRemote: 0,
 			LogLevel:            "info",
+			UploadConcurrency:   1,
+			DownloadConcurrency: 1,
 		},
 		ClickHouse: ClickHouseConfig{
 			Username: "default",

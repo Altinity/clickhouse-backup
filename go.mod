@@ -1,7 +1,7 @@
 module github.com/AlexAkulov/clickhouse-backup
 
 require (
-	cloud.google.com/go/storage v1.10.0
+	cloud.google.com/go/storage v1.16.0
 	github.com/Azure/azure-pipeline-go v0.2.2
 	github.com/Azure/azure-storage-blob-go v0.10.1-0.20200807102407-24fe552e0870
 	github.com/ClickHouse/clickhouse-go v1.4.5
@@ -14,7 +14,7 @@ require (
 	github.com/go-logfmt/logfmt v0.4.0
 	github.com/go-sql-driver/mysql v1.5.0 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
-	github.com/google/uuid v1.1.1
+	github.com/google/uuid v1.1.2
 	github.com/gorilla/mux v1.7.4
 	github.com/jlaffaye/ftp v0.0.0-20200730135723-c2ee4fa2503b
 	github.com/jmoiron/sqlx v1.2.0
@@ -34,13 +34,13 @@ require (
 	github.com/urfave/cli v1.22.2
 	github.com/yargevad/filepathx v1.0.0
 	golang.org/x/crypto v0.0.0-20201221181555-eec23a3978ad
-	golang.org/x/mod v0.3.0
-	golang.org/x/sync v0.0.0-20200317015054-43a5402ce75a
-	google.golang.org/api v0.28.0
+	golang.org/x/mod v0.4.2
+	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
+	google.golang.org/api v0.49.0
 	gopkg.in/cheggaaa/pb.v1 v1.0.28
 	gopkg.in/djherbis/buffer.v1 v1.1.0
 	gopkg.in/djherbis/nio.v2 v2.0.3
 	gopkg.in/yaml.v2 v2.3.0
 )
 
-go 1.14
+go 1.16

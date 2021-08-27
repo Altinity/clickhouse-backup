@@ -1,9 +1,12 @@
 package backup
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 	"io/ioutil"
 	"os"
 	"path"
@@ -148,6 +151,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, schemaOnly b
 		metadataSize += int64(size)
 		log.
 			WithField("duration", utils.HumanizeDuration(time.Since(start))).
+			WithField("size", utils.FormatBytes(int64(size))).
 			Info("done")
 	}
 
@@ -159,20 +163,35 @@ func (b *Backuper) Download(backupName string, tablePattern string, schemaOnly b
 				}
 			}
 		}
-		for _, tableMetadata := range tableMetadataForDownload {
+		log.Debugf("prepare table concurrent semaphore with concurrency=%d len(tableMetadataForDownload)=%d", b.cfg.General.UploadConcurrency, len(tableMetadataForDownload))
+		s := semaphore.NewWeighted(int64(b.cfg.General.DownloadConcurrency))
+		g, ctx := errgroup.WithContext(context.Background())
+
+		for i, tableMetadata := range tableMetadataForDownload {
 			if tableMetadata.MetadataOnly {
 				continue
 			}
-			dataSize += tableMetadata.TotalBytes
-			start := time.Now()
-			if err := b.downloadTableData(remoteBackup.BackupMetadata, tableMetadata); err != nil {
-				return err
+			if err := s.Acquire(ctx, 1); err != nil {
+				return fmt.Errorf("can't acquire semaphore during download: %v", err)
 			}
-			log.
-				WithField("table", fmt.Sprintf("%s.%s", tableMetadata.Database, tableMetadata.Table)).
-				WithField("duration", utils.HumanizeDuration(time.Since(start))).
-				WithField("size", utils.FormatBytes(metadataSize+tableMetadata.TotalBytes)).
-				Info("done")
+			dataSize += tableMetadata.TotalBytes
+			idx := i
+			g.Go(func() error {
+				defer s.Release(1)
+				start := time.Now()
+				if err := b.downloadTableData(remoteBackup.BackupMetadata, tableMetadataForDownload[idx]); err != nil {
+					return err
+				}
+				log.
+					WithField("table", fmt.Sprintf("%s.%s", tableMetadataForDownload[idx].Database, tableMetadataForDownload[idx].Table)).
+					WithField("duration", utils.HumanizeDuration(time.Since(start))).
+					WithField("size", utils.FormatBytes(tableMetadataForDownload[idx].TotalBytes)).
+					Info("done")
+				return nil
+			})
+		}
+		if err := g.Wait(); err != nil {
+			return fmt.Errorf("one of download go-routine return error: %v", err)
 		}
 	}
 	rbacSize, err := b.downloadRBACData(remoteBackup)
@@ -231,27 +250,64 @@ func (b *Backuper) downloadBackupRelatedDir(remoteBackup new_storage.Backup, pre
 
 func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table metadata.TableMetadata) error {
 	uuid := path.Join(clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table))
+
+	s := semaphore.NewWeighted(int64(b.cfg.General.DownloadConcurrency))
+	g, ctx := errgroup.WithContext(context.Background())
+
 	if remoteBackup.DataFormat != "directory" {
+		capacity := 0
+		for disk := range table.Files {
+			capacity += len(table.Files[disk])
+		}
+		apexLog.Debugf("start downloadTableData %s.%s with concurrency=%d len(table.Files[...])=%d", table.Database, table.Table, b.cfg.General.DownloadConcurrency, capacity)
+
 		for disk := range table.Files {
 			diskPath := b.DiskMap[disk]
 			tableLocalDir := path.Join(diskPath, "backup", remoteBackup.BackupName, "shadow", uuid, disk)
 			for _, archiveFile := range table.Files[disk] {
-				tableRemoteFile := path.Join(remoteBackup.BackupName, "shadow", clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table), archiveFile)
-				if err := b.dst.CompressedStreamDownload(tableRemoteFile, tableLocalDir); err != nil {
-					return err
+				if err := s.Acquire(ctx, 1); err != nil {
+					return fmt.Errorf("can't acquire semaphore during download: %v", err)
 				}
+				tableRemoteFile := path.Join(remoteBackup.BackupName, "shadow", clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table), archiveFile)
+				g.Go(func() error {
+					apexLog.Debugf("start download from %s", tableRemoteFile)
+					defer s.Release(1)
+					if err := b.dst.CompressedStreamDownload(tableRemoteFile, tableLocalDir); err != nil {
+						return err
+					}
+					apexLog.Debugf("finish download from %s", tableRemoteFile)
+					return nil
+				})
 			}
 		}
 	} else {
+		capacity := 0
 		for disk := range table.Parts {
+			capacity += len(table.Parts[disk])
+		}
+		apexLog.Debugf("start downloadTableData %s.%s with concurrency=%d len(table.Parts[...])=%d", table.Database, table.Table, b.cfg.General.DownloadConcurrency, capacity)
+		for disk := range table.Parts {
+			if err := s.Acquire(ctx, 1); err != nil {
+				return fmt.Errorf("can't acquire semaphore during download: %v", err)
+			}
 			tableRemotePath := path.Join(remoteBackup.BackupName, "shadow", uuid, disk)
 			diskPath := b.DiskMap[disk]
 			tableLocalDir := path.Join(diskPath, "backup", remoteBackup.BackupName, "shadow", uuid, disk)
-			if err := b.dst.DownloadPath(0, tableRemotePath, tableLocalDir); err != nil {
-				return err
-			}
+			g.Go(func() error {
+				apexLog.Debugf("start download from %s", tableRemotePath)
+				defer s.Release(1)
+				if err := b.dst.DownloadPath(0, tableRemotePath, tableLocalDir); err != nil {
+					return err
+				}
+				apexLog.Debugf("finish download from %s", tableRemotePath)
+				return nil
+			})
 		}
 	}
+	if err := g.Wait(); err != nil {
+		return fmt.Errorf("one of download go-routine return error: %v", err)
+	}
+
 	// Create symlink for exists parts
 	for disk, parts := range table.Parts {
 		for _, p := range parts {

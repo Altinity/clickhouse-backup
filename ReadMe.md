@@ -101,6 +101,8 @@ general:
   backups_to_keep_remote: 0      # BACKUPS_TO_KEEP_REMOTE
   log_level: info                # LOG_LEVEL
   allow_empty_backups: false     # ALLOW_EMPTY_BACKUPS
+  download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255
+  upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255
 clickhouse:
   username: default                # CLICKHOUSE_USERNAME
   password: ""                     # CLICKHOUSE_PASSWORD
