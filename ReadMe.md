@@ -95,7 +95,7 @@ All options can be overwritten via environment variables
 ```yaml
 general:
   remote_storage: none           # REMOTE_STORAGE
-  max_file_size: 10737418240     # MAX_FILE_SIZE
+  max_file_size: 107374182400    # MAX_FILE_SIZE
   disable_progress_bar: false    # DISABLE_PROGRESS_BAR
   backups_to_keep_local: 0       # BACKUPS_TO_KEEP_LOCAL
   backups_to_keep_remote: 0      # BACKUPS_TO_KEEP_REMOTE
