@@ -4,7 +4,9 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io/ioutil"
+	"math"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -268,15 +270,20 @@ func PrintDefaultConfig() {
 }
 
 func DefaultConfig() *Config {
+	availableConcurrency := uint8(1)
+	if runtime.NumCPU() > 1 {
+		availableConcurrency = uint8(math.Min(float64(runtime.NumCPU()/2), 128))
+	}
 	return &Config{
 		General: GeneralConfig{
 			RemoteStorage:       "s3",
-			MaxFileSize:         1024 * 1024 * 1024 * 1024, // 1TB
+			MaxFileSize:         10 * 1024 * 1024 * 1024, // 10Gb
 			BackupsToKeepLocal:  0,
 			BackupsToKeepRemote: 0,
 			LogLevel:            "info",
-			UploadConcurrency:   1,
-			DownloadConcurrency: 1,
+			DisableProgressBar:  true,
+			UploadConcurrency:   availableConcurrency,
+			DownloadConcurrency: availableConcurrency,
 		},
 		ClickHouse: ClickHouseConfig{
 			Username: "default",
@@ -301,7 +308,7 @@ func DefaultConfig() *Config {
 			Region:                  "us-east-1",
 			DisableSSL:              false,
 			ACL:                     "private",
-			PartSize:                512 * 1024 * 1024,
+			PartSize:                16 * 1024 * 1024,
 			CompressionLevel:        1,
 			CompressionFormat:       "tar",
 			DisableCertVerification: false,

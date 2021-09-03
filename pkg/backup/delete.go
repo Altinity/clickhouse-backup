@@ -2,8 +2,10 @@ package backup
 
 import (
 	"fmt"
+	"github.com/AlexAkulov/clickhouse-backup/utils"
 	"os"
 	"path"
+	"time"
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
@@ -35,6 +37,7 @@ func RemoveOldBackupsLocal(cfg *config.Config, keepLastBackup bool) error {
 }
 
 func RemoveBackupLocal(cfg *config.Config, backupName string) error {
+	start := time.Now()
 	backupList, err := GetLocalBackups(cfg)
 	if err != nil {
 		return err
@@ -63,6 +66,7 @@ func RemoveBackupLocal(cfg *config.Config, backupName string) error {
 			apexLog.WithField("operation", "delete").
 				WithField("location", "local").
 				WithField("backup", backupName).
+				WithField("duration", utils.HumanizeDuration(time.Since(start))).
 				Info("done")
 			return nil
 		}
@@ -71,6 +75,7 @@ func RemoveBackupLocal(cfg *config.Config, backupName string) error {
 }
 
 func RemoveBackupRemote(cfg *config.Config, backupName string) error {
+	start := time.Now()
 	if cfg.General.RemoteStorage == "none" {
 		fmt.Println("RemoveBackupRemote aborted: RemoteStorage set to \"none\"")
 		return nil
@@ -90,7 +95,16 @@ func RemoveBackupRemote(cfg *config.Config, backupName string) error {
 	}
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
-			return bd.RemoveBackup(backup)
+			if err := bd.RemoveBackup(backup); err != nil {
+				return err
+			}
+			apexLog.WithFields(apexLog.Fields{
+				"backup":    backupName,
+				"location":  "remote",
+				"operation": "delete",
+				"duration":  utils.HumanizeDuration(time.Since(start)),
+			}).Info("done")
+			return nil
 		}
 	}
 	return fmt.Errorf("'%s' is not found on remote storage", backupName)

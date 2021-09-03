@@ -255,10 +255,11 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 			fileName := fmt.Sprintf("%s_%d.%s", disk, i+1, b.cfg.GetArchiveExtension())
 			metdataFiles[disk] = append(metdataFiles[disk], fileName)
 			remoteDataFile := path.Join(remoteDataPath, fileName)
+			localFiles := p
 			g.Go(func() error {
-				apexLog.Debugf("start upload to %s", remoteDataFile)
+				apexLog.Debugf("start upload %d files to %s", len(localFiles), remoteDataFile)
 				defer s.Release(1)
-				if err := b.dst.CompressedStreamUpload(backupPath, p, remoteDataFile); err != nil {
+				if err := b.dst.CompressedStreamUpload(backupPath, localFiles, remoteDataFile); err != nil {
 					return fmt.Errorf("can't upload: %v", err)
 				}
 				remoteFile, err := b.dst.StatFile(remoteDataFile)
