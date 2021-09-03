@@ -402,8 +402,8 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 		}, nil
 	case "s3":
 		partSize := cfg.General.MaxFileSize / 10000
-		if partSize < 1048576 {
-			partSize = 1048576
+		if partSize < 5242880 {
+			partSize = 5242880
 		}
 		s3Storage := &S3{
 			Config:      &cfg.S3,
