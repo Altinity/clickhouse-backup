@@ -90,7 +90,6 @@ func (s *S3) GetFileReader(key string) (io.ReadCloser, error) {
 func (s *S3) PutFile(key string, r io.ReadCloser) error {
 	uploader := s3manager.NewUploader(s.session)
 	uploader.Concurrency = 1
-	uploader.PartSize = s.Config.PartSize
 	var sse *string
 	if s.Config.SSE != "" {
 		sse = aws.String(s.Config.SSE)

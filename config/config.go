@@ -13,19 +13,6 @@ import (
 	yaml "gopkg.in/yaml.v2"
 )
 
-// ArchiveExtensions - list of availiable compression formats and associated file extensions
-var ArchiveExtensions = map[string]string{
-	"tar":    "tar",
-	"lz4":    "tar.lz4",
-	"bzip2":  "tar.bz2",
-	"gzip":   "tar.gz",
-	"sz":     "tar.sz",
-	"xz":     "tar.xz",
-	"br":     "tar.br",
-	"brotli": "tar.br",
-	"zstd":   "tar.zstd",
-}
-
 // Config - config file format
 type Config struct {
 	General    GeneralConfig    `yaml:"general" envconfig:"_"`
@@ -84,7 +71,6 @@ type S3Config struct {
 	ForcePathStyle          bool   `yaml:"force_path_style" envconfig:"S3_FORCE_PATH_STYLE"`
 	Path                    string `yaml:"path" envconfig:"S3_PATH"`
 	DisableSSL              bool   `yaml:"disable_ssl" envconfig:"S3_DISABLE_SSL"`
-	PartSize                int64  `yaml:"part_size" envconfig:"S3_PART_SIZE"`
 	CompressionLevel        int    `yaml:"compression_level" envconfig:"S3_COMPRESSION_LEVEL"`
 	CompressionFormat       string `yaml:"compression_format" envconfig:"S3_COMPRESSION_FORMAT"`
 	SSE                     string `yaml:"sse" envconfig:"S3_SSE"`
@@ -159,6 +145,19 @@ type APIConfig struct {
 	CreateIntegrationTables bool   `yaml:"create_integration_tables" envconfig:"API_CREATE_INTEGRATION_TABLES"`
 }
 
+// ArchiveExtensions - list of availiable compression formats and associated file extensions
+var ArchiveExtensions = map[string]string{
+	"tar":    "tar",
+	"lz4":    "tar.lz4",
+	"bzip2":  "tar.bz2",
+	"gzip":   "tar.gz",
+	"sz":     "tar.sz",
+	"xz":     "tar.xz",
+	"br":     "tar.br",
+	"brotli": "tar.br",
+	"zstd":   "tar.zstd",
+}
+
 func (cfg *Config) GetArchiveExtension() string {
 	switch cfg.General.RemoteStorage {
 	case "s3":
@@ -193,7 +192,7 @@ func (cfg *Config) GetCompressionFormat() string {
 	case "azblob":
 		return cfg.AzureBlob.CompressionFormat
 	case "none":
-		return "none"
+		return "tar"
 	default:
 		return "unknown"
 	}
@@ -217,6 +216,9 @@ func LoadConfig(configLocation string) (*Config, error) {
 }
 
 func ValidateConfig(cfg *Config) error {
+	if cfg.GetCompressionFormat() == "unknown" {
+		return fmt.Errorf("'%s' is unknown remote storage", cfg.General.RemoteStorage)
+	}
 	if cfg.GetCompressionFormat() == "lz4" {
 		return fmt.Errorf("clickhouse already compressed data by lz4")
 	}
@@ -268,8 +270,8 @@ func PrintDefaultConfig() {
 func DefaultConfig() *Config {
 	return &Config{
 		General: GeneralConfig{
-			RemoteStorage:       "s3",
-			MaxFileSize:         1024 * 1024 * 1024 * 1024, // 1TB
+			RemoteStorage:       "none",
+			MaxFileSize:         10 * 1024 * 1024 * 1024, // 10GB
 			BackupsToKeepLocal:  0,
 			BackupsToKeepRemote: 0,
 			LogLevel:            "info",
@@ -297,7 +299,6 @@ func DefaultConfig() *Config {
 			Region:                  "us-east-1",
 			DisableSSL:              false,
 			ACL:                     "private",
-			PartSize:                512 * 1024 * 1024,
 			CompressionLevel:        1,
 			CompressionFormat:       "tar",
 			DisableCertVerification: false,
