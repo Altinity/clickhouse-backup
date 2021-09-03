@@ -9,12 +9,26 @@ import (
 )
 
 func GetDiskByPath(disks []Disk, dataPath string) string {
+	prefixLengthMap := map[int]string{}
+
 	for _, disk := range disks {
 		if strings.HasPrefix(dataPath, disk.Path) {
-			return disk.Name
+			prefixLengthMap[len(disk.Path)] = disk.Name
 		}
 	}
-	return "unknown"
+
+	if len(prefixLengthMap) == 0 {
+		return "unknown"
+	}
+
+	var maxPrefixLength int
+	for prefixLength := range prefixLengthMap {
+		if prefixLength > maxPrefixLength {
+			maxPrefixLength = prefixLength
+		}
+	}
+
+	return prefixLengthMap[maxPrefixLength]
 }
 
 func GetDisksByPaths(disks []Disk, dataPaths []string) map[string]string {
