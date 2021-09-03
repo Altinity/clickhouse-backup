@@ -403,10 +403,15 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 			cfg.General.DisableProgressBar,
 		}, nil
 	case "s3":
+		partSize := cfg.General.MaxFileSize / 10000
+		if partSize < 5242880 {
+			partSize = 5242880
+		}
 		s3Storage := &S3{
 			Config:      &cfg.S3,
 			Concurrency: cfg.S3.Concurrency,
 			BufferSize:  1024 * 1024,
+			PartSize:    partSize,
 		}
 		return &BackupDestination{
 			s3Storage,

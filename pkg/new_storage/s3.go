@@ -46,6 +46,7 @@ type S3 struct {
 	session     *session.Session
 	uploader    *s3manager.Uploader
 	Config      *config.S3Config
+	PartSize    int64
 	Concurrency int
 	BufferSize  int
 }
@@ -93,7 +94,7 @@ func (s *S3) Connect() error {
 	s.uploader = s3manager.NewUploader(s.session)
 	s.uploader.Concurrency = s.Concurrency
 	s.uploader.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(s.BufferSize)
-	s.uploader.PartSize = s.Config.PartSize
+	s.uploader.PartSize = s.PartSize
 
 	return nil
 }

@@ -94,8 +94,8 @@ All options can be overwritten via environment variables
 
 ```yaml
 general:
-  remote_storage: s3             # REMOTE_STORAGE
-  max_file_size: 1099511627776   # MAX_FILE_SIZE
+  remote_storage: none           # REMOTE_STORAGE
+  max_file_size: 10737418240     # MAX_FILE_SIZE
   disable_progress_bar: false    # DISABLE_PROGRESS_BAR
   backups_to_keep_local: 0       # BACKUPS_TO_KEEP_LOCAL
   backups_to_keep_remote: 0      # BACKUPS_TO_KEEP_REMOTE
@@ -117,7 +117,7 @@ clickhouse:
   skip_verify: false               # CLICKHOUSE_SKIP_VERIFY
   sync_replicated_tables: true     # CLICKHOUSE_SYNC_REPLICATED_TABLES
   log_sql_queries: true            # CLICKHOUSE_LOG_SQL_QUERIES
-  
+
   config_dir:      "/etc/clickhouse-server"              # CLICKHOUSE_CONFIG_DIR
   restart_command: "systemctl restart clickhouse-server" # CLICKHOUSE_RESTART_COMMAND
 
@@ -141,7 +141,6 @@ s3:
   force_path_style: false          # S3_FORCE_PATH_STYLE
   path: ""                         # S3_PATH
   disable_ssl: false               # S3_DISABLE_SSL
-  part_size: 536870912             # S3_PART_SIZE
   compression_level: 1             # S3_COMPRESSION_LEVEL
   # supports 'tar', 'gzip', 'zstd', 'brotli'
   compression_format: tar          # S3_COMPRESSION_FORMAT
@@ -261,7 +260,7 @@ Display list of current async operations: `curl -s localhost:7171/backup/status 
 
 > **POST /backup/actions**
 
-Execute multiple backup actions: `curl -X POST -d '{"command":"create test_backup"}' -s localhost:7171/backup/actions` 
+Execute multiple backup actions: `curl -X POST -d '{"command":"create test_backup"}' -s localhost:7171/backup/actions`
 
 > **GET /backup/actions**
 
@@ -277,7 +276,7 @@ clickhouse-backup create $BACKUP_NAME >> /var/log/clickhouse-backup.log
 if [[ $? != 0 ]]; then
   echo "clickhouse-backup create $BACKUP_NAME FAILED and return $? exit code"
 fi
-  
+
 clickhouse-backup upload $BACKUP_NAME >> /var/log/clickhouse-backup.log
 if [[ $? != 0 ]]; then
   echo "clickhouse-backup upload $BACKUP_NAME FAILED and return $? exit code"
