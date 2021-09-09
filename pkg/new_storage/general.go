@@ -20,8 +20,8 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	apexLog "github.com/apex/log"
+	"github.com/djherbis/buffer"
 	"github.com/mholt/archiver/v3"
-	"gopkg.in/djherbis/buffer.v1"
 	"gopkg.in/djherbis/nio.v2"
 )
 
@@ -231,6 +231,7 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 		if err := file.Close(); err != nil {
 			return err
 		}
+		apexLog.Debugf("extract %s", extractFile)
 	}
 	return nil
 }
@@ -295,6 +296,7 @@ func (bd *BackupDestination) CompressedStreamUpload(baseLocalPath string, files 
 			if err := file.Close(); err != nil { // No use defer for this too
 				return err
 			}
+			apexLog.Debugf("compress %s to %s", filePath, remotePath)
 		}
 		return nil
 	})

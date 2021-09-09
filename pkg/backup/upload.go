@@ -2,13 +2,17 @@ package backup
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 	"io/ioutil"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
@@ -66,8 +70,6 @@ func (b *Backuper) Upload(backupName string, tablePattern string, diffFrom strin
 			return err
 		}
 	}
-	compressedDataSize := int64(0)
-	metadataSize := int64(0)
 	var diffFromBackup *metadata.BackupMetadata
 	tablesForUploadFromDiff := map[metadata.TableTitle]metadata.TableMetadata{}
 	if diffFrom != "" {
@@ -90,10 +92,16 @@ func (b *Backuper) Upload(backupName string, tablePattern string, diffFrom strin
 			}
 		}
 	}
-	for _, table := range tablesForUpload {
-		// if table.UUID != "" {
-		// 	uuid = path.Join(table.UUID[0:3], table.UUID)
-		// }
+	compressedDataSize := int64(0)
+	metadataSize := int64(0)
+	log.Debugf("prepare table concurrent semaphore with concurrency=%d len(tablesForUpload)=%d", b.cfg.General.UploadConcurrency, len(tablesForUpload))
+	s := semaphore.NewWeighted(int64(b.cfg.General.UploadConcurrency))
+	g, ctx := errgroup.WithContext(context.Background())
+
+	for i, table := range tablesForUpload {
+		if err := s.Acquire(ctx, 1); err != nil {
+			return fmt.Errorf("can't acquire semaphore during upload: %v", err)
+		}
 		start := time.Now()
 		var uploadedBytes int64
 		if !schemaOnly {
@@ -103,25 +111,36 @@ func (b *Backuper) Upload(backupName string, tablePattern string, diffFrom strin
 			}]; ok {
 				b.markDuplicatedParts(backupMetadata, &diffTable, &table)
 			}
-			var files map[string][]string
-			files, uploadedBytes, err = b.uploadTableData(backupName, table)
+		}
+		idx := i
+		g.Go(func() error {
+			defer s.Release(1)
+			if !schemaOnly {
+				var files map[string][]string
+				files, uploadedBytes, err = b.uploadTableData(backupName, tablesForUpload[idx])
+				if err != nil {
+					return err
+				}
+				atomic.AddInt64(&compressedDataSize, uploadedBytes)
+				tablesForUpload[idx].Files = files
+			}
+			tableMetadataSize, err := b.uploadTableMetadata(backupName, tablesForUpload[idx])
 			if err != nil {
 				return err
 			}
-			compressedDataSize += uploadedBytes
-			table.Files = files
-		}
-		tableMetadataSize, err := b.uploadTableMetadata(backupName, table)
-		if err != nil {
-			return err
-		}
-		metadataSize += tableMetadataSize
-		log.
-			WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).
-			WithField("duration", utils.HumanizeDuration(time.Since(start))).
-			WithField("size", utils.FormatBytes(uploadedBytes+tableMetadataSize)).
-			Info("done")
+			atomic.AddInt64(&metadataSize, tableMetadataSize)
+			log.
+				WithField("table", fmt.Sprintf("%s.%s", tablesForUpload[idx].Database, tablesForUpload[idx].Table)).
+				WithField("duration", utils.HumanizeDuration(time.Since(start))).
+				WithField("size", utils.FormatBytes(uploadedBytes+tableMetadataSize)).
+				Info("done")
+			return nil
+		})
 	}
+	if err := g.Wait(); err != nil {
+		return fmt.Errorf("one of upload go-routine return error: %v", err)
+	}
+
 	// upload rbac for backup
 	if backupMetadata.RBACSize, err = b.uploadRBACData(backupName); err != nil {
 		return err
@@ -210,6 +229,13 @@ func (b *Backuper) uploadAndArchiveBackupRelatedDir(localBackupRelatedDir, local
 func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetadata) (map[string][]string, int64, error) {
 	uuid := path.Join(clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table))
 	metdataFiles := map[string][]string{}
+	capacity := 0
+	for disk := range table.Parts {
+		capacity += len(table.Parts[disk])
+	}
+	apexLog.Debugf("start uploadTableData %s.%s with concurrency=%d len(table.Parts[...])=%d", table.Database, table.Table, b.cfg.General.UploadConcurrency, capacity)
+	s := semaphore.NewWeighted(int64(b.cfg.General.UploadConcurrency))
+	g, ctx := errgroup.WithContext(context.Background())
 	var uploadedBytes int64
 	for disk := range table.Parts {
 		backupPath := path.Join(b.DiskMap[disk], "backup", backupName, "shadow", uuid, disk)
@@ -218,6 +244,9 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 			return nil, 0, err
 		}
 		for i, p := range parts {
+			if err := s.Acquire(ctx, 1); err != nil {
+				return nil, 0, fmt.Errorf("can't acquire semaphore during upload: %v", err)
+			}
 			remoteDataPath := path.Join(backupName, "shadow", clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table))
 			// Disabled temporary
 			// if b.cfg.GetCompressionFormat() == "none" {
@@ -226,15 +255,25 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 			fileName := fmt.Sprintf("%s_%d.%s", disk, i+1, b.cfg.GetArchiveExtension())
 			metdataFiles[disk] = append(metdataFiles[disk], fileName)
 			remoteDataFile := path.Join(remoteDataPath, fileName)
-			if err := b.dst.CompressedStreamUpload(backupPath, p, remoteDataFile); err != nil {
-				return nil, 0, fmt.Errorf("can't upload: %v", err)
-			}
-			remoteFile, err := b.dst.StatFile(remoteDataFile)
-			if err != nil {
-				return nil, 0, fmt.Errorf("can't check uploaded file: %v", err)
-			}
-			uploadedBytes += remoteFile.Size()
+			localFiles := p
+			g.Go(func() error {
+				apexLog.Debugf("start upload %d files to %s", len(localFiles), remoteDataFile)
+				defer s.Release(1)
+				if err := b.dst.CompressedStreamUpload(backupPath, localFiles, remoteDataFile); err != nil {
+					return fmt.Errorf("can't upload: %v", err)
+				}
+				remoteFile, err := b.dst.StatFile(remoteDataFile)
+				if err != nil {
+					return fmt.Errorf("can't check uploaded file: %v", err)
+				}
+				atomic.AddInt64(&uploadedBytes, remoteFile.Size())
+				apexLog.Debugf("finish upload to %s", remoteDataFile)
+				return nil
+			})
 		}
+	}
+	if err := g.Wait(); err != nil {
+		return nil, 0, fmt.Errorf("one of upload go-routine return error: %v", err)
 	}
 	return metdataFiles, uploadedBytes, nil
 }
@@ -345,7 +384,7 @@ func separateParts(basePath string, parts []metadata.Part, maxSize int64) ([][]s
 			continue
 		}
 		partPath := path.Join(basePath, parts[i].Name)
-		filepath.Walk(partPath, func(filePath string, info os.FileInfo, err error) error {
+		err := filepath.Walk(partPath, func(filePath string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err
 			}
@@ -362,6 +401,9 @@ func separateParts(basePath string, parts []metadata.Part, maxSize int64) ([][]s
 			size += info.Size()
 			return nil
 		})
+		if err != nil {
+			apexLog.Warnf("filepath.Walk return error: %v", err)
+		}
 	}
 	if len(files) > 0 {
 		result = append(result, files)

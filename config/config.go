@@ -4,7 +4,9 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io/ioutil"
+	"math"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -35,6 +37,8 @@ type GeneralConfig struct {
 	BackupsToKeepRemote int    `yaml:"backups_to_keep_remote" envconfig:"BACKUPS_TO_KEEP_REMOTE"`
 	LogLevel            string `yaml:"log_level" envconfig:"LOG_LEVEL"`
 	AllowEmptyBackups   bool   `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
+	DownloadConcurrency uint8  `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
+	UploadConcurrency   uint8  `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
 }
 
 // GCSConfig - GCS settings section
@@ -268,6 +272,10 @@ func PrintDefaultConfig() {
 }
 
 func DefaultConfig() *Config {
+	availableConcurrency := uint8(1)
+	if runtime.NumCPU() > 1 {
+		availableConcurrency = uint8(math.Min(float64(runtime.NumCPU()/2), 128))
+	}
 	return &Config{
 		General: GeneralConfig{
 			RemoteStorage:       "none",
@@ -275,6 +283,9 @@ func DefaultConfig() *Config {
 			BackupsToKeepLocal:  0,
 			BackupsToKeepRemote: 0,
 			LogLevel:            "info",
+			DisableProgressBar:  true,
+			UploadConcurrency:   availableConcurrency,
+			DownloadConcurrency: availableConcurrency,
 		},
 		ClickHouse: ClickHouseConfig{
 			Username: "default",
