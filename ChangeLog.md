@@ -1,3 +1,23 @@
+# v1.1.0
+
+IMPROVEMENTS
+- Added concurrency settings for upload and download, which allow loading table data in parallel for each table and each disk for multi-disk storages
+- Up go to 1.16
+- Updated go libraries dependencies to actual version (exclude azure)
+- Add Clickhouse 21.8 to test matrix
+- remove `S3_PART_SIZE` config parameter and calculate it depends on `MAX_FILE_SIZE`
+- improve logging for delete operation
+- Added `S3_DEBUG` option to allow debug S3 connection
+- Decrease number of SQL queries to system.* during backup commands
+- Added options for RBAC and CONFIGs backup, look to `clickhouse-backup help create` and `clickhouse-backup help restore` for details
+- Add `S3_CONCURRENCY` option to speedup backup upload
+- Add `--diff-from-remote` to `upload` command for avoid store local backup
+
+BUG FIXES
+- fix [#256](https://github.com/AlexAkulov/clickhouse-backup/issues/256)
+- backup only database metadata for proxy integrated database engines like MySQL, PostgreSQL fix [#223](https://github.com/AlexAkulov/clickhouse-backup/issues/223)
+- Remove unused `SKIP_SYNC_REPLICA_TIMEOUTS` option
+
 # v1.0.0
 
 BUG FIXES

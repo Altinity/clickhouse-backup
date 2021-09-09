@@ -3,6 +3,7 @@ set -x
 set -e
 
 export CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION:-21.8}
+export CLICKHOUSE_IMAGE=${CLICKHOUSE_IMAGE:-yandex/clickhouse-server}
 export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup"
 export LOG_LEVEL=${LOG_LEVEL:-info}
 export GCS_TESTS=${GCS_TESTS:-}

@@ -43,7 +43,7 @@ services:
       - clickhouse-backup
 
   clickhouse:
-    image: yandex/clickhouse-server:${CLICKHOUSE_VERSION:-21.3}
+    image: ${CLICKHOUSE_IMAGE:-yandex/clickhouse-server}:${CLICKHOUSE_VERSION:-19.17}
     container_name: clickhouse
     user: root
     environment:
