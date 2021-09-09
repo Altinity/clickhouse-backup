@@ -400,11 +400,12 @@ func (api *APIServer) httpTablesHandler(w http.ResponseWriter, _ *http.Request) 
 // ??? INSERT INTO system.backup_list (name) VALUES ('backup_name') - create backup
 func (api *APIServer) httpListHandler(w http.ResponseWriter, _ *http.Request) {
 	type backupJSON struct {
-		Name     string `json:"name"`
-		Created  string `json:"created"`
-		Size     int64  `json:"size,omitempty"`
-		Location string `json:"location"`
-		Desc     string `json:"desc"`
+		Name           string `json:"name"`
+		Created        string `json:"created"`
+		Size           int64  `json:"size,omitempty"`
+		Location       string `json:"location"`
+		RequiredBackup string `json:"required"`
+		Desc           string `json:"desc"`
 	}
 	backupsJSON := make([]backupJSON, 0)
 	cfg, err := config.LoadConfig(api.configPath)
@@ -426,11 +427,12 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, _ *http.Request) {
 			description = b.Broken
 		}
 		backupsJSON = append(backupsJSON, backupJSON{
-			Name:     b.BackupName,
-			Created:  b.CreationDate.Format(APITimeFormat),
-			Size:     b.DataSize + b.MetadataSize,
-			Location: "local",
-			Desc:     description,
+			Name:           b.BackupName,
+			Created:        b.CreationDate.Format(APITimeFormat),
+			Size:           b.DataSize + b.MetadataSize,
+			Location:       "local",
+			RequiredBackup: b.RequiredBackup,
+			Desc:           description,
 		})
 	}
 	if cfg.General.RemoteStorage != "none" {
@@ -448,11 +450,12 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, _ *http.Request) {
 				description = b.Broken
 			}
 			backupsJSON = append(backupsJSON, backupJSON{
-				Name:     b.BackupName,
-				Created:  b.CreationDate.Format(APITimeFormat),
-				Size:     b.DataSize + b.MetadataSize,
-				Location: "remote",
-				Desc:     description,
+				Name:           b.BackupName,
+				Created:        b.CreationDate.Format(APITimeFormat),
+				Size:           b.DataSize + b.MetadataSize,
+				Location:       "remote",
+				RequiredBackup: b.RequiredBackup,
+				Desc:           description,
 			})
 		}
 	}
