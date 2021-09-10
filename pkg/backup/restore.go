@@ -257,7 +257,7 @@ func RestoreSchema(ch *clickhouse.ClickHouse, backupName string, tablePattern st
 				restoreRetries++
 				if restoreRetries >= totalRetries {
 					return fmt.Errorf(
-						"can't create table `%s`.`%s`: %v after %d times, please check your schema depencncies",
+						"can't create table `%s`.`%s`: %v after %d times, please check your schema dependencies",
 						schema.Database, schema.Table, restoreErr, restoreRetries,
 					)
 				} else {
