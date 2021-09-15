@@ -126,6 +126,7 @@ azblob:
   account_name: ""             # AZBLOB_ACCOUNT_NAME
   account_key: ""              # AZBLOB_ACCOUNT_KEY
   sas: ""                      # AZBLOB_SAS
+  use_managed_identity: false  # AZBLOB_USE_MANAGED_IDENTITY
   container: ""                # AZBLOB_CONTAINER
   path: ""                     # AZBLOB_PATH
   compression_level: 1         # AZBLOB_COMPRESSION_LEVEL

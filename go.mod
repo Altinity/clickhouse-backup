@@ -4,6 +4,8 @@ require (
 	cloud.google.com/go/storage v1.16.0
 	github.com/Azure/azure-pipeline-go v0.2.2
 	github.com/Azure/azure-storage-blob-go v0.10.1-0.20200807102407-24fe552e0870
+	github.com/Azure/go-autorest/autorest v0.9.0
+	github.com/Azure/go-autorest/autorest/adal v0.8.3
 	github.com/ClickHouse/clickhouse-go v1.4.7
 	github.com/apex/log v1.9.0
 	github.com/aws/aws-sdk-go v1.40.31
