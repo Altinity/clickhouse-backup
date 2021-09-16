@@ -17,6 +17,8 @@ import (
 
 	"github.com/Azure/azure-pipeline-go/pipeline"
 	"github.com/Azure/azure-storage-blob-go/azblob"
+	"github.com/Azure/go-autorest/autorest/adal"
+	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/pkg/errors"
 )
 
@@ -38,8 +40,8 @@ func (s *AzureBlob) Connect() error {
 	if s.Config.AccountName == "" {
 		return fmt.Errorf("account name not set")
 	}
-	if s.Config.AccountKey == "" && s.Config.SharedAccessSignature == "" {
-		return fmt.Errorf("account key or SAS must be set")
+	if s.Config.AccountKey == "" && s.Config.SharedAccessSignature == "" && !s.Config.UseManagedIdentity {
+		return fmt.Errorf("account key or SAS or use_managed_identity must be set")
 	}
 	var (
 		err        error
@@ -52,10 +54,39 @@ func (s *AzureBlob) Connect() error {
 			return err
 		}
 		urlString = fmt.Sprintf("https://%s.blob.%s", s.Config.AccountName, s.Config.EndpointSuffix)
-	}
-	if s.Config.SharedAccessSignature != "" {
+	} else if s.Config.SharedAccessSignature != "" {
 		credential = azblob.NewAnonymousCredential()
 		urlString = fmt.Sprintf("https://%s.blob.%s?%s", s.Config.AccountName, s.Config.EndpointSuffix, s.Config.SharedAccessSignature)
+	} else if s.Config.UseManagedIdentity {
+		azureEnv, err := azure.EnvironmentFromName("AZUREPUBLICCLOUD")
+		if err != nil {
+			return err
+		}
+		var spToken *adal.ServicePrincipalToken
+		msiEndpoint, _ := adal.GetMSIVMEndpoint()
+		spToken, err = adal.NewServicePrincipalTokenFromMSI(msiEndpoint, azureEnv.ResourceIdentifiers.Storage)
+		if err != nil {
+			return err
+		}
+		tokenRefresher := func(tokenCred azblob.TokenCredential) time.Duration {
+			// Refreshing Azure auth token
+			err := spToken.Refresh()
+			if err != nil {
+				// Error refreshing Azure auth token, retry after 1 min.
+				return 1 * time.Minute
+			}
+			token := spToken.Token()
+			tokenCred.SetToken(token.AccessToken)
+			// Return the expiry time of <response> minus 30 min. so we can retry
+			// OAuth token is valid for 1hr.
+			// ManagedIdentity one for 24 hrs.
+			exp := token.Expires().Sub(time.Now().Add(30 * time.Minute))
+			// Received a new Azure auth token, valid for exp
+			return exp
+		}
+
+		credential = azblob.NewTokenCredential("", tokenRefresher)
+		urlString = fmt.Sprintf("https://%s.blob.%s", s.Config.AccountName, s.Config.EndpointSuffix)
 	}
 
 	u, err := url.Parse(urlString)

@@ -57,6 +57,7 @@ type AzureBlobConfig struct {
 	AccountName           string `yaml:"account_name" envconfig:"AZBLOB_ACCOUNT_NAME"`
 	AccountKey            string `yaml:"account_key" envconfig:"AZBLOB_ACCOUNT_KEY"`
 	SharedAccessSignature string `yaml:"sas" envconfig:"AZBLOB_SAS"`
+	UseManagedIdentity    bool   `yaml:"use_managed_identity" envconfig:"AZBLOB_USE_MANAGED_IDENTITY"`
 	Container             string `yaml:"container" envconfig:"AZBLOB_CONTAINER"`
 	Path                  string `yaml:"path" envconfig:"AZBLOB_PATH"`
 	CompressionLevel      int    `yaml:"compression_level" envconfig:"AZBLOB_COMPRESSION_LEVEL"`
