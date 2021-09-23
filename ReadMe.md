@@ -277,7 +277,7 @@ In order to make backups to S3, the following permissions shall be set:
     "Version": "2012-10-17",
     "Statement": [
         {
-            "Sid": "VisualEditor0",
+            "Sid": "clickhouse-backup-s3-access-to-files",
             "Effect": "Allow",
             "Action": [
                 "s3:PutObject",
