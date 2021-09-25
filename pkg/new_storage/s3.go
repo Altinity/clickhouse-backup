@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
 	"github.com/aws/aws-sdk-go/aws/defaults"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
@@ -87,6 +88,12 @@ func (s *S3) Connect() error {
 		}
 		awsConfig.HTTPClient = &http.Client{Transport: tr}
 	}
+
+	if s.Config.AssumeRoleARN != "" {
+		/// Reference to regular credentials chain is to be copied into `stscreds` credentials.
+		awsConfig.Credentials = stscreds.NewCredentials(session.Must(session.NewSession(awsConfig)), s.Config.AssumeRoleARN)
+	}
+
 	if s.session, err = session.NewSession(awsConfig); err != nil {
 		return err
 	}
