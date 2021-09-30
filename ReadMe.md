@@ -149,6 +149,8 @@ s3:
   sse: AES256                      # S3_SSE
   disable_cert_verification: false # S3_DISABLE_CERT_VERIFICATION
   storage_class: STANDARD          # S3_STORAGE_CLASS
+  # if less or eq 0 then calculated as max_file_size / 10000 
+  part_size: 0                     # S3_PART_SIZE
   debug: false                     # S3_DEBUG
 gcs:
   credentials_file: ""         # GCS_CREDENTIALS_FILE
