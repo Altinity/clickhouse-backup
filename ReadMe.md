@@ -117,10 +117,9 @@ clickhouse:
   skip_verify: false               # CLICKHOUSE_SKIP_VERIFY
   sync_replicated_tables: true     # CLICKHOUSE_SYNC_REPLICATED_TABLES
   log_sql_queries: true            # CLICKHOUSE_LOG_SQL_QUERIES
-
+  debug: false                     # CLICKHOUSE_DEBUG
   config_dir:      "/etc/clickhouse-server"              # CLICKHOUSE_CONFIG_DIR
   restart_command: "systemctl restart clickhouse-server" # CLICKHOUSE_RESTART_COMMAND
-
 azblob:
   endpoint_suffix: "core.windows.net" # AZBLOB_ENDPOINT_SUFFIX
   account_name: ""             # AZBLOB_ACCOUNT_NAME
@@ -156,6 +155,7 @@ gcs:
   path: ""                     # GCS_PATH
   compression_level: 1         # GCS_COMPRESSION_LEVEL
   compression_format: tar      # GCS_COMPRESSION_FORMAT
+  debug: false                 # GCS_DEBUG
 cos:
   url: ""                      # COS_URL
   timeout: 2m                  # COS_TIMEOUT
@@ -264,7 +264,7 @@ Execute multiple backup actions: `curl -X POST -d '{"command":"create test_backu
 
 > **GET /backup/actions**
 
-Display list of current async operations: `curl -s localhost:7171/backup/status | jq .`
+Display list of current async operations: `curl -s localhost:7171/backup/actions | jq .`
 
 ## Examples
 

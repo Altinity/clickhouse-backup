@@ -49,6 +49,7 @@ type GCSConfig struct {
 	Path              string `yaml:"path" envconfig:"GCS_PATH"`
 	CompressionLevel  int    `yaml:"compression_level" envconfig:"GCS_COMPRESSION_LEVEL"`
 	CompressionFormat string `yaml:"compression_format" envconfig:"GCS_COMPRESSION_FORMAT"`
+	Debug             bool   `yaml:"debug" envconfig:"GCS_DEBUG"`
 }
 
 // AzureBlobConfig - Azure Blob settings section
@@ -135,6 +136,7 @@ type ClickHouseConfig struct {
 	LogSQLQueries        bool              `yaml:"log_sql_queries" envconfig:"CLICKHOUSE_LOG_SQL_QUERIES"`
 	ConfigDir            string            `yaml:"config_dir" envconfig:"CLICKHOUSE_CONFIG_DIR"`
 	RestartCommand       string            `yaml:"restart_command" evnconfig:"CLICKHOUSE_RESTART_COMMAND"`
+	Debug                bool              `yaml:"debug" envconfig:"CLICKHOUSE_DEBUG"`
 }
 
 type APIConfig struct {

@@ -2,43 +2,83 @@ package new_storage
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"net/http"
 	"path"
 	"strings"
 	"time"
 
-	"github.com/AlexAkulov/clickhouse-backup/config"
-
 	"cloud.google.com/go/storage"
+	"github.com/AlexAkulov/clickhouse-backup/config"
+	"github.com/apex/log"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
+	"google.golang.org/api/option/internaloption"
+	googleHTTPTransport "google.golang.org/api/transport/http"
 )
 
 // GCS - presents methods for manipulate data on GCS
 type GCS struct {
 	client *storage.Client
 	Config *config.GCSConfig
-	buffer []byte
+}
+
+type debugGCSTransport struct {
+	base http.RoundTripper
+}
+
+func (w debugGCSTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	logMsg := fmt.Sprintf(">>> [GCS_REQUEST] >>> %v %v\n", r.Method, r.URL.String())
+	for h, values := range r.Header {
+		for _, v := range values {
+			logMsg += fmt.Sprintf("%v: %v\n", h, v)
+		}
+	}
+	log.Info(logMsg)
+
+	resp, err := w.base.RoundTrip(r)
+	logMsg = fmt.Sprintf("<<< [GCS_RESPONSE] <<< %v %v\n", r.Method, r.URL.String())
+	if err != nil {
+		log.Errorf("GCS_ERROR: %v", err)
+		return resp, err
+	}
+	for h, values := range resp.Header {
+		for _, v := range values {
+			logMsg += fmt.Sprintf("%v: %v\n", h, v)
+		}
+	}
+	log.Info(logMsg)
+	return resp, err
 }
 
 // Connect - connect to GCS
 func (gcs *GCS) Connect() error {
 	var err error
-	var clientOption option.ClientOption
-	gcs.buffer = make([]byte, 4*1024*1024)
+	clientOptions := make([]option.ClientOption, 0)
 	ctx := context.Background()
 
 	if gcs.Config.CredentialsJSON != "" {
-		clientOption = option.WithCredentialsJSON([]byte(gcs.Config.CredentialsJSON))
-		gcs.client, err = storage.NewClient(ctx, clientOption)
-		return err
+		clientOptions = append(clientOptions, option.WithCredentialsJSON([]byte(gcs.Config.CredentialsJSON)))
+	} else if gcs.Config.CredentialsFile != "" {
+		clientOptions = append(clientOptions, option.WithCredentialsFile(gcs.Config.CredentialsFile))
 	}
-	if gcs.Config.CredentialsFile != "" {
-		clientOption = option.WithCredentialsFile(gcs.Config.CredentialsFile)
-		gcs.client, err = storage.NewClient(ctx, clientOption)
-		return err
+
+	if gcs.Config.Debug {
+		clientOptions = append([]option.ClientOption{option.WithScopes(storage.ScopeFullControl)}, clientOptions...)
+
+		clientOptions = append(clientOptions, internaloption.WithDefaultEndpoint("https://storage.googleapis.com/storage/v1/"))
+		clientOptions = append(clientOptions, internaloption.WithDefaultMTLSEndpoint("https://storage.mtls.googleapis.com/storage/v1/"))
+
+		debugClient, _, err := googleHTTPTransport.NewClient(ctx, clientOptions...)
+		if err != nil {
+			return fmt.Errorf("googleHTTPTransport.NewClient error: %v", err)
+		}
+		debugClient.Transport = debugGCSTransport{base: debugClient.Transport}
+		clientOptions = append(clientOptions, option.WithHTTPClient(debugClient))
 	}
-	gcs.client, err = storage.NewClient(ctx)
+
+	gcs.client, err = storage.NewClient(ctx, clientOptions...)
 	return err
 }
 
@@ -104,7 +144,8 @@ func (gcs *GCS) PutFile(key string, r io.ReadCloser) error {
 	obj := gcs.client.Bucket(gcs.Config.Bucket).Object(path.Join(gcs.Config.Path, key))
 	writer := obj.NewWriter(ctx)
 	defer writer.Close()
-	_, err := io.CopyBuffer(writer, r, gcs.buffer)
+	buffer := make([]byte, 4*1024*1024)
+	_, err := io.CopyBuffer(writer, r, buffer)
 	return err
 }
 

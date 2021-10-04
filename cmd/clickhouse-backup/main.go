@@ -100,7 +100,7 @@ func main() {
 		{
 			Name:        "create_remote",
 			Usage:       "Create and upload",
-			UsageText:   "clickhouse-backup create_remote [-t, --tables=<db>.<table>] [--diff-from=<backup_name>] [--delete] [--schema] [--rbac] [--configs] <backup_name>",
+			UsageText:   "clickhouse-backup create_remote [-t, --tables=<db>.<table>] [--diff-from=<local_backup_name>] [--schema] [--rbac] [--configs] <backup_name>",
 			Description: "Create and upload",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(getConfig(c))
@@ -114,6 +114,7 @@ func main() {
 				cli.StringFlag{
 					Name:   "diff-from",
 					Hidden: false,
+					Usage:  "local backup name which used to upload current backup as differential",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",
@@ -135,7 +136,7 @@ func main() {
 		{
 			Name:      "upload",
 			Usage:     "Upload backup to remote storage",
-			UsageText: "clickhouse-backup upload [-t, --tables=<db>.<table>] [-s, --schema] [--diff-from=<backup_name>] <backup_name>",
+			UsageText: "clickhouse-backup upload [-t, --tables=<db>.<table>] [-s, --schema] [--diff-from=<local_backup_name>] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(getConfig(c))
 				return b.Upload(c.Args().First(), c.String("t"), c.String("diff-from"), c.Bool("s"))
@@ -144,6 +145,7 @@ func main() {
 				cli.StringFlag{
 					Name:   "diff-from",
 					Hidden: false,
+					Usage:  "local backup name which used to upload current backup as differential",
 				},
 				cli.StringFlag{
 					Name:   "table, tables, t",

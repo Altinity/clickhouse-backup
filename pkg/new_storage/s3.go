@@ -37,7 +37,7 @@ func (S3LogToApexLogAdapter *S3LogToApexLogAdapter) Log(args ...interface{}) {
 	if len(args) > 1 {
 		S3LogToApexLogAdapter.apexLog.Infof(args[0].(string), args[1:]...)
 	} else {
-		S3LogToApexLogAdapter.apexLog.Infof(args[0].(string))
+		S3LogToApexLogAdapter.apexLog.Info(args[0].(string))
 	}
 }
 

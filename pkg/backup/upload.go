@@ -22,7 +22,7 @@ import (
 	"github.com/yargevad/filepathx"
 )
 
-func (b *Backuper) Upload(backupName string, tablePattern string, diffFrom string, schemaOnly bool) error {
+func (b *Backuper) Upload(backupName, tablePattern, diffFrom string, schemaOnly bool) error {
 	if b.cfg.General.RemoteStorage == "none" {
 		fmt.Println("Upload aborted: RemoteStorage set to \"none\"")
 		return nil
@@ -100,10 +100,10 @@ func (b *Backuper) Upload(backupName string, tablePattern string, diffFrom strin
 
 	for i, table := range tablesForUpload {
 		if err := s.Acquire(ctx, 1); err != nil {
-			return fmt.Errorf("can't acquire semaphore during upload: %v", err)
+			log.Errorf("can't acquire semaphore during Upload: %v", err)
+			break
 		}
 		start := time.Now()
-		var uploadedBytes int64
 		if !schemaOnly {
 			if diffTable, ok := tablesForUploadFromDiff[metadata.TableTitle{
 				Database: table.Database,
@@ -115,8 +115,10 @@ func (b *Backuper) Upload(backupName string, tablePattern string, diffFrom strin
 		idx := i
 		g.Go(func() error {
 			defer s.Release(1)
+			var uploadedBytes int64
 			if !schemaOnly {
 				var files map[string][]string
+				var err error
 				files, uploadedBytes, err = b.uploadTableData(backupName, tablesForUpload[idx])
 				if err != nil {
 					return err
@@ -245,7 +247,8 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 		}
 		for i, p := range parts {
 			if err := s.Acquire(ctx, 1); err != nil {
-				return nil, 0, fmt.Errorf("can't acquire semaphore during upload: %v", err)
+				apexLog.Errorf("can't acquire semaphore during Upload: %v", err)
+				break
 			}
 			remoteDataPath := path.Join(backupName, "shadow", clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table))
 			// Disabled temporary
@@ -260,6 +263,7 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 				apexLog.Debugf("start upload %d files to %s", len(localFiles), remoteDataFile)
 				defer s.Release(1)
 				if err := b.dst.CompressedStreamUpload(backupPath, localFiles, remoteDataFile); err != nil {
+					apexLog.Errorf("CompressedStreamUpload return error: %v", err)
 					return fmt.Errorf("can't upload: %v", err)
 				}
 				remoteFile, err := b.dst.StatFile(remoteDataFile)
@@ -273,8 +277,9 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 		}
 	}
 	if err := g.Wait(); err != nil {
-		return nil, 0, fmt.Errorf("one of upload go-routine return error: %v", err)
+		return nil, 0, fmt.Errorf("one of uploadTableData go-routine return error: %v", err)
 	}
+	apexLog.Debugf("finish uploadTableData %s.%s with concurrency=%d len(table.Parts[...])=%d metadataFiles=%v, uploadedBytes=%v", table.Database, table.Table, b.cfg.General.UploadConcurrency, capacity, metdataFiles, uploadedBytes)
 	return metdataFiles, uploadedBytes, nil
 }
 

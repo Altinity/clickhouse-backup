@@ -91,9 +91,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, schemaOnly b
 	if !found {
 		return fmt.Errorf("'%s' is not found on remote storage", backupName)
 	}
-	if len(remoteBackup.Tables) == 0 && !b.cfg.General.AllowEmptyBackups {
-		return fmt.Errorf("'%s' is empty backup", backupName)
-	}
+	//look https://github.com/AlexAkulov/clickhouse-backup/discussions/266 need download legacy before check for empty backup
 	if remoteBackup.Legacy {
 		if tablePattern != "" {
 			return fmt.Errorf("'%s' is old format backup and doesn't supports download of specific tables", backupName)
@@ -101,8 +99,11 @@ func (b *Backuper) Download(backupName string, tablePattern string, schemaOnly b
 		if schemaOnly {
 			return fmt.Errorf("'%s' is old format backup and doesn't supports download of schema only", backupName)
 		}
-		log.Debugf("'%s' is old-format backup", backupName)
+		log.Warnf("'%s' is old-format backup", backupName)
 		return legacyDownload(b.cfg, b.DefaultDataPath, backupName)
+	}
+	if len(remoteBackup.Tables) == 0 && !b.cfg.General.AllowEmptyBackups {
+		return fmt.Errorf("'%s' is empty backup", backupName)
 	}
 	tableMetadataForDownload := []metadata.TableMetadata{}
 	tablesForDownload := parseTablePatternForDownload(remoteBackup.Tables, tablePattern)
@@ -154,7 +155,6 @@ func (b *Backuper) Download(backupName string, tablePattern string, schemaOnly b
 			WithField("size", utils.FormatBytes(int64(size))).
 			Info("done")
 	}
-
 	if !schemaOnly {
 		for _, t := range tableMetadataForDownload {
 			for disk := range t.Parts {
@@ -172,7 +172,8 @@ func (b *Backuper) Download(backupName string, tablePattern string, schemaOnly b
 				continue
 			}
 			if err := s.Acquire(ctx, 1); err != nil {
-				return fmt.Errorf("can't acquire semaphore during download: %v", err)
+				log.Errorf("can't acquire semaphore during Download: %v", err)
+				break
 			}
 			dataSize += tableMetadata.TotalBytes
 			idx := i
@@ -191,7 +192,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, schemaOnly b
 			})
 		}
 		if err := g.Wait(); err != nil {
-			return fmt.Errorf("one of download go-routine return error: %v", err)
+			return fmt.Errorf("one of Download go-routine return error: %v", err)
 		}
 	}
 	rbacSize, err := b.downloadRBACData(remoteBackup)
@@ -249,7 +250,7 @@ func (b *Backuper) downloadBackupRelatedDir(remoteBackup new_storage.Backup, pre
 }
 
 func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table metadata.TableMetadata) error {
-	uuid := path.Join(clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table))
+	dbAndTableDir := path.Join(clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table))
 
 	s := semaphore.NewWeighted(int64(b.cfg.General.DownloadConcurrency))
 	g, ctx := errgroup.WithContext(context.Background())
@@ -263,10 +264,11 @@ func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table
 
 		for disk := range table.Files {
 			diskPath := b.DiskMap[disk]
-			tableLocalDir := path.Join(diskPath, "backup", remoteBackup.BackupName, "shadow", uuid, disk)
+			tableLocalDir := path.Join(diskPath, "backup", remoteBackup.BackupName, "shadow", dbAndTableDir, disk)
 			for _, archiveFile := range table.Files[disk] {
 				if err := s.Acquire(ctx, 1); err != nil {
-					return fmt.Errorf("can't acquire semaphore during download: %v", err)
+					apexLog.Errorf("can't acquire semaphore during downloadTableData: %v", err)
+					break
 				}
 				tableRemoteFile := path.Join(remoteBackup.BackupName, "shadow", clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table), archiveFile)
 				g.Go(func() error {
@@ -288,11 +290,12 @@ func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table
 		apexLog.Debugf("start downloadTableData %s.%s with concurrency=%d len(table.Parts[...])=%d", table.Database, table.Table, b.cfg.General.DownloadConcurrency, capacity)
 		for disk := range table.Parts {
 			if err := s.Acquire(ctx, 1); err != nil {
-				return fmt.Errorf("can't acquire semaphore during download: %v", err)
+				apexLog.Errorf("can't acquire semaphore during downloadTableData: %v", err)
+				break
 			}
-			tableRemotePath := path.Join(remoteBackup.BackupName, "shadow", uuid, disk)
+			tableRemotePath := path.Join(remoteBackup.BackupName, "shadow", dbAndTableDir, disk)
 			diskPath := b.DiskMap[disk]
-			tableLocalDir := path.Join(diskPath, "backup", remoteBackup.BackupName, "shadow", uuid, disk)
+			tableLocalDir := path.Join(diskPath, "backup", remoteBackup.BackupName, "shadow", dbAndTableDir, disk)
 			g.Go(func() error {
 				apexLog.Debugf("start download from %s", tableRemotePath)
 				defer s.Release(1)
@@ -305,17 +308,17 @@ func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table
 		}
 	}
 	if err := g.Wait(); err != nil {
-		return fmt.Errorf("one of download go-routine return error: %v", err)
+		return fmt.Errorf("one of downloadTableData go-routine return error: %v", err)
 	}
 
-	// Create symlink for exists parts
+	// Create hardlink for exists parts
 	for disk, parts := range table.Parts {
 		for _, p := range parts {
 			if !p.Required {
 				continue
 			}
-			existsPath := path.Join(b.DiskMap[disk], "backup", remoteBackup.RequiredBackup, "shadow", uuid, disk, p.Name)
-			newPath := path.Join(b.DiskMap[disk], "backup", remoteBackup.BackupName, "shadow", uuid, disk, p.Name)
+			existsPath := path.Join(b.DiskMap[disk], "backup", remoteBackup.RequiredBackup, "shadow", dbAndTableDir, disk, p.Name)
+			newPath := path.Join(b.DiskMap[disk], "backup", remoteBackup.BackupName, "shadow", dbAndTableDir, disk, p.Name)
 			if err := duplicatePart(existsPath, newPath); err != nil {
 				return fmt.Errorf("can't to add exists part: %s", err)
 			}

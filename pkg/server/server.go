@@ -137,13 +137,11 @@ func Server(c *cli.App, configPath string, clickhouseBackupVersion string) error
 		clickhouseBackupVersion: clickhouseBackupVersion,
 	}
 	if cfg.API.CreateIntegrationTables {
-		apexLog.Infof("Create integration tables")
 		if err := api.CreateIntegrationTables(); err != nil {
 			apexLog.Error(err.Error())
 		}
 	}
 	api.metrics = setupMetrics()
-	apexLog.Debug("Update last backup size metrics")
 	if err := api.updateSizeOfLastBackup(); err != nil {
 		apexLog.Error(err.Error())
 	}
@@ -546,8 +544,8 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	vars := mux.Vars(r)
-	diffFrom := ""
 	query := r.URL.Query()
+	diffFrom := ""
 	name := vars["name"]
 	tablePattern := ""
 	schemaOnly := false
@@ -555,7 +553,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 
 	if df, exist := query["diff-from"]; exist {
 		diffFrom = df[0]
-		fullCommand = fmt.Sprintf("%s --diff-from=%s", fullCommand, diffFrom)
+		fullCommand = fmt.Sprintf("%s --diff-from=\"%s\"", fullCommand, diffFrom)
 	}
 	if tp, exist := query["table"]; exist {
 		tablePattern = tp[0]
@@ -799,6 +797,7 @@ func (api *APIServer) httpBackupStatusHandler(w http.ResponseWriter, _ *http.Req
 }
 
 func (api *APIServer) updateSizeOfLastBackup() error {
+	apexLog.Debug("Update last backup size metrics")
 	if !api.config.API.EnableMetrics {
 		return nil
 	}
@@ -980,6 +979,7 @@ func setupMetrics() Metrics {
 }
 
 func (api *APIServer) CreateIntegrationTables() error {
+	apexLog.Infof("Create integration tables")
 	ch := &clickhouse.ClickHouse{
 		Config: &api.config.ClickHouse,
 	}

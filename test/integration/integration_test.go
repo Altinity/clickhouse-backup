@@ -1,3 +1,4 @@
+//go:build integration
 // +build integration
 
 package main
@@ -360,7 +361,7 @@ func TestIntegrationS3(t *testing.T) {
 }
 
 func TestIntegrationGCS(t *testing.T) {
-	if os.Getenv("GCS_TESTS") == "" || os.Getenv("TRAVIS_PULL_REQUEST") != "false" {
+	if isTestShouldSkip("GCS_TESTS") {
 		t.Skip("Skipping GCS integration tests...")
 		return
 	}
@@ -372,7 +373,7 @@ func TestIntegrationGCS(t *testing.T) {
 }
 
 func TestIntegrationAzure(t *testing.T) {
-	if os.Getenv("AZURE_TESTS") == "" || os.Getenv("TRAVIS_PULL_REQUEST") != "false" {
+	if isTestShouldSkip("AZURE_TESTS") {
 		t.Skip("Skipping Azure integration tests...")
 		return
 	}
@@ -973,4 +974,9 @@ func compareVersion(v1, v2 string) int {
 		v1 = strings.Join(strings.Split(v1, ".")[0:2], ".")
 	}
 	return semver.Compare(v1, v2)
+}
+
+func isTestShouldSkip(envName string) bool {
+	isSkip, _ := map[string]bool{"": true, "0": true, "false": true, "False": true, "1": false, "True": false, "true": false}[os.Getenv(envName)]
+	return isSkip
 }
