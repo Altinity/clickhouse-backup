@@ -138,6 +138,7 @@ s3:
   endpoint: ""                     # S3_ENDPOINT
   region: us-east-1                # S3_REGION
   acl: private                     # S3_ACL
+  assume_role_arn: ""              # S3_ASSUME_ROLE_ARN
   force_path_style: false          # S3_FORCE_PATH_STYLE
   path: ""                         # S3_PATH
   disable_ssl: false               # S3_DISABLE_SSL
@@ -270,6 +271,35 @@ Execute multiple backup actions: `curl -X POST -d '{"command":"create test_backu
 > **GET /backup/actions**
 
 Display list of current async operations: `curl -s localhost:7171/backup/actions | jq .`
+
+## Storages
+
+### S3
+
+In order to make backups to S3, the following permissions shall be set:
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "clickhouse-backup-s3-access-to-files",
+            "Effect": "Allow",
+            "Action": [
+                "s3:PutObject",
+                "s3:GetObject"
+            ],
+            "Resource": "arn:aws:s3:::BUCKET_NAME/*"
+        },
+        {
+            "Sid": "clickhouse-backup-s3-access-to-bucket",
+            "Effect": "Allow",
+            "Action": "s3:ListBucket",
+            "Resource": "arn:aws:s3:::BUCKET_NAME"
+        }
+    ]
+}
+```
 
 ## Examples
 
