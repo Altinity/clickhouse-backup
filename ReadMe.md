@@ -137,6 +137,7 @@ s3:
   endpoint: ""                     # S3_ENDPOINT
   region: us-east-1                # S3_REGION
   acl: private                     # S3_ACL
+  assume_role_arn: ""              # S3_ASSUME_ROLE_ARN
   force_path_style: false          # S3_FORCE_PATH_STYLE
   path: ""                         # S3_PATH
   disable_ssl: false               # S3_DISABLE_SSL
