@@ -42,6 +42,7 @@ func (ch *ClickHouse) Connect() error {
 	params.Add("username", ch.Config.Username)
 	params.Add("password", ch.Config.Password)
 	params.Add("database", "system")
+	params.Add("read_timeout", timeoutSeconds)
 	params.Add("receive_timeout", timeoutSeconds)
 	params.Add("send_timeout", timeoutSeconds)
 	params.Add("read_timeout", timeoutSeconds)

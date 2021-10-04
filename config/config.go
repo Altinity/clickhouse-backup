@@ -58,6 +58,7 @@ type AzureBlobConfig struct {
 	AccountName           string `yaml:"account_name" envconfig:"AZBLOB_ACCOUNT_NAME"`
 	AccountKey            string `yaml:"account_key" envconfig:"AZBLOB_ACCOUNT_KEY"`
 	SharedAccessSignature string `yaml:"sas" envconfig:"AZBLOB_SAS"`
+	UseManagedIdentity    bool   `yaml:"use_managed_identity" envconfig:"AZBLOB_USE_MANAGED_IDENTITY"`
 	Container             string `yaml:"container" envconfig:"AZBLOB_CONTAINER"`
 	Path                  string `yaml:"path" envconfig:"AZBLOB_PATH"`
 	CompressionLevel      int    `yaml:"compression_level" envconfig:"AZBLOB_COMPRESSION_LEVEL"`
@@ -82,6 +83,7 @@ type S3Config struct {
 	DisableCertVerification bool   `yaml:"disable_cert_verification" envconfig:"S3_DISABLE_CERT_VERIFICATION"`
 	StorageClass            string `yaml:"storage_class" envconfig:"S3_STORAGE_CLASS"`
 	Concurrency             int    `yaml:"concurrency" envconfig:"S3_CONCURRENCY"`
+	PartSize                int64  `yaml:"part_size" envconfig:"S3_PART_SIZE"`
 	Debug                   bool   `yaml:"debug" envconfig:"S3_DEBUG"`
 }
 
@@ -118,6 +120,7 @@ type SFTPConfig struct {
 	Path              string `yaml:"path" envconfig:"SFTP_PATH"`
 	CompressionFormat string `yaml:"compression_format" envconfig:"SFTP_COMPRESSION_FORMAT"`
 	CompressionLevel  int    `yaml:"compression_level" envconfig:"SFTP_COMPRESSION_LEVEL"`
+	Concurrency       int    `yaml:"concurrency" envconfig:"SFTP_CONCURRENCY"`
 }
 
 // ClickHouseConfig - clickhouse settings section
@@ -317,6 +320,7 @@ func DefaultConfig() *Config {
 			DisableCertVerification: false,
 			StorageClass:            s3.StorageClassStandard,
 			Concurrency:             1,
+			PartSize:                0,
 		},
 		GCS: GCSConfig{
 			CompressionLevel:  1,
@@ -344,6 +348,7 @@ func DefaultConfig() *Config {
 			Port:              22,
 			CompressionFormat: "tar",
 			CompressionLevel:  1,
+			Concurrency:       1,
 		},
 	}
 }

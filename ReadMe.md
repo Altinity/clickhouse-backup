@@ -125,6 +125,7 @@ azblob:
   account_name: ""             # AZBLOB_ACCOUNT_NAME
   account_key: ""              # AZBLOB_ACCOUNT_KEY
   sas: ""                      # AZBLOB_SAS
+  use_managed_identity: false  # AZBLOB_USE_MANAGED_IDENTITY
   container: ""                # AZBLOB_CONTAINER
   path: ""                     # AZBLOB_PATH
   compression_level: 1         # AZBLOB_COMPRESSION_LEVEL
@@ -147,6 +148,9 @@ s3:
   sse: AES256                      # S3_SSE
   disable_cert_verification: false # S3_DISABLE_CERT_VERIFICATION
   storage_class: STANDARD          # S3_STORAGE_CLASS
+  concurrency: 1                   # S3_CONCURRENCY
+  # if less or eq 0 then calculated as max_file_size / 10000 
+  part_size: 0                     # S3_PART_SIZE
   debug: false                     # S3_DEBUG
 gcs:
   credentials_file: ""         # GCS_CREDENTIALS_FILE
@@ -190,6 +194,7 @@ sftp:
   password: ""                 # SFTP_PASSWORD
   key: ""                      # SFTP_KEY
   path: ""                     # SFTP_PATH
+  concurrency: 1               # SFTP_CONCURRENCY     
   compression_format: tar      # SFTP_COMPRESSION_FORMAT
   compression_level: 1         # SFTP_COMPRESSION_LEVEL
 ```
