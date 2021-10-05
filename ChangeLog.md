@@ -12,7 +12,6 @@ IMPROVEMENTS
 - Added options for RBAC and CONFIGs backup, look to `clickhouse-backup help create` and `clickhouse-backup help restore` for details
 - Add `S3_CONCURRENCY` option to speedup backup upload to `S3`
 - Add `SFTP_CONCURRENCY` option to speedup backup upload to `SFTP`
-- Add `--diff-from-remote` to `upload` command for avoid store local backup
 - Add `AZBLOB_USE_MANAGED_IDENTITY` support for ManagedIdentity for azure remote storage, thanks https://github.com/roman-vynar
 - Add clickhouse-operator kubernetes manifest which run `clickhouse-backup` in `server` mode on each clickhouse pod in kubernetes cluster
 - Add detailed description and restrictions for incremental backups.
