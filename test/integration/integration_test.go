@@ -598,6 +598,8 @@ func testCommon(t *testing.T) {
 	r := require.New(t)
 	ch.connectWithWait(r)
 
+	rand.Seed(time.Now().UnixNano())
+
 	testBackupName := fmt.Sprintf("test_backup_%d", rand.Int())
 	incrementBackupName := fmt.Sprintf("increment_%d", rand.Int())
 
