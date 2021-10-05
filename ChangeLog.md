@@ -2,20 +2,31 @@
 
 IMPROVEMENTS
 - Added concurrency settings for upload and download, which allow loading table data in parallel for each table and each disk for multi-disk storages
-- Up go to 1.16
+- Up golang version to 1.17
 - Updated go libraries dependencies to actual version (exclude azure)
 - Add Clickhouse 21.8 to test matrix
-- remove `S3_PART_SIZE` config parameter and calculate it depends on `MAX_FILE_SIZE`
+- Now `S3_PART_SIZE` not restrict upload size, partSize calculate depends on `MAX_FILE_SIZE`
 - improve logging for delete operation
 - Added `S3_DEBUG` option to allow debug S3 connection
 - Decrease number of SQL queries to system.* during backup commands
 - Added options for RBAC and CONFIGs backup, look to `clickhouse-backup help create` and `clickhouse-backup help restore` for details
-- Add `S3_CONCURRENCY` option to speedup backup upload
+- Add `S3_CONCURRENCY` option to speedup backup upload to `S3`
+- Add `SFTP_CONCURRENCY` option to speedup backup upload to `SFTP`
 - Add `--diff-from-remote` to `upload` command for avoid store local backup
+- Add `AZBLOB_USE_MANAGED_IDENTITY` support for ManagedIdentity for azure remote storage, thanks https://github.com/roman-vynar
+- Add clickhouse-operator kubernetes manifest which run `clickhouse-backup` in `server` mode on each clickhouse pod in kubernetes cluster
+- Add detailed description and restrictions for incremental backups.
+- Add `GCS_DEBUG` option
+- Add `CLICKHOUSE_DEBUG` option to allow low-level debug for `clickhouse-go`
 
 BUG FIXES
-- fix [#256](https://github.com/AlexAkulov/clickhouse-backup/issues/256)
-- backup only database metadata for proxy integrated database engines like MySQL, PostgreSQL fix [#223](https://github.com/AlexAkulov/clickhouse-backup/issues/223)
+- fix [#266](https://github.com/AlexAkulov/clickhouse-backup/discussions/266) properly restore legacy backup format
+- fix [#244](https://github.com/AlexAkulov/clickhouse-backup/issues/244) add `read_timeout`, `write_timeout` to client-side timeout for `clickhouse-go` 
+- fix [#255](https://github.com/AlexAkulov/clickhouse-backup/issues/255) restrict connection pooling to 1 in `clickhouse-go` 
+- fix [#256](https://github.com/AlexAkulov/clickhouse-backup/issues/256) remote_storage: none, was broke compression
+- fix [#266](https://github.com/AlexAkulov/clickhouse-backup/discussions/266) legacy backups from version prior 1.0 can't restore without `allow_empty_backup: true`
+- fix [#223](https://github.com/AlexAkulov/clickhouse-backup/issues/223) backup only database metadata for proxy integrated database engines like MySQL, PostgreSQL
+- fix `GCS` global buffer wrong usage during UPLOAD_CONCURRENCY > 1
 - Remove unused `SKIP_SYNC_REPLICA_TIMEOUTS` option
 
 # v1.0.0
