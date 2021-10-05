@@ -3,6 +3,7 @@ package new_storage
 import (
 	"context"
 	"fmt"
+	"google.golang.org/api/option/internaloption"
 	"io"
 	"net/http"
 	"path"
@@ -14,7 +15,6 @@ import (
 	"github.com/apex/log"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
-	"google.golang.org/api/option/internaloption"
 	googleHTTPTransport "google.golang.org/api/transport/http"
 )
 
@@ -38,11 +38,11 @@ func (w debugGCSTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	log.Info(logMsg)
 
 	resp, err := w.base.RoundTrip(r)
-	logMsg = fmt.Sprintf("<<< [GCS_RESPONSE] <<< %v %v\n", r.Method, r.URL.String())
 	if err != nil {
 		log.Errorf("GCS_ERROR: %v", err)
 		return resp, err
 	}
+	logMsg = fmt.Sprintf("<<< [GCS_RESPONSE] <<< %v %v\n", r.Method, r.URL.String())
 	for h, values := range resp.Header {
 		for _, v := range values {
 			logMsg += fmt.Sprintf("%v: %v\n", h, v)
@@ -58,17 +58,25 @@ func (gcs *GCS) Connect() error {
 	clientOptions := make([]option.ClientOption, 0)
 	ctx := context.Background()
 
-	if gcs.Config.CredentialsJSON != "" {
+	endpoint := "https://storage.googleapis.com/storage/v1/"
+	if gcs.Config.Endpoint != "" {
+		endpoint = gcs.Config.Endpoint
+		clientOptions = append([]option.ClientOption{option.WithoutAuthentication()}, clientOptions...)
+		clientOptions = append(clientOptions, option.WithEndpoint(endpoint))
+	} else if gcs.Config.CredentialsJSON != "" {
 		clientOptions = append(clientOptions, option.WithCredentialsJSON([]byte(gcs.Config.CredentialsJSON)))
 	} else if gcs.Config.CredentialsFile != "" {
 		clientOptions = append(clientOptions, option.WithCredentialsFile(gcs.Config.CredentialsFile))
 	}
 
 	if gcs.Config.Debug {
-		clientOptions = append([]option.ClientOption{option.WithScopes(storage.ScopeFullControl)}, clientOptions...)
-
-		clientOptions = append(clientOptions, internaloption.WithDefaultEndpoint("https://storage.googleapis.com/storage/v1/"))
-		clientOptions = append(clientOptions, internaloption.WithDefaultMTLSEndpoint("https://storage.mtls.googleapis.com/storage/v1/"))
+		if gcs.Config.Endpoint == "" {
+			clientOptions = append([]option.ClientOption{option.WithScopes(storage.ScopeFullControl)}, clientOptions...)
+		}
+		clientOptions = append(clientOptions, internaloption.WithDefaultEndpoint(endpoint))
+		if strings.HasPrefix(endpoint, "https://") {
+			clientOptions = append(clientOptions, internaloption.WithDefaultMTLSEndpoint(endpoint))
+		}
 
 		debugClient, _, err := googleHTTPTransport.NewClient(ctx, clientOptions...)
 		if err != nil {

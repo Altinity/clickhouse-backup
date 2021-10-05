@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"os"
 	"os/exec"
 	"strings"
@@ -597,16 +598,16 @@ func testCommon(t *testing.T) {
 	r := require.New(t)
 	ch.connectWithWait(r)
 
+	testBackupName := fmt.Sprintf("test_backup_%d", rand.Int())
+	incrementBackupName := fmt.Sprintf("increment_%d", rand.Int())
+
 	log.Info("Clean before start")
-	_ = dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", "test_backup")
-	_ = dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_backup")
-	_ = dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", "increment")
-	_ = dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "increment")
-	dropAllDatabases(r, ch)
+	fullCleanup(r, ch, testBackupName, incrementBackupName)
+
 	generateTestData(ch, r)
 
 	log.Info("Create backup")
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "test_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", testBackupName))
 	log.Info("Generate increment test data")
 	for _, data := range incrementData {
 		if isTableSkip(ch, data, false) {
@@ -615,11 +616,11 @@ func testCommon(t *testing.T) {
 		r.NoError(ch.createTestData(data))
 	}
 	time.Sleep(time.Second * 5)
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "increment"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", incrementBackupName))
 
 	log.Info("Upload")
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "upload", "test_backup"))
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "upload", "increment", "--diff-from", "test_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "upload", testBackupName))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "upload", incrementBackupName, "--diff-from", testBackupName))
 
 	dropAllDatabases(r, ch)
 
@@ -627,22 +628,22 @@ func testCommon(t *testing.T) {
 	r.NoError(err)
 	r.Equal(5, len(strings.Split(strings.Trim(out, " \t\r\n"), "\n")), "expect one backup exists in backup directory")
 	log.Info("Delete backup")
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
 	out, err = dockerExecOut("clickhouse", "ls", "-lha", "/var/lib/clickhouse/backup")
 	r.NoError(err)
 	r.Equal(4, len(strings.Split(strings.Trim(out, " \t\r\n"), "\n")), "expect no backup exists in backup directory")
 
 	log.Info("Download")
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", "test_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", testBackupName))
 
 	log.Info("Restore schema")
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--schema", "test_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--schema", testBackupName))
 
 	log.Info("Restore data")
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--data", "test_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--data", testBackupName))
 
 	log.Info("Full restore with rm")
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--rm", "test_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--rm", testBackupName))
 
 	log.Info("Check data")
 	for i := range testData {
@@ -659,15 +660,15 @@ func testCommon(t *testing.T) {
 	dropAllDatabases(r, ch)
 	r.NoError(dockerExec("clickhouse", "ls", "-lha", "/var/lib/clickhouse/backup"))
 	log.Info("Delete backup")
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_backup"))
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "increment"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", incrementBackupName))
 	r.NoError(dockerExec("clickhouse", "ls", "-lha", "/var/lib/clickhouse/backup"))
 
 	log.Info("Download increment")
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", "increment"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", incrementBackupName))
 
 	log.Info("Restore")
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--schema", "--data", "increment"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--schema", "--data", incrementBackupName))
 
 	log.Info("Check increment data")
 	for i := range testData {
@@ -688,13 +689,18 @@ func testCommon(t *testing.T) {
 
 	}
 
-	log.Info("Clean")
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", "test_backup"))
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_backup"))
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", "increment"))
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "increment"))
+	log.Info("Clean after finish")
+	fullCleanup(r, ch, testBackupName, incrementBackupName)
 
 	ch.chbackup.Close()
+}
+
+func fullCleanup(r *require.Assertions, ch *TestClickHouse, testBackupName string, incrementBackupName string) {
+	_ = dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", testBackupName)
+	_ = dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName)
+	_ = dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", incrementBackupName)
+	_ = dockerExec("clickhouse", "clickhouse-backup", "delete", "local", incrementBackupName)
+	dropAllDatabases(r, ch)
 }
 
 func generateTestData(ch *TestClickHouse, r *require.Assertions) {

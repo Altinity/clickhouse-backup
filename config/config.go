@@ -50,6 +50,7 @@ type GCSConfig struct {
 	CompressionLevel  int    `yaml:"compression_level" envconfig:"GCS_COMPRESSION_LEVEL"`
 	CompressionFormat string `yaml:"compression_format" envconfig:"GCS_COMPRESSION_FORMAT"`
 	Debug             bool   `yaml:"debug" envconfig:"GCS_DEBUG"`
+	Endpoint          string `yaml:"endpoint" envconfig:"GCS_ENDPOINT"`
 }
 
 // AzureBlobConfig - Azure Blob settings section
