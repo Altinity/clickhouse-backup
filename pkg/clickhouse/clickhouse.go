@@ -45,6 +45,9 @@ func (ch *ClickHouse) Connect() error {
 	params.Add("read_timeout", timeoutSeconds)
 	params.Add("receive_timeout", timeoutSeconds)
 	params.Add("send_timeout", timeoutSeconds)
+	params.Add("read_timeout", timeoutSeconds)
+	params.Add("write_timeout", timeoutSeconds)
+
 	if ch.Config.Secure {
 		params.Add("secure", "true")
 		params.Add("skip_verify", strconv.FormatBool(ch.Config.SkipVerify))
@@ -56,6 +59,9 @@ func (ch *ClickHouse) Connect() error {
 	if ch.conn, err = sqlx.Open("clickhouse", connectionString); err != nil {
 		return err
 	}
+	ch.conn.SetMaxOpenConns(1)
+	ch.conn.SetConnMaxLifetime(0)
+	ch.conn.SetMaxIdleConns(0)
 	return ch.conn.Ping()
 }
 

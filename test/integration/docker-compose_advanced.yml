@@ -25,6 +25,25 @@ services:
     networks:
       - clickhouse-backup
 
+# todo need to reproduce download after upload
+#  gcs:
+#    image: fsouza/fake-gcs-server:latest
+#    container_name: gcs
+#    entrypoint:
+#      - /bin/sh
+#    command:
+#      - -c
+#      - "mkdir -p /data/clickhouse-backup-test-gcs && fake-gcs-server -data /data -scheme http -port 8080 -public-host gsc:8080"
+#    networks:
+#      - clickhouse-backup
+
+
+  azure:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    container_name: azure
+    networks:
+      - clickhouse-backup
+
   mysql:
     image: mysql:${MYSQL_VERSION:-latest}
     command: --default_authentication_plugin='mysql_native_password'
@@ -43,13 +62,16 @@ services:
       - clickhouse-backup
 
   clickhouse:
-    image: yandex/clickhouse-server:${CLICKHOUSE_VERSION:-21.3}
+    image: ${CLICKHOUSE_IMAGE:-yandex/clickhouse-server}:${CLICKHOUSE_VERSION:-19.17}
     container_name: clickhouse
     user: root
     environment:
       TZ: UTC
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      S3_DEBUG: ${S3_DEBUG:-false}
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      S3_DEBUG: "${S3_DEBUG:-false}"
+      GCS_DEBUG: "${GCS_DEBUG:-false}"
+#      STORAGE_EMULATOR_HOST: "http://gsc:8080"
+#      GOOGLE_API_USE_CLIENT_CERTIFICATE: "false"
     volumes:
       - ./backup-user.xml:/etc/clickhouse-server/users.d/backup-user.xml
       - ./enable-access_management.xml:/etc/clickhouse-server/users.d/enable-access_management.xml
@@ -74,6 +96,8 @@ services:
       - minio
       - sshd
       - mysql
+      - azure
+#      - gcs
 
 networks:
   clickhouse-backup:

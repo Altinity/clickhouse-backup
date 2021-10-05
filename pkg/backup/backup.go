@@ -163,7 +163,6 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 				if removeBackupErr := RemoveBackupLocal(cfg, backupName); removeBackupErr != nil {
 					log.Error(removeBackupErr.Error())
 				}
-				// continue
 				return err
 			}
 			backupDataSize += table.TotalBytes.Int64
@@ -182,7 +181,6 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 				log.Error(removeBackupErr.Error())
 			}
 			return err
-			// continue
 		}
 		backupMetadataSize += int64(metadataSize)
 		t = append(t, metadata.TableTitle{

@@ -15,6 +15,7 @@ sftp:
   password: ""
   key: "/tmp/id_rsa"
   path: "/root"
+  concurrency: 2
   compression_format: tar
   compression_level: 1
 api:

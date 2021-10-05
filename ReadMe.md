@@ -117,10 +117,9 @@ clickhouse:
   skip_verify: false               # CLICKHOUSE_SKIP_VERIFY
   sync_replicated_tables: true     # CLICKHOUSE_SYNC_REPLICATED_TABLES
   log_sql_queries: true            # CLICKHOUSE_LOG_SQL_QUERIES
-
+  debug: false                     # CLICKHOUSE_DEBUG
   config_dir:      "/etc/clickhouse-server"              # CLICKHOUSE_CONFIG_DIR
   restart_command: "systemctl restart clickhouse-server" # CLICKHOUSE_RESTART_COMMAND
-
 azblob:
   endpoint_suffix: "core.windows.net" # AZBLOB_ENDPOINT_SUFFIX
   account_name: ""             # AZBLOB_ACCOUNT_NAME
@@ -139,6 +138,7 @@ s3:
   endpoint: ""                     # S3_ENDPOINT
   region: us-east-1                # S3_REGION
   acl: private                     # S3_ACL
+  assume_role_arn: ""              # S3_ASSUME_ROLE_ARN
   force_path_style: false          # S3_FORCE_PATH_STYLE
   path: ""                         # S3_PATH
   disable_ssl: false               # S3_DISABLE_SSL
@@ -149,6 +149,7 @@ s3:
   sse: AES256                      # S3_SSE
   disable_cert_verification: false # S3_DISABLE_CERT_VERIFICATION
   storage_class: STANDARD          # S3_STORAGE_CLASS
+  concurrency: 1                   # S3_CONCURRENCY
   # if less or eq 0 then calculated as max_file_size / 10000 
   part_size: 0                     # S3_PART_SIZE
   debug: false                     # S3_DEBUG
@@ -159,6 +160,7 @@ gcs:
   path: ""                     # GCS_PATH
   compression_level: 1         # GCS_COMPRESSION_LEVEL
   compression_format: tar      # GCS_COMPRESSION_FORMAT
+  debug: false                 # GCS_DEBUG
 cos:
   url: ""                      # COS_URL
   timeout: 2m                  # COS_TIMEOUT
@@ -193,6 +195,7 @@ sftp:
   password: ""                 # SFTP_PASSWORD
   key: ""                      # SFTP_KEY
   path: ""                     # SFTP_PATH
+  concurrency: 1               # SFTP_CONCURRENCY     
   compression_format: tar      # SFTP_COMPRESSION_FORMAT
   compression_level: 1         # SFTP_COMPRESSION_LEVEL
 ```
@@ -267,7 +270,36 @@ Execute multiple backup actions: `curl -X POST -d '{"command":"create test_backu
 
 > **GET /backup/actions**
 
-Display list of current async operations: `curl -s localhost:7171/backup/status | jq .`
+Display list of current async operations: `curl -s localhost:7171/backup/actions | jq .`
+
+## Storages
+
+### S3
+
+In order to make backups to S3, the following permissions shall be set:
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "clickhouse-backup-s3-access-to-files",
+            "Effect": "Allow",
+            "Action": [
+                "s3:PutObject",
+                "s3:GetObject"
+            ],
+            "Resource": "arn:aws:s3:::BUCKET_NAME/*"
+        },
+        {
+            "Sid": "clickhouse-backup-s3-access-to-bucket",
+            "Effect": "Allow",
+            "Action": "s3:ListBucket",
+            "Resource": "arn:aws:s3:::BUCKET_NAME"
+        }
+    ]
+}
+```
 
 ## Examples
 

@@ -21,8 +21,8 @@ import (
 
 	apexLog "github.com/apex/log"
 	"github.com/djherbis/buffer"
+	"github.com/djherbis/nio/v3"
 	"github.com/mholt/archiver/v3"
-	"gopkg.in/djherbis/nio.v2"
 )
 
 const (
@@ -254,14 +254,17 @@ func (bd *BackupDestination) CompressedStreamUpload(baseLocalPath string, files 
 	}
 	bar := progressbar.StartNewByteBar(!bd.disableProgressBar, totalBytes)
 	defer bar.Finish()
-	buf := buffer.New(BufferSize)
-	body, w := nio.Pipe(buf)
+	pipeBuffer := buffer.New(BufferSize)
+	body, w := nio.Pipe(pipeBuffer)
 	g, _ := errgroup.WithContext(context.Background())
 
 	g.Go(func() error {
 		defer w.Close()
-		iobuf := buffer.New(BufferSize)
-		z, _ := getArchiveWriter(bd.compressionFormat, bd.compressionLevel)
+		localFileBuffer := buffer.New(BufferSize)
+		z, err := getArchiveWriter(bd.compressionFormat, bd.compressionLevel)
+		if err != nil {
+			return err
+		}
 		if err := z.Create(w); err != nil {
 			return err
 		}
@@ -280,7 +283,7 @@ func (bd *BackupDestination) CompressedStreamUpload(baseLocalPath string, files 
 			if err != nil {
 				return err
 			}
-			bfile := nio.NewReader(file, iobuf)
+			bfile := nio.NewReader(file, localFileBuffer)
 			if err := z.Write(archiver.File{
 				FileInfo: archiver.FileInfo{
 					FileInfo:   info,
@@ -406,8 +409,11 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 		partSize := cfg.S3.PartSize
 		if cfg.S3.PartSize <= 0 {
 			partSize = cfg.General.MaxFileSize / 10000
-			if partSize < 5242880 {
-				partSize = 5242880
+			if partSize < 5*1024*1024 {
+				partSize = 5 * 1024 * 1024
+			}
+			if partSize > 5*1024*1024*1024 {
+				partSize = 5 * 1024 * 1024 * 1024
 			}
 		}
 		s3Storage := &S3{

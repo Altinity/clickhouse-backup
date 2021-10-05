@@ -27,7 +27,7 @@ func (sftp *SFTP) Connect() error {
 	authMethods := []ssh.AuthMethod{}
 
 	if sftp.Config.Key == "" && sftp.Config.Password == "" {
-		return errors.New("please specify sftp.key or sftp.password for authentification")
+		return errors.New("please specify sftp.key or sftp.password for authentication")
 	}
 
 	if sftp.Config.Key != "" {
@@ -58,8 +58,16 @@ func (sftp *SFTP) Connect() error {
 	if err != nil {
 		return err
 	}
-
-	sftpConnection, err := lib_sftp.NewClient(sshConnection)
+	clientOptions := make([]lib_sftp.ClientOption, 0)
+	if sftp.Config.Concurrency > 0 {
+		clientOptions = append(
+			clientOptions,
+			lib_sftp.UseConcurrentReads(true),
+			lib_sftp.UseConcurrentWrites(true),
+			lib_sftp.MaxConcurrentRequestsPerFile(sftp.Config.Concurrency),
+		)
+	}
+	sftpConnection, err := lib_sftp.NewClient(sshConnection, clientOptions...)
 	if err != nil {
 		return err
 	}

@@ -49,6 +49,8 @@ type GCSConfig struct {
 	Path              string `yaml:"path" envconfig:"GCS_PATH"`
 	CompressionLevel  int    `yaml:"compression_level" envconfig:"GCS_COMPRESSION_LEVEL"`
 	CompressionFormat string `yaml:"compression_format" envconfig:"GCS_COMPRESSION_FORMAT"`
+	Debug             bool   `yaml:"debug" envconfig:"GCS_DEBUG"`
+	Endpoint          string `yaml:"endpoint" envconfig:"GCS_ENDPOINT"`
 }
 
 // AzureBlobConfig - Azure Blob settings section
@@ -73,6 +75,7 @@ type S3Config struct {
 	Endpoint                string `yaml:"endpoint" envconfig:"S3_ENDPOINT"`
 	Region                  string `yaml:"region" envconfig:"S3_REGION"`
 	ACL                     string `yaml:"acl" envconfig:"S3_ACL"`
+	AssumeRoleARN           string `yaml:"assume_role_arn" envconfig:"S3_ASSUME_ROLE_ARN"`
 	ForcePathStyle          bool   `yaml:"force_path_style" envconfig:"S3_FORCE_PATH_STYLE"`
 	Path                    string `yaml:"path" envconfig:"S3_PATH"`
 	DisableSSL              bool   `yaml:"disable_ssl" envconfig:"S3_DISABLE_SSL"`
@@ -119,6 +122,7 @@ type SFTPConfig struct {
 	Path              string `yaml:"path" envconfig:"SFTP_PATH"`
 	CompressionFormat string `yaml:"compression_format" envconfig:"SFTP_COMPRESSION_FORMAT"`
 	CompressionLevel  int    `yaml:"compression_level" envconfig:"SFTP_COMPRESSION_LEVEL"`
+	Concurrency       int    `yaml:"concurrency" envconfig:"SFTP_CONCURRENCY"`
 }
 
 // ClickHouseConfig - clickhouse settings section
@@ -137,6 +141,7 @@ type ClickHouseConfig struct {
 	LogSQLQueries        bool              `yaml:"log_sql_queries" envconfig:"CLICKHOUSE_LOG_SQL_QUERIES"`
 	ConfigDir            string            `yaml:"config_dir" envconfig:"CLICKHOUSE_CONFIG_DIR"`
 	RestartCommand       string            `yaml:"restart_command" evnconfig:"CLICKHOUSE_RESTART_COMMAND"`
+	Debug                bool              `yaml:"debug" envconfig:"CLICKHOUSE_DEBUG"`
 }
 
 type APIConfig struct {
@@ -312,6 +317,7 @@ func DefaultConfig() *Config {
 			Region:                  "us-east-1",
 			DisableSSL:              false,
 			ACL:                     "private",
+			AssumeRoleARN:           "",
 			CompressionLevel:        1,
 			CompressionFormat:       "tar",
 			DisableCertVerification: false,
@@ -345,6 +351,7 @@ func DefaultConfig() *Config {
 			Port:              22,
 			CompressionFormat: "tar",
 			CompressionLevel:  1,
+			Concurrency:       1,
 		},
 	}
 }
