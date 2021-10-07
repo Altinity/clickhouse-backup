@@ -469,7 +469,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	cfg, err := config.LoadConfig(api.configPath)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "list", err)
+		writeError(w, http.StatusInternalServerError, "create", err)
 		return
 	}
 	tablePattern := ""
@@ -485,15 +485,21 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	if schema, exist := query["schema"]; exist {
 		schemaOnly, _ = strconv.ParseBool(schema[0])
-		fullCommand = fmt.Sprintf("%s --schema", fullCommand)
+		if schemaOnly {
+			fullCommand = fmt.Sprintf("%s --schema", fullCommand)
+		}
 	}
-	if schema, exist := query["rbac"]; exist {
-		rbacOnly, _ = strconv.ParseBool(schema[0])
-		fullCommand = fmt.Sprintf("%s --rbac", fullCommand)
+	if rbac, exist := query["rbac"]; exist {
+		rbacOnly, _ = strconv.ParseBool(rbac[0])
+		if rbacOnly {
+			fullCommand = fmt.Sprintf("%s --rbac", fullCommand)
+		}
 	}
-	if schema, exist := query["backupConfig"]; exist {
-		configsOnly, _ = strconv.ParseBool(schema[0])
-		fullCommand = fmt.Sprintf("%s --configs", fullCommand)
+	if configs, exist := query["backupConfig"]; exist {
+		configsOnly, _ = strconv.ParseBool(configs[0])
+		if configsOnly {
+			fullCommand = fmt.Sprintf("%s --configs", fullCommand)
+		}
 	}
 	if name, exist := query["name"]; exist {
 		backupName = name[0]
