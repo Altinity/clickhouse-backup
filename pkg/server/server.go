@@ -1014,11 +1014,11 @@ func (api *APIServer) CreateIntegrationTables() error {
 	if api.config.API.Secure {
 		schema = "https"
 	}
-	query := fmt.Sprintf("CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String) ENGINE=URL('%s://127.0.0.1:%s/backup/actions%s', JSONEachRow)", schema, port, auth)
+	query := fmt.Sprintf("CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String) ENGINE=URL('%s://127.0.0.1:%s/backup/actions%s', JSONEachRow) SETTINGS input_format_skip_unknown_fields=1", schema, port, auth)
 	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_actions"}, query, true); err != nil {
 		return err
 	}
-	query = fmt.Sprintf("CREATE TABLE system.backup_list (name String, created DateTime, size Int64, location String, desc String) ENGINE=URL('%s://127.0.0.1:%s/backup/list%s', JSONEachRow)", schema, port, auth)
+	query = fmt.Sprintf("CREATE TABLE system.backup_list (name String, created DateTime, size Int64, location String, required String, desc String) ENGINE=URL('%s://127.0.0.1:%s/backup/list%s', JSONEachRow) SETTINGS input_format_skip_unknown_fields=1", schema, port, auth)
 	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_list"}, query, true); err != nil {
 		return err
 	}
