@@ -118,7 +118,7 @@ type SFTPConfig struct {
 	Port              uint   `yaml:"port" envconfig:"SFTP_PORT"`
 	Username          string `yaml:"username" envconfig:"SFTP_USERNAME"`
 	Password          string `yaml:"password" envconfig:"SFTP_PASSWORD"`
-	Key               string `yaml:"key" envconfig:"SFTP_PASSWORD"`
+	Key               string `yaml:"key" envconfig:"SFTP_KEY"`
 	Path              string `yaml:"path" envconfig:"SFTP_PATH"`
 	CompressionFormat string `yaml:"compression_format" envconfig:"SFTP_COMPRESSION_FORMAT"`
 	CompressionLevel  int    `yaml:"compression_level" envconfig:"SFTP_COMPRESSION_LEVEL"`

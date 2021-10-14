@@ -1,3 +1,9 @@
+# v1.1.1
+
+BUG FIXES
+- fix broken `system.backup_list` integration table after add `required field` in https://github.com/AlexAkulov/clickhouse-backup/pull/263
+- fix [#274](https://github.com/AlexAkulov/clickhouse-backup/issues/274) invalid `SFTP_PASSWORD` environment usage 
+
 # v1.1.0
 
 IMPROVEMENTS
