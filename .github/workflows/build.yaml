@@ -13,6 +13,17 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        clickhouse:
+          - '1.1.54390'
+          - '19.11.12.69'
+          - '19.15.3.6'
+          - '19.16.19.85'
+          - '20.3'
+          - '20.8'
+          - '21.3'
+          - '21.8'
     steps:
       - name: Checkout project
         uses: actions/checkout@v2
@@ -23,11 +34,14 @@ jobs:
         with:
           go-version: '^1.17'
 
-      - name: Set up GCC
-        uses: egor-tensin/setup-gcc@v1
-        with:
-          version: latest
-          platform: x64
+      - name: Setup docker-compose & gcc
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y make gcc
+          sudo apt-get install --no-install-recommends -y python3-pip
+          sudo python3 -m pip install -U pip
+          sudo pip3 install --prefer-binary -U setuptools
+          sudo pip3 install --prefer-binary -U docker-compose
 
       - name: Cache golang
         id: cache-golang
@@ -45,13 +59,6 @@ jobs:
         if: |
           steps.cache-golang.outputs.cache-hit != 'true'
 
-      - name: Setup docker-compose
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y make python3-pip
-          sudo python3 -m pip install -U pip
-          sudo pip3 install --prefer-binary -U setuptools
-          sudo pip3 install --prefer-binary -U docker-compose
 
       - name: Extract DOCKER_TAG version
         id: docker_tag
@@ -65,7 +72,7 @@ jobs:
       - run: make test
 
 
-      # be carefull with encrypt with old OpenSSL - https://habr.com/ru/post/535140/
+      # be careful with encrypt with old OpenSSL - https://habr.com/ru/post/535140/
       - name: Decrypting credentials for Google Cloud Storage
         id: secrets
         env:
@@ -76,21 +83,7 @@ jobs:
             openssl enc -base64 -aes-256-cbc -d -in test/integration/credentials.json.enc -out test/integration/credentials.json -md md5 -k ${VAULT_PASSWORD}
           fi
           echo "::set-output name=GCS_TESTS::$(if [ -z "${{ secrets.VAULT_PASSWORD }}" ]; then echo "false"; else echo "true"; fi)"
-  test:
-    needs: build
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        clickhouse:
-          - '1.1.54390'
-          - '19.11.12.69'
-          - '19.15.3.6'
-          - '19.16.19.85'
-          - '20.3'
-          - '20.8'
-          - '21.3'
-          - '21.8'
-    steps:
+
       - name: Running integration tests
         env:
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
@@ -113,10 +106,6 @@ jobs:
           docker-compose -f test/integration/${COMPOSE_FILE} ps -a
           go test -timeout 30m -failfast -tags=integration -v test/integration/integration_test.go
 
-  image:
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
       - name: Building docker image
         env:
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
@@ -127,7 +116,7 @@ jobs:
           DOCKER_REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
           DOCKER_TAG: ${{ steps.docker_tag.outputs.docker_tag }}
         run: |
-          if [[ "${CLICKHOUSE_VERSION}" == "21.3" && "${DOCKER_TOKEN}" != "" ]]; then
+          if [[ "${CLICKHOUSE_VERSION}" == "21.8" && "${DOCKER_TOKEN}" != "" ]]; then
             export DOCKER_REGISTRY=${DOCKER_REGISTRY:-docker.io}
             echo ${DOCKER_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin ${DOCKER_REGISTRY}
 
