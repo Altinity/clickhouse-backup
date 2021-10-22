@@ -31,25 +31,26 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y make
 
+      - name: Setup golang
+        id: setup-go
+        uses: actions/setup-go@v2
+        with:
+          go-version: '^1.17'
+
+
       - name: Cache golang
         id: cache-golang
-        env:
-          GOROOT: ${{ env.GOROOT_1_17_X64 }}
         uses: actions/cache@v2
         with:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: ${{ runner.os }}-golang-${{ hashFiles('go.sum') }}
+          key: ${{ runner.os }}-${{ matrix.golang-version }}-golang-${{ hashFiles('go.sum') }}
           restore-keys: |
-            ${{ runner.os }}-golang-
+            ${{ runner.os }}-${{ matrix.golang-version }}-golang-
 
       - name: Install golang dependencies
-        env:
-          GOROOT: ${{ env.GOROOT_1_17_X64 }}
-        run: |
-          ${GOROOT}/bin/go env
-          ${GOROOT}/bin/go mod download -x
+        run: go mod download -x
         if: |
           steps.cache-golang.outputs.cache-hit != 'true'
 

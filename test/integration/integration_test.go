@@ -460,7 +460,7 @@ func TestUnlockAPI(t *testing.T) {
 	defer func() {
 		ch.chbackup.Close()
 	}()
-	fieldTypes := []string{"UInt64", "String", "LowCardinality(String)"}
+	fieldTypes := []string{"UInt64", "String", "Int"}
 	installDebIfNotExists(r, "clickhouse", "curl")
 	maxTables := 10
 	minFields := 10
