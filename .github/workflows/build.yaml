@@ -87,7 +87,9 @@ jobs:
       - name: Running integration tests
         env:
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
-          # LOG_LEVEL: debug
+          LOG_LEVEL: "debug"
+          FTP_DEBUG: "true"
+          RUN_TESTS: "TestIntegrationFTP"
           CGO_ENABLED: 0
           GCS_TESTS: ${{ steps.secrets.outputs.GCS_TESTS }}
         run: |
@@ -102,9 +104,9 @@ jobs:
           export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup-race"
           docker-compose -f test/integration/${COMPOSE_FILE} down
           docker volume prune -f
-          docker-compose -f test/integration/${COMPOSE_FILE} up -d --force-recreate
+          docker-compose -f test/integration/${COMPOSE_FILE} up -d clickhouse
           docker-compose -f test/integration/${COMPOSE_FILE} ps -a
-          go test -timeout 30m -failfast -tags=integration -v test/integration/integration_test.go
+          go test -timeout 30m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
 
       - name: Building docker image
         env:
