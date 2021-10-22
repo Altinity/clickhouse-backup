@@ -17,9 +17,7 @@ jobs:
       matrix:
         clickhouse:
           - '1.1.54390'
-          - '19.11.12.69'
-          - '19.15.3.6'
-          - '19.16.19.85'
+          - '19.17'
           - '20.3'
           - '20.8'
           - '21.3'
@@ -28,34 +26,45 @@ jobs:
       - name: Checkout project
         uses: actions/checkout@v2
 
-      - name: Setup golang
-        id: setup-go
-        uses: actions/setup-go@v2
-        with:
-          go-version: '^1.17'
+#      - name: Setup golang
+#        id: setup-go
+#        uses: actions/setup-go@v2
+#        with:
+#          go-version: '^1.17'
 
-      - name: Setup docker-compose & gcc
+#      - name: Setup required packages
+#        run: |
+#          sudo apt-get update
+#          sudo apt-get install --no-install-recommends -y make gcc
+#          sudo apt-get install --no-install-recommends -y python3-pip
+#          sudo python3 -m pip install -U pip
+#          sudo pip3 install --prefer-binary -U setuptools
+#          sudo pip3 install --prefer-binary -U docker-compose
+
+      - name: Setup required packages
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y make gcc
-          sudo apt-get install --no-install-recommends -y python3-pip
-          sudo python3 -m pip install -U pip
-          sudo pip3 install --prefer-binary -U setuptools
-          sudo pip3 install --prefer-binary -U docker-compose
+          sudo apt-get install --no-install-recommends -y make
 
       - name: Cache golang
         id: cache-golang
+        env:
+          GOROOT: ${{ env.GOROOT_1_17_X64 }}
         uses: actions/cache@v2
         with:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: ${{ runner.os }}-${{ matrix.golang-version }}-golang-${{ hashFiles('go.sum') }}
+          key: ${{ runner.os }}-golang-${{ hashFiles('go.sum') }}
           restore-keys: |
-            ${{ runner.os }}-${{ matrix.golang-version }}-golang-
+            ${{ runner.os }}-golang-
 
       - name: Install golang dependencies
-        run: go mod download -x
+        env:
+          GOROOT: ${{ env.GOROOT_1_17_X64 }}
+        run: |
+          ${GOROOT}/bin/go env
+          ${GOROOT}/bin/go mod download -x
         if: |
           steps.cache-golang.outputs.cache-hit != 'true'
 
@@ -67,9 +76,14 @@ jobs:
           export DOCKER_TAG=${DOCKER_TAG##*\\}
           echo "::set-output name=docker_tag::${DOCKER_TAG:-dev}"
 
-      - run: make build-race
-      - run: make config
-      - run: make test
+      - name: Build clickhouse-backup binary
+        id: make
+        env:
+          GOROOT: ${{ env.GOROOT_1_17_X64 }}
+        run: |
+          make build-race
+          make config
+          make test
 
 
       # be careful with encrypt with old OpenSSL - https://habr.com/ru/post/535140/
@@ -102,8 +116,6 @@ jobs:
             export COMPOSE_FILE=docker-compose.yml
           fi
           export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup-race"
-          docker-compose -f test/integration/${COMPOSE_FILE} down
-          docker volume prune -f
           docker-compose -f test/integration/${COMPOSE_FILE} up -d clickhouse
           docker-compose -f test/integration/${COMPOSE_FILE} ps -a
           go test -timeout 30m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
