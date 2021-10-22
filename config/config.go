@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/apex/log"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/kelseyhightower/envconfig"
 	yaml "gopkg.in/yaml.v2"
@@ -110,6 +111,8 @@ type FTPConfig struct {
 	Path              string `yaml:"path" envconfig:"FTP_PATH"`
 	CompressionFormat string `yaml:"compression_format" envconfig:"FTP_COMPRESSION_FORMAT"`
 	CompressionLevel  int    `yaml:"compression_level" envconfig:"FTP_COMPRESSION_LEVEL"`
+	Concurrency       uint8  `yaml:"concurrency" envconfig:"FTP_CONCURRENCY"`
+	Debug             bool   `yaml:"debug" envconfig:"FTP_DEBUG"`
 }
 
 // SFTPConfig - sftp settings section
@@ -209,7 +212,7 @@ func (cfg *Config) GetCompressionFormat() string {
 	}
 }
 
-// LoadConfig - load config from file
+// LoadConfig - load config from file + environment variables
 func LoadConfig(configLocation string) (*Config, error) {
 	cfg := DefaultConfig()
 	configYaml, err := ioutil.ReadFile(configLocation)
@@ -223,6 +226,7 @@ func LoadConfig(configLocation string) (*Config, error) {
 		return nil, err
 	}
 	cfg.AzureBlob.Path = strings.TrimPrefix(cfg.AzureBlob.Path, "/")
+	log.SetLevelFromString(cfg.General.LogLevel)
 	return cfg, ValidateConfig(cfg)
 }
 
@@ -344,6 +348,7 @@ func DefaultConfig() *Config {
 		},
 		FTP: FTPConfig{
 			Timeout:           "2m",
+			Concurrency:       availableConcurrency,
 			CompressionFormat: "tar",
 			CompressionLevel:  1,
 		},

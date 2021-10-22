@@ -1,7 +1,7 @@
 version: "3.3"
 services:
   sshd:
-    image: panubo/sshd:latest
+    image: docker.io/panubo/sshd:latest
     container_name: sshd
     environment:
       SSH_ENABLE_ROOT: "true"
@@ -12,8 +12,22 @@ services:
     networks:
       - clickhouse-backup
 
+  ftp:
+    image: docker.io/fauria/vsftpd:latest
+    container_name: ftp
+    environment:
+      FTP_USER: test_backup
+      FTP_PASS: test_backup
+      PASV_ENABLE: "YES"
+      PASV_ADDRESS: "ftp"
+      PASV_ADDR_RESOLVE: "YES"
+      PASV_MIN_PORT: 21100
+      PASV_MAX_PORT: 21110
+    networks:
+      - clickhouse-backup
+
   minio:
-    image: minio/minio:${MINIO_VERSION:-latest}
+    image: docker.io/minio/minio:${MINIO_VERSION:-latest}
     container_name: minio
     environment:
       MINIO_ACCESS_KEY: access-key
@@ -45,13 +59,13 @@ services:
       - clickhouse-backup
 
   zookeeper:
-    image: zookeeper:${ZOOKEEPER_VERSION:-latest}
+    image: docker.io/zookeeper:${ZOOKEEPER_VERSION:-latest}
     container_name: zookeeper
     networks:
       - clickhouse-backup
 
   clickhouse:
-    image: ${CLICKHOUSE_IMAGE:-yandex/clickhouse-server}:${CLICKHOUSE_VERSION:-1.1.54390}
+    image: docker.io/${CLICKHOUSE_IMAGE:-yandex/clickhouse-server}:${CLICKHOUSE_VERSION:-1.1.54390}
     container_name: clickhouse
     user: root
     environment:
@@ -59,11 +73,12 @@ services:
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       S3_DEBUG: "${S3_DEBUG:-false}"
       GCS_DEBUG: "${GCS_DEBUG:-false}"
+      FTP_DEBUG: "${FTP_DEBUG:-false}"
 #      STORAGE_EMULATOR_HOST: "http://gsc:8080"
 #      GOOGLE_API_USE_CLIENT_CERTIFICATE: "false"
     volumes:
       - ./backup-user.xml:/etc/clickhouse-server/users.d/backup-user.xml
-      - ${CLICKHOUSE_BACKUP_BIN:-../../clickhouse-backup/clickhouse-backup}:/usr/bin/clickhouse-backup
+      - ${CLICKHOUSE_BACKUP_BIN:-../../clickhouse-backup/clickhouse-backup-race}:/usr/bin/clickhouse-backup
       - ./credentials.json:/etc/clickhouse-backup/credentials.json
       - ./server.crt:/etc/clickhouse-server/server.crt
       - ./server.key:/etc/clickhouse-server/server.key
@@ -80,7 +95,8 @@ services:
       - zookeeper
       - minio
       - sshd
-      - azure
+      - ftp
+#      - azure
 #      - gcs
 
 networks:

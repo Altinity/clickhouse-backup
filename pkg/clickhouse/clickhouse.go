@@ -2,6 +2,7 @@ package clickhouse
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -151,7 +152,7 @@ func (ch *ClickHouse) Close() {
 }
 
 // GetTables - return slice of all tables suitable for backup, MySQL and PostgreSQL database engine shall be skipped
-func (ch *ClickHouse) GetTables() ([]Table, error) {
+func (ch *ClickHouse) GetTables(tablePattern string) ([]Table, error) {
 	var err error
 	tables := make([]Table, 0)
 	isUUIDPresent := make([]int, 0)
@@ -163,6 +164,10 @@ func (ch *ClickHouse) GetTables() ([]Table, error) {
 		return nil, err
 	}
 	allTablesSQL := "SELECT * FROM system.tables WHERE is_temporary = 0"
+	if tablePattern != "" {
+		replacer := strings.NewReplacer(".", "\\.", ",", "|", "*", ".*", "?", ".")
+		allTablesSQL += fmt.Sprintf(" AND match(concat(database,'.',name),'%s') ", replacer.Replace(tablePattern))
+	}
 	if len(skipDatabases) > 0 {
 		allTablesSQL += fmt.Sprintf(" AND database NOT IN ('%s')", strings.Join(skipDatabases, "','"))
 	}
@@ -581,6 +586,17 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable bool) err
 			return err
 		}
 	}
+	if !strings.Contains(query, table.Name) {
+		return errors.New(fmt.Sprintf("schema query ```%s``` doesn't contains table name `%s`", query, table.Name))
+	}
+
+	// fix restore schema for legacy backup, see https://github.com/AlexAkulov/clickhouse-backup/issues/268
+	if strings.Contains(query, fmt.Sprintf("`%s`", table.Name)) && !strings.Contains(query, fmt.Sprintf("`%s`.`%s`", table.Database, table.Name)) {
+		query = strings.Replace(query, fmt.Sprintf("`%s`", table.Name), fmt.Sprintf("`%s`.`%s`", table.Database, table.Name), 1)
+	} else if strings.Contains(query, table.Name) && !strings.Contains(query, fmt.Sprintf("%s.%s", table.Database, table.Name)) && !strings.Contains(query, table.Database) {
+		query = strings.Replace(query, fmt.Sprintf("%s", table.Name), fmt.Sprintf("%s.%s", table.Database, table.Name), 1)
+	}
+
 	if _, err := ch.Query(query); err != nil {
 		return err
 	}

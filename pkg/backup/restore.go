@@ -308,7 +308,7 @@ func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName strin
 		return fmt.Errorf("no have found schemas by %s in %s", tablePattern, backupName)
 	}
 	log.Debugf("found %d tables with data in backup", len(tablesForRestore))
-	chTables, err := ch.GetTables()
+	chTables, err := ch.GetTables(tablePattern)
 	if err != nil {
 		return err
 	}

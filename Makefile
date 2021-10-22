@@ -39,6 +39,7 @@ test:
 
 build: $(NAME)/$(NAME)
 
+
 config: $(NAME)/config.yml
 
 $(NAME)/config.yml: $(NAME)/$(NAME)
@@ -80,3 +81,8 @@ $(PKG_FILES): build/pkg
 		-v $(VERSION) \
 		-p build \
 		build/pkg/=/
+
+build-race: $(NAME)/$(NAME)-race
+
+$(NAME)/$(NAME)-race: $(GO_FILES)
+	CGO_ENABLED=1 $(GO_BUILD) -race -o $@ ./cmd/$(NAME)

@@ -29,7 +29,7 @@ func CopyPartHashes(cfg config.Config, tablePattern string, backupName string) e
 		return fmt.Errorf("can't get data path from clickhouse: %v\nyou can set data_path in config file", err)
 	}
 
-	allTables, err := ch.GetTables()
+	allTables, err := ch.GetTables(tablePattern)
 	if err != nil {
 		return fmt.Errorf("can't get tables from clickhouse: %v", err)
 	}

@@ -99,12 +99,12 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 
 	allDatabases, err := ch.GetDatabases()
 	if err != nil {
-		return fmt.Errorf("cat't get database engines from clickhouse: %v", err)
+		return fmt.Errorf("can't get database engines from clickhouse: %v", err)
 	}
 
-	allTables, err := ch.GetTables()
+	allTables, err := ch.GetTables(tablePattern)
 	if err != nil {
-		return fmt.Errorf("cat't get tables from clickhouse: %v", err)
+		return fmt.Errorf("can't get tables from clickhouse: %v", err)
 	}
 	tables := filterTablesByPattern(allTables, tablePattern)
 	i := 0

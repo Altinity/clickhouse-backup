@@ -67,7 +67,7 @@ func (bd *BackupDestination) RemoveOldBackups(keep int) error {
 }
 
 func (bd *BackupDestination) RemoveBackup(backup Backup) error {
-	if bd.Kind() == "SFTP" {
+	if bd.Kind() == "SFTP" || bd.Kind() == "FTP" {
 		return bd.DeleteFile(backup.BackupName)
 	}
 	if backup.Legacy {
@@ -450,7 +450,6 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 	case "ftp":
 		ftpStorage := &FTP{
 			Config: &cfg.FTP,
-			Debug:  cfg.General.LogLevel == "debug",
 		}
 		return &BackupDestination{
 			ftpStorage,

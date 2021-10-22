@@ -368,8 +368,7 @@ func TestIntegrationGCS(t *testing.T) {
 	}
 	r := require.New(t)
 	r.NoError(dockerCP("config-gcs.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	r.NoError(dockerExec("clickhouse", "apt-get", "-y", "update"))
-	r.NoError(dockerExec("clickhouse", "apt-get", "-y", "install", "ca-certificates"))
+	installDebIfNotExists(r, "clickhouse", "ca-certificates")
 	testCommon(t)
 }
 
@@ -380,8 +379,7 @@ func TestIntegrationAzure(t *testing.T) {
 	}
 	r := require.New(t)
 	r.NoError(dockerCP("config-azblob.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	r.NoError(dockerExec("clickhouse", "apt-get", "-y", "update"))
-	r.NoError(dockerExec("clickhouse", "apt-get", "-y", "install", "ca-certificates"))
+	installDebIfNotExists(r, "clickhouse", "ca-certificates")
 	testCommon(t)
 }
 
@@ -403,6 +401,12 @@ func TestIntegrationSFTPAuthKey(t *testing.T) {
 	r.NoError(dockerExec("sshd", "chown", "-v", "root:root", "/root/.ssh/authorized_keys"))
 	r.NoError(dockerExec("sshd", "chmod", "-v", "0600", "/root/.ssh/authorized_keys"))
 
+	testCommon(t)
+}
+
+func TestIntegrationFTP(t *testing.T) {
+	r := require.New(t)
+	r.NoError(dockerCP("config-ftp.yaml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	testCommon(t)
 }
 
@@ -445,6 +449,46 @@ func TestSyncReplicaTimeout(t *testing.T) {
 
 }
 
+func TestUnlockAPI(t *testing.T) {
+	ch := &TestClickHouse{}
+	r := require.New(t)
+	ch.connectWithWait(r)
+	r.NoError(dockerCP("config-gcs.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	ch.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS long_schema")
+	defer func() {
+		ch.chbackup.Close()
+	}()
+	fieldTypes := []string{"UInt64", "String", "LowCardinality(String)"}
+	installDebIfNotExists(r, "clickhouse", "curl")
+	maxTables := 10
+	minFields := 10
+	randFields := 10
+	log.Infof("Create %d long_schema.t%%d` tables with with %d..%d fields...", maxTables, minFields, minFields+randFields)
+	for i := 0; i < maxTables; i++ {
+		sql := fmt.Sprintf("CREATE TABLE long_schema.t%d (id UInt64", i)
+		fieldsCount := minFields + rand.Intn(randFields)
+		for j := 0; j < fieldsCount; j++ {
+			fieldType := fieldTypes[rand.Intn(len(fieldTypes))]
+			sql += fmt.Sprintf(", f%d %s", j, fieldType)
+		}
+		sql += ") ENGINE=MergeTree() ORDER BY id"
+		ch.queryWithNoError(r, sql)
+	}
+	log.Info("...DONE")
+
+	log.Info("Run `clickhouse-backup server` in background")
+	r.NoError(dockerExec("-d", "clickhouse", "bash", "-c", "clickhouse-backup server &>>/tmp/clickhouse-backup-server.log"))
+	time.Sleep(1 * time.Second)
+	log.Info("...DONE")
+	log.Info("Create multiple backups")
+	out, err := dockerExecOut("clickhouse", "bash", "-c", "for i in {1..5}; do date; curl -sL -XPOST 'http://localhost:7171/backup/create?table=long_schema.*'; sleep 1; done")
+	log.Info("...DONE")
+
+	r.NoError(err)
+	r.NotContains(out, "Connection refused")
+	r.NotContains(out, "another operation is currently running")
+	ch.dropDatabase("long_schema")
+}
 func TestDoRestoreRBAC(t *testing.T) {
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.4") == -1 {
 		t.Skipf("Test skipped, RBAC not available for %s version", os.Getenv("CLICKHOUSE_VERSION"))
@@ -604,7 +648,7 @@ func testCommon(t *testing.T) {
 	incrementBackupName := fmt.Sprintf("increment_%d", rand.Int())
 
 	log.Info("Clean before start")
-	fullCleanup(r, ch, testBackupName, incrementBackupName)
+	fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, false)
 
 	generateTestData(ch, r)
 
@@ -692,16 +736,20 @@ func testCommon(t *testing.T) {
 	}
 
 	log.Info("Clean after finish")
-	fullCleanup(r, ch, testBackupName, incrementBackupName)
+	fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, true)
 
 	ch.chbackup.Close()
 }
 
-func fullCleanup(r *require.Assertions, ch *TestClickHouse, testBackupName string, incrementBackupName string) {
-	_ = dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", testBackupName)
-	_ = dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName)
-	_ = dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", incrementBackupName)
-	_ = dockerExec("clickhouse", "clickhouse-backup", "delete", "local", incrementBackupName)
+func fullCleanup(r *require.Assertions, ch *TestClickHouse, backupNames []string, checkDeleteErr bool) {
+	for _, backupName := range backupNames {
+		for _, backupType := range []string{"remote", "local"} {
+			err := dockerExec("clickhouse", "clickhouse-backup", "delete", backupType, backupName)
+			if checkDeleteErr {
+				r.NoError(err)
+			}
+		}
+	}
 	dropAllDatabases(r, ch)
 }
 
@@ -987,4 +1035,15 @@ func compareVersion(v1, v2 string) int {
 func isTestShouldSkip(envName string) bool {
 	isSkip, _ := map[string]bool{"": true, "0": true, "false": true, "False": true, "1": false, "True": false, "true": false}[os.Getenv(envName)]
 	return isSkip
+}
+
+func installDebIfNotExists(r *require.Assertions, container, pkg string) {
+	r.NoError(dockerExec(
+		container,
+		"bash", "-c",
+		fmt.Sprintf(
+			"if [[ '0' == $(dpkg -l %s | grep -c -E \"^ii\\s+%s\" ) ]]; then apt-get -y update; apt-get install -y %s; fi",
+			pkg, pkg, pkg,
+		),
+	))
 }
