@@ -4,28 +4,15 @@ on:
   pull_request:
     branches:
       - master
-      - dev
 
   push:
     branches:
       - master
-      - dev
 
 jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        clickhouse:
-          - '1.1.54390'
-          - '19.11.12.69'
-          - '19.15.3.6'
-          - '19.16.19.85'
-          - '20.3'
-          - '20.8'
-          - '21.3'
-          - '21.8'
     steps:
       - name: Checkout project
         uses: actions/checkout@v2
@@ -36,6 +23,11 @@ jobs:
         with:
           go-version: '^1.17'
 
+      - name: Set up GCC
+        uses: egor-tensin/setup-gcc@v1
+        with:
+          version: latest
+          platform: x64
 
       - name: Cache golang
         id: cache-golang
@@ -84,7 +76,21 @@ jobs:
             openssl enc -base64 -aes-256-cbc -d -in test/integration/credentials.json.enc -out test/integration/credentials.json -md md5 -k ${VAULT_PASSWORD}
           fi
           echo "::set-output name=GCS_TESTS::$(if [ -z "${{ secrets.VAULT_PASSWORD }}" ]; then echo "false"; else echo "true"; fi)"
-
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        clickhouse:
+          - '1.1.54390'
+          - '19.11.12.69'
+          - '19.15.3.6'
+          - '19.16.19.85'
+          - '20.3'
+          - '20.8'
+          - '21.3'
+          - '21.8'
+    steps:
       - name: Running integration tests
         env:
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
@@ -100,13 +106,17 @@ jobs:
           else
             export COMPOSE_FILE=docker-compose.yml
           fi
-          export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup"
+          export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup-race"
           docker-compose -f test/integration/${COMPOSE_FILE} down
           docker volume prune -f
           docker-compose -f test/integration/${COMPOSE_FILE} up -d --force-recreate
           docker-compose -f test/integration/${COMPOSE_FILE} ps -a
-          go test -failfast -tags=integration -v test/integration/integration_test.go
+          go test -timeout 30m -failfast -tags=integration -v test/integration/integration_test.go
 
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
       - name: Building docker image
         env:
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
