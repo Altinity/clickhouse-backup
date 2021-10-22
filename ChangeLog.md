@@ -11,6 +11,8 @@ IMPROVEMENTS
 - Improved `FTP` remote storage parallel upload / download
 - Added `FTP_CONCURRENCY` to allow, by default MAX_CPU / 2 
 - Added `FTP_DEBUG` setting, to allow debug FTP commands
+- Added `FTP` to CI/CD on any commit
+- Added race condition check to CI/CD
 
 BUG FIXES
 - environment variable `LOG_LEVEL` now apply to `clickhouse-backup server` properly

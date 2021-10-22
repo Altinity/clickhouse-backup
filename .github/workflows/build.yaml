@@ -68,7 +68,7 @@ jobs:
           export DOCKER_TAG=${DOCKER_TAG##*\\}
           echo "::set-output name=docker_tag::${DOCKER_TAG:-dev}"
 
-      - run: make build
+      - run: make build-race
       - run: make config
       - run: make test
 
