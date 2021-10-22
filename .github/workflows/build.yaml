@@ -26,21 +26,6 @@ jobs:
       - name: Checkout project
         uses: actions/checkout@v2
 
-#      - name: Setup golang
-#        id: setup-go
-#        uses: actions/setup-go@v2
-#        with:
-#          go-version: '^1.17'
-
-#      - name: Setup required packages
-#        run: |
-#          sudo apt-get update
-#          sudo apt-get install --no-install-recommends -y make gcc
-#          sudo apt-get install --no-install-recommends -y python3-pip
-#          sudo python3 -m pip install -U pip
-#          sudo pip3 install --prefer-binary -U setuptools
-#          sudo pip3 install --prefer-binary -U docker-compose
-
       - name: Setup required packages
         run: |
           sudo apt-get update
@@ -103,7 +88,6 @@ jobs:
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
           LOG_LEVEL: "debug"
           FTP_DEBUG: "true"
-          RUN_TESTS: "TestIntegrationFTP"
           CGO_ENABLED: 0
           GCS_TESTS: ${{ steps.secrets.outputs.GCS_TESTS }}
         run: |

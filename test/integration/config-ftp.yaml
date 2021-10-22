@@ -19,5 +19,7 @@ ftp:
   path: "/backup"
   compression_format: tar
   compression_level: 1
+  # need to equal upload_concurrency / download_concurrency
+  concurrency: 4
 api:
   listen: :7171

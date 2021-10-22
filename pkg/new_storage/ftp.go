@@ -55,7 +55,13 @@ func (f *FTP) Connect() error {
 	)
 	f.ctx = context.Background()
 	f.clients = pool.NewObjectPoolWithDefaultConfig(f.ctx, f.factory)
-	f.clients.Config.MaxTotal = int(f.Config.Concurrency)
+	if f.Config.Concurrency > 1 {
+		f.clients.Config.MaxTotal = int(f.Config.Concurrency)
+	}
+	f.clients.Config.MaxIdle = 0
+	f.clients.Config.MinIdle = 0
+	f.clients.Config.BlockWhenExhausted = false
+
 	f.dirCacheMutex.Lock()
 	f.dirCache = map[string]struct{}{}
 	f.dirCacheMutex.Unlock()
