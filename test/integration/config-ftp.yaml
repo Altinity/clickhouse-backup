@@ -1,8 +1,8 @@
 general:
   disable_progress_bar: true
   remote_storage: ftp
-  upload_concurrency: 4
-  download_concurrency: 4
+  upload_concurrency: 1
+  download_concurrency: 1
 clickhouse:
   host: 127.0.0.1
   port: 9440
@@ -20,6 +20,6 @@ ftp:
   compression_format: tar
   compression_level: 1
   # need to equal upload_concurrency / download_concurrency
-  concurrency: 4
+  # concurrency: 2
 api:
   listen: :7171

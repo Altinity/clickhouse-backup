@@ -60,7 +60,6 @@ func (f *FTP) Connect() error {
 	}
 	f.clients.Config.MaxIdle = 0
 	f.clients.Config.MinIdle = 0
-	f.clients.Config.BlockWhenExhausted = false
 
 	f.dirCacheMutex.Lock()
 	f.dirCache = map[string]struct{}{}
@@ -74,14 +73,17 @@ func (f *FTP) Kind() string {
 
 // getConnectionFromPool *ftp.ServerConn is not thread-safe, so we need implements connection pool
 func (f *FTP) getConnectionFromPool() (*ftp.ServerConn, error) {
-	client, err := f.clients.BorrowObject(context.Background())
+	apexLog.Debugf("FTP::getConnectionFromPool()")
+	client, err := f.clients.BorrowObject(f.ctx)
 	if err != nil {
+		apexLog.Errorf("can't BorrowObject from FTP Connection Pool: %v", err)
 		return nil, err
 	}
 	return client.(*ftp.ServerConn), nil
 }
 
 func (f *FTP) returnConnectionToPool(client *ftp.ServerConn) {
+	apexLog.Debugf("FTP::returnConnectionToPool(%v)", client)
 	if client != nil {
 		err := f.clients.ReturnObject(f.ctx, client)
 		if err != nil {
@@ -181,6 +183,7 @@ func (f *FTP) Walk(ftpPath string, recursive bool, process func(RemoteFile) erro
 }
 
 func (f *FTP) GetFileReader(key string) (io.ReadCloser, error) {
+	apexLog.Debugf("FTP::GetFileReader key=%s", key)
 	client, err := f.getConnectionFromPool()
 	if err != nil {
 		return nil, err
@@ -194,6 +197,7 @@ func (f *FTP) GetFileReader(key string) (io.ReadCloser, error) {
 }
 
 func (f *FTP) PutFile(key string, r io.ReadCloser) error {
+	apexLog.Debugf("FTP::PutFile key=%s", key)
 	client, err := f.getConnectionFromPool()
 	defer f.returnConnectionToPool(client)
 	if err != nil {
