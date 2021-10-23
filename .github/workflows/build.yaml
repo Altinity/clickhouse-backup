@@ -70,7 +70,7 @@ jobs:
 
       - uses: actions/upload-artifact@v2
         with:
-          name: build-artefacts
+          name: build-artifacts
           path: |
             clickhouse-backup/clickhouse-backup*
             test/integration/credentials.json
