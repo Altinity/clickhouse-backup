@@ -15,7 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        golang-version: 1.17
+        golang-version:
+          - "1.17"
     outputs:
       GCS_TESTS: ${{ steps.secrets.outputs.GST_TESTS }}
     steps:
