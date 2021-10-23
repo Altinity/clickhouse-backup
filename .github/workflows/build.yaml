@@ -140,8 +140,7 @@ jobs:
           echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"
           echo "GCS_TESTS=${GCS_TESTS}"
 
-          ls -la $(pwd)/clickhouse-backup/
-          ls -la $(pwd)/test/integration/credentials.json
+          chmod +x $(pwd)/clickhouse-backup/clickhouse-backup*
 
           if [[ "${CLICKHOUSE_VERSION}" == 2* ]]; then
             export COMPOSE_FILE=docker-compose_advanced.yml
