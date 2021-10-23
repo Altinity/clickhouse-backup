@@ -70,17 +70,27 @@ jobs:
 
       - uses: actions/upload-artifact@v2
         with:
+          name: build-gcp-credentials
+          path: |
+            test/integration/credentials.json
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v2
+        with:
           name: build-artifacts
           path: |
-            clickhouse-backup/clickhouse-backup*
+            clickhouse-backup/clickhouse-backup
+            clickhouse-backup/clickhouse-backup-race
             test/integration/credentials.json
-
+          if-no-files-found: error
   test:
     needs: build
     name: Test
     runs-on: ubuntu-latest
     strategy:
       matrix:
+        golang-version:
+          - "1.17"
         clickhouse:
           - '1.1.54390'
           - '19.17'
@@ -92,9 +102,30 @@ jobs:
       - name: Checkout project
         uses: actions/checkout@v2
 
+      - name: Setup golang
+        id: setup-go
+        uses: actions/setup-go@v2
+        with:
+          go-version: '^${{ matrix.golang-version }}'
+
+      - name: Cache golang
+        id: cache-golang
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-${{ matrix.golang-version }}-golang-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.golang-version }}-golang-
+
       - uses: actions/download-artifact@v2
         with:
           name: build-artifacts
+
+      - uses: actions/download-artifact@v2
+        with:
+          name: build-gcp-credentials
 
       - name: Running integration tests
         env:
@@ -108,6 +139,10 @@ jobs:
           set -x
           echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"
           echo "GCS_TESTS=${GCS_TESTS}"
+
+          ls -la $(pwd)/clickhouse-backup/
+          ls -la $(pwd)/test/integration/credentials.json
+
           if [[ "${CLICKHOUSE_VERSION}" == 2* ]]; then
             export COMPOSE_FILE=docker-compose_advanced.yml
           else
