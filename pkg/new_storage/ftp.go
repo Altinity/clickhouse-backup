@@ -3,6 +3,7 @@ package new_storage
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	apexLog "github.com/apex/log"
 	"io"
 	"os"
@@ -17,7 +18,6 @@ import (
 )
 
 type FTP struct {
-	factory       pool.PooledObjectFactory
 	clients       *pool.ObjectPool
 	ctx           context.Context
 	Config        *config.FTPConfig
@@ -41,22 +41,10 @@ func (f *FTP) Connect() error {
 		tlsConfig := tls.Config{}
 		options = append(options, ftp.DialWithTLS(&tlsConfig))
 	}
-	f.factory = pool.NewPooledObjectFactorySimple(
-		func(context.Context) (interface{}, error) {
-			c, err := ftp.Dial(f.Config.Address, options...)
-			if err != nil {
-				return nil, err
-			}
-			if err := c.Login(f.Config.Username, f.Config.Password); err != nil {
-				return nil, err
-			}
-			return c, nil
-		},
-	)
 	f.ctx = context.Background()
-	f.clients = pool.NewObjectPoolWithDefaultConfig(f.ctx, f.factory)
+	f.clients = pool.NewObjectPoolWithDefaultConfig(f.ctx, &ftpPoolFactory{options: options, ftp: f})
 	if f.Config.Concurrency > 1 {
-		f.clients.Config.MaxTotal = int(f.Config.Concurrency)
+		f.clients.Config.MaxTotal = int(f.Config.Concurrency) * 2
 	}
 	f.clients.Config.MaxIdle = 0
 	f.clients.Config.MinIdle = 0
@@ -72,8 +60,8 @@ func (f *FTP) Kind() string {
 }
 
 // getConnectionFromPool *ftp.ServerConn is not thread-safe, so we need implements connection pool
-func (f *FTP) getConnectionFromPool() (*ftp.ServerConn, error) {
-	apexLog.Debugf("FTP::getConnectionFromPool()")
+func (f *FTP) getConnectionFromPool(where string) (*ftp.ServerConn, error) {
+	apexLog.Debugf("FTP::getConnectionFromPool(%s) active=%d idle=%d", where, f.clients.GetNumActive(), f.clients.GetNumIdle())
 	client, err := f.clients.BorrowObject(f.ctx)
 	if err != nil {
 		apexLog.Errorf("can't BorrowObject from FTP Connection Pool: %v", err)
@@ -82,8 +70,8 @@ func (f *FTP) getConnectionFromPool() (*ftp.ServerConn, error) {
 	return client.(*ftp.ServerConn), nil
 }
 
-func (f *FTP) returnConnectionToPool(client *ftp.ServerConn) {
-	apexLog.Debugf("FTP::returnConnectionToPool(%v)", client)
+func (f *FTP) returnConnectionToPool(where string, client *ftp.ServerConn) {
+	apexLog.Debugf("FTP::returnConnectionToPool(%s) active=%d idle=%d", where, f.clients.GetNumActive(), f.clients.GetNumIdle())
 	if client != nil {
 		err := f.clients.ReturnObject(f.ctx, client)
 		if err != nil {
@@ -95,8 +83,8 @@ func (f *FTP) returnConnectionToPool(client *ftp.ServerConn) {
 func (f *FTP) StatFile(key string) (RemoteFile, error) {
 	// cant list files, so check the dir
 	dir := path.Dir(path.Join(f.Config.Path, key))
-	client, err := f.getConnectionFromPool()
-	defer f.returnConnectionToPool(client)
+	client, err := f.getConnectionFromPool("StatFile")
+	defer f.returnConnectionToPool("StatFile", client)
 	if err != nil {
 		return nil, err
 	}
@@ -124,8 +112,8 @@ func (f *FTP) StatFile(key string) (RemoteFile, error) {
 }
 
 func (f *FTP) DeleteFile(key string) error {
-	client, err := f.getConnectionFromPool()
-	defer f.returnConnectionToPool(client)
+	client, err := f.getConnectionFromPool("DeleteFile")
+	defer f.returnConnectionToPool("DeleteFile", client)
 	if err != nil {
 		return err
 	}
@@ -133,8 +121,8 @@ func (f *FTP) DeleteFile(key string) error {
 }
 
 func (f *FTP) Walk(ftpPath string, recursive bool, process func(RemoteFile) error) error {
-	client, err := f.getConnectionFromPool()
-	defer f.returnConnectionToPool(client)
+	client, err := f.getConnectionFromPool("Walk")
+	defer f.returnConnectionToPool("Walk", client)
 	if err != nil {
 		return err
 	}
@@ -184,7 +172,7 @@ func (f *FTP) Walk(ftpPath string, recursive bool, process func(RemoteFile) erro
 
 func (f *FTP) GetFileReader(key string) (io.ReadCloser, error) {
 	apexLog.Debugf("FTP::GetFileReader key=%s", key)
-	client, err := f.getConnectionFromPool()
+	client, err := f.getConnectionFromPool("GetFileReader")
 	if err != nil {
 		return nil, err
 	}
@@ -198,13 +186,16 @@ func (f *FTP) GetFileReader(key string) (io.ReadCloser, error) {
 
 func (f *FTP) PutFile(key string, r io.ReadCloser) error {
 	apexLog.Debugf("FTP::PutFile key=%s", key)
-	client, err := f.getConnectionFromPool()
-	defer f.returnConnectionToPool(client)
+	client, err := f.getConnectionFromPool("PutFile")
+	defer f.returnConnectionToPool("PutFile", client)
 	if err != nil {
 		return err
 	}
 	k := path.Join(f.Config.Path, key)
-	f.MkdirAll(path.Dir(k))
+	err = f.MkdirAll(path.Dir(k))
+	if err != nil {
+		return err
+	}
 	return client.Stor(k, r)
 }
 
@@ -227,13 +218,17 @@ func (f *ftpFile) Name() string {
 }
 
 func (f *FTP) MkdirAll(key string) error {
-	client, err := f.getConnectionFromPool()
-	defer f.returnConnectionToPool(client)
+	client, err := f.getConnectionFromPool(fmt.Sprintf("MkDirAll(%s)", key))
+	defer f.returnConnectionToPool(fmt.Sprintf("MkDirAll(%s)", key), client)
 	if err != nil {
 		return err
 	}
 	dirs := strings.Split(key, "/")
-	client.ChangeDir("/")
+	err = client.ChangeDir("/")
+	if err != nil {
+		return err
+	}
+
 	for i := range dirs {
 		d := path.Join(dirs[:i+1]...)
 
@@ -243,8 +238,7 @@ func (f *FTP) MkdirAll(key string) error {
 			continue
 		}
 		f.dirCacheMutex.RUnlock()
-
-		client.MakeDir(d)
+		_ = client.MakeDir(d)
 
 		f.dirCacheMutex.Lock()
 		f.dirCache[d] = struct{}{}
@@ -260,6 +254,38 @@ type FTPFileReader struct {
 }
 
 func (fr *FTPFileReader) Close() error {
-	defer fr.pool.returnConnectionToPool(fr.client)
+	defer fr.pool.returnConnectionToPool("FTPFileReader.Close", fr.client)
 	return fr.Response.Close()
+}
+
+type ftpPoolFactory struct {
+	options []ftp.DialOption
+	ftp     *FTP
+}
+
+func (f *ftpPoolFactory) MakeObject(ctx context.Context) (*pool.PooledObject, error) {
+	c, err := ftp.Dial(f.ftp.Config.Address, f.options...)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.Login(f.ftp.Config.Username, f.ftp.Config.Password); err != nil {
+		return nil, err
+	}
+	return pool.NewPooledObject(c), nil
+}
+
+func (f *ftpPoolFactory) DestroyObject(ctx context.Context, object *pool.PooledObject) error {
+	return object.Object.(*ftp.ServerConn).Quit()
+}
+
+func (f *ftpPoolFactory) ValidateObject(ctx context.Context, object *pool.PooledObject) bool {
+	return true
+}
+
+func (f *ftpPoolFactory) ActivateObject(ctx context.Context, object *pool.PooledObject) error {
+	return nil
+}
+
+func (f *ftpPoolFactory) PassivateObject(ctx context.Context, object *pool.PooledObject) error {
+	return nil
 }

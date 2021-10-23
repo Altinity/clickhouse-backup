@@ -404,13 +404,11 @@ func TestIntegrationSFTPAuthKey(t *testing.T) {
 	testCommon(t)
 }
 
-/* TODO: need to figure out with download
 func TestIntegrationFTP(t *testing.T) {
 	r := require.New(t)
 	r.NoError(dockerCP("config-ftp.yaml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	testCommon(t)
 }
-*/
 
 func TestSyncReplicaTimeout(t *testing.T) {
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.11") == -1 {

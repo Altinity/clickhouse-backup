@@ -234,6 +234,12 @@ func ValidateConfig(cfg *Config) error {
 	if cfg.GetCompressionFormat() == "unknown" {
 		return fmt.Errorf("'%s' is unknown remote storage", cfg.General.RemoteStorage)
 	}
+	if cfg.FTP.Concurrency < cfg.General.DownloadConcurrency || cfg.FTP.Concurrency < cfg.General.UploadConcurrency {
+		return fmt.Errorf(
+			"FTP_CONCURRENCY=%d should be great or equal than DOWNLOAD_CONCURRENCY=%d and UPLOAD_CONCURRENCY=%d",
+			cfg.FTP.Concurrency, cfg.General.DownloadConcurrency, cfg.General.UploadConcurrency,
+		)
+	}
 	if cfg.GetCompressionFormat() == "lz4" {
 		return fmt.Errorf("clickhouse already compressed data by lz4")
 	}
