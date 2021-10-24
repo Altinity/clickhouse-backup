@@ -20,7 +20,8 @@ BUG FIXES
 - fix [#273](https://github.com/AlexAkulov/clickhouse-backup/issues/273), return `S3_PART_SIZE` back, but calculates it smartly
 - fix [#252](https://github.com/AlexAkulov/clickhouse-backup/issues/252), now you can pass `last` and `filter` query string parameters
 - fix [#246](https://github.com/AlexAkulov/clickhouse-backup/issues/246), incorrect error messages when use `REMOTE_STORAGE=none`
-- fix [#283](https://github.com/AlexAkulov/clickhouse-backup/issues/283), properly handle error message from `FTP` server 
+- fix [#283](https://github.com/AlexAkulov/clickhouse-backup/issues/283), properly handle error message from `FTP` server
+- fix [#268](https://github.com/AlexAkulov/clickhouse-backup/issues/268), properly restore legacy backup for schema without database name
 
 # v1.1.1
 
