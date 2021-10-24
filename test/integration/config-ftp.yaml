@@ -1,0 +1,24 @@
+general:
+  disable_progress_bar: true
+  remote_storage: ftp
+  upload_concurrency: 4
+  download_concurrency: 4
+clickhouse:
+  host: 127.0.0.1
+  port: 9440
+  username: backup
+  password: meow=& 123?*%# МЯУ
+  secure: true
+  skip_verify: true
+  restart_command: bash -c 'echo "FAKE RESTART"'
+ftp:
+  address: "ftp:21"
+  username: "test_backup"
+  password: "test_backup"
+  tls: false
+  path: "/backup"
+  compression_format: tar
+  compression_level: 1
+  concurrency: 4
+api:
+  listen: :7171

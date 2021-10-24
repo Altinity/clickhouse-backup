@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/apex/log"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/kelseyhightower/envconfig"
 	yaml "gopkg.in/yaml.v2"
@@ -110,6 +111,8 @@ type FTPConfig struct {
 	Path              string `yaml:"path" envconfig:"FTP_PATH"`
 	CompressionFormat string `yaml:"compression_format" envconfig:"FTP_COMPRESSION_FORMAT"`
 	CompressionLevel  int    `yaml:"compression_level" envconfig:"FTP_COMPRESSION_LEVEL"`
+	Concurrency       uint8  `yaml:"concurrency" envconfig:"FTP_CONCURRENCY"`
+	Debug             bool   `yaml:"debug" envconfig:"FTP_DEBUG"`
 }
 
 // SFTPConfig - sftp settings section
@@ -118,7 +121,7 @@ type SFTPConfig struct {
 	Port              uint   `yaml:"port" envconfig:"SFTP_PORT"`
 	Username          string `yaml:"username" envconfig:"SFTP_USERNAME"`
 	Password          string `yaml:"password" envconfig:"SFTP_PASSWORD"`
-	Key               string `yaml:"key" envconfig:"SFTP_PASSWORD"`
+	Key               string `yaml:"key" envconfig:"SFTP_KEY"`
 	Path              string `yaml:"path" envconfig:"SFTP_PATH"`
 	CompressionFormat string `yaml:"compression_format" envconfig:"SFTP_COMPRESSION_FORMAT"`
 	CompressionLevel  int    `yaml:"compression_level" envconfig:"SFTP_COMPRESSION_LEVEL"`
@@ -209,7 +212,7 @@ func (cfg *Config) GetCompressionFormat() string {
 	}
 }
 
-// LoadConfig - load config from file
+// LoadConfig - load config from file + environment variables
 func LoadConfig(configLocation string) (*Config, error) {
 	cfg := DefaultConfig()
 	configYaml, err := ioutil.ReadFile(configLocation)
@@ -223,12 +226,19 @@ func LoadConfig(configLocation string) (*Config, error) {
 		return nil, err
 	}
 	cfg.AzureBlob.Path = strings.TrimPrefix(cfg.AzureBlob.Path, "/")
+	log.SetLevelFromString(cfg.General.LogLevel)
 	return cfg, ValidateConfig(cfg)
 }
 
 func ValidateConfig(cfg *Config) error {
 	if cfg.GetCompressionFormat() == "unknown" {
 		return fmt.Errorf("'%s' is unknown remote storage", cfg.General.RemoteStorage)
+	}
+	if cfg.General.RemoteStorage == "ftp" && (cfg.FTP.Concurrency < cfg.General.DownloadConcurrency || cfg.FTP.Concurrency < cfg.General.UploadConcurrency) {
+		return fmt.Errorf(
+			"FTP_CONCURRENCY=%d should be great or equal than DOWNLOAD_CONCURRENCY=%d and UPLOAD_CONCURRENCY=%d",
+			cfg.FTP.Concurrency, cfg.General.DownloadConcurrency, cfg.General.UploadConcurrency,
+		)
 	}
 	if cfg.GetCompressionFormat() == "lz4" {
 		return fmt.Errorf("clickhouse already compressed data by lz4")
@@ -344,6 +354,7 @@ func DefaultConfig() *Config {
 		},
 		FTP: FTPConfig{
 			Timeout:           "2m",
+			Concurrency:       availableConcurrency,
 			CompressionFormat: "tar",
 			CompressionLevel:  1,
 		},

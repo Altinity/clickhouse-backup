@@ -243,8 +243,8 @@ func GetRemoteBackups(cfg *config.Config) ([]new_storage.Backup, error) {
 	return backupList, err
 }
 
-// getTables - get all tables for use by PrintTables and API
-func GetTables(cfg config.Config) ([]clickhouse.Table, error) {
+// GetTables - get all tables for use by PrintTables and API
+func GetTables(cfg *config.Config) ([]clickhouse.Table, error) {
 	ch := &clickhouse.ClickHouse{
 		Config: &cfg.ClickHouse,
 	}
@@ -254,7 +254,7 @@ func GetTables(cfg config.Config) ([]clickhouse.Table, error) {
 	}
 	defer ch.Close()
 
-	allTables, err := ch.GetTables()
+	allTables, err := ch.GetTables("")
 	if err != nil {
 		return []clickhouse.Table{}, fmt.Errorf("can't get tables: %v", err)
 	}
@@ -262,7 +262,7 @@ func GetTables(cfg config.Config) ([]clickhouse.Table, error) {
 }
 
 // PrintTables - print all tables suitable for backup
-func PrintTables(cfg config.Config, printAll bool) error {
+func PrintTables(cfg *config.Config, printAll bool) error {
 	ch := &clickhouse.ClickHouse{
 		Config: &cfg.ClickHouse,
 	}

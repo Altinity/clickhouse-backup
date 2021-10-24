@@ -4,12 +4,10 @@ on:
   pull_request:
     branches:
       - master
-      - dev
 
   push:
     branches:
       - master
-      - dev
 
 jobs:
   build:
@@ -17,15 +15,10 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        clickhouse:
-          - '1.1.54390'
-          - '19.11.12.69'
-          - '19.15.3.6'
-          - '19.16.19.85'
-          - '20.3'
-          - '20.8'
-          - '21.3'
-          - '21.8'
+        golang-version:
+          - "1.17"
+    outputs:
+      GCS_TESTS: ${{ steps.secrets.outputs.GST_TESTS }}
     steps:
       - name: Checkout project
         uses: actions/checkout@v2
@@ -34,8 +27,7 @@ jobs:
         id: setup-go
         uses: actions/setup-go@v2
         with:
-          go-version: '^1.17'
-
+          go-version: '^${{ matrix.golang-version }}'
 
       - name: Cache golang
         id: cache-golang
@@ -53,27 +45,18 @@ jobs:
         if: |
           steps.cache-golang.outputs.cache-hit != 'true'
 
-      - name: Setup docker-compose
+
+      - name: Build clickhouse-backup binary
+        id: make
+        env:
+          GOROOT: ${{ env.GOROOT_1_17_X64 }}
         run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y make python3-pip
-          sudo python3 -m pip install -U pip
-          sudo pip3 install --prefer-binary -U setuptools
-          sudo pip3 install --prefer-binary -U docker-compose
-
-      - name: Extract DOCKER_TAG version
-        id: docker_tag
-        run: |
-          DOCKER_TAG=${GITHUB_REF##*/}
-          export DOCKER_TAG=${DOCKER_TAG##*\\}
-          echo "::set-output name=docker_tag::${DOCKER_TAG:-dev}"
-
-      - run: make build
-      - run: make config
-      - run: make test
+          make build-race
+          make config
+          make test
 
 
-      # be carefull with encrypt with old OpenSSL - https://habr.com/ru/post/535140/
+      # be careful with encrypt with old OpenSSL - https://habr.com/ru/post/535140/
       - name: Decrypting credentials for Google Cloud Storage
         id: secrets
         env:
@@ -85,31 +68,115 @@ jobs:
           fi
           echo "::set-output name=GCS_TESTS::$(if [ -z "${{ secrets.VAULT_PASSWORD }}" ]; then echo "false"; else echo "true"; fi)"
 
+      - uses: actions/upload-artifact@v2
+        with:
+          name: build-gcp-credentials
+          path: |
+            test/integration/credentials.json
+          if-no-files-found: error
+        if: |
+          steps.secrets.outputs.GCS_TESTS == 'true'
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: build-artifacts
+          path: |
+            ./clickhouse-backup/clickhouse-backup
+            ./clickhouse-backup/clickhouse-backup-race
+            ChangeLog.md
+          if-no-files-found: error
+  test:
+    needs: build
+    name: Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        golang-version:
+          - "1.17"
+        clickhouse:
+          - '1.1.54390'
+          - '19.17'
+          - '20.3'
+          - '20.8'
+          - '21.3'
+          - '21.8'
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v2
+
+      - name: Setup golang
+        id: setup-go
+        uses: actions/setup-go@v2
+        with:
+          go-version: '^${{ matrix.golang-version }}'
+
+      - name: Cache golang
+        id: cache-golang
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-${{ matrix.golang-version }}-golang-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.golang-version }}-golang-
+
+      - uses: actions/download-artifact@v2
+        with:
+          name: build-artifacts
+
+      - uses: actions/download-artifact@v2
+        with:
+          name: build-gcp-credentials
+        if: |
+          needs.build.outputs.GCS_TESTS == 'true'
+
       - name: Running integration tests
         env:
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
-          # LOG_LEVEL: debug
+          # RUN_TESTS: "TestIntegrationFTP"
+          # LOG_LEVEL: "debug"
+          # FTP_DEBUG: "true"
           CGO_ENABLED: 0
-          GCS_TESTS: ${{ steps.secrets.outputs.GCS_TESTS }}
+          GCS_TESTS: ${{ needs.build.outputs.GCS_TESTS }}
         run: |
           set -x
           echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"
           echo "GCS_TESTS=${GCS_TESTS}"
+
+          chmod +x $(pwd)/clickhouse-backup/clickhouse-backup*
+
           if [[ "${CLICKHOUSE_VERSION}" == 2* ]]; then
             export COMPOSE_FILE=docker-compose_advanced.yml
           else
             export COMPOSE_FILE=docker-compose.yml
           fi
-          export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup"
-          docker-compose -f test/integration/${COMPOSE_FILE} down
-          docker volume prune -f
-          docker-compose -f test/integration/${COMPOSE_FILE} up -d --force-recreate
+          export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup-race"
+          docker-compose -f test/integration/${COMPOSE_FILE} up -d clickhouse
           docker-compose -f test/integration/${COMPOSE_FILE} ps -a
-          go test -failfast -tags=integration -v test/integration/integration_test.go
+          go test -timeout 30m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
+
+  docker:
+    needs: test
+    name: Docker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v2
+
+      - uses: actions/download-artifact@v2
+        with:
+          name: build-artifacts
+
+      - name: Extract DOCKER_TAG version
+        id: docker_tag
+        run: |
+          DOCKER_TAG=${GITHUB_REF##*/}
+          export DOCKER_TAG=${DOCKER_TAG##*\\}
+          echo "::set-output name=docker_tag::${DOCKER_TAG:-dev}"
 
       - name: Building docker image
         env:
-          CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
           DOCKER_REPO: ${{ secrets.DOCKER_REPO }}
           DOCKER_IMAGE: ${{ secrets.DOCKER_IMAGE }}
           DOCKER_TOKEN: ${{ secrets.DOCKER_TOKEN }}
@@ -117,7 +184,7 @@ jobs:
           DOCKER_REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
           DOCKER_TAG: ${{ steps.docker_tag.outputs.docker_tag }}
         run: |
-          if [[ "${CLICKHOUSE_VERSION}" == "21.3" && "${DOCKER_TOKEN}" != "" ]]; then
+          if [[ "${DOCKER_TOKEN}" != "" ]]; then
             export DOCKER_REGISTRY=${DOCKER_REGISTRY:-docker.io}
             echo ${DOCKER_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin ${DOCKER_REGISTRY}
 

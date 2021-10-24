@@ -58,7 +58,7 @@ func main() {
 			Usage:     "Print list of tables",
 			UsageText: "clickhouse-backup tables",
 			Action: func(c *cli.Context) error {
-				return backup.PrintTables(*getConfig(c), c.Bool("a"))
+				return backup.PrintTables(getConfig(c), c.Bool("a"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.BoolFlag{
@@ -329,7 +329,6 @@ func getConfig(ctx *cli.Context) *config.Config {
 	if err != nil {
 		log.Fatal(err.Error())
 	}
-	log.SetLevelFromString(cfg.General.LogLevel)
 	return cfg
 }
 

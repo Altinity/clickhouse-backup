@@ -1,3 +1,34 @@
+# v1.2.0
+
+INCOMPATIBLE CHANGES
+- REST API `/backup/status` now return only latest executed command with status and error message
+
+IMPROVEMENTS
+- Added REST API `/backup/list/local` and `/backup/list/remote` to allow list backup types separately
+- Decreased background backup creation time via REST API `/backup/create`, during avoid list remote backups for update metrics value 
+- Decreased backup creation time, during avoid scan whole `system.tables` when set `table` query string parameter or `--tables` cli parameter     
+- Added `last` and `filter` query string parameters to REST API `/backup/actions`, to avoid pass to client long JSON documents
+- Improved `FTP` remote storage parallel upload / download
+- Added `FTP_CONCURRENCY` to allow, by default MAX_CPU / 2 
+- Added `FTP_DEBUG` setting, to allow debug FTP commands
+- Added `FTP` to CI/CD on any commit
+- Added race condition check to CI/CD
+
+BUG FIXES
+- environment variable `LOG_LEVEL` now apply to `clickhouse-backup server` properly
+- fix [#280](https://github.com/AlexAkulov/clickhouse-backup/issues/280), incorrect prometheus metrics measurement for `/backup/create`, `/backup/upload`, `/backup/download`
+- fix [#273](https://github.com/AlexAkulov/clickhouse-backup/issues/273), return `S3_PART_SIZE` back, but calculates it smartly
+- fix [#252](https://github.com/AlexAkulov/clickhouse-backup/issues/252), now you can pass `last` and `filter` query string parameters
+- fix [#246](https://github.com/AlexAkulov/clickhouse-backup/issues/246), incorrect error messages when use `REMOTE_STORAGE=none`
+- fix [#283](https://github.com/AlexAkulov/clickhouse-backup/issues/283), properly handle error message from `FTP` server
+- fix [#268](https://github.com/AlexAkulov/clickhouse-backup/issues/268), properly restore legacy backup for schema without database name
+
+# v1.1.1
+
+BUG FIXES
+- fix broken `system.backup_list` integration table after add `required field` in https://github.com/AlexAkulov/clickhouse-backup/pull/263
+- fix [#274](https://github.com/AlexAkulov/clickhouse-backup/issues/274) invalid `SFTP_PASSWORD` environment usage 
+
 # v1.1.0
 
 IMPROVEMENTS
@@ -12,7 +43,6 @@ IMPROVEMENTS
 - Added options for RBAC and CONFIGs backup, look to `clickhouse-backup help create` and `clickhouse-backup help restore` for details
 - Add `S3_CONCURRENCY` option to speedup backup upload to `S3`
 - Add `SFTP_CONCURRENCY` option to speedup backup upload to `SFTP`
-- Add `--diff-from-remote` to `upload` command for avoid store local backup
 - Add `AZBLOB_USE_MANAGED_IDENTITY` support for ManagedIdentity for azure remote storage, thanks https://github.com/roman-vynar
 - Add clickhouse-operator kubernetes manifest which run `clickhouse-backup` in `server` mode on each clickhouse pod in kubernetes cluster
 - Add detailed description and restrictions for incremental backups.

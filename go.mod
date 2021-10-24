@@ -17,6 +17,7 @@ require (
 	github.com/gorilla/mux v1.8.0
 	github.com/jlaffaye/ftp v0.0.0-20210307004419-5d4190119067
 	github.com/jmoiron/sqlx v1.3.4
+	github.com/jolestar/go-commons-pool/v2 v2.1.1
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/mattn/go-shellwords v1.0.12
 	github.com/mholt/archiver v1.1.3-0.20190812163345-2d1449806793
