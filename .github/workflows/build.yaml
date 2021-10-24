@@ -81,8 +81,9 @@ jobs:
         with:
           name: build-artifacts
           path: |
-            clickhouse-backup/clickhouse-backup
-            clickhouse-backup/clickhouse-backup-race
+            ./clickhouse-backup/clickhouse-backup
+            ./clickhouse-backup/clickhouse-backup-race
+            ChangeLog.md
           if-no-files-found: error
   test:
     needs: build
