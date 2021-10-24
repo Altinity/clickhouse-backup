@@ -83,7 +83,6 @@ jobs:
           path: |
             clickhouse-backup/clickhouse-backup
             clickhouse-backup/clickhouse-backup-race
-            test/integration/credentials.json
           if-no-files-found: error
   test:
     needs: build
@@ -128,6 +127,8 @@ jobs:
       - uses: actions/download-artifact@v2
         with:
           name: build-gcp-credentials
+        if: |
+          needs.build.outputs.GCS_TESTS == 'true'
 
       - name: Running integration tests
         env:
