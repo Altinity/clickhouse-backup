@@ -74,6 +74,8 @@ jobs:
           path: |
             test/integration/credentials.json
           if-no-files-found: error
+        if: |
+          steps.secrets.outputs.GCS_TESTS == 'true'
 
       - uses: actions/upload-artifact@v2
         with:
