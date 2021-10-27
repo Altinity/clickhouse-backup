@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -449,11 +450,11 @@ func TestSyncReplicaTimeout(t *testing.T) {
 
 }
 
-func TestUnlockAPI(t *testing.T) {
+func TestServerAPI(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
 	ch.connectWithWait(r)
-	r.NoError(dockerCP("config-gcs.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	ch.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS long_schema")
 	defer func() {
 		ch.chbackup.Close()
@@ -479,16 +480,83 @@ func TestUnlockAPI(t *testing.T) {
 	log.Info("Run `clickhouse-backup server` in background")
 	r.NoError(dockerExec("-d", "clickhouse", "bash", "-c", "clickhouse-backup server &>>/tmp/clickhouse-backup-server.log"))
 	time.Sleep(1 * time.Second)
-	log.Info("...DONE")
-	log.Info("Create multiple backups")
-	out, err := dockerExecOut("clickhouse", "bash", "-c", "for i in {1..5}; do date; curl -sL -XPOST 'http://localhost:7171/backup/create?table=long_schema.*'; sleep 1; done")
-	log.Info("...DONE")
 
+	log.Info("Check /backup/create")
+	out, err := dockerExecOut(
+		"clickhouse",
+		"bash", "-xe", "-c", "sleep 3; for i in {1..5}; do date; curl -sL -XPOST \"http://localhost:7171/backup/create?table=long_schema.*&name=backup_$i\"; sleep 1; done",
+	)
+	log.Debugf(out)
 	r.NoError(err)
 	r.NotContains(out, "Connection refused")
 	r.NotContains(out, "another operation is currently running")
+	r.NotContains(out, "\"status\":\"error\"")
+
+	log.Info("Check /backup/upload")
+	out, err = dockerExecOut(
+		"clickhouse",
+		"bash", "-xe", "-c", "for i in {1..5}; do date; curl -sL -XPOST \"http://localhost:7171/backup/upload/backup_$i\"; sleep 2; done",
+	)
+	log.Debugf(out)
+	r.NoError(err)
+	r.NotContains(out, "\"status\":\"error\"")
+	r.NotContains(out, "another operation is currently running")
+
+	log.Info("Check /backup/list")
+	out, err = dockerExecOut("clickhouse", "bash", "-c", "curl -sL 'http://localhost:7171/backup/list'")
+	log.Debugf(out)
+	r.NoError(err)
+	for i := 1; i <= 5; i++ {
+		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"\"}", i)), out))
+		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar\"}", i)), out))
+	}
+
+	log.Info("Check /backup/list/local")
+	out, err = dockerExecOut("clickhouse", "bash", "-c", "curl -sL 'http://localhost:7171/backup/list/local'")
+	log.Debugf(out)
+	r.NoError(err)
+	for i := 1; i <= 5; i++ {
+		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"\"}", i)), out))
+		r.True(assert.NotRegexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar\"}", i)), out))
+	}
+
+	log.Info("Check /backup/list/remote")
+	out, err = dockerExecOut("clickhouse", "bash", "-c", "curl -sL 'http://localhost:7171/backup/list/remote'")
+	log.Debugf(out)
+	r.NoError(err)
+	for i := 1; i <= 5; i++ {
+		r.True(assert.NotRegexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"\"}", i)), out))
+		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar\"}", i)), out))
+	}
+
+	log.Info("Check /backup/download/{name} + /backup/restore/{name}?rm=1")
+	out, err = dockerExecOut(
+		"clickhouse",
+		"bash", "-xe", "-c", "for i in {1..5}; do date; curl -sL -XPOST \"http://localhost:7171/backup/delete/local/backup_$i\"; curl -sL -XPOST \"http://localhost:7171/backup/download/backup_$i\"; sleep 2; curl -sL -XPOST \"http://localhost:7171/backup/restore/backup_$i?rm=1\"; sleep 2; done",
+	)
+	log.Debugf(out)
+	r.NoError(err)
+	r.NotContains(out, "another operation is currently running")
+	r.NotContains(out, "\"status\":\"error\"")
+
+	log.Info("Check /backup/delete/{where}/{name}")
+	for i := 1; i <= 5; i++ {
+		out, err = dockerExecOut("clickhouse", "bash", "-c", fmt.Sprintf("curl -sL -XPOST 'http://localhost:7171/backup/delete/local/backup_%d'", i))
+		log.Debugf(out)
+		r.NoError(err)
+		r.NotContains(out, "another operation is currently running")
+		r.NotContains(out, "\"status\":\"error\"")
+		out, err = dockerExecOut("clickhouse", "bash", "-c", fmt.Sprintf("curl -sL -XPOST 'http://localhost:7171/backup/delete/remote/backup_%d'", i))
+		log.Debugf(out)
+		r.NoError(err)
+		r.NotContains(out, "another operation is currently running")
+		r.NotContains(out, "\"status\":\"error\"")
+	}
+
+	r.NoError(dockerExec("clickhouse", "pkill", "-n", "-f", "clickhouse-backup"))
 	ch.dropDatabase("long_schema")
 }
+
 func TestDoRestoreRBAC(t *testing.T) {
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.4") == -1 {
 		t.Skipf("Test skipped, RBAC not available for %s version", os.Getenv("CLICKHOUSE_VERSION"))
