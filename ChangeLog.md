@@ -1,3 +1,11 @@
+# v1.2.1
+
+IMPROVEMENTS
+- Add REST API integration tests
+
+BUG FIXES
+- fix [#291] https://github.com/AlexAkulov/clickhouse-backup/issues/291
+
 # v1.2.0
 
 INCOMPATIBLE CHANGES
