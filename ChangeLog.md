@@ -5,6 +5,7 @@ IMPROVEMENTS
 
 BUG FIXES
 - fix [#291] https://github.com/AlexAkulov/clickhouse-backup/issues/291
+- fix `CLICKHOUSE_DEBUG` settings behavior (now we can see debug log from clickhouse-go)
 
 # v1.2.0
 

@@ -49,6 +49,10 @@ func (ch *ClickHouse) Connect() error {
 	params.Add("read_timeout", timeoutSeconds)
 	params.Add("write_timeout", timeoutSeconds)
 
+	if ch.Config.Debug {
+		params.Add("debug", "true")
+	}
+
 	if ch.Config.Secure {
 		params.Add("secure", "true")
 		params.Add("skip_verify", strconv.FormatBool(ch.Config.SkipVerify))
