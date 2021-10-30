@@ -12,6 +12,7 @@ export S3_DEBUG=${S3_DEBUG:-false}
 export GCS_DEBUG=${GCS_DEBUG:-false}
 export FTP_DEBUG=${FTP_DEBUG:-false}
 export GODEBUG=${GODEBUG:-}
+export CLICKHOUSE_DEBUG=${CLICKHOUSE_DEBUG:-false}
 
 if [[ "${CLICKHOUSE_VERSION}" == 2* ]]; then
   export COMPOSE_FILE=docker-compose_advanced.yml

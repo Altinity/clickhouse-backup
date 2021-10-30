@@ -10,19 +10,26 @@ import (
 
 // Table - ClickHouse table struct
 type Table struct {
-	Database             string   `db:"database"`
-	Name                 string   `db:"name"`
-	DataPath             string   `db:"data_path"` // For legacy support
-	DataPaths            []string `db:"data_paths"`
-	MetadataPath         string   `db:"metadata_path"`
-	Engine               string   `db:"engine"`
-	UUID                 string   `db:"uuid,omitempty"`
-	StoragePolicy        string   `db:"storage_policy"`
-	CreateTableQuery     string   `db:"create_table_query"`
-	Skip                 bool
-	TotalBytes           sql.NullInt64 `db:"total_bytes,omitempty"`
-	DependencesTable     []string      `db:"dependencies_table"`
-	DependenciesDatabase []string      `db:"dependencies_database"`
+	// common fields for all `clickhouse-server` versions
+	Database string `db:"database"`
+	Name     string `db:"name"`
+	Engine   string `db:"engine"`
+	// fields depends on `clickhouse-server` version
+	DataPath         string        `db:"data_path,omitempty"` // For legacy support
+	DataPaths        []string      `db:"data_paths,omitempty"`
+	UUID             string        `db:"uuid,omitempty"`
+	CreateTableQuery string        `db:"create_table_query,omitempty"`
+	TotalBytes       sql.NullInt64 `db:"total_bytes,omitempty"`
+	Skip             bool
+}
+
+// IsSystemTablesFieldPresent - ClickHouse `system.tables` varius field flags
+type IsSystemTablesFieldPresent struct {
+	IsDataPathPresent         int `db:"is_data_path_present"`
+	IsDataPathsPresent        int `db:"is_data_paths_present"`
+	IsUUIDPresent             int `db:"is_uuid_present"`
+	IsCreateTableQueryPresent int `db:"is_create_table_query_present"`
+	IsTotalBytesPresent       int `db:"is_total_bytes_present"`
 }
 
 type Disk struct {

@@ -49,6 +49,10 @@ func (ch *ClickHouse) Connect() error {
 	params.Add("read_timeout", timeoutSeconds)
 	params.Add("write_timeout", timeoutSeconds)
 
+	if ch.Config.Debug {
+		params.Add("debug", "true")
+	}
+
 	if ch.Config.Secure {
 		params.Add("secure", "true")
 		params.Add("skip_verify", strconv.FormatBool(ch.Config.SkipVerify))
@@ -163,16 +167,9 @@ func (ch *ClickHouse) GetTables(tablePattern string) ([]Table, error) {
 	if err = ch.Select(&skipDatabases, "SELECT name FROM system.databases WHERE engine IN ('MySQL','PostgreSQL')"); err != nil {
 		return nil, err
 	}
-	allTablesSQL := "SELECT * FROM system.tables WHERE is_temporary = 0"
-	if tablePattern != "" {
-		replacer := strings.NewReplacer(".", "\\.", ",", "|", "*", ".*", "?", ".")
-		allTablesSQL += fmt.Sprintf(" AND match(concat(database,'.',name),'%s') ", replacer.Replace(tablePattern))
-	}
-	if len(skipDatabases) > 0 {
-		allTablesSQL += fmt.Sprintf(" AND database NOT IN ('%s')", strings.Join(skipDatabases, "','"))
-	}
-	if len(isUUIDPresent) > 0 && isUUIDPresent[0] > 0 {
-		allTablesSQL += " SETTINGS show_table_uuid_in_table_create_query_if_not_nil=1"
+	allTablesSQL, err := ch.prepareAllTablesSQL(tablePattern, err, skipDatabases, isUUIDPresent)
+	if err != nil {
+		return nil, err
 	}
 	if err = ch.softSelect(&tables, allTablesSQL); err != nil {
 		return nil, err
@@ -197,6 +194,52 @@ func (ch *ClickHouse) GetTables(tablePattern string) ([]Table, error) {
 		tables = ch.getTableSizeFromParts(tables)
 	}
 	return tables, nil
+}
+
+func (ch *ClickHouse) prepareAllTablesSQL(tablePattern string, err error, skipDatabases []string, isUUIDPresent []int) (string, error) {
+	isSystemTablesFieldPresent := make([]IsSystemTablesFieldPresent, 0)
+	isFieldPresentSQL := `
+		SELECT 
+			countIf(name='data_path') is_data_path_present, 
+			countIf(name='data_paths') is_data_paths_present, 
+			countIf(name='uuid') is_uuid_present, 
+			countIf(name='create_table_query') is_create_table_query_present, 
+			countIf(name='total_bytes') is_total_bytes_present 
+		FROM system.columns WHERE database='system' AND table='tables'
+	`
+	if err = ch.Select(&isSystemTablesFieldPresent, isFieldPresentSQL); err != nil {
+		return "", err
+	}
+
+	allTablesSQL := "SELECT database, name, engine "
+	if len(isSystemTablesFieldPresent) > 0 && isSystemTablesFieldPresent[0].IsDataPathPresent > 0 {
+		allTablesSQL += ", data_path "
+	}
+	if len(isSystemTablesFieldPresent) > 0 && isSystemTablesFieldPresent[0].IsDataPathsPresent > 0 {
+		allTablesSQL += ", data_paths "
+	}
+	if len(isSystemTablesFieldPresent) > 0 && isSystemTablesFieldPresent[0].IsUUIDPresent > 0 {
+		allTablesSQL += ", uuid "
+	}
+	if len(isSystemTablesFieldPresent) > 0 && isSystemTablesFieldPresent[0].IsCreateTableQueryPresent > 0 {
+		allTablesSQL += ", create_table_query "
+	}
+	if len(isSystemTablesFieldPresent) > 0 && isSystemTablesFieldPresent[0].IsTotalBytesPresent > 0 {
+		allTablesSQL += ", total_bytes "
+	}
+
+	allTablesSQL += "  FROM system.tables WHERE is_temporary = 0"
+	if tablePattern != "" {
+		replacer := strings.NewReplacer(".", "\\.", ",", "|", "*", ".*", "?", ".")
+		allTablesSQL += fmt.Sprintf(" AND match(concat(database,'.',name),'%s') ", replacer.Replace(tablePattern))
+	}
+	if len(skipDatabases) > 0 {
+		allTablesSQL += fmt.Sprintf(" AND database NOT IN ('%s')", strings.Join(skipDatabases, "','"))
+	}
+	if len(isUUIDPresent) > 0 && isUUIDPresent[0] > 0 {
+		allTablesSQL += " SETTINGS show_table_uuid_in_table_create_query_if_not_nil=1"
+	}
+	return allTablesSQL, nil
 }
 
 // GetDatabases - return slice of all non system databases for backup

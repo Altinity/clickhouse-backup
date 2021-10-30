@@ -494,7 +494,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-	if cfg.General.RemoteStorage != "none" && (where == "local" || !wherePresent) {
+	if cfg.General.RemoteStorage != "none" && (where == "remote" || !wherePresent) {
 		remoteBackups, err := backup.GetRemoteBackups(cfg)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "list", err)
