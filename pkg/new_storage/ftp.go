@@ -32,7 +32,6 @@ func (f *FTP) Connect() error {
 	}
 	options := []ftp.DialOption{
 		ftp.DialWithTimeout(timeout),
-		ftp.DialWithDisabledEPSV(true),
 	}
 	if f.Config.Debug {
 		options = append(options, ftp.DialWithDebugOutput(os.Stdout))
