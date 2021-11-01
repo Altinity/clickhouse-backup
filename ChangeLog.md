@@ -1,3 +1,8 @@
+# Upcoming Release change log
+
+BUG FIXES
+- fix [#297](https://github.com/AlexAkulov/clickhouse-backup/issues/297), properly restore tables where have fields with the same name as table name
+
 # v1.2.1
 
 IMPROVEMENTS

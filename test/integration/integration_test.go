@@ -88,16 +88,16 @@ var testData = []TestDataStruct{
 	}, {
 		Database: dbNameAtomic, DatabaseEngine: "Atomic",
 		Table:  "table4",
-		Schema: "(id UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY id ORDER BY (id, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192",
+		Schema: "(table4 UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY table4 ORDER BY (table4, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192",
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
 			for i := 0; i < 100; i++ {
-				result = append(result, map[string]interface{}{"id": uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
+				result = append(result, map[string]interface{}{"table4": uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
 			}
 			return result
 		}(),
-		Fields:  []string{"id", "Col1", "Col2", "Col3", "Col4", "Col5"},
-		OrderBy: "id",
+		Fields:  []string{"table4", "Col1", "Col2", "Col3", "Col4", "Col5"},
+		OrderBy: "table4",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
 		Table:  "yuzhichang_table2",
@@ -236,7 +236,7 @@ var testData = []TestDataStruct{
 		IsDictionary:   true,
 		Table:          "dict_example",
 		Schema: fmt.Sprintf(
-			" (id UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) PRIMARY KEY id "+
+			" (table4 UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) PRIMARY KEY table4 "+
 				" SOURCE(CLICKHOUSE(host 'localhost' port 9000 database '%s' table 'table4' user 'default' password ''))"+
 				" LAYOUT(HASHED()) LIFETIME(60)",
 			dbNameAtomic),
@@ -244,12 +244,12 @@ var testData = []TestDataStruct{
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
 			for i := 0; i < 100; i++ {
-				result = append(result, map[string]interface{}{"id": uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
+				result = append(result, map[string]interface{}{"table4": uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
 			}
 			return result
 		}(),
 		Fields:  []string{"id"},
-		OrderBy: "id",
+		OrderBy: "table4",
 	},
 	{
 		Database: dbNameMySQL, DatabaseEngine: "MySQL('mysql:3306','mysql','root','root')",
@@ -292,16 +292,16 @@ var incrementData = []TestDataStruct{
 	}, {
 		Database: dbNameAtomic, DatabaseEngine: "Atomic",
 		Table:  "table4",
-		Schema: "(id UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY id ORDER BY (id, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192",
+		Schema: "(table4 UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY table4 ORDER BY (table4, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192",
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
 			for i := 200; i < 220; i++ {
-				result = append(result, map[string]interface{}{"id": uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
+				result = append(result, map[string]interface{}{"table4": uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
 			}
 			return result
 		}(),
-		Fields:  []string{"id", "Col1", "Col2", "Col3", "Col4", "Col5"},
-		OrderBy: "id",
+		Fields:  []string{"table4", "Col1", "Col2", "Col3", "Col4", "Col5"},
+		OrderBy: "table4",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
 		Table:  "yuzhichang_table2",
