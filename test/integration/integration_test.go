@@ -492,6 +492,9 @@ func TestServerAPI(t *testing.T) {
 	r.NotContains(out, "another operation is currently running")
 	r.NotContains(out, "\"status\":\"error\"")
 
+	log.Info("Check /backup/actions")
+	ch.queryWithNoError(r, "SELECT count() FROM system.backup_actions")
+
 	log.Info("Check /backup/upload")
 	out, err = dockerExecOut(
 		"clickhouse",

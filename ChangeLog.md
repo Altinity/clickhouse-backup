@@ -2,6 +2,7 @@
 
 BUG FIXES
 - fix [#297](https://github.com/AlexAkulov/clickhouse-backup/issues/297), properly restore tables where have fields with the same name as table name
+- fix [#298](https://github.com/AlexAkulov/clickhouse-backup/issues/298), properly create `system.backup_actions` and `system.backup_list` integration tables for ClickHouse before 21.1
 
 # v1.2.1
 

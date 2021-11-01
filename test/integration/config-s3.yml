@@ -24,3 +24,4 @@ s3:
   disable_ssl: true
 api:
   listen: :7171
+  create_integration_tables: true
