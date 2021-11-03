@@ -537,7 +537,7 @@ func TestServerAPI(t *testing.T) {
 	log.Info("Check /backup/download/{name} + /backup/restore/{name}?rm=1")
 	out, err = dockerExecOut(
 		"clickhouse",
-		"bash", "-xe", "-c", "for i in {1..5}; do date; curl -sL -XPOST \"http://localhost:7171/backup/delete/local/backup_$i\"; curl -sL -XPOST \"http://localhost:7171/backup/download/backup_$i\"; sleep 2; curl -sL -XPOST \"http://localhost:7171/backup/restore/backup_$i?rm=1\"; sleep 2; done",
+		"bash", "-xe", "-c", "for i in {1..5}; do date; curl -sL -XPOST \"http://localhost:7171/backup/delete/local/backup_$i\"; curl -sL -XPOST \"http://localhost:7171/backup/download/backup_$i\"; sleep 2; curl -sL -XPOST \"http://localhost:7171/backup/restore/backup_$i?rm=1\"; sleep 2.1; done",
 	)
 	log.Debug(out)
 	r.NoError(err)
@@ -548,9 +548,14 @@ func TestServerAPI(t *testing.T) {
 	lastRemoteSize := make([]int64, 0)
 	r.NoError(ch.chbackup.Select(&lastRemoteSize, "SELECT size FROM system.backup_list WHERE name='backup_5' AND location='remote'"))
 	realTotalBytes := make([]uint64, 0)
-	r.NoError(ch.chbackup.Select(&realTotalBytes, "SELECT sum(total_bytes) FROM system.tables WHERE database='long_schema'"))
-	r.Greater(lastRemoteSize[0], int64(realTotalBytes[0]))
 
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 {
+		r.NoError(ch.chbackup.Select(&realTotalBytes, "SELECT sum(total_bytes) FROM system.tables WHERE database='long_schema'"))
+	} else {
+		r.NoError(ch.chbackup.Select(&realTotalBytes, "SELECT sum(bytes_on_disk) FROM system.parts WHERE database='long_schema'"))
+	}
+
+	r.Greater(lastRemoteSize[0], int64(realTotalBytes[0]))
 	out, err = dockerExecOut("clickhouse", "curl", "-sL", "http://localhost:7171/metrics")
 	log.Debug(out)
 	r.NoError(err)
