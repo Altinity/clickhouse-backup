@@ -474,6 +474,8 @@ func TestServerAPI(t *testing.T) {
 		}
 		sql += ") ENGINE=MergeTree() ORDER BY id"
 		ch.queryWithNoError(r, sql)
+		sql = fmt.Sprintf("INSERT INTO long_schema.t%d(id) SELECT number FROM numbers(100)", i)
+		ch.queryWithNoError(r, sql)
 	}
 	log.Info("...DONE")
 
@@ -484,9 +486,9 @@ func TestServerAPI(t *testing.T) {
 	log.Info("Check /backup/create")
 	out, err := dockerExecOut(
 		"clickhouse",
-		"bash", "-xe", "-c", "sleep 3; for i in {1..5}; do date; curl -sL -XPOST \"http://localhost:7171/backup/create?table=long_schema.*&name=backup_$i\"; sleep 1; done",
+		"bash", "-xe", "-c", "sleep 3; for i in {1..5}; do date; curl -sL -XPOST \"http://localhost:7171/backup/create?table=long_schema.*&name=backup_$i\"; sleep 1.5; done",
 	)
-	log.Debugf(out)
+	log.Debug(out)
 	r.NoError(err)
 	r.NotContains(out, "Connection refused")
 	r.NotContains(out, "another operation is currently running")
@@ -500,14 +502,14 @@ func TestServerAPI(t *testing.T) {
 		"clickhouse",
 		"bash", "-xe", "-c", "for i in {1..5}; do date; curl -sL -XPOST \"http://localhost:7171/backup/upload/backup_$i\"; sleep 2; done",
 	)
-	log.Debugf(out)
+	log.Debug(out)
 	r.NoError(err)
 	r.NotContains(out, "\"status\":\"error\"")
 	r.NotContains(out, "another operation is currently running")
 
 	log.Info("Check /backup/list")
 	out, err = dockerExecOut("clickhouse", "bash", "-c", "curl -sL 'http://localhost:7171/backup/list'")
-	log.Debugf(out)
+	log.Debug(out)
 	r.NoError(err)
 	for i := 1; i <= 5; i++ {
 		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"\"}", i)), out))
@@ -516,7 +518,7 @@ func TestServerAPI(t *testing.T) {
 
 	log.Info("Check /backup/list/local")
 	out, err = dockerExecOut("clickhouse", "bash", "-c", "curl -sL 'http://localhost:7171/backup/list/local'")
-	log.Debugf(out)
+	log.Debug(out)
 	r.NoError(err)
 	for i := 1; i <= 5; i++ {
 		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"\"}", i)), out))
@@ -525,7 +527,7 @@ func TestServerAPI(t *testing.T) {
 
 	log.Info("Check /backup/list/remote")
 	out, err = dockerExecOut("clickhouse", "bash", "-c", "curl -sL 'http://localhost:7171/backup/list/remote'")
-	log.Debugf(out)
+	log.Debug(out)
 	r.NoError(err)
 	for i := 1; i <= 5; i++ {
 		r.True(assert.NotRegexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"\"}", i)), out))
@@ -537,10 +539,22 @@ func TestServerAPI(t *testing.T) {
 		"clickhouse",
 		"bash", "-xe", "-c", "for i in {1..5}; do date; curl -sL -XPOST \"http://localhost:7171/backup/delete/local/backup_$i\"; curl -sL -XPOST \"http://localhost:7171/backup/download/backup_$i\"; sleep 2; curl -sL -XPOST \"http://localhost:7171/backup/restore/backup_$i?rm=1\"; sleep 2; done",
 	)
-	log.Debugf(out)
+	log.Debug(out)
 	r.NoError(err)
 	r.NotContains(out, "another operation is currently running")
 	r.NotContains(out, "\"status\":\"error\"")
+
+	log.Info("Check /metrics clickhouse_backup_last_backup_size_remote")
+	lastRemoteSize := make([]int64, 0)
+	r.NoError(ch.chbackup.Select(&lastRemoteSize, "SELECT size FROM system.backup_list WHERE name='backup_5' AND location='remote'"))
+	realTotalBytes := make([]uint64, 0)
+	r.NoError(ch.chbackup.Select(&realTotalBytes, "SELECT sum(total_bytes) FROM system.tables WHERE database='long_schema'"))
+	r.Greater(lastRemoteSize[0], int64(realTotalBytes[0]))
+
+	out, err = dockerExecOut("clickhouse", "curl", "-sL", "http://localhost:7171/metrics")
+	log.Debug(out)
+	r.NoError(err)
+	r.Contains(out, fmt.Sprintf("clickhouse_backup_last_backup_size_remote %d", realTotalBytes[0]))
 
 	log.Info("Check /backup/delete/{where}/{name}")
 	for i := 1; i <= 5; i++ {
