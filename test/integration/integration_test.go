@@ -611,15 +611,14 @@ func TestDoRestoreRBAC(t *testing.T) {
 	ch.queryWithNoError(r, "DROP ROW POLICY test_rbac ON default.test_rbac")
 	ch.queryWithNoError(r, "DROP ROLE test_rbac")
 	ch.queryWithNoError(r, "DROP USER test_rbac")
-	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
-	startTime := time.Now()
-	log.Info("restore")
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", "test_rbac_backup"))
-	endTime := time.Now()
-	waitBeforeRestore := 65*time.Second - endTime.Sub(startTime)
-	log.Infof("wait %f to rebuild access/*.list", waitBeforeRestore.Seconds())
-	time.Sleep(waitBeforeRestore)
 
+	ch.chbackup.Close()
+	r.NoError(execCmd("docker-compose", "-f", os.Getenv("COMPOSE_FILE"), "restart", "clickhouse"))
+	ch.connectWithWait(r)
+
+	log.Info("download+restore RBAC")
+	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", "test_rbac_backup"))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--rm", "--rbac", "test_rbac_backup"))
 	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
 
