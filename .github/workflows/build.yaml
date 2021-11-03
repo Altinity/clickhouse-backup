@@ -74,6 +74,7 @@ jobs:
           path: |
             test/integration/credentials.json
           if-no-files-found: error
+          retention-days: 1
         if: |
           steps.secrets.outputs.GCS_TESTS == 'true'
 
@@ -85,6 +86,8 @@ jobs:
             ./clickhouse-backup/clickhouse-backup-race
             ChangeLog.md
           if-no-files-found: error
+          retention-days: 1
+
   test:
     needs: build
     name: Test
@@ -156,6 +159,10 @@ jobs:
           docker-compose -f test/integration/${COMPOSE_FILE} ps -a
           go test -timeout 30m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
 
+      - uses: geekyeggo/delete-artifact@v1
+        with:
+          name: build-gcp-credentials
+
   docker:
     needs: test
     name: Docker
@@ -192,3 +199,9 @@ jobs:
             docker image tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}
             docker push ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}
           fi
+
+      - name: delete artifacts
+        uses: geekyeggo/delete-artifact@v1
+        with:
+          name: build-artifacts
+
