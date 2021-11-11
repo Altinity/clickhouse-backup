@@ -722,11 +722,37 @@ func TestDoRestoreConfigs(t *testing.T) {
 	ch.chbackup.Close()
 }
 
+func TestTablePatterns(t *testing.T) {
+	ch := &TestClickHouse{}
+	r := require.New(t)
+	ch.connectWithWait(r)
+	defer ch.chbackup.Close()
+
+	testBackupName := "test_backup_patterns"
+	fullCleanup(r, ch, []string{testBackupName}, false)
+	generateTestData(ch, r)
+	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables", " "+dbNameAtomic+".*", testBackupName))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
+	dropAllDatabases(r, ch)
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", "--tables", " "+dbNameAtomic+".*", testBackupName))
+
+	var restoredTables []uint64
+	r.NoError(ch.chbackup.Select(&restoredTables, fmt.Sprintf("SELECT count() FROM system.tables WHERE database='%s'", dbNameAtomic)))
+	r.True(len(restoredTables) > 0)
+	r.NotZero(restoredTables[0])
+
+	restoredTables = make([]uint64, 0)
+	r.NoError(ch.chbackup.Select(&restoredTables, fmt.Sprintf("SELECT count() FROM system.tables WHERE database='%s'", dbNameOrdinary)))
+	r.True(len(restoredTables) > 0)
+	r.Zero(restoredTables[0])
+}
+
 func testCommon(t *testing.T) {
 	var out string
 	var err error
 
-	time.Sleep(time.Second * 5)
 	ch := &TestClickHouse{}
 	r := require.New(t)
 	ch.connectWithWait(r)

@@ -3,6 +3,8 @@ general:
   remote_storage: s3
   upload_concurrency: 4
   download_concurrency: 4
+  skip_tables:
+   - " system.*"
 clickhouse:
   host: 127.0.0.1
   port: 9440

@@ -46,6 +46,7 @@ func (S3LogToApexLogAdapter *S3LogToApexLogAdapter) Log(args ...interface{}) {
 type S3 struct {
 	session     *session.Session
 	uploader    *s3manager.Uploader
+	downloader  *s3manager.Downloader
 	Config      *config.S3Config
 	PartSize    int64
 	Concurrency int
@@ -103,6 +104,11 @@ func (s *S3) Connect() error {
 	s.uploader.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(s.BufferSize)
 	s.uploader.PartSize = s.PartSize
 
+	s.downloader = s3manager.NewDownloader(s.session)
+	s.downloader.Concurrency = s.Concurrency
+	s.downloader.BufferProvider = s3manager.NewPooledBufferedWriterReadFromProvider(s.BufferSize)
+	s.downloader.PartSize = s.PartSize
+
 	return nil
 }
 
@@ -111,17 +117,19 @@ func (s *S3) Kind() string {
 }
 
 func (s *S3) GetFileReader(key string) (io.ReadCloser, error) {
-	// downloader := s3manager.NewDownloader(s.session)
-	// downloader.Concurrency = s.Concurrency
-	// downloader.BufferProvider = s3manager.NewPooledBufferedWriterReadFromProvider(s.BufferSize)
-	// w:= aws.NewWriteAt()
-	// downloader.
-	// downloader.Download(w, &s3.GetObjectInput{
-	// 	Bucket: aws.String(s.Config.Bucket),
-	// 	Key:    aws.String(path.Join(s.Config.Path, key)),
-	// }
-
-	// )
+	/* unfortunately, multipart download require allocate additional disk space and don't allow us to decompress data in streaming model
+	writer, err := os.CreateTemp()
+	if err != nil {
+		return nil, err
+	}
+	_, err = s.downloader.Download(writer, &s3.GetObjectInput{
+		Bucket: aws.String(s.Config.Bucket),
+		Key:    aws.String(path.Join(s.Config.Path, key)),
+	})
+	if err != nil {
+		return nil, err
+	}
+	*/
 
 	svc := s3.New(s.session)
 	req, resp := svc.GetObjectRequest(&s3.GetObjectInput{
