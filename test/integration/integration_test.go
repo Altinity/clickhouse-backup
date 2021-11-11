@@ -733,18 +733,18 @@ func TestTablePatterns(t *testing.T) {
 	generateTestData(ch, r)
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables", " "+dbNameAtomic+".*", testBackupName))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables", " "+dbNameOrdinary+".*", testBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
 	dropAllDatabases(r, ch)
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", "--tables", " "+dbNameAtomic+".*", testBackupName))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", "--tables", " "+dbNameOrdinary+".*", testBackupName))
 
 	var restoredTables []uint64
-	r.NoError(ch.chbackup.Select(&restoredTables, fmt.Sprintf("SELECT count() FROM system.tables WHERE database='%s'", dbNameAtomic)))
+	r.NoError(ch.chbackup.Select(&restoredTables, fmt.Sprintf("SELECT count() FROM system.tables WHERE database='%s'", dbNameOrdinary)))
 	r.True(len(restoredTables) > 0)
 	r.NotZero(restoredTables[0])
 
 	restoredTables = make([]uint64, 0)
-	r.NoError(ch.chbackup.Select(&restoredTables, fmt.Sprintf("SELECT count() FROM system.tables WHERE database='%s'", dbNameOrdinary)))
+	r.NoError(ch.chbackup.Select(&restoredTables, fmt.Sprintf("SELECT count() FROM system.tables WHERE database='%s'", dbNameAtomic)))
 	r.True(len(restoredTables) > 0)
 	r.Zero(restoredTables[0])
 }
