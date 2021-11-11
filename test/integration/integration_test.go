@@ -740,13 +740,15 @@ func TestTablePatterns(t *testing.T) {
 
 	var restoredTables []uint64
 	r.NoError(ch.chbackup.Select(&restoredTables, fmt.Sprintf("SELECT count() FROM system.tables WHERE database='%s'", dbNameOrdinary)))
-	r.True(len(restoredTables) > 0)
+	r.NotZero(len(restoredTables))
 	r.NotZero(restoredTables[0])
 
 	restoredTables = make([]uint64, 0)
 	r.NoError(ch.chbackup.Select(&restoredTables, fmt.Sprintf("SELECT count() FROM system.tables WHERE database='%s'", dbNameAtomic)))
-	r.True(len(restoredTables) > 0)
-	r.Zero(restoredTables[0])
+	// old versions of clickhouse will return empty recordset
+	if len(restoredTables) > 0 {
+		r.Zero(restoredTables[0])
+	}
 }
 
 func testCommon(t *testing.T) {
