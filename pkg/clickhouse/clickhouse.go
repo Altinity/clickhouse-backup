@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -43,9 +44,10 @@ func (ch *ClickHouse) Connect() error {
 	params.Add("username", ch.Config.Username)
 	params.Add("password", ch.Config.Password)
 	params.Add("database", "system")
-	params.Add("read_timeout", timeoutSeconds)
+	params.Add("connect_timeout", timeoutSeconds)
 	params.Add("receive_timeout", timeoutSeconds)
 	params.Add("send_timeout", timeoutSeconds)
+	params.Add("timeout", timeoutSeconds)
 	params.Add("read_timeout", timeoutSeconds)
 	params.Add("write_timeout", timeoutSeconds)
 
@@ -176,7 +178,7 @@ func (ch *ClickHouse) GetTables(tablePattern string) ([]Table, error) {
 	}
 	for i, t := range tables {
 		for _, filter := range ch.Config.SkipTables {
-			if matched, _ := filepath.Match(filter, fmt.Sprintf("%s.%s", t.Database, t.Name)); matched {
+			if matched, _ := filepath.Match(strings.Trim(filter, " \t\r\n"), fmt.Sprintf("%s.%s", t.Database, t.Name)); matched {
 				t.Skip = true
 				break
 			}
@@ -230,7 +232,7 @@ func (ch *ClickHouse) prepareAllTablesSQL(tablePattern string, err error, skipDa
 
 	allTablesSQL += "  FROM system.tables WHERE is_temporary = 0"
 	if tablePattern != "" {
-		replacer := strings.NewReplacer(".", "\\.", ",", "|", "*", ".*", "?", ".")
+		replacer := strings.NewReplacer(".", "\\.", ",", "|", "*", ".*", "?", ".", " ", "")
 		allTablesSQL += fmt.Sprintf(" AND match(concat(database,'.',name),'%s') ", replacer.Replace(tablePattern))
 	}
 	if len(skipDatabases) > 0 {
@@ -633,10 +635,18 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable bool) err
 		return errors.New(fmt.Sprintf("schema query ```%s``` doesn't contains table name `%s`", query, table.Name))
 	}
 
-	// fix restore schema for legacy backup, see https://github.com/AlexAkulov/clickhouse-backup/issues/268
-	if strings.Contains(query, fmt.Sprintf("`%s`", table.Name)) && !strings.Contains(query, fmt.Sprintf("`%s`.`%s`", table.Database, table.Name)) {
+	// fix restore schema for legacy backup, see https://github.com/AlexAkulov/clickhouse-backup/issues/268 and https://github.com/AlexAkulov/clickhouse-backup/issues/297
+	isOnlyTableWithQuotesPresent, err := regexp.Match(fmt.Sprintf("^CREATE [^(]+ `%s`", table.Name), []byte(query))
+	if err != nil {
+		return err
+	}
+	isOnlyTablePresent, err := regexp.Match(fmt.Sprintf("^CREATE [^(]+ %s", table.Name), []byte(query))
+	if err != nil {
+		return err
+	}
+	if isOnlyTableWithQuotesPresent {
 		query = strings.Replace(query, fmt.Sprintf("`%s`", table.Name), fmt.Sprintf("`%s`.`%s`", table.Database, table.Name), 1)
-	} else if strings.Contains(query, table.Name) && !strings.Contains(query, fmt.Sprintf("%s.%s", table.Database, table.Name)) && !strings.Contains(query, table.Database) {
+	} else if isOnlyTablePresent {
 		query = strings.Replace(query, fmt.Sprintf("%s", table.Name), fmt.Sprintf("%s.%s", table.Database, table.Name), 1)
 	}
 

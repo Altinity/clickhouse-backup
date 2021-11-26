@@ -88,16 +88,16 @@ var testData = []TestDataStruct{
 	}, {
 		Database: dbNameAtomic, DatabaseEngine: "Atomic",
 		Table:  "table4",
-		Schema: "(id UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY id ORDER BY (id, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192",
+		Schema: "(table4 UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY table4 ORDER BY (table4, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192",
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
 			for i := 0; i < 100; i++ {
-				result = append(result, map[string]interface{}{"id": uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
+				result = append(result, map[string]interface{}{"table4": uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
 			}
 			return result
 		}(),
-		Fields:  []string{"id", "Col1", "Col2", "Col3", "Col4", "Col5"},
-		OrderBy: "id",
+		Fields:  []string{"table4", "Col1", "Col2", "Col3", "Col4", "Col5"},
+		OrderBy: "table4",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
 		Table:  "yuzhichang_table2",
@@ -236,7 +236,7 @@ var testData = []TestDataStruct{
 		IsDictionary:   true,
 		Table:          "dict_example",
 		Schema: fmt.Sprintf(
-			" (id UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) PRIMARY KEY id "+
+			" (table4 UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) PRIMARY KEY table4 "+
 				" SOURCE(CLICKHOUSE(host 'localhost' port 9000 database '%s' table 'table4' user 'default' password ''))"+
 				" LAYOUT(HASHED()) LIFETIME(60)",
 			dbNameAtomic),
@@ -244,12 +244,12 @@ var testData = []TestDataStruct{
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
 			for i := 0; i < 100; i++ {
-				result = append(result, map[string]interface{}{"id": uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
+				result = append(result, map[string]interface{}{"table4": uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
 			}
 			return result
 		}(),
 		Fields:  []string{"id"},
-		OrderBy: "id",
+		OrderBy: "table4",
 	},
 	{
 		Database: dbNameMySQL, DatabaseEngine: "MySQL('mysql:3306','mysql','root','root')",
@@ -292,16 +292,16 @@ var incrementData = []TestDataStruct{
 	}, {
 		Database: dbNameAtomic, DatabaseEngine: "Atomic",
 		Table:  "table4",
-		Schema: "(id UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY id ORDER BY (id, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192",
+		Schema: "(table4 UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY table4 ORDER BY (table4, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192",
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
 			for i := 200; i < 220; i++ {
-				result = append(result, map[string]interface{}{"id": uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
+				result = append(result, map[string]interface{}{"table4": uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
 			}
 			return result
 		}(),
-		Fields:  []string{"id", "Col1", "Col2", "Col3", "Col4", "Col5"},
-		OrderBy: "id",
+		Fields:  []string{"table4", "Col1", "Col2", "Col3", "Col4", "Col5"},
+		OrderBy: "table4",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
 		Table:  "yuzhichang_table2",
@@ -474,6 +474,8 @@ func TestServerAPI(t *testing.T) {
 		}
 		sql += ") ENGINE=MergeTree() ORDER BY id"
 		ch.queryWithNoError(r, sql)
+		sql = fmt.Sprintf("INSERT INTO long_schema.t%d(id) SELECT number FROM numbers(100)", i)
+		ch.queryWithNoError(r, sql)
 	}
 	log.Info("...DONE")
 
@@ -484,27 +486,48 @@ func TestServerAPI(t *testing.T) {
 	log.Info("Check /backup/create")
 	out, err := dockerExecOut(
 		"clickhouse",
-		"bash", "-xe", "-c", "sleep 3; for i in {1..5}; do date; curl -sL -XPOST \"http://localhost:7171/backup/create?table=long_schema.*&name=backup_$i\"; sleep 1; done",
+		"bash", "-xe", "-c", "sleep 3; for i in {1..5}; do date; curl -sL -XPOST \"http://localhost:7171/backup/create?table=long_schema.*&name=backup_$i\"; sleep 1.5; done",
 	)
-	log.Debugf(out)
+	log.Debug(out)
 	r.NoError(err)
 	r.NotContains(out, "Connection refused")
 	r.NotContains(out, "another operation is currently running")
 	r.NotContains(out, "\"status\":\"error\"")
+
+	log.Info("Check /backup/tables")
+	out, err = dockerExecOut(
+		"clickhouse",
+		"bash", "-xe", "-c", "curl -sL \"http://localhost:7171/backup/tables\"",
+	)
+	log.Debug(out)
+	r.NoError(err)
+	r.NotContains(out, "system")
+
+	log.Info("Check /backup/tables/all")
+	out, err = dockerExecOut(
+		"clickhouse",
+		"bash", "-xe", "-c", "curl -sL \"http://localhost:7171/backup/tables/all\"",
+	)
+	log.Debug(out)
+	r.NoError(err)
+	r.Contains(out, "system")
+
+	log.Info("Check /backup/actions")
+	ch.queryWithNoError(r, "SELECT count() FROM system.backup_actions")
 
 	log.Info("Check /backup/upload")
 	out, err = dockerExecOut(
 		"clickhouse",
 		"bash", "-xe", "-c", "for i in {1..5}; do date; curl -sL -XPOST \"http://localhost:7171/backup/upload/backup_$i\"; sleep 2; done",
 	)
-	log.Debugf(out)
+	log.Debug(out)
 	r.NoError(err)
 	r.NotContains(out, "\"status\":\"error\"")
 	r.NotContains(out, "another operation is currently running")
 
 	log.Info("Check /backup/list")
 	out, err = dockerExecOut("clickhouse", "bash", "-c", "curl -sL 'http://localhost:7171/backup/list'")
-	log.Debugf(out)
+	log.Debug(out)
 	r.NoError(err)
 	for i := 1; i <= 5; i++ {
 		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"\"}", i)), out))
@@ -513,7 +536,7 @@ func TestServerAPI(t *testing.T) {
 
 	log.Info("Check /backup/list/local")
 	out, err = dockerExecOut("clickhouse", "bash", "-c", "curl -sL 'http://localhost:7171/backup/list/local'")
-	log.Debugf(out)
+	log.Debug(out)
 	r.NoError(err)
 	for i := 1; i <= 5; i++ {
 		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"\"}", i)), out))
@@ -522,7 +545,7 @@ func TestServerAPI(t *testing.T) {
 
 	log.Info("Check /backup/list/remote")
 	out, err = dockerExecOut("clickhouse", "bash", "-c", "curl -sL 'http://localhost:7171/backup/list/remote'")
-	log.Debugf(out)
+	log.Debug(out)
 	r.NoError(err)
 	for i := 1; i <= 5; i++ {
 		r.True(assert.NotRegexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"\"}", i)), out))
@@ -532,12 +555,29 @@ func TestServerAPI(t *testing.T) {
 	log.Info("Check /backup/download/{name} + /backup/restore/{name}?rm=1")
 	out, err = dockerExecOut(
 		"clickhouse",
-		"bash", "-xe", "-c", "for i in {1..5}; do date; curl -sL -XPOST \"http://localhost:7171/backup/delete/local/backup_$i\"; curl -sL -XPOST \"http://localhost:7171/backup/download/backup_$i\"; sleep 2; curl -sL -XPOST \"http://localhost:7171/backup/restore/backup_$i?rm=1\"; sleep 2; done",
+		"bash", "-xe", "-c", "for i in {1..5}; do date; curl -sL -XPOST \"http://localhost:7171/backup/delete/local/backup_$i\"; curl -sL -XPOST \"http://localhost:7171/backup/download/backup_$i\"; sleep 2; curl -sL -XPOST \"http://localhost:7171/backup/restore/backup_$i?rm=1\"; sleep 2.1; done",
 	)
-	log.Debugf(out)
+	log.Debug(out)
 	r.NoError(err)
 	r.NotContains(out, "another operation is currently running")
 	r.NotContains(out, "\"status\":\"error\"")
+
+	log.Info("Check /metrics clickhouse_backup_last_backup_size_remote")
+	lastRemoteSize := make([]int64, 0)
+	r.NoError(ch.chbackup.Select(&lastRemoteSize, "SELECT size FROM system.backup_list WHERE name='backup_5' AND location='remote'"))
+	realTotalBytes := make([]uint64, 0)
+
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 {
+		r.NoError(ch.chbackup.Select(&realTotalBytes, "SELECT sum(total_bytes) FROM system.tables WHERE database='long_schema'"))
+	} else {
+		r.NoError(ch.chbackup.Select(&realTotalBytes, "SELECT sum(bytes_on_disk) FROM system.parts WHERE database='long_schema'"))
+	}
+
+	r.Greater(lastRemoteSize[0], int64(realTotalBytes[0]))
+	out, err = dockerExecOut("clickhouse", "curl", "-sL", "http://localhost:7171/metrics")
+	log.Debug(out)
+	r.NoError(err)
+	r.Contains(out, fmt.Sprintf("clickhouse_backup_last_backup_size_remote %d", realTotalBytes[0]))
 
 	log.Info("Check /backup/delete/{where}/{name}")
 	for i := 1; i <= 5; i++ {
@@ -594,15 +634,14 @@ func TestDoRestoreRBAC(t *testing.T) {
 	ch.queryWithNoError(r, "DROP ROW POLICY test_rbac ON default.test_rbac")
 	ch.queryWithNoError(r, "DROP ROLE test_rbac")
 	ch.queryWithNoError(r, "DROP USER test_rbac")
-	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
-	startTime := time.Now()
-	log.Info("restore")
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", "test_rbac_backup"))
-	endTime := time.Now()
-	waitBeforeRestore := 65*time.Second - endTime.Sub(startTime)
-	log.Infof("wait %f to rebuild access/*.list", waitBeforeRestore.Seconds())
-	time.Sleep(waitBeforeRestore)
 
+	ch.chbackup.Close()
+	r.NoError(execCmd("docker-compose", "-f", os.Getenv("COMPOSE_FILE"), "restart", "clickhouse"))
+	ch.connectWithWait(r)
+
+	log.Info("download+restore RBAC")
+	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", "test_rbac_backup"))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--rm", "--rbac", "test_rbac_backup"))
 	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
 
@@ -701,11 +740,39 @@ func TestDoRestoreConfigs(t *testing.T) {
 	ch.chbackup.Close()
 }
 
+func TestTablePatterns(t *testing.T) {
+	ch := &TestClickHouse{}
+	r := require.New(t)
+	ch.connectWithWait(r)
+	defer ch.chbackup.Close()
+
+	testBackupName := "test_backup_patterns"
+	fullCleanup(r, ch, []string{testBackupName}, false)
+	generateTestData(ch, r)
+	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables", " "+dbNameOrdinary+".*", testBackupName))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
+	dropAllDatabases(r, ch)
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", "--tables", " "+dbNameOrdinary+".*", testBackupName))
+
+	var restoredTables []uint64
+	r.NoError(ch.chbackup.Select(&restoredTables, fmt.Sprintf("SELECT count() FROM system.tables WHERE database='%s'", dbNameOrdinary)))
+	r.NotZero(len(restoredTables))
+	r.NotZero(restoredTables[0])
+
+	restoredTables = make([]uint64, 0)
+	r.NoError(ch.chbackup.Select(&restoredTables, fmt.Sprintf("SELECT count() FROM system.tables WHERE database='%s'", dbNameAtomic)))
+	// old versions of clickhouse will return empty recordset
+	if len(restoredTables) > 0 {
+		r.Zero(restoredTables[0])
+	}
+}
+
 func testCommon(t *testing.T) {
 	var out string
 	var err error
 
-	time.Sleep(time.Second * 5)
 	ch := &TestClickHouse{}
 	r := require.New(t)
 	ch.connectWithWait(r)

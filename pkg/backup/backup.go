@@ -64,7 +64,7 @@ func filterTablesByPattern(tables []clickhouse.Table, tablePattern string) []cli
 	var result []clickhouse.Table
 	for _, t := range tables {
 		for _, pattern := range tablePatterns {
-			if matched, _ := filepath.Match(pattern, fmt.Sprintf("%s.%s", t.Database, t.Name)); matched {
+			if matched, _ := filepath.Match(strings.Trim(pattern, " \t\n\r"), fmt.Sprintf("%s.%s", t.Database, t.Name)); matched {
 				result = addTable(result, t)
 			}
 		}

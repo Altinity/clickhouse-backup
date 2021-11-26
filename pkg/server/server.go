@@ -252,6 +252,7 @@ func (api *APIServer) setupAPIServer() *http.Server {
 	r.HandleFunc("/", api.httpRootHandler).Methods("GET")
 
 	r.HandleFunc("/backup/tables", api.httpTablesHandler).Methods("GET")
+	r.HandleFunc("/backup/tables/all", api.httpTablesHandler).Methods("GET")
 	r.HandleFunc("/backup/list", api.httpListHandler).Methods("GET")
 	r.HandleFunc("/backup/list/{where}", api.httpListHandler).Methods("GET")
 	r.HandleFunc("/backup/create", api.httpCreateHandler).Methods("POST")
@@ -433,8 +434,8 @@ func (api *APIServer) httpRootHandler(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
-// httpTablesHandler - displaylist of tables
-func (api *APIServer) httpTablesHandler(w http.ResponseWriter, _ *http.Request) {
+// httpTablesHandler - display list of tables
+func (api *APIServer) httpTablesHandler(w http.ResponseWriter, r *http.Request) {
 	cfg, err := config.LoadConfig(api.configPath)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "list", err)
@@ -445,7 +446,30 @@ func (api *APIServer) httpTablesHandler(w http.ResponseWriter, _ *http.Request) 
 		writeError(w, http.StatusInternalServerError, "tables", err)
 		return
 	}
+	if r.URL.Path != "/backup/tables/all" {
+		tables := api.getTablesWithSkip(tables)
+		sendJSONEachRow(w, http.StatusOK, tables)
+		return
+	}
 	sendJSONEachRow(w, http.StatusOK, tables)
+
+}
+
+func (api *APIServer) getTablesWithSkip(tables []clickhouse.Table) []clickhouse.Table {
+	showCounts := 0
+	for _, t := range tables {
+		if !t.Skip {
+			showCounts++
+		}
+	}
+	showTables := make([]clickhouse.Table, showCounts)
+	showCounts = 0
+	for _, t := range tables {
+		if !t.Skip {
+			showTables[showCounts] = t
+		}
+	}
+	return showTables
 }
 
 // httpTablesHandler - display list of all backups stored locally and remotely
@@ -1076,11 +1100,19 @@ func (api *APIServer) CreateIntegrationTables() error {
 	if api.config.API.Secure {
 		schema = "https"
 	}
-	query := fmt.Sprintf("CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String) ENGINE=URL('%s://127.0.0.1:%s/backup/actions%s', JSONEachRow) SETTINGS input_format_skip_unknown_fields=1", schema, port, auth)
+	settings := ""
+	version, err := ch.GetVersion()
+	if err != nil {
+		return err
+	}
+	if version >= 21001000 {
+		settings = "SETTINGS input_format_skip_unknown_fields=1"
+	}
+	query := fmt.Sprintf("CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String) ENGINE=URL('%s://127.0.0.1:%s/backup/actions%s', JSONEachRow) %s", schema, port, auth, settings)
 	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_actions"}, query, true); err != nil {
 		return err
 	}
-	query = fmt.Sprintf("CREATE TABLE system.backup_list (name String, created DateTime, size Int64, location String, required String, desc String) ENGINE=URL('%s://127.0.0.1:%s/backup/list%s', JSONEachRow) SETTINGS input_format_skip_unknown_fields=1", schema, port, auth)
+	query = fmt.Sprintf("CREATE TABLE system.backup_list (name String, created DateTime, size Int64, location String, required String, desc String) ENGINE=URL('%s://127.0.0.1:%s/backup/list%s', JSONEachRow) %s", schema, port, auth, settings)
 	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_list"}, query, true); err != nil {
 		return err
 	}

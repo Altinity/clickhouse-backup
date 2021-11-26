@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 )
 
@@ -55,7 +54,7 @@ func parseSchemaPattern(metadataPath string, tablePattern string, dropTable bool
 		table, _ := url.PathUnescape(parts[1])
 		tableName := fmt.Sprintf("%s.%s", database, table)
 		for _, p := range tablePatterns {
-			if matched, _ := filepath.Match(p, tableName); !matched {
+			if matched, _ := filepath.Match(strings.Trim(p, " \t\r\n"), tableName); !matched {
 				continue
 			}
 			data, err := ioutil.ReadFile(filePath)
@@ -114,24 +113,6 @@ func getOrderByEngine(query string, dropTable bool) int64 {
 	return 0
 }
 
-func parseTablePatternForRestoreData(tables []metadata.TableMetadata, tablePattern string) clickhouse.BackupTables {
-	tablePatterns := []string{"*"}
-	if tablePattern != "" {
-		tablePatterns = strings.Split(tablePattern, ",")
-	}
-	result := clickhouse.BackupTables{}
-	for _, t := range tables {
-		for _, pattern := range tablePatterns {
-			tableName := fmt.Sprintf("%s.%s", t.Database, t.Table)
-			if matched, _ := filepath.Match(pattern, tableName); matched {
-				result = addBackupTable(result, t)
-			}
-		}
-	}
-	result.Sort()
-	return result
-}
-
 func parseTablePatternForDownload(tables []metadata.TableTitle, tablePattern string) []metadata.TableTitle {
 	tablePatterns := []string{"*"}
 	if tablePattern != "" {
@@ -141,7 +122,7 @@ func parseTablePatternForDownload(tables []metadata.TableTitle, tablePattern str
 	for _, t := range tables {
 		for _, pattern := range tablePatterns {
 			tableName := fmt.Sprintf("%s.%s", t.Database, t.Table)
-			if matched, _ := filepath.Match(pattern, tableName); matched {
+			if matched, _ := filepath.Match(strings.Trim(pattern, " \t\r\n"), tableName); matched {
 				result = append(result, t)
 				break
 			}
