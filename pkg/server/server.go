@@ -252,6 +252,7 @@ func (api *APIServer) setupAPIServer() *http.Server {
 	r.HandleFunc("/", api.httpRootHandler).Methods("GET")
 
 	r.HandleFunc("/backup/tables", api.httpTablesHandler).Methods("GET")
+	r.HandleFunc("/backup/tables/all", api.httpTablesHandler).Methods("GET")
 	r.HandleFunc("/backup/list", api.httpListHandler).Methods("GET")
 	r.HandleFunc("/backup/list/{where}", api.httpListHandler).Methods("GET")
 	r.HandleFunc("/backup/create", api.httpCreateHandler).Methods("POST")
@@ -433,8 +434,8 @@ func (api *APIServer) httpRootHandler(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
-// httpTablesHandler - displaylist of tables
-func (api *APIServer) httpTablesHandler(w http.ResponseWriter, _ *http.Request) {
+// httpTablesHandler - display list of tables
+func (api *APIServer) httpTablesHandler(w http.ResponseWriter, r *http.Request) {
 	cfg, err := config.LoadConfig(api.configPath)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "list", err)
@@ -445,7 +446,30 @@ func (api *APIServer) httpTablesHandler(w http.ResponseWriter, _ *http.Request) 
 		writeError(w, http.StatusInternalServerError, "tables", err)
 		return
 	}
+	if r.URL.Path != "/backup/tables/all" {
+		tables := api.getTablesWithSkip(tables)
+		sendJSONEachRow(w, http.StatusOK, tables)
+		return
+	}
 	sendJSONEachRow(w, http.StatusOK, tables)
+
+}
+
+func (api *APIServer) getTablesWithSkip(tables []clickhouse.Table) []clickhouse.Table {
+	showCounts := 0
+	for _, t := range tables {
+		if !t.Skip {
+			showCounts++
+		}
+	}
+	showTables := make([]clickhouse.Table, showCounts)
+	showCounts = 0
+	for _, t := range tables {
+		if !t.Skip {
+			showTables[showCounts] = t
+		}
+	}
+	return showTables
 }
 
 // httpTablesHandler - display list of all backups stored locally and remotely
