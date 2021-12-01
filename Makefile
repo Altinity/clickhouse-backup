@@ -43,7 +43,7 @@ build/linux/arm64/$(NAME) build/darwin/arm64/$(NAME): GOARCH = arm64
 build/linux/amd64/$(NAME) build/linux/arm64/$(NAME): GOOS = linux
 build/darwin/amd64/$(NAME) build/darwin/arm64/$(NAME): GOOS = darwin
 build/linux/amd64/$(NAME) build/linux/arm64/$(NAME) build/darwin/amd64/$(NAME) build/darwin/arm64/$(NAME): $(GO_FILES)
-	GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO_BUILD) -o $@ ./cmd/$(NAME)
+	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO_BUILD) -o $@ ./cmd/$(NAME)
 
 config: $(NAME)/config.yml
 
