@@ -52,6 +52,7 @@ jobs:
           GOROOT: ${{ env.GOROOT_1_17_X64 }}
         run: |
           make build-race
+          make build
           make config
           make test
 
@@ -82,8 +83,8 @@ jobs:
         with:
           name: build-artifacts
           path: |
-            ./build/linux/amd64
-            ./build/linux/arm64
+            ./build/linux/amd64/clickhouse-backup
+            ./build/linux/arm64/clickhouse-backup
             ./clickhouse-backup/clickhouse-backup
             ./clickhouse-backup/clickhouse-backup-race
             ChangeLog.md
