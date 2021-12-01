@@ -63,11 +63,24 @@ jobs:
         run: |
           export NAME=clickhouse-backup
           export VERSION=$(git describe --always --tags --abbrev=0 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/c\1/;s/-/./g')
-          tar -czvf ${NAME}.tar.gz ${NAME}
-          CGO_ENABLED=0 make packages
-          echo "::set-output name=rpm::${NAME}-${VERSION}-1.x86_64.rpm"
-          echo "::set-output name=deb::${NAME}_${VERSION}_amd64.deb"
-          echo "::set-output name=tgz::${NAME}.tar.gz"
+
+          tar -czvf ${NAME}-linux-amd64.tar.gz build/linux/amd64
+          tar -czvf ${NAME}-linux-arm64.tar.gz build/linux/arm64
+          tar -czvf ${NAME}-darwin-amd64.tar.gz build/darwin/amd64
+          tar -czvf ${NAME}-darwin-arm64.tar.gz build/darwin/arm64
+          echo "::set-output name=tgz_linux_amd64::${NAME}-linux-amd64.tar.gz"
+          echo "::set-output name=tgz_linux_arm64::${NAME}-linux-arm64.tar.gz"
+          echo "::set-output name=tgz_darwin_amd64::${NAME}-darwin-amd64.tar.gz"
+          echo "::set-output name=tgz_darwin_arm64::${NAME}-darwin-arm64.tar.gz"
+
+          make packages
+          cp -lv ./build/linux/*/*.deb ./
+          cp -lv ./build/linux/*/*.rpm ./
+          echo "::set-output name=rpm_amd64::${NAME}-${VERSION}-1.x86_64.rpm"
+          echo "::set-output name=deb_amd64::${NAME}_${VERSION}_amd64.deb"
+          echo "::set-output name=rpm_arm64::${NAME}-${VERSION}-1.aarch64.rpm"
+          echo "::set-output name=deb_arm64::${NAME}_${VERSION}_arm64.deb"
+
 
       - name: Prepare release notes
         id: release_notes
@@ -86,39 +99,98 @@ jobs:
           body_path: ${{ steps.release_notes.outputs.path }}
           draft: true
 
-      - name: Add rpm to github release
-        id: upload-release-rpm
+      - name: Add rpm x86_64 to github release
+        id: upload-release-rpm_amd64
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: build/${{ steps.make_packages.outputs.rpm }}
-          asset_name: ${{ steps.make_packages.outputs.rpm }}
+          asset_path: build/${{ steps.make_packages.outputs.rpm_amd64 }}
+          asset_name: ${{ steps.make_packages.outputs.rpm_amd64 }}
           asset_content_type: application/octet-stream
 
-
-      - name: Add deb to github release
-        id: upload-release-deb
+      - name: Add rpm aarch64 to github release
+        id: upload-release-rpm_arm64
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: build/${{ steps.make_packages.outputs.deb }}
-          asset_name: ${{ steps.make_packages.outputs.deb }}
+          asset_path: build/${{ steps.make_packages.outputs.rpm_arm64 }}
+          asset_name: ${{ steps.make_packages.outputs.rpm_arm64 }}
           asset_content_type: application/octet-stream
 
-      - name: Add tar.gz to github release
-        id: upload-release-tgz
+      - name: Add deb amd64 to github release
+        id: upload-release-deb_amd64
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ steps.make_packages.outputs.tgz }}
-          asset_name: ${{ steps.make_packages.outputs.tgz }}
+          asset_path: build/${{ steps.make_packages.outputs.deb_amd64 }}
+          asset_name: ${{ steps.make_packages.outputs.deb_amd64 }}
           asset_content_type: application/octet-stream
+
+      - name: Add deb arm64 to github release
+        id: upload-release-deb_arm64
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: build/${{ steps.make_packages.outputs.deb_arm64 }}
+          asset_name: ${{ steps.make_packages.outputs.deb_amd64 }}
+          asset_content_type: application/octet-stream
+
+      - name: Add tar.gz linux/amd64 to github release
+        id: upload-release-tgz_linux_amd64
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ steps.make_packages.outputs.tgz_linux_amd64 }}
+          asset_name: ${{ steps.make_packages.outputs.tgz_linux_amd64 }}
+          asset_content_type: application/octet-stream
+
+      - name: Add tar.gz linux/arm64 to github release
+        id: upload-release-tgz_linux_arm64
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ steps.make_packages.outputs.tgz_linux_arm64 }}
+          asset_name: ${{ steps.make_packages.outputs.tgz_linux_arm64 }}
+          asset_content_type: application/octet-stream
+
+      - name: Add tar.gz darwin/amd64 to github release
+        id: upload-release-tgz_darwin_amd64
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ steps.make_packages.outputs.tgz_darwin_amd64 }}
+          asset_name: ${{ steps.make_packages.outputs.tgz_darwin_amd64 }}
+          asset_content_type: application/octet-stream
+
+      - name: Add tar.gz darwin/arm64 to github release
+        id: upload-release-tgz_darwin_arm64
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ steps.make_packages.outputs.tgz_darwin_arm64 }}
+          asset_name: ${{ steps.make_packages.outputs.tgz_darwin_arm64 }}
+          asset_content_type: application/octet-stream
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
 
       - name: Building docker image
         env:
@@ -132,8 +204,4 @@ jobs:
           export DOCKER_REGISTRY=${DOCKER_REGISTRY:-docker.io}
           echo ${DOCKER_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin ${DOCKER_REGISTRY}
 
-          docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
-          docker image tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}
-          docker image tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:latest
-          docker push ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}
-          docker push ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:latest
+          docker buildx build --platform=linux/amd64,linux/arm64 -t ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG} -t ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:latest --pull --push .
