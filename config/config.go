@@ -310,7 +310,9 @@ func DefaultConfig() *Config {
 			Host:     "localhost",
 			Port:     9000,
 			SkipTables: []string{
-				"system.*,INFORMATION_SCHEMA.*,information_schema.*",
+				"system.*",
+				"INFORMATION_SCHEMA.*",
+				"information_schema.*",
 			},
 			Timeout:              "5m",
 			SyncReplicatedTables: false,

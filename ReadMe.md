@@ -272,7 +272,7 @@ Execute multiple backup actions: `curl -X POST -d '{"command":"create test_backu
 
 > **GET /backup/actions**
 
-Display list of current async operations: `curl -s localhost:7171/backup/actions | jq .`
+Display list of all operations from start of API server: `curl -s localhost:7171/backup/actions | jq .`
 * Optional query argument `filter` could filter actions on server side.
 * Optional query argument `last` could filter show only last `XX` actions.
 
