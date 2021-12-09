@@ -437,10 +437,7 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 			cfg.General.DisableProgressBar,
 		}, nil
 	case "cos":
-		tencentStorage := &COS{
-			Config: &cfg.COS,
-			Debug:  cfg.General.LogLevel == "debug",
-		}
+		tencentStorage := &COS{Config: &cfg.COS}
 		return &BackupDestination{
 			tencentStorage,
 			cfg.COS.CompressionFormat,

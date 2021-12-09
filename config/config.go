@@ -99,6 +99,7 @@ type COSConfig struct {
 	Path              string `yaml:"path" envconfig:"COS_PATH"`
 	CompressionFormat string `yaml:"compression_format" envconfig:"COS_COMPRESSION_FORMAT"`
 	CompressionLevel  int    `yaml:"compression_level" envconfig:"COS_COMPRESSION_LEVEL"`
+	Debug             bool   `yaml:"debug" envconfig:"COS_DEBUG"`
 }
 
 // FTPConfig - ftp settings section
