@@ -131,6 +131,8 @@ azblob:
   compression_level: 1         # AZBLOB_COMPRESSION_LEVEL
   compression_format: tar      # AZBLOB_COMPRESSION_FORMAT
   sse_key: ""                  # AZBLOB_SSE_KEY
+  buffer_size: 0               # AZBLOB_BUFFER_SIZE
+  max_buffers: 3               # AZBLOB_MAX_BUFFERS
 s3:
   access_key: ""                   # S3_ACCESS_KEY
   secret_key: ""                   # S3_SECRET_KEY

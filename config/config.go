@@ -66,6 +66,8 @@ type AzureBlobConfig struct {
 	CompressionLevel      int    `yaml:"compression_level" envconfig:"AZBLOB_COMPRESSION_LEVEL"`
 	CompressionFormat     string `yaml:"compression_format" envconfig:"AZBLOB_COMPRESSION_FORMAT"`
 	SSEKey                string `yaml:"sse_key" envconfig:"AZBLOB_SSE_KEY"`
+	BufferSize            int    `yaml:"buffer_size" envconfig:"AZBLOB_BUFFER_SIZE"`
+	MaxBuffers            int    `yaml:"buffer_count" envconfig:"AZBLOB_MAX_BUFFERS"`
 }
 
 // S3Config - s3 settings section
@@ -325,6 +327,8 @@ func DefaultConfig() *Config {
 			EndpointSuffix:    "core.windows.net",
 			CompressionLevel:  1,
 			CompressionFormat: "tar",
+			BufferSize:        0,
+			MaxBuffers:        3,
 		},
 		S3: S3Config{
 			Region:                  "us-east-1",

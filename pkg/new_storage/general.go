@@ -399,6 +399,18 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 	switch cfg.General.RemoteStorage {
 	case "azblob":
 		azblobStorage := &AzureBlob{Config: &cfg.AzureBlob}
+		bufferSize := azblobStorage.Config.BufferSize
+		// https://github.com/AlexAkulov/clickhouse-backup/issues/317
+		if bufferSize <= 0 {
+			bufferSize = int(cfg.General.MaxFileSize / 10000)
+			if bufferSize < 2*1024*1024 {
+				bufferSize = 2 * 1024 * 1024
+			}
+			if bufferSize > 10*1024*1024 {
+				bufferSize = 10 * 1024 * 1024
+			}
+		}
+		azblobStorage.Config.BufferSize = bufferSize
 		return &BackupDestination{
 			azblobStorage,
 			cfg.AzureBlob.CompressionFormat,
