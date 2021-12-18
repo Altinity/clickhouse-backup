@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"io"
 	"net/http"
+	"os"
 	"path"
 	"strings"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/aws/aws-sdk-go/service/sts"
 	"github.com/pkg/errors"
 )
 
@@ -59,15 +61,29 @@ func (s *S3) Connect() error {
 
 	awsDefaults := defaults.Get()
 	defaultCredProviders := defaults.CredProviders(awsDefaults.Config, awsDefaults.Handlers)
+	customCredProviders := defaultCredProviders
 
-	// Define custom static cred provider
-	staticCreds := &credentials.StaticProvider{Value: credentials.Value{
-		AccessKeyID:     s.Config.AccessKey,
-		SecretAccessKey: s.Config.SecretKey,
-	}}
+	if s.Config.AccessKey != "" && s.Config.SecretKey != "" {
+		// Define custom static cred provider
+		staticCreds := &credentials.StaticProvider{Value: credentials.Value{
+			AccessKeyID:     s.Config.AccessKey,
+			SecretAccessKey: s.Config.SecretKey,
+		}}
+		// Append static creds to the defaults
+		customCredProviders = append([]credentials.Provider{staticCreds}, customCredProviders...)
+	}
 
-	// Append static creds to the defaults
-	customCredProviders := append([]credentials.Provider{staticCreds}, defaultCredProviders...)
+	awsRoleARN := os.Getenv("AWS_ROLE_ARN")
+	awsWebIdentityTokenFile := os.Getenv("AWS_WEB_IDENTITY_TOKEN_FILE")
+	if awsRoleARN != "" && awsWebIdentityTokenFile != "" {
+		cfg := &aws.Config{
+			Region: aws.String(s.Config.Region),
+		}
+		stsSvc := sts.New(session.Must(session.NewSession(cfg)))
+		stsProvider := stscreds.NewWebIdentityRoleProvider(stsSvc, awsRoleARN, "", awsWebIdentityTokenFile)
+		customCredProviders = append([]credentials.Provider{stsProvider}, customCredProviders...)
+	}
+
 	creds := credentials.NewChainCredentials(customCredProviders)
 
 	var awsConfig = &aws.Config{
