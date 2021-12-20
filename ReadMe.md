@@ -110,7 +110,9 @@ clickhouse:
   port: 9000                       # CLICKHOUSE_PORT
   disk_mapping: {}                 # CLICKHOUSE_DISK_MAPPING
   skip_tables:                     # CLICKHOUSE_SKIP_TABLES
-    - system.*,INFORMATION_SCHEMA.*,information_schema.*
+    - system.*
+    - INFORMATION_SCHEMA.*
+    - information_schema.*
   timeout: 5m                      # CLICKHOUSE_TIMEOUT
   freeze_by_part: false            # CLICKHOUSE_FREEZE_BY_PART
   secure: false                    # CLICKHOUSE_SECURE
