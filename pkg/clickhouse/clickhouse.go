@@ -619,12 +619,17 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable bool) err
 		return errors.New(fmt.Sprintf("schema query ```%s``` doesn't contains table name `%s`", query, table.Name))
 	}
 
-	// fix restore schema for legacy backup, see https://github.com/AlexAkulov/clickhouse-backup/issues/268 and https://github.com/AlexAkulov/clickhouse-backup/issues/297
-	isOnlyTableWithQuotesPresent, err := regexp.Match(fmt.Sprintf("^CREATE [^(]+ `%s`", table.Name), []byte(query))
+	// fix restore schema for legacy backup
+	// see https://github.com/AlexAkulov/clickhouse-backup/issues/268
+	// https://github.com/AlexAkulov/clickhouse-backup/issues/297
+	// https://github.com/AlexAkulov/clickhouse-backup/issues/331
+	isOnlyTableWithQuotesPresent, err := regexp.Match(fmt.Sprintf("^CREATE [^(\\.]+ `%s`", table.Name), []byte(query))
 	if err != nil {
 		return err
 	}
-	isOnlyTablePresent, err := regexp.Match(fmt.Sprintf("^CREATE [^(]+ %s", table.Name), []byte(query))
+	isOnlyTableWithQuotesPresent = isOnlyTableWithQuotesPresent && !strings.Contains(query, fmt.Sprintf("`%s`.`%s`", table.Database, table.Name))
+
+	isOnlyTablePresent, err := regexp.Match(fmt.Sprintf("^CREATE [^(\\.]+ %s", table.Name), []byte(query))
 	if err != nil {
 		return err
 	}

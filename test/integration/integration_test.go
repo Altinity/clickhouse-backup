@@ -27,6 +27,8 @@ import (
 const dbNameAtomic = "_test.ДБ_atomic_"
 const dbNameOrdinary = "_test.ДБ_ordinary_"
 const dbNameMySQL = "mysql_db"
+const Issue331Atomic = "_issue331._atomic_"
+const Issue331Ordinary = "_issue331.ordinary_"
 
 type TestDataStruct struct {
 	Database           string
@@ -86,28 +88,28 @@ var testData = []TestDataStruct{
 		Fields:  []string{"TimeStamp", "Item"},
 		OrderBy: "TimeStamp",
 	}, {
-		Database: dbNameAtomic, DatabaseEngine: "Atomic",
-		Table:  "table4",
-		Schema: "(table4 UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY table4 ORDER BY (table4, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192",
+		Database: Issue331Atomic, DatabaseEngine: "Atomic",
+		Table:  Issue331Atomic, // need cover fix https://github.com/AlexAkulov/clickhouse-backup/issues/331
+		Schema: fmt.Sprintf("(`%s` UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY `%s` ORDER BY (`%s`, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192", Issue331Atomic, Issue331Atomic, Issue331Atomic),
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
 			for i := 0; i < 100; i++ {
-				result = append(result, map[string]interface{}{"table4": uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
+				result = append(result, map[string]interface{}{Issue331Atomic: uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
 			}
 			return result
 		}(),
-		Fields:  []string{"table4", "Col1", "Col2", "Col3", "Col4", "Col5"},
-		OrderBy: "table4",
+		Fields:  []string{Issue331Atomic, "Col1", "Col2", "Col3", "Col4", "Col5"},
+		OrderBy: Issue331Atomic,
 	}, {
-		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Table:  "yuzhichang_table2",
-		Schema: "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMM(order_time) ORDER BY (order_time, order_id)",
+		Database: Issue331Ordinary, DatabaseEngine: "Ordinary",
+		Table:  Issue331Ordinary, // need cover fix https://github.com/AlexAkulov/clickhouse-backup/issues/331
+		Schema: fmt.Sprintf("(`%s` String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMM(order_time) ORDER BY (order_time, `%s`)", Issue331Ordinary, Issue331Ordinary),
 		Rows: []map[string]interface{}{
-			{"order_id": "1", "order_time": toTS("2010-01-01 00:00:00"), "amount": 1.0},
-			{"order_id": "2", "order_time": toTS("2010-02-01 00:00:00"), "amount": 2.0},
+			{Issue331Ordinary: "1", "order_time": toTS("2010-01-01 00:00:00"), "amount": 1.0},
+			{Issue331Ordinary: "2", "order_time": toTS("2010-02-01 00:00:00"), "amount": 2.0},
 		},
-		Fields:  []string{"order_id", "order_time", "amount"},
-		OrderBy: "order_id",
+		Fields:  []string{Issue331Ordinary, "order_time", "amount"},
+		OrderBy: Issue331Ordinary,
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
 		Table:  "yuzhichang_table3",
@@ -236,20 +238,20 @@ var testData = []TestDataStruct{
 		IsDictionary:   true,
 		Table:          "dict_example",
 		Schema: fmt.Sprintf(
-			" (table4 UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) PRIMARY KEY table4 "+
-				" SOURCE(CLICKHOUSE(host 'localhost' port 9000 database '%s' table 'table4' user 'default' password ''))"+
+			" (`%s` UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) PRIMARY KEY `%s` "+
+				" SOURCE(CLICKHOUSE(host 'localhost' port 9000 db '%s' table '%s' user 'default' password ''))"+
 				" LAYOUT(HASHED()) LIFETIME(60)",
-			dbNameAtomic),
+			Issue331Atomic, Issue331Atomic, Issue331Atomic, Issue331Atomic), // same table and name need cover fix https://github.com/AlexAkulov/clickhouse-backup/issues/331
 		SkipInsert: true,
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
 			for i := 0; i < 100; i++ {
-				result = append(result, map[string]interface{}{"table4": uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
+				result = append(result, map[string]interface{}{Issue331Atomic: uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
 			}
 			return result
 		}(),
-		Fields:  []string{"id"},
-		OrderBy: "table4",
+		Fields:  []string{},
+		OrderBy: Issue331Atomic,
 	},
 	{
 		Database: dbNameMySQL, DatabaseEngine: "MySQL('mysql:3306','mysql','root','root')",
@@ -290,28 +292,28 @@ var incrementData = []TestDataStruct{
 		Fields:  []string{"TimeStamp", "Item"},
 		OrderBy: "TimeStamp",
 	}, {
-		Database: dbNameAtomic, DatabaseEngine: "Atomic",
-		Table:  "table4",
-		Schema: "(table4 UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY table4 ORDER BY (table4, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192",
+		Database: Issue331Atomic, DatabaseEngine: "Atomic",
+		Table:  Issue331Atomic, // need cover fix https://github.com/AlexAkulov/clickhouse-backup/issues/331
+		Schema: fmt.Sprintf("(`%s` UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY `%s` ORDER BY (`%s`, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192", Issue331Atomic, Issue331Atomic, Issue331Atomic),
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
 			for i := 200; i < 220; i++ {
-				result = append(result, map[string]interface{}{"table4": uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
+				result = append(result, map[string]interface{}{Issue331Atomic: uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
 			}
 			return result
 		}(),
-		Fields:  []string{"table4", "Col1", "Col2", "Col3", "Col4", "Col5"},
-		OrderBy: "table4",
+		Fields:  []string{Issue331Atomic, "Col1", "Col2", "Col3", "Col4", "Col5"},
+		OrderBy: Issue331Atomic,
 	}, {
-		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Table:  "yuzhichang_table2",
-		Schema: "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMM(order_time) ORDER BY (order_time, order_id)",
+		Database: Issue331Ordinary, DatabaseEngine: "Ordinary",
+		Table:  Issue331Ordinary, // need cover fix https://github.com/AlexAkulov/clickhouse-backup/issues/331
+		Schema: fmt.Sprintf("(`%s` String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMM(order_time) ORDER BY (order_time, `%s`)", Issue331Ordinary, Issue331Ordinary),
 		Rows: []map[string]interface{}{
-			{"order_id": "3", "order_time": toTS("2010-03-01 00:00:00"), "amount": 3.0},
-			{"order_id": "4", "order_time": toTS("2010-04-01 00:00:00"), "amount": 4.0},
+			{Issue331Ordinary: "3", "order_time": toTS("2010-03-01 00:00:00"), "amount": 3.0},
+			{Issue331Ordinary: "4", "order_time": toTS("2010-04-01 00:00:00"), "amount": 4.0},
 		},
-		Fields:  []string{"order_id", "order_time", "amount"},
-		OrderBy: "order_id",
+		Fields:  []string{Issue331Ordinary, "order_time", "amount"},
+		OrderBy: Issue331Ordinary,
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
 		Table:  "yuzhichang_table3",
@@ -594,7 +596,7 @@ func TestServerAPI(t *testing.T) {
 	}
 
 	r.NoError(dockerExec("clickhouse", "pkill", "-n", "-f", "clickhouse-backup"))
-	ch.dropDatabase("long_schema")
+	r.NoError(ch.dropDatabase("long_schema"))
 }
 
 func TestDoRestoreRBAC(t *testing.T) {
@@ -906,7 +908,7 @@ func generateTestData(ch *TestClickHouse, r *require.Assertions) {
 
 func dropAllDatabases(r *require.Assertions, ch *TestClickHouse) {
 	log.Info("Drop all databases")
-	for _, db := range []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL} {
+	for _, db := range []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, Issue331Atomic, Issue331Ordinary} {
 		r.NoError(ch.dropDatabase(db))
 	}
 }
@@ -1007,10 +1009,10 @@ func (ch *TestClickHouse) createTestData(data TestDataStruct) error {
 	if err != nil {
 		return fmt.Errorf("can't begin transaction: %v", err)
 	}
-	insertSQL := fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES (:%s)",
+	insertSQL := fmt.Sprintf("INSERT INTO `%s`.`%s` (`%s`) VALUES (:%s)",
 		data.Database,
 		data.Table,
-		strings.Join(data.Fields, ","),
+		strings.Join(data.Fields, "`,`"),
 		strings.Join(data.Fields, ",:"),
 	)
 	log.Debug(insertSQL)
@@ -1052,7 +1054,7 @@ func (ch *TestClickHouse) dropDatabase(database string) (err error) {
 func (ch *TestClickHouse) checkData(t *testing.T, data TestDataStruct) error {
 	assert.NotNil(t, data.Rows)
 	log.Infof("Check '%d' rows in '%s.%s'\n", len(data.Rows), data.Database, data.Table)
-	selectSQL := fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY %s", data.Database, data.Table, data.OrderBy)
+	selectSQL := fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY `%s`", data.Database, data.Table, data.OrderBy)
 	log.Debug(selectSQL)
 	rows, err := ch.chbackup.GetConn().Queryx(selectSQL)
 	if err != nil {
