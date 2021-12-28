@@ -192,8 +192,10 @@ func (ch *ClickHouse) GetTables(tablePattern string) ([]Table, error) {
 	if len(tables) == 0 {
 		return tables, nil
 	}
-	if !tables[0].TotalBytes.Valid {
-		tables = ch.getTableSizeFromParts(tables)
+	for i, table := range tables {
+		if table.TotalBytes == 0 && !table.Skip && strings.HasSuffix(table.Engine, "Tree") {
+			tables[i].TotalBytes = ch.getTableSizeFromParts(tables[i])
+		}
 	}
 	return tables, nil
 }
@@ -227,7 +229,7 @@ func (ch *ClickHouse) prepareAllTablesSQL(tablePattern string, err error, skipDa
 		allTablesSQL += ", create_table_query "
 	}
 	if len(isSystemTablesFieldPresent) > 0 && isSystemTablesFieldPresent[0].IsTotalBytesPresent > 0 {
-		allTablesSQL += ", total_bytes "
+		allTablesSQL += ", coalesce(total_bytes, 0) AS total_bytes "
 	}
 
 	allTablesSQL += "  FROM system.tables WHERE is_temporary = 0"
@@ -265,36 +267,18 @@ func (ch *ClickHouse) GetDatabases() ([]Database, error) {
 	return allDatabases, nil
 }
 
-func (ch *ClickHouse) getTableSizeFromParts(tables []Table) []Table {
+func (ch *ClickHouse) getTableSizeFromParts(table Table) uint64 {
 	var tablesSize []struct {
-		Database string `db:"database"`
-		Table    string `db:"table"`
-		Size     int64  `db:"size"`
+		Size uint64 `db:"size"`
 	}
-	query := "SELECT database, table, sum(bytes_on_disk) as size FROM system.parts GROUP BY database, table;"
+	query := fmt.Sprintf("SELECT sum(bytes_on_disk) as size FROM system.parts WHERE database='%s' AND table='%s' GROUP BY database, table", table.Database, table.Name)
 	if err := ch.softSelect(&tablesSize, query); err != nil {
 		log.Warnf("error parsing tablesSize: %w", err)
 	}
-	tableMap := map[metadata.TableTitle]int64{}
-	for i := range tablesSize {
-		tableMap[metadata.TableTitle{
-			Database: tablesSize[i].Database,
-			Table:    tablesSize[i].Table,
-		}] = tablesSize[i].Size
+	if len(tablesSize) > 0 {
+		return tablesSize[0].Size
 	}
-	for i, t := range tables {
-		if t.TotalBytes.Valid {
-			continue
-		}
-		t.TotalBytes = sql.NullInt64{
-			Int64: tableMap[metadata.TableTitle{
-				Database: t.Database,
-				Table:    t.Name}],
-			Valid: true,
-		}
-		tables[i] = t
-	}
-	return tables
+	return 0
 }
 
 func (ch *ClickHouse) fixVariousVersions(t Table) Table {

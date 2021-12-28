@@ -96,7 +96,7 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 			result = append(result, Backup{
 				metadata.BackupMetadata{
 					BackupName: backupName,
-					DataSize:   o.Size(),
+					DataSize:   uint64(o.Size()),
 				},
 				true,
 				fileExtension,

@@ -105,8 +105,8 @@ func (b *Backuper) Download(backupName string, tablePattern string, schemaOnly b
 	if len(remoteBackup.Tables) == 0 && !b.cfg.General.AllowEmptyBackups {
 		return fmt.Errorf("'%s' is empty backup", backupName)
 	}
-	tableMetadataForDownload := []metadata.TableMetadata{}
 	tablesForDownload := parseTablePatternForDownload(remoteBackup.Tables, tablePattern)
+	tableMetadataForDownload := make([]metadata.TableMetadata, len(tablesForDownload))
 
 	if !schemaOnly && remoteBackup.RequiredBackup != "" {
 		err := b.Download(remoteBackup.RequiredBackup, tablePattern, schemaOnly)
@@ -115,13 +115,13 @@ func (b *Backuper) Download(backupName string, tablePattern string, schemaOnly b
 		}
 	}
 
-	dataSize := int64(0)
-	metadataSize := int64(0)
+	dataSize := uint64(0)
+	metadataSize := uint64(0)
 	err = os.MkdirAll(path.Join(b.DefaultDataPath, "backup", backupName), 0750)
 	if err != nil {
 		return err
 	}
-	for _, t := range tablesForDownload {
+	for i, t := range tablesForDownload {
 		start := time.Now()
 		log := log.WithField("table_metadata", fmt.Sprintf("%s.%s", t.Database, t.Table))
 		remoteTableMetadata := path.Join(backupName, "metadata", clickhouse.TablePathEncode(t.Database), fmt.Sprintf("%s.json", clickhouse.TablePathEncode(t.Table)))
@@ -141,7 +141,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, schemaOnly b
 		if err = json.Unmarshal(tmBody, &tableMetadata); err != nil {
 			return err
 		}
-		tableMetadataForDownload = append(tableMetadataForDownload, tableMetadata)
+		tableMetadataForDownload[i] = tableMetadata
 
 		// save metadata
 		metadataLocalFile := path.Join(b.DefaultDataPath, "backup", backupName, "metadata", clickhouse.TablePathEncode(t.Database), fmt.Sprintf("%s.json", clickhouse.TablePathEncode(t.Table)))
@@ -149,10 +149,10 @@ func (b *Backuper) Download(backupName string, tablePattern string, schemaOnly b
 		if err != nil {
 			return err
 		}
-		metadataSize += int64(size)
+		metadataSize += size
 		log.
 			WithField("duration", utils.HumanizeDuration(time.Since(start))).
-			WithField("size", utils.FormatBytes(int64(size))).
+			WithField("size", utils.FormatBytes(size)).
 			Info("done")
 	}
 	if !schemaOnly {
@@ -226,15 +226,15 @@ func (b *Backuper) Download(backupName string, tablePattern string, schemaOnly b
 	return nil
 }
 
-func (b *Backuper) downloadRBACData(remoteBackup new_storage.Backup) (int64, error) {
+func (b *Backuper) downloadRBACData(remoteBackup new_storage.Backup) (uint64, error) {
 	return b.downloadBackupRelatedDir(remoteBackup, "access")
 }
 
-func (b *Backuper) downloadConfigData(remoteBackup new_storage.Backup) (int64, error) {
+func (b *Backuper) downloadConfigData(remoteBackup new_storage.Backup) (uint64, error) {
 	return b.downloadBackupRelatedDir(remoteBackup, "configs")
 }
 
-func (b *Backuper) downloadBackupRelatedDir(remoteBackup new_storage.Backup, prefix string) (int64, error) {
+func (b *Backuper) downloadBackupRelatedDir(remoteBackup new_storage.Backup, prefix string) (uint64, error) {
 	archiveFile := fmt.Sprintf("%s.%s", prefix, b.cfg.GetArchiveExtension())
 	remoteFile := path.Join(remoteBackup.BackupName, archiveFile)
 	localDir := path.Join(b.DefaultDataPath, "backup", remoteBackup.BackupName, prefix)
@@ -246,7 +246,7 @@ func (b *Backuper) downloadBackupRelatedDir(remoteBackup new_storage.Backup, pre
 	if err = b.dst.CompressedStreamDownload(remoteFile, localDir); err != nil {
 		return 0, err
 	}
-	return remoteFileInfo.Size(), nil
+	return uint64(remoteFileInfo.Size()), nil
 }
 
 func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table metadata.TableMetadata) error {
@@ -332,7 +332,12 @@ func duplicatePart(exists, new string) error {
 	if err != nil {
 		return err
 	}
-	defer ex.Close()
+	defer func() {
+		if err = ex.Close(); err != nil {
+			apexLog.Warnf("Can't close %s", exists)
+		}
+
+	}()
 	files, err := ex.Readdirnames(-1)
 	if err != nil {
 		return err

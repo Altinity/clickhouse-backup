@@ -47,15 +47,6 @@ func addTable(tables []clickhouse.Table, table clickhouse.Table) []clickhouse.Ta
 	return append(tables, table)
 }
 
-func addBackupTable(tables clickhouse.BackupTables, table metadata.TableMetadata) clickhouse.BackupTables {
-	for _, t := range tables {
-		if (t.Database == table.Database) && (t.Table == table.Table) {
-			return tables
-		}
-	}
-	return append(tables, table)
-}
-
 func filterTablesByPattern(tables []clickhouse.Table, tablePattern string) []clickhouse.Table {
 	if tablePattern == "" {
 		return tables
@@ -145,7 +136,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 	for _, disk := range disks {
 		diskMap[disk.Name] = disk.Path
 	}
-	var backupDataSize, backupMetadataSize int64
+	var backupDataSize, backupMetadataSize uint64
 
 	var t []metadata.TableTitle
 	for _, table := range tables {
@@ -165,14 +156,14 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 				}
 				return err
 			}
-			backupDataSize += table.TotalBytes.Int64
+			backupDataSize += table.TotalBytes
 		}
 		log.Debug("create metadata")
 		metadataSize, err := createMetadata(ch, backupPath, metadata.TableMetadata{
 			Table:      table.Name,
 			Database:   table.Database,
 			Query:      table.CreateTableQuery,
-			TotalBytes: table.TotalBytes.Int64,
+			TotalBytes: table.TotalBytes,
 			Size:       realSize,
 			Parts:      partitions,
 		})
@@ -182,14 +173,14 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 			}
 			return err
 		}
-		backupMetadataSize += int64(metadataSize)
+		backupMetadataSize += metadataSize
 		t = append(t, metadata.TableTitle{
 			Database: table.Database,
 			Table:    table.Name,
 		})
 		log.Infof("done")
 	}
-	backupRBACSize, backupConfigSize := int64(0), int64(0)
+	backupRBACSize, backupConfigSize := uint64(0), uint64(0)
 
 	if rbacOnly {
 		if backupRBACSize, err = createRBACBackup(ch, backupPath, disks); err != nil {
@@ -247,14 +238,14 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 	return nil
 }
 
-func createConfigBackup(cfg *config.Config, backupPath string) (int64, error) {
-	backupConfigSize := int64(0)
+func createConfigBackup(cfg *config.Config, backupPath string) (uint64, error) {
+	backupConfigSize := uint64(0)
 	configBackupPath := path.Join(backupPath, "configs")
 	apexLog.Debugf("copy %s -> %s", cfg.ClickHouse.ConfigDir, configBackupPath)
 	copyErr := copy.Copy(cfg.ClickHouse.ConfigDir, configBackupPath, copy.Options{
 		Skip: func(src string) (bool, error) {
 			if fileInfo, err := os.Stat(src); err == nil {
-				backupConfigSize += fileInfo.Size()
+				backupConfigSize += uint64(fileInfo.Size())
 			}
 			return false, nil
 		},
@@ -262,8 +253,8 @@ func createConfigBackup(cfg *config.Config, backupPath string) (int64, error) {
 	return backupConfigSize, copyErr
 }
 
-func createRBACBackup(ch *clickhouse.ClickHouse, backupPath string, disks []clickhouse.Disk) (int64, error) {
-	rbacDataSize := int64(0)
+func createRBACBackup(ch *clickhouse.ClickHouse, backupPath string, disks []clickhouse.Disk) (uint64, error) {
+	rbacDataSize := uint64(0)
 	rbacBackup := path.Join(backupPath, "access")
 	accessPath, err := ch.GetAccessManagementPath(disks)
 	if err != nil {
@@ -273,7 +264,7 @@ func createRBACBackup(ch *clickhouse.ClickHouse, backupPath string, disks []clic
 	copyErr := copy.Copy(accessPath, rbacBackup, copy.Options{
 		Skip: func(src string) (bool, error) {
 			if fileInfo, err := os.Stat(src); err == nil {
-				rbacDataSize += fileInfo.Size()
+				rbacDataSize += uint64(fileInfo.Size())
 			}
 			return false, nil
 		},
@@ -332,7 +323,7 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, diskList []c
 	return partitions, realSize, nil
 }
 
-func createMetadata(ch *clickhouse.ClickHouse, backupPath string, table metadata.TableMetadata) (int, error) {
+func createMetadata(ch *clickhouse.ClickHouse, backupPath string, table metadata.TableMetadata) (uint64, error) {
 	metadataPath := path.Join(backupPath, "metadata")
 	if err := ch.Mkdir(metadataPath); err != nil {
 		return 0, err
@@ -352,5 +343,5 @@ func createMetadata(ch *clickhouse.ClickHouse, backupPath string, table metadata
 	if err := ch.Chown(metadataFile); err != nil {
 		return 0, err
 	}
-	return len(metadataBody), nil
+	return uint64(len(metadataBody)), nil
 }

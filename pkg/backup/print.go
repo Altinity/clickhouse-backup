@@ -289,10 +289,10 @@ func PrintTables(cfg *config.Config, printAll bool) error {
 			tableDisks = append(tableDisks, disk)
 		}
 		if table.Skip {
-			fmt.Fprintf(w, "%s.%s\t%s\t%v\tskip\n", table.Database, table.Name, utils.FormatBytes(table.TotalBytes.Int64), strings.Join(tableDisks, ","))
+			fmt.Fprintf(w, "%s.%s\t%s\t%v\tskip\n", table.Database, table.Name, utils.FormatBytes(table.TotalBytes), strings.Join(tableDisks, ","))
 			continue
 		}
-		fmt.Fprintf(w, "%s.%s\t%s\t%v\t\n", table.Database, table.Name, utils.FormatBytes(table.TotalBytes.Int64), strings.Join(tableDisks, ","))
+		fmt.Fprintf(w, "%s.%s\t%s\t%v\t\n", table.Database, table.Name, utils.FormatBytes(table.TotalBytes), strings.Join(tableDisks, ","))
 	}
 	w.Flush()
 	return nil

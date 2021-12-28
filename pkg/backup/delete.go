@@ -14,7 +14,6 @@ import (
 	apexLog "github.com/apex/log"
 )
 
-//
 func RemoveOldBackupsLocal(cfg *config.Config, keepLastBackup bool) error {
 	keep := cfg.General.BackupsToKeepLocal
 	if keep == 0 {

@@ -134,7 +134,7 @@ func (b *Backuper) Upload(backupName, tablePattern, diffFrom string, schemaOnly 
 			log.
 				WithField("table", fmt.Sprintf("%s.%s", tablesForUpload[idx].Database, tablesForUpload[idx].Table)).
 				WithField("duration", utils.HumanizeDuration(time.Since(start))).
-				WithField("size", utils.FormatBytes(uploadedBytes+tableMetadataSize)).
+				WithField("size", utils.FormatBytes(uint64(uploadedBytes+tableMetadataSize))).
 				Info("done")
 			return nil
 		})
@@ -154,14 +154,14 @@ func (b *Backuper) Upload(backupName, tablePattern, diffFrom string, schemaOnly 
 	}
 
 	// upload metadata for backup
-	backupMetadata.CompressedSize = compressedDataSize
-	backupMetadata.MetadataSize = metadataSize
-	tt := []metadata.TableTitle{}
+	backupMetadata.CompressedSize = uint64(compressedDataSize)
+	backupMetadata.MetadataSize = uint64(metadataSize)
+	tt := make([]metadata.TableTitle, len(tablesForUpload))
 	for i := range tablesForUpload {
-		tt = append(tt, metadata.TableTitle{
+		tt[i] = metadata.TableTitle{
 			Database: tablesForUpload[i].Database,
 			Table:    tablesForUpload[i].Table,
-		})
+		}
 	}
 	backupMetadata.Tables = tt
 	if b.cfg.GetCompressionFormat() != "none" {
@@ -180,7 +180,7 @@ func (b *Backuper) Upload(backupName, tablePattern, diffFrom string, schemaOnly 
 	}
 	log.
 		WithField("duration", utils.HumanizeDuration(time.Since(startUpload))).
-		WithField("size", utils.FormatBytes(compressedDataSize+metadataSize+int64(len(newBackupMetadataBody))+backupMetadata.RBACSize+backupMetadata.ConfigSize)).
+		WithField("size", utils.FormatBytes(uint64(compressedDataSize)+uint64(metadataSize)+uint64(len(newBackupMetadataBody))+backupMetadata.RBACSize+backupMetadata.ConfigSize)).
 		Info("done")
 
 	// Clean
@@ -190,7 +190,7 @@ func (b *Backuper) Upload(backupName, tablePattern, diffFrom string, schemaOnly 
 	return nil
 }
 
-func (b *Backuper) uploadConfigData(backupName string) (int64, error) {
+func (b *Backuper) uploadConfigData(backupName string) (uint64, error) {
 	configBackupPath := path.Join(b.DefaultDataPath, "backup", backupName, "configs")
 	configFilesGlobPattern := path.Join(configBackupPath, "**/*.*")
 	remoteConfigsArchive := path.Join(backupName, fmt.Sprintf("configs.%s", b.cfg.GetArchiveExtension()))
@@ -198,14 +198,14 @@ func (b *Backuper) uploadConfigData(backupName string) (int64, error) {
 
 }
 
-func (b *Backuper) uploadRBACData(backupName string) (int64, error) {
+func (b *Backuper) uploadRBACData(backupName string) (uint64, error) {
 	rbacBackupPath := path.Join(b.DefaultDataPath, "backup", backupName, "access")
 	accessFilesGlobPattern := path.Join(rbacBackupPath, "*.*")
 	remoteRBACArchive := path.Join(backupName, fmt.Sprintf("access.%s", b.cfg.GetArchiveExtension()))
 	return b.uploadAndArchiveBackupRelatedDir(rbacBackupPath, accessFilesGlobPattern, remoteRBACArchive)
 }
 
-func (b *Backuper) uploadAndArchiveBackupRelatedDir(localBackupRelatedDir, localFilesGlobPattern, remoteFile string) (int64, error) {
+func (b *Backuper) uploadAndArchiveBackupRelatedDir(localBackupRelatedDir, localFilesGlobPattern, remoteFile string) (uint64, error) {
 	if _, err := os.Stat(localBackupRelatedDir); os.IsNotExist(err) {
 		return 0, nil
 	}
@@ -225,7 +225,7 @@ func (b *Backuper) uploadAndArchiveBackupRelatedDir(localBackupRelatedDir, local
 	if err != nil {
 		return 0, fmt.Errorf("can't check uploaded %s file: %v", remoteFile, err)
 	}
-	return remoteUploaded.Size(), nil
+	return uint64(remoteUploaded.Size()), nil
 }
 
 func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetadata) (map[string][]string, int64, error) {
@@ -331,12 +331,20 @@ func isDuplicatedParts(part1, part2 string) error {
 	if err != nil {
 		return err
 	}
-	defer p1.Close()
+	defer func() {
+		if err = p1.Close(); err != nil {
+			apexLog.Warnf("Can't close %s", part1)
+		}
+	}()
 	p2, err := os.Open(part2)
 	if err != nil {
 		return err
 	}
-	defer p2.Close()
+	defer func() {
+		if err = p2.Close(); err != nil {
+			apexLog.Warnf("Can't close %s", part2)
+		}
+	}()
 	pf1, err := p1.Readdirnames(-1)
 	if err != nil {
 		return err
