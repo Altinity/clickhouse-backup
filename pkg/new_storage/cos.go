@@ -18,7 +18,6 @@ import (
 type COS struct {
 	client *cos.Client
 	Config *config.COSConfig
-	Debug  bool
 }
 
 // Connect - connect to cos
@@ -39,9 +38,9 @@ func (c *COS) Connect() error {
 			SecretKey: c.Config.SecretKey,
 			// request debug
 			Transport: &debug.DebugRequestTransport{
-				RequestHeader:  c.Debug,
+				RequestHeader:  c.Config.Debug,
 				RequestBody:    false,
-				ResponseHeader: c.Debug,
+				ResponseHeader: c.Config.Debug,
 				ResponseBody:   false,
 			},
 		},

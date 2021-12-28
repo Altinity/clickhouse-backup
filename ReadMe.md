@@ -111,6 +111,8 @@ clickhouse:
   disk_mapping: {}                 # CLICKHOUSE_DISK_MAPPING
   skip_tables:                     # CLICKHOUSE_SKIP_TABLES
     - system.*
+    - INFORMATION_SCHEMA.*
+    - information_schema.*
   timeout: 5m                      # CLICKHOUSE_TIMEOUT
   freeze_by_part: false            # CLICKHOUSE_FREEZE_BY_PART
   secure: false                    # CLICKHOUSE_SECURE
@@ -131,6 +133,8 @@ azblob:
   compression_level: 1         # AZBLOB_COMPRESSION_LEVEL
   compression_format: tar      # AZBLOB_COMPRESSION_FORMAT
   sse_key: ""                  # AZBLOB_SSE_KEY
+  buffer_size: 0               # AZBLOB_BUFFER_SIZE
+  max_buffers: 3               # AZBLOB_MAX_BUFFERS
 s3:
   access_key: ""                   # S3_ACCESS_KEY
   secret_key: ""                   # S3_SECRET_KEY
@@ -272,7 +276,7 @@ Execute multiple backup actions: `curl -X POST -d '{"command":"create test_backu
 
 > **GET /backup/actions**
 
-Display list of current async operations: `curl -s localhost:7171/backup/actions | jq .`
+Display list of all operations from start of API server: `curl -s localhost:7171/backup/actions | jq .`
 * Optional query argument `filter` could filter actions on server side.
 * Optional query argument `last` could filter show only last `XX` actions.
 

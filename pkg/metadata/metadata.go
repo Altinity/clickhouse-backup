@@ -16,11 +16,11 @@ type BackupMetadata struct {
 	CreationDate            time.Time         `json:"creation_date"`
 	Tags                    string            `json:"tags,omitempty"` // "type=manual", "type=sheduled", "hostname": "", "shard="
 	ClickHouseVersion       string            `json:"clickhouse_version,omitempty"`
-	DataSize                int64             `json:"data_size,omitempty"`
-	MetadataSize            int64             `json:"metadata_size"`
-	RBACSize                int64             `json:"rbac_size,omitempty"`
-	ConfigSize              int64             `json:"config_size,omitempty"`
-	CompressedSize          int64             `json:"compressed_size,omitempty"`
+	DataSize                uint64            `json:"data_size,omitempty"`
+	MetadataSize            uint64            `json:"metadata_size"`
+	RBACSize                uint64            `json:"rbac_size,omitempty"`
+	ConfigSize              uint64            `json:"config_size,omitempty"`
+	CompressedSize          uint64            `json:"compressed_size,omitempty"`
 	Databases               []DatabasesMeta   `json:"databases,omitempty"`
 	Tables                  []TableTitle      `json:"tables"`
 	DataFormat              string            `json:"data_format"`
@@ -44,7 +44,7 @@ type TableMetadata struct {
 	// UUID        string            `json:"uuid,omitempty"`
 	// Macros ???
 	Size                 map[string]int64 `json:"size"`                  // сколько занимает бэкап на каждом диске
-	TotalBytes           int64            `json:"total_bytes,omitempty"` // общий объём бэкапа
+	TotalBytes           uint64           `json:"total_bytes,omitempty"` // общий объём бэкапа
 	DependencesTable     string           `json:"dependencies_table,omitempty"`
 	DependenciesDatabase string           `json:"dependencies_database,omitempty"`
 	MetadataOnly         bool             `json:"metadata_only"`

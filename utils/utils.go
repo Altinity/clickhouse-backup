@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"github.com/apex/log"
 	"strings"
 	"time"
 )
@@ -12,7 +13,7 @@ const (
 )
 
 // FormatBytes - Convert bytes to human readable string
-func FormatBytes(i int64) string {
+func FormatBytes(i uint64) string {
 	const (
 		KiB = 1024
 		MiB = 1048576
@@ -40,11 +41,15 @@ func HumanizeDuration(d time.Duration) string {
 	var b strings.Builder
 	if d >= year {
 		years := d / year
-		fmt.Fprintf(&b, "%dy", years)
+		if _, err := fmt.Fprintf(&b, "%dy", years); err != nil {
+			log.Warnf("HumanizeDuration error: %v", err)
+		}
 		d -= years * year
 	}
 	days := d / day
 	d -= days * day
-	fmt.Fprintf(&b, "%dd%s", days, d)
+	if _, err := fmt.Fprintf(&b, "%dd%s", days, d); err != nil {
+		log.Warnf("HumanizeDuration error: %v", err)
+	}
 	return b.String()
 }

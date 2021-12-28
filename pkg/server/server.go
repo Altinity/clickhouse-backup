@@ -480,7 +480,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 	type backupJSON struct {
 		Name           string `json:"name"`
 		Created        string `json:"created"`
-		Size           int64  `json:"size,omitempty"`
+		Size           uint64 `json:"size,omitempty"`
 		Location       string `json:"location"`
 		RequiredBackup string `json:"required"`
 		Desc           string `json:"desc"`

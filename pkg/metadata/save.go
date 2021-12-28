@@ -8,7 +8,7 @@ import (
 	"path"
 )
 
-func (tm *TableMetadata) Save(location string, metadataOnly bool) (int, error) {
+func (tm *TableMetadata) Save(location string, metadataOnly bool) (uint64, error) {
 	newTM := TableMetadata{
 		Table:                tm.Table,
 		Database:             tm.Database,
@@ -42,7 +42,7 @@ func (tm *TableMetadata) Save(location string, metadataOnly bool) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return len(body), ioutil.WriteFile(location, body, 0640)
+	return uint64(len(body)), ioutil.WriteFile(location, body, 0640)
 }
 
 func (bm *BackupMetadata) Save(location string) error {

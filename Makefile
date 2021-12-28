@@ -15,14 +15,13 @@ define DESC =
 endef
 GO_FILES = $(shell find -name '*.go')
 GO_BUILD = go build -ldflags "-X 'main.version=$(VERSION)' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)'"
-PKG_FILES = build/$(NAME)_$(VERSION)_amd64.deb build/$(NAME)-$(VERSION)-1.x86_64.rpm
-export CGO_ENABLED = 0
-export GOOS = linux
-export GOARCH = amd64
+PKG_FILES = build/$(NAME)_$(VERSION).amd64.deb build/$(NAME)_$(VERSION).arm64.deb build/$(NAME)-$(VERSION)-1.amd64.rpm build/$(NAME)-$(VERSION)-1.arm64.rpm
+HOST_OS = $(shell bash -c 'source <(go env) && echo $$GOHOSTOS')
+HOST_ARCH = $(shell bash -c 'source <(go env) && echo $$GOHOSTARCH')
 
 .PHONY: clean all version test
 
-all: build config
+all: build config packages
 
 version:
 	@echo $(VERSION)
@@ -37,41 +36,57 @@ test:
 	go vet ./...
 	go test -v ./...
 
-build: $(NAME)/$(NAME)
+build: build/linux/amd64/$(NAME) build/linux/arm64/$(NAME) build/darwin/amd64/$(NAME) build/darwin/arm64/$(NAME)
 
+build/linux/amd64/$(NAME) build/darwin/amd64/$(NAME): GOARCH = amd64
+build/linux/arm64/$(NAME) build/darwin/arm64/$(NAME): GOARCH = arm64
+build/linux/amd64/$(NAME) build/linux/arm64/$(NAME): GOOS = linux
+build/darwin/amd64/$(NAME) build/darwin/arm64/$(NAME): GOOS = darwin
+build/linux/amd64/$(NAME) build/linux/arm64/$(NAME) build/darwin/amd64/$(NAME) build/darwin/arm64/$(NAME): $(GO_FILES)
+	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO_BUILD) -o $@ ./cmd/$(NAME)
 
 config: $(NAME)/config.yml
 
-$(NAME)/config.yml: $(NAME)/$(NAME)
-	./$(NAME)/$(NAME) default-config > $@
+$(NAME)/$(NAME): build/$(HOST_OS)/amd64/$(NAME)
+	mkdir -p $(NAME)
+	cp -lv ./build/linux/amd64/$(NAME) ./$(NAME)/$(NAME)
 
-$(NAME)/$(NAME): $(GO_FILES)
-	$(GO_BUILD) -o $@ ./cmd/$(NAME)
+$(NAME)/config.yml: $(NAME)/$(NAME) build/$(HOST_OS)/$(HOST_ARCH)/$(NAME)
+	./build/$(HOST_OS)/$(HOST_ARCH)/$(NAME) default-config > $@
 
-build/$(NAME): $(GO_FILES)
-	GOOS=linux GOARCH=amd64 $(GO_BUILD) -o $@ ./cmd/$(NAME)
+build/linux/amd64/config.yml build/linux/arm64/config.yml build/darwin/amd64/config.yml build/darwin/arm64/config.yml: config
+	cp -lv ./$(NAME)/config.yml $@
 
 packages: $(PKG_FILES)
 
+build/linux/amd64/pkg: ARCH = amd64
+build/linux/arm64/pkg: ARCH = arm64
 .ONESHELL:
-build/pkg: build/$(NAME) $(NAME)/config.yml
-	cd build
-	mkdir -p pkg/etc/$(NAME)
-	mkdir -p pkg/usr/bin
-	cp -l $(NAME) pkg/usr/bin/
-	cp -l ../$(NAME)/config.yml pkg/etc/$(NAME)/config.yml.example
+build/linux/amd64/pkg build/linux/arm64/pkg: build config
+	cd ./build/linux/$(ARCH)
+	mkdir -pv pkg/etc/$(NAME)
+	mkdir -pv pkg/usr/bin
+	cp -lv $(NAME) pkg/usr/bin/
+	cp -lv ../../../$(NAME)/config.yml pkg/etc/$(NAME)/config.yml.example
+
 
 deb: $(word 1, $(PKG_FILES))
 
-rpm: $(word 2, $(PKG_FILES))
+deb_arm: $(word 2, $(PKG_FILES))
+
+rpm: $(word 3, $(PKG_FILES))
+
+rpm_arm: $(word 4, $(PKG_FILES))
 
 # Set TYPE to package suffix w/o dot
-$(PKG_FILES): TYPE = $(subst .,,$(suffix $@))
-$(PKG_FILES): build/pkg
+$(PKG_FILES): PKG_TYPE = $(subst .,,$(suffix $@))
+# Set ARCH to package python split('.')[-1].split('_')[-]
+$(PKG_FILES): PKG_ARCH = $(word $(shell echo $(words $(subst ., ,$@))-1 | bc),$(subst ., ,$@))
+$(PKG_FILES): build/linux/amd64/pkg build/linux/arm64/pkg
 	fpm --verbose \
 		-s dir \
-		-a x86_64 \
-		-t $(TYPE) \
+		-a $(PKG_ARCH) \
+		-t $(PKG_TYPE) \
 		--vendor $(VENDOR) \
 		-m $(VENDOR) \
 		--url $(URL) \
@@ -79,8 +94,8 @@ $(PKG_FILES): build/pkg
 		--license MIT \
 		-n $(NAME) \
 		-v $(VERSION) \
-		-p build \
-		build/pkg/=/
+		-p build/linux/$(PKG_ARCH) \
+		build/linux/$(PKG_ARCH)/pkg/=/
 
 build-race: $(NAME)/$(NAME)-race
 

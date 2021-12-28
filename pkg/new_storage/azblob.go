@@ -145,8 +145,8 @@ func (s *AzureBlob) GetFileReader(key string) (io.ReadCloser, error) {
 func (s *AzureBlob) PutFile(key string, r io.ReadCloser) error {
 	ctx := context.Background()
 	blob := s.Container.NewBlockBlobURL(path.Join(s.Config.Path, key))
-	bufferSize := 2 * 1024 * 1024 // Configure the size of the rotating buffers that are used when uploading
-	maxBuffers := 3               // Configure the number of rotating buffers that are used when uploading
+	bufferSize := s.Config.BufferSize // Configure the size of the rotating buffers that are used when uploading
+	maxBuffers := s.Config.MaxBuffers // Configure the number of rotating buffers that are used when uploading
 	_, err := x.UploadStreamToBlockBlob(ctx, r, blob, azblob.UploadStreamToBlockBlobOptions{BufferSize: bufferSize, MaxBuffers: maxBuffers}, s.CPK)
 	return err
 }

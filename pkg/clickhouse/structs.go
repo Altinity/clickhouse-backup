@@ -1,7 +1,6 @@
 package clickhouse
 
 import (
-	"database/sql"
 	"sort"
 	"time"
 
@@ -15,11 +14,11 @@ type Table struct {
 	Name     string `db:"name"`
 	Engine   string `db:"engine"`
 	// fields depends on `clickhouse-server` version
-	DataPath         string        `db:"data_path,omitempty"` // For legacy support
-	DataPaths        []string      `db:"data_paths,omitempty"`
-	UUID             string        `db:"uuid,omitempty"`
-	CreateTableQuery string        `db:"create_table_query,omitempty"`
-	TotalBytes       sql.NullInt64 `db:"total_bytes,omitempty"`
+	DataPath         string   `db:"data_path,omitempty"` // For legacy support
+	DataPaths        []string `db:"data_paths,omitempty"`
+	UUID             string   `db:"uuid,omitempty"`
+	CreateTableQuery string   `db:"create_table_query,omitempty"`
+	TotalBytes       uint64   `db:"total_bytes,omitempty"`
 	Skip             bool
 }
 
