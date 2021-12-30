@@ -11,6 +11,7 @@ export AZURE_TESTS=${AZURE_TESTS:-}
 export S3_DEBUG=${S3_DEBUG:-false}
 export GCS_DEBUG=${GCS_DEBUG:-false}
 export FTP_DEBUG=${FTP_DEBUG:-false}
+export SFTP_DEBUG=${SFTP_DEBUG:-false}
 export GODEBUG=${GODEBUG:-}
 export CLICKHOUSE_DEBUG=${CLICKHOUSE_DEBUG:-false}
 

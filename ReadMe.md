@@ -202,6 +202,7 @@ sftp:
   concurrency: 1               # SFTP_CONCURRENCY     
   compression_format: tar      # SFTP_COMPRESSION_FORMAT
   compression_level: 1         # SFTP_COMPRESSION_LEVEL
+  debug: false                 # SFTP_DEBUG
 ```
 
 ## ATTENTION!

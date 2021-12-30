@@ -129,6 +129,7 @@ type SFTPConfig struct {
 	CompressionFormat string `yaml:"compression_format" envconfig:"SFTP_COMPRESSION_FORMAT"`
 	CompressionLevel  int    `yaml:"compression_level" envconfig:"SFTP_COMPRESSION_LEVEL"`
 	Concurrency       int    `yaml:"concurrency" envconfig:"SFTP_CONCURRENCY"`
+	Debug             bool   `yaml:"debug" envconfig:"SFTP_DEBUG"`
 }
 
 // ClickHouseConfig - clickhouse settings section
