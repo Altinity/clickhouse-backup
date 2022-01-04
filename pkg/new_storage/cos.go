@@ -77,10 +77,10 @@ func (c *COS) DeleteFile(key string) error {
 	return err
 }
 
-func (c *COS) Walk(cosPath string, recursuve bool, process func(RemoteFile) error) error {
+func (c *COS) Walk(cosPath string, recursive bool, process func(RemoteFile) error) error {
 	prefix := path.Join(c.Config.Path, cosPath)
 	delimiter := ""
-	if !recursuve {
+	if !recursive {
 		delimiter = "/"
 	}
 	res, _, err := c.client.Bucket.Get(context.Background(), &cos.BucketGetOptions{
