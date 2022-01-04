@@ -90,7 +90,7 @@ func isLegacyBackup(backupName string) (bool, string, string) {
 
 func (bd *BackupDestination) BackupList() ([]Backup, error) {
 	result := []Backup{}
-	err := bd.Walk("/", false, func(o RemoteFile) error {
+	err := bd.Walk("/", true, func(o RemoteFile) error {
 		// Legacy backup
 		if ok, backupName, fileExtension := isLegacyBackup(strings.TrimPrefix(o.Name(), "/")); ok {
 			result = append(result, Backup{
@@ -105,17 +105,14 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 			})
 			return nil
 		}
-		mf, err := bd.StatFile(path.Join(o.Name(), "metadata.json"))
+		metadataFilePath := ""
+		if strings.Contains(o.Name(), "metadata.json") {
+			metadataFilePath = o.Name()
+		} else {
+			metadataFilePath = path.Join(o.Name(), "metadata.json")
+		}
+		mf, err := bd.StatFile(metadataFilePath)
 		if err != nil {
-			result = append(result, Backup{
-				metadata.BackupMetadata{
-					BackupName: strings.Trim(o.Name(), "/"),
-				},
-				false,
-				"",
-				"broken (can't stat metadata.json)",
-				o.LastModified(), // folder
-			})
 			return nil
 		}
 		r, err := bd.GetFileReader(path.Join(o.Name(), "metadata.json"))
