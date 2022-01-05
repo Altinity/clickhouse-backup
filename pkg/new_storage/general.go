@@ -90,7 +90,7 @@ func isLegacyBackup(backupName string) (bool, string, string) {
 
 func (bd *BackupDestination) BackupList() ([]Backup, error) {
 	result := []Backup{}
-	err := bd.Walk("/", false, func(o RemoteFile) error {
+	err := bd.Walk("/", true, func(o RemoteFile) error {
 		// Legacy backup
 		if ok, backupName, fileExtension := isLegacyBackup(strings.TrimPrefix(o.Name(), "/")); ok {
 			result = append(result, Backup{
