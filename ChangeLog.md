@@ -1,3 +1,9 @@
+# v1.3.0
+
+IMPROVEMENTS
+- KeepRemoteBackups should respect differential backups, fix [#111](https://github.com/AlexAkulov/clickhouse-backup/issues/111)
+
+
 # v1.2.2
 
 IMPROVEMENTS
