@@ -633,6 +633,7 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable bool) err
 	if err != nil {
 		return err
 	}
+	isOnlyTablePresent = isOnlyTablePresent && !strings.Contains(query, fmt.Sprintf("%s.%s", table.Database, table.Name))
 	if isOnlyTableWithQuotesPresent {
 		query = strings.Replace(query, fmt.Sprintf("`%s`", table.Name), fmt.Sprintf("`%s`.`%s`", table.Database, table.Name), 1)
 	} else if isOnlyTablePresent {
