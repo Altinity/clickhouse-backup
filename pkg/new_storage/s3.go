@@ -203,6 +203,8 @@ func (s *S3) StatFile(key string) (RemoteFile, error) {
 }
 
 func (s *S3) Walk(s3Path string, recursive bool, process func(r RemoteFile) error) error {
+	// We force recursive equals true.
+	recursive = true
 	g, _ := errgroup.WithContext(context.Background())
 	s3Files := make(chan *s3File)
 	g.Go(func() error {

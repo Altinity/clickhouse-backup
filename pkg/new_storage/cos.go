@@ -80,6 +80,8 @@ func (c *COS) DeleteFile(key string) error {
 func (c *COS) Walk(cosPath string, recursive bool, process func(RemoteFile) error) error {
 	prefix := path.Join(c.Config.Path, cosPath)
 	delimiter := ""
+	// We force recursive equals true.
+	recursive = true
 	if !recursive {
 		delimiter = "/"
 	}
