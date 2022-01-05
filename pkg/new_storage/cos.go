@@ -77,10 +77,12 @@ func (c *COS) DeleteFile(key string) error {
 	return err
 }
 
-func (c *COS) Walk(cosPath string, recursuve bool, process func(RemoteFile) error) error {
+func (c *COS) doWalk(cosPath string, recursive bool, process func(RemoteFile) error) error {
 	prefix := path.Join(c.Config.Path, cosPath)
 	delimiter := ""
-	if !recursuve {
+	// We force recursive equals true.
+	recursive = true
+	if !recursive {
 		delimiter = "/"
 	}
 	res, _, err := c.client.Bucket.Get(context.Background(), &cos.BucketGetOptions{
@@ -108,6 +110,11 @@ func (c *COS) Walk(cosPath string, recursuve bool, process func(RemoteFile) erro
 		}
 	}
 	return nil
+}
+
+func (c *COS) Walk(cosPath string, recursive bool, process func(RemoteFile) error) error {
+	// COS only supports recusive.
+	return c.doWalk(cosPath, true, process)
 }
 
 func (c *COS) GetFileReader(key string) (io.ReadCloser, error) {
