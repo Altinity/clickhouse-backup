@@ -88,17 +88,6 @@ func isLegacyBackup(backupName string) (bool, string, string) {
 	return false, backupName, ""
 }
 
-func getMetadataFilePath(file RemoteFile) string {
-	_metadataFilePath := ""
-
-	if strings.Contains(file.Name(), "metadata.json") {
-		_metadataFilePath = file.Name()
-	} else {
-		_metadataFilePath = path.Join(file.Name(), "metadata.json")
-	}
-	return _metadataFilePath
-}
-
 func (bd *BackupDestination) BackupList() ([]Backup, error) {
 	result := []Backup{}
 	err := bd.Walk("/", false, func(o RemoteFile) error {
@@ -116,8 +105,7 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 			})
 			return nil
 		}
-		metadataFilePath := getMetadataFilePath(o)
-		mf, err := bd.StatFile(metadataFilePath)
+		mf, err := bd.StatFile(path.Join(o.Name(), "metadata.json"))
 		if err != nil {
 			result = append(result, Backup{
 				metadata.BackupMetadata{
@@ -130,7 +118,7 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 			})
 			return nil
 		}
-		r, err := bd.GetFileReader(metadataFilePath)
+		r, err := bd.GetFileReader(path.Join(o.Name(), "metadata.json"))
 		if err != nil {
 			result = append(result, Backup{
 				metadata.BackupMetadata{
@@ -147,7 +135,7 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 		if err != nil {
 			result = append(result, Backup{
 				metadata.BackupMetadata{
-					BackupName: metadataFilePath,
+					BackupName: strings.Trim(o.Name(), "/"),
 				},
 				false,
 				"",
@@ -163,7 +151,7 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 		if err := json.Unmarshal(b, &m); err != nil {
 			result = append(result, Backup{
 				metadata.BackupMetadata{
-					BackupName: metadataFilePath,
+					BackupName: strings.Trim(o.Name(), "/")
 				},
 				false,
 				"",
