@@ -151,7 +151,7 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 		if err := json.Unmarshal(b, &m); err != nil {
 			result = append(result, Backup{
 				metadata.BackupMetadata{
-					BackupName: strings.Trim(o.Name(), "/")
+					BackupName: strings.Trim(o.Name(), "/"),
 				},
 				false,
 				"",
