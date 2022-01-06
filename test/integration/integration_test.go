@@ -1017,7 +1017,7 @@ func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {
 			Name:     data.Table,
 		},
 		createSQL,
-		false, "",
+		false, "", 0,
 	)
 	return err
 }

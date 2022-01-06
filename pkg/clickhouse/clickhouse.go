@@ -596,7 +596,7 @@ func (ch *ClickHouse) CreateDatabaseFromQuery(query string) error {
 }
 
 // CreateTable - create ClickHouse table
-func (ch *ClickHouse) CreateTable(table Table, query string, dropTable bool, onCluster string) error {
+func (ch *ClickHouse) CreateTable(table Table, query string, dropTable bool, onCluster string, version int) error {
 	var isAtomic bool
 	var err error
 	if isAtomic, err = ch.IsAtomic(table.Database); err != nil {
@@ -608,7 +608,7 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable bool, onC
 			kind = "DICTIONARY"
 		}
 		dropQuery := fmt.Sprintf("DROP %s IF EXISTS `%s`.`%s`", kind, table.Database, table.Name)
-		if onCluster != "" {
+		if version > 19000000 && onCluster != "" {
 			dropQuery += " ON CLUSTER '" + onCluster + "' "
 		}
 		if isAtomic {

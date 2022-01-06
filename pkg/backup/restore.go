@@ -220,6 +220,10 @@ func RestoreSchema(cfg *config.Config, ch *clickhouse.ClickHouse, backupName str
 	if err != nil {
 		return ErrUnknownClickhouseDataPath
 	}
+	version, err := ch.GetVersion()
+	if err != nil {
+		return err
+	}
 	metadataPath := path.Join(defaultDataPath, "backup", backupName, "metadata")
 	info, err := os.Stat(metadataPath)
 	if err != nil {
@@ -249,7 +253,7 @@ func RestoreSchema(cfg *config.Config, ch *clickhouse.ClickHouse, backupName str
 			if err = ch.CreateDatabase(schema.Database); err != nil {
 				return fmt.Errorf("can't create database '%s': %v", schema.Database, err)
 			}
-			if cfg.General.RestoreSchemaOnCluster != "" && !onClusterRe.MatchString(schema.Query) {
+			if version > 19000000 && cfg.General.RestoreSchemaOnCluster != "" && !onClusterRe.MatchString(schema.Query) {
 				if createViewRe.MatchString(schema.Query) {
 					schema.Query = createViewRe.ReplaceAllString(schema.Query, "$1 ON CLUSTER '"+cfg.General.RestoreSchemaOnCluster+"' $2")
 				} else if createObjRe.MatchString(schema.Query) {
@@ -263,7 +267,7 @@ func RestoreSchema(cfg *config.Config, ch *clickhouse.ClickHouse, backupName str
 			restoreErr = ch.CreateTable(clickhouse.Table{
 				Database: schema.Database,
 				Name:     schema.Table,
-			}, schema.Query, dropTable, cfg.General.RestoreSchemaOnCluster)
+			}, schema.Query, dropTable, cfg.General.RestoreSchemaOnCluster, version)
 
 			if restoreErr != nil {
 				restoreRetries++
