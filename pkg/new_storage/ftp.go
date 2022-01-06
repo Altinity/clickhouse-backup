@@ -21,7 +21,7 @@ type FTP struct {
 	clients       *pool.ObjectPool
 	ctx           context.Context
 	Config        *config.FTPConfig
-	dirCache      map[string]struct{}
+	dirCache      map[string]bool
 	dirCacheMutex sync.RWMutex
 }
 
@@ -49,7 +49,7 @@ func (f *FTP) Connect() error {
 	f.clients.Config.MinIdle = 0
 
 	f.dirCacheMutex.Lock()
-	f.dirCache = map[string]struct{}{}
+	f.dirCache = map[string]bool{}
 	f.dirCacheMutex.Unlock()
 	return nil
 }
@@ -232,15 +232,19 @@ func (f *FTP) MkdirAll(key string) error {
 		d := path.Join(dirs[:i+1]...)
 
 		f.dirCacheMutex.RLock()
-		if _, ok := f.dirCache[d]; ok {
+		if _, exists := f.dirCache[d]; exists {
 			f.dirCacheMutex.RUnlock()
+			apexLog.Debugf("FTP::MkdirAll %s exists in dirCache", d)
 			continue
 		}
 		f.dirCacheMutex.RUnlock()
-		_ = client.MakeDir(d)
+		err = client.MakeDir(d)
+		if err != nil {
+			apexLog.Warnf("FTP::MkdirAll MakeDir(%s) return error: %v", d, err)
+		}
 
 		f.dirCacheMutex.Lock()
-		f.dirCache[d] = struct{}{}
+		f.dirCache[d] = true
 		f.dirCacheMutex.Unlock()
 	}
 	return nil

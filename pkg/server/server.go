@@ -750,7 +750,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	name := vars["name"]
-	fullCommand = fmt.Sprintf(fullCommand, " ", name)
+	fullCommand += fmt.Sprintf(" %s", name)
 
 	go func() {
 		api.status.start(fullCommand)
@@ -809,7 +809,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		schemaOnly = true
 		fullCommand += " --schema"
 	}
-	fullCommand = fmt.Sprintf(fullCommand, " ", name)
+	fullCommand += fmt.Sprintf(" %s", name)
 
 	go func() {
 		api.status.start(fullCommand)
@@ -1109,11 +1109,11 @@ func (api *APIServer) CreateIntegrationTables() error {
 		settings = "SETTINGS input_format_skip_unknown_fields=1"
 	}
 	query := fmt.Sprintf("CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String) ENGINE=URL('%s://127.0.0.1:%s/backup/actions%s', JSONEachRow) %s", schema, port, auth, settings)
-	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_actions"}, query, true); err != nil {
+	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_actions"}, query, true, ""); err != nil {
 		return err
 	}
 	query = fmt.Sprintf("CREATE TABLE system.backup_list (name String, created DateTime, size Int64, location String, required String, desc String) ENGINE=URL('%s://127.0.0.1:%s/backup/list%s', JSONEachRow) %s", schema, port, auth, settings)
-	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_list"}, query, true); err != nil {
+	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_list"}, query, true, ""); err != nil {
 		return err
 	}
 	return nil

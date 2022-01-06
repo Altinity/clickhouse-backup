@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -114,7 +115,7 @@ func Restore(cfg *config.Config, backupName string, tablePattern string, schemaO
 
 	if schemaOnly || (schemaOnly == dataOnly) {
 
-		if err := RestoreSchema(ch, backupName, tablePattern, dropTable); err != nil {
+		if err := RestoreSchema(cfg, ch, backupName, tablePattern, dropTable); err != nil {
 			return err
 		}
 	}
@@ -204,8 +205,12 @@ func restoreBackupRelatedDir(ch *clickhouse.ClickHouse, backupName, backupPrefix
 	return nil
 }
 
+var createViewRe = regexp.MustCompile(`(?im)(CREATE[\s\w]+VIEW[^(]+)(\s+AS\s+SELECT.+)`)
+var createObjRe = regexp.MustCompile(`(?im)(CREATE[^(]+)(\(.+)`)
+var onClusterRe = regexp.MustCompile(`(?im)\S+ON\S+CLUSTER\S+`)
+
 // RestoreSchema - restore schemas matched by tablePattern from backupName
-func RestoreSchema(ch *clickhouse.ClickHouse, backupName string, tablePattern string, dropTable bool) error {
+func RestoreSchema(cfg *config.Config, ch *clickhouse.ClickHouse, backupName string, tablePattern string, dropTable bool) error {
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "restore",
@@ -244,6 +249,13 @@ func RestoreSchema(ch *clickhouse.ClickHouse, backupName string, tablePattern st
 			if err = ch.CreateDatabase(schema.Database); err != nil {
 				return fmt.Errorf("can't create database '%s': %v", schema.Database, err)
 			}
+			if cfg.General.RestoreSchemaOnCluster != "" && !onClusterRe.MatchString(schema.Query) {
+				if createViewRe.MatchString(schema.Query) {
+					schema.Query = createViewRe.ReplaceAllString(schema.Query, "$1 ON CLUSTER '"+cfg.General.RestoreSchemaOnCluster+"' $2")
+				} else if createObjRe.MatchString(schema.Query) {
+					schema.Query = createObjRe.ReplaceAllString(schema.Query, "$1 ON CLUSTER '"+cfg.General.RestoreSchemaOnCluster+"' $2")
+				}
+			}
 			//materialized views should restore via ATTACH
 			schema.Query = strings.Replace(
 				schema.Query, "CREATE MATERIALIZED VIEW", "ATTACH MATERIALIZED VIEW", 1,
@@ -251,7 +263,7 @@ func RestoreSchema(ch *clickhouse.ClickHouse, backupName string, tablePattern st
 			restoreErr = ch.CreateTable(clickhouse.Table{
 				Database: schema.Database,
 				Name:     schema.Table,
-			}, schema.Query, dropTable)
+			}, schema.Query, dropTable, cfg.General.RestoreSchemaOnCluster)
 
 			if restoreErr != nil {
 				restoreRetries++
