@@ -4,7 +4,10 @@ general:
   upload_concurrency: 4
   download_concurrency: 4
   skip_tables:
-   - " system.*"
+    - " system.*"
+    - "INFORMATION_SCHEMA.*"
+    - "information_schema.*"
+  restore_schema_on_cluster: "cluster"
 clickhouse:
   host: 127.0.0.1
   port: 9440

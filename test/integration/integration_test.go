@@ -39,6 +39,7 @@ type TestDataStruct struct {
 	Fields             []string
 	OrderBy            string
 	IsMaterializedView bool
+	IsView             bool
 	IsDictionary       bool
 	SkipInsert         bool
 	CheckDatabaseOnly  bool
@@ -199,6 +200,21 @@ var testData = []TestDataStruct{
 		}(),
 		Fields:  []string{"id"},
 		OrderBy: "id",
+	},
+	{
+		Database:       dbNameAtomic,
+		DatabaseEngine: "Atomic",
+		IsView:         true,
+		Table:          "test_view",
+		Schema:         fmt.Sprintf(" AS SELECT count() AS cnt FROM `%s`.`mv_src_table`", dbNameAtomic),
+		SkipInsert:     true,
+		Rows: func() []map[string]interface{} {
+			return []map[string]interface{}{
+				{"cnt": uint64(100)},
+			}
+		}(),
+		Fields:  []string{"cnt"},
+		OrderBy: "cnt",
 	},
 	{
 		Database:           dbNameAtomic,
@@ -557,7 +573,7 @@ func TestServerAPI(t *testing.T) {
 	log.Info("Check /backup/download/{name} + /backup/restore/{name}?rm=1")
 	out, err = dockerExecOut(
 		"clickhouse",
-		"bash", "-xe", "-c", "for i in {1..5}; do date; curl -sL -XPOST \"http://localhost:7171/backup/delete/local/backup_$i\"; curl -sL -XPOST \"http://localhost:7171/backup/download/backup_$i\"; sleep 2; curl -sL -XPOST \"http://localhost:7171/backup/restore/backup_$i?rm=1\"; sleep 2.1; done",
+		"bash", "-xe", "-c", "for i in {1..5}; do date; curl -sL -XPOST \"http://localhost:7171/backup/delete/local/backup_$i\"; curl -sL -XPOST \"http://localhost:7171/backup/download/backup_$i\"; sleep 2; curl -sL -XPOST \"http://localhost:7171/backup/restore/backup_$i?rm=1\"; sleep 4; done",
 	)
 	log.Debug(out)
 	r.NoError(err)
@@ -972,12 +988,17 @@ func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {
 	createSQL := "CREATE "
 	if data.IsMaterializedView {
 		createSQL += " MATERIALIZED VIEW "
+	} else if data.IsView {
+		createSQL += " VIEW "
 	} else if data.IsDictionary {
 		createSQL += " DICTIONARY "
 	} else {
 		createSQL += " TABLE "
 	}
 	createSQL += fmt.Sprintf(" IF NOT EXISTS `%s`.`%s` ", data.Database, data.Table)
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.0") == 1 {
+		createSQL += " ON CLUSTER 'cluster' "
+	}
 	createSQL += data.Schema
 	// old 1.x clickhouse versions doesn't contains {table} and {database} macros
 	if strings.Contains(createSQL, "{table}") || strings.Contains(createSQL, "{database}") {
@@ -996,7 +1017,7 @@ func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {
 			Name:     data.Table,
 		},
 		createSQL,
-		false,
+		false, "", 0,
 	)
 	return err
 }

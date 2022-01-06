@@ -103,6 +103,7 @@ general:
   allow_empty_backups: false     # ALLOW_EMPTY_BACKUPS
   download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255
   upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255
+  restore_schema_on_cluster: ""  # RESTORE_SCHEMA_ON_CLUSTER, look to system.clusters for proper cluster name
 clickhouse:
   username: default                # CLICKHOUSE_USERNAME
   password: ""                     # CLICKHOUSE_PASSWORD
@@ -133,7 +134,7 @@ azblob:
   compression_level: 1         # AZBLOB_COMPRESSION_LEVEL
   compression_format: tar      # AZBLOB_COMPRESSION_FORMAT
   sse_key: ""                  # AZBLOB_SSE_KEY
-  buffer_size: 0               # AZBLOB_BUFFER_SIZE
+  buffer_size: 0               # AZBLOB_BUFFER_SIZE, if less or eq 0 then calculated as max_file_size / 10000, between 2Mb and 4Mb
   max_buffers: 3               # AZBLOB_MAX_BUFFERS
 s3:
   access_key: ""                   # S3_ACCESS_KEY
@@ -147,15 +148,12 @@ s3:
   path: ""                         # S3_PATH
   disable_ssl: false               # S3_DISABLE_SSL
   compression_level: 1             # S3_COMPRESSION_LEVEL
-  # supports 'tar', 'gzip', 'zstd', 'brotli'
-  compression_format: tar          # S3_COMPRESSION_FORMAT
-  # empty (default), AES256, or aws:kms
-  sse: AES256                      # S3_SSE
+  compression_format: tar          # S3_COMPRESSION_FORMAT, supports 'tar', 'gzip', 'zstd', 'brotli'
+  sse: ""                          # S3_SSE, empty (default), AES256, or aws:kms
   disable_cert_verification: false # S3_DISABLE_CERT_VERIFICATION
   storage_class: STANDARD          # S3_STORAGE_CLASS
   concurrency: 1                   # S3_CONCURRENCY
-  # if less or eq 0 then calculated as max_file_size / 10000 
-  part_size: 0                     # S3_PART_SIZE
+  part_size: 0                     # S3_PART_SIZE, if less or eq 0 then calculated as max_file_size / 10000
   debug: false                     # S3_DEBUG
 gcs:
   credentials_file: ""         # GCS_CREDENTIALS_FILE
@@ -173,16 +171,6 @@ cos:
   path: ""                     # COS_PATH
   compression_format: tar      # COS_COMPRESSION_FORMAT
   compression_level: 1         # COS_COMPRESSION_LEVEL
-api:
-  listen: "localhost:7171"     # API_LISTEN
-  enable_metrics: true         # API_ENABLE_METRICS
-  enable_pprof: false          # API_ENABLE_PPROF
-  username: ""                 # API_USERNAME
-  password: ""                 # API_PASSWORD
-  secure: false                # API_SECURE
-  certificate_file: ""         # API_CERTIFICATE_FILE
-  private_key_file: ""         # API_PRIVATE_KEY_FILE
-  create_integration_tables: false # API_CREATE_INTEGRATION_TABLES
 ftp:
   address: ""                  # FTP_ADDRESS
   timeout: 2m                  # FTP_TIMEOUT
@@ -203,6 +191,16 @@ sftp:
   compression_format: tar      # SFTP_COMPRESSION_FORMAT
   compression_level: 1         # SFTP_COMPRESSION_LEVEL
   debug: false                 # SFTP_DEBUG
+api:
+  listen: "localhost:7171"     # API_LISTEN
+  enable_metrics: true         # API_ENABLE_METRICS
+  enable_pprof: false          # API_ENABLE_PPROF
+  username: ""                 # API_USERNAME
+  password: ""                 # API_PASSWORD
+  secure: false                # API_SECURE
+  certificate_file: ""         # API_CERTIFICATE_FILE
+  private_key_file: ""         # API_PRIVATE_KEY_FILE
+  create_integration_tables: false # API_CREATE_INTEGRATION_TABLES
 ```
 
 ## ATTENTION!
