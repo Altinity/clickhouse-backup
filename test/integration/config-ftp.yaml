@@ -3,6 +3,7 @@ general:
   remote_storage: ftp
   upload_concurrency: 4
   download_concurrency: 4
+  restore_schema_on_cluster: "cluster"
 clickhouse:
   host: 127.0.0.1
   port: 9440

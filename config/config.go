@@ -13,7 +13,7 @@ import (
 	"github.com/apex/log"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/kelseyhightower/envconfig"
-	yaml "gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v2"
 )
 
 // Config - config file format
@@ -31,15 +31,16 @@ type Config struct {
 
 // GeneralConfig - general setting section
 type GeneralConfig struct {
-	RemoteStorage       string `yaml:"remote_storage" envconfig:"REMOTE_STORAGE"`
-	MaxFileSize         int64  `yaml:"max_file_size" envconfig:"MAX_FILE_SIZE"`
-	DisableProgressBar  bool   `yaml:"disable_progress_bar" envconfig:"DISABLE_PROGRESS_BAR"`
-	BackupsToKeepLocal  int    `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL"`
-	BackupsToKeepRemote int    `yaml:"backups_to_keep_remote" envconfig:"BACKUPS_TO_KEEP_REMOTE"`
-	LogLevel            string `yaml:"log_level" envconfig:"LOG_LEVEL"`
-	AllowEmptyBackups   bool   `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
-	DownloadConcurrency uint8  `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
-	UploadConcurrency   uint8  `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
+	RemoteStorage          string `yaml:"remote_storage" envconfig:"REMOTE_STORAGE"`
+	MaxFileSize            int64  `yaml:"max_file_size" envconfig:"MAX_FILE_SIZE"`
+	DisableProgressBar     bool   `yaml:"disable_progress_bar" envconfig:"DISABLE_PROGRESS_BAR"`
+	BackupsToKeepLocal     int    `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL"`
+	BackupsToKeepRemote    int    `yaml:"backups_to_keep_remote" envconfig:"BACKUPS_TO_KEEP_REMOTE"`
+	LogLevel               string `yaml:"log_level" envconfig:"LOG_LEVEL"`
+	AllowEmptyBackups      bool   `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
+	DownloadConcurrency    uint8  `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
+	UploadConcurrency      uint8  `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
+	RestoreSchemaOnCluster string `yaml:"restore_schema_on_cluster" envconfig:"RESTORE_SCHEMA_ON_CLUSTER"`
 }
 
 // GCSConfig - GCS settings section
@@ -147,7 +148,7 @@ type ClickHouseConfig struct {
 	SyncReplicatedTables bool              `yaml:"sync_replicated_tables" envconfig:"CLICKHOUSE_SYNC_REPLICATED_TABLES"`
 	LogSQLQueries        bool              `yaml:"log_sql_queries" envconfig:"CLICKHOUSE_LOG_SQL_QUERIES"`
 	ConfigDir            string            `yaml:"config_dir" envconfig:"CLICKHOUSE_CONFIG_DIR"`
-	RestartCommand       string            `yaml:"restart_command" evnconfig:"CLICKHOUSE_RESTART_COMMAND"`
+	RestartCommand       string            `yaml:"restart_command" envconfig:"CLICKHOUSE_RESTART_COMMAND"`
 	Debug                bool              `yaml:"debug" envconfig:"CLICKHOUSE_DEBUG"`
 }
 
@@ -299,14 +300,15 @@ func DefaultConfig() *Config {
 	}
 	return &Config{
 		General: GeneralConfig{
-			RemoteStorage:       "none",
-			MaxFileSize:         100 * 1024 * 1024 * 1024, // 100GB
-			BackupsToKeepLocal:  0,
-			BackupsToKeepRemote: 0,
-			LogLevel:            "info",
-			DisableProgressBar:  true,
-			UploadConcurrency:   availableConcurrency,
-			DownloadConcurrency: availableConcurrency,
+			RemoteStorage:          "none",
+			MaxFileSize:            100 * 1024 * 1024 * 1024, // 100GB
+			BackupsToKeepLocal:     0,
+			BackupsToKeepRemote:    0,
+			LogLevel:               "info",
+			DisableProgressBar:     true,
+			UploadConcurrency:      availableConcurrency,
+			DownloadConcurrency:    availableConcurrency,
+			RestoreSchemaOnCluster: "",
 		},
 		ClickHouse: ClickHouseConfig{
 			Username: "default",
