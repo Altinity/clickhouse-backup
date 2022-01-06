@@ -74,6 +74,7 @@ services:
       S3_DEBUG: "${S3_DEBUG:-false}"
       GCS_DEBUG: "${GCS_DEBUG:-false}"
       FTP_DEBUG: "${FTP_DEBUG:-false}"
+      SFTP_DEBUG: "${SFTP_DEBUG:-false}"
       CLICKHOUSE_DEBUG: "${CLICKHOUSE_DEBUG:-false}"
 #      STORAGE_EMULATOR_HOST: "http://gsc:8080"
 #      GOOGLE_API_USE_CLIENT_CERTIFICATE: "false"

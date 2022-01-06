@@ -12,7 +12,19 @@ func GetBackupsToDelete(backups []Backup, keep int) []Backup {
 		sort.SliceStable(backups, func(i, j int) bool {
 			return backups[i].UploadDate.After(backups[j].UploadDate)
 		})
-		return backups[keep:]
+		// KeepRemoteBackups should respect differential backups, fix https://github.com/AlexAkulov/clickhouse-backup/issues/111
+		deletedBackup := backups[keep:]
+		for _, b := range backups[:keep] {
+			if b.RequiredBackup != "" {
+				for i := range deletedBackup {
+					if b.RequiredBackup == deletedBackup[i].BackupName {
+						deletedBackup = append(deletedBackup[:i], deletedBackup[i+1:]...)
+						break
+					}
+				}
+			}
+		}
+		return deletedBackup
 	}
 	return []Backup{}
 }
