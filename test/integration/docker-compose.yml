@@ -87,6 +87,8 @@ services:
       - ./dhparam.pem:/etc/clickhouse-server/dhparam.pem
       - ./ssl.xml:/etc/clickhouse-server/config.d/ssl.xml
       - ./cluster.xml:/etc/clickhouse-server/config.d/cluster.xml
+      # uncomment only for local debug
+      # - ./clickhouse-server.log:/var/log/clickhouse-server/clickhouse-server.log
     ports:
       - "8123:8123"
       - "9000:9000"
