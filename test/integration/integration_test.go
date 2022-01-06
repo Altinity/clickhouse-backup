@@ -573,7 +573,7 @@ func TestServerAPI(t *testing.T) {
 	log.Info("Check /backup/download/{name} + /backup/restore/{name}?rm=1")
 	out, err = dockerExecOut(
 		"clickhouse",
-		"bash", "-xe", "-c", "for i in {1..5}; do date; curl -sL -XPOST \"http://localhost:7171/backup/delete/local/backup_$i\"; curl -sL -XPOST \"http://localhost:7171/backup/download/backup_$i\"; sleep 2; curl -sL -XPOST \"http://localhost:7171/backup/restore/backup_$i?rm=1\"; sleep 3.2; done",
+		"bash", "-xe", "-c", "for i in {1..5}; do date; curl -sL -XPOST \"http://localhost:7171/backup/delete/local/backup_$i\"; curl -sL -XPOST \"http://localhost:7171/backup/download/backup_$i\"; sleep 2; curl -sL -XPOST \"http://localhost:7171/backup/restore/backup_$i?rm=1\"; sleep 4; done",
 	)
 	log.Debug(out)
 	r.NoError(err)
