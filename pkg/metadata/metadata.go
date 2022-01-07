@@ -51,9 +51,9 @@ type TableMetadata struct {
 }
 
 type Part struct {
-	Partition string `json:"partition,omitempty"`
-	Name      string `json:"name"`
-	Required  bool   `json:"required,omitempty"`
+	Partition      string `json:"partition,omitempty"`
+	Name           string `json:"name"`
+	DuplicatedPart bool   `json:"required,omitempty"`
 	// Path                              string    `json:"path"`              // TODO: должен быть относительный путь вообще непонятно зачем он, его можно из name получить
 	HashOfAllFiles                    string     `json:"hash_of_all_files,omitempty"` // ???
 	HashOfUncompressedFiles           string     `json:"hash_of_uncompressed_files,omitempty"`

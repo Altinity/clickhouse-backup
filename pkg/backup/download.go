@@ -314,7 +314,7 @@ func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table
 	// Create hardlink for exists parts
 	for disk, parts := range table.Parts {
 		for _, p := range parts {
-			if !p.Required {
+			if !p.DuplicatedPart {
 				continue
 			}
 			existsPath := path.Join(b.DiskMap[disk], "backup", remoteBackup.RequiredBackup, "shadow", dbAndTableDir, disk, p.Name)

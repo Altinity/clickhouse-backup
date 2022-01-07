@@ -320,7 +320,7 @@ func (b *Backuper) markDuplicatedParts(backup *metadata.BackupMetadata, existsTa
 					apexLog.Debugf("part '%s' and '%s' must be the same: %v", existsPath, newPath, err)
 					continue
 				}
-				newParts[i].Required = true
+				newParts[i].DuplicatedPart = true
 			}
 		}
 	}
@@ -393,7 +393,7 @@ func separateParts(basePath string, parts []metadata.Part, maxSize int64) ([][]s
 	files := []string{}
 	result := [][]string{}
 	for i := range parts {
-		if parts[i].Required {
+		if parts[i].DuplicatedPart {
 			continue
 		}
 		partPath := path.Join(basePath, parts[i].Name)
