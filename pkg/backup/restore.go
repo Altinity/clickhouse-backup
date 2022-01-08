@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -24,13 +23,13 @@ import (
 	"github.com/yargevad/filepathx"
 )
 
-// RestoreTables - slice of RestoreTable
-type RestoreTables []metadata.TableMetadata
+// ListOfTables - slice of RestoreTable
+type ListOfTables []metadata.TableMetadata
 
 // Sort - sorting BackupTables slice orderly by name
-func (rt RestoreTables) Sort(dropTable bool) {
-	sort.Slice(rt, func(i, j int) bool {
-		return getOrderByEngine(rt[i].Query, dropTable) < getOrderByEngine(rt[j].Query, dropTable)
+func (lt ListOfTables) Sort(dropTable bool) {
+	sort.Slice(lt, func(i, j int) bool {
+		return getOrderByEngine(lt[i].Query, dropTable) < getOrderByEngine(lt[j].Query, dropTable)
 	})
 }
 
@@ -205,10 +204,6 @@ func restoreBackupRelatedDir(ch *clickhouse.ClickHouse, backupName, backupPrefix
 	return nil
 }
 
-var createViewRe = regexp.MustCompile(`(?im)(CREATE[\s\w]+VIEW[^(]+)(\s+AS\s+SELECT.+)`)
-var createObjRe = regexp.MustCompile(`(?im)(CREATE[^(]+)(\(.+)`)
-var onClusterRe = regexp.MustCompile(`(?im)\S+ON\S+CLUSTER\S+`)
-
 // RestoreSchema - restore schemas matched by tablePattern from backupName
 func RestoreSchema(cfg *config.Config, ch *clickhouse.ClickHouse, backupName string, tablePattern string, dropTable bool) error {
 	log := apexLog.WithFields(apexLog.Fields{
@@ -243,22 +238,26 @@ func RestoreSchema(cfg *config.Config, ch *clickhouse.ClickHouse, backupName str
 		return fmt.Errorf("no have found schemas by %s in %s", tablePattern, backupName)
 	}
 
+	if dropErr := dropExistsTables(cfg, ch, tablesForRestore, version, log); dropErr != nil {
+		return dropErr
+	}
+
+	if restoreErr := createTables(cfg, ch, tablesForRestore, version, log); restoreErr != nil {
+		return restoreErr
+	}
+	return nil
+}
+
+func createTables(cfg *config.Config, ch *clickhouse.ClickHouse, tablesForRestore ListOfTables, version int, log *apexLog.Entry) error {
 	totalRetries := len(tablesForRestore)
 	restoreRetries := 0
-	var notRestoredTables RestoreTables
 	var restoreErr error
 	for restoreRetries < totalRetries {
+		var notRestoredTables ListOfTables
 		for _, schema := range tablesForRestore {
 			// if metadata.json doesn't contains "databases", we will re-create tables with default engine
-			if err = ch.CreateDatabase(schema.Database); err != nil {
+			if err := ch.CreateDatabase(schema.Database); err != nil {
 				return fmt.Errorf("can't create database '%s': %v", schema.Database, err)
-			}
-			if version > 19000000 && cfg.General.RestoreSchemaOnCluster != "" && !onClusterRe.MatchString(schema.Query) {
-				if createViewRe.MatchString(schema.Query) {
-					schema.Query = createViewRe.ReplaceAllString(schema.Query, "$1 ON CLUSTER '"+cfg.General.RestoreSchemaOnCluster+"' $2")
-				} else if createObjRe.MatchString(schema.Query) {
-					schema.Query = createObjRe.ReplaceAllString(schema.Query, "$1 ON CLUSTER '"+cfg.General.RestoreSchemaOnCluster+"' $2")
-				}
 			}
 			//materialized views should restore via ATTACH
 			schema.Query = strings.Replace(
@@ -267,7 +266,7 @@ func RestoreSchema(cfg *config.Config, ch *clickhouse.ClickHouse, backupName str
 			restoreErr = ch.CreateTable(clickhouse.Table{
 				Database: schema.Database,
 				Name:     schema.Table,
-			}, schema.Query, dropTable, cfg.General.RestoreSchemaOnCluster, version)
+			}, schema.Query, false, cfg.General.RestoreSchemaOnCluster, version)
 
 			if restoreErr != nil {
 				restoreRetries++
@@ -292,6 +291,41 @@ func RestoreSchema(cfg *config.Config, ch *clickhouse.ClickHouse, backupName str
 	return nil
 }
 
+func dropExistsTables(cfg *config.Config, ch *clickhouse.ClickHouse, tablesForDrop ListOfTables, version int, log *apexLog.Entry) error {
+	var dropErr error
+	dropRetries := 0
+	totalRetries := len(tablesForDrop)
+	for dropRetries < totalRetries {
+		var notDroppedTables ListOfTables
+		for _, schema := range tablesForDrop {
+			dropErr = ch.DropTable(clickhouse.Table{
+				Database: schema.Database,
+				Name:     schema.Table,
+			}, schema.Query, cfg.General.RestoreSchemaOnCluster, version)
+
+			if dropErr != nil {
+				dropRetries++
+				if dropRetries >= totalRetries {
+					return fmt.Errorf(
+						"can't drop table `%s`.`%s`: %v after %d times, please check your schema dependencies",
+						schema.Database, schema.Table, dropErr, dropRetries,
+					)
+				} else {
+					log.Warnf(
+						"can't drop table '%s.%s': %v, will try again", schema.Database, schema.Table, dropErr,
+					)
+				}
+				notDroppedTables = append(notDroppedTables, schema)
+			}
+		}
+		tablesForDrop = notDroppedTables
+		if len(tablesForDrop) == 0 {
+			break
+		}
+	}
+	return nil
+}
+
 // RestoreData - restore data for tables matched by tablePattern from backupName
 func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName string, tablePattern string) error {
 	startRestore := time.Now()
@@ -310,7 +344,7 @@ func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName strin
 	if err != nil {
 		return fmt.Errorf("can't restore: %v", err)
 	}
-	var tablesForRestore RestoreTables
+	var tablesForRestore ListOfTables
 	if backup.Legacy {
 		tablesForRestore, err = ch.GetBackupTablesLegacy(backupName)
 	} else {

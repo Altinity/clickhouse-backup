@@ -106,6 +106,7 @@ jobs:
           - '20.8'
           - '21.3'
           - '21.8'
+          - '21.12'
     steps:
       - name: Checkout project
         uses: actions/checkout@v2
