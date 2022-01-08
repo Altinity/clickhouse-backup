@@ -9,12 +9,17 @@ import (
 )
 
 func GetDiskByPath(disks []Disk, dataPath string) string {
+	resultDisk := Disk{}
 	for _, disk := range disks {
-		if strings.HasPrefix(dataPath, disk.Path) {
-			return disk.Name
+		if strings.HasPrefix(dataPath, disk.Path) && len(disk.Path) > len(resultDisk.Path) {
+			resultDisk = disk
 		}
 	}
-	return "unknown"
+	if resultDisk.Name == "" {
+		return "unknown"
+	} else {
+		return resultDisk.Name
+	}
 }
 
 func GetDisksByPaths(disks []Disk, dataPaths []string) map[string]string {

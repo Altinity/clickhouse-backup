@@ -5,12 +5,14 @@ IMPROVEMENTS
 - KeepRemoteBackups should respect differential backups, fix [#111](https://github.com/AlexAkulov/clickhouse-backup/issues/111)
 - Add SFTP_DEBUG, fix [#335](https://github.com/AlexAkulov/clickhouse-backup/issues/335)
 - Add ability to restore schema `ON CLUSTER`, fix [#145](https://github.com/AlexAkulov/clickhouse-backup/issues/145) 
+- Add support encrypted disk (include s3 encrypted disks), fix [#260](https://github.com/AlexAkulov/clickhouse-backup/issues/260)
 
 BUG FIXES
 - fix [#331](https://github.com/AlexAkulov/clickhouse-backup/issues/331), properly restore tables where have table name with the same name as database name
 - fix [#311](https://github.com/AlexAkulov/clickhouse-backup/issues/311), properly run clickhouse-backup inside docker container via entrypoint
 - fix [#317](https://github.com/AlexAkulov/clickhouse-backup/issues/317), properly upload large files to Azure Blob Storage
 - fix [#220](https://github.com/AlexAkulov/clickhouse-backup/issues/220), properly handle total_bytes for uint64 type
+- fix `restore --rm` behavior for 20.12+ for tables which have dependent objects (like dictionary)
 
 # v1.2.2
 

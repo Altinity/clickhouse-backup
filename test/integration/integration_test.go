@@ -852,7 +852,7 @@ func testCommon(t *testing.T) {
 			if isTableSkip(ch, testData[i], true) {
 				continue
 			}
-			r.NoError(ch.checkData(t, testData[i]))
+			r.NoError(ch.checkData(t, testData[i], r))
 		}
 	}
 	// test increment
@@ -883,7 +883,7 @@ func testCommon(t *testing.T) {
 		if testDataItem.CheckDatabaseOnly {
 			r.NoError(ch.checkDatabaseEngine(t, testDataItem))
 		} else {
-			r.NoError(ch.checkData(t, testDataItem))
+			r.NoError(ch.checkData(t, testDataItem, r))
 		}
 
 	}
@@ -908,6 +908,44 @@ func fullCleanup(r *require.Assertions, ch *TestClickHouse, backupNames []string
 
 func generateTestData(ch *TestClickHouse, r *require.Assertions) {
 	log.Info("Generate test data")
+	for databaseName, databaseEngine := range map[string]string{dbNameOrdinary: "Ordinary", dbNameAtomic: "Atomic"} {
+		testDataEncrypted := TestDataStruct{
+			Database: databaseName, DatabaseEngine: databaseEngine,
+			Rows: func() []map[string]interface{} {
+				var result []map[string]interface{}
+				for i := 0; i < 100; i++ {
+					result = append(result, map[string]interface{}{"id": uint64(i)})
+				}
+				return result
+			}(),
+			Fields:  []string{"id"},
+			OrderBy: "id",
+		}
+		addTestDataIfNotExists := func() {
+			found := false
+			for _, data := range testData {
+				if data.Table == testDataEncrypted.Table && data.Database == testDataEncrypted.Database {
+					found = true
+					break
+				}
+			}
+			if !found {
+				testData = append(testData, testDataEncrypted)
+			}
+		}
+		//encrypted disks support after 21.10
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.10") >= 0 {
+			testDataEncrypted.Table = "test_hdd3_encrypted"
+			testDataEncrypted.Schema = "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 'hdd3_only_encrypted'"
+			addTestDataIfNotExists()
+		}
+		//encrypted s3 disks support after 21.12
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
+			testDataEncrypted.Table = "test_s3_encrypted"
+			testDataEncrypted.Schema = "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 's3_only_encrypted'"
+			addTestDataIfNotExists()
+		}
+	}
 	for _, data := range testData {
 		if isTableSkip(ch, data, false) {
 			continue
@@ -937,6 +975,7 @@ func (ch *TestClickHouse) connectWithWait(r *require.Assertions) {
 	for i := 1; i < 11; i++ {
 		err := ch.connect()
 		if i == 10 {
+			r.NoError(execCmd("docker", "logs", "clickhouse"))
 			r.NoError(err)
 		}
 		if err != nil {
@@ -1072,7 +1111,7 @@ func (ch *TestClickHouse) dropDatabase(database string) (err error) {
 	return err
 }
 
-func (ch *TestClickHouse) checkData(t *testing.T, data TestDataStruct) error {
+func (ch *TestClickHouse) checkData(t *testing.T, data TestDataStruct, r *require.Assertions) error {
 	assert.NotNil(t, data.Rows)
 	log.Infof("Check '%d' rows in '%s.%s'\n", len(data.Rows), data.Database, data.Table)
 	selectSQL := fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY `%s`", data.Database, data.Table, data.OrderBy)
@@ -1089,10 +1128,10 @@ func (ch *TestClickHouse) checkData(t *testing.T, data TestDataStruct) error {
 		}
 		result = append(result, row)
 	}
-	assert.Equal(t, len(data.Rows), len(result))
+	r.Equal(len(data.Rows), len(result))
 	for i := range data.Rows {
 		//goland:noinspection GoNilness
-		assert.EqualValues(t, data.Rows[i], result[i])
+		r.EqualValues(data.Rows[i], result[i])
 	}
 	return nil
 }

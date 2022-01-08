@@ -62,7 +62,7 @@ func (b *Backuper) Upload(backupName, tablePattern, diffFrom string, schemaOnly 
 	if err != nil {
 		return err
 	}
-	var tablesForUpload RestoreTables
+	var tablesForUpload ListOfTables
 	if len(backupMetadata.Tables) != 0 {
 		metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
 		tablesForUpload, err = parseSchemaPattern(metadataPath, tablePattern, false)

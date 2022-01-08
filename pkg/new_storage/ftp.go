@@ -230,22 +230,23 @@ func (f *FTP) MkdirAll(key string) error {
 
 	for i := range dirs {
 		d := path.Join(dirs[:i+1]...)
-
-		f.dirCacheMutex.RLock()
-		if _, exists := f.dirCache[d]; exists {
+		if d != "" {
+			f.dirCacheMutex.RLock()
+			if _, exists := f.dirCache[d]; exists {
+				f.dirCacheMutex.RUnlock()
+				apexLog.Debugf("FTP::MkdirAll %s exists in dirCache", d)
+				continue
+			}
 			f.dirCacheMutex.RUnlock()
-			apexLog.Debugf("FTP::MkdirAll %s exists in dirCache", d)
-			continue
-		}
-		f.dirCacheMutex.RUnlock()
-		err = client.MakeDir(d)
-		if err != nil {
-			apexLog.Warnf("FTP::MkdirAll MakeDir(%s) return error: %v", d, err)
-		}
+			err = client.MakeDir(d)
+			if err != nil {
+				apexLog.Warnf("FTP::MkdirAll MakeDir(%s) return error: %v", d, err)
+			}
 
-		f.dirCacheMutex.Lock()
-		f.dirCache[d] = true
-		f.dirCacheMutex.Unlock()
+			f.dirCacheMutex.Lock()
+			f.dirCache[d] = true
+			f.dirCacheMutex.Unlock()
+		}
 	}
 	return nil
 }

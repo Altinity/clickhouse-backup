@@ -595,29 +595,51 @@ func (ch *ClickHouse) CreateDatabaseFromQuery(query string) error {
 	return err
 }
 
-// CreateTable - create ClickHouse table
-func (ch *ClickHouse) CreateTable(table Table, query string, dropTable bool, onCluster string, version int) error {
+// DropTable - drop ClickHouse table
+func (ch *ClickHouse) DropTable(table Table, query string, onCluster string, version int) error {
 	var isAtomic bool
 	var err error
 	if isAtomic, err = ch.IsAtomic(table.Database); err != nil {
 		return err
 	}
+	kind := "TABLE"
+	if strings.HasPrefix(query, "CREATE DICTIONARY") {
+		kind = "DICTIONARY"
+	}
+	dropQuery := fmt.Sprintf("DROP %s IF EXISTS `%s`.`%s`", kind, table.Database, table.Name)
+	if version > 19000000 && onCluster != "" {
+		dropQuery += " ON CLUSTER '" + onCluster + "' "
+	}
+	if isAtomic {
+		dropQuery += " NO DELAY"
+	}
+	if _, err := ch.Query(dropQuery); err != nil {
+		return err
+	}
+	return nil
+}
+
+var createViewRe = regexp.MustCompile(`(?im)(CREATE[\s\w]+VIEW[^(]+)(\s+AS\s+SELECT.+)`)
+var createObjRe = regexp.MustCompile(`(?im)(CREATE[^(]+)(\(.+)`)
+var onClusterRe = regexp.MustCompile(`(?im)\S+ON\S+CLUSTER\S+`)
+
+// CreateTable - create ClickHouse table
+func (ch *ClickHouse) CreateTable(table Table, query string, dropTable bool, onCluster string, version int) error {
+	var err error
 	if dropTable {
-		kind := "TABLE"
-		if strings.HasPrefix(query, "CREATE DICTIONARY") {
-			kind = "DICTIONARY"
-		}
-		dropQuery := fmt.Sprintf("DROP %s IF EXISTS `%s`.`%s`", kind, table.Database, table.Name)
-		if version > 19000000 && onCluster != "" {
-			dropQuery += " ON CLUSTER '" + onCluster + "' "
-		}
-		if isAtomic {
-			dropQuery += " NO DELAY"
-		}
-		if _, err := ch.Query(dropQuery); err != nil {
+		if err = ch.DropTable(table, query, onCluster, version); err != nil {
 			return err
 		}
 	}
+
+	if version > 19000000 && onCluster != "" && !onClusterRe.MatchString(query) {
+		if createViewRe.MatchString(query) {
+			query = createViewRe.ReplaceAllString(query, "$1 ON CLUSTER '"+onCluster+"' $2")
+		} else if createObjRe.MatchString(query) {
+			query = createObjRe.ReplaceAllString(query, "$1 ON CLUSTER '"+onCluster+"' $2")
+		}
+	}
+
 	if !strings.Contains(query, table.Name) {
 		return errors.New(fmt.Sprintf("schema query ```%s``` doesn't contains table name `%s`", query, table.Name))
 	}
