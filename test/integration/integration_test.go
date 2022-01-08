@@ -975,6 +975,7 @@ func (ch *TestClickHouse) connectWithWait(r *require.Assertions) {
 	for i := 1; i < 11; i++ {
 		err := ch.connect()
 		if i == 10 {
+			r.NoError(execCmd("docker", "logs", "clickhouse"))
 			r.NoError(err)
 		}
 		if err != nil {

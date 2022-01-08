@@ -113,8 +113,8 @@ services:
       - ./cluster.xml:/etc/clickhouse-server/config.d/cluster.xml
       - ./storage_configuration.sh:/docker-entrypoint-initdb.d/storage_configuration.sh
       # uncomment only for local debug
-      - ./clickhouse-server.log:/var/log/clickhouse-server/clickhouse-server.log
-      - ./clickhouse-server.err.log:/var/log/clickhouse-server/clickhouse-server.err.log
+      # - ./clickhouse-server.log:/var/log/clickhouse-server/clickhouse-server.log
+      # - ./clickhouse-server.err.log:/var/log/clickhouse-server/clickhouse-server.err.log
     ports:
       - "8123:8123"
       - "9000:9000"
