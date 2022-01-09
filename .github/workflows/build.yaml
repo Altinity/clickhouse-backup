@@ -17,8 +17,6 @@ jobs:
       matrix:
         golang-version:
           - "1.17"
-    outputs:
-      GCS_TESTS: ${{ steps.secrets.outputs.GST_TESTS }}
     steps:
       - name: Checkout project
         uses: actions/checkout@v2
@@ -90,6 +88,8 @@ jobs:
             ChangeLog.md
           if-no-files-found: error
           retention-days: 1
+    outputs:
+      GCS_TESTS: ${{ steps.secrets.outputs.GST_TESTS }}
 
   test:
     needs: build
