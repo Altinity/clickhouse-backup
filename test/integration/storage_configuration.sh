@@ -80,7 +80,35 @@ EOT
 
 fi
 
-if [[ "${CLICKHOUSE_VERSION}" =~ ^21.12 || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.\d+ ]]; then
+if [[ "${CLICKHOUSE_VERSION}" =~ ^21.[8-9]|^21.[0-9]{2} || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
+
+cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_s3.xml
+<yandex>
+  <storage_configuration>
+    <disks>
+      <disk_s3>
+        <type>s3</type>
+        <endpoint>http://minio:9000/clickhouse/disk_s3/</endpoint>
+        <access_key_id>access-key</access_key_id>
+        <secret_access_key>it-is-my-super-secret-key</secret_access_key>
+      </disk_s3>
+    </disks>
+    <policies>
+      <s3_only>
+          <volumes>
+              <s3_only>
+                  <disk>disk_s3</disk>
+              </s3_only>
+          </volumes>
+      </s3_only>
+    </policies>
+  </storage_configuration>
+</yandex>
+EOT
+
+fi
+
+if [[ "${CLICKHOUSE_VERSION}" =~ ^21.12 || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
 
 cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_encrypted_s3.xml
 <yandex>

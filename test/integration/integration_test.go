@@ -933,6 +933,13 @@ func generateTestData(ch *TestClickHouse, r *require.Assertions) {
 				testData = append(testData, testDataEncrypted)
 			}
 		}
+		//s3 disks support after 21.8
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 {
+			testDataEncrypted.Table = "test_s3"
+			testDataEncrypted.Schema = "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 's3_only'"
+			addTestDataIfNotExists()
+		}
+
 		//encrypted disks support after 21.10
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.10") >= 0 {
 			testDataEncrypted.Table = "test_hdd3_encrypted"
