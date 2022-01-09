@@ -11,4 +11,5 @@ gcs:
   bucket: clickhouse-backup-test-gcs
   path: backup
   credentials_file: /etc/clickhouse-backup/credentials.json
+  compression_format: tar
 #  endpoint: http://gcs:8080/storage/v1/

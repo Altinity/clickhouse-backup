@@ -377,7 +377,7 @@ func init() {
 func TestIntegrationS3(t *testing.T) {
 	r := require.New(t)
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	testCommon(t)
+	testCommon(t, "S3")
 }
 
 func TestIntegrationGCS(t *testing.T) {
@@ -388,7 +388,7 @@ func TestIntegrationGCS(t *testing.T) {
 	r := require.New(t)
 	r.NoError(dockerCP("config-gcs.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	installDebIfNotExists(r, "clickhouse", "ca-certificates")
-	testCommon(t)
+	testCommon(t, "GCS")
 }
 
 func TestIntegrationAzure(t *testing.T) {
@@ -399,13 +399,13 @@ func TestIntegrationAzure(t *testing.T) {
 	r := require.New(t)
 	r.NoError(dockerCP("config-azblob.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	installDebIfNotExists(r, "clickhouse", "ca-certificates")
-	testCommon(t)
+	testCommon(t, "AZBLOB")
 }
 
 func TestIntegrationSFTPAuthPassword(t *testing.T) {
 	r := require.New(t)
 	r.NoError(dockerCP("config-sftp-auth-password.yaml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	testCommon(t)
+	testCommon(t, "SFTP")
 }
 
 func TestIntegrationSFTPAuthKey(t *testing.T) {
@@ -420,13 +420,13 @@ func TestIntegrationSFTPAuthKey(t *testing.T) {
 	r.NoError(dockerExec("sshd", "chown", "-v", "root:root", "/root/.ssh/authorized_keys"))
 	r.NoError(dockerExec("sshd", "chmod", "-v", "0600", "/root/.ssh/authorized_keys"))
 
-	testCommon(t)
+	testCommon(t, "SFTP")
 }
 
 func TestIntegrationFTP(t *testing.T) {
 	r := require.New(t)
 	r.NoError(dockerCP("config-ftp.yaml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	testCommon(t)
+	testCommon(t, "FTP")
 }
 
 func TestSyncReplicaTimeout(t *testing.T) {
@@ -787,7 +787,7 @@ func TestTablePatterns(t *testing.T) {
 	}
 }
 
-func testCommon(t *testing.T) {
+func testCommon(t *testing.T, remoteStorageType string) {
 	var out string
 	var err error
 
@@ -818,7 +818,7 @@ func testCommon(t *testing.T) {
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", incrementBackupName))
 
 	log.Info("Upload")
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "upload", testBackupName))
+	r.NoError(dockerExec("clickhouse", "bash", "-c", fmt.Sprintf("%s_COMPRESSION_FORMAT=zstd clickhouse-backup upload %s", remoteStorageType, testBackupName)))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "upload", incrementBackupName, "--diff-from", testBackupName))
 
 	dropAllDatabases(r, ch)
@@ -933,6 +933,13 @@ func generateTestData(ch *TestClickHouse, r *require.Assertions) {
 				testData = append(testData, testDataEncrypted)
 			}
 		}
+		//s3 disks support after 21.8
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 {
+			testDataEncrypted.Table = "test_s3"
+			testDataEncrypted.Schema = "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 's3_only'"
+			addTestDataIfNotExists()
+		}
+
 		//encrypted disks support after 21.10
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.10") >= 0 {
 			testDataEncrypted.Table = "test_hdd3_encrypted"
