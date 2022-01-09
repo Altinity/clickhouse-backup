@@ -19,9 +19,8 @@ import (
 
 // SFTP Implement RemoteStorage
 type SFTP struct {
-	client   *lib_sftp.Client
-	Config   *config.SFTPConfig
-	dirCache map[string]struct{}
+	client *lib_sftp.Client
+	Config *config.SFTPConfig
 }
 
 func (sftp *SFTP) Debug(msg string, v ...interface{}) {
@@ -80,8 +79,6 @@ func (sftp *SFTP) Connect() error {
 	}
 
 	sftp.client = sftpConnection
-
-	sftp.dirCache = map[string]struct{}{}
 	return nil
 }
 

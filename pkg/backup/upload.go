@@ -49,7 +49,7 @@ func (b *Backuper) Upload(backupName, tablePattern, diffFrom string, schemaOnly 
 	if _, err := getLocalBackup(b.cfg, backupName); err != nil {
 		return fmt.Errorf("can't upload: %v", err)
 	}
-	remoteBackups, err := b.dst.BackupList()
+	remoteBackups, err := b.dst.BackupList(false, "")
 	if err != nil {
 		return err
 	}

@@ -187,7 +187,7 @@ func PrintAllBackups(cfg *config.Config, format string) error {
 	printBackupsLocal(w, localBackups, format)
 
 	if cfg.General.RemoteStorage != "none" {
-		remoteBackups, err := GetRemoteBackups(cfg)
+		remoteBackups, err := GetRemoteBackups(cfg, true)
 		if err != nil {
 			return err
 		}
@@ -200,7 +200,7 @@ func PrintAllBackups(cfg *config.Config, format string) error {
 func PrintRemoteBackups(cfg *config.Config, format string) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', tabwriter.DiscardEmptyColumns)
 	defer w.Flush()
-	backupList, err := GetRemoteBackups(cfg)
+	backupList, err := GetRemoteBackups(cfg, true)
 	if err != nil {
 		return err
 	}
@@ -224,7 +224,7 @@ func getLocalBackup(cfg *config.Config, backupName string) (*BackupLocal, error)
 }
 
 // GetRemoteBackups - get all backups stored on remote storage
-func GetRemoteBackups(cfg *config.Config) ([]new_storage.Backup, error) {
+func GetRemoteBackups(cfg *config.Config, parseMetadata bool) ([]new_storage.Backup, error) {
 	if cfg.General.RemoteStorage == "none" {
 		return nil, fmt.Errorf("remote_storage is 'none'")
 	}
@@ -235,10 +235,17 @@ func GetRemoteBackups(cfg *config.Config) ([]new_storage.Backup, error) {
 	if err := bd.Connect(); err != nil {
 		return []new_storage.Backup{}, err
 	}
-
-	backupList, err := bd.BackupList()
+	backupList, err := bd.BackupList(parseMetadata, "")
 	if err != nil {
 		return []new_storage.Backup{}, err
+	}
+	// ugly hack to fix https://github.com/AlexAkulov/clickhouse-backup/issues/309
+	if parseMetadata == false && len(backupList) > 0 {
+		lastBackup := backupList[len(backupList)-1]
+		backupList, err = bd.BackupList(true, lastBackup.BackupName)
+		if err != nil {
+			return []new_storage.Backup{}, err
+		}
 	}
 	return backupList, err
 }

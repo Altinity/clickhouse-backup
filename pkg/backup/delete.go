@@ -88,7 +88,7 @@ func RemoveBackupRemote(cfg *config.Config, backupName string) error {
 	if err != nil {
 		return fmt.Errorf("can't connect to remote storage: %v", err)
 	}
-	backupList, err := bd.BackupList()
+	backupList, err := bd.BackupList(true, backupName)
 	if err != nil {
 		return err
 	}
