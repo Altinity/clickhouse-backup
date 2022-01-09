@@ -12,6 +12,7 @@ BUG FIXES
 - fix [#311](https://github.com/AlexAkulov/clickhouse-backup/issues/311), properly run clickhouse-backup inside docker container via entrypoint
 - fix [#317](https://github.com/AlexAkulov/clickhouse-backup/issues/317), properly upload large files to Azure Blob Storage
 - fix [#220](https://github.com/AlexAkulov/clickhouse-backup/issues/220), properly handle total_bytes for uint64 type
+- fix [#304](https://github.com/AlexAkulov/clickhouse-backup/issues/304), properly handle archive extension during download instead of use config settings
 - fix `restore --rm` behavior for 20.12+ for tables which have dependent objects (like dictionary)
 
 # v1.2.2

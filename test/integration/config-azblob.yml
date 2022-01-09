@@ -13,3 +13,4 @@ azblob:
   endpoint_suffix: azure:10000
   container: container1
   path: backup
+  compression_format: tar
