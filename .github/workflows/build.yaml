@@ -89,7 +89,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
     outputs:
-      GCS_TESTS: ${{ steps.secrets.outputs.GST_TESTS }}
+      GCS_TESTS: ${{ steps.secrets.outputs.GCS_TESTS }}
 
   test:
     needs: build
