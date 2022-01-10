@@ -159,8 +159,6 @@ jobs:
           echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"
           echo "GCS_TESTS=${GCS_TESTS}"
 
-          chmod +r ./test/integration/credentials.json
-
           chmod +x $(pwd)/clickhouse-backup/clickhouse-backup*
 
           if [[ "${CLICKHOUSE_VERSION}" == 2* ]]; then
