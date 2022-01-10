@@ -137,6 +137,7 @@ jobs:
       - uses: actions/download-artifact@v2
         with:
           name: build-test-artifacts
+          path: ./clickhouse-backup/
 
       - uses: actions/download-artifact@v2
         with:
@@ -183,6 +184,7 @@ jobs:
       - uses: actions/download-artifact@v2
         with:
           name: build-artifacts
+          path: ./build/
 
       - name: Extract DOCKER_TAG version
         id: docker_tag
