@@ -283,7 +283,7 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, diskList []c
 	}
 
 	// backup data
-	if !strings.HasSuffix(table.Engine, "MergeTree") {
+	if !(strings.HasSuffix(table.Engine, "MergeTree")) {
 		log.WithField("engine", table.Engine).Debug("skip table backup")
 		return nil, nil, nil
 	}

@@ -5,8 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"golang.org/x/sync/errgroup"
-	"golang.org/x/sync/semaphore"
 	"io/ioutil"
 	"os"
 	"path"
@@ -14,6 +12,9 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
@@ -305,22 +306,39 @@ func (b *Backuper) markDuplicatedParts(backup *metadata.BackupMetadata, existsTa
 				continue
 			}
 			existsPartsMap := map[string]struct{}{}
+			existsPartitionMap := map[string]struct{}{}
 			for _, p := range existsTable.Parts[disk] {
 				existsPartsMap[p.Name] = struct{}{}
+				//
+				// ClickHouse part name: partition_start_end_level, the first part is partition name.
+				//
+				//
+				existsPartitionMap[strings.Split(p.Name, "_")[0]] = struct{}{}
 			}
-			for i := range newParts {
-				if _, ok := existsPartsMap[newParts[i].Name]; !ok {
-					continue
-				}
-				uuid := path.Join(clickhouse.TablePathEncode(existsTable.Database), clickhouse.TablePathEncode(existsTable.Table))
-				existsPath := path.Join(b.DiskMap[disk], "backup", backup.RequiredBackup, "shadow", uuid, disk, newParts[i].Name)
-				newPath := path.Join(b.DiskMap[disk], "backup", backup.BackupName, "shadow", uuid, disk, newParts[i].Name)
+			// TODO If more codes here, split these codes into two functions. It will be neat and clean.
+			if b.cfg.General.BackUpPartsBasedIncremental {
+				for i := range newParts {
+					if _, ok := existsPartsMap[newParts[i].Name]; !ok {
+						continue
+					}
+					uuid := path.Join(clickhouse.TablePathEncode(existsTable.Database), clickhouse.TablePathEncode(existsTable.Table))
+					existsPath := path.Join(b.DiskMap[disk], "backup", backup.RequiredBackup, "shadow", uuid, disk, newParts[i].Name)
+					newPath := path.Join(b.DiskMap[disk], "backup", backup.BackupName, "shadow", uuid, disk, newParts[i].Name)
 
-				if err := isDuplicatedParts(existsPath, newPath); err != nil {
-					apexLog.Debugf("part '%s' and '%s' must be the same: %v", existsPath, newPath, err)
-					continue
+					if err := isDuplicatedParts(existsPath, newPath); err != nil {
+						apexLog.Debugf("part '%s' and '%s' must be the same: %v", existsPath, newPath, err)
+						continue
+					}
+					// Required : this part is duplicated with some part of existTable.
+					newParts[i].Required = true
 				}
-				newParts[i].Required = true
+			} else {
+				for i := range newParts {
+					if _, ok := existsPartitionMap[strings.Split(newParts[i].Name, "_")[0]]; ok {
+						// Required : this part is duplicated with some part of existTable.
+						newParts[i].Required = true
+					}
+				}
 			}
 		}
 	}
