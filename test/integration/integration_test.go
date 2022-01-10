@@ -482,7 +482,7 @@ func TestServerAPI(t *testing.T) {
 	maxTables := 10
 	minFields := 10
 	randFields := 10
-	log.Infof("Create %d long_schema.t%%d` tables with with %d..%d fields...", maxTables, minFields, minFields+randFields)
+	log.Infof("Create %d `long_schema`.`t%%d` tables with with %d..%d fields...", maxTables, minFields, minFields+randFields)
 	for i := 0; i < maxTables; i++ {
 		sql := fmt.Sprintf("CREATE TABLE long_schema.t%d (id UInt64", i)
 		fieldsCount := minFields + rand.Intn(randFields)
@@ -595,7 +595,7 @@ func TestServerAPI(t *testing.T) {
 	out, err = dockerExecOut("clickhouse", "curl", "-sL", "http://localhost:7171/metrics")
 	log.Debug(out)
 	r.NoError(err)
-	r.Contains(out, fmt.Sprintf("clickhouse_backup_last_backup_size_remote %d", realTotalBytes[0]))
+	r.Contains(out, fmt.Sprintf("clickhouse_backup_last_backup_size_remote %d", lastRemoteSize[0]))
 
 	log.Info("Check /backup/delete/{where}/{name}")
 	for i := 1; i <= 5; i++ {

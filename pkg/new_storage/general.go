@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/AlexAkulov/clickhouse-backup/utils"
 	"io"
 	"io/ioutil"
 	"os"
@@ -49,20 +50,30 @@ func (bd *BackupDestination) RemoveOldBackups(keep int) error {
 	if keep < 1 {
 		return nil
 	}
-	backupList, err := bd.BackupList()
+	start := time.Now()
+	backupList, err := bd.BackupList(true, "")
+	apexLog.WithFields(apexLog.Fields{
+		"operation": "RemoveOldBackups",
+		"duration":  utils.HumanizeDuration(time.Since(start)),
+	}).Info("calculate backup list for delete")
+
 	if err != nil {
 		return err
 	}
 	backupsToDelete := GetBackupsToDelete(backupList, keep)
 	for _, backupToDelete := range backupsToDelete {
+		startDelete := time.Now()
 		if err := bd.RemoveBackup(backupToDelete); err != nil {
 			return err
 		}
-		apexLog.WithField("operation", "delete").
-			WithField("location", "remote").
-			WithField("backup", backupToDelete.BackupName).
-			Info("done")
+		apexLog.WithFields(apexLog.Fields{
+			"operation": "RemoveOldBackups",
+			"location":  "remote",
+			"backup":    backupToDelete.BackupName,
+			"duration":  utils.HumanizeDuration(time.Since(startDelete)),
+		}).Info("done")
 	}
+	apexLog.WithFields(apexLog.Fields{"operation": "RemoveOldBackups", "duration": utils.HumanizeDuration(time.Since(start))}).Info("done")
 	return nil
 }
 
@@ -88,7 +99,7 @@ func isLegacyBackup(backupName string) (bool, string, string) {
 	return false, backupName, ""
 }
 
-func (bd *BackupDestination) BackupList() ([]Backup, error) {
+func (bd *BackupDestination) BackupList(parseMetadata bool, parseMetadataOnly string) ([]Backup, error) {
 	result := []Backup{}
 	err := bd.Walk("/", false, func(o RemoteFile) error {
 		// Legacy backup
@@ -105,11 +116,22 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 			})
 			return nil
 		}
+		backupName := strings.Trim(o.Name(), "/")
+		if !parseMetadata || (parseMetadataOnly != "" && parseMetadataOnly != backupName) {
+			result = append(result, Backup{
+				BackupMetadata: metadata.BackupMetadata{
+					BackupName: backupName,
+				},
+				Legacy:     false,
+				UploadDate: o.LastModified(),
+			})
+			return nil
+		}
 		mf, err := bd.StatFile(path.Join(o.Name(), "metadata.json"))
 		if err != nil {
 			result = append(result, Backup{
 				metadata.BackupMetadata{
-					BackupName: strings.Trim(o.Name(), "/"),
+					BackupName: backupName,
 				},
 				false,
 				"",
@@ -122,11 +144,11 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 		if err != nil {
 			result = append(result, Backup{
 				metadata.BackupMetadata{
-					BackupName: strings.Trim(o.Name(), "/"),
+					BackupName: backupName,
 				},
 				false,
 				"",
-				"broken (not found metadata.json)",
+				"broken (can't open metadata.json)",
 				o.LastModified(), // folder
 			})
 			return nil
@@ -135,11 +157,11 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 		if err != nil {
 			result = append(result, Backup{
 				metadata.BackupMetadata{
-					BackupName: strings.Trim(o.Name(), "/"),
+					BackupName: backupName,
 				},
 				false,
 				"",
-				"broken (can't get metadata.json)",
+				"broken (can't read metadata.json)",
 				o.LastModified(), // folder
 			})
 			return nil
@@ -151,7 +173,7 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 		if err := json.Unmarshal(b, &m); err != nil {
 			result = append(result, Backup{
 				metadata.BackupMetadata{
-					BackupName: strings.Trim(o.Name(), "/"),
+					BackupName: backupName,
 				},
 				false,
 				"",

@@ -129,9 +129,12 @@ func (ch *ClickHouse) getDataPathFromSystemSettings() ([]Disk, error) {
 	var result []struct {
 		MetadataPath string `db:"metadata_path"`
 	}
-	query := "SELECT metadata_path FROM system.tables WHERE database == 'system' LIMIT 1;"
+	query := "SELECT metadata_path FROM system.tables WHERE database = 'system' AND metadata_path!='' LIMIT 1;"
 	if err := ch.Select(&result, query); err != nil {
 		return nil, err
+	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("can't get metadata_path from system.tables")
 	}
 	metadataPath := result[0].MetadataPath
 	dataPathArray := strings.Split(metadataPath, "/")

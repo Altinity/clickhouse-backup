@@ -75,15 +75,15 @@ func (b *Backuper) Download(backupName string, tablePattern string, schemaOnly b
 	if err := b.init(); err != nil {
 		return err
 	}
-	remoteBackups, err := b.dst.BackupList()
+	remoteBackups, err := b.dst.BackupList(true, backupName)
 	if err != nil {
 		return err
 	}
 	found := false
 	var remoteBackup new_storage.Backup
-	for _, b := range remoteBackups {
-		if backupName == b.BackupName {
-			remoteBackup = b
+	for _, r := range remoteBackups {
+		if backupName == r.BackupName {
+			remoteBackup = r
 			found = true
 			break
 		}

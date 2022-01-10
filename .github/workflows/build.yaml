@@ -17,8 +17,6 @@ jobs:
       matrix:
         golang-version:
           - "1.17"
-    outputs:
-      GCS_TESTS: ${{ steps.secrets.outputs.GST_TESTS }}
     steps:
       - name: Checkout project
         uses: actions/checkout@v2
@@ -83,13 +81,21 @@ jobs:
         with:
           name: build-artifacts
           path: |
-            ./build/linux/amd64/clickhouse-backup
-            ./build/linux/arm64/clickhouse-backup
-            ./clickhouse-backup/clickhouse-backup
-            ./clickhouse-backup/clickhouse-backup-race
-            ChangeLog.md
+            build/linux/amd64/clickhouse-backup
+            build/linux/arm64/clickhouse-backup
           if-no-files-found: error
           retention-days: 1
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: build-test-artifacts
+          path: |
+            clickhouse-backup/clickhouse-backup
+            clickhouse-backup/clickhouse-backup-race
+          if-no-files-found: error
+          retention-days: 1
+    outputs:
+      GCS_TESTS: ${{ steps.secrets.outputs.GCS_TESTS }}
 
   test:
     needs: build
@@ -130,11 +136,13 @@ jobs:
 
       - uses: actions/download-artifact@v2
         with:
-          name: build-artifacts
+          name: build-test-artifacts
+          path: ./clickhouse-backup/
 
       - uses: actions/download-artifact@v2
         with:
           name: build-gcp-credentials
+          path: ./test/integration/
         if: |
           needs.build.outputs.GCS_TESTS == 'true'
 
@@ -174,6 +182,7 @@ jobs:
       - uses: actions/download-artifact@v2
         with:
           name: build-artifacts
+          path: ./build/linux/
 
       - name: Extract DOCKER_TAG version
         id: docker_tag

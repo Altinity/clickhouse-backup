@@ -6,6 +6,7 @@ IMPROVEMENTS
 - Add SFTP_DEBUG, fix [#335](https://github.com/AlexAkulov/clickhouse-backup/issues/335)
 - Add ability to restore schema `ON CLUSTER`, fix [#145](https://github.com/AlexAkulov/clickhouse-backup/issues/145) 
 - Add support encrypted disk (include s3 encrypted disks), fix [#260](https://github.com/AlexAkulov/clickhouse-backup/issues/260)
+- API Server optimize `last_backup_size_remote` metric calculation to make it async during REST API startup and after download/upload, fix [#309](https://github.com/AlexAkulov/clickhouse-backup/issues/309)
 
 BUG FIXES
 - fix [#331](https://github.com/AlexAkulov/clickhouse-backup/issues/331), properly restore tables where have table name with the same name as database name
