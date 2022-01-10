@@ -128,7 +128,7 @@ func (bd *BackupDestination) loadMetadataCache() map[string]Backup {
 
 func (bd *BackupDestination) saveMetadataCache(listCache map[string]Backup) {
 	listCacheFile := path.Join(os.TempDir(), fmt.Sprintf(".clickhouse-backup-metadata.cache.%s", bd.Kind()))
-	f, err := os.OpenFile(listCacheFile, os.O_RDWR|os.O_CREATE, 0755)
+	f, err := os.OpenFile(listCacheFile, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		apexLog.Warnf("can't open %s return error %v", listCacheFile, err)
 		return

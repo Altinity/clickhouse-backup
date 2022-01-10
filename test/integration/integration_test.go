@@ -799,7 +799,7 @@ func TestLongListRemote(t *testing.T) {
 	generateTestData(ch, r)
 	r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/tmp/.clickhouse-backup-metadata.cache.S3"))
 
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 15; i++ {
 		r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", fmt.Sprintf("%s_%d", testBackupName, i)))
 	}
 	startFirst := time.Now()
