@@ -71,7 +71,7 @@ jobs:
         with:
           name: build-gcp-credentials
           path: |
-            ~/test/integration/credentials.json
+            test/integration/credentials.json
           if-no-files-found: error
           retention-days: 1
         if: |
@@ -81,8 +81,8 @@ jobs:
         with:
           name: build-artifacts
           path: |
-            ~/build/linux/amd64/clickhouse-backup
-            ~/build/linux/arm64/clickhouse-backup
+            build/linux/amd64/clickhouse-backup
+            build/linux/arm64/clickhouse-backup
           if-no-files-found: error
           retention-days: 1
 
@@ -90,8 +90,8 @@ jobs:
         with:
           name: build-test-artifacts
           path: |
-            ~/clickhouse-backup/clickhouse-backup
-            ~/clickhouse-backup/clickhouse-backup-race
+            clickhouse-backup/clickhouse-backup
+            clickhouse-backup/clickhouse-backup-race
           if-no-files-found: error
           retention-days: 1
     outputs:
@@ -137,12 +137,10 @@ jobs:
       - uses: actions/download-artifact@v2
         with:
           name: build-test-artifacts
-          path: ~/
 
       - uses: actions/download-artifact@v2
         with:
           name: build-gcp-credentials
-          path: ~/
         if: |
           needs.build.outputs.GCS_TESTS == 'true'
 
@@ -182,7 +180,6 @@ jobs:
       - uses: actions/download-artifact@v2
         with:
           name: build-artifacts
-          path: ~/
 
       - name: Extract DOCKER_TAG version
         id: docker_tag
