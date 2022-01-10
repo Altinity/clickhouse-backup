@@ -787,6 +787,41 @@ func TestTablePatterns(t *testing.T) {
 	}
 }
 
+func TestLongListRemote(t *testing.T) {
+	ch := &TestClickHouse{}
+	r := require.New(t)
+	ch.connectWithWait(r)
+	defer ch.chbackup.Close()
+
+	testBackupName := "test_list_remote"
+	fullCleanup(r, ch, []string{testBackupName}, false)
+	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	generateTestData(ch, r)
+	r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/tmp/.clickhouse-backup-metadata.cache.S3"))
+
+	for i := 0; i < 10; i++ {
+		r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", fmt.Sprintf("%s_%d", testBackupName, i)))
+	}
+	startFirst := time.Now()
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "list", "remote"))
+	firstDuration := time.Since(startFirst)
+
+	r.NoError(dockerExec("clickhouse", "chmod", "-Rv", "+r", "/tmp/.clickhouse-backup-metadata.cache.S3"))
+
+	startCashed := time.Now()
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "list", "remote"))
+	cashedDuration := time.Since(startCashed)
+
+	r.Greater(firstDuration, cashedDuration)
+
+	startCasheClear := time.Now()
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "list", "remote"))
+	casheClearDuration := time.Since(startCasheClear)
+
+	r.Greater(casheClearDuration, cashedDuration)
+	log.Infof("firstDuration=%s cachedDuration=%s cacheClearDuration=%s", firstDuration.String(), cashedDuration.String(), casheClearDuration.String())
+}
+
 func testCommon(t *testing.T, remoteStorageType string) {
 	var out string
 	var err error
