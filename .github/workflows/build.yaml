@@ -71,7 +71,7 @@ jobs:
         with:
           name: build-gcp-credentials
           path: |
-            test/integration/credentials.json
+            ./test/integration/credentials.json
           if-no-files-found: error
           retention-days: 1
         if: |
@@ -85,7 +85,7 @@ jobs:
             ./build/linux/arm64/clickhouse-backup
             ./clickhouse-backup/clickhouse-backup
             ./clickhouse-backup/clickhouse-backup-race
-            ChangeLog.md
+            ./ChangeLog.md
           if-no-files-found: error
           retention-days: 1
     outputs:
@@ -131,10 +131,12 @@ jobs:
       - uses: actions/download-artifact@v2
         with:
           name: build-artifacts
+          path: ./
 
       - uses: actions/download-artifact@v2
         with:
           name: build-gcp-credentials
+          path: ./
         if: |
           needs.build.outputs.GCS_TESTS == 'true'
 
