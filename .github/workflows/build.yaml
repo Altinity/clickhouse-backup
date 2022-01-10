@@ -141,6 +141,7 @@ jobs:
       - uses: actions/download-artifact@v2
         with:
           name: build-gcp-credentials
+          path: ./test/integration/
         if: |
           needs.build.outputs.GCS_TESTS == 'true'
 
@@ -157,10 +158,7 @@ jobs:
           echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"
           echo "GCS_TESTS=${GCS_TESTS}"
 
-          pwd
-          ls -la ./test/integration/credentials.json
-          ls -la /home/runner/work/clickhouse-backup/
-          ls -R ./clickhouse-backup/
+          chmod +r ./test/integration/credentials.json
 
           chmod +x $(pwd)/clickhouse-backup/clickhouse-backup*
 
