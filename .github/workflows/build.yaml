@@ -66,10 +66,6 @@ jobs:
             openssl enc -base64 -aes-256-cbc -d -in test/integration/credentials.json.enc -out test/integration/credentials.json -md md5 -k ${VAULT_PASSWORD}
           fi
           echo "::set-output name=GCS_TESTS::$(if [ -z "${{ secrets.VAULT_PASSWORD }}" ]; then echo "false"; else echo "true"; fi)"
-          pwd
-          ls -R ./build/
-          ls -R ./clickhouse-backup/
-          ls -la ./test/integration/credentials.json
 
       - uses: actions/upload-artifact@v2
         with:
@@ -160,6 +156,11 @@ jobs:
           set -x
           echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"
           echo "GCS_TESTS=${GCS_TESTS}"
+
+          pwd
+          ls -la ./test/integration/credentials.json
+          ls -la /home/runner/work/clickhouse-backup/
+          ls -R ./clickhouse-backup/
 
           chmod +x $(pwd)/clickhouse-backup/clickhouse-backup*
 
