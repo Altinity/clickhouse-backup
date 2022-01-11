@@ -99,8 +99,56 @@ func isLegacyBackup(backupName string) (bool, string, string) {
 	return false, backupName, ""
 }
 
+func (bd *BackupDestination) loadMetadataCache() map[string]Backup {
+	listCacheFile := path.Join(os.TempDir(), fmt.Sprintf(".clickhouse-backup-metadata.cache.%s", bd.Kind()))
+	listCache := map[string]Backup{}
+	if info, err := os.Stat(listCacheFile); os.IsNotExist(err) || info.IsDir() {
+		return listCache
+	}
+	f, err := os.Open(listCacheFile)
+	if err != nil {
+		apexLog.Warnf("can't open %s return error %v", listCacheFile, err)
+		return listCache
+	}
+	body, err := ioutil.ReadAll(f)
+	if err != nil {
+		apexLog.Warnf("can't read %s return error %v", listCacheFile, err)
+		return listCache
+	}
+	if err := f.Close(); err != nil { // Never use defer in loops
+		apexLog.Warnf("can't close %s return error %v", listCacheFile, err)
+		return listCache
+	}
+	if err := json.Unmarshal(body, &listCache); err != nil {
+		apexLog.Warnf("can't parse %s to map[string]Backup, return error %v", listCacheFile, err)
+	}
+	apexLog.Debugf("%s load %d elements", listCacheFile, len(listCache))
+	return listCache
+}
+
+func (bd *BackupDestination) saveMetadataCache(listCache map[string]Backup) {
+	listCacheFile := path.Join(os.TempDir(), fmt.Sprintf(".clickhouse-backup-metadata.cache.%s", bd.Kind()))
+	f, err := os.OpenFile(listCacheFile, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		apexLog.Warnf("can't open %s return error %v", listCacheFile, err)
+		return
+	}
+	body, err := json.MarshalIndent(&listCache, "", "\t")
+	if err != nil {
+		apexLog.Warnf("can't json marshal %s return error %v", listCacheFile, err)
+		return
+	}
+	_, err = f.Write(body)
+	if err != nil {
+		apexLog.Warnf("can't write to %s return error %v", listCacheFile, err)
+	}
+	apexLog.Debugf("%s save %d elements", listCacheFile, len(listCache))
+	_ = f.Close()
+}
+
 func (bd *BackupDestination) BackupList(parseMetadata bool, parseMetadataOnly string) ([]Backup, error) {
 	result := []Backup{}
+	listCache := bd.loadMetadataCache()
 	err := bd.Walk("/", false, func(o RemoteFile) error {
 		// Legacy backup
 		if ok, backupName, fileExtension := isLegacyBackup(strings.TrimPrefix(o.Name(), "/")); ok {
@@ -118,18 +166,32 @@ func (bd *BackupDestination) BackupList(parseMetadata bool, parseMetadataOnly st
 		}
 		backupName := strings.Trim(o.Name(), "/")
 		if !parseMetadata || (parseMetadataOnly != "" && parseMetadataOnly != backupName) {
-			result = append(result, Backup{
-				BackupMetadata: metadata.BackupMetadata{
-					BackupName: backupName,
-				},
-				Legacy:     false,
-				UploadDate: o.LastModified(),
-			})
+			if cachedMetadata, isCached := listCache[backupName]; isCached {
+				cachedMetadata.UploadDate = o.LastModified()
+				cachedMetadata.Legacy = false
+				listCache[backupName] = cachedMetadata
+				result = append(result, cachedMetadata)
+			} else {
+				result = append(result, Backup{
+					BackupMetadata: metadata.BackupMetadata{
+						BackupName: backupName,
+					},
+					Legacy:     false,
+					UploadDate: o.LastModified(),
+				})
+			}
+			return nil
+		}
+		if cachedMetadata, isCached := listCache[backupName]; isCached {
+			cachedMetadata.UploadDate = o.LastModified()
+			cachedMetadata.Legacy = false
+			listCache[backupName] = cachedMetadata
+			result = append(result, cachedMetadata)
 			return nil
 		}
 		mf, err := bd.StatFile(path.Join(o.Name(), "metadata.json"))
 		if err != nil {
-			result = append(result, Backup{
+			brokenBackup := Backup{
 				metadata.BackupMetadata{
 					BackupName: backupName,
 				},
@@ -137,12 +199,14 @@ func (bd *BackupDestination) BackupList(parseMetadata bool, parseMetadataOnly st
 				"",
 				"broken (can't stat metadata.json)",
 				o.LastModified(), // folder
-			})
+			}
+			listCache[backupName] = brokenBackup
+			result = append(result, brokenBackup)
 			return nil
 		}
 		r, err := bd.GetFileReader(path.Join(o.Name(), "metadata.json"))
 		if err != nil {
-			result = append(result, Backup{
+			brokenBackup := Backup{
 				metadata.BackupMetadata{
 					BackupName: backupName,
 				},
@@ -150,12 +214,14 @@ func (bd *BackupDestination) BackupList(parseMetadata bool, parseMetadataOnly st
 				"",
 				"broken (can't open metadata.json)",
 				o.LastModified(), // folder
-			})
+			}
+			listCache[backupName] = brokenBackup
+			result = append(result, brokenBackup)
 			return nil
 		}
 		b, err := ioutil.ReadAll(r)
 		if err != nil {
-			result = append(result, Backup{
+			brokenBackup := Backup{
 				metadata.BackupMetadata{
 					BackupName: backupName,
 				},
@@ -163,7 +229,9 @@ func (bd *BackupDestination) BackupList(parseMetadata bool, parseMetadataOnly st
 				"",
 				"broken (can't read metadata.json)",
 				o.LastModified(), // folder
-			})
+			}
+			listCache[backupName] = brokenBackup
+			result = append(result, brokenBackup)
 			return nil
 		}
 		if err := r.Close(); err != nil { // Never use defer in loops
@@ -171,7 +239,7 @@ func (bd *BackupDestination) BackupList(parseMetadata bool, parseMetadataOnly st
 		}
 		var m metadata.BackupMetadata
 		if err := json.Unmarshal(b, &m); err != nil {
-			result = append(result, Backup{
+			brokenBackup := Backup{
 				metadata.BackupMetadata{
 					BackupName: backupName,
 				},
@@ -179,17 +247,25 @@ func (bd *BackupDestination) BackupList(parseMetadata bool, parseMetadataOnly st
 				"",
 				"broken (bad metadata.json)",
 				o.LastModified(), // folder
-			})
+			}
+			listCache[backupName] = brokenBackup
+			result = append(result, brokenBackup)
 			return nil
 		}
-		result = append(result, Backup{
+		goodBackup := Backup{
 			m, false, "", "", mf.LastModified(),
-		})
+		}
+		listCache[backupName] = goodBackup
+		result = append(result, goodBackup)
 		return nil
 	})
+	if err != nil {
+		apexLog.Warnf("BackupList bd.Walk return error: %v", err)
+	}
 	sort.SliceStable(result, func(i, j int) bool {
 		return result[i].UploadDate.Before(result[j].UploadDate)
 	})
+	bd.saveMetadataCache(listCache)
 	return result, err
 }
 
