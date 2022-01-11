@@ -32,7 +32,7 @@ func getArchiveWriter(format string, level int) (archiver.Writer, error) {
 	case "xz":
 		return &archiver.TarXz{Tar: archiver.NewTar()}, nil
 	}
-	return nil, fmt.Errorf("wrong compression_format, supported: 'lz4', 'bzip2', 'gzip', 'sz', 'xz'")
+	return nil, fmt.Errorf("wrong compression_format: %s, supported: 'tar', 'lz4', 'bzip2', 'gzip', 'sz', 'xz'", format)
 }
 
 func getExtension(format string) string {
@@ -68,5 +68,5 @@ func getArchiveReader(format string) (archiver.Reader, error) {
 	case "xz":
 		return archiver.NewTarXz(), nil
 	}
-	return nil, fmt.Errorf("wrong compression_format, supported: 'tar', 'lz4', 'bzip2', 'gzip', 'sz', 'xz'")
+	return nil, fmt.Errorf("wrong compression_format: %s, supported: 'tar', 'lz4', 'bzip2', 'gzip', 'sz', 'xz'", format)
 }

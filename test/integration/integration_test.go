@@ -796,11 +796,10 @@ func TestLongListRemote(t *testing.T) {
 	testBackupName := "test_list_remote"
 	fullCleanup(r, ch, []string{testBackupName}, false)
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	generateTestData(ch, r)
 	r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/tmp/.clickhouse-backup-metadata.cache.S3"))
 
 	for i := 0; i < 15; i++ {
-		r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", fmt.Sprintf("%s_%d", testBackupName, i)))
+		r.NoError(dockerExec("clickhouse", "bash", "-c", fmt.Sprintf("ALLOW_EMPTY_BACKUP=true clickhouse-backup create_remote %s_%d", testBackupName, i)))
 	}
 	startFirst := time.Now()
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "list", "remote"))
