@@ -68,6 +68,11 @@ func NewBackupName() string {
 	return time.Now().UTC().Format(TimeFormatForBackup)
 }
 
+// Set backup incremental policy,it need work with --diff-from.
+func (b *Backuper) SetIncrementalBackupPolicy(partitionBasedIncremental bool) {
+	b.cfg.General.BackUpPartsBasedIncremental = !partitionBasedIncremental
+}
+
 // CreateBackup - create new backup of all tables matched by tablePattern
 // If backupName is empty string will use default backup name
 func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnly, rbacOnly, configsOnly bool, version string) error {

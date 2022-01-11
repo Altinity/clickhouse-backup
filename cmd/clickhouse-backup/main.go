@@ -95,6 +95,11 @@ func main() {
 					Hidden: false,
 					Usage:  "Backup ClickHouse server configuration files only",
 				},
+				cli.BoolFlag{
+					Name:   "parts-based-incremental",
+					Hidden: false,
+					Usage:  "Backup  parts based incremental backup policy",
+				},
 			),
 		},
 		{
@@ -104,7 +109,12 @@ func main() {
 			Description: "Create and upload",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(getConfig(c))
-				return b.CreateToRemote(c.Args().First(), c.String("t"), c.String("diff-from"), c.Bool("s"), c.Bool("rbac"), c.Bool("configs"), version)
+				// Modify  incremental backup policy , iff diff-from is set and partition-based_incremental is set.
+				diffFrom := c.String("diff-from")
+				if len(diffFrom) > 0 && c.Bool("partition-based-incremental") {
+					b.SetIncrementalBackupPolicy(c.Bool("partition-based-incremental"))
+				}
+				return b.CreateToRemote(c.Args().First(), c.String("t"), diffFrom, c.Bool("s"), c.Bool("rbac"), c.Bool("configs"), version)
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -130,6 +140,11 @@ func main() {
 					Name:   "configs, backup-configs, do-backup-configs",
 					Hidden: false,
 					Usage:  "Backup ClickHouse server configuration files only",
+				},
+				cli.BoolFlag{
+					Name:   "partition-based-incremental",
+					Hidden: false,
+					Usage:  "Backup parts based incremental backup policy",
 				},
 			),
 		},
