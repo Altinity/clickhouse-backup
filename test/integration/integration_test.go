@@ -814,12 +814,13 @@ func TestLongListRemote(t *testing.T) {
 
 	r.Greater(firstDuration, cashedDuration)
 
-	startCasheClear := time.Now()
+	r.NoError(dockerExec("clickhouse", "rm", "-Rfv", "/tmp/.clickhouse-backup-metadata.cache.S3"))
+	startCacheClear := time.Now()
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "list", "remote"))
-	casheClearDuration := time.Since(startCasheClear)
+	cacheClearDuration := time.Since(startCacheClear)
 
-	r.Greater(casheClearDuration, cashedDuration)
-	log.Infof("firstDuration=%s cachedDuration=%s cacheClearDuration=%s", firstDuration.String(), cashedDuration.String(), casheClearDuration.String())
+	r.Greater(cacheClearDuration, cashedDuration)
+	log.Infof("firstDuration=%s cachedDuration=%s cacheClearDuration=%s", firstDuration.String(), cashedDuration.String(), cacheClearDuration.String())
 }
 
 func testCommon(t *testing.T, remoteStorageType string) {
