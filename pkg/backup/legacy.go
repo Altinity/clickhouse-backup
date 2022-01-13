@@ -21,7 +21,7 @@ func addRestoreTable(tables ListOfTables, table metadata.TableMetadata) ListOfTa
 	return append(tables, table)
 }
 
-func parseSchemaPattern(metadataPath string, tablePattern string, dropTable bool) (ListOfTables, error) {
+func parseSchemaPattern(metadataPath string, tablePattern string, dropTable bool, parseSchemaForDrop bool) (ListOfTables, error) {
 	result := ListOfTables{}
 	tablePatterns := []string{"*"}
 
@@ -74,7 +74,15 @@ func parseSchemaPattern(metadataPath string, tablePattern string, dropTable bool
 			if err := json.Unmarshal(data, &t); err != nil {
 				return err
 			}
-			result = addRestoreTable(result, t)
+			//
+			// If PartsBasedIncremental (original policy) is true, we drop table.
+			// If PartBasedIncremental policy is false, we just attach partition and DO NOT DROP TABLE!
+			//
+			if parseSchemaForDrop && !t.PartsBasedIncremental {
+				continue
+			} else {
+				result = addRestoreTable(result, t)
+			}
 			return nil
 		}
 		return nil

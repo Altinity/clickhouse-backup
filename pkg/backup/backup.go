@@ -146,6 +146,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 	var t []metadata.TableTitle
 	for _, table := range tables {
 		log := log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Name))
+
 		if table.Skip {
 			continue
 		}
@@ -165,12 +166,13 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 		}
 		log.Debug("create metadata")
 		metadataSize, err := createMetadata(ch, backupPath, metadata.TableMetadata{
-			Table:      table.Name,
-			Database:   table.Database,
-			Query:      table.CreateTableQuery,
-			TotalBytes: table.TotalBytes,
-			Size:       realSize,
-			Parts:      partitions,
+			Table:                 table.Name,
+			Database:              table.Database,
+			Query:                 table.CreateTableQuery,
+			TotalBytes:            table.TotalBytes,
+			Size:                  realSize,
+			Parts:                 partitions,
+			PartsBasedIncremental: cfg.General.BackUpPartsBasedIncremental,
 		})
 		if err != nil {
 			if removeBackupErr := RemoveBackupLocal(cfg, backupName); removeBackupErr != nil {
@@ -179,10 +181,14 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 			return err
 		}
 		backupMetadataSize += metadataSize
+
+		// In Partitionbased
+		// if cfg.General.BackUpPartsBasedIncremental {
 		t = append(t, metadata.TableTitle{
 			Database: table.Database,
 			Table:    table.Name,
 		})
+		// }
 		log.Infof("done")
 	}
 	backupRBACSize, backupConfigSize := uint64(0), uint64(0)

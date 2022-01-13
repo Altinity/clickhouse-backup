@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"golang.org/x/sync/errgroup"
-	"golang.org/x/sync/semaphore"
 	"io/ioutil"
 	"os"
 	"path"
 	"time"
+
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
@@ -102,9 +103,9 @@ func (b *Backuper) Download(backupName string, tablePattern string, schemaOnly b
 		log.Warnf("'%s' is old-format backup", backupName)
 		return legacyDownload(b.cfg, b.DefaultDataPath, backupName)
 	}
-	if len(remoteBackup.Tables) == 0 && !b.cfg.General.AllowEmptyBackups {
-		return fmt.Errorf("'%s' is empty backup", backupName)
-	}
+	// if len(remoteBackup.Tables) == 0 && !b.cfg.General.AllowEmptyBackups {
+	// 	return fmt.Errorf("'%s' is empty backup", backupName)
+	// }
 	tablesForDownload := parseTablePatternForDownload(remoteBackup.Tables, tablePattern)
 	tableMetadataForDownload := make([]metadata.TableMetadata, len(tablesForDownload))
 

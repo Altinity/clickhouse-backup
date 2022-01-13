@@ -70,12 +70,12 @@ func Restore(cfg *config.Config, backupName string, tablePattern string, schemaO
 				}
 			}
 		}
-		if len(backupMetadata.Tables) == 0 {
-			log.Warnf("'%s' doesn't contains tables for restore", backupName)
-			if (!rbacOnly) && (!configsOnly) {
-				return nil
-			}
-		}
+		// if len(backupMetadata.Tables) == 0 {
+		// 	log.Warnf("'%s' doesn't contains tables for restore", backupName)
+		// 	if (!rbacOnly) && (!configsOnly) {
+		// 		return nil
+		// 	}
+		// }
 	} else if !os.IsNotExist(err) { // Legacy backups don't contain metadata.json
 		return err
 	}
@@ -227,17 +227,17 @@ func RestoreSchema(cfg *config.Config, ch *clickhouse.ClickHouse, backupName str
 	if !info.IsDir() {
 		return fmt.Errorf("%s is not a dir", metadataPath)
 	}
+
 	if tablePattern == "" {
 		tablePattern = "*"
 	}
-	tablesForRestore, err := parseSchemaPattern(metadataPath, tablePattern, dropTable)
+	tablesForRestore, err := parseSchemaPattern(metadataPath, tablePattern, dropTable, true)
 	if err != nil {
 		return err
 	}
-	if len(tablesForRestore) == 0 {
-		return fmt.Errorf("no have found schemas by %s in %s", tablePattern, backupName)
-	}
-
+	// if len(tablesForRestore) == 0 {
+	// 	return fmt.Errorf("no have found schemas by %s in %s", tablePattern, backupName)
+	// }
 	if dropErr := dropExistsTables(cfg, ch, tablesForRestore, version, log); dropErr != nil {
 		return dropErr
 	}
@@ -245,6 +245,7 @@ func RestoreSchema(cfg *config.Config, ch *clickhouse.ClickHouse, backupName str
 	if restoreErr := createTables(cfg, ch, tablesForRestore, version, log); restoreErr != nil {
 		return restoreErr
 	}
+
 	return nil
 }
 
@@ -349,7 +350,7 @@ func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName strin
 		tablesForRestore, err = ch.GetBackupTablesLegacy(backupName)
 	} else {
 		metadataPath := path.Join(defaultDataPath, "backup", backupName, "metadata")
-		tablesForRestore, err = parseSchemaPattern(metadataPath, tablePattern, false)
+		tablesForRestore, err = parseSchemaPattern(metadataPath, tablePattern, false, false)
 	}
 	if err != nil {
 		return err

@@ -43,11 +43,12 @@ type TableMetadata struct {
 	Query       string            `json:"query"`
 	// UUID        string            `json:"uuid,omitempty"`
 	// Macros ???
-	Size                 map[string]int64 `json:"size"`                  // сколько занимает бэкап на каждом диске
-	TotalBytes           uint64           `json:"total_bytes,omitempty"` // общий объём бэкапа
-	DependencesTable     string           `json:"dependencies_table,omitempty"`
-	DependenciesDatabase string           `json:"dependencies_database,omitempty"`
-	MetadataOnly         bool             `json:"metadata_only"`
+	Size                  map[string]int64 `json:"size"`                  // сколько занимает бэкап на каждом диске
+	TotalBytes            uint64           `json:"total_bytes,omitempty"` // общий объём бэкапа
+	DependencesTable      string           `json:"dependencies_table,omitempty"`
+	DependenciesDatabase  string           `json:"dependencies_database,omitempty"`
+	MetadataOnly          bool             `json:"metadata_only"`
+	PartsBasedIncremental bool             `json:"parts_based_incremental"`
 }
 
 type Part struct {

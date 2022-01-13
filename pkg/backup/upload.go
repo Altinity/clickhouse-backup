@@ -66,7 +66,7 @@ func (b *Backuper) Upload(backupName, tablePattern, diffFrom string, schemaOnly 
 	var tablesForUpload ListOfTables
 	if len(backupMetadata.Tables) != 0 {
 		metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
-		tablesForUpload, err = parseSchemaPattern(metadataPath, tablePattern, false)
+		tablesForUpload, err = parseSchemaPattern(metadataPath, tablePattern, false, false)
 		if err != nil {
 			return err
 		}
@@ -81,7 +81,7 @@ func (b *Backuper) Upload(backupName, tablePattern, diffFrom string, schemaOnly 
 		if len(diffFromBackup.Tables) != 0 {
 			backupMetadata.RequiredBackup = diffFrom
 			metadataPath := path.Join(b.DefaultDataPath, "backup", diffFrom, "metadata")
-			diffTablesList, err := parseSchemaPattern(metadataPath, tablePattern, false)
+			diffTablesList, err := parseSchemaPattern(metadataPath, tablePattern, false, false)
 			if err != nil {
 				return err
 			}
@@ -329,16 +329,21 @@ func (b *Backuper) markDuplicatedParts(backup *metadata.BackupMetadata, existsTa
 						apexLog.Debugf("part '%s' and '%s' must be the same: %v", existsPath, newPath, err)
 						continue
 					}
-					// Required : this part is duplicated with some part of existTable.
 					newParts[i].Required = true
 				}
 			} else {
-				for i := range newParts {
+				for i := 0; i < len(newParts); {
+					// Mark to remove duplicated parts under this policy.
+					// newParts[i].RemovePartsBasedOnPartitionIncrementalPolicy = true
 					if _, ok := existsPartitionMap[strings.Split(newParts[i].Name, "_")[0]]; ok {
-						// Required : this part is duplicated with some part of existTable.
-						newParts[i].Required = true
+						// Required = Not upload.
+						newParts = append(newParts[:i], newParts[i+1:]...)
+					} else {
+						i++
+						// We should remove this part.
 					}
 				}
+				newTable.Parts[disk] = newParts
 			}
 		}
 	}
@@ -400,9 +405,9 @@ func (b *Backuper) ReadBackupMetadata(backupName string) (*metadata.BackupMetada
 	if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
 		return nil, err
 	}
-	if len(backupMetadata.Tables) == 0 && !b.cfg.General.AllowEmptyBackups {
-		return nil, fmt.Errorf("'%s' is empty backup", backupName)
-	}
+	// if len(backupMetadata.Tables) == 0 && !b.cfg.General.AllowEmptyBackups {
+	// 	return nil, fmt.Errorf("'%s' is empty backup", backupName)
+	// }
 	return &backupMetadata, nil
 }
 
