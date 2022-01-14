@@ -545,7 +545,7 @@ func (ch *ClickHouse) CopyData(backupName string, backupTable metadata.TableMeta
 				}
 				return ch.Chown(dstFilePath)
 			}); err != nil {
-				return fmt.Errorf("error during filepath.Walk for partition '%s': %w", part.Name, err)
+				return fmt.Errorf("error during filepath.Walk for part '%s': %w", part.Name, err)
 			}
 		}
 	}
