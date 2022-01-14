@@ -34,7 +34,7 @@ type DatabasesMeta struct {
 }
 
 type TableMetadata struct {
-	Files map[string][]string `json:"files,omitempty"`
+	DiskToFiles map[string][]string `json:"files,omitempty"`
 	// Disks       map[string]string   `json:"disks"` // "default": "/var/lib/clickhouse"
 	Table       string            `json:"table"`
 	Database    string            `json:"database"`

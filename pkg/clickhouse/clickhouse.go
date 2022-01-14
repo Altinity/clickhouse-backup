@@ -506,8 +506,8 @@ func (ch *ClickHouse) CopyData(backupName string, backupTable metadata.TableMeta
 		}
 		detachedParentDir := filepath.Join(dstDataPaths[backupDisk.Name], "detached")
 		log.Debugf("detachedParentDir=%s", detachedParentDir)
-		for _, partition := range backupTable.Parts[backupDisk.Name] {
-			detachedPath := filepath.Join(detachedParentDir, partition.Name)
+		for _, part := range backupTable.Parts[backupDisk.Name] {
+			detachedPath := filepath.Join(detachedParentDir, part.Name)
 			log.Debugf("detachedPath=%s", detachedPath)
 			info, err := os.Stat(detachedPath)
 			if err != nil {
@@ -522,16 +522,16 @@ func (ch *ClickHouse) CopyData(backupName string, backupTable metadata.TableMeta
 				return fmt.Errorf("'%s' should be directory or absent", detachedPath)
 			}
 			uuid := path.Join(TablePathEncode(backupTable.Database), TablePathEncode(backupTable.Table))
-			partitionPath := path.Join(backupDisk.Path, "backup", backupName, "shadow", uuid, backupDisk.Name, partition.Name)
+			partPath := path.Join(backupDisk.Path, "backup", backupName, "shadow", uuid, backupDisk.Name, part.Name)
 			// Legacy backup support
-			if _, err := os.Stat(partitionPath); os.IsNotExist(err) {
-				partitionPath = path.Join(backupDisk.Path, "backup", backupName, "shadow", uuid, partition.Name)
+			if _, err := os.Stat(partPath); os.IsNotExist(err) {
+				partPath = path.Join(backupDisk.Path, "backup", backupName, "shadow", uuid, part.Name)
 			}
-			if err := filepath.Walk(partitionPath, func(filePath string, info os.FileInfo, err error) error {
+			if err := filepath.Walk(partPath, func(filePath string, info os.FileInfo, err error) error {
 				if err != nil {
 					return err
 				}
-				filename := strings.Trim(strings.TrimPrefix(filePath, partitionPath), "/")
+				filename := strings.Trim(strings.TrimPrefix(filePath, partPath), "/")
 				dstFilePath := filepath.Join(detachedPath, filename)
 				if info.IsDir() {
 					return ch.Mkdir(dstFilePath)
@@ -545,13 +545,14 @@ func (ch *ClickHouse) CopyData(backupName string, backupTable metadata.TableMeta
 				}
 				return ch.Chown(dstFilePath)
 			}); err != nil {
-				return fmt.Errorf("error during filepath.Walk for partition '%s': %w", partition.Name, err)
+				return fmt.Errorf("error during filepath.Walk for partition '%s': %w", part.Name, err)
 			}
 		}
 	}
 	return nil
 }
 
+//
 // AttachPartitions - execute ATTACH command for specific table
 func (ch *ClickHouse) AttachPartitions(table metadata.TableMetadata, disks []Disk) error {
 	for _, disk := range disks {

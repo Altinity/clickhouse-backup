@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"golang.org/x/sync/errgroup"
-	"golang.org/x/sync/semaphore"
 	"io/ioutil"
 	"os"
 	"path"
 	"time"
+
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
@@ -158,7 +159,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, schemaOnly b
 	if !schemaOnly {
 		for _, t := range tableMetadataForDownload {
 			for disk := range t.Parts {
-				if _, ok := b.DiskMap[disk]; !ok {
+				if _, ok := b.DiskToPathMap[disk]; !ok {
 					return fmt.Errorf("table '%s.%s' require disk '%s' that not found in clickhouse, you can add nonexistent disks to disk_mapping config", t.Database, t.Table, disk)
 				}
 			}
@@ -257,15 +258,15 @@ func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table
 
 	if remoteBackup.DataFormat != "directory" {
 		capacity := 0
-		for disk := range table.Files {
-			capacity += len(table.Files[disk])
+		for disk := range table.DiskToFiles {
+			capacity += len(table.DiskToFiles[disk])
 		}
-		apexLog.Debugf("start downloadTableData %s.%s with concurrency=%d len(table.Files[...])=%d", table.Database, table.Table, b.cfg.General.DownloadConcurrency, capacity)
+		apexLog.Debugf("start downloadTableData %s.%s with concurrency=%d len(table.DiskToFiles[...])=%d", table.Database, table.Table, b.cfg.General.DownloadConcurrency, capacity)
 
-		for disk := range table.Files {
-			diskPath := b.DiskMap[disk]
-			tableLocalDir := path.Join(diskPath, "backup", remoteBackup.BackupName, "shadow", dbAndTableDir, disk)
-			for _, archiveFile := range table.Files[disk] {
+		for disk := range table.DiskToFiles {
+			backupPath := b.DiskToPathMap[disk]
+			tableLocalDir := path.Join(backupPath, "backup", remoteBackup.BackupName, "shadow", dbAndTableDir, disk)
+			for _, archiveFile := range table.DiskToFiles[disk] {
 				if err := s.Acquire(ctx, 1); err != nil {
 					apexLog.Errorf("can't acquire semaphore during downloadTableData: %v", err)
 					break
@@ -294,7 +295,7 @@ func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table
 				break
 			}
 			tableRemotePath := path.Join(remoteBackup.BackupName, "shadow", dbAndTableDir, disk)
-			diskPath := b.DiskMap[disk]
+			diskPath := b.DiskToPathMap[disk]
 			tableLocalDir := path.Join(diskPath, "backup", remoteBackup.BackupName, "shadow", dbAndTableDir, disk)
 			g.Go(func() error {
 				apexLog.Debugf("start download from %s", tableRemotePath)
@@ -317,8 +318,8 @@ func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table
 			if !p.Required {
 				continue
 			}
-			existsPath := path.Join(b.DiskMap[disk], "backup", remoteBackup.RequiredBackup, "shadow", dbAndTableDir, disk, p.Name)
-			newPath := path.Join(b.DiskMap[disk], "backup", remoteBackup.BackupName, "shadow", dbAndTableDir, disk, p.Name)
+			existsPath := path.Join(b.DiskToPathMap[disk], "backup", remoteBackup.RequiredBackup, "shadow", dbAndTableDir, disk, p.Name)
+			newPath := path.Join(b.DiskToPathMap[disk], "backup", remoteBackup.BackupName, "shadow", dbAndTableDir, disk, p.Name)
 			if err := duplicatePart(existsPath, newPath); err != nil {
 				return fmt.Errorf("can't to add exists part: %s", err)
 			}

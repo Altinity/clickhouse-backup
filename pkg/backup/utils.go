@@ -14,7 +14,7 @@ import (
 
 func moveShadow(shadowPath, backupPartsPath string) ([]metadata.Part, int64, error) {
 	size := int64(0)
-	partitions := []metadata.Part{}
+	parts := []metadata.Part{}
 	err := filepath.Walk(shadowPath, func(filePath string, info os.FileInfo, err error) error {
 		relativePath := strings.Trim(strings.TrimPrefix(filePath, shadowPath), "/")
 		pathParts := strings.SplitN(relativePath, "/", 4)
@@ -24,7 +24,7 @@ func moveShadow(shadowPath, backupPartsPath string) ([]metadata.Part, int64, err
 		}
 		dstFilePath := filepath.Join(backupPartsPath, pathParts[3])
 		if info.IsDir() {
-			partitions = append(partitions, metadata.Part{
+			parts = append(parts, metadata.Part{
 				Name: pathParts[3],
 			})
 			return os.MkdirAll(dstFilePath, 0750)
@@ -36,7 +36,7 @@ func moveShadow(shadowPath, backupPartsPath string) ([]metadata.Part, int64, err
 		size += info.Size()
 		return os.Rename(filePath, dstFilePath)
 	})
-	return partitions, size, err
+	return parts, size, err
 }
 
 func copyFile(srcFile string, dstFile string) error {
