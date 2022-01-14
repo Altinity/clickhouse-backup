@@ -5,8 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"golang.org/x/sync/errgroup"
-	"golang.org/x/sync/semaphore"
 	"io/ioutil"
 	"os"
 	"path"
@@ -14,6 +12,9 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
@@ -240,12 +241,12 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 	g, ctx := errgroup.WithContext(context.Background())
 	var uploadedBytes int64
 	for disk := range table.Parts {
-		backupPath := path.Join(b.DiskMap[disk], "backup", backupName, "shadow", uuid, disk)
+		backupPath := path.Join(b.DiskToPathMap[disk], "backup", backupName, "shadow", uuid, disk)
 		parts, err := separateParts(backupPath, table.Parts[disk], b.cfg.General.MaxFileSize)
 		if err != nil {
 			return nil, 0, err
 		}
-		for i, p := range parts {
+		for i, part := range parts {
 			if err := s.Acquire(ctx, 1); err != nil {
 				apexLog.Errorf("can't acquire semaphore during Upload: %v", err)
 				break
@@ -258,7 +259,7 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 			fileName := fmt.Sprintf("%s_%d.%s", disk, i+1, b.cfg.GetArchiveExtension())
 			metdataFiles[disk] = append(metdataFiles[disk], fileName)
 			remoteDataFile := path.Join(remoteDataPath, fileName)
-			localFiles := p
+			localFiles := part
 			g.Go(func() error {
 				apexLog.Debugf("start upload %d files to %s", len(localFiles), remoteDataFile)
 				defer s.Release(1)
@@ -313,8 +314,8 @@ func (b *Backuper) markDuplicatedParts(backup *metadata.BackupMetadata, existsTa
 					continue
 				}
 				uuid := path.Join(clickhouse.TablePathEncode(existsTable.Database), clickhouse.TablePathEncode(existsTable.Table))
-				existsPath := path.Join(b.DiskMap[disk], "backup", backup.RequiredBackup, "shadow", uuid, disk, newParts[i].Name)
-				newPath := path.Join(b.DiskMap[disk], "backup", backup.BackupName, "shadow", uuid, disk, newParts[i].Name)
+				existsPath := path.Join(b.DiskToPathMap[disk], "backup", backup.RequiredBackup, "shadow", uuid, disk, newParts[i].Name)
+				newPath := path.Join(b.DiskToPathMap[disk], "backup", backup.BackupName, "shadow", uuid, disk, newParts[i].Name)
 
 				if err := isDuplicatedParts(existsPath, newPath); err != nil {
 					apexLog.Debugf("part '%s' and '%s' must be the same: %v", existsPath, newPath, err)

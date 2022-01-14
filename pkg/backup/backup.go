@@ -113,7 +113,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 	if err != nil {
 		return err
 	}
-	// create backup dir on all clickhouse disks
+	// Create backup dir on all clickhouse disks
 	for _, disk := range disks {
 		if err := ch.Mkdir(path.Join(disk.Path, "backup")); err != nil {
 			return err
@@ -138,17 +138,17 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 	}
 	var backupDataSize, backupMetadataSize uint64
 
-	var t []metadata.TableTitle
+	var tableMetas []metadata.TableTitle
 	for _, table := range tables {
 		log := log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Name))
 		if table.Skip {
 			continue
 		}
 		var realSize map[string]int64
-		var partitions map[string][]metadata.Part
+		var disksToPartsMap map[string][]metadata.Part
 		if doBackupData {
 			log.Debug("create data")
-			partitions, realSize, err = AddTableToBackup(ch, backupName, disks, &table)
+			disksToPartsMap, realSize, err = AddTableToBackup(ch, backupName, disks, &table)
 			if err != nil {
 				log.Error(err.Error())
 				if removeBackupErr := RemoveBackupLocal(cfg, backupName); removeBackupErr != nil {
@@ -165,7 +165,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 			Query:      table.CreateTableQuery,
 			TotalBytes: table.TotalBytes,
 			Size:       realSize,
-			Parts:      partitions,
+			Parts:      disksToPartsMap,
 		})
 		if err != nil {
 			if removeBackupErr := RemoveBackupLocal(cfg, backupName); removeBackupErr != nil {
@@ -174,7 +174,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 			return err
 		}
 		backupMetadataSize += metadataSize
-		t = append(t, metadata.TableTitle{
+		tableMetas = append(tableMetas, metadata.TableTitle{
 			Database: table.Database,
 			Table:    table.Name,
 		})
@@ -210,7 +210,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 		RBACSize:          backupRBACSize,
 		ConfigSize:        backupConfigSize,
 		// CompressedSize: ,
-		Tables:    t,
+		Tables:    tableMetas,
 		Databases: []metadata.DatabasesMeta{},
 	}
 	for _, database := range allDatabases {
@@ -293,7 +293,7 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, diskList []c
 	}
 	log.Debug("freezed")
 	realSize := map[string]int64{}
-	partitions := map[string][]metadata.Part{}
+	disksToPartsMap := map[string][]metadata.Part{}
 	for _, disk := range diskList {
 		shadowPath := path.Join(disk.Path, "shadow", backupID)
 		if _, err := os.Stat(shadowPath); err != nil && os.IsNotExist(err) {
@@ -305,22 +305,23 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, diskList []c
 		if err := ch.MkdirAll(backupShadowPath); err != nil && !os.IsExist(err) {
 			return nil, nil, err
 		}
+
 		parts, size, err := moveShadow(shadowPath, backupShadowPath)
 		if err != nil {
 			return nil, nil, err
 		}
 		realSize[disk.Name] = size
-		partitions[disk.Name] = parts
+		disksToPartsMap[disk.Name] = parts
 		log.WithField("disk", disk.Name).Debug("shadow moved")
 		if err := os.RemoveAll(shadowPath); err != nil {
-			return partitions, realSize, err
+			return disksToPartsMap, realSize, err
 		}
 	}
 	if err := ch.CleanShadow(backupID); err != nil {
-		return partitions, realSize, err
+		return disksToPartsMap, realSize, err
 	}
 	log.Debug("done")
-	return partitions, realSize, nil
+	return disksToPartsMap, realSize, nil
 }
 
 func createMetadata(ch *clickhouse.ClickHouse, backupPath string, table metadata.TableMetadata) (uint64, error) {
