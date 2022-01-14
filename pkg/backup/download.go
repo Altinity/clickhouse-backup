@@ -258,15 +258,15 @@ func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table
 
 	if remoteBackup.DataFormat != "directory" {
 		capacity := 0
-		for disk := range table.DiskToFiles {
-			capacity += len(table.DiskToFiles[disk])
+		for disk := range table.Files {
+			capacity += len(table.Files[disk])
 		}
-		apexLog.Debugf("start downloadTableData %s.%s with concurrency=%d len(table.DiskToFiles[...])=%d", table.Database, table.Table, b.cfg.General.DownloadConcurrency, capacity)
+		apexLog.Debugf("start downloadTableData %s.%s with concurrency=%d len(table.Files[...])=%d", table.Database, table.Table, b.cfg.General.DownloadConcurrency, capacity)
 
-		for disk := range table.DiskToFiles {
+		for disk := range table.Files {
 			backupPath := b.DiskToPathMap[disk]
 			tableLocalDir := path.Join(backupPath, "backup", remoteBackup.BackupName, "shadow", dbAndTableDir, disk)
-			for _, archiveFile := range table.DiskToFiles[disk] {
+			for _, archiveFile := range table.Files[disk] {
 				if err := s.Acquire(ctx, 1); err != nil {
 					apexLog.Errorf("can't acquire semaphore during downloadTableData: %v", err)
 					break

@@ -125,7 +125,7 @@ func (b *Backuper) Upload(backupName, tablePattern, diffFrom string, schemaOnly 
 					return err
 				}
 				atomic.AddInt64(&compressedDataSize, uploadedBytes)
-				tablesForUpload[idx].DiskToFiles = files
+				tablesForUpload[idx].Files = files
 			}
 			tableMetadataSize, err := b.uploadTableMetadata(backupName, tablesForUpload[idx])
 			if err != nil {
