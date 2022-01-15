@@ -607,7 +607,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 			api.metrics.LastDuration["create"].Set(float64(time.Since(start).Nanoseconds()))
 			api.metrics.LastFinish["create"].Set(float64(time.Now().Unix()))
 		}()
-		err := backup.CreateBackup(cfg, backupName, tablePattern, schemaOnly, rbacOnly, configsOnly, api.clickhouseBackupVersion)
+		err := backup.CreateBackup(cfg, backupName, tablePattern, "", schemaOnly, rbacOnly, configsOnly, api.clickhouseBackupVersion)
 		defer api.status.stop(err)
 		if err != nil {
 			api.metrics.FailedCounter["create"].Inc()
