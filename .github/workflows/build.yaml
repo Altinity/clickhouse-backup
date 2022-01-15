@@ -50,6 +50,7 @@ jobs:
           GOROOT: ${{ env.GOROOT_1_17_X64 }}
         run: |
           make build-race
+          make build/linux/amd64/clickhouse-backup build/linux/arm64/clickhouse-backup
           make config
           make test
 
@@ -148,8 +149,8 @@ jobs:
       - name: Running integration tests
         env:
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
-          RUN_TESTS: "TestSkipNotExistsTable"
-          LOG_LEVEL: "debug"
+          # RUN_TESTS: "TestSkipNotExistsTable"
+          # LOG_LEVEL: "debug"
           # FTP_DEBUG: "true"
           CGO_ENABLED: 0
           GCS_TESTS: ${{ needs.build.outputs.GCS_TESTS }}
