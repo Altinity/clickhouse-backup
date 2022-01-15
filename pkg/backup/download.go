@@ -125,7 +125,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, schemaOnly b
 	for i, t := range tablesForDownload {
 		start := time.Now()
 		log := log.WithField("table_metadata", fmt.Sprintf("%s.%s", t.Database, t.Table))
-		remoteTableMetadata := path.Join(backupName, "metadata", clickhouse.common.TablePathEncode(t.Database), fmt.Sprintf("%s.json", clickhouse.common.TablePathEncode(t.Table)))
+		remoteTableMetadata := path.Join(backupName, "metadata", common.TablePathEncode(t.Database), fmt.Sprintf("%s.json", common.TablePathEncode(t.Table)))
 		tmReader, err := b.dst.GetFileReader(remoteTableMetadata)
 		if err != nil {
 			return err
