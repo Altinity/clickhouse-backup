@@ -8,6 +8,7 @@ IMPROVEMENTS
 - Add support encrypted disk (include s3 encrypted disks), fix [#260](https://github.com/AlexAkulov/clickhouse-backup/issues/260)
 - API Server optimize `last_backup_size_remote` metric calculation to make it async during REST API startup and after download/upload, fix [#309](https://github.com/AlexAkulov/clickhouse-backup/issues/309)
 - Improve list remote speed via local metadata cache, fix [#318](https://github.com/AlexAkulov/clickhouse-backup/issues/318)
+- Add `CLICKHOUSE_IGNORE_NOT_EXISTS_ERROR_DURING_FREEZE` option, fix [#319](https://github.com/AlexAkulov/clickhouse-backup/issues/319)
 
 BUG FIXES
 - fix [#331](https://github.com/AlexAkulov/clickhouse-backup/issues/331), properly restore tables where have table name with the same name as database name

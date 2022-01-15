@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -822,6 +823,71 @@ func TestLongListRemote(t *testing.T) {
 	log.Infof("firstDuration=%s cachedDuration=%s cacheClearDuration=%s", firstDuration.String(), cashedDuration.String(), cacheClearDuration.String())
 }
 
+func TestSkipNotExistsTable(t *testing.T) {
+	ch := &TestClickHouse{}
+	r := require.New(t)
+	ch.connectWithWait(r)
+	defer ch.chbackup.Close()
+
+	log.Info("Check skip not exist errors")
+	ifNotExistsCreateSQL := "CREATE TABLE IF NOT EXISTS default.if_not_exists (id UInt64) ENGINE=MergeTree() ORDER BY id"
+	chVersion, err := ch.chbackup.GetVersion()
+	r.NoError(err)
+
+	errorCatched := false
+	pauseChannel := make(chan int64)
+	resumeChannel := make(chan int64)
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer func() {
+			close(pauseChannel)
+			wg.Done()
+		}()
+		pause := int64(0)
+		for i := 0; i < 5; i++ {
+			testBackupName := fmt.Sprintf("not_exists_%d", i)
+			_, err = ch.chbackup.Query(ifNotExistsCreateSQL)
+			r.NoError(err)
+			pauseChannel <- pause
+			startTime := time.Now()
+			out, err := dockerExecOut("clickhouse", "bash", "-c", "clickhouse-backup create --table default.if_not_exists "+testBackupName)
+			log.Debug(out)
+			pause = time.Since(startTime).Microseconds() * 96 / 100
+			assert.NoError(t, err)
+			if strings.Contains(out, "warn") && strings.Contains(out, "can't freeze") && strings.Contains(out, "code: 60") {
+				errorCatched = true
+				<-resumeChannel
+				r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
+				break
+			}
+			if err == nil {
+				err = dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName)
+				assert.NoError(t, err)
+			}
+			<-resumeChannel
+		}
+	}()
+	wg.Add(1)
+	go func() {
+		defer func() {
+			close(resumeChannel)
+			wg.Done()
+		}()
+		for pause := range pauseChannel {
+			if pause > 0 {
+				log.Infof("pause=%d", pause)
+				time.Sleep(time.Duration(pause) * time.Microsecond)
+				err = ch.chbackup.DropTable(clickhouse.Table{Database: "default", Name: "if_not_exists"}, ifNotExistsCreateSQL, "", chVersion)
+				r.NoError(err)
+			}
+			resumeChannel <- 1
+		}
+	}()
+	wg.Wait()
+	r.True(errorCatched)
+}
 func testCommon(t *testing.T, remoteStorageType string) {
 	var out string
 	var err error

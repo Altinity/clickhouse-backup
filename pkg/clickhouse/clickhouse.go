@@ -366,7 +366,11 @@ func (ch *ClickHouse) FreezeTableOldWay(table *Table, name string) error {
 			)
 		}
 		if _, err := ch.Query(query); err != nil {
-			return fmt.Errorf("can't freeze partition '%s': %w", item.PartitionID, err)
+			if strings.Contains(err.Error(), "code: 60") && ch.Config.IgnoreNotExistsErrorDuringFreeze {
+				log.Warnf("can't freeze partition: %v", err)
+			} else {
+				return fmt.Errorf("can't freeze partition '%s': %w", item.PartitionID, err)
+			}
 		}
 	}
 	return nil
@@ -396,6 +400,10 @@ func (ch *ClickHouse) FreezeTable(table *Table, name string) error {
 	}
 	query := fmt.Sprintf("ALTER TABLE `%s`.`%s` FREEZE %s;", table.Database, table.Name, withNameQuery)
 	if _, err := ch.Query(query); err != nil {
+		if strings.Contains(err.Error(), "code: 60") && ch.Config.IgnoreNotExistsErrorDuringFreeze {
+			log.Warnf("can't freeze table: %v", err)
+			return nil
+		}
 		return fmt.Errorf("can't freeze table: %v", err)
 	}
 	return nil
