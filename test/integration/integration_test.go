@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/AlexAkulov/clickhouse-backup/internal/logcli"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -368,6 +369,7 @@ var incrementData = []TestDataStruct{
 }
 
 func init() {
+	log.SetHandler(logcli.New(os.Stdout))
 	logLevel := "info"
 	if os.Getenv("LOG_LEVEL") != "" {
 		logLevel = os.Getenv("LOG_LEVEL")
@@ -848,6 +850,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 			wg.Done()
 		}()
 		pause := int64(0)
+		pausePercent := int64(93)
 		for i := 0; i < 100; i++ {
 			testBackupName := fmt.Sprintf("not_exists_%d", i)
 			_, err = ch.chbackup.Query(ifNotExistsCreateSQL)
@@ -857,13 +860,16 @@ func TestSkipNotExistsTable(t *testing.T) {
 			pauseChannel <- pause
 			startTime := time.Now()
 			out, err := dockerExecOut("clickhouse", "bash", "-c", "LOG_LEVEL=debug clickhouse-backup create --table default.if_not_exists "+testBackupName)
+			pause = time.Since(startTime).Nanoseconds() * pausePercent / 100
 			log.Info(out)
 			if err != nil {
 				if !strings.Contains(out, "no tables for backup") {
 					assert.NoError(t, err)
+				} else {
+					pausePercent += 1
 				}
 			}
-			pause = time.Since(startTime).Microseconds() * int64(93+rand.Intn(6)) / 100
+
 			if strings.Contains(out, "warn") && strings.Contains(out, "can't freeze") && strings.Contains(out, "code: 60") && err == nil {
 				errorCatched = true
 				<-resumeChannel
@@ -885,8 +891,8 @@ func TestSkipNotExistsTable(t *testing.T) {
 		}()
 		for pause := range pauseChannel {
 			if pause > 0 {
-				time.Sleep(time.Duration(pause) * time.Microsecond)
-				log.Infof("pause=%d", pause)
+				time.Sleep(time.Duration(pause) * time.Nanosecond)
+				log.Infof("pause=%s", time.Duration(pause).String())
 				err = ch.chbackup.DropTable(clickhouse.Table{Database: "default", Name: "if_not_exists"}, ifNotExistsCreateSQL, "", chVersion)
 				r.NoError(err)
 			}
@@ -1088,6 +1094,7 @@ type TestClickHouse struct {
 }
 
 func (ch *TestClickHouse) connectWithWait(r *require.Assertions) {
+	time.Sleep(500 * time.Millisecond)
 	for i := 1; i < 11; i++ {
 		err := ch.connect()
 		if i == 10 {
