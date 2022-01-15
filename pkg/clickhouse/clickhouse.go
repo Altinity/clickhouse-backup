@@ -653,12 +653,12 @@ func (ch *ClickHouse) GetPartitions(database, table string) (map[string][]metada
 	for _, disk := range disks {
 		partitions := make([]partition, 0)
 		if len(disks) == 1 {
-			if err := SoftSelect(&partitions,
+			if err := ch.SoftSelect(&partitions,
 				fmt.Sprintf("select * from `system`.`parts` where database='%s' and table='%s' and active=1;", database, table)); err != nil {
 				return nil, err
 			}
 		} else {
-			if err := SoftSelect(&partitions,
+			if err := ch.SoftSelect(&partitions,
 				fmt.Sprintf("select * from `system`.`parts` where database='%s' and table='%s' and disk_name='%s' and active=1;", database, table, disk.Name)); err != nil {
 				return nil, err
 			}
