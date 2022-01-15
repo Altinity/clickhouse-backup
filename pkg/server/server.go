@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/utils"
 	"io/ioutil"
 	"net/http"
 	"net/http/pprof"
@@ -17,6 +16,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/AlexAkulov/clickhouse-backup/utils"
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/backup"
@@ -421,7 +422,7 @@ func (api *APIServer) actionsLog(w http.ResponseWriter, r *http.Request) {
 	if q.Get("last") != "" {
 		last, err = strconv.ParseInt(q.Get("last"), 10, 16)
 		if err != nil {
-		apexLog.Warn(err.Error())
+			apexLog.Warn(err.Error())
 			writeError(w, http.StatusInternalServerError, "actions", err)
 			return
 		}
