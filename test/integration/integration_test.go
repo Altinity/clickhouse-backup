@@ -831,12 +831,14 @@ func TestSkipNotExistsTable(t *testing.T) {
 
 	log.Info("Check skip not exist errors")
 	ifNotExistsCreateSQL := "CREATE TABLE IF NOT EXISTS default.if_not_exists (id UInt64) ENGINE=MergeTree() ORDER BY id"
+	ifNotExistsInsertSQL := "INSERT INTO default.if_not_exists SELECT number FROM numbers(1000)"
 	chVersion, err := ch.chbackup.GetVersion()
 	r.NoError(err)
 
 	errorCatched := false
 	pauseChannel := make(chan int64)
 	resumeChannel := make(chan int64)
+	rand.Seed(time.Now().UnixNano())
 
 	wg := sync.WaitGroup{}
 	wg.Add(1)
@@ -850,13 +852,19 @@ func TestSkipNotExistsTable(t *testing.T) {
 			testBackupName := fmt.Sprintf("not_exists_%d", i)
 			_, err = ch.chbackup.Query(ifNotExistsCreateSQL)
 			r.NoError(err)
+			_, err = ch.chbackup.Query(ifNotExistsInsertSQL)
+			r.NoError(err)
 			pauseChannel <- pause
 			startTime := time.Now()
 			out, err := dockerExecOut("clickhouse", "bash", "-c", "LOG_LEVEL=debug clickhouse-backup create --table default.if_not_exists "+testBackupName)
 			log.Info(out)
-			pause = time.Since(startTime).Microseconds() * int64(90+rand.Intn(10)) / 100
-			assert.NoError(t, err)
-			if strings.Contains(out, "warn") && strings.Contains(out, "can't freeze") && strings.Contains(out, "code: 60") {
+			if err != nil {
+				if !strings.Contains(out, "no tables for backup") {
+					assert.NoError(t, err)
+				}
+			}
+			pause = time.Since(startTime).Microseconds() * int64(93+rand.Intn(6)) / 100
+			if strings.Contains(out, "warn") && strings.Contains(out, "can't freeze") && strings.Contains(out, "code: 60") && err == nil {
 				errorCatched = true
 				<-resumeChannel
 				r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
