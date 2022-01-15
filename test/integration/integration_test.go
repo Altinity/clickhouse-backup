@@ -852,8 +852,8 @@ func TestSkipNotExistsTable(t *testing.T) {
 			r.NoError(err)
 			pauseChannel <- pause
 			startTime := time.Now()
-			out, err := dockerExecOut("clickhouse", "bash", "-c", "clickhouse-backup create --table default.if_not_exists "+testBackupName)
-			log.Debug(out)
+			out, err := dockerExecOut("clickhouse", "bash", "-c", "LOG_LEVEL=debug clickhouse-backup create --table default.if_not_exists "+testBackupName)
+			log.Info(out)
 			pause = time.Since(startTime).Microseconds() * 96 / 100
 			assert.NoError(t, err)
 			if strings.Contains(out, "warn") && strings.Contains(out, "can't freeze") && strings.Contains(out, "code: 60") {
@@ -877,8 +877,8 @@ func TestSkipNotExistsTable(t *testing.T) {
 		}()
 		for pause := range pauseChannel {
 			if pause > 0 {
-				log.Infof("pause=%d", pause)
 				time.Sleep(time.Duration(pause) * time.Microsecond)
+				log.Infof("pause=%d", pause)
 				err = ch.chbackup.DropTable(clickhouse.Table{Database: "default", Name: "if_not_exists"}, ifNotExistsCreateSQL, "", chVersion)
 				r.NoError(err)
 			}
