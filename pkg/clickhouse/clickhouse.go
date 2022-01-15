@@ -166,7 +166,7 @@ func (ch *ClickHouse) getDataPathFromSystemSettings() ([]Disk, error) {
 func (ch *ClickHouse) getDataPathFromSystemDisks() ([]Disk, error) {
 	var result []Disk
 	query := "SELECT * FROM system.disks;"
-	err := ch.softSelect(&result, query)
+	err := ch.SoftSelect(&result, query)
 	return result, err
 }
 
@@ -193,7 +193,7 @@ func (ch *ClickHouse) GetTables(tablePattern string) ([]Table, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err = ch.softSelect(&tables, allTablesSQL); err != nil {
+	if err = ch.SoftSelect(&tables, allTablesSQL); err != nil {
 		return nil, err
 	}
 	for i, t := range tables {
@@ -270,7 +270,7 @@ func (ch *ClickHouse) prepareAllTablesSQL(tablePattern string, err error, skipDa
 func (ch *ClickHouse) GetDatabases() ([]Database, error) {
 	allDatabases := make([]Database, 0)
 	allDatabasesSQL := "SELECT name, engine FROM system.databases WHERE name != 'system'"
-	if err := ch.softSelect(&allDatabases, allDatabasesSQL); err != nil {
+	if err := ch.SoftSelect(&allDatabases, allDatabasesSQL); err != nil {
 		return nil, err
 	}
 	for i, db := range allDatabases {
@@ -292,7 +292,7 @@ func (ch *ClickHouse) getTableSizeFromParts(table Table) uint64 {
 		Size uint64 `db:"size"`
 	}
 	query := fmt.Sprintf("SELECT sum(bytes_on_disk) as size FROM system.parts WHERE database='%s' AND table='%s' GROUP BY database, table", table.Database, table.Name)
-	if err := ch.softSelect(&tablesSize, query); err != nil {
+	if err := ch.SoftSelect(&tablesSize, query); err != nil {
 		log.Warnf("error parsing tablesSize: %w", err)
 	}
 	if len(tablesSize) > 0 {
@@ -571,7 +571,7 @@ func IsClickhouseShadow(path string) bool {
 	return true
 }
 
-func (ch *ClickHouse) softSelect(dest interface{}, query string) error {
+func (ch *ClickHouse) SoftSelect(dest interface{}, query string) error {
 	rows, err := ch.Queryx(query)
 	if err != nil {
 		return err
@@ -653,12 +653,12 @@ func (ch *ClickHouse) GetPartitions(database, table string) (map[string][]metada
 	for _, disk := range disks {
 		partitions := make([]partition, 0)
 		if len(disks) == 1 {
-			if err := softSelect(&partitions,
+			if err := SoftSelect(&partitions,
 				fmt.Sprintf("select * from `system`.`parts` where database='%s' and table='%s' and active=1;", database, table)); err != nil {
 				return nil, err
 			}
 		} else {
-			if err := softSelect(&partitions,
+			if err := SoftSelect(&partitions,
 				fmt.Sprintf("select * from `system`.`parts` where database='%s' and table='%s' and disk_name='%s' and active=1;", database, table, disk.Name)); err != nil {
 				return nil, err
 			}
