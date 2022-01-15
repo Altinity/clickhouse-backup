@@ -13,7 +13,7 @@ type Backuper struct {
 	ch              *clickhouse.ClickHouse
 	dst             *new_storage.BackupDestination
 	Version         string
-	DiskMap         map[string]string
+	DiskToPathMap   map[string]string
 	DefaultDataPath string
 }
 
@@ -40,7 +40,7 @@ func (b *Backuper) init() error {
 	for _, disk := range disks {
 		diskMap[disk.Name] = disk.Path
 	}
-	b.DiskMap = diskMap
+	b.DiskToPathMap = diskMap
 	if b.cfg.General.RemoteStorage != "none" {
 		b.dst, err = new_storage.NewBackupDestination(b.cfg)
 		if err != nil {

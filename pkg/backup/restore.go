@@ -16,6 +16,7 @@ import (
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/filesystemhelper"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 	"github.com/AlexAkulov/clickhouse-backup/utils"
 	apexLog "github.com/apex/log"
@@ -141,7 +142,7 @@ func restoreRBAC(ch *clickhouse.ClickHouse, backupName string) error {
 			return err
 		}
 		_ = file.Close()
-		_ = ch.Chown(markFile)
+		_ = filesystemhelper.Chown(markFile, ch)
 		listFilesPattern := path.Join(accessPath, "*.list")
 		apexLog.Infof("remove %s for properly rebuild RBAC after restart clickhouse-server", listFilesPattern)
 		if listFiles, err := filepathx.Glob(listFilesPattern); err != nil {
@@ -197,7 +198,7 @@ func restoreBackupRelatedDir(ch *clickhouse.ClickHouse, backupName, backupPrefix
 	}
 	files = append(files, destinationDir)
 	for _, localFile := range files {
-		if err := ch.Chown(localFile); err != nil {
+		if err := filesystemhelper.Chown(localFile, ch); err != nil {
 			return err
 		}
 	}
@@ -407,7 +408,7 @@ func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName strin
 		dstTableDataPaths := dstTablesMap[metadata.TableTitle{
 			Database: table.Database,
 			Table:    table.Table}].DataPaths
-		if err := ch.CopyData(backupName, table, disks, dstTableDataPaths); err != nil {
+		if err := filesystemhelper.CopyData(backupName, table, disks, dstTableDataPaths, ch); err != nil {
 			return fmt.Errorf("can't restore '%s.%s': %v", table.Database, table.Table, err)
 		}
 		log.Debugf("copied data to 'detached'")

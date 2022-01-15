@@ -5,15 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"golang.org/x/sync/errgroup"
-	"golang.org/x/sync/semaphore"
 	"io/ioutil"
 	"os"
 	"path"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
+
 	"github.com/AlexAkulov/clickhouse-backup/config"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/new_storage"
 	legacyStorage "github.com/AlexAkulov/clickhouse-backup/pkg/storage"
@@ -124,7 +125,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, schemaOnly b
 	for i, t := range tablesForDownload {
 		start := time.Now()
 		log := log.WithField("table_metadata", fmt.Sprintf("%s.%s", t.Database, t.Table))
-		remoteTableMetadata := path.Join(backupName, "metadata", clickhouse.TablePathEncode(t.Database), fmt.Sprintf("%s.json", clickhouse.TablePathEncode(t.Table)))
+		remoteTableMetadata := path.Join(backupName, "metadata", common.TablePathEncode(t.Database), fmt.Sprintf("%s.json", common.TablePathEncode(t.Table)))
 		tmReader, err := b.dst.GetFileReader(remoteTableMetadata)
 		if err != nil {
 			return err
@@ -144,7 +145,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, schemaOnly b
 		tableMetadataForDownload[i] = tableMetadata
 
 		// save metadata
-		metadataLocalFile := path.Join(b.DefaultDataPath, "backup", backupName, "metadata", clickhouse.TablePathEncode(t.Database), fmt.Sprintf("%s.json", clickhouse.TablePathEncode(t.Table)))
+		metadataLocalFile := path.Join(b.DefaultDataPath, "backup", backupName, "metadata", common.TablePathEncode(t.Database), fmt.Sprintf("%s.json", common.TablePathEncode(t.Table)))
 		size, err := tableMetadata.Save(metadataLocalFile, schemaOnly)
 		if err != nil {
 			return err
@@ -158,7 +159,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, schemaOnly b
 	if !schemaOnly {
 		for _, t := range tableMetadataForDownload {
 			for disk := range t.Parts {
-				if _, ok := b.DiskMap[disk]; !ok {
+				if _, ok := b.DiskToPathMap[disk]; !ok {
 					return fmt.Errorf("table '%s.%s' require disk '%s' that not found in clickhouse, you can add nonexistent disks to disk_mapping config", t.Database, t.Table, disk)
 				}
 			}
@@ -250,7 +251,7 @@ func (b *Backuper) downloadBackupRelatedDir(remoteBackup new_storage.Backup, pre
 }
 
 func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table metadata.TableMetadata) error {
-	dbAndTableDir := path.Join(clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table))
+	dbAndTableDir := path.Join(common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
 
 	s := semaphore.NewWeighted(int64(b.cfg.General.DownloadConcurrency))
 	g, ctx := errgroup.WithContext(context.Background())
@@ -263,14 +264,14 @@ func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table
 		apexLog.Debugf("start downloadTableData %s.%s with concurrency=%d len(table.Files[...])=%d", table.Database, table.Table, b.cfg.General.DownloadConcurrency, capacity)
 
 		for disk := range table.Files {
-			diskPath := b.DiskMap[disk]
-			tableLocalDir := path.Join(diskPath, "backup", remoteBackup.BackupName, "shadow", dbAndTableDir, disk)
+			backupPath := b.DiskToPathMap[disk]
+			tableLocalDir := path.Join(backupPath, "backup", remoteBackup.BackupName, "shadow", dbAndTableDir, disk)
 			for _, archiveFile := range table.Files[disk] {
 				if err := s.Acquire(ctx, 1); err != nil {
 					apexLog.Errorf("can't acquire semaphore during downloadTableData: %v", err)
 					break
 				}
-				tableRemoteFile := path.Join(remoteBackup.BackupName, "shadow", clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table), archiveFile)
+				tableRemoteFile := path.Join(remoteBackup.BackupName, "shadow", common.TablePathEncode(table.Database), common.TablePathEncode(table.Table), archiveFile)
 				g.Go(func() error {
 					apexLog.Debugf("start download from %s", tableRemoteFile)
 					defer s.Release(1)
@@ -294,7 +295,7 @@ func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table
 				break
 			}
 			tableRemotePath := path.Join(remoteBackup.BackupName, "shadow", dbAndTableDir, disk)
-			diskPath := b.DiskMap[disk]
+			diskPath := b.DiskToPathMap[disk]
 			tableLocalDir := path.Join(diskPath, "backup", remoteBackup.BackupName, "shadow", dbAndTableDir, disk)
 			g.Go(func() error {
 				apexLog.Debugf("start download from %s", tableRemotePath)
@@ -317,8 +318,8 @@ func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table
 			if !p.Required {
 				continue
 			}
-			existsPath := path.Join(b.DiskMap[disk], "backup", remoteBackup.RequiredBackup, "shadow", dbAndTableDir, disk, p.Name)
-			newPath := path.Join(b.DiskMap[disk], "backup", remoteBackup.BackupName, "shadow", dbAndTableDir, disk, p.Name)
+			existsPath := path.Join(b.DiskToPathMap[disk], "backup", remoteBackup.RequiredBackup, "shadow", dbAndTableDir, disk, p.Name)
+			newPath := path.Join(b.DiskToPathMap[disk], "backup", remoteBackup.BackupName, "shadow", dbAndTableDir, disk, p.Name)
 			if err := duplicatePart(existsPath, newPath); err != nil {
 				return fmt.Errorf("can't to add exists part: %s", err)
 			}

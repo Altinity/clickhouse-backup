@@ -13,6 +13,8 @@ import (
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/filesystemhelper"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 	"github.com/AlexAkulov/clickhouse-backup/utils"
 	apexLog "github.com/apex/log"
@@ -116,9 +118,9 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 	if err != nil {
 		return err
 	}
-	// create backup dir on all clickhouse disks
+	// Create backup dir on all clickhouse disks
 	for _, disk := range disks {
-		if err := ch.Mkdir(path.Join(disk.Path, "backup")); err != nil {
+		if err := filesystemhelper.Mkdir(path.Join(disk.Path, "backup"), ch); err != nil {
 			return err
 		}
 	}
@@ -131,7 +133,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 		return fmt.Errorf("'%s' medatata.json already exists", backupName)
 	}
 	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
-		if err = ch.Mkdir(backupPath); err != nil {
+		if err = filesystemhelper.Mkdir(backupPath, ch); err != nil {
 			log.Errorf("can't create directory %s: %v", backupPath, err)
 		}
 	}
@@ -141,17 +143,17 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 	}
 	var backupDataSize, backupMetadataSize uint64
 
-	var t []metadata.TableTitle
+	var tableMetas []metadata.TableTitle
 	for _, table := range tables {
 		log := log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Name))
 		if table.Skip {
 			continue
 		}
 		var realSize map[string]int64
-		var partitions map[string][]metadata.Part
+		var disksToPartsMap map[string][]metadata.Part
 		if doBackupData {
 			log.Debug("create data")
-			partitions, realSize, err = AddTableToBackup(ch, backupName, disks, &table)
+			disksToPartsMap, realSize, err = AddTableToBackup(ch, backupName, disks, &table)
 			if err != nil {
 				log.Error(err.Error())
 				if removeBackupErr := RemoveBackupLocal(cfg, backupName); removeBackupErr != nil {
@@ -168,7 +170,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 			Query:      table.CreateTableQuery,
 			TotalBytes: table.TotalBytes,
 			Size:       realSize,
-			Parts:      partitions,
+			Parts:      disksToPartsMap,
 		})
 		if err != nil {
 			if removeBackupErr := RemoveBackupLocal(cfg, backupName); removeBackupErr != nil {
@@ -177,7 +179,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 			return err
 		}
 		backupMetadataSize += metadataSize
-		t = append(t, metadata.TableTitle{
+		tableMetas = append(tableMetas, metadata.TableTitle{
 			Database: table.Database,
 			Table:    table.Name,
 		})
@@ -213,7 +215,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 		RBACSize:          backupRBACSize,
 		ConfigSize:        backupConfigSize,
 		// CompressedSize: ,
-		Tables:    t,
+		Tables:    tableMetas,
 		Databases: []metadata.DatabasesMeta{},
 	}
 	for _, database := range allDatabases {
@@ -229,7 +231,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 		_ = RemoveBackupLocal(cfg, backupName)
 		return err
 	}
-	if err := ch.Chown(backupMetaFile); err != nil {
+	if err := filesystemhelper.Chown(backupMetaFile, ch); err != nil {
 		log.Warnf("can't chown %s: %v", backupMetaFile, err)
 	}
 	log.WithField("duration", utils.HumanizeDuration(time.Since(startBackup))).Info("done")
@@ -296,46 +298,48 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, diskList []c
 	}
 	log.Debug("freezed")
 	realSize := map[string]int64{}
-	partitions := map[string][]metadata.Part{}
+	disksToPartsMap := map[string][]metadata.Part{}
 	for _, disk := range diskList {
 		shadowPath := path.Join(disk.Path, "shadow", backupID)
 		if _, err := os.Stat(shadowPath); err != nil && os.IsNotExist(err) {
 			continue
 		}
 		backupPath := path.Join(disk.Path, "backup", backupName)
-		encodedTablePath := path.Join(clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Name))
+		encodedTablePath := path.Join(common.TablePathEncode(table.Database), common.TablePathEncode(table.Name))
 		backupShadowPath := path.Join(backupPath, "shadow", encodedTablePath, disk.Name)
-		if err := ch.MkdirAll(backupShadowPath); err != nil && !os.IsExist(err) {
+		if err := filesystemhelper.MkdirAll(backupShadowPath, ch); err != nil && !os.IsExist(err) {
 			return nil, nil, err
 		}
-		parts, size, err := moveShadow(shadowPath, backupShadowPath)
+
+		parts, size, err := filesystemhelper.MoveShadow(shadowPath, backupShadowPath)
 		if err != nil {
 			return nil, nil, err
 		}
 		realSize[disk.Name] = size
-		partitions[disk.Name] = parts
+		disksToPartsMap[disk.Name] = parts
 		log.WithField("disk", disk.Name).Debug("shadow moved")
 		if err := os.RemoveAll(shadowPath); err != nil {
-			return partitions, realSize, err
+			return disksToPartsMap, realSize, err
 		}
 	}
-	if err := ch.CleanShadow(backupID); err != nil {
-		return partitions, realSize, err
+	if err := filesystemhelper.CleanShadow(backupID, ch); err != nil {
+		return disksToPartsMap, realSize, err
 	}
 	log.Debug("done")
-	return partitions, realSize, nil
+	return disksToPartsMap, realSize, nil
 }
 
+//
 func createMetadata(ch *clickhouse.ClickHouse, backupPath string, table metadata.TableMetadata) (uint64, error) {
 	metadataPath := path.Join(backupPath, "metadata")
-	if err := ch.Mkdir(metadataPath); err != nil {
+	if err := filesystemhelper.Mkdir(metadataPath, ch); err != nil {
 		return 0, err
 	}
-	metadataDatabasePath := path.Join(metadataPath, clickhouse.TablePathEncode(table.Database))
-	if err := ch.Mkdir(metadataDatabasePath); err != nil {
+	metadataDatabasePath := path.Join(metadataPath, common.TablePathEncode(table.Database))
+	if err := filesystemhelper.Mkdir(metadataDatabasePath, ch); err != nil {
 		return 0, err
 	}
-	metadataFile := path.Join(metadataDatabasePath, fmt.Sprintf("%s.json", clickhouse.TablePathEncode(table.Table)))
+	metadataFile := path.Join(metadataDatabasePath, fmt.Sprintf("%s.json", common.TablePathEncode(table.Table)))
 	metadataBody, err := json.MarshalIndent(&table, "", " ")
 	if err != nil {
 		return 0, fmt.Errorf("can't marshal %s: %v", MetaFileName, err)
@@ -343,7 +347,7 @@ func createMetadata(ch *clickhouse.ClickHouse, backupPath string, table metadata
 	if err := ioutil.WriteFile(metadataFile, metadataBody, 0644); err != nil {
 		return 0, fmt.Errorf("can't create %s: %v", MetaFileName, err)
 	}
-	if err := ch.Chown(metadataFile); err != nil {
+	if err := filesystemhelper.Chown(metadataFile, ch); err != nil {
 		return 0, err
 	}
 	return uint64(len(metadataBody)), nil

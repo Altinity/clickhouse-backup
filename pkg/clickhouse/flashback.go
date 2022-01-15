@@ -68,7 +68,7 @@ package clickhouse
 // 	if err != nil {
 // 		return err
 // 	}
-// 	detachedParentDir := filepath.Join(dataPath, "data", TablePathEncode(diff.BTable.Database), TablePathEncode(diff.BTable.Table), "detached")
+// 	detachedParentDir := filepath.Join(dataPath, "data", common.TablePathEncode(diff.BTable.Database), common.TablePathEncode(diff.BTable.Table), "detached")
 // 	os.MkdirAll(detachedParentDir, 0750)
 // 	ch.Chown(detachedParentDir)
 
@@ -156,7 +156,7 @@ package clickhouse
 // 			}
 // 		}
 
-// 		detachedParentDir := filepath.Join(dataPath, "data", TablePathEncode(table.BTable.Database), TablePathEncode(table.BTable.Table), "detached")
+// 		detachedParentDir := filepath.Join(dataPath, "data", common.TablePathEncode(table.BTable.Database), common.TablePathEncode(table.BTable.Table), "detached")
 
 // 		for _, partition := range table.PartitionsRemove {
 // 			detachedPath := filepath.Join(detachedParentDir, partition.Name)
