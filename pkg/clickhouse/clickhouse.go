@@ -41,12 +41,12 @@ func (ch *ClickHouse) GetGid() *int {
 	return ch.gid
 }
 
-func (ch *ClickHouse) SetUid(_uid int) {
-	*ch.uid = _uid
+func (ch *ClickHouse) SetUid(puid *int) {
+	ch.uid = puid
 }
 
-func (ch *ClickHouse) SetGid(_gid int) {
-	*ch.uid = _gid
+func (ch *ClickHouse) SetGid(pgid *int) {
+	ch.gid = pgid
 }
 
 // Connect - establish connection to ClickHouse
