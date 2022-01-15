@@ -238,13 +238,14 @@ func (f *FTP) MkdirAll(key string) error {
 				continue
 			}
 			f.dirCacheMutex.RUnlock()
+
+			f.dirCacheMutex.Lock()
 			err = client.MakeDir(d)
 			if err != nil {
 				apexLog.Warnf("FTP::MkdirAll MakeDir(%s) return error: %v", d, err)
+			} else {
+				f.dirCache[d] = true
 			}
-
-			f.dirCacheMutex.Lock()
-			f.dirCache[d] = true
 			f.dirCacheMutex.Unlock()
 		}
 	}
