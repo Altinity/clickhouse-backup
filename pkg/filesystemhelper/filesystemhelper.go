@@ -112,7 +112,7 @@ func MkdirAll(path string, ch *clickhouse.ClickHouse) error {
 // CopyData - copy partitions for specific table to detached folder
 func CopyData(backupName string, backupTable metadata.TableMetadata, disks []clickhouse.Disk, tableDataPaths []string, ch *clickhouse.ClickHouse) error {
 	// TODO: проверить если диск есть в бэкапе но нет в ClickHouse
-	dstDataPaths := getDisksByPaths(disks, tableDataPaths)
+	dstDataPaths := clickhouse.GetDisksByPaths(disks, tableDataPaths)
 	log.Debugf("dstDataPaths=%v disks=%v tableDataPaths=%v", dstDataPaths, disks, tableDataPaths)
 	for _, backupDisk := range disks {
 		if len(backupTable.Parts[backupDisk.Name]) == 0 {

@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/jmoiron/sqlx/reflectx"
 )
@@ -34,4 +35,26 @@ func fieldsByTraversal(v reflect.Value, traversals [][]int, values []interface{}
 		}
 	}
 	return nil
+}
+
+func getDiskByPath(disks []Disk, dataPath string) string {
+	resultDisk := Disk{}
+	for _, disk := range disks {
+		if strings.HasPrefix(dataPath, disk.Path) && len(disk.Path) > len(resultDisk.Path) {
+			resultDisk = disk
+		}
+	}
+	if resultDisk.Name == "" {
+		return "unknown"
+	} else {
+		return resultDisk.Name
+	}
+}
+
+func GetDisksByPaths(disks []Disk, dataPaths []string) map[string]string {
+	result := map[string]string{}
+	for _, dataPath := range dataPaths {
+		result[getDiskByPath(disks, dataPath)] = dataPath
+	}
+	return result
 }
