@@ -438,7 +438,7 @@ func TestSyncReplicaTimeout(t *testing.T) {
 	}
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r)
+	ch.connectWithWait(r, 0*time.Millisecond)
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 
 	for _, table := range []string{"repl1", "repl2"} {
@@ -474,7 +474,7 @@ func TestSyncReplicaTimeout(t *testing.T) {
 func TestServerAPI(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r)
+	ch.connectWithWait(r, 0*time.Second)
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	ch.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS long_schema")
 	defer func() {
@@ -625,7 +625,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
 
-	ch.connectWithWait(r)
+	ch.connectWithWait(r, 1*time.Second)
 
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_rbac")
@@ -658,7 +658,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 
 	ch.chbackup.Close()
 	r.NoError(execCmd("docker-compose", "-f", os.Getenv("COMPOSE_FILE"), "restart", "clickhouse"))
-	ch.connectWithWait(r)
+	ch.connectWithWait(r, 2*time.Second)
 
 	log.Info("download+restore RBAC")
 	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
@@ -670,7 +670,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 	ch.chbackup.Close()
 	_, err := execCmdOut("docker", "restart", "clickhouse")
 	r.NoError(err)
-	ch.connectWithWait(r)
+	ch.connectWithWait(r, 2*time.Second)
 
 	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
 
@@ -715,7 +715,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 	}
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r)
+	ch.connectWithWait(r, 0*time.Millisecond)
 	ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_rbac")
 	ch.queryWithNoError(r, "CREATE TABLE default.test_rbac (v UInt64) ENGINE=MergeTree() ORDER BY tuple()")
 
@@ -727,8 +727,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_configs_backup"))
 
 	ch.chbackup.Close()
-	time.Sleep(2 * time.Second)
-	ch.connectWithWait(r)
+	ch.connectWithWait(r, 2*time.Second)
 
 	var settings []string
 	r.NoError(ch.chbackup.Select(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
@@ -738,8 +737,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", "test_configs_backup"))
 
 	ch.chbackup.Close()
-	time.Sleep(2 * time.Second)
-	ch.connectWithWait(r)
+	ch.connectWithWait(r, 2*time.Second)
 
 	settings = []string{}
 	r.NoError(ch.chbackup.Select(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
@@ -748,8 +746,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--rm", "--configs", "test_configs_backup"))
 
 	ch.chbackup.Close()
-	time.Sleep(2 * time.Second)
-	ch.connectWithWait(r)
+	ch.connectWithWait(r, 2*time.Second)
 
 	settings = []string{}
 	r.NoError(ch.chbackup.Select(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
@@ -764,7 +761,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 func TestTablePatterns(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r)
+	ch.connectWithWait(r, 500*time.Millisecond)
 	defer ch.chbackup.Close()
 
 	testBackupName := "test_backup_patterns"
@@ -793,7 +790,7 @@ func TestTablePatterns(t *testing.T) {
 func TestLongListRemote(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r)
+	ch.connectWithWait(r, 0*time.Second)
 	defer ch.chbackup.Close()
 
 	testBackupName := "test_list_remote"
@@ -828,7 +825,7 @@ func TestLongListRemote(t *testing.T) {
 func TestSkipNotExistsTable(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r)
+	ch.connectWithWait(r, 0*time.Second)
 	defer ch.chbackup.Close()
 
 	log.Info("Check skip not exist errors")
@@ -908,7 +905,7 @@ func testCommon(t *testing.T, remoteStorageType string) {
 
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r)
+	ch.connectWithWait(r, 500*time.Millisecond)
 
 	rand.Seed(time.Now().UnixNano())
 
@@ -1093,8 +1090,8 @@ type TestClickHouse struct {
 	chbackup *clickhouse.ClickHouse
 }
 
-func (ch *TestClickHouse) connectWithWait(r *require.Assertions) {
-	time.Sleep(500 * time.Millisecond)
+func (ch *TestClickHouse) connectWithWait(r *require.Assertions, sleepBefore time.Duration) {
+	time.Sleep(sleepBefore)
 	for i := 1; i < 11; i++ {
 		err := ch.connect()
 		if i == 10 {
