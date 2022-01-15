@@ -49,8 +49,10 @@ func Chown(filename string, ch *clickhouse.ClickHouse) error {
 			return err
 		}
 		stat := info.Sys().(*syscall.Stat_t)
-		ch.SetUid(int(stat.Uid))
-		ch.SetGid(int(stat.Gid))
+		_uid := int(stat.Uid)
+		_gid := int(stat.Gid)
+		ch.SetUid(&_uid)
+		ch.SetGid(&_gid)
 
 	}
 	return os.Chown(filename, *ch.GetGid(), *ch.GetGid())
