@@ -6,6 +6,6 @@ import (
 )
 
 func TablePathEncode(str string) string {
-	return strings.ReplaceAll(
-		strings.ReplaceAll(url.PathEscape(str), ".", "%2E"), "-", "%2D")
+	return strings.NewReplacer(".", "%2E", "-", "%2D").Replace(url.PathEscape(str))
+
 }
