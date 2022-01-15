@@ -149,7 +149,7 @@ jobs:
         env:
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
           RUN_TESTS: "TestSkipNotExistsTable"
-          # LOG_LEVEL: "debug"
+          LOG_LEVEL: "debug"
           # FTP_DEBUG: "true"
           CGO_ENABLED: 0
           GCS_TESTS: ${{ needs.build.outputs.GCS_TESTS }}
