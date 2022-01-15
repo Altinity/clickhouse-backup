@@ -75,8 +75,8 @@ func createPartitionsToBackupMap(partitions string) map[string]struct{} {
 		return nil
 	} else {
 		res := map[string]struct{}{}
-		for _, _partition := range strings.Split(partitions, ",") {
-			res[_partition] = struct{}{}
+		for _, partition := range strings.Split(partitions, ",") {
+			res[partition] = struct{}{}
 		}
 		return res
 	}

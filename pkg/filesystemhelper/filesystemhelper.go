@@ -49,10 +49,10 @@ func Chown(filename string, ch *clickhouse.ClickHouse) error {
 			return err
 		}
 		stat := info.Sys().(*syscall.Stat_t)
-		_uid := int(stat.Uid)
-		_gid := int(stat.Gid)
-		ch.SetUid(&_uid)
-		ch.SetGid(&_gid)
+		uid := int(stat.Uid)
+		gid := int(stat.Gid)
+		ch.SetUid(&uid)
+		ch.SetGid(&gid)
 
 	}
 	return os.Chown(filename, *ch.GetGid(), *ch.GetGid())
@@ -169,8 +169,8 @@ func CopyData(backupName string, backupTable metadata.TableMetadata, disks []cli
 }
 
 func isPartInPartition(partName string, partitionsBackupMap map[string]struct{}) bool {
-	_partition := strings.Split(partName, "_")[0]
-	_, ok := partitionsBackupMap[_partition]
+	partition := strings.Split(partName, "_")[0]
+	_, ok := partitionsBackupMap[partition]
 	return ok
 }
 
