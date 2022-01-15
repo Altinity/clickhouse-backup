@@ -8,10 +8,10 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
@@ -20,6 +20,7 @@ import (
 
 	_ "github.com/ClickHouse/clickhouse-go"
 	"github.com/jmoiron/sqlx"
+	"github.com/jmoiron/sqlx/reflectx"
 )
 
 // ClickHouse - provide
@@ -30,6 +31,22 @@ type ClickHouse struct {
 	gid     *int
 	disks   []Disk
 	version int
+}
+
+func (ch *ClickHouse) GetUid() *int {
+	return ch.uid
+}
+
+func (ch *ClickHouse) GetGid() *int {
+	return ch.gid
+}
+
+func (ch *ClickHouse) SetUid(puid *int) {
+	ch.uid = puid
+}
+
+func (ch *ClickHouse) SetGid(pgid *int) {
+	ch.gid = pgid
 }
 
 // Connect - establish connection to ClickHouse
@@ -149,7 +166,7 @@ func (ch *ClickHouse) getDataPathFromSystemSettings() ([]Disk, error) {
 func (ch *ClickHouse) getDataPathFromSystemDisks() ([]Disk, error) {
 	var result []Disk
 	query := "SELECT * FROM system.disks;"
-	err := ch.softSelect(&result, query)
+	err := ch.SoftSelect(&result, query)
 	return result, err
 }
 
@@ -176,7 +193,7 @@ func (ch *ClickHouse) GetTables(tablePattern string) ([]Table, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err = ch.softSelect(&tables, allTablesSQL); err != nil {
+	if err = ch.SoftSelect(&tables, allTablesSQL); err != nil {
 		return nil, err
 	}
 	for i, t := range tables {
@@ -253,7 +270,7 @@ func (ch *ClickHouse) prepareAllTablesSQL(tablePattern string, err error, skipDa
 func (ch *ClickHouse) GetDatabases() ([]Database, error) {
 	allDatabases := make([]Database, 0)
 	allDatabasesSQL := "SELECT name, engine FROM system.databases WHERE name != 'system'"
-	if err := ch.softSelect(&allDatabases, allDatabasesSQL); err != nil {
+	if err := ch.SoftSelect(&allDatabases, allDatabasesSQL); err != nil {
 		return nil, err
 	}
 	for i, db := range allDatabases {
@@ -275,7 +292,7 @@ func (ch *ClickHouse) getTableSizeFromParts(table Table) uint64 {
 		Size uint64 `db:"size"`
 	}
 	query := fmt.Sprintf("SELECT sum(bytes_on_disk) as size FROM system.parts WHERE database='%s' AND table='%s' GROUP BY database, table", table.Database, table.Name)
-	if err := ch.softSelect(&tablesSize, query); err != nil {
+	if err := ch.SoftSelect(&tablesSize, query); err != nil {
 		log.Warnf("error parsing tablesSize: %w", err)
 	}
 	if len(tablesSize) > 0 {
@@ -397,157 +414,6 @@ func (ch *ClickHouse) FreezeTable(table *Table, name string) error {
 	query := fmt.Sprintf("ALTER TABLE `%s`.`%s` FREEZE %s;", table.Database, table.Name, withNameQuery)
 	if _, err := ch.Query(query); err != nil {
 		return fmt.Errorf("can't freeze table: %v", err)
-	}
-	return nil
-}
-
-func (ch *ClickHouse) CleanShadow(name string) error {
-	disks, err := ch.GetDisks()
-	if err != nil {
-		return err
-	}
-	for _, disk := range disks {
-		shadowDir := path.Join(disk.Path, "shadow", name)
-		if err := os.RemoveAll(shadowDir); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// Chown - set permission on file to clickhouse user
-// This is necessary that the ClickHouse will be able to read parts files on restore
-func (ch *ClickHouse) Chown(filename string) error {
-	var (
-		dataPath string
-		err      error
-	)
-	if os.Getuid() != 0 {
-		return nil
-	}
-	if ch.uid == nil || ch.gid == nil {
-		if dataPath, err = ch.GetDefaultPath(); err != nil {
-			return err
-		}
-		info, err := os.Stat(dataPath)
-		if err != nil {
-			return err
-		}
-		stat := info.Sys().(*syscall.Stat_t)
-		uid := int(stat.Uid)
-		gid := int(stat.Gid)
-		ch.uid = &uid
-		ch.gid = &gid
-	}
-	return os.Chown(filename, *ch.uid, *ch.gid)
-}
-
-func (ch *ClickHouse) Mkdir(name string) error {
-	if err := os.Mkdir(name, 0750); err != nil && !os.IsExist(err) {
-		return err
-	}
-	if err := ch.Chown(name); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (ch *ClickHouse) MkdirAll(path string) error {
-	// Fast path: if we can tell whether path is a directory or file, stop with success or error.
-	dir, err := os.Stat(path)
-	if err == nil {
-		if dir.IsDir() {
-			return nil
-		}
-		return &os.PathError{Op: "mkdir", Path: path, Err: syscall.ENOTDIR}
-	}
-
-	// Slow path: make sure parent exists and then call Mkdir for path.
-	i := len(path)
-	for i > 0 && os.IsPathSeparator(path[i-1]) { // Skip trailing path separator.
-		i--
-	}
-
-	j := i
-	for j > 0 && !os.IsPathSeparator(path[j-1]) { // Scan backward over element.
-		j--
-	}
-
-	if j > 1 {
-		// Create parent.
-		err = ch.MkdirAll(path[:j-1])
-		if err != nil {
-			return err
-		}
-	}
-
-	// Parent now exists; invoke Mkdir and use its result.
-	err = ch.Mkdir(path)
-	if err != nil {
-		// Handle arguments like "foo/." by
-		// double-checking that directory doesn't exist.
-		dir, err1 := os.Lstat(path)
-		if err1 == nil && dir.IsDir() {
-			return nil
-		}
-		return err
-	}
-	return nil
-}
-
-// CopyData - copy partitions for specific table to detached folder
-func (ch *ClickHouse) CopyData(backupName string, backupTable metadata.TableMetadata, disks []Disk, tableDataPaths []string) error {
-	// TODO: проверить если диск есть в бэкапе но нет в ClickHouse
-	dstDataPaths := GetDisksByPaths(disks, tableDataPaths)
-	log.Debugf("dstDataPaths=%v disks=%v tableDataPaths=%v", dstDataPaths, disks, tableDataPaths)
-	for _, backupDisk := range disks {
-		if len(backupTable.Parts[backupDisk.Name]) == 0 {
-			continue
-		}
-		detachedParentDir := filepath.Join(dstDataPaths[backupDisk.Name], "detached")
-		log.Debugf("detachedParentDir=%s", detachedParentDir)
-		for _, part := range backupTable.Parts[backupDisk.Name] {
-			detachedPath := filepath.Join(detachedParentDir, part.Name)
-			log.Debugf("detachedPath=%s", detachedPath)
-			info, err := os.Stat(detachedPath)
-			if err != nil {
-				if os.IsNotExist(err) {
-					if mkdirErr := ch.MkdirAll(detachedPath); mkdirErr != nil {
-						log.Warnf("error during Mkdir %w", mkdirErr)
-					}
-				} else {
-					return err
-				}
-			} else if !info.IsDir() {
-				return fmt.Errorf("'%s' should be directory or absent", detachedPath)
-			}
-			uuid := path.Join(TablePathEncode(backupTable.Database), TablePathEncode(backupTable.Table))
-			partPath := path.Join(backupDisk.Path, "backup", backupName, "shadow", uuid, backupDisk.Name, part.Name)
-			// Legacy backup support
-			if _, err := os.Stat(partPath); os.IsNotExist(err) {
-				partPath = path.Join(backupDisk.Path, "backup", backupName, "shadow", uuid, part.Name)
-			}
-			if err := filepath.Walk(partPath, func(filePath string, info os.FileInfo, err error) error {
-				if err != nil {
-					return err
-				}
-				filename := strings.Trim(strings.TrimPrefix(filePath, partPath), "/")
-				dstFilePath := filepath.Join(detachedPath, filename)
-				if info.IsDir() {
-					return ch.Mkdir(dstFilePath)
-				}
-				if !info.Mode().IsRegular() {
-					log.Debugf("'%s' is not a regular file, skipping.", filePath)
-					return nil
-				}
-				if err := os.Link(filePath, dstFilePath); err != nil {
-					return fmt.Errorf("failed to create hard link '%s' -> '%s': %w", filePath, dstFilePath, err)
-				}
-				return ch.Chown(dstFilePath)
-			}); err != nil {
-				return fmt.Errorf("error during filepath.Walk for part '%s': %w", part.Name, err)
-			}
-		}
 	}
 	return nil
 }
@@ -705,9 +571,64 @@ func IsClickhouseShadow(path string) bool {
 	return true
 }
 
-func TablePathEncode(str string) string {
-	return strings.ReplaceAll(
-		strings.ReplaceAll(url.PathEscape(str), ".", "%2E"), "-", "%2D")
+func (ch *ClickHouse) SoftSelect(dest interface{}, query string) error {
+	rows, err := ch.Queryx(query)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	var v, vp reflect.Value
+
+	value := reflect.ValueOf(dest)
+
+	// json.Unmarshal returns errors for these
+	if value.Kind() != reflect.Ptr {
+		return fmt.Errorf("must pass a pointer, not a value, to StructScan destination")
+	}
+	if value.IsNil() {
+		return fmt.Errorf("nil pointer passed to StructScan destination")
+	}
+	direct := reflect.Indirect(value)
+
+	slice, err := baseType(value.Type(), reflect.Slice)
+	if err != nil {
+		return err
+	}
+
+	isPtr := slice.Elem().Kind() == reflect.Ptr
+	base := reflectx.Deref(slice.Elem())
+
+	columns, err := rows.Columns()
+	fields := rows.Mapper.TraversalsByName(base, columns)
+	values := make([]interface{}, len(columns))
+
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		vp = reflect.New(base)
+		v = reflect.Indirect(vp)
+
+		err = fieldsByTraversal(v, fields, values, true)
+		if err != nil {
+			return err
+		}
+
+		// scan into the struct field pointers and append to our results
+		err = rows.Scan(values...)
+		if err != nil {
+			return err
+		}
+
+		if isPtr {
+			direct.Set(reflect.Append(direct, vp))
+		} else {
+			direct.Set(reflect.Append(direct, v))
+		}
+
+	}
+	return rows.Err()
 }
 
 // GetPartitions - return slice of all partitions for a table
@@ -720,12 +641,12 @@ func (ch *ClickHouse) GetPartitions(database, table string) (map[string][]metada
 	for _, disk := range disks {
 		partitions := make([]partition, 0)
 		if len(disks) == 1 {
-			if err := ch.softSelect(&partitions,
+			if err := ch.SoftSelect(&partitions,
 				fmt.Sprintf("select * from `system`.`parts` where database='%s' and table='%s' and active=1;", database, table)); err != nil {
 				return nil, err
 			}
 		} else {
-			if err := ch.softSelect(&partitions,
+			if err := ch.SoftSelect(&partitions,
 				fmt.Sprintf("select * from `system`.`parts` where database='%s' and table='%s' and disk_name='%s' and active=1;", database, table, disk.Name)); err != nil {
 				return nil, err
 			}

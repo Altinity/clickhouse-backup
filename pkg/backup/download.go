@@ -14,7 +14,7 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/new_storage"
 	legacyStorage "github.com/AlexAkulov/clickhouse-backup/pkg/storage"
@@ -125,7 +125,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, schemaOnly b
 	for i, t := range tablesForDownload {
 		start := time.Now()
 		log := log.WithField("table_metadata", fmt.Sprintf("%s.%s", t.Database, t.Table))
-		remoteTableMetadata := path.Join(backupName, "metadata", clickhouse.TablePathEncode(t.Database), fmt.Sprintf("%s.json", clickhouse.TablePathEncode(t.Table)))
+		remoteTableMetadata := path.Join(backupName, "metadata", common.TablePathEncode(t.Database), fmt.Sprintf("%s.json", common.TablePathEncode(t.Table)))
 		tmReader, err := b.dst.GetFileReader(remoteTableMetadata)
 		if err != nil {
 			return err
@@ -145,7 +145,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, schemaOnly b
 		tableMetadataForDownload[i] = tableMetadata
 
 		// save metadata
-		metadataLocalFile := path.Join(b.DefaultDataPath, "backup", backupName, "metadata", clickhouse.TablePathEncode(t.Database), fmt.Sprintf("%s.json", clickhouse.TablePathEncode(t.Table)))
+		metadataLocalFile := path.Join(b.DefaultDataPath, "backup", backupName, "metadata", common.TablePathEncode(t.Database), fmt.Sprintf("%s.json", common.TablePathEncode(t.Table)))
 		size, err := tableMetadata.Save(metadataLocalFile, schemaOnly)
 		if err != nil {
 			return err
@@ -251,7 +251,7 @@ func (b *Backuper) downloadBackupRelatedDir(remoteBackup new_storage.Backup, pre
 }
 
 func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table metadata.TableMetadata) error {
-	dbAndTableDir := path.Join(clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table))
+	dbAndTableDir := path.Join(common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
 
 	s := semaphore.NewWeighted(int64(b.cfg.General.DownloadConcurrency))
 	g, ctx := errgroup.WithContext(context.Background())
@@ -271,7 +271,7 @@ func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table
 					apexLog.Errorf("can't acquire semaphore during downloadTableData: %v", err)
 					break
 				}
-				tableRemoteFile := path.Join(remoteBackup.BackupName, "shadow", clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table), archiveFile)
+				tableRemoteFile := path.Join(remoteBackup.BackupName, "shadow", common.TablePathEncode(table.Database), common.TablePathEncode(table.Table), archiveFile)
 				g.Go(func() error {
 					apexLog.Debugf("start download from %s", tableRemoteFile)
 					defer s.Release(1)

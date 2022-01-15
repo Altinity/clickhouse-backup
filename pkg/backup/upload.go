@@ -16,7 +16,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 
-	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 	"github.com/AlexAkulov/clickhouse-backup/utils"
 	apexLog "github.com/apex/log"
@@ -230,7 +230,7 @@ func (b *Backuper) uploadAndArchiveBackupRelatedDir(localBackupRelatedDir, local
 }
 
 func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetadata) (map[string][]string, int64, error) {
-	uuid := path.Join(clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table))
+	uuid := path.Join(common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
 	metdataFiles := map[string][]string{}
 	capacity := 0
 	for disk := range table.Parts {
@@ -251,7 +251,7 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 				apexLog.Errorf("can't acquire semaphore during Upload: %v", err)
 				break
 			}
-			remoteDataPath := path.Join(backupName, "shadow", clickhouse.TablePathEncode(table.Database), clickhouse.TablePathEncode(table.Table))
+			remoteDataPath := path.Join(backupName, "shadow", common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
 			// Disabled temporary
 			// if b.cfg.GetCompressionFormat() == "none" {
 			// 	err = b.dst.UploadPath(0, backupPath, p, path.Join(remoteDataPath, disk))
@@ -291,7 +291,7 @@ func (b *Backuper) uploadTableMetadata(backupName string, table metadata.TableMe
 	if err != nil {
 		return 0, fmt.Errorf("can't marshal json: %v", err)
 	}
-	remoteTableMetaFile := path.Join(backupName, "metadata", clickhouse.TablePathEncode(table.Database), fmt.Sprintf("%s.%s", clickhouse.TablePathEncode(table.Table), "json"))
+	remoteTableMetaFile := path.Join(backupName, "metadata", common.TablePathEncode(table.Database), fmt.Sprintf("%s.%s", common.TablePathEncode(table.Table), "json"))
 	if err := b.dst.PutFile(remoteTableMetaFile,
 		ioutil.NopCloser(bytes.NewReader(content))); err != nil {
 		return 0, fmt.Errorf("can't upload: %v", err)
@@ -313,7 +313,7 @@ func (b *Backuper) markDuplicatedParts(backup *metadata.BackupMetadata, existsTa
 				if _, ok := existsPartsMap[newParts[i].Name]; !ok {
 					continue
 				}
-				uuid := path.Join(clickhouse.TablePathEncode(existsTable.Database), clickhouse.TablePathEncode(existsTable.Table))
+				uuid := path.Join(common.TablePathEncode(existsTable.Database), common.TablePathEncode(existsTable.Table))
 				existsPath := path.Join(b.DiskToPathMap[disk], "backup", backup.RequiredBackup, "shadow", uuid, disk, newParts[i].Name)
 				newPath := path.Join(b.DiskToPathMap[disk], "backup", backup.BackupName, "shadow", uuid, disk, newParts[i].Name)
 
