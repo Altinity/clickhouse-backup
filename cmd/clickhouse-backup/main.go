@@ -108,12 +108,6 @@ func main() {
 			UsageText:   "clickhouse-backup create_remote [-t, --tables=<db>.<table>] [--partitions=<partitions_to_backup>] [--diff-from=<local_backup_name>] [--schema] [--rbac] [--configs] <backup_name>",
 			Description: "Create and upload",
 			Action: func(c *cli.Context) error {
-				// args := c.Args()
-				// args.Get(0)
-				// switch c.Args().Get(0) {
-				// case "help", "-h":
-				// 	cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
-				// }
 				b := backup.NewBackuper(getConfig(c))
 				return b.CreateToRemote(c.Args().First(), c.String("t"), c.String("partitions"), c.String("diff-from"), c.Bool("s"), c.Bool("rbac"), c.Bool("configs"), version)
 			},
