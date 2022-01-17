@@ -1310,11 +1310,30 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) err
 	// Check
 	rows, err := ch.chbackup.GetConn().Queryx("SELECT count(0) as count from default.t1 where dt = '2022-01-01'")
 	// Must have one value
-	row := map[string]interface{}{}
-	result := rows.Next().MapScan(row)
-	r.Equal(10, row["count"])
+	var result []map[string]interface{}
+	for rows.Next() {
+		row := map[string]interface{}{}
+		if err = rows.MapScan(row); err != nil {
+			return err
+		}
+		result = append(result, row)
+	}
+	r.Equal(1, len(result))
+	r.Equal(10, result[0]["count"])
 
+	// Reset the result.
+	result = nil
 	rows, err = ch.chbackup.GetConn().Queryx("SELECT count(0) as count from default.t1 where dt != '2022-01-01")
-	result = rows.Next().MapScan(row)
+
+	for rows.Next() {
+		row := map[string]interface{}{}
+		if err = rows.MapScan(row); err != nil {
+			return err
+		}
+		result = append(result, row)
+	}
+	r.Equal(1, len(result))
+	r.Equal(10, result[0]["count"])
+
 	r.Equal(0, row["count"])
 }
