@@ -1288,7 +1288,7 @@ func installDebIfNotExists(r *require.Assertions, container, pkg string) {
 	))
 }
 
-func TestBackupSpecifiedPartition(t *testing.T, r *require.Assertions) error {
+func TestBackupSpecifiedPartition(r *require.Assertions) error {
 
 	ch := &TestClickHouse{}
 	r := require.New(t)
