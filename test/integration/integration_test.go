@@ -1287,3 +1287,35 @@ func installDebIfNotExists(r *require.Assertions, container, pkg string) {
 		),
 	))
 }
+
+func TestBackupSpecifiedPartition(t *testing.T, r *require.Assertions) error{
+
+	ch := &TestClickHouse{}
+	r := require.New(t)
+	ch.connectWithWait(r)
+	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+
+	testBackupName := "test_partitions_backup"
+	// Create table
+	ch.queryWithNoErrror(r, "CREATE TABLE default.t1(dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(dt) ORDER BY dt")
+	ch.queryWithNoError(r, "INSERT INTO t1 SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
+	ch.queryWithNoError(r, "INSERT INTO t1 SELECT '2022-01-02 00:00:00', number FROM numbers(10)")
+	// Backup
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables", " default.t1 ", "--partitions", " 20220101 ", testBackupName))
+	
+	// TRUNCATE TABLE
+	r.queryWithNoError(r, "TRUNCATE table default.t1")
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
+	r.NoError(dockerExec("clickhouse", "restore" testBackupName))
+
+	// Check
+	rows, err := ch.chbackup.GetConn().Queryx("SELECT count(0) as count from default.t1 where dt = '2022-01-01'")
+	// Must have one value
+	row := map[string]interface{}{}
+	result := rows.MapScan(row)
+	r.Equal(10, row["count"])
+	
+	rows, err := ch.chbackup.GetConn().Queryx("SELECT count(0) as count from default.t1 where dt != '2022-01-01")
+	result = rows.MapScan(row)
+	r.Equal(0, row["count"])
+}
