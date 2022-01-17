@@ -1415,4 +1415,5 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 	r.NoError(dockerExec("clickhouse", "ls", "-lha", "/var/lib/clickhouse/backup"))
 	log.Info("Delete backup")
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
+	dropAllDatabases(r, ch)
 }
