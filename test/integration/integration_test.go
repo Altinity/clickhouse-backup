@@ -1384,7 +1384,7 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", testBackupName))
 
-	log.Infof("testBackupSpecifiedPartition begin check \n")
+	log.Debugf("testBackupSpecifiedPartition begin check \n")
 	// Check
 	var result []int
 
@@ -1392,8 +1392,8 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 		log.Warnf("SELECT error: %w", err)
 	}
 	// Must have one value
-	log.Infof("testBackupSpecifiedPartition result : '%s'", result)
-	log.Infof("testBackupSpecifiedPartition result' length '%d'", len(result))
+	log.Debugf("testBackupSpecifiedPartition result : '%s'", result)
+	log.Debugf("testBackupSpecifiedPartition result' length '%d'", len(result))
 
 	// r.Equal(1, len(result))
 	r.Equal(10, result[0])
@@ -1404,8 +1404,8 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 		log.Warnf("SELECT error: %w", err)
 	}
 
-	log.Infof("testBackupSpecifiedPartition result : '%s'", result)
-	log.Infof("testBackupSpecifiedPartition result' length '%d'", len(result))
+	log.Debugf("testBackupSpecifiedPartition result : '%s'", result)
+	log.Debugf("testBackupSpecifiedPartition result' length '%d'", len(result))
 
 	// r.Equal(1, len(result))
 	r.Equal(0, result[0])
