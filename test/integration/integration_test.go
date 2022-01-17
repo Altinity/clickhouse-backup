@@ -938,7 +938,7 @@ func testCommon(t *testing.T, remoteStorageType string) {
 
 	out, err = dockerExecOut("clickhouse", "ls", "-lha", "/var/lib/clickhouse/backup")
 	r.NoError(err)
-	r.Equal(5, len(strings.Split(strings.Trim(out, " \t\r\n"), "\n")), "expect one backup exists in backup directory")
+	r.Equal(6, len(strings.Split(strings.Trim(out, " \t\r\n"), "\n")), "expect 6 backups exists in backup directory")
 	log.Info("Delete backup")
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
 	out, err = dockerExecOut("clickhouse", "ls", "-lha", "/var/lib/clickhouse/backup")
