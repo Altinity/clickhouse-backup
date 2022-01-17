@@ -1288,7 +1288,7 @@ func installDebIfNotExists(r *require.Assertions, container, pkg string) {
 	))
 }
 
-func testBackupSpecifiedPartition(r *require.Assertions) error {
+func testBackupSpecifiedPartition(t *testing.T, r *require.Assertions) error {
 
 	ch := &TestClickHouse{}
 	r := require.New(t)
@@ -1297,7 +1297,7 @@ func testBackupSpecifiedPartition(r *require.Assertions) error {
 
 	testBackupName := "test_partitions_backup"
 	// Create table
-	ch.queryWithNoErrror(r, "CREATE TABLE default.t1(dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(dt) ORDER BY dt")
+	ch.queryWithNoError(r, "CREATE TABLE default.t1(dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(dt) ORDER BY dt")
 	ch.queryWithNoError(r, "INSERT INTO t1 SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
 	ch.queryWithNoError(r, "INSERT INTO t1 SELECT '2022-01-02 00:00:00', number FROM numbers(10)")
 	// Backup
@@ -1315,7 +1315,7 @@ func testBackupSpecifiedPartition(r *require.Assertions) error {
 	result := rows.MapScan(row)
 	r.Equal(10, row["count"])
 
-	rows, err := ch.chbackup.GetConn().Queryx("SELECT count(0) as count from default.t1 where dt != '2022-01-01")
+	rows, err = ch.chbackup.GetConn().Queryx("SELECT count(0) as count from default.t1 where dt != '2022-01-01")
 	result = rows.MapScan(row)
 	r.Equal(0, row["count"])
 }
