@@ -1001,7 +1001,7 @@ func testCommon(t *testing.T, remoteStorageType string) {
 
 	}
 	// test for specified partitions backup
-	testBackupSpecifiedPartition(r, ch)
+	ch.testBackupSpecifiedPartition(r)
 
 	log.Info("Clean after finish")
 	fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, true)
@@ -1368,7 +1368,7 @@ func installDebIfNotExists(r *require.Assertions, container, pkg string) {
 	))
 }
 
-func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) error {
+func (ch *TestClickHouse) testBackupSpecifiedPartition(r *require.Assertions) error {
 	log.Debugf("testBackupSpecifiedPartition started")
 
 	testBackupName := fmt.Sprintf("test_backup_%d", rand.Int())
