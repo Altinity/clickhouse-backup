@@ -1333,7 +1333,5 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) err
 		result = append(result, row)
 	}
 	r.Equal(1, len(result))
-	r.Equal(10, result[0]["count"])
-
-	r.Equal(0, row["count"])
+	r.Equal(0, result[0]["count"])
 }
