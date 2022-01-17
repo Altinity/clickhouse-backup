@@ -464,7 +464,7 @@ func TestSyncReplicaTimeout(t *testing.T) {
 	ch.queryWithNoError(r, "SYSTEM START REPLICATED SENDS default.repl1")
 	ch.queryWithNoError(r, "SYSTEM START FETCHES default.repl2")
 
-	ch.chbackup.Close()
+	ch.chbackend.Close()
 
 }
 
@@ -475,7 +475,7 @@ func TestServerAPI(t *testing.T) {
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	ch.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS long_schema")
 	defer func() {
-		ch.chbackup.Close()
+		ch.chbackend.Close()
 	}()
 	fieldTypes := []string{"UInt64", "String", "Int"}
 	installDebIfNotExists(r, "clickhouse", "curl")
@@ -582,13 +582,13 @@ func TestServerAPI(t *testing.T) {
 
 	log.Info("Check /metrics clickhouse_backup_last_backup_size_remote")
 	lastRemoteSize := make([]int64, 0)
-	r.NoError(ch.chbackup.Select(&lastRemoteSize, "SELECT size FROM system.backup_list WHERE name='backup_5' AND location='remote'"))
+	r.NoError(ch.chbackend.Select(&lastRemoteSize, "SELECT size FROM system.backup_list WHERE name='backup_5' AND location='remote'"))
 	realTotalBytes := make([]uint64, 0)
 
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 {
-		r.NoError(ch.chbackup.Select(&realTotalBytes, "SELECT sum(total_bytes) FROM system.tables WHERE database='long_schema'"))
+		r.NoError(ch.chbackend.Select(&realTotalBytes, "SELECT sum(total_bytes) FROM system.tables WHERE database='long_schema'"))
 	} else {
-		r.NoError(ch.chbackup.Select(&realTotalBytes, "SELECT sum(bytes_on_disk) FROM system.parts WHERE database='long_schema'"))
+		r.NoError(ch.chbackend.Select(&realTotalBytes, "SELECT sum(bytes_on_disk) FROM system.parts WHERE database='long_schema'"))
 	}
 
 	r.Greater(lastRemoteSize[0], int64(realTotalBytes[0]))
@@ -653,7 +653,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 	ch.queryWithNoError(r, "DROP ROLE test_rbac")
 	ch.queryWithNoError(r, "DROP USER test_rbac")
 
-	ch.chbackup.Close()
+	ch.chbackend.Close()
 	r.NoError(execCmd("docker-compose", "-f", os.Getenv("COMPOSE_FILE"), "restart", "clickhouse"))
 	ch.connectWithWait(r)
 
@@ -664,7 +664,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
 
 	// we can't restart clickhouse inside container, we need restart container
-	ch.chbackup.Close()
+	ch.chbackend.Close()
 	_, err := execCmdOut("docker", "restart", "clickhouse")
 	r.NoError(err)
 	ch.connectWithWait(r)
@@ -680,7 +680,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 	}
 	for rbacType, expectedValue := range rbacTypes {
 		var rbacRows []string
-		_ = ch.chbackup.Select(&rbacRows, fmt.Sprintf("SHOW %s", rbacType))
+		_ = ch.chbackend.Select(&rbacRows, fmt.Sprintf("SHOW %s", rbacType))
 		found := false
 		for _, row := range rbacRows {
 			if row == expectedValue {
@@ -702,7 +702,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 	ch.queryWithNoError(r, "DROP ROLE test_rbac")
 	ch.queryWithNoError(r, "DROP USER test_rbac")
 
-	ch.chbackup.Close()
+	ch.chbackend.Close()
 
 }
 
@@ -723,46 +723,46 @@ func TestDoRestoreConfigs(t *testing.T) {
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "upload", "test_configs_backup"))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_configs_backup"))
 
-	ch.chbackup.Close()
+	ch.chbackend.Close()
 	time.Sleep(2 * time.Second)
 	ch.connectWithWait(r)
 
 	var settings []string
-	r.NoError(ch.chbackup.Select(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
+	r.NoError(ch.chbackend.Select(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
 	r.Equal([]string{"1"}, settings, "expect empty_result_for_aggregation_by_empty_set=1")
 
 	r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/etc/clickhouse-server/users.d/test_config.xml"))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", "test_configs_backup"))
 
-	ch.chbackup.Close()
+	ch.chbackend.Close()
 	time.Sleep(2 * time.Second)
 	ch.connectWithWait(r)
 
 	settings = []string{}
-	r.NoError(ch.chbackup.Select(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
+	r.NoError(ch.chbackend.Select(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
 	r.Equal([]string{"0"}, settings, "expect empty_result_for_aggregation_by_empty_set=0")
 
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--rm", "--configs", "test_configs_backup"))
 
-	ch.chbackup.Close()
+	ch.chbackend.Close()
 	time.Sleep(2 * time.Second)
 	ch.connectWithWait(r)
 
 	settings = []string{}
-	r.NoError(ch.chbackup.Select(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
+	r.NoError(ch.chbackend.Select(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
 	r.Equal([]string{"1"}, settings, "expect empty_result_for_aggregation_by_empty_set=1")
 
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_configs_backup"))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", "test_configs_backup"))
 
-	ch.chbackup.Close()
+	ch.chbackend.Close()
 }
 
 func TestTablePatterns(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
 	ch.connectWithWait(r)
-	defer ch.chbackup.Close()
+	defer ch.chbackend.Close()
 
 	testBackupName := "test_backup_patterns"
 	fullCleanup(r, ch, []string{testBackupName}, false)
@@ -775,12 +775,12 @@ func TestTablePatterns(t *testing.T) {
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", "--tables", " "+dbNameOrdinary+".*", testBackupName))
 
 	var restoredTables []uint64
-	r.NoError(ch.chbackup.Select(&restoredTables, fmt.Sprintf("SELECT count() FROM system.tables WHERE database='%s'", dbNameOrdinary)))
+	r.NoError(ch.chbackend.Select(&restoredTables, fmt.Sprintf("SELECT count() FROM system.tables WHERE database='%s'", dbNameOrdinary)))
 	r.NotZero(len(restoredTables))
 	r.NotZero(restoredTables[0])
 
 	restoredTables = make([]uint64, 0)
-	r.NoError(ch.chbackup.Select(&restoredTables, fmt.Sprintf("SELECT count() FROM system.tables WHERE database='%s'", dbNameAtomic)))
+	r.NoError(ch.chbackend.Select(&restoredTables, fmt.Sprintf("SELECT count() FROM system.tables WHERE database='%s'", dbNameAtomic)))
 	// old versions of clickhouse will return empty recordset
 	if len(restoredTables) > 0 {
 		r.Zero(restoredTables[0])
@@ -791,7 +791,7 @@ func TestLongListRemote(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
 	ch.connectWithWait(r)
-	defer ch.chbackup.Close()
+	defer ch.chbackend.Close()
 
 	testBackupName := "test_list_remote"
 	fullCleanup(r, ch, []string{testBackupName}, false)
@@ -929,7 +929,7 @@ func testCommon(t *testing.T, remoteStorageType string) {
 	log.Info("Clean after finish")
 	fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, true)
 
-	ch.chbackup.Close()
+	ch.chbackend.Close()
 }
 
 func fullCleanup(r *require.Assertions, ch *TestClickHouse, backupNames []string, checkDeleteErr bool) {
@@ -1013,7 +1013,7 @@ func dropAllDatabases(r *require.Assertions, ch *TestClickHouse) {
 }
 
 type TestClickHouse struct {
-	chbackup *clickhouse.ClickHouse
+	chbackend *clickhouse.ClickHouse
 }
 
 func (ch *TestClickHouse) connectWithWait(r *require.Assertions) {
@@ -1030,7 +1030,7 @@ func (ch *TestClickHouse) connectWithWait(r *require.Assertions) {
 		} else {
 			if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") == 1 {
 				var rows []string
-				err = ch.chbackup.Select(&rows, "SELECT count() FROM mysql('mysql:3306','mysql','user','root','root')")
+				err = ch.chbackend.Select(&rows, "SELECT count() FROM mysql('mysql:3306','mysql','user','root','root')")
 				if err == nil {
 					break
 				} else {
@@ -1045,24 +1045,24 @@ func (ch *TestClickHouse) connectWithWait(r *require.Assertions) {
 }
 
 func (ch *TestClickHouse) connect() error {
-	ch.chbackup = &clickhouse.ClickHouse{
+	ch.chbackend = &clickhouse.ClickHouse{
 		Config: &config.ClickHouseConfig{
 			Host:    "127.0.0.1",
 			Port:    9000,
 			Timeout: "5m",
 		},
 	}
-	return ch.chbackup.Connect()
+	return ch.chbackend.Connect()
 }
 
 func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {
 	// 20.8 doesn't respect DROP TABLE .. NO DELAY, so Atomic works but --rm is not applicable
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") == 1 {
-		if err := ch.chbackup.CreateDatabaseWithEngine(data.Database, data.DatabaseEngine); err != nil {
+		if err := ch.chbackend.CreateDatabaseWithEngine(data.Database, data.DatabaseEngine); err != nil {
 			return err
 		}
 	} else {
-		if err := ch.chbackup.CreateDatabase(data.Database); err != nil {
+		if err := ch.chbackend.CreateDatabase(data.Database); err != nil {
 			return err
 		}
 	}
@@ -1087,7 +1087,7 @@ func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {
 	// old 1.x clickhouse versions doesn't contains {table} and {database} macros
 	if strings.Contains(createSQL, "{table}") || strings.Contains(createSQL, "{database}") {
 		var isMacrosExists []int
-		if err := ch.chbackup.Select(&isMacrosExists, "SELECT count() FROM system.functions WHERE name='getMacro'"); err != nil {
+		if err := ch.chbackend.Select(&isMacrosExists, "SELECT count() FROM system.functions WHERE name='getMacro'"); err != nil {
 			return err
 		}
 		if len(isMacrosExists) == 0 || isMacrosExists[0] == 0 {
@@ -1095,7 +1095,7 @@ func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {
 			createSQL = strings.Replace(createSQL, "{database}", data.Database, -1)
 		}
 	}
-	err := ch.chbackup.CreateTable(
+	err := ch.chbackend.CreateTable(
 		clickhouse.Table{
 			Database: data.Database,
 			Name:     data.Table,
@@ -1110,7 +1110,7 @@ func (ch *TestClickHouse) createTestData(data TestDataStruct) error {
 	if data.SkipInsert || data.CheckDatabaseOnly {
 		return nil
 	}
-	tx, err := ch.chbackup.GetConn().Beginx()
+	tx, err := ch.chbackend.GetConn().Beginx()
 	if err != nil {
 		return fmt.Errorf("can't begin transaction: %v", err)
 	}
@@ -1147,12 +1147,12 @@ func (ch *TestClickHouse) createTestData(data TestDataStruct) error {
 func (ch *TestClickHouse) dropDatabase(database string) (err error) {
 	var isAtomic bool
 	dropDatabaseSQL := fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", database)
-	if isAtomic, err = ch.chbackup.IsAtomic(database); isAtomic {
+	if isAtomic, err = ch.chbackend.IsAtomic(database); isAtomic {
 		dropDatabaseSQL += " SYNC"
 	} else if err != nil {
 		return err
 	}
-	_, err = ch.chbackup.Query(dropDatabaseSQL)
+	_, err = ch.chbackend.Query(dropDatabaseSQL)
 	return err
 }
 
@@ -1161,7 +1161,7 @@ func (ch *TestClickHouse) checkData(t *testing.T, data TestDataStruct, r *requir
 	log.Infof("Check '%d' rows in '%s.%s'\n", len(data.Rows), data.Database, data.Table)
 	selectSQL := fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY `%s`", data.Database, data.Table, data.OrderBy)
 	log.Debug(selectSQL)
-	rows, err := ch.chbackup.GetConn().Queryx(selectSQL)
+	rows, err := ch.chbackend.GetConn().Queryx(selectSQL)
 	if err != nil {
 		return err
 	}
@@ -1187,7 +1187,7 @@ func (ch *TestClickHouse) checkDatabaseEngine(t *testing.T, data TestDataStruct)
 	}
 	selectSQL := fmt.Sprintf("SELECT engine FROM system.databases WHERE name='%s'", data.Database)
 	log.Debug(selectSQL)
-	rows, err := ch.chbackup.GetConn().Queryx(selectSQL)
+	rows, err := ch.chbackend.GetConn().Queryx(selectSQL)
 	for rows.Next() {
 		row := map[string]interface{}{}
 		if err = rows.MapScan(row); err != nil {
@@ -1202,7 +1202,7 @@ func (ch *TestClickHouse) checkDatabaseEngine(t *testing.T, data TestDataStruct)
 }
 
 func (ch *TestClickHouse) queryWithNoError(r *require.Assertions, query string, args ...interface{}) {
-	_, err := ch.chbackup.Query(query, args...)
+	_, err := ch.chbackend.Query(query, args...)
 	r.NoError(err)
 }
 
@@ -1259,7 +1259,7 @@ func isTableSkip(ch *TestClickHouse, data TestDataStruct, dataExists bool) bool 
 			"SELECT engine FROM system.tables WHERE name='%s' AND database='%s'",
 			data.Table, data.Database,
 		)
-		_ = ch.chbackup.Select(&dictEngines, dictSQL)
+		_ = ch.chbackend.Select(&dictEngines, dictSQL)
 		return len(dictEngines) == 0
 	}
 	return os.Getenv("COMPOSE_FILE") == "docker-compose.yml" && (data.Table == "jbod" || data.IsDictionary)
@@ -1309,9 +1309,9 @@ func (ch *TestClickHouse) testBackupSpecifiedPartition(r *require.Assertions) er
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", testBackupName))
 
 	time.Sleep(10 * time.Second)
-	log.Infof("testBackupSpecifiedPartition begin check : '%s'", result)
+	log.Infof("testBackupSpecifiedPartition begin check \n")
 	// Check
-	rows, err := ch.chbackup.GetConn().Queryx("SELECT count(0) as count from default.t1 where dt = '2022-01-01'")
+	rows, err := ch.chbackend.GetConn().Queryx("SELECT count(0) as count from default.t1 where dt = '2022-01-01'")
 	// Must have one value
 	var result []map[string]interface{}
 	for rows.Next() {
@@ -1328,7 +1328,7 @@ func (ch *TestClickHouse) testBackupSpecifiedPartition(r *require.Assertions) er
 
 	// Reset the result.
 	result = nil
-	rows, err = ch.chbackup.GetConn().Queryx("SELECT count(0) as count from default.t1 where dt != '2022-01-01")
+	rows, err = ch.chbackend.GetConn().Queryx("SELECT count(0) as count from default.t1 where dt != '2022-01-01")
 
 	for rows.Next() {
 		row := map[string]interface{}{}
