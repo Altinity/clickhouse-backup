@@ -1375,7 +1375,7 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 
 	testBackupName := fmt.Sprintf("test_backup_%d", rand.Int())
 	// Create table
-	ch.queryWithNoError(r, "CREATE TABLE default.t1_ (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(dt) ORDER BY dt")
+	ch.queryWithNoError(r, "CREATE TABLE IF NOT EXISTS default.t1_ (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(dt) ORDER BY dt")
 	ch.queryWithNoError(r, "INSERT INTO default.t1_ SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
 	ch.queryWithNoError(r, "INSERT INTO default.t1_ SELECT '2022-01-02 00:00:00', number FROM numbers(10)")
 	// Backup
