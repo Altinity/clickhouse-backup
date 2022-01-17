@@ -1000,7 +1000,7 @@ func testCommon(t *testing.T, remoteStorageType string) {
 		}
 
 	}
-	
+
 	// test for specified partitions backup
 	dropAllDatabases(r, ch)
 	testBackupSpecifiedPartition(r, ch)
@@ -1008,7 +1008,7 @@ func testCommon(t *testing.T, remoteStorageType string) {
 	log.Info("Delete backup")
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", incrementBackupName))
-	r.NoError(dockerExec("clickhouse", "ls", "-lha", "/var/lib/clickhouse/backup")
+	r.NoError(dockerExec("clickhouse", "ls", "-lha", "/var/lib/clickhouse/backup"))
 
 	// test end
 	log.Info("Clean after finish")
