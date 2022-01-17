@@ -1295,9 +1295,9 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) err
 
 	testBackupName := fmt.Sprintf("test_backup_%d", rand.Int())
 	// Create table
-	ch.queryWithNoError(r, "CREATE TABLE default.t1(dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(dt) ORDER BY dt")
-	ch.queryWithNoError(r, "INSERT INTO t1 SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
-	ch.queryWithNoError(r, "INSERT INTO t1 SELECT '2022-01-02 00:00:00', number FROM numbers(10)")
+	ch.queryWithNoError(r, "CREATE TABLE default.t1 (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(dt) ORDER BY dt")
+	ch.queryWithNoError(r, "INSERT INTO default.t1 SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
+	ch.queryWithNoError(r, "INSERT INTO default.t1 SELECT '2022-01-02 00:00:00', number FROM numbers(10)")
 	// Backup
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables=default.t1", "--partitions=20220101", testBackupName))
 
@@ -1319,6 +1319,7 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) err
 		}
 		result = append(result, row)
 	}
+	log.Infof("testBackupSpecifiedPartition result : '%s'", result)
 	log.Infof("testBackupSpecifiedPartition result' length '%d'", len(result))
 	// r.Equal(1, len(result))
 	r.Equal(10, result[0]["count"])
@@ -1334,6 +1335,7 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) err
 		}
 		result = append(result, row)
 	}
+	log.Infof("testBackupSpecifiedPartition result : '%s'", result)
 	log.Infof("testBackupSpecifiedPartition result' length '%d'", len(result))
 	r.Equal(0, result[0]["count"])
 	return err
