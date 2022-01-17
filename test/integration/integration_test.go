@@ -771,7 +771,7 @@ func TestTablePatterns(t *testing.T) {
 
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables", " "+dbNameOrdinary+".*", testBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
-	dropAllDatabases(r, ch)
+	dropDatabasesFromTestDataDataSet(r, ch)
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", "--tables", " "+dbNameOrdinary+".*", testBackupName))
 
 	var restoredTables []uint64
@@ -823,6 +823,7 @@ func TestLongListRemote(t *testing.T) {
 }
 
 func TestSkipNotExistsTable(t *testing.T) {
+	t.Skip("TestSkipNotExistsTable is flaky now, need more precise algorithm for pause calculation")
 	ch := &TestClickHouse{}
 	r := require.New(t)
 	ch.connectWithWait(r, 0*time.Second)
@@ -933,7 +934,7 @@ func testCommon(t *testing.T, remoteStorageType string) {
 	r.NoError(dockerExec("clickhouse", "bash", "-c", fmt.Sprintf("%s_COMPRESSION_FORMAT=zstd clickhouse-backup upload %s", remoteStorageType, testBackupName)))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "upload", incrementBackupName, "--diff-from", testBackupName))
 
-	dropAllDatabases(r, ch)
+	dropDatabasesFromTestDataDataSet(r, ch)
 
 	out, err = dockerExecOut("clickhouse", "ls", "-lha", "/var/lib/clickhouse/backup")
 	r.NoError(err)
@@ -968,7 +969,7 @@ func testCommon(t *testing.T, remoteStorageType string) {
 		}
 	}
 	// test increment
-	dropAllDatabases(r, ch)
+	dropDatabasesFromTestDataDataSet(r, ch)
 	r.NoError(dockerExec("clickhouse", "ls", "-lha", "/var/lib/clickhouse/backup"))
 	log.Info("Delete backup")
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
@@ -1015,7 +1016,7 @@ func fullCleanup(r *require.Assertions, ch *TestClickHouse, backupNames []string
 			}
 		}
 	}
-	dropAllDatabases(r, ch)
+	dropDatabasesFromTestDataDataSet(r, ch)
 }
 
 func generateTestData(ch *TestClickHouse, r *require.Assertions) {
@@ -1079,7 +1080,7 @@ func generateTestData(ch *TestClickHouse, r *require.Assertions) {
 	}
 }
 
-func dropAllDatabases(r *require.Assertions, ch *TestClickHouse) {
+func dropDatabasesFromTestDataDataSet(r *require.Assertions, ch *TestClickHouse) {
 	log.Info("Drop all databases")
 	for _, db := range []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, Issue331Atomic, Issue331Ordinary} {
 		r.NoError(ch.dropDatabase(db))
