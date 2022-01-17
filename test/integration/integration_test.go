@@ -899,6 +899,34 @@ func TestSkipNotExistsTable(t *testing.T) {
 	wg.Wait()
 	r.True(errorCatched)
 }
+
+func TestProjections(t *testing.T) {
+	var err error
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") == -1 {
+		t.Skipf("Test skipped, PROJECTION available only 21.8+, current version %s", os.Getenv("CLICKHOUSE_VERSION"))
+	}
+
+	ch := &TestClickHouse{}
+	r := require.New(t)
+	ch.connectWithWait(r, 0*time.Second)
+	defer ch.chbackup.Close()
+
+	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	_, err = ch.chbackup.Query("CREATE TABLE default.table_with_projection(dt DateTime, v UInt64, PROJECTION x (SELECT toStartOfMonth(dt) m, sum(v) GROUP BY m)) ENGINE=MergeTree() ORDER BY dt")
+	r.NoError(err)
+
+	_, err = ch.chbackup.Query("INSERT INTO default.table_with_projection SELECT today() - INTERVAL number DAY, number FROM numbers(10)")
+	r.NoError(err)
+
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "test_backup_projection"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--rm", "test_backup_projection"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_backup_projection"))
+
+	_, err = ch.chbackup.Query("DROP TABLE default.table_with_projection")
+	r.NoError(err)
+
+}
+
 func testCommon(t *testing.T, remoteStorageType string) {
 	var out string
 	var err error
