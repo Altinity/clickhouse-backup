@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -1369,7 +1370,7 @@ func installDebIfNotExists(r *require.Assertions, container, pkg string) {
 }
 
 func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
-	log.Debugf("testBackupSpecifiedPartition started")
+	log.Infof("testBackupSpecifiedPartition started")
 
 	testBackupName := fmt.Sprintf("test_backup_%d", rand.Int())
 	// Create table
@@ -1384,24 +1385,28 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", testBackupName))
 
-	log.Debugf("testBackupSpecifiedPartition begin check \n")
+	log.Infof("testBackupSpecifiedPartition begin check \n")
 	// Check
 	var result []int
 
-	_ = ch.chbackend.Select(&result, "SELECT count(0) as count from default.t1 where dt = '2022-01-01'")
+	if err := ch.chbackend.Select(&result, "SELECT count(0) from default.t1 where dt = '2022-01-01'"); err != nil {
+		log.Fatalf(err)
+	}
 	// Must have one value
-	log.Info("testBackupSpecifiedPartition result : '%s'", result)
-	log.Info("testBackupSpecifiedPartition result' length '%d'", len(result))
+	log.Infof("testBackupSpecifiedPartition result : '%s'", result)
+	log.Infof("testBackupSpecifiedPartition result' length '%d'", len(result))
 
 	// r.Equal(1, len(result))
 	r.Equal(10, result[0])
 
 	// Reset the result.
 	result = nil
-	_ = ch.chbackend.Select(&result, "SELECT count(0) as count from default.t1 where dt != '2022-01-01")
+	if err := ch.chbackend.Select(&result, "SELECT count(0) from default.t1 where dt != '2022-01-01"); err != nil {
+		log.Fatalf(err)
+	}
 
-	log.Info("testBackupSpecifiedPartition result : '%s'", result)
-	log.Info("testBackupSpecifiedPartition result' length '%d'", len(result))
+	log.Infof("testBackupSpecifiedPartition result : '%s'", result)
+	log.Infof("testBackupSpecifiedPartition result' length '%d'", len(result))
 
 	// r.Equal(1, len(result))
 	r.Equal(0, result[0])
