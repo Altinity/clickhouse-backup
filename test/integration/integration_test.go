@@ -1384,7 +1384,6 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) err
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", testBackupName))
 
-	time.Sleep(10 * time.Second)
 	log.Debugf("testBackupSpecifiedPartition begin check \n")
 	// Check
 	rows, err := ch.chbackend.GetConn().Queryx("SELECT count(0) as count from default.t1 where dt = '2022-01-01'")
