@@ -1303,8 +1303,10 @@ func testBackupSpecifiedPartition(t *testing.T, r *require.Assertions) error {
 	// Backup
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables=default.t1", "--partitions=20220101", testBackupName))
 
+	time.Sleep(10 * time.Second)
+
 	// TRUNCATE TABLE
-	r.queryWithNoError(r, "TRUNCATE table default.t1")
+	ch.queryWithNoError(r, "TRUNCATE table default.t1")
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
 	r.NoError(dockerExec("clickhouse", "restore_remote", testBackupName))
 
@@ -1312,10 +1314,10 @@ func testBackupSpecifiedPartition(t *testing.T, r *require.Assertions) error {
 	rows, err := ch.chbackup.GetConn().Queryx("SELECT count(0) as count from default.t1 where dt = '2022-01-01'")
 	// Must have one value
 	row := map[string]interface{}{}
-	result := rows.MapScan(row)
+	result := rows.Next().MapScan(row)
 	r.Equal(10, row["count"])
 
 	rows, err = ch.chbackup.GetConn().Queryx("SELECT count(0) as count from default.t1 where dt != '2022-01-01")
-	result = rows.MapScan(row)
+	result = rows.Next().MapScan(row)
 	r.Equal(0, row["count"])
 }
