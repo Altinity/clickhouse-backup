@@ -1380,8 +1380,7 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 	ch.queryWithNoError(r, "INSERT INTO default.t1 SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
 	ch.queryWithNoError(r, "INSERT INTO default.t1 SELECT '2022-01-02 00:00:00', number FROM numbers(10)")
 	// Backup
-	// DELETE remote backup before create remote backup.
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", testBackupName))
+
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables=default.t1", "--partitions=20220101", testBackupName))
 
 	// TRUNCATE TABLE
@@ -1413,7 +1412,8 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 	log.Infof("testBackupSpecifiedPartition result : '%s'", result)
 	log.Infof("testBackupSpecifiedPartition result' length '%d'", len(result))
 
+	// DELETE remote backup.
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", testBackupName))
 	// r.Equal(1, len(result))
 	r.Equal(0, result[0])
-	dropAllDatabases(r, ch)
 }
