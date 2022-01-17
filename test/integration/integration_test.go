@@ -6,11 +6,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/AlexAkulov/clickhouse-backup/internal/logcli"
 	"math/rand"
 	"os"
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -367,6 +369,7 @@ var incrementData = []TestDataStruct{
 }
 
 func init() {
+	log.SetHandler(logcli.New(os.Stdout))
 	logLevel := "info"
 	if os.Getenv("LOG_LEVEL") != "" {
 		logLevel = os.Getenv("LOG_LEVEL")
@@ -435,7 +438,7 @@ func TestSyncReplicaTimeout(t *testing.T) {
 	}
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r)
+	ch.connectWithWait(r, 0*time.Millisecond)
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 
 	for _, table := range []string{"repl1", "repl2"} {
@@ -471,7 +474,7 @@ func TestSyncReplicaTimeout(t *testing.T) {
 func TestServerAPI(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r)
+	ch.connectWithWait(r, 0*time.Second)
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	ch.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS long_schema")
 	defer func() {
@@ -622,7 +625,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
 
-	ch.connectWithWait(r)
+	ch.connectWithWait(r, 1*time.Second)
 
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_rbac")
@@ -655,7 +658,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 
 	ch.chbackend.Close()
 	r.NoError(execCmd("docker-compose", "-f", os.Getenv("COMPOSE_FILE"), "restart", "clickhouse"))
-	ch.connectWithWait(r)
+	ch.connectWithWait(r, 2*time.Second)
 
 	log.Info("download+restore RBAC")
 	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
@@ -667,7 +670,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 	ch.chbackend.Close()
 	_, err := execCmdOut("docker", "restart", "clickhouse")
 	r.NoError(err)
-	ch.connectWithWait(r)
+	ch.connectWithWait(r, 2*time.Second)
 
 	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
 
@@ -712,7 +715,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 	}
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r)
+	ch.connectWithWait(r, 0*time.Millisecond)
 	ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_rbac")
 	ch.queryWithNoError(r, "CREATE TABLE default.test_rbac (v UInt64) ENGINE=MergeTree() ORDER BY tuple()")
 
@@ -724,8 +727,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_configs_backup"))
 
 	ch.chbackend.Close()
-	time.Sleep(2 * time.Second)
-	ch.connectWithWait(r)
+	ch.connectWithWait(r, 2*time.Second)
 
 	var settings []string
 	r.NoError(ch.chbackend.Select(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
@@ -735,8 +737,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", "test_configs_backup"))
 
 	ch.chbackend.Close()
-	time.Sleep(2 * time.Second)
-	ch.connectWithWait(r)
+	ch.connectWithWait(r, 2*time.Second)
 
 	settings = []string{}
 	r.NoError(ch.chbackend.Select(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
@@ -745,8 +746,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--rm", "--configs", "test_configs_backup"))
 
 	ch.chbackend.Close()
-	time.Sleep(2 * time.Second)
-	ch.connectWithWait(r)
+	ch.connectWithWait(r, 2*time.Second)
 
 	settings = []string{}
 	r.NoError(ch.chbackend.Select(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
@@ -761,7 +761,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 func TestTablePatterns(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r)
+	ch.connectWithWait(r, 500*time.Millisecond)
 	defer ch.chbackend.Close()
 
 	testBackupName := "test_backup_patterns"
@@ -790,17 +790,16 @@ func TestTablePatterns(t *testing.T) {
 func TestLongListRemote(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r)
+	ch.connectWithWait(r, 0*time.Second)
 	defer ch.chbackend.Close()
 
 	testBackupName := "test_list_remote"
 	fullCleanup(r, ch, []string{testBackupName}, false)
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	generateTestData(ch, r)
 	r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/tmp/.clickhouse-backup-metadata.cache.S3"))
 
 	for i := 0; i < 15; i++ {
-		r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", fmt.Sprintf("%s_%d", testBackupName, i)))
+		r.NoError(dockerExec("clickhouse", "bash", "-c", fmt.Sprintf("ALLOW_EMPTY_BACKUPS=true clickhouse-backup create_remote %s_%d", testBackupName, i)))
 	}
 	startFirst := time.Now()
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "list", "remote"))
@@ -823,13 +822,90 @@ func TestLongListRemote(t *testing.T) {
 	log.Infof("firstDuration=%s cachedDuration=%s cacheClearDuration=%s", firstDuration.String(), cashedDuration.String(), cacheClearDuration.String())
 }
 
+func TestSkipNotExistsTable(t *testing.T) {
+	ch := &TestClickHouse{}
+	r := require.New(t)
+	ch.connectWithWait(r, 0*time.Second)
+	defer ch.chbackend.Close()
+
+	log.Info("Check skip not exist errors")
+	ifNotExistsCreateSQL := "CREATE TABLE IF NOT EXISTS default.if_not_exists (id UInt64) ENGINE=MergeTree() ORDER BY id"
+	ifNotExistsInsertSQL := "INSERT INTO default.if_not_exists SELECT number FROM numbers(1000)"
+	chVersion, err := ch.chbackend.GetVersion()
+	r.NoError(err)
+
+	errorCatched := false
+	pauseChannel := make(chan int64)
+	resumeChannel := make(chan int64)
+	rand.Seed(time.Now().UnixNano())
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer func() {
+			close(pauseChannel)
+			wg.Done()
+		}()
+		pause := int64(0)
+		pausePercent := int64(93)
+		for i := 0; i < 100; i++ {
+			testBackupName := fmt.Sprintf("not_exists_%d", i)
+			_, err = ch.chbackend.Query(ifNotExistsCreateSQL)
+			r.NoError(err)
+			_, err = ch.chbackend.Query(ifNotExistsInsertSQL)
+			r.NoError(err)
+			pauseChannel <- pause
+			startTime := time.Now()
+			out, err := dockerExecOut("clickhouse", "bash", "-c", "LOG_LEVEL=debug clickhouse-backup create --table default.if_not_exists "+testBackupName)
+			pause = time.Since(startTime).Nanoseconds() * pausePercent / 100
+			log.Info(out)
+			if err != nil {
+				if !strings.Contains(out, "no tables for backup") {
+					assert.NoError(t, err)
+				} else {
+					pausePercent += 1
+				}
+			}
+
+			if strings.Contains(out, "warn") && strings.Contains(out, "can't freeze") && strings.Contains(out, "code: 60") && err == nil {
+				errorCatched = true
+				<-resumeChannel
+				r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
+				break
+			}
+			if err == nil {
+				err = dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName)
+				assert.NoError(t, err)
+			}
+			<-resumeChannel
+		}
+	}()
+	wg.Add(1)
+	go func() {
+		defer func() {
+			close(resumeChannel)
+			wg.Done()
+		}()
+		for pause := range pauseChannel {
+			if pause > 0 {
+				time.Sleep(time.Duration(pause) * time.Nanosecond)
+				log.Infof("pause=%s", time.Duration(pause).String())
+				err = ch.chbackend.DropTable(clickhouse.Table{Database: "default", Name: "if_not_exists"}, ifNotExistsCreateSQL, "", chVersion)
+				r.NoError(err)
+			}
+			resumeChannel <- 1
+		}
+	}()
+	wg.Wait()
+	r.True(errorCatched)
+}
 func testCommon(t *testing.T, remoteStorageType string) {
 	var out string
 	var err error
 
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r)
+	ch.connectWithWait(r, 500*time.Millisecond)
 
 	rand.Seed(time.Now().UnixNano())
 
@@ -1016,7 +1092,8 @@ type TestClickHouse struct {
 	chbackend *clickhouse.ClickHouse
 }
 
-func (ch *TestClickHouse) connectWithWait(r *require.Assertions) {
+func (ch *TestClickHouse) connectWithWait(r *require.Assertions, sleepBefore time.Duration) {
+	time.Sleep(sleepBefore)
 	for i := 1; i < 11; i++ {
 		err := ch.connect()
 		if i == 10 {

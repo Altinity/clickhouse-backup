@@ -48,7 +48,7 @@ func getArchiveWriter(format string, level int) (archiver.Writer, error) {
 	case "zstd":
 		return &archiver.TarZstd{Tar: archiver.NewTar()}, nil
 	}
-	return nil, fmt.Errorf("wrong compression_format, supported: 'tar', 'gzip', 'zstd'")
+	return nil, fmt.Errorf("wrong compression_format: %s, supported: 'tar', 'lz4', 'bzip2', 'gzip', 'sz', 'xz', 'brotli', 'zstd'", format)
 }
 
 func getArchiveReader(format string) (archiver.Reader, error) {
@@ -70,5 +70,5 @@ func getArchiveReader(format string) (archiver.Reader, error) {
 	case "zstd":
 		return archiver.NewTarZstd(), nil
 	}
-	return nil, fmt.Errorf("wrong compression_format, supported: 'tar', 'gzip', 'zstd'")
+	return nil, fmt.Errorf("wrong compression_format: %s, supported: 'tar', 'lz4', 'bzip2', 'gzip', 'sz', 'xz', 'brotli', 'zstd'", format)
 }

@@ -56,7 +56,7 @@ func (h *Handler) HandleLog(e *log.Entry) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	fmt.Fprintf(h.Writer, "%s %-5s %-25s", e.Timestamp.Format("2006/01/02 15:04:05"), level, e.Message)
+	fmt.Fprintf(h.Writer, "%s %-5s %-25s", e.Timestamp.Format("2006/01/02 15:04:05.000000"), level, e.Message)
 
 	for _, name := range names {
 		if name == "source" {
