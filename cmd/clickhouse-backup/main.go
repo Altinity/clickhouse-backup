@@ -83,6 +83,7 @@ func main() {
 				cli.StringFlag{
 					Name:   "partitions",
 					Hidden: false,
+					Usage:  "partitions seperated by ,",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",
@@ -118,6 +119,7 @@ func main() {
 				cli.StringFlag{
 					Name:   "partitions",
 					Hidden: false,
+					Usage:  "partitions seperated by ,",
 				},
 				cli.StringFlag{
 					Name:   "diff-from",
