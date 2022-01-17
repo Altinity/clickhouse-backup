@@ -1388,7 +1388,7 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 	// Check
 	var result []int
 
-	if err := ch.chbackend.Select(&result, "SELECT count(0) from default.t1 where dt = '2022-01-01'"); err != nil {
+	if err := ch.chbackend.Select(&result, "SELECT count(0) from default.t1 where dt = '2022-01-01 00:00:00'"); err != nil {
 		log.Warnf("SELECT error: %w", err)
 	}
 	// Must have one value
@@ -1400,7 +1400,7 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 
 	// Reset the result.
 	result = nil
-	if err := ch.chbackend.Select(&result, "SELECT count(0) from default.t1 where dt != '2022-01-01"); err != nil {
+	if err := ch.chbackend.Select(&result, "SELECT count(0) from default.t1 where dt != '2022-01-01 00:00:00'"); err != nil {
 		log.Warnf("SELECT error: %w", err)
 	}
 
