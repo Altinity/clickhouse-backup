@@ -485,7 +485,7 @@ func TestServerAPI(t *testing.T) {
 	maxTables := 10
 	minFields := 10
 	randFields := 10
-	log.Infof("Create %d `long_schema`.`t%%d` tables with with %d..%d fields...", maxTables, minFields, minFields+randFields)
+	log.Debugf("Create %d `long_schema`.`t%%d` tables with with %d..%d fields...", maxTables, minFields, minFields+randFields)
 	for i := 0; i < maxTables; i++ {
 		sql := fmt.Sprintf("CREATE TABLE long_schema.t%d (id UInt64", i)
 		fieldsCount := minFields + rand.Intn(randFields)
@@ -819,7 +819,7 @@ func TestLongListRemote(t *testing.T) {
 	cacheClearDuration := time.Since(startCacheClear)
 
 	r.Greater(cacheClearDuration, cashedDuration)
-	log.Infof("firstDuration=%s cachedDuration=%s cacheClearDuration=%s", firstDuration.String(), cashedDuration.String(), cacheClearDuration.String())
+	log.Debugf("firstDuration=%s cachedDuration=%s cacheClearDuration=%s", firstDuration.String(), cashedDuration.String(), cacheClearDuration.String())
 }
 
 func TestSkipNotExistsTable(t *testing.T) {
@@ -889,7 +889,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 		for pause := range pauseChannel {
 			if pause > 0 {
 				time.Sleep(time.Duration(pause) * time.Nanosecond)
-				log.Infof("pause=%s", time.Duration(pause).String())
+				log.Debugf("pause=%s", time.Duration(pause).String())
 				err = ch.chbackend.DropTable(clickhouse.Table{Database: "default", Name: "if_not_exists"}, ifNotExistsCreateSQL, "", chVersion)
 				r.NoError(err)
 			}
@@ -1235,7 +1235,7 @@ func (ch *TestClickHouse) dropDatabase(database string) (err error) {
 
 func (ch *TestClickHouse) checkData(t *testing.T, data TestDataStruct, r *require.Assertions) error {
 	assert.NotNil(t, data.Rows)
-	log.Infof("Check '%d' rows in '%s.%s'\n", len(data.Rows), data.Database, data.Table)
+	log.Debugf("Check '%d' rows in '%s.%s'\n", len(data.Rows), data.Database, data.Table)
 	selectSQL := fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY `%s`", data.Database, data.Table, data.OrderBy)
 	log.Debug(selectSQL)
 	rows, err := ch.chbackend.GetConn().Queryx(selectSQL)
@@ -1303,7 +1303,7 @@ func execCmd(cmd string, args ...string) error {
 
 func execCmdOut(cmd string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
-	log.Infof("%s %s", cmd, strings.Join(args, " "))
+	log.Debugf("%s %s", cmd, strings.Join(args, " "))
 	out, err := exec.CommandContext(ctx, cmd, args...).CombinedOutput()
 	cancel()
 	return string(out), err
@@ -1312,7 +1312,7 @@ func execCmdOut(cmd string, args ...string) (string, error) {
 func dockerCP(src, dst string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	dcmd := []string{"cp", src, dst}
-	log.Infof("docker %s", strings.Join(dcmd, " "))
+	log.Debugf("docker %s", strings.Join(dcmd, " "))
 	out, err := exec.CommandContext(ctx, "docker", dcmd...).CombinedOutput()
 	log.Info(string(out))
 	cancel()
@@ -1368,7 +1368,7 @@ func installDebIfNotExists(r *require.Assertions, container, pkg string) {
 }
 
 func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) error {
-	log.Infof("testBackupSpecifiedPartition started")
+	log.Debugf("testBackupSpecifiedPartition started")
 
 	testBackupName := fmt.Sprintf("test_backup_%d", rand.Int())
 	// Create table
@@ -1378,15 +1378,13 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) err
 	// Backup
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables=default.t1", "--partitions=20220101", testBackupName))
 
-	time.Sleep(10 * time.Second)
-
 	// TRUNCATE TABLE
 	ch.queryWithNoError(r, "TRUNCATE table default.t1")
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", testBackupName))
 
 	time.Sleep(10 * time.Second)
-	log.Infof("testBackupSpecifiedPartition begin check \n")
+	log.Debugf("testBackupSpecifiedPartition begin check \n")
 	// Check
 	rows, err := ch.chbackend.GetConn().Queryx("SELECT count(0) as count from default.t1 where dt = '2022-01-01'")
 	// Must have one value
@@ -1398,9 +1396,10 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) err
 		}
 		result = append(result, row)
 	}
-	log.Infof("testBackupSpecifiedPartition result : '%s'", result)
-	log.Infof("testBackupSpecifiedPartition result' length '%d'", len(result))
-	// r.Equal(1, len(result))
+	log.Debugf("testBackupSpecifiedPartition result : '%s'", result)
+	log.Debugf("testBackupSpecifiedPartition result' length '%d'", len(result))
+
+	r.Equal(1, len(result))
 	r.Equal(10, result[0]["count"])
 
 	// Reset the result.
@@ -1414,8 +1413,10 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) err
 		}
 		result = append(result, row)
 	}
-	log.Infof("testBackupSpecifiedPartition result : '%s'", result)
-	log.Infof("testBackupSpecifiedPartition result' length '%d'", len(result))
+	log.Debugf("testBackupSpecifiedPartition result : '%s'", result)
+	log.Debugf("testBackupSpecifiedPartition result' length '%d'", len(result))
+
+	r.Equal(1, len(result))
 	r.Equal(0, result[0]["count"])
 	return err
 }
