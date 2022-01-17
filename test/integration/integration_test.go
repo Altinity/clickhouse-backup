@@ -924,7 +924,7 @@ func testCommon(t *testing.T, remoteStorageType string) {
 
 	}
 	// test for specified partitions backup
-	testBackupSpecifiedPartition(r, ch)
+	ch.testBackupSpecifiedPartition(r)
 
 	log.Info("Clean after finish")
 	fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, true)
@@ -1290,7 +1290,7 @@ func installDebIfNotExists(r *require.Assertions, container, pkg string) {
 	))
 }
 
-func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) error {
+func (ch *TestClickHouse) testBackupSpecifiedPartition(r *require.Assertions) error {
 	log.Infof("testBackupSpecifiedPartition started")
 
 	testBackupName := fmt.Sprintf("test_backup_%d", rand.Int())
@@ -1308,6 +1308,8 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) err
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", testBackupName))
 
+	time.Sleep(10 * time.Second)
+	log.Infof("testBackupSpecifiedPartition begin check : '%s'", result)
 	// Check
 	rows, err := ch.chbackup.GetConn().Queryx("SELECT count(0) as count from default.t1 where dt = '2022-01-01'")
 	// Must have one value
