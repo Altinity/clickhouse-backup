@@ -1288,7 +1288,7 @@ func installDebIfNotExists(r *require.Assertions, container, pkg string) {
 	))
 }
 
-func TestBackupSpecifiedPartition(t *testing.T, r *require.Assertions) error{
+func TestBackupSpecifiedPartition(t *testing.T, r *require.Assertions) error {
 
 	ch := &TestClickHouse{}
 	r := require.New(t)
@@ -1301,12 +1301,12 @@ func TestBackupSpecifiedPartition(t *testing.T, r *require.Assertions) error{
 	ch.queryWithNoError(r, "INSERT INTO t1 SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
 	ch.queryWithNoError(r, "INSERT INTO t1 SELECT '2022-01-02 00:00:00', number FROM numbers(10)")
 	// Backup
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables=default.t1","--partitions=20220101", testBackupName))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables=default.t1", "--partitions=20220101", testBackupName))
 
 	// TRUNCATE TABLE
 	r.queryWithNoError(r, "TRUNCATE table default.t1")
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
-	r.NoError(dockerExec("clickhouse", "restore" testBackupName))
+	r.NoError(dockerExec("clickhouse", "restore_remote", testBackupName))
 
 	// Check
 	rows, err := ch.chbackup.GetConn().Queryx("SELECT count(0) as count from default.t1 where dt = '2022-01-01'")
