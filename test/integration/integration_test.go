@@ -1414,6 +1414,8 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 
 	// DELETE remote backup.
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", testBackupName))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
+
 	// r.Equal(1, len(result))
 	r.Equal(0, result[0])
 }
