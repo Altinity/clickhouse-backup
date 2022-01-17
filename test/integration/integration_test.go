@@ -1375,14 +1375,14 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 
 	testBackupName := fmt.Sprintf("test_backup_%d", rand.Int())
 	// Create table
-	ch.queryWithNoError(r, "CREATE TABLE default.t1 (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(dt) ORDER BY dt")
-	ch.queryWithNoError(r, "INSERT INTO default.t1 SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
-	ch.queryWithNoError(r, "INSERT INTO default.t1 SELECT '2022-01-02 00:00:00', number FROM numbers(10)")
+	ch.queryWithNoError(r, "CREATE TABLE default.t1_ (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(dt) ORDER BY dt")
+	ch.queryWithNoError(r, "INSERT INTO default.t1_ SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
+	ch.queryWithNoError(r, "INSERT INTO default.t1_ SELECT '2022-01-02 00:00:00', number FROM numbers(10)")
 	// Backup
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables=default.t1", "--partitions=20220101", testBackupName))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables=default.t1_", "--partitions=20220101", testBackupName))
 
 	// TRUNCATE TABLE
-	ch.queryWithNoError(r, "TRUNCATE table default.t1")
+	ch.queryWithNoError(r, "TRUNCATE table default.t1_")
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", testBackupName))
 
@@ -1390,7 +1390,7 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 	// Check
 	var result []int
 
-	if err := ch.chbackend.Select(&result, "SELECT count(0) from default.t1 where dt = '2022-01-01 00:00:00'"); err != nil {
+	if err := ch.chbackend.Select(&result, "SELECT count(0) from default.t1_ where dt = '2022-01-01 00:00:00'"); err != nil {
 		log.Warnf("SELECT error: %w", err)
 	}
 	// Must have one value
@@ -1402,7 +1402,7 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 
 	// Reset the result.
 	result = nil
-	if err := ch.chbackend.Select(&result, "SELECT count(0) from default.t1 where dt != '2022-01-01 00:00:00'"); err != nil {
+	if err := ch.chbackend.Select(&result, "SELECT count(0) from default.t1_ where dt != '2022-01-01 00:00:00'"); err != nil {
 		log.Warnf("SELECT error: %w", err)
 	}
 
