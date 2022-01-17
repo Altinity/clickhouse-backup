@@ -1334,4 +1334,5 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) err
 	}
 	r.Equal(1, len(result))
 	r.Equal(0, result[0]["count"])
+	return err
 }
