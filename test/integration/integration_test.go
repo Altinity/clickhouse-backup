@@ -587,8 +587,8 @@ func TestServerAPI(t *testing.T) {
 	log.Info("Check /metrics clickhouse_backup_last_backup_size_remote")
 	lastRemoteSize := make([]int64, 0)
 	r.NoError(ch.chbackend.Select(&lastRemoteSize, "SELECT size FROM system.backup_list WHERE name='backup_5' AND location='remote'"))
-	realTotalBytes := make([]uint64, 0)
 
+	realTotalBytes := make([]uint64, 0)
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 {
 		r.NoError(ch.chbackend.Select(&realTotalBytes, "SELECT sum(total_bytes) FROM system.tables WHERE database='long_schema'"))
 	} else {
@@ -1368,7 +1368,7 @@ func installDebIfNotExists(r *require.Assertions, container, pkg string) {
 	))
 }
 
-func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) error {
+func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 	log.Debugf("testBackupSpecifiedPartition started")
 
 	testBackupName := fmt.Sprintf("test_backup_%d", rand.Int())
@@ -1386,37 +1386,23 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) err
 
 	log.Debugf("testBackupSpecifiedPartition begin check \n")
 	// Check
-	rows, err := ch.chbackend.Select("SELECT count(0) as count from default.t1 where dt = '2022-01-01'")
+	var result []int
+
+	_ = ch.chbackend.Select(&result, "SELECT count(0) as count from default.t1 where dt = '2022-01-01'")
 	// Must have one value
-	var result []map[string]interface{}
-	for rows.Next() {
-		row := map[string]interface{}{}
-		if err = rows.MapScan(row); err != nil {
-			return err
-		}
-		result = append(result, row)
-	}
 	log.Debugf("testBackupSpecifiedPartition result : '%s'", result)
 	log.Debugf("testBackupSpecifiedPartition result' length '%d'", len(result))
 
 	r.Equal(1, len(result))
-	r.Equal(10, result[0]["count"])
+	r.Equal(10, result[0])
 
 	// Reset the result.
 	result = nil
-	rows, err = ch.chbackend.Select("SELECT count(0) as count from default.t1 where dt != '2022-01-01")
+	_ = ch.chbackend.Select(&result, "SELECT count(0) as count from default.t1 where dt != '2022-01-01")
 
-	for rows.Next() {
-		row := map[string]interface{}{}
-		if err = rows.MapScan(row); err != nil {
-			return err
-		}
-		result = append(result, row)
-	}
 	log.Debugf("testBackupSpecifiedPartition result : '%s'", result)
 	log.Debugf("testBackupSpecifiedPartition result' length '%d'", len(result))
 
 	r.Equal(1, len(result))
-	r.Equal(0, result[0]["count"])
-	return err
+	r.Equal(0, result[0])
 }
