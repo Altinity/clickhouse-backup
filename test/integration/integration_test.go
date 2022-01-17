@@ -1001,7 +1001,7 @@ func testCommon(t *testing.T, remoteStorageType string) {
 
 	}
 	// test for specified partitions backup
-	ch.testBackupSpecifiedPartition(r)
+	testBackupSpecifiedPartition(r, ch)
 
 	log.Info("Clean after finish")
 	fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, true)
@@ -1368,7 +1368,7 @@ func installDebIfNotExists(r *require.Assertions, container, pkg string) {
 	))
 }
 
-func (ch *TestClickHouse) testBackupSpecifiedPartition(r *require.Assertions) error {
+func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) error {
 	log.Debugf("testBackupSpecifiedPartition started")
 
 	testBackupName := fmt.Sprintf("test_backup_%d", rand.Int())
@@ -1386,7 +1386,7 @@ func (ch *TestClickHouse) testBackupSpecifiedPartition(r *require.Assertions) er
 
 	log.Debugf("testBackupSpecifiedPartition begin check \n")
 	// Check
-	rows, err := ch.chbackend.GetConn().Queryx("SELECT count(0) as count from default.t1 where dt = '2022-01-01'")
+	rows, err := ch.chbackend.Select("SELECT count(0) as count from default.t1 where dt = '2022-01-01'")
 	// Must have one value
 	var result []map[string]interface{}
 	for rows.Next() {
@@ -1404,7 +1404,7 @@ func (ch *TestClickHouse) testBackupSpecifiedPartition(r *require.Assertions) er
 
 	// Reset the result.
 	result = nil
-	rows, err = ch.chbackend.GetConn().Queryx("SELECT count(0) as count from default.t1 where dt != '2022-01-01")
+	rows, err = ch.chbackend.Select("SELECT count(0) as count from default.t1 where dt != '2022-01-01")
 
 	for rows.Next() {
 		row := map[string]interface{}{}
