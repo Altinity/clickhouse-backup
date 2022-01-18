@@ -16,19 +16,6 @@ import (
 	apexLog "github.com/apex/log"
 )
 
-func CleanShadow(name string, ch *clickhouse.ClickHouse) error {
-	disks, err := ch.GetDisks()
-	if err != nil {
-		return err
-	}
-	for _, disk := range disks {
-		shadowDir := path.Join(disk.Path, "shadow", name)
-		if err := os.RemoveAll(shadowDir); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 // Chown - set permission on file to clickhouse user
 // This is necessary that the ClickHouse will be able to read parts files on restore

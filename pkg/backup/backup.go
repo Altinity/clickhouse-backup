@@ -337,9 +337,6 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, diskList []c
 			return disksToPartsMap, realSize, err
 		}
 	}
-	if err := filesystemhelper.CleanShadow(backupID, ch); err != nil {
-		return disksToPartsMap, realSize, err
-	}
 	log.Debug("done")
 	return disksToPartsMap, realSize, nil
 }
