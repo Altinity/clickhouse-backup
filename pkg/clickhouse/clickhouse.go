@@ -431,11 +431,13 @@ func (ch *ClickHouse) FreezeTable(table *Table, name string) error {
 func (ch *ClickHouse) AttachPartitions(table metadata.TableMetadata, disks []Disk) error {
 	for _, disk := range disks {
 		for _, partition := range table.Parts[disk.Name] {
-			query := fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PART '%s'", table.Database, table.Table, partition.Name)
-			if _, err := ch.Query(query); err != nil {
-				return err
+			if !strings.HasSuffix(partition.Name, ".proj") {
+				query := fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PART '%s'", table.Database, table.Table, partition.Name)
+				if _, err := ch.Query(query); err != nil {
+					return err
+				}
+				log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).WithField("disk", disk.Name).WithField("part", partition.Name).Debug("attached")
 			}
-			log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).WithField("disk", disk.Name).WithField("part", partition.Name).Debug("attached")
 		}
 	}
 	return nil

@@ -911,20 +911,23 @@ func TestProjections(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
 	ch.connectWithWait(r, 0*time.Second)
-	defer ch.chbackup.Close()
+	defer ch.chbackend.Close()
 
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	_, err = ch.chbackup.Query("CREATE TABLE default.table_with_projection(dt DateTime, v UInt64, PROJECTION x (SELECT toStartOfMonth(dt) m, sum(v) GROUP BY m)) ENGINE=MergeTree() ORDER BY dt")
+	_, err = ch.chbackend.Query("CREATE TABLE default.table_with_projection(dt DateTime, v UInt64, PROJECTION x (SELECT toStartOfMonth(dt) m, sum(v) GROUP BY m)) ENGINE=MergeTree() ORDER BY dt")
 	r.NoError(err)
 
-	_, err = ch.chbackup.Query("INSERT INTO default.table_with_projection SELECT today() - INTERVAL number DAY, number FROM numbers(10)")
+	_, err = ch.chbackend.Query("INSERT INTO default.table_with_projection SELECT today() - INTERVAL number DAY, number FROM numbers(10)")
 	r.NoError(err)
 
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "test_backup_projection"))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--rm", "test_backup_projection"))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_backup_projection"))
-
-	_, err = ch.chbackup.Query("DROP TABLE default.table_with_projection")
+	counts := make([]int, 0)
+	r.NoError(ch.chbackend.Select(&counts, "SELECT count() FROM default.table_with_projection"))
+	r.Equal(1, len(counts))
+	r.Equal(10, counts[0])
+	_, err = ch.chbackend.Query("DROP TABLE default.table_with_projection NO DELAY")
 	r.NoError(err)
 
 }
