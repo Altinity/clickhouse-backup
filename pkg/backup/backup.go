@@ -333,6 +333,8 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, diskList []c
 		realSize[disk.Name] = size
 		disksToPartsMap[disk.Name] = parts
 		log.WithField("disk", disk.Name).Debug("shadow moved")
+
+		// Clean all the files under the shadowPath.
 		if err := os.RemoveAll(shadowPath); err != nil {
 			return disksToPartsMap, realSize, err
 		}
