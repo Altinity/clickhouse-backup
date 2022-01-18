@@ -84,6 +84,11 @@ GLOBAL OPTIONS:
    --config FILE, -c FILE  Config FILE name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --help, -h              show help
    --version, -v           print the version
+
+LOCAL OPTIONS:
+  clickhouse-backup create/create_remote
+  partitions      Backup for specified partitions seperated by ","
+
 ```
 
 ### Default Config

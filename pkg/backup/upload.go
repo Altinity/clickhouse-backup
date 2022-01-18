@@ -17,6 +17,7 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/filesystemhelper"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 	"github.com/AlexAkulov/clickhouse-backup/utils"
 	apexLog "github.com/apex/log"
@@ -317,7 +318,7 @@ func (b *Backuper) markDuplicatedParts(backup *metadata.BackupMetadata, existsTa
 				existsPath := path.Join(b.DiskToPathMap[disk], "backup", backup.RequiredBackup, "shadow", uuid, disk, newParts[i].Name)
 				newPath := path.Join(b.DiskToPathMap[disk], "backup", backup.BackupName, "shadow", uuid, disk, newParts[i].Name)
 
-				if err := isDuplicatedParts(existsPath, newPath); err != nil {
+				if err := filesystemhelper.IsDuplicatedParts(existsPath, newPath); err != nil {
 					apexLog.Debugf("part '%s' and '%s' must be the same: %v", existsPath, newPath, err)
 					continue
 				}
@@ -325,52 +326,6 @@ func (b *Backuper) markDuplicatedParts(backup *metadata.BackupMetadata, existsTa
 			}
 		}
 	}
-}
-
-func isDuplicatedParts(part1, part2 string) error {
-	p1, err := os.Open(part1)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err = p1.Close(); err != nil {
-			apexLog.Warnf("Can't close %s", part1)
-		}
-	}()
-	p2, err := os.Open(part2)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err = p2.Close(); err != nil {
-			apexLog.Warnf("Can't close %s", part2)
-		}
-	}()
-	pf1, err := p1.Readdirnames(-1)
-	if err != nil {
-		return err
-	}
-	pf2, err := p2.Readdirnames(-1)
-	if err != nil {
-		return err
-	}
-	if len(pf1) != len(pf2) {
-		return fmt.Errorf("files count in parts is different")
-	}
-	for _, f := range pf1 {
-		part1File, err := os.Stat(path.Join(part1, f))
-		if err != nil {
-			return err
-		}
-		part2File, err := os.Stat(path.Join(part2, f))
-		if err != nil {
-			return err
-		}
-		if !os.SameFile(part1File, part2File) {
-			return fmt.Errorf("file '%s' is different", f)
-		}
-	}
-	return nil
 }
 
 func (b *Backuper) ReadBackupMetadata(backupName string) (*metadata.BackupMetadata, error) {

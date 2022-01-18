@@ -73,9 +73,22 @@ func NewBackupName() string {
 	return time.Now().UTC().Format(TimeFormatForBackup)
 }
 
+func createPartitionsToBackupMap(partitions string) map[string]struct{} {
+	if len(partitions) == 0 {
+		return nil
+	} else {
+		res := map[string]struct{}{}
+		for _, partition := range strings.Split(partitions, ",") {
+			res[partition] = struct{}{}
+		}
+		return res
+	}
+}
+
 // CreateBackup - create new backup of all tables matched by tablePattern
 // If backupName is empty string will use default backup name
-func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnly, rbacOnly, configsOnly bool, version string) error {
+func CreateBackup(cfg *config.Config, backupName, tablePattern string, partitionsToBackup string, schemaOnly, rbacOnly, configsOnly bool, version string) error {
+
 	startBackup := time.Now()
 	doBackupData := !schemaOnly
 	if backupName == "" {
@@ -153,7 +166,9 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, schemaOnl
 		var disksToPartsMap map[string][]metadata.Part
 		if doBackupData {
 			log.Debug("create data")
-			disksToPartsMap, realSize, err = AddTableToBackup(ch, backupName, disks, &table)
+			log.Debug("Backup partitions \n" + partitionsToBackup)
+			partitionsToBackupMap := createPartitionsToBackupMap(partitionsToBackup)
+			disksToPartsMap, realSize, err = AddTableToBackup(ch, backupName, disks, &table, partitionsToBackupMap)
 			if err != nil {
 				log.Error(err.Error())
 				if removeBackupErr := RemoveBackupLocal(cfg, backupName); removeBackupErr != nil {
@@ -277,7 +292,7 @@ func createRBACBackup(ch *clickhouse.ClickHouse, backupPath string, disks []clic
 	return rbacDataSize, copyErr
 }
 
-func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, diskList []clickhouse.Disk, table *clickhouse.Table) (map[string][]metadata.Part, map[string]int64, error) {
+func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, diskList []clickhouse.Disk, table *clickhouse.Table, partitionsToBackupMap map[string]struct{}) (map[string][]metadata.Part, map[string]int64, error) {
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "create",
@@ -310,20 +325,19 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, diskList []c
 		if err := filesystemhelper.MkdirAll(backupShadowPath, ch); err != nil && !os.IsExist(err) {
 			return nil, nil, err
 		}
-
-		parts, size, err := filesystemhelper.MoveShadow(shadowPath, backupShadowPath)
+		// If partitionsToBackupMap is not empty, only parts in this partition will be backuped.
+		parts, size, err := filesystemhelper.MoveShadow(shadowPath, backupShadowPath, partitionsToBackupMap)
 		if err != nil {
 			return nil, nil, err
 		}
 		realSize[disk.Name] = size
 		disksToPartsMap[disk.Name] = parts
 		log.WithField("disk", disk.Name).Debug("shadow moved")
+
+		// Clean all the files under the shadowPath.
 		if err := os.RemoveAll(shadowPath); err != nil {
 			return disksToPartsMap, realSize, err
 		}
-	}
-	if err := filesystemhelper.CleanShadow(backupID, ch); err != nil {
-		return disksToPartsMap, realSize, err
 	}
 	log.Debug("done")
 	return disksToPartsMap, realSize, nil

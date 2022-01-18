@@ -16,19 +16,6 @@ import (
 	apexLog "github.com/apex/log"
 )
 
-func CleanShadow(name string, ch *clickhouse.ClickHouse) error {
-	disks, err := ch.GetDisks()
-	if err != nil {
-		return err
-	}
-	for _, disk := range disks {
-		shadowDir := path.Join(disk.Path, "shadow", name)
-		if err := os.RemoveAll(shadowDir); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 // Chown - set permission on file to clickhouse user
 // This is necessary that the ClickHouse will be able to read parts files on restore
@@ -49,10 +36,10 @@ func Chown(filename string, ch *clickhouse.ClickHouse) error {
 			return err
 		}
 		stat := info.Sys().(*syscall.Stat_t)
-		_uid := int(stat.Uid)
-		_gid := int(stat.Gid)
-		ch.SetUid(&_uid)
-		ch.SetGid(&_gid)
+		uid := int(stat.Uid)
+		gid := int(stat.Gid)
+		ch.SetUid(&uid)
+		ch.SetGid(&gid)
 
 	}
 	return os.Chown(filename, *ch.GetGid(), *ch.GetGid())
@@ -168,7 +155,13 @@ func CopyData(backupName string, backupTable metadata.TableMetadata, disks []cli
 	return nil
 }
 
-func MoveShadow(shadowPath, backupPartsPath string) ([]metadata.Part, int64, error) {
+func isPartInPartition(partName string, partitionsBackupMap map[string]struct{}) bool {
+	partition := strings.Split(partName, "_")[0]
+	_, ok := partitionsBackupMap[partition]
+	return ok
+}
+
+func MoveShadow(shadowPath, backupPartsPath string, partitionsBackupMap map[string]struct{}) ([]metadata.Part, int64, error) {
 	size := int64(0)
 	parts := []metadata.Part{}
 	err := filepath.Walk(shadowPath, func(filePath string, info os.FileInfo, err error) error {
@@ -176,6 +169,9 @@ func MoveShadow(shadowPath, backupPartsPath string) ([]metadata.Part, int64, err
 		pathParts := strings.SplitN(relativePath, "/", 4)
 		// [store 1f9 1f9dc899-0de9-41f8-b95c-26c1f0d67d93 20181023_2_2_0/partition.dat]
 		if len(pathParts) != 4 {
+			return nil
+		}
+		if len(partitionsBackupMap) != 0 && !isPartInPartition(pathParts[3], partitionsBackupMap) {
 			return nil
 		}
 		dstFilePath := filepath.Join(backupPartsPath, pathParts[3])
@@ -211,4 +207,50 @@ func CopyFile(srcFile string, dstFile string) error {
 	defer dst.Close()
 	_, err = io.Copy(dst, src)
 	return err
+}
+
+func IsDuplicatedParts(part1, part2 string) error {
+	p1, err := os.Open(part1)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err = p1.Close(); err != nil {
+			apexLog.Warnf("Can't close %s", part1)
+		}
+	}()
+	p2, err := os.Open(part2)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err = p2.Close(); err != nil {
+			apexLog.Warnf("Can't close %s", part2)
+		}
+	}()
+	pf1, err := p1.Readdirnames(-1)
+	if err != nil {
+		return err
+	}
+	pf2, err := p2.Readdirnames(-1)
+	if err != nil {
+		return err
+	}
+	if len(pf1) != len(pf2) {
+		return fmt.Errorf("files count in parts is different")
+	}
+	for _, f := range pf1 {
+		part1File, err := os.Stat(path.Join(part1, f))
+		if err != nil {
+			return err
+		}
+		part2File, err := os.Stat(path.Join(part2, f))
+		if err != nil {
+			return err
+		}
+		if !os.SameFile(part1File, part2File) {
+			return fmt.Errorf("file '%s' is different", f)
+		}
+	}
+	return nil
 }
