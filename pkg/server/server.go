@@ -566,6 +566,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	tablePattern := ""
+	partitionsToBackup := ""
 	backupName := backup.NewBackupName()
 	schemaOnly := false
 	rbacOnly := false
@@ -575,6 +576,10 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	if tp, exist := query["table"]; exist {
 		tablePattern = tp[0]
 		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
+	}
+	if partitions, exist := query["partitions"]; exist {
+		partitionsToBackup = partitions[0]
+		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, partitionsToBackup)
 	}
 	if schema, exist := query["schema"]; exist {
 		schemaOnly, _ = strconv.ParseBool(schema[0])
@@ -607,7 +612,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 			api.metrics.LastDuration["create"].Set(float64(time.Since(start).Nanoseconds()))
 			api.metrics.LastFinish["create"].Set(float64(time.Now().Unix()))
 		}()
-		err := backup.CreateBackup(cfg, backupName, tablePattern, schemaOnly, rbacOnly, configsOnly, api.clickhouseBackupVersion)
+		err := backup.CreateBackup(cfg, backupName, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, api.clickhouseBackupVersion)
 		defer api.status.stop(err)
 		if err != nil {
 			api.metrics.FailedCounter["create"].Inc()
