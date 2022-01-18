@@ -486,7 +486,7 @@ func TestServerAPI(t *testing.T) {
 	maxTables := 10
 	minFields := 10
 	randFields := 10
-	log.Debugf("Create %d `long_schema`.`t%%d` tables with with %d..%d fields...", maxTables, minFields, minFields+randFields)
+	log.Infof("Create %d `long_schema`.`t%%d` tables with with %d..%d fields...", maxTables, minFields, minFields+randFields)
 	for i := 0; i < maxTables; i++ {
 		sql := fmt.Sprintf("CREATE TABLE long_schema.t%d (id UInt64", i)
 		fieldsCount := minFields + rand.Intn(randFields)
@@ -604,12 +604,12 @@ func TestServerAPI(t *testing.T) {
 	log.Info("Check /backup/delete/{where}/{name}")
 	for i := 1; i <= 5; i++ {
 		out, err = dockerExecOut("clickhouse", "bash", "-c", fmt.Sprintf("curl -sL -XPOST 'http://localhost:7171/backup/delete/local/backup_%d'", i))
-		log.Debugf(out)
+		log.Infof(out)
 		r.NoError(err)
 		r.NotContains(out, "another operation is currently running")
 		r.NotContains(out, "\"status\":\"error\"")
 		out, err = dockerExecOut("clickhouse", "bash", "-c", fmt.Sprintf("curl -sL -XPOST 'http://localhost:7171/backup/delete/remote/backup_%d'", i))
-		log.Debugf(out)
+		log.Infof(out)
 		r.NoError(err)
 		r.NotContains(out, "another operation is currently running")
 		r.NotContains(out, "\"status\":\"error\"")
@@ -820,7 +820,7 @@ func TestLongListRemote(t *testing.T) {
 	cacheClearDuration := time.Since(startCacheClear)
 
 	r.Greater(cacheClearDuration, cashedDuration)
-	log.Debugf("firstDuration=%s cachedDuration=%s cacheClearDuration=%s", firstDuration.String(), cashedDuration.String(), cacheClearDuration.String())
+	log.Infof("firstDuration=%s cachedDuration=%s cacheClearDuration=%s", firstDuration.String(), cashedDuration.String(), cacheClearDuration.String())
 }
 
 func TestSkipNotExistsTable(t *testing.T) {
@@ -890,7 +890,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 		for pause := range pauseChannel {
 			if pause > 0 {
 				time.Sleep(time.Duration(pause) * time.Nanosecond)
-				log.Debugf("pause=%s", time.Duration(pause).String())
+				log.Infof("pause=%s", time.Duration(pause).String())
 				err = ch.chbackend.DropTable(clickhouse.Table{Database: "default", Name: "if_not_exists"}, ifNotExistsCreateSQL, "", chVersion)
 				r.NoError(err)
 			}
@@ -1213,7 +1213,7 @@ func (ch *TestClickHouse) createTestData(data TestDataStruct) error {
 	}()
 
 	for _, row := range data.Rows {
-		log.Debugf("%#v", row)
+		log.Infof("%#v", row)
 		if _, err := statement.Exec(row); err != nil {
 			return fmt.Errorf("can't add insert to transaction: %v", err)
 		}
@@ -1238,7 +1238,7 @@ func (ch *TestClickHouse) dropDatabase(database string) (err error) {
 
 func (ch *TestClickHouse) checkData(t *testing.T, data TestDataStruct, r *require.Assertions) error {
 	assert.NotNil(t, data.Rows)
-	log.Debugf("Check '%d' rows in '%s.%s'\n", len(data.Rows), data.Database, data.Table)
+	log.Infof("Check '%d' rows in '%s.%s'\n", len(data.Rows), data.Database, data.Table)
 	selectSQL := fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY `%s`", data.Database, data.Table, data.OrderBy)
 	log.Debug(selectSQL)
 	rows, err := ch.chbackend.GetConn().Queryx(selectSQL)
@@ -1306,7 +1306,7 @@ func execCmd(cmd string, args ...string) error {
 
 func execCmdOut(cmd string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
-	log.Debugf("%s %s", cmd, strings.Join(args, " "))
+	log.Infof("%s %s", cmd, strings.Join(args, " "))
 	out, err := exec.CommandContext(ctx, cmd, args...).CombinedOutput()
 	cancel()
 	return string(out), err
@@ -1315,7 +1315,7 @@ func execCmdOut(cmd string, args ...string) (string, error) {
 func dockerCP(src, dst string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	dcmd := []string{"cp", src, dst}
-	log.Debugf("docker %s", strings.Join(dcmd, " "))
+	log.Infof("docker %s", strings.Join(dcmd, " "))
 	out, err := exec.CommandContext(ctx, "docker", dcmd...).CombinedOutput()
 	log.Info(string(out))
 	cancel()
@@ -1400,7 +1400,7 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 	log.Infof("testBackupSpecifiedPartition result : '%s'", result)
 	log.Infof("testBackupSpecifiedPartition result' length '%d'", len(result))
 
-	// r.Equal(1, len(result))
+	r.Equal(1, len(result))
 	r.Equal(10, result[0])
 
 	// Reset the result.
@@ -1411,11 +1411,9 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 
 	log.Infof("testBackupSpecifiedPartition result : '%s'", result)
 	log.Infof("testBackupSpecifiedPartition result' length '%d'", len(result))
+	r.Equal(1, len(result))
+	r.Equal(0, result[0])
 
 	// DELETE remote backup.
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", testBackupName))
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
-
-	// r.Equal(1, len(result))
-	r.Equal(0, result[0])
 }
