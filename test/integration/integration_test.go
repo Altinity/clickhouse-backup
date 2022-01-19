@@ -1406,7 +1406,7 @@ func installDebIfNotExists(r *require.Assertions, container, pkg string) {
 }
 
 func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
-	log.Infof("testBackupSpecifiedPartition started")
+	log.Info("testBackupSpecifiedPartition started")
 
 	testBackupName := fmt.Sprintf("test_backup_%d", rand.Int())
 	// Create table
@@ -1424,28 +1424,25 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", testBackupName))
 
-	log.Infof("testBackupSpecifiedPartition begin check \n")
+	log.Debug("testBackupSpecifiedPartition begin check \n")
 	// Check
 	var result []int
 
-	if err := ch.chbackend.Select(&result, "SELECT count(0) from default.t1 where dt = '2022-01-01 00:00:00'"); err != nil {
-		log.Warnf("SELECT error: %w", err)
-	}
+	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM default.t1 where dt = '2022-01-01 00:00:00'"))
+
 	// Must have one value
-	log.Infof("testBackupSpecifiedPartition result : '%s'", result)
-	log.Infof("testBackupSpecifiedPartition result' length '%d'", len(result))
+	log.Debugf("testBackupSpecifiedPartition result : '%s'", result)
+	log.Debugf("testBackupSpecifiedPartition result' length '%d'", len(result))
 
 	r.Equal(1, len(result))
 	r.Equal(10, result[0])
 
 	// Reset the result.
 	result = nil
-	if err := ch.chbackend.Select(&result, "SELECT count(0) from default.t1 where dt != '2022-01-01 00:00:00'"); err != nil {
-		log.Warnf("SELECT error: %w", err)
-	}
+	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM default.t1 where dt != '2022-01-01 00:00:00'"))
 
-	log.Infof("testBackupSpecifiedPartition result : '%s'", result)
-	log.Infof("testBackupSpecifiedPartition result' length '%d'", len(result))
+	log.Debugf("testBackupSpecifiedPartition result : '%s'", result)
+	log.Debugf("testBackupSpecifiedPartition result' length '%d'", len(result))
 	r.Equal(1, len(result))
 	r.Equal(0, result[0])
 
@@ -1453,4 +1450,5 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", testBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
 
+	log.Info("testBackupSpecifiedPartition finish")
 }
