@@ -442,14 +442,16 @@ func TestSyncReplicaTimeout(t *testing.T) {
 	ch.connectWithWait(r, 0*time.Millisecond)
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 
-	for _, table := range []string{"repl1", "repl2"} {
-		query := "DROP TABLE IF EXISTS default." + table
-		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.3") == 1 {
-			query += " NO DELAY"
+	dropReplTables := func() {
+		for _, table := range []string{"repl1", "repl2"} {
+			query := "DROP TABLE IF EXISTS default." + table
+			if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.3") == 1 {
+				query += " NO DELAY"
+			}
+			ch.queryWithNoError(r, query)
 		}
-		ch.queryWithNoError(r, query)
 	}
-
+	dropReplTables()
 	ch.queryWithNoError(r, "CREATE TABLE default.repl1 (v UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/default/repl','repl1') ORDER BY tuple()")
 	ch.queryWithNoError(r, "CREATE TABLE default.repl2 (v UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/default/repl','repl2') ORDER BY tuple()")
 
@@ -468,6 +470,7 @@ func TestSyncReplicaTimeout(t *testing.T) {
 	ch.queryWithNoError(r, "SYSTEM START REPLICATED SENDS default.repl1")
 	ch.queryWithNoError(r, "SYSTEM START FETCHES default.repl2")
 
+	dropReplTables()
 	ch.chbackend.Close()
 
 }
@@ -901,6 +904,37 @@ func TestSkipNotExistsTable(t *testing.T) {
 	wg.Wait()
 	r.True(errorCatched)
 }
+
+func TestProjections(t *testing.T) {
+	var err error
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") == -1 {
+		t.Skipf("Test skipped, PROJECTION available only 21.8+, current version %s", os.Getenv("CLICKHOUSE_VERSION"))
+	}
+
+	ch := &TestClickHouse{}
+	r := require.New(t)
+	ch.connectWithWait(r, 0*time.Second)
+	defer ch.chbackend.Close()
+
+	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	_, err = ch.chbackend.Query("CREATE TABLE default.table_with_projection(dt DateTime, v UInt64, PROJECTION x (SELECT toStartOfMonth(dt) m, sum(v) GROUP BY m)) ENGINE=MergeTree() ORDER BY dt")
+	r.NoError(err)
+
+	_, err = ch.chbackend.Query("INSERT INTO default.table_with_projection SELECT today() - INTERVAL number DAY, number FROM numbers(10)")
+	r.NoError(err)
+
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "test_backup_projection"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--rm", "test_backup_projection"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_backup_projection"))
+	counts := make([]int, 0)
+	r.NoError(ch.chbackend.Select(&counts, "SELECT count() FROM default.table_with_projection"))
+	r.Equal(1, len(counts))
+	r.Equal(10, counts[0])
+	_, err = ch.chbackend.Query("DROP TABLE default.table_with_projection NO DELAY")
+	r.NoError(err)
+
+}
+
 func testCommon(t *testing.T, remoteStorageType string) {
 	var out string
 	var err error
@@ -1372,7 +1406,7 @@ func installDebIfNotExists(r *require.Assertions, container, pkg string) {
 }
 
 func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
-	log.Infof("testBackupSpecifiedPartition started")
+	log.Info("testBackupSpecifiedPartition started")
 
 	testBackupName := fmt.Sprintf("test_backup_%d", rand.Int())
 	// Create table
@@ -1390,28 +1424,25 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", testBackupName))
 
-	log.Infof("testBackupSpecifiedPartition begin check \n")
+	log.Debug("testBackupSpecifiedPartition begin check \n")
 	// Check
 	var result []int
 
-	if err := ch.chbackend.Select(&result, "SELECT count(0) from default.t1 where dt = '2022-01-01 00:00:00'"); err != nil {
-		log.Warnf("SELECT error: %w", err)
-	}
+	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM default.t1 where dt = '2022-01-01 00:00:00'"))
+
 	// Must have one value
-	log.Infof("testBackupSpecifiedPartition result : '%s'", result)
-	log.Infof("testBackupSpecifiedPartition result' length '%d'", len(result))
+	log.Debugf("testBackupSpecifiedPartition result : '%s'", result)
+	log.Debugf("testBackupSpecifiedPartition result' length '%d'", len(result))
 
 	r.Equal(1, len(result))
 	r.Equal(10, result[0])
 
 	// Reset the result.
 	result = nil
-	if err := ch.chbackend.Select(&result, "SELECT count(0) from default.t1 where dt != '2022-01-01 00:00:00'"); err != nil {
-		log.Warnf("SELECT error: %w", err)
-	}
+	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM default.t1 where dt != '2022-01-01 00:00:00'"))
 
-	log.Infof("testBackupSpecifiedPartition result : '%s'", result)
-	log.Infof("testBackupSpecifiedPartition result' length '%d'", len(result))
+	log.Debugf("testBackupSpecifiedPartition result : '%s'", result)
+	log.Debugf("testBackupSpecifiedPartition result' length '%d'", len(result))
 	r.Equal(1, len(result))
 	r.Equal(0, result[0])
 
@@ -1419,4 +1450,5 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", testBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
 
+	log.Info("testBackupSpecifiedPartition finish")
 }

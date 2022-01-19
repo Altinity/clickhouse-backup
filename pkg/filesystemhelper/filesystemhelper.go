@@ -16,7 +16,6 @@ import (
 	apexLog "github.com/apex/log"
 )
 
-
 // Chown - set permission on file to clickhouse user
 // This is necessary that the ClickHouse will be able to read parts files on restore
 func Chown(filename string, ch *clickhouse.ClickHouse) error {
@@ -144,7 +143,9 @@ func CopyData(backupName string, backupTable metadata.TableMetadata, disks []cli
 					return nil
 				}
 				if err := os.Link(filePath, dstFilePath); err != nil {
-					return fmt.Errorf("failed to create hard link '%s' -> '%s': %w", filePath, dstFilePath, err)
+					if !os.IsExist(err) {
+						return fmt.Errorf("failed to create hard link '%s' -> '%s': %w", filePath, dstFilePath, err)
+					}
 				}
 				return Chown(dstFilePath, ch)
 			}); err != nil {
