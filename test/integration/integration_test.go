@@ -442,14 +442,16 @@ func TestSyncReplicaTimeout(t *testing.T) {
 	ch.connectWithWait(r, 0*time.Millisecond)
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 
-	for _, table := range []string{"repl1", "repl2"} {
-		query := "DROP TABLE IF EXISTS default." + table
-		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.3") == 1 {
-			query += " NO DELAY"
+	dropReplTables := func() {
+		for _, table := range []string{"repl1", "repl2"} {
+			query := "DROP TABLE IF EXISTS default." + table
+			if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.3") == 1 {
+				query += " NO DELAY"
+			}
+			ch.queryWithNoError(r, query)
 		}
-		ch.queryWithNoError(r, query)
 	}
-
+	dropReplTables()
 	ch.queryWithNoError(r, "CREATE TABLE default.repl1 (v UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/default/repl','repl1') ORDER BY tuple()")
 	ch.queryWithNoError(r, "CREATE TABLE default.repl2 (v UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/default/repl','repl2') ORDER BY tuple()")
 
@@ -468,6 +470,7 @@ func TestSyncReplicaTimeout(t *testing.T) {
 	ch.queryWithNoError(r, "SYSTEM START REPLICATED SENDS default.repl1")
 	ch.queryWithNoError(r, "SYSTEM START FETCHES default.repl2")
 
+	dropReplTables()
 	ch.chbackend.Close()
 
 }
