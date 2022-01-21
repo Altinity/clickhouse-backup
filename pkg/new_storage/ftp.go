@@ -3,7 +3,6 @@ package new_storage
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	apexLog "github.com/apex/log"
 	"io"
 	"os"
@@ -191,7 +190,7 @@ func (f *FTP) PutFile(key string, r io.ReadCloser) error {
 		return err
 	}
 	k := path.Join(f.Config.Path, key)
-	err = f.MkdirAll(path.Dir(k))
+	err = f.MkdirAll(path.Dir(k), client)
 	if err != nil {
 		return err
 	}
@@ -216,14 +215,9 @@ func (f *ftpFile) Name() string {
 	return f.name
 }
 
-func (f *FTP) MkdirAll(key string) error {
-	client, err := f.getConnectionFromPool(fmt.Sprintf("MkDirAll(%s)", key))
-	defer f.returnConnectionToPool(fmt.Sprintf("MkDirAll(%s)", key), client)
-	if err != nil {
-		return err
-	}
+func (f *FTP) MkdirAll(key string, client *ftp.ServerConn) error {
 	dirs := strings.Split(key, "/")
-	err = client.ChangeDir("/")
+	err := client.ChangeDir("/")
 	if err != nil {
 		return err
 	}
