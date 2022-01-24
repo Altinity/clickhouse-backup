@@ -1,6 +1,7 @@
 # v1.3.0
 
 IMPROVEMENTS
+- Add `UPLOAD_BY_PART` (default: true) option for improve upload/download concurrency fix [#324](https://github.com/AlexAkulov/clickhouse-backup/issues/324)
 - Add ARM support for Docker images and pre-compiled binary files, fix [#312](https://github.com/AlexAkulov/clickhouse-backup/issues/312)
 - KeepRemoteBackups should respect differential backups, fix [#111](https://github.com/AlexAkulov/clickhouse-backup/issues/111)
 - Add SFTP_DEBUG, fix [#335](https://github.com/AlexAkulov/clickhouse-backup/issues/335)
@@ -18,7 +19,7 @@ BUG FIXES
 - fix [#220](https://github.com/AlexAkulov/clickhouse-backup/issues/220), properly handle total_bytes for uint64 type
 - fix [#304](https://github.com/AlexAkulov/clickhouse-backup/issues/304), properly handle archive extension during download instead of use config settings
 - fix `restore --rm` behavior for 20.12+ for tables which have dependent objects (like dictionary)
-- fix concurrency by FTP creation directories during upload 
+- fix concurrency by `FTP` creation directories during upload, reduce connection pool usage 
 
 # v1.2.2
 

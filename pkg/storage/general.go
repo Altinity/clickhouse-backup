@@ -18,7 +18,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/internal/progressbar"
 
 	"github.com/djherbis/buffer"
-	"github.com/mholt/archiver"
+	"github.com/mholt/archiver/v3"
 	"gopkg.in/djherbis/nio.v2"
 )
 

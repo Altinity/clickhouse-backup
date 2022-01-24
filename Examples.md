@@ -1,18 +1,22 @@
 # Use cases of clickhouse-backup
 
-## How to convert MergeTree to ReplicatedMegreTree
+## How to convert MergeTree to ReplicatedMergeTree
+don't work for tables which created in `MergeTree(date_column, (primary keys columns), 8192)` format
 1. Create backup
    ```
    clickhouse-backup create --table='my_db.my_table' my_backup
    ```
-2. Edit '/var/lib/clickhouse/backup/my_backup/metadata/my_db/my_table.sql'
+2. Edit `/var/lib/clickhouse/backup/my_backup/metadata/my_db/my_table.json`, change `query` field, 
+   replace MergeTree() to ReplicatedMergeTree() with parameters according to https://clickhouse.com/docs/en/engines/table-engines/mergetree-family/replication/#creating-replicated-tables
+   
+
 3. Drop table in Clickhouse
    ```
-   clickhouse -c "DROP TABLE my_db.my.table
+   clickhouse-client -q "DROP TABLE my_db.my.table NO DELAY"
    ```
 4. Restore backup
    ```
-   clickhouse-backup restore my_backup
+   clickhouse-backup restore --rm my_backup
    ```
 
 ## How to store backups on NFS, backup drive or another server via SFTP

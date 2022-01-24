@@ -30,8 +30,9 @@ func (f *FTP) Connect() error {
 	if err != nil {
 		return err
 	}
-	options := []ftp.DialOption{
-		ftp.DialWithTimeout(timeout),
+	options := []ftp.DialOption{}
+	if timeout > 0 {
+		options = append(options, ftp.DialWithTimeout(timeout))
 	}
 	if f.Config.Debug {
 		options = append(options, ftp.DialWithDebugOutput(os.Stdout))
@@ -43,10 +44,8 @@ func (f *FTP) Connect() error {
 	f.ctx = context.Background()
 	f.clients = pool.NewObjectPoolWithDefaultConfig(f.ctx, &ftpPoolFactory{options: options, ftp: f})
 	if f.Config.Concurrency > 1 {
-		f.clients.Config.MaxTotal = int(f.Config.Concurrency) * 2
+		f.clients.Config.MaxTotal = int(f.Config.Concurrency)*2 + 1
 	}
-	f.clients.Config.MaxIdle = 0
-	f.clients.Config.MinIdle = 0
 
 	f.dirCacheMutex.Lock()
 	f.dirCache = map[string]bool{}
@@ -82,11 +81,11 @@ func (f *FTP) returnConnectionToPool(where string, client *ftp.ServerConn) {
 func (f *FTP) StatFile(key string) (RemoteFile, error) {
 	// cant list files, so check the dir
 	dir := path.Dir(path.Join(f.Config.Path, key))
-	client, err := f.getConnectionFromPool("StatFile")
-	defer f.returnConnectionToPool("StatFile", client)
+	client, err := f.getConnectionFromPool(fmt.Sprintf("StatFile, key=%s", key))
 	if err != nil {
 		return nil, err
 	}
+	defer f.returnConnectionToPool(fmt.Sprintf("StatFile, key=%s", key), client)
 	entries, err := client.List(dir)
 	if err != nil {
 		// proftpd return 550 error if `dir` not exists
@@ -191,7 +190,7 @@ func (f *FTP) PutFile(key string, r io.ReadCloser) error {
 		return err
 	}
 	k := path.Join(f.Config.Path, key)
-	err = f.MkdirAll(path.Dir(k))
+	err = f.MkdirAll(path.Dir(k), client)
 	if err != nil {
 		return err
 	}
@@ -216,14 +215,9 @@ func (f *ftpFile) Name() string {
 	return f.name
 }
 
-func (f *FTP) MkdirAll(key string) error {
-	client, err := f.getConnectionFromPool(fmt.Sprintf("MkDirAll(%s)", key))
-	defer f.returnConnectionToPool(fmt.Sprintf("MkDirAll(%s)", key), client)
-	if err != nil {
-		return err
-	}
+func (f *FTP) MkdirAll(key string, client *ftp.ServerConn) error {
 	dirs := strings.Split(key, "/")
-	err = client.ChangeDir("/")
+	err := client.ChangeDir("/")
 	if err != nil {
 		return err
 	}

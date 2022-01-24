@@ -26,4 +26,4 @@ docker volume prune -f
 make clean
 make build-race
 docker-compose -f test/integration/${COMPOSE_FILE} up -d --force-recreate
-go test  -timeout 30m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
+go test -timeout 30m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
