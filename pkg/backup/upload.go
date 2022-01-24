@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/AlexAkulov/clickhouse-backup/config"
 	"io/ioutil"
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -176,7 +178,7 @@ func (b *Backuper) Upload(backupName, tablePattern, diffFrom string, schemaOnly 
 		return err
 	}
 	remoteBackupMetaFile := path.Join(backupName, "metadata.json")
-	if err := b.dst.PutFile(remoteBackupMetaFile,
+	if err = b.dst.PutFile(remoteBackupMetaFile,
 		ioutil.NopCloser(bytes.NewReader(newBackupMetadataBody))); err != nil {
 		return fmt.Errorf("can't upload: %v", err)
 	}
@@ -186,7 +188,7 @@ func (b *Backuper) Upload(backupName, tablePattern, diffFrom string, schemaOnly 
 		Info("done")
 
 	// Clean
-	if err := b.dst.RemoveOldBackups(b.cfg.General.BackupsToKeepRemote); err != nil {
+	if err = b.dst.RemoveOldBackups(b.cfg.General.BackupsToKeepRemote); err != nil {
 		return fmt.Errorf("can't remove old backups on remote storage: %v", err)
 	}
 	return nil
@@ -232,7 +234,7 @@ func (b *Backuper) uploadAndArchiveBackupRelatedDir(localBackupRelatedDir, local
 
 func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetadata) (map[string][]string, int64, error) {
 	uuid := path.Join(common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
-	metdataFiles := map[string][]string{}
+	metadataFiles := map[string][]string{}
 	capacity := 0
 	for disk := range table.Parts {
 		capacity += len(table.Parts[disk])
@@ -243,11 +245,11 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 	var uploadedBytes int64
 	for disk := range table.Parts {
 		backupPath := path.Join(b.DiskToPathMap[disk], "backup", backupName, "shadow", uuid, disk)
-		parts, err := separateParts(backupPath, table.Parts[disk], b.cfg.General.MaxFileSize)
+		parts, err := splitPartFiles(backupPath, table.Parts[disk], b.cfg.General)
 		if err != nil {
 			return nil, 0, err
 		}
-		for i, part := range parts {
+		for partSuffix, partFiles := range parts {
 			if err := s.Acquire(ctx, 1); err != nil {
 				apexLog.Errorf("can't acquire semaphore during Upload: %v", err)
 				break
@@ -257,13 +259,13 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 			// if b.cfg.GetCompressionFormat() == "none" {
 			// 	err = b.dst.UploadPath(0, backupPath, p, path.Join(remoteDataPath, disk))
 			// } else {
-			fileName := fmt.Sprintf("%s_%d.%s", disk, i+1, b.cfg.GetArchiveExtension())
-			metdataFiles[disk] = append(metdataFiles[disk], fileName)
+			fileName := fmt.Sprintf("%s_%s.%s", disk, common.TablePathEncode(partSuffix), b.cfg.GetArchiveExtension())
+			metadataFiles[disk] = append(metadataFiles[disk], fileName)
 			remoteDataFile := path.Join(remoteDataPath, fileName)
-			localFiles := part
+			localFiles := partFiles
 			g.Go(func() error {
-				apexLog.Debugf("start upload %d files to %s", len(localFiles), remoteDataFile)
 				defer s.Release(1)
+				apexLog.Debugf("start upload %d files to %s", len(localFiles), remoteDataFile)
 				if err := b.dst.CompressedStreamUpload(backupPath, localFiles, remoteDataFile); err != nil {
 					apexLog.Errorf("CompressedStreamUpload return error: %v", err)
 					return fmt.Errorf("can't upload: %v", err)
@@ -281,8 +283,8 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 	if err := g.Wait(); err != nil {
 		return nil, 0, fmt.Errorf("one of uploadTableData go-routine return error: %v", err)
 	}
-	apexLog.Debugf("finish uploadTableData %s.%s with concurrency=%d len(table.Parts[...])=%d metadataFiles=%v, uploadedBytes=%v", table.Database, table.Table, b.cfg.General.UploadConcurrency, capacity, metdataFiles, uploadedBytes)
-	return metdataFiles, uploadedBytes, nil
+	apexLog.Debugf("finish uploadTableData %s.%s with concurrency=%d len(table.Parts[...])=%d metadataFiles=%v, uploadedBytes=%v", table.Database, table.Table, b.cfg.General.UploadConcurrency, capacity, metadataFiles, uploadedBytes)
+	return metadataFiles, uploadedBytes, nil
 }
 
 func (b *Backuper) uploadTableMetadata(backupName string, table metadata.TableMetadata) (int64, error) {
@@ -344,10 +346,46 @@ func (b *Backuper) ReadBackupMetadata(backupName string) (*metadata.BackupMetada
 	return &backupMetadata, nil
 }
 
-func separateParts(basePath string, parts []metadata.Part, maxSize int64) ([][]string, error) {
+func splitPartFiles(basePath string, parts []metadata.Part, cfg config.GeneralConfig) (map[string][]string, error) {
+	if cfg.UploadByPart {
+		return splitFilesByName(basePath, parts)
+	} else {
+		return splitFilesBySize(basePath, parts, cfg.MaxFileSize)
+	}
+}
+
+func splitFilesByName(basePath string, parts []metadata.Part) (map[string][]string, error) {
+	result := map[string][]string{}
+	for i := range parts {
+		if parts[i].Required {
+			continue
+		}
+		files := []string{}
+		partPath := path.Join(basePath, parts[i].Name)
+		err := filepath.Walk(partPath, func(filePath string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if !info.Mode().IsRegular() {
+				return nil
+			}
+			relativePath := strings.TrimPrefix(filePath, basePath)
+			files = append(files, relativePath)
+			return nil
+		})
+		if err != nil {
+			apexLog.Warnf("filepath.Walk return error: %v", err)
+		}
+		result[parts[i].Name] = files
+	}
+	return result, nil
+}
+
+func splitFilesBySize(basePath string, parts []metadata.Part, maxSize int64) (map[string][]string, error) {
 	var size int64
 	files := []string{}
-	result := [][]string{}
+	result := map[string][]string{}
+	partSuffix := 1
 	for i := range parts {
 		if parts[i].Required {
 			continue
@@ -360,10 +398,11 @@ func separateParts(basePath string, parts []metadata.Part, maxSize int64) ([][]s
 			if !info.Mode().IsRegular() {
 				return nil
 			}
-			if (size + info.Size()) > maxSize {
-				result = append(result, files)
+			if (size+info.Size()) > maxSize && len(files) > 0 {
+				result[strconv.Itoa(partSuffix)] = files
 				files = []string{}
 				size = 0
+				partSuffix += 1
 			}
 			relativePath := strings.TrimPrefix(filePath, basePath)
 			files = append(files, relativePath)
@@ -375,7 +414,7 @@ func separateParts(basePath string, parts []metadata.Part, maxSize int64) ([][]s
 		}
 	}
 	if len(files) > 0 {
-		result = append(result, files)
+		result[strconv.Itoa(partSuffix)] = files
 	}
 	return result, nil
 }

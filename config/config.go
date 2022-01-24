@@ -41,6 +41,7 @@ type GeneralConfig struct {
 	DownloadConcurrency    uint8  `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
 	UploadConcurrency      uint8  `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
 	RestoreSchemaOnCluster string `yaml:"restore_schema_on_cluster" envconfig:"RESTORE_SCHEMA_ON_CLUSTER"`
+	UploadByPart           bool   `yaml:"upload_by_part" envconfig:"UPLOAD_BY_PART"`
 }
 
 // GCSConfig - GCS settings section
@@ -302,7 +303,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		General: GeneralConfig{
 			RemoteStorage:          "none",
-			MaxFileSize:            100 * 1024 * 1024 * 1024, // 100GB
+			MaxFileSize:            1 * 1024 * 1024 * 1024, // 1GB
 			BackupsToKeepLocal:     0,
 			BackupsToKeepRemote:    0,
 			LogLevel:               "info",
@@ -310,6 +311,7 @@ func DefaultConfig() *Config {
 			UploadConcurrency:      availableConcurrency,
 			DownloadConcurrency:    availableConcurrency,
 			RestoreSchemaOnCluster: "",
+			UploadByPart:           true,
 		},
 		ClickHouse: ClickHouseConfig{
 			Username: "default",

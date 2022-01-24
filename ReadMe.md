@@ -109,6 +109,7 @@ general:
   download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255
   upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255
   restore_schema_on_cluster: ""  # RESTORE_SCHEMA_ON_CLUSTER, look to system.clusters for proper cluster name
+  upload_by_part: true           # UPLOAD_BY_PART
 clickhouse:
   username: default                # CLICKHOUSE_USERNAME
   password: ""                     # CLICKHOUSE_PASSWORD
