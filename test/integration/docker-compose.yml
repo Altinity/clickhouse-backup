@@ -21,8 +21,8 @@ services:
       PASV_ENABLE: "YES"
       PASV_ADDRESS: "ftp"
       PASV_ADDR_RESOLVE: "YES"
-      PASV_MIN_PORT: 21100
-      PASV_MAX_PORT: 21110
+      PASV_MIN_PORT: 20000
+      PASV_MAX_PORT: 21000
     networks:
       - clickhouse-backup
 
@@ -73,8 +73,7 @@ services:
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       S3_DEBUG: "${S3_DEBUG:-false}"
       GCS_DEBUG: "${GCS_DEBUG:-false}"
-      # FTP_DEBUG: "${FTP_DEBUG:-false}"
-      FTP_DEBUG: "true"
+      FTP_DEBUG: "${FTP_DEBUG:-false}"
       SFTP_DEBUG: "${SFTP_DEBUG:-false}"
       CLICKHOUSE_DEBUG: "${CLICKHOUSE_DEBUG:-false}"
 #      STORAGE_EMULATOR_HOST: "http://gsc:8080"
