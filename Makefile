@@ -100,4 +100,4 @@ $(PKG_FILES): build/linux/amd64/pkg build/linux/arm64/pkg
 build-race: $(NAME)/$(NAME)-race
 
 $(NAME)/$(NAME)-race: $(GO_FILES)
-	CGO_ENABLED=1 $(GO_BUILD) -race -o $@ ./cmd/$(NAME)
+	CGO_ENABLED=1 $(GO_BUILD) -gcflags "all=-N -l" -race -o $@ ./cmd/$(NAME)
