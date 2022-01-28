@@ -652,6 +652,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	vars := mux.Vars(r)
 	query := r.URL.Query()
 	diffFrom := ""
+	diffFromRemote := ""
 	name := vars["name"]
 	tablePattern := ""
 	schemaOnly := false
@@ -660,6 +661,10 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	if df, exist := query["diff-from"]; exist {
 		diffFrom = df[0]
 		fullCommand = fmt.Sprintf("%s --diff-from=\"%s\"", fullCommand, diffFrom)
+	}
+	if df, exist := query["diff-from-remote"]; exist {
+		diffFromRemote = df[0]
+		fullCommand = fmt.Sprintf("%s --diff-from-remote=\"%s\"", fullCommand, diffFromRemote)
 	}
 	if tp, exist := query["table"]; exist {
 		tablePattern = tp[0]
@@ -680,7 +685,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 			api.metrics.LastFinish["upload"].Set(float64(time.Now().Unix()))
 		}()
 		b := backup.NewBackuper(cfg)
-		err := b.Upload(name, tablePattern, diffFrom, schemaOnly)
+		err := b.Upload(name, tablePattern, diffFrom, diffFromRemote, schemaOnly)
 		api.status.stop(err)
 		if err != nil {
 			apexLog.Errorf("Upload error: %+v\n", err)

@@ -180,12 +180,13 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, partition
 		}
 		log.Debug("create metadata")
 		metadataSize, err := createMetadata(ch, backupPath, metadata.TableMetadata{
-			Table:      table.Name,
-			Database:   table.Database,
-			Query:      table.CreateTableQuery,
-			TotalBytes: table.TotalBytes,
-			Size:       realSize,
-			Parts:      disksToPartsMap,
+			Table:        table.Name,
+			Database:     table.Database,
+			Query:        table.CreateTableQuery,
+			TotalBytes:   table.TotalBytes,
+			Size:         realSize,
+			Parts:        disksToPartsMap,
+			MetadataOnly: schemaOnly,
 		})
 		if err != nil {
 			if removeBackupErr := RemoveBackupLocal(cfg, backupName); removeBackupErr != nil {
