@@ -333,7 +333,7 @@ func (ch *ClickHouse) GetVersion() (int, error) {
 	var err error
 	query := "SELECT value FROM `system`.`build_options` where name='VERSION_INTEGER'"
 	if err = ch.Select(&result, query); err != nil {
-		return 0, fmt.Errorf("can't get сlickHouse version: %w", err)
+		return 0, fmt.Errorf("can't get clickHouse version: %w", err)
 	}
 	if len(result) == 0 {
 		return 0, nil

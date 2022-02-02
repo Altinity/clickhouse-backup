@@ -1,16 +1,20 @@
 # v1.3.0
 
 IMPROVEMENTS
+- Add support for `--partitions` on create, upload, download, restore CLI commands and API endpoint fix [#378](https://github.com/AlexAkulov/clickhouse-backup/issues/378) properly implementation of [#356](https://github.com/AlexAkulov/clickhouse-backup/pull/356)
+- Add implementation `--diff-from-remote` for `upload` command and properly handle `required` on download command, fix [#289](https://github.com/AlexAkulov/clickhouse-backup/issues/289)
+- Add `print-config` cli command fix [#366](https://github.com/AlexAkulov/clickhouse-backup/issues/366) 
 - Add `UPLOAD_BY_PART` (default: true) option for improve upload/download concurrency fix [#324](https://github.com/AlexAkulov/clickhouse-backup/issues/324)
 - Add ARM support for Docker images and pre-compiled binary files, fix [#312](https://github.com/AlexAkulov/clickhouse-backup/issues/312)
 - KeepRemoteBackups should respect differential backups, fix [#111](https://github.com/AlexAkulov/clickhouse-backup/issues/111)
-- Add SFTP_DEBUG, fix [#335](https://github.com/AlexAkulov/clickhouse-backup/issues/335)
+- Add `SFTP_DEBUG` option, fix [#335](https://github.com/AlexAkulov/clickhouse-backup/issues/335)
 - Add ability to restore schema `ON CLUSTER`, fix [#145](https://github.com/AlexAkulov/clickhouse-backup/issues/145) 
 - Add support encrypted disk (include s3 encrypted disks), fix [#260](https://github.com/AlexAkulov/clickhouse-backup/issues/260)
-- API Server optimize `last_backup_size_remote` metric calculation to make it async during REST API startup and after download/upload, fix [#309](https://github.com/AlexAkulov/clickhouse-backup/issues/309)
-- Improve list remote speed via local metadata cache, fix [#318](https://github.com/AlexAkulov/clickhouse-backup/issues/318)
+- API Server optimization for speed of `last_backup_size_remote` metric calculation to make it async during REST API startup and after download/upload, fix [#309](https://github.com/AlexAkulov/clickhouse-backup/issues/309)
+- Improve `list remote` speed via local metadata cache in `$TEMP/.clickhouse-backup.$REMOTE_STORAGE`, fix [#318](https://github.com/AlexAkulov/clickhouse-backup/issues/318)
 - Add `CLICKHOUSE_IGNORE_NOT_EXISTS_ERROR_DURING_FREEZE` option, fix [#319](https://github.com/AlexAkulov/clickhouse-backup/issues/319)
 - Add support for PROJECTION, fix [#320](https://github.com/AlexAkulov/clickhouse-backup/issues/320)
+- Return `clean` cli command and API `POST /backup/clean` endpoint, fix [#379](https://github.com/AlexAkulov/clickhouse-backup/issues/379)
 
 BUG FIXES
 - fix [#331](https://github.com/AlexAkulov/clickhouse-backup/issues/331), properly restore tables where have table name with the same name as database name
@@ -18,8 +22,12 @@ BUG FIXES
 - fix [#317](https://github.com/AlexAkulov/clickhouse-backup/issues/317), properly upload large files to Azure Blob Storage
 - fix [#220](https://github.com/AlexAkulov/clickhouse-backup/issues/220), properly handle total_bytes for uint64 type
 - fix [#304](https://github.com/AlexAkulov/clickhouse-backup/issues/304), properly handle archive extension during download instead of use config settings
+- fix [#375](https://github.com/AlexAkulov/clickhouse-backup/issues/375), properly `REMOTE_STORAGE=none` error handle
+- fix [#379](https://github.com/AlexAkulov/clickhouse-backup/issues/379), will try to clean `shadow` if `create` fail during `moveShadow`
+- more precise calculation backup size during `upload`, for backups created with `--partitions`, fix bug after [#356](https://github.com/AlexAkulov/clickhouse-backup/pull/356)
 - fix `restore --rm` behavior for 20.12+ for tables which have dependent objects (like dictionary)
-- fix concurrency by `FTP` creation directories during upload, reduce connection pool usage 
+- fix concurrency by `FTP` creation directories during upload, reduce connection pool usage
+- properly handle `--schema` parameter for show local backup size after `download`
 
 # v1.2.2
 
@@ -163,7 +171,7 @@ IMPROVEMENTS
 
 BROKEN CHANGES
 - Changed backup format
-- Incremental backup on remote storage and 'flashback' feature is not supported now, but will supported in future versions
+- Incremental backup on remote storage feature is not supported now, but will support in future versions
 
 # v0.6.4
 

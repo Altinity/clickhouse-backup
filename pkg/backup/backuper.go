@@ -2,7 +2,6 @@ package backup
 
 import (
 	"fmt"
-
 	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/new_storage"

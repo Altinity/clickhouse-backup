@@ -2,17 +2,17 @@ package filesystemhelper
 
 import (
 	"fmt"
-	"io"
+	"github.com/AlexAkulov/clickhouse-backup/utils"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
-	"github.com/apex/log"
 	apexLog "github.com/apex/log"
 )
 
@@ -99,21 +99,22 @@ func MkdirAll(path string, ch *clickhouse.ClickHouse) error {
 
 // CopyData - copy partitions for specific table to detached folder
 func CopyData(backupName string, backupTable metadata.TableMetadata, disks []clickhouse.Disk, tableDataPaths []string, ch *clickhouse.ClickHouse) error {
-	// TODO: проверить если диск есть в бэкапе но нет в ClickHouse
+	// TODO: check when disk exists in backup, but miss in ClickHouse
 	dstDataPaths := clickhouse.GetDisksByPaths(disks, tableDataPaths)
-	log.Debugf("dstDataPaths=%v disks=%v tableDataPaths=%v", dstDataPaths, disks, tableDataPaths)
+	log := apexLog.WithFields(apexLog.Fields{"operation": "CopyData"})
+	start := time.Now()
 	for _, backupDisk := range disks {
 		if len(backupTable.Parts[backupDisk.Name]) == 0 {
+			log.Debugf("%s disk have no parts", backupDisk.Name)
 			continue
 		}
 		detachedParentDir := filepath.Join(dstDataPaths[backupDisk.Name], "detached")
-		log.Debugf("detachedParentDir=%s", detachedParentDir)
 		for _, part := range backupTable.Parts[backupDisk.Name] {
 			detachedPath := filepath.Join(detachedParentDir, part.Name)
-			log.Debugf("detachedPath=%s", detachedPath)
 			info, err := os.Stat(detachedPath)
 			if err != nil {
 				if os.IsNotExist(err) {
+					log.Debugf("MkDirAll %s", detachedPath)
 					if mkdirErr := MkdirAll(detachedPath, ch); mkdirErr != nil {
 						log.Warnf("error during Mkdir %w", mkdirErr)
 					}
@@ -123,11 +124,11 @@ func CopyData(backupName string, backupTable metadata.TableMetadata, disks []cli
 			} else if !info.IsDir() {
 				return fmt.Errorf("'%s' should be directory or absent", detachedPath)
 			}
-			uuid := path.Join(common.TablePathEncode(backupTable.Database), common.TablePathEncode(backupTable.Table))
-			partPath := path.Join(backupDisk.Path, "backup", backupName, "shadow", uuid, backupDisk.Name, part.Name)
+			dbAndTableDir := path.Join(common.TablePathEncode(backupTable.Database), common.TablePathEncode(backupTable.Table))
+			partPath := path.Join(backupDisk.Path, "backup", backupName, "shadow", dbAndTableDir, backupDisk.Name, part.Name)
 			// Legacy backup support
 			if _, err := os.Stat(partPath); os.IsNotExist(err) {
-				partPath = path.Join(backupDisk.Path, "backup", backupName, "shadow", uuid, part.Name)
+				partPath = path.Join(backupDisk.Path, "backup", backupName, "shadow", dbAndTableDir, part.Name)
 			}
 			if err := filepath.Walk(partPath, func(filePath string, info os.FileInfo, err error) error {
 				if err != nil {
@@ -136,12 +137,14 @@ func CopyData(backupName string, backupTable metadata.TableMetadata, disks []cli
 				filename := strings.Trim(strings.TrimPrefix(filePath, partPath), "/")
 				dstFilePath := filepath.Join(detachedPath, filename)
 				if info.IsDir() {
+					log.Debugf("MkDir %s", dstFilePath)
 					return Mkdir(dstFilePath, ch)
 				}
 				if !info.Mode().IsRegular() {
 					log.Debugf("'%s' is not a regular file, skipping.", filePath)
 					return nil
 				}
+				log.Debugf("Link %s -> %s", filePath, dstFilePath)
 				if err := os.Link(filePath, dstFilePath); err != nil {
 					if !os.IsExist(err) {
 						return fmt.Errorf("failed to create hard link '%s' -> '%s': %w", filePath, dstFilePath, err)
@@ -153,26 +156,27 @@ func CopyData(backupName string, backupTable metadata.TableMetadata, disks []cli
 			}
 		}
 	}
+	log.WithField("duration", utils.HumanizeDuration(time.Since(start))).Debugf("done")
 	return nil
 }
 
-func isPartInPartition(partName string, partitionsBackupMap map[string]struct{}) bool {
-	partition := strings.Split(partName, "_")[0]
-	_, ok := partitionsBackupMap[partition]
+func IsPartInPartition(partName string, partitionsBackupMap common.EmptyMap) bool {
+	_, ok := partitionsBackupMap[strings.Split(partName, "_")[0]]
 	return ok
 }
 
-func MoveShadow(shadowPath, backupPartsPath string, partitionsBackupMap map[string]struct{}) ([]metadata.Part, int64, error) {
+func MoveShadow(shadowPath, backupPartsPath string, partitionsBackupMap common.EmptyMap) ([]metadata.Part, int64, error) {
 	size := int64(0)
 	parts := []metadata.Part{}
 	err := filepath.Walk(shadowPath, func(filePath string, info os.FileInfo, err error) error {
 		relativePath := strings.Trim(strings.TrimPrefix(filePath, shadowPath), "/")
 		pathParts := strings.SplitN(relativePath, "/", 4)
-		// [store 1f9 1f9dc899-0de9-41f8-b95c-26c1f0d67d93 20181023_2_2_0/partition.dat]
+		// store / 1f9 / 1f9dc899-0de9-41f8-b95c-26c1f0d67d93 / 20181023_2_2_0 / checksums.txt
+		// data / database / table / 20181023_2_2_0 / checksums.txt
 		if len(pathParts) != 4 {
 			return nil
 		}
-		if len(partitionsBackupMap) != 0 && !isPartInPartition(pathParts[3], partitionsBackupMap) {
+		if len(partitionsBackupMap) != 0 && !IsPartInPartition(pathParts[3], partitionsBackupMap) {
 			return nil
 		}
 		dstFilePath := filepath.Join(backupPartsPath, pathParts[3])
@@ -190,24 +194,6 @@ func MoveShadow(shadowPath, backupPartsPath string, partitionsBackupMap map[stri
 		return os.Rename(filePath, dstFilePath)
 	})
 	return parts, size, err
-}
-
-func CopyFile(srcFile string, dstFile string) error {
-	if err := os.MkdirAll(path.Dir(dstFile), os.ModePerm); err != nil {
-		return err
-	}
-	src, err := os.Open(srcFile)
-	if err != nil {
-		return err
-	}
-	defer src.Close()
-	dst, err := os.Create(dstFile)
-	if err != nil {
-		return err
-	}
-	defer dst.Close()
-	_, err = io.Copy(dst, src)
-	return err
 }
 
 func IsDuplicatedParts(part1, part2 string) error {
@@ -254,4 +240,16 @@ func IsDuplicatedParts(part1, part2 string) error {
 		}
 	}
 	return nil
+}
+
+func CreatePartitionsToBackupMap(partitions []string) common.EmptyMap {
+	if len(partitions) == 0 {
+		return make(common.EmptyMap, 0)
+	} else {
+		partitionsMap := common.EmptyMap{}
+		for _, partition := range partitions {
+			partitionsMap[partition] = struct{}{}
+		}
+		return partitionsMap
+	}
 }

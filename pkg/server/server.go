@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/http/pprof"
 	"net/url"
@@ -260,6 +261,7 @@ func (api *APIServer) setupAPIServer() *http.Server {
 	r.HandleFunc("/backup/list", api.httpListHandler).Methods("GET")
 	r.HandleFunc("/backup/list/{where}", api.httpListHandler).Methods("GET")
 	r.HandleFunc("/backup/create", api.httpCreateHandler).Methods("POST")
+	r.HandleFunc("/backup/clean", api.httpCleanHandler).Methods("POST")
 	r.HandleFunc("/backup/upload/{name}", api.httpUploadHandler).Methods("POST")
 	r.HandleFunc("/backup/download/{name}", api.httpDownloadHandler).Methods("POST")
 	r.HandleFunc("/backup/restore/{name}", api.httpRestoreHandler).Methods("POST")
@@ -566,7 +568,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	tablePattern := ""
-	partitionsToBackup := ""
+	partitionsToBackup := make([]string, 0)
 	backupName := backup.NewBackupName()
 	schemaOnly := false
 	rbacOnly := false
@@ -578,8 +580,8 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
 	}
 	if partitions, exist := query["partitions"]; exist {
-		partitionsToBackup = partitions[0]
-		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, partitionsToBackup)
+		partitionsToBackup = strings.Split(partitions[0], ",")
+		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, partitions)
 	}
 	if schema, exist := query["schema"]; exist {
 		schemaOnly, _ = strconv.ParseBool(schema[0])
@@ -637,6 +639,25 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// httpCleanHandler - clean ./shadow directory
+func (api *APIServer) httpCleanHandler(w http.ResponseWriter, r *http.Request) {
+	api.status.start("clean")
+	err := backup.Clean(api.config)
+	api.status.stop(err)
+	if err != nil {
+		log.Printf("Clean error: = %+v", err)
+		writeError(w, http.StatusInternalServerError, "clean", err)
+		return
+	}
+	sendJSONEachRow(w, http.StatusOK, struct {
+		Status    string `json:"status"`
+		Operation string `json:"operation"`
+	}{
+		Status:    "success",
+		Operation: "clean",
+	})
+}
+
 // httpUploadHandler - upload a backup to remote storage
 func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) {
 	if api.status.inProgress() {
@@ -655,6 +676,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	diffFromRemote := ""
 	name := vars["name"]
 	tablePattern := ""
+	partitionsToBackup := make([]string, 0)
 	schemaOnly := false
 	fullCommand := "upload"
 
@@ -669,6 +691,10 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	if tp, exist := query["table"]; exist {
 		tablePattern = tp[0]
 		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
+	}
+	if partitions, exist := query["partitions"]; exist {
+		partitionsToBackup = strings.Split(partitions[0], ",")
+		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, partitions)
 	}
 	if schema, exist := query["schema"]; exist {
 		schemaOnly, _ = strconv.ParseBool(schema[0])
@@ -685,7 +711,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 			api.metrics.LastFinish["upload"].Set(float64(time.Now().Unix()))
 		}()
 		b := backup.NewBackuper(cfg)
-		err := b.Upload(name, tablePattern, diffFrom, diffFromRemote, schemaOnly)
+		err := b.Upload(name, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly)
 		api.status.stop(err)
 		if err != nil {
 			apexLog.Errorf("Upload error: %+v\n", err)
@@ -730,6 +756,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	}
 	vars := mux.Vars(r)
 	tablePattern := ""
+	partitionsToBackup := make([]string, 0)
 	schemaOnly := false
 	dataOnly := false
 	dropTable := false
@@ -741,6 +768,10 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	if tp, exist := query["table"]; exist {
 		tablePattern = tp[0]
 		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
+	}
+	if partitions, exist := query["partitions"]; exist {
+		partitionsToBackup = strings.Split(partitions[0], ",")
+		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, partitions)
 	}
 	if _, exist := query["schema"]; exist {
 		schemaOnly = true
@@ -758,12 +789,10 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		dropTable = true
 		fullCommand += " --rm"
 	}
-
 	if _, exist := query["rbac"]; exist {
 		rbacOnly = true
 		fullCommand += " --rbac"
 	}
-
 	if _, exist := query["configs"]; exist {
 		configsOnly = true
 		fullCommand += " --configs"
@@ -780,7 +809,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 			api.metrics.LastDuration["restore"].Set(float64(time.Since(start).Nanoseconds()))
 			api.metrics.LastFinish["restore"].Set(float64(time.Now().Unix()))
 		}()
-		err := backup.Restore(cfg, name, tablePattern, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly)
+		err := backup.Restore(cfg, name, tablePattern, partitionsToBackup, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly)
 		api.status.stop(err)
 		if err != nil {
 			apexLog.Errorf("Download error: %+v\n", err)
@@ -818,12 +847,17 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	name := vars["name"]
 	query := r.URL.Query()
 	tablePattern := ""
+	partitionsToBackup := make([]string, 0)
 	schemaOnly := false
 	fullCommand := "download"
 
 	if tp, exist := query["table"]; exist {
 		tablePattern = tp[0]
 		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
+	}
+	if partitions, exist := query["partitions"]; exist {
+		partitionsToBackup = strings.Split(partitions[0], ",")
+		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, partitions)
 	}
 	if _, exist := query["schema"]; exist {
 		schemaOnly = true
@@ -841,7 +875,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		}()
 
 		b := backup.NewBackuper(cfg)
-		err := b.Download(name, tablePattern, schemaOnly)
+		err := b.Download(name, tablePattern, partitionsToBackup, schemaOnly)
 		api.status.stop(err)
 		if err != nil {
 			apexLog.Errorf("Download error: %+v\n", err)

@@ -14,10 +14,6 @@ import (
 	"github.com/urfave/cli"
 )
 
-const (
-	defaultConfigPath = "/etc/clickhouse-backup/config.yml"
-)
-
 var (
 	version   = "unknown"
 	gitCommit = "unknown"
@@ -36,7 +32,7 @@ func main() {
 	cliapp.Flags = []cli.Flag{
 		cli.StringFlag{
 			Name:   "config, c",
-			Value:  defaultConfigPath,
+			Value:  config.DefaultConfigPath,
 			Usage:  "Config `FILE` name.",
 			EnvVar: "CLICKHOUSE_BACKUP_CONFIG",
 		},
@@ -58,7 +54,7 @@ func main() {
 			Usage:     "Print list of tables",
 			UsageText: "clickhouse-backup tables",
 			Action: func(c *cli.Context) error {
-				return backup.PrintTables(getConfig(c), c.Bool("a"))
+				return backup.PrintTables(config.GetConfig(c), c.Bool("a"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.BoolFlag{
@@ -70,20 +66,21 @@ func main() {
 		{
 			Name:        "create",
 			Usage:       "Create new backup",
-			UsageText:   "clickhouse-backup create [-t, --tables=<db>.<table>] [--partitions=<partitions_to_backup>] [-s, --schema] [--rbac] [--configs] <backup_name>",
+			UsageText:   "clickhouse-backup create [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--rbac] [--configs] <backup_name>",
 			Description: "Create new backup",
 			Action: func(c *cli.Context) error {
-				return backup.CreateBackup(getConfig(c), c.Args().First(), c.String("t"), c.String("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("configs"), version)
+				return backup.CreateBackup(config.GetConfig(c), c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("configs"), version)
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
 					Name:   "table, tables, t",
 					Hidden: false,
+					Usage:  "table name patterns, separated by comma, allow ? and * as wildcard",
 				},
-				cli.StringFlag{
+				cli.StringSliceFlag{
 					Name:   "partitions",
 					Hidden: false,
-					Usage:  "partitions seperated by ,",
+					Usage:  "partition names, separated by comma",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",
@@ -105,26 +102,32 @@ func main() {
 		{
 			Name:        "create_remote",
 			Usage:       "Create and upload",
-			UsageText:   "clickhouse-backup create_remote [-t, --tables=<db>.<table>] [--partitions=<partitions_to_backup>] [--diff-from=<local_backup_name>] [--schema] [--rbac] [--configs] <backup_name>",
+			UsageText:   "clickhouse-backup create_remote [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--diff-from=<local_backup_name>] [--diff-from-remote=<local_backup_name>] [--schema] [--rbac] [--configs] <backup_name>",
 			Description: "Create and upload",
 			Action: func(c *cli.Context) error {
-				b := backup.NewBackuper(getConfig(c))
-				return b.CreateToRemote(c.Args().First(), c.String("t"), c.String("partitions"), c.String("diff-from"), c.Bool("s"), c.Bool("rbac"), c.Bool("configs"), version)
+				b := backup.NewBackuper(config.GetConfig(c))
+				return b.CreateToRemote(c.Args().First(), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("configs"), version)
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
 					Name:   "table, tables, t",
+					Usage:  "table name patterns, separated by comma, allow ? and * as wildcard",
 					Hidden: false,
 				},
-				cli.StringFlag{
+				cli.StringSliceFlag{
 					Name:   "partitions",
 					Hidden: false,
-					Usage:  "partitions seperated by ,",
+					Usage:  "partition names, separated by comma",
 				},
 				cli.StringFlag{
 					Name:   "diff-from",
 					Hidden: false,
 					Usage:  "local backup name which used to upload current backup as differential",
+				},
+				cli.StringFlag{
+					Name:   "diff-from-remote",
+					Hidden: false,
+					Usage:  "remote backup name which used to upload current backup as differential",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",
@@ -146,10 +149,10 @@ func main() {
 		{
 			Name:      "upload",
 			Usage:     "Upload backup to remote storage",
-			UsageText: "clickhouse-backup upload [-t, --tables=<db>.<table>] [-s, --schema] [--diff-from=<local_backup_name>] <backup_name>",
+			UsageText: "clickhouse-backup upload [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--diff-from=<local_backup_name>] [--diff-from-remote=<remote_backup_name>] <backup_name>",
 			Action: func(c *cli.Context) error {
-				b := backup.NewBackuper(getConfig(c))
-				return b.Upload(c.Args().First(), c.String("t"), c.String("diff-from"), c.Bool("s"))
+				b := backup.NewBackuper(config.GetConfig(c))
+				return b.Upload(c.Args().First(), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -158,8 +161,19 @@ func main() {
 					Usage:  "local backup name which used to upload current backup as differential",
 				},
 				cli.StringFlag{
-					Name:   "table, tables, t",
+					Name:   "diff-from-remote",
 					Hidden: false,
+					Usage:  "remote backup name which used to upload current backup as differential",
+				},
+				cli.StringFlag{
+					Name:   "table, tables, t",
+					Usage:  "table name patterns, separated by comma, allow ? and * as wildcard",
+					Hidden: false,
+				},
+				cli.StringSliceFlag{
+					Name:   "partitions",
+					Hidden: false,
+					Usage:  "partition names, separated by comma",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",
@@ -173,7 +187,7 @@ func main() {
 			Usage:     "Print list of backups",
 			UsageText: "clickhouse-backup list [all|local|remote] [latest|penult]",
 			Action: func(c *cli.Context) error {
-				cfg := getConfig(c)
+				cfg := config.GetConfig(c)
 				switch c.Args().Get(0) {
 				case "local":
 					return backup.PrintLocalBackups(cfg, c.Args().Get(1))
@@ -192,15 +206,21 @@ func main() {
 		{
 			Name:      "download",
 			Usage:     "Download backup from remote storage",
-			UsageText: "clickhouse-backup download [-t, --tables=<db>.<table>] [-s, --schema] <backup_name>",
+			UsageText: "clickhouse-backup download [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] <backup_name>",
 			Action: func(c *cli.Context) error {
-				b := backup.NewBackuper(getConfig(c))
-				return b.Download(c.Args().First(), c.String("t"), c.Bool("s"))
+				b := backup.NewBackuper(config.GetConfig(c))
+				return b.Download(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("s"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
 					Name:   "table, tables, t",
+					Usage:  "table name patterns, separated by comma, allow ? and * as wildcard",
 					Hidden: false,
+				},
+				cli.StringFlag{
+					Name:   "partitions",
+					Hidden: false,
+					Usage:  "partition names, separated by comma",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",
@@ -212,14 +232,20 @@ func main() {
 		{
 			Name:      "restore",
 			Usage:     "Create schema and restore data from backup",
-			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-s, --schema] [-d, --data] [--rm, --drop] [--rbac] [--configs] <backup_name>",
+			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [--rbac] [--configs] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return backup.Restore(getConfig(c), c.Args().First(), c.String("t"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("rbac"), c.Bool("configs"))
+				return backup.Restore(config.GetConfig(c), c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("rbac"), c.Bool("configs"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
 					Name:   "table, tables, t",
+					Usage:  "table name patterns, separated by comma, allow ? and * as wildcard",
 					Hidden: false,
+				},
+				cli.StringSliceFlag{
+					Name:   "partitions",
+					Hidden: false,
+					Usage:  "partition names, separated by comma",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",
@@ -251,15 +277,21 @@ func main() {
 		{
 			Name:      "restore_remote",
 			Usage:     "Download and restore",
-			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [--rm, --drop] [--rbac] [--configs] [--skip-rbac] [--skip-configs] <backup_name>",
+			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [--partitions=<partitions_names>] [--rm, --drop] [--rbac] [--configs] [--skip-rbac] [--skip-configs] <backup_name>",
 			Action: func(c *cli.Context) error {
-				b := backup.NewBackuper(getConfig(c))
-				return b.RestoreFromRemote(c.Args().First(), c.String("t"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("rbac"), c.Bool("configs"))
+				b := backup.NewBackuper(config.GetConfig(c))
+				return b.RestoreFromRemote(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("rbac"), c.Bool("configs"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
 					Name:   "table, tables, t",
+					Usage:  "table name patterns, separated by comma, allow ? and * as wildcard",
 					Hidden: false,
+				},
+				cli.StringSliceFlag{
+					Name:   "partitions",
+					Hidden: false,
+					Usage:  "partition names, separated by comma",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",
@@ -293,7 +325,7 @@ func main() {
 			Usage:     "Delete specific backup",
 			UsageText: "clickhouse-backup delete <local|remote> <backup_name>",
 			Action: func(c *cli.Context) error {
-				cfg := getConfig(c)
+				cfg := config.GetConfig(c)
 				if c.Args().Get(1) == "" {
 					log.Errorf("Backup name must be defined")
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
@@ -314,8 +346,24 @@ func main() {
 		{
 			Name:  "default-config",
 			Usage: "Print default config",
-			Action: func(*cli.Context) {
-				config.PrintDefaultConfig()
+			Action: func(*cli.Context) error {
+				return config.PrintConfig(nil)
+			},
+			Flags: cliapp.Flags,
+		},
+		{
+			Name:  "print-config",
+			Usage: "Print current config",
+			Action: func(c *cli.Context) error {
+				return config.PrintConfig(c)
+			},
+			Flags: cliapp.Flags,
+		},
+		{
+			Name:  "clean",
+			Usage: "Remove data in 'shadow' folder from all `path` folder available from `system.disks`",
+			Action: func(c *cli.Context) error {
+				return backup.Clean(config.GetConfig(c))
 			},
 			Flags: cliapp.Flags,
 		},
@@ -323,7 +371,7 @@ func main() {
 			Name:  "server",
 			Usage: "Run API server",
 			Action: func(c *cli.Context) error {
-				return server.Server(cliapp, getConfigPath(c), version)
+				return server.Server(cliapp, config.GetConfigPath(c), version)
 			},
 			Flags: cliapp.Flags,
 		},
@@ -331,26 +379,4 @@ func main() {
 	if err := cliapp.Run(os.Args); err != nil {
 		log.Fatal(err.Error())
 	}
-}
-
-func getConfig(ctx *cli.Context) *config.Config {
-	configPath := getConfigPath(ctx)
-	cfg, err := config.LoadConfig(configPath)
-	if err != nil {
-		log.Fatal(err.Error())
-	}
-	return cfg
-}
-
-func getConfigPath(ctx *cli.Context) string {
-	if ctx.String("config") != defaultConfigPath {
-		return ctx.String("config")
-	}
-	if ctx.GlobalString("config") != defaultConfigPath {
-		return ctx.GlobalString("config")
-	}
-	if os.Getenv("CLICKHOUSE_BACKUP_CONFIG") != "" {
-		return os.Getenv("CLICKHOUSE_BACKUP_CONFIG")
-	}
-	return defaultConfigPath
 }

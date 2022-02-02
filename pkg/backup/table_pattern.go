@@ -3,16 +3,30 @@ package backup
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/filesystemhelper"
+	"io"
 	"io/ioutil"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 )
 
-func addRestoreTable(tables ListOfTables, table metadata.TableMetadata) ListOfTables {
+type ListOfTables []metadata.TableMetadata
+
+// Sort - sorting ListOfTables slice orderly by engine priority
+func (lt ListOfTables) Sort(dropTable bool) {
+	sort.Slice(lt, func(i, j int) bool {
+		return getOrderByEngine(lt[i].Query, dropTable) < getOrderByEngine(lt[j].Query, dropTable)
+	})
+}
+
+func addTableToListIfNotExists(tables ListOfTables, table metadata.TableMetadata) ListOfTables {
 	for _, t := range tables {
 		if (t.Database == table.Database) && (t.Table == table.Table) {
 			return tables
@@ -21,7 +35,7 @@ func addRestoreTable(tables ListOfTables, table metadata.TableMetadata) ListOfTa
 	return append(tables, table)
 }
 
-func parseSchemaPattern(metadataPath string, tablePattern string, dropTable bool) (ListOfTables, error) {
+func getTableListByPatternLocal(metadataPath string, tablePattern string, dropTable bool, partitionsFilter common.EmptyMap) (ListOfTables, error) {
 	result := ListOfTables{}
 	tablePatterns := []string{"*"}
 
@@ -62,7 +76,7 @@ func parseSchemaPattern(metadataPath string, tablePattern string, dropTable bool
 				return err
 			}
 			if legacy {
-				result = addRestoreTable(result, metadata.TableMetadata{
+				result = addTableToListIfNotExists(result, metadata.TableMetadata{
 					Database: database,
 					Table:    table,
 					Query:    strings.Replace(string(data), "ATTACH", "CREATE", 1),
@@ -74,12 +88,65 @@ func parseSchemaPattern(metadataPath string, tablePattern string, dropTable bool
 			if err := json.Unmarshal(data, &t); err != nil {
 				return err
 			}
-			result = addRestoreTable(result, t)
+			filterPartsByPartitionsFilter(t, partitionsFilter)
+			result = addTableToListIfNotExists(result, t)
 			return nil
 		}
 		return nil
 	}); err != nil {
 		return nil, err
+	}
+	result.Sort(dropTable)
+	return result, nil
+}
+
+func filterPartsByPartitionsFilter(tableMetadata metadata.TableMetadata, partitionsFilter common.EmptyMap) {
+	if len(partitionsFilter) > 0 {
+		for disk, parts := range tableMetadata.Parts {
+			for i, part := range parts {
+				if !filesystemhelper.IsPartInPartition(part.Name, partitionsFilter) {
+					parts = append(parts[:i], parts[i+1:]...)
+				}
+			}
+			tableMetadata.Parts[disk] = parts
+		}
+	}
+}
+
+func getTableListByPatternRemote(b *Backuper, remoteBackupMetadata *metadata.BackupMetadata, tablePattern string, dropTable bool) (ListOfTables, error) {
+	result := ListOfTables{}
+	tablePatterns := []string{"*"}
+
+	if tablePattern != "" {
+		tablePatterns = strings.Split(tablePattern, ",")
+	}
+	metadataPath := path.Join(remoteBackupMetadata.BackupName, "metadata")
+	for _, t := range remoteBackupMetadata.Tables {
+		tableName := fmt.Sprintf("%s.%s", t.Database, t.Table)
+		for _, p := range tablePatterns {
+			if matched, _ := filepath.Match(strings.Trim(p, " \t\r\n"), tableName); !matched {
+				continue
+			}
+			tmReader, err := b.dst.GetFileReader(path.Join(metadataPath, common.TablePathEncode(t.Database), fmt.Sprintf("%s.json", common.TablePathEncode(t.Table))))
+			if err != nil {
+				return nil, err
+			}
+			data, err := io.ReadAll(tmReader)
+			if err != nil {
+				return nil, err
+			}
+			err = tmReader.Close()
+			if err != nil {
+				return nil, err
+			}
+
+			var t metadata.TableMetadata
+			if err = json.Unmarshal(data, &t); err != nil {
+				return nil, err
+			}
+			result = addTableToListIfNotExists(result, t)
+			break
+		}
 	}
 	result.Sort(dropTable)
 	return result, nil
@@ -118,7 +185,7 @@ func parseTablePatternForDownload(tables []metadata.TableTitle, tablePattern str
 	if tablePattern != "" {
 		tablePatterns = strings.Split(tablePattern, ",")
 	}
-	result := []metadata.TableTitle{}
+	var result []metadata.TableTitle
 	for _, t := range tables {
 		for _, pattern := range tablePatterns {
 			tableName := fmt.Sprintf("%s.%s", t.Database, t.Table)

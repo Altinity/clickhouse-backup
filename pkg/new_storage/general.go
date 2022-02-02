@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/AlexAkulov/clickhouse-backup/config"
@@ -45,6 +46,8 @@ type BackupDestination struct {
 	compressionLevel   int
 	disableProgressBar bool
 }
+
+var metadataCacheLock sync.RWMutex
 
 func (bd *BackupDestination) RemoveOldBackups(keep int) error {
 	if keep < 1 {
@@ -103,6 +106,7 @@ func (bd *BackupDestination) loadMetadataCache() map[string]Backup {
 	listCacheFile := path.Join(os.TempDir(), fmt.Sprintf(".clickhouse-backup-metadata.cache.%s", bd.Kind()))
 	listCache := map[string]Backup{}
 	if info, err := os.Stat(listCacheFile); os.IsNotExist(err) || info.IsDir() {
+		apexLog.Debugf("%s not found, load %d elements", listCacheFile, len(listCache))
 		return listCache
 	}
 	f, err := os.Open(listCacheFile)
@@ -119,19 +123,33 @@ func (bd *BackupDestination) loadMetadataCache() map[string]Backup {
 		apexLog.Warnf("can't close %s return error %v", listCacheFile, err)
 		return listCache
 	}
-	if err := json.Unmarshal(body, &listCache); err != nil {
-		apexLog.Warnf("can't parse %s to map[string]Backup, return error %v", listCacheFile, err)
+	if string(body) != "" {
+		if err := json.Unmarshal(body, &listCache); err != nil {
+			apexLog.Fatalf("can't parse %s to map[string]Backup\n\n%s\n\nreturn error %v", listCacheFile, body, err)
+		}
 	}
 	apexLog.Debugf("%s load %d elements", listCacheFile, len(listCache))
 	return listCache
 }
 
-func (bd *BackupDestination) saveMetadataCache(listCache map[string]Backup) {
+func (bd *BackupDestination) saveMetadataCache(listCache map[string]Backup, actualList []Backup) {
 	listCacheFile := path.Join(os.TempDir(), fmt.Sprintf(".clickhouse-backup-metadata.cache.%s", bd.Kind()))
-	f, err := os.OpenFile(listCacheFile, os.O_RDWR|os.O_CREATE, 0644)
+	f, err := os.OpenFile(listCacheFile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		apexLog.Warnf("can't open %s return error %v", listCacheFile, err)
 		return
+	}
+	for backupName := range listCache {
+		found := false
+		for _, actualBackup := range actualList {
+			if backupName == actualBackup.BackupName {
+				found = true
+				break
+			}
+		}
+		if !found {
+			delete(listCache, backupName)
+		}
 	}
 	body, err := json.MarshalIndent(&listCache, "", "\t")
 	if err != nil {
@@ -147,7 +165,9 @@ func (bd *BackupDestination) saveMetadataCache(listCache map[string]Backup) {
 }
 
 func (bd *BackupDestination) BackupList(parseMetadata bool, parseMetadataOnly string) ([]Backup, error) {
-	result := []Backup{}
+	result := make([]Backup, 0)
+	metadataCacheLock.Lock()
+	defer metadataCacheLock.Unlock()
 	listCache := bd.loadMetadataCache()
 	err := bd.Walk("/", false, func(o RemoteFile) error {
 		// Legacy backup
@@ -265,7 +285,7 @@ func (bd *BackupDestination) BackupList(parseMetadata bool, parseMetadataOnly st
 	sort.SliceStable(result, func(i, j int) bool {
 		return result[i].UploadDate.Before(result[j].UploadDate)
 	})
-	bd.saveMetadataCache(listCache)
+	bd.saveMetadataCache(listCache, result)
 	return result, err
 }
 
@@ -284,24 +304,34 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 	if err != nil {
 		return err
 	}
-	defer reader.Close()
+	defer func() {
+		if err := reader.Close(); err != nil {
+			apexLog.Warnf("can't close GetFileReader descriptor %v", reader)
+		}
+	}()
 
 	bar := progressbar.StartNewByteBar(!bd.disableProgressBar, filesize)
 	buf := buffer.New(BufferSize)
 	defer bar.Finish()
 	bufReader := nio.NewReader(reader, buf)
 	proxyReader := bar.NewProxyReader(bufReader)
-	if !strings.HasSuffix(path.Ext(remotePath), bd.compressionFormat) {
-		apexLog.Warnf("remote file backup extension %s not equal with %s", remotePath, bd.compressionFormat)
+	compressionFormat := bd.compressionFormat
+	if !strings.HasSuffix(path.Ext(remotePath), compressionFormat) {
+		apexLog.Warnf("remote file backup extension %s not equal with %s", remotePath, compressionFormat)
+		compressionFormat = strings.Replace(path.Ext(remotePath), ".", "", -1)
 	}
-	z, err := getArchiveReader(strings.Replace(path.Ext(remotePath), ".", "", -1))
+	z, err := getArchiveReader(compressionFormat)
 	if err != nil {
 		return err
 	}
 	if err := z.Open(proxyReader, 0); err != nil {
 		return err
 	}
-	defer z.Close()
+	defer func() {
+		if err := z.Close(); err != nil {
+			apexLog.Warnf("can't close getArchiveReader %v: %v", z, err)
+		}
+	}()
 	for {
 		file, err := z.Read()
 		if err == io.EOF {
@@ -317,7 +347,7 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 		extractFile := filepath.Join(localPath, header.Name)
 		extractDir := filepath.Dir(extractFile)
 		if _, err := os.Stat(extractDir); os.IsNotExist(err) {
-			os.MkdirAll(extractDir, 0750)
+			_ = os.MkdirAll(extractDir, 0750)
 		}
 		dst, err := os.Create(extractFile)
 		if err != nil {
@@ -332,7 +362,7 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 		if err := file.Close(); err != nil {
 			return err
 		}
-		apexLog.Debugf("extract %s", extractFile)
+		//apexLog.Debugf("extract %s", extractFile)
 	}
 	return nil
 }
@@ -360,7 +390,11 @@ func (bd *BackupDestination) CompressedStreamUpload(baseLocalPath string, files 
 	g, _ := errgroup.WithContext(context.Background())
 
 	g.Go(func() error {
-		defer w.Close()
+		defer func() {
+			if err := w.Close(); err != nil {
+				apexLog.Warnf("can't close nio.Pipe writer %v", w)
+			}
+		}()
 		localFileBuffer := buffer.New(BufferSize)
 		z, err := getArchiveWriter(bd.compressionFormat, bd.compressionLevel)
 		if err != nil {
@@ -369,7 +403,11 @@ func (bd *BackupDestination) CompressedStreamUpload(baseLocalPath string, files 
 		if err := z.Create(w); err != nil {
 			return err
 		}
-		defer z.Close()
+		defer func() {
+			if err := z.Close(); err != nil {
+				apexLog.Warnf("can't close getArchiveWriter %v: %v", z, err)
+			}
+		}()
 		for _, f := range files {
 			filePath := path.Join(baseLocalPath, f)
 			info, err := os.Stat(filePath)
@@ -400,7 +438,7 @@ func (bd *BackupDestination) CompressedStreamUpload(baseLocalPath string, files 
 			if err := file.Close(); err != nil { // No use defer for this too
 				return err
 			}
-			apexLog.Debugf("compress %s to %s", filePath, remotePath)
+			//apexLog.Debugf("compress %s to %s", filePath, remotePath)
 		}
 		return nil
 	})
@@ -411,23 +449,26 @@ func (bd *BackupDestination) CompressedStreamUpload(baseLocalPath string, files 
 }
 
 func (bd *BackupDestination) DownloadPath(size int64, remotePath string, localPath string) error {
-	totalBytes := size
-	if size == 0 {
-		if err := bd.Walk(remotePath, true, func(f RemoteFile) error {
-			totalBytes += f.Size()
-			return nil
-		}); err != nil {
-			return err
+	var bar *progressbar.Bar
+	if !bd.disableProgressBar {
+		totalBytes := size
+		if size == 0 {
+			if err := bd.Walk(remotePath, true, func(f RemoteFile) error {
+				totalBytes += f.Size()
+				return nil
+			}); err != nil {
+				return err
+			}
 		}
+		bar = progressbar.StartNewByteBar(!bd.disableProgressBar, totalBytes)
+		defer bar.Finish()
 	}
-	bar := progressbar.StartNewByteBar(!bd.disableProgressBar, totalBytes)
-	defer bar.Finish()
 	log := apexLog.WithFields(apexLog.Fields{
 		"path":      remotePath,
 		"operation": "download",
 	})
 	return bd.Walk(remotePath, true, func(f RemoteFile) error {
-		// TODO: return err приостанавливает загрузку, нужно научить Walk обратывать ошибки или добавить какие-то ретраи
+		// TODO: return err break download, think about make Walk error handle and retry
 		r, err := bd.GetFileReader(path.Join(remotePath, f.Name()))
 		if err != nil {
 			log.Error(err.Error())
@@ -456,26 +497,31 @@ func (bd *BackupDestination) DownloadPath(size int64, remotePath string, localPa
 			log.Error(err.Error())
 			return err
 		}
-		bar.Add64(f.Size())
+		if !bd.disableProgressBar {
+			bar.Add64(f.Size())
+		}
 		return nil
 	})
 }
 
 func (bd *BackupDestination) UploadPath(size int64, baseLocalPath string, files []string, remotePath string) error {
-	totalBytes := size
-	if size == 0 {
-		for _, filename := range files {
-			finfo, err := os.Stat(path.Join(baseLocalPath, filename))
-			if err != nil {
-				return err
-			}
-			if finfo.Mode().IsRegular() {
-				totalBytes += finfo.Size()
+	var bar *progressbar.Bar
+	if !bd.disableProgressBar {
+		totalBytes := size
+		if size == 0 {
+			for _, filename := range files {
+				finfo, err := os.Stat(path.Join(baseLocalPath, filename))
+				if err != nil {
+					return err
+				}
+				if finfo.Mode().IsRegular() {
+					totalBytes += finfo.Size()
+				}
 			}
 		}
+		bar = progressbar.StartNewByteBar(!bd.disableProgressBar, totalBytes)
+		defer bar.Finish()
 	}
-	bar := progressbar.StartNewByteBar(!bd.disableProgressBar, totalBytes)
-	defer bar.Finish()
 
 	for _, filename := range files {
 		f, err := os.Open(path.Join(baseLocalPath, filename))
@@ -489,8 +535,12 @@ func (bd *BackupDestination) UploadPath(size int64, baseLocalPath string, files 
 		if err != nil {
 			return err
 		}
-		bar.Add64(fi.Size())
-		f.Close()
+		if !bd.disableProgressBar {
+			bar.Add64(fi.Size())
+		}
+		if err = f.Close(); err != nil {
+			apexLog.Warnf("can't close UploadPath file descriptor %v: %v", f, err)
+		}
 	}
 
 	return nil

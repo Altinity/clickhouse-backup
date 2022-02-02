@@ -25,7 +25,6 @@ import (
 const (
 	// TimeFormatForBackup - default backup name format
 	TimeFormatForBackup = "2006-01-02T15-04-05"
-	hashfile            = "parts.hash"
 	MetaFileName        = "metadata.json"
 )
 
@@ -73,21 +72,9 @@ func NewBackupName() string {
 	return time.Now().UTC().Format(TimeFormatForBackup)
 }
 
-func createPartitionsToBackupMap(partitions string) map[string]struct{} {
-	if len(partitions) == 0 {
-		return nil
-	} else {
-		res := map[string]struct{}{}
-		for _, partition := range strings.Split(partitions, ",") {
-			res[partition] = struct{}{}
-		}
-		return res
-	}
-}
-
 // CreateBackup - create new backup of all tables matched by tablePattern
 // If backupName is empty string will use default backup name
-func CreateBackup(cfg *config.Config, backupName, tablePattern string, partitionsToBackup string, schemaOnly, rbacOnly, configsOnly bool, version string) error {
+func CreateBackup(cfg *config.Config, backupName, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly bool, version string) error {
 
 	startBackup := time.Now()
 	doBackupData := !schemaOnly
@@ -148,6 +135,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, partition
 	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
 		if err = filesystemhelper.Mkdir(backupPath, ch); err != nil {
 			log.Errorf("can't create directory %s: %v", backupPath, err)
+			return err
 		}
 	}
 	diskMap := map[string]string{}
@@ -157,6 +145,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, partition
 	var backupDataSize, backupMetadataSize uint64
 
 	var tableMetas []metadata.TableTitle
+	partitionsToBackupMap := filesystemhelper.CreatePartitionsToBackupMap(partitions)
 	for _, table := range tables {
 		log := log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Name))
 		if table.Skip {
@@ -166,17 +155,23 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, partition
 		var disksToPartsMap map[string][]metadata.Part
 		if doBackupData {
 			log.Debug("create data")
-			log.Debug("Backup partitions \n" + partitionsToBackup)
-			partitionsToBackupMap := createPartitionsToBackupMap(partitionsToBackup)
-			disksToPartsMap, realSize, err = AddTableToBackup(ch, backupName, disks, &table, partitionsToBackupMap)
+			shadowBackupUUID := strings.ReplaceAll(uuid.New().String(), "-", "")
+			disksToPartsMap, realSize, err = AddTableToBackup(ch, backupName, shadowBackupUUID, disks, &table, partitionsToBackupMap)
 			if err != nil {
 				log.Error(err.Error())
 				if removeBackupErr := RemoveBackupLocal(cfg, backupName); removeBackupErr != nil {
 					log.Error(removeBackupErr.Error())
 				}
+				// fix corner cases after https://github.com/AlexAkulov/clickhouse-backup/issues/379
+				if cleanShadowErr := Clean(cfg); cleanShadowErr != nil {
+					log.Error(cleanShadowErr.Error())
+				}
 				return err
 			}
-			backupDataSize += table.TotalBytes
+			// more precise data size calculation
+			for _, size := range realSize {
+				backupDataSize += uint64(size)
+			}
 		}
 		log.Debug("create metadata")
 		metadataSize, err := createMetadata(ch, backupPath, metadata.TableMetadata{
@@ -219,7 +214,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, partition
 	}
 
 	backupMetadata := metadata.BackupMetadata{
-		// TODO: надо помечать какие таблички зафейлились либо фейлить весь бэкап
+		// TODO: think about which tables failed or  whole backup failed
 		BackupName:              backupName,
 		Disks:                   diskMap,
 		ClickhouseBackupVersion: version,
@@ -293,7 +288,7 @@ func createRBACBackup(ch *clickhouse.ClickHouse, backupPath string, disks []clic
 	return rbacDataSize, copyErr
 }
 
-func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, diskList []clickhouse.Disk, table *clickhouse.Table, partitionsToBackupMap map[string]struct{}) (map[string][]metadata.Part, map[string]int64, error) {
+func AddTableToBackup(ch *clickhouse.ClickHouse, backupName, shadowBackupUUID string, diskList []clickhouse.Disk, table *clickhouse.Table, partitionsToBackupMap common.EmptyMap) (map[string][]metadata.Part, map[string]int64, error) {
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "create",
@@ -308,15 +303,14 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, diskList []c
 		log.WithField("engine", table.Engine).Debug("skip table backup")
 		return nil, nil, nil
 	}
-	backupID := strings.ReplaceAll(uuid.New().String(), "-", "")
-	if err := ch.FreezeTable(table, backupID); err != nil {
+	if err := ch.FreezeTable(table, shadowBackupUUID); err != nil {
 		return nil, nil, err
 	}
 	log.Debug("freezed")
 	realSize := map[string]int64{}
 	disksToPartsMap := map[string][]metadata.Part{}
 	for _, disk := range diskList {
-		shadowPath := path.Join(disk.Path, "shadow", backupID)
+		shadowPath := path.Join(disk.Path, "shadow", shadowBackupUUID)
 		if _, err := os.Stat(shadowPath); err != nil && os.IsNotExist(err) {
 			continue
 		}
@@ -326,7 +320,7 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName string, diskList []c
 		if err := filesystemhelper.MkdirAll(backupShadowPath, ch); err != nil && !os.IsExist(err) {
 			return nil, nil, err
 		}
-		// If partitionsToBackupMap is not empty, only parts in this partition will be backuped.
+		// If partitionsToBackupMap is not empty, only parts in this partition will back up.
 		parts, size, err := filesystemhelper.MoveShadow(shadowPath, backupShadowPath, partitionsToBackupMap)
 		if err != nil {
 			return nil, nil, err

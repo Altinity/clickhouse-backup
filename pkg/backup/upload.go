@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/config"
 	"io/ioutil"
 	"os"
 	"path"
@@ -26,17 +25,9 @@ import (
 	"github.com/yargevad/filepathx"
 )
 
-func (b *Backuper) Upload(backupName, tablePattern, diffFrom string, schemaOnly bool) error {
-	if b.cfg.General.RemoteStorage == "none" {
-		fmt.Println("Upload aborted: RemoteStorage set to \"none\"")
-		return nil
-	}
-	if backupName == "" {
-		_ = PrintLocalBackups(b.cfg, "all")
-		return fmt.Errorf("select backup for upload")
-	}
-	if backupName == diffFrom {
-		return fmt.Errorf("you cannot upload diff from the same backup")
+func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern string, partitions []string, schemaOnly bool) error {
+	if err := b.validateUploadParams(backupName, diffFrom, diffFromRemote); err != nil {
+		return err
 	}
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
@@ -62,42 +53,36 @@ func (b *Backuper) Upload(backupName, tablePattern, diffFrom string, schemaOnly 
 			return fmt.Errorf("'%s' already exists on remote", backupName)
 		}
 	}
-	backupMetadata, err := b.ReadBackupMetadata(backupName)
+	backupMetadata, err := b.ReadBackupMetadataLocal(backupName)
 	if err != nil {
 		return err
 	}
 	var tablesForUpload ListOfTables
+	partitionsToUploadMap := filesystemhelper.CreatePartitionsToBackupMap(partitions)
 	if len(backupMetadata.Tables) != 0 {
 		metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
-		tablesForUpload, err = parseSchemaPattern(metadataPath, tablePattern, false)
+		tablesForUpload, err = getTableListByPatternLocal(metadataPath, tablePattern, false, partitionsToUploadMap)
 		if err != nil {
 			return err
 		}
 	}
-	var diffFromBackup *metadata.BackupMetadata
 	tablesForUploadFromDiff := map[metadata.TableTitle]metadata.TableMetadata{}
 	if diffFrom != "" {
-		diffFromBackup, err = b.ReadBackupMetadata(diffFrom)
+		tablesForUploadFromDiff, err = b.getTablesForUploadDiffLocal(diffFrom, backupMetadata, tablePattern)
 		if err != nil {
 			return err
 		}
-		if len(diffFromBackup.Tables) != 0 {
-			backupMetadata.RequiredBackup = diffFrom
-			metadataPath := path.Join(b.DefaultDataPath, "backup", diffFrom, "metadata")
-			diffTablesList, err := parseSchemaPattern(metadataPath, tablePattern, false)
-			if err != nil {
-				return err
-			}
-			for _, t := range diffTablesList {
-				tablesForUploadFromDiff[metadata.TableTitle{
-					Database: t.Database,
-					Table:    t.Table,
-				}] = t
-			}
+	}
+	if diffFromRemote != "" {
+		tablesForUploadFromDiff, err = b.getTablesForUploadDiffRemote(diffFromRemote, backupMetadata, tablePattern)
+		if err != nil {
+			return err
 		}
 	}
+
 	compressedDataSize := int64(0)
 	metadataSize := int64(0)
+
 	log.Debugf("prepare table concurrent semaphore with concurrency=%d len(tablesForUpload)=%d", b.cfg.General.UploadConcurrency, len(tablesForUpload))
 	s := semaphore.NewWeighted(int64(b.cfg.General.UploadConcurrency))
 	g, ctx := errgroup.WithContext(context.Background())
@@ -109,11 +94,12 @@ func (b *Backuper) Upload(backupName, tablePattern, diffFrom string, schemaOnly 
 		}
 		start := time.Now()
 		if !schemaOnly {
-			if diffTable, ok := tablesForUploadFromDiff[metadata.TableTitle{
+			if diffTable, diffExists := tablesForUploadFromDiff[metadata.TableTitle{
 				Database: table.Database,
 				Table:    table.Table,
-			}]; ok {
-				b.markDuplicatedParts(backupMetadata, &diffTable, &table)
+			}]; diffExists {
+				checkLocalPart := diffFrom != "" && diffFromRemote == ""
+				b.markDuplicatedParts(backupMetadata, &diffTable, &table, checkLocalPart)
 			}
 		}
 		idx := i
@@ -194,6 +180,90 @@ func (b *Backuper) Upload(backupName, tablePattern, diffFrom string, schemaOnly 
 	return nil
 }
 
+func (b *Backuper) getTablesForUploadDiffLocal(diffFrom string, backupMetadata *metadata.BackupMetadata, tablePattern string) (tablesForUploadFromDiff map[metadata.TableTitle]metadata.TableMetadata, err error) {
+	tablesForUploadFromDiff = make(map[metadata.TableTitle]metadata.TableMetadata)
+	diffFromBackup, err := b.ReadBackupMetadataLocal(diffFrom)
+	if err != nil {
+		return nil, err
+	}
+	if len(diffFromBackup.Tables) != 0 {
+		backupMetadata.RequiredBackup = diffFrom
+		metadataPath := path.Join(b.DefaultDataPath, "backup", diffFrom, "metadata")
+		// empty partitionsToBackupMap, cause we can not filter
+		diffTablesList, err := getTableListByPatternLocal(metadataPath, tablePattern, false, common.EmptyMap{})
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range diffTablesList {
+			tablesForUploadFromDiff[metadata.TableTitle{
+				Database: t.Database,
+				Table:    t.Table,
+			}] = t
+		}
+	}
+	return tablesForUploadFromDiff, nil
+}
+
+func (b *Backuper) getTablesForUploadDiffRemote(diffFromRemote string, backupMetadata *metadata.BackupMetadata, tablePattern string) (tablesForUploadFromDiff map[metadata.TableTitle]metadata.TableMetadata, err error) {
+	tablesForUploadFromDiff = make(map[metadata.TableTitle]metadata.TableMetadata)
+	backupList, err := b.dst.BackupList(true, diffFromRemote)
+	if err != nil {
+		return nil, err
+	}
+	var diffRemoteMetadata *metadata.BackupMetadata
+	for _, backup := range backupList {
+		if backup.BackupName == diffFromRemote {
+			if backup.Legacy {
+				return nil, fmt.Errorf("%s have legacy format and can't be used as diff-from-remote source", diffFromRemote)
+			}
+			diffRemoteMetadata = &backup.BackupMetadata
+			break
+		}
+	}
+	if diffRemoteMetadata == nil {
+		return nil, fmt.Errorf("%s not found on remote storage", diffFromRemote)
+	}
+
+	if len(diffRemoteMetadata.Tables) != 0 {
+		backupMetadata.RequiredBackup = diffFromRemote
+		diffTablesList, err := getTableListByPatternRemote(b, diffRemoteMetadata, tablePattern, false)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range diffTablesList {
+			tablesForUploadFromDiff[metadata.TableTitle{
+				Database: t.Database,
+				Table:    t.Table,
+			}] = t
+		}
+	}
+	return tablesForUploadFromDiff, nil
+}
+
+func (b *Backuper) validateUploadParams(backupName string, diffFrom string, diffFromRemote string) error {
+	if b.cfg.General.RemoteStorage == "none" {
+		return fmt.Errorf("general->remote_storage shall not be \"none\", change you config or use REMOTE_STORAGE environment variable")
+	}
+	if backupName == "" {
+		_ = PrintLocalBackups(b.cfg, "all")
+		return fmt.Errorf("select backup for upload")
+	}
+	if backupName == diffFrom || backupName == diffFromRemote {
+		return fmt.Errorf("you cannot upload diff from the same backup")
+	}
+	if diffFromRemote != "" && b.cfg.General.UploadByPart == false {
+		return fmt.Errorf("`--diff-from-remote` require `upload_by_part` equal true in `general` config section")
+	}
+	if diffFrom != "" && diffFromRemote != "" {
+		return fmt.Errorf("choose setup only `--diff-from-remote` or `--diff-from`, not both")
+	}
+	if b.cfg.GetCompressionFormat() == "none" && !b.cfg.General.UploadByPart {
+		return fmt.Errorf("%s->`compression_format`=%s incompatible with general->upload_by_part=%v", b.cfg.General.RemoteStorage, b.cfg.GetCompressionFormat(), b.cfg.General.UploadByPart)
+	}
+
+	return nil
+}
+
 func (b *Backuper) uploadConfigData(backupName string) (uint64, error) {
 	configBackupPath := path.Join(b.DefaultDataPath, "backup", backupName, "configs")
 	configFilesGlobPattern := path.Join(configBackupPath, "**/*.*")
@@ -233,7 +303,7 @@ func (b *Backuper) uploadAndArchiveBackupRelatedDir(localBackupRelatedDir, local
 }
 
 func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetadata) (map[string][]string, int64, error) {
-	uuid := path.Join(common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
+	dbAndTablePath := path.Join(common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
 	metadataFiles := map[string][]string{}
 	capacity := 0
 	for disk := range table.Parts {
@@ -244,8 +314,8 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 	g, ctx := errgroup.WithContext(context.Background())
 	var uploadedBytes int64
 	for disk := range table.Parts {
-		backupPath := path.Join(b.DiskToPathMap[disk], "backup", backupName, "shadow", uuid, disk)
-		parts, err := splitPartFiles(backupPath, table.Parts[disk], b.cfg.General)
+		backupPath := path.Join(b.DiskToPathMap[disk], "backup", backupName, "shadow", dbAndTablePath, disk)
+		parts, err := b.splitPartFiles(backupPath, table.Parts[disk])
 		if err != nil {
 			return nil, 0, err
 		}
@@ -254,30 +324,41 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 				apexLog.Errorf("can't acquire semaphore during Upload: %v", err)
 				break
 			}
-			remoteDataPath := path.Join(backupName, "shadow", common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
-			// Disabled temporary
-			// if b.cfg.GetCompressionFormat() == "none" {
-			// 	err = b.dst.UploadPath(0, backupPath, p, path.Join(remoteDataPath, disk))
-			// } else {
-			fileName := fmt.Sprintf("%s_%s.%s", disk, common.TablePathEncode(partSuffix), b.cfg.GetArchiveExtension())
-			metadataFiles[disk] = append(metadataFiles[disk], fileName)
-			remoteDataFile := path.Join(remoteDataPath, fileName)
-			localFiles := partFiles
-			g.Go(func() error {
-				defer s.Release(1)
-				apexLog.Debugf("start upload %d files to %s", len(localFiles), remoteDataFile)
-				if err := b.dst.CompressedStreamUpload(backupPath, localFiles, remoteDataFile); err != nil {
-					apexLog.Errorf("CompressedStreamUpload return error: %v", err)
-					return fmt.Errorf("can't upload: %v", err)
-				}
-				remoteFile, err := b.dst.StatFile(remoteDataFile)
-				if err != nil {
-					return fmt.Errorf("can't check uploaded file: %v", err)
-				}
-				atomic.AddInt64(&uploadedBytes, remoteFile.Size())
-				apexLog.Debugf("finish upload to %s", remoteDataFile)
-				return nil
-			})
+			baseRemoteDataPath := path.Join(backupName, "shadow", common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
+			if b.cfg.GetCompressionFormat() == "none" {
+				localPath := path.Join(backupPath, partSuffix)
+				remotePath := path.Join(baseRemoteDataPath, disk, partSuffix)
+				g.Go(func() error {
+					defer s.Release(1)
+					apexLog.Debugf("start upload %d files to %s", len(partFiles), remotePath)
+					if err := b.dst.UploadPath(0, localPath, partFiles, remotePath); err != nil {
+						apexLog.Errorf("UploadPath return error: %v", err)
+						return fmt.Errorf("can't upload: %v", err)
+					}
+					apexLog.Debugf("finish upload %d files to %s", len(partFiles), remotePath)
+					return nil
+				})
+			} else {
+				fileName := fmt.Sprintf("%s_%s.%s", disk, common.TablePathEncode(partSuffix), b.cfg.GetArchiveExtension())
+				metadataFiles[disk] = append(metadataFiles[disk], fileName)
+				remoteDataFile := path.Join(baseRemoteDataPath, fileName)
+				localFiles := partFiles
+				g.Go(func() error {
+					defer s.Release(1)
+					apexLog.Debugf("start upload %d files to %s", len(localFiles), remoteDataFile)
+					if err := b.dst.CompressedStreamUpload(backupPath, localFiles, remoteDataFile); err != nil {
+						apexLog.Errorf("CompressedStreamUpload return error: %v", err)
+						return fmt.Errorf("can't upload: %v", err)
+					}
+					remoteFile, err := b.dst.StatFile(remoteDataFile)
+					if err != nil {
+						return fmt.Errorf("can't check uploaded file: %v", err)
+					}
+					atomic.AddInt64(&uploadedBytes, remoteFile.Size())
+					apexLog.Debugf("finish upload to %s", remoteDataFile)
+					return nil
+				})
+			}
 		}
 	}
 	if err := g.Wait(); err != nil {
@@ -288,7 +369,6 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 }
 
 func (b *Backuper) uploadTableMetadata(backupName string, table metadata.TableMetadata) (int64, error) {
-	// заливаем метадату для таблицы
 	tableMetafile := table
 	content, err := json.MarshalIndent(&tableMetafile, "", "\t")
 	if err != nil {
@@ -302,27 +382,29 @@ func (b *Backuper) uploadTableMetadata(backupName string, table metadata.TableMe
 	return int64(len(content)), nil
 }
 
-func (b *Backuper) markDuplicatedParts(backup *metadata.BackupMetadata, existsTable *metadata.TableMetadata, newTable *metadata.TableMetadata) {
+func (b *Backuper) markDuplicatedParts(backup *metadata.BackupMetadata, existsTable *metadata.TableMetadata, newTable *metadata.TableMetadata, checkLocal bool) {
 	for disk, newParts := range newTable.Parts {
-		if _, ok := existsTable.Parts[disk]; ok {
+		if _, diskExists := existsTable.Parts[disk]; diskExists {
 			if len(existsTable.Parts[disk]) == 0 {
 				continue
 			}
-			existsPartsMap := map[string]struct{}{}
+			existsPartsMap := common.EmptyMap{}
 			for _, p := range existsTable.Parts[disk] {
 				existsPartsMap[p.Name] = struct{}{}
 			}
 			for i := range newParts {
-				if _, ok := existsPartsMap[newParts[i].Name]; !ok {
+				if _, partExists := existsPartsMap[newParts[i].Name]; !partExists {
 					continue
 				}
-				uuid := path.Join(common.TablePathEncode(existsTable.Database), common.TablePathEncode(existsTable.Table))
-				existsPath := path.Join(b.DiskToPathMap[disk], "backup", backup.RequiredBackup, "shadow", uuid, disk, newParts[i].Name)
-				newPath := path.Join(b.DiskToPathMap[disk], "backup", backup.BackupName, "shadow", uuid, disk, newParts[i].Name)
+				if checkLocal {
+					dbAndTablePath := path.Join(common.TablePathEncode(existsTable.Database), common.TablePathEncode(existsTable.Table))
+					existsPath := path.Join(b.DiskToPathMap[disk], "backup", backup.RequiredBackup, "shadow", dbAndTablePath, disk, newParts[i].Name)
+					newPath := path.Join(b.DiskToPathMap[disk], "backup", backup.BackupName, "shadow", dbAndTablePath, disk, newParts[i].Name)
 
-				if err := filesystemhelper.IsDuplicatedParts(existsPath, newPath); err != nil {
-					apexLog.Debugf("part '%s' and '%s' must be the same: %v", existsPath, newPath, err)
-					continue
+					if err := filesystemhelper.IsDuplicatedParts(existsPath, newPath); err != nil {
+						apexLog.Debugf("part '%s' and '%s' must be the same: %v", existsPath, newPath, err)
+						continue
+					}
 				}
 				newParts[i].Required = true
 			}
@@ -330,7 +412,7 @@ func (b *Backuper) markDuplicatedParts(backup *metadata.BackupMetadata, existsTa
 	}
 }
 
-func (b *Backuper) ReadBackupMetadata(backupName string) (*metadata.BackupMetadata, error) {
+func (b *Backuper) ReadBackupMetadataLocal(backupName string) (*metadata.BackupMetadata, error) {
 	backupMetadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata.json")
 	backupMetadataBody, err := ioutil.ReadFile(backupMetadataPath)
 	if err != nil {
@@ -346,21 +428,21 @@ func (b *Backuper) ReadBackupMetadata(backupName string) (*metadata.BackupMetada
 	return &backupMetadata, nil
 }
 
-func splitPartFiles(basePath string, parts []metadata.Part, cfg config.GeneralConfig) (map[string][]string, error) {
-	if cfg.UploadByPart {
-		return splitFilesByName(basePath, parts)
+func (b *Backuper) splitPartFiles(basePath string, parts []metadata.Part) (map[string][]string, error) {
+	if b.cfg.General.UploadByPart {
+		return b.splitFilesByName(basePath, parts)
 	} else {
-		return splitFilesBySize(basePath, parts, cfg.MaxFileSize)
+		return b.splitFilesBySize(basePath, parts)
 	}
 }
 
-func splitFilesByName(basePath string, parts []metadata.Part) (map[string][]string, error) {
+func (b *Backuper) splitFilesByName(basePath string, parts []metadata.Part) (map[string][]string, error) {
 	result := map[string][]string{}
 	for i := range parts {
 		if parts[i].Required {
 			continue
 		}
-		files := []string{}
+		var files []string
 		partPath := path.Join(basePath, parts[i].Name)
 		err := filepath.Walk(partPath, func(filePath string, info os.FileInfo, err error) error {
 			if err != nil {
@@ -381,9 +463,10 @@ func splitFilesByName(basePath string, parts []metadata.Part) (map[string][]stri
 	return result, nil
 }
 
-func splitFilesBySize(basePath string, parts []metadata.Part, maxSize int64) (map[string][]string, error) {
+func (b *Backuper) splitFilesBySize(basePath string, parts []metadata.Part) (map[string][]string, error) {
 	var size int64
-	files := []string{}
+	var files []string
+	maxSize := b.cfg.General.MaxFileSize
 	result := map[string][]string{}
 	partSuffix := 1
 	for i := range parts {

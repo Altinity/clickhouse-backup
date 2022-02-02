@@ -43,7 +43,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration.xml
 </yandex>
 EOT
 
-if [[ "${CLICKHOUSE_VERSION}" =~ ^21.1[0-9] ]]; then
+if [[ "${CLICKHOUSE_VERSION}" =~ ^21.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9].[0-9]+ ]]; then
 
   if [[ ! -d /hdd3_data ]]; then
     mkdir -pv /hdd3_data
