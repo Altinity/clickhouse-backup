@@ -1343,7 +1343,7 @@ func execCmd(cmd string, args ...string) error {
 }
 
 func execCmdOut(cmd string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 	log.Infof("%s %s", cmd, strings.Join(args, " "))
 	out, err := exec.CommandContext(ctx, cmd, args...).CombinedOutput()
 	cancel()
