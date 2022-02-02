@@ -116,7 +116,7 @@ func CopyData(backupName string, backupTable metadata.TableMetadata, disks []cli
 				if os.IsNotExist(err) {
 					log.Debugf("MkDirAll %s", detachedPath)
 					if mkdirErr := MkdirAll(detachedPath, ch); mkdirErr != nil {
-						log.Warnf("error during Mkdir %w", mkdirErr)
+						log.Warnf("error during Mkdir %+v", mkdirErr)
 					}
 				} else {
 					return err
