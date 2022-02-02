@@ -31,3 +31,4 @@ s3:
 api:
   listen: :7171
   create_integration_tables: true
+  allow_parallel: true

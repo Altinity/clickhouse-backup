@@ -1,6 +1,7 @@
 # v1.3.0
 
 IMPROVEMENTS
+- Add `API_ALLOW_PARALLEL` to support multiple parallel execution calls for, WARNING, control command names don't try to execute multiple same commands and be careful, it could allocate much memory during upload / download, fix [#332](https://github.com/AlexAkulov/clickhouse-backup/issues/332) 
 - Add support for `--partitions` on create, upload, download, restore CLI commands and API endpoint fix [#378](https://github.com/AlexAkulov/clickhouse-backup/issues/378) properly implementation of [#356](https://github.com/AlexAkulov/clickhouse-backup/pull/356)
 - Add implementation `--diff-from-remote` for `upload` command and properly handle `required` on download command, fix [#289](https://github.com/AlexAkulov/clickhouse-backup/issues/289)
 - Add `print-config` cli command fix [#366](https://github.com/AlexAkulov/clickhouse-backup/issues/366) 

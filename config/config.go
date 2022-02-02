@@ -170,6 +170,7 @@ type APIConfig struct {
 	CertificateFile         string `yaml:"certificate_file" envconfig:"API_CERTIFICATE_FILE"`
 	PrivateKeyFile          string `yaml:"private_key_file" envconfig:"API_PRIVATE_KEY_FILE"`
 	CreateIntegrationTables bool   `yaml:"create_integration_tables" envconfig:"API_CREATE_INTEGRATION_TABLES"`
+	AllowParallel           bool   `yaml:"allow_parallel" envconfig:"API_ALLOW_PARALLEL"`
 }
 
 // ArchiveExtensions - list of availiable compression formats and associated file extensions

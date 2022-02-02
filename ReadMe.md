@@ -216,6 +216,14 @@ That might lead to data corruption.
 ## API
 Use the `clickhouse-backup server` command to run as a REST API server. In general, the API attempts to mirror the CLI commands.
 
+> **GET /**
+
+List all current applicable HTTP routes
+
+> **POST /restart**
+
+Restart HTTP server, close all current connections, close listen socket, open listen socket again, all background go-routines with upload / download not breaks (maybe will in future)
+
 > **GET /backup/tables**
 
 Print list of tables: `curl -s localhost:7171/backup/tables | jq .`
