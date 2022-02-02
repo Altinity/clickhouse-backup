@@ -99,19 +99,7 @@ func (ch *ClickHouse) GetBackupTablesLegacy(backupName string) ([]metadata.Table
 	}
 
 	var allpartsBackup map[string][]metadata.Part
-	// hashPath := path.Join(dataPath, "backup", backupName, hashfile)
-	// log.Printf("Reading part hashes %s", hashPath)
-	// bytes, err := ioutil.ReadFile(hashPath)
-	// if err != nil {
-	// 	log.Printf("Unable to read hash file %s", hashPath)
-	// 	//return nil, fmt.Errorf("Unable to read hash file %s", hashPath)
-	// } else {
-	// 	err = json.Unmarshal(bytes, &allpartsBackup)
-	// 	if err != nil {
-	// 		return nil, fmt.Errorf("issue occurred while reading hash file %s", hashPath)
-	// 	}
-	// }
-	// TODO: нам больше не нужно заполнять Partitions из файла теперь их можно взять из таблицы detached
+	// TODO: we don't need anymore fill Partitions from file, we can get it from `system.detached_parts` table
 	tables := make(map[string]metadata.TableMetadata)
 	err = filepath.Walk(backupShadowPath, func(filePath string, info os.FileInfo, err error) error {
 		if err != nil {

@@ -17,5 +17,5 @@ ln -nsfv /usr/lib/go-1.17/bin/go /usr/bin/go
 
 CGO_ENABLED=0 GO111MODULE=on go install -ldflags "-s -w -extldflags '-static'" github.com/go-delve/delve/cmd/dlv@latest
 
-# ~/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /usr/bin/clickhouse-backup upload test_backup_3374479194397076014
+# ~/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /usr/bin/clickhouse-backup download increment_59690570474117865
 

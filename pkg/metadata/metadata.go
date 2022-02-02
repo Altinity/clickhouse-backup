@@ -43,9 +43,9 @@ type TableMetadata struct {
 	Query       string            `json:"query"`
 	// UUID        string            `json:"uuid,omitempty"`
 	// Macros ???
-	Size                 map[string]int64 `json:"size"`                  // сколько занимает бэкап на каждом диске
-	TotalBytes           uint64           `json:"total_bytes,omitempty"` // общий объём бэкапа
-	DependencesTable     string           `json:"dependencies_table,omitempty"`
+	Size                 map[string]int64 `json:"size"`                  // how much size on each disk
+	TotalBytes           uint64           `json:"total_bytes,omitempty"` // total table size
+	DependenciesTable    string           `json:"dependencies_table,omitempty"`
 	DependenciesDatabase string           `json:"dependencies_database,omitempty"`
 	MetadataOnly         bool             `json:"metadata_only"`
 }
@@ -54,7 +54,7 @@ type Part struct {
 	Partition string `json:"partition,omitempty"`
 	Name      string `json:"name"`
 	Required  bool   `json:"required,omitempty"`
-	// Path                              string    `json:"path"`              // TODO: должен быть относительный путь вообще непонятно зачем он, его можно из name получить
+	// Path                              string    `json:"path"`              // TODO: make it relative? look like useless now, can be calculated from Name
 	HashOfAllFiles                    string     `json:"hash_of_all_files,omitempty"` // ???
 	HashOfUncompressedFiles           string     `json:"hash_of_uncompressed_files,omitempty"`
 	UncompressedHashOfCompressedFiles string     `json:"uncompressed_hash_of_compressed_files,omitempty"` // ???

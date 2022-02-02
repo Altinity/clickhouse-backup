@@ -84,11 +84,6 @@ GLOBAL OPTIONS:
    --config FILE, -c FILE  Config FILE name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --help, -h              show help
    --version, -v           print the version
-
-LOCAL OPTIONS:
-  clickhouse-backup create/create_remote
-  partitions      Backup for specified partitions seperated by ","
-
 ```
 
 ### Default Config
@@ -110,6 +105,7 @@ general:
   upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255
   restore_schema_on_cluster: ""  # RESTORE_SCHEMA_ON_CLUSTER, look to system.clusters for proper cluster name
   upload_by_part: true           # UPLOAD_BY_PART
+  download_by_part: true         # DOWNLOAD_BY_PART
 clickhouse:
   username: default                # CLICKHOUSE_USERNAME
   password: ""                     # CLICKHOUSE_PASSWORD
@@ -220,6 +216,14 @@ That might lead to data corruption.
 ## API
 Use the `clickhouse-backup server` command to run as a REST API server. In general, the API attempts to mirror the CLI commands.
 
+> **GET /**
+
+List all current applicable HTTP routes
+
+> **POST /restart**
+
+Restart HTTP server, close all current connections, close listen socket, open listen socket again, all background go-routines with upload / download not breaks (maybe will in future)
+
 > **GET /backup/tables**
 
 Print list of tables: `curl -s localhost:7171/backup/tables | jq .`
@@ -228,6 +232,7 @@ Print list of tables: `curl -s localhost:7171/backup/tables | jq .`
 
 Create new backup: `curl -s localhost:7171/backup/create -X POST | jq .`
 * Optional query argument `table` works the same as the `--table value` CLI argument.
+* Optional query argument `partitions` works the same as the `--partitions value` CLI argument.
 * Optional query argument `name` works the same as specifying a backup name with the CLI.
 * Optional query argument `schema` works the same the `--schema` CLI argument (backup schema only).
 * Optional query argument `rbac` works the same the `--rbac` CLI argument (backup RBAC).
@@ -236,10 +241,19 @@ Create new backup: `curl -s localhost:7171/backup/create -X POST | jq .`
 
 Note: this operation is async, so the API will return once the operation has been started.
 
+> **POST /backup/clean**
+
+Clean `shadow` folder on all available path from `system.disks`
+
+
 > **POST /backup/upload**
 
 Upload backup to remote storage: `curl -s localhost:7171/backup/upload/<BACKUP_NAME> -X POST | jq .`
 * Optional query argument `diff-from` works the same as the `--diff-from` CLI argument.
+* Optional query argument `diff-from-remote` works the same as the `--diff-from-remote` CLI argument.
+* Optional query argument `table` works the same as the `--table value` CLI argument.
+* Optional query argument `partitions` works the same as the `--partitions value` CLI argument.
+* Optional query argument `schema` works the same as the `--schema` CLI argument (upload schema only).
 
 Note: this operation is async, so the API will return once the operation has been started.
 
@@ -254,6 +268,10 @@ Note: The `Size` field is not populated for local backups.
 > **POST /backup/download**
 
 Download backup from remote storage: `curl -s localhost:7171/backup/download/<BACKUP_NAME> -X POST | jq .`
+* Optional query argument `table` works the same as the `--table value` CLI argument.
+* Optional query argument `partitions` works the same as the `--partitions value` CLI argument.
+* Optional query argument `schema` works the same the `--schema` CLI argument (download schema only).
+
 
 Note: this operation is async, so the API will return once the operation has been started.
 
@@ -261,8 +279,10 @@ Note: this operation is async, so the API will return once the operation has bee
 
 Create schema and restore data from backup: `curl -s localhost:7171/backup/restore/<BACKUP_NAME> -X POST | jq .`
 * Optional query argument `table` works the same as the `--table value` CLI argument.
+* Optional query argument `partitions` works the same as the `--partitions value` CLI argument.
 * Optional query argument `schema` works the same the `--schema` CLI argument (restore schema only).
 * Optional query argument `data` works the same the `--data` CLI argument (restore data only).
+* Optional query argument `rm` works the same the `--rm` CLI argument (drop tables before restore).
 * Optional query argument `rbac` works the same the `--rbac` CLI argument (restore RBAC).
 * Optional query argument `configs` works the same the `--configs` CLI argument (restore configs).
 

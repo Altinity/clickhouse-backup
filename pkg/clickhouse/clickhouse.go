@@ -333,7 +333,7 @@ func (ch *ClickHouse) GetVersion() (int, error) {
 	var err error
 	query := "SELECT value FROM `system`.`build_options` where name='VERSION_INTEGER'"
 	if err = ch.Select(&result, query); err != nil {
-		return 0, fmt.Errorf("can't get сlickHouse version: %w", err)
+		return 0, fmt.Errorf("can't get clickHouse version: %w", err)
 	}
 	if len(result) == 0 {
 		return 0, nil
@@ -383,7 +383,7 @@ func (ch *ClickHouse) FreezeTableOldWay(table *Table, name string) error {
 			)
 		}
 		if _, err := ch.Query(query); err != nil {
-			if strings.Contains(err.Error(), "code: 60") && ch.Config.IgnoreNotExistsErrorDuringFreeze {
+			if (strings.Contains(err.Error(), "code: 60") || strings.Contains(err.Error(), "code: 81")) && ch.Config.IgnoreNotExistsErrorDuringFreeze {
 				log.Warnf("can't freeze partition: %v", err)
 			} else {
 				return fmt.Errorf("can't freeze partition '%s': %w", item.PartitionID, err)
@@ -417,7 +417,7 @@ func (ch *ClickHouse) FreezeTable(table *Table, name string) error {
 	}
 	query := fmt.Sprintf("ALTER TABLE `%s`.`%s` FREEZE %s;", table.Database, table.Name, withNameQuery)
 	if _, err := ch.Query(query); err != nil {
-		if strings.Contains(err.Error(), "code: 60") && ch.Config.IgnoreNotExistsErrorDuringFreeze {
+		if (strings.Contains(err.Error(), "code: 60") || strings.Contains(err.Error(), "code: 81")) && ch.Config.IgnoreNotExistsErrorDuringFreeze {
 			log.Warnf("can't freeze table: %v", err)
 			return nil
 		}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/http/pprof"
 	"net/url"
@@ -62,7 +63,7 @@ type ActionRow struct {
 	Error   string `json:"error,omitempty"`
 }
 
-func (status *AsyncStatus) start(command string) {
+func (status *AsyncStatus) start(command string) int {
 	status.Lock()
 	defer status.Unlock()
 	status.commands = append(status.commands, ActionRow{
@@ -70,7 +71,9 @@ func (status *AsyncStatus) start(command string) {
 		Start:   time.Now().Format(APITimeFormat),
 		Status:  InProgressText,
 	})
-	apexLog.Debugf("api.status.Start -> status.commands[%d] == %v", len(status.commands)-1, status.commands[len(status.commands)-1])
+	lastCommandId := len(status.commands) - 1
+	apexLog.Debugf("api.status.Start -> status.commands[%d] == %v", lastCommandId, status.commands[lastCommandId])
+	return lastCommandId
 }
 
 func (status *AsyncStatus) inProgress() bool {
@@ -85,18 +88,17 @@ func (status *AsyncStatus) inProgress() bool {
 	return status.commands[n].Status == InProgressText
 }
 
-func (status *AsyncStatus) stop(err error) {
+func (status *AsyncStatus) stop(commandId int, err error) {
 	status.Lock()
 	defer status.Unlock()
-	n := len(status.commands) - 1
 	s := "success"
 	if err != nil {
 		s = "error"
-		status.commands[n].Error = err.Error()
+		status.commands[commandId].Error = err.Error()
 	}
-	status.commands[n].Status = s
-	status.commands[n].Finish = time.Now().Format(APITimeFormat)
-	apexLog.Debugf("api.status.stop -> status.commands[%d] == %v", n, status.commands[n])
+	status.commands[commandId].Status = s
+	status.commands[commandId].Finish = time.Now().Format(APITimeFormat)
+	apexLog.Debugf("api.status.stop -> status.commands[%d] == %v", commandId, status.commands[commandId])
 }
 
 func (status *AsyncStatus) status(current bool, filter string, last int) []ActionRow {
@@ -254,12 +256,13 @@ func (api *APIServer) setupAPIServer() *http.Server {
 	})
 
 	r.HandleFunc("/", api.httpRootHandler).Methods("GET")
-
+	r.HandleFunc("/", api.httpRestartHandler).Methods("POST")
 	r.HandleFunc("/backup/tables", api.httpTablesHandler).Methods("GET")
 	r.HandleFunc("/backup/tables/all", api.httpTablesHandler).Methods("GET")
 	r.HandleFunc("/backup/list", api.httpListHandler).Methods("GET")
 	r.HandleFunc("/backup/list/{where}", api.httpListHandler).Methods("GET")
 	r.HandleFunc("/backup/create", api.httpCreateHandler).Methods("POST")
+	r.HandleFunc("/backup/clean", api.httpCleanHandler).Methods("POST")
 	r.HandleFunc("/backup/upload/{name}", api.httpUploadHandler).Methods("POST")
 	r.HandleFunc("/backup/download/{name}", api.httpDownloadHandler).Methods("POST")
 	r.HandleFunc("/backup/restore/{name}", api.httpRestoreHandler).Methods("POST")
@@ -342,7 +345,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 		command := args[0]
 		switch command {
 		case "create", "restore", "upload", "download", "create_remote", "restore_remote":
-			if api.status.inProgress() {
+			if !api.config.API.AllowParallel && api.status.inProgress() {
 				apexLog.Info(ErrAPILocked.Error())
 				writeError(w, http.StatusLocked, row.Command, ErrAPILocked)
 				return
@@ -355,9 +358,9 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 					api.metrics.LastFinish[command].Set(float64(time.Now().Unix()))
 				}()
 
-				api.status.start(row.Command)
+				commandId := api.status.start(row.Command)
 				err := api.c.Run(append([]string{"clickhouse-backup", "-c", api.configPath}, args...))
-				defer api.status.stop(err)
+				defer api.status.stop(commandId, err)
 				if err != nil {
 					api.metrics.FailedCounter[command].Inc()
 					api.metrics.LastStatus[command].Set(0)
@@ -381,14 +384,14 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		case "delete":
-			if api.status.inProgress() {
+			if !api.config.API.AllowParallel && api.status.inProgress() {
 				apexLog.Info(ErrAPILocked.Error())
 				writeError(w, http.StatusLocked, row.Command, ErrAPILocked)
 				return
 			}
-			api.status.start(row.Command)
+			commandId := api.status.start(row.Command)
 			err := api.c.Run(append([]string{"clickhouse-backup", "-c", api.configPath}, args...))
-			api.status.stop(err)
+			api.status.stop(commandId, err)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, row.Command, err)
 				apexLog.Error(err.Error())
@@ -440,6 +443,18 @@ func (api *APIServer) httpRootHandler(w http.ResponseWriter, _ *http.Request) {
 	for _, r := range api.routes {
 		_, _ = fmt.Fprintln(w, r)
 	}
+}
+
+// httpRestart - restart API server
+func (api *APIServer) httpRestartHandler(w http.ResponseWriter, _ *http.Request) {
+	sendJSONEachRow(w, http.StatusCreated, struct {
+		Status    string `json:"status"`
+		Operation string `json:"operation"`
+	}{
+		Status:    "acknowledged",
+		Operation: "restart",
+	})
+	api.restart <- struct{}{}
 }
 
 // httpTablesHandler - display list of tables
@@ -555,7 +570,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 
 // httpCreateHandler - create a backup
 func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) {
-	if api.status.inProgress() {
+	if !api.config.API.AllowParallel && api.status.inProgress() {
 		apexLog.Info(ErrAPILocked.Error())
 		writeError(w, http.StatusLocked, "create", ErrAPILocked)
 		return
@@ -566,7 +581,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	tablePattern := ""
-	partitionsToBackup := ""
+	partitionsToBackup := make([]string, 0)
 	backupName := backup.NewBackupName()
 	schemaOnly := false
 	rbacOnly := false
@@ -578,8 +593,8 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
 	}
 	if partitions, exist := query["partitions"]; exist {
-		partitionsToBackup = partitions[0]
-		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, partitionsToBackup)
+		partitionsToBackup = strings.Split(partitions[0], ",")
+		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, partitions)
 	}
 	if schema, exist := query["schema"]; exist {
 		schemaOnly, _ = strconv.ParseBool(schema[0])
@@ -605,7 +620,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	go func() {
-		api.status.start(fullCommand)
+		commandId := api.status.start(fullCommand)
 		start := time.Now()
 		api.metrics.LastStart["create"].Set(float64(start.Unix()))
 		defer func() {
@@ -613,11 +628,11 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 			api.metrics.LastFinish["create"].Set(float64(time.Now().Unix()))
 		}()
 		err := backup.CreateBackup(cfg, backupName, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, api.clickhouseBackupVersion)
-		defer api.status.stop(err)
+		defer api.status.stop(commandId, err)
 		if err != nil {
 			api.metrics.FailedCounter["create"].Inc()
 			api.metrics.LastStatus["create"].Set(0)
-			apexLog.Errorf("CreateBackup error: %v", err)
+			apexLog.Errorf("CreateBackup error: %+v\n", err)
 			return
 		}
 		if err := api.updateSizeOfLastBackup(true); err != nil {
@@ -637,9 +652,28 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// httpCleanHandler - clean ./shadow directory
+func (api *APIServer) httpCleanHandler(w http.ResponseWriter, _ *http.Request) {
+	commandId := api.status.start("clean")
+	err := backup.Clean(api.config)
+	api.status.stop(commandId, err)
+	if err != nil {
+		log.Printf("Clean error: %+v\n", err)
+		writeError(w, http.StatusInternalServerError, "clean", err)
+		return
+	}
+	sendJSONEachRow(w, http.StatusOK, struct {
+		Status    string `json:"status"`
+		Operation string `json:"operation"`
+	}{
+		Status:    "success",
+		Operation: "clean",
+	})
+}
+
 // httpUploadHandler - upload a backup to remote storage
 func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) {
-	if api.status.inProgress() {
+	if !api.config.API.AllowParallel && api.status.inProgress() {
 		apexLog.Info(ErrAPILocked.Error())
 		writeError(w, http.StatusLocked, "upload", ErrAPILocked)
 		return
@@ -652,8 +686,10 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	vars := mux.Vars(r)
 	query := r.URL.Query()
 	diffFrom := ""
+	diffFromRemote := ""
 	name := vars["name"]
 	tablePattern := ""
+	partitionsToBackup := make([]string, 0)
 	schemaOnly := false
 	fullCommand := "upload"
 
@@ -661,9 +697,17 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		diffFrom = df[0]
 		fullCommand = fmt.Sprintf("%s --diff-from=\"%s\"", fullCommand, diffFrom)
 	}
+	if df, exist := query["diff-from-remote"]; exist {
+		diffFromRemote = df[0]
+		fullCommand = fmt.Sprintf("%s --diff-from-remote=\"%s\"", fullCommand, diffFromRemote)
+	}
 	if tp, exist := query["table"]; exist {
 		tablePattern = tp[0]
 		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
+	}
+	if partitions, exist := query["partitions"]; exist {
+		partitionsToBackup = strings.Split(partitions[0], ",")
+		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, partitions)
 	}
 	if schema, exist := query["schema"]; exist {
 		schemaOnly, _ = strconv.ParseBool(schema[0])
@@ -672,7 +716,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	fullCommand = fmt.Sprint(fullCommand, " ", name)
 
 	go func() {
-		api.status.start(fullCommand)
+		commandId := api.status.start(fullCommand)
 		start := time.Now()
 		api.metrics.LastStart["upload"].Set(float64(start.Unix()))
 		defer func() {
@@ -680,8 +724,8 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 			api.metrics.LastFinish["upload"].Set(float64(time.Now().Unix()))
 		}()
 		b := backup.NewBackuper(cfg)
-		err := b.Upload(name, tablePattern, diffFrom, schemaOnly)
-		api.status.stop(err)
+		err := b.Upload(name, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly)
+		api.status.stop(commandId, err)
 		if err != nil {
 			apexLog.Errorf("Upload error: %+v\n", err)
 			api.metrics.FailedCounter["upload"].Inc()
@@ -713,7 +757,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 
 // httpRestoreHandler - restore a backup from local storage
 func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request) {
-	if api.status.inProgress() {
+	if !api.config.API.AllowParallel && api.status.inProgress() {
 		apexLog.Info(ErrAPILocked.Error())
 		writeError(w, http.StatusLocked, "restore", ErrAPILocked)
 		return
@@ -725,6 +769,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	}
 	vars := mux.Vars(r)
 	tablePattern := ""
+	partitionsToBackup := make([]string, 0)
 	schemaOnly := false
 	dataOnly := false
 	dropTable := false
@@ -736,6 +781,10 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	if tp, exist := query["table"]; exist {
 		tablePattern = tp[0]
 		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
+	}
+	if partitions, exist := query["partitions"]; exist {
+		partitionsToBackup = strings.Split(partitions[0], ",")
+		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, partitions)
 	}
 	if _, exist := query["schema"]; exist {
 		schemaOnly = true
@@ -753,12 +802,10 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		dropTable = true
 		fullCommand += " --rm"
 	}
-
 	if _, exist := query["rbac"]; exist {
 		rbacOnly = true
 		fullCommand += " --rbac"
 	}
-
 	if _, exist := query["configs"]; exist {
 		configsOnly = true
 		fullCommand += " --configs"
@@ -768,15 +815,15 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	fullCommand += fmt.Sprintf(" %s", name)
 
 	go func() {
-		api.status.start(fullCommand)
+		commandId := api.status.start(fullCommand)
 		start := time.Now()
 		api.metrics.LastStart["restore"].Set(float64(start.Unix()))
 		defer func() {
 			api.metrics.LastDuration["restore"].Set(float64(time.Since(start).Nanoseconds()))
 			api.metrics.LastFinish["restore"].Set(float64(time.Now().Unix()))
 		}()
-		err := backup.Restore(cfg, name, tablePattern, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly)
-		api.status.stop(err)
+		err := backup.Restore(cfg, name, tablePattern, partitionsToBackup, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly)
+		api.status.stop(commandId, err)
 		if err != nil {
 			apexLog.Errorf("Download error: %+v\n", err)
 			api.metrics.FailedCounter["restore"].Inc()
@@ -799,7 +846,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 
 // httpDownloadHandler - download a backup from remote to local storage
 func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request) {
-	if api.status.inProgress() {
+	if !api.config.API.AllowParallel && api.status.inProgress() {
 		apexLog.Info(ErrAPILocked.Error())
 		writeError(w, http.StatusLocked, "download", ErrAPILocked)
 		return
@@ -813,12 +860,17 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	name := vars["name"]
 	query := r.URL.Query()
 	tablePattern := ""
+	partitionsToBackup := make([]string, 0)
 	schemaOnly := false
 	fullCommand := "download"
 
 	if tp, exist := query["table"]; exist {
 		tablePattern = tp[0]
 		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
+	}
+	if partitions, exist := query["partitions"]; exist {
+		partitionsToBackup = strings.Split(partitions[0], ",")
+		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, partitions)
 	}
 	if _, exist := query["schema"]; exist {
 		schemaOnly = true
@@ -827,7 +879,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	fullCommand += fmt.Sprintf(" %s", name)
 
 	go func() {
-		api.status.start(fullCommand)
+		commandId := api.status.start(fullCommand)
 		start := time.Now()
 		api.metrics.LastStart["download"].Set(float64(start.Unix()))
 		defer func() {
@@ -836,8 +888,8 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		}()
 
 		b := backup.NewBackuper(cfg)
-		err := b.Download(name, tablePattern, schemaOnly)
-		api.status.stop(err)
+		err := b.Download(name, tablePattern, partitionsToBackup, schemaOnly)
+		api.status.stop(commandId, err)
 		if err != nil {
 			apexLog.Errorf("Download error: %+v\n", err)
 			api.metrics.FailedCounter["download"].Inc()
@@ -863,7 +915,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 
 // httpDeleteHandler - delete a backup from local or remote storage
 func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) {
-	if api.status.inProgress() {
+	if !api.config.API.AllowParallel && api.status.inProgress() {
 		apexLog.Info(ErrAPILocked.Error())
 		writeError(w, http.StatusLocked, "delete", ErrAPILocked)
 		return
@@ -875,7 +927,7 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	vars := mux.Vars(r)
 	fullCommand := fmt.Sprintf("delete %s %s", vars["where"], vars["name"])
-	api.status.start(fullCommand)
+	commandId := api.status.start(fullCommand)
 
 	switch vars["where"] {
 	case "local":
@@ -885,7 +937,7 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 	default:
 		err = fmt.Errorf("backup location must be 'local' or 'remote'")
 	}
-	api.status.stop(err)
+	api.status.stop(commandId, err)
 	if err != nil {
 		apexLog.Errorf("delete backup error: %+v\n", err)
 		writeError(w, http.StatusInternalServerError, "delete", err)

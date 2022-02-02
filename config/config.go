@@ -3,6 +3,7 @@ package config
 import (
 	"crypto/tls"
 	"fmt"
+	"github.com/urfave/cli"
 	"io/ioutil"
 	"math"
 	"os"
@@ -14,6 +15,10 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/kelseyhightower/envconfig"
 	"gopkg.in/yaml.v2"
+)
+
+const (
+	DefaultConfigPath = "/etc/clickhouse-backup/config.yml"
 )
 
 // Config - config file format
@@ -42,6 +47,7 @@ type GeneralConfig struct {
 	UploadConcurrency      uint8  `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
 	RestoreSchemaOnCluster string `yaml:"restore_schema_on_cluster" envconfig:"RESTORE_SCHEMA_ON_CLUSTER"`
 	UploadByPart           bool   `yaml:"upload_by_part" envconfig:"UPLOAD_BY_PART"`
+	DownloadByPart         bool   `yaml:"download_by_part" envconfig:"DOWNLOAD_BY_PART"`
 }
 
 // GCSConfig - GCS settings section
@@ -164,6 +170,7 @@ type APIConfig struct {
 	CertificateFile         string `yaml:"certificate_file" envconfig:"API_CERTIFICATE_FILE"`
 	PrivateKeyFile          string `yaml:"private_key_file" envconfig:"API_PRIVATE_KEY_FILE"`
 	CreateIntegrationTables bool   `yaml:"create_integration_tables" envconfig:"API_CREATE_INTEGRATION_TABLES"`
+	AllowParallel           bool   `yaml:"allow_parallel" envconfig:"API_ALLOW_PARALLEL"`
 }
 
 // ArchiveExtensions - list of availiable compression formats and associated file extensions
@@ -250,7 +257,7 @@ func ValidateConfig(cfg *Config) error {
 	if cfg.GetCompressionFormat() == "lz4" {
 		return fmt.Errorf("clickhouse already compressed data by lz4")
 	}
-	if _, ok := ArchiveExtensions[cfg.GetCompressionFormat()]; !ok {
+	if _, ok := ArchiveExtensions[cfg.GetCompressionFormat()]; !ok && cfg.GetCompressionFormat() != "none" {
 		return fmt.Errorf("'%s' is unsupported compression format", cfg.GetCompressionFormat())
 	}
 	if _, err := time.ParseDuration(cfg.ClickHouse.Timeout); err != nil {
@@ -288,11 +295,17 @@ func ValidateConfig(cfg *Config) error {
 	return nil
 }
 
-// PrintDefaultConfig - print default config to stdout
-func PrintDefaultConfig() {
-	c := DefaultConfig()
-	d, _ := yaml.Marshal(&c)
-	fmt.Print(string(d))
+// PrintConfig - print default / current config to stdout
+func PrintConfig(ctx *cli.Context) error {
+	var cfg *Config
+	if ctx == nil {
+		cfg = DefaultConfig()
+	} else {
+		cfg = GetConfig(ctx)
+	}
+	yml, _ := yaml.Marshal(&cfg)
+	fmt.Print(string(yml))
+	return nil
 }
 
 func DefaultConfig() *Config {
@@ -312,6 +325,7 @@ func DefaultConfig() *Config {
 			DownloadConcurrency:    availableConcurrency,
 			RestoreSchemaOnCluster: "",
 			UploadByPart:           true,
+			DownloadByPart:         true,
 		},
 		ClickHouse: ClickHouseConfig{
 			Username: "default",
@@ -379,4 +393,26 @@ func DefaultConfig() *Config {
 			Concurrency:       1,
 		},
 	}
+}
+
+func GetConfig(ctx *cli.Context) *Config {
+	configPath := GetConfigPath(ctx)
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+	return cfg
+}
+
+func GetConfigPath(ctx *cli.Context) string {
+	if ctx.String("config") != DefaultConfigPath {
+		return ctx.String("config")
+	}
+	if ctx.GlobalString("config") != DefaultConfigPath {
+		return ctx.GlobalString("config")
+	}
+	if os.Getenv("CLICKHOUSE_BACKUP_CONFIG") != "" {
+		return os.Getenv("CLICKHOUSE_BACKUP_CONFIG")
+	}
+	return DefaultConfigPath
 }

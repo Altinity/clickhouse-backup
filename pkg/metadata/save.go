@@ -14,7 +14,7 @@ func (tm *TableMetadata) Save(location string, metadataOnly bool) (uint64, error
 		Database:             tm.Database,
 		IncrementOf:          tm.IncrementOf,
 		Query:                tm.Query,
-		DependencesTable:     tm.DependencesTable,
+		DependenciesTable:    tm.DependenciesTable,
 		DependenciesDatabase: tm.DependenciesDatabase,
 		MetadataOnly:         true,
 	}

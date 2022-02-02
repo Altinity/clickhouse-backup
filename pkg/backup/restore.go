@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
 	"io/ioutil"
 	"os"
 	"os/exec"
 	"path"
-	"sort"
 	"strings"
 	"time"
 
@@ -24,18 +24,8 @@ import (
 	"github.com/yargevad/filepathx"
 )
 
-// ListOfTables - slice of RestoreTable
-type ListOfTables []metadata.TableMetadata
-
-// Sort - sorting BackupTables slice orderly by name
-func (lt ListOfTables) Sort(dropTable bool) {
-	sort.Slice(lt, func(i, j int) bool {
-		return getOrderByEngine(lt[i].Query, dropTable) < getOrderByEngine(lt[j].Query, dropTable)
-	})
-}
-
 // Restore - restore tables matched by tablePattern from backupName
-func Restore(cfg *config.Config, backupName string, tablePattern string, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly bool) error {
+func Restore(cfg *config.Config, backupName string, tablePattern string, partitions []string, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly bool) error {
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "restore",
@@ -120,7 +110,8 @@ func Restore(cfg *config.Config, backupName string, tablePattern string, schemaO
 		}
 	}
 	if dataOnly || (schemaOnly == dataOnly) {
-		if err := RestoreData(cfg, ch, backupName, tablePattern); err != nil {
+		partitionsToRestore := filesystemhelper.CreatePartitionsToBackupMap(partitions)
+		if err := RestoreData(cfg, ch, backupName, tablePattern, partitionsToRestore); err != nil {
 			return err
 		}
 	}
@@ -231,7 +222,7 @@ func RestoreSchema(cfg *config.Config, ch *clickhouse.ClickHouse, backupName str
 	if tablePattern == "" {
 		tablePattern = "*"
 	}
-	tablesForRestore, err := parseSchemaPattern(metadataPath, tablePattern, dropTable)
+	tablesForRestore, err := getTableListByPatternLocal(metadataPath, tablePattern, dropTable, nil)
 	if err != nil {
 		return err
 	}
@@ -328,7 +319,7 @@ func dropExistsTables(cfg *config.Config, ch *clickhouse.ClickHouse, tablesForDr
 }
 
 // RestoreData - restore data for tables matched by tablePattern from backupName
-func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName string, tablePattern string) error {
+func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName string, tablePattern string, partitionsToRestore common.EmptyMap) error {
 	startRestore := time.Now()
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
@@ -350,7 +341,7 @@ func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName strin
 		tablesForRestore, err = ch.GetBackupTablesLegacy(backupName)
 	} else {
 		metadataPath := path.Join(defaultDataPath, "backup", backupName, "metadata")
-		tablesForRestore, err = parseSchemaPattern(metadataPath, tablePattern, false)
+		tablesForRestore, err = getTableListByPatternLocal(metadataPath, tablePattern, false, partitionsToRestore)
 	}
 	if err != nil {
 		return err

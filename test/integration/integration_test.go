@@ -381,7 +381,7 @@ func init() {
 func TestIntegrationS3(t *testing.T) {
 	r := require.New(t)
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	testCommon(t, "S3")
+	runMainIntegrationScenario(t, "S3")
 }
 
 func TestIntegrationGCS(t *testing.T) {
@@ -392,7 +392,7 @@ func TestIntegrationGCS(t *testing.T) {
 	r := require.New(t)
 	r.NoError(dockerCP("config-gcs.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	installDebIfNotExists(r, "clickhouse", "ca-certificates")
-	testCommon(t, "GCS")
+	runMainIntegrationScenario(t, "GCS")
 }
 
 func TestIntegrationAzure(t *testing.T) {
@@ -403,13 +403,13 @@ func TestIntegrationAzure(t *testing.T) {
 	r := require.New(t)
 	r.NoError(dockerCP("config-azblob.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	installDebIfNotExists(r, "clickhouse", "ca-certificates")
-	testCommon(t, "AZBLOB")
+	runMainIntegrationScenario(t, "AZBLOB")
 }
 
 func TestIntegrationSFTPAuthPassword(t *testing.T) {
 	r := require.New(t)
 	r.NoError(dockerCP("config-sftp-auth-password.yaml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	testCommon(t, "SFTP")
+	runMainIntegrationScenario(t, "SFTP")
 }
 
 func TestIntegrationSFTPAuthKey(t *testing.T) {
@@ -424,13 +424,13 @@ func TestIntegrationSFTPAuthKey(t *testing.T) {
 	r.NoError(dockerExec("sshd", "chown", "-v", "root:root", "/root/.ssh/authorized_keys"))
 	r.NoError(dockerExec("sshd", "chmod", "-v", "0600", "/root/.ssh/authorized_keys"))
 
-	testCommon(t, "SFTP")
+	runMainIntegrationScenario(t, "SFTP")
 }
 
 func TestIntegrationFTP(t *testing.T) {
 	r := require.New(t)
 	r.NoError(dockerCP("config-ftp.yaml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	testCommon(t, "FTP")
+	runMainIntegrationScenario(t, "FTP")
 }
 
 func TestSyncReplicaTimeout(t *testing.T) {
@@ -800,11 +800,12 @@ func TestLongListRemote(t *testing.T) {
 	testBackupName := "test_list_remote"
 	fullCleanup(r, ch, []string{testBackupName}, false)
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/tmp/.clickhouse-backup-metadata.cache.S3"))
 
 	for i := 0; i < 15; i++ {
 		r.NoError(dockerExec("clickhouse", "bash", "-c", fmt.Sprintf("ALLOW_EMPTY_BACKUPS=true clickhouse-backup create_remote %s_%d", testBackupName, i)))
 	}
+
+	r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/tmp/.clickhouse-backup-metadata.cache.S3"))
 	startFirst := time.Now()
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "list", "remote"))
 	firstDuration := time.Since(startFirst)
@@ -935,7 +936,7 @@ func TestProjections(t *testing.T) {
 
 }
 
-func testCommon(t *testing.T, remoteStorageType string) {
+func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 	var out string
 	var err error
 
@@ -967,7 +968,11 @@ func testCommon(t *testing.T, remoteStorageType string) {
 
 	log.Info("Upload")
 	r.NoError(dockerExec("clickhouse", "bash", "-c", fmt.Sprintf("%s_COMPRESSION_FORMAT=zstd clickhouse-backup upload %s", remoteStorageType, testBackupName)))
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "upload", incrementBackupName, "--diff-from", testBackupName))
+
+	rand.Seed(time.Now().UnixNano())
+	//diffFrom := []string{"--diff-from", "--diff-from-remote"}[rand.Intn(2)]
+	diffFrom := "--diff-from-remote"
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "upload", incrementBackupName, diffFrom, testBackupName))
 
 	dropDatabasesFromTestDataDataSet(r, ch)
 
@@ -1036,7 +1041,6 @@ func testCommon(t *testing.T, remoteStorageType string) {
 
 	}
 	// test for specified partitions backup
-	// dropAllDatabases(r, ch)
 	testBackupSpecifiedPartition(r, ch)
 
 	// test end
@@ -1340,7 +1344,7 @@ func execCmd(cmd string, args ...string) error {
 }
 
 func execCmdOut(cmd string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 	log.Infof("%s %s", cmd, strings.Join(args, " "))
 	out, err := exec.CommandContext(ctx, cmd, args...).CombinedOutput()
 	cancel()
@@ -1434,8 +1438,8 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 	log.Debugf("testBackupSpecifiedPartition result : '%s'", result)
 	log.Debugf("testBackupSpecifiedPartition result' length '%d'", len(result))
 
-	r.Equal(1, len(result))
-	r.Equal(10, result[0])
+	r.Equal(1, len(result), "expect one row")
+	r.Equal(10, result[0], "expect count=10")
 
 	// Reset the result.
 	result = nil
@@ -1443,8 +1447,8 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 
 	log.Debugf("testBackupSpecifiedPartition result : '%s'", result)
 	log.Debugf("testBackupSpecifiedPartition result' length '%d'", len(result))
-	r.Equal(1, len(result))
-	r.Equal(0, result[0])
+	r.Equal(1, len(result), "expect one row")
+	r.Equal(0, result[0], "expect count=0")
 
 	// DELETE remote backup.
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", testBackupName))
