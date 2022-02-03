@@ -1,0 +1,23 @@
+version: '2.3'
+
+services:
+  clickhouse:
+    image: clickhouse/integration-test
+    expose:
+      - "9000"
+      - "9009"
+      - "8123"
+    volumes:
+      - "${CLICKHOUSE_TESTS_SERVER_BIN_PATH:-/usr/bin/clickhouse}:/usr/bin/clickhouse"
+      - "${CLICKHOUSE_TESTS_ODBC_BRIDGE_BIN_PATH:-/usr/bin/clickhouse-odbc-bridge}:/usr/bin/clickhouse-odbc-bridge"
+    entrypoint: bash -c "clickhouse server --config-file=/etc/clickhouse-server/config.xml --log-file=/var/log/clickhouse-server/clickhouse-server.log --errorlog-file=/var/log/clickhouse-server/clickhouse-server.err.log"
+    healthcheck:
+      test: clickhouse client --query='select 1'
+      interval: 3s
+      timeout: 2s
+      retries: 40
+      start_period: 2s
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - label:disable

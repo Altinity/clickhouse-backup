@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<yandex>
+    <named_collections>
+        <postgres>
+            <host>postgres</host>
+            <port>5432</port>
+            <user>test</user>
+            <password>qwerty</password>
+            <db>mydb</db>
+            <table>pg_table</table>
+            <where>id=10</where>
+            <invalidate_query>SQL_QUERY</invalidate_query>
+        </postgres>
+    </named_collections>
+</yandex>
