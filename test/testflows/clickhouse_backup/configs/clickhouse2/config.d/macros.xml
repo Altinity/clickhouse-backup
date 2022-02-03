@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<yandex>
+    <macros>
+        <cluster>clus</cluster>
+        <replica>clickhouse2</replica>
+        <shard>01</shard>
+        <shard2>02</shard2>
+    </macros>
+</yandex>

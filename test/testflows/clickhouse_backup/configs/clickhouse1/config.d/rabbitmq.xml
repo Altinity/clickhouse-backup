@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<yandex>
+    <rabbitmq>
+        <username>test</username>
+        <password>qwerty</password>
+    </rabbitmq>
+</yandex>

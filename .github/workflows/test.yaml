@@ -1,0 +1,56 @@
+name: Test
+
+on:
+  pull_request:
+    branches:
+      - master
+      - actions
+
+  push:
+    branches:
+      - master
+      - actions
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        clickhouse:
+          - '22.1.*'
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v2
+
+      - name: Running TestFlows tests
+        env:
+          CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
+          QA_AWS_ACCESS_KEY: ${{ secrets.QA_AWS_ACCESS_KEY }}
+          QA_AWS_ENDPOINT: ${{ secrets.QA_AWS_ENDPOINT }}
+          QA_AWS_SECRET_KEY: ${{ secrets.QA_AWS_SECRET_KEY }}
+          QA_AWS_REGION: ${{ secrets.QA_AWS_REGION }}
+          QA_AWS_BUCKET: ${{ secrets.QA_AWS_BUCKET }}
+          QA_GCS_CRED_JSON: ${{ secrets.QA_GCS_CRED_JSON }}
+        run: |
+          set -x
+          env DEBIAN_FRONTEND=noninteractive
+          export CLICKHOUSE_TESTS_DIR=$(pwd)/test/testflows/clickhouse_backup
+          cd $CLICKHOUSE_TESTS_DIR
+
+          sudo apt install --allow-unauthenticated --yes apt-transport-https ca-certificates dirmngr
+          sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv E0C56BD4
+
+          echo "deb https://repo.clickhouse.com/deb/stable/ main/" | sudo tee /etc/apt/sources.list.d/clickhouse.list
+          sudo apt update
+
+          sudo apt install --allow-unauthenticated --yes --no-install-recommends clickhouse-common-static=${{ matrix.clickhouse }} clickhouse-client=${{ matrix.clickhouse }} clickhouse-test=${{ matrix.clickhouse }}
+
+          export CLICKHOUSE_BINARY_PATH=/usr/bin
+
+          sudo apt install -y python3-pip
+          pip3 install urllib3 setuptools requests pytz python-dateutil numpy testflows==1.7.77
+          
+          docker pull clickhouse/integration-test:latest
+
+          python3 regression.py --log raw.log

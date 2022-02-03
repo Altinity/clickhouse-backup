@@ -1,0 +1,204 @@
+version: '2.3'
+
+services:
+  zookeeper:
+    image: zookeeper:3.4.12
+    expose:
+      - "2181"
+    environment:
+      ZOO_TICK_TIME: 500
+      ZOO_MY_ID: 1
+      #ZOO_SERVERS: server.1=0.0.0.0:2888:3888
+    healthcheck:
+      test: echo stat | nc localhost 2181
+      interval: 3s
+      timeout: 2s
+      retries: 5
+      start_period: 2s
+    security_opt:
+      - label:disable
+
+  clickhouse1:
+    extends:
+      file: clickhouse-service.yml
+      service: clickhouse
+    hostname: clickhouse1
+    volumes:
+      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse1/fast_disk/:/mnt/fast_disk/clickhouse/backup"
+      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse1/slow_disk/:/mnt/slow_disk/clickhouse/backup"
+      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse1/simple_disk/:/mnt/simple_disk/clickhouse/backup"
+      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse1/database/:/var/lib/clickhouse/"
+      - "${CLICKHOUSE_TESTS_DIR}/files/:/var/lib/clickhouse/user_files/"
+      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse1/logs/:/var/log/clickhouse-server/"
+      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse1/:/etc/clickhouse-server/"
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+
+  clickhouse2:
+    extends:
+      file: clickhouse-service.yml
+      service: clickhouse
+    hostname: clickhouse2
+    volumes:
+      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse2/database:/var/lib/clickhouse"
+      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse2/logs/:/var/log/clickhouse-server/"
+      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse2/:/etc/clickhouse-server/"
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+
+  mysql:
+    image: mysql:8.0
+    command: --default-authentication-plugin=mysql_native_password --gtid_mode=on --enforce_gtid_consistency=ON
+    hostname: mysql
+    environment:
+      - MYSQL_ALLOW_EMPTY_PASSWORD=True
+      - MYSQL_ROOT_PASSWORD=qwerty
+    expose:
+      - "3306"
+    healthcheck:
+      test: mysqladmin -p=qwerty ping -h localhost
+      timeout: 20s
+      retries: 10
+
+  postgres:
+    image: postgres:14.1
+    hostname: postgres
+    environment:
+      - POSTGRES_PASSWORD=qwerty
+      - POSTGRES_USER=test
+    expose:
+      - "5432"
+    command: [ "postgres", "-c", "wal_level=logical" ]
+    healthcheck:
+      test: pg_isready -U test
+      timeout: 20s
+      retries: 10
+
+  clickhouse_backup:
+    image: altinity/clickhouse-backup:${CLICKHOUSE_BACKUP_VERSION:-master}
+    hostname: backup
+    ports:
+      - "7171:7171"
+    expose:
+      - "7171"
+    environment:
+      - GCS_CREDENTIALS_JSON=${QA_GCS_CRED_JSON}
+      - CLICKHOUSE_HOST=clickhouse1
+      - CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config.yml
+    entrypoint: clickhouse-backup
+    command: "server"
+    volumes:
+      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse1/fast_disk/:/mnt/fast_disk/clickhouse/backup"
+      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse1/slow_disk/:/mnt/slow_disk/clickhouse/backup"
+      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse1/simple_disk/:/mnt/simple_disk/clickhouse/backup"
+      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse1/database:/var/lib/clickhouse"
+      - "${CLICKHOUSE_TESTS_DIR}/configs/backup/:/etc/clickhouse-backup/"
+      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse1/:/etc/clickhouse-server/"
+    healthcheck:
+      test: clickhouse-backup --version
+      interval: 3s
+      timeout: 2s
+      retries: 40
+      start_period: 10s
+
+  ftp_server:
+    image: stilliard/pure-ftpd
+    hostname: ftp_server
+    environment:
+      - FTP_USER_NAME=aztest
+      - FTP_USER_PASS=aztest
+      - FTP_USER_HOME=/home/aztest
+      - PUBLICHOST=ftp_server
+    healthcheck:
+      test: echo 1
+      interval: 3s
+      timeout: 2s
+      retries: 20
+      start_period: 10s
+
+  sftp_server:
+    image: panubo/sshd:1.5.0
+    container_name: sftp_server
+    hostname: sftp_server
+    environment:
+      SSH_ENABLE_ROOT: "true"
+      SSH_ENABLE_PASSWORD_AUTH: "true"
+    command: sh -c 'echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && echo "root:JFzMHfVpvTgEd74XXPq6wARA2Qg3AutJ" | chpasswd && /usr/sbin/sshd -D -e -f /etc/ssh/sshd_config'
+    healthcheck:
+      test: echo 1
+      interval: 3s
+      timeout: 2s
+      retries: 20
+      start_period: 10s
+
+  minio:
+    image: minio/minio:RELEASE.2021-11-03T03-36-36Z.fips
+    container_name: minio
+    hostname: minio
+    environment:
+      MINIO_ACCESS_KEY: access-key
+      MINIO_SECRET_KEY: it-is-my-super-secret-key
+    entrypoint: sh
+    command: -c 'mkdir -p doc_gen_minio/export/clickhouse && minio server doc_gen_minio/export'
+    healthcheck:
+      test: echo 1
+      interval: 3s
+      timeout: 2s
+      retries: 20
+      start_period: 10s
+
+  kafka:
+    extends:
+      file: kafka-service.yml
+      service: kafka
+    hostname: kafka
+    environment:
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+      - KAFKA_BROKER_ID=1
+      - BOOTSTRAP_SERVERS=kafka:9092
+    healthcheck:
+      test: echo dump | nc zookeeper 2181 | grep '/brokers/ids/1'
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+
+  rabbitmq:
+    image: rabbitmq:3.9.13-alpine
+    hostname: rabbitmq
+    environment:
+      - RABBITMQ_DEFAULT_USER=test
+      - RABBITMQ_DEFAULT_PASS=qwerty
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 10s
+      timeout: 15s
+      retries: 20
+      start_period: 15s
+
+  # dummy service which does nothing, but allows to postpone 
+  # 'docker-compose up -d' till all dependencies will go healthy
+  all_services_ready:
+    image: hello-world
+    depends_on:
+      clickhouse1:
+        condition: service_healthy
+      clickhouse2:
+        condition: service_healthy
+      clickhouse_backup:
+        condition: service_healthy
+      zookeeper:
+        condition: service_healthy
+      ftp_server:
+        condition: service_healthy
+      sftp_server:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
