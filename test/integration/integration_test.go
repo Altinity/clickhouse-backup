@@ -936,6 +936,17 @@ func TestProjections(t *testing.T) {
 
 }
 
+func TestS3AdvancedIntegration(t *testing.T) {
+	if isTestShouldSkip("S3_ADVANCED_TESTS") {
+		t.Skip("Skipping S3 Advanced integration tests...")
+		return
+	}
+	r := require.New(t)
+	r.NoError(dockerExec("minio", "/bin/minio_nodelete.sh"))
+	r.NoError(dockerCP("config-s3-nodelete.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	runMainIntegrationScenario(t, "S3")
+}
+
 func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 	var out string
 	var err error
@@ -1344,7 +1355,7 @@ func execCmd(cmd string, args ...string) error {
 }
 
 func execCmdOut(cmd string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	log.Infof("%s %s", cmd, strings.Join(args, " "))
 	out, err := exec.CommandContext(ctx, cmd, args...).CombinedOutput()
 	cancel()

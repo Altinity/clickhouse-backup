@@ -1,4 +1,5 @@
 #!/bin/bash
+date
 if [[ ! -d /hdd1_data ]]; then
   mkdir -pv /hdd1_data
 fi

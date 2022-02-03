@@ -8,6 +8,7 @@ export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup-race"
 export LOG_LEVEL=${LOG_LEVEL:-info}
 export GCS_TESTS=${GCS_TESTS:-}
 export AZURE_TESTS=${AZURE_TESTS:-}
+export S3_ADVANCED_TESTS=${S3_ADVANCED_TESTS:-}
 export S3_DEBUG=${S3_DEBUG:-false}
 export GCS_DEBUG=${GCS_DEBUG:-false}
 export FTP_DEBUG=${FTP_DEBUG:-false}
@@ -25,5 +26,9 @@ docker-compose -f test/integration/${COMPOSE_FILE} down --remove-orphans
 docker volume prune -f
 make clean
 make build-race
-docker-compose -f test/integration/${COMPOSE_FILE} up -d --force-recreate
+docker-compose -f test/integration/${COMPOSE_FILE} up -d minio mysql
+sleep 5
+docker-compose -f test/integration/${COMPOSE_FILE} exec minio mc alias list
+
+docker-compose -f test/integration/${COMPOSE_FILE} up -d
 go test -timeout 30m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go

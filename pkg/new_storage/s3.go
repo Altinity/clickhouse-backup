@@ -223,9 +223,10 @@ func (s *S3) Walk(s3Path string, recursive bool, process func(r RemoteFile) erro
 		})
 	})
 	g.Go(func() error {
+		var err error
 		for s3File := range s3Files {
-			if err := process(s3File); err != nil {
-				return err
+			if err == nil {
+				err = process(s3File)
 			}
 		}
 		return nil
