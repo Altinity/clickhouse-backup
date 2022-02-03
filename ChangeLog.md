@@ -18,6 +18,7 @@ IMPROVEMENTS
 - Return `clean` cli command and API `POST /backup/clean` endpoint, fix [#379](https://github.com/AlexAkulov/clickhouse-backup/issues/379)
 
 BUG FIXES
+- fix [#340](https://github.com/AlexAkulov/clickhouse-backup/issues/340), properly handle errors on S3 during Walk() and delete old backup
 - fix [#331](https://github.com/AlexAkulov/clickhouse-backup/issues/331), properly restore tables where have table name with the same name as database name
 - fix [#311](https://github.com/AlexAkulov/clickhouse-backup/issues/311), properly run clickhouse-backup inside docker container via entrypoint
 - fix [#317](https://github.com/AlexAkulov/clickhouse-backup/issues/317), properly upload large files to Azure Blob Storage

@@ -1,6 +1,8 @@
 general:
   disable_progress_bar: true
   remote_storage: sftp
+  upload_concurrency: 4
+  download_concurrency: 4
   restore_schema_on_cluster: "cluster"
 clickhouse:
   host: 127.0.0.1

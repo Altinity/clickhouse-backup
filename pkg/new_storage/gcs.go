@@ -92,12 +92,13 @@ func (gcs *GCS) Connect() error {
 
 func (gcs *GCS) Walk(gcsPath string, recursive bool, process func(r RemoteFile) error) error {
 	ctx := context.Background()
+	rootPath := path.Join(gcs.Config.Path, gcsPath)
 	delimiter := ""
 	if !recursive {
 		delimiter = "/"
 	}
 	it := gcs.client.Bucket(gcs.Config.Bucket).Objects(ctx, &storage.Query{
-		Prefix:    path.Join(gcs.Config.Path, gcsPath) + "/",
+		Prefix:    rootPath + "/",
 		Delimiter: delimiter,
 	})
 	for {
@@ -106,7 +107,7 @@ func (gcs *GCS) Walk(gcsPath string, recursive bool, process func(r RemoteFile) 
 		case nil:
 			if object.Prefix != "" {
 				if err := process(&gcsFile{
-					name: strings.TrimPrefix(object.Prefix, path.Join(gcs.Config.Path, gcsPath)),
+					name: strings.TrimPrefix(object.Prefix, rootPath),
 				}); err != nil {
 					return err
 				}
@@ -115,7 +116,7 @@ func (gcs *GCS) Walk(gcsPath string, recursive bool, process func(r RemoteFile) 
 			if err := process(&gcsFile{
 				size:         object.Size,
 				lastModified: object.Updated,
-				name:         strings.TrimPrefix(object.Name, path.Join(gcs.Config.Path, gcsPath)),
+				name:         strings.TrimPrefix(object.Name, rootPath),
 			}); err != nil {
 				return err
 			}
