@@ -1,3 +1,8 @@
+#!/bin/bash
+mkdir -pv /mnt/fast_disk/clickhouse /mnt/slow_disk/clickhouse /mnt/simple_disk/clickhouse
+chown -Rv clickhouse:clickhouse /mnt/fast_disk/clickhouse /mnt/slow_disk/clickhouse /mnt/simple_disk/clickhouse
+
+cat <<EOT > /etc/clickhouse-server/config.d/storage.xml
 <yandex>
     <storage_configuration>
         <disks>
@@ -43,3 +48,4 @@
         </policies>
     </storage_configuration>
 </yandex>
+EOT

@@ -1,0 +1,8 @@
+<yandex>
+    <profiles>
+        <default>
+            <allow_suspicious_low_cardinality_types>1</allow_suspicious_low_cardinality_types>
+            <allow_experimental_geo_types>1</allow_experimental_geo_types>
+        </default>
+    </profiles>
+</yandex>

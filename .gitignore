@@ -12,4 +12,3 @@ build/
 _instances/
 __pycache__/
 *.py[cod]
-users.d/

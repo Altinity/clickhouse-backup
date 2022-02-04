@@ -181,11 +181,7 @@ func Server(c *cli.App, configPath string, clickhouseBackupVersion string) error
 		}
 	}
 	api.metrics = setupMetrics()
-	go func() {
-		if err := api.updateSizeOfLastBackup(false); err != nil {
-			apexLog.Errorf("updateSizeOfLastBackup return error: %v", err)
-		}
-	}()
+
 	apexLog.Infof("Starting API server on %s", api.config.API.ListenAddr)
 	sigterm := make(chan os.Signal, 1)
 	signal.Notify(sigterm, os.Interrupt, syscall.SIGTERM)
@@ -194,6 +190,11 @@ func Server(c *cli.App, configPath string, clickhouseBackupVersion string) error
 	if err := api.Restart(); err != nil {
 		return err
 	}
+	go func() {
+		if err := api.updateSizeOfLastBackup(false); err != nil {
+			apexLog.Errorf("updateSizeOfLastBackup return error: %v", err)
+		}
+	}()
 
 	for {
 		select {

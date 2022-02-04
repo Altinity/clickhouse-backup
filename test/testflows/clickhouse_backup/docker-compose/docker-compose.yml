@@ -2,15 +2,15 @@ version: '2.3'
 
 services:
   zookeeper:
-    image: zookeeper:3.4.12
+    image: zookeeper:3.7.0
     expose:
       - "2181"
     environment:
       ZOO_TICK_TIME: 500
       ZOO_MY_ID: 1
-      #ZOO_SERVERS: server.1=0.0.0.0:2888:3888
+      ZOO_4LW_COMMANDS_WHITELIST: "*"
     healthcheck:
-      test: echo stat | nc localhost 2181
+      test: echo stats | nc 127.0.0.1 2181
       interval: 3s
       timeout: 2s
       retries: 5
@@ -24,13 +24,20 @@ services:
       service: clickhouse
     hostname: clickhouse1
     volumes:
-      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse1/fast_disk/:/mnt/fast_disk/clickhouse/backup"
-      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse1/slow_disk/:/mnt/slow_disk/clickhouse/backup"
-      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse1/simple_disk/:/mnt/simple_disk/clickhouse/backup"
-      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse1/database/:/var/lib/clickhouse/"
+      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse1/storage_configuration.sh:/docker-entrypoint-initdb.d/storage_configuration.sh"
       - "${CLICKHOUSE_TESTS_DIR}/files/:/var/lib/clickhouse/user_files/"
       - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse1/logs/:/var/log/clickhouse-server/"
-      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse1/:/etc/clickhouse-server/"
+      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse1/config.d/macros.xml:/etc/clickhouse-server/config.d/macros.xml"
+      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse1/config.d/rabbitmq.xml:/etc/clickhouse-server/config.d/rabbitmq.xml"
+      - "/var/lib/clickhouse"
+      - "/mnt"
+    links:
+      - zookeeper
+      - kafka
+      - rabbitmq
+      - mysql
+      - postgres
+      - clickhouse2
     depends_on:
       zookeeper:
         condition: service_healthy
@@ -41,15 +48,20 @@ services:
       service: clickhouse
     hostname: clickhouse2
     volumes:
-      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse2/database:/var/lib/clickhouse"
       - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse2/logs/:/var/log/clickhouse-server/"
-      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse2/:/etc/clickhouse-server/"
+      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse2/config.d/macros.xml:/etc/clickhouse-server/config.d/macros.xml"
+    links:
+      - zookeeper
+      - kafka
+      - rabbitmq
+      - mysql
+      - postgres
     depends_on:
       zookeeper:
         condition: service_healthy
 
   mysql:
-    image: mysql:8.0
+    image: mysql:${MYSQL_VERSION:-latest}
     command: --default-authentication-plugin=mysql_native_password --gtid_mode=on --enforce_gtid_consistency=ON
     hostname: mysql
     environment:
@@ -77,31 +89,44 @@ services:
       retries: 10
 
   clickhouse_backup:
-    image: altinity/clickhouse-backup:${CLICKHOUSE_BACKUP_VERSION:-master}
+    image: ubuntu:latest
     hostname: backup
-    ports:
-      - "7171:7171"
     expose:
       - "7171"
     environment:
+      - DEBIAN_FRONTEND=noninteractive
       - GCS_CREDENTIALS_JSON=${QA_GCS_CRED_JSON}
       - CLICKHOUSE_HOST=clickhouse1
       - CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config.yml
-    entrypoint: clickhouse-backup
-    command: "server"
+      - TZ=Europe/Moscow
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - "set -x && 
+      apt-get update && 
+      apt-get install -y ca-certificates tzdata bash curl &&  
+      update-ca-certificates && 
+      clickhouse-backup server"
     volumes:
-      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse1/fast_disk/:/mnt/fast_disk/clickhouse/backup"
-      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse1/slow_disk/:/mnt/slow_disk/clickhouse/backup"
-      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse1/simple_disk/:/mnt/simple_disk/clickhouse/backup"
-      - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse1/database:/var/lib/clickhouse"
+      - "${CLICKHOUSE_TESTS_DIR}/../../../clickhouse-backup/clickhouse-backup-race:/bin/clickhouse-backup"
       - "${CLICKHOUSE_TESTS_DIR}/configs/backup/:/etc/clickhouse-backup/"
       - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse1/:/etc/clickhouse-server/"
+    volumes_from:
+      - clickhouse1
     healthcheck:
       test: clickhouse-backup --version
       interval: 3s
       timeout: 2s
       retries: 40
       start_period: 10s
+    depends_on:
+      - clickhouse1
+      - clickhouse2
+
+    links:
+      - ftp_server
+      - sftp_server
+      - minio
 
   ftp_server:
     image: stilliard/pure-ftpd
@@ -134,7 +159,7 @@ services:
       start_period: 10s
 
   minio:
-    image: minio/minio:RELEASE.2021-11-03T03-36-36Z.fips
+    image: minio/minio:${MINIO_VERSION:-latest}
     container_name: minio
     hostname: minio
     environment:

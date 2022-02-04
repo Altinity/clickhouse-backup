@@ -98,6 +98,56 @@ jobs:
     outputs:
       GCS_TESTS: ${{ steps.secrets.outputs.GCS_TESTS }}
 
+  testflows:
+    needs: build
+    name: Testflows
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        clickhouse:
+          - '22.1'
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v2
+
+      - name: Running TestFlows tests
+        env:
+          CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
+          QA_AWS_ACCESS_KEY: ${{ secrets.QA_AWS_ACCESS_KEY }}
+          QA_AWS_ENDPOINT: ${{ secrets.QA_AWS_ENDPOINT }}
+          QA_AWS_SECRET_KEY: ${{ secrets.QA_AWS_SECRET_KEY }}
+          QA_AWS_REGION: ${{ secrets.QA_AWS_REGION }}
+          QA_AWS_BUCKET: ${{ secrets.QA_AWS_BUCKET }}
+          QA_GCS_CRED_JSON: ${{ secrets.QA_GCS_CRED_JSON }}
+        run: |
+          set -x
+          sudo apt install -y python3-pip
+          pip3 install -U -r ./test/testflows/requirements.txt
+
+          export CLICKHOUSE_TESTS_DIR=$(pwd)/test/testflows/clickhouse_backup
+          python3 ./test/testflows/clickhouse_backup/regression.py --log ./test/testflows/raw.log
+          tfs --debug --no-colors transform compact ./test/testflows/raw.log ./test/testflows/compact.log
+          tfs --debug --no-colors transform nice ./test/testflows/raw.log ./test/testflows/nice.log.txt
+          tfs --debug --no-colors transform short ./test/testflows/raw.log ./test/testflows/short.log.txt
+          tfs --debug --no-colors report results -a "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/" raw.log - --confidential --copyright "Altinity LTD" --logo ./test/testflows/altinity.png | tfs --debug --no-colors document convert > report.html
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: testflows-logs
+          path: |
+            test/testflows/*.log
+            test/testflows/*.log.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: testflows-report
+          path: |
+            test/testflows/*.html
+          if-no-files-found: error
+          retention-days: 14
+
   test:
     needs: build
     name: Test

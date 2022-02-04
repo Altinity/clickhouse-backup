@@ -10,7 +10,6 @@ from testflows.core import *
 from testflows.asserts import error
 from testflows.connect import Shell as ShellBase
 from testflows.uexpect import ExpectTimeoutError
-from testflows._core.testtype import TestSubType
 
 MESSAGES_TO_RETRY = [
     "DB::Exception: ZooKeeper session has been expired",
@@ -23,9 +22,10 @@ MESSAGES_TO_RETRY = [
     "ConnectionPoolWithFailover: Connection failed at try",
     "DB::Exception: New table appeared in database being dropped or detached. Try again",
     "is already started to be removing by another replica right now",
-    "Shutdown is called for table", # happens in SYSTEM SYNC REPLICA query if session with ZooKeeper is being reinitialized.
-    "is executing longer than distributed_ddl_task_timeout" # distributed TTL timeout message
+    "Shutdown is called for table",  # happens in SYSTEM SYNC REPLICA query if session with ZooKeeper is being reinitialized.
+    "is executing longer than distributed_ddl_task_timeout"  # distributed TTL timeout message
 ]
+
 
 class Shell(ShellBase):
     def __exit__(self, type, value, traceback):
@@ -45,10 +45,12 @@ class Shell(ShellBase):
                     pass
         return super(Shell, self).__exit__(type, value, traceback)
 
+
 class QueryRuntimeException(Exception):
     """Exception during query execution on the server.
     """
     pass
+
 
 class Node(object):
     """Generic cluster node.
@@ -135,11 +137,12 @@ class Node(object):
 class ClickHouseNode(Node):
     """Node with ClickHouse server.
     """
+
     def wait_healthy(self, timeout=300):
         with By(f"waiting until container {self.name} is healthy"):
             start_time = time.time()
             while True:
-                if self.query("select version()", no_checks=1, timeout=300, steps=False).exitcode == 0:
+                if self.query("select version()", no_checks=True, timeout=300, steps=False).exitcode == 0:
                     break
                 if time.time() - start_time < timeout:
                     time.sleep(10)
@@ -251,7 +254,7 @@ class ClickHouseNode(Node):
         return r.output
 
     def diff_query(self, sql, expected_output, steps=True, step=By,
-            settings=None, secure=False, *args, **kwargs):
+                   settings=None, secure=False, *args, **kwargs):
         """Execute inside the container but from the host and compare its output
         to file that is located on the host.
 
@@ -305,7 +308,7 @@ class ClickHouseNode(Node):
 
     def query(self, sql, message=None, exitcode=None, steps=True, no_checks=False,
               raise_on_exception=False, step=By, settings=None,
-              retries=5, messages_to_retry=None, retry_delay=5, secure=False,
+              retries=5, messages_to_retry=None, retry_delay=5.0, secure=False,
               *args, **kwargs):
         """Execute and check query.
         :param sql: sql query
@@ -322,7 +325,7 @@ class ClickHouseNode(Node):
         :param secure: use secure connection, default: False
         """
         retries = max(0, int(retries))
-        retry_delay = max(0, float(retry_delay))
+        retry_delay = max(0.0, float(retry_delay))
         settings = list(settings or [])
         query_settings = list(settings)
 
@@ -369,10 +372,10 @@ class ClickHouseNode(Node):
             if any(msg in r.output for msg in messages_to_retry):
                 time.sleep(retry_delay)
                 return self.query(sql=sql, message=message, exitcode=exitcode,
-                    steps=steps, no_checks=no_checks,
-                    raise_on_exception=raise_on_exception, step=step, settings=settings,
-                    retries=retries-1, messages_to_retry=messages_to_retry,
-                    *args, **kwargs)
+                                  steps=steps, no_checks=no_checks,
+                                  raise_on_exception=raise_on_exception, step=step, settings=settings,
+                                  retries=retries - 1, messages_to_retry=messages_to_retry,
+                                  *args, **kwargs)
 
         if no_checks:
             return r
@@ -394,15 +397,17 @@ class ClickHouseNode(Node):
 
         return r
 
+
 class Cluster(object):
     """Simple object around docker-compose cluster.
     """
+
     def __init__(self, local=False,
-            clickhouse_binary_path=None, configs_dir=None,
-            nodes=None,
-            docker_compose="docker-compose", docker_compose_project_dir=None,
-            docker_compose_file="docker-compose.yml",
-            environ=None):
+                 clickhouse_binary_path=None, configs_dir=None,
+                 nodes=None,
+                 docker_compose="docker-compose", docker_compose_project_dir=None,
+                 docker_compose_file="docker-compose.yml",
+                 environ=None):
 
         self._bash = {}
         self._control_shell = None
@@ -447,9 +452,9 @@ class Cluster(object):
 
         time_start = time.time()
         while True:
+            shell = Shell()
+            shell.timeout = 30
             try:
-                shell = Shell()
-                shell.timeout = 30
                 shell("echo 1")
                 break
             except IOError:
@@ -501,14 +506,14 @@ class Cluster(object):
 
         time_start = time.time()
         while True:
+            if node is None:
+                shell = Shell()
+            else:
+                shell = Shell(command=[
+                    "/bin/bash", "--noediting", "-c", f"docker exec -it {container_id} bash --noediting"
+                ], name=node)
+            shell.timeout = 30
             try:
-                if node is None:
-                    shell = Shell()
-                else:
-                    shell = Shell(command=[
-                        "/bin/bash", "--noediting", "-c", f"docker exec -it {container_id} bash --noediting"
-                    ], name=node)
-                shell.timeout = 30
                 shell("echo 1")
                 break
             except IOError:
@@ -556,7 +561,7 @@ class Cluster(object):
                             raise RuntimeError(f"failed to open bash to node {node}")
 
                 if node is None:
-                    for name,value in self.environ.items():
+                    for name, value in self.environ.items():
                         self._bash[id](f"export {name}=\"{value}\"")
 
                 self._bash[id].timeout = timeout
@@ -642,7 +647,7 @@ class Cluster(object):
         """
         return f"{os.path.join(self.temp_path(), name)}"
 
-    def up(self, timeout=30*60):
+    def up(self, timeout=30 * 60):
         if self.local:
             with Given("I am running in local mode"):
                 with Then("check --clickhouse-binary-path is specified"):
@@ -666,12 +671,7 @@ class Cluster(object):
 
             for attempt in range(max_attempts):
                 with When(f"attempt {attempt}/{max_attempts}"):
-                    with By("pulling images for all the services"):
-                        cmd = self.command(None, f"{self.docker_compose} pull 2>&1 | tee", exitcode=None, timeout=timeout)
-                        if cmd.exitcode != 0:
-                            continue
-
-                    with And("checking if any containers are already running"):
+                    with By("checking if any containers are already running"):
                         self.command(None, f"{self.docker_compose} ps | tee")
 
                     with And("executing docker-compose down just in case it is up"):
@@ -685,7 +685,7 @@ class Cluster(object):
                     with And("executing docker-compose up"):
                         for up_attempt in range(max_up_attempts):
                             with By(f"attempt {up_attempt}/{max_up_attempts}"):
-                                cmd = self.command(None, f"{self.docker_compose} up --renew-anon-volumes --force-recreate --timeout 300 -d 2>&1 | tee", timeout=timeout)
+                                cmd = self.command(None, f"{self.docker_compose} up --renew-anon-volumes --force-recreate --timeout 60 -d 2>&1 | tee", timeout=timeout)
                                 if "is unhealthy" not in cmd.output:
                                     break
 

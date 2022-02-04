@@ -1,4 +1,5 @@
 import os
+import posixpath
 import time
 from pathlib import Path
 
@@ -27,27 +28,27 @@ def configs_backup_restore(self):
             create_and_populate_table(node=ch_node, table_name=table_name)
 
         with And("I make sure some configuration files/directories exist"):
-            for dirname in ("configs/clickhouse1/config.d", "configs/clickhouse1/users.d"):
+            for dirname in ("configs/clickhouse/config.d", "configs/clickhouse/users.d"):
+                dirname = os.path.abspath(os.path.join((posixpath.dirname(__file__)), '..', dirname))
                 if not Path(dirname).is_dir():
-                    with By(f"creating new dir {dirname}"):
-                        os.mkdir(dirname)
+                    fail(f"{dirname} not found, why you change file structure?")
 
-            for filename in ("configs/clickhouse1/config.xml", "configs/clickhouse1/users.xml",
-                             "configs/clickhouse1/config.d/macros.xml", "configs/clickhouse1/users.d/users_d.xml"):
+            for filename in ("configs/clickhouse1/config.d/macros.xml", "configs/clickhouse1/config.d/rabbitmq.xml", "configs/clickhouse/users.d/default.xml"):
+                filename = os.path.abspath(os.path.join((posixpath.dirname(__file__)), '..', filename))
                 if not Path(filename).is_file():
-                    with By(f"creating new file {filename}"):
-                        with open(filename, "w") as file:
-                            file.write("<yandex></yandex>")
+                    fail(f"{filename} not found, why you change file structure?")
 
         with When(f"I create backup"):
             backup.cmd(f"clickhouse-backup create --configs {table_name}")
 
         with When("I remove existing configuration to restore it later"):
-            for root, dirs, files in os.walk("configs/clickhouse1", topdown=False):
-                for file in files:
-                    filename = f"{root[20:]}/{file}"
-                    files_contents[filename] = ch_node.cmd(f"cat /etc/clickhouse-server/{filename}").output
-                    ch_node.cmd(f"echo \"\" > /etc/clickhouse-server/{filename}")
+            for local_config_dir in ("configs/clickhouse", "configs/clickhouse1/config.d"):
+                local_config_dir = os.path.abspath(os.path.join((posixpath.dirname(__file__)), '..', local_config_dir))
+                for root, dirs, files in os.walk(local_config_dir, topdown=False):
+                    for file in files:
+                        filename = f"{root[len(local_config_dir)+1:]}/{file}"
+                        files_contents[filename] = ch_node.cmd(f"cat /etc/clickhouse-server/{filename}").output
+                        ch_node.cmd(f"echo \"\" > /etc/clickhouse-server/{filename}")
 
         with Then("I restore from the backup and restart"):
             r = backup.cmd(f"clickhouse-backup restore --configs {table_name}", exitcode=None)
@@ -55,14 +56,16 @@ def configs_backup_restore(self):
             with Then("I expect ch-backup to attempt restart ch-server"):
                 assert "restart clickhouse-server" in r.output, error()
 
-            with And("I restart clickhouse"):
+            with And("I restart clickhouse, cause clickhouse-backup doesn't have access to systemd"):
                 ch_node.restart(safe=False)
 
         with And("I check files restored correctly"):
-            for root, dirs, files in os.walk("configs/clickhouse1", topdown=False):
-                for name in files:
-                    filename = f"{root[20:]}/{name}"
-                    assert files_contents[filename] == ch_node.cmd(f"cat /etc/clickhouse-server/{filename}").output, error()
+            for local_config_dir in ("configs/clickhouse", "configs/clickhouse1/config.d"):
+                local_config_dir = os.path.abspath(os.path.join((posixpath.dirname(__file__)), '..', local_config_dir))
+                for root, dirs, files in os.walk(local_config_dir, topdown=False):
+                    for name in files:
+                        filename = f"{root[len(local_config_dir)+1:]}/{name}"
+                        assert files_contents[filename] == ch_node.cmd(f"cat /etc/clickhouse-server/{filename}").output, error()
 
     finally:
         with Finally("removing created backup"):
