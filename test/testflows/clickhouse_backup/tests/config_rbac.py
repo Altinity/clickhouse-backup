@@ -28,7 +28,7 @@ def configs_backup_restore(self):
             create_and_populate_table(node=ch_node, table_name=table_name)
 
         with And("I make sure some configuration files/directories exist"):
-            for dirname in ("configs/clickhouse/config.d", "configs/clickhouse/users.d"):
+            for dirname in ("configs/clickhouse/config.d", "configs/clickhouse/users.d", "configs/clickhouse1/config.d"):
                 dirname = os.path.abspath(os.path.join((posixpath.dirname(__file__)), '..', dirname))
                 if not Path(dirname).is_dir():
                     fail(f"{dirname} not found, why you change file structure?")
@@ -42,13 +42,14 @@ def configs_backup_restore(self):
             backup.cmd(f"clickhouse-backup create --configs {table_name}")
 
         with When("I remove existing configuration to restore it later"):
-            for local_config_dir in ("configs/clickhouse", "configs/clickhouse1/config.d"):
+            for local_config_dir in ("configs/clickhouse", "configs/clickhouse1"):
                 local_config_dir = os.path.abspath(os.path.join((posixpath.dirname(__file__)), '..', local_config_dir))
                 for root, dirs, files in os.walk(local_config_dir, topdown=False):
                     for file in files:
                         filename = f"{root[len(local_config_dir)+1:]}/{file}"
-                        files_contents[filename] = ch_node.cmd(f"cat /etc/clickhouse-server/{filename}").output
-                        ch_node.cmd(f"echo \"\" > /etc/clickhouse-server/{filename}")
+                        if filename != "storage_configuration.sh":
+                            files_contents[filename] = ch_node.cmd(f"cat /etc/clickhouse-server/{filename}").output
+                            ch_node.cmd(f"echo \"\" > /etc/clickhouse-server/{filename}")
 
         with Then("I restore from the backup and restart"):
             r = backup.cmd(f"clickhouse-backup restore --configs {table_name}", exitcode=None)
@@ -60,12 +61,13 @@ def configs_backup_restore(self):
                 ch_node.restart(safe=False)
 
         with And("I check files restored correctly"):
-            for local_config_dir in ("configs/clickhouse", "configs/clickhouse1/config.d"):
+            for local_config_dir in ("configs/clickhouse", "configs/clickhouse1"):
                 local_config_dir = os.path.abspath(os.path.join((posixpath.dirname(__file__)), '..', local_config_dir))
                 for root, dirs, files in os.walk(local_config_dir, topdown=False):
                     for name in files:
-                        filename = f"{root[len(local_config_dir)+1:]}/{name}"
-                        assert files_contents[filename] == ch_node.cmd(f"cat /etc/clickhouse-server/{filename}").output, error()
+                        if filename != "storage_configuration.sh":
+                            filename = f"{root[len(local_config_dir)+1:]}/{name}"
+                            assert files_contents[filename] == ch_node.cmd(f"cat /etc/clickhouse-server/{filename}").output, error()
 
     finally:
         with Finally("removing created backup"):
