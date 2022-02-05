@@ -250,7 +250,7 @@ jobs:
   docker:
     needs:
       - test
-    - testflows
+      - testflows
     name: Docker
     runs-on: ubuntu-latest
     steps:
