@@ -141,8 +141,7 @@ jobs:
           set -x
 
           export CLICKHOUSE_TESTS_DIR=$(pwd)/test/testflows/clickhouse_backup
-          ~/venv/qa/bin/activate
-          python3 ./test/testflows/clickhouse_backup/regression.py --log ./test/testflows/raw.log
+          ~/venv/qa/bin/python3 ./test/testflows/clickhouse_backup/regression.py --log ./test/testflows/raw.log
           tfs --debug --no-colors transform compact ./test/testflows/raw.log ./test/testflows/compact.log
           tfs --debug --no-colors transform nice ./test/testflows/raw.log ./test/testflows/nice.log.txt
           tfs --debug --no-colors transform short ./test/testflows/raw.log ./test/testflows/short.log.txt
