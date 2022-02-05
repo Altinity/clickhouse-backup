@@ -212,7 +212,7 @@ def materializedmysql(self):
             mysql.cmd(f"mysql -uroot -pqwerty -e \"DELETE FROM mydb.MyTable WHERE id<3;\"")
 
         with And("I restore from backup"):
-            backup.cmd(f"clickhouse-backup restore --data --tables=mysql.MyTable {backup_name}")
+            backup.cmd(f"clickhouse-backup restore --tables=mysql.MyTable {backup_name}")
             time.sleep(5)
 
         with Then("expect table restored"):

@@ -185,7 +185,7 @@ def create_restore_delete_remote(self):
     api_base_table_name = self.context.api_base_table_name
 
     with Given("I configure ch-backup to use remote storage"):
-        config_modifier(path="configs/backup/config.yml", fields= {"general": {"remote_storage": "ftp"}})
+        config_modifier(fields= {"general": {"remote_storage": "ftp"}})
 
     try:
         with Step("I check API /create command works"):
@@ -218,7 +218,7 @@ def create_restore_delete_remote(self):
 
     finally:
         with Finally("I set remote_storage to none and remove local backup"):
-            config_modifier(path="configs/backup/config.yml", fields={"general": {"remote_storage": "none"}})
+            config_modifier(fields={"general": {"remote_storage": "none"}})
             backup.cmd(f"clickhouse-backup delete local {backup_name}")
 
 
@@ -296,7 +296,7 @@ def post_upload_download(self):
     backup = self.context.backup
 
     with Given("I configure ch-backup to use remote storage"):
-        config_modifier(path="configs/backup/config.yml", fields= {"general": {"remote_storage": "ftp"}})
+        config_modifier(fields={"general": {"remote_storage": "ftp"}})
 
     with And("I create a local backup"):
         backup.cmd(f"clickhouse-backup create {backup_name}")
@@ -321,7 +321,7 @@ def post_upload_download(self):
 
     finally:
         with Finally("I set remote_storage to none"):
-            config_modifier(path="configs/backup/config.yml", fields={"general": {"remote_storage": "none"}})
+            config_modifier(fields={"general": {"remote_storage": "none"}})
 
         with And("I remove backups"):
             backup.cmd(f"clickhouse-backup delete local {backup_name}")
@@ -341,7 +341,7 @@ def post_get_actions(self):
     backup = self.context.backup
 
     with Given("I configure ch-backup to use remote storage"):
-        config_modifier(path="configs/backup/config.yml", fields= {"general": {"remote_storage": "ftp"}})
+        config_modifier(fields= {"general": {"remote_storage": "ftp"}})
 
     try:
         with When("I start remote backup creations via POST actions"):
@@ -360,7 +360,7 @@ def post_get_actions(self):
 
     finally:
         with Finally("I set remote_storage to none"):
-            config_modifier(path="configs/backup/config.yml", fields={"general": {"remote_storage": "none"}})
+            config_modifier(fields={"general": {"remote_storage": "none"}})
 
         with And("I remove backups"):
             backup.cmd(f"clickhouse-backup delete local {backup_name}")

@@ -1,4 +1,4 @@
-version: '2.3'
+version: '2.4'
 
 services:
   zookeeper:
@@ -91,6 +91,8 @@ services:
   clickhouse_backup:
     image: ubuntu:latest
     hostname: backup
+    ports:
+      - "7171:7171"
     expose:
       - "7171"
     environment:
@@ -110,7 +112,6 @@ services:
     volumes:
       - "${CLICKHOUSE_TESTS_DIR}/../../../clickhouse-backup/clickhouse-backup-race:/bin/clickhouse-backup"
       - "${CLICKHOUSE_TESTS_DIR}/configs/backup/:/etc/clickhouse-backup/"
-      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse1/:/etc/clickhouse-server/"
     volumes_from:
       - clickhouse1
     healthcheck:

@@ -47,9 +47,9 @@ def configs_backup_restore(self):
                 for root, dirs, files in os.walk(local_config_dir, topdown=False):
                     for file in files:
                         filename = f"{root[len(local_config_dir)+1:]}/{file}"
-                        if filename != "storage_configuration.sh":
+                        if "storage_configuration.sh" not in filename:
                             files_contents[filename] = ch_node.cmd(f"cat /etc/clickhouse-server/{filename}").output
-                            ch_node.cmd(f"echo \"\" > /etc/clickhouse-server/{filename}")
+                            ch_node.cmd(f"truncate -s 0 /etc/clickhouse-server/{filename}")
 
         with Then("I restore from the backup and restart"):
             r = backup.cmd(f"clickhouse-backup restore --configs {table_name}", exitcode=None)
@@ -58,15 +58,15 @@ def configs_backup_restore(self):
                 assert "restart clickhouse-server" in r.output, error()
 
             with And("I restart clickhouse, cause clickhouse-backup doesn't have access to systemd"):
-                ch_node.restart(safe=False)
+                ch_node.restart(safe=False, wait_healthy=True)
 
         with And("I check files restored correctly"):
             for local_config_dir in ("configs/clickhouse", "configs/clickhouse1"):
                 local_config_dir = os.path.abspath(os.path.join((posixpath.dirname(__file__)), '..', local_config_dir))
                 for root, dirs, files in os.walk(local_config_dir, topdown=False):
                     for name in files:
-                        if filename != "storage_configuration.sh":
-                            filename = f"{root[len(local_config_dir)+1:]}/{name}"
+                        filename = f"{root[len(local_config_dir) + 1:]}/{name}"
+                        if "storage_configuration.sh" not in filename:
                             assert files_contents[filename] == ch_node.cmd(f"cat /etc/clickhouse-server/{filename}").output, error()
 
     finally:
@@ -104,12 +104,11 @@ def rbac_backup_restore(self):
                 ch_node.query(f"DROP {o} IF EXISTS {n}")
             ch_node.restart()
 
-
         with Then("I restore from the backup and restart"):
             backup.cmd(f"clickhouse-backup restore --rbac {table_name}", exitcode=None)
             ch_node.restart()
 
-        with And("I check objects rstored correctly"):
+        with And("I check objects restored correctly"):
             with By("expect user restored"):
                 assert "test_user" in ch_node.query("SHOW USERS").output, error()
 
@@ -125,8 +124,8 @@ def rbac_backup_restore(self):
             with And("expect quota restored"):
                 assert "test_quota" in ch_node.query("SHOW QUOTAS").output, error()
 
-            for o, n in (("USER", "test_user"), ("ROLE", "test_role"), ("ROW POLICY", "test_policy ON rbac_bp"),
-                         ("SETTINGS PROFILE", "test_profile"), ("QUOTA", "test_quota")):
+            for o, n in (("ROLE", "test_role"), ("ROW POLICY", "test_policy ON rbac_bp"),
+                         ("SETTINGS PROFILE", "test_profile"), ("QUOTA", "test_quota"), ("USER", "test_user")):
                 ch_node.query(f"DROP {o} IF EXISTS {n}")
 
     finally:

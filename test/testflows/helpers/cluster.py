@@ -4,6 +4,7 @@ import inspect
 import threading
 import tempfile
 
+import glob
 import testflows.settings as settings
 
 from testflows.core import *
@@ -107,6 +108,8 @@ class Node(object):
     def cmd(self, cmd, message=None, exitcode=0, steps=True, shell_command="bash --noediting", no_checks=False,
             raise_on_exception=False, step=By, *args, **kwargs):
         """Execute and check command.
+        :param shell_command:
+        :param steps:
         :param cmd: command
         :param message: expected message that should be in the output, default: None
         :param exitcode: expected exitcode, default: None
@@ -142,10 +145,12 @@ class ClickHouseNode(Node):
         with By(f"waiting until container {self.name} is healthy"):
             start_time = time.time()
             while True:
+                # sleep before to avoid false positive during /docker-entrypoint.initdb.d/ processing
+                time.sleep(1)
                 if self.query("select version()", no_checks=True, timeout=300, steps=False).exitcode == 0:
                     break
                 if time.time() - start_time < timeout:
-                    time.sleep(10)
+                    time.sleep(3)
                     continue
                 assert False, "container is not healthy"
 
@@ -403,7 +408,7 @@ class Cluster(object):
     """
 
     def __init__(self, local=False,
-                 clickhouse_binary_path=None, configs_dir=None,
+                 configs_dir=None,
                  nodes=None,
                  docker_compose="docker-compose", docker_compose_project_dir=None,
                  docker_compose_file="docker-compose.yml",
@@ -412,7 +417,6 @@ class Cluster(object):
         self._bash = {}
         self._control_shell = None
         self.environ = {} if (environ is None) else environ
-        self.clickhouse_binary_path = clickhouse_binary_path
         self.configs_dir = configs_dir
         self.local = local
         self.nodes = nodes or {}
@@ -616,8 +620,8 @@ class Cluster(object):
         if settings.debug:
             for node in self.nodes["clickhouse"]:
                 self.command(node=node, command=f"echo -e \"\n-- sending stop to: {node} --\n\" >> /var/log/clickhouse-server/clickhouse-server.log")
+        bash = self.bash(None)
         try:
-            bash = self.bash(None)
             with self.lock:
                 # remove and close all not None node terminals
                 for id in list(self._bash.keys()):
@@ -627,12 +631,12 @@ class Cluster(object):
                     else:
                         self._bash[id] = shell
         finally:
-            cmd = self.command(None, f"{self.docker_compose} down -v --remove-orphans --timeout 60", bash=bash, timeout=timeout)
+            if not self.local:
+                self.command(None, f"{self.docker_compose} down -v --remove-orphans --timeout 60", bash=bash, timeout=timeout)
             with self.lock:
                 if self._control_shell:
                     self._control_shell.__exit__(None, None, None)
                     self._control_shell = None
-            return cmd
 
     def temp_path(self):
         """Return temporary folder path.
@@ -647,19 +651,19 @@ class Cluster(object):
         """
         return f"{os.path.join(self.temp_path(), name)}"
 
-    def up(self, timeout=30 * 60):
+    def up(self, timeout=120):
         if self.local:
             with Given("I am running in local mode"):
-                with Then("check --clickhouse-binary-path is specified"):
-                    assert self.clickhouse_binary_path, "when running in local mode then --clickhouse-binary-path must be specified"
-                with And("path should exist"):
-                    assert os.path.exists(self.clickhouse_binary_path)
+                with Then("clean local clickhouse instances logs"):
+                    for node_type in self.nodes:
+                        if node_type == "clickhouse":
+                            for node in self.nodes[node_type]:
+                                logs_path = f"{self.configs_dir}/_instances/{node}/logs/*.log"
+                                if glob.glob(logs_path):
+                                    self.command(None, f"truncate -s 0 {logs_path}")
 
             with And("I set all the necessary environment variables"):
                 self.environ["COMPOSE_HTTP_TIMEOUT"] = "300"
-                self.environ["CLICKHOUSE_TESTS_SERVER_BIN_PATH"] = self.clickhouse_binary_path
-                self.environ["CLICKHOUSE_TESTS_ODBC_BRIDGE_BIN_PATH"] = os.path.join(
-                    os.path.dirname(self.clickhouse_binary_path), "clickhouse-odbc-bridge")
                 self.environ["CLICKHOUSE_TESTS_DIR"] = self.configs_dir
 
             with And("I list environment variables to show their values"):
@@ -675,7 +679,7 @@ class Cluster(object):
                         self.command(None, f"{self.docker_compose} ps | tee")
 
                     with And("executing docker-compose down just in case it is up"):
-                        cmd = self.command(None, f"{self.docker_compose} down 2>&1 | tee", exitcode=None, timeout=timeout)
+                        cmd = self.command(None, f"{self.docker_compose} down --timeout=10 2>&1 | tee", exitcode=None, timeout=timeout)
                         if cmd.exitcode != 0:
                             continue
 
@@ -701,12 +705,13 @@ class Cluster(object):
             if cmd.exitcode != 0 or "is unhealthy" in cmd.output or "Exit" in ps_cmd.output:
                 fail("could not bring up docker-compose cluster")
 
-        with Then("wait all nodes report healhy"):
+        with Then("wait all nodes report healthy"):
             for name in self.nodes["clickhouse"]:
                 self.node(name).wait_healthy()
 
     def command(self, node, command, message=None, exitcode=None, steps=True, bash=None, *args, **kwargs):
         """Execute and check command.
+        :param bash:
         :param node: name of the service
         :param command: command
         :param message: expected message that should be in the output, default: None

@@ -62,7 +62,6 @@ gcs:
   credentials_file: ''
   credentials_json: ''
   debug: false
-  path: gcb
 general:
   allow_empty_backups: false
   backups_to_keep_local: 0
@@ -81,7 +80,6 @@ s3:
   disable_ssl: true
   endpoint: http://minio:9000
   force_path_style: true
-  path: bckp
   secret_key: it-is-my-super-secret-key
 sftp:
   address: sftp_server

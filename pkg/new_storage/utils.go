@@ -35,9 +35,9 @@ func getArchiveWriter(format string, level int) (archiver.Writer, error) {
 		return &archiver.Tar{}, nil
 	case "lz4":
 		return &archiver.TarLz4{CompressionLevel: level, Tar: archiver.NewTar()}, nil
-	case "bzip2":
+	case "bzip2", "bz2":
 		return &archiver.TarBz2{CompressionLevel: level, Tar: archiver.NewTar()}, nil
-	case "gzip":
+	case "gzip", "gz":
 		return &archiver.TarGz{CompressionLevel: level, Tar: archiver.NewTar()}, nil
 	case "sz":
 		return &archiver.TarSz{Tar: archiver.NewTar()}, nil
@@ -48,7 +48,7 @@ func getArchiveWriter(format string, level int) (archiver.Writer, error) {
 	case "zstd":
 		return &archiver.TarZstd{Tar: archiver.NewTar()}, nil
 	}
-	return nil, fmt.Errorf("wrong compression_format: %s, supported: 'tar', 'lz4', 'bzip2', 'gzip', 'sz', 'xz', 'brotli', 'zstd'", format)
+	return nil, fmt.Errorf("wrong compression_format: %s, supported: 'tar', 'lz4', 'bzip2', 'bz2', 'gzip', 'gz', 'sz', 'xz', 'br', 'brotli', 'zstd'", format)
 }
 
 func getArchiveReader(format string) (archiver.Reader, error) {
@@ -57,9 +57,9 @@ func getArchiveReader(format string) (archiver.Reader, error) {
 		return archiver.NewTar(), nil
 	case "lz4":
 		return archiver.NewTarLz4(), nil
-	case "bzip2":
+	case "bzip2", "bz2":
 		return archiver.NewTarBz2(), nil
-	case "gzip":
+	case "gzip", "gz":
 		return archiver.NewTarGz(), nil
 	case "sz":
 		return archiver.NewTarSz(), nil
@@ -70,5 +70,5 @@ func getArchiveReader(format string) (archiver.Reader, error) {
 	case "zstd":
 		return archiver.NewTarZstd(), nil
 	}
-	return nil, fmt.Errorf("wrong compression_format: %s, supported: 'tar', 'lz4', 'bzip2', 'gzip', 'sz', 'xz', 'brotli', 'zstd'", format)
+	return nil, fmt.Errorf("wrong compression_format: %s, supported: 'tar', 'lz4', 'bzip2', 'bz2', 'gzip', 'gz', 'sz', 'xz', 'br', 'brotli', 'zstd'", format)
 }

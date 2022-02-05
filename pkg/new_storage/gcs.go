@@ -93,12 +93,16 @@ func (gcs *GCS) Connect() error {
 func (gcs *GCS) Walk(gcsPath string, recursive bool, process func(r RemoteFile) error) error {
 	ctx := context.Background()
 	rootPath := path.Join(gcs.Config.Path, gcsPath)
+	prefix := rootPath + "/"
+	if rootPath == "/" {
+		prefix = ""
+	}
 	delimiter := ""
 	if !recursive {
 		delimiter = "/"
 	}
 	it := gcs.client.Bucket(gcs.Config.Bucket).Objects(ctx, &storage.Query{
-		Prefix:    rootPath + "/",
+		Prefix:    prefix,
 		Delimiter: delimiter,
 	})
 	for {
@@ -144,13 +148,15 @@ func (gcs *GCS) GetFileReader(key string) (io.ReadCloser, error) {
 
 func (gcs *GCS) GetFileWriter(key string) io.WriteCloser {
 	ctx := context.Background()
-	obj := gcs.client.Bucket(gcs.Config.Bucket).Object(path.Join(gcs.Config.Path, key))
+	key = path.Join(gcs.Config.Path, key)
+	obj := gcs.client.Bucket(gcs.Config.Bucket).Object(key)
 	return obj.NewWriter(ctx)
 }
 
 func (gcs *GCS) PutFile(key string, r io.ReadCloser) error {
 	ctx := context.Background()
-	obj := gcs.client.Bucket(gcs.Config.Bucket).Object(path.Join(gcs.Config.Path, key))
+	key = path.Join(gcs.Config.Path, key)
+	obj := gcs.client.Bucket(gcs.Config.Bucket).Object(key)
 	writer := obj.NewWriter(ctx)
 	defer writer.Close()
 	buffer := make([]byte, 4*1024*1024)
@@ -176,7 +182,8 @@ func (gcs *GCS) StatFile(key string) (RemoteFile, error) {
 
 func (gcs *GCS) DeleteFile(key string) error {
 	ctx := context.Background()
-	object := gcs.client.Bucket(gcs.Config.Bucket).Object(path.Join(gcs.Config.Path, key))
+	key = path.Join(gcs.Config.Path, key)
+	object := gcs.client.Bucket(gcs.Config.Bucket).Object(key)
 	return object.Delete(ctx)
 }
 

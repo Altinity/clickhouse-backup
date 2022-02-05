@@ -34,9 +34,7 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: ${{ runner.os }}-${{ matrix.golang-version }}-golang-${{ hashFiles('go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.golang-version }}-golang-
+          key: ${{ runner.os }}-${{ matrix.golang-version }}-golang-${{ hashFiles('go.mod') }}
 
       - name: Install golang dependencies
         run: go mod download -x
@@ -110,6 +108,26 @@ jobs:
       - name: Checkout project
         uses: actions/checkout@v2
 
+      - uses: actions/download-artifact@v2
+        with:
+          name: build-test-artifacts
+          path: ./clickhouse-backup/
+
+      - name: Cache python
+        uses: actions/cache@v2
+        id: cache-python
+        with:
+          path: ~/venv/qa
+          key: python-${{ hashFiles('test/testflows/requirements.txt') }}
+
+      - name: Install python dependencies
+        run: |
+          set -x
+          python3 -m venv ~/venv/qa
+          ~/venv/qa/bin/pip3 install -U -r ./test/testflows/requirements.txt
+        if: |
+          steps.cache-python.outputs.cache-hit != 'true'
+
       - name: Running TestFlows tests
         env:
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
@@ -121,10 +139,9 @@ jobs:
           QA_GCS_CRED_JSON: ${{ secrets.QA_GCS_CRED_JSON }}
         run: |
           set -x
-          sudo apt install -y python3-pip
-          pip3 install -U -r ./test/testflows/requirements.txt
 
           export CLICKHOUSE_TESTS_DIR=$(pwd)/test/testflows/clickhouse_backup
+          ~/venv/qa/bin/activate
           python3 ./test/testflows/clickhouse_backup/regression.py --log ./test/testflows/raw.log
           tfs --debug --no-colors transform compact ./test/testflows/raw.log ./test/testflows/compact.log
           tfs --debug --no-colors transform nice ./test/testflows/raw.log ./test/testflows/nice.log.txt
@@ -145,6 +162,14 @@ jobs:
           name: testflows-report
           path: |
             test/testflows/*.html
+          if-no-files-found: error
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: tesflows-clickhouse-logs
+          path: |
+            test/testflows/clickhouse*/logs/*.log
           if-no-files-found: error
           retention-days: 14
 
@@ -181,9 +206,7 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: ${{ runner.os }}-${{ matrix.golang-version }}-golang-${{ hashFiles('go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.golang-version }}-golang-
+          key: ${{ runner.os }}-${{ matrix.golang-version }}-golang-${{ hashFiles('go.mod') }}
 
       - uses: actions/download-artifact@v2
         with:
@@ -225,7 +248,9 @@ jobs:
           go test -timeout 30m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
 
   docker:
-    needs: test
+    needs:
+    - test
+    - tesflows
     name: Docker
     runs-on: ubuntu-latest
     steps:

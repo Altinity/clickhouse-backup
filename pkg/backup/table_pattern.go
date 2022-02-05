@@ -160,6 +160,9 @@ func getOrderByEngine(query string, dropTable bool) int64 {
 		return 3
 	}
 	if strings.HasPrefix(query, "CREATE VIEW") ||
+		strings.HasPrefix(query, "CREATE LIVE VIEW") ||
+		strings.HasPrefix(query, "CREATE WINDOW VIEW") ||
+		strings.HasPrefix(query, "ATTACH WINDOW VIEW") ||
 		strings.HasPrefix(query, "CREATE MATERIALIZED VIEW") ||
 		strings.HasPrefix(query, "ATTACH MATERIALIZED VIEW") {
 		if dropTable {

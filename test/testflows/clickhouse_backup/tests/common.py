@@ -31,9 +31,8 @@ def random_datetime(dt_start, dt_end):
     return dt_start + datetime.timedelta(seconds=random_second)
 
 
-def config_modifier(path=None, fields={}):
-    if not path:
-        path = current().context.backup_config_file
+def config_modifier(fields={}):
+    path = current().context.backup_config_file
         
     with open(path) as f:
         s = yaml.full_load(f)

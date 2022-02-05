@@ -18,11 +18,10 @@ from clickhouse_backup.requirements.requirements import *
 from clickhouse_backup.tests.common import simple_data_types_columns
 
 xfails = {
-    "/clickhouse backup/cloud storage/gcs/:": [(Fail, "https://github.com/AlexAkulov/clickhouse-backup/issues/300")],
-    "/clickhouse backup/other engines/materializedpostgresql/:": [(Fail, "https://github.com/ClickHouse/ClickHouse/issues/32902")],
-    "/clickhouse backup/other engines/materializedmysql/:": [(Fail, "Expected behavior unclear.")],
-    "/clickhouse backup/cloud storage/compression formats/:": [(Fail, "Known, to be fixed.")],
-    "/clickhouse backup/cloud storage/s3 aws/:": [(Fail, "Test will be fixed in future PR.")],
+    "/clickhouse backup/other engines/materializedpostgresql/:": [
+        (Fail, "https://github.com/ClickHouse/ClickHouse/issues/32902")],
+    "/clickhouse backup/other engines/materializedmysql/:": [
+        (Fail, "DROP TABLE not supported by MaterializedMySQL, just attach will not help")],
 }
 
 
@@ -33,19 +32,18 @@ xfails = {
 @Specifications(
     QA_SRS013_ClickHouse_Backup_Utility
 )
-def regression(self, clickhouse_binary_path, local):
+def regression(self, local):
     """ClickHouse Backup utility test regression suite.
     """
-    self.context.local = local
     nodes = {
-            "clickhouse": ("clickhouse1", "clickhouse2"),
-            "clickhouse_backup": ("clickhouse_backup",),
-            "kafka": ("kafka",),
-            "mysql": ("mysql",),
-            "postgres": ("postgres",),
+        "clickhouse": ("clickhouse1", "clickhouse2"),
+        "clickhouse_backup": ("clickhouse_backup",),
+        "kafka": ("kafka",),
+        "mysql": ("mysql",),
+        "postgres": ("postgres",),
     }
 
-    with Cluster(local, clickhouse_binary_path, nodes=nodes) as cluster:
+    with Cluster(local, nodes=nodes) as cluster:
         cwd = os.environ.get('CLICKHOUSE_TESTS_DIR') if os.environ.get('CLICKHOUSE_TESTS_DIR') else os.getcwd()
         self.context.backup_config_file = f"{cwd}/configs/backup/config.yml"
         self.context.cluster = cluster

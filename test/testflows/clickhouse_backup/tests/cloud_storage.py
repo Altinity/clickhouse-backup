@@ -93,7 +93,7 @@ def test_storage_outline(self, storage_type, fields_to_modify=None):
     """
     clickhouse = self.context.nodes[0]
     backup = self.context.backup
-    name_prefix = f"{storage_type}_backup"
+    name_prefix = f"{storage_type}_backup_{time.time_ns()}"
 
     if not fields_to_modify:
         fields_to_modify = {"general": {"remote_storage": storage_type}}

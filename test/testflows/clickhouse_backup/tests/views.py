@@ -145,10 +145,9 @@ def nested_views(self):
         with Finally("I remove backup"):
             backup.cmd(f"clickhouse-backup delete local {base_table_name}")
 
-        with And("I drop views and table"):
+        with And("I drop views"):
             drop_table(node=clickhouse, table_name=f"{base_table_name}_sview")
             drop_table(node=clickhouse, table_name=f"{base_table_name}_nview")
-            drop_table(node=clickhouse, table_name=base_table_name)
 
 
 @TestFeature
