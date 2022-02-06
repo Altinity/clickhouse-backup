@@ -22,6 +22,8 @@ IMPROVEMENTS
 
 BUG FIXES
 
+- fix [#300](https://github.com/AlexAkulov/clickhouse-backup/issues/300), allow GCP properly work with empty `GCP_PATH`
+  value
 - fix [#340](https://github.com/AlexAkulov/clickhouse-backup/issues/340), properly handle errors on S3 during Walk() and
   delete old backup
 - fix [#331](https://github.com/AlexAkulov/clickhouse-backup/issues/331), properly restore tables where have table name
@@ -38,7 +40,7 @@ BUG FIXES
 - fix `restore --rm` behavior for 20.12+ for tables which have dependent objects (like dictionary)
 - fix concurrency by `FTP` creation directories during upload, reduce connection pool usage
 - properly handle `--schema` parameter for show local backup size after `download`
-- fix restore bug for WINDOW VIEW, thanks @
+- fix restore bug for WINDOW VIEW, thanks @zvonand
 
 EXPERIMENTAL
 
