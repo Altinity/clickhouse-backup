@@ -170,7 +170,7 @@ jobs:
         with:
           name: tesflows-clickhouse-logs
           path: |
-            test/testflows/clickhouse_backup/_instances/clickhouse*/*.log
+            test/testflows/clickhouse_backup/_instances/clickhouse*/logs/*.log
           if-no-files-found: error
           retention-days: 14
 
