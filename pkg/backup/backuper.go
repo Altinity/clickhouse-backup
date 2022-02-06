@@ -16,15 +16,6 @@ type Backuper struct {
 	DefaultDataPath string
 }
 
-type BackupOptions struct {
-	BackupName        string
-	TablePattern      string
-	DiffFrom          string
-	SchemaOnly        bool
-	DataOnly          bool
-	DropBeforeRestore bool
-}
-
 func (b *Backuper) init() error {
 	var err error
 	b.DefaultDataPath, err = b.ch.GetDefaultPath()
