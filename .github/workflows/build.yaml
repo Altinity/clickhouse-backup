@@ -141,10 +141,11 @@ jobs:
           set -x
 
           chmod +x $(pwd)/clickhouse-backup/clickhouse-backup*
+          sudo ln -snvf ~/venv/qa/bin/tfs /bin/tfs
+          tfs --help
 
           export CLICKHOUSE_TESTS_DIR=$(pwd)/test/testflows/clickhouse_backup
           ~/venv/qa/bin/python3 ./test/testflows/clickhouse_backup/regression.py --log ./test/testflows/raw.log --output=short
-          sudo ln -snvf /bin/tfs ~/venv/qa/bin/tfs
           ~/venv/qa/bin/tfs --debug --no-colors transform compact ./test/testflows/raw.log ./test/testflows/compact.log
           ~/venv/qa/bin/tfs --debug --no-colors transform nice ./test/testflows/raw.log ./test/testflows/nice.log.txt
           ~/venv/qa/bin/tfs --debug --no-colors transform short ./test/testflows/raw.log ./test/testflows/short.log.txt
@@ -171,7 +172,7 @@ jobs:
         with:
           name: tesflows-clickhouse-logs
           path: |
-            test/testflows/clickhouse_backup/_instances/clickhouse*/logs/*.log
+            test/testflows/clickhouse_backup/_instances/**/*.log
           if-no-files-found: error
           retention-days: 14
 
