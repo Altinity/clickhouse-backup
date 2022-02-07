@@ -156,6 +156,7 @@ jobs:
           path: |
             test/testflows/*.log
             test/testflows/*.log.txt
+            test/testflows/clickhouse_backup/_instances/**/*.log
           if-no-files-found: error
           retention-days: 7
 
@@ -164,14 +165,6 @@ jobs:
           name: testflows-report
           path: |
             test/testflows/*.html
-          if-no-files-found: error
-          retention-days: 7
-
-      - uses: actions/upload-artifact@v2
-        with:
-          name: tesflows-clickhouse-logs
-          path: |
-            test/testflows/clickhouse_backup/_instances/**/*.log
           if-no-files-found: error
           retention-days: 7
 
