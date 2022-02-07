@@ -173,6 +173,8 @@ def s3_minio(self):
 def s3_aws(self):
     """Test that an existing backup can be uploaded to a S3 server.
     """
+    if not os.environ.get('QA_AWS_ACCESS_KEY'):
+        skip("QA_AWS_ACCESS_KEY environment not found, test skipped")
     access_key = os.environ.get('QA_AWS_ACCESS_KEY')
     secret_key = os.environ.get('QA_AWS_SECRET_KEY')
     endpoint = os.environ.get('QA_AWS_ENDPOINT')
@@ -192,6 +194,9 @@ def s3_aws(self):
 def gcs(self):
     """Test that an existing backup can be uploaded to GCS bucket.
     """
+    if not os.environ.get('QA_GCS_CRED_JSON'):
+        skip("QA_GCS_CRED_JSON environment not found, test skipped")
+
     test_storage_outline(storage_type="gcs")
 
 
