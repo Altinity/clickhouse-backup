@@ -689,7 +689,7 @@ class Cluster(object):
                     with And("executing docker-compose up"):
                         for up_attempt in range(max_up_attempts):
                             with By(f"attempt {up_attempt}/{max_up_attempts}"):
-                                cmd = self.command(None, f"{self.docker_compose} up --renew-anon-volumes --force-recreate --timeout 60 -d 2>&1 | tee", timeout=timeout)
+                                cmd = self.command(None, f"{self.docker_compose} up --renew-anon-volumes --force-recreate --timeout 120 -d 2>&1 | tee", timeout=timeout)
                                 if "is unhealthy" not in cmd.output:
                                     break
 
