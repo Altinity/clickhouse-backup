@@ -1,0 +1,5 @@
+<?xml version="1.0"?>
+<yandex>
+    <default_replica_path>/clickhouse/tables/{shard}/{database}/{table}</default_replica_path>
+    <default_replica_name>{replica}</default_replica_name>
+</yandex>

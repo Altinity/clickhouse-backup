@@ -251,9 +251,12 @@ func createTables(cfg *config.Config, ch *clickhouse.ClickHouse, tablesForRestor
 			if err := ch.CreateDatabase(schema.Database); err != nil {
 				return fmt.Errorf("can't create database '%s': %v", schema.Database, err)
 			}
-			//materialized views should restore via ATTACH
+			//materialized and window views should restore via ATTACH
 			schema.Query = strings.Replace(
 				schema.Query, "CREATE MATERIALIZED VIEW", "ATTACH MATERIALIZED VIEW", 1,
+			)
+			schema.Query = strings.Replace(
+				schema.Query, "CREATE WINDOW VIEW", "ATTACH WINDOW VIEW", 1,
 			)
 			restoreErr = ch.CreateTable(clickhouse.Table{
 				Database: schema.Database,

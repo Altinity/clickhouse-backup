@@ -77,9 +77,10 @@ COMMANDS:
    restore_remote  Download and restore
    delete          Delete specific backup
    default-config  Print default config
+   print-config    Print current config
+   clean           Remove data in 'shadow' folder from all `path` folders available from `system.disks`
    server          Run API server
    help, h         Shows a list of commands or help for one command
-
 GLOBAL OPTIONS:
    --config FILE, -c FILE  Config FILE name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --help, -h              show help

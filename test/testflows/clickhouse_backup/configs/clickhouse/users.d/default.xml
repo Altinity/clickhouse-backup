@@ -1,0 +1,14 @@
+<yandex>
+    <users>
+        <default><access_management>1</access_management></default>
+    </users>
+    <profiles>
+        <default>
+            <allow_suspicious_low_cardinality_types>1</allow_suspicious_low_cardinality_types>
+            <allow_experimental_geo_types>1</allow_experimental_geo_types>
+            <allow_experimental_live_view>1</allow_experimental_live_view>
+            <allow_experimental_window_view>1</allow_experimental_window_view>
+            <allow_experimental_database_materialized_mysql>1</allow_experimental_database_materialized_mysql>
+       </default>
+    </profiles>
+</yandex>

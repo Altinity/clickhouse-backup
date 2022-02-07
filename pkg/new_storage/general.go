@@ -187,25 +187,18 @@ func (bd *BackupDestination) BackupList(parseMetadata bool, parseMetadataOnly st
 		backupName := strings.Trim(o.Name(), "/")
 		if !parseMetadata || (parseMetadataOnly != "" && parseMetadataOnly != backupName) {
 			if cachedMetadata, isCached := listCache[backupName]; isCached {
-				cachedMetadata.UploadDate = o.LastModified()
-				cachedMetadata.Legacy = false
-				listCache[backupName] = cachedMetadata
 				result = append(result, cachedMetadata)
 			} else {
 				result = append(result, Backup{
 					BackupMetadata: metadata.BackupMetadata{
 						BackupName: backupName,
 					},
-					Legacy:     false,
-					UploadDate: o.LastModified(),
+					Legacy: false,
 				})
 			}
 			return nil
 		}
 		if cachedMetadata, isCached := listCache[backupName]; isCached {
-			cachedMetadata.UploadDate = o.LastModified()
-			cachedMetadata.Legacy = false
-			listCache[backupName] = cachedMetadata
 			result = append(result, cachedMetadata)
 			return nil
 		}

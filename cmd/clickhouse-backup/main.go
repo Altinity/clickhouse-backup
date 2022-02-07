@@ -361,7 +361,7 @@ func main() {
 		},
 		{
 			Name:  "clean",
-			Usage: "Remove data in 'shadow' folder from all `path` folder available from `system.disks`",
+			Usage: "Remove data in 'shadow' folder from all `path` folders available from `system.disks`",
 			Action: func(c *cli.Context) error {
 				return backup.Clean(config.GetConfig(c))
 			},

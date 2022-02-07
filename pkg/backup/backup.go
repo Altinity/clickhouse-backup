@@ -299,7 +299,7 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName, shadowBackupUUID st
 	}
 
 	// backup data
-	if !strings.HasSuffix(table.Engine, "MergeTree") {
+	if !strings.HasSuffix(table.Engine, "MergeTree") && table.Engine != "MaterializedMySQL" && table.Engine != "MaterializedPostreSQL" {
 		log.WithField("engine", table.Engine).Debug("skip table backup")
 		return nil, nil, nil
 	}

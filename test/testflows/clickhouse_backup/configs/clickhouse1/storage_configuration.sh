@@ -1,0 +1,51 @@
+#!/bin/bash
+mkdir -pv /mnt/fast_disk/clickhouse /mnt/slow_disk/clickhouse /mnt/simple_disk/clickhouse
+chown -Rv clickhouse:clickhouse /mnt/fast_disk/clickhouse /mnt/slow_disk/clickhouse /mnt/simple_disk/clickhouse
+
+cat <<EOT > /etc/clickhouse-server/config.d/storage.xml
+<yandex>
+    <storage_configuration>
+        <disks>
+            <fast_disk>
+                <path>/mnt/fast_disk/clickhouse/</path>
+            </fast_disk>
+            <slow_disk>
+                <path>/mnt/slow_disk/clickhouse/</path>
+            </slow_disk>
+            <simple_disk>
+              <type>local</type>
+                <path>/mnt/simple_disk/clickhouse/</path>
+            </simple_disk>
+            <encrypted_disk>
+                <type>encrypted</type>
+                <disk>simple_disk</disk>
+                <key>_16_ascii_chars_</key>
+            </encrypted_disk>
+        </disks>
+        <policies>
+            <tiered_policy>
+                <volumes>
+                    <hot_volume>
+                        <disk>fast_disk</disk>
+                        <max_data_part_size_bytes>200000000</max_data_part_size_bytes>
+                    </hot_volume>
+                    <cold_volume>
+                        <disk>slow_disk</disk>
+                    </cold_volume>
+                </volumes>
+                <move_factor>0.2</move_factor>
+            </tiered_policy>
+            <encrypted_policy>
+                <volumes>
+                    <encrypted>
+                        <disk>encrypted_disk</disk>
+                    </encrypted>
+                    <plain>
+                        <disk>simple_disk</disk>
+                    </plain>
+                </volumes>
+            </encrypted_policy>
+        </policies>
+    </storage_configuration>
+</yandex>
+EOT

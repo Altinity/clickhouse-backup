@@ -1,0 +1,25 @@
+version: '2.4'
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:-22.1}
+    volumes:
+      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse/ssl:/etc/clickhouse-server/ssl"
+      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse/config.d/common.xml:/etc/clickhouse-server/config.d/common.xml"
+      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse/config.d/graphite_rollup.xml:/etc/clickhouse-server/config.d/graphite_rollup.xml"
+      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse/config.d/logs.xml:/etc/clickhouse-server/config.d/logs.xml"
+      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse/config.d/postgres.xml:/etc/clickhouse-server/config.d/postgres.xml"
+      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse/config.d/remote.xml:/etc/clickhouse-server/config.d/remote.xml"
+      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse/config.d/replication.xml:/etc/clickhouse-server/config.d/replication.xml"
+      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse/config.d/zookeeper.xml:/etc/clickhouse-server/config.d/zookeeper.xml"
+      - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse/users.d/default.xml:/etc/clickhouse-server/users.d/default.xml"
+    healthcheck:
+      test: clickhouse client --query='select 1'
+      interval: 3s
+      timeout: 2s
+      retries: 40
+      start_period: 2s
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - label:disable

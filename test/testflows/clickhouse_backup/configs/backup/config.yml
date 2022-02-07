@@ -1,0 +1,92 @@
+api:
+  certificate_file: ''
+  create_integration_tables: false
+  enable_metrics: false
+  enable_pprof: false
+  listen: backup:7171
+  password: ''
+  private_key_file: ''
+  secure: false
+  username: ''
+azblob:
+  account_key: ''
+  account_name: ''
+  compression_format: tar
+  compression_level: 3
+  container: ''
+  endpoint_suffix: core.windows.net
+  path: ''
+  sas: ''
+  sse_key: ''
+  use_managed_identity: false
+clickhouse:
+  config_dir: /etc/clickhouse-server
+  debug: false
+  disk_mapping: {}
+  freeze_by_part: false
+  host: clickhouse1
+  log_sql_queries: true
+  password: ''
+  port: 9000
+  secure: false
+  skip_tables:
+  - system.*
+  - INFORMATION_SCHEMA.*
+  - information_schema.*
+  skip_verify: false
+  sync_replicated_tables: true
+  timeout: 5m
+  username: default
+cos:
+  compression_format: tar
+  compression_level: 3
+  path: ''
+  secret_id: ''
+  secret_key: ''
+  timeout: 2m
+  url: ''
+ftp:
+  address: ftp_server:21
+  compression_format: tar
+  compression_level: 3
+  debug: false
+  password: aztest
+  path: ''
+  timeout: 2m
+  tls: false
+  username: aztest
+gcs:
+  bucket: altinity-qa-test
+  compression_format: tar
+  compression_level: 3
+  credentials_file: ''
+  credentials_json: ''
+  debug: false
+general:
+  allow_empty_backups: false
+  backups_to_keep_local: 0
+  backups_to_keep_remote: 0
+  disable_progress_bar: false
+  download_concurrency: 1
+  log_level: info
+  max_file_size: 107374182400
+  remote_storage: none
+  upload_concurrency: 1
+s3:
+  access_key: access-key
+  acl: private
+  bucket: altinity-qa-test
+  debug: false
+  disable_ssl: true
+  endpoint: http://minio:9000
+  force_path_style: true
+  secret_key: it-is-my-super-secret-key
+sftp:
+  address: sftp_server
+  compression_format: tar
+  compression_level: 3
+  concurrency: 1
+  key: ''
+  password: JFzMHfVpvTgEd74XXPq6wARA2Qg3AutJ
+  path: /root
+  username: root

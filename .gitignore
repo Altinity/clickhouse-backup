@@ -2,9 +2,13 @@
 *.exe
 debug
 /clickhouse-backup
-config.yml
 credentials.json
 .idea
 build/
 .env
 *.log
+
+# TestFlows tests artifacts that shall not be stored in Git
+_instances/
+__pycache__/
+*.py[cod]
