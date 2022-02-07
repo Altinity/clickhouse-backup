@@ -61,6 +61,7 @@ jobs:
       - name: Building deb, rpm and tar.gz packages
         id: make_packages
         run: |
+          set -x
           export NAME=clickhouse-backup
           export VERSION=$(git describe --always --tags --abbrev=0 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/c\1/;s/-/./g')
 
@@ -106,7 +107,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: build/${{ steps.make_packages.outputs.rpm_amd64 }}
+          asset_path: ${{ steps.make_packages.outputs.rpm_amd64 }}
           asset_name: ${{ steps.make_packages.outputs.rpm_amd64 }}
           asset_content_type: application/octet-stream
 
@@ -117,7 +118,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: build/${{ steps.make_packages.outputs.rpm_arm64 }}
+          asset_path: ${{ steps.make_packages.outputs.rpm_arm64 }}
           asset_name: ${{ steps.make_packages.outputs.rpm_arm64 }}
           asset_content_type: application/octet-stream
 
@@ -128,7 +129,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: build/${{ steps.make_packages.outputs.deb_amd64 }}
+          asset_path: ${{ steps.make_packages.outputs.deb_amd64 }}
           asset_name: ${{ steps.make_packages.outputs.deb_amd64 }}
           asset_content_type: application/octet-stream
 
@@ -139,7 +140,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: build/${{ steps.make_packages.outputs.deb_arm64 }}
+          asset_path: ${{ steps.make_packages.outputs.deb_arm64 }}
           asset_name: ${{ steps.make_packages.outputs.deb_amd64 }}
           asset_content_type: application/octet-stream
 
