@@ -91,102 +91,23 @@ jobs:
 
       - name: Create release
         id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
         with:
           tag_name: ${{ steps.docker_tag.outputs.docker_tag }}
           release_name: ${{ steps.docker_tag.outputs.docker_tag }}
           body_path: ${{ steps.release_notes.outputs.path }}
           draft: true
-
-      - name: Add rpm x86_64 to github release
-        id: upload-release-rpm_amd64
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ steps.make_packages.outputs.rpm_amd64 }}
-          asset_name: ${{ steps.make_packages.outputs.rpm_amd64 }}
-          asset_content_type: application/octet-stream
-
-      - name: Add rpm aarch64 to github release
-        id: upload-release-rpm_arm64
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ steps.make_packages.outputs.rpm_arm64 }}
-          asset_name: ${{ steps.make_packages.outputs.rpm_arm64 }}
-          asset_content_type: application/octet-stream
-
-      - name: Add deb amd64 to github release
-        id: upload-release-deb_amd64
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ steps.make_packages.outputs.deb_amd64 }}
-          asset_name: ${{ steps.make_packages.outputs.deb_amd64 }}
-          asset_content_type: application/octet-stream
-
-      - name: Add deb arm64 to github release
-        id: upload-release-deb_arm64
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ steps.make_packages.outputs.deb_arm64 }}
-          asset_name: ${{ steps.make_packages.outputs.deb_amd64 }}
-          asset_content_type: application/octet-stream
-
-      - name: Add tar.gz linux/amd64 to github release
-        id: upload-release-tgz_linux_amd64
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ steps.make_packages.outputs.tgz_linux_amd64 }}
-          asset_name: ${{ steps.make_packages.outputs.tgz_linux_amd64 }}
-          asset_content_type: application/octet-stream
-
-      - name: Add tar.gz linux/arm64 to github release
-        id: upload-release-tgz_linux_arm64
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ steps.make_packages.outputs.tgz_linux_arm64 }}
-          asset_name: ${{ steps.make_packages.outputs.tgz_linux_arm64 }}
-          asset_content_type: application/octet-stream
-
-      - name: Add tar.gz darwin/amd64 to github release
-        id: upload-release-tgz_darwin_amd64
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ steps.make_packages.outputs.tgz_darwin_amd64 }}
-          asset_name: ${{ steps.make_packages.outputs.tgz_darwin_amd64 }}
-          asset_content_type: application/octet-stream
-
-      - name: Add tar.gz darwin/arm64 to github release
-        id: upload-release-tgz_darwin_arm64
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ steps.make_packages.outputs.tgz_darwin_arm64 }}
-          asset_name: ${{ steps.make_packages.outputs.tgz_darwin_arm64 }}
-          asset_content_type: application/octet-stream
+          fail_on_unmatched_files: true
+          files: |
+            ${{ steps.make_packages.outputs.rpm_amd64 }}
+            ${{ steps.make_packages.outputs.rpm_arm64 }}
+            ${{ steps.make_packages.outputs.deb_amd64 }}
+            ${{ steps.make_packages.outputs.deb_arm64 }}
+            ${{ steps.make_packages.outputs.tgz_linux_amd64 }}
+            ${{ steps.make_packages.outputs.tgz_linux_arm64 }}
+            ${{ steps.make_packages.outputs.tgz_darwin_amd64 }}
+            ${{ steps.make_packages.outputs.tgz_darwin_arm64 }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v1
