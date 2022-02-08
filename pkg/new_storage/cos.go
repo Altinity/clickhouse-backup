@@ -2,14 +2,13 @@ package new_storage
 
 import (
 	"context"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"io"
 	"net/http"
 	"net/url"
 	"path"
 	"strings"
 	"time"
-
-	"github.com/AlexAkulov/clickhouse-backup/config"
 
 	"github.com/tencentyun/cos-go-sdk-v5"
 	"github.com/tencentyun/cos-go-sdk-v5/debug"

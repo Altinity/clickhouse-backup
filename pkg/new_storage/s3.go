@@ -3,6 +3,7 @@ package new_storage
 import (
 	"context"
 	"crypto/tls"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"io"
 	"net/http"
 	"os"
@@ -10,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AlexAkulov/clickhouse-backup/config"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/apex/log"

@@ -2,12 +2,11 @@ package storage
 
 import (
 	"crypto/tls"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"io"
 	"os"
 	"path"
 	"time"
-
-	"github.com/AlexAkulov/clickhouse-backup/config"
 
 	"github.com/jlaffaye/ftp"
 )

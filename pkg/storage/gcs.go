@@ -2,10 +2,9 @@ package storage
 
 import (
 	"context"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"io"
 	"time"
-
-	"github.com/AlexAkulov/clickhouse-backup/config"
 
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/iterator"

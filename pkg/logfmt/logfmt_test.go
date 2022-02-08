@@ -2,13 +2,12 @@ package logfmt_test
 
 import (
 	"bytes"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/logfmt"
 	"io/ioutil"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
-
-	"github.com/AlexAkulov/clickhouse-backup/internal/logfmt"
 
 	"github.com/apex/log"
 )

@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"encoding/json"
 	"fmt"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/progressbar"
 	"io"
 	"io/ioutil"
 	"log"
@@ -13,9 +15,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/AlexAkulov/clickhouse-backup/config"
-	"github.com/AlexAkulov/clickhouse-backup/internal/progressbar"
 
 	"github.com/djherbis/buffer"
 	"github.com/mholt/archiver/v3"

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"net/url"
 	"os"
 	"path"
@@ -14,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 	"github.com/apex/log"
 

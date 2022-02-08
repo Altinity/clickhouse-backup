@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	apexLog "github.com/apex/log"
 	"io"
 	"os"
@@ -12,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/jlaffaye/ftp"
 	"github.com/jolestar/go-commons-pool/v2"
 )

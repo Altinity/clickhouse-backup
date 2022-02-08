@@ -3,6 +3,7 @@ package backup
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"io"
 	"io/ioutil"
 	"os"
@@ -11,11 +12,10 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/new_storage"
-	"github.com/AlexAkulov/clickhouse-backup/utils"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
 )
 
 func printBackupsRemote(w io.Writer, backupList []new_storage.Backup, format string) error {

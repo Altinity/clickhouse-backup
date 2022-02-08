@@ -2,7 +2,7 @@ package filesystemhelper
 
 import (
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/utils"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
 	"os"
 	"path"
 	"path/filepath"

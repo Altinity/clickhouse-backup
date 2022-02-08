@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -18,9 +19,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/AlexAkulov/clickhouse-backup/utils"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
 
-	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/backup"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 

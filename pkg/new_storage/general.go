@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/utils"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/progressbar"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
 	"io"
 	"io/ioutil"
 	"os"
@@ -16,8 +18,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/AlexAkulov/clickhouse-backup/config"
-	"github.com/AlexAkulov/clickhouse-backup/internal/progressbar"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 	"golang.org/x/sync/errgroup"
 

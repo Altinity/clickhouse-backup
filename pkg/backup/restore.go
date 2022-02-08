@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"io/ioutil"
 	"os"
 	"os/exec"
@@ -14,11 +15,10 @@ import (
 
 	"github.com/mattn/go-shellwords"
 
-	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/filesystemhelper"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
-	"github.com/AlexAkulov/clickhouse-backup/utils"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
 	apexLog "github.com/apex/log"
 	"github.com/otiai10/copy"
 	"github.com/yargevad/filepathx"

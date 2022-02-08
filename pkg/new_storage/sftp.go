@@ -3,6 +3,7 @@ package new_storage
 import (
 	"errors"
 	"fmt"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"io"
 	"io/ioutil"
 	"path"
@@ -11,7 +12,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/apex/log"
 	lib_sftp "github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"

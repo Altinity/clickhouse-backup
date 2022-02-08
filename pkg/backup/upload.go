@@ -20,7 +20,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/filesystemhelper"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
-	"github.com/AlexAkulov/clickhouse-backup/utils"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
 	apexLog "github.com/apex/log"
 	"github.com/yargevad/filepathx"
 )

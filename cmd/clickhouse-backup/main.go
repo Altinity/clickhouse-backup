@@ -2,11 +2,10 @@ package main
 
 import (
 	"fmt"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/logcli"
 	"os"
 
-	"github.com/AlexAkulov/clickhouse-backup/config"
-	// "github.com/AlexAkulov/clickhouse-backup/internal/logfmt"
-	"github.com/AlexAkulov/clickhouse-backup/internal/logcli"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/backup"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/server"
 

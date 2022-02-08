@@ -3,6 +3,7 @@ package new_storage
 import (
 	"context"
 	"fmt"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"google.golang.org/api/option/internaloption"
 	"io"
 	"net/http"
@@ -11,7 +12,6 @@ import (
 	"time"
 
 	"cloud.google.com/go/storage"
-	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/apex/log"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"

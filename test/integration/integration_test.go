@@ -6,6 +6,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/logcli"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -15,9 +17,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AlexAkulov/clickhouse-backup/internal/logcli"
-
-	"github.com/AlexAkulov/clickhouse-backup/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/apex/log"
 	"golang.org/x/mod/semver"
