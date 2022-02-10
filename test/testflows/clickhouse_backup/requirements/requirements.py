@@ -33,11 +33,25 @@ RQ_SRS_013_ClickHouse_BackupUtility_Generic_RestorePartiallyDropped = Requiremen
     description=(
         'The [clickhouse-backup] utility SHALL support restoring table that has lost some piece of data.\n'
         '\n'
-        '\n'
         ),
     link=None,
     level=3,
     num='4.1.2')
+
+RQ_SRS_013_ClickHouse_BackupUtility_Generic_BackupDuringMutation = Requirement(
+    name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.BackupDuringMutation',
+    version='1.0',
+    priority=None,
+    group=None,
+    type=None,
+    uid=None,
+    description=(
+        'The [clickhouse-backup] utility SHALL be able to create a backup if there is an ongoing mutation. Restoring from such backups SHALL also be possible.\n'
+        '\n'
+        ),
+    link=None,
+    level=3,
+    num='4.1.3')
 
 RQ_SRS_013_ClickHouse_BackupUtility_Generic_AllTables = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.AllTables',
@@ -52,7 +66,7 @@ RQ_SRS_013_ClickHouse_BackupUtility_Generic_AllTables = Requirement(
         ),
     link=None,
     level=3,
-    num='4.1.3')
+    num='4.1.4')
 
 RQ_SRS_013_ClickHouse_BackupUtility_Generic_SpecificTables = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.SpecificTables',
@@ -68,7 +82,7 @@ RQ_SRS_013_ClickHouse_BackupUtility_Generic_SpecificTables = Requirement(
         ),
     link=None,
     level=3,
-    num='4.1.4')
+    num='4.1.5')
 
 RQ_SRS_013_ClickHouse_BackupUtility_Generic_SpecificTables_Performance = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.SpecificTables.Performance',
@@ -83,7 +97,7 @@ RQ_SRS_013_ClickHouse_BackupUtility_Generic_SpecificTables_Performance = Require
         ),
     link=None,
     level=3,
-    num='4.1.5')
+    num='4.1.6')
 
 RQ_SRS_013_ClickHouse_BackupUtility_Generic_SpecificTables_ManyColumns = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.SpecificTables.ManyColumns',
@@ -99,7 +113,7 @@ RQ_SRS_013_ClickHouse_BackupUtility_Generic_SpecificTables_ManyColumns = Require
         ),
     link=None,
     level=3,
-    num='4.1.6')
+    num='4.1.7')
 
 RQ_SRS_013_ClickHouse_BackupUtility_Generic_ReplicatedTable = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.ReplicatedTable',
@@ -115,7 +129,7 @@ RQ_SRS_013_ClickHouse_BackupUtility_Generic_ReplicatedTable = Requirement(
         ),
     link=None,
     level=3,
-    num='4.1.7')
+    num='4.1.8')
 
 RQ_SRS_013_ClickHouse_BackupUtility_Generic_MultipleBackups_EfficientStorageByUsingHardLinks = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.MultipleBackups.EfficientStorageByUsingHardLinks',
@@ -131,7 +145,7 @@ RQ_SRS_013_ClickHouse_BackupUtility_Generic_MultipleBackups_EfficientStorageByUs
         ),
     link=None,
     level=3,
-    num='4.1.8')
+    num='4.1.9')
 
 RQ_SRS_013_ClickHouse_BackupUtility_Generic_CompressionLevel = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.CompressionLevel',
@@ -146,7 +160,7 @@ RQ_SRS_013_ClickHouse_BackupUtility_Generic_CompressionLevel = Requirement(
         ),
     link=None,
     level=3,
-    num='4.1.9')
+    num='4.1.10')
 
 RQ_SRS_013_ClickHouse_BackupUtility_Generic_ClickHouseVersions = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.ClickHouseVersions',
@@ -161,7 +175,7 @@ RQ_SRS_013_ClickHouse_BackupUtility_Generic_ClickHouseVersions = Requirement(
         ),
     link=None,
     level=3,
-    num='4.1.10')
+    num='4.1.11')
 
 RQ_SRS_013_ClickHouse_BackupUtility_Generic_TieredStorage = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.TieredStorage',
@@ -176,7 +190,7 @@ RQ_SRS_013_ClickHouse_BackupUtility_Generic_TieredStorage = Requirement(
         ),
     link=None,
     level=3,
-    num='4.1.11')
+    num='4.1.12')
 
 RQ_SRS_013_ClickHouse_BackupUtility_Generic_EncryptedStorage = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.EncryptedStorage',
@@ -191,7 +205,7 @@ RQ_SRS_013_ClickHouse_BackupUtility_Generic_EncryptedStorage = Requirement(
         ),
     link=None,
     level=3,
-    num='4.1.12')
+    num='4.1.13')
 
 RQ_SRS_013_ClickHouse_BackupUtility_Views_View = Requirement(
     name='RQ.SRS-013.ClickHouse.BackupUtility.Views.View',
@@ -1609,16 +1623,17 @@ QA_SRS013_ClickHouse_Backup_Utility = Specification(
         Heading(name='Generic', level=2, num='4.1'),
         Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.AllDataTypes', level=3, num='4.1.1'),
         Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.RestorePartiallyDropped', level=3, num='4.1.2'),
-        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.AllTables', level=3, num='4.1.3'),
-        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.SpecificTables', level=3, num='4.1.4'),
-        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.SpecificTables.Performance', level=3, num='4.1.5'),
-        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.SpecificTables.ManyColumns', level=3, num='4.1.6'),
-        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.ReplicatedTable', level=3, num='4.1.7'),
-        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.MultipleBackups.EfficientStorageByUsingHardLinks', level=3, num='4.1.8'),
-        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.CompressionLevel', level=3, num='4.1.9'),
-        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.ClickHouseVersions', level=3, num='4.1.10'),
-        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.TieredStorage', level=3, num='4.1.11'),
-        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.EncryptedStorage', level=3, num='4.1.12'),
+        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.BackupDuringMutation', level=3, num='4.1.3'),
+        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.AllTables', level=3, num='4.1.4'),
+        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.SpecificTables', level=3, num='4.1.5'),
+        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.SpecificTables.Performance', level=3, num='4.1.6'),
+        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.SpecificTables.ManyColumns', level=3, num='4.1.7'),
+        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.ReplicatedTable', level=3, num='4.1.8'),
+        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.MultipleBackups.EfficientStorageByUsingHardLinks', level=3, num='4.1.9'),
+        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.CompressionLevel', level=3, num='4.1.10'),
+        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.ClickHouseVersions', level=3, num='4.1.11'),
+        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.TieredStorage', level=3, num='4.1.12'),
+        Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Generic.EncryptedStorage', level=3, num='4.1.13'),
         Heading(name='Views', level=2, num='4.2'),
         Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Views.View', level=3, num='4.2.1'),
         Heading(name='RQ.SRS-013.ClickHouse.BackupUtility.Views.MaterializedView', level=3, num='4.2.2'),
@@ -1692,6 +1707,7 @@ QA_SRS013_ClickHouse_Backup_Utility = Specification(
     requirements=(
         RQ_SRS_013_ClickHouse_BackupUtility_Generic_AllDataTypes,
         RQ_SRS_013_ClickHouse_BackupUtility_Generic_RestorePartiallyDropped,
+        RQ_SRS_013_ClickHouse_BackupUtility_Generic_BackupDuringMutation,
         RQ_SRS_013_ClickHouse_BackupUtility_Generic_AllTables,
         RQ_SRS_013_ClickHouse_BackupUtility_Generic_SpecificTables,
         RQ_SRS_013_ClickHouse_BackupUtility_Generic_SpecificTables_Performance,
@@ -1779,16 +1795,17 @@ QA_SRS013_ClickHouse_Backup_Utility = Specification(
   * 4.1 [Generic](#generic)
     * 4.1.1 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.AllDataTypes](#rqsrs-013clickhousebackuputilitygenericalldatatypes)
     * 4.1.2 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.RestorePartiallyDropped](#rqsrs-013clickhousebackuputilitygenericrestorepartiallydropped)
-    * 4.1.3 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.AllTables](#rqsrs-013clickhousebackuputilitygenericalltables)
-    * 4.1.4 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.SpecificTables](#rqsrs-013clickhousebackuputilitygenericspecifictables)
-    * 4.1.5 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.SpecificTables.Performance](#rqsrs-013clickhousebackuputilitygenericspecifictablesperformance)
-    * 4.1.6 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.SpecificTables.ManyColumns](#rqsrs-013clickhousebackuputilitygenericspecifictablesmanycolumns)
-    * 4.1.7 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.ReplicatedTable](#rqsrs-013clickhousebackuputilitygenericreplicatedtable)
-    * 4.1.8 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.MultipleBackups.EfficientStorageByUsingHardLinks](#rqsrs-013clickhousebackuputilitygenericmultiplebackupsefficientstoragebyusinghardlinks)
-    * 4.1.9 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.CompressionLevel](#rqsrs-013clickhousebackuputilitygenericcompressionlevel)
-    * 4.1.10 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.ClickHouseVersions](#rqsrs-013clickhousebackuputilitygenericclickhouseversions)
-    * 4.1.11 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.TieredStorage](#rqsrs-013clickhousebackuputilitygenerictieredstorage)
-    * 4.1.12 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.EncryptedStorage](#rqsrs-013clickhousebackuputilitygenericencryptedstorage)
+    * 4.1.3 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.BackupDuringMutation](#rqsrs-013clickhousebackuputilitygenericbackupduringmutation)
+    * 4.1.4 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.AllTables](#rqsrs-013clickhousebackuputilitygenericalltables)
+    * 4.1.5 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.SpecificTables](#rqsrs-013clickhousebackuputilitygenericspecifictables)
+    * 4.1.6 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.SpecificTables.Performance](#rqsrs-013clickhousebackuputilitygenericspecifictablesperformance)
+    * 4.1.7 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.SpecificTables.ManyColumns](#rqsrs-013clickhousebackuputilitygenericspecifictablesmanycolumns)
+    * 4.1.8 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.ReplicatedTable](#rqsrs-013clickhousebackuputilitygenericreplicatedtable)
+    * 4.1.9 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.MultipleBackups.EfficientStorageByUsingHardLinks](#rqsrs-013clickhousebackuputilitygenericmultiplebackupsefficientstoragebyusinghardlinks)
+    * 4.1.10 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.CompressionLevel](#rqsrs-013clickhousebackuputilitygenericcompressionlevel)
+    * 4.1.11 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.ClickHouseVersions](#rqsrs-013clickhousebackuputilitygenericclickhouseversions)
+    * 4.1.12 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.TieredStorage](#rqsrs-013clickhousebackuputilitygenerictieredstorage)
+    * 4.1.13 [RQ.SRS-013.ClickHouse.BackupUtility.Generic.EncryptedStorage](#rqsrs-013clickhousebackuputilitygenericencryptedstorage)
   * 4.2 [Views](#views)
     * 4.2.1 [RQ.SRS-013.ClickHouse.BackupUtility.Views.View](#rqsrs-013clickhousebackuputilityviewsview)
     * 4.2.2 [RQ.SRS-013.ClickHouse.BackupUtility.Views.MaterializedView](#rqsrs-013clickhousebackuputilityviewsmaterializedview)
@@ -1904,6 +1921,10 @@ version: 1.0
 
 The [clickhouse-backup] utility SHALL support restoring table that has lost some piece of data.
 
+#### RQ.SRS-013.ClickHouse.BackupUtility.Generic.BackupDuringMutation
+version: 1.0
+
+The [clickhouse-backup] utility SHALL be able to create a backup if there is an ongoing mutation. Restoring from such backups SHALL also be possible.
 
 #### RQ.SRS-013.ClickHouse.BackupUtility.Generic.AllTables
 version: 1.0
