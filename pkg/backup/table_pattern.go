@@ -35,7 +35,7 @@ func addTableToListIfNotExists(tables ListOfTables, table metadata.TableMetadata
 	return append(tables, table)
 }
 
-func getTableListByPatternLocal(metadataPath string, tablePattern string, dropTable bool, partitionsFilter common.EmptyMap) (ListOfTables, error) {
+func getTableListByPatternLocal(metadataPath string, tablePattern string, skipTables []string, dropTable bool, partitionsFilter common.EmptyMap) (ListOfTables, error) {
 	result := ListOfTables{}
 	tablePatterns := []string{"*"}
 
@@ -65,10 +65,19 @@ func getTableListByPatternLocal(metadataPath string, tablePattern string, dropTa
 			return nil
 		}
 		database, _ := url.PathUnescape(parts[0])
+		if IsInformationSchema(database) {
+			return nil
+		}
 		table, _ := url.PathUnescape(parts[1])
 		tableName := fmt.Sprintf("%s.%s", database, table)
+		shallSkipped := false
+		for _, skipPattern := range skipTables {
+			if shallSkipped, _ = filepath.Match(skipPattern, tableName); shallSkipped {
+				break
+			}
+		}
 		for _, p := range tablePatterns {
-			if matched, _ := filepath.Match(strings.Trim(p, " \t\r\n"), tableName); !matched {
+			if matched, _ := filepath.Match(strings.Trim(p, " \t\r\n"), tableName); !matched || shallSkipped {
 				continue
 			}
 			data, err := ioutil.ReadFile(filePath)
@@ -113,7 +122,7 @@ func filterPartsByPartitionsFilter(tableMetadata metadata.TableMetadata, partiti
 	}
 }
 
-func getTableListByPatternRemote(b *Backuper, remoteBackupMetadata *metadata.BackupMetadata, tablePattern string, dropTable bool) (ListOfTables, error) {
+func getTableListByPatternRemote(b *Backuper, remoteBackupMetadata *metadata.BackupMetadata, tablePattern string, skipTables []string, dropTable bool) (ListOfTables, error) {
 	result := ListOfTables{}
 	tablePatterns := []string{"*"}
 
@@ -122,9 +131,18 @@ func getTableListByPatternRemote(b *Backuper, remoteBackupMetadata *metadata.Bac
 	}
 	metadataPath := path.Join(remoteBackupMetadata.BackupName, "metadata")
 	for _, t := range remoteBackupMetadata.Tables {
+		if IsInformationSchema(t.Database) {
+			continue
+		}
 		tableName := fmt.Sprintf("%s.%s", t.Database, t.Table)
+		shallSkipped := false
+		for _, skipPattern := range skipTables {
+			if shallSkipped, _ = filepath.Match(skipPattern, tableName); shallSkipped {
+				break
+			}
+		}
 		for _, p := range tablePatterns {
-			if matched, _ := filepath.Match(strings.Trim(p, " \t\r\n"), tableName); !matched {
+			if matched, _ := filepath.Match(strings.Trim(p, " \t\r\n"), tableName); !matched || shallSkipped {
 				continue
 			}
 			tmReader, err := b.dst.GetFileReader(path.Join(metadataPath, common.TablePathEncode(t.Database), fmt.Sprintf("%s.json", common.TablePathEncode(t.Table))))
@@ -199,4 +217,13 @@ func parseTablePatternForDownload(tables []metadata.TableTitle, tablePattern str
 		}
 	}
 	return result
+}
+
+func IsInformationSchema(database string) bool {
+	for _, skipDatabase := range []string{"INFORMATION_SCHEMA", "information_schema"} {
+		if database == skipDatabase {
+			return true
+		}
+	}
+	return false
 }

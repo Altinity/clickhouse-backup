@@ -315,7 +315,7 @@ func (ch *ClickHouse) GetVersion() (int, error) {
 	var err error
 	query := "SELECT value FROM `system`.`build_options` where name='VERSION_INTEGER'"
 	if err = ch.Select(&result, query); err != nil {
-		return 0, fmt.Errorf("can't get clickHouse version: %w", err)
+		return 0, fmt.Errorf("can't get ClickHouse version: %w", err)
 	}
 	if len(result) == 0 {
 		return 0, nil
@@ -408,7 +408,6 @@ func (ch *ClickHouse) FreezeTable(table *Table, name string) error {
 	return nil
 }
 
-//
 // AttachPartitions - execute ATTACH command for specific table
 func (ch *ClickHouse) AttachPartitions(table metadata.TableMetadata, disks []Disk) error {
 	for _, disk := range disks {

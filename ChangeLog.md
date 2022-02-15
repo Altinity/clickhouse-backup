@@ -1,3 +1,8 @@
+# v1.3.1
+
+BUG FIXES
+- fix [390](https://github.com/AlexAkulov/clickhouse-backup/issues/390), respect skip_tables patterns during restore and skip all INFORMATION_SCHEMA related tables even skip_tables don't contain INFORMATION_SCHEMA pattern
+
 # v1.3.0
 
 IMPROVEMENTS
@@ -21,7 +26,6 @@ IMPROVEMENTS
 - Return `clean` cli command and API `POST /backup/clean` endpoint, fix [#379](https://github.com/AlexAkulov/clickhouse-backup/issues/379)
 
 BUG FIXES
-
 - fix [#300](https://github.com/AlexAkulov/clickhouse-backup/issues/300), allow GCP properly work with empty `GCP_PATH`
   value
 - fix [#340](https://github.com/AlexAkulov/clickhouse-backup/issues/340), properly handle errors on S3 during Walk() and
@@ -43,18 +47,20 @@ BUG FIXES
 - fix restore bug for WINDOW VIEW, thanks @zvonand
 
 EXPERIMENTAL
-
 - Try to add experimental support for backup `MaterializedMySQL` and `MaterializedPostgeSQL` tables, restore MySQL tables not impossible now without replace `table_name.json` to `Engine=MergeTree`,
   PostgreSQL not supported now, see https://github.com/ClickHouse/ClickHouse/issues/32902
+
+# v1.2.3
+
+HOT FIXES
+- fix [390](https://github.com/AlexAkulov/clickhouse-backup/issues/390), respect skip_tables patterns during restore and skip all INFORMATION_SCHEMA related tables even skip_tables don't contain INFORMATION_SCHEMA pattern
 
 # v1.2.2
 
 IMPROVEMENTS
-
 - Add REST API `POST /backup/tables/all`, fix `POST /backup/tables` to respect `CLICKHOUSE_SKIP_TABLES`
 
 BUG FIXES
-
 - fix [#297](https://github.com/AlexAkulov/clickhouse-backup/issues/297), properly restore tables where have fields with the same name as table name
 - fix [#298](https://github.com/AlexAkulov/clickhouse-backup/issues/298), properly create `system.backup_actions` and `system.backup_list` integration tables for ClickHouse before 21.1
 - fix [#303](https://github.com/AlexAkulov/clickhouse-backup/issues/303), ignore leading and trailing spaces in `skip_tables` and `--tables` parameters
