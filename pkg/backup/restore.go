@@ -65,8 +65,10 @@ func Restore(cfg *config.Config, backupName string, tablePattern string, schemaO
 		}
 		if schemaOnly || doRestoreData {
 			for _, database := range backupMetadata.Databases {
-				if err := ch.CreateDatabaseFromQuery(database.Query); err != nil {
-					return err
+				if !IsInformationSchema(database.Name) {
+					if err := ch.CreateDatabaseFromQuery(database.Query); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -226,7 +228,7 @@ func RestoreSchema(ch *clickhouse.ClickHouse, backupName string, tablePattern st
 	if tablePattern == "" {
 		tablePattern = "*"
 	}
-	tablesForRestore, err := parseSchemaPattern(metadataPath, tablePattern, dropTable)
+	tablesForRestore, err := parseSchemaPattern(metadataPath, tablePattern, ch.Config.SkipTables, dropTable)
 	if err != nil {
 		return err
 	}
@@ -299,7 +301,7 @@ func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName strin
 		tablesForRestore, err = ch.GetBackupTablesLegacy(backupName)
 	} else {
 		metadataPath := path.Join(defaultDataPath, "backup", backupName, "metadata")
-		tablesForRestore, err = parseSchemaPattern(metadataPath, tablePattern, false)
+		tablesForRestore, err = parseSchemaPattern(metadataPath, tablePattern, cfg.ClickHouse.SkipTables, false)
 	}
 	if err != nil {
 		return err

@@ -247,7 +247,7 @@ func (ch *ClickHouse) prepareAllTablesSQL(tablePattern string, err error, skipDa
 // GetDatabases - return slice of all non system databases for backup
 func (ch *ClickHouse) GetDatabases() ([]Database, error) {
 	allDatabases := make([]Database, 0)
-	allDatabasesSQL := "SELECT name, engine FROM system.databases WHERE name != 'system'"
+	allDatabasesSQL := "SELECT name, engine FROM system.databases WHERE name NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema')"
 	if err := ch.softSelect(&allDatabases, allDatabasesSQL); err != nil {
 		return nil, err
 	}

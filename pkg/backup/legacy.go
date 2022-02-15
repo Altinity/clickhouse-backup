@@ -21,7 +21,7 @@ func addRestoreTable(tables RestoreTables, table metadata.TableMetadata) Restore
 	return append(tables, table)
 }
 
-func parseSchemaPattern(metadataPath string, tablePattern string, dropTable bool) (RestoreTables, error) {
+func parseSchemaPattern(metadataPath string, tablePattern string, skipTables []string, dropTable bool) (RestoreTables, error) {
 	result := RestoreTables{}
 	tablePatterns := []string{"*"}
 
@@ -51,10 +51,19 @@ func parseSchemaPattern(metadataPath string, tablePattern string, dropTable bool
 			return nil
 		}
 		database, _ := url.PathUnescape(parts[0])
+		if IsInformationSchema(database) {
+			return nil
+		}
 		table, _ := url.PathUnescape(parts[1])
 		tableName := fmt.Sprintf("%s.%s", database, table)
+		shallSkipped := false
+		for _, skipPattern := range skipTables {
+			if shallSkipped, _ = filepath.Match(skipPattern, tableName); shallSkipped {
+				break
+			}
+		}
 		for _, p := range tablePatterns {
-			if matched, _ := filepath.Match(strings.Trim(p, " \t\r\n"), tableName); !matched {
+			if matched, _ := filepath.Match(strings.Trim(p, " \t\r\n"), tableName); !matched || shallSkipped {
 				continue
 			}
 			data, err := ioutil.ReadFile(filePath)
@@ -129,4 +138,13 @@ func parseTablePatternForDownload(tables []metadata.TableTitle, tablePattern str
 		}
 	}
 	return result
+}
+
+func IsInformationSchema(database string) bool {
+	for _, skipDatabase := range []string{"INFORMATION_SCHEMA", "information_schema"} {
+		if database == skipDatabase {
+			return true
+		}
+	}
+	return false
 }

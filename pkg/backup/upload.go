@@ -65,7 +65,7 @@ func (b *Backuper) Upload(backupName, tablePattern, diffFrom string, schemaOnly 
 	var tablesForUpload RestoreTables
 	if len(backupMetadata.Tables) != 0 {
 		metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
-		tablesForUpload, err = parseSchemaPattern(metadataPath, tablePattern, false)
+		tablesForUpload, err = parseSchemaPattern(metadataPath, tablePattern, b.cfg.ClickHouse.SkipTables, false)
 		if err != nil {
 			return err
 		}
@@ -80,7 +80,7 @@ func (b *Backuper) Upload(backupName, tablePattern, diffFrom string, schemaOnly 
 		if len(diffFromBackup.Tables) != 0 {
 			backupMetadata.RequiredBackup = diffFrom
 			metadataPath := path.Join(b.DefaultDataPath, "backup", diffFrom, "metadata")
-			diffTablesList, err := parseSchemaPattern(metadataPath, tablePattern, false)
+			diffTablesList, err := parseSchemaPattern(metadataPath, tablePattern, b.cfg.ClickHouse.SkipTables, false)
 			if err != nil {
 				return err
 			}
