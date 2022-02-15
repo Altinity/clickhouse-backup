@@ -1,5 +1,8 @@
 # v1.3.1
 
+IMPROVEMENTS
+- fix [387](https://github.com/AlexAkulov/clickhouse-backup/issues/387#issuecomment-1034648447), improve documentation related to memory and CPU usage
+
 BUG FIXES
 - fix [390](https://github.com/AlexAkulov/clickhouse-backup/issues/390), respect skip_tables patterns during restore and skip all INFORMATION_SCHEMA related tables even skip_tables don't contain INFORMATION_SCHEMA pattern
 
