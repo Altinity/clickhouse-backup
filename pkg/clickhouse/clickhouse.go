@@ -27,26 +27,8 @@ import (
 type ClickHouse struct {
 	Config  *config.ClickHouseConfig
 	conn    *sqlx.DB
-	uid     *int
-	gid     *int
 	disks   []Disk
 	version int
-}
-
-func (ch *ClickHouse) GetUid() *int {
-	return ch.uid
-}
-
-func (ch *ClickHouse) GetGid() *int {
-	return ch.gid
-}
-
-func (ch *ClickHouse) SetUid(puid *int) {
-	ch.uid = puid
-}
-
-func (ch *ClickHouse) SetGid(pgid *int) {
-	ch.gid = pgid
 }
 
 // Connect - establish connection to ClickHouse
@@ -586,7 +568,12 @@ func (ch *ClickHouse) SoftSelect(dest interface{}, query string) error {
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() {
+		err = rows.Close()
+		if err != nil {
+			log.Warnf("can't close rows recordset")
+		}
+	}()
 
 	var v, vp reflect.Value
 

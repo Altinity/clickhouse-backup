@@ -402,7 +402,7 @@ func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName strin
 		dstTableDataPaths := dstTablesMap[metadata.TableTitle{
 			Database: table.Database,
 			Table:    table.Table}].DataPaths
-		if err := filesystemhelper.CopyData(backupName, table, disks, dstTableDataPaths, ch); err != nil {
+		if err := filesystemhelper.CopyDataToDetached(backupName, table, disks, dstTableDataPaths, ch); err != nil {
 			return fmt.Errorf("can't restore '%s.%s': %v", table.Database, table.Table, err)
 		}
 		log.Debugf("copied data to 'detached'")

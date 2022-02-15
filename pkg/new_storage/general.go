@@ -55,15 +55,14 @@ func (bd *BackupDestination) RemoveOldBackups(keep int) error {
 	}
 	start := time.Now()
 	backupList, err := bd.BackupList(true, "")
-	apexLog.WithFields(apexLog.Fields{
-		"operation": "RemoveOldBackups",
-		"duration":  utils.HumanizeDuration(time.Since(start)),
-	}).Info("calculate backup list for delete")
-
 	if err != nil {
 		return err
 	}
 	backupsToDelete := GetBackupsToDelete(backupList, keep)
+	apexLog.WithFields(apexLog.Fields{
+		"operation": "RemoveOldBackups",
+		"duration":  utils.HumanizeDuration(time.Since(start)),
+	}).Info("calculate backup list for delete")
 	for _, backupToDelete := range backupsToDelete {
 		startDelete := time.Now()
 		if err := bd.RemoveBackup(backupToDelete); err != nil {
