@@ -480,7 +480,8 @@ func (ch *ClickHouse) DropTable(table Table, query string, onCluster string, ver
 	return nil
 }
 
-var createViewRe = regexp.MustCompile(`(?im)(CREATE[\s\w]+VIEW[^(]+)(\s+AS\s+SELECT.+)`)
+var createViewToClauseRe = regexp.MustCompile(`(?im)(CREATE[\s\w]+VIEW[^(]+)(\s+TO\s+.+)`)
+var createViewSelectRe = regexp.MustCompile(`(?im)(CREATE[\s\w]+VIEW[^(]+)(\s+AS\s+SELECT.+)`)
 var createObjRe = regexp.MustCompile(`(?im)(CREATE[^(]+)(\(.+)`)
 var onClusterRe = regexp.MustCompile(`(?im)\S+ON\S+CLUSTER\S+`)
 
@@ -494,10 +495,12 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable bool, onC
 	}
 
 	if version > 19000000 && onCluster != "" && !onClusterRe.MatchString(query) {
-		if createViewRe.MatchString(query) {
-			query = createViewRe.ReplaceAllString(query, "$1 ON CLUSTER '"+onCluster+"' $2")
-		} else if createObjRe.MatchString(query) {
-			query = createObjRe.ReplaceAllString(query, "$1 ON CLUSTER '"+onCluster+"' $2")
+		tryMatchReList := []*regexp.Regexp{createViewToClauseRe, createViewSelectRe, createObjRe}
+		for _, tryMatchRe := range tryMatchReList {
+			if tryMatchRe.MatchString(query) {
+				query = tryMatchRe.ReplaceAllString(query, "$1 ON CLUSTER '"+onCluster+"' $2")
+				break
+			}
 		}
 	}
 
