@@ -27,26 +27,8 @@ import (
 type ClickHouse struct {
 	Config  *config.ClickHouseConfig
 	conn    *sqlx.DB
-	uid     *int
-	gid     *int
 	disks   []Disk
 	version int
-}
-
-func (ch *ClickHouse) GetUid() *int {
-	return ch.uid
-}
-
-func (ch *ClickHouse) GetGid() *int {
-	return ch.gid
-}
-
-func (ch *ClickHouse) SetUid(puid *int) {
-	ch.uid = puid
-}
-
-func (ch *ClickHouse) SetGid(pgid *int) {
-	ch.gid = pgid
 }
 
 // Connect - establish connection to ClickHouse
@@ -333,7 +315,7 @@ func (ch *ClickHouse) GetVersion() (int, error) {
 	var err error
 	query := "SELECT value FROM `system`.`build_options` where name='VERSION_INTEGER'"
 	if err = ch.Select(&result, query); err != nil {
-		return 0, fmt.Errorf("can't get clickHouse version: %w", err)
+		return 0, fmt.Errorf("can't get ClickHouse version: %w", err)
 	}
 	if len(result) == 0 {
 		return 0, nil
@@ -426,7 +408,6 @@ func (ch *ClickHouse) FreezeTable(table *Table, name string) error {
 	return nil
 }
 
-//
 // AttachPartitions - execute ATTACH command for specific table
 func (ch *ClickHouse) AttachPartitions(table metadata.TableMetadata, disks []Disk) error {
 	for _, disk := range disks {
@@ -499,8 +480,11 @@ func (ch *ClickHouse) DropTable(table Table, query string, onCluster string, ver
 	return nil
 }
 
-var createViewRe = regexp.MustCompile(`(?im)(CREATE[\s\w]+VIEW[^(]+)(\s+AS\s+SELECT.+)`)
-var createObjRe = regexp.MustCompile(`(?im)(CREATE[^(]+)(\(.+)`)
+var createViewToClauseRe = regexp.MustCompile(`(?im)^(CREATE[\s\w]+VIEW[^(]+)(\s+TO\s+.+)`)
+var createViewSelectRe = regexp.MustCompile(`(?im)^(CREATE[\s\w]+VIEW[^(]+)(\s+AS\s+SELECT.+)`)
+var attachViewToClauseRe = regexp.MustCompile(`(?im)^(ATTACH[\s\w]+VIEW[^(]+)(\s+TO\s+.+)`)
+var attachViewSelectRe = regexp.MustCompile(`(?im)^(ATTACH[\s\w]+VIEW[^(]+)(\s+AS\s+SELECT.+)`)
+var createObjRe = regexp.MustCompile(`(?im)^(CREATE [^(]+)(\(.+)`)
 var onClusterRe = regexp.MustCompile(`(?im)\S+ON\S+CLUSTER\S+`)
 
 // CreateTable - create ClickHouse table
@@ -513,10 +497,12 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable bool, onC
 	}
 
 	if version > 19000000 && onCluster != "" && !onClusterRe.MatchString(query) {
-		if createViewRe.MatchString(query) {
-			query = createViewRe.ReplaceAllString(query, "$1 ON CLUSTER '"+onCluster+"' $2")
-		} else if createObjRe.MatchString(query) {
-			query = createObjRe.ReplaceAllString(query, "$1 ON CLUSTER '"+onCluster+"' $2")
+		tryMatchReList := []*regexp.Regexp{attachViewToClauseRe, attachViewSelectRe, createViewToClauseRe, createViewSelectRe, createObjRe}
+		for _, tryMatchRe := range tryMatchReList {
+			if tryMatchRe.MatchString(query) {
+				query = tryMatchRe.ReplaceAllString(query, "$1 ON CLUSTER '"+onCluster+"' $2")
+				break
+			}
 		}
 	}
 
@@ -586,7 +572,12 @@ func (ch *ClickHouse) SoftSelect(dest interface{}, query string) error {
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() {
+		err = rows.Close()
+		if err != nil {
+			log.Warnf("can't close rows recordset")
+		}
+	}()
 
 	var v, vp reflect.Value
 

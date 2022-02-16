@@ -16,6 +16,11 @@ import (
 	apexLog "github.com/apex/log"
 )
 
+var (
+	uid *int
+	gid *int
+)
+
 // Chown - set permission on file to clickhouse user
 // This is necessary that the ClickHouse will be able to read parts files on restore
 func Chown(filename string, ch *clickhouse.ClickHouse) error {
@@ -26,7 +31,7 @@ func Chown(filename string, ch *clickhouse.ClickHouse) error {
 	if os.Getuid() != 0 {
 		return nil
 	}
-	if ch.GetUid() == nil || ch.GetGid() == nil {
+	if uid == nil || gid == nil {
 		if dataPath, err = ch.GetDefaultPath(); err != nil {
 			return err
 		}
@@ -35,13 +40,13 @@ func Chown(filename string, ch *clickhouse.ClickHouse) error {
 			return err
 		}
 		stat := info.Sys().(*syscall.Stat_t)
-		uid := int(stat.Uid)
-		gid := int(stat.Gid)
-		ch.SetUid(&uid)
-		ch.SetGid(&gid)
-
+		intUid := int(stat.Uid)
+		intGid := int(stat.Gid)
+		uid = &intUid
+		gid = &intGid
 	}
-	return os.Chown(filename, *ch.GetGid(), *ch.GetGid())
+	//apexLog.Debugf("Chown %s to %d:%d", filename, *uid, *gid)
+	return os.Chown(filename, *uid, *gid)
 }
 
 func Mkdir(name string, ch *clickhouse.ClickHouse) error {
@@ -97,11 +102,11 @@ func MkdirAll(path string, ch *clickhouse.ClickHouse) error {
 	return nil
 }
 
-// CopyData - copy partitions for specific table to detached folder
-func CopyData(backupName string, backupTable metadata.TableMetadata, disks []clickhouse.Disk, tableDataPaths []string, ch *clickhouse.ClickHouse) error {
+// CopyDataToDetached - copy partitions for specific table to detached folder
+func CopyDataToDetached(backupName string, backupTable metadata.TableMetadata, disks []clickhouse.Disk, tableDataPaths []string, ch *clickhouse.ClickHouse) error {
 	// TODO: check when disk exists in backup, but miss in ClickHouse
 	dstDataPaths := clickhouse.GetDisksByPaths(disks, tableDataPaths)
-	log := apexLog.WithFields(apexLog.Fields{"operation": "CopyData"})
+	log := apexLog.WithFields(apexLog.Fields{"operation": "CopyDataToDetached"})
 	start := time.Now()
 	for _, backupDisk := range disks {
 		if len(backupTable.Parts[backupDisk.Name]) == 0 {

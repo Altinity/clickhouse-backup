@@ -95,38 +95,40 @@ All options can be overwritten via environment variables
 
 ```yaml
 general:
-  remote_storage: none           # REMOTE_STORAGE
-  max_file_size: 107374182400    # MAX_FILE_SIZE
-  disable_progress_bar: false    # DISABLE_PROGRESS_BAR
-  backups_to_keep_local: 0       # BACKUPS_TO_KEEP_LOCAL
-  backups_to_keep_remote: 0      # BACKUPS_TO_KEEP_REMOTE
+  remote_storage: none           # REMOTE_STORAGE, if `none` then `upload` and  `download` command will fail
+  max_file_size: 1073741824      # MAX_FILE_SIZE, 1G by default, useless when upload_by_part is true, use for split data parts files by archives  
+  disable_progress_bar: true     # DISABLE_PROGRESS_BAR, show progress bar during upload and download, have sense only when `upload_concurrency` and `download_concurrency` equal 1
+  backups_to_keep_local: 0       # BACKUPS_TO_KEEP_LOCAL, how much newest local backup should keep, 0 mean all created backups will keep on local disk
+                                 # you shall to run `clickhouse-backup delete local <backup_name>` command to avoid useless disk space allocations
+  backups_to_keep_remote: 0      # BACKUPS_TO_KEEP_REMOTE, how much newest backup should keep on remote storage, 0 mean all uploaded backups will keep on remote storage. 
+                                 # if old backup is required for newer incremental backup, then it will don't delete. Be careful with long incremental backup sequences.
   log_level: info                # LOG_LEVEL
   allow_empty_backups: false     # ALLOW_EMPTY_BACKUPS
   download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255
   upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255
-  restore_schema_on_cluster: ""  # RESTORE_SCHEMA_ON_CLUSTER, look to system.clusters for proper cluster name
+  restore_schema_on_cluster: ""  # RESTORE_SCHEMA_ON_CLUSTER, execute all schema related SQL queryes with `ON CLUSTER` clause as Distributed DDL, look to `system.clusters` table for proper cluster name
   upload_by_part: true           # UPLOAD_BY_PART
   download_by_part: true         # DOWNLOAD_BY_PART
 clickhouse:
   username: default                # CLICKHOUSE_USERNAME
   password: ""                     # CLICKHOUSE_PASSWORD
   host: localhost                  # CLICKHOUSE_HOST
-  port: 9000                       # CLICKHOUSE_PORT
-  disk_mapping: {}                 # CLICKHOUSE_DISK_MAPPING
+  port: 9000                       # CLICKHOUSE_PORT, don't use 8123, clickhouse-backup doesn't support HTTP protocol
+  disk_mapping: {}                 # CLICKHOUSE_DISK_MAPPING, use it if your system.disks on restored servers not the same with system.disks on server where backup was created
   skip_tables:                     # CLICKHOUSE_SKIP_TABLES
     - system.*
     - INFORMATION_SCHEMA.*
     - information_schema.*
   timeout: 5m                      # CLICKHOUSE_TIMEOUT
   freeze_by_part: false            # CLICKHOUSE_FREEZE_BY_PART
-  secure: false                    # CLICKHOUSE_SECURE
+  secure: false                    # CLICKHOUSE_SECURE, use SSL encryption for connect
   skip_verify: false               # CLICKHOUSE_SKIP_VERIFY
   sync_replicated_tables: true     # CLICKHOUSE_SYNC_REPLICATED_TABLES
-  log_sql_queries: true            # CLICKHOUSE_LOG_SQL_QUERIES
+  log_sql_queries: true            # CLICKHOUSE_LOG_SQL_QUERIES, enable log clickhouse-backup SQL queries on `system.query_log` table inside clickhouse-server
   debug: false                     # CLICKHOUSE_DEBUG
   config_dir:      "/etc/clickhouse-server"              # CLICKHOUSE_CONFIG_DIR
-  restart_command: "systemctl restart clickhouse-server" # CLICKHOUSE_RESTART_COMMAND
-  ignore_not_exists_error_during_freeze: true # CLICKHOUSE_IGNORE_NOT_EXISTS_ERROR_DURING_FREEZE
+  restart_command: "systemctl restart clickhouse-server" # CLICKHOUSE_RESTART_COMMAND, this command use when you try to restore with --rbac or --config options
+  ignore_not_exists_error_during_freeze: true # CLICKHOUSE_IGNORE_NOT_EXISTS_ERROR_DURING_FREEZE, allow avoiding backup failures when you often CREATE / DROP tables and databases during backup creation, clickhouse-backup will ignore `code: 60` and `code: 81` errors during execute `ALTER TABLE ... FREEZE` 
 azblob:
   endpoint_suffix: "core.windows.net" # AZBLOB_ENDPOINT_SUFFIX
   account_name: ""             # AZBLOB_ACCOUNT_NAME
@@ -152,7 +154,7 @@ s3:
   path: ""                         # S3_PATH
   disable_ssl: false               # S3_DISABLE_SSL
   compression_level: 1             # S3_COMPRESSION_LEVEL
-  compression_format: tar          # S3_COMPRESSION_FORMAT, supports 'tar', 'gzip', 'zstd', 'brotli'
+  compression_format: tar          # S3_COMPRESSION_FORMAT
   sse: ""                          # S3_SSE, empty (default), AES256, or aws:kms
   disable_cert_verification: false # S3_DISABLE_CERT_VERIFICATION
   storage_class: STANDARD          # S3_STORAGE_CLASS
@@ -199,13 +201,26 @@ api:
   listen: "localhost:7171"     # API_LISTEN
   enable_metrics: true         # API_ENABLE_METRICS
   enable_pprof: false          # API_ENABLE_PPROF
-  username: ""                 # API_USERNAME
+  username: ""                 # API_USERNAME, basic authorization for API endpoint
   password: ""                 # API_PASSWORD
-  secure: false                # API_SECURE
+  secure: false                # API_SECURE, use TLS for listen API socket
   certificate_file: ""         # API_CERTIFICATE_FILE
   private_key_file: ""         # API_PRIVATE_KEY_FILE
   create_integration_tables: false # API_CREATE_INTEGRATION_TABLES
+  allow_parallel: false        # API_ALLOW_PARALLEL, could allocate much memory and spawn go-routines, don't enable it if you not sure
 ```
+
+## Concurrency, CPU and Memory usage recommendation 
+
+`upload_concurrency` and `download concurrency` define how much parallel download / upload go-routines will start independent of remote storage type.
+In 1.3.0+ it means how much parallel data parts will upload, cause by default `upload_by_part` and `download_by_part` is true.
+
+`concurrency` in `s3` section mean how much concurrent `upload` streams will run during multipart upload in each upload go-routine
+High value for `S3_CONCURRENCY` and high value for `S3_PART_SIZE` will allocate high memory for buffers inside AWS golang SDK.
+
+`concurrency` in `sftp` section mean how much concurrent request will use for `upload` and `download` for each file. 
+
+`compression_format`, better use `tar` for less CPU usage, cause for most of cases data on clickhouse-backup already compressed.
 
 ## ATTENTION!
 
@@ -354,7 +369,7 @@ fi
 ```
 
 ### More use cases of clickhouse-backup
-- [How to convert MergeTree to ReplicatedMergeTree](Examples.md#how-to-convert-mergetree-to-replicatedmegretree)
+- [How to convert MergeTree to ReplicatedMergeTree](Examples.md#how-to-convert-mergetree-to-replicatedmergetree)
 - [How to store backups on NFS or another server](Examples.md#how-to-store-backups-on-nfs-backup-drive-or-another-server-via-sftp)
 - [How to move data to another clickhouse server](Examples.md#how-to-move-data-to-another-clickhouse-server)
 - [How to reduce number of partitions](Examples.md#How-to-reduce-number-of-partitions)

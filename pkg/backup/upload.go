@@ -61,20 +61,20 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	partitionsToUploadMap := filesystemhelper.CreatePartitionsToBackupMap(partitions)
 	if len(backupMetadata.Tables) != 0 {
 		metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
-		tablesForUpload, err = getTableListByPatternLocal(metadataPath, tablePattern, false, partitionsToUploadMap)
+		tablesForUpload, err = getTableListByPatternLocal(metadataPath, tablePattern, b.cfg.ClickHouse.SkipTables, false, partitionsToUploadMap)
 		if err != nil {
 			return err
 		}
 	}
 	tablesForUploadFromDiff := map[metadata.TableTitle]metadata.TableMetadata{}
 	if diffFrom != "" {
-		tablesForUploadFromDiff, err = b.getTablesForUploadDiffLocal(diffFrom, backupMetadata, tablePattern)
+		tablesForUploadFromDiff, err = b.getTablesForUploadDiffLocal(diffFrom, backupMetadata, tablePattern, b.cfg.ClickHouse.SkipTables)
 		if err != nil {
 			return err
 		}
 	}
 	if diffFromRemote != "" {
-		tablesForUploadFromDiff, err = b.getTablesForUploadDiffRemote(diffFromRemote, backupMetadata, tablePattern)
+		tablesForUploadFromDiff, err = b.getTablesForUploadDiffRemote(diffFromRemote, backupMetadata, tablePattern, b.cfg.ClickHouse.SkipTables)
 		if err != nil {
 			return err
 		}
@@ -180,7 +180,7 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	return nil
 }
 
-func (b *Backuper) getTablesForUploadDiffLocal(diffFrom string, backupMetadata *metadata.BackupMetadata, tablePattern string) (tablesForUploadFromDiff map[metadata.TableTitle]metadata.TableMetadata, err error) {
+func (b *Backuper) getTablesForUploadDiffLocal(diffFrom string, backupMetadata *metadata.BackupMetadata, tablePattern string, skipTables []string) (tablesForUploadFromDiff map[metadata.TableTitle]metadata.TableMetadata, err error) {
 	tablesForUploadFromDiff = make(map[metadata.TableTitle]metadata.TableMetadata)
 	diffFromBackup, err := b.ReadBackupMetadataLocal(diffFrom)
 	if err != nil {
@@ -190,7 +190,7 @@ func (b *Backuper) getTablesForUploadDiffLocal(diffFrom string, backupMetadata *
 		backupMetadata.RequiredBackup = diffFrom
 		metadataPath := path.Join(b.DefaultDataPath, "backup", diffFrom, "metadata")
 		// empty partitionsToBackupMap, cause we can not filter
-		diffTablesList, err := getTableListByPatternLocal(metadataPath, tablePattern, false, common.EmptyMap{})
+		diffTablesList, err := getTableListByPatternLocal(metadataPath, tablePattern, skipTables, false, common.EmptyMap{})
 		if err != nil {
 			return nil, err
 		}
@@ -204,7 +204,7 @@ func (b *Backuper) getTablesForUploadDiffLocal(diffFrom string, backupMetadata *
 	return tablesForUploadFromDiff, nil
 }
 
-func (b *Backuper) getTablesForUploadDiffRemote(diffFromRemote string, backupMetadata *metadata.BackupMetadata, tablePattern string) (tablesForUploadFromDiff map[metadata.TableTitle]metadata.TableMetadata, err error) {
+func (b *Backuper) getTablesForUploadDiffRemote(diffFromRemote string, backupMetadata *metadata.BackupMetadata, tablePattern string, skipTables []string) (tablesForUploadFromDiff map[metadata.TableTitle]metadata.TableMetadata, err error) {
 	tablesForUploadFromDiff = make(map[metadata.TableTitle]metadata.TableMetadata)
 	backupList, err := b.dst.BackupList(true, diffFromRemote)
 	if err != nil {
@@ -226,7 +226,7 @@ func (b *Backuper) getTablesForUploadDiffRemote(diffFromRemote string, backupMet
 
 	if len(diffRemoteMetadata.Tables) != 0 {
 		backupMetadata.RequiredBackup = diffFromRemote
-		diffTablesList, err := getTableListByPatternRemote(b, diffRemoteMetadata, tablePattern, false)
+		diffTablesList, err := getTableListByPatternRemote(b, diffRemoteMetadata, tablePattern, skipTables, false)
 		if err != nil {
 			return nil, err
 		}
