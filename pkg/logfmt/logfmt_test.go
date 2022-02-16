@@ -18,7 +18,7 @@ func init() {
 	}
 }
 
-func Test(t *testing.T) {
+func TestLogFmt(t *testing.T) {
 	var buf bytes.Buffer
 
 	log.SetHandler(logfmt.New(&buf))

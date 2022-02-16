@@ -2,6 +2,7 @@ package new_storage
 
 import (
 	"fmt"
+	"github.com/apex/log"
 	"sort"
 
 	"github.com/mholt/archiver/v3"
@@ -12,19 +13,25 @@ func GetBackupsToDelete(backups []Backup, keep int) []Backup {
 		sort.SliceStable(backups, func(i, j int) bool {
 			return backups[i].UploadDate.After(backups[j].UploadDate)
 		})
-		// KeepRemoteBackups should respect incremental backups, fix https://github.com/AlexAkulov/clickhouse-backup/issues/111
-		deletedBackup := backups[keep:]
-		for _, b := range backups[:keep] {
+		// KeepRemoteBackups should respect incremental backups and don't delete required backups
+		// fix https://github.com/AlexAkulov/clickhouse-backup/issues/111
+		// fix https://github.com/AlexAkulov/clickhouse-backup/issues/385
+		deletedBackups := make([]Backup, len(backups)-keep)
+		copied := copy(deletedBackups, backups[keep:])
+		if copied != len(backups)-keep {
+			log.Warnf("copied wrong items from backup list expected=%d, actual=%d", len(backups)-keep, copied)
+		}
+		for _, b := range backups {
 			if b.RequiredBackup != "" {
-				for i := range deletedBackup {
-					if b.RequiredBackup == deletedBackup[i].BackupName {
-						deletedBackup = append(deletedBackup[:i], deletedBackup[i+1:]...)
+				for i, deletedBackup := range deletedBackups {
+					if b.RequiredBackup == deletedBackup.BackupName {
+						deletedBackups = append(deletedBackups[:i], deletedBackups[i+1:]...)
 						break
 					}
 				}
 			}
 		}
-		return deletedBackup
+		return deletedBackups
 	}
 	return []Backup{}
 }

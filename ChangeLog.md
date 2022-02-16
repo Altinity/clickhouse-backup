@@ -6,6 +6,7 @@ IMPROVEMENTS
 BUG FIXES
 - fix [390](https://github.com/AlexAkulov/clickhouse-backup/issues/390), respect skip_tables patterns during restore and skip all INFORMATION_SCHEMA related tables even skip_tables don't contain INFORMATION_SCHEMA pattern
 - fix [388](https://github.com/AlexAkulov/clickhouse-backup/issues/388), improve restore ON CLUSTER for VIEW with TO clause
+- fix [385](https://github.com/AlexAkulov/clickhouse-backup/issues/385), properly handle multiple incremental backup sequences + `BACKUPS_TO_KEEP_REMOTE`
 
 # v1.3.0
 

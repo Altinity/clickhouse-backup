@@ -34,16 +34,30 @@ func TestGetBackupsToDelete(t *testing.T) {
 }
 
 func TestGetBackupsToDeleteWithRequiredBackup(t *testing.T) {
+	// fix https://github.com/AlexAkulov/clickhouse-backup/issues/111
 	testData := []Backup{
-		{metadata.BackupMetadata{BackupName: "three"}, false, "", "", timeParse("2019-03-28T19-50-13")},
-		{metadata.BackupMetadata{BackupName: "one"}, false, "", "", timeParse("2019-03-28T19-50-11")},
-		{metadata.BackupMetadata{BackupName: "five", RequiredBackup: "two"}, false, "", "", timeParse("2019-03-28T19-50-15")},
-		{metadata.BackupMetadata{BackupName: "two"}, false, "", "", timeParse("2019-03-28T19-50-12")},
-		{metadata.BackupMetadata{BackupName: "four", RequiredBackup: "three"}, false, "", "", timeParse("2019-03-28T19-50-14")},
+		{metadata.BackupMetadata{BackupName: "3"}, false, "", "", timeParse("2019-03-28T19-50-13")},
+		{metadata.BackupMetadata{BackupName: "1"}, false, "", "", timeParse("2019-03-28T19-50-11")},
+		{metadata.BackupMetadata{BackupName: "5", RequiredBackup: "2"}, false, "", "", timeParse("2019-03-28T19-50-15")},
+		{metadata.BackupMetadata{BackupName: "2"}, false, "", "", timeParse("2019-03-28T19-50-12")},
+		{metadata.BackupMetadata{BackupName: "4", RequiredBackup: "3"}, false, "", "", timeParse("2019-03-28T19-50-14")},
 	}
 	expectedData := []Backup{
-		{metadata.BackupMetadata{BackupName: "one"}, false, "", "", timeParse("2019-03-28T19-50-11")},
+		{metadata.BackupMetadata{BackupName: "1"}, false, "", "", timeParse("2019-03-28T19-50-11")},
 	}
 	assert.Equal(t, expectedData, GetBackupsToDelete(testData, 3))
 	assert.Equal(t, []Backup{}, GetBackupsToDelete([]Backup{testData[0]}, 3))
+
+	// fix https://github.com/AlexAkulov/clickhouse-backup/issues/385
+	testData = []Backup{
+		{metadata.BackupMetadata{BackupName: "3", RequiredBackup: "2"}, false, "", "", timeParse("2019-03-28T19-50-13")},
+		{metadata.BackupMetadata{BackupName: "1"}, false, "", "", timeParse("2019-03-28T19-50-11")},
+		{metadata.BackupMetadata{BackupName: "5", RequiredBackup: "4"}, false, "", "", timeParse("2019-03-28T19-50-15")},
+		{metadata.BackupMetadata{BackupName: "2", RequiredBackup: "1"}, false, "", "", timeParse("2019-03-28T19-50-12")},
+		{metadata.BackupMetadata{BackupName: "4", RequiredBackup: "3"}, false, "", "", timeParse("2019-03-28T19-50-14")},
+	}
+	expectedData = []Backup{}
+	assert.Equal(t, expectedData, GetBackupsToDelete(testData, 3))
+	assert.Equal(t, []Backup{}, GetBackupsToDelete([]Backup{testData[0]}, 3))
+
 }

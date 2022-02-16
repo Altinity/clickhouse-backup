@@ -935,6 +935,42 @@ func TestProjections(t *testing.T) {
 
 }
 
+func TestKeepBackupRemote(t *testing.T) {
+	if isTestShouldSkip("S3_ADVANCED_TESTS") {
+		t.Skip("Skipping S3 Advanced integration tests...")
+		return
+	}
+	r := require.New(t)
+	ch := &TestClickHouse{}
+	ch.connectWithWait(r, 500*time.Millisecond)
+	backupNames := make([]string, 5)
+	for i := 0; i < 5; i++ {
+		backupNames[i] = fmt.Sprintf("keep_remote_backup_%d", i)
+	}
+
+	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	fullCleanup(r, ch, backupNames, false)
+	generateTestData(ch, r)
+	for i, backupName := range backupNames {
+		generateIncrementTestData(ch, r)
+		if i == 0 {
+			r.NoError(dockerExec("clickhouse", "bash", "-c", fmt.Sprintf("BACKUPS_TO_KEEP_REMOTE=3 clickhouse-backup create_remote %s", backupName)))
+		} else {
+			r.NoError(dockerExec("clickhouse", "bash", "-c", fmt.Sprintf("BACKUPS_TO_KEEP_REMOTE=3 clickhouse-backup create_remote --diff-from-remote=%s %s", backupNames[i-1], backupName)))
+		}
+	}
+	out, err := dockerExecOut("clickhouse", "bash", "-c", "clickhouse-backup list local")
+	r.NoError(err)
+	for i, backupName := range backupNames {
+		if i == 0 || i <= 4 {
+			r.Contains(out, backupName)
+		} else {
+			r.NotContains(out, backupName)
+		}
+	}
+	fullCleanup(r, ch, backupNames, true)
+}
+
 func TestS3AdvancedIntegration(t *testing.T) {
 	if isTestShouldSkip("S3_ADVANCED_TESTS") {
 		t.Skip("Skipping S3 Advanced integration tests...")
@@ -950,8 +986,8 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 	var out string
 	var err error
 
-	ch := &TestClickHouse{}
 	r := require.New(t)
+	ch := &TestClickHouse{}
 	ch.connectWithWait(r, 500*time.Millisecond)
 
 	rand.Seed(time.Now().UnixNano())
@@ -966,14 +1002,9 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 
 	log.Info("Create backup")
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", testBackupName))
-	log.Info("Generate increment test data")
-	for _, data := range incrementData {
-		if isTableSkip(ch, data, false) {
-			continue
-		}
-		r.NoError(ch.createTestData(data))
-	}
-	time.Sleep(time.Second * 5)
+
+	generateIncrementTestData(ch, r)
+
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", incrementBackupName))
 
 	log.Info("Upload")
@@ -1034,10 +1065,10 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 
 	log.Info("Check increment data")
 	for i := range testData {
-		if isTableSkip(ch, testData[i], true) || testData[i].IsDictionary {
+		testDataItem := testData[i]
+		if isTableSkip(ch, testDataItem, true) || testDataItem.IsDictionary {
 			continue
 		}
-		testDataItem := testData[i]
 		for _, incrementDataItem := range incrementData {
 			if testDataItem.Database == incrementDataItem.Database && testDataItem.Table == incrementDataItem.Table {
 				testDataItem.Rows = append(testDataItem.Rows, incrementDataItem.Rows...)
@@ -1074,6 +1105,22 @@ func fullCleanup(r *require.Assertions, ch *TestClickHouse, backupNames []string
 
 func generateTestData(ch *TestClickHouse, r *require.Assertions) {
 	log.Info("Generate test data")
+	generateTestDataWithDifferentStoragePolicy()
+	for _, data := range testData {
+		if isTableSkip(ch, data, false) {
+			continue
+		}
+		r.NoError(ch.createTestSchema(data))
+	}
+	for _, data := range testData {
+		if isTableSkip(ch, data, false) {
+			continue
+		}
+		r.NoError(ch.createTestData(data))
+	}
+}
+
+func generateTestDataWithDifferentStoragePolicy() {
 	for databaseName, databaseEngine := range map[string]string{dbNameOrdinary: "Ordinary", dbNameAtomic: "Atomic"} {
 		testDataEncrypted := TestDataStruct{
 			Database: databaseName, DatabaseEngine: databaseEngine,
@@ -1119,13 +1166,11 @@ func generateTestData(ch *TestClickHouse, r *require.Assertions) {
 			addTestDataIfNotExists()
 		}
 	}
-	for _, data := range testData {
-		if isTableSkip(ch, data, false) {
-			continue
-		}
-		r.NoError(ch.createTestSchema(data))
-	}
-	for _, data := range testData {
+}
+
+func generateIncrementTestData(ch *TestClickHouse, r *require.Assertions) {
+	log.Info("Generate increment test data")
+	for _, data := range incrementData {
 		if isTableSkip(ch, data, false) {
 			continue
 		}
