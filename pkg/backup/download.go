@@ -10,6 +10,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -363,8 +364,9 @@ func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table
 
 func (b *Backuper) downloadDiffParts(remoteBackup metadata.BackupMetadata, table metadata.TableMetadata, dbAndTableDir string) error {
 	log := apexLog.WithField("operation", "downloadDiffParts")
-	log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).Debugf("start")
+	log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).Debug("start")
 	start := time.Now()
+	downloadedDiffParts := uint32(0)
 	s := semaphore.NewWeighted(int64(b.cfg.General.DownloadConcurrency))
 	g, ctx := errgroup.WithContext(context.Background())
 
@@ -404,6 +406,22 @@ func (b *Backuper) downloadDiffParts(remoteBackup metadata.BackupMetadata, table
 						if err != nil {
 							return err
 						}
+						downloadedPartPath := path.Join(tableLocalDir, partForDownload.Name)
+						if downloadedPartPath != existsPath {
+							info, err := os.Stat(downloadedPartPath)
+							if err == nil {
+								if !info.IsDir() {
+									return fmt.Errorf("after downloadDiffRemoteFile %s exists but is not directory", downloadedPartPath)
+								}
+								if err = makePartHardlinks(downloadedPartPath, existsPath); err != nil {
+									return fmt.Errorf("can't to add link to exists part %s -> %s error: %v", newPath, existsPath, err)
+								}
+							}
+							if err != nil && !os.IsNotExist(err) {
+								return fmt.Errorf("after downloadDiffRemoteFile %s stat return error: %v", downloadedPartPath, err)
+							}
+						}
+						atomic.AddUint32(&downloadedDiffParts, 1)
 					}
 					if err = makePartHardlinks(existsPath, newPath); err != nil {
 						return fmt.Errorf("can't to add link to exists part %s -> %s error: %v", newPath, existsPath, err)
@@ -420,7 +438,7 @@ func (b *Backuper) downloadDiffParts(remoteBackup metadata.BackupMetadata, table
 	if err := g.Wait(); err != nil {
 		return fmt.Errorf("one of downloadDiffParts go-routine return error: %v", err)
 	}
-	log.WithField("duration", utils.HumanizeDuration(time.Since(start))).Debug("finish")
+	log.WithField("duration", utils.HumanizeDuration(time.Since(start))).WithField("diff_parts", strconv.Itoa(int(downloadedDiffParts))).Info("done")
 	return nil
 }
 

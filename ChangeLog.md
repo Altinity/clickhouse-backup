@@ -4,6 +4,7 @@ IMPROVEMENTS
 - fix [387](https://github.com/AlexAkulov/clickhouse-backup/issues/387#issuecomment-1034648447), improve documentation related to memory and CPU usage
 
 BUG FIXES
+- fix [392](https://github.com/AlexAkulov/clickhouse-backup/issues/392), correct download for recursive sequence of diff backups when `DOWNLOAD_BY_PART` true
 - fix [390](https://github.com/AlexAkulov/clickhouse-backup/issues/390), respect skip_tables patterns during restore and skip all INFORMATION_SCHEMA related tables even skip_tables don't contain INFORMATION_SCHEMA pattern
 - fix [388](https://github.com/AlexAkulov/clickhouse-backup/issues/388), improve restore ON CLUSTER for VIEW with TO clause
 - fix [385](https://github.com/AlexAkulov/clickhouse-backup/issues/385), properly handle multiple incremental backup sequences + `BACKUPS_TO_KEEP_REMOTE`

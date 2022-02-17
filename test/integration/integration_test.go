@@ -935,9 +935,9 @@ func TestProjections(t *testing.T) {
 
 }
 
-func TestKeepBackupRemote(t *testing.T) {
-	if isTestShouldSkip("S3_ADVANCED_TESTS") {
-		t.Skip("Skipping S3 Advanced integration tests...")
+func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
+	if isTestShouldSkip("RUN_ADVANCED_TESTS") {
+		t.Skip("Skipping Advanced integration tests...")
 		return
 	}
 	r := require.New(t)
@@ -961,25 +961,40 @@ func TestKeepBackupRemote(t *testing.T) {
 	}
 	out, err := dockerExecOut("clickhouse", "bash", "-c", "clickhouse-backup list local")
 	r.NoError(err)
-	for i, backupName := range backupNames {
-		if i == 0 || i <= 4 {
-			r.Contains(out, backupName)
-		} else {
-			r.NotContains(out, backupName)
-		}
+	// shall not delete any backup, cause all deleted backup have links as required in other backups
+	for _, backupName := range backupNames {
+		r.Contains(out, backupName)
+		r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", backupName))
 	}
+	latestIncrementBackup := fmt.Sprintf("keep_remote_backup_%d", len(backupNames)-1)
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", latestIncrementBackup))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--rm", latestIncrementBackup))
+	res := make([]int, 0)
+	r.NoError(ch.chbackend.Select(&res, fmt.Sprintf("SELECT count() FROM `%s`.`%s`", Issue331Atomic, Issue331Atomic)))
+	r.Greater(len(res), 0)
+	r.Equal(200, res[0])
 	fullCleanup(r, ch, backupNames, true)
 }
 
-func TestS3AdvancedIntegration(t *testing.T) {
-	if isTestShouldSkip("S3_ADVANCED_TESTS") {
-		t.Skip("Skipping S3 Advanced integration tests...")
+func TestS3NoDeletePermission(t *testing.T) {
+	if isTestShouldSkip("RUN_ADVANCED_TESTS") {
+		t.Skip("Skipping Advanced integration tests...")
 		return
 	}
 	r := require.New(t)
 	r.NoError(dockerExec("minio", "/bin/minio_nodelete.sh"))
 	r.NoError(dockerCP("config-s3-nodelete.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	runMainIntegrationScenario(t, "S3")
+
+	ch := &TestClickHouse{}
+	ch.connectWithWait(r, 500*time.Millisecond)
+	defer ch.chbackend.Close()
+	generateTestData(ch, r)
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "no_delete_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "no_delete_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", "no_delete_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "no_delete_backup"))
+	r.Error(dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", "no_delete_backup"))
+	dropDatabasesFromTestDataDataSet(r, ch)
 }
 
 func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
@@ -989,6 +1004,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 	r := require.New(t)
 	ch := &TestClickHouse{}
 	ch.connectWithWait(r, 500*time.Millisecond)
+	defer ch.chbackend.Close()
 
 	rand.Seed(time.Now().UnixNano())
 
@@ -1087,8 +1103,6 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 	// test end
 	log.Info("Clean after finish")
 	fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, true)
-
-	ch.chbackend.Close()
 }
 
 func fullCleanup(r *require.Assertions, ch *TestClickHouse, backupNames []string, checkDeleteErr bool) {
@@ -1467,7 +1481,7 @@ func installDebIfNotExists(r *require.Assertions, container, pkg string) {
 func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 	log.Info("testBackupSpecifiedPartition started")
 
-	testBackupName := fmt.Sprintf("test_backup_%d", rand.Int())
+	partitionBackupName := fmt.Sprintf("partition_backup_%d", rand.Int())
 	// Create table
 	ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.t1")
 	ch.queryWithNoError(r, "CREATE TABLE default.t1 (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(dt) ORDER BY dt")
@@ -1475,13 +1489,13 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 	ch.queryWithNoError(r, "INSERT INTO default.t1 SELECT '2022-01-02 00:00:00', number FROM numbers(10)")
 	// Backup
 
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables=default.t1", "--partitions=20220101", testBackupName))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables=default.t1", "--partitions=20220101", partitionBackupName))
 
 	// TRUNCATE TABLE
 	ch.queryWithNoError(r, "TRUNCATE table default.t1")
 	// DELETE local backup before restore
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", testBackupName))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", partitionBackupName))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", partitionBackupName))
 
 	log.Debug("testBackupSpecifiedPartition begin check \n")
 	// Check
@@ -1490,8 +1504,8 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM default.t1 where dt = '2022-01-01 00:00:00'"))
 
 	// Must have one value
-	log.Debugf("testBackupSpecifiedPartition result : '%s'", result)
-	log.Debugf("testBackupSpecifiedPartition result' length '%d'", len(result))
+	log.Debugf("testBackupSpecifiedPartition result : '%v'", result)
+	log.Debugf("testBackupSpecifiedPartition result' length '%v'", len(result))
 
 	r.Equal(1, len(result), "expect one row")
 	r.Equal(10, result[0], "expect count=10")
@@ -1506,8 +1520,8 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 	r.Equal(0, result[0], "expect count=0")
 
 	// DELETE remote backup.
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", testBackupName))
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", partitionBackupName))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", partitionBackupName))
 
 	log.Info("testBackupSpecifiedPartition finish")
 }

@@ -130,6 +130,7 @@ func RemoveBackupRemote(cfg *config.Config, backupName string) error {
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
 			if err := bd.RemoveBackup(backup); err != nil {
+				apexLog.Warnf("RemoveBackup return error: %+v", err)
 				return err
 			}
 			apexLog.WithFields(apexLog.Fields{
