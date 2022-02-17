@@ -229,7 +229,7 @@ func (s *S3) Walk(s3Path string, recursive bool, process func(r RemoteFile) erro
 				err = process(s3File)
 			}
 		}
-		return nil
+		return err
 	})
 	return g.Wait()
 }

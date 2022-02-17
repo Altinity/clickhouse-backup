@@ -23,7 +23,8 @@ func (tm *TableMetadata) Save(location string, metadataOnly bool) (uint64, error
 		newp := make([]Part, len(p))
 		for i := range p {
 			newp[i] = Part{
-				Name: p[i].Name,
+				Name:     p[i].Name,
+				Required: p[i].Required,
 			}
 		}
 		parts[disk] = newp
