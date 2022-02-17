@@ -150,22 +150,15 @@ jobs:
           ~/venv/qa/bin/tfs --debug --no-colors transform short ./test/testflows/raw.log ./test/testflows/short.log.txt
           ~/venv/qa/bin/tfs --debug --no-colors report results -a "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/" ./test/testflows/raw.log - --confidential --copyright "Altinity LTD" --logo ./test/testflows/altinity.png | ~/venv/qa/bin/tfs --debug --no-colors document convert > ./test/testflows/report.html
           sudo chmod -Rv +rx test/testflows/clickhouse_backup/_instances
-      - uses: actions/upload-artifact@v2
+      - name: Upload testflows logs
+        uses: actions/upload-artifact@v2
         with:
-          name: testflows-logs
+          name: testflows-logs-and-reports
           path: |
             test/testflows/*.log
             test/testflows/*.log.txt
             test/testflows/clickhouse_backup/_instances/**/*.log
-          if-no-files-found: error
-          retention-days: 7
-
-      - uses: actions/upload-artifact@v2
-        with:
-          name: testflows-report
-          path: |
             test/testflows/*.html
-          if-no-files-found: error
           retention-days: 7
 
   test:
