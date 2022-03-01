@@ -3,13 +3,14 @@ package new_storage
 import (
 	"context"
 	"crypto/tls"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"io"
 	"net/http"
 	"os"
 	"path"
 	"strings"
 	"time"
+
+	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 
 	"golang.org/x/sync/errgroup"
 
@@ -210,14 +211,14 @@ func (s *S3) Walk(s3Path string, recursive bool, process func(r RemoteFile) erro
 		return s.remotePager(path.Join(s.Config.Path, s3Path), recursive, func(page *s3.ListObjectsV2Output) {
 			for _, cp := range page.CommonPrefixes {
 				s3Files <- &s3File{
-					name: strings.TrimPrefix(*cp.Prefix, path.Join(s.Config.Path, s3Path)),
+					name: s.trimS3Prefix(s3Path, *cp.Prefix),
 				}
 			}
 			for _, c := range page.Contents {
 				s3Files <- &s3File{
-					*c.Size,
-					*c.LastModified,
-					strings.TrimPrefix(*c.Key, path.Join(s.Config.Path, s3Path)),
+					size:         *c.Size,
+					lastModified: *c.LastModified,
+					name:         s.trimS3Prefix(*c.Key, s3Path),
 				}
 			}
 		})
@@ -252,6 +253,17 @@ func (s *S3) remotePager(s3Path string, recursive bool, pager func(page *s3.List
 		return !lastPage
 	}
 	return s3.New(s.session).ListObjectsV2Pages(params, wrapper)
+}
+
+func (s *S3) trimS3Prefix(s3Path, key string) string {
+	toTrim := path.Join(s.Config.Path, s3Path)
+	if toTrim == "" {
+		return key
+	}
+	if strings.HasPrefix(key, "/") {
+		return strings.TrimPrefix(key, toTrim)
+	}
+	return strings.TrimPrefix(key, toTrim[1:])
 }
 
 type s3File struct {
