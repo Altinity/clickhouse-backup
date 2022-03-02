@@ -240,6 +240,8 @@ func LoadConfig(configLocation string) (*Config, error) {
 		return nil, err
 	}
 	cfg.AzureBlob.Path = strings.TrimPrefix(cfg.AzureBlob.Path, "/")
+	cfg.S3.Path = strings.TrimPrefix(cfg.S3.Path, "/")
+	cfg.GCS.Path = strings.TrimPrefix(cfg.GCS.Path, "/")
 	log.SetLevelFromString(cfg.General.LogLevel)
 	return cfg, ValidateConfig(cfg)
 }

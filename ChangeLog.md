@@ -1,3 +1,8 @@
+# v1.3.2
+
+BUG FIXES
+- fix [406](https://github.com/AlexAkulov/clickhouse-backup/issues/406), properly handle `path` for S3, GCS for case when it begin from "/"
+
 # v1.3.1
 
 IMPROVEMENTS
