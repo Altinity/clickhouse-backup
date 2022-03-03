@@ -491,6 +491,7 @@ func (api *APIServer) getTablesWithSkip(tables []clickhouse.Table) []clickhouse.
 	for _, t := range tables {
 		if !t.Skip {
 			showTables[showCounts] = t
+			showCounts++
 		}
 	}
 	return showTables
