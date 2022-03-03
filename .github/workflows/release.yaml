@@ -61,13 +61,27 @@ jobs:
       - name: Building deb, rpm and tar.gz packages
         id: make_packages
         run: |
+          set -x
           export NAME=clickhouse-backup
           export VERSION=$(git describe --always --tags --abbrev=0 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/c\1/;s/-/./g')
-          tar -czvf ${NAME}.tar.gz ${NAME}
-          CGO_ENABLED=0 make packages
-          echo "::set-output name=rpm::${NAME}-${VERSION}-1.x86_64.rpm"
-          echo "::set-output name=deb::${NAME}_${VERSION}_amd64.deb"
-          echo "::set-output name=tgz::${NAME}.tar.gz"
+
+          tar -czvf ${NAME}-linux-amd64.tar.gz build/linux/amd64
+          tar -czvf ${NAME}-linux-arm64.tar.gz build/linux/arm64
+          tar -czvf ${NAME}-darwin-amd64.tar.gz build/darwin/amd64
+          tar -czvf ${NAME}-darwin-arm64.tar.gz build/darwin/arm64
+          echo "::set-output name=tgz_linux_amd64::${NAME}-linux-amd64.tar.gz"
+          echo "::set-output name=tgz_linux_arm64::${NAME}-linux-arm64.tar.gz"
+          echo "::set-output name=tgz_darwin_amd64::${NAME}-darwin-amd64.tar.gz"
+          echo "::set-output name=tgz_darwin_arm64::${NAME}-darwin-arm64.tar.gz"
+
+          make packages
+          cp -lv ./build/linux/*/*.deb ./
+          cp -lv ./build/linux/*/*.rpm ./
+          echo "::set-output name=rpm_amd64::${NAME}-${VERSION}-1.x86_64.rpm"
+          echo "::set-output name=deb_amd64::${NAME}_${VERSION}_amd64.deb"
+          echo "::set-output name=rpm_arm64::${NAME}-${VERSION}-1.aarch64.rpm"
+          echo "::set-output name=deb_arm64::${NAME}_${VERSION}_arm64.deb"
+
 
       - name: Prepare release notes
         id: release_notes
@@ -77,48 +91,28 @@ jobs:
 
       - name: Create release
         id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
         with:
           tag_name: ${{ steps.docker_tag.outputs.docker_tag }}
-          release_name: ${{ steps.docker_tag.outputs.docker_tag }}
+          name: ${{ steps.docker_tag.outputs.docker_tag }}
           body_path: ${{ steps.release_notes.outputs.path }}
           draft: true
+          fail_on_unmatched_files: true
+          files: |
+            ${{ steps.make_packages.outputs.rpm_amd64 }}
+            ${{ steps.make_packages.outputs.rpm_arm64 }}
+            ${{ steps.make_packages.outputs.deb_amd64 }}
+            ${{ steps.make_packages.outputs.deb_arm64 }}
+            ${{ steps.make_packages.outputs.tgz_linux_amd64 }}
+            ${{ steps.make_packages.outputs.tgz_linux_arm64 }}
+            ${{ steps.make_packages.outputs.tgz_darwin_amd64 }}
+            ${{ steps.make_packages.outputs.tgz_darwin_arm64 }}
 
-      - name: Add rpm to github release
-        id: upload-release-rpm
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: build/${{ steps.make_packages.outputs.rpm }}
-          asset_name: ${{ steps.make_packages.outputs.rpm }}
-          asset_content_type: application/octet-stream
-
-
-      - name: Add deb to github release
-        id: upload-release-deb
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: build/${{ steps.make_packages.outputs.deb }}
-          asset_name: ${{ steps.make_packages.outputs.deb }}
-          asset_content_type: application/octet-stream
-
-      - name: Add tar.gz to github release
-        id: upload-release-tgz
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ steps.make_packages.outputs.tgz }}
-          asset_name: ${{ steps.make_packages.outputs.tgz }}
-          asset_content_type: application/octet-stream
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
 
       - name: Building docker image
         env:
@@ -132,8 +126,4 @@ jobs:
           export DOCKER_REGISTRY=${DOCKER_REGISTRY:-docker.io}
           echo ${DOCKER_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin ${DOCKER_REGISTRY}
 
-          docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
-          docker image tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}
-          docker image tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:latest
-          docker push ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}
-          docker push ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:latest
+          docker buildx build --platform=linux/amd64,linux/arm64 -t ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG} -t ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:latest --pull --push .
