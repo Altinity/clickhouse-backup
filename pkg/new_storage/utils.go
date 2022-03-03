@@ -2,9 +2,10 @@ package new_storage
 
 import (
 	"fmt"
-	"sort"
-
+	"github.com/apex/log"
 	"github.com/mholt/archiver/v3"
+	"sort"
+	"time"
 )
 
 func GetBackupsToDelete(backups []Backup, keep int) []Backup {
@@ -12,7 +13,35 @@ func GetBackupsToDelete(backups []Backup, keep int) []Backup {
 		sort.SliceStable(backups, func(i, j int) bool {
 			return backups[i].UploadDate.After(backups[j].UploadDate)
 		})
-		return backups[keep:]
+		// KeepRemoteBackups should respect incremental backups and don't delete required backups
+		// fix https://github.com/AlexAkulov/clickhouse-backup/issues/111
+		// fix https://github.com/AlexAkulov/clickhouse-backup/issues/385
+		deletedBackups := make([]Backup, len(backups)-keep)
+		copied := copy(deletedBackups, backups[keep:])
+		if copied != len(backups)-keep {
+			log.Warnf("copied wrong items from backup list expected=%d, actual=%d", len(backups)-keep, copied)
+		}
+		for _, b := range backups {
+			if b.RequiredBackup != "" {
+				for i, deletedBackup := range deletedBackups {
+					if b.RequiredBackup == deletedBackup.BackupName {
+						deletedBackups = append(deletedBackups[:i], deletedBackups[i+1:]...)
+						break
+					}
+				}
+			}
+		}
+		// remove from old backup list backup with UploadDate `0001-01-01 00:00:00`, to avoid race condition for multiple shards copy
+		// fix https://github.com/AlexAkulov/clickhouse-backup/issues/409
+		i := 0
+		for _, b := range deletedBackups {
+			if b.UploadDate != time.Date(1, time.January, 1, 0, 0, 0, 0, time.UTC) {
+				deletedBackups[i] = b
+				i++
+			}
+		}
+		deletedBackups = deletedBackups[:i]
+		return deletedBackups
 	}
 	return []Backup{}
 }
