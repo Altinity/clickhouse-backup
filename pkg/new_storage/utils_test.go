@@ -61,3 +61,18 @@ func TestGetBackupsToDeleteWithRequiredBackup(t *testing.T) {
 	assert.Equal(t, []Backup{}, GetBackupsToDelete([]Backup{testData[0]}, 3))
 
 }
+
+func TestGetBackupsToDeleteWithInvalidUploadDate(t *testing.T) {
+	// fix https://github.com/AlexAkulov/clickhouse-backup/issues/409
+	testData := []Backup{
+		{metadata.BackupMetadata{BackupName: "1"}, false, "", "", timeParse("2022-03-03T18-08-01")},
+		{metadata.BackupMetadata{BackupName: "2"}, false, "", "", timeParse("2022-03-03T18-08-02")},
+		{BackupMetadata: metadata.BackupMetadata{BackupName: "3"}, Legacy: false, FileExtension: "", Broken: ""}, // UploadDate initialized with default value
+		{metadata.BackupMetadata{BackupName: "4"}, false, "", "", timeParse("2022-03-03T18-08-04")},
+	}
+	expectedData := []Backup{
+		{metadata.BackupMetadata{BackupName: "1"}, false, "", "", timeParse("2022-03-03T18-08-01")},
+	}
+	assert.Equal(t, expectedData, GetBackupsToDelete(testData, 2))
+
+}
