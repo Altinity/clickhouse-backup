@@ -1,4 +1,6 @@
 # v1.3.2
+IMPROVEMENTS
+- add TLS certificates and TLS CA support for clickhouse connections, fix [410](https://github.com/AlexAkulov/clickhouse-backup/issues/410)
 
 BUG FIXES
 - fix [406](https://github.com/AlexAkulov/clickhouse-backup/issues/406), properly handle `path` for S3, GCS for case when it begin from "/"

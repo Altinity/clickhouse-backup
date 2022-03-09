@@ -157,6 +157,9 @@ type ClickHouseConfig struct {
 	ConfigDir                        string            `yaml:"config_dir" envconfig:"CLICKHOUSE_CONFIG_DIR"`
 	RestartCommand                   string            `yaml:"restart_command" envconfig:"CLICKHOUSE_RESTART_COMMAND"`
 	IgnoreNotExistsErrorDuringFreeze bool              `yaml:"ignore_not_exists_error_during_freeze" envconfig:"CLICKHOUSE_IGNORE_NOT_EXISTS_ERROR_DURING_FREEZE"`
+	TLSKey                           string            `yaml:"tls_key" envconfig:"CLICKHOUSE_TLS_KEY"`
+	TLSCert                          string            `yaml:"tls_cert" envconfig:"CLICKHOUSE_TLS_CERT"`
+	TLSCa                            string            `yaml:"tls_ca" envconfig:"CLICKHOUSE_TLS_CA"`
 	Debug                            bool              `yaml:"debug" envconfig:"CLICKHOUSE_DEBUG"`
 }
 
@@ -341,7 +344,7 @@ func DefaultConfig() *Config {
 			},
 			Timeout:                          "5m",
 			SyncReplicatedTables:             false,
-			LogSQLQueries:                    false,
+			LogSQLQueries:                    true,
 			ConfigDir:                        "/etc/clickhouse-server/",
 			RestartCommand:                   "systemctl restart clickhouse-server",
 			IgnoreNotExistsErrorDuringFreeze: true,
