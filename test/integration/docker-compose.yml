@@ -33,6 +33,8 @@ services:
       MINIO_ACCESS_KEY: access-key
       MINIO_SECRET_KEY: it-is-my-super-secret-key
       MINIO_DEFAULT_BUCKETS: 'clickhouse'
+      MINIO_ROOT_USER: access-key
+      MINIO_ROOT_PASSWORD: it-is-my-super-secret-key
     volumes:
       - ./minio_nodelete.sh:/bin/minio_nodelete.sh
     networks:
