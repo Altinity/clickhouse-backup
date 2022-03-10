@@ -26,7 +26,11 @@ docker-compose -f test/integration/${COMPOSE_FILE} down --remove-orphans
 docker volume prune -f
 make clean
 make build-race
-docker-compose -f test/integration/${COMPOSE_FILE} up -d minio mysql
+if [[ "${COMPOSE_FILE}" == "docker-compose_advanced.yml" ]]; then
+  docker-compose -f test/integration/${COMPOSE_FILE} up -d minio mysql
+else
+  docker-compose -f test/integration/${COMPOSE_FILE} up -d minio
+fi
 sleep 5
 docker-compose -f test/integration/${COMPOSE_FILE} exec minio mc alias list
 
