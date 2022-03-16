@@ -281,8 +281,8 @@ spec:
                     clickhouse-client --echo -mn -q "INSERT INTO system.backup_actions(command) VALUES('create ${SERVER}-${BACKUP_NAME}')" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD;
                   done;
                   for SERVER in $CLICKHOUSE_SERVICES; do
-                    while [[ "InProgress" == $(clickhouse-client -mn -q "SELECT status FROM system.backup_actions WHERE command='create ${SERVER}-${BACKUP_NAME}'" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD) ]]; do
-                      echo "still InProgress $BACKUP_NAME on $SERVER";
+                    while [[ "in progress" == $(clickhouse-client -mn -q "SELECT status FROM system.backup_actions WHERE command='create ${SERVER}-${BACKUP_NAME}'" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD) ]]; do
+                      echo "still in progress $BACKUP_NAME on $SERVER";
                       sleep 1;
                     done;
                     if [[ "success" != $(clickhouse-client -mn -q "SELECT status FROM system.backup_actions WHERE command='create ${SERVER}-${BACKUP_NAME}'" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD) ]]; then
@@ -296,8 +296,8 @@ spec:
                     clickhouse-client --echo -mn -q "INSERT INTO system.backup_actions(command) VALUES('upload ${SERVER}-${BACKUP_NAME}')" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD;
                   done;
                   for SERVER in $CLICKHOUSE_SERVICES; do
-                    while [[ "InProgress" == $(clickhouse-client -mn -q "SELECT status FROM system.backup_actions WHERE command='upload ${SERVER}-${BACKUP_NAME}'" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD) ]]; do
-                      echo "upload still InProgress $BACKUP_NAME on $SERVER";
+                    while [[ "in progress" == $(clickhouse-client -mn -q "SELECT status FROM system.backup_actions WHERE command='upload ${SERVER}-${BACKUP_NAME}'" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD) ]]; do
+                      echo "upload still in progress $BACKUP_NAME on $SERVER";
                       sleep 5;
                     done;
                     if [[ "success" != $(clickhouse-client -mn -q "SELECT status FROM system.backup_actions WHERE command='upload ${SERVER}-${BACKUP_NAME}'" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD) ]]; then
