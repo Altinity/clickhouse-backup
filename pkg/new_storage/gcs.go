@@ -57,7 +57,7 @@ func (gcs *GCS) Connect() error {
 	var err error
 	clientOptions := make([]option.ClientOption, 0)
 	ctx := context.Background()
-
+	clientOptions = append(clientOptions, option.WithTelemetryDisabled())
 	endpoint := "https://storage.googleapis.com/storage/v1/"
 	if gcs.Config.Endpoint != "" {
 		endpoint = gcs.Config.Endpoint
@@ -158,7 +158,11 @@ func (gcs *GCS) PutFile(key string, r io.ReadCloser) error {
 	key = path.Join(gcs.Config.Path, key)
 	obj := gcs.client.Bucket(gcs.Config.Bucket).Object(key)
 	writer := obj.NewWriter(ctx)
-	defer writer.Close()
+	defer func() {
+		if err := writer.Close(); err != nil {
+			log.Warnf("can't close writer: %+v", err)
+		}
+	}()
 	buffer := make([]byte, 4*1024*1024)
 	_, err := io.CopyBuffer(writer, r, buffer)
 	return err

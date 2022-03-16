@@ -1,3 +1,11 @@
+# v1.3.2
+IMPROVEMENTS
+- add TLS certificates and TLS CA support for clickhouse connections, fix [410](https://github.com/AlexAkulov/clickhouse-backup/issues/410)
+
+BUG FIXES
+- fix [406](https://github.com/AlexAkulov/clickhouse-backup/issues/406), properly handle `path` for S3, GCS for case when it begin from "/"
+- fix [409](https://github.com/AlexAkulov/clickhouse-backup/issues/409), avoid delete partially uploaded backups via `backups_keep_remote` option
+
 # v1.3.1
 
 IMPROVEMENTS
@@ -55,6 +63,11 @@ BUG FIXES
 EXPERIMENTAL
 - Try to add experimental support for backup `MaterializedMySQL` and `MaterializedPostgeSQL` tables, restore MySQL tables not impossible now without replace `table_name.json` to `Engine=MergeTree`,
   PostgreSQL not supported now, see https://github.com/ClickHouse/ClickHouse/issues/32902
+
+# v1.2.4
+
+HOT FIXES
+- fix [409](https://github.com/AlexAkulov/clickhouse-backup/issues/409), avoid delete partially uploaded backups via `backups_keep_remote` option
 
 # v1.2.3
 

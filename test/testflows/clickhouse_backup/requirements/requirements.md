@@ -1,7 +1,6 @@
 # QA-SRS013 ClickHouse Backup Utility
 # Software Requirements Specification
 
-(c) 2021 Altinity LTD. All Rights Reserved.
 
 ## Table of Contents
 
@@ -98,7 +97,7 @@
 ## Revision History
 
 This document is stored in an electronic form using [Git] source control management software
-hosted in a [GitLab Repository].
+hosted in a [Github Repository].
 All the updates are tracked using the [Revision History].
 
 ## Introduction
@@ -1021,14 +1020,14 @@ All CLI actions such as `create`, `upload` etc. SHALL be supported.
 
 * **clickhouse-backup**: https://github.com/AlexAkulov/clickhouse-backup
 * **ClickHouse:** https://clickhouse.tech
-* **GitLab Repository:** https://gitlab.com/altinity-qa/documents/qa-srs013-clickhouse-backup-utility/-/blob/master/QA_SRS013_ClickHouse_Backup_Utility.md
-* **Revision History:** https://gitlab.com/altinity-qa/documents/qa-srs013-clickhouse-backup-utility/-/commits/master/QA_SRS013_ClickHouse_Backup_Utility.md
+* **GitHub Repository:** https://github.com/AlexAkulov/clickhouse-backup/blob/master/test/testflows/clickhouse_backup/requirements/requirements.md
+* **Revision History:** https://github.com/AlexAkulov/clickhouse-backup/commits/master/test/testflows/clickhouse_backup/requirements/requirements.md
 * **Git:** https://git-scm.com/
 
 [SRS]: #srs
 [clickhouse-backup]: https://github.com/AlexAkulov/clickhouse-backup
 [ClickHouse]: https://clickhouse.tech
-[GitLab Repository]: https://gitlab.com/altinity-qa/documents/qa-srs013-clickhouse-backup-utility/-/blob/master/QA_SRS013_ClickHouse_Backup_Utility.md
-[Revision History]: https://gitlab.com/altinity-qa/documents/qa-srs013-clickhouse-backup-utility/-/commits/master/QA_SRS013_ClickHouse_Backup_Utility.md
+[GitHub Repository]: https://github.com/AlexAkulov/clickhouse-backup/blob/master/test/testflows/clickhouse_backup/requirements/requirements.md
+[Revision History]: https://github.com/AlexAkulov/clickhouse-backup/commits/master/test/testflows/clickhouse_backup/requirements/requirements.md
 [Git]: https://git-scm.com/
-[GitLab]: https://gitlab.com
+[GitHub]: https://github.com/

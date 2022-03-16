@@ -119,13 +119,16 @@ clickhouse:
     - system.*
     - INFORMATION_SCHEMA.*
     - information_schema.*
-  timeout: 5m                      # CLICKHOUSE_TIMEOUT
-  freeze_by_part: false            # CLICKHOUSE_FREEZE_BY_PART
-  secure: false                    # CLICKHOUSE_SECURE, use SSL encryption for connect
-  skip_verify: false               # CLICKHOUSE_SKIP_VERIFY
-  sync_replicated_tables: true     # CLICKHOUSE_SYNC_REPLICATED_TABLES
-  log_sql_queries: true            # CLICKHOUSE_LOG_SQL_QUERIES, enable log clickhouse-backup SQL queries on `system.query_log` table inside clickhouse-server
-  debug: false                     # CLICKHOUSE_DEBUG
+  timeout: 5m                  # CLICKHOUSE_TIMEOUT
+  freeze_by_part: false        # CLICKHOUSE_FREEZE_BY_PART
+  secure: false                # CLICKHOUSE_SECURE, use SSL encryption for connect
+  skip_verify: false           # CLICKHOUSE_SKIP_VERIFY
+  sync_replicated_tables: true # CLICKHOUSE_SYNC_REPLICATED_TABLES
+  tls_key: ""                  # CLICKHOUSE_TLS_KEY, filename with TLS key file 
+  tls_cert: ""                 # CLICKHOUSE_TLS_CERT, filename with TLS certificate file 
+  tls_ca: ""                   # CLICKHOUSE_TLS_CA, filename with TLS custom authority file 
+  log_sql_queries: true        # CLICKHOUSE_LOG_SQL_QUERIES, enable log clickhouse-backup SQL queries on `system.query_log` table inside clickhouse-server
+  debug: false                 # CLICKHOUSE_DEBUG
   config_dir:      "/etc/clickhouse-server"              # CLICKHOUSE_CONFIG_DIR
   restart_command: "systemctl restart clickhouse-server" # CLICKHOUSE_RESTART_COMMAND, this command use when you try to restore with --rbac or --config options
   ignore_not_exists_error_during_freeze: true # CLICKHOUSE_IGNORE_NOT_EXISTS_ERROR_DURING_FREEZE, allow avoiding backup failures when you often CREATE / DROP tables and databases during backup creation, clickhouse-backup will ignore `code: 60` and `code: 81` errors during execute `ALTER TABLE ... FREEZE` 

@@ -1014,8 +1014,10 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 	log.Info("Clean before start")
 	fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, false)
 
+	r.NoError(dockerExec("minio", "mc", "ls", "local/clickhouse/disk_s3"))
 	generateTestData(ch, r)
 
+	r.NoError(dockerExec("minio", "mc", "ls", "local/clickhouse/disk_s3"))
 	log.Info("Create backup")
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", testBackupName))
 
@@ -1026,21 +1028,22 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 	log.Info("Upload")
 	r.NoError(dockerExec("clickhouse", "bash", "-c", fmt.Sprintf("%s_COMPRESSION_FORMAT=zstd clickhouse-backup upload %s", remoteStorageType, testBackupName)))
 
-	rand.Seed(time.Now().UnixNano())
 	//diffFrom := []string{"--diff-from", "--diff-from-remote"}[rand.Intn(2)]
 	diffFrom := "--diff-from-remote"
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "upload", incrementBackupName, diffFrom, testBackupName))
 
-	dropDatabasesFromTestDataDataSet(r, ch)
-
 	out, err = dockerExecOut("clickhouse", "ls", "-lha", "/var/lib/clickhouse/backup")
 	r.NoError(err)
-	r.Equal(5, len(strings.Split(strings.Trim(out, " \t\r\n"), "\n")), "expect one backup directory backups exists in backup directory")
+	r.Equal(5, len(strings.Split(strings.Trim(out, " \t\r\n"), "\n")), "expect two backups exists in backup directory")
 	log.Info("Delete backup")
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", incrementBackupName))
 	out, err = dockerExecOut("clickhouse", "ls", "-lha", "/var/lib/clickhouse/backup")
 	r.NoError(err)
-	r.Equal(4, len(strings.Split(strings.Trim(out, " \t\r\n"), "\n")), "expect no backup exists in backup directory")
+	r.Equal(3, len(strings.Split(strings.Trim(out, " \t\r\n"), "\n")), "expect no backup exists in backup directory")
+
+	dropDatabasesFromTestDataDataSet(r, ch)
+	r.NoError(dockerExec("minio", "mc", "ls", "local/clickhouse/disk_s3"))
 
 	log.Info("Download")
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", testBackupName))
@@ -1067,11 +1070,9 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 	}
 	// test increment
 	dropDatabasesFromTestDataDataSet(r, ch)
-	r.NoError(dockerExec("clickhouse", "ls", "-lha", "/var/lib/clickhouse/backup"))
+
 	log.Info("Delete backup")
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", incrementBackupName))
-	r.NoError(dockerExec("clickhouse", "ls", "-lha", "/var/lib/clickhouse/backup"))
 
 	log.Info("Download increment")
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", incrementBackupName))

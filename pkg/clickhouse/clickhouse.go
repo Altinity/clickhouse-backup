@@ -1,10 +1,14 @@
 package clickhouse
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"database/sql"
 	"errors"
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
+	"github.com/ClickHouse/clickhouse-go"
+	"io/ioutil"
 	"net/url"
 	"os"
 	"path"
@@ -18,7 +22,6 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 	"github.com/apex/log"
 
-	_ "github.com/ClickHouse/clickhouse-go"
 	"github.com/jmoiron/sqlx"
 	"github.com/jmoiron/sqlx/reflectx"
 )
@@ -57,6 +60,35 @@ func (ch *ClickHouse) Connect() error {
 	if ch.Config.Secure {
 		params.Add("secure", "true")
 		params.Add("skip_verify", strconv.FormatBool(ch.Config.SkipVerify))
+		if ch.Config.TLSKey != "" || ch.Config.TLSCert != "" || ch.Config.TLSCa != "" {
+			tlsConfig := &tls.Config{
+				InsecureSkipVerify: ch.Config.SkipVerify,
+			}
+			if ch.Config.TLSCert != "" || ch.Config.TLSKey != "" {
+				cert, err := tls.LoadX509KeyPair("server.crt", "server.key")
+				if err != nil {
+					log.Errorf("tls.LoadX509KeyPair error: %v", err)
+					return err
+				}
+				tlsConfig.Certificates = []tls.Certificate{cert}
+			}
+			if ch.Config.TLSCa != "" {
+				caCert, err := ioutil.ReadFile(ch.Config.TLSCa)
+				if err != nil {
+					log.Errorf("read `tls_ca` file %s return error: %v ", ch.Config.TLSCa, err)
+					return err
+				}
+				caCertPool := x509.NewCertPool()
+				if caCertPool.AppendCertsFromPEM(caCert) != true {
+					log.Errorf("AppendCertsFromPEM %s return false", ch.Config.TLSCa)
+					return fmt.Errorf("AppendCertsFromPEM %s return false", ch.Config.TLSCa)
+				}
+				tlsConfig.RootCAs = caCertPool
+			}
+			clickhouse.RegisterTLSConfig("clickhouse-backup", tlsConfig)
+			params.Add("tls_config", "clickhouse-backup")
+		}
+
 	}
 	if !ch.Config.LogSQLQueries {
 		params.Add("log_queries", "0")
@@ -68,6 +100,7 @@ func (ch *ClickHouse) Connect() error {
 	ch.conn.SetMaxOpenConns(1)
 	ch.conn.SetConnMaxLifetime(0)
 	ch.conn.SetMaxIdleConns(0)
+
 	return ch.conn.Ping()
 }
 
