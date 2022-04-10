@@ -103,7 +103,7 @@ jobs:
     strategy:
       matrix:
         clickhouse:
-          - '22.1'
+          - '22.3'
     steps:
       - name: Checkout project
         uses: actions/checkout@v2
