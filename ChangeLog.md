@@ -1,10 +1,13 @@
 # v1.3.2
 IMPROVEMENTS
 - add TLS certificates and TLS CA support for clickhouse connections, fix [410](https://github.com/AlexAkulov/clickhouse-backup/issues/410)
+- switch to go 1.18
+- add clickhouse version 22.3 to integration tests
 
 BUG FIXES
 - fix [406](https://github.com/AlexAkulov/clickhouse-backup/issues/406), properly handle `path` for S3, GCS for case when it begin from "/"
 - fix [409](https://github.com/AlexAkulov/clickhouse-backup/issues/409), avoid delete partially uploaded backups via `backups_keep_remote` option
+- fix [422](https://github.com/AlexAkulov/clickhouse-backup/issues/422), avoid cache broken (partially uploaded) remote backup metadata.
 
 # v1.3.1
 

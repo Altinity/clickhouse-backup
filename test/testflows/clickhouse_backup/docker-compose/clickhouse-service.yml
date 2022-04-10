@@ -2,7 +2,7 @@ version: '2.4'
 
 services:
   clickhouse:
-    image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:-22.1}
+    image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:-22.3}
     volumes:
       - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse/ssl:/etc/clickhouse-server/ssl"
       - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse/config.d/common.xml:/etc/clickhouse-server/config.d/common.xml"

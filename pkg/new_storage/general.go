@@ -212,7 +212,6 @@ func (bd *BackupDestination) BackupList(parseMetadata bool, parseMetadataOnly st
 				"broken (can't stat metadata.json)",
 				o.LastModified(), // folder
 			}
-			listCache[backupName] = brokenBackup
 			result = append(result, brokenBackup)
 			return nil
 		}
@@ -227,7 +226,6 @@ func (bd *BackupDestination) BackupList(parseMetadata bool, parseMetadataOnly st
 				"broken (can't open metadata.json)",
 				o.LastModified(), // folder
 			}
-			listCache[backupName] = brokenBackup
 			result = append(result, brokenBackup)
 			return nil
 		}
@@ -242,7 +240,6 @@ func (bd *BackupDestination) BackupList(parseMetadata bool, parseMetadataOnly st
 				"broken (can't read metadata.json)",
 				o.LastModified(), // folder
 			}
-			listCache[backupName] = brokenBackup
 			result = append(result, brokenBackup)
 			return nil
 		}
@@ -260,7 +257,6 @@ func (bd *BackupDestination) BackupList(parseMetadata bool, parseMetadataOnly st
 				"broken (bad metadata.json)",
 				o.LastModified(), // folder
 			}
-			listCache[backupName] = brokenBackup
 			result = append(result, brokenBackup)
 			return nil
 		}
