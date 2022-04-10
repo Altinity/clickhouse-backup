@@ -12,7 +12,7 @@ jobs:
     strategy:
       matrix:
         golang-version:
-          - "1.17"
+          - "1.18"
 
     steps:
       - name: Checkout project
