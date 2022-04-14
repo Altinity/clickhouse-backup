@@ -292,7 +292,7 @@ func (b *Backuper) uploadAndArchiveBackupRelatedDir(localBackupRelatedDir, local
 		localFiles[i] = strings.Replace(localFiles[i], localBackupRelatedDir, "", 1)
 	}
 
-	if err := b.dst.CompressedStreamUpload(localBackupRelatedDir, localFiles, remoteFile); err != nil {
+	if err := b.dst.UploadCompressedStream(localBackupRelatedDir, localFiles, remoteFile); err != nil {
 		return 0, fmt.Errorf("can't RBAC upload: %v", err)
 	}
 	remoteUploaded, err := b.dst.StatFile(remoteFile)
@@ -346,8 +346,8 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 				g.Go(func() error {
 					defer s.Release(1)
 					apexLog.Debugf("start upload %d files to %s", len(localFiles), remoteDataFile)
-					if err := b.dst.CompressedStreamUpload(backupPath, localFiles, remoteDataFile); err != nil {
-						apexLog.Errorf("CompressedStreamUpload return error: %v", err)
+					if err := b.dst.UploadCompressedStream(backupPath, localFiles, remoteDataFile); err != nil {
+						apexLog.Errorf("UploadCompressedStream return error: %v", err)
 						return fmt.Errorf("can't upload: %v", err)
 					}
 					remoteFile, err := b.dst.StatFile(remoteDataFile)

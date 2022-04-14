@@ -321,7 +321,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		General: GeneralConfig{
 			RemoteStorage:          "none",
-			MaxFileSize:            1 * 1024 * 1024 * 1024, // 1GB
+			MaxFileSize:            0,
 			BackupsToKeepLocal:     0,
 			BackupsToKeepRemote:    0,
 			LogLevel:               "info",

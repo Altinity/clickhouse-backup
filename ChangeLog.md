@@ -8,6 +8,7 @@ BUG FIXES
 - fix [406](https://github.com/AlexAkulov/clickhouse-backup/issues/406), properly handle `path` for S3, GCS for case when it begin from "/"
 - fix [409](https://github.com/AlexAkulov/clickhouse-backup/issues/409), avoid delete partially uploaded backups via `backups_keep_remote` option
 - fix [422](https://github.com/AlexAkulov/clickhouse-backup/issues/422), avoid cache broken (partially uploaded) remote backup metadata.
+- fix [404](https://github.com/AlexAkulov/clickhouse-backup/issues/404), properly calculate S3_PART_SIZE to avoid freeze after 10000 multi parts uploading
 
 # v1.3.1
 

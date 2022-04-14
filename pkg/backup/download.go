@@ -286,7 +286,7 @@ func (b *Backuper) downloadBackupRelatedDir(remoteBackup new_storage.Backup, pre
 		apexLog.Debugf("%s not exists on remote storage, skip download", remoteFile)
 		return 0, nil
 	}
-	if err = b.dst.CompressedStreamDownload(remoteFile, localDir); err != nil {
+	if err = b.dst.DownloadCompressedStream(remoteFile, localDir); err != nil {
 		return 0, err
 	}
 	return uint64(remoteFileInfo.Size()), nil
@@ -317,7 +317,7 @@ func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table
 				g.Go(func() error {
 					apexLog.Debugf("start download from %s", tableRemoteFile)
 					defer s.Release(1)
-					if err := b.dst.CompressedStreamDownload(tableRemoteFile, tableLocalDir); err != nil {
+					if err := b.dst.DownloadCompressedStream(tableRemoteFile, tableLocalDir); err != nil {
 						return err
 					}
 					apexLog.Debugf("finish download from %s", tableRemoteFile)
@@ -459,8 +459,8 @@ func (b *Backuper) downloadDiffRemoteFile(diffRemoteFilesLock *sync.Mutex, diffR
 		namedLock.Lock()
 		diffRemoteFilesLock.Unlock()
 		if path.Ext(tableRemoteFile) != "" {
-			if err := b.dst.CompressedStreamDownload(tableRemoteFile, tableLocalDir); err != nil {
-				log.Warnf("CompressedStreamDownload %s -> %s return error: %v", tableRemoteFile, tableLocalDir, err)
+			if err := b.dst.DownloadCompressedStream(tableRemoteFile, tableLocalDir); err != nil {
+				log.Warnf("DownloadCompressedStream %s -> %s return error: %v", tableRemoteFile, tableLocalDir, err)
 				return err
 			}
 		} else {

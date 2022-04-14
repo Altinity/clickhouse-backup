@@ -2,7 +2,7 @@
 set -x
 set -e
 
-export CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION:-21.8}
+export CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION:-22.3}
 if [[ "${CLICKHOUSE_VERSION}" =~ 2[2-9]+ ]]; then
   export CLICKHOUSE_IMAGE=clickhouse/clickhouse-server
 else

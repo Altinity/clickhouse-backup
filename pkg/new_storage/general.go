@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/progressbar"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
@@ -29,7 +30,7 @@ import (
 
 const (
 	// BufferSize - size of ring buffer between stream handlers
-	BufferSize = 4 * 1024 * 1024
+	BufferSize = 1 * 1024 * 1024
 )
 
 type Backup struct {
@@ -277,7 +278,7 @@ func (bd *BackupDestination) BackupList(parseMetadata bool, parseMetadataOnly st
 	return result, err
 }
 
-func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPath string) error {
+func (bd *BackupDestination) DownloadCompressedStream(remotePath string, localPath string) error {
 	if err := os.MkdirAll(localPath, 0750); err != nil {
 		return err
 	}
@@ -355,7 +356,7 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 	return nil
 }
 
-func (bd *BackupDestination) CompressedStreamUpload(baseLocalPath string, files []string, remotePath string) error {
+func (bd *BackupDestination) UploadCompressedStream(baseLocalPath string, files []string, remotePath string) error {
 	if _, err := bd.StatFile(remotePath); err != nil {
 		if err != ErrNotFound && !os.IsNotExist(err) {
 			return err
@@ -535,6 +536,14 @@ func (bd *BackupDestination) UploadPath(size int64, baseLocalPath string, files 
 }
 
 func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
+	// https://github.com/AlexAkulov/clickhouse-backup/issues/404
+	if cfg.General.MaxFileSize <= 0 {
+		if maxFileSize, err := clickhouse.CalculateMaxFileSize(cfg); err != nil {
+			return nil, err
+		} else {
+			cfg.General.MaxFileSize = maxFileSize
+		}
+	}
 	switch cfg.General.RemoteStorage {
 	case "azblob":
 		azblobStorage := &AzureBlob{Config: &cfg.AzureBlob}

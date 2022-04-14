@@ -757,3 +757,26 @@ func (ch *ClickHouse) GetAccessManagementPath(disks []Disk) (string, error) {
 	}
 	return accessPath, nil
 }
+
+func CalculateMaxFileSize(cfg *config.Config) (int64, error) {
+	ch := &ClickHouse{
+		Config: &cfg.ClickHouse,
+	}
+	if err := ch.Connect(); err != nil {
+		return 0, fmt.Errorf("can't connect to clickhouse: %v", err)
+	}
+	defer ch.Close()
+	rows := make([]int64, 0)
+	maxSizeQuery := "SELECT max(toInt64(bytes_on_disk)) AS max_file_size FROM system.parts"
+	if !cfg.General.UploadByPart {
+		maxSizeQuery = "SELECT max(data_by_disk) AS max_file_size FROM (SELECT disk_name, max(toInt64(bytes_on_disk)) FROM system.parts GROUP BY disk_name)"
+	}
+
+	if err := ch.Select(&rows, maxSizeQuery); err != nil {
+		return 0, fmt.Errorf("can't calculate max(bytes_on_disk): %v", err)
+	}
+	if len(rows) > 0 {
+		return rows[0], nil
+	}
+	return 0, nil
+}
