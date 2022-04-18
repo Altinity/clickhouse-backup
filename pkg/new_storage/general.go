@@ -549,8 +549,8 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cfg.General.MaxFileSize < maxFileSize {
-		apexLog.Warnf("MAX_FILE_SIZE=%d is smaller than actual %d, please remove general->max_file_size section from your config", cfg.General.MaxFileSize, maxFileSize)
+	if cfg.General.MaxFileSize > 0 && cfg.General.MaxFileSize < maxFileSize {
+		apexLog.Warnf("MAX_FILE_SIZE=%d is less than actual %d, please remove general->max_file_size section from your config", cfg.General.MaxFileSize, maxFileSize)
 	}
 	if cfg.General.MaxFileSize <= 0 || cfg.General.MaxFileSize < maxFileSize {
 		cfg.General.MaxFileSize = maxFileSize
