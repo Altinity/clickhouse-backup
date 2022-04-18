@@ -4,7 +4,6 @@ IMPROVEMENTS
 - switch to go 1.18
 - add clickhouse version 22.3 to integration tests
 - add `S3_MAX_PARTS_COUNT` and `AZBLOB_MAX_PARTS_COUNT` for properly calculate buffer sizes during upload and download
-- add multithreading GZIP implementation
 
 BUG FIXES
 - fix [406](https://github.com/AlexAkulov/clickhouse-backup/issues/406), properly handle `path` for S3, GCS for case when it begins from "/"
