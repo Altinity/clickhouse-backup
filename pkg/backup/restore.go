@@ -110,7 +110,6 @@ func Restore(cfg *config.Config, backupName string, tablePattern string, partiti
 	}
 
 	if schemaOnly || (schemaOnly == dataOnly) {
-
 		if err := RestoreSchema(cfg, ch, backupName, tablePattern, dropTable, disks); err != nil {
 			return err
 		}
