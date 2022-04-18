@@ -561,7 +561,7 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 		bufferSize := azblobStorage.Config.BufferSize
 		// https://github.com/AlexAkulov/clickhouse-backup/issues/317
 		if bufferSize <= 0 {
-			bufferSize = int(cfg.General.MaxFileSize / 10000)
+			bufferSize = int(cfg.General.MaxFileSize) / cfg.AzureBlob.MaxPartsCount
 			if bufferSize < 2*1024*1024 {
 				bufferSize = 2 * 1024 * 1024
 			}
@@ -579,7 +579,7 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 	case "s3":
 		partSize := cfg.S3.PartSize
 		if cfg.S3.PartSize <= 0 {
-			partSize = cfg.General.MaxFileSize / 10000
+			partSize = cfg.General.MaxFileSize / cfg.S3.MaxPartsCount
 			if partSize < 5*1024*1024 {
 				partSize = 5 * 1024 * 1024
 			}
