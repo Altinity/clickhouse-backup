@@ -3,6 +3,7 @@ IMPROVEMENTS
 - add TLS certificates and TLS CA support for clickhouse connections, fix [410](https://github.com/AlexAkulov/clickhouse-backup/issues/410)
 - switch to go 1.18
 - add clickhouse version 22.3 to integration tests
+- add `S3_MAX_PARTS_COUNT` and `AZBLOB_MAX_PARTS_COUNT` for propely calculate buffer sizes during upload and download
 
 BUG FIXES
 - fix [406](https://github.com/AlexAkulov/clickhouse-backup/issues/406), properly handle `path` for S3, GCS for case when it begin from "/"
