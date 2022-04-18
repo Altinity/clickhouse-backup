@@ -25,13 +25,19 @@ import (
 	apexLog "github.com/apex/log"
 	"github.com/djherbis/buffer"
 	"github.com/djherbis/nio/v3"
-	"github.com/mholt/archiver/v3"
+	"github.com/mholt/archiver/v4"
 )
 
 const (
 	// BufferSize - size of ring buffer between stream handlers
 	BufferSize = 1 * 1024 * 1024
 )
+
+type readerWrapperForContext func(p []byte) (n int, err error)
+
+func (readerWrapper readerWrapperForContext) Read(p []byte) (n int, err error) {
+	return readerWrapper(p)
+}
 
 type Backup struct {
 	metadata.BackupMetadata
@@ -278,7 +284,8 @@ func (bd *BackupDestination) BackupList(parseMetadata bool, parseMetadataOnly st
 	return result, err
 }
 
-func (bd *BackupDestination) DownloadCompressedStream(remotePath string, localPath string) error {
+func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remotePath string, localPath string) error {
+
 	if err := os.MkdirAll(localPath, 0750); err != nil {
 		return err
 	}
@@ -313,21 +320,10 @@ func (bd *BackupDestination) DownloadCompressedStream(remotePath string, localPa
 	if err != nil {
 		return err
 	}
-	if err := z.Open(proxyReader, 0); err != nil {
-		return err
-	}
-	defer func() {
-		if err := z.Close(); err != nil {
-			apexLog.Warnf("can't close getArchiveReader %v: %v", z, err)
-		}
-	}()
-	for {
-		file, err := z.Read()
-		if err == io.EOF {
-			break
-		}
+	if err := z.Extract(ctx, proxyReader, nil, func(ctx context.Context, file archiver.File) error {
+		f, err := file.Open()
 		if err != nil {
-			return err
+			return fmt.Errorf("can't open %s", file.NameInArchive)
 		}
 		header, ok := file.Header.(*tar.Header)
 		if !ok {
@@ -342,16 +338,26 @@ func (bd *BackupDestination) DownloadCompressedStream(remotePath string, localPa
 		if err != nil {
 			return err
 		}
-		if _, err := io.Copy(dst, file); err != nil {
+		if _, err := io.Copy(dst, readerWrapperForContext(func(p []byte) (int, error) {
+			select {
+			case <-ctx.Done():
+				return 0, ctx.Err()
+			default:
+				return f.Read(p)
+			}
+		})); err != nil {
 			return err
 		}
 		if err := dst.Close(); err != nil {
 			return err
 		}
-		if err := file.Close(); err != nil {
+		if err := f.Close(); err != nil {
 			return err
 		}
 		//apexLog.Debugf("extract %s", extractFile)
+		return nil
+	}); err != nil {
+		return err
 	}
 	return nil
 }
@@ -376,30 +382,29 @@ func (bd *BackupDestination) UploadCompressedStream(baseLocalPath string, files 
 	defer bar.Finish()
 	pipeBuffer := buffer.New(BufferSize)
 	body, w := nio.Pipe(pipeBuffer)
-	g, _ := errgroup.WithContext(context.Background())
+	g, ctx := errgroup.WithContext(context.Background())
 
+	var writerErr, readerErr error
 	g.Go(func() error {
 		defer func() {
-			if err := w.Close(); err != nil {
-				apexLog.Warnf("can't close nio.Pipe writer %v", w)
+			if writerErr != nil {
+				if err := w.CloseWithError(writerErr); err != nil {
+					apexLog.Errorf("can't close after error %v pipe writer error: %v", writerErr, err)
+				}
+			} else {
+				if err := w.Close(); err != nil {
+					apexLog.Errorf("can't close pipe writer: %v", err)
+				}
 			}
 		}()
-		localFileBuffer := buffer.New(BufferSize)
 		z, err := getArchiveWriter(bd.compressionFormat, bd.compressionLevel)
 		if err != nil {
 			return err
 		}
-		if err := z.Create(w); err != nil {
-			return err
-		}
-		defer func() {
-			if err := z.Close(); err != nil {
-				apexLog.Warnf("can't close getArchiveWriter %v: %v", z, err)
-			}
-		}()
+		archiveFiles := make([]archiver.File, 0)
 		for _, f := range files {
-			filePath := path.Join(baseLocalPath, f)
-			info, err := os.Stat(filePath)
+			localPath := path.Join(baseLocalPath, f)
+			info, err := os.Stat(localPath)
 			if err != nil {
 				return err
 			}
@@ -407,32 +412,35 @@ func (bd *BackupDestination) UploadCompressedStream(baseLocalPath string, files 
 				continue
 			}
 			bar.Add64(info.Size())
-			file, err := os.Open(filePath)
-			if err != nil {
-				return err
-			}
-			bfile := nio.NewReader(file, localFileBuffer)
-			if err := z.Write(archiver.File{
-				FileInfo: archiver.FileInfo{
-					FileInfo:   info,
-					CustomName: f,
+			file := archiver.File{
+				FileInfo:      info,
+				NameInArchive: f,
+				Open: func() (io.ReadCloser, error) {
+					return os.Open(localPath)
 				},
-				ReadCloser: bfile,
-			}); err != nil {
-				return err
 			}
-			if err := bfile.Close(); err != nil { // No use defer for this
-				return err
-			}
-			if err := file.Close(); err != nil { // No use defer for this too
-				return err
-			}
-			//apexLog.Debugf("compress %s to %s", filePath, remotePath)
+			archiveFiles = append(archiveFiles, file)
+			//apexLog.Debugf("add %s to archive %s", filePath, remotePath)
+		}
+		if writerErr = z.Archive(ctx, w, archiveFiles); writerErr != nil {
+			return writerErr
 		}
 		return nil
 	})
 	g.Go(func() error {
-		return bd.PutFile(remotePath, body)
+		defer func() {
+			if readerErr != nil {
+				if err := body.CloseWithError(readerErr); err != nil {
+					apexLog.Errorf("can't close after error %v pipe reader error: %v", writerErr, err)
+				}
+			} else {
+				if err := body.Close(); err != nil {
+					apexLog.Errorf("can't close pipe reader: %v", err)
+				}
+			}
+		}()
+		readerErr = bd.PutFile(remotePath, body)
+		return readerErr
 	})
 	return g.Wait()
 }
@@ -537,12 +545,15 @@ func (bd *BackupDestination) UploadPath(size int64, baseLocalPath string, files 
 
 func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 	// https://github.com/AlexAkulov/clickhouse-backup/issues/404
-	if cfg.General.MaxFileSize <= 0 {
-		if maxFileSize, err := clickhouse.CalculateMaxFileSize(cfg); err != nil {
-			return nil, err
-		} else {
-			cfg.General.MaxFileSize = maxFileSize
-		}
+	maxFileSize, err := clickhouse.CalculateMaxFileSize(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.General.MaxFileSize < maxFileSize {
+		apexLog.Warnf("MAX_FILE_SIZE=%d is smaller than actual %d, please remove general->max_file_size section from your config", cfg.General.MaxFileSize, maxFileSize)
+	}
+	if cfg.General.MaxFileSize <= 0 || cfg.General.MaxFileSize < maxFileSize {
+		cfg.General.MaxFileSize = maxFileSize
 	}
 	switch cfg.General.RemoteStorage {
 	case "azblob":

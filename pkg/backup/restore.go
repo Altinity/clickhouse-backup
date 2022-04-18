@@ -43,7 +43,11 @@ func Restore(cfg *config.Config, backupName string, tablePattern string, partiti
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
 	defer ch.Close()
-	defaultDataPath, err := ch.GetDefaultPath()
+	disks, err := ch.GetDisks()
+	if err != nil {
+		return err
+	}
+	defaultDataPath, err := ch.GetDefaultPath(disks)
 	if err != nil {
 		return ErrUnknownClickhouseDataPath
 	}
@@ -74,13 +78,13 @@ func Restore(cfg *config.Config, backupName string, tablePattern string, partiti
 	}
 	needRestart := false
 	if rbacOnly {
-		if err := restoreRBAC(ch, backupName); err != nil {
+		if err := restoreRBAC(ch, backupName, disks); err != nil {
 			return err
 		}
 		needRestart = true
 	}
 	if configsOnly {
-		if err := restoreConfigs(ch, backupName); err != nil {
+		if err := restoreConfigs(ch, backupName, disks); err != nil {
 			return err
 		}
 		needRestart = true
@@ -107,13 +111,13 @@ func Restore(cfg *config.Config, backupName string, tablePattern string, partiti
 
 	if schemaOnly || (schemaOnly == dataOnly) {
 
-		if err := RestoreSchema(cfg, ch, backupName, tablePattern, dropTable); err != nil {
+		if err := RestoreSchema(cfg, ch, backupName, tablePattern, dropTable, disks); err != nil {
 			return err
 		}
 	}
 	if dataOnly || (schemaOnly == dataOnly) {
 		partitionsToRestore := filesystemhelper.CreatePartitionsToBackupMap(partitions)
-		if err := RestoreData(cfg, ch, backupName, tablePattern, partitionsToRestore); err != nil {
+		if err := RestoreData(cfg, ch, backupName, tablePattern, partitionsToRestore, disks); err != nil {
 			return err
 		}
 	}
@@ -122,12 +126,12 @@ func Restore(cfg *config.Config, backupName string, tablePattern string, partiti
 }
 
 // restoreRBAC - copy backup_name>/rbac folder to access_data_path
-func restoreRBAC(ch *clickhouse.ClickHouse, backupName string) error {
+func restoreRBAC(ch *clickhouse.ClickHouse, backupName string, disks []clickhouse.Disk) error {
 	accessPath, err := ch.GetAccessManagementPath(nil)
 	if err != nil {
 		return err
 	}
-	if err = restoreBackupRelatedDir(ch, backupName, "access", accessPath); err == nil {
+	if err = restoreBackupRelatedDir(ch, backupName, "access", accessPath, disks); err == nil {
 		markFile := path.Join(accessPath, "need_rebuild_lists.mark")
 		apexLog.Infof("create %s for properly rebuild RBAC after restart clickhouse-server", markFile)
 		file, err := os.Create(markFile)
@@ -135,7 +139,7 @@ func restoreRBAC(ch *clickhouse.ClickHouse, backupName string) error {
 			return err
 		}
 		_ = file.Close()
-		_ = filesystemhelper.Chown(markFile, ch)
+		_ = filesystemhelper.Chown(markFile, ch, disks)
 		listFilesPattern := path.Join(accessPath, "*.list")
 		apexLog.Infof("remove %s for properly rebuild RBAC after restart clickhouse-server", listFilesPattern)
 		if listFiles, err := filepathx.Glob(listFilesPattern); err != nil {
@@ -155,16 +159,16 @@ func restoreRBAC(ch *clickhouse.ClickHouse, backupName string) error {
 }
 
 // restoreConfigs - copy backup_name/configs folder to /etc/clickhouse-server/
-func restoreConfigs(ch *clickhouse.ClickHouse, backupName string) error {
-	if err := restoreBackupRelatedDir(ch, backupName, "configs", ch.Config.ConfigDir); err != nil && os.IsNotExist(err) {
+func restoreConfigs(ch *clickhouse.ClickHouse, backupName string, disks []clickhouse.Disk) error {
+	if err := restoreBackupRelatedDir(ch, backupName, "configs", ch.Config.ConfigDir, disks); err != nil && os.IsNotExist(err) {
 		return nil
 	} else {
 		return err
 	}
 }
 
-func restoreBackupRelatedDir(ch *clickhouse.ClickHouse, backupName, backupPrefixDir, destinationDir string) error {
-	defaultDataPath, err := ch.GetDefaultPath()
+func restoreBackupRelatedDir(ch *clickhouse.ClickHouse, backupName, backupPrefixDir, destinationDir string, disks []clickhouse.Disk) error {
+	defaultDataPath, err := ch.GetDefaultPath(disks)
 	if err != nil {
 		return ErrUnknownClickhouseDataPath
 	}
@@ -191,7 +195,7 @@ func restoreBackupRelatedDir(ch *clickhouse.ClickHouse, backupName, backupPrefix
 	}
 	files = append(files, destinationDir)
 	for _, localFile := range files {
-		if err := filesystemhelper.Chown(localFile, ch); err != nil {
+		if err := filesystemhelper.Chown(localFile, ch, disks); err != nil {
 			return err
 		}
 	}
@@ -199,13 +203,13 @@ func restoreBackupRelatedDir(ch *clickhouse.ClickHouse, backupName, backupPrefix
 }
 
 // RestoreSchema - restore schemas matched by tablePattern from backupName
-func RestoreSchema(cfg *config.Config, ch *clickhouse.ClickHouse, backupName string, tablePattern string, dropTable bool) error {
+func RestoreSchema(cfg *config.Config, ch *clickhouse.ClickHouse, backupName string, tablePattern string, dropTable bool, disks []clickhouse.Disk) error {
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "restore",
 	})
 
-	defaultDataPath, err := ch.GetDefaultPath()
+	defaultDataPath, err := ch.GetDefaultPath(disks)
 	if err != nil {
 		return ErrUnknownClickhouseDataPath
 	}
@@ -324,26 +328,26 @@ func dropExistsTables(cfg *config.Config, ch *clickhouse.ClickHouse, tablesForDr
 }
 
 // RestoreData - restore data for tables matched by tablePattern from backupName
-func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName string, tablePattern string, partitionsToRestore common.EmptyMap) error {
+func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName string, tablePattern string, partitionsToRestore common.EmptyMap, disks []clickhouse.Disk) error {
 	startRestore := time.Now()
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "restore",
 	})
-	defaultDataPath, err := ch.GetDefaultPath()
+	defaultDataPath, err := ch.GetDefaultPath(disks)
 	if err != nil {
 		return ErrUnknownClickhouseDataPath
 	}
 	if clickhouse.IsClickhouseShadow(path.Join(defaultDataPath, "backup", backupName, "shadow")) {
 		return fmt.Errorf("backups created in v0.0.1 is not supported now")
 	}
-	backup, err := getLocalBackup(cfg, backupName)
+	backup, _, err := getLocalBackup(cfg, backupName, disks)
 	if err != nil {
 		return fmt.Errorf("can't restore: %v", err)
 	}
 	var tablesForRestore ListOfTables
 	if backup.Legacy {
-		tablesForRestore, err = ch.GetBackupTablesLegacy(backupName)
+		tablesForRestore, err = ch.GetBackupTablesLegacy(backupName, disks)
 	} else {
 		metadataPath := path.Join(defaultDataPath, "backup", backupName, "metadata")
 		tablesForRestore, err = getTableListByPatternLocal(metadataPath, tablePattern, ch.Config.SkipTables, false, partitionsToRestore)
@@ -356,10 +360,6 @@ func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName strin
 	}
 	log.Debugf("found %d tables with data in backup", len(tablesForRestore))
 	chTables, err := ch.GetTables(tablePattern)
-	if err != nil {
-		return err
-	}
-	disks, err := ch.GetDisks()
 	if err != nil {
 		return err
 	}

@@ -23,7 +23,7 @@ var (
 
 // Chown - set permission on file to clickhouse user
 // This is necessary that the ClickHouse will be able to read parts files on restore
-func Chown(filename string, ch *clickhouse.ClickHouse) error {
+func Chown(filename string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk) error {
 	var (
 		dataPath string
 		err      error
@@ -32,7 +32,7 @@ func Chown(filename string, ch *clickhouse.ClickHouse) error {
 		return nil
 	}
 	if uid == nil || gid == nil {
-		if dataPath, err = ch.GetDefaultPath(); err != nil {
+		if dataPath, err = ch.GetDefaultPath(disks); err != nil {
 			return err
 		}
 		info, err := os.Stat(dataPath)
@@ -49,17 +49,17 @@ func Chown(filename string, ch *clickhouse.ClickHouse) error {
 	return os.Chown(filename, *uid, *gid)
 }
 
-func Mkdir(name string, ch *clickhouse.ClickHouse) error {
+func Mkdir(name string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk) error {
 	if err := os.Mkdir(name, 0750); err != nil && !os.IsExist(err) {
 		return err
 	}
-	if err := Chown(name, ch); err != nil {
+	if err := Chown(name, ch, disks); err != nil {
 		return err
 	}
 	return nil
 }
 
-func MkdirAll(path string, ch *clickhouse.ClickHouse) error {
+func MkdirAll(path string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk) error {
 	// Fast path: if we can tell whether path is a directory or file, stop with success or error.
 	dir, err := os.Stat(path)
 	if err == nil {
@@ -82,14 +82,14 @@ func MkdirAll(path string, ch *clickhouse.ClickHouse) error {
 
 	if j > 1 {
 		// Create parent.
-		err = MkdirAll(path[:j-1], ch)
+		err = MkdirAll(path[:j-1], ch, disks)
 		if err != nil {
 			return err
 		}
 	}
 
 	// Parent now exists; invoke Mkdir and use its result.
-	err = Mkdir(path, ch)
+	err = Mkdir(path, ch, disks)
 	if err != nil {
 		// Handle arguments like "foo/." by
 		// double-checking that directory doesn't exist.
@@ -120,7 +120,7 @@ func CopyDataToDetached(backupName string, backupTable metadata.TableMetadata, d
 			if err != nil {
 				if os.IsNotExist(err) {
 					log.Debugf("MkDirAll %s", detachedPath)
-					if mkdirErr := MkdirAll(detachedPath, ch); mkdirErr != nil {
+					if mkdirErr := MkdirAll(detachedPath, ch, disks); mkdirErr != nil {
 						log.Warnf("error during Mkdir %+v", mkdirErr)
 					}
 				} else {
@@ -143,7 +143,7 @@ func CopyDataToDetached(backupName string, backupTable metadata.TableMetadata, d
 				dstFilePath := filepath.Join(detachedPath, filename)
 				if info.IsDir() {
 					log.Debugf("MkDir %s", dstFilePath)
-					return Mkdir(dstFilePath, ch)
+					return Mkdir(dstFilePath, ch, disks)
 				}
 				if !info.Mode().IsRegular() {
 					log.Debugf("'%s' is not a regular file, skipping.", filePath)
@@ -155,7 +155,7 @@ func CopyDataToDetached(backupName string, backupTable metadata.TableMetadata, d
 						return fmt.Errorf("failed to create hard link '%s' -> '%s': %w", filePath, dstFilePath, err)
 					}
 				}
-				return Chown(dstFilePath, ch)
+				return Chown(dstFilePath, ch, disks)
 			}); err != nil {
 				return fmt.Errorf("error during filepath.Walk for part '%s': %w", part.Name, err)
 			}

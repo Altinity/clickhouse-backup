@@ -142,10 +142,13 @@ func (ch *ClickHouse) GetDisks() ([]Disk, error) {
 	return disks, nil
 }
 
-func (ch *ClickHouse) GetDefaultPath() (string, error) {
-	disks, err := ch.GetDisks()
-	if err != nil {
-		return "", err
+func (ch *ClickHouse) GetDefaultPath(disks []Disk) (string, error) {
+	var err error
+	if disks == nil {
+		disks, err = ch.GetDisks()
+		if err != nil {
+			return "", err
+		}
 	}
 	defaultPath := "/var/lib/clickhouse"
 	for _, d := range disks {

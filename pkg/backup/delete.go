@@ -49,7 +49,7 @@ func cleanDir(dirName string) error {
 	return nil
 }
 
-func RemoveOldBackupsLocal(cfg *config.Config, keepLastBackup bool) error {
+func RemoveOldBackupsLocal(cfg *config.Config, keepLastBackup bool, disks []clickhouse.Disk) error {
 	keep := cfg.General.BackupsToKeepLocal
 	if keep == 0 {
 		return nil
@@ -57,34 +57,37 @@ func RemoveOldBackupsLocal(cfg *config.Config, keepLastBackup bool) error {
 	if keepLastBackup && keep < 0 {
 		keep = 1
 	}
-	backupList, err := GetLocalBackups(cfg)
+	backupList, disks, err := GetLocalBackups(cfg, disks)
 	if err != nil {
 		return err
 	}
 	backupsToDelete := GetBackupsToDelete(backupList, keep)
 	for _, backup := range backupsToDelete {
-		if err := RemoveBackupLocal(cfg, backup.BackupName); err != nil {
+		if err := RemoveBackupLocal(cfg, backup.BackupName, disks); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func RemoveBackupLocal(cfg *config.Config, backupName string) error {
+func RemoveBackupLocal(cfg *config.Config, backupName string, disks []clickhouse.Disk) error {
+	var err error
 	start := time.Now()
-	backupList, err := GetLocalBackups(cfg)
-	if err != nil {
-		return err
-	}
 	ch := &clickhouse.ClickHouse{
 		Config: &cfg.ClickHouse,
 	}
-	if err := ch.Connect(); err != nil {
+
+	if err = ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
 	defer ch.Close()
-
-	disks, err := ch.GetDisks()
+	if disks == nil {
+		disks, err = ch.GetDisks()
+		if err != nil {
+			return err
+		}
+	}
+	backupList, disks, err := GetLocalBackups(cfg, disks)
 	if err != nil {
 		return err
 	}

@@ -520,7 +520,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 	where, wherePresent := vars["where"]
 
 	if where == "local" || !wherePresent {
-		localBackups, err := backup.GetLocalBackups(cfg)
+		localBackups, _, err := backup.GetLocalBackups(cfg, nil)
 		if err != nil && !os.IsNotExist(err) {
 			writeError(w, http.StatusInternalServerError, "list", err)
 			return
@@ -933,7 +933,7 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 
 	switch vars["where"] {
 	case "local":
-		err = backup.RemoveBackupLocal(cfg, vars["name"])
+		err = backup.RemoveBackupLocal(cfg, vars["name"], nil)
 	case "remote":
 		err = backup.RemoveBackupRemote(cfg, vars["name"])
 	default:
@@ -976,7 +976,7 @@ func (api *APIServer) updateSizeOfLastBackup(onlyLocal bool) error {
 	if !api.config.API.EnableMetrics {
 		return nil
 	}
-	localBackups, err := backup.GetLocalBackups(api.config)
+	localBackups, _, err := backup.GetLocalBackups(api.config, nil)
 	if err != nil {
 		return err
 	}

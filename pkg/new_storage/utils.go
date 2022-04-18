@@ -3,7 +3,8 @@ package new_storage
 import (
 	"fmt"
 	"github.com/apex/log"
-	"github.com/mholt/archiver/v3"
+	"github.com/klauspost/compress/zstd"
+	"github.com/mholt/archiver/v4"
 	"sort"
 	"time"
 )
@@ -46,46 +47,46 @@ func GetBackupsToDelete(backups []Backup, keep int) []Backup {
 	return []Backup{}
 }
 
-func getArchiveWriter(format string, level int) (archiver.Writer, error) {
+func getArchiveWriter(format string, level int) (*archiver.CompressedArchive, error) {
 	switch format {
 	case "tar":
-		return &archiver.Tar{}, nil
+		return &archiver.CompressedArchive{Archival: archiver.Tar{}}, nil
 	case "lz4":
-		return &archiver.TarLz4{CompressionLevel: level, Tar: archiver.NewTar()}, nil
+		return &archiver.CompressedArchive{Compression: archiver.Lz4{CompressionLevel: level}, Archival: archiver.Tar{}}, nil
 	case "bzip2", "bz2":
-		return &archiver.TarBz2{CompressionLevel: level, Tar: archiver.NewTar()}, nil
+		return &archiver.CompressedArchive{Compression: archiver.Bz2{CompressionLevel: level}, Archival: archiver.Tar{}}, nil
 	case "gzip", "gz":
-		return &archiver.TarGz{CompressionLevel: level, Tar: archiver.NewTar()}, nil
+		return &archiver.CompressedArchive{Compression: archiver.Gz{CompressionLevel: level}, Archival: archiver.Tar{}}, nil
 	case "sz":
-		return &archiver.TarSz{Tar: archiver.NewTar()}, nil
+		return &archiver.CompressedArchive{Compression: archiver.Sz{}, Archival: archiver.Tar{}}, nil
 	case "xz":
-		return &archiver.TarXz{Tar: archiver.NewTar()}, nil
+		return &archiver.CompressedArchive{Compression: archiver.Xz{}, Archival: archiver.Tar{}}, nil
 	case "br", "brotli":
-		return &archiver.TarBrotli{Quality: level, Tar: archiver.NewTar()}, nil
+		return &archiver.CompressedArchive{Compression: archiver.Brotli{Quality: level}, Archival: archiver.Tar{}}, nil
 	case "zstd":
-		return &archiver.TarZstd{Tar: archiver.NewTar()}, nil
+		return &archiver.CompressedArchive{Compression: archiver.Zstd{EncoderOptions: []zstd.EOption{zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(level))}}, Archival: archiver.Tar{}}, nil
 	}
 	return nil, fmt.Errorf("wrong compression_format: %s, supported: 'tar', 'lz4', 'bzip2', 'bz2', 'gzip', 'gz', 'sz', 'xz', 'br', 'brotli', 'zstd'", format)
 }
 
-func getArchiveReader(format string) (archiver.Reader, error) {
+func getArchiveReader(format string) (*archiver.CompressedArchive, error) {
 	switch format {
 	case "tar":
-		return archiver.NewTar(), nil
+		return &archiver.CompressedArchive{Archival: archiver.Tar{}}, nil
 	case "lz4":
-		return archiver.NewTarLz4(), nil
+		return &archiver.CompressedArchive{Compression: archiver.Lz4{}, Archival: archiver.Tar{}}, nil
 	case "bzip2", "bz2":
-		return archiver.NewTarBz2(), nil
+		return &archiver.CompressedArchive{Compression: archiver.Bz2{}, Archival: archiver.Tar{}}, nil
 	case "gzip", "gz":
-		return archiver.NewTarGz(), nil
+		return &archiver.CompressedArchive{Compression: archiver.Gz{}, Archival: archiver.Tar{}}, nil
 	case "sz":
-		return archiver.NewTarSz(), nil
+		return &archiver.CompressedArchive{Compression: archiver.Sz{}, Archival: archiver.Tar{}}, nil
 	case "xz":
-		return archiver.NewTarXz(), nil
+		return &archiver.CompressedArchive{Compression: archiver.Xz{}, Archival: archiver.Tar{}}, nil
 	case "br", "brotli":
-		return archiver.NewTarBrotli(), nil
+		return &archiver.CompressedArchive{Compression: archiver.Brotli{}, Archival: archiver.Tar{}}, nil
 	case "zstd":
-		return archiver.NewTarZstd(), nil
+		return &archiver.CompressedArchive{Compression: archiver.Zstd{}, Archival: archiver.Tar{}}, nil
 	}
 	return nil, fmt.Errorf("wrong compression_format: %s, supported: 'tar', 'lz4', 'bzip2', 'bz2', 'gzip', 'gz', 'sz', 'xz', 'br', 'brotli', 'zstd'", format)
 }

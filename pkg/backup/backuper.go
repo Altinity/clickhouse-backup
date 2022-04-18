@@ -16,15 +16,17 @@ type Backuper struct {
 	DefaultDataPath string
 }
 
-func (b *Backuper) init() error {
+func (b *Backuper) init(disks []clickhouse.Disk) error {
 	var err error
-	b.DefaultDataPath, err = b.ch.GetDefaultPath()
+	if disks == nil {
+		disks, err = b.ch.GetDisks()
+		if err != nil {
+			return err
+		}
+	}
+	b.DefaultDataPath, err = b.ch.GetDefaultPath(disks)
 	if err != nil {
 		return ErrUnknownClickhouseDataPath
-	}
-	disks, err := b.ch.GetDisks()
-	if err != nil {
-		return err
 	}
 	diskMap := map[string]string{}
 	for _, disk := range disks {
