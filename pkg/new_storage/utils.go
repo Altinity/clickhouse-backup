@@ -56,7 +56,7 @@ func getArchiveWriter(format string, level int) (*archiver.CompressedArchive, er
 	case "bzip2", "bz2":
 		return &archiver.CompressedArchive{Compression: archiver.Bz2{CompressionLevel: level}, Archival: archiver.Tar{}}, nil
 	case "gzip", "gz":
-		return &archiver.CompressedArchive{Compression: archiver.Gz{CompressionLevel: level}, Archival: archiver.Tar{}}, nil
+		return &archiver.CompressedArchive{Compression: archiver.Gz{CompressionLevel: level, Multithreaded: true}, Archival: archiver.Tar{}}, nil
 	case "sz":
 		return &archiver.CompressedArchive{Compression: archiver.Sz{}, Archival: archiver.Tar{}}, nil
 	case "xz":
@@ -78,7 +78,7 @@ func getArchiveReader(format string) (*archiver.CompressedArchive, error) {
 	case "bzip2", "bz2":
 		return &archiver.CompressedArchive{Compression: archiver.Bz2{}, Archival: archiver.Tar{}}, nil
 	case "gzip", "gz":
-		return &archiver.CompressedArchive{Compression: archiver.Gz{}, Archival: archiver.Tar{}}, nil
+		return &archiver.CompressedArchive{Compression: archiver.Gz{Multithreaded: true}, Archival: archiver.Tar{}}, nil
 	case "sz":
 		return &archiver.CompressedArchive{Compression: archiver.Sz{}, Archival: archiver.Tar{}}, nil
 	case "xz":
