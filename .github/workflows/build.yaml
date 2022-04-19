@@ -16,7 +16,7 @@ jobs:
     strategy:
       matrix:
         golang-version:
-          - "1.17"
+          - "1.18"
     steps:
       - name: Checkout project
         uses: actions/checkout@v2
@@ -103,7 +103,7 @@ jobs:
     strategy:
       matrix:
         clickhouse:
-          - '22.1'
+          - '22.3'
     steps:
       - name: Checkout project
         uses: actions/checkout@v2
@@ -168,7 +168,7 @@ jobs:
     strategy:
       matrix:
         golang-version:
-          - "1.17"
+          - "1.18"
         clickhouse:
           - '1.1.54390'
           - '19.17'
@@ -176,7 +176,7 @@ jobs:
           - '20.8'
           - '21.3'
           - '21.8'
-          - '22.1'
+          - '22.3'
     steps:
       - name: Checkout project
         uses: actions/checkout@v2
@@ -223,6 +223,12 @@ jobs:
           echo "GCS_TESTS=${GCS_TESTS}"
 
           chmod +x $(pwd)/clickhouse-backup/clickhouse-backup*
+
+          if [[ "${CLICKHOUSE_VERSION}" =~ 2[2-9]+ ]]; then
+            export CLICKHOUSE_IMAGE=clickhouse/clickhouse-server
+          else
+            export CLICKHOUSE_IMAGE=yandex/clickhouse-server
+          fi
 
           if [[ "${CLICKHOUSE_VERSION}" == 2* ]]; then
             export COMPOSE_FILE=docker-compose_advanced.yml

@@ -106,7 +106,7 @@ func printBackupsLocal(w io.Writer, backupList []BackupLocal, format string) err
 func PrintLocalBackups(cfg *config.Config, format string) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', tabwriter.DiscardEmptyColumns)
 	defer w.Flush()
-	backupList, err := GetLocalBackups(cfg)
+	backupList, _, err := GetLocalBackups(cfg, nil)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -114,32 +114,38 @@ func PrintLocalBackups(cfg *config.Config, format string) error {
 }
 
 // GetLocalBackups - return slice of all backups stored locally
-func GetLocalBackups(cfg *config.Config) ([]BackupLocal, error) {
+func GetLocalBackups(cfg *config.Config, disks []clickhouse.Disk) ([]BackupLocal, []clickhouse.Disk, error) {
+	var err error
 	ch := &clickhouse.ClickHouse{
 		Config: &cfg.ClickHouse,
 	}
 	if err := ch.Connect(); err != nil {
-		return nil, fmt.Errorf("can't connect to clickhouse: %w", err)
+		return nil, disks, fmt.Errorf("can't connect to clickhouse: %w", err)
 	}
 	defer ch.Close()
-
-	dataPath, err := ch.GetDefaultPath()
+	if disks == nil {
+		disks, err = ch.GetDisks()
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	dataPath, err := ch.GetDefaultPath(disks)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	result := []BackupLocal{}
 	backupsPath := path.Join(dataPath, "backup")
 	d, err := os.Open(backupsPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return result, nil
+			return result, disks, nil
 		}
-		return nil, err
+		return nil, nil, err
 	}
 	defer d.Close()
 	names, err := d.Readdirnames(-1)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, name := range names {
 		info, err := os.Stat(path.Join(backupsPath, name))
@@ -164,7 +170,7 @@ func GetLocalBackups(cfg *config.Config) ([]BackupLocal, error) {
 		}
 		var backupMetadata metadata.BackupMetadata
 		if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
-			return nil, err
+			return nil, disks, err
 		}
 		result = append(result, BackupLocal{
 			BackupMetadata: backupMetadata,
@@ -174,13 +180,13 @@ func GetLocalBackups(cfg *config.Config) ([]BackupLocal, error) {
 	sort.SliceStable(result, func(i, j int) bool {
 		return result[i].CreationDate.Before(result[j].CreationDate)
 	})
-	return result, nil
+	return result, disks, nil
 }
 
 func PrintAllBackups(cfg *config.Config, format string) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', tabwriter.DiscardEmptyColumns)
 	defer w.Flush()
-	localBackups, err := GetLocalBackups(cfg)
+	localBackups, _, err := GetLocalBackups(cfg, nil)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -207,20 +213,20 @@ func PrintRemoteBackups(cfg *config.Config, format string) error {
 	return printBackupsRemote(w, backupList, format)
 }
 
-func getLocalBackup(cfg *config.Config, backupName string) (*BackupLocal, error) {
+func getLocalBackup(cfg *config.Config, backupName string, disks []clickhouse.Disk) (*BackupLocal, []clickhouse.Disk, error) {
 	if backupName == "" {
-		return nil, fmt.Errorf("backup name is required")
+		return nil, disks, fmt.Errorf("backup name is required")
 	}
-	backupList, err := GetLocalBackups(cfg)
+	backupList, disks, err := GetLocalBackups(cfg, disks)
 	if err != nil {
-		return nil, err
+		return nil, disks, err
 	}
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
-			return &backup, nil
+			return &backup, disks, nil
 		}
 	}
-	return nil, fmt.Errorf("backup '%s' is not found", backupName)
+	return nil, disks, fmt.Errorf("backup '%s' is not found", backupName)
 }
 
 // GetRemoteBackups - get all backups stored on remote storage

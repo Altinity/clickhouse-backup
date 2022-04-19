@@ -2,8 +2,12 @@
 set -x
 set -e
 
-export CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION:-21.8}
-export CLICKHOUSE_IMAGE=${CLICKHOUSE_IMAGE:-yandex/clickhouse-server}
+export CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION:-22.3}
+if [[ "${CLICKHOUSE_VERSION}" =~ 2[2-9]+ ]]; then
+  export CLICKHOUSE_IMAGE=clickhouse/clickhouse-server
+else
+  export CLICKHOUSE_IMAGE=yandex/clickhouse-server
+fi
 export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup-race"
 export LOG_LEVEL=${LOG_LEVEL:-info}
 export GCS_TESTS=${GCS_TESTS:-}

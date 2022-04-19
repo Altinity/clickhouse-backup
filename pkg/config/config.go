@@ -76,6 +76,7 @@ type AzureBlobConfig struct {
 	SSEKey                string `yaml:"sse_key" envconfig:"AZBLOB_SSE_KEY"`
 	BufferSize            int    `yaml:"buffer_size" envconfig:"AZBLOB_BUFFER_SIZE"`
 	MaxBuffers            int    `yaml:"buffer_count" envconfig:"AZBLOB_MAX_BUFFERS"`
+	MaxPartsCount         int    `yaml:"max_parts_count" envconfig:"AZBLOB_MAX_PARTS_COUNT"`
 }
 
 // S3Config - s3 settings section
@@ -97,6 +98,7 @@ type S3Config struct {
 	StorageClass            string `yaml:"storage_class" envconfig:"S3_STORAGE_CLASS"`
 	Concurrency             int    `yaml:"concurrency" envconfig:"S3_CONCURRENCY"`
 	PartSize                int64  `yaml:"part_size" envconfig:"S3_PART_SIZE"`
+	MaxPartsCount           int64  `yaml:"max_parts_count" envconfig:"S3_MAX_PARTS_COUNT"`
 	Debug                   bool   `yaml:"debug" envconfig:"S3_DEBUG"`
 }
 
@@ -321,7 +323,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		General: GeneralConfig{
 			RemoteStorage:          "none",
-			MaxFileSize:            1 * 1024 * 1024 * 1024, // 1GB
+			MaxFileSize:            0,
 			BackupsToKeepLocal:     0,
 			BackupsToKeepRemote:    0,
 			LogLevel:               "info",
@@ -367,6 +369,7 @@ func DefaultConfig() *Config {
 			StorageClass:            s3.StorageClassStandard,
 			Concurrency:             1,
 			PartSize:                0,
+			MaxPartsCount:           10000,
 		},
 		GCS: GCSConfig{
 			CompressionLevel:  1,

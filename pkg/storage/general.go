@@ -2,10 +2,12 @@ package storage
 
 import (
 	"archive/tar"
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/progressbar"
+	apexLog "github.com/apex/log"
 	"io"
 	"io/ioutil"
 	"log"
@@ -17,7 +19,7 @@ import (
 	"time"
 
 	"github.com/djherbis/buffer"
-	"github.com/mholt/archiver/v3"
+	"github.com/mholt/archiver/v4"
 	"gopkg.in/djherbis/nio.v2"
 )
 
@@ -27,6 +29,12 @@ const (
 	// BufferSize - size of ring buffer between stream handlers
 	BufferSize = 4 * 1024 * 1024
 )
+
+type readerWrapperForContext func(p []byte) (n int, err error)
+
+func (readerWrapper readerWrapperForContext) Read(p []byte) (n int, err error) {
+	return readerWrapper(p)
+}
 
 type Backup struct {
 	Name string
@@ -68,7 +76,7 @@ func (bd *BackupDestination) RemoveOldBackups(keep int) error {
 }
 
 func (bd *BackupDestination) RemoveBackup(backupName string) error {
-	objects := []string{}
+	objects := make([]string, 0)
 	if err := bd.Walk(bd.path, func(f RemoteFile) {
 		if strings.HasPrefix(f.Name(), path.Join(bd.path, backupName)) {
 			objects = append(objects, f.Name())
@@ -130,7 +138,7 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 	if err != nil {
 		return nil, err
 	}
-	result := []Backup{}
+	result := make([]Backup, 0)
 	for name, e := range files {
 		if e.Metadata && e.Shadow || e.Tar {
 			result = append(result, Backup{
@@ -146,7 +154,7 @@ func (bd *BackupDestination) BackupList() ([]Backup, error) {
 	return result, nil
 }
 
-func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPath string) error {
+func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remotePath string, localPath string) error {
 	archiveName := path.Join(bd.path, fmt.Sprintf("%s.%s", remotePath, getExtension(bd.compressionFormat)))
 	if err := bd.Connect(); err != nil {
 		return err
@@ -169,36 +177,32 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 	buf := buffer.New(BufferSize)
 	bufReader := nio.NewReader(reader, buf)
 	proxyReader := bar.NewProxyReader(bufReader)
-	z, _ := getArchiveReader(bd.compressionFormat)
-	if err := z.Open(proxyReader, 0); err != nil {
+	z, err := getArchiveReader(bd.compressionFormat)
+	if err != nil {
 		return err
 	}
-	defer z.Close()
 	if err := os.MkdirAll(localPath, os.ModePerm); err != nil {
 		return err
 	}
 	var metafile MetaFile
-	for {
-		file, err := z.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
+	if err := z.Extract(ctx, proxyReader, nil, func(ctx context.Context, file archiver.File) error {
 		header, ok := file.Header.(*tar.Header)
 		if !ok {
 			return fmt.Errorf("expected header to be *tar.Header but was %T", file.Header)
 		}
+		f, err := file.Open()
+		if err != nil {
+			return fmt.Errorf("can't open %s", file.NameInArchive)
+		}
 		if header.Name == MetaFileName {
-			b, err := ioutil.ReadAll(file)
+			b, err := ioutil.ReadAll(f)
 			if err != nil {
 				return fmt.Errorf("can't read %s", MetaFileName)
 			}
 			if err := json.Unmarshal(b, &metafile); err != nil {
 				return err
 			}
-			continue
+			return nil
 		}
 		extractFile := filepath.Join(localPath, header.Name)
 		extractDir := filepath.Dir(extractFile)
@@ -209,20 +213,30 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 		if err != nil {
 			return err
 		}
-		if _, err := io.Copy(dst, file); err != nil {
+		if _, err := io.Copy(dst, readerWrapperForContext(func(p []byte) (int, error) {
+			select {
+			case <-ctx.Done():
+				return 0, ctx.Err()
+			default:
+				return f.Read(p)
+			}
+		})); err != nil {
 			return err
 		}
 		if err := dst.Close(); err != nil {
 			return err
 		}
-		if err := file.Close(); err != nil {
+		if err := f.Close(); err != nil {
 			return err
 		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	bar.Finish()
 	if metafile.RequiredBackup != "" {
 		log.Printf("Backup '%s' required '%s'. Downloading.", remotePath, metafile.RequiredBackup)
-		err := bd.CompressedStreamDownload(metafile.RequiredBackup, filepath.Join(filepath.Dir(localPath), metafile.RequiredBackup))
+		err := bd.DownloadCompressedStream(ctx, metafile.RequiredBackup, filepath.Join(filepath.Dir(localPath), metafile.RequiredBackup))
 		if err != nil && !os.IsExist(err) {
 			return fmt.Errorf("can't download '%s': %v", metafile.RequiredBackup, err)
 		}
@@ -242,7 +256,7 @@ func (bd *BackupDestination) CompressedStreamDownload(remotePath string, localPa
 	return nil
 }
 
-func (bd *BackupDestination) CompressedStreamUpload(localPath, remotePath, diffFromPath string) error {
+func (bd *BackupDestination) UploadCompressedStream(ctx context.Context, localPath, remotePath, diffFromPath string) error {
 	archiveName := path.Join(bd.path, fmt.Sprintf("%s.%s", remotePath, getExtension(bd.compressionFormat)))
 
 	if _, err := bd.GetFile(archiveName); err != nil {
@@ -268,19 +282,28 @@ func (bd *BackupDestination) CompressedStreamUpload(localPath, remotePath, diffF
 			return fmt.Errorf("'%s' is not a directory", diffFromPath)
 		}
 	}
-	hardlinks := []string{}
+	hardlinks := make([]string, 0)
 
 	buf := buffer.New(BufferSize)
 	body, w := nio.Pipe(buf)
-	go func() (ferr error) {
-		defer w.CloseWithError(ferr)
-		iobuf := buffer.New(BufferSize)
-		z, _ := getArchiveWriter(bd.compressionFormat, bd.compressionLevel)
-		if ferr = z.Create(w); ferr != nil {
-			return
+	tmpFileName := ""
+	go func() (writerErr error) {
+		defer func() {
+			if writerErr != nil {
+				w.CloseWithError(writerErr)
+			} else {
+				if err := w.Close(); err != nil {
+					apexLog.Errorf("can't close pipe writer: %v", err)
+				}
+			}
+		}()
+
+		z, err := getArchiveWriter(bd.compressionFormat, bd.compressionLevel)
+		if err != nil {
+			return err
 		}
-		defer z.Close()
-		if ferr = filepath.Walk(localPath, func(filePath string, info os.FileInfo, err error) error {
+		archiveFiles := make([]archiver.File, 0)
+		if writerErr = filepath.Walk(localPath, func(filePath string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err
 			}
@@ -288,11 +311,6 @@ func (bd *BackupDestination) CompressedStreamUpload(localPath, remotePath, diffF
 				return nil
 			}
 			bar.Add64(info.Size())
-			file, err := os.Open(filePath)
-			if err != nil {
-				return err
-			}
-			defer file.Close()
 			relativePath := strings.TrimPrefix(strings.TrimPrefix(filePath, localPath), "/")
 			if diffFromPath != "" {
 				diffFromFile, err := os.Stat(filepath.Join(diffFromPath, relativePath))
@@ -303,16 +321,16 @@ func (bd *BackupDestination) CompressedStreamUpload(localPath, remotePath, diffF
 					}
 				}
 			}
-			bfile := nio.NewReader(file, iobuf)
-			defer bfile.Close()
-			return z.Write(archiver.File{
-				FileInfo: archiver.FileInfo{
-					FileInfo:   info,
-					CustomName: relativePath,
+			file := archiver.File{
+				FileInfo:      info,
+				NameInArchive: relativePath,
+				Open: func() (io.ReadCloser, error) {
+					return os.Open(localPath)
 				},
-				ReadCloser: bfile,
-			})
-		}); ferr != nil {
+			}
+			archiveFiles = append(archiveFiles, file)
+			return nil
+		}); writerErr != nil {
 			return
 		}
 		if len(hardlinks) > 0 {
@@ -322,50 +340,52 @@ func (bd *BackupDestination) CompressedStreamUpload(localPath, remotePath, diffF
 			}
 			content, err := json.MarshalIndent(&metafile, "", "\t")
 			if err != nil {
-				ferr = fmt.Errorf("can't marshal json: %v", err)
+				writerErr = fmt.Errorf("can't marshal json: %v", err)
 				return
 			}
 			tmpfile, err := ioutil.TempFile("", MetaFileName)
 			if err != nil {
-				ferr = fmt.Errorf("can't create meta.info: %v", err)
+				writerErr = fmt.Errorf("can't create meta.info: %v", err)
 				return
 			}
 			if _, err := tmpfile.Write(content); err != nil {
-				ferr = fmt.Errorf("can't write to meta.info: %v", err)
+				writerErr = fmt.Errorf("can't write to meta.info: %v", err)
 				return
 			}
 			tmpfile.Close()
-			tmpFileName := tmpfile.Name()
-			defer os.Remove(tmpFileName)
+			tmpFileName = tmpfile.Name()
 			info, err := os.Stat(tmpFileName)
 			if err != nil {
-				ferr = fmt.Errorf("can't get stat: %v", err)
+				writerErr = fmt.Errorf("can't get stat: %v", err)
 				return
 			}
-			mf, err := os.Open(tmpFileName)
-			if err != nil {
-				ferr = err
-				return
-			}
-			defer mf.Close()
-			if err := z.Write(archiver.File{
-				FileInfo: archiver.FileInfo{
-					FileInfo:   info,
-					CustomName: MetaFileName,
+			file := archiver.File{
+				FileInfo:      info,
+				NameInArchive: MetaFileName,
+				Open: func() (io.ReadCloser, error) {
+					return os.Open(tmpFileName)
 				},
-				ReadCloser: mf,
-			}); err != nil {
-				ferr = fmt.Errorf("can't add mata.json to archive: %v", err)
-				return
 			}
+			archiveFiles = append(archiveFiles, file)
+		}
+		if writerErr = z.Archive(ctx, w, archiveFiles); writerErr != nil {
+			return writerErr
 		}
 		return
 	}()
 
+	defer bar.Finish()
 	if err := bd.PutFile(archiveName, body); err != nil {
 		return err
 	}
-	bar.Finish()
+
+	defer func() {
+		if tmpFileName != "" {
+			if err := os.Remove(tmpFileName); err != nil {
+				apexLog.Warnf("can't remove %s", tmpFileName)
+			}
+		}
+	}()
 	return nil
 }
 

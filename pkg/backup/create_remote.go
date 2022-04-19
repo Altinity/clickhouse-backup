@@ -12,7 +12,7 @@ func (b *Backuper) CreateToRemote(backupName, diffFrom, diffFromRemote, tablePat
 	if err := b.Upload(backupName, diffFrom, diffFromRemote, tablePattern, partitions, schemaOnly); err != nil {
 		return err
 	}
-	if err := RemoveOldBackupsLocal(b.cfg, false); err != nil {
+	if err := RemoveOldBackupsLocal(b.cfg, false, nil); err != nil {
 		return fmt.Errorf("can't remove old local backups: %v", err)
 	}
 	return nil

@@ -1,10 +1,16 @@
 # v1.3.2
 IMPROVEMENTS
 - add TLS certificates and TLS CA support for clickhouse connections, fix [410](https://github.com/AlexAkulov/clickhouse-backup/issues/410)
+- switch to go 1.18
+- add clickhouse version 22.3 to integration tests
+- add `S3_MAX_PARTS_COUNT` and `AZBLOB_MAX_PARTS_COUNT` for properly calculate buffer sizes during upload and download
+- add multithreading GZIP implementation
 
 BUG FIXES
-- fix [406](https://github.com/AlexAkulov/clickhouse-backup/issues/406), properly handle `path` for S3, GCS for case when it begin from "/"
+- fix [406](https://github.com/AlexAkulov/clickhouse-backup/issues/406), properly handle `path` for S3, GCS for case when it begins from "/"
 - fix [409](https://github.com/AlexAkulov/clickhouse-backup/issues/409), avoid delete partially uploaded backups via `backups_keep_remote` option
+- fix [422](https://github.com/AlexAkulov/clickhouse-backup/issues/422), avoid cache broken (partially uploaded) remote backup metadata.
+- fix [404](https://github.com/AlexAkulov/clickhouse-backup/issues/404), properly calculate S3_PART_SIZE to avoid freeze after 10000 multi parts uploading, properly handle error when upload and download go-routine failed to avoid pipe stuck 
 
 # v1.3.1
 
@@ -27,7 +33,7 @@ IMPROVEMENTS
 - Add implementation `--diff-from-remote` for `upload` command and properly handle `required` on download command, fix [#289](https://github.com/AlexAkulov/clickhouse-backup/issues/289)
 - Add `print-config` cli command fix [#366](https://github.com/AlexAkulov/clickhouse-backup/issues/366)
 - Add `UPLOAD_BY_PART` (default: true) option for improve upload/download concurrency fix [#324](https://github.com/AlexAkulov/clickhouse-backup/issues/324)
-- Add ARM support for Docker images and pre-compiled binary files, fix [#312](https://github.com/AlexAkulov/clickhouse-backup/issues/312)
+- Add support ARM platform for Docker images and pre-compiled binary files, fix [#312](https://github.com/AlexAkulov/clickhouse-backup/issues/312)
 - KeepRemoteBackups should respect differential backups, fix [#111](https://github.com/AlexAkulov/clickhouse-backup/issues/111)
 - Add `SFTP_DEBUG` option, fix [#335](https://github.com/AlexAkulov/clickhouse-backup/issues/335)
 - Add ability to restore schema `ON CLUSTER`, fix [#145](https://github.com/AlexAkulov/clickhouse-backup/issues/145)
@@ -62,7 +68,7 @@ BUG FIXES
 
 EXPERIMENTAL
 - Try to add experimental support for backup `MaterializedMySQL` and `MaterializedPostgeSQL` tables, restore MySQL tables not impossible now without replace `table_name.json` to `Engine=MergeTree`,
-  PostgreSQL not supported now, see https://github.com/ClickHouse/ClickHouse/issues/32902
+  PostgresSQL not supported now, see https://github.com/ClickHouse/ClickHouse/issues/32902
 
 # v1.2.4
 
@@ -137,7 +143,7 @@ IMPROVEMENTS
 - improve logging for delete operation
 - Added `S3_DEBUG` option to allow debug S3 connection
 - Decrease number of SQL queries to system.* during backup commands
-- Added options for RBAC and CONFIGs backup, look to `clickhouse-backup help create` and `clickhouse-backup help restore` for details
+- Added options for RBAC and CONFIG backup, look to `clickhouse-backup help create` and `clickhouse-backup help restore` for details
 - Add `S3_CONCURRENCY` option to speedup backup upload to `S3`
 - Add `SFTP_CONCURRENCY` option to speedup backup upload to `SFTP`
 - Add `AZBLOB_USE_MANAGED_IDENTITY` support for ManagedIdentity for azure remote storage, thanks https://github.com/roman-vynar
@@ -152,7 +158,7 @@ BUG FIXES
 - fix [#255](https://github.com/AlexAkulov/clickhouse-backup/issues/255) restrict connection pooling to 1 in `clickhouse-go` 
 - fix [#256](https://github.com/AlexAkulov/clickhouse-backup/issues/256) remote_storage: none, was broke compression
 - fix [#266](https://github.com/AlexAkulov/clickhouse-backup/discussions/266) legacy backups from version prior 1.0 can't restore without `allow_empty_backup: true`
-- fix [#223](https://github.com/AlexAkulov/clickhouse-backup/issues/223) backup only database metadata for proxy integrated database engines like MySQL, PostgreSQL
+- fix [#223](https://github.com/AlexAkulov/clickhouse-backup/issues/223) backup only database metadata for proxy integrated database engines like MySQL, PostgresSQL
 - fix `GCS` global buffer wrong usage during UPLOAD_CONCURRENCY > 1
 - Remove unused `SKIP_SYNC_REPLICA_TIMEOUTS` option
 

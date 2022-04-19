@@ -31,7 +31,7 @@ var (
 	ErrBackupIsAlreadyExists = errors.New("backup is already exists")
 )
 
-func legacyDownload(cfg *config.Config, defaultDataPath, backupName string) error {
+func legacyDownload(ctx context.Context, cfg *config.Config, defaultDataPath, backupName string) error {
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "download_legacy",
@@ -43,7 +43,7 @@ func legacyDownload(cfg *config.Config, defaultDataPath, backupName string) erro
 	if err := bd.Connect(); err != nil {
 		return err
 	}
-	if err := bd.CompressedStreamDownload(backupName,
+	if err := bd.DownloadCompressedStream(ctx, backupName,
 		path.Join(defaultDataPath, "backup", backupName)); err != nil {
 		return err
 	}
@@ -63,7 +63,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		_ = PrintRemoteBackups(b.cfg, "all")
 		return fmt.Errorf("select backup for download")
 	}
-	localBackups, err := GetLocalBackups(b.cfg)
+	localBackups, disks, err := GetLocalBackups(b.cfg, nil)
 	if err != nil {
 		return err
 	}
@@ -77,7 +77,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
 	defer b.ch.Close()
-	if err := b.init(); err != nil {
+	if err := b.init(disks); err != nil {
 		return err
 	}
 	remoteBackups, err := b.dst.BackupList(true, backupName)
@@ -105,7 +105,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			return fmt.Errorf("'%s' is old format backup and doesn't supports download of schema only", backupName)
 		}
 		log.Warnf("'%s' is old-format backup", backupName)
-		return legacyDownload(b.cfg, b.DefaultDataPath, backupName)
+		return legacyDownload(context.Background(), b.cfg, b.DefaultDataPath, backupName)
 	}
 	if len(remoteBackup.Tables) == 0 && !b.cfg.General.AllowEmptyBackups {
 		return fmt.Errorf("'%s' is empty backup", backupName)
@@ -286,7 +286,7 @@ func (b *Backuper) downloadBackupRelatedDir(remoteBackup new_storage.Backup, pre
 		apexLog.Debugf("%s not exists on remote storage, skip download", remoteFile)
 		return 0, nil
 	}
-	if err = b.dst.CompressedStreamDownload(remoteFile, localDir); err != nil {
+	if err = b.dst.DownloadCompressedStream(context.Background(), remoteFile, localDir); err != nil {
 		return 0, err
 	}
 	return uint64(remoteFileInfo.Size()), nil
@@ -317,7 +317,7 @@ func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table
 				g.Go(func() error {
 					apexLog.Debugf("start download from %s", tableRemoteFile)
 					defer s.Release(1)
-					if err := b.dst.CompressedStreamDownload(tableRemoteFile, tableLocalDir); err != nil {
+					if err := b.dst.DownloadCompressedStream(ctx, tableRemoteFile, tableLocalDir); err != nil {
 						return err
 					}
 					apexLog.Debugf("finish download from %s", tableRemoteFile)
@@ -402,7 +402,7 @@ func (b *Backuper) downloadDiffParts(remoteBackup metadata.BackupMetadata, table
 					}
 
 					for tableRemoteFile, tableLocalDir := range tableRemoteFiles {
-						err = b.downloadDiffRemoteFile(diffRemoteFilesLock, diffRemoteFilesCache, tableRemoteFile, tableLocalDir)
+						err = b.downloadDiffRemoteFile(ctx, diffRemoteFilesLock, diffRemoteFilesCache, tableRemoteFile, tableLocalDir)
 						if err != nil {
 							return err
 						}
@@ -442,7 +442,7 @@ func (b *Backuper) downloadDiffParts(remoteBackup metadata.BackupMetadata, table
 	return nil
 }
 
-func (b *Backuper) downloadDiffRemoteFile(diffRemoteFilesLock *sync.Mutex, diffRemoteFilesCache map[string]*sync.Mutex, tableRemoteFile string, tableLocalDir string) error {
+func (b *Backuper) downloadDiffRemoteFile(ctx context.Context, diffRemoteFilesLock *sync.Mutex, diffRemoteFilesCache map[string]*sync.Mutex, tableRemoteFile string, tableLocalDir string) error {
 	diffRemoteFilesLock.Lock()
 	namedLock, isCached := diffRemoteFilesCache[tableRemoteFile]
 	log := apexLog.WithField("operation", "downloadDiffRemoteFile")
@@ -459,8 +459,8 @@ func (b *Backuper) downloadDiffRemoteFile(diffRemoteFilesLock *sync.Mutex, diffR
 		namedLock.Lock()
 		diffRemoteFilesLock.Unlock()
 		if path.Ext(tableRemoteFile) != "" {
-			if err := b.dst.CompressedStreamDownload(tableRemoteFile, tableLocalDir); err != nil {
-				log.Warnf("CompressedStreamDownload %s -> %s return error: %v", tableRemoteFile, tableLocalDir, err)
+			if err := b.dst.DownloadCompressedStream(ctx, tableRemoteFile, tableLocalDir); err != nil {
+				log.Warnf("DownloadCompressedStream %s -> %s return error: %v", tableRemoteFile, tableLocalDir, err)
 				return err
 			}
 		} else {

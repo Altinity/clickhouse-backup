@@ -143,7 +143,8 @@ azblob:
   compression_level: 1         # AZBLOB_COMPRESSION_LEVEL
   compression_format: tar      # AZBLOB_COMPRESSION_FORMAT
   sse_key: ""                  # AZBLOB_SSE_KEY
-  buffer_size: 0               # AZBLOB_BUFFER_SIZE, if less or eq 0 then calculated as max_file_size / 10000, between 2Mb and 4Mb
+  buffer_size: 0               # AZBLOB_BUFFER_SIZE, if less or eq 0 then calculated as max_file_size / max_parts_count, between 2Mb and 4Mb
+  max_parts_count: 10000       # AZBLOB_MAX_PARTS_COUNT, number of parts for AZBLOB uploads, for properly calculate buffer size
   max_buffers: 3               # AZBLOB_MAX_BUFFERS
 s3:
   access_key: ""                   # S3_ACCESS_KEY
@@ -162,7 +163,8 @@ s3:
   disable_cert_verification: false # S3_DISABLE_CERT_VERIFICATION
   storage_class: STANDARD          # S3_STORAGE_CLASS
   concurrency: 1                   # S3_CONCURRENCY
-  part_size: 0                     # S3_PART_SIZE, if less or eq 0 then calculated as max_file_size / 10000
+  part_size: 0                     # S3_PART_SIZE, if less or eq 0 then calculated as max_file_size / max_parts_count, between 5MB and 5Gb
+  max_parts_count: 10000           # S3_MAX_PARTS_COUNT, number of parts for S3 multipart uploads
   debug: false                     # S3_DEBUG
 gcs:
   credentials_file: ""         # GCS_CREDENTIALS_FILE

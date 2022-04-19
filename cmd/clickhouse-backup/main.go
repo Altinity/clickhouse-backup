@@ -331,7 +331,7 @@ func main() {
 				}
 				switch c.Args().Get(0) {
 				case "local":
-					return backup.RemoveBackupLocal(cfg, c.Args().Get(1))
+					return backup.RemoveBackupLocal(cfg, c.Args().Get(1), nil)
 				case "remote":
 					return backup.RemoveBackupRemote(cfg, c.Args().Get(1))
 				default:

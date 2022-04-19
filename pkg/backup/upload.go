@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"io/ioutil"
 	"os"
 	"path"
@@ -26,7 +27,9 @@ import (
 )
 
 func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern string, partitions []string, schemaOnly bool) error {
-	if err := b.validateUploadParams(backupName, diffFrom, diffFromRemote); err != nil {
+	var err error
+	var disks []clickhouse.Disk
+	if err = b.validateUploadParams(backupName, diffFrom, diffFromRemote); err != nil {
 		return err
 	}
 	log := apexLog.WithFields(apexLog.Fields{
@@ -34,15 +37,15 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 		"operation": "upload",
 	})
 	startUpload := time.Now()
-	if err := b.ch.Connect(); err != nil {
+	if err = b.ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
 	defer b.ch.Close()
-	if err := b.init(); err != nil {
-		return err
-	}
-	if _, err := getLocalBackup(b.cfg, backupName); err != nil {
+	if _, disks, err = getLocalBackup(b.cfg, backupName, nil); err != nil {
 		return fmt.Errorf("can't upload: %v", err)
+	}
+	if err := b.init(disks); err != nil {
+		return err
 	}
 	remoteBackups, err := b.dst.BackupList(false, "")
 	if err != nil {
@@ -292,7 +295,7 @@ func (b *Backuper) uploadAndArchiveBackupRelatedDir(localBackupRelatedDir, local
 		localFiles[i] = strings.Replace(localFiles[i], localBackupRelatedDir, "", 1)
 	}
 
-	if err := b.dst.CompressedStreamUpload(localBackupRelatedDir, localFiles, remoteFile); err != nil {
+	if err := b.dst.UploadCompressedStream(localBackupRelatedDir, localFiles, remoteFile); err != nil {
 		return 0, fmt.Errorf("can't RBAC upload: %v", err)
 	}
 	remoteUploaded, err := b.dst.StatFile(remoteFile)
@@ -346,8 +349,8 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 				g.Go(func() error {
 					defer s.Release(1)
 					apexLog.Debugf("start upload %d files to %s", len(localFiles), remoteDataFile)
-					if err := b.dst.CompressedStreamUpload(backupPath, localFiles, remoteDataFile); err != nil {
-						apexLog.Errorf("CompressedStreamUpload return error: %v", err)
+					if err := b.dst.UploadCompressedStream(backupPath, localFiles, remoteDataFile); err != nil {
+						apexLog.Errorf("UploadCompressedStream return error: %v", err)
 						return fmt.Errorf("can't upload: %v", err)
 					}
 					remoteFile, err := b.dst.StatFile(remoteDataFile)
