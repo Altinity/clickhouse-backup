@@ -771,6 +771,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	}
 	vars := mux.Vars(r)
 	tablePattern := ""
+	databaseMapping := ""
 	partitionsToBackup := make([]string, 0)
 	schemaOnly := false
 	dataOnly := false
@@ -783,6 +784,10 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	if tp, exist := query["table"]; exist {
 		tablePattern = tp[0]
 		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
+	}
+	// TODO(mojerro): check
+	if databaseMapping, exist := query["databaseMapping"]; exist {
+		fullCommand = fmt.Sprintf("%s --restore-database-mapping=\"%s\"", fullCommand, databaseMapping)
 	}
 	if partitions, exist := query["partitions"]; exist {
 		partitionsToBackup = strings.Split(partitions[0], ",")
@@ -824,7 +829,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 			api.metrics.LastDuration["restore"].Set(float64(time.Since(start).Nanoseconds()))
 			api.metrics.LastFinish["restore"].Set(float64(time.Now().Unix()))
 		}()
-		err := backup.Restore(cfg, name, tablePattern, partitionsToBackup, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly)
+		err := backup.Restore(cfg, name, tablePattern, databaseMapping, partitionsToBackup, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly)
 		api.status.stop(commandId, err)
 		if err != nil {
 			apexLog.Errorf("Download error: %+v\n", err)

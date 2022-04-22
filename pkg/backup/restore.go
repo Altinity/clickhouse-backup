@@ -25,7 +25,8 @@ import (
 )
 
 // Restore - restore tables matched by tablePattern from backupName
-func Restore(cfg *config.Config, backupName string, tablePattern string, partitions []string, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly bool) error {
+func Restore(cfg *config.Config, backupName, tablePattern, databaseMapping string, partitions []string, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly bool) error {
+	println(databaseMapping)
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "restore",

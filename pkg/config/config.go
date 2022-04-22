@@ -48,6 +48,7 @@ type GeneralConfig struct {
 	RestoreSchemaOnCluster string `yaml:"restore_schema_on_cluster" envconfig:"RESTORE_SCHEMA_ON_CLUSTER"`
 	UploadByPart           bool   `yaml:"upload_by_part" envconfig:"UPLOAD_BY_PART"`
 	DownloadByPart         bool   `yaml:"download_by_part" envconfig:"DOWNLOAD_BY_PART"`
+	RestoreDatabaseMapping           map[string]string `yaml:"restore_database_mapping" envconfig:"RESTORE_DATABASE_MAPPING"`
 }
 
 // GCSConfig - GCS settings section
