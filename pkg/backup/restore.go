@@ -26,7 +26,15 @@ import (
 
 // Restore - restore tables matched by tablePattern from backupName
 func Restore(cfg *config.Config, backupName, tablePattern string, databaseMapping, partitions []string, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly bool) error {
-	println(databaseMapping)
+	dbMapRule := make(map[string]string)
+	for i := 0; i < len(databaseMapping); i++ {
+		maps := strings.Split(databaseMapping[i], ":")
+		if len(maps) != 2 {
+			return fmt.Errorf("restore-database-mapping should only have one colon`:` for each map rule")
+		}
+		dbMapRule[maps[0]] = maps[1]
+	}
+
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "restore",
@@ -111,13 +119,13 @@ func Restore(cfg *config.Config, backupName, tablePattern string, databaseMappin
 	}
 
 	if schemaOnly || (schemaOnly == dataOnly) {
-		if err := RestoreSchema(cfg, ch, backupName, tablePattern, dropTable, disks); err != nil {
+		if err := RestoreSchema(cfg, ch, backupName, tablePattern, dbMapRule, dropTable, disks); err != nil {
 			return err
 		}
 	}
 	if dataOnly || (schemaOnly == dataOnly) {
 		partitionsToRestore := filesystemhelper.CreatePartitionsToBackupMap(partitions)
-		if err := RestoreData(cfg, ch, backupName, tablePattern, partitionsToRestore, disks); err != nil {
+		if err := RestoreData(cfg, ch, backupName, tablePattern, dbMapRule, partitionsToRestore, disks); err != nil {
 			return err
 		}
 	}
@@ -203,7 +211,7 @@ func restoreBackupRelatedDir(ch *clickhouse.ClickHouse, backupName, backupPrefix
 }
 
 // RestoreSchema - restore schemas matched by tablePattern from backupName
-func RestoreSchema(cfg *config.Config, ch *clickhouse.ClickHouse, backupName string, tablePattern string, dropTable bool, disks []clickhouse.Disk) error {
+func RestoreSchema(cfg *config.Config, ch *clickhouse.ClickHouse, backupName string, tablePattern string, dbMapRule map[string]string, dropTable bool, disks []clickhouse.Disk) error {
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "restore",
@@ -330,7 +338,7 @@ func dropExistsTables(cfg *config.Config, ch *clickhouse.ClickHouse, tablesForDr
 }
 
 // RestoreData - restore data for tables matched by tablePattern from backupName
-func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName string, tablePattern string, partitionsToRestore common.EmptyMap, disks []clickhouse.Disk) error {
+func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName string, tablePattern string, dbMapRule map[string]string, partitionsToRestore common.EmptyMap, disks []clickhouse.Disk) error {
 	startRestore := time.Now()
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
@@ -369,6 +377,7 @@ func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName strin
 	for _, disk := range disks {
 		diskMap[disk.Name] = disk.Path
 	}
+	// TODO(mojerro): if restore-database-mapping specified, create database in mapping rules.
 	for _, t := range tablesForRestore {
 		for disk := range t.Parts {
 			if _, ok := diskMap[disk]; !ok {
