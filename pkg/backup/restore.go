@@ -25,7 +25,7 @@ import (
 )
 
 // Restore - restore tables matched by tablePattern from backupName
-func Restore(cfg *config.Config, backupName, tablePattern, databaseMapping string, partitions []string, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly bool) error {
+func Restore(cfg *config.Config, backupName, tablePattern string, databaseMapping, partitions []string, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly bool) error {
 	println(databaseMapping)
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
@@ -254,6 +254,7 @@ func createTables(cfg *config.Config, ch *clickhouse.ClickHouse, tablesForRestor
 		var notRestoredTables ListOfTables
 		for _, schema := range tablesForRestore {
 			// if metadata.json doesn't contains "databases", we will re-create tables with default engine
+			// TODO(mojerro): if restore-database-mapping specified, create database in mapping rules.
 			if err := ch.CreateDatabase(schema.Database); err != nil {
 				return fmt.Errorf("can't create database '%s': %v", schema.Database, err)
 			}
@@ -264,6 +265,7 @@ func createTables(cfg *config.Config, ch *clickhouse.ClickHouse, tablesForRestor
 			schema.Query = strings.Replace(
 				schema.Query, "CREATE WINDOW VIEW", "ATTACH WINDOW VIEW", 1,
 			)
+			// TODO(mojerro): if restore-database-mapping specified, use mapping database
 			restoreErr = ch.CreateTable(clickhouse.Table{
 				Database: schema.Database,
 				Name:     schema.Table,

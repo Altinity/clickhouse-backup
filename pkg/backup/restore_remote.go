@@ -1,6 +1,6 @@
 package backup
 
-func (b *Backuper) RestoreFromRemote(backupName, tablePattern, databaseMapping string, partitions []string, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly bool) error {
+func (b *Backuper) RestoreFromRemote(backupName, tablePattern string, databaseMapping, partitions []string, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly bool) error {
 	if err := b.Download(backupName, tablePattern, partitions, schemaOnly); err != nil {
 		return err
 	}
