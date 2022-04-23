@@ -72,6 +72,7 @@ general:
   max_file_size: 107374182400
   remote_storage: none
   upload_concurrency: 1
+  restore_database_mapping: "default:default,test:test"
 s3:
   access_key: access-key
   acl: private

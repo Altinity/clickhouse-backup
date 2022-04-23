@@ -109,6 +109,7 @@ general:
   restore_schema_on_cluster: ""  # RESTORE_SCHEMA_ON_CLUSTER, execute all schema related SQL queryes with `ON CLUSTER` clause as Distributed DDL, look to `system.clusters` table for proper cluster name
   upload_by_part: true           # UPLOAD_BY_PART
   download_by_part: true         # DOWNLOAD_BY_PART
+  restore_database_mapping: ""   # RESTORE_DATABASE_MAPPING, restore rules from backup databases to target databases, which is useful on change the restore database or restore part of the backup databases.
 clickhouse:
   username: default                # CLICKHOUSE_USERNAME
   password: ""                     # CLICKHOUSE_PASSWORD
