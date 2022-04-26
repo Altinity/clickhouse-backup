@@ -109,11 +109,22 @@ func getTableListByPatternLocal(metadataPath string, tablePattern string, skipTa
 	return result, nil
 }
 
-// TODO(mojerro): 
 func getTableListByRestoreDatabaseMappingRule(originTables *ListOfTables, rule map[string]string) error {
 	result := ListOfTables{}
-	for i := 0; i < len(rule); i++ {
-
+	dbMetaMap := make(map[string]metadata.TableMetadata, 0)
+	for i := 0; i < len(*originTables); i++ {
+		table := (*originTables)[i]
+		dbMetaMap[table.Database] = table
+	}
+	originDBs := make([]string, 0, len(rule))
+	for k := range rule {
+		originDBs = append(originDBs, k)
+	}
+	for i := 0; i < len(originDBs); i++ {
+		originDB := originDBs[i]
+		targetDBMeta := dbMetaMap[originDB]
+		targetDBMeta.Database = rule[originDB]
+		result = append(result, targetDBMeta)
 	}
 	originTables = &result
 	return nil
