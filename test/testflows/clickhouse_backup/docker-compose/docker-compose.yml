@@ -10,7 +10,7 @@ services:
       ZOO_MY_ID: 1
       ZOO_4LW_COMMANDS_WHITELIST: "*"
     healthcheck:
-      test: echo stats | nc 127.0.0.1 2181
+      test: echo ruok | nc 127.0.0.1 2181
       interval: 3s
       timeout: 2s
       retries: 5
@@ -38,6 +38,12 @@ services:
       - mysql
       - postgres
       - clickhouse2
+    healthcheck:
+      test: wget http://localhost:8123/ping
+      interval: 3s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
     depends_on:
       zookeeper:
         condition: service_healthy
@@ -56,6 +62,12 @@ services:
       - rabbitmq
       - mysql
       - postgres
+    healthcheck:
+      test: wget http://localhost:8123/ping
+      interval: 3s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
     depends_on:
       zookeeper:
         condition: service_healthy
@@ -115,14 +127,16 @@ services:
     volumes_from:
       - clickhouse1
     healthcheck:
-      test: clickhouse-backup --version
-      interval: 3s
-      timeout: 2s
+      test: curl http://backup:7171/backup/status
+      interval: 5s
+      timeout: 5s
       retries: 40
       start_period: 10s
     depends_on:
-      - clickhouse1
-      - clickhouse2
+      clickhouse1:
+        condition: service_healthy
+      clickhouse2:
+        condition: service_healthy
 
     links:
       - ftp_server
