@@ -12,7 +12,7 @@ To execute tests, you will need:
 
 To install all necessary Python packages, execute:
 ```bash
-pip3 install -r ./tests/testflows/requirements.txt
+pip3 install -r ./test/testflows/requirements.txt
 ```
 
 ## Execution
@@ -51,11 +51,11 @@ source /home/username/clickhouse-backup/test/testflows/.env
 ### To execute the test suite, execute the following commands:
 
 ```bash
-python3 ./tests/testflows/clickhouse_backup/regression.py
+python3 ./test/testflows/clickhouse_backup/regression.py
 ```
 
 If you need only one certain test, you may execute
 
 ```bash
-python3 ./tests/testflows/clickhouse_backup/regression.py --only "/clickhouse backup/path to test/"
+python3 ./test/testflows/clickhouse_backup/regression.py --only "/clickhouse backup/path to test/"
 ```
