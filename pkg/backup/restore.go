@@ -241,6 +241,7 @@ func RestoreSchema(cfg *config.Config, ch *clickhouse.ClickHouse, backupName str
 		return err
 	}
 	// TODO(mojerro): if restore-database-mapping specified, create database in mapping rules instead of in backup files.
+	// I think tablesForRestore is just for restore action, and change it will not affect other actions.
 	if len(dbMapRule) > 0 {
 		err = getTableListByRestoreDatabaseMappingRule(&tablesForRestore, dbMapRule)
 		if err != nil {
