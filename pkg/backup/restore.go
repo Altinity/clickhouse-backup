@@ -240,6 +240,13 @@ func RestoreSchema(cfg *config.Config, ch *clickhouse.ClickHouse, backupName str
 	if err != nil {
 		return err
 	}
+	// TODO(mojerro): if restore-database-mapping specified, create database in mapping rules instead of in backup files.
+	if len(dbMapRule) > 0 {
+		err = getTableListByRestoreDatabaseMappingRule(&tablesForRestore, dbMapRule)
+		if err != nil {
+			return err
+		}
+	}
 	if len(tablesForRestore) == 0 {
 		return fmt.Errorf("no have found schemas by %s in %s", tablePattern, backupName)
 	}
@@ -262,7 +269,6 @@ func createTables(cfg *config.Config, ch *clickhouse.ClickHouse, tablesForRestor
 		var notRestoredTables ListOfTables
 		for _, schema := range tablesForRestore {
 			// if metadata.json doesn't contains "databases", we will re-create tables with default engine
-			// TODO(mojerro): if restore-database-mapping specified, create database in mapping rules.
 			if err := ch.CreateDatabase(schema.Database); err != nil {
 				return fmt.Errorf("can't create database '%s': %v", schema.Database, err)
 			}
@@ -273,7 +279,6 @@ func createTables(cfg *config.Config, ch *clickhouse.ClickHouse, tablesForRestor
 			schema.Query = strings.Replace(
 				schema.Query, "CREATE WINDOW VIEW", "ATTACH WINDOW VIEW", 1,
 			)
-			// TODO(mojerro): if restore-database-mapping specified, use mapping database
 			restoreErr = ch.CreateTable(clickhouse.Table{
 				Database: schema.Database,
 				Name:     schema.Table,
@@ -377,7 +382,6 @@ func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName strin
 	for _, disk := range disks {
 		diskMap[disk.Name] = disk.Path
 	}
-	// TODO(mojerro): if restore-database-mapping specified, create database in mapping rules.
 	for _, t := range tablesForRestore {
 		for disk := range t.Parts {
 			if _, ok := diskMap[disk]; !ok {

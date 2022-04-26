@@ -109,6 +109,16 @@ func getTableListByPatternLocal(metadataPath string, tablePattern string, skipTa
 	return result, nil
 }
 
+// TODO(mojerro): 
+func getTableListByRestoreDatabaseMappingRule(originTables *ListOfTables, rule map[string]string) error {
+	result := ListOfTables{}
+	for i := 0; i < len(rule); i++ {
+
+	}
+	originTables = &result
+	return nil
+}
+
 func filterPartsByPartitionsFilter(tableMetadata metadata.TableMetadata, partitionsFilter common.EmptyMap) {
 	if len(partitionsFilter) > 0 {
 		for disk, parts := range tableMetadata.Parts {
