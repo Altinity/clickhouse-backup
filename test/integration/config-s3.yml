@@ -28,6 +28,7 @@ s3:
   path: backup
   disable_ssl: true
   compression_format: tar
+  allow_multipart_download: true
 api:
   listen: :7171
   create_integration_tables: true

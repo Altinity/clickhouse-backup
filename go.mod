@@ -17,15 +17,16 @@ require (
 	github.com/gorilla/mux v1.8.0
 	github.com/jlaffaye/ftp v0.0.0-20210307004419-5d4190119067
 	github.com/jmoiron/sqlx v1.3.4
-	github.com/jolestar/go-commons-pool/v2 v2.1.1
+	github.com/jolestar/go-commons-pool/v2 v2.1.2
 	github.com/kelseyhightower/envconfig v1.4.0
+	github.com/klauspost/compress v1.15.1
 	github.com/mattn/go-shellwords v1.0.12
 	github.com/mholt/archiver/v4 v4.0.0-alpha.6
 	github.com/otiai10/copy v1.6.0
 	github.com/pkg/errors v0.9.1
 	github.com/pkg/sftp v1.13.2
 	github.com/prometheus/client_golang v1.11.0
-	github.com/stretchr/testify v1.7.0
+	github.com/stretchr/testify v1.7.1
 	github.com/tencentyun/cos-go-sdk-v5 v0.7.30
 	github.com/urfave/cli v1.22.5
 	github.com/yargevad/filepathx v1.0.0
@@ -60,7 +61,6 @@ require (
 	github.com/google/go-querystring v1.0.0 // indirect
 	github.com/googleapis/gax-go/v2 v2.1.1 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
-	github.com/klauspost/compress v1.15.1 // indirect
 	github.com/klauspost/pgzip v1.2.5 // indirect
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/mattn/go-ieproxy v0.0.0-20190702010315-6dee0af9227d // indirect

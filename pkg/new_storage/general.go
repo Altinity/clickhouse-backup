@@ -296,13 +296,20 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 	}
 	filesize := file.Size()
 
-	reader, err := bd.GetFileReader(remotePath)
+	reader, err := bd.GetFileReaderWithLocalPath(remotePath, localPath)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if err := reader.Close(); err != nil {
 			apexLog.Warnf("can't close GetFileReader descriptor %v", reader)
+		}
+		switch reader.(type) {
+		case *os.File:
+			fileName := reader.(*os.File).Name()
+			if err := os.Remove(fileName); err != nil {
+				apexLog.Warnf("can't remove %s", fileName)
+			}
 		}
 	}()
 

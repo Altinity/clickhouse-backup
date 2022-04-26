@@ -132,6 +132,10 @@ func (c *COS) GetFileReader(key string) (io.ReadCloser, error) {
 	return resp.Body, nil
 }
 
+func (c *COS) GetFileReaderWithLocalPath(key, _ string) (io.ReadCloser, error) {
+	return c.GetFileReader(key)
+}
+
 func (c *COS) PutFile(key string, r io.ReadCloser) error {
 	_, err := c.client.Object.Put(context.Background(), path.Join(c.Config.Path, key), r, nil)
 	return err
