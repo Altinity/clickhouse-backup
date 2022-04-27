@@ -51,7 +51,7 @@ source /home/username/clickhouse-backup/test/testflows/.env
 ### To execute the test suite, execute the following commands:
 
 ```bash
-python3 ./tests/testflows/clickhouse_backup/regression.py
+python3 ./test/testflows/clickhouse_backup/regression.py
 ```
 
 If you need only one certain test, you may execute
