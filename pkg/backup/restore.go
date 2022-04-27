@@ -374,6 +374,13 @@ func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName strin
 	} else {
 		metadataPath := path.Join(defaultDataPath, "backup", backupName, "metadata")
 		tablesForRestore, err = getTableListByPatternLocal(metadataPath, tablePattern, ch.Config.SkipTables, false, partitionsToRestore)
+		// if restore-database-mapping specified, create database in mapping rules instead of in backup files.
+		if len(dbMapRule) > 0 {
+			err = getTableListByRestoreDatabaseMappingRule(&tablesForRestore, dbMapRule)
+			if err != nil {
+				return err
+			}
+		}
 	}
 	if err != nil {
 		return err
