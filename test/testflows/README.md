@@ -12,7 +12,7 @@ To execute tests, you will need:
 
 To install all necessary Python packages, execute:
 ```bash
-pip3 install -r ./tests/testflows/requirements.txt
+pip3 install -r ./test/testflows/requirements.txt
 ```
 
 ## Execution
