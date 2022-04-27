@@ -35,7 +35,7 @@ const Issue331Ordinary = "_issue331.ordinary_"
 type TestDataStruct struct {
 	Database           string
 	DatabaseEngine     string
-	Table              string
+	Name               string
 	Schema             string
 	Rows               []map[string]interface{}
 	Fields             []string
@@ -43,6 +43,7 @@ type TestDataStruct struct {
 	IsMaterializedView bool
 	IsView             bool
 	IsDictionary       bool
+	IsFunction         bool
 	SkipInsert         bool
 	CheckDatabaseOnly  bool
 }
@@ -50,7 +51,7 @@ type TestDataStruct struct {
 var testData = []TestDataStruct{
 	{
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Table:  ".inner.table1",
+		Name:   ".inner.table1",
 		Schema: "(Date Date, TimeStamp DateTime, Log String) ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)",
 		Rows: []map[string]interface{}{
 			{"Date": toDate("2018-10-23"), "TimeStamp": toTS("2018-10-23 07:37:14"), "Log": "One"},
@@ -64,7 +65,7 @@ var testData = []TestDataStruct{
 		OrderBy: "TimeStamp",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Table:  "2. Таблица №2",
+		Name:   "2. Таблица №2",
 		Schema: "(id UInt64, User String) ENGINE = MergeTree ORDER BY id SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
 			{"id": uint64(1), "User": "Alice"},
@@ -78,7 +79,7 @@ var testData = []TestDataStruct{
 		OrderBy: "id",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Table:  "-table-3-",
+		Name:   "-table-3-",
 		Schema: "(TimeStamp DateTime, Item String, Date Date MATERIALIZED toDate(TimeStamp)) ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
 			{"TimeStamp": toTS("2018-10-23 07:37:14"), "Item": "One"},
@@ -92,7 +93,7 @@ var testData = []TestDataStruct{
 		OrderBy: "TimeStamp",
 	}, {
 		Database: Issue331Atomic, DatabaseEngine: "Atomic",
-		Table:  Issue331Atomic, // need cover fix https://github.com/AlexAkulov/clickhouse-backup/issues/331
+		Name:   Issue331Atomic, // need cover fix https://github.com/AlexAkulov/clickhouse-backup/issues/331
 		Schema: fmt.Sprintf("(`%s` UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY `%s` ORDER BY (`%s`, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192", Issue331Atomic, Issue331Atomic, Issue331Atomic),
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
@@ -105,7 +106,7 @@ var testData = []TestDataStruct{
 		OrderBy: Issue331Atomic,
 	}, {
 		Database: Issue331Ordinary, DatabaseEngine: "Ordinary",
-		Table:  Issue331Ordinary, // need cover fix https://github.com/AlexAkulov/clickhouse-backup/issues/331
+		Name:   Issue331Ordinary, // need cover fix https://github.com/AlexAkulov/clickhouse-backup/issues/331
 		Schema: fmt.Sprintf("(`%s` String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMM(order_time) ORDER BY (order_time, `%s`)", Issue331Ordinary, Issue331Ordinary),
 		Rows: []map[string]interface{}{
 			{Issue331Ordinary: "1", "order_time": toTS("2010-01-01 00:00:00"), "amount": 1.0},
@@ -115,7 +116,7 @@ var testData = []TestDataStruct{
 		OrderBy: Issue331Ordinary,
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Table:  "yuzhichang_table3",
+		Name:   "yuzhichang_table3",
 		Schema: "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMMDD(order_time) ORDER BY (order_time, order_id)",
 		Rows: []map[string]interface{}{
 			{"order_id": "1", "order_time": toTS("2010-01-01 00:00:00"), "amount": 1.0},
@@ -125,7 +126,7 @@ var testData = []TestDataStruct{
 		OrderBy: "order_id",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Table:  "yuzhichang_table4",
+		Name:   "yuzhichang_table4",
 		Schema: "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() ORDER BY (order_time, order_id)",
 		Rows: []map[string]interface{}{
 			{"order_id": "1", "order_time": toTS("2010-01-01 00:00:00"), "amount": 1.0},
@@ -135,7 +136,7 @@ var testData = []TestDataStruct{
 		OrderBy: "order_id",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Table:  "jbod",
+		Name:   "jbod",
 		Schema: "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 'jbod'",
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
@@ -148,7 +149,7 @@ var testData = []TestDataStruct{
 		OrderBy: "id",
 	}, {
 		Database: dbNameAtomic, DatabaseEngine: "Atomic",
-		Table:  "jbod",
+		Name:   "jbod",
 		Schema: "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 'jbod'",
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
@@ -161,7 +162,7 @@ var testData = []TestDataStruct{
 		OrderBy: "id",
 	}, {
 		Database: dbNameAtomic, DatabaseEngine: "Atomic",
-		Table:  "mv_src_table",
+		Name:   "mv_src_table",
 		Schema: "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{database}/{table}','replica1') ORDER BY id",
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
@@ -176,7 +177,7 @@ var testData = []TestDataStruct{
 	{
 		Database:       dbNameAtomic,
 		DatabaseEngine: "Atomic",
-		Table:          "mv_dst_table",
+		Name:           "mv_dst_table",
 		Schema:         "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{database}/{table}','replica1') ORDER BY id",
 		SkipInsert:     true,
 		Rows: func() []map[string]interface{} {
@@ -192,7 +193,7 @@ var testData = []TestDataStruct{
 		Database:           dbNameAtomic,
 		DatabaseEngine:     "Atomic",
 		IsMaterializedView: true,
-		Table:              "mv_max_with_inner",
+		Name:               "mv_max_with_inner",
 		Schema:             fmt.Sprintf("(id UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/{database}/{table}','replica1') ORDER BY id AS SELECT max(id) AS id FROM `%s`.`mv_src_table`", dbNameAtomic),
 		SkipInsert:         true,
 		Rows: func() []map[string]interface{} {
@@ -207,7 +208,7 @@ var testData = []TestDataStruct{
 		Database:       dbNameAtomic,
 		DatabaseEngine: "Atomic",
 		IsView:         true,
-		Table:          "test_view",
+		Name:           "test_view",
 		Schema:         fmt.Sprintf(" AS SELECT count() AS cnt FROM `%s`.`mv_src_table`", dbNameAtomic),
 		SkipInsert:     true,
 		Rows: func() []map[string]interface{} {
@@ -222,7 +223,7 @@ var testData = []TestDataStruct{
 		Database:           dbNameAtomic,
 		DatabaseEngine:     "Atomic",
 		IsMaterializedView: true,
-		Table:              "mv_max_with_dst",
+		Name:               "mv_max_with_dst",
 		Schema:             fmt.Sprintf(" TO `%s`.`mv_dst_table` AS SELECT max(id) AS id FROM `%s`.mv_src_table", dbNameAtomic, dbNameAtomic),
 		SkipInsert:         true,
 		Rows: func() []map[string]interface{} {
@@ -238,7 +239,7 @@ var testData = []TestDataStruct{
 		Database:           dbNameAtomic,
 		DatabaseEngine:     "Atomic",
 		IsMaterializedView: true,
-		Table:              "mv_min_with_nested_depencency",
+		Name:               "mv_min_with_nested_depencency",
 		Schema:             fmt.Sprintf(" TO `%s`.`mv_dst_table` AS SELECT min(id) * 2 AS id FROM `%s`.mv_src_table", dbNameAtomic, dbNameAtomic),
 		SkipInsert:         true,
 		Rows: func() []map[string]interface{} {
@@ -254,7 +255,7 @@ var testData = []TestDataStruct{
 		Database:       dbNameAtomic,
 		DatabaseEngine: "Atomic",
 		IsDictionary:   true,
-		Table:          "dict_example",
+		Name:           "dict_example",
 		Schema: fmt.Sprintf(
 			" (`%s` UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) PRIMARY KEY `%s` "+
 				" SOURCE(CLICKHOUSE(host 'localhost' port 9000 db '%s' table '%s' user 'default' password ''))"+
@@ -275,12 +276,25 @@ var testData = []TestDataStruct{
 		Database: dbNameMySQL, DatabaseEngine: "MySQL('mysql:3306','mysql','root','root')",
 		CheckDatabaseOnly: true,
 	},
+	{
+		IsFunction: true,
+		Name:       "test_function",
+		Schema:     fmt.Sprintf(" AS (a, b) -> a+b"),
+		SkipInsert: true,
+		Rows: func() []map[string]interface{} {
+			var result []map[string]interface{}
+			for i := 0; i < 3; i++ {
+				result = append(result, map[string]interface{}{"test_result": uint64(i + (i + 1))})
+			}
+			return result
+		}(),
+	},
 }
 
 var incrementData = []TestDataStruct{
 	{
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Table:  ".inner.table1",
+		Name:   ".inner.table1",
 		Schema: "(Date Date, TimeStamp DateTime, Log String) ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)",
 		Rows: []map[string]interface{}{
 			{"Date": toDate("2019-10-26"), "TimeStamp": toTS("2019-01-26 07:37:19"), "Log": "Seven"},
@@ -289,7 +303,7 @@ var incrementData = []TestDataStruct{
 		OrderBy: "TimeStamp",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Table:  "2. Таблица №2",
+		Name:   "2. Таблица №2",
 		Schema: "(id UInt64, User String) ENGINE = MergeTree ORDER BY id SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
 			{"id": uint64(7), "User": "Alice"},
@@ -301,7 +315,7 @@ var incrementData = []TestDataStruct{
 		OrderBy: "id",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Table:  "-table-3-",
+		Name:   "-table-3-",
 		Schema: "(TimeStamp DateTime, Item String, Date Date MATERIALIZED toDate(TimeStamp)) ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
 			{"TimeStamp": toTS("2019-01-26 07:37:18"), "Item": "Seven"},
@@ -311,7 +325,7 @@ var incrementData = []TestDataStruct{
 		OrderBy: "TimeStamp",
 	}, {
 		Database: Issue331Atomic, DatabaseEngine: "Atomic",
-		Table:  Issue331Atomic, // need cover fix https://github.com/AlexAkulov/clickhouse-backup/issues/331
+		Name:   Issue331Atomic, // need cover fix https://github.com/AlexAkulov/clickhouse-backup/issues/331
 		Schema: fmt.Sprintf("(`%s` UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY `%s` ORDER BY (`%s`, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192", Issue331Atomic, Issue331Atomic, Issue331Atomic),
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
@@ -324,7 +338,7 @@ var incrementData = []TestDataStruct{
 		OrderBy: Issue331Atomic,
 	}, {
 		Database: Issue331Ordinary, DatabaseEngine: "Ordinary",
-		Table:  Issue331Ordinary, // need cover fix https://github.com/AlexAkulov/clickhouse-backup/issues/331
+		Name:   Issue331Ordinary, // need cover fix https://github.com/AlexAkulov/clickhouse-backup/issues/331
 		Schema: fmt.Sprintf("(`%s` String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMM(order_time) ORDER BY (order_time, `%s`)", Issue331Ordinary, Issue331Ordinary),
 		Rows: []map[string]interface{}{
 			{Issue331Ordinary: "3", "order_time": toTS("2010-03-01 00:00:00"), "amount": 3.0},
@@ -334,7 +348,7 @@ var incrementData = []TestDataStruct{
 		OrderBy: Issue331Ordinary,
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Table:  "yuzhichang_table3",
+		Name:   "yuzhichang_table3",
 		Schema: "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMMDD(order_time) ORDER BY (order_time, order_id)",
 		Rows: []map[string]interface{}{
 			{"order_id": "3", "order_time": toTS("2010-03-01 00:00:00"), "amount": 3.0},
@@ -344,7 +358,7 @@ var incrementData = []TestDataStruct{
 		OrderBy: "order_id",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Table:  "yuzhichang_table4",
+		Name:   "yuzhichang_table4",
 		Schema: "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() ORDER BY (order_time, order_id)",
 		Rows: []map[string]interface{}{
 			{"order_id": "3", "order_time": toTS("2010-03-01 00:00:00"), "amount": 3.0},
@@ -354,7 +368,7 @@ var incrementData = []TestDataStruct{
 		OrderBy: "order_id",
 	}, {
 		Database: dbNameAtomic, DatabaseEngine: "Atomic",
-		Table:  "jbod",
+		Name:   "jbod",
 		Schema: "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 'jbod'",
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
@@ -1087,7 +1101,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 			continue
 		}
 		for _, incrementDataItem := range incrementData {
-			if testDataItem.Database == incrementDataItem.Database && testDataItem.Table == incrementDataItem.Table {
+			if testDataItem.Database == incrementDataItem.Database && testDataItem.Name == incrementDataItem.Name {
 				testDataItem.Rows = append(testDataItem.Rows, incrementDataItem.Rows...)
 			}
 		}
@@ -1152,7 +1166,7 @@ func generateTestDataWithDifferentStoragePolicy() {
 		addTestDataIfNotExists := func() {
 			found := false
 			for _, data := range testData {
-				if data.Table == testDataEncrypted.Table && data.Database == testDataEncrypted.Database {
+				if data.Name == testDataEncrypted.Name && data.Database == testDataEncrypted.Database {
 					found = true
 					break
 				}
@@ -1163,20 +1177,20 @@ func generateTestDataWithDifferentStoragePolicy() {
 		}
 		//s3 disks support after 21.8
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 {
-			testDataEncrypted.Table = "test_s3"
+			testDataEncrypted.Name = "test_s3"
 			testDataEncrypted.Schema = "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 's3_only'"
 			addTestDataIfNotExists()
 		}
 
 		//encrypted disks support after 21.10
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.10") >= 0 {
-			testDataEncrypted.Table = "test_hdd3_encrypted"
+			testDataEncrypted.Name = "test_hdd3_encrypted"
 			testDataEncrypted.Schema = "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 'hdd3_only_encrypted'"
 			addTestDataIfNotExists()
 		}
 		//encrypted s3 disks support after 21.12
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
-			testDataEncrypted.Table = "test_s3_encrypted"
+			testDataEncrypted.Name = "test_s3_encrypted"
 			testDataEncrypted.Schema = "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 's3_only_encrypted'"
 			addTestDataIfNotExists()
 		}
@@ -1245,21 +1259,25 @@ func (ch *TestClickHouse) connect() error {
 }
 
 func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {
-	// 20.8 doesn't respect DROP TABLE .. NO DELAY, so Atomic works but --rm is not applicable
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") == 1 {
-		if err := ch.chbackend.CreateDatabaseWithEngine(data.Database, data.DatabaseEngine); err != nil {
-			return err
-		}
-	} else {
-		if err := ch.chbackend.CreateDatabase(data.Database); err != nil {
-			return err
+	if !data.IsFunction {
+		// 20.8 doesn't respect DROP TABLE .. NO DELAY, so Atomic works but --rm is not applicable
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 {
+			if err := ch.chbackend.CreateDatabaseWithEngine(data.Database, data.DatabaseEngine); err != nil {
+				return err
+			}
+		} else {
+			if err := ch.chbackend.CreateDatabase(data.Database); err != nil {
+				return err
+			}
 		}
 	}
 	if data.CheckDatabaseOnly {
 		return nil
 	}
 	createSQL := "CREATE "
-	if data.IsMaterializedView {
+	if data.IsFunction {
+		createSQL += " FUNCTION "
+	} else if data.IsMaterializedView {
 		createSQL += " MATERIALIZED VIEW "
 	} else if data.IsView {
 		createSQL += " VIEW "
@@ -1268,8 +1286,14 @@ func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {
 	} else {
 		createSQL += " TABLE "
 	}
-	createSQL += fmt.Sprintf(" IF NOT EXISTS `%s`.`%s` ", data.Database, data.Table)
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.0") == 1 {
+
+	if data.IsFunction {
+		createSQL += fmt.Sprintf(" IF NOT EXISTS `%s` ", data.Name)
+	} else {
+		createSQL += fmt.Sprintf(" IF NOT EXISTS `%s`.`%s` ", data.Database, data.Name)
+	}
+
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.0") == 1 && !data.IsFunction {
 		createSQL += " ON CLUSTER 'cluster' "
 	}
 	createSQL += data.Schema
@@ -1280,14 +1304,18 @@ func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {
 			return err
 		}
 		if len(isMacrosExists) == 0 || isMacrosExists[0] == 0 {
-			createSQL = strings.Replace(createSQL, "{table}", data.Table, -1)
+			createSQL = strings.Replace(createSQL, "{table}", data.Name, -1)
 			createSQL = strings.Replace(createSQL, "{database}", data.Database, -1)
 		}
+	}
+	// functions supported only after 21.12
+	if data.IsFunction && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") == -1 {
+		return nil
 	}
 	err := ch.chbackend.CreateTable(
 		clickhouse.Table{
 			Database: data.Database,
-			Name:     data.Table,
+			Name:     data.Name,
 		},
 		createSQL,
 		false, "", 0,
@@ -1305,7 +1333,7 @@ func (ch *TestClickHouse) createTestData(data TestDataStruct) error {
 	}
 	insertSQL := fmt.Sprintf("INSERT INTO `%s`.`%s` (`%s`) VALUES (:%s)",
 		data.Database,
-		data.Table,
+		data.Name,
 		strings.Join(data.Fields, "`,`"),
 		strings.Join(data.Fields, ",:"),
 	)
@@ -1347,8 +1375,15 @@ func (ch *TestClickHouse) dropDatabase(database string) (err error) {
 
 func (ch *TestClickHouse) checkData(t *testing.T, data TestDataStruct, r *require.Assertions) error {
 	assert.NotNil(t, data.Rows)
-	log.Infof("Check '%d' rows in '%s.%s'\n", len(data.Rows), data.Database, data.Table)
-	selectSQL := fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY `%s`", data.Database, data.Table, data.OrderBy)
+	log.Infof("Check '%d' rows in '%s.%s'\n", len(data.Rows), data.Database, data.Name)
+	selectSQL := fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY `%s`", data.Database, data.Name, data.OrderBy)
+
+	if data.IsFunction && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") == -1 {
+		return nil
+	}
+	if data.IsFunction {
+		selectSQL = fmt.Sprintf("SELECT %s(number, number+1) AS test_result FROM numbers(3)", data.Name)
+	}
 	log.Debug(selectSQL)
 	rows, err := ch.chbackend.GetConn().Queryx(selectSQL)
 	if err != nil {
@@ -1446,12 +1481,12 @@ func isTableSkip(ch *TestClickHouse, data TestDataStruct, dataExists bool) bool 
 		var dictEngines []string
 		dictSQL := fmt.Sprintf(
 			"SELECT engine FROM system.tables WHERE name='%s' AND database='%s'",
-			data.Table, data.Database,
+			data.Name, data.Database,
 		)
 		_ = ch.chbackend.Select(&dictEngines, dictSQL)
 		return len(dictEngines) == 0
 	}
-	return os.Getenv("COMPOSE_FILE") == "docker-compose.yml" && (data.Table == "jbod" || data.IsDictionary)
+	return os.Getenv("COMPOSE_FILE") == "docker-compose.yml" && (data.Name == "jbod" || data.IsDictionary)
 }
 
 func compareVersion(v1, v2 string) int {

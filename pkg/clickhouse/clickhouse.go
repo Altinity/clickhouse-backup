@@ -85,7 +85,12 @@ func (ch *ClickHouse) Connect() error {
 				}
 				tlsConfig.RootCAs = caCertPool
 			}
-			clickhouse.RegisterTLSConfig("clickhouse-backup", tlsConfig)
+			err = clickhouse.RegisterTLSConfig("clickhouse-backup", tlsConfig)
+			if err != nil {
+				log.Errorf("RegisterTLSConfig return error: %v", err)
+				return fmt.Errorf("RegisterTLSConfig return error: %v", err)
+
+			}
 			params.Add("tls_config", "clickhouse-backup")
 		}
 
@@ -195,7 +200,7 @@ func (ch *ClickHouse) Close() {
 	}
 }
 
-// GetTables - return slice of all tables suitable for backup, MySQL and PostgreSQL database engine shall be skipped
+// GetTables - return slice of all tables suitable for backup, MySQL and PorstgreSQL database engine shall be skipped
 func (ch *ClickHouse) GetTables(tablePattern string) ([]Table, error) {
 	var err error
 	tables := make([]Table, 0)
@@ -561,9 +566,9 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable bool, onC
 		return err
 	}
 	isOnlyTablePresent = isOnlyTablePresent && !strings.Contains(query, fmt.Sprintf("%s.%s", table.Database, table.Name))
-	if isOnlyTableWithQuotesPresent {
+	if isOnlyTableWithQuotesPresent && table.Database != "" {
 		query = strings.Replace(query, fmt.Sprintf("`%s`", table.Name), fmt.Sprintf("`%s`.`%s`", table.Database, table.Name), 1)
-	} else if isOnlyTablePresent {
+	} else if isOnlyTablePresent && table.Database != "" {
 		query = strings.Replace(query, fmt.Sprintf("%s", table.Name), fmt.Sprintf("%s.%s", table.Database, table.Name), 1)
 	}
 
@@ -759,6 +764,33 @@ func (ch *ClickHouse) GetAccessManagementPath(disks []Disk) (string, error) {
 		accessPath = rows[0]
 	}
 	return accessPath, nil
+}
+
+func (ch *ClickHouse) GetUserDefinedFunctions() ([]Function, error) {
+	allFunctions := make([]Function, 0)
+	allFunctionsSQL := "SELECT name, create_query FROM system.functions WHERE create_query!=''"
+	detectUDF := make([]uint8, 0)
+	detectUDFSQL := "SELECT toUInt8(count()) udf_presents FROM system.columns WHERE database='system' AND table='functions' AND name='create_query'"
+	if err := ch.Select(&detectUDF, detectUDFSQL); err != nil {
+		return nil, err
+	}
+	if len(detectUDF) == 0 || detectUDF[0] == 0 {
+		return allFunctions, nil
+	}
+
+	if err := ch.SoftSelect(&allFunctions, allFunctionsSQL); err != nil {
+		return nil, err
+	}
+	return allFunctions, nil
+}
+
+func (ch *ClickHouse) CreateUserDefinedFunction(name string, query string) error {
+	_, err := ch.Query(fmt.Sprintf("DROP FUNCTION IF EXISTS `%s`", name))
+	if err != nil {
+		return err
+	}
+	_, err = ch.Query(query)
+	return err
 }
 
 func CalculateMaxFileSize(cfg *config.Config) (int64, error) {

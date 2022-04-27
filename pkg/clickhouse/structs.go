@@ -41,6 +41,12 @@ type Database struct {
 	Query  string `db:"query"`
 }
 
+// Function - Clickhouse system.functions stuct
+type Function struct {
+	Name        string `db:"name"`
+	CreateQuery string `db:"create_query"`
+}
+
 // partition info from system.parts
 type partition struct {
 	Partition                         string    `db:"partition"`

@@ -1,6 +1,7 @@
 # v1.4.0
 IMPROVEMENTS
 - add `S3_ALLOW_MULTIPART_DOWNLOAD` to config, to improve download speed, fix [431](https://github.com/AlexAkulov/clickhouse-backup/issues/431)
+- add support backup/restore [user defined functions](https://clickhouse.com/docs/en/sql-reference/statements/create/function), fix [420](https://github.com/AlexAkulov/clickhouse-backup/issues/420)
 
 # v1.3.2
 IMPROVEMENTS
