@@ -119,6 +119,9 @@ func getTableListByRestoreDatabaseMappingRule(originTables *ListOfTables, dbMapR
 	for i := 0; i < len(*originTables); i++ {
 		originDBMeta := (*originTables)[i]
 		if targetDB, ok := dbMapRule[originDBMeta.Database]; ok {
+			originDBMeta.Query = strings.Replace(
+				originDBMeta.Query, originDBMeta.Database+".", targetDB+".", 1,
+			)
 			originDBMeta.Database = targetDB
 			result = append(result, originDBMeta)
 		}
@@ -126,6 +129,7 @@ func getTableListByRestoreDatabaseMappingRule(originTables *ListOfTables, dbMapR
 	if len(result) == 0 {
 		return fmt.Errorf("no datababse/schema matched in restore-database-mapping rules")
 	}
+
 	*originTables = result
 	return nil
 }
