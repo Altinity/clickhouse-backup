@@ -109,25 +109,21 @@ func getTableListByPatternLocal(metadataPath string, tablePattern string, skipTa
 	return result, nil
 }
 
-func getTableListByRestoreDatabaseMappingRule(originTables *ListOfTables, mappingRule map[string]string) error {
+func getTableListByRestoreDatabaseMappingRule(originTables *ListOfTables, dbMapRule map[string]string) error {
 	result := ListOfTables{}
 	dbMetaMap := make(map[string]metadata.TableMetadata, 0)
 	for i := 0; i < len(*originTables); i++ {
 		table := (*originTables)[i]
 		dbMetaMap[table.Database] = table
 	}
-	mapOriginDBs := make([]string, 0, len(mappingRule))
-	for k := range mappingRule {
-		mapOriginDBs = append(mapOriginDBs, k)
-	}
-	for i := 0; i < len(mapOriginDBs); i++ {
-		originDB := mapOriginDBs[i]
-		if targetDBMeta, ok := dbMetaMap[originDB]; ok {
-			targetDBMeta.Database = mappingRule[originDB]
-			result = append(result, targetDBMeta)
+	for i := 0; i < len(*originTables); i++ {
+		originDBMeta := (*originTables)[i]
+		if targetDB, ok := dbMapRule[originDBMeta.Database]; ok {
+			originDBMeta.Database = targetDB
+			result = append(result, originDBMeta)
 		}
 	}
-	originTables = &result
+	*originTables = result
 	return nil
 }
 
