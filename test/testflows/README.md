@@ -57,5 +57,5 @@ python3 ./tests/testflows/clickhouse_backup/regression.py
 If you need only one certain test, you may execute
 
 ```bash
-python3 ./tests/testflows/clickhouse_backup/regression.py --only "/clickhouse backup/path to test/"
+python3 ./test/testflows/clickhouse_backup/regression.py --only "/clickhouse backup/path to test/"
 ```
