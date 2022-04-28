@@ -243,14 +243,6 @@ func RestoreSchema(cfg *config.Config, ch *clickhouse.ClickHouse, backupName str
 	// if restore-database-mapping specified, create database in mapping rules instead of in backup files.
 	if len(dbMapRule) > 0 {
 		err = getTableListByRestoreDatabaseMappingRule(&tablesForRestore, dbMapRule)
-		// println("************************************")
-		// for k := range dbMapRule{
-		// 	println(k)
-		// 	println(dbMapRule[k])
-		// }
-		// for i := 0; i < len(tablesForRestore); i++ {
-		// 	println(tablesForRestore[i].Database)
-		// }
 		if err != nil {
 			return err
 		}
