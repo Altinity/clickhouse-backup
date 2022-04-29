@@ -2,7 +2,7 @@ version: '2.4'
 
 services:
   zookeeper:
-    image: zookeeper:3.7.0
+    image: zookeeper:latest
     expose:
       - "2181"
     environment:
@@ -10,7 +10,7 @@ services:
       ZOO_MY_ID: 1
       ZOO_4LW_COMMANDS_WHITELIST: "*"
     healthcheck:
-      test: echo ruok | nc 127.0.0.1 2181
+      test: bash -c 'if [[ "$$(echo ruok | nc 127.0.0.1 2181)" == "imok" ]]; then exit 0; else exit 1; fi'
       interval: 3s
       timeout: 2s
       retries: 5
