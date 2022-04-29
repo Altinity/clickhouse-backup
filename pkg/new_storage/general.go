@@ -277,6 +277,10 @@ func (bd *BackupDestination) BackupList(parseMetadata bool, parseMetadataOnly st
 	if err != nil {
 		apexLog.Warnf("BackupList bd.Walk return error: %v", err)
 	}
+	// sort by name for the same not parsed metadata.json
+	sort.SliceStable(result, func(i, j int) bool {
+		return result[i].BackupName > result[j].BackupName
+	})
 	sort.SliceStable(result, func(i, j int) bool {
 		return result[i].UploadDate.Before(result[j].UploadDate)
 	})
@@ -550,17 +554,19 @@ func (bd *BackupDestination) UploadPath(size int64, baseLocalPath string, files 
 	return nil
 }
 
-func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
+func NewBackupDestination(cfg *config.Config, calcMaxSize bool) (*BackupDestination, error) {
 	// https://github.com/AlexAkulov/clickhouse-backup/issues/404
-	maxFileSize, err := clickhouse.CalculateMaxFileSize(cfg)
-	if err != nil {
-		return nil, err
-	}
-	if cfg.General.MaxFileSize > 0 && cfg.General.MaxFileSize < maxFileSize {
-		apexLog.Warnf("MAX_FILE_SIZE=%d is less than actual %d, please remove general->max_file_size section from your config", cfg.General.MaxFileSize, maxFileSize)
-	}
-	if cfg.General.MaxFileSize <= 0 || cfg.General.MaxFileSize < maxFileSize {
-		cfg.General.MaxFileSize = maxFileSize
+	if calcMaxSize {
+		maxFileSize, err := clickhouse.CalculateMaxFileSize(cfg)
+		if err != nil {
+			return nil, err
+		}
+		if cfg.General.MaxFileSize > 0 && cfg.General.MaxFileSize < maxFileSize {
+			apexLog.Warnf("MAX_FILE_SIZE=%d is less than actual %d, please remove general->max_file_size section from your config", cfg.General.MaxFileSize, maxFileSize)
+		}
+		if cfg.General.MaxFileSize <= 0 || cfg.General.MaxFileSize < maxFileSize {
+			cfg.General.MaxFileSize = maxFileSize
+		}
 	}
 	switch cfg.General.RemoteStorage {
 	case "azblob":

@@ -234,7 +234,7 @@ func GetRemoteBackups(cfg *config.Config, parseMetadata bool) ([]new_storage.Bac
 	if cfg.General.RemoteStorage == "none" {
 		return nil, fmt.Errorf("remote_storage is 'none'")
 	}
-	bd, err := new_storage.NewBackupDestination(cfg)
+	bd, err := new_storage.NewBackupDestination(cfg, false)
 	if err != nil {
 		return []new_storage.Backup{}, err
 	}

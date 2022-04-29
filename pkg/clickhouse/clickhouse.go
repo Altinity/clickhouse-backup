@@ -314,7 +314,7 @@ func (ch *ClickHouse) getTableSizeFromParts(table Table) uint64 {
 	var tablesSize []struct {
 		Size uint64 `db:"size"`
 	}
-	query := fmt.Sprintf("SELECT sum(bytes_on_disk) as size FROM system.parts WHERE database='%s' AND table='%s' GROUP BY database, table", table.Database, table.Name)
+	query := fmt.Sprintf("SELECT sum(bytes_on_disk) as size FROM system.parts WHERE active AND database='%s' AND table='%s' GROUP BY database, table", table.Database, table.Name)
 	if err := ch.SoftSelect(&tablesSize, query); err != nil {
 		log.Warnf("error parsing tablesSize: %w", err)
 	}

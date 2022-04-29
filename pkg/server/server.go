@@ -248,7 +248,7 @@ func (api *APIServer) Restart() error {
 // setupAPIServer - resister API routes
 func (api *APIServer) setupAPIServer() *http.Server {
 	r := mux.NewRouter()
-	r.Use(api.basicAuthMidleware)
+	r.Use(api.basicAuthMiddleware)
 	r.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "", fmt.Errorf("404 Not Found"))
 	})
@@ -295,7 +295,7 @@ func (api *APIServer) setupAPIServer() *http.Server {
 	return srv
 }
 
-func (api *APIServer) basicAuthMidleware(next http.Handler) http.Handler {
+func (api *APIServer) basicAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, pass, _ := r.BasicAuth()
 		query := r.URL.Query()
@@ -549,7 +549,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "list", err)
 			return
 		}
-		for _, b := range remoteBackups {
+		for i, b := range remoteBackups {
 			description := b.DataFormat
 			if b.Legacy {
 				description = "old-format"
@@ -565,6 +565,9 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 				RequiredBackup: b.RequiredBackup,
 				Desc:           description,
 			})
+			if i == len(remoteBackups)-1 {
+				api.metrics.LastBackupSizeRemote.Set(float64(b.DataSize + b.MetadataSize + b.ConfigSize + b.RBACSize))
+			}
 		}
 	}
 	sendJSONEachRow(w, http.StatusOK, backupsJSON)
@@ -969,9 +972,15 @@ func (api *APIServer) httpBackupStatusHandler(w http.ResponseWriter, _ *http.Req
 
 func (api *APIServer) updateSizeOfLastBackup(onlyLocal bool) error {
 	startTime := time.Now()
+	lastSizeLocal := uint64(0)
+	lastSizeRemote := uint64(0)
 	apexLog.Infof("Update last backup size metrics start (onlyLocal=%v)", onlyLocal)
 	defer func() {
-		apexLog.WithField("duration", utils.HumanizeDuration(time.Since(startTime))).Info("Update last backup size metrics finish")
+		apexLog.WithFields(apexLog.Fields{
+			"duration":             utils.HumanizeDuration(time.Since(startTime)),
+			"LastBackupSizeRemote": lastSizeRemote,
+			"LastBackupSizeLocal":  lastSizeLocal,
+		}).Info("Update last backup size metrics finish")
 	}()
 	if !api.config.API.EnableMetrics {
 		return nil
@@ -982,7 +991,8 @@ func (api *APIServer) updateSizeOfLastBackup(onlyLocal bool) error {
 	}
 	if len(localBackups) > 0 {
 		lastBackup := localBackups[len(localBackups)-1]
-		api.metrics.LastBackupSizeLocal.Set(float64(lastBackup.DataSize + lastBackup.MetadataSize + lastBackup.ConfigSize + lastBackup.RBACSize))
+		lastSizeLocal = lastBackup.DataSize + lastBackup.MetadataSize + lastBackup.ConfigSize + lastBackup.RBACSize
+		api.metrics.LastBackupSizeLocal.Set(float64(lastSizeLocal))
 	} else {
 		api.metrics.LastBackupSizeLocal.Set(0)
 	}
@@ -995,14 +1005,15 @@ func (api *APIServer) updateSizeOfLastBackup(onlyLocal bool) error {
 	}
 	if len(remoteBackups) > 0 {
 		lastBackup := remoteBackups[len(remoteBackups)-1]
-		api.metrics.LastBackupSizeRemote.Set(float64(lastBackup.DataSize + lastBackup.MetadataSize + lastBackup.ConfigSize + lastBackup.RBACSize))
+		lastSizeRemote = lastBackup.DataSize + lastBackup.MetadataSize + lastBackup.ConfigSize + lastBackup.RBACSize
+		api.metrics.LastBackupSizeRemote.Set(float64(lastSizeRemote))
 	} else {
 		api.metrics.LastBackupSizeRemote.Set(0)
 	}
 	return nil
 }
 
-func registerMetricsHandlers(r *mux.Router, enablemetrics bool, enablepprof bool) {
+func registerMetricsHandlers(r *mux.Router, enableMetrics bool, enablePprof bool) {
 	r.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		sendJSONEachRow(w, http.StatusOK, struct {
 			Status string `json:"status"`
@@ -1010,10 +1021,10 @@ func registerMetricsHandlers(r *mux.Router, enablemetrics bool, enablepprof bool
 			Status: "OK",
 		})
 	})
-	if enablemetrics {
+	if enableMetrics {
 		r.Handle("/metrics", promhttp.Handler())
 	}
-	if enablepprof {
+	if enablePprof {
 		r.HandleFunc("/debug/pprof/", pprof.Index)
 		r.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
 		r.HandleFunc("/debug/pprof/profile", pprof.Profile)
