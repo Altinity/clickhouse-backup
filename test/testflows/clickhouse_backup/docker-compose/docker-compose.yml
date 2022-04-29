@@ -47,6 +47,8 @@ services:
     depends_on:
       zookeeper:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
 
   clickhouse2:
     extends:
@@ -70,6 +72,8 @@ services:
       start_period: 5s
     depends_on:
       zookeeper:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
 
   mysql:
@@ -200,6 +204,10 @@ services:
       - BOOTSTRAP_SERVERS=kafka:9092
     healthcheck:
       test: echo dump | nc zookeeper 2181 | grep '/brokers/ids/1'
+      interval: 10s
+      timeout: 2s
+      retries: 40
+      start_period: 10s
     depends_on:
       zookeeper:
         condition: service_healthy
