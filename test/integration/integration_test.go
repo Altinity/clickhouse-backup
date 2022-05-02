@@ -559,6 +559,9 @@ func TestTablePatterns(t *testing.T) {
 	if len(restoredTables) > 0 {
 		r.Zero(restoredTables[0])
 	}
+
+	fullCleanup(r, ch, []string{testBackupName}, true)
+
 }
 
 func TestLongListRemote(t *testing.T) {
@@ -895,7 +898,8 @@ func TestServerAPI(t *testing.T) {
 	out, err = dockerExecOut("clickhouse", "bash", "-c", "curl -sL 'http://localhost:7171/backup/list'")
 	log.Debug(out)
 	r.NoError(err)
-	for i := 1; i <= 5; i++ {
+	totalBackupNumber := 5
+	for i := 1; i <= totalBackupNumber; i++ {
 		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"\"}", i)), out))
 		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar\"}", i)), out))
 	}
@@ -904,7 +908,7 @@ func TestServerAPI(t *testing.T) {
 	out, err = dockerExecOut("clickhouse", "bash", "-c", "curl -sL 'http://localhost:7171/backup/list/local'")
 	log.Debug(out)
 	r.NoError(err)
-	for i := 1; i <= 5; i++ {
+	for i := 1; i <= totalBackupNumber; i++ {
 		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"\"}", i)), out))
 		r.True(assert.NotRegexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar\"}", i)), out))
 	}
@@ -913,7 +917,7 @@ func TestServerAPI(t *testing.T) {
 	out, err = dockerExecOut("clickhouse", "bash", "-c", "curl -sL 'http://localhost:7171/backup/list/remote'")
 	log.Debug(out)
 	r.NoError(err)
-	for i := 1; i <= 5; i++ {
+	for i := 1; i <= totalBackupNumber; i++ {
 		r.True(assert.NotRegexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"\"}", i)), out))
 		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar\"}", i)), out))
 	}
@@ -944,6 +948,12 @@ func TestServerAPI(t *testing.T) {
 	log.Debug(out)
 	r.NoError(err)
 	r.Contains(out, fmt.Sprintf("clickhouse_backup_last_backup_size_remote %d", lastRemoteSize[0]))
+
+	log.Info("Check /metrics clickhouse_backup_number_backups_*")
+	r.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_local %d", totalBackupNumber))
+	r.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_remote %d", totalBackupNumber))
+	r.Contains(out, "clickhouse_backup_number_backups_local_expected 0")
+	r.Contains(out, "clickhouse_backup_number_backups_remote_expected 0")
 
 	log.Info("Check /backup/delete/{where}/{name}")
 	for i := 1; i <= 5; i++ {

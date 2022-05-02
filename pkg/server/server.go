@@ -191,8 +191,8 @@ func Server(c *cli.App, configPath string, clickhouseBackupVersion string) error
 		return err
 	}
 	go func() {
-		if err := api.updateSizeOfLastBackup(false); err != nil {
-			apexLog.Errorf("updateSizeOfLastBackup return error: %v", err)
+		if err := api.updateBackupMetrics(false); err != nil {
+			apexLog.Errorf("updateBackupMetrics return error: %v", err)
 		}
 	}()
 
@@ -222,6 +222,8 @@ func (api *APIServer) Restart() error {
 	if err != nil {
 		return err
 	}
+	api.metrics.NumberBackupsRemoteExpected.Set(float64(cfg.General.BackupsToKeepRemote))
+	api.metrics.NumberBackupsLocalExpected.Set(float64(cfg.General.BackupsToKeepLocal))
 	api.config = cfg
 	server := api.setupAPIServer()
 	if api.server != nil {
@@ -369,8 +371,8 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				go func() {
-					if err := api.updateSizeOfLastBackup(command == "create" || command == "restore"); err != nil {
-						apexLog.Errorf("updateSizeOfLastBackup return error: %v", err)
+					if err := api.updateBackupMetrics(command == "create" || command == "restore"); err != nil {
+						apexLog.Errorf("updateBackupMetrics return error: %v", err)
 					}
 				}()
 				api.metrics.SuccessfulCounter[command].Inc()
@@ -400,8 +402,8 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 			}
 			apexLog.Info("OK")
 			go func() {
-				if err := api.updateSizeOfLastBackup(args[1] == "local"); err != nil {
-					apexLog.Errorf("updateSizeOfLastBackup return error: %v", err)
+				if err := api.updateBackupMetrics(args[1] == "local"); err != nil {
+					apexLog.Errorf("updateBackupMetrics return error: %v", err)
 				}
 			}()
 			sendJSONEachRow(w, http.StatusCreated, struct {
@@ -465,6 +467,8 @@ func (api *APIServer) httpTablesHandler(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "list", err)
 		return
 	}
+	api.metrics.NumberBackupsRemoteExpected.Set(float64(cfg.General.BackupsToKeepRemote))
+	api.metrics.NumberBackupsLocalExpected.Set(float64(cfg.General.BackupsToKeepLocal))
 	tables, err := backup.GetTables(cfg)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "tables", err)
@@ -516,6 +520,8 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "list", err)
 		return
 	}
+	api.metrics.NumberBackupsRemoteExpected.Set(float64(cfg.General.BackupsToKeepRemote))
+	api.metrics.NumberBackupsLocalExpected.Set(float64(cfg.General.BackupsToKeepLocal))
 	vars := mux.Vars(r)
 	where, wherePresent := vars["where"]
 
@@ -542,6 +548,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 				Desc:           description,
 			})
 		}
+		api.metrics.NumberBackupsLocal.Set(float64(len(localBackups)))
 	}
 	if cfg.General.RemoteStorage != "none" && (where == "remote" || !wherePresent) {
 		remoteBackups, err := backup.GetRemoteBackups(cfg, true)
@@ -569,6 +576,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 				api.metrics.LastBackupSizeRemote.Set(float64(b.DataSize + b.MetadataSize + b.ConfigSize + b.RBACSize))
 			}
 		}
+		api.metrics.NumberBackupsRemote.Set(float64(len(remoteBackups)))
 	}
 	sendJSONEachRow(w, http.StatusOK, backupsJSON)
 }
@@ -585,6 +593,8 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "create", err)
 		return
 	}
+	api.metrics.NumberBackupsRemoteExpected.Set(float64(cfg.General.BackupsToKeepRemote))
+	api.metrics.NumberBackupsLocalExpected.Set(float64(cfg.General.BackupsToKeepLocal))
 	tablePattern := ""
 	partitionsToBackup := make([]string, 0)
 	backupName := backup.NewBackupName()
@@ -640,8 +650,8 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 			apexLog.Errorf("CreateBackup error: %+v\n", err)
 			return
 		}
-		if err := api.updateSizeOfLastBackup(true); err != nil {
-			apexLog.Errorf("updateSizeOfLastBackup return error: %v", err)
+		if err := api.updateBackupMetrics(true); err != nil {
+			apexLog.Errorf("updateBackupMetrics return error: %v", err)
 		}
 		api.metrics.SuccessfulCounter["create"].Inc()
 		api.metrics.LastStatus["create"].Set(1)
@@ -688,6 +698,8 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "upload", err)
 		return
 	}
+	api.metrics.NumberBackupsRemoteExpected.Set(float64(cfg.General.BackupsToKeepRemote))
+	api.metrics.NumberBackupsLocalExpected.Set(float64(cfg.General.BackupsToKeepLocal))
 	vars := mux.Vars(r)
 	query := r.URL.Query()
 	diffFrom := ""
@@ -738,8 +750,8 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		go func() {
-			if err := api.updateSizeOfLastBackup(false); err != nil {
-				apexLog.Errorf("updateSizeOfLastBackup return error: %v", err)
+			if err := api.updateBackupMetrics(false); err != nil {
+				apexLog.Errorf("updateBackupMetrics return error: %v", err)
 			}
 		}()
 		api.metrics.SuccessfulCounter["upload"].Inc()
@@ -772,6 +784,8 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "restore", err)
 		return
 	}
+	api.metrics.NumberBackupsRemoteExpected.Set(float64(cfg.General.BackupsToKeepRemote))
+	api.metrics.NumberBackupsLocalExpected.Set(float64(cfg.General.BackupsToKeepLocal))
 	vars := mux.Vars(r)
 	tablePattern := ""
 	partitionsToBackup := make([]string, 0)
@@ -861,6 +875,8 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "download", err)
 		return
 	}
+	api.metrics.NumberBackupsRemoteExpected.Set(float64(cfg.General.BackupsToKeepRemote))
+	api.metrics.NumberBackupsLocalExpected.Set(float64(cfg.General.BackupsToKeepLocal))
 	vars := mux.Vars(r)
 	name := vars["name"]
 	query := r.URL.Query()
@@ -901,8 +917,8 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 			api.metrics.LastStatus["download"].Set(0)
 			return
 		}
-		if err := api.updateSizeOfLastBackup(true); err != nil {
-			apexLog.Errorf("updateSizeOfLastBackup return error: %v", err)
+		if err := api.updateBackupMetrics(true); err != nil {
+			apexLog.Errorf("updateBackupMetrics return error: %v", err)
 		}
 		api.metrics.SuccessfulCounter["download"].Inc()
 		api.metrics.LastStatus["download"].Set(1)
@@ -930,6 +946,8 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "delete", err)
 		return
 	}
+	api.metrics.NumberBackupsRemoteExpected.Set(float64(cfg.General.BackupsToKeepRemote))
+	api.metrics.NumberBackupsLocalExpected.Set(float64(cfg.General.BackupsToKeepLocal))
 	vars := mux.Vars(r)
 	fullCommand := fmt.Sprintf("delete %s %s", vars["where"], vars["name"])
 	commandId := api.status.start(fullCommand)
@@ -949,8 +967,8 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	go func() {
-		if err := api.updateSizeOfLastBackup(vars["where"] == "local"); err != nil {
-			apexLog.Errorf("updateSizeOfLastBackup return error: %v", err)
+		if err := api.updateBackupMetrics(vars["where"] == "local"); err != nil {
+			apexLog.Errorf("updateBackupMetrics return error: %v", err)
 		}
 	}()
 	sendJSONEachRow(w, http.StatusOK, struct {
@@ -970,17 +988,22 @@ func (api *APIServer) httpBackupStatusHandler(w http.ResponseWriter, _ *http.Req
 	sendJSONEachRow(w, http.StatusOK, api.status.status(true, "", 0))
 }
 
-func (api *APIServer) updateSizeOfLastBackup(onlyLocal bool) error {
+func (api *APIServer) updateBackupMetrics(onlyLocal bool) error {
 	startTime := time.Now()
 	lastSizeLocal := uint64(0)
 	lastSizeRemote := uint64(0)
-	apexLog.Infof("Update last backup size metrics start (onlyLocal=%v)", onlyLocal)
+	numberBackupsLocal := 0
+	numberBackupsRemote := 0
+
+	apexLog.Infof("Update backup metrics start (onlyLocal=%v)", onlyLocal)
 	defer func() {
 		apexLog.WithFields(apexLog.Fields{
 			"duration":             utils.HumanizeDuration(time.Since(startTime)),
 			"LastBackupSizeRemote": lastSizeRemote,
 			"LastBackupSizeLocal":  lastSizeLocal,
-		}).Info("Update last backup size metrics finish")
+			"NumberBackupsLocal":   numberBackupsLocal,
+			"NumberBackupsRemote":  numberBackupsRemote,
+		}).Info("Update backup metrics finish")
 	}()
 	if !api.config.API.EnableMetrics {
 		return nil
@@ -990,11 +1013,14 @@ func (api *APIServer) updateSizeOfLastBackup(onlyLocal bool) error {
 		return err
 	}
 	if len(localBackups) > 0 {
-		lastBackup := localBackups[len(localBackups)-1]
+		numberBackupsLocal = len(localBackups)
+		lastBackup := localBackups[numberBackupsLocal-1]
 		lastSizeLocal = lastBackup.DataSize + lastBackup.MetadataSize + lastBackup.ConfigSize + lastBackup.RBACSize
 		api.metrics.LastBackupSizeLocal.Set(float64(lastSizeLocal))
+		api.metrics.NumberBackupsLocal.Set(float64(numberBackupsLocal))
 	} else {
 		api.metrics.LastBackupSizeLocal.Set(0)
+		api.metrics.NumberBackupsLocal.Set(0)
 	}
 	if api.config.General.RemoteStorage == "none" || onlyLocal {
 		return nil
@@ -1004,11 +1030,14 @@ func (api *APIServer) updateSizeOfLastBackup(onlyLocal bool) error {
 		return err
 	}
 	if len(remoteBackups) > 0 {
-		lastBackup := remoteBackups[len(remoteBackups)-1]
+		numberBackupsRemote = len(remoteBackups)
+		lastBackup := remoteBackups[numberBackupsRemote-1]
 		lastSizeRemote = lastBackup.DataSize + lastBackup.MetadataSize + lastBackup.ConfigSize + lastBackup.RBACSize
 		api.metrics.LastBackupSizeRemote.Set(float64(lastSizeRemote))
+		api.metrics.NumberBackupsRemote.Set(float64(numberBackupsRemote))
 	} else {
 		api.metrics.LastBackupSizeRemote.Set(0)
+		api.metrics.NumberBackupsRemote.Set(0)
 	}
 	return nil
 }
@@ -1045,8 +1074,12 @@ type Metrics struct {
 	LastDuration      map[string]prometheus.Gauge
 	LastStatus        map[string]prometheus.Gauge
 
-	LastBackupSizeLocal  prometheus.Gauge
-	LastBackupSizeRemote prometheus.Gauge
+	LastBackupSizeLocal         prometheus.Gauge
+	LastBackupSizeRemote        prometheus.Gauge
+	NumberBackupsRemote         prometheus.Gauge
+	NumberBackupsLocal          prometheus.Gauge
+	NumberBackupsRemoteExpected prometheus.Gauge
+	NumberBackupsLocalExpected  prometheus.Gauge
 }
 
 // setupMetrics - resister prometheus metrics
@@ -1110,51 +1143,48 @@ func setupMetrics() Metrics {
 		Help:      "Last remote backup size in bytes",
 	})
 
+	m.NumberBackupsRemote = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "clickhouse_backup",
+		Name:      "number_backups_remote",
+		Help:      "Number of stored remote backups",
+	})
+
+	m.NumberBackupsRemoteExpected = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "clickhouse_backup",
+		Name:      "number_backups_remote_expected",
+		Help:      "How many backups expected on remote storage",
+	})
+
+	m.NumberBackupsLocal = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "clickhouse_backup",
+		Name:      "number_backups_local",
+		Help:      "Number of stored local backups",
+	})
+
+	m.NumberBackupsLocalExpected = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "clickhouse_backup",
+		Name:      "number_backups_local_expected",
+		Help:      "How many backups expected on local storage",
+	})
+
+	for _, command := range []string{"create", "upload", "download", "restore", "create_remote", "restore_remote"} {
+		prometheus.MustRegister(
+			m.SuccessfulCounter[command],
+			m.FailedCounter[command],
+			m.LastStart[command],
+			m.LastFinish[command],
+			m.LastDuration[command],
+			m.LastStatus[command],
+		)
+	}
+
 	prometheus.MustRegister(
-		m.SuccessfulCounter["create"],
-		m.FailedCounter["create"],
-		m.LastStart["create"],
-		m.LastFinish["create"],
-		m.LastDuration["create"],
-		m.LastStatus["create"],
-
-		m.SuccessfulCounter["upload"],
-		m.FailedCounter["upload"],
-		m.LastStart["upload"],
-		m.LastFinish["upload"],
-		m.LastDuration["upload"],
-		m.LastStatus["upload"],
-
-		m.SuccessfulCounter["download"],
-		m.FailedCounter["download"],
-		m.LastStart["download"],
-		m.LastFinish["download"],
-		m.LastDuration["download"],
-		m.LastStatus["download"],
-
-		m.SuccessfulCounter["restore"],
-		m.FailedCounter["restore"],
-		m.LastStart["restore"],
-		m.LastFinish["restore"],
-		m.LastDuration["restore"],
-		m.LastStatus["restore"],
-
-		m.SuccessfulCounter["create_remote"],
-		m.FailedCounter["create_remote"],
-		m.LastStart["create_remote"],
-		m.LastFinish["create_remote"],
-		m.LastDuration["create_remote"],
-		m.LastStatus["create_remote"],
-
-		m.SuccessfulCounter["restore_remote"],
-		m.FailedCounter["restore_remote"],
-		m.LastStart["restore_remote"],
-		m.LastFinish["restore_remote"],
-		m.LastDuration["restore_remote"],
-		m.LastStatus["restore_remote"],
-
 		m.LastBackupSizeLocal,
 		m.LastBackupSizeRemote,
+		m.NumberBackupsRemote,
+		m.NumberBackupsLocal,
+		m.NumberBackupsRemoteExpected,
+		m.NumberBackupsLocalExpected,
 	)
 	m.LastStatus["create"].Set(2) // 0=failed, 1=success, 2=unknown
 	m.LastStatus["upload"].Set(2)
