@@ -571,6 +571,7 @@ func NewBackupDestination(cfg *config.Config, calcMaxSize bool) (*BackupDestinat
 	switch cfg.General.RemoteStorage {
 	case "azblob":
 		azblobStorage := &AzureBlob{Config: &cfg.AzureBlob}
+		azblobStorage.Config.Path = clickhouse.ApplyMacros(cfg, azblobStorage.Config.Path)
 		bufferSize := azblobStorage.Config.BufferSize
 		// https://github.com/AlexAkulov/clickhouse-backup/issues/317
 		if bufferSize <= 0 {
@@ -606,6 +607,7 @@ func NewBackupDestination(cfg *config.Config, calcMaxSize bool) (*BackupDestinat
 			BufferSize:  1024 * 1024,
 			PartSize:    partSize,
 		}
+		s3Storage.Config.Path = clickhouse.ApplyMacros(cfg, s3Storage.Config.Path)
 		return &BackupDestination{
 			s3Storage,
 			cfg.S3.CompressionFormat,
@@ -614,6 +616,7 @@ func NewBackupDestination(cfg *config.Config, calcMaxSize bool) (*BackupDestinat
 		}, nil
 	case "gcs":
 		googleCloudStorage := &GCS{Config: &cfg.GCS}
+		googleCloudStorage.Config.Path = clickhouse.ApplyMacros(cfg, googleCloudStorage.Config.Path)
 		return &BackupDestination{
 			googleCloudStorage,
 			cfg.GCS.CompressionFormat,
@@ -622,6 +625,7 @@ func NewBackupDestination(cfg *config.Config, calcMaxSize bool) (*BackupDestinat
 		}, nil
 	case "cos":
 		tencentStorage := &COS{Config: &cfg.COS}
+		tencentStorage.Config.Path = clickhouse.ApplyMacros(cfg, tencentStorage.Config.Path)
 		return &BackupDestination{
 			tencentStorage,
 			cfg.COS.CompressionFormat,
@@ -632,6 +636,7 @@ func NewBackupDestination(cfg *config.Config, calcMaxSize bool) (*BackupDestinat
 		ftpStorage := &FTP{
 			Config: &cfg.FTP,
 		}
+		ftpStorage.Config.Path = clickhouse.ApplyMacros(cfg, ftpStorage.Config.Path)
 		return &BackupDestination{
 			ftpStorage,
 			cfg.FTP.CompressionFormat,
@@ -642,6 +647,7 @@ func NewBackupDestination(cfg *config.Config, calcMaxSize bool) (*BackupDestinat
 		sftpStorage := &SFTP{
 			Config: &cfg.SFTP,
 		}
+		sftpStorage.Config.Path = clickhouse.ApplyMacros(cfg, sftpStorage.Config.Path)
 		return &BackupDestination{
 			sftpStorage,
 			cfg.SFTP.CompressionFormat,

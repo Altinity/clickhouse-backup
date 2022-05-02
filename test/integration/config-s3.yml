@@ -25,7 +25,7 @@ s3:
   endpoint: http://minio:9000
   acl: private
   force_path_style: true
-  path: backup
+  path: backup/{cluster}/{shard}
   disable_ssl: true
   compression_format: tar
   allow_multipart_download: true

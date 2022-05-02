@@ -815,3 +815,32 @@ func CalculateMaxFileSize(cfg *config.Config) (int64, error) {
 	}
 	return 0, nil
 }
+
+func ApplyMacros(cfg *config.Config, path string) string {
+	ch := &ClickHouse{
+		Config: &cfg.ClickHouse,
+	}
+	if err := ch.Connect(); err != nil {
+		log.Warnf("can't connect to clickhouse: %v", err)
+		return path
+	}
+	defer ch.Close()
+	macrosExists := make([]int, 0)
+	err := ch.Select(&macrosExists, "SELECT count() AS is_macros_exists FROM system.tables WHERE database='system' AND table='macros'")
+	if err != nil || len(macrosExists) == 0 || macrosExists[0] == 0 {
+		return path
+	}
+	macros := make([]macro, 0)
+	err = ch.SoftSelect(&macros, "SELECT * FROM system.macros")
+	if err != nil || len(macros) == 0 {
+		return path
+	}
+
+	replaces := make([]string, len(macros)*2)
+	for i, macro := range macros {
+		replaces[i*2] = fmt.Sprintf("{%s}", macro.Macro)
+		replaces[i*2+1] = fmt.Sprintf("%s", macro.Substitution)
+	}
+	path = strings.NewReplacer(replaces...).Replace(path)
+	return path
+}

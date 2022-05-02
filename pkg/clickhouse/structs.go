@@ -61,3 +61,8 @@ type partition struct {
 	ModificationTime                  time.Time `db:"modification_time"`
 	DataUncompressedBytes             int64     `db:"data_uncompressed_bytes"`
 }
+
+type macro struct {
+	Macro        string `db:"macro"`
+	Substitution string `db:"substitution"`
+}
