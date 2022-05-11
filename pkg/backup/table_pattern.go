@@ -3,16 +3,18 @@ package backup
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/filesystemhelper"
 	"io"
 	"io/ioutil"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/filesystemhelper"
 
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 )
@@ -119,9 +121,10 @@ func getTableListByRestoreDatabaseMappingRule(originTables *ListOfTables, dbMapR
 	for i := 0; i < len(*originTables); i++ {
 		originDBMeta := (*originTables)[i]
 		if targetDB, ok := dbMapRule[originDBMeta.Database]; ok {
-			originDBMeta.Query = strings.Replace(
-				originDBMeta.Query, originDBMeta.Database+".", targetDB+".", 1,
-			)
+			regExp := regexp.MustCompile(`(?m)^CREATE (TABLE|VIEW|MATERIALIZED VIEW|DICTiONARY|FUNCTION) ([\x60]?)([^\x60]*)([\x60]?)\.`)
+			substitution := fmt.Sprintf("CREATE ${1} ${2}%v${4}.", targetDB)
+
+			originDBMeta.Query = regExp.ReplaceAllString(originDBMeta.Query, substitution)
 			originDBMeta.Database = targetDB
 			result = append(result, originDBMeta)
 		}
