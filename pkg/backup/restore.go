@@ -4,14 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"io/ioutil"
 	"os"
 	"os/exec"
 	"path"
+	"regexp"
 	"strings"
 	"time"
+
+	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 
 	"github.com/mattn/go-shellwords"
 
@@ -69,9 +71,15 @@ func Restore(cfg *config.Config, backupName, tablePattern string, databaseMappin
 		}
 		if schemaOnly || doRestoreData {
 			for _, database := range backupMetadata.Databases {
-				if !IsInformationSchema(database.Name) {
-					if err := ch.CreateDatabaseFromQuery(database.Query); err != nil {
-						return err
+				if targetDB, ok := dbMapRule[database.Name]; ok && len(dbMapRule) > 0 {
+					// When create database, try to substitute the database by following the database mapping rule.
+					if !IsInformationSchema(targetDB) {
+						regExp := regexp.MustCompile(`(?m)^CREATE DATABASE ([\x60]?)([^\x60]*)([\x60]?)`)
+						substitution := fmt.Sprintf("CREATE DATABASE ${1}%v${3}", targetDB)
+
+						if err := ch.CreateDatabaseFromQuery(regExp.ReplaceAllString(database.Query, substitution)); err != nil {
+							return err
+						}
 					}
 				}
 			}
