@@ -121,8 +121,16 @@ func getTableListByRestoreDatabaseMappingRule(originTables *ListOfTables, dbMapR
 	for i := 0; i < len(*originTables); i++ {
 		originDBMeta := (*originTables)[i]
 		if targetDB, ok := dbMapRule[originDBMeta.Database]; ok {
-			regExp := regexp.MustCompile(`(?m)^CREATE (TABLE|VIEW|MATERIALIZED VIEW|DICTiONARY|FUNCTION) ([\x60]?)([^\x60]*)([\x60]?)\.`)
-			substitution := fmt.Sprintf("CREATE ${1} ${2}%v${4}.", targetDB)
+			regExp := regexp.MustCompile(`(?m)^(CREATE|ATTACH) (TABLE|VIEW|MATERIALIZED VIEW|DICTiONARY|FUNCTION) ([\x60]?)([^\s\x60\.]*)([\x60]?)\.([^\s\x60\.]*)(?:( TO )([\x60]?)([^\s\x60\.]*)([\x60]?)(\.))?`)
+			var substitution string
+
+			if len(regexp.MustCompile(`(?m)^CREATE`).FindAllString(originDBMeta.Query, -1)) > 0 {
+				substitution = fmt.Sprintf("${1} ${2} ${3}%v${5}.${6}", targetDB)
+			} else if len(regexp.MustCompile(`(?m)^ATTACH`).FindAllString(originDBMeta.Query, -1)) > 0 {
+				substitution = fmt.Sprintf("${1} ${2} ${3}%v${5}.${6}${7}${8}%v${11}", targetDB, targetDB)
+			} else {
+				return fmt.Errorf("there is an error when substituting the default database in query, try to open an issue on Github and we will fix it :)")
+			}
 
 			originDBMeta.Query = regExp.ReplaceAllString(originDBMeta.Query, substitution)
 			originDBMeta.Database = targetDB
