@@ -81,6 +81,12 @@ func Restore(cfg *config.Config, backupName, tablePattern string, databaseMappin
 							return err
 						}
 					}
+				} else {
+					if !IsInformationSchema(database.Name) {
+						if err := ch.CreateDatabaseFromQuery(database.Query); err != nil {
+							return err
+						}
+					}
 				}
 			}
 		}
