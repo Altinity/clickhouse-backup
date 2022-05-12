@@ -125,8 +125,10 @@ func getTableListByRestoreDatabaseMappingRule(originTables *ListOfTables, dbMapR
 			var substitution string
 
 			if len(regexp.MustCompile(`(?m)^CREATE`).FindAllString(originDBMeta.Query, -1)) > 0 {
+				// matching CREATE... command
 				substitution = fmt.Sprintf("${1} ${2} ${3}%v${5}.${6}", targetDB)
 			} else if len(regexp.MustCompile(`(?m)^ATTACH`).FindAllString(originDBMeta.Query, -1)) > 0 {
+				// matching ATTACH...TO... command
 				substitution = fmt.Sprintf("${1} ${2} ${3}%v${5}.${6}${7}${8}%v${11}", targetDB, targetDB)
 			} else {
 				return fmt.Errorf("there is an error when substituting the default database in query, try to open an issue on Github and we will fix it :)")
