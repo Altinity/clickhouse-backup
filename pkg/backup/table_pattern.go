@@ -121,6 +121,7 @@ func getTableListByRestoreDatabaseMappingRule(originTables *ListOfTables, dbMapR
 	for i := 0; i < len(*originTables); i++ {
 		originDBMeta := (*originTables)[i]
 		if targetDB, ok := dbMapRule[originDBMeta.Database]; ok {
+			// substitute database in the table create query
 			regExp := regexp.MustCompile(`(?m)^(CREATE|ATTACH) (TABLE|VIEW|MATERIALIZED VIEW|DICTiONARY|FUNCTION) ([\x60]?)([^\s\x60\.]*)([\x60]?)\.([^\s\x60\.]*)(?:( TO )([\x60]?)([^\s\x60\.]*)([\x60]?)(\.))?`)
 			var substitution string
 
@@ -137,6 +138,21 @@ func getTableListByRestoreDatabaseMappingRule(originTables *ListOfTables, dbMapR
 			originDBMeta.Query = regExp.ReplaceAllString(originDBMeta.Query, substitution)
 			originDBMeta.Database = targetDB
 			result = append(result, originDBMeta)
+		}
+		// FIXME: Need to optimize
+		for i, table := range *originTables {
+			// substitute database of table.Parts[dbName]dbInfo
+			keys := make([]string, 0, len(dbMapRule))
+			for k := range dbMapRule {
+				keys = append(keys, k)
+			}
+
+			for _, key := range keys {
+				if _, ok := table.Parts[key]; ok {
+					(*originTables)[i].Parts[dbMapRule[key]] = (*originTables)[i].Parts[key]
+					delete((*originTables)[i].Parts, key)
+				}
+			}
 		}
 	}
 	if len(result) == 0 {
