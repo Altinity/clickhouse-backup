@@ -22,7 +22,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
 	apexLog "github.com/apex/log"
-	"github.com/otiai10/copy"
+	otiai10_copy "github.com/otiai10/copy"
 	"github.com/yargevad/filepathx"
 )
 
@@ -204,10 +204,10 @@ func restoreBackupRelatedDir(ch *clickhouse.ClickHouse, backupName, backupPrefix
 		return fmt.Errorf("%s is not a dir", srcBackupDir)
 	}
 	apexLog.Debugf("copy %s -> %s", srcBackupDir, destinationDir)
-	copyOptions := copy.Options{OnDirExists: func(src, dest string) copy.DirExistsAction {
-		return copy.Merge
+	copyOptions := otiai10_copy.Options{OnDirExists: func(src, dest string) otiai10_copy.DirExistsAction {
+		return otiai10_copy.Merge
 	}}
-	if err := copy.Copy(srcBackupDir, destinationDir, copyOptions); err != nil {
+	if err := otiai10_copy.Copy(srcBackupDir, destinationDir, copyOptions); err != nil {
 		return err
 	}
 
@@ -374,7 +374,7 @@ func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName strin
 	if err != nil {
 		return fmt.Errorf("can't restore: %v", err)
 	}
-	var tablesForRestore ListOfTables
+	var tablesForRestore, originTablesForRestore ListOfTables
 	if backup.Legacy {
 		tablesForRestore, err = ch.GetBackupTablesLegacy(backupName, disks)
 	} else {
@@ -382,6 +382,8 @@ func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName strin
 		tablesForRestore, err = getTableListByPatternLocal(metadataPath, tablePattern, ch.Config.SkipTables, false, partitionsToRestore)
 		// if restore-database-mapping specified, create database in mapping rules instead of in backup files.
 		if len(dbMapRule) > 0 {
+			originTablesForRestore = make(ListOfTables, len(tablesForRestore))
+			copy(originTablesForRestore, tablesForRestore)
 			err = getTableListByRestoreDatabaseMappingRule(&tablesForRestore, dbMapRule)
 			if err != nil {
 				return err
@@ -399,7 +401,30 @@ func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName strin
 	if err != nil {
 		return err
 	}
+	var originDisks = make([]clickhouse.Disk, len(disks))
+	copy(originDisks, disks)
 	diskMap := map[string]string{}
+	if len(dbMapRule) > 0 {
+		var _disks []clickhouse.Disk
+		for i := range disks {
+			if name, ok := dbMapRule[disks[i].Name]; ok {
+				_disks = append(_disks, clickhouse.Disk{
+					Name: name,
+					Path: disks[i].Path,
+					Type: disks[i].Type,
+				})
+			}
+		}
+		disks = _disks
+
+		for i := range chTables {
+			for originDB, targetDB := range dbMapRule {
+				for j := range chTables[i].DataPaths {
+					chTables[i].DataPaths[j] = strings.Replace(chTables[i].DataPaths[j], fmt.Sprintf("/%v/", originDB), fmt.Sprintf("/%v/", targetDB), 1)
+				}
+			}
+		}
+	}
 	for _, disk := range disks {
 		diskMap[disk.Name] = disk.Path
 	}
@@ -412,10 +437,12 @@ func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName strin
 	}
 	dstTablesMap := map[metadata.TableTitle]clickhouse.Table{}
 	for i := range chTables {
+		chTable := chTables[i]
+		chTable.Database = dbMapRule[chTable.Database]
 		dstTablesMap[metadata.TableTitle{
 			Database: chTables[i].Database,
 			Table:    chTables[i].Name,
-		}] = chTables[i]
+		}] = chTable
 	}
 
 	var missingTables []string
@@ -435,17 +462,17 @@ func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName strin
 		return fmt.Errorf("%s is not created. Restore schema first or create missing tables manually", strings.Join(missingTables, ", "))
 	}
 
-	for _, table := range tablesForRestore {
+	for i, table := range originTablesForRestore {
 		log := log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table))
 		dstTableDataPaths := dstTablesMap[metadata.TableTitle{
 			Database: table.Database,
 			Table:    table.Table}].DataPaths
-		if err := filesystemhelper.CopyDataToDetached(backupName, table, disks, dstTableDataPaths, ch); err != nil {
+		if err := filesystemhelper.CopyDataToDetached(backupName, table, originDisks, dstTableDataPaths, ch, dbMapRule); err != nil {
 			return fmt.Errorf("can't restore '%s.%s': %v", table.Database, table.Table, err)
 		}
 		log.Debugf("copied data to 'detached'")
-		if err := ch.AttachPartitions(table, disks); err != nil {
-			return fmt.Errorf("can't attach partitions for table '%s.%s': %v", table.Database, table.Table, err)
+		if err := ch.AttachPartitions(tablesForRestore[i], disks); err != nil {
+			return fmt.Errorf("can't attach partitions for table '%s.%s': %v", tablesForRestore[i].Database, tablesForRestore[i].Table, err)
 		}
 		log.Debugf("attached parts")
 		log.Info("done")
