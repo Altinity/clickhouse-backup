@@ -41,13 +41,13 @@ type Database struct {
 	Query  string `db:"query"`
 }
 
-// Function - Clickhouse system.functions stuct
+// Function - Clickhouse system.functions struct
 type Function struct {
 	Name        string `db:"name"`
 	CreateQuery string `db:"create_query"`
 }
 
-// partition info from system.parts
+// partition - info from system.parts
 type partition struct {
 	Partition                         string    `db:"partition"`
 	PartitionID                       string    `db:"partition_id"`
@@ -62,6 +62,7 @@ type partition struct {
 	DataUncompressedBytes             int64     `db:"data_uncompressed_bytes"`
 }
 
+// macro - info from system.macros
 type macro struct {
 	Macro        string `db:"macro"`
 	Substitution string `db:"substitution"`

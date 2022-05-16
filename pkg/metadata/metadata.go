@@ -69,3 +69,8 @@ type Part struct {
 	Size                              int64      `json:"size,omitempty"`
 	// bytes_on_disk, data_compressed_bytes, data_uncompressed_bytes
 }
+
+type PartFilesSplitted struct {
+	Prefix string
+	Files  []string
+}

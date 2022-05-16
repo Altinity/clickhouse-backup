@@ -4,6 +4,7 @@ IMPROVEMENTS
 - add support backup/restore [user defined functions](https://clickhouse.com/docs/en/sql-reference/statements/create/function), fix [420](https://github.com/AlexAkulov/clickhouse-backup/issues/420)
 - add `clickhouse_backup_number_backups_remote`, `clickhouse_backup_number_backups_local`, `clickhouse_backup_number_backups_remote_expected`,`clickhouse_backup_number_backups_local_expected` prometheus metric, fix [437](https://github.com/AlexAkulov/clickhouse-backup/issues/437)
 - add ability to apply `system.macros` values to `path` field in all types of `remote_storage`, fix [438](https://github.com/AlexAkulov/clickhouse-backup/issues/438) 
+- use all disks for upload and download for mutli-disk volumes in parallel when `upload_by_part: true` fix [#400](https://github.com/AlexAkulov/clickhouse-backup/issues/400) 
 
 # v1.3.2
 IMPROVEMENTS

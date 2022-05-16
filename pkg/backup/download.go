@@ -300,19 +300,25 @@ func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table
 
 	if remoteBackup.DataFormat != "directory" {
 		capacity := 0
+		downloadOffset := make(map[string]int, 0)
 		for disk := range table.Files {
 			capacity += len(table.Files[disk])
+			downloadOffset[disk] = 0
 		}
 		apexLog.Debugf("start downloadTableData %s.%s with concurrency=%d len(table.Files[...])=%d", table.Database, table.Table, b.cfg.General.DownloadConcurrency, capacity)
-
-		for disk := range table.Files {
-			backupPath := b.DiskToPathMap[disk]
-			tableLocalDir := path.Join(backupPath, "backup", remoteBackup.BackupName, "shadow", dbAndTableDir, disk)
-			for _, archiveFile := range table.Files[disk] {
+		for common.SumMapValuesInt(downloadOffset) < capacity {
+			for disk := range table.Files {
+				if downloadOffset[disk] >= len(table.Files[disk]) {
+					continue
+				}
 				if err := s.Acquire(ctx, 1); err != nil {
 					apexLog.Errorf("can't acquire semaphore during downloadTableData: %v", err)
 					break
 				}
+				backupPath := b.DiskToPathMap[disk]
+				tableLocalDir := path.Join(backupPath, "backup", remoteBackup.BackupName, "shadow", dbAndTableDir, disk)
+				archiveFile := table.Files[disk][downloadOffset[disk]]
+				downloadOffset[disk] += 1
 				tableRemoteFile := path.Join(remoteBackup.BackupName, "shadow", common.TablePathEncode(table.Database), common.TablePathEncode(table.Table), archiveFile)
 				g.Go(func() error {
 					apexLog.Debugf("start download from %s", tableRemoteFile)
