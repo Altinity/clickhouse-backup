@@ -213,6 +213,10 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, partition
 		}
 	}
 
+	allFunctions, err := ch.GetUserDefinedFunctions()
+	if err != nil {
+		return fmt.Errorf("GetUserDefinedFunctions return error: %v", err)
+	}
 	backupMetadata := metadata.BackupMetadata{
 		// TODO: think about which tables failed or  whole backup failed
 		BackupName:              backupName,
@@ -228,9 +232,13 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, partition
 		// CompressedSize: ,
 		Tables:    tableMetas,
 		Databases: []metadata.DatabasesMeta{},
+		Functions: []metadata.FunctionsMeta{},
 	}
 	for _, database := range allDatabases {
 		backupMetadata.Databases = append(backupMetadata.Databases, metadata.DatabasesMeta(database))
+	}
+	for _, function := range allFunctions {
+		backupMetadata.Functions = append(backupMetadata.Functions, metadata.FunctionsMeta(function))
 	}
 	content, err := json.MarshalIndent(&backupMetadata, "", "\t")
 	if err != nil {

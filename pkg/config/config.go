@@ -99,6 +99,7 @@ type S3Config struct {
 	Concurrency             int    `yaml:"concurrency" envconfig:"S3_CONCURRENCY"`
 	PartSize                int64  `yaml:"part_size" envconfig:"S3_PART_SIZE"`
 	MaxPartsCount           int64  `yaml:"max_parts_count" envconfig:"S3_MAX_PARTS_COUNT"`
+	AllowMultipartDownload  bool   `yaml:"allow_multipart_download" envconfig:"S3_ALLOW_MULTIPART_DOWNLOAD"`
 	Debug                   bool   `yaml:"debug" envconfig:"S3_DEBUG"`
 }
 

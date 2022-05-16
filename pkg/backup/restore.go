@@ -66,6 +66,11 @@ func Restore(cfg *config.Config, backupName string, tablePattern string, partiti
 					}
 				}
 			}
+			for _, function := range backupMetadata.Functions {
+				if err := ch.CreateUserDefinedFunction(function.Name, function.CreateQuery); err != nil {
+					return err
+				}
+			}
 		}
 		if len(backupMetadata.Tables) == 0 {
 			log.Warnf("'%s' doesn't contains tables for restore", backupName)

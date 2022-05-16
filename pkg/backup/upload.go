@@ -316,13 +316,30 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 	s := semaphore.NewWeighted(int64(b.cfg.General.UploadConcurrency))
 	g, ctx := errgroup.WithContext(context.Background())
 	var uploadedBytes int64
+
+	splittedParts := make(map[string][]metadata.PartFilesSplitted, 0)
+	splittedPartsOffset := make(map[string]int, 0)
+	splittedPartsCapacity := 0
 	for disk := range table.Parts {
 		backupPath := path.Join(b.DiskToPathMap[disk], "backup", backupName, "shadow", dbAndTablePath, disk)
-		parts, err := b.splitPartFiles(backupPath, table.Parts[disk])
+		splittedPartsList, err := b.splitPartFiles(backupPath, table.Parts[disk])
 		if err != nil {
 			return nil, 0, err
 		}
-		for partSuffix, partFiles := range parts {
+		splittedParts[disk] = splittedPartsList
+		splittedPartsOffset[disk] = 0
+		splittedPartsCapacity += len(splittedPartsList)
+	}
+	for common.SumMapValuesInt(splittedPartsOffset) < splittedPartsCapacity {
+		for disk := range table.Parts {
+			if splittedPartsOffset[disk] >= len(splittedParts[disk]) {
+				continue
+			}
+			backupPath := path.Join(b.DiskToPathMap[disk], "backup", backupName, "shadow", dbAndTablePath, disk)
+			splittedPart := splittedParts[disk][splittedPartsOffset[disk]]
+			partSuffix := splittedPart.Prefix
+			partFiles := splittedPart.Files
+			splittedPartsOffset[disk] += 1
 			if err := s.Acquire(ctx, 1); err != nil {
 				apexLog.Errorf("can't acquire semaphore during Upload: %v", err)
 				break
@@ -363,9 +380,9 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 				})
 			}
 		}
-	}
-	if err := g.Wait(); err != nil {
-		return nil, 0, fmt.Errorf("one of uploadTableData go-routine return error: %v", err)
+		if err := g.Wait(); err != nil {
+			return nil, 0, fmt.Errorf("one of uploadTableData go-routine return error: %v", err)
+		}
 	}
 	apexLog.Debugf("finish uploadTableData %s.%s with concurrency=%d len(table.Parts[...])=%d metadataFiles=%v, uploadedBytes=%v", table.Database, table.Table, b.cfg.General.UploadConcurrency, capacity, metadataFiles, uploadedBytes)
 	return metadataFiles, uploadedBytes, nil
@@ -431,7 +448,7 @@ func (b *Backuper) ReadBackupMetadataLocal(backupName string) (*metadata.BackupM
 	return &backupMetadata, nil
 }
 
-func (b *Backuper) splitPartFiles(basePath string, parts []metadata.Part) (map[string][]string, error) {
+func (b *Backuper) splitPartFiles(basePath string, parts []metadata.Part) ([]metadata.PartFilesSplitted, error) {
 	if b.cfg.General.UploadByPart {
 		return b.splitFilesByName(basePath, parts)
 	} else {
@@ -439,8 +456,8 @@ func (b *Backuper) splitPartFiles(basePath string, parts []metadata.Part) (map[s
 	}
 }
 
-func (b *Backuper) splitFilesByName(basePath string, parts []metadata.Part) (map[string][]string, error) {
-	result := map[string][]string{}
+func (b *Backuper) splitFilesByName(basePath string, parts []metadata.Part) ([]metadata.PartFilesSplitted, error) {
+	result := make([]metadata.PartFilesSplitted, 0)
 	for i := range parts {
 		if parts[i].Required {
 			continue
@@ -461,16 +478,19 @@ func (b *Backuper) splitFilesByName(basePath string, parts []metadata.Part) (map
 		if err != nil {
 			apexLog.Warnf("filepath.Walk return error: %v", err)
 		}
-		result[parts[i].Name] = files
+		result = append(result, metadata.PartFilesSplitted{
+			Prefix: parts[i].Name,
+			Files:  files,
+		})
 	}
 	return result, nil
 }
 
-func (b *Backuper) splitFilesBySize(basePath string, parts []metadata.Part) (map[string][]string, error) {
+func (b *Backuper) splitFilesBySize(basePath string, parts []metadata.Part) ([]metadata.PartFilesSplitted, error) {
 	var size int64
 	var files []string
 	maxSize := b.cfg.General.MaxFileSize
-	result := map[string][]string{}
+	result := make([]metadata.PartFilesSplitted, 0)
 	partSuffix := 1
 	for i := range parts {
 		if parts[i].Required {
@@ -485,7 +505,10 @@ func (b *Backuper) splitFilesBySize(basePath string, parts []metadata.Part) (map
 				return nil
 			}
 			if (size+info.Size()) > maxSize && len(files) > 0 {
-				result[strconv.Itoa(partSuffix)] = files
+				result = append(result, metadata.PartFilesSplitted{
+					Prefix: strconv.Itoa(partSuffix),
+					Files:  files,
+				})
 				files = []string{}
 				size = 0
 				partSuffix += 1
@@ -500,7 +523,10 @@ func (b *Backuper) splitFilesBySize(basePath string, parts []metadata.Part) (map
 		}
 	}
 	if len(files) > 0 {
-		result[strconv.Itoa(partSuffix)] = files
+		result = append(result, metadata.PartFilesSplitted{
+			Prefix: strconv.Itoa(partSuffix),
+			Files:  files,
+		})
 	}
 	return result, nil
 }
