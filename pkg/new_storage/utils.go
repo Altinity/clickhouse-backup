@@ -93,9 +93,6 @@ func getArchiveReader(format string) (*archiver.CompressedArchive, error) {
 }
 
 func checkArchiveExtension(ext, format string) bool {
-	if strings.HasSuffix(ext, format) {
-		return true
-	}
 	if (format == "gz" || format == "gzip") && ext != ".gz" && ext != ".gzip" {
 		return false
 	}
@@ -104,6 +101,18 @@ func checkArchiveExtension(ext, format string) bool {
 	}
 	if (format == "br" || format == "brotli") && ext != ".br" && ext != ".brotli" {
 		return false
+	}
+	if strings.HasSuffix(ext, format) {
+		return true
+	}
+	if (format == "gz" || format == "gzip") && (ext == ".gz" || ext == ".gzip") {
+		return true
+	}
+	if (format == "bz2" || format == "bzip2") && (ext == ".bz2" || ext == ".bzip2") {
+		return true
+	}
+	if (format == "br" || format == "brotli") && (ext == ".br" || ext == ".brotli") {
+		return true
 	}
 	return false
 }
