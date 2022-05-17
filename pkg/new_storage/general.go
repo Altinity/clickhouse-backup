@@ -323,7 +323,7 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 	bufReader := nio.NewReader(reader, buf)
 	proxyReader := bar.NewProxyReader(bufReader)
 	compressionFormat := bd.compressionFormat
-	if !strings.HasSuffix(path.Ext(remotePath), compressionFormat) {
+	if !checkArchiveExtension(path.Ext(remotePath), compressionFormat) {
 		apexLog.Warnf("remote file backup extension %s not equal with %s", remotePath, compressionFormat)
 		compressionFormat = strings.Replace(path.Ext(remotePath), ".", "", -1)
 	}

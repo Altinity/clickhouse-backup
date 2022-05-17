@@ -6,6 +6,9 @@ IMPROVEMENTS
 - add ability to apply `system.macros` values to `path` field in all types of `remote_storage`, fix [438](https://github.com/AlexAkulov/clickhouse-backup/issues/438) 
 - use all disks for upload and download for mutli-disk volumes in parallel when `upload_by_part: true` fix [#400](https://github.com/AlexAkulov/clickhouse-backup/issues/400) 
 
+BUG FIXES
+- fix wrong warning for .gz, .bz2, .br archive extensions during download, fix [441](https://github.com/AlexAkulov/clickhouse-backup/issues/441)
+
 # v1.3.2
 IMPROVEMENTS
 - add TLS certificates and TLS CA support for clickhouse connections, fix [410](https://github.com/AlexAkulov/clickhouse-backup/issues/410)
