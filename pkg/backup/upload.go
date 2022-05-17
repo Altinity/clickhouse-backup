@@ -335,15 +335,15 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 			if splittedPartsOffset[disk] >= len(splittedParts[disk]) {
 				continue
 			}
+			if err := s.Acquire(ctx, 1); err != nil {
+				apexLog.Errorf("can't acquire semaphore during Upload: %v", err)
+				break
+			}
 			backupPath := path.Join(b.DiskToPathMap[disk], "backup", backupName, "shadow", dbAndTablePath, disk)
 			splittedPart := splittedParts[disk][splittedPartsOffset[disk]]
 			partSuffix := splittedPart.Prefix
 			partFiles := splittedPart.Files
 			splittedPartsOffset[disk] += 1
-			if err := s.Acquire(ctx, 1); err != nil {
-				apexLog.Errorf("can't acquire semaphore during Upload: %v", err)
-				break
-			}
 			baseRemoteDataPath := path.Join(backupName, "shadow", common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
 			if b.cfg.GetCompressionFormat() == "none" {
 				localPath := path.Join(backupPath, partSuffix)
