@@ -166,6 +166,7 @@ s3:
   concurrency: 1                   # S3_CONCURRENCY
   part_size: 0                     # S3_PART_SIZE, if less or eq 0 then calculated as max_file_size / max_parts_count, between 5MB and 5Gb
   max_parts_count: 10000           # S3_MAX_PARTS_COUNT, number of parts for S3 multipart uploads
+  allow_multipart_download: false  # S3_ALLOW_MULTIPART_DOWNLOAD, allow us fast download speed (same as upload), but will require additional disk space, download_concurrency * part size in worst case   
   debug: false                     # S3_DEBUG
 gcs:
   credentials_file: ""         # GCS_CREDENTIALS_FILE

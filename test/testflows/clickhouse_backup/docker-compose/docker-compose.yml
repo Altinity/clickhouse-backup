@@ -2,7 +2,7 @@ version: '2.4'
 
 services:
   zookeeper:
-    image: zookeeper:3.7.0
+    image: zookeeper:latest
     expose:
       - "2181"
     environment:
@@ -10,7 +10,7 @@ services:
       ZOO_MY_ID: 1
       ZOO_4LW_COMMANDS_WHITELIST: "*"
     healthcheck:
-      test: echo stats | nc 127.0.0.1 2181
+      test: bash -c 'if [[ "$$(echo ruok | nc 127.0.0.1 2181)" == "imok" ]]; then exit 0; else exit 1; fi'
       interval: 3s
       timeout: 2s
       retries: 5
@@ -38,8 +38,16 @@ services:
       - mysql
       - postgres
       - clickhouse2
+    healthcheck:
+      test: wget http://localhost:8123/ping
+      interval: 3s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
     depends_on:
       zookeeper:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
 
   clickhouse2:
@@ -56,8 +64,16 @@ services:
       - rabbitmq
       - mysql
       - postgres
+    healthcheck:
+      test: wget http://localhost:8123/ping
+      interval: 3s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
     depends_on:
       zookeeper:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
 
   mysql:
@@ -115,14 +131,16 @@ services:
     volumes_from:
       - clickhouse1
     healthcheck:
-      test: clickhouse-backup --version
-      interval: 3s
-      timeout: 2s
+      test: curl http://backup:7171/backup/status
+      interval: 5s
+      timeout: 5s
       retries: 40
       start_period: 10s
     depends_on:
-      - clickhouse1
-      - clickhouse2
+      clickhouse1:
+        condition: service_healthy
+      clickhouse2:
+        condition: service_healthy
 
     links:
       - ftp_server
@@ -186,6 +204,10 @@ services:
       - BOOTSTRAP_SERVERS=kafka:9092
     healthcheck:
       test: echo dump | nc zookeeper 2181 | grep '/brokers/ids/1'
+      interval: 10s
+      timeout: 2s
+      retries: 40
+      start_period: 10s
     depends_on:
       zookeeper:
         condition: service_healthy

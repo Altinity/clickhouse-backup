@@ -27,5 +27,6 @@ type RemoteStorage interface {
 	Connect() error
 	Walk(prefix string, recursive bool, fn func(RemoteFile) error) error
 	GetFileReader(key string) (io.ReadCloser, error)
+	GetFileReaderWithLocalPath(key, localPath string) (io.ReadCloser, error)
 	PutFile(key string, r io.ReadCloser) error
 }

@@ -182,6 +182,10 @@ func (f *FTP) GetFileReader(key string) (io.ReadCloser, error) {
 	}, err
 }
 
+func (f *FTP) GetFileReaderWithLocalPath(key, _ string) (io.ReadCloser, error) {
+	return f.GetFileReader(key)
+}
+
 func (f *FTP) PutFile(key string, r io.ReadCloser) error {
 	apexLog.Debugf("FTP::PutFile key=%s", key)
 	client, err := f.getConnectionFromPool("PutFile")

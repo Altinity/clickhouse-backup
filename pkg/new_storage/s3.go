@@ -133,20 +133,6 @@ func (s *S3) Kind() string {
 }
 
 func (s *S3) GetFileReader(key string) (io.ReadCloser, error) {
-	/* unfortunately, multipart download require allocate additional disk space and don't allow us to decompress data in streaming model
-	writer, err := os.CreateTemp()
-	if err != nil {
-		return nil, err
-	}
-	_, err = s.downloader.Download(writer, &s3.GetObjectInput{
-		Bucket: aws.String(s.Config.Bucket),
-		Key:    aws.String(path.Join(s.Config.Path, key)),
-	})
-	if err != nil {
-		return nil, err
-	}
-	*/
-
 	svc := s3.New(s.session)
 	req, resp := svc.GetObjectRequest(&s3.GetObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
@@ -157,6 +143,27 @@ func (s *S3) GetFileReader(key string) (io.ReadCloser, error) {
 	}
 
 	return resp.Body, nil
+}
+
+func (s *S3) GetFileReaderWithLocalPath(key, localPath string) (io.ReadCloser, error) {
+	/* unfortunately, multipart download require allocate additional disk space
+	and don't allow us to decompress data directly from stream */
+	if s.Config.AllowMultipartDownload {
+		writer, err := os.CreateTemp(localPath, strings.ReplaceAll(key, "/", "_"))
+		if err != nil {
+			return nil, err
+		}
+		_, err = s.downloader.Download(writer, &s3.GetObjectInput{
+			Bucket: aws.String(s.Config.Bucket),
+			Key:    aws.String(path.Join(s.Config.Path, key)),
+		})
+		if err != nil {
+			return nil, err
+		}
+		return writer, nil
+	} else {
+		return s.GetFileReader(key)
+	}
 }
 
 func (s *S3) PutFile(key string, r io.ReadCloser) error {

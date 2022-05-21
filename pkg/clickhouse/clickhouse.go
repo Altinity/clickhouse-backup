@@ -85,7 +85,12 @@ func (ch *ClickHouse) Connect() error {
 				}
 				tlsConfig.RootCAs = caCertPool
 			}
-			clickhouse.RegisterTLSConfig("clickhouse-backup", tlsConfig)
+			err = clickhouse.RegisterTLSConfig("clickhouse-backup", tlsConfig)
+			if err != nil {
+				log.Errorf("RegisterTLSConfig return error: %v", err)
+				return fmt.Errorf("RegisterTLSConfig return error: %v", err)
+
+			}
 			params.Add("tls_config", "clickhouse-backup")
 		}
 
@@ -195,7 +200,7 @@ func (ch *ClickHouse) Close() {
 	}
 }
 
-// GetTables - return slice of all tables suitable for backup, MySQL and PostgreSQL database engine shall be skipped
+// GetTables - return slice of all tables suitable for backup, MySQL and PorstgreSQL database engine shall be skipped
 func (ch *ClickHouse) GetTables(tablePattern string) ([]Table, error) {
 	var err error
 	tables := make([]Table, 0)
@@ -309,7 +314,7 @@ func (ch *ClickHouse) getTableSizeFromParts(table Table) uint64 {
 	var tablesSize []struct {
 		Size uint64 `db:"size"`
 	}
-	query := fmt.Sprintf("SELECT sum(bytes_on_disk) as size FROM system.parts WHERE database='%s' AND table='%s' GROUP BY database, table", table.Database, table.Name)
+	query := fmt.Sprintf("SELECT sum(bytes_on_disk) as size FROM system.parts WHERE active AND database='%s' AND table='%s' GROUP BY database, table", table.Database, table.Name)
 	if err := ch.SoftSelect(&tablesSize, query); err != nil {
 		log.Warnf("error parsing tablesSize: %w", err)
 	}
@@ -561,9 +566,9 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable bool, onC
 		return err
 	}
 	isOnlyTablePresent = isOnlyTablePresent && !strings.Contains(query, fmt.Sprintf("%s.%s", table.Database, table.Name))
-	if isOnlyTableWithQuotesPresent {
+	if isOnlyTableWithQuotesPresent && table.Database != "" {
 		query = strings.Replace(query, fmt.Sprintf("`%s`", table.Name), fmt.Sprintf("`%s`.`%s`", table.Database, table.Name), 1)
-	} else if isOnlyTablePresent {
+	} else if isOnlyTablePresent && table.Database != "" {
 		query = strings.Replace(query, fmt.Sprintf("%s", table.Name), fmt.Sprintf("%s.%s", table.Database, table.Name), 1)
 	}
 
@@ -761,6 +766,33 @@ func (ch *ClickHouse) GetAccessManagementPath(disks []Disk) (string, error) {
 	return accessPath, nil
 }
 
+func (ch *ClickHouse) GetUserDefinedFunctions() ([]Function, error) {
+	allFunctions := make([]Function, 0)
+	allFunctionsSQL := "SELECT name, create_query FROM system.functions WHERE create_query!=''"
+	detectUDF := make([]uint8, 0)
+	detectUDFSQL := "SELECT toUInt8(count()) udf_presents FROM system.columns WHERE database='system' AND table='functions' AND name='create_query'"
+	if err := ch.Select(&detectUDF, detectUDFSQL); err != nil {
+		return nil, err
+	}
+	if len(detectUDF) == 0 || detectUDF[0] == 0 {
+		return allFunctions, nil
+	}
+
+	if err := ch.SoftSelect(&allFunctions, allFunctionsSQL); err != nil {
+		return nil, err
+	}
+	return allFunctions, nil
+}
+
+func (ch *ClickHouse) CreateUserDefinedFunction(name string, query string) error {
+	_, err := ch.Query(fmt.Sprintf("DROP FUNCTION IF EXISTS `%s`", name))
+	if err != nil {
+		return err
+	}
+	_, err = ch.Query(query)
+	return err
+}
+
 func CalculateMaxFileSize(cfg *config.Config) (int64, error) {
 	ch := &ClickHouse{
 		Config: &cfg.ClickHouse,
@@ -785,3 +817,32 @@ func CalculateMaxFileSize(cfg *config.Config) (int64, error) {
 }
 
 var CreateDatabaseRE = regexp.MustCompile(`(?m)^CREATE DATABASE ([\x60]?)([^\x60]*)([\x60]?)`)
+
+func ApplyMacros(cfg *config.Config, path string) string {
+	ch := &ClickHouse{
+		Config: &cfg.ClickHouse,
+	}
+	if err := ch.Connect(); err != nil {
+		log.Warnf("can't connect to clickhouse: %v", err)
+		return path
+	}
+	defer ch.Close()
+	macrosExists := make([]int, 0)
+	err := ch.Select(&macrosExists, "SELECT count() AS is_macros_exists FROM system.tables WHERE database='system' AND table='macros'")
+	if err != nil || len(macrosExists) == 0 || macrosExists[0] == 0 {
+		return path
+	}
+	macros := make([]macro, 0)
+	err = ch.SoftSelect(&macros, "SELECT * FROM system.macros")
+	if err != nil || len(macros) == 0 {
+		return path
+	}
+
+	replaces := make([]string, len(macros)*2)
+	for i, macro := range macros {
+		replaces[i*2] = fmt.Sprintf("{%s}", macro.Macro)
+		replaces[i*2+1] = fmt.Sprintf("%s", macro.Substitution)
+	}
+	path = strings.NewReplacer(replaces...).Replace(path)
+	return path
+}

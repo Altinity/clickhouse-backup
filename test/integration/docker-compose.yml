@@ -1,4 +1,3 @@
-version: "3.3"
 services:
   sshd:
     image: docker.io/panubo/sshd:latest
@@ -62,8 +61,17 @@ services:
   zookeeper:
     image: docker.io/zookeeper:${ZOOKEEPER_VERSION:-latest}
     container_name: zookeeper
+    environment:
+      ZOO_4LW_COMMANDS_WHITELIST: "*"
     networks:
       - clickhouse-backup
+    healthcheck:
+      test: bash -c 'if [[ "$$(echo 'ruok' | nc 127.0.0.1 2181)" == "imok" ]]; then exit 0; else exit 1; fi'
+      interval: 3s
+      timeout: 2s
+      retries: 5
+      start_period: 2s
+
 
   clickhouse:
     image: docker.io/${CLICKHOUSE_IMAGE:-yandex/clickhouse-server}:${CLICKHOUSE_VERSION:-1.1.54390}
@@ -102,13 +110,16 @@ services:
 #       - "40001:40001"
     networks:
       - clickhouse-backup
-    depends_on:
+    links:
       - zookeeper
       - minio
       - sshd
       - ftp
 #      - azure
 #      - gcs
+    depends_on:
+      zookeeper:
+        condition: service_healthy
 
 networks:
   clickhouse-backup:

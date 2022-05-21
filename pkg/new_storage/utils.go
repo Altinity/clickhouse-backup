@@ -6,6 +6,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/mholt/archiver/v4"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -89,4 +90,29 @@ func getArchiveReader(format string) (*archiver.CompressedArchive, error) {
 		return &archiver.CompressedArchive{Compression: archiver.Zstd{}, Archival: archiver.Tar{}}, nil
 	}
 	return nil, fmt.Errorf("wrong compression_format: %s, supported: 'tar', 'lz4', 'bzip2', 'bz2', 'gzip', 'gz', 'sz', 'xz', 'br', 'brotli', 'zstd'", format)
+}
+
+func checkArchiveExtension(ext, format string) bool {
+	if (format == "gz" || format == "gzip") && ext != ".gz" && ext != ".gzip" {
+		return false
+	}
+	if (format == "bz2" || format == "bzip2") && ext != ".bz2" && ext != ".bzip2" {
+		return false
+	}
+	if (format == "br" || format == "brotli") && ext != ".br" && ext != ".brotli" {
+		return false
+	}
+	if strings.HasSuffix(ext, format) {
+		return true
+	}
+	if (format == "gz" || format == "gzip") && (ext == ".gz" || ext == ".gzip") {
+		return true
+	}
+	if (format == "bz2" || format == "bzip2") && (ext == ".bz2" || ext == ".bzip2") {
+		return true
+	}
+	if (format == "br" || format == "brotli") && (ext == ".br" || ext == ".brotli") {
+		return true
+	}
+	return false
 }

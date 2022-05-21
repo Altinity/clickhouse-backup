@@ -1,5 +1,4 @@
 //go:build integration
-// +build integration
 
 package main
 
@@ -35,7 +34,7 @@ const Issue331Ordinary = "_issue331.ordinary_"
 type TestDataStruct struct {
 	Database           string
 	DatabaseEngine     string
-	Table              string
+	Name               string
 	Schema             string
 	Rows               []map[string]interface{}
 	Fields             []string
@@ -43,6 +42,7 @@ type TestDataStruct struct {
 	IsMaterializedView bool
 	IsView             bool
 	IsDictionary       bool
+	IsFunction         bool
 	SkipInsert         bool
 	CheckDatabaseOnly  bool
 }
@@ -50,7 +50,7 @@ type TestDataStruct struct {
 var testData = []TestDataStruct{
 	{
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Table:  ".inner.table1",
+		Name:   ".inner.table1",
 		Schema: "(Date Date, TimeStamp DateTime, Log String) ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)",
 		Rows: []map[string]interface{}{
 			{"Date": toDate("2018-10-23"), "TimeStamp": toTS("2018-10-23 07:37:14"), "Log": "One"},
@@ -64,7 +64,7 @@ var testData = []TestDataStruct{
 		OrderBy: "TimeStamp",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Table:  "2. Таблица №2",
+		Name:   "2. Таблица №2",
 		Schema: "(id UInt64, User String) ENGINE = MergeTree ORDER BY id SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
 			{"id": uint64(1), "User": "Alice"},
@@ -78,7 +78,7 @@ var testData = []TestDataStruct{
 		OrderBy: "id",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Table:  "-table-3-",
+		Name:   "-table-3-",
 		Schema: "(TimeStamp DateTime, Item String, Date Date MATERIALIZED toDate(TimeStamp)) ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
 			{"TimeStamp": toTS("2018-10-23 07:37:14"), "Item": "One"},
@@ -92,7 +92,7 @@ var testData = []TestDataStruct{
 		OrderBy: "TimeStamp",
 	}, {
 		Database: Issue331Atomic, DatabaseEngine: "Atomic",
-		Table:  Issue331Atomic, // need cover fix https://github.com/AlexAkulov/clickhouse-backup/issues/331
+		Name:   Issue331Atomic, // need cover fix https://github.com/AlexAkulov/clickhouse-backup/issues/331
 		Schema: fmt.Sprintf("(`%s` UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY `%s` ORDER BY (`%s`, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192", Issue331Atomic, Issue331Atomic, Issue331Atomic),
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
@@ -105,7 +105,7 @@ var testData = []TestDataStruct{
 		OrderBy: Issue331Atomic,
 	}, {
 		Database: Issue331Ordinary, DatabaseEngine: "Ordinary",
-		Table:  Issue331Ordinary, // need cover fix https://github.com/AlexAkulov/clickhouse-backup/issues/331
+		Name:   Issue331Ordinary, // need cover fix https://github.com/AlexAkulov/clickhouse-backup/issues/331
 		Schema: fmt.Sprintf("(`%s` String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMM(order_time) ORDER BY (order_time, `%s`)", Issue331Ordinary, Issue331Ordinary),
 		Rows: []map[string]interface{}{
 			{Issue331Ordinary: "1", "order_time": toTS("2010-01-01 00:00:00"), "amount": 1.0},
@@ -115,7 +115,7 @@ var testData = []TestDataStruct{
 		OrderBy: Issue331Ordinary,
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Table:  "yuzhichang_table3",
+		Name:   "yuzhichang_table3",
 		Schema: "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMMDD(order_time) ORDER BY (order_time, order_id)",
 		Rows: []map[string]interface{}{
 			{"order_id": "1", "order_time": toTS("2010-01-01 00:00:00"), "amount": 1.0},
@@ -125,7 +125,7 @@ var testData = []TestDataStruct{
 		OrderBy: "order_id",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Table:  "yuzhichang_table4",
+		Name:   "yuzhichang_table4",
 		Schema: "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() ORDER BY (order_time, order_id)",
 		Rows: []map[string]interface{}{
 			{"order_id": "1", "order_time": toTS("2010-01-01 00:00:00"), "amount": 1.0},
@@ -135,7 +135,7 @@ var testData = []TestDataStruct{
 		OrderBy: "order_id",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Table:  "jbod",
+		Name:   "jbod",
 		Schema: "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 'jbod'",
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
@@ -148,7 +148,7 @@ var testData = []TestDataStruct{
 		OrderBy: "id",
 	}, {
 		Database: dbNameAtomic, DatabaseEngine: "Atomic",
-		Table:  "jbod",
+		Name:   "jbod",
 		Schema: "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 'jbod'",
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
@@ -161,7 +161,7 @@ var testData = []TestDataStruct{
 		OrderBy: "id",
 	}, {
 		Database: dbNameAtomic, DatabaseEngine: "Atomic",
-		Table:  "mv_src_table",
+		Name:   "mv_src_table",
 		Schema: "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{database}/{table}','replica1') ORDER BY id",
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
@@ -176,7 +176,7 @@ var testData = []TestDataStruct{
 	{
 		Database:       dbNameAtomic,
 		DatabaseEngine: "Atomic",
-		Table:          "mv_dst_table",
+		Name:           "mv_dst_table",
 		Schema:         "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{database}/{table}','replica1') ORDER BY id",
 		SkipInsert:     true,
 		Rows: func() []map[string]interface{} {
@@ -192,7 +192,7 @@ var testData = []TestDataStruct{
 		Database:           dbNameAtomic,
 		DatabaseEngine:     "Atomic",
 		IsMaterializedView: true,
-		Table:              "mv_max_with_inner",
+		Name:               "mv_max_with_inner",
 		Schema:             fmt.Sprintf("(id UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/{database}/{table}','replica1') ORDER BY id AS SELECT max(id) AS id FROM `%s`.`mv_src_table`", dbNameAtomic),
 		SkipInsert:         true,
 		Rows: func() []map[string]interface{} {
@@ -207,7 +207,7 @@ var testData = []TestDataStruct{
 		Database:       dbNameAtomic,
 		DatabaseEngine: "Atomic",
 		IsView:         true,
-		Table:          "test_view",
+		Name:           "test_view",
 		Schema:         fmt.Sprintf(" AS SELECT count() AS cnt FROM `%s`.`mv_src_table`", dbNameAtomic),
 		SkipInsert:     true,
 		Rows: func() []map[string]interface{} {
@@ -222,7 +222,7 @@ var testData = []TestDataStruct{
 		Database:           dbNameAtomic,
 		DatabaseEngine:     "Atomic",
 		IsMaterializedView: true,
-		Table:              "mv_max_with_dst",
+		Name:               "mv_max_with_dst",
 		Schema:             fmt.Sprintf(" TO `%s`.`mv_dst_table` AS SELECT max(id) AS id FROM `%s`.mv_src_table", dbNameAtomic, dbNameAtomic),
 		SkipInsert:         true,
 		Rows: func() []map[string]interface{} {
@@ -238,7 +238,7 @@ var testData = []TestDataStruct{
 		Database:           dbNameAtomic,
 		DatabaseEngine:     "Atomic",
 		IsMaterializedView: true,
-		Table:              "mv_min_with_nested_depencency",
+		Name:               "mv_min_with_nested_depencency",
 		Schema:             fmt.Sprintf(" TO `%s`.`mv_dst_table` AS SELECT min(id) * 2 AS id FROM `%s`.mv_src_table", dbNameAtomic, dbNameAtomic),
 		SkipInsert:         true,
 		Rows: func() []map[string]interface{} {
@@ -254,7 +254,7 @@ var testData = []TestDataStruct{
 		Database:       dbNameAtomic,
 		DatabaseEngine: "Atomic",
 		IsDictionary:   true,
-		Table:          "dict_example",
+		Name:           "dict_example",
 		Schema: fmt.Sprintf(
 			" (`%s` UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) PRIMARY KEY `%s` "+
 				" SOURCE(CLICKHOUSE(host 'localhost' port 9000 db '%s' table '%s' user 'default' password ''))"+
@@ -275,12 +275,25 @@ var testData = []TestDataStruct{
 		Database: dbNameMySQL, DatabaseEngine: "MySQL('mysql:3306','mysql','root','root')",
 		CheckDatabaseOnly: true,
 	},
+	{
+		IsFunction: true,
+		Name:       "test_function",
+		Schema:     fmt.Sprintf(" AS (a, b) -> a+b"),
+		SkipInsert: true,
+		Rows: func() []map[string]interface{} {
+			var result []map[string]interface{}
+			for i := 0; i < 3; i++ {
+				result = append(result, map[string]interface{}{"test_result": uint64(i + (i + 1))})
+			}
+			return result
+		}(),
+	},
 }
 
 var incrementData = []TestDataStruct{
 	{
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Table:  ".inner.table1",
+		Name:   ".inner.table1",
 		Schema: "(Date Date, TimeStamp DateTime, Log String) ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)",
 		Rows: []map[string]interface{}{
 			{"Date": toDate("2019-10-26"), "TimeStamp": toTS("2019-01-26 07:37:19"), "Log": "Seven"},
@@ -289,7 +302,7 @@ var incrementData = []TestDataStruct{
 		OrderBy: "TimeStamp",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Table:  "2. Таблица №2",
+		Name:   "2. Таблица №2",
 		Schema: "(id UInt64, User String) ENGINE = MergeTree ORDER BY id SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
 			{"id": uint64(7), "User": "Alice"},
@@ -301,7 +314,7 @@ var incrementData = []TestDataStruct{
 		OrderBy: "id",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Table:  "-table-3-",
+		Name:   "-table-3-",
 		Schema: "(TimeStamp DateTime, Item String, Date Date MATERIALIZED toDate(TimeStamp)) ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
 			{"TimeStamp": toTS("2019-01-26 07:37:18"), "Item": "Seven"},
@@ -311,7 +324,7 @@ var incrementData = []TestDataStruct{
 		OrderBy: "TimeStamp",
 	}, {
 		Database: Issue331Atomic, DatabaseEngine: "Atomic",
-		Table:  Issue331Atomic, // need cover fix https://github.com/AlexAkulov/clickhouse-backup/issues/331
+		Name:   Issue331Atomic, // need cover fix https://github.com/AlexAkulov/clickhouse-backup/issues/331
 		Schema: fmt.Sprintf("(`%s` UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY `%s` ORDER BY (`%s`, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192", Issue331Atomic, Issue331Atomic, Issue331Atomic),
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
@@ -324,7 +337,7 @@ var incrementData = []TestDataStruct{
 		OrderBy: Issue331Atomic,
 	}, {
 		Database: Issue331Ordinary, DatabaseEngine: "Ordinary",
-		Table:  Issue331Ordinary, // need cover fix https://github.com/AlexAkulov/clickhouse-backup/issues/331
+		Name:   Issue331Ordinary, // need cover fix https://github.com/AlexAkulov/clickhouse-backup/issues/331
 		Schema: fmt.Sprintf("(`%s` String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMM(order_time) ORDER BY (order_time, `%s`)", Issue331Ordinary, Issue331Ordinary),
 		Rows: []map[string]interface{}{
 			{Issue331Ordinary: "3", "order_time": toTS("2010-03-01 00:00:00"), "amount": 3.0},
@@ -334,7 +347,7 @@ var incrementData = []TestDataStruct{
 		OrderBy: Issue331Ordinary,
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Table:  "yuzhichang_table3",
+		Name:   "yuzhichang_table3",
 		Schema: "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMMDD(order_time) ORDER BY (order_time, order_id)",
 		Rows: []map[string]interface{}{
 			{"order_id": "3", "order_time": toTS("2010-03-01 00:00:00"), "amount": 3.0},
@@ -344,7 +357,7 @@ var incrementData = []TestDataStruct{
 		OrderBy: "order_id",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Table:  "yuzhichang_table4",
+		Name:   "yuzhichang_table4",
 		Schema: "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() ORDER BY (order_time, order_id)",
 		Rows: []map[string]interface{}{
 			{"order_id": "3", "order_time": toTS("2010-03-01 00:00:00"), "amount": 3.0},
@@ -354,7 +367,7 @@ var incrementData = []TestDataStruct{
 		OrderBy: "order_id",
 	}, {
 		Database: dbNameAtomic, DatabaseEngine: "Atomic",
-		Table:  "jbod",
+		Name:   "jbod",
 		Schema: "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 'jbod'",
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
@@ -375,250 +388,6 @@ func init() {
 		logLevel = os.Getenv("LOG_LEVEL")
 	}
 	log.SetLevelFromString(logLevel)
-}
-
-func TestIntegrationS3(t *testing.T) {
-	r := require.New(t)
-	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	runMainIntegrationScenario(t, "S3")
-}
-
-func TestIntegrationGCS(t *testing.T) {
-	if isTestShouldSkip("GCS_TESTS") {
-		t.Skip("Skipping GCS integration tests...")
-		return
-	}
-	r := require.New(t)
-	r.NoError(dockerCP("config-gcs.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	installDebIfNotExists(r, "clickhouse", "ca-certificates")
-	runMainIntegrationScenario(t, "GCS")
-}
-
-func TestIntegrationAzure(t *testing.T) {
-	if isTestShouldSkip("AZURE_TESTS") {
-		t.Skip("Skipping Azure integration tests...")
-		return
-	}
-	r := require.New(t)
-	r.NoError(dockerCP("config-azblob.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	installDebIfNotExists(r, "clickhouse", "ca-certificates")
-	runMainIntegrationScenario(t, "AZBLOB")
-}
-
-func TestIntegrationSFTPAuthPassword(t *testing.T) {
-	r := require.New(t)
-	r.NoError(dockerCP("config-sftp-auth-password.yaml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	runMainIntegrationScenario(t, "SFTP")
-}
-
-func TestIntegrationSFTPAuthKey(t *testing.T) {
-	r := require.New(t)
-	r.NoError(dockerCP("config-sftp-auth-key.yaml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-
-	r.NoError(dockerCP("sftp/clickhouse-backup_rsa", "clickhouse:/id_rsa"))
-	r.NoError(dockerExec("clickhouse", "cp", "-vf", "/id_rsa", "/tmp/id_rsa"))
-	r.NoError(dockerExec("clickhouse", "chmod", "-v", "0600", "/tmp/id_rsa"))
-
-	r.NoError(dockerCP("sftp/clickhouse-backup_rsa.pub", "sshd:/root/.ssh/authorized_keys"))
-	r.NoError(dockerExec("sshd", "chown", "-v", "root:root", "/root/.ssh/authorized_keys"))
-	r.NoError(dockerExec("sshd", "chmod", "-v", "0600", "/root/.ssh/authorized_keys"))
-
-	runMainIntegrationScenario(t, "SFTP")
-}
-
-func TestIntegrationFTP(t *testing.T) {
-	r := require.New(t)
-	r.NoError(dockerCP("config-ftp.yaml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	runMainIntegrationScenario(t, "FTP")
-}
-
-func TestSyncReplicaTimeout(t *testing.T) {
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.11") == -1 {
-		t.Skipf("Test skipped, SYNC REPLICA ignore receive_timeout for %s version", os.Getenv("CLICKHOUSE_VERSION"))
-	}
-	ch := &TestClickHouse{}
-	r := require.New(t)
-	ch.connectWithWait(r, 0*time.Millisecond)
-	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-
-	dropReplTables := func() {
-		for _, table := range []string{"repl1", "repl2"} {
-			query := "DROP TABLE IF EXISTS default." + table
-			if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.3") == 1 {
-				query += " NO DELAY"
-			}
-			ch.queryWithNoError(r, query)
-		}
-	}
-	dropReplTables()
-	ch.queryWithNoError(r, "CREATE TABLE default.repl1 (v UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/default/repl','repl1') ORDER BY tuple()")
-	ch.queryWithNoError(r, "CREATE TABLE default.repl2 (v UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/default/repl','repl2') ORDER BY tuple()")
-
-	ch.queryWithNoError(r, "INSERT INTO default.repl1 SELECT number FROM numbers(10)")
-
-	ch.queryWithNoError(r, "SYSTEM STOP REPLICATED SENDS default.repl1")
-	ch.queryWithNoError(r, "SYSTEM STOP FETCHES default.repl2")
-
-	ch.queryWithNoError(r, "INSERT INTO default.repl1 SELECT number FROM numbers(100)")
-
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "--tables=default.repl*", "test_not_synced_backup"))
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "upload", "test_not_synced_backup"))
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_not_synced_backup"))
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", "test_not_synced_backup"))
-
-	ch.queryWithNoError(r, "SYSTEM START REPLICATED SENDS default.repl1")
-	ch.queryWithNoError(r, "SYSTEM START FETCHES default.repl2")
-
-	dropReplTables()
-	ch.chbackend.Close()
-
-}
-
-func TestServerAPI(t *testing.T) {
-	ch := &TestClickHouse{}
-	r := require.New(t)
-	ch.connectWithWait(r, 0*time.Second)
-	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	ch.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS long_schema")
-	defer func() {
-		ch.chbackend.Close()
-	}()
-	fieldTypes := []string{"UInt64", "String", "Int"}
-	installDebIfNotExists(r, "clickhouse", "curl")
-	maxTables := 10
-	minFields := 10
-	randFields := 10
-	log.Infof("Create %d `long_schema`.`t%%d` tables with with %d..%d fields...", maxTables, minFields, minFields+randFields)
-	for i := 0; i < maxTables; i++ {
-		sql := fmt.Sprintf("CREATE TABLE long_schema.t%d (id UInt64", i)
-		fieldsCount := minFields + rand.Intn(randFields)
-		for j := 0; j < fieldsCount; j++ {
-			fieldType := fieldTypes[rand.Intn(len(fieldTypes))]
-			sql += fmt.Sprintf(", f%d %s", j, fieldType)
-		}
-		sql += ") ENGINE=MergeTree() ORDER BY id"
-		ch.queryWithNoError(r, sql)
-		sql = fmt.Sprintf("INSERT INTO long_schema.t%d(id) SELECT number FROM numbers(100)", i)
-		ch.queryWithNoError(r, sql)
-	}
-	log.Info("...DONE")
-
-	log.Info("Run `clickhouse-backup server` in background")
-	r.NoError(dockerExec("-d", "clickhouse", "bash", "-c", "clickhouse-backup server &>>/tmp/clickhouse-backup-server.log"))
-	time.Sleep(1 * time.Second)
-
-	log.Info("Check /backup/create")
-	out, err := dockerExecOut(
-		"clickhouse",
-		"bash", "-xe", "-c", "sleep 3; for i in {1..5}; do date; curl -sL -XPOST \"http://localhost:7171/backup/create?table=long_schema.*&name=backup_$i\"; sleep 1.5; done",
-	)
-	log.Debug(out)
-	r.NoError(err)
-	r.NotContains(out, "Connection refused")
-	r.NotContains(out, "another operation is currently running")
-	r.NotContains(out, "\"status\":\"error\"")
-
-	log.Info("Check /backup/tables")
-	out, err = dockerExecOut(
-		"clickhouse",
-		"bash", "-xe", "-c", "curl -sL \"http://localhost:7171/backup/tables\"",
-	)
-	log.Debug(out)
-	r.NoError(err)
-	r.NotContains(out, "system")
-
-	log.Info("Check /backup/tables/all")
-	out, err = dockerExecOut(
-		"clickhouse",
-		"bash", "-xe", "-c", "curl -sL \"http://localhost:7171/backup/tables/all\"",
-	)
-	log.Debug(out)
-	r.NoError(err)
-	r.Contains(out, "system")
-
-	log.Info("Check /backup/actions")
-	ch.queryWithNoError(r, "SELECT count() FROM system.backup_actions")
-
-	log.Info("Check /backup/upload")
-	out, err = dockerExecOut(
-		"clickhouse",
-		"bash", "-xe", "-c", "for i in {1..5}; do date; curl -sL -XPOST \"http://localhost:7171/backup/upload/backup_$i\"; sleep 2; done",
-	)
-	log.Debug(out)
-	r.NoError(err)
-	r.NotContains(out, "\"status\":\"error\"")
-	r.NotContains(out, "another operation is currently running")
-
-	log.Info("Check /backup/list")
-	out, err = dockerExecOut("clickhouse", "bash", "-c", "curl -sL 'http://localhost:7171/backup/list'")
-	log.Debug(out)
-	r.NoError(err)
-	for i := 1; i <= 5; i++ {
-		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"\"}", i)), out))
-		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar\"}", i)), out))
-	}
-
-	log.Info("Check /backup/list/local")
-	out, err = dockerExecOut("clickhouse", "bash", "-c", "curl -sL 'http://localhost:7171/backup/list/local'")
-	log.Debug(out)
-	r.NoError(err)
-	for i := 1; i <= 5; i++ {
-		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"\"}", i)), out))
-		r.True(assert.NotRegexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar\"}", i)), out))
-	}
-
-	log.Info("Check /backup/list/remote")
-	out, err = dockerExecOut("clickhouse", "bash", "-c", "curl -sL 'http://localhost:7171/backup/list/remote'")
-	log.Debug(out)
-	r.NoError(err)
-	for i := 1; i <= 5; i++ {
-		r.True(assert.NotRegexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"\"}", i)), out))
-		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar\"}", i)), out))
-	}
-
-	log.Info("Check /backup/download/{name} + /backup/restore/{name}?rm=1")
-	out, err = dockerExecOut(
-		"clickhouse",
-		"bash", "-xe", "-c", "for i in {1..5}; do date; curl -sL -XPOST \"http://localhost:7171/backup/delete/local/backup_$i\"; curl -sL -XPOST \"http://localhost:7171/backup/download/backup_$i\"; sleep 2; curl -sL -XPOST \"http://localhost:7171/backup/restore/backup_$i?rm=1\"; sleep 4; done",
-	)
-	log.Debug(out)
-	r.NoError(err)
-	r.NotContains(out, "another operation is currently running")
-	r.NotContains(out, "\"status\":\"error\"")
-
-	log.Info("Check /metrics clickhouse_backup_last_backup_size_remote")
-	lastRemoteSize := make([]int64, 0)
-	r.NoError(ch.chbackend.Select(&lastRemoteSize, "SELECT size FROM system.backup_list WHERE name='backup_5' AND location='remote'"))
-
-	realTotalBytes := make([]uint64, 0)
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 {
-		r.NoError(ch.chbackend.Select(&realTotalBytes, "SELECT sum(total_bytes) FROM system.tables WHERE database='long_schema'"))
-	} else {
-		r.NoError(ch.chbackend.Select(&realTotalBytes, "SELECT sum(bytes_on_disk) FROM system.parts WHERE database='long_schema'"))
-	}
-
-	r.Greater(lastRemoteSize[0], int64(realTotalBytes[0]))
-	out, err = dockerExecOut("clickhouse", "curl", "-sL", "http://localhost:7171/metrics")
-	log.Debug(out)
-	r.NoError(err)
-	r.Contains(out, fmt.Sprintf("clickhouse_backup_last_backup_size_remote %d", lastRemoteSize[0]))
-
-	log.Info("Check /backup/delete/{where}/{name}")
-	for i := 1; i <= 5; i++ {
-		out, err = dockerExecOut("clickhouse", "bash", "-c", fmt.Sprintf("curl -sL -XPOST 'http://localhost:7171/backup/delete/local/backup_%d'", i))
-		log.Infof(out)
-		r.NoError(err)
-		r.NotContains(out, "another operation is currently running")
-		r.NotContains(out, "\"status\":\"error\"")
-		out, err = dockerExecOut("clickhouse", "bash", "-c", fmt.Sprintf("curl -sL -XPOST 'http://localhost:7171/backup/delete/remote/backup_%d'", i))
-		log.Infof(out)
-		r.NoError(err)
-		r.NotContains(out, "another operation is currently running")
-		r.NotContains(out, "\"status\":\"error\"")
-	}
-
-	r.NoError(dockerExec("clickhouse", "pkill", "-n", "-f", "clickhouse-backup"))
-	r.NoError(ch.dropDatabase("long_schema"))
 }
 
 func TestDoRestoreRBAC(t *testing.T) {
@@ -747,7 +516,8 @@ func TestDoRestoreConfigs(t *testing.T) {
 	r.Equal([]string{"0"}, settings, "expect empty_result_for_aggregation_by_empty_set=0")
 
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--rm", "--configs", "test_configs_backup"))
-
+	_, err := ch.chbackend.Query("SYSTEM RELOAD CONFIG")
+	r.NoError(err)
 	ch.chbackend.Close()
 	ch.connectWithWait(r, 2*time.Second)
 
@@ -757,6 +527,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_configs_backup"))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", "test_configs_backup"))
+	r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/etc/clickhouse-server/users.d/test_config.xml"))
 
 	ch.chbackend.Close()
 }
@@ -788,6 +559,9 @@ func TestTablePatterns(t *testing.T) {
 	if len(restoredTables) > 0 {
 		r.Zero(restoredTables[0])
 	}
+
+	fullCleanup(r, ch, []string{testBackupName}, true)
+
 }
 
 func TestLongListRemote(t *testing.T) {
@@ -795,12 +569,11 @@ func TestLongListRemote(t *testing.T) {
 	r := require.New(t)
 	ch.connectWithWait(r, 0*time.Second)
 	defer ch.chbackend.Close()
-
+	totalCacheCount := 20
 	testBackupName := "test_list_remote"
-	fullCleanup(r, ch, []string{testBackupName}, false)
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 
-	for i := 0; i < 15; i++ {
+	for i := 0; i < totalCacheCount; i++ {
 		r.NoError(dockerExec("clickhouse", "bash", "-c", fmt.Sprintf("ALLOW_EMPTY_BACKUPS=true clickhouse-backup create_remote %s_%d", testBackupName, i)))
 	}
 
@@ -824,6 +597,13 @@ func TestLongListRemote(t *testing.T) {
 
 	r.Greater(cacheClearDuration, cashedDuration)
 	log.Infof("firstDuration=%s cachedDuration=%s cacheClearDuration=%s", firstDuration.String(), cashedDuration.String(), cacheClearDuration.String())
+
+	testListRemoteAllBackups := make([]string, totalCacheCount)
+	for i := 0; i < totalCacheCount; i++ {
+		testListRemoteAllBackups[i] = fmt.Sprintf("%s_%d", testBackupName, i)
+	}
+	fullCleanup(r, ch, testListRemoteAllBackups, true)
+
 }
 
 func TestSkipNotExistsTable(t *testing.T) {
@@ -997,6 +777,257 @@ func TestS3NoDeletePermission(t *testing.T) {
 	dropDatabasesFromTestDataDataSet(r, ch)
 }
 
+func TestSyncReplicaTimeout(t *testing.T) {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.11") == -1 {
+		t.Skipf("Test skipped, SYNC REPLICA ignore receive_timeout for %s version", os.Getenv("CLICKHOUSE_VERSION"))
+	}
+	ch := &TestClickHouse{}
+	r := require.New(t)
+	ch.connectWithWait(r, 0*time.Millisecond)
+	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+
+	dropReplTables := func() {
+		for _, table := range []string{"repl1", "repl2"} {
+			query := "DROP TABLE IF EXISTS default." + table
+			if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.3") == 1 {
+				query += " NO DELAY"
+			}
+			ch.queryWithNoError(r, query)
+		}
+	}
+	dropReplTables()
+	ch.queryWithNoError(r, "CREATE TABLE default.repl1 (v UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/default/repl','repl1') ORDER BY tuple()")
+	ch.queryWithNoError(r, "CREATE TABLE default.repl2 (v UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/default/repl','repl2') ORDER BY tuple()")
+
+	ch.queryWithNoError(r, "INSERT INTO default.repl1 SELECT number FROM numbers(10)")
+
+	ch.queryWithNoError(r, "SYSTEM STOP REPLICATED SENDS default.repl1")
+	ch.queryWithNoError(r, "SYSTEM STOP FETCHES default.repl2")
+
+	ch.queryWithNoError(r, "INSERT INTO default.repl1 SELECT number FROM numbers(100)")
+
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "--tables=default.repl*", "test_not_synced_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "upload", "test_not_synced_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_not_synced_backup"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", "test_not_synced_backup"))
+
+	ch.queryWithNoError(r, "SYSTEM START REPLICATED SENDS default.repl1")
+	ch.queryWithNoError(r, "SYSTEM START FETCHES default.repl2")
+
+	dropReplTables()
+	ch.chbackend.Close()
+
+}
+
+func TestServerAPI(t *testing.T) {
+	ch := &TestClickHouse{}
+	r := require.New(t)
+	ch.connectWithWait(r, 0*time.Second)
+	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	ch.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS long_schema")
+	defer func() {
+		ch.chbackend.Close()
+	}()
+	fieldTypes := []string{"UInt64", "String", "Int"}
+	installDebIfNotExists(r, "clickhouse", "curl")
+	maxTables := 10
+	minFields := 10
+	randFields := 10
+	log.Infof("Create %d `long_schema`.`t%%d` tables with with %d..%d fields...", maxTables, minFields, minFields+randFields)
+	for i := 0; i < maxTables; i++ {
+		sql := fmt.Sprintf("CREATE TABLE long_schema.t%d (id UInt64", i)
+		fieldsCount := minFields + rand.Intn(randFields)
+		for j := 0; j < fieldsCount; j++ {
+			fieldType := fieldTypes[rand.Intn(len(fieldTypes))]
+			sql += fmt.Sprintf(", f%d %s", j, fieldType)
+		}
+		sql += ") ENGINE=MergeTree() ORDER BY id"
+		ch.queryWithNoError(r, sql)
+		sql = fmt.Sprintf("INSERT INTO long_schema.t%d(id) SELECT number FROM numbers(100)", i)
+		ch.queryWithNoError(r, sql)
+	}
+	log.Info("...DONE")
+
+	log.Info("Run `clickhouse-backup server` in background")
+	r.NoError(dockerExec("-d", "clickhouse", "bash", "-c", "clickhouse-backup server &>>/tmp/clickhouse-backup-server.log"))
+	time.Sleep(1 * time.Second)
+
+	log.Info("Check /backup/create")
+	out, err := dockerExecOut(
+		"clickhouse",
+		"bash", "-xe", "-c", "sleep 3; for i in {1..5}; do date; curl -sL -XPOST \"http://localhost:7171/backup/create?table=long_schema.*&name=z_backup_$i\"; sleep 1.5; done",
+	)
+	log.Debug(out)
+	r.NoError(err)
+	r.NotContains(out, "Connection refused")
+	r.NotContains(out, "another operation is currently running")
+	r.NotContains(out, "\"status\":\"error\"")
+
+	log.Info("Check /backup/tables")
+	out, err = dockerExecOut(
+		"clickhouse",
+		"bash", "-xe", "-c", "curl -sL \"http://localhost:7171/backup/tables\"",
+	)
+	log.Debug(out)
+	r.NoError(err)
+	r.NotContains(out, "system")
+
+	log.Info("Check /backup/tables/all")
+	out, err = dockerExecOut(
+		"clickhouse",
+		"bash", "-xe", "-c", "curl -sL \"http://localhost:7171/backup/tables/all\"",
+	)
+	log.Debug(out)
+	r.NoError(err)
+	r.Contains(out, "system")
+
+	log.Info("Check /backup/actions")
+	ch.queryWithNoError(r, "SELECT count() FROM system.backup_actions")
+
+	log.Info("Check /backup/upload")
+	out, err = dockerExecOut(
+		"clickhouse",
+		"bash", "-xe", "-c", "for i in {1..5}; do date; curl -sL -XPOST \"http://localhost:7171/backup/upload/z_backup_$i\"; sleep 2; done",
+	)
+	log.Debug(out)
+	r.NoError(err)
+	r.NotContains(out, "\"status\":\"error\"")
+	r.NotContains(out, "another operation is currently running")
+
+	log.Info("Check /backup/list")
+	out, err = dockerExecOut("clickhouse", "bash", "-c", "curl -sL 'http://localhost:7171/backup/list'")
+	log.Debug(out)
+	r.NoError(err)
+	totalBackupNumber := 5
+	for i := 1; i <= totalBackupNumber; i++ {
+		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"\"}", i)), out))
+		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar\"}", i)), out))
+	}
+
+	log.Info("Check /backup/list/local")
+	out, err = dockerExecOut("clickhouse", "bash", "-c", "curl -sL 'http://localhost:7171/backup/list/local'")
+	log.Debug(out)
+	r.NoError(err)
+	for i := 1; i <= totalBackupNumber; i++ {
+		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"\"}", i)), out))
+		r.True(assert.NotRegexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar\"}", i)), out))
+	}
+
+	log.Info("Check /backup/list/remote")
+	out, err = dockerExecOut("clickhouse", "bash", "-c", "curl -sL 'http://localhost:7171/backup/list/remote'")
+	log.Debug(out)
+	r.NoError(err)
+	for i := 1; i <= totalBackupNumber; i++ {
+		r.True(assert.NotRegexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"\"}", i)), out))
+		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar\"}", i)), out))
+	}
+
+	log.Info("Check /backup/download/{name} + /backup/restore/{name}?rm=1")
+	out, err = dockerExecOut(
+		"clickhouse",
+		"bash", "-xe", "-c", "for i in {1..5}; do date; curl -sL -XPOST \"http://localhost:7171/backup/delete/local/z_backup_$i\"; curl -sL -XPOST \"http://localhost:7171/backup/download/z_backup_$i\"; sleep 2; curl -sL -XPOST \"http://localhost:7171/backup/restore/z_backup_$i?rm=1\"; sleep 4; done",
+	)
+	log.Debug(out)
+	r.NoError(err)
+	r.NotContains(out, "another operation is currently running")
+	r.NotContains(out, "\"status\":\"error\"")
+
+	log.Info("Check /metrics clickhouse_backup_last_backup_size_remote")
+	lastRemoteSize := make([]int64, 0)
+	r.NoError(ch.chbackend.Select(&lastRemoteSize, "SELECT size FROM system.backup_list WHERE name='z_backup_5' AND location='remote'"))
+
+	realTotalBytes := make([]uint64, 0)
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 {
+		r.NoError(ch.chbackend.Select(&realTotalBytes, "SELECT sum(total_bytes) FROM system.tables WHERE database='long_schema'"))
+	} else {
+		r.NoError(ch.chbackend.Select(&realTotalBytes, "SELECT sum(bytes_on_disk) FROM system.parts WHERE database='long_schema'"))
+	}
+
+	r.Greater(lastRemoteSize[0], int64(realTotalBytes[0]))
+	out, err = dockerExecOut("clickhouse", "curl", "-sL", "http://localhost:7171/metrics")
+	log.Debug(out)
+	r.NoError(err)
+	r.Contains(out, fmt.Sprintf("clickhouse_backup_last_backup_size_remote %d", lastRemoteSize[0]))
+
+	log.Info("Check /metrics clickhouse_backup_number_backups_*")
+	r.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_local %d", totalBackupNumber))
+	r.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_remote %d", totalBackupNumber))
+	r.Contains(out, "clickhouse_backup_number_backups_local_expected 0")
+	r.Contains(out, "clickhouse_backup_number_backups_remote_expected 0")
+
+	log.Info("Check /backup/delete/{where}/{name}")
+	for i := 1; i <= 5; i++ {
+		out, err = dockerExecOut("clickhouse", "bash", "-c", fmt.Sprintf("curl -sL -XPOST 'http://localhost:7171/backup/delete/local/z_backup_%d'", i))
+		log.Infof(out)
+		r.NoError(err)
+		r.NotContains(out, "another operation is currently running")
+		r.NotContains(out, "\"status\":\"error\"")
+		out, err = dockerExecOut("clickhouse", "bash", "-c", fmt.Sprintf("curl -sL -XPOST 'http://localhost:7171/backup/delete/remote/z_backup_%d'", i))
+		log.Infof(out)
+		r.NoError(err)
+		r.NotContains(out, "another operation is currently running")
+		r.NotContains(out, "\"status\":\"error\"")
+	}
+
+	r.NoError(dockerExec("clickhouse", "pkill", "-n", "-f", "clickhouse-backup"))
+	r.NoError(ch.dropDatabase("long_schema"))
+}
+
+func TestIntegrationS3(t *testing.T) {
+	r := require.New(t)
+	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	runMainIntegrationScenario(t, "S3")
+}
+
+func TestIntegrationGCS(t *testing.T) {
+	if isTestShouldSkip("GCS_TESTS") {
+		t.Skip("Skipping GCS integration tests...")
+		return
+	}
+	r := require.New(t)
+	r.NoError(dockerCP("config-gcs.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	installDebIfNotExists(r, "clickhouse", "ca-certificates")
+	runMainIntegrationScenario(t, "GCS")
+}
+
+func TestIntegrationAzure(t *testing.T) {
+	if isTestShouldSkip("AZURE_TESTS") {
+		t.Skip("Skipping Azure integration tests...")
+		return
+	}
+	r := require.New(t)
+	r.NoError(dockerCP("config-azblob.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	installDebIfNotExists(r, "clickhouse", "ca-certificates")
+	runMainIntegrationScenario(t, "AZBLOB")
+}
+
+func TestIntegrationSFTPAuthPassword(t *testing.T) {
+	r := require.New(t)
+	r.NoError(dockerCP("config-sftp-auth-password.yaml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	runMainIntegrationScenario(t, "SFTP")
+}
+
+func TestIntegrationSFTPAuthKey(t *testing.T) {
+	r := require.New(t)
+	r.NoError(dockerCP("config-sftp-auth-key.yaml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+
+	r.NoError(dockerCP("sftp/clickhouse-backup_rsa", "clickhouse:/id_rsa"))
+	r.NoError(dockerExec("clickhouse", "cp", "-vf", "/id_rsa", "/tmp/id_rsa"))
+	r.NoError(dockerExec("clickhouse", "chmod", "-v", "0600", "/tmp/id_rsa"))
+
+	r.NoError(dockerCP("sftp/clickhouse-backup_rsa.pub", "sshd:/root/.ssh/authorized_keys"))
+	r.NoError(dockerExec("sshd", "chown", "-v", "root:root", "/root/.ssh/authorized_keys"))
+	r.NoError(dockerExec("sshd", "chmod", "-v", "0600", "/root/.ssh/authorized_keys"))
+
+	runMainIntegrationScenario(t, "SFTP")
+}
+
+func TestIntegrationFTP(t *testing.T) {
+	r := require.New(t)
+	r.NoError(dockerCP("config-ftp.yaml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	runMainIntegrationScenario(t, "FTP")
+}
+
 func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 	var out string
 	var err error
@@ -1087,7 +1118,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 			continue
 		}
 		for _, incrementDataItem := range incrementData {
-			if testDataItem.Database == incrementDataItem.Database && testDataItem.Table == incrementDataItem.Table {
+			if testDataItem.Database == incrementDataItem.Database && testDataItem.Name == incrementDataItem.Name {
 				testDataItem.Rows = append(testDataItem.Rows, incrementDataItem.Rows...)
 			}
 		}
@@ -1115,6 +1146,18 @@ func fullCleanup(r *require.Assertions, ch *TestClickHouse, backupNames []string
 			}
 		}
 	}
+	otherBackupList, err := dockerExecOut("clickhouse", "ls", "-1", "/var/lib/clickhouse/backup")
+	if err == nil {
+		for _, backupName := range strings.Split(otherBackupList, "\n") {
+			if backupName != "" {
+				err := dockerExec("clickhouse", "clickhouse-backup", "delete", "local", backupName)
+				if checkDeleteErr {
+					r.NoError(err)
+				}
+			}
+		}
+	}
+
 	dropDatabasesFromTestDataDataSet(r, ch)
 }
 
@@ -1152,7 +1195,7 @@ func generateTestDataWithDifferentStoragePolicy() {
 		addTestDataIfNotExists := func() {
 			found := false
 			for _, data := range testData {
-				if data.Table == testDataEncrypted.Table && data.Database == testDataEncrypted.Database {
+				if data.Name == testDataEncrypted.Name && data.Database == testDataEncrypted.Database {
 					found = true
 					break
 				}
@@ -1163,20 +1206,20 @@ func generateTestDataWithDifferentStoragePolicy() {
 		}
 		//s3 disks support after 21.8
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 {
-			testDataEncrypted.Table = "test_s3"
+			testDataEncrypted.Name = "test_s3"
 			testDataEncrypted.Schema = "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 's3_only'"
 			addTestDataIfNotExists()
 		}
 
 		//encrypted disks support after 21.10
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.10") >= 0 {
-			testDataEncrypted.Table = "test_hdd3_encrypted"
+			testDataEncrypted.Name = "test_hdd3_encrypted"
 			testDataEncrypted.Schema = "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 'hdd3_only_encrypted'"
 			addTestDataIfNotExists()
 		}
 		//encrypted s3 disks support after 21.12
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
-			testDataEncrypted.Table = "test_s3_encrypted"
+			testDataEncrypted.Name = "test_s3_encrypted"
 			testDataEncrypted.Schema = "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 's3_only_encrypted'"
 			addTestDataIfNotExists()
 		}
@@ -1245,21 +1288,25 @@ func (ch *TestClickHouse) connect() error {
 }
 
 func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {
-	// 20.8 doesn't respect DROP TABLE .. NO DELAY, so Atomic works but --rm is not applicable
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") == 1 {
-		if err := ch.chbackend.CreateDatabaseWithEngine(data.Database, data.DatabaseEngine); err != nil {
-			return err
-		}
-	} else {
-		if err := ch.chbackend.CreateDatabase(data.Database); err != nil {
-			return err
+	if !data.IsFunction {
+		// 20.8 doesn't respect DROP TABLE .. NO DELAY, so Atomic works but --rm is not applicable
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") == 1 {
+			if err := ch.chbackend.CreateDatabaseWithEngine(data.Database, data.DatabaseEngine); err != nil {
+				return err
+			}
+		} else {
+			if err := ch.chbackend.CreateDatabase(data.Database); err != nil {
+				return err
+			}
 		}
 	}
 	if data.CheckDatabaseOnly {
 		return nil
 	}
 	createSQL := "CREATE "
-	if data.IsMaterializedView {
+	if data.IsFunction {
+		createSQL += " FUNCTION "
+	} else if data.IsMaterializedView {
 		createSQL += " MATERIALIZED VIEW "
 	} else if data.IsView {
 		createSQL += " VIEW "
@@ -1268,8 +1315,14 @@ func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {
 	} else {
 		createSQL += " TABLE "
 	}
-	createSQL += fmt.Sprintf(" IF NOT EXISTS `%s`.`%s` ", data.Database, data.Table)
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.0") == 1 {
+
+	if data.IsFunction {
+		createSQL += fmt.Sprintf(" IF NOT EXISTS `%s` ", data.Name)
+	} else {
+		createSQL += fmt.Sprintf(" IF NOT EXISTS `%s`.`%s` ", data.Database, data.Name)
+	}
+
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.0") == 1 && !data.IsFunction {
 		createSQL += " ON CLUSTER 'cluster' "
 	}
 	createSQL += data.Schema
@@ -1280,14 +1333,18 @@ func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {
 			return err
 		}
 		if len(isMacrosExists) == 0 || isMacrosExists[0] == 0 {
-			createSQL = strings.Replace(createSQL, "{table}", data.Table, -1)
+			createSQL = strings.Replace(createSQL, "{table}", data.Name, -1)
 			createSQL = strings.Replace(createSQL, "{database}", data.Database, -1)
 		}
+	}
+	// functions supported only after 21.12
+	if data.IsFunction && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") == -1 {
+		return nil
 	}
 	err := ch.chbackend.CreateTable(
 		clickhouse.Table{
 			Database: data.Database,
-			Name:     data.Table,
+			Name:     data.Name,
 		},
 		createSQL,
 		false, "", 0,
@@ -1305,7 +1362,7 @@ func (ch *TestClickHouse) createTestData(data TestDataStruct) error {
 	}
 	insertSQL := fmt.Sprintf("INSERT INTO `%s`.`%s` (`%s`) VALUES (:%s)",
 		data.Database,
-		data.Table,
+		data.Name,
 		strings.Join(data.Fields, "`,`"),
 		strings.Join(data.Fields, ",:"),
 	)
@@ -1347,8 +1404,15 @@ func (ch *TestClickHouse) dropDatabase(database string) (err error) {
 
 func (ch *TestClickHouse) checkData(t *testing.T, data TestDataStruct, r *require.Assertions) error {
 	assert.NotNil(t, data.Rows)
-	log.Infof("Check '%d' rows in '%s.%s'\n", len(data.Rows), data.Database, data.Table)
-	selectSQL := fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY `%s`", data.Database, data.Table, data.OrderBy)
+	log.Infof("Check '%d' rows in '%s.%s'\n", len(data.Rows), data.Database, data.Name)
+	selectSQL := fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY `%s`", data.Database, data.Name, data.OrderBy)
+
+	if data.IsFunction && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") == -1 {
+		return nil
+	}
+	if data.IsFunction {
+		selectSQL = fmt.Sprintf("SELECT %s(number, number+1) AS test_result FROM numbers(3)", data.Name)
+	}
 	log.Debug(selectSQL)
 	rows, err := ch.chbackend.GetConn().Queryx(selectSQL)
 	if err != nil {
@@ -1446,12 +1510,12 @@ func isTableSkip(ch *TestClickHouse, data TestDataStruct, dataExists bool) bool 
 		var dictEngines []string
 		dictSQL := fmt.Sprintf(
 			"SELECT engine FROM system.tables WHERE name='%s' AND database='%s'",
-			data.Table, data.Database,
+			data.Name, data.Database,
 		)
 		_ = ch.chbackend.Select(&dictEngines, dictSQL)
 		return len(dictEngines) == 0
 	}
-	return os.Getenv("COMPOSE_FILE") == "docker-compose.yml" && (data.Table == "jbod" || data.IsDictionary)
+	return os.Getenv("COMPOSE_FILE") == "docker-compose.yml" && (data.Name == "jbod" || data.IsDictionary)
 }
 
 func compareVersion(v1, v2 string) int {
@@ -1512,10 +1576,10 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 	r.Equal(10, result[0], "expect count=10")
 
 	// Reset the result.
-	result = nil
+	result = make([]int, 0)
 	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM default.t1 where dt != '2022-01-01 00:00:00'"))
 
-	log.Debugf("testBackupSpecifiedPartition result : '%s'", result)
+	log.Debugf("testBackupSpecifiedPartition result : '%v'", result)
 	log.Debugf("testBackupSpecifiedPartition result' length '%d'", len(result))
 	r.Equal(1, len(result), "expect one row")
 	r.Equal(0, result[0], "expect count=0")

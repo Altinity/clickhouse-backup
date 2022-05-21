@@ -277,6 +277,10 @@ func (bd *BackupDestination) BackupList(parseMetadata bool, parseMetadataOnly st
 	if err != nil {
 		apexLog.Warnf("BackupList bd.Walk return error: %v", err)
 	}
+	// sort by name for the same not parsed metadata.json
+	sort.SliceStable(result, func(i, j int) bool {
+		return result[i].BackupName > result[j].BackupName
+	})
 	sort.SliceStable(result, func(i, j int) bool {
 		return result[i].UploadDate.Before(result[j].UploadDate)
 	})
@@ -296,13 +300,20 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 	}
 	filesize := file.Size()
 
-	reader, err := bd.GetFileReader(remotePath)
+	reader, err := bd.GetFileReaderWithLocalPath(remotePath, localPath)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if err := reader.Close(); err != nil {
 			apexLog.Warnf("can't close GetFileReader descriptor %v", reader)
+		}
+		switch reader.(type) {
+		case *os.File:
+			fileName := reader.(*os.File).Name()
+			if err := os.Remove(fileName); err != nil {
+				apexLog.Warnf("can't remove %s", fileName)
+			}
 		}
 	}()
 
@@ -312,7 +323,7 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 	bufReader := nio.NewReader(reader, buf)
 	proxyReader := bar.NewProxyReader(bufReader)
 	compressionFormat := bd.compressionFormat
-	if !strings.HasSuffix(path.Ext(remotePath), compressionFormat) {
+	if !checkArchiveExtension(path.Ext(remotePath), compressionFormat) {
 		apexLog.Warnf("remote file backup extension %s not equal with %s", remotePath, compressionFormat)
 		compressionFormat = strings.Replace(path.Ext(remotePath), ".", "", -1)
 	}
@@ -543,21 +554,24 @@ func (bd *BackupDestination) UploadPath(size int64, baseLocalPath string, files 
 	return nil
 }
 
-func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
+func NewBackupDestination(cfg *config.Config, calcMaxSize bool) (*BackupDestination, error) {
 	// https://github.com/AlexAkulov/clickhouse-backup/issues/404
-	maxFileSize, err := clickhouse.CalculateMaxFileSize(cfg)
-	if err != nil {
-		return nil, err
-	}
-	if cfg.General.MaxFileSize > 0 && cfg.General.MaxFileSize < maxFileSize {
-		apexLog.Warnf("MAX_FILE_SIZE=%d is less than actual %d, please remove general->max_file_size section from your config", cfg.General.MaxFileSize, maxFileSize)
-	}
-	if cfg.General.MaxFileSize <= 0 || cfg.General.MaxFileSize < maxFileSize {
-		cfg.General.MaxFileSize = maxFileSize
+	if calcMaxSize {
+		maxFileSize, err := clickhouse.CalculateMaxFileSize(cfg)
+		if err != nil {
+			return nil, err
+		}
+		if cfg.General.MaxFileSize > 0 && cfg.General.MaxFileSize < maxFileSize {
+			apexLog.Warnf("MAX_FILE_SIZE=%d is less than actual %d, please remove general->max_file_size section from your config", cfg.General.MaxFileSize, maxFileSize)
+		}
+		if cfg.General.MaxFileSize <= 0 || cfg.General.MaxFileSize < maxFileSize {
+			cfg.General.MaxFileSize = maxFileSize
+		}
 	}
 	switch cfg.General.RemoteStorage {
 	case "azblob":
 		azblobStorage := &AzureBlob{Config: &cfg.AzureBlob}
+		azblobStorage.Config.Path = clickhouse.ApplyMacros(cfg, azblobStorage.Config.Path)
 		bufferSize := azblobStorage.Config.BufferSize
 		// https://github.com/AlexAkulov/clickhouse-backup/issues/317
 		if bufferSize <= 0 {
@@ -593,6 +607,7 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 			BufferSize:  1024 * 1024,
 			PartSize:    partSize,
 		}
+		s3Storage.Config.Path = clickhouse.ApplyMacros(cfg, s3Storage.Config.Path)
 		return &BackupDestination{
 			s3Storage,
 			cfg.S3.CompressionFormat,
@@ -601,6 +616,7 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 		}, nil
 	case "gcs":
 		googleCloudStorage := &GCS{Config: &cfg.GCS}
+		googleCloudStorage.Config.Path = clickhouse.ApplyMacros(cfg, googleCloudStorage.Config.Path)
 		return &BackupDestination{
 			googleCloudStorage,
 			cfg.GCS.CompressionFormat,
@@ -609,6 +625,7 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 		}, nil
 	case "cos":
 		tencentStorage := &COS{Config: &cfg.COS}
+		tencentStorage.Config.Path = clickhouse.ApplyMacros(cfg, tencentStorage.Config.Path)
 		return &BackupDestination{
 			tencentStorage,
 			cfg.COS.CompressionFormat,
@@ -619,6 +636,7 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 		ftpStorage := &FTP{
 			Config: &cfg.FTP,
 		}
+		ftpStorage.Config.Path = clickhouse.ApplyMacros(cfg, ftpStorage.Config.Path)
 		return &BackupDestination{
 			ftpStorage,
 			cfg.FTP.CompressionFormat,
@@ -629,6 +647,7 @@ func NewBackupDestination(cfg *config.Config) (*BackupDestination, error) {
 		sftpStorage := &SFTP{
 			Config: &cfg.SFTP,
 		}
+		sftpStorage.Config.Path = clickhouse.ApplyMacros(cfg, sftpStorage.Config.Path)
 		return &BackupDestination{
 			sftpStorage,
 			cfg.SFTP.CompressionFormat,
