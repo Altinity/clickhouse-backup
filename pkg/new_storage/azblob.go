@@ -142,6 +142,10 @@ func (s *AzureBlob) GetFileReader(key string) (io.ReadCloser, error) {
 	return r.Body(azblob.RetryReaderOptions{}), nil
 }
 
+func (s *AzureBlob) GetFileReaderWithLocalPath(key, _ string) (io.ReadCloser, error) {
+	return s.GetFileReader(key)
+}
+
 func (s *AzureBlob) PutFile(key string, r io.ReadCloser) error {
 	ctx := context.Background()
 	blob := s.Container.NewBlockBlobURL(path.Join(s.Config.Path, key))

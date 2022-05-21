@@ -1,9 +1,20 @@
+# v1.4.0
+IMPROVEMENTS
+- add `S3_ALLOW_MULTIPART_DOWNLOAD` to config, to improve download speed, fix [431](https://github.com/AlexAkulov/clickhouse-backup/issues/431)
+- add support backup/restore [user defined functions](https://clickhouse.com/docs/en/sql-reference/statements/create/function), fix [420](https://github.com/AlexAkulov/clickhouse-backup/issues/420)
+- add `clickhouse_backup_number_backups_remote`, `clickhouse_backup_number_backups_local`, `clickhouse_backup_number_backups_remote_expected`,`clickhouse_backup_number_backups_local_expected` prometheus metric, fix [437](https://github.com/AlexAkulov/clickhouse-backup/issues/437)
+- add ability to apply `system.macros` values to `path` field in all types of `remote_storage`, fix [438](https://github.com/AlexAkulov/clickhouse-backup/issues/438) 
+- use all disks for upload and download for mutli-disk volumes in parallel when `upload_by_part: true` fix [#400](https://github.com/AlexAkulov/clickhouse-backup/issues/400) 
+
+BUG FIXES
+- fix wrong warning for .gz, .bz2, .br archive extensions during download, fix [441](https://github.com/AlexAkulov/clickhouse-backup/issues/441)
+
 # v1.3.2
 IMPROVEMENTS
 - add TLS certificates and TLS CA support for clickhouse connections, fix [410](https://github.com/AlexAkulov/clickhouse-backup/issues/410)
 - switch to go 1.18
 - add clickhouse version 22.3 to integration tests
-- add `S3_MAX_PARTS_COUNT` and `AZBLOB_MAX_PARTS_COUNT` for properly calculate buffer sizes during upload and download
+- add `S3_MAX_PARTS_COUNT` and `AZBLOB_MAX_PARTS_COUNT` for properly calculate buffer sizes during upload and download for custom S3 implementation like Swift
 - add multithreading GZIP implementation
 
 BUG FIXES

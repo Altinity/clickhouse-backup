@@ -118,7 +118,7 @@ func RemoveBackupRemote(cfg *config.Config, backupName string) error {
 		return nil
 	}
 
-	bd, err := new_storage.NewBackupDestination(cfg)
+	bd, err := new_storage.NewBackupDestination(cfg, false)
 	if err != nil {
 		return err
 	}

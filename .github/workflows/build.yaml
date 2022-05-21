@@ -66,7 +66,7 @@ jobs:
           fi
           echo "::set-output name=GCS_TESTS::$(if [ -z "${{ secrets.VAULT_PASSWORD }}" ]; then echo "false"; else echo "true"; fi)"
 
-      - uses: actions/upload-artifact@v2
+      - uses: actions/upload-artifact@v2.2.4
         with:
           name: build-gcp-credentials
           path: |
@@ -76,7 +76,7 @@ jobs:
         if: |
           steps.secrets.outputs.GCS_TESTS == 'true'
 
-      - uses: actions/upload-artifact@v2
+      - uses: actions/upload-artifact@v2.2.4
         with:
           name: build-artifacts
           path: |
@@ -85,7 +85,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - uses: actions/upload-artifact@v2
+      - uses: actions/upload-artifact@v2.2.4
         with:
           name: build-test-artifacts
           path: |
@@ -108,7 +108,7 @@ jobs:
       - name: Checkout project
         uses: actions/checkout@v2
 
-      - uses: actions/download-artifact@v2
+      - uses: actions/download-artifact@v3
         with:
           name: build-test-artifacts
           path: ./clickhouse-backup/
@@ -151,7 +151,7 @@ jobs:
           ~/venv/qa/bin/tfs --debug --no-colors report results -a "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/" ./test/testflows/raw.log - --confidential --copyright "Altinity LTD" --logo ./test/testflows/altinity.png | ~/venv/qa/bin/tfs --debug --no-colors document convert > ./test/testflows/report.html
           sudo chmod -Rv +rx test/testflows/clickhouse_backup/_instances
       - name: Upload testflows logs
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v2.2.4
         with:
           name: testflows-logs-and-reports
           path: |
@@ -196,12 +196,12 @@ jobs:
             ~/.cache/go-build
           key: ${{ runner.os }}-${{ matrix.golang-version }}-golang-${{ hashFiles('go.mod') }}
 
-      - uses: actions/download-artifact@v2
+      - uses: actions/download-artifact@v3
         with:
           name: build-test-artifacts
           path: ./clickhouse-backup/
 
-      - uses: actions/download-artifact@v2
+      - uses: actions/download-artifact@v3
         with:
           name: build-gcp-credentials
           path: ./test/integration/
@@ -252,7 +252,7 @@ jobs:
       - name: Checkout project
         uses: actions/checkout@v2
 
-      - uses: actions/download-artifact@v2
+      - uses: actions/download-artifact@v3
         with:
           name: build-artifacts
           path: ./build/linux/

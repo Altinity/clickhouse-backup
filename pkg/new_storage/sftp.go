@@ -192,6 +192,10 @@ func (sftp *SFTP) GetFileReader(key string) (io.ReadCloser, error) {
 	return sftp.client.OpenFile(filePath, syscall.O_RDWR)
 }
 
+func (sftp *SFTP) GetFileReaderWithLocalPath(key, _ string) (io.ReadCloser, error) {
+	return sftp.GetFileReader(key)
+}
+
 func (sftp *SFTP) PutFile(key string, localFile io.ReadCloser) error {
 	filePath := path.Join(sftp.Config.Path, key)
 	sftp.client.MkdirAll(path.Dir(filePath))

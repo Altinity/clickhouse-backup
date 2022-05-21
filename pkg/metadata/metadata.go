@@ -23,6 +23,7 @@ type BackupMetadata struct {
 	CompressedSize          uint64            `json:"compressed_size,omitempty"`
 	Databases               []DatabasesMeta   `json:"databases,omitempty"`
 	Tables                  []TableTitle      `json:"tables"`
+	Functions               []FunctionsMeta   `json:"functions"`
 	DataFormat              string            `json:"data_format"`
 	RequiredBackup          string            `json:"required_backup,omitempty"`
 }
@@ -31,6 +32,11 @@ type DatabasesMeta struct {
 	Name   string `json:"name"`
 	Engine string `json:"engine"`
 	Query  string `json:"query"`
+}
+
+type FunctionsMeta struct {
+	Name        string `json:"name"`
+	CreateQuery string `json:"create_query"`
 }
 
 type TableMetadata struct {
@@ -62,4 +68,9 @@ type Part struct {
 	ModificationTime                  *time.Time `json:"modification_time,omitempty"`
 	Size                              int64      `json:"size,omitempty"`
 	// bytes_on_disk, data_compressed_bytes, data_uncompressed_bytes
+}
+
+type PartFilesSplitted struct {
+	Prefix string
+	Files  []string
 }

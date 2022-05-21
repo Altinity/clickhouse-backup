@@ -146,6 +146,10 @@ func (gcs *GCS) GetFileReader(key string) (io.ReadCloser, error) {
 	return reader, nil
 }
 
+func (gcs *GCS) GetFileReaderWithLocalPath(key, _ string) (io.ReadCloser, error) {
+	return gcs.GetFileReader(key)
+}
+
 func (gcs *GCS) GetFileWriter(key string) io.WriteCloser {
 	ctx := context.Background()
 	key = path.Join(gcs.Config.Path, key)
