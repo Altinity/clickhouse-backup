@@ -74,10 +74,9 @@ func Restore(cfg *config.Config, backupName, tablePattern string, databaseMappin
 				if targetDB, ok := dbMapRule[database.Name]; ok {
 					// When create database, try to substitute the database by following the database mapping rule.
 					if !IsInformationSchema(targetDB) {
-						regExp := regexp.MustCompile(`(?m)^CREATE DATABASE ([\x60]?)([^\x60]*)([\x60]?)`)
 						substitution := fmt.Sprintf("CREATE DATABASE ${1}%v${3}", targetDB)
 
-						if err := ch.CreateDatabaseFromQuery(regExp.ReplaceAllString(database.Query, substitution)); err != nil {
+						if err := ch.CreateDatabaseFromQuery(clickhouse.CreateDatabaseRE.ReplaceAllString(database.Query, substitution)); err != nil {
 							return err
 						}
 					}

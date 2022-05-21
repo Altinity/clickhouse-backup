@@ -783,3 +783,5 @@ func CalculateMaxFileSize(cfg *config.Config) (int64, error) {
 	}
 	return 0, nil
 }
+
+var CreateDatabaseRE = regexp.MustCompile(`(?m)^CREATE DATABASE ([\x60]?)([^\x60]*)([\x60]?)`)
