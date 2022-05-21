@@ -22,7 +22,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
 	apexLog "github.com/apex/log"
-	otiai10_copy "github.com/otiai10/copy"
+	recursive_copy "github.com/otiai10/copy"
 	"github.com/yargevad/filepathx"
 )
 
@@ -71,7 +71,7 @@ func Restore(cfg *config.Config, backupName, tablePattern string, databaseMappin
 		}
 		if schemaOnly || doRestoreData {
 			for _, database := range backupMetadata.Databases {
-				if targetDB, ok := dbMapRule[database.Name]; ok && len(dbMapRule) > 0 {
+				if targetDB, ok := dbMapRule[database.Name]; ok {
 					// When create database, try to substitute the database by following the database mapping rule.
 					if !IsInformationSchema(targetDB) {
 						regExp := regexp.MustCompile(`(?m)^CREATE DATABASE ([\x60]?)([^\x60]*)([\x60]?)`)
@@ -204,10 +204,10 @@ func restoreBackupRelatedDir(ch *clickhouse.ClickHouse, backupName, backupPrefix
 		return fmt.Errorf("%s is not a dir", srcBackupDir)
 	}
 	apexLog.Debugf("copy %s -> %s", srcBackupDir, destinationDir)
-	copyOptions := otiai10_copy.Options{OnDirExists: func(src, dest string) otiai10_copy.DirExistsAction {
-		return otiai10_copy.Merge
+	copyOptions := recursive_copy.Options{OnDirExists: func(src, dest string) recursive_copy.DirExistsAction {
+		return recursive_copy.Merge
 	}}
-	if err := otiai10_copy.Copy(srcBackupDir, destinationDir, copyOptions); err != nil {
+	if err := recursive_copy.Copy(srcBackupDir, destinationDir, copyOptions); err != nil {
 		return err
 	}
 
