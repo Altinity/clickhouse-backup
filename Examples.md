@@ -177,7 +177,7 @@ spec:
                       - name: S3_FORCE_PATH_STYLE
                         value: "true"
                       # remove it for production S3
-                      - name: S3_DISTABLE_SSL
+                      - name: S3_DISABLE_SSL
                         value: "true"
                       - name: S3_DEBUG
                         value: "true"
