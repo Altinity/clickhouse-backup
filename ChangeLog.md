@@ -1,3 +1,7 @@
+# v1.4.1
+BUG FIXES
+- fix upload data go routines waiting, expect the same upload speed as 1.3.2
+
 # v1.4.0
 IMPROVEMENTS
 - add `S3_ALLOW_MULTIPART_DOWNLOAD` to config, to improve download speed, fix [431](https://github.com/AlexAkulov/clickhouse-backup/issues/431)
