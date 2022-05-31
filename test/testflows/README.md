@@ -7,7 +7,8 @@ This folder contains TestFlows tests for ClickHouse Backup Utility. This file de
 To execute tests, you will need:
 
 * Python 3.8 or higher (`python3`)
-* TestFlows Python library
+* The latest version of Go (`https://go.dev/doc/install`)
+* TestFlows Python library (`https://testflows.com/`)
 * `docker` and `docker-compose`
 
 To install all necessary Python packages, execute:
@@ -37,12 +38,12 @@ You can do it with something like that:
 ```bash
 cat > /home/username/clickhouse-backup/test/testflows/.env <<EOT
 export CLICKHOUSE_TESTS_DIR=/home/username/clickhouse-backup/test/testflows/clickhouse_backup
-export QA_AWS_ACCESS_KEY = XXXXXX
-export QA_AWS_ENDPOINT = XXXXXX
-export QA_AWS_SECRET_KEY = XXXXXX
-export QA_AWS_REGION = XXXXXX
-export QA_AWS_BUCKET = XXXXXX
-export QA_GCS_CRED_JSON = XXXXXX
+export QA_AWS_ACCESS_KEY=XXXXXX
+export QA_AWS_ENDPOINT=XXXXXX
+export QA_AWS_SECRET_KEY=XXXXXX
+export QA_AWS_REGION=XXXXXX
+export QA_AWS_BUCKET=XXXXXX
+export QA_GCS_CRED_JSON=XXXXXX
 EOT
 source /home/username/clickhouse-backup/test/testflows/.env
 ```
