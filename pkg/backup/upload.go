@@ -380,9 +380,9 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 				})
 			}
 		}
-		if err := g.Wait(); err != nil {
-			return nil, 0, fmt.Errorf("one of uploadTableData go-routine return error: %v", err)
-		}
+	}
+	if err := g.Wait(); err != nil {
+		return nil, 0, fmt.Errorf("one of uploadTableData go-routine return error: %v", err)
 	}
 	apexLog.Debugf("finish uploadTableData %s.%s with concurrency=%d len(table.Parts[...])=%d metadataFiles=%v, uploadedBytes=%v", table.Database, table.Table, b.cfg.General.UploadConcurrency, capacity, metadataFiles, uploadedBytes)
 	return metadataFiles, uploadedBytes, nil
