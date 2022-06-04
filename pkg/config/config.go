@@ -3,7 +3,6 @@ package config
 import (
 	"crypto/tls"
 	"fmt"
-	"github.com/urfave/cli"
 	"io/ioutil"
 	"math"
 	"os"
@@ -14,6 +13,7 @@ import (
 	"github.com/apex/log"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/kelseyhightower/envconfig"
+	"github.com/urfave/cli"
 	"gopkg.in/yaml.v2"
 )
 
@@ -358,6 +358,7 @@ func DefaultConfig() *Config {
 			CompressionFormat: "tar",
 			BufferSize:        0,
 			MaxBuffers:        3,
+			MaxPartsCount:     10000,
 		},
 		S3: S3Config{
 			Region:                  "us-east-1",
