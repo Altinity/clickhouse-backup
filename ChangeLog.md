@@ -1,3 +1,7 @@
+# v1.4.2
+BUG FIXES
+- fix `--partitions` parameter parsing, fix [425](https://github.com/AlexAkulov/clickhouse-backup/issues/425)
+
 # v1.4.1
 BUG FIXES
 - fix upload data go routines waiting, expect the same upload speed as 1.3.2

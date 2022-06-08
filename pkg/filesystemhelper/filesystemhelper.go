@@ -167,6 +167,9 @@ func CopyDataToDetached(backupName string, backupTable metadata.TableMetadata, d
 
 func IsPartInPartition(partName string, partitionsBackupMap common.EmptyMap) bool {
 	_, ok := partitionsBackupMap[strings.Split(partName, "_")[0]]
+	if !ok {
+		apexLog.Debugf("%v not in %v", strings.Split(partName, "_")[0], partitionsBackupMap)
+	}
 	return ok
 }
 
@@ -252,8 +255,11 @@ func CreatePartitionsToBackupMap(partitions []string) common.EmptyMap {
 		return make(common.EmptyMap, 0)
 	} else {
 		partitionsMap := common.EmptyMap{}
-		for _, partition := range partitions {
-			partitionsMap[partition] = struct{}{}
+		// to avoid use --partitions val1 --partitions val2, https://github.com/AlexAkulov/clickhouse-backup/issues/425#issuecomment-1149855063
+		for _, partitionArg := range partitions {
+			for _, partition := range strings.Split(partitionArg, ",") {
+				partitionsMap[strings.Trim(partition, " ")] = struct{}{}
+			}
 		}
 		return partitionsMap
 	}

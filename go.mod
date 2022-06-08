@@ -28,7 +28,7 @@ require (
 	github.com/prometheus/client_golang v1.11.0
 	github.com/stretchr/testify v1.7.1
 	github.com/tencentyun/cos-go-sdk-v5 v0.7.30
-	github.com/urfave/cli v1.22.5
+	github.com/urfave/cli v1.22.9
 	github.com/yargevad/filepathx v1.0.0
 	golang.org/x/crypto v0.0.0-20210817164053-32db794688a5
 	golang.org/x/mod v0.5.0

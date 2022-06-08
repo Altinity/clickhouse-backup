@@ -1039,6 +1039,10 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 
 	rand.Seed(time.Now().UnixNano())
 
+	// test for specified partitions backup
+	testBackupSpecifiedPartitions(r, ch)
+
+	// main test scenario
 	testBackupName := fmt.Sprintf("test_backup_%d", rand.Int())
 	incrementBackupName := fmt.Sprintf("increment_%d", rand.Int())
 
@@ -1129,8 +1133,6 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 		}
 
 	}
-	// test for specified partitions backup
-	testBackupSpecifiedPartition(r, ch)
 
 	// test end
 	log.Info("Clean after finish")
@@ -1543,8 +1545,8 @@ func installDebIfNotExists(r *require.Assertions, container, pkg string) {
 	))
 }
 
-func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
-	log.Info("testBackupSpecifiedPartition started")
+func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse) {
+	log.Info("testBackupSpecifiedPartitions started")
 
 	partitionBackupName := fmt.Sprintf("partition_backup_%d", rand.Int())
 	// Create table
@@ -1552,9 +1554,10 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 	ch.queryWithNoError(r, "CREATE TABLE default.t1 (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(dt) ORDER BY dt")
 	ch.queryWithNoError(r, "INSERT INTO default.t1 SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
 	ch.queryWithNoError(r, "INSERT INTO default.t1 SELECT '2022-01-02 00:00:00', number FROM numbers(10)")
+	ch.queryWithNoError(r, "INSERT INTO default.t1 SELECT '2022-01-03 00:00:00', number FROM numbers(10)")
 	// Backup
 
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables=default.t1", "--partitions=20220101", partitionBackupName))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables=default.t1", "--partitions=20220101,20220102", partitionBackupName))
 
 	// TRUNCATE TABLE
 	ch.queryWithNoError(r, "TRUNCATE table default.t1")
@@ -1562,25 +1565,25 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", partitionBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", partitionBackupName))
 
-	log.Debug("testBackupSpecifiedPartition begin check \n")
+	log.Debug("testBackupSpecifiedPartitions begin check \n")
 	// Check
 	var result []int
 
-	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM default.t1 where dt = '2022-01-01 00:00:00'"))
+	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM default.t1 WHERE dt IN ('2022-01-01 00:00:00','2022-01-02 00:00:00')"))
 
 	// Must have one value
-	log.Debugf("testBackupSpecifiedPartition result : '%v'", result)
-	log.Debugf("testBackupSpecifiedPartition result' length '%v'", len(result))
+	log.Debugf("testBackupSpecifiedPartitions result : '%v'", result)
+	log.Debugf("testBackupSpecifiedPartitions result' length '%v'", len(result))
 
 	r.Equal(1, len(result), "expect one row")
-	r.Equal(10, result[0], "expect count=10")
+	r.Equal(20, result[0], "expect count=20")
 
 	// Reset the result.
 	result = make([]int, 0)
-	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM default.t1 where dt != '2022-01-01 00:00:00'"))
+	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM default.t1 WHERE dt NOT IN ('2022-01-01 00:00:00','2022-01-02 00:00:00')"))
 
-	log.Debugf("testBackupSpecifiedPartition result : '%v'", result)
-	log.Debugf("testBackupSpecifiedPartition result' length '%d'", len(result))
+	log.Debugf("testBackupSpecifiedPartitions result : '%v'", result)
+	log.Debugf("testBackupSpecifiedPartitions result' length '%d'", len(result))
 	r.Equal(1, len(result), "expect one row")
 	r.Equal(0, result[0], "expect count=0")
 
@@ -1588,5 +1591,5 @@ func testBackupSpecifiedPartition(r *require.Assertions, ch *TestClickHouse) {
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", partitionBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", partitionBackupName))
 
-	log.Info("testBackupSpecifiedPartition finish")
+	log.Info("testBackupSpecifiedPartitions finish")
 }
