@@ -146,7 +146,6 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, partition
 
 	var tableMetas []metadata.TableTitle
 	partitionsToBackupMap := filesystemhelper.CreatePartitionsToBackupMap(partitions)
-	log.Infof("partitions=%v, len(partitions)=%v, partitionsToBackupMap=%v", partitions, len(partitions), partitionsToBackupMap)
 	for _, table := range tables {
 		log := log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Name))
 		if table.Skip {

@@ -167,9 +167,6 @@ func CopyDataToDetached(backupName string, backupTable metadata.TableMetadata, d
 
 func IsPartInPartition(partName string, partitionsBackupMap common.EmptyMap) bool {
 	_, ok := partitionsBackupMap[strings.Split(partName, "_")[0]]
-	if !ok {
-		apexLog.Debugf("%v not in %v", strings.Split(partName, "_")[0], partitionsBackupMap)
-	}
 	return ok
 }
 
