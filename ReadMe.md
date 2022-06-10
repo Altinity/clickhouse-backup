@@ -213,6 +213,7 @@ api:
   certificate_file: ""         # API_CERTIFICATE_FILE
   private_key_file: ""         # API_PRIVATE_KEY_FILE
   create_integration_tables: false # API_CREATE_INTEGRATION_TABLES
+  integration_tables_host: "" # API_INTEGRATION_TABLES_HOST, allow use DNS name to connect in `system.backup_list` and `system.backup_actions`
   allow_parallel: false        # API_ALLOW_PARALLEL, could allocate much memory and spawn go-routines, don't enable it if you not sure
 ```
 

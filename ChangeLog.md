@@ -1,3 +1,7 @@
+# v1.4.3
+IMPROVEMENTS
+- add `API_INTEGRATION_TABLES_HOST` option to allow use DNS name in integration tables system.backup_list, system.backup_actions
+
 # v1.4.2
 BUG FIXES
 - fix `--partitions` parameter parsing, fix [425](https://github.com/AlexAkulov/clickhouse-backup/issues/425)
