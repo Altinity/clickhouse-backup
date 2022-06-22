@@ -6,8 +6,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
-	"github.com/ClickHouse/clickhouse-go"
 	"io/ioutil"
 	"net/url"
 	"os"
@@ -380,7 +378,7 @@ func (ch *ClickHouse) FreezeTableOldWay(table *Table, name string) error {
 	var partitions []struct {
 		PartitionID string `db:"partition_id"`
 	}
-	q := fmt.Sprintf("SELECT DISTINCT partition_id FROM `system`.`parts` WHERE database='%s' AND table='%s'", table.Database, table.Name)
+	q := fmt.Sprintf("SELECT DISTINCT partition_id FROM `system`.`parts` WHERE database='%s' AND table='%s' %s", table.Database, table.Name, ch.Config.FreezeByPartWhere)
 	if err := ch.conn.Select(&partitions, q); err != nil {
 		return fmt.Errorf("can't get partitions for '%s.%s': %w", table.Database, table.Name, err)
 	}
