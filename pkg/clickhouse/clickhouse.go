@@ -17,9 +17,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
+	"github.com/ClickHouse/clickhouse-go"
 	"github.com/apex/log"
-
 	"github.com/jmoiron/sqlx"
 	"github.com/jmoiron/sqlx/reflectx"
 )
