@@ -1,3 +1,7 @@
+# v1.4.4
+IMPROVEMENTS
+- download and restore to default disk if disks not found on destination clickhouse server, fix [457](https://github.com/AlexAkulov/clickhouse-backup/issues/457)
+
 # v1.4.3
 IMPROVEMENTS
 - add `API_INTEGRATION_TABLES_HOST` option to allow use DNS name in integration tables system.backup_list, system.backup_actions

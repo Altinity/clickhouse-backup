@@ -157,7 +157,8 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		for _, t := range tableMetadataForDownload {
 			for disk := range t.Parts {
 				if _, diskExists := b.DiskToPathMap[disk]; !diskExists {
-					return fmt.Errorf("table '%s.%s' require disk '%s' that not found in clickhouse table system.disks, you can add nonexistent disks to disk_mapping config", t.Database, t.Table, disk)
+					b.DiskToPathMap[disk] = b.DiskToPathMap["default"]
+					log.Warnf("table '%s.%s' require disk '%s' that not found in clickhouse table system.disks, you can add nonexistent disks to `disk_mapping` in  `clickhouse` config section, data will download to %s", t.Database, t.Table, disk, b.DiskToPathMap["default"])
 				}
 			}
 		}
