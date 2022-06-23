@@ -1,3 +1,7 @@
+# v1.4.5
+IMPROVEMENTS
+- add `CLICKHOUSE_FREEZE_BY_PART_WHERE` option which allow freeze by part with WHERE condition, thanks @vahid-sohrabloo 
+
 # v1.4.4
 IMPROVEMENTS
 - download and restore to default disk if disks not found on destination clickhouse server, fix [457](https://github.com/AlexAkulov/clickhouse-backup/issues/457)

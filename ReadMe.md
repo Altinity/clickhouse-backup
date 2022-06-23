@@ -120,7 +120,8 @@ clickhouse:
     - INFORMATION_SCHEMA.*
     - information_schema.*
   timeout: 5m                  # CLICKHOUSE_TIMEOUT
-  freeze_by_part: false        # CLICKHOUSE_FREEZE_BY_PART
+  freeze_by_part: false        # CLICKHOUSE_FREEZE_BY_PART, allows freeze part by part instead of freeze the whole table
+  freeze_by_part_where: ""     # CLICKHOUSE_FREEZE_BY_PART_WHERE, allows parts filtering during freeze when freeze_by_part: true
   secure: false                # CLICKHOUSE_SECURE, use SSL encryption for connect
   skip_verify: false           # CLICKHOUSE_SKIP_VERIFY
   sync_replicated_tables: true # CLICKHOUSE_SYNC_REPLICATED_TABLES
