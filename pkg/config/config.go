@@ -32,6 +32,7 @@ type Config struct {
 	FTP        FTPConfig        `yaml:"ftp" envconfig:"_"`
 	SFTP       SFTPConfig       `yaml:"sftp" envconfig:"_"`
 	AzureBlob  AzureBlobConfig  `yaml:"azblob" envconfig:"_"`
+	Custom     CustomConfig     `yaml:"custom" envconfig:"_"`
 }
 
 // GeneralConfig - general setting section
@@ -141,6 +142,13 @@ type SFTPConfig struct {
 	CompressionLevel  int    `yaml:"compression_level" envconfig:"SFTP_COMPRESSION_LEVEL"`
 	Concurrency       int    `yaml:"concurrency" envconfig:"SFTP_CONCURRENCY"`
 	Debug             bool   `yaml:"debug" envconfig:"SFTP_DEBUG"`
+}
+
+// CustomConfig - custom CLI storage settings section
+type CustomConfig struct {
+	ListCommand     string `yaml:"list_command" envconfig:"CUSTOM_LIST_COMMAND"`
+	UploadCommand   string `yaml:"upload_command" envconfig:"CUSTOM_UPLOAD_COMMAND"`
+	DownloadCommand string `yaml:"download_command" envconfig:"CUSTOM_DOWNLOAD_COMMAND"`
 }
 
 // ClickHouseConfig - clickhouse settings section
