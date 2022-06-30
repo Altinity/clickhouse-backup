@@ -26,17 +26,18 @@ else
   export COMPOSE_FILE=docker-compose.yml
 fi
 
-docker-compose -f test/integration/${COMPOSE_FILE} down --remove-orphans
+CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+docker-compose -f ${CUR_DIR}/${COMPOSE_FILE} down --remove-orphans
 docker volume prune -f
 make clean
 make build-race
 if [[ "${COMPOSE_FILE}" == "docker-compose_advanced.yml" ]]; then
-  docker-compose -f test/integration/${COMPOSE_FILE} up -d minio mysql
+  docker-compose -f ${CUR_DIR}/${COMPOSE_FILE} up -d minio mysql
 else
-  docker-compose -f test/integration/${COMPOSE_FILE} up -d minio
+  docker-compose -f ${CUR_DIR}/${COMPOSE_FILE} up -d minio
 fi
 sleep 5
-docker-compose -f test/integration/${COMPOSE_FILE} exec minio mc alias list
+docker-compose -f ${CUR_DIR}/${COMPOSE_FILE} exec minio mc alias list
 
-docker-compose -f test/integration/${COMPOSE_FILE} up -d
-go test -timeout 30m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
+docker-compose -f ${CUR_DIR}/${COMPOSE_FILE} up -d
+go test -timeout 30m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v ${CUR_DIR}/integration_test.go

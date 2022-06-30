@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/custom"
 	"io"
 	"io/ioutil"
 	"os"
@@ -233,6 +234,9 @@ func getLocalBackup(cfg *config.Config, backupName string, disks []clickhouse.Di
 func GetRemoteBackups(cfg *config.Config, parseMetadata bool) ([]new_storage.Backup, error) {
 	if cfg.General.RemoteStorage == "none" {
 		return nil, fmt.Errorf("remote_storage is 'none'")
+	}
+	if cfg.General.RemoteStorage == "custom" {
+		return custom.List(cfg)
 	}
 	bd, err := new_storage.NewBackupDestination(cfg, false)
 	if err != nil {

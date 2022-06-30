@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/custom"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/filesystemhelper"
 	"io/ioutil"
 	"os"
@@ -57,7 +58,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		"operation": "download",
 	})
 	if b.cfg.General.RemoteStorage == "none" {
-		return fmt.Errorf("remote storage is 'none'")
+		return fmt.Errorf("general->remote_storage shall not be \"none\" for download, change you config or use REMOTE_STORAGE environment variable")
 	}
 	if backupName == "" {
 		_ = PrintRemoteBackups(b.cfg, "all")
@@ -77,6 +78,9 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
 	defer b.ch.Close()
+	if b.cfg.General.RemoteStorage == "custom" {
+		return custom.Download(b.cfg, backupName, tablePattern, partitions, schemaOnly)
+	}
 	if err := b.init(disks); err != nil {
 		return err
 	}

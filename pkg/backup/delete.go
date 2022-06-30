@@ -3,6 +3,7 @@ package backup
 import (
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/custom"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
 	"os"
 	"path"
@@ -114,8 +115,12 @@ func RemoveBackupLocal(cfg *config.Config, backupName string, disks []clickhouse
 func RemoveBackupRemote(cfg *config.Config, backupName string) error {
 	start := time.Now()
 	if cfg.General.RemoteStorage == "none" {
-		fmt.Println("RemoveBackupRemote aborted: RemoteStorage set to \"none\"")
-		return nil
+		err := fmt.Errorf("RemoveBackupRemote aborted: RemoteStorage set to \"none\"")
+		apexLog.Error(err.Error())
+		return err
+	}
+	if cfg.General.RemoteStorage == "custom" {
+		return custom.DeleteRemote(cfg, backupName)
 	}
 
 	bd, err := new_storage.NewBackupDestination(cfg, false)

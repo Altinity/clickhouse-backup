@@ -33,7 +33,7 @@ func (b *Backuper) init(disks []clickhouse.Disk) error {
 		diskMap[disk.Name] = disk.Path
 	}
 	b.DiskToPathMap = diskMap
-	if b.cfg.General.RemoteStorage != "none" {
+	if b.cfg.General.RemoteStorage != "none" && b.cfg.General.RemoteStorage != "custom" {
 		b.dst, err = new_storage.NewBackupDestination(b.cfg, true)
 		if err != nil {
 			return err

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/logcli"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -429,7 +430,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 	ch.queryWithNoError(r, "DROP USER test_rbac")
 
 	ch.chbackend.Close()
-	r.NoError(execCmd("docker-compose", "-f", os.Getenv("COMPOSE_FILE"), "restart", "clickhouse"))
+	r.NoError(utils.ExecCmd(180*time.Second, "docker-compose", "-f", os.Getenv("COMPOSE_FILE"), "restart", "clickhouse"))
 	ch.connectWithWait(r, 2*time.Second)
 
 	log.Info("download+restore RBAC")
@@ -440,7 +441,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 
 	// we can't restart clickhouse inside container, we need restart container
 	ch.chbackend.Close()
-	_, err := execCmdOut("docker", "restart", "clickhouse")
+	_, err := utils.ExecCmdOut(180*time.Second, "docker", "restart", "clickhouse")
 	r.NoError(err)
 	ch.connectWithWait(r, 2*time.Second)
 
@@ -1011,13 +1012,7 @@ func TestIntegrationSFTPAuthKey(t *testing.T) {
 	r := require.New(t)
 	r.NoError(dockerCP("config-sftp-auth-key.yaml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 
-	r.NoError(dockerCP("sftp/clickhouse-backup_rsa", "clickhouse:/id_rsa"))
-	r.NoError(dockerExec("clickhouse", "cp", "-vf", "/id_rsa", "/tmp/id_rsa"))
-	r.NoError(dockerExec("clickhouse", "chmod", "-v", "0600", "/tmp/id_rsa"))
-
-	r.NoError(dockerCP("sftp/clickhouse-backup_rsa.pub", "sshd:/root/.ssh/authorized_keys"))
-	r.NoError(dockerExec("sshd", "chown", "-v", "root:root", "/root/.ssh/authorized_keys"))
-	r.NoError(dockerExec("sshd", "chmod", "-v", "0600", "/root/.ssh/authorized_keys"))
+	uploadSSHKeys(r)
 
 	runMainIntegrationScenario(t, "SFTP")
 }
@@ -1026,6 +1021,43 @@ func TestIntegrationFTP(t *testing.T) {
 	r := require.New(t)
 	r.NoError(dockerCP("config-ftp.yaml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	runMainIntegrationScenario(t, "FTP")
+}
+
+func TestIntegrationCustom(t *testing.T) {
+	r := require.New(t)
+
+	for _, customType := range []string{"kopia", "restic", "rsync"} {
+		if customType == "rsync" {
+			uploadSSHKeys(r)
+			installDebIfNotExists(r, "clickhouse", "openssh-client")
+			installDebIfNotExists(r, "clickhouse", "rsync")
+			installDebIfNotExists(r, "clickhouse", "jq")
+		}
+		if customType == "restic" {
+			installDebIfNotExists(r, "clickhouse", "restic")
+			installDebIfNotExists(r, "clickhouse", "jq")
+		}
+		if customType == "kopia" {
+			r.NoError(dockerExec("clickhouse", "bash", "-c", "wget -qO- https://kopia.io/signing-key | gpg --dearmor -o /usr/share/keyrings/kopia-keyring.gpg"))
+			r.NoError(dockerExec("clickhouse", "bash", "-c", "echo 'deb [signed-by=/usr/share/keyrings/kopia-keyring.gpg] http://packages.kopia.io/apt/ stable main' > /etc/apt/sources.list.d/kopia.list"))
+			installDebIfNotExists(r, "clickhouse", "kopia")
+			installDebIfNotExists(r, "clickhouse", "jq")
+		}
+		r.NoError(dockerCP("config-custom-"+customType+".yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+		r.NoError(dockerExec("clickhouse", "mkdir", "-pv", "/custom/"+customType))
+		r.NoError(dockerCP("./"+customType+"/", "clickhouse:/custom/"))
+		runMainIntegrationScenario(t, "CUSTOM")
+	}
+}
+
+func uploadSSHKeys(r *require.Assertions) {
+	r.NoError(dockerCP("sftp/clickhouse-backup_rsa", "clickhouse:/id_rsa"))
+	r.NoError(dockerExec("clickhouse", "cp", "-vf", "/id_rsa", "/tmp/id_rsa"))
+	r.NoError(dockerExec("clickhouse", "chmod", "-v", "0600", "/tmp/id_rsa"))
+
+	r.NoError(dockerCP("sftp/clickhouse-backup_rsa.pub", "sshd:/root/.ssh/authorized_keys"))
+	r.NoError(dockerExec("sshd", "chown", "-v", "root:root", "/root/.ssh/authorized_keys"))
+	r.NoError(dockerExec("sshd", "chmod", "-v", "0600", "/root/.ssh/authorized_keys"))
 }
 
 func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
@@ -1136,7 +1168,11 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 
 	// test end
 	log.Info("Clean after finish")
-	fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, true)
+	if remoteStorageType == "CUSTOM" {
+		fullCleanup(r, ch, []string{}, true)
+	} else {
+		fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, true)
+	}
 }
 
 func fullCleanup(r *require.Assertions, ch *TestClickHouse, backupNames []string, checkDeleteErr bool) {
@@ -1254,12 +1290,12 @@ func (ch *TestClickHouse) connectWithWait(r *require.Assertions, sleepBefore tim
 	for i := 1; i < 11; i++ {
 		err := ch.connect()
 		if i == 10 {
-			r.NoError(execCmd("docker", "logs", "clickhouse"))
+			r.NoError(utils.ExecCmd(180*time.Second, "docker", "logs", "clickhouse"))
 			r.NoError(err)
 		}
 		if err != nil {
 			log.Warnf("clickhouse not ready %v, wait %d seconds", err, i*2)
-			r.NoError(execCmd("docker", "ps", "-a"))
+			r.NoError(utils.ExecCmd(180*time.Second, "docker", "ps", "-a"))
 			time.Sleep(time.Second * time.Duration(i*2))
 		} else {
 			if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") == 1 {
@@ -1470,21 +1506,7 @@ func dockerExec(container string, cmd ...string) error {
 func dockerExecOut(container string, cmd ...string) (string, error) {
 	dcmd := []string{"exec", container}
 	dcmd = append(dcmd, cmd...)
-	return execCmdOut("docker", dcmd...)
-}
-
-func execCmd(cmd string, args ...string) error {
-	out, err := execCmdOut(cmd, args...)
-	log.Info(out)
-	return err
-}
-
-func execCmdOut(cmd string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
-	log.Infof("%s %s", cmd, strings.Join(args, " "))
-	out, err := exec.CommandContext(ctx, cmd, args...).CombinedOutput()
-	cancel()
-	return string(out), err
+	return utils.ExecCmdOut(180*time.Second, "docker", dcmd...)
 }
 
 func dockerCP(src, dst string) error {
