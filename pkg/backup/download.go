@@ -133,7 +133,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	g, ctx := errgroup.WithContext(context.Background())
 	for i, t := range tablesForDownload {
 		if err := s.Acquire(ctx, 1); err != nil {
-			log.Errorf("can't acquire semaphore during Download: %v", err)
+			log.Errorf("can't acquire semaphore during Download metadata: %v", err)
 			break
 		}
 		log := log.WithField("table_metadata", fmt.Sprintf("%s.%s", t.Database, t.Table))
@@ -171,7 +171,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 				continue
 			}
 			if err := s.Acquire(ctx, 1); err != nil {
-				log.Errorf("can't acquire semaphore during Download: %v", err)
+				log.Errorf("can't acquire semaphore during Download table data: %v", err)
 				break
 			}
 			dataSize += tableMetadata.TotalBytes
@@ -232,7 +232,7 @@ func (b *Backuper) downloadTableMetadataIfNotExists(backupName string, log *apex
 	if _, err := tm.Load(metadataLocalFile); err == nil {
 		return tm, nil
 	}
-	tm, _, err := b.downloadTableMetadata(backupName, log.WithFields(apexLog.Fields{"operation": "downloadTableMetadataIfNotExists", "table_metadata_diff": fmt.Sprintf("%s.%s", tableTitle.Database, tableTitle.Table)}), tableTitle, false, nil)
+	tm, _, err := b.downloadTableMetadata(backupName, log.WithFields(apexLog.Fields{"operation": "downloadTableMetadataIfNotExists", "backupName": backupName, "table_metadata_diff": fmt.Sprintf("%s.%s", tableTitle.Database, tableTitle.Table)}), tableTitle, false, nil)
 	return tm, err
 }
 
