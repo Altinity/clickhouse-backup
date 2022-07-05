@@ -137,7 +137,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	g, ctx := errgroup.WithContext(context.Background())
 	for i, t := range tablesForDownload {
 		if err := s.Acquire(ctx, 1); err != nil {
-			log.Errorf("can't acquire semaphore during Download: %v", err)
+			log.Errorf("can't acquire semaphore during Download metadata: %v", err)
 			break
 		}
 		log := log.WithField("table_metadata", fmt.Sprintf("%s.%s", t.Database, t.Table))
@@ -175,7 +175,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 				continue
 			}
 			if err := s.Acquire(ctx, 1); err != nil {
-				log.Errorf("can't acquire semaphore during Download: %v", err)
+				log.Errorf("can't acquire semaphore during Download table data: %v", err)
 				break
 			}
 			dataSize += tableMetadata.TotalBytes
@@ -236,7 +236,7 @@ func (b *Backuper) downloadTableMetadataIfNotExists(backupName string, log *apex
 	if _, err := tm.Load(metadataLocalFile); err == nil {
 		return tm, nil
 	}
-	tm, _, err := b.downloadTableMetadata(backupName, log.WithFields(apexLog.Fields{"operation": "downloadTableMetadataIfNotExists", "table_metadata_diff": fmt.Sprintf("%s.%s", tableTitle.Database, tableTitle.Table)}), tableTitle, false, nil)
+	tm, _, err := b.downloadTableMetadata(backupName, log.WithFields(apexLog.Fields{"operation": "downloadTableMetadataIfNotExists", "backupName": backupName, "table_metadata_diff": fmt.Sprintf("%s.%s", tableTitle.Database, tableTitle.Table)}), tableTitle, false, nil)
 	return tm, err
 }
 
@@ -311,13 +311,15 @@ func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table
 			downloadOffset[disk] = 0
 		}
 		apexLog.Debugf("start downloadTableData %s.%s with concurrency=%d len(table.Files[...])=%d", table.Database, table.Table, b.cfg.General.DownloadConcurrency, capacity)
-		for common.SumMapValuesInt(downloadOffset) < capacity {
+		breakByError := false
+		for common.SumMapValuesInt(downloadOffset) < capacity && !breakByError {
 			for disk := range table.Files {
 				if downloadOffset[disk] >= len(table.Files[disk]) {
 					continue
 				}
 				if err := s.Acquire(ctx, 1); err != nil {
 					apexLog.Errorf("can't acquire semaphore during downloadTableData: %v", err)
+					breakByError = true
 					break
 				}
 				backupPath := b.DiskToPathMap[disk]
@@ -385,6 +387,7 @@ func (b *Backuper) downloadDiffParts(remoteBackup metadata.BackupMetadata, table
 	diffRemoteFilesLock := &sync.Mutex{}
 
 	for disk, parts := range table.Parts {
+		breakByError := false
 		for _, part := range parts {
 			newPath := path.Join(b.DiskToPathMap[disk], "backup", remoteBackup.BackupName, "shadow", dbAndTableDir, disk, part.Name)
 			if err := b.checkNewPath(newPath, part); err != nil {
@@ -401,6 +404,7 @@ func (b *Backuper) downloadDiffParts(remoteBackup metadata.BackupMetadata, table
 			if err != nil && os.IsNotExist(err) {
 				if err := s.Acquire(ctx, 1); err != nil {
 					log.Errorf("can't acquire semaphore during downloadDiffParts: %v", err)
+					breakByError = true
 					break
 				}
 				partForDownload := part
@@ -444,6 +448,9 @@ func (b *Backuper) downloadDiffParts(remoteBackup metadata.BackupMetadata, table
 					return fmt.Errorf("can't to add exists part: %v", err)
 				}
 			}
+		}
+		if breakByError {
+			break
 		}
 	}
 	if err := g.Wait(); err != nil {

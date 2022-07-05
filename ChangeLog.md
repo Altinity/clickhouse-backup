@@ -2,6 +2,10 @@
 IMPROVEMENTS
 - implements `remote_storage: custom`, which allow us to adopt any external backup system like restic, kopia, rsync, rclone etc. fix [383](https://github.com/AlexAkulov/clickhouse-backup/issues/383)
 
+# v1.4.6
+BUG FIXES
+- fix infinite loop `error can't acquire semaphore during Download: context canceled`, and `error can't acquire semaphore during Upload: context canceled` all 1.4.x users recommends upgrade to 1.4.6
+
 # v1.4.5
 IMPROVEMENTS
 - add `CLICKHOUSE_FREEZE_BY_PART_WHERE` option which allow freeze by part with WHERE condition, thanks @vahid-sohrabloo 
