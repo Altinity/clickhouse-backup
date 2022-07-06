@@ -539,7 +539,7 @@ func TestTablePatterns(t *testing.T) {
 	defer ch.chbackend.Close()
 
 	testBackupName := "test_backup_patterns"
-	databaseList := []string{dbNameOrdinary}
+	databaseList := []string{dbNameOrdinary, dbNameAtomic}
 	fullCleanup(r, ch, []string{testBackupName}, []string{"remote", "local"}, databaseList, false)
 	generateTestData(ch, r)
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
