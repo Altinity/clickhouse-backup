@@ -3,7 +3,7 @@ api:
   create_integration_tables: false
   enable_metrics: false
   enable_pprof: false
-  listen: backup:7171
+  listen: 0.0.0.0:7171
   password: ''
   private_key_file: ''
   secure: false
