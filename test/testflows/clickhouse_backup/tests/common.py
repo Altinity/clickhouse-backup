@@ -62,5 +62,5 @@ def wait_request_finalized(url: str):
     with Step("wait for the query to finalize"):
         r = api_request(endpoint=f"{url}/backup/status")
         while r.text and r.json()["status"] == "in progress":
-            r = api_request(endpoint=f"{url}/backup/status")
             time.sleep(1)
+            r = api_request(endpoint=f"{url}/backup/status")
