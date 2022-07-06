@@ -109,8 +109,6 @@ services:
     hostname: backup
     ports:
       - "7171:7171"
-    expose:
-      - "7171"
     environment:
       - DEBIAN_FRONTEND=noninteractive
       - GCS_CREDENTIALS_JSON=${QA_GCS_CRED_JSON}
