@@ -1,3 +1,34 @@
+# v1.4.7
+IMPROVEMENTS
+- PROPERLY restore to default disk if disks not found on destination clickhouse server, fix [457](https://github.com/AlexAkulov/clickhouse-backup/issues/457)
+
+# v1.4.6
+BUG FIXES
+- fix infinite loop `error can't acquire semaphore during Download: context canceled`, and `error can't acquire semaphore during Upload: context canceled` all 1.4.x users recommends upgrade to 1.4.6
+
+# v1.4.5
+IMPROVEMENTS
+- add `CLICKHOUSE_FREEZE_BY_PART_WHERE` option which allow freeze by part with WHERE condition, thanks @vahid-sohrabloo 
+
+# v1.4.4
+IMPROVEMENTS
+- download and restore to default disk if disks not found on destination clickhouse server, fix [457](https://github.com/AlexAkulov/clickhouse-backup/issues/457)
+
+# v1.4.3
+IMPROVEMENTS
+- add `API_INTEGRATION_TABLES_HOST` option to allow use DNS name in integration tables system.backup_list, system.backup_actions
+
+BUG FIXES
+- fix `upload_by_part: false` max file size calculation, fix [454](https://github.com/AlexAkulov/clickhouse-backup/issues/454)
+
+# v1.4.2
+BUG FIXES
+- fix `--partitions` parameter parsing, fix [425](https://github.com/AlexAkulov/clickhouse-backup/issues/425)
+
+# v1.4.1
+BUG FIXES
+- fix upload data go routines waiting, expect the same upload speed as 1.3.2
+
 # v1.4.0
 IMPROVEMENTS
 - add `S3_ALLOW_MULTIPART_DOWNLOAD` to config, to improve download speed, fix [431](https://github.com/AlexAkulov/clickhouse-backup/issues/431)

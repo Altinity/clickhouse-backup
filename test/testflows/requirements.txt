@@ -1,6 +1,5 @@
-testflows==1.7.77
+testflows==1.9.9
 requests
-docker>=5.0.0
 docker>=5.0.0
 docker-compose>=1.29.1
 setuptools

@@ -3,7 +3,6 @@ package config
 import (
 	"crypto/tls"
 	"fmt"
-	"github.com/urfave/cli"
 	"io/ioutil"
 	"math"
 	"os"
@@ -14,6 +13,7 @@ import (
 	"github.com/apex/log"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/kelseyhightower/envconfig"
+	"github.com/urfave/cli"
 	"gopkg.in/yaml.v2"
 )
 
@@ -154,6 +154,7 @@ type ClickHouseConfig struct {
 	SkipTables                       []string          `yaml:"skip_tables" envconfig:"CLICKHOUSE_SKIP_TABLES"`
 	Timeout                          string            `yaml:"timeout" envconfig:"CLICKHOUSE_TIMEOUT"`
 	FreezeByPart                     bool              `yaml:"freeze_by_part" envconfig:"CLICKHOUSE_FREEZE_BY_PART"`
+	FreezeByPartWhere                string            `yaml:"freeze_by_part_where" envconfig:"CLICKHOUSE_FREEZE_BY_PART_WHERE"`
 	Secure                           bool              `yaml:"secure" envconfig:"CLICKHOUSE_SECURE"`
 	SkipVerify                       bool              `yaml:"skip_verify" envconfig:"CLICKHOUSE_SKIP_VERIFY"`
 	SyncReplicatedTables             bool              `yaml:"sync_replicated_tables" envconfig:"CLICKHOUSE_SYNC_REPLICATED_TABLES"`
@@ -177,6 +178,7 @@ type APIConfig struct {
 	CertificateFile         string `yaml:"certificate_file" envconfig:"API_CERTIFICATE_FILE"`
 	PrivateKeyFile          string `yaml:"private_key_file" envconfig:"API_PRIVATE_KEY_FILE"`
 	CreateIntegrationTables bool   `yaml:"create_integration_tables" envconfig:"API_CREATE_INTEGRATION_TABLES"`
+	IntegrationTablesHost   string `yaml:"integration_tables_host" envconfig:"API_INTEGRATION_TABLES_HOST"`
 	AllowParallel           bool   `yaml:"allow_parallel" envconfig:"API_ALLOW_PARALLEL"`
 }
 
@@ -359,6 +361,7 @@ func DefaultConfig() *Config {
 			CompressionFormat: "tar",
 			BufferSize:        0,
 			MaxBuffers:        3,
+			MaxPartsCount:     10000,
 		},
 		S3: S3Config{
 			Region:                  "us-east-1",

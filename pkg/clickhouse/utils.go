@@ -37,24 +37,38 @@ func fieldsByTraversal(v reflect.Value, traversals [][]int, values []interface{}
 	return nil
 }
 
-func getDiskByPath(disks []Disk, dataPath string) string {
-	resultDisk := Disk{}
+func getDisksByPath(disks []Disk, dataPath string) []string {
+	resultDisks := []Disk{}
 	for _, disk := range disks {
-		if strings.HasPrefix(dataPath, disk.Path) && len(disk.Path) > len(resultDisk.Path) {
-			resultDisk = disk
+		if strings.HasPrefix(dataPath, disk.Path) {
+			if len(resultDisks) == 0 {
+				resultDisks = append(resultDisks, disk)
+			} else {
+				if len(disk.Path) > len(resultDisks[len(resultDisks)-1].Path) {
+					resultDisks[len(resultDisks)-1] = disk
+				} else if disk.Name != resultDisks[len(resultDisks)-1].Name && len(disk.Path) == len(resultDisks[len(resultDisks)-1].Path) {
+					resultDisks = append(resultDisks, disk)
+				}
+			}
 		}
 	}
-	if resultDisk.Name == "" {
-		return "unknown"
+	if len(resultDisks) == 0 {
+		return []string{"default"}
 	} else {
-		return resultDisk.Name
+		result := make([]string, len(resultDisks))
+		for i, disk := range resultDisks {
+			result[i] = disk.Name
+		}
+		return result
 	}
 }
 
 func GetDisksByPaths(disks []Disk, dataPaths []string) map[string]string {
 	result := map[string]string{}
 	for _, dataPath := range dataPaths {
-		result[getDiskByPath(disks, dataPath)] = dataPath
+		for _, disk := range getDisksByPath(disks, dataPath) {
+			result[disk] = dataPath
+		}
 	}
 	return result
 }

@@ -6,8 +6,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
-	"github.com/ClickHouse/clickhouse-go"
 	"io/ioutil"
 	"net/url"
 	"os"
@@ -19,9 +17,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
+	"github.com/ClickHouse/clickhouse-go"
 	"github.com/apex/log"
-
 	"github.com/jmoiron/sqlx"
 	"github.com/jmoiron/sqlx/reflectx"
 )
@@ -380,7 +379,7 @@ func (ch *ClickHouse) FreezeTableOldWay(table *Table, name string) error {
 	var partitions []struct {
 		PartitionID string `db:"partition_id"`
 	}
-	q := fmt.Sprintf("SELECT DISTINCT partition_id FROM `system`.`parts` WHERE database='%s' AND table='%s'", table.Database, table.Name)
+	q := fmt.Sprintf("SELECT DISTINCT partition_id FROM `system`.`parts` WHERE database='%s' AND table='%s' %s", table.Database, table.Name, ch.Config.FreezeByPartWhere)
 	if err := ch.conn.Select(&partitions, q); err != nil {
 		return fmt.Errorf("can't get partitions for '%s.%s': %w", table.Database, table.Name, err)
 	}
@@ -804,7 +803,7 @@ func CalculateMaxFileSize(cfg *config.Config) (int64, error) {
 	rows := make([]int64, 0)
 	maxSizeQuery := "SELECT max(toInt64(bytes_on_disk * 1.02)) AS max_file_size FROM system.parts"
 	if !cfg.General.UploadByPart {
-		maxSizeQuery = "SELECT max(data_by_disk) AS max_file_size FROM (SELECT disk_name, max(toInt64(bytes_on_disk)) FROM system.parts GROUP BY disk_name)"
+		maxSizeQuery = "SELECT toInt64(max(data_by_disk) * 1.02) AS max_file_size FROM (SELECT disk_name, max(toInt64(bytes_on_disk)) data_by_disk FROM system.parts GROUP BY disk_name)"
 	}
 
 	if err := ch.Select(&rows, maxSizeQuery); err != nil {

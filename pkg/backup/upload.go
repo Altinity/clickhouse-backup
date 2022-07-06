@@ -92,7 +92,7 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 
 	for i, table := range tablesForUpload {
 		if err := s.Acquire(ctx, 1); err != nil {
-			log.Errorf("can't acquire semaphore during Upload: %v", err)
+			log.Errorf("can't acquire semaphore during Upload table: %v", err)
 			break
 		}
 		start := time.Now()
@@ -330,13 +330,15 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 		splittedPartsOffset[disk] = 0
 		splittedPartsCapacity += len(splittedPartsList)
 	}
-	for common.SumMapValuesInt(splittedPartsOffset) < splittedPartsCapacity {
+	breakByError := false
+	for common.SumMapValuesInt(splittedPartsOffset) < splittedPartsCapacity && !breakByError {
 		for disk := range table.Parts {
 			if splittedPartsOffset[disk] >= len(splittedParts[disk]) {
 				continue
 			}
 			if err := s.Acquire(ctx, 1); err != nil {
-				apexLog.Errorf("can't acquire semaphore during Upload: %v", err)
+				apexLog.Errorf("can't acquire semaphore during Upload data parts: %v", err)
+				breakByError = true
 				break
 			}
 			backupPath := path.Join(b.DiskToPathMap[disk], "backup", backupName, "shadow", dbAndTablePath, disk)
@@ -380,9 +382,9 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 				})
 			}
 		}
-		if err := g.Wait(); err != nil {
-			return nil, 0, fmt.Errorf("one of uploadTableData go-routine return error: %v", err)
-		}
+	}
+	if err := g.Wait(); err != nil {
+		return nil, 0, fmt.Errorf("one of uploadTableData go-routine return error: %v", err)
 	}
 	apexLog.Debugf("finish uploadTableData %s.%s with concurrency=%d len(table.Parts[...])=%d metadataFiles=%v, uploadedBytes=%v", table.Database, table.Table, b.cfg.General.UploadConcurrency, capacity, metadataFiles, uploadedBytes)
 	return metadataFiles, uploadedBytes, nil

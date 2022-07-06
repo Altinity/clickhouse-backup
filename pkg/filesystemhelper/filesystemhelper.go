@@ -253,8 +253,11 @@ func CreatePartitionsToBackupMap(partitions []string) common.EmptyMap {
 		return make(common.EmptyMap, 0)
 	} else {
 		partitionsMap := common.EmptyMap{}
-		for _, partition := range partitions {
-			partitionsMap[partition] = struct{}{}
+		// to avoid use --partitions val1 --partitions val2, https://github.com/AlexAkulov/clickhouse-backup/issues/425#issuecomment-1149855063
+		for _, partitionArg := range partitions {
+			for _, partition := range strings.Split(partitionArg, ",") {
+				partitionsMap[strings.Trim(partition, " ")] = struct{}{}
+			}
 		}
 		return partitionsMap
 	}

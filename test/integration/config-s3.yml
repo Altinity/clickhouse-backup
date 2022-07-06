@@ -32,4 +32,5 @@ s3:
 api:
   listen: :7171
   create_integration_tables: true
+  integration_tables_host: "localhost"
   allow_parallel: true
