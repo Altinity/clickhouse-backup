@@ -32,7 +32,7 @@ func Restore(cfg *config.Config, backupName, tablePattern string, databaseMappin
 		for _, m := range splitByCommas {
 			splitByColon := strings.Split(m, ":")
 			if len(splitByColon) != 2 {
-				return fmt.Errorf("restore-database-mapping %s should only have srcDatabase:destinationDatabase format for each map rule")
+				return fmt.Errorf("restore-database-mapping %s should only have srcDatabase:destinationDatabase format for each map rule", m)
 			}
 			cfg.General.RestoreDatabaseMapping[splitByColon[0]] = splitByColon[1]
 		}
