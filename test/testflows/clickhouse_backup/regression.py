@@ -61,9 +61,9 @@ def regression(self, local):
 
         Scenario(run=load("clickhouse_backup.tests.smoke", "smoke"), flags=TE)
 
-        Scenario(run=load("clickhouse_backup.tests.generic", "generic"))
         Scenario(run=load("clickhouse_backup.tests.api", "api"))
         Scenario(run=load("clickhouse_backup.tests.cli", "cli"))
+        Scenario(run=load("clickhouse_backup.tests.generic", "generic"))
         Scenario(run=load("clickhouse_backup.tests.other_engines", "other_engines"))
         Scenario(run=load("clickhouse_backup.tests.cloud_storage", "cloud_storage"))
         Scenario(run=load("clickhouse_backup.tests.views", "views"))
