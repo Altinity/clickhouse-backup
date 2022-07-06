@@ -231,9 +231,9 @@ func main() {
 		{
 			Name:      "restore",
 			Usage:     "Create schema and restore data from backup",
-			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-disk-mapping=<originDB>:<targetDB>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [--rbac] [--configs] <backup_name>",
+			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [--rbac] [--configs] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return backup.Restore(config.GetConfig(c), c.Args().First(), c.String("t"), c.StringSlice("map"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("rbac"), c.Bool("configs"))
+				return backup.Restore(config.GetConfig(c), c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("rbac"), c.Bool("configs"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -242,8 +242,8 @@ func main() {
 					Hidden: false,
 				},
 				cli.StringSliceFlag{
-					Name: "map, restore-database-mapping, m",
-					Usage: "Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.",
+					Name:   "restore-database-mapping, m",
+					Usage:  "Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.",
 					Hidden: false,
 				},
 				cli.StringSliceFlag{
@@ -281,10 +281,10 @@ func main() {
 		{
 			Name:      "restore_remote",
 			Usage:     "Download and restore",
-			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-disk-mapping=<originDB>:<targetDB>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [--rbac] [--configs] [--skip-rbac] [--skip-configs] <backup_name>",
+			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [--rbac] [--configs] [--skip-rbac] [--skip-configs] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfig(c))
-				return b.RestoreFromRemote(c.Args().First(), c.String("t"), c.StringSlice("map"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("rbac"), c.Bool("configs"))
+				return b.RestoreFromRemote(c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("rbac"), c.Bool("configs"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -293,8 +293,8 @@ func main() {
 					Hidden: false,
 				},
 				cli.StringSliceFlag{
-					Name: "map, restore-database-mapping, m",
-					Usage: "Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.",
+					Name:   "restore-database-mapping, m",
+					Usage:  "Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.",
 					Hidden: false,
 				},
 				cli.StringSliceFlag{

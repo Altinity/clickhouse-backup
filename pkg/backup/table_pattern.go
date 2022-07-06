@@ -3,6 +3,7 @@ package backup
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
 	"io"
 	"io/ioutil"
 	"net/url"
@@ -111,55 +112,37 @@ func getTableListByPatternLocal(metadataPath string, tablePattern string, skipTa
 	return result, nil
 }
 
-func getTableListByRestoreDatabaseMappingRule(originTables *ListOfTables, dbMapRule map[string]string) error {
-	result := ListOfTables{}
-	dbMetaMap := make(map[string]metadata.TableMetadata, 0)
+var queryRE = regexp.MustCompile(`(?m)^(CREATE|ATTACH) (TABLE|VIEW|MATERIALIZED VIEW|DICTIONARY|FUNCTION) ([\x60]?)([^\s\x60\.]*)([\x60]?)\.([^\s\x60\.]*)(?:( TO )([\x60]?)([^\s\x60\.]*)([\x60]?)(\.))?`)
+var createRE = regexp.MustCompile(`(?m)^CREATE`)
+var attachRE = regexp.MustCompile(`(?m)^ATTACH`)
+var uuidRE = regexp.MustCompile(`UUID '[a-f\d\-]+'`)
+
+func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRule map[string]string) error {
 	for i := 0; i < len(*originTables); i++ {
-		table := (*originTables)[i]
-		dbMetaMap[table.Database] = table
-	}
-	for i := 0; i < len(*originTables); i++ {
-		originDBMeta := (*originTables)[i]
-		if targetDB, ok := dbMapRule[originDBMeta.Database]; ok {
+		originTable := (*originTables)[i]
+		if targetDB, isMapped := dbMapRule[originTable.Database]; isMapped {
 			// substitute database in the table create query
-			regExp := regexp.MustCompile(`(?m)^(CREATE|ATTACH) (TABLE|VIEW|MATERIALIZED VIEW|DICTiONARY|FUNCTION) ([\x60]?)([^\s\x60\.]*)([\x60]?)\.([^\s\x60\.]*)(?:( TO )([\x60]?)([^\s\x60\.]*)([\x60]?)(\.))?`)
 			var substitution string
 
-			if len(regexp.MustCompile(`(?m)^CREATE`).FindAllString(originDBMeta.Query, -1)) > 0 {
+			if len(createRE.FindAllString(originTable.Query, -1)) > 0 {
 				// matching CREATE... command
 				substitution = fmt.Sprintf("${1} ${2} ${3}%v${5}.${6}", targetDB)
-			} else if len(regexp.MustCompile(`(?m)^ATTACH`).FindAllString(originDBMeta.Query, -1)) > 0 {
+			} else if len(attachRE.FindAllString(originTable.Query, -1)) > 0 {
 				// matching ATTACH...TO... command
 				substitution = fmt.Sprintf("${1} ${2} ${3}%v${5}.${6}${7}${8}%v${11}", targetDB, targetDB)
 			} else {
-				return fmt.Errorf("there is an error when substituting the default database in query, try to open an issue on Github and we will fix it :)")
+				return fmt.Errorf("error when try to replace database `%s` to `%s` in query: %s", originTable.Database, targetDB, originTable.Query)
 			}
-
-			originDBMeta.Query = regExp.ReplaceAllString(originDBMeta.Query, substitution)
-			originDBMeta.Database = targetDB
-			result = append(result, originDBMeta)
-		}
-		// FIXME: Need to optimize
-		for i, table := range *originTables {
-			// substitute database of table.Parts[dbName]dbInfo
-			keys := make([]string, 0, len(dbMapRule))
-			for k := range dbMapRule {
-				keys = append(keys, k)
+			originTable.Query = queryRE.ReplaceAllString(originTable.Query, substitution)
+			originTable.Database = targetDB
+			if len(uuidRE.FindAllString(originTable.Query, -1)) > 0 {
+				newUUID, _ := uuid.NewUUID()
+				substitution = fmt.Sprintf("UUID '%s'", newUUID.String())
+				originTable.Query = uuidRE.ReplaceAllString(originTable.Query, substitution)
 			}
-
-			for _, key := range keys {
-				if _, ok := table.Parts[key]; ok {
-					(*originTables)[i].Parts[dbMapRule[key]] = (*originTables)[i].Parts[key]
-					delete((*originTables)[i].Parts, key)
-				}
-			}
+			(*originTables)[i] = originTable
 		}
 	}
-	if len(result) == 0 {
-		return fmt.Errorf("no datababse/schema matched in restore-database-mapping rules")
-	}
-
-	*originTables = result
 	return nil
 }
 

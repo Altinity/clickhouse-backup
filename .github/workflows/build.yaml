@@ -216,7 +216,7 @@ jobs:
           # FTP_DEBUG: "true"
           CGO_ENABLED: 0
           GCS_TESTS: ${{ needs.build.outputs.GCS_TESTS }}
-          # RUN_ADVANCED_TESTS: 1
+          RUN_ADVANCED_TESTS: 1
         run: |
           set -x
           echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"

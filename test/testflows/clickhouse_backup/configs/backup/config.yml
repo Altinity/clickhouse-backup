@@ -67,14 +67,11 @@ general:
   backups_to_keep_local: 0
   backups_to_keep_remote: 0
   disable_progress_bar: false
-  download_concurrency: 1
+  download_concurrency: 2
   log_level: info
   max_file_size: 107374182400
   remote_storage: none
-  upload_concurrency: 1
-  restore_database_mapping: 
-    default: default
-    test: test
+  upload_concurrency: 2
 s3:
   access_key: access-key
   acl: private

@@ -103,18 +103,13 @@ func MkdirAll(path string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk) e
 }
 
 // CopyDataToDetached - copy partitions for specific table to detached folder
-func CopyDataToDetached(backupName string, backupTable metadata.TableMetadata, disks []clickhouse.Disk, tableDataPaths []string, ch *clickhouse.ClickHouse, dbMapRule map[string]string) error {
+func CopyDataToDetached(backupName string, backupTable metadata.TableMetadata, disks []clickhouse.Disk, tableDataPaths []string, ch *clickhouse.ClickHouse) error {
 	// TODO: check when disk exists in backup, but miss in ClickHouse
 	dstDataPaths := clickhouse.GetDisksByPaths(disks, tableDataPaths)
 	log := apexLog.WithFields(apexLog.Fields{"operation": "CopyDataToDetached"})
 	start := time.Now()
 	for _, backupDisk := range disks {
 		backupDiskName := backupDisk.Name
-		if len(dbMapRule) > 0 {
-			if name, ok := dbMapRule[backupDisk.Name]; ok {
-				backupDiskName = name
-			}
-		}
 		if len(backupTable.Parts[backupDiskName]) == 0 {
 			log.Debugf("%s disk have no parts", backupDisk.Name)
 			continue
