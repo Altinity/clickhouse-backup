@@ -374,8 +374,22 @@ func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName strin
 	for _, t := range tablesForRestore {
 		for disk := range t.Parts {
 			if _, diskExists := diskMap[disk]; !diskExists {
-				diskMap[disk] = diskMap["default"]
 				log.Warnf("table '%s.%s' require disk '%s' that not found in clickhouse table system.disks, you can add nonexistent disks to `disk_mapping` in  `clickhouse` config section, data will restored to %s", t.Database, t.Table, disk, diskMap["default"])
+				newDisk := clickhouse.Disk{
+					Name: disk,
+					Path: diskMap["default"],
+					Type: "local",
+				}
+				found := false
+				for _, d := range disks {
+					if d.Name == disk {
+						found = true
+						break
+					}
+				}
+				if !found {
+					disks = append(disks, newDisk)
+				}
 			}
 		}
 	}
