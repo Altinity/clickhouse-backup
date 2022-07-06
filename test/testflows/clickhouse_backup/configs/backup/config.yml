@@ -55,6 +55,7 @@ ftp:
   timeout: 2m
   tls: false
   username: aztest
+  concurrency: 2
 gcs:
   bucket: altinity-qa-test
   compression_format: tar
