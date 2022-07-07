@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/custom"
 	"io/ioutil"
 	"os"
 	"path"
@@ -31,6 +32,9 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	var disks []clickhouse.Disk
 	if err = b.validateUploadParams(backupName, diffFrom, diffFromRemote); err != nil {
 		return err
+	}
+	if b.cfg.General.RemoteStorage == "custom" {
+		return custom.Upload(b.cfg, backupName, diffFrom, diffFromRemote, tablePattern, partitions, schemaOnly)
 	}
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
@@ -245,7 +249,7 @@ func (b *Backuper) getTablesForUploadDiffRemote(diffFromRemote string, backupMet
 
 func (b *Backuper) validateUploadParams(backupName string, diffFrom string, diffFromRemote string) error {
 	if b.cfg.General.RemoteStorage == "none" {
-		return fmt.Errorf("general->remote_storage shall not be \"none\", change you config or use REMOTE_STORAGE environment variable")
+		return fmt.Errorf("general->remote_storage shall not be \"none\" for upload, change you config or use REMOTE_STORAGE environment variable")
 	}
 	if backupName == "" {
 		_ = PrintLocalBackups(b.cfg, "all")

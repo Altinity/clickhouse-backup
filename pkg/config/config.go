@@ -32,6 +32,7 @@ type Config struct {
 	FTP        FTPConfig        `yaml:"ftp" envconfig:"_"`
 	SFTP       SFTPConfig       `yaml:"sftp" envconfig:"_"`
 	AzureBlob  AzureBlobConfig  `yaml:"azblob" envconfig:"_"`
+	Custom     CustomConfig     `yaml:"custom" envconfig:"_"`
 }
 
 // GeneralConfig - general setting section
@@ -144,6 +145,16 @@ type SFTPConfig struct {
 	Debug             bool   `yaml:"debug" envconfig:"SFTP_DEBUG"`
 }
 
+// CustomConfig - custom CLI storage settings section
+type CustomConfig struct {
+	UploadCommand          string `yaml:"upload_command" envconfig:"CUSTOM_UPLOAD_COMMAND"`
+	DownloadCommand        string `yaml:"download_command" envconfig:"CUSTOM_DOWNLOAD_COMMAND"`
+	ListCommand            string `yaml:"list_command" envconfig:"CUSTOM_LIST_COMMAND"`
+	DeleteCommand          string `yaml:"delete_command" envconfig:"CUSTOM_DELETE_COMMAND"`
+	CommandTimeout         string `yaml:"command_timeout" envconfig:"CUSTOM_COMMAND_TIMEOUT"`
+	CommandTimeoutDuration time.Duration
+}
+
 // ClickHouseConfig - clickhouse settings section
 type ClickHouseConfig struct {
 	Username                         string            `yaml:"username" envconfig:"CLICKHOUSE_USERNAME"`
@@ -228,7 +239,7 @@ func (cfg *Config) GetCompressionFormat() string {
 		return cfg.SFTP.CompressionFormat
 	case "azblob":
 		return cfg.AzureBlob.CompressionFormat
-	case "none":
+	case "none", "custom":
 		return "tar"
 	default:
 		return "unknown"
@@ -272,13 +283,13 @@ func ValidateConfig(cfg *Config) error {
 		return fmt.Errorf("'%s' is unsupported compression format", cfg.GetCompressionFormat())
 	}
 	if _, err := time.ParseDuration(cfg.ClickHouse.Timeout); err != nil {
-		return err
+		return fmt.Errorf("invalid clickhouse timeout: %v", err)
 	}
 	if _, err := time.ParseDuration(cfg.COS.Timeout); err != nil {
-		return err
+		return fmt.Errorf("invalid cos timeout: %v", err)
 	}
 	if _, err := time.ParseDuration(cfg.FTP.Timeout); err != nil {
-		return err
+		return fmt.Errorf("invalid ftp timeout: %v", err)
 	}
 	storageClassOk := false
 	for _, storageClass := range s3.StorageClass_Values() {
@@ -302,6 +313,15 @@ func ValidateConfig(cfg *Config) error {
 		if err != nil {
 			return err
 		}
+	}
+	if cfg.Custom.CommandTimeout != "" {
+		if duration, err := time.ParseDuration(cfg.Custom.CommandTimeout); err != nil {
+			return fmt.Errorf("invalid custom command timeout: %v", err)
+		} else {
+			cfg.Custom.CommandTimeoutDuration = duration
+		}
+	} else {
+		return fmt.Errorf("empty custom command timeout")
 	}
 	return nil
 }
@@ -405,6 +425,10 @@ func DefaultConfig() *Config {
 			CompressionFormat: "tar",
 			CompressionLevel:  1,
 			Concurrency:       1,
+		},
+		Custom: CustomConfig{
+			CommandTimeout:         "4h",
+			CommandTimeoutDuration: 4 * time.Hour,
 		},
 	}
 }

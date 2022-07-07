@@ -1,10 +1,12 @@
-FROM alpine:3.15
+FROM clickhouse/clickhouse-server:latest
 ARG TARGETPLATFORM
 
-RUN addgroup -S -g 101 clickhouse \
-    && adduser -S -h /var/lib/clickhouse -s /bin/bash -G clickhouse -g "ClickHouse server" -u 101 clickhouse
-
-RUN apk update && apk add --no-cache ca-certificates tzdata bash curl && update-ca-certificates
+RUN wget -qO- https://kopia.io/signing-key | gpg --dearmor -o /usr/share/keyrings/kopia-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/kopia-keyring.gpg] http://packages.kopia.io/apt/ stable main" > /etc/apt/sources.list.d/kopia.list && \
+    apt-get update -y && \
+    apt-get install -y ca-certificates tzdata bash curl restic rsync rclone jq gpg && \
+    update-ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && rm -rf /var/cache/apt/*
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

@@ -1,8 +1,10 @@
 package utils
 
 import (
+	"context"
 	"fmt"
 	"github.com/apex/log"
+	"os/exec"
 	"strings"
 	"time"
 )
@@ -52,4 +54,18 @@ func HumanizeDuration(d time.Duration) string {
 		log.Warnf("HumanizeDuration error: %v", err)
 	}
 	return b.String()
+}
+
+func ExecCmd(timeout time.Duration, cmd string, args ...string) error {
+	out, err := ExecCmdOut(timeout, cmd, args...)
+	log.Info(out)
+	return err
+}
+
+func ExecCmdOut(timeout time.Duration, cmd string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	log.Infof("%s %s", cmd, strings.Join(args, " "))
+	out, err := exec.CommandContext(ctx, cmd, args...).CombinedOutput()
+	cancel()
+	return string(out), err
 }

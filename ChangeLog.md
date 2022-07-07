@@ -1,3 +1,7 @@
+# v2.0.0
+IMPROVEMENTS
+- implements `remote_storage: custom`, which allow us to adopt any external backup system like restic, kopia, rsync, rclone etc. fix [383](https://github.com/AlexAkulov/clickhouse-backup/issues/383)
+
 # v1.4.7
 IMPROVEMENTS
 - PROPERLY restore to default disk if disks not found on destination clickhouse server, fix [457](https://github.com/AlexAkulov/clickhouse-backup/issues/457)

@@ -16,10 +16,8 @@ Tool for easy ClickHouse backup and restore with cloud storages support
 - Works with AWS, GCS, Azure, Tencent COS, FTP, SFTP
 - **Support of Atomic Database Engine**
 - **Support of multi disks installations**
+- **Support for any custom remote storage like rclone, kopia, restic**
 - Support of incremental backups on remote storages
-
-TODO:
-- Smart restore for replicated tables
 
 ## Limitations
 
@@ -61,7 +59,7 @@ USAGE:
    clickhouse-backup <command> [-t, --tables=<db>.<table>] <backup_name>
 
 VERSION:
-   1.0.0
+   2.0.0
 
 DESCRIPTION:
    Run as 'root' or 'clickhouse' user
@@ -205,6 +203,12 @@ sftp:
   compression_format: tar      # SFTP_COMPRESSION_FORMAT
   compression_level: 1         # SFTP_COMPRESSION_LEVEL
   debug: false                 # SFTP_DEBUG
+custom:  
+  upload_command: ""           # CUSTOM_UPLOAD_COMMAND
+  download_command: ""         # CUSTOM_DOWNLOAD_COMMAND
+  delete_command: ""           # CUSTOM_DELETE_COMMAND
+  list_command: ""             # CUSTOM_LIST_COMMAND
+  command_timeout: "4h"          # CUSTOM_COMMAND_TIMEOUT
 api:
   listen: "localhost:7171"     # API_LISTEN
   enable_metrics: true         # API_ENABLE_METRICS
@@ -230,6 +234,12 @@ High value for `S3_CONCURRENCY` and high value for `S3_PART_SIZE` will allocate 
 `concurrency` in `sftp` section mean how much concurrent request will use for `upload` and `download` for each file. 
 
 `compression_format`, better use `tar` for less CPU usage, cause for most of cases data on clickhouse-backup already compressed.
+
+## remote_storage: custom
+
+All custom commands could use go-template language for evaluate you can use `{{ .cfg.* }}` `{{ .backupName }}` `{{ .diffFromRemote }}`
+Custom `list_command` shall return JSON which compatible with `metadata.Backup` type with [JSONEachRow](https://clickhouse.com/docs/en/interfaces/formats/#jsoneachrow) format. 
+Look examples for adoption [restic](https://github.com/AlexAkulov/clickhouse-backup/tree/master/test/integration/restic/), [rsync](https://github.com/AlexAkulov/clickhouse-backup/tree/master/test/integration/rsync/) and [kopia](https://github.com/AlexAkulov/clickhouse-backup/tree/master/test/integration/kopia/). 
 
 ## ATTENTION!
 
