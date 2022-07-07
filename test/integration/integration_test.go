@@ -1028,7 +1028,7 @@ func TestIntegrationFTP(t *testing.T) {
 func TestIntegrationCustom(t *testing.T) {
 	r := require.New(t)
 
-	for _, customType := range []string{"rsync", "restic", "kopia"} {
+	for _, customType := range []string{"restic", "kopia", "rsync"} {
 		if customType == "rsync" {
 			uploadSSHKeys(r)
 			installDebIfNotExists(r, "clickhouse", "openssh-client")
@@ -1037,12 +1037,12 @@ func TestIntegrationCustom(t *testing.T) {
 		}
 		if customType == "restic" {
 			r.NoError(dockerExec("minio", "rm", "-rf", "/data/clickhouse/*"))
-			installDebIfNotExists(r, "clickhouse", "restic")
+			installDebIfNotExists(r, "clickhouse", "curl")
 			installDebIfNotExists(r, "clickhouse", "jq")
+			r.NoError(dockerExec("clickhouse", "bash", "-xc", "RELEASE_TAG=$(curl -H 'Accept: application/json' -sL https://github.com/restic/restic/releases/latest | jq -c -r -M '.tag_name'); RELEASE=$(echo $RELEASE_TAG | sed -e 's/v//'); curl -sL \"https://github.com/restic/restic/releases/download/${RELEASE_TAG}/restic_${RELEASE}_linux_amd64.bz2\" | bzip2 -d > /bin/restic; chmod +x /bin/restic"))
 		}
 		if customType == "kopia" {
 			r.NoError(dockerExec("minio", "bash", "-c", "rm -rfv /data/clickhouse/*"))
-			installDebIfNotExists(r, "clickhouse", "wget")
 			r.NoError(dockerExec("clickhouse", "bash", "-c", "wget -qO- https://kopia.io/signing-key | gpg --dearmor -o /usr/share/keyrings/kopia-keyring.gpg"))
 			r.NoError(dockerExec("clickhouse", "bash", "-c", "echo 'deb [signed-by=/usr/share/keyrings/kopia-keyring.gpg] https://packages.kopia.io/apt/ stable main' > /etc/apt/sources.list.d/kopia.list"))
 			installDebIfNotExists(r, "clickhouse", "kopia")
