@@ -5,7 +5,7 @@ source "${CUR_DIR}/settings.sh"
 BACKUP_NAME=$1
 DIFF_FROM_REMOTE=${2:-}
 DIFF_FROM_REMOTE_CMD=""
-LOCAL_DISKS=$(clickhouse-client -q "SELECT concat(name, ':', trim(TRAILING '/' FROM path)) FROM system.disks FORMAT TSVRaw")
+LOCAL_DISKS=$(clickhouse client -q "SELECT concat(name, ':', trim(TRAILING '/' FROM path)) FROM system.disks FORMAT TSVRaw"  || clickhouse client -q "SELECT concat('default:',replaceRegexpOne(metadata_path,'/metadata.*$','')) FROM system.tables WHERE database = 'system' AND metadata_path!='' LIMIT 1 FORMAT TSVRaw")
 for disk in $LOCAL_DISKS; do
   disk_name=$(echo $disk | cut -d ":" -f 1)
   disk_path=$(echo $disk | cut -d ":" -f 2)

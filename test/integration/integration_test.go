@@ -777,6 +777,7 @@ func TestS3NoDeletePermission(t *testing.T) {
 	r.Error(dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", "no_delete_backup"))
 	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, Issue331Atomic, Issue331Ordinary}
 	dropDatabasesFromTestDataDataSet(r, ch, databaseList)
+	r.NoError(dockerExec("minio", "bash", "-c", "rm -rf /data/clickhouse/*"))
 }
 
 func TestSyncReplicaTimeout(t *testing.T) {
@@ -1027,7 +1028,7 @@ func TestIntegrationFTP(t *testing.T) {
 func TestIntegrationCustom(t *testing.T) {
 	r := require.New(t)
 
-	for _, customType := range []string{"kopia", "restic", "rsync"} {
+	for _, customType := range []string{"rsync", "restic", "kopia"} {
 		if customType == "rsync" {
 			uploadSSHKeys(r)
 			installDebIfNotExists(r, "clickhouse", "openssh-client")
@@ -1035,12 +1036,15 @@ func TestIntegrationCustom(t *testing.T) {
 			installDebIfNotExists(r, "clickhouse", "jq")
 		}
 		if customType == "restic" {
+			r.NoError(dockerExec("minio", "rm", "-rf", "/data/clickhouse/*"))
 			installDebIfNotExists(r, "clickhouse", "restic")
 			installDebIfNotExists(r, "clickhouse", "jq")
 		}
 		if customType == "kopia" {
+			r.NoError(dockerExec("minio", "bash", "-c", "rm -rfv /data/clickhouse/*"))
+			installDebIfNotExists(r, "clickhouse", "wget")
 			r.NoError(dockerExec("clickhouse", "bash", "-c", "wget -qO- https://kopia.io/signing-key | gpg --dearmor -o /usr/share/keyrings/kopia-keyring.gpg"))
-			r.NoError(dockerExec("clickhouse", "bash", "-c", "echo 'deb [signed-by=/usr/share/keyrings/kopia-keyring.gpg] http://packages.kopia.io/apt/ stable main' > /etc/apt/sources.list.d/kopia.list"))
+			r.NoError(dockerExec("clickhouse", "bash", "-c", "echo 'deb [signed-by=/usr/share/keyrings/kopia-keyring.gpg] https://packages.kopia.io/apt/ stable main' > /etc/apt/sources.list.d/kopia.list"))
 			installDebIfNotExists(r, "clickhouse", "kopia")
 			installDebIfNotExists(r, "clickhouse", "jq")
 		}
