@@ -49,13 +49,13 @@ ftp:
   address: ftp_server:21
   compression_format: tar
   compression_level: 3
+  concurrency: 2
   debug: false
   password: aztest
   path: ''
   timeout: 2m
   tls: false
   username: aztest
-  concurrency: 2
 gcs:
   bucket: altinity-qa-test
   compression_format: tar
