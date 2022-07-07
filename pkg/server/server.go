@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -772,6 +773,8 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+var databaseMappingRE = regexp.MustCompile(`[\w+]:[\w+]`)
+
 // httpRestoreHandler - restore a backup from local storage
 func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request) {
 	if !api.config.API.AllowParallel && api.status.inProgress() {
@@ -802,9 +805,20 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		tablePattern = tp[0]
 		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
 	}
-	if databaseMapping, exist := query["restore_database_mapping"]; exist {
-		databaseMappingToRestore = strings.Split(databaseMapping[0], ",")
-		fullCommand = fmt.Sprintf("%s --restore-database-mapping=\"%s\"", fullCommand, databaseMapping)
+	if databaseMappingQuery, exist := query["restore_database_mapping"]; exist {
+		for _, databaseMapping := range databaseMappingQuery {
+			mappingItems := strings.Split(databaseMapping, ",")
+			for _, m := range mappingItems {
+				if strings.Count(m, ":") != 1 || !databaseMappingRE.MatchString(m) {
+					writeError(w, http.StatusInternalServerError, "restore", fmt.Errorf("invalid values in restore_database_mapping %s", m))
+					return
+
+				}
+			}
+			databaseMappingToRestore = append(databaseMappingToRestore, mappingItems...)
+		}
+
+		fullCommand = fmt.Sprintf("%s --restore-database-mapping=\"%s\"", fullCommand, strings.Join(databaseMappingToRestore, ","))
 	}
 	if partitions, exist := query["partitions"]; exist {
 		partitionsToBackup = strings.Split(partitions[0], ",")
