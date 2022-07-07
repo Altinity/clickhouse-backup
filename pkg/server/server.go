@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -772,6 +773,8 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+var databaseMappingRE = regexp.MustCompile(`[\w+]:[\w+]`)
+
 // httpRestoreHandler - restore a backup from local storage
 func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request) {
 	if !api.config.API.AllowParallel && api.status.inProgress() {
@@ -788,6 +791,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	api.metrics.NumberBackupsLocalExpected.Set(float64(cfg.General.BackupsToKeepLocal))
 	vars := mux.Vars(r)
 	tablePattern := ""
+	databaseMappingToRestore := make([]string, 0)
 	partitionsToBackup := make([]string, 0)
 	schemaOnly := false
 	dataOnly := false
@@ -800,6 +804,21 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	if tp, exist := query["table"]; exist {
 		tablePattern = tp[0]
 		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
+	}
+	if databaseMappingQuery, exist := query["restore_database_mapping"]; exist {
+		for _, databaseMapping := range databaseMappingQuery {
+			mappingItems := strings.Split(databaseMapping, ",")
+			for _, m := range mappingItems {
+				if strings.Count(m, ":") != 1 || !databaseMappingRE.MatchString(m) {
+					writeError(w, http.StatusInternalServerError, "restore", fmt.Errorf("invalid values in restore_database_mapping %s", m))
+					return
+
+				}
+			}
+			databaseMappingToRestore = append(databaseMappingToRestore, mappingItems...)
+		}
+
+		fullCommand = fmt.Sprintf("%s --restore-database-mapping=\"%s\"", fullCommand, strings.Join(databaseMappingToRestore, ","))
 	}
 	if partitions, exist := query["partitions"]; exist {
 		partitionsToBackup = strings.Split(partitions[0], ",")
@@ -841,7 +860,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 			api.metrics.LastDuration["restore"].Set(float64(time.Since(start).Nanoseconds()))
 			api.metrics.LastFinish["restore"].Set(float64(time.Now().Unix()))
 		}()
-		err := backup.Restore(cfg, name, tablePattern, partitionsToBackup, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly)
+		err := backup.Restore(cfg, name, tablePattern, databaseMappingToRestore, partitionsToBackup, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly)
 		api.status.stop(commandId, err)
 		if err != nil {
 			apexLog.Errorf("Download error: %+v\n", err)

@@ -3,16 +3,19 @@ package backup
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/filesystemhelper"
+	"github.com/google/uuid"
 	"io"
 	"io/ioutil"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/filesystemhelper"
 
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 )
@@ -107,6 +110,40 @@ func getTableListByPatternLocal(metadataPath string, tablePattern string, skipTa
 	}
 	result.Sort(dropTable)
 	return result, nil
+}
+
+var queryRE = regexp.MustCompile(`(?m)^(CREATE|ATTACH) (TABLE|VIEW|MATERIALIZED VIEW|DICTIONARY|FUNCTION) ([\x60]?)([^\s\x60\.]*)([\x60]?)\.([^\s\x60\.]*)(?:( TO )([\x60]?)([^\s\x60\.]*)([\x60]?)(\.))?`)
+var createRE = regexp.MustCompile(`(?m)^CREATE`)
+var attachRE = regexp.MustCompile(`(?m)^ATTACH`)
+var uuidRE = regexp.MustCompile(`UUID '[a-f\d\-]+'`)
+
+func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRule map[string]string) error {
+	for i := 0; i < len(*originTables); i++ {
+		originTable := (*originTables)[i]
+		if targetDB, isMapped := dbMapRule[originTable.Database]; isMapped {
+			// substitute database in the table create query
+			var substitution string
+
+			if len(createRE.FindAllString(originTable.Query, -1)) > 0 {
+				// matching CREATE... command
+				substitution = fmt.Sprintf("${1} ${2} ${3}%v${5}.${6}", targetDB)
+			} else if len(attachRE.FindAllString(originTable.Query, -1)) > 0 {
+				// matching ATTACH...TO... command
+				substitution = fmt.Sprintf("${1} ${2} ${3}%v${5}.${6}${7}${8}%v${11}", targetDB, targetDB)
+			} else {
+				return fmt.Errorf("error when try to replace database `%s` to `%s` in query: %s", originTable.Database, targetDB, originTable.Query)
+			}
+			originTable.Query = queryRE.ReplaceAllString(originTable.Query, substitution)
+			originTable.Database = targetDB
+			if len(uuidRE.FindAllString(originTable.Query, -1)) > 0 {
+				newUUID, _ := uuid.NewUUID()
+				substitution = fmt.Sprintf("UUID '%s'", newUUID.String())
+				originTable.Query = uuidRE.ReplaceAllString(originTable.Query, substitution)
+			}
+			(*originTables)[i] = originTable
+		}
+	}
+	return nil
 }
 
 func filterPartsByPartitionsFilter(tableMetadata metadata.TableMetadata, partitionsFilter common.EmptyMap) {
@@ -220,7 +257,7 @@ func parseTablePatternForDownload(tables []metadata.TableTitle, tablePattern str
 }
 
 func IsInformationSchema(database string) bool {
-	for _, skipDatabase := range []string{"INFORMATION_SCHEMA", "information_schema"} {
+	for _, skipDatabase := range []string{"INFORMATION_SCHEMA", "information_schema", "_temporary_and_external_tables"} {
 		if database == skipDatabase {
 			return true
 		}

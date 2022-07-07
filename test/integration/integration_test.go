@@ -540,13 +540,14 @@ func TestTablePatterns(t *testing.T) {
 	defer ch.chbackend.Close()
 
 	testBackupName := "test_backup_patterns"
-	fullCleanup(r, ch, []string{testBackupName}, false)
+	databaseList := []string{dbNameOrdinary, dbNameAtomic}
+	fullCleanup(r, ch, []string{testBackupName}, []string{"remote", "local"}, databaseList, false)
 	generateTestData(ch, r)
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables", " "+dbNameOrdinary+".*", testBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
-	dropDatabasesFromTestDataDataSet(r, ch)
+	dropDatabasesFromTestDataDataSet(r, ch, databaseList)
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", "--tables", " "+dbNameOrdinary+".*", testBackupName))
 
 	var restoredTables []uint64
@@ -561,7 +562,7 @@ func TestTablePatterns(t *testing.T) {
 		r.Zero(restoredTables[0])
 	}
 
-	fullCleanup(r, ch, []string{testBackupName}, true)
+	fullCleanup(r, ch, []string{testBackupName}, []string{"remote", "local"}, databaseList, true)
 
 }
 
@@ -603,8 +604,7 @@ func TestLongListRemote(t *testing.T) {
 	for i := 0; i < totalCacheCount; i++ {
 		testListRemoteAllBackups[i] = fmt.Sprintf("%s_%d", testBackupName, i)
 	}
-	fullCleanup(r, ch, testListRemoteAllBackups, true)
-
+	fullCleanup(r, ch, testListRemoteAllBackups, []string{"remote", "local"}, []string{}, true)
 }
 
 func TestSkipNotExistsTable(t *testing.T) {
@@ -728,9 +728,9 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		backupNames[i] = fmt.Sprintf("keep_remote_backup_%d", i)
 	}
-
+	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, Issue331Atomic, Issue331Ordinary}
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	fullCleanup(r, ch, backupNames, false)
+	fullCleanup(r, ch, backupNames, []string{"remote", "local"}, databaseList, false)
 	generateTestData(ch, r)
 	for i, backupName := range backupNames {
 		generateIncrementTestData(ch, r)
@@ -754,7 +754,7 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	r.NoError(ch.chbackend.Select(&res, fmt.Sprintf("SELECT count() FROM `%s`.`%s`", Issue331Atomic, Issue331Atomic)))
 	r.Greater(len(res), 0)
 	r.Equal(200, res[0])
-	fullCleanup(r, ch, backupNames, true)
+	fullCleanup(r, ch, backupNames, []string{"remote", "local"}, databaseList, true)
 }
 
 func TestS3NoDeletePermission(t *testing.T) {
@@ -775,7 +775,8 @@ func TestS3NoDeletePermission(t *testing.T) {
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", "no_delete_backup"))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "no_delete_backup"))
 	r.Error(dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", "no_delete_backup"))
-	dropDatabasesFromTestDataDataSet(r, ch)
+	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, Issue331Atomic, Issue331Ordinary}
+	dropDatabasesFromTestDataDataSet(r, ch, databaseList)
 }
 
 func TestSyncReplicaTimeout(t *testing.T) {
@@ -1060,6 +1061,40 @@ func uploadSSHKeys(r *require.Assertions) {
 	r.NoError(dockerExec("sshd", "chmod", "-v", "0600", "/root/.ssh/authorized_keys"))
 }
 
+func TestRestoreDatabaseMapping(t *testing.T) {
+	r := require.New(t)
+	r.NoError(dockerCP("config-database-mapping.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	ch := &TestClickHouse{}
+	ch.connectWithWait(r, 500*time.Millisecond)
+	defer ch.chbackend.Close()
+	testBackupName := "test_restore_database_mapping"
+	databaseList := []string{"database1", "database2"}
+	fullCleanup(r, ch, []string{testBackupName}, []string{"local"}, databaseList, false)
+
+	ch.queryWithNoError(r, "CREATE DATABASE database1")
+	ch.queryWithNoError(r, "CREATE TABLE database1.t1 (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY dt")
+	ch.queryWithNoError(r, "INSERT INTO database1.t1 SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
+
+	log.Info("Create backup")
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", testBackupName))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--restore-database-mapping", "database1:database2", testBackupName))
+
+	ch.queryWithNoError(r, "INSERT INTO database1.t1 SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
+
+	log.Info("Check result")
+	result := make([]int, 0)
+	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM database2.t1"))
+	r.Equal(1, len(result), "expect one row")
+	r.Equal(10, result[0], "expect count=10")
+
+	result = make([]int, 0)
+	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM database1.t1"))
+	r.Equal(1, len(result), "expect one row")
+	r.Equal(20, result[0], "expect count=20")
+
+	fullCleanup(r, ch, []string{testBackupName}, []string{"local"}, databaseList, true)
+}
+
 func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 	var out string
 	var err error
@@ -1077,9 +1112,10 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 	// main test scenario
 	testBackupName := fmt.Sprintf("test_backup_%d", rand.Int())
 	incrementBackupName := fmt.Sprintf("increment_%d", rand.Int())
+	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, Issue331Atomic, Issue331Ordinary}
 
 	log.Info("Clean before start")
-	fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, false)
+	fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, []string{"remote", "local"}, databaseList, false)
 
 	r.NoError(dockerExec("minio", "mc", "ls", "local/clickhouse/disk_s3"))
 	generateTestData(ch, r)
@@ -1109,7 +1145,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 	r.NoError(err)
 	r.Equal(3, len(strings.Split(strings.Trim(out, " \t\r\n"), "\n")), "expect no backup exists in backup directory")
 
-	dropDatabasesFromTestDataDataSet(r, ch)
+	dropDatabasesFromTestDataDataSet(r, ch, databaseList)
 	r.NoError(dockerExec("minio", "mc", "ls", "local/clickhouse/disk_s3"))
 
 	log.Info("Download")
@@ -1136,7 +1172,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 		}
 	}
 	// test increment
-	dropDatabasesFromTestDataDataSet(r, ch)
+	dropDatabasesFromTestDataDataSet(r, ch, databaseList)
 
 	log.Info("Delete backup")
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
@@ -1169,15 +1205,15 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 	// test end
 	log.Info("Clean after finish")
 	if remoteStorageType == "CUSTOM" {
-		fullCleanup(r, ch, []string{}, true)
+		fullCleanup(r, ch, []string{}, []string{}, databaseList, true)
 	} else {
-		fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, true)
+		fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, []string{"remote", "local"}, databaseList, true)
 	}
 }
 
-func fullCleanup(r *require.Assertions, ch *TestClickHouse, backupNames []string, checkDeleteErr bool) {
+func fullCleanup(r *require.Assertions, ch *TestClickHouse, backupNames, backupTypes, databaseList []string, checkDeleteErr bool) {
 	for _, backupName := range backupNames {
-		for _, backupType := range []string{"remote", "local"} {
+		for _, backupType := range backupTypes {
 			err := dockerExec("clickhouse", "clickhouse-backup", "delete", backupType, backupName)
 			if checkDeleteErr {
 				r.NoError(err)
@@ -1196,7 +1232,7 @@ func fullCleanup(r *require.Assertions, ch *TestClickHouse, backupNames []string
 		}
 	}
 
-	dropDatabasesFromTestDataDataSet(r, ch)
+	dropDatabasesFromTestDataDataSet(r, ch, databaseList)
 }
 
 func generateTestData(ch *TestClickHouse, r *require.Assertions) {
@@ -1274,9 +1310,9 @@ func generateIncrementTestData(ch *TestClickHouse, r *require.Assertions) {
 	}
 }
 
-func dropDatabasesFromTestDataDataSet(r *require.Assertions, ch *TestClickHouse) {
+func dropDatabasesFromTestDataDataSet(r *require.Assertions, ch *TestClickHouse, databaseList []string) {
 	log.Info("Drop all databases")
-	for _, db := range []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, Issue331Atomic, Issue331Ordinary} {
+	for _, db := range databaseList {
 		r.NoError(ch.dropDatabase(db))
 	}
 }

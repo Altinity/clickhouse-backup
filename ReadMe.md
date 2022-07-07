@@ -107,6 +107,7 @@ general:
   restore_schema_on_cluster: ""  # RESTORE_SCHEMA_ON_CLUSTER, execute all schema related SQL queryes with `ON CLUSTER` clause as Distributed DDL, look to `system.clusters` table for proper cluster name
   upload_by_part: true           # UPLOAD_BY_PART
   download_by_part: true         # DOWNLOAD_BY_PART
+  restore_database_mapping: {}   # RESTORE_DATABASE_MAPPING, restore rules from backup databases to target databases, which is useful on change destination database all atomic tables will create with new uuid.
 clickhouse:
   username: default                # CLICKHOUSE_USERNAME
   password: ""                     # CLICKHOUSE_PASSWORD
@@ -238,7 +239,7 @@ High value for `S3_CONCURRENCY` and high value for `S3_PART_SIZE` will allocate 
 
 All custom commands could use go-template language for evaluate you can use `{{ .cfg.* }}` `{{ .backupName }}` `{{ .diffFromRemote }}`
 Custom `list_command` shall return JSON which compatible with `metadata.Backup` type with [JSONEachRow](https://clickhouse.com/docs/en/interfaces/formats/#jsoneachrow) format. 
-Look examples for adoption [restic](./test/integration/restic/), [rsync](./test/integration/rsync/) and [kopia](./test/integration/kopia/). 
+Look examples for adoption [restic](https://github.com/AlexAkulov/clickhouse-backup/tree/master/test/integration/restic/), [rsync](https://github.com/AlexAkulov/clickhouse-backup/tree/master/test/integration/rsync/) and [kopia](https://github.com/AlexAkulov/clickhouse-backup/tree/master/test/integration/kopia/). 
 
 ## ATTENTION!
 
@@ -319,6 +320,7 @@ Create schema and restore data from backup: `curl -s localhost:7171/backup/resto
 * Optional query argument `rm` works the same the `--rm` CLI argument (drop tables before restore).
 * Optional query argument `rbac` works the same the `--rbac` CLI argument (restore RBAC).
 * Optional query argument `configs` works the same the `--configs` CLI argument (restore configs).
+* Optional query argument `restore_database_mapping` works the same the `--restore-database-mapping` CLI argument.
 
 > **POST /backup/delete**
 

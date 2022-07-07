@@ -200,6 +200,7 @@ def materializedmysql(self):
             for i in range(10):
                 mysql.cmd(f"mysql -uroot -pqwerty -e \"INSERT INTO mydb.MyTable VALUES ({i}, '{''.join(random.choices(string.ascii_uppercase + string.digits, k=10))}')\"")
 
+        table_contents = []
         with And("I create MaterializedMySQL"):
             clickhouse.query(f"CREATE DATABASE mysql ENGINE = MaterializedMySQL('mysql:3306', 'mydb', 'root', 'qwerty') "
                              f"SETTINGS allows_query_when_mysql_lost=true, max_wait_time_when_mysql_unavailable=10000;")

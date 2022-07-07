@@ -291,7 +291,7 @@ func (ch *ClickHouse) prepareAllTablesSQL(tablePattern string, err error, skipDa
 // GetDatabases - return slice of all non system databases for backup
 func (ch *ClickHouse) GetDatabases() ([]Database, error) {
 	allDatabases := make([]Database, 0)
-	allDatabasesSQL := "SELECT name, engine FROM system.databases WHERE name NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema')"
+	allDatabasesSQL := "SELECT name, engine FROM system.databases WHERE name NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema', '_temporary_and_external_tables')"
 	if err := ch.SoftSelect(&allDatabases, allDatabasesSQL); err != nil {
 		return nil, err
 	}
@@ -488,11 +488,11 @@ func (ch *ClickHouse) CreateDatabaseWithEngine(database string, engine string) e
 	return err
 }
 
-func (ch *ClickHouse) CreateDatabaseFromQuery(query string) error {
+func (ch *ClickHouse) CreateDatabaseFromQuery(query string, args ...interface{}) error {
 	if !strings.HasPrefix(query, "CREATE DATABASE IF NOT EXISTS") {
 		query = strings.Replace(query, "CREATE DATABASE", "CREATE DATABASE IF NOT EXISTS", 1)
 	}
-	_, err := ch.Query(query)
+	_, err := ch.Query(query, args)
 	return err
 }
 
@@ -713,22 +713,28 @@ func (ch *ClickHouse) GetPartitions(database, table string) (map[string][]metada
 }
 
 func (ch *ClickHouse) Query(query string, args ...interface{}) (sql.Result, error) {
-	return ch.conn.Exec(ch.LogQuery(query), args...)
+	return ch.conn.Exec(ch.LogQuery(query, args...), args...)
 }
 
 func (ch *ClickHouse) Queryx(query string, args ...interface{}) (*sqlx.Rows, error) {
-	return ch.conn.Queryx(ch.LogQuery(query), args...)
+	return ch.conn.Queryx(ch.LogQuery(query, args...), args...)
 }
 
 func (ch *ClickHouse) Select(dest interface{}, query string, args ...interface{}) error {
-	return ch.conn.Select(dest, ch.LogQuery(query), args...)
+	return ch.conn.Select(dest, ch.LogQuery(query, args...), args...)
 }
 
-func (ch *ClickHouse) LogQuery(query string) string {
+func (ch *ClickHouse) LogQuery(query string, args ...interface{}) string {
+	var logF func(msg string, v ...interface{})
 	if !ch.Config.LogSQLQueries {
-		log.Debug(query)
+		logF = log.Debugf
 	} else {
-		log.Info(query)
+		logF = log.Infof
+	}
+	if len(args) > 0 {
+		logF("%s with args %v", query, args)
+	} else {
+		logF("%s", query)
 	}
 	return query
 }

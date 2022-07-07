@@ -109,12 +109,13 @@ func CopyDataToDetached(backupName string, backupTable metadata.TableMetadata, d
 	log := apexLog.WithFields(apexLog.Fields{"operation": "CopyDataToDetached"})
 	start := time.Now()
 	for _, backupDisk := range disks {
-		if len(backupTable.Parts[backupDisk.Name]) == 0 {
+		backupDiskName := backupDisk.Name
+		if len(backupTable.Parts[backupDiskName]) == 0 {
 			log.Debugf("%s disk have no parts", backupDisk.Name)
 			continue
 		}
 		detachedParentDir := filepath.Join(dstDataPaths[backupDisk.Name], "detached")
-		for _, part := range backupTable.Parts[backupDisk.Name] {
+		for _, part := range backupTable.Parts[backupDiskName] {
 			detachedPath := filepath.Join(detachedParentDir, part.Name)
 			info, err := os.Stat(detachedPath)
 			if err != nil {

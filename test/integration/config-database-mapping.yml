@@ -3,12 +3,9 @@ general:
   remote_storage: s3
   upload_concurrency: 4
   download_concurrency: 4
-  skip_tables:
-    - " system.*"
-    - "INFORMATION_SCHEMA.*"
-    - "information_schema.*"
-    - "_temporary_and_external_tables.*"
   restore_schema_on_cluster: "cluster"
+  restore_database_mapping:
+    database1: default
 clickhouse:
   host: 127.0.0.1
   port: 9440
@@ -33,5 +30,4 @@ s3:
 api:
   listen: :7171
   create_integration_tables: true
-  integration_tables_host: "localhost"
   allow_parallel: true
