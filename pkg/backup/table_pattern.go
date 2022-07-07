@@ -257,7 +257,7 @@ func parseTablePatternForDownload(tables []metadata.TableTitle, tablePattern str
 }
 
 func IsInformationSchema(database string) bool {
-	for _, skipDatabase := range []string{"INFORMATION_SCHEMA", "information_schema"} {
+	for _, skipDatabase := range []string{"INFORMATION_SCHEMA", "information_schema", "_temporary_and_external_tables"} {
 		if database == skipDatabase {
 			return true
 		}

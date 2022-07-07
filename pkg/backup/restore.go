@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 
@@ -21,9 +22,11 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
 	apexLog "github.com/apex/log"
-	recursive_copy "github.com/otiai10/copy"
+	recursiveCopy "github.com/otiai10/copy"
 	"github.com/yargevad/filepathx"
 )
+
+var CreateDatabaseRE = regexp.MustCompile(`(?m)^CREATE DATABASE (\s*)(\S+)(\s*)`)
 
 // Restore - restore tables matched by tablePattern from backupName
 func Restore(cfg *config.Config, backupName, tablePattern string, databaseMapping, partitions []string, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly bool) error {
@@ -75,8 +78,8 @@ func Restore(cfg *config.Config, backupName, tablePattern string, databaseMappin
 				if targetDB, isMapped := cfg.General.RestoreDatabaseMapping[database.Name]; isMapped {
 					// When create database, try to substitute the database by following the database mapping rule.
 					if !IsInformationSchema(targetDB) {
-						substitution := fmt.Sprintf("CREATE DATABASE ${1}%v${3}", targetDB)
-						if err := ch.CreateDatabaseFromQuery(clickhouse.CreateDatabaseRE.ReplaceAllString(database.Query, substitution)); err != nil {
+						substitution := "CREATE DATABASE ${1}`?`${3}"
+						if err := ch.CreateDatabaseFromQuery(CreateDatabaseRE.ReplaceAllString(database.Query, substitution), targetDB); err != nil {
 							return err
 						}
 					}
@@ -208,10 +211,10 @@ func restoreBackupRelatedDir(ch *clickhouse.ClickHouse, backupName, backupPrefix
 		return fmt.Errorf("%s is not a dir", srcBackupDir)
 	}
 	apexLog.Debugf("copy %s -> %s", srcBackupDir, destinationDir)
-	copyOptions := recursive_copy.Options{OnDirExists: func(src, dest string) recursive_copy.DirExistsAction {
-		return recursive_copy.Merge
+	copyOptions := recursiveCopy.Options{OnDirExists: func(src, dest string) recursiveCopy.DirExistsAction {
+		return recursiveCopy.Merge
 	}}
-	if err := recursive_copy.Copy(srcBackupDir, destinationDir, copyOptions); err != nil {
+	if err := recursiveCopy.Copy(srcBackupDir, destinationDir, copyOptions); err != nil {
 		return err
 	}
 

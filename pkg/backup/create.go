@@ -19,7 +19,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
 	apexLog "github.com/apex/log"
 	"github.com/google/uuid"
-	"github.com/otiai10/copy"
+	recursiveCopy "github.com/otiai10/copy"
 )
 
 const (
@@ -266,7 +266,7 @@ func createConfigBackup(cfg *config.Config, backupPath string) (uint64, error) {
 	backupConfigSize := uint64(0)
 	configBackupPath := path.Join(backupPath, "configs")
 	apexLog.Debugf("copy %s -> %s", cfg.ClickHouse.ConfigDir, configBackupPath)
-	copyErr := copy.Copy(cfg.ClickHouse.ConfigDir, configBackupPath, copy.Options{
+	copyErr := recursiveCopy.Copy(cfg.ClickHouse.ConfigDir, configBackupPath, recursiveCopy.Options{
 		Skip: func(src string) (bool, error) {
 			if fileInfo, err := os.Stat(src); err == nil {
 				backupConfigSize += uint64(fileInfo.Size())
@@ -285,7 +285,7 @@ func createRBACBackup(ch *clickhouse.ClickHouse, backupPath string, disks []clic
 		return 0, err
 	}
 	apexLog.Debugf("copy %s -> %s", accessPath, rbacBackup)
-	copyErr := copy.Copy(accessPath, rbacBackup, copy.Options{
+	copyErr := recursiveCopy.Copy(accessPath, rbacBackup, recursiveCopy.Options{
 		Skip: func(src string) (bool, error) {
 			if fileInfo, err := os.Stat(src); err == nil {
 				rbacDataSize += uint64(fileInfo.Size())
