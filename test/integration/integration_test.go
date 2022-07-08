@@ -1028,7 +1028,7 @@ func TestIntegrationFTP(t *testing.T) {
 func TestIntegrationCustom(t *testing.T) {
 	r := require.New(t)
 
-	for _, customType := range []string{"restic", "kopia", "rsync"} {
+	for _, customType := range []string{"kopia", "restic", "rsync"} {
 		if customType == "rsync" {
 			uploadSSHKeys(r)
 			installDebIfNotExists(r, "clickhouse", "openssh-client")
@@ -1044,6 +1044,8 @@ func TestIntegrationCustom(t *testing.T) {
 		if customType == "kopia" {
 			r.NoError(dockerExec("minio", "bash", "-c", "rm -rfv /data/clickhouse/*"))
 			installDebIfNotExists(r, "clickhouse", "curl")
+			r.NoError(dockerExec("clickhouse", "apt-get", "install", "-y", "ca-certificates"))
+			r.NoError(dockerExec("clickhouse", "update-ca-certificates"))
 			r.NoError(dockerExec("clickhouse", "bash", "-c", "curl -sL https://kopia.io/signing-key | gpg --dearmor -o /usr/share/keyrings/kopia-keyring.gpg"))
 			r.NoError(dockerExec("clickhouse", "bash", "-c", "echo 'deb [signed-by=/usr/share/keyrings/kopia-keyring.gpg] https://packages.kopia.io/apt/ stable main' > /etc/apt/sources.list.d/kopia.list"))
 			installDebIfNotExists(r, "clickhouse", "kopia")
