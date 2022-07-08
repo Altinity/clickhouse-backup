@@ -96,10 +96,16 @@ def window_view(self):
     """Test that window view is handled properly by clickhouse-backup.
     """
     base_table_name = self.context.views_base_name
-
+    if os.environ['CLICKHOUSE_VERSION'] >= '22.6':
+        view_create_query=f"CREATE WINDOW VIEW {base_table_name}_wview " \
+                          f"ENGINE AggregatingMergeTree() ORDER BY t AS SELECT count(Version) v, tumbleStart(w_id) " \
+                          f"t FROM default.{base_table_name} GROUP BY tumble(Time, INTERVAL '10' SECOND) AS w_id"
+    else:
+        view_create_query=f"CREATE WINDOW VIEW {base_table_name}_wview " \
+                          f"AS SELECT countState(Version) v, tumbleStart(w_id) AS date_start " \
+                          f"FROM default.{base_table_name} GROUP BY tumble(Time, INTERVAL '10' SECOND) AS w_id"
     views_outline(view_name="wview", view_contents_query=f"DESCRIBE {base_table_name}_wview",
-                  view_create_query=f"CREATE WINDOW VIEW {base_table_name}_wview ENGINE AggregatingMergeTree() ORDER BY t AS SELECT count(Version) v, tumbleStart(w_id) t "
-                                    f"FROM default.{base_table_name} GROUP BY tumble(Time, INTERVAL '10' SECOND) as w_id")
+                  view_create_query=view_create_query)
 
 
 @TestScenario
