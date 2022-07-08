@@ -1043,7 +1043,8 @@ func TestIntegrationCustom(t *testing.T) {
 		}
 		if customType == "kopia" {
 			r.NoError(dockerExec("minio", "bash", "-c", "rm -rfv /data/clickhouse/*"))
-			r.NoError(dockerExec("clickhouse", "bash", "-c", "wget -qO- https://kopia.io/signing-key | gpg --dearmor -o /usr/share/keyrings/kopia-keyring.gpg"))
+			installDebIfNotExists(r, "clickhouse", "curl")
+			r.NoError(dockerExec("clickhouse", "bash", "-c", "curl -sL https://kopia.io/signing-key | gpg --dearmor -o /usr/share/keyrings/kopia-keyring.gpg"))
 			r.NoError(dockerExec("clickhouse", "bash", "-c", "echo 'deb [signed-by=/usr/share/keyrings/kopia-keyring.gpg] https://packages.kopia.io/apt/ stable main' > /etc/apt/sources.list.d/kopia.list"))
 			installDebIfNotExists(r, "clickhouse", "kopia")
 			installDebIfNotExists(r, "clickhouse", "jq")

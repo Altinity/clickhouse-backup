@@ -98,7 +98,7 @@ def window_view(self):
     base_table_name = self.context.views_base_name
 
     views_outline(view_name="wview", view_contents_query=f"DESCRIBE {base_table_name}_wview",
-                  view_create_query=f"CREATE WINDOW VIEW {base_table_name}_wview AS SELECT count(Version), tumbleStart(w_id) "
+                  view_create_query=f"CREATE WINDOW VIEW {base_table_name}_wview ENGINE AggregatingMergeTree() ORDER BY t AS SELECT count(Version) v, tumbleStart(w_id) t "
                                     f"FROM default.{base_table_name} GROUP BY tumble(Time, INTERVAL '10' SECOND) as w_id")
 
 
