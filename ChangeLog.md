@@ -1,6 +1,7 @@
 # v2.0.0
 IMPROVEMENTS
 - implements `remote_storage: custom`, which allow us to adopt any external backup system like restic, kopia, rsync, rclone etc. fix [383](https://github.com/AlexAkulov/clickhouse-backup/issues/383)
+- add example workflow hot to make backup / restore on sharded cluster, fix [469](https://github.com/AlexAkulov/clickhouse-backup/discussions/469)
 
 # v1.4.7
 IMPROVEMENTS
