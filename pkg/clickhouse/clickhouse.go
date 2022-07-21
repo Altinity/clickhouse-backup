@@ -306,7 +306,7 @@ func (ch *ClickHouse) prepareAllTablesSQL(tablePattern string, err error, skipDa
 
 	allTablesSQL += "  FROM system.tables WHERE is_temporary = 0"
 	if tablePattern != "" {
-		replacer := strings.NewReplacer(".", "\\.", ",", "|", "*", ".*", "?", ".", " ", "")
+		replacer := strings.NewReplacer(".", "\\.", ",", "|", "*", ".*", "?", ".", " ", "", "'", "")
 		allTablesSQL += fmt.Sprintf(" AND match(concat(database,'.',name),'%s') ", replacer.Replace(tablePattern))
 	}
 	if len(skipDatabases) > 0 {
@@ -761,16 +761,16 @@ func (ch *ClickHouse) Select(dest interface{}, query string, args ...interface{}
 }
 
 func (ch *ClickHouse) LogQuery(query string, args ...interface{}) string {
-	var logF func(msg string, v ...interface{})
+	var logF func(msg string)
 	if !ch.Config.LogSQLQueries {
-		logF = log.Debugf
+		logF = log.Debug
 	} else {
-		logF = log.Infof
+		logF = log.Info
 	}
 	if len(args) > 0 {
-		logF("%s with args %v", query, args)
+		logF(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(fmt.Sprintf("%s with args %v", query, args)))
 	} else {
-		logF("%s", query)
+		logF(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(query))
 	}
 	return query
 }

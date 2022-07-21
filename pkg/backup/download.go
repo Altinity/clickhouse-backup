@@ -56,6 +56,7 @@ func legacyDownload(ctx context.Context, cfg *config.Config, defaultDataPath, ba
 }
 
 func (b *Backuper) Download(backupName string, tablePattern string, partitions []string, schemaOnly bool) error {
+	backupName = cleanBackupNameRE.ReplaceAllString(backupName, "")
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "download",

@@ -30,6 +30,7 @@ var CreateDatabaseRE = regexp.MustCompile(`(?m)^CREATE DATABASE (\s*)(\S+)(\s*)`
 
 // Restore - restore tables matched by tablePattern from backupName
 func Restore(cfg *config.Config, backupName, tablePattern string, databaseMapping, partitions []string, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly bool) error {
+	backupName = cleanBackupNameRE.ReplaceAllString(backupName, "")
 	if err := prepareRestoreDatabaseMapping(cfg, databaseMapping); err != nil {
 		return err
 	}
@@ -47,9 +48,6 @@ func Restore(cfg *config.Config, backupName, tablePattern string, databaseMappin
 		_ = PrintLocalBackups(cfg, "all")
 		return fmt.Errorf("select backup for restore")
 	}
-	backupName = strings.ReplaceAll(backupName, "/", "")
-	backupName = strings.ReplaceAll(backupName, "\\", "")
-
 	if err := ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}

@@ -30,9 +30,8 @@ import (
 func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern string, partitions []string, schemaOnly bool) error {
 	var err error
 	var disks []clickhouse.Disk
-	backupName = strings.ReplaceAll(backupName, "/", "")
-	backupName = strings.ReplaceAll(backupName, "\\", "")
-
+	startUpload := time.Now()
+	backupName = cleanBackupNameRE.ReplaceAllString(backupName, "")
 	if err = b.validateUploadParams(backupName, diffFrom, diffFromRemote); err != nil {
 		return err
 	}
@@ -43,7 +42,6 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 		"backup":    backupName,
 		"operation": "upload",
 	})
-	startUpload := time.Now()
 	if err = b.ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
