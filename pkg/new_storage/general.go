@@ -99,7 +99,7 @@ func (bd *BackupDestination) RemoveBackup(backup Backup) error {
 	})
 }
 
-func isLegacyBackup(backupName string) (bool, string, string) {
+func isArchiveFile(backupName string) (bool, string, string) {
 	for _, suffix := range config.ArchiveExtensions {
 		if strings.HasSuffix(backupName, "."+suffix) {
 			return true, strings.TrimSuffix(backupName, "."+suffix), suffix
@@ -177,7 +177,7 @@ func (bd *BackupDestination) BackupList(parseMetadata bool, parseMetadataOnly st
 	listCache := bd.loadMetadataCache()
 	err := bd.Walk("/", false, func(o RemoteFile) error {
 		// Legacy backup
-		if ok, backupName, fileExtension := isLegacyBackup(strings.TrimPrefix(o.Name(), "/")); ok {
+		if ok, backupName, fileExtension := isArchiveFile(strings.TrimPrefix(o.Name(), "/")); ok {
 			result = append(result, Backup{
 				metadata.BackupMetadata{
 					BackupName: backupName,
@@ -477,6 +477,9 @@ func (bd *BackupDestination) DownloadPath(size int64, remotePath string, localPa
 	})
 	return bd.Walk(remotePath, true, func(f RemoteFile) error {
 		// TODO: return err break download, think about make Walk error handle and retry
+		if bd.Kind() == "SFTP" && (f.Name() == "." || f.Name() == "..") {
+			return nil
+		}
 		r, err := bd.GetFileReader(path.Join(remotePath, f.Name()))
 		if err != nil {
 			log.Error(err.Error())

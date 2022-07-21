@@ -3,6 +3,8 @@ package backup
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
+	apexLog "github.com/apex/log"
 	"github.com/google/uuid"
 	"io"
 	"io/ioutil"
@@ -29,16 +31,22 @@ func (lt ListOfTables) Sort(dropTable bool) {
 	})
 }
 
-func addTableToListIfNotExists(tables ListOfTables, table metadata.TableMetadata) ListOfTables {
-	for _, t := range tables {
+func addTableToListIfNotExistsOrEnrichQueryAndParts(tables ListOfTables, table metadata.TableMetadata) ListOfTables {
+	for i, t := range tables {
 		if (t.Database == table.Database) && (t.Table == table.Table) {
+			if t.Query == "" && table.Query != "" {
+				tables[i].Query = table.Query
+			}
+			if len(t.Parts) == 0 && len(table.Parts) > 0 {
+				tables[i].Parts = table.Parts
+			}
 			return tables
 		}
 	}
 	return append(tables, table)
 }
 
-func getTableListByPatternLocal(metadataPath string, tablePattern string, skipTables []string, dropTable bool, partitionsFilter common.EmptyMap) (ListOfTables, error) {
+func getTableListByPatternLocal(cfg *config.Config, metadataPath string, tablePattern string, dropTable bool, partitionsFilter common.EmptyMap) (ListOfTables, error) {
 	result := ListOfTables{}
 	tablePatterns := []string{"*"}
 
@@ -55,26 +63,26 @@ func getTableListByPatternLocal(metadataPath string, tablePattern string, skipTa
 			return nil
 		}
 		p := filepath.ToSlash(filePath)
-		legacy := false
+		isEmbeddedMetadata := false
 		if strings.HasSuffix(p, ".sql") {
-			legacy = true
+			isEmbeddedMetadata = true
 			p = strings.TrimSuffix(p, ".sql")
 		} else {
 			p = strings.TrimSuffix(p, ".json")
 		}
 		p = strings.Trim(strings.TrimPrefix(p, metadataPath), "/")
-		parts := strings.Split(p, "/")
-		if len(parts) != 2 {
+		names := strings.Split(p, "/")
+		if len(names) != 2 {
 			return nil
 		}
-		database, _ := url.PathUnescape(parts[0])
+		database, _ := url.PathUnescape(names[0])
 		if IsInformationSchema(database) {
 			return nil
 		}
-		table, _ := url.PathUnescape(parts[1])
+		table, _ := url.PathUnescape(names[1])
 		tableName := fmt.Sprintf("%s.%s", database, table)
 		shallSkipped := false
-		for _, skipPattern := range skipTables {
+		for _, skipPattern := range cfg.ClickHouse.SkipTables {
 			if shallSkipped, _ = filepath.Match(skipPattern, tableName); shallSkipped {
 				break
 			}
@@ -87,13 +95,39 @@ func getTableListByPatternLocal(metadataPath string, tablePattern string, skipTa
 			if err != nil {
 				return err
 			}
-			if legacy {
-				result = addTableToListIfNotExists(result, metadata.TableMetadata{
+			if isEmbeddedMetadata {
+				// embedded backup to s3 disk could contain only s3 key names inside .sql file
+				query := string(data)
+				if strings.HasPrefix(query, "ATTACH") || strings.HasPrefix(query, "CREATE") {
+					query = strings.Replace(query, "ATTACH", "CREATE", 1)
+				} else {
+					query = ""
+				}
+				dataPartsPath := strings.Replace(metadataPath, "/metadata", "/data", 1)
+				dataPartsPath = path.Join(dataPartsPath, path.Join(names...))
+				if _, err := os.Stat(dataPartsPath); err != nil && !os.IsNotExist(err) {
+					return err
+				}
+				dataParts, err := os.ReadDir(dataPartsPath)
+				if err != nil {
+					apexLog.Warn(err.Error())
+				}
+				parts := map[string][]metadata.Part{
+					cfg.ClickHouse.EmbeddedBackupDisk: make([]metadata.Part, len(dataParts)),
+				}
+				for i := range dataParts {
+					parts[cfg.ClickHouse.EmbeddedBackupDisk][i].Name = dataParts[i].Name()
+				}
+				var t metadata.TableMetadata
+				t = metadata.TableMetadata{
 					Database: database,
 					Table:    table,
-					Query:    strings.Replace(string(data), "ATTACH", "CREATE", 1),
-					// Path:     filePath,
-				})
+					Query:    query,
+					Parts:    parts,
+				}
+				filterPartsByPartitionsFilter(t, partitionsFilter)
+				result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, t)
+
 				return nil
 			}
 			var t metadata.TableMetadata
@@ -101,7 +135,7 @@ func getTableListByPatternLocal(metadataPath string, tablePattern string, skipTa
 				return err
 			}
 			filterPartsByPartitionsFilter(t, partitionsFilter)
-			result = addTableToListIfNotExists(result, t)
+			result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, t)
 			return nil
 		}
 		return nil
@@ -112,7 +146,7 @@ func getTableListByPatternLocal(metadataPath string, tablePattern string, skipTa
 	return result, nil
 }
 
-var queryRE = regexp.MustCompile(`(?m)^(CREATE|ATTACH) (TABLE|VIEW|MATERIALIZED VIEW|DICTIONARY|FUNCTION) ([\x60]?)([^\s\x60\.]*)([\x60]?)\.([^\s\x60\.]*)(?:( TO )([\x60]?)([^\s\x60\.]*)([\x60]?)(\.))?`)
+var queryRE = regexp.MustCompile(`(?m)^(CREATE|ATTACH) (TABLE|VIEW|MATERIALIZED VIEW|DICTIONARY|FUNCTION) (\x60?)([^\s\x60.]*)(\x60?)\.([^\s\x60.]*)(?:( TO )(\x60?)([^\s\x60.]*)(\x60?)(\.))?`)
 var createRE = regexp.MustCompile(`(?m)^CREATE`)
 var attachRE = regexp.MustCompile(`(?m)^ATTACH`)
 var uuidRE = regexp.MustCompile(`UUID '[a-f\d\-]+'`)
@@ -131,6 +165,9 @@ func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRu
 				// matching ATTACH...TO... command
 				substitution = fmt.Sprintf("${1} ${2} ${3}%v${5}.${6}${7}${8}%v${11}", targetDB, targetDB)
 			} else {
+				if originTable.Query == "" {
+					continue
+				}
 				return fmt.Errorf("error when try to replace database `%s` to `%s` in query: %s", originTable.Database, targetDB, originTable.Query)
 			}
 			originTable.Query = queryRE.ReplaceAllString(originTable.Query, substitution)
@@ -159,7 +196,7 @@ func filterPartsByPartitionsFilter(tableMetadata metadata.TableMetadata, partiti
 	}
 }
 
-func getTableListByPatternRemote(b *Backuper, remoteBackupMetadata *metadata.BackupMetadata, tablePattern string, skipTables []string, dropTable bool) (ListOfTables, error) {
+func getTableListByPatternRemote(b *Backuper, remoteBackupMetadata *metadata.BackupMetadata, tablePattern string, dropTable bool) (ListOfTables, error) {
 	result := ListOfTables{}
 	tablePatterns := []string{"*"}
 
@@ -173,7 +210,7 @@ func getTableListByPatternRemote(b *Backuper, remoteBackupMetadata *metadata.Bac
 		}
 		tableName := fmt.Sprintf("%s.%s", t.Database, t.Table)
 		shallSkipped := false
-		for _, skipPattern := range skipTables {
+		for _, skipPattern := range b.cfg.ClickHouse.SkipTables {
 			if shallSkipped, _ = filepath.Match(skipPattern, tableName); shallSkipped {
 				break
 			}
@@ -199,7 +236,7 @@ func getTableListByPatternRemote(b *Backuper, remoteBackupMetadata *metadata.Bac
 			if err = json.Unmarshal(data, &t); err != nil {
 				return nil, err
 			}
-			result = addTableToListIfNotExists(result, t)
+			result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, t)
 			break
 		}
 	}

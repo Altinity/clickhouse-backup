@@ -95,8 +95,12 @@ func RemoveBackupLocal(cfg *config.Config, backupName string, disks []clickhouse
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
 			for _, disk := range disks {
-				apexLog.WithField("path", path.Join(disk.Path, "backup")).Debugf("remove '%s'", backupName)
-				err := os.RemoveAll(path.Join(disk.Path, "backup", backupName))
+				backupPath := path.Join(disk.Path, "backup", backupName)
+				if disk.IsBackup {
+					backupPath = path.Join(disk.Path, backupName)
+				}
+				apexLog.Debugf("remove '%s'", backupPath)
+				err = os.RemoveAll(backupPath)
 				if err != nil {
 					return err
 				}

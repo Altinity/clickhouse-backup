@@ -5,15 +5,17 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/new_storage"
+	"path"
 )
 
 type Backuper struct {
-	cfg             *config.Config
-	ch              *clickhouse.ClickHouse
-	dst             *new_storage.BackupDestination
-	Version         string
-	DiskToPathMap   map[string]string
-	DefaultDataPath string
+	cfg                    *config.Config
+	ch                     *clickhouse.ClickHouse
+	dst                    *new_storage.BackupDestination
+	Version                string
+	DiskToPathMap          map[string]string
+	DefaultDataPath        string
+	EmbeddedBackupDataPath string
 }
 
 func (b *Backuper) init(disks []clickhouse.Disk) error {
@@ -31,6 +33,9 @@ func (b *Backuper) init(disks []clickhouse.Disk) error {
 	diskMap := map[string]string{}
 	for _, disk := range disks {
 		diskMap[disk.Name] = disk.Path
+		if b.cfg.ClickHouse.UseEmbeddedBackupRestore && (disk.IsBackup || disk.Name == b.cfg.ClickHouse.EmbeddedBackupDisk) {
+			b.EmbeddedBackupDataPath = disk.Path
+		}
 	}
 	b.DiskToPathMap = diskMap
 	if b.cfg.General.RemoteStorage != "none" && b.cfg.General.RemoteStorage != "custom" {
@@ -43,6 +48,14 @@ func (b *Backuper) init(disks []clickhouse.Disk) error {
 		}
 	}
 	return nil
+}
+
+func (b *Backuper) getLocalBackupDataPathForTable(backupName string, disk string, dbAndTablePath string, isEmbeddedBackup bool) string {
+	backupPath := path.Join(b.DiskToPathMap[disk], "backup", backupName, "shadow", dbAndTablePath, disk)
+	if isEmbeddedBackup {
+		backupPath = path.Join(b.DiskToPathMap[disk], backupName, "data", dbAndTablePath)
+	}
+	return backupPath
 }
 
 func NewBackuper(cfg *config.Config) *Backuper {

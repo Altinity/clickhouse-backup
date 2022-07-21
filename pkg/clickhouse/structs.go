@@ -29,9 +29,10 @@ type IsSystemTablesFieldPresent struct {
 }
 
 type Disk struct {
-	Name string `db:"name"`
-	Path string `db:"path"`
-	Type string `db:"type"`
+	Name     string `db:"name"`
+	Path     string `db:"path"`
+	Type     string `db:"type"`
+	IsBackup bool
 }
 
 // Database - Clickhouse system.databases struct
@@ -66,4 +67,14 @@ type partition struct {
 type macro struct {
 	Macro        string `db:"macro"`
 	Substitution string `db:"substitution"`
+}
+
+// SystemBackups - info from system.backups
+type SystemBackups struct {
+	UUID              string    `db:"uuid"`
+	BackupName        string    `db:"backup_name"`
+	Status            string    `db:"status"`
+	StatusChangedTime time.Time `db:"status_changed_time"`
+	Error             string    `db:"error"`
+	Internal          bool      `db:"internal"`
 }

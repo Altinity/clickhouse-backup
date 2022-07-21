@@ -46,7 +46,7 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	}
 	defer b.ch.Close()
 	if _, disks, err = getLocalBackup(b.cfg, backupName, nil); err != nil {
-		return fmt.Errorf("can't upload: %v", err)
+		return fmt.Errorf("can't find local backup: %v", err)
 	}
 	if err := b.init(disks); err != nil {
 		return err
@@ -65,23 +65,24 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 		return err
 	}
 	var tablesForUpload ListOfTables
-	partitionsToUploadMap := filesystemhelper.CreatePartitionsToBackupMap(partitions)
+	isEmbedded := strings.Contains(backupMetadata.Tags, "embedded")
+	partitionsToUploadMap, _ := filesystemhelper.CreatePartitionsToBackupMap(partitions)
 	if len(backupMetadata.Tables) != 0 {
-		metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
-		tablesForUpload, err = getTableListByPatternLocal(metadataPath, tablePattern, b.cfg.ClickHouse.SkipTables, false, partitionsToUploadMap)
+		tablesForUpload, err = b.prepareTableListToUpload(backupName, tablePattern, partitionsToUploadMap, isEmbedded)
 		if err != nil {
 			return err
 		}
 	}
 	tablesForUploadFromDiff := map[metadata.TableTitle]metadata.TableMetadata{}
-	if diffFrom != "" {
-		tablesForUploadFromDiff, err = b.getTablesForUploadDiffLocal(diffFrom, backupMetadata, tablePattern, b.cfg.ClickHouse.SkipTables)
+
+	if diffFrom != "" && !isEmbedded {
+		tablesForUploadFromDiff, err = b.getTablesForUploadDiffLocal(diffFrom, backupMetadata, tablePattern)
 		if err != nil {
 			return err
 		}
 	}
-	if diffFromRemote != "" {
-		tablesForUploadFromDiff, err = b.getTablesForUploadDiffRemote(diffFromRemote, backupMetadata, tablePattern, b.cfg.ClickHouse.SkipTables)
+	if diffFromRemote != "" && !isEmbedded {
+		tablesForUploadFromDiff, err = b.getTablesForUploadDiffRemote(diffFromRemote, backupMetadata, tablePattern)
 		if err != nil {
 			return err
 		}
@@ -116,14 +117,14 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 			if !schemaOnly {
 				var files map[string][]string
 				var err error
-				files, uploadedBytes, err = b.uploadTableData(backupName, tablesForUpload[idx])
+				files, uploadedBytes, err = b.uploadTableData(backupName, tablesForUpload[idx], isEmbedded)
 				if err != nil {
 					return err
 				}
 				atomic.AddInt64(&compressedDataSize, uploadedBytes)
 				tablesForUpload[idx].Files = files
 			}
-			tableMetadataSize, err := b.uploadTableMetadata(backupName, tablesForUpload[idx])
+			tableMetadataSize, err := b.uploadTableMetadata(backupName, tablesForUpload[idx], isEmbedded)
 			if err != nil {
 				return err
 			}
@@ -137,17 +138,19 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 		})
 	}
 	if err := g.Wait(); err != nil {
-		return fmt.Errorf("one of upload go-routine return error: %v", err)
+		return fmt.Errorf("one of upload table go-routine return error: %v", err)
 	}
 
-	// upload rbac for backup
-	if backupMetadata.RBACSize, err = b.uploadRBACData(backupName); err != nil {
-		return err
-	}
+	if !isEmbedded {
+		// upload rbac for backup
+		if backupMetadata.RBACSize, err = b.uploadRBACData(backupName); err != nil {
+			return err
+		}
 
-	// upload configs for backup
-	if backupMetadata.ConfigSize, err = b.uploadConfigData(backupName); err != nil {
-		return err
+		// upload configs for backup
+		if backupMetadata.ConfigSize, err = b.uploadConfigData(backupName); err != nil {
+			return err
+		}
 	}
 
 	// upload metadata for backup
@@ -171,9 +174,15 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 		return err
 	}
 	remoteBackupMetaFile := path.Join(backupName, "metadata.json")
-	if err = b.dst.PutFile(remoteBackupMetaFile,
-		ioutil.NopCloser(bytes.NewReader(newBackupMetadataBody))); err != nil {
-		return fmt.Errorf("can't upload: %v", err)
+	if err = b.dst.PutFile(remoteBackupMetaFile, ioutil.NopCloser(bytes.NewReader(newBackupMetadataBody))); err != nil {
+		return fmt.Errorf("can't upload %s: %v", remoteBackupMetaFile, err)
+	}
+	if isEmbedded {
+		localClickHouseBackupFile := path.Join(b.EmbeddedBackupDataPath, backupName, ".backup")
+		remoteClickHouseBackupFile := path.Join(backupName, ".backup")
+		if err = b.uploadSingleBackupFile(localClickHouseBackupFile, remoteClickHouseBackupFile); err != nil {
+			return err
+		}
 	}
 	log.
 		WithField("duration", utils.HumanizeDuration(time.Since(startUpload))).
@@ -187,7 +196,37 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	return nil
 }
 
-func (b *Backuper) getTablesForUploadDiffLocal(diffFrom string, backupMetadata *metadata.BackupMetadata, tablePattern string, skipTables []string) (tablesForUploadFromDiff map[metadata.TableTitle]metadata.TableMetadata, err error) {
+func (b *Backuper) uploadSingleBackupFile(localFile, remoteFile string) error {
+	f, err := os.Open(localFile)
+	if err != nil {
+		return fmt.Errorf("can't open %s: %v", localFile, err)
+	}
+	defer func() {
+		if err := f.Close(); err != nil {
+			apexLog.Warnf("can't close %v: %v", f, err)
+		}
+	}()
+	if err = b.dst.PutFile(remoteFile, f); err != nil {
+		return fmt.Errorf("can't upload %s: %v", remoteFile, err)
+	}
+	return nil
+}
+
+func (b *Backuper) prepareTableListToUpload(backupName string, tablePattern string, partitionsToUploadMap common.EmptyMap, isEmbedded bool) (ListOfTables, error) {
+	var tablesForUpload ListOfTables
+	var err error
+	metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
+	if isEmbedded {
+		metadataPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
+	}
+	tablesForUpload, err = getTableListByPatternLocal(b.cfg, metadataPath, tablePattern, false, partitionsToUploadMap)
+	if err != nil {
+		return nil, err
+	}
+	return tablesForUpload, nil
+}
+
+func (b *Backuper) getTablesForUploadDiffLocal(diffFrom string, backupMetadata *metadata.BackupMetadata, tablePattern string) (tablesForUploadFromDiff map[metadata.TableTitle]metadata.TableMetadata, err error) {
 	tablesForUploadFromDiff = make(map[metadata.TableTitle]metadata.TableMetadata)
 	diffFromBackup, err := b.ReadBackupMetadataLocal(diffFrom)
 	if err != nil {
@@ -197,7 +236,7 @@ func (b *Backuper) getTablesForUploadDiffLocal(diffFrom string, backupMetadata *
 		backupMetadata.RequiredBackup = diffFrom
 		metadataPath := path.Join(b.DefaultDataPath, "backup", diffFrom, "metadata")
 		// empty partitionsToBackupMap, cause we can not filter
-		diffTablesList, err := getTableListByPatternLocal(metadataPath, tablePattern, skipTables, false, common.EmptyMap{})
+		diffTablesList, err := getTableListByPatternLocal(b.cfg, metadataPath, tablePattern, false, common.EmptyMap{})
 		if err != nil {
 			return nil, err
 		}
@@ -211,7 +250,7 @@ func (b *Backuper) getTablesForUploadDiffLocal(diffFrom string, backupMetadata *
 	return tablesForUploadFromDiff, nil
 }
 
-func (b *Backuper) getTablesForUploadDiffRemote(diffFromRemote string, backupMetadata *metadata.BackupMetadata, tablePattern string, skipTables []string) (tablesForUploadFromDiff map[metadata.TableTitle]metadata.TableMetadata, err error) {
+func (b *Backuper) getTablesForUploadDiffRemote(diffFromRemote string, backupMetadata *metadata.BackupMetadata, tablePattern string) (tablesForUploadFromDiff map[metadata.TableTitle]metadata.TableMetadata, err error) {
 	tablesForUploadFromDiff = make(map[metadata.TableTitle]metadata.TableMetadata)
 	backupList, err := b.dst.BackupList(true, diffFromRemote)
 	if err != nil {
@@ -233,7 +272,7 @@ func (b *Backuper) getTablesForUploadDiffRemote(diffFromRemote string, backupMet
 
 	if len(diffRemoteMetadata.Tables) != 0 {
 		backupMetadata.RequiredBackup = diffFromRemote
-		diffTablesList, err := getTableListByPatternRemote(b, diffRemoteMetadata, tablePattern, skipTables, false)
+		diffTablesList, err := getTableListByPatternRemote(b, diffRemoteMetadata, tablePattern, false)
 		if err != nil {
 			return nil, err
 		}
@@ -267,7 +306,9 @@ func (b *Backuper) validateUploadParams(backupName string, diffFrom string, diff
 	if b.cfg.GetCompressionFormat() == "none" && !b.cfg.General.UploadByPart {
 		return fmt.Errorf("%s->`compression_format`=%s incompatible with general->upload_by_part=%v", b.cfg.General.RemoteStorage, b.cfg.GetCompressionFormat(), b.cfg.General.UploadByPart)
 	}
-
+	if (diffFrom != "" || diffFromRemote != "") && b.cfg.ClickHouse.UseEmbeddedBackupRestore {
+		apexLog.Warnf("--diff-from and --diff-from-remote not compatible with backups created with `use_embedded_backup_restore: true`")
+	}
 	return nil
 }
 
@@ -309,9 +350,9 @@ func (b *Backuper) uploadAndArchiveBackupRelatedDir(localBackupRelatedDir, local
 	return uint64(remoteUploaded.Size()), nil
 }
 
-func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetadata) (map[string][]string, int64, error) {
+func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetadata, isEmbedded bool) (map[string][]string, int64, error) {
 	dbAndTablePath := path.Join(common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
-	metadataFiles := map[string][]string{}
+	uploadedFiles := map[string][]string{}
 	capacity := 0
 	for disk := range table.Parts {
 		capacity += len(table.Parts[disk])
@@ -325,7 +366,7 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 	splittedPartsOffset := make(map[string]int, 0)
 	splittedPartsCapacity := 0
 	for disk := range table.Parts {
-		backupPath := path.Join(b.DiskToPathMap[disk], "backup", backupName, "shadow", dbAndTablePath, disk)
+		backupPath := b.getLocalBackupDataPathForTable(backupName, disk, dbAndTablePath, isEmbedded)
 		splittedPartsList, err := b.splitPartFiles(backupPath, table.Parts[disk])
 		if err != nil {
 			return nil, 0, err
@@ -334,30 +375,28 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 		splittedPartsOffset[disk] = 0
 		splittedPartsCapacity += len(splittedPartsList)
 	}
-	breakByError := false
-	for common.SumMapValuesInt(splittedPartsOffset) < splittedPartsCapacity && !breakByError {
+breakByError:
+	for common.SumMapValuesInt(splittedPartsOffset) < splittedPartsCapacity {
 		for disk := range table.Parts {
 			if splittedPartsOffset[disk] >= len(splittedParts[disk]) {
 				continue
 			}
 			if err := s.Acquire(ctx, 1); err != nil {
 				apexLog.Errorf("can't acquire semaphore during Upload data parts: %v", err)
-				breakByError = true
-				break
+				break breakByError
 			}
-			backupPath := path.Join(b.DiskToPathMap[disk], "backup", backupName, "shadow", dbAndTablePath, disk)
+			backupPath := b.getLocalBackupDataPathForTable(backupName, disk, dbAndTablePath, isEmbedded)
 			splittedPart := splittedParts[disk][splittedPartsOffset[disk]]
 			partSuffix := splittedPart.Prefix
 			partFiles := splittedPart.Files
 			splittedPartsOffset[disk] += 1
 			baseRemoteDataPath := path.Join(backupName, "shadow", common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
 			if b.cfg.GetCompressionFormat() == "none" {
-				localPath := path.Join(backupPath, partSuffix)
-				remotePath := path.Join(baseRemoteDataPath, disk, partSuffix)
+				remotePath := path.Join(baseRemoteDataPath, disk)
 				g.Go(func() error {
 					defer s.Release(1)
 					apexLog.Debugf("start upload %d files to %s", len(partFiles), remotePath)
-					if err := b.dst.UploadPath(0, localPath, partFiles, remotePath); err != nil {
+					if err := b.dst.UploadPath(0, backupPath, partFiles, remotePath); err != nil {
 						apexLog.Errorf("UploadPath return error: %v", err)
 						return fmt.Errorf("can't upload: %v", err)
 					}
@@ -366,7 +405,7 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 				})
 			} else {
 				fileName := fmt.Sprintf("%s_%s.%s", disk, common.TablePathEncode(partSuffix), b.cfg.GetArchiveExtension())
-				metadataFiles[disk] = append(metadataFiles[disk], fileName)
+				uploadedFiles[disk] = append(uploadedFiles[disk], fileName)
 				remoteDataFile := path.Join(baseRemoteDataPath, fileName)
 				localFiles := partFiles
 				g.Go(func() error {
@@ -390,22 +429,54 @@ func (b *Backuper) uploadTableData(backupName string, table metadata.TableMetada
 	if err := g.Wait(); err != nil {
 		return nil, 0, fmt.Errorf("one of uploadTableData go-routine return error: %v", err)
 	}
-	apexLog.Debugf("finish uploadTableData %s.%s with concurrency=%d len(table.Parts[...])=%d metadataFiles=%v, uploadedBytes=%v", table.Database, table.Table, b.cfg.General.UploadConcurrency, capacity, metadataFiles, uploadedBytes)
-	return metadataFiles, uploadedBytes, nil
+	apexLog.Debugf("finish uploadTableData %s.%s with concurrency=%d len(table.Parts[...])=%d uploadedFiles=%v, uploadedBytes=%v", table.Database, table.Table, b.cfg.General.UploadConcurrency, capacity, uploadedFiles, uploadedBytes)
+	return uploadedFiles, uploadedBytes, nil
 }
 
-func (b *Backuper) uploadTableMetadata(backupName string, table metadata.TableMetadata) (int64, error) {
-	tableMetafile := table
-	content, err := json.MarshalIndent(&tableMetafile, "", "\t")
+func (b *Backuper) uploadTableMetadata(backupName string, tableMetadata metadata.TableMetadata, isEmbedded bool) (int64, error) {
+	if isEmbedded {
+		if sqlSize, err := b.uploadTableMetadataEmbedded(backupName, tableMetadata); err != nil {
+			return sqlSize, err
+		} else {
+			jsonSize, err := b.uploadTableMetadataRegular(backupName, tableMetadata)
+			return sqlSize + jsonSize, err
+		}
+	}
+	return b.uploadTableMetadataRegular(backupName, tableMetadata)
+}
+
+func (b *Backuper) uploadTableMetadataRegular(backupName string, tableMetadata metadata.TableMetadata) (int64, error) {
+	content, err := json.MarshalIndent(&tableMetadata, "", "\t")
 	if err != nil {
 		return 0, fmt.Errorf("can't marshal json: %v", err)
 	}
-	remoteTableMetaFile := path.Join(backupName, "metadata", common.TablePathEncode(table.Database), fmt.Sprintf("%s.%s", common.TablePathEncode(table.Table), "json"))
-	if err := b.dst.PutFile(remoteTableMetaFile,
-		ioutil.NopCloser(bytes.NewReader(content))); err != nil {
+	remoteTableMetaFile := path.Join(backupName, "metadata", common.TablePathEncode(tableMetadata.Database), fmt.Sprintf("%s.json", common.TablePathEncode(tableMetadata.Table)))
+	if err := b.dst.PutFile(remoteTableMetaFile, ioutil.NopCloser(bytes.NewReader(content))); err != nil {
 		return 0, fmt.Errorf("can't upload: %v", err)
 	}
 	return int64(len(content)), nil
+}
+
+func (b *Backuper) uploadTableMetadataEmbedded(backupName string, tableMetadata metadata.TableMetadata) (int64, error) {
+	remoteTableMetaFile := path.Join(backupName, "metadata", common.TablePathEncode(tableMetadata.Database), fmt.Sprintf("%s.sql", common.TablePathEncode(tableMetadata.Table)))
+	localTableMetaFile := path.Join(b.EmbeddedBackupDataPath, backupName, "metadata", common.TablePathEncode(tableMetadata.Database), fmt.Sprintf("%s.sql", common.TablePathEncode(tableMetadata.Table)))
+	localReader, err := os.Open(localTableMetaFile)
+	if err != nil {
+		return 0, fmt.Errorf("can't open %s: %v", localTableMetaFile, err)
+	}
+	defer func() {
+		if err := localReader.Close(); err != nil {
+			apexLog.Warnf("can't close %v: %v", localReader, err)
+		}
+	}()
+	if err := b.dst.PutFile(remoteTableMetaFile, localReader); err != nil {
+		return 0, fmt.Errorf("can't embeeded upload metadata: %v", err)
+	}
+	if info, err := os.Stat(localTableMetaFile); err != nil {
+		return 0, fmt.Errorf("stat %s error: %v", localTableMetaFile, err)
+	} else {
+		return info.Size(), nil
+	}
 }
 
 func (b *Backuper) markDuplicatedParts(backup *metadata.BackupMetadata, existsTable *metadata.TableMetadata, newTable *metadata.TableMetadata, checkLocal bool) {
@@ -439,10 +510,25 @@ func (b *Backuper) markDuplicatedParts(backup *metadata.BackupMetadata, existsTa
 }
 
 func (b *Backuper) ReadBackupMetadataLocal(backupName string) (*metadata.BackupMetadata, error) {
-	backupMetadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata.json")
-	backupMetadataBody, err := ioutil.ReadFile(backupMetadataPath)
-	if err != nil {
-		return nil, err
+	var backupMetadataBody []byte
+	var err error
+	allBackupDataPaths := []string{
+		path.Join(b.DefaultDataPath, "backup", backupName, "metadata.json"),
+		path.Join(b.EmbeddedBackupDataPath, backupName, "metadata.json"),
+	}
+	for i, backupMetadataPath := range allBackupDataPaths {
+		if backupMetadataPath != "" {
+			backupMetadataBody, err = ioutil.ReadFile(backupMetadataPath)
+			if err != nil && i == len(allBackupDataPaths)-1 {
+				return nil, err
+			}
+		}
+		if backupMetadataBody != nil && len(backupMetadataBody) > 0 {
+			break
+		}
+	}
+	if backupMetadataBody == nil || len(backupMetadataBody) == 0 {
+		return nil, fmt.Errorf("%s not found in %v", path.Join(backupName, "metadata.json"), allBackupDataPaths)
 	}
 	backupMetadata := metadata.BackupMetadata{}
 	if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {

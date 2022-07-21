@@ -123,6 +123,11 @@ func (ch *ClickHouse) GetDisks() ([]Disk, error) {
 	if err != nil {
 		return nil, err
 	}
+	for i := range disks {
+		if disks[i].Name == ch.Config.EmbeddedBackupDisk {
+			disks[i].IsBackup = true
+		}
+	}
 	if len(ch.Config.DiskMapping) == 0 {
 		return disks, nil
 	}
@@ -144,6 +149,28 @@ func (ch *ClickHouse) GetDisks() ([]Disk, error) {
 		})
 	}
 	return disks, nil
+}
+
+func (ch *ClickHouse) GetEmbeddedBackupPath(disks []Disk) (string, error) {
+	var err error
+	if !ch.Config.UseEmbeddedBackupRestore {
+		return "", nil
+	}
+	if ch.Config.EmbeddedBackupDisk == "" {
+		return "", fmt.Errorf("please setup `clickhouse->embedded_backup_disk` in config or CLICKHOUSE_EMBEDDED_BACKUP_DISK environment variable")
+	}
+	if disks == nil {
+		disks, err = ch.GetDisks()
+		if err != nil {
+			return "", err
+		}
+	}
+	for _, d := range disks {
+		if d.Name == ch.Config.EmbeddedBackupDisk {
+			return d.Path, nil
+		}
+	}
+	return "", fmt.Errorf("%s not found in system.disks %v", ch.Config.EmbeddedBackupDisk, disks)
 }
 
 func (ch *ClickHouse) GetDefaultPath(disks []Disk) (string, error) {
@@ -224,6 +251,9 @@ func (ch *ClickHouse) GetTables(tablePattern string) ([]Table, error) {
 				t.Skip = true
 				break
 			}
+		}
+		if ch.Config.UseEmbeddedBackupRestore && (strings.HasPrefix(t.Name, ".inner_id.") || strings.HasPrefix(t.Name, ".inner.")) {
+			t.Skip = true
 		}
 		if t.Skip {
 			tables[i] = t
@@ -476,14 +506,20 @@ func (ch *ClickHouse) ShowCreateTable(database, name string) string {
 }
 
 // CreateDatabase - create ClickHouse database
-func (ch *ClickHouse) CreateDatabase(database string) error {
+func (ch *ClickHouse) CreateDatabase(database string, cluster string) error {
 	query := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", database)
+	if cluster != "" {
+		query += fmt.Sprintf(" ON CLUSTER '%s'", cluster)
+	}
 	_, err := ch.Query(query)
 	return err
 }
 
-func (ch *ClickHouse) CreateDatabaseWithEngine(database string, engine string) error {
+func (ch *ClickHouse) CreateDatabaseWithEngine(database, engine, cluster string) error {
 	query := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s` ENGINE=%s", database, engine)
+	if cluster != "" {
+		query += fmt.Sprintf(" ON CLUSTER '%s'", cluster)
+	}
 	_, err := ch.Query(query)
 	return err
 }
@@ -789,8 +825,13 @@ func (ch *ClickHouse) GetUserDefinedFunctions() ([]Function, error) {
 	return allFunctions, nil
 }
 
-func (ch *ClickHouse) CreateUserDefinedFunction(name string, query string) error {
-	_, err := ch.Query(fmt.Sprintf("DROP FUNCTION IF EXISTS `%s`", name))
+func (ch *ClickHouse) CreateUserDefinedFunction(name string, query string, cluster string) error {
+	dropQuery := fmt.Sprintf("DROP FUNCTION IF EXISTS `%s`", name)
+	if cluster != "" {
+		dropQuery += fmt.Sprintf(" ON CLUSTER '%s'", cluster)
+		query = strings.Replace(query, " AS ", fmt.Sprintf(" ON CLUSTER '%s' AS ", cluster), 1)
+	}
+	_, err := ch.Query(dropQuery)
 	if err != nil {
 		return err
 	}

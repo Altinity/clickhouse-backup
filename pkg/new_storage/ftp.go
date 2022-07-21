@@ -160,7 +160,7 @@ func (f *FTP) Walk(ftpPath string, recursive bool, process func(RemoteFile) erro
 		if err := process(&ftpFile{
 			size:         int64(entry.Size),
 			lastModified: entry.Time,
-			name:         strings.Trim(walker.Path(), prefix),
+			name:         strings.TrimPrefix(walker.Path(), prefix),
 		}); err != nil {
 			return err
 		}

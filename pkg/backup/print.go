@@ -44,7 +44,10 @@ func printBackupsRemote(w io.Writer, backupList []new_storage.Backup, format str
 			description := backup.DataFormat
 			uploadDate := backup.UploadDate.Format("02/01/2006 15:04:05")
 			if backup.Legacy {
-				description = "old-format"
+				description += ", old-format"
+			}
+			if backup.Tags != "" {
+				description += ", " + backup.Tags
 			}
 			required := ""
 			if backup.RequiredBackup != "" {
@@ -140,57 +143,72 @@ func GetLocalBackups(cfg *config.Config, disks []clickhouse.Disk) ([]BackupLocal
 			return nil, nil, err
 		}
 	}
-	dataPath, err := ch.GetDefaultPath(disks)
+	defaultDataPath, err := ch.GetDefaultPath(disks)
 	if err != nil {
 		return nil, nil, err
 	}
 	result := []BackupLocal{}
-	backupsPath := path.Join(dataPath, "backup")
-	d, err := os.Open(backupsPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return result, disks, nil
+	allBackupPaths := []string{path.Join(defaultDataPath, "backup")}
+	if cfg.ClickHouse.UseEmbeddedBackupRestore {
+		for _, disk := range disks {
+			if disk.IsBackup || disk.Name == cfg.ClickHouse.EmbeddedBackupDisk {
+				allBackupPaths = append(allBackupPaths, disk.Path)
+			}
 		}
-		return nil, nil, err
 	}
-	defer func() {
-		if err := d.Close(); err != nil {
-			apexLog.Errorf("can't close %s error: %v", backupsPath, err)
-		}
-	}()
-	names, err := d.Readdirnames(-1)
-	if err != nil {
-		return nil, nil, err
-	}
-	for _, name := range names {
-		info, err := os.Stat(path.Join(backupsPath, name))
+	l := len(allBackupPaths)
+	for i, backupPath := range allBackupPaths {
+		d, err := os.Open(backupPath)
 		if err != nil {
-			continue
+			if i < l-1 {
+				continue
+			}
+			if os.IsNotExist(err) {
+				return result, disks, nil
+			}
+			return nil, nil, err
 		}
-		if !info.IsDir() {
-			continue
+		if err == nil {
+			defer func() {
+				if err := d.Close(); err != nil {
+					apexLog.Errorf("can't close %s error: %v", backupPath, err)
+				}
+			}()
 		}
-		backupMetafilePath := path.Join(backupsPath, name, "metadata.json")
-		backupMetadataBody, err := ioutil.ReadFile(backupMetafilePath)
-		if os.IsNotExist(err) {
-			// Legacy backup
+		names, err := d.Readdirnames(-1)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, name := range names {
+			info, err := os.Stat(path.Join(backupPath, name))
+			if err != nil {
+				continue
+			}
+			if !info.IsDir() {
+				continue
+			}
+			backupMetafilePath := path.Join(backupPath, name, "metadata.json")
+			backupMetadataBody, err := ioutil.ReadFile(backupMetafilePath)
+			if os.IsNotExist(err) {
+				// Legacy backup
+				result = append(result, BackupLocal{
+					BackupMetadata: metadata.BackupMetadata{
+						BackupName:   name,
+						CreationDate: info.ModTime(),
+					},
+					Legacy: true,
+				})
+				continue
+			}
+			var backupMetadata metadata.BackupMetadata
+			if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
+				return nil, disks, err
+			}
 			result = append(result, BackupLocal{
-				BackupMetadata: metadata.BackupMetadata{
-					BackupName:   name,
-					CreationDate: info.ModTime(),
-				},
-				Legacy: true,
+				BackupMetadata: backupMetadata,
+				Legacy:         false,
 			})
-			continue
 		}
-		var backupMetadata metadata.BackupMetadata
-		if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
-			return nil, disks, err
-		}
-		result = append(result, BackupLocal{
-			BackupMetadata: backupMetadata,
-			Legacy:         false,
-		})
 	}
 	sort.SliceStable(result, func(i, j int) bool {
 		return result[i].CreationDate.Before(result[j].CreationDate)

@@ -24,7 +24,6 @@ func List(cfg *config.Config) ([]new_storage.Backup, error) {
 	if err == nil {
 		outLines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 		backupList := make([]new_storage.Backup, len(outLines))
-		log.Infof("SUKA1 len(outLines)=%d", len(outLines))
 		for i, line := range outLines {
 			if len(line) > 0 {
 				if err = json.Unmarshal([]byte(line), &backupList[i]); err != nil {

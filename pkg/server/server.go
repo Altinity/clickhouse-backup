@@ -540,6 +540,12 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 			if b.Broken != "" {
 				description = b.Broken
 			}
+			if b.Tags != "" {
+				if description != "" {
+					description += ", "
+				}
+				description += b.Tags
+			}
 			backupsJSON = append(backupsJSON, backupJSON{
 				Name:           b.BackupName,
 				Created:        b.CreationDate.Format(APITimeFormat),
@@ -564,6 +570,12 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			if b.Broken != "" {
 				description = b.Broken
+			}
+			if b.Tags != "" {
+				if description != "" {
+					description += ", "
+				}
+				description += b.Tags
 			}
 			backupsJSON = append(backupsJSON, backupJSON{
 				Name:           b.BackupName,

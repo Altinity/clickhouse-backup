@@ -166,6 +166,8 @@ type ClickHouseConfig struct {
 	Timeout                          string            `yaml:"timeout" envconfig:"CLICKHOUSE_TIMEOUT"`
 	FreezeByPart                     bool              `yaml:"freeze_by_part" envconfig:"CLICKHOUSE_FREEZE_BY_PART"`
 	FreezeByPartWhere                string            `yaml:"freeze_by_part_where" envconfig:"CLICKHOUSE_FREEZE_BY_PART_WHERE"`
+	UseEmbeddedBackupRestore         bool              `yaml:"use_embedded_backup_restore" envconfig:"CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE"`
+	EmbeddedBackupDisk               string            `yaml:"embedded_backup_disk" envconfig:"CLICKHOUSE_EMBEDDED_BACKUP_DISK"`
 	Secure                           bool              `yaml:"secure" envconfig:"CLICKHOUSE_SECURE"`
 	SkipVerify                       bool              `yaml:"skip_verify" envconfig:"CLICKHOUSE_SKIP_VERIFY"`
 	SyncReplicatedTables             bool              `yaml:"sync_replicated_tables" envconfig:"CLICKHOUSE_SYNC_REPLICATED_TABLES"`
@@ -282,8 +284,15 @@ func ValidateConfig(cfg *Config) error {
 	if _, ok := ArchiveExtensions[cfg.GetCompressionFormat()]; !ok && cfg.GetCompressionFormat() != "none" {
 		return fmt.Errorf("'%s' is unsupported compression format", cfg.GetCompressionFormat())
 	}
-	if _, err := time.ParseDuration(cfg.ClickHouse.Timeout); err != nil {
+	if timeout, err := time.ParseDuration(cfg.ClickHouse.Timeout); err != nil {
 		return fmt.Errorf("invalid clickhouse timeout: %v", err)
+	} else {
+		if cfg.ClickHouse.UseEmbeddedBackupRestore && timeout < 240*time.Minute {
+			return fmt.Errorf("clickhouse `timeout: %v`, not enough for `use_embedded_backup_restore: true`", cfg.ClickHouse.Timeout)
+		}
+	}
+	if cfg.ClickHouse.FreezeByPart && cfg.ClickHouse.UseEmbeddedBackupRestore {
+		return fmt.Errorf("`freeze_by_part: %v` is not compatible with `use_embedded_backup_restore: %v`", cfg.ClickHouse.FreezeByPart, cfg.ClickHouse.UseEmbeddedBackupRestore)
 	}
 	if _, err := time.ParseDuration(cfg.COS.Timeout); err != nil {
 		return fmt.Errorf("invalid cos timeout: %v", err)
@@ -375,6 +384,7 @@ func DefaultConfig() *Config {
 			ConfigDir:                        "/etc/clickhouse-server/",
 			RestartCommand:                   "systemctl restart clickhouse-server",
 			IgnoreNotExistsErrorDuringFreeze: true,
+			UseEmbeddedBackupRestore:         false,
 		},
 		AzureBlob: AzureBlobConfig{
 			EndpointSuffix:    "core.windows.net",

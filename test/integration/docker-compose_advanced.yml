@@ -117,6 +117,7 @@ services:
     volumes:
       - ./backup-user.xml:/etc/clickhouse-server/users.d/backup-user.xml
       - ./enable-access_management.xml:/etc/clickhouse-server/users.d/enable-access_management.xml
+#      - ./allow_deprecated_syntax_for_merge_tree.xml:/etc/clickhouse-server/users.d/allow_deprecated_syntax_for_merge_tree.xml
       - ${CLICKHOUSE_BACKUP_BIN:-../../clickhouse-backup/clickhouse-backup-race}:/usr/bin/clickhouse-backup
       - ./credentials.json:/etc/clickhouse-backup/credentials.json
       - ./server.crt:/etc/clickhouse-server/server.crt

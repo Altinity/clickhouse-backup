@@ -7,6 +7,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -17,13 +18,14 @@ import (
 )
 
 var (
-	uid *int
-	gid *int
+	uid       *int
+	gid       *int
+	chownLock sync.Mutex
 )
 
-// Chown - set permission on file to clickhouse user
+// Chown - set permission on path to clickhouse user
 // This is necessary that the ClickHouse will be able to read parts files on restore
-func Chown(filename string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk) error {
+func Chown(path string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk, recursive bool) error {
 	var (
 		dataPath string
 		err      error
@@ -31,7 +33,8 @@ func Chown(filename string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk) 
 	if os.Getuid() != 0 {
 		return nil
 	}
-	if uid == nil || gid == nil {
+	chownLock.Lock()
+	if uid == nil {
 		if dataPath, err = ch.GetDefaultPath(disks); err != nil {
 			return err
 		}
@@ -45,15 +48,24 @@ func Chown(filename string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk) 
 		uid = &intUid
 		gid = &intGid
 	}
-	//apexLog.Debugf("Chown %s to %d:%d", filename, *uid, *gid)
-	return os.Chown(filename, *uid, *gid)
+	chownLock.Unlock()
+	if !recursive {
+		//apexLog.Debugf("Chown %s to %d:%d", path, *uid, *gid)
+		return os.Chown(path, *uid, *gid)
+	}
+	return filepath.Walk(path, func(fName string, f os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Chown(fName, *uid, *gid)
+	})
 }
 
 func Mkdir(name string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk) error {
-	if err := os.Mkdir(name, 0750); err != nil && !os.IsExist(err) {
+	if err := os.MkdirAll(name, 0750); err != nil && !os.IsExist(err) {
 		return err
 	}
-	if err := Chown(name, ch, disks); err != nil {
+	if err := Chown(name, ch, disks, false); err != nil {
 		return err
 	}
 	return nil
@@ -156,7 +168,7 @@ func CopyDataToDetached(backupName string, backupTable metadata.TableMetadata, d
 						return fmt.Errorf("failed to create hard link '%s' -> '%s': %w", filePath, dstFilePath, err)
 					}
 				}
-				return Chown(dstFilePath, ch, disks)
+				return Chown(dstFilePath, ch, disks, false)
 			}); err != nil {
 				return fmt.Errorf("error during filepath.Walk for part '%s': %w", part.Name, err)
 			}
@@ -248,17 +260,24 @@ func IsDuplicatedParts(part1, part2 string) error {
 	return nil
 }
 
-func CreatePartitionsToBackupMap(partitions []string) common.EmptyMap {
+func CreatePartitionsToBackupMap(partitions []string) (common.EmptyMap, []string) {
 	if len(partitions) == 0 {
-		return make(common.EmptyMap, 0)
+		return make(common.EmptyMap, 0), partitions
 	} else {
 		partitionsMap := common.EmptyMap{}
-		// to avoid use --partitions val1 --partitions val2, https://github.com/AlexAkulov/clickhouse-backup/issues/425#issuecomment-1149855063
+
+		// to allow use --partitions val1 --partitions val2, https://github.com/AlexAkulov/clickhouse-backup/issues/425#issuecomment-1149855063
 		for _, partitionArg := range partitions {
 			for _, partition := range strings.Split(partitionArg, ",") {
-				partitionsMap[strings.Trim(partition, " ")] = struct{}{}
+				partitionsMap[strings.Trim(partition, " \t")] = struct{}{}
 			}
 		}
-		return partitionsMap
+		newPartitions := make([]string, len(partitionsMap))
+		i := 0
+		for partitionName := range partitionsMap {
+			newPartitions[i] = partitionName
+			i += 1
+		}
+		return partitionsMap, newPartitions
 	}
 }
