@@ -911,7 +911,8 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	api.metrics.NumberBackupsRemoteExpected.Set(float64(cfg.General.BackupsToKeepRemote))
 	api.metrics.NumberBackupsLocalExpected.Set(float64(cfg.General.BackupsToKeepLocal))
 	vars := mux.Vars(r)
-	name := vars["name"]
+	name := strings.ReplaceAll(vars["name"], "/", "")
+	name = strings.ReplaceAll(name, "/", "")
 	query := r.URL.Query()
 	tablePattern := ""
 	partitionsToBackup := make([]string, 0)
