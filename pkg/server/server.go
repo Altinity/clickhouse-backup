@@ -719,7 +719,8 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	query := r.URL.Query()
 	diffFrom := ""
 	diffFromRemote := ""
-	name := vars["name"]
+	name := strings.ReplaceAll(vars["name"], "/", "")
+	name = strings.ReplaceAll(name, "/", "")
 	tablePattern := ""
 	partitionsToBackup := make([]string, 0)
 	schemaOnly := false
@@ -863,7 +864,9 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		fullCommand += " --configs"
 	}
 
-	name := vars["name"]
+	name := strings.ReplaceAll(vars["name"], "/", "")
+	name = strings.ReplaceAll(name, "\\", "")
+
 	fullCommand += fmt.Sprintf(" %s", name)
 
 	go func() {

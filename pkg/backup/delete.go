@@ -7,6 +7,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
 	"os"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
@@ -74,6 +75,9 @@ func RemoveOldBackupsLocal(cfg *config.Config, keepLastBackup bool, disks []clic
 func RemoveBackupLocal(cfg *config.Config, backupName string, disks []clickhouse.Disk) error {
 	var err error
 	start := time.Now()
+	backupName = strings.ReplaceAll(backupName, "/", "")
+	backupName = strings.ReplaceAll(backupName, "\\", "")
+
 	ch := &clickhouse.ClickHouse{
 		Config: &cfg.ClickHouse,
 	}
@@ -118,6 +122,8 @@ func RemoveBackupLocal(cfg *config.Config, backupName string, disks []clickhouse
 
 func RemoveBackupRemote(cfg *config.Config, backupName string) error {
 	start := time.Now()
+	backupName = strings.ReplaceAll(backupName, "/", "")
+	backupName = strings.ReplaceAll(backupName, "\\", "")
 	if cfg.General.RemoteStorage == "none" {
 		err := fmt.Errorf("RemoveBackupRemote aborted: RemoteStorage set to \"none\"")
 		apexLog.Error(err.Error())

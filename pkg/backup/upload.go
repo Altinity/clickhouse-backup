@@ -30,6 +30,9 @@ import (
 func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern string, partitions []string, schemaOnly bool) error {
 	var err error
 	var disks []clickhouse.Disk
+	backupName = strings.ReplaceAll(backupName, "/", "")
+	backupName = strings.ReplaceAll(backupName, "\\", "")
+
 	if err = b.validateUploadParams(backupName, diffFrom, diffFromRemote); err != nil {
 		return err
 	}
