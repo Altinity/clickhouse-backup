@@ -160,7 +160,7 @@ jobs:
       - name: Upload testflows logs
         uses: actions/upload-artifact@v3
         with:
-          name: testflows-logs-and-reports
+          name: testflows-logs-and-reports-${{ matrix.clickhouse }}
           path: |
             test/testflows/*.log
             test/testflows/*.log.txt
