@@ -39,6 +39,7 @@ func Restore(cfg *config.Config, backupName string, tablePattern string, partiti
 		_ = PrintLocalBackups(cfg, "all")
 		return fmt.Errorf("select backup for restore")
 	}
+	backupName = cleanBackupNameRE.ReplaceAllString(backupName, "")
 	if err := ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}

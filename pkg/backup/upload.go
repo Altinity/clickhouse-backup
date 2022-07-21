@@ -37,6 +37,7 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 		"operation": "upload",
 	})
 	startUpload := time.Now()
+	backupName = cleanBackupNameRE.ReplaceAllString(backupName, "")
 	if err = b.ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}

@@ -63,6 +63,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		_ = PrintRemoteBackups(b.cfg, "all")
 		return fmt.Errorf("select backup for download")
 	}
+	backupName = cleanBackupNameRE.ReplaceAllString(backupName, "")
 	localBackups, disks, err := GetLocalBackups(b.cfg, nil)
 	if err != nil {
 		return err
