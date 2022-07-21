@@ -646,6 +646,8 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		backupName = name[0]
 		fullCommand = fmt.Sprintf("%s %s", fullCommand, backupName)
 	}
+	backupName = strings.ReplaceAll(backupName, "/", "")
+	backupName = strings.ReplaceAll(backupName, "\\", "")
 
 	go func() {
 		commandId := api.status.start(fullCommand)
