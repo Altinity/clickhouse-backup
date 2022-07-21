@@ -726,9 +726,9 @@ func (ch *ClickHouse) Select(dest interface{}, query string, args ...interface{}
 
 func (ch *ClickHouse) LogQuery(query string) string {
 	if !ch.Config.LogSQLQueries {
-		log.Debug(query)
+		log.Debug(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(query))
 	} else {
-		log.Info(query)
+		log.Info(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(query))
 	}
 	return query
 }
