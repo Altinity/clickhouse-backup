@@ -26,6 +26,7 @@ import (
 
 // Restore - restore tables matched by tablePattern from backupName
 func Restore(cfg *config.Config, backupName string, tablePattern string, partitions []string, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly bool) error {
+	backupName = cleanBackupNameRE.ReplaceAllString(backupName, "")
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "restore",
@@ -39,7 +40,6 @@ func Restore(cfg *config.Config, backupName string, tablePattern string, partiti
 		_ = PrintLocalBackups(cfg, "all")
 		return fmt.Errorf("select backup for restore")
 	}
-	backupName = cleanBackupNameRE.ReplaceAllString(backupName, "")
 	if err := ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}

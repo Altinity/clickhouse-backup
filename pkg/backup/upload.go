@@ -32,12 +32,12 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	if err = b.validateUploadParams(backupName, diffFrom, diffFromRemote); err != nil {
 		return err
 	}
+	startUpload := time.Now()
+	backupName = cleanBackupNameRE.ReplaceAllString(backupName, "")
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "upload",
 	})
-	startUpload := time.Now()
-	backupName = cleanBackupNameRE.ReplaceAllString(backupName, "")
 	if err = b.ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
