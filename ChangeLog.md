@@ -1,3 +1,7 @@
+# v1.4.8
+IMPROVEMENTS
+- add check_replicas_before_attach configuration to avoid concurrent ATTACH PART execution during `restore` command on multi-shard cluster, fix [474](https://github.com/AlexAkulov/clickhouse-backup/issues/474)
+
 # v1.4.7
 IMPROVEMENTS
 - PROPERLY restore to default disk if disks not found on destination clickhouse server, fix [457](https://github.com/AlexAkulov/clickhouse-backup/issues/457)
