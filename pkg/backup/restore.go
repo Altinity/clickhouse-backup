@@ -30,7 +30,7 @@ var CreateDatabaseRE = regexp.MustCompile(`(?m)^CREATE DATABASE (\s*)(\S+)(\s*)`
 
 // Restore - restore tables matched by tablePattern from backupName
 func Restore(cfg *config.Config, backupName, tablePattern string, databaseMapping, partitions []string, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly bool) error {
-	backupName = cleanBackupNameRE.ReplaceAllString(backupName, "")
+	backupName = CleanBackupNameRE.ReplaceAllString(backupName, "")
 	if err := prepareRestoreDatabaseMapping(cfg, databaseMapping); err != nil {
 		return err
 	}

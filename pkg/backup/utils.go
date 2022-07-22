@@ -15,4 +15,4 @@ func GetBackupsToDelete(backups []BackupLocal, keep int) []BackupLocal {
 	return []BackupLocal{}
 }
 
-var cleanBackupNameRE = regexp.MustCompile(`[\t\r\n ]+|\.{2,}|[\\/]+`)
+var CleanBackupNameRE = regexp.MustCompile(`[\t\r\n ]+|\.{2,}|[\\/]+`)

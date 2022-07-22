@@ -643,11 +643,9 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if name, exist := query["name"]; exist {
-		backupName = name[0]
+		backupName = backup.CleanBackupNameRE.ReplaceAllString(name[0], "")
 		fullCommand = fmt.Sprintf("%s %s", fullCommand, backupName)
 	}
-	backupName = strings.ReplaceAll(backupName, "/", "")
-	backupName = strings.ReplaceAll(backupName, "\\", "")
 
 	go func() {
 		commandId := api.status.start(fullCommand)

@@ -31,7 +31,7 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	var err error
 	var disks []clickhouse.Disk
 	startUpload := time.Now()
-	backupName = cleanBackupNameRE.ReplaceAllString(backupName, "")
+	backupName = CleanBackupNameRE.ReplaceAllString(backupName, "")
 	if err = b.validateUploadParams(backupName, diffFrom, diffFromRemote); err != nil {
 		return err
 	}
