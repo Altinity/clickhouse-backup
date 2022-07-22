@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
+	apexLog "github.com/apex/log"
 	"io"
 	"io/ioutil"
 	"os"
@@ -52,7 +53,9 @@ func printBackupsRemote(w io.Writer, backupList []new_storage.Backup, format str
 				description = backup.Broken
 				size = "???"
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", backup.BackupName, size, uploadDate, "remote", required, description)
+			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", backup.BackupName, size, uploadDate, "remote", required, description); err != nil {
+				apexLog.Warnf("can't write remote backup list to writer: %v", err)
+			}
 		}
 	default:
 		return fmt.Errorf("'%s' undefined", format)
@@ -94,7 +97,9 @@ func printBackupsLocal(w io.Writer, backupList []BackupLocal, format string) err
 				description = backup.Broken
 				size = "???"
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", backup.BackupName, size, creationDate, "local", required, description)
+			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", backup.BackupName, size, creationDate, "local", required, description); err != nil {
+				apexLog.Warnf("can't write local backup list to writer: %v", err)
+			}
 		}
 	default:
 		return fmt.Errorf("'%s' undefined", format)
@@ -105,7 +110,11 @@ func printBackupsLocal(w io.Writer, backupList []BackupLocal, format string) err
 // PrintLocalBackups - print all backups stored locally
 func PrintLocalBackups(cfg *config.Config, format string) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', tabwriter.DiscardEmptyColumns)
-	defer w.Flush()
+	defer func() {
+		if err := w.Flush(); err != nil {
+			apexLog.Warnf("can't flush tabwriter for local backup list: %v ", err)
+		}
+	}()
 	backupList, _, err := GetLocalBackups(cfg, nil)
 	if err != nil && !os.IsNotExist(err) {
 		return err
@@ -133,7 +142,7 @@ func GetLocalBackups(cfg *config.Config, disks []clickhouse.Disk) ([]BackupLocal
 	if err != nil {
 		return nil, nil, err
 	}
-	result := []BackupLocal{}
+	result := make([]BackupLocal, 0)
 	backupsPath := path.Join(dataPath, "backup")
 	d, err := os.Open(backupsPath)
 	if err != nil {
@@ -142,7 +151,11 @@ func GetLocalBackups(cfg *config.Config, disks []clickhouse.Disk) ([]BackupLocal
 		}
 		return nil, nil, err
 	}
-	defer d.Close()
+	defer func() {
+		if err := d.Close(); err != nil {
+			apexLog.Warnf("can't close backupPath for GetLocalBackups: %v ", err)
+		}
+	}()
 	names, err := d.Readdirnames(-1)
 	if err != nil {
 		return nil, nil, err
@@ -185,19 +198,27 @@ func GetLocalBackups(cfg *config.Config, disks []clickhouse.Disk) ([]BackupLocal
 
 func PrintAllBackups(cfg *config.Config, format string) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', tabwriter.DiscardEmptyColumns)
-	defer w.Flush()
+	defer func() {
+		if err := w.Flush(); err != nil {
+			apexLog.Warnf("can't flush tabwriter for PrintAllBackups: %v ", err)
+		}
+	}()
 	localBackups, _, err := GetLocalBackups(cfg, nil)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	printBackupsLocal(w, localBackups, format)
+	if err = printBackupsLocal(w, localBackups, format); err != nil {
+		apexLog.Warnf("printBackupsLocal return error: %v", err)
+	}
 
 	if cfg.General.RemoteStorage != "none" {
 		remoteBackups, err := GetRemoteBackups(cfg, true)
 		if err != nil {
 			return err
 		}
-		printBackupsRemote(w, remoteBackups, format)
+		if err = printBackupsRemote(w, remoteBackups, format); err != nil {
+			apexLog.Warnf("printBackupsLocal return error: %v", err)
+		}
 	}
 	return nil
 }
@@ -205,7 +226,11 @@ func PrintAllBackups(cfg *config.Config, format string) error {
 // PrintRemoteBackups - print all backups stored on remote storage
 func PrintRemoteBackups(cfg *config.Config, format string) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', tabwriter.DiscardEmptyColumns)
-	defer w.Flush()
+	defer func() {
+		if err := w.Flush(); err != nil {
+			apexLog.Warnf("can't flush tabwriter for PrintRemoteBackups: %v ", err)
+		}
+	}()
 	backupList, err := GetRemoteBackups(cfg, true)
 	if err != nil {
 		return err
@@ -302,11 +327,17 @@ func PrintTables(cfg *config.Config, printAll bool) error {
 			tableDisks = append(tableDisks, disk)
 		}
 		if table.Skip {
-			fmt.Fprintf(w, "%s.%s\t%s\t%v\tskip\n", table.Database, table.Name, utils.FormatBytes(table.TotalBytes), strings.Join(tableDisks, ","))
+			if _, err := fmt.Fprintf(w, "%s.%s\t%s\t%v\tskip\n", table.Database, table.Name, utils.FormatBytes(table.TotalBytes), strings.Join(tableDisks, ",")); err != nil {
+				apexLog.Warnf("can't write table list: %v", err)
+			}
 			continue
 		}
-		fmt.Fprintf(w, "%s.%s\t%s\t%v\t\n", table.Database, table.Name, utils.FormatBytes(table.TotalBytes), strings.Join(tableDisks, ","))
+		if _, err := fmt.Fprintf(w, "%s.%s\t%s\t%v\t\n", table.Database, table.Name, utils.FormatBytes(table.TotalBytes), strings.Join(tableDisks, ",")); err != nil {
+			apexLog.Warnf("can't write table list: %v", err)
+		}
 	}
-	w.Flush()
+	if err = w.Flush(); err != nil {
+		apexLog.Warnf("can't flush table list: %v", err)
+	}
 	return nil
 }
