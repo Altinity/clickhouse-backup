@@ -571,7 +571,7 @@ func TestLongListRemote(t *testing.T) {
 	r := require.New(t)
 	ch.connectWithWait(r, 0*time.Second)
 	defer ch.chbackend.Close()
-	totalCacheCount := 10
+	totalCacheCount := 20
 	testBackupName := "test_list_remote"
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 
