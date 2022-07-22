@@ -1,6 +1,7 @@
 # v1.4.8
 IMPROVEMENTS
 - add check_replicas_before_attach configuration to avoid concurrent ATTACH PART execution during `restore` command on multi-shard cluster, fix [474](https://github.com/AlexAkulov/clickhouse-backup/issues/474)
+- allow backup list when clickhouse server offline, fix [476](https://github.com/AlexAkulov/clickhouse-backup/issues/476)
 
 # v1.4.7
 IMPROVEMENTS

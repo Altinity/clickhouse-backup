@@ -128,14 +128,19 @@ func GetLocalBackups(cfg *config.Config, disks []clickhouse.Disk) ([]BackupLocal
 	ch := &clickhouse.ClickHouse{
 		Config: &cfg.ClickHouse,
 	}
-	if err := ch.Connect(); err != nil {
-		return nil, disks, fmt.Errorf("can't connect to clickhouse: %w", err)
+	if err = ch.Connect(); err != nil {
+		apexLog.Warnf("can't connect to clickhouse: %v will try get backup directly from /var/lib/clickhouse/", err)
+	} else {
+		defer ch.Close()
 	}
-	defer ch.Close()
-	if disks == nil {
+	if disks == nil && err == nil {
 		disks, err = ch.GetDisks()
 		if err != nil {
 			return nil, nil, err
+		}
+	} else if disks == nil && err != nil {
+		disks = []clickhouse.Disk{
+			{Name: "default", Path: "/var/lib/clickhouse"},
 		}
 	}
 	dataPath, err := ch.GetDefaultPath(disks)
