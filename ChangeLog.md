@@ -3,6 +3,9 @@ IMPROVEMENTS
 - add check_replicas_before_attach configuration to avoid concurrent ATTACH PART execution during `restore` command on multi-shard cluster, fix [474](https://github.com/AlexAkulov/clickhouse-backup/issues/474)
 - allow backup list when clickhouse server offline, fix [476](https://github.com/AlexAkulov/clickhouse-backup/issues/476)
 
+BUG FIXES
+- resolve `{uuid}` marcos during restore for `ReplicatedMergeTree` table and ClickHouse server 22.5+, fix [466](https://github.com/AlexAkulov/clickhouse-backup/issues/466)
+
 # v1.4.7
 IMPROVEMENTS
 - PROPERLY restore to default disk if disks not found on destination clickhouse server, fix [457](https://github.com/AlexAkulov/clickhouse-backup/issues/457)
