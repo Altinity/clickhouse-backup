@@ -96,7 +96,7 @@ def window_view(self):
     """Test that window view is handled properly by clickhouse-backup.
     """
     base_table_name = self.context.views_base_name
-    if os.environ['CLICKHOUSE_VERSION'] >= '22.6':
+    if os.environ.get('CLICKHOUSE_VERSION','22.3') >= '22.6':
         view_create_query=f"CREATE WINDOW VIEW {base_table_name}_wview " \
                           f"ENGINE AggregatingMergeTree() ORDER BY t AS SELECT count(Version) v, tumbleStart(w_id) t " \
                           f"FROM default.{base_table_name} GROUP BY tumble(Time, INTERVAL '10' SECOND) AS w_id"

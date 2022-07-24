@@ -480,6 +480,20 @@ func (ch *ClickHouse) FreezeTable(table *Table, name string) error {
 
 // AttachPartitions - execute ATTACH command for specific table
 func (ch *ClickHouse) AttachPartitions(table metadata.TableMetadata, disks []Disk) error {
+	// https://github.com/AlexAkulov/clickhouse-backup/issues/474
+	if ch.Config.CheckReplicasBeforeAttach {
+		existsReplicas := make([]int, 0)
+		if err := ch.Select(&existsReplicas, "SELECT log_pointer + absolute_delay FROM system.replicas WHERE database=? and table=?", table.Database, table.Table); err != nil {
+			return err
+		}
+		if len(existsReplicas) != 1 {
+			return fmt.Errorf("invalid result for check exists replicas: %+v", existsReplicas)
+		}
+		if existsReplicas[0] > 0 {
+			log.Warnf("%s.%s skipped cause system.replicas entry already exists and not zero", table.Database, table.Table)
+			return nil
+		}
+	}
 	for _, disk := range disks {
 		for _, partition := range table.Parts[disk.Name] {
 			if !strings.HasSuffix(partition.Name, ".proj") {

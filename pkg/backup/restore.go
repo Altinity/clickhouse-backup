@@ -319,6 +319,8 @@ func RestoreSchema(cfg *config.Config, ch *clickhouse.ClickHouse, backupName str
 	return nil
 }
 
+var UUIDWithReplicatedMergeTreeRE = regexp.MustCompile(`^(.+)(UUID)(\s+)'([^']+)'(.+)({uuid})(.*)`)
+
 func restoreSchemaEmbedded(cfg *config.Config, ch *clickhouse.ClickHouse, backupName string, tablesForRestore ListOfTables) error {
 	return restoreEmbedded(cfg, ch, backupName, true, tablesForRestore, nil)
 }
@@ -392,6 +394,14 @@ func restoreSchemaRegular(cfg *config.Config, ch *clickhouse.ClickHouse, tablesF
 			schema.Query = strings.Replace(
 				schema.Query, "CREATE LIVE VIEW", "ATTACH LIVE VIEW", 1,
 			)
+			// https://github.com/AlexAkulov/clickhouse-backup/issues/466
+			if cfg.General.RestoreSchemaOnCluster == "" && strings.Contains(schema.Query, "{uuid}") && strings.Contains(schema.Query, "Replicated") {
+				if !strings.Contains(schema.Query, "UUID") {
+					log.Warnf("table query doesn't contains UUID, can't guarantee properly restore for ReplicatedMergeTree")
+				} else {
+					schema.Query = UUIDWithReplicatedMergeTreeRE.ReplaceAllString(schema.Query, "$1$2$3'$4'$5$4$7")
+				}
+			}
 			restoreErr = ch.CreateTable(clickhouse.Table{
 				Database: schema.Database,
 				Name:     schema.Table,

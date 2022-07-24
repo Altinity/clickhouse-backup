@@ -1,4 +1,4 @@
-testflows==1.9.10
+testflows==1.9.12
 requests
 docker>=5.0.0
 docker-compose>=1.29.1

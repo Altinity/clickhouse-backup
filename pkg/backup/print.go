@@ -133,14 +133,19 @@ func GetLocalBackups(cfg *config.Config, disks []clickhouse.Disk) ([]BackupLocal
 	ch := &clickhouse.ClickHouse{
 		Config: &cfg.ClickHouse,
 	}
-	if err := ch.Connect(); err != nil {
-		return nil, disks, fmt.Errorf("can't connect to clickhouse: %w", err)
+	if err = ch.Connect(); err != nil {
+		apexLog.Warnf("can't connect to clickhouse: %v will try get backup directly from /var/lib/clickhouse/", err)
+	} else {
+		defer ch.Close()
 	}
-	defer ch.Close()
-	if disks == nil {
+	if disks == nil && err == nil {
 		disks, err = ch.GetDisks()
 		if err != nil {
 			return nil, nil, err
+		}
+	} else if disks == nil && err != nil {
+		disks = []clickhouse.Disk{
+			{Name: "default", Path: "/var/lib/clickhouse"},
 		}
 	}
 	defaultDataPath, err := ch.GetDefaultPath(disks)
@@ -227,9 +232,8 @@ func PrintAllBackups(cfg *config.Config, format string) error {
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	err = printBackupsLocal(w, localBackups, format)
-	if err != nil {
-		apexLog.Warnf("printBackupsLocal error: %v", err)
+	if err = printBackupsLocal(w, localBackups, format); err != nil {
+		apexLog.Warnf("printBackupsLocal return error: %v", err)
 	}
 
 	if cfg.General.RemoteStorage != "none" {
@@ -237,11 +241,9 @@ func PrintAllBackups(cfg *config.Config, format string) error {
 		if err != nil {
 			return err
 		}
-		err = printBackupsRemote(w, remoteBackups, format)
-		if err != nil {
-			apexLog.Warnf("printBackupsRemote error: %v", err)
+		if err = printBackupsRemote(w, remoteBackups, format); err != nil {
+			apexLog.Warnf("printBackupsRemote return error: %v", err)
 		}
-
 	}
 	return nil
 }
