@@ -30,7 +30,7 @@ def all_engines(self):
                             "CREATE TABLE url (word String, value UInt64) ENGINE=URL('http://127.0.0.1:12345/', CSV)",
                             "CREATE TABLE set ENGINE = Set AS SELECT toUInt32(number) as id from numbers(10)",
                             "CREATE TABLE null ENGINE = Null AS SELECT toUInt32(number) as id from numbers(10)",
-                            "CREATE TABLE file (name String, value UInt32) ENGINE=File(MyFile)",
+                            "CREATE TABLE file (name String, value UInt32) ENGINE=File(CSVWithNames)",
 
                             "CREATE TABLE table_for_dict (key_column UInt64, third_column String) ENGINE = MergeTree() ORDER BY key_column",
                             "INSERT INTO table_for_dict select number, concat('Hello World ', toString(number)) from numbers(100)",
@@ -200,6 +200,7 @@ def materializedmysql(self):
             for i in range(10):
                 mysql.cmd(f"mysql -uroot -pqwerty -e \"INSERT INTO mydb.MyTable VALUES ({i}, '{''.join(random.choices(string.ascii_uppercase + string.digits, k=10))}')\"")
 
+        table_contents = []
         with And("I create MaterializedMySQL"):
             clickhouse.query(f"CREATE DATABASE mysql ENGINE = MaterializedMySQL('mysql:3306', 'mydb', 'root', 'qwerty') "
                              f"SETTINGS allows_query_when_mysql_lost=true, max_wait_time_when_mysql_unavailable=10000;")
