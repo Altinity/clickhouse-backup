@@ -104,7 +104,7 @@ jobs:
       matrix:
         clickhouse:
           - '22.3'
-          - '22.6'
+          - '22.7'
     steps:
       - name: Checkout project
         uses: actions/checkout@v2
@@ -184,7 +184,7 @@ jobs:
           - '21.3'
           - '21.8'
           - '22.3'
-          - '22.6'
+          - '22.7'
     steps:
       - name: Checkout project
         uses: actions/checkout@v2
