@@ -44,7 +44,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration.xml
 </yandex>
 EOT
 
-if [[ "${CLICKHOUSE_VERSION}" =~ ^21.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9].[0-9]+ ]]; then
+if [[ "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
 
   if [[ ! -d /hdd3_data ]]; then
     mkdir -pv /hdd3_data
@@ -81,7 +81,7 @@ EOT
 
 fi
 
-if [[ "${CLICKHOUSE_VERSION}" =~ ^21.[8-9]|^21.[0-9]{2} || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
+if [[ "${CLICKHOUSE_VERSION}" =~ ^21\.[8-9]|^21\.[0-9]{2} || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
 
 cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_s3.xml
 <yandex>
@@ -110,7 +110,7 @@ EOT
 
 fi
 
-if [[ "${CLICKHOUSE_VERSION}" =~ ^21.12 || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
+if [[ "${CLICKHOUSE_VERSION}" =~ ^21\.12 || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
 
 cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_encrypted_s3.xml
 <yandex>
@@ -174,6 +174,19 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration.xml
         <allow_remote_fs_zero_copy_replication>1</allow_remote_fs_zero_copy_replication>
     </merge_tree>
 </clickhouse>
+EOT
+
+fi
+
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[7-9]|^22\.[0-9]{2}|^2[3-9]\. ]]; then
+
+cat <<EOT > /etc/clickhouse-server/users.d/allow_deprecated_database_ordinary.xml
+<yandex>
+<profiles><default>
+ <allow_deprecated_database_ordinary>1</allow_deprecated_database_ordinary>
+ <allow_deprecated_syntax_for_merge_tree>1</allow_deprecated_syntax_for_merge_tree>
+</default></profiles>
+</yandex>
 EOT
 
 fi

@@ -4,6 +4,7 @@ services:
   clickhouse:
     image: ${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server}:${CLICKHOUSE_VERSION:-22.3}
     volumes:
+      - "${CLICKHOUSE_TESTS_DIR}/docker-compose/dynamic_settings.sh:/docker-entrypoint-initdb.d/dynamic_settings.sh"
       - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse/ssl:/etc/clickhouse-server/ssl"
       - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse/config.d/common.xml:/etc/clickhouse-server/config.d/common.xml"
       - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse/config.d/graphite_rollup.xml:/etc/clickhouse-server/config.d/graphite_rollup.xml"
@@ -19,6 +20,8 @@ services:
       timeout: 2s
       retries: 40
       start_period: 2s
+    environment:
+      CLICKHOUSE_VERSION: ${CLICKHOUSE_VERSION:-22.3}
     cap_add:
       - SYS_PTRACE
     security_opt:
