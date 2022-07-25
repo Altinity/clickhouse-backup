@@ -483,7 +483,7 @@ func (ch *ClickHouse) AttachPartitions(table metadata.TableMetadata, disks []Dis
 	// https://github.com/AlexAkulov/clickhouse-backup/issues/474
 	if ch.Config.CheckReplicasBeforeAttach {
 		existsReplicas := make([]int, 0)
-		if err := ch.Select(&existsReplicas, "SELECT log_pointer + absolute_delay FROM system.replicas WHERE database=? and table=?", table.Database, table.Table); err != nil {
+		if err := ch.Select(&existsReplicas, "SELECT sum(log_pointer + absolute_delay) FROM system.replicas WHERE database=? and table=? SETTINGS empty_result_for_aggregation_by_empty_set=0", table.Database, table.Table); err != nil {
 			return err
 		}
 		if len(existsReplicas) != 1 {

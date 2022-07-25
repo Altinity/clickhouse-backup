@@ -385,6 +385,7 @@ func DefaultConfig() *Config {
 			ConfigDir:                        "/etc/clickhouse-server/",
 			RestartCommand:                   "systemctl restart clickhouse-server",
 			IgnoreNotExistsErrorDuringFreeze: true,
+			CheckReplicasBeforeAttach:        true,
 			UseEmbeddedBackupRestore:         false,
 		},
 		AzureBlob: AzureBlobConfig{
