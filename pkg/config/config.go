@@ -354,6 +354,7 @@ func DefaultConfig() *Config {
 			ConfigDir:                        "/etc/clickhouse-server/",
 			RestartCommand:                   "systemctl restart clickhouse-server",
 			IgnoreNotExistsErrorDuringFreeze: true,
+			CheckReplicasBeforeAttach:        true,
 		},
 		AzureBlob: AzureBlobConfig{
 			EndpointSuffix:    "core.windows.net",
