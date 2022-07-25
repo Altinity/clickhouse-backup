@@ -3,6 +3,7 @@ IMPROVEMENTS
 - implements `remote_storage: custom`, which allow us to adopt any external backup system like restic, kopia, rsync, rclone etc. fix [383](https://github.com/AlexAkulov/clickhouse-backup/issues/383)
 - add example workflow hot to make backup / restore on sharded cluster, fix [469](https://github.com/AlexAkulov/clickhouse-backup/discussions/469)
 - add `use_embedded_backup_restore` to allow `BACKUP` and `RESTORE` SQL commands usage, fix [323](https://github.com/AlexAkulov/clickhouse-backup/issues/323), need 22.7+ and resolve https://github.com/ClickHouse/ClickHouse/issues/39416
+- add `timeout` to `azure` config `AZBLOB_TIMEOUT` to allow download with bad network quality, fix [467](https://github.com/AlexAkulov/clickhouse-backup/issues/467)
 
 BUG FIXES
 - fix wrong upload / download errors for `compression_format: none` and `remote_storage: ftp`

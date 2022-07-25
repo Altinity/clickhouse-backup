@@ -79,6 +79,7 @@ type AzureBlobConfig struct {
 	BufferSize            int    `yaml:"buffer_size" envconfig:"AZBLOB_BUFFER_SIZE"`
 	MaxBuffers            int    `yaml:"buffer_count" envconfig:"AZBLOB_MAX_BUFFERS"`
 	MaxPartsCount         int    `yaml:"max_parts_count" envconfig:"AZBLOB_MAX_PARTS_COUNT"`
+	Timeout               string `yaml:"timeout" envconfig:"AZBLOB_TIMEOUT"`
 }
 
 // S3Config - s3 settings section
@@ -301,6 +302,9 @@ func ValidateConfig(cfg *Config) error {
 	if _, err := time.ParseDuration(cfg.FTP.Timeout); err != nil {
 		return fmt.Errorf("invalid ftp timeout: %v", err)
 	}
+	if _, err := time.ParseDuration(cfg.AzureBlob.Timeout); err != nil {
+		return fmt.Errorf("invalid azblob timeout: %v", err)
+	}
 	storageClassOk := false
 	for _, storageClass := range s3.StorageClass_Values() {
 		if strings.ToUpper(cfg.S3.StorageClass) == storageClass {
@@ -395,6 +399,7 @@ func DefaultConfig() *Config {
 			BufferSize:        0,
 			MaxBuffers:        3,
 			MaxPartsCount:     10000,
+			Timeout:           "15m",
 		},
 		S3: S3Config{
 			Region:                  "us-east-1",
