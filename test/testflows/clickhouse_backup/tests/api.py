@@ -320,12 +320,12 @@ def post_upload_download(self):
                 assert backup_name in backup.cmd("clickhouse-backup list local").output, error()
 
     finally:
-        with Finally("I set remote_storage to none"):
-            config_modifier(fields={"general": {"remote_storage": "none"}})
-
         with And("I remove backups"):
             backup.cmd(f"clickhouse-backup delete local {backup_name}")
             backup.cmd(f"clickhouse-backup delete remote {backup_name}")
+
+        with Finally("I set remote_storage to none"):
+            config_modifier(fields={"general": {"remote_storage": "none"}})
 
 
 @TestScenario
@@ -359,12 +359,12 @@ def post_get_actions(self):
             wait_request_finalized(url)
 
     finally:
-        with Finally("I set remote_storage to none"):
-            config_modifier(fields={"general": {"remote_storage": "none"}})
-
         with And("I remove backups"):
             backup.cmd(f"clickhouse-backup delete local {backup_name}")
             backup.cmd(f"clickhouse-backup delete remote {backup_name}")
+
+        with Finally("I set remote_storage to none"):
+            config_modifier(fields={"general": {"remote_storage": "none"}})
 
 
 

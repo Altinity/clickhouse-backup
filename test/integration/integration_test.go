@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/logcli"
+	"github.com/google/uuid"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -177,7 +178,7 @@ var testData = []TestDataStruct{
 		Database:       dbNameAtomic,
 		DatabaseEngine: "Atomic",
 		Name:           "mv_dst_table",
-		Schema:         "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{database}/{table}','replica1') ORDER BY id",
+		Schema:         "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{database}/{table}/{uuid}','replica1') ORDER BY id",
 		SkipInsert:     true,
 		Rows: func() []map[string]interface{} {
 			return []map[string]interface{}{
@@ -193,7 +194,7 @@ var testData = []TestDataStruct{
 		DatabaseEngine:     "Atomic",
 		IsMaterializedView: true,
 		Name:               "mv_max_with_inner",
-		Schema:             fmt.Sprintf("(id UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/{database}/{table}','replica1') ORDER BY id AS SELECT max(id) AS id FROM `%s`.`mv_src_table`", dbNameAtomic),
+		Schema:             fmt.Sprintf("(id UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/{database}/{table}/{uuid}','replica1') ORDER BY id AS SELECT max(id) AS id FROM `%s`.`mv_src_table`", dbNameAtomic),
 		SkipInsert:         true,
 		Rows: func() []map[string]interface{} {
 			return []map[string]interface{}{
@@ -1292,7 +1293,7 @@ func (ch *TestClickHouse) connect() error {
 func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {
 	if !data.IsFunction {
 		// 20.8 doesn't respect DROP TABLE .. NO DELAY, so Atomic works but --rm is not applicable
-		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") == 1 {
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") > 0 {
 			if err := ch.chbackend.CreateDatabaseWithEngine(data.Database, data.DatabaseEngine); err != nil {
 				return err
 			}
@@ -1338,6 +1339,10 @@ func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {
 			createSQL = strings.Replace(createSQL, "{table}", data.Name, -1)
 			createSQL = strings.Replace(createSQL, "{database}", data.Database, -1)
 		}
+	}
+	// old clickhouse version doesn't know about `{uuid}` macros
+	if strings.Contains(createSQL, "{uuid}") && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") <= 0 {
+		createSQL = strings.Replace(createSQL, "{uuid}", uuid.New().String(), -1)
 	}
 	// functions supported only after 21.12
 	if data.IsFunction && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") == -1 {

@@ -276,7 +276,7 @@ func (ch *ClickHouse) prepareAllTablesSQL(tablePattern string, err error, skipDa
 
 	allTablesSQL += "  FROM system.tables WHERE is_temporary = 0"
 	if tablePattern != "" {
-		replacer := strings.NewReplacer(".", "\\.", ",", "|", "*", ".*", "?", ".", " ", "")
+		replacer := strings.NewReplacer(".", "\\.", ",", "|", "*", ".*", "?", ".", " ", "", "'", "")
 		allTablesSQL += fmt.Sprintf(" AND match(concat(database,'.',name),'%s') ", replacer.Replace(tablePattern))
 	}
 	if len(skipDatabases) > 0 {
@@ -450,6 +450,20 @@ func (ch *ClickHouse) FreezeTable(table *Table, name string) error {
 
 // AttachPartitions - execute ATTACH command for specific table
 func (ch *ClickHouse) AttachPartitions(table metadata.TableMetadata, disks []Disk) error {
+	// https://github.com/AlexAkulov/clickhouse-backup/issues/474
+	if ch.Config.CheckReplicasBeforeAttach {
+		existsReplicas := make([]int, 0)
+		if err := ch.Select(&existsReplicas, "SELECT sum(log_pointer + absolute_delay) FROM system.replicas WHERE database=? and table=? SETTINGS empty_result_for_aggregation_by_empty_set=0", table.Database, table.Table); err != nil {
+			return err
+		}
+		if len(existsReplicas) != 1 {
+			return fmt.Errorf("invalid result for check exists replicas: %+v", existsReplicas)
+		}
+		if existsReplicas[0] > 0 {
+			log.Warnf("%s.%s skipped cause system.replicas entry already exists and not zero", table.Database, table.Table)
+			return nil
+		}
+	}
 	for _, disk := range disks {
 		for _, partition := range table.Parts[disk.Name] {
 			if !strings.HasSuffix(partition.Name, ".proj") {
@@ -726,9 +740,9 @@ func (ch *ClickHouse) Select(dest interface{}, query string, args ...interface{}
 
 func (ch *ClickHouse) LogQuery(query string) string {
 	if !ch.Config.LogSQLQueries {
-		log.Debug(query)
+		log.Debug(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(query))
 	} else {
-		log.Info(query)
+		log.Info(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(query))
 	}
 	return query
 }

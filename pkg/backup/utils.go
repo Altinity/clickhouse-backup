@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"regexp"
 	"sort"
 )
 
@@ -13,3 +14,5 @@ func GetBackupsToDelete(backups []BackupLocal, keep int) []BackupLocal {
 	}
 	return []BackupLocal{}
 }
+
+var cleanBackupNameRE = regexp.MustCompile(`[\t\r\n ]+|\.{2,}|[\\/]+`)

@@ -142,6 +142,7 @@ class ClickHouseNode(Node):
 
     def wait_healthy(self, timeout=300):
         with By(f"waiting until container {self.name} is healthy"):
+            self.cluster.node_wait_healthy(self.name)
             start_time = time.time()
             while True:
                 # sleep before to avoid false positive during /docker-entrypoint.initdb.d/ processing
@@ -488,7 +489,7 @@ class Cluster(object):
                 c = self.control_shell(f"{self.docker_compose} ps -q {node}", timeout=timeout)
                 container_id = c.output.strip()
                 if c.exitcode == 0 and len(container_id) > 1:
-                    break
+                    return container_id
             except IOError:
                 raise
             except ExpectTimeoutError:
@@ -496,7 +497,23 @@ class Cluster(object):
                 timeout = timeout - (time.time() - time_start)
                 if timeout <= 0:
                     raise RuntimeError(f"failed to get docker container id for the {node} service")
-        return container_id
+
+    def node_wait_healthy(self, node, timeout=300):
+        """Must be called with self.lock acquired.
+        """
+        time_start = time.time()
+        while True:
+            try:
+                c = self.control_shell(f"{self.docker_compose} ps {node} | grep {node}", timeout=timeout)
+                if c.exitcode == 0 and 'Up (healthy)' in c.output:
+                    return
+            except IOError:
+                raise
+            except ExpectTimeoutError:
+                self.close_control_shell()
+                timeout = timeout - (time.time() - time_start)
+                if timeout <= 0:
+                    raise RuntimeError(f"failed to get docker container healthy status for the {node} service")
 
     def shell(self, node, timeout=300):
         """Returns unique shell terminal to be used.
