@@ -95,6 +95,7 @@ type S3Config struct {
 	CompressionFormat       string `yaml:"compression_format" envconfig:"S3_COMPRESSION_FORMAT"`
 	SSE                     string `yaml:"sse" envconfig:"S3_SSE"`
 	DisableCertVerification bool   `yaml:"disable_cert_verification" envconfig:"S3_DISABLE_CERT_VERIFICATION"`
+	UseCustomStorageClass   bool   `yaml:"use_custom_storage_class" envconfig:"S3_USE_CUSTOM_STORAGE_CLASS"`
 	StorageClass            string `yaml:"storage_class" envconfig:"S3_STORAGE_CLASS"`
 	Concurrency             int    `yaml:"concurrency" envconfig:"S3_CONCURRENCY"`
 	PartSize                int64  `yaml:"part_size" envconfig:"S3_PART_SIZE"`
@@ -281,10 +282,14 @@ func ValidateConfig(cfg *Config) error {
 		return err
 	}
 	storageClassOk := false
-	for _, storageClass := range s3.StorageClass_Values() {
-		if strings.ToUpper(cfg.S3.StorageClass) == storageClass {
-			storageClassOk = true
-			break
+	if cfg.S3.UseCustomStorageClass {
+		storageClassOk = true
+	} else {
+		for _, storageClass := range s3.StorageClass_Values() {
+			if strings.ToUpper(cfg.S3.StorageClass) == storageClass {
+				storageClassOk = true
+				break
+			}
 		}
 	}
 	if !storageClassOk {
@@ -372,6 +377,7 @@ func DefaultConfig() *Config {
 			CompressionLevel:        1,
 			CompressionFormat:       "tar",
 			DisableCertVerification: false,
+			UseCustomStorageClass:   false,
 			StorageClass:            s3.StorageClassStandard,
 			Concurrency:             1,
 			PartSize:                0,
