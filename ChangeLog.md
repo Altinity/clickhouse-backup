@@ -6,7 +6,11 @@ IMPROVEMENTS
 - add `timeout` to `azure` config `AZBLOB_TIMEOUT` to allow download with bad network quality, fix [467](https://github.com/AlexAkulov/clickhouse-backup/issues/467)
 
 BUG FIXES
-- fix wrong upload / download errors for `compression_format: none` and `remote_storage: ftp`
+- fix wrong upload / download behavior for `compression_format: none` and `remote_storage: ftp`
+
+# v1.4.9
+BUG FIXES
+- fix `download` behavior for parts which contains special characters in name, fix [462](https://github.com/AlexAkulov/clickhouse-backup/issues/462)
 
 # v1.4.8
 IMPROVEMENTS
