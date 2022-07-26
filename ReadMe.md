@@ -162,6 +162,7 @@ s3:
   compression_format: tar          # S3_COMPRESSION_FORMAT
   sse: ""                          # S3_SSE, empty (default), AES256, or aws:kms
   disable_cert_verification: false # S3_DISABLE_CERT_VERIFICATION
+  use_custom_storage_class: false  # S3_USE_CUSTOM_STORAGE_CLASS
   storage_class: STANDARD          # S3_STORAGE_CLASS
   concurrency: 1                   # S3_CONCURRENCY
   part_size: 0                     # S3_PART_SIZE, if less or eq 0 then calculated as max_file_size / max_parts_count, between 5MB and 5Gb

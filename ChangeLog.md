@@ -12,6 +12,7 @@ BUG FIXES
 IMPROVEMENTS
 - add check_replicas_before_attach configuration to avoid concurrent ATTACH PART execution during `restore` command on multi-shard cluster, fix [474](https://github.com/AlexAkulov/clickhouse-backup/issues/474)
 - allow backup list when clickhouse server offline, fix [476](https://github.com/AlexAkulov/clickhouse-backup/issues/476)
+- add `use_custom_storage_class` (`S3_USE_CUSTOM_STORAGE_CLASS`) option to `s3` section, thanks @realwhite
 
 BUG FIXES
 - resolve `{uuid}` marcos during restore for `ReplicatedMergeTree` table and ClickHouse server 22.5+, fix [466](https://github.com/AlexAkulov/clickhouse-backup/issues/466)
