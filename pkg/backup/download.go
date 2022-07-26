@@ -616,7 +616,7 @@ func (b *Backuper) findDiffOnePartArchive(requiredBackup *metadata.BackupMetadat
 	apexLog.WithFields(apexLog.Fields{"database": table.Database, "table": table.Table, "part": part.Name}).Debugf("findDiffOnePartArchive")
 	dbAndTableDir := path.Join(common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
 	remoteExt := config.ArchiveExtensions[requiredBackup.DataFormat]
-	tableRemotePath := path.Join(requiredBackup.BackupName, "shadow", dbAndTableDir, fmt.Sprintf("%s_%s.%s", remoteDisk, part.Name, remoteExt))
+	tableRemotePath := path.Join(requiredBackup.BackupName, "shadow", dbAndTableDir, fmt.Sprintf("%s_%s.%s", remoteDisk, common.TablePathEncode(part.Name), remoteExt))
 	tableRemoteFile := tableRemotePath
 	return b.findDiffFileExist(requiredBackup, tableRemoteFile, tableRemotePath, localDisk, dbAndTableDir, part)
 }

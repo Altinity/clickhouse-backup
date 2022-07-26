@@ -127,7 +127,7 @@ var testData = []TestDataStruct{
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
 		Name:   "yuzhichang_table4",
-		Schema: "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() ORDER BY (order_time, order_id)",
+		Schema: "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY (toYYYYMM(order_time), order_id) ORDER BY (order_time, order_id)",
 		Rows: []map[string]interface{}{
 			{"order_id": "1", "order_time": toTS("2010-01-01 00:00:00"), "amount": 1.0},
 			{"order_id": "2", "order_time": toTS("2010-02-01 00:00:00"), "amount": 2.0},
@@ -150,15 +150,15 @@ var testData = []TestDataStruct{
 	}, {
 		Database: dbNameAtomic, DatabaseEngine: "Atomic",
 		Name:   "jbod",
-		Schema: "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 'jbod'",
+		Schema: "(t DateTime, id UInt64) Engine=MergeTree PARTITION BY (toYYYYMM(t), id % 4) ORDER BY id SETTINGS storage_policy = 'jbod'",
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
 			for i := 0; i < 100; i++ {
-				result = append(result, map[string]interface{}{"id": uint64(i)})
+				result = append(result, map[string]interface{}{"t": toTS("2022-01-01 00:00:00"), "id": uint64(i)})
 			}
 			return result
 		}(),
-		Fields:  []string{"id"},
+		Fields:  []string{"t", "id"},
 		OrderBy: "id",
 	}, {
 		Database: dbNameAtomic, DatabaseEngine: "Atomic",
@@ -359,7 +359,7 @@ var incrementData = []TestDataStruct{
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
 		Name:   "yuzhichang_table4",
-		Schema: "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() ORDER BY (order_time, order_id)",
+		Schema: "(order_id String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY (toYYYYMM(order_time), order_id) ORDER BY (order_time, order_id)",
 		Rows: []map[string]interface{}{
 			{"order_id": "3", "order_time": toTS("2010-03-01 00:00:00"), "amount": 3.0},
 			{"order_id": "4", "order_time": toTS("2010-04-01 00:00:00"), "amount": 4.0},
@@ -369,15 +369,15 @@ var incrementData = []TestDataStruct{
 	}, {
 		Database: dbNameAtomic, DatabaseEngine: "Atomic",
 		Name:   "jbod",
-		Schema: "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 'jbod'",
+		Schema: "(t DateTime, id UInt64) Engine=MergeTree PARTITION BY (toYYYYMM(t), id % 4) ORDER BY id SETTINGS storage_policy = 'jbod'",
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
 			for i := 100; i < 200; i++ {
-				result = append(result, map[string]interface{}{"id": uint64(i)})
+				result = append(result, map[string]interface{}{"t": toTS("2022-02-01 00:00:00"), "id": uint64(i)})
 			}
 			return result
 		}(),
-		Fields:  []string{"id"},
+		Fields:  []string{"t", "id"},
 		OrderBy: "id",
 	},
 }

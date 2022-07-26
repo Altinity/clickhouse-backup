@@ -1,3 +1,7 @@
+# v1.4.9
+BUG FIXES
+- fix `download` behavior for parts which contains special characters in name, fix [462](https://github.com/AlexAkulov/clickhouse-backup/issues/462)
+
 # v1.4.8
 IMPROVEMENTS
 - add check_replicas_before_attach configuration to avoid concurrent ATTACH PART execution during `restore` command on multi-shard cluster, fix [474](https://github.com/AlexAkulov/clickhouse-backup/issues/474)
