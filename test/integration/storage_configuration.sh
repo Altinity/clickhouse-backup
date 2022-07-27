@@ -44,7 +44,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration.xml
 </yandex>
 EOT
 
-if [[ "${CLICKHOUSE_VERSION}" =~ ^21.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9].[0-9]+ ]]; then
+if [[ "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
 
   if [[ ! -d /hdd3_data ]]; then
     mkdir -pv /hdd3_data
@@ -81,7 +81,7 @@ EOT
 
 fi
 
-if [[ "${CLICKHOUSE_VERSION}" =~ ^21.[8-9]|^21.[0-9]{2} || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
+if [[ "${CLICKHOUSE_VERSION}" =~ ^21\.[8-9]|^21\.[0-9]{2} || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
 
 cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_s3.xml
 <yandex>
@@ -92,6 +92,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_s3.xml
         <endpoint>http://minio:9000/clickhouse/disk_s3/</endpoint>
         <access_key_id>access-key</access_key_id>
         <secret_access_key>it-is-my-super-secret-key</secret_access_key>
+        <send_metadata>true</send_metadata>
       </disk_s3>
     </disks>
     <policies>
@@ -109,7 +110,7 @@ EOT
 
 fi
 
-if [[ "${CLICKHOUSE_VERSION}" =~ ^21.12 || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
+if [[ "${CLICKHOUSE_VERSION}" =~ ^21\.12 || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
 
 cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_encrypted_s3.xml
 <yandex>
@@ -120,6 +121,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_encrypted_s3.x
         <endpoint>http://minio:9000/clickhouse/disk_s3/</endpoint>
         <access_key_id>access-key</access_key_id>
         <secret_access_key>it-is-my-super-secret-key</secret_access_key>
+        <send_metadata>true</send_metadata>
       </disk_s3>
       <disk_s3_encrypted>
         <type>encrypted</type>
@@ -129,6 +131,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_encrypted_s3.x
         <key_hex id="0">00112233445566778899aabbccddeeff</key_hex>
         <key_hex id="1">ffeeddccbbaa99887766554433221100</key_hex>
         <current_key_id>1</current_key_id>
+        <send_metadata>true</send_metadata>
       </disk_s3_encrypted>
     </disks>
     <policies>
@@ -143,4 +146,47 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_encrypted_s3.x
   </storage_configuration>
 </yandex>
 EOT
+fi
+
+# embedded s3 backup configuration
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[6-9] || "${CLICKHOUSE_VERSION}" =~ ^22\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[0-9]+ ]]; then
+
+cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration.xml
+<?xml version="1.0"?>
+<clickhouse>
+    <storage_configuration>
+        <disks>
+            <backups>
+              <send_metadata>true</send_metadata>
+              <type>s3</type>
+              <endpoint>http://minio:9000/clickhouse/backups/</endpoint>
+              <access_key_id>access-key</access_key_id>
+              <secret_access_key>it-is-my-super-secret-key</secret_access_key>
+              <!-- to avoid unnecessary disk space allocations -->
+              <cache_enabled>false</cache_enabled>
+            </backups>
+        </disks>
+    </storage_configuration>
+    <backups>
+        <allowed_disk>backups</allowed_disk>
+    </backups>
+    <merge_tree>
+        <allow_remote_fs_zero_copy_replication>1</allow_remote_fs_zero_copy_replication>
+    </merge_tree>
+</clickhouse>
+EOT
+
+fi
+
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[7-9]|^22\.[0-9]{2}|^2[3-9]\. ]]; then
+
+cat <<EOT > /etc/clickhouse-server/users.d/allow_deprecated_database_ordinary.xml
+<yandex>
+<profiles><default>
+ <allow_deprecated_database_ordinary>1</allow_deprecated_database_ordinary>
+ <allow_deprecated_syntax_for_merge_tree>1</allow_deprecated_syntax_for_merge_tree>
+</default></profiles>
+</yandex>
+EOT
+
 fi
