@@ -481,17 +481,19 @@ func (ch *ClickHouse) FreezeTable(table *Table, name string) error {
 // AttachPartitions - execute ATTACH command for specific table
 func (ch *ClickHouse) AttachPartitions(table metadata.TableMetadata, disks []Disk) error {
 	// https://github.com/AlexAkulov/clickhouse-backup/issues/474
-	if ch.Config.CheckReplicasBeforeAttach {
+	if ch.Config.CheckReplicasBeforeAttach && strings.Contains(table.Query, "Replicated") {
 		existsReplicas := make([]int, 0)
-		if err := ch.Select(&existsReplicas, "SELECT sum(log_pointer + absolute_delay) FROM system.replicas WHERE database=? and table=? SETTINGS empty_result_for_aggregation_by_empty_set=0", table.Database, table.Table); err != nil {
+		if err := ch.Select(&existsReplicas, "SELECT sum(log_pointer + log_max_index + absolute_delay + queue_size)  AS replication_in_progress FROM system.replicas WHERE database=? and table=? SETTINGS empty_result_for_aggregation_by_empty_set=0", table.Database, table.Table); err != nil {
 			return err
 		}
 		if len(existsReplicas) != 1 {
 			return fmt.Errorf("invalid result for check exists replicas: %+v", existsReplicas)
 		}
 		if existsReplicas[0] > 0 {
-			log.Warnf("%s.%s skipped cause system.replicas entry already exists and not zero", table.Database, table.Table)
+			log.Warnf("%s.%s skipped cause system.replicas entry already exists and replication in progress from another replica", table.Database, table.Table)
 			return nil
+		} else {
+			log.Infof("replication_in_progress status = %+v", existsReplicas)
 		}
 	}
 	for _, disk := range disks {

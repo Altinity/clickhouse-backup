@@ -8,13 +8,18 @@ IMPROVEMENTS
 BUG FIXES
 - fix wrong upload / download behavior for `compression_format: none` and `remote_storage: ftp`
 
+# v1.5.0
+IMPROVEMENTS 
+- try to improve implementation `check_replicas_before_attach` configuration to avoid concurrent ATTACH PART execution during `restore` command on multi-shard cluster, fix [474](https://github.com/AlexAkulov/clickhouse-backup/issues/474)
+- add `timeout` to `azure` config `AZBLOB_TIMEOUT` to allow download with bad network quality, fix [467](https://github.com/AlexAkulov/clickhouse-backup/issues/467)
+
 # v1.4.9
 BUG FIXES
 - fix `download` behavior for parts which contains special characters in name, fix [462](https://github.com/AlexAkulov/clickhouse-backup/issues/462)
 
 # v1.4.8
 IMPROVEMENTS
-- add check_replicas_before_attach configuration to avoid concurrent ATTACH PART execution during `restore` command on multi-shard cluster, fix [474](https://github.com/AlexAkulov/clickhouse-backup/issues/474)
+- add `check_replicas_before_attach` configuration to avoid concurrent ATTACH PART execution during `restore` command on multi-shard cluster, fix [474](https://github.com/AlexAkulov/clickhouse-backup/issues/474)
 - allow backup list when clickhouse server offline, fix [476](https://github.com/AlexAkulov/clickhouse-backup/issues/476)
 - add `use_custom_storage_class` (`S3_USE_CUSTOM_STORAGE_CLASS`) option to `s3` section, thanks @realwhite
 

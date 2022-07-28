@@ -306,6 +306,9 @@ func ValidateConfig(cfg *Config) error {
 	if _, err := time.ParseDuration(cfg.AzureBlob.Timeout); err != nil {
 		return fmt.Errorf("invalid azblob timeout: %v", err)
 	}
+	if _, err := time.ParseDuration(cfg.AzureBlob.Timeout); err != nil {
+		return fmt.Errorf("invalid azblob timeout: %v", err)
+	}
 	storageClassOk := false
 	if cfg.S3.UseCustomStorageClass {
 		storageClassOk = true
