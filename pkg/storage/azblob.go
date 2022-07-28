@@ -29,6 +29,10 @@ func (s *AzureBlob) Connect() error {
 		urlString  string
 		credential azblob.Credential
 	)
+	timeout, err := time.ParseDuration(s.Config.Timeout)
+	if err != nil {
+		return err
+	}
 	switch {
 	case s.Config.EndpointSuffix == "":
 		return fmt.Errorf("azblob: endpoint suffix not set")
@@ -53,10 +57,14 @@ func (s *AzureBlob) Connect() error {
 		return err
 	}
 
-	container := azblob.NewServiceURL(*u, azblob.NewPipeline(credential, azblob.PipelineOptions{})).NewContainerURL(s.Config.Container)
-	context := context.Background()
+	container := azblob.NewServiceURL(*u, azblob.NewPipeline(credential, azblob.PipelineOptions{
+		Retry: azblob.RetryOptions{
+			TryTimeout: timeout,
+		},
+	})).NewContainerURL(s.Config.Container)
+	ctx := context.Background()
 
-	if _, err = container.Create(context, azblob.Metadata{}, azblob.PublicAccessContainer); err != nil {
+	if _, err = container.Create(ctx, azblob.Metadata{}, azblob.PublicAccessContainer); err != nil {
 		if se, ok := err.(azblob.StorageError); !ok || se.ServiceCode() != azblob.ServiceCodeContainerAlreadyExists {
 			return errors.Wrapf(err, "azblob: failed to create container %s", s.Config.Container)
 		}

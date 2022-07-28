@@ -1,6 +1,7 @@
 # v1.5.0
 IMPROVEMENTS 
 - try to improve implementation `check_replicas_before_attach` configuration to avoid concurrent ATTACH PART execution during `restore` command on multi-shard cluster, fix [474](https://github.com/AlexAkulov/clickhouse-backup/issues/474)
+- add `timeout` to `azure` config `AZBLOB_TIMEOUT` to allow download with bad network quality, fix [467](https://github.com/AlexAkulov/clickhouse-backup/issues/467)
 
 # v1.4.9
 BUG FIXES

@@ -48,6 +48,10 @@ func (s *AzureBlob) Connect() error {
 		urlString  string
 		credential azblob.Credential
 	)
+	timeout, err := time.ParseDuration(s.Config.Timeout)
+	if err != nil {
+		return err
+	}
 	if s.Config.AccountKey != "" {
 		credential, err = azblob.NewSharedKeyCredential(s.Config.AccountName, s.Config.AccountKey)
 		if err != nil {
@@ -96,7 +100,11 @@ func (s *AzureBlob) Connect() error {
 	// don't pollute syslog with expected 404's and other garbage logs
 	pipeline.SetForceLogEnabled(false)
 
-	s.Container = azblob.NewServiceURL(*u, azblob.NewPipeline(credential, azblob.PipelineOptions{})).NewContainerURL(s.Config.Container)
+	s.Container = azblob.NewServiceURL(*u, azblob.NewPipeline(credential, azblob.PipelineOptions{
+		Retry: azblob.RetryOptions{
+			TryTimeout: timeout,
+		},
+	})).NewContainerURL(s.Config.Container)
 	_, err = s.Container.Create(context.Background(), azblob.Metadata{}, azblob.PublicAccessNone)
 	if err != nil && !isContainerAlreadyExists(err) {
 		return err
