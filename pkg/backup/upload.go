@@ -519,7 +519,7 @@ func (b *Backuper) ReadBackupMetadataLocal(backupName string) (*metadata.BackupM
 	}
 	for i, backupMetadataPath := range allBackupDataPaths {
 		if backupMetadataPath != "" {
-			backupMetadataBody, err = ioutil.ReadFile(backupMetadataPath)
+			backupMetadataBody, err = os.ReadFile(backupMetadataPath)
 			if err != nil && i == len(allBackupDataPaths)-1 {
 				return nil, err
 			}

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"io"
-	"io/ioutil"
 	"path"
 	"path/filepath"
 	"strings"
@@ -37,7 +36,7 @@ func (sftp *SFTP) Connect() error {
 	}
 
 	if sftp.Config.Key != "" {
-		fSftpKey, err := ioutil.ReadFile(sftp.Config.Key)
+		fSftpKey, err := os.ReadFile(sftp.Config.Key)
 		if err != nil {
 			return err
 		}

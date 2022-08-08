@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"net/url"
 	"os"
 	"path"
@@ -72,7 +71,7 @@ func (ch *ClickHouse) Connect() error {
 				tlsConfig.Certificates = []tls.Certificate{cert}
 			}
 			if ch.Config.TLSCa != "" {
-				caCert, err := ioutil.ReadFile(ch.Config.TLSCa)
+				caCert, err := os.ReadFile(ch.Config.TLSCa)
 				if err != nil {
 					log.Errorf("read `tls_ca` file %s return error: %v ", ch.Config.TLSCa, err)
 					return err
@@ -533,19 +532,29 @@ func (ch *ClickHouse) CreateDatabase(database string, cluster string) error {
 
 func (ch *ClickHouse) CreateDatabaseWithEngine(database, engine, cluster string) error {
 	query := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s` ENGINE=%s", database, engine)
-	if cluster != "" {
-		query += fmt.Sprintf(" ON CLUSTER '%s'", cluster)
-	}
+	query = ch.addOnClusterToCreateDatabase(cluster, query)
 	_, err := ch.Query(query)
 	return err
 }
 
-func (ch *ClickHouse) CreateDatabaseFromQuery(query string, args ...interface{}) error {
+func (ch *ClickHouse) CreateDatabaseFromQuery(query, cluster string, args ...interface{}) error {
 	if !strings.HasPrefix(query, "CREATE DATABASE IF NOT EXISTS") {
 		query = strings.Replace(query, "CREATE DATABASE", "CREATE DATABASE IF NOT EXISTS", 1)
 	}
+	query = ch.addOnClusterToCreateDatabase(cluster, query)
 	_, err := ch.Query(query, args)
 	return err
+}
+
+func (ch *ClickHouse) addOnClusterToCreateDatabase(cluster string, query string) string {
+	if cluster != "" && !strings.Contains(query, " ON CLUSTER ") {
+		if !strings.Contains(query, "ENGINE") {
+			query += fmt.Sprintf(" ON CLUSTER '%s'", cluster)
+		} else {
+			query = strings.Replace(query, "ENGINE", fmt.Sprintf(" ON CLUSTER '%s' ENGINE", cluster), 1)
+		}
+	}
+	return query
 }
 
 // DropTable - drop ClickHouse table

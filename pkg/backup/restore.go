@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path"
@@ -73,7 +72,7 @@ func Restore(cfg *config.Config, backupName, tablePattern string, databaseMappin
 		return err
 	}
 	for _, metadataPath := range backupMetafileLocalPaths {
-		backupMetadataBody, err = ioutil.ReadFile(metadataPath)
+		backupMetadataBody, err = os.ReadFile(metadataPath)
 		if err == nil && embeddedBackupPath != "" {
 			isEmbedded = strings.HasPrefix(metadataPath, embeddedBackupPath)
 			break
@@ -94,10 +93,7 @@ func Restore(cfg *config.Config, backupName, tablePattern string, databaseMappin
 						targetDB = database.Name
 					}
 					substitution := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS ${1}`%s`${3}", targetDB)
-					if cfg.General.RestoreSchemaOnCluster != "" {
-						substitution = fmt.Sprintf("CREATE DATABASE IF NOT EXISTS ${1}`%s` ON CLUSTER '%s' ${3}", targetDB, cfg.General.RestoreSchemaOnCluster)
-					}
-					if err = ch.CreateDatabaseFromQuery(CreateDatabaseRE.ReplaceAllString(database.Query, substitution)); err != nil {
+					if err = ch.CreateDatabaseFromQuery(CreateDatabaseRE.ReplaceAllString(database.Query, substitution), cfg.General.RestoreSchemaOnCluster); err != nil {
 						return err
 					}
 				}

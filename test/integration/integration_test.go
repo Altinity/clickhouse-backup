@@ -1385,11 +1385,11 @@ func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {
 	if !data.IsFunction {
 		// 20.8 doesn't respect DROP TABLE .. NO DELAY, so Atomic works but --rm is not applicable
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") > 0 {
-			if err := ch.chbackend.CreateDatabaseWithEngine(data.Database, data.DatabaseEngine, ""); err != nil {
+			if err := ch.chbackend.CreateDatabaseWithEngine(data.Database, data.DatabaseEngine, "cluster"); err != nil {
 				return err
 			}
 		} else {
-			if err := ch.chbackend.CreateDatabase(data.Database, ""); err != nil {
+			if err := ch.chbackend.CreateDatabase(data.Database, "cluster"); err != nil {
 				return err
 			}
 		}

@@ -7,7 +7,6 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/custom"
 	apexLog "github.com/apex/log"
 	"io"
-	"io/ioutil"
 	"os"
 	"path"
 	"sort"
@@ -193,7 +192,7 @@ func GetLocalBackups(cfg *config.Config, disks []clickhouse.Disk) ([]BackupLocal
 				continue
 			}
 			backupMetafilePath := path.Join(backupPath, name, "metadata.json")
-			backupMetadataBody, err := ioutil.ReadFile(backupMetafilePath)
+			backupMetadataBody, err := os.ReadFile(backupMetafilePath)
 			if os.IsNotExist(err) {
 				// Legacy backup
 				result = append(result, BackupLocal{
