@@ -1,3 +1,7 @@
+# v1.5.1
+BUG FIXES
+- properly execute `CREATE DATABASE IF NOT EXISTS ... ON CLUSTER` when setup `restore_schema_on_cluster`, fix [486](https://github.com/AlexAkulov/clickhouse-backup/issues/486)
+
 # v1.5.0
 IMPROVEMENTS 
 - try to improve implementation `check_replicas_before_attach` configuration to avoid concurrent ATTACH PART execution during `restore` command on multi-shard cluster, fix [474](https://github.com/AlexAkulov/clickhouse-backup/issues/474)

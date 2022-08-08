@@ -63,7 +63,7 @@ func Restore(cfg *config.Config, backupName string, tablePattern string, partiti
 		if schemaOnly || doRestoreData {
 			for _, database := range backupMetadata.Databases {
 				if !IsInformationSchema(database.Name) {
-					if err := ch.CreateDatabaseFromQuery(database.Query); err != nil {
+					if err := ch.CreateDatabaseFromQuery(database.Query, cfg.General.RestoreSchemaOnCluster); err != nil {
 						return err
 					}
 				}
@@ -262,7 +262,7 @@ func createTables(cfg *config.Config, ch *clickhouse.ClickHouse, tablesForRestor
 		var notRestoredTables ListOfTables
 		for _, schema := range tablesForRestore {
 			// if metadata.json doesn't contains "databases", we will re-create tables with default engine
-			if err := ch.CreateDatabase(schema.Database); err != nil {
+			if err := ch.CreateDatabase(schema.Database, cfg.General.RestoreSchemaOnCluster); err != nil {
 				return fmt.Errorf("can't create database '%s': %v", schema.Database, err)
 			}
 			//materialized and window views should restore via ATTACH

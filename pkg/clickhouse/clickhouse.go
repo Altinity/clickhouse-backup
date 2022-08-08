@@ -492,24 +492,41 @@ func (ch *ClickHouse) ShowCreateTable(database, name string) string {
 }
 
 // CreateDatabase - create ClickHouse database
-func (ch *ClickHouse) CreateDatabase(database string) error {
+func (ch *ClickHouse) CreateDatabase(database, cluster string) error {
 	query := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", database)
+	if cluster != "" {
+		query += fmt.Sprintf(" ON CLUSTER '%s'", cluster)
+	}
+
 	_, err := ch.Query(query)
 	return err
 }
 
-func (ch *ClickHouse) CreateDatabaseWithEngine(database string, engine string) error {
+func (ch *ClickHouse) CreateDatabaseWithEngine(database, engine, cluster string) error {
 	query := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s` ENGINE=%s", database, engine)
+	query = ch.addOnClusterToCreateDatabase(cluster, query)
 	_, err := ch.Query(query)
 	return err
 }
 
-func (ch *ClickHouse) CreateDatabaseFromQuery(query string) error {
+func (ch *ClickHouse) CreateDatabaseFromQuery(query, cluster string) error {
 	if !strings.HasPrefix(query, "CREATE DATABASE IF NOT EXISTS") {
 		query = strings.Replace(query, "CREATE DATABASE", "CREATE DATABASE IF NOT EXISTS", 1)
 	}
+	query = ch.addOnClusterToCreateDatabase(cluster, query)
 	_, err := ch.Query(query)
 	return err
+}
+
+func (ch *ClickHouse) addOnClusterToCreateDatabase(cluster string, query string) string {
+	if cluster != "" && !strings.Contains(query, " ON CLUSTER ") {
+		if !strings.Contains(query, "ENGINE") {
+			query += fmt.Sprintf(" ON CLUSTER '%s'", cluster)
+		} else {
+			query = strings.Replace(query, "ENGINE", fmt.Sprintf(" ON CLUSTER '%s' ENGINE", cluster), 1)
+		}
+	}
+	return query
 }
 
 // DropTable - drop ClickHouse table
