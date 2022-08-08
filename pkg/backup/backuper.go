@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/new_storage"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/storage"
 	"path"
 )
 
 type Backuper struct {
 	cfg                    *config.Config
 	ch                     *clickhouse.ClickHouse
-	dst                    *new_storage.BackupDestination
+	dst                    *storage.BackupDestination
 	Version                string
 	DiskToPathMap          map[string]string
 	DefaultDataPath        string
@@ -39,7 +39,7 @@ func (b *Backuper) init(disks []clickhouse.Disk) error {
 	}
 	b.DiskToPathMap = diskMap
 	if b.cfg.General.RemoteStorage != "none" && b.cfg.General.RemoteStorage != "custom" {
-		b.dst, err = new_storage.NewBackupDestination(b.cfg, true)
+		b.dst, err = storage.NewBackupDestination(b.cfg, true)
 		if err != nil {
 			return err
 		}

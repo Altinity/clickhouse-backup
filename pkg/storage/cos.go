@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
+	"strings"
 	"time"
 
 	"github.com/tencentyun/cos-go-sdk-v5"
@@ -15,7 +17,6 @@ import (
 type COS struct {
 	client *cos.Client
 	Config *config.COSConfig
-	Debug  bool
 }
 
 // Connect - connect to cos
@@ -36,9 +37,9 @@ func (c *COS) Connect() error {
 			SecretKey: c.Config.SecretKey,
 			// request debug
 			Transport: &debug.DebugRequestTransport{
-				RequestHeader:  c.Debug,
+				RequestHeader:  c.Config.Debug,
 				RequestBody:    false,
-				ResponseHeader: c.Debug,
+				ResponseHeader: c.Config.Debug,
 				ResponseBody:   false,
 			},
 		},
@@ -52,9 +53,9 @@ func (c *COS) Kind() string {
 	return "COS"
 }
 
-func (c *COS) GetFile(key string) (RemoteFile, error) {
+func (c *COS) StatFile(key string) (RemoteFile, error) {
 	// file max size is 5Gb
-	resp, err := c.client.Object.Get(context.Background(), key, nil)
+	resp, err := c.client.Object.Get(context.Background(), path.Join(c.Config.Path, key), nil)
 	if err != nil {
 		cosErr, ok := err.(*cos.ErrorResponse)
 		if ok && cosErr.Code == "NoSuchKey" {
@@ -71,38 +72,72 @@ func (c *COS) GetFile(key string) (RemoteFile, error) {
 }
 
 func (c *COS) DeleteFile(key string) error {
-	_, err := c.client.Object.Delete(context.Background(), key)
+	_, err := c.client.Object.Delete(context.Background(), path.Join(c.Config.Path, key))
 	return err
 }
 
-func (c *COS) Walk(path string, process func(RemoteFile)) error {
+func (c *COS) Walk(cosPath string, recursive bool, process func(RemoteFile) error) error {
+	// COS needs prefix ended with "/".
+	prefix := path.Join(c.Config.Path, cosPath) + "/"
+
+	delimiter := ""
+	if !recursive {
+		//
+		// When delimiter is "/", we only process all backups in the CommonPrefixes field of response.
+		// Then we get backupLists.
+		//
+		delimiter = "/"
+	} else {
+		//
+		// When delimiter is an empty string, we  process the items under specified path.
+		// Then we can Delete File object.
+		//
+		delimiter = ""
+	}
 	res, _, err := c.client.Bucket.Get(context.Background(), &cos.BucketGetOptions{
-		Prefix: c.Config.Path,
+		Delimiter: delimiter,
+		Prefix:    prefix,
 	})
 	if err != nil {
 		return err
 	}
-	for _, v := range res.Contents {
-		modifiedTime, _ := parseTime(v.LastModified)
-		process(&cosFile{
-			name:         v.Key,
-			lastModified: modifiedTime,
-			size:         int64(v.Size),
-		})
+	// When recursive is false, only process all the backups in the CommonPrefixes part.
+	for _, dir := range res.CommonPrefixes {
+		if err := process(&cosFile{
+			name: strings.TrimPrefix(dir, prefix),
+		}); err != nil {
+			return err
+		}
+	}
+	if recursive {
+		for _, v := range res.Contents {
+			modifiedTime, _ := parseTime(v.LastModified)
+			if err := process(&cosFile{
+				name:         strings.TrimPrefix(v.Key, prefix),
+				lastModified: modifiedTime,
+				size:         int64(v.Size),
+			}); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
 
 func (c *COS) GetFileReader(key string) (io.ReadCloser, error) {
-	resp, err := c.client.Object.Get(context.Background(), key, nil)
+	resp, err := c.client.Object.Get(context.Background(), path.Join(c.Config.Path, key), nil)
 	if err != nil {
 		return nil, err
 	}
 	return resp.Body, nil
 }
 
+func (c *COS) GetFileReaderWithLocalPath(key, _ string) (io.ReadCloser, error) {
+	return c.GetFileReader(key)
+}
+
 func (c *COS) PutFile(key string, r io.ReadCloser) error {
-	_, err := c.client.Object.Put(context.Background(), key, r, nil)
+	_, err := c.client.Object.Put(context.Background(), path.Join(c.Config.Path, key), r, nil)
 	return err
 }
 

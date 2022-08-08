@@ -3,6 +3,7 @@ package metadata
 import (
 	"encoding/json"
 	apexLog "github.com/apex/log"
+	"os"
 )
 
 func (tm *TableMetadata) Load(location string) (uint64, error) {

@@ -1,10 +1,11 @@
-package new_storage
+package storage
 
 import (
 	"errors"
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"io"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -12,13 +13,13 @@ import (
 	"time"
 
 	"github.com/apex/log"
-	lib_sftp "github.com/pkg/sftp"
+	libSFTP "github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 )
 
 // SFTP Implement RemoteStorage
 type SFTP struct {
-	client *lib_sftp.Client
+	client *libSFTP.Client
 	Config *config.SFTPConfig
 }
 
@@ -29,7 +30,7 @@ func (sftp *SFTP) Debug(msg string, v ...interface{}) {
 }
 
 func (sftp *SFTP) Connect() error {
-	authMethods := []ssh.AuthMethod{}
+	authMethods := make([]ssh.AuthMethod, 0)
 
 	if sftp.Config.Key == "" && sftp.Config.Password == "" {
 		return errors.New("please specify sftp.key or sftp.password for authentication")
@@ -63,16 +64,16 @@ func (sftp *SFTP) Connect() error {
 	if err != nil {
 		return err
 	}
-	clientOptions := make([]lib_sftp.ClientOption, 0)
+	clientOptions := make([]libSFTP.ClientOption, 0)
 	if sftp.Config.Concurrency > 0 {
 		clientOptions = append(
 			clientOptions,
-			lib_sftp.UseConcurrentReads(true),
-			lib_sftp.UseConcurrentWrites(true),
-			lib_sftp.MaxConcurrentRequestsPerFile(sftp.Config.Concurrency),
+			libSFTP.UseConcurrentReads(true),
+			libSFTP.UseConcurrentWrites(true),
+			libSFTP.MaxConcurrentRequestsPerFile(sftp.Config.Concurrency),
 		)
 	}
-	sftpConnection, err := lib_sftp.NewClient(sshConnection, clientOptions...)
+	sftpConnection, err := libSFTP.NewClient(sshConnection, clientOptions...)
 	if err != nil {
 		return err
 	}
@@ -122,7 +123,11 @@ func (sftp *SFTP) DeleteFile(key string) error {
 
 func (sftp *SFTP) DeleteDirectory(dirPath string) error {
 	sftp.Debug("[SFTP_DEBUG] DeleteDirectory %s", dirPath)
-	defer sftp.client.RemoveDirectory(dirPath)
+	defer func() {
+		if err := sftp.client.RemoveDirectory(dirPath); err != nil {
+			log.Warnf("RemoveDirectory err=%v", err)
+		}
+	}()
 
 	files, err := sftp.client.ReadDir(dirPath)
 	if err != nil {
@@ -132,9 +137,13 @@ func (sftp *SFTP) DeleteDirectory(dirPath string) error {
 	for _, file := range files {
 		filePath := path.Join(dirPath, file.Name())
 		if file.IsDir() {
-			sftp.DeleteDirectory(filePath)
+			if err := sftp.DeleteDirectory(filePath); err != nil {
+				log.Warnf("sftp.DeleteDirectory(%s) err=%v", filePath, err)
+			}
 		} else {
-			defer sftp.client.Remove(filePath)
+			if err := sftp.client.Remove(filePath); err != nil {
+				log.Warnf("sftp.Remove(%s) err=%v", filePath, err)
+			}
 		}
 	}
 
@@ -187,7 +196,6 @@ func (sftp *SFTP) Walk(remotePath string, recursive bool, process func(RemoteFil
 
 func (sftp *SFTP) GetFileReader(key string) (io.ReadCloser, error) {
 	filePath := path.Join(sftp.Config.Path, key)
-	sftp.client.MkdirAll(path.Dir(filePath))
 	return sftp.client.OpenFile(filePath, syscall.O_RDWR)
 }
 
@@ -197,12 +205,18 @@ func (sftp *SFTP) GetFileReaderWithLocalPath(key, _ string) (io.ReadCloser, erro
 
 func (sftp *SFTP) PutFile(key string, localFile io.ReadCloser) error {
 	filePath := path.Join(sftp.Config.Path, key)
-	sftp.client.MkdirAll(path.Dir(filePath))
+	if err := sftp.client.MkdirAll(path.Dir(filePath)); err != nil {
+		log.Warnf("sftp.client.MkdirAll(%s) err=%v", path.Dir(filePath), err)
+	}
 	remoteFile, err := sftp.client.Create(filePath)
 	if err != nil {
 		return err
 	}
-	defer remoteFile.Close()
+	defer func() {
+		if err := remoteFile.Close(); err != nil {
+			log.Warnf("can't close %s err=%v", filePath, err)
+		}
+	}()
 	if _, err = remoteFile.ReadFrom(localFile); err != nil {
 		return err
 	}

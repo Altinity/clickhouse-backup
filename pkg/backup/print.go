@@ -15,11 +15,11 @@ import (
 
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/new_storage"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/storage"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
 )
 
-func printBackupsRemote(w io.Writer, backupList []new_storage.Backup, format string) error {
+func printBackupsRemote(w io.Writer, backupList []storage.Backup, format string) error {
 	switch format {
 	case "latest", "last", "l":
 		if len(backupList) < 1 {
@@ -59,7 +59,6 @@ func printBackupsRemote(w io.Writer, backupList []new_storage.Backup, format str
 			if bytes, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", backup.BackupName, size, uploadDate, "remote", required, description); err != nil {
 				apexLog.Errorf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
 			}
-
 		}
 	default:
 		return fmt.Errorf("'%s' undefined", format)
@@ -279,30 +278,30 @@ func getLocalBackup(cfg *config.Config, backupName string, disks []clickhouse.Di
 }
 
 // GetRemoteBackups - get all backups stored on remote storage
-func GetRemoteBackups(cfg *config.Config, parseMetadata bool) ([]new_storage.Backup, error) {
+func GetRemoteBackups(cfg *config.Config, parseMetadata bool) ([]storage.Backup, error) {
 	if cfg.General.RemoteStorage == "none" {
 		return nil, fmt.Errorf("remote_storage is 'none'")
 	}
 	if cfg.General.RemoteStorage == "custom" {
 		return custom.List(cfg)
 	}
-	bd, err := new_storage.NewBackupDestination(cfg, false)
+	bd, err := storage.NewBackupDestination(cfg, false)
 	if err != nil {
-		return []new_storage.Backup{}, err
+		return []storage.Backup{}, err
 	}
 	if err := bd.Connect(); err != nil {
-		return []new_storage.Backup{}, err
+		return []storage.Backup{}, err
 	}
 	backupList, err := bd.BackupList(parseMetadata, "")
 	if err != nil {
-		return []new_storage.Backup{}, err
+		return []storage.Backup{}, err
 	}
 	// ugly hack to fix https://github.com/AlexAkulov/clickhouse-backup/issues/309
 	if parseMetadata == false && len(backupList) > 0 {
 		lastBackup := backupList[len(backupList)-1]
 		backupList, err = bd.BackupList(true, lastBackup.BackupName)
 		if err != nil {
-			return []new_storage.Backup{}, err
+			return []storage.Backup{}, err
 		}
 	}
 	return backupList, err

@@ -4,9 +4,16 @@ IMPROVEMENTS
 - add example workflow hot to make backup / restore on sharded cluster, fix [469](https://github.com/AlexAkulov/clickhouse-backup/discussions/469)
 - add `use_embedded_backup_restore` to allow `BACKUP` and `RESTORE` SQL commands usage, fix [323](https://github.com/AlexAkulov/clickhouse-backup/issues/323), need 22.7+ and resolve https://github.com/ClickHouse/ClickHouse/issues/39416
 - add `timeout` to `azure` config `AZBLOB_TIMEOUT` to allow download with bad network quality, fix [467](https://github.com/AlexAkulov/clickhouse-backup/issues/467)
+- switch to go 1.19
+- refactoring to remove legacy `storage` package
 
 BUG FIXES
 - fix wrong upload / download behavior for `compression_format: none` and `remote_storage: ftp`
+
+# v1.5.2
+IMPROVEMENTS
+- switch to go 1.19
+- refactoring to remove legacy `storage` package
 
 # v1.5.1
 BUG FIXES
