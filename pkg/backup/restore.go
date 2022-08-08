@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path"
@@ -54,7 +53,7 @@ func Restore(cfg *config.Config, backupName string, tablePattern string, partiti
 		return ErrUnknownClickhouseDataPath
 	}
 	backupMetafileLocalPath := path.Join(defaultDataPath, "backup", backupName, "metadata.json")
-	backupMetadataBody, err := ioutil.ReadFile(backupMetafileLocalPath)
+	backupMetadataBody, err := os.ReadFile(backupMetafileLocalPath)
 	if err == nil {
 		backupMetadata := metadata.BackupMetadata{}
 		if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {

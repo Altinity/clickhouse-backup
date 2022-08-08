@@ -6,7 +6,6 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/filesystemhelper"
 	"io"
-	"io/ioutil"
 	"net/url"
 	"os"
 	"path"
@@ -80,7 +79,7 @@ func getTableListByPatternLocal(metadataPath string, tablePattern string, skipTa
 			if matched, _ := filepath.Match(strings.Trim(p, " \t\r\n"), tableName); !matched || shallSkipped {
 				continue
 			}
-			data, err := ioutil.ReadFile(filePath)
+			data, err := os.ReadFile(filePath)
 			if err != nil {
 				return err
 			}

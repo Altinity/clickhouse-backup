@@ -16,7 +16,7 @@ jobs:
     strategy:
       matrix:
         golang-version:
-          - "1.18"
+          - "1.19"
     steps:
       - name: Checkout project
         uses: actions/checkout@v2
@@ -168,7 +168,7 @@ jobs:
     strategy:
       matrix:
         golang-version:
-          - "1.18"
+          - "1.19"
         clickhouse:
           - '1.1.54390'
           - '19.17'

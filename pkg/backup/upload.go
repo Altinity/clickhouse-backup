@@ -437,7 +437,7 @@ func (b *Backuper) markDuplicatedParts(backup *metadata.BackupMetadata, existsTa
 
 func (b *Backuper) ReadBackupMetadataLocal(backupName string) (*metadata.BackupMetadata, error) {
 	backupMetadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata.json")
-	backupMetadataBody, err := ioutil.ReadFile(backupMetadataPath)
+	backupMetadataBody, err := os.ReadFile(backupMetadataPath)
 	if err != nil {
 		return nil, err
 	}

@@ -1,3 +1,8 @@
+# v1.5.2
+IMPROVEMENTS
+- switch to go 1.19
+- refactoring to remove legacy `storage` package
+
 # v1.5.1
 BUG FIXES
 - properly execute `CREATE DATABASE IF NOT EXISTS ... ON CLUSTER` when setup `restore_schema_on_cluster`, fix [486](https://github.com/AlexAkulov/clickhouse-backup/issues/486)

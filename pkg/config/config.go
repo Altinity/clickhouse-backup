@@ -3,7 +3,6 @@ package config
 import (
 	"crypto/tls"
 	"fmt"
-	"io/ioutil"
 	"math"
 	"os"
 	"runtime"
@@ -240,7 +239,7 @@ func (cfg *Config) GetCompressionFormat() string {
 // LoadConfig - load config from file + environment variables
 func LoadConfig(configLocation string) (*Config, error) {
 	cfg := DefaultConfig()
-	configYaml, err := ioutil.ReadFile(configLocation)
+	configYaml, err := os.ReadFile(configLocation)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("can't open config file: %v", err)
 	}

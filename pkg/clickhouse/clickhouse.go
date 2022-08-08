@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"net/url"
 	"os"
 	"path"
@@ -72,7 +71,7 @@ func (ch *ClickHouse) Connect() error {
 				tlsConfig.Certificates = []tls.Certificate{cert}
 			}
 			if ch.Config.TLSCa != "" {
-				caCert, err := ioutil.ReadFile(ch.Config.TLSCa)
+				caCert, err := os.ReadFile(ch.Config.TLSCa)
 				if err != nil {
 					log.Errorf("read `tls_ca` file %s return error: %v ", ch.Config.TLSCa, err)
 					return err

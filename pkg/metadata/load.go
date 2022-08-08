@@ -3,11 +3,11 @@ package metadata
 import (
 	"encoding/json"
 	apexLog "github.com/apex/log"
-	"io/ioutil"
+	"os"
 )
 
 func (tm *TableMetadata) Load(location string) (uint64, error) {
-	data, err := ioutil.ReadFile(location)
+	data, err := os.ReadFile(location)
 	if err != nil {
 		return 0, err
 	}

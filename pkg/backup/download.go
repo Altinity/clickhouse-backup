@@ -20,8 +20,7 @@ import (
 
 	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/new_storage"
-	legacyStorage "github.com/AlexAkulov/clickhouse-backup/pkg/storage"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/storage"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
 
 	apexLog "github.com/apex/log"
@@ -36,7 +35,7 @@ func legacyDownload(ctx context.Context, cfg *config.Config, defaultDataPath, ba
 		"backup":    backupName,
 		"operation": "download_legacy",
 	})
-	bd, err := legacyStorage.NewBackupDestination(cfg)
+	bd, err := storage.NewBackupDestination(cfg, true)
 	if err != nil {
 		return err
 	}
@@ -86,7 +85,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		return err
 	}
 	found := false
-	var remoteBackup new_storage.Backup
+	var remoteBackup storage.Backup
 	for _, r := range remoteBackups {
 		if backupName == r.BackupName {
 			remoteBackup = r
@@ -271,15 +270,15 @@ func (b *Backuper) downloadTableMetadata(backupName string, log *apexLog.Entry, 
 	return &tableMetadata, size, nil
 }
 
-func (b *Backuper) downloadRBACData(remoteBackup new_storage.Backup) (uint64, error) {
+func (b *Backuper) downloadRBACData(remoteBackup storage.Backup) (uint64, error) {
 	return b.downloadBackupRelatedDir(remoteBackup, "access")
 }
 
-func (b *Backuper) downloadConfigData(remoteBackup new_storage.Backup) (uint64, error) {
+func (b *Backuper) downloadConfigData(remoteBackup storage.Backup) (uint64, error) {
 	return b.downloadBackupRelatedDir(remoteBackup, "configs")
 }
 
-func (b *Backuper) downloadBackupRelatedDir(remoteBackup new_storage.Backup, prefix string) (uint64, error) {
+func (b *Backuper) downloadBackupRelatedDir(remoteBackup storage.Backup, prefix string) (uint64, error) {
 	archiveFile := fmt.Sprintf("%s.%s", prefix, b.cfg.GetArchiveExtension())
 	remoteFile := path.Join(remoteBackup.BackupName, archiveFile)
 	localDir := path.Join(b.DefaultDataPath, "backup", remoteBackup.BackupName, prefix)

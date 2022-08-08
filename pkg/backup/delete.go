@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/new_storage"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/storage"
 
 	apexLog "github.com/apex/log"
 )
@@ -119,7 +119,7 @@ func RemoveBackupRemote(cfg *config.Config, backupName string) error {
 	}
 	backupName = cleanBackupNameRE.ReplaceAllString(backupName, "")
 
-	bd, err := new_storage.NewBackupDestination(cfg, false)
+	bd, err := storage.NewBackupDestination(cfg, false)
 	if err != nil {
 		return err
 	}
