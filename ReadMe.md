@@ -263,7 +263,13 @@ Restart HTTP server, close all current connections, close listen socket, open li
 
 > **GET /backup/tables**
 
-Print list of tables: `curl -s localhost:7171/backup/tables | jq .`
+Print list of tables: `curl -s localhost:7171/backup/tables | jq .`, exclude pattern matched table from `skip_tables` configuration parameters
+* Optional query argument `table` works the same as the `--table value` CLI argument.
+
+> **GET /backup/tables/all**
+
+Print list of tables: `curl -s localhost:7171/backup/tables/all | jq .`, ignore `skip_tables` configuration parameters
+* Optional query argument `table` works the same as the `--table value` CLI argument.
 
 > **POST /backup/create**
 

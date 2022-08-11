@@ -50,15 +50,21 @@ func main() {
 	cliapp.Commands = []cli.Command{
 		{
 			Name:      "tables",
-			Usage:     "Print list of tables",
-			UsageText: "clickhouse-backup tables",
+			Usage:     "Print list of tables, exclude skip_tables",
+			UsageText: "clickhouse-backup tables [-t, --tables=<db>.<table>]] [--all]",
 			Action: func(c *cli.Context) error {
-				return backup.PrintTables(config.GetConfig(c), c.Bool("a"))
+				return backup.PrintTables(config.GetConfig(c), c.Bool("a"), c.String("table"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.BoolFlag{
 					Name:   "all, a",
 					Hidden: false,
+					Usage:  "print table even when match with `skip_tables` pattern",
+				},
+				cli.StringFlag{
+					Name:   "table, tables, t",
+					Hidden: false,
+					Usage:  "table name patterns, separated by comma, allow ? and * as wildcard",
 				},
 			),
 		},

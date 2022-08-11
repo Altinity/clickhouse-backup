@@ -6,6 +6,7 @@ IMPROVEMENTS
 - add `timeout` to `azure` config `AZBLOB_TIMEOUT` to allow download with bad network quality, fix [467](https://github.com/AlexAkulov/clickhouse-backup/issues/467)
 - switch to go 1.19
 - refactoring to remove legacy `storage` package
+- add `table` parameter to `tables` cli command and `/backup/tables` API handler, fix [367](https://github.com/AlexAkulov/clickhouse-backup/issues/367)
 
 BUG FIXES
 - fix wrong upload / download behavior for `compression_format: none` and `remote_storage: ftp`

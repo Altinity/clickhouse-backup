@@ -443,7 +443,7 @@ func (api *APIServer) httpRootHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
 
-	_, _ = fmt.Fprintln(w, "Documentation: https://github.com/AlexAkulov/clickhouse-backup#api-configuration")
+	_, _ = fmt.Fprintln(w, "Documentation: https://github.com/AlexAkulov/clickhouse-backup#api")
 	for _, r := range api.routes {
 		_, _ = fmt.Fprintln(w, r)
 	}
@@ -468,9 +468,10 @@ func (api *APIServer) httpTablesHandler(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "list", err)
 		return
 	}
+	q := r.URL.Query()
 	api.metrics.NumberBackupsRemoteExpected.Set(float64(cfg.General.BackupsToKeepRemote))
 	api.metrics.NumberBackupsLocalExpected.Set(float64(cfg.General.BackupsToKeepLocal))
-	tables, err := backup.GetTables(cfg)
+	tables, err := backup.GetTables(cfg, q.Get("table"))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "tables", err)
 		return
