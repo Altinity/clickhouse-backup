@@ -23,174 +23,174 @@ const (
 
 // Config - config file format
 type Config struct {
-	General    GeneralConfig    `yaml:"general" envconfig:"_"`
-	ClickHouse ClickHouseConfig `yaml:"clickhouse" envconfig:"_"`
-	S3         S3Config         `yaml:"s3" envconfig:"_"`
-	GCS        GCSConfig        `yaml:"gcs" envconfig:"_"`
-	COS        COSConfig        `yaml:"cos" envconfig:"_"`
-	API        APIConfig        `yaml:"api" envconfig:"_"`
-	FTP        FTPConfig        `yaml:"ftp" envconfig:"_"`
-	SFTP       SFTPConfig       `yaml:"sftp" envconfig:"_"`
-	AzureBlob  AzureBlobConfig  `yaml:"azblob" envconfig:"_"`
-	Custom     CustomConfig     `yaml:"custom" envconfig:"_"`
+	General    GeneralConfig    `yaml:"general" envconfig:"_" json:"general"`
+	ClickHouse ClickHouseConfig `yaml:"clickhouse" envconfig:"_" json:"clickhouse"`
+	S3         S3Config         `yaml:"s3" envconfig:"_" json:"s3"`
+	GCS        GCSConfig        `yaml:"gcs" envconfig:"_" json:"gcs"`
+	COS        COSConfig        `yaml:"cos" envconfig:"_" json:"cos"`
+	API        APIConfig        `yaml:"api" envconfig:"_" json:"api"`
+	FTP        FTPConfig        `yaml:"ftp" envconfig:"_" json:"ftp"`
+	SFTP       SFTPConfig       `yaml:"sftp" envconfig:"_" json:"sftp"`
+	AzureBlob  AzureBlobConfig  `yaml:"azblob" envconfig:"_" json:"azblob"`
+	Custom     CustomConfig     `yaml:"custom" envconfig:"_" json:"custom"`
 }
 
 // GeneralConfig - general setting section
 type GeneralConfig struct {
-	RemoteStorage          string            `yaml:"remote_storage" envconfig:"REMOTE_STORAGE"`
-	MaxFileSize            int64             `yaml:"max_file_size" envconfig:"MAX_FILE_SIZE"`
-	DisableProgressBar     bool              `yaml:"disable_progress_bar" envconfig:"DISABLE_PROGRESS_BAR"`
-	BackupsToKeepLocal     int               `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL"`
-	BackupsToKeepRemote    int               `yaml:"backups_to_keep_remote" envconfig:"BACKUPS_TO_KEEP_REMOTE"`
-	LogLevel               string            `yaml:"log_level" envconfig:"LOG_LEVEL"`
-	AllowEmptyBackups      bool              `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
-	DownloadConcurrency    uint8             `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
-	UploadConcurrency      uint8             `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
-	RestoreSchemaOnCluster string            `yaml:"restore_schema_on_cluster" envconfig:"RESTORE_SCHEMA_ON_CLUSTER"`
-	UploadByPart           bool              `yaml:"upload_by_part" envconfig:"UPLOAD_BY_PART"`
-	DownloadByPart         bool              `yaml:"download_by_part" envconfig:"DOWNLOAD_BY_PART"`
-	RestoreDatabaseMapping map[string]string `yaml:"restore_database_mapping" envconfig:"RESTORE_DATABASE_MAPPING"`
+	RemoteStorage          string            `yaml:"remote_storage" envconfig:"REMOTE_STORAGE" json:"remote_storage"`
+	MaxFileSize            int64             `yaml:"max_file_size" envconfig:"MAX_FILE_SIZE" json:"max_file_size"`
+	DisableProgressBar     bool              `yaml:"disable_progress_bar" envconfig:"DISABLE_PROGRESS_BAR" json:"disable_progress_bar"`
+	BackupsToKeepLocal     int               `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL" json:"backups_to_keep_local"`
+	BackupsToKeepRemote    int               `yaml:"backups_to_keep_remote" envconfig:"BACKUPS_TO_KEEP_REMOTE" json:"backups_to_keep_remote"`
+	LogLevel               string            `yaml:"log_level" envconfig:"LOG_LEVEL" json:"log_level"`
+	AllowEmptyBackups      bool              `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS" json:"allow_empty_backups"`
+	DownloadConcurrency    uint8             `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY" json:"download_concurrency"`
+	UploadConcurrency      uint8             `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY" json:"upload_concurrency"`
+	RestoreSchemaOnCluster string            `yaml:"restore_schema_on_cluster" envconfig:"RESTORE_SCHEMA_ON_CLUSTER" json:"restore_schema_on_cluster"`
+	UploadByPart           bool              `yaml:"upload_by_part" envconfig:"UPLOAD_BY_PART" json:"upload_by_part"`
+	DownloadByPart         bool              `yaml:"download_by_part" envconfig:"DOWNLOAD_BY_PART" json:"download_by_part"`
+	RestoreDatabaseMapping map[string]string `yaml:"restore_database_mapping" envconfig:"RESTORE_DATABASE_MAPPING" json:"restore_database_mapping"`
 }
 
 // GCSConfig - GCS settings section
 type GCSConfig struct {
-	CredentialsFile   string `yaml:"credentials_file" envconfig:"GCS_CREDENTIALS_FILE"`
-	CredentialsJSON   string `yaml:"credentials_json" envconfig:"GCS_CREDENTIALS_JSON"`
-	Bucket            string `yaml:"bucket" envconfig:"GCS_BUCKET"`
-	Path              string `yaml:"path" envconfig:"GCS_PATH"`
-	CompressionLevel  int    `yaml:"compression_level" envconfig:"GCS_COMPRESSION_LEVEL"`
-	CompressionFormat string `yaml:"compression_format" envconfig:"GCS_COMPRESSION_FORMAT"`
-	Debug             bool   `yaml:"debug" envconfig:"GCS_DEBUG"`
-	Endpoint          string `yaml:"endpoint" envconfig:"GCS_ENDPOINT"`
+	CredentialsFile   string `yaml:"credentials_file" envconfig:"GCS_CREDENTIALS_FILE" json:"credentials_file"`
+	CredentialsJSON   string `yaml:"credentials_json" envconfig:"GCS_CREDENTIALS_JSON" json:"credentials_json"`
+	Bucket            string `yaml:"bucket" envconfig:"GCS_BUCKET" json:"bucket"`
+	Path              string `yaml:"path" envconfig:"GCS_PATH" json:"path"`
+	CompressionLevel  int    `yaml:"compression_level" envconfig:"GCS_COMPRESSION_LEVEL" json:"compression_level"`
+	CompressionFormat string `yaml:"compression_format" envconfig:"GCS_COMPRESSION_FORMAT" json:"compression_format"`
+	Debug             bool   `yaml:"debug" envconfig:"GCS_DEBUG" json:"debug"`
+	Endpoint          string `yaml:"endpoint" envconfig:"GCS_ENDPOINT" json:"endpoint"`
 }
 
 // AzureBlobConfig - Azure Blob settings section
 type AzureBlobConfig struct {
-	EndpointSuffix        string `yaml:"endpoint_suffix" envconfig:"AZBLOB_ENDPOINT_SUFFIX"`
-	AccountName           string `yaml:"account_name" envconfig:"AZBLOB_ACCOUNT_NAME"`
-	AccountKey            string `yaml:"account_key" envconfig:"AZBLOB_ACCOUNT_KEY"`
-	SharedAccessSignature string `yaml:"sas" envconfig:"AZBLOB_SAS"`
-	UseManagedIdentity    bool   `yaml:"use_managed_identity" envconfig:"AZBLOB_USE_MANAGED_IDENTITY"`
-	Container             string `yaml:"container" envconfig:"AZBLOB_CONTAINER"`
-	Path                  string `yaml:"path" envconfig:"AZBLOB_PATH"`
-	CompressionLevel      int    `yaml:"compression_level" envconfig:"AZBLOB_COMPRESSION_LEVEL"`
-	CompressionFormat     string `yaml:"compression_format" envconfig:"AZBLOB_COMPRESSION_FORMAT"`
-	SSEKey                string `yaml:"sse_key" envconfig:"AZBLOB_SSE_KEY"`
-	BufferSize            int    `yaml:"buffer_size" envconfig:"AZBLOB_BUFFER_SIZE"`
-	MaxBuffers            int    `yaml:"buffer_count" envconfig:"AZBLOB_MAX_BUFFERS"`
-	MaxPartsCount         int    `yaml:"max_parts_count" envconfig:"AZBLOB_MAX_PARTS_COUNT"`
+	EndpointSuffix        string `yaml:"endpoint_suffix" envconfig:"AZBLOB_ENDPOINT_SUFFIX" json:"endpoint"`
+	AccountName           string `yaml:"account_name" envconfig:"AZBLOB_ACCOUNT_NAME" json:"account_name"`
+	AccountKey            string `yaml:"account_key" envconfig:"AZBLOB_ACCOUNT_KEY" json:"account_key"`
+	SharedAccessSignature string `yaml:"sas" envconfig:"AZBLOB_SAS" json:"sas"`
+	UseManagedIdentity    bool   `yaml:"use_managed_identity" envconfig:"AZBLOB_USE_MANAGED_IDENTITY" json:"use_managed_identity"`
+	Container             string `yaml:"container" envconfig:"AZBLOB_CONTAINER" json:"container"`
+	Path                  string `yaml:"path" envconfig:"AZBLOB_PATH" json:"path"`
+	CompressionLevel      int    `yaml:"compression_level" envconfig:"AZBLOB_COMPRESSION_LEVEL" json:"compression_level"`
+	CompressionFormat     string `yaml:"compression_format" envconfig:"AZBLOB_COMPRESSION_FORMAT" json:"compression_format"`
+	SSEKey                string `yaml:"sse_key" envconfig:"AZBLOB_SSE_KEY" json:"sse_key"`
+	BufferSize            int    `yaml:"buffer_size" envconfig:"AZBLOB_BUFFER_SIZE" json:"buffer_size"`
+	MaxBuffers            int    `yaml:"buffer_count" envconfig:"AZBLOB_MAX_BUFFERS" json:"buffer_count"`
+	MaxPartsCount         int    `yaml:"max_parts_count" envconfig:"AZBLOB_MAX_PARTS_COUNT" json:"max_parts_count"`
 }
 
 // S3Config - s3 settings section
 type S3Config struct {
-	AccessKey               string `yaml:"access_key" envconfig:"S3_ACCESS_KEY"`
-	SecretKey               string `yaml:"secret_key" envconfig:"S3_SECRET_KEY"`
-	Bucket                  string `yaml:"bucket" envconfig:"S3_BUCKET"`
-	Endpoint                string `yaml:"endpoint" envconfig:"S3_ENDPOINT"`
-	Region                  string `yaml:"region" envconfig:"S3_REGION"`
-	ACL                     string `yaml:"acl" envconfig:"S3_ACL"`
-	AssumeRoleARN           string `yaml:"assume_role_arn" envconfig:"S3_ASSUME_ROLE_ARN"`
-	ForcePathStyle          bool   `yaml:"force_path_style" envconfig:"S3_FORCE_PATH_STYLE"`
-	Path                    string `yaml:"path" envconfig:"S3_PATH"`
-	DisableSSL              bool   `yaml:"disable_ssl" envconfig:"S3_DISABLE_SSL"`
-	CompressionLevel        int    `yaml:"compression_level" envconfig:"S3_COMPRESSION_LEVEL"`
-	CompressionFormat       string `yaml:"compression_format" envconfig:"S3_COMPRESSION_FORMAT"`
-	SSE                     string `yaml:"sse" envconfig:"S3_SSE"`
-	DisableCertVerification bool   `yaml:"disable_cert_verification" envconfig:"S3_DISABLE_CERT_VERIFICATION"`
-	StorageClass            string `yaml:"storage_class" envconfig:"S3_STORAGE_CLASS"`
-	Concurrency             int    `yaml:"concurrency" envconfig:"S3_CONCURRENCY"`
-	PartSize                int64  `yaml:"part_size" envconfig:"S3_PART_SIZE"`
-	MaxPartsCount           int64  `yaml:"max_parts_count" envconfig:"S3_MAX_PARTS_COUNT"`
-	AllowMultipartDownload  bool   `yaml:"allow_multipart_download" envconfig:"S3_ALLOW_MULTIPART_DOWNLOAD"`
-	Debug                   bool   `yaml:"debug" envconfig:"S3_DEBUG"`
+	AccessKey               string `yaml:"access_key" envconfig:"S3_ACCESS_KEY" json:"access_key"`
+	SecretKey               string `yaml:"secret_key" envconfig:"S3_SECRET_KEY" json:"secret_key"`
+	Bucket                  string `yaml:"bucket" envconfig:"S3_BUCKET" json:"bucket"`
+	Endpoint                string `yaml:"endpoint" envconfig:"S3_ENDPOINT" json:"endpoint"`
+	Region                  string `yaml:"region" envconfig:"S3_REGION" json:"region"`
+	ACL                     string `yaml:"acl" envconfig:"S3_ACL" json:"acl"`
+	AssumeRoleARN           string `yaml:"assume_role_arn" envconfig:"S3_ASSUME_ROLE_ARN" json:"assume_role_arn"`
+	ForcePathStyle          bool   `yaml:"force_path_style" envconfig:"S3_FORCE_PATH_STYLE" json:"force_path_style"`
+	Path                    string `yaml:"path" envconfig:"S3_PATH" json:"path"`
+	DisableSSL              bool   `yaml:"disable_ssl" envconfig:"S3_DISABLE_SSL" json:"disable_ssl"`
+	CompressionLevel        int    `yaml:"compression_level" envconfig:"S3_COMPRESSION_LEVEL" json:"compression_level"`
+	CompressionFormat       string `yaml:"compression_format" envconfig:"S3_COMPRESSION_FORMAT" json:"compression_format"`
+	SSE                     string `yaml:"sse" envconfig:"S3_SSE" json:"sse"`
+	DisableCertVerification bool   `yaml:"disable_cert_verification" envconfig:"S3_DISABLE_CERT_VERIFICATION" json:"disable_cert_verification"`
+	StorageClass            string `yaml:"storage_class" envconfig:"S3_STORAGE_CLASS" json:"storage_class"`
+	Concurrency             int    `yaml:"concurrency" envconfig:"S3_CONCURRENCY" json:"concurrency"`
+	PartSize                int64  `yaml:"part_size" envconfig:"S3_PART_SIZE" json:"part_size"`
+	MaxPartsCount           int64  `yaml:"max_parts_count" envconfig:"S3_MAX_PARTS_COUNT" json:"max_parts_count"`
+	AllowMultipartDownload  bool   `yaml:"allow_multipart_download" envconfig:"S3_ALLOW_MULTIPART_DOWNLOAD" json:"allow_multipart_download"`
+	Debug                   bool   `yaml:"debug" envconfig:"S3_DEBUG" json:"debug"`
 }
 
 // COSConfig - cos settings section
 type COSConfig struct {
-	RowURL            string `yaml:"url" envconfig:"COS_URL"`
-	Timeout           string `yaml:"timeout" envconfig:"COS_TIMEOUT"`
-	SecretID          string `yaml:"secret_id" envconfig:"COS_SECRET_ID"`
-	SecretKey         string `yaml:"secret_key" envconfig:"COS_SECRET_KEY"`
-	Path              string `yaml:"path" envconfig:"COS_PATH"`
-	CompressionFormat string `yaml:"compression_format" envconfig:"COS_COMPRESSION_FORMAT"`
-	CompressionLevel  int    `yaml:"compression_level" envconfig:"COS_COMPRESSION_LEVEL"`
-	Debug             bool   `yaml:"debug" envconfig:"COS_DEBUG"`
+	RowURL            string `yaml:"url" envconfig:"COS_URL" json:"url"`
+	Timeout           string `yaml:"timeout" envconfig:"COS_TIMEOUT" json:"timeout"`
+	SecretID          string `yaml:"secret_id" envconfig:"COS_SECRET_ID" json:"secret_id"`
+	SecretKey         string `yaml:"secret_key" envconfig:"COS_SECRET_KEY" json:"secret_key"`
+	Path              string `yaml:"path" envconfig:"COS_PATH" json:"path"`
+	CompressionFormat string `yaml:"compression_format" envconfig:"COS_COMPRESSION_FORMAT" json:"compression_format"`
+	CompressionLevel  int    `yaml:"compression_level" envconfig:"COS_COMPRESSION_LEVEL" json:"compression_level"`
+	Debug             bool   `yaml:"debug" envconfig:"COS_DEBUG" json:"debug"`
 }
 
 // FTPConfig - ftp settings section
 type FTPConfig struct {
-	Address           string `yaml:"address" envconfig:"FTP_ADDRESS"`
-	Timeout           string `yaml:"timeout" envconfig:"FTP_TIMEOUT"`
-	Username          string `yaml:"username" envconfig:"FTP_USERNAME"`
-	Password          string `yaml:"password" envconfig:"FTP_PASSWORD"`
-	TLS               bool   `yaml:"tls" envconfig:"FTP_TLS"`
-	Path              string `yaml:"path" envconfig:"FTP_PATH"`
-	CompressionFormat string `yaml:"compression_format" envconfig:"FTP_COMPRESSION_FORMAT"`
-	CompressionLevel  int    `yaml:"compression_level" envconfig:"FTP_COMPRESSION_LEVEL"`
-	Concurrency       uint8  `yaml:"concurrency" envconfig:"FTP_CONCURRENCY"`
-	Debug             bool   `yaml:"debug" envconfig:"FTP_DEBUG"`
+	Address           string `yaml:"address" envconfig:"FTP_ADDRESS" json:"address"`
+	Timeout           string `yaml:"timeout" envconfig:"FTP_TIMEOUT" json:"timeout"`
+	Username          string `yaml:"username" envconfig:"FTP_USERNAME" json:"username"`
+	Password          string `yaml:"password" envconfig:"FTP_PASSWORD" json:"password"`
+	TLS               bool   `yaml:"tls" envconfig:"FTP_TLS" json:"tls"`
+	Path              string `yaml:"path" envconfig:"FTP_PATH" json:"path"`
+	CompressionFormat string `yaml:"compression_format" envconfig:"FTP_COMPRESSION_FORMAT" json:"compression_format"`
+	CompressionLevel  int    `yaml:"compression_level" envconfig:"FTP_COMPRESSION_LEVEL" json:"compression_level"`
+	Concurrency       uint8  `yaml:"concurrency" envconfig:"FTP_CONCURRENCY" json:"concurrency"`
+	Debug             bool   `yaml:"debug" envconfig:"FTP_DEBUG" json:"debug"`
 }
 
 // SFTPConfig - sftp settings section
 type SFTPConfig struct {
-	Address           string `yaml:"address" envconfig:"SFTP_ADDRESS"`
-	Port              uint   `yaml:"port" envconfig:"SFTP_PORT"`
-	Username          string `yaml:"username" envconfig:"SFTP_USERNAME"`
-	Password          string `yaml:"password" envconfig:"SFTP_PASSWORD"`
-	Key               string `yaml:"key" envconfig:"SFTP_KEY"`
-	Path              string `yaml:"path" envconfig:"SFTP_PATH"`
-	CompressionFormat string `yaml:"compression_format" envconfig:"SFTP_COMPRESSION_FORMAT"`
-	CompressionLevel  int    `yaml:"compression_level" envconfig:"SFTP_COMPRESSION_LEVEL"`
-	Concurrency       int    `yaml:"concurrency" envconfig:"SFTP_CONCURRENCY"`
-	Debug             bool   `yaml:"debug" envconfig:"SFTP_DEBUG"`
+	Address           string `yaml:"address" envconfig:"SFTP_ADDRESS" json:"address"`
+	Port              uint   `yaml:"port" envconfig:"SFTP_PORT" json:"port"`
+	Username          string `yaml:"username" envconfig:"SFTP_USERNAME" json:"username"`
+	Password          string `yaml:"password" envconfig:"SFTP_PASSWORD" json:"password"`
+	Key               string `yaml:"key" envconfig:"SFTP_KEY" json:"key"`
+	Path              string `yaml:"path" envconfig:"SFTP_PATH" json:"path"`
+	CompressionFormat string `yaml:"compression_format" envconfig:"SFTP_COMPRESSION_FORMAT" json:"compression_format"`
+	CompressionLevel  int    `yaml:"compression_level" envconfig:"SFTP_COMPRESSION_LEVEL" json:"compression_level"`
+	Concurrency       int    `yaml:"concurrency" envconfig:"SFTP_CONCURRENCY" json:"concurrency"`
+	Debug             bool   `yaml:"debug" envconfig:"SFTP_DEBUG" json:"debug"`
 }
 
 // CustomConfig - custom CLI storage settings section
 type CustomConfig struct {
-	UploadCommand          string `yaml:"upload_command" envconfig:"CUSTOM_UPLOAD_COMMAND"`
-	DownloadCommand        string `yaml:"download_command" envconfig:"CUSTOM_DOWNLOAD_COMMAND"`
-	ListCommand            string `yaml:"list_command" envconfig:"CUSTOM_LIST_COMMAND"`
-	DeleteCommand          string `yaml:"delete_command" envconfig:"CUSTOM_DELETE_COMMAND"`
-	CommandTimeout         string `yaml:"command_timeout" envconfig:"CUSTOM_COMMAND_TIMEOUT"`
+	UploadCommand          string `yaml:"upload_command" envconfig:"CUSTOM_UPLOAD_COMMAND" json:"upload_command"`
+	DownloadCommand        string `yaml:"download_command" envconfig:"CUSTOM_DOWNLOAD_COMMAND" json:"download_command"`
+	ListCommand            string `yaml:"list_command" envconfig:"CUSTOM_LIST_COMMAND" json:"list_command"`
+	DeleteCommand          string `yaml:"delete_command" envconfig:"CUSTOM_DELETE_COMMAND" json:"delete_command"`
+	CommandTimeout         string `yaml:"command_timeout" envconfig:"CUSTOM_COMMAND_TIMEOUT" json:"command_timeout"`
 	CommandTimeoutDuration time.Duration
 }
 
 // ClickHouseConfig - clickhouse settings section
 type ClickHouseConfig struct {
-	Username                         string            `yaml:"username" envconfig:"CLICKHOUSE_USERNAME"`
-	Password                         string            `yaml:"password" envconfig:"CLICKHOUSE_PASSWORD"`
-	Host                             string            `yaml:"host" envconfig:"CLICKHOUSE_HOST"`
-	Port                             uint              `yaml:"port" envconfig:"CLICKHOUSE_PORT"`
-	DiskMapping                      map[string]string `yaml:"disk_mapping" envconfig:"CLICKHOUSE_DISK_MAPPING"`
-	SkipTables                       []string          `yaml:"skip_tables" envconfig:"CLICKHOUSE_SKIP_TABLES"`
-	Timeout                          string            `yaml:"timeout" envconfig:"CLICKHOUSE_TIMEOUT"`
-	FreezeByPart                     bool              `yaml:"freeze_by_part" envconfig:"CLICKHOUSE_FREEZE_BY_PART"`
-	FreezeByPartWhere                string            `yaml:"freeze_by_part_where" envconfig:"CLICKHOUSE_FREEZE_BY_PART_WHERE"`
-	Secure                           bool              `yaml:"secure" envconfig:"CLICKHOUSE_SECURE"`
-	SkipVerify                       bool              `yaml:"skip_verify" envconfig:"CLICKHOUSE_SKIP_VERIFY"`
-	SyncReplicatedTables             bool              `yaml:"sync_replicated_tables" envconfig:"CLICKHOUSE_SYNC_REPLICATED_TABLES"`
-	LogSQLQueries                    bool              `yaml:"log_sql_queries" envconfig:"CLICKHOUSE_LOG_SQL_QUERIES"`
-	ConfigDir                        string            `yaml:"config_dir" envconfig:"CLICKHOUSE_CONFIG_DIR"`
-	RestartCommand                   string            `yaml:"restart_command" envconfig:"CLICKHOUSE_RESTART_COMMAND"`
-	IgnoreNotExistsErrorDuringFreeze bool              `yaml:"ignore_not_exists_error_during_freeze" envconfig:"CLICKHOUSE_IGNORE_NOT_EXISTS_ERROR_DURING_FREEZE"`
-	TLSKey                           string            `yaml:"tls_key" envconfig:"CLICKHOUSE_TLS_KEY"`
-	TLSCert                          string            `yaml:"tls_cert" envconfig:"CLICKHOUSE_TLS_CERT"`
-	TLSCa                            string            `yaml:"tls_ca" envconfig:"CLICKHOUSE_TLS_CA"`
-	Debug                            bool              `yaml:"debug" envconfig:"CLICKHOUSE_DEBUG"`
+	Username                         string            `yaml:"username" envconfig:"CLICKHOUSE_USERNAME" json:"username"`
+	Password                         string            `yaml:"password" envconfig:"CLICKHOUSE_PASSWORD" json:"password"`
+	Host                             string            `yaml:"host" envconfig:"CLICKHOUSE_HOST" json:"host"`
+	Port                             uint              `yaml:"port" envconfig:"CLICKHOUSE_PORT" json:"port"`
+	DiskMapping                      map[string]string `yaml:"disk_mapping" envconfig:"CLICKHOUSE_DISK_MAPPING" json:"disk_mapping"`
+	SkipTables                       []string          `yaml:"skip_tables" envconfig:"CLICKHOUSE_SKIP_TABLES" json:"skip_tables"`
+	Timeout                          string            `yaml:"timeout" envconfig:"CLICKHOUSE_TIMEOUT" json:"timeout"`
+	FreezeByPart                     bool              `yaml:"freeze_by_part" envconfig:"CLICKHOUSE_FREEZE_BY_PART" json:"freeze_by_part"`
+	FreezeByPartWhere                string            `yaml:"freeze_by_part_where" envconfig:"CLICKHOUSE_FREEZE_BY_PART_WHERE" json:"freeze_by_part_where"`
+	Secure                           bool              `yaml:"secure" envconfig:"CLICKHOUSE_SECURE" json:"secure"`
+	SkipVerify                       bool              `yaml:"skip_verify" envconfig:"CLICKHOUSE_SKIP_VERIFY" json:"skip_verify"`
+	SyncReplicatedTables             bool              `yaml:"sync_replicated_tables" envconfig:"CLICKHOUSE_SYNC_REPLICATED_TABLES" json:"sync_replicated_tables"`
+	LogSQLQueries                    bool              `yaml:"log_sql_queries" envconfig:"CLICKHOUSE_LOG_SQL_QUERIES" json:"log_sql_queries"`
+	ConfigDir                        string            `yaml:"config_dir" envconfig:"CLICKHOUSE_CONFIG_DIR" json:"config_dir"`
+	RestartCommand                   string            `yaml:"restart_command" envconfig:"CLICKHOUSE_RESTART_COMMAND" json:"restart_command"`
+	IgnoreNotExistsErrorDuringFreeze bool              `yaml:"ignore_not_exists_error_during_freeze" envconfig:"CLICKHOUSE_IGNORE_NOT_EXISTS_ERROR_DURING_FREEZE" json:"ignore_not_exists_error_during_freeze"`
+	TLSKey                           string            `yaml:"tls_key" envconfig:"CLICKHOUSE_TLS_KEY" json:"tls_key"`
+	TLSCert                          string            `yaml:"tls_cert" envconfig:"CLICKHOUSE_TLS_CERT" json:"tls_cert"`
+	TLSCa                            string            `yaml:"tls_ca" envconfig:"CLICKHOUSE_TLS_CA" json:"tls_ca"`
+	Debug                            bool              `yaml:"debug" envconfig:"CLICKHOUSE_DEBUG" json:"debug"`
 }
 
 type APIConfig struct {
-	ListenAddr              string `yaml:"listen" envconfig:"API_LISTEN"`
-	EnableMetrics           bool   `yaml:"enable_metrics" envconfig:"API_ENABLE_METRICS"`
-	EnablePprof             bool   `yaml:"enable_pprof" envconfig:"API_ENABLE_PPROF"`
-	Username                string `yaml:"username" envconfig:"API_USERNAME"`
-	Password                string `yaml:"password" envconfig:"API_PASSWORD"`
-	Secure                  bool   `yaml:"secure" envconfig:"API_SECURE"`
-	CertificateFile         string `yaml:"certificate_file" envconfig:"API_CERTIFICATE_FILE"`
-	PrivateKeyFile          string `yaml:"private_key_file" envconfig:"API_PRIVATE_KEY_FILE"`
-	CreateIntegrationTables bool   `yaml:"create_integration_tables" envconfig:"API_CREATE_INTEGRATION_TABLES"`
-	IntegrationTablesHost   string `yaml:"integration_tables_host" envconfig:"API_INTEGRATION_TABLES_HOST"`
-	AllowParallel           bool   `yaml:"allow_parallel" envconfig:"API_ALLOW_PARALLEL"`
+	ListenAddr              string `yaml:"listen" envconfig:"API_LISTEN" json:"listen"`
+	EnableMetrics           bool   `yaml:"enable_metrics" envconfig:"API_ENABLE_METRICS" json:"enable_metrics"`
+	EnablePprof             bool   `yaml:"enable_pprof" envconfig:"API_ENABLE_PPROF" json:"enable_pprof"`
+	Username                string `yaml:"username" envconfig:"API_USERNAME" json:"username"`
+	Password                string `yaml:"password" envconfig:"API_PASSWORD" json:"password"`
+	Secure                  bool   `yaml:"secure" envconfig:"API_SECURE" json:"secure"`
+	CertificateFile         string `yaml:"certificate_file" envconfig:"API_CERTIFICATE_FILE" json:"certificate_file"`
+	PrivateKeyFile          string `yaml:"private_key_file" envconfig:"API_PRIVATE_KEY_FILE" json:"private_key_file"`
+	CreateIntegrationTables bool   `yaml:"create_integration_tables" envconfig:"API_CREATE_INTEGRATION_TABLES" json:"create_integration_tables"`
+	IntegrationTablesHost   string `yaml:"integration_tables_host" envconfig:"API_INTEGRATION_TABLES_HOST" json:"integration_tables_host"`
+	AllowParallel           bool   `yaml:"allow_parallel" envconfig:"API_ALLOW_PARALLEL" json:"allow_parallel"`
 }
 
 // ArchiveExtensions - list of availiable compression formats and associated file extensions
@@ -453,4 +453,26 @@ func GetConfigPath(ctx *cli.Context) string {
 		return os.Getenv("CLICKHOUSE_BACKUP_CONFIG")
 	}
 	return DefaultConfigPath
+}
+
+// SaveConfig - save config to file and reload config to environment variables
+func SaveConfig(cfg *Config, configLocation string) error {
+
+	configYaml, err := yaml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+
+	err = ioutil.WriteFile(configLocation, configYaml, 0644)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("can't write config file: %v", err)
+	}
+	if err = envconfig.Process("", cfg); err != nil {
+		return err
+	}
+	cfg.AzureBlob.Path = strings.TrimPrefix(cfg.AzureBlob.Path, "/")
+	cfg.S3.Path = strings.TrimPrefix(cfg.S3.Path, "/")
+	cfg.GCS.Path = strings.TrimPrefix(cfg.GCS.Path, "/")
+	log.SetLevelFromString(cfg.General.LogLevel)
+	return nil
 }

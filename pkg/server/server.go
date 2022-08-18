@@ -276,6 +276,8 @@ func (api *APIServer) setupAPIServer() *http.Server {
 	r.HandleFunc("/backup/actions", api.actionsLog).Methods("GET")
 	r.HandleFunc("/backup/actions", api.actions).Methods("POST")
 
+	r.HandleFunc("/backup/config", api.updateConfig).Methods("POST")
+
 	var routes []string
 	if err := r.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
 		t, err := route.GetPathTemplate()
@@ -1257,4 +1259,201 @@ func (api *APIServer) CreateIntegrationTables() error {
 		return err
 	}
 	return nil
+}
+
+// updateConfig - update config
+func (api *APIServer) updateConfig(w http.ResponseWriter, r *http.Request) {
+
+	// json body, such as
+	// {
+	// 	"general": {
+	// 	"remote_storage": "ftp",
+	// 		"max_file_size": 107374182400,
+	// 		"disable_progress_bar": true,
+	// 		"backups_to_keep_local": 2,
+	// 		"backups_to_keep_remote": 2,
+	// 		"log_level": "debug",
+	// 		"allow_empty_backups": false,
+	// 		"download_concurrency": 1,
+	// 		"upload_concurrency": 1,
+	// 		"restore_schema_on_cluster": "idc1_cluster_udcp",
+	// 		"upload_by_part": true,
+	// 		"download_by_part": true,
+	// 		"restore_database_mapping": {}
+	// },
+	// 	"clickhouse": {
+	// 	"username": "uos",
+	// 		"password": "Udcp2022cs",
+	// 		"host": "10.0.35.162",
+	// 		"port": 8000,
+	// 		"disk_mapping": {
+	// 		"default": "/data/clickhouse/data/"
+	// 	},
+	// 	"skip_tables": [
+	// "system.*"
+	// ],
+	// "timeout": "5m",
+	// "freeze_by_part": false,
+	// "freeze_by_part_where": "",
+	// "secure": false,
+	// "skip_verify": false,
+	// "sync_replicated_tables": false,
+	// "log_sql_queries": false,
+	// "config_dir": "/etc/clickhouse-server/",
+	// "restart_command": "systemctl restart clickhouse-server",
+	// "ignore_not_exists_error_during_freeze": true,
+	// "tls_key": "",
+	// "tls_cert": "",
+	// "tls_ca": "",
+	// "debug": false
+	// },
+	// "s3": {
+	// "access_key": "",
+	// "secret_key": "",
+	// "bucket": "",
+	// "endpoint": "",
+	// "region": "us-east-1",
+	// "acl": "private",
+	// "assume_role_arn": "",
+	// "force_path_style": false,
+	// "path": "",
+	// "disable_ssl": false,
+	// "compression_level": 1,
+	// "compression_format": "tar",
+	// "sse": "",
+	// "disable_cert_verification": false,
+	// "storage_class": "STANDARD",
+	// "concurrency": 1,
+	// "part_size": 0,
+	// "max_parts_count": 10000,
+	// "allow_multipart_download": false,
+	// "debug": false
+	// },
+	// "gcs": {
+	// "credentials_file": "",
+	// "credentials_json": "",
+	// "bucket": "",
+	// "path": "",
+	// "compression_level": 1,
+	// "compression_format": "tar",
+	// "debug": false,
+	// "endpoint": ""
+	// },
+	// "cos": {
+	// "url": "",
+	// "timeout": "2m",
+	// "secret_id": "",
+	// "secret_key": "",
+	// "path": "",
+	// "compression_format": "tar",
+	// "compression_level": 1,
+	// "debug": false
+	// },
+	// "api": {
+	// "listen": "0.0.0.0:8018",
+	// "enable_metrics": true,
+	// "enable_pprof": true,
+	// "username": "",
+	// "password": "",
+	// "secure": false,
+	// "certificate_file": "",
+	// "private_key_file": "",
+	// "create_integration_tables": false,
+	// "integration_tables_host": "",
+	// "allow_parallel": false
+	// },
+	// "ftp": {
+	// "address": "10.0.35.164:21",
+	// "timeout": "2m",
+	// "username": "ftpuos",
+	// "password": "1",
+	// "tls": false,
+	// "path": "/var/ftp/data/clickhouse-backup/",
+	// "compression_format": "tar",
+	// "compression_level": 1,
+	// "concurrency": 1,
+	// "debug": true
+	// },
+	// "sftp": {
+	// "address": "",
+	// "port": 22,
+	// "username": "",
+	// "password": "",
+	// "key": "",
+	// "path": "",
+	// "compression_format": "tar",
+	// "compression_level": 1,
+	// "concurrency": 1,
+	// "debug": false
+	// },
+	// "azblob": {
+	// "endpoint_suffix": "core.windows.net",
+	// "account_name": "",
+	// "account_key": "",
+	// "sas": "",
+	// "use_managed_identity": false,
+	// "container": "",
+	// "path": "",
+	// "compression_level": 1,
+	// "compression_format": "tar",
+	// "sse_key": "",
+	// "buffer_size": 0,
+	// "buffer_count": 3,
+	// "max_parts_count": 10000
+	// },
+	// "custom": {
+	// "upload_command": "",
+	// "download_command": "",
+	// "list_command": "",
+	// "delete_command": "",
+	// "command_timeout": "4h"
+	// }
+	// }
+
+
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "config", err)
+		return
+	}
+	if len(body) == 0 {
+		writeError(w, http.StatusBadRequest, "config", fmt.Errorf("empty request"))
+		return
+	}
+	apexLog.Debugf("api.updateConfig -> body == %v", string(body))
+
+	var conf config.Config
+	err = json.Unmarshal(body, &conf)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "config", err)
+		return
+	}
+
+	// ValidateConfig
+	err = config.ValidateConfig(&conf)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "config", fmt.Errorf("bad request, invalid config"))
+		return
+	}
+	// don't support update ListenAddr
+	if conf.API.ListenAddr != api.config.API.ListenAddr {
+		writeError(w, http.StatusBadRequest, "config", fmt.Errorf("don't support update api.listen"))
+		return
+	}
+	// SaveConfig
+	err = config.SaveConfig(&conf, api.configPath)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "config", err)
+		return
+	}
+	api.config = &conf
+
+	sendJSONEachRow(w, http.StatusOK, struct {
+		Status    string `json:"status"`
+		Operation string `json:"operation"`
+	}{
+		Status:    "success",
+		Operation: "config",
+	})
+	return
 }
