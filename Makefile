@@ -101,3 +101,18 @@ build-race: $(NAME)/$(NAME)-race
 
 $(NAME)/$(NAME)-race: $(GO_FILES)
 	CGO_ENABLED=1 $(GO_BUILD) -gcflags "all=-N -l" -race -o $@ ./cmd/$(NAME)
+
+
+# 仓库地址基础路径  默认hub.deepin.com/wuhan_udcp
+DOCKER_BASE := $(if $(DOCKER_BASE),$(DOCKER_BASE:%/=%),hub.deepin.com)/wuhan_udcp
+# 镜像标签
+DOCKER_TAG := $(shell echo $(ARCH)|awk '{ sub(/linux\//,""); print $$0 }')
+# 如果要编译amd，执行 make docker ARCH=linux/amd64
+# 如果要编译arm，执行 make docker ARCH=linux/arm64
+docker:
+	docker buildx build \
+		--build-arg TARGETPLATFORM=$(ARCH) \
+		--rm -f Dockerfile \
+		-t $(DOCKER_BASE)/$(NAME):$(DOCKER_TAG) \
+		--platform=$(ARCH) \
+		-o type=docker .;

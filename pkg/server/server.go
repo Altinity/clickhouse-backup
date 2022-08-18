@@ -1432,7 +1432,7 @@ func (api *APIServer) updateConfig(w http.ResponseWriter, r *http.Request) {
 	// ValidateConfig
 	err = config.ValidateConfig(&conf)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "config", fmt.Errorf("bad request, invalid config"))
+		writeError(w, http.StatusBadRequest, "config", fmt.Errorf("bad request, invalid config, err:%v", err.Error()))
 		return
 	}
 	// don't support update ListenAddr
