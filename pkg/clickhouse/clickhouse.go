@@ -857,7 +857,7 @@ func ApplyMacros(cfg *config.Config, path string) string {
 	}
 	defer ch.Close()
 	macrosExists := make([]int, 0)
-	err := ch.Select(&macrosExists, "SELECT count() AS is_macros_exists FROM system.tables WHERE database='system' AND table='macros'")
+	err := ch.Select(&macrosExists, "SELECT count() AS is_macros_exists FROM system.tables WHERE database='system' AND name='macros'")
 	if err != nil || len(macrosExists) == 0 || macrosExists[0] == 0 {
 		return path
 	}

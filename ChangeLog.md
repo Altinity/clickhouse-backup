@@ -1,3 +1,7 @@
+# v1.6.1
+BUG FIXES
+- fix system.macros detect query
+
 # v1.6.0
 IMPROVEMENTS
 - add `storage_class` (GCS_STORAGE_CLASS) support for `remote_storage: gcs` fix [502](https://github.com/AlexAkulov/clickhouse-backup/issues/502)
