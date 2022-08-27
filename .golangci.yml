@@ -6,6 +6,7 @@ run:
   build-tags: []
   skip-dirs:
     - test/integration
+    - test/tesflows
   skip-dirs-use-default: true
   skip-files: []
   modules-download-mode: readonly
