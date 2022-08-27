@@ -61,6 +61,7 @@ type GCSConfig struct {
 	CompressionFormat string `yaml:"compression_format" envconfig:"GCS_COMPRESSION_FORMAT"`
 	Debug             bool   `yaml:"debug" envconfig:"GCS_DEBUG"`
 	Endpoint          string `yaml:"endpoint" envconfig:"GCS_ENDPOINT"`
+	StorageClass      string `yaml:"storage_class" envconfig:"GCS_STORAGE_CLASS"`
 }
 
 // AzureBlobConfig - Azure Blob settings section
@@ -425,6 +426,7 @@ func DefaultConfig() *Config {
 		GCS: GCSConfig{
 			CompressionLevel:  1,
 			CompressionFormat: "tar",
+			StorageClass:      "STANDARD",
 		},
 		COS: COSConfig{
 			RowURL:            "",

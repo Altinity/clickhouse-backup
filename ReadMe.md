@@ -177,6 +177,7 @@ gcs:
   compression_level: 1         # GCS_COMPRESSION_LEVEL
   compression_format: tar      # GCS_COMPRESSION_FORMAT
   debug: false                 # GCS_DEBUG
+  storage_class: STANDARD      # GCS_STORAGE_CLASS
 cos:
   url: ""                      # COS_URL
   timeout: 2m                  # COS_TIMEOUT

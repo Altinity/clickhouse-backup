@@ -11,6 +11,15 @@ IMPROVEMENTS
 BUG FIXES
 - fix wrong upload / download behavior for `compression_format: none` and `remote_storage: ftp`
 
+# v1.6.1
+BUG FIXES
+- fix system.macros detect query
+
+# v1.6.0
+IMPROVEMENTS
+- add `storage_class` (GCS_STORAGE_CLASS) support for `remote_storage: gcs` fix [502](https://github.com/AlexAkulov/clickhouse-backup/issues/502)
+- upgrade aws golang sdk and gcp golang sdk to latest versions
+
 # v1.5.2
 IMPROVEMENTS
 - switch to go 1.19

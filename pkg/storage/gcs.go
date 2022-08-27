@@ -154,7 +154,9 @@ func (gcs *GCS) GetFileWriter(key string) io.WriteCloser {
 	ctx := context.Background()
 	key = path.Join(gcs.Config.Path, key)
 	obj := gcs.client.Bucket(gcs.Config.Bucket).Object(key)
-	return obj.NewWriter(ctx)
+	writer := obj.NewWriter(ctx)
+	writer.StorageClass = gcs.Config.StorageClass
+	return writer
 }
 
 func (gcs *GCS) PutFile(key string, r io.ReadCloser) error {
@@ -162,6 +164,7 @@ func (gcs *GCS) PutFile(key string, r io.ReadCloser) error {
 	key = path.Join(gcs.Config.Path, key)
 	obj := gcs.client.Bucket(gcs.Config.Bucket).Object(key)
 	writer := obj.NewWriter(ctx)
+	writer.StorageClass = gcs.Config.StorageClass
 	defer func() {
 		if err := writer.Close(); err != nil {
 			log.Warnf("can't close writer: %+v", err)
