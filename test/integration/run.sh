@@ -2,7 +2,7 @@
 set -x
 set -e
 
-export CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION:-22.3}
+export CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION:-22.8}
 if [[ "${CLICKHOUSE_VERSION}" =~ 2[2-9]+ || "${CLICKHOUSE_VERSION}" == "head" ]]; then
   export CLICKHOUSE_IMAGE=${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server}
 else
@@ -30,11 +30,11 @@ CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 docker-compose -f ${CUR_DIR}/${COMPOSE_FILE} down --remove-orphans
 docker volume prune -f
 # why make so slow?
-# make clean
-# make build-race
-rm -rf ${CUR_DIR}/build
-rm -rf ${CUR_DIR}/clickhouse-backup
-CGO_ENABLED=1 go build -gcflags "all=-N -l" -race -o clickhouse-backup/clickhouse-backup-race ./cmd/clickhouse-backup
+make clean
+make build-race
+# rm -rf ${CUR_DIR}/build
+# rm -rf ${CUR_DIR}/clickhouse-backup
+# CGO_ENABLED=1 go build -gcflags "all=-N -l" -race -o clickhouse-backup/clickhouse-backup-race ./cmd/clickhouse-backup
 
 if [[ "${COMPOSE_FILE}" == "docker-compose_advanced.yml" ]]; then
   docker-compose -f ${CUR_DIR}/${COMPOSE_FILE} up -d minio mysql

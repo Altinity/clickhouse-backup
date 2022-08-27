@@ -4,7 +4,7 @@ NAME = clickhouse-backup
 VERSION = $(shell git describe --always --tags --abbrev=0 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/c\1/;s/-/./g')
 GIT_COMMIT = $(shell git rev-parse HEAD)
 DATE = $(shell date +%F)
-VENDOR = "Alexander Akulov <alexakulov86@gmail.com>"
+VENDOR = "Eugene Klimov <eklimov@altinity.com>"
 URL = https://github.com/AlexAkulov/$(NAME)
 define DESC =
 'Tool for easy ClickHouse backup and restore with S3 and GCS support
@@ -100,4 +100,9 @@ $(PKG_FILES): build/linux/amd64/pkg build/linux/arm64/pkg
 build-race: $(NAME)/$(NAME)-race
 
 $(NAME)/$(NAME)-race: $(GO_FILES)
-	CGO_ENABLED=1 $(GO_BUILD) -gcflags "all=-N -l" -race -o $@ ./cmd/$(NAME)
+	bash -xce 'docker build --tag $(NAME):build-race --target build-race --progress=plain . && \
+		mkdir -pv ./$(NAME) && \
+		DOCKER_RACE_ID=$$(docker create $(NAME):build-race) && \
+		echo $${DOCKER_RACE_ID} && \
+		docker cp $${DOCKER_RACE_ID}:/src/$(NAME)/$(NAME)-race ./$(NAME)/ && \
+		docker rm -f "$${DOCKER_RACE_ID}"'

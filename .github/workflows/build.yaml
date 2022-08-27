@@ -45,7 +45,7 @@ jobs:
       - name: Build clickhouse-backup binary
         id: make
         env:
-          GOROOT: ${{ env.GOROOT_1_18_X64 }}
+          GOROOT: ${{ env.GOROOT_1_19_X64 }}
         run: |
           make build-race
           make build/linux/amd64/clickhouse-backup build/linux/arm64/clickhouse-backup
@@ -104,7 +104,7 @@ jobs:
       matrix:
         clickhouse:
           - '22.3'
-          - '22.7'
+          - '22.8'
     steps:
       - name: Checkout project
         uses: actions/checkout@v2
@@ -184,7 +184,7 @@ jobs:
           - '21.3'
           - '21.8'
           - '22.3'
-          - '22.7'
+          - '22.8'
     steps:
       - name: Checkout project
         uses: actions/checkout@v2
