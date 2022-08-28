@@ -1,4 +1,6 @@
-test
 .github
+.idea
 build
 clickhouse-backup
+test
+

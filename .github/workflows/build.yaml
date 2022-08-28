@@ -12,7 +12,7 @@ on:
 jobs:
   build:
     name: Build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     strategy:
       matrix:
         golang-version:
@@ -45,7 +45,7 @@ jobs:
       - name: Build clickhouse-backup binary
         id: make
         env:
-          GOROOT: ${{ env.GOROOT_1_17_X64 }}
+          GOROOT: ${{ env.GOROOT_1_19_X64 }}
         run: |
           make build-race
           make build/linux/amd64/clickhouse-backup build/linux/arm64/clickhouse-backup

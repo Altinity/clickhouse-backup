@@ -13,7 +13,6 @@ define DESC =
  Most efficient AWS S3/GCS uploading and downloading with streaming compression
  Support of incremental backups on remote storages'
 endef
-GO_FILES = $(shell find -name '*.go')
 GO_BUILD = go build -ldflags "-X 'main.version=$(VERSION)' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)'"
 PKG_FILES = build/$(NAME)_$(VERSION).amd64.deb build/$(NAME)_$(VERSION).arm64.deb build/$(NAME)-$(VERSION)-1.amd64.rpm build/$(NAME)-$(VERSION)-1.arm64.rpm
 HOST_OS = $(shell bash -c 'source <(go env) && echo $$GOHOSTOS')
@@ -42,7 +41,7 @@ build/linux/amd64/$(NAME) build/darwin/amd64/$(NAME): GOARCH = amd64
 build/linux/arm64/$(NAME) build/darwin/arm64/$(NAME): GOARCH = arm64
 build/linux/amd64/$(NAME) build/linux/arm64/$(NAME): GOOS = linux
 build/darwin/amd64/$(NAME) build/darwin/arm64/$(NAME): GOOS = darwin
-build/linux/amd64/$(NAME) build/linux/arm64/$(NAME) build/darwin/amd64/$(NAME) build/darwin/arm64/$(NAME): $(GO_FILES)
+build/linux/amd64/$(NAME) build/linux/arm64/$(NAME) build/darwin/amd64/$(NAME) build/darwin/arm64/$(NAME):
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO_BUILD) -o $@ ./cmd/$(NAME)
 
 config: $(NAME)/config.yml
@@ -99,10 +98,21 @@ $(PKG_FILES): build/linux/amd64/pkg build/linux/arm64/pkg
 
 build-race: $(NAME)/$(NAME)-race
 
-$(NAME)/$(NAME)-race: $(GO_FILES)
-	bash -xce 'docker build --tag $(NAME):build-race --target build-race --progress=plain . && \
+$(NAME)/$(NAME)-race:
+	CGO_ENABLED=1 $(GO_BUILD) -gcflags "all=-N -l" -race -o $@ ./cmd/$(NAME)
+
+# run `docker buildx create --use` first time
+build-race-docker:
+	bash -xce 'docker buildx build --tag $(NAME):build-race --target make-build-race --progress=plain --load . && \
 		mkdir -pv ./$(NAME) && \
-		DOCKER_RACE_ID=$$(docker create $(NAME):build-race) && \
-		echo $${DOCKER_RACE_ID} && \
-		docker cp $${DOCKER_RACE_ID}:/src/$(NAME)/$(NAME)-race ./$(NAME)/ && \
-		docker rm -f "$${DOCKER_RACE_ID}"'
+		DOCKER_ID=$$(docker create $(NAME):build-race) && \
+		docker cp -q $${DOCKER_ID}:/src/$(NAME)/$(NAME)-race ./$(NAME)/ && \
+		docker rm -f "$${DOCKER_ID}" && \
+		cp -fl ./$(NAME)/$(NAME)-race ./$(NAME)/$(NAME)-race-docker'
+		
+build-docker:
+	bash -xce 'docker buildx build --tag $(NAME):build-docker --target make-build-docker --progress=plain --load . && \
+		mkdir -pv ./build && \
+		DOCKER_ID=$$(docker create $(NAME):build-docker) && \
+		docker cp -q $${DOCKER_ID}:/src/build/ ./build/ && \
+		docker rm -f "$${DOCKER_ID}"'

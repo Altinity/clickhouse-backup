@@ -29,7 +29,7 @@ fi
 docker-compose -f test/integration/${COMPOSE_FILE} down --remove-orphans
 docker volume prune -f
 make clean
-make build-race
+make build-race-docker
 if [[ "${COMPOSE_FILE}" == "docker-compose_advanced.yml" ]]; then
   docker-compose -f test/integration/${COMPOSE_FILE} up -d minio mysql
 else

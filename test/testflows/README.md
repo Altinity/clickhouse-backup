@@ -19,7 +19,7 @@ pip3 install -r ./test/testflows/requirements.txt
 ## Execution
 Make clickhouse-backup binary
 ```bash
-make build-race
+make build-race-docker
 ```
 
 Some environment variables required to be set up before test execution:
