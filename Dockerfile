@@ -18,20 +18,20 @@ RUN go env
 WORKDIR /src/
 # cache modules when go.mod go.sum changed
 COPY go.mod go.sum ./
-RUN go mod download -x
+RUN --mount=type=cache,id=clickhouse-backup-gobuild,target=/root/.cache/go go mod download -x
 
 FROM builder-base AS builder-race
 ARG TARGETPLATFORM
 COPY ./ /src/
 RUN mkdir -p ./clickhouse-backup/
-RUN GOOS=$( echo ${TARGETPLATFORM} | cut -d "/" -f 1) GOARCH=$( echo ${TARGETPLATFORM} | cut -d "/" -f 2) CGO_ENABLED=1 go build --ldflags '-extldflags "-static"' -gcflags "all=-N -l" -race -o ./clickhouse-backup/clickhouse-backup-race ./cmd/clickhouse-backup
+RUN --mount=type=cache,id=clickhouse-backup-gobuild,target=/root/.cache/go GOOS=$( echo ${TARGETPLATFORM} | cut -d "/" -f 1) GOARCH=$( echo ${TARGETPLATFORM} | cut -d "/" -f 2) CGO_ENABLED=1 go build --ldflags '-extldflags "-static"' -gcflags "all=-N -l" -race -o ./clickhouse-backup/clickhouse-backup-race ./cmd/clickhouse-backup
 RUN ln -nsfv ./clickhouse-backup/clickhouse-backup-race /bin/clickhouse-backup && ldd ./clickhouse-backup/clickhouse-backup-race
 COPY entrypoint.sh /entrypoint.sh
 
 FROM builder-base AS builder-docker
 COPY ./ /src/
 RUN mkdir -p ./build/
-RUN make build
+RUN --mount=type=cache,id=clickhouse-backup-gobuild,target=/root/.cache/go make build
 
 FROM scratch AS make-build-race
 COPY --from=builder-race /src/clickhouse-backup/ /src/clickhouse-backup/
