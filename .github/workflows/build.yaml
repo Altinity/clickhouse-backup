@@ -221,7 +221,7 @@ jobs:
         env:
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
           # FTP_DEBUG: "true"
-          # RUN_TESTS: "TestIntegrationGCS"
+          RUN_TESTS: "^TestIntegration.+"
           LOG_LEVEL: "debug"
           # GCS_DEBUG: "true"
           CGO_ENABLED: 0

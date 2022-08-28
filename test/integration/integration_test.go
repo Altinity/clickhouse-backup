@@ -977,12 +977,6 @@ func TestServerAPI(t *testing.T) {
 	r.NoError(ch.dropDatabase("long_schema"))
 }
 
-func TestIntegrationS3(t *testing.T) {
-	r := require.New(t)
-	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	runMainIntegrationScenario(t, "S3")
-}
-
 func TestIntegrationGCS(t *testing.T) {
 	if isTestShouldSkip("GCS_TESTS") {
 		t.Skip("Skipping GCS integration tests...")
@@ -992,6 +986,12 @@ func TestIntegrationGCS(t *testing.T) {
 	r.NoError(dockerCP("config-gcs.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	installDebIfNotExists(r, "clickhouse", "ca-certificates")
 	runMainIntegrationScenario(t, "GCS")
+}
+
+func TestIntegrationS3(t *testing.T) {
+	r := require.New(t)
+	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	runMainIntegrationScenario(t, "S3")
 }
 
 func TestIntegrationAzure(t *testing.T) {
