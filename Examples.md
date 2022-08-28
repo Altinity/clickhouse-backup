@@ -174,7 +174,7 @@ spec:
                  fsGroup: 101
               containers:
                  - name: clickhouse-pod
-                   image: clickhouse/clickhouse-server:22.3
+                   image: clickhouse/clickhouse-server:22.8
                    command:
                       - clickhouse-server
                       - --config-file=/etc/clickhouse-server/config.xml

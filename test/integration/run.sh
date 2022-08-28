@@ -31,7 +31,7 @@ docker-compose -f ${CUR_DIR}/${COMPOSE_FILE} down --remove-orphans
 docker volume prune -f
 # why make so slow?
 make clean
-make build-race
+make build-race-docker
 # rm -rf ${CUR_DIR}/build
 # rm -rf ${CUR_DIR}/clickhouse-backup
 # CGO_ENABLED=1 go build -gcflags "all=-N -l" -race -o clickhouse-backup/clickhouse-backup-race ./cmd/clickhouse-backup
