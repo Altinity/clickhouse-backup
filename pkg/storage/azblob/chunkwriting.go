@@ -20,7 +20,7 @@ import (
 // This allows us to provide a local implementation that fakes the server for hermetic testing.
 type blockWriter interface {
 	StageBlock(context.Context, string, io.ReadSeeker, azb.LeaseAccessConditions, []byte, azb.ClientProvidedKeyOptions) (*azb.BlockBlobStageBlockResponse, error)
-	CommitBlockList(context.Context, []string, azb.BlobHTTPHeaders, azb.Metadata, azb.BlobAccessConditions, azb.ClientProvidedKeyOptions) (*azb.BlockBlobCommitBlockListResponse, error)
+	CommitBlockList(ctx context.Context, base64BlockIDs []string, h azb.BlobHTTPHeaders, metadata azb.Metadata, ac azb.BlobAccessConditions, tier azb.AccessTierType, blobTagsMap azb.BlobTagsMap, cpk azb.ClientProvidedKeyOptions, immutability azb.ImmutabilityPolicyOptions) (*azb.BlockBlobCommitBlockListResponse, error)
 }
 
 // copyFromReader copies a source io.Reader to blob storage using concurrent uploads.
@@ -205,7 +205,7 @@ func (c *copier) close() error {
 	}
 
 	var err error
-	c.result, err = c.to.CommitBlockList(c.ctx, c.id.issued(), c.o.BlobHTTPHeaders, c.o.Metadata, c.o.AccessConditions, c.cpk)
+	c.result, err = c.to.CommitBlockList(c.ctx, c.id.issued(), c.o.BlobHTTPHeaders, c.o.Metadata, c.o.AccessConditions, c.o.BlobAccessTier, c.o.BlobTagsMap, c.cpk, c.o.ImmutabilityPolicyOptions)
 	return err
 }
 
