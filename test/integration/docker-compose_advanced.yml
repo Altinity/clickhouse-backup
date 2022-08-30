@@ -66,6 +66,7 @@ services:
   azure:
     image: mcr.microsoft.com/azure-storage/azurite:latest
     container_name: azure
+    hostname: devstoreaccount1.blob.azure
     networks:
       - clickhouse-backup
 
@@ -144,7 +145,7 @@ services:
       - sshd
       - mysql
       - ftp
-#      - azure
+      - azure
 #      - gcs
     depends_on:
       mysql:

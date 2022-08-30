@@ -64,6 +64,7 @@ type GCSConfig struct {
 
 // AzureBlobConfig - Azure Blob settings section
 type AzureBlobConfig struct {
+	EndpointSchema        string `yaml:"endpoint_schema" envconfig:"AZBLOB_ENDPOINT_SCHEMA"`
 	EndpointSuffix        string `yaml:"endpoint_suffix" envconfig:"AZBLOB_ENDPOINT_SUFFIX"`
 	AccountName           string `yaml:"account_name" envconfig:"AZBLOB_ACCOUNT_NAME"`
 	AccountKey            string `yaml:"account_key" envconfig:"AZBLOB_ACCOUNT_KEY"`
@@ -366,6 +367,7 @@ func DefaultConfig() *Config {
 			CheckReplicasBeforeAttach:        true,
 		},
 		AzureBlob: AzureBlobConfig{
+			EndpointSchema:    "https",
 			EndpointSuffix:    "core.windows.net",
 			CompressionLevel:  1,
 			CompressionFormat: "tar",

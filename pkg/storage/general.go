@@ -95,6 +95,13 @@ func (bd *BackupDestination) RemoveBackup(backup Backup) error {
 		return bd.DeleteFile(archiveName)
 	}
 	return bd.Walk(backup.BackupName+"/", true, func(f RemoteFile) error {
+		if bd.Kind() == "azblob" {
+			if f.Size() > 0 || !f.LastModified().IsZero() {
+				return bd.DeleteFile(path.Join(backup.BackupName, f.Name()))
+			} else {
+				return nil
+			}
+		}
 		return bd.DeleteFile(path.Join(backup.BackupName, f.Name()))
 	})
 }

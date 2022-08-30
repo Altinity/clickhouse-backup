@@ -13,6 +13,7 @@ azblob:
   account_name: devstoreaccount1
   account_key: Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==
   endpoint_suffix: azure:10000
+  endpoint_schema: http
   container: container1
   path: backup
   compression_format: tar
