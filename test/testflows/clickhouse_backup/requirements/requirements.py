@@ -1102,6 +1102,7 @@ RQ_SRS_013_ClickHouse_BackupUtility_Configuration = Requirement(
         'gcs:\n'
         '  credentials_file: ""         # GCS_CREDENTIALS_FILE\n'
         '  credentials_json: ""         # GCS_CREDENTIALS_JSON\n'
+        '  credentials_json_encoded: "" # GCS_CREDENTIALS_JSON_ENCODED\n'
         '  bucket: ""                   # GCS_BUCKET\n'
         '  path: ""                     # GCS_PATH\n'
         '  compression_level: 1         # GCS_COMPRESSION_LEVEL\n'
@@ -2485,6 +2486,7 @@ s3:
 gcs:
   credentials_file: ""         # GCS_CREDENTIALS_FILE
   credentials_json: ""         # GCS_CREDENTIALS_JSON
+  credentials_json_encoded: "" # GCS_CREDENTIALS_JSON_ENCODED'
   bucket: ""                   # GCS_BUCKET
   path: ""                     # GCS_PATH
   compression_level: 1         # GCS_COMPRESSION_LEVEL

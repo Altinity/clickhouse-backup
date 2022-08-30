@@ -32,6 +32,7 @@ Some environment variables required to be set up before test execution:
   - `QA_AWS_REGION`
   - `QA_AWS_BUCKET`
   - `QA_GCS_CRED_JSON`
+  - `QA_GCS_CRED_JSON_ENCODED`
 
 You can do it with something like that:
 
@@ -44,6 +45,7 @@ export QA_AWS_SECRET_KEY=XXXXXX
 export QA_AWS_REGION=XXXXXX
 export QA_AWS_BUCKET=XXXXXX
 export QA_GCS_CRED_JSON=XXXXXX
+export QA_GCS_CRED_JSON_ENCODED=XXXXXX
 EOT
 source /home/username/clickhouse-backup/test/testflows/.env
 ```

@@ -112,6 +112,7 @@ services:
     environment:
       - DEBIAN_FRONTEND=noninteractive
       - GCS_CREDENTIALS_JSON=${QA_GCS_CRED_JSON}
+      - GCS_CREDENTIALS_JSON_ENCODED=${QA_GCS_CRED_JSON_ENCODED}
       - CLICKHOUSE_HOST=clickhouse1
       - CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config.yml
       - TZ=Europe/Moscow

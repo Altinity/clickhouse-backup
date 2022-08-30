@@ -62,6 +62,7 @@ gcs:
   compression_level: 3
   credentials_file: ''
   credentials_json: ''
+  credentials_json_encoded: ''
   debug: false
 general:
   allow_empty_backups: false
