@@ -1,3 +1,10 @@
+# v1.6.2
+IMPROVEMENTS
+- add Azure to every CI/CD run, testing with Azurite 
+
+BUG FIXES
+- fix azblob.Walk with recursive=True, for properly delete remote backups
+
 # v1.6.1
 BUG FIXES
 - fix system.macros detect query
