@@ -58,7 +58,7 @@ services:
 #      - /bin/sh
 #    command:
 #      - -c
-#      - "mkdir -p /data/clickhouse-backup-test-gcs && fake-gcs-server -data /data -scheme http -port 8080 -public-host gsc:8080"
+#      - "mkdir -p /storage/altinity-qa-test && fake-gcs-server -scheme http -port 8080 -public-host gsc:8080"
 #    networks:
 #      - clickhouse-backup
 
@@ -137,7 +137,7 @@ services:
       - "9000:9000"
       - "7171:7171"
 # uncomment for delve debugger
-      - "40001:40001"
+#      - "40001:40001"
     networks:
       - clickhouse-backup
     links:
