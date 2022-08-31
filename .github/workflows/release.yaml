@@ -54,9 +54,12 @@ jobs:
           export DOCKER_TAG=${DOCKER_TAG#v}
           echo "::set-output name=docker_tag::${DOCKER_TAG:-dev}"
 
-      - run: make build
-      - run: make config
-      - run: make test
+      - name: Prepare binaries
+        id: make
+        env:
+          GOROOT: ${{ env.GOROOT_1_19_X64 }}
+        run: |
+          make build config test
 
       - name: Building deb, rpm and tar.gz packages
         id: make_packages
