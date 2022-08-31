@@ -57,10 +57,10 @@ func (s *AzureBlob) Connect() error {
 		if err != nil {
 			return err
 		}
-		urlString = fmt.Sprintf("https://%s.blob.%s", s.Config.AccountName, s.Config.EndpointSuffix)
+		urlString = fmt.Sprintf("%s://%s.blob.%s", s.Config.EndpointSchema, s.Config.AccountName, s.Config.EndpointSuffix)
 	} else if s.Config.SharedAccessSignature != "" {
 		credential = azblob.NewAnonymousCredential()
-		urlString = fmt.Sprintf("https://%s.blob.%s?%s", s.Config.AccountName, s.Config.EndpointSuffix, s.Config.SharedAccessSignature)
+		urlString = fmt.Sprintf("%s://%s.blob.%s?%s", s.Config.EndpointSchema, s.Config.AccountName, s.Config.EndpointSuffix, s.Config.SharedAccessSignature)
 	} else if s.Config.UseManagedIdentity {
 		azureEnv, err := azure.EnvironmentFromName("AZUREPUBLICCLOUD")
 		if err != nil {
@@ -90,7 +90,7 @@ func (s *AzureBlob) Connect() error {
 		}
 
 		credential = azblob.NewTokenCredential("", tokenRefresher)
-		urlString = fmt.Sprintf("https://%s.blob.%s", s.Config.AccountName, s.Config.EndpointSuffix)
+		urlString = fmt.Sprintf("%s://%s.blob.%s", s.Config.EndpointSchema, s.Config.AccountName, s.Config.EndpointSuffix)
 	}
 
 	u, err := url.Parse(urlString)
@@ -204,34 +204,56 @@ func (s *AzureBlob) Walk(azPath string, recursive bool, process func(r RemoteFil
 		delimiter = "/"
 	}
 	for mrk.NotDone() {
-		// r, err := s.Container.ListBlobsFlatSegment(ctx, mrk, opt)
-		r, err := s.Container.ListBlobsHierarchySegment(ctx, mrk, delimiter, opt)
-		if err != nil {
-			return err
-		}
-		for _, p := range r.Segment.BlobPrefixes {
-			if err := process(&azureBlobFile{
-				name: strings.TrimPrefix(p.Name, prefix),
-			}); err != nil {
+		if !recursive {
+			r, err := s.Container.ListBlobsHierarchySegment(ctx, mrk, delimiter, opt)
+			if err != nil {
 				return err
 			}
-		}
-		for _, blob := range r.Segment.BlobItems {
-			var size int64
-			if blob.Properties.ContentLength != nil {
-				size = *blob.Properties.ContentLength
-			} else {
-				size = 0
+			for _, p := range r.Segment.BlobPrefixes {
+				if err := process(&azureBlobFile{
+					name: strings.TrimPrefix(p.Name, prefix),
+				}); err != nil {
+					return err
+				}
 			}
-			if err := process(&azureBlobFile{
-				name:         strings.TrimPrefix(blob.Name, prefix),
-				size:         size,
-				lastModified: blob.Properties.LastModified,
-			}); err != nil {
+			for _, blob := range r.Segment.BlobItems {
+				var size int64
+				if blob.Properties.ContentLength != nil {
+					size = *blob.Properties.ContentLength
+				} else {
+					size = 0
+				}
+				if err := process(&azureBlobFile{
+					name:         strings.TrimPrefix(blob.Name, prefix),
+					size:         size,
+					lastModified: blob.Properties.LastModified,
+				}); err != nil {
+					return err
+				}
+			}
+			mrk = r.NextMarker
+		} else {
+			r, err := s.Container.ListBlobsFlatSegment(ctx, mrk, opt)
+			if err != nil {
 				return err
 			}
+			for _, blob := range r.Segment.BlobItems {
+				var size int64
+				if blob.Properties.ContentLength != nil {
+					size = *blob.Properties.ContentLength
+				} else {
+					size = 0
+				}
+				if err := process(&azureBlobFile{
+					name:         strings.TrimPrefix(blob.Name, prefix),
+					size:         size,
+					lastModified: blob.Properties.LastModified,
+				}); err != nil {
+					return err
+				}
+			}
+			mrk = r.NextMarker
 		}
-		mrk = r.NextMarker
 	}
 	return nil
 }

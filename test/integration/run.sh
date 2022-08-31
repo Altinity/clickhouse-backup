@@ -11,7 +11,7 @@ fi
 export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup-race"
 export LOG_LEVEL=${LOG_LEVEL:-info}
 export GCS_TESTS=${GCS_TESTS:-}
-export AZURE_TESTS=${AZURE_TESTS:-}
+export AZURE_TESTS=${AZURE_TESTS:-1}
 export RUN_ADVANCED_TESTS=${RUN_ADVANCED_TESTS:-1}
 export S3_DEBUG=${S3_DEBUG:-false}
 export GCS_DEBUG=${GCS_DEBUG:-false}
@@ -29,13 +29,7 @@ fi
 CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 docker-compose -f ${CUR_DIR}/${COMPOSE_FILE} down --remove-orphans
 docker volume prune -f
-# why make so slow?
-make clean
-make build-race-docker
-# rm -rf ${CUR_DIR}/build
-# rm -rf ${CUR_DIR}/clickhouse-backup
-# CGO_ENABLED=1 go build -gcflags "all=-N -l" -race -o clickhouse-backup/clickhouse-backup-race ./cmd/clickhouse-backup
-
+make clean build-race-docker
 if [[ "${COMPOSE_FILE}" == "docker-compose_advanced.yml" ]]; then
   docker-compose -f ${CUR_DIR}/${COMPOSE_FILE} up -d minio mysql
 else
