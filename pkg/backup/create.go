@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
-	"io/ioutil"
 	"os"
 	"path"
 	"path/filepath"
@@ -504,7 +503,7 @@ func createBackupMetadata(cfg *config.Config, ch *clickhouse.ClickHouse, backupM
 		_ = RemoveBackupLocal(cfg, backupName, disks)
 		return fmt.Errorf("can't marshal backup metafile json: %v", err)
 	}
-	if err := ioutil.WriteFile(backupMetaFile, content, 0640); err != nil {
+	if err := os.WriteFile(backupMetaFile, content, 0640); err != nil {
 		_ = RemoveBackupLocal(cfg, backupName, disks)
 		return err
 	}
@@ -527,7 +526,7 @@ func createTableMetadata(ch *clickhouse.ClickHouse, metadataPath string, table m
 	if err != nil {
 		return 0, fmt.Errorf("can't marshal %s: %v", MetaFileName, err)
 	}
-	if err := ioutil.WriteFile(metadataFile, metadataBody, 0644); err != nil {
+	if err := os.WriteFile(metadataFile, metadataBody, 0644); err != nil {
 		return 0, fmt.Errorf("can't create %s: %v", MetaFileName, err)
 	}
 	if err := filesystemhelper.Chown(metadataFile, ch, disks, false); err != nil {

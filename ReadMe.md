@@ -298,6 +298,7 @@ Upload backup to remote storage: `curl -s localhost:7171/backup/upload/<BACKUP_N
 * Optional query argument `table` works the same as the `--table value` CLI argument.
 * Optional query argument `partitions` works the same as the `--partitions value` CLI argument.
 * Optional query argument `schema` works the same as the `--schema` CLI argument (upload schema only).
+* Optional query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate upload state and resume upload if already exists on remote storage).
 
 Note: this operation is async, so the API will return once the operation has been started.
 
@@ -315,6 +316,7 @@ Download backup from remote storage: `curl -s localhost:7171/backup/download/<BA
 * Optional query argument `table` works the same as the `--table value` CLI argument.
 * Optional query argument `partitions` works the same as the `--partitions value` CLI argument.
 * Optional query argument `schema` works the same the `--schema` CLI argument (download schema only).
+* Optional query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate download state and resume download if already exists on local storage).
 
 
 Note: this operation is async, so the API will return once the operation has been started.

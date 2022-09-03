@@ -10,7 +10,6 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/progressbar"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
 	"io"
-	"io/ioutil"
 	"os"
 	"path"
 	"path/filepath"
@@ -127,7 +126,7 @@ func (bd *BackupDestination) loadMetadataCache() map[string]Backup {
 		apexLog.Warnf("can't open %s return error %v", listCacheFile, err)
 		return listCache
 	}
-	body, err := ioutil.ReadAll(f)
+	body, err := io.ReadAll(f)
 	if err != nil {
 		apexLog.Warnf("can't read %s return error %v", listCacheFile, err)
 		return listCache
@@ -243,7 +242,7 @@ func (bd *BackupDestination) BackupList(parseMetadata bool, parseMetadataOnly st
 			result = append(result, brokenBackup)
 			return nil
 		}
-		b, err := ioutil.ReadAll(r)
+		b, err := io.ReadAll(r)
 		if err != nil {
 			brokenBackup := Backup{
 				metadata.BackupMetadata{

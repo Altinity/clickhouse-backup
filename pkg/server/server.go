@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"net/http/pprof"
@@ -324,7 +324,7 @@ func (api *APIServer) basicAuthMiddleware(next http.Handler) http.Handler {
 // INSERT INTO system.backup_actions (command) VALUES ('create backup_name')
 // INSERT INTO system.backup_actions (command) VALUES ('upload backup_name')
 func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
-	body, err := ioutil.ReadAll(r.Body)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "", err)
 		return
@@ -723,6 +723,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	tablePattern := ""
 	partitionsToBackup := make([]string, 0)
 	schemaOnly := false
+	resumable := false
 	fullCommand := "upload"
 
 	if df, exist := query["diff-from"]; exist {
@@ -741,10 +742,15 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		partitionsToBackup = strings.Split(partitions[0], ",")
 		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, partitions)
 	}
-	if schema, exist := query["schema"]; exist {
-		schemaOnly, _ = strconv.ParseBool(schema[0])
+	if _, exist := query["schema"]; exist {
+		schemaOnly = true
 		fullCommand += " --schema"
 	}
+	if _, exist := query["resumable"]; exist {
+		resumable = true
+		fullCommand += " --resumable"
+	}
+
 	fullCommand = fmt.Sprint(fullCommand, " ", name)
 
 	go func() {
@@ -756,7 +762,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 			api.metrics.LastFinish["upload"].Set(float64(time.Now().Unix()))
 		}()
 		b := backup.NewBackuper(cfg)
-		err := b.Upload(name, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly)
+		err := b.Upload(name, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, resumable)
 		api.status.stop(commandId, err)
 		if err != nil {
 			apexLog.Errorf("Upload error: %+v\n", err)
@@ -919,6 +925,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	tablePattern := ""
 	partitionsToBackup := make([]string, 0)
 	schemaOnly := false
+	resumable := false
 	fullCommand := "download"
 
 	if tp, exist := query["table"]; exist {
@@ -933,6 +940,10 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		schemaOnly = true
 		fullCommand += " --schema"
 	}
+	if _, exist := query["resumable"]; exist {
+		resumable = true
+		fullCommand += " --resumable"
+	}
 	fullCommand += fmt.Sprintf(" %s", name)
 
 	go func() {
@@ -945,7 +956,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		}()
 
 		b := backup.NewBackuper(cfg)
-		err := b.Download(name, tablePattern, partitionsToBackup, schemaOnly)
+		err := b.Download(name, tablePattern, partitionsToBackup, schemaOnly, resumable)
 		api.status.stop(commandId, err)
 		if err != nil {
 			apexLog.Errorf("Download error: %+v\n", err)

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/resumable"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/storage"
 	"path"
 )
@@ -16,6 +17,9 @@ type Backuper struct {
 	DiskToPathMap          map[string]string
 	DefaultDataPath        string
 	EmbeddedBackupDataPath string
+	isEmbedded             bool
+	resume                 bool
+	resumableState         *resumable.State
 }
 
 func (b *Backuper) init(disks []clickhouse.Disk) error {
@@ -50,9 +54,9 @@ func (b *Backuper) init(disks []clickhouse.Disk) error {
 	return nil
 }
 
-func (b *Backuper) getLocalBackupDataPathForTable(backupName string, disk string, dbAndTablePath string, isEmbeddedBackup bool) string {
+func (b *Backuper) getLocalBackupDataPathForTable(backupName string, disk string, dbAndTablePath string) string {
 	backupPath := path.Join(b.DiskToPathMap[disk], "backup", backupName, "shadow", dbAndTablePath, disk)
-	if isEmbeddedBackup {
+	if b.isEmbedded {
 		backupPath = path.Join(b.DiskToPathMap[disk], backupName, "data", dbAndTablePath)
 	}
 	return backupPath

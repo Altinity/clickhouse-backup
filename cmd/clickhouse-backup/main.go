@@ -107,11 +107,11 @@ func main() {
 		{
 			Name:        "create_remote",
 			Usage:       "Create and upload",
-			UsageText:   "clickhouse-backup create_remote [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--diff-from=<local_backup_name>] [--diff-from-remote=<local_backup_name>] [--schema] [--rbac] [--configs] <backup_name>",
+			UsageText:   "clickhouse-backup create_remote [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--diff-from=<local_backup_name>] [--diff-from-remote=<local_backup_name>] [--schema] [--rbac] [--configs] [--resumable] <backup_name>",
 			Description: "Create and upload",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfig(c))
-				return b.CreateToRemote(c.Args().First(), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("configs"), version)
+				return b.CreateToRemote(c.Args().First(), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("configs"), c.Bool("resume"), version)
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -149,15 +149,20 @@ func main() {
 					Hidden: false,
 					Usage:  "Backup ClickHouse server configuration files only",
 				},
+				cli.BoolFlag{
+					Name:   "resume, resumable",
+					Hidden: false,
+					Usage:  "Save intermediate upload state and resume upload if backup exists on remote storage, ignore when `remote_storage: custom` or `use_embedded_backup_restore: true`",
+				},
 			),
 		},
 		{
 			Name:      "upload",
 			Usage:     "Upload backup to remote storage",
-			UsageText: "clickhouse-backup upload [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--diff-from=<local_backup_name>] [--diff-from-remote=<remote_backup_name>] <backup_name>",
+			UsageText: "clickhouse-backup upload [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--diff-from=<local_backup_name>] [--diff-from-remote=<remote_backup_name>] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfig(c))
-				return b.Upload(c.Args().First(), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"))
+				return b.Upload(c.Args().First(), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("resume"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -185,12 +190,17 @@ func main() {
 					Hidden: false,
 					Usage:  "Upload schemas only",
 				},
+				cli.BoolFlag{
+					Name:   "resume, resumable",
+					Hidden: false,
+					Usage:  "Save intermediate upload state and resume upload if backup exists on remote storage, ignored with `remote_storage: custom` or `use_embedded_backup_restore: true`",
+				},
 			),
 		},
 		{
 			Name:      "list",
 			Usage:     "Print list of backups",
-			UsageText: "clickhouse-backup list [all|local|remote] [latest|penult]",
+			UsageText: "clickhouse-backup list [all|local|remote] [latest|previous]",
 			Action: func(c *cli.Context) error {
 				cfg := config.GetConfig(c)
 				switch c.Args().Get(0) {
@@ -211,10 +221,10 @@ func main() {
 		{
 			Name:      "download",
 			Usage:     "Download backup from remote storage",
-			UsageText: "clickhouse-backup download [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] <backup_name>",
+			UsageText: "clickhouse-backup download [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfig(c))
-				return b.Download(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("s"))
+				return b.Download(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("resume"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -231,6 +241,11 @@ func main() {
 					Name:   "schema, s",
 					Hidden: false,
 					Usage:  "Download schema only",
+				},
+				cli.BoolFlag{
+					Name:   "resume, resumable",
+					Hidden: false,
+					Usage:  "Save intermediate download state and resume download if backup exists on local storage, ignored with `remote_storage: custom` or `use_embedded_backup_restore: true`",
 				},
 			),
 		},
@@ -287,10 +302,10 @@ func main() {
 		{
 			Name:      "restore_remote",
 			Usage:     "Download and restore",
-			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [--rbac] [--configs] [--skip-rbac] [--skip-configs] <backup_name>",
+			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [--rbac] [--configs] [--skip-rbac] [--skip-configs] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfig(c))
-				return b.RestoreFromRemote(c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("rbac"), c.Bool("configs"))
+				return b.RestoreFromRemote(c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("rbac"), c.Bool("configs"), c.Bool("resume"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -332,6 +347,11 @@ func main() {
 					Name:   "configs, restore-configs, do-restore-configs",
 					Hidden: false,
 					Usage:  "Restore CONFIG related files only",
+				},
+				cli.BoolFlag{
+					Name:   "resume, resumable",
+					Hidden: false,
+					Usage:  "Save intermediate upload state and resume upload if backup exists on remote storage, ignored with `remote_storage: custom` or `use_embedded_backup_restore: true`",
 				},
 			),
 		},
