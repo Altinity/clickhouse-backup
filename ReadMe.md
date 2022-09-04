@@ -16,15 +16,13 @@ Tool for easy ClickHouse backup and restore with cloud storages support
 - Works with AWS, GCS, Azure, Tencent COS, FTP, SFTP
 - **Support of Atomic Database Engine**
 - **Support of multi disks installations**
+- **Support for any custom remote storage like rclone, kopia, restic**
 - Support of incremental backups on remote storages
-
-TODO:
-- Smart restore for replicated tables
 
 ## Limitations
 
 - ClickHouse above 1.1.54390 is supported
-- Only MergeTree family tables engines
+- Only MergeTree family tables engines (more table types for `clickhouse-server` 22.7+ and `USE_EMBEDDED_BACKUP_RESTORE=true`)
 
 ## Installation
 
@@ -61,7 +59,7 @@ USAGE:
    clickhouse-backup <command> [-t, --tables=<db>.<table>] <backup_name>
 
 VERSION:
-   1.0.0
+   2.0.0
 
 DESCRIPTION:
    Run as 'root' or 'clickhouse' user
@@ -109,6 +107,7 @@ general:
   restore_schema_on_cluster: ""  # RESTORE_SCHEMA_ON_CLUSTER, execute all schema related SQL queryes with `ON CLUSTER` clause as Distributed DDL, look to `system.clusters` table for proper cluster name
   upload_by_part: true           # UPLOAD_BY_PART
   download_by_part: true         # DOWNLOAD_BY_PART
+  restore_database_mapping: {}   # RESTORE_DATABASE_MAPPING, restore rules from backup databases to target databases, which is useful on change destination database all atomic tables will create with new uuid.
 clickhouse:
   username: default                # CLICKHOUSE_USERNAME
   password: ""                     # CLICKHOUSE_PASSWORD
@@ -207,6 +206,12 @@ sftp:
   compression_format: tar      # SFTP_COMPRESSION_FORMAT
   compression_level: 1         # SFTP_COMPRESSION_LEVEL
   debug: false                 # SFTP_DEBUG
+custom:  
+  upload_command: ""           # CUSTOM_UPLOAD_COMMAND
+  download_command: ""         # CUSTOM_DOWNLOAD_COMMAND
+  delete_command: ""           # CUSTOM_DELETE_COMMAND
+  list_command: ""             # CUSTOM_LIST_COMMAND
+  command_timeout: "4h"          # CUSTOM_COMMAND_TIMEOUT
 api:
   listen: "localhost:7171"     # API_LISTEN
   enable_metrics: true         # API_ENABLE_METRICS
@@ -233,6 +238,12 @@ High value for `S3_CONCURRENCY` and high value for `S3_PART_SIZE` will allocate 
 
 `compression_format`, better use `tar` for less CPU usage, cause for most of cases data on clickhouse-backup already compressed.
 
+## remote_storage: custom
+
+All custom commands could use go-template language for evaluate you can use `{{ .cfg.* }}` `{{ .backupName }}` `{{ .diffFromRemote }}`
+Custom `list_command` shall return JSON which compatible with `metadata.Backup` type with [JSONEachRow](https://clickhouse.com/docs/en/interfaces/formats/#jsoneachrow) format. 
+Look examples for adoption [restic](https://github.com/AlexAkulov/clickhouse-backup/tree/master/test/integration/restic/), [rsync](https://github.com/AlexAkulov/clickhouse-backup/tree/master/test/integration/rsync/) and [kopia](https://github.com/AlexAkulov/clickhouse-backup/tree/master/test/integration/kopia/). 
+
 ## ATTENTION!
 
 Never change files permissions in `/var/lib/clickhouse/backup`.
@@ -253,7 +264,13 @@ Restart HTTP server, close all current connections, close listen socket, open li
 
 > **GET /backup/tables**
 
-Print list of tables: `curl -s localhost:7171/backup/tables | jq .`
+Print list of tables: `curl -s localhost:7171/backup/tables | jq .`, exclude pattern matched table from `skip_tables` configuration parameters
+* Optional query argument `table` works the same as the `--table value` CLI argument.
+
+> **GET /backup/tables/all**
+
+Print list of tables: `curl -s localhost:7171/backup/tables/all | jq .`, ignore `skip_tables` configuration parameters
+* Optional query argument `table` works the same as the `--table value` CLI argument.
 
 > **POST /backup/create**
 
@@ -281,6 +298,7 @@ Upload backup to remote storage: `curl -s localhost:7171/backup/upload/<BACKUP_N
 * Optional query argument `table` works the same as the `--table value` CLI argument.
 * Optional query argument `partitions` works the same as the `--partitions value` CLI argument.
 * Optional query argument `schema` works the same as the `--schema` CLI argument (upload schema only).
+* Optional query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate upload state and resume upload if already exists on remote storage).
 
 Note: this operation is async, so the API will return once the operation has been started.
 
@@ -298,6 +316,7 @@ Download backup from remote storage: `curl -s localhost:7171/backup/download/<BA
 * Optional query argument `table` works the same as the `--table value` CLI argument.
 * Optional query argument `partitions` works the same as the `--partitions value` CLI argument.
 * Optional query argument `schema` works the same the `--schema` CLI argument (download schema only).
+* Optional query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate download state and resume download if already exists on local storage).
 
 
 Note: this operation is async, so the API will return once the operation has been started.
@@ -310,8 +329,10 @@ Create schema and restore data from backup: `curl -s localhost:7171/backup/resto
 * Optional query argument `schema` works the same the `--schema` CLI argument (restore schema only).
 * Optional query argument `data` works the same the `--data` CLI argument (restore data only).
 * Optional query argument `rm` works the same the `--rm` CLI argument (drop tables before restore).
+* Optional query argument `ignore_dependencies` works the same the `--ignore-dependencies` CLI argument.
 * Optional query argument `rbac` works the same the `--rbac` CLI argument (restore RBAC).
 * Optional query argument `configs` works the same the `--configs` CLI argument (restore configs).
+* Optional query argument `restore_database_mapping` works the same the `--restore-database-mapping` CLI argument.
 
 > **POST /backup/delete**
 
@@ -385,7 +406,8 @@ fi
 - [How to move data to another clickhouse server](Examples.md#how-to-move-data-to-another-clickhouse-server)
 - [How to reduce number of partitions](Examples.md#How-to-reduce-number-of-partitions)
 - [How to monitor that backups created and uploaded correctly](Examples.md#how-to-monitor-that-backups-created-and-uploaded-correctly)
-- [How to backup sharded cluster with Ansible](Examples.md#how-to-backup-sharded-cluster-with-ansible)
-- [How to backup database with several terabytes of data](Examples.md#how-to-backup-database-with-several-terabytes-of-data)
+- [How to make backup / restore sharded cluster](Examples.md#how-backup--restore-sharded-cluster)
+- [How to make backup sharded cluster with Ansible](Examples.md#how-backup-sharded-cluster-with-ansible)
+- [How to make back up database with several terabytes of data](Examples.md#how-to-backup-database-with-several-terabytes-of-data)
 - [How to use clickhouse-backup in Kubernetes](Examples.md#how-to-use-clickhouse-backup-in-kubernetes)
 - [How do incremental backups work to remote storage](Examples.md#how-do-incremental-backups-work-to-remote-storage)

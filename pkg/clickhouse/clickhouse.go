@@ -122,6 +122,11 @@ func (ch *ClickHouse) GetDisks() ([]Disk, error) {
 	if err != nil {
 		return nil, err
 	}
+	for i := range disks {
+		if disks[i].Name == ch.Config.EmbeddedBackupDisk {
+			disks[i].IsBackup = true
+		}
+	}
 	if len(ch.Config.DiskMapping) == 0 {
 		return disks, nil
 	}
@@ -143,6 +148,28 @@ func (ch *ClickHouse) GetDisks() ([]Disk, error) {
 		})
 	}
 	return disks, nil
+}
+
+func (ch *ClickHouse) GetEmbeddedBackupPath(disks []Disk) (string, error) {
+	var err error
+	if !ch.Config.UseEmbeddedBackupRestore {
+		return "", nil
+	}
+	if ch.Config.EmbeddedBackupDisk == "" {
+		return "", fmt.Errorf("please setup `clickhouse->embedded_backup_disk` in config or CLICKHOUSE_EMBEDDED_BACKUP_DISK environment variable")
+	}
+	if disks == nil {
+		disks, err = ch.GetDisks()
+		if err != nil {
+			return "", err
+		}
+	}
+	for _, d := range disks {
+		if d.Name == ch.Config.EmbeddedBackupDisk {
+			return d.Path, nil
+		}
+	}
+	return "", fmt.Errorf("%s not found in system.disks %v", ch.Config.EmbeddedBackupDisk, disks)
 }
 
 func (ch *ClickHouse) GetDefaultPath(disks []Disk) (string, error) {
@@ -224,6 +251,9 @@ func (ch *ClickHouse) GetTables(tablePattern string) ([]Table, error) {
 				break
 			}
 		}
+		if ch.Config.UseEmbeddedBackupRestore && (strings.HasPrefix(t.Name, ".inner_id.") || strings.HasPrefix(t.Name, ".inner.")) {
+			t.Skip = true
+		}
 		if t.Skip {
 			tables[i] = t
 			continue
@@ -290,7 +320,7 @@ func (ch *ClickHouse) prepareAllTablesSQL(tablePattern string, err error, skipDa
 // GetDatabases - return slice of all non system databases for backup
 func (ch *ClickHouse) GetDatabases() ([]Database, error) {
 	allDatabases := make([]Database, 0)
-	allDatabasesSQL := "SELECT name, engine FROM system.databases WHERE name NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema')"
+	allDatabasesSQL := "SELECT name, engine FROM system.databases WHERE name NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema', '_temporary_and_external_tables')"
 	if err := ch.SoftSelect(&allDatabases, allDatabasesSQL); err != nil {
 		return nil, err
 	}
@@ -491,12 +521,11 @@ func (ch *ClickHouse) ShowCreateTable(database, name string) string {
 }
 
 // CreateDatabase - create ClickHouse database
-func (ch *ClickHouse) CreateDatabase(database, cluster string) error {
+func (ch *ClickHouse) CreateDatabase(database string, cluster string) error {
 	query := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", database)
 	if cluster != "" {
 		query += fmt.Sprintf(" ON CLUSTER '%s'", cluster)
 	}
-
 	_, err := ch.Query(query)
 	return err
 }
@@ -508,12 +537,12 @@ func (ch *ClickHouse) CreateDatabaseWithEngine(database, engine, cluster string)
 	return err
 }
 
-func (ch *ClickHouse) CreateDatabaseFromQuery(query, cluster string) error {
+func (ch *ClickHouse) CreateDatabaseFromQuery(query, cluster string, args ...interface{}) error {
 	if !strings.HasPrefix(query, "CREATE DATABASE IF NOT EXISTS") {
 		query = strings.Replace(query, "CREATE DATABASE", "CREATE DATABASE IF NOT EXISTS", 1)
 	}
 	query = ch.addOnClusterToCreateDatabase(cluster, query)
-	_, err := ch.Query(query)
+	_, err := ch.Query(query, args)
 	return err
 }
 
@@ -529,7 +558,7 @@ func (ch *ClickHouse) addOnClusterToCreateDatabase(cluster string, query string)
 }
 
 // DropTable - drop ClickHouse table
-func (ch *ClickHouse) DropTable(table Table, query string, onCluster string, version int) error {
+func (ch *ClickHouse) DropTable(table Table, query string, onCluster string, ignoreDependencies bool, version int) error {
 	var isAtomic bool
 	var err error
 	if isAtomic, err = ch.IsAtomic(table.Database); err != nil {
@@ -546,6 +575,9 @@ func (ch *ClickHouse) DropTable(table Table, query string, onCluster string, ver
 	if isAtomic {
 		dropQuery += " NO DELAY"
 	}
+	if ignoreDependencies {
+		dropQuery += " SETTINGS check_table_dependencies=0"
+	}
 	if _, err := ch.Query(dropQuery); err != nil {
 		return err
 	}
@@ -560,10 +592,10 @@ var createObjRe = regexp.MustCompile(`(?im)^(CREATE [^(]+)(\(.+)`)
 var onClusterRe = regexp.MustCompile(`(?im)\S+ON\S+CLUSTER\S+`)
 
 // CreateTable - create ClickHouse table
-func (ch *ClickHouse) CreateTable(table Table, query string, dropTable bool, onCluster string, version int) error {
+func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDependencies bool, onCluster string, version int) error {
 	var err error
 	if dropTable {
-		if err = ch.DropTable(table, query, onCluster, version); err != nil {
+		if err = ch.DropTable(table, query, onCluster, ignoreDependencies, version); err != nil {
 			return err
 		}
 	}
@@ -745,22 +777,28 @@ func (ch *ClickHouse) GetPartitions(database, table string) (map[string][]metada
 }
 
 func (ch *ClickHouse) Query(query string, args ...interface{}) (sql.Result, error) {
-	return ch.conn.Exec(ch.LogQuery(query), args...)
+	return ch.conn.Exec(ch.LogQuery(query, args...), args...)
 }
 
 func (ch *ClickHouse) Queryx(query string, args ...interface{}) (*sqlx.Rows, error) {
-	return ch.conn.Queryx(ch.LogQuery(query), args...)
+	return ch.conn.Queryx(ch.LogQuery(query, args...), args...)
 }
 
 func (ch *ClickHouse) Select(dest interface{}, query string, args ...interface{}) error {
-	return ch.conn.Select(dest, ch.LogQuery(query), args...)
+	return ch.conn.Select(dest, ch.LogQuery(query, args...), args...)
 }
 
-func (ch *ClickHouse) LogQuery(query string) string {
+func (ch *ClickHouse) LogQuery(query string, args ...interface{}) string {
+	var logF func(msg string)
 	if !ch.Config.LogSQLQueries {
-		log.Debug(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(query))
+		logF = log.Debug
 	} else {
-		log.Info(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(query))
+		logF = log.Info
+	}
+	if len(args) > 0 {
+		logF(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(fmt.Sprintf("%s with args %v", query, args)))
+	} else {
+		logF(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(query))
 	}
 	return query
 }
@@ -815,8 +853,13 @@ func (ch *ClickHouse) GetUserDefinedFunctions() ([]Function, error) {
 	return allFunctions, nil
 }
 
-func (ch *ClickHouse) CreateUserDefinedFunction(name string, query string) error {
-	_, err := ch.Query(fmt.Sprintf("DROP FUNCTION IF EXISTS `%s`", name))
+func (ch *ClickHouse) CreateUserDefinedFunction(name string, query string, cluster string) error {
+	dropQuery := fmt.Sprintf("DROP FUNCTION IF EXISTS `%s`", name)
+	if cluster != "" {
+		dropQuery += fmt.Sprintf(" ON CLUSTER '%s'", cluster)
+		query = strings.Replace(query, " AS ", fmt.Sprintf(" ON CLUSTER '%s' AS ", cluster), 1)
+	}
+	_, err := ch.Query(dropQuery)
 	if err != nil {
 		return err
 	}

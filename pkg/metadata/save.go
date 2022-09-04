@@ -3,7 +3,6 @@ package metadata
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path"
 )
@@ -31,6 +30,7 @@ func (tm *TableMetadata) Save(location string, metadataOnly bool) (uint64, error
 	}
 
 	if !metadataOnly {
+		newTM.Files = tm.Files
 		newTM.Parts = parts
 		newTM.Size = tm.Size
 		newTM.TotalBytes = tm.TotalBytes
@@ -43,7 +43,7 @@ func (tm *TableMetadata) Save(location string, metadataOnly bool) (uint64, error
 	if err != nil {
 		return 0, err
 	}
-	return uint64(len(body)), ioutil.WriteFile(location, body, 0640)
+	return uint64(len(body)), os.WriteFile(location, body, 0640)
 }
 
 func (bm *BackupMetadata) Save(location string) error {
@@ -51,7 +51,7 @@ func (bm *BackupMetadata) Save(location string) error {
 	if err != nil {
 		return fmt.Errorf("can't marshall backup metadata: %v", err)
 	}
-	if err := ioutil.WriteFile(location, tbBody, 0640); err != nil {
+	if err := os.WriteFile(location, tbBody, 0640); err != nil {
 		return fmt.Errorf("can't save backup metadata: %v", err)
 	}
 	return nil

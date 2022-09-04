@@ -1,6 +1,21 @@
+# v2.0.0
+IMPROVEMENTS
+- implements `remote_storage: custom`, which allow us to adopt any external backup system like restic, kopia, rsync, rclone etc. fix [383](https://github.com/AlexAkulov/clickhouse-backup/issues/383)
+- add example workflow hot to make backup / restore on sharded cluster, fix [469](https://github.com/AlexAkulov/clickhouse-backup/discussions/469)
+- add `use_embedded_backup_restore` to allow `BACKUP` and `RESTORE` SQL commands usage, fix [323](https://github.com/AlexAkulov/clickhouse-backup/issues/323), need 22.7+ and resolve https://github.com/ClickHouse/ClickHouse/issues/39416
+- add `timeout` to `azure` config `AZBLOB_TIMEOUT` to allow download with bad network quality, fix [467](https://github.com/AlexAkulov/clickhouse-backup/issues/467)
+- switch to go 1.19
+- refactoring to remove legacy `storage` package
+- add `table` parameter to `tables` cli command and `/backup/tables` API handler, fix [367](https://github.com/AlexAkulov/clickhouse-backup/issues/367)
+- add `--resumable` parameter to `create_remote`, `upload`, `restore_remote`, `donwload` commands to allow resume upload or download after break. Ignored for `remote_storage: custom`, fix [207](https://github.com/AlexAkulov/clickhouse-backup/issues/207)
+- add `--ignore-dependencies` parameter to `restore` and `restore_remote`, to allow drop object during restore schema on server where schema objects already exists and contains dependencies which not present in backup, fix [455](https://github.com/AlexAkulov/clickhouse-backup/issues/455)
+
+BUG FIXES
+- fix wrong upload / download behavior for `compression_format: none` and `remote_storage: ftp`
+
 # v1.6.2
 IMPROVEMENTS
-- add Azure to every CI/CD run, testing with Azurite 
+- add Azure to every CI/CD run, testing with Azurite
 
 BUG FIXES
 - fix azblob.Walk with recursive=True, for properly delete remote backups

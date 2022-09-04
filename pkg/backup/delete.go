@@ -3,9 +3,11 @@ package backup
 import (
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/custom"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
 	"os"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
@@ -73,10 +75,13 @@ func RemoveOldBackupsLocal(cfg *config.Config, keepLastBackup bool, disks []clic
 func RemoveBackupLocal(cfg *config.Config, backupName string, disks []clickhouse.Disk) error {
 	var err error
 	start := time.Now()
+	backupName = strings.ReplaceAll(backupName, "/", "")
+	backupName = strings.ReplaceAll(backupName, "\\", "")
+
 	ch := &clickhouse.ClickHouse{
 		Config: &cfg.ClickHouse,
 	}
-	backupName = cleanBackupNameRE.ReplaceAllString(backupName, "")
+	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 	if err = ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
@@ -94,8 +99,12 @@ func RemoveBackupLocal(cfg *config.Config, backupName string, disks []clickhouse
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
 			for _, disk := range disks {
-				apexLog.WithField("path", path.Join(disk.Path, "backup")).Debugf("remove '%s'", backupName)
-				err := os.RemoveAll(path.Join(disk.Path, "backup", backupName))
+				backupPath := path.Join(disk.Path, "backup", backupName)
+				if disk.IsBackup {
+					backupPath = path.Join(disk.Path, backupName)
+				}
+				apexLog.Debugf("remove '%s'", backupPath)
+				err = os.RemoveAll(backupPath)
 				if err != nil {
 					return err
 				}
@@ -112,12 +121,16 @@ func RemoveBackupLocal(cfg *config.Config, backupName string, disks []clickhouse
 }
 
 func RemoveBackupRemote(cfg *config.Config, backupName string) error {
+	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 	start := time.Now()
 	if cfg.General.RemoteStorage == "none" {
-		fmt.Println("RemoveBackupRemote aborted: RemoteStorage set to \"none\"")
-		return nil
+		err := fmt.Errorf("RemoveBackupRemote aborted: RemoteStorage set to \"none\"")
+		apexLog.Error(err.Error())
+		return err
 	}
-	backupName = cleanBackupNameRE.ReplaceAllString(backupName, "")
+	if cfg.General.RemoteStorage == "custom" {
+		return custom.DeleteRemote(cfg, backupName)
+	}
 
 	bd, err := storage.NewBackupDestination(cfg, false)
 	if err != nil {

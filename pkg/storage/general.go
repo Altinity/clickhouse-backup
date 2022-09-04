@@ -10,7 +10,6 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/progressbar"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
 	"io"
-	"io/ioutil"
 	"os"
 	"path"
 	"path/filepath"
@@ -127,7 +126,7 @@ func (bd *BackupDestination) loadMetadataCache() map[string]Backup {
 		apexLog.Warnf("can't open %s return error %v", listCacheFile, err)
 		return listCache
 	}
-	body, err := ioutil.ReadAll(f)
+	body, err := io.ReadAll(f)
 	if err != nil {
 		apexLog.Warnf("can't read %s return error %v", listCacheFile, err)
 		return listCache
@@ -243,7 +242,7 @@ func (bd *BackupDestination) BackupList(parseMetadata bool, parseMetadataOnly st
 			result = append(result, brokenBackup)
 			return nil
 		}
-		b, err := ioutil.ReadAll(r)
+		b, err := io.ReadAll(r)
 		if err != nil {
 			brokenBackup := Backup{
 				metadata.BackupMetadata{
@@ -484,6 +483,9 @@ func (bd *BackupDestination) DownloadPath(size int64, remotePath string, localPa
 	})
 	return bd.Walk(remotePath, true, func(f RemoteFile) error {
 		// TODO: return err break download, think about make Walk error handle and retry
+		if bd.Kind() == "SFTP" && (f.Name() == "." || f.Name() == "..") {
+			return nil
+		}
 		r, err := bd.GetFileReader(path.Join(remotePath, f.Name()))
 		if err != nil {
 			log.Error(err.Error())
@@ -539,7 +541,7 @@ func (bd *BackupDestination) UploadPath(size int64, baseLocalPath string, files 
 	}
 
 	for _, filename := range files {
-		f, err := os.Open(path.Join(baseLocalPath, filename))
+		f, err := os.Open(filepath.Clean(path.Join(baseLocalPath, filename)))
 		if err != nil {
 			return err
 		}
