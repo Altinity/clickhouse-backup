@@ -329,6 +329,7 @@ Create schema and restore data from backup: `curl -s localhost:7171/backup/resto
 * Optional query argument `schema` works the same the `--schema` CLI argument (restore schema only).
 * Optional query argument `data` works the same the `--data` CLI argument (restore data only).
 * Optional query argument `rm` works the same the `--rm` CLI argument (drop tables before restore).
+* Optional query argument `ignore_dependencies` works the same the `--ignore-dependencies` CLI argument.
 * Optional query argument `rbac` works the same the `--rbac` CLI argument (restore RBAC).
 * Optional query argument `configs` works the same the `--configs` CLI argument (restore configs).
 * Optional query argument `restore_database_mapping` works the same the `--restore-database-mapping` CLI argument.

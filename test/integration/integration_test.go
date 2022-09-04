@@ -636,7 +636,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 			if pause > 0 {
 				time.Sleep(time.Duration(pause) * time.Nanosecond)
 				log.Infof("pause=%s", time.Duration(pause).String())
-				err = ch.chbackend.DropTable(clickhouse.Table{Database: "default", Name: "if_not_exists"}, ifNotExistsCreateSQL, "", chVersion)
+				err = ch.chbackend.DropTable(clickhouse.Table{Database: "default", Name: "if_not_exists"}, ifNotExistsCreateSQL, "", false, chVersion)
 				r.NoError(err)
 			}
 			resumeChannel <- 1
@@ -834,6 +834,8 @@ func TestServerAPI(t *testing.T) {
 	log.Debug(out)
 	r.NoError(err)
 	r.NotContains(out, "system")
+	r.NotContains(out, "INFORMATION_SCHEMA")
+	r.NotContains(out, "information_schema")
 
 	log.Info("Check /backup/tables/all")
 	out, err = dockerExecOut(
@@ -843,6 +845,8 @@ func TestServerAPI(t *testing.T) {
 	log.Debug(out)
 	r.NoError(err)
 	r.Contains(out, "system")
+	r.Contains(out, "INFORMATION_SCHEMA")
+	r.Contains(out, "information_schema")
 
 	log.Info("Check /backup/actions")
 	ch.queryWithNoError(r, "SELECT count() FROM system.backup_actions")
@@ -1465,7 +1469,7 @@ func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {
 			Name:     data.Name,
 		},
 		createSQL,
-		false, "", 0,
+		false, false, "", 0,
 	)
 	return err
 }

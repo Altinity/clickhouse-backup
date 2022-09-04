@@ -816,6 +816,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	schemaOnly := false
 	dataOnly := false
 	dropTable := false
+	ignoreDependencies := false
 	rbacOnly := false
 	configsOnly := false
 	fullCommand := "restore"
@@ -860,6 +861,10 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		dropTable = true
 		fullCommand += " --rm"
 	}
+	if _, exists := query["ignore_dependencies"]; exists {
+		ignoreDependencies = true
+		fullCommand += " --ignore-dependencies"
+	}
 	if _, exist := query["rbac"]; exist {
 		rbacOnly = true
 		fullCommand += " --rbac"
@@ -882,7 +887,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 			api.metrics.LastDuration["restore"].Set(float64(time.Since(start).Nanoseconds()))
 			api.metrics.LastFinish["restore"].Set(float64(time.Now().Unix()))
 		}()
-		err := backup.Restore(cfg, name, tablePattern, databaseMappingToRestore, partitionsToBackup, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly)
+		err := backup.Restore(cfg, name, tablePattern, databaseMappingToRestore, partitionsToBackup, schemaOnly, dataOnly, dropTable, ignoreDependencies, rbacOnly, configsOnly)
 		api.status.stop(commandId, err)
 		if err != nil {
 			apexLog.Errorf("Download error: %+v\n", err)
@@ -1277,11 +1282,11 @@ func (api *APIServer) CreateIntegrationTables() error {
 		settings = "SETTINGS input_format_skip_unknown_fields=1"
 	}
 	query := fmt.Sprintf("CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String) ENGINE=URL('%s://%s:%s/backup/actions%s', JSONEachRow) %s", schema, host, port, auth, settings)
-	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_actions"}, query, true, "", 0); err != nil {
+	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_actions"}, query, true, false, "", 0); err != nil {
 		return err
 	}
 	query = fmt.Sprintf("CREATE TABLE system.backup_list (name String, created DateTime, size Int64, location String, required String, desc String) ENGINE=URL('%s://%s:%s/backup/list%s', JSONEachRow) %s", schema, host, port, auth, settings)
-	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_list"}, query, true, "", 0); err != nil {
+	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_list"}, query, true, false, "", 0); err != nil {
 		return err
 	}
 	return nil

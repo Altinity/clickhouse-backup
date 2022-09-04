@@ -252,9 +252,9 @@ func main() {
 		{
 			Name:      "restore",
 			Usage:     "Create schema and restore data from backup",
-			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [--rbac] [--configs] <backup_name>",
+			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return backup.Restore(config.GetConfig(c), c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("rbac"), c.Bool("configs"))
+				return backup.Restore(config.GetConfig(c), c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("ignore-dependencies"), c.Bool("rbac"), c.Bool("configs"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -285,7 +285,12 @@ func main() {
 				cli.BoolFlag{
 					Name:   "rm, drop",
 					Hidden: false,
-					Usage:  "Drop table before restore",
+					Usage:  "Drop exists schema objects before restore",
+				},
+				cli.BoolFlag{
+					Name:   "i, ignore-dependencies",
+					Hidden: false,
+					Usage:  "Ignore dependencies when drop exists schema objects",
 				},
 				cli.BoolFlag{
 					Name:   "rbac, restore-rbac, do-restore-rbac",
@@ -302,10 +307,10 @@ func main() {
 		{
 			Name:      "restore_remote",
 			Usage:     "Download and restore",
-			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [--rbac] [--configs] [--skip-rbac] [--skip-configs] [--resumable] <backup_name>",
+			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--skip-rbac] [--skip-configs] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfig(c))
-				return b.RestoreFromRemote(c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("rbac"), c.Bool("configs"), c.Bool("resume"))
+				return b.RestoreFromRemote(c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("configs"), c.Bool("resume"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -336,7 +341,12 @@ func main() {
 				cli.BoolFlag{
 					Name:   "rm, drop",
 					Hidden: false,
-					Usage:  "Drop table before restore",
+					Usage:  "Drop schema objects before restore",
+				},
+				cli.BoolFlag{
+					Name:   "i, ignore-dependencies",
+					Hidden: false,
+					Usage:  "Ignore dependencies when drop exists schema objects",
 				},
 				cli.BoolFlag{
 					Name:   "rbac, restore-rbac, do-restore-rbac",

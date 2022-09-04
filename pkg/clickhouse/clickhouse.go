@@ -558,7 +558,7 @@ func (ch *ClickHouse) addOnClusterToCreateDatabase(cluster string, query string)
 }
 
 // DropTable - drop ClickHouse table
-func (ch *ClickHouse) DropTable(table Table, query string, onCluster string, version int) error {
+func (ch *ClickHouse) DropTable(table Table, query string, onCluster string, ignoreDependencies bool, version int) error {
 	var isAtomic bool
 	var err error
 	if isAtomic, err = ch.IsAtomic(table.Database); err != nil {
@@ -575,6 +575,9 @@ func (ch *ClickHouse) DropTable(table Table, query string, onCluster string, ver
 	if isAtomic {
 		dropQuery += " NO DELAY"
 	}
+	if ignoreDependencies {
+		dropQuery += " SETTINGS check_table_dependencies=0"
+	}
 	if _, err := ch.Query(dropQuery); err != nil {
 		return err
 	}
@@ -589,10 +592,10 @@ var createObjRe = regexp.MustCompile(`(?im)^(CREATE [^(]+)(\(.+)`)
 var onClusterRe = regexp.MustCompile(`(?im)\S+ON\S+CLUSTER\S+`)
 
 // CreateTable - create ClickHouse table
-func (ch *ClickHouse) CreateTable(table Table, query string, dropTable bool, onCluster string, version int) error {
+func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDependencies bool, onCluster string, version int) error {
 	var err error
 	if dropTable {
-		if err = ch.DropTable(table, query, onCluster, version); err != nil {
+		if err = ch.DropTable(table, query, onCluster, ignoreDependencies, version); err != nil {
 			return err
 		}
 	}

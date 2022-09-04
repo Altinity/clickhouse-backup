@@ -28,7 +28,7 @@ import (
 var CreateDatabaseRE = regexp.MustCompile(`(?m)^CREATE DATABASE (\s*)(\S+)(\s*)`)
 
 // Restore - restore tables matched by tablePattern from backupName
-func Restore(cfg *config.Config, backupName, tablePattern string, databaseMapping, partitions []string, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly bool) error {
+func Restore(cfg *config.Config, backupName, tablePattern string, databaseMapping, partitions []string, schemaOnly, dataOnly, dropTable, ignoreDependencies, rbacOnly, configsOnly bool) error {
 	backupName = CleanBackupNameRE.ReplaceAllString(backupName, "")
 	if err := prepareRestoreDatabaseMapping(cfg, databaseMapping); err != nil {
 		return err
@@ -147,7 +147,7 @@ func Restore(cfg *config.Config, backupName, tablePattern string, databaseMappin
 	}
 
 	if schemaOnly || (schemaOnly == dataOnly) {
-		if err := RestoreSchema(cfg, ch, backupName, tablePattern, dropTable, disks, isEmbedded); err != nil {
+		if err := RestoreSchema(cfg, ch, backupName, tablePattern, dropTable, ignoreDependencies, disks, isEmbedded); err != nil {
 			return err
 		}
 	}
@@ -253,7 +253,7 @@ func restoreBackupRelatedDir(ch *clickhouse.ClickHouse, backupName, backupPrefix
 }
 
 // RestoreSchema - restore schemas matched by tablePattern from backupName
-func RestoreSchema(cfg *config.Config, ch *clickhouse.ClickHouse, backupName string, tablePattern string, dropTable bool, disks []clickhouse.Disk, isEmbedded bool) error {
+func RestoreSchema(cfg *config.Config, ch *clickhouse.ClickHouse, backupName string, tablePattern string, dropTable, ignoreDependencies bool, disks []clickhouse.Disk, isEmbedded bool) error {
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "restore",
@@ -299,8 +299,7 @@ func RestoreSchema(cfg *config.Config, ch *clickhouse.ClickHouse, backupName str
 	if len(tablesForRestore) == 0 {
 		return fmt.Errorf("no have found schemas by %s in %s", tablePattern, backupName)
 	}
-
-	if dropErr := dropExistsTables(cfg, ch, tablesForRestore, version, log); dropErr != nil {
+	if dropErr := dropExistsTables(cfg, ch, tablesForRestore, ignoreDependencies, version, log); dropErr != nil {
 		return dropErr
 	}
 	var restoreErr error
@@ -401,7 +400,7 @@ func restoreSchemaRegular(cfg *config.Config, ch *clickhouse.ClickHouse, tablesF
 			restoreErr = ch.CreateTable(clickhouse.Table{
 				Database: schema.Database,
 				Name:     schema.Table,
-			}, schema.Query, false, cfg.General.RestoreSchemaOnCluster, version)
+			}, schema.Query, false, false, cfg.General.RestoreSchemaOnCluster, version)
 
 			if restoreErr != nil {
 				restoreRetries++
@@ -426,7 +425,7 @@ func restoreSchemaRegular(cfg *config.Config, ch *clickhouse.ClickHouse, tablesF
 	return nil
 }
 
-func dropExistsTables(cfg *config.Config, ch *clickhouse.ClickHouse, tablesForDrop ListOfTables, version int, log *apexLog.Entry) error {
+func dropExistsTables(cfg *config.Config, ch *clickhouse.ClickHouse, tablesForDrop ListOfTables, ignoreDependencies bool, version int, log *apexLog.Entry) error {
 	var dropErr error
 	dropRetries := 0
 	totalRetries := len(tablesForDrop)
@@ -447,7 +446,7 @@ func dropExistsTables(cfg *config.Config, ch *clickhouse.ClickHouse, tablesForDr
 					dropErr = ch.DropTable(clickhouse.Table{
 						Database: schema.Database,
 						Name:     schema.Table,
-					}, query, cfg.General.RestoreSchemaOnCluster, version)
+					}, query, cfg.General.RestoreSchemaOnCluster, ignoreDependencies, version)
 					if dropErr == nil {
 						tablesForDrop[i].Query = query
 					}
@@ -456,7 +455,7 @@ func dropExistsTables(cfg *config.Config, ch *clickhouse.ClickHouse, tablesForDr
 				dropErr = ch.DropTable(clickhouse.Table{
 					Database: schema.Database,
 					Name:     schema.Table,
-				}, schema.Query, cfg.General.RestoreSchemaOnCluster, version)
+				}, schema.Query, cfg.General.RestoreSchemaOnCluster, ignoreDependencies, version)
 			}
 
 			if dropErr != nil {
