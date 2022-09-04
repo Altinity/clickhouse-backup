@@ -47,10 +47,7 @@ jobs:
         env:
           GOROOT: ${{ env.GOROOT_1_19_X64 }}
         run: |
-          make build-race
-          make build/linux/amd64/clickhouse-backup build/linux/arm64/clickhouse-backup
-          make config
-          make test
+          make build-race build/linux/amd64/clickhouse-backup build/linux/arm64/clickhouse-backup config test
 
 
       # be careful with encrypt with old OpenSSL - https://habr.com/ru/post/535140/
@@ -145,7 +142,13 @@ jobs:
           sudo ln -snvf ~/venv/qa/bin/tfs /bin/tfs
 
           export CLICKHOUSE_TESTS_DIR=$(pwd)/test/testflows/clickhouse_backup
-          ~/venv/qa/bin/python3 ./test/testflows/clickhouse_backup/regression.py --log ./test/testflows/raw.log
+          set +e
+          ~/venv/qa/bin/python3 ./test/testflows/clickhouse_backup/regression.py --log ./test/testflows/raw.log 
+          if [[ "0" != "$?" ]]; then
+            docker-compose -f ${CLICKHOUSE_TESTS_DIR}/docker-compose/docker-compose.yml logs clickhouse_backup
+            exit 1
+          fi
+          set -e
           ~/venv/qa/bin/tfs --debug --no-colors transform compact ./test/testflows/raw.log ./test/testflows/compact.log
           ~/venv/qa/bin/tfs --debug --no-colors transform nice ./test/testflows/raw.log ./test/testflows/nice.log.txt
           ~/venv/qa/bin/tfs --debug --no-colors transform short ./test/testflows/raw.log ./test/testflows/short.log.txt
@@ -214,13 +217,13 @@ jobs:
       - name: Running integration tests
         env:
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
-          # RUN_TESTS: "TestSkipNotExistsTable"
+          RUN_TESTS: "TestIntegrationGCS"
           # LOG_LEVEL: "debug"
           # FTP_DEBUG: "true"
           CGO_ENABLED: 0
           GCS_TESTS: ${{ needs.build.outputs.GCS_TESTS }}
+          RUN_ADVANCED_TESTS: 1
           AZURE_TESTS: 1
-          # RUN_ADVANCED_TESTS: 1
         run: |
           set -x
           echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"

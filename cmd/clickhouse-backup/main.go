@@ -50,15 +50,21 @@ func main() {
 	cliapp.Commands = []cli.Command{
 		{
 			Name:      "tables",
-			Usage:     "Print list of tables",
-			UsageText: "clickhouse-backup tables",
+			Usage:     "Print list of tables, exclude skip_tables",
+			UsageText: "clickhouse-backup tables [-t, --tables=<db>.<table>]] [--all]",
 			Action: func(c *cli.Context) error {
-				return backup.PrintTables(config.GetConfig(c), c.Bool("a"))
+				return backup.PrintTables(config.GetConfig(c), c.Bool("a"), c.String("table"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.BoolFlag{
 					Name:   "all, a",
 					Hidden: false,
+					Usage:  "print table even when match with `skip_tables` pattern",
+				},
+				cli.StringFlag{
+					Name:   "table, tables, t",
+					Hidden: false,
+					Usage:  "table name patterns, separated by comma, allow ? and * as wildcard",
 				},
 			),
 		},
@@ -101,11 +107,11 @@ func main() {
 		{
 			Name:        "create_remote",
 			Usage:       "Create and upload",
-			UsageText:   "clickhouse-backup create_remote [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--diff-from=<local_backup_name>] [--diff-from-remote=<local_backup_name>] [--schema] [--rbac] [--configs] <backup_name>",
+			UsageText:   "clickhouse-backup create_remote [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--diff-from=<local_backup_name>] [--diff-from-remote=<local_backup_name>] [--schema] [--rbac] [--configs] [--resumable] <backup_name>",
 			Description: "Create and upload",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfig(c))
-				return b.CreateToRemote(c.Args().First(), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("configs"), version)
+				return b.CreateToRemote(c.Args().First(), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("configs"), c.Bool("resume"), version)
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -143,15 +149,20 @@ func main() {
 					Hidden: false,
 					Usage:  "Backup ClickHouse server configuration files only",
 				},
+				cli.BoolFlag{
+					Name:   "resume, resumable",
+					Hidden: false,
+					Usage:  "Save intermediate upload state and resume upload if backup exists on remote storage, ignore when `remote_storage: custom` or `use_embedded_backup_restore: true`",
+				},
 			),
 		},
 		{
 			Name:      "upload",
 			Usage:     "Upload backup to remote storage",
-			UsageText: "clickhouse-backup upload [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--diff-from=<local_backup_name>] [--diff-from-remote=<remote_backup_name>] <backup_name>",
+			UsageText: "clickhouse-backup upload [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--diff-from=<local_backup_name>] [--diff-from-remote=<remote_backup_name>] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfig(c))
-				return b.Upload(c.Args().First(), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"))
+				return b.Upload(c.Args().First(), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("resume"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -179,12 +190,17 @@ func main() {
 					Hidden: false,
 					Usage:  "Upload schemas only",
 				},
+				cli.BoolFlag{
+					Name:   "resume, resumable",
+					Hidden: false,
+					Usage:  "Save intermediate upload state and resume upload if backup exists on remote storage, ignored with `remote_storage: custom` or `use_embedded_backup_restore: true`",
+				},
 			),
 		},
 		{
 			Name:      "list",
 			Usage:     "Print list of backups",
-			UsageText: "clickhouse-backup list [all|local|remote] [latest|penult]",
+			UsageText: "clickhouse-backup list [all|local|remote] [latest|previous]",
 			Action: func(c *cli.Context) error {
 				cfg := config.GetConfig(c)
 				switch c.Args().Get(0) {
@@ -205,10 +221,10 @@ func main() {
 		{
 			Name:      "download",
 			Usage:     "Download backup from remote storage",
-			UsageText: "clickhouse-backup download [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] <backup_name>",
+			UsageText: "clickhouse-backup download [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfig(c))
-				return b.Download(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("s"))
+				return b.Download(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("resume"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -226,19 +242,29 @@ func main() {
 					Hidden: false,
 					Usage:  "Download schema only",
 				},
+				cli.BoolFlag{
+					Name:   "resume, resumable",
+					Hidden: false,
+					Usage:  "Save intermediate download state and resume download if backup exists on local storage, ignored with `remote_storage: custom` or `use_embedded_backup_restore: true`",
+				},
 			),
 		},
 		{
 			Name:      "restore",
 			Usage:     "Create schema and restore data from backup",
-			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [--rbac] [--configs] <backup_name>",
+			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] <backup_name>",
 			Action: func(c *cli.Context) error {
-				return backup.Restore(config.GetConfig(c), c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("rbac"), c.Bool("configs"))
+				return backup.Restore(config.GetConfig(c), c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("ignore-dependencies"), c.Bool("rbac"), c.Bool("configs"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
 					Name:   "table, tables, t",
 					Usage:  "table name patterns, separated by comma, allow ? and * as wildcard",
+					Hidden: false,
+				},
+				cli.StringSliceFlag{
+					Name:   "restore-database-mapping, m",
+					Usage:  "Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.",
 					Hidden: false,
 				},
 				cli.StringSliceFlag{
@@ -259,7 +285,12 @@ func main() {
 				cli.BoolFlag{
 					Name:   "rm, drop",
 					Hidden: false,
-					Usage:  "Drop table before restore",
+					Usage:  "Drop exists schema objects before restore",
+				},
+				cli.BoolFlag{
+					Name:   "i, ignore-dependencies",
+					Hidden: false,
+					Usage:  "Ignore dependencies when drop exists schema objects",
 				},
 				cli.BoolFlag{
 					Name:   "rbac, restore-rbac, do-restore-rbac",
@@ -276,15 +307,20 @@ func main() {
 		{
 			Name:      "restore_remote",
 			Usage:     "Download and restore",
-			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [--partitions=<partitions_names>] [--rm, --drop] [--rbac] [--configs] [--skip-rbac] [--skip-configs] <backup_name>",
+			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--skip-rbac] [--skip-configs] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfig(c))
-				return b.RestoreFromRemote(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("rbac"), c.Bool("configs"))
+				return b.RestoreFromRemote(c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("configs"), c.Bool("resume"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
 					Name:   "table, tables, t",
 					Usage:  "table name patterns, separated by comma, allow ? and * as wildcard",
+					Hidden: false,
+				},
+				cli.StringSliceFlag{
+					Name:   "restore-database-mapping, m",
+					Usage:  "Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.",
 					Hidden: false,
 				},
 				cli.StringSliceFlag{
@@ -305,7 +341,12 @@ func main() {
 				cli.BoolFlag{
 					Name:   "rm, drop",
 					Hidden: false,
-					Usage:  "Drop table before restore",
+					Usage:  "Drop schema objects before restore",
+				},
+				cli.BoolFlag{
+					Name:   "i, ignore-dependencies",
+					Hidden: false,
+					Usage:  "Ignore dependencies when drop exists schema objects",
 				},
 				cli.BoolFlag{
 					Name:   "rbac, restore-rbac, do-restore-rbac",
@@ -316,6 +357,11 @@ func main() {
 					Name:   "configs, restore-configs, do-restore-configs",
 					Hidden: false,
 					Usage:  "Restore CONFIG related files only",
+				},
+				cli.BoolFlag{
+					Name:   "resume, resumable",
+					Hidden: false,
+					Usage:  "Save intermediate upload state and resume upload if backup exists on remote storage, ignored with `remote_storage: custom` or `use_embedded_backup_restore: true`",
 				},
 			),
 		},

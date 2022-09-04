@@ -18,7 +18,8 @@ ln -nsfv /usr/lib/go-1.19/bin/go /usr/bin/go
 CGO_ENABLED=0 GO111MODULE=on go install -ldflags "-s -w -extldflags '-static'" github.com/go-delve/delve/cmd/dlv@latest
 
 # GO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags osusergo,netgo -gcflags "all=-N -l" -ldflags "-extldflags '-static' -X 'main.version=debug'" -o build/linux/amd64/clickhouse-backup ./cmd/clickhouse-backup
-# ~/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /usr/bin/clickhouse-backup download increment_59690570474117865
+# /root/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /bin/clickhouse-backup -- -c /etc/clickhouse-server/config.d/ch-backup.yaml upload debug_upload --table
 
-/root/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /bin/clickhouse-backup -- -c /etc/clickhouse-server/config.d/ch-backup.yaml upload debug_upload --table
+/root/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /bin/clickhouse-backup -- download --resume increment_2205626085035817738
+
 

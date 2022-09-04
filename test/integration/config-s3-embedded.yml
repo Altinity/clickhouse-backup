@@ -1,0 +1,39 @@
+general:
+  disable_progress_bar: true
+  remote_storage: s3
+  upload_concurrency: 4
+  download_concurrency: 4
+  skip_tables:
+    - " system.*"
+    - "INFORMATION_SCHEMA.*"
+    - "information_schema.*"
+    - "_temporary_and_external_tables.*"
+  restore_schema_on_cluster: "cluster"
+clickhouse:
+  host: 127.0.0.1
+  port: 9440
+  username: backup
+  password: meow=& 123?*%# МЯУ
+  secure: true
+  skip_verify: true
+  sync_replicated_tables: true
+  timeout: 4h
+  restart_command: bash -c 'echo "FAKE RESTART"'
+  use_embedded_backup_restore: true
+  embedded_backup_disk: backups
+s3:
+  access_key: access-key
+  secret_key: it-is-my-super-secret-key
+  bucket: clickhouse
+  endpoint: http://minio:9000
+  acl: private
+  force_path_style: true
+  path: backup/{cluster}/{shard}
+  disable_ssl: true
+  compression_format: none
+  allow_multipart_download: true
+api:
+  listen: :7171
+  create_integration_tables: true
+  integration_tables_host: "localhost"
+  allow_parallel: true
