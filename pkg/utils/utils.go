@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/apex/log"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -13,6 +14,8 @@ const (
 	day  = time.Minute * 60 * 24
 	year = 365 * day
 )
+
+var CleanBackupNameRE = regexp.MustCompile(`[\t\r\n ]+|\.{2,}|[\\/]+`)
 
 // FormatBytes - Convert bytes to human readable string
 func FormatBytes(i uint64) string {

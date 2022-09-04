@@ -55,6 +55,8 @@ func legacyDownload(ctx context.Context, cfg *config.Config, defaultDataPath, ba
 }
 
 func (b *Backuper) Download(backupName string, tablePattern string, partitions []string, schemaOnly, resume bool) error {
+	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
+
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "download",
@@ -67,10 +69,6 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		_ = PrintRemoteBackups(b.cfg, "all")
 		return fmt.Errorf("select backup for download")
 	}
-	if CleanBackupNameRE.MatchString(backupName) {
-		return fmt.Errorf("invalid backup name %s", backupName)
-	}
-
 	localBackups, disks, err := GetLocalBackups(b.cfg, nil)
 	if err != nil {
 		return err

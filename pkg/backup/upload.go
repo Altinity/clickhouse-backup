@@ -29,15 +29,13 @@ import (
 )
 
 func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern string, partitions []string, schemaOnly, resume bool) error {
+	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 	var err error
 	var disks []clickhouse.Disk
 	startUpload := time.Now()
 	b.resume = resume
 	if err = b.validateUploadParams(backupName, diffFrom, diffFromRemote); err != nil {
 		return err
-	}
-	if CleanBackupNameRE.MatchString(backupName) {
-		return fmt.Errorf("invalid backup name %s", backupName)
 	}
 	if b.cfg.General.RemoteStorage == "custom" {
 		return custom.Upload(b.cfg, backupName, diffFrom, diffFromRemote, tablePattern, partitions, schemaOnly)

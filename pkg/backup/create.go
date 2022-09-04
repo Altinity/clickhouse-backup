@@ -80,7 +80,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, partition
 	if backupName == "" {
 		backupName = NewBackupName()
 	}
-	backupName = CleanBackupNameRE.ReplaceAllString(backupName, "")
+	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "create",

@@ -644,7 +644,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if name, exist := query["name"]; exist {
-		backupName = backup.CleanBackupNameRE.ReplaceAllString(name[0], "")
+		backupName = utils.CleanBackupNameRE.ReplaceAllString(name[0], "")
 		fullCommand = fmt.Sprintf("%s %s", fullCommand, backupName)
 	}
 
@@ -874,9 +874,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		fullCommand += " --configs"
 	}
 
-	name := strings.ReplaceAll(vars["name"], "/", "")
-	name = strings.ReplaceAll(name, "\\", "")
-
+	name := utils.CleanBackupNameRE.ReplaceAllString(vars["name"], "")
 	fullCommand += fmt.Sprintf(" %s", name)
 
 	go func() {
