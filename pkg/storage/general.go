@@ -539,7 +539,7 @@ func (bd *BackupDestination) UploadPath(size int64, baseLocalPath string, files 
 	}
 
 	for _, filename := range files {
-		f, err := os.Open(path.Join(baseLocalPath, filename))
+		f, err := os.Open(path.Clean(path.Join(baseLocalPath, filename)))
 		if err != nil {
 			return err
 		}
