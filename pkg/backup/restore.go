@@ -26,7 +26,7 @@ import (
 
 // Restore - restore tables matched by tablePattern from backupName
 func Restore(cfg *config.Config, backupName string, tablePattern string, partitions []string, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly bool) error {
-	backupName = cleanBackupNameRE.ReplaceAllString(backupName, "")
+	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "restore",

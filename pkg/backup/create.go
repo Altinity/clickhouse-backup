@@ -81,7 +81,7 @@ func CreateBackup(cfg *config.Config, backupName, tablePattern string, partition
 	if backupName == "" {
 		backupName = NewBackupName()
 	}
-	backupName = cleanBackupNameRE.ReplaceAllString(backupName, "")
+	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "create",
@@ -347,7 +347,6 @@ func AddTableToBackup(ch *clickhouse.ClickHouse, backupName, shadowBackupUUID st
 	return disksToPartsMap, realSize, nil
 }
 
-//
 func createMetadata(ch *clickhouse.ClickHouse, backupPath string, table metadata.TableMetadata, disks []clickhouse.Disk) (uint64, error) {
 	metadataPath := path.Join(backupPath, "metadata")
 	if err := filesystemhelper.Mkdir(metadataPath, ch, disks); err != nil {

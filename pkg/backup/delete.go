@@ -76,7 +76,7 @@ func RemoveBackupLocal(cfg *config.Config, backupName string, disks []clickhouse
 	ch := &clickhouse.ClickHouse{
 		Config: &cfg.ClickHouse,
 	}
-	backupName = cleanBackupNameRE.ReplaceAllString(backupName, "")
+	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 	if err = ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
@@ -112,12 +112,12 @@ func RemoveBackupLocal(cfg *config.Config, backupName string, disks []clickhouse
 }
 
 func RemoveBackupRemote(cfg *config.Config, backupName string) error {
+	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 	start := time.Now()
 	if cfg.General.RemoteStorage == "none" {
 		fmt.Println("RemoveBackupRemote aborted: RemoteStorage set to \"none\"")
 		return nil
 	}
-	backupName = cleanBackupNameRE.ReplaceAllString(backupName, "")
 
 	bd, err := storage.NewBackupDestination(cfg, false)
 	if err != nil {

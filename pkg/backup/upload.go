@@ -27,7 +27,7 @@ import (
 )
 
 func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern string, partitions []string, schemaOnly bool) error {
-	backupName = cleanBackupNameRE.ReplaceAllString(backupName, "")
+	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 	var err error
 	var disks []clickhouse.Disk
 	if err = b.validateUploadParams(backupName, diffFrom, diffFromRemote); err != nil {
