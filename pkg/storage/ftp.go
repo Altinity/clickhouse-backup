@@ -44,7 +44,7 @@ func (f *FTP) Connect() error {
 	f.ctx = context.Background()
 	f.clients = pool.NewObjectPoolWithDefaultConfig(f.ctx, &ftpPoolFactory{options: options, ftp: f})
 	if f.Config.Concurrency > 1 {
-		f.clients.Config.MaxTotal = int(f.Config.Concurrency)*2 + 1
+		f.clients.Config.MaxTotal = int(f.Config.Concurrency) * 3
 	}
 
 	f.dirCacheMutex.Lock()
@@ -120,13 +120,13 @@ func (f *FTP) DeleteFile(key string) error {
 
 func (f *FTP) Walk(ftpPath string, recursive bool, process func(RemoteFile) error) error {
 	client, err := f.getConnectionFromPool("Walk")
-	defer f.returnConnectionToPool("Walk", client)
 	if err != nil {
 		return err
 	}
 	prefix := path.Join(f.Config.Path, ftpPath)
 	if !recursive {
 		entries, err := client.List(prefix)
+		f.returnConnectionToPool("Walk", client)
 		if err != nil {
 			// proftpd return 550 error if prefix not exits
 			if strings.HasPrefix(err.Error(), "550") {
@@ -148,6 +148,7 @@ func (f *FTP) Walk(ftpPath string, recursive bool, process func(RemoteFile) erro
 		}
 		return nil
 	}
+	defer f.returnConnectionToPool("Walk", client)
 	walker := client.Walk(prefix)
 	for walker.Next() {
 		if err := walker.Err(); err != nil {
@@ -160,7 +161,7 @@ func (f *FTP) Walk(ftpPath string, recursive bool, process func(RemoteFile) erro
 		if err := process(&ftpFile{
 			size:         int64(entry.Size),
 			lastModified: entry.Time,
-			name:         strings.Trim(walker.Path(), prefix),
+			name:         strings.TrimPrefix(walker.Path(), prefix),
 		}); err != nil {
 			return err
 		}
