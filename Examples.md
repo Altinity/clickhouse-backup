@@ -279,7 +279,7 @@ spec:
       targetPort: minio
 ```
 
-Also, you can apply CronJob to run clickouse-backup actions by schedule
+Also, you can apply CronJob to run `clickhouse-backup` actions by schedule
 ```yaml
 apiVersion: batch/v1
 kind: CronJob
@@ -299,7 +299,7 @@ spec:
           restartPolicy: Never
           containers:
             - name: run-backup-cron
-              image: yandex/clickhouse-client:latest
+              image: clickhouse/clickhouse-client:latest
               imagePullPolicy: IfNotPresent
               env:
                 # use first replica in each shard, use `kubectl get svc | grep test-backups`
@@ -311,42 +311,64 @@ spec:
                   value: backup
                 - name: BACKUP_PASSWORD
                   value: "backup_password"
+                # change to 1, if you want make full backup only in $FULL_BACKUP_WEEKDAY (1 - Mon, 7 - Sun)   
+                - name: MAKE_INCREMENT_BACKUP
+                  value: "1"
+                - name: FULL_BACKUP_WEEKDAY
+                  value: "1"
               command:
                 - bash
                 - -ec
                 - CLICKHOUSE_SERVICES=$(echo $CLICKHOUSE_SERVICES | tr "," " ");
                   BACKUP_DATE=$(date +%Y-%m-%d-%H-%M-%S);
-                  BACKUP_NAME="full-$BACKUP_DATE";
+                  declare -A BACKUP_NAMES;
+                  declare -A DIFF_FROM;
                   if [[ "" != "$BACKUP_PASSWORD" ]]; then
                     BACKUP_PASSWORD="--password=$BACKUP_PASSWORD";
                   fi;
                   for SERVER in $CLICKHOUSE_SERVICES; do
-                    echo "create $BACKUP_NAME on $SERVER";
-                    clickhouse-client --echo -mn -q "INSERT INTO system.backup_actions(command) VALUES('create ${SERVER}-${BACKUP_NAME}')" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD;
+                    if [[ "1" == "$MAKE_INCREMENT_BACKUP" ]]; then
+                      LAST_FULL_BACKUP=$(clickhouse-client -q "SELECT name FROM system.backup_list WHERE location='remote' AND name LIKE '%full%' AND desc NOT LIKE 'broken%' ORDER BY created DESC LIMIT 1 FORMAT TabSeparatedRaw" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD);
+                      PREV_BACKUP_NAME=$(clickhouse-client -q "SELECT name FROM system.backup_list WHERE location='remote' AND desc NOT LIKE 'broken%' ORDER BY created DESC LIMIT 1 FORMAT TabSeparatedRaw" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD);
+                      DIFF_FROM[$SERVER]="";
+                      if [[ "$FULL_BACKUP_WEEKDAY" == "$(date +%u)" || "" == "$PREV_BACKUP_NAME" || "" == "$LAST_FULL_BACKUP" ]]; then
+                        BACKUP_NAMES[$SERVER]="full-$BACKUP_DATE";
+                      else
+                        BACKUP_NAMES[$SERVER]="increment-$BACKUP_DATE";
+                        DIFF_FROM[$SERVER]="--diff-from-remote=$PREV_BACKUP_NAME";
+                      fi                   
+                    else 
+                      BACKUP_NAMES[$SERVER]="full-$BACKUP_DATE"; 
+                    fi;
+                    echo "set backup name on $SERVER = ${BACKUP_NAMES[$SERVER]}";
                   done;
                   for SERVER in $CLICKHOUSE_SERVICES; do
-                    while [[ "in progress" == $(clickhouse-client -mn -q "SELECT status FROM system.backup_actions WHERE command='create ${SERVER}-${BACKUP_NAME}'" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD) ]]; do
-                      echo "still in progress $BACKUP_NAME on $SERVER";
+                    echo "create ${BACKUP_NAMES[$SERVER]} on $SERVER";
+                    clickhouse-client --echo -mn -q "INSERT INTO system.backup_actions(command) VALUES('create ${SERVER}-${BACKUP_NAMES[$SERVER]}')" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD;
+                  done;
+                  for SERVER in $CLICKHOUSE_SERVICES; do
+                    while [[ "in progress" == $(clickhouse-client -mn -q "SELECT status FROM system.backup_actions WHERE command='create ${SERVER}-${BACKUP_NAMES[$SERVER]}'" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD) ]]; do
+                      echo "still in progress ${BACKUP_NAMES[$SERVER]} on $SERVER";
                       sleep 1;
                     done;
-                    if [[ "success" != $(clickhouse-client -mn -q "SELECT status FROM system.backup_actions WHERE command='create ${SERVER}-${BACKUP_NAME}'" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD) ]]; then
-                      echo "error create $BACKUP_NAME on $SERVER";
-                      clickhouse-client -mn --echo -q "SELECT status,error FROM system.backup_actions WHERE command='create ${SERVER}-${BACKUP_NAME}'" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD;
+                    if [[ "success" != $(clickhouse-client -mn -q "SELECT status FROM system.backup_actions WHERE command='create ${SERVER}-${BACKUP_NAMES[$SERVER]}'" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD) ]]; then
+                      echo "error create ${BACKUP_NAMES[$SERVER]} on $SERVER";
+                      clickhouse-client -mn --echo -q "SELECT status,error FROM system.backup_actions WHERE command='create ${SERVER}-${BACKUP_NAMES[$SERVER]}'" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD;
                       exit 1;
                     fi;
                   done;
                   for SERVER in $CLICKHOUSE_SERVICES; do
-                    echo "upload $BACKUP_NAME on $SERVER";
-                    clickhouse-client --echo -mn -q "INSERT INTO system.backup_actions(command) VALUES('upload ${SERVER}-${BACKUP_NAME}')" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD;
+                    echo "upload ${DIFF_FROM[$SERVER]} ${BACKUP_NAMES[$SERVER]} on $SERVER";
+                    clickhouse-client --echo -mn -q "INSERT INTO system.backup_actions(command) VALUES('upload ${DIFF_FROM[$SERVER]} ${SERVER}-${BACKUP_NAMES[$SERVER]}')" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD;
                   done;
                   for SERVER in $CLICKHOUSE_SERVICES; do
-                    while [[ "in progress" == $(clickhouse-client -mn -q "SELECT status FROM system.backup_actions WHERE command='upload ${SERVER}-${BACKUP_NAME}'" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD) ]]; do
-                      echo "upload still in progress $BACKUP_NAME on $SERVER";
+                    while [[ "in progress" == $(clickhouse-client -mn -q "SELECT status FROM system.backup_actions WHERE command='upload ${DIFF_FROM[$SERVER]} ${SERVER}-${BACKUP_NAMES[$SERVER]}'" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD) ]]; do
+                      echo "upload still in progress ${BACKUP_NAMES[$SERVER]} on $SERVER";
                       sleep 5;
                     done;
-                    if [[ "success" != $(clickhouse-client -mn -q "SELECT status FROM system.backup_actions WHERE command='upload ${SERVER}-${BACKUP_NAME}'" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD) ]]; then
-                      echo "error $BACKUP_NAME on $SERVER";
-                      clickhouse-client -mn --echo -q "SELECT status,error FROM system.backup_actions WHERE command='upload ${SERVER}-${BACKUP_NAME}'" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD;
+                    if [[ "success" != $(clickhouse-client -mn -q "SELECT status FROM system.backup_actions WHERE command='upload ${DIFF_FROM[$SERVER]} ${SERVER}-${BACKUP_NAMES[$SERVER]}'" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD) ]]; then
+                      echo "error ${BACKUP_NAMES[$SERVER]} on $SERVER";
+                      clickhouse-client -mn --echo -q "SELECT status,error FROM system.backup_actions WHERE command='upload ${DIFF_FROM[$SERVER]} ${SERVER}-${BACKUP_NAMES[$SERVER]}'" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD;
                       exit 1;
                     fi;
                   done;
