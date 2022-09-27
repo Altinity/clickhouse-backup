@@ -128,8 +128,8 @@ services:
       - ./cluster.xml:/etc/clickhouse-server/config.d/cluster.xml
       - ./storage_configuration.sh:/docker-entrypoint-initdb.d/storage_configuration.sh
 # uncomment only when you need clickhouse logs
-      - ./clickhouse-server.log:/var/log/clickhouse-server/clickhouse-server.log
-      - ./clickhouse-server.err.log:/var/log/clickhouse-server/clickhouse-server.err.log
+#      - ./clickhouse-server.log:/var/log/clickhouse-server/clickhouse-server.log
+#      - ./clickhouse-server.err.log:/var/log/clickhouse-server/clickhouse-server.err.log
 # uncomment only for local debug
       - ./install_delve.sh:/tmp/install_delve.sh
     ports:
