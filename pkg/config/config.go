@@ -49,6 +49,9 @@ type GeneralConfig struct {
 	UploadByPart           bool              `yaml:"upload_by_part" envconfig:"UPLOAD_BY_PART"`
 	DownloadByPart         bool              `yaml:"download_by_part" envconfig:"DOWNLOAD_BY_PART"`
 	RestoreDatabaseMapping map[string]string `yaml:"restore_database_mapping" envconfig:"RESTORE_DATABASE_MAPPING"`
+	RetriesOnFailure       int               `yaml:"retries_on_failure" envconfig:"RETRIES_ON_FAILURE"`
+	RetriesPause           string            `yaml:"upload_retries_pause" envconfig:"RETRIES_PAUSE"`
+	RetriesDuration        time.Duration
 }
 
 // GCSConfig - GCS settings section
@@ -346,6 +349,15 @@ func ValidateConfig(cfg *Config) error {
 	} else {
 		return fmt.Errorf("empty custom command timeout")
 	}
+	if cfg.General.RetriesPause != "" {
+		if duration, err := time.ParseDuration(cfg.General.RetriesPause); err != nil {
+			return fmt.Errorf("invalid retries pause: %v", err)
+		} else {
+			cfg.General.RetriesDuration = duration
+		}
+	} else {
+		return fmt.Errorf("empty retries pause")
+	}
 	return nil
 }
 
@@ -380,6 +392,9 @@ func DefaultConfig() *Config {
 			RestoreSchemaOnCluster: "",
 			UploadByPart:           true,
 			DownloadByPart:         true,
+			RetriesOnFailure:       3,
+			RetriesPause:           "100ms",
+			RetriesDuration:        100 * time.Millisecond,
 		},
 		ClickHouse: ClickHouseConfig{
 			Username: "default",

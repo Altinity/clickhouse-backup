@@ -1,3 +1,8 @@
+# v2.1.0
+IMPROVEMENTS
+- improve kubernetes example for adjust incremental backup, fix [523](https://github.com/AlexAkulov/clickhouse-backup/issues/523)
+- add storage independent retries policy, fix [397](https://github.com/AlexAkulov/clickhouse-backup/issues/397)
+
 # v2.0.0
 IMPROVEMENTS
 - implements `remote_storage: custom`, which allow us to adopt any external backup system like restic, kopia, rsync, rclone etc. fix [383](https://github.com/AlexAkulov/clickhouse-backup/issues/383)

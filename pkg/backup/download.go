@@ -10,6 +10,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/custom"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/filesystemhelper"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/resumable"
+	"github.com/eapache/go-resiliency/retrier"
 	"io"
 	"os"
 	"path"
@@ -46,8 +47,11 @@ func legacyDownload(ctx context.Context, cfg *config.Config, defaultDataPath, ba
 	if err := bd.Connect(); err != nil {
 		return err
 	}
-	if err := bd.DownloadCompressedStream(ctx, backupName,
-		path.Join(defaultDataPath, "backup", backupName)); err != nil {
+	retry := retrier.New(retrier.ConstantBackoff(cfg.General.RetriesOnFailure, cfg.General.RetriesDuration), nil)
+	err = retry.Run(func() error {
+		return bd.DownloadCompressedStream(ctx, backupName, path.Join(defaultDataPath, "backup", backupName))
+	})
+	if err != nil {
 		return err
 	}
 	log.Info("done")
@@ -313,18 +317,27 @@ func (b *Backuper) downloadTableMetadata(backupName string, disks []clickhouse.D
 			}
 			continue
 		}
-		tmReader, err := b.dst.GetFileReader(remoteMetadataFile)
+		var tmBody []byte
+		retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
+		err := retry.Run(func() error {
+			tmReader, err := b.dst.GetFileReader(remoteMetadataFile)
+			if err != nil {
+				return err
+			}
+			tmBody, err = io.ReadAll(tmReader)
+			if err != nil {
+				return err
+			}
+			err = tmReader.Close()
+			if err != nil {
+				return err
+			}
+			return nil
+		})
 		if err != nil {
 			return nil, 0, err
 		}
-		tmBody, err := io.ReadAll(tmReader)
-		if err != nil {
-			return nil, 0, err
-		}
-		err = tmReader.Close()
-		if err != nil {
-			return nil, 0, err
-		}
+
 		if err = os.MkdirAll(path.Dir(localMetadataFile), 0755); err != nil {
 			return nil, 0, err
 		}
@@ -380,7 +393,11 @@ func (b *Backuper) downloadBackupRelatedDir(remoteBackup storage.Backup, prefix 
 		apexLog.Debugf("%s not exists on remote storage, skip download", remoteFile)
 		return 0, nil
 	}
-	if err = b.dst.DownloadCompressedStream(context.Background(), remoteFile, localDir); err != nil {
+	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
+	err = retry.Run(func() error {
+		return b.dst.DownloadCompressedStream(context.Background(), remoteFile, localDir)
+	})
+	if err != nil {
 		return 0, err
 	}
 	if b.resume {
@@ -423,7 +440,11 @@ func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table
 					if b.resume && b.resumableState.IsAlreadyProcessed(tableRemoteFile) {
 						return nil
 					}
-					if err := b.dst.DownloadCompressedStream(ctx, tableRemoteFile, tableLocalDir); err != nil {
+					retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
+					err := retry.Run(func() error {
+						return b.dst.DownloadCompressedStream(ctx, tableRemoteFile, tableLocalDir)
+					})
+					if err != nil {
 						return err
 					}
 					if b.resume {
@@ -465,7 +486,7 @@ func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table
 					if b.resume && b.resumableState.IsAlreadyProcessed(partRemotePath) {
 						return nil
 					}
-					if err := b.dst.DownloadPath(0, partRemotePath, partLocalPath); err != nil {
+					if err := b.dst.DownloadPath(0, partRemotePath, partLocalPath, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration); err != nil {
 						return err
 					}
 					if b.resume {
@@ -594,13 +615,17 @@ func (b *Backuper) downloadDiffRemoteFile(ctx context.Context, diffRemoteFilesLo
 		namedLock.Lock()
 		diffRemoteFilesLock.Unlock()
 		if path.Ext(tableRemoteFile) != "" {
-			if err := b.dst.DownloadCompressedStream(ctx, tableRemoteFile, tableLocalDir); err != nil {
+			retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
+			err := retry.Run(func() error {
+				return b.dst.DownloadCompressedStream(ctx, tableRemoteFile, tableLocalDir)
+			})
+			if err != nil {
 				log.Warnf("DownloadCompressedStream %s -> %s return error: %v", tableRemoteFile, tableLocalDir, err)
 				return err
 			}
 		} else {
 			// remoteFile could be a directory
-			if err := b.dst.DownloadPath(0, tableRemoteFile, tableLocalDir); err != nil {
+			if err := b.dst.DownloadPath(0, tableRemoteFile, tableLocalDir, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration); err != nil {
 				log.Warnf("DownloadPath %s -> %s return error: %v", tableRemoteFile, tableLocalDir, err)
 				return err
 			}
@@ -811,34 +836,41 @@ func (b *Backuper) downloadSingleBackupFile(remoteFile string, localFile string,
 	if b.resume && b.resumableState.IsAlreadyProcessed(remoteFile) {
 		return nil
 	}
-	remoteReader, err := b.dst.GetFileReader(remoteFile)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		err = remoteReader.Close()
+	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
+	err := retry.Run(func() error {
+		remoteReader, err := b.dst.GetFileReader(remoteFile)
 		if err != nil {
-			apexLog.Warnf("can't close remoteReader %s", remoteFile)
+			return err
 		}
-	}()
-	localWriter, err := os.OpenFile(localFile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0640)
-	if err != nil {
-		return err
-	}
-
-	defer func() {
-		err = localWriter.Close()
+		defer func() {
+			err = remoteReader.Close()
+			if err != nil {
+				apexLog.Warnf("can't close remoteReader %s", remoteFile)
+			}
+		}()
+		localWriter, err := os.OpenFile(localFile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0640)
 		if err != nil {
-			apexLog.Warnf("can't close localWriter %s", localFile)
+			return err
 		}
-	}()
 
-	_, err = io.CopyBuffer(localWriter, remoteReader, nil)
+		defer func() {
+			err = localWriter.Close()
+			if err != nil {
+				apexLog.Warnf("can't close localWriter %s", localFile)
+			}
+		}()
+
+		_, err = io.CopyBuffer(localWriter, remoteReader, nil)
+		if err != nil {
+			return err
+		}
+
+		if err = filesystemhelper.Chown(localFile, b.ch, disks, false); err != nil {
+			return err
+		}
+		return nil
+	})
 	if err != nil {
-		return err
-	}
-
-	if err = filesystemhelper.Chown(localFile, b.ch, disks, false); err != nil {
 		return err
 	}
 	if b.resume {

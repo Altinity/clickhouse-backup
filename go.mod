@@ -11,6 +11,7 @@ require (
 	github.com/aws/aws-sdk-go v1.44.87
 	github.com/djherbis/buffer v1.2.0
 	github.com/djherbis/nio/v3 v3.0.1
+	github.com/eapache/go-resiliency v1.3.0
 	github.com/go-logfmt/logfmt v0.5.1
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/google/uuid v1.3.0

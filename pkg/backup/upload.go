@@ -8,6 +8,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/custom"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/resumable"
+	"github.com/eapache/go-resiliency/retrier"
 	"io"
 	"os"
 	"path"
@@ -185,7 +186,11 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	}
 	remoteBackupMetaFile := path.Join(backupName, "metadata.json")
 	if !b.resume || (b.resume && !b.resumableState.IsAlreadyProcessed(remoteBackupMetaFile)) {
-		if err = b.dst.PutFile(remoteBackupMetaFile, io.NopCloser(bytes.NewReader(newBackupMetadataBody))); err != nil {
+		retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
+		err := retry.Run(func() error {
+			return b.dst.PutFile(remoteBackupMetaFile, io.NopCloser(bytes.NewReader(newBackupMetadataBody)))
+		})
+		if err != nil {
 			return fmt.Errorf("can't upload %s: %v", remoteBackupMetaFile, err)
 		}
 		if b.resume {
@@ -227,7 +232,11 @@ func (b *Backuper) uploadSingleBackupFile(localFile, remoteFile string) error {
 			apexLog.Warnf("can't close %v: %v", f, err)
 		}
 	}()
-	if err = b.dst.PutFile(remoteFile, f); err != nil {
+	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
+	err = retry.Run(func() error {
+		return b.dst.PutFile(remoteFile, f)
+	})
+	if err != nil {
 		return fmt.Errorf("can't upload %s: %v", remoteFile, err)
 	}
 	if b.resume {
@@ -370,8 +379,13 @@ func (b *Backuper) uploadAndArchiveBackupRelatedDir(localBackupRelatedDir, local
 		localFiles[i] = strings.Replace(localFiles[i], localBackupRelatedDir, "", 1)
 	}
 
-	if err := b.dst.UploadCompressedStream(localBackupRelatedDir, localFiles, remoteFile); err != nil {
-		return 0, fmt.Errorf("can't RBAC upload: %v", err)
+	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
+	err = retry.Run(func() error {
+		return b.dst.UploadCompressedStream(localBackupRelatedDir, localFiles, remoteFile)
+	})
+
+	if err != nil {
+		return 0, fmt.Errorf("can't RBAC or config upload: %v", err)
 	}
 	remoteUploaded, err := b.dst.StatFile(remoteFile)
 	if err != nil {
@@ -433,7 +447,7 @@ breakByError:
 						return nil
 					}
 					apexLog.Debugf("start upload %d files to %s", len(partFiles), remotePath)
-					if err := b.dst.UploadPath(0, backupPath, partFiles, remotePath); err != nil {
+					if err := b.dst.UploadPath(0, backupPath, partFiles, remotePath, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration); err != nil {
 						apexLog.Errorf("UploadPath return error: %v", err)
 						return fmt.Errorf("can't upload: %v", err)
 					}
@@ -454,7 +468,11 @@ breakByError:
 						return nil
 					}
 					apexLog.Debugf("start upload %d files to %s", len(localFiles), remoteDataFile)
-					if err := b.dst.UploadCompressedStream(backupPath, localFiles, remoteDataFile); err != nil {
+					retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
+					err := retry.Run(func() error {
+						return b.dst.UploadCompressedStream(backupPath, localFiles, remoteDataFile)
+					})
+					if err != nil {
 						apexLog.Errorf("UploadCompressedStream return error: %v", err)
 						return fmt.Errorf("can't upload: %v", err)
 					}
@@ -500,7 +518,11 @@ func (b *Backuper) uploadTableMetadataRegular(backupName string, tableMetadata m
 	if b.resume && b.resumableState.IsAlreadyProcessed(remoteTableMetaFile) {
 		return int64(len(content)), nil
 	}
-	if err := b.dst.PutFile(remoteTableMetaFile, io.NopCloser(bytes.NewReader(content))); err != nil {
+	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
+	err = retry.Run(func() error {
+		return b.dst.PutFile(remoteTableMetaFile, io.NopCloser(bytes.NewReader(content)))
+	})
+	if err != nil {
 		return 0, fmt.Errorf("can't upload: %v", err)
 	}
 	if b.resume {
@@ -524,7 +546,11 @@ func (b *Backuper) uploadTableMetadataEmbedded(backupName string, tableMetadata 
 			apexLog.Warnf("can't close %v: %v", localReader, err)
 		}
 	}()
-	if err := b.dst.PutFile(remoteTableMetaFile, localReader); err != nil {
+	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
+	err = retry.Run(func() error {
+		return b.dst.PutFile(remoteTableMetaFile, localReader)
+	})
+	if err != nil {
 		return 0, fmt.Errorf("can't embeeded upload metadata: %v", err)
 	}
 	if b.resume {

@@ -5,6 +5,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
 	"github.com/apex/log"
+	"github.com/eapache/go-resiliency/retrier"
 	"time"
 )
 
@@ -38,7 +39,10 @@ func Upload(cfg *config.Config, backupName, diffFrom, diffFromRemote, tablePatte
 		"schema":           schemaOnly,
 	}
 	args := ApplyCommandTemplate(cfg.Custom.UploadCommand, templateData)
-	err := utils.ExecCmd(cfg.Custom.CommandTimeoutDuration, args[0], args[1:]...)
+	retry := retrier.New(retrier.ConstantBackoff(cfg.General.RetriesOnFailure, cfg.General.RetriesDuration), nil)
+	err := retry.Run(func() error {
+		return utils.ExecCmd(cfg.Custom.CommandTimeoutDuration, args[0], args[1:]...)
+	})
 	if err == nil {
 		log.
 			WithField("operation", "upload_custom").

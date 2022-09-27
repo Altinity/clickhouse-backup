@@ -5,6 +5,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
 	"github.com/apex/log"
+	"github.com/eapache/go-resiliency/retrier"
 	"time"
 )
 
@@ -32,7 +33,10 @@ func Download(cfg *config.Config, backupName string, tablePattern string, partit
 		"schema":        schemaOnly,
 	}
 	args := ApplyCommandTemplate(cfg.Custom.DownloadCommand, templateData)
-	err := utils.ExecCmd(cfg.Custom.CommandTimeoutDuration, args[0], args[1:]...)
+	retry := retrier.New(retrier.ConstantBackoff(cfg.General.RetriesOnFailure, cfg.General.RetriesDuration), nil)
+	err := retry.Run(func() error {
+		return utils.ExecCmd(cfg.Custom.CommandTimeoutDuration, args[0], args[1:]...)
+	})
 	if err == nil {
 		log.
 			WithField("operation", "download_custom").

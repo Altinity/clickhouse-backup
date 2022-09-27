@@ -9,6 +9,7 @@ import (
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/progressbar"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
+	"github.com/eapache/go-resiliency/retrier"
 	"io"
 	"os"
 	"path"
@@ -462,7 +463,7 @@ func (bd *BackupDestination) UploadCompressedStream(baseLocalPath string, files 
 	return g.Wait()
 }
 
-func (bd *BackupDestination) DownloadPath(size int64, remotePath string, localPath string) error {
+func (bd *BackupDestination) DownloadPath(size int64, remotePath string, localPath string, RetriesOnFailure int, RetriesDuration time.Duration) error {
 	var bar *progressbar.Bar
 	if !bd.disableProgressBar {
 		totalBytes := size
@@ -482,36 +483,42 @@ func (bd *BackupDestination) DownloadPath(size int64, remotePath string, localPa
 		"operation": "download",
 	})
 	return bd.Walk(remotePath, true, func(f RemoteFile) error {
-		// TODO: return err break download, think about make Walk error handle and retry
 		if bd.Kind() == "SFTP" && (f.Name() == "." || f.Name() == "..") {
 			return nil
 		}
-		r, err := bd.GetFileReader(path.Join(remotePath, f.Name()))
+		retry := retrier.New(retrier.ConstantBackoff(RetriesOnFailure, RetriesDuration), nil)
+		err := retry.Run(func() error {
+			r, err := bd.GetFileReader(path.Join(remotePath, f.Name()))
+			if err != nil {
+				log.Error(err.Error())
+				return err
+			}
+			dstFilePath := path.Join(localPath, f.Name())
+			dstDirPath, _ := path.Split(dstFilePath)
+			if err := os.MkdirAll(dstDirPath, 0750); err != nil {
+				log.Error(err.Error())
+				return err
+			}
+			dst, err := os.Create(dstFilePath)
+			if err != nil {
+				log.Error(err.Error())
+				return err
+			}
+			if _, err := io.CopyBuffer(dst, r, nil); err != nil {
+				log.Error(err.Error())
+				return err
+			}
+			if err := dst.Close(); err != nil {
+				log.Error(err.Error())
+				return err
+			}
+			if err := r.Close(); err != nil {
+				log.Error(err.Error())
+				return err
+			}
+			return nil
+		})
 		if err != nil {
-			log.Error(err.Error())
-			return err
-		}
-		dstFilePath := path.Join(localPath, f.Name())
-		dstDirPath, _ := path.Split(dstFilePath)
-		if err := os.MkdirAll(dstDirPath, 0750); err != nil {
-			log.Error(err.Error())
-			return err
-		}
-		dst, err := os.Create(dstFilePath)
-		if err != nil {
-			log.Error(err.Error())
-			return err
-		}
-		if _, err := io.CopyBuffer(dst, r, nil); err != nil {
-			log.Error(err.Error())
-			return err
-		}
-		if err := dst.Close(); err != nil {
-			log.Error(err.Error())
-			return err
-		}
-		if err := r.Close(); err != nil {
-			log.Error(err.Error())
 			return err
 		}
 		if !bd.disableProgressBar {
@@ -521,7 +528,7 @@ func (bd *BackupDestination) DownloadPath(size int64, remotePath string, localPa
 	})
 }
 
-func (bd *BackupDestination) UploadPath(size int64, baseLocalPath string, files []string, remotePath string) error {
+func (bd *BackupDestination) UploadPath(size int64, baseLocalPath string, files []string, remotePath string, RetriesOnFailure int, RetriesDuration time.Duration) error {
 	var bar *progressbar.Bar
 	if !bd.disableProgressBar {
 		totalBytes := size
@@ -545,7 +552,11 @@ func (bd *BackupDestination) UploadPath(size int64, baseLocalPath string, files 
 		if err != nil {
 			return err
 		}
-		if err := bd.PutFile(path.Join(remotePath, filename), f); err != nil {
+		retry := retrier.New(retrier.ConstantBackoff(RetriesOnFailure, RetriesDuration), nil)
+		err = retry.Run(func() error {
+			return bd.PutFile(path.Join(remotePath, filename), f)
+		})
+		if err != nil {
 			return err
 		}
 		fi, err := f.Stat()
