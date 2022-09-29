@@ -8,8 +8,6 @@ don't work for tables which created in `MergeTree(date_column, (primary keys col
    ```
 2. Edit `/var/lib/clickhouse/backup/my_backup/metadata/my_db/my_table.json`, change `query` field, 
    replace MergeTree() to ReplicatedMergeTree() with parameters according to https://clickhouse.com/docs/en/engines/table-engines/mergetree-family/replication/#creating-replicated-tables
-   
-
 3. Drop table in Clickhouse
    ```
    clickhouse-client -q "DROP TABLE my_db.my.table NO DELAY"
@@ -26,16 +24,54 @@ You can create daily backup by clickhouse-backup and sync backup folder to mount
 `rsync -a -H --delete --progress --numeric-ids --update /var/lib/clickhouse/backup/ /mnt/data/clickhouse-backup/` or similar for sync over ssh. In this case rsync will copy only difference between backups.
 
 ## How to move data to another clickhouse server
-See above
+destination server
+```bash
+mkdir -p /var/lib/clickhouse/backups/backup_name
+```
+source server
+```bash
+clickhouse-backup create backup_name
+rsync --rsh=ssh /var/lib/clickhouse/backups/backup_name/ user@dst_server:/var/lib/clickhouse/backups/backup_name
+```
+
+destination server
+```bash
+clickhouse-backup restore --rm backup_name
+```
 
 ## How to reduce number of partitions
 ...
 
 ## How to monitor that backups created and uploaded correctly
 Use services like https://healthchecks.io or https://deadmanssnitch.com.
+Or use `clickhouse-backup server` and prometheus endpoint :7171/metrics, look alerts examples on https://github.com/Altinity/clickhouse-operator/blob/master/deploy/prometheus/prometheus-alert-rules-backup.yaml
 
-## How to backup sharded cluster with Ansible
+## How to make backup / restore sharded cluster 
+### BACKUP
+run only on the first replica for each shard
+```bash
+shard_number=$(clickhouse-client -q "SELECT getMacro('{shard}')")
+clickhouse-backup create_remote shard${shard_number}-backup
+clickhouse-backup delete local shard${shard_number}-backup
+```
+
+### RESTORE
+run on all replicas
+```bash
+shard_number=$(clickhouse-client -q "SELECT getMacro('{shard}')")
+clickhouse-backup restore_remote --rm --schema shard${shard_number}-backup
+clickhouse-backup delete local shard${shard_number}-backup
+```
+after it, run only on the first replica for each shard
+```bash
+shard_number=$(clickhouse-client -q "SELECT getMacro('{shard}')")
+clickhouse-backup restore_remote --rm shard${shard_number}-backup
+clickhouse-backup delete local shard${shard_number}-backup
+```
+
+## How to make backup sharded cluster with Ansible
 On the first day of month full backup will be uploaded and increments on the others days.
+`hosts: clickhouse-cluster` shall be only first replica on each shard
 
 ```yaml
 - hosts: clickhouse-cluster
@@ -74,13 +110,12 @@ On the first day of month full backup will be uploaded and increments on the oth
         - uri: url="https://hc-ping.com/{{ healthchecksio_clickhouse_upload_id }}/fail"
 ```
 
-## How to backup database with several terabytes of data
+## How to make backup database with several terabytes of data
 You can use clickhouse-backup for creating periodical backups and keep it local. It protect you from destructive operations.
-In addition you may create instance of ClickHouse on another DC and have it fresh by clickhouse-copier it protect you from hardware or DC failures.
+In addition, you may create instance of ClickHouse on another DC and have it fresh by clickhouse-copier it protects you from hardware or DC failures.
 
 ## How to use clickhouse-backup in Kubernetes
 Install [clickhouse kubernetes operator](https://github.com/Altinity/clickhouse-operator/) and use following manifest
-
 
 ```yaml
 apiVersion: "clickhouse.altinity.com/v1"
@@ -91,6 +126,7 @@ spec:
    defaults:
       templates:
          podTemplate: clickhouse-backup
+         dataVolumeClaimTemplate: data-volume
    configuration:
       users:
          # use cluster Pod CIDR for more security
@@ -118,6 +154,14 @@ spec:
               shardsCount: 2
               replicasCount: 1
    templates:
+      volumeClaimTemplates:
+         - name: data-volume
+           spec:
+              accessModes:
+                 - ReadWriteOnce
+              resources:
+                 requests:
+                    storage: 10Gi
       podTemplates:
          - name: clickhouse-backup
            metadata:
@@ -181,7 +225,7 @@ spec:
                         value: "true"
                       - name: S3_DEBUG
                         value: "true"
-                    # require to avoid double scraping clickhouse and clickhouse-backup containers
+                      # require to avoid double scraping clickhouse and clickhouse-backup containers
                    ports:
                       - name: backup-rest
                         containerPort: 7171

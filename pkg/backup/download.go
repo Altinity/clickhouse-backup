@@ -5,12 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/custom"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/filesystemhelper"
-	"io/ioutil"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/resumable"
+	"io"
 	"os"
 	"path"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -50,15 +54,17 @@ func legacyDownload(ctx context.Context, cfg *config.Config, defaultDataPath, ba
 	return nil
 }
 
-func (b *Backuper) Download(backupName string, tablePattern string, partitions []string, schemaOnly bool) error {
-	backupName = cleanBackupNameRE.ReplaceAllString(backupName, "")
+func (b *Backuper) Download(backupName string, tablePattern string, partitions []string, schemaOnly, resume bool) error {
+	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
+
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "download",
 	})
 	if b.cfg.General.RemoteStorage == "none" {
-		return fmt.Errorf("remote storage is 'none'")
+		return fmt.Errorf("general->remote_storage shall not be \"none\" for download, change you config or use REMOTE_STORAGE environment variable")
 	}
+	b.resume = resume
 	if backupName == "" {
 		_ = PrintRemoteBackups(b.cfg, "all")
 		return fmt.Errorf("select backup for download")
@@ -69,7 +75,14 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	}
 	for i := range localBackups {
 		if backupName == localBackups[i].BackupName {
-			return ErrBackupIsAlreadyExists
+			if !b.resume {
+				return ErrBackupIsAlreadyExists
+			} else {
+				if strings.Contains(localBackups[i].Tags, "embedded") || b.cfg.General.RemoteStorage == "custom" {
+					return ErrBackupIsAlreadyExists
+				}
+				apexLog.Warnf("%s already exists will try to resume download", backupName)
+			}
 		}
 	}
 	startDownload := time.Now()
@@ -77,6 +90,9 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
 	defer b.ch.Close()
+	if b.cfg.General.RemoteStorage == "custom" {
+		return custom.Download(b.cfg, backupName, tablePattern, partitions, schemaOnly)
+	}
 	if err := b.init(disks); err != nil {
 		return err
 	}
@@ -111,10 +127,10 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		return fmt.Errorf("'%s' is empty backup", backupName)
 	}
 	tablesForDownload := parseTablePatternForDownload(remoteBackup.Tables, tablePattern)
-	tableMetadataForDownload := make([]metadata.TableMetadata, len(tablesForDownload))
+	tableMetadataAfterDownload := make([]metadata.TableMetadata, len(tablesForDownload))
 
 	if !schemaOnly && !b.cfg.General.DownloadByPart && remoteBackup.RequiredBackup != "" {
-		err := b.Download(remoteBackup.RequiredBackup, tablePattern, partitions, schemaOnly)
+		err := b.Download(remoteBackup.RequiredBackup, tablePattern, partitions, schemaOnly, b.resume)
 		if err != nil && err != ErrBackupIsAlreadyExists {
 			return err
 		}
@@ -122,13 +138,21 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 
 	dataSize := uint64(0)
 	metadataSize := uint64(0)
-	err = os.MkdirAll(path.Join(b.DefaultDataPath, "backup", backupName), 0750)
-	if err != nil {
+	b.isEmbedded = strings.Contains(remoteBackup.Tags, "embedded")
+	localBackupDir := path.Join(b.DefaultDataPath, "backup", backupName)
+	if b.isEmbedded {
+		localBackupDir = path.Join(b.EmbeddedBackupDataPath, backupName)
+	}
+	err = os.MkdirAll(localBackupDir, 0750)
+	if err != nil && !resume {
 		return err
 	}
-	partitionsToDownloadMap := filesystemhelper.CreatePartitionsToBackupMap(partitions)
+	if b.resume {
+		b.resumableState = resumable.NewState(b.DefaultDataPath, backupName, "download")
+	}
+	partitionsToDownloadMap, _ := filesystemhelper.CreatePartitionsToBackupMap(partitions)
 
-	log.Debugf("prepare table METADATA concurrent semaphore with concurrency=%d len(tableMetadataForDownload)=%d", b.cfg.General.DownloadConcurrency, len(tableMetadataForDownload))
+	log.Debugf("prepare table METADATA concurrent semaphore with concurrency=%d len(tablesForDownload)=%d", b.cfg.General.DownloadConcurrency, len(tablesForDownload))
 	s := semaphore.NewWeighted(int64(b.cfg.General.DownloadConcurrency))
 	g, ctx := errgroup.WithContext(context.Background())
 	for i, t := range tablesForDownload {
@@ -141,11 +165,11 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		tableTitle := t
 		g.Go(func() error {
 			defer s.Release(1)
-			downloadedMetadata, size, err := b.downloadTableMetadata(backupName, log, tableTitle, schemaOnly, partitionsToDownloadMap)
+			downloadedMetadata, size, err := b.downloadTableMetadata(backupName, disks, log, tableTitle, schemaOnly, partitionsToDownloadMap)
 			if err != nil {
 				return err
 			}
-			tableMetadataForDownload[idx] = *downloadedMetadata
+			tableMetadataAfterDownload[idx] = *downloadedMetadata
 			atomic.AddUint64(&metadataSize, size)
 			return nil
 		})
@@ -154,19 +178,19 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		return fmt.Errorf("one of Download Metadata go-routine return error: %v", err)
 	}
 	if !schemaOnly {
-		for _, t := range tableMetadataForDownload {
+		for _, t := range tableMetadataAfterDownload {
 			for disk := range t.Parts {
-				if _, diskExists := b.DiskToPathMap[disk]; !diskExists {
+				if _, diskExists := b.DiskToPathMap[disk]; !diskExists && disk != b.cfg.ClickHouse.EmbeddedBackupDisk {
 					b.DiskToPathMap[disk] = b.DiskToPathMap["default"]
 					log.Warnf("table '%s.%s' require disk '%s' that not found in clickhouse table system.disks, you can add nonexistent disks to `disk_mapping` in  `clickhouse` config section, data will download to %s", t.Database, t.Table, disk, b.DiskToPathMap["default"])
 				}
 			}
 		}
-		log.Debugf("prepare table SHADOW concurrent semaphore with concurrency=%d len(tableMetadataForDownload)=%d", b.cfg.General.DownloadConcurrency, len(tableMetadataForDownload))
+		log.Debugf("prepare table SHADOW concurrent semaphore with concurrency=%d len(tableMetadataAfterDownload)=%d", b.cfg.General.DownloadConcurrency, len(tableMetadataAfterDownload))
 		s := semaphore.NewWeighted(int64(b.cfg.General.DownloadConcurrency))
 		g, ctx := errgroup.WithContext(context.Background())
 
-		for i, tableMetadata := range tableMetadataForDownload {
+		for i, tableMetadata := range tableMetadataAfterDownload {
 			if tableMetadata.MetadataOnly {
 				continue
 			}
@@ -179,14 +203,14 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			g.Go(func() error {
 				defer s.Release(1)
 				start := time.Now()
-				if err := b.downloadTableData(remoteBackup.BackupMetadata, tableMetadataForDownload[idx]); err != nil {
+				if err := b.downloadTableData(remoteBackup.BackupMetadata, tableMetadataAfterDownload[idx]); err != nil {
 					return err
 				}
 				log.
 					WithField("operation", "download_data").
-					WithField("table", fmt.Sprintf("%s.%s", tableMetadataForDownload[idx].Database, tableMetadataForDownload[idx].Table)).
+					WithField("table", fmt.Sprintf("%s.%s", tableMetadataAfterDownload[idx].Database, tableMetadataAfterDownload[idx].Table)).
 					WithField("duration", utils.HumanizeDuration(time.Since(start))).
-					WithField("size", utils.FormatBytes(tableMetadataForDownload[idx].TotalBytes)).
+					WithField("size", utils.FormatBytes(tableMetadataAfterDownload[idx].TotalBytes)).
 					Info("done")
 				return nil
 			})
@@ -195,20 +219,32 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			return fmt.Errorf("one of Download go-routine return error: %v", err)
 		}
 	}
-	rbacSize, err := b.downloadRBACData(remoteBackup)
-	if err != nil {
-		return fmt.Errorf("download RBAC error: %v", err)
-	}
+	var rbacSize, configSize uint64
+	if !b.isEmbedded {
+		rbacSize, err = b.downloadRBACData(remoteBackup)
+		if err != nil {
+			return fmt.Errorf("download RBAC error: %v", err)
+		}
 
-	configSize, err := b.downloadConfigData(remoteBackup)
-	if err != nil {
-		return fmt.Errorf("download CONFIGS error: %v", err)
+		configSize, err = b.downloadConfigData(remoteBackup)
+		if err != nil {
+			return fmt.Errorf("download CONFIGS error: %v", err)
+		}
 	}
 
 	backupMetadata := remoteBackup.BackupMetadata
 	backupMetadata.Tables = tablesForDownload
 	backupMetadata.DataSize = dataSize
 	backupMetadata.MetadataSize = metadataSize
+
+	if b.isEmbedded {
+		localClickHouseBackupFile := path.Join(b.EmbeddedBackupDataPath, backupName, ".backup")
+		remoteClickHouseBackupFile := path.Join(backupName, ".backup")
+		if err = b.downloadSingleBackupFile(remoteClickHouseBackupFile, localClickHouseBackupFile, disks); err != nil {
+			return err
+		}
+	}
+
 	backupMetadata.CompressedSize = 0
 	backupMetadata.DataFormat = ""
 	backupMetadata.RequiredBackup = ""
@@ -216,9 +252,24 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	backupMetadata.RBACSize = rbacSize
 
 	backupMetafileLocalPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata.json")
+	if b.isEmbedded {
+		backupMetafileLocalPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata.json")
+	}
 	if err := backupMetadata.Save(backupMetafileLocalPath); err != nil {
 		return err
 	}
+	for _, disk := range disks {
+		if disk.IsBackup {
+			if err = filesystemhelper.Chown(path.Join(disk.Path, backupName), b.ch, disks, true); err != nil {
+				return err
+			}
+		}
+	}
+
+	if b.resume {
+		b.resumableState.Close()
+	}
+
 	log.
 		WithField("duration", utils.HumanizeDuration(time.Since(startDownload))).
 		WithField("size", utils.FormatBytes(dataSize+metadataSize+rbacSize+configSize)).
@@ -232,36 +283,75 @@ func (b *Backuper) downloadTableMetadataIfNotExists(backupName string, log *apex
 	if _, err := tm.Load(metadataLocalFile); err == nil {
 		return tm, nil
 	}
-	tm, _, err := b.downloadTableMetadata(backupName, log.WithFields(apexLog.Fields{"operation": "downloadTableMetadataIfNotExists", "backupName": backupName, "table_metadata_diff": fmt.Sprintf("%s.%s", tableTitle.Database, tableTitle.Table)}), tableTitle, false, nil)
+	tm, _, err := b.downloadTableMetadata(backupName, nil, log.WithFields(apexLog.Fields{"operation": "downloadTableMetadataIfNotExists", "backupName": backupName, "table_metadata_diff": fmt.Sprintf("%s.%s", tableTitle.Database, tableTitle.Table)}), tableTitle, false, nil)
 	return tm, err
 }
 
-func (b *Backuper) downloadTableMetadata(backupName string, log *apexLog.Entry, tableTitle metadata.TableTitle, schemaOnly bool, partitionsFilter common.EmptyMap) (*metadata.TableMetadata, uint64, error) {
+func (b *Backuper) downloadTableMetadata(backupName string, disks []clickhouse.Disk, log *apexLog.Entry, tableTitle metadata.TableTitle, schemaOnly bool, partitionsFilter common.EmptyMap) (*metadata.TableMetadata, uint64, error) {
 	start := time.Now()
 	size := uint64(0)
-	remoteTableMetadata := path.Join(backupName, "metadata", common.TablePathEncode(tableTitle.Database), fmt.Sprintf("%s.json", common.TablePathEncode(tableTitle.Table)))
-	tmReader, err := b.dst.GetFileReader(remoteTableMetadata)
-	if err != nil {
-		return nil, 0, err
-	}
-	tmBody, err := ioutil.ReadAll(tmReader)
-	if err != nil {
-		return nil, 0, err
-	}
-	err = tmReader.Close()
-	if err != nil {
-		return nil, 0, err
+	metadataFiles := map[string]string{}
+	remoteMedataPrefix := path.Join(backupName, "metadata", common.TablePathEncode(tableTitle.Database), common.TablePathEncode(tableTitle.Table))
+	metadataFiles[fmt.Sprintf("%s.json", remoteMedataPrefix)] = path.Join(b.DefaultDataPath, "backup", backupName, "metadata", common.TablePathEncode(tableTitle.Database), fmt.Sprintf("%s.json", common.TablePathEncode(tableTitle.Table)))
+
+	if b.isEmbedded {
+		metadataFiles[fmt.Sprintf("%s.sql", remoteMedataPrefix)] = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata", common.TablePathEncode(tableTitle.Database), fmt.Sprintf("%s.sql", common.TablePathEncode(tableTitle.Table)))
+		metadataFiles[fmt.Sprintf("%s.json", remoteMedataPrefix)] = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata", common.TablePathEncode(tableTitle.Database), fmt.Sprintf("%s.json", common.TablePathEncode(tableTitle.Table)))
 	}
 	var tableMetadata metadata.TableMetadata
-	if err = json.Unmarshal(tmBody, &tableMetadata); err != nil {
-		return nil, 0, err
-	}
-	filterPartsByPartitionsFilter(tableMetadata, partitionsFilter)
-	// save metadata
-	metadataLocalFile := path.Join(b.DefaultDataPath, "backup", backupName, "metadata", common.TablePathEncode(tableTitle.Database), fmt.Sprintf("%s.json", common.TablePathEncode(tableTitle.Table)))
-	size, err = tableMetadata.Save(metadataLocalFile, schemaOnly)
-	if err != nil {
-		return nil, 0, err
+	for remoteMetadataFile, localMetadataFile := range metadataFiles {
+		if b.resume && b.resumableState.IsAlreadyProcessed(localMetadataFile) {
+			if strings.HasSuffix(localMetadataFile, ".json") {
+				tmBody, err := os.ReadFile(localMetadataFile)
+				if err != nil {
+					return nil, 0, err
+				}
+				if err = json.Unmarshal(tmBody, &tableMetadata); err != nil {
+					return nil, 0, err
+				}
+				filterPartsByPartitionsFilter(tableMetadata, partitionsFilter)
+			}
+			continue
+		}
+		tmReader, err := b.dst.GetFileReader(remoteMetadataFile)
+		if err != nil {
+			return nil, 0, err
+		}
+		tmBody, err := io.ReadAll(tmReader)
+		if err != nil {
+			return nil, 0, err
+		}
+		err = tmReader.Close()
+		if err != nil {
+			return nil, 0, err
+		}
+		if err = os.MkdirAll(path.Dir(localMetadataFile), 0755); err != nil {
+			return nil, 0, err
+		}
+		if strings.HasSuffix(localMetadataFile, ".sql") {
+			if err = os.WriteFile(localMetadataFile, tmBody, 0640); err != nil {
+				return nil, 0, err
+			}
+			if err = filesystemhelper.Chown(localMetadataFile, b.ch, disks, false); err != nil {
+				return nil, 0, err
+			}
+			size += uint64(len(tmBody))
+		} else {
+			if err = json.Unmarshal(tmBody, &tableMetadata); err != nil {
+				return nil, 0, err
+			}
+			filterPartsByPartitionsFilter(tableMetadata, partitionsFilter)
+			// save metadata
+			jsonSize := uint64(0)
+			jsonSize, err = tableMetadata.Save(localMetadataFile, schemaOnly)
+			if err != nil {
+				return nil, 0, err
+			}
+			size += jsonSize
+		}
+		if b.resume {
+			b.resumableState.AppendToState(localMetadataFile)
+		}
 	}
 	log.
 		WithField("duration", utils.HumanizeDuration(time.Since(start))).
@@ -281,6 +371,9 @@ func (b *Backuper) downloadConfigData(remoteBackup storage.Backup) (uint64, erro
 func (b *Backuper) downloadBackupRelatedDir(remoteBackup storage.Backup, prefix string) (uint64, error) {
 	archiveFile := fmt.Sprintf("%s.%s", prefix, b.cfg.GetArchiveExtension())
 	remoteFile := path.Join(remoteBackup.BackupName, archiveFile)
+	if b.resume && b.resumableState.IsAlreadyProcessed(remoteFile) {
+		return 0, nil
+	}
 	localDir := path.Join(b.DefaultDataPath, "backup", remoteBackup.BackupName, prefix)
 	remoteFileInfo, err := b.dst.StatFile(remoteFile)
 	if err != nil {
@@ -289,6 +382,9 @@ func (b *Backuper) downloadBackupRelatedDir(remoteBackup storage.Backup, prefix 
 	}
 	if err = b.dst.DownloadCompressedStream(context.Background(), remoteFile, localDir); err != nil {
 		return 0, err
+	}
+	if b.resume {
+		b.resumableState.AppendToState(remoteFile)
 	}
 	return uint64(remoteFileInfo.Size()), nil
 }
@@ -307,27 +403,31 @@ func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table
 			downloadOffset[disk] = 0
 		}
 		apexLog.Debugf("start downloadTableData %s.%s with concurrency=%d len(table.Files[...])=%d", table.Database, table.Table, b.cfg.General.DownloadConcurrency, capacity)
-		breakByError := false
-		for common.SumMapValuesInt(downloadOffset) < capacity && !breakByError {
+	breakByErrorArchive:
+		for common.SumMapValuesInt(downloadOffset) < capacity {
 			for disk := range table.Files {
 				if downloadOffset[disk] >= len(table.Files[disk]) {
 					continue
 				}
 				if err := s.Acquire(ctx, 1); err != nil {
-					apexLog.Errorf("can't acquire semaphore during downloadTableData: %v", err)
-					breakByError = true
-					break
+					apexLog.Errorf("can't acquire semaphore during downloadTableData archive: %v", err)
+					break breakByErrorArchive
 				}
-				backupPath := b.DiskToPathMap[disk]
-				tableLocalDir := path.Join(backupPath, "backup", remoteBackup.BackupName, "shadow", dbAndTableDir, disk)
+				tableLocalDir := b.getLocalBackupDataPathForTable(remoteBackup.BackupName, disk, dbAndTableDir)
 				archiveFile := table.Files[disk][downloadOffset[disk]]
 				downloadOffset[disk] += 1
 				tableRemoteFile := path.Join(remoteBackup.BackupName, "shadow", common.TablePathEncode(table.Database), common.TablePathEncode(table.Table), archiveFile)
 				g.Go(func() error {
-					apexLog.Debugf("start download from %s", tableRemoteFile)
 					defer s.Release(1)
+					apexLog.Debugf("start download from %s", tableRemoteFile)
+					if b.resume && b.resumableState.IsAlreadyProcessed(tableRemoteFile) {
+						return nil
+					}
 					if err := b.dst.DownloadCompressedStream(ctx, tableRemoteFile, tableLocalDir); err != nil {
 						return err
+					}
+					if b.resume {
+						b.resumableState.AppendToState(tableRemoteFile)
 					}
 					apexLog.Debugf("finish download from %s", tableRemoteFile)
 					return nil
@@ -340,32 +440,52 @@ func (b *Backuper) downloadTableData(remoteBackup metadata.BackupMetadata, table
 			capacity += len(table.Parts[disk])
 		}
 		apexLog.Debugf("start downloadTableData %s.%s with concurrency=%d len(table.Parts[...])=%d", table.Database, table.Table, b.cfg.General.DownloadConcurrency, capacity)
-		for disk := range table.Parts {
-			if err := s.Acquire(ctx, 1); err != nil {
-				apexLog.Errorf("can't acquire semaphore during downloadTableData: %v", err)
-				break
-			}
+
+	breakByErrorDirectory:
+		for disk, parts := range table.Parts {
 			tableRemotePath := path.Join(remoteBackup.BackupName, "shadow", dbAndTableDir, disk)
 			diskPath := b.DiskToPathMap[disk]
-			tableLocalDir := path.Join(diskPath, "backup", remoteBackup.BackupName, "shadow", dbAndTableDir, disk)
-			g.Go(func() error {
-				apexLog.Debugf("start download from %s to %s", tableLocalDir, tableRemotePath)
-				defer s.Release(1)
-				if err := b.dst.DownloadPath(0, tableRemotePath, tableLocalDir); err != nil {
-					return err
+			tableLocalPath := path.Join(diskPath, "backup", remoteBackup.BackupName, "shadow", dbAndTableDir, disk)
+			if b.isEmbedded {
+				tableLocalPath = path.Join(diskPath, remoteBackup.BackupName, "data", dbAndTableDir)
+			}
+			for _, part := range parts {
+				if part.Required {
+					continue
 				}
-				apexLog.Debugf("finish download from %s to %s", tableLocalDir, tableRemotePath)
-				return nil
-			})
+				if err := s.Acquire(ctx, 1); err != nil {
+					apexLog.Errorf("can't acquire semaphore during downloadTableData directory: %v", err)
+					break breakByErrorDirectory
+				}
+				partRemotePath := path.Join(tableRemotePath, part.Name)
+				partLocalPath := path.Join(tableLocalPath, part.Name)
+				g.Go(func() error {
+					defer s.Release(1)
+					apexLog.Debugf("start download from %s to %s", partRemotePath, partLocalPath)
+					if b.resume && b.resumableState.IsAlreadyProcessed(partRemotePath) {
+						return nil
+					}
+					if err := b.dst.DownloadPath(0, partRemotePath, partLocalPath); err != nil {
+						return err
+					}
+					if b.resume {
+						b.resumableState.AppendToState(partRemotePath)
+					}
+					apexLog.Debugf("finish download from %s to %s", partRemotePath, partLocalPath)
+					return nil
+				})
+			}
 		}
 	}
 	if err := g.Wait(); err != nil {
 		return fmt.Errorf("one of downloadTableData go-routine return error: %v", err)
 	}
 
-	err := b.downloadDiffParts(remoteBackup, table, dbAndTableDir)
-	if err != nil {
-		return err
+	if !b.isEmbedded {
+		err := b.downloadDiffParts(remoteBackup, table, dbAndTableDir)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -382,8 +502,8 @@ func (b *Backuper) downloadDiffParts(remoteBackup metadata.BackupMetadata, table
 	diffRemoteFilesCache := map[string]*sync.Mutex{}
 	diffRemoteFilesLock := &sync.Mutex{}
 
+breakByError:
 	for disk, parts := range table.Parts {
-		breakByError := false
 		for _, part := range parts {
 			newPath := path.Join(b.DiskToPathMap[disk], "backup", remoteBackup.BackupName, "shadow", dbAndTableDir, disk, part.Name)
 			if err := b.checkNewPath(newPath, part); err != nil {
@@ -400,8 +520,7 @@ func (b *Backuper) downloadDiffParts(remoteBackup metadata.BackupMetadata, table
 			if err != nil && os.IsNotExist(err) {
 				if err := s.Acquire(ctx, 1); err != nil {
 					log.Errorf("can't acquire semaphore during downloadDiffParts: %v", err)
-					breakByError = true
-					break
+					break breakByError
 				}
 				partForDownload := part
 				diskForDownload := disk
@@ -424,7 +543,7 @@ func (b *Backuper) downloadDiffParts(remoteBackup metadata.BackupMetadata, table
 								if !info.IsDir() {
 									return fmt.Errorf("after downloadDiffRemoteFile %s exists but is not directory", downloadedPartPath)
 								}
-								if err = makePartHardlinks(downloadedPartPath, existsPath); err != nil {
+								if err = b.makePartHardlinks(downloadedPartPath, existsPath); err != nil {
 									return fmt.Errorf("can't to add link to exists part %s -> %s error: %v", newPath, existsPath, err)
 								}
 							}
@@ -434,19 +553,21 @@ func (b *Backuper) downloadDiffParts(remoteBackup metadata.BackupMetadata, table
 						}
 						atomic.AddUint32(&downloadedDiffParts, 1)
 					}
-					if err = makePartHardlinks(existsPath, newPath); err != nil {
+					if err = b.makePartHardlinks(existsPath, newPath); err != nil {
 						return fmt.Errorf("can't to add link to exists part %s -> %s error: %v", newPath, existsPath, err)
+					}
+					if b.resume {
+						b.resumableState.AppendToState(existsPath)
 					}
 					return nil
 				})
 			} else {
-				if err = makePartHardlinks(existsPath, newPath); err != nil {
-					return fmt.Errorf("can't to add exists part: %v", err)
+				if !b.resume || (b.resume && !b.resumableState.IsAlreadyProcessed(existsPath)) {
+					if err = b.makePartHardlinks(existsPath, newPath); err != nil {
+						return fmt.Errorf("can't to add exists part: %v", err)
+					}
 				}
 			}
-		}
-		if breakByError {
-			break
 		}
 	}
 	if err := g.Wait(); err != nil {
@@ -653,7 +774,7 @@ func (b *Backuper) ReadBackupMetadataRemote(backupName string) (*metadata.Backup
 	return nil, fmt.Errorf("%s not found on remote storage", backupName)
 }
 
-func makePartHardlinks(exists, new string) error {
+func (b *Backuper) makePartHardlinks(exists, new string) error {
 	ex, err := os.Open(exists)
 	if err != nil {
 		return err
@@ -675,9 +796,53 @@ func makePartHardlinks(exists, new string) error {
 		existsF := path.Join(exists, f)
 		newF := path.Join(new, f)
 		if err := os.Link(existsF, newF); err != nil {
-			apexLog.Warnf("makePartHardlinks::Link %s -> %s: %v", newF, existsF, err)
-			return err
+			existsFInfo, existsStatErr := os.Stat(existsF)
+			newFInfo, newStatErr := os.Stat(newF)
+			if existsStatErr != nil || newStatErr != nil || !os.SameFile(existsFInfo, newFInfo) {
+				apexLog.Warnf("makePartHardlinks::Link %s -> %s: %v", newF, existsF, err)
+				return err
+			}
 		}
+	}
+	return nil
+}
+
+func (b *Backuper) downloadSingleBackupFile(remoteFile string, localFile string, disks []clickhouse.Disk) error {
+	if b.resume && b.resumableState.IsAlreadyProcessed(remoteFile) {
+		return nil
+	}
+	remoteReader, err := b.dst.GetFileReader(remoteFile)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err = remoteReader.Close()
+		if err != nil {
+			apexLog.Warnf("can't close remoteReader %s", remoteFile)
+		}
+	}()
+	localWriter, err := os.OpenFile(localFile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0640)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		err = localWriter.Close()
+		if err != nil {
+			apexLog.Warnf("can't close localWriter %s", localFile)
+		}
+	}()
+
+	_, err = io.CopyBuffer(localWriter, remoteReader, nil)
+	if err != nil {
+		return err
+	}
+
+	if err = filesystemhelper.Chown(localFile, b.ch, disks, false); err != nil {
+		return err
+	}
+	if b.resume {
+		b.resumableState.AppendToState(remoteFile)
 	}
 	return nil
 }

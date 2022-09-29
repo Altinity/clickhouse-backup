@@ -6,13 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"net/http/pprof"
 	"net/url"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -323,7 +324,7 @@ func (api *APIServer) basicAuthMiddleware(next http.Handler) http.Handler {
 // INSERT INTO system.backup_actions (command) VALUES ('create backup_name')
 // INSERT INTO system.backup_actions (command) VALUES ('upload backup_name')
 func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
-	body, err := ioutil.ReadAll(r.Body)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "", err)
 		return
@@ -442,7 +443,7 @@ func (api *APIServer) httpRootHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
 
-	_, _ = fmt.Fprintln(w, "Documentation: https://github.com/AlexAkulov/clickhouse-backup#api-configuration")
+	_, _ = fmt.Fprintln(w, "Documentation: https://github.com/AlexAkulov/clickhouse-backup#api")
 	for _, r := range api.routes {
 		_, _ = fmt.Fprintln(w, r)
 	}
@@ -467,9 +468,10 @@ func (api *APIServer) httpTablesHandler(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "list", err)
 		return
 	}
+	q := r.URL.Query()
 	api.metrics.NumberBackupsRemoteExpected.Set(float64(cfg.General.BackupsToKeepRemote))
 	api.metrics.NumberBackupsLocalExpected.Set(float64(cfg.General.BackupsToKeepLocal))
-	tables, err := backup.GetTables(cfg)
+	tables, err := backup.GetTables(cfg, q.Get("table"))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "tables", err)
 		return
@@ -539,6 +541,12 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 			if b.Broken != "" {
 				description = b.Broken
 			}
+			if b.Tags != "" {
+				if description != "" {
+					description += ", "
+				}
+				description += b.Tags
+			}
 			backupsJSON = append(backupsJSON, backupJSON{
 				Name:           b.BackupName,
 				Created:        b.CreationDate.Format(APITimeFormat),
@@ -563,6 +571,12 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			if b.Broken != "" {
 				description = b.Broken
+			}
+			if b.Tags != "" {
+				if description != "" {
+					description += ", "
+				}
+				description += b.Tags
 			}
 			backupsJSON = append(backupsJSON, backupJSON{
 				Name:           b.BackupName,
@@ -630,7 +644,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if name, exist := query["name"]; exist {
-		backupName = name[0]
+		backupName = utils.CleanBackupNameRE.ReplaceAllString(name[0], "")
 		fullCommand = fmt.Sprintf("%s %s", fullCommand, backupName)
 	}
 
@@ -704,10 +718,12 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	query := r.URL.Query()
 	diffFrom := ""
 	diffFromRemote := ""
-	name := vars["name"]
+	name := strings.ReplaceAll(vars["name"], "/", "")
+	name = strings.ReplaceAll(name, "/", "")
 	tablePattern := ""
 	partitionsToBackup := make([]string, 0)
 	schemaOnly := false
+	resumable := false
 	fullCommand := "upload"
 
 	if df, exist := query["diff-from"]; exist {
@@ -726,10 +742,15 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		partitionsToBackup = strings.Split(partitions[0], ",")
 		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, partitions)
 	}
-	if schema, exist := query["schema"]; exist {
-		schemaOnly, _ = strconv.ParseBool(schema[0])
+	if _, exist := query["schema"]; exist {
+		schemaOnly = true
 		fullCommand += " --schema"
 	}
+	if _, exist := query["resumable"]; exist {
+		resumable = true
+		fullCommand += " --resumable"
+	}
+
 	fullCommand = fmt.Sprint(fullCommand, " ", name)
 
 	go func() {
@@ -741,7 +762,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 			api.metrics.LastFinish["upload"].Set(float64(time.Now().Unix()))
 		}()
 		b := backup.NewBackuper(cfg)
-		err := b.Upload(name, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly)
+		err := b.Upload(name, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, resumable)
 		api.status.stop(commandId, err)
 		if err != nil {
 			apexLog.Errorf("Upload error: %+v\n", err)
@@ -772,6 +793,8 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+var databaseMappingRE = regexp.MustCompile(`[\w+]:[\w+]`)
+
 // httpRestoreHandler - restore a backup from local storage
 func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request) {
 	if !api.config.API.AllowParallel && api.status.inProgress() {
@@ -788,10 +811,12 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	api.metrics.NumberBackupsLocalExpected.Set(float64(cfg.General.BackupsToKeepLocal))
 	vars := mux.Vars(r)
 	tablePattern := ""
+	databaseMappingToRestore := make([]string, 0)
 	partitionsToBackup := make([]string, 0)
 	schemaOnly := false
 	dataOnly := false
 	dropTable := false
+	ignoreDependencies := false
 	rbacOnly := false
 	configsOnly := false
 	fullCommand := "restore"
@@ -800,6 +825,21 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	if tp, exist := query["table"]; exist {
 		tablePattern = tp[0]
 		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
+	}
+	if databaseMappingQuery, exist := query["restore_database_mapping"]; exist {
+		for _, databaseMapping := range databaseMappingQuery {
+			mappingItems := strings.Split(databaseMapping, ",")
+			for _, m := range mappingItems {
+				if strings.Count(m, ":") != 1 || !databaseMappingRE.MatchString(m) {
+					writeError(w, http.StatusInternalServerError, "restore", fmt.Errorf("invalid values in restore_database_mapping %s", m))
+					return
+
+				}
+			}
+			databaseMappingToRestore = append(databaseMappingToRestore, mappingItems...)
+		}
+
+		fullCommand = fmt.Sprintf("%s --restore-database-mapping=\"%s\"", fullCommand, strings.Join(databaseMappingToRestore, ","))
 	}
 	if partitions, exist := query["partitions"]; exist {
 		partitionsToBackup = strings.Split(partitions[0], ",")
@@ -821,6 +861,10 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		dropTable = true
 		fullCommand += " --rm"
 	}
+	if _, exists := query["ignore_dependencies"]; exists {
+		ignoreDependencies = true
+		fullCommand += " --ignore-dependencies"
+	}
 	if _, exist := query["rbac"]; exist {
 		rbacOnly = true
 		fullCommand += " --rbac"
@@ -830,7 +874,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		fullCommand += " --configs"
 	}
 
-	name := vars["name"]
+	name := utils.CleanBackupNameRE.ReplaceAllString(vars["name"], "")
 	fullCommand += fmt.Sprintf(" %s", name)
 
 	go func() {
@@ -841,7 +885,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 			api.metrics.LastDuration["restore"].Set(float64(time.Since(start).Nanoseconds()))
 			api.metrics.LastFinish["restore"].Set(float64(time.Now().Unix()))
 		}()
-		err := backup.Restore(cfg, name, tablePattern, partitionsToBackup, schemaOnly, dataOnly, dropTable, rbacOnly, configsOnly)
+		err := backup.Restore(cfg, name, tablePattern, databaseMappingToRestore, partitionsToBackup, schemaOnly, dataOnly, dropTable, ignoreDependencies, rbacOnly, configsOnly)
 		api.status.stop(commandId, err)
 		if err != nil {
 			apexLog.Errorf("Download error: %+v\n", err)
@@ -878,11 +922,13 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	api.metrics.NumberBackupsRemoteExpected.Set(float64(cfg.General.BackupsToKeepRemote))
 	api.metrics.NumberBackupsLocalExpected.Set(float64(cfg.General.BackupsToKeepLocal))
 	vars := mux.Vars(r)
-	name := vars["name"]
+	name := strings.ReplaceAll(vars["name"], "/", "")
+	name = strings.ReplaceAll(name, "/", "")
 	query := r.URL.Query()
 	tablePattern := ""
 	partitionsToBackup := make([]string, 0)
 	schemaOnly := false
+	resumable := false
 	fullCommand := "download"
 
 	if tp, exist := query["table"]; exist {
@@ -897,6 +943,10 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		schemaOnly = true
 		fullCommand += " --schema"
 	}
+	if _, exist := query["resumable"]; exist {
+		resumable = true
+		fullCommand += " --resumable"
+	}
 	fullCommand += fmt.Sprintf(" %s", name)
 
 	go func() {
@@ -909,7 +959,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		}()
 
 		b := backup.NewBackuper(cfg)
-		err := b.Download(name, tablePattern, partitionsToBackup, schemaOnly)
+		err := b.Download(name, tablePattern, partitionsToBackup, schemaOnly, resumable)
 		api.status.stop(commandId, err)
 		if err != nil {
 			apexLog.Errorf("Download error: %+v\n", err)
@@ -1230,11 +1280,11 @@ func (api *APIServer) CreateIntegrationTables() error {
 		settings = "SETTINGS input_format_skip_unknown_fields=1"
 	}
 	query := fmt.Sprintf("CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String) ENGINE=URL('%s://%s:%s/backup/actions%s', JSONEachRow) %s", schema, host, port, auth, settings)
-	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_actions"}, query, true, "", 0); err != nil {
+	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_actions"}, query, true, false, "", 0); err != nil {
 		return err
 	}
 	query = fmt.Sprintf("CREATE TABLE system.backup_list (name String, created DateTime, size Int64, location String, required String, desc String) ENGINE=URL('%s://%s:%s/backup/list%s', JSONEachRow) %s", schema, host, port, auth, settings)
-	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_list"}, query, true, "", 0); err != nil {
+	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_list"}, query, true, false, "", 0); err != nil {
 		return err
 	}
 	return nil

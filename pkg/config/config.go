@@ -31,22 +31,24 @@ type Config struct {
 	FTP        FTPConfig        `yaml:"ftp" envconfig:"_"`
 	SFTP       SFTPConfig       `yaml:"sftp" envconfig:"_"`
 	AzureBlob  AzureBlobConfig  `yaml:"azblob" envconfig:"_"`
+	Custom     CustomConfig     `yaml:"custom" envconfig:"_"`
 }
 
 // GeneralConfig - general setting section
 type GeneralConfig struct {
-	RemoteStorage          string `yaml:"remote_storage" envconfig:"REMOTE_STORAGE"`
-	MaxFileSize            int64  `yaml:"max_file_size" envconfig:"MAX_FILE_SIZE"`
-	DisableProgressBar     bool   `yaml:"disable_progress_bar" envconfig:"DISABLE_PROGRESS_BAR"`
-	BackupsToKeepLocal     int    `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL"`
-	BackupsToKeepRemote    int    `yaml:"backups_to_keep_remote" envconfig:"BACKUPS_TO_KEEP_REMOTE"`
-	LogLevel               string `yaml:"log_level" envconfig:"LOG_LEVEL"`
-	AllowEmptyBackups      bool   `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
-	DownloadConcurrency    uint8  `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
-	UploadConcurrency      uint8  `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
-	RestoreSchemaOnCluster string `yaml:"restore_schema_on_cluster" envconfig:"RESTORE_SCHEMA_ON_CLUSTER"`
-	UploadByPart           bool   `yaml:"upload_by_part" envconfig:"UPLOAD_BY_PART"`
-	DownloadByPart         bool   `yaml:"download_by_part" envconfig:"DOWNLOAD_BY_PART"`
+	RemoteStorage          string            `yaml:"remote_storage" envconfig:"REMOTE_STORAGE"`
+	MaxFileSize            int64             `yaml:"max_file_size" envconfig:"MAX_FILE_SIZE"`
+	DisableProgressBar     bool              `yaml:"disable_progress_bar" envconfig:"DISABLE_PROGRESS_BAR"`
+	BackupsToKeepLocal     int               `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL"`
+	BackupsToKeepRemote    int               `yaml:"backups_to_keep_remote" envconfig:"BACKUPS_TO_KEEP_REMOTE"`
+	LogLevel               string            `yaml:"log_level" envconfig:"LOG_LEVEL"`
+	AllowEmptyBackups      bool              `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
+	DownloadConcurrency    uint8             `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
+	UploadConcurrency      uint8             `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
+	RestoreSchemaOnCluster string            `yaml:"restore_schema_on_cluster" envconfig:"RESTORE_SCHEMA_ON_CLUSTER"`
+	UploadByPart           bool              `yaml:"upload_by_part" envconfig:"UPLOAD_BY_PART"`
+	DownloadByPart         bool              `yaml:"download_by_part" envconfig:"DOWNLOAD_BY_PART"`
+	RestoreDatabaseMapping map[string]string `yaml:"restore_database_mapping" envconfig:"RESTORE_DATABASE_MAPPING"`
 }
 
 // GCSConfig - GCS settings section
@@ -147,6 +149,16 @@ type SFTPConfig struct {
 	Debug             bool   `yaml:"debug" envconfig:"SFTP_DEBUG"`
 }
 
+// CustomConfig - custom CLI storage settings section
+type CustomConfig struct {
+	UploadCommand          string `yaml:"upload_command" envconfig:"CUSTOM_UPLOAD_COMMAND"`
+	DownloadCommand        string `yaml:"download_command" envconfig:"CUSTOM_DOWNLOAD_COMMAND"`
+	ListCommand            string `yaml:"list_command" envconfig:"CUSTOM_LIST_COMMAND"`
+	DeleteCommand          string `yaml:"delete_command" envconfig:"CUSTOM_DELETE_COMMAND"`
+	CommandTimeout         string `yaml:"command_timeout" envconfig:"CUSTOM_COMMAND_TIMEOUT"`
+	CommandTimeoutDuration time.Duration
+}
+
 // ClickHouseConfig - clickhouse settings section
 type ClickHouseConfig struct {
 	Username                         string            `yaml:"username" envconfig:"CLICKHOUSE_USERNAME"`
@@ -158,6 +170,8 @@ type ClickHouseConfig struct {
 	Timeout                          string            `yaml:"timeout" envconfig:"CLICKHOUSE_TIMEOUT"`
 	FreezeByPart                     bool              `yaml:"freeze_by_part" envconfig:"CLICKHOUSE_FREEZE_BY_PART"`
 	FreezeByPartWhere                string            `yaml:"freeze_by_part_where" envconfig:"CLICKHOUSE_FREEZE_BY_PART_WHERE"`
+	UseEmbeddedBackupRestore         bool              `yaml:"use_embedded_backup_restore" envconfig:"CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE"`
+	EmbeddedBackupDisk               string            `yaml:"embedded_backup_disk" envconfig:"CLICKHOUSE_EMBEDDED_BACKUP_DISK"`
 	Secure                           bool              `yaml:"secure" envconfig:"CLICKHOUSE_SECURE"`
 	SkipVerify                       bool              `yaml:"skip_verify" envconfig:"CLICKHOUSE_SKIP_VERIFY"`
 	SyncReplicatedTables             bool              `yaml:"sync_replicated_tables" envconfig:"CLICKHOUSE_SYNC_REPLICATED_TABLES"`
@@ -232,7 +246,7 @@ func (cfg *Config) GetCompressionFormat() string {
 		return cfg.SFTP.CompressionFormat
 	case "azblob":
 		return cfg.AzureBlob.CompressionFormat
-	case "none":
+	case "none", "custom":
 		return "tar"
 	default:
 		return "unknown"
@@ -275,14 +289,24 @@ func ValidateConfig(cfg *Config) error {
 	if _, ok := ArchiveExtensions[cfg.GetCompressionFormat()]; !ok && cfg.GetCompressionFormat() != "none" {
 		return fmt.Errorf("'%s' is unsupported compression format", cfg.GetCompressionFormat())
 	}
-	if _, err := time.ParseDuration(cfg.ClickHouse.Timeout); err != nil {
-		return err
+	if timeout, err := time.ParseDuration(cfg.ClickHouse.Timeout); err != nil {
+		return fmt.Errorf("invalid clickhouse timeout: %v", err)
+	} else {
+		if cfg.ClickHouse.UseEmbeddedBackupRestore && timeout < 240*time.Minute {
+			return fmt.Errorf("clickhouse `timeout: %v`, not enough for `use_embedded_backup_restore: true`", cfg.ClickHouse.Timeout)
+		}
+	}
+	if cfg.ClickHouse.FreezeByPart && cfg.ClickHouse.UseEmbeddedBackupRestore {
+		return fmt.Errorf("`freeze_by_part: %v` is not compatible with `use_embedded_backup_restore: %v`", cfg.ClickHouse.FreezeByPart, cfg.ClickHouse.UseEmbeddedBackupRestore)
 	}
 	if _, err := time.ParseDuration(cfg.COS.Timeout); err != nil {
-		return err
+		return fmt.Errorf("invalid cos timeout: %v", err)
 	}
 	if _, err := time.ParseDuration(cfg.FTP.Timeout); err != nil {
-		return err
+		return fmt.Errorf("invalid ftp timeout: %v", err)
+	}
+	if _, err := time.ParseDuration(cfg.AzureBlob.Timeout); err != nil {
+		return fmt.Errorf("invalid azblob timeout: %v", err)
 	}
 	if _, err := time.ParseDuration(cfg.AzureBlob.Timeout); err != nil {
 		return fmt.Errorf("invalid azblob timeout: %v", err)
@@ -313,6 +337,15 @@ func ValidateConfig(cfg *Config) error {
 		if err != nil {
 			return err
 		}
+	}
+	if cfg.Custom.CommandTimeout != "" {
+		if duration, err := time.ParseDuration(cfg.Custom.CommandTimeout); err != nil {
+			return fmt.Errorf("invalid custom command timeout: %v", err)
+		} else {
+			cfg.Custom.CommandTimeoutDuration = duration
+		}
+	} else {
+		return fmt.Errorf("empty custom command timeout")
 	}
 	return nil
 }
@@ -358,6 +391,7 @@ func DefaultConfig() *Config {
 				"system.*",
 				"INFORMATION_SCHEMA.*",
 				"information_schema.*",
+				"_temporary_and_external_tables.*",
 			},
 			Timeout:                          "5m",
 			SyncReplicatedTables:             false,
@@ -366,6 +400,7 @@ func DefaultConfig() *Config {
 			RestartCommand:                   "systemctl restart clickhouse-server",
 			IgnoreNotExistsErrorDuringFreeze: true,
 			CheckReplicasBeforeAttach:        true,
+			UseEmbeddedBackupRestore:         false,
 		},
 		AzureBlob: AzureBlobConfig{
 			EndpointSchema:    "https",
@@ -420,6 +455,10 @@ func DefaultConfig() *Config {
 			CompressionFormat: "tar",
 			CompressionLevel:  1,
 			Concurrency:       1,
+		},
+		Custom: CustomConfig{
+			CommandTimeout:         "4h",
+			CommandTimeoutDuration: 4 * time.Hour,
 		},
 	}
 }
