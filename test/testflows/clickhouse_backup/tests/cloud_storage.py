@@ -194,8 +194,8 @@ def s3_aws(self):
 def gcs(self):
     """Test that an existing backup can be uploaded to GCS bucket.
     """
-    if not os.environ.get('QA_GCS_CRED_JSON'):
-        skip("QA_GCS_CRED_JSON environment not found, test skipped")
+    if not (os.environ.get('QA_GCS_CRED_JSON') or os.environ.get('QA_GCS_CRED_JSON_ENCODED')):
+        skip("QA_GCS_CRED_JSON/QA_GCS_CRED_JSON_ENCODED environment not found, test skipped")
 
     test_storage_outline(storage_type="gcs")
 

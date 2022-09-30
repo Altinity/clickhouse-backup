@@ -704,6 +704,7 @@ s3:
 gcs:
   credentials_file: ""         # GCS_CREDENTIALS_FILE
   credentials_json: ""         # GCS_CREDENTIALS_JSON
+  credentials_json_encoded: "" # GCS_CREDENTIALS_JSON_ENCODED
   bucket: ""                   # GCS_BUCKET
   path: ""                     # GCS_PATH
   compression_level: 1         # GCS_COMPRESSION_LEVEL
