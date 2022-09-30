@@ -53,15 +53,16 @@ type GeneralConfig struct {
 
 // GCSConfig - GCS settings section
 type GCSConfig struct {
-	CredentialsFile   string `yaml:"credentials_file" envconfig:"GCS_CREDENTIALS_FILE"`
-	CredentialsJSON   string `yaml:"credentials_json" envconfig:"GCS_CREDENTIALS_JSON"`
-	Bucket            string `yaml:"bucket" envconfig:"GCS_BUCKET"`
-	Path              string `yaml:"path" envconfig:"GCS_PATH"`
-	CompressionLevel  int    `yaml:"compression_level" envconfig:"GCS_COMPRESSION_LEVEL"`
-	CompressionFormat string `yaml:"compression_format" envconfig:"GCS_COMPRESSION_FORMAT"`
-	Debug             bool   `yaml:"debug" envconfig:"GCS_DEBUG"`
-	Endpoint          string `yaml:"endpoint" envconfig:"GCS_ENDPOINT"`
-	StorageClass      string `yaml:"storage_class" envconfig:"GCS_STORAGE_CLASS"`
+	CredentialsFile        string `yaml:"credentials_file" envconfig:"GCS_CREDENTIALS_FILE"`
+	CredentialsJSON        string `yaml:"credentials_json" envconfig:"GCS_CREDENTIALS_JSON"`
+	CredentialsJSONEncoded string `yaml:"credentials_json_encoded" envconfig:"GCS_CREDENTIALS_JSON_ENCODED"`
+	Bucket                 string `yaml:"bucket" envconfig:"GCS_BUCKET"`
+	Path                   string `yaml:"path" envconfig:"GCS_PATH"`
+	CompressionLevel       int    `yaml:"compression_level" envconfig:"GCS_COMPRESSION_LEVEL"`
+	CompressionFormat      string `yaml:"compression_format" envconfig:"GCS_COMPRESSION_FORMAT"`
+	Debug                  bool   `yaml:"debug" envconfig:"GCS_DEBUG"`
+	Endpoint               string `yaml:"endpoint" envconfig:"GCS_ENDPOINT"`
+	StorageClass           string `yaml:"storage_class" envconfig:"GCS_STORAGE_CLASS"`
 }
 
 // AzureBlobConfig - Azure Blob settings section

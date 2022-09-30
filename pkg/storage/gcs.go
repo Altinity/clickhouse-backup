@@ -2,14 +2,16 @@ package storage
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
-	"google.golang.org/api/option/internaloption"
 	"io"
 	"net/http"
 	"path"
 	"strings"
 	"time"
+
+	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
+	"google.golang.org/api/option/internaloption"
 
 	"cloud.google.com/go/storage"
 	"github.com/apex/log"
@@ -65,6 +67,9 @@ func (gcs *GCS) Connect() error {
 		clientOptions = append(clientOptions, option.WithEndpoint(endpoint))
 	} else if gcs.Config.CredentialsJSON != "" {
 		clientOptions = append(clientOptions, option.WithCredentialsJSON([]byte(gcs.Config.CredentialsJSON)))
+	} else if gcs.Config.CredentialsJSONEncoded != "" {
+		d, _ := base64.StdEncoding.DecodeString(gcs.Config.CredentialsJSONEncoded)
+		clientOptions = append(clientOptions, option.WithCredentialsJSON(d))
 	} else if gcs.Config.CredentialsFile != "" {
 		clientOptions = append(clientOptions, option.WithCredentialsFile(gcs.Config.CredentialsFile))
 	}
