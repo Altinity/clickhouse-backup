@@ -68,8 +68,8 @@ func (gcs *GCS) Connect() error {
 	} else if gcs.Config.CredentialsJSON != "" {
 		clientOptions = append(clientOptions, option.WithCredentialsJSON([]byte(gcs.Config.CredentialsJSON)))
 	} else if gcs.Config.CredentialsJSONEncoded != "" {
-		d, _ := base64.StdEncoding.DecodeString(gcs.Config.CredentialsJSON)
-		clientOptions = append(clientOptions, option.WithCredentialsJSON([]byte(d)))
+		d, _ := base64.StdEncoding.DecodeString(gcs.Config.CredentialsJSONEncoded)
+		clientOptions = append(clientOptions, option.WithCredentialsJSON(d))
 	} else if gcs.Config.CredentialsFile != "" {
 		clientOptions = append(clientOptions, option.WithCredentialsFile(gcs.Config.CredentialsFile))
 	}
