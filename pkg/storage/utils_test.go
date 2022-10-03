@@ -76,3 +76,52 @@ func TestGetBackupsToDeleteWithInvalidUploadDate(t *testing.T) {
 	assert.Equal(t, expectedData, GetBackupsToDelete(testData, 2))
 
 }
+
+func TestGetBackupsToDeleteWithRecursiveRequiredBackups(t *testing.T) {
+	// fix https://github.com/AlexAkulov/clickhouse-backup/issues/525
+	testData := []Backup{
+		{metadata.BackupMetadata{BackupName: "2022-09-01T05-00-01"}, false, "", "", timeParse("2022-09-01T05-00-01")},
+		{metadata.BackupMetadata{BackupName: "2022-09-01T21-00-03", RequiredBackup: "2022-09-01T05-00-01"}, false, "", "", timeParse("2022-09-01T21-00-03")},
+		{metadata.BackupMetadata{BackupName: "2022-09-02T21-00-02", RequiredBackup: "2022-09-01T21-00-03"}, false, "", "", timeParse("2022-09-02T21-00-02")},
+		{metadata.BackupMetadata{BackupName: "2022-09-03T21-00-03", RequiredBackup: "2022-09-02T21-00-02"}, false, "", "", timeParse("2022-09-03T21-00-03")},
+		{metadata.BackupMetadata{BackupName: "2022-09-04T21-00-03", RequiredBackup: "2022-09-04T21-00-03"}, false, "", "", timeParse("2022-09-04T21-00-03")},
+		{metadata.BackupMetadata{BackupName: "2022-09-05T21-00-03", RequiredBackup: "2022-09-04T21-00-03"}, false, "", "", timeParse("2022-09-05T21-00-03")},
+		{metadata.BackupMetadata{BackupName: "2022-09-06T21-00-03", RequiredBackup: "2022-09-05T21-00-03"}, false, "", "", timeParse("2022-09-06T21-00-03")},
+		{metadata.BackupMetadata{BackupName: "2022-09-07T21-00-03", RequiredBackup: "2022-09-06T21-00-03"}, false, "", "", timeParse("2022-09-07T21-00-03")},
+		{metadata.BackupMetadata{BackupName: "2022-09-08T21-00-03", RequiredBackup: "2022-09-07T21-00-03"}, false, "", "", timeParse("2022-09-08T21-00-03")},
+		{metadata.BackupMetadata{BackupName: "2022-09-09T21-00-03", RequiredBackup: "2022-09-08T21-00-03"}, false, "", "", timeParse("2022-09-09T21-00-03")},
+		{metadata.BackupMetadata{BackupName: "2022-09-10T21-00-03", RequiredBackup: "2022-09-09T21-00-03"}, false, "", "", timeParse("2022-09-10T21-00-03")},
+		{metadata.BackupMetadata{BackupName: "2022-09-11T21-00-03", RequiredBackup: "2022-09-10T21-00-03"}, false, "", "", timeParse("2022-09-11T21-00-03")},
+		{metadata.BackupMetadata{BackupName: "2022-09-12T21-00-02", RequiredBackup: "2022-09-11T21-00-03"}, false, "", "", timeParse("2022-09-12T21-00-02")},
+		{metadata.BackupMetadata{BackupName: "2022-09-13T21-00-03", RequiredBackup: "2022-09-12T21-00-02"}, false, "", "", timeParse("2022-09-13T21-00-03")},
+		{metadata.BackupMetadata{BackupName: "2022-09-14T21-00-03", RequiredBackup: "2022-09-13T21-00-03"}, false, "", "", timeParse("2022-09-14T21-00-03")},
+		{metadata.BackupMetadata{BackupName: "2022-10-03T09-30-20"}, false, "", "", timeParse("2022-10-03T09-30-20")},
+		{metadata.BackupMetadata{BackupName: "2022-10-03T09-39-37", RequiredBackup: "2022-10-03T09-30-20"}, false, "", "", timeParse("2022-10-03T09-39-37")},
+		{metadata.BackupMetadata{BackupName: "2022-10-03T09-40-03", RequiredBackup: "2022-10-03T09-39-37"}, false, "", "", timeParse("2022-10-03T09-40-03")},
+		{metadata.BackupMetadata{BackupName: "2022-10-03T09-41-31", RequiredBackup: "2022-10-03T09-40-03"}, false, "", "", timeParse("2022-10-03T09-41-31")},
+		{metadata.BackupMetadata{BackupName: "2022-10-03T09-52-12", RequiredBackup: "2022-10-03T09-41-31"}, false, "", "", timeParse("2022-10-03T09-52-12")},
+		{metadata.BackupMetadata{BackupName: "2022-10-03T10-11-15", RequiredBackup: "2022-10-03T09-52-12"}, false, "", "", timeParse("2022-10-03T10-11-15")},
+		{metadata.BackupMetadata{BackupName: "2022-10-03T10-12-38", RequiredBackup: "2022-10-03T10-11-15"}, false, "", "", timeParse("2022-10-03T10-12-38")},
+		{metadata.BackupMetadata{BackupName: "2022-10-03T10-12-57", RequiredBackup: "2022-10-03T10-12-38"}, false, "", "", timeParse("2022-10-03T10-12-57")},
+		{metadata.BackupMetadata{BackupName: "2022-10-03T10-13-16", RequiredBackup: "2022-10-03T10-12-57"}, false, "", "", timeParse("2022-10-03T10-13-16")},
+		{metadata.BackupMetadata{BackupName: "2022-10-03T10-15-32", RequiredBackup: "2022-10-03T10-13-16"}, false, "", "", timeParse("2022-10-03T10-15-32")},
+	}
+	expectedData := []Backup{
+		{metadata.BackupMetadata{BackupName: "2022-09-14T21-00-03", RequiredBackup: "2022-09-13T21-00-03"}, false, "", "", timeParse("2022-09-14T21-00-03")},
+		{metadata.BackupMetadata{BackupName: "2022-09-13T21-00-03", RequiredBackup: "2022-09-12T21-00-02"}, false, "", "", timeParse("2022-09-13T21-00-03")},
+		{metadata.BackupMetadata{BackupName: "2022-09-12T21-00-02", RequiredBackup: "2022-09-11T21-00-03"}, false, "", "", timeParse("2022-09-12T21-00-02")},
+		{metadata.BackupMetadata{BackupName: "2022-09-11T21-00-03", RequiredBackup: "2022-09-10T21-00-03"}, false, "", "", timeParse("2022-09-11T21-00-03")},
+		{metadata.BackupMetadata{BackupName: "2022-09-10T21-00-03", RequiredBackup: "2022-09-09T21-00-03"}, false, "", "", timeParse("2022-09-10T21-00-03")},
+		{metadata.BackupMetadata{BackupName: "2022-09-09T21-00-03", RequiredBackup: "2022-09-08T21-00-03"}, false, "", "", timeParse("2022-09-09T21-00-03")},
+		{metadata.BackupMetadata{BackupName: "2022-09-08T21-00-03", RequiredBackup: "2022-09-07T21-00-03"}, false, "", "", timeParse("2022-09-08T21-00-03")},
+		{metadata.BackupMetadata{BackupName: "2022-09-07T21-00-03", RequiredBackup: "2022-09-06T21-00-03"}, false, "", "", timeParse("2022-09-07T21-00-03")},
+		{metadata.BackupMetadata{BackupName: "2022-09-06T21-00-03", RequiredBackup: "2022-09-05T21-00-03"}, false, "", "", timeParse("2022-09-06T21-00-03")},
+		{metadata.BackupMetadata{BackupName: "2022-09-05T21-00-03", RequiredBackup: "2022-09-04T21-00-03"}, false, "", "", timeParse("2022-09-05T21-00-03")},
+		{metadata.BackupMetadata{BackupName: "2022-09-04T21-00-03", RequiredBackup: "2022-09-04T21-00-03"}, false, "", "", timeParse("2022-09-04T21-00-03")},
+		{metadata.BackupMetadata{BackupName: "2022-09-03T21-00-03", RequiredBackup: "2022-09-02T21-00-02"}, false, "", "", timeParse("2022-09-03T21-00-03")},
+		{metadata.BackupMetadata{BackupName: "2022-09-02T21-00-02", RequiredBackup: "2022-09-01T21-00-03"}, false, "", "", timeParse("2022-09-02T21-00-02")},
+		{metadata.BackupMetadata{BackupName: "2022-09-01T21-00-03", RequiredBackup: "2022-09-01T05-00-01"}, false, "", "", timeParse("2022-09-01T21-00-03")},
+		{metadata.BackupMetadata{BackupName: "2022-09-01T05-00-01"}, false, "", "", timeParse("2022-09-01T05-00-01")},
+	}
+	assert.Equal(t, expectedData, GetBackupsToDelete(testData, 6))
+}

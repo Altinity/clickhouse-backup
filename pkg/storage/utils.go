@@ -12,26 +12,38 @@ import (
 
 func GetBackupsToDelete(backups []Backup, keep int) []Backup {
 	if len(backups) > keep {
+		// sort backup ascending
 		sort.SliceStable(backups, func(i, j int) bool {
 			return backups[i].UploadDate.After(backups[j].UploadDate)
 		})
-		// KeepRemoteBackups should respect incremental backups and don't delete required backups
+		// KeepRemoteBackups should respect incremental backups sequences and don't delete required backups
 		// fix https://github.com/AlexAkulov/clickhouse-backup/issues/111
 		// fix https://github.com/AlexAkulov/clickhouse-backup/issues/385
+		// fix https://github.com/AlexAkulov/clickhouse-backup/issues/525
 		deletedBackups := make([]Backup, len(backups)-keep)
 		copied := copy(deletedBackups, backups[keep:])
 		if copied != len(backups)-keep {
 			log.Warnf("copied wrong items from backup list expected=%d, actual=%d", len(backups)-keep, copied)
 		}
-		for _, b := range backups {
+		keepBackups := make([]Backup, keep)
+		copied = copy(keepBackups, backups[:keep])
+		if copied != keep {
+			log.Warnf("copied wrong items from backup list expected=%d, actual=%d", keep, copied)
+		}
+		var findRequiredBackup func(b Backup)
+		findRequiredBackup = func(b Backup) {
 			if b.RequiredBackup != "" {
 				for i, deletedBackup := range deletedBackups {
 					if b.RequiredBackup == deletedBackup.BackupName {
 						deletedBackups = append(deletedBackups[:i], deletedBackups[i+1:]...)
+						findRequiredBackup(deletedBackup)
 						break
 					}
 				}
 			}
+		}
+		for _, b := range keepBackups {
+			findRequiredBackup(b)
 		}
 		// remove from old backup list backup with UploadDate `0001-01-01 00:00:00`, to avoid race condition for multiple shards copy
 		// fix https://github.com/AlexAkulov/clickhouse-backup/issues/409
