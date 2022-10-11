@@ -17,6 +17,7 @@ IMPROVEMENTS
 - add `table` parameter to `tables` cli command and `/backup/tables` API handler, fix [367](https://github.com/AlexAkulov/clickhouse-backup/issues/367)
 - add `--resumable` parameter to `create_remote`, `upload`, `restore_remote`, `donwload` commands to allow resume upload or download after break. Ignored for `remote_storage: custom`, fix [207](https://github.com/AlexAkulov/clickhouse-backup/issues/207)
 - add `--ignore-dependencies` parameter to `restore` and `restore_remote`, to allow drop object during restore schema on server where schema objects already exists and contains dependencies which not present in backup, fix [455](https://github.com/AlexAkulov/clickhouse-backup/issues/455)
+- add `restore --restore-database-mapping=<originDB>:<targetDB>[,<...>]`, fix [269](https://github.com/AlexAkulov/clickhouse-backup/issues/269), thanks @mojerro
 
 BUG FIXES
 - fix wrong upload / download behavior for `compression_format: none` and `remote_storage: ftp`
