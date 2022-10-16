@@ -37,6 +37,13 @@ func main() {
 			Usage:  "Config `FILE` name.",
 			EnvVar: "CLICKHOUSE_BACKUP_CONFIG",
 		},
+		cli.IntFlag{
+			Name:     "command-id",
+			Hidden:   true,
+			Value:    -1,
+			Required: false,
+			Usage:    "internal parameter for API call",
+		},
 	}
 	cliapp.CommandNotFound = func(c *cli.Context, command string) {
 		fmt.Printf("Error. Unknown command: '%s'\n\n", command)
@@ -81,12 +88,6 @@ func main() {
 				return b.CreateBackup(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("configs"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
-				cli.IntFlag{
-					Name:   "command-id",
-					Hidden: true,
-					Value:  -1,
-					Usage:  "internal parameter for API call",
-				},
 				cli.StringFlag{
 					Name:   "table, tables, t",
 					Hidden: false,
@@ -124,12 +125,6 @@ func main() {
 				return b.CreateToRemote(c.Args().First(), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("configs"), c.Bool("resume"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
-				cli.IntFlag{
-					Name:   "command-id",
-					Hidden: true,
-					Value:  -1,
-					Usage:  "internal parameter for API call",
-				},
 				cli.StringFlag{
 					Name:   "table, tables, t",
 					Usage:  "table name patterns, separated by comma, allow ? and * as wildcard",
@@ -181,12 +176,6 @@ func main() {
 				return b.Upload(c.Args().First(), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("resume"), c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
-				cli.IntFlag{
-					Name:   "command-id",
-					Hidden: true,
-					Value:  -1,
-					Usage:  "internal parameter for API call",
-				},
 				cli.StringFlag{
 					Name:   "diff-from",
 					Hidden: false,
@@ -238,12 +227,6 @@ func main() {
 				return b.Download(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("resume"), c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
-				cli.IntFlag{
-					Name:   "command-id",
-					Hidden: true,
-					Value:  status.NotFromAPI,
-					Usage:  "internal parameter for API call",
-				},
 				cli.StringFlag{
 					Name:   "table, tables, t",
 					Usage:  "table name patterns, separated by comma, allow ? and * as wildcard",
@@ -275,12 +258,6 @@ func main() {
 				return b.Restore(c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("ignore-dependencies"), c.Bool("rbac"), c.Bool("configs"), c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
-				cli.IntFlag{
-					Name:   "command-id",
-					Hidden: true,
-					Value:  status.NotFromAPI,
-					Usage:  "internal parameter for API call",
-				},
 				cli.StringFlag{
 					Name:   "table, tables, t",
 					Usage:  "table name patterns, separated by comma, allow ? and * as wildcard",
@@ -337,12 +314,6 @@ func main() {
 				return b.RestoreFromRemote(c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("configs"), c.Bool("resume"), c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
-				cli.IntFlag{
-					Name:   "command-id",
-					Hidden: true,
-					Value:  status.NotFromAPI,
-					Usage:  "internal parameter for API call",
-				},
 				cli.StringFlag{
 					Name:   "table, tables, t",
 					Usage:  "table name patterns, separated by comma, allow ? and * as wildcard",
@@ -411,14 +382,7 @@ func main() {
 				}
 				return b.Delete(c.Args().Get(0), c.Args().Get(1), c.Int("command-id"))
 			},
-			Flags: append(cliapp.Flags,
-				cli.IntFlag{
-					Name:   "command-id",
-					Hidden: true,
-					Value:  status.NotFromAPI,
-					Usage:  "internal parameter for API call",
-				},
-			),
+			Flags: cliapp.Flags,
 		},
 		{
 			Name:  "default-config",
@@ -465,12 +429,6 @@ func main() {
 				return b.Watch(c.String("watch-interval"), c.String("full-interval"), c.String("watch-backup-name-template"), c.String("tables"), c.StringSlice("partitions"), c.Bool("schema"), c.Bool("rbac"), c.Bool("configs"), version, c.Int("command-id"), nil, c)
 			},
 			Flags: append(cliapp.Flags,
-				cli.IntFlag{
-					Name:   "command-id",
-					Hidden: true,
-					Value:  status.NotFromAPI,
-					Usage:  "internal parameter for API call",
-				},
 				cli.StringFlag{
 					Name:   "watch-interval",
 					Usage:  "Interval for run `create_remote` + `delete local` for incremental backup, look format https://pkg.go.dev/time#ParseDuration",

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-#  Copyright 2021, Altinity LTD. All Rights Reserved.
+#  Copyright 2022, Altinity LTD. All Rights Reserved.
 #
 #  All information contained herein is, and remains the property
 #  of Altinity LTD. Any dissemination of this information or
@@ -9,13 +9,13 @@ import os
 import sys
 from testflows.core import *
 
+append_path(sys.path, "..")
 from helpers.cluster import Cluster
 from helpers.argparser import argparser
 
 from clickhouse_backup.requirements.requirements import *
 from clickhouse_backup.tests.common import simple_data_types_columns
 
-append_path(sys.path, "..")
 
 xfails = {
     "/clickhouse backup/other engines/materializedpostgresql/:": [

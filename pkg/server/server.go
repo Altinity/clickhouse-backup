@@ -285,9 +285,12 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 	lines := bytes.Split(body, []byte("\n"))
 	actionsResults := make([]actionsResultsRow, 0)
 	for _, line := range lines {
+		if len(line) == 0 {
+			continue
+		}
 		row := status.ActionRow{}
 		if err := json.Unmarshal(line, &row); err != nil {
-			api.writeError(w, http.StatusBadRequest, "", err)
+			api.writeError(w, http.StatusBadRequest, string(line), err)
 			return
 		}
 		api.log.Infof("/backup/actions call: %s", row.Command)

@@ -821,10 +821,54 @@ func TestServerAPI(t *testing.T) {
 
 	testAPIWatchAndKill(r, ch)
 
+	testAPIBackupActions(r, ch)
+
+	testAPIRestart(r, ch)
+
 	testAPIBackupDelete(r)
 
 	r.NoError(dockerExec("clickhouse", "pkill", "-n", "-f", "clickhouse-backup"))
 	r.NoError(ch.dropDatabase("long_schema"))
+}
+
+func testAPIRestart(r *require.Assertions, ch *TestClickHouse) {
+	out, err := dockerExecOut("clickhouse", "bash", "-c", "curl -sL 'http://localhost:7171/restart'")
+	log.Debug(out)
+	r.NoError(err)
+	inProgressActions := make([]uint64, 0)
+	r.NoError(ch.chbackend.Select(&inProgressActions, "SELECT count() FROM system.backup_actions WHERE status!=?", status.CancelStatus))
+	r.Equal(1, len(inProgressActions))
+	r.Equal(0, inProgressActions[0])
+}
+
+func testAPIBackupActions(r *require.Assertions, ch *TestClickHouse) {
+	runClickHouseClient := func(sql string, sleep time.Duration) {
+		out, err := dockerExecOut("clickhouse", "bash", "-c", fmt.Sprintf("clickhouse-client --echo -mn -q \"%s\"", sql))
+		log.Debug(out)
+		r.NoError(err)
+		time.Sleep(sleep)
+	}
+	runClickHouseClient("INSERT INTO system.backup_actions(command) VALUES ('create_remote actions_backup1')", 5*time.Second)
+	runClickHouseClient("INSERT INTO system.backup_actions(command) VALUES ('delete local actions_backup1'),('restore_remote --rm actions_backup1')", 5*time.Second)
+	runClickHouseClient("INSERT INTO system.backup_actions(command) VALUES ('delete local actions_backup1'), ('delete remote actions_backup1')", 0*time.Second)
+
+	runClickHouseClient("INSERT INTO system.backup_actions(command) VALUES ('create actions_backup2')", 5*time.Second)
+	runClickHouseClient("INSERT INTO system.backup_actions(command) VALUES ('upload actions_backup2')", 5*time.Second)
+	runClickHouseClient("INSERT INTO system.backup_actions(command) VALUES ('delete local actions_backup2')", 0*time.Second)
+	runClickHouseClient("INSERT INTO system.backup_actions(command) VALUES ('download actions_backup2')", 5*time.Second)
+	runClickHouseClient("INSERT INTO system.backup_actions(command) VALUES ('restore --rm actions_backup2')", 5*time.Second)
+	runClickHouseClient("INSERT INTO system.backup_actions(command) VALUES ('delete local actions_backup2'), ('delete remote actions_backup2')", 0*time.Second)
+
+	inProgressActions := make([]uint64, 0)
+	r.NoError(ch.chbackend.Select(&inProgressActions, "SELECT count() FROM system.backup_actions WHERE command LIKE '%actions%' AND status IN (?,?)", status.InProgressStatus, status.ErrorStatus))
+	r.Equal(1, len(inProgressActions))
+	r.Equal(uint64(0), inProgressActions[0])
+
+	actionsBackups := make([]uint64, 0)
+	r.NoError(ch.chbackend.Select(&actionsBackups, "SELECT count() FROM system.backup_list WHERE name LIKE 'backup_action%'"))
+	r.Equal(1, len(actionsBackups))
+	r.Equal(uint64(0), actionsBackups[0])
+
 }
 
 func testAPIWatchAndKill(r *require.Assertions, ch *TestClickHouse) {
@@ -1488,7 +1532,7 @@ func (ch *TestClickHouse) connect() error {
 		Config: &config.ClickHouseConfig{
 			Host:    "127.0.0.1",
 			Port:    9000,
-			Timeout: "5m",
+			Timeout: "10m",
 		},
 		Log: log.WithField("logger", "clickhouse"),
 	}
