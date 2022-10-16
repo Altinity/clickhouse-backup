@@ -1,8 +1,3 @@
-import random
-
-from testflows.core import *
-from testflows.asserts import *
-
 from clickhouse_backup.requirements.requirements import *
 from clickhouse_backup.tests.common import *
 from clickhouse_backup.tests.steps import *
@@ -23,46 +18,56 @@ def all_engines(self):
                    "mysql", "postgres", "ext_dist", "sqlite", "rabbitmq"]
     table_schemas = {}
 
-    create_table_queries = ["CREATE TABLE log ENGINE = Log AS SELECT toUInt32(number) as id from numbers(10)",
-                            "CREATE TABLE tinylog ENGINE = TinyLog AS SELECT toUInt32(number) as id from numbers(10)",
-                            "CREATE TABLE stripelog ENGINE = StripeLog AS SELECT toUInt32(number) as id from numbers(10)",
-                            "CREATE TABLE memory ENGINE = Memory AS SELECT toUInt32(number) as id from numbers(10)",
-                            "CREATE TABLE url (word String, value UInt64) ENGINE=URL('http://127.0.0.1:12345/', CSV)",
-                            "CREATE TABLE set ENGINE = Set AS SELECT toUInt32(number) as id from numbers(10)",
-                            "CREATE TABLE null ENGINE = Null AS SELECT toUInt32(number) as id from numbers(10)",
-                            "CREATE TABLE file (name String, value UInt32) ENGINE=File(CSVWithNames)",
+    create_table_queries = [
+        "CREATE TABLE log ENGINE = Log AS SELECT toUInt32(number) as id from numbers(10)",
+        "CREATE TABLE tinylog ENGINE = TinyLog AS SELECT toUInt32(number) as id from numbers(10)",
+        "CREATE TABLE stripelog ENGINE = StripeLog AS SELECT toUInt32(number) as id from numbers(10)",
+        "CREATE TABLE memory ENGINE = Memory AS SELECT toUInt32(number) as id from numbers(10)",
+        "CREATE TABLE url (word String, value UInt64) ENGINE=URL('http://127.0.0.1:12345/', CSV)",
+        "CREATE TABLE set ENGINE = Set AS SELECT toUInt32(number) as id from numbers(10)",
+        "CREATE TABLE null ENGINE = Null AS SELECT toUInt32(number) as id from numbers(10)",
+        "CREATE TABLE file (name String, value UInt32) ENGINE=File(CSVWithNames)",
 
-                            "CREATE TABLE table_for_dict (key_column UInt64, third_column String) ENGINE = MergeTree() ORDER BY key_column",
-                            "INSERT INTO table_for_dict select number, concat('Hello World ', toString(number)) from numbers(100)",
-                            "CREATE DICTIONARY ndict(key_column UInt64 DEFAULT 0, third_column String DEFAULT 'qqq') "
-                            "PRIMARY KEY key_column "
-                            "SOURCE(CLICKHOUSE(HOST 'localhost' PORT 9000 USER 'default' TABLE 'table_for_dict' PASSWORD '' DB 'default')) "
-                            "LIFETIME(MIN 1 MAX 10) LAYOUT(HASHED())",
-                            "CREATE TABLE dict (key_column UInt64, third_column String) Engine = Dictionary(ndict)",
+        "CREATE TABLE table_for_dict (key_column UInt64, third_column String) ENGINE = MergeTree() ORDER BY key_column",
+        "INSERT INTO table_for_dict select number, concat('Hello World ', toString(number)) from numbers(100)",
+        "CREATE DICTIONARY ndict(key_column UInt64 DEFAULT 0, third_column String DEFAULT 'qqq') "
+        "PRIMARY KEY key_column "
+        "SOURCE(CLICKHOUSE(HOST 'localhost' PORT 9000 USER 'default' TABLE 'table_for_dict' PASSWORD '' DB 'default')) "
+        "LIFETIME(MIN 1 MAX 10) LAYOUT(HASHED())",
+        "CREATE TABLE dict (key_column UInt64, third_column String) Engine = Dictionary(ndict)",
 
-                            "CREATE TABLE buffer AS log ENGINE = Buffer(default, log, 16, 10, 100, 10000, 1000000, 10000000, 100000000)",
-                            "CREATE TABLE join (id UInt32, val UInt8) ENGINE = Join(ANY, LEFT, id)",
-                            "CREATE TABLE merge (id UInt32) ENGINE = Merge(currentDatabase(), 'log')",
-                            "CREATE TABLE distributed AS log ENGINE = Distributed(replicated_cluster, default, log)",
-                            "CREATE TABLE generate_random (name String, value UInt32) ENGINE = GenerateRandom(1, 5, 3)",
+        "CREATE TABLE buffer AS log ENGINE = Buffer(default, log, 16, 10, 100, 10000, 1000000, 10000000, 100000000)",
+        "CREATE TABLE join (id UInt32, val UInt8) ENGINE = Join(ANY, LEFT, id)",
+        "CREATE TABLE merge (id UInt32) ENGINE = Merge(currentDatabase(), 'log')",
+        "CREATE TABLE distributed AS log ENGINE = Distributed(replicated_cluster, default, log)",
+        "CREATE TABLE generate_random (name String, value UInt32) ENGINE = GenerateRandom(1, 5, 3)",
 
-                            "CREATE TABLE jdbc (id Int32, name String) ENGINE=JDBC('jdbc:mysql://localhost:3306/?user=root&password=root', 'test', 'test')",
-                            "CREATE TABLE odbc (id Int32, name String) ENGINE=ODBC('DSN=mysqlconn', 'test', 'test')",
-                            "CREATE TABLE mongo (id Int32, name String) ENGINE=MongoDB('mongo:27017', 'db', 'table', 'user', 'pwd')",
-                            "CREATE TABLE hdfs (id Int32, name String) ENGINE=HDFS('hdfs://hdfs:9000/other_storage', 'TSV')",
-                            "CREATE TABLE s3 (id Int32, name String) ENGINE=S3('https://storage.yandexcloud.net/my-test-bucket-768/test-data.csv.gz', 'CSV', 'gzip')",
-                            "CREATE TABLE embrdb (id Int32, name String) ENGINE = EmbeddedRocksDB PRIMARY KEY id",
-                            "CREATE TABLE mysql (id Int32, name String) ENGINE = MySQL('localhost:3306', 'test', 'test', 'bayonet', '123')",
-                            "CREATE TABLE postgres (id Int32, name String) ENGINE = PostgreSQL('postgres', 'test', 'test', 'postgres', 'qwerty')",
-                            "CREATE TABLE ext_dist (id Int32, name String) ENGINE = ExternalDistributed('PostgreSQL', 'postgres', 'mydb', 'my_table', 'test', 'qwerty')",
+        "CREATE TABLE jdbc (id Int32, name String) "
+        "ENGINE=JDBC('jdbc:mysql://localhost:3306/?user=root&password=root', 'test', 'test')",
 
-                            "CREATE DATABASE sqlite_db ENGINE = SQLite('sqlite.db')",
-                            "CREATE TABLE sqlite AS sqlite_db.sample Engine=MergeTree() ORDER BY id",
-                            "DROP DATABASE sqlite_db",
+        "CREATE TABLE odbc (id Int32, name String) ENGINE=ODBC('DSN=mysqlconn', 'test', 'test')",
+        "CREATE TABLE mongo (id Int32, name String) ENGINE=MongoDB('mongo:27017', 'db', 'table', 'user', 'pwd')",
+        "CREATE TABLE hdfs (id Int32, name String) ENGINE=HDFS('hdfs://hdfs:9000/other_storage', 'TSV')",
 
-                            "CREATE TABLE rabbitmq (id Int32, name String) ENGINE = RabbitMQ SETTINGS "
-                            "rabbitmq_host_port = 'rabbitmq:5672', rabbitmq_exchange_name = 'exchange1', rabbitmq_format = 'JSONEachRow'",
-                            ]
+        "CREATE TABLE s3 (id Int32, name String) "
+        "ENGINE=S3('https://storage.yandexcloud.net/my-test-bucket-768/test-data.csv.gz', 'CSV', 'gzip')",
+
+        "CREATE TABLE embrdb (id Int32, name String) ENGINE = EmbeddedRocksDB PRIMARY KEY id",
+        "CREATE TABLE mysql (id Int32, name String) ENGINE = MySQL('localhost:3306', 'test', 'test', 'bayonet', '123')",
+
+        "CREATE TABLE postgres (id Int32, name String) "
+        "ENGINE = PostgreSQL('postgres', 'test', 'test', 'postgres', 'qwerty')",
+
+        "CREATE TABLE ext_dist (id Int32, name String) "
+        "ENGINE = ExternalDistributed('PostgreSQL', 'postgres', 'mydb', 'my_table', 'test', 'qwerty')",
+
+        "CREATE DATABASE sqlite_db ENGINE = SQLite('sqlite.db')",
+        "CREATE TABLE sqlite AS sqlite_db.sample Engine=MergeTree() ORDER BY id",
+        "DROP DATABASE sqlite_db",
+
+        "CREATE TABLE rabbitmq (id Int32, name String) ENGINE = RabbitMQ SETTINGS "
+        "rabbitmq_host_port = 'rabbitmq:5672', rabbitmq_exchange_name = 'exchange1', rabbitmq_format = 'JSONEachRow'",
+    ]
 
     try:
         with Given("I create tables with unsupported engines"):
@@ -138,7 +143,9 @@ def kafka_engine(self):
                          consumer_group=consumer_group, partitions=partitions, replication_factor=replication_factor)
 
         with And("I create data source table"):
-            clickhouse.query(f"CREATE TABLE source_table ENGINE = Log AS SELECT toUInt32(number) as id from numbers({counts})")
+            clickhouse.query(
+                f"CREATE TABLE source_table ENGINE = Log AS SELECT toUInt32(number) as id from numbers({counts})"
+            )
 
         with And("I copy table data to topic"):
             command = (f"{cluster.docker_compose} exec -T clickhouse1 clickhouse client "
@@ -198,12 +205,14 @@ def materializedmysql(self):
             mysql.cmd(f"mysql -uroot -pqwerty -e \"CREATE DATABASE mydb\"")
             mysql.cmd(f"mysql -uroot -pqwerty -e \"CREATE TABLE mydb.MyTable (id INT PRIMARY KEY, name VARCHAR(10))\"")
             for i in range(10):
-                mysql.cmd(f"mysql -uroot -pqwerty -e \"INSERT INTO mydb.MyTable VALUES ({i}, '{''.join(random.choices(string.ascii_uppercase + string.digits, k=10))}')\"")
+                random_value = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
+                mysql.cmd(f"mysql -uroot -pqwerty -e \"INSERT INTO mydb.MyTable VALUES ({i}, '{random_value}')\"")
 
-        table_contents = []
         with And("I create MaterializedMySQL"):
-            clickhouse.query(f"CREATE DATABASE mysql ENGINE = MaterializedMySQL('mysql:3306', 'mydb', 'root', 'qwerty') "
-                             f"SETTINGS allows_query_when_mysql_lost=true, max_wait_time_when_mysql_unavailable=10000;")
+            clickhouse.query(
+                f"CREATE DATABASE mysql ENGINE = MaterializedMySQL('mysql:3306', 'mydb', 'root', 'qwerty') "
+                f"SETTINGS allows_query_when_mysql_lost=true, max_wait_time_when_mysql_unavailable=10000;"
+            )
             table_contents = clickhouse.query("SELECT * FROM mysql.MyTable").output.split('\n')[:-1]
 
         with When(f"I create backup"):
@@ -248,34 +257,38 @@ def materializedpostgresql(self):
     try:
         with Given("I create database and table in MySQL"):
             postgres.cmd(f"psql -Utest -c \"CREATE DATABASE mydb;\"")
-            postgres.cmd(f"psql -Utest --dbname=mydb -c \"CREATE TABLE MyTable (id INTEGER PRIMARY KEY, name VARCHAR(10));\"")
+            postgres.cmd(
+                f"psql -Utest --dbname=mydb -c \"CREATE TABLE MyTable (id INTEGER PRIMARY KEY, name VARCHAR(10));\""
+            )
             for i in range(10):
-                postgres.cmd(f"psql -Utest --dbname=mydb -c \"INSERT INTO MyTable (id, name) VALUES ({i}, '{''.join(random.choices(string.ascii_uppercase + string.digits, k=10))}');\"")
+                random_value = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
+                postgres.cmd(f"psql -Utest --dbname=mydb -c \"INSERT INTO MyTable (id, name) VALUES ({i}, '{random_value}');\"")
             debug(postgres.cmd(f"psql -Utest --dbname=mydb -c \"select * from MyTable\"").output)
             time.sleep(10)
 
         with And("I create MaterializedPostgreSQL"):
-            clickhouse.query(f"CREATE DATABASE psql ENGINE = MaterializedPostgreSQL('postgres:5432', 'mydb', 'test', 'qwerty')")
+            clickhouse.query(
+                f"CREATE DATABASE psql ENGINE = MaterializedPostgreSQL('postgres:5432', 'mydb', 'test', 'qwerty')"
+            )
             debug(clickhouse.query("SHOW TABLES FROM psql").output)
             debug(backup.cmd("clickhouse-backup tables").output)
-            table_contents = clickhouse.query("SELECT * FROM psql.mytable").output.split('\n')[:-1]
-
+            table_contents = clickhouse.query("SELECT * FROM psql.my_table").output.split('\n')[:-1]
 
         with When(f"I create backup"):
-            backup.cmd(f"clickhouse-backup create --tables=psql.mytable {backup_name}")
+            backup.cmd(f"clickhouse-backup create --tables=psql.my_table {backup_name}")
 
         with And("I modify original table"):
-            postgres.cmd(f"psql -Utest --dbname=mydb -c \"DELETE FROM mytable WHERE id<3;\"")
-            drop_table(node=clickhouse, database="psql", table_name="mytable")
+            postgres.cmd(f"psql -Utest --dbname=mydb -c \"DELETE FROM my_table WHERE id<3;\"")
+            drop_table(node=clickhouse, database="psql", table_name="my_table")
 
         with And("restore table"):
-            backup.cmd(f"clickhouse-backup restore --tables=psql.mytable {backup_name}")
+            backup.cmd(f"clickhouse-backup restore --tables=psql.my_table {backup_name}")
 
         with Then("expect table restored"):
             r = clickhouse.query("SHOW TABLES FROM psql").output
-            assert "mytable" in r, error()
+            assert "my_table" in r, error()
 
-            restored = clickhouse.query("SELECT * FROM psql.mytable").output.split('\n')
+            restored = clickhouse.query("SELECT * FROM psql.my_table").output.split('\n')
             for row in table_contents:
                 assert row in restored, error()
 
@@ -292,7 +305,7 @@ def materializedpostgresql(self):
     RQ_SRS_013_ClickHouse_BackupUtility_TableEngines_OtherEngines("1.0")
 )
 def other_engines(self):
-    """Check that schemas for other engines that MergeTree are backed up and those tables don't break the backup process.
+    """Check that schemas for other engines that MergeTree are backed up and those tables don't break the backup process
     """
     for scenario in loads(current_module(), Scenario, Suite):
         Scenario(run=scenario)

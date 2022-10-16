@@ -1,13 +1,14 @@
 package backup
 
 import (
+	"context"
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/custom"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/status"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
+	"github.com/pkg/errors"
 	"os"
 	"path"
-	"strings"
 	"time"
 
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
@@ -17,30 +18,28 @@ import (
 )
 
 // Clean - removed all data in shadow folder
-func Clean(cfg *config.Config) error {
-	ch := &clickhouse.ClickHouse{
-		Config: &cfg.ClickHouse,
-	}
-	if err := ch.Connect(); err != nil {
+func (b *Backuper) Clean(ctx context.Context) error {
+	log := b.log.WithField("logger", "Clean")
+	if err := b.ch.ConnectOnce(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
-	defer ch.Close()
+	defer b.ch.Close()
 
-	disks, err := ch.GetDisks()
+	disks, err := b.ch.GetDisks(ctx)
 	if err != nil {
 		return err
 	}
 	for _, disk := range disks {
 		shadowDir := path.Join(disk.Path, "shadow")
-		apexLog.Infof("Clean %s", shadowDir)
-		if err := cleanDir(shadowDir); err != nil {
+		if err := b.cleanDir(shadowDir); err != nil {
 			return fmt.Errorf("can't clean '%s': %v", shadowDir, err)
 		}
+		log.Info(shadowDir)
 	}
 	return nil
 }
 
-func cleanDir(dirName string) error {
+func (b *Backuper) cleanDir(dirName string) error {
 	if items, err := os.ReadDir(dirName); err != nil {
 		return err
 	} else {
@@ -51,48 +50,62 @@ func cleanDir(dirName string) error {
 	return nil
 }
 
-func RemoveOldBackupsLocal(cfg *config.Config, keepLastBackup bool, disks []clickhouse.Disk) error {
-	keep := cfg.General.BackupsToKeepLocal
+// Delete - remove local or remote backup
+func (b *Backuper) Delete(backupType, backupName string, commandId int) error {
+	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
+	if err != nil {
+		return err
+	}
+	ctx, cancel = context.WithCancel(ctx)
+	defer cancel()
+
+	switch backupType {
+	case "local":
+		return b.RemoveBackupLocal(ctx, backupName, nil)
+	case "remote":
+		return b.RemoveBackupRemote(ctx, backupName)
+	default:
+		return fmt.Errorf("unknown backup type")
+	}
+}
+
+func (b *Backuper) RemoveOldBackupsLocal(ctx context.Context, keepLastBackup bool, disks []clickhouse.Disk) error {
+	keep := b.cfg.General.BackupsToKeepLocal
 	if keep == 0 {
 		return nil
 	}
 	if keepLastBackup && keep < 0 {
 		keep = 1
 	}
-	backupList, disks, err := GetLocalBackups(cfg, disks)
+	backupList, disks, err := b.GetLocalBackups(ctx, disks)
 	if err != nil {
 		return err
 	}
 	backupsToDelete := GetBackupsToDelete(backupList, keep)
 	for _, backup := range backupsToDelete {
-		if err := RemoveBackupLocal(cfg, backup.BackupName, disks); err != nil {
+		if err := b.RemoveBackupLocal(ctx, backup.BackupName, disks); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func RemoveBackupLocal(cfg *config.Config, backupName string, disks []clickhouse.Disk) error {
+func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, disks []clickhouse.Disk) error {
+	log := b.log.WithField("logger", "RemoveBackupLocal")
 	var err error
 	start := time.Now()
-	backupName = strings.ReplaceAll(backupName, "/", "")
-	backupName = strings.ReplaceAll(backupName, "\\", "")
-
-	ch := &clickhouse.ClickHouse{
-		Config: &cfg.ClickHouse,
-	}
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
-	if err = ch.Connect(); err != nil {
+	if err = b.ch.ConnectOnce(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
-	defer ch.Close()
+	defer b.ch.Close()
 	if disks == nil {
-		disks, err = ch.GetDisks()
+		disks, err = b.ch.GetDisks(ctx)
 		if err != nil {
 			return err
 		}
 	}
-	backupList, disks, err := GetLocalBackups(cfg, disks)
+	backupList, disks, err := b.GetLocalBackups(ctx, disks)
 	if err != nil {
 		return err
 	}
@@ -103,13 +116,13 @@ func RemoveBackupLocal(cfg *config.Config, backupName string, disks []clickhouse
 				if disk.IsBackup {
 					backupPath = path.Join(disk.Path, backupName)
 				}
-				apexLog.Debugf("remove '%s'", backupPath)
+				log.Debugf("remove '%s'", backupPath)
 				err = os.RemoveAll(backupPath)
 				if err != nil {
 					return err
 				}
 			}
-			apexLog.WithField("operation", "delete").
+			log.WithField("operation", "delete").
 				WithField("location", "local").
 				WithField("backup", backupName).
 				WithField("duration", utils.HumanizeDuration(time.Since(start))).
@@ -120,37 +133,42 @@ func RemoveBackupLocal(cfg *config.Config, backupName string, disks []clickhouse
 	return fmt.Errorf("'%s' is not found on local storage", backupName)
 }
 
-func RemoveBackupRemote(cfg *config.Config, backupName string) error {
+func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) error {
+	log := b.log.WithField("logger", "RemoveBackupRemote")
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 	start := time.Now()
-	if cfg.General.RemoteStorage == "none" {
-		err := fmt.Errorf("RemoveBackupRemote aborted: RemoteStorage set to \"none\"")
-		apexLog.Error(err.Error())
+	if b.cfg.General.RemoteStorage == "none" {
+		err := errors.New("aborted: RemoteStorage set to \"none\"")
+		log.Error(err.Error())
 		return err
 	}
-	if cfg.General.RemoteStorage == "custom" {
-		return custom.DeleteRemote(cfg, backupName)
+	if b.cfg.General.RemoteStorage == "custom" {
+		return custom.DeleteRemote(ctx, b.cfg, backupName)
 	}
+	if err := b.ch.ConnectOnce(); err != nil {
+		return fmt.Errorf("can't connect to clickhouse: %v", err)
+	}
+	defer b.ch.Close()
 
-	bd, err := storage.NewBackupDestination(cfg, false)
+	bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, false)
 	if err != nil {
 		return err
 	}
-	err = bd.Connect()
+	err = bd.Connect(ctx)
 	if err != nil {
 		return fmt.Errorf("can't connect to remote storage: %v", err)
 	}
-	backupList, err := bd.BackupList(true, backupName)
+	backupList, err := bd.BackupList(ctx, true, backupName)
 	if err != nil {
 		return err
 	}
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
-			if err := bd.RemoveBackup(backup); err != nil {
-				apexLog.Warnf("RemoveBackup return error: %+v", err)
+			if err := bd.RemoveBackup(ctx, backup); err != nil {
+				log.Warnf("bd.RemoveBackup return error: %v", err)
 				return err
 			}
-			apexLog.WithFields(apexLog.Fields{
+			log.WithFields(apexLog.Fields{
 				"backup":    backupName,
 				"location":  "remote",
 				"operation": "delete",
@@ -160,4 +178,26 @@ func RemoveBackupRemote(cfg *config.Config, backupName string) error {
 		}
 	}
 	return fmt.Errorf("'%s' is not found on remote storage", backupName)
+}
+
+func (b *Backuper) CleanRemoteBroken(commandId int) error {
+	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
+	if err != nil {
+		return err
+	}
+	ctx, cancel = context.WithCancel(ctx)
+	defer cancel()
+
+	remoteBackups, err := b.GetRemoteBackups(ctx, true)
+	if err != nil {
+		return err
+	}
+	for _, backup := range remoteBackups {
+		if backup.Broken != "" {
+			if err = b.RemoveBackupRemote(ctx, backup.BackupName); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

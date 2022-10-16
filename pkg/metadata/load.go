@@ -7,6 +7,7 @@ import (
 )
 
 func (tm *TableMetadata) Load(location string) (uint64, error) {
+	log := apexLog.WithField("logger", "metadata.Load")
 	data, err := os.ReadFile(location)
 	if err != nil {
 		return 0, err
@@ -14,6 +15,6 @@ func (tm *TableMetadata) Load(location string) (uint64, error) {
 	if err := json.Unmarshal(data, tm); err != nil {
 		return 0, err
 	}
-	apexLog.Debugf("success TableMedata.Load(%s)", location)
+	log.Debugf("success %s", location)
 	return uint64(len(data)), nil
 }

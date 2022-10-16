@@ -1,6 +1,7 @@
 package custom
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
@@ -11,7 +12,7 @@ import (
 	"time"
 )
 
-func List(cfg *config.Config) ([]storage.Backup, error) {
+func List(ctx context.Context, cfg *config.Config) ([]storage.Backup, error) {
 	if cfg.Custom.ListCommand == "" {
 		return nil, fmt.Errorf("CUSTOM_LIST_COMMAND is not defined")
 	}
@@ -20,7 +21,7 @@ func List(cfg *config.Config) ([]storage.Backup, error) {
 		"cfg": cfg,
 	}
 	args := ApplyCommandTemplate(cfg.Custom.ListCommand, templateData)
-	out, err := utils.ExecCmdOut(cfg.Custom.CommandTimeoutDuration, args[0], args[1:]...)
+	out, err := utils.ExecCmdOut(ctx, cfg.Custom.CommandTimeoutDuration, args[0], args[1:]...)
 	if err == nil {
 		outLines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 		backupList := make([]storage.Backup, len(outLines))

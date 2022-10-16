@@ -111,7 +111,7 @@ On the first day of month full backup will be uploaded and increments on the oth
 ```
 
 ## How to make backup database with several terabytes of data
-You can use clickhouse-backup for creating periodical backups and keep it local. It protect you from destructive operations.
+You can use clickhouse-backup for creating periodical backups and keep it local. It protects you from destructive operations.
 In addition, you may create instance of ClickHouse on another DC and have it fresh by clickhouse-copier it protects you from hardware or DC failures.
 
 ## How to use clickhouse-backup in Kubernetes
@@ -311,7 +311,7 @@ spec:
                   value: backup
                 - name: BACKUP_PASSWORD
                   value: "backup_password"
-                # change to 1, if you want make full backup only in $FULL_BACKUP_WEEKDAY (1 - Mon, 7 - Sun)   
+                # change to 1, if you want to make full backup only in $FULL_BACKUP_WEEKDAY (1 - Mon, 7 - Sun)   
                 - name: MAKE_INCREMENT_BACKUP
                   value: "1"
                 - name: FULL_BACKUP_WEEKDAY
@@ -380,7 +380,7 @@ spec:
 - Incremental backup calculate increment only during execute `upload` or `create_remote` command or similar REST API request.
 - Currently, incremental backup calculate increment only on table parts level, look to ClicHouse documentation to fill the difference between [data parts](https://clickhouse.tech/docs/en/operations/system-tables/parts/) and [table partitions](https://clickhouse.tech/docs/en/operations/system-tables/partitions/).  
 - To calculate increment, backup which listed on `--diff-from` parameter is required to be present as local backup, look to `clickhouse-backup list` command results for ensure.
-- Currently, during execute `clickhouse-backup upload --diff-from=base_backup` don't check `base_backup` exits on remote storage, be carefull.
+- Currently, during execute `clickhouse-backup upload --diff-from=base_backup` don't check `base_backup` exits on remote storage, be careful.
 - During upload operation `base_backup` added to current backup metadata as required. All data parts which exists in `base_backup` also mark in backup metadata table level with `required` flag and skip data uploading. 
 - During download, if backup contains link to `required` backup it will try to fully download first. This action apply recursively. If you have a chain of incremental backups, all incremental backups in the chain and first "full" will download to local storage. 
 - Size of increment depends not only on the intensity your data ingestion and also depends on the intensity background merges for data parts in your tables. Please increase how much rows you will ingest during one INSERT query and don't apply often [table data mutations](https://clickhouse.tech/docs/en/operations/system-tables/mutations/).

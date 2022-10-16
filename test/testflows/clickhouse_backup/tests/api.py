@@ -1,25 +1,22 @@
 import json
 
-from testflows.core import *
-from testflows.asserts import *
-
 from clickhouse_backup.requirements.requirements import *
-from clickhouse_backup.tests.steps import *
 from clickhouse_backup.tests.common import *
+from clickhouse_backup.tests.steps import *
 
 
 @TestStep
-def validate_JsonEachRow(self, r):
+def validate_json_each_row(self, r):
     try:
         return [json.loads(s) for s in r.text.split('\n')[:-1]]
-    except ValueError as e:
+    except ValueError:
         return False
 
 
 @TestStep
 def post_api_actions(self, url, command: str, code=None):
     data = {'command': command}
-    r = api_request(endpoint=f"{url}/backup/actions", type="post", payload=data)
+    r = api_request(endpoint=f"{url}/backup/actions", request_type="post", payload=data)
 
     if code:
         with Then(f"check response code is {code}"):
@@ -40,21 +37,21 @@ def get_status(self):
     try:
         with Given("make 2 create backup requests"):
             with By("create first backup and wait for it to finish"):
-                api_request(endpoint=f"{url}/backup/create?name={name_prefix}_0", type="post")
+                api_request(endpoint=f"{url}/backup/create?name={name_prefix}_0", request_type="post")
                 wait_request_finalized(url)
             with By("create a second one"):
-                api_request(endpoint=f"{url}/backup/create?name={name_prefix}_1", type="post")
+                api_request(endpoint=f"{url}/backup/create?name={name_prefix}_1", request_type="post")
 
         with When("check the return concerns only the last query"):
             r = api_request(endpoint=f"{url}/backup/status")
-            assert validate_JsonEachRow(r=r), error()
+            assert validate_json_each_row(r=r), error()
             assert r.json()["command"] == f"create {name_prefix}_1", error()
             wait_request_finalized(url)
 
     finally:
         with Finally("remove created backups"):
             for i in range(2):
-                api_request(endpoint=f"{url}/backup/delete/local/{name_prefix}_{i}", type="post")
+                api_request(endpoint=f"{url}/backup/delete/local/{name_prefix}_{i}", request_type="post")
                 wait_request_finalized(url)
 
 
@@ -63,26 +60,27 @@ def get_status(self):
     RQ_SRS_013_ClickHouse_BackupUtility_REST_API_AsyncPostQuery("1.0")
 )
 def async_post_query(self):
-    """Test that POST queries are async. If previous query is not finished yet, the new one shall return 423 without being executed.
+    """Test that POST queries are async.
+    If previous query is not finished yet, the new one shall return 423 without being executed.
     """
     url = self.context.url
     name_prefix = "api_async"
 
     try:
         with When("I send first create backup request"):
-            r1 = api_request(endpoint=f"{url}/backup/create?name={name_prefix}_0", type="post")
+            r1 = api_request(endpoint=f"{url}/backup/create?name={name_prefix}_0", request_type="post")
 
         with And("I send second create backup request"):
-            r2 = api_request(endpoint=f"{url}/backup/create?name={name_prefix}_1", type="post")
-            validate_JsonEachRow(r=r1)
-            validate_JsonEachRow(r=r2)
+            r2 = api_request(endpoint=f"{url}/backup/create?name={name_prefix}_1", request_type="post")
+            validate_json_each_row(r=r1)
+            validate_json_each_row(r=r2)
             with Then("I expect code 423"):
                 assert r2.status_code == 423, error()
 
     finally:
         with Finally("remove created backups"):
             for i in range(2):
-                api_request(endpoint=f"{url}/backup/delete/local/{name_prefix}_{i}", type="post")
+                api_request(endpoint=f"{url}/backup/delete/local/{name_prefix}_{i}", request_type="post")
                 wait_request_finalized(url)
 
 
@@ -104,7 +102,7 @@ def get_tables(self):
                 assert api_base_table_name in r_cli, error()
 
         with And("I GET tables (via API)"):
-            r_api = api_request(endpoint=f"{url}/backup/tables", type="get").text
+            r_api = api_request(endpoint=f"{url}/backup/tables", request_type="get").text
             debug(r_api)
             with Then("I expect table to be listed"):
                 assert api_base_table_name in r_api, error()
@@ -116,12 +114,12 @@ def get_tables(self):
                 assert api_base_table_name in r_cli, error()
 
         with And("I GET tables (via API)"):
-            r_api = api_request(endpoint=f"{url}/backup/tables/all", type="get")
+            r_api = api_request(endpoint=f"{url}/backup/tables/all", request_type="get")
             with Then("I expect table to be listed"):
                 assert api_base_table_name in r_api.text, error()
 
             with Then("I check all tables are listed"):
-                tables_data = validate_JsonEachRow(r=r_api)
+                tables_data = validate_json_each_row(r=r_api)
                 for t in tables_data:
                     assert f"{t['Database']}.{t['Name']}" in r_cli, error()
 
@@ -143,7 +141,7 @@ def create_restore_delete_local(self):
 
     with Step("I check POST /create command works"):
         with When("I create local backup"):
-            api_request(endpoint=f"{url}/backup/create?name={backup_name}", type="post")
+            api_request(endpoint=f"{url}/backup/create?name={backup_name}", request_type="post")
             wait_request_finalized(url)
 
             with Then("I check backup appears in filesystem"):
@@ -154,7 +152,7 @@ def create_restore_delete_local(self):
             drop_table(node=clickhouse, table_name=api_base_table_name)
 
         with And("I perform a POST restore"):
-            api_request(endpoint=f"{url}/backup/restore/{backup_name}", type="post")
+            api_request(endpoint=f"{url}/backup/restore/{backup_name}", request_type="post")
             wait_request_finalized(url)
 
         with Then("I expect table is restored"):
@@ -162,7 +160,7 @@ def create_restore_delete_local(self):
 
     with Step("I check API /delete/local command works"):
         with When("I remove backup"):
-            api_request(endpoint=f"{url}/backup/delete/local/{backup_name}", type="post")
+            api_request(endpoint=f"{url}/backup/delete/local/{backup_name}", request_type="post")
             wait_request_finalized(url)
 
             with Then("I check backup disappears from filesystem"):
@@ -185,7 +183,7 @@ def create_restore_delete_remote(self):
     api_base_table_name = self.context.api_base_table_name
 
     with Given("I configure ch-backup to use remote storage"):
-        config_modifier(fields= {"general": {"remote_storage": "ftp"}})
+        config_modifier(fields={"general": {"remote_storage": "ftp"}})
 
     try:
         with Step("I check API /create command works"):
@@ -210,7 +208,7 @@ def create_restore_delete_remote(self):
 
         with Step("I check API /delete/remote command works"):
             with When("I remove backup"):
-                api_request(endpoint=f"{url}/backup/delete/remote/{backup_name}", type="post")
+                api_request(endpoint=f"{url}/backup/delete/remote/{backup_name}", request_type="post")
                 wait_request_finalized(url)
 
                 with Then("I check backup is not in storage"):
@@ -236,7 +234,7 @@ def get_list_local_remote(self):
 
     try:
         with Given("create a local backup"):
-            api_request(endpoint=f"{url}/backup/create?name={name_prefix}_0", type="post")
+            api_request(endpoint=f"{url}/backup/create?name={name_prefix}_0", request_type="post")
             wait_request_finalized(url)
 
         with And("create a remote backup"):
@@ -249,21 +247,25 @@ def get_list_local_remote(self):
         with When("check the list query return only appropriate results"):
             with By("check all backups"):
                 total_backups = 0
-                data = validate_JsonEachRow(r=api_request(endpoint=f"{url}/backup/list", type="get"))
+                data = validate_json_each_row(r=api_request(endpoint=f"{url}/backup/list", request_type="get"))
                 for entry in data:
                     total_backups += 1
-                    assert entry["location"] in ("local", "remote") , error()
+                    assert entry["location"] in ("local", "remote"), error()
 
             with By("check local backups"):
                 local_backups = 0
-                data = validate_JsonEachRow(r=api_request(endpoint=f"{url}/backup/list/local", type="get"))
+                data = validate_json_each_row(r=api_request(endpoint=f"{url}/backup/list/local", request_type="get"))
                 for entry in data:
                     local_backups += 1
                     assert entry["location"] == "local", error()
 
             with By("check remote backups"):
                 remote_backups = 0
-                data = [json.loads(s) for s in api_request(endpoint=f"{url}/backup/list/remote", type="get").text.split('\n')[:-1]]
+                data = [
+                    json.loads(s) for s in api_request(
+                        endpoint=f"{url}/backup/list/remote", request_type="get"
+                    ).text.split('\n')[:-1]
+                ]
                 for entry in data:
                     remote_backups += 1
                     assert entry["location"] == "remote", error()
@@ -274,12 +276,12 @@ def get_list_local_remote(self):
     finally:
         with Finally("undo changes"):
             with By("remove remote backup and set remote_storage none"):
-                api_request(endpoint=f"{url}/backup/delete/remote/{name_prefix}_1", type="post")
+                api_request(endpoint=f"{url}/backup/delete/remote/{name_prefix}_1", request_type="post")
                 wait_request_finalized(url)
                 config_modifier(fields={"general": {"remote_storage": "none"}})
 
             with And("remove local backup"):
-                api_request(endpoint=f"{url}/backup/delete/local/{name_prefix}_0", type="post")
+                api_request(endpoint=f"{url}/backup/delete/local/{name_prefix}_0", request_type="post")
                 wait_request_finalized(url)
 
 
@@ -303,7 +305,7 @@ def post_upload_download(self):
 
     try:
         with When("I perform POST /upload"):
-            api_request(endpoint=f"{url}/backup/upload/{backup_name}", type="post")
+            api_request(endpoint=f"{url}/backup/upload/{backup_name}", request_type="post")
             wait_request_finalized(url)
 
             with Then("I check backup appears in storage"):
@@ -313,7 +315,7 @@ def post_upload_download(self):
             backup.cmd(f"clickhouse-backup delete local {backup_name}")
 
         with And("I perform POST /download"):
-            api_request(endpoint=f"{url}/backup/download/{backup_name}", type="post")
+            api_request(endpoint=f"{url}/backup/download/{backup_name}", request_type="post")
             wait_request_finalized(url)
 
             with Then("I check backup exists locally"):
@@ -341,18 +343,20 @@ def post_get_actions(self):
     backup = self.context.backup
 
     with Given("I configure ch-backup to use remote storage"):
-        config_modifier(fields= {"general": {"remote_storage": "ftp"}})
+        config_modifier(fields={"general": {"remote_storage": "ftp"}})
 
     try:
         with When("I start remote backup creations via POST actions"):
-            r1 = api_request(endpoint=f"{url}/backup/actions", type="post", payload={'command': f"create_remote {backup_name}"})
+            r1 = api_request(
+                endpoint=f"{url}/backup/actions", request_type="post", payload={'command': f"create_remote {backup_name}"}
+            )
 
         with And("I perform GET /actions"):
-            r2 = api_request(endpoint=f"{url}/backup/actions", type="get")
+            r2 = api_request(endpoint=f"{url}/backup/actions", request_type="get")
 
         with Then("I check both responses have correct data"):
             assert r1.json()["operation"] == f"create_remote {backup_name}" and r1.json()["status"] == "acknowledged", error()
-            last_op = validate_JsonEachRow(r=r2)[-1]
+            last_op = validate_json_each_row(r=r2)[-1]
             assert last_op["command"] == f"create_remote {backup_name}" and last_op["status"] == "in progress", error()
 
         with And("I wait for request to finish"):
@@ -365,7 +369,6 @@ def post_get_actions(self):
 
         with Finally("I set remote_storage to none"):
             config_modifier(fields={"general": {"remote_storage": "none"}})
-
 
 
 @TestFeature

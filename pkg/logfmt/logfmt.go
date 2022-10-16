@@ -3,15 +3,11 @@ package logfmt
 
 import (
 	"io"
-	"os"
 	"sync"
 
 	"github.com/apex/log"
 	"github.com/go-logfmt/logfmt"
 )
-
-// Default handler outputting to stderr.
-var Default = New(os.Stderr)
 
 // Handler implementation.
 type Handler struct {
@@ -33,15 +29,15 @@ func (h *Handler) HandleLog(e *log.Entry) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	h.enc.EncodeKeyval("ts", e.Timestamp)
-	h.enc.EncodeKeyval("lvl", e.Level.String())
-	h.enc.EncodeKeyval("msg", e.Message)
+	_ = h.enc.EncodeKeyval("ts", e.Timestamp)
+	_ = h.enc.EncodeKeyval("lvl", e.Level.String())
+	_ = h.enc.EncodeKeyval("msg", e.Message)
 
 	for _, name := range names {
-		h.enc.EncodeKeyval(name, e.Fields.Get(name))
+		_ = h.enc.EncodeKeyval(name, e.Fields.Get(name))
 	}
 
-	h.enc.EndRecord()
+	_ = h.enc.EndRecord()
 
 	return nil
 }

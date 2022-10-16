@@ -9,17 +9,21 @@ import os
 import sys
 from testflows.core import *
 
-append_path(sys.path, "..")
-
 from helpers.cluster import Cluster
 from helpers.argparser import argparser
 
 from clickhouse_backup.requirements.requirements import *
 from clickhouse_backup.tests.common import simple_data_types_columns
 
+append_path(sys.path, "..")
+
 xfails = {
-    "/clickhouse backup/other engines/materializedpostgresql/:": [(Fail, "https://github.com/ClickHouse/ClickHouse/issues/32902")],
-    "/clickhouse backup/other engines/materializedmysql/:": [(Fail, "DROP TABLE not supported by MaterializedMySQL, just attach will not help")],
+    "/clickhouse backup/other engines/materializedpostgresql/:": [
+        (Fail, "https://github.com/ClickHouse/ClickHouse/issues/32902")
+    ],
+    "/clickhouse backup/other engines/materializedmysql/:": [
+        (Fail, "DROP TABLE not supported by MaterializedMySQL, just attach will not help")
+    ],
 }
 
 

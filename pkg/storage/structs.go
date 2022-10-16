@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"io"
 	"time"
@@ -8,8 +9,7 @@ import (
 
 var (
 	// ErrNotFound is returned when file/object cannot be found
-	ErrNotFound         = errors.New("key not found")
-	ErrFileDoesNotExist = errors.New("file does not exist")
+	ErrNotFound = errors.New("key not found")
 )
 
 // RemoteFile - interface describe file on remote storage
@@ -22,11 +22,11 @@ type RemoteFile interface {
 // RemoteStorage -
 type RemoteStorage interface {
 	Kind() string
-	StatFile(key string) (RemoteFile, error)
-	DeleteFile(key string) error
-	Connect() error
-	Walk(prefix string, recursive bool, fn func(RemoteFile) error) error
-	GetFileReader(key string) (io.ReadCloser, error)
-	GetFileReaderWithLocalPath(key, localPath string) (io.ReadCloser, error)
-	PutFile(key string, r io.ReadCloser) error
+	StatFile(ctx context.Context, key string) (RemoteFile, error)
+	DeleteFile(ctx context.Context, key string) error
+	Connect(ctx context.Context) error
+	Walk(ctx context.Context, prefix string, recursive bool, fn func(context.Context, RemoteFile) error) error
+	GetFileReader(ctx context.Context, key string) (io.ReadCloser, error)
+	GetFileReaderWithLocalPath(ctx context.Context, key, localPath string) (io.ReadCloser, error)
+	PutFile(ctx context.Context, key string, r io.ReadCloser) error
 }

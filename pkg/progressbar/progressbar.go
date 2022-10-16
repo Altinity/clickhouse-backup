@@ -24,18 +24,6 @@ func StartNewByteBar(show bool, total int64) *Bar {
 	}
 }
 
-func StartNewBar(show bool, total int) *Bar {
-	if show {
-		return &Bar{
-			show: true,
-			pb:   progressbar.StartNew(total),
-		}
-	}
-	return &Bar{
-		show: false,
-	}
-}
-
 func (b *Bar) Finish() {
 	if b.show {
 		b.pb.Finish()

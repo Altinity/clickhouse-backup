@@ -9,7 +9,6 @@ clickhouse:
   port: 9000
   restart_command: bash -c 'echo "FAKE RESTART"'
 azblob:
-  # account_name: clickhousebackuptest
   account_name: devstoreaccount1
   account_key: Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==
   endpoint_suffix: azure:10000

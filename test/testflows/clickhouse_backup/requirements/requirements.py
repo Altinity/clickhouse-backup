@@ -1042,7 +1042,7 @@ RQ_SRS_013_ClickHouse_BackupUtility_Configuration = Requirement(
     uid=None,
     description=(
         'The [clickhouse-backup] utility SHALL support the following options in the configuration file.\n'
-        'All options SHALL be overwritable via environment variables.\n'
+        'All options SHALL be overridable via environment variables.\n'
         '\n'
         '```bash\n'
         'general:\n'
@@ -2426,7 +2426,7 @@ The [clickhouse-backup] utility SHALL support `help` option to show the list of 
 version: 1.0
 
 The [clickhouse-backup] utility SHALL support the following options in the configuration file.
-All options SHALL be overwritable via environment variables.
+All options SHALL be overridable via environment variables.
 
 ```bash
 general:

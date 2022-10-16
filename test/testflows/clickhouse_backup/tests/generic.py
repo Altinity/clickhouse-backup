@@ -1,9 +1,4 @@
-import time
-import random
 import itertools
-
-from testflows.core import *
-from testflows.asserts import *
 
 from clickhouse_backup.requirements.requirements import *
 from clickhouse_backup.tests.common import *
@@ -19,7 +14,7 @@ def many_columns(self):
     """
     clickhouse = self.context.nodes[0]
     backup = self.context.backup
-    name_prefix = "backup_manycols"
+    name_prefix = "backup_many_columns"
     columns = {}
 
     col_types = list(self.context.columns.values())
@@ -63,13 +58,13 @@ def backup_all_datatypes(self):
     clickhouse = self.context.nodes[0]
     backup = self.context.backup
     name_prefix = "bp_all_dt"
-    aggr_funcs = ["any", "anyLast","min", "max", "sum", "sumWithOverflow"]
-    multiword_types = {"dprec": "DOUBLE PRECISION", "clo": "CHAR LARGE OBJECT", "chv": "CHAR VARYING",
-                       "crlo": "CHARACTER LARGE OBJECT", "ctrv": "CHARACTER VARYING", "nclo": "NCHAR LARGE OBJECT",
-                       "ncv": "NCHAR VARYING", "natclo": "NATIONAL CHARACTER LARGE OBJECT",
-                       "natchrv": "NATIONAL CHARACTER VARYING", "natchv": "NATIONAL CHAR VARYING",
-                       "nchar": "NATIONAL CHARACTER", "nch": "NATIONAL CHAR",
-                       "blo": "BINARY LARGE OBJECT", "bivar": "BINARY VARYING"}
+    aggr_funcs = ["any", "anyLast", "min", "max", "sum", "sumWithOverflow"]
+    multi_word_types = {"dprec": "DOUBLE PRECISION", "clo": "CHAR LARGE OBJECT", "chv": "CHAR VARYING",
+                        "crlo": "CHARACTER LARGE OBJECT", "ctrv": "CHARACTER VARYING", "nclo": "NCHAR LARGE OBJECT",
+                        "ncv": "NCHAR VARYING", "natclo": "NATIONAL CHARACTER LARGE OBJECT",
+                        "natchrv": "NATIONAL CHARACTER VARYING", "natchv": "NATIONAL CHAR VARYING",
+                        "nchar": "NATIONAL CHARACTER", "nch": "NATIONAL CHAR",
+                        "blo": "BINARY LARGE OBJECT", "bivar": "BINARY VARYING"}
 
     all_columns = {}
     simple_columns = {}
@@ -101,7 +96,7 @@ def backup_all_datatypes(self):
             all_columns[f"saf_{ag_func}"] = f"SimpleAggregateFunction({ag_func}, Double)"
             all_columns[f"af_{ag_func}"] = f"AggregateFunction({ag_func}, Double)"
 
-        for k, v in multiword_types.items():
+        for k, v in multi_word_types.items():
             all_columns[k] = v
 
     try:
@@ -149,7 +144,9 @@ def restore_partially_dropped(self):
 
     try:
         with Given("I create table"):
-            create_and_populate_table(node=clickhouse, table_name=name_prefix, columns=self.context.columns, native=True)
+            create_and_populate_table(
+                node=clickhouse, table_name=name_prefix, columns=self.context.columns, native=True
+            )
             table_data = clickhouse.query(f"SELECT * FROM {name_prefix}").output
 
         with When("I create backup"):
@@ -250,15 +247,17 @@ def backup_and_restore_all_tables(self):
         with Given(f"I create {dbe} database"):
             clickhouse.query(f"CREATE DATABASE {dbn} ENGINE = {dbe}")
 
+    table_data = {dbn: {} for dbn in database_names}
     try:
-        table_data = {dbn: {} for dbn in database_names}
         with Given("I create tables"):
             for dbn in database_names:
                 for e in table_engines:
                     create_and_populate_table(node=clickhouse, database=dbn, table_name=f"{name_prefix}_{e}")
 
                     with By(f"save data from {e} table"):
-                        table_data[dbn][f"{name_prefix}_{e}"] = clickhouse.query(f"SELECT * FROM {dbn}.{name_prefix}_{e}").output
+                        table_data[dbn][f"{name_prefix}_{e}"] = clickhouse.query(
+                            f"SELECT * FROM {dbn}.{name_prefix}_{e}"
+                        ).output
 
         with When("I create backup for all tables"):
             backup.cmd(f"clickhouse-backup create {name_prefix}")

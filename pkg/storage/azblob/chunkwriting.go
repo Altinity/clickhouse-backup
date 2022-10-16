@@ -1,4 +1,4 @@
-// forked from github.com/Azure/azure-storage-blob-go/azblob/blob/feature/clientprovidedkey because UploadStreamToBlockBlob does not expose CPK
+// Package azblob forked from github.com/Azure/azure-storage-blob-go/azblob/blob/feature/clientprovidedkey because UploadStreamToBlockBlob does not expose CPK
 package azblob
 
 import (
@@ -28,7 +28,7 @@ type blockWriter interface {
 // useless other than needing to be above some number, as the network stack is going to hack up the buffer over some size. The
 // max buffers is providing a cap on how much memory we use (by multiplying it times the buffer size) and how many go routines can upload
 // at a time.  I think having a single max memory dial would be more efficient.  We can choose an internal buffer size that works
-// well, 4 MiB or 8 MiB, and autoscale to as many goroutines within the memory limit. This gives a single dial to tweak and we can
+// well, 4 MiB or 8 MiB, and autoscale to as many goroutines within the memory limit. This gives a single dial to tweak, and we can
 // choose a max value for the memory setting based on internal transfers within Azure (which will give us the maximum throughput model).
 // We can even provide a utility to dial this number in for customer networks to optimize their copies.
 func copyFromReader(ctx context.Context, from io.Reader, to blockWriter, o azb.UploadStreamToBlockBlobOptions, cpk azb.ClientProvidedKeyOptions) (*azb.BlockBlobCommitBlockListResponse, error) {
@@ -82,7 +82,7 @@ func copyFromReader(ctx context.Context, from io.Reader, to blockWriter, o azb.U
 // Do not use directly, instead use copyFromReader().
 type copier struct {
 	// ctx holds the context of a copier. This is normally a faux pas to store a Context in a struct. In this case,
-	// the copier has the lifetime of a function call, so its fine.
+	// the copier has the lifetime of a function call, so it's fine.
 	ctx    context.Context
 	cancel context.CancelFunc
 
@@ -228,14 +228,14 @@ func newID() *id {
 func (id *id) next() string {
 	defer func() { id.num++ }()
 
-	binary.BigEndian.PutUint32((id.u[len(guuid.UUID{}):]), id.num)
+	binary.BigEndian.PutUint32(id.u[len(guuid.UUID{}):], id.num)
 	str := base64.StdEncoding.EncodeToString(id.u[:])
 	id.all = append(id.all, str)
 
 	return str
 }
 
-// issued returns all ids that have been issued. This returned value shares the internal slice so it is not safe to modify the return.
+// issued returns all ids that have been issued. This returned value shares the internal slice, so it is not safe to modify the return.
 // The value is only valid until the next time next() is called.
 func (id *id) issued() []string {
 	return id.all

@@ -17,7 +17,7 @@ const (
 
 var CleanBackupNameRE = regexp.MustCompile(`[\t\r\n ]+|\.{2,}|[\\/]+`)
 
-// FormatBytes - Convert bytes to human readable string
+// FormatBytes - Convert bytes to human-readable string
 func FormatBytes(i uint64) string {
 	const (
 		KiB = 1024
@@ -59,14 +59,14 @@ func HumanizeDuration(d time.Duration) string {
 	return b.String()
 }
 
-func ExecCmd(timeout time.Duration, cmd string, args ...string) error {
-	out, err := ExecCmdOut(timeout, cmd, args...)
+func ExecCmd(ctx context.Context, timeout time.Duration, cmd string, args ...string) error {
+	out, err := ExecCmdOut(ctx, timeout, cmd, args...)
 	log.Info(out)
 	return err
 }
 
-func ExecCmdOut(timeout time.Duration, cmd string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+func ExecCmdOut(ctx context.Context, timeout time.Duration, cmd string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	log.Infof("%s %s", cmd, strings.Join(args, " "))
 	out, err := exec.CommandContext(ctx, cmd, args...).CombinedOutput()
 	cancel()

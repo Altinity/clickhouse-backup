@@ -3,7 +3,7 @@ package logfmt_test
 import (
 	"bytes"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/logfmt"
-	"io/ioutil"
+	"io"
 	"testing"
 	"time"
 
@@ -35,7 +35,7 @@ ts=1970-01-01T00:00:00Z lvl=error msg=boom
 }
 
 func Benchmark(b *testing.B) {
-	log.SetHandler(logfmt.New(ioutil.Discard))
+	log.SetHandler(logfmt.New(io.Discard))
 	ctx := log.WithField("user", "tj").WithField("id", "123")
 
 	for i := 0; i < b.N; i++ {

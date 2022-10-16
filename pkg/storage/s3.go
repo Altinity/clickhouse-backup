@@ -13,7 +13,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/apex/log"
+	apexLog "github.com/apex/log"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -27,12 +27,12 @@ import (
 )
 
 type S3LogToApexLogAdapter struct {
-	apexLog *log.Logger
+	apexLog *apexLog.Logger
 }
 
-func newS3Logger() *S3LogToApexLogAdapter {
+func newS3Logger(log *apexLog.Entry) *S3LogToApexLogAdapter {
 	return &S3LogToApexLogAdapter{
-		apexLog: log.Log.(*log.Logger),
+		apexLog: log.Logger,
 	}
 }
 
@@ -50,13 +50,14 @@ type S3 struct {
 	uploader    *s3manager.Uploader
 	downloader  *s3manager.Downloader
 	Config      *config.S3Config
+	Log         *apexLog.Entry
 	PartSize    int64
 	Concurrency int
 	BufferSize  int
 }
 
 // Connect - connect to s3
-func (s *S3) Connect() error {
+func (s *S3) Connect(ctx context.Context) error {
 	var err error
 
 	awsDefaults := defaults.Get()
@@ -80,7 +81,7 @@ func (s *S3) Connect() error {
 			Region: aws.String(s.Config.Region),
 		}
 		stsSvc := sts.New(session.Must(session.NewSession(cfg)))
-		stsProvider := stscreds.NewWebIdentityRoleProvider(stsSvc, awsRoleARN, "", awsWebIdentityTokenFile)
+		stsProvider := stscreds.NewWebIdentityRoleProviderWithOptions(stsSvc, awsRoleARN, "", stscreds.FetchTokenPath(awsWebIdentityTokenFile))
 		customCredProviders = append([]credentials.Provider{stsProvider}, customCredProviders...)
 	}
 
@@ -95,7 +96,7 @@ func (s *S3) Connect() error {
 		MaxRetries:       aws.Int(30),
 	}
 	if s.Config.Debug {
-		awsConfig.Logger = newS3Logger()
+		awsConfig.Logger = newS3Logger(s.Log)
 		awsConfig.LogLevel = aws.LogLevel(aws.LogDebug)
 	}
 
@@ -107,7 +108,7 @@ func (s *S3) Connect() error {
 	}
 
 	if s.Config.AssumeRoleARN != "" {
-		/// Reference to regular credentials chain is to be copied into `stscreds` credentials.
+		// Reference to regular credentials chain is to be copied into `stscreds` credentials.
 		awsConfig.Credentials = stscreds.NewCredentials(session.Must(session.NewSession(awsConfig)), s.Config.AssumeRoleARN)
 	}
 
@@ -132,7 +133,7 @@ func (s *S3) Kind() string {
 	return "S3"
 }
 
-func (s *S3) GetFileReader(key string) (io.ReadCloser, error) {
+func (s *S3) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {
 	svc := s3.New(s.session)
 	req, resp := svc.GetObjectRequest(&s3.GetObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
@@ -145,7 +146,7 @@ func (s *S3) GetFileReader(key string) (io.ReadCloser, error) {
 	return resp.Body, nil
 }
 
-func (s *S3) GetFileReaderWithLocalPath(key, localPath string) (io.ReadCloser, error) {
+func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath string) (io.ReadCloser, error) {
 	/* unfortunately, multipart download require allocate additional disk space
 	and don't allow us to decompress data directly from stream */
 	if s.Config.AllowMultipartDownload {
@@ -162,11 +163,11 @@ func (s *S3) GetFileReaderWithLocalPath(key, localPath string) (io.ReadCloser, e
 		}
 		return writer, nil
 	} else {
-		return s.GetFileReader(key)
+		return s.GetFileReader(ctx, key)
 	}
 }
 
-func (s *S3) PutFile(key string, r io.ReadCloser) error {
+func (s *S3) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
 	var sse *string
 	if s.Config.SSE != "" {
 		sse = aws.String(s.Config.SSE)
@@ -182,7 +183,7 @@ func (s *S3) PutFile(key string, r io.ReadCloser) error {
 	return err
 }
 
-func (s *S3) DeleteFile(key string) error {
+func (s *S3) DeleteFile(ctx context.Context, key string) error {
 	params := &s3.DeleteObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
 		Key:    aws.String(path.Join(s.Config.Path, key)),
@@ -193,15 +194,15 @@ func (s *S3) DeleteFile(key string) error {
 	return nil
 }
 
-func (s *S3) StatFile(key string) (RemoteFile, error) {
+func (s *S3) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 	svc := s3.New(s.session)
 	head, err := svc.HeadObject(&s3.HeadObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
 		Key:    aws.String(path.Join(s.Config.Path, key)),
 	})
 	if err != nil {
-		aerr, ok := err.(awserr.Error)
-		if ok && aerr.Code() == "NotFound" {
+		awsError, ok := err.(awserr.Error)
+		if ok && awsError.Code() == "NotFound" {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -209,8 +210,8 @@ func (s *S3) StatFile(key string) (RemoteFile, error) {
 	return &s3File{*head.ContentLength, *head.LastModified, key}, nil
 }
 
-func (s *S3) Walk(s3Path string, recursive bool, process func(r RemoteFile) error) error {
-	g, _ := errgroup.WithContext(context.Background())
+func (s *S3) Walk(ctx context.Context, s3Path string, recursive bool, process func(ctx context.Context, r RemoteFile) error) error {
+	g, ctx := errgroup.WithContext(ctx)
 	s3Files := make(chan *s3File)
 	g.Go(func() error {
 		defer close(s3Files)
@@ -233,7 +234,7 @@ func (s *S3) Walk(s3Path string, recursive bool, process func(r RemoteFile) erro
 		var err error
 		for s3File := range s3Files {
 			if err == nil {
-				err = process(s3File)
+				err = process(ctx, s3File)
 			}
 		}
 		return err

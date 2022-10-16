@@ -1,14 +1,26 @@
 # v2.1.0
 IMPROVEMENTS
+- complex refactoring to use contexts, AWS and SFTP storage not full supported
+- complex refactoring for logging to avoid race condition when change log level during config reload
 - improve kubernetes example for adjust incremental backup, fix [523](https://github.com/AlexAkulov/clickhouse-backup/issues/523)
 - add storage independent retries policy, fix [397](https://github.com/AlexAkulov/clickhouse-backup/issues/397)
+- add `clickhouse-backup-full` docker image with integrated `kopia`, `rsync`, `restic` and `clickhouse-local`, fix [507](https://github.com/AlexAkulov/clickhouse-backup/issues/507)
+- implement `GET /backup/kill?command=XXX` API to allow kill, fix [516](https://github.com/AlexAkulov/clickhouse-backup/issues/516)  
+- implement `kill "full command"` in `POST /backup/actions` handler, fix [516](https://github.com/AlexAkulov/clickhouse-backup/issues/516)
+- implement `watch` in `POST /backup/actions` handler API and CLI command, fix [430](https://github.com/AlexAkulov/clickhouse-backup/issues/430)
+- implement `clickhouse-backup server --watch` to allow server start watch after start, fix [430](https://github.com/AlexAkulov/clickhouse-backup/issues/430)
+- update metric `last_{create|create_remote|upload}_finish` metrics values during API server startup, fix [515](https://github.com/AlexAkulov/clickhouse-backup/issues/515)
+- implement `clean_remote_broken` command and `POST /backup/clean/remote_broken` API request, fix [520](https://github.com/AlexAkulov/clickhouse-backup/issues/520)
+- add metric `number_backups_remote_broken` to calculate broken remote backups, fix [530](https://github.com/AlexAkulov/clickhouse-backup/issues/530)
 
 BUG FIXES
 - fix `keep_backups_remote` behavior for recursive incremental sequences, fix [525](https://github.com/AlexAkulov/clickhouse-backup/issues/525)
+- for `restore` command call `DROP DATABASE IF EXISTS db SYNC` when pass `--schema` and `--drop` together, fix [514](https://github.com/AlexAkulov/clickhouse-backup/issues/514)
+- lot of typos fixes
 
 # v2.0.0
 IMPROVEMENTS
-- implements `remote_storage: custom`, which allow us to adopt any external backup system like restic, kopia, rsync, rclone etc. fix [383](https://github.com/AlexAkulov/clickhouse-backup/issues/383)
+- implements `remote_storage: custom`, which allow us to adopt any external backup system like `restic`, `kopia`, `rsync`, rclone etc. fix [383](https://github.com/AlexAkulov/clickhouse-backup/issues/383)
 - add example workflow hot to make backup / restore on sharded cluster, fix [469](https://github.com/AlexAkulov/clickhouse-backup/discussions/469)
 - add `use_embedded_backup_restore` to allow `BACKUP` and `RESTORE` SQL commands usage, fix [323](https://github.com/AlexAkulov/clickhouse-backup/issues/323), need 22.7+ and resolve https://github.com/ClickHouse/ClickHouse/issues/39416
 - add `timeout` to `azure` config `AZBLOB_TIMEOUT` to allow download with bad network quality, fix [467](https://github.com/AlexAkulov/clickhouse-backup/issues/467)
@@ -24,7 +36,7 @@ BUG FIXES
 
 # v1.6.2
 IMPROVEMENTS
-- add Azure to every CI/CD run, testing with Azurite
+- add Azure to every CI/CD run, testing with `Azurite`
 
 BUG FIXES
 - fix azblob.Walk with recursive=True, for properly delete remote backups
@@ -102,7 +114,7 @@ IMPROVEMENTS
 - add support backup/restore [user defined functions](https://clickhouse.com/docs/en/sql-reference/statements/create/function), fix [420](https://github.com/AlexAkulov/clickhouse-backup/issues/420)
 - add `clickhouse_backup_number_backups_remote`, `clickhouse_backup_number_backups_local`, `clickhouse_backup_number_backups_remote_expected`,`clickhouse_backup_number_backups_local_expected` prometheus metric, fix [437](https://github.com/AlexAkulov/clickhouse-backup/issues/437)
 - add ability to apply `system.macros` values to `path` field in all types of `remote_storage`, fix [438](https://github.com/AlexAkulov/clickhouse-backup/issues/438) 
-- use all disks for upload and download for mutli-disk volumes in parallel when `upload_by_part: true` fix [#400](https://github.com/AlexAkulov/clickhouse-backup/issues/400) 
+- use all disks for upload and download for multi-disk volumes in parallel when `upload_by_part: true` fix [#400](https://github.com/AlexAkulov/clickhouse-backup/issues/400) 
 
 BUG FIXES
 - fix wrong warning for .gz, .bz2, .br archive extensions during download, fix [441](https://github.com/AlexAkulov/clickhouse-backup/issues/441)

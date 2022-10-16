@@ -150,9 +150,9 @@ services:
     image: stilliard/pure-ftpd
     hostname: ftp_server
     environment:
-      - FTP_USER_NAME=aztest
-      - FTP_USER_PASS=aztest
-      - FTP_USER_HOME=/home/aztest
+      - FTP_USER_NAME=test
+      - FTP_USER_PASS=test
+      - FTP_USER_HOME=/home/test
       - PUBLICHOST=ftp_server
     healthcheck:
       test: echo 1

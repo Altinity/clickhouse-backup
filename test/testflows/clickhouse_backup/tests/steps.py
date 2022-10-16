@@ -1,10 +1,9 @@
-import re
+import datetime
 import random
 import string
-import datetime
 
 from testflows.core import *
-from testflows.asserts import values, error, snapshot
+
 from clickhouse_backup.tests.common import random_datetime
 
 
@@ -17,8 +16,8 @@ def drop_table(self, node, table_name, database="default", sync=True):
 
 
 @TestStep(Given)
-def create_table(self, node, table_name, columns, database="default", engine="MergeTree", order_by=None, sign=None, version=None,
-                 config_section="graphite_rollup_params", settings=None):
+def create_table(self, node, table_name, columns, database="default", engine="MergeTree", order_by=None, sign=None,
+                 version=None, config_section="graphite_rollup_params", settings=None):
     """Helper step, creates a ClickHouse table in the given node.
     """
     with When(f"creating table {table_name} with {engine} engine in database {database}"):
@@ -26,7 +25,7 @@ def create_table(self, node, table_name, columns, database="default", engine="Me
         for i, j in columns.items():
             schema += f"{i} {j}, "
 
-        schema = schema [:-2]
+        schema = schema[:-2]
 
         if not order_by:
             order_by = str(list(columns.keys())[0])
@@ -49,10 +48,13 @@ def create_table(self, node, table_name, columns, database="default", engine="Me
         if "Replicated" in engine:
             zoo_path = "/clickhouse/tables/{shard}" \
                        f"/{table_name}"
-            engine_params = f"'{zoo_path}', '{{replica}}'" if engine_params == "" else f"'{zoo_path}', '{{replica}}', {engine_params}"
+            if engine_params == "":
+                engine_params = f"'{zoo_path}', '{{replica}}'"
+            else:
+                engine_params = f"'{zoo_path}', '{{replica}}', {engine_params}"
 
-
-        query = f"CREATE TABLE {database}.{table_name} ({schema}) Engine = {engine}({engine_params}) ORDER BY {order_by}"
+        query = f"CREATE TABLE {database}.{table_name} ({schema}) " \
+                f"Engine = {engine}({engine_params}) ORDER BY {order_by}"
         if settings:
             query += f" SETTINGS {settings}"
 
@@ -82,7 +84,7 @@ def populate_table(self, node, table_name, columns, database="default", size=10,
 
                 for col_name, col_type in columns.items():
                     if col_type == "String":
-                        portion.append((''.join(random.choice(letters) for j in range(10))))
+                        portion.append((''.join(random.choice(letters) for _ in range(10))))
                     elif "Int" in col_type:
                         portion.append(random.randint(1, 51) if col_name != "Sign" else random.choice((1, -1)))
                     elif col_type == "DateTime":
@@ -95,12 +97,17 @@ def populate_table(self, node, table_name, columns, database="default", size=10,
             values = str(values)[1:-1].replace("\"(", "(").replace(")\"", ")").replace("\"", "'")
             column_selector = str(list(columns.keys())).replace('\'', '')[1:-1]
 
-            insert_into_table(node=node, table_name=table_name, database=database, values=values, columns=f"({column_selector})")
+            insert_into_table(
+                node=node, table_name=table_name, database=database, values=values, columns=f"({column_selector})"
+            )
     else:
         random_schema = []
         insert_columns = []
         for i, j in columns.items():
-            if not ("Map" in j or "LowCardinality" in j or "Nested" in j or (type(j) == str and j.startswith("Aggregate"))):
+            if not (
+                "Map" in j or "LowCardinality" in j or "Nested" in j
+                or (type(j) == str and j.startswith("Aggregate"))
+            ):
                 insert_columns.append(i)
                 if "'" in j:
                     j_mod = j.replace("'", "\\'")
@@ -123,8 +130,12 @@ def create_and_populate_table(self, node, table_name, database="default", column
         columns = self.context.columns
 
     try:
-        create_table(node=node, table_name=f"{table_name}", database=database, engine=engine, columns=columns, settings=settings)
-        populate_table(node=node, table_name=f"{table_name}", database=database, columns=columns, size=size, native=native)
+        create_table(
+            node=node, table_name=f"{table_name}", database=database, engine=engine, columns=columns, settings=settings
+        )
+        populate_table(
+            node=node, table_name=f"{table_name}", database=database, columns=columns, size=size, native=native
+        )
         yield
 
     finally:
@@ -133,22 +144,20 @@ def create_and_populate_table(self, node, table_name, database="default", column
 
 
 @TestStep(Given)
-def delete_any_old_topic_and_consumer_group(self, kafka_node, bootstrap_server, topic, consumer_group, node="kafka1"):
+def delete_any_old_topic_and_consumer_group(self, kafka_node, bootstrap_server, topic, consumer_group):
     """Delete any old topic and consumer group.
     """
     with By("deleting topic"):
-        command = (f"kafka-topics "
-               f"--bootstrap-server {bootstrap_server} --delete --topic {topic}")
+        command = f"kafka-topics --bootstrap-server {bootstrap_server} --delete --topic {topic}"
         kafka_node.cmd(command)
 
     with By("deleting consumer group"):
-        command = (f"kafka-consumer-groups "
-               f"--bootstrap-server {bootstrap_server} --delete --group {consumer_group}")
+        command = f"kafka-consumer-groups --bootstrap-server {bootstrap_server} --delete --group {consumer_group}"
         kafka_node.cmd(command)
 
 
 @TestStep(Given)
-def create_topic(self, kafka_node, bootstrap_server, topic, consumer_group, replication_factor, partitions, node="kafka1"):
+def create_topic(self, kafka_node, bootstrap_server, topic, consumer_group, replication_factor, partitions):
     """Create Kafka topic.
     """
     try:
@@ -160,10 +169,8 @@ def create_topic(self, kafka_node, bootstrap_server, topic, consumer_group, repl
 
     finally:
         with Finally("I cleanup Kafka topic and consumer group"):
-            command = (f"kafka-topics "
-                f"--bootstrap-server {bootstrap_server} --delete --topic {topic}")
+            command = f"kafka-topics --bootstrap-server {bootstrap_server} --delete --topic {topic}"
             kafka_node.cmd(command)
 
-            command = (f"kafka-consumer-groups "
-                f"--bootstrap-server {bootstrap_server} --delete --group {consumer_group}")
+            command = f"kafka-consumer-groups --bootstrap-server {bootstrap_server} --delete --group {consumer_group}"
             kafka_node.cmd(command)

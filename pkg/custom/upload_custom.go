@@ -1,6 +1,7 @@
 package custom
 
 import (
+	"context"
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
@@ -9,7 +10,7 @@ import (
 	"time"
 )
 
-func Upload(cfg *config.Config, backupName, diffFrom, diffFromRemote, tablePattern string, partitions []string, schemaOnly bool) error {
+func Upload(ctx context.Context, cfg *config.Config, backupName, diffFrom, diffFromRemote, tablePattern string, partitions []string, schemaOnly bool) error {
 	startCustomUpload := time.Now()
 	if cfg.Custom.UploadCommand == "" {
 		return fmt.Errorf("CUSTOM_UPLOAD_COMMAND is not defined")
@@ -40,8 +41,8 @@ func Upload(cfg *config.Config, backupName, diffFrom, diffFromRemote, tablePatte
 	}
 	args := ApplyCommandTemplate(cfg.Custom.UploadCommand, templateData)
 	retry := retrier.New(retrier.ConstantBackoff(cfg.General.RetriesOnFailure, cfg.General.RetriesDuration), nil)
-	err := retry.Run(func() error {
-		return utils.ExecCmd(cfg.Custom.CommandTimeoutDuration, args[0], args[1:]...)
+	err := retry.RunCtx(ctx, func(ctx context.Context) error {
+		return utils.ExecCmd(ctx, cfg.Custom.CommandTimeoutDuration, args[0], args[1:]...)
 	})
 	if err == nil {
 		log.

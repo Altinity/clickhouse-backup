@@ -43,7 +43,22 @@ COPY --from=builder-docker /src/build/ /src/build/
 CMD /src/build/${TARGETPLATFORM}/clickhouse-backup --help
 
 
-FROM ${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server}:${CLICKHOUSE_VERSION:-latest}
+FROM alpine:3.16 AS image_short
+ARG TARGETPLATFORM
+MAINTAINER Eugene Klimov <eklimov@altinity.com>
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+COPY build/${TARGETPLATFORM}/clickhouse-backup /bin/clickhouse-backup
+RUN chmod +x /bin/clickhouse-backup
+
+# USER clickhouse
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD [ "/bin/clickhouse-backup", "--help" ]
+
+
+FROM ${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server}:${CLICKHOUSE_VERSION:-latest} AS image_full
 ARG TARGETPLATFORM
 MAINTAINER Eugene Klimov <eklimov@altinity.com>
 

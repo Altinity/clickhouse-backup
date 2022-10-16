@@ -12,6 +12,7 @@ import (
 type State struct {
 	stateFile    string
 	currentState string
+	log          *apexLog.Entry
 	fp           *os.File
 	mx           *sync.RWMutex
 }
@@ -21,10 +22,11 @@ func NewState(defaultDiskPath, backupName, command string) *State {
 		stateFile:    path.Join(defaultDiskPath, "backup", backupName, fmt.Sprintf("%s.state", command)),
 		currentState: "",
 		mx:           &sync.RWMutex{},
+		log:          apexLog.WithField("logger", "resumable"),
 	}
 	fp, err := os.OpenFile(s.stateFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
-		apexLog.Warnf("can't open %s error: %v", s.stateFile, err)
+		s.log.Warnf("can't open %s error: %v", s.stateFile, err)
 	}
 	s.fp = fp
 	s.LoadState()
@@ -39,9 +41,9 @@ func (s *State) LoadState() {
 	} else {
 		s.currentState = ""
 		if !os.IsNotExist(err) {
-			apexLog.Warnf("can't read %s error: %v", s.stateFile, err)
+			s.log.Warnf("can't read %s error: %v", s.stateFile, err)
 		} else {
-			apexLog.Warnf("%s empty, will continue from scratch error: %v", s.stateFile, err)
+			s.log.Warnf("%s empty, will continue from scratch error: %v", s.stateFile, err)
 		}
 	}
 	s.mx.Unlock()
@@ -52,9 +54,12 @@ func (s *State) AppendToState(path string) {
 	if s.fp != nil {
 		_, err := s.fp.WriteString(path + "\n")
 		if err != nil {
-			apexLog.Warnf("can't write %s error: %v", s.stateFile, err)
+			s.log.Warnf("can't write %s error: %v", s.stateFile, err)
 		}
-		s.fp.Sync()
+		err = s.fp.Sync()
+		if err != nil {
+			s.log.Warnf("can't sync %s error: %v", s.stateFile, err)
+		}
 	}
 	s.currentState += path + "\n"
 	s.mx.Unlock()
@@ -65,7 +70,7 @@ func (s *State) IsAlreadyProcessed(path string) bool {
 	res := strings.Contains(s.currentState, path+"\n")
 	s.mx.RUnlock()
 	if res {
-		apexLog.Infof("%s already processed", path)
+		s.log.Infof("%s already processed", path)
 	}
 	return res
 }

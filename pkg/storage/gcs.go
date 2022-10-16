@@ -55,10 +55,9 @@ func (w debugGCSTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 // Connect - connect to GCS
-func (gcs *GCS) Connect() error {
+func (gcs *GCS) Connect(ctx context.Context) error {
 	var err error
 	clientOptions := make([]option.ClientOption, 0)
-	ctx := context.Background()
 	clientOptions = append(clientOptions, option.WithTelemetryDisabled())
 	endpoint := "https://storage.googleapis.com/storage/v1/"
 	if gcs.Config.Endpoint != "" {
@@ -95,8 +94,7 @@ func (gcs *GCS) Connect() error {
 	return err
 }
 
-func (gcs *GCS) Walk(gcsPath string, recursive bool, process func(r RemoteFile) error) error {
-	ctx := context.Background()
+func (gcs *GCS) Walk(ctx context.Context, gcsPath string, recursive bool, process func(ctx context.Context, r RemoteFile) error) error {
 	rootPath := path.Join(gcs.Config.Path, gcsPath)
 	prefix := rootPath + "/"
 	if rootPath == "/" {
@@ -115,14 +113,14 @@ func (gcs *GCS) Walk(gcsPath string, recursive bool, process func(r RemoteFile) 
 		switch err {
 		case nil:
 			if object.Prefix != "" {
-				if err := process(&gcsFile{
+				if err := process(ctx, &gcsFile{
 					name: strings.TrimPrefix(object.Prefix, rootPath),
 				}); err != nil {
 					return err
 				}
 				continue
 			}
-			if err := process(&gcsFile{
+			if err := process(ctx, &gcsFile{
 				size:         object.Size,
 				lastModified: object.Updated,
 				name:         strings.TrimPrefix(object.Name, rootPath),
@@ -141,8 +139,7 @@ func (gcs *GCS) Kind() string {
 	return "GCS"
 }
 
-func (gcs *GCS) GetFileReader(key string) (io.ReadCloser, error) {
-	ctx := context.Background()
+func (gcs *GCS) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {
 	obj := gcs.client.Bucket(gcs.Config.Bucket).Object(path.Join(gcs.Config.Path, key))
 	reader, err := obj.NewReader(ctx)
 	if err != nil {
@@ -151,21 +148,11 @@ func (gcs *GCS) GetFileReader(key string) (io.ReadCloser, error) {
 	return reader, nil
 }
 
-func (gcs *GCS) GetFileReaderWithLocalPath(key, _ string) (io.ReadCloser, error) {
-	return gcs.GetFileReader(key)
+func (gcs *GCS) GetFileReaderWithLocalPath(ctx context.Context, key, _ string) (io.ReadCloser, error) {
+	return gcs.GetFileReader(ctx, key)
 }
 
-func (gcs *GCS) GetFileWriter(key string) io.WriteCloser {
-	ctx := context.Background()
-	key = path.Join(gcs.Config.Path, key)
-	obj := gcs.client.Bucket(gcs.Config.Bucket).Object(key)
-	writer := obj.NewWriter(ctx)
-	writer.StorageClass = gcs.Config.StorageClass
-	return writer
-}
-
-func (gcs *GCS) PutFile(key string, r io.ReadCloser) error {
-	ctx := context.Background()
+func (gcs *GCS) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
 	key = path.Join(gcs.Config.Path, key)
 	obj := gcs.client.Bucket(gcs.Config.Bucket).Object(key)
 	writer := obj.NewWriter(ctx)
@@ -180,8 +167,7 @@ func (gcs *GCS) PutFile(key string, r io.ReadCloser) error {
 	return err
 }
 
-func (gcs *GCS) StatFile(key string) (RemoteFile, error) {
-	ctx := context.Background()
+func (gcs *GCS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 	objAttr, err := gcs.client.Bucket(gcs.Config.Bucket).Object(path.Join(gcs.Config.Path, key)).Attrs(ctx)
 	if err != nil {
 		if err == storage.ErrObjectNotExist {
@@ -196,8 +182,7 @@ func (gcs *GCS) StatFile(key string) (RemoteFile, error) {
 	}, nil
 }
 
-func (gcs *GCS) DeleteFile(key string) error {
-	ctx := context.Background()
+func (gcs *GCS) DeleteFile(ctx context.Context, key string) error {
 	key = path.Join(gcs.Config.Path, key)
 	object := gcs.client.Bucket(gcs.Config.Bucket).Object(key)
 	return object.Delete(ctx)

@@ -38,7 +38,7 @@ func fieldsByTraversal(v reflect.Value, traversals [][]int, values []interface{}
 }
 
 func getDisksByPath(disks []Disk, dataPath string) []string {
-	resultDisks := []Disk{}
+	resultDisks := make([]Disk, 0)
 	for _, disk := range disks {
 		if strings.HasPrefix(dataPath, disk.Path) {
 			if len(resultDisks) == 0 {

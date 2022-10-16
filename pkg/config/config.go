@@ -36,22 +36,27 @@ type Config struct {
 
 // GeneralConfig - general setting section
 type GeneralConfig struct {
-	RemoteStorage          string            `yaml:"remote_storage" envconfig:"REMOTE_STORAGE"`
-	MaxFileSize            int64             `yaml:"max_file_size" envconfig:"MAX_FILE_SIZE"`
-	DisableProgressBar     bool              `yaml:"disable_progress_bar" envconfig:"DISABLE_PROGRESS_BAR"`
-	BackupsToKeepLocal     int               `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL"`
-	BackupsToKeepRemote    int               `yaml:"backups_to_keep_remote" envconfig:"BACKUPS_TO_KEEP_REMOTE"`
-	LogLevel               string            `yaml:"log_level" envconfig:"LOG_LEVEL"`
-	AllowEmptyBackups      bool              `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
-	DownloadConcurrency    uint8             `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
-	UploadConcurrency      uint8             `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
-	RestoreSchemaOnCluster string            `yaml:"restore_schema_on_cluster" envconfig:"RESTORE_SCHEMA_ON_CLUSTER"`
-	UploadByPart           bool              `yaml:"upload_by_part" envconfig:"UPLOAD_BY_PART"`
-	DownloadByPart         bool              `yaml:"download_by_part" envconfig:"DOWNLOAD_BY_PART"`
-	RestoreDatabaseMapping map[string]string `yaml:"restore_database_mapping" envconfig:"RESTORE_DATABASE_MAPPING"`
-	RetriesOnFailure       int               `yaml:"retries_on_failure" envconfig:"RETRIES_ON_FAILURE"`
-	RetriesPause           string            `yaml:"upload_retries_pause" envconfig:"RETRIES_PAUSE"`
-	RetriesDuration        time.Duration
+	RemoteStorage           string            `yaml:"remote_storage" envconfig:"REMOTE_STORAGE"`
+	MaxFileSize             int64             `yaml:"max_file_size" envconfig:"MAX_FILE_SIZE"`
+	DisableProgressBar      bool              `yaml:"disable_progress_bar" envconfig:"DISABLE_PROGRESS_BAR"`
+	BackupsToKeepLocal      int               `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL"`
+	BackupsToKeepRemote     int               `yaml:"backups_to_keep_remote" envconfig:"BACKUPS_TO_KEEP_REMOTE"`
+	LogLevel                string            `yaml:"log_level" envconfig:"LOG_LEVEL"`
+	AllowEmptyBackups       bool              `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
+	DownloadConcurrency     uint8             `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
+	UploadConcurrency       uint8             `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
+	RestoreSchemaOnCluster  string            `yaml:"restore_schema_on_cluster" envconfig:"RESTORE_SCHEMA_ON_CLUSTER"`
+	UploadByPart            bool              `yaml:"upload_by_part" envconfig:"UPLOAD_BY_PART"`
+	DownloadByPart          bool              `yaml:"download_by_part" envconfig:"DOWNLOAD_BY_PART"`
+	RestoreDatabaseMapping  map[string]string `yaml:"restore_database_mapping" envconfig:"RESTORE_DATABASE_MAPPING"`
+	RetriesOnFailure        int               `yaml:"retries_on_failure" envconfig:"RETRIES_ON_FAILURE"`
+	RetriesPause            string            `yaml:"upload_retries_pause" envconfig:"RETRIES_PAUSE"`
+	WatchInterval           string            `yaml:"watch_interval" envconfig:"WATCH_INTERVAL"`
+	FullInterval            string            `yaml:"full_interval" envconfig:"FULL_INTERVAL"`
+	WatchBackupNameTemplate string            `yaml:"watch_backup_name_template" envconfig:"WATCH_BACKUP_NAME_TEMPLATE"`
+	RetriesDuration         time.Duration
+	WatchDuration           time.Duration
+	FullDuration            time.Duration
 }
 
 // GCSConfig - GCS settings section
@@ -203,7 +208,7 @@ type APIConfig struct {
 	AllowParallel           bool   `yaml:"allow_parallel" envconfig:"API_ALLOW_PARALLEL"`
 }
 
-// ArchiveExtensions - list of availiable compression formats and associated file extensions
+// ArchiveExtensions - list of available compression formats and associated file extensions
 var ArchiveExtensions = map[string]string{
 	"tar":    "tar",
 	"lz4":    "tar.lz4",
@@ -359,6 +364,20 @@ func ValidateConfig(cfg *Config) error {
 	} else {
 		return fmt.Errorf("empty retries pause")
 	}
+	if cfg.General.WatchInterval != "" {
+		if duration, err := time.ParseDuration(cfg.General.WatchInterval); err != nil {
+			return fmt.Errorf("invalid watch interval: %v", err)
+		} else {
+			cfg.General.WatchDuration = duration
+		}
+	}
+	if cfg.General.FullInterval != "" {
+		if duration, err := time.ParseDuration(cfg.General.FullInterval); err != nil {
+			return fmt.Errorf("invalid full interval for watch: %v", err)
+		} else {
+			cfg.General.FullDuration = duration
+		}
+	}
 	return nil
 }
 
@@ -368,7 +387,7 @@ func PrintConfig(ctx *cli.Context) error {
 	if ctx == nil {
 		cfg = DefaultConfig()
 	} else {
-		cfg = GetConfig(ctx)
+		cfg = GetConfigFromCli(ctx)
 	}
 	yml, _ := yaml.Marshal(&cfg)
 	fmt.Print(string(yml))
@@ -382,20 +401,25 @@ func DefaultConfig() *Config {
 	}
 	return &Config{
 		General: GeneralConfig{
-			RemoteStorage:          "none",
-			MaxFileSize:            0,
-			BackupsToKeepLocal:     0,
-			BackupsToKeepRemote:    0,
-			LogLevel:               "info",
-			DisableProgressBar:     true,
-			UploadConcurrency:      availableConcurrency,
-			DownloadConcurrency:    availableConcurrency,
-			RestoreSchemaOnCluster: "",
-			UploadByPart:           true,
-			DownloadByPart:         true,
-			RetriesOnFailure:       3,
-			RetriesPause:           "100ms",
-			RetriesDuration:        100 * time.Millisecond,
+			RemoteStorage:           "none",
+			MaxFileSize:             0,
+			BackupsToKeepLocal:      0,
+			BackupsToKeepRemote:     0,
+			LogLevel:                "info",
+			DisableProgressBar:      true,
+			UploadConcurrency:       availableConcurrency,
+			DownloadConcurrency:     availableConcurrency,
+			RestoreSchemaOnCluster:  "",
+			UploadByPart:            true,
+			DownloadByPart:          true,
+			RetriesOnFailure:        3,
+			RetriesPause:            "100ms",
+			RetriesDuration:         100 * time.Millisecond,
+			WatchInterval:           "1h",
+			WatchDuration:           1 * time.Hour,
+			FullInterval:            "24h",
+			FullDuration:            24 * time.Hour,
+			WatchBackupNameTemplate: "shard{shard}-{type}-{time:20060102150405}",
 		},
 		ClickHouse: ClickHouseConfig{
 			Username: "default",
@@ -478,7 +502,7 @@ func DefaultConfig() *Config {
 	}
 }
 
-func GetConfig(ctx *cli.Context) *Config {
+func GetConfigFromCli(ctx *cli.Context) *Config {
 	configPath := GetConfigPath(ctx)
 	cfg, err := LoadConfig(configPath)
 	if err != nil {

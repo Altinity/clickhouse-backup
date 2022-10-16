@@ -1,8 +1,4 @@
-from testflows.core import *
-from testflows.asserts import *
-
 from clickhouse_backup.requirements.requirements import *
-from clickhouse_backup.tests.common import *
 from clickhouse_backup.tests.steps import *
 
 
@@ -30,7 +26,6 @@ def create_backup_performance(self):
 
     with Then("I expect clickhouse-backup>=1.2.0 to outperform clickhouse-backup<=1.1.1"):
         pass
-
 
 
 @TestFeature
