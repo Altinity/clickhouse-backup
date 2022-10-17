@@ -74,7 +74,7 @@ func (bd *BackupDestination) RemoveOldBackups(ctx context.Context, keep int) err
 	for _, backupToDelete := range backupsToDelete {
 		startDelete := time.Now()
 		if err := bd.RemoveBackup(ctx, backupToDelete); err != nil {
-			bd.Log.Warnf("can't delete %s return error : %v", backupToDelete, err)
+			bd.Log.Warnf("can't delete %s return error : %v", backupToDelete.BackupName, err)
 		}
 		bd.Log.WithFields(apexLog.Fields{
 			"operation": "RemoveOldBackups",
