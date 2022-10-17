@@ -32,7 +32,7 @@ jobs:
 
       - name: Cache golang
         id: cache-golang
-        uses: actions/cache@v2
+        uses: actions/cache@latest
         with:
           path: |
             ~/go/pkg/mod
