@@ -373,7 +373,7 @@ func (ch *ClickHouse) getTableSizeFromParts(ctx context.Context, table Table) ui
 	}
 	query := fmt.Sprintf("SELECT sum(bytes_on_disk) as size FROM system.parts WHERE active AND database='%s' AND table='%s' GROUP BY database, table", table.Database, table.Name)
 	if err := ch.StructSelectContext(ctx, &tablesSize, query); err != nil {
-		ch.Log.Warnf("error parsing tablesSize: %w", err)
+		ch.Log.Warnf("error parsing tablesSize: %v", err)
 	}
 	if len(tablesSize) > 0 {
 		return tablesSize[0].Size
@@ -687,7 +687,7 @@ func (ch *ClickHouse) IsClickhouseShadow(path string) bool {
 	}
 	defer func() {
 		if err := d.Close(); err != nil {
-			ch.Log.Warnf("can't close directory %w", err)
+			ch.Log.Warnf("can't close directory %v", err)
 		}
 	}()
 	names, err := d.Readdirnames(-1)
