@@ -119,7 +119,7 @@ services:
       - azure
 #      - gcs
     healthcheck:
-      test: clickhouse-client -q "SELECT 1"
+      test: clickhouse client -q "SELECT 1"
       interval: 10s
       timeout: 2s
       retries: 30
