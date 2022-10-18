@@ -37,9 +37,7 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: ${{ runner.os }}-${{ matrix.golang-version }}-golang-${{ hashFiles('go.mod', '.github/workflows/*.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.golang-version }}-golang-
+          key: clickhouse-backup-golang-${{ matrix.golang-version }}-${{ hashFiles('go.mod', '.github/workflows/*.yaml') }}
 
       - name: Install golang dependencies
         run: go mod download -x

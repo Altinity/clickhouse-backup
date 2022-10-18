@@ -34,7 +34,7 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: ${{ runner.os }}-${{ matrix.golang-version }}-golang-${{ hashFiles('go.mod') }}
+          key: clickhouse-backup-golang-${{ matrix.golang-version }}-${{ hashFiles('go.mod', '.github/workflows/*.yaml') }}
 
       - name: Install golang dependencies
         run: go mod download -x
@@ -122,7 +122,7 @@ jobs:
         id: cache-python
         with:
           path: ~/venv/qa
-          key: python-${{ hashFiles('test/testflows/requirements.txt','.github/workflows/*.yaml') }}
+          key: clickhouse-backup-python-${{ hashFiles('test/testflows/requirements.txt','.github/workflows/*.yaml') }}
 
       - name: Install python dependencies
         run: |
@@ -207,7 +207,7 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: ${{ runner.os }}-${{ matrix.golang-version }}-golang-${{ hashFiles('go.mod', '.github/workflows/*.yaml') }}
+          key: clickhouse-backup-golang-${{ matrix.golang-version }}-${{ hashFiles('go.mod', '.github/workflows/*.yaml') }}
 
       - uses: actions/download-artifact@v3
         with:
