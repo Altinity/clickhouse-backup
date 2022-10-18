@@ -119,8 +119,8 @@ services:
       - azure
 #      - gcs
     healthcheck:
-      test: wget http://localhost:8123/ping
-      interval: 3s
+      test: clickhouse-client -q "SELECT 1"
+      interval: 10s
       timeout: 2s
       retries: 30
       start_period: 5s
