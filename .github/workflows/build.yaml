@@ -243,7 +243,7 @@ jobs:
             export COMPOSE_FILE=docker-compose.yml
           fi
           export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup-race"
-          docker-compose -f test/integration/${COMPOSE_FILE} up -d || ( docker-compose -f test/integration/${COMPOSE_FILE} ps -a && exit 1 ) 
+          docker-compose -f test/integration/${COMPOSE_FILE} up -d || ( docker-compose -f test/integration/${COMPOSE_FILE} ps -a && docker-compose -f test/integration/${COMPOSE_FILE} logs clickhouse && exit 1 ) 
           docker-compose -f test/integration/${COMPOSE_FILE} ps -a
           go test -timeout 30m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
 
@@ -297,13 +297,13 @@ jobs:
     if: always()
     steps:
       - name: delete build-artifacts
-        uses: geekyeggo/delete-artifact@v1
+        uses: geekyeggo/delete-artifact@v2
         with:
           name: build-artifacts
           failOnError: false
 
       - name: delete build-gcp-credentials
-        uses: geekyeggo/delete-artifact@v1
+        uses: geekyeggo/delete-artifact@v2
         with:
           name: build-gcp-credentials
           failOnError: false
