@@ -37,7 +37,7 @@ jobs:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: ${{ runner.os }}-${{ matrix.golang-version }}-golang-${{ hashFiles('go.sum') }}
+          key: ${{ runner.os }}-${{ matrix.golang-version }}-golang-${{ hashFiles('go.mod', '.github/workflows/*.yaml') }}
           restore-keys: |
             ${{ runner.os }}-${{ matrix.golang-version }}-golang-
 
