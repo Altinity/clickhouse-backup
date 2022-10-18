@@ -849,7 +849,7 @@ func testAPIRestart(r *require.Assertions, ch *TestClickHouse) {
 func testAPIBackupActions(r *require.Assertions, ch *TestClickHouse) {
 	runClickHouseClientInsertSystemBackupActions := func(commands []string, needWait bool) {
 		sql := "INSERT INTO system.backup_actions(command) " + "VALUES ('" + strings.Join(commands, "'),('") + "')"
-		out, err := dockerExecOut("clickhouse", "bash", "-ce", fmt.Sprintf("clickhouse-client --echo -mn -q \"%s\"", sql))
+		out, err := dockerExecOut("clickhouse", "bash", "-ce", fmt.Sprintf("clickhouse client --echo -mn -q \"%s\"", sql))
 		log.Debug(out)
 		r.NoError(err)
 		if needWait {
