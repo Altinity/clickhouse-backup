@@ -2,6 +2,8 @@
 set -x
 set -e
 
+CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+
 export CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION:-22.8}
 if [[ "${CLICKHOUSE_VERSION}" =~ 2[2-9]+ || "${CLICKHOUSE_VERSION}" == "head" ]]; then
   export CLICKHOUSE_IMAGE=${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server}
@@ -10,7 +12,13 @@ else
 fi
 export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup-race"
 export LOG_LEVEL=${LOG_LEVEL:-info}
-export GCS_TESTS=${GCS_TESTS:-}
+
+if [[ -f "${CUR_DIR/credentials.json}"]]; then
+  export GCS_TESTS=${GCS_TESTS:-1}
+else
+  export GCS_TESTS=${GCS_TESTS:-}
+fi
+
 export AZURE_TESTS=${AZURE_TESTS:-1}
 export RUN_ADVANCED_TESTS=${RUN_ADVANCED_TESTS:-1}
 export S3_DEBUG=${S3_DEBUG:-false}
@@ -26,7 +34,6 @@ else
   export COMPOSE_FILE=docker-compose.yml
 fi
 
-CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 docker-compose -f ${CUR_DIR}/${COMPOSE_FILE} down --remove-orphans
 docker volume prune -f
 make clean build-race-docker
