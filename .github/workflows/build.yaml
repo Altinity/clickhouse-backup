@@ -142,13 +142,13 @@ jobs:
           QA_GCS_CRED_JSON: ${{ secrets.QA_GCS_CRED_JSON }}
         run: |
           set -x
+          export CLICKHOUSE_TESTS_DIR=$(pwd)/test/testflows/clickhouse_backup
 
           command -v docker-compose || (apt-get update && apt-get install -y python3-pip && pip3 install -U docker-compose)
           docker-compose -f ${CLICKHOUSE_TESTS_DIR}/docker-compose/docker-compose.yml pull
           
           chmod +x $(pwd)/clickhouse-backup/clickhouse-backup*
           source ~/venv/qa/bin/activate
-          export CLICKHOUSE_TESTS_DIR=$(pwd)/test/testflows/clickhouse_backup
           set +e
           ~/venv/qa/bin/python3 ./test/testflows/clickhouse_backup/regression.py --log ./test/testflows/raw.log 
           if [[ "0" != "$?" ]]; then
