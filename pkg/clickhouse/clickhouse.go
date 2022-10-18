@@ -718,8 +718,8 @@ func (ch *ClickHouse) StructSelectContext(ctx context.Context, dest interface{},
 	}
 }
 
-func (ch *ClickHouse) StructSelect(dest interface{}, query string) error {
-	rows, err := ch.Queryx(query)
+func (ch *ClickHouse) StructSelect(dest interface{}, query string, args ...interface{}) error {
+	rows, err := ch.Queryx(query, args...)
 	if err != nil {
 		return err
 	}

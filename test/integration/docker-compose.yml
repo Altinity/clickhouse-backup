@@ -118,6 +118,12 @@ services:
       - ftp
       - azure
 #      - gcs
+    healthcheck:
+      test: wget http://localhost:8123/ping
+      interval: 3s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
     depends_on:
       zookeeper:
         condition: service_healthy

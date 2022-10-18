@@ -171,14 +171,22 @@ func (api *APIServer) Restart() error {
 		go func() {
 			err = api.server.ListenAndServeTLS(api.config.API.CertificateFile, api.config.API.PrivateKeyFile)
 			if err != nil {
-				log.Fatalf("ListenAndServeTLS error: %s", err.Error())
+				if err == http.ErrServerClosed {
+					log.Warnf("ListenAndServeTLS get signal: %s", err.Error())
+				} else {
+					log.Fatalf("ListenAndServeTLS error: %s", err.Error())
+				}
 			}
 		}()
 		return nil
 	} else {
 		go func() {
 			if err = api.server.ListenAndServe(); err != nil {
-				log.Fatalf("ListenAndServe error: %s", err.Error())
+				if err == http.ErrServerClosed {
+					log.Warnf("ListenAndServe get signal: %s", err.Error())
+				} else {
+					log.Fatalf("ListenAndServe error: %s", err.Error())
+				}
 			}
 		}()
 	}
@@ -199,7 +207,7 @@ func (api *APIServer) registerHTTPHandlers() *http.Server {
 
 	r.HandleFunc("/", api.httpRootHandler).Methods("GET", "HEAD")
 	r.HandleFunc("/", api.httpRestartHandler).Methods("POST")
-	r.HandleFunc("/backup/restart", api.httpRestartHandler).Methods("POST", "GET")
+	r.HandleFunc("/restart", api.httpRestartHandler).Methods("POST", "GET")
 	r.HandleFunc("/backup/kill", api.httpKillHandler).Methods("POST", "GET")
 	r.HandleFunc("/backup/watch", api.httpWatchHandler).Methods("POST", "GET")
 	r.HandleFunc("/backup/tables", api.httpTablesHandler).Methods("GET")
@@ -566,7 +574,9 @@ func (api *APIServer) httpRestartHandler(w http.ResponseWriter, _ *http.Request)
 		Status:    "acknowledged",
 		Operation: "restart",
 	})
-	api.restart <- struct{}{}
+	defer func() {
+		api.restart <- struct{}{}
+	}()
 }
 
 // httpKillHandler - kill selected command if it InProgress
