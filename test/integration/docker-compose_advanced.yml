@@ -160,5 +160,11 @@ services:
       zookeeper:
         condition: service_healthy
 
+  all_services_ready:
+    image: hello-world
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
 networks:
   clickhouse-backup:
