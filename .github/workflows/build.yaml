@@ -150,7 +150,7 @@ jobs:
           chmod +x $(pwd)/clickhouse-backup/clickhouse-backup*
           source ~/venv/qa/bin/activate
           set +e
-          ~/venv/qa/bin/python3 ./test/testflows/clickhouse_backup/regression.py --log ./test/testflows/raw.log 
+          ~/venv/qa/bin/python3 ./test/testflows/clickhouse_backup/regression.py --debug --log ./test/testflows/raw.log 
           if [[ "0" != "$?" ]]; then
             docker-compose -f ${CLICKHOUSE_TESTS_DIR}/docker-compose/docker-compose.yml logs clickhouse_backup
             exit 1
