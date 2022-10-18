@@ -96,7 +96,7 @@ jobs:
   testflows:
     needs: build
     name: Testflows
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         clickhouse:
@@ -176,7 +176,7 @@ jobs:
   test:
     needs: build
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         golang-version:
@@ -262,7 +262,7 @@ jobs:
       - test
       - testflows
     name: Docker
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout project
         uses: actions/checkout@v2
@@ -303,7 +303,7 @@ jobs:
   cleanup:
     name: Cleanup
     needs: docker
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     if: always()
     steps:
       - name: delete build-artifacts
