@@ -224,7 +224,8 @@ jobs:
       - name: Running integration tests
         env:
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
-          RUN_TESTS: "TestIntegrationGCS"
+          # don't change it to avoid broken CI/CD!!!
+          RUN_TESTS: ".+"
           # LOG_LEVEL: "debug"
           # FTP_DEBUG: "true"
           CGO_ENABLED: 0
