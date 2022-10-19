@@ -214,10 +214,10 @@ def restore_one_replica(self):
             tables_data = (clickhouse1.query(query).output.split('\n'), clickhouse2.query(query).output.split('\n'))
 
             with By("I compare data in both tables"):
-                assert set(tables_data[0]) <= set(tables_data[1]) <= set(tables_data[0]), error()
+                assert set(tables_data[0]) <= set(tables_data[1]) and set(tables_data[1]) <= set(tables_data[0]), error()
 
             with And("I check data restored"):
-                assert set(tables_data[0]) <= set(table_data.split('\n')) <= set(tables_data[0]), error()
+                assert set(tables_data[0]) <= set(table_data.split('\n')) and set(table_data.split('\n')) <= set(tables_data[0]), error()
 
     finally:
         with Finally("I remove backup"):

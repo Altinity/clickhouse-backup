@@ -111,6 +111,7 @@ func (ch *ClickHouse) ConnectOnce() error {
 	ch.conn.SetConnMaxLifetime(0)
 	ch.conn.SetMaxIdleConns(0)
 
+	ch.Log.Errorf("clickhouse connection prepared: %s run ping", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
 	err = ch.conn.Ping()
 	if err != nil {
 		ch.Log.Errorf("clickhouse connection ping: %s return error: %v", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
