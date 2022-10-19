@@ -111,7 +111,7 @@ func (ch *ClickHouse) Connect() error {
 		return err
 	}
 	ch.conn.SetMaxOpenConns(1)
-	ch.conn.SetConnMaxLifetime(timeout)
+	ch.conn.SetConnMaxLifetime(0)
 	ch.conn.SetMaxIdleConns(0)
 	logFunc := ch.Log.Infof
 	if !ch.Config.LogSQLQueries {
