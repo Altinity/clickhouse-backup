@@ -1483,7 +1483,7 @@ func testAPIBackupTables(r *require.Assertions) {
 	r.NotContains(out, "Connection refused")
 	r.NotContains(out, "another operation is currently running")
 	r.NotContains(out, "\"status\":\"error\"")
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.3") >= 0 {
 		r.Contains(out, "INFORMATION_SCHEMA")
 		r.Contains(out, "information_schema")
 	}
