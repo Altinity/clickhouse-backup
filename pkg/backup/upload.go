@@ -42,7 +42,7 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 	var disks []clickhouse.Disk
 	b.resume = resume
-	if err = b.ch.ConnectOnce(); err != nil {
+	if err = b.ch.ConnectIfNotConnected(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
 	defer b.ch.Close()

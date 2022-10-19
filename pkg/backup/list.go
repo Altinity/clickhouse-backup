@@ -136,7 +136,7 @@ func printBackupsLocal(ctx context.Context, w io.Writer, backupList []LocalBacku
 func (b *Backuper) PrintLocalBackups(ctx context.Context, format string) error {
 	log := apexLog.WithField("logger", "PrintLocalBackups")
 	if !b.ch.IsOpen {
-		if err := b.ch.ConnectOnce(); err != nil {
+		if err := b.ch.ConnectIfNotConnected(); err != nil {
 			return fmt.Errorf("can't connect to clickhouse: %v", err)
 		}
 		defer b.ch.Close()
@@ -158,7 +158,7 @@ func (b *Backuper) PrintLocalBackups(ctx context.Context, format string) error {
 func (b *Backuper) GetLocalBackups(ctx context.Context, disks []clickhouse.Disk) ([]LocalBackup, []clickhouse.Disk, error) {
 	var err error
 	if !b.ch.IsOpen {
-		if err = b.ch.ConnectOnce(); err != nil {
+		if err = b.ch.ConnectIfNotConnected(); err != nil {
 			return nil, nil, err
 		}
 		defer b.ch.Close()
@@ -257,7 +257,7 @@ func (b *Backuper) GetLocalBackups(ctx context.Context, disks []clickhouse.Disk)
 func (b *Backuper) PrintAllBackups(ctx context.Context, format string) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', tabwriter.DiscardEmptyColumns)
 	if !b.ch.IsOpen {
-		if err := b.ch.ConnectOnce(); err != nil {
+		if err := b.ch.ConnectIfNotConnected(); err != nil {
 			return fmt.Errorf("can't connect to clickhouse: %v", err)
 		}
 		defer b.ch.Close()
@@ -291,7 +291,7 @@ func (b *Backuper) PrintAllBackups(ctx context.Context, format string) error {
 // PrintRemoteBackups - print all backups stored on remote storage
 func (b *Backuper) PrintRemoteBackups(ctx context.Context, format string) error {
 	if !b.ch.IsOpen {
-		if err := b.ch.ConnectOnce(); err != nil {
+		if err := b.ch.ConnectIfNotConnected(); err != nil {
 			return fmt.Errorf("can't connect to clickhouse: %v", err)
 		}
 		defer b.ch.Close()
@@ -329,7 +329,7 @@ func (b *Backuper) getLocalBackup(ctx context.Context, backupName string, disks 
 // GetRemoteBackups - get all backups stored on remote storage
 func (b *Backuper) GetRemoteBackups(ctx context.Context, parseMetadata bool) ([]storage.Backup, error) {
 	if !b.ch.IsOpen {
-		if err := b.ch.ConnectOnce(); err != nil {
+		if err := b.ch.ConnectIfNotConnected(); err != nil {
 			return nil, err
 		}
 		defer b.ch.Close()
@@ -366,7 +366,7 @@ func (b *Backuper) GetRemoteBackups(ctx context.Context, parseMetadata bool) ([]
 // GetTables - get all tables for use by PrintTables and API
 func (b *Backuper) GetTables(ctx context.Context, tablePattern string) ([]clickhouse.Table, error) {
 	if !b.ch.IsOpen {
-		if err := b.ch.ConnectOnce(); err != nil {
+		if err := b.ch.ConnectIfNotConnected(); err != nil {
 			return []clickhouse.Table{}, fmt.Errorf("can't connect to clickhouse: %v", err)
 		}
 		defer b.ch.Close()
@@ -383,7 +383,7 @@ func (b *Backuper) GetTables(ctx context.Context, tablePattern string) ([]clickh
 func (b *Backuper) PrintTables(printAll bool, tablePattern string) error {
 	ctx, cancel, _ := status.Current.GetContextWithCancel(status.NotFromAPI)
 	defer cancel()
-	if err := b.ch.ConnectOnce(); err != nil {
+	if err := b.ch.ConnectIfNotConnected(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
 	defer b.ch.Close()

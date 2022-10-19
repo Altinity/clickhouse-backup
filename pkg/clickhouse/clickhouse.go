@@ -35,11 +35,12 @@ type ClickHouse struct {
 	IsOpen  bool
 }
 
-// ConnectOnce - establish connection to ClickHouse
-func (ch *ClickHouse) ConnectOnce() error {
+// ConnectIfNotConnected - establish connection to ClickHouse
+func (ch *ClickHouse) ConnectIfNotConnected() error {
 	if ch.IsOpen {
 		return nil
 	}
+	ch.IsOpen = false
 	timeout, err := time.ParseDuration(ch.Config.Timeout)
 	if err != nil {
 		return err
@@ -119,9 +120,10 @@ func (ch *ClickHouse) ConnectOnce() error {
 	if err != nil {
 		ch.Log.Errorf("clickhouse connection ping: %s return error: %v", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
 		return err
+	} else {
+		ch.IsOpen = true
 	}
 	logFunc("clickhouse connection open: %s", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
-	ch.IsOpen = true
 	return err
 }
 

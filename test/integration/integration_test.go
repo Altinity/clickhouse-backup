@@ -1562,7 +1562,7 @@ func (ch *TestClickHouse) connect() error {
 		},
 		Log: log.WithField("logger", "integration-test"),
 	}
-	return ch.chbackend.ConnectOnce()
+	return ch.chbackend.ConnectIfNotConnected()
 }
 
 func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {

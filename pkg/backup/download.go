@@ -67,7 +67,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	ctx, cancel = context.WithCancel(ctx)
 	defer cancel()
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
-	if err := b.ch.ConnectOnce(); err != nil {
+	if err := b.ch.ConnectIfNotConnected(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
 	defer b.ch.Close()
