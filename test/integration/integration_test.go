@@ -1558,7 +1558,7 @@ func (ch *TestClickHouse) connect() error {
 		Config: &config.ClickHouseConfig{
 			Host:    "127.0.0.1",
 			Port:    9000,
-			Timeout: "30m",
+			Timeout: "5s",
 		},
 		Log: log.WithField("logger", "integration-test"),
 	}
