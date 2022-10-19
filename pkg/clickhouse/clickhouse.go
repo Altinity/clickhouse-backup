@@ -114,12 +114,12 @@ func (ch *ClickHouse) ConnectOnce() error {
 	if !ch.Config.LogSQLQueries {
 		logFunc = ch.Log.Debugf
 	}
-	//logFunc("clickhouse connection prepared: %s run ping", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
-	//err = ch.conn.Ping()
-	//if err != nil {
-	//	ch.Log.Errorf("clickhouse connection ping: %s return error: %v", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
-	//	return err
-	//}
+	logFunc("clickhouse connection prepared: %s run ping", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
+	err = ch.conn.Ping()
+	if err != nil {
+		ch.Log.Errorf("clickhouse connection ping: %s return error: %v", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
+		return err
+	}
 	logFunc("clickhouse connection open: %s", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
 	ch.IsOpen = true
 	return err
