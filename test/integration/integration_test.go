@@ -443,8 +443,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 
 	// we can't restart clickhouse inside container, we need restart container
 	ch.chbackend.Close()
-	_, err := utils.ExecCmdOut(context.Background(), 180*time.Second, "docker", "restart", "clickhouse")
-	r.NoError(err)
+	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker-compose", "-f", os.Getenv("COMPOSE_FILE"), "restart", "clickhouse"))
 	ch.connectWithWait(r, 2*time.Second)
 
 	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
@@ -655,7 +654,7 @@ func TestLongListRemote(t *testing.T) {
 	r.Greater(noCacheDuration, cashedDuration)
 
 	r.NoError(dockerExec("clickhouse", "rm", "-Rfv", "/tmp/.clickhouse-backup-metadata.cache.S3"))
-	_, err = utils.ExecCmdOut(context.Background(), 180*time.Second, "docker", "restart", "minio")
+	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker-compose", "-f", os.Getenv("COMPOSE_FILE"), "restart", "minio"))
 	r.NoError(err)
 	time.Sleep(2 * time.Second)
 
