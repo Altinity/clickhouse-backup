@@ -1540,6 +1540,8 @@ func (ch *TestClickHouse) connectWithWait(r *require.Assertions, sleepBefore tim
 			r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", "ps", "-a"))
 			if out, err := dockerExecOut("clickhouse", "clickhouse-client", "-q", "SELECT version()"); err == nil {
 				log.Warnf(out)
+			} else {
+				log.Info(out)
 			}
 			time.Sleep(time.Second * time.Duration(i*2))
 		} else {
