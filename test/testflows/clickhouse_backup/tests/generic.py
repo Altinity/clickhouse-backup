@@ -196,28 +196,26 @@ def restore_one_replica(self):
             with And("I create a replica for created table"):
                 create_table(node=clickhouse2, table_name=name_prefix,
                              columns=self.context.columns, engine="ReplicatedMergeTree")
-                time.sleep(1)
+                time.sleep(5)
 
         with When("I create backup"):
             backup.cmd(f"clickhouse-backup create --tables=default.{name_prefix} {name_prefix}")
 
         with And("I drop some data in table"):
-            clickhouse1.query(f"ALTER TABLE default.{name_prefix} DELETE WHERE Sign=1")
-            time.sleep(10)
+            clickhouse1.query(f"ALTER TABLE default.{name_prefix} DELETE WHERE Sign=1 SETTINGS mutations_sync=2")
 
         with Then("I restore table"):
             backup.cmd(f"clickhouse-backup restore --tables=default.{name_prefix} {name_prefix}")
-            time.sleep(10)
 
         with And("I expect data restored on both replicas"):
             query = f"SELECT * FROM default.{name_prefix}"
             tables_data = (clickhouse1.query(query).output.split('\n'), clickhouse2.query(query).output.split('\n'))
 
             with By("I compare data in both tables"):
-                assert set(tables_data[0]) <= set(tables_data[1]) and set(tables_data[1]) <= set(tables_data[0]), error()
+                assert set(tables_data[0]) == set(tables_data[1]), error()
 
             with And("I check data restored"):
-                assert set(tables_data[0]) <= set(table_data.split('\n')) and set(table_data.split('\n')) <= set(tables_data[0]), error()
+                assert set(tables_data[0]) == set(table_data.split('\n')), error()
 
     finally:
         with Finally("I remove backup"):
