@@ -104,19 +104,25 @@ func (ch *ClickHouse) ConnectOnce() error {
 	}
 	connectionString := fmt.Sprintf("tcp://%v:%v?%s", ch.Config.Host, ch.Config.Port, params.Encode())
 	if ch.conn, err = sqlx.Open("clickhouse", connectionString); err != nil {
+		ch.Log.Errorf("clickhouse connection: %s, sql.Open return error: %v", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
 		return err
 	}
 	ch.conn.SetMaxOpenConns(1)
 	ch.conn.SetConnMaxLifetime(0)
 	ch.conn.SetMaxIdleConns(0)
 
+	err = ch.conn.Ping()
+	if err != nil {
+		ch.Log.Errorf("clickhouse connection ping: %s return error: %v", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
+		return err
+	}
 	if ch.Config.LogSQLQueries {
 		ch.Log.Infof("clickhouse connection open: %s", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
 	} else {
-		ch.Log.Infof("clickhouse connection open: %s", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
+		ch.Log.Debugf("clickhouse connection open: %s", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
 	}
 	ch.IsOpen = true
-	return ch.conn.Ping()
+	return err
 }
 
 // GetDisks - return data from system.disks table
