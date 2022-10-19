@@ -1558,7 +1558,7 @@ func (ch *TestClickHouse) connect() error {
 		Config: &config.ClickHouseConfig{
 			Host:    "127.0.0.1",
 			Port:    9000,
-			Timeout: "5s",
+			Timeout: "30m",
 		},
 		Log: log.WithField("logger", "integration-test"),
 	}
@@ -1803,7 +1803,7 @@ func isTestShouldSkip(envName string) bool {
 func installDebIfNotExists(r *require.Assertions, container, pkg string) {
 	r.NoError(dockerExec(
 		container,
-		"bash", "-ce",
+		"bash", "-c",
 		fmt.Sprintf(
 			"if [[ '0' == $(dpkg -l %s | grep -c -E \"^ii\\s+%s\" ) ]]; then apt-get -y update; apt-get install -y %s; fi",
 			pkg, pkg, pkg,
