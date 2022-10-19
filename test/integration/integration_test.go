@@ -534,6 +534,12 @@ func TestDoRestoreConfigs(t *testing.T) {
 	ch.chbackend.Close()
 }
 
+func TestIntegrationS3(t *testing.T) {
+	r := require.New(t)
+	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	runMainIntegrationScenario(t, "S3")
+}
+
 func TestIntegrationGCS(t *testing.T) {
 	if isTestShouldSkip("GCS_TESTS") {
 		t.Skip("Skipping GCS integration tests...")
@@ -543,12 +549,6 @@ func TestIntegrationGCS(t *testing.T) {
 	r.NoError(dockerCP("config-gcs.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	installDebIfNotExists(r, "clickhouse", "ca-certificates")
 	runMainIntegrationScenario(t, "GCS")
-}
-
-func TestIntegrationS3(t *testing.T) {
-	r := require.New(t)
-	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	runMainIntegrationScenario(t, "S3")
 }
 
 func TestIntegrationAzure(t *testing.T) {
@@ -1538,7 +1538,9 @@ func (ch *TestClickHouse) connectWithWait(r *require.Assertions, sleepBefore tim
 		if err != nil {
 			log.Warnf("clickhouse not ready %v, wait %d seconds", err, i*2)
 			r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", "ps", "-a"))
-			r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", "ps", "-a"))
+			if out, err := dockerExecOut("clickhouse", "clickhouse-client", "-q", "SELECT version()"); err == nil {
+				log.Warnf(out)
+			}
 			time.Sleep(time.Second * time.Duration(i*2))
 		} else {
 			if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") == 1 {
