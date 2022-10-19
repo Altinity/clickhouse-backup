@@ -35,10 +35,12 @@ type ClickHouse struct {
 	IsOpen  bool
 }
 
-// ConnectIfNotConnected - establish connection to ClickHouse
-func (ch *ClickHouse) ConnectIfNotConnected() error {
+// Connect - establish connection to ClickHouse
+func (ch *ClickHouse) Connect() error {
 	if ch.IsOpen {
-		return nil
+		if err := ch.conn.Close(); err != nil {
+			ch.Log.Errorf("close previous connection error: %v", err)
+		}
 	}
 	ch.IsOpen = false
 	timeout, err := time.ParseDuration(ch.Config.Timeout)
@@ -236,8 +238,10 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 
 // Close - closing connection to ClickHouse
 func (ch *ClickHouse) Close() {
-	if err := ch.conn.Close(); err != nil {
-		ch.Log.Warnf("can't close clickhouse connection: %v", err)
+	if ch.IsOpen {
+		if err := ch.conn.Close(); err != nil {
+			ch.Log.Warnf("can't close clickhouse connection: %v", err)
+		}
 	}
 	if ch.Config.LogSQLQueries {
 		ch.Log.Info("clickhouse connection closed")

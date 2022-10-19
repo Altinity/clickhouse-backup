@@ -20,7 +20,7 @@ import (
 // Clean - removed all data in shadow folder
 func (b *Backuper) Clean(ctx context.Context) error {
 	log := b.log.WithField("logger", "Clean")
-	if err := b.ch.ConnectIfNotConnected(); err != nil {
+	if err := b.ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
 	defer b.ch.Close()
@@ -96,7 +96,7 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 	var err error
 	start := time.Now()
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
-	if err = b.ch.ConnectIfNotConnected(); err != nil {
+	if err = b.ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
 	defer b.ch.Close()
@@ -146,7 +146,7 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 	if b.cfg.General.RemoteStorage == "custom" {
 		return custom.DeleteRemote(ctx, b.cfg, backupName)
 	}
-	if err := b.ch.ConnectIfNotConnected(); err != nil {
+	if err := b.ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
 	defer b.ch.Close()

@@ -74,7 +74,7 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 	ctx, cancel = context.WithCancel(ctx)
 	defer cancel()
 	if !b.ch.IsOpen {
-		if err = b.ch.ConnectIfNotConnected(); err != nil {
+		if err = b.ch.Connect(); err != nil {
 			return err
 		}
 		defer b.ch.Close()

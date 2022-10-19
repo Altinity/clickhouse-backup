@@ -93,7 +93,7 @@ func (b *Backuper) CreateBackup(backupName, tablePattern string, partitions []st
 		"backup":    backupName,
 		"operation": "create",
 	})
-	if err := b.ch.ConnectIfNotConnected(); err != nil {
+	if err := b.ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
 	defer b.ch.Close()

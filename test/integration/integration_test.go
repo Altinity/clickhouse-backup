@@ -1530,10 +1530,14 @@ func (ch *TestClickHouse) connectWithWait(r *require.Assertions, sleepBefore tim
 		err := ch.connect()
 		if i == 10 {
 			r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", "logs", "clickhouse"))
-			r.NoError(err)
+			out, err := dockerExecOut("clickhouse", "clickhouse-client -q 'SELECT version()'")
+			if err == nil {
+				ch.chbackend.Log.Warnf(out)
+			}
 		}
 		if err != nil {
 			log.Warnf("clickhouse not ready %v, wait %d seconds", err, i*2)
+			r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", "ps", "-a"))
 			r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", "ps", "-a"))
 			time.Sleep(time.Second * time.Duration(i*2))
 		} else {
@@ -1558,11 +1562,11 @@ func (ch *TestClickHouse) connect() error {
 		Config: &config.ClickHouseConfig{
 			Host:    "127.0.0.1",
 			Port:    9000,
-			Timeout: "60s",
+			Timeout: "10s",
 		},
 		Log: log.WithField("logger", "integration-test"),
 	}
-	return ch.chbackend.ConnectIfNotConnected()
+	return ch.chbackend.Connect()
 }
 
 func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {

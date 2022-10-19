@@ -70,7 +70,7 @@ func Run(cliCtx *cli.Context, cliApp *cli.App, configPath string, clickhouseBack
 			Config: &cfg.ClickHouse,
 			Log:    apexLog.WithField("logger", "clickhouse"),
 		}
-		if err := ch.ConnectIfNotConnected(); err != nil {
+		if err := ch.Connect(); err != nil {
 			log.Error(err.Error())
 			time.Sleep(5 * time.Second)
 			continue
@@ -1390,7 +1390,7 @@ func (api *APIServer) CreateIntegrationTables() error {
 		Config: &api.config.ClickHouse,
 		Log:    api.log.WithField("logger", "clickhouse"),
 	}
-	if err := ch.ConnectIfNotConnected(); err != nil {
+	if err := ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %w", err)
 	}
 	defer ch.Close()
