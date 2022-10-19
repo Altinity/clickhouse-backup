@@ -70,7 +70,7 @@ func (ch *ClickHouse) ConnectIfNotConnected() error {
 				InsecureSkipVerify: ch.Config.SkipVerify,
 			}
 			if ch.Config.TLSCert != "" || ch.Config.TLSKey != "" {
-				cert, err := tls.LoadX509KeyPair("server.crt", "server.key")
+				cert, err := tls.LoadX509KeyPair(ch.Config.TLSCert, ch.Config.TLSKey)
 				if err != nil {
 					ch.Log.Errorf("tls.LoadX509KeyPair error: %v", err)
 					return err
@@ -109,7 +109,7 @@ func (ch *ClickHouse) ConnectIfNotConnected() error {
 		return err
 	}
 	ch.conn.SetMaxOpenConns(1)
-	ch.conn.SetConnMaxLifetime(0)
+	ch.conn.SetConnMaxLifetime(timeout)
 	ch.conn.SetMaxIdleConns(0)
 	logFunc := ch.Log.Infof
 	if !ch.Config.LogSQLQueries {
