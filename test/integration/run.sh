@@ -13,7 +13,7 @@ fi
 export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup-race"
 export LOG_LEVEL=${LOG_LEVEL:-info}
 
-if [[ -f "${CUR_DIR/credentials.json}"]]; then
+if [[ -f "${CUR_DIR}/credentials.json" ]]; then
   export GCS_TESTS=${GCS_TESTS:-1}
 else
   export GCS_TESTS=${GCS_TESTS:-}
