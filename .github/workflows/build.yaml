@@ -61,7 +61,7 @@ jobs:
             openssl version
             openssl enc -base64 -aes-256-cbc -d -in test/integration/credentials.json.enc -out test/integration/credentials.json -md md5 -k ${VAULT_PASSWORD}
           fi
-          echo "::set-output name=GCS_TESTS::$(if [ -z "${{ secrets.VAULT_PASSWORD }}" ]; then echo "false"; else echo "true"; fi)"
+          echo "echo GCS_TESTS=$(if [ -z "${{ secrets.VAULT_PASSWORD }}" ]; then echo "false"; else echo "true"; fi)" >> $GITHUB_OUTPUT
 
       - uses: actions/upload-artifact@v3
         with:
@@ -277,7 +277,7 @@ jobs:
         run: |
           DOCKER_TAG=${GITHUB_REF##*/}
           export DOCKER_TAG=${DOCKER_TAG##*\\}
-          echo "::set-output name=docker_tag::${DOCKER_TAG:-dev}"
+          echo "docker_tag=${DOCKER_TAG:-dev}" >> $GITHUB_OUTPUT
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v1
