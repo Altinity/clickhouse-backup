@@ -110,18 +110,17 @@ func (ch *ClickHouse) ConnectOnce() error {
 	ch.conn.SetMaxOpenConns(1)
 	ch.conn.SetConnMaxLifetime(0)
 	ch.conn.SetMaxIdleConns(0)
-
-	ch.Log.Errorf("clickhouse connection prepared: %s run ping", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
-	err = ch.conn.Ping()
-	if err != nil {
-		ch.Log.Errorf("clickhouse connection ping: %s return error: %v", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
-		return err
+	logFunc := ch.Log.Infof
+	if !ch.Config.LogSQLQueries {
+		logFunc = ch.Log.Debugf
 	}
-	if ch.Config.LogSQLQueries {
-		ch.Log.Infof("clickhouse connection open: %s", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
-	} else {
-		ch.Log.Debugf("clickhouse connection open: %s", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
-	}
+	//logFunc("clickhouse connection prepared: %s run ping", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
+	//err = ch.conn.Ping()
+	//if err != nil {
+	//	ch.Log.Errorf("clickhouse connection ping: %s return error: %v", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
+	//	return err
+	//}
+	logFunc("clickhouse connection open: %s", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
 	ch.IsOpen = true
 	return err
 }
