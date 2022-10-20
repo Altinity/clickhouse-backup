@@ -56,6 +56,10 @@ type S3 struct {
 	BufferSize  int
 }
 
+func (s *S3) Kind() string {
+	return "S3"
+}
+
 // Connect - connect to s3
 func (s *S3) Connect(ctx context.Context) error {
 	var err error
@@ -129,8 +133,8 @@ func (s *S3) Connect(ctx context.Context) error {
 	return nil
 }
 
-func (s *S3) Kind() string {
-	return "S3"
+func (s *S3) Close(ctx context.Context) error {
+	return nil
 }
 
 func (s *S3) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {

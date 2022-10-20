@@ -30,6 +30,10 @@ func (sftp *SFTP) Debug(msg string, v ...interface{}) {
 	}
 }
 
+func (sftp *SFTP) Kind() string {
+	return "SFTP"
+}
+
 func (sftp *SFTP) Connect(ctx context.Context) error {
 	authMethods := make([]ssh.AuthMethod, 0)
 
@@ -83,8 +87,8 @@ func (sftp *SFTP) Connect(ctx context.Context) error {
 	return nil
 }
 
-func (sftp *SFTP) Kind() string {
-	return "SFTP"
+func (sftp *SFTP) Close(ctx context.Context) error {
+	return sftp.client.Close()
 }
 
 func (sftp *SFTP) StatFile(ctx context.Context, key string) (RemoteFile, error) {

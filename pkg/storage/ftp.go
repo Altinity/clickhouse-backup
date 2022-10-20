@@ -25,6 +25,10 @@ type FTP struct {
 	dirCacheMutex sync.RWMutex
 }
 
+func (f *FTP) Kind() string {
+	return "FTP"
+}
+
 func (f *FTP) Connect(ctx context.Context) error {
 	timeout, err := time.ParseDuration(f.Config.Timeout)
 	if err != nil {
@@ -53,8 +57,9 @@ func (f *FTP) Connect(ctx context.Context) error {
 	return nil
 }
 
-func (f *FTP) Kind() string {
-	return "FTP"
+func (f *FTP) Close(ctx context.Context) error {
+	f.clients.Close(ctx)
+	return nil
 }
 
 // getConnectionFromPool *ftp.ServerConn is not thread-safe, so we need implements connection pool

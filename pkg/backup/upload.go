@@ -62,6 +62,12 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	if err := b.init(ctx, disks); err != nil {
 		return err
 	}
+	defer func() {
+		if err := b.dst.Close(ctx); err != nil {
+			b.log.Warnf("can't close BackupDestination error: %v", err)
+		}
+	}()
+
 	remoteBackups, err := b.dst.BackupList(ctx, false, "")
 	if err != nil {
 		return err

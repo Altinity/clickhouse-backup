@@ -48,6 +48,11 @@ func (b *Backuper) legacyDownload(ctx context.Context, backupName string) error 
 	if err := bd.Connect(ctx); err != nil {
 		return err
 	}
+	defer func() {
+		if err := bd.Close(ctx); err != nil {
+			b.log.Warnf("can't close BackupDestination error: %v", err)
+		}
+	}()
 	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
 	err = retry.RunCtx(ctx, func(ctx context.Context) error {
 		return bd.DownloadCompressedStream(ctx, backupName, path.Join(b.DefaultDataPath, "backup", backupName))
@@ -107,6 +112,12 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	if err := b.init(ctx, disks); err != nil {
 		return err
 	}
+	defer func() {
+		if err := b.dst.Close(ctx); err != nil {
+			b.log.Warnf("can't close BackupDestination error: %v", err)
+		}
+	}()
+
 	remoteBackups, err := b.dst.BackupList(ctx, true, backupName)
 	if err != nil {
 		return err

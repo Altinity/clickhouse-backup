@@ -22,9 +22,10 @@ type RemoteFile interface {
 // RemoteStorage -
 type RemoteStorage interface {
 	Kind() string
+	Connect(ctx context.Context) error
+	Close(ctx context.Context) error
 	StatFile(ctx context.Context, key string) (RemoteFile, error)
 	DeleteFile(ctx context.Context, key string) error
-	Connect(ctx context.Context) error
 	Walk(ctx context.Context, prefix string, recursive bool, fn func(context.Context, RemoteFile) error) error
 	GetFileReader(ctx context.Context, key string) (io.ReadCloser, error)
 	GetFileReaderWithLocalPath(ctx context.Context, key, localPath string) (io.ReadCloser, error)

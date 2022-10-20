@@ -16,6 +16,7 @@ IMPROVEMENTS
 BUG FIXES
 - fix `keep_backups_remote` behavior for recursive incremental sequences, fix [525](https://github.com/AlexAkulov/clickhouse-backup/issues/525)
 - for `restore` command call `DROP DATABASE IF EXISTS db SYNC` when pass `--schema` and `--drop` together, fix [514](https://github.com/AlexAkulov/clickhouse-backup/issues/514)
+- close persistent connections for remote backup storage after command execution, fix [535](https://github.com/AlexAkulov/clickhouse-backup/issues/535) 
 - lot of typos fixes
 
 # v2.0.0

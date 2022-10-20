@@ -29,6 +29,10 @@ type AzureBlob struct {
 	Config    *config.AzureBlobConfig
 }
 
+func (s *AzureBlob) Kind() string {
+	return "azblob"
+}
+
 // Connect - connect to Azure
 func (s *AzureBlob) Connect(ctx context.Context) error {
 	if s.Config.EndpointSuffix == "" {
@@ -141,8 +145,8 @@ func (s *AzureBlob) Connect(ctx context.Context) error {
 	}
 }
 
-func (s *AzureBlob) Kind() string {
-	return "azblob"
+func (s *AzureBlob) Close(ctx context.Context) error {
+	return nil
 }
 
 func (s *AzureBlob) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {

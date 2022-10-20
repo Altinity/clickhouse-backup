@@ -54,6 +54,10 @@ func (w debugGCSTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return resp, err
 }
 
+func (gcs *GCS) Kind() string {
+	return "GCS"
+}
+
 // Connect - connect to GCS
 func (gcs *GCS) Connect(ctx context.Context) error {
 	var err error
@@ -92,6 +96,10 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 
 	gcs.client, err = storage.NewClient(ctx, clientOptions...)
 	return err
+}
+
+func (gcs *GCS) Close(ctx context.Context) error {
+	return gcs.client.Close()
 }
 
 func (gcs *GCS) Walk(ctx context.Context, gcsPath string, recursive bool, process func(ctx context.Context, r RemoteFile) error) error {
@@ -133,10 +141,6 @@ func (gcs *GCS) Walk(ctx context.Context, gcsPath string, recursive bool, proces
 			return err
 		}
 	}
-}
-
-func (gcs *GCS) Kind() string {
-	return "GCS"
 }
 
 func (gcs *GCS) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {

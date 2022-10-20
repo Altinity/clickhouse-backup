@@ -159,6 +159,12 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 	if err != nil {
 		return fmt.Errorf("can't connect to remote storage: %v", err)
 	}
+	defer func() {
+		if err := bd.Close(ctx); err != nil {
+			b.log.Warnf("can't close BackupDestination error: %v", err)
+		}
+	}()
+
 	backupList, err := bd.BackupList(ctx, true, backupName)
 	if err != nil {
 		return err

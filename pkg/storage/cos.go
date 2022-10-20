@@ -19,6 +19,10 @@ type COS struct {
 	Config *config.COSConfig
 }
 
+func (c *COS) Kind() string {
+	return "COS"
+}
+
 // Connect - connect to cos
 func (c *COS) Connect(ctx context.Context) error {
 	u, err := url.Parse(c.Config.RowURL)
@@ -49,8 +53,8 @@ func (c *COS) Connect(ctx context.Context) error {
 	return err
 }
 
-func (c *COS) Kind() string {
-	return "COS"
+func (c *COS) Close(ctx context.Context) error {
+	return nil
 }
 
 func (c *COS) StatFile(ctx context.Context, key string) (RemoteFile, error) {

@@ -348,6 +348,11 @@ func (b *Backuper) GetRemoteBackups(ctx context.Context, parseMetadata bool) ([]
 	if err := bd.Connect(ctx); err != nil {
 		return []storage.Backup{}, err
 	}
+	defer func() {
+		if err := bd.Close(ctx); err != nil {
+			b.log.Warnf("can't close BackupDestination error: %v", err)
+		}
+	}()
 	backupList, err := bd.BackupList(ctx, parseMetadata, "")
 	if err != nil {
 		return []storage.Backup{}, err
