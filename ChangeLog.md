@@ -1,3 +1,7 @@
+# v2.1.1
+BUG FIXES
+- return bash and clickhouse usergroup to Dockerfile image short, fix [542](https://github.com/AlexAkulov/clickhouse-backup/issues/542)
+
 # v2.1.0
 IMPROVEMENTS
 - complex refactoring to use contexts, AWS and SFTP storage not full supported

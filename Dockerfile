@@ -47,6 +47,11 @@ FROM alpine:3.16 AS image_short
 ARG TARGETPLATFORM
 MAINTAINER Eugene Klimov <eklimov@altinity.com>
 
+RUN addgroup -S -g 101 clickhouse \
+    && adduser -S -h /var/lib/clickhouse -s /bin/bash -G clickhouse -g "ClickHouse server" -u 101 clickhouse
+
+RUN apk update && apk add --no-cache ca-certificates tzdata bash curl && update-ca-certificates
+
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 COPY build/${TARGETPLATFORM}/clickhouse-backup /bin/clickhouse-backup
