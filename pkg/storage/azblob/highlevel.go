@@ -1,4 +1,4 @@
-// forked from github.com/Azure/azure-storage-blob-go/azblob/blob/feature/clientprovidedkey because UploadStreamToBlockBlob does not expose CPK
+// Package azblob forked from github.com/Azure/azure-storage-blob-go/azblob/blob/feature/clientprovidedkey because UploadStreamToBlockBlob does not expose CPK
 package azblob
 
 import (

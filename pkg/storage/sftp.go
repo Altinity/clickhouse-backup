@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
@@ -29,7 +30,11 @@ func (sftp *SFTP) Debug(msg string, v ...interface{}) {
 	}
 }
 
-func (sftp *SFTP) Connect() error {
+func (sftp *SFTP) Kind() string {
+	return "SFTP"
+}
+
+func (sftp *SFTP) Connect(ctx context.Context) error {
 	authMethods := make([]ssh.AuthMethod, 0)
 
 	if sftp.Config.Key == "" && sftp.Config.Password == "" {
@@ -82,11 +87,11 @@ func (sftp *SFTP) Connect() error {
 	return nil
 }
 
-func (sftp *SFTP) Kind() string {
-	return "SFTP"
+func (sftp *SFTP) Close(ctx context.Context) error {
+	return sftp.client.Close()
 }
 
-func (sftp *SFTP) StatFile(key string) (RemoteFile, error) {
+func (sftp *SFTP) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 	filePath := path.Join(sftp.Config.Path, key)
 
 	stat, err := sftp.client.Stat(filePath)
@@ -105,7 +110,7 @@ func (sftp *SFTP) StatFile(key string) (RemoteFile, error) {
 	}, nil
 }
 
-func (sftp *SFTP) DeleteFile(key string) error {
+func (sftp *SFTP) DeleteFile(ctx context.Context, key string) error {
 	sftp.Debug("[SFTP_DEBUG] Delete %s", key)
 	filePath := path.Join(sftp.Config.Path, key)
 
@@ -115,13 +120,13 @@ func (sftp *SFTP) DeleteFile(key string) error {
 		return err
 	}
 	if fileStat.IsDir() {
-		return sftp.DeleteDirectory(filePath)
+		return sftp.DeleteDirectory(ctx, filePath)
 	} else {
 		return sftp.client.Remove(filePath)
 	}
 }
 
-func (sftp *SFTP) DeleteDirectory(dirPath string) error {
+func (sftp *SFTP) DeleteDirectory(ctx context.Context, dirPath string) error {
 	sftp.Debug("[SFTP_DEBUG] DeleteDirectory %s", dirPath)
 	defer func() {
 		if err := sftp.client.RemoveDirectory(dirPath); err != nil {
@@ -137,7 +142,7 @@ func (sftp *SFTP) DeleteDirectory(dirPath string) error {
 	for _, file := range files {
 		filePath := path.Join(dirPath, file.Name())
 		if file.IsDir() {
-			if err := sftp.DeleteDirectory(filePath); err != nil {
+			if err := sftp.DeleteDirectory(ctx, filePath); err != nil {
 				log.Warnf("sftp.DeleteDirectory(%s) err=%v", filePath, err)
 			}
 		} else {
@@ -150,7 +155,7 @@ func (sftp *SFTP) DeleteDirectory(dirPath string) error {
 	return nil
 }
 
-func (sftp *SFTP) Walk(remotePath string, recursive bool, process func(RemoteFile) error) error {
+func (sftp *SFTP) Walk(ctx context.Context, remotePath string, recursive bool, process func(context.Context, RemoteFile) error) error {
 	dir := path.Join(sftp.Config.Path, remotePath)
 	sftp.Debug("[SFTP_DEBUG] Walk %s, recursive=%v", dir, recursive)
 
@@ -165,7 +170,7 @@ func (sftp *SFTP) Walk(remotePath string, recursive bool, process func(RemoteFil
 				continue
 			}
 			relName, _ := filepath.Rel(dir, walker.Path())
-			err := process(&sftpFile{
+			err := process(ctx, &sftpFile{
 				size:         entry.Size(),
 				lastModified: entry.ModTime(),
 				name:         relName,
@@ -181,7 +186,7 @@ func (sftp *SFTP) Walk(remotePath string, recursive bool, process func(RemoteFil
 			return err
 		}
 		for _, entry := range entries {
-			err := process(&sftpFile{
+			err := process(ctx, &sftpFile{
 				size:         entry.Size(),
 				lastModified: entry.ModTime(),
 				name:         entry.Name(),
@@ -194,16 +199,16 @@ func (sftp *SFTP) Walk(remotePath string, recursive bool, process func(RemoteFil
 	return nil
 }
 
-func (sftp *SFTP) GetFileReader(key string) (io.ReadCloser, error) {
+func (sftp *SFTP) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {
 	filePath := path.Join(sftp.Config.Path, key)
 	return sftp.client.OpenFile(filePath, syscall.O_RDWR)
 }
 
-func (sftp *SFTP) GetFileReaderWithLocalPath(key, _ string) (io.ReadCloser, error) {
-	return sftp.GetFileReader(key)
+func (sftp *SFTP) GetFileReaderWithLocalPath(ctx context.Context, key, _ string) (io.ReadCloser, error) {
+	return sftp.GetFileReader(ctx, key)
 }
 
-func (sftp *SFTP) PutFile(key string, localFile io.ReadCloser) error {
+func (sftp *SFTP) PutFile(ctx context.Context, key string, localFile io.ReadCloser) error {
 	filePath := path.Join(sftp.Config.Path, key)
 	if err := sftp.client.MkdirAll(path.Dir(filePath)); err != nil {
 		log.Warnf("sftp.client.MkdirAll(%s) err=%v", path.Dir(filePath), err)

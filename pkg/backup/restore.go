@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/status"
 	"os"
 	"os/exec"
 	"path"
@@ -12,7 +13,6 @@ import (
 	"time"
 
 	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 
 	"github.com/mattn/go-shellwords"
 
@@ -28,9 +28,15 @@ import (
 var CreateDatabaseRE = regexp.MustCompile(`(?m)^CREATE DATABASE (\s*)(\S+)(\s*)`)
 
 // Restore - restore tables matched by tablePattern from backupName
-func Restore(cfg *config.Config, backupName, tablePattern string, databaseMapping, partitions []string, schemaOnly, dataOnly, dropTable, ignoreDependencies, rbacOnly, configsOnly bool) error {
+func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, partitions []string, schemaOnly, dataOnly, dropTable, ignoreDependencies, rbacOnly, configsOnly bool, commandId int) error {
+	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
+	if err != nil {
+		return err
+	}
+	ctx, cancel = context.WithCancel(ctx)
+	defer cancel()
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
-	if err := prepareRestoreDatabaseMapping(cfg, databaseMapping); err != nil {
+	if err := b.prepareRestoreDatabaseMapping(databaseMapping); err != nil {
 		return err
 	}
 
@@ -40,22 +46,20 @@ func Restore(cfg *config.Config, backupName, tablePattern string, databaseMappin
 	})
 	doRestoreData := !schemaOnly || dataOnly
 
-	ch := &clickhouse.ClickHouse{
-		Config: &cfg.ClickHouse,
-	}
-	if backupName == "" {
-		_ = PrintLocalBackups(cfg, "all")
-		return fmt.Errorf("select backup for restore")
-	}
-	if err := ch.Connect(); err != nil {
+	if err := b.ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
-	defer ch.Close()
-	disks, err := ch.GetDisks()
+	defer b.ch.Close()
+
+	if backupName == "" {
+		_ = b.PrintLocalBackups(ctx, "all")
+		return fmt.Errorf("select backup for restore")
+	}
+	disks, err := b.ch.GetDisks(ctx)
 	if err != nil {
 		return err
 	}
-	defaultDataPath, err := ch.GetDefaultPath(disks)
+	defaultDataPath, err := b.ch.GetDefaultPath(disks)
 	if err != nil {
 		log.Warnf("%v", err)
 		return ErrUnknownClickhouseDataPath
@@ -63,10 +67,10 @@ func Restore(cfg *config.Config, backupName, tablePattern string, databaseMappin
 	backupMetafileLocalPaths := []string{path.Join(defaultDataPath, "backup", backupName, "metadata.json")}
 	var backupMetadataBody []byte
 	isEmbedded := false
-	embeddedBackupPath, err := ch.GetEmbeddedBackupPath(disks)
+	embeddedBackupPath, err := b.ch.GetEmbeddedBackupPath(disks)
 	if err == nil && embeddedBackupPath != "" {
 		backupMetafileLocalPaths = append(backupMetafileLocalPaths, path.Join(embeddedBackupPath, backupName, "metadata.json"))
-	} else if cfg.ClickHouse.UseEmbeddedBackupRestore && cfg.ClickHouse.EmbeddedBackupDisk == "" {
+	} else if b.cfg.ClickHouse.UseEmbeddedBackupRestore && b.cfg.ClickHouse.EmbeddedBackupDisk == "" {
 		log.Warnf("%v", err)
 	} else if err != nil {
 		return err
@@ -87,19 +91,14 @@ func Restore(cfg *config.Config, backupName, tablePattern string, databaseMappin
 		if schemaOnly || doRestoreData {
 			for _, database := range backupMetadata.Databases {
 				targetDB := database.Name
-				isMapped := false
 				if !IsInformationSchema(targetDB) {
-					if targetDB, isMapped = cfg.General.RestoreDatabaseMapping[database.Name]; !isMapped {
-						targetDB = database.Name
-					}
-					substitution := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS ${1}`%s`${3}", targetDB)
-					if err = ch.CreateDatabaseFromQuery(CreateDatabaseRE.ReplaceAllString(database.Query, substitution), cfg.General.RestoreSchemaOnCluster); err != nil {
+					if err = b.restoreEmptyDatabase(ctx, targetDB, database, dropTable, schemaOnly); err != nil {
 						return err
 					}
 				}
 			}
 			for _, function := range backupMetadata.Functions {
-				if err := ch.CreateUserDefinedFunction(function.Name, function.CreateQuery, cfg.General.RestoreSchemaOnCluster); err != nil {
+				if err = b.ch.CreateUserDefinedFunction(function.Name, function.CreateQuery, b.cfg.General.RestoreSchemaOnCluster); err != nil {
 					return err
 				}
 			}
@@ -115,26 +114,26 @@ func Restore(cfg *config.Config, backupName, tablePattern string, databaseMappin
 	}
 	needRestart := false
 	if rbacOnly && !isEmbedded {
-		if err := restoreRBAC(ch, backupName, disks); err != nil {
+		if err := b.restoreRBAC(ctx, backupName, disks); err != nil {
 			return err
 		}
 		needRestart = true
 	}
 	if configsOnly && !isEmbedded {
-		if err := restoreConfigs(ch, backupName, disks); err != nil {
+		if err := b.restoreConfigs(backupName, disks); err != nil {
 			return err
 		}
 		needRestart = true
 	}
 
 	if needRestart {
-		log.Warnf("%s contains `access` or `configs` directory, so we need exec %s", backupName, ch.Config.RestartCommand)
-		cmd, err := shellwords.Parse(ch.Config.RestartCommand)
+		log.Warnf("%s contains `access` or `configs` directory, so we need exec %s", backupName, b.ch.Config.RestartCommand)
+		cmd, err := shellwords.Parse(b.ch.Config.RestartCommand)
 		if err != nil {
 			return err
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
-		log.Infof("run %s", ch.Config.RestartCommand)
+		ctx, cancel := context.WithTimeout(ctx, 180*time.Second)
+		log.Infof("run %s", b.ch.Config.RestartCommand)
 		var out []byte
 		if len(cmd) > 1 {
 			out, err = exec.CommandContext(ctx, cmd[0], cmd[1:]...).CombinedOutput()
@@ -147,13 +146,13 @@ func Restore(cfg *config.Config, backupName, tablePattern string, databaseMappin
 	}
 
 	if schemaOnly || (schemaOnly == dataOnly) {
-		if err := RestoreSchema(cfg, ch, backupName, tablePattern, dropTable, ignoreDependencies, disks, isEmbedded); err != nil {
+		if err := b.RestoreSchema(ctx, backupName, tablePattern, dropTable, ignoreDependencies, disks, isEmbedded); err != nil {
 			return err
 		}
 	}
 	if dataOnly || (schemaOnly == dataOnly) {
 		partitionsToRestore, partitions := filesystemhelper.CreatePartitionsToBackupMap(partitions)
-		if err := RestoreData(cfg, ch, backupName, tablePattern, partitions, partitionsToRestore, disks, isEmbedded); err != nil {
+		if err := b.RestoreData(ctx, backupName, tablePattern, partitions, partitionsToRestore, disks, isEmbedded); err != nil {
 			return err
 		}
 	}
@@ -161,7 +160,30 @@ func Restore(cfg *config.Config, backupName, tablePattern string, databaseMappin
 	return nil
 }
 
-func prepareRestoreDatabaseMapping(cfg *config.Config, databaseMapping []string) error {
+func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB string, database metadata.DatabasesMeta, dropTable, schemaOnly bool) error {
+	isMapped := false
+	if targetDB, isMapped = b.cfg.General.RestoreDatabaseMapping[database.Name]; !isMapped {
+		targetDB = database.Name
+	}
+	//https://github.com/AlexAkulov/clickhouse-backup/issues/514
+	if schemaOnly && dropTable {
+		onCluster := ""
+		if b.cfg.General.RestoreSchemaOnCluster != "" {
+			onCluster = fmt.Sprintf(" ON CLUSTER '%s'", b.cfg.General.RestoreSchemaOnCluster)
+		}
+		if _, err := b.ch.QueryContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s` %s SYNC", targetDB, onCluster)); err != nil {
+			return err
+		}
+
+	}
+	substitution := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS ${1}`%s`${3}", targetDB)
+	if err := b.ch.CreateDatabaseFromQuery(ctx, CreateDatabaseRE.ReplaceAllString(database.Query, substitution), b.cfg.General.RestoreSchemaOnCluster); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (b *Backuper) prepareRestoreDatabaseMapping(databaseMapping []string) error {
 	for i := 0; i < len(databaseMapping); i++ {
 		splitByCommas := strings.Split(databaseMapping[i], ",")
 		for _, m := range splitByCommas {
@@ -169,29 +191,30 @@ func prepareRestoreDatabaseMapping(cfg *config.Config, databaseMapping []string)
 			if len(splitByColon) != 2 {
 				return fmt.Errorf("restore-database-mapping %s should only have srcDatabase:destinationDatabase format for each map rule", m)
 			}
-			cfg.General.RestoreDatabaseMapping[splitByColon[0]] = splitByColon[1]
+			b.cfg.General.RestoreDatabaseMapping[splitByColon[0]] = splitByColon[1]
 		}
 	}
 	return nil
 }
 
 // restoreRBAC - copy backup_name>/rbac folder to access_data_path
-func restoreRBAC(ch *clickhouse.ClickHouse, backupName string, disks []clickhouse.Disk) error {
-	accessPath, err := ch.GetAccessManagementPath(nil)
+func (b *Backuper) restoreRBAC(ctx context.Context, backupName string, disks []clickhouse.Disk) error {
+	log := b.log.WithField("logger", "restoreRBAC")
+	accessPath, err := b.ch.GetAccessManagementPath(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if err = restoreBackupRelatedDir(ch, backupName, "access", accessPath, disks); err == nil {
+	if err = b.restoreBackupRelatedDir(backupName, "access", accessPath, disks); err == nil {
 		markFile := path.Join(accessPath, "need_rebuild_lists.mark")
-		apexLog.Infof("create %s for properly rebuild RBAC after restart clickhouse-server", markFile)
+		log.Infof("create %s for properly rebuild RBAC after restart clickhouse-server", markFile)
 		file, err := os.Create(markFile)
 		if err != nil {
 			return err
 		}
 		_ = file.Close()
-		_ = filesystemhelper.Chown(markFile, ch, disks, false)
+		_ = filesystemhelper.Chown(markFile, b.ch, disks, false)
 		listFilesPattern := path.Join(accessPath, "*.list")
-		apexLog.Infof("remove %s for properly rebuild RBAC after restart clickhouse-server", listFilesPattern)
+		log.Infof("remove %s for properly rebuild RBAC after restart clickhouse-server", listFilesPattern)
 		if listFiles, err := filepathx.Glob(listFilesPattern); err != nil {
 			return err
 		} else {
@@ -209,16 +232,17 @@ func restoreRBAC(ch *clickhouse.ClickHouse, backupName string, disks []clickhous
 }
 
 // restoreConfigs - copy backup_name/configs folder to /etc/clickhouse-server/
-func restoreConfigs(ch *clickhouse.ClickHouse, backupName string, disks []clickhouse.Disk) error {
-	if err := restoreBackupRelatedDir(ch, backupName, "configs", ch.Config.ConfigDir, disks); err != nil && os.IsNotExist(err) {
+func (b *Backuper) restoreConfigs(backupName string, disks []clickhouse.Disk) error {
+	if err := b.restoreBackupRelatedDir(backupName, "configs", b.ch.Config.ConfigDir, disks); err != nil && os.IsNotExist(err) {
 		return nil
 	} else {
 		return err
 	}
 }
 
-func restoreBackupRelatedDir(ch *clickhouse.ClickHouse, backupName, backupPrefixDir, destinationDir string, disks []clickhouse.Disk) error {
-	defaultDataPath, err := ch.GetDefaultPath(disks)
+func (b *Backuper) restoreBackupRelatedDir(backupName, backupPrefixDir, destinationDir string, disks []clickhouse.Disk) error {
+	log := b.log.WithField("logger", "restoreBackupRelatedDir")
+	defaultDataPath, err := b.ch.GetDefaultPath(disks)
 	if err != nil {
 		return ErrUnknownClickhouseDataPath
 	}
@@ -231,7 +255,7 @@ func restoreBackupRelatedDir(ch *clickhouse.ClickHouse, backupName, backupPrefix
 	if !info.IsDir() {
 		return fmt.Errorf("%s is not a dir", srcBackupDir)
 	}
-	apexLog.Debugf("copy %s -> %s", srcBackupDir, destinationDir)
+	log.Debugf("copy %s -> %s", srcBackupDir, destinationDir)
 	copyOptions := recursiveCopy.Options{OnDirExists: func(src, dest string) recursiveCopy.DirExistsAction {
 		return recursiveCopy.Merge
 	}}
@@ -245,7 +269,7 @@ func restoreBackupRelatedDir(ch *clickhouse.ClickHouse, backupName, backupPrefix
 	}
 	files = append(files, destinationDir)
 	for _, localFile := range files {
-		if err := filesystemhelper.Chown(localFile, ch, disks, false); err != nil {
+		if err := filesystemhelper.Chown(localFile, b.ch, disks, false); err != nil {
 			return err
 		}
 	}
@@ -253,23 +277,23 @@ func restoreBackupRelatedDir(ch *clickhouse.ClickHouse, backupName, backupPrefix
 }
 
 // RestoreSchema - restore schemas matched by tablePattern from backupName
-func RestoreSchema(cfg *config.Config, ch *clickhouse.ClickHouse, backupName string, tablePattern string, dropTable, ignoreDependencies bool, disks []clickhouse.Disk, isEmbedded bool) error {
+func (b *Backuper) RestoreSchema(ctx context.Context, backupName, tablePattern string, dropTable, ignoreDependencies bool, disks []clickhouse.Disk, isEmbedded bool) error {
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "restore",
 	})
 
-	defaultDataPath, err := ch.GetDefaultPath(disks)
+	defaultDataPath, err := b.ch.GetDefaultPath(disks)
 	if err != nil {
 		return ErrUnknownClickhouseDataPath
 	}
-	version, err := ch.GetVersion()
+	version, err := b.ch.GetVersion(ctx)
 	if err != nil {
 		return err
 	}
 	metadataPath := path.Join(defaultDataPath, "backup", backupName, "metadata")
 	if isEmbedded {
-		defaultDataPath, err = ch.GetEmbeddedBackupPath(disks)
+		defaultDataPath, err = b.ch.GetEmbeddedBackupPath(disks)
 		if err != nil {
 			return err
 		}
@@ -285,13 +309,13 @@ func RestoreSchema(cfg *config.Config, ch *clickhouse.ClickHouse, backupName str
 	if tablePattern == "" {
 		tablePattern = "*"
 	}
-	tablesForRestore, err := getTableListByPatternLocal(cfg, metadataPath, tablePattern, dropTable, nil)
+	tablesForRestore, err := getTableListByPatternLocal(b.cfg, metadataPath, tablePattern, dropTable, nil)
 	if err != nil {
 		return err
 	}
 	// if restore-database-mapping specified, create database in mapping rules instead of in backup files.
-	if len(cfg.General.RestoreDatabaseMapping) > 0 {
-		err = changeTableQueryToAdjustDatabaseMapping(&tablesForRestore, cfg.General.RestoreDatabaseMapping)
+	if len(b.cfg.General.RestoreDatabaseMapping) > 0 {
+		err = changeTableQueryToAdjustDatabaseMapping(&tablesForRestore, b.cfg.General.RestoreDatabaseMapping)
 		if err != nil {
 			return err
 		}
@@ -299,14 +323,14 @@ func RestoreSchema(cfg *config.Config, ch *clickhouse.ClickHouse, backupName str
 	if len(tablesForRestore) == 0 {
 		return fmt.Errorf("no have found schemas by %s in %s", tablePattern, backupName)
 	}
-	if dropErr := dropExistsTables(cfg, ch, tablesForRestore, ignoreDependencies, version, log); dropErr != nil {
+	if dropErr := b.dropExistsTables(tablesForRestore, ignoreDependencies, version, log); dropErr != nil {
 		return dropErr
 	}
 	var restoreErr error
 	if isEmbedded {
-		restoreErr = restoreSchemaEmbedded(cfg, ch, backupName, tablesForRestore)
+		restoreErr = b.restoreSchemaEmbedded(backupName, tablesForRestore)
 	} else {
-		restoreErr = restoreSchemaRegular(cfg, ch, tablesForRestore, version, log)
+		restoreErr = b.restoreSchemaRegular(tablesForRestore, version, log)
 	}
 	if restoreErr != nil {
 		return restoreErr
@@ -316,54 +340,11 @@ func RestoreSchema(cfg *config.Config, ch *clickhouse.ClickHouse, backupName str
 
 var UUIDWithReplicatedMergeTreeRE = regexp.MustCompile(`^(.+)(UUID)(\s+)'([^']+)'(.+)({uuid})(.*)`)
 
-func restoreSchemaEmbedded(cfg *config.Config, ch *clickhouse.ClickHouse, backupName string, tablesForRestore ListOfTables) error {
-	return restoreEmbedded(cfg, ch, backupName, true, tablesForRestore, nil)
+func (b *Backuper) restoreSchemaEmbedded(backupName string, tablesForRestore ListOfTables) error {
+	return b.restoreEmbedded(backupName, true, tablesForRestore, nil)
 }
 
-func restoreEmbedded(cfg *config.Config, ch *clickhouse.ClickHouse, backupName string, restoreOnlySchema bool, tablesForRestore ListOfTables, partititions []string) error {
-	restoreSQL := "Disk(?,?)"
-	tablesSQL := ""
-	l := len(tablesForRestore)
-	for i, t := range tablesForRestore {
-		if t.Query != "" {
-			kind := "TABLE"
-			if strings.Contains(t.Query, " DICTIONARY ") {
-				kind = "DICTIONARY"
-			}
-			if newDb, isMapped := cfg.General.RestoreDatabaseMapping[t.Database]; isMapped {
-				tablesSQL += fmt.Sprintf("%s `%s`.`%s` AS `%s`.`%s`", kind, t.Database, t.Table, newDb, t.Table)
-			} else {
-				tablesSQL += fmt.Sprintf("%s `%s`.`%s`", kind, t.Database, t.Table)
-			}
-
-			if strings.Contains(t.Query, " VIEW ") {
-				kind = "VIEW"
-			}
-
-			if kind == "TABLE" && len(partititions) > 0 {
-				tablesSQL += fmt.Sprintf(" PARTITIONS '%s'", strings.Join(partititions, "','"))
-			}
-			if i < l-1 {
-				tablesSQL += ", "
-			}
-		}
-	}
-	settings := ""
-	if restoreOnlySchema {
-		settings = "SETTINGS structure_only=true"
-	}
-	restoreSQL = fmt.Sprintf("RESTORE %s FROM %s %s", tablesSQL, restoreSQL, settings)
-	restoreResults := make([]clickhouse.SystemBackups, 0)
-	if err := ch.Select(&restoreResults, restoreSQL, cfg.ClickHouse.EmbeddedBackupDisk, backupName); err != nil {
-		return fmt.Errorf("restore error: %v", err)
-	}
-	if len(restoreResults) == 0 || restoreResults[0].Status != "RESTORED" {
-		return fmt.Errorf("restore wrong result: %v", restoreResults)
-	}
-	return nil
-}
-
-func restoreSchemaRegular(cfg *config.Config, ch *clickhouse.ClickHouse, tablesForRestore ListOfTables, version int, log *apexLog.Entry) error {
+func (b *Backuper) restoreSchemaRegular(tablesForRestore ListOfTables, version int, log *apexLog.Entry) error {
 	totalRetries := len(tablesForRestore)
 	restoreRetries := 0
 	isDatabaseCreated := common.EmptyMap{}
@@ -371,9 +352,9 @@ func restoreSchemaRegular(cfg *config.Config, ch *clickhouse.ClickHouse, tablesF
 	for restoreRetries < totalRetries {
 		var notRestoredTables ListOfTables
 		for _, schema := range tablesForRestore {
-			// if metadata.json doesn't contains "databases", we will re-create tables with default engine
+			// if metadata.json doesn't contain "databases", we will re-create tables with default engine
 			if _, isCreated := isDatabaseCreated[schema.Database]; !isCreated {
-				if err := ch.CreateDatabase(schema.Database, cfg.General.RestoreSchemaOnCluster); err != nil {
+				if err := b.ch.CreateDatabase(schema.Database, b.cfg.General.RestoreSchemaOnCluster); err != nil {
 					return fmt.Errorf("can't create database '%s': %v", schema.Database, err)
 				} else {
 					isDatabaseCreated[schema.Database] = struct{}{}
@@ -390,17 +371,17 @@ func restoreSchemaRegular(cfg *config.Config, ch *clickhouse.ClickHouse, tablesF
 				schema.Query, "CREATE LIVE VIEW", "ATTACH LIVE VIEW", 1,
 			)
 			// https://github.com/AlexAkulov/clickhouse-backup/issues/466
-			if cfg.General.RestoreSchemaOnCluster == "" && strings.Contains(schema.Query, "{uuid}") && strings.Contains(schema.Query, "Replicated") {
+			if b.cfg.General.RestoreSchemaOnCluster == "" && strings.Contains(schema.Query, "{uuid}") && strings.Contains(schema.Query, "Replicated") {
 				if !strings.Contains(schema.Query, "UUID") {
 					log.Warnf("table query doesn't contains UUID, can't guarantee properly restore for ReplicatedMergeTree")
 				} else {
 					schema.Query = UUIDWithReplicatedMergeTreeRE.ReplaceAllString(schema.Query, "$1$2$3'$4'$5$4$7")
 				}
 			}
-			restoreErr = ch.CreateTable(clickhouse.Table{
+			restoreErr = b.ch.CreateTable(clickhouse.Table{
 				Database: schema.Database,
 				Name:     schema.Table,
-			}, schema.Query, false, false, cfg.General.RestoreSchemaOnCluster, version)
+			}, schema.Query, false, false, b.cfg.General.RestoreSchemaOnCluster, version)
 
 			if restoreErr != nil {
 				restoreRetries++
@@ -425,7 +406,7 @@ func restoreSchemaRegular(cfg *config.Config, ch *clickhouse.ClickHouse, tablesF
 	return nil
 }
 
-func dropExistsTables(cfg *config.Config, ch *clickhouse.ClickHouse, tablesForDrop ListOfTables, ignoreDependencies bool, version int, log *apexLog.Entry) error {
+func (b *Backuper) dropExistsTables(tablesForDrop ListOfTables, ignoreDependencies bool, version int, log *apexLog.Entry) error {
 	var dropErr error
 	dropRetries := 0
 	totalRetries := len(tablesForDrop)
@@ -443,19 +424,19 @@ func dropExistsTables(cfg *config.Config, ch *clickhouse.ClickHouse, tablesForDr
 					}, possibleQueries...)
 				}
 				for _, query := range possibleQueries {
-					dropErr = ch.DropTable(clickhouse.Table{
+					dropErr = b.ch.DropTable(clickhouse.Table{
 						Database: schema.Database,
 						Name:     schema.Table,
-					}, query, cfg.General.RestoreSchemaOnCluster, ignoreDependencies, version)
+					}, query, b.cfg.General.RestoreSchemaOnCluster, ignoreDependencies, version)
 					if dropErr == nil {
 						tablesForDrop[i].Query = query
 					}
 				}
 			} else {
-				dropErr = ch.DropTable(clickhouse.Table{
+				dropErr = b.ch.DropTable(clickhouse.Table{
 					Database: schema.Database,
 					Name:     schema.Table,
-				}, schema.Query, cfg.General.RestoreSchemaOnCluster, ignoreDependencies, version)
+				}, schema.Query, b.cfg.General.RestoreSchemaOnCluster, ignoreDependencies, version)
 			}
 
 			if dropErr != nil {
@@ -482,20 +463,20 @@ func dropExistsTables(cfg *config.Config, ch *clickhouse.ClickHouse, tablesForDr
 }
 
 // RestoreData - restore data for tables matched by tablePattern from backupName
-func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName string, tablePattern string, partitions []string, partitionsToRestore common.EmptyMap, disks []clickhouse.Disk, isEmbedded bool) error {
+func (b *Backuper) RestoreData(ctx context.Context, backupName string, tablePattern string, partitions []string, partitionsToRestore common.EmptyMap, disks []clickhouse.Disk, isEmbedded bool) error {
 	startRestore := time.Now()
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "restore",
 	})
-	defaultDataPath, err := ch.GetDefaultPath(disks)
+	defaultDataPath, err := b.ch.GetDefaultPath(disks)
 	if err != nil {
 		return ErrUnknownClickhouseDataPath
 	}
-	if clickhouse.IsClickhouseShadow(path.Join(defaultDataPath, "backup", backupName, "shadow")) {
+	if b.ch.IsClickhouseShadow(path.Join(defaultDataPath, "backup", backupName, "shadow")) {
 		return fmt.Errorf("backups created in v0.0.1 is not supported now")
 	}
-	backup, _, err := getLocalBackup(cfg, backupName, disks)
+	backup, _, err := b.getLocalBackup(ctx, backupName, disks)
 	if err != nil {
 		return fmt.Errorf("can't restore: %v", err)
 	}
@@ -506,13 +487,13 @@ func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName strin
 	}
 	var tablesForRestore ListOfTables
 	if backup.Legacy {
-		tablesForRestore, err = ch.GetBackupTablesLegacy(backupName, disks)
+		tablesForRestore, err = b.ch.GetBackupTablesLegacy(backupName, disks)
 	} else {
 		metadataPath := path.Join(defaultDataPath, "backup", backupName, "metadata")
 		if isEmbedded {
-			metadataPath = path.Join(diskMap[cfg.ClickHouse.EmbeddedBackupDisk], backupName, "metadata")
+			metadataPath = path.Join(diskMap[b.cfg.ClickHouse.EmbeddedBackupDisk], backupName, "metadata")
 		}
-		tablesForRestore, err = getTableListByPatternLocal(cfg, metadataPath, tablePattern, false, partitionsToRestore)
+		tablesForRestore, err = getTableListByPatternLocal(b.cfg, metadataPath, tablePattern, false, partitionsToRestore)
 	}
 	if err != nil {
 		return err
@@ -522,9 +503,9 @@ func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName strin
 	}
 	log.Debugf("found %d tables with data in backup", len(tablesForRestore))
 	if isEmbedded {
-		err = restoreDataEmbedded(cfg, ch, backupName, tablesForRestore, partitions)
+		err = b.restoreDataEmbedded(backupName, tablesForRestore, partitions)
 	} else {
-		err = restoreDataRegular(cfg, ch, backupName, tablePattern, tablesForRestore, diskMap, disks, log)
+		err = b.restoreDataRegular(ctx, backupName, tablePattern, tablesForRestore, diskMap, disks, log)
 	}
 	if err != nil {
 		return err
@@ -533,12 +514,12 @@ func RestoreData(cfg *config.Config, ch *clickhouse.ClickHouse, backupName strin
 	return nil
 }
 
-func restoreDataEmbedded(cfg *config.Config, ch *clickhouse.ClickHouse, backupName string, tablesForRestore ListOfTables, partititions []string) error {
-	return restoreEmbedded(cfg, ch, backupName, false, tablesForRestore, partititions)
+func (b *Backuper) restoreDataEmbedded(backupName string, tablesForRestore ListOfTables, partitions []string) error {
+	return b.restoreEmbedded(backupName, false, tablesForRestore, partitions)
 }
 
-func restoreDataRegular(cfg *config.Config, ch *clickhouse.ClickHouse, backupName string, tablePattern string, tablesForRestore ListOfTables, diskMap map[string]string, disks []clickhouse.Disk, log *apexLog.Entry) error {
-	chTables, err := ch.GetTables(tablePattern)
+func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, tablePattern string, tablesForRestore ListOfTables, diskMap map[string]string, disks []clickhouse.Disk, log *apexLog.Entry) error {
+	chTables, err := b.ch.GetTables(ctx, tablePattern)
 	if err != nil {
 		return err
 	}
@@ -575,8 +556,8 @@ func restoreDataRegular(cfg *config.Config, ch *clickhouse.ClickHouse, backupNam
 	var missingTables []string
 	for _, tableForRestore := range tablesForRestore {
 		found := false
-		if len(cfg.General.RestoreDatabaseMapping) > 0 {
-			if targetDB, isMapped := cfg.General.RestoreDatabaseMapping[tableForRestore.Database]; isMapped {
+		if len(b.cfg.General.RestoreDatabaseMapping) > 0 {
+			if targetDB, isMapped := b.cfg.General.RestoreDatabaseMapping[tableForRestore.Database]; isMapped {
 				tableForRestore.Database = targetDB
 			}
 		}
@@ -597,8 +578,8 @@ func restoreDataRegular(cfg *config.Config, ch *clickhouse.ClickHouse, backupNam
 	for i, table := range tablesForRestore {
 		// need mapped database path and original table.Database for CopyDataToDetached
 		dstDatabase := table.Database
-		if len(cfg.General.RestoreDatabaseMapping) > 0 {
-			if targetDB, isMapped := cfg.General.RestoreDatabaseMapping[table.Database]; isMapped {
+		if len(b.cfg.General.RestoreDatabaseMapping) > 0 {
+			if targetDB, isMapped := b.cfg.General.RestoreDatabaseMapping[table.Database]; isMapped {
 				dstDatabase = targetDB
 				tablesForRestore[i].Database = targetDB
 			}
@@ -610,14 +591,57 @@ func restoreDataRegular(cfg *config.Config, ch *clickhouse.ClickHouse, backupNam
 		if !ok {
 			return fmt.Errorf("can't find '%s.%s' in current system.tables", dstDatabase, table.Table)
 		}
-		if err := filesystemhelper.CopyDataToDetached(backupName, table, disks, dstTable.DataPaths, ch); err != nil {
+		if err := filesystemhelper.CopyDataToDetached(backupName, table, disks, dstTable.DataPaths, b.ch); err != nil {
 			return fmt.Errorf("can't restore '%s.%s': %v", table.Database, table.Table, err)
 		}
 		log.Debugf("copied data to 'detached'")
-		if err := ch.AttachPartitions(tablesForRestore[i], disks); err != nil {
+		if err := b.ch.AttachPartitions(tablesForRestore[i], disks); err != nil {
 			return fmt.Errorf("can't attach partitions for table '%s.%s': %v", tablesForRestore[i].Database, tablesForRestore[i].Table, err)
 		}
 		log.Info("done")
+	}
+	return nil
+}
+
+func (b *Backuper) restoreEmbedded(backupName string, restoreOnlySchema bool, tablesForRestore ListOfTables, partitions []string) error {
+	restoreSQL := "Disk(?,?)"
+	tablesSQL := ""
+	l := len(tablesForRestore)
+	for i, t := range tablesForRestore {
+		if t.Query != "" {
+			kind := "TABLE"
+			if strings.Contains(t.Query, " DICTIONARY ") {
+				kind = "DICTIONARY"
+			}
+			if newDb, isMapped := b.cfg.General.RestoreDatabaseMapping[t.Database]; isMapped {
+				tablesSQL += fmt.Sprintf("%s `%s`.`%s` AS `%s`.`%s`", kind, t.Database, t.Table, newDb, t.Table)
+			} else {
+				tablesSQL += fmt.Sprintf("%s `%s`.`%s`", kind, t.Database, t.Table)
+			}
+
+			if strings.Contains(t.Query, " VIEW ") {
+				kind = "VIEW"
+			}
+
+			if kind == "TABLE" && len(partitions) > 0 {
+				tablesSQL += fmt.Sprintf(" PARTITIONS '%s'", strings.Join(partitions, "','"))
+			}
+			if i < l-1 {
+				tablesSQL += ", "
+			}
+		}
+	}
+	settings := ""
+	if restoreOnlySchema {
+		settings = "SETTINGS structure_only=true"
+	}
+	restoreSQL = fmt.Sprintf("RESTORE %s FROM %s %s", tablesSQL, restoreSQL, settings)
+	restoreResults := make([]clickhouse.SystemBackups, 0)
+	if err := b.ch.Select(&restoreResults, restoreSQL, b.cfg.ClickHouse.EmbeddedBackupDisk, backupName); err != nil {
+		return fmt.Errorf("restore error: %v", err)
+	}
+	if len(restoreResults) == 0 || restoreResults[0].Status != "RESTORED" {
+		return fmt.Errorf("restore wrong result: %v", restoreResults)
 	}
 	return nil
 }

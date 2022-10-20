@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
@@ -48,7 +49,7 @@ func addTableToListIfNotExistsOrEnrichQueryAndParts(tables ListOfTables, table m
 func getTableListByPatternLocal(cfg *config.Config, metadataPath string, tablePattern string, dropTable bool, partitionsFilter common.EmptyMap) (ListOfTables, error) {
 	result := ListOfTables{}
 	tablePatterns := []string{"*"}
-
+	log := apexLog.WithField("logger", "getTableListByPatternLocal")
 	if tablePattern != "" {
 		tablePatterns = strings.Split(tablePattern, ",")
 	}
@@ -109,7 +110,7 @@ func getTableListByPatternLocal(cfg *config.Config, metadataPath string, tablePa
 				}
 				dataParts, err := os.ReadDir(dataPartsPath)
 				if err != nil {
-					apexLog.Warn(err.Error())
+					log.Warn(err.Error())
 				}
 				parts := map[string][]metadata.Part{
 					cfg.ClickHouse.EmbeddedBackupDisk: make([]metadata.Part, len(dataParts)),
@@ -195,7 +196,7 @@ func filterPartsByPartitionsFilter(tableMetadata metadata.TableMetadata, partiti
 	}
 }
 
-func getTableListByPatternRemote(b *Backuper, remoteBackupMetadata *metadata.BackupMetadata, tablePattern string, dropTable bool) (ListOfTables, error) {
+func getTableListByPatternRemote(ctx context.Context, b *Backuper, remoteBackupMetadata *metadata.BackupMetadata, tablePattern string, dropTable bool) (ListOfTables, error) {
 	result := ListOfTables{}
 	tablePatterns := []string{"*"}
 
@@ -214,29 +215,34 @@ func getTableListByPatternRemote(b *Backuper, remoteBackupMetadata *metadata.Bac
 				break
 			}
 		}
+	tablePatterns:
 		for _, p := range tablePatterns {
-			if matched, _ := filepath.Match(strings.Trim(p, " \t\r\n"), tableName); !matched || shallSkipped {
-				continue
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
+				if matched, _ := filepath.Match(strings.Trim(p, " \t\r\n"), tableName); !matched || shallSkipped {
+					continue
+				}
+				tmReader, err := b.dst.GetFileReader(ctx, path.Join(metadataPath, common.TablePathEncode(t.Database), fmt.Sprintf("%s.json", common.TablePathEncode(t.Table))))
+				if err != nil {
+					return nil, err
+				}
+				data, err := io.ReadAll(tmReader)
+				if err != nil {
+					return nil, err
+				}
+				err = tmReader.Close()
+				if err != nil {
+					return nil, err
+				}
+				var t metadata.TableMetadata
+				if err = json.Unmarshal(data, &t); err != nil {
+					return nil, err
+				}
+				result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, t)
+				break tablePatterns
 			}
-			tmReader, err := b.dst.GetFileReader(path.Join(metadataPath, common.TablePathEncode(t.Database), fmt.Sprintf("%s.json", common.TablePathEncode(t.Table))))
-			if err != nil {
-				return nil, err
-			}
-			data, err := io.ReadAll(tmReader)
-			if err != nil {
-				return nil, err
-			}
-			err = tmReader.Close()
-			if err != nil {
-				return nil, err
-			}
-
-			var t metadata.TableMetadata
-			if err = json.Unmarshal(data, &t); err != nil {
-				return nil, err
-			}
-			result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, t)
-			break
 		}
 	}
 	result.Sort(dropTable)

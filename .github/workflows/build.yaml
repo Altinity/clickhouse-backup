@@ -29,12 +29,12 @@ jobs:
 
       - name: Cache golang
         id: cache-golang
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: ${{ runner.os }}-${{ matrix.golang-version }}-golang-${{ hashFiles('go.mod') }}
+          key: clickhouse-backup-golang-${{ matrix.golang-version }}-${{ hashFiles('go.mod', '.github/workflows/*.yaml') }}
 
       - name: Install golang dependencies
         run: go mod download -x
@@ -61,7 +61,7 @@ jobs:
             openssl version
             openssl enc -base64 -aes-256-cbc -d -in test/integration/credentials.json.enc -out test/integration/credentials.json -md md5 -k ${VAULT_PASSWORD}
           fi
-          echo "::set-output name=GCS_TESTS::$(if [ -z "${{ secrets.VAULT_PASSWORD }}" ]; then echo "false"; else echo "true"; fi)"
+          echo "GCS_TESTS=$(if [ -z "${{ secrets.VAULT_PASSWORD }}" ]; then echo "false"; else echo "true"; fi)" >> $GITHUB_OUTPUT
 
       - uses: actions/upload-artifact@v3
         with:
@@ -96,7 +96,7 @@ jobs:
   testflows:
     needs: build
     name: Testflows
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         clickhouse:
@@ -111,17 +111,22 @@ jobs:
           name: build-test-artifacts
           path: ./clickhouse-backup/
 
+      - name: Install python venv
+        run: |
+          set -x
+          (dpkg -l | grep venv) || (apt-get update && apt-get install -y python3-venv)
+          python3 -m venv ~/venv/qa
+
       - name: Cache python
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         id: cache-python
         with:
           path: ~/venv/qa
-          key: python-${{ hashFiles('test/testflows/requirements.txt') }}
+          key: clickhouse-backup-python-${{ hashFiles('test/testflows/requirements.txt','.github/workflows/*.yaml') }}
 
       - name: Install python dependencies
         run: |
           set -x
-          python3 -m venv ~/venv/qa
           ~/venv/qa/bin/pip3 install -U -r ./test/testflows/requirements.txt
         if: |
           steps.cache-python.outputs.cache-hit != 'true'
@@ -137,22 +142,24 @@ jobs:
           QA_GCS_CRED_JSON: ${{ secrets.QA_GCS_CRED_JSON }}
         run: |
           set -x
-
-          chmod +x $(pwd)/clickhouse-backup/clickhouse-backup*
-          sudo ln -snvf ~/venv/qa/bin/tfs /bin/tfs
-
           export CLICKHOUSE_TESTS_DIR=$(pwd)/test/testflows/clickhouse_backup
+
+          command -v docker-compose || (apt-get update && apt-get install -y python3-pip && pip3 install -U docker-compose)
+          docker-compose -f ${CLICKHOUSE_TESTS_DIR}/docker-compose/docker-compose.yml pull
+          
+          chmod +x $(pwd)/clickhouse-backup/clickhouse-backup*
+          source ~/venv/qa/bin/activate
           set +e
-          ~/venv/qa/bin/python3 ./test/testflows/clickhouse_backup/regression.py --log ./test/testflows/raw.log 
+          ~/venv/qa/bin/python3 ./test/testflows/clickhouse_backup/regression.py --debug --log ./test/testflows/raw.log 
           if [[ "0" != "$?" ]]; then
             docker-compose -f ${CLICKHOUSE_TESTS_DIR}/docker-compose/docker-compose.yml logs clickhouse_backup
             exit 1
           fi
           set -e
-          ~/venv/qa/bin/tfs --debug --no-colors transform compact ./test/testflows/raw.log ./test/testflows/compact.log
-          ~/venv/qa/bin/tfs --debug --no-colors transform nice ./test/testflows/raw.log ./test/testflows/nice.log.txt
-          ~/venv/qa/bin/tfs --debug --no-colors transform short ./test/testflows/raw.log ./test/testflows/short.log.txt
-          ~/venv/qa/bin/tfs --debug --no-colors report results -a "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/" ./test/testflows/raw.log - --confidential --copyright "Altinity LTD" --logo ./test/testflows/altinity.png | ~/venv/qa/bin/tfs --debug --no-colors document convert > ./test/testflows/report.html
+          tfs --debug --no-colors transform compact ./test/testflows/raw.log ./test/testflows/compact.log
+          tfs --debug --no-colors transform nice ./test/testflows/raw.log ./test/testflows/nice.log.txt
+          tfs --debug --no-colors transform short ./test/testflows/raw.log ./test/testflows/short.log.txt
+          tfs --debug --no-colors report results -a "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/" ./test/testflows/raw.log - --confidential --copyright "Altinity LTD" --logo ./test/testflows/altinity.png | ~/venv/qa/bin/tfs --debug --no-colors document convert > ./test/testflows/report.html
           sudo chmod -Rv +rx test/testflows/clickhouse_backup/_instances
 # todo wait when resolve https://github.com/actions/upload-artifact/issues/270 and uncomment
 #      - name: Upload testflows logs
@@ -169,7 +176,7 @@ jobs:
   test:
     needs: build
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     strategy:
       matrix:
         golang-version:
@@ -195,12 +202,12 @@ jobs:
 
       - name: Cache golang
         id: cache-golang
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: ${{ runner.os }}-${{ matrix.golang-version }}-golang-${{ hashFiles('go.mod') }}
+          key: clickhouse-backup-golang-${{ matrix.golang-version }}-${{ hashFiles('go.mod', '.github/workflows/*.yaml') }}
 
       - uses: actions/download-artifact@v3
         with:
@@ -217,7 +224,8 @@ jobs:
       - name: Running integration tests
         env:
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
-          RUN_TESTS: "TestIntegrationGCS"
+          # don't change it to avoid broken CI/CD!!!
+          RUN_TESTS: ".+"
           # LOG_LEVEL: "debug"
           # FTP_DEBUG: "true"
           CGO_ENABLED: 0
@@ -242,10 +250,11 @@ jobs:
           else
             export COMPOSE_FILE=docker-compose.yml
           fi
+
+          command -v docker-compose || (apt-get update && apt-get install -y python3-pip && pip3 install -U docker-compose)
+          
           export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup-race"
-          docker-compose -f test/integration/${COMPOSE_FILE} up -d minio
-          sleep 3
-          docker-compose -f test/integration/${COMPOSE_FILE} up -d clickhouse
+          docker-compose -f test/integration/${COMPOSE_FILE} up -d || ( docker-compose -f test/integration/${COMPOSE_FILE} ps -a && docker-compose -f test/integration/${COMPOSE_FILE} logs clickhouse && exit 1 ) 
           docker-compose -f test/integration/${COMPOSE_FILE} ps -a
           go test -timeout 30m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
 
@@ -254,7 +263,7 @@ jobs:
       - test
       - testflows
     name: Docker
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout project
         uses: actions/checkout@v2
@@ -269,7 +278,7 @@ jobs:
         run: |
           DOCKER_TAG=${GITHUB_REF##*/}
           export DOCKER_TAG=${DOCKER_TAG##*\\}
-          echo "::set-output name=docker_tag::${DOCKER_TAG:-dev}"
+          echo "docker_tag=${DOCKER_TAG:-dev}" >> $GITHUB_OUTPUT
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v1
@@ -288,23 +297,24 @@ jobs:
           if [[ "${DOCKER_TOKEN}" != "" ]]; then
             export DOCKER_REGISTRY=${DOCKER_REGISTRY:-docker.io}
             echo ${DOCKER_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin ${DOCKER_REGISTRY}
-            docker buildx build --platform=linux/amd64,linux/arm64 -t ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG} --pull --push .
+            docker buildx build --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG} --target=image_short --pull --push .
+            docker buildx build --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}-full:${DOCKER_TAG} --target=image_full --pull --push .
           fi
 
   cleanup:
     name: Cleanup
     needs: docker
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     if: always()
     steps:
       - name: delete build-artifacts
-        uses: geekyeggo/delete-artifact@v1
+        uses: geekyeggo/delete-artifact@v2
         with:
           name: build-artifacts
           failOnError: false
 
       - name: delete build-gcp-credentials
-        uses: geekyeggo/delete-artifact@v1
+        uses: geekyeggo/delete-artifact@v2
         with:
           name: build-gcp-credentials
           failOnError: false

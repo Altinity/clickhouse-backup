@@ -18,9 +18,10 @@ def random_string():
 def create_table_query(name, num):
     q = ""
     for i in range(num):
-        q += f"CREATE TABLE IF NOT EXISTS default.{name}{i} (OrderBy Int32, C2 Int8, C3 UInt8, C4 String, C5 DateTime, C6 Int8, C7 DateTime64, " \
-            f"C8 DateTime64, C9 Int16, C10 UInt64, C11 String, C12 DateTime, C13 Int8, C14 DateTime64)" \
-            f"Engine = MergeTree() ORDER BY OrderBy;"
+        q += f"CREATE TABLE IF NOT EXISTS default.{name}{i} " \
+             f"(OrderBy Int32, C2 Int8, C3 UInt8, C4 String, C5 DateTime, C6 Int8, C7 DateTime64, " \
+             f"C8 DateTime64, C9 Int16, C10 UInt64, C11 String, C12 DateTime, C13 Int8, C14 DateTime64) " \
+             f"Engine = MergeTree() ORDER BY OrderBy;"
     print(q)
 
 
@@ -33,9 +34,9 @@ def populate_table_query(name, num):
             f"'{random_datetime()}', {random.randint(0, 128)}, '{random_datetime()}')"
         for _ in range(30):
             inserts += f", ({random.randint(0, 128)}, {random.randint(0, 128)}, {random.randint(0, 128)}, " \
-            f"'{random_string()}', '{random_datetime()}', {random.randint(0, 128)}, '{random_datetime()}'," \
-            f"'{random_datetime()}', {random.randint(0, 128)}, {random.randint(0, 128)}, '{random_string()}', " \
-            f"'{random_datetime()}', {random.randint(0, 128)}, '{random_datetime()}') "
+                       f"'{random_string()}', '{random_datetime()}', {random.randint(0, 128)}, '{random_datetime()}', " \
+                       f"'{random_datetime()}', {random.randint(0, 128)}, {random.randint(0, 128)}, '{random_string()}', " \
+                       f"'{random_datetime()}', {random.randint(0, 128)}, '{random_datetime()}') "
 
         q += f"INSERT INTO default.{name}{i} (*) VALUES {inserts}; "
     print(q)

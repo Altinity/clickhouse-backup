@@ -1,11 +1,13 @@
 package backup
 
 import (
+	"context"
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/resumable"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/storage"
+	apexLog "github.com/apex/log"
 	"path"
 )
 
@@ -13,6 +15,7 @@ type Backuper struct {
 	cfg                    *config.Config
 	ch                     *clickhouse.ClickHouse
 	dst                    *storage.BackupDestination
+	log                    *apexLog.Entry
 	Version                string
 	DiskToPathMap          map[string]string
 	DefaultDataPath        string
@@ -22,10 +25,22 @@ type Backuper struct {
 	resumableState         *resumable.State
 }
 
-func (b *Backuper) init(disks []clickhouse.Disk) error {
+func NewBackuper(cfg *config.Config) *Backuper {
+	ch := &clickhouse.ClickHouse{
+		Config: &cfg.ClickHouse,
+		Log:    apexLog.WithField("logger", "clickhouse"),
+	}
+	return &Backuper{
+		cfg: cfg,
+		ch:  ch,
+		log: apexLog.WithField("logger", "backuper"),
+	}
+}
+
+func (b *Backuper) init(ctx context.Context, disks []clickhouse.Disk) error {
 	var err error
 	if disks == nil {
-		disks, err = b.ch.GetDisks()
+		disks, err = b.ch.GetDisks(ctx)
 		if err != nil {
 			return err
 		}
@@ -43,11 +58,11 @@ func (b *Backuper) init(disks []clickhouse.Disk) error {
 	}
 	b.DiskToPathMap = diskMap
 	if b.cfg.General.RemoteStorage != "none" && b.cfg.General.RemoteStorage != "custom" {
-		b.dst, err = storage.NewBackupDestination(b.cfg, true)
+		b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, true)
 		if err != nil {
 			return err
 		}
-		if err := b.dst.Connect(); err != nil {
+		if err := b.dst.Connect(ctx); err != nil {
 			return fmt.Errorf("can't connect to %s: %v", b.dst.Kind(), err)
 		}
 	}
@@ -60,14 +75,4 @@ func (b *Backuper) getLocalBackupDataPathForTable(backupName string, disk string
 		backupPath = path.Join(b.DiskToPathMap[disk], backupName, "data", dbAndTablePath)
 	}
 	return backupPath
-}
-
-func NewBackuper(cfg *config.Config) *Backuper {
-	ch := &clickhouse.ClickHouse{
-		Config: &cfg.ClickHouse,
-	}
-	return &Backuper{
-		cfg: cfg,
-		ch:  ch,
-	}
 }

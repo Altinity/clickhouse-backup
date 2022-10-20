@@ -1,6 +1,6 @@
 # -*- mode: ruby -*-
 # vi: set ft=ruby :
-# This environment use only for reproducible tests for statefull Linux clickhouse-server installation
+# This environment use only for reproducible tests for stateful Linux clickhouse-server installation
  
 def total_cpus
   require 'etc'

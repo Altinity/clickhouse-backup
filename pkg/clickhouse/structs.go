@@ -48,21 +48,6 @@ type Function struct {
 	CreateQuery string `db:"create_query"`
 }
 
-// partition - info from system.parts
-type partition struct {
-	Partition                         string    `db:"partition"`
-	PartitionID                       string    `db:"partition_id"`
-	Name                              string    `db:"name"`
-	Path                              string    `db:"path"`
-	HashOfAllFiles                    string    `db:"hash_of_all_files"`
-	HashOfUncompressedFiles           string    `db:"hash_of_uncompressed_files"`
-	UncompressedHashOfCompressedFiles string    `db:"uncompressed_hash_of_compressed_files"`
-	Active                            uint8     `db:"active"`
-	DiskName                          string    `db:"disk_name"`
-	ModificationTime                  time.Time `db:"modification_time"`
-	DataUncompressedBytes             int64     `db:"data_uncompressed_bytes"`
-}
-
 // macro - info from system.macros
 type macro struct {
 	Macro        string `db:"macro"`

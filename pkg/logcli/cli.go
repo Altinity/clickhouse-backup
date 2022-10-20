@@ -3,19 +3,11 @@ package logcli
 
 import (
 	"fmt"
+	"github.com/apex/log"
 	"io"
 	"os"
 	"sync"
-	"time"
-
-	"github.com/apex/log"
 )
-
-// Default handler outputting to stderr.
-var Default = New(os.Stderr)
-
-// start time.
-var start = time.Now()
 
 // Strings mapping.
 var Strings = [...]string{
@@ -56,16 +48,16 @@ func (h *Handler) HandleLog(e *log.Entry) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	fmt.Fprintf(h.Writer, "%s %-5s %-25s", e.Timestamp.Format("2006/01/02 15:04:05.000000"), level, e.Message)
+	_, _ = fmt.Fprintf(h.Writer, "%s %-5s %-25s", e.Timestamp.Format("2006/01/02 15:04:05.000000"), level, e.Message)
 
 	for _, name := range names {
 		if name == "source" {
 			continue
 		}
-		fmt.Fprintf(h.Writer, " %s=%v", name, e.Fields.Get(name))
+		_, _ = fmt.Fprintf(h.Writer, " %s=%v", name, e.Fields.Get(name))
 	}
 
-	fmt.Fprintln(h.Writer)
+	_, _ = fmt.Fprintln(h.Writer)
 
 	return nil
 }

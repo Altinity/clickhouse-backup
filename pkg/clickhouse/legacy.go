@@ -21,7 +21,7 @@ func (ch *ClickHouse) GetBackupTablesLegacy(backupName string, disks []Disk) ([]
 	tableNum := 1
 	partNum := 2
 	totalNum := 3
-	if IsClickhouseShadow(backupShadowPath) {
+	if ch.IsClickhouseShadow(backupShadowPath) {
 		dbNum = 2
 		tableNum = 3
 		partNum = 4
@@ -54,22 +54,22 @@ func (ch *ClickHouse) GetBackupTablesLegacy(backupName string, disks []Disk) ([]
 			tName, _ := url.PathUnescape(parts[tableNum])
 			fullTableName := fmt.Sprintf("%s.%s", tDB, tName)
 
-			allparthash := allpartsBackup[fullTableName]
-			var hoaf, houf, uhocf string
-			for _, parthash := range allparthash {
-				if parthash.Name == parts[partNum] {
-					hoaf = parthash.HashOfAllFiles
-					houf = parthash.HashOfUncompressedFiles
-					uhocf = parthash.UncompressedHashOfCompressedFiles
+			allPartsHashes := allpartsBackup[fullTableName]
+			var hashOfAllFiles, hashOfUncompressedFiles, uncompressHashOfCompressedFiles string
+			for _, partHash := range allPartsHashes {
+				if partHash.Name == parts[partNum] {
+					hashOfAllFiles = partHash.HashOfAllFiles
+					hashOfUncompressedFiles = partHash.HashOfUncompressedFiles
+					uncompressHashOfCompressedFiles = partHash.UncompressedHashOfCompressedFiles
 				}
 			}
 
 			partition := metadata.Part{
 				Name: parts[partNum],
 				// Path:                              filePath,
-				HashOfAllFiles:                    hoaf,
-				HashOfUncompressedFiles:           houf,
-				UncompressedHashOfCompressedFiles: uhocf,
+				HashOfAllFiles:                    hashOfAllFiles,
+				HashOfUncompressedFiles:           hashOfUncompressedFiles,
+				UncompressedHashOfCompressedFiles: uncompressHashOfCompressedFiles,
 			}
 
 			if t, ok := tables[fullTableName]; ok {
@@ -86,7 +86,7 @@ func (ch *ClickHouse) GetBackupTablesLegacy(backupName string, disks []Disk) ([]
 		}
 		return nil
 	})
-	result := []metadata.TableMetadata{}
+	result := make([]metadata.TableMetadata, 0)
 	for i := range tables {
 		result = append(result, tables[i])
 	}

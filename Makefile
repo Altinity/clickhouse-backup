@@ -13,7 +13,7 @@ define DESC =
  Most efficient AWS S3/GCS uploading and downloading with streaming compression
  Support of incremental backups on remote storages'
 endef
-GO_BUILD = go build -ldflags "-X 'main.version=$(VERSION)' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)'"
+GO_BUILD = go build -buildvcs=false -ldflags "-X 'main.version=$(VERSION)' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)'"
 PKG_FILES = build/$(NAME)_$(VERSION).amd64.deb build/$(NAME)_$(VERSION).arm64.deb build/$(NAME)-$(VERSION)-1.amd64.rpm build/$(NAME)-$(VERSION)-1.arm64.rpm
 HOST_OS = $(shell bash -c 'source <(go env) && echo $$GOHOSTOS')
 HOST_ARCH = $(shell bash -c 'source <(go env) && echo $$GOHOSTARCH')

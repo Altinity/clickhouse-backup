@@ -8,7 +8,7 @@ on:
 jobs:
   release:
     name: Release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         golang-version:
@@ -32,14 +32,12 @@ jobs:
 
       - name: Cache golang
         id: cache-golang
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: ${{ runner.os }}-${{ matrix.golang-version }}-golang-${{ hashFiles('go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.golang-version }}-golang-
+          key: clickhouse-backup-golang-${{ matrix.golang-version }}-${{ hashFiles('go.mod', '.github/workflows/*.yaml') }}
 
       - name: Install golang dependencies
         run: go mod download -x
@@ -52,7 +50,7 @@ jobs:
           DOCKER_TAG=${GITHUB_REF##*/}
           DOCKER_TAG=${DOCKER_TAG##*\\}
           export DOCKER_TAG=${DOCKER_TAG#v}
-          echo "::set-output name=docker_tag::${DOCKER_TAG:-dev}"
+          echo "docker_tag=${DOCKER_TAG:-dev}" >> $GITHUB_OUTPUT
 
       - name: Prepare binaries
         id: make
@@ -72,25 +70,25 @@ jobs:
           tar -czvf ${NAME}-linux-arm64.tar.gz build/linux/arm64
           tar -czvf ${NAME}-darwin-amd64.tar.gz build/darwin/amd64
           tar -czvf ${NAME}-darwin-arm64.tar.gz build/darwin/arm64
-          echo "::set-output name=tgz_linux_amd64::${NAME}-linux-amd64.tar.gz"
-          echo "::set-output name=tgz_linux_arm64::${NAME}-linux-arm64.tar.gz"
-          echo "::set-output name=tgz_darwin_amd64::${NAME}-darwin-amd64.tar.gz"
-          echo "::set-output name=tgz_darwin_arm64::${NAME}-darwin-arm64.tar.gz"
+          echo "tgz_linux_amd64=${NAME}-linux-amd64.tar.gz" >> $GITHUB_OUTPUT
+          echo "tgz_linux_arm64=${NAME}-linux-arm64.tar.gz" >> $GITHUB_OUTPUT
+          echo "tgz_darwin_amd64=${NAME}-darwin-amd64.tar.gz" >> $GITHUB_OUTPUT
+          echo "tgz_darwin_arm64=${NAME}-darwin-arm64.tar.gz" >> $GITHUB_OUTPUT
 
           make packages
           cp -lv ./build/linux/*/*.deb ./
           cp -lv ./build/linux/*/*.rpm ./
-          echo "::set-output name=rpm_amd64::${NAME}-${VERSION}-1.x86_64.rpm"
-          echo "::set-output name=deb_amd64::${NAME}_${VERSION}_amd64.deb"
-          echo "::set-output name=rpm_arm64::${NAME}-${VERSION}-1.aarch64.rpm"
-          echo "::set-output name=deb_arm64::${NAME}_${VERSION}_arm64.deb"
+          echo "rpm_amd64=${NAME}-${VERSION}-1.x86_64.rpm" >> $GITHUB_OUTPUT
+          echo "deb_amd64=${NAME}_${VERSION}_amd64.deb" >> $GITHUB_OUTPUT
+          echo "rpm_arm64=${NAME}-${VERSION}-1.aarch64.rpm" >> $GITHUB_OUTPUT
+          echo "deb_arm64=${NAME}_${VERSION}_arm64.deb" >> $GITHUB_OUTPUT
 
 
       - name: Prepare release notes
         id: release_notes
         run: |
           awk '/^# / {s++} s == 1 {print}' ChangeLog.md > /tmp/release_notes.md
-          echo "::set-output name=path::/tmp/release_notes.md"
+          echo "path=/tmp/release_notes.md" >> $GITHUB_OUTPUT
 
       - name: Create release
         id: create_release
@@ -129,4 +127,5 @@ jobs:
           export DOCKER_REGISTRY=${DOCKER_REGISTRY:-docker.io}
           echo ${DOCKER_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin ${DOCKER_REGISTRY}
 
-          docker buildx build --platform=linux/amd64,linux/arm64 -t ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG} -t ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:latest --pull --push .
+          docker buildx build --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG} --tag ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:latest --target=image_short --pull --push .
+          docker buildx build --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}-full:${DOCKER_TAG} --tag ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}-full:latest --target=image_full --pull --push .

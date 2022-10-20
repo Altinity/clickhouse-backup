@@ -1,9 +1,4 @@
 import os
-import yaml
-
-from testflows.core import *
-from testflows.asserts import *
-
 from clickhouse_backup.requirements.requirements import *
 from clickhouse_backup.tests.common import *
 from clickhouse_backup.tests.steps import *
@@ -40,11 +35,15 @@ def incremental_remote_storage(self):
             populate_table(node=clickhouse, table_name=f"{table_name}", columns=self.context.columns, size=100)
 
             with By("I perform `ALTER` requests"):
-                clickhouse.query(f"ALTER TABLE {table_name} DELETE WHERE ToDelete=0 SETTINGS mutations_sync=2")
-                clickhouse.query(f"ALTER TABLE {table_name} UPDATE ToUpdate=OrderBy WHERE ToUpdate=0 SETTINGS mutations_sync=2")
-                clickhouse.query(f"ALTER TABLE {table_name} ADD COLUMN ToClear Int32")
-                clickhouse.query(f"ALTER TABLE {table_name} CLEAR COLUMN ToClear")
-                clickhouse.query(f"ALTER TABLE {table_name} DROP COLUMN ToDrop")
+                queries = (
+                    f"ALTER TABLE {table_name} DELETE WHERE ToDelete=0 SETTINGS mutations_sync=2",
+                    f"ALTER TABLE {table_name} UPDATE ToUpdate=OrderBy WHERE ToUpdate=0 SETTINGS mutations_sync=2",
+                    f"ALTER TABLE {table_name} ADD COLUMN ToClear Int32",
+                    f"ALTER TABLE {table_name} CLEAR COLUMN ToClear",
+                    f"ALTER TABLE {table_name} DROP COLUMN ToDrop",
+                )
+                for q in queries:
+                    clickhouse.query(q)
                 time.sleep(10)
 
             with And("I save table contents"):
@@ -137,7 +136,7 @@ def test_storage_outline(self, storage_type, fields_to_modify=None):
     RQ_SRS_013_ClickHouse_BackupUtility_CloudStorage_FTP("1.0")
 )
 def test_ftp(self):
-    """Test that an existing backup can be uploaded to a FTP server.
+    """Test that an existing backup can be uploaded to FTP server.
     """
     test_storage_outline(storage_type="ftp")
 
@@ -159,11 +158,19 @@ def sftp(self):
 def s3_minio(self):
     """Test that an existing backup can be uploaded to a S3 server.
     """
-    test_storage_outline(storage_type="s3", fields_to_modify={"general": {"remote_storage": "s3"},
-                                                              "s3": {"access_key": "access-key",
-                                                                     "secret_key": "it-is-my-super-secret-key",
-                                                                     "endpoint": "http://minio:9000", "disable_ssl": True,
-                                                                     "region": "us-west-2", "bucket": "clickhouse"}})
+    test_storage_outline(
+        storage_type="s3",
+        fields_to_modify={
+            "general": {"remote_storage": "s3"},
+            "s3": {
+                "access_key": "access-key",
+                "secret_key": "it-is-my-super-secret-key",
+                "endpoint": "http://minio:9000",
+                "disable_ssl": True,
+                "region": "us-west-2", "bucket": "clickhouse"
+            }
+        }
+    )
 
 
 @TestScenario
@@ -181,10 +188,17 @@ def s3_aws(self):
     region = os.environ.get('QA_AWS_REGION')
     bucket = os.environ.get('QA_AWS_BUCKET')
 
-    test_storage_outline(storage_type="aws", fields_to_modify={"general": {"remote_storage": "s3"},
-                                                               "s3": {"access_key": access_key, "secret_key": secret_key,
-                                                                      "endpoint": endpoint, "disable_ssl": False,
-                                                                      "region": region, "bucket": bucket}})
+    test_storage_outline(
+        storage_type="aws",
+        fields_to_modify={
+            "general": {"remote_storage": "s3"},
+            "s3": {
+                "access_key": access_key, "secret_key": secret_key,
+                "endpoint": endpoint, "disable_ssl": False,
+                "region": region, "bucket": bucket
+            }
+        }
+    )
 
 
 @TestScenario
@@ -218,7 +232,7 @@ def compression_formats(self):
     for compr_mode in ("tar", "bzip2", "gzip", "sz", "xz", "br", "zstd"):
         try:
             with Given(f"I modify config file to use ftp and {compr_mode}"):
-                config_modifier(fields={"general": {"remote_storage": "ftp"}, "ftp": {"compression_format": compr_mode}})
+                config_modifier({"general": {"remote_storage": "ftp"}, "ftp": {"compression_format": compr_mode}})
 
             with And("creating MergeTree table to be backed up"):
                 create_and_populate_table(node=clickhouse, table_name=f"{name_prefix}_{compr_mode}")

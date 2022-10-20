@@ -22,13 +22,15 @@ MESSAGES_TO_RETRY = [
     "ConnectionPoolWithFailover: Connection failed at try",
     "DB::Exception: New table appeared in database being dropped or detached. Try again",
     "is already started to be removing by another replica right now",
-    "Shutdown is called for table",  # happens in SYSTEM SYNC REPLICA query if session with ZooKeeper is being reinitialized.
-    "is executing longer than distributed_ddl_task_timeout"  # distributed TTL timeout message
+    # happens in SYSTEM SYNC REPLICA query if session with ZooKeeper is being reinitialized.
+    "Shutdown is called for table",
+    # distributed TTL timeout message
+    "is executing longer than distributed_ddl_task_timeout"
 ]
 
 
 class Shell(ShellBase):
-    def __exit__(self, type, value, traceback):
+    def __exit__(self, shell_type, shell_value, traceback):
         # send exit and Ctrl-D repeatedly
         # to terminate any open shell commands.
         # This is needed for example
@@ -43,7 +45,7 @@ class Shell(ShellBase):
                     self.send('\x04\r', eol='')
                 except OSError:
                     pass
-        return super(Shell, self).__exit__(type, value, traceback)
+        return super(Shell, self).__exit__(shell_type, shell_value, traceback)
 
 
 class QueryRuntimeException(Exception):
@@ -57,9 +59,9 @@ class Node(object):
     """
     config_d_dir = "/etc/clickhouse-server/config.d/"
 
-    def __init__(self, cluster, name):
+    def __init__(self, cluster, node_name):
         self.cluster = cluster
-        self.name = name
+        self.name = node_name
 
     def repr(self):
         return f"Node(name='{self.name}')"
@@ -68,56 +70,49 @@ class Node(object):
         """Close all active bashes to the node.
         """
         with self.cluster.lock:
-            for key in list(self.cluster._bash.keys()):
+            for key in list(self.cluster.shells.keys()):
                 if key.endswith(f"-{self.name}"):
-                    shell = self.cluster._bash.pop(key)
+                    shell = self.cluster.shells.pop(key)
                     shell.__exit__(None, None, None)
 
-    def restart(self, timeout=300, retries=5, safe=True):
+    def restart(self, timeout=300, num_retries=5, safe=True):
         """Restart node.
         """
         self.close_bashes()
 
-        for retry in range(retries):
+        for _ in range(num_retries):
             r = self.cluster.command(None, f'{self.cluster.docker_compose} restart {self.name}', timeout=timeout)
             if r.exitcode == 0:
                 break
 
-    def start(self, timeout=300, retries=5):
+    def start(self, timeout=300, num_retries=5):
         """Start node.
         """
-        for retry in range(retries):
+        for _ in range(num_retries):
             r = self.cluster.command(None, f'{self.cluster.docker_compose} start {self.name}', timeout=timeout)
             if r.exitcode == 0:
                 break
 
-    def stop(self, timeout=300, retries=5, safe=True):
+    def stop(self, timeout=300, num_retries=5, safe=True):
         """Stop node.
         """
         self.close_bashes()
 
-        for retry in range(retries):
+        for _ in range(num_retries):
             r = self.cluster.command(None, f'{self.cluster.docker_compose} stop {self.name}', timeout=timeout)
             if r.exitcode == 0:
                 break
 
-    def command(self, *args, **kwargs):
-        return self.cluster.command(self.name, *args, **kwargs)
+    def command(self, *nargs, **kwargs):
+        return self.cluster.command(self.name, *nargs, **kwargs)
 
-    def cmd(self, cmd, message=None, exitcode=0, steps=True, shell_command="bash --noediting", no_checks=False,
-            raise_on_exception=False, step=By, *args, **kwargs):
-        """Execute and check command.
-        :param shell_command:
-        :param steps:
-        :param cmd: command
-        :param message: expected message that should be in the output, default: None
-        :param exitcode: expected exitcode, default: None
-        """
+    def cmd(self, cmd, expect_message=None, exitcode=0, steps=True, shell_command="bash --noediting", no_checks=False,
+            step=By, *nargs, **kwargs):
 
         command = f"{cmd}"
         with step("executing command", description=command, format_description=False) if steps else NullStep():
             try:
-                r = self.cluster.bash(self.name, command=shell_command)(command, *args, **kwargs)
+                r = self.cluster.bash(self.name, command=shell_command)(command, *nargs, **kwargs)
             except ExpectTimeoutError:
                 self.cluster.close_bash(self.name)
                 raise
@@ -129,9 +124,9 @@ class Node(object):
             with Then(f"exitcode should be {exitcode}") if steps else NullStep():
                 assert r.exitcode == exitcode, error(r.output)
 
-        if message is not None:
-            with Then(f"output should contain message", description=message) if steps else NullStep():
-                assert message in r.output, error(r.output)
+        if expect_message is not None:
+            with Then(f"output should contain message", description=expect_message) if steps else NullStep():
+                assert expect_message in r.output, error(r.output)
 
         return r
 
@@ -154,7 +149,7 @@ class ClickHouseNode(Node):
                     continue
                 assert False, "container is not healthy"
 
-    def stop(self, timeout=300, safe=True, retries=5):
+    def stop(self, timeout=300, safe=True, num_retries=5):
         """Stop node.
         """
         if safe:
@@ -168,15 +163,15 @@ class ClickHouseNode(Node):
 
         self.close_bashes()
 
-        for retry in range(retries):
+        for _ in range(num_retries):
             r = self.cluster.command(None, f'{self.cluster.docker_compose} stop {self.name}', timeout=timeout)
             if r.exitcode == 0:
                 break
 
-    def start(self, timeout=300, wait_healthy=True, retries=5):
+    def start(self, timeout=300, wait_healthy=True, num_retries=5):
         """Start node.
         """
-        for retry in range(retries):
+        for _ in range(num_retries):
             r = self.cluster.command(None, f'{self.cluster.docker_compose} start {self.name}', timeout=timeout)
             if r.exitcode == 0:
                 break
@@ -184,7 +179,7 @@ class ClickHouseNode(Node):
         if wait_healthy:
             self.wait_healthy(timeout)
 
-    def restart(self, timeout=300, safe=True, wait_healthy=True, retries=5):
+    def restart(self, timeout=300, safe=True, wait_healthy=True, num_retries=5):
         """Restart node.
         """
         if safe:
@@ -198,7 +193,7 @@ class ClickHouseNode(Node):
 
         self.close_bashes()
 
-        for retry in range(retries):
+        for _ in range(num_retries):
             r = self.cluster.command(None, f'{self.cluster.docker_compose} restart {self.name}', timeout=timeout)
             if r.exitcode == 0:
                 break
@@ -207,14 +202,18 @@ class ClickHouseNode(Node):
             self.wait_healthy(timeout)
 
     def hash_query(self, sql, hash_utility="sha1sum", steps=True, step=By,
-                   settings=None, secure=False, *args, **kwargs):
+                   query_settings=None, secure=False, *nargs, **kwargs):
         """Execute sql query inside the container and return the hash of the output.
 
+        :param secure:
+        :param step:
+        :param steps:
+        :param query_settings:
         :param sql: sql query
         :param hash_utility: hash function which used to compute hash
         """
-        settings = list(settings or [])
-        query_settings = list(settings)
+        query_settings = list(query_settings or [])
+        query_settings = list(query_settings)
 
         if hasattr(current().context, "default_query_settings"):
             query_settings += current().context.default_query_settings
@@ -229,8 +228,8 @@ class ClickHouseNode(Node):
                 query.flush()
                 command = f"set -o pipefail && cat \"{query.name}\" | {self.cluster.docker_compose} exec -T {self.name} {client} | {hash_utility}"
                 for setting in query_settings:
-                    name, value = setting
-                    command += f" --{name} \"{value}\""
+                    setting_name, setting_value = setting
+                    command += f" --{setting_name} \"{setting_value}\""
                 description = f"""
                             echo -e \"{sql[:100]}...\" > {query.name}
                             {command}
@@ -238,18 +237,18 @@ class ClickHouseNode(Node):
                 with step("executing command", description=description,
                           format_description=False) if steps else NullStep():
                     try:
-                        r = self.cluster.bash(None)(command, *args, **kwargs)
+                        r = self.cluster.bash(None)(command=command, *nargs, **kwargs)
                     except ExpectTimeoutError:
                         self.cluster.close_bash(None)
         else:
             command = f"set -o pipefail && echo -e \"{sql}\" | {client} | {hash_utility}"
             for setting in query_settings:
-                name, value = setting
-                command += f" --{name} \"{value}\""
+                setting_name, setting_value = setting
+                command += f" --{setting_name} \"{setting_value}\""
             with step("executing command", description=command,
                       format_description=False) if steps else NullStep():
                 try:
-                    r = self.cluster.bash(self.name)(command, *args, **kwargs)
+                    r = self.cluster.bash(self.name)(command=command, *nargs, **kwargs)
                 except ExpectTimeoutError:
                     self.cluster.close_bash(self.name)
 
@@ -259,18 +258,22 @@ class ClickHouseNode(Node):
         return r.output
 
     def diff_query(self, sql, expected_output, steps=True, step=By,
-                   settings=None, secure=False, *args, **kwargs):
+                   query_settings=None, secure=False, *nargs, **kwargs):
         """Execute inside the container but from the host and compare its output
         to file that is located on the host.
 
         For example:
-            diff <(echo "SELECT * FROM myints FORMAT CSVWithNames" | clickhouse-client -mn) select.out
+            diff <(echo "SELECT * FROM my_ints FORMAT CSVWithNames" | clickhouse-client -mn) select.out
 
+        :param step:
+        :param steps:
+        :param secure:
+        :param query_settings:
         :param sql: sql query
         :param expected_output: path to the expected output
         """
-        settings = list(settings or [])
-        query_settings = list(settings)
+        query_settings = list(query_settings or [])
+        query_settings = list(query_settings)
 
         if hasattr(current().context, "default_query_settings"):
             query_settings += current().context.default_query_settings
@@ -285,54 +288,55 @@ class ClickHouseNode(Node):
                 query.flush()
                 command = f"diff <(cat \"{query.name}\" | {self.cluster.docker_compose} exec -T {self.name} {client}) {expected_output}"
                 for setting in query_settings:
-                    name, value = setting
-                    command += f" --{name} \"{value}\""
+                    setting_name, setting_value = setting
+                    command += f" --{setting_name} \"{setting_value}\""
                 description = f"""
                     echo -e \"{sql[:100]}...\" > {query.name}
                     {command}
                 """
                 with step("executing command", description=description, format_description=False) if steps else NullStep():
                     try:
-                        r = self.cluster.bash(None)(command, *args, **kwargs)
+                        r = self.cluster.bash(None)(command, *nargs, **kwargs)
                     except ExpectTimeoutError:
                         self.cluster.close_bash(None)
         else:
             command = f"diff <(echo -e \"{sql}\" | {self.cluster.docker_compose} exec -T {self.name} {client}) {expected_output}"
             for setting in query_settings:
-                name, value = setting
-                command += f" --{name} \"{value}\""
+                setting_name, setting_value = setting
+                command += f" --{setting_name} \"{setting_value}\""
             with step("executing command", description=command,
                       format_description=False) if steps else NullStep():
                 try:
-                    r = self.cluster.bash(None)(command, *args, **kwargs)
+                    r = self.cluster.bash(None)(command, *nargs, **kwargs)
                 except ExpectTimeoutError:
                     self.cluster.close_bash(None)
 
         with Then(f"exitcode should be 0") if steps else NullStep():
             assert r.exitcode == 0, error(r.output)
 
-    def query(self, sql, message=None, exitcode=None, steps=True, no_checks=False,
-              raise_on_exception=False, step=By, settings=None,
-              retries=5, messages_to_retry=None, retry_delay=5.0, secure=False,
-              *args, **kwargs):
-        """Execute and check query.
+    def query(self, sql, expect_message=None, exitcode=None, steps=True, no_checks=False,
+              raise_on_exception=False, step=By, query_settings=None,
+              num_retries=5, messages_to_retry=None, retry_delay=5.0, secure=False,
+              *nargs, **kwargs):
+        """Execute and check query
+        :param no_checks:
+        :param raise_on_exception:
         :param sql: sql query
-        :param message: expected message that should be in the output, default: None
+        :param expect_message: expected message that should be in the output, default: None
         :param exitcode: expected exitcode, default: None
         :param steps: wrap query execution in a step, default: True
-        :param no_check: disable exitcode and message checks, default: False
         :param step: wrapping step class, default: By
-        :param settings: list of settings to be used for the query in the form [(name, value),...], default: None
-        :param retries: number of retries, default: 5
+        :param query_settings: list of settings to be used for the query in the form [(name, value),...], default: None
+        :param num_retries: number of retries, default: 5
         :param messages_to_retry: list of messages in the query output for
                which retry should be triggered, default: MESSAGES_TO_RETRY
         :param retry_delay: number of seconds to sleep before retry, default: 5
         :param secure: use secure connection, default: False
         """
-        retries = max(0, int(retries))
+        num_retries = max(0, int(num_retries))
         retry_delay = max(0.0, float(retry_delay))
-        settings = list(settings or [])
-        query_settings = list(settings)
+        query_settings = list(query_settings or [])
+        query_settings = list(query_settings)
 
         if messages_to_retry is None:
             messages_to_retry = MESSAGES_TO_RETRY
@@ -350,37 +354,37 @@ class ClickHouseNode(Node):
                 query.flush()
                 command = f"cat \"{query.name}\" | {self.cluster.docker_compose} exec -T {self.name} {client}"
                 for setting in query_settings:
-                    name, value = setting
-                    command += f" --{name} \"{value}\""
+                    setting_name, setting_value = setting
+                    command += f" --{setting_name} \"{setting_value}\""
                 description = f"""
                     echo -e \"{sql[:100]}...\" > {query.name}
                     {command}
                 """
                 with step("executing command", description=description, format_description=False) if steps else NullStep():
                     try:
-                        r = self.cluster.bash(None)(command, *args, **kwargs)
+                        r = self.cluster.bash(None)(command, *nargs, **kwargs)
                     except ExpectTimeoutError:
                         self.cluster.close_bash(None)
         else:
             command = f"echo -e \"{sql}\" | {client}"
             for setting in query_settings:
-                name, value = setting
-                command += f" --{name} \"{value}\""
+                setting_name, setting_value = setting
+                command += f" --{setting_name} \"{setting_value}\""
             with step("executing command", description=command, format_description=False) if steps else NullStep():
                 try:
-                    r = self.cluster.bash(self.name)(command, *args, **kwargs)
+                    r = self.cluster.bash(self.name)(command, *nargs, **kwargs)
                 except ExpectTimeoutError:
                     self.cluster.close_bash(self.name)
                     raise
 
-        if retries and retries > 0:
+        if num_retries and num_retries > 0:
             if any(msg in r.output for msg in messages_to_retry):
                 time.sleep(retry_delay)
-                return self.query(sql=sql, message=message, exitcode=exitcode,
+                return self.query(sql=sql, expect_message=expect_message, exitcode=exitcode,
                                   steps=steps, no_checks=no_checks,
-                                  raise_on_exception=raise_on_exception, step=step, settings=settings,
-                                  retries=retries - 1, messages_to_retry=messages_to_retry,
-                                  *args, **kwargs)
+                                  raise_on_exception=raise_on_exception, step=step, query_settings=query_settings,
+                                  num_retries=num_retries - 1, messages_to_retry=messages_to_retry,
+                                  *nargs, **kwargs)
 
         if no_checks:
             return r
@@ -389,11 +393,11 @@ class ClickHouseNode(Node):
             with Then(f"exitcode should be {exitcode}") if steps else NullStep():
                 assert r.exitcode == exitcode, error(r.output)
 
-        if message is not None:
-            with Then(f"output should contain message", description=message) if steps else NullStep():
-                assert message in r.output, error(r.output)
+        if expect_message is not None:
+            with Then(f"output should contain message", description=expect_message) if steps else NullStep():
+                assert expect_message in r.output, error(r.output)
 
-        if message is None or "Exception:" not in message:
+        if expect_message is None or "Exception:" not in expect_message:
             with Then("check if output has exception") if steps else NullStep():
                 if "Exception:" in r.output:
                     if raise_on_exception:
@@ -414,7 +418,7 @@ class Cluster(object):
                  docker_compose_file="docker-compose.yml",
                  environ=None):
 
-        self._bash = {}
+        self.shells = {}
         self._control_shell = None
         self.environ = {} if (environ is None) else environ
         self.configs_dir = configs_dir
@@ -463,7 +467,7 @@ class Cluster(object):
                 break
             except IOError:
                 raise
-            except Exception as exc:
+            except Exception:
                 shell.__exit__(None, None, None)
                 if time.time() - time_start > timeout:
                     raise RuntimeError(f"failed to open control shell")
@@ -480,9 +484,8 @@ class Cluster(object):
         shell.__exit__(None, None, None)
 
     def node_container_id(self, node, timeout=300):
-        """Must be called with self.lock acquired.
+        """Must be called with `self.lock` acquired.
         """
-        container_id = None
         time_start = time.time()
         while True:
             try:
@@ -499,7 +502,7 @@ class Cluster(object):
                     raise RuntimeError(f"failed to get docker container id for the {node} service")
 
     def node_wait_healthy(self, node, timeout=300):
-        """Must be called with self.lock acquired.
+        """Must be called with `self.lock` acquired.
         """
         time_start = time.time()
         while True:
@@ -538,7 +541,7 @@ class Cluster(object):
                 break
             except IOError:
                 raise
-            except Exception as exc:
+            except Exception:
                 shell.__exit__(None, None, None)
                 if time.time() - time_start > timeout:
                     raise RuntimeError(f"failed to open bash to node {node}")
@@ -549,15 +552,16 @@ class Cluster(object):
     def bash(self, node, timeout=300, command="bash --noediting"):
         """Returns thread-local bash terminal
         to a specific node.
+        :param command:
+        :param timeout:
         :param node: name of the service
         """
-        test = current()
 
         current_thread = threading.current_thread()
-        id = f"{current_thread.name}-{node}"
+        shell_id = f"{current_thread.name}-{node}"
 
         with self.lock:
-            if self._bash.get(id) is None:
+            if self.shells.get(shell_id) is None:
                 if node is not None:
                     container_id = self.node_container_id(node=node, timeout=timeout)
 
@@ -565,47 +569,47 @@ class Cluster(object):
                 while True:
                     try:
                         if node is None:
-                            self._bash[id] = Shell()
+                            self.shells[shell_id] = Shell()
                         else:
-                            self._bash[id] = Shell(command=[
+                            self.shells[shell_id] = Shell(command=[
                                 "/bin/bash", "--noediting", "-c", f"docker exec -it {container_id} {command}"
                             ], name=node).__enter__()
-                        self._bash[id].timeout = 30
-                        self._bash[id]("echo 1")
+                        self.shells[shell_id].timeout = 30
+                        self.shells[shell_id]("echo 1")
                         break
                     except IOError:
                         raise
-                    except Exception as exc:
-                        self._bash[id].__exit__(None, None, None)
+                    except Exception:
+                        self.shells[shell_id].__exit__(None, None, None)
                         if time.time() - time_start > timeout:
                             raise RuntimeError(f"failed to open bash to node {node}")
 
                 if node is None:
-                    for name, value in self.environ.items():
-                        self._bash[id](f"export {name}=\"{value}\"")
+                    for env_name, env_value in self.environ.items():
+                        self.shells[shell_id](f"export {env_name}=\"{env_value}\"")
 
-                self._bash[id].timeout = timeout
+                self.shells[shell_id].timeout = timeout
 
                 # clean up any stale open shells for threads that have exited
                 active_thread_names = {thread.name for thread in threading.enumerate()}
 
-                for bash_id in list(self._bash.keys()):
+                for bash_id in list(self.shells.keys()):
                     thread_name, node_name = bash_id.rsplit("-", 1)
                     if thread_name not in active_thread_names:
-                        self._bash[bash_id].__exit__(None, None, None)
-                        del self._bash[bash_id]
+                        self.shells[bash_id].__exit__(None, None, None)
+                        del self.shells[bash_id]
 
-            return self._bash[id]
+            return self.shells[shell_id]
 
     def close_bash(self, node):
         current_thread = threading.current_thread()
-        id = f"{current_thread.name}-{node}"
+        shell_id = f"{current_thread.name}-{node}"
 
         with self.lock:
-            if self._bash.get(id) is None:
+            if self.shells.get(shell_id) is None:
                 return
-            self._bash[id].__exit__(None, None, None)
-            del self._bash[id]
+            self.shells[shell_id].__exit__(None, None, None)
+            del self.shells[shell_id]
 
     def __enter__(self):
         with Given("docker-compose cluster"):
@@ -618,16 +622,16 @@ class Cluster(object):
                 self.down()
         finally:
             with self.lock:
-                for shell in self._bash.values():
+                for shell in self.shells.values():
                     shell.__exit__(type, value, traceback)
 
-    def node(self, name):
-        """Get object with node bound methods.
-        :param name: name of service name
+    def node(self, node_name):
+        """Get object with node bound methods
+        :param node_name: name of service name
         """
-        if name.startswith("clickhouse"):
-            return ClickHouseNode(self, name)
-        return Node(self, name)
+        if node_name.startswith("clickhouse"):
+            return ClickHouseNode(self, node_name)
+        return Node(self, node_name)
 
     def down(self, timeout=300):
         """Bring cluster down by executing docker-compose down."""
@@ -640,15 +644,17 @@ class Cluster(object):
         try:
             with self.lock:
                 # remove and close all not None node terminals
-                for id in list(self._bash.keys()):
-                    shell = self._bash.pop(id)
+                for shell_id in list(self.shells.keys()):
+                    shell = self.shells.pop(shell_id)
                     if shell is not bash:
                         shell.__exit__(None, None, None)
                     else:
-                        self._bash[id] = shell
+                        self.shells[shell_id] = shell
         finally:
             if not self.local:
-                self.command(None, f"{self.docker_compose} down -v --remove-orphans --timeout 60", bash=bash, timeout=timeout)
+                self.command(
+                    None, f"{self.docker_compose} down -v --remove-orphans --timeout 60", bash=bash, timeout=timeout
+                )
             with self.lock:
                 if self._control_shell:
                     self._control_shell.__exit__(None, None, None)
@@ -662,10 +668,10 @@ class Cluster(object):
             os.mkdir(p)
         return p
 
-    def temp_file(self, name):
+    def temp_file(self, file_name):
         """Return absolute temporary file path.
         """
-        return f"{os.path.join(self.temp_path(), name)}"
+        return f"{os.path.join(self.temp_path(), file_name)}"
 
     def up(self, timeout=120):
         if self.local:
@@ -695,7 +701,9 @@ class Cluster(object):
                         self.command(None, f"{self.docker_compose} ps | tee")
 
                     with And("executing docker-compose down just in case it is up"):
-                        cmd = self.command(None, f"{self.docker_compose} down --timeout=10 2>&1 | tee", exitcode=None, timeout=timeout)
+                        cmd = self.command(
+                            None, f"{self.docker_compose} down --timeout=10 2>&1 | tee", exitcode=None, timeout=timeout
+                        )
                         if cmd.exitcode != 0:
                             continue
 
@@ -705,7 +713,9 @@ class Cluster(object):
                     with And("executing docker-compose up"):
                         for up_attempt in range(max_up_attempts):
                             with By(f"attempt {up_attempt}/{max_up_attempts}"):
-                                cmd = self.command(None, f"{self.docker_compose} up --timeout 120 -d 2>&1 | tee", timeout=timeout)
+                                cmd = self.command(
+                                    None, f"{self.docker_compose} up --timeout 120 -d 2>&1 | tee", timeout=timeout
+                                )
                                 if "is unhealthy" not in cmd.output:
                                     break
 
@@ -722,15 +732,15 @@ class Cluster(object):
                 fail("could not bring up docker-compose cluster")
 
         with Then("wait all nodes report healthy"):
-            for name in self.nodes["clickhouse"]:
-                self.node(name).wait_healthy()
+            for node_name in self.nodes["clickhouse"]:
+                self.node(node_name).wait_healthy()
 
-    def command(self, node, command, message=None, exitcode=None, steps=True, bash=None, *args, **kwargs):
+    def command(self, node, command, expect_message=None, exitcode=None, steps=True, bash=None, *nargs, **kwargs):
         """Execute and check command.
         :param bash:
         :param node: name of the service
         :param command: command
-        :param message: expected message that should be in the output, default: None
+        :param expect_message: expected message that should be in the output, default: None
         :param exitcode: expected exitcode, default: None
         :param steps: don't break command into steps, default: True
         """
@@ -738,14 +748,14 @@ class Cluster(object):
             if bash is None:
                 bash = self.bash(node)
             try:
-                r = bash(command, *args, **kwargs)
+                r = bash(command, *nargs, **kwargs)
             except ExpectTimeoutError:
                 self.close_bash(node)
                 raise
         if exitcode is not None:
             with Then(f"exitcode should be {exitcode}", format_name=False) if steps else NullStep():
                 assert r.exitcode == exitcode, error(r.output)
-        if message is not None:
-            with Then(f"output should contain message", description=message, format_description=False) if steps else NullStep():
-                assert message in r.output, error(r.output)
+        if expect_message is not None:
+            with Then(f"output should contain message", description=expect_message, format_description=False) if steps else NullStep():
+                assert expect_message in r.output, error(r.output)
         return r

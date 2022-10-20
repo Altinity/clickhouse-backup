@@ -1,6 +1,7 @@
 package custom
 
 import (
+	"context"
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
@@ -8,7 +9,7 @@ import (
 	"time"
 )
 
-func DeleteRemote(cfg *config.Config, backupName string) error {
+func DeleteRemote(ctx context.Context, cfg *config.Config, backupName string) error {
 	if cfg.Custom.DeleteCommand == "" {
 		return fmt.Errorf("CUSTOM_DELETE_COMMAND is not defined")
 	}
@@ -22,7 +23,7 @@ func DeleteRemote(cfg *config.Config, backupName string) error {
 		"cfg":         cfg,
 	}
 	args := ApplyCommandTemplate(cfg.Custom.DeleteCommand, templateData)
-	err := utils.ExecCmd(cfg.Custom.CommandTimeoutDuration, args[0], args[1:]...)
+	err := utils.ExecCmd(ctx, cfg.Custom.CommandTimeoutDuration, args[0], args[1:]...)
 	if err == nil {
 		log.WithFields(log.Fields{
 			"backup":    backupName,

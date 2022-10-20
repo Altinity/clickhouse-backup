@@ -1,14 +1,16 @@
 package custom
 
 import (
+	"context"
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
 	"github.com/apex/log"
+	"github.com/eapache/go-resiliency/retrier"
 	"time"
 )
 
-func Download(cfg *config.Config, backupName string, tablePattern string, partitions []string, schemaOnly bool) error {
+func Download(ctx context.Context, cfg *config.Config, backupName string, tablePattern string, partitions []string, schemaOnly bool) error {
 	startCustomDownload := time.Now()
 	if cfg.Custom.DownloadCommand == "" {
 		return fmt.Errorf("CUSTOM_DOWNLOAD_COMMAND is not defined")
@@ -32,7 +34,10 @@ func Download(cfg *config.Config, backupName string, tablePattern string, partit
 		"schema":        schemaOnly,
 	}
 	args := ApplyCommandTemplate(cfg.Custom.DownloadCommand, templateData)
-	err := utils.ExecCmd(cfg.Custom.CommandTimeoutDuration, args[0], args[1:]...)
+	retry := retrier.New(retrier.ConstantBackoff(cfg.General.RetriesOnFailure, cfg.General.RetriesDuration), nil)
+	err := retry.RunCtx(ctx, func(ctx context.Context) error {
+		return utils.ExecCmd(ctx, cfg.Custom.CommandTimeoutDuration, args[0], args[1:]...)
+	})
 	if err == nil {
 		log.
 			WithField("operation", "download_custom").

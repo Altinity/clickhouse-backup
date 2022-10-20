@@ -102,9 +102,10 @@ All the updates are tracked using the [Revision History].
 
 ## Introduction
 
-[ClickHouse] does not support any convenient method to backup and restore databases or tables.
+[ClickHouse] does not support any convenient method to make backup and restore databases or tables. 
+BACKUP/RESTORE command in non production ready status.
 This [SRS] covers the requirements for the [clickhouse-backup] utility that supports
-easy [ClickHouse] backup and restore with cloud storages support.
+easy [ClickHouse] backup and restore tool with cloud storages support.
 
 ## Terminology
 
@@ -336,7 +337,7 @@ version: 1.0
 
 The [clickhouse-backup] utility SHALL support backing up ClickHouse configs.
 
-By configs we mean the following files:
+By configs, we mean the following files:
     * `/etc/clickhouse-server/config.xml`
     * `/etc/clickhouse-server/config.d/*.xml`
     * `/etc/clickhouse-server/users.xml`
@@ -349,7 +350,7 @@ version: 1.0
 
 The [clickhouse-backup] utility SHALL support restoring ClickHouse configs from backup. This should be done automatically in case configs backup is present. If configs are found in backup, ClickHouse server SHALL restart automatically.
 
-By configs we mean the following files:
+By configs, we mean the following files:
     * `/etc/clickhouse-server/config.xml`
     * `/etc/clickhouse-server/config.d/*.xml`
     * `/etc/clickhouse-server/users.xml`
@@ -644,7 +645,7 @@ The [clickhouse-backup] utility SHALL support `help` option to show the list of 
 version: 1.0
 
 The [clickhouse-backup] utility SHALL support the following options in the configuration file.
-All options SHALL be overwritable via environment variables.
+All options SHALL be overridable via environment variables.
 
 ```bash
 general:
@@ -765,7 +766,7 @@ version: 1.0
 
 The [clickhouse-backup] utility REST API server SHALL return results
 in a format compatible with [ClickHouse]'s `JSONEachRow` format
-for all the the endpoints.
+for all the endpoints.
 
 #### RQ.SRS-013.ClickHouse.BackupUtility.REST.API.Server.GetTables
 version: 1.0

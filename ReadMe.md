@@ -16,7 +16,7 @@ Tool for easy ClickHouse backup and restore with cloud storages support
 - Works with AWS, GCS, Azure, Tencent COS, FTP, SFTP
 - **Support of Atomic Database Engine**
 - **Support of multi disks installations**
-- **Support for any custom remote storage like rclone, kopia, restic**
+- **Support for any custom remote storage like `rclone`, `kopia`, `restic`**
 - Support of incremental backups on remote storages
 
 ## Limitations
@@ -59,26 +59,29 @@ USAGE:
    clickhouse-backup <command> [-t, --tables=<db>.<table>] <backup_name>
 
 VERSION:
-   2.0.0
+   2.1.0
 
 DESCRIPTION:
    Run as 'root' or 'clickhouse' user
 
 COMMANDS:
-   tables          Print list of tables
-   create          Create new backup
-   create_remote   Create and upload
-   upload          Upload backup to remote storage
-   list            Print list of backups
-   download        Download backup from remote storage
-   restore         Create schema and restore data from backup
-   restore_remote  Download and restore
-   delete          Delete specific backup
-   default-config  Print default config
-   print-config    Print current config
-   clean           Remove data in 'shadow' folder from all `path` folders available from `system.disks`
-   server          Run API server
-   help, h         Shows a list of commands or help for one command
+   tables               List list of tables, exclude skip_tables
+   create               Create new backup
+   create_remote        Create and upload
+   upload               Upload backup to remote storage
+   list                 List list of backups
+   download             Download backup from remote storage
+   restore              Create schema and restore data from backup
+   restore_remote       Download and restore
+   delete               Delete specific backup
+   default-config       List default config
+   print-config         List current config
+   clean                Remove data in 'shadow' folder from all `path` folders available from `system.disks`
+   clean_remote_broken  Remove all broken remote backups
+   watch                Run infinite loop which create full + incremental backup sequence to allow efficient backup sequences
+   server               Run API server
+   help, h              Shows a list of commands or help for one command
+
 GLOBAL OPTIONS:
    --config FILE, -c FILE  Config FILE name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --help, -h              show help
@@ -104,10 +107,12 @@ general:
   allow_empty_backups: false     # ALLOW_EMPTY_BACKUPS
   download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255
   upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255
-  restore_schema_on_cluster: ""  # RESTORE_SCHEMA_ON_CLUSTER, execute all schema related SQL queryes with `ON CLUSTER` clause as Distributed DDL, look to `system.clusters` table for proper cluster name
+  restore_schema_on_cluster: ""  # RESTORE_SCHEMA_ON_CLUSTER, execute all schema related SQL queries with `ON CLUSTER` clause as Distributed DDL, look to `system.clusters` table for proper cluster name
   upload_by_part: true           # UPLOAD_BY_PART
   download_by_part: true         # DOWNLOAD_BY_PART
   restore_database_mapping: {}   # RESTORE_DATABASE_MAPPING, restore rules from backup databases to target databases, which is useful on change destination database all atomic tables will create with new uuid.
+  retries_on_failure: 3          # RETRIES_ON_FAILURE, retry if failure during upload or download
+  retries_pause: 100ms           # RETRIES_PAUSE, time duration pause after each download or upload fail 
 clickhouse:
   username: default                # CLICKHOUSE_USERNAME
   password: ""                     # CLICKHOUSE_PASSWORD
@@ -259,9 +264,15 @@ Use the `clickhouse-backup server` command to run as a REST API server. In gener
 
 List all current applicable HTTP routes
 
+> **POST /**
 > **POST /restart**
 
-Restart HTTP server, close all current connections, close listen socket, open listen socket again, all background go-routines with upload / download not breaks (maybe will in future)
+Restart HTTP server, close all current connections, close listen socket, open listen socket again, all background go-routines breaks with contexts
+
+> **GET /backup/kill**
+
+Kill selected command from `GET /backup/actions` command list, kill process should be near immediately, but some go-routines (upload one data part) could continue run  
+* Optional query argument `command` should contain command string which will kill, if omit then will kill last "in progress" command  
 
 > **GET /backup/tables**
 
@@ -282,13 +293,34 @@ Create new backup: `curl -s localhost:7171/backup/create -X POST | jq .`
 * Optional query argument `schema` works the same the `--schema` CLI argument (backup schema only).
 * Optional query argument `rbac` works the same the `--rbac` CLI argument (backup RBAC).
 * Optional query argument `configs` works the same the `--configs` CLI argument (backup configs).
-* Full example: `curl -s 'localhost:7171/backup/create?table=default.billing&name=billing_test' -X POST`
+* Additional example: `curl -s 'localhost:7171/backup/create?table=default.billing&name=billing_test' -X POST`
+
+Note: this operation is async, so the API will return once the operation has been started.
+
+> **POST /backup/watch**
+
+Run background watch process and create full+incremental backups sequence: `curl -s localhost:7171/backup/watch -X POST | jq .`
+You can't run watch twice with the same parameters even when `allow_parallel: true`
+* Optional query argument `watch_interval` works the same as the `--watch-interval value` CLI argument.
+* Optional query argument `full_interval` works the same as the `--full-interval value` CLI argument.
+* Optional query argument `watch_backup_name_template` works the same as the `--watch-backup-name-template value` CLI argument.
+* Optional query argument `table` works the same as the `--table value` CLI argument (backup only selected tables).
+* Optional query argument `partitions` works the same as the `--partitions value` CLI argument (backup only selected partitions).
+* Optional query argument `schema` works the same the `--schema` CLI argument (backup schema only).
+* Optional query argument `rbac` works the same the `--rbac` CLI argument (backup RBAC).
+* Optional query argument `configs` works the same the `--configs` CLI argument (backup configs).
+* Additional example: `curl -s 'localhost:7171/backup/watch?table=default.billing&watch_interval=1h&full_interval=24h' -X POST`
 
 Note: this operation is async, so the API will return once the operation has been started.
 
 > **POST /backup/clean**
 
 Clean `shadow` folder on all available path from `system.disks`
+
+> **POST /backup/clean/remote_broken**
+
+Remove
+Note: this operation is sync, and could take a lot of time, increase http timeouts during call
 
 
 > **POST /backup/upload**
@@ -309,7 +341,8 @@ Print list of backups: `curl -s localhost:7171/backup/list | jq .`
 Print list only local backups: `curl -s localhost:7171/backup/list/local | jq .`
 Print list only remote backups: `curl -s localhost:7171/backup/list/remote | jq .`
 
-Note: The `Size` field is not populated for local backups.
+Note: The `Size` field could not populate for local backups, which recently or in progress created.
+Note: The `Size` field could not populate for remote backups, which upload status in progress.
 
 > **POST /backup/download**
 
@@ -407,8 +440,8 @@ fi
 - [How to move data to another clickhouse server](Examples.md#how-to-move-data-to-another-clickhouse-server)
 - [How to reduce number of partitions](Examples.md#How-to-reduce-number-of-partitions)
 - [How to monitor that backups created and uploaded correctly](Examples.md#how-to-monitor-that-backups-created-and-uploaded-correctly)
-- [How to make backup / restore sharded cluster](Examples.md#how-backup--restore-sharded-cluster)
-- [How to make backup sharded cluster with Ansible](Examples.md#how-backup-sharded-cluster-with-ansible)
-- [How to make back up database with several terabytes of data](Examples.md#how-to-backup-database-with-several-terabytes-of-data)
+- [How to make backup / restore sharded cluster](Examples.md#how-to-make-backup--restore-sharded-cluster)
+- [How to make backup sharded cluster with Ansible](Examples.md#how-to-make-backup-sharded-cluster-with-ansible)
+- [How to make back up database with several terabytes of data](Examples.md#how-to-make-backup-database-with-several-terabytes-of-data)
 - [How to use clickhouse-backup in Kubernetes](Examples.md#how-to-use-clickhouse-backup-in-kubernetes)
 - [How do incremental backups work to remote storage](Examples.md#how-do-incremental-backups-work-to-remote-storage)

@@ -1,9 +1,4 @@
-import time
-import random
 import itertools
-
-from testflows.core import *
-from testflows.asserts import *
 
 from clickhouse_backup.requirements.requirements import *
 from clickhouse_backup.tests.common import *
@@ -19,7 +14,7 @@ def many_columns(self):
     """
     clickhouse = self.context.nodes[0]
     backup = self.context.backup
-    name_prefix = "backup_manycols"
+    name_prefix = "backup_many_columns"
     columns = {}
 
     col_types = list(self.context.columns.values())
@@ -63,13 +58,13 @@ def backup_all_datatypes(self):
     clickhouse = self.context.nodes[0]
     backup = self.context.backup
     name_prefix = "bp_all_dt"
-    aggr_funcs = ["any", "anyLast","min", "max", "sum", "sumWithOverflow"]
-    multiword_types = {"dprec": "DOUBLE PRECISION", "clo": "CHAR LARGE OBJECT", "chv": "CHAR VARYING",
-                       "crlo": "CHARACTER LARGE OBJECT", "ctrv": "CHARACTER VARYING", "nclo": "NCHAR LARGE OBJECT",
-                       "ncv": "NCHAR VARYING", "natclo": "NATIONAL CHARACTER LARGE OBJECT",
-                       "natchrv": "NATIONAL CHARACTER VARYING", "natchv": "NATIONAL CHAR VARYING",
-                       "nchar": "NATIONAL CHARACTER", "nch": "NATIONAL CHAR",
-                       "blo": "BINARY LARGE OBJECT", "bivar": "BINARY VARYING"}
+    aggr_funcs = ["any", "anyLast", "min", "max", "sum", "sumWithOverflow"]
+    multi_word_types = {"dprec": "DOUBLE PRECISION", "clo": "CHAR LARGE OBJECT", "chv": "CHAR VARYING",
+                        "crlo": "CHARACTER LARGE OBJECT", "ctrv": "CHARACTER VARYING", "nclo": "NCHAR LARGE OBJECT",
+                        "ncv": "NCHAR VARYING", "natclo": "NATIONAL CHARACTER LARGE OBJECT",
+                        "natchrv": "NATIONAL CHARACTER VARYING", "natchv": "NATIONAL CHAR VARYING",
+                        "nchar": "NATIONAL CHARACTER", "nch": "NATIONAL CHAR",
+                        "blo": "BINARY LARGE OBJECT", "bivar": "BINARY VARYING"}
 
     all_columns = {}
     simple_columns = {}
@@ -101,7 +96,7 @@ def backup_all_datatypes(self):
             all_columns[f"saf_{ag_func}"] = f"SimpleAggregateFunction({ag_func}, Double)"
             all_columns[f"af_{ag_func}"] = f"AggregateFunction({ag_func}, Double)"
 
-        for k, v in multiword_types.items():
+        for k, v in multi_word_types.items():
             all_columns[k] = v
 
     try:
@@ -149,7 +144,9 @@ def restore_partially_dropped(self):
 
     try:
         with Given("I create table"):
-            create_and_populate_table(node=clickhouse, table_name=name_prefix, columns=self.context.columns, native=True)
+            create_and_populate_table(
+                node=clickhouse, table_name=name_prefix, columns=self.context.columns, native=True
+            )
             table_data = clickhouse.query(f"SELECT * FROM {name_prefix}").output
 
         with When("I create backup"):
@@ -199,28 +196,26 @@ def restore_one_replica(self):
             with And("I create a replica for created table"):
                 create_table(node=clickhouse2, table_name=name_prefix,
                              columns=self.context.columns, engine="ReplicatedMergeTree")
-                time.sleep(1)
+                time.sleep(5)
 
         with When("I create backup"):
             backup.cmd(f"clickhouse-backup create --tables=default.{name_prefix} {name_prefix}")
 
         with And("I drop some data in table"):
-            clickhouse1.query(f"ALTER TABLE default.{name_prefix} DELETE WHERE Sign=1")
-            time.sleep(10)
+            clickhouse1.query(f"ALTER TABLE default.{name_prefix} DELETE WHERE Sign=1 SETTINGS mutations_sync=2")
 
         with Then("I restore table"):
             backup.cmd(f"clickhouse-backup restore --tables=default.{name_prefix} {name_prefix}")
-            time.sleep(10)
 
         with And("I expect data restored on both replicas"):
             query = f"SELECT * FROM default.{name_prefix}"
             tables_data = (clickhouse1.query(query).output.split('\n'), clickhouse2.query(query).output.split('\n'))
 
             with By("I compare data in both tables"):
-                assert set(tables_data[0]) <= set(tables_data[1]) <= set(tables_data[0]), error()
+                assert set(tables_data[0]) == set(tables_data[1]), error()
 
             with And("I check data restored"):
-                assert set(tables_data[0]) <= set(table_data.split('\n')) <= set(tables_data[0]), error()
+                assert set(tables_data[0]) == set(table_data.split('\n')), error()
 
     finally:
         with Finally("I remove backup"):
@@ -250,15 +245,17 @@ def backup_and_restore_all_tables(self):
         with Given(f"I create {dbe} database"):
             clickhouse.query(f"CREATE DATABASE {dbn} ENGINE = {dbe}")
 
+    table_data = {dbn: {} for dbn in database_names}
     try:
-        table_data = {dbn: {} for dbn in database_names}
         with Given("I create tables"):
             for dbn in database_names:
                 for e in table_engines:
                     create_and_populate_table(node=clickhouse, database=dbn, table_name=f"{name_prefix}_{e}")
 
                     with By(f"save data from {e} table"):
-                        table_data[dbn][f"{name_prefix}_{e}"] = clickhouse.query(f"SELECT * FROM {dbn}.{name_prefix}_{e}").output
+                        table_data[dbn][f"{name_prefix}_{e}"] = clickhouse.query(
+                            f"SELECT * FROM {dbn}.{name_prefix}_{e}"
+                        ).output
 
         with When("I create backup for all tables"):
             backup.cmd(f"clickhouse-backup create {name_prefix}")

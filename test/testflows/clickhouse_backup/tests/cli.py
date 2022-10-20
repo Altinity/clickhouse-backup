@@ -1,11 +1,8 @@
-from testflows.core import *
 from testflows.asserts import values, error, snapshot
 
 from clickhouse_backup.requirements.requirements import *
 from clickhouse_backup.tests.common import *
 from clickhouse_backup.tests.steps import *
-
-import yaml
 
 
 @TestScenario
@@ -139,7 +136,6 @@ def help_flag(self):
 
         snap = "".join([s for s in r.output.split('\n\n') if s != "" and "VERSION" not in s])
 
-
         with Then("I expect snapshot to match"):
             with values() as that:
                 assert that(snapshot(snap, "cli", name="help_flag")), error()
@@ -168,17 +164,23 @@ def list_local_remote(self):
         with When("check the list query return only appropriate results"):
             with By("check all backups"):
                 total_backups = 0
-                data = [[entry for entry in line.split(' ') if entry]
-                        for line in backup.cmd("clickhouse-backup list").output.replace('\t', ' ').split('\n') if name_prefix in line]
+                data = [
+                    [entry for entry in line.split(' ') if entry] for line in backup.cmd(
+                        "clickhouse-backup list"
+                    ).output.replace('\t', ' ').split('\n') if name_prefix in line
+                ]
                 for line in data:
                     debug(line)
                     total_backups += 1
-                    assert line[4] in ("local", "remote") , error()
+                    assert line[4] in ("local", "remote"), error()
 
             with By("check local backups"):
                 local_backups = 0
-                data = [[entry for entry in line.split(' ') if entry]
-                        for line in backup.cmd("clickhouse-backup list local").output.replace('\t', ' ').split('\n') if name_prefix in line]
+                data = [
+                    [entry for entry in line.split(' ') if entry] for line in backup.cmd(
+                        "clickhouse-backup list local"
+                    ).output.replace('\t', ' ').split('\n') if name_prefix in line
+                ]
                 for line in data:
                     debug(line)
                     local_backups += 1
@@ -186,8 +188,11 @@ def list_local_remote(self):
 
             with By("check remote backups"):
                 remote_backups = 0
-                data = [[entry for entry in line.split(' ') if entry]
-                        for line in backup.cmd("clickhouse-backup list remote").output.replace('\t', ' ').split('\n') if name_prefix in line]
+                data = [
+                    [entry for entry in line.split(' ') if entry] for line in backup.cmd(
+                        "clickhouse-backup list remote"
+                    ).output.replace('\t', ' ').split('\n') if name_prefix in line
+                ]
                 for line in data:
                     debug(line)
                     remote_backups += 1

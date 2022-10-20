@@ -50,7 +50,6 @@ func Chown(path string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk, recu
 	}
 	chownLock.Unlock()
 	if !recursive {
-		//apexLog.Debugf("Chown %s to %d:%d", path, *uid, *gid)
 		return os.Chown(path, *uid, *gid)
 	}
 	return filepath.Walk(path, func(fName string, f os.FileInfo, err error) error {
@@ -115,8 +114,8 @@ func MkdirAll(path string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk) e
 }
 
 // CopyDataToDetached - copy partitions for specific table to detached folder
+// TODO: check when disk exists in backup, but miss in ClickHouse
 func CopyDataToDetached(backupName string, backupTable metadata.TableMetadata, disks []clickhouse.Disk, tableDataPaths []string, ch *clickhouse.ClickHouse) error {
-	// TODO: check when disk exists in backup, but miss in ClickHouse
 	dstDataPaths := clickhouse.GetDisksByPaths(disks, tableDataPaths)
 	log := apexLog.WithFields(apexLog.Fields{"operation": "CopyDataToDetached"})
 	start := time.Now()
@@ -184,8 +183,9 @@ func IsPartInPartition(partName string, partitionsBackupMap common.EmptyMap) boo
 }
 
 func MoveShadow(shadowPath, backupPartsPath string, partitionsBackupMap common.EmptyMap) ([]metadata.Part, int64, error) {
+	log := apexLog.WithField("logger", "MoveShadow")
 	size := int64(0)
-	parts := []metadata.Part{}
+	parts := make([]metadata.Part, 0)
 	err := filepath.Walk(shadowPath, func(filePath string, info os.FileInfo, err error) error {
 		relativePath := strings.Trim(strings.TrimPrefix(filePath, shadowPath), "/")
 		pathParts := strings.SplitN(relativePath, "/", 4)
@@ -205,7 +205,7 @@ func MoveShadow(shadowPath, backupPartsPath string, partitionsBackupMap common.E
 			return os.MkdirAll(dstFilePath, 0750)
 		}
 		if !info.Mode().IsRegular() {
-			apexLog.Debugf("'%s' is not a regular file, skipping", filePath)
+			log.Debugf("'%s' is not a regular file, skipping", filePath)
 			return nil
 		}
 		size += info.Size()
@@ -215,13 +215,14 @@ func MoveShadow(shadowPath, backupPartsPath string, partitionsBackupMap common.E
 }
 
 func IsDuplicatedParts(part1, part2 string) error {
+	log := apexLog.WithField("logger", "IsDuplicatedParts")
 	p1, err := os.Open(part1)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if err = p1.Close(); err != nil {
-			apexLog.Warnf("Can't close %s", part1)
+			log.Warnf("Can't close %s", part1)
 		}
 	}()
 	p2, err := os.Open(part2)
@@ -230,7 +231,7 @@ func IsDuplicatedParts(part1, part2 string) error {
 	}
 	defer func() {
 		if err = p2.Close(); err != nil {
-			apexLog.Warnf("Can't close %s", part2)
+			log.Warnf("Can't close %s", part2)
 		}
 	}()
 	pf1, err := p1.Readdirnames(-1)

@@ -1,14 +1,16 @@
 package custom
 
 import (
+	"context"
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
 	"github.com/apex/log"
+	"github.com/eapache/go-resiliency/retrier"
 	"time"
 )
 
-func Upload(cfg *config.Config, backupName, diffFrom, diffFromRemote, tablePattern string, partitions []string, schemaOnly bool) error {
+func Upload(ctx context.Context, cfg *config.Config, backupName, diffFrom, diffFromRemote, tablePattern string, partitions []string, schemaOnly bool) error {
 	startCustomUpload := time.Now()
 	if cfg.Custom.UploadCommand == "" {
 		return fmt.Errorf("CUSTOM_UPLOAD_COMMAND is not defined")
@@ -38,7 +40,10 @@ func Upload(cfg *config.Config, backupName, diffFrom, diffFromRemote, tablePatte
 		"schema":           schemaOnly,
 	}
 	args := ApplyCommandTemplate(cfg.Custom.UploadCommand, templateData)
-	err := utils.ExecCmd(cfg.Custom.CommandTimeoutDuration, args[0], args[1:]...)
+	retry := retrier.New(retrier.ConstantBackoff(cfg.General.RetriesOnFailure, cfg.General.RetriesDuration), nil)
+	err := retry.RunCtx(ctx, func(ctx context.Context) error {
+		return utils.ExecCmd(ctx, cfg.Custom.CommandTimeoutDuration, args[0], args[1:]...)
+	})
 	if err == nil {
 		log.
 			WithField("operation", "upload_custom").

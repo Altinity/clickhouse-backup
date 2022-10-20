@@ -148,10 +148,22 @@ services:
       - ftp
       - azure
 #      - gcs
+    healthcheck:
+      test: clickhouse client -q "SELECT 1"
+      interval: 10s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
     depends_on:
       mysql:
         condition: service_healthy
       zookeeper:
+        condition: service_healthy
+
+  all_services_ready:
+    image: hello-world
+    depends_on:
+      clickhouse:
         condition: service_healthy
 
 networks:

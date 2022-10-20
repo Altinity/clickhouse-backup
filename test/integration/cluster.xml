@@ -22,4 +22,8 @@
         <shard>0</shard>
         <replica>clickhouse</replica>
     </macros>
+    <logger>
+        <level>trace</level>
+        <console>1</console>
+    </logger>
 </yandex>

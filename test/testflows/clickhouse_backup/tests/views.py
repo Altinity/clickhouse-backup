@@ -1,6 +1,4 @@
-from testflows.core import *
-from testflows.asserts import *
-
+import os
 from clickhouse_backup.requirements.requirements import *
 from clickhouse_backup.tests.common import *
 from clickhouse_backup.tests.steps import *
@@ -70,9 +68,11 @@ def materialized_view(self):
     """
     base_table_name = self.context.views_base_name
 
-    views_outline(view_name="mview", view_contents_query=f"SELECT * FROM {base_table_name}_mview",
-                  view_create_query=f"CREATE MATERIALIZED VIEW {base_table_name}_mview ENGINE = MergeTree "
-                                    f"ORDER BY Time POPULATE AS SELECT Version, Path, Time FROM default.{base_table_name}")
+    views_outline(
+        view_name="mview", view_contents_query=f"SELECT * FROM {base_table_name}_mview",
+        view_create_query=f"CREATE MATERIALIZED VIEW {base_table_name}_mview ENGINE = MergeTree "
+                          f"ORDER BY Time POPULATE AS SELECT Version, Path, Time FROM default.{base_table_name}"
+    )
 
 
 @TestScenario
@@ -88,6 +88,7 @@ def live_view(self):
                   view_create_query=f"CREATE LIVE VIEW {base_table_name}_lview AS "
                                     f"SELECT Version, Path, Time FROM default.{base_table_name}")
 
+
 @TestScenario
 @Requirements(
     RQ_SRS_013_ClickHouse_BackupUtility_Views_WindowView("1.0")
@@ -96,16 +97,17 @@ def window_view(self):
     """Test that window view is handled properly by clickhouse-backup.
     """
     base_table_name = self.context.views_base_name
-    if os.environ.get('CLICKHOUSE_VERSION','22.8') >= '22.6':
-        view_create_query=f"CREATE WINDOW VIEW {base_table_name}_wview " \
-                          f"ENGINE AggregatingMergeTree() ORDER BY t AS SELECT count(Version) v, tumbleStart(w_id) t " \
-                          f"FROM default.{base_table_name} GROUP BY tumble(Time, INTERVAL '10' SECOND) AS w_id"
+    if os.environ.get('CLICKHOUSE_VERSION', '22.8') >= '22.6':
+        create_query = f"CREATE WINDOW VIEW {base_table_name}_wview " \
+                       f"ENGINE AggregatingMergeTree() ORDER BY t AS SELECT count(Version) v, tumbleStart(w_id) t " \
+                       f"FROM default.{base_table_name} GROUP BY tumble(Time, INTERVAL '10' SECOND) AS w_id"
     else:
-        view_create_query=f"CREATE WINDOW VIEW {base_table_name}_wview " \
-                          f"AS SELECT countState(Version) v, tumbleStart(w_id) AS date_start " \
-                          f"FROM default.{base_table_name} GROUP BY tumble(Time, INTERVAL '10' SECOND) AS w_id"
-    views_outline(view_name="wview", view_contents_query=f"DESCRIBE {base_table_name}_wview",
-                  view_create_query=view_create_query)
+        create_query = f"CREATE WINDOW VIEW {base_table_name}_wview " \
+                       f"AS SELECT countState(Version) v, tumbleStart(w_id) AS date_start " \
+                       f"FROM default.{base_table_name} GROUP BY tumble(Time, INTERVAL '10' SECOND) AS w_id"
+    views_outline(
+        view_name="wview", view_contents_query=f"DESCRIBE {base_table_name}_wview", view_create_query=create_query
+    )
 
 
 @TestScenario
@@ -122,10 +124,14 @@ def nested_views(self):
     try:
         with Given("I create views"):
             with By("I create View"):
-                clickhouse.query(f"CREATE VIEW {base_table_name}_sview AS SELECT Version, Path, Time FROM default.{base_table_name}")
+                clickhouse.query(
+                    f"CREATE VIEW {base_table_name}_sview AS SELECT Version, Path, Time FROM default.{base_table_name}"
+                )
 
             with And("I create nested View"):
-                clickhouse.query(f"CREATE VIEW {base_table_name}_nview AS SELECT Version, Time FROM default.{base_table_name}_sview")
+                clickhouse.query(
+                    f"CREATE VIEW {base_table_name}_nview AS SELECT Version, Time FROM default.{base_table_name}_sview"
+                )
                 view_data = clickhouse.query(f"SELECT * FROM {base_table_name}_nview").output
 
         with When("I create backup"):
@@ -168,7 +174,9 @@ def views(self):
 
     try:
         with Given("I create base table"):
-            create_and_populate_table(node=clickhouse, table_name=self.context.views_base_name, columns=self.context.columns)
+            create_and_populate_table(
+                node=clickhouse, table_name=self.context.views_base_name, columns=self.context.columns
+            )
 
         for scenario in loads(current_module(), Scenario, Suite):
             Scenario(run=scenario)

@@ -14,7 +14,7 @@ type BackupMetadata struct {
 	Disks                   map[string]string `json:"disks"` // "default": "/var/lib/clickhouse"
 	ClickhouseBackupVersion string            `json:"version"`
 	CreationDate            time.Time         `json:"creation_date"`
-	Tags                    string            `json:"tags,omitempty"` // "type=manual", "type=sheduled", "hostname": "", "shard="
+	Tags                    string            `json:"tags,omitempty"` // example "type=manual", "type=scheduled", "hostname": "", "shard="
 	ClickHouseVersion       string            `json:"clickhouse_version,omitempty"`
 	DataSize                uint64            `json:"data_size,omitempty"`
 	MetadataSize            uint64            `json:"metadata_size"`
@@ -70,7 +70,7 @@ type Part struct {
 	// bytes_on_disk, data_compressed_bytes, data_uncompressed_bytes
 }
 
-type PartFilesSplitted struct {
+type SplitPartFiles struct {
 	Prefix string
 	Files  []string
 }
