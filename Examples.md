@@ -385,3 +385,8 @@ spec:
 - During download, if backup contains link to `required` backup it will try to fully download first. This action apply recursively. If you have a chain of incremental backups, all incremental backups in the chain and first "full" will download to local storage. 
 - Size of increment depends not only on the intensity your data ingestion and also depends on the intensity background merges for data parts in your tables. Please increase how much rows you will ingest during one INSERT query and don't apply often [table data mutations](https://clickhouse.tech/docs/en/operations/system-tables/mutations/).
 - Look to [ClicHouse documentation](https://clickhouse.tech/docs/en/engines/table-engines/mergetree-family/mergetree/) and try to understand how exactly `*MergeTree` table engine works.
+
+## How to work `watch` command
+Current implementation simple and will improve in next releases
+- When `watch` command start, it call create_remote+delete command sequence to make `full` backup
+- Then it wait `watch-interval` time period and call create_remote+delete command sequence again, type of backup will `full` if `full-interval` expired after last full backup created and `incremental`, if not.

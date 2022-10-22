@@ -311,7 +311,7 @@ You can't run watch twice with the same parameters even when `allow_parallel: tr
 * Optional query argument `configs` works the same the `--configs` CLI argument (backup configs).
 * Additional example: `curl -s 'localhost:7171/backup/watch?table=default.billing&watch_interval=1h&full_interval=24h' -X POST`
 
-Note: this operation is async, so the API will return once the operation has been started.
+Note: this operation is async and can stop only with `kill -s SIGHUP $(pgrep -f clickhouse-backup)` or call `/restart`, `/backup/kill`, so the API will return once the operation has been started.
 
 > **POST /backup/clean**
 
@@ -445,3 +445,4 @@ fi
 - [How to make back up database with several terabytes of data](Examples.md#how-to-make-backup-database-with-several-terabytes-of-data)
 - [How to use clickhouse-backup in Kubernetes](Examples.md#how-to-use-clickhouse-backup-in-kubernetes)
 - [How do incremental backups work to remote storage](Examples.md#how-do-incremental-backups-work-to-remote-storage)
+- [How to watch backups work](Examples.md#how-to-work-watch-command)
