@@ -186,12 +186,13 @@ func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRu
 func filterPartsByPartitionsFilter(tableMetadata metadata.TableMetadata, partitionsFilter common.EmptyMap) {
 	if len(partitionsFilter) > 0 {
 		for disk, parts := range tableMetadata.Parts {
-			for i, part := range parts {
-				if !filesystemhelper.IsPartInPartition(part.Name, partitionsFilter) {
-					parts = append(parts[:i], parts[i+1:]...)
+			filteredParts := make([]metadata.Part, 0)
+			for _, part := range parts {
+				if filesystemhelper.IsPartInPartition(part.Name, partitionsFilter) {
+					filteredParts = append(filteredParts, part)
 				}
 			}
-			tableMetadata.Parts[disk] = parts
+			tableMetadata.Parts[disk] = filteredParts
 		}
 	}
 }

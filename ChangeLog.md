@@ -1,6 +1,10 @@
-# TODO
+# v2.1.2
 IMPROVEMENTS
 - add `watch` description to Examples.md
+
+BUG FIXES
+- fix panic when use `--restore-database-mapping=db1:db2`, fix [545](https://github.com/AlexAkulov/clickhouse-backup/issues/545)
+- fix panic when use `--partitions=XXX`, fix [544](https://github.com/AlexAkulov/clickhouse-backup/issues/545)
 
 # v2.1.1
 BUG FIXES

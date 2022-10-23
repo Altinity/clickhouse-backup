@@ -1838,9 +1838,10 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse) {
 	ch.queryWithNoError(r, "INSERT INTO default.t1 SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
 	ch.queryWithNoError(r, "INSERT INTO default.t1 SELECT '2022-01-02 00:00:00', number FROM numbers(10)")
 	ch.queryWithNoError(r, "INSERT INTO default.t1 SELECT '2022-01-03 00:00:00', number FROM numbers(10)")
+	ch.queryWithNoError(r, "INSERT INTO default.t1 SELECT '2022-01-04 00:00:00', number FROM numbers(10)")
 	// Backup
 
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables=default.t1", "--partitions=20220101,20220102", partitionBackupName))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables=default.t1", "--partitions=20220102,20220103", partitionBackupName))
 
 	// TRUNCATE TABLE
 	ch.queryWithNoError(r, "TRUNCATE table default.t1")
@@ -1852,7 +1853,7 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse) {
 	// Check
 	var result []int
 
-	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM default.t1 WHERE dt IN ('2022-01-01 00:00:00','2022-01-02 00:00:00')"))
+	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM default.t1 WHERE dt IN ('2022-01-02 00:00:00','2022-01-03 00:00:00')"))
 
 	// Must have one value
 	log.Debugf("testBackupSpecifiedPartitions result : '%v'", result)
@@ -1863,7 +1864,7 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse) {
 
 	// Reset the result.
 	result = make([]int, 0)
-	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM default.t1 WHERE dt NOT IN ('2022-01-01 00:00:00','2022-01-02 00:00:00')"))
+	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM default.t1 WHERE dt NOT IN ('2022-01-02 00:00:00','2022-01-03 00:00:00')"))
 
 	log.Debugf("testBackupSpecifiedPartitions result : '%v'", result)
 	log.Debugf("testBackupSpecifiedPartitions result' length '%d'", len(result))
