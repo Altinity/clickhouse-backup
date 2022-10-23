@@ -1530,15 +1530,15 @@ func (ch *TestClickHouse) connectWithWait(r *require.Assertions, sleepBefore tim
 		err := ch.connect()
 		if i == 10 {
 			r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", "logs", "clickhouse"))
-			out, err := dockerExecOut("clickhouse", "clickhouse-client -q 'SELECT version()'")
-			if err == nil {
-				ch.chbackend.Log.Warnf(out)
-			}
+			out, dockerErr := dockerExecOut("clickhouse", "clickhouse-client", "--echo", "-q", "'SELECT version()'")
+			r.NoError(dockerErr)
+			ch.chbackend.Log.Warnf(out)
+			r.NoError(err)
 		}
 		if err != nil {
 			log.Warnf("clickhouse not ready %v, wait %d seconds", err, i*2)
 			r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", "ps", "-a"))
-			if out, err := dockerExecOut("clickhouse", "clickhouse-client", "-q", "SELECT version()"); err == nil {
+			if out, dockerErr := dockerExecOut("clickhouse", "clickhouse-client", "--echo", "-q", "SELECT version()"); dockerErr == nil {
 				log.Warnf(out)
 			} else {
 				log.Info(out)
@@ -1570,7 +1570,16 @@ func (ch *TestClickHouse) connect() error {
 		},
 		Log: log.WithField("logger", "integration-test"),
 	}
-	return ch.chbackend.Connect()
+	var err error
+	for i := 0; i < 3; i++ {
+		err = ch.chbackend.Connect()
+		if err == nil {
+			return nil
+		} else {
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+	return err
 }
 
 func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {
@@ -1829,9 +1838,10 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse) {
 	ch.queryWithNoError(r, "INSERT INTO default.t1 SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
 	ch.queryWithNoError(r, "INSERT INTO default.t1 SELECT '2022-01-02 00:00:00', number FROM numbers(10)")
 	ch.queryWithNoError(r, "INSERT INTO default.t1 SELECT '2022-01-03 00:00:00', number FROM numbers(10)")
+	ch.queryWithNoError(r, "INSERT INTO default.t1 SELECT '2022-01-04 00:00:00', number FROM numbers(10)")
 	// Backup
 
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables=default.t1", "--partitions=20220101,20220102", partitionBackupName))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables=default.t1", "--partitions=20220102,20220103", partitionBackupName))
 
 	// TRUNCATE TABLE
 	ch.queryWithNoError(r, "TRUNCATE table default.t1")
@@ -1843,7 +1853,7 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse) {
 	// Check
 	var result []int
 
-	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM default.t1 WHERE dt IN ('2022-01-01 00:00:00','2022-01-02 00:00:00')"))
+	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM default.t1 WHERE dt IN ('2022-01-02 00:00:00','2022-01-03 00:00:00')"))
 
 	// Must have one value
 	log.Debugf("testBackupSpecifiedPartitions result : '%v'", result)
@@ -1854,7 +1864,7 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse) {
 
 	// Reset the result.
 	result = make([]int, 0)
-	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM default.t1 WHERE dt NOT IN ('2022-01-01 00:00:00','2022-01-02 00:00:00')"))
+	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM default.t1 WHERE dt NOT IN ('2022-01-02 00:00:00','2022-01-03 00:00:00')"))
 
 	log.Debugf("testBackupSpecifiedPartitions result : '%v'", result)
 	log.Debugf("testBackupSpecifiedPartitions result' length '%d'", len(result))

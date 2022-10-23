@@ -420,6 +420,7 @@ func DefaultConfig() *Config {
 			FullInterval:            "24h",
 			FullDuration:            24 * time.Hour,
 			WatchBackupNameTemplate: "shard{shard}-{type}-{time:20060102150405}",
+			RestoreDatabaseMapping:  make(map[string]string, 0),
 		},
 		ClickHouse: ClickHouseConfig{
 			Username: "default",
