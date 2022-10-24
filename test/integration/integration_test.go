@@ -641,6 +641,9 @@ func TestLongListRemote(t *testing.T) {
 	}
 
 	r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/tmp/.clickhouse-backup-metadata.cache.S3"))
+	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker-compose", "-f", os.Getenv("COMPOSE_FILE"), "restart", "minio"))
+	time.Sleep(2 * time.Second)
+
 	startFirst := time.Now()
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "list", "remote"))
 	noCacheDuration := time.Since(startFirst)
@@ -655,7 +658,6 @@ func TestLongListRemote(t *testing.T) {
 
 	r.NoError(dockerExec("clickhouse", "rm", "-Rfv", "/tmp/.clickhouse-backup-metadata.cache.S3"))
 	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker-compose", "-f", os.Getenv("COMPOSE_FILE"), "restart", "minio"))
-	r.NoError(err)
 	time.Sleep(2 * time.Second)
 
 	startCacheClear := time.Now()
