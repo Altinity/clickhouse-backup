@@ -103,6 +103,9 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 				} else {
 					b.log.Warnf("watch config.LoadConfig error: %v", err)
 				}
+				if err := b.ValidateWatchParams(watchInterval, fullInterval, watchBackupNameTemplate); err != nil {
+					return err
+				}
 			}
 			backupName, err := b.NewBackupWatchName(ctx, backupType)
 			log := b.log.WithFields(apexLog.Fields{
