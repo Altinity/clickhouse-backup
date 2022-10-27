@@ -30,6 +30,7 @@ s3:
   disable_ssl: true
   compression_format: tar
   allow_multipart_download: true
+  concurrency: 3
 api:
   listen: :7171
   create_integration_tables: true
