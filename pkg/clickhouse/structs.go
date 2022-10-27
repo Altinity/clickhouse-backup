@@ -56,10 +56,17 @@ type macro struct {
 
 // SystemBackups - info from system.backups
 type SystemBackups struct {
+	Id                string    `db:"id"`
 	UUID              string    `db:"uuid"`
 	BackupName        string    `db:"backup_name"`
+	Name              string    `db:"name"`
 	Status            string    `db:"status"`
 	StatusChangedTime time.Time `db:"status_changed_time"`
 	Error             string    `db:"error"`
 	Internal          bool      `db:"internal"`
+	StartTime         time.Time `db:"start_time"`
+	EndTime           time.Time `db:"end_time"`
+	CompressedSize    uint64    `db:"compressed_size"`
+	UncompressedSize  uint64    `db:"uncompressed_size"`
+	NumFiles          uint64    `db:"num_files"`
 }

@@ -617,7 +617,7 @@ func TestIntegrationCustom(t *testing.T) {
 }
 
 func TestIntegrationEmbedded(t *testing.T) {
-	t.Skipf("Test skipped, wait 22.7, RESTORE MATERIALIZED VIEW not works for %s version, look https://github.com/ClickHouse/ClickHouse/issues/39416", os.Getenv("CLICKHOUSE_VERSION"))
+	t.Skipf("Test skipped, wait 22.11, RESTORE MATERIALIZED VIEW and {uuid} not works for %s version, look https://github.com/ClickHouse/ClickHouse/issues/39416 and https://github.com/ClickHouse/ClickHouse/issues/42709", os.Getenv("CLICKHOUSE_VERSION"))
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.7") < 0 {
 		t.Skipf("Test skipped, BACKUP/RESTORE not available for %s version", os.Getenv("CLICKHOUSE_VERSION"))
 	}
@@ -843,7 +843,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 
 func checkResumeAlreadyProcessed(backupCmd, testBackupName, resumeKind string, r *require.Assertions, remoteStorageType string) {
 	// backupCmd = fmt.Sprintf("%s & PID=$!; sleep 0.7; kill -9 $PID; cat /var/lib/clickhouse/backup/%s/upload.state; sleep 0.3; %s", backupCmd, testBackupName, backupCmd)
-	if remoteStorageType == "CUSTOM" {
+	if remoteStorageType == "CUSTOM" || remoteStorageType == "EMBEDDED" {
 		backupCmd = strings.Replace(backupCmd, "--resume", "", 1)
 	} else {
 		backupCmd = fmt.Sprintf("%s; cat /var/lib/clickhouse/backup/%s/%s.state; %s", backupCmd, testBackupName, resumeKind, backupCmd)

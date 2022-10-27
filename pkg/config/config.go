@@ -334,6 +334,12 @@ func ValidateConfig(cfg *Config) error {
 		return fmt.Errorf("'%s' is bad S3_STORAGE_CLASS, select one of: %s",
 			cfg.S3.StorageClass, strings.Join(s3.StorageClass_Values(), ", "))
 	}
+	if cfg.S3.AllowMultipartDownload && cfg.S3.Concurrency == 1 {
+		return fmt.Errorf(
+			"`allow_multipart_download` require `concurrency` in `s3` section more than 1 (3-4 recommends) current value: %d",
+			cfg.S3.Concurrency,
+		)
+	}
 	if cfg.API.Secure {
 		if cfg.API.CertificateFile == "" {
 			return fmt.Errorf("api.certificate_file must be defined")

@@ -151,6 +151,9 @@ fi
 # embedded s3 backup configuration
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[6-9] || "${CLICKHOUSE_VERSION}" =~ ^22\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[0-9]+ ]]; then
 
+mkdir -p /var/lib/clickhouse/backups_embedded
+chown clickhouse:clickhouse /var/lib/clickhouse/backups_embedded
+
 cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration.xml
 <?xml version="1.0"?>
 <clickhouse>
@@ -169,6 +172,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration.xml
     </storage_configuration>
     <backups>
         <allowed_disk>backups</allowed_disk>
+        <allowed_path>/var/lib/clickhouse/backups_embedded/</allowed_path>
     </backups>
     <merge_tree>
         <allow_remote_fs_zero_copy_replication>1</allow_remote_fs_zero_copy_replication>
