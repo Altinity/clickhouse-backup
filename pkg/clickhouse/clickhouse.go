@@ -635,7 +635,7 @@ var createViewSelectRe = regexp.MustCompile(`(?im)^(CREATE[\s\w]+VIEW[^(]+)(\s+A
 var attachViewToClauseRe = regexp.MustCompile(`(?im)^(ATTACH[\s\w]+VIEW[^(]+)(\s+TO\s+.+)`)
 var attachViewSelectRe = regexp.MustCompile(`(?im)^(ATTACH[\s\w]+VIEW[^(]+)(\s+AS\s+SELECT.+)`)
 var createObjRe = regexp.MustCompile(`(?im)^(CREATE [^(]+)(\(.+)`)
-var onClusterRe = regexp.MustCompile(`(?im)\S+ON\S+CLUSTER\S+`)
+var onClusterRe = regexp.MustCompile(`(?im)\s+ON\s+CLUSTER\s+`)
 
 // CreateTable - create ClickHouse table
 func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDependencies bool, onCluster string, version int) error {
