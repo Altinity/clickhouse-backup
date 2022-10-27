@@ -188,13 +188,13 @@ def restore_one_replica(self):
 
     try:
         with Given("I create replicated table"):
-            with By("I create and populate table"):
-                create_and_populate_table(node=clickhouse1, table_name=name_prefix,
+            with By("I create table"):
+                create_table(node=clickhouse1, table_name=name_prefix,
                                           engine="ReplicatedMergeTree", columns=self.context.columns)
-                table_data = clickhouse1.query(f"SELECT * FROM {name_prefix}").output
+                inserted_data = clickhouse1.query(f"SELECT * FROM {name_prefix}").output
 
-            with And("I create a replica for created table"):
-                create_table(node=clickhouse2, table_name=name_prefix,
+            with And("I create a replica for created table and populate"):
+                create_and_populate_table(node=clickhouse2, table_name=name_prefix,
                              columns=self.context.columns, engine="ReplicatedMergeTree")
                 time.sleep(5)
 
@@ -205,7 +205,7 @@ def restore_one_replica(self):
             clickhouse1.query(f"ALTER TABLE default.{name_prefix} DELETE WHERE Sign=1 SETTINGS mutations_sync=2")
 
         with Then("I restore table"):
-            backup.cmd(f"clickhouse-backup restore --tables=default.{name_prefix} {name_prefix}")
+            backup.cmd(f"clickhouse-backup restore --rm --tables=default.{name_prefix} {name_prefix}")
 
         with And("I expect data restored on both replicas"):
             query = f"SELECT * FROM default.{name_prefix}"
@@ -215,7 +215,7 @@ def restore_one_replica(self):
                 assert set(tables_data[0]) == set(tables_data[1]), error()
 
             with And("I check data restored"):
-                assert set(tables_data[0]) == set(table_data.split('\n')), error()
+                assert set(tables_data[0]) == set(inserted_data.split('\n')), error()
 
     finally:
         with Finally("I remove backup"):
