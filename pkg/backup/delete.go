@@ -44,8 +44,9 @@ func (b *Backuper) cleanDir(dirName string) error {
 		return err
 	} else {
 		for _, item := range items {
-			err = os.RemoveAll(item.Name())
-			return err
+			if err = os.RemoveAll(path.Join(dirName, item.Name())); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
