@@ -50,7 +50,7 @@ Or use `clickhouse-backup server` and prometheus endpoint :7171/metrics, look al
 ### BACKUP
 run only on the first replica for each shard
 ```bash
-shard_number=$(clickhouse-client -q "SELECT getMacro('{shard}')")
+shard_number=$(clickhouse-client -q "SELECT getMacro('shard')")
 clickhouse-backup create_remote shard${shard_number}-backup
 clickhouse-backup delete local shard${shard_number}-backup
 ```
@@ -58,13 +58,13 @@ clickhouse-backup delete local shard${shard_number}-backup
 ### RESTORE
 run on all replicas
 ```bash
-shard_number=$(clickhouse-client -q "SELECT getMacro('{shard}')")
+shard_number=$(clickhouse-client -q "SELECT getMacro('shard')")
 clickhouse-backup restore_remote --rm --schema shard${shard_number}-backup
 clickhouse-backup delete local shard${shard_number}-backup
 ```
 after it, run only on the first replica for each shard
 ```bash
-shard_number=$(clickhouse-client -q "SELECT getMacro('{shard}')")
+shard_number=$(clickhouse-client -q "SELECT getMacro('shard')")
 clickhouse-backup restore_remote --rm shard${shard_number}-backup
 clickhouse-backup delete local shard${shard_number}-backup
 ```
