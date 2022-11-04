@@ -192,10 +192,35 @@ func (s *S3) DeleteFile(ctx context.Context, key string) error {
 		Bucket: aws.String(s.Config.Bucket),
 		Key:    aws.String(path.Join(s.Config.Path, key)),
 	}
+
+	if s.isVersioningEnabled() {
+		params.VersionId = s.getObjectVersion(key)
+	}
+
 	if _, err := s3.New(s.session).DeleteObject(params); err != nil {
 		return errors.Wrapf(err, "DeleteFile, deleting object %+v", params)
 	}
 	return nil
+}
+
+func (s *S3) isVersioningEnabled() bool {
+	output, err := s3.New(s.session).GetBucketVersioning(&s3.GetBucketVersioningInput{
+		Bucket: aws.String(s.Config.Bucket),
+	})
+	if err != nil {
+		return false
+	}
+	return output.Status != nil && *output.Status == s3.BucketVersioningStatusEnabled
+}
+
+func (s *S3) getObjectVersion(key string) *string {
+	params := &s3.GetObjectInput{
+		Bucket: aws.String(s.Config.Bucket),
+		Key:    aws.String(path.Join(s.Config.Path, key)),
+	}
+
+	object, _ := s3.New(s.session).GetObject(params)
+	return object.VersionId
 }
 
 func (s *S3) StatFile(ctx context.Context, key string) (RemoteFile, error) {
