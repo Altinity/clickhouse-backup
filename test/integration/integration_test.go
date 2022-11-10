@@ -23,7 +23,7 @@ import (
 	"github.com/apex/log"
 	"golang.org/x/mod/semver"
 
-	_ "github.com/ClickHouse/clickhouse-go"
+	_ "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
