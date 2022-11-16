@@ -3,7 +3,8 @@ BUG FIXES
 - fix `--watch-backup-name-template` command line parsing, overridden after config reload, fix [548](https://github.com/AlexAkulov/clickhouse-backup/issues/548)
 - fix wrong regexp, when `restore_schema_on_cluster: cluster_name`, fix [552](https://github.com/AlexAkulov/clickhouse-backup/issues/552)
 - fix wrong `clean` command and API behavior, fix [533](https://github.com/AlexAkulov/clickhouse-backup/issues/533)
-- fix getMacro usage in Examples for backup / restore sharded clsuter.
+- fix getMacro usage in Examples for backup / restore sharded cluster.
+- fix deletion files from S3 versioned bucket, fix [555](https://github.com/AlexAkulov/clickhouse-backup/issues/555)
 
 # v2.1.2
 IMPROVEMENTS
