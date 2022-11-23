@@ -171,7 +171,7 @@ func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB string, da
 		if b.cfg.General.RestoreSchemaOnCluster != "" {
 			onCluster = fmt.Sprintf(" ON CLUSTER '%s'", b.cfg.General.RestoreSchemaOnCluster)
 		}
-		if _, err := b.ch.QueryContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s` %s SYNC", targetDB, onCluster)); err != nil {
+		if _, err := b.ch.QueryxContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s` %s SYNC", targetDB, onCluster)); err != nil {
 			return err
 		}
 

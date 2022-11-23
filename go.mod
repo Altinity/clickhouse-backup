@@ -6,7 +6,7 @@ require (
 	github.com/Azure/azure-storage-blob-go v0.15.0
 	github.com/Azure/go-autorest/autorest v0.11.28
 	github.com/Azure/go-autorest/autorest/adal v0.9.21
-	github.com/ClickHouse/clickhouse-go/v2 v2.3.0
+	github.com/ClickHouse/clickhouse-go/v2 v2.4.0
 	github.com/apex/log v1.9.0
 	github.com/aws/aws-sdk-go v1.44.118
 	github.com/djherbis/buffer v1.2.0
@@ -17,17 +17,16 @@ require (
 	github.com/google/uuid v1.3.0
 	github.com/gorilla/mux v1.8.0
 	github.com/jlaffaye/ftp v0.1.0
-	github.com/jmoiron/sqlx v1.3.5
 	github.com/jolestar/go-commons-pool/v2 v2.1.2
 	github.com/kelseyhightower/envconfig v1.4.0
-	github.com/klauspost/compress v1.15.11
+	github.com/klauspost/compress v1.15.12
 	github.com/mattn/go-shellwords v1.0.12
 	github.com/mholt/archiver/v4 v4.0.0-alpha.7
 	github.com/otiai10/copy v1.7.0
 	github.com/pkg/errors v0.9.1
 	github.com/pkg/sftp v1.13.5
 	github.com/prometheus/client_golang v1.13.0
-	github.com/stretchr/testify v1.8.0
+	github.com/stretchr/testify v1.8.1
 	github.com/tencentyun/cos-go-sdk-v5 v0.7.39
 	github.com/urfave/cli v1.22.10
 	github.com/yargevad/filepathx v1.0.0
@@ -47,7 +46,7 @@ require (
 	github.com/Azure/go-autorest/autorest/date v0.3.0 // indirect
 	github.com/Azure/go-autorest/logger v0.2.1 // indirect
 	github.com/Azure/go-autorest/tracing v0.6.0 // indirect
-	github.com/ClickHouse/ch-go v0.47.3 // indirect
+	github.com/ClickHouse/ch-go v0.49.0 // indirect
 	github.com/andybalholm/brotli v1.0.4 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.1.2 // indirect
@@ -89,8 +88,8 @@ require (
 	github.com/therootcompany/xz v1.0.1 // indirect
 	github.com/ulikunitz/xz v0.5.10 // indirect
 	go.opencensus.io v0.23.0 // indirect
-	go.opentelemetry.io/otel v1.9.0 // indirect
-	go.opentelemetry.io/otel/trace v1.9.0 // indirect
+	go.opentelemetry.io/otel v1.11.1 // indirect
+	go.opentelemetry.io/otel/trace v1.11.1 // indirect
 	golang.org/x/net v0.0.0-20221019024206-cb67ada4b0ad // indirect
 	golang.org/x/oauth2 v0.0.0-20221014153046-6fdb5e3db783 // indirect
 	golang.org/x/sys v0.1.0 // indirect

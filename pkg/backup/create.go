@@ -296,7 +296,7 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePa
 			tableSizeSQL += ", "
 		}
 	}
-	backupDataSize := make([]uint64, 0)
+	var backupDataSize uint64
 	chVersion, err := b.ch.GetVersion(ctx)
 	if err != nil {
 		return err
@@ -306,11 +306,11 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePa
 		if chVersion >= 20005000 {
 			backupSizeSQL = fmt.Sprintf("SELECT sum(total_bytes) AS backup_data_size FROM system.tables WHERE concat(database,'.',name) IN (%s)", tableSizeSQL)
 		}
-		if err := b.ch.SelectContext(ctx, &backupDataSize, backupSizeSQL); err != nil {
+		if err := b.ch.SelectSingleRow(ctx, &backupDataSize, backupSizeSQL); err != nil {
 			return err
 		}
 	} else {
-		backupDataSize = append(backupDataSize, 0)
+		backupDataSize = 0
 	}
 	backupSQL := fmt.Sprintf("BACKUP %s TO Disk(?,?)", tablesSQL)
 	if schemaOnly {
@@ -359,7 +359,7 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePa
 		}
 	}
 	backupMetaFile := path.Join(diskMap[b.cfg.ClickHouse.EmbeddedBackupDisk], backupName, "metadata.json")
-	if err := b.createBackupMetadata(ctx, backupMetaFile, backupName, backupVersion, "embedded", diskMap, disks, backupDataSize[0], backupMetadataSize, 0, 0, tableMetas, allDatabases, allFunctions, log); err != nil {
+	if err := b.createBackupMetadata(ctx, backupMetaFile, backupName, backupVersion, "embedded", diskMap, disks, backupDataSize, backupMetadataSize, 0, 0, tableMetas, allDatabases, allFunctions, log); err != nil {
 		return err
 	}
 

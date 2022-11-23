@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"database/sql"
 	"errors"
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -53,17 +54,15 @@ func (ch *ClickHouse) Connect() error {
 			Username: ch.Config.Username,
 			Password: ch.Config.Password,
 		},
-		Settings: map[string]interface{}{
+		Settings: clickhouse.Settings{
 			"connect_timeout": timeoutSeconds,
 			"receive_timeout": timeoutSeconds,
 			"send_timeout":    timeoutSeconds,
-			"timeout":         timeoutSeconds,
-			"read_timeout":    timeoutSeconds,
-			"write_timeout":   timeoutSeconds,
 		},
 		MaxOpenConns:    1,
 		ConnMaxLifetime: 0,
 		MaxIdleConns:    0,
+		DialTimeout:     timeout,
 	}
 
 	if ch.Config.Debug {
@@ -71,10 +70,10 @@ func (ch *ClickHouse) Connect() error {
 	}
 
 	if ch.Config.Secure {
+		tlsConfig := &tls.Config{
+			InsecureSkipVerify: ch.Config.SkipVerify,
+		}
 		if ch.Config.TLSKey != "" || ch.Config.TLSCert != "" || ch.Config.TLSCa != "" {
-			tlsConfig := &tls.Config{
-				InsecureSkipVerify: ch.Config.SkipVerify,
-			}
 			if ch.Config.TLSCert != "" || ch.Config.TLSKey != "" {
 				cert, err := tls.LoadX509KeyPair(ch.Config.TLSCert, ch.Config.TLSKey)
 				if err != nil {
@@ -96,10 +95,8 @@ func (ch *ClickHouse) Connect() error {
 				}
 				tlsConfig.RootCAs = caCertPool
 			}
-			opt.TLS = tlsConfig
-
 		}
-
+		opt.TLS = tlsConfig
 	}
 	if !ch.Config.LogSQLQueries {
 		opt.Settings["log_queries"] = 0
@@ -201,7 +198,7 @@ func (ch *ClickHouse) getDisksFromSystemSettings(ctx context.Context) ([]Disk, e
 		return nil, ctx.Err()
 	default:
 		var result []struct {
-			MetadataPath string `db:"metadata_path"`
+			MetadataPath string `ch:"metadata_path"`
 		}
 		query := "SELECT metadata_path FROM system.tables WHERE database = 'system' AND metadata_path!='' LIMIT 1;"
 		if err := ch.SelectContext(ctx, &result, query); err != nil {
@@ -227,7 +224,7 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		return nil, ctx.Err()
 	default:
 		var result []Disk
-		query := "SELECT * FROM system.disks;"
+		query := "SELECT name, path, type FROM system.disks;"
 		err := ch.Select(&result, query)
 		return result, err
 	}
@@ -252,11 +249,11 @@ func (ch *ClickHouse) Close() {
 func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Table, error) {
 	var err error
 	tables := make([]Table, 0)
-	isUUIDPresent := make([]int, 0)
-	if err = ch.SelectContext(ctx, &isUUIDPresent, "SELECT count() FROM system.settings WHERE name = 'show_table_uuid_in_table_create_query_if_not_nil'"); err != nil {
+	var isUUIDPresent uint64
+	if err = ch.SelectSingleRow(ctx, &isUUIDPresent, "SELECT count() FROM system.settings WHERE name = 'show_table_uuid_in_table_create_query_if_not_nil'"); err != nil {
 		return nil, err
 	}
-	skipDatabases := make([]string, 0)
+	skipDatabases := make([]Database, 0)
 	if err = ch.SelectContext(ctx, &skipDatabases, "SELECT name FROM system.databases WHERE engine IN ('MySQL','PostgreSQL')"); err != nil {
 		return nil, err
 	}
@@ -299,7 +296,7 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 	return tables, nil
 }
 
-func (ch *ClickHouse) prepareAllTablesSQL(ctx context.Context, tablePattern string, err error, skipDatabases []string, isUUIDPresent []int) (string, error) {
+func (ch *ClickHouse) prepareAllTablesSQL(ctx context.Context, tablePattern string, err error, skipDatabases []Database, isUUIDPresent uint64) (string, error) {
 	isSystemTablesFieldPresent := make([]IsSystemTablesFieldPresent, 0)
 	isFieldPresentSQL := `
 		SELECT 
@@ -337,9 +334,9 @@ func (ch *ClickHouse) prepareAllTablesSQL(ctx context.Context, tablePattern stri
 		allTablesSQL += fmt.Sprintf(" AND match(concat(database,'.',name),'%s') ", replacer.Replace(tablePattern))
 	}
 	if len(skipDatabases) > 0 {
-		allTablesSQL += fmt.Sprintf(" AND database NOT IN ('%s')", strings.Join(skipDatabases, "','"))
+		allTablesSQL += fmt.Sprintf(" AND database NOT IN ('%s')", strings.Join(ConvertToSlice(skipDatabases), "','"))
 	}
-	if len(isUUIDPresent) > 0 && isUUIDPresent[0] > 0 {
+	if isUUIDPresent > 0 {
 		allTablesSQL += " SETTINGS show_table_uuid_in_table_create_query_if_not_nil=1"
 	}
 	return allTablesSQL, nil
@@ -348,7 +345,8 @@ func (ch *ClickHouse) prepareAllTablesSQL(ctx context.Context, tablePattern stri
 // GetDatabases - return slice of all non system databases for backup
 func (ch *ClickHouse) GetDatabases(ctx context.Context) ([]Database, error) {
 	allDatabases := make([]Database, 0)
-	allDatabasesSQL := "SELECT name, engine FROM system.databases WHERE name NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema', '_temporary_and_external_tables')"
+	allDatabasesSQL := "SELECT name, engine FROM system.databases WHERE name NOT IN" +
+		" ('system', 'INFORMATION_SCHEMA', 'information_schema', '_temporary_and_external_tables')"
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -363,13 +361,13 @@ func (ch *ClickHouse) GetDatabases(ctx context.Context) ([]Database, error) {
 			return nil, ctx.Err()
 		default:
 			showDatabaseSQL := fmt.Sprintf("SHOW CREATE DATABASE `%s`", db.Name)
-			var result []string
+			var result string
 			// 19.4 doesn't have /var/lib/clickhouse/metadata/default.sql
-			if err := ch.Select(&result, showDatabaseSQL); err != nil {
+			if err := ch.SelectSingleRow(ctx, &result, showDatabaseSQL); err != nil {
 				ch.Log.Warnf("can't get create database query: %v", err)
 				allDatabases[i].Query = fmt.Sprintf("CREATE DATABASE `%s` ENGINE = %s", db.Name, db.Engine)
 			} else {
-				allDatabases[i].Query = result[0]
+				allDatabases[i].Query = result
 			}
 		}
 	}
@@ -378,7 +376,7 @@ func (ch *ClickHouse) GetDatabases(ctx context.Context) ([]Database, error) {
 
 func (ch *ClickHouse) getTableSizeFromParts(ctx context.Context, table Table) uint64 {
 	var tablesSize []struct {
-		Size uint64 `db:"size"`
+		Size uint64 `ch:"size"`
 	}
 	query := fmt.Sprintf("SELECT sum(bytes_on_disk) as size FROM system.parts WHERE active AND database='%s' AND table='%s' GROUP BY database, table", table.Database, table.Name)
 	if err := ch.SelectContext(ctx, &tablesSize, query); err != nil {
@@ -422,34 +420,31 @@ func (ch *ClickHouse) GetVersion(ctx context.Context) (int, error) {
 	case <-ctx.Done():
 		return 0, ctx.Err()
 	default:
-		var result []string
+		var result string
 		var err error
 		query := "SELECT value FROM `system`.`build_options` where name='VERSION_INTEGER'"
-		if err = ch.SelectContext(ctx, &result, query); err != nil {
+		if err = ch.SelectSingleRow(ctx, &result, query); err != nil {
 			return 0, fmt.Errorf("can't get ClickHouse version: %w", err)
 		}
-		if len(result) == 0 {
-			return 0, nil
-		}
-		ch.version, err = strconv.Atoi(result[0])
+		ch.version, err = strconv.Atoi(result)
 		return ch.version, err
 	}
 }
 
 func (ch *ClickHouse) GetVersionDescribe(ctx context.Context) string {
-	var result []string
+	var result string
 	query := "SELECT value FROM `system`.`build_options` where name='VERSION_DESCRIBE'"
-	if err := ch.SelectContext(ctx, &result, query); err != nil {
+	if err := ch.SelectSingleRow(ctx, &result, query); err != nil {
 		return ""
 	}
-	return result[0]
+	return result
 }
 
 // FreezeTableOldWay - freeze all partitions in table one by one
 // This way using for ClickHouse below v19.1
 func (ch *ClickHouse) FreezeTableOldWay(ctx context.Context, table *Table, name string) error {
 	var partitions []struct {
-		PartitionID string `db:"partition_id"`
+		PartitionID string `ch:"partition_id"`
 	}
 	q := fmt.Sprintf("SELECT DISTINCT partition_id FROM `system`.`parts` WHERE database='%s' AND table='%s' %s", table.Database, table.Name, ch.Config.FreezeByPartWhere)
 	if err := ch.conn.Select(ctx, &partitions, q); err != nil {
@@ -476,7 +471,7 @@ func (ch *ClickHouse) FreezeTableOldWay(ctx context.Context, table *Table, name 
 				withNameQuery,
 			)
 		}
-		if _, err := ch.QueryContext(ctx, query); err != nil {
+		if err := ch.QueryContext(ctx, query); err != nil {
 			if (strings.Contains(err.Error(), "code: 60") || strings.Contains(err.Error(), "code: 81")) && ch.Config.IgnoreNotExistsErrorDuringFreeze {
 				ch.Log.Warnf("can't freeze partition: %v", err)
 			} else {
@@ -496,7 +491,7 @@ func (ch *ClickHouse) FreezeTable(ctx context.Context, table *Table, name string
 	}
 	if strings.HasPrefix(table.Engine, "Replicated") && ch.Config.SyncReplicatedTables {
 		query := fmt.Sprintf("SYSTEM SYNC REPLICA `%s`.`%s`;", table.Database, table.Name)
-		if _, err := ch.QueryContext(ctx, query); err != nil {
+		if err := ch.QueryContext(ctx, query); err != nil {
 			ch.Log.Warnf("can't sync replica: %v", err)
 		} else {
 			ch.Log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Debugf("replica synced")
@@ -510,7 +505,7 @@ func (ch *ClickHouse) FreezeTable(ctx context.Context, table *Table, name string
 		withNameQuery = fmt.Sprintf("WITH NAME '%s'", name)
 	}
 	query := fmt.Sprintf("ALTER TABLE `%s`.`%s` FREEZE %s;", table.Database, table.Name, withNameQuery)
-	if _, err := ch.QueryContext(ctx, query); err != nil {
+	if err := ch.Query(query); err != nil {
 		if (strings.Contains(err.Error(), "code: 60") || strings.Contains(err.Error(), "code: 81")) && ch.Config.IgnoreNotExistsErrorDuringFreeze {
 			ch.Log.Warnf("can't freeze table: %v", err)
 			return nil
@@ -524,14 +519,14 @@ func (ch *ClickHouse) FreezeTable(ctx context.Context, table *Table, name string
 func (ch *ClickHouse) AttachPartitions(table metadata.TableMetadata, disks []Disk) error {
 	// https://github.com/AlexAkulov/clickhouse-backup/issues/474
 	if ch.Config.CheckReplicasBeforeAttach && strings.Contains(table.Query, "Replicated") {
-		existsReplicas := make([]int, 0)
-		if err := ch.Select(&existsReplicas, "SELECT sum(log_pointer + log_max_index + absolute_delay + queue_size)  AS replication_in_progress FROM system.replicas WHERE database=? and table=? SETTINGS empty_result_for_aggregation_by_empty_set=0", table.Database, table.Table); err != nil {
+		var existsReplicas uint64
+		if err := ch.SelectSingleRowNoCtx(
+			&existsReplicas,
+			fmt.Sprintf("SELECT sum(log_pointer + log_max_index + absolute_delay + queue_size) AS replication_in_progress FROM system.replicas WHERE database = '%s' and table = '%s' SETTINGS empty_result_for_aggregation_by_empty_set=0", table.Database, table.Table),
+		); err != nil {
 			return err
 		}
-		if len(existsReplicas) != 1 {
-			return fmt.Errorf("invalid result for check exists replicas: %+v", existsReplicas)
-		}
-		if existsReplicas[0] > 0 {
+		if existsReplicas > 0 {
 			ch.Log.Warnf("%s.%s skipped cause system.replicas entry already exists and replication in progress from another replica", table.Database, table.Table)
 			return nil
 		} else {
@@ -554,7 +549,7 @@ func (ch *ClickHouse) AttachPartitions(table metadata.TableMetadata, disks []Dis
 
 func (ch *ClickHouse) ShowCreateTable(database, name string) string {
 	var result []struct {
-		Statement string `db:"statement"`
+		Statement string `ch:"statement"`
 	}
 	query := fmt.Sprintf("SHOW CREATE TABLE `%s`.`%s`;", database, name)
 
@@ -584,8 +579,8 @@ func (ch *ClickHouse) CreateDatabaseFromQuery(ctx context.Context, query, cluste
 		query = strings.Replace(query, "CREATE DATABASE", "CREATE DATABASE IF NOT EXISTS", 1)
 	}
 	query = ch.addOnClusterToCreateDatabase(cluster, query)
-	_, err := ch.QueryContext(ctx, query, args)
-	return err
+	//_, err :=
+	return ch.QueryContext(ctx, query, args)
 }
 
 func (ch *ClickHouse) addOnClusterToCreateDatabase(cluster string, query string) string {
@@ -714,19 +709,15 @@ func (ch *ClickHouse) IsClickhouseShadow(path string) bool {
 }
 
 func (ch *ClickHouse) StructSelect(dest interface{}, query string, args ...interface{}) error {
-	return ch.SelectContext(context.Background(), dest, query, args)
+	return ch.SelectContext(context.Background(), dest, ch.LogQuery(query, args...), args)
 }
 
-func (ch *ClickHouse) QueryContext(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-	return ch.conn.Query(ctx, ch.LogQuery(query, args...), args...)
+func (ch *ClickHouse) QueryContext(ctx context.Context, query string, args ...interface{}) error {
+	return ch.conn.Exec(ctx, ch.LogQuery(query, args...), args...)
 }
 
 func (ch *ClickHouse) Query(query string, args ...interface{}) error {
 	return ch.conn.Exec(context.Background(), ch.LogQuery(query, args...), args...)
-}
-
-func (ch *ClickHouse) Queryx(query string, args ...interface{}) (driver.Rows, error) {
-	return ch.conn.Query(context.Background(), ch.LogQuery(query, args...), args...)
 }
 
 func (ch *ClickHouse) QueryxContext(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
@@ -746,6 +737,18 @@ func (ch *ClickHouse) Select(dest interface{}, query string, args ...interface{}
 	return ch.conn.Select(context.Background(), dest, ch.LogQuery(query, args...), args...)
 }
 
+func (ch *ClickHouse) SelectSingleRow(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
+	return ch.conn.QueryRow(ctx, ch.LogQuery(query, args...), args).Scan(dest)
+}
+
+func (ch *ClickHouse) SelectSingleRowNoCtx(dest interface{}, query string, args ...interface{}) error {
+	err := ch.conn.QueryRow(context.Background(), ch.LogQuery(query, args...), args).Scan(dest)
+	if err != nil && err == sql.ErrNoRows {
+		return nil
+	}
+	return err
+}
+
 func (ch *ClickHouse) LogQuery(query string, args ...interface{}) string {
 	var logF func(msg string)
 	if !ch.Config.LogSQLQueries {
@@ -762,11 +765,11 @@ func (ch *ClickHouse) LogQuery(query string, args ...interface{}) string {
 }
 
 func (ch *ClickHouse) IsAtomic(database string) (bool, error) {
-	var isDatabaseAtomic []string
-	if err := ch.Select(&isDatabaseAtomic, fmt.Sprintf("SELECT engine FROM system.databases WHERE name = '%s'", database)); err != nil {
+	var isDatabaseAtomic string
+	if err := ch.SelectSingleRowNoCtx(&isDatabaseAtomic, fmt.Sprintf("SELECT engine FROM system.databases WHERE name = '%s'", database)); err != nil {
 		return false, err
 	}
-	return len(isDatabaseAtomic) > 0 && isDatabaseAtomic[0] == "Atomic", nil
+	return isDatabaseAtomic == "Atomic", nil
 }
 
 // GetAccessManagementPath @todo think about how to properly extract access_management_path from /etc/clickhouse-server/
@@ -795,12 +798,12 @@ func (ch *ClickHouse) GetAccessManagementPath(ctx context.Context, disks []Disk)
 func (ch *ClickHouse) GetUserDefinedFunctions(ctx context.Context) ([]Function, error) {
 	allFunctions := make([]Function, 0)
 	allFunctionsSQL := "SELECT name, create_query FROM system.functions WHERE create_query!=''"
-	detectUDF := make([]uint8, 0)
-	detectUDFSQL := "SELECT toUInt8(count()) udf_presents FROM system.columns WHERE database='system' AND table='functions' AND name='create_query'"
-	if err := ch.SelectContext(ctx, &detectUDF, detectUDFSQL); err != nil {
+	var detectUDF uint64
+	detectUDFSQL := "SELECT count() as cnt FROM system.columns WHERE database='system' AND table='functions' AND name='create_query'"
+	if err := ch.SelectSingleRow(ctx, &detectUDF, detectUDFSQL); err != nil {
 		return nil, err
 	}
-	if len(detectUDF) == 0 || detectUDF[0] == 0 {
+	if detectUDF == 0 {
 		return allFunctions, nil
 	}
 
@@ -824,29 +827,26 @@ func (ch *ClickHouse) CreateUserDefinedFunction(name string, query string, clust
 }
 
 func (ch *ClickHouse) CalculateMaxFileSize(ctx context.Context, cfg *config.Config) (int64, error) {
-	rows := make([]int64, 0)
+	var rows int64
 	maxSizeQuery := "SELECT max(toInt64(bytes_on_disk * 1.02)) AS max_file_size FROM system.parts"
 	if !cfg.General.UploadByPart {
 		maxSizeQuery = "SELECT toInt64(max(data_by_disk) * 1.02) AS max_file_size FROM (SELECT disk_name, max(toInt64(bytes_on_disk)) data_by_disk FROM system.parts GROUP BY disk_name)"
 	}
-
-	if err := ch.SelectContext(ctx, &rows, maxSizeQuery); err != nil {
+	if err := ch.SelectSingleRow(ctx, &rows, maxSizeQuery); err != nil {
 		return 0, fmt.Errorf("can't calculate max(bytes_on_disk): %v", err)
 	}
-	if len(rows) > 0 {
-		return rows[0], nil
-	}
-	return 0, nil
+	return rows, nil
 }
 
 func (ch *ClickHouse) ApplyMacros(ctx context.Context, s string) (string, error) {
-	macrosExists := make([]int, 0)
-	err := ch.SelectContext(ctx, &macrosExists, "SELECT count() AS is_macros_exists FROM system.tables WHERE database='system' AND name='macros'")
-	if err != nil || len(macrosExists) == 0 || macrosExists[0] == 0 {
+	var macrosExists uint64
+	err := ch.SelectSingleRow(ctx, &macrosExists, "SELECT count() AS is_macros_exists FROM system.tables WHERE database='system' AND name='macros'")
+	if err != nil || macrosExists == 0 {
 		return s, err
 	}
-	macros := make([]macro, 0)
-	err = ch.SelectContext(ctx, &macros, "SELECT * FROM system.macros")
+
+	macros := make([]Macro, 0)
+	err = ch.SelectContext(ctx, &macros, "SELECT macro, substitution FROM system.macros")
 	if err != nil || len(macros) == 0 {
 		return s, err
 	}
