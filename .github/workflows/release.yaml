@@ -127,5 +127,5 @@ jobs:
           export DOCKER_REGISTRY=${DOCKER_REGISTRY:-docker.io}
           echo ${DOCKER_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin ${DOCKER_REGISTRY}
 
-          docker buildx build --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG} --tag ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:latest --target=image_short --pull --push .
-          docker buildx build --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}-full:${DOCKER_TAG} --tag ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}-full:latest --target=image_full --pull --push .
+          docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG} --tag ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:latest --target=image_short --pull --push .
+          docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}-full:${DOCKER_TAG} --tag ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}-full:latest --target=image_full --pull --push .

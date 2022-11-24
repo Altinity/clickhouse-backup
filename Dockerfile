@@ -67,7 +67,7 @@ FROM ${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server}:${CLICKHOUSE_VERSION:-lat
 ARG TARGETPLATFORM
 MAINTAINER Eugene Klimov <eklimov@altinity.com>
 
-RUN wget -qO- https://kopia.io/signing-key | gpg --dearmor -o /usr/share/keyrings/kopia-keyring.gpg && \
+RUN apt-get update && apt-get install -y gpg && wget -qO- https://kopia.io/signing-key | gpg --dearmor -o /usr/share/keyrings/kopia-keyring.gpg && \
     echo "deb [signed-by=/usr/share/keyrings/kopia-keyring.gpg] http://packages.kopia.io/apt/ stable main" > /etc/apt/sources.list.d/kopia.list && \
     apt-get update -y && \
     apt-get install -y ca-certificates tzdata bash curl restic rsync rclone jq gpg && \
