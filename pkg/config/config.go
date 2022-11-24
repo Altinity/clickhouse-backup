@@ -419,7 +419,7 @@ func DefaultConfig() *Config {
 			UploadByPart:            true,
 			DownloadByPart:          true,
 			RetriesOnFailure:        3,
-			RetriesPause:            "100ms",
+			RetriesPause:            "30s",
 			RetriesDuration:         100 * time.Millisecond,
 			WatchInterval:           "1h",
 			WatchDuration:           1 * time.Hour,
