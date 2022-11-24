@@ -19,11 +19,11 @@ jobs:
           - "1.19"
     steps:
       - name: Checkout project
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Setup golang
         id: setup-go
-        uses: actions/setup-go@v2
+        uses: actions/setup-go@v3
         with:
           go-version: '^${{ matrix.golang-version }}'
 
@@ -104,7 +104,7 @@ jobs:
           - '22.8'
     steps:
       - name: Checkout project
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - uses: actions/download-artifact@v3
         with:
@@ -192,11 +192,11 @@ jobs:
           - '22.8'
     steps:
       - name: Checkout project
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Setup golang
         id: setup-go
-        uses: actions/setup-go@v2
+        uses: actions/setup-go@v3
         with:
           go-version: '^${{ matrix.golang-version }}'
 
@@ -266,7 +266,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout project
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - uses: actions/download-artifact@v3
         with:
