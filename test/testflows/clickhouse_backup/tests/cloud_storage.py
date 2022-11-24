@@ -49,9 +49,13 @@ def incremental_remote_storage(self):
             with And("I save table contents"):
                 contents_before = clickhouse.query(f"SELECT * FROM {table_name}").output.split('\n')
 
+        with And("I do create_remote --diff-from-remote"):
+            backup.cmd(f"clickhouse-backup create_remote --diff-from-remote={table_name}_1 {table_name}_2")
+
         with And("I do create_remote --diff-from"):
-            backup.cmd(f"clickhouse-backup create_remote --diff-from={table_name}_1 {table_name}_2")
-            time.sleep(10)
+            backup.cmd(f"clickhouse-backup create_remote --diff-from={table_name}_1 {table_name}_3")
+            backup.cmd(f"clickhouse-backup delete remote {table_name}_3")
+            backup.cmd(f"clickhouse-backup delete local {table_name}_3")
 
         with Then("I drop created table and local backups"):
             drop_table(node=clickhouse, table_name=table_name)
@@ -60,7 +64,6 @@ def incremental_remote_storage(self):
 
         with And("I restore table"):
             backup.cmd(f"clickhouse-backup restore_remote {table_name}_2")
-            time.sleep(10)
 
         with And("I expect table restored"):
             with By("I check table exists"):
