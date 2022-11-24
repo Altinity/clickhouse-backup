@@ -53,7 +53,7 @@ func (b *Backuper) ValidateWatchParams(watchInterval, fullInterval, watchBackupN
 	if watchBackupNameTemplate != "" {
 		b.cfg.General.WatchBackupNameTemplate = watchBackupNameTemplate
 	}
-	if b.cfg.General.FullDuration.Seconds() < b.cfg.General.WatchDuration.Seconds()*float64(b.cfg.General.BackupsToKeepRemote) {
+	if b.cfg.General.FullDuration.Seconds() > b.cfg.General.WatchDuration.Seconds()*float64(b.cfg.General.BackupsToKeepRemote) {
 		return fmt.Errorf("fullInterval `%s` is not enought to keep %d remote backups with watchInterval `%s`", b.cfg.General.FullInterval, b.cfg.General.BackupsToKeepRemote, b.cfg.General.WatchInterval)
 	}
 	return nil
