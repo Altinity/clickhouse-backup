@@ -250,7 +250,11 @@ func (api *APIServer) registerHTTPHandlers() *http.Server {
 
 func (api *APIServer) basicAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		api.log.Infof("API call %s %s", r.Method, r.URL.Path)
+		if r.URL.Path != "/metrics" {
+			api.log.Infof("API call %s %s", r.Method, r.URL.Path)
+		} else {
+			api.log.Debugf("API call %s %s", r.Method, r.URL.Path)
+		}
 		user, pass, _ := r.BasicAuth()
 		query := r.URL.Query()
 		if u, exist := query["user"]; exist {
