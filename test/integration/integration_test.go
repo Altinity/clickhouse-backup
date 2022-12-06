@@ -617,9 +617,10 @@ func TestIntegrationCustom(t *testing.T) {
 }
 
 func TestIntegrationEmbedded(t *testing.T) {
-	t.Skipf("Test skipped, wait 22.11, RESTORE MATERIALIZED VIEW and {uuid} not works for %s version, look https://github.com/ClickHouse/ClickHouse/issues/39416 and https://github.com/ClickHouse/ClickHouse/issues/42709", os.Getenv("CLICKHOUSE_VERSION"))
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.7") < 0 {
-		t.Skipf("Test skipped, BACKUP/RESTORE not available for %s version", os.Getenv("CLICKHOUSE_VERSION"))
+	t.Skipf("Test skipped, wait 23.01, RESTORE Ordinary table and RESTORE MATERIALIZED VIEW and {uuid} not works for %s version, look https://github.com/ClickHouse/ClickHouse/issues/43971 and https://github.com/ClickHouse/ClickHouse/issues/42709", os.Getenv("CLICKHOUSE_VERSION"))
+	version := os.Getenv("CLICKHOUSE_VERSION")
+	if version != "head" && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.7") < 0 {
+		t.Skipf("Test skipped, BACKUP/RESTORE not available for %s version", version)
 	}
 	r := require.New(t)
 	r.NoError(dockerCP("config-s3-embedded.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))

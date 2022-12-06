@@ -277,7 +277,7 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 				break
 			}
 		}
-		if ch.Config.UseEmbeddedBackupRestore && (strings.HasPrefix(t.Name, ".inner_id.") || strings.HasPrefix(t.Name, ".inner.")) {
+		if ch.Config.UseEmbeddedBackupRestore && (strings.HasPrefix(t.Name, ".inner_id.") /*|| strings.HasPrefix(t.Name, ".inner.")*/) {
 			t.Skip = true
 		}
 		if t.Skip {
