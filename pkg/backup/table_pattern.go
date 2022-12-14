@@ -151,6 +151,9 @@ var createRE = regexp.MustCompile(`(?m)^CREATE`)
 var attachRE = regexp.MustCompile(`(?m)^ATTACH`)
 var uuidRE = regexp.MustCompile(`UUID '[a-f\d\-]+'`)
 
+var replicatedRE = regexp.MustCompile(`(Replicated[a-zA-Z]*MergeTree)\('([^']+)'([^\)]+)\)`)
+var distributedRE = regexp.MustCompile(`(Distributed)\(([^,]+),([^,]+),([^)]+)\)`)
+
 func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRule map[string]string) error {
 	for i := 0; i < len(*originTables); i++ {
 		originTable := (*originTables)[i]
@@ -171,12 +174,32 @@ func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRu
 				return fmt.Errorf("error when try to replace database `%s` to `%s` in query: %s", originTable.Database, targetDB, originTable.Query)
 			}
 			originTable.Query = queryRE.ReplaceAllString(originTable.Query, substitution)
-			originTable.Database = targetDB
 			if len(uuidRE.FindAllString(originTable.Query, -1)) > 0 {
 				newUUID, _ := uuid.NewUUID()
 				substitution = fmt.Sprintf("UUID '%s'", newUUID.String())
 				originTable.Query = uuidRE.ReplaceAllString(originTable.Query, substitution)
 			}
+			// https://github.com/AlexAkulov/clickhouse-backup/issues/547
+			if replicatedRE.MatchString(originTable.Query) {
+				matches := replicatedRE.FindAllStringSubmatch(originTable.Query, -1)
+				originPath := matches[0][2]
+				dbReplicatedPattern := "/" + originTable.Database + "/"
+				if strings.Contains(originPath, dbReplicatedPattern) {
+					substitution = fmt.Sprintf("${1}('%s'${3})", strings.Replace(originPath, dbReplicatedPattern, "/"+targetDB+"/", 1))
+					originTable.Query = replicatedRE.ReplaceAllString(originTable.Query, substitution)
+				}
+			}
+			// https://github.com/AlexAkulov/clickhouse-backup/issues/547
+			if distributedRE.MatchString(originTable.Query) {
+				matches := distributedRE.FindAllStringSubmatch(originTable.Query, -1)
+				underlyingDB := matches[0][3]
+				underlyingDBClean := strings.NewReplacer(" ", "", "'", "").Replace(underlyingDB)
+				if underlyingTargetDB, isUnderlyingMapped := dbMapRule[underlyingDBClean]; isUnderlyingMapped {
+					substitution = fmt.Sprintf("${1}(${2},%s,${4})", strings.Replace(underlyingDB, underlyingDBClean, underlyingTargetDB, 1))
+					originTable.Query = distributedRE.ReplaceAllString(originTable.Query, substitution)
+				}
+			}
+			originTable.Database = targetDB
 			(*originTables)[i] = originTable
 		}
 	}

@@ -8,6 +8,7 @@ BUG FIXES
 - fix wrong `clean` command and API behavior, fix [533](https://github.com/AlexAkulov/clickhouse-backup/issues/533)
 - fix getMacro usage in Examples for backup / restore sharded cluster.
 - fix deletion files from S3 versioned bucket, fix [555](https://github.com/AlexAkulov/clickhouse-backup/issues/555)
+- fix `--restore-database-mapping` behavior for `ReplicatedMergeTree` (replace database name in replication path) and `Distributed` (replace database name in underlying table) tables, fix [547](https://github.com/AlexAkulov/clickhouse-backup/issues/547)
 
 # v2.1.2
 IMPROVEMENTS

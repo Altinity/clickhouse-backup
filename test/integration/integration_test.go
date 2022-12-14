@@ -686,14 +686,15 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 	fullCleanup(r, ch, []string{testBackupName}, []string{"local"}, databaseList, false)
 
 	ch.queryWithNoError(r, "CREATE DATABASE database1")
-	ch.queryWithNoError(r, "CREATE TABLE database1.t1 (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY dt")
+	ch.queryWithNoError(r, "CREATE TABLE database1.t1 (dt DateTime, v UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/database1/{table}','{replica}') PARTITION BY toYYYYMM(dt) ORDER BY dt")
+	ch.queryWithNoError(r, "CREATE TABLE database1.d1 AS database1.t1 ENGINE=Distributed('{cluster}',database1, t1)")
 	ch.queryWithNoError(r, "INSERT INTO database1.t1 SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
 
 	log.Info("Create backup")
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", testBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--restore-database-mapping", "database1:database2", testBackupName))
 
-	ch.queryWithNoError(r, "INSERT INTO database1.t1 SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
+	ch.queryWithNoError(r, "INSERT INTO database1.t1 SELECT '2023-01-01 00:00:00', number FROM numbers(10)")
 
 	log.Info("Check result")
 	result := make([]int, 0)
@@ -701,8 +702,16 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 	r.Equal(1, len(result), "expect one row")
 	r.Equal(10, result[0], "expect count=10")
 
+	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM database2.d1"))
+	r.Equal(1, len(result), "expect one row")
+	r.Equal(10, result[0], "expect count=10")
+
 	result = make([]int, 0)
 	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM database1.t1"))
+	r.Equal(1, len(result), "expect one row")
+	r.Equal(20, result[0], "expect count=20")
+
+	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM database1.d1"))
 	r.Equal(1, len(result), "expect one row")
 	r.Equal(20, result[0], "expect count=20")
 
