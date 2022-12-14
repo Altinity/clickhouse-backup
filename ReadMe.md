@@ -112,7 +112,7 @@ general:
   download_by_part: true         # DOWNLOAD_BY_PART
   restore_database_mapping: {}   # RESTORE_DATABASE_MAPPING, restore rules from backup databases to target databases, which is useful on change destination database all atomic tables will create with new uuid.
   retries_on_failure: 3          # RETRIES_ON_FAILURE, retry if failure during upload or download
-  retries_pause: 100ms           # RETRIES_PAUSE, time duration pause after each download or upload fail 
+  retries_pause: 30s             # RETRIES_PAUSE, time duration pause after each download or upload fail 
 clickhouse:
   username: default                # CLICKHOUSE_USERNAME
   password: ""                     # CLICKHOUSE_PASSWORD

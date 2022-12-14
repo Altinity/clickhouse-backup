@@ -1,4 +1,7 @@
 # v2.1.3
+IMPROVEMENTS
+- during upload sort tables descending by `total_bytes` if this field present 
+
 BUG FIXES
 - fix `--watch-backup-name-template` command line parsing, overridden after config reload, fix [548](https://github.com/AlexAkulov/clickhouse-backup/issues/548)
 - fix wrong regexp, when `restore_schema_on_cluster: cluster_name`, fix [552](https://github.com/AlexAkulov/clickhouse-backup/issues/552)

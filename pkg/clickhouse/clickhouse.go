@@ -342,6 +342,10 @@ func (ch *ClickHouse) prepareAllTablesSQL(ctx context.Context, tablePattern stri
 	if len(skipDatabases) > 0 {
 		allTablesSQL += fmt.Sprintf(" AND database NOT IN ('%s')", strings.Join(skipDatabases, "','"))
 	}
+	// try to upload big tables first
+	if len(isSystemTablesFieldPresent) > 0 && isSystemTablesFieldPresent[0].IsTotalBytesPresent > 0 {
+		allTablesSQL += " ORDER BY total_bytes DESC"
+	}
 	if len(isUUIDPresent) > 0 && isUUIDPresent[0] > 0 {
 		allTablesSQL += " SETTINGS show_table_uuid_in_table_create_query_if_not_nil=1"
 	}

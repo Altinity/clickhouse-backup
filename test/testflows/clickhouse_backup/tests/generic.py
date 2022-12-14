@@ -195,10 +195,10 @@ def restore_one_replica(self):
             with And("I create a replica for created table and populate"):
                 create_and_populate_table(node=clickhouse2, table_name=name_prefix,
                              columns=self.context.columns, engine="ReplicatedMergeTree")
-                inserted_data = clickhouse1.query(f"SELECT * FROM {name_prefix}").output
 
             with And("Wait when data replicate"):
                 time.sleep(5)
+                inserted_data = clickhouse1.query(f"SELECT * FROM {name_prefix}").output
 
         with When("I create backup"):
             backup.cmd(f"clickhouse-backup create --tables=default.{name_prefix} {name_prefix}")
