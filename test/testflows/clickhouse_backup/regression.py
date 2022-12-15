@@ -19,7 +19,7 @@ from clickhouse_backup.tests.common import simple_data_types_columns
 
 xfails = {
     "/clickhouse backup/other engines/materializedpostgresql/:": [
-        (Fail, "https://github.com/ClickHouse/ClickHouse/issues/32902")
+        (Fail, "https://github.com/ClickHouse/ClickHouse/issues/32902, https://github.com/ClickHouse/ClickHouse/issues/44250")
     ],
     "/clickhouse backup/other engines/materializedmysql/:": [
         (Fail, "DROP TABLE not supported by MaterializedMySQL, just attach will not help")

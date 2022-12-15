@@ -31,6 +31,7 @@ import (
 const dbNameAtomic = "_test.ДБ_atomic_"
 const dbNameOrdinary = "_test.ДБ_ordinary_"
 const dbNameMySQL = "mysql_db"
+const dbNamePostgreSQL = "pgsql_db"
 const Issue331Atomic = "_issue331._atomic_"
 const Issue331Ordinary = "_issue331.ordinary_"
 
@@ -276,6 +277,10 @@ var testData = []TestDataStruct{
 	},
 	{
 		Database: dbNameMySQL, DatabaseEngine: "MySQL('mysql:3306','mysql','root','root')",
+		CheckDatabaseOnly: true,
+	},
+	{
+		Database: dbNamePostgreSQL, DatabaseEngine: "PostgreSQL('pgsql:5432','postgres','root','root')",
 		CheckDatabaseOnly: true,
 	},
 	{
@@ -686,7 +691,7 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 	fullCleanup(r, ch, []string{testBackupName}, []string{"local"}, databaseList, false)
 
 	ch.queryWithNoError(r, "CREATE DATABASE database1")
-	ch.queryWithNoError(r, "CREATE TABLE database1.t1 (dt DateTime, v UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/database1/{table}','{replica}') PARTITION BY toYYYYMM(dt) ORDER BY dt")
+	ch.queryWithNoError(r, "CREATE TABLE database1.t1 (dt DateTime, v UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/database1/t1','{replica}') PARTITION BY toYYYYMM(dt) ORDER BY dt")
 	ch.queryWithNoError(r, "CREATE TABLE database1.d1 AS database1.t1 ENGINE=Distributed('{cluster}',database1, t1)")
 	ch.queryWithNoError(r, "INSERT INTO database1.t1 SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
 
@@ -702,6 +707,7 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 	r.Equal(1, len(result), "expect one row")
 	r.Equal(10, result[0], "expect count=10")
 
+	result = make([]int, 0)
 	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM database2.d1"))
 	r.Equal(1, len(result), "expect one row")
 	r.Equal(10, result[0], "expect count=10")
@@ -711,11 +717,77 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 	r.Equal(1, len(result), "expect one row")
 	r.Equal(20, result[0], "expect count=20")
 
+	result = make([]int, 0)
 	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM database1.d1"))
 	r.Equal(1, len(result), "expect one row")
 	r.Equal(20, result[0], "expect count=20")
 
 	fullCleanup(r, ch, []string{testBackupName}, []string{"local"}, databaseList, true)
+}
+
+func TestMySQLMaterialized(t *testing.T) {
+	t.Skipf("Wait when fix DROP TABLE not supported by MaterializedMySQL, just attach will not help")
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.12") == -1 {
+		t.Skipf("MaterializedMySQL doens't support for clickhouse version %s", os.Getenv("CLICKHOUSE_VERSION"))
+	}
+	r := require.New(t)
+	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	r.NoError(dockerExec("mysql", "mysql", "-u", "root", "--password=root", "-v", "-e", "CREATE DATABASE ch_mysql_repl"))
+	ch := &TestClickHouse{}
+	ch.connectWithWait(r, 500*time.Millisecond)
+	defer ch.chbackend.Close()
+	engine := "MaterializedMySQL"
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.9") == -1 {
+		engine = "MaterializeMySQL"
+	}
+	ch.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE ch_mysql_repl ENGINE=%s('mysql:3306','ch_mysql_repl','root','root')", engine))
+	r.NoError(dockerExec("mysql", "mysql", "-u", "root", "--password=root", "-v", "-e", "CREATE TABLE ch_mysql_repl.t1 (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, s VARCHAR(255)); INSERT INTO ch_mysql_repl.t1(s) VALUES('s1'),('s2'),('s3')"))
+	time.Sleep(1 * time.Second)
+
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "test_mysql_materialized"))
+	ch.queryWithNoError(r, "DROP DATABASE ch_mysql_repl")
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "test_mysql_materialized"))
+
+	result := make([]int, 0)
+	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM ch_mysql_repl.t1"))
+	r.Equal(1, len(result), "expect one row")
+	r.Equal(3, result[0], "expect count=3")
+
+	ch.queryWithNoError(r, "DROP DATABASE ch_mysql_repl")
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_mysql_materialized"))
+}
+
+func TestPostgreSQLMaterialized(t *testing.T) {
+	t.Skipf("Wait when fix https://github.com/ClickHouse/ClickHouse/issues/44250")
+
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.11") == -1 {
+		t.Skipf("MaterializedPostgreSQL doens't support for clickhouse version %s", os.Getenv("CLICKHOUSE_VERSION"))
+	}
+	r := require.New(t)
+	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	r.NoError(dockerExec("pgsql", "bash", "-ce", "echo 'CREATE DATABASE ch_pgsql_repl' | PGPASSWORD=root psql -v ON_ERROR_STOP=1 -U root"))
+	r.NoError(dockerExec("pgsql", "bash", "-ce", "echo \"CREATE TABLE t1 (id BIGINT PRIMARY KEY, s VARCHAR(255)); INSERT INTO t1(id, s) VALUES(1,'s1'),(2,'s2'),(3,'s3')\" | PGPASSWORD=root psql -v ON_ERROR_STOP=1 -U root -d ch_pgsql_repl"))
+	ch := &TestClickHouse{}
+	ch.connectWithWait(r, 500*time.Millisecond)
+	defer ch.chbackend.Close()
+
+	ch.queryWithNoError(r,
+		"CREATE DATABASE ch_pgsql_repl ENGINE=MaterializedPostgreSQL('pgsql:5432','ch_pgsql_repl','root','root') "+
+			"SETTINGS materialized_postgresql_allow_automatic_update = 1, materialized_postgresql_schema = 'public'",
+	)
+	time.Sleep(1 * time.Second)
+
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "test_pgsql_materialized"))
+	ch.queryWithNoError(r, "DROP DATABASE ch_pgsql_repl")
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "test_pgsql_materialized"))
+
+	result := make([]int, 0)
+	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM ch_pgsql_repl.t1"))
+	r.Equal(1, len(result), "expect one row")
+	r.Equal(3, result[0], "expect count=3")
+
+	ch.queryWithNoError(r, "DROP DATABASE ch_pgsql_repl")
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_pgsql_materialized"))
 }
 
 func uploadSSHKeys(r *require.Assertions) {
@@ -745,7 +817,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 	// main test scenario
 	testBackupName := fmt.Sprintf("test_backup_%d", rand.Int())
 	incrementBackupName := fmt.Sprintf("increment_%d", rand.Int())
-	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, Issue331Atomic, Issue331Ordinary}
+	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Atomic, Issue331Ordinary}
 
 	log.Info("Clean before start")
 	fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, []string{"remote", "local"}, databaseList, false)
@@ -1126,7 +1198,7 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		backupNames[i] = fmt.Sprintf("keep_remote_backup_%d", i)
 	}
-	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, Issue331Atomic, Issue331Ordinary}
+	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Atomic, Issue331Ordinary}
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	fullCleanup(r, ch, backupNames, []string{"remote", "local"}, databaseList, false)
 	generateTestData(ch, r)
@@ -1173,7 +1245,7 @@ func TestS3NoDeletePermission(t *testing.T) {
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", "no_delete_backup"))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "no_delete_backup"))
 	r.Error(dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", "no_delete_backup"))
-	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, Issue331Atomic, Issue331Ordinary}
+	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Atomic, Issue331Ordinary}
 	dropDatabasesFromTestDataDataSet(r, ch, databaseList)
 	r.NoError(dockerExec("minio", "bash", "-ce", "rm -rf /data/clickhouse/*"))
 }
@@ -1816,6 +1888,15 @@ func isTableSkip(ch *TestClickHouse, data TestDataStruct, dataExists bool) bool 
 }
 
 func compareVersion(v1, v2 string) int {
+	if v2 == "head" && v1 == "head" {
+		return 0
+	}
+	if v1 == "head" {
+		return 1
+	}
+	if v2 == "head" {
+		return -1
+	}
 	v1 = "v" + v1
 	v2 = "v" + v2
 	if strings.Count(v1, ".") > 2 {

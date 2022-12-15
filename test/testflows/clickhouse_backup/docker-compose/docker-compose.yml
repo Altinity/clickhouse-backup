@@ -91,7 +91,7 @@ services:
       retries: 10
 
   postgres:
-    image: postgres:14.1
+    image: postgres:${PGSQL_VERSION:-latest}
     hostname: postgres
     environment:
       - POSTGRES_PASSWORD=qwerty

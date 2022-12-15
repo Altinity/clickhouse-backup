@@ -248,47 +248,48 @@ def materializedmysql(self):
 def materializedpostgresql(self):
     """Test that a MaterializedPostgreSQL can be backed up and restored.
     """
-    xfail("skipping this test for now")
+    # xfail("skipping this test for now")
     clickhouse = self.context.nodes[0]
     backup = self.context.backup
     postgres = self.context.postgres
     backup_name = "backup_psql"
 
     try:
-        with Given("I create database and table in MySQL"):
-            postgres.cmd(f"psql -Utest -c \"CREATE DATABASE mydb;\"")
+        with Given("I create database and table in PostgreSQL"):
+            postgres.cmd(f"psql -Utest -c \"CREATE DATABASE pgdb;\"")
             postgres.cmd(
-                f"psql -Utest --dbname=mydb -c \"CREATE TABLE MyTable (id INTEGER PRIMARY KEY, name VARCHAR(10));\""
+                f"psql -Utest --dbname=pgdb -c \"CREATE TABLE pg_table (id INTEGER PRIMARY KEY, name VARCHAR(10));\""
             )
             for i in range(10):
                 random_value = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
-                postgres.cmd(f"psql -Utest --dbname=mydb -c \"INSERT INTO MyTable (id, name) VALUES ({i}, '{random_value}');\"")
-            debug(postgres.cmd(f"psql -Utest --dbname=mydb -c \"select * from MyTable\"").output)
-            time.sleep(10)
+                postgres.cmd(f"psql -Utest --dbname=pgdb -c \"INSERT INTO pg_table (id, name) VALUES ({i}, '{random_value}');\"")
+            debug(postgres.cmd(f"psql -Utest --dbname=pgdb -c \"select * from pg_table\"").output)
 
         with And("I create MaterializedPostgreSQL"):
             clickhouse.query(
-                f"CREATE DATABASE psql ENGINE = MaterializedPostgreSQL('postgres:5432', 'mydb', 'test', 'qwerty')"
+                "CREATE DATABASE psql ENGINE = MaterializedPostgreSQL('postgres:5432', 'pgdb', 'test', 'qwerty') "
+                # "SETTINGS materialized_postgresql_allow_automatic_update = 1, materialized_postgresql_schema = 'public'"
             )
+            time.sleep(3)
             debug(clickhouse.query("SHOW TABLES FROM psql").output)
             debug(backup.cmd("clickhouse-backup tables").output)
-            table_contents = clickhouse.query("SELECT * FROM psql.my_table").output.split('\n')[:-1]
+            table_contents = clickhouse.query("SELECT * FROM psql.pg_table").output.split('\n')[:-1]
 
         with When(f"I create backup"):
-            backup.cmd(f"clickhouse-backup create --tables=psql.my_table {backup_name}")
+            backup.cmd(f"clickhouse-backup create --tables=psql.pg_table {backup_name}")
 
         with And("I modify original table"):
-            postgres.cmd(f"psql -Utest --dbname=mydb -c \"DELETE FROM my_table WHERE id<3;\"")
-            drop_table(node=clickhouse, database="psql", table_name="my_table")
+            postgres.cmd(f"psql -Utest --dbname=pgdb -c \"DELETE FROM pg_table WHERE id<3;\"")
+            drop_table(node=clickhouse, database="psql", table_name="pg_table")
 
         with And("restore table"):
-            backup.cmd(f"clickhouse-backup restore --tables=psql.my_table {backup_name}")
+            backup.cmd(f"clickhouse-backup restore --tables=psql.pg_table {backup_name}")
 
         with Then("expect table restored"):
             r = clickhouse.query("SHOW TABLES FROM psql").output
-            assert "my_table" in r, error()
+            assert "pg_table" in r, error()
 
-            restored = clickhouse.query("SELECT * FROM psql.my_table").output.split('\n')
+            restored = clickhouse.query("SELECT * FROM psql.pg_table").output.split('\n')
             for row in table_contents:
                 assert row in restored, error()
 
@@ -297,7 +298,7 @@ def materializedpostgresql(self):
             backup.cmd(f"clickhouse-backup delete local {backup_name}")
 
         with And("I drop database"):
-            clickhouse.query("DROP DATABASE IF EXISTS psql")
+            clickhouse.query("DROP DATABASE IF EXISTS psql SYNC")
 
 
 @TestFeature

@@ -9,6 +9,7 @@ BUG FIXES
 - fix getMacro usage in Examples for backup / restore sharded cluster.
 - fix deletion files from S3 versioned bucket, fix [555](https://github.com/AlexAkulov/clickhouse-backup/issues/555)
 - fix `--restore-database-mapping` behavior for `ReplicatedMergeTree` (replace database name in replication path) and `Distributed` (replace database name in underlying table) tables, fix [547](https://github.com/AlexAkulov/clickhouse-backup/issues/547)
+- `MaterializedPostgreSQL` doesn't support FREEZE, fix [550](https://github.com/AlexAkulov/clickhouse-backup/issues/550), see also https://github.com/ClickHouse/ClickHouse/issues/32902, https://github.com/ClickHouse/ClickHouse/issues/44252
 
 # v2.1.2
 IMPROVEMENTS

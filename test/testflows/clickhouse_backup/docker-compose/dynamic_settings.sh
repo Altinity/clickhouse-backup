@@ -13,3 +13,23 @@ cat <<EOT > /etc/clickhouse-server/users.d/allow_deprecated_database_ordinary.xm
 EOT
 
 fi
+
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[3-9]|^2[3-9]\. ]]; then
+
+cat <<EOT > /etc/clickhouse-server/users.d/allow_experimental_database_materialized_postgresql.xml
+<yandex>
+<profiles><default>
+ <allow_experimental_database_materialized_postgresql>1</allow_experimental_database_materialized_postgresql>
+</default></profiles>
+</yandex>
+EOT
+
+cat <<EOT > /etc/clickhouse-server/users.d/allow_experimental_database_materialized_mysql.xml
+<yandex>
+<profiles><default>
+ <allow_experimental_database_materialized_mysql>1</allow_experimental_database_materialized_mysql>
+</default></profiles>
+</yandex>
+EOT
+
+fi

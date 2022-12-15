@@ -260,7 +260,8 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 		return nil, err
 	}
 	skipDatabases := make([]string, 0)
-	if err = ch.SelectContext(ctx, &skipDatabases, "SELECT name FROM system.databases WHERE engine IN ('MySQL','PostgreSQL')"); err != nil {
+	// MaterializedPostgreSQL doesn't support FREEZE look https://github.com/AlexAkulov/clickhouse-backup/issues/550
+	if err = ch.SelectContext(ctx, &skipDatabases, "SELECT name FROM system.databases WHERE engine IN ('MySQL','PostgreSQL','MaterializedPostgreSQL')"); err != nil {
 		return nil, err
 	}
 	allTablesSQL, err := ch.prepareAllTablesSQL(ctx, tablePattern, err, skipDatabases, isUUIDPresent)
