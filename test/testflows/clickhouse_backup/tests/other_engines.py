@@ -199,7 +199,7 @@ def materializedmysql(self):
     backup = self.context.backup
     mysql = self.context.mysql
     backup_name = "backup_mysql"
-
+    table_contents = []
     try:
         with Given("I create database and table in MySQL"):
             mysql.cmd(f"mysql -uroot -pqwerty -e \"CREATE DATABASE mydb\"")
