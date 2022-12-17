@@ -207,7 +207,7 @@ EOT
 
 fi
 
-if [[ "${CLICKHOUSE_VERSION}" =~ ^21\.[3-9] || ]"${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] ]; then
+if [[ "${CLICKHOUSE_VERSION}" =~ ^21\.[3-9] || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] ]]; then
 cat <<EOT > /etc/clickhouse-server/users.d/allow_experimental_database_materialize_mysql.xml
 <yandex>
 <profiles><default>
