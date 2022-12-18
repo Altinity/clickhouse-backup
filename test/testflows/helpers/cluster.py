@@ -549,7 +549,7 @@ class Cluster(object):
         shell.timeout = timeout
         return shell
 
-    def bash(self, node, timeout=300, command="bash --noediting"):
+    def bash(self, node, timeout=600, command="bash --noediting"):
         """Returns thread-local bash terminal
         to a specific node.
         :param command:
