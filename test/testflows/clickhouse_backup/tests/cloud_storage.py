@@ -71,7 +71,7 @@ def incremental_remote_storage(self):
                 assert table_name in r, error()
 
             with And("I check table contents are restored"):
-                contents_after = clickhouse.query(f"SELECT * FROM {table_name}").output.split('\n')
+                contents_after = clickhouse.query(f"SELECT * FROM {table_name} ORDER BY OrderBy").output.split('\n')
 
                 for line in contents_after:
                     assert line in contents_before, error()
