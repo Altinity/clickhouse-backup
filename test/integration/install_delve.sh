@@ -22,7 +22,7 @@ CGO_ENABLED=0 GO111MODULE=on go install -ldflags "-s -w -extldflags '-static'" g
 # /root/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /bin/clickhouse-backup -- download test_rbac_backup
 # /root/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /bin/clickhouse-backup -- download keep_remote_backup_4
 # /root/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /bin/clickhouse-backup -- server
-
+# /root/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /bin/clickhouse-backup -- restore --schema test_backup_8007633179464680930
 
 # run integration_test.go under debug, run from host OS not inside docker
 # go test -timeout 30m -failfast -tags=integration -run "TestIntegrationEmbedded" -v ./test/integration/integration_test.go -c -o ./test/integration/integration_test
