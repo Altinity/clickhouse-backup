@@ -212,7 +212,7 @@ services:
         condition: service_healthy
 
   rabbitmq:
-    image: rabbitmq:3.9.13-alpine
+    image: docker.io/rabbitmq:alpine
     hostname: rabbitmq
     environment:
       - RABBITMQ_DEFAULT_USER=test

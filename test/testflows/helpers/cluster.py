@@ -366,7 +366,7 @@ class ClickHouseNode(Node):
                     except ExpectTimeoutError:
                         self.cluster.close_bash(None)
         else:
-            command = f"echo -e \"{sql}\" | {client}"
+            command = f"{client} -q \"{sql}\""
             for setting in query_settings:
                 setting_name, setting_value = setting
                 command += f" --{setting_name} \"{setting_value}\""
