@@ -573,6 +573,12 @@ func TestIntegrationSFTPAuthPassword(t *testing.T) {
 	runMainIntegrationScenario(t, "SFTP")
 }
 
+func TestIntegrationFTP(t *testing.T) {
+	r := require.New(t)
+	r.NoError(dockerCP("config-ftp.yaml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	runMainIntegrationScenario(t, "FTP")
+}
+
 func TestIntegrationSFTPAuthKey(t *testing.T) {
 	r := require.New(t)
 	r.NoError(dockerCP("config-sftp-auth-key.yaml", "clickhouse:/etc/clickhouse-backup/config.yml"))
@@ -580,12 +586,6 @@ func TestIntegrationSFTPAuthKey(t *testing.T) {
 	uploadSSHKeys(r)
 
 	runMainIntegrationScenario(t, "SFTP")
-}
-
-func TestIntegrationFTP(t *testing.T) {
-	r := require.New(t)
-	r.NoError(dockerCP("config-ftp.yaml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	runMainIntegrationScenario(t, "FTP")
 }
 
 func TestIntegrationCustom(t *testing.T) {
@@ -1875,6 +1875,9 @@ func toTS(s string) time.Time {
 }
 
 func isTableSkip(ch *TestClickHouse, data TestDataStruct, dataExists bool) bool {
+	if strings.Contains(data.DatabaseEngine, "PostgreSQL") && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") <= 0 {
+		return true
+	}
 	if data.IsDictionary && os.Getenv("COMPOSE_FILE") != "docker-compose.yml" && dataExists {
 		var dictEngines []string
 		dictSQL := fmt.Sprintf(
