@@ -378,13 +378,13 @@ spec:
 
 ## How do incremental backups work to remote storage
 - Incremental backup calculate increment only during execute `upload` or `create_remote` command or similar REST API request.
-- Currently, incremental backup calculate increment only on table parts level, look to ClicHouse documentation to fill the difference between [data parts](https://clickhouse.tech/docs/en/operations/system-tables/parts/) and [table partitions](https://clickhouse.tech/docs/en/operations/system-tables/partitions/).  
+- Currently, incremental backup calculate increment only on table parts level, look to ClickHouse documentation to fill the difference between [data parts](https://clickhouse.tech/docs/en/operations/system-tables/parts/) and [table partitions](https://clickhouse.tech/docs/en/operations/system-tables/partitions/).  
 - To calculate increment, backup which listed on `--diff-from` parameter is required to be present as local backup, look to `clickhouse-backup list` command results for ensure.
 - Currently, during execute `clickhouse-backup upload --diff-from=base_backup` don't check `base_backup` exits on remote storage, be careful.
 - During upload operation `base_backup` added to current backup metadata as required. All data parts which exists in `base_backup` also mark in backup metadata table level with `required` flag and skip data uploading. 
 - During download, if backup contains link to `required` backup it will try to fully download first. This action apply recursively. If you have a chain of incremental backups, all incremental backups in the chain and first "full" will download to local storage. 
 - Size of increment depends not only on the intensity your data ingestion and also depends on the intensity background merges for data parts in your tables. Please increase how much rows you will ingest during one INSERT query and don't apply often [table data mutations](https://clickhouse.tech/docs/en/operations/system-tables/mutations/).
-- Look to [ClicHouse documentation](https://clickhouse.tech/docs/en/engines/table-engines/mergetree-family/mergetree/) and try to understand how exactly `*MergeTree` table engine works.
+- Look to [ClickHouse documentation](https://clickhouse.tech/docs/en/engines/table-engines/mergetree-family/mergetree/) and try to understand how exactly `*MergeTree` table engine works.
 
 ## How to work `watch` command
 Current implementation simple and will improve in next releases

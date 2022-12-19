@@ -421,10 +421,8 @@ func (b *Backuper) createConfigBackup(ctx context.Context, backupPath string) (u
 		configBackupPath := path.Join(backupPath, "configs")
 		log.Debugf("copy %s -> %s", b.cfg.ClickHouse.ConfigDir, configBackupPath)
 		copyErr := recursiveCopy.Copy(b.cfg.ClickHouse.ConfigDir, configBackupPath, recursiveCopy.Options{
-			Skip: func(src string) (bool, error) {
-				if fileInfo, err := os.Stat(src); err == nil {
-					backupConfigSize += uint64(fileInfo.Size())
-				}
+			Skip: func(srcinfo os.FileInfo, src, dest string) (bool, error) {
+				backupConfigSize += uint64(srcinfo.Size())
 				return false, nil
 			},
 		})
@@ -446,10 +444,8 @@ func (b *Backuper) createRBACBackup(ctx context.Context, backupPath string, disk
 		}
 		log.Debugf("copy %s -> %s", accessPath, rbacBackup)
 		copyErr := recursiveCopy.Copy(accessPath, rbacBackup, recursiveCopy.Options{
-			Skip: func(src string) (bool, error) {
-				if fileInfo, err := os.Stat(src); err == nil {
-					rbacDataSize += uint64(fileInfo.Size())
-				}
+			Skip: func(srcinfo os.FileInfo, src, dest string) (bool, error) {
+				rbacDataSize += uint64(srcinfo.Size())
 				return false, nil
 			},
 		})
