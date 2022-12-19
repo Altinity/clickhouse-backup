@@ -330,3 +330,31 @@ func IsInformationSchema(database string) bool {
 	}
 	return false
 }
+
+func ShallSkipDatabase(cfg *config.Config, targetDB, tablePattern string) bool {
+	if tablePattern != "" {
+		var bypassTablePatterns []string
+		bypassTablePatterns = append(bypassTablePatterns, strings.Split(tablePattern, ",")...)
+		for _, pattern := range bypassTablePatterns {
+			pattern = strings.Trim(pattern, " \r\t\n")
+			apexLog.Debugf("SUKA!!! pattern=%s targetDB=%s", pattern, targetDB)
+			if strings.HasSuffix(pattern, ".*") && strings.TrimSuffix(pattern, ".*") == targetDB {
+				return false
+			}
+		}
+		return true
+	}
+
+	if len(cfg.ClickHouse.SkipTables) > 0 {
+		var skipTablesPatterns []string
+		skipTablesPatterns = append(skipTablesPatterns, cfg.ClickHouse.SkipTables...)
+		for _, pattern := range skipTablesPatterns {
+			pattern = strings.Trim(pattern, " \r\t\n")
+			apexLog.Debugf("SUKA2!!! pattern=%s targetDB=%s", pattern, targetDB)
+			if strings.HasSuffix(pattern, ".*") && strings.TrimSuffix(pattern, ".*") == targetDB {
+				return true
+			}
+		}
+	}
+	return false
+}

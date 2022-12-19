@@ -92,7 +92,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 			for _, database := range backupMetadata.Databases {
 				targetDB := database.Name
 				if !IsInformationSchema(targetDB) {
-					if err = b.restoreEmptyDatabase(ctx, targetDB, database, dropTable, schemaOnly); err != nil {
+					if err = b.restoreEmptyDatabase(ctx, targetDB, tablePattern, database, dropTable, schemaOnly); err != nil {
 						return err
 					}
 				}
@@ -160,10 +160,14 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 	return nil
 }
 
-func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB string, database metadata.DatabasesMeta, dropTable, schemaOnly bool) error {
+func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB, tablePattern string, database metadata.DatabasesMeta, dropTable, schemaOnly bool) error {
 	isMapped := false
 	if targetDB, isMapped = b.cfg.General.RestoreDatabaseMapping[database.Name]; !isMapped {
 		targetDB = database.Name
+	}
+	// https://github.com/AlexAkulov/clickhouse-backup/issues/583
+	if ShallSkipDatabase(b.cfg, targetDB, tablePattern) {
+		return nil
 	}
 	//https://github.com/AlexAkulov/clickhouse-backup/issues/514
 	if schemaOnly && dropTable {

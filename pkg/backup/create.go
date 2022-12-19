@@ -98,7 +98,7 @@ func (b *Backuper) CreateBackup(backupName, tablePattern string, partitions []st
 	}
 	defer b.ch.Close()
 
-	allDatabases, err := b.ch.GetDatabases(ctx)
+	allDatabases, err := b.ch.GetDatabases(ctx, b.cfg, tablePattern)
 	if err != nil {
 		return fmt.Errorf("can't get database engines from clickhouse: %v", err)
 	}

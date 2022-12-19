@@ -354,15 +354,39 @@ func (ch *ClickHouse) prepareAllTablesSQL(ctx context.Context, tablePattern stri
 }
 
 // GetDatabases - return slice of all non system databases for backup
-func (ch *ClickHouse) GetDatabases(ctx context.Context) ([]Database, error) {
+func (ch *ClickHouse) GetDatabases(ctx context.Context, cfg *config.Config, tablePattern string) ([]Database, error) {
 	allDatabases := make([]Database, 0)
-	allDatabasesSQL := "SELECT name, engine FROM system.databases WHERE name NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema', '_temporary_and_external_tables')"
+	skipDatabases := []string{"system", "INFORMATION_SCHEMA", "information_schema", "_temporary_and_external_tables"}
+	bypassDatabases := make([]string, 0)
+	var skipTablesPatterns, bypassTablesPatterns []string
+	skipTablesPatterns = append(skipTablesPatterns, cfg.ClickHouse.SkipTables...)
+	bypassTablesPatterns = append(bypassTablesPatterns, strings.Split(tablePattern, ",")...)
+	for _, pattern := range skipTablesPatterns {
+		pattern = strings.Trim(pattern, " \r\t\n")
+		if strings.HasSuffix(pattern, ".*") {
+			skipDatabases = append(skipDatabases, strings.TrimSuffix(pattern, ".*"))
+		}
+	}
+	for _, pattern := range bypassTablesPatterns {
+		pattern = strings.Trim(pattern, " \r\t\n")
+		if strings.HasSuffix(pattern, ".*") {
+			bypassDatabases = append(bypassDatabases, strings.TrimSuffix(pattern, ".*"))
+		}
+	}
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
-		if err := ch.StructSelect(&allDatabases, allDatabasesSQL); err != nil {
-			return nil, err
+		if len(bypassDatabases) > 0 {
+			allDatabasesSQL := "SELECT name, engine FROM system.databases WHERE name NOT IN (?) AND name IN (?)"
+			if err := ch.StructSelect(&allDatabases, allDatabasesSQL, skipDatabases, bypassDatabases); err != nil {
+				return nil, err
+			}
+		} else {
+			allDatabasesSQL := "SELECT name, engine FROM system.databases WHERE name NOT IN (?)"
+			if err := ch.StructSelect(&allDatabases, allDatabasesSQL, skipDatabases); err != nil {
+				return nil, err
+			}
 		}
 	}
 	for i, db := range allDatabases {

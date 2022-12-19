@@ -1052,29 +1052,56 @@ func TestTablePatterns(t *testing.T) {
 
 	testBackupName := "test_backup_patterns"
 	databaseList := []string{dbNameOrdinary, dbNameAtomic}
-	fullCleanup(r, ch, []string{testBackupName}, []string{"remote", "local"}, databaseList, false)
-	generateTestData(ch, r)
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables", " "+dbNameOrdinary+".*", testBackupName))
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
-	dropDatabasesFromTestDataDataSet(r, ch, databaseList)
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", "--tables", " "+dbNameOrdinary+".*", testBackupName))
+	for _, createPattern := range []bool{true, false} {
+		for _, restorePattern := range []bool{true, false} {
+			fullCleanup(r, ch, []string{testBackupName}, []string{"remote", "local"}, databaseList, false)
+			generateTestData(ch, r)
+			if createPattern {
+				r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables", " "+dbNameOrdinary+".*", testBackupName))
+			} else {
+				r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", testBackupName))
+			}
 
-	var restoredTables []uint64
-	r.NoError(ch.chbackend.Select(&restoredTables, fmt.Sprintf("SELECT count() FROM system.tables WHERE database='%s'", dbNameOrdinary)))
-	r.NotZero(len(restoredTables))
-	r.NotZero(restoredTables[0])
+			r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
+			dropDatabasesFromTestDataDataSet(r, ch, databaseList)
+			if restorePattern {
+				r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", "--tables", " "+dbNameOrdinary+".*", testBackupName))
+			} else {
+				r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", testBackupName))
+			}
 
-	restoredTables = make([]uint64, 0)
-	r.NoError(ch.chbackend.Select(&restoredTables, fmt.Sprintf("SELECT count() FROM system.tables WHERE database='%s'", dbNameAtomic)))
-	// old versions of clickhouse will return empty recordset
-	if len(restoredTables) > 0 {
-		r.Zero(restoredTables[0])
+			var restored []uint64
+			r.NoError(ch.chbackend.Select(&restored, fmt.Sprintf("SELECT count() FROM system.tables WHERE database='%s'", dbNameOrdinary)))
+			r.NotZero(len(restored))
+			r.NotZero(restored[0])
+
+			if createPattern || restorePattern {
+				restored = make([]uint64, 0)
+				r.NoError(ch.chbackend.Select(&restored, fmt.Sprintf("SELECT count() FROM system.tables WHERE database='%s'", dbNameAtomic)))
+				// old versions of clickhouse will return empty recordset
+				if len(restored) > 0 {
+					r.Zero(restored[0])
+				}
+
+				restored = make([]uint64, 0)
+				r.NoError(ch.chbackend.Select(&restored, fmt.Sprintf("SELECT count() FROM system.databases WHERE name='%s'", dbNameAtomic)))
+				// old versions of clickhouse will return empty recordset
+				if len(restored) > 0 {
+					r.Zero(restored[0])
+				}
+			} else {
+				restored = make([]uint64, 0)
+				r.NoError(ch.chbackend.Select(&restored, fmt.Sprintf("SELECT count() FROM system.tables WHERE database='%s'", dbNameAtomic)))
+				r.NotZero(len(restored))
+				r.NotZero(restored[0])
+			}
+
+			fullCleanup(r, ch, []string{testBackupName}, []string{"remote", "local"}, databaseList, true)
+
+		}
 	}
-
-	fullCleanup(r, ch, []string{testBackupName}, []string{"remote", "local"}, databaseList, true)
-
 }
 
 func TestSkipNotExistsTable(t *testing.T) {
