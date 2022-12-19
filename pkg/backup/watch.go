@@ -53,8 +53,8 @@ func (b *Backuper) ValidateWatchParams(watchInterval, fullInterval, watchBackupN
 	if watchBackupNameTemplate != "" {
 		b.cfg.General.WatchBackupNameTemplate = watchBackupNameTemplate
 	}
-	if b.cfg.General.FullDuration.Seconds() < b.cfg.General.WatchDuration.Seconds()*float64(b.cfg.General.BackupsToKeepRemote) {
-		return fmt.Errorf("fullInterval `%s` is not enought to keep %d remote backups with watchInterval `%s`", b.cfg.General.FullInterval, b.cfg.General.BackupsToKeepRemote, b.cfg.General.WatchInterval)
+	if b.cfg.General.BackupsToKeepRemote > 0 && b.cfg.General.WatchDuration.Seconds()*float64(b.cfg.General.BackupsToKeepRemote) < b.cfg.General.FullDuration.Seconds() {
+		return fmt.Errorf("fullInterval `%s` is too long to keep %d remote backups with watchInterval `%s`", b.cfg.General.FullInterval, b.cfg.General.BackupsToKeepRemote, b.cfg.General.WatchInterval)
 	}
 	return nil
 }
@@ -87,12 +87,10 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 	var createRemoteErr error
 	var deleteLocalErr error
 	for {
-		b.log.Warnf("SUKA!!! b.ch.IsOpen=%v", b.ch.IsOpen)
 		if !b.ch.IsOpen {
 			if err = b.ch.Connect(); err != nil {
 				return err
 			}
-			b.log.Warnf("BLA!!! b.ch.IsOpen=%v", b.ch.IsOpen)
 		}
 		select {
 		case <-ctx.Done():
