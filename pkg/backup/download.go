@@ -84,6 +84,9 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	if b.cfg.General.RemoteStorage == "none" {
 		return fmt.Errorf("general->remote_storage shall not be \"none\" for download, change you config or use REMOTE_STORAGE environment variable")
 	}
+	if !resume && b.cfg.General.UseResumableState {
+		resume = true
+	}
 	b.resume = resume
 	if backupName == "" {
 		_ = b.PrintRemoteBackups(ctx, "all")

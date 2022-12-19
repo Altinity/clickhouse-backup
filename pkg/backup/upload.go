@@ -41,6 +41,9 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	startUpload := time.Now()
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 	var disks []clickhouse.Disk
+	if !resume && b.cfg.General.UseResumableState {
+		resume = true
+	}
 	b.resume = resume
 	if err = b.ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)

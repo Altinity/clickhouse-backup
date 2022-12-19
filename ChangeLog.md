@@ -2,6 +2,7 @@
 IMPROVEMENTS
 - during upload sort tables descending by `total_bytes` if this field present 
 - improve ReadMe.md add description for all CLI commands and parameters
+- add `use_resumable_state` to config to allow default resumable behavior in `create_remote`, `upload`, `restore_remote` and `download` commands, fix [576](https://github.com/AlexAkulov/clickhouse-backup/issues/576)
 
 BUG FIXES
 - fix `--watch-backup-name-template` command line parsing, overridden after config reload, fix [548](https://github.com/AlexAkulov/clickhouse-backup/issues/548)
