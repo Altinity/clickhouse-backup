@@ -366,7 +366,7 @@ class ClickHouseNode(Node):
                     except ExpectTimeoutError:
                         self.cluster.close_bash(None)
         else:
-            command = f"echo -e \"{sql}\" | {client}"
+            command = f"{client} -q \"{sql}\""
             for setting in query_settings:
                 setting_name, setting_value = setting
                 command += f" --{setting_name} \"{setting_value}\""
@@ -549,7 +549,7 @@ class Cluster(object):
         shell.timeout = timeout
         return shell
 
-    def bash(self, node, timeout=300, command="bash --noediting"):
+    def bash(self, node, timeout=600, command="bash --noediting"):
         """Returns thread-local bash terminal
         to a specific node.
         :param command:

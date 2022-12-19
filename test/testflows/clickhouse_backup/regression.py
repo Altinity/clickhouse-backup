@@ -19,7 +19,7 @@ from clickhouse_backup.tests.common import simple_data_types_columns
 
 xfails = {
     "/clickhouse backup/other engines/materializedpostgresql/:": [
-        (Fail, "https://github.com/ClickHouse/ClickHouse/issues/32902")
+        (Fail, "https://github.com/ClickHouse/ClickHouse/issues/32902, https://github.com/ClickHouse/ClickHouse/issues/44250")
     ],
     "/clickhouse backup/other engines/materializedmysql/:": [
         (Fail, "DROP TABLE not supported by MaterializedMySQL, just attach will not help")
@@ -65,11 +65,11 @@ def regression(self, local):
 
         Scenario(run=load("clickhouse_backup.tests.smoke", "smoke"), flags=TE)
 
+        Scenario(run=load("clickhouse_backup.tests.cloud_storage", "cloud_storage"))
+        Scenario(run=load("clickhouse_backup.tests.other_engines", "other_engines"))
         Scenario(run=load("clickhouse_backup.tests.api", "api"))
         Scenario(run=load("clickhouse_backup.tests.cli", "cli"))
         Scenario(run=load("clickhouse_backup.tests.generic", "generic"))
-        Scenario(run=load("clickhouse_backup.tests.other_engines", "other_engines"))
-        Scenario(run=load("clickhouse_backup.tests.cloud_storage", "cloud_storage"))
         Scenario(run=load("clickhouse_backup.tests.views", "views"))
         Scenario(run=load("clickhouse_backup.tests.config_rbac", "config_rbac"))
 

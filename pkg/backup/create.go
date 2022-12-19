@@ -98,7 +98,7 @@ func (b *Backuper) CreateBackup(backupName, tablePattern string, partitions []st
 	}
 	defer b.ch.Close()
 
-	allDatabases, err := b.ch.GetDatabases(ctx)
+	allDatabases, err := b.ch.GetDatabases(ctx, b.cfg, tablePattern)
 	if err != nil {
 		return fmt.Errorf("can't get database engines from clickhouse: %v", err)
 	}
@@ -296,22 +296,6 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePa
 			tableSizeSQL += ", "
 		}
 	}
-	backupDataSize := make([]uint64, 0)
-	chVersion, err := b.ch.GetVersion(ctx)
-	if err != nil {
-		return err
-	}
-	if !schemaOnly {
-		backupSizeSQL := fmt.Sprintf("SELECT sum(bytes_on_disk) AS backup_data_size FROM system.parts WHERE active AND concat(database,'.',table) IN (%s)", tableSizeSQL)
-		if chVersion >= 20005000 {
-			backupSizeSQL = fmt.Sprintf("SELECT sum(total_bytes) AS backup_data_size FROM system.tables WHERE concat(database,'.',name) IN (%s)", tableSizeSQL)
-		}
-		if err := b.ch.SelectContext(ctx, &backupDataSize, backupSizeSQL); err != nil {
-			return err
-		}
-	} else {
-		backupDataSize = append(backupDataSize, 0)
-	}
 	backupSQL := fmt.Sprintf("BACKUP %s TO Disk(?,?)", tablesSQL)
 	if schemaOnly {
 		backupSQL += " SETTINGS structure_only=true"
@@ -320,8 +304,28 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePa
 	if err := b.ch.SelectContext(ctx, &backupResult, backupSQL, b.cfg.ClickHouse.EmbeddedBackupDisk, backupName); err != nil {
 		return fmt.Errorf("backup error: %v", err)
 	}
-	if len(backupResult) != 1 || backupResult[0].Status != "BACKUP_COMPLETE" {
-		return fmt.Errorf("backup return wrong results: %v", backupResult)
+	if len(backupResult) != 1 || (backupResult[0].Status != "BACKUP_COMPLETE" && backupResult[0].Status != "BACKUP_CREATED") {
+		return fmt.Errorf("backup return wrong results: %+v", backupResult)
+	}
+	backupDataSize := make([]uint64, 0)
+	if !schemaOnly {
+		if backupResult[0].CompressedSize == 0 {
+			chVersion, err := b.ch.GetVersion(ctx)
+			if err != nil {
+				return err
+			}
+			backupSizeSQL := fmt.Sprintf("SELECT sum(bytes_on_disk) AS backup_data_size FROM system.parts WHERE active AND concat(database,'.',table) IN (%s)", tableSizeSQL)
+			if chVersion >= 20005000 {
+				backupSizeSQL = fmt.Sprintf("SELECT sum(total_bytes) AS backup_data_size FROM system.tables WHERE concat(database,'.',name) IN (%s)", tableSizeSQL)
+			}
+			if err := b.ch.SelectContext(ctx, &backupDataSize, backupSizeSQL); err != nil {
+				return err
+			}
+		} else {
+			backupDataSize = append(backupDataSize, backupResult[0].CompressedSize)
+		}
+	} else {
+		backupDataSize = append(backupDataSize, 0)
 	}
 
 	log.Debug("calculate parts list from embedded backup disk")

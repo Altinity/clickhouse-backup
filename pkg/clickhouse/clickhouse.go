@@ -260,7 +260,8 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 		return nil, err
 	}
 	skipDatabases := make([]string, 0)
-	if err = ch.SelectContext(ctx, &skipDatabases, "SELECT name FROM system.databases WHERE engine IN ('MySQL','PostgreSQL')"); err != nil {
+	// MaterializedPostgreSQL doesn't support FREEZE look https://github.com/AlexAkulov/clickhouse-backup/issues/550
+	if err = ch.SelectContext(ctx, &skipDatabases, "SELECT name FROM system.databases WHERE engine IN ('MySQL','PostgreSQL','MaterializedPostgreSQL')"); err != nil {
 		return nil, err
 	}
 	allTablesSQL, err := ch.prepareAllTablesSQL(ctx, tablePattern, err, skipDatabases, isUUIDPresent)
@@ -277,7 +278,7 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 				break
 			}
 		}
-		if ch.Config.UseEmbeddedBackupRestore && (strings.HasPrefix(t.Name, ".inner_id.") || strings.HasPrefix(t.Name, ".inner.")) {
+		if ch.Config.UseEmbeddedBackupRestore && (strings.HasPrefix(t.Name, ".inner_id.") /*|| strings.HasPrefix(t.Name, ".inner.")*/) {
 			t.Skip = true
 		}
 		if t.Skip {
@@ -342,6 +343,10 @@ func (ch *ClickHouse) prepareAllTablesSQL(ctx context.Context, tablePattern stri
 	if len(skipDatabases) > 0 {
 		allTablesSQL += fmt.Sprintf(" AND database NOT IN ('%s')", strings.Join(skipDatabases, "','"))
 	}
+	// try to upload big tables first
+	if len(isSystemTablesFieldPresent) > 0 && isSystemTablesFieldPresent[0].IsTotalBytesPresent > 0 {
+		allTablesSQL += " ORDER BY total_bytes DESC"
+	}
 	if len(isUUIDPresent) > 0 && isUUIDPresent[0] > 0 {
 		allTablesSQL += " SETTINGS show_table_uuid_in_table_create_query_if_not_nil=1"
 	}
@@ -349,15 +354,39 @@ func (ch *ClickHouse) prepareAllTablesSQL(ctx context.Context, tablePattern stri
 }
 
 // GetDatabases - return slice of all non system databases for backup
-func (ch *ClickHouse) GetDatabases(ctx context.Context) ([]Database, error) {
+func (ch *ClickHouse) GetDatabases(ctx context.Context, cfg *config.Config, tablePattern string) ([]Database, error) {
 	allDatabases := make([]Database, 0)
-	allDatabasesSQL := "SELECT name, engine FROM system.databases WHERE name NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema', '_temporary_and_external_tables')"
+	skipDatabases := []string{"system", "INFORMATION_SCHEMA", "information_schema", "_temporary_and_external_tables"}
+	bypassDatabases := make([]string, 0)
+	var skipTablesPatterns, bypassTablesPatterns []string
+	skipTablesPatterns = append(skipTablesPatterns, cfg.ClickHouse.SkipTables...)
+	bypassTablesPatterns = append(bypassTablesPatterns, strings.Split(tablePattern, ",")...)
+	for _, pattern := range skipTablesPatterns {
+		pattern = strings.Trim(pattern, " \r\t\n")
+		if strings.HasSuffix(pattern, ".*") {
+			skipDatabases = append(skipDatabases, strings.TrimSuffix(pattern, ".*"))
+		}
+	}
+	for _, pattern := range bypassTablesPatterns {
+		pattern = strings.Trim(pattern, " \r\t\n")
+		if strings.HasSuffix(pattern, ".*") {
+			bypassDatabases = append(bypassDatabases, strings.TrimSuffix(pattern, ".*"))
+		}
+	}
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
-		if err := ch.StructSelect(&allDatabases, allDatabasesSQL); err != nil {
-			return nil, err
+		if len(bypassDatabases) > 0 {
+			allDatabasesSQL := "SELECT name, engine FROM system.databases WHERE name NOT IN (?) AND name IN (?)"
+			if err := ch.StructSelect(&allDatabases, allDatabasesSQL, skipDatabases, bypassDatabases); err != nil {
+				return nil, err
+			}
+		} else {
+			allDatabasesSQL := "SELECT name, engine FROM system.databases WHERE name NOT IN (?)"
+			if err := ch.StructSelect(&allDatabases, allDatabasesSQL, skipDatabases); err != nil {
+				return nil, err
+			}
 		}
 	}
 	for i, db := range allDatabases {
@@ -635,7 +664,7 @@ var createViewSelectRe = regexp.MustCompile(`(?im)^(CREATE[\s\w]+VIEW[^(]+)(\s+A
 var attachViewToClauseRe = regexp.MustCompile(`(?im)^(ATTACH[\s\w]+VIEW[^(]+)(\s+TO\s+.+)`)
 var attachViewSelectRe = regexp.MustCompile(`(?im)^(ATTACH[\s\w]+VIEW[^(]+)(\s+AS\s+SELECT.+)`)
 var createObjRe = regexp.MustCompile(`(?im)^(CREATE [^(]+)(\(.+)`)
-var onClusterRe = regexp.MustCompile(`(?im)\S+ON\S+CLUSTER\S+`)
+var onClusterRe = regexp.MustCompile(`(?im)\s+ON\s+CLUSTER\s+`)
 
 // CreateTable - create ClickHouse table
 func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDependencies bool, onCluster string, version int) error {

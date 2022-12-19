@@ -45,6 +45,7 @@ type GeneralConfig struct {
 	AllowEmptyBackups       bool              `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
 	DownloadConcurrency     uint8             `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
 	UploadConcurrency       uint8             `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
+	UseResumableState       bool              `yaml:"use_resumable_state" envconfig:"USE_RESUMABLE_STATE"`
 	RestoreSchemaOnCluster  string            `yaml:"restore_schema_on_cluster" envconfig:"RESTORE_SCHEMA_ON_CLUSTER"`
 	UploadByPart            bool              `yaml:"upload_by_part" envconfig:"UPLOAD_BY_PART"`
 	DownloadByPart          bool              `yaml:"download_by_part" envconfig:"DOWNLOAD_BY_PART"`
@@ -334,6 +335,12 @@ func ValidateConfig(cfg *Config) error {
 		return fmt.Errorf("'%s' is bad S3_STORAGE_CLASS, select one of: %s",
 			cfg.S3.StorageClass, strings.Join(s3.StorageClass_Values(), ", "))
 	}
+	if cfg.S3.AllowMultipartDownload && cfg.S3.Concurrency == 1 {
+		return fmt.Errorf(
+			"`allow_multipart_download` require `concurrency` in `s3` section more than 1 (3-4 recommends) current value: %d",
+			cfg.S3.Concurrency,
+		)
+	}
 	if cfg.API.Secure {
 		if cfg.API.CertificateFile == "" {
 			return fmt.Errorf("api.certificate_file must be defined")
@@ -412,8 +419,9 @@ func DefaultConfig() *Config {
 			RestoreSchemaOnCluster:  "",
 			UploadByPart:            true,
 			DownloadByPart:          true,
+			UseResumableState:       false,
 			RetriesOnFailure:        3,
-			RetriesPause:            "100ms",
+			RetriesPause:            "30s",
 			RetriesDuration:         100 * time.Millisecond,
 			WatchInterval:           "1h",
 			WatchDuration:           1 * time.Hour,

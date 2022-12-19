@@ -91,7 +91,7 @@ services:
       retries: 10
 
   postgres:
-    image: postgres:14.1
+    image: postgres:${PGSQL_VERSION:-latest}
     hostname: postgres
     environment:
       - POSTGRES_PASSWORD=qwerty
@@ -212,7 +212,7 @@ services:
         condition: service_healthy
 
   rabbitmq:
-    image: rabbitmq:3.9.13-alpine
+    image: docker.io/rabbitmq:alpine
     hostname: rabbitmq
     environment:
       - RABBITMQ_DEFAULT_USER=test

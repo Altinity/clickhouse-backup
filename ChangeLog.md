@@ -1,3 +1,21 @@
+# v2.1.3
+IMPROVEMENTS
+- during upload sort tables descending by `total_bytes` if this field present 
+- improve ReadMe.md add description for all CLI commands and parameters
+- add `use_resumable_state` to config to allow default resumable behavior in `create_remote`, `upload`, `restore_remote` and `download` commands, fix [576](https://github.com/AlexAkulov/clickhouse-backup/issues/576)
+
+BUG FIXES
+- fix `--watch-backup-name-template` command line parsing, overridden after config reload, fix [548](https://github.com/AlexAkulov/clickhouse-backup/issues/548)
+- fix wrong regexp, when `restore_schema_on_cluster: cluster_name`, fix [552](https://github.com/AlexAkulov/clickhouse-backup/issues/552)
+- fix wrong `clean` command and API behavior, fix [533](https://github.com/AlexAkulov/clickhouse-backup/issues/533)
+- fix getMacro usage in Examples for backup / restore sharded cluster.
+- fix deletion files from S3 versioned bucket, fix [555](https://github.com/AlexAkulov/clickhouse-backup/issues/555)
+- fix `--restore-database-mapping` behavior for `ReplicatedMergeTree` (replace database name in replication path) and `Distributed` (replace database name in underlying table) tables, fix [547](https://github.com/AlexAkulov/clickhouse-backup/issues/547)
+- `MaterializedPostgreSQL` doesn't support FREEZE, fix [550](https://github.com/AlexAkulov/clickhouse-backup/issues/550), see also https://github.com/ClickHouse/ClickHouse/issues/32902, https://github.com/ClickHouse/ClickHouse/issues/44252
+- `create` and `restore` commands will respect `skip_tables` config options and `--table` cli parameter, to avoid create unnecessary empty databases, fix [583](https://github.com/AlexAkulov/clickhouse-backup/issues/583)
+- fix `watch` unexpected connection closed behavior, fix [568](https://github.com/AlexAkulov/clickhouse-backup/issues/568)
+- fix `watch` validation parameters corner cases, close [569](https://github.com/AlexAkulov/clickhouse-backup/pull/569)
+
 # v2.1.2
 IMPROVEMENTS
 - add `watch` description to Examples.md

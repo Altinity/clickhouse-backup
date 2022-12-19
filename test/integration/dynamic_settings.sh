@@ -151,6 +151,9 @@ fi
 # embedded s3 backup configuration
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[6-9] || "${CLICKHOUSE_VERSION}" =~ ^22\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[0-9]+ ]]; then
 
+mkdir -p /var/lib/clickhouse/backups_embedded
+chown clickhouse:clickhouse /var/lib/clickhouse/backups_embedded
+
 cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration.xml
 <?xml version="1.0"?>
 <clickhouse>
@@ -169,6 +172,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration.xml
     </storage_configuration>
     <backups>
         <allowed_disk>backups</allowed_disk>
+        <allowed_path>/var/lib/clickhouse/backups_embedded/</allowed_path>
     </backups>
     <merge_tree>
         <allow_remote_fs_zero_copy_replication>1</allow_remote_fs_zero_copy_replication>
@@ -185,6 +189,52 @@ cat <<EOT > /etc/clickhouse-server/users.d/allow_deprecated_database_ordinary.xm
 <profiles><default>
  <allow_deprecated_database_ordinary>1</allow_deprecated_database_ordinary>
  <allow_deprecated_syntax_for_merge_tree>1</allow_deprecated_syntax_for_merge_tree>
+</default></profiles>
+</yandex>
+EOT
+
+fi
+
+if [[ "${CLICKHOUSE_VERSION}" =~ ^20\.1[3-9] ]]; then
+
+cat <<EOT > /etc/clickhouse-server/users.d/allow_experimental_database_materialize_mysql.xml
+<yandex>
+<profiles><default>
+ <allow_experimental_database_materialize_mysql>1</allow_experimental_database_materialize_mysql>
+</default></profiles>
+</yandex>
+EOT
+
+fi
+
+if [[ "${CLICKHOUSE_VERSION}" =~ ^21\.[3-9] || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] ]]; then
+cat <<EOT > /etc/clickhouse-server/users.d/allow_experimental_database_materialize_mysql.xml
+<yandex>
+<profiles><default>
+ <allow_experimental_database_materialize_mysql>1</allow_experimental_database_materialize_mysql>
+</default></profiles>
+</yandex>
+EOT
+
+fi
+
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9] ]]; then
+cat <<EOT > /etc/clickhouse-server/users.d/allow_experimental_database_materialized_mysql.xml
+<yandex>
+<profiles><default>
+ <allow_experimental_database_materialized_mysql>1</allow_experimental_database_materialized_mysql>
+</default></profiles>
+</yandex>
+EOT
+
+fi
+
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9] || "${CLICKHOUSE_VERSION}" =~ ^21\.[8-9] || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] ]]; then
+
+cat <<EOT > /etc/clickhouse-server/users.d/allow_experimental_database_materialized_postgresql.xml
+<yandex>
+<profiles><default>
+ <allow_experimental_database_materialized_postgresql>1</allow_experimental_database_materialized_postgresql>
 </default></profiles>
 </yandex>
 EOT

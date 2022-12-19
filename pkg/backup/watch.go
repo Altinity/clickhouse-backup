@@ -53,8 +53,8 @@ func (b *Backuper) ValidateWatchParams(watchInterval, fullInterval, watchBackupN
 	if watchBackupNameTemplate != "" {
 		b.cfg.General.WatchBackupNameTemplate = watchBackupNameTemplate
 	}
-	if b.cfg.General.FullDuration.Seconds() > b.cfg.General.WatchDuration.Seconds()*float64(b.cfg.General.BackupsToKeepRemote) {
-		return fmt.Errorf("fullInterval `%s` is not enought to keep %d remote backups with watchInterval `%s`", b.cfg.General.FullInterval, b.cfg.General.BackupsToKeepRemote, b.cfg.General.WatchInterval)
+	if b.cfg.General.BackupsToKeepRemote > 0 && b.cfg.General.WatchDuration.Seconds()*float64(b.cfg.General.BackupsToKeepRemote) < b.cfg.General.FullDuration.Seconds() {
+		return fmt.Errorf("fullInterval `%s` is too long to keep %d remote backups with watchInterval `%s`", b.cfg.General.FullInterval, b.cfg.General.BackupsToKeepRemote, b.cfg.General.WatchInterval)
 	}
 	return nil
 }
@@ -73,12 +73,6 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 	}
 	ctx, cancel = context.WithCancel(ctx)
 	defer cancel()
-	if !b.ch.IsOpen {
-		if err = b.ch.Connect(); err != nil {
-			return err
-		}
-		defer b.ch.Close()
-	}
 
 	if err := b.ValidateWatchParams(watchInterval, fullInterval, watchBackupNameTemplate); err != nil {
 		return err
@@ -93,6 +87,11 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 	var createRemoteErr error
 	var deleteLocalErr error
 	for {
+		if !b.ch.IsOpen {
+			if err = b.ch.Connect(); err != nil {
+				return err
+			}
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -102,6 +101,9 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 					b.cfg = cfg
 				} else {
 					b.log.Warnf("watch config.LoadConfig error: %v", err)
+				}
+				if err := b.ValidateWatchParams(watchInterval, fullInterval, watchBackupNameTemplate); err != nil {
+					return err
 				}
 			}
 			backupName, err := b.NewBackupWatchName(ctx, backupType)
@@ -169,6 +171,9 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 					lastFullBackup = now
 				}
 			}
+		}
+		if b.ch.IsOpen {
+			b.ch.Close()
 		}
 	}
 }

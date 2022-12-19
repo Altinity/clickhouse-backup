@@ -72,7 +72,7 @@ services:
 
   mysql:
     image: docker.io/mysql:${MYSQL_VERSION:-latest}
-    command: --default_authentication_plugin='mysql_native_password'
+    command: --default-authentication-plugin=mysql_native_password --gtid_mode=on --enforce_gtid_consistency=ON
     container_name: mysql
     environment:
       MYSQL_ROOT_PASSWORD: "root"
@@ -82,6 +82,24 @@ services:
       - clickhouse-backup
     healthcheck:
       test: mysqladmin -p=root ping -h localhost
+      timeout: 20s
+      retries: 10
+
+  pgsql:
+    image: docker.io/postgres:${PGSQL_VERSION:-latest}
+    container_name: pgsql
+    environment:
+      POSTGRES_USER: "root"
+      POSTGRES_PASSWORD: "root"
+      # to allow connection from clickhouse 21.3
+      POSTGRES_HOST_AUTH_METHOD: "md5"
+    ports:
+      - "5432:5432"
+    networks:
+      - clickhouse-backup
+    command: [ "postgres", "-c", "wal_level=logical" ]
+    healthcheck:
+      test: pg_isready
       timeout: 20s
       retries: 10
 
@@ -118,7 +136,6 @@ services:
     volumes:
       - ./backup-user.xml:/etc/clickhouse-server/users.d/backup-user.xml
       - ./enable-access_management.xml:/etc/clickhouse-server/users.d/enable-access_management.xml
-#      - ./allow_deprecated_syntax_for_merge_tree.xml:/etc/clickhouse-server/users.d/allow_deprecated_syntax_for_merge_tree.xml
       - ${CLICKHOUSE_BACKUP_BIN:-../../clickhouse-backup/clickhouse-backup-race}:/usr/bin/clickhouse-backup
       - ./credentials.json:/etc/clickhouse-backup/credentials.json
       - ./server.crt:/etc/clickhouse-server/server.crt
@@ -126,7 +143,7 @@ services:
       - ./dhparam.pem:/etc/clickhouse-server/dhparam.pem
       - ./ssl.xml:/etc/clickhouse-server/config.d/ssl.xml
       - ./cluster.xml:/etc/clickhouse-server/config.d/cluster.xml
-      - ./storage_configuration.sh:/docker-entrypoint-initdb.d/storage_configuration.sh
+      - ./dynamic_settings.sh:/docker-entrypoint-initdb.d/dynamic_settings.sh
 # uncomment only when you need clickhouse logs
 #      - ./clickhouse-server.log:/var/log/clickhouse-server/clickhouse-server.log
 #      - ./clickhouse-server.err.log:/var/log/clickhouse-server/clickhouse-server.err.log
@@ -145,6 +162,7 @@ services:
       - minio
       - sshd
       - mysql
+      - pgsql
       - ftp
       - azure
 #      - gcs
@@ -156,6 +174,8 @@ services:
       start_period: 5s
     depends_on:
       mysql:
+        condition: service_healthy
+      pgsql:
         condition: service_healthy
       zookeeper:
         condition: service_healthy
