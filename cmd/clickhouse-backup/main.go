@@ -34,7 +34,7 @@ func main() {
 		cli.StringFlag{
 			Name:   "config, c",
 			Value:  config.DefaultConfigPath,
-			Usage:  "Config `FILE` name.",
+			Usage:  "Config 'FILE' name.",
 			EnvVar: "CLICKHOUSE_BACKUP_CONFIG",
 		},
 		cli.IntFlag{
@@ -69,12 +69,12 @@ func main() {
 				cli.BoolFlag{
 					Name:   "all, a",
 					Hidden: false,
-					Usage:  "print table even when match with `skip_tables` pattern",
+					Usage:  "print table even when match with skip_tables pattern",
 				},
 				cli.StringFlag{
 					Name:   "table, tables, t",
 					Hidden: false,
-					Usage:  "table name patterns, separated by comma, allow ? and * as wildcard",
+					Usage:  "list tables only match with table name patterns, separated by comma, allow ? and * as wildcard",
 				},
 			),
 		},
@@ -91,12 +91,12 @@ func main() {
 				cli.StringFlag{
 					Name:   "table, tables, t",
 					Hidden: false,
-					Usage:  "table name patterns, separated by comma, allow ? and * as wildcard",
+					Usage:  "create backup only matched with table name patterns, separated by comma, allow ? and * as wildcard",
 				},
 				cli.StringSliceFlag{
 					Name:   "partitions",
 					Hidden: false,
-					Usage:  "partition names, separated by comma",
+					Usage:  "create backup only for selected partition names, separated by comma",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",
@@ -111,7 +111,7 @@ func main() {
 				cli.BoolFlag{
 					Name:   "configs, backup-configs, do-backup-configs",
 					Hidden: false,
-					Usage:  "Backup ClickHouse server configuration files only",
+					Usage:  "Backup 'clickhouse-server' configuration files only",
 				},
 			),
 		},
@@ -127,43 +127,43 @@ func main() {
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
 					Name:   "table, tables, t",
-					Usage:  "table name patterns, separated by comma, allow ? and * as wildcard",
 					Hidden: false,
+					Usage:  "create and upload backup only matched with table name patterns, separated by comma, allow ? and * as wildcard",
 				},
 				cli.StringSliceFlag{
 					Name:   "partitions",
 					Hidden: false,
-					Usage:  "partition names, separated by comma",
+					Usage:  "create and upload backup only for selected partition names, separated by comma",
 				},
 				cli.StringFlag{
 					Name:   "diff-from",
 					Hidden: false,
-					Usage:  "local backup name which used to upload current backup as differential",
+					Usage:  "local backup name which used to upload current backup as incremental",
 				},
 				cli.StringFlag{
 					Name:   "diff-from-remote",
 					Hidden: false,
-					Usage:  "remote backup name which used to upload current backup as differential",
+					Usage:  "remote backup name which used to upload current backup as incremental",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",
 					Hidden: false,
-					Usage:  "Schemas only",
+					Usage:  "Backup and upload metadata schema only",
 				},
 				cli.BoolFlag{
 					Name:   "rbac, backup-rbac, do-backup-rbac",
 					Hidden: false,
-					Usage:  "Backup RBAC related objects only",
+					Usage:  "Backup and upload RBAC related objects only",
 				},
 				cli.BoolFlag{
 					Name:   "configs, backup-configs, do-backup-configs",
 					Hidden: false,
-					Usage:  "Backup ClickHouse server configuration files only",
+					Usage:  "Backup 'clickhouse-server' configuration files only",
 				},
 				cli.BoolFlag{
 					Name:   "resume, resumable",
 					Hidden: false,
-					Usage:  "Save intermediate upload state and resume upload if backup exists on remote storage, ignore when `remote_storage: custom` or `use_embedded_backup_restore: true`",
+					Usage:  "Save intermediate upload state and resume upload if backup exists on remote storage, ignore when 'remote_storage: custom' or 'use_embedded_backup_restore: true'",
 				},
 			),
 		},
@@ -179,22 +179,22 @@ func main() {
 				cli.StringFlag{
 					Name:   "diff-from",
 					Hidden: false,
-					Usage:  "local backup name which used to upload current backup as differential",
+					Usage:  "local backup name which used to upload current backup as incremental",
 				},
 				cli.StringFlag{
 					Name:   "diff-from-remote",
 					Hidden: false,
-					Usage:  "remote backup name which used to upload current backup as differential",
+					Usage:  "remote backup name which used to upload current backup as incremental",
 				},
 				cli.StringFlag{
 					Name:   "table, tables, t",
-					Usage:  "table name patterns, separated by comma, allow ? and * as wildcard",
+					Usage:  "Upload data only for matched table name patterns, separated by comma, allow ? and * as wildcard",
 					Hidden: false,
 				},
 				cli.StringSliceFlag{
 					Name:   "partitions",
 					Hidden: false,
-					Usage:  "partition names, separated by comma",
+					Usage:  "Upload data only for selected partition names, separated by comma",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",
@@ -204,7 +204,7 @@ func main() {
 				cli.BoolFlag{
 					Name:   "resume, resumable",
 					Hidden: false,
-					Usage:  "Save intermediate upload state and resume upload if backup exists on remote storage, ignored with `remote_storage: custom` or `use_embedded_backup_restore: true`",
+					Usage:  "Save intermediate upload state and resume upload if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'",
 				},
 			),
 		},
@@ -229,13 +229,13 @@ func main() {
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
 					Name:   "table, tables, t",
-					Usage:  "table name patterns, separated by comma, allow ? and * as wildcard",
+					Usage:  "Download objects which matched with table name patterns, separated by comma, allow ? and * as wildcard",
 					Hidden: false,
 				},
 				cli.StringFlag{
 					Name:   "partitions",
 					Hidden: false,
-					Usage:  "partition names, separated by comma",
+					Usage:  "Download data only for selected partition names, separated by comma",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",
@@ -245,7 +245,7 @@ func main() {
 				cli.BoolFlag{
 					Name:   "resume, resumable",
 					Hidden: false,
-					Usage:  "Save intermediate download state and resume download if backup exists on local storage, ignored with `remote_storage: custom` or `use_embedded_backup_restore: true`",
+					Usage:  "Save intermediate download state and resume download if backup exists on local storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'",
 				},
 			),
 		},
@@ -260,7 +260,7 @@ func main() {
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
 					Name:   "table, tables, t",
-					Usage:  "table name patterns, separated by comma, allow ? and * as wildcard",
+					Usage:  "Restore only database and objects which matched with table name patterns, separated by comma, allow ? and * as wildcard",
 					Hidden: false,
 				},
 				cli.StringSliceFlag{
@@ -271,7 +271,7 @@ func main() {
 				cli.StringSliceFlag{
 					Name:   "partitions",
 					Hidden: false,
-					Usage:  "partition names, separated by comma",
+					Usage:  "Restore data only for selected partition names, separated by comma",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",
@@ -301,7 +301,7 @@ func main() {
 				cli.BoolFlag{
 					Name:   "configs, restore-configs, do-restore-configs",
 					Hidden: false,
-					Usage:  "Restore CONFIG related files only",
+					Usage:  "Restore 'clickhouse-server' CONFIG related files only",
 				},
 			),
 		},
@@ -316,7 +316,7 @@ func main() {
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
 					Name:   "table, tables, t",
-					Usage:  "table name patterns, separated by comma, allow ? and * as wildcard",
+					Usage:  "Download and restore objects which matched with table name patterns, separated by comma, allow ? and * as wildcard",
 					Hidden: false,
 				},
 				cli.StringSliceFlag{
@@ -327,17 +327,17 @@ func main() {
 				cli.StringSliceFlag{
 					Name:   "partitions",
 					Hidden: false,
-					Usage:  "partition names, separated by comma",
+					Usage:  "Download and restore data only for selected partition names, separated by comma",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",
 					Hidden: false,
-					Usage:  "Restore schema only",
+					Usage:  "Download and Restore schema only",
 				},
 				cli.BoolFlag{
 					Name:   "data, d",
 					Hidden: false,
-					Usage:  "Restore data only",
+					Usage:  "Download and Restore data only",
 				},
 				cli.BoolFlag{
 					Name:   "rm, drop",
@@ -352,17 +352,17 @@ func main() {
 				cli.BoolFlag{
 					Name:   "rbac, restore-rbac, do-restore-rbac",
 					Hidden: false,
-					Usage:  "Restore RBAC related objects only",
+					Usage:  "Download and Restore RBAC related objects only",
 				},
 				cli.BoolFlag{
 					Name:   "configs, restore-configs, do-restore-configs",
 					Hidden: false,
-					Usage:  "Restore CONFIG related files only",
+					Usage:  "Download and Restore 'clickhouse-server' CONFIG related files only",
 				},
 				cli.BoolFlag{
 					Name:   "resume, resumable",
 					Hidden: false,
-					Usage:  "Save intermediate upload state and resume upload if backup exists on remote storage, ignored with `remote_storage: custom` or `use_embedded_backup_restore: true`",
+					Usage:  "Save intermediate upload state and resume upload if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'",
 				},
 			),
 		},
@@ -386,7 +386,7 @@ func main() {
 		},
 		{
 			Name:  "default-config",
-			Usage: "List default config",
+			Usage: "Print default config",
 			Action: func(*cli.Context) error {
 				return config.PrintConfig(nil)
 			},
@@ -394,7 +394,7 @@ func main() {
 		},
 		{
 			Name:  "print-config",
-			Usage: "List current config",
+			Usage: "Print current config merged with environment variables",
 			Action: func(c *cli.Context) error {
 				return config.PrintConfig(c)
 			},
@@ -402,7 +402,7 @@ func main() {
 		},
 		{
 			Name:  "clean",
-			Usage: "Remove data in 'shadow' folder from all `path` folders available from `system.disks`",
+			Usage: "Remove data in 'shadow' folder from all 'path' folders available from 'system.disks'",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				return b.Clean(context.Background())
@@ -431,12 +431,12 @@ func main() {
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
 					Name:   "watch-interval",
-					Usage:  "Interval for run `create_remote` + `delete local` for incremental backup, look format https://pkg.go.dev/time#ParseDuration",
+					Usage:  "Interval for run 'create_remote' + 'delete local' for incremental backup, look format https://pkg.go.dev/time#ParseDuration",
 					Hidden: false,
 				},
 				cli.StringFlag{
 					Name:   "full-interval",
-					Usage:  "Interval for run `create_remote`+`delete local` when stop create incremental backup sequence and create full backup, look format https://pkg.go.dev/time#ParseDuration",
+					Usage:  "Interval for run 'create_remote'+'delete local' when stop create incremental backup sequence and create full backup, look format https://pkg.go.dev/time#ParseDuration",
 					Hidden: false,
 				},
 				cli.StringFlag{
@@ -446,7 +446,7 @@ func main() {
 				},
 				cli.StringFlag{
 					Name:   "table, tables, t",
-					Usage:  "table name patterns, separated by comma, allow ? and * as wildcard",
+					Usage:  "Create and upload only objects which matched with table name patterns, separated by comma, allow ? and * as wildcard",
 					Hidden: false,
 				},
 				cli.StringSliceFlag{
@@ -467,7 +467,7 @@ func main() {
 				cli.BoolFlag{
 					Name:   "configs, backup-configs, do-backup-configs",
 					Hidden: false,
-					Usage:  "Backup ClickHouse server configuration files only",
+					Usage:  "Backup `clickhouse-server' configuration files only",
 				},
 			),
 		},
@@ -480,17 +480,17 @@ func main() {
 			Flags: append(cliapp.Flags,
 				cli.BoolFlag{
 					Name:   "watch",
-					Usage:  "run watch goroutine for `create_remote` + `delete local`, after server startup",
+					Usage:  "run watch go-routine for 'create_remote' + 'delete local', after API server startup",
 					Hidden: false,
 				},
 				cli.StringFlag{
 					Name:   "watch-interval",
-					Usage:  "Interval for run `create_remote` + `delete local` for incremental backup, look format https://pkg.go.dev/time#ParseDuration",
+					Usage:  "Interval for run 'create_remote' + 'delete local' for incremental backup, look format https://pkg.go.dev/time#ParseDuration",
 					Hidden: false,
 				},
 				cli.StringFlag{
 					Name:   "full-interval",
-					Usage:  "Interval for run `create_remote`+`delete local` when stop create incremental backup sequence and create full backup, look format https://pkg.go.dev/time#ParseDuration",
+					Usage:  "Interval for run 'create_remote'+'delete local' when stop create incremental backup sequence and create full backup, look format https://pkg.go.dev/time#ParseDuration",
 					Hidden: false,
 				},
 				cli.StringFlag{

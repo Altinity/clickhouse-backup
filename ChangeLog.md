@@ -1,6 +1,7 @@
 # v2.1.3
 IMPROVEMENTS
 - during upload sort tables descending by `total_bytes` if this field present 
+- improve ReadMe.md add description for all CLI commands and parameters
 
 BUG FIXES
 - fix `--watch-backup-name-template` command line parsing, overridden after config reload, fix [548](https://github.com/AlexAkulov/clickhouse-backup/issues/548)

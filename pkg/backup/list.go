@@ -92,7 +92,7 @@ func printBackupsLocal(ctx context.Context, w io.Writer, backupList []LocalBacku
 		fmt.Println(backupList[len(backupList)-1].BackupName)
 	case "penult", "prev", "previous", "p":
 		if len(backupList) < 2 {
-			return fmt.Errorf("no penult backup is found")
+			return fmt.Errorf("no previous backup is found")
 		}
 		fmt.Println(backupList[len(backupList)-2].BackupName)
 	case "all", "":
