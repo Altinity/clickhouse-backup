@@ -73,12 +73,6 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 	}
 	ctx, cancel = context.WithCancel(ctx)
 	defer cancel()
-	if !b.ch.IsOpen {
-		if err = b.ch.Connect(); err != nil {
-			return err
-		}
-		defer b.ch.Close()
-	}
 
 	if err := b.ValidateWatchParams(watchInterval, fullInterval, watchBackupNameTemplate); err != nil {
 		return err
@@ -93,6 +87,13 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 	var createRemoteErr error
 	var deleteLocalErr error
 	for {
+		b.log.Warnf("SUKA!!! b.ch.IsOpen=%v", b.ch.IsOpen)
+		if !b.ch.IsOpen {
+			if err = b.ch.Connect(); err != nil {
+				return err
+			}
+			b.log.Warnf("BLA!!! b.ch.IsOpen=%v", b.ch.IsOpen)
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -172,6 +173,9 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 					lastFullBackup = now
 				}
 			}
+		}
+		if b.ch.IsOpen {
+			b.ch.Close()
 		}
 	}
 }

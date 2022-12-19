@@ -337,7 +337,6 @@ func ShallSkipDatabase(cfg *config.Config, targetDB, tablePattern string) bool {
 		bypassTablePatterns = append(bypassTablePatterns, strings.Split(tablePattern, ",")...)
 		for _, pattern := range bypassTablePatterns {
 			pattern = strings.Trim(pattern, " \r\t\n")
-			apexLog.Debugf("SUKA!!! pattern=%s targetDB=%s", pattern, targetDB)
 			if strings.HasSuffix(pattern, ".*") && strings.TrimSuffix(pattern, ".*") == targetDB {
 				return false
 			}
@@ -350,7 +349,6 @@ func ShallSkipDatabase(cfg *config.Config, targetDB, tablePattern string) bool {
 		skipTablesPatterns = append(skipTablesPatterns, cfg.ClickHouse.SkipTables...)
 		for _, pattern := range skipTablesPatterns {
 			pattern = strings.Trim(pattern, " \r\t\n")
-			apexLog.Debugf("SUKA2!!! pattern=%s targetDB=%s", pattern, targetDB)
 			if strings.HasSuffix(pattern, ".*") && strings.TrimSuffix(pattern, ".*") == targetDB {
 				return true
 			}
