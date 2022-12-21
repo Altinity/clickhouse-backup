@@ -523,6 +523,15 @@ func (b *Backuper) restoreDataEmbedded(backupName string, tablesForRestore ListO
 }
 
 func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, tablePattern string, tablesForRestore ListOfTables, diskMap map[string]string, disks []clickhouse.Disk, log *apexLog.Entry) error {
+	if len(b.cfg.General.RestoreDatabaseMapping) > 0 {
+		for _, targetDb := range b.cfg.General.RestoreDatabaseMapping {
+			if tablePattern != "" {
+				tablePattern += "," + targetDb + ".*"
+			} else {
+				tablePattern += targetDb + ".*"
+			}
+		}
+	}
 	chTables, err := b.ch.GetTables(ctx, tablePattern)
 	if err != nil {
 		return err
@@ -550,21 +559,16 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ta
 		}
 	}
 	dstTablesMap := map[metadata.TableTitle]clickhouse.Table{}
-	for i := range chTables {
+	for i, chTable := range chTables {
 		dstTablesMap[metadata.TableTitle{
 			Database: chTables[i].Database,
 			Table:    chTables[i].Name,
-		}] = chTables[i]
+		}] = chTable
 	}
 
 	var missingTables []string
 	for _, tableForRestore := range tablesForRestore {
 		found := false
-		if len(b.cfg.General.RestoreDatabaseMapping) > 0 {
-			if targetDB, isMapped := b.cfg.General.RestoreDatabaseMapping[tableForRestore.Database]; isMapped {
-				tableForRestore.Database = targetDB
-			}
-		}
 		for _, chTable := range chTables {
 			if (tableForRestore.Database == chTable.Database) && (tableForRestore.Table == chTable.Name) {
 				found = true

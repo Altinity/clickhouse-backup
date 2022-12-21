@@ -693,34 +693,34 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 	ch.queryWithNoError(r, "CREATE DATABASE database1")
 	ch.queryWithNoError(r, "CREATE TABLE database1.t1 (dt DateTime, v UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/database1/t1','{replica}') PARTITION BY toYYYYMM(dt) ORDER BY dt")
 	ch.queryWithNoError(r, "CREATE TABLE database1.d1 AS database1.t1 ENGINE=Distributed('{cluster}',database1, t1)")
+	ch.queryWithNoError(r, "CREATE TABLE database1.t2 AS database1.t1 ENGINE=ReplicatedMergeTree('/clickhouse/tables/{database}/{table}','{replica}') PARTITION BY toYYYYMM(dt) ORDER BY dt")
+	ch.queryWithNoError(r, "CREATE MATERIALIZED VIEW database1.mv1 TO database1.t2 AS SELECT * FROM database1.t1")
 	ch.queryWithNoError(r, "INSERT INTO database1.t1 SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
 
 	log.Info("Create backup")
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", testBackupName))
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--restore-database-mapping", "database1:database2", testBackupName))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--schema", "--rm", "--restore-database-mapping", "database1:database2", "--tables", "database1.*", testBackupName))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--data", "--restore-database-mapping", "database1:database2", "--tables", "database1.*", testBackupName))
 
 	ch.queryWithNoError(r, "INSERT INTO database1.t1 SELECT '2023-01-01 00:00:00', number FROM numbers(10)")
 
 	log.Info("Check result")
-	result := make([]int, 0)
-	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM database2.t1"))
-	r.Equal(1, len(result), "expect one row")
-	r.Equal(10, result[0], "expect count=10")
+	checkRecordset := func(expectedRows, expectedCount int, query string) {
+		result := make([]int, 0)
+		r.NoError(ch.chbackend.Select(&result, query))
+		r.Equal(expectedRows, len(result), "expect %d row", expectedRows)
+		r.Equal(expectedCount, result[0], "expect count=%d", expectedCount)
+	}
 
-	result = make([]int, 0)
-	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM database2.d1"))
-	r.Equal(1, len(result), "expect one row")
-	r.Equal(10, result[0], "expect count=10")
+	// database 2
+	checkRecordset(1, 10, "SELECT count() FROM database2.t1")
+	checkRecordset(1, 10, "SELECT count() FROM database2.d1")
+	checkRecordset(1, 10, "SELECT count() FROM database2.mv1")
 
-	result = make([]int, 0)
-	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM database1.t1"))
-	r.Equal(1, len(result), "expect one row")
-	r.Equal(20, result[0], "expect count=20")
-
-	result = make([]int, 0)
-	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM database1.d1"))
-	r.Equal(1, len(result), "expect one row")
-	r.Equal(20, result[0], "expect count=20")
+	// database 1
+	checkRecordset(1, 20, "SELECT count() FROM database1.t1")
+	checkRecordset(1, 20, "SELECT count() FROM database1.d1")
+	checkRecordset(1, 20, "SELECT count() FROM database1.mv1")
 
 	fullCleanup(r, ch, []string{testBackupName}, []string{"local"}, databaseList, true)
 }

@@ -146,12 +146,12 @@ func getTableListByPatternLocal(cfg *config.Config, metadataPath string, tablePa
 	return result, nil
 }
 
-var queryRE = regexp.MustCompile(`(?m)^(CREATE|ATTACH) (TABLE|VIEW|MATERIALIZED VIEW|DICTIONARY|FUNCTION) (\x60?)([^\s\x60.]*)(\x60?)\.([^\s\x60.]*)(?:( TO )(\x60?)([^\s\x60.]*)(\x60?)(\.))?`)
+var queryRE = regexp.MustCompile(`(?m)^(CREATE|ATTACH) (TABLE|VIEW|MATERIALIZED VIEW|DICTIONARY|FUNCTION) (\x60?)([^\s\x60.]*)(\x60?)\.([^\s\x60.]*)(?:( UUID '[^']+'))?(?:( TO )(\x60?)([^\s\x60.]*)(\x60?)(\.))?(?:(.+FROM )(\x60?)([^\s\x60.]*)(\x60?)(\.))?`)
 var createRE = regexp.MustCompile(`(?m)^CREATE`)
 var attachRE = regexp.MustCompile(`(?m)^ATTACH`)
 var uuidRE = regexp.MustCompile(`UUID '[a-f\d\-]+'`)
 
-var replicatedRE = regexp.MustCompile(`(Replicated[a-zA-Z]*MergeTree)\('([^']+)'([^\)]+)\)`)
+var replicatedRE = regexp.MustCompile(`(Replicated[a-zA-Z]*MergeTree)\('([^']+)'([^)]+)\)`)
 var distributedRE = regexp.MustCompile(`(Distributed)\(([^,]+),([^,]+),([^)]+)\)`)
 
 func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRule map[string]string) error {
@@ -161,12 +161,24 @@ func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRu
 			// substitute database in the table create query
 			var substitution string
 
-			if len(createRE.FindAllString(originTable.Query, -1)) > 0 {
+			if createRE.MatchString(originTable.Query) {
 				// matching CREATE... command
 				substitution = fmt.Sprintf("${1} ${2} ${3}%v${5}.${6}", targetDB)
-			} else if len(attachRE.FindAllString(originTable.Query, -1)) > 0 {
-				// matching ATTACH...TO... command
-				substitution = fmt.Sprintf("${1} ${2} ${3}%v${5}.${6}${7}${8}%v${11}", targetDB, targetDB)
+			} else if attachRE.MatchString(originTable.Query) {
+				matches := queryRE.FindAllStringSubmatch(originTable.Query, -1)
+				if matches[0][4] != originTable.Database {
+					return fmt.Errorf("invalid SQL: %s for restore-database-mapping[%s]=%s", originTable.Query, originTable.Database, targetDB)
+				}
+				setMatchedDb := func(clauseTargetDb string) string {
+					if clauseMappedDb, isClauseMapped := dbMapRule[clauseTargetDb]; isClauseMapped {
+						clauseTargetDb = clauseMappedDb
+					}
+					return clauseTargetDb
+				}
+				toClauseTargetDb := setMatchedDb(matches[0][10])
+				fromClauseTargetDb := setMatchedDb(matches[0][15])
+				// matching ATTACH ... TO .. SELECT ... FROM ... command
+				substitution = fmt.Sprintf("${1} ${2} ${3}%v${5}.${6}${7}${8}${9}%v${11}${12}${13}${14}%v${16}${17}", targetDB, toClauseTargetDb, fromClauseTargetDb)
 			} else {
 				if originTable.Query == "" {
 					continue
