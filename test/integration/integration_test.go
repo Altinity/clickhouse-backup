@@ -686,6 +686,13 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 	ch := &TestClickHouse{}
 	ch.connectWithWait(r, 500*time.Millisecond)
 	defer ch.chbackend.Close()
+	checkRecordset := func(expectedRows, expectedCount int, query string) {
+		result := make([]int, 0)
+		r.NoError(ch.chbackend.Select(&result, query))
+		r.Equal(expectedRows, len(result), "expect %d row", expectedRows)
+		r.Equal(expectedCount, result[0], "expect count=%d", expectedCount)
+	}
+
 	testBackupName := "test_restore_database_mapping"
 	databaseList := []string{"database1", "database2"}
 	fullCleanup(r, ch, []string{testBackupName}, []string{"local"}, databaseList, false)
@@ -703,28 +710,34 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 
 	log.Info("Create backup")
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", testBackupName))
+
+	log.Info("Restore schema")
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--schema", "--rm", "--restore-database-mapping", "database1:database2", "--tables", "database1.*", testBackupName))
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--data", "--restore-database-mapping", "database1:database2", "--tables", "database1.*", testBackupName))
 
+	log.Info("Check result database1")
 	ch.queryWithNoError(r, "INSERT INTO database1.t1 SELECT '2023-01-01 00:00:00', number FROM numbers(10)")
-
-	log.Info("Check result")
-	checkRecordset := func(expectedRows, expectedCount int, query string) {
-		result := make([]int, 0)
-		r.NoError(ch.chbackend.Select(&result, query))
-		r.Equal(expectedRows, len(result), "expect %d row", expectedRows)
-		r.Equal(expectedCount, result[0], "expect count=%d", expectedCount)
+	checkRecordset(1, 20, "SELECT count() FROM database1.t1")
+	checkRecordset(1, 20, "SELECT count() FROM database1.d1")
+	checkRecordset(1, 20, "SELECT count() FROM database1.mv1")
+	log.Info("Drop database1")
+	isAtomic, err := ch.chbackend.IsAtomic("database1")
+	r.NoError(err)
+	if isAtomic {
+		ch.queryWithNoError(r, "DROP DATABASE database1 SYNC")
+	} else {
+		ch.queryWithNoError(r, "DROP DATABASE database1")
 	}
 
-	// database 2
+	log.Info("Restore data")
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--data", "--restore-database-mapping", "database1:database2", "--tables", "database1.*", testBackupName))
+
+	log.Info("Check result database2")
 	checkRecordset(1, 10, "SELECT count() FROM database2.t1")
 	checkRecordset(1, 10, "SELECT count() FROM database2.d1")
 	checkRecordset(1, 10, "SELECT count() FROM database2.mv1")
 
-	// database 1
-	checkRecordset(1, 20, "SELECT count() FROM database1.t1")
-	checkRecordset(1, 20, "SELECT count() FROM database1.d1")
-	checkRecordset(1, 20, "SELECT count() FROM database1.mv1")
+	log.Info("Check database1 not exists")
+	checkRecordset(1, 0, "SELECT count() FROM system.databases WHERE name='database1'")
 
 	fullCleanup(r, ch, []string{testBackupName}, []string{"local"}, databaseList, true)
 }

@@ -524,14 +524,25 @@ func (b *Backuper) restoreDataEmbedded(backupName string, tablesForRestore ListO
 
 func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, tablePattern string, tablesForRestore ListOfTables, diskMap map[string]string, disks []clickhouse.Disk, log *apexLog.Entry) error {
 	if len(b.cfg.General.RestoreDatabaseMapping) > 0 {
-		for _, targetDb := range b.cfg.General.RestoreDatabaseMapping {
+		for sourceDb, targetDb := range b.cfg.General.RestoreDatabaseMapping {
 			if tablePattern != "" {
-				tablePattern += "," + targetDb + ".*"
+				sourceDbRE := regexp.MustCompile(fmt.Sprintf("(^%s.*)|(,%s.*)", sourceDb, sourceDb))
+				if sourceDbRE.MatchString(tablePattern) {
+					matches := sourceDbRE.FindAllStringSubmatch(tablePattern, -1)
+					substitution := targetDb + ".*"
+					if strings.HasPrefix(matches[0][1], ",") {
+						substitution = "," + substitution
+					}
+					tablePattern = sourceDbRE.ReplaceAllString(tablePattern, substitution)
+				} else {
+					tablePattern += "," + targetDb + ".*"
+				}
 			} else {
 				tablePattern += targetDb + ".*"
 			}
 		}
 	}
+	apexLog.Infof("SUKA!!! tablePattern=%s", tablePattern)
 	chTables, err := b.ch.GetTables(ctx, tablePattern)
 	if err != nil {
 		return err
@@ -567,16 +578,22 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ta
 	}
 
 	var missingTables []string
-	for _, tableForRestore := range tablesForRestore {
+	for _, table := range tablesForRestore {
+		dstDatabase := table.Database
+		if len(b.cfg.General.RestoreDatabaseMapping) > 0 {
+			if targetDB, isMapped := b.cfg.General.RestoreDatabaseMapping[table.Database]; isMapped {
+				dstDatabase = targetDB
+			}
+		}
 		found := false
 		for _, chTable := range chTables {
-			if (tableForRestore.Database == chTable.Database) && (tableForRestore.Table == chTable.Name) {
+			if (dstDatabase == chTable.Database) && (table.Table == chTable.Name) {
 				found = true
 				break
 			}
 		}
 		if !found {
-			missingTables = append(missingTables, fmt.Sprintf("'%s.%s'", tableForRestore.Database, tableForRestore.Table))
+			missingTables = append(missingTables, fmt.Sprintf("'%s.%s'", dstDatabase, table.Table))
 		}
 	}
 	if len(missingTables) > 0 {

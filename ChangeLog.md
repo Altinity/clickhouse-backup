@@ -15,7 +15,7 @@ BUG FIXES
 - `create` and `restore` commands will respect `skip_tables` config options and `--table` cli parameter, to avoid create unnecessary empty databases, fix [583](https://github.com/AlexAkulov/clickhouse-backup/issues/583)
 - fix `watch` unexpected connection closed behavior, fix [568](https://github.com/AlexAkulov/clickhouse-backup/issues/568)
 - fix `watch` validation parameters corner cases, close [569](https://github.com/AlexAkulov/clickhouse-backup/pull/569)
-- fix `--restore-database-mapping` behavior for `ATTACH MATERIALIZED VIEW` corner cases, fix [559](https://github.com/AlexAkulov/clickhouse-backup/issues/559)
+- fix `--restore-database-mapping` behavior for `ATTACH MATERIALIZED VIEW` and `restore --data` corner cases, fix [559](https://github.com/AlexAkulov/clickhouse-backup/issues/559)
 
 # v2.1.2
 IMPROVEMENTS
