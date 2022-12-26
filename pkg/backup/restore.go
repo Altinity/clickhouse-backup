@@ -542,7 +542,6 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ta
 			}
 		}
 	}
-	apexLog.Infof("SUKA!!! tablePattern=%s", tablePattern)
 	chTables, err := b.ch.GetTables(ctx, tablePattern)
 	if err != nil {
 		return err

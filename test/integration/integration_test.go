@@ -706,6 +706,7 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 		ch.queryWithNoError(r, "CREATE TABLE database1.t2 AS database1.t1 ENGINE=ReplicatedMergeTree('/clickhouse/tables/{database}/{table}','{replica}') PARTITION BY toYYYYMM(dt) ORDER BY dt")
 	}
 	ch.queryWithNoError(r, "CREATE MATERIALIZED VIEW database1.mv1 TO database1.t2 AS SELECT * FROM database1.t1")
+	ch.queryWithNoError(r, "CREATE VIEW database1.v1 AS SELECT * FROM database1.t1")
 	ch.queryWithNoError(r, "INSERT INTO database1.t1 SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
 
 	log.Info("Create backup")
@@ -719,6 +720,8 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 	checkRecordset(1, 20, "SELECT count() FROM database1.t1")
 	checkRecordset(1, 20, "SELECT count() FROM database1.d1")
 	checkRecordset(1, 20, "SELECT count() FROM database1.mv1")
+	checkRecordset(1, 20, "SELECT count() FROM database1.v1")
+
 	log.Info("Drop database1")
 	isAtomic, err := ch.chbackend.IsAtomic("database1")
 	r.NoError(err)
@@ -735,6 +738,7 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 	checkRecordset(1, 10, "SELECT count() FROM database2.t1")
 	checkRecordset(1, 10, "SELECT count() FROM database2.d1")
 	checkRecordset(1, 10, "SELECT count() FROM database2.mv1")
+	checkRecordset(1, 10, "SELECT count() FROM database2.v1")
 
 	log.Info("Check database1 not exists")
 	checkRecordset(1, 0, "SELECT count() FROM system.databases WHERE name='database1'")
