@@ -351,9 +351,10 @@ general:
                                  # if old backup is required for newer incremental backup, then it will don't delete. Be careful with long incremental backup sequences.
   log_level: info                # LOG_LEVEL, allow `debug`, `info`, `warn`, `error`
   allow_empty_backups: false     # ALLOW_EMPTY_BACKUPS
-  # concurrency means parallel tables and parallel parts inside tables, for example 4 means max 4 parallel tables and 4 parallel parts inside one table, so equal 16 streams
-  download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255   
-  upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255
+  # concurrency means parallel tables and parallel parts inside tables
+  # for example 4 means max 4 parallel tables and 4 parallel parts inside one table, so equal 16 streams
+  download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255, default value AVAILABLE_CPU_CORES / 2  
+  upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255, default value AVAILABLE_CPU_CORES / 2
   restore_schema_on_cluster: ""  # RESTORE_SCHEMA_ON_CLUSTER, execute all schema related SQL queries with `ON CLUSTER` clause as Distributed DDL, look to `system.clusters` table for proper cluster name
   upload_by_part: true           # UPLOAD_BY_PART
   download_by_part: true         # DOWNLOAD_BY_PART
