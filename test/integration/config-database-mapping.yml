@@ -3,7 +3,7 @@ general:
   remote_storage: s3
   upload_concurrency: 4
   download_concurrency: 4
-  restore_schema_on_cluster: "cluster"
+  restore_schema_on_cluster: "{cluster}"
   restore_database_mapping:
     database1: default
 clickhouse:

@@ -665,6 +665,7 @@ var attachViewToClauseRe = regexp.MustCompile(`(?im)^(ATTACH[\s\w]+VIEW[^(]+)(\s
 var attachViewSelectRe = regexp.MustCompile(`(?im)^(ATTACH[\s\w]+VIEW[^(]+)(\s+AS\s+SELECT.+)`)
 var createObjRe = regexp.MustCompile(`(?im)^(CREATE [^(]+)(\(.+)`)
 var onClusterRe = regexp.MustCompile(`(?im)\s+ON\s+CLUSTER\s+`)
+var distributedRE = regexp.MustCompile(`(Distributed)\(([^,]+),([^)]+)\)`)
 
 // CreateTable - create ClickHouse table
 func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDependencies bool, onCluster string, version int) error {
@@ -708,6 +709,15 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 		query = strings.Replace(query, fmt.Sprintf("`%s`", table.Name), fmt.Sprintf("`%s`.`%s`", table.Database, table.Name), 1)
 	} else if isOnlyTablePresent && table.Database != "" {
 		query = strings.Replace(query, fmt.Sprintf("%s", table.Name), fmt.Sprintf("%s.%s", table.Database, table.Name), 1)
+	}
+
+	// https://github.com/AlexAkulov/clickhouse-backup/issues/574, replace ENGINE=Distributed to new cluster name
+	if onCluster != "" && distributedRE.MatchString(query) {
+		matches := distributedRE.FindAllStringSubmatch(query, -1)
+		if onCluster != strings.Trim(matches[0][2], "'\" ") {
+			apexLog.Warnf("Will replace distributed ")
+			query = distributedRE.ReplaceAllString(query, fmt.Sprintf("${1}(%s,${3})", onCluster))
+		}
 	}
 
 	if _, err := ch.Query(query); err != nil {

@@ -1,3 +1,7 @@
+# v2.2.0
+IMPROVEMENTS
+- apply `system.macros` values when use `restore_schema_on_cluster` and replace cluster name in engine=Distributed tables, fix [574](https://github.com/AlexAkulov/clickhouse-backup/issues/574) 
+
 # v2.1.3
 IMPROVEMENTS
 - during upload sort tables descending by `total_bytes` if this field present 

@@ -355,7 +355,11 @@ general:
   # for example 4 means max 4 parallel tables and 4 parallel parts inside one table, so equal 16 streams
   download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255, default value AVAILABLE_CPU_CORES / 2  
   upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255, default value AVAILABLE_CPU_CORES / 2
-  restore_schema_on_cluster: ""  # RESTORE_SCHEMA_ON_CLUSTER, execute all schema related SQL queries with `ON CLUSTER` clause as Distributed DDL, look to `system.clusters` table for proper cluster name
+
+  # RESTORE_SCHEMA_ON_CLUSTER, execute all schema related SQL queries with `ON CLUSTER` clause as Distributed DDL, 
+  # look to `system.clusters` table for proper cluster name, also system.macros could be used, 
+  # don't applicable when `use_embedded_backup_restore: true`
+  restore_schema_on_cluster: ""   
   upload_by_part: true           # UPLOAD_BY_PART
   download_by_part: true         # DOWNLOAD_BY_PART
   use_resumable_state: false     # USE_RESUMABLE_STATE, allow resume upload and download according to <backup_name>.resumable file
@@ -387,6 +391,7 @@ clickhouse:
   restart_command: "systemctl restart clickhouse-server" # CLICKHOUSE_RESTART_COMMAND, this command use when you try to restore with --rbac or --config options
   ignore_not_exists_error_during_freeze: true # CLICKHOUSE_IGNORE_NOT_EXISTS_ERROR_DURING_FREEZE, allow avoiding backup failures when you often CREATE / DROP tables and databases during backup creation, clickhouse-backup will ignore `code: 60` and `code: 81` errors during execute `ALTER TABLE ... FREEZE`
   check_replicas_before_attach: true # CLICKHOUSE_CHECK_REPLICAS_BEFORE_ATTACH, allow to avoid concurrent ATTACH PART execution when restore ReplicatedMergeTree tables
+  use_embedded_backup_restore: false # CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE, use BACKUP / RESTORE SQL statements instead of use regular SQL queries to allow compatible for modern ClickHouse server versions
 azblob:
   endpoint_suffix: "core.windows.net" # AZBLOB_ENDPOINT_SUFFIX
   account_name: ""             # AZBLOB_ACCOUNT_NAME

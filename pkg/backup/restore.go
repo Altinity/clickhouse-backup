@@ -82,12 +82,15 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 			break
 		}
 	}
-
+	if b.cfg.General.RestoreSchemaOnCluster != "" {
+		b.cfg.General.RestoreSchemaOnCluster, err = b.ch.ApplyMacros(ctx, b.cfg.General.RestoreSchemaOnCluster)
+	}
 	if err == nil {
 		backupMetadata := metadata.BackupMetadata{}
 		if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
 			return err
 		}
+
 		if schemaOnly || doRestoreData {
 			for _, database := range backupMetadata.Databases {
 				targetDB := database.Name
