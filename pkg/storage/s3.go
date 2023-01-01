@@ -3,7 +3,10 @@ package storage
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
+	"github.com/aws/smithy-go"
+	awsV2http "github.com/aws/smithy-go/transport/http"
 	"io"
 	"net/http"
 	"os"
@@ -14,15 +17,16 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	apexLog "github.com/apex/log"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
-	"github.com/aws/aws-sdk-go/aws/defaults"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
-	"github.com/aws/aws-sdk-go/service/sts"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsV2Config "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
+
+	s3manager "github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	awsV2Logging "github.com/aws/smithy-go/logging"
 	"github.com/pkg/errors"
 )
 
@@ -30,23 +34,24 @@ type S3LogToApexLogAdapter struct {
 	apexLog *apexLog.Logger
 }
 
-func newS3Logger(log *apexLog.Entry) *S3LogToApexLogAdapter {
-	return &S3LogToApexLogAdapter{
+func newS3Logger(log *apexLog.Entry) S3LogToApexLogAdapter {
+	return S3LogToApexLogAdapter{
 		apexLog: log.Logger,
 	}
 }
 
-func (S3LogToApexLogAdapter *S3LogToApexLogAdapter) Log(args ...interface{}) {
-	if len(args) > 1 {
-		S3LogToApexLogAdapter.apexLog.Infof(args[0].(string), args[1:]...)
+func (S3LogToApexLogAdapter S3LogToApexLogAdapter) Logf(severity awsV2Logging.Classification, msg string, args ...interface{}) {
+	msg = fmt.Sprintf("[s3:%s] %s", severity, msg)
+	if len(args) > 0 {
+		S3LogToApexLogAdapter.apexLog.Infof(msg, args...)
 	} else {
-		S3LogToApexLogAdapter.apexLog.Info(args[0].(string))
+		S3LogToApexLogAdapter.apexLog.Info(msg)
 	}
 }
 
 // S3 - presents methods for manipulate data on s3
 type S3 struct {
-	session     *session.Session
+	client      *s3.Client
 	uploader    *s3manager.Uploader
 	downloader  *s3manager.Downloader
 	Config      *config.S3Config
@@ -58,51 +63,50 @@ type S3 struct {
 }
 
 func (s *S3) Kind() string {
+
 	return "S3"
 }
 
 // Connect - connect to s3
 func (s *S3) Connect(ctx context.Context) error {
 	var err error
-
-	awsDefaults := defaults.Get()
-	defaultCredProviders := defaults.CredProviders(awsDefaults.Config, awsDefaults.Handlers)
-	customCredProviders := defaultCredProviders
-
+	var awsConfig aws.Config
+	awsConfig, err = awsV2Config.LoadDefaultConfig(
+		ctx,
+		awsV2Config.WithRetryMode(aws.RetryModeAdaptive),
+	)
+	if err != nil {
+		return err
+	}
+	if s.Config.Region != "" {
+		awsConfig.Region = s.Config.Region
+	}
 	if s.Config.AccessKey != "" && s.Config.SecretKey != "" {
-		// Define custom static cred provider
-		staticCreds := &credentials.StaticProvider{Value: credentials.Value{
-			AccessKeyID:     s.Config.AccessKey,
-			SecretAccessKey: s.Config.SecretKey,
-		}}
-		// Append static creds to the defaults
-		customCredProviders = append([]credentials.Provider{staticCreds}, customCredProviders...)
+		awsConfig.Credentials = credentials.StaticCredentialsProvider{
+			Value: aws.Credentials{
+				AccessKeyID:     s.Config.AccessKey,
+				SecretAccessKey: s.Config.SecretKey,
+			},
+		}
 	}
 
 	awsRoleARN := os.Getenv("AWS_ROLE_ARN")
+	if s.Config.AssumeRoleARN != "" {
+		stsClient := sts.NewFromConfig(awsConfig)
+		awsConfig.Credentials = stscreds.NewAssumeRoleProvider(stsClient, awsRoleARN)
+	}
+
 	awsWebIdentityTokenFile := os.Getenv("AWS_WEB_IDENTITY_TOKEN_FILE")
 	if awsRoleARN != "" && awsWebIdentityTokenFile != "" {
-		cfg := &aws.Config{
-			Region: aws.String(s.Config.Region),
-		}
-		stsSvc := sts.New(session.Must(session.NewSession(cfg)))
-		stsProvider := stscreds.NewWebIdentityRoleProviderWithOptions(stsSvc, awsRoleARN, "", stscreds.FetchTokenPath(awsWebIdentityTokenFile))
-		customCredProviders = append([]credentials.Provider{stsProvider}, customCredProviders...)
+		stsClient := sts.NewFromConfig(awsConfig)
+		awsConfig.Credentials = stscreds.NewWebIdentityRoleProvider(
+			stsClient, awsRoleARN, stscreds.IdentityTokenFile(awsWebIdentityTokenFile),
+		)
 	}
 
-	creds := credentials.NewChainCredentials(customCredProviders)
-
-	var awsConfig = &aws.Config{
-		Credentials:      creds,
-		Region:           aws.String(s.Config.Region),
-		Endpoint:         aws.String(s.Config.Endpoint),
-		DisableSSL:       aws.Bool(s.Config.DisableSSL),
-		S3ForcePathStyle: aws.Bool(s.Config.ForcePathStyle),
-		MaxRetries:       aws.Int(30),
-	}
 	if s.Config.Debug {
 		awsConfig.Logger = newS3Logger(s.Log)
-		awsConfig.LogLevel = aws.LogLevel(aws.LogDebug)
+		awsConfig.ClientLogMode = aws.LogRetries | aws.LogRequest | aws.LogResponse
 	}
 
 	if s.Config.DisableCertVerification {
@@ -112,26 +116,34 @@ func (s *S3) Connect(ctx context.Context) error {
 		awsConfig.HTTPClient = &http.Client{Transport: tr}
 	}
 
-	if s.Config.AssumeRoleARN != "" {
-		// Reference to regular credentials chain is to be copied into `stscreds` credentials.
-		awsConfig.Credentials = stscreds.NewCredentials(session.Must(session.NewSession(awsConfig)), s.Config.AssumeRoleARN)
-	}
+	if s.Config.Endpoint != "" {
+		awsConfig.EndpointResolverWithOptions = aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+			return aws.Endpoint{
+				PartitionID:       "aws",
+				URL:               s.Config.Endpoint,
+				SigningRegion:     s.Config.Region,
+				HostnameImmutable: true,
+				Source:            aws.EndpointSourceCustom,
+			}, nil
+		})
 
-	if s.session, err = session.NewSession(awsConfig); err != nil {
-		return err
 	}
+	s.client = s3.NewFromConfig(awsConfig, func(o *s3.Options) {
+		o.UsePathStyle = s.Config.ForcePathStyle
+		o.EndpointOptions.DisableHTTPS = s.Config.DisableSSL
+	})
 
-	s.uploader = s3manager.NewUploader(s.session)
+	s.uploader = s3manager.NewUploader(s.client)
 	s.uploader.Concurrency = s.Concurrency
 	s.uploader.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(s.BufferSize)
 	s.uploader.PartSize = s.PartSize
 
-	s.downloader = s3manager.NewDownloader(s.session)
+	s.downloader = s3manager.NewDownloader(s.client)
 	s.downloader.Concurrency = s.Concurrency
 	s.downloader.BufferProvider = s3manager.NewPooledBufferedWriterReadFromProvider(s.BufferSize)
 	s.downloader.PartSize = s.PartSize
 
-	s.versioning = s.isVersioningEnabled()
+	s.versioning = s.isVersioningEnabled(ctx)
 
 	return nil
 }
@@ -141,12 +153,11 @@ func (s *S3) Close(ctx context.Context) error {
 }
 
 func (s *S3) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {
-	svc := s3.New(s.session)
-	req, resp := svc.GetObjectRequest(&s3.GetObjectInput{
+	resp, err := s.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
 		Key:    aws.String(path.Join(s.Config.Path, key)),
 	})
-	if err := req.Send(); err != nil {
+	if err != nil {
 		return nil, err
 	}
 
@@ -161,7 +172,7 @@ func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath stri
 		if err != nil {
 			return nil, err
 		}
-		_, err = s.downloader.Download(writer, &s3.GetObjectInput{
+		_, err = s.downloader.Download(ctx, writer, &s3.GetObjectInput{
 			Bucket: aws.String(s.Config.Bucket),
 			Key:    aws.String(path.Join(s.Config.Path, key)),
 		})
@@ -175,18 +186,17 @@ func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath stri
 }
 
 func (s *S3) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
-	var sse *string
-	if s.Config.SSE != "" {
-		sse = aws.String(s.Config.SSE)
+	params := s3.PutObjectInput{
+		ACL:          s3types.ObjectCannedACL(s.Config.ACL),
+		Bucket:       aws.String(s.Config.Bucket),
+		Key:          aws.String(path.Join(s.Config.Path, key)),
+		Body:         r,
+		StorageClass: s3types.StorageClass(strings.ToUpper(s.Config.StorageClass)),
 	}
-	_, err := s.uploader.Upload(&s3manager.UploadInput{
-		ACL:                  aws.String(s.Config.ACL),
-		Bucket:               aws.String(s.Config.Bucket),
-		Key:                  aws.String(path.Join(s.Config.Path, key)),
-		Body:                 r,
-		ServerSideEncryption: sse,
-		StorageClass:         aws.String(strings.ToUpper(s.Config.StorageClass)),
-	})
+	if s.Config.SSE != "" {
+		params.ServerSideEncryption = s3types.ServerSideEncryption(s.Config.SSE)
+	}
+	_, err := s.uploader.Upload(ctx, &params)
 	return err
 }
 
@@ -196,34 +206,34 @@ func (s *S3) DeleteFile(ctx context.Context, key string) error {
 		Key:    aws.String(path.Join(s.Config.Path, key)),
 	}
 	if s.versioning {
-		objVersion, err := s.getObjectVersion(key)
+		objVersion, err := s.getObjectVersion(ctx, key)
 		if err != nil {
 			return errors.Wrapf(err, "DeleteFile, obtaining object version %+v", params)
 		}
 		params.VersionId = objVersion
 	}
-	if _, err := s3.New(s.session).DeleteObject(params); err != nil {
+	if _, err := s.client.DeleteObject(ctx, params); err != nil {
 		return errors.Wrapf(err, "DeleteFile, deleting object %+v", params)
 	}
 	return nil
 }
 
-func (s *S3) isVersioningEnabled() bool {
-	output, err := s3.New(s.session).GetBucketVersioning(&s3.GetBucketVersioningInput{
+func (s *S3) isVersioningEnabled(ctx context.Context) bool {
+	output, err := s.client.GetBucketVersioning(ctx, &s3.GetBucketVersioningInput{
 		Bucket: aws.String(s.Config.Bucket),
 	})
 	if err != nil {
 		return false
 	}
-	return output.Status != nil && *output.Status == s3.BucketVersioningStatusEnabled
+	return output.Status == s3types.BucketVersioningStatusEnabled
 }
 
-func (s *S3) getObjectVersion(key string) (*string, error) {
+func (s *S3) getObjectVersion(ctx context.Context, key string) (*string, error) {
 	params := &s3.GetObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
 		Key:    aws.String(path.Join(s.Config.Path, key)),
 	}
-	object, err := s3.New(s.session).GetObject(params)
+	object, err := s.client.GetObject(ctx, params)
 	if err != nil {
 		return nil, err
 	}
@@ -231,19 +241,23 @@ func (s *S3) getObjectVersion(key string) (*string, error) {
 }
 
 func (s *S3) StatFile(ctx context.Context, key string) (RemoteFile, error) {
-	svc := s3.New(s.session)
-	head, err := svc.HeadObject(&s3.HeadObjectInput{
+	head, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
 		Key:    aws.String(path.Join(s.Config.Path, key)),
 	})
 	if err != nil {
-		awsError, ok := err.(awserr.Error)
-		if ok && awsError.Code() == "NotFound" {
-			return nil, ErrNotFound
+		var opError *smithy.OperationError
+		if errors.As(err, &opError) {
+			var httpErr *awsV2http.ResponseError
+			if errors.As(opError.Err, &httpErr) {
+				if httpErr.Response.StatusCode == http.StatusNotFound {
+					return nil, ErrNotFound
+				}
+			}
 		}
 		return nil, err
 	}
-	return &s3File{*head.ContentLength, *head.LastModified, key}, nil
+	return &s3File{head.ContentLength, *head.LastModified, key}, nil
 }
 
 func (s *S3) Walk(ctx context.Context, s3Path string, recursive bool, process func(ctx context.Context, r RemoteFile) error) error {
@@ -251,7 +265,7 @@ func (s *S3) Walk(ctx context.Context, s3Path string, recursive bool, process fu
 	s3Files := make(chan *s3File)
 	g.Go(func() error {
 		defer close(s3Files)
-		return s.remotePager(path.Join(s.Config.Path, s3Path), recursive, func(page *s3.ListObjectsV2Output) {
+		return s.remotePager(ctx, path.Join(s.Config.Path, s3Path), recursive, func(page *s3.ListObjectsV2Output) {
 			for _, cp := range page.CommonPrefixes {
 				s3Files <- &s3File{
 					name: strings.TrimPrefix(*cp.Prefix, path.Join(s.Config.Path, s3Path)),
@@ -259,7 +273,7 @@ func (s *S3) Walk(ctx context.Context, s3Path string, recursive bool, process fu
 			}
 			for _, c := range page.Contents {
 				s3Files <- &s3File{
-					*c.Size,
+					c.Size,
 					*c.LastModified,
 					strings.TrimPrefix(*c.Key, path.Join(s.Config.Path, s3Path)),
 				}
@@ -278,24 +292,30 @@ func (s *S3) Walk(ctx context.Context, s3Path string, recursive bool, process fu
 	return g.Wait()
 }
 
-func (s *S3) remotePager(s3Path string, recursive bool, pager func(page *s3.ListObjectsV2Output)) error {
+func (s *S3) remotePager(ctx context.Context, s3Path string, recursive bool, process func(page *s3.ListObjectsV2Output)) error {
 	prefix := s3Path + "/"
 	if s3Path == "" || s3Path == "/" {
 		prefix = ""
 	}
 	params := &s3.ListObjectsV2Input{
 		Bucket:  aws.String(s.Config.Bucket), // Required
-		MaxKeys: aws.Int64(1000),
+		MaxKeys: 1000,
 		Prefix:  aws.String(prefix),
 	}
 	if !recursive {
-		params.SetDelimiter("/")
+		params.Delimiter = aws.String("/")
 	}
-	wrapper := func(page *s3.ListObjectsV2Output, lastPage bool) bool {
-		pager(page)
-		return !lastPage
+	pager := s3.NewListObjectsV2Paginator(s.client, params, func(o *s3.ListObjectsV2PaginatorOptions) {
+		o.Limit = 1000
+	})
+	for pager.HasMorePages() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return err
+		}
+		process(page)
 	}
-	return s3.New(s.session).ListObjectsV2Pages(params, wrapper)
+	return nil
 }
 
 type s3File struct {

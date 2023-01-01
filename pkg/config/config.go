@@ -3,6 +3,7 @@ package config
 import (
 	"crypto/tls"
 	"fmt"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"math"
 	"os"
 	"runtime"
@@ -10,7 +11,6 @@ import (
 	"time"
 
 	"github.com/apex/log"
-	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/kelseyhightower/envconfig"
 	"github.com/urfave/cli"
 	"gopkg.in/yaml.v2"
@@ -321,19 +321,20 @@ func ValidateConfig(cfg *Config) error {
 		return fmt.Errorf("invalid azblob timeout: %v", err)
 	}
 	storageClassOk := false
+	var allStorageClasses s3types.StorageClass
 	if cfg.S3.UseCustomStorageClass {
 		storageClassOk = true
 	} else {
-		for _, storageClass := range s3.StorageClass_Values() {
-			if strings.ToUpper(cfg.S3.StorageClass) == storageClass {
+		for _, storageClass := range allStorageClasses.Values() {
+			if s3types.StorageClass(strings.ToUpper(cfg.S3.StorageClass)) == storageClass {
 				storageClassOk = true
 				break
 			}
 		}
 	}
 	if !storageClassOk {
-		return fmt.Errorf("'%s' is bad S3_STORAGE_CLASS, select one of: %s",
-			cfg.S3.StorageClass, strings.Join(s3.StorageClass_Values(), ", "))
+		return fmt.Errorf("'%s' is bad S3_STORAGE_CLASS, select one of: %#v",
+			cfg.S3.StorageClass, allStorageClasses.Values())
 	}
 	if cfg.S3.AllowMultipartDownload && cfg.S3.Concurrency == 1 {
 		return fmt.Errorf(
@@ -469,7 +470,7 @@ func DefaultConfig() *Config {
 			CompressionFormat:       "tar",
 			DisableCertVerification: false,
 			UseCustomStorageClass:   false,
-			StorageClass:            s3.StorageClassStandard,
+			StorageClass:            string(s3types.StorageClassStandard),
 			Concurrency:             1,
 			PartSize:                0,
 			MaxPartsCount:           10000,
