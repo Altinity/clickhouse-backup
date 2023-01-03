@@ -152,7 +152,7 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 	}
 	defer b.ch.Close()
 
-	bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, false)
+	bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, false, "")
 	if err != nil {
 		return err
 	}

@@ -41,7 +41,7 @@ func (b *Backuper) legacyDownload(ctx context.Context, backupName string) error 
 		"backup":    backupName,
 		"operation": "download_legacy",
 	})
-	bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, true)
+	bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, true, "")
 	if err != nil {
 		return err
 	}
@@ -112,7 +112,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	if b.cfg.General.RemoteStorage == "custom" {
 		return custom.Download(ctx, b.cfg, backupName, tablePattern, partitions, schemaOnly)
 	}
-	if err := b.init(ctx, disks); err != nil {
+	if err := b.init(ctx, disks, ""); err != nil {
 		return err
 	}
 	defer func() {

@@ -62,16 +62,17 @@ type GeneralConfig struct {
 
 // GCSConfig - GCS settings section
 type GCSConfig struct {
-	CredentialsFile        string `yaml:"credentials_file" envconfig:"GCS_CREDENTIALS_FILE"`
-	CredentialsJSON        string `yaml:"credentials_json" envconfig:"GCS_CREDENTIALS_JSON"`
-	CredentialsJSONEncoded string `yaml:"credentials_json_encoded" envconfig:"GCS_CREDENTIALS_JSON_ENCODED"`
-	Bucket                 string `yaml:"bucket" envconfig:"GCS_BUCKET"`
-	Path                   string `yaml:"path" envconfig:"GCS_PATH"`
-	CompressionLevel       int    `yaml:"compression_level" envconfig:"GCS_COMPRESSION_LEVEL"`
-	CompressionFormat      string `yaml:"compression_format" envconfig:"GCS_COMPRESSION_FORMAT"`
-	Debug                  bool   `yaml:"debug" envconfig:"GCS_DEBUG"`
-	Endpoint               string `yaml:"endpoint" envconfig:"GCS_ENDPOINT"`
-	StorageClass           string `yaml:"storage_class" envconfig:"GCS_STORAGE_CLASS"`
+	CredentialsFile        string            `yaml:"credentials_file" envconfig:"GCS_CREDENTIALS_FILE"`
+	CredentialsJSON        string            `yaml:"credentials_json" envconfig:"GCS_CREDENTIALS_JSON"`
+	CredentialsJSONEncoded string            `yaml:"credentials_json_encoded" envconfig:"GCS_CREDENTIALS_JSON_ENCODED"`
+	Bucket                 string            `yaml:"bucket" envconfig:"GCS_BUCKET"`
+	Path                   string            `yaml:"path" envconfig:"GCS_PATH"`
+	CompressionLevel       int               `yaml:"compression_level" envconfig:"GCS_COMPRESSION_LEVEL"`
+	CompressionFormat      string            `yaml:"compression_format" envconfig:"GCS_COMPRESSION_FORMAT"`
+	Debug                  bool              `yaml:"debug" envconfig:"GCS_DEBUG"`
+	Endpoint               string            `yaml:"endpoint" envconfig:"GCS_ENDPOINT"`
+	StorageClass           string            `yaml:"storage_class" envconfig:"GCS_STORAGE_CLASS"`
+	ObjectLabels           map[string]string `yaml:"object_labels" envconfig:"S3_OBJECT_LABELS"`
 }
 
 // AzureBlobConfig - Azure Blob settings section
@@ -95,27 +96,28 @@ type AzureBlobConfig struct {
 
 // S3Config - s3 settings section
 type S3Config struct {
-	AccessKey               string `yaml:"access_key" envconfig:"S3_ACCESS_KEY"`
-	SecretKey               string `yaml:"secret_key" envconfig:"S3_SECRET_KEY"`
-	Bucket                  string `yaml:"bucket" envconfig:"S3_BUCKET"`
-	Endpoint                string `yaml:"endpoint" envconfig:"S3_ENDPOINT"`
-	Region                  string `yaml:"region" envconfig:"S3_REGION"`
-	ACL                     string `yaml:"acl" envconfig:"S3_ACL"`
-	AssumeRoleARN           string `yaml:"assume_role_arn" envconfig:"S3_ASSUME_ROLE_ARN"`
-	ForcePathStyle          bool   `yaml:"force_path_style" envconfig:"S3_FORCE_PATH_STYLE"`
-	Path                    string `yaml:"path" envconfig:"S3_PATH"`
-	DisableSSL              bool   `yaml:"disable_ssl" envconfig:"S3_DISABLE_SSL"`
-	CompressionLevel        int    `yaml:"compression_level" envconfig:"S3_COMPRESSION_LEVEL"`
-	CompressionFormat       string `yaml:"compression_format" envconfig:"S3_COMPRESSION_FORMAT"`
-	SSE                     string `yaml:"sse" envconfig:"S3_SSE"`
-	DisableCertVerification bool   `yaml:"disable_cert_verification" envconfig:"S3_DISABLE_CERT_VERIFICATION"`
-	UseCustomStorageClass   bool   `yaml:"use_custom_storage_class" envconfig:"S3_USE_CUSTOM_STORAGE_CLASS"`
-	StorageClass            string `yaml:"storage_class" envconfig:"S3_STORAGE_CLASS"`
-	Concurrency             int    `yaml:"concurrency" envconfig:"S3_CONCURRENCY"`
-	PartSize                int64  `yaml:"part_size" envconfig:"S3_PART_SIZE"`
-	MaxPartsCount           int64  `yaml:"max_parts_count" envconfig:"S3_MAX_PARTS_COUNT"`
-	AllowMultipartDownload  bool   `yaml:"allow_multipart_download" envconfig:"S3_ALLOW_MULTIPART_DOWNLOAD"`
-	Debug                   bool   `yaml:"debug" envconfig:"S3_DEBUG"`
+	AccessKey               string            `yaml:"access_key" envconfig:"S3_ACCESS_KEY"`
+	SecretKey               string            `yaml:"secret_key" envconfig:"S3_SECRET_KEY"`
+	Bucket                  string            `yaml:"bucket" envconfig:"S3_BUCKET"`
+	Endpoint                string            `yaml:"endpoint" envconfig:"S3_ENDPOINT"`
+	Region                  string            `yaml:"region" envconfig:"S3_REGION"`
+	ACL                     string            `yaml:"acl" envconfig:"S3_ACL"`
+	AssumeRoleARN           string            `yaml:"assume_role_arn" envconfig:"S3_ASSUME_ROLE_ARN"`
+	ForcePathStyle          bool              `yaml:"force_path_style" envconfig:"S3_FORCE_PATH_STYLE"`
+	Path                    string            `yaml:"path" envconfig:"S3_PATH"`
+	DisableSSL              bool              `yaml:"disable_ssl" envconfig:"S3_DISABLE_SSL"`
+	CompressionLevel        int               `yaml:"compression_level" envconfig:"S3_COMPRESSION_LEVEL"`
+	CompressionFormat       string            `yaml:"compression_format" envconfig:"S3_COMPRESSION_FORMAT"`
+	SSE                     string            `yaml:"sse" envconfig:"S3_SSE"`
+	DisableCertVerification bool              `yaml:"disable_cert_verification" envconfig:"S3_DISABLE_CERT_VERIFICATION"`
+	UseCustomStorageClass   bool              `yaml:"use_custom_storage_class" envconfig:"S3_USE_CUSTOM_STORAGE_CLASS"`
+	StorageClass            string            `yaml:"storage_class" envconfig:"S3_STORAGE_CLASS"`
+	Concurrency             int               `yaml:"concurrency" envconfig:"S3_CONCURRENCY"`
+	PartSize                int64             `yaml:"part_size" envconfig:"S3_PART_SIZE"`
+	MaxPartsCount           int64             `yaml:"max_parts_count" envconfig:"S3_MAX_PARTS_COUNT"`
+	AllowMultipartDownload  bool              `yaml:"allow_multipart_download" envconfig:"S3_ALLOW_MULTIPART_DOWNLOAD"`
+	ObjectLabels            map[string]string `yaml:"object_labels" envconfig:"S3_OBJECT_LABELS"`
+	Debug                   bool              `yaml:"debug" envconfig:"S3_DEBUG"`
 }
 
 // COSConfig - cos settings section

@@ -341,7 +341,7 @@ func (b *Backuper) GetRemoteBackups(ctx context.Context, parseMetadata bool) ([]
 	if b.cfg.General.RemoteStorage == "custom" {
 		return custom.List(ctx, b.cfg)
 	}
-	bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, false)
+	bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, false, "")
 	if err != nil {
 		return []storage.Backup{}, err
 	}

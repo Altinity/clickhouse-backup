@@ -161,6 +161,9 @@ func (gcs *GCS) PutFile(ctx context.Context, key string, r io.ReadCloser) error 
 	obj := gcs.client.Bucket(gcs.Config.Bucket).Object(key)
 	writer := obj.NewWriter(ctx)
 	writer.StorageClass = gcs.Config.StorageClass
+	if len(gcs.Config.ObjectLabels) > 0 {
+		writer.Metadata = gcs.Config.ObjectLabels
+	}
 	defer func() {
 		if err := writer.Close(); err != nil {
 			log.Warnf("can't close writer: %+v", err)

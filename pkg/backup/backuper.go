@@ -37,7 +37,7 @@ func NewBackuper(cfg *config.Config) *Backuper {
 	}
 }
 
-func (b *Backuper) init(ctx context.Context, disks []clickhouse.Disk) error {
+func (b *Backuper) init(ctx context.Context, disks []clickhouse.Disk, backupName string) error {
 	var err error
 	if disks == nil {
 		disks, err = b.ch.GetDisks(ctx)
@@ -58,7 +58,7 @@ func (b *Backuper) init(ctx context.Context, disks []clickhouse.Disk) error {
 	}
 	b.DiskToPathMap = diskMap
 	if b.cfg.General.RemoteStorage != "none" && b.cfg.General.RemoteStorage != "custom" {
-		b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, true)
+		b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, true, backupName)
 		if err != nil {
 			return err
 		}

@@ -193,6 +193,17 @@ func (s *S3) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
 		Body:         r,
 		StorageClass: s3types.StorageClass(strings.ToUpper(s.Config.StorageClass)),
 	}
+	// https://github.com/AlexAkulov/clickhouse-backup/issues/588
+	if len(s.Config.ObjectLabels) > 0 {
+		tags := ""
+		for k, v := range s.Config.ObjectLabels {
+			if tags != "" {
+				tags += "&"
+			}
+			tags += k + "=" + v
+		}
+		params.Tagging = aws.String(tags)
+	}
 	if s.Config.SSE != "" {
 		params.ServerSideEncryption = s3types.ServerSideEncryption(s.Config.SSE)
 	}

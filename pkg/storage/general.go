@@ -605,7 +605,7 @@ func (bd *BackupDestination) UploadPath(ctx context.Context, size int64, baseLoc
 	return nil
 }
 
-func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhouse.ClickHouse, calcMaxSize bool) (*BackupDestination, error) {
+func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhouse.ClickHouse, calcMaxSize bool, backupName string) (*BackupDestination, error) {
 	log := apexLog.WithField("logger", "NewBackupDestination")
 	var err error
 	// https://github.com/AlexAkulov/clickhouse-backup/issues/404
@@ -670,6 +670,15 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 		if err != nil {
 			return nil, err
 		}
+		// https://github.com/AlexAkulov/clickhouse-backup/issues/588
+		if len(s3Storage.Config.ObjectLabels) > 0 && backupName != "" {
+			objectLabels := s3Storage.Config.ObjectLabels
+			objectLabels, err = ApplyMacrosToObjectLabels(ctx, objectLabels, ch, backupName)
+			if err != nil {
+				return nil, err
+			}
+			s3Storage.Config.ObjectLabels = objectLabels
+		}
 		return &BackupDestination{
 			s3Storage,
 			log.WithField("logger", "s3"),
@@ -682,6 +691,15 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 		googleCloudStorage.Config.Path, err = ch.ApplyMacros(ctx, googleCloudStorage.Config.Path)
 		if err != nil {
 			return nil, err
+		}
+		// https://github.com/AlexAkulov/clickhouse-backup/issues/588
+		if len(googleCloudStorage.Config.ObjectLabels) > 0 && backupName != "" {
+			objectLabels := googleCloudStorage.Config.ObjectLabels
+			objectLabels, err = ApplyMacrosToObjectLabels(ctx, objectLabels, ch, backupName)
+			if err != nil {
+				return nil, err
+			}
+			googleCloudStorage.Config.ObjectLabels = objectLabels
 		}
 		return &BackupDestination{
 			googleCloudStorage,
@@ -737,4 +755,18 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 	default:
 		return nil, fmt.Errorf("storage type '%s' is not supported", cfg.General.RemoteStorage)
 	}
+}
+
+// https://github.com/AlexAkulov/clickhouse-backup/issues/588
+func ApplyMacrosToObjectLabels(ctx context.Context, objectLabels map[string]string, ch *clickhouse.ClickHouse, backupName string) (map[string]string, error) {
+	var err error
+	for k, v := range objectLabels {
+		v, err = ch.ApplyMacros(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		r := strings.NewReplacer("{backup}", backupName, "{backupName}", backupName, "{backup_name}", backupName, "{BACKUP_NAME}", backupName)
+		objectLabels[k] = r.Replace(v)
+	}
+	return objectLabels, nil
 }
