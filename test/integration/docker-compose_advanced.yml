@@ -5,9 +5,7 @@ services:
     environment:
       SSH_ENABLE_ROOT: "true"
       SSH_ENABLE_PASSWORD_AUTH: "true"
-    command: sh -c 'echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && echo "root:JFzMHfVpvTgEd74XXPq6wARA2Qg3AutJ" | chpasswd && /usr/sbin/sshd -D -e -f /etc/ssh/sshd_config'
-    ports:
-      - "2222:22"
+    command: sh -c 'echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && echo "LogLevel DEBUG3" >> /etc/ssh/sshd_config && echo "root:JFzMHfVpvTgEd74XXPq6wARA2Qg3AutJ" | chpasswd && /usr/sbin/sshd -D -e -f /etc/ssh/sshd_config'
     networks:
       - clickhouse-backup
 
