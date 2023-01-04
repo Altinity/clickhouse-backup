@@ -30,7 +30,7 @@ import (
 
 const (
 	// BufferSize - size of ring buffer between stream handlers
-	BufferSize = 1 * 1024 * 1024
+	BufferSize = 512 * 1024
 )
 
 type readerWrapperForContext func(p []byte) (n int, err error)
