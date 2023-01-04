@@ -336,9 +336,9 @@ OPTIONS:
 
 ## Default Config
 
-Config file location can be defined by ```$CLICKHOUSE_BACKUP_CONFIG```
-
+Config file location by default `/etc/clickhouse-backup/config.yml` can be redefined via `CLICKHOUSE_BACKUP_CONFIG` environment variable
 All options can be overwritten via environment variables
+Use `clickhouse-backup print-config` for print current config
 
 ```yaml
 general:
@@ -363,7 +363,10 @@ general:
   upload_by_part: true           # UPLOAD_BY_PART
   download_by_part: true         # DOWNLOAD_BY_PART
   use_resumable_state: false     # USE_RESUMABLE_STATE, allow resume upload and download according to <backup_name>.resumable file
-  restore_database_mapping: {}   # RESTORE_DATABASE_MAPPING, restore rules from backup databases to target databases, which is useful on change destination database all atomic tables will create with new uuid.
+
+  # RESTORE_DATABASE_MAPPING, restore rules from backup databases to target databases, which is useful on change destination database all atomic tables will create with new uuid.
+  # for environment use following format "src_db1:target_db1,src_db2:target_db2" 
+  restore_database_mapping: {}   
   retries_on_failure: 3          # RETRIES_ON_FAILURE, retry if failure during upload or download
   retries_pause: 30s             # RETRIES_PAUSE, time duration pause after each download or upload fail 
 clickhouse:
@@ -371,8 +374,12 @@ clickhouse:
   password: ""                     # CLICKHOUSE_PASSWORD
   host: localhost                  # CLICKHOUSE_HOST
   port: 9000                       # CLICKHOUSE_PORT, don't use 8123, clickhouse-backup doesn't support HTTP protocol
-  disk_mapping: {}                 # CLICKHOUSE_DISK_MAPPING, use it if your system.disks on restored servers not the same with system.disks on server where backup was created
-  skip_tables:                     # CLICKHOUSE_SKIP_TABLES, during create and restore tables which matched with these patterns will ignore
+  # CLICKHOUSE_DISK_MAPPING, use it if your system.disks on restored servers not the same with system.disks on server where backup was created
+  # for environment use following format "disk_name1:disk_path1,disk_name2:disk_path2" 
+  disk_mapping: {}
+  # CLICKHOUSE_SKIP_TABLES, during create and restore tables which matched with these patterns will ignore
+  # for environment use following format "pattern1,pattern2,pattern3" 
+  skip_tables:                     
     - system.*
     - INFORMATION_SCHEMA.*
     - information_schema.*
@@ -427,7 +434,10 @@ s3:
   part_size: 0                     # S3_PART_SIZE, if less or eq 0 then calculated as max_file_size / max_parts_count, between 5MB and 5Gb
   max_parts_count: 10000           # S3_MAX_PARTS_COUNT, number of parts for S3 multipart uploads
   allow_multipart_download: false  # S3_ALLOW_MULTIPART_DOWNLOAD, allow us fast download speed (same as upload), but will require additional disk space, download_concurrency * part size in worst case
-  object_labels: {}                # S3_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
+
+  # S3_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
+  # for environment use following format "key1:value1,key2:value2" 
+  object_labels: {}                
   debug: false                     # S3_DEBUG
 gcs:
   credentials_file: ""         # GCS_CREDENTIALS_FILE
@@ -438,7 +448,10 @@ gcs:
   compression_level: 1         # GCS_COMPRESSION_LEVEL
   compression_format: tar      # GCS_COMPRESSION_FORMAT
   storage_class: STANDARD      # GCS_STORAGE_CLASS
-  object_labels: {}            # GCS_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
+
+  # GCS_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
+  # for environment use following format "key1:value1,key2:value2" 
+  object_labels: {}            
   debug: false                 # GCS_DEBUG
 cos:
   url: ""                      # COS_URL
