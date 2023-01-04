@@ -102,10 +102,10 @@ services:
       retries: 10
 
   zookeeper:
-    image: docker.io/zookeeper:${ZOOKEEPER_VERSION:-latest}
+    image: docker.io/clickhouse/clickhouse-keeper:${CLICKHOUSE_KEEPER_VERSION:-latest-alpine}
     container_name: zookeeper
-    environment:
-      ZOO_4LW_COMMANDS_WHITELIST: "*"
+    volumes:
+      - ./clickhouse-keeper.xml:/etc/clickhouse-keeper/conf.d/clickhouse-keeper.xml
     networks:
       - clickhouse-backup
     healthcheck:

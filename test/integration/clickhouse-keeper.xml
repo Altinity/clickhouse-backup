@@ -1,0 +1,9 @@
+<clickhouse>
+    <listen_host>0.0.0.0</listen_host>
+    <logger>
+        <console>1</console>
+    </logger>
+    <keeper_server>
+        <tcp_port>2181</tcp_port>
+    </keeper_server>
+</clickhouse>
