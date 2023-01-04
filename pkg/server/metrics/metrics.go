@@ -172,16 +172,18 @@ func (m *APIMetrics) Finish(command string, startTime time.Time) {
 	}
 }
 func (m *APIMetrics) Success(command string) {
-	if _, exists := m.LastStart[command]; exists {
+	if _, exists := m.SuccessfulCounter[command]; exists {
+		m.SuccessfulCounter[command].Inc()
 	} else {
-		m.log.Warnf("%s not found in m", command)
+		m.log.Warnf("%s not found in successful metrics", command)
 	}
 }
 
 func (m *APIMetrics) Failure(command string) {
-	if _, exists := m.LastStart[command]; exists {
+	if _, exists := m.FailedCounter[command]; exists {
+		m.FailedCounter[command].Inc()
 	} else {
-		m.log.Warnf("%s not found in m", command)
+		m.log.Warnf("%s not found in failed metrics", command)
 	}
 }
 
