@@ -4,6 +4,9 @@ IMPROVEMENTS
 - switch S3 storage backend to https://github.com/aws/aws-sdk-go-v2/, fix [534](https://github.com/AlexAkulov/clickhouse-backup/issues/534)
 - add `S3_OBJECT_LABLES` and `GCS_OBJECT_LABELS` to allow setup each backup object metadata during upload fix [588](https://github.com/AlexAkulov/clickhouse-backup/issues/588)
 
+BUG FIXES
+- Wrong size of backup in list command if upload or download was break and resume, fix [526](https://github.com/AlexAkulov/clickhouse-backup/issues/526)
+
 # v2.1.3
 IMPROVEMENTS
 - during upload sort tables descending by `total_bytes` if this field present 

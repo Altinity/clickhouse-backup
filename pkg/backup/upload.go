@@ -201,7 +201,7 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 		return err
 	}
 	remoteBackupMetaFile := path.Join(backupName, "metadata.json")
-	if !b.resume || (b.resume && !b.resumableState.IsAlreadyProcessed(remoteBackupMetaFile)) {
+	if !b.resume || (b.resume && !b.resumableState.IsAlreadyProcessedBool(remoteBackupMetaFile)) {
 		retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
 		err = retry.RunCtx(ctx, func(ctx context.Context) error {
 			return b.dst.PutFile(ctx, remoteBackupMetaFile, io.NopCloser(bytes.NewReader(newBackupMetadataBody)))
@@ -210,7 +210,7 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 			return fmt.Errorf("can't upload %s: %v", remoteBackupMetaFile, err)
 		}
 		if b.resume {
-			b.resumableState.AppendToState(remoteBackupMetaFile)
+			b.resumableState.AppendToState(remoteBackupMetaFile, int64(len(newBackupMetadataBody)))
 		}
 	}
 	if b.isEmbedded {
@@ -236,7 +236,7 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 }
 
 func (b *Backuper) uploadSingleBackupFile(ctx context.Context, localFile, remoteFile string) error {
-	if b.resume && b.resumableState.IsAlreadyProcessed(remoteFile) {
+	if b.resume && b.resumableState.IsAlreadyProcessedBool(remoteFile) {
 		return nil
 	}
 	log := b.log.WithField("logger", "uploadSingleBackupFile")
@@ -257,7 +257,11 @@ func (b *Backuper) uploadSingleBackupFile(ctx context.Context, localFile, remote
 		return fmt.Errorf("can't upload %s: %v", remoteFile, err)
 	}
 	if b.resume {
-		b.resumableState.AppendToState(remoteFile)
+		info, err := os.Stat(localFile)
+		if err != nil {
+			return fmt.Errorf("can't stat %s", localFile)
+		}
+		b.resumableState.AppendToState(remoteFile, info.Size())
 	}
 	return nil
 }
@@ -385,8 +389,10 @@ func (b *Backuper) uploadAndArchiveBackupRelatedDir(ctx context.Context, localBa
 	if _, err := os.Stat(localBackupRelatedDir); os.IsNotExist(err) {
 		return 0, nil
 	}
-	if b.resume && b.resumableState.IsAlreadyProcessed(remoteFile) {
-		return 0, nil
+	if b.resume {
+		if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(remoteFile); isProcessed {
+			return uint64(processedSize), nil
+		}
 	}
 	var localFiles []string
 	var err error
@@ -410,7 +416,7 @@ func (b *Backuper) uploadAndArchiveBackupRelatedDir(ctx context.Context, localBa
 		return 0, fmt.Errorf("can't check uploaded %s file: %v", remoteFile, err)
 	}
 	if b.resume {
-		b.resumableState.AppendToState(remoteFile)
+		b.resumableState.AppendToState(remoteFile, remoteUploaded.Size())
 	}
 	return uint64(remoteUploaded.Size()), nil
 }
@@ -462,16 +468,21 @@ breakByError:
 				remotePathFull := path.Join(remotePath, partSuffix)
 				g.Go(func() error {
 					defer s.Release(1)
-					if b.resume && b.resumableState.IsAlreadyProcessed(remotePathFull) {
-						return nil
+					if b.resume {
+						if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(remotePathFull); isProcessed {
+							atomic.AddInt64(&uploadedBytes, processedSize)
+							return nil
+						}
 					}
 					log.Debugf("start upload %d files to %s", len(partFiles), remotePath)
-					if err := b.dst.UploadPath(ctx, 0, backupPath, partFiles, remotePath, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration); err != nil {
+					if uploadPathBytes, err := b.dst.UploadPath(ctx, 0, backupPath, partFiles, remotePath, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration); err != nil {
 						log.Errorf("UploadPath return error: %v", err)
 						return fmt.Errorf("can't upload: %v", err)
-					}
-					if b.resume {
-						b.resumableState.AppendToState(remotePathFull)
+					} else {
+						atomic.AddInt64(&uploadedBytes, uploadPathBytes)
+						if b.resume {
+							b.resumableState.AppendToState(remotePathFull, uploadPathBytes)
+						}
 					}
 					log.Debugf("finish upload %d files to %s", len(partFiles), remotePath)
 					return nil
@@ -483,8 +494,11 @@ breakByError:
 				localFiles := partFiles
 				g.Go(func() error {
 					defer s.Release(1)
-					if b.resume && b.resumableState.IsAlreadyProcessed(remoteDataFile) {
-						return nil
+					if b.resume {
+						if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(remoteDataFile); isProcessed {
+							atomic.AddInt64(&uploadedBytes, processedSize)
+							return nil
+						}
 					}
 					log.Debugf("start upload %d files to %s", len(localFiles), remoteDataFile)
 					retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
@@ -501,7 +515,7 @@ breakByError:
 					}
 					atomic.AddInt64(&uploadedBytes, remoteFile.Size())
 					if b.resume {
-						b.resumableState.AppendToState(remoteDataFile)
+						b.resumableState.AppendToState(remoteDataFile, remoteFile.Size())
 					}
 					log.Debugf("finish upload to %s", remoteDataFile)
 					return nil
@@ -534,8 +548,10 @@ func (b *Backuper) uploadTableMetadataRegular(ctx context.Context, backupName st
 		return 0, fmt.Errorf("can't marshal json: %v", err)
 	}
 	remoteTableMetaFile := path.Join(backupName, "metadata", common.TablePathEncode(tableMetadata.Database), fmt.Sprintf("%s.json", common.TablePathEncode(tableMetadata.Table)))
-	if b.resume && b.resumableState.IsAlreadyProcessed(remoteTableMetaFile) {
-		return int64(len(content)), nil
+	if b.resume {
+		if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(remoteTableMetaFile); isProcessed {
+			return processedSize, nil
+		}
 	}
 	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
 	err = retry.RunCtx(ctx, func(ctx context.Context) error {
@@ -545,15 +561,17 @@ func (b *Backuper) uploadTableMetadataRegular(ctx context.Context, backupName st
 		return 0, fmt.Errorf("can't upload: %v", err)
 	}
 	if b.resume {
-		b.resumableState.AppendToState(remoteTableMetaFile)
+		b.resumableState.AppendToState(remoteTableMetaFile, int64(len(content)))
 	}
 	return int64(len(content)), nil
 }
 
 func (b *Backuper) uploadTableMetadataEmbedded(ctx context.Context, backupName string, tableMetadata metadata.TableMetadata) (int64, error) {
 	remoteTableMetaFile := path.Join(backupName, "metadata", common.TablePathEncode(tableMetadata.Database), fmt.Sprintf("%s.sql", common.TablePathEncode(tableMetadata.Table)))
-	if b.resume && b.resumableState.IsAlreadyProcessed(remoteTableMetaFile) {
-		return 0, nil
+	if b.resume {
+		if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(remoteTableMetaFile); isProcessed {
+			return processedSize, nil
+		}
 	}
 	log := b.log.WithField("logger", "uploadTableMetadataEmbedded")
 	localTableMetaFile := path.Join(b.EmbeddedBackupDataPath, backupName, "metadata", common.TablePathEncode(tableMetadata.Database), fmt.Sprintf("%s.sql", common.TablePathEncode(tableMetadata.Table)))
@@ -573,12 +591,12 @@ func (b *Backuper) uploadTableMetadataEmbedded(ctx context.Context, backupName s
 	if err != nil {
 		return 0, fmt.Errorf("can't embeeded upload metadata: %v", err)
 	}
-	if b.resume {
-		b.resumableState.AppendToState(remoteTableMetaFile)
-	}
 	if info, err := os.Stat(localTableMetaFile); err != nil {
 		return 0, fmt.Errorf("stat %s error: %v", localTableMetaFile, err)
 	} else {
+		if b.resume {
+			b.resumableState.AppendToState(remoteTableMetaFile, info.Size())
+		}
 		return info.Size(), nil
 	}
 }

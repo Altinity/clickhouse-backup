@@ -5,6 +5,7 @@ import (
 	apexLog "github.com/apex/log"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -49,7 +50,8 @@ func (s *State) LoadState() {
 	s.mx.Unlock()
 }
 
-func (s *State) AppendToState(path string) {
+func (s *State) AppendToState(path string, size int64) {
+	path = fmt.Sprintf("%s:%d", path, size)
 	s.mx.Lock()
 	if s.fp != nil {
 		_, err := s.fp.WriteString(path + "\n")
@@ -65,14 +67,25 @@ func (s *State) AppendToState(path string) {
 	s.mx.Unlock()
 }
 
-func (s *State) IsAlreadyProcessed(path string) bool {
+func (s *State) IsAlreadyProcessedBool(path string) bool {
+	isProcesses, _ := s.IsAlreadyProcessed(path)
+	return isProcesses
+}
+func (s *State) IsAlreadyProcessed(path string) (bool, int64) {
+	var size int64
+	var err error
 	s.mx.RLock()
-	res := strings.Contains(s.currentState, path+"\n")
-	s.mx.RUnlock()
-	if res {
+	res := strings.Index(s.currentState, path+":")
+	if res >= 0 {
 		s.log.Infof("%s already processed", path)
+		sSize := s.currentState[res : res+strings.Index(s.currentState[res:], "\n")]
+		size, err = strconv.ParseInt(sSize, 10, 64)
+		if err != nil {
+			s.log.Warnf("invalid size %s in upload state")
+		}
 	}
-	return res
+	s.mx.RUnlock()
+	return res >= 0, size
 }
 
 func (s *State) Close() {

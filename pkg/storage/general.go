@@ -555,21 +555,21 @@ func (bd *BackupDestination) DownloadPath(ctx context.Context, size int64, remot
 	})
 }
 
-func (bd *BackupDestination) UploadPath(ctx context.Context, size int64, baseLocalPath string, files []string, remotePath string, RetriesOnFailure int, RetriesDuration time.Duration) error {
+func (bd *BackupDestination) UploadPath(ctx context.Context, size int64, baseLocalPath string, files []string, remotePath string, RetriesOnFailure int, RetriesDuration time.Duration) (int64, error) {
 	var bar *progressbar.Bar
-	if !bd.disableProgressBar {
-		totalBytes := size
-		if size == 0 {
-			for _, filename := range files {
-				fInfo, err := os.Stat(path.Join(baseLocalPath, filename))
-				if err != nil {
-					return err
-				}
-				if fInfo.Mode().IsRegular() {
-					totalBytes += fInfo.Size()
-				}
+	totalBytes := size
+	if size == 0 {
+		for _, filename := range files {
+			fInfo, err := os.Stat(filepath.Clean(path.Join(baseLocalPath, filename)))
+			if err != nil {
+				return 0, err
+			}
+			if fInfo.Mode().IsRegular() {
+				totalBytes += fInfo.Size()
 			}
 		}
+	}
+	if !bd.disableProgressBar {
 		bar = progressbar.StartNewByteBar(!bd.disableProgressBar, totalBytes)
 		defer bar.Finish()
 	}
@@ -577,7 +577,7 @@ func (bd *BackupDestination) UploadPath(ctx context.Context, size int64, baseLoc
 	for _, filename := range files {
 		f, err := os.Open(filepath.Clean(path.Join(baseLocalPath, filename)))
 		if err != nil {
-			return err
+			return 0, err
 		}
 		closeFile := func() {
 			if err := f.Close(); err != nil {
@@ -590,11 +590,11 @@ func (bd *BackupDestination) UploadPath(ctx context.Context, size int64, baseLoc
 		})
 		if err != nil {
 			closeFile()
-			return err
+			return 0, err
 		}
 		fi, err := f.Stat()
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if !bd.disableProgressBar {
 			bar.Add64(fi.Size())
@@ -602,7 +602,7 @@ func (bd *BackupDestination) UploadPath(ctx context.Context, size int64, baseLoc
 		closeFile()
 	}
 
-	return nil
+	return totalBytes, nil
 }
 
 func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhouse.ClickHouse, calcMaxSize bool, backupName string) (*BackupDestination, error) {

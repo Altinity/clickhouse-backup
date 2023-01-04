@@ -324,8 +324,9 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 	}
 	var tableMetadata metadata.TableMetadata
 	for remoteMetadataFile, localMetadataFile := range metadataFiles {
-		if b.resume && b.resumableState.IsAlreadyProcessed(localMetadataFile) {
-			if strings.HasSuffix(localMetadataFile, ".json") {
+		if b.resume {
+			isProcesses, processedSize := b.resumableState.IsAlreadyProcessed(localMetadataFile)
+			if isProcesses && strings.HasSuffix(localMetadataFile, ".json") {
 				tmBody, err := os.ReadFile(localMetadataFile)
 				if err != nil {
 					return nil, 0, err
@@ -335,7 +336,10 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 				}
 				filterPartsByPartitionsFilter(tableMetadata, partitionsFilter)
 			}
-			continue
+			if isProcesses {
+				size += uint64(processedSize)
+				continue
+			}
 		}
 		var tmBody []byte
 		retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
@@ -361,6 +365,7 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 		if err = os.MkdirAll(path.Dir(localMetadataFile), 0755); err != nil {
 			return nil, 0, err
 		}
+		var written int64
 		if strings.HasSuffix(localMetadataFile, ".sql") {
 			if err = os.WriteFile(localMetadataFile, tmBody, 0640); err != nil {
 				return nil, 0, err
@@ -368,6 +373,7 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 			if err = filesystemhelper.Chown(localMetadataFile, b.ch, disks, false); err != nil {
 				return nil, 0, err
 			}
+			written = int64(len(tmBody))
 			size += uint64(len(tmBody))
 		} else {
 			if err = json.Unmarshal(tmBody, &tableMetadata); err != nil {
@@ -380,10 +386,11 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 			if err != nil {
 				return nil, 0, err
 			}
+			written = int64(jsonSize)
 			size += jsonSize
 		}
 		if b.resume {
-			b.resumableState.AppendToState(localMetadataFile)
+			b.resumableState.AppendToState(localMetadataFile, written)
 		}
 	}
 	log.
@@ -405,8 +412,10 @@ func (b *Backuper) downloadBackupRelatedDir(ctx context.Context, remoteBackup st
 	log := b.log.WithField("logger", "downloadBackupRelatedDir")
 	archiveFile := fmt.Sprintf("%s.%s", prefix, b.cfg.GetArchiveExtension())
 	remoteFile := path.Join(remoteBackup.BackupName, archiveFile)
-	if b.resume && b.resumableState.IsAlreadyProcessed(remoteFile) {
-		return 0, nil
+	if b.resume {
+		if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(remoteFile); isProcessed {
+			return uint64(processedSize), nil
+		}
 	}
 	localDir := path.Join(b.DefaultDataPath, "backup", remoteBackup.BackupName, prefix)
 	remoteFileInfo, err := b.dst.StatFile(ctx, remoteFile)
@@ -422,7 +431,7 @@ func (b *Backuper) downloadBackupRelatedDir(ctx context.Context, remoteBackup st
 		return 0, err
 	}
 	if b.resume {
-		b.resumableState.AppendToState(remoteFile)
+		b.resumableState.AppendToState(remoteFile, remoteFileInfo.Size())
 	}
 	return uint64(remoteFileInfo.Size()), nil
 }
@@ -459,7 +468,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 				g.Go(func() error {
 					defer s.Release(1)
 					log.Debugf("start download %s", tableRemoteFile)
-					if b.resume && b.resumableState.IsAlreadyProcessed(tableRemoteFile) {
+					if b.resume && b.resumableState.IsAlreadyProcessedBool(tableRemoteFile) {
 						return nil
 					}
 					retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
@@ -470,7 +479,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 						return err
 					}
 					if b.resume {
-						b.resumableState.AppendToState(tableRemoteFile)
+						b.resumableState.AppendToState(tableRemoteFile, 0)
 					}
 					log.Debugf("finish download %s", tableRemoteFile)
 					return nil
@@ -505,14 +514,14 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 				g.Go(func() error {
 					defer s.Release(1)
 					log.Debugf("start %s -> %s", partRemotePath, partLocalPath)
-					if b.resume && b.resumableState.IsAlreadyProcessed(partRemotePath) {
+					if b.resume && b.resumableState.IsAlreadyProcessedBool(partRemotePath) {
 						return nil
 					}
 					if err := b.dst.DownloadPath(dataCtx, 0, partRemotePath, partLocalPath, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration); err != nil {
 						return err
 					}
 					if b.resume {
-						b.resumableState.AppendToState(partRemotePath)
+						b.resumableState.AppendToState(partRemotePath, 0)
 					}
 					log.Debugf("finish %s -> %s", partRemotePath, partLocalPath)
 					return nil
@@ -600,12 +609,12 @@ breakByError:
 						return fmt.Errorf("can't to add link to exists part %s -> %s error: %v", newPath, existsPath, err)
 					}
 					if b.resume {
-						b.resumableState.AppendToState(existsPath)
+						b.resumableState.AppendToState(existsPath, 0)
 					}
 					return nil
 				})
 			} else {
-				if !b.resume || (b.resume && !b.resumableState.IsAlreadyProcessed(existsPath)) {
+				if !b.resume || (b.resume && !b.resumableState.IsAlreadyProcessedBool(existsPath)) {
 					if err = b.makePartHardlinks(existsPath, newPath); err != nil {
 						return fmt.Errorf("can't to add exists part: %v", err)
 					}
@@ -859,7 +868,7 @@ func (b *Backuper) makePartHardlinks(exists, new string) error {
 }
 
 func (b *Backuper) downloadSingleBackupFile(ctx context.Context, remoteFile string, localFile string, disks []clickhouse.Disk) error {
-	if b.resume && b.resumableState.IsAlreadyProcessed(remoteFile) {
+	if b.resume && b.resumableState.IsAlreadyProcessedBool(remoteFile) {
 		return nil
 	}
 	log := b.log.WithField("logger", "downloadSingleBackupFile")
@@ -901,7 +910,7 @@ func (b *Backuper) downloadSingleBackupFile(ctx context.Context, remoteFile stri
 		return err
 	}
 	if b.resume {
-		b.resumableState.AppendToState(remoteFile)
+		b.resumableState.AppendToState(remoteFile, 0)
 	}
 	return nil
 }
