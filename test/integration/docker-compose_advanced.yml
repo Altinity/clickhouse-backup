@@ -106,6 +106,7 @@ services:
     container_name: zookeeper
     volumes:
       - ./clickhouse-keeper.xml:/etc/clickhouse-keeper/conf.d/clickhouse-keeper.xml
+      - /var/lib/clickhouse
     networks:
       - clickhouse-backup
     healthcheck:

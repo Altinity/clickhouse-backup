@@ -169,7 +169,7 @@ func (gcs *GCS) PutFile(ctx context.Context, key string, r io.ReadCloser) error 
 			log.Warnf("can't close writer: %+v", err)
 		}
 	}()
-	buffer := make([]byte, 4*1024*1024)
+	buffer := make([]byte, 512*1024)
 	_, err := io.CopyBuffer(writer, r, buffer)
 	return err
 }

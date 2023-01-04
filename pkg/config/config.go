@@ -407,7 +407,7 @@ func PrintConfig(ctx *cli.Context) error {
 func DefaultConfig() *Config {
 	availableConcurrency := uint8(1)
 	if runtime.NumCPU() > 1 {
-		availableConcurrency = uint8(math.Min(float64(runtime.NumCPU()/2), 128))
+		availableConcurrency = uint8(math.Round(math.Sqrt(float64(runtime.NumCPU() / 2))))
 	}
 	return &Config{
 		General: GeneralConfig{

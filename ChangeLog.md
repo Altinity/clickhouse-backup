@@ -4,6 +4,7 @@ IMPROVEMENTS
 - switch S3 storage backend to https://github.com/aws/aws-sdk-go-v2/, fix [534](https://github.com/AlexAkulov/clickhouse-backup/issues/534)
 - add `S3_OBJECT_LABLES` and `GCS_OBJECT_LABELS` to allow setup each backup object metadata during upload fix [588](https://github.com/AlexAkulov/clickhouse-backup/issues/588)
 - add `clickhouse-keeper` as zookeeper replacement for integration test during reproduce [416](https://github.com/AlexAkulov/clickhouse-backup/issues/416)
+- decrease memory buffers for S3 and GCS, change default value for `upload_concurrency` and `download_concurrency` to `round(sqrt(MAX_CPU / 2))`, fix [539](https://github.com/AlexAkulov/clickhouse-backup/issues/539)
 
 BUG FIXES
 - Wrong size of backup in list command if upload or download was break and resume, fix [526](https://github.com/AlexAkulov/clickhouse-backup/issues/526)

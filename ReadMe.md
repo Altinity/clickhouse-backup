@@ -353,8 +353,8 @@ general:
   allow_empty_backups: false     # ALLOW_EMPTY_BACKUPS
   # concurrency means parallel tables and parallel parts inside tables
   # for example 4 means max 4 parallel tables and 4 parallel parts inside one table, so equal 16 streams
-  download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255, default value AVAILABLE_CPU_CORES / 2  
-  upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255, default value AVAILABLE_CPU_CORES / 2
+  download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255, default value round(sqrt(AVAILABLE_CPU_CORES / 2))  
+  upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255, default value round(sqrt(AVAILABLE_CPU_CORES / 2))
 
   # RESTORE_SCHEMA_ON_CLUSTER, execute all schema related SQL queries with `ON CLUSTER` clause as Distributed DDL, 
   # look to `system.clusters` table for proper cluster name, also system.macros could be used, 

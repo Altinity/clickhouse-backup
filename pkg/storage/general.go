@@ -662,7 +662,7 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 		s3Storage := &S3{
 			Config:      &cfg.S3,
 			Concurrency: cfg.S3.Concurrency,
-			BufferSize:  1024 * 1024,
+			BufferSize:  512 * 1024,
 			PartSize:    partSize,
 			Log:         log.WithField("logger", "S3"),
 		}
