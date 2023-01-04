@@ -81,7 +81,7 @@ func (s *State) IsAlreadyProcessed(path string) (bool, int64) {
 		sSize := s.currentState[res : res+strings.Index(s.currentState[res:], "\n")]
 		size, err = strconv.ParseInt(sSize, 10, 64)
 		if err != nil {
-			s.log.Warnf("invalid size %s in upload state")
+			s.log.Warnf("invalid size %s in upload state: %v", sSize, err)
 		}
 	}
 	s.mx.RUnlock()
