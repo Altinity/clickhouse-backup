@@ -1299,30 +1299,6 @@ func (api *APIServer) UpdateBackupMetrics(ctx context.Context, onlyLocal bool) e
 	numberBackupsRemoteBroken := 0
 
 	api.log.Infof("Update backup metrics start (onlyLocal=%v)", onlyLocal)
-	defer func() {
-		if lastBackupCreateLocal != nil {
-			api.metrics.LastFinish["create"].Set(float64(lastBackupCreateLocal.Unix()))
-		}
-		if lastBackupCreateRemote != nil {
-			api.metrics.LastFinish["create_remote"].Set(float64(lastBackupCreateRemote.Unix()))
-			if lastBackupCreateLocal == nil || lastBackupCreateRemote.Unix() > lastBackupCreateLocal.Unix() {
-				api.metrics.LastFinish["create"].Set(float64(lastBackupCreateRemote.Unix()))
-			}
-		}
-		if lastBackupUpload != nil {
-			api.metrics.LastFinish["upload"].Set(float64(lastBackupCreateRemote.Unix()))
-			if lastBackupCreateRemote == nil || lastBackupUpload.Unix() > lastBackupCreateRemote.Unix() {
-				api.metrics.LastFinish["create_remote"].Set(float64(lastBackupCreateRemote.Unix()))
-			}
-		}
-		api.log.WithFields(apexLog.Fields{
-			"duration":             utils.HumanizeDuration(time.Since(startTime)),
-			"LastBackupSizeRemote": lastSizeRemote,
-			"LastBackupSizeLocal":  lastSizeLocal,
-			"NumberBackupsLocal":   numberBackupsLocal,
-			"NumberBackupsRemote":  numberBackupsRemote,
-		}).Info("Update backup metrics finish")
-	}()
 	if !api.config.API.EnableMetrics {
 		return nil
 	}
@@ -1368,6 +1344,33 @@ func (api *APIServer) UpdateBackupMetrics(ctx context.Context, onlyLocal bool) e
 		api.metrics.NumberBackupsRemote.Set(0)
 		api.metrics.NumberBackupsRemoteBroken.Set(0)
 	}
+
+	if lastBackupCreateLocal != nil {
+		api.metrics.LastFinish["create"].Set(float64(lastBackupCreateLocal.Unix()))
+	}
+	if lastBackupCreateRemote != nil {
+		api.metrics.LastFinish["create_remote"].Set(float64(lastBackupCreateRemote.Unix()))
+		if lastBackupCreateLocal == nil || lastBackupCreateRemote.Unix() > lastBackupCreateLocal.Unix() {
+			api.metrics.LastFinish["create"].Set(float64(lastBackupCreateRemote.Unix()))
+		}
+	}
+	if lastBackupUpload != nil {
+		api.metrics.LastFinish["upload"].Set(float64(lastBackupCreateRemote.Unix()))
+		if lastBackupCreateRemote == nil || lastBackupUpload.Unix() > lastBackupCreateRemote.Unix() {
+			api.metrics.LastFinish["create_remote"].Set(float64(lastBackupCreateRemote.Unix()))
+		}
+	}
+	api.log.WithFields(apexLog.Fields{
+		"duration":               utils.HumanizeDuration(time.Since(startTime)),
+		"LastBackupCreateLocal":  lastBackupCreateLocal,
+		"LastBackupCreateRemote": lastBackupCreateRemote,
+		"LastBackupUpload":       lastBackupUpload,
+		"LastBackupSizeRemote":   lastSizeRemote,
+		"LastBackupSizeLocal":    lastSizeLocal,
+		"NumberBackupsLocal":     numberBackupsLocal,
+		"NumberBackupsRemote":    numberBackupsRemote,
+	}).Info("Update backup metrics finish")
+
 	return nil
 }
 

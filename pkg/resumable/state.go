@@ -79,6 +79,7 @@ func (s *State) IsAlreadyProcessed(path string) (bool, int64) {
 	if res >= 0 {
 		s.log.Infof("%s already processed", path)
 		sSize := s.currentState[res : res+strings.Index(s.currentState[res:], "\n")]
+		sSize = sSize[strings.Index(sSize, ":")+1:]
 		size, err = strconv.ParseInt(sSize, 10, 64)
 		if err != nil {
 			s.log.Warnf("invalid size %s in upload state: %v", sSize, err)
