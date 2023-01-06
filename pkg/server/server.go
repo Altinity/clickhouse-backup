@@ -1357,7 +1357,7 @@ func (api *APIServer) UpdateBackupMetrics(ctx context.Context, onlyLocal bool) e
 	if lastBackupUpload != nil {
 		api.metrics.LastFinish["upload"].Set(float64(lastBackupCreateRemote.Unix()))
 		if lastBackupCreateRemote == nil || lastBackupUpload.Unix() > lastBackupCreateRemote.Unix() {
-			api.metrics.LastFinish["create_remote"].Set(float64(lastBackupCreateRemote.Unix()))
+			api.metrics.LastFinish["create_remote"].Set(float64(lastBackupUpload.Unix()))
 		}
 	}
 	api.log.WithFields(apexLog.Fields{
