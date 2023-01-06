@@ -312,7 +312,7 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 	}
 	// sort by name for the same not parsed metadata.json
 	sort.SliceStable(result, func(i, j int) bool {
-		return result[i].BackupName > result[j].BackupName
+		return result[i].BackupName < result[j].BackupName
 	})
 	sort.SliceStable(result, func(i, j int) bool {
 		return result[i].UploadDate.Before(result[j].UploadDate)
