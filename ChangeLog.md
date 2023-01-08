@@ -9,6 +9,7 @@ IMPROVEMENTS
 BUG FIXES
 - Wrong size of backup in list command if upload or download was break and resume, fix [526](https://github.com/AlexAkulov/clickhouse-backup/issues/526)
 - Fix `_successful_` and `_failed_` metrics counter issue, happens after 2.1.0, fix [589](https://github.com/AlexAkulov/clickhouse-backup/issues/589)
+- Fix wrong calculation date of last remote backup during startup
 
 # v2.1.3
 IMPROVEMENTS
