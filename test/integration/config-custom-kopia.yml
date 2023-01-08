@@ -19,6 +19,7 @@ clickhouse:
   timeout: 1s
   restart_command: bash -c 'echo "FAKE RESTART"'
 custom:
+  # all `kopia` uploads are incremental
   upload_command: /custom/kopia/upload.sh {{ .backupName }}
   download_command: /custom/kopia/download.sh {{ .backupName }}
   delete_command:  /custom/kopia/delete.sh {{ .backupName }}

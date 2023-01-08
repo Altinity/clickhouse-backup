@@ -19,7 +19,7 @@ clickhouse:
   timeout: 1s
   restart_command: bash -c 'echo "FAKE RESTART"'
 custom:
-  upload_command: /custom/restic/upload.sh {{ .backupName }}
+  upload_command: /custom/restic/upload.sh {{ .backupName }} {{ .diffFromRemote }}
   download_command: /custom/restic/download.sh {{ .backupName }}
   delete_command:  /custom/restic/delete.sh {{ .backupName }}
   list_command:  /custom/restic/list.sh
