@@ -1446,6 +1446,14 @@ func testAPIBackupActions(r *require.Assertions, ch *TestClickHouse) {
 	r.Equal(1, len(actionsBackups))
 	r.Equal(uint64(0), actionsBackups[0])
 
+	out, err := dockerExecOut("clickhouse", "curl", "http://localhost:7171/metrics")
+	r.NoError(err)
+	r.Contains(out, "clickhouse_backup_last_create_remote_status 1")
+	r.Contains(out, "clickhouse_backup_last_create_status 1")
+	r.Contains(out, "clickhouse_backup_last_upload_status 1")
+	r.Contains(out, "clickhouse_backup_last_delete_status 1")
+	r.Contains(out, "clickhouse_backup_last_download_status 1")
+	r.Contains(out, "clickhouse_backup_last_restore_status 1")
 }
 
 func testAPIWatchAndKill(r *require.Assertions, ch *TestClickHouse) {
@@ -1502,6 +1510,9 @@ func testAPIBackupDelete(r *require.Assertions) {
 		r.NotContains(out, "another operation is currently running")
 		r.NotContains(out, "\"status\":\"error\"")
 	}
+	out, err := dockerExecOut("clickhouse", "curl", "http://localhost:7171/metrics")
+	r.NoError(err)
+	r.Contains(out, "clickhouse_backup_last_delete_status 1")
 }
 
 func testAPIMetrics(r *require.Assertions, ch *TestClickHouse) {
@@ -1542,6 +1553,12 @@ func testAPIDeleteLocalDownloadRestore(r *require.Assertions) {
 	r.NoError(err)
 	r.NotContains(out, "another operation is currently running")
 	r.NotContains(out, "\"status\":\"error\"")
+
+	out, err = dockerExecOut("clickhouse", "curl", "http://localhost:7171/metrics")
+	r.NoError(err)
+	r.Contains(out, "clickhouse_backup_last_delete_status 1")
+	r.Contains(out, "clickhouse_backup_last_download_status 1")
+	r.Contains(out, "clickhouse_backup_last_restore_status 1")
 }
 
 func testAPIBackupList(t *testing.T, r *require.Assertions) {
@@ -1584,6 +1601,9 @@ func testAPIBackupUpload(r *require.Assertions) {
 	r.NoError(err)
 	r.NotContains(out, "\"status\":\"error\"")
 	r.NotContains(out, "another operation is currently running")
+	out, err = dockerExecOut("clickhouse", "curl", "http://localhost:7171/metrics")
+	r.NoError(err)
+	r.Contains(out, "clickhouse_backup_last_upload_status 1")
 }
 
 func testAPIBackupTables(r *require.Assertions) {
@@ -1632,6 +1652,10 @@ func testAPIBackupCreate(r *require.Assertions) {
 	r.NotContains(out, "Connection refused")
 	r.NotContains(out, "another operation is currently running")
 	r.NotContains(out, "\"status\":\"error\"")
+	out, err = dockerExecOut("clickhouse", "curl", "http://localhost:7171/metrics")
+	r.NoError(err)
+	r.Contains(out, "clickhouse_backup_last_create_status 1")
+
 }
 
 func fillDatabaseForAPIServer(maxTables int, minFields int, randFields int, ch *TestClickHouse, r *require.Assertions, fieldTypes []string) {

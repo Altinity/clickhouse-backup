@@ -30,11 +30,17 @@ type APIMetrics struct {
 	NumberBackupsLocal          prometheus.Gauge
 	NumberBackupsRemoteExpected prometheus.Gauge
 	NumberBackupsLocalExpected  prometheus.Gauge
-	log                         *apexLog.Entry
+
+	SubCommands map[string][]string
+	log         *apexLog.Entry
 }
 
 func NewAPIMetrics() *APIMetrics {
 	metrics := &APIMetrics{
+		SubCommands: map[string][]string{
+			"create_remote":  {"create", "upload"},
+			"restore_remote": {"download", "restore"},
+		},
 		log: apexLog.WithField("logger", "metrics"),
 	}
 	return metrics
@@ -159,23 +165,43 @@ func (m *APIMetrics) RegisterMetrics() {
 func (m *APIMetrics) Start(command string, startTime time.Time) {
 	if _, exists := m.LastStart[command]; exists {
 		m.LastStart[command].Set(float64(startTime.Unix()))
+		if subCommands, subCommandsExists := m.SubCommands[command]; subCommandsExists {
+			for _, subCommand := range subCommands {
+				if _, exists := m.LastStart[subCommand]; exists {
+					m.LastStart[subCommand].Set(float64(startTime.Unix()))
+				}
+			}
+		}
 	} else {
-		m.log.Warnf("%s not found in m", command)
+		m.log.Warnf("%s not found in LastStart metrics", command)
 	}
 }
 func (m *APIMetrics) Finish(command string, startTime time.Time) {
-	if _, exists := m.LastStart[command]; exists {
+	if _, exists := m.LastFinish[command]; exists {
 		m.LastDuration[command].Set(float64(time.Since(startTime).Nanoseconds()))
 		m.LastFinish[command].Set(float64(time.Now().Unix()))
+		if subCommands, subCommandsExists := m.SubCommands[command]; subCommandsExists {
+			for _, subCommand := range subCommands {
+				if _, exists := m.LastFinish[subCommand]; exists {
+					m.LastDuration[subCommand].Set(float64(time.Since(startTime).Nanoseconds()))
+					m.LastFinish[subCommand].Set(float64(startTime.Unix()))
+				}
+			}
+		}
 	} else {
-		m.log.Warnf("%s not found in m", command)
+		m.log.Warnf("%s not found in LastFinish", command)
 	}
 }
 func (m *APIMetrics) Success(command string) {
 	if _, exists := m.SuccessfulCounter[command]; exists {
 		m.SuccessfulCounter[command].Inc()
 	} else {
-		m.log.Warnf("%s not found in successful metrics", command)
+		m.log.Warnf("%s not found in SuccessfulCounter metrics", command)
+	}
+	if _, exists := m.LastStatus[command]; exists {
+		m.LastStatus[command].Set(1)
+	} else {
+		m.log.Warnf("%s not found in LastStatus metrics", command)
 	}
 }
 
@@ -183,7 +209,12 @@ func (m *APIMetrics) Failure(command string) {
 	if _, exists := m.FailedCounter[command]; exists {
 		m.FailedCounter[command].Inc()
 	} else {
-		m.log.Warnf("%s not found in failed metrics", command)
+		m.log.Warnf("%s not found in FailedCounter metrics", command)
+	}
+	if _, exists := m.LastStatus[command]; exists {
+		m.LastStatus[command].Set(0)
+	} else {
+		m.log.Warnf("%s not found in LastStatus metrics", command)
 	}
 }
 

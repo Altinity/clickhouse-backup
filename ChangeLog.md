@@ -10,6 +10,8 @@ BUG FIXES
 - Wrong size of backup in list command if upload or download was break and resume, fix [526](https://github.com/AlexAkulov/clickhouse-backup/issues/526)
 - Fix `_successful_` and `_failed_` metrics counter issue, happens after 2.1.0, fix [589](https://github.com/AlexAkulov/clickhouse-backup/issues/589)
 - Fix wrong calculation date of last remote backup during startup
+- Fix wrong duration, status for metrics after 2.1.0 refactoring, fix [599](https://github.com/AlexAkulov/clickhouse-backup/issues/599)
+
 
 # v2.1.3
 IMPROVEMENTS
@@ -60,8 +62,9 @@ IMPROVEMENTS
 BUG FIXES
 - fix `keep_backups_remote` behavior for recursive incremental sequences, fix [525](https://github.com/AlexAkulov/clickhouse-backup/issues/525)
 - for `restore` command call `DROP DATABASE IF EXISTS db SYNC` when pass `--schema` and `--drop` together, fix [514](https://github.com/AlexAkulov/clickhouse-backup/issues/514)
-- close persistent connections for remote backup storage after command execution, fix [535](https://github.com/AlexAkulov/clickhouse-backup/issues/535) 
+- close persistent connections for remote backup storage after command execution, fix [535](https://github.com/AlexAkulov/clickhouse-backup/issues/535)
 - lot of typos fixes
+- fix all commands was always return 200 status (expect errors) and ignore status which passed from application code in API server 
 
 # v2.0.0
 IMPROVEMENTS
