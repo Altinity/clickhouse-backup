@@ -152,7 +152,7 @@ spec:
            layout:
               # 2 shards one replica in each
               shardsCount: 2
-              replicasCount: 1
+              replicasCount: 2
    templates:
       volumeClaimTemplates:
          - name: data-volume
@@ -212,8 +212,9 @@ spec:
                         value: http://s3-backup-minio:9000
                       - name: S3_BUCKET
                         value: clickhouse
+                      # {shard} macro defined by clickhouse-operator
                       - name: S3_PATH
-                        value: backup
+                        value: backup/shard-{shard}
                       - name: S3_ACCESS_KEY
                         value: backup-access-key
                       - name: S3_SECRET_KEY
@@ -261,8 +262,8 @@ spec:
             - -xc
             - mkdir -p doc_gen_minio/export/clickhouse && minio server doc_gen_minio/export
           ports:
-              - name: minio
-                containerPort: 9000
+             - name: minio
+               containerPort: 9000
 ---
 apiVersion: v1
 kind: Service
@@ -295,6 +296,9 @@ spec:
       completions: 1
       parallelism: 1
       template:
+        metadata:
+          labels:
+            app: clickhouse-backup-cron
         spec:
           restartPolicy: Never
           containers:
@@ -311,7 +315,7 @@ spec:
                   value: backup
                 - name: BACKUP_PASSWORD
                   value: "backup_password"
-                # change to 1, if you want to make full backup only in $FULL_BACKUP_WEEKDAY (1 - Mon, 7 - Sun)   
+                # change to 1, if you want make full backup only in $FULL_BACKUP_WEEKDAY (1 - Mon, 7 - Sun)   
                 - name: MAKE_INCREMENT_BACKUP
                   value: "1"
                 - name: FULL_BACKUP_WEEKDAY
@@ -347,11 +351,11 @@ spec:
                     clickhouse-client --echo -mn -q "INSERT INTO system.backup_actions(command) VALUES('create ${SERVER}-${BACKUP_NAMES[$SERVER]}')" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD;
                   done;
                   for SERVER in $CLICKHOUSE_SERVICES; do
-                    while [[ "in progress" == $(clickhouse-client -mn -q "SELECT status FROM system.backup_actions WHERE command='create ${SERVER}-${BACKUP_NAMES[$SERVER]}'" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD) ]]; do
+                    while [[ "in progress" == $(clickhouse-client -mn -q "SELECT status FROM system.backup_actions WHERE command='create ${SERVER}-${BACKUP_NAMES[$SERVER]}' FORMAT TabSeparatedRaw" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD) ]]; do
                       echo "still in progress ${BACKUP_NAMES[$SERVER]} on $SERVER";
                       sleep 1;
                     done;
-                    if [[ "success" != $(clickhouse-client -mn -q "SELECT status FROM system.backup_actions WHERE command='create ${SERVER}-${BACKUP_NAMES[$SERVER]}'" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD) ]]; then
+                    if [[ "success" != $(clickhouse-client -mn -q "SELECT status FROM system.backup_actions WHERE command='create ${SERVER}-${BACKUP_NAMES[$SERVER]}' FORMAT TabSeparatedRaw" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD) ]]; then
                       echo "error create ${BACKUP_NAMES[$SERVER]} on $SERVER";
                       clickhouse-client -mn --echo -q "SELECT status,error FROM system.backup_actions WHERE command='create ${SERVER}-${BACKUP_NAMES[$SERVER]}'" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD;
                       exit 1;
@@ -371,10 +375,99 @@ spec:
                       clickhouse-client -mn --echo -q "SELECT status,error FROM system.backup_actions WHERE command='upload ${DIFF_FROM[$SERVER]} ${SERVER}-${BACKUP_NAMES[$SERVER]}'" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD;
                       exit 1;
                     fi;
+                    clickhouse-client --echo -mn -q "INSERT INTO system.backup_actions(command) VALUES('delete local ${SERVER}-${BACKUP_NAMES[$SERVER]}')" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD;
                   done;
                   echo "BACKUP CREATED"
 ```
 
+For one time restore data you could use `Job`
+```yaml
+# example to restore latest backup
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: clickhouse-backup-restore
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      name: clickhouse-backup-restore
+      labels:
+        app: clickhouse-backup-restore
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: clickhouse-backup-restore
+        image: clickhouse/clickhouse-client:latest
+        imagePullPolicy: IfNotPresent
+        env:
+          # use all replicas in each shard to restore schema
+          - name: CLICKHOUSE_SCHEMA_RESTORE_SERVICES
+            value: chi-test-backups-default-0-0,chi-test-backups-default-0-1,chi-test-backups-default-1-0,chi-test-backups-default-1-1
+          # use only first replica in each shard to restore data
+          - name: CLICKHOUSE_DATA_RESTORE_SERVICES
+            value: chi-test-backups-default-0-0,chi-test-backups-default-1-0
+          - name: CLICKHOUSE_PORT
+            value: "9000"
+          - name: BACKUP_USER
+            value: backup
+          - name: BACKUP_PASSWORD
+            value: "backup_password"
+
+        command:
+        - bash
+        - -ec
+        - if [[ "" != "$BACKUP_PASSWORD" ]]; then
+            BACKUP_PASSWORD="--password=$BACKUP_PASSWORD";
+          fi;
+          declare -A BACKUP_NAMES;
+          CLICKHOUSE_SCHEMA_RESTORE_SERVICES=$(echo $CLICKHOUSE_SCHEMA_RESTORE_SERVICES | tr "," " ");
+          CLICKHOUSE_DATA_RESTORE_SERVICES=$(echo $CLICKHOUSE_DATA_RESTORE_SERVICES | tr "," " ");
+          for SERVER in $CLICKHOUSE_SCHEMA_RESTORE_SERVICES; do
+            LATEST_BACKUP_NAME=$(clickhouse-client -q "SELECT name FROM system.backup_list WHERE location='remote' AND desc NOT LIKE 'broken%' ORDER BY created DESC LIMIT 1 FORMAT TabSeparatedRaw" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD);
+            if [[ "" == "$LATEST_BACKUP_NAME" ]]; then
+              echo "Remote backup not found for $SERVER";
+              exit 1;
+            fi;
+            BACKUP_NAMES[$SERVER]="$LATEST_BACKUP_NAME";
+            clickhouse-client -mn --echo -q "INSERT INTO system.backup_actions(command) VALUES('restore_remote --schema --rm ${BACKUP_NAMES[$SERVER]}')" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD;
+          done;
+          for SERVER in $CLICKHOUSE_SCHEMA_RESTORE_SERVICES; do
+            while [[ "in progress" == $(clickhouse-client -mn -q "SELECT status FROM system.backup_actions WHERE command='restore_remote --schema --rm ${BACKUP_NAMES[$SERVER]}' ORDER BY start DESC LIMIT 1 FORMAT TabSeparatedRaw" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD) ]]; do
+              echo "still in progress ${BACKUP_NAMES[$SERVER]} on $SERVER";
+              sleep 1;
+            done;
+            RESTORE_STATUS=$(clickhouse-client -mn -q "SELECT status FROM system.backup_actions WHERE command='restore_remote --schema --rm ${BACKUP_NAMES[$SERVER]}'  ORDER BY start DESC LIMIT 1 FORMAT TabSeparatedRaw" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD);
+            if [[ "success" != "${RESTORE_STATUS}" ]]; then
+              echo "error restore_remote --schema --rm ${BACKUP_NAMES[$SERVER]} on $SERVER";
+              clickhouse-client -mn --echo -q "SELECT start,finish,status,error FROM system.backup_actions WHERE command='restore_remote --schema --rm ${BACKUP_NAMES[$SERVER]}'" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD;
+              exit 1;
+            fi;
+            if [[ "success" == "${RESTORE_STATUS}" ]]; then
+              echo "schema ${BACKUP_NAMES[$SERVER]} on $SERVER RESTORED";
+              clickhouse-client -q "INSERT INTO system.backup_actions(command) VALUES('delete local ${BACKUP_NAMES[$SERVER]}')" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD;
+            fi;
+          done;
+          for SERVER in $CLICKHOUSE_DATA_RESTORE_SERVICES; do
+            clickhouse-client -mn --echo -q "INSERT INTO system.backup_actions(command) VALUES('restore_remote --data ${BACKUP_NAMES[$SERVER]}')" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD;
+          done;
+          for SERVER in $CLICKHOUSE_DATA_RESTORE_SERVICES; do
+            while [[ "in progress" == $(clickhouse-client -mn -q "SELECT status FROM system.backup_actions WHERE command='restore_remote --data ${BACKUP_NAMES[$SERVER]}' ORDER BY start DESC LIMIT 1 FORMAT TabSeparatedRaw" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD) ]]; do
+              echo "still in progress ${BACKUP_NAMES[$SERVER]} on $SERVER";
+              sleep 1;
+            done;
+            RESTORE_STATUS=$(clickhouse-client -mn -q "SELECT status FROM system.backup_actions WHERE command='restore_remote --data ${BACKUP_NAMES[$SERVER]}'  ORDER BY start DESC LIMIT 1 FORMAT TabSeparatedRaw" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD);
+            if [[ "success" != "${RESTORE_STATUS}" ]]; then
+              echo "error restore_remote --data ${BACKUP_NAMES[$SERVER]} on $SERVER";
+              clickhouse-client -mn --echo -q "SELECT start,finish,status,error FROM system.backup_actions WHERE command='restore_remote --data ${BACKUP_NAMES[$SERVER]}'" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD;
+              exit 1;
+            fi;
+            echo "data ${BACKUP_NAMES[$SERVER]} on $SERVER RESTORED";
+            if [[ "success" == "${RESTORE_STATUS}" ]]; then
+              clickhouse-client -q "INSERT INTO system.backup_actions(command) VALUES('delete local ${BACKUP_NAMES[$SERVER]}')" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD;
+            fi;
+          done
+```
 
 ## How do incremental backups work to remote storage
 - Incremental backup calculate increment only during execute `upload` or `create_remote` command or similar REST API request.
