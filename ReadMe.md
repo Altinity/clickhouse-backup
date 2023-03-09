@@ -408,7 +408,7 @@ azblob:
   container: ""                # AZBLOB_CONTAINER
   path: ""                     # AZBLOB_PATH
   compression_level: 1         # AZBLOB_COMPRESSION_LEVEL
-  compression_format: tar      # AZBLOB_COMPRESSION_FORMAT
+  compression_format: tar      # AZBLOB_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd
   sse_key: ""                  # AZBLOB_SSE_KEY
   buffer_size: 0               # AZBLOB_BUFFER_SIZE, if less or eq 0 then calculated as max_file_size / max_parts_count, between 2Mb and 4Mb
   max_parts_count: 10000       # AZBLOB_MAX_PARTS_COUNT, number of parts for AZBLOB uploads, for properly calculate buffer size
@@ -425,7 +425,7 @@ s3:
   path: ""                         # S3_PATH
   disable_ssl: false               # S3_DISABLE_SSL
   compression_level: 1             # S3_COMPRESSION_LEVEL
-  compression_format: tar          # S3_COMPRESSION_FORMAT
+  compression_format: tar          # S3_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd
   sse: ""                          # S3_SSE, empty (default), AES256, or aws:kms
   disable_cert_verification: false # S3_DISABLE_CERT_VERIFICATION
   use_custom_storage_class: false  # S3_USE_CUSTOM_STORAGE_CLASS
@@ -446,7 +446,7 @@ gcs:
   bucket: ""                   # GCS_BUCKET
   path: ""                     # GCS_PATH
   compression_level: 1         # GCS_COMPRESSION_LEVEL
-  compression_format: tar      # GCS_COMPRESSION_FORMAT
+  compression_format: tar      # GCS_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd
   storage_class: STANDARD      # GCS_STORAGE_CLASS
 
   # GCS_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
@@ -459,7 +459,7 @@ cos:
   secret_id: ""                # COS_SECRET_ID
   secret_key: ""               # COS_SECRET_KEY
   path: ""                     # COS_PATH
-  compression_format: tar      # COS_COMPRESSION_FORMAT
+  compression_format: tar      # COS_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd
   compression_level: 1         # COS_COMPRESSION_LEVEL
 ftp:
   address: ""                  # FTP_ADDRESS
@@ -468,7 +468,7 @@ ftp:
   password: ""                 # FTP_PASSWORD
   tls: false                   # FTP_TLS
   path: ""                     # FTP_PATH
-  compression_format: tar      # FTP_COMPRESSION_FORMAT
+  compression_format: tar      # FTP_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd
   compression_level: 1         # FTP_COMPRESSION_LEVEL
   debug: false                 # FTP_DEBUG
 sftp:
@@ -478,7 +478,7 @@ sftp:
   key: ""                      # SFTP_KEY
   path: ""                     # SFTP_PATH
   concurrency: 1               # SFTP_CONCURRENCY     
-  compression_format: tar      # SFTP_COMPRESSION_FORMAT
+  compression_format: tar      # SFTP_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd
   compression_level: 1         # SFTP_COMPRESSION_LEVEL
   debug: false                 # SFTP_DEBUG
 custom:  
