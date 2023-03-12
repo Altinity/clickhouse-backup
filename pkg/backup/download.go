@@ -175,7 +175,6 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	if b.resume {
 		b.resumableState = resumable.NewState(b.DefaultDataPath, backupName, "download")
 	}
-	partitionsToDownloadMap, _ := filesystemhelper.CreatePartitionsToBackupMap(partitions)
 
 	log.Debugf("prepare table METADATA concurrent semaphore with concurrency=%d len(tablesForDownload)=%d", b.cfg.General.DownloadConcurrency, len(tablesForDownload))
 	downloadSemaphore := semaphore.NewWeighted(int64(b.cfg.General.DownloadConcurrency))
@@ -190,7 +189,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		tableTitle := t
 		metadataGroup.Go(func() error {
 			defer downloadSemaphore.Release(1)
-			downloadedMetadata, size, err := b.downloadTableMetadata(metadataCtx, backupName, disks, log, tableTitle, schemaOnly, partitionsToDownloadMap)
+			downloadedMetadata, size, err := b.downloadTableMetadata(metadataCtx, backupName, disks, log, tableTitle, schemaOnly, partitions)
 			if err != nil {
 				return err
 			}
@@ -311,7 +310,7 @@ func (b *Backuper) downloadTableMetadataIfNotExists(ctx context.Context, backupN
 	return tm, err
 }
 
-func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string, disks []clickhouse.Disk, log *apexLog.Entry, tableTitle metadata.TableTitle, schemaOnly bool, partitionsFilter common.EmptyMap) (*metadata.TableMetadata, uint64, error) {
+func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string, disks []clickhouse.Disk, log *apexLog.Entry, tableTitle metadata.TableTitle, schemaOnly bool, partitions []string) (*metadata.TableMetadata, uint64, error) {
 	start := time.Now()
 	size := uint64(0)
 	metadataFiles := map[string]string{}
@@ -325,8 +324,8 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 	var tableMetadata metadata.TableMetadata
 	for remoteMetadataFile, localMetadataFile := range metadataFiles {
 		if b.resume {
-			isProcesses, processedSize := b.resumableState.IsAlreadyProcessed(localMetadataFile)
-			if isProcesses && strings.HasSuffix(localMetadataFile, ".json") {
+			isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(localMetadataFile)
+			if isProcessed && strings.HasSuffix(localMetadataFile, ".json") {
 				tmBody, err := os.ReadFile(localMetadataFile)
 				if err != nil {
 					return nil, 0, err
@@ -334,9 +333,11 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 				if err = json.Unmarshal(tmBody, &tableMetadata); err != nil {
 					return nil, 0, err
 				}
-				filterPartsByPartitionsFilter(tableMetadata, partitionsFilter)
+				partitionsFilter, _ := filesystemhelper.CreatePartitionsToBackupMap(b.ch, nil, []metadata.TableMetadata{tableMetadata}, partitions)
+				apexLog.Errorf("SUKA!!! partitionsFilter=%#v", partitionsFilter)
+				filterPartsAndFilesByPartitionsFilter(tableMetadata, partitionsFilter)
 			}
-			if isProcesses {
+			if isProcessed {
 				size += uint64(processedSize)
 				continue
 			}
@@ -379,7 +380,9 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 			if err = json.Unmarshal(tmBody, &tableMetadata); err != nil {
 				return nil, 0, err
 			}
-			filterPartsByPartitionsFilter(tableMetadata, partitionsFilter)
+			partitionsFilter, _ := filesystemhelper.CreatePartitionsToBackupMap(b.ch, nil, []metadata.TableMetadata{tableMetadata}, partitions)
+			apexLog.Errorf("SUKA2!!! partitions=%#v, partitionsFilter=%#v", partitions, partitionsFilter)
+			filterPartsAndFilesByPartitionsFilter(tableMetadata, partitionsFilter)
 			// save metadata
 			jsonSize := uint64(0)
 			jsonSize, err = tableMetadata.Save(localMetadataFile, schemaOnly)

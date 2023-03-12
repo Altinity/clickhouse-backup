@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/logcli"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/partition"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/status"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
 	"github.com/google/uuid"
@@ -830,10 +831,8 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 	ch.connectWithWait(r, 500*time.Millisecond)
 	defer ch.chbackend.Close()
 
-	rand.Seed(time.Now().UnixNano())
-
 	// test for specified partitions backup
-	testBackupSpecifiedPartitions(r, ch)
+	testBackupSpecifiedPartitions(r, ch, remoteStorageType)
 
 	// main test scenario
 	testBackupName := fmt.Sprintf("test_backup_%d", rand.Int())
@@ -1141,7 +1140,6 @@ func TestSkipNotExistsTable(t *testing.T) {
 	errorCaught := false
 	pauseChannel := make(chan int64)
 	resumeChannel := make(chan int64)
-	rand.Seed(time.Now().UnixNano())
 
 	wg := sync.WaitGroup{}
 	wg.Add(1)
@@ -1338,6 +1336,63 @@ func TestSyncReplicaTimeout(t *testing.T) {
 	dropReplTables()
 	ch.chbackend.Close()
 
+}
+
+func TestGetPartitionId(t *testing.T) {
+	r := require.New(t)
+	ch := &TestClickHouse{}
+	ch.connectWithWait(r, 500*time.Millisecond)
+	defer ch.chbackend.Close()
+
+	type testData struct {
+		CreateTableSQL string
+		Database       string
+		Table          string
+		Partition      string
+		ExpectedOutput string
+	}
+	testCases := []testData{
+		{
+			"CREATE TABLE default.test_part_id_1 UUID 'b45e751f-6c06-42a3-ab4a-f5bb9ac3716e' (dt Date, version DateTime, category String, name String) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/{table}','{replica}',version) ORDER BY dt PARTITION BY (toYYYYMM(dt),category)",
+			"default",
+			"test_part_id_1",
+			"('2023-01-01','category1')",
+			"ad598a31d0ee285798bbe450f596c89c",
+		},
+		{
+			"CREATE TABLE default.test_part_id_2 (dt Date, version DateTime, name String) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/{table}','{replica}',version) ORDER BY dt PARTITION BY toYYYYMM(dt)",
+			"default",
+			"test_part_id_2",
+			"'2023-01-01'",
+			"202301",
+		},
+		{
+			"CREATE TABLE default.test_part_id_3 ON CLUSTER '{cluster}' (i UInt32, name String) ENGINE = ReplicatedMergeTree() ORDER BY i PARTITION BY i",
+			"default",
+			"test_part_id_3",
+			"202301",
+			"202301",
+		},
+		{
+			"CREATE TABLE default.test_part_id_4 (dt String, name String) ENGINE = MergeTree ORDER BY dt PARTITION BY dt",
+			"default",
+			"test_part_id_4",
+			"'2023-01-01'",
+			"c487903ebbb25a533634d6ec3485e3a9",
+		},
+		{
+			"CREATE TABLE default.test_part_id_5 (dt String, name String) ENGINE = Memory",
+			"default",
+			"test_part_id_5",
+			"'2023-01-01'",
+			"",
+		},
+	}
+	for _, tc := range testCases {
+		err, partitionId := partition.GetPartitionId(ch.chbackend, tc.Database, tc.Table, tc.CreateTableSQL, tc.Partition)
+		assert.NoError(t, err)
+		assert.Equal(t, tc.ExpectedOutput, partitionId)
+	}
 }
 
 const apiBackupNumber = 5
@@ -1996,52 +2051,99 @@ func installDebIfNotExists(r *require.Assertions, container, pkg string) {
 	))
 }
 
-func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse) {
+func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse, remoteStorageType string) {
 	log.Info("testBackupSpecifiedPartitions started")
-
-	partitionBackupName := fmt.Sprintf("partition_backup_%d", rand.Int())
-	// Create table
-	ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.t1")
-	ch.queryWithNoError(r, "CREATE TABLE default.t1 (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(dt) ORDER BY dt")
-	ch.queryWithNoError(r, "INSERT INTO default.t1 SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
-	ch.queryWithNoError(r, "INSERT INTO default.t1 SELECT '2022-01-02 00:00:00', number FROM numbers(10)")
-	ch.queryWithNoError(r, "INSERT INTO default.t1 SELECT '2022-01-03 00:00:00', number FROM numbers(10)")
-	ch.queryWithNoError(r, "INSERT INTO default.t1 SELECT '2022-01-04 00:00:00', number FROM numbers(10)")
-	// Backup
-
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables=default.t1", "--partitions=20220102,20220103", partitionBackupName))
-
-	// TRUNCATE TABLE
-	ch.queryWithNoError(r, "TRUNCATE table default.t1")
-	// DELETE local backup before restore
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", partitionBackupName))
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", partitionBackupName))
-
-	log.Debug("testBackupSpecifiedPartitions begin check \n")
-	// Check
+	var err error
+	var out string
 	var result []int
 
-	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM default.t1 WHERE dt IN ('2022-01-02 00:00:00','2022-01-03 00:00:00')"))
+	partitionBackupName := fmt.Sprintf("partition_backup_%d", rand.Int())
+	fullBackupName := fmt.Sprintf("full_backup_%d", rand.Int())
+	// Create and fill tables
+	ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.t1")
+	ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.t2")
+	ch.queryWithNoError(r, "CREATE TABLE default.t1 (dt Date, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(dt) ORDER BY dt")
+	ch.queryWithNoError(r, "CREATE TABLE default.t2 (dt String, v UInt64) ENGINE=MergeTree() PARTITION BY dt ORDER BY dt")
+	for _, dt := range []string{"2022-01-01", "2022-01-02", "2022-01-03", "2022-01-04"} {
+		ch.queryWithNoError(r, fmt.Sprintf("INSERT INTO default.t1 SELECT '%s', number FROM numbers(10)", dt))
+		ch.queryWithNoError(r, fmt.Sprintf("INSERT INTO default.t2 SELECT '%s', number FROM numbers(10)", dt))
+	}
 
-	// Must have one value
-	log.Debugf("testBackupSpecifiedPartitions result : '%v'", result)
-	log.Debugf("testBackupSpecifiedPartitions result' length '%v'", len(result))
-
-	r.Equal(1, len(result), "expect one row")
-	r.Equal(20, result[0], "expect count=20")
-
-	// Reset the result.
+	// check create_remote full > download + partitions > delete local > download > restore --partitions > restore
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables=default.t*", fullBackupName))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", fullBackupName))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", "--partitions=('2022-01-02'),('2022-01-03')", fullBackupName))
+	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la /var/lib/clickhouse/backup/"+fullBackupName+"/shadow/default/t?/default/ | wc -l")
+	r.NoError(err)
+	// custom storage doesn't support --partitions for upload / download now
+	if remoteStorageType != "CUSTOM" {
+		r.Equal("13", strings.Trim(out, "\r\n\t "))
+	}
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", fullBackupName))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", fullBackupName))
+	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la /var/lib/clickhouse/backup/"+fullBackupName+"/shadow/default/t?/default/ | wc -l")
+	r.NoError(err)
+	r.Equal("17", strings.Trim(out, "\r\n\t "))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--partitions=('2022-01-02'),('2022-01-03')", fullBackupName))
 	result = make([]int, 0)
-	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM default.t1 WHERE dt NOT IN ('2022-01-02 00:00:00','2022-01-03 00:00:00')"))
-
-	log.Debugf("testBackupSpecifiedPartitions result : '%v'", result)
-	log.Debugf("testBackupSpecifiedPartitions result' length '%d'", len(result))
+	r.NoError(ch.chbackend.Select(&result, "SELECT sum(c) FROM (SELECT count() AS c FROM default.t1 UNION ALL SELECT count() AS c FROM default.t2)"))
 	r.Equal(1, len(result), "expect one row")
-	r.Equal(0, result[0], "expect count=0")
+	r.Equal(40, result[0], "expect count=40")
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", fullBackupName))
+	result = make([]int, 0)
+	r.NoError(ch.chbackend.Select(&result, "SELECT sum(c) FROM (SELECT count() AS c FROM default.t1 UNION ALL SELECT count() AS c FROM default.t2)"))
+	r.Equal(1, len(result), "expect one row")
+	r.Equal(80, result[0], "expect count=80")
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", fullBackupName))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", fullBackupName))
 
-	// DELETE remote backup.
+	// check create + partitions
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "--tables=default.t1", "--partitions=20220102,20220103", partitionBackupName))
+	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la /var/lib/clickhouse/backup/"+partitionBackupName+"/shadow/default/t1/default/ | wc -l")
+	r.NoError(err)
+	r.Equal("5", strings.Trim(out, "\r\n\t "))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", partitionBackupName))
+
+	// check create > upload + partitions
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "--tables=default.t1", partitionBackupName))
+	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la /var/lib/clickhouse/backup/"+partitionBackupName+"/shadow/default/t1/default/ | wc -l")
+	r.NoError(err)
+	r.Equal("7", strings.Trim(out, "\r\n\t "))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "upload", "--tables=default.t1", "--partitions=20220102,20220103", partitionBackupName))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", partitionBackupName))
+
+	// restore partial uploaded
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", partitionBackupName))
+
+	// Check partial restored t1
+	result = make([]int, 0)
+	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM default.t1"))
+
+	r.Equal(1, len(result), "expect one row")
+	expectedCount := 20
+	// custom doesn't support --partitions in upload and download
+	if remoteStorageType == "CUSTOM" {
+		expectedCount = 40
+	}
+	r.Equal(expectedCount, result[0], fmt.Sprintf("expect count=%d", expectedCount))
+
+	// Check only selected partitions restored
+	result = make([]int, 0)
+	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM default.t1 WHERE dt NOT IN ('2022-01-02','2022-01-03')"))
+	r.Equal(1, len(result), "expect one row")
+	expectedCount = 0
+	// custom doesn't support --partitions in upload and download
+	if remoteStorageType == "CUSTOM" {
+		expectedCount = 20
+	}
+	r.Equal(expectedCount, result[0], "expect count=0")
+
+	// DELETE backup.
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "remote", partitionBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", partitionBackupName))
+
+	ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.t1")
+	ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.t2")
 
 	log.Info("testBackupSpecifiedPartitions finish")
 }

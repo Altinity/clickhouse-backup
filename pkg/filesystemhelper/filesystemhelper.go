@@ -2,10 +2,12 @@ package filesystemhelper
 
 import (
 	"fmt"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/partition"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -182,6 +184,12 @@ func IsPartInPartition(partName string, partitionsBackupMap common.EmptyMap) boo
 	return ok
 }
 
+func IsFileInPartition(disk, fileName string, partitionsBackupMap common.EmptyMap) bool {
+	fileName = strings.TrimPrefix(fileName, disk+"_")
+	_, ok := partitionsBackupMap[strings.Split(fileName, "_")[0]]
+	return ok
+}
+
 func MoveShadow(shadowPath, backupPartsPath string, partitionsBackupMap common.EmptyMap) ([]metadata.Part, int64, error) {
 	log := apexLog.WithField("logger", "MoveShadow")
 	size := int64(0)
@@ -261,24 +269,50 @@ func IsDuplicatedParts(part1, part2 string) error {
 	return nil
 }
 
-func CreatePartitionsToBackupMap(partitions []string) (common.EmptyMap, []string) {
+var partitionTupleRE = regexp.MustCompile(`\)\s*,\s*\(`)
+
+func CreatePartitionsToBackupMap(ch *clickhouse.ClickHouse, tablesFromClickHouse []clickhouse.Table, tablesFromMetadata []metadata.TableMetadata, partitions []string) (common.EmptyMap, []string) {
 	if len(partitions) == 0 {
 		return make(common.EmptyMap, 0), partitions
-	} else {
-		partitionsMap := common.EmptyMap{}
+	}
 
-		// to allow use --partitions val1 --partitions val2, https://github.com/AlexAkulov/clickhouse-backup/issues/425#issuecomment-1149855063
-		for _, partitionArg := range partitions {
-			for _, partition := range strings.Split(partitionArg, ",") {
-				partitionsMap[strings.Trim(partition, " \t")] = struct{}{}
+	partitionsMap := common.EmptyMap{}
+
+	// to allow use --partitions val1 --partitions val2, https://github.com/AlexAkulov/clickhouse-backup/issues/425#issuecomment-1149855063
+	for _, partitionArg := range partitions {
+		partitionArg = strings.Trim(partitionArg, " \t")
+		// when PARTITION BY clause return partition_id field as hash, https://github.com/AlexAkulov/clickhouse-backup/issues/602
+		if strings.HasPrefix(partitionArg, "(") {
+			partitionArg = strings.TrimSuffix(strings.TrimPrefix(partitionArg, "("), ")")
+			for _, partitionTuple := range partitionTupleRE.Split(partitionArg, -1) {
+				for _, item := range tablesFromClickHouse {
+					if err, partitionId := partition.GetPartitionId(ch, item.Database, item.Name, item.CreateTableQuery, partitionTuple); err != nil {
+						apexLog.Errorf("partition.GetPartitionId error: %v", err)
+						return make(common.EmptyMap, 0), partitions
+					} else if partitionId != "" {
+						partitionsMap[partitionId] = struct{}{}
+					}
+				}
+				for _, item := range tablesFromMetadata {
+					if err, partitionId := partition.GetPartitionId(ch, item.Database, item.Table, item.Query, partitionTuple); err != nil {
+						apexLog.Errorf("partition.GetPartitionId error: %v", err)
+						return make(common.EmptyMap, 0), partitions
+					} else if partitionId != "" {
+						partitionsMap[partitionId] = struct{}{}
+					}
+				}
+			}
+		} else {
+			for _, item := range strings.Split(partitionArg, ",") {
+				partitionsMap[strings.Trim(item, " \t")] = struct{}{}
 			}
 		}
-		newPartitions := make([]string, len(partitionsMap))
-		i := 0
-		for partitionName := range partitionsMap {
-			newPartitions[i] = partitionName
-			i += 1
-		}
-		return partitionsMap, newPartitions
 	}
+	newPartitions := make([]string, len(partitionsMap))
+	i := 0
+	for partitionName := range partitionsMap {
+		newPartitions[i] = partitionName
+		i += 1
+	}
+	return partitionsMap, newPartitions
 }

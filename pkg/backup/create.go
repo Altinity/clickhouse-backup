@@ -132,7 +132,7 @@ func (b *Backuper) CreateBackup(backupName, tablePattern string, partitions []st
 	for _, disk := range disks {
 		diskMap[disk.Name] = disk.Path
 	}
-	partitionsToBackupMap, partitions := filesystemhelper.CreatePartitionsToBackupMap(partitions)
+	partitionsToBackupMap, partitions := filesystemhelper.CreatePartitionsToBackupMap(b.ch, tables, nil, partitions)
 	// create
 	if b.cfg.ClickHouse.UseEmbeddedBackupRestore {
 		err = b.createBackupEmbedded(ctx, backupName, tablePattern, partitions, partitionsToBackupMap, schemaOnly, rbacOnly, configsOnly, tables, allDatabases, allFunctions, disks, diskMap, log, startBackup, version)

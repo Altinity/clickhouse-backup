@@ -96,7 +96,12 @@ func main() {
 				cli.StringSliceFlag{
 					Name:   "partitions",
 					Hidden: false,
-					Usage:  "create backup only for selected partition names, separated by comma",
+					Usage: "create backup only for selected partition names, separated by comma\n" +
+						"if PARTITION BY clause return numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"if PARTITION BY clause return hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"if PARTITION BY clause return tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"values depends on field types in your table, use single quote for String and Date/DateTime related types\n" +
+						"look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",
@@ -133,7 +138,12 @@ func main() {
 				cli.StringSliceFlag{
 					Name:   "partitions",
 					Hidden: false,
-					Usage:  "create and upload backup only for selected partition names, separated by comma",
+					Usage: "create and upload backup only for selected partition names, separated by comma\n" +
+						"if PARTITION BY clause return numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"if PARTITION BY clause return hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"if PARTITION BY clause return tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"values depends on field types in your table, use single quote for String and Date/DateTime related types\n" +
+						"look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
 				cli.StringFlag{
 					Name:   "diff-from",
@@ -194,7 +204,12 @@ func main() {
 				cli.StringSliceFlag{
 					Name:   "partitions",
 					Hidden: false,
-					Usage:  "Upload data only for selected partition names, separated by comma",
+					Usage: "Upload backup only for selected partition names, separated by comma\n" +
+						"if PARTITION BY clause return numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"if PARTITION BY clause return hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"if PARTITION BY clause return tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"values depends on field types in your table, use single quote for String and Date/DateTime related types\n" +
+						"look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",
@@ -232,10 +247,15 @@ func main() {
 					Usage:  "Download objects which matched with table name patterns, separated by comma, allow ? and * as wildcard",
 					Hidden: false,
 				},
-				cli.StringFlag{
+				cli.StringSliceFlag{
 					Name:   "partitions",
 					Hidden: false,
-					Usage:  "Download data only for selected partition names, separated by comma",
+					Usage: "Download backup data only for selected partition names, separated by comma\n" +
+						"if PARTITION BY clause return numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"if PARTITION BY clause return hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"if PARTITION BY clause return tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"values depends on field types in your table, use single quote for String and Date/DateTime related types\n" +
+						"look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",
@@ -271,7 +291,12 @@ func main() {
 				cli.StringSliceFlag{
 					Name:   "partitions",
 					Hidden: false,
-					Usage:  "Restore data only for selected partition names, separated by comma",
+					Usage: "Restore backup only for selected partition names, separated by comma\n" +
+						"if PARTITION BY clause return numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"if PARTITION BY clause return hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"if PARTITION BY clause return tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"values depends on field types in your table, use single quote for String and Date/DateTime related types\n" +
+						"look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",
@@ -327,7 +352,12 @@ func main() {
 				cli.StringSliceFlag{
 					Name:   "partitions",
 					Hidden: false,
-					Usage:  "Download and restore data only for selected partition names, separated by comma",
+					Usage: "Download and restore backup only for selected partition names, separated by comma\n" +
+						"if PARTITION BY clause return numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"if PARTITION BY clause return hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"if PARTITION BY clause return tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"values depends on field types in your table, use single quote for String and Date/DateTime related types\n" +
+						"look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",
@@ -452,7 +482,12 @@ func main() {
 				cli.StringSliceFlag{
 					Name:   "partitions",
 					Hidden: false,
-					Usage:  "partition names, separated by comma",
+					Usage: "partition names, separated by comma\n" +
+						"if PARTITION BY clause return numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"if PARTITION BY clause return hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"if PARTITION BY clause return tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"values depends on field types in your table, use single quote for String and Date/DateTime related types\n" +
+						"look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",

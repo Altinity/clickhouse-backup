@@ -1,5 +1,6 @@
 # v2.2.0
 IMPROVEMENTS
+- improve support `--partitions` parameter, for cases when PARTITION BY clause return hashed value instead of numeric prefix for `partition_id` in `system.parts`, fix [602](https://github.com/AlexAkulov/clickhouse-backup/issues/602) 
 - apply `system.macros` values when use `restore_schema_on_cluster` and replace cluster name in engine=Distributed tables, fix [574](https://github.com/AlexAkulov/clickhouse-backup/issues/574) 
 - switch S3 storage backend to https://github.com/aws/aws-sdk-go-v2/, fix [534](https://github.com/AlexAkulov/clickhouse-backup/issues/534)
 - add `S3_OBJECT_LABLES` and `GCS_OBJECT_LABELS` to allow setup each backup object metadata during upload fix [588](https://github.com/AlexAkulov/clickhouse-backup/issues/588)
@@ -7,6 +8,7 @@ IMPROVEMENTS
 - decrease memory buffers for S3 and GCS, change default value for `upload_concurrency` and `download_concurrency` to `round(sqrt(MAX_CPU / 2))`, fix [539](https://github.com/AlexAkulov/clickhouse-backup/issues/539)
 
 BUG FIXES
+- Fix wrong behavior for `download` with `--partitions` fix [606](https://github.com/AlexAkulov/clickhouse-backup/issues/606) 
 - Wrong size of backup in list command if upload or download was break and resume, fix [526](https://github.com/AlexAkulov/clickhouse-backup/issues/526)
 - Fix `_successful_` and `_failed_` metrics counter issue, happens after 2.1.0, fix [589](https://github.com/AlexAkulov/clickhouse-backup/issues/589)
 - Fix wrong calculation date of last remote backup during startup

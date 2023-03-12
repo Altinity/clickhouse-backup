@@ -40,26 +40,22 @@ type FunctionsMeta struct {
 }
 
 type TableMetadata struct {
-	Files map[string][]string `json:"files,omitempty"`
-	// Disks       map[string]string   `json:"disks"` // "default": "/var/lib/clickhouse"
-	Table       string            `json:"table"`
-	Database    string            `json:"database"`
-	IncrementOf string            `json:"increment_of,omitempty"`
-	Parts       map[string][]Part `json:"parts"`
-	Query       string            `json:"query"`
-	// UUID        string            `json:"uuid,omitempty"`
-	// Macros ???
-	Size                 map[string]int64 `json:"size"`                  // how much size on each disk
-	TotalBytes           uint64           `json:"total_bytes,omitempty"` // total table size
-	DependenciesTable    string           `json:"dependencies_table,omitempty"`
-	DependenciesDatabase string           `json:"dependencies_database,omitempty"`
-	MetadataOnly         bool             `json:"metadata_only"`
+	Files                map[string][]string `json:"files,omitempty"`
+	Table                string              `json:"table"`
+	Database             string              `json:"database"`
+	Parts                map[string][]Part   `json:"parts"`
+	Query                string              `json:"query"`
+	Size                 map[string]int64    `json:"size"`                  // how much size on each disk
+	TotalBytes           uint64              `json:"total_bytes,omitempty"` // total table size
+	DependenciesTable    string              `json:"dependencies_table,omitempty"`
+	DependenciesDatabase string              `json:"dependencies_database,omitempty"`
+	MetadataOnly         bool                `json:"metadata_only"`
 }
 
 type Part struct {
-	Partition string `json:"partition,omitempty"`
 	Name      string `json:"name"`
 	Required  bool   `json:"required,omitempty"`
+	Partition string `json:"partition,omitempty"`
 	// Path                              string    `json:"path"`              // TODO: make it relative? look like useless now, can be calculated from Name
 	HashOfAllFiles                    string     `json:"hash_of_all_files,omitempty"` // ???
 	HashOfUncompressedFiles           string     `json:"hash_of_uncompressed_files,omitempty"`

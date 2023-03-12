@@ -90,9 +90,9 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	}
 	var tablesForUpload ListOfTables
 	b.isEmbedded = strings.Contains(backupMetadata.Tags, "embedded")
-	partitionsToUploadMap, _ := filesystemhelper.CreatePartitionsToBackupMap(partitions)
+
 	if len(backupMetadata.Tables) != 0 {
-		tablesForUpload, err = b.prepareTableListToUpload(backupName, tablePattern, partitionsToUploadMap)
+		tablesForUpload, err = b.prepareTableListToUpload(backupName, tablePattern, partitions)
 		if err != nil {
 			return err
 		}
@@ -266,14 +266,14 @@ func (b *Backuper) uploadSingleBackupFile(ctx context.Context, localFile, remote
 	return nil
 }
 
-func (b *Backuper) prepareTableListToUpload(backupName string, tablePattern string, partitionsToUploadMap common.EmptyMap) (ListOfTables, error) {
+func (b *Backuper) prepareTableListToUpload(backupName string, tablePattern string, partitions []string) (ListOfTables, error) {
 	var tablesForUpload ListOfTables
 	var err error
 	metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
 	if b.isEmbedded {
 		metadataPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
 	}
-	tablesForUpload, err = getTableListByPatternLocal(b.cfg, metadataPath, tablePattern, false, partitionsToUploadMap)
+	tablesForUpload, err = getTableListByPatternLocal(b.cfg, b.ch, metadataPath, tablePattern, false, partitions)
 	if err != nil {
 		return nil, err
 	}
@@ -289,8 +289,8 @@ func (b *Backuper) getTablesForUploadDiffLocal(ctx context.Context, diffFrom str
 	if len(diffFromBackup.Tables) != 0 {
 		backupMetadata.RequiredBackup = diffFrom
 		metadataPath := path.Join(b.DefaultDataPath, "backup", diffFrom, "metadata")
-		// empty partitionsToBackupMap, because we can not filter
-		diffTablesList, err := getTableListByPatternLocal(b.cfg, metadataPath, tablePattern, false, common.EmptyMap{})
+		// empty partitions, because we can not filter
+		diffTablesList, err := getTableListByPatternLocal(b.cfg, b.ch, metadataPath, tablePattern, false, []string{})
 		if err != nil {
 			return nil, err
 		}

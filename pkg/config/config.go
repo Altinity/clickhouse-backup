@@ -13,7 +13,7 @@ import (
 	"github.com/apex/log"
 	"github.com/kelseyhightower/envconfig"
 	"github.com/urfave/cli"
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 )
 
 const (

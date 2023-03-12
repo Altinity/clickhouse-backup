@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	apexLog "github.com/apex/log"
 	"github.com/google/uuid"
@@ -46,7 +47,7 @@ func addTableToListIfNotExistsOrEnrichQueryAndParts(tables ListOfTables, table m
 	return append(tables, table)
 }
 
-func getTableListByPatternLocal(cfg *config.Config, metadataPath string, tablePattern string, dropTable bool, partitionsFilter common.EmptyMap) (ListOfTables, error) {
+func getTableListByPatternLocal(cfg *config.Config, ch *clickhouse.ClickHouse, metadataPath string, tablePattern string, dropTable bool, partitions []string) (ListOfTables, error) {
 	result := ListOfTables{}
 	tablePatterns := []string{"*"}
 	log := apexLog.WithField("logger", "getTableListByPatternLocal")
@@ -125,7 +126,8 @@ func getTableListByPatternLocal(cfg *config.Config, metadataPath string, tablePa
 					Query:    query,
 					Parts:    parts,
 				}
-				filterPartsByPartitionsFilter(t, partitionsFilter)
+				partitionsFilter, _ := filesystemhelper.CreatePartitionsToBackupMap(ch, nil, []metadata.TableMetadata{t}, partitions)
+				filterPartsAndFilesByPartitionsFilter(t, partitionsFilter)
 				result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, t)
 
 				return nil
@@ -134,7 +136,8 @@ func getTableListByPatternLocal(cfg *config.Config, metadataPath string, tablePa
 			if err := json.Unmarshal(data, &t); err != nil {
 				return err
 			}
-			filterPartsByPartitionsFilter(t, partitionsFilter)
+			partitionsFilter, _ := filesystemhelper.CreatePartitionsToBackupMap(ch, nil, []metadata.TableMetadata{t}, partitions)
+			filterPartsAndFilesByPartitionsFilter(t, partitionsFilter)
 			result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, t)
 			return nil
 		}
@@ -214,7 +217,7 @@ func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRu
 	return nil
 }
 
-func filterPartsByPartitionsFilter(tableMetadata metadata.TableMetadata, partitionsFilter common.EmptyMap) {
+func filterPartsAndFilesByPartitionsFilter(tableMetadata metadata.TableMetadata, partitionsFilter common.EmptyMap) {
 	if len(partitionsFilter) > 0 {
 		for disk, parts := range tableMetadata.Parts {
 			filteredParts := make([]metadata.Part, 0)
@@ -224,6 +227,15 @@ func filterPartsByPartitionsFilter(tableMetadata metadata.TableMetadata, partiti
 				}
 			}
 			tableMetadata.Parts[disk] = filteredParts
+		}
+		for disk, files := range tableMetadata.Files {
+			filteredFiles := make([]string, 0)
+			for _, file := range files {
+				if filesystemhelper.IsFileInPartition(disk, file, partitionsFilter) {
+					filteredFiles = append(filteredFiles, file)
+				}
+			}
+			tableMetadata.Files[disk] = filteredFiles
 		}
 	}
 }

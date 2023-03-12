@@ -154,8 +154,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 		}
 	}
 	if dataOnly || (schemaOnly == dataOnly) {
-		partitionsToRestore, partitions := filesystemhelper.CreatePartitionsToBackupMap(partitions)
-		if err := b.RestoreData(ctx, backupName, tablePattern, partitions, partitionsToRestore, disks, isEmbedded); err != nil {
+		if err := b.RestoreData(ctx, backupName, tablePattern, partitions, disks, isEmbedded); err != nil {
 			return err
 		}
 	}
@@ -316,7 +315,7 @@ func (b *Backuper) RestoreSchema(ctx context.Context, backupName, tablePattern s
 	if tablePattern == "" {
 		tablePattern = "*"
 	}
-	tablesForRestore, err := getTableListByPatternLocal(b.cfg, metadataPath, tablePattern, dropTable, nil)
+	tablesForRestore, err := getTableListByPatternLocal(b.cfg, b.ch, metadataPath, tablePattern, dropTable, nil)
 	if err != nil {
 		return err
 	}
@@ -470,7 +469,7 @@ func (b *Backuper) dropExistsTables(tablesForDrop ListOfTables, ignoreDependenci
 }
 
 // RestoreData - restore data for tables matched by tablePattern from backupName
-func (b *Backuper) RestoreData(ctx context.Context, backupName string, tablePattern string, partitions []string, partitionsToRestore common.EmptyMap, disks []clickhouse.Disk, isEmbedded bool) error {
+func (b *Backuper) RestoreData(ctx context.Context, backupName string, tablePattern string, partitions []string, disks []clickhouse.Disk, isEmbedded bool) error {
 	startRestore := time.Now()
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
@@ -500,7 +499,7 @@ func (b *Backuper) RestoreData(ctx context.Context, backupName string, tablePatt
 		if isEmbedded {
 			metadataPath = path.Join(diskMap[b.cfg.ClickHouse.EmbeddedBackupDisk], backupName, "metadata")
 		}
-		tablesForRestore, err = getTableListByPatternLocal(b.cfg, metadataPath, tablePattern, false, partitionsToRestore)
+		tablesForRestore, err = getTableListByPatternLocal(b.cfg, b.ch, metadataPath, tablePattern, false, partitions)
 	}
 	if err != nil {
 		return err
