@@ -63,6 +63,9 @@ func GetPartitionId(ch *clickhouse.ClickHouse, database, table, createQuery stri
 	columns := make([]string, 0)
 	sql = "SELECT name FROM system.columns WHERE database=? AND table=? AND is_in_partition_key"
 	if err := ch.Select(&columns, sql, database, partitionIdTable); err != nil {
+		if err = dropPartitionIdTable(ch, database, partitionIdTable); err != nil {
+			return err, ""
+		}
 		return fmt.Errorf("can't get is_in_partition_key column names from for table `%s`.`%s`: %v", database, partitionIdTable, err), ""
 	}
 	if len(columns) == 0 {
@@ -92,14 +95,22 @@ func GetPartitionId(ch *clickhouse.ClickHouse, database, table, createQuery stri
 	if len(partitionIds) != 1 {
 		return fmt.Errorf("wrong partitionsIds=%#v found system.parts for table `%s`.`%s`", partitionIds, database, partitionIdTable), ""
 	}
-	sql = fmt.Sprintf("DROP TABLE `%s`.`%s`", database, partitionIdTable)
-	if isAtomic, err := ch.IsAtomic(database); isAtomic {
-		sql += " SYNC"
-	} else if err != nil {
-		return err, ""
-	}
-	if _, err = ch.Query(sql); err != nil {
+
+	if err = dropPartitionIdTable(ch, database, partitionIdTable); err != nil {
 		return err, ""
 	}
 	return nil, partitionIds[0]
+}
+
+func dropPartitionIdTable(ch *clickhouse.ClickHouse, database string, partitionIdTable string) error {
+	sql := fmt.Sprintf("DROP TABLE `%s`.`%s`", database, partitionIdTable)
+	if isAtomic, err := ch.IsAtomic(database); isAtomic {
+		sql += " SYNC"
+	} else if err != nil {
+		return err
+	}
+	if _, err := ch.Query(sql); err != nil {
+		return err
+	}
+	return nil
 }

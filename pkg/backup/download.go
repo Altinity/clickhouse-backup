@@ -334,7 +334,6 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 					return nil, 0, err
 				}
 				partitionsFilter, _ := filesystemhelper.CreatePartitionsToBackupMap(b.ch, nil, []metadata.TableMetadata{tableMetadata}, partitions)
-				apexLog.Errorf("SUKA!!! partitionsFilter=%#v", partitionsFilter)
 				filterPartsAndFilesByPartitionsFilter(tableMetadata, partitionsFilter)
 			}
 			if isProcessed {
@@ -381,7 +380,6 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 				return nil, 0, err
 			}
 			partitionsFilter, _ := filesystemhelper.CreatePartitionsToBackupMap(b.ch, nil, []metadata.TableMetadata{tableMetadata}, partitions)
-			apexLog.Errorf("SUKA2!!! partitions=%#v, partitionsFilter=%#v", partitions, partitionsFilter)
 			filterPartsAndFilesByPartitionsFilter(tableMetadata, partitionsFilter)
 			// save metadata
 			jsonSize := uint64(0)

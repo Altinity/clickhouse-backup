@@ -592,7 +592,7 @@ func TestIntegrationSFTPAuthKey(t *testing.T) {
 func TestIntegrationCustom(t *testing.T) {
 	r := require.New(t)
 
-	for _, customType := range []string{"kopia", "restic", "rsync"} {
+	for _, customType := range []string{"restic", "kopia", "rsync"} {
 		if customType == "rsync" {
 			uploadSSHKeys(r)
 			installDebIfNotExists(r, "clickhouse", "openssh-client")
@@ -2075,10 +2075,12 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse, re
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", "--partitions=('2022-01-02'),('2022-01-03')", fullBackupName))
 	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la /var/lib/clickhouse/backup/"+fullBackupName+"/shadow/default/t?/default/ | wc -l")
 	r.NoError(err)
+	expectedLines := "13"
 	// custom storage doesn't support --partitions for upload / download now
-	if remoteStorageType != "CUSTOM" {
-		r.Equal("13", strings.Trim(out, "\r\n\t "))
+	if remoteStorageType == "CUSTOM" || compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.17") == -1 {
+		expectedLines = "17"
 	}
+	r.Equal(expectedLines, strings.Trim(out, "\r\n\t "))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", fullBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", fullBackupName))
 	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la /var/lib/clickhouse/backup/"+fullBackupName+"/shadow/default/t?/default/ | wc -l")
@@ -2088,7 +2090,12 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse, re
 	result = make([]int, 0)
 	r.NoError(ch.chbackend.Select(&result, "SELECT sum(c) FROM (SELECT count() AS c FROM default.t1 UNION ALL SELECT count() AS c FROM default.t2)"))
 	r.Equal(1, len(result), "expect one row")
-	r.Equal(40, result[0], "expect count=40")
+	expectedCount := 40
+	// old 1.x clickhouse versions doesn't have is_in_partition_key
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.17") == -1 {
+		expectedCount = 80
+	}
+	r.Equal(expectedCount, result[0], fmt.Sprintf("expect count=%d", expectedCount))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", fullBackupName))
 	result = make([]int, 0)
 	r.NoError(ch.chbackend.Select(&result, "SELECT sum(c) FROM (SELECT count() AS c FROM default.t1 UNION ALL SELECT count() AS c FROM default.t2)"))
@@ -2120,7 +2127,7 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse, re
 	r.NoError(ch.chbackend.Select(&result, "SELECT count() FROM default.t1"))
 
 	r.Equal(1, len(result), "expect one row")
-	expectedCount := 20
+	expectedCount = 20
 	// custom doesn't support --partitions in upload and download
 	if remoteStorageType == "CUSTOM" {
 		expectedCount = 40

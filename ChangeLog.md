@@ -1,5 +1,6 @@
 # v2.2.0
 IMPROVEMENTS
+- switch to go 1.20
 - improve support `--partitions` parameter, for cases when PARTITION BY clause return hashed value instead of numeric prefix for `partition_id` in `system.parts`, fix [602](https://github.com/AlexAkulov/clickhouse-backup/issues/602) 
 - apply `system.macros` values when use `restore_schema_on_cluster` and replace cluster name in engine=Distributed tables, fix [574](https://github.com/AlexAkulov/clickhouse-backup/issues/574) 
 - switch S3 storage backend to https://github.com/aws/aws-sdk-go-v2/, fix [534](https://github.com/AlexAkulov/clickhouse-backup/issues/534)

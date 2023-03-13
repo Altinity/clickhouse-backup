@@ -6,14 +6,14 @@ RUN apt-get update && apt-get install -y gnupg && apt-key adv --keyserver keyser
     echo "deb https://ppa.launchpadcontent.net/longsleep/golang-backports/ubuntu ${DISTRIB_CODENAME} main" > /etc/apt/sources.list.d/golang.list && \
     echo "deb-src https://ppa.launchpadcontent.net/longsleep/golang-backports/ubuntu ${DISTRIB_CODENAME} main" >> /etc/apt/sources.list.d/golang.list && \
     apt-get update  && \
-    apt-get install -y golang-1.19 make git && \
+    apt-get install -y golang-1.20 make git && \
     mkdir -p /root/go/
 
-RUN ln -nsfv /usr/lib/go-1.19/bin/go /usr/bin/go
+RUN ln -nsfv /usr/lib/go-1.20/bin/go /usr/bin/go
 VOLUME /root/.cache/go
 ENV GOCACHE=/root/.cache/go
 ENV GOPATH=/root/go/
-ENV GOROOT=/usr/lib/go-1.19/
+ENV GOROOT=/usr/lib/go-1.20/
 RUN go env
 WORKDIR /src/
 # cache modules when go.mod go.sum changed
