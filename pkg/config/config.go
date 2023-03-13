@@ -422,7 +422,7 @@ func DefaultConfig() *Config {
 			RestoreSchemaOnCluster:  "",
 			UploadByPart:            true,
 			DownloadByPart:          true,
-			UseResumableState:       false,
+			UseResumableState:       true,
 			RetriesOnFailure:        3,
 			RetriesPause:            "30s",
 			RetriesDuration:         100 * time.Millisecond,

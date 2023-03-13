@@ -1,5 +1,6 @@
 # v2.2.0
 IMPROVEMENTS
+- make `use_resumable_state: true` behavior for `upload` and `download`, fix [608](https://github.com/AlexAkulov/clickhouse-backup/issues/608) 
 - switch to go 1.20
 - improve support `--partitions` parameter, for cases when PARTITION BY clause return hashed value instead of numeric prefix for `partition_id` in `system.parts`, fix [602](https://github.com/AlexAkulov/clickhouse-backup/issues/602) 
 - apply `system.macros` values when use `restore_schema_on_cluster` and replace cluster name in engine=Distributed tables, fix [574](https://github.com/AlexAkulov/clickhouse-backup/issues/574) 
