@@ -1391,6 +1391,9 @@ func TestGetPartitionId(t *testing.T) {
 			"",
 		},
 	}
+	if isAtomic, _ := ch.chbackend.IsAtomic("default"); !isAtomic {
+		testCases[0].CreateTableSQL = strings.Replace(testCases[0].CreateTableSQL, "UUID 'b45e751f-6c06-42a3-ab4a-f5bb9ac3716e'", "", 1)
+	}
 	for _, tc := range testCases {
 		err, partitionId := partition.GetPartitionId(ch.chbackend, tc.Database, tc.Table, tc.CreateTableSQL, tc.Partition)
 		assert.NoError(t, err)
