@@ -1339,6 +1339,9 @@ func TestSyncReplicaTimeout(t *testing.T) {
 }
 
 func TestGetPartitionId(t *testing.T) {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.17") == -1 {
+		t.Skipf("Test skipped, is_in_partition_key not available for %s version", os.Getenv("CLICKHOUSE_VERSION"))
+	}
 	r := require.New(t)
 	ch := &TestClickHouse{}
 	ch.connectWithWait(r, 500*time.Millisecond)
