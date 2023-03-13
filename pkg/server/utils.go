@@ -32,10 +32,10 @@ func (api *APIServer) writeError(w http.ResponseWriter, statusCode int, operatio
 }
 
 func (api *APIServer) sendJSONEachRow(w http.ResponseWriter, statusCode int, v interface{}) {
-	w.WriteHeader(statusCode)
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
+	w.WriteHeader(statusCode)
 	switch reflect.TypeOf(v).Kind() {
 	case reflect.Slice:
 		s := reflect.ValueOf(v)
