@@ -1478,7 +1478,7 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 	}
 	defer func() {
 		if err := ch.GetConn().Close(); err != nil {
-			api.log.Errorf("ResumeOperationsAfterRestart can't close clickhouse connection: %v")
+			api.log.Errorf("ResumeOperationsAfterRestart can't close clickhouse connection: %v", err)
 		}
 	}()
 	disks, err := ch.GetDisks(context.Background())
