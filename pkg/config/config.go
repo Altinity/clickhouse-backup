@@ -198,17 +198,18 @@ type ClickHouseConfig struct {
 }
 
 type APIConfig struct {
-	ListenAddr              string `yaml:"listen" envconfig:"API_LISTEN"`
-	EnableMetrics           bool   `yaml:"enable_metrics" envconfig:"API_ENABLE_METRICS"`
-	EnablePprof             bool   `yaml:"enable_pprof" envconfig:"API_ENABLE_PPROF"`
-	Username                string `yaml:"username" envconfig:"API_USERNAME"`
-	Password                string `yaml:"password" envconfig:"API_PASSWORD"`
-	Secure                  bool   `yaml:"secure" envconfig:"API_SECURE"`
-	CertificateFile         string `yaml:"certificate_file" envconfig:"API_CERTIFICATE_FILE"`
-	PrivateKeyFile          string `yaml:"private_key_file" envconfig:"API_PRIVATE_KEY_FILE"`
-	CreateIntegrationTables bool   `yaml:"create_integration_tables" envconfig:"API_CREATE_INTEGRATION_TABLES"`
-	IntegrationTablesHost   string `yaml:"integration_tables_host" envconfig:"API_INTEGRATION_TABLES_HOST"`
-	AllowParallel           bool   `yaml:"allow_parallel" envconfig:"API_ALLOW_PARALLEL"`
+	ListenAddr                    string `yaml:"listen" envconfig:"API_LISTEN"`
+	EnableMetrics                 bool   `yaml:"enable_metrics" envconfig:"API_ENABLE_METRICS"`
+	EnablePprof                   bool   `yaml:"enable_pprof" envconfig:"API_ENABLE_PPROF"`
+	Username                      string `yaml:"username" envconfig:"API_USERNAME"`
+	Password                      string `yaml:"password" envconfig:"API_PASSWORD"`
+	Secure                        bool   `yaml:"secure" envconfig:"API_SECURE"`
+	CertificateFile               string `yaml:"certificate_file" envconfig:"API_CERTIFICATE_FILE"`
+	PrivateKeyFile                string `yaml:"private_key_file" envconfig:"API_PRIVATE_KEY_FILE"`
+	CreateIntegrationTables       bool   `yaml:"create_integration_tables" envconfig:"API_CREATE_INTEGRATION_TABLES"`
+	IntegrationTablesHost         string `yaml:"integration_tables_host" envconfig:"API_INTEGRATION_TABLES_HOST"`
+	AllowParallel                 bool   `yaml:"allow_parallel" envconfig:"API_ALLOW_PARALLEL"`
+	CompleteResumableAfterRestart bool   `yaml:"complete_resumable_after_restart" envconfig:"API_COMPLETE_RESUMABLE_AFTER_RESTART"`
 }
 
 // ArchiveExtensions - list of available compression formats and associated file extensions
@@ -492,8 +493,9 @@ func DefaultConfig() *Config {
 			CompressionLevel:  1,
 		},
 		API: APIConfig{
-			ListenAddr:    "localhost:7171",
-			EnableMetrics: true,
+			ListenAddr:                    "localhost:7171",
+			EnableMetrics:                 true,
+			CompleteResumableAfterRestart: true,
 		},
 		FTP: FTPConfig{
 			Timeout:           "2m",

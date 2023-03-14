@@ -1,6 +1,7 @@
 package resumable
 
 import (
+	"encoding/json"
 	"fmt"
 	apexLog "github.com/apex/log"
 	"os"
@@ -13,12 +14,13 @@ import (
 type State struct {
 	stateFile    string
 	currentState string
+	params       map[string]interface{}
 	log          *apexLog.Entry
 	fp           *os.File
 	mx           *sync.RWMutex
 }
 
-func NewState(defaultDiskPath, backupName, command string) *State {
+func NewState(defaultDiskPath, backupName, command string, params map[string]interface{}) *State {
 	s := State{
 		stateFile:    path.Join(defaultDiskPath, "backup", backupName, fmt.Sprintf("%s.state", command)),
 		currentState: "",
@@ -31,7 +33,28 @@ func NewState(defaultDiskPath, backupName, command string) *State {
 	}
 	s.fp = fp
 	s.LoadState()
+	s.LoadParams()
+	if len(s.params) == 0 {
+		s.params = params
+		if paramsBytes, err := json.Marshal(s.params); err == nil {
+			s.AppendToState(string(paramsBytes), 0)
+		}
+	}
 	return &s
+}
+
+func (s *State) GetParams() map[string]interface{} {
+	return s.params
+}
+
+func (s *State) LoadParams() {
+	lines := strings.SplitN(s.currentState, "\n", 2)
+	if len(lines) == 0 || !strings.HasPrefix(lines[0], "{") {
+		return
+	}
+	//size 0 during write
+	lines[0] = strings.TrimSuffix(lines[0], ":0")
+	_ = json.Unmarshal([]byte(lines[0]), &s.params)
 }
 
 func (s *State) LoadState() {

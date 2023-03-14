@@ -397,7 +397,7 @@ general:
   restore_schema_on_cluster: ""   
   upload_by_part: true           # UPLOAD_BY_PART
   download_by_part: true         # DOWNLOAD_BY_PART
-  use_resumable_state: false     # USE_RESUMABLE_STATE, allow resume upload and download according to <backup_name>.resumable file
+  use_resumable_state: true      # USE_RESUMABLE_STATE, allow resume upload and download according to <backup_name>.resumable file
 
   # RESTORE_DATABASE_MAPPING, restore rules from backup databases to target databases, which is useful on change destination database all atomic tables will create with new uuid.
   # for environment use following format "src_db1:target_db1,src_db2:target_db2" 
@@ -531,9 +531,11 @@ api:
   secure: false                # API_SECURE, use TLS for listen API socket
   certificate_file: ""         # API_CERTIFICATE_FILE
   private_key_file: ""         # API_PRIVATE_KEY_FILE
-  create_integration_tables: false # API_CREATE_INTEGRATION_TABLES
-  integration_tables_host: "" # API_INTEGRATION_TABLES_HOST, allow use DNS name to connect in `system.backup_list` and `system.backup_actions`
+  integration_tables_host: ""  # API_INTEGRATION_TABLES_HOST, allow use DNS name to connect in `system.backup_list` and `system.backup_actions`
   allow_parallel: false        # API_ALLOW_PARALLEL, could allocate much memory and spawn go-routines, don't enable it if you not sure
+  create_integration_tables: false # API_CREATE_INTEGRATION_TABLES, create `system.backup_list` and `system.backup_actions` 
+  complete_resumable_after_restart: true # API_COMPLETE_RESUMABLE_AFTER_RESTART, after API server startup, if `/var/lib/clickhouse/backup/*/(upload|download).state` present, then operation will continue in background
+
 ```
 
 ## Concurrency, CPU and Memory usage recommendation 

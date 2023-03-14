@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/resumable"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/server/metrics"
 	"io"
 	"net/http"
@@ -15,6 +16,8 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -103,6 +106,12 @@ func Run(cliCtx *cli.Context, cliApp *cli.App, configPath string, clickhouseBack
 	if err := api.Restart(); err != nil {
 		return err
 	}
+	go func() {
+		if err := api.ResumeOperationsAfterRestart(); err != nil {
+			log.Errorf("ResumeOperationsAfterRestart return error: %v", err)
+		}
+	}()
+
 	go func() {
 		if err := api.UpdateBackupMetrics(context.Background(), false); err != nil {
 			log.Errorf("UpdateBackupMetrics return error: %v", err)
@@ -1000,7 +1009,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	tablePattern := ""
 	partitionsToBackup := make([]string, 0)
 	schemaOnly := false
-	resumable := false
+	resume := false
 	fullCommand := "upload"
 
 	if df, exist := query["diff-from"]; exist {
@@ -1024,7 +1033,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		fullCommand += " --schema"
 	}
 	if _, exist := query["resumable"]; exist {
-		resumable = true
+		resume = true
 		fullCommand += " --resumable"
 	}
 
@@ -1034,7 +1043,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		commandId, ctx := status.Current.Start(fullCommand)
 		err, _ := api.metrics.ExecuteWithMetrics("upload", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.Upload(name, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, resumable, commandId)
+			return b.Upload(name, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, resume, commandId)
 		})
 		if err != nil {
 			api.log.Errorf("Upload error: %v", err)
@@ -1185,7 +1194,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	tablePattern := ""
 	partitionsToBackup := make([]string, 0)
 	schemaOnly := false
-	resumable := false
+	resume := false
 	fullCommand := "download"
 
 	if tp, exist := query["table"]; exist {
@@ -1193,7 +1202,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
 	}
 	if partitions, exist := query["partitions"]; exist {
-		partitionsToBackup = strings.Split(partitions[0], ",")
+		partitionsToBackup = partitions
 		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, partitions)
 	}
 	if _, exist := query["schema"]; exist {
@@ -1201,7 +1210,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		fullCommand += " --schema"
 	}
 	if _, exist := query["resumable"]; exist {
-		resumable = true
+		resume = true
 		fullCommand += " --resumable"
 	}
 	fullCommand += fmt.Sprintf(" %s", name)
@@ -1210,7 +1219,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		commandId, ctx := status.Current.Start(fullCommand)
 		err, _ := api.metrics.ExecuteWithMetrics("download", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.Download(name, tablePattern, partitionsToBackup, schemaOnly, resumable, commandId)
+			return b.Download(name, tablePattern, partitionsToBackup, schemaOnly, resume, commandId)
 		})
 		if err != nil {
 			api.log.Errorf("API /backup/download error: %v", err)
@@ -1457,4 +1466,103 @@ func (api *APIServer) ReloadConfig(w http.ResponseWriter, command string) (*conf
 	api.metrics.NumberBackupsRemoteExpected.Set(float64(cfg.General.BackupsToKeepRemote))
 	api.metrics.NumberBackupsLocalExpected.Set(float64(cfg.General.BackupsToKeepLocal))
 	return cfg, nil
+}
+
+func (api *APIServer) ResumeOperationsAfterRestart() error {
+	ch := clickhouse.ClickHouse{
+		Config: &api.config.ClickHouse,
+		Log:    apexLog.WithField("logger", "clickhouse"),
+	}
+	if err := ch.Connect(); err != nil {
+		return err
+	}
+	defer func() {
+		if err := ch.GetConn().Close(); err != nil {
+			api.log.Errorf("ResumeOperationsAfterRestart can't close clickhouse connection: %v")
+		}
+	}()
+	disks, err := ch.GetDisks(context.Background())
+	if err != nil {
+		return err
+	}
+	defaultDiskPath, err := ch.GetDefaultPath(disks)
+	if err != nil {
+		return err
+	}
+	backupList, err := os.ReadDir(path.Join(defaultDiskPath, "backup"))
+	if err != nil {
+		return err
+	}
+	for _, backupItem := range backupList {
+		if backupItem.IsDir() {
+			backupName := backupItem.Name()
+			stateFiles, err := filepath.Glob(path.Join(defaultDiskPath, "backup", backupName, "*.state"))
+			if err != nil {
+				return err
+			}
+			for _, stateFile := range stateFiles {
+				command := strings.TrimSuffix(strings.TrimPrefix(stateFile, path.Join(defaultDiskPath, "backup", backupName)+"/"), ".state")
+				state := resumable.NewState(defaultDiskPath, backupName, command, nil)
+				params := state.GetParams()
+				state.Close()
+				if !api.config.API.AllowParallel && status.Current.InProgress() {
+					return fmt.Errorf("another commands in progress")
+				}
+				switch command {
+				case "download":
+				case "upload":
+					args := make([]string, len(params)+2)
+					fullCommand := command
+					i := 0
+					if diffFrom, ok := params["diffFrom"]; ok {
+						args[i] = fmt.Sprintf("--diff-from=\"%s\"", diffFrom)
+						fullCommand += " " + args[i]
+						i++
+					}
+					if diffFrom, ok := params["diffFromRemote"]; ok {
+						args[i] = fmt.Sprintf("--diff-from-remote=\"%s\"", diffFrom)
+						fullCommand += " " + args[i]
+						i++
+					}
+
+					if tablePattern, ok := params["tablePattern"]; ok {
+						args[i] = fmt.Sprintf("--tables=\"%s\"", tablePattern)
+						fullCommand += " " + args[i]
+						i++
+					}
+
+					if _, ok := params["schemaOnly"]; ok {
+						args[i] = "--schema"
+						fullCommand += " " + args[i]
+						i++
+					}
+
+					if partitions, ok := params["partitions"]; ok {
+						args[i] = fmt.Sprintf(" --partitions=\"%s\"", strings.Join(partitions.([]string), ","))
+						fullCommand += " " + args[i]
+						i++
+					}
+					args[i] = "--resumable"
+					args[i+1] = backupName
+					fullCommand += " --resumable " + backupName
+					api.log.WithField("operation", "ResumeOperationsAfterRestart").Info(fullCommand)
+					commandId, _ := status.Current.Start(fullCommand)
+					err, _ = api.metrics.ExecuteWithMetrics(command, 0, func() error {
+						return api.cliApp.Run(append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
+					})
+					status.Current.Stop(commandId, err)
+					if err != nil {
+						return err
+					}
+					if err = os.Remove(stateFile); err != nil {
+						return err
+					}
+				default:
+					return fmt.Errorf("unkown command for state file %s", stateFile)
+				}
+			}
+		}
+	}
+
+	return nil
 }

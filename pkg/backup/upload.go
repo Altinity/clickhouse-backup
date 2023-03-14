@@ -112,7 +112,13 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 		}
 	}
 	if b.resume {
-		b.resumableState = resumable.NewState(b.DefaultDataPath, backupName, "upload")
+		b.resumableState = resumable.NewState(b.DefaultDataPath, backupName, "upload", map[string]interface{}{
+			"diffFrom":       diffFrom,
+			"diffFromRemote": diffFromRemote,
+			"tablePattern":   tablePattern,
+			"partitions":     partitions,
+			"schemaOnly":     schemaOnly,
+		})
 	}
 
 	compressedDataSize := int64(0)

@@ -8,6 +8,7 @@ general:
     - "INFORMATION_SCHEMA.*"
     - "information_schema.*"
   restore_schema_on_cluster: "{cluster}"
+  use_resumable_state: false
 clickhouse:
   host: 127.0.0.1
   port: 9440

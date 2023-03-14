@@ -173,7 +173,11 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		return err
 	}
 	if b.resume {
-		b.resumableState = resumable.NewState(b.DefaultDataPath, backupName, "download")
+		b.resumableState = resumable.NewState(b.DefaultDataPath, backupName, "download", map[string]interface{}{
+			"tablePattern": tablePattern,
+			"partitions":   partitions,
+			"schemaOnly":   schemaOnly,
+		})
 	}
 
 	log.Debugf("prepare table METADATA concurrent semaphore with concurrency=%d len(tablesForDownload)=%d", b.cfg.General.DownloadConcurrency, len(tablesForDownload))

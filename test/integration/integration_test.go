@@ -1550,7 +1550,7 @@ func testAPIWatchAndKill(r *require.Assertions, ch *TestClickHouse) {
 	out, err := dockerExecOut("clickhouse", "bash", "-ce", "curl -sfL 'http://localhost:7171/backup/watch'")
 	log.Debug(out)
 	r.NoError(err)
-	time.Sleep(5 * time.Second)
+	time.Sleep(7 * time.Second)
 
 	checkWatchBackup(2)
 	runKillCommand("watch")

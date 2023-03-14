@@ -1,5 +1,6 @@
 # v2.2.0
 IMPROVEMENTS
+- after API server startup, if `/var/lib/clickhouse/backup/*/(upload|download).state` present, then operation will continue in background, fix [608](https://github.com/AlexAkulov/clickhouse-backup/issues/608)
 - make `use_resumable_state: true` behavior for `upload` and `download`, fix [608](https://github.com/AlexAkulov/clickhouse-backup/issues/608) 
 - switch to go 1.20
 - improve support `--partitions` parameter, for cases when PARTITION BY clause return hashed value instead of numeric prefix for `partition_id` in `system.parts`, fix [602](https://github.com/AlexAkulov/clickhouse-backup/issues/602) 
@@ -10,6 +11,7 @@ IMPROVEMENTS
 - decrease memory buffers for S3 and GCS, change default value for `upload_concurrency` and `download_concurrency` to `round(sqrt(MAX_CPU / 2))`, fix [539](https://github.com/AlexAkulov/clickhouse-backup/issues/539)
 
 BUG FIXES
+- Fix wrong Content-Type header, fix [605](https://github.com/AlexAkulov/clickhouse-backup/issues/605)
 - Fix wrong behavior for `download` with `--partitions` fix [606](https://github.com/AlexAkulov/clickhouse-backup/issues/606) 
 - Wrong size of backup in list command if upload or download was break and resume, fix [526](https://github.com/AlexAkulov/clickhouse-backup/issues/526)
 - Fix `_successful_` and `_failed_` metrics counter issue, happens after 2.1.0, fix [589](https://github.com/AlexAkulov/clickhouse-backup/issues/589)
