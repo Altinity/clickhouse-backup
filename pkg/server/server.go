@@ -106,11 +106,13 @@ func Run(cliCtx *cli.Context, cliApp *cli.App, configPath string, clickhouseBack
 	if err := api.Restart(); err != nil {
 		return err
 	}
-	go func() {
-		if err := api.ResumeOperationsAfterRestart(); err != nil {
-			log.Errorf("ResumeOperationsAfterRestart return error: %v", err)
-		}
-	}()
+	if api.config.API.CompleteResumableAfterRestart {
+		go func() {
+			if err := api.ResumeOperationsAfterRestart(); err != nil {
+				log.Errorf("ResumeOperationsAfterRestart return error: %v", err)
+			}
+		}()
+	}
 
 	go func() {
 		if err := api.UpdateBackupMetrics(context.Background(), false); err != nil {

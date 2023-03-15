@@ -20,8 +20,9 @@ import (
 
 // SFTP Implement RemoteStorage
 type SFTP struct {
-	client *libSFTP.Client
-	Config *config.SFTPConfig
+	sshClient  *ssh.Client
+	sftpClient *libSFTP.Client
+	Config     *config.SFTPConfig
 }
 
 func (sftp *SFTP) Debug(msg string, v ...interface{}) {
@@ -83,18 +84,27 @@ func (sftp *SFTP) Connect(ctx context.Context) error {
 		return err
 	}
 
-	sftp.client = sftpConnection
+	sftp.sftpClient = sftpConnection
+	sftp.sshClient = sshConnection
 	return nil
 }
 
 func (sftp *SFTP) Close(ctx context.Context) error {
-	return sftp.client.Close()
+	sftp.Debug("[SFTP_DEBUG] sftpClient.Close()")
+	if err := sftp.sftpClient.Close(); err != nil {
+		return err
+	}
+	sftp.Debug("[SFTP_DEBUG] sshClient.Close()")
+	if err := sftp.sshClient.Close(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (sftp *SFTP) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 	filePath := path.Join(sftp.Config.Path, key)
 
-	stat, err := sftp.client.Stat(filePath)
+	stat, err := sftp.sftpClient.Stat(filePath)
 	if err != nil {
 		sftp.Debug("[SFTP_DEBUG] StatFile::STAT %s return error %v", filePath, err)
 		if strings.Contains(err.Error(), "not exist") {
@@ -114,7 +124,7 @@ func (sftp *SFTP) DeleteFile(ctx context.Context, key string) error {
 	sftp.Debug("[SFTP_DEBUG] Delete %s", key)
 	filePath := path.Join(sftp.Config.Path, key)
 
-	fileStat, err := sftp.client.Stat(filePath)
+	fileStat, err := sftp.sftpClient.Stat(filePath)
 	if err != nil {
 		sftp.Debug("[SFTP_DEBUG] Delete::STAT %s return error %v", filePath, err)
 		return err
@@ -122,19 +132,19 @@ func (sftp *SFTP) DeleteFile(ctx context.Context, key string) error {
 	if fileStat.IsDir() {
 		return sftp.DeleteDirectory(ctx, filePath)
 	} else {
-		return sftp.client.Remove(filePath)
+		return sftp.sftpClient.Remove(filePath)
 	}
 }
 
 func (sftp *SFTP) DeleteDirectory(ctx context.Context, dirPath string) error {
 	sftp.Debug("[SFTP_DEBUG] DeleteDirectory %s", dirPath)
 	defer func() {
-		if err := sftp.client.RemoveDirectory(dirPath); err != nil {
+		if err := sftp.sftpClient.RemoveDirectory(dirPath); err != nil {
 			log.Warnf("RemoveDirectory err=%v", err)
 		}
 	}()
 
-	files, err := sftp.client.ReadDir(dirPath)
+	files, err := sftp.sftpClient.ReadDir(dirPath)
 	if err != nil {
 		sftp.Debug("[SFTP_DEBUG] DeleteDirectory::ReadDir %s return error %v", dirPath, err)
 		return err
@@ -146,7 +156,7 @@ func (sftp *SFTP) DeleteDirectory(ctx context.Context, dirPath string) error {
 				log.Warnf("sftp.DeleteDirectory(%s) err=%v", filePath, err)
 			}
 		} else {
-			if err := sftp.client.Remove(filePath); err != nil {
+			if err := sftp.sftpClient.Remove(filePath); err != nil {
 				log.Warnf("sftp.Remove(%s) err=%v", filePath, err)
 			}
 		}
@@ -160,7 +170,7 @@ func (sftp *SFTP) Walk(ctx context.Context, remotePath string, recursive bool, p
 	sftp.Debug("[SFTP_DEBUG] Walk %s, recursive=%v", dir, recursive)
 
 	if recursive {
-		walker := sftp.client.Walk(dir)
+		walker := sftp.sftpClient.Walk(dir)
 		for walker.Step() {
 			if err := walker.Err(); err != nil {
 				return err
@@ -180,7 +190,7 @@ func (sftp *SFTP) Walk(ctx context.Context, remotePath string, recursive bool, p
 			}
 		}
 	} else {
-		entries, err := sftp.client.ReadDir(dir)
+		entries, err := sftp.sftpClient.ReadDir(dir)
 		if err != nil {
 			sftp.Debug("[SFTP_DEBUG] Walk::NonRecursive::ReadDir %s return error %v", dir, err)
 			return err
@@ -201,7 +211,7 @@ func (sftp *SFTP) Walk(ctx context.Context, remotePath string, recursive bool, p
 
 func (sftp *SFTP) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {
 	filePath := path.Join(sftp.Config.Path, key)
-	return sftp.client.OpenFile(filePath, syscall.O_RDWR)
+	return sftp.sftpClient.OpenFile(filePath, syscall.O_RDWR)
 }
 
 func (sftp *SFTP) GetFileReaderWithLocalPath(ctx context.Context, key, _ string) (io.ReadCloser, error) {
@@ -210,10 +220,10 @@ func (sftp *SFTP) GetFileReaderWithLocalPath(ctx context.Context, key, _ string)
 
 func (sftp *SFTP) PutFile(ctx context.Context, key string, localFile io.ReadCloser) error {
 	filePath := path.Join(sftp.Config.Path, key)
-	if err := sftp.client.MkdirAll(path.Dir(filePath)); err != nil {
-		log.Warnf("sftp.client.MkdirAll(%s) err=%v", path.Dir(filePath), err)
+	if err := sftp.sftpClient.MkdirAll(path.Dir(filePath)); err != nil {
+		log.Warnf("sftp.sftpClient.MkdirAll(%s) err=%v", path.Dir(filePath), err)
 	}
-	remoteFile, err := sftp.client.Create(filePath)
+	remoteFile, err := sftp.sftpClient.Create(filePath)
 	if err != nil {
 		return err
 	}

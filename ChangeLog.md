@@ -11,6 +11,7 @@ IMPROVEMENTS
 - decrease memory buffers for S3 and GCS, change default value for `upload_concurrency` and `download_concurrency` to `round(sqrt(MAX_CPU / 2))`, fix [539](https://github.com/AlexAkulov/clickhouse-backup/issues/539)
 
 BUG FIXES
+- Fix ssh connection leak for SFTP remote storage, fix [578](https://github.com/AlexAkulov/clickhouse-backup/issues/578)
 - Fix wrong Content-Type header, fix [605](https://github.com/AlexAkulov/clickhouse-backup/issues/605)
 - Fix wrong behavior for `download` with `--partitions` fix [606](https://github.com/AlexAkulov/clickhouse-backup/issues/606) 
 - Wrong size of backup in list command if upload or download was break and resume, fix [526](https://github.com/AlexAkulov/clickhouse-backup/issues/526)
