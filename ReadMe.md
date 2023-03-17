@@ -464,7 +464,7 @@ s3:
   sse: ""                          # S3_SSE, empty (default), AES256, or aws:kms
   disable_cert_verification: false # S3_DISABLE_CERT_VERIFICATION
   use_custom_storage_class: false  # S3_USE_CUSTOM_STORAGE_CLASS
-  storage_class: STANDARD          # S3_STORAGE_CLASS
+  storage_class: STANDARD          # S3_STORAGE_CLASS, by default allow only from list https://github.com/aws/aws-sdk-go-v2/blob/main/service/s3/types/enums.go#L787-L799
   concurrency: 1                   # S3_CONCURRENCY
   part_size: 0                     # S3_PART_SIZE, if less or eq 0 then calculated as max_file_size / max_parts_count, between 5MB and 5Gb
   max_parts_count: 10000           # S3_MAX_PARTS_COUNT, number of parts for S3 multipart uploads
@@ -472,7 +472,9 @@ s3:
 
   # S3_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
   # for environment use following format "key1:value1,key2:value2" 
-  object_labels: {}                
+  object_labels: {}
+  # S3_CUSTOM_STORAGE_CLASS_MAP, allow setup  storage class depends on backup name regexp pattern, format nameRegexp > className  
+  custom_storage_class_map: {}
   debug: false                     # S3_DEBUG
 gcs:
   credentials_file: ""         # GCS_CREDENTIALS_FILE
@@ -486,7 +488,9 @@ gcs:
 
   # GCS_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
   # for environment use following format "key1:value1,key2:value2" 
-  object_labels: {}            
+  object_labels: {}
+  # GCS_CUSTOM_STORAGE_CLASS_MAP, allow setup storage class depends on backup name regexp pattern, format nameRegexp > className  
+  custom_storage_class_map: {}  
   debug: false                 # GCS_DEBUG
 cos:
   url: ""                      # COS_URL

@@ -72,7 +72,8 @@ type GCSConfig struct {
 	Debug                  bool              `yaml:"debug" envconfig:"GCS_DEBUG"`
 	Endpoint               string            `yaml:"endpoint" envconfig:"GCS_ENDPOINT"`
 	StorageClass           string            `yaml:"storage_class" envconfig:"GCS_STORAGE_CLASS"`
-	ObjectLabels           map[string]string `yaml:"object_labels" envconfig:"S3_OBJECT_LABELS"`
+	ObjectLabels           map[string]string `yaml:"object_labels" envconfig:"GCS_OBJECT_LABELS"`
+	CustomStorageClassMap  map[string]string `yaml:"custom_storage_class_map" envconfig:"GCS_CUSTOM_STORAGE_CLASS_MAP"`
 }
 
 // AzureBlobConfig - Azure Blob settings section
@@ -112,6 +113,7 @@ type S3Config struct {
 	DisableCertVerification bool              `yaml:"disable_cert_verification" envconfig:"S3_DISABLE_CERT_VERIFICATION"`
 	UseCustomStorageClass   bool              `yaml:"use_custom_storage_class" envconfig:"S3_USE_CUSTOM_STORAGE_CLASS"`
 	StorageClass            string            `yaml:"storage_class" envconfig:"S3_STORAGE_CLASS"`
+	CustomStorageClassMap   map[string]string `yaml:"custom_storage_class_map" envconfig:"S3_CUSTOM_STORAGE_CLASS_MAP"`
 	Concurrency             int               `yaml:"concurrency" envconfig:"S3_CONCURRENCY"`
 	PartSize                int64             `yaml:"part_size" envconfig:"S3_PART_SIZE"`
 	MaxPartsCount           int64             `yaml:"max_parts_count" envconfig:"S3_MAX_PARTS_COUNT"`

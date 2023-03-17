@@ -14,6 +14,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -372,6 +373,22 @@ func (b *Backuper) validateUploadParams(ctx context.Context, backupName string, 
 	}
 	if b.cfg.General.RemoteStorage == "custom" && b.resume {
 		return fmt.Errorf("can't resume for `remote_storage: custom`")
+	}
+	if b.cfg.General.RemoteStorage == "s3" && len(b.cfg.S3.CustomStorageClassMap) > 0 {
+		for pattern, storageClass := range b.cfg.S3.CustomStorageClassMap {
+			re := regexp.MustCompile(pattern)
+			if re.MatchString(backupName) {
+				b.cfg.S3.StorageClass = storageClass
+			}
+		}
+	}
+	if b.cfg.General.RemoteStorage == "gcs" && len(b.cfg.GCS.CustomStorageClassMap) > 0 {
+		for pattern, storageClass := range b.cfg.GCS.CustomStorageClassMap {
+			re := regexp.MustCompile(pattern)
+			if re.MatchString(backupName) {
+				b.cfg.GCS.StorageClass = storageClass
+			}
+		}
 	}
 	return nil
 }
