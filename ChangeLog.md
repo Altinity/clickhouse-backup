@@ -12,14 +12,14 @@ IMPROVEMENTS
 - added ability to set up custom storage class for GCS and S3 depends on backupName pattern, fix [584](https://github.com/AlexAkulov/clickhouse-backup/issues/584)
 
 BUG FIXES
-- Fix ssh connection leak for SFTP remote storage, fix [578](https://github.com/AlexAkulov/clickhouse-backup/issues/578)
-- Fix wrong Content-Type header, fix [605](https://github.com/AlexAkulov/clickhouse-backup/issues/605)
-- Fix wrong behavior for `download` with `--partitions` fix [606](https://github.com/AlexAkulov/clickhouse-backup/issues/606) 
-- Wrong size of backup in list command if upload or download was break and resume, fix [526](https://github.com/AlexAkulov/clickhouse-backup/issues/526)
-- Fix `_successful_` and `_failed_` metrics counter issue, happens after 2.1.0, fix [589](https://github.com/AlexAkulov/clickhouse-backup/issues/589)
-- Fix wrong calculation date of last remote backup during startup
-- Fix wrong duration, status for metrics after 2.1.0 refactoring, fix [599](https://github.com/AlexAkulov/clickhouse-backup/issues/599)
-
+- fix ssh connection leak for SFTP remote storage, fix [578](https://github.com/AlexAkulov/clickhouse-backup/issues/578)
+- fix wrong Content-Type header, fix [605](https://github.com/AlexAkulov/clickhouse-backup/issues/605)
+- fix wrong behavior for `download` with `--partitions` fix [606](https://github.com/AlexAkulov/clickhouse-backup/issues/606) 
+- fix wrong size of backup in list command if upload or download was break and resume, fix [526](https://github.com/AlexAkulov/clickhouse-backup/issues/526)
+- fix `_successful_` and `_failed_` metrics counter issue, happens after 2.1.0, fix [589](https://github.com/AlexAkulov/clickhouse-backup/issues/589)
+- fix wrong calculation date of last remote backup during startup
+- fix wrong duration, status for metrics after 2.1.0 refactoring, fix [599](https://github.com/AlexAkulov/clickhouse-backup/issues/599)
+- fix panic on LIVE VIEW tables with option --restore-database-mapping db:db_new enabled), thanks @php53unit
 
 # v2.1.3
 IMPROVEMENTS
