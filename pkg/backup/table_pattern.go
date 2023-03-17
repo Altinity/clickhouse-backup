@@ -149,7 +149,7 @@ func getTableListByPatternLocal(cfg *config.Config, ch *clickhouse.ClickHouse, m
 	return result, nil
 }
 
-var queryRE = regexp.MustCompile(`(?m)^(CREATE|ATTACH) (TABLE|VIEW|MATERIALIZED VIEW|DICTIONARY|FUNCTION) (\x60?)([^\s\x60.]*)(\x60?)\.([^\s\x60.]*)(?:( UUID '[^']+'))?(?:( TO )(\x60?)([^\s\x60.]*)(\x60?)(\.))?(?:(.+FROM )(\x60?)([^\s\x60.]*)(\x60?)(\.))?`)
+var queryRE = regexp.MustCompile(`(?m)^(CREATE|ATTACH) (TABLE|VIEW|LIVE VIEW|MATERIALIZED VIEW|DICTIONARY|FUNCTION) (\x60?)([^\s\x60.]*)(\x60?)\.([^\s\x60.]*)(?:( UUID '[^']+'))?(?:( TO )(\x60?)([^\s\x60.]*)(\x60?)(\.))?(?:(.+FROM )(\x60?)([^\s\x60.]*)(\x60?)(\.))?`)
 var createOrAttachRE = regexp.MustCompile(`(?m)^(CREATE|ATTACH)`)
 var uuidRE = regexp.MustCompile(`UUID '[a-f\d\-]+'`)
 
