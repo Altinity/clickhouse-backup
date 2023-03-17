@@ -110,6 +110,11 @@ type S3Config struct {
 	CompressionLevel        int               `yaml:"compression_level" envconfig:"S3_COMPRESSION_LEVEL"`
 	CompressionFormat       string            `yaml:"compression_format" envconfig:"S3_COMPRESSION_FORMAT"`
 	SSE                     string            `yaml:"sse" envconfig:"S3_SSE"`
+	SSEKMSKeyId             string            `yaml:"sse_kms_key_id" envconfig:"S3_SSE_KMS_KEY_ID"`
+	SSECustomerAlgorithm    string            `yaml:"sse_customer_algorithm" envconfig:"S3_SSE_CUSTOMER_ALGORITHM"`
+	SSECustomerKey          string            `yaml:"sse_customer_key" envconfig:"S3_SSE_CUSTOMER_KEY"`
+	SSECustomerKeyMD5       string            `yaml:"sse_customer_key_md5" envconfig:"S3_SSE_CUSTOMER_KEY_MD5"`
+	SSEKMSEncryptionContext string            `yaml:"sse_kms_encryption_context" envconfig:"S3_SSE_KMS_ENCRYPTION_CONTEXT"`
 	DisableCertVerification bool              `yaml:"disable_cert_verification" envconfig:"S3_DISABLE_CERT_VERIFICATION"`
 	UseCustomStorageClass   bool              `yaml:"use_custom_storage_class" envconfig:"S3_USE_CUSTOM_STORAGE_CLASS"`
 	StorageClass            string            `yaml:"storage_class" envconfig:"S3_STORAGE_CLASS"`

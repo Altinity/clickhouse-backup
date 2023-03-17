@@ -461,7 +461,15 @@ s3:
   disable_ssl: false               # S3_DISABLE_SSL
   compression_level: 1             # S3_COMPRESSION_LEVEL
   compression_format: tar          # S3_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
+  # look details in https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingKMSEncryption.html
   sse: ""                          # S3_SSE, empty (default), AES256, or aws:kms
+  sse_kms_key_id: ""               # S3_SSE_KMS_KEY_ID, if S3_SSE is aws:kms then specifies the ID of the Amazon Web Services Key Management Service
+  sse_customer_algorithm: ""       # S3_SSE_CUSTOMER_ALGORITHM, Specifies the algorithm to use to when encrypting the object (for example, AES256)
+  sse_customer_key: ""             # S3_SSE_CUSTOMER_KEY, Specifies the customer-provided encryption key for Amazon S3 to use in encrypting data
+  sse_customer_key_md5: ""         # S3_SSE_CUSTOMER_KEY_MD5, Specifies the 128-bit MD5 digest of the encryption key according to RFC 1321.
+  sse_kms_encryption_context: ""   # S3_SSE_KMS_ENCRYPTION_CONTEXT, The value of this header is a base64-encoded UTF-8 string holding JSON with the encryption context key-value pairs.
+                                   # Specifies the Amazon Web Services KMS Encryption Context to use for object
+                                   # encryption. 
   disable_cert_verification: false # S3_DISABLE_CERT_VERIFICATION
   use_custom_storage_class: false  # S3_USE_CUSTOM_STORAGE_CLASS
   storage_class: STANDARD          # S3_STORAGE_CLASS, by default allow only from list https://github.com/aws/aws-sdk-go-v2/blob/main/service/s3/types/enums.go#L787-L799

@@ -1,3 +1,7 @@
+# v2.3.0
+IMPROVEMENTS
+- add additional server-side encryption parameters to s3 config section, fix [619](https://github.com/AlexAkulov/clickhouse-backup/issues/619)
+
 # v2.2.0
 IMPROVEMENTS
 - switch to go 1.20

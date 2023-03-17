@@ -207,6 +207,21 @@ func (s *S3) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
 	if s.Config.SSE != "" {
 		params.ServerSideEncryption = s3types.ServerSideEncryption(s.Config.SSE)
 	}
+	if s.Config.SSEKMSKeyId != "" {
+		params.SSEKMSKeyId = aws.String(s.Config.SSEKMSKeyId)
+	}
+	if s.Config.SSECustomerAlgorithm != "" {
+		params.SSECustomerAlgorithm = aws.String(s.Config.SSECustomerAlgorithm)
+	}
+	if s.Config.SSECustomerKey != "" {
+		params.SSECustomerKey = aws.String(s.Config.SSECustomerKey)
+	}
+	if s.Config.SSECustomerKeyMD5 != "" {
+		params.SSECustomerKeyMD5 = aws.String(s.Config.SSECustomerKeyMD5)
+	}
+	if s.Config.SSEKMSEncryptionContext != "" {
+		params.SSEKMSEncryptionContext = aws.String(s.Config.SSEKMSEncryptionContext)
+	}
 	_, err := s.uploader.Upload(ctx, &params)
 	return err
 }
