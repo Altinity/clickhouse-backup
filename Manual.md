@@ -1,7 +1,7 @@
 ### CLI command - tables
 ```
 NAME:
-   clickhouse-backup tables - List list of tables, exclude skip_tables
+   clickhouse-backup tables - List of tables, exclude skip_tables
 
 USAGE:
    clickhouse-backup tables [-t, --tables=<db>.<table>]] [--all]
@@ -27,9 +27,9 @@ OPTIONS:
    --config value, -c value                 Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --table value, --tables value, -t value  create backup only matched with table name patterns, separated by comma, allow ? and * as wildcard
    --partitions partition_id                create backup only for selected partition names, separated by comma
-if PARTITION BY clause return numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
-if PARTITION BY clause return hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
-if PARTITION BY clause return tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
+if PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
+if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
+if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
 values depends on field types in your table, use single quote for String and Date/DateTime related types
 look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
    --schema, -s                                      Backup schemas only
@@ -40,7 +40,7 @@ look to system.parts partition and partition_id fields for details https://click
 ### CLI command - create_remote
 ```
 NAME:
-   clickhouse-backup create_remote - Create and upload
+   clickhouse-backup create_remote - Create and upload new backup
 
 USAGE:
    clickhouse-backup create_remote [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--diff-from=<local_backup_name>] [--diff-from-remote=<local_backup_name>] [--schema] [--rbac] [--configs] [--resumable] <backup_name>
@@ -52,9 +52,9 @@ OPTIONS:
    --config value, -c value                 Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --table value, --tables value, -t value  create and upload backup only matched with table name patterns, separated by comma, allow ? and * as wildcard
    --partitions partition_id                create and upload backup only for selected partition names, separated by comma
-if PARTITION BY clause return numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
-if PARTITION BY clause return hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
-if PARTITION BY clause return tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
+if PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
+if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
+if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
 values depends on field types in your table, use single quote for String and Date/DateTime related types
 look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
    --diff-from value                                 local backup name which used to upload current backup as incremental
@@ -79,9 +79,9 @@ OPTIONS:
    --diff-from-remote value                 remote backup name which used to upload current backup as incremental
    --table value, --tables value, -t value  Upload data only for matched table name patterns, separated by comma, allow ? and * as wildcard
    --partitions partition_id                Upload backup only for selected partition names, separated by comma
-if PARTITION BY clause return numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
-if PARTITION BY clause return hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
-if PARTITION BY clause return tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
+if PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
+if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
+if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
 values depends on field types in your table, use single quote for String and Date/DateTime related types
 look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
    --schema, -s           Upload schemas only
@@ -91,7 +91,7 @@ look to system.parts partition and partition_id fields for details https://click
 ### CLI command - list
 ```
 NAME:
-   clickhouse-backup list - List list of backups
+   clickhouse-backup list - List of backups
 
 USAGE:
    clickhouse-backup list [all|local|remote] [latest|previous]
@@ -112,9 +112,9 @@ OPTIONS:
    --config value, -c value                 Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --table value, --tables value, -t value  Download objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
    --partitions partition_id                Download backup data only for selected partition names, separated by comma
-if PARTITION BY clause return numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
-if PARTITION BY clause return hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
-if PARTITION BY clause return tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
+if PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
+if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
+if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
 values depends on field types in your table, use single quote for String and Date/DateTime related types
 look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
    --schema, -s           Download schema only
@@ -134,9 +134,9 @@ OPTIONS:
    --table value, --tables value, -t value     Restore only database and objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
    --restore-database-mapping value, -m value  Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.
    --partitions partition_id                   Restore backup only for selected partition names, separated by comma
-if PARTITION BY clause return numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
-if PARTITION BY clause return hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
-if PARTITION BY clause return tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
+if PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
+if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
+if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
 values depends on field types in your table, use single quote for String and Date/DateTime related types
 look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
    --schema, -s                                        Restore schema only
@@ -160,9 +160,9 @@ OPTIONS:
    --table value, --tables value, -t value     Download and restore objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
    --restore-database-mapping value, -m value  Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.
    --partitions partition_id                   Download and restore backup only for selected partition names, separated by comma
-if PARTITION BY clause return numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
-if PARTITION BY clause return hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
-if PARTITION BY clause return tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
+if PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
+if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
+if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
 values depends on field types in your table, use single quote for String and Date/DateTime related types
 look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
    --schema, -s                                        Download and Restore schema only
@@ -252,9 +252,9 @@ OPTIONS:
    --watch-backup-name-template value       Template for new backup name, could contain names from system.macros, {type} - full or incremental and {time:LAYOUT}, look to https://go.dev/src/time/format.go for layout examples
    --table value, --tables value, -t value  Create and upload only objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
    --partitions partition_id                partition names, separated by comma
-if PARTITION BY clause return numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
-if PARTITION BY clause return hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
-if PARTITION BY clause return tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
+if PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
+if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
+if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
 values depends on field types in your table, use single quote for String and Date/DateTime related types
 look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
    --schema, -s                                      Schemas only
