@@ -3,10 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+
 	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/logcli"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/status"
-	"os"
 
 	"github.com/AlexAkulov/clickhouse-backup/pkg/backup"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/server"
@@ -59,7 +60,7 @@ func main() {
 	cliapp.Commands = []cli.Command{
 		{
 			Name:      "tables",
-			Usage:     "List list of tables, exclude skip_tables",
+			Usage:     "List of tables, exclude skip_tables",
 			UsageText: "clickhouse-backup tables [-t, --tables=<db>.<table>]] [--all]",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
@@ -97,9 +98,9 @@ func main() {
 					Name:   "partitions",
 					Hidden: false,
 					Usage: "create backup only for selected partition names, separated by comma\n" +
-						"if PARTITION BY clause return numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
-						"if PARTITION BY clause return hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
-						"if PARTITION BY clause return tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"if PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
 						"values depends on field types in your table, use single quote for String and Date/DateTime related types\n" +
 						"look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
@@ -122,7 +123,7 @@ func main() {
 		},
 		{
 			Name:        "create_remote",
-			Usage:       "Create and upload",
+			Usage:       "Create and upload new backup",
 			UsageText:   "clickhouse-backup create_remote [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--diff-from=<local_backup_name>] [--diff-from-remote=<local_backup_name>] [--schema] [--rbac] [--configs] [--resumable] <backup_name>",
 			Description: "Create and upload",
 			Action: func(c *cli.Context) error {
@@ -139,9 +140,9 @@ func main() {
 					Name:   "partitions",
 					Hidden: false,
 					Usage: "create and upload backup only for selected partition names, separated by comma\n" +
-						"if PARTITION BY clause return numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
-						"if PARTITION BY clause return hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
-						"if PARTITION BY clause return tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"if PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
 						"values depends on field types in your table, use single quote for String and Date/DateTime related types\n" +
 						"look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
@@ -205,9 +206,9 @@ func main() {
 					Name:   "partitions",
 					Hidden: false,
 					Usage: "Upload backup only for selected partition names, separated by comma\n" +
-						"if PARTITION BY clause return numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
-						"if PARTITION BY clause return hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
-						"if PARTITION BY clause return tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"if PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
 						"values depends on field types in your table, use single quote for String and Date/DateTime related types\n" +
 						"look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
@@ -225,7 +226,7 @@ func main() {
 		},
 		{
 			Name:      "list",
-			Usage:     "List list of backups",
+			Usage:     "List of backups",
 			UsageText: "clickhouse-backup list [all|local|remote] [latest|previous]",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
@@ -251,9 +252,9 @@ func main() {
 					Name:   "partitions",
 					Hidden: false,
 					Usage: "Download backup data only for selected partition names, separated by comma\n" +
-						"if PARTITION BY clause return numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
-						"if PARTITION BY clause return hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
-						"if PARTITION BY clause return tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"if PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
 						"values depends on field types in your table, use single quote for String and Date/DateTime related types\n" +
 						"look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
@@ -292,9 +293,9 @@ func main() {
 					Name:   "partitions",
 					Hidden: false,
 					Usage: "Restore backup only for selected partition names, separated by comma\n" +
-						"if PARTITION BY clause return numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
-						"if PARTITION BY clause return hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
-						"if PARTITION BY clause return tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"if PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
 						"values depends on field types in your table, use single quote for String and Date/DateTime related types\n" +
 						"look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
@@ -353,9 +354,9 @@ func main() {
 					Name:   "partitions",
 					Hidden: false,
 					Usage: "Download and restore backup only for selected partition names, separated by comma\n" +
-						"if PARTITION BY clause return numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
-						"if PARTITION BY clause return hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
-						"if PARTITION BY clause return tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"if PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
 						"values depends on field types in your table, use single quote for String and Date/DateTime related types\n" +
 						"look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
@@ -483,9 +484,9 @@ func main() {
 					Name:   "partitions",
 					Hidden: false,
 					Usage: "partition names, separated by comma\n" +
-						"if PARTITION BY clause return numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
-						"if PARTITION BY clause return hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
-						"if PARTITION BY clause return tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"if PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
 						"values depends on field types in your table, use single quote for String and Date/DateTime related types\n" +
 						"look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
