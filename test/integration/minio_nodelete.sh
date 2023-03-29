@@ -2,7 +2,7 @@
 set -x
 set -e
 mc admin user add local nodelete nodelete_password
-mc admin policy add local nodelete <( cat << EOF
+mc admin policy create local nodelete <( cat << EOF
 {
  "Version": "2012-10-17",
  "Statement": [
@@ -29,6 +29,6 @@ mc admin policy add local nodelete <( cat << EOF
 EOF
 )
 
-mc admin policy set local nodelete user=nodelete
+mc admin policy attach local nodelete --user nodelete
 mc alias set nodelete http://localhost:9000 nodelete nodelete_password
 mc alias list
