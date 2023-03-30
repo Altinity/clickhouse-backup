@@ -34,7 +34,7 @@ func NewState(defaultDiskPath, backupName, command string, params map[string]int
 	s.fp = fp
 	s.LoadState()
 	s.LoadParams()
-	if len(s.params) == 0 {
+	if len(s.params) == 0 && params != nil {
 		s.params = params
 		if paramsBytes, err := json.Marshal(s.params); err == nil {
 			s.AppendToState(string(paramsBytes), 0)
@@ -54,7 +54,9 @@ func (s *State) LoadParams() {
 	}
 	//size 0 during write
 	lines[0] = strings.TrimSuffix(lines[0], ":0")
-	_ = json.Unmarshal([]byte(lines[0]), &s.params)
+	if err := json.Unmarshal([]byte(lines[0]), &s.params); err != nil {
+		apexLog.Errorf("can't parse state file line 0 as []interface{}: %s", lines[0])
+	}
 }
 
 func (s *State) LoadState() {

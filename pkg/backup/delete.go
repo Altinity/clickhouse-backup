@@ -30,6 +30,9 @@ func (b *Backuper) Clean(ctx context.Context) error {
 		return err
 	}
 	for _, disk := range disks {
+		if disk.IsBackup {
+			continue
+		}
 		shadowDir := path.Join(disk.Path, "shadow")
 		if err := b.cleanDir(shadowDir); err != nil {
 			return fmt.Errorf("can't clean '%s': %v", shadowDir, err)

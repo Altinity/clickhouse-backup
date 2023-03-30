@@ -1120,8 +1120,8 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		fullCommand = fmt.Sprintf("%s --restore-database-mapping=\"%s\"", fullCommand, strings.Join(databaseMappingToRestore, ","))
 	}
 	if partitions, exist := query["partitions"]; exist {
-		partitionsToBackup = strings.Split(partitions[0], ",")
-		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, partitions)
+		partitionsToBackup = partitions
+		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, strings.Join(partitions, ","))
 	}
 	if _, exist := query["schema"]; exist {
 		schemaOnly = true
@@ -1205,7 +1205,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	}
 	if partitions, exist := query["partitions"]; exist {
 		partitionsToBackup = partitions
-		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, partitions)
+		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, strings.Join(partitions, ","))
 	}
 	if _, exist := query["schema"]; exist {
 		schemaOnly = true
@@ -1540,7 +1540,11 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 					}
 
 					if partitions, ok := params["partitions"]; ok {
-						args[i] = fmt.Sprintf(" --partitions=\"%s\"", strings.Join(partitions.([]string), ","))
+						partitionsStr := make([]string, len(partitions.([]interface{})))
+						for j, v := range partitions.([]interface{}) {
+							partitionsStr[j] = v.(string)
+						}
+						args[i] = fmt.Sprintf(" --partitions=\"%s\"", strings.Join(partitionsStr, ","))
 						fullCommand += " " + args[i]
 						i++
 					}

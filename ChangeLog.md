@@ -1,6 +1,9 @@
-# v2.3.0
+# v2.2.1
 IMPROVEMENTS
 - add additional server-side encryption parameters to s3 config section, fix [619](https://github.com/AlexAkulov/clickhouse-backup/issues/619)
+BUG FIXES
+- fix error after restart API server when .state file present in backup folder, fix [623](https://github.com/AlexAkulov/clickhouse-backup/issues/623)
+
 
 # v2.2.0
 IMPROVEMENTS
