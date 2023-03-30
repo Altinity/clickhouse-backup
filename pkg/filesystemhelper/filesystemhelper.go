@@ -195,10 +195,13 @@ func MoveShadow(shadowPath, backupPartsPath string, partitionsBackupMap common.E
 	size := int64(0)
 	parts := make([]metadata.Part, 0)
 	err := filepath.Walk(shadowPath, func(filePath string, info os.FileInfo, err error) error {
+		// possible relative path
+		// store / 1f9 / 1f9dc899-0de9-41f8-b95c-26c1f0d67d93 / 20181023_2_2_0 / checksums.txt
+		// store / 1f9 / 1f9dc899-0de9-41f8-b95c-26c1f0d67d93 / 20181023_2_2_0 / x.proj / checksums.txt
+		// data / database / table / 20181023_2_2_0 / checksums.txt
+		// data / database / table / 20181023_2_2_0 / x.proj / checksums.txt
 		relativePath := strings.Trim(strings.TrimPrefix(filePath, shadowPath), "/")
 		pathParts := strings.SplitN(relativePath, "/", 4)
-		// store / 1f9 / 1f9dc899-0de9-41f8-b95c-26c1f0d67d93 / 20181023_2_2_0 / checksums.txt
-		// data / database / table / 20181023_2_2_0 / checksums.txt
 		if len(pathParts) != 4 {
 			return nil
 		}
@@ -207,9 +210,11 @@ func MoveShadow(shadowPath, backupPartsPath string, partitionsBackupMap common.E
 		}
 		dstFilePath := filepath.Join(backupPartsPath, pathParts[3])
 		if info.IsDir() {
-			parts = append(parts, metadata.Part{
-				Name: pathParts[3],
-			})
+			if !strings.HasSuffix(pathParts[3], ".proj") {
+				parts = append(parts, metadata.Part{
+					Name: pathParts[3],
+				})
+			}
 			return os.MkdirAll(dstFilePath, 0750)
 		}
 		if !info.Mode().IsRegular() {
