@@ -1,6 +1,8 @@
 # v2.2.1
 IMPROVEMENTS
 - add additional server-side encryption parameters to s3 config section, fix [619](https://github.com/AlexAkulov/clickhouse-backup/issues/619)
+- `restore_remote` will not return error when backup already exists in local storage during download check, fix [625](https://github.com/AlexAkulov/clickhouse-backup/issues/625)
+
 BUG FIXES
 - fix error after restart API server when .state file present in backup folder, fix [623](https://github.com/AlexAkulov/clickhouse-backup/issues/623)
 - fix upload / download files from projections multiple times, cause  backup create wrong create *.proj as separate data part, fix [622](https://github.com/AlexAkulov/clickhouse-backup/issues/622)
