@@ -102,7 +102,7 @@ services:
       retries: 10
 
   zookeeper:
-    image: docker.io/clickhouse/clickhouse-keeper:${CLICKHOUSE_KEEPER_VERSION:-latest}
+    image: docker.io/clickhouse/clickhouse-keeper:${CLICKHOUSE_KEEPER_VERSION:-latest-alpine}
     container_name: zookeeper
     volumes:
       - ./clickhouse-keeper.xml:/etc/clickhouse-keeper/conf.d/clickhouse-keeper.xml
