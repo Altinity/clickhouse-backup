@@ -6,7 +6,7 @@
 [![Telegram](https://img.shields.io/badge/telegram-join%20chat-3796cd.svg)](https://t.me/clickhousebackup)
 [![Docker Image](https://img.shields.io/docker/pulls/alexakulov/clickhouse-backup.svg)](https://hub.docker.com/r/alexakulov/clickhouse-backup)
 
-Tool for easy ClickHouse backup and restore with cloud storage support
+A tool for easy ClickHouse backup and restore with support for many cloud and non-cloud storage types.
 
 ## Features
 
@@ -16,7 +16,7 @@ Tool for easy ClickHouse backup and restore with cloud storage support
 - Works with AWS, GCS, Azure, Tencent COS, FTP, SFTP
 - **Support of Atomic Database Engine**
 - **Support of multi disks installations**
-- **Support for many custom remote storage like `rclone`, `kopia`, `restic`**
+- **Support for custom remote storage types via `rclone`, `kopia`, `restic`, etc**
 - Support of incremental backups on remote storage
 
 ## Limitations
@@ -62,7 +62,7 @@ Use `clickhouse-backup print-config` to print current config.
 ```yaml
 general:
   remote_storage: none           # REMOTE_STORAGE, if `none` then `upload` and  `download` command will fail
-  max_file_size: 1073741824      # MAX_FILE_SIZE, 1G by default, useless when upload_by_part is true, use to split data into archives of defined size
+  max_file_size: 1073741824      # MAX_FILE_SIZE, 1G by default, useless when upload_by_part is true, use for split data parts files by archives
   disable_progress_bar: true     # DISABLE_PROGRESS_BAR, show progress bar during upload and download, makes sense only when `upload_concurrency` and `download_concurrency` is 1
   backups_to_keep_local: 0       # BACKUPS_TO_KEEP_LOCAL, how many latest local backup should be kept, 0 means all created backups will be stored on local disk
                                  # You shall run `clickhouse-backup delete local <backup_name>` command to remove temporary backup files from the local disk
@@ -84,7 +84,7 @@ general:
   use_resumable_state: true      # USE_RESUMABLE_STATE, allow resume upload and download according to the <backup_name>.resumable file
 
   # RESTORE_DATABASE_MAPPING, restore rules from backup databases to target databases, which is useful when changing destination database, all atomic tables will be created with new UUIDs.
-  # Use the following format "src_db1:target_db1,src_db2:target_db2" 
+  # The format for this env variable is "src_db1:target_db1,src_db2:target_db2". For YAML please continue using map syntax
   restore_database_mapping: {}   
   retries_on_failure: 3          # RETRIES_ON_FAILURE, how many times to retry after a failure during upload or download
   retries_pause: 30s             # RETRIES_PAUSE, duration time to pause after each download or upload failure 
@@ -94,10 +94,10 @@ clickhouse:
   host: localhost                  # CLICKHOUSE_HOST
   port: 9000                       # CLICKHOUSE_PORT, don't use 8123, clickhouse-backup doesn't support HTTP protocol
   # CLICKHOUSE_DISK_MAPPING, use this mapping when your `system.disks` are different between the source and destination clusters during backup and restore process
-  # Use the following format "disk_name1:disk_path1,disk_name2:disk_path2" 
+  # The format for this env variable is "disk_name1:disk_path1,disk_name2:disk_path2". For YAML please continue using map syntax 
   disk_mapping: {}
   # CLICKHOUSE_SKIP_TABLES, the list of tables (pattern are allowed) which are ignored during backup and restore process
-  # Use the following format "pattern1,pattern2,pattern3" 
+  # The format for this env variable is "pattern1,pattern2,pattern3". For YAML please continue using map syntax 
   skip_tables:                     
     - system.*
     - INFORMATION_SCHEMA.*
@@ -163,7 +163,7 @@ s3:
   allow_multipart_download: false  # S3_ALLOW_MULTIPART_DOWNLOAD, allow us fast download speed (same as upload), but will require additional disk space, download_concurrency * part size in worst case
 
   # S3_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
-  # Use the following format "key1:value1,key2:value2" 
+  # The format for this env variable is "key1:value1,key2:value2". For YAML please continue using map syntax 
   object_labels: {}
   # S3_CUSTOM_STORAGE_CLASS_MAP, allow setup  storage class depends on backup name regexp pattern, format nameRegexp > className  
   custom_storage_class_map: {}
@@ -179,7 +179,7 @@ gcs:
   storage_class: STANDARD      # GCS_STORAGE_CLASS
 
   # GCS_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
-  # Use the following format "key1:value1,key2:value2" 
+  # The format for this env variable is "key1:value1,key2:value2". For YAML please continue using map syntax 
   object_labels: {}
   # GCS_CUSTOM_STORAGE_CLASS_MAP, allow setup storage class depends on backup name regexp pattern, format nameRegexp > className  
   custom_storage_class_map: {}  
@@ -390,7 +390,7 @@ Display list of all operations from start of API server: `curl -s localhost:7171
 * Optional query argument `filter` could filter actions on server side.
 * Optional query argument `last` could filter show only last `XX` actions.
 
-## Storage
+## Storage types
 
 ### S3
 
