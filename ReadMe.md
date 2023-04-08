@@ -6,7 +6,7 @@
 [![Telegram](https://img.shields.io/badge/telegram-join%20chat-3796cd.svg)](https://t.me/clickhousebackup)
 [![Docker Image](https://img.shields.io/docker/pulls/alexakulov/clickhouse-backup.svg)](https://hub.docker.com/r/alexakulov/clickhouse-backup)
 
-Tool for easy ClickHouse backup and restore with cloud storages support
+A tool for easy ClickHouse backup and restore with support for many cloud and non-cloud storage types.
 
 ## Features
 
@@ -16,8 +16,8 @@ Tool for easy ClickHouse backup and restore with cloud storages support
 - Works with AWS, GCS, Azure, Tencent COS, FTP, SFTP
 - **Support of Atomic Database Engine**
 - **Support of multi disks installations**
-- **Support for any custom remote storage like `rclone`, `kopia`, `restic`**
-- Support of incremental backups on remote storages
+- **Support for custom remote storage types via `rclone`, `kopia`, `restic`, etc**
+- Support of incremental backups on remote storage
 
 ## Limitations
 
@@ -26,13 +26,13 @@ Tool for easy ClickHouse backup and restore with cloud storages support
 
 ## Installation
 
-- Download the latest binary from the [releases](https://github.com/AlexAkulov/clickhouse-backup/releases) page and decompress with:
+Download the latest binary from the [releases](https://github.com/AlexAkulov/clickhouse-backup/releases) page and decompress with:
 
 ```shell
 tar -zxvf clickhouse-backup.tar.gz
 ```
 
-- Use the official tiny Docker image and run it on host where installed `clickhouse-server`:
+Use the official tiny Docker image and run it on host with `clickhouse-server` installed:
 
 ```shell
 docker run -u $(id -u clickhouse) --rm -it --network host -v "/var/lib/clickhouse:/var/lib/clickhouse" \
@@ -43,7 +43,7 @@ docker run -u $(id -u clickhouse) --rm -it --network host -v "/var/lib/clickhous
    alexakulov/clickhouse-backup --help
 ```
 
-- Build from the sources:
+Build from the sources:
 
 ```shell
 GO111MODULE=on go get github.com/AlexAkulov/clickhouse-backup/cmd/clickhouse-backup
@@ -55,69 +55,69 @@ For CLI usage please see [Manual.md](Manual.md).
 
 ## Default Config
 
-Config file location by default `/etc/clickhouse-backup/config.yml` can be redefined via `CLICKHOUSE_BACKUP_CONFIG` environment variable
-All options can be overwritten via environment variables
-Use `clickhouse-backup print-config` for print current config
+By default, the config file is located at `/etc/clickhouse-backup/config.yml`, but it can be redefined via `CLICKHOUSE_BACKUP_CONFIG` environment variable.
+All options can be overwritten via environment variables.
+Use `clickhouse-backup print-config` to print current config.
 
 ```yaml
 general:
   remote_storage: none           # REMOTE_STORAGE, if `none` then `upload` and  `download` command will fail
-  max_file_size: 1073741824      # MAX_FILE_SIZE, 1G by default, useless when upload_by_part is true, use for split data parts files by archives  
-  disable_progress_bar: true     # DISABLE_PROGRESS_BAR, show progress bar during upload and download, have sense only when `upload_concurrency` and `download_concurrency` equal 1
-  backups_to_keep_local: 0       # BACKUPS_TO_KEEP_LOCAL, how much newest local backup should keep, 0 mean all created backups will keep on local disk
-                                 # you shall to run `clickhouse-backup delete local <backup_name>` command to avoid useless disk space allocations
-  backups_to_keep_remote: 0      # BACKUPS_TO_KEEP_REMOTE, how much newest backup should keep on remote storage, 0 mean all uploaded backups will keep on remote storage. 
-                                 # if old backup is required for newer incremental backup, then it will don't delete. Be careful with long incremental backup sequences.
-  log_level: info                # LOG_LEVEL, allow `debug`, `info`, `warn`, `error`
+  max_file_size: 1073741824      # MAX_FILE_SIZE, 1G by default, useless when upload_by_part is true, use for split data parts files by archives
+  disable_progress_bar: true     # DISABLE_PROGRESS_BAR, show progress bar during upload and download, makes sense only when `upload_concurrency` and `download_concurrency` is 1
+  backups_to_keep_local: 0       # BACKUPS_TO_KEEP_LOCAL, how many latest local backup should be kept, 0 means all created backups will be stored on local disk
+                                 # You shall run `clickhouse-backup delete local <backup_name>` command to remove temporary backup files from the local disk
+  backups_to_keep_remote: 0      # BACKUPS_TO_KEEP_REMOTE, how many latest backup should be kept on remote storage, 0 means all uploaded backups will be stored on remote storage. 
+                                 # If old backups are required for newer incremental backup then it won't be deleted. Be careful with long incremental backup sequences.
+  log_level: info                # LOG_LEVEL, a choice from `debug`, `info`, `warn`, `error`
   allow_empty_backups: false     # ALLOW_EMPTY_BACKUPS
   # concurrency means parallel tables and parallel parts inside tables
-  # for example 4 means max 4 parallel tables and 4 parallel parts inside one table, so equal 16 streams
-  download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255, default value round(sqrt(AVAILABLE_CPU_CORES / 2))  
-  upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255, default value round(sqrt(AVAILABLE_CPU_CORES / 2))
+  # for example 4 means max 4 parallel tables and 4 parallel parts inside one table, so equals 16 concurrent streams
+  download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255, by default, the value is round(sqrt(AVAILABLE_CPU_CORES / 2))  
+  upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255, by default, the value is round(sqrt(AVAILABLE_CPU_CORES / 2))
 
-  # RESTORE_SCHEMA_ON_CLUSTER, execute all schema related SQL queries with `ON CLUSTER` clause as Distributed DDL, 
-  # look to `system.clusters` table for proper cluster name, also system.macros could be used, 
-  # don't applicable when `use_embedded_backup_restore: true`
+  # RESTORE_SCHEMA_ON_CLUSTER, execute all schema related SQL queries with `ON CLUSTER` clause as Distributed DDL. 
+  # Check `system.clusters` table for the correct cluster name, also `system.macros` can be used.
+  # This isn't applicable when `use_embedded_backup_restore: true`
   restore_schema_on_cluster: ""   
   upload_by_part: true           # UPLOAD_BY_PART
   download_by_part: true         # DOWNLOAD_BY_PART
-  use_resumable_state: true      # USE_RESUMABLE_STATE, allow resume upload and download according to <backup_name>.resumable file
+  use_resumable_state: true      # USE_RESUMABLE_STATE, allow resume upload and download according to the <backup_name>.resumable file
 
-  # RESTORE_DATABASE_MAPPING, restore rules from backup databases to target databases, which is useful on change destination database all atomic tables will create with new uuid.
-  # for environment use following format "src_db1:target_db1,src_db2:target_db2" 
+  # RESTORE_DATABASE_MAPPING, restore rules from backup databases to target databases, which is useful when changing destination database, all atomic tables will be created with new UUIDs.
+  # The format for this env variable is "src_db1:target_db1,src_db2:target_db2". For YAML please continue using map syntax
   restore_database_mapping: {}   
-  retries_on_failure: 3          # RETRIES_ON_FAILURE, retry if failure during upload or download
-  retries_pause: 30s             # RETRIES_PAUSE, time duration pause after each download or upload fail 
+  retries_on_failure: 3          # RETRIES_ON_FAILURE, how many times to retry after a failure during upload or download
+  retries_pause: 30s             # RETRIES_PAUSE, duration time to pause after each download or upload failure 
 clickhouse:
   username: default                # CLICKHOUSE_USERNAME
   password: ""                     # CLICKHOUSE_PASSWORD
   host: localhost                  # CLICKHOUSE_HOST
   port: 9000                       # CLICKHOUSE_PORT, don't use 8123, clickhouse-backup doesn't support HTTP protocol
-  # CLICKHOUSE_DISK_MAPPING, use it if your system.disks on restored servers not the same with system.disks on server where backup was created
-  # for environment use following format "disk_name1:disk_path1,disk_name2:disk_path2" 
+  # CLICKHOUSE_DISK_MAPPING, use this mapping when your `system.disks` are different between the source and destination clusters during backup and restore process
+  # The format for this env variable is "disk_name1:disk_path1,disk_name2:disk_path2". For YAML please continue using map syntax 
   disk_mapping: {}
-  # CLICKHOUSE_SKIP_TABLES, during create and restore tables which matched with these patterns will ignore
-  # for environment use following format "pattern1,pattern2,pattern3" 
+  # CLICKHOUSE_SKIP_TABLES, the list of tables (pattern are allowed) which are ignored during backup and restore process
+  # The format for this env variable is "pattern1,pattern2,pattern3". For YAML please continue using map syntax 
   skip_tables:                     
     - system.*
     - INFORMATION_SCHEMA.*
     - information_schema.*
   timeout: 5m                  # CLICKHOUSE_TIMEOUT
-  freeze_by_part: false        # CLICKHOUSE_FREEZE_BY_PART, allows freeze part by part instead of freeze the whole table
-  freeze_by_part_where: ""     # CLICKHOUSE_FREEZE_BY_PART_WHERE, allows parts filtering during freeze when freeze_by_part: true
-  secure: false                # CLICKHOUSE_SECURE, use SSL encryption for connect
-  skip_verify: false           # CLICKHOUSE_SKIP_VERIFY
+  freeze_by_part: false        # CLICKHOUSE_FREEZE_BY_PART, allow freezing by part instead of freezing the whole table
+  freeze_by_part_where: ""     # CLICKHOUSE_FREEZE_BY_PART_WHERE, allow parts filtering during freezing when freeze_by_part: true
+  secure: false                # CLICKHOUSE_SECURE, use TLS encryption for connection
+  skip_verify: false           # CLICKHOUSE_SKIP_VERIFY, skip certificate verification and allow potential certificate warnings
   sync_replicated_tables: true # CLICKHOUSE_SYNC_REPLICATED_TABLES
   tls_key: ""                  # CLICKHOUSE_TLS_KEY, filename with TLS key file 
   tls_cert: ""                 # CLICKHOUSE_TLS_CERT, filename with TLS certificate file 
   tls_ca: ""                   # CLICKHOUSE_TLS_CA, filename with TLS custom authority file 
-  log_sql_queries: true        # CLICKHOUSE_LOG_SQL_QUERIES, enable log clickhouse-backup SQL queries on `system.query_log` table inside clickhouse-server
+  log_sql_queries: true        # CLICKHOUSE_LOG_SQL_QUERIES, enable logging `clickhouse-backup` SQL queries on `system.query_log` table inside clickhouse-server
   debug: false                 # CLICKHOUSE_DEBUG
   config_dir:      "/etc/clickhouse-server"              # CLICKHOUSE_CONFIG_DIR
-  restart_command: "systemctl restart clickhouse-server" # CLICKHOUSE_RESTART_COMMAND, this command use when you try to restore with --rbac or --config options
-  ignore_not_exists_error_during_freeze: true # CLICKHOUSE_IGNORE_NOT_EXISTS_ERROR_DURING_FREEZE, allow avoiding backup failures when you often CREATE / DROP tables and databases during backup creation, clickhouse-backup will ignore `code: 60` and `code: 81` errors during execute `ALTER TABLE ... FREEZE`
-  check_replicas_before_attach: true # CLICKHOUSE_CHECK_REPLICAS_BEFORE_ATTACH, allow to avoid concurrent ATTACH PART execution when restore ReplicatedMergeTree tables
-  use_embedded_backup_restore: false # CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE, use BACKUP / RESTORE SQL statements instead of use regular SQL queries to allow compatible for modern ClickHouse server versions
+  restart_command: "systemctl restart clickhouse-server" # CLICKHOUSE_RESTART_COMMAND, use this command when restoring with --rbac or --config options
+  ignore_not_exists_error_during_freeze: true # CLICKHOUSE_IGNORE_NOT_EXISTS_ERROR_DURING_FREEZE, helps to avoid backup failures when running frequent CREATE / DROP tables and databases during backup, `clickhouse-backup` will ignore `code: 60` and `code: 81` errors during execution of `ALTER TABLE ... FREEZE`
+  check_replicas_before_attach: true # CLICKHOUSE_CHECK_REPLICAS_BEFORE_ATTACH, helps avoiding concurrent ATTACH PART execution when restoring ReplicatedMergeTree tables
+  use_embedded_backup_restore: false # CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE, use BACKUP / RESTORE SQL statements instead of regular SQL queries to use features of modern ClickHouse server versions
 azblob:
   endpoint_suffix: "core.windows.net" # AZBLOB_ENDPOINT_SUFFIX
   account_name: ""             # AZBLOB_ACCOUNT_NAME
@@ -129,7 +129,7 @@ azblob:
   compression_level: 1         # AZBLOB_COMPRESSION_LEVEL
   compression_format: tar      # AZBLOB_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   sse_key: ""                  # AZBLOB_SSE_KEY
-  buffer_size: 0               # AZBLOB_BUFFER_SIZE, if less or eq 0 then calculated as max_file_size / max_parts_count, between 2Mb and 4Mb
+  buffer_size: 0               # AZBLOB_BUFFER_SIZE, if less or eq 0 then it is calculated as max_file_size / max_parts_count, between 2Mb and 4Mb
   max_parts_count: 10000       # AZBLOB_MAX_PARTS_COUNT, number of parts for AZBLOB uploads, for properly calculate buffer size
   max_buffers: 3               # AZBLOB_MAX_BUFFERS
 s3:
@@ -148,24 +148,26 @@ s3:
   # look details in https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingKMSEncryption.html
   sse: ""                          # S3_SSE, empty (default), AES256, or aws:kms
   sse_kms_key_id: ""               # S3_SSE_KMS_KEY_ID, if S3_SSE is aws:kms then specifies the ID of the Amazon Web Services Key Management Service
-  sse_customer_algorithm: ""       # S3_SSE_CUSTOMER_ALGORITHM, Specifies the algorithm to use to when encrypting the object (for example, AES256)
-  sse_customer_key: ""             # S3_SSE_CUSTOMER_KEY, Specifies the customer-provided encryption key for Amazon S3 to use in encrypting data
-  sse_customer_key_md5: ""         # S3_SSE_CUSTOMER_KEY_MD5, Specifies the 128-bit MD5 digest of the encryption key according to RFC 1321.
-  sse_kms_encryption_context: ""   # S3_SSE_KMS_ENCRYPTION_CONTEXT, The value of this header is a base64-encoded UTF-8 string holding JSON with the encryption context key-value pairs.
-                                   # Specifies the Amazon Web Services KMS Encryption Context to use for object
-                                   # encryption. 
+  sse_customer_algorithm: ""       # S3_SSE_CUSTOMER_ALGORITHM, encryption algorithm, for example, AES256
+  sse_customer_key: ""             # S3_SSE_CUSTOMER_KEY, customer-provided encryption key
+  sse_customer_key_md5: ""         # S3_SSE_CUSTOMER_KEY_MD5, 128-bit MD5 digest of the encryption key according to RFC 1321
+  sse_kms_encryption_context: ""   # S3_SSE_KMS_ENCRYPTION_CONTEXT, base64-encoded UTF-8 string holding a JSON with the encryption context
+                                   # Specifies the Amazon Web Services KMS Encryption Context to use for object encryption.
+                                   # This is a collection of non-secret key-value pairs that represent additional authenticated data. 
+                                   # When you use an encryption context to encrypt data, you must specify the same (an exact case-sensitive match) 
+                                   # encryption context to decrypt the data. An encryption context is supported only on operations with symmetric encryption KMS keys
   disable_cert_verification: false # S3_DISABLE_CERT_VERIFICATION
   use_custom_storage_class: false  # S3_USE_CUSTOM_STORAGE_CLASS
   storage_class: STANDARD          # S3_STORAGE_CLASS, by default allow only from list https://github.com/aws/aws-sdk-go-v2/blob/main/service/s3/types/enums.go#L787-L799
   concurrency: 1                   # S3_CONCURRENCY
-  part_size: 0                     # S3_PART_SIZE, if less or eq 0 then calculated as max_file_size / max_parts_count, between 5MB and 5Gb
+  part_size: 0                     # S3_PART_SIZE, if less or eq 0 then it is calculated as max_file_size / max_parts_count, between 5MB and 5Gb
   max_parts_count: 10000           # S3_MAX_PARTS_COUNT, number of parts for S3 multipart uploads
-  allow_multipart_download: false  # S3_ALLOW_MULTIPART_DOWNLOAD, allow us fast download speed (same as upload), but will require additional disk space, download_concurrency * part size in worst case
+  allow_multipart_download: false  # S3_ALLOW_MULTIPART_DOWNLOAD, allow faster download and upload speeds, but will require additional disk space, download_concurrency * part size in worst case
 
   # S3_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
-  # for environment use following format "key1:value1,key2:value2" 
+  # The format for this env variable is "key1:value1,key2:value2". For YAML please continue using map syntax 
   object_labels: {}
-  # S3_CUSTOM_STORAGE_CLASS_MAP, allow setup  storage class depends on backup name regexp pattern, format nameRegexp > className  
+  # S3_CUSTOM_STORAGE_CLASS_MAP, allow setup storage class depending on the backup name regexp pattern, format nameRegexp > className  
   custom_storage_class_map: {}
   debug: false                     # S3_DEBUG
 gcs:
@@ -178,8 +180,8 @@ gcs:
   compression_format: tar      # GCS_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   storage_class: STANDARD      # GCS_STORAGE_CLASS
 
-  # GCS_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
-  # for environment use following format "key1:value1,key2:value2" 
+    # GCS_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
+    # The format for this env variable is "key1:value1,key2:value2". For YAML please continue using map syntax 
   object_labels: {}
   # GCS_CUSTOM_STORAGE_CLASS_MAP, allow setup storage class depends on backup name regexp pattern, format nameRegexp > className  
   custom_storage_class_map: {}  
@@ -227,30 +229,30 @@ api:
   secure: false                # API_SECURE, use TLS for listen API socket
   certificate_file: ""         # API_CERTIFICATE_FILE
   private_key_file: ""         # API_PRIVATE_KEY_FILE
-  integration_tables_host: ""  # API_INTEGRATION_TABLES_HOST, allow use DNS name to connect in `system.backup_list` and `system.backup_actions`
-  allow_parallel: false        # API_ALLOW_PARALLEL, could allocate much memory and spawn go-routines, don't enable it if you not sure
+  integration_tables_host: ""  # API_INTEGRATION_TABLES_HOST, allow using DNS name to connect in `system.backup_list` and `system.backup_actions`
+  allow_parallel: false        # API_ALLOW_PARALLEL, enable parallel operations, this allows for significant memory allocation and spawns go-routines, don't enable it if you are not sure
   create_integration_tables: false # API_CREATE_INTEGRATION_TABLES, create `system.backup_list` and `system.backup_actions` 
-  complete_resumable_after_restart: true # API_COMPLETE_RESUMABLE_AFTER_RESTART, after API server startup, if `/var/lib/clickhouse/backup/*/(upload|download).state` present, then operation will continue in background
+  complete_resumable_after_restart: true # API_COMPLETE_RESUMABLE_AFTER_RESTART, after API server startup, if `/var/lib/clickhouse/backup/*/(upload|download).state` present, then operation will continue in the background
 
 ```
 
-## Concurrency, CPU and Memory usage recommendation 
+## Concurrency, CPU and Memory usage recommendation
 
-`upload_concurrency` and `download concurrency` define how much parallel download / upload go-routines will start independent of remote storage type.
-In 1.3.0+ it means how much parallel data parts will upload, cause by default `upload_by_part` and `download_by_part` is true.
+`upload_concurrency` and `download concurrency` define how much parallel download / upload go-routines will start independently of the remote storage type.
+In 1.3.0+ it means how many parallel data parts will be uploaded, assuming `upload_by_part` and `download_by_part` are `true` (which is default value).
 
-`concurrency` in `s3` section mean how much concurrent `upload` streams will run during multipart upload in each upload go-routine
-High value for `S3_CONCURRENCY` and high value for `S3_PART_SIZE` will allocate high memory for buffers inside AWS golang SDK.
+`concurrency` in `s3` section means how much concurrent `upload` streams will run during multipart upload in each upload go-routine
+High value for `S3_CONCURRENCY` and high value for `S3_PART_SIZE` will allocate a lot of memory for buffers inside AWS golang SDK.
 
-`concurrency` in `sftp` section mean how much concurrent request will use for `upload` and `download` for each file. 
+`concurrency` in `sftp` section means how many concurrent request will be used for `upload` and `download` for each file.
 
-`compression_format`, better use `tar` for less CPU usage, cause for most of cases data on clickhouse-backup already compressed.
+`compression_format`, a good default is `tar` for using less CPU. In most cases the data in clickhouse is already compressed, so you may not get a lot of space savings when double compress.
 
 ## remote_storage: custom
 
-All custom commands could use go-template language for evaluate you can use `{{ .cfg.* }}` `{{ .backupName }}` `{{ .diffFromRemote }}`
-Custom `list_command` shall return JSON which compatible with `metadata.Backup` type with [JSONEachRow](https://clickhouse.com/docs/en/interfaces/formats/#jsoneachrow) format. 
-Look examples for adoption [restic](https://github.com/AlexAkulov/clickhouse-backup/tree/master/test/integration/restic/), [rsync](https://github.com/AlexAkulov/clickhouse-backup/tree/master/test/integration/rsync/) and [kopia](https://github.com/AlexAkulov/clickhouse-backup/tree/master/test/integration/kopia/). 
+All custom commands could use go-template language, for example, you can use `{{ .cfg.* }}` `{{ .backupName }}` `{{ .diffFromRemote }}`.
+Custom `list_command` shall return JSON which is compatible with `metadata.Backup` type with [JSONEachRow](https://clickhouse.com/docs/en/interfaces/formats/#jsoneachrow) format.
+For examples, see [restic](https://github.com/AlexAkulov/clickhouse-backup/tree/master/test/integration/restic/), [rsync](https://github.com/AlexAkulov/clickhouse-backup/tree/master/test/integration/rsync/) and [kopia](https://github.com/AlexAkulov/clickhouse-backup/tree/master/test/integration/kopia/). Feel free to add yours too. 
 
 ## ATTENTION!
 
@@ -260,6 +262,7 @@ That means that if you change the permissions/owner/attributes on a hard link in
 That might lead to data corruption.
 
 ## API
+
 Use the `clickhouse-backup server` command to run as a REST API server. In general, the API attempts to mirror the CLI commands.
 
 > **GET /**
@@ -273,69 +276,74 @@ Restart HTTP server, close all current connections, close listen socket, open li
 
 > **GET /backup/kill**
 
-Kill selected command from `GET /backup/actions` command list, kill process should be near immediately, but some go-routines (upload one data part) could continue run  
-* Optional query argument `command` should contain command string which will kill, if omit then will kill last "in progress" command  
+Kill selected command from `GET /backup/actions` command list, kill process should be near immediate, but some go-routines (upload one data part) could continue to run.
+
+- Optional query argument `command` may contain the command name to kill, or if it is omitted then kill the last "in progress" command.
 
 > **GET /backup/tables**
 
-Print list of tables: `curl -s localhost:7171/backup/tables | jq .`, exclude pattern matched table from `skip_tables` configuration parameters
-* Optional query argument `table` works the same as the `--table value` CLI argument.
+Print list of tables: `curl -s localhost:7171/backup/tables | jq .`, exclude pattern matched tables from `skip_tables` configuration parameters
+
+- Optional query argument `table` works the same as the `--table value` CLI argument.
 
 > **GET /backup/tables/all**
 
-Print list of tables: `curl -s localhost:7171/backup/tables/all | jq .`, ignore `skip_tables` configuration parameters
-* Optional query argument `table` works the same as the `--table value` CLI argument.
+Print list of tables: `curl -s localhost:7171/backup/tables/all | jq .`, ignore `skip_tables` configuration parameters.
+
+- Optional query argument `table` works the same as the `--table value` CLI argument.
 
 > **POST /backup/create**
 
 Create new backup: `curl -s localhost:7171/backup/create -X POST | jq .`
-* Optional query argument `table` works the same as the `--table value` CLI argument.
-* Optional query argument `partitions` works the same as the `--partitions value` CLI argument.
-* Optional query argument `name` works the same as specifying a backup name with the CLI.
-* Optional query argument `schema` works the same the `--schema` CLI argument (backup schema only).
-* Optional query argument `rbac` works the same the `--rbac` CLI argument (backup RBAC).
-* Optional query argument `configs` works the same the `--configs` CLI argument (backup configs).
-* Additional example: `curl -s 'localhost:7171/backup/create?table=default.billing&name=billing_test' -X POST`
 
-Note: this operation is async, so the API will return once the operation has been started.
+- Optional query argument `table` works the same as the `--table value` CLI argument.
+- Optional query argument `partitions` works the same as the `--partitions value` CLI argument.
+- Optional query argument `name` works the same as specifying a backup name with the CLI.
+- Optional query argument `schema` works the same as the `--schema` CLI argument (backup schema only).
+- Optional query argument `rbac` works the same as the `--rbac` CLI argument (backup RBAC).
+- Optional query argument `configs` works the same as the `--configs` CLI argument (backup configs).
+- Additional example: `curl -s 'localhost:7171/backup/create?table=default.billing&name=billing_test' -X POST`
+
+Note: this operation is async, so the API will return once the operation has started.
 
 > **POST /backup/watch**
 
 Run background watch process and create full+incremental backups sequence: `curl -s localhost:7171/backup/watch -X POST | jq .`
 You can't run watch twice with the same parameters even when `allow_parallel: true`
-* Optional query argument `watch_interval` works the same as the `--watch-interval value` CLI argument.
-* Optional query argument `full_interval` works the same as the `--full-interval value` CLI argument.
-* Optional query argument `watch_backup_name_template` works the same as the `--watch-backup-name-template value` CLI argument.
-* Optional query argument `table` works the same as the `--table value` CLI argument (backup only selected tables).
-* Optional query argument `partitions` works the same as the `--partitions value` CLI argument (backup only selected partitions).
-* Optional query argument `schema` works the same the `--schema` CLI argument (backup schema only).
-* Optional query argument `rbac` works the same the `--rbac` CLI argument (backup RBAC).
-* Optional query argument `configs` works the same the `--configs` CLI argument (backup configs).
-* Additional example: `curl -s 'localhost:7171/backup/watch?table=default.billing&watch_interval=1h&full_interval=24h' -X POST`
 
-Note: this operation is async and can stop only with `kill -s SIGHUP $(pgrep -f clickhouse-backup)` or call `/restart`, `/backup/kill`, so the API will return once the operation has been started.
+- Optional query argument `watch_interval` works the same as the `--watch-interval value` CLI argument.
+- Optional query argument `full_interval` works the same as the `--full-interval value` CLI argument.
+- Optional query argument `watch_backup_name_template` works the same as the `--watch-backup-name-template value` CLI argument.
+- Optional query argument `table` works the same as the `--table value` CLI argument (backup only selected tables).
+- Optional query argument `partitions` works the same as the `--partitions value` CLI argument (backup only selected partitions).
+- Optional query argument `schema` works the same as the `--schema` CLI argument (backup schema only).
+- Optional query argument `rbac` works the same as the `--rbac` CLI argument (backup RBAC).
+- Optional query argument `configs` works the same as the `--configs` CLI argument (backup configs).
+- Additional example: `curl -s 'localhost:7171/backup/watch?table=default.billing&watch_interval=1h&full_interval=24h' -X POST`
+
+Note: this operation is async and can stop only with `kill -s SIGHUP $(pgrep -f clickhouse-backup)` or call `/restart`, `/backup/kill`. The API will return immediately once the operation has started.
 
 > **POST /backup/clean**
 
-Clean `shadow` folder on all available path from `system.disks`
+Clean the `shadow` folders using all available paths from `system.disks`
 
 > **POST /backup/clean/remote_broken**
 
 Remove
 Note: this operation is sync, and could take a lot of time, increase http timeouts during call
 
-
 > **POST /backup/upload**
 
 Upload backup to remote storage: `curl -s localhost:7171/backup/upload/<BACKUP_NAME> -X POST | jq .`
-* Optional query argument `diff-from` works the same as the `--diff-from` CLI argument.
-* Optional query argument `diff-from-remote` works the same as the `--diff-from-remote` CLI argument.
-* Optional query argument `table` works the same as the `--table value` CLI argument.
-* Optional query argument `partitions` works the same as the `--partitions value` CLI argument.
-* Optional query argument `schema` works the same as the `--schema` CLI argument (upload schema only).
-* Optional query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate upload state and resume upload if already exists on remote storage).
 
-Note: this operation is async, so the API will return once the operation has been started.
+- Optional query argument `diff-from` works the same as the `--diff-from` CLI argument.
+- Optional query argument `diff-from-remote` works the same as the `--diff-from-remote` CLI argument.
+- Optional query argument `table` works the same as the `--table value` CLI argument.
+- Optional query argument `partitions` works the same as the `--partitions value` CLI argument.
+- Optional query argument `schema` works the same as the `--schema` CLI argument (upload schema only).
+- Optional query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate upload state and resume upload if data already exists on remote storage).
+
+Note: this operation is async, so the API will return once the operation has started.
 
 > **GET /backup/list/{where}**
 
@@ -343,32 +351,33 @@ Print list of backups: `curl -s localhost:7171/backup/list | jq .`
 Print list only local backups: `curl -s localhost:7171/backup/list/local | jq .`
 Print list only remote backups: `curl -s localhost:7171/backup/list/remote | jq .`
 
-Note: The `Size` field could not populate for local backups, which recently or in progress created.
-Note: The `Size` field could not populate for remote backups, which upload status in progress.
+Note: The `Size` field will not be set for the local backups that have just been created or are in progress.
+Note: The `Size` field will not be set for the remote backups with upload status in progress.
 
 > **POST /backup/download**
 
 Download backup from remote storage: `curl -s localhost:7171/backup/download/<BACKUP_NAME> -X POST | jq .`
-* Optional query argument `table` works the same as the `--table value` CLI argument.
-* Optional query argument `partitions` works the same as the `--partitions value` CLI argument.
-* Optional query argument `schema` works the same the `--schema` CLI argument (download schema only).
-* Optional query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate download state and resume download if already exists on local storage).
 
+- Optional query argument `table` works the same as the `--table value` CLI argument.
+- Optional query argument `partitions` works the same as the `--partitions value` CLI argument.
+- Optional query argument `schema` works the same as the `--schema` CLI argument (download schema only).
+- Optional query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate download state and resume download if it already exists on local storage).
 
-Note: this operation is async, so the API will return once the operation has been started.
+Note: this operation is async, so the API will return once the operation has started.
 
 > **POST /backup/restore**
 
 Create schema and restore data from backup: `curl -s localhost:7171/backup/restore/<BACKUP_NAME> -X POST | jq .`
-* Optional query argument `table` works the same as the `--table value` CLI argument.
-* Optional query argument `partitions` works the same as the `--partitions value` CLI argument.
-* Optional query argument `schema` works the same the `--schema` CLI argument (restore schema only).
-* Optional query argument `data` works the same the `--data` CLI argument (restore data only).
-* Optional query argument `rm` works the same the `--rm` CLI argument (drop tables before restore).
-* Optional query argument `ignore_dependencies` works the same the `--ignore-dependencies` CLI argument.
-* Optional query argument `rbac` works the same the `--rbac` CLI argument (restore RBAC).
-* Optional query argument `configs` works the same the `--configs` CLI argument (restore configs).
-* Optional query argument `restore_database_mapping` works the same the `--restore-database-mapping` CLI argument.
+
+- Optional query argument `table` works the same as the `--table value` CLI argument.
+- Optional query argument `partitions` works the same as the `--partitions value` CLI argument.
+- Optional query argument `schema` works the same as the `--schema` CLI argument (restore schema only).
+- Optional query argument `data` works the same as the `--data` CLI argument (restore data only).
+- Optional query argument `rm` works the same as the `--rm` CLI argument (drop tables before restore).
+- Optional query argument `ignore_dependencies` works the as same the `--ignore-dependencies` CLI argument.
+- Optional query argument `rbac` works the same as the `--rbac` CLI argument (restore RBAC).
+- Optional query argument `configs` works the same as the `--configs` CLI argument (restore configs).
+- Optional query argument `restore_database_mapping` works the same as the `--restore-database-mapping` CLI argument.
 
 > **POST /backup/delete**
 
@@ -378,7 +387,7 @@ Delete specific local backup: `curl -s localhost:7171/backup/delete/local/<BACKU
 
 > **GET /backup/status**
 
-Display list of current running async operation: `curl -s localhost:7171/backup/status | jq .`
+Display list of currently running async operation: `curl -s localhost:7171/backup/status | jq .`
 
 > **POST /backup/actions**
 
@@ -386,11 +395,12 @@ Execute multiple backup actions: `curl -X POST -d '{"command":"create test_backu
 
 > **GET /backup/actions**
 
-Display list of all operations from start of API server: `curl -s localhost:7171/backup/actions | jq .`
-* Optional query argument `filter` could filter actions on server side.
-* Optional query argument `last` could filter show only last `XX` actions.
+Display a list of all operations from start of API server: `curl -s localhost:7171/backup/actions | jq .`
 
-## Storages
+- Optional query argument `filter` to filter actions on server side.
+- Optional query argument `last` to show only the last `N` actions.
+
+## Storage types
 
 ### S3
 
@@ -421,7 +431,8 @@ In order to make backups to S3, the following permissions shall be set:
 
 ## Examples
 
-### Simple cron script for daily backup and uploading
+### Simple cron script for daily backups and remote upload
+
 ```bash
 #!/bin/bash
 BACKUP_NAME=my_backup_$(date -u +%Y-%m-%dT%H-%M-%S)
@@ -437,6 +448,7 @@ fi
 ```
 
 ### More use cases of clickhouse-backup
+
 - [How to convert MergeTree to ReplicatedMergeTree](Examples.md#how-to-convert-mergetree-to-replicatedmergetree)
 - [How to store backups on NFS or another server](Examples.md#how-to-store-backups-on-nfs-backup-drive-or-another-server-via-sftp)
 - [How to move data to another clickhouse server](Examples.md#how-to-move-data-to-another-clickhouse-server)
