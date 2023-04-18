@@ -6,10 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/resumable"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/server/metrics"
 	"io"
 	"net/http"
 	"net/http/pprof"
@@ -24,11 +20,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
-
 	"github.com/AlexAkulov/clickhouse-backup/pkg/backup"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/resumable"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/server/metrics"
 	"github.com/AlexAkulov/clickhouse-backup/pkg/status"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
 
 	apexLog "github.com/apex/log"
 	"github.com/google/shlex"
@@ -822,6 +821,13 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		fullCommand = fmt.Sprintf("%s %s", fullCommand, backupName)
 	}
 
+	callback, err := parseCallback(query)
+	if err != nil {
+		api.log.Error(err.Error())
+		api.writeError(w, http.StatusBadRequest, "create", err)
+		return
+	}
+
 	go func() {
 		commandId, ctx := status.Current.Start(fullCommand)
 		err, _ := api.metrics.ExecuteWithMetrics("create", 0, func() error {
@@ -831,14 +837,17 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			api.log.Errorf("API /backup/create error: %v", err)
 			status.Current.Stop(commandId, err)
+			api.errorCallback(r.Context(), err, callback)
 			return
 		}
 		if err := api.UpdateBackupMetrics(ctx, true); err != nil {
 			api.log.Errorf("UpdateBackupMetrics return error: %v", err)
 			status.Current.Stop(commandId, err)
+			api.errorCallback(r.Context(), err, callback)
 			return
 		}
 		status.Current.Stop(commandId, nil)
+		api.successCallback(r.Context(), callback)
 	}()
 	api.sendJSONEachRow(w, http.StatusCreated, struct {
 		Status     string `json:"status"`
@@ -1041,6 +1050,13 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 
 	fullCommand = fmt.Sprint(fullCommand, " ", name)
 
+	callback, err := parseCallback(query)
+	if err != nil {
+		api.log.Error(err.Error())
+		api.writeError(w, http.StatusBadRequest, "upload", err)
+		return
+	}
+
 	go func() {
 		commandId, ctx := status.Current.Start(fullCommand)
 		err, _ := api.metrics.ExecuteWithMetrics("upload", 0, func() error {
@@ -1050,14 +1066,17 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			api.log.Errorf("Upload error: %v", err)
 			status.Current.Stop(commandId, err)
+			api.errorCallback(r.Context(), err, callback)
 			return
 		}
 		if err := api.UpdateBackupMetrics(ctx, false); err != nil {
 			api.log.Errorf("UpdateBackupMetrics return error: %v", err)
 			status.Current.Stop(commandId, err)
+			api.errorCallback(r.Context(), err, callback)
 			return
 		}
 		status.Current.Stop(commandId, nil)
+		api.successCallback(r.Context(), callback)
 	}()
 	api.sendJSONEachRow(w, http.StatusOK, struct {
 		Status     string `json:"status"`
@@ -1155,6 +1174,13 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	name := utils.CleanBackupNameRE.ReplaceAllString(vars["name"], "")
 	fullCommand += fmt.Sprintf(" %s", name)
 
+	callback, err := parseCallback(query)
+	if err != nil {
+		api.log.Error(err.Error())
+		api.writeError(w, http.StatusBadRequest, "restore", err)
+		return
+	}
+
 	go func() {
 		commandId, _ := status.Current.Start(fullCommand)
 		err, _ := api.metrics.ExecuteWithMetrics("restore", 0, func() error {
@@ -1164,8 +1190,10 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		status.Current.Stop(commandId, err)
 		if err != nil {
 			api.log.Errorf("API /backup/restore error: %v", err)
+			api.errorCallback(r.Context(), err, callback)
 			return
 		}
+		api.successCallback(r.Context(), callback)
 	}()
 	api.sendJSONEachRow(w, http.StatusOK, struct {
 		Status     string `json:"status"`
@@ -1217,6 +1245,13 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	}
 	fullCommand += fmt.Sprintf(" %s", name)
 
+	callback, err := parseCallback(query)
+	if err != nil {
+		api.log.Error(err.Error())
+		api.writeError(w, http.StatusBadRequest, "download", err)
+		return
+	}
+
 	go func() {
 		commandId, ctx := status.Current.Start(fullCommand)
 		err, _ := api.metrics.ExecuteWithMetrics("download", 0, func() error {
@@ -1226,14 +1261,17 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		if err != nil {
 			api.log.Errorf("API /backup/download error: %v", err)
 			status.Current.Stop(commandId, err)
+			api.errorCallback(r.Context(), err, callback)
 			return
 		}
 		if err := api.UpdateBackupMetrics(ctx, true); err != nil {
 			api.log.Errorf("UpdateBackupMetrics return error: %v", err)
 			status.Current.Stop(commandId, err)
+			api.errorCallback(r.Context(), err, callback)
 			return
 		}
 		status.Current.Stop(commandId, nil)
+		api.successCallback(r.Context(), callback)
 	}()
 	api.sendJSONEachRow(w, http.StatusOK, struct {
 		Status     string `json:"status"`
