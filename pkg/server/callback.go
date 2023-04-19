@@ -40,23 +40,27 @@ func parseCallback(query url.Values) (callbackFn, error) {
 		}
 
 		var errors []error
-		for _, url := range decodedURLs {
+		for _, callBackURL := range decodedURLs {
 			reader := bytes.NewReader(payload)
-			req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, reader)
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, callBackURL, reader)
 			if err != nil {
-				errors = append(errors, fmt.Errorf("error creating request to %q: %w", url, err))
+				errors = append(errors, fmt.Errorf("error creating request to %q: %w", callBackURL, err))
 				continue
 			}
 			req.Header.Set("Content-Type", "application/json")
 			resp, err := client.Do(req)
 			if err != nil {
-				errors = append(errors, fmt.Errorf("error while posting callback to %q: %w", url,
-					err))
+				errors = append(
+					errors,
+					fmt.Errorf("error while posting callback to %q: %w", callBackURL, err),
+				)
 				continue
 			}
 			if resp.StatusCode != http.StatusOK {
-				errors = append(errors, fmt.Errorf("error while posting callback to %q: "+
-					"status code %d", url, resp.StatusCode))
+				errors = append(
+					errors,
+					fmt.Errorf("error while posting callback to %q: status code %d", callBackURL, resp.StatusCode),
+				)
 			}
 		}
 		return errors
