@@ -26,7 +26,7 @@ FROM builder-base AS builder-race
 ARG TARGETPLATFORM
 COPY ./ /src/
 RUN mkdir -p ./clickhouse-backup/
-RUN --mount=type=cache,id=clickhouse-backup-gobuild,target=/root/.cache/go GOOS=$( echo ${TARGETPLATFORM} | cut -d "/" -f 1) GOARCH=$( echo ${TARGETPLATFORM} | cut -d "/" -f 2) CGO_ENABLED=1 go build --ldflags '-extldflags "-static"' -gcflags "all=-N -l" -race -o ./clickhouse-backup/clickhouse-backup-race ./cmd/clickhouse-backup
+RUN --mount=type=cache,id=clickhouse-backup-gobuild,target=/root/.cache/go GOOS=$( echo ${TARGETPLATFORM} | cut -d "/" -f 1) GOARCH=$( echo ${TARGETPLATFORM} | cut -d "/" -f 2) CGO_ENABLED=1 go build -buildvcs=false --ldflags '-extldflags "-static"' -gcflags "all=-N -l" -race -o ./clickhouse-backup/clickhouse-backup-race ./cmd/clickhouse-backup
 RUN ln -nsfv ./clickhouse-backup/clickhouse-backup-race /bin/clickhouse-backup && ldd ./clickhouse-backup/clickhouse-backup-race
 COPY entrypoint.sh /entrypoint.sh
 
