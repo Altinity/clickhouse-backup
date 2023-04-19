@@ -404,7 +404,7 @@ azblob:
   sas: ""                      # AZBLOB_SAS
   use_managed_identity: false  # AZBLOB_USE_MANAGED_IDENTITY
   container: ""                # AZBLOB_CONTAINER
-  path: ""                     # AZBLOB_PATH
+  path: ""                     # AZBLOB_PATH, `system.macros` values could be applied as {macro_name}
   compression_level: 1         # AZBLOB_COMPRESSION_LEVEL
   compression_format: tar      # AZBLOB_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   sse_key: ""                  # AZBLOB_SSE_KEY
@@ -420,7 +420,7 @@ s3:
   acl: private                     # S3_ACL
   assume_role_arn: ""              # S3_ASSUME_ROLE_ARN
   force_path_style: false          # S3_FORCE_PATH_STYLE
-  path: ""                         # S3_PATH
+  path: ""                         # S3_PATH, `system.macros` values could be applied as {macro_name} 
   disable_ssl: false               # S3_DISABLE_SSL
   compression_level: 1             # S3_COMPRESSION_LEVEL
   compression_format: tar          # S3_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
@@ -454,13 +454,13 @@ gcs:
   credentials_json: ""         # GCS_CREDENTIALS_JSON
   credentials_json_encoded: "" # GCS_CREDENTIALS_JSON_ENCODED
   bucket: ""                   # GCS_BUCKET
-  path: ""                     # GCS_PATH
+  path: ""                     # GCS_PATH, `system.macros` values could be applied as {macro_name}
   compression_level: 1         # GCS_COMPRESSION_LEVEL
   compression_format: tar      # GCS_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   storage_class: STANDARD      # GCS_STORAGE_CLASS
 
-    # GCS_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
-    # The format for this env variable is "key1:value1,key2:value2". For YAML please continue using map syntax 
+  # GCS_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
+  # The format for this env variable is "key1:value1,key2:value2". For YAML please continue using map syntax 
   object_labels: {}
   # GCS_CUSTOM_STORAGE_CLASS_MAP, allow setup storage class depends on backup name regexp pattern, format nameRegexp > className  
   custom_storage_class_map: {}  
@@ -470,7 +470,7 @@ cos:
   timeout: 2m                  # COS_TIMEOUT
   secret_id: ""                # COS_SECRET_ID
   secret_key: ""               # COS_SECRET_KEY
-  path: ""                     # COS_PATH
+  path: ""                     # COS_PATH, `system.macros` values could be applied as {macro_name}
   compression_format: tar      # COS_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   compression_level: 1         # COS_COMPRESSION_LEVEL
 ftp:
@@ -479,7 +479,7 @@ ftp:
   username: ""                 # FTP_USERNAME
   password: ""                 # FTP_PASSWORD
   tls: false                   # FTP_TLS
-  path: ""                     # FTP_PATH
+  path: ""                     # FTP_PATH, `system.macros` values could be applied as {macro_name}
   compression_format: tar      # FTP_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   compression_level: 1         # FTP_COMPRESSION_LEVEL
   debug: false                 # FTP_DEBUG
@@ -488,7 +488,7 @@ sftp:
   username: ""                 # SFTP_USERNAME
   password: ""                 # SFTP_PASSWORD
   key: ""                      # SFTP_KEY
-  path: ""                     # SFTP_PATH
+  path: ""                     # SFTP_PATH, `system.macros` values could be applied as {macro_name}
   concurrency: 1               # SFTP_CONCURRENCY     
   compression_format: tar      # SFTP_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   compression_level: 1         # SFTP_COMPRESSION_LEVEL
