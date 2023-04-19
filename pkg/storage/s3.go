@@ -255,11 +255,11 @@ func (s *S3) isVersioningEnabled(ctx context.Context) bool {
 }
 
 func (s *S3) getObjectVersion(ctx context.Context, key string) (*string, error) {
-	params := &s3.GetObjectInput{
+	params := &s3.GetObjectAttributesInput{
 		Bucket: aws.String(s.Config.Bucket),
 		Key:    aws.String(path.Join(s.Config.Path, key)),
 	}
-	object, err := s.client.GetObject(ctx, params)
+	object, err := s.client.GetObjectAttributes(ctx, params)
 	if err != nil {
 		return nil, err
 	}
