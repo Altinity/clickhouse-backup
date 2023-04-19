@@ -103,7 +103,7 @@ $(NAME)/$(NAME)-race:
 
 # run `docker buildx create --use` first time
 build-race-docker:
-	bash -xce 'docker buildx build --tag $(NAME):build-race --target make-build-race --progress=plain --load . && \
+	bash -xce 'docker buildx build --build-arg CLICKHOUSE_VERSION=$${CLICKHOUSE_VERSION:-latest} --build-arg CLICKHOUSE_IMAGE=$${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server} --tag $(NAME):build-race --target make-build-race --progress=plain --load . && \
 		mkdir -pv ./$(NAME) && \
 		DOCKER_ID=$$(docker create $(NAME):build-race) && \
 		docker cp -q $${DOCKER_ID}:/src/$(NAME)/$(NAME)-race ./$(NAME)/ && \
@@ -111,7 +111,7 @@ build-race-docker:
 		cp -fl ./$(NAME)/$(NAME)-race ./$(NAME)/$(NAME)-race-docker'
 		
 build-docker:
-	bash -xce 'docker buildx build --tag $(NAME):build-docker --target make-build-docker --progress=plain --load . && \
+	bash -xce 'docker buildx build --build-arg CLICKHOUSE_VERSION=$${CLICKHOUSE_VERSION:-latest} --build-arg CLICKHOUSE_IMAGE=$${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server} --tag $(NAME):build-docker --target make-build-docker --progress=plain --load . && \
 		mkdir -pv ./build && \
 		DOCKER_ID=$$(docker create $(NAME):build-docker) && \
 		docker cp -q $${DOCKER_ID}:/src/build/ ./build/ && \
