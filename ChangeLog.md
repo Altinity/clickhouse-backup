@@ -1,3 +1,11 @@
+# v2.2.2
+IMPROVEMENTS
+- add `callback` parameter to upload, download, create, restore API endpoints, fix [636](https://github.com/AlexAkulov/clickhouse-backup/pull/636)
+
+BUG FIXES
+- add system.macros could be applied to `path` config section to ReadMe.md, fix [638](https://github.com/AlexAkulov/clickhouse-backup/issues/638)
+- fix connection leaks for S3 versioned buckets during execution upload and delete command, fix [637](https://github.com/AlexAkulov/clickhouse-backup/pull/637)
+
 # v2.2.1
 IMPROVEMENTS
 - add additional server-side encryption parameters to s3 config section, fix [619](https://github.com/AlexAkulov/clickhouse-backup/issues/619)
