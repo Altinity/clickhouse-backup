@@ -454,7 +454,7 @@ func main() {
 			Name:        "watch",
 			Usage:       "Run infinite loop which create full + incremental backup sequence to allow efficient backup sequences",
 			UsageText:   "clickhouse-backup watch [--watch-interval=1h] [--full-interval=24h] [--watch-backup-name-template=shard{shard}-{type}-{time:20060102150405}] [-t, --tables=<db>.<table>] [--partitions=<partitions_names>] [--schema] [--rbac] [--configs]",
-			Description: "Create and upload",
+			Description: "Execute create_remote + delete local, create full backup every `--full-interval`, create and upload incremental backup every `--watch-interval` use previous backup as base with `--diff-from-remote` option, use `backups_to_keep_remote` config option for properly deletion remote backups, will delete old backups which not have references from other backups",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				return b.Watch(c.String("watch-interval"), c.String("full-interval"), c.String("watch-backup-name-template"), c.String("tables"), c.StringSlice("partitions"), c.Bool("schema"), c.Bool("rbac"), c.Bool("configs"), version, c.Int("command-id"), nil, c)
