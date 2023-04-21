@@ -1,3 +1,7 @@
+# v2.1.3
+BUG FIXES
+- fix wrong parameters parsing from *.state file for resumable upload \ download after restart, fix [641](https://github.com/AlexAkulov/clickhouse-backup/issues/641)
+
 # v2.2.2
 IMPROVEMENTS
 - add `callback` parameter to upload, download, create, restore API endpoints, fix [636](https://github.com/AlexAkulov/clickhouse-backup/pull/636)

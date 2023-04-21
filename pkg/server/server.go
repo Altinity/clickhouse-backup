@@ -1554,30 +1554,30 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 					args := make([]string, len(params)+2)
 					fullCommand := command
 					i := 0
-					if diffFrom, ok := params["diffFrom"]; ok {
+					if diffFrom, ok := params["diffFrom"]; ok && diffFrom.(string) != "" {
 						args[i] = fmt.Sprintf("--diff-from=\"%s\"", diffFrom)
 						fullCommand += " " + args[i]
 						i++
 					}
-					if diffFrom, ok := params["diffFromRemote"]; ok {
-						args[i] = fmt.Sprintf("--diff-from-remote=\"%s\"", diffFrom)
+					if diffFromRemote, ok := params["diffFromRemote"]; ok && diffFromRemote.(string) != "" {
+						args[i] = fmt.Sprintf("--diff-from-remote=\"%s\"", diffFromRemote)
 						fullCommand += " " + args[i]
 						i++
 					}
 
-					if tablePattern, ok := params["tablePattern"]; ok {
+					if tablePattern, ok := params["tablePattern"]; ok && tablePattern.(string) != "" {
 						args[i] = fmt.Sprintf("--tables=\"%s\"", tablePattern)
 						fullCommand += " " + args[i]
 						i++
 					}
 
-					if _, ok := params["schemaOnly"]; ok {
+					if schemaOnly, ok := params["schemaOnly"]; ok && schemaOnly.(bool) {
 						args[i] = "--schema"
 						fullCommand += " " + args[i]
 						i++
 					}
 
-					if partitions, ok := params["partitions"]; ok {
+					if partitions, ok := params["partitions"]; ok && len(partitions.([]interface{})) > 0 {
 						partitionsStr := make([]string, len(partitions.([]interface{})))
 						for j, v := range partitions.([]interface{}) {
 							partitionsStr[j] = v.(string)
