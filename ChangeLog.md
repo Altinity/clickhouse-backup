@@ -1,4 +1,4 @@
-# v2.1.3
+# v2.2.3
 BUG FIXES
 - fix wrong parameters parsing from *.state file for resumable upload \ download after restart, fix [641](https://github.com/AlexAkulov/clickhouse-backup/issues/641)
 
