@@ -1,5 +1,7 @@
 # v2.2.5
+BUG FIXES
 - fix error after restart API server for boolean parameters, fix [646](https://github.com/AlexAkulov/clickhouse-backup/issues/646)
+- fix corner cases when `restore_schema_on_cluster: cluster`, fix [642](https://github.com/AlexAkulov/clickhouse-backup/issues/642), error happens on 2.2.0-2.2.4
 
 # v2.2.4
 BUG FIXES
