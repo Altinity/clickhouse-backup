@@ -1,3 +1,7 @@
+# v2.2.4
+BUG FIXES
+- fix wrong deletion on S3 for versioned buckets, use s3.HeadObject instead of s3.GetObjectAttributes, fix [643](https://github.com/AlexAkulov/clickhouse-backup/pull/643)
+
 # v2.2.3
 BUG FIXES
 - fix wrong parameters parsing from *.state file for resumable upload \ download after restart, fix [641](https://github.com/AlexAkulov/clickhouse-backup/issues/641)
