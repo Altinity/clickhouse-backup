@@ -1552,28 +1552,25 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 				case "download":
 				case "upload":
 					args := make([]string, len(params)+2)
-					fullCommand := command
 					i := 0
+					args[i] = command
+					i++
 					if diffFrom, ok := params["diffFrom"]; ok && diffFrom.(string) != "" {
 						args[i] = fmt.Sprintf("--diff-from=\"%s\"", diffFrom)
-						fullCommand += " " + args[i]
 						i++
 					}
 					if diffFromRemote, ok := params["diffFromRemote"]; ok && diffFromRemote.(string) != "" {
 						args[i] = fmt.Sprintf("--diff-from-remote=\"%s\"", diffFromRemote)
-						fullCommand += " " + args[i]
 						i++
 					}
 
 					if tablePattern, ok := params["tablePattern"]; ok && tablePattern.(string) != "" {
 						args[i] = fmt.Sprintf("--tables=\"%s\"", tablePattern)
-						fullCommand += " " + args[i]
 						i++
 					}
 
 					if schemaOnly, ok := params["schemaOnly"]; ok && schemaOnly.(bool) {
-						args[i] = "--schema"
-						fullCommand += " " + args[i]
+						args[i] = "--schema=1"
 						i++
 					}
 
@@ -1582,13 +1579,14 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 						for j, v := range partitions.([]interface{}) {
 							partitionsStr[j] = v.(string)
 						}
-						args[i] = fmt.Sprintf(" --partitions=\"%s\"", strings.Join(partitionsStr, ","))
-						fullCommand += " " + args[i]
+						args[i] = fmt.Sprintf("--partitions=\"%s\"", strings.Join(partitionsStr, ","))
 						i++
 					}
-					args[i] = "--resumable"
-					args[i+1] = backupName
-					fullCommand += " --resumable " + backupName
+					args[i] = "--resumable=1"
+					i++
+					args[i] = backupName
+					args = args[:i+1]
+					fullCommand := strings.Join(args, " ")
 					api.log.WithField("operation", "ResumeOperationsAfterRestart").Info(fullCommand)
 					commandId, _ := status.Current.Start(fullCommand)
 					err, _ = api.metrics.ExecuteWithMetrics(command, 0, func() error {

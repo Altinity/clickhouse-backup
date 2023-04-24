@@ -1,3 +1,6 @@
+# v2.2.5
+- fix error after restart API server for boolean parameters, fix [646](https://github.com/AlexAkulov/clickhouse-backup/issues/646)
+
 # v2.2.4
 BUG FIXES
 - fix wrong deletion on S3 for versioned buckets, use s3.HeadObject instead of s3.GetObjectAttributes, fix [643](https://github.com/AlexAkulov/clickhouse-backup/pull/643)
