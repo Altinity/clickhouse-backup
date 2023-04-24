@@ -2,6 +2,8 @@
 BUG FIXES
 - fix error after restart API server for boolean parameters, fix [646](https://github.com/AlexAkulov/clickhouse-backup/issues/646)
 - fix corner cases when `restore_schema_on_cluster: cluster`, fix [642](https://github.com/AlexAkulov/clickhouse-backup/issues/642), error happens on 2.2.0-2.2.4
+- fix `Makefile` targets `build-docker` and `build-race-docker` for old clickhouse-server version
+- fix typo `retries_pause` config definition in general section
 
 # v2.2.4
 BUG FIXES
