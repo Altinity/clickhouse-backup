@@ -5,12 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/pkg/config"
-	"github.com/Altinity/clickhouse-backup/pkg/keeper"
-	"github.com/Altinity/clickhouse-backup/pkg/partition"
-	"github.com/Altinity/clickhouse-backup/pkg/status"
-	"github.com/Altinity/clickhouse-backup/pkg/storage"
-	"github.com/Altinity/clickhouse-backup/pkg/storage/object_disk"
 	"os"
 	"path"
 	"path/filepath"
@@ -19,9 +13,16 @@ import (
 
 	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/pkg/common"
+	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"github.com/Altinity/clickhouse-backup/pkg/filesystemhelper"
+	"github.com/Altinity/clickhouse-backup/pkg/keeper"
 	"github.com/Altinity/clickhouse-backup/pkg/metadata"
+	"github.com/Altinity/clickhouse-backup/pkg/partition"
+	"github.com/Altinity/clickhouse-backup/pkg/status"
+	"github.com/Altinity/clickhouse-backup/pkg/storage"
+	"github.com/Altinity/clickhouse-backup/pkg/storage/object_disk"
 	"github.com/Altinity/clickhouse-backup/pkg/utils"
+
 	apexLog "github.com/apex/log"
 	"github.com/google/uuid"
 	recursiveCopy "github.com/otiai10/copy"
@@ -82,7 +83,7 @@ func (b *Backuper) CreateBackup(backupName, tablePattern string, partitions []st
 	if err != nil {
 		return fmt.Errorf("can't get database engines from clickhouse: %v", err)
 	}
-	tables, err := b.ch.GetTables(ctx, tablePattern)
+	tables, err := b.GetTables(ctx, tablePattern)
 	if err != nil {
 		return fmt.Errorf("can't get tables from clickhouse: %v", err)
 	}
@@ -166,7 +167,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 			}
 			var realSize map[string]int64
 			var disksToPartsMap map[string][]metadata.Part
-			if doBackupData {
+			if doBackupData && table.BackupType == clickhouse.ShardBackupFull {
 				log.Debug("create data")
 				shadowBackupUUID := strings.ReplaceAll(uuid.New().String(), "-", "")
 				disksToPartsMap, realSize, err = b.AddTableToBackup(ctx, backupName, shadowBackupUUID, disks, &table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}])
@@ -209,7 +210,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 					Size:         realSize,
 					Parts:        disksToPartsMap,
 					Mutations:    inProgressMutations,
-					MetadataOnly: schemaOnly,
+					MetadataOnly: schemaOnly || table.BackupType == clickhouse.ShardBackupSchema,
 				}, disks)
 				if err != nil {
 					if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks); removeBackupErr != nil {
@@ -252,6 +253,10 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 }
 
 func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePattern string, partitionsNameList map[metadata.TableTitle][]string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, schemaOnly, createRBAC, createConfigs bool, tables []clickhouse.Table, allDatabases []clickhouse.Database, allFunctions []clickhouse.Function, disks []clickhouse.Disk, diskMap, diskTypes map[string]string, log *apexLog.Entry, startBackup time.Time, backupVersion string) error {
+	// TODO: Implement sharded backup operations for embedded backups
+	if doesShard(b.cfg.General.ShardedOperationMode) {
+		return fmt.Errorf("cannot perform embedded backup: %w", errShardOperationUnsupported)
+	}
 	if _, isBackupDiskExists := diskMap[b.cfg.ClickHouse.EmbeddedBackupDisk]; !isBackupDiskExists {
 		return fmt.Errorf("backup disk `%s` not exists in system.disks", b.cfg.ClickHouse.EmbeddedBackupDisk)
 	}

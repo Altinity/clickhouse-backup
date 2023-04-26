@@ -55,6 +55,7 @@ type GeneralConfig struct {
 	WatchInterval           string            `yaml:"watch_interval" envconfig:"WATCH_INTERVAL"`
 	FullInterval            string            `yaml:"full_interval" envconfig:"FULL_INTERVAL"`
 	WatchBackupNameTemplate string            `yaml:"watch_backup_name_template" envconfig:"WATCH_BACKUP_NAME_TEMPLATE"`
+	ShardedOperationMode    string            `yaml:"sharded_operation_mode" envconfig:"SHARDED_OPERATION_MODE"`
 	RetriesDuration         time.Duration
 	WatchDuration           time.Duration
 	FullDuration            time.Duration
