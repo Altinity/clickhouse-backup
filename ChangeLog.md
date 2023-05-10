@@ -1,3 +1,7 @@
+# v2.3.0
+BUG FIXES
+- apply SETTINGS check_table_dependencies=0 to DROP DATABASE statement, when pass `--ignore-dependencies` together with `--rm` in `restore` command, fix [651](https://github.com/AlexAkulov/clickhouse-backup/issues/651) 
+
 # v2.2.5
 BUG FIXES
 - fix error after restart API server for boolean parameters, fix [646](https://github.com/AlexAkulov/clickhouse-backup/issues/646)
