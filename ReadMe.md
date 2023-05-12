@@ -7,6 +7,9 @@
 [![Docker Image](https://img.shields.io/docker/pulls/alexakulov/clickhouse-backup.svg)](https://hub.docker.com/r/alexakulov/clickhouse-backup)
 
 A tool for easy ClickHouse backup and restore with support for many cloud and non-cloud storage types.
+To make data backup `clickhouse-backup` requires access to the same files as `clickhouse-server` in `/var/lib/clickhouse` folders. 
+So prefer running `clickhouse-backup` on the same host or same Kubernetes Pod or the neighbor container on the same host where `clickhouse-server` ran.
+You can backup only schema from remote hosts.
 
 ## Features
 
@@ -16,7 +19,7 @@ A tool for easy ClickHouse backup and restore with support for many cloud and no
 - Works with AWS, GCS, Azure, Tencent COS, FTP, SFTP
 - **Support of Atomic Database Engine**
 - **Support of multi disks installations**
-- **Support for custom remote storage types via `rclone`, `kopia`, `restic`, etc**
+- **Support for custom remote storage types via `rclone`, `kopia`, `restic`, `rsync` etc**
 - Support of incremental backups on remote storage
 
 ## Limitations
@@ -370,7 +373,7 @@ general:
 clickhouse:
   username: default                # CLICKHOUSE_USERNAME
   password: ""                     # CLICKHOUSE_PASSWORD
-  host: localhost                  # CLICKHOUSE_HOST
+  host: localhost                  # CLICKHOUSE_HOST, to backup data clickhouse-backup requires access to the same file system as clickhouse-server, to host could be address of other docker container on the same machine, or IP address binded on some network interface on the same host. 
   port: 9000                       # CLICKHOUSE_PORT, don't use 8123, clickhouse-backup doesn't support HTTP protocol
   # CLICKHOUSE_DISK_MAPPING, use this mapping when your `system.disks` are different between the source and destination clusters during backup and restore process
   # The format for this env variable is "disk_name1:disk_path1,disk_name2:disk_path2". For YAML please continue using map syntax 
