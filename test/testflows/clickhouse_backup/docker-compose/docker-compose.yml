@@ -129,7 +129,7 @@ services:
       - "${CLICKHOUSE_TESTS_DIR}/../../../clickhouse-backup/clickhouse-backup-race:/bin/clickhouse-backup"
       - "${CLICKHOUSE_TESTS_DIR}/configs/backup/:/etc/clickhouse-backup/"
       - "${CLICKHOUSE_TESTS_DIR}/_coverage_/:/tmp/_coverage_/"
- volumes_from:
+    volumes_from:
       - clickhouse1
     healthcheck:
       test: curl http://backup:7171/backup/status

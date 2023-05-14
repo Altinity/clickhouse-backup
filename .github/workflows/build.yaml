@@ -140,7 +140,8 @@ jobs:
           QA_AWS_REGION: ${{ secrets.QA_AWS_REGION }}
           QA_AWS_BUCKET: ${{ secrets.QA_AWS_BUCKET }}
           QA_GCS_CRED_JSON: ${{ secrets.QA_GCS_CRED_JSON }}
-          GOCOVERDIR:
+          # don't change it to avoid not working CI/CD
+          RUN_TESTS: "*"
         run: |
           set -x
           export CLICKHOUSE_TESTS_DIR=$(pwd)/test/testflows/clickhouse_backup
@@ -151,7 +152,7 @@ jobs:
           chmod +x $(pwd)/clickhouse-backup/clickhouse-backup*
           source ~/venv/qa/bin/activate
           set +e
-          ~/venv/qa/bin/python3 ./test/testflows/clickhouse_backup/regression.py --debug --log ./test/testflows/raw.log 
+          ~/venv/qa/bin/python3 ./test/testflows/clickhouse_backup/regression.py --debug --only="${RUN_TESTS:-*}" --log ./test/testflows/raw.log 
           if [[ "0" != "$?" ]]; then
             docker-compose -f ${CLICKHOUSE_TESTS_DIR}/docker-compose/docker-compose.yml logs clickhouse_backup
             exit 1
@@ -164,11 +165,11 @@ jobs:
           sudo chmod -Rv +rx test/testflows/clickhouse_backup/_instances
       - name: Format testflows coverage
         run: |
-          go tool covdata textfmt -i /tmp/_coverage_/ -o coverage.out
+          go tool covdata textfmt -i ./test/testflows/clickhouse_backup/_coverage_/ -o ./test/testflows/clickhouse_backup/_coverage_/coverage.out
       - name: Report testflows coverage
         uses: coverallsapp/github-action@v2
         with:
-          file: coverage.out
+          file: ./test/testflows/clickhouse_backup/_coverage_/coverage.out
           parallel: true
           format: golang
           flag-name: testflows-$
@@ -243,7 +244,6 @@ jobs:
           GCS_TESTS: ${{ needs.build.outputs.GCS_TESTS }}
           RUN_ADVANCED_TESTS: 1
           AZURE_TESTS: 1
-          GOCOVERDIR: /tmp/_coverage_/
         run: |
           set -x
           echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"
@@ -271,11 +271,11 @@ jobs:
           go test -timeout 30m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
       - name: Format integration coverage
         run: |
-          go tool covdata textfmt -i /tmp/_coverage_/ -o coverage.out
+          go tool covdata textfmt -i ./test/integration/_coverage_/ -o ./test/integration/_coverage_/coverage.out
       - name: Report integration coverage
         uses: coverallsapp/github-action@v2
         with:
-          file: coverage.out
+          file: ./test/integration/_coverage_/coverage.out
           parallel: true
           format: golang
           flag-name: integration-$
