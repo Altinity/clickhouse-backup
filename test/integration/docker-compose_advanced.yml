@@ -130,6 +130,7 @@ services:
       FTP_DEBUG: "${FTP_DEBUG:-false}"
       SFTP_DEBUG: "${SFTP_DEBUG:-false}"
       CLICKHOUSE_DEBUG: "${CLICKHOUSE_DEBUG:-false}"
+      GOCOVERDIR: "/tmp/_coverage_/"
 #      STORAGE_EMULATOR_HOST: "http://gsc:8080"
 #      GOOGLE_API_USE_CLIENT_CERTIFICATE: "false"
     volumes:
@@ -143,11 +144,12 @@ services:
       - ./ssl.xml:/etc/clickhouse-server/config.d/ssl.xml
       - ./cluster.xml:/etc/clickhouse-server/config.d/cluster.xml
       - ./dynamic_settings.sh:/docker-entrypoint-initdb.d/dynamic_settings.sh
+      - ./_coverage_/:/tmp/_coverage_/
 # uncomment only when you need clickhouse logs
 #      - ./clickhouse-server.log:/var/log/clickhouse-server/clickhouse-server.log
 #      - ./clickhouse-server.err.log:/var/log/clickhouse-server/clickhouse-server.err.log
 # uncomment only for local debug
-      - ./install_delve.sh:/tmp/install_delve.sh
+#      - ./install_delve.sh:/tmp/install_delve.sh
     ports:
       - "8123:8123"
       - "9000:9000"

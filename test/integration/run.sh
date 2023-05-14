@@ -3,7 +3,7 @@ set -x
 set -e
 
 CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
-
+mkdir -p "${CUR_DIR}/_coverage_/"
 export CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION:-22.8}
 if [[ "${CLICKHOUSE_VERSION}" =~ ^2[1-9]+ || "${CLICKHOUSE_VERSION}" == "head" ]]; then
   export CLICKHOUSE_IMAGE=${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server}

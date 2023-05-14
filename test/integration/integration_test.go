@@ -1419,7 +1419,7 @@ func TestRestoreMutationInProgress(t *testing.T) {
 	t.Logf("ALTER TABLE default.test_restore_mutation_in_progress MODIFY COLUMN attr String RETURN EXPECTED ERROR=%#v", err)
 
 	attrs := []uint64{}
-	r.NoError(ch.chbackend.Select(&attrs, "SELECT attr FROM default.test_restore_mutation_in_progress"))
+	r.NoError(ch.chbackend.Select(&attrs, "SELECT attr FROM default.test_restore_mutation_in_progress ORDER BY id"))
 	r.Equal([]uint64{0, 1}, attrs)
 
 	_, err = ch.chbackend.QueryContext(context.Background(), "ALTER TABLE default.test_restore_mutation_in_progress RENAME COLUMN attr TO attr_1")

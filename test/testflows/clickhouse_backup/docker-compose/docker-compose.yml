@@ -116,6 +116,7 @@ services:
       - CLICKHOUSE_HOST=clickhouse1
       - CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config.yml
       - TZ=Europe/Moscow
+      - GOCOVERDIR=/tmp/_coverage_/
     entrypoint: /bin/bash
     command:
       - -c
@@ -127,7 +128,8 @@ services:
     volumes:
       - "${CLICKHOUSE_TESTS_DIR}/../../../clickhouse-backup/clickhouse-backup-race:/bin/clickhouse-backup"
       - "${CLICKHOUSE_TESTS_DIR}/configs/backup/:/etc/clickhouse-backup/"
-    volumes_from:
+      - "${CLICKHOUSE_TESTS_DIR}/_coverage_/:/tmp/_coverage_/"
+ volumes_from:
       - clickhouse1
     healthcheck:
       test: curl http://backup:7171/backup/status

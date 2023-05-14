@@ -99,7 +99,7 @@ $(PKG_FILES): build/linux/amd64/pkg build/linux/arm64/pkg
 build-race: $(NAME)/$(NAME)-race
 
 $(NAME)/$(NAME)-race:
-	CGO_ENABLED=1 $(GO_BUILD) -gcflags "all=-N -l" -race -o $@ ./cmd/$(NAME)
+	CGO_ENABLED=1 $(GO_BUILD) -cover -gcflags "all=-N -l" -race -o $@ ./cmd/$(NAME)
 
 # run `docker buildx create --use` first time
 build-race-docker:
