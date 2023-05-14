@@ -205,7 +205,21 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 					backupDataSize += uint64(size)
 				}
 			}
+			// https://github.com/AlexAkulov/clickhouse-backup/issues/529
+			log.Debug("get in progress mutations list")
+			inProgressMutations := make([]metadata.MutationMetadata, 0)
+			if b.cfg.ClickHouse.BackupMutations {
+				inProgressMutations, err = b.ch.GetInProgressMutations(ctx, table.Database, table.Name)
+				if err != nil {
+					log.Error(err.Error())
+					if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks); removeBackupErr != nil {
+						log.Error(removeBackupErr.Error())
+					}
+					return err
+				}
+			}
 			log.Debug("create metadata")
+
 			metadataSize, err := b.createTableMetadata(path.Join(backupPath, "metadata"), metadata.TableMetadata{
 				Table:        table.Name,
 				Database:     table.Database,
@@ -213,6 +227,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 				TotalBytes:   table.TotalBytes,
 				Size:         realSize,
 				Parts:        disksToPartsMap,
+				Mutations:    inProgressMutations,
 				MetadataOnly: schemaOnly,
 			}, disks)
 			if err != nil {

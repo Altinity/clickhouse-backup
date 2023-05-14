@@ -635,6 +635,12 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ta
 		if err := b.ch.AttachPartitions(tablesForRestore[i], disks); err != nil {
 			return fmt.Errorf("can't attach partitions for table '%s.%s': %v", tablesForRestore[i].Database, tablesForRestore[i].Table, err)
 		}
+		// https://github.com/AlexAkulov/clickhouse-backup/issues/529
+		for _, mutation := range table.Mutations {
+			if err := b.ch.ApplyMutation(ctx, tablesForRestore[i], mutation); err != nil {
+				log.Warnf("can't apply mutation %s for table `%s`.`%s`	: %v", mutation.Command, tablesForRestore[i].Database, tablesForRestore[i].Table, err)
+			}
+		}
 		log.Info("done")
 	}
 	return nil

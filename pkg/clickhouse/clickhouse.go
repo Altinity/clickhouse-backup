@@ -961,6 +961,15 @@ func (ch *ClickHouse) CalculateMaxFileSize(ctx context.Context, cfg *config.Conf
 	return 0, nil
 }
 
+func (ch *ClickHouse) GetInProgressMutations(ctx context.Context, database string, table string) ([]metadata.MutationMetadata, error) {
+	inProgressMutations := make([]metadata.MutationMetadata, 0)
+	getInProgressMutationsQuery := "SELECT mutation_id, command FROM system.mutations WHERE is_done=0 AND database=? AND table=?"
+	if err := ch.SelectContext(ctx, &inProgressMutations, getInProgressMutationsQuery, database, table); err != nil {
+		return nil, fmt.Errorf("can't get in progress mutations: %v", err)
+	}
+	return inProgressMutations, nil
+}
+
 func (ch *ClickHouse) ApplyMacros(ctx context.Context, s string) (string, error) {
 	macrosExists := make([]int, 0)
 	err := ch.SelectContext(ctx, &macrosExists, "SELECT count() AS is_macros_exists FROM system.tables WHERE database='system' AND name='macros'")
@@ -980,4 +989,12 @@ func (ch *ClickHouse) ApplyMacros(ctx context.Context, s string) (string, error)
 	}
 	s = strings.NewReplacer(replaces...).Replace(s)
 	return s, nil
+}
+
+func (ch *ClickHouse) ApplyMutation(ctx context.Context, tableMetadata metadata.TableMetadata, mutation metadata.MutationMetadata) error {
+	applyMutatoinSQL := fmt.Sprintf("ALTER TABLE `%s`.`%s` %s", tableMetadata.Database, tableMetadata.Table, mutation.Command)
+	if _, err := ch.QueryContext(ctx, applyMutatoinSQL); err != nil {
+		return err
+	}
+	return nil
 }

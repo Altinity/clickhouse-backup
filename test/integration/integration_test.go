@@ -1401,6 +1401,52 @@ func TestGetPartitionId(t *testing.T) {
 	}
 }
 
+func TestRestoreMutationInProgress(t *testing.T) {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.3") == -1 {
+		t.Skipf("Test skipped, throwIf not available for %s version", os.Getenv("CLICKHOUSE_VERSION"))
+	}
+	r := require.New(t)
+	ch := &TestClickHouse{}
+	ch.connectWithWait(r, 0*time.Second)
+	defer ch.chbackend.Close()
+	ch.queryWithNoError(r, "CREATE TABLE default.test_restore_mutation_in_progress (id UInt64, attr UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/{shard}/{database}/{table}','{replica}') PARTITION BY id ORDER BY id")
+	ch.queryWithNoError(r, "INSERT INTO default.test_restore_mutation_in_progress SELECT number, number FROM numbers(2)")
+
+	ch.queryWithNoError(r, "ALTER TABLE default.test_restore_mutation_in_progress UPDATE attr = throwIf(attr>0) WHERE 1")
+	_, err := ch.chbackend.QueryContext(context.Background(), "ALTER TABLE default.test_restore_mutation_in_progress MODIFY COLUMN attr String")
+	r.NotEqual(nil, err)
+	r.Contains(err.Error(), "code: 341")
+	t.Logf("ALTER TABLE default.test_restore_mutation_in_progress MODIFY COLUMN attr String RETURN EXPECTED ERROR=%#v", err)
+
+	attrs := []uint64{}
+	r.NoError(ch.chbackend.Select(&attrs, "SELECT attr FROM default.test_restore_mutation_in_progress"))
+	r.Equal([]uint64{0, 1}, attrs)
+
+	_, err = ch.chbackend.QueryContext(context.Background(), "ALTER TABLE default.test_restore_mutation_in_progress RENAME COLUMN attr TO attr_1")
+	r.NotEqual(nil, err)
+	r.Contains(err.Error(), "code: 517")
+	t.Logf("ALTER TABLE default.test_restore_mutation_in_progress RENAME COLUMN attr TO attr_1 RETURN EXPECTED ERROR=%#v", err)
+
+	r.NoError(dockerExec("clickhouse", "clickhouse-client", "-q", "SELECT * FROM system.mutations WHERE is_done=0 FORMAT Vertical"))
+
+	attrs = []uint64{}
+	r.NoError(ch.chbackend.Select(&attrs, "SELECT attr FROM default.test_restore_mutation_in_progress ORDER BY id"))
+	r.Equal([]uint64{0, 1}, attrs)
+
+	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "--tables=default.test_restore_mutation_in_progress", "test_restore_mutation_in_progress"))
+	ch.queryWithNoError(r, "DROP TABLE default.test_restore_mutation_in_progress SYNC")
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--rm", "--tables=default.test_restore_mutation_in_progress", "test_restore_mutation_in_progress"))
+
+	attrs = []uint64{}
+	r.NoError(ch.chbackend.Select(&attrs, "SELECT attr_1 FROM default.test_restore_mutation_in_progress ORDER BY id"))
+	r.Equal([]uint64{0, 1}, attrs)
+
+	r.NoError(dockerExec("clickhouse", "clickhouse-client", "-q", "SELECT * FROM system.mutations WHERE is_done=0 FORMAT Vertical"))
+	ch.queryWithNoError(r, "DROP TABLE default.test_restore_mutation_in_progress SYNC")
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_restore_mutation_in_progress"))
+}
+
 const apiBackupNumber = 5
 
 func TestServerAPI(t *testing.T) {

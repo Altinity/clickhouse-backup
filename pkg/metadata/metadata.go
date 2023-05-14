@@ -49,7 +49,13 @@ type TableMetadata struct {
 	TotalBytes           uint64              `json:"total_bytes,omitempty"` // total table size
 	DependenciesTable    string              `json:"dependencies_table,omitempty"`
 	DependenciesDatabase string              `json:"dependencies_database,omitempty"`
+	Mutations            []MutationMetadata  `json:"mutations,omitempty"`
 	MetadataOnly         bool                `json:"metadata_only"`
+}
+
+type MutationMetadata struct {
+	MutationId string `json:"mutation_id" db:"mutation_id"`
+	Command    string `json:"command" db:"command"`
 }
 
 type Part struct {
