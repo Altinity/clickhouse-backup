@@ -165,7 +165,7 @@ jobs:
           sudo chmod -Rv +rx test/testflows/clickhouse_backup/_instances
       - name: Format testflows coverage
         run: |
-          go tool covdata textfmt -i ./test/testflows/clickhouse_backup/_coverage_/ -o ./test/testflows/clickhouse_backup/_coverage_/coverage.out
+          go tool covdata textfmt -i ./test/testflows/_coverage_/ -o ./test/testflows/_coverage_/coverage.out
       - name: Report testflows coverage
         uses: coverallsapp/github-action@v2
         with:

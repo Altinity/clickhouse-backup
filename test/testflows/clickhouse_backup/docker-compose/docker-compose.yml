@@ -128,7 +128,7 @@ services:
     volumes:
       - "${CLICKHOUSE_TESTS_DIR}/../../../clickhouse-backup/clickhouse-backup-race:/bin/clickhouse-backup"
       - "${CLICKHOUSE_TESTS_DIR}/configs/backup/:/etc/clickhouse-backup/"
-      - "${CLICKHOUSE_TESTS_DIR}/_coverage_/:/tmp/_coverage_/"
+      - "${CLICKHOUSE_TESTS_DIR}/../_coverage_/:/tmp/_coverage_/"
     volumes_from:
       - clickhouse1
     healthcheck:

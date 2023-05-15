@@ -4,6 +4,7 @@ set -e
 
 CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 mkdir -p "${CUR_DIR}/_coverage_/"
+rm -rf "${CUR_DIR}/_coverage_/*"
 export CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION:-22.8}
 if [[ "${CLICKHOUSE_VERSION}" =~ ^2[1-9]+ || "${CLICKHOUSE_VERSION}" == "head" ]]; then
   export CLICKHOUSE_IMAGE=${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server}
@@ -41,3 +42,4 @@ docker-compose -f ${CUR_DIR}/${COMPOSE_FILE} up -d
 docker-compose -f ${CUR_DIR}/${COMPOSE_FILE} exec minio mc alias list
 
 go test -timeout 30m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v ${CUR_DIR}/integration_test.go
+go tool covdata textfmt -i "${CUR_DIR}/_coverage_/" -o "${CUR_DIR}/_coverage_/coverage.out"
