@@ -174,7 +174,7 @@ jobs:
           file: test/testflows/clickhouse_backup/_coverage_/coverage.out
           parallel: true
           format: golang
-          flag-name: testflows-$
+          flag-name: testflows-${{ join(matrix.*, '-') }}
 # todo wait when resolve https://github.com/actions/upload-artifact/issues/270 and uncomment
       - name: Upload testflows logs
         uses: actions/upload-artifact@v3
@@ -282,7 +282,18 @@ jobs:
           file: test/integration/_coverage_/coverage.out
           parallel: true
           format: golang
-          flag-name: integration-$
+          flag-name: integration-${{ join(matrix.*, '-') }}
+  coverage:
+    needs:
+      - test
+      - testflows
+    name: coverage
+    runs-on: ubuntu-latest
+    steps:
+        - name: Coveralls Finished
+          uses: coverallsapp/github-action@v2
+          with:
+            parallel-finished: true
   docker:
     needs:
       - test
