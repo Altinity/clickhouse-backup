@@ -163,12 +163,9 @@ jobs:
           tfs --debug --no-colors transform short ./test/testflows/raw.log ./test/testflows/short.log.txt
           tfs --debug --no-colors report results -a "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/" ./test/testflows/raw.log - --confidential --copyright "Altinity LTD" --logo ./test/testflows/altinity.png | ~/venv/qa/bin/tfs --debug --no-colors document convert > ./test/testflows/report.html
           sudo chmod -Rv +rx test/testflows/clickhouse_backup/_instances
-          pwd
-          ls -la test/testflows/_coverage_/
+          sudo chmod -v +rw test/testflows/_coverage_/
       - name: Format testflows coverage
         run: |
-          pwd
-          ls -la test/testflows/_coverage_/
           go tool covdata textfmt -i test/testflows/_coverage_/ -o test/testflows/_coverage_/coverage.out
       - name: Report testflows coverage
         uses: coverallsapp/github-action@v2
@@ -273,12 +270,9 @@ jobs:
           docker-compose -f test/integration/${COMPOSE_FILE} up -d || ( docker-compose -f test/integration/${COMPOSE_FILE} ps -a && docker-compose -f test/integration/${COMPOSE_FILE} logs clickhouse && exit 1 ) 
           docker-compose -f test/integration/${COMPOSE_FILE} ps -a
           go test -timeout 30m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
-          pwd
-          ls -la test/integration/_coverage_/
+          sudo chmod -v +rw test/integration/_coverage_/
       - name: Format integration coverage
         run: |
-          pwd
-          ls -la test/integration/_coverage_/
           go tool covdata textfmt -i test/integration/_coverage_/ -o test/integration/_coverage_/coverage.out
       - name: Report integration coverage
         uses: coverallsapp/github-action@v2
