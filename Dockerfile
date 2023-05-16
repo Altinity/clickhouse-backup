@@ -2,12 +2,13 @@ ARG CLICKHOUSE_VERSION=latest
 ARG CLICKHOUSE_IMAGE=clickhouse/clickhouse-server
 FROM ${CLICKHOUSE_IMAGE}:${CLICKHOUSE_VERSION} AS builder-base
 
-RUN apt-get update && apt-get install -y gnupg && apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 52B59B1571A79DBC054901C0F6BC817356A3D45E && \
+RUN rm -fv /etc/apt/sources.list.d/clickhouse.list && \
+    apt-get install -y gnupg && apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 52B59B1571A79DBC054901C0F6BC817356A3D45E && \
     DISTRIB_CODENAME=$(cat /etc/lsb-release | grep DISTRIB_CODENAME | cut -d "=" -f 2) && \
     echo ${DISTRIB_CODENAME} && \
     echo "deb https://ppa.launchpadcontent.net/longsleep/golang-backports/ubuntu ${DISTRIB_CODENAME} main" > /etc/apt/sources.list.d/golang.list && \
     echo "deb-src https://ppa.launchpadcontent.net/longsleep/golang-backports/ubuntu ${DISTRIB_CODENAME} main" >> /etc/apt/sources.list.d/golang.list && \
-    apt-get update  && \
+    apt-get update && \
     apt-get install -y golang-1.20 make git && \
     mkdir -p /root/go/
 

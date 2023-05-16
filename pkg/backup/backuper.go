@@ -16,7 +16,6 @@ type Backuper struct {
 	ch                     *clickhouse.ClickHouse
 	dst                    *storage.BackupDestination
 	log                    *apexLog.Entry
-	Version                string
 	DiskToPathMap          map[string]string
 	DefaultDataPath        string
 	EmbeddedBackupDataPath string

@@ -95,7 +95,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 			for _, database := range backupMetadata.Databases {
 				targetDB := database.Name
 				if !IsInformationSchema(targetDB) {
-					if err = b.restoreEmptyDatabase(ctx, targetDB, tablePattern, database, dropTable, schemaOnly); err != nil {
+					if err = b.restoreEmptyDatabase(ctx, targetDB, tablePattern, database, dropTable, schemaOnly, ignoreDependencies); err != nil {
 						return err
 					}
 				}
@@ -162,7 +162,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 	return nil
 }
 
-func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB, tablePattern string, database metadata.DatabasesMeta, dropTable, schemaOnly bool) error {
+func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB, tablePattern string, database metadata.DatabasesMeta, dropTable, schemaOnly, ignoreDependencies bool) error {
 	isMapped := false
 	if targetDB, isMapped = b.cfg.General.RestoreDatabaseMapping[database.Name]; !isMapped {
 		targetDB = database.Name
@@ -177,7 +177,18 @@ func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB, tablePatt
 		if b.cfg.General.RestoreSchemaOnCluster != "" {
 			onCluster = fmt.Sprintf(" ON CLUSTER '%s'", b.cfg.General.RestoreSchemaOnCluster)
 		}
-		if _, err := b.ch.QueryContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s` %s SYNC", targetDB, onCluster)); err != nil {
+		// https://github.com/AlexAkulov/clickhouse-backup/issues/651
+		settings := ""
+		if ignoreDependencies {
+			version, err := b.ch.GetVersion(ctx)
+			if err != nil {
+				return err
+			}
+			if version >= 21012000 {
+				settings = "SETTINGS check_table_dependencies=0"
+			}
+		}
+		if _, err := b.ch.QueryContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s` %s SYNC %s", targetDB, onCluster, settings)); err != nil {
 			return err
 		}
 
