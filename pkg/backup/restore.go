@@ -537,28 +537,114 @@ func (b *Backuper) restoreDataEmbedded(backupName string, tablesForRestore ListO
 
 func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, tablePattern string, tablesForRestore ListOfTables, diskMap map[string]string, disks []clickhouse.Disk, log *apexLog.Entry) error {
 	if len(b.cfg.General.RestoreDatabaseMapping) > 0 {
-		for sourceDb, targetDb := range b.cfg.General.RestoreDatabaseMapping {
-			if tablePattern != "" {
-				sourceDbRE := regexp.MustCompile(fmt.Sprintf("(^%s.*)|(,%s.*)", sourceDb, sourceDb))
-				if sourceDbRE.MatchString(tablePattern) {
-					matches := sourceDbRE.FindAllStringSubmatch(tablePattern, -1)
-					substitution := targetDb + ".*"
-					if strings.HasPrefix(matches[0][1], ",") {
-						substitution = "," + substitution
-					}
-					tablePattern = sourceDbRE.ReplaceAllString(tablePattern, substitution)
-				} else {
-					tablePattern += "," + targetDb + ".*"
-				}
-			} else {
-				tablePattern += targetDb + ".*"
-			}
-		}
+		tablePattern = b.changeTablePatternFromRestoreDatabaseMapping(tablePattern)
 	}
 	chTables, err := b.ch.GetTables(ctx, tablePattern)
 	if err != nil {
 		return err
 	}
+	disks = b.adjustDisksFromTablesWithSystemDisks(tablesForRestore, diskMap, log, disks)
+	dstTablesMap := b.prepareDstTablesMap(chTables)
+
+	missingTables := b.checkMissingTables(tablesForRestore, chTables)
+	if len(missingTables) > 0 {
+		return fmt.Errorf("%s is not created. Restore schema first or create missing tables manually", strings.Join(missingTables, ", "))
+	}
+
+	for i, table := range tablesForRestore {
+		// need mapped database path and original table.Database for HardlinkBackupPartsToStorage
+		dstDatabase := table.Database
+		if len(b.cfg.General.RestoreDatabaseMapping) > 0 {
+			if targetDB, isMapped := b.cfg.General.RestoreDatabaseMapping[table.Database]; isMapped {
+				dstDatabase = targetDB
+				tablesForRestore[i].Database = targetDB
+			}
+		}
+		log := log.WithField("table", fmt.Sprintf("%s.%s", dstDatabase, table.Table))
+		dstTable, ok := dstTablesMap[metadata.TableTitle{
+			Database: dstDatabase,
+			Table:    table.Table}]
+		if !ok {
+			return fmt.Errorf("can't find '%s.%s' in current system.tables", dstDatabase, table.Table)
+		}
+		// https://github.com/AlexAkulov/clickhouse-backup/issues/529
+		if b.cfg.ClickHouse.RestoreAsAttach {
+			if err = b.restoreDataRegularByAttach(ctx, backupName, table, disks, dstTable, log, tablesForRestore, i); err != nil {
+				return err
+			}
+		} else {
+			if err = b.restoreDataRegularByParts(backupName, table, disks, dstTable, log, tablesForRestore, i); err != nil {
+				return err
+			}
+		}
+		// https://github.com/AlexAkulov/clickhouse-backup/issues/529
+		for _, mutation := range table.Mutations {
+			if err := b.ch.ApplyMutation(ctx, tablesForRestore[i], mutation); err != nil {
+				log.Warnf("can't apply mutation %s for table `%s`.`%s`	: %v", mutation.Command, tablesForRestore[i].Database, tablesForRestore[i].Table, err)
+			}
+		}
+		log.Info("done")
+	}
+	return nil
+}
+
+func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName string, table metadata.TableMetadata, disks []clickhouse.Disk, dstTable clickhouse.Table, log *apexLog.Entry, tablesForRestore ListOfTables, i int) error {
+	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, table, disks, dstTable.DataPaths, b.ch, false); err != nil {
+		return fmt.Errorf("can't copy data to storage '%s.%s': %v", table.Database, table.Table, err)
+	}
+	log.Debugf("data to 'storage' copied")
+	if err := b.ch.AttachTable(ctx, tablesForRestore[i]); err != nil {
+		return fmt.Errorf("can't attach table '%s.%s': %v", tablesForRestore[i].Database, tablesForRestore[i].Table, err)
+	}
+	return nil
+}
+
+func (b *Backuper) restoreDataRegularByParts(backupName string, table metadata.TableMetadata, disks []clickhouse.Disk, dstTable clickhouse.Table, log *apexLog.Entry, tablesForRestore ListOfTables, i int) error {
+	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, table, disks, dstTable.DataPaths, b.ch, true); err != nil {
+		return fmt.Errorf("can't copy data to datached '%s.%s': %v", table.Database, table.Table, err)
+	}
+	log.Debugf("data to 'detached' copied")
+	if err := b.ch.AttachDataParts(tablesForRestore[i], disks); err != nil {
+		return fmt.Errorf("can't attach data parts for table '%s.%s': %v", tablesForRestore[i].Database, tablesForRestore[i].Table, err)
+	}
+	return nil
+}
+
+func (b *Backuper) checkMissingTables(tablesForRestore ListOfTables, chTables []clickhouse.Table) []string {
+	var missingTables []string
+	for _, table := range tablesForRestore {
+		dstDatabase := table.Database
+		if len(b.cfg.General.RestoreDatabaseMapping) > 0 {
+			if targetDB, isMapped := b.cfg.General.RestoreDatabaseMapping[table.Database]; isMapped {
+				dstDatabase = targetDB
+			}
+		}
+		found := false
+		for _, chTable := range chTables {
+			if (dstDatabase == chTable.Database) && (table.Table == chTable.Name) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			missingTables = append(missingTables, fmt.Sprintf("'%s.%s'", dstDatabase, table.Table))
+		}
+	}
+	return missingTables
+}
+
+func (b *Backuper) prepareDstTablesMap(chTables []clickhouse.Table) map[metadata.TableTitle]clickhouse.Table {
+	dstTablesMap := map[metadata.TableTitle]clickhouse.Table{}
+	for i, chTable := range chTables {
+		dstTablesMap[metadata.TableTitle{
+			Database: chTables[i].Database,
+			Table:    chTables[i].Name,
+		}] = chTable
+	}
+	return dstTablesMap
+}
+
+func (b *Backuper) adjustDisksFromTablesWithSystemDisks(tablesForRestore ListOfTables, diskMap map[string]string, log *apexLog.Entry, disks []clickhouse.Disk) []clickhouse.Disk {
 	for _, t := range tablesForRestore {
 		for disk := range t.Parts {
 			if _, diskExists := diskMap[disk]; !diskExists {
@@ -581,69 +667,28 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ta
 			}
 		}
 	}
-	dstTablesMap := map[metadata.TableTitle]clickhouse.Table{}
-	for i, chTable := range chTables {
-		dstTablesMap[metadata.TableTitle{
-			Database: chTables[i].Database,
-			Table:    chTables[i].Name,
-		}] = chTable
-	}
+	return disks
+}
 
-	var missingTables []string
-	for _, table := range tablesForRestore {
-		dstDatabase := table.Database
-		if len(b.cfg.General.RestoreDatabaseMapping) > 0 {
-			if targetDB, isMapped := b.cfg.General.RestoreDatabaseMapping[table.Database]; isMapped {
-				dstDatabase = targetDB
+func (b *Backuper) changeTablePatternFromRestoreDatabaseMapping(tablePattern string) string {
+	for sourceDb, targetDb := range b.cfg.General.RestoreDatabaseMapping {
+		if tablePattern != "" {
+			sourceDbRE := regexp.MustCompile(fmt.Sprintf("(^%s.*)|(,%s.*)", sourceDb, sourceDb))
+			if sourceDbRE.MatchString(tablePattern) {
+				matches := sourceDbRE.FindAllStringSubmatch(tablePattern, -1)
+				substitution := targetDb + ".*"
+				if strings.HasPrefix(matches[0][1], ",") {
+					substitution = "," + substitution
+				}
+				tablePattern = sourceDbRE.ReplaceAllString(tablePattern, substitution)
+			} else {
+				tablePattern += "," + targetDb + ".*"
 			}
-		}
-		found := false
-		for _, chTable := range chTables {
-			if (dstDatabase == chTable.Database) && (table.Table == chTable.Name) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			missingTables = append(missingTables, fmt.Sprintf("'%s.%s'", dstDatabase, table.Table))
+		} else {
+			tablePattern += targetDb + ".*"
 		}
 	}
-	if len(missingTables) > 0 {
-		return fmt.Errorf("%s is not created. Restore schema first or create missing tables manually", strings.Join(missingTables, ", "))
-	}
-
-	for i, table := range tablesForRestore {
-		// need mapped database path and original table.Database for CopyDataToDetached
-		dstDatabase := table.Database
-		if len(b.cfg.General.RestoreDatabaseMapping) > 0 {
-			if targetDB, isMapped := b.cfg.General.RestoreDatabaseMapping[table.Database]; isMapped {
-				dstDatabase = targetDB
-				tablesForRestore[i].Database = targetDB
-			}
-		}
-		log := log.WithField("table", fmt.Sprintf("%s.%s", dstDatabase, table.Table))
-		dstTable, ok := dstTablesMap[metadata.TableTitle{
-			Database: dstDatabase,
-			Table:    table.Table}]
-		if !ok {
-			return fmt.Errorf("can't find '%s.%s' in current system.tables", dstDatabase, table.Table)
-		}
-		if err := filesystemhelper.CopyDataToDetached(backupName, table, disks, dstTable.DataPaths, b.ch); err != nil {
-			return fmt.Errorf("can't restore '%s.%s': %v", table.Database, table.Table, err)
-		}
-		log.Debugf("copied data to 'detached'")
-		if err := b.ch.AttachPartitions(tablesForRestore[i], disks); err != nil {
-			return fmt.Errorf("can't attach partitions for table '%s.%s': %v", tablesForRestore[i].Database, tablesForRestore[i].Table, err)
-		}
-		// https://github.com/AlexAkulov/clickhouse-backup/issues/529
-		for _, mutation := range table.Mutations {
-			if err := b.ch.ApplyMutation(ctx, tablesForRestore[i], mutation); err != nil {
-				log.Warnf("can't apply mutation %s for table `%s`.`%s`	: %v", mutation.Command, tablesForRestore[i].Database, tablesForRestore[i].Table, err)
-			}
-		}
-		log.Info("done")
-	}
-	return nil
+	return tablePattern
 }
 
 func (b *Backuper) restoreEmbedded(backupName string, restoreOnlySchema bool, tablesForRestore ListOfTables, partitions []string) error {

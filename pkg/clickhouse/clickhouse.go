@@ -552,38 +552,88 @@ func (ch *ClickHouse) FreezeTable(ctx context.Context, table *Table, name string
 	return nil
 }
 
-// AttachPartitions - execute ATTACH command for specific table
-func (ch *ClickHouse) AttachPartitions(table metadata.TableMetadata, disks []Disk) error {
-	// https://github.com/AlexAkulov/clickhouse-backup/issues/474
-	if ch.Config.CheckReplicasBeforeAttach && strings.Contains(table.Query, "Replicated") {
-		existsReplicas := make([]int, 0)
-		if err := ch.Select(&existsReplicas, "SELECT sum(log_pointer + log_max_index + absolute_delay + queue_size)  AS replication_in_progress FROM system.replicas WHERE database=? and table=? SETTINGS empty_result_for_aggregation_by_empty_set=0", table.Database, table.Table); err != nil {
-			return err
-		}
-		if len(existsReplicas) != 1 {
-			return fmt.Errorf("invalid result for check exists replicas: %+v", existsReplicas)
-		}
-		if existsReplicas[0] > 0 {
-			ch.Log.Warnf("%s.%s skipped cause system.replicas entry already exists and replication in progress from another replica", table.Database, table.Table)
-			return nil
-		} else {
-			ch.Log.Infof("replication_in_progress status = %+v", existsReplicas)
-		}
+// AttachDataParts - execute ALTER TABLE ... ATTACH PART command for specific table
+func (ch *ClickHouse) AttachDataParts(table metadata.TableMetadata, disks []Disk) error {
+	canContinue, err := ch.CheckReplicationInProgress(table)
+	if err != nil {
+		return err
+	}
+	if !canContinue {
+		return nil
 	}
 	for _, disk := range disks {
-		for _, partition := range table.Parts[disk.Name] {
-			if !strings.HasSuffix(partition.Name, ".proj") {
-				query := fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PART '%s'", table.Database, table.Table, partition.Name)
+		for _, part := range table.Parts[disk.Name] {
+			if !strings.HasSuffix(part.Name, ".proj") {
+				query := fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PART '%s'", table.Database, table.Table, part.Name)
 				if _, err := ch.Query(query); err != nil {
 					return err
 				}
-				ch.Log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).WithField("disk", disk.Name).WithField("part", partition.Name).Debug("attached")
+				ch.Log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).WithField("disk", disk.Name).WithField("part", part.Name).Debug("attached")
 			}
 		}
 	}
 	return nil
 }
 
+var replicatedMergeTreeRE = regexp.MustCompile(`Replicated[\w_]*MergeTree\s*\(((\s*'[^']+'\s*),(\s*'[^']+')(\s*,\s*|.*?)([^)]*)|)\)`)
+var uuidRE = regexp.MustCompile(`UUID '([^']+)'`)
+
+// AttachTable - execute ATTACH TABLE  command for specific table
+func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetadata) error {
+	if len(table.Parts) == 0 {
+		apexLog.Warnf("no data parts for restore for `%s`.`%s`", table.Database, table.Table)
+		return nil
+	}
+	canContinue, err := ch.CheckReplicationInProgress(table)
+	if err != nil {
+		return err
+	}
+	if !canContinue {
+		return nil
+	}
+
+	query := fmt.Sprintf("DETACH TABLE `%s`.`%s`", table.Database, table.Table)
+	if _, err := ch.Query(query); err != nil {
+		return err
+	}
+	apexLog.Infof("SUKA1 table.Query=%s", table.Query)
+	if matches := replicatedMergeTreeRE.FindStringSubmatch(table.Query); len(matches) > 0 {
+		apexLog.Infof("SUKA2 matches=%#v", matches)
+		zkPath := strings.Trim(matches[2], "' \r\n\t")
+		replicaName := strings.Trim(matches[3], "' \r\n\t")
+		if strings.Contains(zkPath, "{uuid}") {
+			if uuidMatches := uuidRE.FindStringSubmatch(table.Query); len(uuidMatches) > 0 {
+				zkPath = strings.Replace(zkPath, "{uuid}", uuidMatches[0], 1)
+			}
+		}
+		zkPath = strings.NewReplacer("{database}", table.Database, "{table}", table.Table).Replace(zkPath)
+		zkPath, err = ch.ApplyMacros(ctx, zkPath)
+		if err != nil {
+			return err
+		}
+		replicaName, err = ch.ApplyMacros(ctx, replicaName)
+		if err != nil {
+			return err
+		}
+		query = fmt.Sprintf("SYSTEM DROP REPLICA '%s' FROM ZKPATH '%s'", replicaName, zkPath)
+		apexLog.Infof("SUKA3 query=%s", query)
+		if _, err := ch.Query(query); err != nil {
+			return err
+		}
+	}
+	query = fmt.Sprintf("ATTACH TABLE `%s`.`%s`", table.Database, table.Table)
+	if _, err := ch.Query(query); err != nil {
+		return err
+	}
+
+	query = fmt.Sprintf("SYSTEM RESTART REPLICA `%s`.`%s`", table.Database, table.Table)
+	if _, err := ch.Query(query); err != nil {
+		return err
+	}
+
+	ch.Log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).Debug("attached")
+	return nil
+}
 func (ch *ClickHouse) ShowCreateTable(database, name string) string {
 	var result []struct {
 		Statement string `db:"statement"`
@@ -715,7 +765,7 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 	if onCluster != "" && distributedRE.MatchString(query) {
 		matches := distributedRE.FindAllStringSubmatch(query, -1)
 		if onCluster != strings.Trim(matches[0][2], "'\" ") {
-			apexLog.Warnf("Will replace distributed ")
+			apexLog.Warnf("Will replace cluster ENGINE=Distributed %s -> %s", matches[0][2], onCluster)
 			query = distributedRE.ReplaceAllString(query, fmt.Sprintf("${1}(%s,${3})", onCluster))
 		}
 	}
@@ -997,4 +1047,24 @@ func (ch *ClickHouse) ApplyMutation(ctx context.Context, tableMetadata metadata.
 		return err
 	}
 	return nil
+}
+
+// https://github.com/AlexAkulov/clickhouse-backup/issues/474
+func (ch *ClickHouse) CheckReplicationInProgress(table metadata.TableMetadata) (bool, error) {
+	if ch.Config.CheckReplicasBeforeAttach && strings.Contains(table.Query, "Replicated") {
+		existsReplicas := make([]int, 0)
+		if err := ch.Select(&existsReplicas, "SELECT sum(log_pointer + log_max_index + absolute_delay + queue_size)  AS replication_in_progress FROM system.replicas WHERE database=? and table=? SETTINGS empty_result_for_aggregation_by_empty_set=0", table.Database, table.Table); err != nil {
+			return false, err
+		}
+		if len(existsReplicas) != 1 {
+			return false, fmt.Errorf("invalid result for check exists replicas: %+v", existsReplicas)
+		}
+		if existsReplicas[0] > 0 {
+			ch.Log.Warnf("%s.%s skipped cause system.replicas entry already exists and replication in progress from another replica", table.Database, table.Table)
+			return false, nil
+		} else {
+			ch.Log.Infof("replication_in_progress status = %+v", existsReplicas)
+		}
+	}
+	return true, nil
 }

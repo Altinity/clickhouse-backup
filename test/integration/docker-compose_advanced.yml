@@ -145,11 +145,11 @@ services:
       - ./cluster.xml:/etc/clickhouse-server/config.d/cluster.xml
       - ./dynamic_settings.sh:/docker-entrypoint-initdb.d/dynamic_settings.sh
       - ./_coverage_/:/tmp/_coverage_/
+# uncomment only for local debug
+      - ./install_delve.sh:/tmp/install_delve.sh
 # uncomment only when you need clickhouse logs
 #      - ./clickhouse-server.log:/var/log/clickhouse-server/clickhouse-server.log
 #      - ./clickhouse-server.err.log:/var/log/clickhouse-server/clickhouse-server.err.log
-# uncomment only for local debug
-#      - ./install_delve.sh:/tmp/install_delve.sh
     ports:
       - "8123:8123"
       - "9000:9000"

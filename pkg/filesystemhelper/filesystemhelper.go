@@ -115,11 +115,10 @@ func MkdirAll(path string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk) e
 	return nil
 }
 
-// CopyDataToDetached - copy partitions for specific table to detached folder
-// TODO: check when disk exists in backup, but miss in ClickHouse
-func CopyDataToDetached(backupName string, backupTable metadata.TableMetadata, disks []clickhouse.Disk, tableDataPaths []string, ch *clickhouse.ClickHouse) error {
+// HardlinkBackupPartsToStorage - copy partitions for specific table to detached folder
+func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableMetadata, disks []clickhouse.Disk, tableDataPaths []string, ch *clickhouse.ClickHouse, toDetached bool) error {
 	dstDataPaths := clickhouse.GetDisksByPaths(disks, tableDataPaths)
-	log := apexLog.WithFields(apexLog.Fields{"operation": "CopyDataToDetached"})
+	log := apexLog.WithFields(apexLog.Fields{"operation": "HardlinkBackupPartsToStorage"})
 	start := time.Now()
 	for _, backupDisk := range disks {
 		backupDiskName := backupDisk.Name
@@ -127,21 +126,24 @@ func CopyDataToDetached(backupName string, backupTable metadata.TableMetadata, d
 			log.Debugf("%s disk have no parts", backupDisk.Name)
 			continue
 		}
-		detachedParentDir := filepath.Join(dstDataPaths[backupDisk.Name], "detached")
+		dstParentDir := dstDataPaths[backupDiskName]
+		if toDetached {
+			dstParentDir = filepath.Join(dstParentDir, "detached")
+		}
 		for _, part := range backupTable.Parts[backupDiskName] {
-			detachedPath := filepath.Join(detachedParentDir, part.Name)
-			info, err := os.Stat(detachedPath)
+			dstPartPath := filepath.Join(dstParentDir, part.Name)
+			info, err := os.Stat(dstPartPath)
 			if err != nil {
 				if os.IsNotExist(err) {
-					log.Debugf("MkDirAll %s", detachedPath)
-					if mkdirErr := MkdirAll(detachedPath, ch, disks); mkdirErr != nil {
+					log.Debugf("MkDirAll %s", dstPartPath)
+					if mkdirErr := MkdirAll(dstPartPath, ch, disks); mkdirErr != nil {
 						log.Warnf("error during Mkdir %+v", mkdirErr)
 					}
 				} else {
 					return err
 				}
 			} else if !info.IsDir() {
-				return fmt.Errorf("'%s' should be directory or absent", detachedPath)
+				return fmt.Errorf("'%s' should be directory or absent", dstPartPath)
 			}
 			dbAndTableDir := path.Join(common.TablePathEncode(backupTable.Database), common.TablePathEncode(backupTable.Table))
 			partPath := path.Join(backupDisk.Path, "backup", backupName, "shadow", dbAndTableDir, backupDisk.Name, part.Name)
@@ -154,7 +156,7 @@ func CopyDataToDetached(backupName string, backupTable metadata.TableMetadata, d
 					return err
 				}
 				filename := strings.Trim(strings.TrimPrefix(filePath, partPath), "/")
-				dstFilePath := filepath.Join(detachedPath, filename)
+				dstFilePath := filepath.Join(dstPartPath, filename)
 				if info.IsDir() {
 					log.Debugf("MkDir %s", dstFilePath)
 					return Mkdir(dstFilePath, ch, disks)

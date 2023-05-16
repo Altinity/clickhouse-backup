@@ -406,7 +406,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
 
-	ch.connectWithWait(r, 1*time.Second)
+	ch.connectWithWait(r, 1*time.Second, 10*time.Second)
 
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_rbac")
@@ -439,7 +439,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 
 	ch.chbackend.Close()
 	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker-compose", "-f", os.Getenv("COMPOSE_FILE"), "restart", "clickhouse"))
-	ch.connectWithWait(r, 2*time.Second)
+	ch.connectWithWait(r, 2*time.Second, 10*time.Second)
 
 	log.Info("download+restore RBAC")
 	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
@@ -450,7 +450,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 	// we can't restart clickhouse inside container, we need restart container
 	ch.chbackend.Close()
 	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker-compose", "-f", os.Getenv("COMPOSE_FILE"), "restart", "clickhouse"))
-	ch.connectWithWait(r, 2*time.Second)
+	ch.connectWithWait(r, 2*time.Second, 10*time.Second)
 
 	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
 
@@ -495,7 +495,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 	}
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r, 0*time.Millisecond)
+	ch.connectWithWait(r, 0*time.Millisecond, 1*time.Second)
 	ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_rbac")
 	ch.queryWithNoError(r, "CREATE TABLE default.test_rbac (v UInt64) ENGINE=MergeTree() ORDER BY tuple()")
 
@@ -507,7 +507,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_configs_backup"))
 
 	ch.chbackend.Close()
-	ch.connectWithWait(r, 2*time.Second)
+	ch.connectWithWait(r, 2*time.Second, 10*time.Second)
 
 	var settings []string
 	r.NoError(ch.chbackend.Select(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
@@ -517,7 +517,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", "test_configs_backup"))
 
 	ch.chbackend.Close()
-	ch.connectWithWait(r, 2*time.Second)
+	ch.connectWithWait(r, 2*time.Second, 10*time.Second)
 
 	settings = []string{}
 	r.NoError(ch.chbackend.Select(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
@@ -527,7 +527,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 	_, err := ch.chbackend.Query("SYSTEM RELOAD CONFIG")
 	r.NoError(err)
 	ch.chbackend.Close()
-	ch.connectWithWait(r, 2*time.Second)
+	ch.connectWithWait(r, 2*time.Second, 1*time.Second)
 
 	settings = []string{}
 	r.NoError(ch.chbackend.Select(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
@@ -636,7 +636,7 @@ func TestIntegrationEmbedded(t *testing.T) {
 func TestLongListRemote(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r, 0*time.Second)
+	ch.connectWithWait(r, 0*time.Second, 1*time.Second)
 	defer ch.chbackend.Close()
 	totalCacheCount := 20
 	testBackupName := "test_list_remote"
@@ -685,7 +685,7 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 	r := require.New(t)
 	r.NoError(dockerCP("config-database-mapping.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	ch := &TestClickHouse{}
-	ch.connectWithWait(r, 500*time.Millisecond)
+	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second)
 	defer ch.chbackend.Close()
 	checkRecordset := func(expectedRows, expectedCount int, query string) {
 		result := make([]int, 0)
@@ -756,7 +756,7 @@ func TestMySQLMaterialized(t *testing.T) {
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	r.NoError(dockerExec("mysql", "mysql", "-u", "root", "--password=root", "-v", "-e", "CREATE DATABASE ch_mysql_repl"))
 	ch := &TestClickHouse{}
-	ch.connectWithWait(r, 500*time.Millisecond)
+	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second)
 	defer ch.chbackend.Close()
 	engine := "MaterializedMySQL"
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.9") == -1 {
@@ -790,7 +790,7 @@ func TestPostgreSQLMaterialized(t *testing.T) {
 	r.NoError(dockerExec("pgsql", "bash", "-ce", "echo 'CREATE DATABASE ch_pgsql_repl' | PGPASSWORD=root psql -v ON_ERROR_STOP=1 -U root"))
 	r.NoError(dockerExec("pgsql", "bash", "-ce", "echo \"CREATE TABLE t1 (id BIGINT PRIMARY KEY, s VARCHAR(255)); INSERT INTO t1(id, s) VALUES(1,'s1'),(2,'s2'),(3,'s3')\" | PGPASSWORD=root psql -v ON_ERROR_STOP=1 -U root -d ch_pgsql_repl"))
 	ch := &TestClickHouse{}
-	ch.connectWithWait(r, 500*time.Millisecond)
+	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second)
 	defer ch.chbackend.Close()
 
 	ch.queryWithNoError(r,
@@ -828,7 +828,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 
 	r := require.New(t)
 	ch := &TestClickHouse{}
-	ch.connectWithWait(r, 500*time.Millisecond)
+	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Minute)
 	defer ch.chbackend.Close()
 
 	// test for specified partitions backup
@@ -1067,7 +1067,7 @@ func dropDatabasesFromTestDataDataSet(r *require.Assertions, ch *TestClickHouse,
 func TestTablePatterns(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r, 500*time.Millisecond)
+	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second)
 	defer ch.chbackend.Close()
 
 	testBackupName := "test_backup_patterns"
@@ -1128,7 +1128,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 	t.Skip("TestSkipNotExistsTable is flaky now, need more precise algorithm for pause calculation")
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r, 0*time.Second)
+	ch.connectWithWait(r, 0*time.Second, 1*time.Second)
 	defer ch.chbackend.Close()
 
 	log.Info("Check skip not exist errors")
@@ -1210,7 +1210,7 @@ func TestProjections(t *testing.T) {
 
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r, 0*time.Second)
+	ch.connectWithWait(r, 0*time.Second, 1*time.Second)
 	defer ch.chbackend.Close()
 
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
@@ -1239,7 +1239,7 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	}
 	r := require.New(t)
 	ch := &TestClickHouse{}
-	ch.connectWithWait(r, 500*time.Millisecond)
+	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second)
 	backupNames := make([]string, 5)
 	for i := 0; i < 5; i++ {
 		backupNames[i] = fmt.Sprintf("keep_remote_backup_%d", i)
@@ -1283,7 +1283,7 @@ func TestS3NoDeletePermission(t *testing.T) {
 	r.NoError(dockerCP("config-s3-nodelete.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 
 	ch := &TestClickHouse{}
-	ch.connectWithWait(r, 500*time.Millisecond)
+	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second)
 	defer ch.chbackend.Close()
 	generateTestData(ch, r)
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "no_delete_backup"))
@@ -1302,7 +1302,7 @@ func TestSyncReplicaTimeout(t *testing.T) {
 	}
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r, 0*time.Millisecond)
+	ch.connectWithWait(r, 0*time.Millisecond, 1*time.Second)
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 
 	dropReplTables := func() {
@@ -1344,7 +1344,7 @@ func TestGetPartitionId(t *testing.T) {
 	}
 	r := require.New(t)
 	ch := &TestClickHouse{}
-	ch.connectWithWait(r, 500*time.Millisecond)
+	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second)
 	defer ch.chbackend.Close()
 
 	type testData struct {
@@ -1402,48 +1402,66 @@ func TestGetPartitionId(t *testing.T) {
 }
 
 func TestRestoreMutationInProgress(t *testing.T) {
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.3") == -1 {
-		t.Skipf("Test skipped, throwIf not available for %s version", os.Getenv("CLICKHOUSE_VERSION"))
-	}
 	r := require.New(t)
 	ch := &TestClickHouse{}
-	ch.connectWithWait(r, 0*time.Second)
+	ch.connectWithWait(r, 0*time.Second, 1*time.Second)
 	defer ch.chbackend.Close()
-	ch.queryWithNoError(r, "CREATE TABLE default.test_restore_mutation_in_progress (id UInt64, attr UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/{shard}/{database}/{table}','{replica}') PARTITION BY id ORDER BY id")
-	ch.queryWithNoError(r, "INSERT INTO default.test_restore_mutation_in_progress SELECT number, number FROM numbers(2)")
+	version, err := ch.chbackend.GetVersion(context.Background())
+	r.NoError(err)
+	zkPath := "/clickhouse/tables/{shard}/default/test_restore_mutation_in_progress"
+	onCluster := ""
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 {
+		zkPath = "/clickhouse/tables/{shard}/{database}/{table}"
+	}
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.3") >= 0 {
+		zkPath = "/clickhouse/tables/{shard}/{database}/{table}/{uuid}"
+		onCluster = " ON CLUSTER '{cluster}'"
+	}
+	createSQL := fmt.Sprintf("CREATE TABLE default.test_restore_mutation_in_progress %s (id UInt64, attr String) ENGINE=ReplicatedMergeTree('%s','{replica}') PARTITION BY id ORDER BY id", onCluster, zkPath)
+	ch.queryWithNoError(r, createSQL)
+	ch.queryWithNoError(r, "INSERT INTO default.test_restore_mutation_in_progress SELECT number, if(number>0,'a',toString(number)) FROM numbers(2)")
 
-	ch.queryWithNoError(r, "ALTER TABLE default.test_restore_mutation_in_progress UPDATE attr = throwIf(attr>0) WHERE 1")
-	_, err := ch.chbackend.QueryContext(context.Background(), "ALTER TABLE default.test_restore_mutation_in_progress MODIFY COLUMN attr String")
-	r.NotEqual(nil, err)
-	r.Contains(err.Error(), "code: 341")
-	t.Logf("ALTER TABLE default.test_restore_mutation_in_progress MODIFY COLUMN attr String RETURN EXPECTED ERROR=%#v", err)
+	mutationSQL := "ALTER TABLE default.test_restore_mutation_in_progress MODIFY COLUMN attr UInt64"
+	_, err = ch.chbackend.QueryContext(context.Background(), mutationSQL)
+	if err != nil {
+		errStr := strings.ToLower(err.Error())
+		r.True(strings.Contains(errStr, "code: 341") || strings.Contains(errStr, "code: 517") || strings.Contains(errStr, "bad connection"), "UNKNOWN ERROR: %s", err.Error())
+		t.Logf("%s RETURN EXPECTED ERROR=%#v", mutationSQL, err)
+	}
 
 	attrs := []uint64{}
-	r.NoError(ch.chbackend.Select(&attrs, "SELECT attr FROM default.test_restore_mutation_in_progress ORDER BY id"))
-	r.Equal([]uint64{0, 1}, attrs)
-
-	_, err = ch.chbackend.QueryContext(context.Background(), "ALTER TABLE default.test_restore_mutation_in_progress RENAME COLUMN attr TO attr_1")
+	err = ch.chbackend.Select(&attrs, "SELECT attr FROM default.test_restore_mutation_in_progress ORDER BY id")
 	r.NotEqual(nil, err)
-	r.Contains(err.Error(), "code: 517")
-	t.Logf("ALTER TABLE default.test_restore_mutation_in_progress RENAME COLUMN attr TO attr_1 RETURN EXPECTED ERROR=%#v", err)
+	errStr := strings.ToLower(err.Error())
+	r.True(strings.Contains(errStr, "code: 53") || strings.Contains(errStr, "code: 6"))
+	r.Equal([]uint64{}, attrs)
 
-	r.NoError(dockerExec("clickhouse", "clickhouse-client", "-q", "SELECT * FROM system.mutations WHERE is_done=0 FORMAT Vertical"))
-
-	attrs = []uint64{}
-	r.NoError(ch.chbackend.Select(&attrs, "SELECT attr FROM default.test_restore_mutation_in_progress ORDER BY id"))
-	r.Equal([]uint64{0, 1}, attrs)
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 {
+		mutationSQL = "ALTER TABLE default.test_restore_mutation_in_progress RENAME COLUMN attr TO attr_1"
+		_, err = ch.chbackend.QueryContext(context.Background(), mutationSQL)
+		r.NotEqual(nil, err)
+		r.Contains(strings.ToLower(err.Error()), "code: 517")
+		t.Logf("%s RETURN EXPECTED ERROR=%#v", mutationSQL, err)
+	}
+	r.NoError(dockerExec("clickhouse", "clickhouse", "client", "-q", "SELECT * FROM system.mutations WHERE is_done=0 FORMAT Vertical"))
 
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "--tables=default.test_restore_mutation_in_progress", "test_restore_mutation_in_progress"))
-	ch.queryWithNoError(r, "DROP TABLE default.test_restore_mutation_in_progress SYNC")
+	r.NoError(ch.chbackend.DropTable(clickhouse.Table{Database: "default", Name: "test_restore_mutation_in_progress"}, "", "", false, version))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--rm", "--tables=default.test_restore_mutation_in_progress", "test_restore_mutation_in_progress"))
 
-	attrs = []uint64{}
-	r.NoError(ch.chbackend.Select(&attrs, "SELECT attr_1 FROM default.test_restore_mutation_in_progress ORDER BY id"))
-	r.Equal([]uint64{0, 1}, attrs)
+	r.NoError(dockerExec("clickhouse", "clickhouse", "client", "-q", "SELECT * FROM system.parts WHERE table='test_restore_mutation_in_progress' FORMAT Vertical"))
 
-	r.NoError(dockerExec("clickhouse", "clickhouse-client", "-q", "SELECT * FROM system.mutations WHERE is_done=0 FORMAT Vertical"))
-	ch.queryWithNoError(r, "DROP TABLE default.test_restore_mutation_in_progress SYNC")
+	attrs = []uint64{}
+	checkRestoredData := "attr"
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 {
+		checkRestoredData = "attr_1"
+	}
+	err = ch.chbackend.Select(&attrs, fmt.Sprintf("SELECT %s FROM default.test_restore_mutation_in_progress ORDER BY id", checkRestoredData))
+	r.Equal([]uint64{0, 0}, attrs)
+
+	r.NoError(dockerExec("clickhouse", "clickhouse", "client", "-q", "SELECT * FROM system.mutations WHERE is_done=0 FORMAT Vertical"))
+	r.NoError(ch.chbackend.DropTable(clickhouse.Table{Database: "default", Name: "test_restore_mutation_in_progress"}, "", "", false, version))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_restore_mutation_in_progress"))
 }
 
@@ -1452,7 +1470,7 @@ const apiBackupNumber = 5
 func TestServerAPI(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r, 0*time.Second)
+	ch.connectWithWait(r, 0*time.Second, 1*time.Second)
 	defer func() {
 		ch.chbackend.Close()
 	}()
@@ -1787,10 +1805,10 @@ type TestClickHouse struct {
 	chbackend *clickhouse.ClickHouse
 }
 
-func (ch *TestClickHouse) connectWithWait(r *require.Assertions, sleepBefore time.Duration) {
+func (ch *TestClickHouse) connectWithWait(r *require.Assertions, sleepBefore, timeOut time.Duration) {
 	time.Sleep(sleepBefore)
 	for i := 1; i < 11; i++ {
-		err := ch.connect()
+		err := ch.connect(timeOut.String())
 		if i == 10 {
 			r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", "logs", "clickhouse"))
 			out, dockerErr := dockerExecOut("clickhouse", "clickhouse-client", "--echo", "-q", "'SELECT version()'")
@@ -1824,12 +1842,12 @@ func (ch *TestClickHouse) connectWithWait(r *require.Assertions, sleepBefore tim
 	}
 }
 
-func (ch *TestClickHouse) connect() error {
+func (ch *TestClickHouse) connect(timeOut string) error {
 	ch.chbackend = &clickhouse.ClickHouse{
 		Config: &config.ClickHouseConfig{
 			Host:    "127.0.0.1",
 			Port:    9000,
-			Timeout: "1m",
+			Timeout: timeOut,
 		},
 		Log: log.WithField("logger", "integration-test"),
 	}

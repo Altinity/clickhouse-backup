@@ -191,6 +191,7 @@ type ClickHouseConfig struct {
 	UseEmbeddedBackupRestore         bool              `yaml:"use_embedded_backup_restore" envconfig:"CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE"`
 	EmbeddedBackupDisk               string            `yaml:"embedded_backup_disk" envconfig:"CLICKHOUSE_EMBEDDED_BACKUP_DISK"`
 	BackupMutations                  bool              `yaml:"backup_mutations" envconfig:"CLICKHOUSE_BACKUP_MUTATIONS"`
+	RestoreAsAttach                  bool              `yaml:"restore_as_attach" envconfig:"CLICKHOUSE_RESTORE_AS_ATTACH"`
 	Secure                           bool              `yaml:"secure" envconfig:"CLICKHOUSE_SECURE"`
 	SkipVerify                       bool              `yaml:"skip_verify" envconfig:"CLICKHOUSE_SKIP_VERIFY"`
 	SyncReplicatedTables             bool              `yaml:"sync_replicated_tables" envconfig:"CLICKHOUSE_SYNC_REPLICATED_TABLES"`
@@ -462,6 +463,7 @@ func DefaultConfig() *Config {
 			CheckReplicasBeforeAttach:        true,
 			UseEmbeddedBackupRestore:         false,
 			BackupMutations:                  true,
+			RestoreAsAttach:                  true,
 		},
 		AzureBlob: AzureBlobConfig{
 			EndpointSchema:    "https",
