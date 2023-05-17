@@ -1,5 +1,6 @@
-# v2.3.0
+# v2.2.6
 BUG FIXES
+- fix panic for resume upload after restart API server for boolean parameters, fix [653](https://github.com/AlexAkulov/clickhouse-backup/issues/653)
 - apply SETTINGS check_table_dependencies=0 to DROP DATABASE statement, when pass `--ignore-dependencies` together with `--rm` in `restore` command, fix [651](https://github.com/AlexAkulov/clickhouse-backup/issues/651) 
 
 # v2.2.5

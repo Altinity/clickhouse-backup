@@ -1551,27 +1551,21 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 				switch command {
 				case "download":
 				case "upload":
-					args := make([]string, len(params)+2)
-					i := 0
-					args[i] = command
-					i++
+					args := make([]string, 0)
+					args = append(args, command)
 					if diffFrom, ok := params["diffFrom"]; ok && diffFrom.(string) != "" {
-						args[i] = fmt.Sprintf("--diff-from=\"%s\"", diffFrom)
-						i++
+						args = append(args, fmt.Sprintf("--diff-from=\"%s\"", diffFrom))
 					}
 					if diffFromRemote, ok := params["diffFromRemote"]; ok && diffFromRemote.(string) != "" {
-						args[i] = fmt.Sprintf("--diff-from-remote=\"%s\"", diffFromRemote)
-						i++
+						args = append(args, fmt.Sprintf("--diff-from-remote=\"%s\"", diffFromRemote))
 					}
 
 					if tablePattern, ok := params["tablePattern"]; ok && tablePattern.(string) != "" {
-						args[i] = fmt.Sprintf("--tables=\"%s\"", tablePattern)
-						i++
+						args = append(args, fmt.Sprintf("--tables=\"%s\"", tablePattern))
 					}
 
 					if schemaOnly, ok := params["schemaOnly"]; ok && schemaOnly.(bool) {
-						args[i] = "--schema=1"
-						i++
+						args = append(args, "--schema=1")
 					}
 
 					if partitions, ok := params["partitions"]; ok && len(partitions.([]interface{})) > 0 {
@@ -1579,13 +1573,9 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 						for j, v := range partitions.([]interface{}) {
 							partitionsStr[j] = v.(string)
 						}
-						args[i] = fmt.Sprintf("--partitions=\"%s\"", strings.Join(partitionsStr, ","))
-						i++
+						args = append(args, fmt.Sprintf("--partitions=\"%s\"", strings.Join(partitionsStr, ",")))
 					}
-					args[i] = "--resumable=1"
-					i++
-					args[i] = backupName
-					args = args[:i+1]
+					args = append(args, "--resumable=1", backupName)
 					fullCommand := strings.Join(args, " ")
 					api.log.WithField("operation", "ResumeOperationsAfterRestart").Info(fullCommand)
 					commandId, _ := status.Current.Start(fullCommand)
