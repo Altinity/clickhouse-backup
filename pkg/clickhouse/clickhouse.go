@@ -596,9 +596,7 @@ func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetad
 	if _, err := ch.Query(query); err != nil {
 		return err
 	}
-	apexLog.Infof("SUKA1 table.Query=%s", table.Query)
 	if matches := replicatedMergeTreeRE.FindStringSubmatch(table.Query); len(matches) > 0 {
-		apexLog.Infof("SUKA2 matches=%#v", matches)
 		zkPath := strings.Trim(matches[2], "' \r\n\t")
 		replicaName := strings.Trim(matches[3], "' \r\n\t")
 		if strings.Contains(zkPath, "{uuid}") {
@@ -616,7 +614,6 @@ func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetad
 			return err
 		}
 		query = fmt.Sprintf("SYSTEM DROP REPLICA '%s' FROM ZKPATH '%s'", replicaName, zkPath)
-		apexLog.Infof("SUKA3 query=%s", query)
 		if _, err := ch.Query(query); err != nil {
 			return err
 		}
@@ -626,7 +623,7 @@ func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetad
 		return err
 	}
 
-	query = fmt.Sprintf("SYSTEM RESTART REPLICA `%s`.`%s`", table.Database, table.Table)
+	query = fmt.Sprintf("SYSTEM RESTORE REPLICA `%s`.`%s`", table.Database, table.Table)
 	if _, err := ch.Query(query); err != nil {
 		return err
 	}
