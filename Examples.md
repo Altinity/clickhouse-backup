@@ -315,7 +315,7 @@ spec:
                   value: backup
                 - name: BACKUP_PASSWORD
                   value: "backup_password"
-                # change to 1, if you want make full backup only in $FULL_BACKUP_WEEKDAY (1 - Mon, 7 - Sun)   
+                # change to 1, if you want make full backup only in $FULL_BACKUP_WEEKDAY (1 - Mon, 7 - Sun)
                 - name: MAKE_INCREMENT_BACKUP
                   value: "1"
                 - name: FULL_BACKUP_WEEKDAY
@@ -333,16 +333,17 @@ spec:
                   for SERVER in $CLICKHOUSE_SERVICES; do
                     if [[ "1" == "$MAKE_INCREMENT_BACKUP" ]]; then
                       LAST_FULL_BACKUP=$(clickhouse-client -q "SELECT name FROM system.backup_list WHERE location='remote' AND name LIKE '%full%' AND desc NOT LIKE 'broken%' ORDER BY created DESC LIMIT 1 FORMAT TabSeparatedRaw" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD);
+                      TODAY_FULL_BACKUP=$(clickhouse-client -q "SELECT name FROM system.backup_list WHERE location='remote' AND name LIKE '%full%' AND desc NOT LIKE 'broken%' AND DATE_FORMAT(created, '%Y-%m-%d')=DATE_FORMAT(now(), '%Y-%m-%d') ORDER BY created DESC LIMIT 1 FORMAT TabSeparatedRaw" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD)
                       PREV_BACKUP_NAME=$(clickhouse-client -q "SELECT name FROM system.backup_list WHERE location='remote' AND desc NOT LIKE 'broken%' ORDER BY created DESC LIMIT 1 FORMAT TabSeparatedRaw" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD);
                       DIFF_FROM[$SERVER]="";
-                      if [[ "$FULL_BACKUP_WEEKDAY" == "$(date +%u)" || "" == "$PREV_BACKUP_NAME" || "" == "$LAST_FULL_BACKUP" ]]; then
+                      if [[ ("$FULL_BACKUP_WEEKDAY" == "$(date +%u)" && "" == "$TODAY_FULL_BACKUP") || "" == "$PREV_BACKUP_NAME" || "" == "$LAST_FULL_BACKUP" ]]; then
                         BACKUP_NAMES[$SERVER]="full-$BACKUP_DATE";
                       else
                         BACKUP_NAMES[$SERVER]="increment-$BACKUP_DATE";
                         DIFF_FROM[$SERVER]="--diff-from-remote=$PREV_BACKUP_NAME";
-                      fi                   
-                    else 
-                      BACKUP_NAMES[$SERVER]="full-$BACKUP_DATE"; 
+                      fi
+                    else
+                      BACKUP_NAMES[$SERVER]="full-$BACKUP_DATE";
                     fi;
                     echo "set backup name on $SERVER = ${BACKUP_NAMES[$SERVER]}";
                   done;
