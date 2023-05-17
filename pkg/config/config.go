@@ -51,7 +51,7 @@ type GeneralConfig struct {
 	DownloadByPart          bool              `yaml:"download_by_part" envconfig:"DOWNLOAD_BY_PART"`
 	RestoreDatabaseMapping  map[string]string `yaml:"restore_database_mapping" envconfig:"RESTORE_DATABASE_MAPPING"`
 	RetriesOnFailure        int               `yaml:"retries_on_failure" envconfig:"RETRIES_ON_FAILURE"`
-	RetriesPause            string            `yaml:"upload_retries_pause" envconfig:"RETRIES_PAUSE"`
+	RetriesPause            string            `yaml:"retries_pause" envconfig:"RETRIES_PAUSE"`
 	WatchInterval           string            `yaml:"watch_interval" envconfig:"WATCH_INTERVAL"`
 	FullInterval            string            `yaml:"full_interval" envconfig:"FULL_INTERVAL"`
 	WatchBackupNameTemplate string            `yaml:"watch_backup_name_template" envconfig:"WATCH_BACKUP_NAME_TEMPLATE"`
