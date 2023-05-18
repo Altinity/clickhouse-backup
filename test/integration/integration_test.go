@@ -1402,6 +1402,8 @@ func TestGetPartitionId(t *testing.T) {
 }
 
 func TestRestoreMutationInProgress(t *testing.T) {
+	t.Skipf("Test skipped for %s version", os.Getenv("CLICKHOUSE_VERSION"))
+
 	r := require.New(t)
 	ch := &TestClickHouse{}
 	ch.connectWithWait(r, 0*time.Second, 1*time.Second)

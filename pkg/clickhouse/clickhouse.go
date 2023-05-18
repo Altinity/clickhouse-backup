@@ -601,7 +601,7 @@ func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetad
 		replicaName := strings.Trim(matches[3], "' \r\n\t")
 		if strings.Contains(zkPath, "{uuid}") {
 			if uuidMatches := uuidRE.FindStringSubmatch(table.Query); len(uuidMatches) > 0 {
-				zkPath = strings.Replace(zkPath, "{uuid}", uuidMatches[0], 1)
+				zkPath = strings.Replace(zkPath, "{uuid}", uuidMatches[1], 1)
 			}
 		}
 		zkPath = strings.NewReplacer("{database}", table.Database, "{table}", table.Table).Replace(zkPath)

@@ -463,7 +463,7 @@ func DefaultConfig() *Config {
 			CheckReplicasBeforeAttach:        true,
 			UseEmbeddedBackupRestore:         false,
 			BackupMutations:                  true,
-			RestoreAsAttach:                  true,
+			RestoreAsAttach:                  false,
 		},
 		AzureBlob: AzureBlobConfig{
 			EndpointSchema:    "https",
