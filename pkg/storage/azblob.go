@@ -113,7 +113,7 @@ func (s *AzureBlob) Connect(ctx context.Context) error {
 				TryTimeout: timeout,
 			},
 		})).NewContainerURL(s.Config.Container)
-		_, err = s.Container.Create(context.Background(), azblob.Metadata{}, azblob.PublicAccessNone)
+		_, err = s.Container.Create(ctx, azblob.Metadata{}, azblob.PublicAccessNone)
 		if err != nil && !isContainerAlreadyExists(err) {
 			return err
 		}
@@ -122,7 +122,7 @@ func (s *AzureBlob) Connect(ctx context.Context) error {
 			return errors.Wrapf(err, "azblob: failed to generate test blob name")
 		}
 		testBlob := s.Container.NewBlockBlobURL(base64.URLEncoding.EncodeToString(testName))
-		if _, err = testBlob.GetProperties(context.Background(), azblob.BlobAccessConditions{}, azblob.ClientProvidedKeyOptions{}); err != nil {
+		if _, err = testBlob.GetProperties(ctx, azblob.BlobAccessConditions{}, azblob.ClientProvidedKeyOptions{}); err != nil {
 			if se, ok := err.(azblob.StorageError); !ok || se.ServiceCode() != azblob.ServiceCodeBlobNotFound {
 				return errors.Wrapf(err, "azblob: failed to access container %s", s.Config.Container)
 			}
