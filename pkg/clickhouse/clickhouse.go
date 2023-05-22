@@ -27,12 +27,13 @@ import (
 
 // ClickHouse - provide
 type ClickHouse struct {
-	Config  *config.ClickHouseConfig
-	Log     *apexLog.Entry
-	conn    *sqlx.DB
-	disks   []Disk
-	version int
-	IsOpen  bool
+	Config               *config.ClickHouseConfig
+	Log                  *apexLog.Entry
+	conn                 *sqlx.DB
+	disks                []Disk
+	version              int
+	isPartsColumnPresent int8
+	IsOpen               bool
 }
 
 // Connect - establish connection to ClickHouse
@@ -803,12 +804,12 @@ func (ch *ClickHouse) IsClickhouseShadow(path string) bool {
 	return true
 }
 
-func (ch *ClickHouse) StructSelectContext(ctx context.Context, dest interface{}, query string) error {
+func (ch *ClickHouse) StructSelectContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
-		rows, err := ch.QueryxContext(ctx, query)
+		rows, err := ch.QueryxContext(ctx, query, args...)
 		if err != nil {
 			return err
 		}
@@ -1064,4 +1065,40 @@ func (ch *ClickHouse) CheckReplicationInProgress(table metadata.TableMetadata) (
 		}
 	}
 	return true, nil
+}
+
+// https://github.com/AlexAkulov/clickhouse-backup/issues/529#issuecomment-1554460504
+func (ch *ClickHouse) CheckSystemPartsColumns(ctx context.Context, table *Table) error {
+	if ch.isPartsColumnPresent == -1 {
+		return nil
+	}
+	if ch.isPartsColumnPresent == 0 {
+		isPartsColumnPresent := make([]uint64, 0)
+		if err := ch.SelectContext(ctx, &isPartsColumnPresent, "SELECT count() FROM system.tables WHERE database='system' AND name='parts_columns'"); err != nil {
+			return err
+		}
+		if len(isPartsColumnPresent) != 1 || isPartsColumnPresent[0] != 1 {
+			ch.isPartsColumnPresent = -1
+			return nil
+		}
+	}
+	ch.isPartsColumnPresent = 1
+	isPartsColumnsInconsistent := make([]struct {
+		Column string   `db:"column"`
+		Types  []string `db:"uniq_types"`
+	}, 0)
+	partsColumnsSQL := "SELECT column, groupUniqArray(type) AS uniq_types " +
+		"FROM system.parts_columns " +
+		"WHERE active AND database=? AND table=? " +
+		"GROUP BY column HAVING length(uniq_types) > 1"
+	if err := ch.StructSelectContext(ctx, &isPartsColumnsInconsistent, partsColumnsSQL, table.Database, table.Name); err != nil {
+		return err
+	}
+	if len(isPartsColumnsInconsistent) > 0 {
+		for i := range isPartsColumnsInconsistent {
+			ch.Log.Errorf("`%s`.`%s` have inconsistent data types %#v for \"%s\" column", table.Database, table.Name, isPartsColumnsInconsistent[i].Types, isPartsColumnsInconsistent[i].Column)
+		}
+		return fmt.Errorf("`%s`.`%s` have inconsistent data types for active data part in system.parts_columns", table.Database, table.Name)
+	}
+	return nil
 }

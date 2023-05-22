@@ -75,7 +75,7 @@ func NewBackupName() string {
 
 // CreateBackup - create new backup of all tables matched by tablePattern
 // If backupName is empty string will use default backup name
-func (b *Backuper) CreateBackup(backupName, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly bool, version string, commandId int) error {
+func (b *Backuper) CreateBackup(backupName, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, skipCheckPartsColumns bool, version string, commandId int) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return err
@@ -97,6 +97,10 @@ func (b *Backuper) CreateBackup(backupName, tablePattern string, partitions []st
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
 	defer b.ch.Close()
+
+	if skipCheckPartsColumns && b.cfg.ClickHouse.CheckPartsColumns {
+		b.cfg.ClickHouse.CheckPartsColumns = false
+	}
 
 	allDatabases, err := b.ch.GetDatabases(ctx, b.cfg, tablePattern)
 	if err != nil {
@@ -478,11 +482,17 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 		return nil, nil, fmt.Errorf("backupName is not defined")
 	}
 
-	// backup data
 	if !strings.HasSuffix(table.Engine, "MergeTree") && table.Engine != "MaterializedMySQL" && table.Engine != "MaterializedPostgreSQL" {
-		log.WithField("engine", table.Engine).Debug("skip table backup")
+		log.WithField("engine", table.Engine).Warnf("supports only schema backup")
 		return nil, nil, nil
 	}
+	//
+	if b.cfg.ClickHouse.CheckPartsColumns {
+		if err := b.ch.CheckSystemPartsColumns(ctx, table); err != nil {
+			return nil, nil, err
+		}
+	}
+	// backup data
 	if err := b.ch.FreezeTable(ctx, table, shadowBackupUUID); err != nil {
 		return nil, nil, err
 	}

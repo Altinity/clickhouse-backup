@@ -1402,8 +1402,6 @@ func TestGetPartitionId(t *testing.T) {
 }
 
 func TestRestoreMutationInProgress(t *testing.T) {
-	t.Skipf("Test skipped for %s version", os.Getenv("CLICKHOUSE_VERSION"))
-
 	r := require.New(t)
 	ch := &TestClickHouse{}
 	ch.connectWithWait(r, 0*time.Second, 1*time.Second)
@@ -1448,21 +1446,59 @@ func TestRestoreMutationInProgress(t *testing.T) {
 	r.NoError(dockerExec("clickhouse", "clickhouse", "client", "-q", "SELECT * FROM system.mutations WHERE is_done=0 FORMAT Vertical"))
 
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "--tables=default.test_restore_mutation_in_progress", "test_restore_mutation_in_progress"))
-	r.NoError(ch.chbackend.DropTable(clickhouse.Table{Database: "default", Name: "test_restore_mutation_in_progress"}, "", "", false, version))
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--rm", "--tables=default.test_restore_mutation_in_progress", "test_restore_mutation_in_progress"))
+	// backup with check consistency
+	out, createErr := dockerExecOut("clickhouse", "clickhouse-backup", "create", "--tables=default.test_restore_mutation_in_progress", "test_restore_mutation_in_progress")
+	r.NotEqual(createErr, nil)
+	r.Contains(out, "have inconsistent data types")
+	t.Log(out)
 
-	r.NoError(dockerExec("clickhouse", "clickhouse", "client", "-q", "SELECT * FROM system.parts WHERE table='test_restore_mutation_in_progress' FORMAT Vertical"))
+	// backup without check consistency
+	out, createErr = dockerExecOut("clickhouse", "clickhouse-backup", "create", "--skip-check-parts-columns", "--tables=default.test_restore_mutation_in_progress", "test_restore_mutation_in_progress")
+	r.NoError(createErr)
+	r.NotContains(out, "have inconsistent data types")
+	t.Log(out)
+
+	r.NoError(ch.chbackend.DropTable(clickhouse.Table{Database: "default", Name: "test_restore_mutation_in_progress"}, "", "", false, version))
+	var restoreErr error
+	restoreErr = dockerExec("clickhouse", "clickhouse-backup", "restore", "--rm", "--tables=default.test_restore_mutation_in_progress", "test_restore_mutation_in_progress")
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.8") < 0 {
+		r.NotEqual(restoreErr, nil)
+	} else {
+		r.NoError(restoreErr)
+	}
 
 	attrs = []uint64{}
 	checkRestoredData := "attr"
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 {
+	if restoreErr == nil && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.8") < 0 {
 		checkRestoredData = "attr_1"
 	}
-	err = ch.chbackend.Select(&attrs, fmt.Sprintf("SELECT %s FROM default.test_restore_mutation_in_progress ORDER BY id", checkRestoredData))
-	r.Equal([]uint64{0, 0}, attrs)
+	selectSQL := fmt.Sprintf("SELECT %s FROM default.test_restore_mutation_in_progress ORDER BY id", checkRestoredData)
+	selectErr := ch.chbackend.Select(&attrs, selectSQL)
+	expectedSelectResults := []uint64{0}
+	expectedSelectError := "code: 517"
 
-	r.NoError(dockerExec("clickhouse", "clickhouse", "client", "-q", "SELECT * FROM system.mutations WHERE is_done=0 FORMAT Vertical"))
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") < 0 {
+		expectedSelectResults = []uint64{0, 0}
+		expectedSelectError = ""
+	}
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.8") < 0 {
+		expectedSelectError = ""
+	}
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.8") >= 0 {
+		expectedSelectError = "code: 6"
+		expectedSelectResults = []uint64{}
+	}
+	r.Equal(expectedSelectResults, attrs)
+	if expectedSelectError != "" {
+		r.Error(selectErr)
+		r.Contains(strings.ToLower(selectErr.Error()), expectedSelectError)
+		t.Logf("%s RETURN EXPECTED ERROR=%#v", selectSQL, selectErr)
+	} else {
+		r.NoError(selectErr)
+	}
+
+	r.NoError(dockerExec("clickhouse", "clickhouse", "client", "-q", "SELECT * FROM system.mutations FORMAT Vertical"))
+
 	r.NoError(ch.chbackend.DropTable(clickhouse.Table{Database: "default", Name: "test_restore_mutation_in_progress"}, "", "", false, version))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_restore_mutation_in_progress"))
 }

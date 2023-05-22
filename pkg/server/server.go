@@ -154,7 +154,8 @@ func (api *APIServer) RunWatch(cliCtx *cli.Context) {
 	commandId, _ := status.Current.Start("watch")
 	err := b.Watch(
 		cliCtx.String("watch-interval"), cliCtx.String("full-interval"), cliCtx.String("watch-backup-name-template"),
-		"*.*", nil, false, false, false, api.clickhouseBackupVersion, commandId, api.GetMetrics(), cliCtx,
+		"*.*", nil, false, false, false, false,
+		api.clickhouseBackupVersion, commandId, api.GetMetrics(), cliCtx,
 	)
 	status.Current.Stop(commandId, err)
 }
@@ -475,6 +476,7 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 	schemaOnly := false
 	rbacOnly := false
 	configsOnly := false
+	skipCheckPartsColumns := false
 	watchInterval := ""
 	fullInterval := ""
 	watchBackupNameTemplate := ""
@@ -528,12 +530,16 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 			configsOnly = true
 			fullCommand = fmt.Sprintf("%s --configs", fullCommand)
 		}
+		if matchParam, _ = simpleParseArg(i, args, "--skip-check-parts-columns"); matchParam {
+			skipCheckPartsColumns = true
+			fullCommand = fmt.Sprintf("%s --skip-check-parts-columns", fullCommand)
+		}
 	}
 
 	go func() {
 		commandId, _ := status.Current.Start(fullCommand)
 		b := backup.NewBackuper(cfg)
-		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
+		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, skipCheckPartsColumns, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
 		defer status.Current.Stop(commandId, err)
 		if err != nil {
 			api.log.Errorf("Watch error: %v", err)
@@ -788,6 +794,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	schemaOnly := false
 	rbacOnly := false
 	configsOnly := false
+	checkPartsColumns := true
 	fullCommand := "create"
 	query := r.URL.Query()
 	if tp, exist := query["table"]; exist {
@@ -816,6 +823,12 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 			fullCommand = fmt.Sprintf("%s --configs", fullCommand)
 		}
 	}
+
+	if partsColumns, exist := query["check_parts_columns"]; exist {
+		checkPartsColumns, _ = strconv.ParseBool(partsColumns[0])
+		fullCommand = fmt.Sprintf("%s --check-parts-columns=%s", fullCommand, checkPartsColumns)
+	}
+
 	if name, exist := query["name"]; exist {
 		backupName = utils.CleanBackupNameRE.ReplaceAllString(name[0], "")
 		fullCommand = fmt.Sprintf("%s %s", fullCommand, backupName)
@@ -832,7 +845,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		commandId, ctx := status.Current.Start(fullCommand)
 		err, _ := api.metrics.ExecuteWithMetrics("create", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.CreateBackup(backupName, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, api.clickhouseBackupVersion, commandId)
+			return b.CreateBackup(backupName, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, checkPartsColumns, api.clickhouseBackupVersion, commandId)
 		})
 		if err != nil {
 			api.log.Errorf("API /backup/create error: %v", err)
@@ -876,6 +889,7 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 	schemaOnly := false
 	rbacOnly := false
 	configsOnly := false
+	skipCheckPartsColumns := false
 	watchInterval := ""
 	fullInterval := ""
 	watchBackupNameTemplate := ""
@@ -919,6 +933,13 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 			fullCommand = fmt.Sprintf("%s --configs", fullCommand)
 		}
 	}
+	if partsColumns, exist := query["skip_check_parts_columns"]; exist {
+		skipCheckPartsColumns, _ = strconv.ParseBool(partsColumns[0])
+		if configsOnly {
+			fullCommand = fmt.Sprintf("%s --skip-check-parts-columns", fullCommand)
+		}
+	}
+
 	if status.Current.CheckCommandInProgress(fullCommand) {
 		api.log.Warnf("%s error: %v", fullCommand, ErrAPILocked)
 		api.writeError(w, http.StatusLocked, "watch", ErrAPILocked)
@@ -928,7 +949,7 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		commandId, _ := status.Current.Start(fullCommand)
 		b := backup.NewBackuper(cfg)
-		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
+		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, skipCheckPartsColumns, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
 		defer status.Current.Stop(commandId, err)
 		if err != nil {
 			api.log.Errorf("Watch error: %v", err)

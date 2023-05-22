@@ -1,6 +1,7 @@
 # v2.3.0
 IMPROVEMENTS
 - add `CLICKHOUSE_BACKUP_MUTATIONS` and `CLICKHOUSE_RESTORE_AS_ATTACH` config options to allow backup and properly restore table with system.mutations is_done=0 status. fix [529](https://github.com/AlexAkulov/clickhouse-backup/issues/529)
+- add `CLICKHOUSE_CHECK_PARTS_COLUMNS` config option and `--skip-check-parts-column` CLI parameter to `watch`, `create` and `create_remote` commands to disallow backup with inconsistent column data types fix [529](https://github.com/AlexAkulov/clickhouse-backup/issues/529)
 - add test coverage reports for unit, testflows and integration tests, fix [644](https://github.com/AlexAkulov/clickhouse-backup/issues/644)
 
 BUG FIXES
