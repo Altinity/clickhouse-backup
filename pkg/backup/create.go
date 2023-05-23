@@ -526,7 +526,7 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 		// Unfreeze to unlock data on S3 disks, https://github.com/AlexAkulov/clickhouse-backup/issues/423
 		if version, err := b.ch.GetVersion(ctx); err != nil {
 			return disksToPartsMap, realSize, err
-		} else if version > 19017010 {
+		} else if version > 21004000 {
 			if _, err := b.ch.QueryContext(ctx, fmt.Sprintf("ALTER TABLE `%s`.`%s` UNFREEZE WITH NAME '%s'", table.Database, table.Name, shadowBackupUUID)); err != nil {
 				return disksToPartsMap, realSize, err
 			}
