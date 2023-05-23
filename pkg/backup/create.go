@@ -524,8 +524,12 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 			log.WithField("disk", disk.Name).Debug("shadow moved")
 		}
 		// Unfreeze to unlock data on S3 disks, https://github.com/AlexAkulov/clickhouse-backup/issues/423
-		if _, err := b.ch.QueryContext(ctx, fmt.Sprintf("ALTER TABLE `%s`.`%s` UNFREEZE WITH NAME '%s'", table.Database, table.Name, shadowBackupUUID)); err != nil {
+		if version, err := b.ch.GetVersion(ctx); err != nil {
 			return disksToPartsMap, realSize, err
+		} else if version > 19017010 {
+			if _, err := b.ch.QueryContext(ctx, fmt.Sprintf("ALTER TABLE `%s`.`%s` UNFREEZE WITH NAME '%s'", table.Database, table.Name, shadowBackupUUID)); err != nil {
+				return disksToPartsMap, realSize, err
+			}
 		}
 		for _, disk := range diskList {
 			// Clean all the files under the shadowPath.

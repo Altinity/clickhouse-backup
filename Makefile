@@ -33,7 +33,8 @@ rebuild: clean all
 
 test:
 	go vet ./...
-	go test -v ./...
+	mkdir -v ./_coverage_
+	GOCOVERDIR=./_coverage_/ go test -coverprofile=./_coverage_/coverage.out -v ./...
 
 build: build/linux/amd64/$(NAME) build/linux/arm64/$(NAME) build/darwin/amd64/$(NAME) build/darwin/arm64/$(NAME)
 
