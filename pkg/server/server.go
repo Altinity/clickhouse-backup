@@ -826,7 +826,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 
 	if partsColumns, exist := query["check_parts_columns"]; exist {
 		checkPartsColumns, _ = strconv.ParseBool(partsColumns[0])
-		fullCommand = fmt.Sprintf("%s --check-parts-columns=%s", fullCommand, checkPartsColumns)
+		fullCommand = fmt.Sprintf("%s --check-parts-columns=%v", fullCommand, checkPartsColumns)
 	}
 
 	if name, exist := query["name"]; exist {
