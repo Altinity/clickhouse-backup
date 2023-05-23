@@ -1454,9 +1454,9 @@ func TestRestoreMutationInProgress(t *testing.T) {
 
 	// backup without check consistency
 	out, createErr = dockerExecOut("clickhouse", "clickhouse-backup", "create", "--skip-check-parts-columns", "--tables=default.test_restore_mutation_in_progress", "test_restore_mutation_in_progress")
+	t.Log(out)
 	r.NoError(createErr)
 	r.NotContains(out, "have inconsistent data types")
-	t.Log(out)
 
 	r.NoError(ch.chbackend.DropTable(clickhouse.Table{Database: "default", Name: "test_restore_mutation_in_progress"}, "", "", false, version))
 	var restoreErr error
