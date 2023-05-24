@@ -231,8 +231,16 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		return nil, ctx.Err()
 	default:
 		var result []Disk
-		query := "SELECT path, any(name) AS name, any(type) AS type FROM system.disks GROUP BY path;"
-		err := ch.StructSelect(&result, query)
+		isDiskTypePresent := make([]int, 0)
+		if err := ch.SelectContext(ctx, &isDiskTypePresent, "SELECT count() FROM system.columns WHERE database='system' AND table='disks' AND name='type'"); err != nil {
+			return result, err
+		}
+		diskTypeSQL := "'local'"
+		if len(isDiskTypePresent) > 0 && isDiskTypePresent[0] > 0 {
+			diskTypeSQL = "any(type)"
+		}
+		query := fmt.Sprintf("SELECT path, any(name) AS name, %s AS type FROM system.disks GROUP BY path", diskTypeSQL)
+		err := ch.StructSelectContext(ctx, &result, query)
 		return result, err
 	}
 }
