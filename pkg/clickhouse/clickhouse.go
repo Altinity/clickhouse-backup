@@ -231,7 +231,7 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		return nil, ctx.Err()
 	default:
 		var result []Disk
-		query := "SELECT * FROM system.disks;"
+		query := "SELECT path, any(name) AS name, any(type) AS type FROM system.disks GROUP BY path;"
 		err := ch.StructSelect(&result, query)
 		return result, err
 	}

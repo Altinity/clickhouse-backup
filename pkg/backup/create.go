@@ -497,6 +497,10 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 		return nil, nil, err
 	}
 	log.Debug("frozen")
+	version, err := b.ch.GetVersion(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
 	realSize := map[string]int64{}
 	disksToPartsMap := map[string][]metadata.Part{}
 	for _, disk := range diskList {
@@ -522,16 +526,16 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 			realSize[disk.Name] = size
 			disksToPartsMap[disk.Name] = parts
 			log.WithField("disk", disk.Name).Debug("shadow moved")
-			// Clean all the files under the shadowPath.
-			if err := os.RemoveAll(shadowPath); err != nil {
-				return disksToPartsMap, realSize, err
+			// Clean all the files under the shadowPath, cause UNFREEZE unavailable
+			if version < 21004000 {
+				if err := os.RemoveAll(shadowPath); err != nil {
+					return disksToPartsMap, realSize, err
+				}
 			}
 		}
 	}
 	// Unfreeze to unlock data on S3 disks, https://github.com/AlexAkulov/clickhouse-backup/issues/423
-	if version, err := b.ch.GetVersion(ctx); err != nil {
-		return disksToPartsMap, realSize, err
-	} else if version > 21004000 {
+	if version > 21004000 {
 		if _, err := b.ch.QueryContext(ctx, fmt.Sprintf("ALTER TABLE `%s`.`%s` UNFREEZE WITH NAME '%s'", table.Database, table.Name, shadowBackupUUID)); err != nil {
 			return disksToPartsMap, realSize, err
 		}
