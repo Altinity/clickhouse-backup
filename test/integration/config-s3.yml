@@ -19,6 +19,7 @@ clickhouse:
   sync_replicated_tables: true
   timeout: 1s
   restart_command: bash -c 'echo "FAKE RESTART"'
+  backup_mutations: true
 s3:
   access_key: access-key
   secret_key: it-is-my-super-secret-key

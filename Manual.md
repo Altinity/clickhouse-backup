@@ -18,7 +18,7 @@ NAME:
    clickhouse-backup create - Create new backup
 
 USAGE:
-   clickhouse-backup create [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--rbac] [--configs] <backup_name>
+   clickhouse-backup create [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--rbac] [--configs] [--skip-check-parts-columns] <backup_name>
 
 DESCRIPTION:
    Create new backup
@@ -35,6 +35,7 @@ look to system.parts partition and partition_id fields for details https://click
    --schema, -s                                      Backup schemas only
    --rbac, --backup-rbac, --do-backup-rbac           Backup RBAC related objects only
    --configs, --backup-configs, --do-backup-configs  Backup 'clickhouse-server' configuration files only
+   --skip-check-parts-columns                        skip check system.parts_columns to disallow backup inconsistent column types for data parts
    
 ```
 ### CLI command - create_remote
@@ -43,7 +44,7 @@ NAME:
    clickhouse-backup create_remote - Create and upload new backup
 
 USAGE:
-   clickhouse-backup create_remote [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--diff-from=<local_backup_name>] [--diff-from-remote=<local_backup_name>] [--schema] [--rbac] [--configs] [--resumable] <backup_name>
+   clickhouse-backup create_remote [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--diff-from=<local_backup_name>] [--diff-from-remote=<local_backup_name>] [--schema] [--rbac] [--configs] [--resumable] [--skip-check-parts-columns] <backup_name>
 
 DESCRIPTION:
    Create and upload
@@ -63,6 +64,7 @@ look to system.parts partition and partition_id fields for details https://click
    --rbac, --backup-rbac, --do-backup-rbac           Backup and upload RBAC related objects only
    --configs, --backup-configs, --do-backup-configs  Backup 'clickhouse-server' configuration files only
    --resume, --resumable                             Save intermediate upload state and resume upload if backup exists on remote storage, ignore when 'remote_storage: custom' or 'use_embedded_backup_restore: true'
+   --skip-check-parts-columns                        skip check system.parts_columns to disallow backup inconsistent column types for data parts
    
 ```
 ### CLI command - upload
@@ -240,7 +242,7 @@ NAME:
    clickhouse-backup watch - Run infinite loop which create full + incremental backup sequence to allow efficient backup sequences
 
 USAGE:
-   clickhouse-backup watch [--watch-interval=1h] [--full-interval=24h] [--watch-backup-name-template=shard{shard}-{type}-{time:20060102150405}] [-t, --tables=<db>.<table>] [--partitions=<partitions_names>] [--schema] [--rbac] [--configs]
+   clickhouse-backup watch [--watch-interval=1h] [--full-interval=24h] [--watch-backup-name-template=shard{shard}-{type}-{time:20060102150405}] [-t, --tables=<db>.<table>] [--partitions=<partitions_names>] [--schema] [--rbac] [--configs] [--skip-check-parts-columns]
 
 DESCRIPTION:
    Execute create_remote + delete local, create full backup every `--full-interval`, create and upload incremental backup every `--watch-interval` use previous backup as base with `--diff-from-remote` option, use `backups_to_keep_remote` config option for properly deletion remote backups, will delete old backups which not have references from other backups
@@ -260,6 +262,7 @@ look to system.parts partition and partition_id fields for details https://click
    --schema, -s                                      Schemas only
    --rbac, --backup-rbac, --do-backup-rbac           Backup RBAC related objects only
    --configs, --backup-configs, --do-backup-configs  Backup `clickhouse-server' configuration files only
+   --skip-check-parts-columns                        skip check system.parts_columns to disallow backup inconsistent column types for data parts
    
 ```
 ### CLI command - server

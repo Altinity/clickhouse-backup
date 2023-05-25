@@ -85,6 +85,7 @@ services:
       FTP_DEBUG: "${FTP_DEBUG:-false}"
       SFTP_DEBUG: "${SFTP_DEBUG:-false}"
       CLICKHOUSE_DEBUG: "${CLICKHOUSE_DEBUG:-false}"
+      GOCOVERDIR: "/tmp/_coverage_/"
 #      STORAGE_EMULATOR_HOST: "http://gsc:8080"
 #      GOOGLE_API_USE_CLIENT_CERTIFICATE: "false"
     volumes:
@@ -96,6 +97,7 @@ services:
       - ./dhparam.pem:/etc/clickhouse-server/dhparam.pem
       - ./ssl.xml:/etc/clickhouse-server/config.d/ssl.xml
       - ./cluster.xml:/etc/clickhouse-server/config.d/cluster.xml
+      - ./_coverage_/:/tmp/_coverage_/
 # uncomment only when you need clickhouse logs
 #      - ./clickhouse-server.log:/var/log/clickhouse-server/clickhouse-server.log
 #      - ./clickhouse-server.err.log:/var/log/clickhouse-server/clickhouse-server.err.log

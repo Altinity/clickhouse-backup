@@ -75,7 +75,7 @@ func NewBackupName() string {
 
 // CreateBackup - create new backup of all tables matched by tablePattern
 // If backupName is empty string will use default backup name
-func (b *Backuper) CreateBackup(backupName, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly bool, version string, commandId int) error {
+func (b *Backuper) CreateBackup(backupName, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, skipCheckPartsColumns bool, version string, commandId int) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return err
@@ -97,6 +97,10 @@ func (b *Backuper) CreateBackup(backupName, tablePattern string, partitions []st
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
 	defer b.ch.Close()
+
+	if skipCheckPartsColumns && b.cfg.ClickHouse.CheckPartsColumns {
+		b.cfg.ClickHouse.CheckPartsColumns = false
+	}
 
 	allDatabases, err := b.ch.GetDatabases(ctx, b.cfg, tablePattern)
 	if err != nil {
@@ -205,7 +209,21 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 					backupDataSize += uint64(size)
 				}
 			}
+			// https://github.com/AlexAkulov/clickhouse-backup/issues/529
+			log.Debug("get in progress mutations list")
+			inProgressMutations := make([]metadata.MutationMetadata, 0)
+			if b.cfg.ClickHouse.BackupMutations {
+				inProgressMutations, err = b.ch.GetInProgressMutations(ctx, table.Database, table.Name)
+				if err != nil {
+					log.Error(err.Error())
+					if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks); removeBackupErr != nil {
+						log.Error(removeBackupErr.Error())
+					}
+					return err
+				}
+			}
 			log.Debug("create metadata")
+
 			metadataSize, err := b.createTableMetadata(path.Join(backupPath, "metadata"), metadata.TableMetadata{
 				Table:        table.Name,
 				Database:     table.Database,
@@ -213,6 +231,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 				TotalBytes:   table.TotalBytes,
 				Size:         realSize,
 				Parts:        disksToPartsMap,
+				Mutations:    inProgressMutations,
 				MetadataOnly: schemaOnly,
 			}, disks)
 			if err != nil {
@@ -463,15 +482,25 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 		return nil, nil, fmt.Errorf("backupName is not defined")
 	}
 
-	// backup data
 	if !strings.HasSuffix(table.Engine, "MergeTree") && table.Engine != "MaterializedMySQL" && table.Engine != "MaterializedPostgreSQL" {
-		log.WithField("engine", table.Engine).Debug("skip table backup")
+		log.WithField("engine", table.Engine).Warnf("supports only schema backup")
 		return nil, nil, nil
 	}
+	//
+	if b.cfg.ClickHouse.CheckPartsColumns {
+		if err := b.ch.CheckSystemPartsColumns(ctx, table); err != nil {
+			return nil, nil, err
+		}
+	}
+	// backup data
 	if err := b.ch.FreezeTable(ctx, table, shadowBackupUUID); err != nil {
 		return nil, nil, err
 	}
 	log.Debug("frozen")
+	version, err := b.ch.GetVersion(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
 	realSize := map[string]int64{}
 	disksToPartsMap := map[string][]metadata.Part{}
 	for _, disk := range diskList {
@@ -497,11 +526,18 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 			realSize[disk.Name] = size
 			disksToPartsMap[disk.Name] = parts
 			log.WithField("disk", disk.Name).Debug("shadow moved")
-
-			// Clean all the files under the shadowPath.
-			if err := os.RemoveAll(shadowPath); err != nil {
-				return disksToPartsMap, realSize, err
+			// Clean all the files under the shadowPath, cause UNFREEZE unavailable
+			if version < 21004000 {
+				if err := os.RemoveAll(shadowPath); err != nil {
+					return disksToPartsMap, realSize, err
+				}
 			}
+		}
+	}
+	// Unfreeze to unlock data on S3 disks, https://github.com/AlexAkulov/clickhouse-backup/issues/423
+	if version > 21004000 {
+		if _, err := b.ch.QueryContext(ctx, fmt.Sprintf("ALTER TABLE `%s`.`%s` UNFREEZE WITH NAME '%s'", table.Database, table.Name, shadowBackupUUID)); err != nil {
+			return disksToPartsMap, realSize, err
 		}
 	}
 	log.Debug("done")

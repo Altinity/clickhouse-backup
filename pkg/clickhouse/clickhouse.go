@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
 	"net/url"
 	"os"
 	"path"
@@ -27,12 +28,13 @@ import (
 
 // ClickHouse - provide
 type ClickHouse struct {
-	Config  *config.ClickHouseConfig
-	Log     *apexLog.Entry
-	conn    *sqlx.DB
-	disks   []Disk
-	version int
-	IsOpen  bool
+	Config               *config.ClickHouseConfig
+	Log                  *apexLog.Entry
+	conn                 *sqlx.DB
+	disks                []Disk
+	version              int
+	isPartsColumnPresent int8
+	IsOpen               bool
 }
 
 // Connect - establish connection to ClickHouse
@@ -203,19 +205,12 @@ func (ch *ClickHouse) getDisksFromSystemSettings(ctx context.Context) ([]Disk, e
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
-		var result []struct {
-			MetadataPath string `db:"metadata_path"`
-		}
-		query := "SELECT metadata_path FROM system.tables WHERE database = 'system' AND metadata_path!='' LIMIT 1;"
-		if err := ch.SelectContext(ctx, &result, query); err != nil {
+		metadataPath, err := ch.getMetadataPath(ctx)
+		if err != nil {
 			return nil, err
 		}
-		if len(result) == 0 {
-			return nil, fmt.Errorf("can't get metadata_path from system.tables")
-		}
-		metadataPath := result[0].MetadataPath
 		dataPathArray := strings.Split(metadataPath, "/")
-		clickhouseData := path.Join(dataPathArray[:len(dataPathArray)-3]...)
+		clickhouseData := path.Join(dataPathArray[:len(dataPathArray)-1]...)
 		return []Disk{{
 			Name: "default",
 			Path: path.Join("/", clickhouseData),
@@ -224,14 +219,43 @@ func (ch *ClickHouse) getDisksFromSystemSettings(ctx context.Context) ([]Disk, e
 	}
 }
 
+func (ch *ClickHouse) getMetadataPath(ctx context.Context) (string, error) {
+	var result []struct {
+		MetadataPath string `db:"metadata_path"`
+	}
+	query := "SELECT metadata_path FROM system.tables WHERE database = 'system' AND metadata_path!='' LIMIT 1;"
+	if err := ch.SelectContext(ctx, &result, query); err != nil {
+		return "", err
+	}
+	if len(result) == 0 {
+		return "", fmt.Errorf("can't get metadata_path from system.tables")
+	}
+	metadataPath := strings.Split(result[0].MetadataPath, "/")
+	if strings.Contains(result[0].MetadataPath, "/store/") {
+		result[0].MetadataPath = path.Join(metadataPath[:len(metadataPath)-4]...)
+		result[0].MetadataPath = path.Join(result[0].MetadataPath, "metadata")
+	} else {
+		result[0].MetadataPath = path.Join(metadataPath[:len(metadataPath)-2]...)
+	}
+	return path.Join("/", result[0].MetadataPath), nil
+}
+
 func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
 		var result []Disk
-		query := "SELECT * FROM system.disks;"
-		err := ch.StructSelect(&result, query)
+		isDiskTypePresent := make([]int, 0)
+		if err := ch.SelectContext(ctx, &isDiskTypePresent, "SELECT count() FROM system.columns WHERE database='system' AND table='disks' AND name='type'"); err != nil {
+			return result, err
+		}
+		diskTypeSQL := "'local'"
+		if len(isDiskTypePresent) > 0 && isDiskTypePresent[0] > 0 {
+			diskTypeSQL = "any(type)"
+		}
+		query := fmt.Sprintf("SELECT path, any(name) AS name, %s AS type FROM system.disks GROUP BY path", diskTypeSQL)
+		err := ch.StructSelectContext(ctx, &result, query)
 		return result, err
 	}
 }
@@ -255,8 +279,11 @@ func (ch *ClickHouse) Close() {
 func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Table, error) {
 	var err error
 	tables := make([]Table, 0)
-	isUUIDPresent := make([]int, 0)
-	if err = ch.SelectContext(ctx, &isUUIDPresent, "SELECT count() FROM system.settings WHERE name = 'show_table_uuid_in_table_create_query_if_not_nil'"); err != nil {
+	settings := map[string]bool{
+		"show_table_uuid_in_table_create_query_if_not_nil": false,
+		"display_secrets_in_show_and_select":               false,
+	}
+	if settings, err = ch.CheckSettingsExists(ctx, settings); err != nil {
 		return nil, err
 	}
 	skipDatabases := make([]string, 0)
@@ -264,11 +291,15 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 	if err = ch.SelectContext(ctx, &skipDatabases, "SELECT name FROM system.databases WHERE engine IN ('MySQL','PostgreSQL','MaterializedPostgreSQL')"); err != nil {
 		return nil, err
 	}
-	allTablesSQL, err := ch.prepareAllTablesSQL(ctx, tablePattern, err, skipDatabases, isUUIDPresent)
+	allTablesSQL, err := ch.prepareAllTablesSQL(ctx, tablePattern, err, skipDatabases, settings)
 	if err != nil {
 		return nil, err
 	}
 	if err = ch.StructSelectContext(ctx, &tables, allTablesSQL); err != nil {
+		return nil, err
+	}
+	metadataPath, err := ch.getMetadataPath(ctx)
+	if err != nil {
 		return nil, err
 	}
 	for i, t := range tables {
@@ -285,7 +316,7 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 			tables[i] = t
 			continue
 		}
-		tables[i] = ch.fixVariousVersions(t)
+		tables[i] = ch.fixVariousVersions(t, metadataPath)
 	}
 	if len(tables) == 0 {
 		return tables, nil
@@ -303,7 +334,7 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 	return tables, nil
 }
 
-func (ch *ClickHouse) prepareAllTablesSQL(ctx context.Context, tablePattern string, err error, skipDatabases []string, isUUIDPresent []int) (string, error) {
+func (ch *ClickHouse) prepareAllTablesSQL(ctx context.Context, tablePattern string, err error, skipDatabases []string, settings map[string]bool) (string, error) {
 	isSystemTablesFieldPresent := make([]IsSystemTablesFieldPresent, 0)
 	isFieldPresentSQL := `
 		SELECT 
@@ -347,10 +378,31 @@ func (ch *ClickHouse) prepareAllTablesSQL(ctx context.Context, tablePattern stri
 	if len(isSystemTablesFieldPresent) > 0 && isSystemTablesFieldPresent[0].IsTotalBytesPresent > 0 {
 		allTablesSQL += " ORDER BY total_bytes DESC"
 	}
-	if len(isUUIDPresent) > 0 && isUUIDPresent[0] > 0 {
-		allTablesSQL += " SETTINGS show_table_uuid_in_table_create_query_if_not_nil=1"
-	}
+	allTablesSQL = ch.addSettingsSQL(allTablesSQL, settings)
 	return allTablesSQL, nil
+}
+
+func (ch *ClickHouse) addSettingsSQL(inputSQL string, settings map[string]bool) string {
+	maxI := 0
+	for _, v := range settings {
+		if v {
+			maxI += 1
+		}
+	}
+	i := 0
+	for k, v := range settings {
+		if v {
+			if i == 0 {
+				inputSQL += " SETTINGS "
+			}
+			inputSQL += k + "=1"
+			if i < maxI-1 {
+				inputSQL += ", "
+			}
+			i++
+		}
+	}
+	return inputSQL
 }
 
 // GetDatabases - return slice of all non system databases for backup
@@ -372,6 +424,10 @@ func (ch *ClickHouse) GetDatabases(ctx context.Context, cfg *config.Config, tabl
 		if strings.HasSuffix(pattern, ".*") {
 			bypassDatabases = append(bypassDatabases, strings.TrimSuffix(pattern, ".*"))
 		}
+	}
+	metadataPath, err := ch.getMetadataPath(ctx)
+	if err != nil {
+		return nil, err
 	}
 	select {
 	case <-ctx.Done():
@@ -401,6 +457,15 @@ func (ch *ClickHouse) GetDatabases(ctx context.Context, cfg *config.Config, tabl
 				ch.Log.Warnf("can't get create database query: %v", err)
 				allDatabases[i].Query = fmt.Sprintf("CREATE DATABASE `%s` ENGINE = %s", db.Name, db.Engine)
 			} else {
+				// 23.3+ masked secrets https://github.com/AlexAkulov/clickhouse-backup/issues/640
+				if strings.Contains(result[0], "'[HIDDEN]'") {
+					if attachSQL, err := os.ReadFile(path.Join(metadataPath, common.TablePathEncode(db.Name)+".sql")); err != nil {
+						return nil, err
+					} else {
+						result[0] = strings.Replace(string(attachSQL), "ATTACH", "CREATE", 1)
+						result[0] = strings.Replace(result[0], " _ ", " `"+db.Name+"` ", 1)
+					}
+				}
 				allDatabases[i].Query = result[0]
 			}
 		}
@@ -422,7 +487,7 @@ func (ch *ClickHouse) getTableSizeFromParts(ctx context.Context, table Table) ui
 	return 0
 }
 
-func (ch *ClickHouse) fixVariousVersions(t Table) Table {
+func (ch *ClickHouse) fixVariousVersions(t Table, metadataPath string) Table {
 	// versions before 19.15 contain data_path in a different column
 	if t.DataPath != "" {
 		t.DataPaths = []string{t.DataPath}
@@ -440,6 +505,16 @@ func (ch *ClickHouse) fixVariousVersions(t Table) Table {
 		t.CreateTableQuery = strings.Replace(
 			t.CreateTableQuery, "CREATE MATERIALIZED VIEW", "ATTACH MATERIALIZED VIEW", 1,
 		)
+	}
+	// 23.3+ masked secrets https://github.com/AlexAkulov/clickhouse-backup/issues/640
+	if strings.Contains(t.CreateTableQuery, "'[HIDDEN]'") {
+		tableSQLPath := path.Join(metadataPath, common.TablePathEncode(t.Database), common.TablePathEncode(t.Name)+".sql")
+		if attachSQL, err := os.ReadFile(tableSQLPath); err != nil {
+			ch.Log.Warnf("can't read %s: %v", tableSQLPath, err)
+		} else {
+			t.CreateTableQuery = strings.Replace(string(attachSQL), "ATTACH", "CREATE", 1)
+			t.CreateTableQuery = strings.Replace(t.CreateTableQuery, " _ ", " `"+t.Database+"`.`"+t.Name+"` ", 1)
+		}
 	}
 	return t
 }
@@ -552,38 +627,85 @@ func (ch *ClickHouse) FreezeTable(ctx context.Context, table *Table, name string
 	return nil
 }
 
-// AttachPartitions - execute ATTACH command for specific table
-func (ch *ClickHouse) AttachPartitions(table metadata.TableMetadata, disks []Disk) error {
-	// https://github.com/AlexAkulov/clickhouse-backup/issues/474
-	if ch.Config.CheckReplicasBeforeAttach && strings.Contains(table.Query, "Replicated") {
-		existsReplicas := make([]int, 0)
-		if err := ch.Select(&existsReplicas, "SELECT sum(log_pointer + log_max_index + absolute_delay + queue_size)  AS replication_in_progress FROM system.replicas WHERE database=? and table=? SETTINGS empty_result_for_aggregation_by_empty_set=0", table.Database, table.Table); err != nil {
-			return err
-		}
-		if len(existsReplicas) != 1 {
-			return fmt.Errorf("invalid result for check exists replicas: %+v", existsReplicas)
-		}
-		if existsReplicas[0] > 0 {
-			ch.Log.Warnf("%s.%s skipped cause system.replicas entry already exists and replication in progress from another replica", table.Database, table.Table)
-			return nil
-		} else {
-			ch.Log.Infof("replication_in_progress status = %+v", existsReplicas)
-		}
+// AttachDataParts - execute ALTER TABLE ... ATTACH PART command for specific table
+func (ch *ClickHouse) AttachDataParts(table metadata.TableMetadata, disks []Disk) error {
+	canContinue, err := ch.CheckReplicationInProgress(table)
+	if err != nil {
+		return err
+	}
+	if !canContinue {
+		return nil
 	}
 	for _, disk := range disks {
-		for _, partition := range table.Parts[disk.Name] {
-			if !strings.HasSuffix(partition.Name, ".proj") {
-				query := fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PART '%s'", table.Database, table.Table, partition.Name)
+		for _, part := range table.Parts[disk.Name] {
+			if !strings.HasSuffix(part.Name, ".proj") {
+				query := fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PART '%s'", table.Database, table.Table, part.Name)
 				if _, err := ch.Query(query); err != nil {
 					return err
 				}
-				ch.Log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).WithField("disk", disk.Name).WithField("part", partition.Name).Debug("attached")
+				ch.Log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).WithField("disk", disk.Name).WithField("part", part.Name).Debug("attached")
 			}
 		}
 	}
 	return nil
 }
 
+var replicatedMergeTreeRE = regexp.MustCompile(`Replicated[\w_]*MergeTree\s*\(((\s*'[^']+'\s*),(\s*'[^']+')(\s*,\s*|.*?)([^)]*)|)\)`)
+var uuidRE = regexp.MustCompile(`UUID '([^']+)'`)
+
+// AttachTable - execute ATTACH TABLE  command for specific table
+func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetadata) error {
+	if len(table.Parts) == 0 {
+		apexLog.Warnf("no data parts for restore for `%s`.`%s`", table.Database, table.Table)
+		return nil
+	}
+	canContinue, err := ch.CheckReplicationInProgress(table)
+	if err != nil {
+		return err
+	}
+	if !canContinue {
+		return nil
+	}
+
+	query := fmt.Sprintf("DETACH TABLE `%s`.`%s`", table.Database, table.Table)
+	if _, err := ch.Query(query); err != nil {
+		return err
+	}
+	if matches := replicatedMergeTreeRE.FindStringSubmatch(table.Query); len(matches) > 0 {
+		zkPath := strings.Trim(matches[2], "' \r\n\t")
+		replicaName := strings.Trim(matches[3], "' \r\n\t")
+		if strings.Contains(zkPath, "{uuid}") {
+			if uuidMatches := uuidRE.FindStringSubmatch(table.Query); len(uuidMatches) > 0 {
+				zkPath = strings.Replace(zkPath, "{uuid}", uuidMatches[1], 1)
+			}
+		}
+		zkPath = strings.NewReplacer("{database}", table.Database, "{table}", table.Table).Replace(zkPath)
+		zkPath, err = ch.ApplyMacros(ctx, zkPath)
+		if err != nil {
+			return err
+		}
+		replicaName, err = ch.ApplyMacros(ctx, replicaName)
+		if err != nil {
+			return err
+		}
+		query = fmt.Sprintf("SYSTEM DROP REPLICA '%s' FROM ZKPATH '%s'", replicaName, zkPath)
+		if _, err := ch.Query(query); err != nil {
+			return err
+		}
+	}
+	query = fmt.Sprintf("ATTACH TABLE `%s`.`%s`", table.Database, table.Table)
+	if _, err := ch.Query(query); err != nil {
+		return err
+	}
+
+	query = fmt.Sprintf("SYSTEM RESTORE REPLICA `%s`.`%s`", table.Database, table.Table)
+	if _, err := ch.Query(query); err != nil {
+		return err
+	}
+
+	ch.Log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).Debug("attached")
+	return nil
+}
 func (ch *ClickHouse) ShowCreateTable(database, name string) string {
 	var result []struct {
 		Statement string `db:"statement"`
@@ -715,7 +837,7 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 	if onCluster != "" && distributedRE.MatchString(query) {
 		matches := distributedRE.FindAllStringSubmatch(query, -1)
 		if onCluster != strings.Trim(matches[0][2], "'\" ") {
-			apexLog.Warnf("Will replace distributed ")
+			apexLog.Warnf("Will replace cluster ENGINE=Distributed %s -> %s", matches[0][2], onCluster)
 			query = distributedRE.ReplaceAllString(query, fmt.Sprintf("${1}(%s,${3})", onCluster))
 		}
 	}
@@ -756,12 +878,12 @@ func (ch *ClickHouse) IsClickhouseShadow(path string) bool {
 	return true
 }
 
-func (ch *ClickHouse) StructSelectContext(ctx context.Context, dest interface{}, query string) error {
+func (ch *ClickHouse) StructSelectContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
-		rows, err := ch.QueryxContext(ctx, query)
+		rows, err := ch.QueryxContext(ctx, query, args...)
 		if err != nil {
 			return err
 		}
@@ -961,6 +1083,15 @@ func (ch *ClickHouse) CalculateMaxFileSize(ctx context.Context, cfg *config.Conf
 	return 0, nil
 }
 
+func (ch *ClickHouse) GetInProgressMutations(ctx context.Context, database string, table string) ([]metadata.MutationMetadata, error) {
+	inProgressMutations := make([]metadata.MutationMetadata, 0)
+	getInProgressMutationsQuery := "SELECT mutation_id, command FROM system.mutations WHERE is_done=0 AND database=? AND table=?"
+	if err := ch.SelectContext(ctx, &inProgressMutations, getInProgressMutationsQuery, database, table); err != nil {
+		return nil, fmt.Errorf("can't get in progress mutations: %v", err)
+	}
+	return inProgressMutations, nil
+}
+
 func (ch *ClickHouse) ApplyMacros(ctx context.Context, s string) (string, error) {
 	macrosExists := make([]int, 0)
 	err := ch.SelectContext(ctx, &macrosExists, "SELECT count() AS is_macros_exists FROM system.tables WHERE database='system' AND name='macros'")
@@ -980,4 +1111,90 @@ func (ch *ClickHouse) ApplyMacros(ctx context.Context, s string) (string, error)
 	}
 	s = strings.NewReplacer(replaces...).Replace(s)
 	return s, nil
+}
+
+func (ch *ClickHouse) ApplyMutation(ctx context.Context, tableMetadata metadata.TableMetadata, mutation metadata.MutationMetadata) error {
+	applyMutatoinSQL := fmt.Sprintf("ALTER TABLE `%s`.`%s` %s", tableMetadata.Database, tableMetadata.Table, mutation.Command)
+	if _, err := ch.QueryContext(ctx, applyMutatoinSQL); err != nil {
+		return err
+	}
+	return nil
+}
+
+// https://github.com/AlexAkulov/clickhouse-backup/issues/474
+func (ch *ClickHouse) CheckReplicationInProgress(table metadata.TableMetadata) (bool, error) {
+	if ch.Config.CheckReplicasBeforeAttach && strings.Contains(table.Query, "Replicated") {
+		existsReplicas := make([]int, 0)
+		if err := ch.Select(&existsReplicas, "SELECT sum(log_pointer + log_max_index + absolute_delay + queue_size)  AS replication_in_progress FROM system.replicas WHERE database=? and table=? SETTINGS empty_result_for_aggregation_by_empty_set=0", table.Database, table.Table); err != nil {
+			return false, err
+		}
+		if len(existsReplicas) != 1 {
+			return false, fmt.Errorf("invalid result for check exists replicas: %+v", existsReplicas)
+		}
+		if existsReplicas[0] > 0 {
+			ch.Log.Warnf("%s.%s skipped cause system.replicas entry already exists and replication in progress from another replica", table.Database, table.Table)
+			return false, nil
+		} else {
+			ch.Log.Infof("replication_in_progress status = %+v", existsReplicas)
+		}
+	}
+	return true, nil
+}
+
+// https://github.com/AlexAkulov/clickhouse-backup/issues/529#issuecomment-1554460504
+func (ch *ClickHouse) CheckSystemPartsColumns(ctx context.Context, table *Table) error {
+	if ch.isPartsColumnPresent == -1 {
+		return nil
+	}
+	if ch.isPartsColumnPresent == 0 {
+		isPartsColumnPresent := make([]uint64, 0)
+		if err := ch.SelectContext(ctx, &isPartsColumnPresent, "SELECT count() FROM system.tables WHERE database='system' AND name='parts_columns'"); err != nil {
+			return err
+		}
+		if len(isPartsColumnPresent) != 1 || isPartsColumnPresent[0] != 1 {
+			ch.isPartsColumnPresent = -1
+			return nil
+		}
+	}
+	ch.isPartsColumnPresent = 1
+	isPartsColumnsInconsistent := make([]struct {
+		Column string   `db:"column"`
+		Types  []string `db:"uniq_types"`
+	}, 0)
+	partsColumnsSQL := "SELECT column, groupUniqArray(type) AS uniq_types " +
+		"FROM system.parts_columns " +
+		"WHERE active AND database=? AND table=? " +
+		"GROUP BY column HAVING length(uniq_types) > 1"
+	if err := ch.StructSelectContext(ctx, &isPartsColumnsInconsistent, partsColumnsSQL, table.Database, table.Name); err != nil {
+		return err
+	}
+	if len(isPartsColumnsInconsistent) > 0 {
+		for i := range isPartsColumnsInconsistent {
+			ch.Log.Errorf("`%s`.`%s` have inconsistent data types %#v for \"%s\" column", table.Database, table.Name, isPartsColumnsInconsistent[i].Types, isPartsColumnsInconsistent[i].Column)
+		}
+		return fmt.Errorf("`%s`.`%s` have inconsistent data types for active data part in system.parts_columns", table.Database, table.Name)
+	}
+	return nil
+}
+
+func (ch *ClickHouse) CheckSettingsExists(ctx context.Context, settings map[string]bool) (map[string]bool, error) {
+	isSettingsPresent := make([]*struct {
+		Name      string `db:"name"`
+		IsPresent int    `db:"is_present"`
+	}, 0)
+	queryStr := "SELECT name, count(*) as is_present FROM system.settings WHERE name IN ("
+	args := make([]interface{}, 0, len(settings))
+	for k := range settings {
+		queryStr += "?, "
+		args = append(args, k)
+	}
+	queryStr = queryStr[:len(queryStr)-2]
+	queryStr += ") GROUP BY name"
+	if err := ch.SelectContext(ctx, &isSettingsPresent, queryStr, args...); err != nil {
+		return nil, err
+	}
+	for _, item := range isSettingsPresent {
+		settings[item.Name] = item.IsPresent > 0
+	}
+	return settings, nil
 }

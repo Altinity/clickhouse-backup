@@ -49,6 +49,13 @@ jobs:
         run: |
           make build-race build/linux/amd64/clickhouse-backup build/linux/arm64/clickhouse-backup config test
 
+      - name: Report unittest coverage
+        uses: coverallsapp/github-action@v2
+        with:
+          file: _coverage_/coverage.out
+          parallel: true
+          format: golang
+          flag-name: unittest-${{ matrix.clickhouse }}
 
       # be careful with encrypt with old OpenSSL - https://habr.com/ru/post/535140/
       # openssl enc -base64 -aes-256-cbc -e -in test/integration/credentials.json -out test/integration/credentials.json.enc -md md5 -k ${VAULT_PASSWORD}
@@ -102,6 +109,7 @@ jobs:
         clickhouse:
           - '22.3'
           - '22.8'
+          - '23.3'
     steps:
       - name: Checkout project
         uses: actions/checkout@v3
@@ -140,6 +148,8 @@ jobs:
           QA_AWS_REGION: ${{ secrets.QA_AWS_REGION }}
           QA_AWS_BUCKET: ${{ secrets.QA_AWS_BUCKET }}
           QA_GCS_CRED_JSON: ${{ secrets.QA_GCS_CRED_JSON }}
+          # don't change it to avoid not working CI/CD
+          RUN_TESTS: "*"
         run: |
           set -x
           export CLICKHOUSE_TESTS_DIR=$(pwd)/test/testflows/clickhouse_backup
@@ -150,7 +160,7 @@ jobs:
           chmod +x $(pwd)/clickhouse-backup/clickhouse-backup*
           source ~/venv/qa/bin/activate
           set +e
-          ~/venv/qa/bin/python3 ./test/testflows/clickhouse_backup/regression.py --debug --log ./test/testflows/raw.log 
+          ~/venv/qa/bin/python3 ./test/testflows/clickhouse_backup/regression.py --debug --only="${RUN_TESTS:-*}" --log ./test/testflows/raw.log 
           if [[ "0" != "$?" ]]; then
             docker-compose -f ${CLICKHOUSE_TESTS_DIR}/docker-compose/docker-compose.yml logs clickhouse_backup
             exit 1
@@ -161,6 +171,18 @@ jobs:
           tfs --debug --no-colors transform short ./test/testflows/raw.log ./test/testflows/short.log.txt
           tfs --debug --no-colors report results -a "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/" ./test/testflows/raw.log - --confidential --copyright "Altinity LTD" --logo ./test/testflows/altinity.png | ~/venv/qa/bin/tfs --debug --no-colors document convert > ./test/testflows/report.html
           sudo chmod -Rv +rx test/testflows/clickhouse_backup/_instances
+      - name: Format testflows coverage
+        run: |
+          sudo chmod -Rv a+rw test/testflows/_coverage_/
+          ls -la test/testflows/_coverage_ 
+          go tool covdata textfmt -i test/testflows/_coverage_/ -o test/testflows/_coverage_/coverage.out
+      - name: Report testflows coverage
+        uses: coverallsapp/github-action@v2
+        with:
+          file: test/testflows/_coverage_/coverage.out
+          parallel: true
+          format: golang
+          flag-name: testflows-${{ matrix.clickhouse }}
 # todo wait when resolve https://github.com/actions/upload-artifact/issues/270 and uncomment
 #      - name: Upload testflows logs
 #        uses: actions/upload-artifact@v3
@@ -190,6 +212,7 @@ jobs:
           - '21.8'
           - '22.3'
           - '22.8'
+          - '23.3'
     steps:
       - name: Checkout project
         uses: actions/checkout@v3
@@ -257,7 +280,29 @@ jobs:
           docker-compose -f test/integration/${COMPOSE_FILE} up -d || ( docker-compose -f test/integration/${COMPOSE_FILE} ps -a && docker-compose -f test/integration/${COMPOSE_FILE} logs clickhouse && exit 1 ) 
           docker-compose -f test/integration/${COMPOSE_FILE} ps -a
           go test -timeout 30m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
-
+      - name: Format integration coverage
+        run: |
+          sudo chmod -Rv a+rw test/integration/_coverage_/
+          ls -la test/integration/_coverage_ 
+          go tool covdata textfmt -i test/integration/_coverage_/ -o test/integration/_coverage_/coverage.out
+      - name: Report integration coverage
+        uses: coverallsapp/github-action@v2
+        with:
+          file: test/integration/_coverage_/coverage.out
+          parallel: true
+          format: golang
+          flag-name: integration-${{ matrix.clickhouse }}
+  coverage:
+    needs:
+      - test
+      - testflows
+    name: coverage
+    runs-on: ubuntu-latest
+    steps:
+        - name: Coveralls Finished
+          uses: coverallsapp/github-action@v2
+          with:
+            parallel-finished: true
   docker:
     needs:
       - test
@@ -303,7 +348,9 @@ jobs:
 
   cleanup:
     name: Cleanup
-    needs: docker
+    needs:
+      - docker
+      - coverage
     runs-on: ubuntu-22.04
     if: always()
     steps:

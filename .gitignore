@@ -10,5 +10,6 @@ build/
 
 # TestFlows tests artifacts that shall not be stored in Git
 _instances/
+_coverage_/
 __pycache__/
 *.py[cod]

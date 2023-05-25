@@ -82,11 +82,11 @@ func main() {
 		{
 			Name:        "create",
 			Usage:       "Create new backup",
-			UsageText:   "clickhouse-backup create [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--rbac] [--configs] <backup_name>",
+			UsageText:   "clickhouse-backup create [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--rbac] [--configs] [--skip-check-parts-columns] <backup_name>",
 			Description: "Create new backup",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CreateBackup(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("configs"), version, c.Int("command-id"))
+				return b.CreateBackup(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("configs"), c.Bool("skip-check-parts-columns"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -119,16 +119,21 @@ func main() {
 					Hidden: false,
 					Usage:  "Backup 'clickhouse-server' configuration files only",
 				},
+				cli.BoolFlag{
+					Name:   "skip-check-parts-columns",
+					Hidden: false,
+					Usage:  "skip check system.parts_columns to disallow backup inconsistent column types for data parts",
+				},
 			),
 		},
 		{
 			Name:        "create_remote",
 			Usage:       "Create and upload new backup",
-			UsageText:   "clickhouse-backup create_remote [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--diff-from=<local_backup_name>] [--diff-from-remote=<local_backup_name>] [--schema] [--rbac] [--configs] [--resumable] <backup_name>",
+			UsageText:   "clickhouse-backup create_remote [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--diff-from=<local_backup_name>] [--diff-from-remote=<local_backup_name>] [--schema] [--rbac] [--configs] [--resumable] [--skip-check-parts-columns] <backup_name>",
 			Description: "Create and upload",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CreateToRemote(c.Args().First(), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("configs"), c.Bool("resume"), version, c.Int("command-id"))
+				return b.CreateToRemote(c.Args().First(), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("configs"), c.Bool("resume"), c.Bool("skip-check-parts-columns"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -175,6 +180,11 @@ func main() {
 					Name:   "resume, resumable",
 					Hidden: false,
 					Usage:  "Save intermediate upload state and resume upload if backup exists on remote storage, ignore when 'remote_storage: custom' or 'use_embedded_backup_restore: true'",
+				},
+				cli.BoolFlag{
+					Name:   "skip-check-parts-columns",
+					Hidden: false,
+					Usage:  "skip check system.parts_columns to disallow backup inconsistent column types for data parts",
 				},
 			),
 		},
@@ -453,11 +463,11 @@ func main() {
 		{
 			Name:        "watch",
 			Usage:       "Run infinite loop which create full + incremental backup sequence to allow efficient backup sequences",
-			UsageText:   "clickhouse-backup watch [--watch-interval=1h] [--full-interval=24h] [--watch-backup-name-template=shard{shard}-{type}-{time:20060102150405}] [-t, --tables=<db>.<table>] [--partitions=<partitions_names>] [--schema] [--rbac] [--configs]",
+			UsageText:   "clickhouse-backup watch [--watch-interval=1h] [--full-interval=24h] [--watch-backup-name-template=shard{shard}-{type}-{time:20060102150405}] [-t, --tables=<db>.<table>] [--partitions=<partitions_names>] [--schema] [--rbac] [--configs] [--skip-check-parts-columns]",
 			Description: "Execute create_remote + delete local, create full backup every `--full-interval`, create and upload incremental backup every `--watch-interval` use previous backup as base with `--diff-from-remote` option, use `backups_to_keep_remote` config option for properly deletion remote backups, will delete old backups which not have references from other backups",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Watch(c.String("watch-interval"), c.String("full-interval"), c.String("watch-backup-name-template"), c.String("tables"), c.StringSlice("partitions"), c.Bool("schema"), c.Bool("rbac"), c.Bool("configs"), version, c.Int("command-id"), nil, c)
+				return b.Watch(c.String("watch-interval"), c.String("full-interval"), c.String("watch-backup-name-template"), c.String("tables"), c.StringSlice("partitions"), c.Bool("schema"), c.Bool("rbac"), c.Bool("configs"), c.Bool("skip-check-parts-columns"), version, c.Int("command-id"), nil, c)
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -504,6 +514,11 @@ func main() {
 					Name:   "configs, backup-configs, do-backup-configs",
 					Hidden: false,
 					Usage:  "Backup `clickhouse-server' configuration files only",
+				},
+				cli.BoolFlag{
+					Name:   "skip-check-parts-columns",
+					Hidden: false,
+					Usage:  "skip check system.parts_columns to disallow backup inconsistent column types for data parts",
 				},
 			),
 		},

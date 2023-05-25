@@ -74,7 +74,7 @@ NAME:
    clickhouse-backup create - Create new backup
 
 USAGE:
-   clickhouse-backup create [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--rbac] [--configs] <backup_name>
+   clickhouse-backup create [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--rbac] [--configs] [--skip-check-parts-columns] <backup_name>
 
 DESCRIPTION:
    Create new backup
@@ -91,6 +91,7 @@ look to system.parts partition and partition_id fields for details https://click
    --schema, -s                                      Backup schemas only
    --rbac, --backup-rbac, --do-backup-rbac           Backup RBAC related objects only
    --configs, --backup-configs, --do-backup-configs  Backup 'clickhouse-server' configuration files only
+   --skip-check-parts-columns                        skip check system.parts_columns to disallow backup inconsistent column types for data parts
    
 ```
 ### CLI command - create_remote
@@ -99,7 +100,7 @@ NAME:
    clickhouse-backup create_remote - Create and upload new backup
 
 USAGE:
-   clickhouse-backup create_remote [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--diff-from=<local_backup_name>] [--diff-from-remote=<local_backup_name>] [--schema] [--rbac] [--configs] [--resumable] <backup_name>
+   clickhouse-backup create_remote [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--diff-from=<local_backup_name>] [--diff-from-remote=<local_backup_name>] [--schema] [--rbac] [--configs] [--resumable] [--skip-check-parts-columns] <backup_name>
 
 DESCRIPTION:
    Create and upload
@@ -119,6 +120,7 @@ look to system.parts partition and partition_id fields for details https://click
    --rbac, --backup-rbac, --do-backup-rbac           Backup and upload RBAC related objects only
    --configs, --backup-configs, --do-backup-configs  Backup 'clickhouse-server' configuration files only
    --resume, --resumable                             Save intermediate upload state and resume upload if backup exists on remote storage, ignore when 'remote_storage: custom' or 'use_embedded_backup_restore: true'
+   --skip-check-parts-columns                        skip check system.parts_columns to disallow backup inconsistent column types for data parts
    
 ```
 ### CLI command - upload
@@ -296,7 +298,7 @@ NAME:
    clickhouse-backup watch - Run infinite loop which create full + incremental backup sequence to allow efficient backup sequences
 
 USAGE:
-   clickhouse-backup watch [--watch-interval=1h] [--full-interval=24h] [--watch-backup-name-template=shard{shard}-{type}-{time:20060102150405}] [-t, --tables=<db>.<table>] [--partitions=<partitions_names>] [--schema] [--rbac] [--configs]
+   clickhouse-backup watch [--watch-interval=1h] [--full-interval=24h] [--watch-backup-name-template=shard{shard}-{type}-{time:20060102150405}] [-t, --tables=<db>.<table>] [--partitions=<partitions_names>] [--schema] [--rbac] [--configs] [--skip-check-parts-columns]
 
 DESCRIPTION:
    Execute create_remote + delete local, create full backup every `--full-interval`, create and upload incremental backup every `--watch-interval` use previous backup as base with `--diff-from-remote` option, use `backups_to_keep_remote` config option for properly deletion remote backups, will delete old backups which not have references from other backups
@@ -316,6 +318,7 @@ look to system.parts partition and partition_id fields for details https://click
    --schema, -s                                      Schemas only
    --rbac, --backup-rbac, --do-backup-rbac           Backup RBAC related objects only
    --configs, --backup-configs, --do-backup-configs  Backup `clickhouse-server' configuration files only
+   --skip-check-parts-columns                        skip check system.parts_columns to disallow backup inconsistent column types for data parts
    
 ```
 ### CLI command - server
@@ -347,6 +350,7 @@ general:
   max_file_size: 1073741824      # MAX_FILE_SIZE, 1G by default, useless when upload_by_part is true, use for split data parts files by archives
   disable_progress_bar: true     # DISABLE_PROGRESS_BAR, show progress bar during upload and download, makes sense only when `upload_concurrency` and `download_concurrency` is 1
   backups_to_keep_local: 0       # BACKUPS_TO_KEEP_LOCAL, how many latest local backup should be kept, 0 means all created backups will be stored on local disk
+                                 # -1 means backup will keep after `create` but will delete after `create_remote` command  
                                  # You shall run `clickhouse-backup delete local <backup_name>` command to remove temporary backup files from the local disk
   backups_to_keep_remote: 0      # BACKUPS_TO_KEEP_REMOTE, how many latest backup should be kept on remote storage, 0 means all uploaded backups will be stored on remote storage. 
                                  # If old backups are required for newer incremental backup then it won't be deleted. Be careful with long incremental backup sequences.
@@ -373,7 +377,7 @@ general:
 clickhouse:
   username: default                # CLICKHOUSE_USERNAME
   password: ""                     # CLICKHOUSE_PASSWORD
-  host: localhost                  # CLICKHOUSE_HOST, to backup data clickhouse-backup requires access to the same file system as clickhouse-server, to host could be address of other docker container on the same machine, or IP address binded on some network interface on the same host. 
+  host: localhost                  # CLICKHOUSE_HOST, To make backup data `clickhouse-backup` requires access to the same file system as clickhouse-server, so `host` should localhost or address of another docker container on the same machine, or IP address bound to some network interface on the same host.
   port: 9000                       # CLICKHOUSE_PORT, don't use 8123, clickhouse-backup doesn't support HTTP protocol
   # CLICKHOUSE_DISK_MAPPING, use this mapping when your `system.disks` are different between the source and destination clusters during backup and restore process
   # The format for this env variable is "disk_name1:disk_path1,disk_name2:disk_path2". For YAML please continue using map syntax 
@@ -396,10 +400,12 @@ clickhouse:
   log_sql_queries: true        # CLICKHOUSE_LOG_SQL_QUERIES, enable logging `clickhouse-backup` SQL queries on `system.query_log` table inside clickhouse-server
   debug: false                 # CLICKHOUSE_DEBUG
   config_dir:      "/etc/clickhouse-server"              # CLICKHOUSE_CONFIG_DIR
-  restart_command: "systemctl restart clickhouse-server" # CLICKHOUSE_RESTART_COMMAND, use this command when restoring with --rbac or --config options
+  restart_command: "systemctl restart clickhouse-server" # CLICKHOUSE_RESTART_COMMAND, use this command when restoring with --rbac or --configs options
   ignore_not_exists_error_during_freeze: true # CLICKHOUSE_IGNORE_NOT_EXISTS_ERROR_DURING_FREEZE, helps to avoid backup failures when running frequent CREATE / DROP tables and databases during backup, `clickhouse-backup` will ignore `code: 60` and `code: 81` errors during execution of `ALTER TABLE ... FREEZE`
   check_replicas_before_attach: true # CLICKHOUSE_CHECK_REPLICAS_BEFORE_ATTACH, helps avoiding concurrent ATTACH PART execution when restoring ReplicatedMergeTree tables
   use_embedded_backup_restore: false # CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE, use BACKUP / RESTORE SQL statements instead of regular SQL queries to use features of modern ClickHouse server versions
+  backup_mutations: true # CLICKHOUSE_BACKUP_MUTATIONS, allow backup mutations from system.mutations WHERE is_done AND apply it during restore
+  restore_as_attach: false # CLICKHOUSE_RESTORE_AS_ATTACH, allow restore tables which have inconsistent data parts structure and mutations in progress
 azblob:
   endpoint_suffix: "core.windows.net" # AZBLOB_ENDPOINT_SUFFIX
   account_name: ""             # AZBLOB_ACCOUNT_NAME

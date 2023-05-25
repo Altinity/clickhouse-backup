@@ -1,6 +1,14 @@
 # v2.2.7
 IMPROVEMENTS
 - Auto-tuning concurrency and buffer size related parameters depending on remote storage type, fix [658](https://github.com/AlexAkulov/clickhouse-backup/issues/658)
+- add `CLICKHOUSE_BACKUP_MUTATIONS` and `CLICKHOUSE_RESTORE_AS_ATTACH` config options to allow backup and properly restore table with system.mutations is_done=0 status. fix [529](https://github.com/AlexAkulov/clickhouse-backup/issues/529)
+- add `CLICKHOUSE_CHECK_PARTS_COLUMNS` config option and `--skip-check-parts-column` CLI parameter to `watch`, `create` and `create_remote` commands to disallow backup with inconsistent column data types fix [529](https://github.com/AlexAkulov/clickhouse-backup/issues/529)
+- add test coverage reports for unit, testflows and integration tests, fix [644](https://github.com/AlexAkulov/clickhouse-backup/issues/644)
+- use UNFREEZE TABLE in ClickHouse after backup finished to allow s3 and other object storage disks unlock and delete remote keys during merge, fix [423](https://github.com/AlexAkulov/clickhouse-backup/issues/423)
+
+BUG FIXES
+- apply `SETTINGS check_table_dependencies=0` to `DROP DATABASE` statement, when pass `--ignore-dependencies` together with `--rm` in `restore` command, fix [651](https://github.com/AlexAkulov/clickhouse-backup/issues/651)
+- add support for masked secrets for ClickHouse 22.3+, fix [640](https://github.com/AlexAkulov/clickhouse-backup/issues/640)
 
 # v2.2.6
 BUG FIXES
