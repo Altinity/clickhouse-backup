@@ -1,3 +1,7 @@
+# v2.2.7
+IMPROVEMENTS
+- Auto-tuning concurrency and buffer size related parameters depending on remote storage type, fix [658](https://github.com/AlexAkulov/clickhouse-backup/issues/658)
+
 # v2.2.6
 BUG FIXES
 - fix panic for resume upload after restart API server for boolean parameters, fix [653](https://github.com/AlexAkulov/clickhouse-backup/issues/653)

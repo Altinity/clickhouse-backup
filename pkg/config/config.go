@@ -285,6 +285,18 @@ func LoadConfig(configLocation string) (*Config, error) {
 	if err := envconfig.Process("", cfg); err != nil {
 		return nil, err
 	}
+
+	//auto tuning upload_concurrency for storage types which not have SDK level concurrency, https://github.com/AlexAkulov/clickhouse-backup/issues/658
+	cfgWithoutDefault := &Config{}
+	if err := yaml.Unmarshal(configYaml, &cfgWithoutDefault); err != nil {
+		return nil, fmt.Errorf("can't parse config file: %v", err)
+	}
+	if err := envconfig.Process("", cfgWithoutDefault); err != nil {
+		return nil, err
+	}
+	if (cfg.General.RemoteStorage == "gcs" || cfg.General.RemoteStorage == "azblob" || cfg.General.RemoteStorage == "cos") && cfgWithoutDefault.General.UploadConcurrency == 0 {
+		cfg.General.UploadConcurrency = uint8(runtime.NumCPU() / 2)
+	}
 	cfg.AzureBlob.Path = strings.TrimPrefix(cfg.AzureBlob.Path, "/")
 	cfg.S3.Path = strings.TrimPrefix(cfg.S3.Path, "/")
 	cfg.GCS.Path = strings.TrimPrefix(cfg.GCS.Path, "/")
@@ -413,9 +425,12 @@ func PrintConfig(ctx *cli.Context) error {
 }
 
 func DefaultConfig() *Config {
-	availableConcurrency := uint8(1)
+	uploadConcurrency := uint8(1)
+	downloadConcurrency := uint8(1)
+
 	if runtime.NumCPU() > 1 {
-		availableConcurrency = uint8(math.Round(math.Sqrt(float64(runtime.NumCPU() / 2))))
+		uploadConcurrency = uint8(math.Round(math.Sqrt(float64(runtime.NumCPU() / 2))))
+		downloadConcurrency = uint8(runtime.NumCPU() / 2)
 	}
 	return &Config{
 		General: GeneralConfig{
@@ -425,8 +440,8 @@ func DefaultConfig() *Config {
 			BackupsToKeepRemote:     0,
 			LogLevel:                "info",
 			DisableProgressBar:      true,
-			UploadConcurrency:       availableConcurrency,
-			DownloadConcurrency:     availableConcurrency,
+			UploadConcurrency:       uploadConcurrency,
+			DownloadConcurrency:     downloadConcurrency,
 			RestoreSchemaOnCluster:  "",
 			UploadByPart:            true,
 			DownloadByPart:          true,
@@ -468,7 +483,7 @@ func DefaultConfig() *Config {
 			CompressionFormat: "tar",
 			BufferSize:        0,
 			MaxBuffers:        3,
-			MaxPartsCount:     10000,
+			MaxPartsCount:     5000,
 			Timeout:           "15m",
 		},
 		S3: S3Config{
@@ -481,9 +496,9 @@ func DefaultConfig() *Config {
 			DisableCertVerification: false,
 			UseCustomStorageClass:   false,
 			StorageClass:            string(s3types.StorageClassStandard),
-			Concurrency:             1,
+			Concurrency:             int(downloadConcurrency + 1),
 			PartSize:                0,
-			MaxPartsCount:           10000,
+			MaxPartsCount:           5000,
 		},
 		GCS: GCSConfig{
 			CompressionLevel:  1,
@@ -506,7 +521,7 @@ func DefaultConfig() *Config {
 		},
 		FTP: FTPConfig{
 			Timeout:           "2m",
-			Concurrency:       availableConcurrency,
+			Concurrency:       downloadConcurrency + 1,
 			CompressionFormat: "tar",
 			CompressionLevel:  1,
 		},
@@ -514,7 +529,7 @@ func DefaultConfig() *Config {
 			Port:              22,
 			CompressionFormat: "tar",
 			CompressionLevel:  1,
-			Concurrency:       1,
+			Concurrency:       int(downloadConcurrency + 1),
 		},
 		Custom: CustomConfig{
 			CommandTimeout:         "4h",
