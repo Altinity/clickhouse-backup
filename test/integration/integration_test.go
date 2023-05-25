@@ -603,10 +603,12 @@ func TestIntegrationCustom(t *testing.T) {
 			r.NoError(dockerExec("minio", "rm", "-rf", "/data/clickhouse/*"))
 			installDebIfNotExists(r, "clickhouse", "curl")
 			installDebIfNotExists(r, "clickhouse", "jq")
-			r.NoError(dockerExec("clickhouse", "bash", "-xc", "RELEASE_TAG=$(curl -H 'Accept: application/json' -sL https://github.com/restic/restic/releases/latest | jq -c -r -M '.tag_name'); RELEASE=$(echo $RELEASE_TAG | sed -e 's/v//'); curl -sfL \"https://github.com/restic/restic/releases/download/${RELEASE_TAG}/restic_${RELEASE}_linux_amd64.bz2\" | bzip2 -d > /bin/restic; chmod +x /bin/restic"))
+			installDebIfNotExists(r, "clickhouse", "bzip2")
+			r.NoError(dockerExec("clickhouse", "bash", "-xec", "RELEASE_TAG=$(curl -H 'Accept: application/json' -sL https://github.com/restic/restic/releases/latest | jq -c -r -M '.tag_name'); RELEASE=$(echo ${RELEASE_TAG} | sed -e 's/v//'); curl -sfL \"https://github.com/restic/restic/releases/download/${RELEASE_TAG}/restic_${RELEASE}_linux_amd64.bz2\" | bzip2 -d > /bin/restic; chmod +x /bin/restic"))
 		}
 		if customType == "kopia" {
 			r.NoError(dockerExec("minio", "bash", "-ce", "rm -rfv /data/clickhouse/*"))
+			installDebIfNotExists(r, "clickhouse", "pgp")
 			installDebIfNotExists(r, "clickhouse", "curl")
 			r.NoError(dockerExec("clickhouse", "apt-get", "install", "-y", "ca-certificates"))
 			r.NoError(dockerExec("clickhouse", "update-ca-certificates"))

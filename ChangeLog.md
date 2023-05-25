@@ -7,6 +7,7 @@ IMPROVEMENTS
 
 BUG FIXES
 - apply `SETTINGS check_table_dependencies=0` to `DROP DATABASE` statement, when pass `--ignore-dependencies` together with `--rm` in `restore` command, fix [651](https://github.com/AlexAkulov/clickhouse-backup/issues/651)
+- add support for masked secrets for ClickHouse 22.3+, fix [640](https://github.com/AlexAkulov/clickhouse-backup/issues/640)
 
 # v2.2.6
 BUG FIXES
