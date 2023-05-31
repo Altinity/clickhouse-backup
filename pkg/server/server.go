@@ -865,17 +865,17 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			api.log.Errorf("API /backup/create error: %v", err)
 			status.Current.Stop(commandId, err)
-			api.errorCallback(r.Context(), err, callback)
+			api.errorCallback(context.Background(), err, callback)
 			return
 		}
 		if err := api.UpdateBackupMetrics(ctx, true); err != nil {
 			api.log.Errorf("UpdateBackupMetrics return error: %v", err)
 			status.Current.Stop(commandId, err)
-			api.errorCallback(r.Context(), err, callback)
+			api.errorCallback(context.Background(), err, callback)
 			return
 		}
 		status.Current.Stop(commandId, nil)
-		api.successCallback(r.Context(), callback)
+		api.successCallback(context.Background(), callback)
 	}()
 	api.sendJSONEachRow(w, http.StatusCreated, struct {
 		Status     string `json:"status"`
@@ -1102,17 +1102,17 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			api.log.Errorf("Upload error: %v", err)
 			status.Current.Stop(commandId, err)
-			api.errorCallback(r.Context(), err, callback)
+			api.errorCallback(context.Background(), err, callback)
 			return
 		}
 		if err := api.UpdateBackupMetrics(ctx, false); err != nil {
 			api.log.Errorf("UpdateBackupMetrics return error: %v", err)
 			status.Current.Stop(commandId, err)
-			api.errorCallback(r.Context(), err, callback)
+			api.errorCallback(context.Background(), err, callback)
 			return
 		}
 		status.Current.Stop(commandId, nil)
-		api.successCallback(r.Context(), callback)
+		api.successCallback(context.Background(), callback)
 	}()
 	api.sendJSONEachRow(w, http.StatusOK, struct {
 		Status     string `json:"status"`
@@ -1226,10 +1226,10 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		status.Current.Stop(commandId, err)
 		if err != nil {
 			api.log.Errorf("API /backup/restore error: %v", err)
-			api.errorCallback(r.Context(), err, callback)
+			api.errorCallback(context.Background(), err, callback)
 			return
 		}
-		api.successCallback(r.Context(), callback)
+		api.successCallback(context.Background(), callback)
 	}()
 	api.sendJSONEachRow(w, http.StatusOK, struct {
 		Status     string `json:"status"`
@@ -1297,17 +1297,17 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		if err != nil {
 			api.log.Errorf("API /backup/download error: %v", err)
 			status.Current.Stop(commandId, err)
-			api.errorCallback(r.Context(), err, callback)
+			api.errorCallback(context.Background(), err, callback)
 			return
 		}
 		if err := api.UpdateBackupMetrics(ctx, true); err != nil {
 			api.log.Errorf("UpdateBackupMetrics return error: %v", err)
 			status.Current.Stop(commandId, err)
-			api.errorCallback(r.Context(), err, callback)
+			api.errorCallback(context.Background(), err, callback)
 			return
 		}
 		status.Current.Stop(commandId, nil)
-		api.successCallback(r.Context(), callback)
+		api.successCallback(context.Background(), callback)
 	}()
 	api.sendJSONEachRow(w, http.StatusOK, struct {
 		Status     string `json:"status"`
