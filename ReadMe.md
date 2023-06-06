@@ -373,7 +373,12 @@ general:
   # The format for this env variable is "src_db1:target_db1,src_db2:target_db2". For YAML please continue using map syntax
   restore_database_mapping: {}   
   retries_on_failure: 3          # RETRIES_ON_FAILURE, how many times to retry after a failure during upload or download
-  retries_pause: 30s             # RETRIES_PAUSE, duration time to pause after each download or upload failure 
+  retries_pause: 30s             # RETRIES_PAUSE, duration time to pause after each download or upload failure
+
+  watch_interval: 1h       # WATCH_INTERVAL, use only for `watch` command, backup will create every 1h 
+  full_interval: 24h       # FULL_INTERVAL, use only for `watch` command, full backup will create every 24h 
+  watch_backup_name_template: "shard{shard}-{type}-{time:20060102150405}" # WATCH_BACKUP_NAME_TEMPLATE, used only for `watch` command, macros values will apply from `system.macros` for time:XXX, look format in https://go.dev/src/time/format.go
+  
 clickhouse:
   username: default                # CLICKHOUSE_USERNAME
   password: ""                     # CLICKHOUSE_PASSWORD
