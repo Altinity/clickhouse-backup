@@ -1,3 +1,7 @@
+# v2.3.0
+IMPROVEMENTS
+- add support for backup S3 disks via server side s3 copy, fix [447](https://github.com/AlexAkulov/clickhouse-backup/issues/447)
+
 # v2.2.7
 IMPROVEMENTS
 - Auto-tuning concurrency and buffer size related parameters depending on remote storage type, fix [658](https://github.com/AlexAkulov/clickhouse-backup/issues/658)
