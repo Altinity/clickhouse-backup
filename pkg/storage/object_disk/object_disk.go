@@ -2,7 +2,9 @@ package object_disk
 
 import (
 	"bufio"
+	"context"
 	"fmt"
+	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
 	apexLog "github.com/apex/log"
 	"io"
 	"os"
@@ -189,4 +191,32 @@ func WriteMetadataToFile(metadata *Metadata, path string) error {
 		}
 	}()
 	return metadata.serialize(metadataFile)
+}
+
+type TableCredentials struct {
+	Type               string // aws, gcs, azblob
+	EndPoint           string
+	S3AccessKey        string
+	S3SecretKey        string
+	AzureAccountName   string
+	AzureAccountKey    string
+	AzureContainerName string
+}
+
+func GetObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) (error, *map[string]TableCredentials) {
+	credentials := make(map[string]TableCredentials, 0)
+	if version, err := ch.GetVersion(ctx); err != nil {
+		return err, nil
+	} else if version <= 20006000 {
+		return nil, &credentials
+	}
+	disks, err := ch.GetDisks(ctx)
+	if err != nil {
+		return err, nil
+	}
+	preprocessedConfigPath, err := ch.GetPreprocessedConfigPath(ctx)
+	if err != nil {
+		return err, nil
+	}
+	return nil, &credentials
 }

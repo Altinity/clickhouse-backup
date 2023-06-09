@@ -91,9 +91,13 @@ func (s *S3) Connect(ctx context.Context) error {
 	}
 
 	awsRoleARN := os.Getenv("AWS_ROLE_ARN")
-	if s.Config.AssumeRoleARN != "" {
+	if s.Config.AssumeRoleARN != "" || awsRoleARN != "" {
 		stsClient := sts.NewFromConfig(awsConfig)
-		awsConfig.Credentials = stscreds.NewAssumeRoleProvider(stsClient, awsRoleARN)
+		if awsRoleARN != "" {
+			awsConfig.Credentials = stscreds.NewAssumeRoleProvider(stsClient, awsRoleARN)
+		} else {
+			awsConfig.Credentials = stscreds.NewAssumeRoleProvider(stsClient, s.Config.AssumeRoleARN)
+		}
 	}
 
 	awsWebIdentityTokenFile := os.Getenv("AWS_WEB_IDENTITY_TOKEN_FILE")
