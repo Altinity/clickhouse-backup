@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
+	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"github.com/aws/smithy-go"
 	awsV2http "github.com/aws/smithy-go/transport/http"
 	"io"
@@ -197,7 +197,7 @@ func (s *S3) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
 		Body:         r,
 		StorageClass: s3types.StorageClass(strings.ToUpper(s.Config.StorageClass)),
 	}
-	// https://github.com/AlexAkulov/clickhouse-backup/issues/588
+	// https://github.com/Altinity/clickhouse-backup/issues/588
 	if len(s.Config.ObjectLabels) > 0 {
 		tags := ""
 		for k, v := range s.Config.ObjectLabels {

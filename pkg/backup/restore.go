@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/status"
+	"github.com/Altinity/clickhouse-backup/pkg/status"
 	"os"
 	"os/exec"
 	"path"
@@ -12,14 +12,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
+	"github.com/Altinity/clickhouse-backup/pkg/common"
 
 	"github.com/mattn/go-shellwords"
 
-	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/filesystemhelper"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
+	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/pkg/filesystemhelper"
+	"github.com/Altinity/clickhouse-backup/pkg/metadata"
+	"github.com/Altinity/clickhouse-backup/pkg/utils"
 	apexLog "github.com/apex/log"
 	recursiveCopy "github.com/otiai10/copy"
 	"github.com/yargevad/filepathx"
@@ -167,17 +167,17 @@ func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB, tablePatt
 	if targetDB, isMapped = b.cfg.General.RestoreDatabaseMapping[database.Name]; !isMapped {
 		targetDB = database.Name
 	}
-	// https://github.com/AlexAkulov/clickhouse-backup/issues/583
+	// https://github.com/Altinity/clickhouse-backup/issues/583
 	if ShallSkipDatabase(b.cfg, targetDB, tablePattern) {
 		return nil
 	}
-	//https://github.com/AlexAkulov/clickhouse-backup/issues/514
+	//https://github.com/Altinity/clickhouse-backup/issues/514
 	if schemaOnly && dropTable {
 		onCluster := ""
 		if b.cfg.General.RestoreSchemaOnCluster != "" {
 			onCluster = fmt.Sprintf(" ON CLUSTER '%s'", b.cfg.General.RestoreSchemaOnCluster)
 		}
-		// https://github.com/AlexAkulov/clickhouse-backup/issues/651
+		// https://github.com/Altinity/clickhouse-backup/issues/651
 		settings := ""
 		if ignoreDependencies {
 			version, err := b.ch.GetVersion(ctx)
@@ -387,7 +387,7 @@ func (b *Backuper) restoreSchemaRegular(tablesForRestore ListOfTables, version i
 			schema.Query = strings.Replace(
 				schema.Query, "CREATE LIVE VIEW", "ATTACH LIVE VIEW", 1,
 			)
-			// https://github.com/AlexAkulov/clickhouse-backup/issues/466
+			// https://github.com/Altinity/clickhouse-backup/issues/466
 			if b.cfg.General.RestoreSchemaOnCluster == "" && strings.Contains(schema.Query, "{uuid}") && strings.Contains(schema.Query, "Replicated") {
 				if !strings.Contains(schema.Query, "UUID") {
 					log.Warnf("table query doesn't contains UUID, can't guarantee properly restore for ReplicatedMergeTree")
@@ -567,7 +567,7 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ta
 		if !ok {
 			return fmt.Errorf("can't find '%s.%s' in current system.tables", dstDatabase, table.Table)
 		}
-		// https://github.com/AlexAkulov/clickhouse-backup/issues/529
+		// https://github.com/Altinity/clickhouse-backup/issues/529
 		if b.cfg.ClickHouse.RestoreAsAttach {
 			if err = b.restoreDataRegularByAttach(ctx, backupName, table, disks, dstTable, log, tablesForRestore, i); err != nil {
 				return err
@@ -577,7 +577,7 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ta
 				return err
 			}
 		}
-		// https://github.com/AlexAkulov/clickhouse-backup/issues/529
+		// https://github.com/Altinity/clickhouse-backup/issues/529
 		for _, mutation := range table.Mutations {
 			if err := b.ch.ApplyMutation(ctx, tablesForRestore[i], mutation); err != nil {
 				log.Warnf("can't apply mutation %s for table `%s`.`%s`	: %v", mutation.Command, tablesForRestore[i].Database, tablesForRestore[i].Table, err)

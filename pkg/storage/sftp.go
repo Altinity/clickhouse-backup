@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
+	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"io"
 	"os"
 	"path"

@@ -17,9 +17,9 @@ func GetBackupsToDelete(backups []Backup, keep int) []Backup {
 			return backups[i].UploadDate.After(backups[j].UploadDate)
 		})
 		// KeepRemoteBackups should respect incremental backups sequences and don't delete required backups
-		// fix https://github.com/AlexAkulov/clickhouse-backup/issues/111
-		// fix https://github.com/AlexAkulov/clickhouse-backup/issues/385
-		// fix https://github.com/AlexAkulov/clickhouse-backup/issues/525
+		// fix https://github.com/Altinity/clickhouse-backup/issues/111
+		// fix https://github.com/Altinity/clickhouse-backup/issues/385
+		// fix https://github.com/Altinity/clickhouse-backup/issues/525
 		deletedBackups := make([]Backup, len(backups)-keep)
 		copied := copy(deletedBackups, backups[keep:])
 		if copied != len(backups)-keep {
@@ -46,7 +46,7 @@ func GetBackupsToDelete(backups []Backup, keep int) []Backup {
 			findRequiredBackup(b)
 		}
 		// remove from old backup list backup with UploadDate `0001-01-01 00:00:00`, to avoid race condition for multiple shards copy
-		// fix https://github.com/AlexAkulov/clickhouse-backup/issues/409
+		// fix https://github.com/Altinity/clickhouse-backup/issues/409
 		i := 0
 		for _, b := range deletedBackups {
 			if b.UploadDate != time.Date(1, time.January, 1, 0, 0, 0, 0, time.UTC) {

@@ -2,7 +2,7 @@ package partition
 
 import (
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
 	"github.com/google/uuid"
 	"regexp"
 	"strconv"

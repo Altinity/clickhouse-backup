@@ -5,10 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/progressbar"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
+	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/pkg/config"
+	"github.com/Altinity/clickhouse-backup/pkg/progressbar"
+	"github.com/Altinity/clickhouse-backup/pkg/utils"
 	"github.com/eapache/go-resiliency/retrier"
 	"io"
 	"os"
@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
+	"github.com/Altinity/clickhouse-backup/pkg/metadata"
 	"golang.org/x/sync/errgroup"
 
 	apexLog "github.com/apex/log"
@@ -608,7 +608,7 @@ func (bd *BackupDestination) UploadPath(ctx context.Context, size int64, baseLoc
 func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhouse.ClickHouse, calcMaxSize bool, backupName string) (*BackupDestination, error) {
 	log := apexLog.WithField("logger", "NewBackupDestination")
 	var err error
-	// https://github.com/AlexAkulov/clickhouse-backup/issues/404
+	// https://github.com/Altinity/clickhouse-backup/issues/404
 	if calcMaxSize {
 		maxFileSize, err := ch.CalculateMaxFileSize(ctx, cfg)
 		if err != nil {
@@ -630,7 +630,7 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 		}
 
 		bufferSize := azblobStorage.Config.BufferSize
-		// https://github.com/AlexAkulov/clickhouse-backup/issues/317
+		// https://github.com/Altinity/clickhouse-backup/issues/317
 		if bufferSize <= 0 {
 			bufferSize = int(cfg.General.MaxFileSize) / cfg.AzureBlob.MaxPartsCount
 			if bufferSize < 2*1024*1024 {
@@ -670,7 +670,7 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 		if err != nil {
 			return nil, err
 		}
-		// https://github.com/AlexAkulov/clickhouse-backup/issues/588
+		// https://github.com/Altinity/clickhouse-backup/issues/588
 		if len(s3Storage.Config.ObjectLabels) > 0 && backupName != "" {
 			objectLabels := s3Storage.Config.ObjectLabels
 			objectLabels, err = ApplyMacrosToObjectLabels(ctx, objectLabels, ch, backupName)
@@ -692,7 +692,7 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 		if err != nil {
 			return nil, err
 		}
-		// https://github.com/AlexAkulov/clickhouse-backup/issues/588
+		// https://github.com/Altinity/clickhouse-backup/issues/588
 		if len(googleCloudStorage.Config.ObjectLabels) > 0 && backupName != "" {
 			objectLabels := googleCloudStorage.Config.ObjectLabels
 			objectLabels, err = ApplyMacrosToObjectLabels(ctx, objectLabels, ch, backupName)
@@ -757,7 +757,7 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 	}
 }
 
-// https://github.com/AlexAkulov/clickhouse-backup/issues/588
+// https://github.com/Altinity/clickhouse-backup/issues/588
 func ApplyMacrosToObjectLabels(ctx context.Context, objectLabels map[string]string, ch *clickhouse.ClickHouse, backupName string) (map[string]string, error) {
 	var err error
 	for k, v := range objectLabels {

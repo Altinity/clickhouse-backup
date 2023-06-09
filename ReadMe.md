@@ -1,10 +1,10 @@
 
 # clickhouse-backup
 
-[![Build](https://github.com/AlexAkulov/clickhouse-backup/actions/workflows/build.yaml/badge.svg?branch=dev)](https://github.com/AlexAkulov/clickhouse-backup/actions/workflows/build.yaml)
-[![GoDoc](https://godoc.org/github.com/AlexAkulov/clickhouse-backup?status.svg)](http://godoc.org/github.com/AlexAkulov/clickhouse-backup)
+[![Build](https://github.com/Altinity/clickhouse-backup/actions/workflows/build.yaml/badge.svg?branch=dev)](https://github.com/Altinity/clickhouse-backup/actions/workflows/build.yaml)
+[![GoDoc](https://godoc.org/github.com/Altinity/clickhouse-backup?status.svg)](http://godoc.org/github.com/Altinity/clickhouse-backup)
 [![Telegram](https://img.shields.io/badge/telegram-join%20chat-3796cd.svg)](https://t.me/clickhousebackup)
-[![Docker Image](https://img.shields.io/docker/pulls/alexakulov/clickhouse-backup.svg)](https://hub.docker.com/r/alexakulov/clickhouse-backup)
+[![Docker Image](https://img.shields.io/docker/pulls/Altinity/clickhouse-backup.svg)](https://hub.docker.com/r/Altinity/clickhouse-backup)
 
 A tool for easy ClickHouse backup and restore with support for many cloud and non-cloud storage types.
 To make data backup `clickhouse-backup` requires access to the same files as `clickhouse-server` in `/var/lib/clickhouse` folders. 
@@ -29,7 +29,7 @@ You can backup only schema from remote hosts.
 
 ## Installation
 
-Download the latest binary from the [releases](https://github.com/AlexAkulov/clickhouse-backup/releases) page and decompress with:
+Download the latest binary from the [releases](https://github.com/Altinity/clickhouse-backup/releases) page and decompress with:
 
 ```shell
 tar -zxvf clickhouse-backup.tar.gz
@@ -43,13 +43,13 @@ docker run -u $(id -u clickhouse) --rm -it --network host -v "/var/lib/clickhous
    -e S3_BUCKET="clickhouse-backup" \
    -e S3_ACCESS_KEY="access_key" \
    -e S3_SECRET_KEY="secret" \
-   alexakulov/clickhouse-backup --help
+   Altinity/clickhouse-backup --help
 ```
 
 Build from the sources:
 
 ```shell
-GO111MODULE=on go get github.com/AlexAkulov/clickhouse-backup/cmd/clickhouse-backup
+GO111MODULE=on go get github.com/Altinity/clickhouse-backup/cmd/clickhouse-backup
 ```
 
 ## Common CLI Usage
@@ -545,7 +545,7 @@ High value for `S3_CONCURRENCY` and high value for `S3_PART_SIZE` will allocate 
 
 All custom commands could use go-template language, for example, you can use `{{ .cfg.* }}` `{{ .backupName }}` `{{ .diffFromRemote }}`.
 Custom `list_command` shall return JSON which is compatible with `metadata.Backup` type with [JSONEachRow](https://clickhouse.com/docs/en/interfaces/formats/#jsoneachrow) format.
-For examples, see [restic](https://github.com/AlexAkulov/clickhouse-backup/tree/master/test/integration/restic/), [rsync](https://github.com/AlexAkulov/clickhouse-backup/tree/master/test/integration/rsync/) and [kopia](https://github.com/AlexAkulov/clickhouse-backup/tree/master/test/integration/kopia/). Feel free to add yours too. 
+For examples, see [restic](https://github.com/Altinity/clickhouse-backup/tree/master/test/integration/restic/), [rsync](https://github.com/Altinity/clickhouse-backup/tree/master/test/integration/rsync/) and [kopia](https://github.com/Altinity/clickhouse-backup/tree/master/test/integration/kopia/). Feel free to add yours too. 
 
 ## ATTENTION!
 
@@ -757,3 +757,6 @@ fi
 - [How to use clickhouse-backup in Kubernetes](Examples.md#how-to-use-clickhouse-backup-in-kubernetes)
 - [How do incremental backups work to remote storage](Examples.md#how-do-incremental-backups-work-to-remote-storage)
 - [How to watch backups work](Examples.md#how-to-work-watch-command)
+
+## Original Author
+Altinity wants to thank @[AlexAkulov](https://github.com/AlexAkulov) for creating this tool and for his valuable contributions.

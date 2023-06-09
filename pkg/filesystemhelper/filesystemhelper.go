@@ -2,8 +2,8 @@ package filesystemhelper
 
 import (
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/partition"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
+	"github.com/Altinity/clickhouse-backup/pkg/partition"
+	"github.com/Altinity/clickhouse-backup/pkg/utils"
 	"os"
 	"path"
 	"path/filepath"
@@ -13,9 +13,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
+	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/pkg/common"
+	"github.com/Altinity/clickhouse-backup/pkg/metadata"
 	apexLog "github.com/apex/log"
 )
 
@@ -285,10 +285,10 @@ func CreatePartitionsToBackupMap(ch *clickhouse.ClickHouse, tablesFromClickHouse
 
 	partitionsMap := common.EmptyMap{}
 
-	// to allow use --partitions val1 --partitions val2, https://github.com/AlexAkulov/clickhouse-backup/issues/425#issuecomment-1149855063
+	// to allow use --partitions val1 --partitions val2, https://github.com/Altinity/clickhouse-backup/issues/425#issuecomment-1149855063
 	for _, partitionArg := range partitions {
 		partitionArg = strings.Trim(partitionArg, " \t")
-		// when PARTITION BY clause return partition_id field as hash, https://github.com/AlexAkulov/clickhouse-backup/issues/602
+		// when PARTITION BY clause return partition_id field as hash, https://github.com/Altinity/clickhouse-backup/issues/602
 		if strings.HasPrefix(partitionArg, "(") {
 			partitionArg = strings.TrimSuffix(strings.TrimPrefix(partitionArg, "("), ")")
 			for _, partitionTuple := range partitionTupleRE.Split(partitionArg, -1) {

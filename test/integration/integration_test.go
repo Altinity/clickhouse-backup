@@ -5,11 +5,11 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/logcli"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/partition"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/status"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
+	"github.com/Altinity/clickhouse-backup/pkg/config"
+	"github.com/Altinity/clickhouse-backup/pkg/logcli"
+	"github.com/Altinity/clickhouse-backup/pkg/partition"
+	"github.com/Altinity/clickhouse-backup/pkg/status"
+	"github.com/Altinity/clickhouse-backup/pkg/utils"
 	"github.com/google/uuid"
 	"math/rand"
 	"os"
@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
 	"github.com/apex/log"
 	"golang.org/x/mod/semver"
 
@@ -97,7 +97,7 @@ var testData = []TestDataStruct{
 		OrderBy: "TimeStamp",
 	}, {
 		Database: Issue331Atomic, DatabaseEngine: "Atomic",
-		Name:   Issue331Atomic, // need cover fix https://github.com/AlexAkulov/clickhouse-backup/issues/331
+		Name:   Issue331Atomic, // need cover fix https://github.com/Altinity/clickhouse-backup/issues/331
 		Schema: fmt.Sprintf("(`%s` UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY `%s` ORDER BY (`%s`, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192", Issue331Atomic, Issue331Atomic, Issue331Atomic),
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
@@ -110,7 +110,7 @@ var testData = []TestDataStruct{
 		OrderBy: Issue331Atomic,
 	}, {
 		Database: Issue331Ordinary, DatabaseEngine: "Ordinary",
-		Name:   Issue331Ordinary, // need cover fix https://github.com/AlexAkulov/clickhouse-backup/issues/331
+		Name:   Issue331Ordinary, // need cover fix https://github.com/Altinity/clickhouse-backup/issues/331
 		Schema: fmt.Sprintf("(`%s` String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMM(order_time) ORDER BY (order_time, `%s`)", Issue331Ordinary, Issue331Ordinary),
 		Rows: []map[string]interface{}{
 			{Issue331Ordinary: "1", "order_time": toTS("2010-01-01 00:00:00"), "amount": 1.0},
@@ -264,7 +264,7 @@ var testData = []TestDataStruct{
 			" (`%s` UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) PRIMARY KEY `%s` "+
 				" SOURCE(CLICKHOUSE(host 'localhost' port 9000 db '%s' table '%s' user 'default' password ''))"+
 				" LAYOUT(HASHED()) LIFETIME(60)",
-			Issue331Atomic, Issue331Atomic, Issue331Atomic, Issue331Atomic), // same table and name need cover fix https://github.com/AlexAkulov/clickhouse-backup/issues/331
+			Issue331Atomic, Issue331Atomic, Issue331Atomic, Issue331Atomic), // same table and name need cover fix https://github.com/Altinity/clickhouse-backup/issues/331
 		SkipInsert: true,
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
@@ -333,7 +333,7 @@ var incrementData = []TestDataStruct{
 		OrderBy: "TimeStamp",
 	}, {
 		Database: Issue331Atomic, DatabaseEngine: "Atomic",
-		Name:   Issue331Atomic, // need cover fix https://github.com/AlexAkulov/clickhouse-backup/issues/331
+		Name:   Issue331Atomic, // need cover fix https://github.com/Altinity/clickhouse-backup/issues/331
 		Schema: fmt.Sprintf("(`%s` UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY `%s` ORDER BY (`%s`, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192", Issue331Atomic, Issue331Atomic, Issue331Atomic),
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
@@ -346,7 +346,7 @@ var incrementData = []TestDataStruct{
 		OrderBy: Issue331Atomic,
 	}, {
 		Database: Issue331Ordinary, DatabaseEngine: "Ordinary",
-		Name:   Issue331Ordinary, // need cover fix https://github.com/AlexAkulov/clickhouse-backup/issues/331
+		Name:   Issue331Ordinary, // need cover fix https://github.com/Altinity/clickhouse-backup/issues/331
 		Schema: fmt.Sprintf("(`%s` String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMM(order_time) ORDER BY (order_time, `%s`)", Issue331Ordinary, Issue331Ordinary),
 		Rows: []map[string]interface{}{
 			{Issue331Ordinary: "3", "order_time": toTS("2010-03-01 00:00:00"), "amount": 3.0},

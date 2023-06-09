@@ -289,7 +289,7 @@ func LoadConfig(configLocation string) (*Config, error) {
 		return nil, err
 	}
 
-	//auto tuning upload_concurrency for storage types which not have SDK level concurrency, https://github.com/AlexAkulov/clickhouse-backup/issues/658
+	//auto tuning upload_concurrency for storage types which not have SDK level concurrency, https://github.com/Altinity/clickhouse-backup/issues/658
 	cfgWithoutDefault := &Config{}
 	if err := yaml.Unmarshal(configYaml, &cfgWithoutDefault); err != nil {
 		return nil, fmt.Errorf("can't parse config file: %v", err)

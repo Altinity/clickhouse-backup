@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
+	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/pkg/config"
 	apexLog "github.com/apex/log"
 	"github.com/google/uuid"
 	"io"
@@ -17,10 +17,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/filesystemhelper"
+	"github.com/Altinity/clickhouse-backup/pkg/common"
+	"github.com/Altinity/clickhouse-backup/pkg/filesystemhelper"
 
-	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
+	"github.com/Altinity/clickhouse-backup/pkg/metadata"
 )
 
 type ListOfTables []metadata.TableMetadata
@@ -190,7 +190,7 @@ func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRu
 				substitution = fmt.Sprintf("UUID '%s'", newUUID.String())
 				originTable.Query = uuidRE.ReplaceAllString(originTable.Query, substitution)
 			}
-			// https://github.com/AlexAkulov/clickhouse-backup/issues/547
+			// https://github.com/Altinity/clickhouse-backup/issues/547
 			if replicatedRE.MatchString(originTable.Query) {
 				matches := replicatedRE.FindAllStringSubmatch(originTable.Query, -1)
 				originPath := matches[0][2]
@@ -200,7 +200,7 @@ func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRu
 					originTable.Query = replicatedRE.ReplaceAllString(originTable.Query, substitution)
 				}
 			}
-			// https://github.com/AlexAkulov/clickhouse-backup/issues/547
+			// https://github.com/Altinity/clickhouse-backup/issues/547
 			if distributedRE.MatchString(originTable.Query) {
 				matches := distributedRE.FindAllStringSubmatch(originTable.Query, -1)
 				underlyingDB := matches[0][3]

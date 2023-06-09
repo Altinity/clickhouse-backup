@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/logcli"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/status"
+	"github.com/Altinity/clickhouse-backup/pkg/config"
+	"github.com/Altinity/clickhouse-backup/pkg/logcli"
+	"github.com/Altinity/clickhouse-backup/pkg/status"
 
-	"github.com/AlexAkulov/clickhouse-backup/pkg/backup"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/server"
+	"github.com/Altinity/clickhouse-backup/pkg/backup"
+	"github.com/Altinity/clickhouse-backup/pkg/server"
 
 	"github.com/apex/log"
 	"github.com/urfave/cli"

@@ -5,18 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/status"
+	"github.com/Altinity/clickhouse-backup/pkg/status"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/filesystemhelper"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
+	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/pkg/common"
+	"github.com/Altinity/clickhouse-backup/pkg/filesystemhelper"
+	"github.com/Altinity/clickhouse-backup/pkg/metadata"
+	"github.com/Altinity/clickhouse-backup/pkg/utils"
 	apexLog "github.com/apex/log"
 	"github.com/google/uuid"
 	recursiveCopy "github.com/otiai10/copy"
@@ -198,7 +198,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 					if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks); removeBackupErr != nil {
 						log.Error(removeBackupErr.Error())
 					}
-					// fix corner cases after https://github.com/AlexAkulov/clickhouse-backup/issues/379
+					// fix corner cases after https://github.com/Altinity/clickhouse-backup/issues/379
 					if cleanShadowErr := b.Clean(ctx); cleanShadowErr != nil {
 						log.Error(cleanShadowErr.Error())
 					}
@@ -209,7 +209,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 					backupDataSize += uint64(size)
 				}
 			}
-			// https://github.com/AlexAkulov/clickhouse-backup/issues/529
+			// https://github.com/Altinity/clickhouse-backup/issues/529
 			log.Debug("get in progress mutations list")
 			inProgressMutations := make([]metadata.MutationMetadata, 0)
 			if b.cfg.ClickHouse.BackupMutations {
@@ -534,7 +534,7 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 			}
 		}
 	}
-	// Unfreeze to unlock data on S3 disks, https://github.com/AlexAkulov/clickhouse-backup/issues/423
+	// Unfreeze to unlock data on S3 disks, https://github.com/Altinity/clickhouse-backup/issues/423
 	if version > 21004000 {
 		if _, err := b.ch.QueryContext(ctx, fmt.Sprintf("ALTER TABLE `%s`.`%s` UNFREEZE WITH NAME '%s'", table.Database, table.Name, shadowBackupUUID)); err != nil {
 			return disksToPartsMap, realSize, err

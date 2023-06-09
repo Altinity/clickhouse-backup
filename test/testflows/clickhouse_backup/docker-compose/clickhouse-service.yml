@@ -2,7 +2,7 @@ version: '2.4'
 
 services:
   clickhouse:
-    image: ${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server}:${CLICKHOUSE_VERSION:-22.8}
+    image: ${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server}:${CLICKHOUSE_VERSION:-23.3}
     volumes:
       - "${CLICKHOUSE_TESTS_DIR}/docker-compose/dynamic_settings.sh:/docker-entrypoint-initdb.d/dynamic_settings.sh"
       - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse/ssl:/etc/clickhouse-server/ssl"
@@ -21,7 +21,7 @@ services:
       retries: 40
       start_period: 2s
     environment:
-      CLICKHOUSE_VERSION: ${CLICKHOUSE_VERSION:-22.8}
+      CLICKHOUSE_VERSION: ${CLICKHOUSE_VERSION:-23.3}
     cap_add:
       - SYS_PTRACE
     security_opt:

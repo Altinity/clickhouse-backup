@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/custom"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/filesystemhelper"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/resumable"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/status"
+	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/pkg/config"
+	"github.com/Altinity/clickhouse-backup/pkg/custom"
+	"github.com/Altinity/clickhouse-backup/pkg/filesystemhelper"
+	"github.com/Altinity/clickhouse-backup/pkg/resumable"
+	"github.com/Altinity/clickhouse-backup/pkg/status"
 	"github.com/eapache/go-resiliency/retrier"
 	"io"
 	"os"
@@ -24,10 +24,10 @@ import (
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 
-	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/storage"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
+	"github.com/Altinity/clickhouse-backup/pkg/common"
+	"github.com/Altinity/clickhouse-backup/pkg/metadata"
+	"github.com/Altinity/clickhouse-backup/pkg/storage"
+	"github.com/Altinity/clickhouse-backup/pkg/utils"
 
 	apexLog "github.com/apex/log"
 )
@@ -137,7 +137,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	if !found {
 		return fmt.Errorf("'%s' is not found on remote storage", backupName)
 	}
-	//look https://github.com/AlexAkulov/clickhouse-backup/discussions/266 need download legacy before check for empty backup
+	//look https://github.com/Altinity/clickhouse-backup/discussions/266 need download legacy before check for empty backup
 	if remoteBackup.Legacy {
 		if tablePattern != "" {
 			return fmt.Errorf("'%s' is old format backup and doesn't supports download of specific tables", backupName)

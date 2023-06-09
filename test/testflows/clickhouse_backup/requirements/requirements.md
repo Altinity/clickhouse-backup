@@ -1020,16 +1020,16 @@ All CLI actions such as `create`, `upload` etc. SHALL be supported.
 
 ## References
 
-* **clickhouse-backup**: https://github.com/AlexAkulov/clickhouse-backup
+* **clickhouse-backup**: https://github.com/Altinity/clickhouse-backup
 * **ClickHouse:** https://clickhouse.tech
-* **GitHub Repository:** https://github.com/AlexAkulov/clickhouse-backup/blob/master/test/testflows/clickhouse_backup/requirements/requirements.md
-* **Revision History:** https://github.com/AlexAkulov/clickhouse-backup/commits/master/test/testflows/clickhouse_backup/requirements/requirements.md
+* **GitHub Repository:** https://github.com/Altinity/clickhouse-backup/blob/master/test/testflows/clickhouse_backup/requirements/requirements.md
+* **Revision History:** https://github.com/Altinity/clickhouse-backup/commits/master/test/testflows/clickhouse_backup/requirements/requirements.md
 * **Git:** https://git-scm.com/
 
 [SRS]: #srs
-[clickhouse-backup]: https://github.com/AlexAkulov/clickhouse-backup
+[clickhouse-backup]: https://github.com/Altinity/clickhouse-backup
 [ClickHouse]: https://clickhouse.tech
-[GitHub Repository]: https://github.com/AlexAkulov/clickhouse-backup/blob/master/test/testflows/clickhouse_backup/requirements/requirements.md
-[Revision History]: https://github.com/AlexAkulov/clickhouse-backup/commits/master/test/testflows/clickhouse_backup/requirements/requirements.md
+[GitHub Repository]: https://github.com/Altinity/clickhouse-backup/blob/master/test/testflows/clickhouse_backup/requirements/requirements.md
+[Revision History]: https://github.com/Altinity/clickhouse-backup/commits/master/test/testflows/clickhouse_backup/requirements/requirements.md
 [Git]: https://git-scm.com/
 [GitHub]: https://github.com/

@@ -7,7 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
+	"github.com/Altinity/clickhouse-backup/pkg/common"
 	"net/url"
 	"os"
 	"path"
@@ -18,8 +18,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
+	"github.com/Altinity/clickhouse-backup/pkg/config"
+	"github.com/Altinity/clickhouse-backup/pkg/metadata"
 	"github.com/ClickHouse/clickhouse-go"
 	apexLog "github.com/apex/log"
 	"github.com/jmoiron/sqlx"
@@ -287,7 +287,7 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 		return nil, err
 	}
 	skipDatabases := make([]string, 0)
-	// MaterializedPostgreSQL doesn't support FREEZE look https://github.com/AlexAkulov/clickhouse-backup/issues/550
+	// MaterializedPostgreSQL doesn't support FREEZE look https://github.com/Altinity/clickhouse-backup/issues/550
 	if err = ch.SelectContext(ctx, &skipDatabases, "SELECT name FROM system.databases WHERE engine IN ('MySQL','PostgreSQL','MaterializedPostgreSQL')"); err != nil {
 		return nil, err
 	}
@@ -457,7 +457,7 @@ func (ch *ClickHouse) GetDatabases(ctx context.Context, cfg *config.Config, tabl
 				ch.Log.Warnf("can't get create database query: %v", err)
 				allDatabases[i].Query = fmt.Sprintf("CREATE DATABASE `%s` ENGINE = %s", db.Name, db.Engine)
 			} else {
-				// 23.3+ masked secrets https://github.com/AlexAkulov/clickhouse-backup/issues/640
+				// 23.3+ masked secrets https://github.com/Altinity/clickhouse-backup/issues/640
 				if strings.Contains(result[0], "'[HIDDEN]'") {
 					if attachSQL, err := os.ReadFile(path.Join(metadataPath, common.TablePathEncode(db.Name)+".sql")); err != nil {
 						return nil, err
@@ -506,7 +506,7 @@ func (ch *ClickHouse) fixVariousVersions(t Table, metadataPath string) Table {
 			t.CreateTableQuery, "CREATE MATERIALIZED VIEW", "ATTACH MATERIALIZED VIEW", 1,
 		)
 	}
-	// 23.3+ masked secrets https://github.com/AlexAkulov/clickhouse-backup/issues/640
+	// 23.3+ masked secrets https://github.com/Altinity/clickhouse-backup/issues/640
 	if strings.Contains(t.CreateTableQuery, "'[HIDDEN]'") {
 		tableSQLPath := path.Join(metadataPath, common.TablePathEncode(t.Database), common.TablePathEncode(t.Name)+".sql")
 		if attachSQL, err := os.ReadFile(tableSQLPath); err != nil {
@@ -813,9 +813,9 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 	}
 
 	// fix restore schema for legacy backup
-	// see https://github.com/AlexAkulov/clickhouse-backup/issues/268
-	// https://github.com/AlexAkulov/clickhouse-backup/issues/297
-	// https://github.com/AlexAkulov/clickhouse-backup/issues/331
+	// see https://github.com/Altinity/clickhouse-backup/issues/268
+	// https://github.com/Altinity/clickhouse-backup/issues/297
+	// https://github.com/Altinity/clickhouse-backup/issues/331
 	isOnlyTableWithQuotesPresent, err := regexp.Match(fmt.Sprintf("^CREATE [^(\\.]+ `%s`", table.Name), []byte(query))
 	if err != nil {
 		return err
@@ -833,7 +833,7 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 		query = strings.Replace(query, fmt.Sprintf("%s", table.Name), fmt.Sprintf("%s.%s", table.Database, table.Name), 1)
 	}
 
-	// https://github.com/AlexAkulov/clickhouse-backup/issues/574, replace ENGINE=Distributed to new cluster name
+	// https://github.com/Altinity/clickhouse-backup/issues/574, replace ENGINE=Distributed to new cluster name
 	if onCluster != "" && distributedRE.MatchString(query) {
 		matches := distributedRE.FindAllStringSubmatch(query, -1)
 		if onCluster != strings.Trim(matches[0][2], "'\" ") {
@@ -1121,7 +1121,7 @@ func (ch *ClickHouse) ApplyMutation(ctx context.Context, tableMetadata metadata.
 	return nil
 }
 
-// https://github.com/AlexAkulov/clickhouse-backup/issues/474
+// https://github.com/Altinity/clickhouse-backup/issues/474
 func (ch *ClickHouse) CheckReplicationInProgress(table metadata.TableMetadata) (bool, error) {
 	if ch.Config.CheckReplicasBeforeAttach && strings.Contains(table.Query, "Replicated") {
 		existsReplicas := make([]int, 0)
@@ -1141,7 +1141,7 @@ func (ch *ClickHouse) CheckReplicationInProgress(table metadata.TableMetadata) (
 	return true, nil
 }
 
-// https://github.com/AlexAkulov/clickhouse-backup/issues/529#issuecomment-1554460504
+// https://github.com/Altinity/clickhouse-backup/issues/529#issuecomment-1554460504
 func (ch *ClickHouse) CheckSystemPartsColumns(ctx context.Context, table *Table) error {
 	if ch.isPartsColumnPresent == -1 {
 		return nil
