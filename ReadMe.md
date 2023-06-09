@@ -488,7 +488,7 @@ cos:
   compression_format: tar      # COS_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   compression_level: 1         # COS_COMPRESSION_LEVEL
 ftp:
-  address: ""                  # FTP_ADDRESS
+  address: ""                  # FTP_ADDRESS in format `host:port`
   timeout: 2m                  # FTP_TIMEOUT
   username: ""                 # FTP_USERNAME
   password: ""                 # FTP_PASSWORD
@@ -501,6 +501,7 @@ sftp:
   address: ""                  # SFTP_ADDRESS
   username: ""                 # SFTP_USERNAME
   password: ""                 # SFTP_PASSWORD
+  port: 22                     # SFTP_PORT
   key: ""                      # SFTP_KEY
   path: ""                     # SFTP_PATH, `system.macros` values could be applied as {macro_name}
   concurrency: 1               # SFTP_CONCURRENCY     

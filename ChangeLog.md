@@ -1,3 +1,7 @@
+# v2.3.0 (not yet released)
+BUG FIXES
+- add `FTP_ADDRESS` and `SFTP_PORT` in Default config Readme.md section fix [668](https://github.com/Altinity/clickhouse-backup/issues/668)
+
 # v2.2.7
 IMPROVEMENTS
 - Auto-tuning concurrency and buffer size related parameters depending on remote storage type, fix [658](https://github.com/Altinity/clickhouse-backup/issues/658)
