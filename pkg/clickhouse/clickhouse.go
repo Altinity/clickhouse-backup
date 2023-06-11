@@ -959,7 +959,7 @@ func (ch *ClickHouse) GetUserDefinedFunctions(ctx context.Context) ([]Function, 
 	allFunctions := make([]Function, 0)
 	allFunctionsSQL := "SELECT name, create_query FROM system.functions WHERE create_query!=''"
 	var detectUDF uint64
-	detectUDFSQL := "SELECT count() as cnt FROM system.columns WHERE database='system' AND table='functions' AND name='create_query'"
+	detectUDFSQL := "SELECT count() as cnt FROM system.columns WHERE database='system' AND table='functions' AND name='create_query' SETTINGS empty_result_for_aggregation_by_empty_set=0"
 	if err := ch.SelectSingleRow(ctx, &detectUDF, detectUDFSQL); err != nil {
 		return nil, err
 	}
@@ -1008,7 +1008,7 @@ func (ch *ClickHouse) GetInProgressMutations(ctx context.Context, database strin
 
 func (ch *ClickHouse) ApplyMacros(ctx context.Context, s string) (string, error) {
 	var macrosExists uint64
-	err := ch.SelectSingleRow(ctx, &macrosExists, "SELECT count() AS is_macros_exists FROM system.tables WHERE database='system' AND name='macros'")
+	err := ch.SelectSingleRow(ctx, &macrosExists, "SELECT count() AS is_macros_exists FROM system.tables WHERE database='system' AND name='macros'  SETTINGS empty_result_for_aggregation_by_empty_set=0")
 	if err != nil || macrosExists == 0 {
 		return s, err
 	}
