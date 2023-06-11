@@ -7,66 +7,66 @@ import (
 // Table - ClickHouse table struct
 type Table struct {
 	// common fields for all `clickhouse-server` versions
-	Database string `db:"database"`
-	Name     string `db:"name"`
-	Engine   string `db:"engine"`
+	Database string `ch:"database"`
+	Name     string `ch:"name"`
+	Engine   string `ch:"engine"`
 	// fields depends on `clickhouse-server` version
-	DataPath         string   `db:"data_path,omitempty"` // For legacy support
-	DataPaths        []string `db:"data_paths,omitempty"`
-	UUID             string   `db:"uuid,omitempty"`
-	CreateTableQuery string   `db:"create_table_query,omitempty"`
-	TotalBytes       uint64   `db:"total_bytes,omitempty"`
+	DataPath         string   `ch:"data_path"` // For legacy support
+	DataPaths        []string `ch:"data_paths"`
+	UUID             string   `ch:"uuid"`
+	CreateTableQuery string   `ch:"create_table_query"`
+	TotalBytes       uint64   `ch:"total_bytes"`
 	Skip             bool
 }
 
 // IsSystemTablesFieldPresent - ClickHouse `system.tables` varius field flags
 type IsSystemTablesFieldPresent struct {
-	IsDataPathPresent         int `db:"is_data_path_present"`
-	IsDataPathsPresent        int `db:"is_data_paths_present"`
-	IsUUIDPresent             int `db:"is_uuid_present"`
-	IsCreateTableQueryPresent int `db:"is_create_table_query_present"`
-	IsTotalBytesPresent       int `db:"is_total_bytes_present"`
+	IsDataPathPresent         uint64 `ch:"is_data_path_present"`
+	IsDataPathsPresent        uint64 `ch:"is_data_paths_present"`
+	IsUUIDPresent             uint64 `ch:"is_uuid_present"`
+	IsCreateTableQueryPresent uint64 `ch:"is_create_table_query_present"`
+	IsTotalBytesPresent       uint64 `ch:"is_total_bytes_present"`
 }
 
 type Disk struct {
-	Name     string `db:"name"`
-	Path     string `db:"path"`
-	Type     string `db:"type"`
+	Name     string `ch:"name"`
+	Path     string `ch:"path"`
+	Type     string `ch:"type"`
 	IsBackup bool
 }
 
 // Database - Clickhouse system.databases struct
 type Database struct {
-	Name   string `db:"name"`
-	Engine string `db:"engine"`
-	Query  string `db:"query"`
+	Name   string `ch:"name"`
+	Engine string `ch:"engine"`
+	Query  string `ch:"query"`
 }
 
 // Function - Clickhouse system.functions struct
 type Function struct {
-	Name        string `db:"name"`
-	CreateQuery string `db:"create_query"`
+	Name        string `ch:"name"`
+	CreateQuery string `ch:"create_query"`
 }
 
-// macro - info from system.macros
-type macro struct {
-	Macro        string `db:"macro"`
-	Substitution string `db:"substitution"`
+// Macro - info from system.macros
+type Macro struct {
+	Macro        string `ch:"macro"`
+	Substitution string `ch:"substitution"`
 }
 
 // SystemBackups - info from system.backups
 type SystemBackups struct {
-	Id                string    `db:"id"`
-	UUID              string    `db:"uuid"`
-	BackupName        string    `db:"backup_name"`
-	Name              string    `db:"name"`
-	Status            string    `db:"status"`
-	StatusChangedTime time.Time `db:"status_changed_time"`
-	Error             string    `db:"error"`
-	Internal          bool      `db:"internal"`
-	StartTime         time.Time `db:"start_time"`
-	EndTime           time.Time `db:"end_time"`
-	CompressedSize    uint64    `db:"compressed_size"`
-	UncompressedSize  uint64    `db:"uncompressed_size"`
-	NumFiles          uint64    `db:"num_files"`
+	Id                string    `ch:"id"`
+	UUID              string    `ch:"uuid"`
+	BackupName        string    `ch:"backup_name"`
+	Name              string    `ch:"name"`
+	Status            string    `ch:"status"`
+	StatusChangedTime time.Time `ch:"status_changed_time"`
+	Error             string    `ch:"error"`
+	Internal          bool      `ch:"internal"`
+	StartTime         time.Time `ch:"start_time"`
+	EndTime           time.Time `ch:"end_time"`
+	CompressedSize    uint64    `ch:"compressed_size"`
+	UncompressedSize  uint64    `ch:"uncompressed_size"`
+	NumFiles          uint64    `ch:"num_files"`
 }

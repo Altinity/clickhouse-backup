@@ -337,7 +337,7 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 				if err = json.Unmarshal(tmBody, &tableMetadata); err != nil {
 					return nil, 0, err
 				}
-				partitionsFilter, _ := filesystemhelper.CreatePartitionsToBackupMap(b.ch, nil, []metadata.TableMetadata{tableMetadata}, partitions)
+				partitionsFilter, _ := filesystemhelper.CreatePartitionsToBackupMap(ctx, b.ch, nil, []metadata.TableMetadata{tableMetadata}, partitions)
 				filterPartsAndFilesByPartitionsFilter(tableMetadata, partitionsFilter)
 			}
 			if isProcessed {
@@ -383,7 +383,7 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 			if err = json.Unmarshal(tmBody, &tableMetadata); err != nil {
 				return nil, 0, err
 			}
-			partitionsFilter, _ := filesystemhelper.CreatePartitionsToBackupMap(b.ch, nil, []metadata.TableMetadata{tableMetadata}, partitions)
+			partitionsFilter, _ := filesystemhelper.CreatePartitionsToBackupMap(ctx, b.ch, nil, []metadata.TableMetadata{tableMetadata}, partitions)
 			filterPartsAndFilesByPartitionsFilter(tableMetadata, partitionsFilter)
 			// save metadata
 			jsonSize := uint64(0)

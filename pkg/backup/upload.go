@@ -93,7 +93,7 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	b.isEmbedded = strings.Contains(backupMetadata.Tags, "embedded")
 
 	if len(backupMetadata.Tables) != 0 {
-		tablesForUpload, err = b.prepareTableListToUpload(backupName, tablePattern, partitions)
+		tablesForUpload, err = b.prepareTableListToUpload(ctx, backupName, tablePattern, partitions)
 		if err != nil {
 			return err
 		}
@@ -273,14 +273,14 @@ func (b *Backuper) uploadSingleBackupFile(ctx context.Context, localFile, remote
 	return nil
 }
 
-func (b *Backuper) prepareTableListToUpload(backupName string, tablePattern string, partitions []string) (ListOfTables, error) {
+func (b *Backuper) prepareTableListToUpload(ctx context.Context, backupName string, tablePattern string, partitions []string) (ListOfTables, error) {
 	var tablesForUpload ListOfTables
 	var err error
 	metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
 	if b.isEmbedded {
 		metadataPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
 	}
-	tablesForUpload, err = getTableListByPatternLocal(b.cfg, b.ch, metadataPath, tablePattern, false, partitions)
+	tablesForUpload, err = getTableListByPatternLocal(ctx, b.cfg, b.ch, metadataPath, tablePattern, false, partitions)
 	if err != nil {
 		return nil, err
 	}
@@ -297,7 +297,7 @@ func (b *Backuper) getTablesForUploadDiffLocal(ctx context.Context, diffFrom str
 		backupMetadata.RequiredBackup = diffFrom
 		metadataPath := path.Join(b.DefaultDataPath, "backup", diffFrom, "metadata")
 		// empty partitions, because we can not filter
-		diffTablesList, err := getTableListByPatternLocal(b.cfg, b.ch, metadataPath, tablePattern, false, []string{})
+		diffTablesList, err := getTableListByPatternLocal(ctx, b.cfg, b.ch, metadataPath, tablePattern, false, []string{})
 		if err != nil {
 			return nil, err
 		}

@@ -1,4 +1,7 @@
 # v2.3.0 (not yet released)
+IMPROVEMENTS
+- migrate to `clickhouse-go/v2`, fix [540](https://github.com/Altinity/clickhouse-backup/issues/540), close [562](https://github.com/Altinity/clickhouse-backup/pull/562)
+
 BUG FIXES
 - add `FTP_ADDRESS` and `SFTP_PORT` in Default config Readme.md section fix [668](https://github.com/Altinity/clickhouse-backup/issues/668)
 

@@ -54,8 +54,8 @@ type TableMetadata struct {
 }
 
 type MutationMetadata struct {
-	MutationId string `json:"mutation_id" db:"mutation_id"`
-	Command    string `json:"command" db:"command"`
+	MutationId string `json:"mutation_id" ch:"mutation_id"`
+	Command    string `json:"command" ch:"command"`
 }
 
 type Part struct {

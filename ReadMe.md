@@ -24,7 +24,7 @@ You can backup only schema from remote hosts.
 
 ## Limitations
 
-- ClickHouse above 1.1.54390 is supported
+- ClickHouse above 1.1.54394 is supported
 - Only MergeTree family tables engines (more table types for `clickhouse-server` 22.7+ and `USE_EMBEDDED_BACKUP_RESTORE=true`)
 
 ## Installation
