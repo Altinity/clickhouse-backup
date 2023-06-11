@@ -470,6 +470,41 @@ spec:
           done
 ```
 
+## How to use AWS IRSA and IAM to allow S3 backup without Explicit credentials
+
+Create Role <ROLE NAME> and IAM Policy, look details in https://docs.aws.amazon.com/emr/latest/EMR-on-EKS-DevelopmentGuide/setting-up-enable-IAM.html
+
+Create service account with annotations
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: <SERVICE ACOUNT NAME>
+  namespace: <NAMESPACE>
+  annotations:
+     eks.amazonaws.com/role-arn: arn:aws:iam::<ACCOUNT_NAME>:role/<ROLE_NAME>
+```
+
+Link service account to podTemplate it will create `AWS_ROLE_ARN` and `AWS_WEB_IDENTITY_TOKEN_FILE` environment variables. 
+```yaml
+apiVersion: "clickhouse.altinity.com/v1"
+kind: "ClickHouseInstallation"
+metadata:
+  name: <NAME>
+  namespace: <NAMESPACE>
+spec:
+  defaults:
+     templates:
+       podTemplate: <POD_TEMPLATE_NAME>
+  templates:
+    podTemplates:
+      - name: <POD_TEMPLATE_NAME>
+        spec:
+          serviceAccountName: <SERVICE ACCOUNT NAME>
+          containers:
+            - name: clickhouse-backup
+```
+
 ## How do incremental backups work to remote storage
 - Incremental backup calculate increment only during execute `upload` or `create_remote` command or similar REST API request.
 - Currently, incremental backup calculate increment only on table parts level, look to ClickHouse documentation to fill the difference between [data parts](https://clickhouse.tech/docs/en/operations/system-tables/parts/) and [table partitions](https://clickhouse.tech/docs/en/operations/system-tables/partitions/).  
