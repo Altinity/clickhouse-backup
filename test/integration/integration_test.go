@@ -1481,10 +1481,7 @@ func TestRestoreMutationInProgress(t *testing.T) {
 	}, 0)
 	checkRestoredData := "attr"
 	if restoreErr == nil {
-		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.8") < 0 {
-			checkRestoredData = "attr_1 AS attr"
-		}
-		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.3") >= 0 {
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 {
 			checkRestoredData = "attr_1 AS attr"
 		}
 	}
