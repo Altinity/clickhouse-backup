@@ -1,6 +1,7 @@
 package filesystemhelper
 
 import (
+	"context"
 	"fmt"
 	"github.com/Altinity/clickhouse-backup/pkg/partition"
 	"github.com/Altinity/clickhouse-backup/pkg/utils"
@@ -278,7 +279,7 @@ func IsDuplicatedParts(part1, part2 string) error {
 
 var partitionTupleRE = regexp.MustCompile(`\)\s*,\s*\(`)
 
-func CreatePartitionsToBackupMap(ch *clickhouse.ClickHouse, tablesFromClickHouse []clickhouse.Table, tablesFromMetadata []metadata.TableMetadata, partitions []string) (common.EmptyMap, []string) {
+func CreatePartitionsToBackupMap(ctx context.Context, ch *clickhouse.ClickHouse, tablesFromClickHouse []clickhouse.Table, tablesFromMetadata []metadata.TableMetadata, partitions []string) (common.EmptyMap, []string) {
 	if len(partitions) == 0 {
 		return make(common.EmptyMap, 0), partitions
 	}
@@ -293,7 +294,7 @@ func CreatePartitionsToBackupMap(ch *clickhouse.ClickHouse, tablesFromClickHouse
 			partitionArg = strings.TrimSuffix(strings.TrimPrefix(partitionArg, "("), ")")
 			for _, partitionTuple := range partitionTupleRE.Split(partitionArg, -1) {
 				for _, item := range tablesFromClickHouse {
-					if err, partitionId := partition.GetPartitionId(ch, item.Database, item.Name, item.CreateTableQuery, partitionTuple); err != nil {
+					if err, partitionId := partition.GetPartitionId(ctx, ch, item.Database, item.Name, item.CreateTableQuery, partitionTuple); err != nil {
 						apexLog.Errorf("partition.GetPartitionId error: %v", err)
 						return make(common.EmptyMap, 0), partitions
 					} else if partitionId != "" {
@@ -301,7 +302,7 @@ func CreatePartitionsToBackupMap(ch *clickhouse.ClickHouse, tablesFromClickHouse
 					}
 				}
 				for _, item := range tablesFromMetadata {
-					if err, partitionId := partition.GetPartitionId(ch, item.Database, item.Table, item.Query, partitionTuple); err != nil {
+					if err, partitionId := partition.GetPartitionId(ctx, ch, item.Database, item.Table, item.Query, partitionTuple); err != nil {
 						apexLog.Errorf("partition.GetPartitionId error: %v", err)
 						return make(common.EmptyMap, 0), partitions
 					} else if partitionId != "" {

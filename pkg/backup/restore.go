@@ -188,7 +188,7 @@ func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB, tablePatt
 				settings = "SETTINGS check_table_dependencies=0"
 			}
 		}
-		if _, err := b.ch.QueryContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s` %s SYNC %s", targetDB, onCluster, settings)); err != nil {
+		if err := b.ch.QueryContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s` %s SYNC %s", targetDB, onCluster, settings)); err != nil {
 			return err
 		}
 
@@ -326,7 +326,7 @@ func (b *Backuper) RestoreSchema(ctx context.Context, backupName, tablePattern s
 	if tablePattern == "" {
 		tablePattern = "*"
 	}
-	tablesForRestore, err := getTableListByPatternLocal(b.cfg, b.ch, metadataPath, tablePattern, dropTable, nil)
+	tablesForRestore, err := getTableListByPatternLocal(ctx, b.cfg, b.ch, metadataPath, tablePattern, dropTable, nil)
 	if err != nil {
 		return err
 	}
@@ -345,7 +345,7 @@ func (b *Backuper) RestoreSchema(ctx context.Context, backupName, tablePattern s
 	}
 	var restoreErr error
 	if isEmbedded {
-		restoreErr = b.restoreSchemaEmbedded(backupName, tablesForRestore)
+		restoreErr = b.restoreSchemaEmbedded(ctx, backupName, tablesForRestore)
 	} else {
 		restoreErr = b.restoreSchemaRegular(tablesForRestore, version, log)
 	}
@@ -357,8 +357,8 @@ func (b *Backuper) RestoreSchema(ctx context.Context, backupName, tablePattern s
 
 var UUIDWithReplicatedMergeTreeRE = regexp.MustCompile(`^(.+)(UUID)(\s+)'([^']+)'(.+)({uuid})(.*)`)
 
-func (b *Backuper) restoreSchemaEmbedded(backupName string, tablesForRestore ListOfTables) error {
-	return b.restoreEmbedded(backupName, true, tablesForRestore, nil)
+func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string, tablesForRestore ListOfTables) error {
+	return b.restoreEmbedded(ctx, backupName, true, tablesForRestore, nil)
 }
 
 func (b *Backuper) restoreSchemaRegular(tablesForRestore ListOfTables, version int, log *apexLog.Entry) error {
@@ -510,7 +510,7 @@ func (b *Backuper) RestoreData(ctx context.Context, backupName string, tablePatt
 		if isEmbedded {
 			metadataPath = path.Join(diskMap[b.cfg.ClickHouse.EmbeddedBackupDisk], backupName, "metadata")
 		}
-		tablesForRestore, err = getTableListByPatternLocal(b.cfg, b.ch, metadataPath, tablePattern, false, partitions)
+		tablesForRestore, err = getTableListByPatternLocal(ctx, b.cfg, b.ch, metadataPath, tablePattern, false, partitions)
 	}
 	if err != nil {
 		return err
@@ -520,7 +520,7 @@ func (b *Backuper) RestoreData(ctx context.Context, backupName string, tablePatt
 	}
 	log.Debugf("found %d tables with data in backup", len(tablesForRestore))
 	if isEmbedded {
-		err = b.restoreDataEmbedded(backupName, tablesForRestore, partitions)
+		err = b.restoreDataEmbedded(ctx, backupName, tablesForRestore, partitions)
 	} else {
 		err = b.restoreDataRegular(ctx, backupName, tablePattern, tablesForRestore, diskMap, disks, log)
 	}
@@ -531,8 +531,8 @@ func (b *Backuper) RestoreData(ctx context.Context, backupName string, tablePatt
 	return nil
 }
 
-func (b *Backuper) restoreDataEmbedded(backupName string, tablesForRestore ListOfTables, partitions []string) error {
-	return b.restoreEmbedded(backupName, false, tablesForRestore, partitions)
+func (b *Backuper) restoreDataEmbedded(ctx context.Context, backupName string, tablesForRestore ListOfTables, partitions []string) error {
+	return b.restoreEmbedded(ctx, backupName, false, tablesForRestore, partitions)
 }
 
 func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, tablePattern string, tablesForRestore ListOfTables, diskMap map[string]string, disks []clickhouse.Disk, log *apexLog.Entry) error {
@@ -691,7 +691,7 @@ func (b *Backuper) changeTablePatternFromRestoreDatabaseMapping(tablePattern str
 	return tablePattern
 }
 
-func (b *Backuper) restoreEmbedded(backupName string, restoreOnlySchema bool, tablesForRestore ListOfTables, partitions []string) error {
+func (b *Backuper) restoreEmbedded(ctx context.Context, backupName string, restoreOnlySchema bool, tablesForRestore ListOfTables, partitions []string) error {
 	restoreSQL := "Disk(?,?)"
 	tablesSQL := ""
 	l := len(tablesForRestore)
@@ -725,7 +725,7 @@ func (b *Backuper) restoreEmbedded(backupName string, restoreOnlySchema bool, ta
 	}
 	restoreSQL = fmt.Sprintf("RESTORE %s FROM %s %s", tablesSQL, restoreSQL, settings)
 	restoreResults := make([]clickhouse.SystemBackups, 0)
-	if err := b.ch.Select(&restoreResults, restoreSQL, b.cfg.ClickHouse.EmbeddedBackupDisk, backupName); err != nil {
+	if err := b.ch.SelectContext(ctx, &restoreResults, restoreSQL, b.cfg.ClickHouse.EmbeddedBackupDisk, backupName); err != nil {
 		return fmt.Errorf("restore error: %v", err)
 	}
 	if len(restoreResults) == 0 || restoreResults[0].Status != "RESTORED" {

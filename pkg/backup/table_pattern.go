@@ -47,7 +47,7 @@ func addTableToListIfNotExistsOrEnrichQueryAndParts(tables ListOfTables, table m
 	return append(tables, table)
 }
 
-func getTableListByPatternLocal(cfg *config.Config, ch *clickhouse.ClickHouse, metadataPath string, tablePattern string, dropTable bool, partitions []string) (ListOfTables, error) {
+func getTableListByPatternLocal(ctx context.Context, cfg *config.Config, ch *clickhouse.ClickHouse, metadataPath string, tablePattern string, dropTable bool, partitions []string) (ListOfTables, error) {
 	result := ListOfTables{}
 	tablePatterns := []string{"*"}
 	log := apexLog.WithField("logger", "getTableListByPatternLocal")
@@ -126,7 +126,7 @@ func getTableListByPatternLocal(cfg *config.Config, ch *clickhouse.ClickHouse, m
 					Query:    query,
 					Parts:    parts,
 				}
-				partitionsFilter, _ := filesystemhelper.CreatePartitionsToBackupMap(ch, nil, []metadata.TableMetadata{t}, partitions)
+				partitionsFilter, _ := filesystemhelper.CreatePartitionsToBackupMap(ctx, ch, nil, []metadata.TableMetadata{t}, partitions)
 				filterPartsAndFilesByPartitionsFilter(t, partitionsFilter)
 				result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, t)
 
@@ -136,7 +136,7 @@ func getTableListByPatternLocal(cfg *config.Config, ch *clickhouse.ClickHouse, m
 			if err := json.Unmarshal(data, &t); err != nil {
 				return err
 			}
-			partitionsFilter, _ := filesystemhelper.CreatePartitionsToBackupMap(ch, nil, []metadata.TableMetadata{t}, partitions)
+			partitionsFilter, _ := filesystemhelper.CreatePartitionsToBackupMap(ctx, ch, nil, []metadata.TableMetadata{t}, partitions)
 			filterPartsAndFilesByPartitionsFilter(t, partitionsFilter)
 			result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, t)
 			return nil
