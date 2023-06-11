@@ -38,9 +38,10 @@ def random_datetime(dt_start, dt_end):
 def config_modifier(fields=None):
     if fields is None:
         fields = {}
+    origin_path = current().context.backup_config_origin
     path = current().context.backup_config_file
         
-    with open(path) as f:
+    with open(origin_path) as f:
         s = yaml.full_load(f)
     with open(path, 'w') as f:
         for section in fields:

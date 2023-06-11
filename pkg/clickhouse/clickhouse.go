@@ -536,7 +536,7 @@ func (ch *ClickHouse) GetVersion(ctx context.Context) (int, error) {
 	var err error
 	query := "SELECT value FROM `system`.`build_options` where name='VERSION_INTEGER'"
 	if err = ch.SelectSingleRow(ctx, &result, query); err != nil {
-		ch.Log.Warnf("can't get ClickHouse version: %w", err)
+		ch.Log.Warnf("can't get ClickHouse version: %v", err)
 		return 0, nil
 	}
 	ch.version, err = strconv.Atoi(result)

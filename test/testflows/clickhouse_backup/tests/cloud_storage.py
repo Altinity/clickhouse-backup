@@ -228,8 +228,8 @@ def compression_formats(self):
     backup = self.context.backup
     name_prefix = "bp_compr"
 
-    with Given("I save original config.yml contents"):
-        with open(self.context.backup_config_file) as f:
+    with Given("I load config.yml.origin contents"):
+        with open(self.context.backup_config_origin) as f:
             initial_config_state = yaml.safe_load(f)
 
     for compr_mode in ("tar", "bzip2", "gzip", "sz", "xz", "br", "zstd"):
@@ -269,7 +269,7 @@ def compression_formats(self):
             with And("I delete table"):
                 drop_table(node=clickhouse, table_name=f"{name_prefix}_{compr_mode}")
 
-            with And("I restore original config.yml contents"):
+            with And("I save config.yml contents"):
                 with open(self.context.backup_config_file, "w") as f:
                     yaml.dump(initial_config_state, f)
 
@@ -287,8 +287,8 @@ def cloud_storage(self):
     initial_config_state = None
 
     try:
-        with Given("I save original config.yml contents"):
-            with open(self.context.backup_config_file) as f:
+        with Given("I load config.yml.origin contents"):
+            with open(self.context.backup_config_origin) as f:
                 initial_config_state = yaml.safe_load(f)
 
         for scenario in loads(current_module(), Scenario, Suite):
@@ -296,6 +296,6 @@ def cloud_storage(self):
 
     finally:
         if initial_config_state:
-            with Finally("I restore original config.yml contents"):
+            with Finally("I save config.yml contents"):
                 with open(self.context.backup_config_file, "w") as f:
                     yaml.dump(initial_config_state, f)
