@@ -65,8 +65,8 @@ func GetPartitionId(ctx context.Context, ch *clickhouse.ClickHouse, database, ta
 	}, 0)
 	sql = "SELECT name FROM system.columns WHERE database=? AND table=? AND is_in_partition_key"
 	if err := ch.SelectContext(ctx, &columns, sql, database, partitionIdTable); err != nil {
-		if err = dropPartitionIdTable(ch, database, partitionIdTable); err != nil {
-			return err, ""
+		if dropErr := dropPartitionIdTable(ch, database, partitionIdTable); dropErr != nil {
+			return dropErr, ""
 		}
 		return fmt.Errorf("can't get is_in_partition_key column names from for table `%s`.`%s`: %v", database, partitionIdTable, err), ""
 	}
@@ -106,7 +106,7 @@ func GetPartitionId(ctx context.Context, ch *clickhouse.ClickHouse, database, ta
 }
 
 func dropPartitionIdTable(ch *clickhouse.ClickHouse, database string, partitionIdTable string) error {
-	sql := fmt.Sprintf("DROP TABLE `%s`.`%s`", database, partitionIdTable)
+	sql := fmt.Sprintf("DROP TABLE IF EXISTS `%s`.`%s`", database, partitionIdTable)
 	if isAtomic, err := ch.IsAtomic(database); isAtomic {
 		sql += " SYNC"
 	} else if err != nil {

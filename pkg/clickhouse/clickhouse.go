@@ -503,7 +503,7 @@ func (ch *ClickHouse) fixVariousVersions(ctx context.Context, t Table, metadataP
 	if t.UUID == "00000000-0000-0000-0000-000000000000" {
 		t.UUID = ""
 	}
-	// version 1.1.54390 no has query column
+	// version 1.1.54394 no has query column
 	if strings.TrimSpace(t.CreateTableQuery) == "" {
 		t.CreateTableQuery = ch.ShowCreateTable(ctx, t.Database, t.Name)
 	}

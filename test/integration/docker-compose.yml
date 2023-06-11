@@ -77,7 +77,7 @@ services:
     container_name: clickhouse
     user: root
     environment:
-      CLICKHOUSE_VERSION: ${CLICKHOUSE_VERSION:-1.1.54390}
+      CLICKHOUSE_VERSION: ${CLICKHOUSE_VERSION:-1.1.54394}
       TZ: UTC
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       S3_DEBUG: "${S3_DEBUG:-false}"
