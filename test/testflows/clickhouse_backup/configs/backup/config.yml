@@ -72,18 +72,17 @@ general:
   download_concurrency: 2
   log_level: info
   max_file_size: 107374182400
-  remote_storage: s3
+  remote_storage: none
   upload_concurrency: 2
 s3:
-  access_key: YCAJEU-PpeGuqFz_KeEfDWrbX
+  access_key: access-key
   acl: private
-  bucket: clickhouse-backup-dev
+  bucket: altinity-qa-test
   debug: false
-  disable_ssl: false
-  endpoint: https://storage.yandexcloud.net/
+  disable_ssl: true
+  endpoint: http://minio:9000
   force_path_style: true
-  region: ru-central1
-  secret_key: YCOYYsZCPwNreu4q2D3udsTXm2LlbVOCzvKdOaB4
+  secret_key: it-is-my-super-secret-key
 sftp:
   address: sftp_server
   compression_format: tar
