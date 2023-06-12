@@ -3,15 +3,16 @@ package config
 import (
 	"crypto/tls"
 	"fmt"
-	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"math"
 	"os"
 	"runtime"
 	"strings"
 	"time"
 
-	"github.com/apex/log"
+	"github.com/Altinity/clickhouse-backup/pkg/log_helper"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/kelseyhightower/envconfig"
+	"github.com/rs/zerolog/log"
 	"github.com/urfave/cli"
 	"gopkg.in/yaml.v3"
 )
@@ -289,7 +290,7 @@ func LoadConfig(configLocation string) (*Config, error) {
 		return nil, err
 	}
 
-	//auto tuning upload_concurrency for storage types which not have SDK level concurrency, https://github.com/Altinity/clickhouse-backup/issues/658
+	//adjust upload_concurrency for storage types which not have SDK level concurrency, https://github.com/Altinity/clickhouse-backup/issues/658
 	cfgWithoutDefault := &Config{}
 	if err := yaml.Unmarshal(configYaml, &cfgWithoutDefault); err != nil {
 		return nil, fmt.Errorf("can't parse config file: %v", err)
@@ -303,7 +304,7 @@ func LoadConfig(configLocation string) (*Config, error) {
 	cfg.AzureBlob.Path = strings.TrimPrefix(cfg.AzureBlob.Path, "/")
 	cfg.S3.Path = strings.TrimPrefix(cfg.S3.Path, "/")
 	cfg.GCS.Path = strings.TrimPrefix(cfg.GCS.Path, "/")
-	log.SetLevelFromString(cfg.General.LogLevel)
+	log_helper.SetLogLevelFromString(cfg.General.LogLevel)
 	return cfg, ValidateConfig(cfg)
 }
 
@@ -548,7 +549,7 @@ func GetConfigFromCli(ctx *cli.Context) *Config {
 	configPath := GetConfigPath(ctx)
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
-		log.Fatal(err.Error())
+		log.Fatal().Stack().Err(err).Send()
 	}
 	return cfg
 }

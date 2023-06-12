@@ -3,14 +3,15 @@ package backup
 import (
 	"context"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/pkg/config"
-	"github.com/Altinity/clickhouse-backup/pkg/server/metrics"
-	"github.com/Altinity/clickhouse-backup/pkg/status"
-	apexLog "github.com/apex/log"
-	"github.com/urfave/cli"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/Altinity/clickhouse-backup/pkg/config"
+	"github.com/Altinity/clickhouse-backup/pkg/server/metrics"
+	"github.com/Altinity/clickhouse-backup/pkg/status"
+	"github.com/rs/zerolog/log"
+	"github.com/urfave/cli"
 )
 
 var watchBackupTemplateTimeRE = regexp.MustCompile(`{time:([^}]+)}`)
@@ -100,17 +101,17 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 				if cfg, err := config.LoadConfig(config.GetConfigPath(cliCtx)); err == nil {
 					b.cfg = cfg
 				} else {
-					b.log.Warnf("watch config.LoadConfig error: %v", err)
+					log.Warn().Msgf("watch config.LoadConfig error: %v", err)
 				}
 				if err := b.ValidateWatchParams(watchInterval, fullInterval, watchBackupNameTemplate); err != nil {
 					return err
 				}
 			}
 			backupName, err := b.NewBackupWatchName(ctx, backupType)
-			log := b.log.WithFields(apexLog.Fields{
+			logger := log.With().Fields(map[string]interface{}{
 				"backup":    backupName,
 				"operation": "watch",
-			})
+			}).Logger()
 			if err != nil {
 				return err
 			}
@@ -129,14 +130,14 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 			} else {
 				createRemoteErr = b.CreateToRemote(backupName, "", diffFromRemote, tablePattern, partitions, schemaOnly, rbac, backupConfig, skipCheckPartsColumns, false, version, commandId)
 				if createRemoteErr != nil {
-					log.Errorf("create_remote %s return error: %v", backupName, createRemoteErr)
+					logger.Error().Msgf("create_remote %s return error: %v", backupName, createRemoteErr)
 					createRemoteErrCount += 1
 				} else {
 					createRemoteErrCount = 0
 				}
 				deleteLocalErr = b.RemoveBackupLocal(ctx, backupName, nil)
 				if deleteLocalErr != nil {
-					log.Errorf("delete local %s return error: %v", backupName, deleteLocalErr)
+					logger.Error().Msgf("delete local %s return error: %v", backupName, deleteLocalErr)
 					deleteLocalErrCount += 1
 				} else {
 					deleteLocalErrCount = 0

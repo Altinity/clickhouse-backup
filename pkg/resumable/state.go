@@ -3,19 +3,21 @@ package resumable
 import (
 	"encoding/json"
 	"fmt"
-	apexLog "github.com/apex/log"
+	"github.com/rs/zerolog"
 	"os"
 	"path"
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/rs/zerolog/log"
 )
 
 type State struct {
 	stateFile    string
 	currentState string
 	params       map[string]interface{}
-	log          *apexLog.Entry
+	logger       zerolog.Logger
 	fp           *os.File
 	mx           *sync.RWMutex
 }
@@ -25,11 +27,11 @@ func NewState(defaultDiskPath, backupName, command string, params map[string]int
 		stateFile:    path.Join(defaultDiskPath, "backup", backupName, fmt.Sprintf("%s.state", command)),
 		currentState: "",
 		mx:           &sync.RWMutex{},
-		log:          apexLog.WithField("logger", "resumable"),
+		logger:       log.With().Str("logger", "resumable").Logger(),
 	}
 	fp, err := os.OpenFile(s.stateFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
-		s.log.Warnf("can't open %s error: %v", s.stateFile, err)
+		s.logger.Warn().Msgf("can't open %s error: %v", s.stateFile, err)
 	}
 	s.fp = fp
 	s.LoadState()
@@ -55,7 +57,7 @@ func (s *State) LoadParams() {
 	//size 0 during write
 	lines[0] = strings.TrimSuffix(lines[0], ":0")
 	if err := json.Unmarshal([]byte(lines[0]), &s.params); err != nil {
-		apexLog.Errorf("can't parse state file line 0 as []interface{}: %s", lines[0])
+		s.logger.Error().Msgf("can't parse state file line 0 as []interface{}: %s", lines[0])
 	}
 }
 
@@ -67,9 +69,9 @@ func (s *State) LoadState() {
 	} else {
 		s.currentState = ""
 		if !os.IsNotExist(err) {
-			s.log.Warnf("can't read %s error: %v", s.stateFile, err)
+			s.logger.Warn().Msgf("can't read %s error: %v", s.stateFile, err)
 		} else {
-			s.log.Warnf("%s empty, will continue from scratch error: %v", s.stateFile, err)
+			s.logger.Warn().Msgf("%s empty, will continue from scratch error: %v", s.stateFile, err)
 		}
 	}
 	s.mx.Unlock()
@@ -81,11 +83,11 @@ func (s *State) AppendToState(path string, size int64) {
 	if s.fp != nil {
 		_, err := s.fp.WriteString(path + "\n")
 		if err != nil {
-			s.log.Warnf("can't write %s error: %v", s.stateFile, err)
+			s.logger.Warn().Msgf("can't write %s error: %v", s.stateFile, err)
 		}
 		err = s.fp.Sync()
 		if err != nil {
-			s.log.Warnf("can't sync %s error: %v", s.stateFile, err)
+			s.logger.Warn().Msgf("can't sync %s error: %v", s.stateFile, err)
 		}
 	}
 	s.currentState += path + "\n"
@@ -102,12 +104,12 @@ func (s *State) IsAlreadyProcessed(path string) (bool, int64) {
 	s.mx.RLock()
 	res := strings.Index(s.currentState, path+":")
 	if res >= 0 {
-		s.log.Infof("%s already processed", path)
+		s.logger.Info().Msgf("%s already processed", path)
 		sSize := s.currentState[res : res+strings.Index(s.currentState[res:], "\n")]
 		sSize = sSize[strings.Index(sSize, ":")+1:]
 		size, err = strconv.ParseInt(sSize, 10, 64)
 		if err != nil {
-			s.log.Warnf("invalid size %s in upload state: %v", sSize, err)
+			s.logger.Warn().Msgf("invalid size %s in upload state: %v", sSize, err)
 		}
 	}
 	s.mx.RUnlock()

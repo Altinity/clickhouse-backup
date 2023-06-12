@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"github.com/Altinity/clickhouse-backup/pkg/utils"
-	"github.com/apex/log"
 	"github.com/eapache/go-resiliency/retrier"
+	"github.com/rs/zerolog/log"
 	"time"
 )
 
@@ -45,15 +45,15 @@ func Upload(ctx context.Context, cfg *config.Config, backupName, diffFrom, diffF
 		return utils.ExecCmd(ctx, cfg.Custom.CommandTimeoutDuration, args[0], args[1:]...)
 	})
 	if err == nil {
-		log.
-			WithField("operation", "upload_custom").
-			WithField("duration", utils.HumanizeDuration(time.Since(startCustomUpload))).
-			Info("done")
+		log.Info().
+			Str("operation", "upload_custom").
+			Str("duration", utils.HumanizeDuration(time.Since(startCustomUpload))).
+			Msg("done")
 		return nil
 	} else {
-		log.
-			WithField("operation", "upload_custom").
-			Error(err.Error())
+		log.Error().
+			Str("operation", "upload_custom").
+			Err(err).Send()
 		return err
 	}
 }

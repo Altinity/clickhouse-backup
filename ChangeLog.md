@@ -2,6 +2,7 @@
 IMPROVEMENTS
 - migrate to `clickhouse-go/v2`, fix [540](https://github.com/Altinity/clickhouse-backup/issues/540), close [562](https://github.com/Altinity/clickhouse-backup/pull/562)
 - add documentation for `AWS_ARN_ROLE` and `AWS_WEB_IDENTITY_TOKEN_FILE`, fix [563](https://github.com/Altinity/clickhouse-backup/issues/563)
+- migrate from `apex/log` to `rs/zerolog`, fix RaceConditions, fix [624](https://github.com/Altinity/clickhouse-backup/issues/624),see details https://github.com/apex/log/issues/103
 
 BUG FIXES
 - add `FTP_ADDRESS` and `SFTP_PORT` in Default config Readme.md section fix [668](https://github.com/Altinity/clickhouse-backup/issues/668)

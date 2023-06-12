@@ -3,16 +3,19 @@ package main
 import (
 	"context"
 	"fmt"
+	stdlog "log"
 	"os"
+	"time"
 
 	"github.com/Altinity/clickhouse-backup/pkg/config"
-	"github.com/Altinity/clickhouse-backup/pkg/logcli"
 	"github.com/Altinity/clickhouse-backup/pkg/status"
 
 	"github.com/Altinity/clickhouse-backup/pkg/backup"
 	"github.com/Altinity/clickhouse-backup/pkg/server"
 
-	"github.com/apex/log"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+	"github.com/rs/zerolog/pkgerrors"
 	"github.com/urfave/cli"
 )
 
@@ -23,7 +26,9 @@ var (
 )
 
 func main() {
-	log.SetHandler(logcli.New(os.Stdout))
+	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout, NoColor: true, TimeFormat: time.StampMilli})
+	stdlog.SetOutput(log.Logger)
+	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
 	cliapp := cli.NewApp()
 	cliapp.Name = "clickhouse-backup"
 	cliapp.Usage = "Tool for easy backup of ClickHouse with cloud support"
@@ -414,11 +419,11 @@ func main() {
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				if c.Args().Get(1) == "" {
-					log.Errorf("Backup name must be defined")
+					log.Err(fmt.Errorf("Backup name must be defined")).Send()
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
 				}
 				if c.Args().Get(0) != "local" && c.Args().Get(0) != "remote" {
-					log.Errorf("Unknown command '%s'\n", c.Args().Get(0))
+					log.Err(fmt.Errorf("Unknown command '%s'\n", c.Args().Get(0))).Send()
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
 				}
 				return b.Delete(c.Args().Get(0), c.Args().Get(1), c.Int("command-id"))
@@ -553,6 +558,6 @@ func main() {
 		},
 	}
 	if err := cliapp.Run(os.Args); err != nil {
-		log.Fatal(err.Error())
+		log.Fatal().Err(err).Send()
 	}
 }

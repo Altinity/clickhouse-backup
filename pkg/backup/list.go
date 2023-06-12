@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/Altinity/clickhouse-backup/pkg/custom"
 	"github.com/Altinity/clickhouse-backup/pkg/status"
-	apexLog "github.com/apex/log"
 	"io"
 	"os"
 	"path"
@@ -18,6 +17,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/pkg/metadata"
 	"github.com/Altinity/clickhouse-backup/pkg/storage"
 	"github.com/Altinity/clickhouse-backup/pkg/utils"
+	"github.com/rs/zerolog/log"
 )
 
 // List - list backups to stdout from command line
@@ -35,7 +35,7 @@ func (b *Backuper) List(what, format string) error {
 	return nil
 }
 func printBackupsRemote(w io.Writer, backupList []storage.Backup, format string) error {
-	log := apexLog.WithField("logger", "printBackupsRemote")
+	logger := log.With().Str("logger", "printBackupsRemote").Logger()
 	switch format {
 	case "latest", "last", "l":
 		if len(backupList) < 1 {
@@ -73,7 +73,7 @@ func printBackupsRemote(w io.Writer, backupList []storage.Backup, format string)
 				size = "???"
 			}
 			if bytes, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", backup.BackupName, size, uploadDate, "remote", required, description); err != nil {
-				log.Errorf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
+				logger.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
 			}
 		}
 	default:
@@ -83,7 +83,7 @@ func printBackupsRemote(w io.Writer, backupList []storage.Backup, format string)
 }
 
 func printBackupsLocal(ctx context.Context, w io.Writer, backupList []LocalBackup, format string) error {
-	log := apexLog.WithField("logger", "printBackupsLocal")
+	logger := log.With().Str("logger", "printBackupsLocal").Logger()
 	switch format {
 	case "latest", "last", "l":
 		if len(backupList) < 1 {
@@ -122,7 +122,7 @@ func printBackupsLocal(ctx context.Context, w io.Writer, backupList []LocalBacku
 					size = "???"
 				}
 				if bytes, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", backup.BackupName, size, creationDate, "local", required, description); err != nil {
-					log.Errorf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
+					logger.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
 				}
 			}
 		}
@@ -134,7 +134,7 @@ func printBackupsLocal(ctx context.Context, w io.Writer, backupList []LocalBacku
 
 // PrintLocalBackups - print all backups stored locally
 func (b *Backuper) PrintLocalBackups(ctx context.Context, format string) error {
-	log := apexLog.WithField("logger", "PrintLocalBackups")
+	logger := log.With().Str("logger", "PrintLocalBackups").Logger()
 	if !b.ch.IsOpen {
 		if err := b.ch.Connect(); err != nil {
 			return fmt.Errorf("can't connect to clickhouse: %v", err)
@@ -144,7 +144,7 @@ func (b *Backuper) PrintLocalBackups(ctx context.Context, format string) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', tabwriter.DiscardEmptyColumns)
 	defer func() {
 		if err := w.Flush(); err != nil {
-			log.Errorf("can't flush tabular writer error: %v", err)
+			logger.Error().Msgf("can't flush tabular writer error: %v", err)
 		}
 	}()
 	backupList, _, err := b.GetLocalBackups(ctx, nil)
@@ -163,7 +163,7 @@ func (b *Backuper) GetLocalBackups(ctx context.Context, disks []clickhouse.Disk)
 		}
 		defer b.ch.Close()
 	}
-	log := b.log.WithField("logger", "GetLocalBackups")
+	logger := log.With().Str("logger", "GetLocalBackups").Logger()
 	if disks == nil {
 		disks, err = b.ch.GetDisks(ctx)
 		if err != nil {
@@ -244,7 +244,7 @@ func (b *Backuper) GetLocalBackups(ctx context.Context, disks []clickhouse.Disk)
 				})
 			}
 			if closeErr := d.Close(); closeErr != nil {
-				log.Errorf("can't close %s openError: %v", backupPath, closeErr)
+				logger.Error().Msgf("can't close %s openError: %v", backupPath, closeErr)
 			}
 		}
 	}
@@ -262,10 +262,10 @@ func (b *Backuper) PrintAllBackups(ctx context.Context, format string) error {
 		}
 		defer b.ch.Close()
 	}
-	log := b.log.WithField("logger", "PrintAllBackups")
+	logger := log.With().Str("logger", "PrintAllBackups").Logger()
 	defer func() {
 		if err := w.Flush(); err != nil {
-			log.Errorf("can't flush tabular writer error: %v", err)
+			logger.Error().Msgf("can't flush tabular writer error: %v", err)
 		}
 	}()
 	localBackups, _, err := b.GetLocalBackups(ctx, nil)
@@ -273,7 +273,7 @@ func (b *Backuper) PrintAllBackups(ctx context.Context, format string) error {
 		return err
 	}
 	if err = printBackupsLocal(ctx, w, localBackups, format); err != nil {
-		log.Warnf("printBackupsLocal return error: %v", err)
+		logger.Warn().Msgf("printBackupsLocal return error: %v", err)
 	}
 
 	if b.cfg.General.RemoteStorage != "none" {
@@ -282,7 +282,7 @@ func (b *Backuper) PrintAllBackups(ctx context.Context, format string) error {
 			return err
 		}
 		if err = printBackupsRemote(w, remoteBackups, format); err != nil {
-			log.Warnf("printBackupsRemote return error: %v", err)
+			logger.Warn().Msgf("printBackupsRemote return error: %v", err)
 		}
 	}
 	return nil
@@ -296,11 +296,11 @@ func (b *Backuper) PrintRemoteBackups(ctx context.Context, format string) error 
 		}
 		defer b.ch.Close()
 	}
-	log := b.log.WithField("logger", "PrintRemoteBackups")
+	logger := log.With().Str("logger", "PrintRemoteBackups").Logger()
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', tabwriter.DiscardEmptyColumns)
 	defer func() {
 		if err := w.Flush(); err != nil {
-			log.Errorf("can't flush tabular writer error: %v", err)
+			logger.Error().Msgf("can't flush tabular writer error: %v", err)
 		}
 	}()
 	backupList, err := b.GetRemoteBackups(ctx, true)
@@ -350,7 +350,7 @@ func (b *Backuper) GetRemoteBackups(ctx context.Context, parseMetadata bool) ([]
 	}
 	defer func() {
 		if err := bd.Close(ctx); err != nil {
-			b.log.Warnf("can't close BackupDestination error: %v", err)
+			log.Warn().Msgf("can't close BackupDestination error: %v", err)
 		}
 	}()
 	backupList, err := bd.BackupList(ctx, parseMetadata, "")
@@ -392,7 +392,7 @@ func (b *Backuper) PrintTables(printAll bool, tablePattern string) error {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
 	defer b.ch.Close()
-	log := b.log.WithField("logger", "PrintTables")
+	logger := log.With().Str("logger", "PrintTables").Logger()
 	allTables, err := b.GetTables(ctx, tablePattern)
 	if err != nil {
 		return err
@@ -412,16 +412,16 @@ func (b *Backuper) PrintTables(printAll bool, tablePattern string) error {
 		}
 		if table.Skip {
 			if bytes, err := fmt.Fprintf(w, "%s.%s\t%s\t%v\tskip\n", table.Database, table.Name, utils.FormatBytes(table.TotalBytes), strings.Join(tableDisks, ",")); err != nil {
-				log.Errorf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
+				logger.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
 			}
 			continue
 		}
 		if bytes, err := fmt.Fprintf(w, "%s.%s\t%s\t%v\t\n", table.Database, table.Name, utils.FormatBytes(table.TotalBytes), strings.Join(tableDisks, ",")); err != nil {
-			log.Errorf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
+			logger.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
 		}
 	}
 	if err := w.Flush(); err != nil {
-		log.Errorf("can't flush tabular writer error: %v", err)
+		logger.Error().Msgf("can't flush tabular writer error: %v", err)
 	}
 	return nil
 }

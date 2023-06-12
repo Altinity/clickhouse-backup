@@ -27,7 +27,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/pkg/filesystemhelper"
 	"github.com/Altinity/clickhouse-backup/pkg/metadata"
 	"github.com/Altinity/clickhouse-backup/pkg/utils"
-	apexLog "github.com/apex/log"
+	"github.com/rs/zerolog/log"
 	"github.com/yargevad/filepathx"
 )
 
@@ -56,10 +56,10 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	if b.cfg.General.RemoteStorage == "custom" {
 		return custom.Upload(ctx, b.cfg, backupName, diffFrom, diffFromRemote, tablePattern, partitions, schemaOnly)
 	}
-	log := apexLog.WithFields(apexLog.Fields{
+	logger := log.With().Fields(map[string]interface{}{
 		"backup":    backupName,
 		"operation": "upload",
-	})
+	}).Logger()
 	if _, disks, err = b.getLocalBackup(ctx, backupName, nil); err != nil {
 		return fmt.Errorf("can't find local backup: %v", err)
 	}
@@ -68,7 +68,7 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	}
 	defer func() {
 		if err := b.dst.Close(ctx); err != nil {
-			b.log.Warnf("can't close BackupDestination error: %v", err)
+			logger.Warn().Msgf("can't close BackupDestination error: %v", err)
 		}
 	}()
 
@@ -81,7 +81,7 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 			if !b.resume {
 				return fmt.Errorf("'%s' already exists on remote storage", backupName)
 			} else {
-				log.Warnf("'%s' already exists on remote, will try to resume upload", backupName)
+				logger.Warn().Msgf("'%s' already exists on remote, will try to resume upload", backupName)
 			}
 		}
 	}
@@ -125,13 +125,13 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	compressedDataSize := int64(0)
 	metadataSize := int64(0)
 
-	log.Debugf("prepare table concurrent semaphore with concurrency=%d len(tablesForUpload)=%d", b.cfg.General.UploadConcurrency, len(tablesForUpload))
+	logger.Debug().Msgf("prepare table concurrent semaphore with concurrency=%d len(tablesForUpload)=%d", b.cfg.General.UploadConcurrency, len(tablesForUpload))
 	uploadSemaphore := semaphore.NewWeighted(int64(b.cfg.General.UploadConcurrency))
 	uploadGroup, uploadCtx := errgroup.WithContext(ctx)
 
 	for i, table := range tablesForUpload {
 		if err := uploadSemaphore.Acquire(uploadCtx, 1); err != nil {
-			log.Errorf("can't acquire semaphore during Upload table: %v", err)
+			logger.Error().Msgf("can't acquire semaphore during Upload table: %v", err)
 			break
 		}
 		start := time.Now()
@@ -163,11 +163,11 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 				return err
 			}
 			atomic.AddInt64(&metadataSize, tableMetadataSize)
-			log.
-				WithField("table", fmt.Sprintf("%s.%s", tablesForUpload[idx].Database, tablesForUpload[idx].Table)).
-				WithField("duration", utils.HumanizeDuration(time.Since(start))).
-				WithField("size", utils.FormatBytes(uint64(uploadedBytes+tableMetadataSize))).
-				Info("done")
+			logger.Info().
+				Str("table", fmt.Sprintf("%s.%s", tablesForUpload[idx].Database, tablesForUpload[idx].Table)).
+				Str("duration", utils.HumanizeDuration(time.Since(start))).
+				Str("size", utils.FormatBytes(uint64(uploadedBytes+tableMetadataSize))).
+				Msg("done")
 			return nil
 		})
 	}
@@ -230,10 +230,10 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	if b.resume {
 		b.resumableState.Close()
 	}
-	log.
-		WithField("duration", utils.HumanizeDuration(time.Since(startUpload))).
-		WithField("size", utils.FormatBytes(uint64(compressedDataSize)+uint64(metadataSize)+uint64(len(newBackupMetadataBody))+backupMetadata.RBACSize+backupMetadata.ConfigSize)).
-		Info("done")
+	logger.Info().
+		Str("duration", utils.HumanizeDuration(time.Since(startUpload))).
+		Str("size", utils.FormatBytes(uint64(compressedDataSize)+uint64(metadataSize)+uint64(len(newBackupMetadataBody))+backupMetadata.RBACSize+backupMetadata.ConfigSize)).
+		Msg("done")
 
 	// Clean
 	if err = b.dst.RemoveOldBackups(ctx, b.cfg.General.BackupsToKeepRemote); err != nil {
@@ -246,14 +246,14 @@ func (b *Backuper) uploadSingleBackupFile(ctx context.Context, localFile, remote
 	if b.resume && b.resumableState.IsAlreadyProcessedBool(remoteFile) {
 		return nil
 	}
-	log := b.log.WithField("logger", "uploadSingleBackupFile")
+	logger := log.With().Str("logger", "uploadSingleBackupFile").Logger()
 	f, err := os.Open(localFile)
 	if err != nil {
 		return fmt.Errorf("can't open %s: %v", localFile, err)
 	}
 	defer func() {
 		if err := f.Close(); err != nil {
-			log.Warnf("can't close %v: %v", f, err)
+			logger.Warn().Msgf("can't close %v: %v", f, err)
 		}
 	}()
 	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
@@ -348,7 +348,7 @@ func (b *Backuper) getTablesForUploadDiffRemote(ctx context.Context, diffFromRem
 }
 
 func (b *Backuper) validateUploadParams(ctx context.Context, backupName string, diffFrom string, diffFromRemote string) error {
-	log := b.log.WithField("logger", "validateUploadParams")
+	logger := log.With().Str("logger", "validateUploadParams").Logger()
 	if b.cfg.General.RemoteStorage == "none" {
 		return fmt.Errorf("general->remote_storage shall not be \"none\" for upload, change you config or use REMOTE_STORAGE environment variable")
 	}
@@ -369,7 +369,7 @@ func (b *Backuper) validateUploadParams(ctx context.Context, backupName string, 
 		return fmt.Errorf("%s->`compression_format`=%s incompatible with general->upload_by_part=%v", b.cfg.General.RemoteStorage, b.cfg.GetCompressionFormat(), b.cfg.General.UploadByPart)
 	}
 	if (diffFrom != "" || diffFromRemote != "") && b.cfg.ClickHouse.UseEmbeddedBackupRestore {
-		log.Warnf("--diff-from and --diff-from-remote not compatible with backups created with `use_embedded_backup_restore: true`")
+		logger.Warn().Msgf("--diff-from and --diff-from-remote not compatible with backups created with `use_embedded_backup_restore: true`")
 	}
 	if b.cfg.General.RemoteStorage == "custom" && b.resume {
 		return fmt.Errorf("can't resume for `remote_storage: custom`")
@@ -451,8 +451,8 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, table
 	for disk := range table.Parts {
 		capacity += len(table.Parts[disk])
 	}
-	log := b.log.WithField("logger", "uploadTableData")
-	log.Debugf("start %s.%s with concurrency=%d len(table.Parts[...])=%d", table.Database, table.Table, b.cfg.General.UploadConcurrency, capacity)
+	logger := log.With().Str("logger", "uploadTableData").Logger()
+	logger.Debug().Msgf("start %s.%s with concurrency=%d len(table.Parts[...])=%d", table.Database, table.Table, b.cfg.General.UploadConcurrency, capacity)
 	s := semaphore.NewWeighted(int64(b.cfg.General.UploadConcurrency))
 	g, ctx := errgroup.WithContext(ctx)
 	var uploadedBytes int64
@@ -477,7 +477,7 @@ breakByError:
 				continue
 			}
 			if err := s.Acquire(ctx, 1); err != nil {
-				log.Errorf("can't acquire semaphore during Upload data parts: %v", err)
+				logger.Error().Msgf("can't acquire semaphore during Upload data parts: %v", err)
 				break breakByError
 			}
 			backupPath := b.getLocalBackupDataPathForTable(backupName, disk, dbAndTablePath)
@@ -497,9 +497,9 @@ breakByError:
 							return nil
 						}
 					}
-					log.Debugf("start upload %d files to %s", len(partFiles), remotePath)
+					logger.Debug().Msgf("start upload %d files to %s", len(partFiles), remotePath)
 					if uploadPathBytes, err := b.dst.UploadPath(ctx, 0, backupPath, partFiles, remotePath, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration); err != nil {
-						log.Errorf("UploadPath return error: %v", err)
+						logger.Error().Msgf("UploadPath return error: %v", err)
 						return fmt.Errorf("can't upload: %v", err)
 					} else {
 						atomic.AddInt64(&uploadedBytes, uploadPathBytes)
@@ -507,7 +507,7 @@ breakByError:
 							b.resumableState.AppendToState(remotePathFull, uploadPathBytes)
 						}
 					}
-					log.Debugf("finish upload %d files to %s", len(partFiles), remotePath)
+					logger.Debug().Msgf("finish upload %d files to %s", len(partFiles), remotePath)
 					return nil
 				})
 			} else {
@@ -523,13 +523,13 @@ breakByError:
 							return nil
 						}
 					}
-					log.Debugf("start upload %d files to %s", len(localFiles), remoteDataFile)
+					logger.Debug().Msgf("start upload %d files to %s", len(localFiles), remoteDataFile)
 					retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
 					err := retry.RunCtx(ctx, func(ctx context.Context) error {
 						return b.dst.UploadCompressedStream(ctx, backupPath, localFiles, remoteDataFile)
 					})
 					if err != nil {
-						log.Errorf("UploadCompressedStream return error: %v", err)
+						logger.Error().Msgf("UploadCompressedStream return error: %v", err)
 						return fmt.Errorf("can't upload: %v", err)
 					}
 					remoteFile, err := b.dst.StatFile(ctx, remoteDataFile)
@@ -540,7 +540,7 @@ breakByError:
 					if b.resume {
 						b.resumableState.AppendToState(remoteDataFile, remoteFile.Size())
 					}
-					log.Debugf("finish upload to %s", remoteDataFile)
+					logger.Debug().Msgf("finish upload to %s", remoteDataFile)
 					return nil
 				})
 			}
@@ -549,7 +549,7 @@ breakByError:
 	if err := g.Wait(); err != nil {
 		return nil, 0, fmt.Errorf("one of uploadTableData go-routine return error: %v", err)
 	}
-	log.Debugf("finish %s.%s with concurrency=%d len(table.Parts[...])=%d uploadedFiles=%v, uploadedBytes=%v", table.Database, table.Table, b.cfg.General.UploadConcurrency, capacity, uploadedFiles, uploadedBytes)
+	logger.Debug().Msgf("finish %s.%s with concurrency=%d len(table.Parts[...])=%d uploadedFiles=%v, uploadedBytes=%v", table.Database, table.Table, b.cfg.General.UploadConcurrency, capacity, uploadedFiles, uploadedBytes)
 	return uploadedFiles, uploadedBytes, nil
 }
 
@@ -596,7 +596,7 @@ func (b *Backuper) uploadTableMetadataEmbedded(ctx context.Context, backupName s
 			return processedSize, nil
 		}
 	}
-	log := b.log.WithField("logger", "uploadTableMetadataEmbedded")
+	logger := log.With().Str("logger", "uploadTableMetadataEmbedded").Logger()
 	localTableMetaFile := path.Join(b.EmbeddedBackupDataPath, backupName, "metadata", common.TablePathEncode(tableMetadata.Database), fmt.Sprintf("%s.sql", common.TablePathEncode(tableMetadata.Table)))
 	localReader, err := os.Open(localTableMetaFile)
 	if err != nil {
@@ -604,7 +604,7 @@ func (b *Backuper) uploadTableMetadataEmbedded(ctx context.Context, backupName s
 	}
 	defer func() {
 		if err := localReader.Close(); err != nil {
-			log.Warnf("can't close %v: %v", localReader, err)
+			logger.Warn().Msgf("can't close %v: %v", localReader, err)
 		}
 	}()
 	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
@@ -625,7 +625,7 @@ func (b *Backuper) uploadTableMetadataEmbedded(ctx context.Context, backupName s
 }
 
 func (b *Backuper) markDuplicatedParts(backup *metadata.BackupMetadata, existsTable *metadata.TableMetadata, newTable *metadata.TableMetadata, checkLocal bool) {
-	log := b.log.WithField("logger", "markDuplicatedParts")
+	logger := log.With().Str("logger", "markDuplicatedParts").Logger()
 	for disk, newParts := range newTable.Parts {
 		if _, diskExists := existsTable.Parts[disk]; diskExists {
 			if len(existsTable.Parts[disk]) == 0 {
@@ -645,7 +645,7 @@ func (b *Backuper) markDuplicatedParts(backup *metadata.BackupMetadata, existsTa
 					newPath := path.Join(b.DiskToPathMap[disk], "backup", backup.BackupName, "shadow", dbAndTablePath, disk, newParts[i].Name)
 
 					if err := filesystemhelper.IsDuplicatedParts(existsPath, newPath); err != nil {
-						log.Debugf("part '%s' and '%s' must be the same: %v", existsPath, newPath, err)
+						logger.Debug().Msgf("part '%s' and '%s' must be the same: %v", existsPath, newPath, err)
 						continue
 					}
 				}
@@ -705,7 +705,7 @@ func (b *Backuper) splitPartFiles(basePath string, parts []metadata.Part) ([]met
 }
 
 func (b *Backuper) splitFilesByName(basePath string, parts []metadata.Part) ([]metadata.SplitPartFiles, error) {
-	log := b.log.WithField("logger", "splitFilesByName")
+	logger := log.With().Str("logger", "splitFilesByName").Logger()
 	result := make([]metadata.SplitPartFiles, 0)
 	for i := range parts {
 		if parts[i].Required {
@@ -725,7 +725,7 @@ func (b *Backuper) splitFilesByName(basePath string, parts []metadata.Part) ([]m
 			return nil
 		})
 		if err != nil {
-			log.Warnf("filepath.Walk return error: %v", err)
+			logger.Warn().Msgf("filepath.Walk return error: %v", err)
 		}
 		result = append(result, metadata.SplitPartFiles{
 			Prefix: parts[i].Name,
@@ -736,7 +736,7 @@ func (b *Backuper) splitFilesByName(basePath string, parts []metadata.Part) ([]m
 }
 
 func (b *Backuper) splitFilesBySize(basePath string, parts []metadata.Part) ([]metadata.SplitPartFiles, error) {
-	log := b.log.WithField("logger", "splitFilesBySize")
+	logger := log.With().Str("logger", "splitFilesBySize").Logger()
 	var size int64
 	var files []string
 	maxSize := b.cfg.General.MaxFileSize
@@ -769,7 +769,7 @@ func (b *Backuper) splitFilesBySize(basePath string, parts []metadata.Part) ([]m
 			return nil
 		})
 		if err != nil {
-			log.Warnf("filepath.Walk return error: %v", err)
+			logger.Warn().Msgf("filepath.Walk return error: %v", err)
 		}
 	}
 	if len(files) > 0 {

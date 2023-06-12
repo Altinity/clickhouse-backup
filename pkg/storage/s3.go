@@ -7,6 +7,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"github.com/aws/smithy-go"
 	awsV2http "github.com/aws/smithy-go/transport/http"
+	"github.com/rs/zerolog"
 	"io"
 	"net/http"
 	"os"
@@ -16,36 +17,34 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	apexLog "github.com/apex/log"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsV2Config "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
-	"github.com/aws/aws-sdk-go-v2/service/sts"
-
 	s3manager "github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	awsV2Logging "github.com/aws/smithy-go/logging"
 	"github.com/pkg/errors"
 )
 
-type S3LogToApexLogAdapter struct {
-	apexLog *apexLog.Logger
+type S3LogToZeroLogAdapter struct {
+	logger zerolog.Logger
 }
 
-func newS3Logger(log *apexLog.Entry) S3LogToApexLogAdapter {
-	return S3LogToApexLogAdapter{
-		apexLog: log.Logger,
+func newS3Logger(log zerolog.Logger) S3LogToZeroLogAdapter {
+	return S3LogToZeroLogAdapter{
+		logger: log,
 	}
 }
 
-func (S3LogToApexLogAdapter S3LogToApexLogAdapter) Logf(severity awsV2Logging.Classification, msg string, args ...interface{}) {
+func (S3LogToApexLogAdapter S3LogToZeroLogAdapter) Logf(severity awsV2Logging.Classification, msg string, args ...interface{}) {
 	msg = fmt.Sprintf("[s3:%s] %s", severity, msg)
 	if len(args) > 0 {
-		S3LogToApexLogAdapter.apexLog.Infof(msg, args...)
+		S3LogToApexLogAdapter.logger.Info().Msgf(msg, args...)
 	} else {
-		S3LogToApexLogAdapter.apexLog.Info(msg)
+		S3LogToApexLogAdapter.logger.Info().Msg(msg)
 	}
 }
 
@@ -55,7 +54,7 @@ type S3 struct {
 	uploader    *s3manager.Uploader
 	downloader  *s3manager.Downloader
 	Config      *config.S3Config
-	Log         *apexLog.Entry
+	Logger      zerolog.Logger
 	PartSize    int64
 	Concurrency int
 	BufferSize  int
@@ -109,7 +108,7 @@ func (s *S3) Connect(ctx context.Context) error {
 	}
 
 	if s.Config.Debug {
-		awsConfig.Logger = newS3Logger(s.Log)
+		awsConfig.Logger = newS3Logger(s.Logger)
 		awsConfig.ClientLogMode = aws.LogRetries | aws.LogRequest | aws.LogResponse
 	}
 

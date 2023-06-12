@@ -4,10 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
-	"github.com/Altinity/clickhouse-backup/pkg/config"
-	apexLog "github.com/apex/log"
-	"github.com/google/uuid"
 	"io"
 	"net/url"
 	"os"
@@ -17,10 +13,13 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/pkg/common"
+	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"github.com/Altinity/clickhouse-backup/pkg/filesystemhelper"
-
 	"github.com/Altinity/clickhouse-backup/pkg/metadata"
+	"github.com/google/uuid"
+	"github.com/rs/zerolog/log"
 )
 
 type ListOfTables []metadata.TableMetadata
@@ -50,7 +49,7 @@ func addTableToListIfNotExistsOrEnrichQueryAndParts(tables ListOfTables, table m
 func getTableListByPatternLocal(ctx context.Context, cfg *config.Config, ch *clickhouse.ClickHouse, metadataPath string, tablePattern string, dropTable bool, partitions []string) (ListOfTables, error) {
 	result := ListOfTables{}
 	tablePatterns := []string{"*"}
-	log := apexLog.WithField("logger", "getTableListByPatternLocal")
+	logger := log.With().Str("logger", "getTableListByPatternLocal").Logger()
 	if tablePattern != "" {
 		tablePatterns = strings.Split(tablePattern, ",")
 	}
@@ -111,7 +110,7 @@ func getTableListByPatternLocal(ctx context.Context, cfg *config.Config, ch *cli
 				}
 				dataParts, err := os.ReadDir(dataPartsPath)
 				if err != nil {
-					log.Warn(err.Error())
+					logger.Warn().Msg(err.Error())
 				}
 				parts := map[string][]metadata.Part{
 					cfg.ClickHouse.EmbeddedBackupDisk: make([]metadata.Part, len(dataParts)),

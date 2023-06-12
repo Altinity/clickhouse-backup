@@ -7,7 +7,6 @@ import (
 	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"github.com/Altinity/clickhouse-backup/pkg/resumable"
 	"github.com/Altinity/clickhouse-backup/pkg/storage"
-	apexLog "github.com/apex/log"
 	"path"
 )
 
@@ -15,7 +14,6 @@ type Backuper struct {
 	cfg                    *config.Config
 	ch                     *clickhouse.ClickHouse
 	dst                    *storage.BackupDestination
-	log                    *apexLog.Entry
 	DiskToPathMap          map[string]string
 	DefaultDataPath        string
 	EmbeddedBackupDataPath string
@@ -27,12 +25,10 @@ type Backuper struct {
 func NewBackuper(cfg *config.Config) *Backuper {
 	ch := &clickhouse.ClickHouse{
 		Config: &cfg.ClickHouse,
-		Log:    apexLog.WithField("logger", "clickhouse"),
 	}
 	return &Backuper{
 		cfg: cfg,
 		ch:  ch,
-		log: apexLog.WithField("logger", "backuper"),
 	}
 }
 

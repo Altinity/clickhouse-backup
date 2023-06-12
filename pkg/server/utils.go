@@ -10,12 +10,12 @@ import (
 
 func (api *APIServer) flushOutput(w http.ResponseWriter, out string) {
 	if _, err := fmt.Fprintln(w, out); err != nil {
-		api.log.Warnf("can't write to http.ResponseWriter: %v", err)
+		api.log.Warn().Msgf("can't write to http.ResponseWriter: %v", err)
 	}
 }
 
 func (api *APIServer) writeError(w http.ResponseWriter, statusCode int, operation string, err error) {
-	api.log.Errorf("api.writeError status=%d operation=%s err=%v", statusCode, operation, err)
+	api.log.Error().Msgf("api.writeError status=%d operation=%s err=%v", statusCode, operation, err)
 	w.WriteHeader(statusCode)
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
@@ -45,7 +45,7 @@ func (api *APIServer) sendJSONEachRow(w http.ResponseWriter, statusCode int, v i
 				api.flushOutput(w, string(out))
 			} else {
 				api.flushOutput(w, err.Error())
-				api.log.Warnf("sendJSONEachRow json.Marshal error: %v", err)
+				api.log.Warn().Msgf("sendJSONEachRow json.Marshal error: %v", err)
 			}
 		}
 	default:
@@ -53,7 +53,7 @@ func (api *APIServer) sendJSONEachRow(w http.ResponseWriter, statusCode int, v i
 			api.flushOutput(w, string(out))
 		} else {
 			api.flushOutput(w, err.Error())
-			api.log.Warnf("sendJSONEachRow json.Marshal error: %v", err)
+			api.log.Warn().Msgf("sendJSONEachRow json.Marshal error: %v", err)
 		}
 	}
 }
@@ -71,7 +71,7 @@ func (api *APIServer) errorCallback(ctx context.Context, err error, callback cal
 		Error:  err.Error(),
 	}
 	for _, e := range callback(ctx, payload) {
-		api.log.Error(e.Error())
+		api.log.Error().Err(e).Send()
 	}
 }
 
@@ -82,6 +82,6 @@ func (api *APIServer) successCallback(ctx context.Context, callback callbackFn) 
 		Error:  "",
 	}
 	for _, e := range callback(ctx, payload) {
-		api.log.Error(e.Error())
+		api.log.Error().Err(e).Send()
 	}
 }
