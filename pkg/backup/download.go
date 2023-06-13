@@ -191,8 +191,8 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		idx := i
 		tableTitle := t
 		metadataGroup.Go(func() error {
-			tableLogger := logger.With().Str("table_metadata", fmt.Sprintf("%s.%s", tableTitle.Database, tableTitle.Table)).Logger()
 			defer downloadSemaphore.Release(1)
+			tableLogger := logger.With().Str("table_metadata", fmt.Sprintf("%s.%s", tableTitle.Database, tableTitle.Table)).Logger()
 			downloadedMetadata, size, err := b.downloadTableMetadata(metadataCtx, backupName, disks, tableLogger, tableTitle, schemaOnly, partitions)
 			if err != nil {
 				return err

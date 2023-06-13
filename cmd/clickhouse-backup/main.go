@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/rs/zerolog/diode"
 	stdlog "log"
 	"os"
 	"time"
@@ -13,6 +12,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/pkg/server"
 	"github.com/Altinity/clickhouse-backup/pkg/status"
 	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/diode"
 	"github.com/rs/zerolog/log"
 	"github.com/rs/zerolog/pkgerrors"
 	"github.com/urfave/cli"
