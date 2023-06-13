@@ -398,6 +398,7 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 			b.resumableState.AppendToState(localMetadataFile, written)
 		}
 	}
+	logger = logger.With().Logger()
 	logger.Info().
 		Str("duration", utils.HumanizeDuration(time.Since(start))).
 		Str("size", utils.FormatBytes(size)).

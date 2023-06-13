@@ -105,12 +105,13 @@ func (s *State) IsAlreadyProcessed(path string) (bool, int64) {
 	res := strings.Index(s.currentState, path+":")
 	if res >= 0 {
 		// s.logger is non thread-safe https://github.com/rs/zerolog/issues/242
-		s.logger.Info().Msgf("%s already processed", path)
+		logger := s.logger.With().Logger()
+		logger.Info().Msgf("%s already processed", path)
 		sSize := s.currentState[res : res+strings.Index(s.currentState[res:], "\n")]
 		sSize = sSize[strings.Index(sSize, ":")+1:]
 		size, err = strconv.ParseInt(sSize, 10, 64)
 		if err != nil {
-			s.logger.Warn().Msgf("invalid size %s in upload state: %v", sSize, err)
+			logger.Warn().Msgf("invalid size %s in upload state: %v", sSize, err)
 		}
 	}
 	s.mx.RUnlock()
