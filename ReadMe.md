@@ -1,10 +1,10 @@
 
 # clickhouse-backup
 
-[![Build](https://github.com/Altinity/clickhouse-backup/actions/workflows/build.yaml/badge.svg?branch=dev)](https://github.com/Altinity/clickhouse-backup/actions/workflows/build.yaml)
+[![Build](https://github.com/Altinity/clickhouse-backup/actions/workflows/build.yaml/badge.svg?branch=master)](https://github.com/Altinity/clickhouse-backup/actions/workflows/build.yaml)
 [![GoDoc](https://godoc.org/github.com/Altinity/clickhouse-backup?status.svg)](http://godoc.org/github.com/Altinity/clickhouse-backup)
 [![Telegram](https://img.shields.io/badge/telegram-join%20chat-3796cd.svg)](https://t.me/clickhousebackup)
-[![Docker Image](https://img.shields.io/docker/pulls/Altinity/clickhouse-backup.svg)](https://hub.docker.com/r/Altinity/clickhouse-backup)
+[![Docker Image](https://img.shields.io/docker/pulls/altinity/clickhouse-backup.svg)](https://hub.docker.com/r/altinity/clickhouse-backup)
 
 A tool for easy ClickHouse backup and restore with support for many cloud and non-cloud storage types.
 To make data backup `clickhouse-backup` requires access to the same files as `clickhouse-server` in `/var/lib/clickhouse` folders. 
