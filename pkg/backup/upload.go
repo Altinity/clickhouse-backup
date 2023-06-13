@@ -147,6 +147,9 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 		idx := i
 		uploadGroup.Go(func() error {
 			defer uploadSemaphore.Release(1)
+			uploadLogger := logger.With().
+				Str("table", fmt.Sprintf("%s.%s", tablesForUpload[idx].Database, tablesForUpload[idx].Table)).
+				Logger()
 			var uploadedBytes int64
 			if !schemaOnly {
 				var files map[string][]string
@@ -163,8 +166,7 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 				return err
 			}
 			atomic.AddInt64(&metadataSize, tableMetadataSize)
-			logger.Info().
-				Str("table", fmt.Sprintf("%s.%s", tablesForUpload[idx].Database, tablesForUpload[idx].Table)).
+			uploadLogger.Info().
 				Str("duration", utils.HumanizeDuration(time.Since(start))).
 				Str("size", utils.FormatBytes(uint64(uploadedBytes+tableMetadataSize))).
 				Msg("done")

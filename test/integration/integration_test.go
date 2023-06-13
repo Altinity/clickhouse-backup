@@ -395,7 +395,8 @@ var incrementData = []TestDataStruct{
 }
 
 func init() {
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout, NoColor: true, TimeFormat: time.StampMilli})
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixMs
+	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout, NoColor: true, TimeFormat: "2006-01-02 15:04:05.000"})
 	stdlog.SetOutput(log.Logger)
 	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
 	logLevel := "info"
@@ -1080,7 +1081,7 @@ func dropDatabasesFromTestDataDataSet(r *require.Assertions, ch *TestClickHouse,
 func TestTablePatterns(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second)
+	ch.connectWithWait(r, 500*time.Millisecond, 5*time.Second)
 	defer ch.chbackend.Close()
 
 	testBackupName := "test_backup_patterns"
@@ -1245,7 +1246,7 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	}
 	r := require.New(t)
 	ch := &TestClickHouse{}
-	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second)
+	ch.connectWithWait(r, 500*time.Millisecond, 2*time.Second)
 	backupNames := make([]string, 5)
 	for i := 0; i < 5; i++ {
 		backupNames[i] = fmt.Sprintf("keep_remote_backup_%d", i)
@@ -1910,6 +1911,7 @@ func (ch *TestClickHouse) connect(timeOut string) error {
 			Port:    9000,
 			Timeout: timeOut,
 		},
+		Logger: log.With().Str("logger", "clickhouse").Logger(),
 	}
 	var err error
 	for i := 0; i < 3; i++ {

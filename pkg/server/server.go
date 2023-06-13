@@ -70,6 +70,7 @@ func Run(cliCtx *cli.Context, cliApp *cli.App, configPath string, clickhouseBack
 		}
 		ch := clickhouse.ClickHouse{
 			Config: &cfg.ClickHouse,
+			Logger: log.With().Str("logger", "clickhouse").Logger(),
 		}
 		if err := ch.Connect(); err != nil {
 			logger.Error().Err(err).Send()
@@ -1471,6 +1472,7 @@ func (api *APIServer) CreateIntegrationTables() error {
 	api.log.Info().Msgf("Create integration tables")
 	ch := &clickhouse.ClickHouse{
 		Config: &api.config.ClickHouse,
+		Logger: log.With().Str("logger", "clickhouse").Logger(),
 	}
 	if err := ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %w", err)
@@ -1530,6 +1532,7 @@ func (api *APIServer) ReloadConfig(w http.ResponseWriter, command string) (*conf
 func (api *APIServer) ResumeOperationsAfterRestart() error {
 	ch := clickhouse.ClickHouse{
 		Config: &api.config.ClickHouse,
+		Logger: log.With().Str("logger", "clickhouse").Logger(),
 	}
 	if err := ch.Connect(); err != nil {
 		return err

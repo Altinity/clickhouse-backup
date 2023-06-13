@@ -188,10 +188,10 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			logger.Error().Msgf("can't acquire semaphore during Download metadata: %v", err)
 			break
 		}
-		tableLogger := logger.With().Str("table_metadata", fmt.Sprintf("%s.%s", t.Database, t.Table)).Logger()
 		idx := i
 		tableTitle := t
 		metadataGroup.Go(func() error {
+			tableLogger := logger.With().Str("table_metadata", fmt.Sprintf("%s.%s", tableTitle.Database, tableTitle.Table)).Logger()
 			defer downloadSemaphore.Release(1)
 			downloadedMetadata, size, err := b.downloadTableMetadata(metadataCtx, backupName, disks, tableLogger, tableTitle, schemaOnly, partitions)
 			if err != nil {

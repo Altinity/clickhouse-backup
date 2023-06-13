@@ -3,16 +3,15 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/rs/zerolog/diode"
 	stdlog "log"
 	"os"
 	"time"
 
-	"github.com/Altinity/clickhouse-backup/pkg/config"
-	"github.com/Altinity/clickhouse-backup/pkg/status"
-
 	"github.com/Altinity/clickhouse-backup/pkg/backup"
+	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"github.com/Altinity/clickhouse-backup/pkg/server"
-
+	"github.com/Altinity/clickhouse-backup/pkg/status"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/rs/zerolog/pkgerrors"
@@ -26,9 +25,14 @@ var (
 )
 
 func main() {
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout, NoColor: true, TimeFormat: time.StampMilli})
-	stdlog.SetOutput(log.Logger)
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixMs
 	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
+	consoleWriter := zerolog.ConsoleWriter{Out: os.Stdout, NoColor: true, TimeFormat: "2006-01-02 15:04:05.000"}
+	diodeWriter := diode.NewWriter(consoleWriter, 4096, 10*time.Millisecond, func(missed int) {
+		fmt.Printf("Logger Dropped %d messages", missed)
+	})
+	log.Logger = zerolog.New(diodeWriter).With().Timestamp().Logger()
+	stdlog.SetOutput(log.Logger)
 	cliapp := cli.NewApp()
 	cliapp.Name = "clickhouse-backup"
 	cliapp.Usage = "Tool for easy backup of ClickHouse with cloud support"

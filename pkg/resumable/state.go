@@ -3,13 +3,13 @@ package resumable
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/rs/zerolog"
 	"os"
 	"path"
 	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
 
@@ -27,7 +27,7 @@ func NewState(defaultDiskPath, backupName, command string, params map[string]int
 		stateFile:    path.Join(defaultDiskPath, "backup", backupName, fmt.Sprintf("%s.state", command)),
 		currentState: "",
 		mx:           &sync.RWMutex{},
-		logger:       log.With().Str("logger", "resumable").Logger(),
+		logger:       log.Logger.With().Str("logger", "resumable").Logger(),
 	}
 	fp, err := os.OpenFile(s.stateFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
@@ -104,6 +104,7 @@ func (s *State) IsAlreadyProcessed(path string) (bool, int64) {
 	s.mx.RLock()
 	res := strings.Index(s.currentState, path+":")
 	if res >= 0 {
+		// s.logger is non thread-safe https://github.com/rs/zerolog/issues/242
 		s.logger.Info().Msgf("%s already processed", path)
 		sSize := s.currentState[res : res+strings.Index(s.currentState[res:], "\n")]
 		sSize = sSize[strings.Index(sSize, ":")+1:]
