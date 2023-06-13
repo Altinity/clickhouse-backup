@@ -19,4 +19,5 @@ func SetLogLevelFromString(logLevel string) {
 		level = zerolog.InfoLevel
 	}
 	zerolog.SetGlobalLevel(level)
+	zerolog.SetGlobalLevel(zerolog.Disabled)
 }
