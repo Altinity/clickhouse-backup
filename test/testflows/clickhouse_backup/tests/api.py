@@ -45,6 +45,7 @@ def get_status(self):
         with When("check the return concerns only the last query"):
             r = api_request(endpoint=f"{url}/backup/status")
             assert validate_json_each_row(r=r), error()
+            assert r.json()["status"] == f"in progress", error()
             assert r.json()["command"] == f"create {name_prefix}_1", error()
             wait_request_finalized(url)
 
