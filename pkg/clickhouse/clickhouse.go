@@ -909,12 +909,10 @@ func (ch *ClickHouse) SelectSingleRowNoCtx(dest interface{}, query string, args 
 
 func (ch *ClickHouse) LogQuery(query string, args ...interface{}) string {
 	var logF *zerolog.Event
-	// zerolog is not thread-safe https://github.com/rs/zerolog/issues/242 ;(
-	logger := ch.Logger.With().Logger()
 	if !ch.Config.LogSQLQueries {
-		logF = logger.Debug()
+		logF = ch.Logger.Debug()
 	} else {
-		logF = logger.Info()
+		logF = ch.Logger.Info()
 	}
 	if len(args) > 0 {
 		logF.Msg(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(fmt.Sprintf("%s with args %v", query, args)))

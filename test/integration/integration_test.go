@@ -396,9 +396,10 @@ var incrementData = []TestDataStruct{
 
 func init() {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixMs
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout, NoColor: true, TimeFormat: "2006-01-02 15:04:05.000"})
-	stdlog.SetOutput(log.Logger)
 	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
+	consoleWriter := zerolog.ConsoleWriter{Out: os.Stdout, NoColor: true, TimeFormat: "2006-01-02 15:04:05.000"}
+	log.Logger = zerolog.New(zerolog.SyncWriter(consoleWriter)).With().Timestamp().Logger()
+	stdlog.SetOutput(log.Logger)
 	logLevel := "info"
 	if os.Getenv("LOG_LEVEL") != "" {
 		logLevel = os.Getenv("LOG_LEVEL")
@@ -1289,7 +1290,7 @@ func TestS3NoDeletePermission(t *testing.T) {
 	r.NoError(dockerCP("config-s3-nodelete.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 
 	ch := &TestClickHouse{}
-	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second)
+	ch.connectWithWait(r, 500*time.Millisecond, 5*time.Second)
 	defer ch.chbackend.Close()
 	generateTestData(ch, r)
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "no_delete_backup"))

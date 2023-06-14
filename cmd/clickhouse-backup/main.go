@@ -24,11 +24,12 @@ var (
 func main() {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixMs
 	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
-	//consoleWriter := zerolog.ConsoleWriter{Out: os.Stdout, NoColor: true, TimeFormat: "2006-01-02 15:04:05.000"}
+	consoleWriter := zerolog.ConsoleWriter{Out: os.Stdout, NoColor: true, TimeFormat: "2006-01-02 15:04:05.000"}
 	//diodeWriter := diode.NewWriter(consoleWriter, 4096, 10*time.Millisecond, func(missed int) {
 	//	fmt.Printf("Logger Dropped %d messages", missed)
 	//})
-	log.Logger = zerolog.New(zerolog.SyncWriter(os.Stdout)).With().Timestamp().Caller().Logger()
+	log.Logger = zerolog.New(zerolog.SyncWriter(consoleWriter)).With().Timestamp().Caller().Logger()
+	//zerolog.SetGlobalLevel(zerolog.Disabled)
 	//log.Logger = zerolog.New(os.Stdout).With().Timestamp().Caller().Logger()
 	stdlog.SetOutput(log.Logger)
 	cliapp := cli.NewApp()
