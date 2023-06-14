@@ -6,14 +6,14 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
+	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"io"
 	"net/url"
 	"path"
 	"strings"
 	"time"
 
-	x "github.com/AlexAkulov/clickhouse-backup/pkg/storage/azblob"
+	x "github.com/Altinity/clickhouse-backup/pkg/storage/azblob"
 
 	"github.com/Azure/azure-pipeline-go/pipeline"
 	"github.com/Azure/azure-storage-blob-go/azblob"

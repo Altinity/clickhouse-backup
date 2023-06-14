@@ -3,16 +3,16 @@ package backup
 import (
 	"context"
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/custom"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/status"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
+	"github.com/Altinity/clickhouse-backup/pkg/custom"
+	"github.com/Altinity/clickhouse-backup/pkg/status"
+	"github.com/Altinity/clickhouse-backup/pkg/utils"
 	"github.com/pkg/errors"
 	"os"
 	"path"
 	"time"
 
-	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/storage"
+	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/pkg/storage"
 
 	apexLog "github.com/apex/log"
 )

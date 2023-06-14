@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
+	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"google.golang.org/api/option/internaloption"
 
 	"cloud.google.com/go/storage"

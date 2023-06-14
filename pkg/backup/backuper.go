@@ -3,10 +3,10 @@ package backup
 import (
 	"context"
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/resumable"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/storage"
+	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/pkg/config"
+	"github.com/Altinity/clickhouse-backup/pkg/resumable"
+	"github.com/Altinity/clickhouse-backup/pkg/storage"
 	apexLog "github.com/apex/log"
 	"path"
 )

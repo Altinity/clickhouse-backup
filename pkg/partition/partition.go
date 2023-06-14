@@ -1,8 +1,9 @@
 package partition
 
 import (
+	"context"
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
 	"github.com/google/uuid"
 	"regexp"
 	"strconv"
@@ -27,7 +28,6 @@ func splitAndParsePartition(partition string) []interface{} {
 		if strings.HasPrefix(v, "'") && strings.HasSuffix(v, "'") {
 			v = strings.TrimSuffix(strings.TrimPrefix(v, "'"), "'")
 		}
-
 		if intVal, err := strconv.ParseInt(v, 10, 64); err == nil {
 			parsedValues[i] = intVal
 		} else if floatVal, err := strconv.ParseFloat(v, 64); err == nil {
@@ -39,7 +39,7 @@ func splitAndParsePartition(partition string) []interface{} {
 	return parsedValues
 }
 
-func GetPartitionId(ch *clickhouse.ClickHouse, database, table, createQuery string, partition string) (error, string) {
+func GetPartitionId(ctx context.Context, ch *clickhouse.ClickHouse, database, table, createQuery string, partition string) (error, string) {
 	if !strings.Contains(createQuery, "MergeTree") {
 		return nil, ""
 	}
@@ -57,14 +57,16 @@ func GetPartitionId(ch *clickhouse.ClickHouse, database, table, createQuery stri
 		))
 	partitionIdTable := "__partition_id_" + table
 	sql = dbAndTableNameRE.ReplaceAllString(sql, fmt.Sprintf("`%s`.`%s`", database, partitionIdTable))
-	if _, err := ch.Query(sql); err != nil {
+	if err := ch.Query(sql); err != nil {
 		return err, ""
 	}
-	columns := make([]string, 0)
+	columns := make([]struct {
+		Name string `ch:"name"`
+	}, 0)
 	sql = "SELECT name FROM system.columns WHERE database=? AND table=? AND is_in_partition_key"
-	if err := ch.Select(&columns, sql, database, partitionIdTable); err != nil {
-		if err = dropPartitionIdTable(ch, database, partitionIdTable); err != nil {
-			return err, ""
+	if err := ch.SelectContext(ctx, &columns, sql, database, partitionIdTable); err != nil {
+		if dropErr := dropPartitionIdTable(ch, database, partitionIdTable); dropErr != nil {
+			return dropErr, ""
 		}
 		return fmt.Errorf("can't get is_in_partition_key column names from for table `%s`.`%s`: %v", database, partitionIdTable, err), ""
 	}
@@ -72,24 +74,25 @@ func GetPartitionId(ch *clickhouse.ClickHouse, database, table, createQuery stri
 		return fmt.Errorf("is_in_partition_key=1 fields not found in system.columns for table `%s`.`%s`", database, partitionIdTable), ""
 	}
 	partitionInsert := splitAndParsePartition(partition)
-	tx, err := ch.GetConn().Beginx()
+	columnNames := make([]string, len(columns))
+	for i, c := range columns {
+		columnNames[i] = c.Name
+	}
+
+	sql = fmt.Sprintf(
+		"INSERT INTO `%s`.`%s`(`%s`) VALUES (%s)",
+		database, partitionIdTable, strings.Join(columnNames, "`,`"),
+		strings.TrimSuffix(strings.Repeat("?,", len(partitionInsert)), ","),
+	)
+	err := ch.QueryContext(ctx, sql, partitionInsert...)
 	if err != nil {
-		return fmt.Errorf("can't start clickhouse-go transactions: %v", err), ""
+		return err, ""
 	}
-	sql = fmt.Sprintf("INSERT INTO `%s`.`%s`(`%s`)", database, partitionIdTable, strings.Join(columns, "`,`"))
-	stmt, err := tx.Prepare(sql)
-	if err != nil {
-		return fmt.Errorf("can't prepare clickhouse-go INSERT statement: %v", err), ""
-	}
-	if _, err = stmt.Exec(partitionInsert...); err != nil {
-		return fmt.Errorf("can't execute clickhouse-go INSERT INTO `%s`.`%s` VALUES(%#v): %v", database, partitionIdTable, partitionInsert, err), ""
-	}
-	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("can't commit clickhouse-go INSERT statement with VALUES(%#v): %v", partitionInsert, err), ""
-	}
-	partitionIds := make([]string, 0)
+	partitionIds := make([]struct {
+		Id string `ch:"partition_id"`
+	}, 0)
 	sql = "SELECT partition_id FROM system.parts WHERE active AND database=? AND table=?"
-	if err = ch.Select(&partitionIds, sql, database, partitionIdTable); err != nil {
+	if err = ch.SelectContext(ctx, &partitionIds, sql, database, partitionIdTable); err != nil {
 		return fmt.Errorf("can't SELECT partition_id for PARTITION BY fields(%#v) FROM `%s`.`%s`: %v", partitionInsert, database, partitionIdTable, err), ""
 	}
 	if len(partitionIds) != 1 {
@@ -99,17 +102,17 @@ func GetPartitionId(ch *clickhouse.ClickHouse, database, table, createQuery stri
 	if err = dropPartitionIdTable(ch, database, partitionIdTable); err != nil {
 		return err, ""
 	}
-	return nil, partitionIds[0]
+	return nil, partitionIds[0].Id
 }
 
 func dropPartitionIdTable(ch *clickhouse.ClickHouse, database string, partitionIdTable string) error {
-	sql := fmt.Sprintf("DROP TABLE `%s`.`%s`", database, partitionIdTable)
+	sql := fmt.Sprintf("DROP TABLE IF EXISTS `%s`.`%s`", database, partitionIdTable)
 	if isAtomic, err := ch.IsAtomic(database); isAtomic {
 		sql += " SYNC"
 	} else if err != nil {
 		return err
 	}
-	if _, err := ch.Query(sql); err != nil {
+	if err := ch.Query(sql); err != nil {
 		return err
 	}
 	return nil

@@ -89,23 +89,27 @@ Vagrant.configure(2) do |config|
 
     apt-get update
     apt-get install --no-install-recommends -y apt-transport-https ca-certificates software-properties-common curl
-    apt-get install --no-install-recommends -y htop ethtool mc curl wget jq socat git make gcc libc-dev
+    apt-get install --no-install-recommends -y htop ethtool mc curl wget jq socat git make gcc libc-dev dirmngr
 
     # clickhouse
-    apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv E0C56BD4
-    add-apt-repository "deb http://repo.clickhouse.tech/deb/stable/ main/"
+    GNUPGHOME=$(mktemp -d)
+    GNUPGHOME="$GNUPGHOME" gpg --no-default-keyring --keyring /usr/share/keyrings/clickhouse-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 8919F6BD2B48D754
+    rm -r "$GNUPGHOME"
+    chmod +r /usr/share/keyrings/clickhouse-keyring.gpg
+    echo "deb [signed-by=/usr/share/keyrings/clickhouse-keyring.gpg] https://packages.clickhouse.com/deb stable main" | tee /etc/apt/sources.list.d/clickhouse.list
+    apt-get update
     apt-get install --no-install-recommends -y clickhouse-client clickhouse-server
 
     # golang
-    export GOLANG_VERSION=1.16
+    export GOLANG_VERSION=1.20
     apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 52B59B1571A79DBC054901C0F6BC817356A3D45E
     add-apt-repository ppa:longsleep/golang-backports
     apt-get install --no-install-recommends -y golang-${GOLANG_VERSION}
 
     ln -nvsf /usr/lib/go-${GOLANG_VERSION}/bin/go /bin/go
     ln -nvsf /usr/lib/go-${GOLANG_VERSION}/bin/gofmt /bin/gofmt
-    mkdir -p /home/ubuntu/go/src/github.com/AlexAkulov/
-    ln -nsvf /vagrant /home/ubuntu/go/src/github.com/AlexAkulov/clickhouse-backup
+    mkdir -p /home/ubuntu/go/src/github.com/Altinity/
+    ln -nsvf /vagrant /home/ubuntu/go/src/github.com/Altinity/clickhouse-backup
 
     # docker
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -
@@ -126,7 +130,7 @@ Vagrant.configure(2) do |config|
     # act -v -r -j build -s DOCKER_REPO=<repo_name> -s DOCKER_IMAGE=clickhouse-backup -s DOCKER_USER=<docker_user> -s DOCKER_TOKEN=<docker_token> -w /vagrant
 
     systemctl restart clickhouse-server
-    export DOCKER_IMAGE=alexakulov/clickhouse-backup
+    export DOCKER_IMAGE=Altinity/clickhouse-backup
     # export DOCKER_IMAGE=altinity/clickhouse-backup:latest
     # export DOCKER_IMAGE=clickhousepro/clickhouse-backup:dev
 

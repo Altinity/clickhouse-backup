@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/custom"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/status"
+	"github.com/Altinity/clickhouse-backup/pkg/custom"
+	"github.com/Altinity/clickhouse-backup/pkg/status"
 	apexLog "github.com/apex/log"
 	"io"
 	"os"
@@ -14,10 +14,10 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/storage"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
+	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/pkg/metadata"
+	"github.com/Altinity/clickhouse-backup/pkg/storage"
+	"github.com/Altinity/clickhouse-backup/pkg/utils"
 )
 
 // List - list backups to stdout from command line
@@ -357,7 +357,7 @@ func (b *Backuper) GetRemoteBackups(ctx context.Context, parseMetadata bool) ([]
 	if err != nil {
 		return []storage.Backup{}, err
 	}
-	// ugly hack to fix https://github.com/AlexAkulov/clickhouse-backup/issues/309
+	// ugly hack to fix https://github.com/Altinity/clickhouse-backup/issues/309
 	if parseMetadata == false && len(backupList) > 0 {
 		lastBackup := backupList[len(backupList)-1]
 		backupList, err = bd.BackupList(ctx, true, lastBackup.BackupName)

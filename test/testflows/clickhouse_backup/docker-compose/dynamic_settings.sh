@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-export CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION:-22.8}
+export CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION:-23.3}
 
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[7-9]|^22\.[0-9]{2}|^2[3-9]\. ]]; then
 

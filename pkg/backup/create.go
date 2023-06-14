@@ -5,18 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/status"
+	"github.com/Altinity/clickhouse-backup/pkg/status"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/filesystemhelper"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/metadata"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
+	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/pkg/common"
+	"github.com/Altinity/clickhouse-backup/pkg/filesystemhelper"
+	"github.com/Altinity/clickhouse-backup/pkg/metadata"
+	"github.com/Altinity/clickhouse-backup/pkg/utils"
 	apexLog "github.com/apex/log"
 	"github.com/google/uuid"
 	recursiveCopy "github.com/otiai10/copy"
@@ -136,7 +136,7 @@ func (b *Backuper) CreateBackup(backupName, tablePattern string, partitions []st
 	for _, disk := range disks {
 		diskMap[disk.Name] = disk.Path
 	}
-	partitionsToBackupMap, partitions := filesystemhelper.CreatePartitionsToBackupMap(b.ch, tables, nil, partitions)
+	partitionsToBackupMap, partitions := filesystemhelper.CreatePartitionsToBackupMap(ctx, b.ch, tables, nil, partitions)
 	// create
 	if b.cfg.ClickHouse.UseEmbeddedBackupRestore {
 		err = b.createBackupEmbedded(ctx, backupName, tablePattern, partitions, partitionsToBackupMap, schemaOnly, rbacOnly, configsOnly, tables, allDatabases, allFunctions, disks, diskMap, log, startBackup, version)
@@ -198,7 +198,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 					if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks); removeBackupErr != nil {
 						log.Error(removeBackupErr.Error())
 					}
-					// fix corner cases after https://github.com/AlexAkulov/clickhouse-backup/issues/379
+					// fix corner cases after https://github.com/Altinity/clickhouse-backup/issues/379
 					if cleanShadowErr := b.Clean(ctx); cleanShadowErr != nil {
 						log.Error(cleanShadowErr.Error())
 					}
@@ -209,7 +209,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 					backupDataSize += uint64(size)
 				}
 			}
-			// https://github.com/AlexAkulov/clickhouse-backup/issues/529
+			// https://github.com/Altinity/clickhouse-backup/issues/529
 			log.Debug("get in progress mutations list")
 			inProgressMutations := make([]metadata.MutationMetadata, 0)
 			if b.cfg.ClickHouse.BackupMutations {
@@ -326,7 +326,9 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePa
 	if len(backupResult) != 1 || (backupResult[0].Status != "BACKUP_COMPLETE" && backupResult[0].Status != "BACKUP_CREATED") {
 		return fmt.Errorf("backup return wrong results: %+v", backupResult)
 	}
-	backupDataSize := make([]uint64, 0)
+	backupDataSize := make([]struct {
+		Size uint64 `ch:"backup_data_size"`
+	}, 0)
 	if !schemaOnly {
 		if backupResult[0].CompressedSize == 0 {
 			chVersion, err := b.ch.GetVersion(ctx)
@@ -341,10 +343,14 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePa
 				return err
 			}
 		} else {
-			backupDataSize = append(backupDataSize, backupResult[0].CompressedSize)
+			backupDataSize = append(backupDataSize, struct {
+				Size uint64 `ch:"backup_data_size"`
+			}{Size: backupResult[0].CompressedSize})
 		}
 	} else {
-		backupDataSize = append(backupDataSize, 0)
+		backupDataSize = append(backupDataSize, struct {
+			Size uint64 `ch:"backup_data_size"`
+		}{Size: 0})
 	}
 
 	log.Debug("calculate parts list from embedded backup disk")
@@ -382,7 +388,7 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePa
 		}
 	}
 	backupMetaFile := path.Join(diskMap[b.cfg.ClickHouse.EmbeddedBackupDisk], backupName, "metadata.json")
-	if err := b.createBackupMetadata(ctx, backupMetaFile, backupName, backupVersion, "embedded", diskMap, disks, backupDataSize[0], backupMetadataSize, 0, 0, tableMetas, allDatabases, allFunctions, log); err != nil {
+	if err := b.createBackupMetadata(ctx, backupMetaFile, backupName, backupVersion, "embedded", diskMap, disks, backupDataSize[0].Size, backupMetadataSize, 0, 0, tableMetas, allDatabases, allFunctions, log); err != nil {
 		return err
 	}
 
@@ -486,7 +492,6 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 		log.WithField("engine", table.Engine).Warnf("supports only schema backup")
 		return nil, nil, nil
 	}
-	//
 	if b.cfg.ClickHouse.CheckPartsColumns {
 		if err := b.ch.CheckSystemPartsColumns(ctx, table); err != nil {
 			return nil, nil, err
@@ -534,9 +539,9 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 			}
 		}
 	}
-	// Unfreeze to unlock data on S3 disks, https://github.com/AlexAkulov/clickhouse-backup/issues/423
+	// Unfreeze to unlock data on S3 disks, https://github.com/Altinity/clickhouse-backup/issues/423
 	if version > 21004000 {
-		if _, err := b.ch.QueryContext(ctx, fmt.Sprintf("ALTER TABLE `%s`.`%s` UNFREEZE WITH NAME '%s'", table.Database, table.Name, shadowBackupUUID)); err != nil {
+		if err := b.ch.QueryContext(ctx, fmt.Sprintf("ALTER TABLE `%s`.`%s` UNFREEZE WITH NAME '%s'", table.Database, table.Name, shadowBackupUUID)); err != nil {
 			return disksToPartsMap, realSize, err
 		}
 	}

@@ -47,6 +47,7 @@ def regression(self, local):
 
     with Cluster(local, nodes=nodes) as cluster:
         cwd = os.environ.get('CLICKHOUSE_TESTS_DIR') if os.environ.get('CLICKHOUSE_TESTS_DIR') else os.getcwd()
+        self.context.backup_config_origin = f"{cwd}/configs/backup/config.yml.origin"
         self.context.backup_config_file = f"{cwd}/configs/backup/config.yml"
         self.context.cluster = cluster
         self.context.nodes = [self.context.cluster.node(n) for n in ["clickhouse1", "clickhouse2"]]

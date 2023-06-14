@@ -5,7 +5,7 @@ VERSION = $(shell git describe --always --tags --abbrev=0 2>/dev/null | sed 's/^
 GIT_COMMIT = $(shell git rev-parse HEAD)
 DATE = $(shell date +%F)
 VENDOR = "Eugene Klimov <eklimov@altinity.com>"
-URL = https://github.com/AlexAkulov/$(NAME)
+URL = https://github.com/Altinity/$(NAME)
 define DESC =
 'Tool for easy ClickHouse backup and restore with S3 and GCS support
  Easy creating and restoring backups of all or specific tables

@@ -20,14 +20,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/AlexAkulov/clickhouse-backup/pkg/backup"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/clickhouse"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/common"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/config"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/resumable"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/server/metrics"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/status"
-	"github.com/AlexAkulov/clickhouse-backup/pkg/utils"
+	"github.com/Altinity/clickhouse-backup/pkg/backup"
+	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/pkg/common"
+	"github.com/Altinity/clickhouse-backup/pkg/config"
+	"github.com/Altinity/clickhouse-backup/pkg/resumable"
+	"github.com/Altinity/clickhouse-backup/pkg/server/metrics"
+	"github.com/Altinity/clickhouse-backup/pkg/status"
+	"github.com/Altinity/clickhouse-backup/pkg/utils"
 
 	apexLog "github.com/apex/log"
 	"github.com/google/shlex"
@@ -579,7 +579,7 @@ func (api *APIServer) httpRootHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
 
-	_, _ = fmt.Fprintln(w, "Documentation: https://github.com/AlexAkulov/clickhouse-backup#api")
+	_, _ = fmt.Fprintln(w, "Documentation: https://github.com/Altinity/clickhouse-backup#api")
 	for _, r := range api.routes {
 		_, _ = fmt.Fprintln(w, r)
 	}
@@ -1357,7 +1357,7 @@ func (api *APIServer) httpBackupStatusHandler(w http.ResponseWriter, _ *http.Req
 }
 
 func (api *APIServer) UpdateBackupMetrics(ctx context.Context, onlyLocal bool) error {
-	// calc lastXXX metrics, fix https://github.com/AlexAkulov/clickhouse-backup/issues/515
+	// calc lastXXX metrics, fix https://github.com/Altinity/clickhouse-backup/issues/515
 	var lastBackupCreateLocal *time.Time
 	var lastBackupCreateRemote *time.Time
 	var lastBackupUpload *time.Time
