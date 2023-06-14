@@ -49,7 +49,6 @@ func addTableToListIfNotExistsOrEnrichQueryAndParts(tables ListOfTables, table m
 func getTableListByPatternLocal(ctx context.Context, cfg *config.Config, ch *clickhouse.ClickHouse, metadataPath string, tablePattern string, dropTable bool, partitions []string) (ListOfTables, error) {
 	result := ListOfTables{}
 	tablePatterns := []string{"*"}
-	logger := log.With().Str("logger", "getTableListByPatternLocal").Logger()
 	if tablePattern != "" {
 		tablePatterns = strings.Split(tablePattern, ",")
 	}
@@ -110,7 +109,7 @@ func getTableListByPatternLocal(ctx context.Context, cfg *config.Config, ch *cli
 				}
 				dataParts, err := os.ReadDir(dataPartsPath)
 				if err != nil {
-					logger.Warn().Msg(err.Error())
+					log.Warn().Msg(err.Error())
 				}
 				parts := map[string][]metadata.Part{
 					cfg.ClickHouse.EmbeddedBackupDisk: make([]metadata.Part, len(dataParts)),

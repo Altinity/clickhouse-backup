@@ -4,10 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/pkg/config"
-	"github.com/aws/smithy-go"
-	awsV2http "github.com/aws/smithy-go/transport/http"
-	"github.com/rs/zerolog"
 	"io"
 	"net/http"
 	"os"
@@ -15,8 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/sync/errgroup"
-
+	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsV2Config "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -25,17 +20,22 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/aws/smithy-go"
 	awsV2Logging "github.com/aws/smithy-go/logging"
+	awsV2http "github.com/aws/smithy-go/transport/http"
 	"github.com/pkg/errors"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+	"golang.org/x/sync/errgroup"
 )
 
 type S3LogToZeroLogAdapter struct {
 	logger zerolog.Logger
 }
 
-func newS3Logger(log zerolog.Logger) S3LogToZeroLogAdapter {
+func newS3Logger(logger zerolog.Logger) S3LogToZeroLogAdapter {
 	return S3LogToZeroLogAdapter{
-		logger: log,
+		logger: logger,
 	}
 }
 
@@ -54,7 +54,6 @@ type S3 struct {
 	uploader    *s3manager.Uploader
 	downloader  *s3manager.Downloader
 	Config      *config.S3Config
-	Logger      zerolog.Logger
 	PartSize    int64
 	Concurrency int
 	BufferSize  int
@@ -108,7 +107,7 @@ func (s *S3) Connect(ctx context.Context) error {
 	}
 
 	if s.Config.Debug {
-		awsConfig.Logger = newS3Logger(s.Logger)
+		awsConfig.Logger = newS3Logger(log.Logger)
 		awsConfig.ClientLogMode = aws.LogRetries | aws.LogRequest | aws.LogResponse
 	}
 

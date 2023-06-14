@@ -7,7 +7,6 @@ import (
 	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"github.com/Altinity/clickhouse-backup/pkg/resumable"
 	"github.com/Altinity/clickhouse-backup/pkg/storage"
-	"github.com/rs/zerolog/log"
 	"path"
 )
 
@@ -26,7 +25,6 @@ type Backuper struct {
 func NewBackuper(cfg *config.Config) *Backuper {
 	ch := &clickhouse.ClickHouse{
 		Config: &cfg.ClickHouse,
-		Logger: log.With().Str("logger", "clickhouse").Logger(),
 	}
 	return &Backuper{
 		cfg: cfg,

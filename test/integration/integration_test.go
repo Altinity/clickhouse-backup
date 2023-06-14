@@ -1912,7 +1912,6 @@ func (ch *TestClickHouse) connect(timeOut string) error {
 			Port:    9000,
 			Timeout: timeOut,
 		},
-		Logger: log.With().Str("logger", "clickhouse").Logger(),
 	}
 	var err error
 	for i := 0; i < 3; i++ {

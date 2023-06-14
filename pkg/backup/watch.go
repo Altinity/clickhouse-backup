@@ -108,10 +108,6 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 				}
 			}
 			backupName, err := b.NewBackupWatchName(ctx, backupType)
-			logger := log.With().Fields(map[string]interface{}{
-				"backup":    backupName,
-				"operation": "watch",
-			}).Logger()
 			if err != nil {
 				return err
 			}
@@ -130,14 +126,20 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 			} else {
 				createRemoteErr = b.CreateToRemote(backupName, "", diffFromRemote, tablePattern, partitions, schemaOnly, rbac, backupConfig, skipCheckPartsColumns, false, version, commandId)
 				if createRemoteErr != nil {
-					logger.Error().Msgf("create_remote %s return error: %v", backupName, createRemoteErr)
+					log.Error().Fields(map[string]interface{}{
+						"backup":    backupName,
+						"operation": "watch",
+					}).Msgf("create_remote %s return error: %v", backupName, createRemoteErr)
 					createRemoteErrCount += 1
 				} else {
 					createRemoteErrCount = 0
 				}
 				deleteLocalErr = b.RemoveBackupLocal(ctx, backupName, nil)
 				if deleteLocalErr != nil {
-					logger.Error().Msgf("delete local %s return error: %v", backupName, deleteLocalErr)
+					log.Error().Fields(map[string]interface{}{
+						"backup":    backupName,
+						"operation": "watch",
+					}).Msgf("delete local %s return error: %v", backupName, deleteLocalErr)
 					deleteLocalErrCount += 1
 				} else {
 					deleteLocalErrCount = 0

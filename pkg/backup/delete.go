@@ -18,7 +18,6 @@ import (
 
 // Clean - removed all data in shadow folder
 func (b *Backuper) Clean(ctx context.Context) error {
-	logger := log.With().Str("logger", "Clean").Logger()
 	if err := b.ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
@@ -36,7 +35,7 @@ func (b *Backuper) Clean(ctx context.Context) error {
 		if err := b.cleanDir(shadowDir); err != nil {
 			return fmt.Errorf("can't clean '%s': %v", shadowDir, err)
 		}
-		logger.Info().Msg(shadowDir)
+		log.Info().Msg(shadowDir)
 	}
 	return nil
 }
@@ -95,7 +94,6 @@ func (b *Backuper) RemoveOldBackupsLocal(ctx context.Context, keepLastBackup boo
 }
 
 func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, disks []clickhouse.Disk) error {
-	logger := log.With().Str("logger", "RemoveBackupLocal").Logger()
 	var err error
 	start := time.Now()
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
@@ -120,13 +118,13 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 				if disk.IsBackup {
 					backupPath = path.Join(disk.Path, backupName)
 				}
-				logger.Debug().Msgf("remove '%s'", backupPath)
+				log.Debug().Msgf("remove '%s'", backupPath)
 				err = os.RemoveAll(backupPath)
 				if err != nil {
 					return err
 				}
 			}
-			logger.Info().Str("operation", "delete").
+			log.Info().Str("operation", "delete").
 				Str("location", "local").
 				Str("backup", backupName).
 				Str("duration", utils.HumanizeDuration(time.Since(start))).
@@ -138,12 +136,11 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 }
 
 func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) error {
-	logger := log.With().Str("logger", "RemoveBackupRemote").Logger()
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 	start := time.Now()
 	if b.cfg.General.RemoteStorage == "none" {
 		err := errors.New("aborted: RemoteStorage set to \"none\"")
-		logger.Error().Msg(err.Error())
+		log.Error().Msg(err.Error())
 		return err
 	}
 	if b.cfg.General.RemoteStorage == "custom" {
@@ -164,7 +161,7 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 	}
 	defer func() {
 		if err := bd.Close(ctx); err != nil {
-			logger.Warn().Msgf("can't close BackupDestination error: %v", err)
+			log.Warn().Msgf("can't close BackupDestination error: %v", err)
 		}
 	}()
 
@@ -175,10 +172,10 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
 			if err := bd.RemoveBackup(ctx, backup); err != nil {
-				logger.Warn().Msgf("bd.RemoveBackup return error: %v", err)
+				log.Warn().Msgf("bd.RemoveBackup return error: %v", err)
 				return err
 			}
-			logger.Info().Fields(map[string]interface{}{
+			log.Info().Fields(map[string]interface{}{
 				"backup":    backupName,
 				"location":  "remote",
 				"operation": "delete",

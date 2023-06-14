@@ -119,12 +119,11 @@ func MkdirAll(path string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk) e
 // HardlinkBackupPartsToStorage - copy parts for specific table to detached folder
 func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableMetadata, disks []clickhouse.Disk, tableDataPaths []string, ch *clickhouse.ClickHouse, toDetached bool) error {
 	dstDataPaths := clickhouse.GetDisksByPaths(disks, tableDataPaths)
-	logger := log.With().Fields(map[string]interface{}{"operation": "HardlinkBackupPartsToStorage"}).Logger()
 	start := time.Now()
 	for _, backupDisk := range disks {
 		backupDiskName := backupDisk.Name
 		if len(backupTable.Parts[backupDiskName]) == 0 {
-			logger.Debug().Msgf("%s disk have no parts", backupDisk.Name)
+			log.Debug().Msgf("%s disk have no parts", backupDisk.Name)
 			continue
 		}
 		dstParentDir := dstDataPaths[backupDiskName]
@@ -136,9 +135,9 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 			info, err := os.Stat(dstPartPath)
 			if err != nil {
 				if os.IsNotExist(err) {
-					logger.Debug().Msgf("MkDirAll %s", dstPartPath)
+					log.Debug().Msgf("MkDirAll %s", dstPartPath)
 					if mkdirErr := MkdirAll(dstPartPath, ch, disks); mkdirErr != nil {
-						logger.Warn().Msgf("error during Mkdir %+v", mkdirErr)
+						log.Warn().Msgf("error during Mkdir %+v", mkdirErr)
 					}
 				} else {
 					return err
@@ -159,14 +158,14 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 				filename := strings.Trim(strings.TrimPrefix(filePath, partPath), "/")
 				dstFilePath := filepath.Join(dstPartPath, filename)
 				if info.IsDir() {
-					logger.Debug().Msgf("MkDir %s", dstFilePath)
+					log.Debug().Msgf("MkDir %s", dstFilePath)
 					return Mkdir(dstFilePath, ch, disks)
 				}
 				if !info.Mode().IsRegular() {
-					logger.Debug().Msgf("'%s' is not a regular file, skipping.", filePath)
+					log.Debug().Msgf("'%s' is not a regular file, skipping.", filePath)
 					return nil
 				}
-				logger.Debug().Msgf("Link %s -> %s", filePath, dstFilePath)
+				log.Debug().Msgf("Link %s -> %s", filePath, dstFilePath)
 				if err := os.Link(filePath, dstFilePath); err != nil {
 					if !os.IsExist(err) {
 						return fmt.Errorf("failed to create hard link '%s' -> '%s': %w", filePath, dstFilePath, err)
@@ -178,7 +177,7 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 			}
 		}
 	}
-	logger.Debug().Str("duration", utils.HumanizeDuration(time.Since(start))).Msg("done")
+	log.Debug().Str("duration", utils.HumanizeDuration(time.Since(start))).Msg("done")
 	return nil
 }
 
@@ -194,7 +193,6 @@ func IsFileInPartition(disk, fileName string, partitionsBackupMap common.EmptyMa
 }
 
 func MoveShadow(shadowPath, backupPartsPath string, partitionsBackupMap common.EmptyMap) ([]metadata.Part, int64, error) {
-	logger := log.With().Str("logger", "MoveShadow").Logger()
 	size := int64(0)
 	parts := make([]metadata.Part, 0)
 	err := filepath.Walk(shadowPath, func(filePath string, info os.FileInfo, err error) error {
@@ -221,7 +219,7 @@ func MoveShadow(shadowPath, backupPartsPath string, partitionsBackupMap common.E
 			return os.MkdirAll(dstFilePath, 0750)
 		}
 		if !info.Mode().IsRegular() {
-			logger.Debug().Msgf("'%s' is not a regular file, skipping", filePath)
+			log.Debug().Msgf("'%s' is not a regular file, skipping", filePath)
 			return nil
 		}
 		size += info.Size()
@@ -231,14 +229,13 @@ func MoveShadow(shadowPath, backupPartsPath string, partitionsBackupMap common.E
 }
 
 func IsDuplicatedParts(part1, part2 string) error {
-	logger := log.With().Str("logger", "IsDuplicatedParts").Logger()
 	p1, err := os.Open(part1)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if err = p1.Close(); err != nil {
-			logger.Warn().Msgf("Can't close %s", part1)
+			log.Warn().Msgf("Can't close %s", part1)
 		}
 	}()
 	p2, err := os.Open(part2)
@@ -247,7 +244,7 @@ func IsDuplicatedParts(part1, part2 string) error {
 	}
 	defer func() {
 		if err = p2.Close(); err != nil {
-			logger.Warn().Msgf("Can't close %s", part2)
+			log.Warn().Msgf("Can't close %s", part2)
 		}
 	}()
 	pf1, err := p1.Readdirnames(-1)

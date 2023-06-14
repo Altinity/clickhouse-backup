@@ -3,13 +3,12 @@ package status
 import (
 	"context"
 	"fmt"
-	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/pkg/common"
-	"github.com/rs/zerolog/log"
 )
 
 const (
@@ -19,15 +18,12 @@ const (
 	ErrorStatus      = "error"
 )
 
-var Current = &AsyncStatus{
-	logger: log.With().Str("logger", "status").Logger(),
-}
+var Current = &AsyncStatus{}
 
 const NotFromAPI = int(-1)
 
 type AsyncStatus struct {
 	commands []ActionRow
-	logger   zerolog.Logger
 	sync.RWMutex
 }
 
@@ -59,7 +55,7 @@ func (status *AsyncStatus) Start(command string) (int, context.Context) {
 		Cancel: cancel,
 	})
 	lastCommandId := len(status.commands) - 1
-	status.logger.Debug().Msgf("api.status.Start -> status.commands[%d] == %+v", lastCommandId, status.commands[lastCommandId])
+	log.Debug().Msgf("api.status.Start -> status.commands[%d] == %+v", lastCommandId, status.commands[lastCommandId])
 	return lastCommandId, ctx
 }
 
@@ -79,10 +75,10 @@ func (status *AsyncStatus) InProgress() bool {
 	defer status.RUnlock()
 	n := len(status.commands) - 1
 	if n < 0 {
-		status.logger.Debug().Msgf("api.status.inProgress -> len(status.commands)=%d, inProgress=false", len(status.commands))
+		log.Debug().Msgf("api.status.inProgress -> len(status.commands)=%d, inProgress=false", len(status.commands))
 		return false
 	}
-	status.logger.Debug().Msgf("api.status.inProgress -> status.commands[n].Status == %s, inProgress=%v", status.commands[n].Status, status.commands[n].Status == InProgressStatus)
+	log.Debug().Msgf("api.status.inProgress -> status.commands[n].Status == %s, inProgress=%v", status.commands[n].Status, status.commands[n].Status == InProgressStatus)
 	return status.commands[n].Status == InProgressStatus
 }
 
@@ -118,7 +114,7 @@ func (status *AsyncStatus) Stop(commandId int, err error) {
 	status.commands[commandId].Finish = time.Now().Format(common.TimeFormat)
 	status.commands[commandId].Ctx = nil
 	status.commands[commandId].Cancel = nil
-	status.logger.Debug().Msgf("api.status.stop -> status.commands[%d] == %+v", commandId, status.commands[commandId])
+	log.Debug().Msgf("api.status.stop -> status.commands[%d] == %+v", commandId, status.commands[commandId])
 }
 
 func (status *AsyncStatus) Cancel(command string, err error) error {
@@ -126,7 +122,7 @@ func (status *AsyncStatus) Cancel(command string, err error) error {
 	defer status.Unlock()
 	if len(status.commands) == 0 {
 		err = fmt.Errorf("empty command list")
-		status.logger.Warn().Err(err).Send()
+		log.Warn().Err(err).Send()
 		return err
 	}
 	commandId := -1
@@ -147,11 +143,11 @@ func (status *AsyncStatus) Cancel(command string, err error) error {
 	}
 	if commandId == -1 {
 		err = fmt.Errorf("command `%s` not found", command)
-		status.logger.Warn().Err(err).Send()
+		log.Warn().Err(err).Send()
 		return err
 	}
 	if status.commands[commandId].Status != InProgressStatus {
-		status.logger.Warn().Msgf("found `%s` with status=%s", command, status.commands[commandId].Status)
+		log.Warn().Msgf("found `%s` with status=%s", command, status.commands[commandId].Status)
 	}
 	if status.commands[commandId].Ctx != nil {
 		status.commands[commandId].Cancel()
@@ -161,7 +157,7 @@ func (status *AsyncStatus) Cancel(command string, err error) error {
 	status.commands[commandId].Error = err.Error()
 	status.commands[commandId].Status = CancelStatus
 	status.commands[commandId].Finish = time.Now().Format(common.TimeFormat)
-	status.logger.Debug().Msgf("api.status.cancel -> status.commands[%d] == %+v", commandId, status.commands[commandId])
+	log.Debug().Msgf("api.status.cancel -> status.commands[%d] == %+v", commandId, status.commands[commandId])
 	return nil
 }
 
@@ -177,7 +173,7 @@ func (status *AsyncStatus) CancelAll(cancelMsg string) {
 		status.commands[commandId].Status = CancelStatus
 		status.commands[commandId].Error = cancelMsg
 		status.commands[commandId].Finish = time.Now().Format(common.TimeFormat)
-		status.logger.Debug().Msgf("api.status.cancel -> status.commands[%d] == %+v", commandId, status.commands[commandId])
+		log.Debug().Msgf("api.status.cancel -> status.commands[%d] == %+v", commandId, status.commands[commandId])
 	}
 }
 

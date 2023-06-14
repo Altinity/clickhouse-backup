@@ -2,7 +2,6 @@ package metrics
 
 import (
 	"fmt"
-	"github.com/rs/zerolog"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -34,7 +33,6 @@ type APIMetrics struct {
 	NumberBackupsLocalExpected  prometheus.Gauge
 
 	SubCommands map[string][]string
-	logger      zerolog.Logger
 }
 
 func NewAPIMetrics() *APIMetrics {
@@ -43,7 +41,6 @@ func NewAPIMetrics() *APIMetrics {
 			"create_remote":  {"create", "upload"},
 			"restore_remote": {"download", "restore"},
 		},
-		logger: log.With().Str("logger", "metrics").Logger(),
 	}
 	return metrics
 }
@@ -175,7 +172,7 @@ func (m *APIMetrics) Start(command string, startTime time.Time) {
 			}
 		}
 	} else {
-		m.logger.Warn().Msgf("%s not found in LastStart metrics", command)
+		log.Warn().Msgf("%s not found in LastStart metrics", command)
 	}
 }
 func (m *APIMetrics) Finish(command string, startTime time.Time) {
@@ -191,19 +188,19 @@ func (m *APIMetrics) Finish(command string, startTime time.Time) {
 			}
 		}
 	} else {
-		m.logger.Warn().Msgf("%s not found in LastFinish", command)
+		log.Warn().Msgf("%s not found in LastFinish", command)
 	}
 }
 func (m *APIMetrics) Success(command string) {
 	if _, exists := m.SuccessfulCounter[command]; exists {
 		m.SuccessfulCounter[command].Inc()
 	} else {
-		m.logger.Warn().Msgf("%s not found in SuccessfulCounter metrics", command)
+		log.Warn().Msgf("%s not found in SuccessfulCounter metrics", command)
 	}
 	if _, exists := m.LastStatus[command]; exists {
 		m.LastStatus[command].Set(1)
 	} else {
-		m.logger.Warn().Msgf("%s not found in LastStatus metrics", command)
+		log.Warn().Msgf("%s not found in LastStatus metrics", command)
 	}
 }
 
@@ -211,12 +208,12 @@ func (m *APIMetrics) Failure(command string) {
 	if _, exists := m.FailedCounter[command]; exists {
 		m.FailedCounter[command].Inc()
 	} else {
-		m.logger.Warn().Msgf("%s not found in FailedCounter metrics", command)
+		log.Warn().Msgf("%s not found in FailedCounter metrics", command)
 	}
 	if _, exists := m.LastStatus[command]; exists {
 		m.LastStatus[command].Set(0)
 	} else {
-		m.logger.Warn().Msgf("%s not found in LastStatus metrics", command)
+		log.Warn().Msgf("%s not found in LastStatus metrics", command)
 	}
 }
 
@@ -226,7 +223,7 @@ func (m *APIMetrics) ExecuteWithMetrics(command string, errCounter int, f func()
 	err := f()
 	m.Finish(command, startTime)
 	if err != nil {
-		m.logger.Error().Msgf("metrics.ExecuteWithMetrics(%s) return error: %v", command, err)
+		log.Error().Msgf("metrics.ExecuteWithMetrics(%s) return error: %v", command, err)
 		errCounter += 1
 		m.Failure(command)
 	} else {
