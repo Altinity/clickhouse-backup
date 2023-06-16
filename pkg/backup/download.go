@@ -9,6 +9,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"github.com/Altinity/clickhouse-backup/pkg/custom"
 	"github.com/Altinity/clickhouse-backup/pkg/filesystemhelper"
+	"github.com/Altinity/clickhouse-backup/pkg/partition"
 	"github.com/Altinity/clickhouse-backup/pkg/resumable"
 	"github.com/Altinity/clickhouse-backup/pkg/status"
 	"github.com/eapache/go-resiliency/retrier"
@@ -337,8 +338,8 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 				if err = json.Unmarshal(tmBody, &tableMetadata); err != nil {
 					return nil, 0, err
 				}
-				partitionsFilter, _ := filesystemhelper.CreatePartitionsToBackupMap(ctx, b.ch, nil, []metadata.TableMetadata{tableMetadata}, partitions)
-				filterPartsAndFilesByPartitionsFilter(tableMetadata, partitionsFilter)
+				partitionsIdMap, _ := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, []metadata.TableMetadata{tableMetadata}, partitions)
+				filterPartsAndFilesByPartitionsFilter(tableMetadata, partitionsIdMap[metadata.TableTitle{Database: tableMetadata.Database, Table: tableMetadata.Table}])
 			}
 			if isProcessed {
 				size += uint64(processedSize)
@@ -383,8 +384,8 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 			if err = json.Unmarshal(tmBody, &tableMetadata); err != nil {
 				return nil, 0, err
 			}
-			partitionsFilter, _ := filesystemhelper.CreatePartitionsToBackupMap(ctx, b.ch, nil, []metadata.TableMetadata{tableMetadata}, partitions)
-			filterPartsAndFilesByPartitionsFilter(tableMetadata, partitionsFilter)
+			partitionsIdMap, _ := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, []metadata.TableMetadata{tableMetadata}, partitions)
+			filterPartsAndFilesByPartitionsFilter(tableMetadata, partitionsIdMap[metadata.TableTitle{Database: tableMetadata.Database, Table: tableMetadata.Table}])
 			// save metadata
 			jsonSize := uint64(0)
 			jsonSize, err = tableMetadata.Save(localMetadataFile, schemaOnly)

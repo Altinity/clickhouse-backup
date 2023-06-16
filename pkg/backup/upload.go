@@ -280,7 +280,7 @@ func (b *Backuper) prepareTableListToUpload(ctx context.Context, backupName stri
 	if b.isEmbedded {
 		metadataPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
 	}
-	tablesForUpload, err = getTableListByPatternLocal(ctx, b.cfg, b.ch, metadataPath, tablePattern, false, partitions)
+	tablesForUpload, _, err = getTableListByPatternLocal(ctx, b.cfg, b.ch, metadataPath, tablePattern, false, partitions)
 	if err != nil {
 		return nil, err
 	}
@@ -297,7 +297,7 @@ func (b *Backuper) getTablesForUploadDiffLocal(ctx context.Context, diffFrom str
 		backupMetadata.RequiredBackup = diffFrom
 		metadataPath := path.Join(b.DefaultDataPath, "backup", diffFrom, "metadata")
 		// empty partitions, because we can not filter
-		diffTablesList, err := getTableListByPatternLocal(ctx, b.cfg, b.ch, metadataPath, tablePattern, false, []string{})
+		diffTablesList, _, err := getTableListByPatternLocal(ctx, b.cfg, b.ch, metadataPath, tablePattern, false, []string{})
 		if err != nil {
 			return nil, err
 		}

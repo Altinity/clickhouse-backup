@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/pkg/config"
+	"github.com/Altinity/clickhouse-backup/pkg/partition"
 	apexLog "github.com/apex/log"
 	"github.com/google/uuid"
 	"io"
@@ -47,8 +48,10 @@ func addTableToListIfNotExistsOrEnrichQueryAndParts(tables ListOfTables, table m
 	return append(tables, table)
 }
 
-func getTableListByPatternLocal(ctx context.Context, cfg *config.Config, ch *clickhouse.ClickHouse, metadataPath string, tablePattern string, dropTable bool, partitions []string) (ListOfTables, error) {
+func getTableListByPatternLocal(ctx context.Context, cfg *config.Config, ch *clickhouse.ClickHouse, metadataPath string, tablePattern string, dropTable bool, partitions []string) (ListOfTables, map[metadata.TableTitle]common.EmptyMap, map[metadata.TableTitle][]string, error) {
 	result := ListOfTables{}
+	resultPartitionNames := map[metadata.TableTitle][]string{}
+	resultPartitionIds := map[metadata.TableTitle]common.EmptyMap{}
 	tablePatterns := []string{"*"}
 	log := apexLog.WithField("logger", "getTableListByPatternLocal")
 	if tablePattern != "" {
@@ -126,27 +129,46 @@ func getTableListByPatternLocal(ctx context.Context, cfg *config.Config, ch *cli
 					Query:    query,
 					Parts:    parts,
 				}
-				partitionsFilter, _ := filesystemhelper.CreatePartitionsToBackupMap(ctx, ch, nil, []metadata.TableMetadata{t}, partitions)
-				filterPartsAndFilesByPartitionsFilter(t, partitionsFilter)
+				// .sql file will enrich Query
+				partitionsIdMap, _ := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, ch, nil, []metadata.TableMetadata{t}, partitions)
+				filterPartsAndFilesByPartitionsFilter(t, partitionsIdMap[metadata.TableTitle{Database: t.Database, Table: t.Table}])
 				result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, t)
-
 				return nil
 			}
 			var t metadata.TableMetadata
 			if err := json.Unmarshal(data, &t); err != nil {
 				return err
 			}
-			partitionsFilter, _ := filesystemhelper.CreatePartitionsToBackupMap(ctx, ch, nil, []metadata.TableMetadata{t}, partitions)
-			filterPartsAndFilesByPartitionsFilter(t, partitionsFilter)
+			partitionsIdMap, partitionsNameList := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, ch, nil, []metadata.TableMetadata{t}, partitions)
+			filterPartsAndFilesByPartitionsFilter(t, partitionsIdMap[metadata.TableTitle{Database: t.Database, Table: t.Table}])
 			result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, t)
+			for tt := range partitionsNameList {
+				if _, exists := resultPartitionNames[tt]; !exists {
+					resultPartitionNames[tt] = []string{}
+				}
+				resultPartitionNames[tt] = common.AddSliceToSliceIfNotExists(
+					resultPartitionNames[tt],
+					partitionsNameList[tt],
+				)
+			}
+			for tt := range partitionsIdMap {
+				if _, exists := resultPartitionIds[tt]; !exists {
+					resultPartitionIds[tt] = common.EmptyMap{}
+				}
+				for id := range partitionsIdMap[tt] {
+					if _, exists := resultPartitionIds[tt][id]; !exists {
+						resultPartitionIds[tt][id] = partitionsIdMap[tt][id]
+					}
+				}
+			}
 			return nil
 		}
 		return nil
 	}); err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	result.Sort(dropTable)
-	return result, nil
+	return result, resultPartitionIds, resultPartitionNames, nil
 }
 
 var queryRE = regexp.MustCompile(`(?m)^(CREATE|ATTACH) (TABLE|VIEW|LIVE VIEW|MATERIALIZED VIEW|DICTIONARY|FUNCTION) (\x60?)([^\s\x60.]*)(\x60?)\.([^\s\x60.]*)(?:( UUID '[^']+'))?(?:( TO )(\x60?)([^\s\x60.]*)(\x60?)(\.))?(?:(.+FROM )(\x60?)([^\s\x60.]*)(\x60?)(\.))?`)

@@ -631,10 +631,10 @@ func TestIntegrationCustom(t *testing.T) {
 }
 
 func TestIntegrationEmbedded(t *testing.T) {
-	t.Skipf("Test skipped, wait 23.01, RESTORE Ordinary table and RESTORE MATERIALIZED VIEW and {uuid} not works for %s version, look https://github.com/ClickHouse/ClickHouse/issues/43971 and https://github.com/ClickHouse/ClickHouse/issues/42709", os.Getenv("CLICKHOUSE_VERSION"))
+	//t.Skipf("Test skipped, wait 23.01, RESTORE Ordinary table and RESTORE MATERIALIZED VIEW and {uuid} not works for %s version, look https://github.com/ClickHouse/ClickHouse/issues/43971 and https://github.com/ClickHouse/ClickHouse/issues/42709", os.Getenv("CLICKHOUSE_VERSION"))
 	version := os.Getenv("CLICKHOUSE_VERSION")
-	if version != "head" && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.7") < 0 {
-		t.Skipf("Test skipped, BACKUP/RESTORE not available for %s version", version)
+	if version != "head" && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.3") < 0 {
+		t.Skipf("Test skipped, BACKUP/RESTORE not production ready for %s version", version)
 	}
 	r := require.New(t)
 	r.NoError(dockerCP("config-s3-embedded.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
@@ -1349,55 +1349,72 @@ func TestGetPartitionId(t *testing.T) {
 
 	type testData struct {
 		CreateTableSQL string
+		DropTableSQL   string
 		Database       string
 		Table          string
 		Partition      string
-		ExpectedOutput string
+		ExpectedId     string
+		ExpectedName   string
 	}
 	testCases := []testData{
 		{
 			"CREATE TABLE default.test_part_id_1 UUID 'b45e751f-6c06-42a3-ab4a-f5bb9ac3716e' (dt Date, version DateTime, category String, name String) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/{table}','{replica}',version) ORDER BY dt PARTITION BY (toYYYYMM(dt),category)",
+			"DROP TABLE default.test_part_id_1",
 			"default",
 			"test_part_id_1",
 			"('2023-01-01','category1')",
 			"ad598a31d0ee285798bbe450f596c89c",
+			"(202301,'category1')",
 		},
 		{
 			"CREATE TABLE default.test_part_id_2 (dt Date, version DateTime, name String) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/{table}','{replica}',version) ORDER BY dt PARTITION BY toYYYYMM(dt)",
+			"DROP TABLE default.test_part_id_2",
 			"default",
 			"test_part_id_2",
 			"'2023-01-01'",
 			"202301",
+			"202301",
 		},
 		{
 			"CREATE TABLE default.test_part_id_3 ON CLUSTER '{cluster}' (i UInt32, name String) ENGINE = ReplicatedMergeTree() ORDER BY i PARTITION BY i",
+			"DROP TABLE default.test_part_id_3",
 			"default",
 			"test_part_id_3",
+			"202301",
 			"202301",
 			"202301",
 		},
 		{
 			"CREATE TABLE default.test_part_id_4 (dt String, name String) ENGINE = MergeTree ORDER BY dt PARTITION BY dt",
+			"DROP TABLE default.test_part_id_4",
 			"default",
 			"test_part_id_4",
 			"'2023-01-01'",
 			"c487903ebbb25a533634d6ec3485e3a9",
+			"2023-01-01",
 		},
 		{
 			"CREATE TABLE default.test_part_id_5 (dt String, name String) ENGINE = Memory",
+			"DROP TABLE default.test_part_id_5",
 			"default",
 			"test_part_id_5",
 			"'2023-01-01'",
+			"",
 			"",
 		},
 	}
 	if isAtomic, _ := ch.chbackend.IsAtomic("default"); !isAtomic {
 		testCases[0].CreateTableSQL = strings.Replace(testCases[0].CreateTableSQL, "UUID 'b45e751f-6c06-42a3-ab4a-f5bb9ac3716e'", "", 1)
+		for i, _ := range testCases {
+			testCases[i].DropTableSQL += " NO DELAY"
+		}
 	}
 	for _, tc := range testCases {
-		err, partitionId := partition.GetPartitionId(context.Background(), ch.chbackend, tc.Database, tc.Table, tc.CreateTableSQL, tc.Partition)
+		err, partitionId, partitionName := partition.GetPartitionIdAndName(context.Background(), ch.chbackend, tc.Database, tc.Table, tc.CreateTableSQL, tc.Partition)
 		assert.NoError(t, err)
-		assert.Equal(t, tc.ExpectedOutput, partitionId)
+		assert.Equal(t, tc.ExpectedId, partitionId)
+		assert.Equal(t, tc.ExpectedName, partitionName)
+		assert.NoError(t, ch.chbackend.Query(tc.DropTableSQL))
 	}
 }
 
@@ -2210,7 +2227,11 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse, re
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables=default.t*", fullBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", fullBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", "--partitions=('2022-01-02'),('2022-01-03')", fullBackupName))
-	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la /var/lib/clickhouse/backup/"+fullBackupName+"/shadow/default/t?/default/ | wc -l")
+	fullBackupDir := "/var/lib/clickhouse/backup/" + fullBackupName + "/shadow/default/t?/default/"
+	if remoteStorageType == "EMBEDDED" {
+		fullBackupDir = "/var/lib/clickhouse/disks/backups/" + fullBackupName + "/data/default/t?"
+	}
+	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la "+fullBackupDir+" | wc -l")
 	r.NoError(err)
 	expectedLines := "13"
 	// custom storage doesn't support --partitions for upload / download now
@@ -2220,7 +2241,12 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse, re
 	r.Equal(expectedLines, strings.Trim(out, "\r\n\t "))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", fullBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", fullBackupName))
-	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la /var/lib/clickhouse/backup/"+fullBackupName+"/shadow/default/t?/default/ | wc -l")
+
+	fullBackupDir = "/var/lib/clickhouse/backup/" + fullBackupName + "/shadow/default/t?/default/"
+	if remoteStorageType == "EMBEDDED" {
+		fullBackupDir = "/var/lib/clickhouse/disks/backups/" + fullBackupName + "/data/default/t?"
+	}
+	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la "+fullBackupDir+"| wc -l")
 	r.NoError(err)
 	r.Equal("17", strings.Trim(out, "\r\n\t "))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--partitions=('2022-01-02'),('2022-01-03')", fullBackupName))
@@ -2241,14 +2267,22 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse, re
 
 	// check create + partitions
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "--tables=default.t1", "--partitions=20220102,20220103", partitionBackupName))
-	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la /var/lib/clickhouse/backup/"+partitionBackupName+"/shadow/default/t1/default/ | wc -l")
+	partitionBackupDir := "/var/lib/clickhouse/backup/" + partitionBackupName + "/shadow/default/t1/default/"
+	if remoteStorageType == "EMBEDDED" {
+		partitionBackupDir = "/var/lib/clickhouse/disks/backups/" + partitionBackupName + "/data/default/t1"
+	}
+	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la "+partitionBackupDir+"| wc -l")
 	r.NoError(err)
 	r.Equal("5", strings.Trim(out, "\r\n\t "))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", partitionBackupName))
 
 	// check create > upload + partitions
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "--tables=default.t1", partitionBackupName))
-	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la /var/lib/clickhouse/backup/"+partitionBackupName+"/shadow/default/t1/default/ | wc -l")
+	partitionBackupDir = "/var/lib/clickhouse/backup/" + partitionBackupName + "/shadow/default/t1/default/"
+	if remoteStorageType == "EMBEDDED" {
+		partitionBackupDir = "/var/lib/clickhouse/disks/backups/" + partitionBackupName + "/data/default/t1"
+	}
+	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la "+partitionBackupDir+" | wc -l")
 	r.NoError(err)
 	r.Equal("7", strings.Trim(out, "\r\n\t "))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "upload", "--tables=default.t1", "--partitions=20220102,20220103", partitionBackupName))

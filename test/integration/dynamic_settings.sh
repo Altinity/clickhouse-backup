@@ -151,8 +151,8 @@ fi
 # embedded s3 backup configuration
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[6-9] || "${CLICKHOUSE_VERSION}" =~ ^22\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[0-9]+ ]]; then
 
-mkdir -p /var/lib/clickhouse/backups_embedded
-chown clickhouse:clickhouse /var/lib/clickhouse/backups_embedded
+mkdir -p /var/lib/clickhouse/disks/backups/ /var/lib/clickhouse/backups_embedded/
+chown -R clickhouse /var/lib/clickhouse/disks/ /var/lib/clickhouse/backups_embedded/
 
 cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration.xml
 <?xml version="1.0"?>
@@ -165,7 +165,6 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration.xml
               <endpoint>http://minio:9000/clickhouse/backups/</endpoint>
               <access_key_id>access-key</access_key_id>
               <secret_access_key>it-is-my-super-secret-key</secret_access_key>
-              <!-- to avoid unnecessary disk space allocations -->
               <cache_enabled>false</cache_enabled>
             </backups>
         </disks>
