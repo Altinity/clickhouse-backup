@@ -639,6 +639,10 @@ func TestIntegrationEmbedded(t *testing.T) {
 	r := require.New(t)
 	r.NoError(dockerCP("config-s3-embedded.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	runMainIntegrationScenario(t, "EMBEDDED")
+	//r.NoError(dockerCP("config-s3-plain-embedded.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	//runMainIntegrationScenario(t, "EMBEDDED")
+	//r.NoError(dockerCP("config-azure-embedded.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	//runMainIntegrationScenario(t, "EMBEDDED")
 }
 
 func TestLongListRemote(t *testing.T) {
@@ -872,7 +876,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 
 	backupDir := "/var/lib/clickhouse/backup"
 	if remoteStorageType == "EMBEDDED" {
-		backupDir = "/var/lib/clickhouse/disks/backups"
+		backupDir = "/var/lib/clickhouse/disks/backups_s3"
 	}
 	out, err = dockerExecOut("clickhouse", "ls", "-lha", backupDir)
 	r.NoError(err)
@@ -1405,7 +1409,8 @@ func TestGetPartitionId(t *testing.T) {
 	}
 	if isAtomic, _ := ch.chbackend.IsAtomic("default"); !isAtomic {
 		testCases[0].CreateTableSQL = strings.Replace(testCases[0].CreateTableSQL, "UUID 'b45e751f-6c06-42a3-ab4a-f5bb9ac3716e'", "", 1)
-		for i, _ := range testCases {
+	} else {
+		for i := range testCases {
 			testCases[i].DropTableSQL += " NO DELAY"
 		}
 	}
@@ -2229,7 +2234,7 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse, re
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", "--partitions=('2022-01-02'),('2022-01-03')", fullBackupName))
 	fullBackupDir := "/var/lib/clickhouse/backup/" + fullBackupName + "/shadow/default/t?/default/"
 	if remoteStorageType == "EMBEDDED" {
-		fullBackupDir = "/var/lib/clickhouse/disks/backups/" + fullBackupName + "/data/default/t?"
+		fullBackupDir = "/var/lib/clickhouse/disks/backups_s3/" + fullBackupName + "/data/default/t?"
 	}
 	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la "+fullBackupDir+" | wc -l")
 	r.NoError(err)
@@ -2238,13 +2243,17 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse, re
 	if remoteStorageType == "CUSTOM" || compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.17") == -1 {
 		expectedLines = "17"
 	}
+	// embedded storage contain hardLink files and will download additional data parts
+	if remoteStorageType == "EMBEDDED" {
+		expectedLines = "15"
+	}
 	r.Equal(expectedLines, strings.Trim(out, "\r\n\t "))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", fullBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", fullBackupName))
 
 	fullBackupDir = "/var/lib/clickhouse/backup/" + fullBackupName + "/shadow/default/t?/default/"
 	if remoteStorageType == "EMBEDDED" {
-		fullBackupDir = "/var/lib/clickhouse/disks/backups/" + fullBackupName + "/data/default/t?"
+		fullBackupDir = "/var/lib/clickhouse/disks/backups_s3/" + fullBackupName + "/data/default/t?"
 	}
 	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la "+fullBackupDir+"| wc -l")
 	r.NoError(err)
@@ -2269,7 +2278,7 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse, re
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "--tables=default.t1", "--partitions=20220102,20220103", partitionBackupName))
 	partitionBackupDir := "/var/lib/clickhouse/backup/" + partitionBackupName + "/shadow/default/t1/default/"
 	if remoteStorageType == "EMBEDDED" {
-		partitionBackupDir = "/var/lib/clickhouse/disks/backups/" + partitionBackupName + "/data/default/t1"
+		partitionBackupDir = "/var/lib/clickhouse/disks/backups_s3/" + partitionBackupName + "/data/default/t1"
 	}
 	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la "+partitionBackupDir+"| wc -l")
 	r.NoError(err)
@@ -2280,7 +2289,7 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse, re
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "--tables=default.t1", partitionBackupName))
 	partitionBackupDir = "/var/lib/clickhouse/backup/" + partitionBackupName + "/shadow/default/t1/default/"
 	if remoteStorageType == "EMBEDDED" {
-		partitionBackupDir = "/var/lib/clickhouse/disks/backups/" + partitionBackupName + "/data/default/t1"
+		partitionBackupDir = "/var/lib/clickhouse/disks/backups_s3/" + partitionBackupName + "/data/default/t1"
 	}
 	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la "+partitionBackupDir+" | wc -l")
 	r.NoError(err)

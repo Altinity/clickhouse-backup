@@ -1117,3 +1117,12 @@ func (ch *ClickHouse) CheckSettingsExists(ctx context.Context, settings map[stri
 	}
 	return settings, nil
 }
+
+func (ch *ClickHouse) GetPreprocessedConfigPath(ctx context.Context) (string, error) {
+	metadataPath, err := ch.getMetadataPath(ctx)
+	if err != nil {
+		return "/var/lib/clickhouse/preprocessed_configs", err
+	}
+	paths := strings.Split(metadataPath, "/")
+	return path.Join("/", path.Join(paths[:len(paths)-1]...), "preprocessed_configs"), nil
+}

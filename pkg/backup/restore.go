@@ -358,7 +358,7 @@ func (b *Backuper) RestoreSchema(ctx context.Context, backupName, tablePattern s
 var UUIDWithReplicatedMergeTreeRE = regexp.MustCompile(`^(.+)(UUID)(\s+)'([^']+)'(.+)({uuid})(.*)`)
 
 func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string, tablesForRestore ListOfTables) error {
-	return b.restoreEmbedded(ctx, backupName, true, tablesForRestore, nil)
+	return b.restoreEmbedded(ctx, backupName, true, tablesForRestore, "", nil, nil, nil)
 }
 
 func (b *Backuper) restoreSchemaRegular(tablesForRestore ListOfTables, version int, log *apexLog.Entry) error {
@@ -522,7 +522,7 @@ func (b *Backuper) RestoreData(ctx context.Context, backupName string, tablePatt
 	}
 	log.Debugf("found %d tables with data in backup", len(tablesForRestore))
 	if isEmbedded {
-		err = b.restoreDataEmbedded(ctx, backupName, tablesForRestore, metadataPath, partitionsIdMap, partitionsNameList)
+		err = b.restoreDataEmbedded(ctx, backupName, tablesForRestore, metadataPath, partitionsIdMap, partitionsNameList, disks)
 	} else {
 		err = b.restoreDataRegular(ctx, backupName, tablePattern, tablesForRestore, diskMap, disks, log)
 	}
@@ -533,8 +533,8 @@ func (b *Backuper) RestoreData(ctx context.Context, backupName string, tablePatt
 	return nil
 }
 
-func (b *Backuper) restoreDataEmbedded(ctx context.Context, backupName string, tablesForRestore ListOfTables, metadataPath string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, partitionsNameList map[metadata.TableTitle][]string) error {
-	return b.restoreEmbedded(ctx, backupName, false, tablesForRestore, metadataPath, partitionsIdMap, partitionsNameList)
+func (b *Backuper) restoreDataEmbedded(ctx context.Context, backupName string, tablesForRestore ListOfTables, metadataPath string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, partitionsNameList map[metadata.TableTitle][]string, disks []clickhouse.Disk) error {
+	return b.restoreEmbedded(ctx, backupName, false, tablesForRestore, metadataPath, partitionsIdMap, partitionsNameList, disks)
 }
 
 func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, tablePattern string, tablesForRestore ListOfTables, diskMap map[string]string, disks []clickhouse.Disk, log *apexLog.Entry) error {
@@ -693,12 +693,13 @@ func (b *Backuper) changeTablePatternFromRestoreDatabaseMapping(tablePattern str
 	return tablePattern
 }
 
-func (b *Backuper) restoreEmbedded(ctx context.Context, backupName string, restoreOnlySchema bool, tablesForRestore ListOfTables, metadataPath string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, partitionsNameList map[metadata.TableTitle][]string) error {
+func (b *Backuper) restoreEmbedded(ctx context.Context, backupName string, restoreOnlySchema bool, tablesForRestore ListOfTables, metadataPath string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, partitionsNameList map[metadata.TableTitle][]string, disks []clickhouse.Disk) error {
 	restoreSQL := "Disk(?,?)"
 	tablesSQL := ""
 	l := len(tablesForRestore)
+	embeddedBackupConfig := path.Join(metadataPath, "..", ".backup")
 	if !restoreOnlySchema {
-		if err := b.createEmbeddedBackupConfigForRestore(backupName, metadataPath, tablesForRestore, partitionsIdMap); err != nil {
+		if err := b.filterEmbeddedBackupConfig(ctx, backupName, embeddedBackupConfig, ".restore", tablesForRestore, partitionsIdMap, disks); err != nil {
 			return err
 		}
 	}
@@ -745,7 +746,7 @@ func (b *Backuper) restoreEmbedded(ctx context.Context, backupName string, resto
 		return fmt.Errorf("restore wrong result: %v", restoreResults)
 	}
 	if !restoreOnlySchema {
-		if err := b.restoreEmbeddedBackupConfigForRestore(backupName, metadataPath, tablesForRestore, partitionsIdMap); err != nil {
+		if err := b.restoreEmbeddedBackupConfigToOrig(ctx, embeddedBackupConfig, ".restore", true); err != nil {
 			return err
 		}
 	}
