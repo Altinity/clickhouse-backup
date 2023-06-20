@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/Altinity/clickhouse-backup/pkg/common"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/antchfx/xmlquery"
 	"os"
 	"path"
 	"path/filepath"
@@ -1125,4 +1126,38 @@ func (ch *ClickHouse) GetPreprocessedConfigPath(ctx context.Context) (string, er
 	}
 	paths := strings.Split(metadataPath, "/")
 	return path.Join("/", path.Join(paths[:len(paths)-1]...), "preprocessed_configs"), nil
+}
+
+var preprocessedXMLSettings map[string]map[string]string
+
+// GetPreprocessedXMLSettings - @todo think about from_end and from_zookeeper corner cases
+func (ch *ClickHouse) GetPreprocessedXMLSettings(ctx context.Context, settingsXPath map[string]string, fileName string) (map[string]string, error) {
+	preprocessedPath, err := ch.GetPreprocessedConfigPath(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resultSettings := make(map[string]string, len(settingsXPath))
+	if _, exists := preprocessedXMLSettings[fileName]; !exists {
+		preprocessedXMLSettings[fileName] = make(map[string]string, 0)
+	}
+	var doc *xmlquery.Node
+	for settingName, xpathExpr := range settingsXPath {
+		if value, exists := preprocessedXMLSettings[fileName][settingName]; exists {
+			resultSettings[settingName] = value
+		} else {
+			if doc == nil {
+				f, err := os.Open(path.Join(preprocessedPath, fileName))
+				if err != nil {
+					return nil, err
+				}
+				if doc, err = xmlquery.Parse(f); err != nil {
+					return nil, err
+				}
+			}
+			for _, node := range xmlquery.Find(doc, xpathExpr) {
+				resultSettings[settingName] = node.InnerText()
+			}
+		}
+	}
+	return resultSettings, nil
 }

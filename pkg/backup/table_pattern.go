@@ -48,10 +48,9 @@ func addTableToListIfNotExistsOrEnrichQueryAndParts(tables ListOfTables, table m
 	return append(tables, table)
 }
 
-func getTableListByPatternLocal(ctx context.Context, cfg *config.Config, ch *clickhouse.ClickHouse, metadataPath string, tablePattern string, dropTable bool, partitions []string) (ListOfTables, map[metadata.TableTitle]common.EmptyMap, map[metadata.TableTitle][]string, error) {
+func getTableListByPatternLocal(ctx context.Context, cfg *config.Config, ch *clickhouse.ClickHouse, metadataPath string, tablePattern string, dropTable bool, partitions []string) (ListOfTables, map[metadata.TableTitle][]string, error) {
 	result := ListOfTables{}
 	resultPartitionNames := map[metadata.TableTitle][]string{}
-	resultPartitionIds := map[metadata.TableTitle]common.EmptyMap{}
 	tablePatterns := []string{"*"}
 	log := apexLog.WithField("logger", "getTableListByPatternLocal")
 	if tablePattern != "" {
@@ -151,24 +150,14 @@ func getTableListByPatternLocal(ctx context.Context, cfg *config.Config, ch *cli
 					partitionsNameList[tt],
 				)
 			}
-			for tt := range partitionsIdMap {
-				if _, exists := resultPartitionIds[tt]; !exists {
-					resultPartitionIds[tt] = common.EmptyMap{}
-				}
-				for id := range partitionsIdMap[tt] {
-					if _, exists := resultPartitionIds[tt][id]; !exists {
-						resultPartitionIds[tt][id] = partitionsIdMap[tt][id]
-					}
-				}
-			}
 			return nil
 		}
 		return nil
 	}); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	result.Sort(dropTable)
-	return result, resultPartitionIds, resultPartitionNames, nil
+	return result, resultPartitionNames, nil
 }
 
 var queryRE = regexp.MustCompile(`(?m)^(CREATE|ATTACH) (TABLE|VIEW|LIVE VIEW|MATERIALIZED VIEW|DICTIONARY|FUNCTION) (\x60?)([^\s\x60.]*)(\x60?)\.([^\s\x60.]*)(?:( UUID '[^']+'))?(?:( TO )(\x60?)([^\s\x60.]*)(\x60?)(\.))?(?:(.+FROM )(\x60?)([^\s\x60.]*)(\x60?)(\.))?`)

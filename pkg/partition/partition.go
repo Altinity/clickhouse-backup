@@ -73,8 +73,15 @@ func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, datab
 		}
 		return fmt.Errorf("can't get is_in_partition_key column names from for table `%s`.`%s`: %v", database, partitionIdTable, err), "", ""
 	}
+	defer func() {
+		if dropErr := dropPartitionIdTable(ch, database, partitionIdTable); dropErr != nil {
+			apexLog.Warnf("partition.GetPartitionId can't drop `%s`.`%s`: %v", database, partitionIdTable, dropErr)
+		}
+	}()
 	if len(columns) == 0 {
-		return fmt.Errorf("is_in_partition_key=1 fields not found in system.columns for table `%s`.`%s`", database, partitionIdTable), "", ""
+		apexLog.Warnf("is_in_partition_key=1 fields not found in system.columns for table `%s`.`%s`", database, partitionIdTable)
+
+		return nil, "", ""
 	}
 	partitionInsert := splitAndParsePartition(partition)
 	columnNames := make([]string, len(columns))
@@ -103,9 +110,6 @@ func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, datab
 		return fmt.Errorf("wrong partitionsIds=%#v found system.parts for table `%s`.`%s`", partitions, database, partitionIdTable), "", ""
 	}
 
-	if err = dropPartitionIdTable(ch, database, partitionIdTable); err != nil {
-		return err, "", ""
-	}
 	return nil, partitions[0].Id, partitions[0].Name
 }
 
@@ -149,7 +153,7 @@ func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.C
 					createIdMapAndNameListIfNotExists(t.Database, t.Name, partitionsIdMap, partitionsNameList)
 					if err, partitionId, partitionName := GetPartitionIdAndName(ctx, ch, t.Database, t.Name, t.CreateTableQuery, partitionTuple); err != nil {
 						apexLog.Fatalf("partition.GetPartitionIdAndName error: %v", err)
-					} else {
+					} else if partitionId != "" {
 						addItemToIdMapAndNameListIfNotExists(partitionId, partitionName, t.Database, t.Name, partitionsIdMap, partitionsNameList)
 					}
 				}
@@ -157,7 +161,7 @@ func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.C
 					createIdMapAndNameListIfNotExists(t.Database, t.Table, partitionsIdMap, partitionsNameList)
 					if err, partitionId, partitionName := GetPartitionIdAndName(ctx, ch, t.Database, t.Table, t.Query, partitionTuple); err != nil {
 						apexLog.Fatalf("partition.GetPartitionIdAndName error: %v", err)
-					} else {
+					} else if partitionId != "" {
 						addItemToIdMapAndNameListIfNotExists(partitionId, partitionName, t.Database, t.Table, partitionsIdMap, partitionsNameList)
 					}
 				}

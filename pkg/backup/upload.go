@@ -90,14 +90,13 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 		return err
 	}
 	var tablesForUpload ListOfTables
-	var partitionsIdMap map[metadata.TableTitle]common.EmptyMap
 	b.isEmbedded = strings.Contains(backupMetadata.Tags, "embedded")
-	//// will ignore partitions cause can't manipulate .backup
-	//if b.isEmbedded {
-	//	partitions = make([]string,0)
-	//}
+	// will ignore partitions cause can't manipulate .backup
+	if b.isEmbedded {
+		partitions = make([]string, 0)
+	}
 	if len(backupMetadata.Tables) != 0 {
-		tablesForUpload, partitionsIdMap, err = b.prepareTableListToUpload(ctx, backupName, tablePattern, partitions)
+		tablesForUpload, err = b.prepareTableListToUpload(ctx, backupName, tablePattern, partitions)
 		if err != nil {
 			return err
 		}
@@ -224,13 +223,7 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	if b.isEmbedded {
 		localClickHouseBackupFile := path.Join(b.EmbeddedBackupDataPath, backupName, ".backup")
 		remoteClickHouseBackupFile := path.Join(backupName, ".backup")
-		if err = b.filterEmbeddedBackupConfig(ctx, backupName, localClickHouseBackupFile, ".upload", tablesForUpload, partitionsIdMap, disks); err != nil {
-			return err
-		}
 		if err = b.uploadSingleBackupFile(ctx, localClickHouseBackupFile, remoteClickHouseBackupFile); err != nil {
-			return err
-		}
-		if err = b.restoreEmbeddedBackupConfigToOrig(ctx, localClickHouseBackupFile, ".upload", false); err != nil {
 			return err
 		}
 	}
@@ -280,16 +273,16 @@ func (b *Backuper) uploadSingleBackupFile(ctx context.Context, localFile, remote
 	return nil
 }
 
-func (b *Backuper) prepareTableListToUpload(ctx context.Context, backupName string, tablePattern string, partitions []string) (tablesForUpload ListOfTables, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, err error) {
+func (b *Backuper) prepareTableListToUpload(ctx context.Context, backupName string, tablePattern string, partitions []string) (tablesForUpload ListOfTables, err error) {
 	metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
 	if b.isEmbedded {
 		metadataPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
 	}
-	tablesForUpload, partitionsIdMap, _, err = getTableListByPatternLocal(ctx, b.cfg, b.ch, metadataPath, tablePattern, false, partitions)
+	tablesForUpload, _, err = getTableListByPatternLocal(ctx, b.cfg, b.ch, metadataPath, tablePattern, false, partitions)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return tablesForUpload, partitionsIdMap, nil
+	return tablesForUpload, nil
 }
 
 func (b *Backuper) getTablesForUploadDiffLocal(ctx context.Context, diffFrom string, backupMetadata *metadata.BackupMetadata, tablePattern string) (tablesForUploadFromDiff map[metadata.TableTitle]metadata.TableMetadata, err error) {
@@ -302,7 +295,7 @@ func (b *Backuper) getTablesForUploadDiffLocal(ctx context.Context, diffFrom str
 		backupMetadata.RequiredBackup = diffFrom
 		metadataPath := path.Join(b.DefaultDataPath, "backup", diffFrom, "metadata")
 		// empty partitions, because we don't want filter
-		diffTablesList, _, _, err := getTableListByPatternLocal(ctx, b.cfg, b.ch, metadataPath, tablePattern, false, []string{})
+		diffTablesList, _, err := getTableListByPatternLocal(ctx, b.cfg, b.ch, metadataPath, tablePattern, false, []string{})
 		if err != nil {
 			return nil, err
 		}

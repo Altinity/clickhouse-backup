@@ -166,6 +166,8 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	b.isEmbedded = strings.Contains(remoteBackup.Tags, "embedded")
 	localBackupDir := path.Join(b.DefaultDataPath, "backup", backupName)
 	if b.isEmbedded {
+		// will ignore partitions cause can't manipulate .backup
+		partitions = make([]string, 0)
 		localBackupDir = path.Join(b.EmbeddedBackupDataPath, backupName)
 	}
 	err = os.MkdirAll(localBackupDir, 0750)
@@ -184,8 +186,6 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	tableMetadataAfterDownload := make([]metadata.TableMetadata, len(tablesForDownload))
 	downloadSemaphore := semaphore.NewWeighted(int64(b.cfg.General.DownloadConcurrency))
 	metadataGroup, metadataCtx := errgroup.WithContext(ctx)
-	partitionsIdMapList := make([]common.EmptyMap, len(tablesForDownload))
-	partitionsIdMap := make(map[metadata.TableTitle]common.EmptyMap, len(tablesForDownload))
 	for i, t := range tablesForDownload {
 		if err := downloadSemaphore.Acquire(metadataCtx, 1); err != nil {
 			log.Errorf("can't acquire semaphore during Download metadata: %v", err)
@@ -196,15 +196,12 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		tableTitle := t
 		metadataGroup.Go(func() error {
 			defer downloadSemaphore.Release(1)
-			downloadedMetadata, idMap, size, err := b.downloadTableMetadata(metadataCtx, backupName, disks, metadataLogger, tableTitle, schemaOnly, partitions)
+			downloadedMetadata, size, err := b.downloadTableMetadata(metadataCtx, backupName, disks, metadataLogger, tableTitle, schemaOnly, partitions)
 			if err != nil {
 				return err
 			}
 			tableMetadataAfterDownload[idx] = *downloadedMetadata
 			atomic.AddUint64(&metadataSize, size)
-			for idMapKey := range idMap {
-				partitionsIdMapList[idx] = idMap[idMapKey]
-			}
 			return nil
 		})
 	}
@@ -276,13 +273,6 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		if err = b.downloadSingleBackupFile(ctx, remoteClickHouseBackupFile, localClickHouseBackupFile, disks); err != nil {
 			return err
 		}
-		for i, idMap := range partitionsIdMapList {
-			t := tableMetadataAfterDownload[i]
-			partitionsIdMap[metadata.TableTitle{Database: t.Database, Table: t.Table}] = idMap
-		}
-		if err = b.filterEmbeddedBackupConfig(ctx, backupName, localClickHouseBackupFile, ".download", tableMetadataAfterDownload, partitionsIdMap, disks); err != nil {
-			return err
-		}
 	}
 
 	backupMetadata.CompressedSize = 0
@@ -324,11 +314,11 @@ func (b *Backuper) downloadTableMetadataIfNotExists(ctx context.Context, backupN
 		return tm, nil
 	}
 	// we always download full metadata in this case without filter by partitions
-	tm, _, _, err := b.downloadTableMetadata(ctx, backupName, nil, log.WithFields(apexLog.Fields{"operation": "downloadTableMetadataIfNotExists", "backupName": backupName, "table_metadata_diff": fmt.Sprintf("%s.%s", tableTitle.Database, tableTitle.Table)}), tableTitle, false, nil)
+	tm, _, err := b.downloadTableMetadata(ctx, backupName, nil, log.WithFields(apexLog.Fields{"operation": "downloadTableMetadataIfNotExists", "backupName": backupName, "table_metadata_diff": fmt.Sprintf("%s.%s", tableTitle.Database, tableTitle.Table)}), tableTitle, false, nil)
 	return tm, err
 }
 
-func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string, disks []clickhouse.Disk, log *apexLog.Entry, tableTitle metadata.TableTitle, schemaOnly bool, partitions []string) (*metadata.TableMetadata, map[metadata.TableTitle]common.EmptyMap, uint64, error) {
+func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string, disks []clickhouse.Disk, log *apexLog.Entry, tableTitle metadata.TableTitle, schemaOnly bool, partitions []string) (*metadata.TableMetadata, uint64, error) {
 	start := time.Now()
 	size := uint64(0)
 	metadataFiles := map[string]string{}
@@ -346,10 +336,10 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 			if isProcessed && strings.HasSuffix(localMetadataFile, ".json") {
 				tmBody, err := os.ReadFile(localMetadataFile)
 				if err != nil {
-					return nil, nil, 0, err
+					return nil, 0, err
 				}
 				if err = json.Unmarshal(tmBody, &tableMetadata); err != nil {
-					return nil, nil, 0, err
+					return nil, 0, err
 				}
 				partitionsIdMap, _ = partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, []metadata.TableMetadata{tableMetadata}, partitions)
 				filterPartsAndFilesByPartitionsFilter(tableMetadata, partitionsIdMap[metadata.TableTitle{Database: tableMetadata.Database, Table: tableMetadata.Table}])
@@ -377,25 +367,25 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 			return nil
 		})
 		if err != nil {
-			return nil, nil, 0, err
+			return nil, 0, err
 		}
 
 		if err = os.MkdirAll(path.Dir(localMetadataFile), 0755); err != nil {
-			return nil, nil, 0, err
+			return nil, 0, err
 		}
 		var written int64
 		if strings.HasSuffix(localMetadataFile, ".sql") {
 			if err = os.WriteFile(localMetadataFile, tmBody, 0640); err != nil {
-				return nil, nil, 0, err
+				return nil, 0, err
 			}
 			if err = filesystemhelper.Chown(localMetadataFile, b.ch, disks, false); err != nil {
-				return nil, nil, 0, err
+				return nil, 0, err
 			}
 			written = int64(len(tmBody))
 			size += uint64(len(tmBody))
 		} else {
 			if err = json.Unmarshal(tmBody, &tableMetadata); err != nil {
-				return nil, nil, 0, err
+				return nil, 0, err
 			}
 			partitionsIdMap, _ = partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, []metadata.TableMetadata{tableMetadata}, partitions)
 			filterPartsAndFilesByPartitionsFilter(tableMetadata, partitionsIdMap[metadata.TableTitle{Database: tableMetadata.Database, Table: tableMetadata.Table}])
@@ -403,7 +393,7 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 			jsonSize := uint64(0)
 			jsonSize, err = tableMetadata.Save(localMetadataFile, schemaOnly)
 			if err != nil {
-				return nil, nil, 0, err
+				return nil, 0, err
 			}
 			written = int64(jsonSize)
 			size += jsonSize
@@ -416,7 +406,7 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 		WithField("duration", utils.HumanizeDuration(time.Since(start))).
 		WithField("size", utils.FormatBytes(size)).
 		Info("done")
-	return &tableMetadata, partitionsIdMap, size, nil
+	return &tableMetadata, size, nil
 }
 
 func (b *Backuper) downloadRBACData(ctx context.Context, remoteBackup storage.Backup) (uint64, error) {

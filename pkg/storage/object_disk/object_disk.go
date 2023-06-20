@@ -211,7 +211,7 @@ func (c *ObjectStorageConnection) GetRemoteStorage() storage.RemoteStorage {
 var DisksConnections map[string]ObjectStorageConnection
 var SystemDisks map[string]clickhouse.Disk
 
-func initCredentialsAndConnections(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Config, diskName string) error {
+func InitCredentialsAndConnections(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Config, diskName string) error {
 	var err error
 	if _, exists := DisksCredentials[diskName]; !exists {
 		DisksCredentials, err = getObjectDisksCredentials(ctx, ch)
@@ -237,15 +237,19 @@ func ReadMetadataFromFile(path string) (*Metadata, error) {
 	if err != nil {
 		return nil, err
 	}
+	return ReadMetadataFromReader(metadataFile, path)
+}
+
+func ReadMetadataFromReader(metadataFile io.ReadCloser, path string) (*Metadata, error) {
 	defer func() {
-		if err = metadataFile.Close(); err != nil {
-			apexLog.Warnf("can't close %s: %v", path, err)
+		if err := metadataFile.Close(); err != nil {
+			apexLog.Warnf("can't close reader %s: %v", path, err)
 		}
 	}()
 
 	var metadata Metadata
 	metadata.Path = path
-	if err = metadata.readFromFile(metadataFile); err != nil {
+	if err := metadata.readFromFile(metadataFile); err != nil {
 		return nil, err
 	}
 	return &metadata, nil
@@ -482,7 +486,7 @@ func GetFileReader(ctx context.Context, diskName, remotePath string) (io.ReadClo
 }
 
 func ReadFileContent(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Config, diskName, localPath string) ([]byte, error) {
-	if err := initCredentialsAndConnections(ctx, ch, cfg, diskName); err != nil {
+	if err := InitCredentialsAndConnections(ctx, ch, cfg, diskName); err != nil {
 		return nil, err
 	}
 	remotePath, err := ConvertLocalPathToRemote(diskName, localPath)
@@ -509,7 +513,7 @@ func PutFile(ctx context.Context, diskName, remotePath string, content []byte) e
 }
 
 func WriteFileContent(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Config, diskName, localPath string, content []byte) error {
-	if err := initCredentialsAndConnections(ctx, ch, cfg, diskName); err != nil {
+	if err := InitCredentialsAndConnections(ctx, ch, cfg, diskName); err != nil {
 		return err
 	}
 
@@ -530,7 +534,7 @@ func DeleteFile(ctx context.Context, diskName, remotePath string) error {
 }
 
 func DeleteFileWithContent(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Config, diskName, localPath string) error {
-	if err := initCredentialsAndConnections(ctx, ch, cfg, diskName); err != nil {
+	if err := InitCredentialsAndConnections(ctx, ch, cfg, diskName); err != nil {
 		return err
 	}
 
@@ -542,7 +546,7 @@ func DeleteFileWithContent(ctx context.Context, ch *clickhouse.ClickHouse, cfg *
 }
 
 func GetFileSize(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Config, diskName, remotePath string) (int64, error) {
-	if err := initCredentialsAndConnections(ctx, ch, cfg, diskName); err != nil {
+	if err := InitCredentialsAndConnections(ctx, ch, cfg, diskName); err != nil {
 		return 0, err
 	}
 	connection, exists := DisksConnections[diskName]

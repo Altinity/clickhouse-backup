@@ -318,7 +318,7 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePa
 	}
 	backupSQL := fmt.Sprintf("BACKUP %s TO Disk(?,?)", tablesSQL)
 	if schemaOnly {
-		backupSQL += " SETTINGS structure_only=true"
+		backupSQL += " SETTINGS structure_only=1, show_table_uuid_in_table_create_query_if_not_nil=1"
 	}
 	backupResult := make([]clickhouse.SystemBackups, 0)
 	if err := b.ch.SelectContext(ctx, &backupResult, backupSQL, b.cfg.ClickHouse.EmbeddedBackupDisk, backupName); err != nil {
