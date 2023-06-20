@@ -2249,11 +2249,8 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse, re
 	r.NoError(err)
 	expectedLines := "13"
 	// custom storage doesn't support --partitions for upload / download now
-	if remoteStorageType == "CUSTOM" || compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.17") == -1 {
-		expectedLines = "17"
-	}
 	// embedded storage contain hardLink files and will download additional data parts
-	if remoteStorageType == "EMBEDDED" {
+	if remoteStorageType == "CUSTOM" || remoteStorageType == "EMBEDDED" {
 		expectedLines = "17"
 	}
 	r.Equal(expectedLines, strings.Trim(out, "\r\n\t "))
@@ -2271,10 +2268,6 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse, re
 	result = 0
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT sum(c) FROM (SELECT count() AS c FROM default.t1 UNION ALL SELECT count() AS c FROM default.t2)"))
 	expectedCount = 40
-	// old 1.x clickhouse versions doesn't have is_in_partition_key
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.17") == -1 {
-		expectedCount = 80
-	}
 	r.Equal(expectedCount, result, fmt.Sprintf("expect count=%d", expectedCount))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", fullBackupName))
 	result = 0

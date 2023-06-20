@@ -43,14 +43,40 @@ func splitAndParsePartition(partition string) []interface{} {
 	return parsedValues
 }
 
+var PartitionByRE = regexp.MustCompile(`(?mi)\s*PARTITION BY\s*(.+)`)
+var SettingsRE = regexp.MustCompile(`(?mi)\s*SETTINGS.*`)
+var OrderByRE = regexp.MustCompile(`(?mi)\s*ORDER BY.*`)
+var FunctionsRE = regexp.MustCompile(`(?i)\w+\(`)
+var StringsRE = regexp.MustCompile(`(?i)'[^']+'`)
+var SpecialCharsRE = regexp.MustCompile(`(?i)[)*+\-/\\]+`)
+var FieldsNamesRE = regexp.MustCompile("(?i)\\w+|`[^`]+`\\.`[^`]+`|\"[^\"]+\"")
+
+func extractPartitionByFieldNames(s string) []struct {
+	Name string `ch:"name"`
+} {
+	s = SettingsRE.ReplaceAllString(s, "")
+	s = OrderByRE.ReplaceAllString(s, "")
+	s = FunctionsRE.ReplaceAllString(s, "")
+	s = StringsRE.ReplaceAllString(s, "")
+	s = SpecialCharsRE.ReplaceAllString(s, "")
+	matches := FieldsNamesRE.FindStringSubmatch(s)
+	columns := make([]struct {
+		Name string `ch:"name"`
+	}, len(matches))
+	for i := range matches {
+		columns[i].Name = matches[i]
+	}
+	return columns
+}
+
 func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, database, table, createQuery string, partition string) (error, string, string) {
-	if !strings.Contains(createQuery, "MergeTree") {
+	if !strings.Contains(createQuery, "MergeTree") || !PartitionByRE.MatchString(createQuery) {
 		return nil, "", ""
 	}
-	sql := replicatedMergeTreeRE.ReplaceAllString(createQuery, "$1($4)$5")
-	if len(uuidRE.FindAllString(sql, -1)) > 0 {
+	createQuery = replicatedMergeTreeRE.ReplaceAllString(createQuery, "$1($4)$5")
+	if len(uuidRE.FindAllString(createQuery, -1)) > 0 {
 		newUUID, _ := uuid.NewUUID()
-		sql = uuidRE.ReplaceAllString(sql, fmt.Sprintf("UUID '%s'", newUUID.String()))
+		createQuery = uuidRE.ReplaceAllString(createQuery, fmt.Sprintf("UUID '%s'", newUUID.String()))
 	}
 	dbAndTableNameRE := regexp.MustCompile(
 		fmt.Sprintf("%s.%s|`%s`.%s|%s.`%s`|`%s`.`%s`",
@@ -60,19 +86,25 @@ func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, datab
 			regexp.QuoteMeta(database), regexp.QuoteMeta(table),
 		))
 	partitionIdTable := "__partition_id_" + table
-	sql = dbAndTableNameRE.ReplaceAllString(sql, fmt.Sprintf("`%s`.`%s`", database, partitionIdTable))
-	if err := ch.Query(sql); err != nil {
+	createQuery = dbAndTableNameRE.ReplaceAllString(createQuery, fmt.Sprintf("`%s`.`%s`", database, partitionIdTable))
+	if err := ch.Query(createQuery); err != nil {
 		return err, "", ""
 	}
 	columns := make([]struct {
 		Name string `ch:"name"`
 	}, 0)
-	sql = "SELECT name FROM system.columns WHERE database=? AND table=? AND is_in_partition_key"
+	sql := "SELECT name FROM system.columns WHERE database=? AND table=? AND is_in_partition_key"
+	oldVersion := false
 	if err := ch.SelectContext(ctx, &columns, sql, database, partitionIdTable); err != nil {
-		if dropErr := dropPartitionIdTable(ch, database, partitionIdTable); dropErr != nil {
-			return dropErr, "", ""
+		matches := PartitionByRE.FindStringSubmatch(createQuery)
+		if len(matches) == 0 {
+			if dropErr := dropPartitionIdTable(ch, database, partitionIdTable); dropErr != nil {
+				return dropErr, "", ""
+			}
+			return fmt.Errorf("can't get is_in_partition_key column names from for table `%s`.`%s`: %v", database, partitionIdTable, err), "", ""
 		}
-		return fmt.Errorf("can't get is_in_partition_key column names from for table `%s`.`%s`: %v", database, partitionIdTable, err), "", ""
+		columns = extractPartitionByFieldNames(matches[1])
+		oldVersion = true
 	}
 	defer func() {
 		if dropErr := dropPartitionIdTable(ch, database, partitionIdTable); dropErr != nil {
@@ -81,7 +113,6 @@ func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, datab
 	}()
 	if len(columns) == 0 {
 		apexLog.Warnf("is_in_partition_key=1 fields not found in system.columns for table `%s`.`%s`", database, partitionIdTable)
-
 		return nil, "", ""
 	}
 	partitionInsert := splitAndParsePartition(partition)
@@ -89,13 +120,30 @@ func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, datab
 	for i, c := range columns {
 		columnNames[i] = c.Name
 	}
-
-	sql = fmt.Sprintf(
-		"INSERT INTO `%s`.`%s`(`%s`) VALUES (%s)",
-		database, partitionIdTable, strings.Join(columnNames, "`,`"),
-		strings.TrimSuffix(strings.Repeat("?,", len(partitionInsert)), ","),
-	)
-	err := ch.QueryContext(ctx, sql, partitionInsert...)
+	var err error
+	if !oldVersion {
+		sql = fmt.Sprintf(
+			"INSERT INTO `%s`.`%s`(`%s`) VALUES (%s)",
+			database, partitionIdTable, strings.Join(columnNames, "`,`"),
+			strings.TrimSuffix(strings.Repeat("?,", len(partitionInsert)), ","),
+		)
+		err = ch.QueryContext(ctx, sql, partitionInsert...)
+	} else {
+		sql = fmt.Sprintf(
+			"INSERT INTO `%s`.`%s`(`%s`)",
+			database, partitionIdTable, strings.Join(columnNames, "`,`"),
+		)
+		batch, err := ch.GetConn().PrepareBatch(ctx, sql)
+		if err != nil {
+			return err, "", ""
+		}
+		if err = batch.Append(partitionInsert...); err != nil {
+			return err, "", ""
+		}
+		if err = batch.Send(); err != nil {
+			return err, "", ""
+		}
+	}
 	if err != nil {
 		return err, "", ""
 	}
