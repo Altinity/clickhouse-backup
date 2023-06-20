@@ -28,6 +28,7 @@ func splitAndParsePartition(partition string) []interface{} {
 		if strings.HasSuffix(v, ")") {
 			v = strings.TrimSuffix(v, ")")
 		}
+		v = strings.TrimSpace(v)
 		if strings.HasPrefix(v, "'") && strings.HasSuffix(v, "'") {
 			v = strings.TrimSuffix(strings.TrimPrefix(v, "'"), "'")
 		}
