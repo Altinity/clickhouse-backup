@@ -21,13 +21,13 @@ func splitAndParsePartition(partition string) []interface{} {
 	values := strings.Split(partition, ",")
 	parsedValues := make([]interface{}, len(values))
 	for i, v := range values {
+		v = strings.TrimSpace(v)
 		if strings.HasPrefix(v, "(") {
 			v = strings.TrimPrefix(v, "(")
 		}
 		if strings.HasSuffix(v, ")") {
-			v = strings.TrimPrefix(v, ")")
+			v = strings.TrimSuffix(v, ")")
 		}
-		v = strings.TrimSpace(v)
 		if strings.HasPrefix(v, "'") && strings.HasSuffix(v, "'") {
 			v = strings.TrimSuffix(strings.TrimPrefix(v, "'"), "'")
 		}

@@ -1361,7 +1361,6 @@ func TestGetPartitionId(t *testing.T) {
 
 	type testData struct {
 		CreateTableSQL string
-		DropTableSQL   string
 		Database       string
 		Table          string
 		Partition      string
@@ -1371,16 +1370,14 @@ func TestGetPartitionId(t *testing.T) {
 	testCases := []testData{
 		{
 			"CREATE TABLE default.test_part_id_1 UUID 'b45e751f-6c06-42a3-ab4a-f5bb9ac3716e' (dt Date, version DateTime, category String, name String) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/{table}','{replica}',version) ORDER BY dt PARTITION BY (toYYYYMM(dt),category)",
-			"DROP TABLE default.test_part_id_1",
 			"default",
 			"test_part_id_1",
 			"('2023-01-01','category1')",
-			"ad598a31d0ee285798bbe450f596c89c",
+			"cc1ad6ede2e7f708f147e132cac7a590",
 			"(202301,'category1')",
 		},
 		{
 			"CREATE TABLE default.test_part_id_2 (dt Date, version DateTime, name String) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/{table}','{replica}',version) ORDER BY dt PARTITION BY toYYYYMM(dt)",
-			"DROP TABLE default.test_part_id_2",
 			"default",
 			"test_part_id_2",
 			"'2023-01-01'",
@@ -1389,7 +1386,6 @@ func TestGetPartitionId(t *testing.T) {
 		},
 		{
 			"CREATE TABLE default.test_part_id_3 ON CLUSTER '{cluster}' (i UInt32, name String) ENGINE = ReplicatedMergeTree() ORDER BY i PARTITION BY i",
-			"DROP TABLE default.test_part_id_3",
 			"default",
 			"test_part_id_3",
 			"202301",
@@ -1398,7 +1394,6 @@ func TestGetPartitionId(t *testing.T) {
 		},
 		{
 			"CREATE TABLE default.test_part_id_4 (dt String, name String) ENGINE = MergeTree ORDER BY dt PARTITION BY dt",
-			"DROP TABLE default.test_part_id_4",
 			"default",
 			"test_part_id_4",
 			"'2023-01-01'",
@@ -1407,7 +1402,6 @@ func TestGetPartitionId(t *testing.T) {
 		},
 		{
 			"CREATE TABLE default.test_part_id_5 (dt String, name String) ENGINE = Memory",
-			"DROP TABLE default.test_part_id_5",
 			"default",
 			"test_part_id_5",
 			"'2023-01-01'",
@@ -1417,17 +1411,12 @@ func TestGetPartitionId(t *testing.T) {
 	}
 	if isAtomic, _ := ch.chbackend.IsAtomic("default"); !isAtomic {
 		testCases[0].CreateTableSQL = strings.Replace(testCases[0].CreateTableSQL, "UUID 'b45e751f-6c06-42a3-ab4a-f5bb9ac3716e'", "", 1)
-	} else {
-		for i := range testCases {
-			testCases[i].DropTableSQL += " NO DELAY"
-		}
 	}
 	for _, tc := range testCases {
 		err, partitionId, partitionName := partition.GetPartitionIdAndName(context.Background(), ch.chbackend, tc.Database, tc.Table, tc.CreateTableSQL, tc.Partition)
 		assert.NoError(t, err)
 		assert.Equal(t, tc.ExpectedId, partitionId)
 		assert.Equal(t, tc.ExpectedName, partitionName)
-		assert.NoError(t, ch.chbackend.Query(tc.DropTableSQL))
 	}
 }
 
