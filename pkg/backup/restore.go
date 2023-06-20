@@ -422,8 +422,6 @@ func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string,
 				substitution = fmt.Sprintf("$1$2('%s','%s',$3)$4", settings["default_replica_path"], settings["default_replica_name"])
 			}
 			sqlQuery = emptyReplicatedMergeTreeRE.ReplaceAllString(sqlQuery, substitution)
-			sqlQuery = strings.Replace(sqlQuery, "MergeTree()", fmt.Sprintf("MergeTree('%s','%s')"), 1)
-
 		}
 		return nil
 	}); err != nil {
