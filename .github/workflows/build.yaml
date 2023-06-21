@@ -46,7 +46,7 @@ jobs:
         env:
           GOROOT: ${{ env.GOROOT_1_20_X64 }}
         run: |
-          printf "build-race build/linux/amd64/clickhouse-backup build/linux/arm64/clickhouse-backup build/linux/amd64/clickhouse-backup-fips build/linux/arm64/clickhouse-backup-fips" | xargs -d " " -P 5 -I {} echo make {} 
+          printf "build-race build/linux/amd64/clickhouse-backup build/linux/arm64/clickhouse-backup build/linux/amd64/clickhouse-backup-fips build/linux/arm64/clickhouse-backup-fips" | xargs -d " " -P 5 -I {} make {} 
           make config test
 
       - name: Report unittest coverage
