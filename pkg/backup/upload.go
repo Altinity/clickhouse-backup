@@ -91,7 +91,10 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	}
 	var tablesForUpload ListOfTables
 	b.isEmbedded = strings.Contains(backupMetadata.Tags, "embedded")
-
+	// will ignore partitions cause can't manipulate .backup
+	if b.isEmbedded {
+		partitions = make([]string, 0)
+	}
 	if len(backupMetadata.Tables) != 0 {
 		tablesForUpload, err = b.prepareTableListToUpload(ctx, backupName, tablePattern, partitions)
 		if err != nil {
@@ -216,9 +219,6 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 		if err != nil {
 			return fmt.Errorf("can't upload %s: %v", remoteBackupMetaFile, err)
 		}
-		if b.resume {
-			b.resumableState.AppendToState(remoteBackupMetaFile, int64(len(newBackupMetadataBody)))
-		}
 	}
 	if b.isEmbedded {
 		localClickHouseBackupFile := path.Join(b.EmbeddedBackupDataPath, backupName, ".backup")
@@ -273,14 +273,12 @@ func (b *Backuper) uploadSingleBackupFile(ctx context.Context, localFile, remote
 	return nil
 }
 
-func (b *Backuper) prepareTableListToUpload(ctx context.Context, backupName string, tablePattern string, partitions []string) (ListOfTables, error) {
-	var tablesForUpload ListOfTables
-	var err error
+func (b *Backuper) prepareTableListToUpload(ctx context.Context, backupName string, tablePattern string, partitions []string) (tablesForUpload ListOfTables, err error) {
 	metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
 	if b.isEmbedded {
 		metadataPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
 	}
-	tablesForUpload, err = getTableListByPatternLocal(ctx, b.cfg, b.ch, metadataPath, tablePattern, false, partitions)
+	tablesForUpload, _, err = getTableListByPatternLocal(ctx, b.cfg, b.ch, metadataPath, tablePattern, false, partitions)
 	if err != nil {
 		return nil, err
 	}
@@ -296,8 +294,8 @@ func (b *Backuper) getTablesForUploadDiffLocal(ctx context.Context, diffFrom str
 	if len(diffFromBackup.Tables) != 0 {
 		backupMetadata.RequiredBackup = diffFrom
 		metadataPath := path.Join(b.DefaultDataPath, "backup", diffFrom, "metadata")
-		// empty partitions, because we can not filter
-		diffTablesList, err := getTableListByPatternLocal(ctx, b.cfg, b.ch, metadataPath, tablePattern, false, []string{})
+		// empty partitions, because we don't want filter
+		diffTablesList, _, err := getTableListByPatternLocal(ctx, b.cfg, b.ch, metadataPath, tablePattern, false, []string{})
 		if err != nil {
 			return nil, err
 		}

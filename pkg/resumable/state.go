@@ -28,7 +28,7 @@ func NewState(defaultDiskPath, backupName, command string, params map[string]int
 		log:          apexLog.WithField("logger", "resumable"),
 	}
 	fp, err := os.OpenFile(s.stateFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		s.log.Warnf("can't open %s error: %v", s.stateFile, err)
 	}
 	s.fp = fp

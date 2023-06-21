@@ -631,14 +631,23 @@ func TestIntegrationCustom(t *testing.T) {
 }
 
 func TestIntegrationEmbedded(t *testing.T) {
-	t.Skipf("Test skipped, wait 23.01, RESTORE Ordinary table and RESTORE MATERIALIZED VIEW and {uuid} not works for %s version, look https://github.com/ClickHouse/ClickHouse/issues/43971 and https://github.com/ClickHouse/ClickHouse/issues/42709", os.Getenv("CLICKHOUSE_VERSION"))
+	//t.Skipf("Test skipped, wait 23.8, RESTORE Ordinary table and RESTORE MATERIALIZED VIEW and {uuid} not works for %s version, look https://github.com/ClickHouse/ClickHouse/issues/43971 and https://github.com/ClickHouse/ClickHouse/issues/42709", os.Getenv("CLICKHOUSE_VERSION"))
+	//dependencies restore https://github.com/ClickHouse/ClickHouse/issues/39416, fixed in 23.3
 	version := os.Getenv("CLICKHOUSE_VERSION")
-	if version != "head" && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.7") < 0 {
-		t.Skipf("Test skipped, BACKUP/RESTORE not available for %s version", version)
+	if version != "head" && compareVersion(version, "23.3") < 0 {
+		t.Skipf("Test skipped, BACKUP/RESTORE not production ready for %s version", version)
 	}
 	r := require.New(t)
+	//CUSTOM backup create folder in each disk
+	r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_s3/backup/"))
 	r.NoError(dockerCP("config-s3-embedded.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	runMainIntegrationScenario(t, "EMBEDDED")
+	//r.NoError(dockerExec("clickhouse","rm", "-rf", "/var/lib/clickhouse/disks/backups_s3_plain/backup", ))
+	//r.NoError(dockerCP("config-s3-plain-embedded.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	//runMainIntegrationScenario(t, "EMBEDDED")
+	//r.NoError(dockerExec("clickhouse","rm", "-rf", "/var/lib/clickhouse/disks/backups_azure/backup", ))
+	//r.NoError(dockerCP("config-azure-embedded.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	//runMainIntegrationScenario(t, "EMBEDDED")
 }
 
 func TestLongListRemote(t *testing.T) {
@@ -686,7 +695,7 @@ func TestLongListRemote(t *testing.T) {
 	for i := 0; i < totalCacheCount; i++ {
 		testListRemoteAllBackups[i] = fmt.Sprintf("%s_%d", testBackupName, i)
 	}
-	fullCleanup(r, ch, testListRemoteAllBackups, []string{"remote", "local"}, []string{}, true)
+	fullCleanup(r, ch, testListRemoteAllBackups, []string{"remote", "local"}, []string{}, true, true)
 }
 
 func TestRestoreDatabaseMapping(t *testing.T) {
@@ -706,7 +715,7 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 
 	testBackupName := "test_restore_database_mapping"
 	databaseList := []string{"database1", "database2"}
-	fullCleanup(r, ch, []string{testBackupName}, []string{"local"}, databaseList, false)
+	fullCleanup(r, ch, []string{testBackupName}, []string{"local"}, databaseList, false, false)
 
 	ch.queryWithNoError(r, "CREATE DATABASE database1")
 	ch.queryWithNoError(r, "CREATE TABLE database1.t1 (dt DateTime, v UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/database1/t1','{replica}') PARTITION BY toYYYYMM(dt) ORDER BY dt")
@@ -754,7 +763,7 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 	log.Info("Check database1 not exists")
 	checkRecordset(1, 0, "SELECT count() FROM system.databases WHERE name='database1'")
 
-	fullCleanup(r, ch, []string{testBackupName}, []string{"local"}, databaseList, true)
+	fullCleanup(r, ch, []string{testBackupName}, []string{"local"}, databaseList, true, true)
 }
 
 func TestMySQLMaterialized(t *testing.T) {
@@ -848,10 +857,10 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Atomic, Issue331Ordinary}
 
 	log.Info("Clean before start")
-	fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, []string{"remote", "local"}, databaseList, false)
+	fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, []string{"remote", "local"}, databaseList, false, false)
 
 	r.NoError(dockerExec("minio", "mc", "ls", "local/clickhouse/disk_s3"))
-	generateTestData(ch, r)
+	generateTestData(ch, r, remoteStorageType)
 
 	r.NoError(dockerExec("minio", "mc", "ls", "local/clickhouse/disk_s3"))
 	log.Info("Create backup")
@@ -872,7 +881,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 
 	backupDir := "/var/lib/clickhouse/backup"
 	if remoteStorageType == "EMBEDDED" {
-		backupDir = "/var/lib/clickhouse/disks/backups"
+		backupDir = "/var/lib/clickhouse/disks/backups_s3"
 	}
 	out, err = dockerExecOut("clickhouse", "ls", "-lha", backupDir)
 	r.NoError(err)
@@ -944,10 +953,14 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 
 	// test end
 	log.Info("Clean after finish")
+	// why CUSTOM delete only local database?
 	if remoteStorageType == "CUSTOM" {
-		fullCleanup(r, ch, []string{}, []string{}, databaseList, true)
+		fullCleanup(r, ch, []string{}, []string{}, databaseList, false, true)
+	} else if remoteStorageType == "EMBEDDED" {
+		fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, []string{"remote"}, databaseList, true, true)
+		fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, []string{"local"}, nil, false, false)
 	} else {
-		fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, []string{"remote", "local"}, databaseList, true)
+		fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, []string{"remote", "local"}, databaseList, true, true)
 	}
 }
 
@@ -966,7 +979,7 @@ func checkResumeAlreadyProcessed(backupCmd, testBackupName, resumeKind string, r
 	}
 }
 
-func fullCleanup(r *require.Assertions, ch *TestClickHouse, backupNames, backupTypes, databaseList []string, checkDeleteErr bool) {
+func fullCleanup(r *require.Assertions, ch *TestClickHouse, backupNames, backupTypes, databaseList []string, checkDeleteErr, checkDropErr bool) {
 	for _, backupName := range backupNames {
 		for _, backupType := range backupTypes {
 			err := dockerExec("clickhouse", "clickhouse-backup", "delete", backupType, backupName)
@@ -980,7 +993,7 @@ func fullCleanup(r *require.Assertions, ch *TestClickHouse, backupNames, backupT
 		for _, backupName := range strings.Split(otherBackupList, "\n") {
 			if backupName != "" {
 				err := dockerExec("clickhouse", "clickhouse-backup", "delete", "local", backupName)
-				if checkDeleteErr {
+				if checkDropErr {
 					r.NoError(err)
 				}
 			}
@@ -990,14 +1003,14 @@ func fullCleanup(r *require.Assertions, ch *TestClickHouse, backupNames, backupT
 	dropDatabasesFromTestDataDataSet(r, ch, databaseList)
 }
 
-func generateTestData(ch *TestClickHouse, r *require.Assertions) {
-	log.Info("Generate test data")
+func generateTestData(ch *TestClickHouse, r *require.Assertions, remoteStorageType string) {
+	log.Infof("Generate test data %s", remoteStorageType)
 	generateTestDataWithDifferentStoragePolicy()
 	for _, data := range testData {
 		if isTableSkip(ch, data, false) {
 			continue
 		}
-		r.NoError(ch.createTestSchema(data))
+		r.NoError(ch.createTestSchema(data, remoteStorageType))
 	}
 	for _, data := range testData {
 		if isTableSkip(ch, data, false) {
@@ -1075,7 +1088,7 @@ func dropDatabasesFromTestDataDataSet(r *require.Assertions, ch *TestClickHouse,
 func TestTablePatterns(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second)
+	ch.connectWithWait(r, 500*time.Millisecond, 2*time.Second)
 	defer ch.chbackend.Close()
 
 	testBackupName := "test_backup_patterns"
@@ -1084,8 +1097,8 @@ func TestTablePatterns(t *testing.T) {
 
 	for _, createPattern := range []bool{true, false} {
 		for _, restorePattern := range []bool{true, false} {
-			fullCleanup(r, ch, []string{testBackupName}, []string{"remote", "local"}, databaseList, false)
-			generateTestData(ch, r)
+			fullCleanup(r, ch, []string{testBackupName}, []string{"remote", "local"}, databaseList, false, false)
+			generateTestData(ch, r, "S3")
 			if createPattern {
 				r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables", " "+dbNameOrdinary+".*", testBackupName))
 			} else {
@@ -1120,7 +1133,7 @@ func TestTablePatterns(t *testing.T) {
 				r.NotZero(restored)
 			}
 
-			fullCleanup(r, ch, []string{testBackupName}, []string{"remote", "local"}, databaseList, true)
+			fullCleanup(r, ch, []string{testBackupName}, []string{"remote", "local"}, databaseList, true, true)
 
 		}
 	}
@@ -1247,8 +1260,8 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	}
 	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Atomic, Issue331Ordinary}
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	fullCleanup(r, ch, backupNames, []string{"remote", "local"}, databaseList, false)
-	generateTestData(ch, r)
+	fullCleanup(r, ch, backupNames, []string{"remote", "local"}, databaseList, false, false)
+	generateTestData(ch, r, "S3")
 	for i, backupName := range backupNames {
 		generateIncrementTestData(ch, r)
 		if i == 0 {
@@ -1270,7 +1283,7 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	var res uint64
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&res, fmt.Sprintf("SELECT count() FROM `%s`.`%s`", Issue331Atomic, Issue331Atomic)))
 	r.Equal(uint64(200), res)
-	fullCleanup(r, ch, backupNames, []string{"remote", "local"}, databaseList, true)
+	fullCleanup(r, ch, backupNames, []string{"remote", "local"}, databaseList, true, true)
 }
 
 func TestS3NoDeletePermission(t *testing.T) {
@@ -1285,7 +1298,7 @@ func TestS3NoDeletePermission(t *testing.T) {
 	ch := &TestClickHouse{}
 	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second)
 	defer ch.chbackend.Close()
-	generateTestData(ch, r)
+	generateTestData(ch, r, "S3")
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "no_delete_backup"))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "no_delete_backup"))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore_remote", "no_delete_backup"))
@@ -1352,7 +1365,8 @@ func TestGetPartitionId(t *testing.T) {
 		Database       string
 		Table          string
 		Partition      string
-		ExpectedOutput string
+		ExpectedId     string
+		ExpectedName   string
 	}
 	testCases := []testData{
 		{
@@ -1360,7 +1374,8 @@ func TestGetPartitionId(t *testing.T) {
 			"default",
 			"test_part_id_1",
 			"('2023-01-01','category1')",
-			"ad598a31d0ee285798bbe450f596c89c",
+			"cc1ad6ede2e7f708f147e132cac7a590",
+			"(202301,'category1')",
 		},
 		{
 			"CREATE TABLE default.test_part_id_2 (dt Date, version DateTime, name String) ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/{table}','{replica}',version) ORDER BY dt PARTITION BY toYYYYMM(dt)",
@@ -1368,11 +1383,13 @@ func TestGetPartitionId(t *testing.T) {
 			"test_part_id_2",
 			"'2023-01-01'",
 			"202301",
+			"202301",
 		},
 		{
 			"CREATE TABLE default.test_part_id_3 ON CLUSTER '{cluster}' (i UInt32, name String) ENGINE = ReplicatedMergeTree() ORDER BY i PARTITION BY i",
 			"default",
 			"test_part_id_3",
+			"202301",
 			"202301",
 			"202301",
 		},
@@ -1382,6 +1399,7 @@ func TestGetPartitionId(t *testing.T) {
 			"test_part_id_4",
 			"'2023-01-01'",
 			"c487903ebbb25a533634d6ec3485e3a9",
+			"2023-01-01",
 		},
 		{
 			"CREATE TABLE default.test_part_id_5 (dt String, name String) ENGINE = Memory",
@@ -1389,15 +1407,17 @@ func TestGetPartitionId(t *testing.T) {
 			"test_part_id_5",
 			"'2023-01-01'",
 			"",
+			"",
 		},
 	}
 	if isAtomic, _ := ch.chbackend.IsAtomic("default"); !isAtomic {
 		testCases[0].CreateTableSQL = strings.Replace(testCases[0].CreateTableSQL, "UUID 'b45e751f-6c06-42a3-ab4a-f5bb9ac3716e'", "", 1)
 	}
 	for _, tc := range testCases {
-		err, partitionId := partition.GetPartitionId(context.Background(), ch.chbackend, tc.Database, tc.Table, tc.CreateTableSQL, tc.Partition)
+		err, partitionId, partitionName := partition.GetPartitionIdAndName(context.Background(), ch.chbackend, tc.Database, tc.Table, tc.CreateTableSQL, tc.Partition)
 		assert.NoError(t, err)
-		assert.Equal(t, tc.ExpectedOutput, partitionId)
+		assert.Equal(t, tc.ExpectedId, partitionId)
+		assert.Equal(t, tc.ExpectedName, partitionName)
 	}
 }
 
@@ -1919,7 +1939,9 @@ func (ch *TestClickHouse) connect(timeOut string) error {
 	return err
 }
 
-func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {
+var mergeTreeOldSyntax = regexp.MustCompile(`(?m)MergeTree\(([^,]+),([\w\s,)(]+),(\s*\d+\s*)\)`)
+
+func (ch *TestClickHouse) createTestSchema(data TestDataStruct, remoteStorageType string) error {
 	if !data.IsFunction {
 		// 20.8 doesn't respect DROP TABLE ... NO DELAY, so Atomic works but --rm is not applicable
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") > 0 {
@@ -1976,6 +1998,16 @@ func (ch *TestClickHouse) createTestSchema(data TestDataStruct) error {
 	// functions supported only after 21.12
 	if data.IsFunction && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") == -1 {
 		return nil
+	}
+	// @TODO remove it when resolve https://github.com/ClickHouse/ClickHouse/issues/43971
+	if strings.Contains(createSQL, "8192)") && remoteStorageType == "EMBEDDED" {
+		matches := mergeTreeOldSyntax.FindStringSubmatch(createSQL)
+		if len(matches) >= 3 {
+			substitution := "MergeTree() PARTITION BY toYYYYMMDD($1) ORDER BY $2 SETTINGS index_granularity=$3"
+			createSQL = mergeTreeOldSyntax.ReplaceAllString(createSQL, substitution)
+		} else {
+			log.Fatalf("Wrong %s, matches=%#v", createSQL, matches)
+		}
 	}
 	err := ch.chbackend.CreateTable(
 		clickhouse.Table{
@@ -2210,27 +2242,33 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse, re
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create_remote", "--tables=default.t*", fullBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", fullBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", "--partitions=('2022-01-02'),('2022-01-03')", fullBackupName))
-	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la /var/lib/clickhouse/backup/"+fullBackupName+"/shadow/default/t?/default/ | wc -l")
+	fullBackupDir := "/var/lib/clickhouse/backup/" + fullBackupName + "/shadow/default/t?/default/"
+	if remoteStorageType == "EMBEDDED" {
+		fullBackupDir = "/var/lib/clickhouse/disks/backups_s3/" + fullBackupName + "/data/default/t?"
+	}
+	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la "+fullBackupDir+" | wc -l")
 	r.NoError(err)
 	expectedLines := "13"
 	// custom storage doesn't support --partitions for upload / download now
-	if remoteStorageType == "CUSTOM" || compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.17") == -1 {
+	// embedded storage contain hardLink files and will download additional data parts
+	if remoteStorageType == "CUSTOM" || remoteStorageType == "EMBEDDED" {
 		expectedLines = "17"
 	}
 	r.Equal(expectedLines, strings.Trim(out, "\r\n\t "))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", fullBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", fullBackupName))
-	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la /var/lib/clickhouse/backup/"+fullBackupName+"/shadow/default/t?/default/ | wc -l")
+
+	fullBackupDir = "/var/lib/clickhouse/backup/" + fullBackupName + "/shadow/default/t?/default/"
+	if remoteStorageType == "EMBEDDED" {
+		fullBackupDir = "/var/lib/clickhouse/disks/backups_s3/" + fullBackupName + "/data/default/t?"
+	}
+	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la "+fullBackupDir+"| wc -l")
 	r.NoError(err)
 	r.Equal("17", strings.Trim(out, "\r\n\t "))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "--partitions=('2022-01-02'),('2022-01-03')", fullBackupName))
 	result = 0
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT sum(c) FROM (SELECT count() AS c FROM default.t1 UNION ALL SELECT count() AS c FROM default.t2)"))
 	expectedCount = 40
-	// old 1.x clickhouse versions doesn't have is_in_partition_key
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.17") == -1 {
-		expectedCount = 80
-	}
 	r.Equal(expectedCount, result, fmt.Sprintf("expect count=%d", expectedCount))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", fullBackupName))
 	result = 0
@@ -2241,14 +2279,22 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse, re
 
 	// check create + partitions
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "--tables=default.t1", "--partitions=20220102,20220103", partitionBackupName))
-	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la /var/lib/clickhouse/backup/"+partitionBackupName+"/shadow/default/t1/default/ | wc -l")
+	partitionBackupDir := "/var/lib/clickhouse/backup/" + partitionBackupName + "/shadow/default/t1/default/"
+	if remoteStorageType == "EMBEDDED" {
+		partitionBackupDir = "/var/lib/clickhouse/disks/backups_s3/" + partitionBackupName + "/data/default/t1"
+	}
+	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la "+partitionBackupDir+"| wc -l")
 	r.NoError(err)
 	r.Equal("5", strings.Trim(out, "\r\n\t "))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", partitionBackupName))
 
 	// check create > upload + partitions
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "--tables=default.t1", partitionBackupName))
-	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la /var/lib/clickhouse/backup/"+partitionBackupName+"/shadow/default/t1/default/ | wc -l")
+	partitionBackupDir = "/var/lib/clickhouse/backup/" + partitionBackupName + "/shadow/default/t1/default/"
+	if remoteStorageType == "EMBEDDED" {
+		partitionBackupDir = "/var/lib/clickhouse/disks/backups_s3/" + partitionBackupName + "/data/default/t1"
+	}
+	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la "+partitionBackupDir+" | wc -l")
 	r.NoError(err)
 	r.Equal("7", strings.Trim(out, "\r\n\t "))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "upload", "--tables=default.t1", "--partitions=20220102,20220103", partitionBackupName))
@@ -2262,8 +2308,8 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse, re
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT count() FROM default.t1"))
 
 	expectedCount = 20
-	// custom doesn't support --partitions in upload and download
-	if remoteStorageType == "CUSTOM" {
+	// custom and embedded doesn't support --partitions in upload and download
+	if remoteStorageType == "CUSTOM" || remoteStorageType == "EMBEDDED" {
 		expectedCount = 40
 	}
 	r.Equal(expectedCount, result, fmt.Sprintf("expect count=%d", expectedCount))
@@ -2272,8 +2318,8 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse, re
 	result = 0
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT count() FROM default.t1 WHERE dt NOT IN ('2022-01-02','2022-01-03')"))
 	expectedCount = 0
-	// custom doesn't support --partitions in upload and download
-	if remoteStorageType == "CUSTOM" {
+	// custom and embedded doesn't support --partitions in upload and download
+	if remoteStorageType == "CUSTOM" || remoteStorageType == "EMBEDDED" {
 		expectedCount = 20
 	}
 	r.Equal(expectedCount, result, "expect count=0")

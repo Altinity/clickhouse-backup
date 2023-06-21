@@ -1,14 +1,11 @@
 package filesystemhelper
 
 import (
-	"context"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/pkg/partition"
 	"github.com/Altinity/clickhouse-backup/pkg/utils"
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -275,52 +272,4 @@ func IsDuplicatedParts(part1, part2 string) error {
 		}
 	}
 	return nil
-}
-
-var partitionTupleRE = regexp.MustCompile(`\)\s*,\s*\(`)
-
-func CreatePartitionsToBackupMap(ctx context.Context, ch *clickhouse.ClickHouse, tablesFromClickHouse []clickhouse.Table, tablesFromMetadata []metadata.TableMetadata, partitions []string) (common.EmptyMap, []string) {
-	if len(partitions) == 0 {
-		return make(common.EmptyMap, 0), partitions
-	}
-
-	partitionsMap := common.EmptyMap{}
-
-	// to allow use --partitions val1 --partitions val2, https://github.com/Altinity/clickhouse-backup/issues/425#issuecomment-1149855063
-	for _, partitionArg := range partitions {
-		partitionArg = strings.Trim(partitionArg, " \t")
-		// when PARTITION BY clause return partition_id field as hash, https://github.com/Altinity/clickhouse-backup/issues/602
-		if strings.HasPrefix(partitionArg, "(") {
-			partitionArg = strings.TrimSuffix(strings.TrimPrefix(partitionArg, "("), ")")
-			for _, partitionTuple := range partitionTupleRE.Split(partitionArg, -1) {
-				for _, item := range tablesFromClickHouse {
-					if err, partitionId := partition.GetPartitionId(ctx, ch, item.Database, item.Name, item.CreateTableQuery, partitionTuple); err != nil {
-						apexLog.Errorf("partition.GetPartitionId error: %v", err)
-						return make(common.EmptyMap, 0), partitions
-					} else if partitionId != "" {
-						partitionsMap[partitionId] = struct{}{}
-					}
-				}
-				for _, item := range tablesFromMetadata {
-					if err, partitionId := partition.GetPartitionId(ctx, ch, item.Database, item.Table, item.Query, partitionTuple); err != nil {
-						apexLog.Errorf("partition.GetPartitionId error: %v", err)
-						return make(common.EmptyMap, 0), partitions
-					} else if partitionId != "" {
-						partitionsMap[partitionId] = struct{}{}
-					}
-				}
-			}
-		} else {
-			for _, item := range strings.Split(partitionArg, ",") {
-				partitionsMap[strings.Trim(item, " \t")] = struct{}{}
-			}
-		}
-	}
-	newPartitions := make([]string, len(partitionsMap))
-	i := 0
-	for partitionName := range partitionsMap {
-		newPartitions[i] = partitionName
-		i += 1
-	}
-	return partitionsMap, newPartitions
 }

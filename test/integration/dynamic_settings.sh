@@ -146,32 +146,32 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_encrypted_s3.x
   </storage_configuration>
 </yandex>
 EOT
+
 fi
 
 # embedded s3 backup configuration
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[6-9] || "${CLICKHOUSE_VERSION}" =~ ^22\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[0-9]+ ]]; then
 
-mkdir -p /var/lib/clickhouse/backups_embedded
-chown clickhouse:clickhouse /var/lib/clickhouse/backups_embedded
+mkdir -p /var/lib/clickhouse/disks/backups_s3/ /var/lib/clickhouse/backups_embedded/
+chown -R clickhouse /var/lib/clickhouse/disks/ /var/lib/clickhouse/backups_embedded/
 
-cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration.xml
+cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3.xml
 <?xml version="1.0"?>
 <clickhouse>
     <storage_configuration>
         <disks>
-            <backups>
+            <backups_s3>
               <send_metadata>true</send_metadata>
               <type>s3</type>
-              <endpoint>http://minio:9000/clickhouse/backups/</endpoint>
+              <endpoint>http://minio:9000/clickhouse/backups_s3/</endpoint>
               <access_key_id>access-key</access_key_id>
               <secret_access_key>it-is-my-super-secret-key</secret_access_key>
-              <!-- to avoid unnecessary disk space allocations -->
               <cache_enabled>false</cache_enabled>
-            </backups>
+            </backups_s3>
         </disks>
     </storage_configuration>
     <backups>
-        <allowed_disk>backups</allowed_disk>
+        <allowed_disk>backups_s3</allowed_disk>
         <allowed_path>/var/lib/clickhouse/backups_embedded/</allowed_path>
     </backups>
     <merge_tree>
@@ -181,6 +181,56 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration.xml
 EOT
 
 fi
+
+# embedded s3_plain and azure backup configuration
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^23\.3 || "${CLICKHOUSE_VERSION}" =~ ^23\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[4-9]\.[1-9]+ ]]; then
+
+mkdir -p /var/lib/clickhouse/disks/backups_azure/ /var/lib/clickhouse/disks/backups_s3_plain/
+chown -R clickhouse /var/lib/clickhouse/disks/
+
+#cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3_plain.xml
+#<?xml version="1.0"?>
+#<clickhouse>
+#    <storage_configuration>
+#        <disks>
+#            <backups_s3_plain>
+#              <send_metadata>true</send_metadata>
+#              <type>s3_plain</type>
+#              <endpoint>http://minio:9000/clickhouse/backups_plain/</endpoint>
+#              <access_key_id>access-key</access_key_id>
+#              <secret_access_key>it-is-my-super-secret-key</secret_access_key>
+#              <cache_enabled>false</cache_enabled>
+#            </backups_s3_plain>
+#        </disks>
+#    </storage_configuration>
+#    <backups>
+#        <allowed_disk>backups_azure</allowed_disk>
+#    </backups>
+#</clickhouse>
+#EOT
+
+#cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_azure.xml
+#<?xml version="1.0"?>
+#<clickhouse>
+#    <storage_configuration>
+#        <disks>
+#            <backups_azure>
+#              <type>azure_blob_storage</type>
+#              <storage_account_url>http://azure:10000</storage_account_url>
+#              <container_name>container-embedded</container_name>
+#              <account_name>devstoreaccount1</account_name>
+#              <account_key>Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==</account_key>
+#            </backups_azure>
+#        </disks>
+#    </storage_configuration>
+#    <backups>
+#        <allowed_disk>backups_azure</allowed_disk>
+#    </backups>
+#</clickhouse>
+#EOT
+
+fi
+
 
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[7-9]|^22\.[0-9]{2}|^2[3-9]\. ]]; then
 
