@@ -1,5 +1,6 @@
 # v2.3.0 (not yet released)
 IMPROVEMENTS
+- add FIPS compatible builds and examples, fix [656](https://github.com/Altinity/clickhouse-backup/issues/656)
 - improve support for `use_embedded_backup_restore: true`, applied ugly workaround in test to avoid https://github.com/ClickHouse/ClickHouse/issues/43971, and applied restore workaround to resolve https://github.com/ClickHouse/ClickHouse/issues/42709
 - migrate to `clickhouse-go/v2`, fix [540](https://github.com/Altinity/clickhouse-backup/issues/540), close [562](https://github.com/Altinity/clickhouse-backup/pull/562)
 - add documentation for `AWS_ARN_ROLE` and `AWS_WEB_IDENTITY_TOKEN_FILE`, fix [563](https://github.com/Altinity/clickhouse-backup/issues/563)

@@ -20,7 +20,7 @@ HOST_ARCH = $(shell bash -c 'source <(go env) && echo $$GOHOSTARCH')
 
 .PHONY: clean all version test
 
-all: build config packages
+all: build build-fips config packages
 
 version:
 	@echo $(VERSION)
@@ -44,6 +44,18 @@ build/linux/amd64/$(NAME) build/linux/arm64/$(NAME): GOOS = linux
 build/darwin/amd64/$(NAME) build/darwin/arm64/$(NAME): GOOS = darwin
 build/linux/amd64/$(NAME) build/linux/arm64/$(NAME) build/darwin/amd64/$(NAME) build/darwin/arm64/$(NAME):
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO_BUILD) -o $@ ./cmd/$(NAME)
+
+build-fips: build/linux/amd64/$(NAME)-fips build/linux/arm64/$(NAME)-fips build/darwin/amd64/$(NAME)-fips build/darwin/arm64/$(NAME)-fips
+
+build/linux/amd64/$(NAME)-fips build/darwin/amd64/$(NAME)-fips: GOARCH = amd64
+build/linux/arm64/$(NAME)-fips build/darwin/arm64/$(NAME)-fips: GOARCH = arm64
+build/linux/amd64/$(NAME)-fips build/linux/arm64/$(NAME)-fips: GOOS = linux
+build/darwin/amd64/$(NAME)-fips build/darwin/arm64/$(NAME)-fips: GOOS = darwin
+build/linux/amd64/$(NAME)-fips build/linux/arm64/$(NAME)-fips build/darwin/amd64/$(NAME)-fips build/darwin/arm64/$(NAME)-fips:
+	GOEXPERIMENT=boringcrypto CGO_ENABLED=1 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO_BUILD) -o $@ ./cmd/$(NAME) && \
+	go tool nm ./cmd/$(NAME) > /tmp/$(NAME)-fips-tags.txt && \
+	grep '_Cfunc__goboringcrypto_' /tmp/$(NAME)-fips-tags.txt 1> /dev/null && \
+	rm -fv /tmp/$(NAME)-fips-tags.txt
 
 config: $(NAME)/config.yml
 
@@ -110,9 +122,24 @@ build-race-docker:
 		docker cp -q $${DOCKER_ID}:/src/$(NAME)/$(NAME)-race ./$(NAME)/ && \
 		docker rm -f "$${DOCKER_ID}" && \
 		cp -fl ./$(NAME)/$(NAME)-race ./$(NAME)/$(NAME)-race-docker'
-		
+
+build-race-fips-docker:
+	bash -xce 'docker buildx build --build-arg CLICKHOUSE_VERSION=$${CLICKHOUSE_VERSION:-latest} --build-arg CLICKHOUSE_IMAGE=$${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server} --tag $(NAME):build-race-fips --target make-build-race-fips --progress plain --load . && \
+		mkdir -pv ./$(NAME) && \
+		DOCKER_ID=$$(docker create $(NAME):build-race-fips) && \
+		docker cp -q $${DOCKER_ID}:/src/$(NAME)/$(NAME)-race-fips ./$(NAME)/ && \
+		docker rm -f "$${DOCKER_ID}" && \
+		cp -fl ./$(NAME)/$(NAME)-race-fips ./$(NAME)/$(NAME)-race-fips-docker'
+
 build-docker:
 	bash -xce 'docker buildx build --build-arg CLICKHOUSE_VERSION=$${CLICKHOUSE_VERSION:-latest} --build-arg CLICKHOUSE_IMAGE=$${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server} --tag $(NAME):build-docker --target make-build-docker --progress plain --load . && \
+		mkdir -pv ./build && \
+		DOCKER_ID=$$(docker create $(NAME):build-docker) && \
+		docker cp -q $${DOCKER_ID}:/src/build/ ./build/ && \
+		docker rm -f "$${DOCKER_ID}"'
+
+build-fips-docker:
+	bash -xce 'docker buildx build --build-arg CLICKHOUSE_VERSION=$${CLICKHOUSE_VERSION:-latest} --build-arg CLICKHOUSE_IMAGE=$${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server} --tag $(NAME):build-docker-fips --target make-build-fips --progress plain --load . && \
 		mkdir -pv ./build && \
 		DOCKER_ID=$$(docker create $(NAME):build-docker) && \
 		docker cp -q $${DOCKER_ID}:/src/build/ ./build/ && \

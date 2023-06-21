@@ -41,13 +41,13 @@ jobs:
         if: |
           steps.cache-golang.outputs.cache-hit != 'true'
 
-
       - name: Build clickhouse-backup binary
-        id: make
+        id: make-race
         env:
-          GOROOT: ${{ env.GOROOT_1_19_X64 }}
+          GOROOT: ${{ env.GOROOT_1_20_X64 }}
         run: |
-          make build-race build/linux/amd64/clickhouse-backup build/linux/arm64/clickhouse-backup config test
+          printf "build-race build/linux/amd64/clickhouse-backup build/linux/arm64/clickhouse-backup build/linux/amd64/clickhouse-backup-fips build/linux/arm64/clickhouse-backup-fips" | xargs -d " " -P 5 -I {} echo make {} 
+          make config test
 
       - name: Report unittest coverage
         uses: coverallsapp/github-action@v2
@@ -86,6 +86,8 @@ jobs:
           path: |
             build/linux/amd64/clickhouse-backup
             build/linux/arm64/clickhouse-backup
+            build/linux/amd64/clickhouse-backup-fips
+            build/linux/arm64/clickhouse-backup-fips
           if-no-files-found: error
           retention-days: 1
 
@@ -255,6 +257,11 @@ jobs:
           GCS_TESTS: ${{ needs.build.outputs.GCS_TESTS }}
           RUN_ADVANCED_TESTS: 1
           AZURE_TESTS: 1
+          # need for FIPS
+          QA_AWS_ACCESS_KEY: ${{ secrets.QA_AWS_ACCESS_KEY }}
+          QA_AWS_SECRET_KEY: ${{ secrets.QA_AWS_SECRET_KEY }}
+          QA_AWS_BUCKET: ${{ secrets.QA_AWS_BUCKET }}
+
         run: |
           set -x
           echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"
@@ -343,6 +350,7 @@ jobs:
             export DOCKER_REGISTRY=${DOCKER_REGISTRY:-docker.io}
             echo ${DOCKER_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin ${DOCKER_REGISTRY}
             docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG} --target=image_short --pull --push .
+            docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}-fips --target=image_fips --pull --push .
             docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}-full:${DOCKER_TAG} --target=image_full --pull --push .
           fi
 

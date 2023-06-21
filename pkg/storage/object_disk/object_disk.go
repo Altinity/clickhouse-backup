@@ -403,7 +403,8 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 		}
 		// https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html
 		// https://kb.altinity.com/altinity-kb-integrations/altinity-kb-google-s3-gcs/
-		if strings.HasSuffix(s3URL.Host, ".amazonaws.com") && strings.Contains(s3URL.Host, ".s3.") {
+		// https://aws.amazon.com/compliance/fips/
+		if strings.HasSuffix(s3URL.Host, ".amazonaws.com") && (strings.Contains(s3URL.Host, ".s3.") || strings.Contains(s3URL.Host, ".s3-fisp.")) {
 			hostParts := strings.Split(s3URL.Host, ".")
 			s3cfg.Bucket = hostParts[0]
 			if len(hostParts) >= 3 {

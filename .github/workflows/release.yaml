@@ -55,7 +55,7 @@ jobs:
       - name: Prepare binaries
         id: make
         env:
-          GOROOT: ${{ env.GOROOT_1_19_X64 }}
+          GOROOT: ${{ env.GOROOT_1_20_X64 }}
         run: |
           make build config test
 
@@ -65,15 +65,19 @@ jobs:
           set -x
           export NAME=clickhouse-backup
           export VERSION=$(git describe --always --tags --abbrev=0 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/c\1/;s/-/./g')
-
-          tar -czvf ${NAME}-linux-amd64.tar.gz build/linux/amd64
-          tar -czvf ${NAME}-linux-arm64.tar.gz build/linux/arm64
-          tar -czvf ${NAME}-darwin-amd64.tar.gz build/darwin/amd64
-          tar -czvf ${NAME}-darwin-arm64.tar.gz build/darwin/arm64
+          printf "amd64 arm64" | xargs -P 2 -d " " -I {} tar -czvf ${NAME}-linux-{}.tar.gz build/linux/{}/${NAME}
+          printf "amd64 arm64" | xargs -P 2 -d " " -I {} tar -czvf ${NAME}-darwin-{}.tar.gz build/darwin/{}/${NAME}
           echo "tgz_linux_amd64=${NAME}-linux-amd64.tar.gz" >> $GITHUB_OUTPUT
           echo "tgz_linux_arm64=${NAME}-linux-arm64.tar.gz" >> $GITHUB_OUTPUT
           echo "tgz_darwin_amd64=${NAME}-darwin-amd64.tar.gz" >> $GITHUB_OUTPUT
           echo "tgz_darwin_arm64=${NAME}-darwin-arm64.tar.gz" >> $GITHUB_OUTPUT
+
+          printf "amd64 arm64" | xargs -P 2 -d " " -I {} tar -czvf ${NAME}-linux-{}-fips.tar.gz build/linux/{}/${NAME}-fips
+          printf "amd64 arm64" | xargs -P 2 -d " " -I {} tar -czvf ${NAME}-darwin-{}-fips.tar.gz build/darwin/{}/${NAME}-fips
+          echo "tgz_linux_amd64_fips=${NAME}-linux-amd64-fips.tar.gz" >> $GITHUB_OUTPUT
+          echo "tgz_linux_arm64_fips=${NAME}-linux-arm64-fips.tar.gz" >> $GITHUB_OUTPUT
+          echo "tgz_darwin_amd64_fips=${NAME}-darwin-amd64-fips.tar.gz" >> $GITHUB_OUTPUT
+          echo "tgz_darwin_arm64_fips=${NAME}-darwin-arm64-fips.tar.gz" >> $GITHUB_OUTPUT
 
           make packages
           cp -lv ./build/linux/*/*.deb ./
@@ -109,6 +113,10 @@ jobs:
             ${{ steps.make_packages.outputs.tgz_linux_arm64 }}
             ${{ steps.make_packages.outputs.tgz_darwin_amd64 }}
             ${{ steps.make_packages.outputs.tgz_darwin_arm64 }}
+            ${{ steps.make_packages.outputs.tgz_linux_amd64_fips }}
+            ${{ steps.make_packages.outputs.tgz_linux_arm64_fips }}
+            ${{ steps.make_packages.outputs.tgz_darwin_amd64_fips }}
+            ${{ steps.make_packages.outputs.tgz_darwin_arm64_fips }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v2
@@ -128,4 +136,5 @@ jobs:
           echo ${DOCKER_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin ${DOCKER_REGISTRY}
 
           docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG} --tag ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:latest --target=image_short --pull --push .
+          docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}-fips --tag ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:latest-fips --target=image_fips --pull --push .
           docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}-full:${DOCKER_TAG} --tag ${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}-full:latest --target=image_full --pull --push .
