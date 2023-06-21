@@ -263,7 +263,7 @@ def materializedpostgresql(self):
             for i in range(10):
                 random_value = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
                 postgres.cmd(f"psql -Utest --dbname=pgdb -c \"INSERT INTO pg_table (id, name) VALUES ({i}, '{random_value}');\"")
-            debug(postgres.cmd(f"psql -Utest --dbname=pgdb -c \"select * from pg_table\"").output)
+            debug(postgres.cmd(f"psql -P pager=off -Utest --dbname=pgdb -c \"select * from pg_table\"").output)
 
         with And("I create MaterializedPostgreSQL"):
             clickhouse.query(

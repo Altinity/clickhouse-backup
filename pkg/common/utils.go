@@ -17,3 +17,24 @@ func SumMapValuesInt(m map[string]int) int {
 	}
 	return s
 }
+
+func AddStringToSliceIfNotExists(slice []string, newItem string) []string {
+	exists := false
+	for _, item := range slice {
+		if item == newItem {
+			exists = true
+			break
+		}
+	}
+	if !exists {
+		slice = append(slice, newItem)
+	}
+	return slice
+}
+
+func AddSliceToSliceIfNotExists(existsSlice []string, newSlice []string) []string {
+	for _, newItem := range newSlice {
+		existsSlice = AddStringToSliceIfNotExists(existsSlice, newItem)
+	}
+	return existsSlice
+}

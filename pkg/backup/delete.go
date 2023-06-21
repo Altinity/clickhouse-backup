@@ -5,10 +5,14 @@ import (
 	"fmt"
 	"github.com/Altinity/clickhouse-backup/pkg/custom"
 	"github.com/Altinity/clickhouse-backup/pkg/status"
+	"github.com/Altinity/clickhouse-backup/pkg/storage/object_disk"
 	"github.com/Altinity/clickhouse-backup/pkg/utils"
 	"github.com/pkg/errors"
+	"io/fs"
 	"os"
 	"path"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
@@ -116,6 +120,12 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 	}
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
+			if strings.Contains(backup.Tags, "embedded") {
+				if err := b.cleanLocalEmbedded(ctx, backup, disks); err != nil {
+					log.Warnf("b.cleanRemoteEmbedded return error: %v", err)
+					return err
+				}
+			}
 			for _, disk := range disks {
 				backupPath := path.Join(disk.Path, "backup", backupName)
 				if disk.IsBackup {
@@ -136,6 +146,51 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 		}
 	}
 	return fmt.Errorf("'%s' is not found on local storage", backupName)
+}
+
+func (b *Backuper) cleanLocalEmbedded(ctx context.Context, backup LocalBackup, disks []clickhouse.Disk) error {
+	// skip if the same backup present in remote
+	if b.cfg.General.RemoteStorage != "custom" && b.cfg.General.RemoteStorage != "none" {
+		if remoteList, err := b.GetRemoteBackups(ctx, true); err != nil {
+			return err
+		} else {
+			for _, remoteBackup := range remoteList {
+				if remoteBackup.BackupName == backup.BackupName && strings.Contains(remoteBackup.Tags, "embedded") {
+					return nil
+				}
+			}
+		}
+	}
+	for _, disk := range disks {
+		if disk.Name == b.cfg.ClickHouse.EmbeddedBackupDisk {
+			if err := object_disk.InitCredentialsAndConnections(ctx, b.ch, b.cfg, disk.Name); err != nil {
+				return err
+			}
+			backupPath := path.Join(disk.Path, backup.BackupName)
+			if err := filepath.Walk(backupPath, func(filePath string, info fs.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+				if !info.IsDir() && !strings.HasSuffix(filePath, ".json") {
+					apexLog.Debugf("object_disk.ReadMetadataFromFile(%s)", filePath)
+					meta, err := object_disk.ReadMetadataFromFile(filePath)
+					if err != nil {
+						return err
+					}
+					for _, o := range meta.StorageObjects {
+						err = object_disk.DeleteFile(ctx, b.cfg.ClickHouse.EmbeddedBackupDisk, o.ObjectRelativePath)
+						if err != nil {
+							return err
+						}
+					}
+				}
+				return nil
+			}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) error {
@@ -175,6 +230,12 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 	}
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
+			if strings.Contains(backup.Tags, "embedded") {
+				if err := b.cleanRemoteEmbedded(ctx, backup, bd); err != nil {
+					log.Warnf("b.cleanRemoteEmbedded return error: %v", err)
+					return err
+				}
+			}
 			if err := bd.RemoveBackup(ctx, backup); err != nil {
 				log.Warnf("bd.RemoveBackup return error: %v", err)
 				return err
@@ -189,6 +250,38 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 		}
 	}
 	return fmt.Errorf("'%s' is not found on remote storage", backupName)
+}
+
+func (b *Backuper) cleanRemoteEmbedded(ctx context.Context, backup storage.Backup, bd *storage.BackupDestination) error {
+	// skip if the same backup present in local
+	if localList, _, err := b.GetLocalBackups(ctx, nil); err != nil {
+		return err
+	} else {
+		for _, localBackup := range localList {
+			if localBackup.BackupName == backup.BackupName && strings.Contains(localBackup.Tags, "embedded") {
+				return nil
+			}
+		}
+	}
+	if err := object_disk.InitCredentialsAndConnections(ctx, b.ch, b.cfg, b.cfg.ClickHouse.EmbeddedBackupDisk); err != nil {
+		return err
+	}
+	return bd.Walk(ctx, backup.BackupName+"/", true, func(ctx context.Context, f storage.RemoteFile) error {
+		if !strings.HasSuffix(f.Name(), ".json") {
+			r, err := bd.GetFileReader(ctx, path.Join(backup.BackupName, f.Name()))
+			if err != nil {
+				return err
+			}
+			apexLog.Debugf("object_disk.ReadMetadataFromReader(%s)", f.Name())
+			meta, err := object_disk.ReadMetadataFromReader(r, f.Name())
+			for _, o := range meta.StorageObjects {
+				if err = object_disk.DeleteFile(ctx, b.cfg.ClickHouse.EmbeddedBackupDisk, o.ObjectRelativePath); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
 }
 
 func (b *Backuper) CleanRemoteBroken(commandId int) error {
