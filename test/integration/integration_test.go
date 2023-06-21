@@ -405,7 +405,7 @@ func TestFIPS(t *testing.T) {
 	r := require.New(t)
 	ch.connectWithWait(r, 1*time.Second, 10*time.Second)
 	fipsBackupName := fmt.Sprintf("fips_backup_%d", rand.Int())
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.17") < 0 {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") < 0 {
 		installDebIfNotExists(r, "clickhouse", "curl", "gettext-base", "bsdmainutils", "dnsutils", "git")
 	} else {
 		installDebIfNotExists(r, "clickhouse", "curl", "gettext-base", "bsdextrautils", "dnsutils", "git")
