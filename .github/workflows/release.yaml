@@ -57,7 +57,7 @@ jobs:
         env:
           GOROOT: ${{ env.GOROOT_1_20_X64 }}
         run: |
-          make build config test
+          make build build-fips config test
 
       - name: Building deb, rpm and tar.gz packages
         id: make_packages
@@ -76,8 +76,8 @@ jobs:
           printf "amd64 arm64" | xargs -P 2 -d " " -I {} tar -czvf ${NAME}-darwin-{}-fips.tar.gz build/darwin/{}/${NAME}-fips
           echo "tgz_linux_amd64_fips=${NAME}-linux-amd64-fips.tar.gz" >> $GITHUB_OUTPUT
           echo "tgz_linux_arm64_fips=${NAME}-linux-arm64-fips.tar.gz" >> $GITHUB_OUTPUT
-          echo "tgz_darwin_amd64_fips=${NAME}-darwin-amd64-fips.tar.gz" >> $GITHUB_OUTPUT
-          echo "tgz_darwin_arm64_fips=${NAME}-darwin-arm64-fips.tar.gz" >> $GITHUB_OUTPUT
+          # echo "tgz_darwin_amd64_fips=${NAME}-darwin-amd64-fips.tar.gz" >> $GITHUB_OUTPUT
+          # echo "tgz_darwin_arm64_fips=${NAME}-darwin-arm64-fips.tar.gz" >> $GITHUB_OUTPUT
 
           make packages
           cp -lv ./build/linux/*/*.deb ./
@@ -115,8 +115,8 @@ jobs:
             ${{ steps.make_packages.outputs.tgz_darwin_arm64 }}
             ${{ steps.make_packages.outputs.tgz_linux_amd64_fips }}
             ${{ steps.make_packages.outputs.tgz_linux_arm64_fips }}
-            ${{ steps.make_packages.outputs.tgz_darwin_amd64_fips }}
-            ${{ steps.make_packages.outputs.tgz_darwin_arm64_fips }}
+#          ${{ steps.make_packages.outputs.tgz_darwin_amd64_fips }}
+#          ${{ steps.make_packages.outputs.tgz_darwin_arm64_fips }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v2

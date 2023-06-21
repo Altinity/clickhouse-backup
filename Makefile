@@ -45,15 +45,24 @@ build/darwin/amd64/$(NAME) build/darwin/arm64/$(NAME): GOOS = darwin
 build/linux/amd64/$(NAME) build/linux/arm64/$(NAME) build/darwin/amd64/$(NAME) build/darwin/arm64/$(NAME):
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO_BUILD) -o $@ ./cmd/$(NAME)
 
-build-fips: build/linux/amd64/$(NAME)-fips build/linux/arm64/$(NAME)-fips build/darwin/amd64/$(NAME)-fips build/darwin/arm64/$(NAME)-fips
+build-fips: build/linux/amd64/$(NAME)-fips build/linux/arm64/$(NAME)-fips
+
+build-fips-darwin: build/darwin/amd64/$(NAME)-fips build/darwin/arm64/$(NAME)-fips
 
 build/linux/amd64/$(NAME)-fips build/darwin/amd64/$(NAME)-fips: GOARCH = amd64
 build/linux/arm64/$(NAME)-fips build/darwin/arm64/$(NAME)-fips: GOARCH = arm64
 build/linux/amd64/$(NAME)-fips build/linux/arm64/$(NAME)-fips: GOOS = linux
 build/darwin/amd64/$(NAME)-fips build/darwin/arm64/$(NAME)-fips: GOOS = darwin
-build/linux/amd64/$(NAME)-fips build/linux/arm64/$(NAME)-fips build/darwin/amd64/$(NAME)-fips build/darwin/arm64/$(NAME)-fips:
+build/linux/amd64/$(NAME)-fips build/darwin/amd64/$(NAME)-fips:
 	GOEXPERIMENT=boringcrypto CGO_ENABLED=1 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO_BUILD) -o $@ ./cmd/$(NAME) && \
-	go tool nm ./cmd/$(NAME) > /tmp/$(NAME)-fips-tags.txt && \
+	go tool nm $@ > /tmp/$(NAME)-fips-tags.txt && \
+	grep '_Cfunc__goboringcrypto_' /tmp/$(NAME)-fips-tags.txt 1> /dev/null && \
+	rm -fv /tmp/$(NAME)-fips-tags.txt
+
+build/linux/arm64/$(NAME)-fips build/darwin/arm64/$(NAME)-fips:
+	bash -xce 'if [[ ! -f ~/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc ]]; then wget -P ~ https://musl.cc/aarch64-linux-musl-cross.tgz; tar -xvf ~/aarch64-linux-musl-cross.tgz -C ~; fi' && \
+	CC=~/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc GOEXPERIMENT=boringcrypto CGO_ENABLED=1 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO_BUILD) -o $@ ./cmd/$(NAME) && \
+	go tool nm $@ > /tmp/$(NAME)-fips-tags.txt && \
 	grep '_Cfunc__goboringcrypto_' /tmp/$(NAME)-fips-tags.txt 1> /dev/null && \
 	rm -fv /tmp/$(NAME)-fips-tags.txt
 

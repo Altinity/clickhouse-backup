@@ -5,13 +5,15 @@ FROM ${CLICKHOUSE_IMAGE}:${CLICKHOUSE_VERSION} AS builder-base
 USER root
 RUN rm -fv /etc/apt/sources.list.d/clickhouse.list && \
     ( apt-get update || true ) && \
-    apt-get install -y --no-install-recommends gnupg ca-certificates && apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 52B59B1571A79DBC054901C0F6BC817356A3D45E && \
+    apt-get install -y --no-install-recommends gnupg ca-certificates wget && apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 52B59B1571A79DBC054901C0F6BC817356A3D45E && \
     DISTRIB_CODENAME=$(cat /etc/lsb-release | grep DISTRIB_CODENAME | cut -d "=" -f 2) && \
     echo ${DISTRIB_CODENAME} && \
     echo "deb https://ppa.launchpadcontent.net/longsleep/golang-backports/ubuntu ${DISTRIB_CODENAME} main" > /etc/apt/sources.list.d/golang.list && \
     echo "deb-src https://ppa.launchpadcontent.net/longsleep/golang-backports/ubuntu ${DISTRIB_CODENAME} main" >> /etc/apt/sources.list.d/golang.list && \
     ( apt-get update || true ) && \
     apt-get install -y --no-install-recommends libc-dev golang-1.20 make git gcc && \
+    wget -q -P /root/ https://musl.cc/aarch64-linux-musl-cross.tgz && \
+    tar -xvf /root/aarch64-linux-musl-cross.tgz -C /root/ && \
     mkdir -p /root/go/
 
 RUN ln -nsfv /usr/lib/go-1.20/bin/go /usr/bin/go
