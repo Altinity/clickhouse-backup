@@ -632,8 +632,9 @@ func TestIntegrationCustom(t *testing.T) {
 
 func TestIntegrationEmbedded(t *testing.T) {
 	//t.Skipf("Test skipped, wait 23.8, RESTORE Ordinary table and RESTORE MATERIALIZED VIEW and {uuid} not works for %s version, look https://github.com/ClickHouse/ClickHouse/issues/43971 and https://github.com/ClickHouse/ClickHouse/issues/42709", os.Getenv("CLICKHOUSE_VERSION"))
+	//dependencies restore https://github.com/ClickHouse/ClickHouse/issues/39416, fixed in 23.3
 	version := os.Getenv("CLICKHOUSE_VERSION")
-	if version != "head" && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.3") < 0 {
+	if version != "head" && compareVersion(version, "23.3") < 0 {
 		t.Skipf("Test skipped, BACKUP/RESTORE not production ready for %s version", version)
 	}
 	r := require.New(t)
