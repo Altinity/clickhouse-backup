@@ -60,7 +60,7 @@ build/linux/amd64/$(NAME)-fips build/darwin/amd64/$(NAME)-fips:
 	rm -fv /tmp/$(NAME)-fips-tags.txt
 
 build/linux/arm64/$(NAME)-fips build/darwin/arm64/$(NAME)-fips:
-	bash -xce 'if [[ ! -f ~/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc ]]; then wget -P ~ https://musl.cc/aarch64-linux-musl-cross.tgz; tar -xvf ~/aarch64-linux-musl-cross.tgz -C ~; fi' && \
+	bash -xce 'if [[ ! -f ~/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc ]]; then wget -q -P ~ https://musl.cc/aarch64-linux-musl-cross.tgz; tar -xvf ~/aarch64-linux-musl-cross.tgz -C ~; fi' && \
 	CC=~/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc GOEXPERIMENT=boringcrypto CGO_ENABLED=1 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO_BUILD) -o $@ ./cmd/$(NAME) && \
 	go tool nm $@ > /tmp/$(NAME)-fips-tags.txt && \
 	grep '_Cfunc__goboringcrypto_' /tmp/$(NAME)-fips-tags.txt 1> /dev/null && \

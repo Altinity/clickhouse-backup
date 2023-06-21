@@ -400,12 +400,16 @@ func init() {
 	log.SetLevelFromString(logLevel)
 }
 
-func TestIntegrationFIPS(t *testing.T) {
+func TestFIPS(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
 	ch.connectWithWait(r, 1*time.Second, 10*time.Second)
 	fipsBackupName := fmt.Sprintf("fips_backup_%d", rand.Int())
-	installDebIfNotExists(r, "clickhouse", "curl", "gettext-base", "bsdextrautils", "dnsutils", "git")
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.17") < 0 {
+		installDebIfNotExists(r, "clickhouse", "curl", "gettext-base", "bsdmainutils", "dnsutils", "git")
+	} else {
+		installDebIfNotExists(r, "clickhouse", "curl", "gettext-base", "bsdextrautils", "dnsutils", "git")
+	}
 	r.NoError(dockerCP("config-s3-fips.yml", "clickhouse:/etc/clickhouse-backup/config.yml.fips-template"))
 	r.NoError(dockerExec("clickhouse", "git", "clone", "--depth", "1", "https://github.com/drwetter/testssl.sh.git", "/opt/testssl"))
 	r.NoError(dockerExec("clickhouse", "chmod", "+x", "/opt/testssl/testssl.sh"))
