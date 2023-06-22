@@ -123,6 +123,12 @@ build-race: $(NAME)/$(NAME)-race
 $(NAME)/$(NAME)-race:
 	CGO_ENABLED=1 $(GO_BUILD) -cover -gcflags "all=-N -l" -race -o $@ ./cmd/$(NAME)
 
+build-race-fips: $(NAME)/$(NAME)-race-fips
+
+$(NAME)/$(NAME)-race-fips:
+	GOEXPERIMENT=boringcrypto CGO_ENABLED=1 $(GO_BUILD) -cover -gcflags "all=-N -l" -race -o $@ ./cmd/$(NAME)
+
+
 # run `docker buildx create --use` first time
 build-race-docker:
 	bash -xce 'docker buildx build --build-arg CLICKHOUSE_VERSION=$${CLICKHOUSE_VERSION:-latest} --build-arg CLICKHOUSE_IMAGE=$${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server} --tag $(NAME):build-race --target make-build-race --progress plain --load . && \
