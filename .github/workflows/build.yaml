@@ -48,7 +48,7 @@ jobs:
         run: |
           make build/linux/amd64/clickhouse-backup build/linux/arm64/clickhouse-backup
           make build/linux/amd64/clickhouse-backup-fips build/linux/arm64/clickhouse-backup-fips 
-          make build-race config test
+          make build-race build-race-fips config test
 
       - name: Report unittest coverage
         uses: coverallsapp/github-action@v2
@@ -96,8 +96,8 @@ jobs:
         with:
           name: build-test-artifacts
           path: |
-            clickhouse-backup/clickhouse-backup
             clickhouse-backup/clickhouse-backup-race
+            clickhouse-backup/clickhouse-backup-race-fips
           if-no-files-found: error
           retention-days: 1
     outputs:
