@@ -2300,8 +2300,8 @@ func installDebIfNotExists(r *require.Assertions, container string, pkgs ...stri
 		container,
 		"bash", "-c",
 		fmt.Sprintf(
-			"if [[ '0' == $(dpkg -l | grep -c -E \"%s\" ) ]]; then apt-get -y update; apt-get install --no-install-recommends -y %s; fi",
-			"^ii\\s+"+strings.Join(pkgs, "|^ii\\s+"), strings.Join(pkgs, " "),
+			"if [[ '%d' != $(dpkg -l | grep -c -E \"%s\" ) ]]; then apt-get -y update; apt-get install --no-install-recommends -y %s; fi",
+			len(pkgs), "^ii\\s+"+strings.Join(pkgs, "|^ii\\s+"), strings.Join(pkgs, " "),
 		),
 	))
 }
