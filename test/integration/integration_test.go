@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -406,23 +407,32 @@ func TestFIPS(t *testing.T) {
 	ch.connectWithWait(r, 1*time.Second, 10*time.Second)
 	fipsBackupName := fmt.Sprintf("fips_backup_%d", rand.Int())
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") < 0 {
-		installDebIfNotExists(r, "clickhouse", "curl", "gettext-base", "bsdmainutils", "dnsutils", "git")
+		installDebIfNotExists(r, "clickhouse", "curl", "gettext-base", "bsdmainutils", "dnsutils", "git", "ca-certificates")
 	} else {
-		installDebIfNotExists(r, "clickhouse", "curl", "gettext-base", "bsdextrautils", "dnsutils", "git")
+		installDebIfNotExists(r, "clickhouse", "curl", "gettext-base", "bsdextrautils", "dnsutils", "git", "ca-certificates")
 	}
 	r.NoError(dockerCP("config-s3-fips.yml", "clickhouse:/etc/clickhouse-backup/config.yml.fips-template"))
+	r.NoError(dockerExec("clickhouse", "update-ca-certificates"))
 	r.NoError(dockerExec("clickhouse", "git", "clone", "--depth", "1", "https://github.com/drwetter/testssl.sh.git", "/opt/testssl"))
 	r.NoError(dockerExec("clickhouse", "chmod", "+x", "/opt/testssl/testssl.sh"))
 
-	r.NoError(dockerExec("clickhouse", "bash", "-xce", "openssl genrsa -out /etc/clickhouse-backup/ca-key.pem 4096"))
-	r.NoError(dockerExec("clickhouse", "bash", "-xce", "openssl req -subj \"/O=altinity\" -x509 -new -nodes -key /etc/clickhouse-backup/ca-key.pem -sha256 -days 365000 -out /etc/clickhouse-backup/ca-cert.pem"))
-
-	r.NoError(dockerExec("clickhouse", "bash", "-xce", "openssl genrsa -out /etc/clickhouse-backup/server-key.pem 4096"))
-	r.NoError(dockerExec("clickhouse", "bash", "-xce", "openssl req -subj \"/CN=localhost\" -addext \"subjectAltName = DNS:localhost,DNS:*.cluster.local\" -new -key /etc/clickhouse-backup/server-key.pem -out /etc/clickhouse-backup/server-req.csr"))
-	r.NoError(dockerExec("clickhouse", "bash", "-xce", "openssl x509 -req -days 365000 -extensions SAN -extfile <(printf \"\\n[SAN]\\nsubjectAltName=DNS:localhost,DNS:*.cluster.local\") -in /etc/clickhouse-backup/server-req.csr -out /etc/clickhouse-backup/server-cert.pem -CA /etc/clickhouse-backup/ca-cert.pem -CAkey /etc/clickhouse-backup/ca-key.pem -CAcreateserial"))
-
+	generateCerts := func(certType, keyLength, curveType string) {
+		r.NoError(dockerExec("clickhouse", "bash", "-xce", "openssl rand -out /root/.rnd 2048"))
+		switch certType {
+		case "rsa":
+			r.NoError(dockerExec("clickhouse", "bash", "-xce", fmt.Sprintf("openssl genrsa -out /etc/clickhouse-backup/ca-key.pem %s", keyLength)))
+			r.NoError(dockerExec("clickhouse", "bash", "-xce", fmt.Sprintf("openssl genrsa -out /etc/clickhouse-backup/server-key.pem %s", keyLength)))
+		case "ecdsa":
+			r.NoError(dockerExec("clickhouse", "bash", "-xce", fmt.Sprintf("openssl ecparam -name %s -genkey -out /etc/clickhouse-backup/ca-key.pem", curveType)))
+			r.NoError(dockerExec("clickhouse", "bash", "-xce", fmt.Sprintf("openssl ecparam -name %s -genkey -out /etc/clickhouse-backup/server-key.pem", curveType)))
+		}
+		r.NoError(dockerExec("clickhouse", "bash", "-xce", "openssl req -subj \"/O=altinity\" -x509 -new -nodes -key /etc/clickhouse-backup/ca-key.pem -sha256 -days 365000 -out /etc/clickhouse-backup/ca-cert.pem"))
+		r.NoError(dockerExec("clickhouse", "bash", "-xce", "openssl req -subj \"/CN=localhost\" -addext \"subjectAltName = DNS:localhost,DNS:*.cluster.local\" -new -key /etc/clickhouse-backup/server-key.pem -out /etc/clickhouse-backup/server-req.csr"))
+		r.NoError(dockerExec("clickhouse", "bash", "-xce", "openssl x509 -req -days 365000 -extensions SAN -extfile <(printf \"\\n[SAN]\\nsubjectAltName=DNS:localhost,DNS:*.cluster.local\") -in /etc/clickhouse-backup/server-req.csr -out /etc/clickhouse-backup/server-cert.pem -CA /etc/clickhouse-backup/ca-cert.pem -CAkey /etc/clickhouse-backup/ca-key.pem -CAcreateserial"))
+	}
 	r.NoError(dockerExec("clickhouse", "bash", "-c", "cat /etc/clickhouse-backup/config.yml.fips-template | envsubst > /etc/clickhouse-backup/config.yml"))
 
+	generateCerts("rsa", "4096", "")
 	createSQL := "CREATE TABLE default.fips_table (v UInt64) ENGINE=MergeTree() ORDER BY tuple()"
 	ch.queryWithNoError(r, createSQL)
 	r.NoError(dockerExec("clickhouse", "bash", "-ce", "AWS_USE_FIPS_ENDPOINT=true clickhouse-backup-fips create_remote --tables=default.fips_table "+fipsBackupName))
@@ -452,13 +462,33 @@ func TestFIPS(t *testing.T) {
 		fmt.Sprintf("%%%s%%", fipsBackupName), status.InProgressStatus, status.ErrorStatus,
 	))
 	r.Equal(0, len(inProgressActions), "inProgressActions=%+v", inProgressActions)
-
-	r.NoError(dockerExec("clickhouse", "bash", "-ce", "rm -rf /tmp/testssl* && /opt/testssl/testssl.sh -e -s -oC /tmp/testssl.csv --color 0 --disable-rating --quiet -n min --mode parallel --add-ca /etc/clickhouse-backup/ca-cert.pem localhost:7171"))
-	out, err := dockerExecOut("clickhouse", "bash", "-ce", "grep -c -E 'ECDHE-RSA-AES128-GCM-SHA256|ECDHE-RSA-AES256-GCM-SHA384|ECDHE-ECDSA-AES128-GCM-SHA256|ECDHE-ECDSA-AES256-GCM-SHA384|AES128-GCM-SHA256|AES256-GCM-SHA384' /tmp/testssl.csv")
-	r.NoError(err)
-	// @TODO shall be 6? or more than zero ?
-	r.Equal("4", strings.Trim(out, " \t\r\n"))
 	r.NoError(dockerExec("clickhouse", "pkill", "-n", "-f", "clickhouse-backup-fips"))
+
+	testsslCerts := func(certType, keyLength, curveName string, cipherList ...string) {
+		generateCerts(certType, keyLength, curveName)
+		log.Infof("Run `clickhouse-backup-fips server` in background for %s %s %s", certType, keyLength, curveName)
+		r.NoError(dockerExec("-d", "clickhouse", "bash", "-ce", "AWS_USE_FIPS_ENDPOINT=true clickhouse-backup-fips server &>>/tmp/clickhouse-backup-server-fips.log"))
+		time.Sleep(1 * time.Second)
+
+		r.NoError(dockerExec("clickhouse", "bash", "-ce", "rm -rf /tmp/testssl* && /opt/testssl/testssl.sh -e -s -oC /tmp/testssl.csv --color 0 --disable-rating --quiet -n min --mode parallel --add-ca /etc/clickhouse-backup/ca-cert.pem localhost:7171"))
+		out, err := dockerExecOut("clickhouse", "bash", "-ce", fmt.Sprintf("grep -c -E '%s' /tmp/testssl.csv", strings.Join(cipherList, "|")))
+		r.NoError(err)
+		r.Equal(strconv.Itoa(len(cipherList)), strings.Trim(out, " \t\r\n"))
+
+		inProgressActions := make([]struct {
+			Command string `ch:"command"`
+			Status  string `ch:"status"`
+		}, 0)
+		r.NoError(ch.chbackend.StructSelect(&inProgressActions,
+			"SELECT command, status FROM system.backup_actions WHERE command LIKE ? AND status IN (?,?)",
+			fmt.Sprintf("%%%s%%", fipsBackupName), status.InProgressStatus, status.ErrorStatus,
+		))
+		r.Equal(0, len(inProgressActions), "inProgressActions=%+v", inProgressActions)
+		r.NoError(dockerExec("clickhouse", "pkill", "-n", "-f", "clickhouse-backup-fips"))
+	}
+	// https://www.perplexity.ai/search/0920f1e8-59ec-4e14-b779-ba7b2e037196
+	testsslCerts("rsa", "4096", "", "ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-AES256-GCM-SHA384", "AES128-GCM-SHA256", "AES256-GCM-SHA384")
+	testsslCerts("ecdsa", "", "prime256v1", "ECDHE-ECDSA-AES128-GCM-SHA256", "ECDHE-ECDSA-AES256-GCM-SHA384")
 	r.NoError(ch.chbackend.DropTable(clickhouse.Table{Database: "default", Name: "fips_table"}, createSQL, "", false, 0))
 
 }
