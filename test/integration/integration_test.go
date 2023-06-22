@@ -407,7 +407,7 @@ func TestFIPS(t *testing.T) {
 	ch.connectWithWait(r, 1*time.Second, 10*time.Second)
 	fipsBackupName := fmt.Sprintf("fips_backup_%d", rand.Int())
 	r.NoError(dockerExec("clickhouse", "rm", "-fv", "/etc/apt/sources.list.d/clickhouse.list"))
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") < 0 {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.8") < 0 {
 		installDebIfNotExists(r, "clickhouse", "curl", "gettext-base", "bsdmainutils", "dnsutils", "git", "ca-certificates")
 	} else {
 		installDebIfNotExists(r, "clickhouse", "curl", "gettext-base", "bsdextrautils", "dnsutils", "git", "ca-certificates")
