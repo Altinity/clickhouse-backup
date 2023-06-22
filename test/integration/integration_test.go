@@ -406,7 +406,8 @@ func TestFIPS(t *testing.T) {
 	r := require.New(t)
 	ch.connectWithWait(r, 1*time.Second, 10*time.Second)
 	fipsBackupName := fmt.Sprintf("fips_backup_%d", rand.Int())
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") < 0 {
+	r.NoError(dockerExec("clickhouse", "rm", "-fv", "/etc/apt/sources.list.d/clickhouse.list"))
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") < 0 {
 		installDebIfNotExists(r, "clickhouse", "curl", "gettext-base", "bsdmainutils", "dnsutils", "git", "ca-certificates")
 	} else {
 		installDebIfNotExists(r, "clickhouse", "curl", "gettext-base", "bsdextrautils", "dnsutils", "git", "ca-certificates")
@@ -2298,9 +2299,9 @@ func isTestShouldSkip(envName string) bool {
 func installDebIfNotExists(r *require.Assertions, container string, pkgs ...string) {
 	r.NoError(dockerExec(
 		container,
-		"bash", "-c",
+		"bash", "-xec",
 		fmt.Sprintf(
-			"if [[ '%d' != $(dpkg -l | grep -c -E \"%s\" ) ]]; then apt-get -y update; apt-get install --no-install-recommends -y %s; fi",
+			"export DEBIAN_FRONTEND=noniteractive; if [[ '%d' != $(dpkg -l | grep -c -E \"%s\" ) ]]; then apt-get -y update; apt-get install --no-install-recommends -y %s; fi",
 			len(pkgs), "^ii\\s+"+strings.Join(pkgs, "|^ii\\s+"), strings.Join(pkgs, " "),
 		),
 	))
