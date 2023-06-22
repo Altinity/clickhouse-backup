@@ -251,10 +251,10 @@ jobs:
         env:
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
           # don't change it to avoid broken CI/CD!!!
-          RUN_TESTS: "TestFIPS"
+          # RUN_TESTS: "TestFIPS"
           # LOG_LEVEL: "debug"
           # FTP_DEBUG: "true"
-          S3_DEBUG: "true"
+          # S3_DEBUG: "true"
           CGO_ENABLED: 0
           GCS_TESTS: ${{ needs.build.outputs.GCS_TESTS }}
           RUN_ADVANCED_TESTS: 1
@@ -263,6 +263,7 @@ jobs:
           QA_AWS_ACCESS_KEY: ${{ secrets.QA_AWS_ACCESS_KEY }}
           QA_AWS_SECRET_KEY: ${{ secrets.QA_AWS_SECRET_KEY }}
           QA_AWS_BUCKET: ${{ secrets.QA_AWS_BUCKET }}
+          QA_AWS_REGION: ${{ secrets.QA_AWS_REGION }}
 
         run: |
           set -x
