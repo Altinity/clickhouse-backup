@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"github.com/Altinity/clickhouse-backup/pkg/logcli"
@@ -30,7 +31,10 @@ func main() {
 	cliapp.UsageText = "clickhouse-backup <command> [-t, --tables=<db>.<table>] <backup_name>"
 	cliapp.Description = "Run as 'root' or 'clickhouse' user"
 	cliapp.Version = version
-
+	// @todo add GCS and Azure support when resolve https://github.com/googleapis/google-cloud-go/issues/8169 and https://github.com/Azure/azure-sdk-for-go/issues/21047
+	if strings.HasSuffix(version, "fips") {
+		_ = os.Setenv("AWS_USE_FIPS_ENDPOINT", "true")
+	}
 	cliapp.Flags = []cli.Flag{
 		cli.StringFlag{
 			Name:   "config, c",

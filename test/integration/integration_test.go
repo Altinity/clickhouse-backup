@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -400,6 +401,98 @@ func init() {
 	log.SetLevelFromString(logLevel)
 }
 
+func TestFIPS(t *testing.T) {
+	ch := &TestClickHouse{}
+	r := require.New(t)
+	ch.connectWithWait(r, 1*time.Second, 10*time.Second)
+	fipsBackupName := fmt.Sprintf("fips_backup_%d", rand.Int())
+	r.NoError(dockerExec("clickhouse", "rm", "-fv", "/etc/apt/sources.list.d/clickhouse.list"))
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.3") < 0 {
+		installDebIfNotExists(r, "clickhouse", "curl", "gettext-base", "bsdmainutils", "dnsutils", "git", "ca-certificates")
+	} else {
+		installDebIfNotExists(r, "clickhouse", "curl", "gettext-base", "bsdextrautils", "dnsutils", "git", "ca-certificates")
+	}
+	r.NoError(dockerCP("config-s3-fips.yml", "clickhouse:/etc/clickhouse-backup/config.yml.fips-template"))
+	r.NoError(dockerExec("clickhouse", "update-ca-certificates"))
+	r.NoError(dockerExec("clickhouse", "git", "clone", "--depth", "1", "https://github.com/drwetter/testssl.sh.git", "/opt/testssl"))
+	r.NoError(dockerExec("clickhouse", "chmod", "+x", "/opt/testssl/testssl.sh"))
+
+	generateCerts := func(certType, keyLength, curveType string) {
+		r.NoError(dockerExec("clickhouse", "bash", "-xce", "openssl rand -out /root/.rnd 2048"))
+		switch certType {
+		case "rsa":
+			r.NoError(dockerExec("clickhouse", "bash", "-xce", fmt.Sprintf("openssl genrsa -out /etc/clickhouse-backup/ca-key.pem %s", keyLength)))
+			r.NoError(dockerExec("clickhouse", "bash", "-xce", fmt.Sprintf("openssl genrsa -out /etc/clickhouse-backup/server-key.pem %s", keyLength)))
+		case "ecdsa":
+			r.NoError(dockerExec("clickhouse", "bash", "-xce", fmt.Sprintf("openssl ecparam -name %s -genkey -out /etc/clickhouse-backup/ca-key.pem", curveType)))
+			r.NoError(dockerExec("clickhouse", "bash", "-xce", fmt.Sprintf("openssl ecparam -name %s -genkey -out /etc/clickhouse-backup/server-key.pem", curveType)))
+		}
+		r.NoError(dockerExec("clickhouse", "bash", "-xce", "openssl req -subj \"/O=altinity\" -x509 -new -nodes -key /etc/clickhouse-backup/ca-key.pem -sha256 -days 365000 -out /etc/clickhouse-backup/ca-cert.pem"))
+		r.NoError(dockerExec("clickhouse", "bash", "-xce", "openssl req -subj \"/CN=localhost\" -addext \"subjectAltName = DNS:localhost,DNS:*.cluster.local\" -new -key /etc/clickhouse-backup/server-key.pem -out /etc/clickhouse-backup/server-req.csr"))
+		r.NoError(dockerExec("clickhouse", "bash", "-xce", "openssl x509 -req -days 365000 -extensions SAN -extfile <(printf \"\\n[SAN]\\nsubjectAltName=DNS:localhost,DNS:*.cluster.local\") -in /etc/clickhouse-backup/server-req.csr -out /etc/clickhouse-backup/server-cert.pem -CA /etc/clickhouse-backup/ca-cert.pem -CAkey /etc/clickhouse-backup/ca-key.pem -CAcreateserial"))
+	}
+	r.NoError(dockerExec("clickhouse", "bash", "-c", "cat /etc/clickhouse-backup/config.yml.fips-template | envsubst > /etc/clickhouse-backup/config.yml"))
+
+	generateCerts("rsa", "4096", "")
+	createSQL := "CREATE TABLE default.fips_table (v UInt64) ENGINE=MergeTree() ORDER BY tuple()"
+	ch.queryWithNoError(r, createSQL)
+	r.NoError(dockerExec("clickhouse", "bash", "-ce", "clickhouse-backup-fips create_remote --tables=default.fips_table "+fipsBackupName))
+	r.NoError(dockerExec("clickhouse", "bash", "-ce", "clickhouse-backup-fips delete local "+fipsBackupName))
+	r.NoError(dockerExec("clickhouse", "bash", "-ce", "clickhouse-backup-fips restore_remote --tables=default.fips_table "+fipsBackupName))
+	r.NoError(dockerExec("clickhouse", "bash", "-ce", "clickhouse-backup-fips delete local "+fipsBackupName))
+	r.NoError(dockerExec("clickhouse", "bash", "-ce", "clickhouse-backup-fips delete remote "+fipsBackupName))
+
+	log.Info("Run `clickhouse-backup-fips server` in background")
+	r.NoError(dockerExec("-d", "clickhouse", "bash", "-ce", "AWS_USE_FIPS_ENDPOINT=true clickhouse-backup-fips server &>>/tmp/clickhouse-backup-server-fips.log"))
+	time.Sleep(1 * time.Second)
+
+	runClickHouseClientInsertSystemBackupActions(r, ch, []string{fmt.Sprintf("create_remote --tables=default.fips_table %s", fipsBackupName)}, true)
+	runClickHouseClientInsertSystemBackupActions(r, ch, []string{fmt.Sprintf("delete local %s", fipsBackupName)}, false)
+	runClickHouseClientInsertSystemBackupActions(r, ch, []string{fmt.Sprintf("restore_remote --tables=default.fips_table  %s", fipsBackupName)}, true)
+	runClickHouseClientInsertSystemBackupActions(r, ch, []string{
+		fmt.Sprintf("delete local %s", fipsBackupName),
+		fmt.Sprintf("delete remote %s", fipsBackupName),
+	}, false)
+
+	inProgressActions := make([]struct {
+		Command string `ch:"command"`
+		Status  string `ch:"status"`
+	}, 0)
+	r.NoError(ch.chbackend.StructSelect(&inProgressActions,
+		"SELECT command, status FROM system.backup_actions WHERE command LIKE ? AND status IN (?,?)",
+		fmt.Sprintf("%%%s%%", fipsBackupName), status.InProgressStatus, status.ErrorStatus,
+	))
+	r.Equal(0, len(inProgressActions), "inProgressActions=%+v", inProgressActions)
+	r.NoError(dockerExec("clickhouse", "pkill", "-n", "-f", "clickhouse-backup-fips"))
+
+	testsslCerts := func(certType, keyLength, curveName string, cipherList ...string) {
+		generateCerts(certType, keyLength, curveName)
+		log.Infof("Run `clickhouse-backup-fips server` in background for %s %s %s", certType, keyLength, curveName)
+		r.NoError(dockerExec("-d", "clickhouse", "bash", "-ce", "AWS_USE_FIPS_ENDPOINT=true clickhouse-backup-fips server &>>/tmp/clickhouse-backup-server-fips.log"))
+		time.Sleep(1 * time.Second)
+
+		r.NoError(dockerExec("clickhouse", "bash", "-ce", "rm -rf /tmp/testssl* && /opt/testssl/testssl.sh -e -s -oC /tmp/testssl.csv --color 0 --disable-rating --quiet -n min --mode parallel --add-ca /etc/clickhouse-backup/ca-cert.pem localhost:7171"))
+		out, err := dockerExecOut("clickhouse", "bash", "-ce", fmt.Sprintf("grep -c -E '%s' /tmp/testssl.csv", strings.Join(cipherList, "|")))
+		r.NoError(err)
+		r.Equal(strconv.Itoa(len(cipherList)), strings.Trim(out, " \t\r\n"))
+
+		inProgressActions := make([]struct {
+			Command string `ch:"command"`
+			Status  string `ch:"status"`
+		}, 0)
+		r.NoError(ch.chbackend.StructSelect(&inProgressActions,
+			"SELECT command, status FROM system.backup_actions WHERE command LIKE ? AND status IN (?,?)",
+			fmt.Sprintf("%%%s%%", fipsBackupName), status.InProgressStatus, status.ErrorStatus,
+		))
+		r.Equal(0, len(inProgressActions), "inProgressActions=%+v", inProgressActions)
+		r.NoError(dockerExec("clickhouse", "pkill", "-n", "-f", "clickhouse-backup-fips"))
+	}
+	// https://www.perplexity.ai/search/0920f1e8-59ec-4e14-b779-ba7b2e037196
+	testsslCerts("rsa", "4096", "", "ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-AES256-GCM-SHA384", "AES128-GCM-SHA256", "AES256-GCM-SHA384")
+	testsslCerts("ecdsa", "", "prime256v1", "ECDHE-ECDSA-AES128-GCM-SHA256", "ECDHE-ECDSA-AES256-GCM-SHA384")
+	r.NoError(ch.chbackend.DropTable(clickhouse.Table{Database: "default", Name: "fips_table"}, createSQL, "", false, 0))
+
+}
 func TestDoRestoreRBAC(t *testing.T) {
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.4") == -1 {
 		t.Skipf("Test skipped, RBAC not available for %s version", os.Getenv("CLICKHOUSE_VERSION"))
@@ -601,27 +694,21 @@ func TestIntegrationCustom(t *testing.T) {
 	for _, customType := range []string{"restic", "kopia", "rsync"} {
 		if customType == "rsync" {
 			uploadSSHKeys(r)
-			installDebIfNotExists(r, "clickhouse", "openssh-client")
-			installDebIfNotExists(r, "clickhouse", "rsync")
-			installDebIfNotExists(r, "clickhouse", "jq")
+			installDebIfNotExists(r, "clickhouse", "openssh-client", "rsync", "jq")
 		}
 		if customType == "restic" {
 			r.NoError(dockerExec("minio", "rm", "-rf", "/data/clickhouse/*"))
-			installDebIfNotExists(r, "clickhouse", "curl")
-			installDebIfNotExists(r, "clickhouse", "jq")
-			installDebIfNotExists(r, "clickhouse", "bzip2")
+			installDebIfNotExists(r, "clickhouse", "curl", "jq", "bzip2")
 			r.NoError(dockerExec("clickhouse", "bash", "-xec", "RELEASE_TAG=$(curl -H 'Accept: application/json' -sL https://github.com/restic/restic/releases/latest | jq -c -r -M '.tag_name'); RELEASE=$(echo ${RELEASE_TAG} | sed -e 's/v//'); curl -sfL \"https://github.com/restic/restic/releases/download/${RELEASE_TAG}/restic_${RELEASE}_linux_amd64.bz2\" | bzip2 -d > /bin/restic; chmod +x /bin/restic"))
 		}
 		if customType == "kopia" {
 			r.NoError(dockerExec("minio", "bash", "-ce", "rm -rfv /data/clickhouse/*"))
-			installDebIfNotExists(r, "clickhouse", "pgp")
-			installDebIfNotExists(r, "clickhouse", "curl")
+			installDebIfNotExists(r, "clickhouse", "pgp", "curl")
 			r.NoError(dockerExec("clickhouse", "apt-get", "install", "-y", "ca-certificates"))
 			r.NoError(dockerExec("clickhouse", "update-ca-certificates"))
 			r.NoError(dockerExec("clickhouse", "bash", "-ce", "curl -sfL https://kopia.io/signing-key | gpg --dearmor -o /usr/share/keyrings/kopia-keyring.gpg"))
 			r.NoError(dockerExec("clickhouse", "bash", "-ce", "echo 'deb [signed-by=/usr/share/keyrings/kopia-keyring.gpg] https://packages.kopia.io/apt/ stable main' > /etc/apt/sources.list.d/kopia.list"))
-			installDebIfNotExists(r, "clickhouse", "kopia")
-			installDebIfNotExists(r, "clickhouse", "jq")
+			installDebIfNotExists(r, "clickhouse", "kopia", "jq")
 		}
 		r.NoError(dockerCP("config-custom-"+customType+".yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 		r.NoError(dockerExec("clickhouse", "mkdir", "-pv", "/custom/"+customType))
@@ -1606,35 +1693,35 @@ func testAPIRestart(r *require.Assertions, ch *TestClickHouse) {
 	r.Equal(uint64(0), inProgressActions)
 }
 
-func testAPIBackupActions(r *require.Assertions, ch *TestClickHouse) {
-	runClickHouseClientInsertSystemBackupActions := func(commands []string, needWait bool) {
-		sql := "INSERT INTO system.backup_actions(command) " + "VALUES ('" + strings.Join(commands, "'),('") + "')"
-		out, err := dockerExecOut("clickhouse", "bash", "-ce", fmt.Sprintf("clickhouse client --echo -mn -q \"%s\"", sql))
-		log.Debug(out)
-		r.NoError(err)
-		if needWait {
-			for _, command := range commands {
-				for {
-					time.Sleep(500 * time.Millisecond)
-					var commandStatus string
-					r.NoError(ch.chbackend.SelectSingleRowNoCtx(&commandStatus, "SELECT status FROM system.backup_actions WHERE command=?", command))
-					if commandStatus != status.InProgressStatus {
-						break
-					}
+func runClickHouseClientInsertSystemBackupActions(r *require.Assertions, ch *TestClickHouse, commands []string, needWait bool) {
+	sql := "INSERT INTO system.backup_actions(command) " + "VALUES ('" + strings.Join(commands, "'),('") + "')"
+	out, err := dockerExecOut("clickhouse", "bash", "-ce", fmt.Sprintf("clickhouse client --echo -mn -q \"%s\"", sql))
+	log.Debug(out)
+	r.NoError(err)
+	if needWait {
+		for _, command := range commands {
+			for {
+				time.Sleep(500 * time.Millisecond)
+				var commandStatus string
+				r.NoError(ch.chbackend.SelectSingleRowNoCtx(&commandStatus, "SELECT status FROM system.backup_actions WHERE command=?", command))
+				if commandStatus != status.InProgressStatus {
+					break
 				}
 			}
 		}
 	}
-	runClickHouseClientInsertSystemBackupActions([]string{"create_remote actions_backup1"}, true)
-	runClickHouseClientInsertSystemBackupActions([]string{"delete local actions_backup1", "restore_remote --rm actions_backup1"}, true)
-	runClickHouseClientInsertSystemBackupActions([]string{"delete local actions_backup1", "delete remote actions_backup1"}, false)
+}
+func testAPIBackupActions(r *require.Assertions, ch *TestClickHouse) {
+	runClickHouseClientInsertSystemBackupActions(r, ch, []string{"create_remote actions_backup1"}, true)
+	runClickHouseClientInsertSystemBackupActions(r, ch, []string{"delete local actions_backup1", "restore_remote --rm actions_backup1"}, true)
+	runClickHouseClientInsertSystemBackupActions(r, ch, []string{"delete local actions_backup1", "delete remote actions_backup1"}, false)
 
-	runClickHouseClientInsertSystemBackupActions([]string{"create actions_backup2"}, true)
-	runClickHouseClientInsertSystemBackupActions([]string{"upload actions_backup2"}, true)
-	runClickHouseClientInsertSystemBackupActions([]string{"delete local actions_backup2"}, false)
-	runClickHouseClientInsertSystemBackupActions([]string{"download actions_backup2"}, true)
-	runClickHouseClientInsertSystemBackupActions([]string{"restore --rm actions_backup2"}, true)
-	runClickHouseClientInsertSystemBackupActions([]string{"delete local actions_backup2", "delete remote actions_backup2"}, false)
+	runClickHouseClientInsertSystemBackupActions(r, ch, []string{"create actions_backup2"}, true)
+	runClickHouseClientInsertSystemBackupActions(r, ch, []string{"upload actions_backup2"}, true)
+	runClickHouseClientInsertSystemBackupActions(r, ch, []string{"delete local actions_backup2"}, false)
+	runClickHouseClientInsertSystemBackupActions(r, ch, []string{"download actions_backup2"}, true)
+	runClickHouseClientInsertSystemBackupActions(r, ch, []string{"restore --rm actions_backup2"}, true)
+	runClickHouseClientInsertSystemBackupActions(r, ch, []string{"delete local actions_backup2", "delete remote actions_backup2"}, false)
 
 	inProgressActions := make([]struct {
 		Command string `ch:"command"`
@@ -2209,13 +2296,13 @@ func isTestShouldSkip(envName string) bool {
 	return isSkip
 }
 
-func installDebIfNotExists(r *require.Assertions, container, pkg string) {
+func installDebIfNotExists(r *require.Assertions, container string, pkgs ...string) {
 	r.NoError(dockerExec(
 		container,
-		"bash", "-c",
+		"bash", "-xec",
 		fmt.Sprintf(
-			"if [[ '0' == $(dpkg -l %s | grep -c -E \"^ii\\s+%s\" ) ]]; then apt-get -y update; apt-get install -y %s; fi",
-			pkg, pkg, pkg,
+			"export DEBIAN_FRONTEND=noniteractive; if [[ '%d' != $(dpkg -l | grep -c -E \"%s\" ) ]]; then apt-get -y update; apt-get install --no-install-recommends -y %s; fi",
+			len(pkgs), "^ii\\s+"+strings.Join(pkgs, "|^ii\\s+"), strings.Join(pkgs, " "),
 		),
 	))
 }

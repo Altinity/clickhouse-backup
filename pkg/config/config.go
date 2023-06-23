@@ -216,6 +216,8 @@ type APIConfig struct {
 	Secure                        bool   `yaml:"secure" envconfig:"API_SECURE"`
 	CertificateFile               string `yaml:"certificate_file" envconfig:"API_CERTIFICATE_FILE"`
 	PrivateKeyFile                string `yaml:"private_key_file" envconfig:"API_PRIVATE_KEY_FILE"`
+	CAKeyFile                     string `yaml:"ca_cert_file" envconfig:"API_CA_KEY_FILE"`
+	CACertFile                    string `yaml:"ca_key_file" envconfig:"API_CA_CERT_FILE"`
 	CreateIntegrationTables       bool   `yaml:"create_integration_tables" envconfig:"API_CREATE_INTEGRATION_TABLES"`
 	IntegrationTablesHost         string `yaml:"integration_tables_host" envconfig:"API_INTEGRATION_TABLES_HOST"`
 	AllowParallel                 bool   `yaml:"allow_parallel" envconfig:"API_ALLOW_PARALLEL"`

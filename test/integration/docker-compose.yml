@@ -86,11 +86,18 @@ services:
       SFTP_DEBUG: "${SFTP_DEBUG:-false}"
       CLICKHOUSE_DEBUG: "${CLICKHOUSE_DEBUG:-false}"
       GOCOVERDIR: "/tmp/_coverage_/"
+      # fake-gcs-server
 #      STORAGE_EMULATOR_HOST: "http://gsc:8080"
 #      GOOGLE_API_USE_CLIENT_CERTIFICATE: "false"
+      # FIPS
+      QA_AWS_ACCESS_KEY: ${QA_AWS_ACCESS_KEY}
+      QA_AWS_SECRET_KEY: ${QA_AWS_SECRET_KEY}
+      QA_AWS_BUCKET: ${QA_AWS_BUCKET}
+      QA_AWS_REGION: ${QA_AWS_REGION}
     volumes:
       - ./backup-user.xml:/etc/clickhouse-server/users.d/backup-user.xml
       - ${CLICKHOUSE_BACKUP_BIN:-../../clickhouse-backup/clickhouse-backup-race}:/usr/bin/clickhouse-backup
+      - ${CLICKHOUSE_BACKUP_BIN_FIPS:-../../clickhouse-backup/clickhouse-backup-race-fips}:/usr/bin/clickhouse-backup-fips
       - ./credentials.json:/etc/clickhouse-backup/credentials.json
       - ./server.crt:/etc/clickhouse-server/server.crt
       - ./server.key:/etc/clickhouse-server/server.key

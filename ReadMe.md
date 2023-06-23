@@ -521,8 +521,13 @@ api:
   username: ""                 # API_USERNAME, basic authorization for API endpoint
   password: ""                 # API_PASSWORD
   secure: false                # API_SECURE, use TLS for listen API socket
-  certificate_file: ""         # API_CERTIFICATE_FILE
-  private_key_file: ""         # API_PRIVATE_KEY_FILE
+  ca_cert_file: ""             # API_CA_CERT_FILE
+                               # openssl genrsa -out /etc/clickhouse-backup/ca-key.pem 4096 
+                               # openssl req -subj "/O=altinity" -x509 -new -nodes -key /etc/clickhouse-backup/ca-key.pem -sha256 -days 365 -out /etc/clickhouse-backup/ca-cert.pem
+  private_key_file: ""         # API_PRIVATE_KEY_FILE, openssl genrsa -out /etc/clickhouse-backup/server-key.pem 4096
+  certificate_file: ""         # API_CERTIFICATE_FILE, 
+                               # openssl req -subj "/CN=localhost" -addext "subjectAltName = DNS:localhost,DNS:*.cluster.local" -new -key /etc/clickhouse-backup/server-key.pem -out /etc/clickhouse-backup/server-req.csr
+                               # openssl x509 -req -days 365000 -extensions SAN -extfile <(printf "\n[SAN]\nsubjectAltName=DNS:localhost,DNS:*.cluster.local") -in /etc/clickhouse-backup/server-req.csr -out /etc/clickhouse-backup/server-cert.pem -CA /etc/clickhouse-backup/ca-cert.pem -CAkey /etc/clickhouse-backup/ca-key.pem -CAcreateserial 
   integration_tables_host: ""  # API_INTEGRATION_TABLES_HOST, allow using DNS name to connect in `system.backup_list` and `system.backup_actions`
   allow_parallel: false        # API_ALLOW_PARALLEL, enable parallel operations, this allows for significant memory allocation and spawns go-routines, don't enable it if you are not sure
   create_integration_tables: false # API_CREATE_INTEGRATION_TABLES, create `system.backup_list` and `system.backup_actions` 
