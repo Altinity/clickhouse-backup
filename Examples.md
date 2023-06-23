@@ -505,11 +505,11 @@ spec:
             - name: clickhouse-backup
 ```
 
-### How to use clickhouse-backup + clickhouse-operator in FIPS compatible mode in Kubernetes
+### How to use clickhouse-backup + clickhouse-operator in FIPS compatible mode in Kubernetes for S3
 
-use `altinity/clickhouse-backup:X.X.X-fips` as image 
-use `AWS_USE_FIPS_ENDPOINT: true` environment variable in `clickhouse-backup` container 
-run following commands to generate self-signed TLS keys for secure clickhouse-backup API endpoint
+use `altinity/clickhouse-backup:X.X.X-fips` as image (where X.X.X version number) 
+run following commands to generate self-signed TLS keys for secure clickhouse-backup API endpoint,
+you need periodically renew this certs, use https://github.com/cert-manager/cert-manager for it in kubernetes
 ```bash
    openssl genrsa -out ca-key.pem 4096
    openssl req -subj "/O=altinity" -x509 -new -nodes -key ca-key.pem -sha256 -days 365000 -out ca-cert.pem
@@ -526,6 +526,14 @@ kind: ConfigMap
 metadata:
    name: backup-tls-certs
 data:
+   ca-key.pem: |-
+      -----BEGIN PRIVATE KEY-----
+      data from openssl related command described above
+      -----END PRIVATE KEY-----
+   ca-cert.pem: |-
+      -----BEGIN PRIVATE KEY-----
+      data from openssl related command described above
+      -----END PRIVATE KEY-----
    server-key.pem: |-
       -----BEGIN PRIVATE KEY-----
       data from openssl related command described above

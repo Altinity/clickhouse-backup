@@ -436,11 +436,11 @@ func TestFIPS(t *testing.T) {
 	generateCerts("rsa", "4096", "")
 	createSQL := "CREATE TABLE default.fips_table (v UInt64) ENGINE=MergeTree() ORDER BY tuple()"
 	ch.queryWithNoError(r, createSQL)
-	r.NoError(dockerExec("clickhouse", "bash", "-ce", "AWS_USE_FIPS_ENDPOINT=true clickhouse-backup-fips create_remote --tables=default.fips_table "+fipsBackupName))
-	r.NoError(dockerExec("clickhouse", "bash", "-ce", "AWS_USE_FIPS_ENDPOINT=true clickhouse-backup-fips delete local "+fipsBackupName))
-	r.NoError(dockerExec("clickhouse", "bash", "-ce", "AWS_USE_FIPS_ENDPOINT=true clickhouse-backup-fips restore_remote --tables=default.fips_table "+fipsBackupName))
-	r.NoError(dockerExec("clickhouse", "bash", "-ce", "AWS_USE_FIPS_ENDPOINT=true clickhouse-backup-fips delete local "+fipsBackupName))
-	r.NoError(dockerExec("clickhouse", "bash", "-ce", "AWS_USE_FIPS_ENDPOINT=true clickhouse-backup-fips delete remote "+fipsBackupName))
+	r.NoError(dockerExec("clickhouse", "bash", "-ce", "clickhouse-backup-fips create_remote --tables=default.fips_table "+fipsBackupName))
+	r.NoError(dockerExec("clickhouse", "bash", "-ce", "clickhouse-backup-fips delete local "+fipsBackupName))
+	r.NoError(dockerExec("clickhouse", "bash", "-ce", "clickhouse-backup-fips restore_remote --tables=default.fips_table "+fipsBackupName))
+	r.NoError(dockerExec("clickhouse", "bash", "-ce", "clickhouse-backup-fips delete local "+fipsBackupName))
+	r.NoError(dockerExec("clickhouse", "bash", "-ce", "clickhouse-backup-fips delete remote "+fipsBackupName))
 
 	log.Info("Run `clickhouse-backup-fips server` in background")
 	r.NoError(dockerExec("-d", "clickhouse", "bash", "-ce", "AWS_USE_FIPS_ENDPOINT=true clickhouse-backup-fips server &>>/tmp/clickhouse-backup-server-fips.log"))
