@@ -521,7 +521,7 @@ api:
   username: ""                 # API_USERNAME, basic authorization for API endpoint
   password: ""                 # API_PASSWORD
   secure: false                # API_SECURE, use TLS for listen API socket
-  ca_cert_file: ""             # API_CA_CERT_FILE,
+  ca_cert_file: ""             # API_CA_CERT_FILE
                                # openssl genrsa -out /etc/clickhouse-backup/ca-key.pem 4096 
                                # openssl req -subj "/O=altinity" -x509 -new -nodes -key /etc/clickhouse-backup/ca-key.pem -sha256 -days 365 -out /etc/clickhouse-backup/ca-cert.pem
   private_key_file: ""         # API_PRIVATE_KEY_FILE, openssl genrsa -out /etc/clickhouse-backup/server-key.pem 4096
