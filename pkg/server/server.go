@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -256,6 +258,19 @@ func (api *APIServer) registerHTTPHandlers() *http.Server {
 		Addr:    api.config.API.ListenAddr,
 		Handler: r,
 	}
+	if api.config.API.CACertFile != "" {
+		caCert, err := os.ReadFile(api.config.API.CACertFile)
+		if err != nil {
+			api.log.Fatalf("api initialization error %s: %v", api.config.API.CAKeyFile, err)
+		}
+		caCertPool := x509.NewCertPool()
+		caCertPool.AppendCertsFromPEM(caCert)
+		srv.TLSConfig = &tls.Config{
+			ClientCAs:  caCertPool,
+			ClientAuth: tls.RequireAndVerifyClientCert,
+		}
+	}
+
 	return srv
 }
 

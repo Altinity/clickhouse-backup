@@ -40,5 +40,6 @@ api:
   integration_tables_host: "localhost"
   allow_parallel: false
   secure: true
+  ca_cert_file: /etc/clickhouse-backup/ca-cert.pem
   private_key_file: /etc/clickhouse-backup/server-key.pem
   certificate_file: /etc/clickhouse-backup/server-cert.pem
