@@ -124,7 +124,10 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 			log.Debugf("%s disk have no parts", backupDisk.Name)
 			continue
 		}
-		dstParentDir := dstDataPaths[backupDiskName]
+		dstParentDir, dstParentDirExists := dstDataPaths[backupDiskName]
+		if !dstParentDirExists {
+			return fmt.Errorf("dstDataPaths=%#v, not contains %s", dstDataPaths, backupDiskName)
+		}
 		if toDetached {
 			dstParentDir = filepath.Join(dstParentDir, "detached")
 		}

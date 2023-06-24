@@ -401,10 +401,40 @@ func init() {
 	log.SetLevelFromString(logLevel)
 }
 
+func TestInnerTablesMaterializedView(t *testing.T) {
+	ch := &TestClickHouse{}
+	r := require.New(t)
+	ch.connectWithWait(r, 1*time.Second, 10*time.Second)
+	defer ch.chbackend.Close()
+
+	ch.queryWithNoError(r, "CREATE DATABASE test_mv")
+	ch.queryWithNoError(r, "CREATE TABLE test_mv.src_table (v UInt64) ENGINE=MergeTree() ORDER BY v")
+	ch.queryWithNoError(r, "CREATE TABLE test_mv.dst_table (v UInt64) ENGINE=MergeTree() ORDER BY v")
+	ch.queryWithNoError(r, "CREATE MATERIALIZED VIEW test_mv.mv_with_inner (v UInt64) ENGINE=MergeTree() ORDER BY v AS SELECT v FROM test_mv.src_table")
+	ch.queryWithNoError(r, "CREATE MATERIALIZED VIEW test_mv.mv_with_dst TO test_mv.dst_table AS SELECT v FROM test_mv.src_table")
+	ch.queryWithNoError(r, "INSERT INTO test_mv.src_table SELECT number FROM numbers(100)")
+	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "test_mv", "--tables=test_mv.mv_with*,test_mv.dst*"))
+	dropSQL := "DROP DATABASE test_mv"
+	isAtomic, err := ch.chbackend.IsAtomic("test_mv")
+	r.NoError(err)
+	if isAtomic {
+		dropSQL += " NO DELAY"
+	}
+	ch.queryWithNoError(r, dropSQL)
+	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "restore", "test_mv", "--tables=test_mv.mv_with*,test_mv.dst*"))
+	var rowCnt uint64
+	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&rowCnt, "SELECT count() FROM test_mv.mv_with_inner"))
+	r.Equal(uint64(100), rowCnt)
+	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&rowCnt, "SELECT count() FROM test_mv.mv_with_dst"))
+	r.Equal(uint64(100), rowCnt)
+	ch.queryWithNoError(r, "DROP DATABASE test_mv")
+}
 func TestFIPS(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
 	ch.connectWithWait(r, 1*time.Second, 10*time.Second)
+	defer ch.chbackend.Close()
 	fipsBackupName := fmt.Sprintf("fips_backup_%d", rand.Int())
 	r.NoError(dockerExec("clickhouse", "rm", "-fv", "/etc/apt/sources.list.d/clickhouse.list"))
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.3") < 0 {
@@ -465,7 +495,7 @@ func TestFIPS(t *testing.T) {
 	r.Equal(0, len(inProgressActions), "inProgressActions=%+v", inProgressActions)
 	r.NoError(dockerExec("clickhouse", "pkill", "-n", "-f", "clickhouse-backup-fips"))
 
-	testsslCerts := func(certType, keyLength, curveName string, cipherList ...string) {
+	testTLSCerts := func(certType, keyLength, curveName string, cipherList ...string) {
 		generateCerts(certType, keyLength, curveName)
 		log.Infof("Run `clickhouse-backup-fips server` in background for %s %s %s", certType, keyLength, curveName)
 		r.NoError(dockerExec("-d", "clickhouse", "bash", "-ce", "AWS_USE_FIPS_ENDPOINT=true clickhouse-backup-fips server &>>/tmp/clickhouse-backup-server-fips.log"))
@@ -488,8 +518,8 @@ func TestFIPS(t *testing.T) {
 		r.NoError(dockerExec("clickhouse", "pkill", "-n", "-f", "clickhouse-backup-fips"))
 	}
 	// https://www.perplexity.ai/search/0920f1e8-59ec-4e14-b779-ba7b2e037196
-	testsslCerts("rsa", "4096", "", "ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-AES256-GCM-SHA384", "AES128-GCM-SHA256", "AES256-GCM-SHA384")
-	testsslCerts("ecdsa", "", "prime256v1", "ECDHE-ECDSA-AES128-GCM-SHA256", "ECDHE-ECDSA-AES256-GCM-SHA384")
+	testTLSCerts("rsa", "4096", "", "ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-AES256-GCM-SHA384", "AES128-GCM-SHA256", "AES256-GCM-SHA384")
+	testTLSCerts("ecdsa", "", "prime256v1", "ECDHE-ECDSA-AES128-GCM-SHA256", "ECDHE-ECDSA-AES256-GCM-SHA384")
 	r.NoError(ch.chbackend.DropTable(clickhouse.Table{Database: "default", Name: "fips_table"}, createSQL, "", false, 0))
 
 }
@@ -1501,7 +1531,7 @@ func TestGetPartitionId(t *testing.T) {
 		testCases[0].CreateTableSQL = strings.Replace(testCases[0].CreateTableSQL, "UUID 'b45e751f-6c06-42a3-ab4a-f5bb9ac3716e'", "", 1)
 	}
 	for _, tc := range testCases {
-		err, partitionId, partitionName := partition.GetPartitionIdAndName(context.Background(), ch.chbackend, tc.Database, tc.Table, tc.CreateTableSQL, tc.Partition)
+		partitionId, partitionName, err := partition.GetPartitionIdAndName(context.Background(), ch.chbackend, tc.Database, tc.Table, tc.CreateTableSQL, tc.Partition)
 		assert.NoError(t, err)
 		assert.Equal(t, tc.ExpectedId, partitionId)
 		assert.Equal(t, tc.ExpectedName, partitionName)

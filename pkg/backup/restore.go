@@ -70,7 +70,6 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 	}
 	backupMetafileLocalPaths := []string{path.Join(defaultDataPath, "backup", backupName, "metadata.json")}
 	var backupMetadataBody []byte
-	isEmbedded := false
 	embeddedBackupPath, err := b.ch.GetEmbeddedBackupPath(disks)
 	if err == nil && embeddedBackupPath != "" {
 		backupMetafileLocalPaths = append(backupMetafileLocalPaths, path.Join(embeddedBackupPath, backupName, "metadata.json"))
@@ -82,7 +81,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 	for _, metadataPath := range backupMetafileLocalPaths {
 		backupMetadataBody, err = os.ReadFile(metadataPath)
 		if err == nil && embeddedBackupPath != "" {
-			isEmbedded = strings.HasPrefix(metadataPath, embeddedBackupPath)
+			b.isEmbedded = strings.HasPrefix(metadataPath, embeddedBackupPath)
 			break
 		}
 	}
@@ -120,13 +119,13 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 		return err
 	}
 	needRestart := false
-	if rbacOnly && !isEmbedded {
+	if rbacOnly && !b.isEmbedded {
 		if err := b.restoreRBAC(ctx, backupName, disks); err != nil {
 			return err
 		}
 		needRestart = true
 	}
-	if configsOnly && !isEmbedded {
+	if configsOnly && !b.isEmbedded {
 		if err := b.restoreConfigs(backupName, disks); err != nil {
 			return err
 		}
@@ -153,12 +152,12 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 	}
 
 	if schemaOnly || (schemaOnly == dataOnly) {
-		if err := b.RestoreSchema(ctx, backupName, tablePattern, dropTable, ignoreDependencies, disks, isEmbedded); err != nil {
+		if err := b.RestoreSchema(ctx, backupName, tablePattern, dropTable, ignoreDependencies, disks); err != nil {
 			return err
 		}
 	}
 	if dataOnly || (schemaOnly == dataOnly) {
-		if err := b.RestoreData(ctx, backupName, tablePattern, partitions, disks, isEmbedded); err != nil {
+		if err := b.RestoreData(ctx, backupName, tablePattern, partitions, disks); err != nil {
 			return err
 		}
 	}
@@ -298,7 +297,7 @@ func (b *Backuper) restoreBackupRelatedDir(backupName, backupPrefixDir, destinat
 }
 
 // RestoreSchema - restore schemas matched by tablePattern from backupName
-func (b *Backuper) RestoreSchema(ctx context.Context, backupName, tablePattern string, dropTable, ignoreDependencies bool, disks []clickhouse.Disk, isEmbedded bool) error {
+func (b *Backuper) RestoreSchema(ctx context.Context, backupName, tablePattern string, dropTable, ignoreDependencies bool, disks []clickhouse.Disk) error {
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "restore",
@@ -313,7 +312,7 @@ func (b *Backuper) RestoreSchema(ctx context.Context, backupName, tablePattern s
 		return err
 	}
 	metadataPath := path.Join(defaultDataPath, "backup", backupName, "metadata")
-	if isEmbedded {
+	if b.isEmbedded {
 		defaultDataPath, err = b.ch.GetEmbeddedBackupPath(disks)
 		if err != nil {
 			return err
@@ -330,7 +329,7 @@ func (b *Backuper) RestoreSchema(ctx context.Context, backupName, tablePattern s
 	if tablePattern == "" {
 		tablePattern = "*"
 	}
-	tablesForRestore, _, err := getTableListByPatternLocal(ctx, b.cfg, b.ch, metadataPath, tablePattern, dropTable, nil)
+	tablesForRestore, _, err := b.getTableListByPatternLocal(ctx, metadataPath, tablePattern, dropTable, nil)
 	if err != nil {
 		return err
 	}
@@ -348,7 +347,7 @@ func (b *Backuper) RestoreSchema(ctx context.Context, backupName, tablePattern s
 		return dropErr
 	}
 	var restoreErr error
-	if isEmbedded {
+	if b.isEmbedded {
 		restoreErr = b.restoreSchemaEmbedded(ctx, backupName, tablesForRestore, defaultDataPath)
 	} else {
 		restoreErr = b.restoreSchemaRegular(tablesForRestore, version, log)
@@ -549,7 +548,7 @@ func (b *Backuper) dropExistsTables(tablesForDrop ListOfTables, ignoreDependenci
 }
 
 // RestoreData - restore data for tables matched by tablePattern from backupName
-func (b *Backuper) RestoreData(ctx context.Context, backupName string, tablePattern string, partitions []string, disks []clickhouse.Disk, isEmbedded bool) error {
+func (b *Backuper) RestoreData(ctx context.Context, backupName string, tablePattern string, partitions []string, disks []clickhouse.Disk) error {
 	startRestore := time.Now()
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
@@ -574,13 +573,13 @@ func (b *Backuper) RestoreData(ctx context.Context, backupName string, tablePatt
 	var tablesForRestore ListOfTables
 	var partitionsNameList map[metadata.TableTitle][]string
 	metadataPath := path.Join(defaultDataPath, "backup", backupName, "metadata")
-	if isEmbedded {
+	if b.isEmbedded {
 		metadataPath = path.Join(diskMap[b.cfg.ClickHouse.EmbeddedBackupDisk], backupName, "metadata")
 	}
 	if backup.Legacy {
 		tablesForRestore, err = b.ch.GetBackupTablesLegacy(backupName, disks)
 	} else {
-		tablesForRestore, partitionsNameList, err = getTableListByPatternLocal(ctx, b.cfg, b.ch, metadataPath, tablePattern, false, partitions)
+		tablesForRestore, partitionsNameList, err = b.getTableListByPatternLocal(ctx, metadataPath, tablePattern, false, partitions)
 	}
 	if err != nil {
 		return err
@@ -589,7 +588,7 @@ func (b *Backuper) RestoreData(ctx context.Context, backupName string, tablePatt
 		return fmt.Errorf("no have found schemas by %s in %s", tablePattern, backupName)
 	}
 	log.Debugf("found %d tables with data in backup", len(tablesForRestore))
-	if isEmbedded {
+	if b.isEmbedded {
 		err = b.restoreDataEmbedded(ctx, backupName, tablesForRestore, metadataPath, partitionsNameList)
 	} else {
 		err = b.restoreDataRegular(ctx, backupName, tablePattern, tablesForRestore, diskMap, disks, log)

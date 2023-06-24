@@ -292,7 +292,21 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 	for i, s := range skipDatabases {
 		skipDatabaseNames[i] = s.Name
 	}
-	allTablesSQL, err := ch.prepareAllTablesSQL(ctx, tablePattern, err, skipDatabaseNames, settings)
+	isSystemTablesFieldPresent := make([]IsSystemTablesFieldPresent, 0)
+	isFieldPresentSQL := `
+		SELECT 
+			countIf(name='data_path') is_data_path_present, 
+			countIf(name='data_paths') is_data_paths_present, 
+			countIf(name='uuid') is_uuid_present, 
+			countIf(name='create_table_query') is_create_table_query_present, 
+			countIf(name='total_bytes') is_total_bytes_present 
+		FROM system.columns WHERE database='system' AND table='tables'
+	`
+	if err = ch.SelectContext(ctx, &isSystemTablesFieldPresent, isFieldPresentSQL); err != nil {
+		return nil, err
+	}
+
+	allTablesSQL := ch.prepareGetTablesSQL(tablePattern, skipDatabaseNames, settings, isSystemTablesFieldPresent)
 	if err != nil {
 		return nil, err
 	}
@@ -325,32 +339,65 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 	}
 	for i, table := range tables {
 		if table.TotalBytes == 0 && !table.Skip && strings.HasSuffix(table.Engine, "Tree") {
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			default:
-				tables[i].TotalBytes = ch.getTableSizeFromParts(ctx, tables[i])
-			}
+			tables[i].TotalBytes = ch.getTableSizeFromParts(ctx, tables[i])
+		}
+	}
+	// https://github.com/Altinity/clickhouse-backup/issues/613
+	if !ch.Config.UseEmbeddedBackupRestore {
+		if tables, err = ch.enrichTablesByInnerDependencies(ctx, tables, metadataPath, settings, isSystemTablesFieldPresent); err != nil {
+			return nil, err
 		}
 	}
 	return tables, nil
 }
 
-func (ch *ClickHouse) prepareAllTablesSQL(ctx context.Context, tablePattern string, err error, skipDatabases []string, settings map[string]bool) (string, error) {
-	isSystemTablesFieldPresent := make([]IsSystemTablesFieldPresent, 0)
-	isFieldPresentSQL := `
-		SELECT 
-			countIf(name='data_path') is_data_path_present, 
-			countIf(name='data_paths') is_data_paths_present, 
-			countIf(name='uuid') is_uuid_present, 
-			countIf(name='create_table_query') is_create_table_query_present, 
-			countIf(name='total_bytes') is_total_bytes_present 
-		FROM system.columns WHERE database='system' AND table='tables'
-	`
-	if err = ch.SelectContext(ctx, &isSystemTablesFieldPresent, isFieldPresentSQL); err != nil {
-		return "", err
+// https://github.com/Altinity/clickhouse-backup/issues/613
+func (ch *ClickHouse) enrichTablesByInnerDependencies(ctx context.Context, tables []Table, metadataPath string, settings map[string]bool, isSystemTablesFieldPresent []IsSystemTablesFieldPresent) ([]Table, error) {
+	innerTablesMissed := make([]string, 0)
+	for _, t := range tables {
+		if !t.Skip && (strings.HasPrefix(t.CreateTableQuery, "ATTACH MATERIALIZED") || strings.HasPrefix(t.CreateTableQuery, "CREATE MATERIALIZED")) {
+			if strings.Contains(t.CreateTableQuery, " TO ") && !strings.Contains(t.CreateTableQuery, " TO INNER UUID") {
+				continue
+			}
+			found := false
+			for j := range tables {
+				if tables[j].Database == t.Database && (tables[j].Name == ".inner."+t.Name || tables[j].Name == ".inner_id."+t.UUID) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				missedInnerTableName := ".inner." + t.Name
+				if t.UUID != "" {
+					missedInnerTableName = ".inner_id." + t.UUID
+				}
+				innerTablesMissed = append(innerTablesMissed, fmt.Sprintf("%s.%s", t.Database, missedInnerTableName))
+			}
+		}
+	}
+	if len(innerTablesMissed) == 0 {
+		return tables, nil
 	}
 
+	missedTablesSQL := ch.prepareGetTablesSQL(strings.Join(innerTablesMissed, ","), nil, settings, isSystemTablesFieldPresent)
+	missedTables := make([]Table, 0)
+	var err error
+	if err = ch.SelectContext(ctx, &missedTables, missedTablesSQL); err != nil {
+		return nil, err
+	}
+	if len(missedTables) == 0 {
+		return tables, nil
+	}
+	for i, t := range missedTables {
+		missedTables[i] = ch.fixVariousVersions(ctx, t, metadataPath)
+		if t.TotalBytes == 0 && !t.Skip && strings.HasSuffix(t.Engine, "Tree") {
+			missedTables[i].TotalBytes = ch.getTableSizeFromParts(ctx, missedTables[i])
+		}
+	}
+	return append(missedTables, tables...), nil
+}
+
+func (ch *ClickHouse) prepareGetTablesSQL(tablePattern string, skipDatabases []string, settings map[string]bool, isSystemTablesFieldPresent []IsSystemTablesFieldPresent) string {
 	allTablesSQL := "SELECT database, name, engine "
 	if len(isSystemTablesFieldPresent) > 0 && isSystemTablesFieldPresent[0].IsDataPathPresent > 0 {
 		allTablesSQL += ", data_path "
@@ -370,8 +417,8 @@ func (ch *ClickHouse) prepareAllTablesSQL(ctx context.Context, tablePattern stri
 
 	allTablesSQL += "  FROM system.tables WHERE is_temporary = 0"
 	if tablePattern != "" {
-		replacer := strings.NewReplacer(".", "\\.", ",", "|", "*", ".*", "?", ".", " ", "", "'", "")
-		allTablesSQL += fmt.Sprintf(" AND match(concat(database,'.',name),'%s') ", replacer.Replace(tablePattern))
+		replacer := strings.NewReplacer(".", "\\.", ",", "$|^", "*", ".*", "?", ".", " ", "", "`", "", `"`, "", "-", "\\-")
+		allTablesSQL += fmt.Sprintf(" AND match(concat(database,'.',name),'^%s$') ", replacer.Replace(tablePattern))
 	}
 	if len(skipDatabases) > 0 {
 		allTablesSQL += fmt.Sprintf(" AND database NOT IN ('%s')", strings.Join(skipDatabases, "','"))
@@ -381,7 +428,7 @@ func (ch *ClickHouse) prepareAllTablesSQL(ctx context.Context, tablePattern stri
 		allTablesSQL += " ORDER BY total_bytes DESC"
 	}
 	allTablesSQL = ch.addSettingsSQL(allTablesSQL, settings)
-	return allTablesSQL, nil
+	return allTablesSQL
 }
 
 func (ch *ClickHouse) addSettingsSQL(inputSQL string, settings map[string]bool) string {
@@ -407,24 +454,35 @@ func (ch *ClickHouse) addSettingsSQL(inputSQL string, settings map[string]bool) 
 	return inputSQL
 }
 
+var tableNameSuffixRE = regexp.MustCompile("\\.\"[^\"]+\"$|\\.`[^`]+`$|\\.[a-zA-Z0-9\\-_]+$")
+
 // GetDatabases - return slice of all non system databases for backup
 func (ch *ClickHouse) GetDatabases(ctx context.Context, cfg *config.Config, tablePattern string) ([]Database, error) {
 	allDatabases := make([]Database, 0)
 	skipDatabases := []string{"system", "INFORMATION_SCHEMA", "information_schema", "_temporary_and_external_tables"}
 	bypassDatabases := make([]string, 0)
-	var skipTablesPatterns, bypassTablesPatterns []string
-	skipTablesPatterns = append(skipTablesPatterns, cfg.ClickHouse.SkipTables...)
-	bypassTablesPatterns = append(bypassTablesPatterns, strings.Split(tablePattern, ",")...)
+	skipTablesPatterns := make([]string, 0)
+	bypassTablesPatterns := make([]string, 0)
+	if len(cfg.ClickHouse.SkipTables) > 0 {
+		skipTablesPatterns = append(skipTablesPatterns, cfg.ClickHouse.SkipTables...)
+	}
+	if tablePattern != "" {
+		bypassTablesPatterns = append(bypassTablesPatterns, strings.Split(tablePattern, ",")...)
+	}
 	for _, pattern := range skipTablesPatterns {
 		pattern = strings.Trim(pattern, " \r\t\n")
 		if strings.HasSuffix(pattern, ".*") {
-			skipDatabases = append(skipDatabases, strings.TrimSuffix(pattern, ".*"))
+			skipDatabases = common.AddStringToSliceIfNotExists(skipDatabases, strings.Trim(strings.TrimSuffix(pattern, ".*"), "\"` "))
+		} else {
+			skipDatabases = common.AddStringToSliceIfNotExists(skipDatabases, strings.Trim(tableNameSuffixRE.ReplaceAllString(pattern, ""), "\"` "))
 		}
 	}
 	for _, pattern := range bypassTablesPatterns {
 		pattern = strings.Trim(pattern, " \r\t\n")
 		if strings.HasSuffix(pattern, ".*") {
-			bypassDatabases = append(bypassDatabases, strings.TrimSuffix(pattern, ".*"))
+			bypassDatabases = common.AddStringToSliceIfNotExists(bypassDatabases, strings.Trim(strings.TrimSuffix(pattern, ".*"), "\"` "))
+		} else {
+			bypassDatabases = common.AddStringToSliceIfNotExists(bypassDatabases, strings.Trim(tableNameSuffixRE.ReplaceAllString(pattern, ""), "\"` "))
 		}
 	}
 	metadataPath, err := ch.getMetadataPath(ctx)
@@ -504,7 +562,7 @@ func (ch *ClickHouse) fixVariousVersions(ctx context.Context, t Table, metadataP
 	if t.UUID == "00000000-0000-0000-0000-000000000000" {
 		t.UUID = ""
 	}
-	// version 1.1.54394 no has query column
+	// version 1.1.54394 has no query column
 	if strings.TrimSpace(t.CreateTableQuery) == "" {
 		t.CreateTableQuery = ch.ShowCreateTable(ctx, t.Database, t.Name)
 	}

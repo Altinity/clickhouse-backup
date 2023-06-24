@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"github.com/Altinity/clickhouse-backup/pkg/partition"
 	apexLog "github.com/apex/log"
@@ -48,13 +47,20 @@ func addTableToListIfNotExistsOrEnrichQueryAndParts(tables ListOfTables, table m
 	return append(tables, table)
 }
 
-func getTableListByPatternLocal(ctx context.Context, cfg *config.Config, ch *clickhouse.ClickHouse, metadataPath string, tablePattern string, dropTable bool, partitions []string) (ListOfTables, map[metadata.TableTitle][]string, error) {
+func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath string, tablePattern string, dropTable bool, partitions []string) (ListOfTables, map[metadata.TableTitle][]string, error) {
 	result := ListOfTables{}
 	resultPartitionNames := map[metadata.TableTitle][]string{}
 	tablePatterns := []string{"*"}
 	log := apexLog.WithField("logger", "getTableListByPatternLocal")
 	if tablePattern != "" {
 		tablePatterns = strings.Split(tablePattern, ",")
+	}
+	var err error
+	// https://github.com/Altinity/clickhouse-backup/issues/613
+	if !b.isEmbedded {
+		if tablePatterns, err = b.enrichTablePatternsByInnerDependencies(metadataPath, tablePatterns); err != nil {
+			return nil, nil, err
+		}
 	}
 	if err := filepath.Walk(metadataPath, func(filePath string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -73,22 +79,9 @@ func getTableListByPatternLocal(ctx context.Context, cfg *config.Config, ch *cli
 		} else {
 			p = strings.TrimSuffix(p, ".json")
 		}
-		p = strings.Trim(strings.TrimPrefix(p, metadataPath), "/")
-		names := strings.Split(p, "/")
-		if len(names) != 2 {
+		names, database, table, tableName, shallSkipped, continueProcessing := b.checkShallSkipped(p, metadataPath)
+		if !continueProcessing {
 			return nil
-		}
-		database, _ := url.PathUnescape(names[0])
-		if IsInformationSchema(database) {
-			return nil
-		}
-		table, _ := url.PathUnescape(names[1])
-		tableName := fmt.Sprintf("%s.%s", database, table)
-		shallSkipped := false
-		for _, skipPattern := range cfg.ClickHouse.SkipTables {
-			if shallSkipped, _ = filepath.Match(skipPattern, tableName); shallSkipped {
-				break
-			}
 		}
 		for _, p := range tablePatterns {
 			if matched, _ := filepath.Match(strings.Trim(p, " \t\r\n"), tableName); !matched || shallSkipped {
@@ -100,36 +93,12 @@ func getTableListByPatternLocal(ctx context.Context, cfg *config.Config, ch *cli
 			}
 			if isEmbeddedMetadata {
 				// embedded backup to s3 disk could contain only s3 key names inside .sql file
-				query := string(data)
-				if strings.HasPrefix(query, "ATTACH") || strings.HasPrefix(query, "CREATE") {
-					query = strings.Replace(query, "ATTACH", "CREATE", 1)
-				} else {
-					query = ""
-				}
-				dataPartsPath := strings.Replace(metadataPath, "/metadata", "/data", 1)
-				dataPartsPath = path.Join(dataPartsPath, path.Join(names...))
-				if _, err := os.Stat(dataPartsPath); err != nil && !os.IsNotExist(err) {
+				t, err := prepareTableMetadataFromSQL(data, metadataPath, names, log, b.cfg, database, table)
+				if err != nil {
 					return err
 				}
-				dataParts, err := os.ReadDir(dataPartsPath)
-				if err != nil {
-					log.Warn(err.Error())
-				}
-				parts := map[string][]metadata.Part{
-					cfg.ClickHouse.EmbeddedBackupDisk: make([]metadata.Part, len(dataParts)),
-				}
-				for i := range dataParts {
-					parts[cfg.ClickHouse.EmbeddedBackupDisk][i].Name = dataParts[i].Name()
-				}
-				var t metadata.TableMetadata
-				t = metadata.TableMetadata{
-					Database: database,
-					Table:    table,
-					Query:    query,
-					Parts:    parts,
-				}
 				// .sql file will enrich Query
-				partitionsIdMap, _ := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, ch, nil, []metadata.TableMetadata{t}, partitions)
+				partitionsIdMap, _ := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, []metadata.TableMetadata{t}, partitions)
 				filterPartsAndFilesByPartitionsFilter(t, partitionsIdMap[metadata.TableTitle{Database: t.Database, Table: t.Table}])
 				result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, t)
 				return nil
@@ -138,7 +107,7 @@ func getTableListByPatternLocal(ctx context.Context, cfg *config.Config, ch *cli
 			if err := json.Unmarshal(data, &t); err != nil {
 				return err
 			}
-			partitionsIdMap, partitionsNameList := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, ch, nil, []metadata.TableMetadata{t}, partitions)
+			partitionsIdMap, partitionsNameList := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, []metadata.TableMetadata{t}, partitions)
 			filterPartsAndFilesByPartitionsFilter(t, partitionsIdMap[metadata.TableTitle{Database: t.Database, Table: t.Table}])
 			result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, t)
 			for tt := range partitionsNameList {
@@ -160,9 +129,125 @@ func getTableListByPatternLocal(ctx context.Context, cfg *config.Config, ch *cli
 	return result, resultPartitionNames, nil
 }
 
+func (b *Backuper) checkShallSkipped(p string, metadataPath string) ([]string, string, string, string, bool, bool) {
+	p = strings.Trim(strings.TrimPrefix(p, metadataPath), "/")
+	names := strings.Split(p, "/")
+	if len(names) != 2 {
+		return nil, "", "", "", true, false
+	}
+	database, _ := url.PathUnescape(names[0])
+	if IsInformationSchema(database) {
+		return nil, "", "", "", true, false
+	}
+	table, _ := url.PathUnescape(names[1])
+	tableFullName := fmt.Sprintf("%s.%s", database, table)
+	shallSkipped := false
+	for _, skipPattern := range b.cfg.ClickHouse.SkipTables {
+		if shallSkipped, _ = filepath.Match(skipPattern, tableFullName); shallSkipped {
+			break
+		}
+	}
+	return names, database, table, tableFullName, shallSkipped, true
+}
+
+func prepareTableMetadataFromSQL(data []byte, metadataPath string, names []string, log *apexLog.Entry, cfg *config.Config, database string, table string) (metadata.TableMetadata, error) {
+	query := string(data)
+	if strings.HasPrefix(query, "ATTACH") || strings.HasPrefix(query, "CREATE") {
+		query = strings.Replace(query, "ATTACH", "CREATE", 1)
+	} else {
+		query = ""
+	}
+	dataPartsPath := strings.Replace(metadataPath, "/metadata", "/data", 1)
+	dataPartsPath = path.Join(dataPartsPath, path.Join(names...))
+	if _, err := os.Stat(dataPartsPath); err != nil && !os.IsNotExist(err) {
+		return metadata.TableMetadata{}, err
+	}
+	dataParts, err := os.ReadDir(dataPartsPath)
+	if err != nil {
+		log.Warn(err.Error())
+	}
+	parts := map[string][]metadata.Part{
+		cfg.ClickHouse.EmbeddedBackupDisk: make([]metadata.Part, len(dataParts)),
+	}
+	for i := range dataParts {
+		parts[cfg.ClickHouse.EmbeddedBackupDisk][i].Name = dataParts[i].Name()
+	}
+	var t metadata.TableMetadata
+	t = metadata.TableMetadata{
+		Database: database,
+		Table:    table,
+		Query:    query,
+		Parts:    parts,
+	}
+	return t, nil
+}
+
+func (b *Backuper) enrichTablePatternsByInnerDependencies(metadataPath string, tablePatterns []string) ([]string, error) {
+	innerTablePatterns := make([]string, 0)
+	if err := filepath.Walk(metadataPath, func(filePath string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !strings.HasSuffix(filePath, ".json") {
+			return nil
+		}
+		names, database, table, tableName, shallSkipped, continueProcessing := b.checkShallSkipped(strings.TrimSuffix(filepath.ToSlash(filePath), ".json"), metadataPath)
+		if !continueProcessing {
+			return nil
+		}
+		for _, p := range tablePatterns {
+			if matched, _ := filepath.Match(strings.Trim(p, " \t\r\n"), tableName); !matched || shallSkipped {
+				continue
+			}
+			data, err := os.ReadFile(filePath)
+			if err != nil {
+				return err
+			}
+			var t metadata.TableMetadata
+			if err := json.Unmarshal(data, &t); err != nil {
+				return err
+			}
+			if strings.HasPrefix(t.Query, "ATTACH MATERIALIZED") || strings.HasPrefix(t.Query, "CREATE MATERIALIZED") {
+				if strings.Contains(t.Query, " TO ") && !strings.Contains(t.Query, " TO INNER UUID") {
+					continue
+				}
+				innerTableFile := path.Join(names[:len(names)-1]...)
+				innerTableName := fmt.Sprintf("%s.", database)
+				if matches := uuidRE.FindStringSubmatch(t.Query); len(matches) > 0 {
+					innerTableFile = path.Join(innerTableFile, common.TablePathEncode(fmt.Sprintf(".inner_id.%s", matches[1])))
+					innerTableName += fmt.Sprintf(".inner_id.%s", matches[1])
+				} else {
+					innerTableFile = path.Join(innerTableFile, common.TablePathEncode(fmt.Sprintf(".inner.%s", table)))
+					innerTableName += fmt.Sprintf(".inner.%s", table)
+				}
+				if _, err := os.Stat(path.Join(metadataPath, innerTableFile+".json")); err != nil {
+					return err
+				}
+				innerPatternExists := false
+				for _, existsP := range tablePatterns {
+					if innerPatternExists, _ = filepath.Match(strings.Trim(existsP, " \t\r\n"), innerTableName); innerPatternExists {
+						break
+					}
+				}
+				if !innerPatternExists {
+					innerTablePatterns = append(innerTablePatterns, innerTableName)
+				}
+			}
+			return nil
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	if len(innerTablePatterns) > 0 {
+		tablePatterns = append(innerTablePatterns, tablePatterns...)
+	}
+	return tablePatterns, nil
+}
+
 var queryRE = regexp.MustCompile(`(?m)^(CREATE|ATTACH) (TABLE|VIEW|LIVE VIEW|MATERIALIZED VIEW|DICTIONARY|FUNCTION) (\x60?)([^\s\x60.]*)(\x60?)\.([^\s\x60.]*)(?:( UUID '[^']+'))?(?:( TO )(\x60?)([^\s\x60.]*)(\x60?)(\.))?(?:(.+FROM )(\x60?)([^\s\x60.]*)(\x60?)(\.))?`)
 var createOrAttachRE = regexp.MustCompile(`(?m)^(CREATE|ATTACH)`)
-var uuidRE = regexp.MustCompile(`UUID '[a-f\d\-]+'`)
+var uuidRE = regexp.MustCompile(`UUID '([a-f\d\-]+)'`)
 
 var replicatedRE = regexp.MustCompile(`(Replicated[a-zA-Z]*MergeTree)\('([^']+)'([^)]+)\)`)
 var distributedRE = regexp.MustCompile(`(Distributed)\(([^,]+),([^,]+),([^)]+)\)`)

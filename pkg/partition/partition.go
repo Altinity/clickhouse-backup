@@ -69,9 +69,9 @@ func extractPartitionByFieldNames(s string) []struct {
 	return columns
 }
 
-func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, database, table, createQuery string, partition string) (error, string, string) {
+func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, database, table, createQuery, partition string) (string, string, error) {
 	if !strings.Contains(createQuery, "MergeTree") || !PartitionByRE.MatchString(createQuery) {
-		return nil, "", ""
+		return "", "", nil
 	}
 	createQuery = replicatedMergeTreeRE.ReplaceAllString(createQuery, "$1($4)$5")
 	if len(uuidRE.FindAllString(createQuery, -1)) > 0 {
@@ -88,7 +88,7 @@ func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, datab
 	partitionIdTable := "__partition_id_" + table
 	createQuery = dbAndTableNameRE.ReplaceAllString(createQuery, fmt.Sprintf("`%s`.`%s`", database, partitionIdTable))
 	if err := ch.Query(createQuery); err != nil {
-		return err, "", ""
+		return "", "", err
 	}
 	columns := make([]struct {
 		Name string `ch:"name"`
@@ -99,9 +99,9 @@ func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, datab
 		matches := PartitionByRE.FindStringSubmatch(createQuery)
 		if len(matches) == 0 {
 			if dropErr := dropPartitionIdTable(ch, database, partitionIdTable); dropErr != nil {
-				return dropErr, "", ""
+				return "", "", dropErr
 			}
-			return fmt.Errorf("can't get is_in_partition_key column names from for table `%s`.`%s`: %v", database, partitionIdTable, err), "", ""
+			return "", "", fmt.Errorf("can't get is_in_partition_key column names from for table `%s`.`%s`: %v", database, partitionIdTable, err)
 		}
 		columns = extractPartitionByFieldNames(matches[1])
 		oldVersion = true
@@ -113,7 +113,7 @@ func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, datab
 	}()
 	if len(columns) == 0 {
 		apexLog.Warnf("is_in_partition_key=1 fields not found in system.columns for table `%s`.`%s`", database, partitionIdTable)
-		return nil, "", ""
+		return "", "", nil
 	}
 	partitionInsert := splitAndParsePartition(partition)
 	columnNames := make([]string, len(columns))
@@ -135,17 +135,17 @@ func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, datab
 		)
 		batch, err := ch.GetConn().PrepareBatch(ctx, sql)
 		if err != nil {
-			return err, "", ""
+			return "", "", err
 		}
 		if err = batch.Append(partitionInsert...); err != nil {
-			return err, "", ""
+			return "", "", err
 		}
 		if err = batch.Send(); err != nil {
-			return err, "", ""
+			return "", "", err
 		}
 	}
 	if err != nil {
-		return err, "", ""
+		return "", "", err
 	}
 	partitions := make([]struct {
 		Id   string `ch:"partition_id"`
@@ -153,13 +153,13 @@ func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, datab
 	}, 0)
 	sql = "SELECT partition_id, partition FROM system.parts WHERE active AND database=? AND table=?"
 	if err = ch.SelectContext(ctx, &partitions, sql, database, partitionIdTable); err != nil {
-		return fmt.Errorf("can't SELECT partition_id for PARTITION BY fields(%#v) FROM `%s`.`%s`: %v", partitionInsert, database, partitionIdTable, err), "", ""
+		return "", "", fmt.Errorf("can't SELECT partition_id for PARTITION BY fields(%#v) FROM `%s`.`%s`: %v", partitionInsert, database, partitionIdTable, err)
 	}
 	if len(partitions) != 1 {
-		return fmt.Errorf("wrong partitionsIds=%#v found system.parts for table `%s`.`%s`", partitions, database, partitionIdTable), "", ""
+		return "", "", fmt.Errorf("wrong partitionsIds=%#v found system.parts for table `%s`.`%s`", partitions, database, partitionIdTable)
 	}
 
-	return nil, partitions[0].Id, partitions[0].Name
+	return partitions[0].Id, partitions[0].Name, nil
 }
 
 func dropPartitionIdTable(ch *clickhouse.ClickHouse, database string, partitionIdTable string) error {
@@ -200,7 +200,7 @@ func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.C
 			for _, partitionTuple := range partitionTupleRE.Split(partitionArg, -1) {
 				for _, t := range tablesFromClickHouse {
 					createIdMapAndNameListIfNotExists(t.Database, t.Name, partitionsIdMap, partitionsNameList)
-					if err, partitionId, partitionName := GetPartitionIdAndName(ctx, ch, t.Database, t.Name, t.CreateTableQuery, partitionTuple); err != nil {
+					if partitionId, partitionName, err := GetPartitionIdAndName(ctx, ch, t.Database, t.Name, t.CreateTableQuery, partitionTuple); err != nil {
 						apexLog.Fatalf("partition.GetPartitionIdAndName error: %v", err)
 					} else if partitionId != "" {
 						addItemToIdMapAndNameListIfNotExists(partitionId, partitionName, t.Database, t.Name, partitionsIdMap, partitionsNameList)
@@ -208,7 +208,7 @@ func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.C
 				}
 				for _, t := range tablesFromMetadata {
 					createIdMapAndNameListIfNotExists(t.Database, t.Table, partitionsIdMap, partitionsNameList)
-					if err, partitionId, partitionName := GetPartitionIdAndName(ctx, ch, t.Database, t.Table, t.Query, partitionTuple); err != nil {
+					if partitionId, partitionName, err := GetPartitionIdAndName(ctx, ch, t.Database, t.Table, t.Query, partitionTuple); err != nil {
 						apexLog.Fatalf("partition.GetPartitionIdAndName error: %v", err)
 					} else if partitionId != "" {
 						addItemToIdMapAndNameListIfNotExists(partitionId, partitionName, t.Database, t.Table, partitionsIdMap, partitionsNameList)

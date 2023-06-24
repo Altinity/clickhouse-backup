@@ -9,7 +9,6 @@ import (
 	"github.com/Altinity/clickhouse-backup/pkg/status"
 	"os"
 	"path"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -38,35 +37,6 @@ type LocalBackup struct {
 	metadata.BackupMetadata
 	Legacy bool
 	Broken string
-}
-
-func addTable(tables []clickhouse.Table, table clickhouse.Table) []clickhouse.Table {
-	for _, t := range tables {
-		if (t.Database == table.Database) && (t.Name == table.Name) {
-			return tables
-		}
-	}
-	return append(tables, table)
-}
-
-func filterTablesByPattern(tables []clickhouse.Table, tablePattern string) []clickhouse.Table {
-	log := apexLog.WithField("logger", "filterTablesByPattern")
-	if tablePattern == "" {
-		return tables
-	}
-	tablePatterns := strings.Split(tablePattern, ",")
-	var result []clickhouse.Table
-	for _, t := range tables {
-		for _, pattern := range tablePatterns {
-			tableName := fmt.Sprintf("%s.%s", t.Database, t.Name)
-			if matched, _ := filepath.Match(strings.Trim(pattern, " \t\n\r"), tableName); matched {
-				result = addTable(result, t)
-			} else {
-				log.Debugf("%s not matched with %s", tableName, pattern)
-			}
-		}
-	}
-	return result
 }
 
 // NewBackupName - return default backup name
@@ -107,11 +77,10 @@ func (b *Backuper) CreateBackup(backupName, tablePattern string, partitions []st
 	if err != nil {
 		return fmt.Errorf("can't get database engines from clickhouse: %v", err)
 	}
-	allTables, err := b.ch.GetTables(ctx, tablePattern)
+	tables, err := b.ch.GetTables(ctx, tablePattern)
 	if err != nil {
 		return fmt.Errorf("can't get tables from clickhouse: %v", err)
 	}
-	tables := filterTablesByPattern(allTables, tablePattern)
 	i := 0
 	for _, table := range tables {
 		if table.Skip {

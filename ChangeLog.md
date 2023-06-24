@@ -7,6 +7,7 @@ IMPROVEMENTS
 
 BUG FIXES
 - add `FTP_ADDRESS` and `SFTP_PORT` in Default config Readme.md section fix [668](https://github.com/Altinity/clickhouse-backup/issues/668)
+- when use `--tables=db.materialized_view` pattern, then create/restore backup also for `.inner.materialized_view` or `.inner_id.uuid`, fix [613](https://github.com/Altinity/clickhouse-backup/issues/613)
 
 # v2.2.7
 IMPROVEMENTS
