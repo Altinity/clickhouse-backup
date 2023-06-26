@@ -1,4 +1,4 @@
-# v2.3.0 (not yet released)
+# v2.3.0
 IMPROVEMENTS
 - add FIPS compatible builds and examples, fix [656](https://github.com/Altinity/clickhouse-backup/issues/656), fix [674](https://github.com/Altinity/clickhouse-backup/issues/674)
 - improve support for `use_embedded_backup_restore: true`, applied ugly workaround in test to avoid https://github.com/ClickHouse/ClickHouse/issues/43971, and applied restore workaround to resolve https://github.com/ClickHouse/ClickHouse/issues/42709
