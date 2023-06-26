@@ -55,7 +55,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 		_ = b.PrintLocalBackups(ctx, "all")
 		return fmt.Errorf("select backup for restore")
 	}
-	disks, err := b.ch.GetDisks(ctx)
+	disks, err := b.ch.GetDisks(ctx, true)
 	if err != nil {
 		return err
 	}

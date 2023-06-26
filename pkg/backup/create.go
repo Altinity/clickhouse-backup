@@ -127,7 +127,7 @@ func (b *Backuper) CreateBackup(backupName, tablePattern string, partitions []st
 		return fmt.Errorf("GetUserDefinedFunctions return error: %v", err)
 	}
 
-	disks, err := b.ch.GetDisks(ctx)
+	disks, err := b.ch.GetDisks(ctx, false)
 	if err != nil {
 		return err
 	}

@@ -1542,7 +1542,7 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 			api.log.Errorf("ResumeOperationsAfterRestart can't close clickhouse connection: %v", err)
 		}
 	}()
-	disks, err := ch.GetDisks(context.Background())
+	disks, err := ch.GetDisks(context.Background(), true)
 	if err != nil {
 		return err
 	}

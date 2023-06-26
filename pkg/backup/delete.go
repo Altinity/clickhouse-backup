@@ -25,7 +25,7 @@ func (b *Backuper) Clean(ctx context.Context) error {
 	}
 	defer b.ch.Close()
 
-	disks, err := b.ch.GetDisks(ctx)
+	disks, err := b.ch.GetDisks(ctx, true)
 	if err != nil {
 		return err
 	}
@@ -105,7 +105,7 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 	}
 	defer b.ch.Close()
 	if disks == nil {
-		disks, err = b.ch.GetDisks(ctx)
+		disks, err = b.ch.GetDisks(ctx, true)
 		if err != nil {
 			return err
 		}

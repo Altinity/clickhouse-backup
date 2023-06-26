@@ -1,3 +1,7 @@
+# v2.2.8
+BUG FIXES
+- hotfix wrong empty files when disk_mapping contains not exists during create, affected 2.2.7 version, look details [676](https://github.com/Altinity/clickhouse-backup/issues/676#issue-1771732489)
+
 # v2.2.7
 IMPROVEMENTS
 - Auto-tuning concurrency and buffer size related parameters depending on remote storage type, fix [658](https://github.com/AlexAkulov/clickhouse-backup/issues/658)

@@ -132,7 +132,7 @@ func (ch *ClickHouse) Connect() error {
 }
 
 // GetDisks - return data from system.disks table
-func (ch *ClickHouse) GetDisks(ctx context.Context) ([]Disk, error) {
+func (ch *ClickHouse) GetDisks(ctx context.Context, enrich bool) ([]Disk, error) {
 	version, err := ch.GetVersion(ctx)
 	if err != nil {
 		return nil, err
@@ -164,12 +164,14 @@ func (ch *ClickHouse) GetDisks(ctx context.Context) ([]Disk, error) {
 			delete(dm, disks[i].Name)
 		}
 	}
-	for k, v := range dm {
-		disks = append(disks, Disk{
-			Name: k,
-			Path: v,
-			Type: "local",
-		})
+	if enrich {
+		for k, v := range dm {
+			disks = append(disks, Disk{
+				Name: k,
+				Path: v,
+				Type: "local",
+			})
+		}
 	}
 	return disks, nil
 }
@@ -1018,7 +1020,7 @@ func (ch *ClickHouse) GetAccessManagementPath(ctx context.Context, disks []Disk)
 	var rows []string
 	if err := ch.SelectContext(ctx, &rows, "SELECT JSONExtractString(params,'path') AS access_path FROM system.user_directories WHERE type='local directory'"); err != nil || len(rows) == 0 {
 		if disks == nil {
-			disks, err = ch.GetDisks(ctx)
+			disks, err = ch.GetDisks(ctx, false)
 			if err != nil {
 				return "", err
 			}
