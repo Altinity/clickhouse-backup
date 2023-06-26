@@ -57,7 +57,7 @@ jobs:
         env:
           GOROOT: ${{ env.GOROOT_1_20_X64 }}
         run: |
-          make build build-fips config test
+          make build build-fips build-fips-darwin config test
 
       - name: Building deb, rpm and tar.gz packages
         id: make_packages
