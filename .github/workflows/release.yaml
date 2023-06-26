@@ -57,7 +57,8 @@ jobs:
         env:
           GOROOT: ${{ env.GOROOT_1_20_X64 }}
         run: |
-          make build build-fips build-fips-darwin config test
+          make build build-fips config test
+          #make build-fips-darwin
 
       - name: Building deb, rpm and tar.gz packages
         id: make_packages
@@ -73,7 +74,7 @@ jobs:
           echo "tgz_darwin_arm64=${NAME}-darwin-arm64.tar.gz" >> $GITHUB_OUTPUT
 
           printf "amd64 arm64" | xargs -P 2 -d " " -I {} tar -czvf ${NAME}-linux-{}-fips.tar.gz build/linux/{}/${NAME}-fips
-          printf "amd64 arm64" | xargs -P 2 -d " " -I {} tar -czvf ${NAME}-darwin-{}-fips.tar.gz build/darwin/{}/${NAME}-fips
+          # printf "amd64 arm64" | xargs -P 2 -d " " -I {} tar -czvf ${NAME}-darwin-{}-fips.tar.gz build/darwin/{}/${NAME}-fips
           echo "tgz_linux_amd64_fips=${NAME}-linux-amd64-fips.tar.gz" >> $GITHUB_OUTPUT
           echo "tgz_linux_arm64_fips=${NAME}-linux-arm64-fips.tar.gz" >> $GITHUB_OUTPUT
           # echo "tgz_darwin_amd64_fips=${NAME}-darwin-amd64-fips.tar.gz" >> $GITHUB_OUTPUT
