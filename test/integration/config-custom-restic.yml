@@ -17,7 +17,7 @@ clickhouse:
   secure: true
   skip_verify: true
   sync_replicated_tables: true
-  timeout: 1s
+  timeout: 2s
   restart_command: bash -c 'echo "FAKE RESTART"'
 custom:
   upload_command: /custom/restic/upload.sh {{ .backupName }} {{ .diffFromRemote }}
