@@ -10,6 +10,9 @@ general:
     - "_temporary_and_external_tables.*"
   restore_schema_on_cluster: "{cluster}"
 clickhouse:
+  # wrong disk name mapping for https://github.com/Altinity/clickhouse-backup/issues/676
+  disk_mapping:
+    default-gp3: /var/lib/clickhouse
   host: 127.0.0.1
   port: 9440
   username: backup

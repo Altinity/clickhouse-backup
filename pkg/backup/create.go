@@ -458,7 +458,7 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 		return nil, nil, fmt.Errorf("backupName is not defined")
 	}
 
-	if !strings.HasSuffix(table.Engine, "MergeTree") && table.Engine != "MaterializedMySQL" && table.Engine != "MaterializedPostgreSQL" {
+	if !strings.HasSuffix(table.Engine, "MergeTree") && table.Engine != "MaterializedMySQL" && table.Engine != "MaterializedPostgreSQL" && table.Engine != "MaterializedView" {
 		log.WithField("engine", table.Engine).Warnf("supports only schema backup")
 		return nil, nil, nil
 	}

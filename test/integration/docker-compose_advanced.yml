@@ -45,6 +45,8 @@ services:
       MINIO_ROOT_PASSWORD: it-is-my-super-secret-key
     volumes:
       - ./minio_nodelete.sh:/bin/minio_nodelete.sh
+    ports:
+      - "9001:9001"
     networks:
       - clickhouse-backup
 
