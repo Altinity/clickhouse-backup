@@ -74,14 +74,16 @@ def create_delete(self):
             backup.cmd(f"clickhouse-backup create bp_cli_crt")
 
             with Then("I check backup appears in filesystem"):
-                assert "bp_cli_crt" in backup.cmd("ls /var/lib/clickhouse/backup").output, error()
+                output = backup.cmd("ls /var/lib/clickhouse/backup").output
+                assert "bp_cli_crt" in output, error()
 
     with Step("I check CLI delete command works"):
         with When("I remove backup"):
             backup.cmd(f"clickhouse-backup delete local bp_cli_crt")
 
             with Then("I check backup disappears from filesystem"):
-                assert "bp_cli_crt" not in backup.cmd("ls /var/lib/clickhouse/backup").output, error()
+                output = backup.cmd("ls /var/lib/clickhouse/backup").output
+                assert "bp_cli_crt" not in output, error()
 
 
 @TestScenario
@@ -111,7 +113,8 @@ def upload_download(self):
             backup.cmd(f"clickhouse-backup download bp_cli_ud")
 
         with Then("I check backup appears in filesystem"):
-            assert "bp_cli_ud" in backup.cmd("ls /var/lib/clickhouse/backup").output, error()
+            output = backup.cmd("ls /var/lib/clickhouse/backup").output
+            assert "bp_cli_ud" in output, error()
 
     finally:
         with Finally("I remove created backups"):

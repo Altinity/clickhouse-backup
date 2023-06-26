@@ -67,7 +67,8 @@ def configs_backup_restore(self):
                     for f in files:
                         filename = f"{root[len(local_config_dir) + 1:]}/{f}"
                         if "storage_configuration.sh" not in filename:
-                            assert files_contents[filename] == ch_node.cmd(f"cat /etc/clickhouse-server/{filename}").output, error()
+                            output = ch_node.cmd(f"cat /etc/clickhouse-server/{filename}").output
+                            assert files_contents[filename] == output, error()
 
     finally:
         with Finally("removing created backup"):
@@ -110,19 +111,24 @@ def rbac_backup_restore(self):
 
         with And("I check objects restored correctly"):
             with By("expect user restored"):
-                assert "test_user" in ch_node.query("SHOW USERS").output, error()
+                output = ch_node.query("SHOW USERS").output
+                assert "test_user" in output, error()
 
             with And("expect role restored"):
-                assert "test_role" in ch_node.query("SHOW ROLES").output, error()
+                output = ch_node.query("SHOW ROLES").output
+                assert "test_role" in output, error()
 
             with And("expect row policy restored"):
-                assert "test_policy" in ch_node.query("SHOW ROW POLICIES").output, error()
+                output = ch_node.query("SHOW ROW POLICIES").output
+                assert "test_policy" in output, error()
 
             with And("expect settings profile restored"):
-                assert "test_profile" in ch_node.query("SHOW SETTINGS PROFILES").output, error()
+                output = ch_node.query("SHOW SETTINGS PROFILES").output
+                assert "test_profile" in output, error()
 
             with And("expect quota restored"):
-                assert "test_quota" in ch_node.query("SHOW QUOTAS").output, error()
+                output = ch_node.query("SHOW QUOTAS").output
+                assert "test_quota" in output, error()
 
             for o, n in (("ROLE", "test_role"), ("ROW POLICY", "test_policy ON rbac_bp"),
                          ("SETTINGS PROFILE", "test_profile"), ("QUOTA", "test_quota"), ("USER", "test_user")):

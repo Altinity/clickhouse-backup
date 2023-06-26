@@ -96,7 +96,8 @@ def all_engines(self):
             tables = clickhouse.query("SHOW TABLES").output
 
             with By("I expect MergeTree fully restored"):
-                assert table_data == clickhouse.query(f"SELECT * FROM {name_prefix}").output, error()
+                output = clickhouse.query(f"SELECT * FROM {name_prefix}").output
+                assert table_data == output, error()
 
             with And("I expect other tables schema restored"):
                 for table_name in table_names:

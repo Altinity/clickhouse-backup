@@ -146,7 +146,8 @@ def create_restore_delete_local(self):
             wait_request_finalized(url)
 
             with Then("I check backup appears in filesystem"):
-                assert backup_name in backup.cmd("ls /var/lib/clickhouse/backup").output, error()
+                output = backup.cmd("ls /var/lib/clickhouse/backup").output
+                assert backup_name in output, f"`{backup_name}` not in `{output}`"
 
     with Step("I check POST /restore command works"):
         with When(f"I delete table {api_base_table_name}"):
@@ -157,7 +158,8 @@ def create_restore_delete_local(self):
             wait_request_finalized(url)
 
         with Then("I expect table is restored"):
-            assert api_base_table_name in clickhouse.query("SHOW TABLES").output, error()
+            output = clickhouse.query("SHOW TABLES").output
+            assert api_base_table_name in output, f"`{api_base_table_name}` not in `{output}`"
 
     with Step("I check API /delete/local command works"):
         with When("I remove backup"):
@@ -165,7 +167,8 @@ def create_restore_delete_local(self):
             wait_request_finalized(url)
 
             with Then("I check backup disappears from filesystem"):
-                assert backup_name not in backup.cmd("ls /var/lib/clickhouse/backup").output, error()
+                output = backup.cmd("ls /var/lib/clickhouse/backup").output
+                assert backup_name not in output, f"`{backup_name}` unexpected in `{output}`"
 
 
 @TestScenario
@@ -193,7 +196,8 @@ def create_restore_delete_remote(self):
                 wait_request_finalized(url)
 
                 with Then("I check backup appears in storage"):
-                    assert backup_name in backup.cmd("clickhouse-backup list remote").output, error()
+                    output = backup.cmd("clickhouse-backup list remote").output
+                    assert backup_name in output, f"`{backup_name}` not in `{output}`"
 
         with Step("I check POST /restore command works"):
             with When(f"I delete table {api_base_table_name} and local backup"):
@@ -205,7 +209,8 @@ def create_restore_delete_remote(self):
                 wait_request_finalized(url)
 
             with Then("I expect table is restored"):
-                assert api_base_table_name in clickhouse.query("SHOW TABLES").output, error()
+                output = clickhouse.query("SHOW TABLES").output
+                assert api_base_table_name in output, f"`{api_base_table_name}` not in `{output}`"
 
         with Step("I check API /delete/remote command works"):
             with When("I remove backup"):
@@ -213,7 +218,8 @@ def create_restore_delete_remote(self):
                 wait_request_finalized(url)
 
                 with Then("I check backup is not in storage"):
-                    assert backup_name not in backup.cmd("clickhouse-backup list remote").output, error()
+                    output = backup.cmd("clickhouse-backup list remote").output
+                    assert backup_name not in output, f"`{backup_name}` unexpected in `{output}`"
 
     finally:
         with Finally("I set remote_storage to none and remove local backup"):
@@ -310,7 +316,8 @@ def post_upload_download(self):
             wait_request_finalized(url)
 
             with Then("I check backup appears in storage"):
-                assert backup_name in backup.cmd("clickhouse-backup list remote").output, error()
+                output = backup.cmd("clickhouse-backup list remote").output
+                assert backup_name in output, f"`{backup_name}` not in `{output}`"
 
         with And(f"I delete local copy"):
             backup.cmd(f"clickhouse-backup delete local {backup_name}")
@@ -320,7 +327,8 @@ def post_upload_download(self):
             wait_request_finalized(url)
 
             with Then("I check backup exists locally"):
-                assert backup_name in backup.cmd("clickhouse-backup list local").output, error()
+                output = backup.cmd("clickhouse-backup list local").output
+                assert backup_name in output, f"`{backup_name}` not in `{output}`"
 
     finally:
         with And("I remove backups"):
