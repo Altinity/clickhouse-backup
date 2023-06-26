@@ -362,7 +362,7 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 	}
 	connection := ObjectStorageConnection{}
 	if SystemDisks == nil || len(SystemDisks) == 0 {
-		disks, err := ch.GetDisks(ctx)
+		disks, err := ch.GetDisks(ctx, false)
 		if err != nil {
 			return nil, err
 		}

@@ -165,7 +165,7 @@ func (b *Backuper) GetLocalBackups(ctx context.Context, disks []clickhouse.Disk)
 	}
 	log := b.log.WithField("logger", "GetLocalBackups")
 	if disks == nil {
-		disks, err = b.ch.GetDisks(ctx)
+		disks, err = b.ch.GetDisks(ctx, true)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -397,7 +397,7 @@ func (b *Backuper) PrintTables(printAll bool, tablePattern string) error {
 	if err != nil {
 		return err
 	}
-	disks, err := b.ch.GetDisks(ctx)
+	disks, err := b.ch.GetDisks(ctx, false)
 	if err != nil {
 		return err
 	}

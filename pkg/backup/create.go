@@ -97,7 +97,7 @@ func (b *Backuper) CreateBackup(backupName, tablePattern string, partitions []st
 		return fmt.Errorf("GetUserDefinedFunctions return error: %v", err)
 	}
 
-	disks, err := b.ch.GetDisks(ctx)
+	disks, err := b.ch.GetDisks(ctx, false)
 	if err != nil {
 		return err
 	}
@@ -458,8 +458,10 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 		return nil, nil, fmt.Errorf("backupName is not defined")
 	}
 
-	if !strings.HasSuffix(table.Engine, "MergeTree") && table.Engine != "MaterializedMySQL" && table.Engine != "MaterializedPostgreSQL" && table.Engine != "MaterializedView" {
-		log.WithField("engine", table.Engine).Warnf("supports only schema backup")
+	if !strings.HasSuffix(table.Engine, "MergeTree") && table.Engine != "MaterializedMySQL" && table.Engine != "MaterializedPostgreSQL" {
+		if table.Engine != "MaterializedView" {
+			log.WithField("engine", table.Engine).Warnf("supports only schema backup")
+		}
 		return nil, nil, nil
 	}
 	if b.cfg.ClickHouse.CheckPartsColumns {

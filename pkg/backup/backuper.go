@@ -39,7 +39,7 @@ func NewBackuper(cfg *config.Config) *Backuper {
 func (b *Backuper) init(ctx context.Context, disks []clickhouse.Disk, backupName string) error {
 	var err error
 	if disks == nil {
-		disks, err = b.ch.GetDisks(ctx)
+		disks, err = b.ch.GetDisks(ctx, true)
 		if err != nil {
 			return err
 		}
