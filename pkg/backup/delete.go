@@ -3,11 +3,6 @@ package backup
 import (
 	"context"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/pkg/custom"
-	"github.com/Altinity/clickhouse-backup/pkg/status"
-	"github.com/Altinity/clickhouse-backup/pkg/storage/object_disk"
-	"github.com/Altinity/clickhouse-backup/pkg/utils"
-	"github.com/pkg/errors"
 	"io/fs"
 	"os"
 	"path"
@@ -16,9 +11,14 @@ import (
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/pkg/custom"
+	"github.com/Altinity/clickhouse-backup/pkg/status"
 	"github.com/Altinity/clickhouse-backup/pkg/storage"
+	"github.com/Altinity/clickhouse-backup/pkg/storage/object_disk"
+	"github.com/Altinity/clickhouse-backup/pkg/utils"
 
 	apexLog "github.com/apex/log"
+	"github.com/pkg/errors"
 )
 
 // Clean - removed all data in shadow folder
@@ -48,6 +48,9 @@ func (b *Backuper) Clean(ctx context.Context) error {
 
 func (b *Backuper) cleanDir(dirName string) error {
 	if items, err := os.ReadDir(dirName); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return err
 	} else {
 		for _, item := range items {
