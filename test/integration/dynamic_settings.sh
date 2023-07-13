@@ -81,7 +81,7 @@ EOT
 
 fi
 
-if [[ "${CLICKHOUSE_VERSION}" =~ ^21\.[8-9]|^21\.[0-9]{2} || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.[8-9]|^21\.[0-9]{2} || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
 
 cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_s3.xml
 <yandex>
@@ -110,7 +110,7 @@ EOT
 
 fi
 
-if [[ "${CLICKHOUSE_VERSION}" =~ ^21\.12 || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.12 || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
 
 cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_encrypted_s3.xml
 <yandex>
@@ -182,52 +182,68 @@ EOT
 
 fi
 
-# embedded s3_plain and azure backup configuration
-if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^23\.3 || "${CLICKHOUSE_VERSION}" =~ ^23\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[4-9]\.[1-9]+ ]]; then
+# s3_plain and azure backup configuration
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^23\.3 || "${CLICKHOUSE_VERSION}" =~ ^23\.[4-9] || "${CLICKHOUSE_VERSION}" =~ ^23\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[4-9]\.[1-9]+ ]]; then
 
-mkdir -p /var/lib/clickhouse/disks/backups_azure/ /var/lib/clickhouse/disks/backups_s3_plain/
+mkdir -p /var/lib/clickhouse/disks/backups_s3_plain/
 chown -R clickhouse /var/lib/clickhouse/disks/
 
-#cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3_plain.xml
-#<?xml version="1.0"?>
-#<clickhouse>
-#    <storage_configuration>
-#        <disks>
-#            <backups_s3_plain>
-#              <send_metadata>true</send_metadata>
-#              <type>s3_plain</type>
-#              <endpoint>http://minio:9000/clickhouse/backups_plain/</endpoint>
-#              <access_key_id>access-key</access_key_id>
-#              <secret_access_key>it-is-my-super-secret-key</secret_access_key>
-#              <cache_enabled>false</cache_enabled>
-#            </backups_s3_plain>
-#        </disks>
-#    </storage_configuration>
-#    <backups>
-#        <allowed_disk>backups_azure</allowed_disk>
-#    </backups>
-#</clickhouse>
-#EOT
+cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3_plain.xml
+<?xml version="1.0"?>
+<clickhouse>
+    <storage_configuration>
+        <disks>
+            <backups_s3_plain>
+              <type>s3_plain</type>
+              <endpoint>http://minio:9000/clickhouse/backups_s3_plain/</endpoint>
+              <access_key_id>access-key</access_key_id>
+              <secret_access_key>it-is-my-super-secret-key</secret_access_key>
+              <cache_enabled>false</cache_enabled>
+            </backups_s3_plain>
+        </disks>
+    </storage_configuration>
+    <backups>
+        <allowed_disk>backups_s3</allowed_disk>
+        <allowed_disk>backups_s3_plain</allowed_disk>
+    </backups>
+</clickhouse>
+EOT
 
-#cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_azure.xml
-#<?xml version="1.0"?>
-#<clickhouse>
-#    <storage_configuration>
-#        <disks>
-#            <backups_azure>
-#              <type>azure_blob_storage</type>
-#              <storage_account_url>http://azure:10000</storage_account_url>
-#              <container_name>container-embedded</container_name>
-#              <account_name>devstoreaccount1</account_name>
-#              <account_key>Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==</account_key>
-#            </backups_azure>
-#        </disks>
-#    </storage_configuration>
-#    <backups>
-#        <allowed_disk>backups_azure</allowed_disk>
-#    </backups>
-#</clickhouse>
-#EOT
+mkdir -p /var/lib/clickhouse/disks/backups_azure/
+chown -R clickhouse /var/lib/clickhouse/disks/
+
+cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_azure.xml
+<?xml version="1.0"?>
+<clickhouse>
+    <storage_configuration>
+        <disks>
+            <azure>
+              <type>azure_blob_storage</type>
+              <storage_account_url>http://azure:10000/devstoreaccount1</storage_account_url>
+              <container_name>azure-disk</container_name>
+              <!--  https://github.com/Azure/Azurite/blob/main/README.md#usage-with-azure-storage-sdks-or-tools -->
+              <account_name>devstoreaccount1</account_name>
+              <account_key>Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==</account_key>
+              <cache_enabled>false</cache_enabled>
+            </azure>
+            <backups_azure>
+              <type>azure_blob_storage</type>
+              <storage_account_url>http://azure:10000/devstoreaccount1</storage_account_url>
+              <container_name>azure-backup-disk</container_name>
+              <!--  https://github.com/Azure/Azurite/blob/main/README.md#usage-with-azure-storage-sdks-or-tools -->
+              <account_name>devstoreaccount1</account_name>
+              <account_key>Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==</account_key>
+              <cache_enabled>false</cache_enabled>
+            </backups_azure>
+        </disks>
+    </storage_configuration>
+    <backups>
+        <allowed_disk>backups_s3</allowed_disk>
+        <allowed_disk>backups_s3_plain</allowed_disk>
+        <allowed_disk>backups_azure</allowed_disk>
+    </backups>
+</clickhouse>
+EOT
 
 fi
 

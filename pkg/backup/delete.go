@@ -277,6 +277,9 @@ func (b *Backuper) cleanRemoteEmbedded(ctx context.Context, backup storage.Backu
 			}
 			apexLog.Debugf("object_disk.ReadMetadataFromReader(%s)", f.Name())
 			meta, err := object_disk.ReadMetadataFromReader(r, f.Name())
+			if err != nil {
+				return err
+			}
 			for _, o := range meta.StorageObjects {
 				if err = object_disk.DeleteFile(ctx, b.cfg.ClickHouse.EmbeddedBackupDisk, o.ObjectRelativePath); err != nil {
 					return err

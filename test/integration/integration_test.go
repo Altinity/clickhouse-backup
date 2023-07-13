@@ -754,13 +754,15 @@ func TestIntegrationEmbedded(t *testing.T) {
 	//CUSTOM backup create folder in each disk
 	r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_s3/backup/"))
 	r.NoError(dockerCP("config-s3-embedded.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	runMainIntegrationScenario(t, "EMBEDDED")
-	//r.NoError(dockerExec("clickhouse","rm", "-rf", "/var/lib/clickhouse/disks/backups_s3_plain/backup", ))
+	runMainIntegrationScenario(t, "EMBEDDED_S3")
+	//@TODO uncomment when resolve slow azure BACKUP/RESTORE https://github.com/ClickHouse/ClickHouse/issues/52088
+	//r.NoError(dockerExec("clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_azure/backup/"))
+	//r.NoError(dockerCP("config-azblob-embedded.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
+	//runMainIntegrationScenario(t, "EMBEDDED_AZURE")
+	//@TODO think about how to implements embedded backup for s3_plain disks
+	//r.NoError(dockerExec("clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_s3_plain/backup/"))
 	//r.NoError(dockerCP("config-s3-plain-embedded.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	//runMainIntegrationScenario(t, "EMBEDDED")
-	//r.NoError(dockerExec("clickhouse","rm", "-rf", "/var/lib/clickhouse/disks/backups_azure/backup", ))
-	//r.NoError(dockerCP("config-azure-embedded.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
-	//runMainIntegrationScenario(t, "EMBEDDED")
+	//runMainIntegrationScenario(t, "EMBEDDED_S3_PLAIN")
 }
 
 func TestLongListRemote(t *testing.T) {
@@ -993,8 +995,8 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 	checkResumeAlreadyProcessed(uploadCmd, incrementBackupName, "upload", r, remoteStorageType)
 
 	backupDir := "/var/lib/clickhouse/backup"
-	if remoteStorageType == "EMBEDDED" {
-		backupDir = "/var/lib/clickhouse/disks/backups_s3"
+	if strings.HasPrefix(remoteStorageType, "EMBEDDED") {
+		backupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED"))
 	}
 	out, err = dockerExecOut("clickhouse", "ls", "-lha", backupDir)
 	r.NoError(err)
@@ -1066,12 +1068,9 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 
 	// test end
 	log.Info("Clean after finish")
-	// why CUSTOM delete only local database?
-	if remoteStorageType == "CUSTOM" {
-		fullCleanup(r, ch, []string{}, []string{}, databaseList, false, true)
-	} else if remoteStorageType == "EMBEDDED" {
+	if remoteStorageType == "CUSTOM" || strings.HasPrefix(remoteStorageType, "EMBEDDED") {
 		fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, []string{"remote"}, databaseList, true, true)
-		fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, []string{"local"}, nil, false, false)
+		fullCleanup(r, ch, []string{incrementBackupName}, []string{"local"}, nil, true, false)
 	} else {
 		fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, []string{"remote", "local"}, databaseList, true, true)
 	}
@@ -1079,7 +1078,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 
 func checkResumeAlreadyProcessed(backupCmd, testBackupName, resumeKind string, r *require.Assertions, remoteStorageType string) {
 	// backupCmd = fmt.Sprintf("%s & PID=$!; sleep 0.7; kill -9 $PID; cat /var/lib/clickhouse/backup/%s/upload.state; sleep 0.3; %s", backupCmd, testBackupName, backupCmd)
-	if remoteStorageType == "CUSTOM" || remoteStorageType == "EMBEDDED" {
+	if remoteStorageType == "CUSTOM" || strings.HasPrefix(remoteStorageType, "EMBEDDED") {
 		backupCmd = strings.Replace(backupCmd, "--resume", "", 1)
 	} else {
 		backupCmd = fmt.Sprintf("%s; cat /var/lib/clickhouse/backup/%s/%s.state; %s", backupCmd, testBackupName, resumeKind, backupCmd)
@@ -2113,7 +2112,7 @@ func (ch *TestClickHouse) createTestSchema(data TestDataStruct, remoteStorageTyp
 		return nil
 	}
 	// @TODO remove it when resolve https://github.com/ClickHouse/ClickHouse/issues/43971
-	if strings.Contains(createSQL, "8192)") && remoteStorageType == "EMBEDDED" {
+	if strings.Contains(createSQL, "8192)") && strings.HasPrefix(remoteStorageType, "EMBEDDED") {
 		matches := mergeTreeOldSyntax.FindStringSubmatch(createSQL)
 		if len(matches) >= 3 {
 			substitution := "MergeTree() PARTITION BY toYYYYMMDD($1) ORDER BY $2 SETTINGS index_granularity=$3"
@@ -2356,15 +2355,15 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse, re
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", fullBackupName))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", "--partitions=('2022-01-02'),('2022-01-03')", fullBackupName))
 	fullBackupDir := "/var/lib/clickhouse/backup/" + fullBackupName + "/shadow/default/t?/default/"
-	if remoteStorageType == "EMBEDDED" {
-		fullBackupDir = "/var/lib/clickhouse/disks/backups_s3/" + fullBackupName + "/data/default/t?"
+	if strings.HasPrefix(remoteStorageType, "EMBEDDED") {
+		fullBackupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED")) + "/" + fullBackupName + "/data/default/t?"
 	}
 	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la "+fullBackupDir+" | wc -l")
 	r.NoError(err)
 	expectedLines := "13"
 	// custom storage doesn't support --partitions for upload / download now
 	// embedded storage contain hardLink files and will download additional data parts
-	if remoteStorageType == "CUSTOM" || remoteStorageType == "EMBEDDED" {
+	if remoteStorageType == "CUSTOM" || strings.HasPrefix(remoteStorageType, "EMBEDDED") {
 		expectedLines = "17"
 	}
 	r.Equal(expectedLines, strings.Trim(out, "\r\n\t "))
@@ -2372,8 +2371,8 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse, re
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", fullBackupName))
 
 	fullBackupDir = "/var/lib/clickhouse/backup/" + fullBackupName + "/shadow/default/t?/default/"
-	if remoteStorageType == "EMBEDDED" {
-		fullBackupDir = "/var/lib/clickhouse/disks/backups_s3/" + fullBackupName + "/data/default/t?"
+	if strings.HasPrefix(remoteStorageType, "EMBEDDED") {
+		fullBackupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED")) + "/" + fullBackupName + "/data/default/t?"
 	}
 	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la "+fullBackupDir+"| wc -l")
 	r.NoError(err)
@@ -2393,8 +2392,8 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse, re
 	// check create + partitions
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "--tables=default.t1", "--partitions=20220102,20220103", partitionBackupName))
 	partitionBackupDir := "/var/lib/clickhouse/backup/" + partitionBackupName + "/shadow/default/t1/default/"
-	if remoteStorageType == "EMBEDDED" {
-		partitionBackupDir = "/var/lib/clickhouse/disks/backups_s3/" + partitionBackupName + "/data/default/t1"
+	if strings.HasPrefix(remoteStorageType, "EMBEDDED") {
+		partitionBackupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED")) + "/" + partitionBackupName + "/data/default/t1"
 	}
 	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la "+partitionBackupDir+"| wc -l")
 	r.NoError(err)
@@ -2404,8 +2403,8 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse, re
 	// check create > upload + partitions
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "--tables=default.t1", partitionBackupName))
 	partitionBackupDir = "/var/lib/clickhouse/backup/" + partitionBackupName + "/shadow/default/t1/default/"
-	if remoteStorageType == "EMBEDDED" {
-		partitionBackupDir = "/var/lib/clickhouse/disks/backups_s3/" + partitionBackupName + "/data/default/t1"
+	if strings.HasPrefix(remoteStorageType, "EMBEDDED") {
+		partitionBackupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED")) + "/" + partitionBackupName + "/data/default/t1"
 	}
 	out, err = dockerExecOut("clickhouse", "bash", "-c", "ls -la "+partitionBackupDir+" | wc -l")
 	r.NoError(err)
@@ -2422,7 +2421,7 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse, re
 
 	expectedCount = 20
 	// custom and embedded doesn't support --partitions in upload and download
-	if remoteStorageType == "CUSTOM" || remoteStorageType == "EMBEDDED" {
+	if remoteStorageType == "CUSTOM" || strings.HasPrefix(remoteStorageType, "EMBEDDED") {
 		expectedCount = 40
 	}
 	r.Equal(expectedCount, result, fmt.Sprintf("expect count=%d", expectedCount))
@@ -2432,7 +2431,7 @@ func testBackupSpecifiedPartitions(r *require.Assertions, ch *TestClickHouse, re
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT count() FROM default.t1 WHERE dt NOT IN ('2022-01-02','2022-01-03')"))
 	expectedCount = 0
 	// custom and embedded doesn't support --partitions in upload and download
-	if remoteStorageType == "CUSTOM" || remoteStorageType == "EMBEDDED" {
+	if remoteStorageType == "CUSTOM" || strings.HasPrefix(remoteStorageType, "EMBEDDED") {
 		expectedCount = 20
 	}
 	r.Equal(expectedCount, result, "expect count=0")

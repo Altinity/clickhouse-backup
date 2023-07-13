@@ -346,7 +346,7 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) (
 				if containerNameNode == nil {
 					return nil, fmt.Errorf("%s -> /%s/storage_configuration/disks/%s doesn't contains <account_key>", configFile, root.Data, diskName)
 				}
-				creds.AzureAccountName = strings.Trim(accountKeyNode.InnerText(), "\r\n \t")
+				creds.AzureAccountKey = strings.Trim(accountKeyNode.InnerText(), "\r\n \t")
 				credentials[diskName] = creds
 				break
 			}
@@ -425,7 +425,12 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 		break
 	case "azblob":
 		connection.Type = "azure_blob_storage"
-		azureCfg := config.AzureBlobConfig{}
+		azureCfg := config.AzureBlobConfig{
+			Timeout:       "15m",
+			BufferSize:    2 * 1024 * 1024,
+			MaxBuffers:    3,
+			MaxPartsCount: 5000,
+		}
 		azureURL, err := url.Parse(creds.EndPoint)
 		if err != nil {
 			return nil, err
@@ -435,11 +440,14 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 			azureCfg.EndpointSchema = azureURL.Scheme
 		}
 		azureCfg.EndpointSuffix = azureURL.Host
+		if creds.AzureAccountName != "" {
+			azureCfg.AccountName = creds.AzureAccountName
+		}
 		if azureURL.Path != "" {
 			azureCfg.Path = azureURL.Path
-		}
-		if creds.AzureAccountKey != "" {
-			azureCfg.AccountName = creds.AzureAccountName
+			if azureCfg.AccountName != "" && strings.HasPrefix(azureCfg.Path, "/"+creds.AzureAccountName) {
+				azureCfg.Path = strings.TrimPrefix(azureURL.Path, "/"+creds.AzureAccountName)
+			}
 		}
 		if creds.AzureAccountKey != "" {
 			azureCfg.AccountKey = creds.AzureAccountKey

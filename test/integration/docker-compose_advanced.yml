@@ -43,6 +43,10 @@ services:
       MINIO_DEFAULT_BUCKETS: 'clickhouse'
       MINIO_ROOT_USER: access-key
       MINIO_ROOT_PASSWORD: it-is-my-super-secret-key
+    healthcheck:
+      test: curl -sL http://localhost:9000/
+      interval: 10s
+      retries: 30
     volumes:
       - ./minio_nodelete.sh:/bin/minio_nodelete.sh
     ports:
@@ -58,7 +62,7 @@ services:
 #      - /bin/sh
 #    command:
 #      - -c
-#      - "mkdir -p /storage/altinity-qa-test && fake-gcs-server -scheme http -port 8080 -public-host gsc:8080"
+#      - "mkdir -p /data/clickhouse-backup-test-gcs && fake-gcs-server -data /data -scheme http -port 8080 -public-host gsc:8080"
 #    networks:
 #      - clickhouse-backup
 
@@ -67,8 +71,30 @@ services:
     image: mcr.microsoft.com/azure-storage/azurite:latest
     container_name: azure
     hostname: devstoreaccount1.blob.azure
+    healthcheck:
+      test: nc 127.0.0.1 10000 -z
+      interval: 1s
+      retries: 30
+    command: ["azurite", "--debug", "/data/debug.log" , "-l", "/data", "--blobHost", "0.0.0.0","--queueHost", "0.0.0.0", "--tableHost", "0.0.0.0"]
     networks:
       - clickhouse-backup
+
+#  azure_init:
+#    image: mcr.microsoft.com/azure-cli:latest
+#    command:
+#      - /bin/sh
+#      - -xc
+#      - |
+#        az storage container create --debug --name azure-backup-disk &&
+#        az storage container create --debug --name azure-disk
+#    depends_on:
+#      azure:
+#        condition: service_healthy
+#    environment:
+#      # https://github.com/Azure/Azurite/blob/main/README.md#usage-with-azure-storage-sdks-or-tools
+#      AZURE_STORAGE_CONNECTION_STRING: DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azure:10000/devstoreaccount1;
+#    networks:
+#      - clickhouse-backup
 
   mysql:
     image: docker.io/mysql:${MYSQL_VERSION:-latest}
@@ -189,6 +215,12 @@ services:
         condition: service_healthy
       zookeeper:
         condition: service_healthy
+      minio:
+        condition: service_healthy
+      azure:
+        condition: service_healthy
+#      azure_init:
+#        condition: service_completed_successfully
 
   all_services_ready:
     image: hello-world

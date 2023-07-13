@@ -36,16 +36,16 @@ func (s *AzureBlob) Kind() string {
 // Connect - connect to Azure
 func (s *AzureBlob) Connect(ctx context.Context) error {
 	if s.Config.EndpointSuffix == "" {
-		return fmt.Errorf("endpoint suffix not set")
+		return fmt.Errorf("azblob endpoint suffix not set")
 	}
 	if s.Config.Container == "" {
-		return fmt.Errorf("container name not set")
+		return fmt.Errorf("azblob container name not set")
 	}
 	if s.Config.AccountName == "" {
-		return fmt.Errorf("account name not set")
+		return fmt.Errorf("azblob account name not set")
 	}
 	if s.Config.AccountKey == "" && s.Config.SharedAccessSignature == "" && !s.Config.UseManagedIdentity {
-		return fmt.Errorf("account key or SAS or use_managed_identity must be set")
+		return fmt.Errorf("azblob account key or SAS or use_managed_identity must be set")
 	}
 	var (
 		err        error

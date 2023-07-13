@@ -32,9 +32,9 @@ FROM builder-base AS builder-race
 ARG TARGETPLATFORM
 COPY ./ /src/
 RUN mkdir -p ./clickhouse-backup/
-RUN --mount=type=cache,id=clickhouse-backup-gobuild,target=/root/.cache/go GOOS=$( echo ${TARGETPLATFORM} | cut -d "/" -f 1) GOARCH=$( echo ${TARGETPLATFORM} | cut -d "/" -f 2) CGO_ENABLED=1 go build -cover -buildvcs=false -ldflags "-X 'main.version=race' -extldflags '-static'" -gcflags "all=-N -l" -race -o ./clickhouse-backup/clickhouse-backup-race ./cmd/clickhouse-backup
+RUN --mount=type=cache,id=clickhouse-backup-gobuild,target=/root/.cache/go GOOS=$( echo ${TARGETPLATFORM} | cut -d "/" -f 1) GOARCH=$( echo ${TARGETPLATFORM} | cut -d "/" -f 2) CGO_ENABLED=1 go build -a -cover -buildvcs=false -ldflags "-X 'main.version=race' -extldflags '-static'" -gcflags "all=-N -l" -race -o ./clickhouse-backup/clickhouse-backup-race ./cmd/clickhouse-backup
 RUN cp -l ./clickhouse-backup/clickhouse-backup-race /bin/clickhouse-backup && ldd ./clickhouse-backup/clickhouse-backup-race
-RUN --mount=type=cache,id=clickhouse-backup-gobuild,target=/root/.cache/go GOEXPERIMENT=boringcrypto CGO_ENABLED=1 GOOS=$( echo ${TARGETPLATFORM} | cut -d "/" -f 1) GOARCH=$( echo ${TARGETPLATFORM} | cut -d "/" -f 2) CGO_ENABLED=1 go build -cover -buildvcs=false -ldflags "-X 'main.version=race-fips' -extldflags '-static'" -gcflags "all=-N -l" -race -o ./clickhouse-backup/clickhouse-backup-race-fips ./cmd/clickhouse-backup
+RUN --mount=type=cache,id=clickhouse-backup-gobuild,target=/root/.cache/go GOOS=$( echo ${TARGETPLATFORM} | cut -d "/" -f 1) GOARCH=$( echo ${TARGETPLATFORM} | cut -d "/" -f 2) GOEXPERIMENT=boringcrypto CGO_ENABLED=1 go build -cover -buildvcs=false -ldflags "-X 'main.version=race-fips' -extldflags '-static'" -gcflags "all=-N -l" -race -o ./clickhouse-backup/clickhouse-backup-race-fips ./cmd/clickhouse-backup
 RUN cp -l ./clickhouse-backup/clickhouse-backup-race-fips /bin/clickhouse-backup-fips && ldd ./clickhouse-backup/clickhouse-backup-race-fips
 COPY entrypoint.sh /entrypoint.sh
 

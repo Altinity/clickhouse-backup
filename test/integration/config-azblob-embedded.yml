@@ -28,7 +28,7 @@ azblob:
   endpoint_schema: http
   container: container1
   path: backup
-  compression_format: tar
+  compression_format: none
 api:
   listen: :7171
   create_integration_tables: true
