@@ -1068,9 +1068,10 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType string) {
 
 	// test end
 	log.Info("Clean after finish")
+	// CUSTOM and EMBEDDED download increment doesn't download full
 	if remoteStorageType == "CUSTOM" || strings.HasPrefix(remoteStorageType, "EMBEDDED") {
-		fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, []string{"remote"}, databaseList, true, true)
 		fullCleanup(r, ch, []string{incrementBackupName}, []string{"local"}, nil, true, false)
+		fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, []string{"remote"}, databaseList, true, true)
 	} else {
 		fullCleanup(r, ch, []string{testBackupName, incrementBackupName}, []string{"remote", "local"}, databaseList, true, true)
 	}
@@ -2326,7 +2327,7 @@ func installDebIfNotExists(r *require.Assertions, container string, pkgs ...stri
 		container,
 		"bash", "-xec",
 		fmt.Sprintf(
-			"export DEBIAN_FRONTEND=noniteractive; if [[ '%d' != $(dpkg -l | grep -c -E \"%s\" ) ]]; then apt-get -y update; apt-get install --no-install-recommends -y %s; fi",
+			"export DEBIAN_FRONTEND=noniteractive; if [[ '%d' != $(dpkg -l | grep -c -E \"%s\" ) ]]; then rm -fv /etc/apt/sources.list.d/clickhouse.list; apt-get -y update; apt-get install --no-install-recommends -y %s; fi",
 			len(pkgs), "^ii\\s+"+strings.Join(pkgs, "|^ii\\s+"), strings.Join(pkgs, " "),
 		),
 	))
