@@ -90,8 +90,11 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_s3.xml
       <disk_s3>
         <type>s3</type>
         <endpoint>http://minio:9000/clickhouse/disk_s3/</endpoint>
+        <!-- https://github.com/Altinity/clickhouse-backup/issues/691
         <access_key_id>access-key</access_key_id>
         <secret_access_key>it-is-my-super-secret-key</secret_access_key>
+        -->
+        <use_environment_credentials>1</use_environment_credentials>
         <send_metadata>true</send_metadata>
       </disk_s3>
     </disks>
@@ -119,8 +122,11 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_encrypted_s3.x
       <disk_s3>
         <type>s3</type>
         <endpoint>http://minio:9000/clickhouse/disk_s3/</endpoint>
+        <!-- https://github.com/Altinity/clickhouse-backup/issues/691
         <access_key_id>access-key</access_key_id>
         <secret_access_key>it-is-my-super-secret-key</secret_access_key>
+        -->
+        <use_environment_credentials>1</use_environment_credentials>
         <send_metadata>true</send_metadata>
       </disk_s3>
       <disk_s3_encrypted>
@@ -158,25 +164,28 @@ chown -R clickhouse /var/lib/clickhouse/disks/ /var/lib/clickhouse/backups_embed
 cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3.xml
 <?xml version="1.0"?>
 <clickhouse>
-    <storage_configuration>
-        <disks>
-            <backups_s3>
-              <send_metadata>true</send_metadata>
-              <type>s3</type>
-              <endpoint>http://minio:9000/clickhouse/backups_s3/</endpoint>
-              <access_key_id>access-key</access_key_id>
-              <secret_access_key>it-is-my-super-secret-key</secret_access_key>
-              <cache_enabled>false</cache_enabled>
-            </backups_s3>
-        </disks>
-    </storage_configuration>
-    <backups>
-        <allowed_disk>backups_s3</allowed_disk>
-        <allowed_path>/var/lib/clickhouse/backups_embedded/</allowed_path>
-    </backups>
-    <merge_tree>
-        <allow_remote_fs_zero_copy_replication>1</allow_remote_fs_zero_copy_replication>
-    </merge_tree>
+  <storage_configuration>
+    <disks>
+      <backups_s3>
+        <send_metadata>true</send_metadata>
+        <type>s3</type>
+        <endpoint>http://minio:9000/clickhouse/backups_s3/</endpoint>
+        <!-- https://github.com/Altinity/clickhouse-backup/issues/691
+        <access_key_id>access-key</access_key_id>
+        <secret_access_key>it-is-my-super-secret-key</secret_access_key>
+        -->
+        <use_environment_credentials>1</use_environment_credentials>
+        <cache_enabled>false</cache_enabled>
+      </backups_s3>
+    </disks>
+  </storage_configuration>
+  <backups>
+    <allowed_disk>backups_s3</allowed_disk>
+    <allowed_path>/var/lib/clickhouse/backups_embedded/</allowed_path>
+  </backups>
+  <merge_tree>
+    <allow_remote_fs_zero_copy_replication>1</allow_remote_fs_zero_copy_replication>
+  </merge_tree>
 </clickhouse>
 EOT
 
@@ -191,21 +200,24 @@ chown -R clickhouse /var/lib/clickhouse/disks/
 cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3_plain.xml
 <?xml version="1.0"?>
 <clickhouse>
-    <storage_configuration>
-        <disks>
-            <backups_s3_plain>
-              <type>s3_plain</type>
-              <endpoint>http://minio:9000/clickhouse/backups_s3_plain/</endpoint>
-              <access_key_id>access-key</access_key_id>
-              <secret_access_key>it-is-my-super-secret-key</secret_access_key>
-              <cache_enabled>false</cache_enabled>
-            </backups_s3_plain>
-        </disks>
-    </storage_configuration>
-    <backups>
-        <allowed_disk>backups_s3</allowed_disk>
-        <allowed_disk>backups_s3_plain</allowed_disk>
-    </backups>
+  <storage_configuration>
+    <disks>
+      <backups_s3_plain>
+        <type>s3_plain</type>
+        <endpoint>http://minio:9000/clickhouse/backups_s3_plain/</endpoint>
+        <!-- https://github.com/Altinity/clickhouse-backup/issues/691
+        <access_key_id>access-key</access_key_id>
+        <secret_access_key>it-is-my-super-secret-key</secret_access_key>
+        -->
+        <use_environment_credentials>1</use_environment_credentials>
+        <cache_enabled>false</cache_enabled>
+      </backups_s3_plain>
+    </disks>
+  </storage_configuration>
+  <backups>
+    <allowed_disk>backups_s3</allowed_disk>
+    <allowed_disk>backups_s3_plain</allowed_disk>
+  </backups>
 </clickhouse>
 EOT
 

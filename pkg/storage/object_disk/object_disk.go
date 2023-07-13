@@ -300,7 +300,7 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) (
 					Type: "s3",
 				}
 				if batchDeleteNode := d.SelectElement("support_batch_delete"); batchDeleteNode != nil {
-					if strings.Trim(batchDeleteNode.InnerText(), "\r\n \t") == "true" {
+					if strings.Trim(batchDeleteNode.InnerText(), "\r\n \t") == "false" {
 						creds.Type = "gcs"
 					}
 				}
@@ -314,13 +314,18 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) (
 				}
 				accessKeyNode := d.SelectElement("access_key_id")
 				secretKeyNode := d.SelectElement("secret_access_key")
-				if accessKeyNode == nil || secretKeyNode == nil {
+				useEnvironmentCredentials := d.SelectElement("use_environment_credentials")
+				if accessKeyNode != nil && secretKeyNode != nil {
+					creds.S3AccessKey = strings.Trim(accessKeyNode.InnerText(), "\r\n \t")
+					creds.S3SecretKey = strings.Trim(secretKeyNode.InnerText(), "\r\n \t")
+				} else {
 					apexLog.Warnf("%s -> /%s/storage_configuration/disks/%s doesn't contains <access_key_id> and <secret_access_key> environment variables will use", configFile, root.Data, diskName)
 					creds.S3AssumeRole = os.Getenv("AWS_ROLE_ARN")
-					break
+					if useEnvironmentCredentials != nil {
+						creds.S3AccessKey = os.Getenv("AWS_ACCESS_KEY_ID")
+						creds.S3SecretKey = os.Getenv("AWS_SECRET_ACCESS_KEY")
+					}
 				}
-				creds.S3AccessKey = strings.Trim(accessKeyNode.InnerText(), "\r\n \t")
-				creds.S3SecretKey = strings.Trim(secretKeyNode.InnerText(), "\r\n \t")
 				credentials[diskName] = creds
 				break
 			case "azure_blob_storage":

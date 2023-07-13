@@ -1,5 +1,6 @@
 # v2.3.1
 IMPROVEMENTS
+- add support `use_environment_credentials` option inside `clickhouse-server` backup object disk definition, fix [691](https://github.com/Altinity/clickhouse-backup/issues/691)
 - add but skip tests for `azure_blob_storage` backup disk for `use_embbeded_backup_restore: true`, it works, but slow, look https://github.com/ClickHouse/ClickHouse/issues/52088 for details
 
 BUG FIXES

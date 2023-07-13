@@ -167,6 +167,9 @@ services:
       QA_AWS_SECRET_KEY: ${QA_AWS_SECRET_KEY}
       QA_AWS_BUCKET: ${QA_AWS_BUCKET}
       QA_AWS_REGION: ${QA_AWS_REGION}
+# https://github.com/Altinity/clickhouse-backup/issues/691:
+      AWS_ACCESS_KEY_ID: access-key
+      AWS_SECRET_ACCESS_KEY: it-is-my-super-secret-key
     volumes:
       - ./backup-user.xml:/etc/clickhouse-server/users.d/backup-user.xml
       - ./enable-access_management.xml:/etc/clickhouse-server/users.d/enable-access_management.xml
