@@ -26,7 +26,7 @@ jobs:
 
       - name: Setup fpm and make
         run: |
-          sudo apt-get install -y --no-install-recommends ruby ruby-dev gcc g++ rpm
+          sudo apt-get install -y --no-install-recommends ruby ruby-dev gcc g++ rpm musl-dev musl-tools
           sudo apt-get install --no-install-recommends -y make
           sudo gem install --no-document fpm
 

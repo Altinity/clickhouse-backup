@@ -14,7 +14,7 @@ define DESC =
  Support of incremental backups on remote storages'
 endef
 GO_BUILD = go build -buildvcs=false -ldflags "-X 'main.version=$(VERSION)' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)'"
-GO_BUILD_FIPS = go build -buildvcs=false -ldflags "-X 'main.version=$(VERSION)-fips' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)'"
+GO_BUILD_STATIC = go build -buildvcs=false -ldflags "-X 'main.version=$(VERSION)-fips' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)' -linkmode=external -extldflags '-static'"
 PKG_FILES = build/$(NAME)_$(VERSION).amd64.deb build/$(NAME)_$(VERSION).arm64.deb build/$(NAME)-$(VERSION)-1.amd64.rpm build/$(NAME)-$(VERSION)-1.arm64.rpm
 HOST_OS = $(shell bash -c 'source <(go env) && echo $$GOHOSTOS')
 HOST_ARCH = $(shell bash -c 'source <(go env) && echo $$GOHOSTARCH')
@@ -55,7 +55,7 @@ build/linux/arm64/$(NAME)-fips build/darwin/arm64/$(NAME)-fips: GOARCH = arm64
 build/linux/amd64/$(NAME)-fips build/linux/arm64/$(NAME)-fips: GOOS = linux
 build/darwin/amd64/$(NAME)-fips build/darwin/arm64/$(NAME)-fips: GOOS = darwin
 build/linux/amd64/$(NAME)-fips build/darwin/amd64/$(NAME)-fips:
-	GOEXPERIMENT=boringcrypto CGO_ENABLED=1 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO_BUILD_FIPS) -o $@ ./cmd/$(NAME) && \
+	CC=musl-gcc GOEXPERIMENT=boringcrypto CGO_ENABLED=1 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO_BUILD_STATIC) -o $@ ./cmd/$(NAME) && \
 	go tool nm $@ > /tmp/$(NAME)-fips-tags.txt && \
 	grep '_Cfunc__goboringcrypto_' /tmp/$(NAME)-fips-tags.txt 1> /dev/null && \
 	rm -fv /tmp/$(NAME)-fips-tags.txt
@@ -63,7 +63,7 @@ build/linux/amd64/$(NAME)-fips build/darwin/amd64/$(NAME)-fips:
 # TODO remove ugly workaround, https://www.perplexity.ai/search/2ead4c04-060a-4d78-a75f-f26835238438
 build/linux/arm64/$(NAME)-fips build/darwin/arm64/$(NAME)-fips:
 	bash -xce 'if [[ ! -f ~/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc ]]; then wget -q -P ~ https://musl.cc/aarch64-linux-musl-cross.tgz; tar -xvf ~/aarch64-linux-musl-cross.tgz -C ~; fi' && \
-	CC=~/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc GOEXPERIMENT=boringcrypto CGO_ENABLED=1 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO_BUILD_FIPS) -o $@ ./cmd/$(NAME) && \
+	CC=~/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc GOEXPERIMENT=boringcrypto CGO_ENABLED=1 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO_BUILD_STATIC) -o $@ ./cmd/$(NAME) && \
 	go tool nm $@ > /tmp/$(NAME)-fips-tags.txt && \
 	grep '_Cfunc__goboringcrypto_' /tmp/$(NAME)-fips-tags.txt 1> /dev/null && \
 	rm -fv /tmp/$(NAME)-fips-tags.txt
@@ -123,12 +123,12 @@ $(PKG_FILES): build/linux/amd64/pkg build/linux/arm64/pkg
 build-race: $(NAME)/$(NAME)-race
 
 $(NAME)/$(NAME)-race:
-	CGO_ENABLED=1 $(GO_BUILD) -cover -gcflags "all=-N -l" -race -o $@ ./cmd/$(NAME)
+	CC=musl-gcc CGO_ENABLED=1 $(GO_BUILD_STATIC) -cover -gcflags "all=-N -l" -race -o $@ ./cmd/$(NAME)
 
 build-race-fips: $(NAME)/$(NAME)-race-fips
 
 $(NAME)/$(NAME)-race-fips:
-	GOEXPERIMENT=boringcrypto CGO_ENABLED=1 $(GO_BUILD_FIPS) -cover -gcflags "all=-N -l" -race -o $@ ./cmd/$(NAME)
+	CC=musl-gcc GOEXPERIMENT=boringcrypto CGO_ENABLED=1 $(GO_BUILD_STATIC) -cover -gcflags "all=-N -l" -race -o $@ ./cmd/$(NAME)
 
 
 # run `docker buildx create --use` first time

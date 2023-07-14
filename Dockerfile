@@ -12,7 +12,7 @@ RUN rm -fv /etc/apt/sources.list.d/clickhouse.list && \
     echo "deb https://ppa.launchpadcontent.net/longsleep/golang-backports/ubuntu ${DISTRIB_CODENAME} main" > /etc/apt/sources.list.d/golang.list && \
     echo "deb-src https://ppa.launchpadcontent.net/longsleep/golang-backports/ubuntu ${DISTRIB_CODENAME} main" >> /etc/apt/sources.list.d/golang.list && \
     ( apt-get update || true ) && \
-    apt-get install -y --no-install-recommends libc-dev golang-1.20 make git gcc && \
+    apt-get install -y --no-install-recommends libc-dev golang-1.20 make git gcc musl-dev musl-tools && \
     wget -q -P /root/ https://musl.cc/aarch64-linux-musl-cross.tgz && \
     tar -xvf /root/aarch64-linux-musl-cross.tgz -C /root/ && \
     mkdir -p /root/go/
@@ -32,9 +32,9 @@ FROM builder-base AS builder-race
 ARG TARGETPLATFORM
 COPY ./ /src/
 RUN mkdir -p ./clickhouse-backup/
-RUN --mount=type=cache,id=clickhouse-backup-gobuild,target=/root/.cache/go GOOS=$( echo ${TARGETPLATFORM} | cut -d "/" -f 1) GOARCH=$( echo ${TARGETPLATFORM} | cut -d "/" -f 2) CGO_ENABLED=1 go build -a -cover -buildvcs=false -ldflags "-X 'main.version=race' -extldflags '-static'" -gcflags "all=-N -l" -race -o ./clickhouse-backup/clickhouse-backup-race ./cmd/clickhouse-backup
+RUN --mount=type=cache,id=clickhouse-backup-gobuild,target=/root/.cache/go GOOS=$( echo ${TARGETPLATFORM} | cut -d "/" -f 1) GOARCH=$( echo ${TARGETPLATFORM} | cut -d "/" -f 2) CC=musl-gcc CGO_ENABLED=1 go build -a -cover -buildvcs=false -ldflags "-X 'main.version=race' -linkmode=external -extldflags '-static'" -gcflags "all=-N -l" -race -o ./clickhouse-backup/clickhouse-backup-race ./cmd/clickhouse-backup
 RUN cp -l ./clickhouse-backup/clickhouse-backup-race /bin/clickhouse-backup && ldd ./clickhouse-backup/clickhouse-backup-race
-RUN --mount=type=cache,id=clickhouse-backup-gobuild,target=/root/.cache/go GOOS=$( echo ${TARGETPLATFORM} | cut -d "/" -f 1) GOARCH=$( echo ${TARGETPLATFORM} | cut -d "/" -f 2) GOEXPERIMENT=boringcrypto CGO_ENABLED=1 go build -cover -buildvcs=false -ldflags "-X 'main.version=race-fips' -extldflags '-static'" -gcflags "all=-N -l" -race -o ./clickhouse-backup/clickhouse-backup-race-fips ./cmd/clickhouse-backup
+RUN --mount=type=cache,id=clickhouse-backup-gobuild,target=/root/.cache/go GOOS=$( echo ${TARGETPLATFORM} | cut -d "/" -f 1) GOARCH=$( echo ${TARGETPLATFORM} | cut -d "/" -f 2) GOEXPERIMENT=boringcrypto CC=musl-gcc CGO_ENABLED=1 go build -cover -buildvcs=false -ldflags "-X 'main.version=race-fips' -linkmode=external -extldflags '-static'" -gcflags "all=-N -l" -race -o ./clickhouse-backup/clickhouse-backup-race-fips ./cmd/clickhouse-backup
 RUN cp -l ./clickhouse-backup/clickhouse-backup-race-fips /bin/clickhouse-backup-fips && ldd ./clickhouse-backup/clickhouse-backup-race-fips
 COPY entrypoint.sh /entrypoint.sh
 

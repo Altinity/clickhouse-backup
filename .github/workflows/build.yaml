@@ -12,7 +12,7 @@ on:
 jobs:
   build:
     name: Build
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         golang-version:
@@ -26,6 +26,11 @@ jobs:
         uses: actions/setup-go@v3
         with:
           go-version: '^${{ matrix.golang-version }}'
+
+      - name: Setup musl
+        id: setup-musl
+        run: |
+          sudo apt-get install -y musl-tools musl-dev
 
       - name: Cache golang
         id: cache-golang

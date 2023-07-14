@@ -4,6 +4,7 @@ IMPROVEMENTS
 - add but skip tests for `azure_blob_storage` backup disk for `use_embbeded_backup_restore: true`, it works, but slow, look https://github.com/ClickHouse/ClickHouse/issues/52088 for details
 
 BUG FIXES
+- fix static build for FIPS compatible mode fix [693](https://github.com/Altinity/clickhouse-backup/issues/693)
 - complete success/failure server callback notification even when main context canceled, fix [680](https://github.com/Altinity/clickhouse-backup/pull/680)
 - `clean` command will not return error when shadow directory not exists, fix [686](https://github.com/Altinity/clickhouse-backup/issues/686)
 
