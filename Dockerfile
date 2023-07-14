@@ -33,9 +33,9 @@ ARG TARGETPLATFORM
 COPY ./ /src/
 RUN mkdir -p ./clickhouse-backup/
 RUN --mount=type=cache,id=clickhouse-backup-gobuild,target=/root/.cache/go GOOS=$( echo ${TARGETPLATFORM} | cut -d "/" -f 1) GOARCH=$( echo ${TARGETPLATFORM} | cut -d "/" -f 2) CC=musl-gcc CGO_ENABLED=1 go build -a -cover -buildvcs=false -ldflags "-X 'main.version=race' -linkmode=external -extldflags '-static'" -gcflags "all=-N -l" -race -o ./clickhouse-backup/clickhouse-backup-race ./cmd/clickhouse-backup
-RUN cp -l ./clickhouse-backup/clickhouse-backup-race /bin/clickhouse-backup && ldd ./clickhouse-backup/clickhouse-backup-race
+RUN cp -l ./clickhouse-backup/clickhouse-backup-race /bin/clickhouse-backup && echo "$(ldd ./clickhouse-backup/clickhouse-backup-race 2>&1 || true)" | grep -c "not a dynamic executable"
 RUN --mount=type=cache,id=clickhouse-backup-gobuild,target=/root/.cache/go GOOS=$( echo ${TARGETPLATFORM} | cut -d "/" -f 1) GOARCH=$( echo ${TARGETPLATFORM} | cut -d "/" -f 2) GOEXPERIMENT=boringcrypto CC=musl-gcc CGO_ENABLED=1 go build -cover -buildvcs=false -ldflags "-X 'main.version=race-fips' -linkmode=external -extldflags '-static'" -gcflags "all=-N -l" -race -o ./clickhouse-backup/clickhouse-backup-race-fips ./cmd/clickhouse-backup
-RUN cp -l ./clickhouse-backup/clickhouse-backup-race-fips /bin/clickhouse-backup-fips && ldd ./clickhouse-backup/clickhouse-backup-race-fips
+RUN cp -l ./clickhouse-backup/clickhouse-backup-race-fips /bin/clickhouse-backup-fips && echo "$(ldd ./clickhouse-backup/clickhouse-backup-race-fips 2>&1 || true)" | grep -c "not a dynamic executable"
 COPY entrypoint.sh /entrypoint.sh
 
 
