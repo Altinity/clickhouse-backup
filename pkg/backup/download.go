@@ -85,6 +85,9 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	if b.cfg.General.RemoteStorage == "none" {
 		return fmt.Errorf("general->remote_storage shall not be \"none\" for download, change you config or use REMOTE_STORAGE environment variable")
 	}
+	if b.cfg.General.DownloadConcurrency == 0 {
+		return fmt.Errorf("`download_concurrency` shall be more than zero")
+	}
 	if !resume && b.cfg.General.UseResumableState {
 		resume = true
 	}

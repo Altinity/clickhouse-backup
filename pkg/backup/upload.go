@@ -354,6 +354,9 @@ func (b *Backuper) validateUploadParams(ctx context.Context, backupName string, 
 		_ = b.PrintLocalBackups(ctx, "all")
 		return fmt.Errorf("select backup for upload")
 	}
+	if b.cfg.General.UploadConcurrency == 0 {
+		return fmt.Errorf("`upload_concurrency` shall be more than zero")
+	}
 	if backupName == diffFrom || backupName == diffFromRemote {
 		return fmt.Errorf("you cannot upload diff from the same backup")
 	}

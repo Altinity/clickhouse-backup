@@ -432,10 +432,15 @@ func PrintConfig(ctx *cli.Context) error {
 func DefaultConfig() *Config {
 	uploadConcurrency := uint8(1)
 	downloadConcurrency := uint8(1)
-
 	if runtime.NumCPU() > 1 {
 		uploadConcurrency = uint8(math.Round(math.Sqrt(float64(runtime.NumCPU() / 2))))
 		downloadConcurrency = uint8(runtime.NumCPU() / 2)
+	}
+	if uploadConcurrency < 1 {
+		uploadConcurrency = 1
+	}
+	if downloadConcurrency < 1 {
+		downloadConcurrency = 1
 	}
 	return &Config{
 		General: GeneralConfig{
