@@ -2,6 +2,7 @@
 BUG FIXES
 - fix error when `backups_to_keep_local: -1`, fix [698](https://github.com/Altinity/clickhouse-backup/issues/698)
 - minimal value for `download_concurrency` and `upload_concurrency` 1, fix [688](https://github.com/Altinity/clickhouse-backup/issues/688)
+- do not create UDF when use --data flag, fix [697](https://github.com/Altinity/clickhouse-backup/issues/697)
 
 # v2.3.1
 IMPROVEMENTS
