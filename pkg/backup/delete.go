@@ -86,9 +86,14 @@ func (b *Backuper) RemoveOldBackupsLocal(ctx context.Context, keepLastBackup boo
 	if keep == 0 {
 		return nil
 	}
-	if keepLastBackup && keep < 0 {
-		keep = 1
+	// fix https://github.com/Altinity/clickhouse-backup/issues/698
+	if keep < 0 {
+		keep = 0
+		if keepLastBackup {
+			keep = 1
+		}
 	}
+
 	backupList, disks, err := b.GetLocalBackups(ctx, disks)
 	if err != nil {
 		return err
