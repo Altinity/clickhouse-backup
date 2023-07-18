@@ -116,12 +116,12 @@ func main() {
 				cli.BoolFlag{
 					Name:   "rbac, backup-rbac, do-backup-rbac",
 					Hidden: false,
-					Usage:  "Backup RBAC related objects only",
+					Usage:  "Backup RBAC related objects",
 				},
 				cli.BoolFlag{
 					Name:   "configs, backup-configs, do-backup-configs",
 					Hidden: false,
-					Usage:  "Backup 'clickhouse-server' configuration files only",
+					Usage:  "Backup 'clickhouse-server' configuration files",
 				},
 				cli.BoolFlag{
 					Name:   "skip-check-parts-columns",
@@ -173,12 +173,12 @@ func main() {
 				cli.BoolFlag{
 					Name:   "rbac, backup-rbac, do-backup-rbac",
 					Hidden: false,
-					Usage:  "Backup and upload RBAC related objects only",
+					Usage:  "Backup and upload RBAC related objects",
 				},
 				cli.BoolFlag{
 					Name:   "configs, backup-configs, do-backup-configs",
 					Hidden: false,
-					Usage:  "Backup 'clickhouse-server' configuration files only",
+					Usage:  "Backup and upload 'clickhouse-server' configuration files",
 				},
 				cli.BoolFlag{
 					Name:   "resume, resumable",
@@ -336,12 +336,12 @@ func main() {
 				cli.BoolFlag{
 					Name:   "rbac, restore-rbac, do-restore-rbac",
 					Hidden: false,
-					Usage:  "Restore RBAC related objects only",
+					Usage:  "Restore RBAC related objects",
 				},
 				cli.BoolFlag{
 					Name:   "configs, restore-configs, do-restore-configs",
 					Hidden: false,
-					Usage:  "Restore 'clickhouse-server' CONFIG related files only",
+					Usage:  "Restore 'clickhouse-server' CONFIG related files",
 				},
 			),
 		},
@@ -397,12 +397,12 @@ func main() {
 				cli.BoolFlag{
 					Name:   "rbac, restore-rbac, do-restore-rbac",
 					Hidden: false,
-					Usage:  "Download and Restore RBAC related objects only",
+					Usage:  "Download and Restore RBAC related objects",
 				},
 				cli.BoolFlag{
 					Name:   "configs, restore-configs, do-restore-configs",
 					Hidden: false,
-					Usage:  "Download and Restore 'clickhouse-server' CONFIG related files only",
+					Usage:  "Download and Restore 'clickhouse-server' CONFIG related files",
 				},
 				cli.BoolFlag{
 					Name:   "resume, resumable",

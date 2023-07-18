@@ -89,8 +89,8 @@ if PARTITION BY clause returns tuple with multiple fields, then use --partitions
 values depends on field types in your table, use single quote for String and Date/DateTime related types
 look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
    --schema, -s                                      Backup schemas only
-   --rbac, --backup-rbac, --do-backup-rbac           Backup RBAC related objects only
-   --configs, --backup-configs, --do-backup-configs  Backup 'clickhouse-server' configuration files only
+   --rbac, --backup-rbac, --do-backup-rbac           Backup RBAC related objects
+   --configs, --backup-configs, --do-backup-configs  Backup 'clickhouse-server' configuration files
    --skip-check-parts-columns                        skip check system.parts_columns to disallow backup inconsistent column types for data parts
    
 ```
@@ -117,8 +117,8 @@ look to system.parts partition and partition_id fields for details https://click
    --diff-from value                                 local backup name which used to upload current backup as incremental
    --diff-from-remote value                          remote backup name which used to upload current backup as incremental
    --schema, -s                                      Backup and upload metadata schema only
-   --rbac, --backup-rbac, --do-backup-rbac           Backup and upload RBAC related objects only
-   --configs, --backup-configs, --do-backup-configs  Backup 'clickhouse-server' configuration files only
+   --rbac, --backup-rbac, --do-backup-rbac           Backup and upload RBAC related objects
+   --configs, --backup-configs, --do-backup-configs  Backup and upload 'clickhouse-server' configuration files
    --resume, --resumable                             Save intermediate upload state and resume upload if backup exists on remote storage, ignore when 'remote_storage: custom' or 'use_embedded_backup_restore: true'
    --skip-check-parts-columns                        skip check system.parts_columns to disallow backup inconsistent column types for data parts
    
@@ -201,8 +201,8 @@ look to system.parts partition and partition_id fields for details https://click
    --data, -d                                          Restore data only
    --rm, --drop                                        Drop exists schema objects before restore
    -i, --ignore-dependencies                           Ignore dependencies when drop exists schema objects
-   --rbac, --restore-rbac, --do-restore-rbac           Restore RBAC related objects only
-   --configs, --restore-configs, --do-restore-configs  Restore 'clickhouse-server' CONFIG related files only
+   --rbac, --restore-rbac, --do-restore-rbac           Restore RBAC related objects
+   --configs, --restore-configs, --do-restore-configs  Restore 'clickhouse-server' CONFIG related files
    
 ```
 ### CLI command - restore_remote
@@ -227,8 +227,8 @@ look to system.parts partition and partition_id fields for details https://click
    --data, -d                                          Download and Restore data only
    --rm, --drop                                        Drop schema objects before restore
    -i, --ignore-dependencies                           Ignore dependencies when drop exists schema objects
-   --rbac, --restore-rbac, --do-restore-rbac           Download and Restore RBAC related objects only
-   --configs, --restore-configs, --do-restore-configs  Download and Restore 'clickhouse-server' CONFIG related files only
+   --rbac, --restore-rbac, --do-restore-rbac           Download and Restore RBAC related objects
+   --configs, --restore-configs, --do-restore-configs  Download and Restore 'clickhouse-server' CONFIG related files
    --resume, --resumable                               Save intermediate upload state and resume upload if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
    
 ```
