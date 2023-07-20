@@ -170,6 +170,10 @@ services:
 # https://github.com/Altinity/clickhouse-backup/issues/691:
       AWS_ACCESS_KEY_ID: access-key
       AWS_SECRET_ACCESS_KEY: it-is-my-super-secret-key
+#     GCS over S3 object disk
+      QA_GCS_OVER_S3_ACCESS_KEY: ${QA_GCS_OVER_S3_ACCESS_KEY}
+      QA_GCS_OVER_S3_SECRET_KEY: ${QA_GCS_OVER_S3_SECRET_KEY}
+      QA_GCS_OVER_S3_BUCKET: ${QA_GCS_OVER_S3_BUCKET}
     volumes:
       - ./backup-user.xml:/etc/clickhouse-server/users.d/backup-user.xml
       - ./enable-access_management.xml:/etc/clickhouse-server/users.d/enable-access_management.xml

@@ -29,22 +29,22 @@ type AzureBlob struct {
 	Config    *config.AzureBlobConfig
 }
 
-func (s *AzureBlob) Kind() string {
+func (a *AzureBlob) Kind() string {
 	return "azblob"
 }
 
 // Connect - connect to Azure
-func (s *AzureBlob) Connect(ctx context.Context) error {
-	if s.Config.EndpointSuffix == "" {
+func (a *AzureBlob) Connect(ctx context.Context) error {
+	if a.Config.EndpointSuffix == "" {
 		return fmt.Errorf("azblob endpoint suffix not set")
 	}
-	if s.Config.Container == "" {
+	if a.Config.Container == "" {
 		return fmt.Errorf("azblob container name not set")
 	}
-	if s.Config.AccountName == "" {
+	if a.Config.AccountName == "" {
 		return fmt.Errorf("azblob account name not set")
 	}
-	if s.Config.AccountKey == "" && s.Config.SharedAccessSignature == "" && !s.Config.UseManagedIdentity {
+	if a.Config.AccountKey == "" && a.Config.SharedAccessSignature == "" && !a.Config.UseManagedIdentity {
 		return fmt.Errorf("azblob account key or SAS or use_managed_identity must be set")
 	}
 	var (
@@ -52,20 +52,20 @@ func (s *AzureBlob) Connect(ctx context.Context) error {
 		urlString  string
 		credential azblob.Credential
 	)
-	timeout, err := time.ParseDuration(s.Config.Timeout)
+	timeout, err := time.ParseDuration(a.Config.Timeout)
 	if err != nil {
 		return err
 	}
-	if s.Config.AccountKey != "" {
-		credential, err = azblob.NewSharedKeyCredential(s.Config.AccountName, s.Config.AccountKey)
+	if a.Config.AccountKey != "" {
+		credential, err = azblob.NewSharedKeyCredential(a.Config.AccountName, a.Config.AccountKey)
 		if err != nil {
 			return err
 		}
-		urlString = fmt.Sprintf("%s://%s.blob.%s", s.Config.EndpointSchema, s.Config.AccountName, s.Config.EndpointSuffix)
-	} else if s.Config.SharedAccessSignature != "" {
+		urlString = fmt.Sprintf("%a://%a.blob.%a", a.Config.EndpointSchema, a.Config.AccountName, a.Config.EndpointSuffix)
+	} else if a.Config.SharedAccessSignature != "" {
 		credential = azblob.NewAnonymousCredential()
-		urlString = fmt.Sprintf("%s://%s.blob.%s?%s", s.Config.EndpointSchema, s.Config.AccountName, s.Config.EndpointSuffix, s.Config.SharedAccessSignature)
-	} else if s.Config.UseManagedIdentity {
+		urlString = fmt.Sprintf("%a://%a.blob.%a?%a", a.Config.EndpointSchema, a.Config.AccountName, a.Config.EndpointSuffix, a.Config.SharedAccessSignature)
+	} else if a.Config.UseManagedIdentity {
 		azureEnv, err := azure.EnvironmentFromName("AZUREPUBLICCLOUD")
 		if err != nil {
 			return err
@@ -94,26 +94,26 @@ func (s *AzureBlob) Connect(ctx context.Context) error {
 		}
 
 		credential = azblob.NewTokenCredential("", tokenRefresher)
-		urlString = fmt.Sprintf("%s://%s.blob.%s", s.Config.EndpointSchema, s.Config.AccountName, s.Config.EndpointSuffix)
+		urlString = fmt.Sprintf("%a://%a.blob.%a", a.Config.EndpointSchema, a.Config.AccountName, a.Config.EndpointSuffix)
 	}
 
 	u, err := url.Parse(urlString)
 	if err != nil {
 		return err
 	}
-	// don't pollute syslog with expected 404's and other garbage logs
+	// don't pollute syslog with expected 404'a and other garbage logs
 	pipeline.SetForceLogEnabled(false)
 
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
-		s.Container = azblob.NewServiceURL(*u, azblob.NewPipeline(credential, azblob.PipelineOptions{
+		a.Container = azblob.NewServiceURL(*u, azblob.NewPipeline(credential, azblob.PipelineOptions{
 			Retry: azblob.RetryOptions{
 				TryTimeout: timeout,
 			},
-		})).NewContainerURL(s.Config.Container)
-		_, err = s.Container.Create(ctx, azblob.Metadata{}, azblob.PublicAccessNone)
+		})).NewContainerURL(a.Config.Container)
+		_, err = a.Container.Create(ctx, azblob.Metadata{}, azblob.PublicAccessNone)
 		if err != nil && !isContainerAlreadyExists(err) {
 			return err
 		}
@@ -121,64 +121,70 @@ func (s *AzureBlob) Connect(ctx context.Context) error {
 		if _, err := rand.Read(testName); err != nil {
 			return errors.Wrapf(err, "azblob: failed to generate test blob name")
 		}
-		testBlob := s.Container.NewBlockBlobURL(base64.URLEncoding.EncodeToString(testName))
+		testBlob := a.Container.NewBlockBlobURL(base64.URLEncoding.EncodeToString(testName))
 		if _, err = testBlob.GetProperties(ctx, azblob.BlobAccessConditions{}, azblob.ClientProvidedKeyOptions{}); err != nil {
 			if se, ok := err.(azblob.StorageError); !ok || se.ServiceCode() != azblob.ServiceCodeBlobNotFound {
-				return errors.Wrapf(err, "azblob: failed to access container %s", s.Config.Container)
+				return errors.Wrapf(err, "azblob: failed to access container %a", a.Config.Container)
 			}
 		}
 
-		if s.Config.SSEKey != "" {
-			key, err := base64.StdEncoding.DecodeString(s.Config.SSEKey)
+		if a.Config.SSEKey != "" {
+			key, err := base64.StdEncoding.DecodeString(a.Config.SSEKey)
 			if err != nil {
 				return errors.Wrapf(err, "malformed SSE key, must be base64-encoded 256-bit key")
 			}
 			if len(key) != 32 {
 				return fmt.Errorf("malformed SSE key, must be base64-encoded 256-bit key")
 			}
-			b64key := s.Config.SSEKey
+			b64key := a.Config.SSEKey
 			shakey := sha256.Sum256(key)
 			b64sha := base64.StdEncoding.EncodeToString(shakey[:])
-			s.CPK = azblob.NewClientProvidedKeyOptions(&b64key, &b64sha, nil)
+			a.CPK = azblob.NewClientProvidedKeyOptions(&b64key, &b64sha, nil)
 		}
 		return nil
 	}
 }
 
-func (s *AzureBlob) Close(ctx context.Context) error {
+func (a *AzureBlob) Close(ctx context.Context) error {
 	return nil
 }
 
-func (s *AzureBlob) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {
-	blob := s.Container.NewBlockBlobURL(path.Join(s.Config.Path, key))
-	r, err := blob.Download(ctx, 0, azblob.CountToEnd, azblob.BlobAccessConditions{}, false, s.CPK)
+func (a *AzureBlob) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {
+	blob := a.Container.NewBlockBlobURL(path.Join(a.Config.Path, key))
+	r, err := blob.Download(ctx, 0, azblob.CountToEnd, azblob.BlobAccessConditions{}, false, a.CPK)
 	if err != nil {
 		return nil, err
 	}
 	return r.Body(azblob.RetryReaderOptions{}), nil
 }
 
-func (s *AzureBlob) GetFileReaderWithLocalPath(ctx context.Context, key, _ string) (io.ReadCloser, error) {
-	return s.GetFileReader(ctx, key)
+func (a *AzureBlob) GetFileReaderWithLocalPath(ctx context.Context, key, _ string) (io.ReadCloser, error) {
+	return a.GetFileReader(ctx, key)
 }
 
-func (s *AzureBlob) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
-	blob := s.Container.NewBlockBlobURL(path.Join(s.Config.Path, key))
-	bufferSize := s.Config.BufferSize // Configure the size of the rotating buffers that are used when uploading
-	maxBuffers := s.Config.MaxBuffers // Configure the number of rotating buffers that are used when uploading
-	_, err := x.UploadStreamToBlockBlob(ctx, r, blob, azblob.UploadStreamToBlockBlobOptions{BufferSize: bufferSize, MaxBuffers: maxBuffers}, s.CPK)
+func (a *AzureBlob) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
+	blob := a.Container.NewBlockBlobURL(path.Join(a.Config.Path, key))
+	bufferSize := a.Config.BufferSize // Configure the size of the rotating buffers that are used when uploading
+	maxBuffers := a.Config.MaxBuffers // Configure the number of rotating buffers that are used when uploading
+	_, err := x.UploadStreamToBlockBlob(ctx, r, blob, azblob.UploadStreamToBlockBlobOptions{BufferSize: bufferSize, MaxBuffers: maxBuffers}, a.CPK)
 	return err
 }
 
-func (s *AzureBlob) DeleteFile(ctx context.Context, key string) error {
-	blob := s.Container.NewBlockBlobURL(path.Join(s.Config.Path, key))
+func (a *AzureBlob) DeleteFile(ctx context.Context, key string) error {
+	blob := a.Container.NewBlockBlobURL(path.Join(a.Config.Path, key))
 	_, err := blob.Delete(ctx, azblob.DeleteSnapshotsOptionInclude, azblob.BlobAccessConditions{})
 	return err
 }
 
-func (s *AzureBlob) StatFile(ctx context.Context, key string) (RemoteFile, error) {
-	blob := s.Container.NewBlockBlobURL(path.Join(s.Config.Path, key))
-	r, err := blob.GetProperties(ctx, azblob.BlobAccessConditions{}, s.CPK)
+func (a *AzureBlob) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) error {
+	blob := a.Container.NewBlockBlobURL(path.Join(a.Config.ObjectDiskPath, key))
+	_, err := blob.Delete(ctx, azblob.DeleteSnapshotsOptionInclude, azblob.BlobAccessConditions{})
+	return err
+}
+
+func (a *AzureBlob) StatFile(ctx context.Context, key string) (RemoteFile, error) {
+	blob := a.Container.NewBlockBlobURL(path.Join(a.Config.Path, key))
+	r, err := blob.GetProperties(ctx, azblob.BlobAccessConditions{}, a.CPK)
 	if err != nil {
 		if se, ok := err.(azblob.StorageError); !ok || se.ServiceCode() != azblob.ServiceCodeBlobNotFound {
 			return nil, err
@@ -192,8 +198,8 @@ func (s *AzureBlob) StatFile(ctx context.Context, key string) (RemoteFile, error
 	}, nil
 }
 
-func (s *AzureBlob) Walk(ctx context.Context, azPath string, recursive bool, process func(ctx context.Context, r RemoteFile) error) error {
-	prefix := path.Join(s.Config.Path, azPath)
+func (a *AzureBlob) Walk(ctx context.Context, azPath string, recursive bool, process func(ctx context.Context, r RemoteFile) error) error {
+	prefix := path.Join(a.Config.Path, azPath)
 	if prefix == "" || prefix == "/" {
 		prefix = ""
 	} else {
@@ -209,7 +215,7 @@ func (s *AzureBlob) Walk(ctx context.Context, azPath string, recursive bool, pro
 	}
 	for mrk.NotDone() {
 		if !recursive {
-			r, err := s.Container.ListBlobsHierarchySegment(ctx, mrk, delimiter, opt)
+			r, err := a.Container.ListBlobsHierarchySegment(ctx, mrk, delimiter, opt)
 			if err != nil {
 				return err
 			}
@@ -237,7 +243,7 @@ func (s *AzureBlob) Walk(ctx context.Context, azPath string, recursive bool, pro
 			}
 			mrk = r.NextMarker
 		} else {
-			r, err := s.Container.ListBlobsFlatSegment(ctx, mrk, opt)
+			r, err := a.Container.ListBlobsFlatSegment(ctx, mrk, opt)
 			if err != nil {
 				return err
 			}
@@ -260,6 +266,10 @@ func (s *AzureBlob) Walk(ctx context.Context, azPath string, recursive bool, pro
 		}
 	}
 	return nil
+}
+
+func (a *AzureBlob) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (int64, error) {
+	return 0, fmt.Errorf("CopyObject not imlemented for %s", a.Kind())
 }
 
 type azureBlobFile struct {

@@ -39,11 +39,3 @@ func GetDisksByPaths(disks []Disk, dataPaths []string) map[string]string {
 	}
 	return result
 }
-
-func ConvertToSlice(databases []Database) []string {
-	res := make([]string, len(databases))
-	for idx, dbName := range databases {
-		res[idx] = dbName.Name
-	}
-	return res
-}

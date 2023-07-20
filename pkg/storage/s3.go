@@ -7,11 +7,13 @@ import (
 	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"github.com/aws/smithy-go"
 	awsV2http "github.com/aws/smithy-go/transport/http"
+	"golang.org/x/sync/semaphore"
 	"io"
 	"net/http"
 	"os"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -230,22 +232,32 @@ func (s *S3) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
 	return err
 }
 
-func (s *S3) DeleteFile(ctx context.Context, key string) error {
+func (s *S3) deleteKey(ctx context.Context, key string) error {
 	params := &s3.DeleteObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
-		Key:    aws.String(path.Join(s.Config.Path, key)),
+		Key:    aws.String(key),
 	}
 	if s.versioning {
 		objVersion, err := s.getObjectVersion(ctx, key)
 		if err != nil {
-			return errors.Wrapf(err, "DeleteFile, obtaining object version %+v", params)
+			return errors.Wrapf(err, "deleteKey, obtaining object version %+v", params)
 		}
 		params.VersionId = objVersion
 	}
 	if _, err := s.client.DeleteObject(ctx, params); err != nil {
-		return errors.Wrapf(err, "DeleteFile, deleting object %+v", params)
+		return errors.Wrapf(err, "deleteKey, deleting object %+v", params)
 	}
 	return nil
+}
+
+func (s *S3) DeleteFile(ctx context.Context, key string) error {
+	key = path.Join(s.Config.Path, key)
+	return s.deleteKey(ctx, key)
+}
+
+func (s *S3) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) error {
+	key = path.Join(s.Config.ObjectDiskPath, key)
+	return s.deleteKey(ctx, key)
 }
 
 func (s *S3) isVersioningEnabled(ctx context.Context) bool {
@@ -346,6 +358,140 @@ func (s *S3) remotePager(ctx context.Context, s3Path string, recursive bool, pro
 		process(page)
 	}
 	return nil
+}
+
+func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (int64, error) {
+	dstKey = path.Join(s.Config.ObjectDiskPath, dstKey)
+	// Initiate a multipart upload
+	params := s3.CreateMultipartUploadInput{
+		Bucket:       aws.String(s.Config.Bucket),
+		Key:          aws.String(dstKey),
+		StorageClass: s3types.StorageClass(strings.ToUpper(s.Config.StorageClass)),
+	}
+	// https://github.com/Altinity/clickhouse-backup/issues/588
+	if len(s.Config.ObjectLabels) > 0 {
+		tags := ""
+		for k, v := range s.Config.ObjectLabels {
+			if tags != "" {
+				tags += "&"
+			}
+			tags += k + "=" + v
+		}
+		params.Tagging = aws.String(tags)
+	}
+	if s.Config.SSE != "" {
+		params.ServerSideEncryption = s3types.ServerSideEncryption(s.Config.SSE)
+	}
+	if s.Config.SSEKMSKeyId != "" {
+		params.SSEKMSKeyId = aws.String(s.Config.SSEKMSKeyId)
+	}
+	if s.Config.SSECustomerAlgorithm != "" {
+		params.SSECustomerAlgorithm = aws.String(s.Config.SSECustomerAlgorithm)
+	}
+	if s.Config.SSECustomerKey != "" {
+		params.SSECustomerKey = aws.String(s.Config.SSECustomerKey)
+	}
+	if s.Config.SSECustomerKeyMD5 != "" {
+		params.SSECustomerKeyMD5 = aws.String(s.Config.SSECustomerKeyMD5)
+	}
+	if s.Config.SSEKMSEncryptionContext != "" {
+		params.SSEKMSEncryptionContext = aws.String(s.Config.SSEKMSEncryptionContext)
+	}
+
+	// Get the size of the source object
+	sourceObjResp, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(srcBucket),
+		Key:    aws.String(srcKey),
+	})
+	if err != nil {
+		return 0, err
+	}
+	srcSize := sourceObjResp.ContentLength
+
+	initResp, err := s.client.CreateMultipartUpload(ctx, &params)
+	if err != nil {
+		return 0, err
+	}
+
+	// Get the upload ID
+	uploadID := initResp.UploadId
+
+	// Set the part size (e.g., 5 MB)
+	partSize := srcSize / s.Config.MaxPartsCount
+	if partSize < 5*1024*1024 {
+		partSize = 5 * 1014 * 1024
+	}
+
+	// Calculate the number of parts
+	numParts := (srcSize + partSize - 1) / partSize
+
+	copyPartSemaphore := semaphore.NewWeighted(int64(s.Config.Concurrency))
+	copyPartErrGroup, ctx := errgroup.WithContext(ctx)
+
+	var mu sync.Mutex
+	var parts []s3types.CompletedPart
+
+	// Copy each part of the object
+	for partNumber := int64(1); partNumber <= numParts; partNumber++ {
+		if err := copyPartSemaphore.Acquire(ctx, 1); err != nil {
+			apexLog.Errorf("can't acquire semaphore during CopyObject data parts: %v", err)
+			break
+		}
+		// Calculate the byte range for the part
+		start := (partNumber - 1) * partSize
+		end := partNumber * partSize
+		if end > srcSize {
+			end = srcSize
+		}
+		currentPartNumber := int32(partNumber)
+
+		copyPartErrGroup.Go(func() error {
+			defer copyPartSemaphore.Release(1)
+			// Copy the part
+			partResp, err := s.client.UploadPartCopy(ctx, &s3.UploadPartCopyInput{
+				Bucket:          aws.String(s.Config.Bucket),
+				Key:             aws.String(dstKey),
+				CopySource:      aws.String(srcBucket + "/" + srcKey),
+				CopySourceRange: aws.String(fmt.Sprintf("bytes=%d-%d", start, end-1)),
+				UploadId:        uploadID,
+				PartNumber:      currentPartNumber,
+			})
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			parts = append(parts, s3types.CompletedPart{
+				ETag:       partResp.CopyPartResult.ETag,
+				PartNumber: currentPartNumber,
+			})
+			return nil
+		})
+	}
+	if err := copyPartErrGroup.Wait(); err != nil {
+		_, abortErr := s.client.AbortMultipartUpload(context.Background(), &s3.AbortMultipartUploadInput{
+			Bucket:   aws.String(s.Config.Bucket),
+			Key:      aws.String(dstKey),
+			UploadId: uploadID,
+		})
+		if abortErr != nil {
+			return 0, fmt.Errorf("aborting CopyObject multipart upload: %v, original error was: %v", abortErr, err)
+		}
+		return 0, fmt.Errorf("one of CopyObject go-routine return error: %v", err)
+	}
+
+	// Complete the multipart upload
+	_, err = s.client.CompleteMultipartUpload(context.Background(), &s3.CompleteMultipartUploadInput{
+		Bucket:          aws.String(s.Config.Bucket),
+		Key:             aws.String(dstKey),
+		UploadId:        uploadID,
+		MultipartUpload: &s3types.CompletedMultipartUpload{Parts: parts},
+	})
+	if err != nil {
+		return 0, fmt.Errorf("complete CopyObject multipart upload: %v", err)
+	}
+
+	return srcSize, nil
 }
 
 type s3File struct {

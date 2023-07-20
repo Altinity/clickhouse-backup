@@ -115,9 +115,10 @@ func MkdirAll(path string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk) e
 
 // HardlinkBackupPartsToStorage - copy partitions for specific table to detached folder
 func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableMetadata, disks []clickhouse.Disk, tableDataPaths []string, ch *clickhouse.ClickHouse, toDetached bool) error {
-	dstDataPaths := clickhouse.GetDisksByPaths(disks, tableDataPaths)
 	log := apexLog.WithFields(apexLog.Fields{"operation": "HardlinkBackupPartsToStorage"})
 	start := time.Now()
+	dstDataPaths := clickhouse.GetDisksByPaths(disks, tableDataPaths)
+	dbAndTableDir := path.Join(common.TablePathEncode(backupTable.Database), common.TablePathEncode(backupTable.Table))
 	for _, backupDisk := range disks {
 		backupDiskName := backupDisk.Name
 		if len(backupTable.Parts[backupDiskName]) == 0 {
@@ -146,7 +147,6 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 			} else if !info.IsDir() {
 				return fmt.Errorf("'%s' should be directory or absent", dstPartPath)
 			}
-			dbAndTableDir := path.Join(common.TablePathEncode(backupTable.Database), common.TablePathEncode(backupTable.Table))
 			partPath := path.Join(backupDisk.Path, "backup", backupName, "shadow", dbAndTableDir, backupDisk.Name, part.Name)
 			// Legacy backup support
 			if _, err := os.Stat(partPath); os.IsNotExist(err) {

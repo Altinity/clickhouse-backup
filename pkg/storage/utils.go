@@ -16,7 +16,7 @@ func GetBackupsToDelete(backups []Backup, keep int) []Backup {
 		sort.SliceStable(backups, func(i, j int) bool {
 			return backups[i].UploadDate.After(backups[j].UploadDate)
 		})
-		// KeepRemoteBackups should respect incremental backups sequences and don't delete required backups
+		// KeepRemoteBackups should respect incremental backups sequences and don't deleteKey required backups
 		// fix https://github.com/Altinity/clickhouse-backup/issues/111
 		// fix https://github.com/Altinity/clickhouse-backup/issues/385
 		// fix https://github.com/Altinity/clickhouse-backup/issues/525

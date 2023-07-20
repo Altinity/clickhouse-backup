@@ -183,6 +183,7 @@ type ObjectStorageCredentials struct {
 	S3SecretKey        string
 	S3AssumeRole       string
 	S3Region           string
+	S3StorageClass     string
 	AzureAccountName   string
 	AzureAccountKey    string
 	AzureContainerName string
@@ -206,6 +207,28 @@ func (c *ObjectStorageConnection) GetRemoteStorage() storage.RemoteStorage {
 	}
 	apexLog.Fatalf("invalid ObjectStorageConnection.type %s", c.Type)
 	return nil
+}
+
+func (c *ObjectStorageConnection) GetRemoteBucket() string {
+	switch c.Type {
+	case "s3":
+		return c.S3.Config.Bucket
+	case "azure_blob_storage":
+		return c.AzureBlob.Config.Container
+	}
+	apexLog.Fatalf("invalid ObjectStorageConnection.type %s", c.Type)
+	return ""
+}
+
+func (c *ObjectStorageConnection) GetRemotePath() string {
+	switch c.Type {
+	case "s3":
+		return c.S3.Config.Path
+	case "azure_blob_storage":
+		return c.AzureBlob.Config.Path
+	}
+	apexLog.Fatalf("invalid ObjectStorageConnection.type %s", c.Type)
+	return ""
 }
 
 var DisksConnections map[string]ObjectStorageConnection
@@ -312,6 +335,11 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) (
 				if regionNode := d.SelectElement("region"); regionNode != nil {
 					creds.S3Region = strings.Trim(regionNode.InnerText(), "\r\n \t")
 				}
+				if storageClassNode := d.SelectElement("s3_storage_class"); storageClassNode != nil {
+					creds.S3StorageClass = strings.Trim(storageClassNode.InnerText(), "\r\n \t")
+				} else {
+					creds.S3StorageClass = "STANDARD"
+				}
 				accessKeyNode := d.SelectElement("access_key_id")
 				secretKeyNode := d.SelectElement("secret_access_key")
 				useEnvironmentCredentials := d.SelectElement("use_environment_credentials")
@@ -357,6 +385,22 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) (
 			}
 		}
 	}
+	for _, d := range disks {
+		diskName := d.Data
+		if diskTypeNode := d.SelectElement("type"); diskTypeNode != nil {
+			diskType := diskTypeNode.InnerText()
+			switch diskType {
+			case "encrypted", "cache":
+				_, exists := credentials[diskName]
+				if !exists {
+					if diskNode := d.SelectElement("disk"); diskNode != nil {
+						childDiskName := diskNode.InnerText()
+						credentials[diskName] = credentials[childDiskName]
+					}
+				}
+			}
+		}
+	}
 	return credentials, nil
 }
 
@@ -397,6 +441,9 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 		if creds.S3Region != "" {
 			s3cfg.Region = creds.S3Region
 		}
+		if creds.S3StorageClass != "" {
+			s3cfg.StorageClass = creds.S3StorageClass
+		}
 		if creds.S3AssumeRole != "" {
 			s3cfg.AssumeRoleARN = creds.S3AssumeRole
 		}
@@ -423,11 +470,12 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 			s3cfg.Path = path.Join(pathItems[1:]...)
 			s3cfg.ForcePathStyle = true
 		}
+		// need for CopyObject
+		s3cfg.ObjectDiskPath = s3cfg.Path
 		connection.S3 = &storage.S3{Config: &s3cfg, Log: apexLog.WithField("logger", "S3")}
 		if err = connection.S3.Connect(ctx); err != nil {
 			return nil, err
 		}
-		break
 	case "azblob":
 		connection.Type = "azure_blob_storage"
 		azureCfg := config.AzureBlobConfig{
@@ -453,6 +501,8 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 			if azureCfg.AccountName != "" && strings.HasPrefix(azureCfg.Path, "/"+creds.AzureAccountName) {
 				azureCfg.Path = strings.TrimPrefix(azureURL.Path, "/"+creds.AzureAccountName)
 			}
+			// need for CopyObject
+			azureCfg.ObjectDiskPath = azureCfg.Path
 		}
 		if creds.AzureAccountKey != "" {
 			azureCfg.AccountKey = creds.AzureAccountKey
@@ -464,7 +514,6 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 		if err = connection.AzureBlob.Connect(ctx); err != nil {
 			return nil, err
 		}
-		break
 	}
 	return &connection, nil
 }
@@ -573,4 +622,14 @@ func GetFileSize(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Con
 		return 0, err
 	}
 	return fileInfo.Size(), nil
+}
+
+func CopyObject(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Config, diskName, srcBucket, srcKey, dstPath string) error {
+	if err := InitCredentialsAndConnections(ctx, ch, cfg, diskName); err != nil {
+		return err
+	}
+	connection := DisksConnections[diskName]
+	remoteStorage := connection.GetRemoteStorage()
+	_, err := remoteStorage.CopyObject(ctx, srcBucket, srcKey, dstPath)
+	return err
 }

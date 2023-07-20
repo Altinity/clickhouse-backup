@@ -189,10 +189,32 @@ func (gcs *GCS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 	}, nil
 }
 
-func (gcs *GCS) DeleteFile(ctx context.Context, key string) error {
-	key = path.Join(gcs.Config.Path, key)
+func (gcs *GCS) deleteKey(ctx context.Context, key string) error {
 	object := gcs.client.Bucket(gcs.Config.Bucket).Object(key)
 	return object.Delete(ctx)
+}
+
+func (gcs *GCS) DeleteFile(ctx context.Context, key string) error {
+	key = path.Join(gcs.Config.Path, key)
+	return gcs.deleteKey(ctx, key)
+}
+
+func (gcs *GCS) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) error {
+	key = path.Join(gcs.Config.ObjectDiskPath, key)
+	return gcs.deleteKey(ctx, key)
+}
+
+func (gcs *GCS) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (int64, error) {
+	src := gcs.client.Bucket(srcBucket).Object(srcKey)
+	dst := gcs.client.Bucket(gcs.Config.Bucket).Object(path.Join(gcs.Config.ObjectDiskPath, dstKey))
+	attrs, err := src.Attrs(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if _, err = dst.CopierFrom(src).Run(ctx); err != nil {
+		return 0, err
+	}
+	return attrs.Size, nil
 }
 
 type gcsFile struct {

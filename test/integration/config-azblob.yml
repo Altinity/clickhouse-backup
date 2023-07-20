@@ -15,4 +15,5 @@ azblob:
   endpoint_schema: http
   container: container1
   path: backup
+  object_disk_path: object_disks
   compression_format: tar

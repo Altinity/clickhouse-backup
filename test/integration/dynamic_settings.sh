@@ -111,6 +111,32 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_s3.xml
 </yandex>
 EOT
 
+cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_gcs.xml
+<yandex>
+  <storage_configuration>
+    <disks>
+      <disk_gcs_over_s3>
+        <type>s3</type>
+        <endpoint>https://storage.googleapis.com/${QA_GCS_OVER_S3_BUCKET}/clickhouse_backup_disk_gcs_over_s3/${HOSTNAME}/</endpoint>
+        <access_key_id>${QA_GCS_OVER_S3_ACCESS_KEY}</access_key_id>
+        <secret_access_key>${QA_GCS_OVER_S3_SECRET_KEY}</secret_access_key>
+        <send_metadata>true</send_metadata>
+        <support_batch_delete>false</support_batch_delete>
+      </disk_gcs_over_s3>
+    </disks>
+    <policies>
+      <gcs_only>
+          <volumes>
+              <gcs_only>
+                  <disk>disk_gcs_over_s3</disk>
+              </gcs_only>
+          </volumes>
+      </gcs_only>
+    </policies>
+  </storage_configuration>
+</yandex>
+EOT
+
 fi
 
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.12 || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
@@ -249,6 +275,16 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_azure.x
             </backups_azure>
         </disks>
     </storage_configuration>
+    <policies>
+      <azure_only>
+          <volumes>
+              <azure_only>
+                  <disk>azure</disk>
+              </azure_only>
+          </volumes>
+      </azure_only>
+    </policies>
+
     <backups>
         <allowed_disk>backups_s3</allowed_disk>
         <allowed_disk>backups_s3_plain</allowed_disk>
