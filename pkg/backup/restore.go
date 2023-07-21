@@ -764,13 +764,13 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 					for _, storageObject := range objMeta.StorageObjects {
 						if b.cfg.General.RemoteStorage == "s3" && diskType == "s3" {
 							srcBucket = b.cfg.S3.Bucket
-							srcKey = path.Join(b.cfg.S3.ObjectDiskPath, backupName, storageObject.ObjectRelativePath)
+							srcKey = path.Join(b.cfg.S3.ObjectDiskPath, backupName, diskName, storageObject.ObjectRelativePath)
 						} else if b.cfg.General.RemoteStorage == "gcs" && diskType == "s3" {
 							srcBucket = b.cfg.GCS.Bucket
-							srcKey = path.Join(b.cfg.GCS.ObjectDiskPath, backupName, storageObject.ObjectRelativePath)
+							srcKey = path.Join(b.cfg.GCS.ObjectDiskPath, backupName, diskName, storageObject.ObjectRelativePath)
 						} else if b.cfg.General.RemoteStorage == "azblob" && diskType == "azure_blob_storage" {
 							srcBucket = b.cfg.AzureBlob.Container
-							srcKey = path.Join(b.cfg.AzureBlob.ObjectDiskPath, backupName, storageObject.ObjectRelativePath)
+							srcKey = path.Join(b.cfg.AzureBlob.ObjectDiskPath, backupName, diskName, storageObject.ObjectRelativePath)
 						} else {
 							return fmt.Errorf("incompatible object_disk[%s].Type=%s amd remote_storage: %s", diskName, diskType, b.cfg.General.RemoteStorage)
 						}

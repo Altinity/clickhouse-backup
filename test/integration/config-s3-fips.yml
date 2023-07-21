@@ -30,6 +30,7 @@ s3:
   acl: private
   force_path_style: false
   path: backup/{cluster}/{shard}
+  object_disk_path: object_disks/{cluster}/{shard}
   disable_ssl: false
   compression_format: tar
   allow_multipart_download: true

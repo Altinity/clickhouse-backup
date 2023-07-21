@@ -360,8 +360,8 @@ func (b *Backuper) cleanRemoteBackupObjectDisks(ctx context.Context, backup stor
 		for diskName, diskType := range backup.DiskTypes {
 			if diskType == "s3" || diskType == "azure_blob_storage" {
 				compressedRE := regexp.MustCompile(`/shadow/([^/]+/[^/]+)/` + diskName + `_[^/]+$`)
-				// compressed remote object disk part
 				if matches := compressedRE.FindStringSubmatch(fName); len(matches) > 0 {
+					// compressed remote object disk part
 					localPath := path.Join(backup.Disks[diskName], "backup", backup.BackupName, "shadow", matches[1], diskName)
 					if err := b.dst.DownloadCompressedStream(ctx, fName, localPath); err != nil {
 						return err
@@ -385,8 +385,11 @@ func (b *Backuper) cleanRemoteBackupObjectDisks(ctx context.Context, backup stor
 						}
 						return nil
 					})
-					// non compressed remote object disk part
+					if err := os.RemoveAll(localPath); err != nil {
+						return err
+					}
 				} else if regexp.MustCompile(`/shadow/[^/]+/[^/]+/` + diskName + `/.+$`).MatchString(fName) {
+					// non compressed remote object disk part
 					objMetaReader, err := b.dst.GetFileReader(ctx, fName)
 					if err != nil {
 						return err

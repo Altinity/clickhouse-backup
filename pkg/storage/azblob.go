@@ -25,6 +25,7 @@ import (
 // AzureBlob - presents methods for manipulate data on Azure
 type AzureBlob struct {
 	Container azblob.ContainerURL
+	Pipeline  pipeline.Pipeline
 	CPK       azblob.ClientProvidedKeyOptions
 	Config    *config.AzureBlobConfig
 }
@@ -61,10 +62,10 @@ func (a *AzureBlob) Connect(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		urlString = fmt.Sprintf("%a://%a.blob.%a", a.Config.EndpointSchema, a.Config.AccountName, a.Config.EndpointSuffix)
+		urlString = fmt.Sprintf("%s://%s.blob.%s", a.Config.EndpointSchema, a.Config.AccountName, a.Config.EndpointSuffix)
 	} else if a.Config.SharedAccessSignature != "" {
 		credential = azblob.NewAnonymousCredential()
-		urlString = fmt.Sprintf("%a://%a.blob.%a?%a", a.Config.EndpointSchema, a.Config.AccountName, a.Config.EndpointSuffix, a.Config.SharedAccessSignature)
+		urlString = fmt.Sprintf("%s://%s.blob.%s?%s", a.Config.EndpointSchema, a.Config.AccountName, a.Config.EndpointSuffix, a.Config.SharedAccessSignature)
 	} else if a.Config.UseManagedIdentity {
 		azureEnv, err := azure.EnvironmentFromName("AZUREPUBLICCLOUD")
 		if err != nil {
@@ -94,7 +95,7 @@ func (a *AzureBlob) Connect(ctx context.Context) error {
 		}
 
 		credential = azblob.NewTokenCredential("", tokenRefresher)
-		urlString = fmt.Sprintf("%a://%a.blob.%a", a.Config.EndpointSchema, a.Config.AccountName, a.Config.EndpointSuffix)
+		urlString = fmt.Sprintf("%s://%s.blob.%s", a.Config.EndpointSchema, a.Config.AccountName, a.Config.EndpointSuffix)
 	}
 
 	u, err := url.Parse(urlString)
@@ -108,11 +109,12 @@ func (a *AzureBlob) Connect(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
-		a.Container = azblob.NewServiceURL(*u, azblob.NewPipeline(credential, azblob.PipelineOptions{
+		a.Pipeline = azblob.NewPipeline(credential, azblob.PipelineOptions{
 			Retry: azblob.RetryOptions{
 				TryTimeout: timeout,
 			},
-		})).NewContainerURL(a.Config.Container)
+		})
+		a.Container = azblob.NewServiceURL(*u, a.Pipeline).NewContainerURL(a.Config.Container)
 		_, err = a.Container.Create(ctx, azblob.Metadata{}, azblob.PublicAccessNone)
 		if err != nil && !isContainerAlreadyExists(err) {
 			return err
@@ -124,7 +126,7 @@ func (a *AzureBlob) Connect(ctx context.Context) error {
 		testBlob := a.Container.NewBlockBlobURL(base64.URLEncoding.EncodeToString(testName))
 		if _, err = testBlob.GetProperties(ctx, azblob.BlobAccessConditions{}, azblob.ClientProvidedKeyOptions{}); err != nil {
 			if se, ok := err.(azblob.StorageError); !ok || se.ServiceCode() != azblob.ServiceCodeBlobNotFound {
-				return errors.Wrapf(err, "azblob: failed to access container %a", a.Config.Container)
+				return errors.Wrapf(err, "azblob: failed to access container %s", a.Config.Container)
 			}
 		}
 
@@ -269,7 +271,41 @@ func (a *AzureBlob) Walk(ctx context.Context, azPath string, recursive bool, pro
 }
 
 func (a *AzureBlob) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (int64, error) {
-	return 0, fmt.Errorf("CopyObject not imlemented for %s", a.Kind())
+	dstKey = path.Join(a.Config.ObjectDiskPath, dstKey)
+	srcURLString := fmt.Sprintf("%s://%s.%s/%s/%s", a.Config.EndpointSchema, a.Config.AccountName, a.Config.EndpointSuffix, srcBucket, srcKey)
+	srcURL, err := url.Parse(srcURLString)
+	if err != nil {
+		return 0, err
+	}
+
+	sourceBlobURL := azblob.NewBlobURL(*srcURL, a.Pipeline)
+	destinationBlobURL := a.Container.NewBlobURL(dstKey)
+
+	startCopy, err := destinationBlobURL.StartCopyFromURL(ctx, sourceBlobURL.URL(), nil, azblob.ModifiedAccessConditions{}, azblob.BlobAccessConditions{}, azblob.AccessTierNone, nil)
+	if err != nil {
+		return 0, fmt.Errorf("azblob->CopyObject failed to start copy operation: %v", err)
+	}
+	copyStatus := startCopy.CopyStatus()
+	copyStatusDesc := ""
+	var size int64
+	pollCount := 1
+	sleepDuration := time.Millisecond * 50
+	for copyStatus == azblob.CopyStatusPending {
+		// @TODO think how to avoid polling GetProperties in AZBLOB during CopyObject
+		time.Sleep(sleepDuration * time.Duration(pollCount*2))
+		dstMeta, err := destinationBlobURL.GetProperties(ctx, azblob.BlobAccessConditions{}, azblob.ClientProvidedKeyOptions{})
+		if err != nil {
+			return 0, fmt.Errorf("azblob->CopyObject failed to destinationBlobURL.GetProperties operation: %v", err)
+		}
+		copyStatus = dstMeta.CopyStatus()
+		copyStatusDesc = dstMeta.CopyStatusDescription()
+		size = dstMeta.ContentLength()
+		pollCount++
+	}
+	if copyStatus == azblob.CopyStatusFailed {
+		return 0, fmt.Errorf("azblob->CopyObject got CopyStatusFailed %s", copyStatusDesc)
+	}
+	return size, nil
 }
 
 type azureBlobFile struct {

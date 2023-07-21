@@ -253,43 +253,42 @@ chown -R clickhouse /var/lib/clickhouse/disks/
 cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_azure.xml
 <?xml version="1.0"?>
 <clickhouse>
-    <storage_configuration>
-        <disks>
-            <azure>
-              <type>azure_blob_storage</type>
-              <storage_account_url>http://azure:10000/devstoreaccount1</storage_account_url>
-              <container_name>azure-disk</container_name>
-              <!--  https://github.com/Azure/Azurite/blob/main/README.md#usage-with-azure-storage-sdks-or-tools -->
-              <account_name>devstoreaccount1</account_name>
-              <account_key>Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==</account_key>
-              <cache_enabled>false</cache_enabled>
-            </azure>
-            <backups_azure>
-              <type>azure_blob_storage</type>
-              <storage_account_url>http://azure:10000/devstoreaccount1</storage_account_url>
-              <container_name>azure-backup-disk</container_name>
-              <!--  https://github.com/Azure/Azurite/blob/main/README.md#usage-with-azure-storage-sdks-or-tools -->
-              <account_name>devstoreaccount1</account_name>
-              <account_key>Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==</account_key>
-              <cache_enabled>false</cache_enabled>
-            </backups_azure>
-        </disks>
-    </storage_configuration>
+  <storage_configuration>
+    <disks>
+      <azure>
+        <type>azure_blob_storage</type>
+        <storage_account_url>http://azure:10000/devstoreaccount1</storage_account_url>
+        <container_name>azure-disk</container_name>
+        <!--  https://github.com/Azure/Azurite/blob/main/README.md#usage-with-azure-storage-sdks-or-tools -->
+        <account_name>devstoreaccount1</account_name>
+        <account_key>Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==</account_key>
+        <cache_enabled>false</cache_enabled>
+      </azure>
+      <backups_azure>
+        <type>azure_blob_storage</type>
+        <storage_account_url>http://azure:10000/devstoreaccount1</storage_account_url>
+        <container_name>azure-backup-disk</container_name>
+        <!--  https://github.com/Azure/Azurite/blob/main/README.md#usage-with-azure-storage-sdks-or-tools -->
+        <account_name>devstoreaccount1</account_name>
+        <account_key>Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==</account_key>
+        <cache_enabled>false</cache_enabled>
+      </backups_azure>
+    </disks>
     <policies>
       <azure_only>
-          <volumes>
-              <azure_only>
-                  <disk>azure</disk>
-              </azure_only>
-          </volumes>
+        <volumes>
+          <azure_only>
+            <disk>azure</disk>
+          </azure_only>
+        </volumes>
       </azure_only>
     </policies>
-
-    <backups>
-        <allowed_disk>backups_s3</allowed_disk>
-        <allowed_disk>backups_s3_plain</allowed_disk>
-        <allowed_disk>backups_azure</allowed_disk>
-    </backups>
+  </storage_configuration>
+  <backups>
+      <allowed_disk>backups_s3</allowed_disk>
+      <allowed_disk>backups_s3_plain</allowed_disk>
+      <allowed_disk>backups_azure</allowed_disk>
+  </backups>
 </clickhouse>
 EOT
 
