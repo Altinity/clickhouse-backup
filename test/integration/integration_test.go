@@ -1118,7 +1118,7 @@ func fullCleanup(r *require.Assertions, ch *TestClickHouse, backupNames, backupT
 
 func generateTestData(ch *TestClickHouse, r *require.Assertions, remoteStorageType string) {
 	log.Infof("Generate test data %s", remoteStorageType)
-	generateTestDataWithDifferentStoragePolicy()
+	generateTestDataWithDifferentStoragePolicy(remoteStorageType)
 	for _, data := range testData {
 		if isTableSkip(ch, data, false) {
 			continue
@@ -1133,14 +1133,14 @@ func generateTestData(ch *TestClickHouse, r *require.Assertions, remoteStorageTy
 	}
 }
 
-func generateTestDataWithDifferentStoragePolicy() {
+func generateTestDataWithDifferentStoragePolicy(remoteStorageType string) {
 	for databaseName, databaseEngine := range map[string]string{dbNameOrdinary: "Ordinary", dbNameAtomic: "Atomic"} {
-		testDataEncrypted := TestDataStruct{
+		testDataWithStoragePolicy := TestDataStruct{
 			Database: databaseName, DatabaseEngine: databaseEngine,
 			Rows: func() []map[string]interface{} {
-				var result []map[string]interface{}
+				result := make([]map[string]interface{}, 100)
 				for i := 0; i < 100; i++ {
-					result = append(result, map[string]interface{}{"id": uint64(i)})
+					result[i] = map[string]interface{}{"id": uint64(i)}
 				}
 				return result
 			}(),
@@ -1150,32 +1150,43 @@ func generateTestDataWithDifferentStoragePolicy() {
 		addTestDataIfNotExists := func() {
 			found := false
 			for _, data := range testData {
-				if data.Name == testDataEncrypted.Name && data.Database == testDataEncrypted.Database {
+				if data.Name == testDataWithStoragePolicy.Name && data.Database == testDataWithStoragePolicy.Database {
 					found = true
 					break
 				}
 			}
 			if !found {
-				testData = append(testData, testDataEncrypted)
+				testData = append(testData, testDataWithStoragePolicy)
 			}
 		}
 		//s3 disks support after 21.8
-		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 {
-			testDataEncrypted.Name = "test_s3"
-			testDataEncrypted.Schema = "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 's3_only'"
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 && remoteStorageType == "S3" {
+			testDataWithStoragePolicy.Name = "test_s3"
+			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 's3_only'"
 			addTestDataIfNotExists()
 		}
-
 		//encrypted disks support after 21.10
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.10") >= 0 {
-			testDataEncrypted.Name = "test_hdd3_encrypted"
-			testDataEncrypted.Schema = "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 'hdd3_only_encrypted'"
+			testDataWithStoragePolicy.Name = "test_hdd3_encrypted"
+			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 'hdd3_only_encrypted'"
 			addTestDataIfNotExists()
 		}
 		//encrypted s3 disks support after 21.12
-		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
-			testDataEncrypted.Name = "test_s3_encrypted"
-			testDataEncrypted.Schema = "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 's3_only_encrypted'"
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 && remoteStorageType == "S3" {
+			testDataWithStoragePolicy.Name = "test_s3_encrypted"
+			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 's3_only_encrypted'"
+			addTestDataIfNotExists()
+		}
+		//gcs over s3 support added in 22.6
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.6") >= 0 && remoteStorageType == "GCS" {
+			testDataWithStoragePolicy.Name = "test_gcs"
+			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 'gcs_only'"
+			addTestDataIfNotExists()
+		}
+		//check azure_blob_storage only in 23.3+ (added in 22.1)
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.3") >= 0 && remoteStorageType == "AZBLOB" {
+			testDataWithStoragePolicy.Name = "test_azure"
+			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 'azure_only'"
 			addTestDataIfNotExists()
 		}
 	}

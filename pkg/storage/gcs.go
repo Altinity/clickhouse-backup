@@ -205,8 +205,9 @@ func (gcs *GCS) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) 
 }
 
 func (gcs *GCS) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (int64, error) {
+	dstKey = path.Join(gcs.Config.ObjectDiskPath, dstKey)
 	src := gcs.client.Bucket(srcBucket).Object(srcKey)
-	dst := gcs.client.Bucket(gcs.Config.Bucket).Object(path.Join(gcs.Config.ObjectDiskPath, dstKey))
+	dst := gcs.client.Bucket(gcs.Config.Bucket).Object(dstKey)
 	attrs, err := src.Attrs(ctx)
 	if err != nil {
 		return 0, err
@@ -214,6 +215,7 @@ func (gcs *GCS) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string
 	if _, err = dst.CopierFrom(src).Run(ctx); err != nil {
 		return 0, err
 	}
+	log.Debugf("GCS->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, gcs.Config.Bucket, dstKey)
 	return attrs.Size, nil
 }
 

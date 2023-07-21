@@ -490,7 +490,7 @@ func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (
 	if err != nil {
 		return 0, fmt.Errorf("complete CopyObject multipart upload: %v", err)
 	}
-
+	s.Log.Debugf("S3->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, s.Config.Bucket, dstKey)
 	return srcSize, nil
 }
 

@@ -147,8 +147,13 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
-			if strings.Contains(backup.Tags, "embedded") {
-				if err := b.cleanLocalEmbedded(ctx, backup, disks); err != nil {
+			var skip bool
+			skip, err = b.skipIfTheSameRemoteBackupPresent(ctx, backup.BackupName, backup.Tags)
+			if err != nil {
+				return err
+			}
+			if !skip && strings.Contains(backup.Tags, "embedded") {
+				if err = b.cleanLocalEmbedded(ctx, backup, disks); err != nil {
 					log.Warnf("b.cleanRemoteEmbedded return error: %v", err)
 					return err
 				}
@@ -159,7 +164,7 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 				if disk.IsBackup {
 					backupPath = path.Join(disk.Path, backupName)
 				}
-				if !disk.IsBackup && (disk.Type == "s3" || disk.Type == "azure_blob_storage") {
+				if !skip && !disk.IsBackup && (disk.Type == "s3" || disk.Type == "azure_blob_storage") && !strings.Contains(backup.Tags, "embedded") {
 					if err = b.cleanLocalBackupObjectDisk(ctx, backupName, backupPath, disk.Name); err != nil {
 						return err
 					}
@@ -196,8 +201,9 @@ func (b *Backuper) hasObjectDisks(backupList []LocalBackup, backupName string, d
 func (b *Backuper) cleanLocalBackupObjectDisk(ctx context.Context, backupName string, backupPath, diskName string) error {
 	_, err := os.Stat(backupPath)
 	if os.IsNotExist(err) {
-		apexLog.Warnf("%v", err)
 		return nil
+	} else if err != nil {
+		return err
 	}
 	err = filepath.Walk(backupPath, func(fPath string, fInfo os.FileInfo, err error) error {
 		if err != nil {
@@ -221,18 +227,6 @@ func (b *Backuper) cleanLocalBackupObjectDisk(ctx context.Context, backupName st
 }
 
 func (b *Backuper) cleanLocalEmbedded(ctx context.Context, backup LocalBackup, disks []clickhouse.Disk) error {
-	// skip if the same backup present in remote
-	if b.cfg.General.RemoteStorage != "custom" && b.cfg.General.RemoteStorage != "none" {
-		if remoteList, err := b.GetRemoteBackups(ctx, true); err != nil {
-			return err
-		} else {
-			for _, remoteBackup := range remoteList {
-				if remoteBackup.BackupName == backup.BackupName && strings.Contains(remoteBackup.Tags, "embedded") {
-					return nil
-				}
-			}
-		}
-	}
 	for _, disk := range disks {
 		if disk.Name == b.cfg.ClickHouse.EmbeddedBackupDisk {
 			if err := object_disk.InitCredentialsAndConnections(ctx, b.ch, b.cfg, disk.Name); err != nil {
@@ -263,6 +257,23 @@ func (b *Backuper) cleanLocalEmbedded(ctx context.Context, backup LocalBackup, d
 		}
 	}
 	return nil
+}
+
+func (b *Backuper) skipIfTheSameRemoteBackupPresent(ctx context.Context, backupName, tags string) (bool, error) {
+	if b.cfg.General.RemoteStorage != "custom" && b.cfg.General.RemoteStorage != "none" {
+		if remoteList, err := b.GetRemoteBackups(ctx, true); err != nil {
+			return true, err
+		} else {
+			for _, remoteBackup := range remoteList {
+				if remoteBackup.BackupName == backupName {
+					if tags == "" || (tags != "" && strings.Contains(remoteBackup.Tags, tags)) {
+						return true, nil
+					}
+				}
+			}
+		}
+	}
+	return false, nil
 }
 
 func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) error {
@@ -304,15 +315,20 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 	}
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
-			if strings.Contains(backup.Tags, "embedded") {
-				if err = b.cleanRemoteEmbedded(ctx, backup, bd); err != nil {
-					log.Warnf("b.cleanRemoteEmbedded return error: %v", err)
+			if skip, err := b.skipIfSameLocalBackupPresent(ctx, backup.BackupName, backup.Tags); err != nil {
+				return err
+			} else if !skip {
+				if strings.Contains(backup.Tags, "embedded") {
+					if err = b.cleanRemoteEmbedded(ctx, backup, bd); err != nil {
+						log.Warnf("b.cleanRemoteEmbedded return error: %v", err)
+						return err
+					}
+				} else if err = b.cleanRemoteBackupObjectDisks(ctx, backup); err != nil {
+					log.Warnf("b.cleanRemoteBackupObjectDisks return error: %v", err)
 					return err
 				}
 			}
-			if err = b.cleanRemoteBackupObjectDisks(ctx, backup); err != nil {
-				return err
-			}
+
 			if err = bd.RemoveBackup(ctx, backup); err != nil {
 				log.Warnf("bd.RemoveBackup return error: %v", err)
 				return err
@@ -342,19 +358,48 @@ func (b *Backuper) cleanRemoteBackupObjectDisks(ctx context.Context, backup stor
 			return nil
 		}
 		for diskName, diskType := range backup.DiskTypes {
-			if (diskType == "s3" || diskType == "azure_blob_storage") && regexp.MustCompile("/"+diskName+"[_/][^/]+$").MatchString(fName) {
-				objMetaReader, err := b.dst.GetFileReader(ctx, fName)
-				if err != nil {
-					return err
-				}
-				objMeta, err := object_disk.ReadMetadataFromReader(objMetaReader, fName)
-				if err != nil {
-					return err
-				}
-				for _, storageObject := range objMeta.StorageObjects {
-					err = b.dst.DeleteFileFromObjectDiskBackup(ctx, path.Join(backup.BackupName, diskName, storageObject.ObjectRelativePath))
+			if diskType == "s3" || diskType == "azure_blob_storage" {
+				compressedRE := regexp.MustCompile(`/shadow/([^/]+/[^/]+)/` + diskName + `_[^/]+$`)
+				// compressed remote object disk part
+				if matches := compressedRE.FindStringSubmatch(fName); len(matches) > 0 {
+					localPath := path.Join(backup.Disks[diskName], "backup", backup.BackupName, "shadow", matches[1], diskName)
+					if err := b.dst.DownloadCompressedStream(ctx, fName, localPath); err != nil {
+						return err
+					}
+					filepath.Walk(localPath, func(fPath string, fInfo fs.FileInfo, err error) error {
+						if err != nil {
+							return err
+						}
+						if fInfo.IsDir() {
+							return nil
+						}
+						objMeta, err := object_disk.ReadMetadataFromFile(fPath)
+						if err != nil {
+							return err
+						}
+						for _, storageObject := range objMeta.StorageObjects {
+							err = b.dst.DeleteFileFromObjectDiskBackup(ctx, path.Join(backup.BackupName, diskName, storageObject.ObjectRelativePath))
+							if err != nil {
+								return err
+							}
+						}
+						return nil
+					})
+					// non compressed remote object disk part
+				} else if regexp.MustCompile(`/shadow/[^/]+/[^/]+/` + diskName + `/.+$`).MatchString(fName) {
+					objMetaReader, err := b.dst.GetFileReader(ctx, fName)
 					if err != nil {
 						return err
+					}
+					objMeta, err := object_disk.ReadMetadataFromReader(objMetaReader, fName)
+					if err != nil {
+						return err
+					}
+					for _, storageObject := range objMeta.StorageObjects {
+						err = b.dst.DeleteFileFromObjectDiskBackup(ctx, path.Join(backup.BackupName, diskName, storageObject.ObjectRelativePath))
+						if err != nil {
+							return err
+						}
 					}
 				}
 			}
@@ -364,16 +409,6 @@ func (b *Backuper) cleanRemoteBackupObjectDisks(ctx context.Context, backup stor
 }
 
 func (b *Backuper) cleanRemoteEmbedded(ctx context.Context, backup storage.Backup, bd *storage.BackupDestination) error {
-	// skip if the same backup present in local
-	if localList, _, err := b.GetLocalBackups(ctx, nil); err != nil {
-		return err
-	} else {
-		for _, localBackup := range localList {
-			if localBackup.BackupName == backup.BackupName && strings.Contains(localBackup.Tags, "embedded") {
-				return nil
-			}
-		}
-	}
 	if err := object_disk.InitCredentialsAndConnections(ctx, b.ch, b.cfg, b.cfg.ClickHouse.EmbeddedBackupDisk); err != nil {
 		return err
 	}
@@ -396,6 +431,19 @@ func (b *Backuper) cleanRemoteEmbedded(ctx context.Context, backup storage.Backu
 		}
 		return nil
 	})
+}
+
+func (b *Backuper) skipIfSameLocalBackupPresent(ctx context.Context, backupName, tags string) (bool, error) {
+	if localList, _, err := b.GetLocalBackups(ctx, nil); err != nil {
+		return true, err
+	} else {
+		for _, localBackup := range localList {
+			if localBackup.BackupName == backupName && strings.Contains(localBackup.Tags, tags) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func (b *Backuper) CleanRemoteBroken(commandId int) error {
