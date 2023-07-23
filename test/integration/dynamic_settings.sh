@@ -95,7 +95,8 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_s3.xml
         <secret_access_key>it-is-my-super-secret-key</secret_access_key>
         -->
         <use_environment_credentials>1</use_environment_credentials>
-        <send_metadata>true</send_metadata>
+        <!-- to avoid slow startup -->
+        <send_metadata>false</send_metadata>
       </disk_s3>
     </disks>
     <policies>
@@ -120,7 +121,8 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_gcs.xml
         <endpoint>https://storage.googleapis.com/${QA_GCS_OVER_S3_BUCKET}/clickhouse_backup_disk_gcs_over_s3/${HOSTNAME}/</endpoint>
         <access_key_id>${QA_GCS_OVER_S3_ACCESS_KEY}</access_key_id>
         <secret_access_key>${QA_GCS_OVER_S3_SECRET_KEY}</secret_access_key>
-        <send_metadata>true</send_metadata>
+        <!-- to avoid slow startup -->
+        <send_metadata>false</send_metadata>
         <support_batch_delete>false</support_batch_delete>
       </disk_gcs_over_s3>
     </disks>
@@ -153,7 +155,8 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_encrypted_s3.x
         <secret_access_key>it-is-my-super-secret-key</secret_access_key>
         -->
         <use_environment_credentials>1</use_environment_credentials>
-        <send_metadata>true</send_metadata>
+        <!-- to avoid slow startup -->
+        <send_metadata>false</send_metadata>
       </disk_s3>
       <disk_s3_encrypted>
         <type>encrypted</type>
@@ -163,7 +166,8 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_encrypted_s3.x
         <key_hex id="0">00112233445566778899aabbccddeeff</key_hex>
         <key_hex id="1">ffeeddccbbaa99887766554433221100</key_hex>
         <current_key_id>1</current_key_id>
-        <send_metadata>true</send_metadata>
+        <!-- to avoid slow startup -->
+        <send_metadata>false</send_metadata>
       </disk_s3_encrypted>
     </disks>
     <policies>
@@ -193,7 +197,6 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3.xml
   <storage_configuration>
     <disks>
       <backups_s3>
-        <send_metadata>true</send_metadata>
         <type>s3</type>
         <endpoint>http://minio:9000/clickhouse/backups_s3/</endpoint>
         <!-- https://github.com/Altinity/clickhouse-backup/issues/691
@@ -202,6 +205,8 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3.xml
         -->
         <use_environment_credentials>1</use_environment_credentials>
         <cache_enabled>false</cache_enabled>
+        <!-- to avoid slow startup -->
+        <send_metadata>false</send_metadata>
       </backups_s3>
     </disks>
   </storage_configuration>

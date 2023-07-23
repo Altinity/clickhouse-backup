@@ -143,6 +143,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 			return err
 		}
 		ctx, cancel := context.WithTimeout(ctx, 180*time.Second)
+		defer cancel()
 		log.Infof("run %s", b.ch.Config.RestartCommand)
 		var out []byte
 		if len(cmd) > 1 {
@@ -152,7 +153,6 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 		}
 		if err != nil {
 			log.Debug(string(out))
-			cancel()
 			return err
 		}
 	}
@@ -432,7 +432,7 @@ func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string,
 	}); err != nil {
 		return err
 	}
-	return b.restoreEmbedded(ctx, backupName, true, tablesForRestore, "", nil)
+	return b.restoreEmbedded(ctx, backupName, true, tablesForRestore, nil)
 }
 
 func (b *Backuper) restoreSchemaRegular(tablesForRestore ListOfTables, version int, log *apexLog.Entry) error {
@@ -607,7 +607,7 @@ func (b *Backuper) RestoreData(ctx context.Context, backupName string, tablePatt
 	}
 	log.Debugf("found %d tables with data in backup", len(tablesForRestore))
 	if b.isEmbedded {
-		err = b.restoreDataEmbedded(ctx, backupName, tablesForRestore, metadataPath, partitionsNameList)
+		err = b.restoreDataEmbedded(ctx, backupName, tablesForRestore, partitionsNameList)
 	} else {
 		err = b.restoreDataRegular(ctx, backupName, tablePattern, tablesForRestore, diskMap, diskTypes, disks, log)
 	}
@@ -618,8 +618,8 @@ func (b *Backuper) RestoreData(ctx context.Context, backupName string, tablePatt
 	return nil
 }
 
-func (b *Backuper) restoreDataEmbedded(ctx context.Context, backupName string, tablesForRestore ListOfTables, metadataPath string, partitionsNameList map[metadata.TableTitle][]string) error {
-	return b.restoreEmbedded(ctx, backupName, false, tablesForRestore, metadataPath, partitionsNameList)
+func (b *Backuper) restoreDataEmbedded(ctx context.Context, backupName string, tablesForRestore ListOfTables, partitionsNameList map[metadata.TableTitle][]string) error {
+	return b.restoreEmbedded(ctx, backupName, false, tablesForRestore, partitionsNameList)
 }
 
 func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, tablePattern string, tablesForRestore ListOfTables, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, log *apexLog.Entry) error {
@@ -680,7 +680,7 @@ func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName st
 		return fmt.Errorf("can't copy data to storage '%s.%s': %v", table.Database, table.Table, err)
 	}
 	log.Debug("data to 'storage' copied")
-	if err := b.downloadObjectDiskParts(ctx, backupName, table, diskMap, diskTypes, dstTable); err != nil {
+	if err := b.downloadObjectDiskParts(ctx, backupName, table, diskMap, diskTypes); err != nil {
 		return fmt.Errorf("can't restore object_disk server-side copy data parts '%s.%s': %v", table.Database, table.Table, err)
 	}
 
@@ -695,7 +695,7 @@ func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName str
 		return fmt.Errorf("can't copy data to datached '%s.%s': %v", table.Database, table.Table, err)
 	}
 	log.Debug("data to 'detached' copied")
-	if err := b.downloadObjectDiskParts(ctx, backupName, table, diskMap, diskTypes, dstTable); err != nil {
+	if err := b.downloadObjectDiskParts(ctx, backupName, table, diskMap, diskTypes); err != nil {
 		return fmt.Errorf("can't restore object_disk server-side copy data parts '%s.%s': %v", table.Database, table.Table, err)
 	}
 	if err := b.ch.AttachDataParts(tablesForRestore[i], disks); err != nil {
@@ -704,13 +704,13 @@ func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName str
 	return nil
 }
 
-func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName string, backupTable metadata.TableMetadata, diskMap, diskTypes map[string]string, dstTable clickhouse.Table) error {
+func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName string, backupTable metadata.TableMetadata, diskMap, diskTypes map[string]string) error {
 	log := apexLog.WithFields(apexLog.Fields{"operation": "downloadObjectDiskParts"})
 	start := time.Now()
 	dbAndTableDir := path.Join(common.TablePathEncode(backupTable.Database), common.TablePathEncode(backupTable.Table))
 	var err error
 	needToDownloadObjectDisk := false
-	for diskName, _ := range backupTable.Parts {
+	for diskName := range backupTable.Parts {
 		diskType, exists := diskTypes[diskName]
 		if !exists {
 			return fmt.Errorf("%s disk doesn't present in diskTypes: %v", diskName, diskTypes)
@@ -720,20 +720,21 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 			break
 		}
 	}
-	if needToDownloadObjectDisk {
-		b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, false, backupName)
-		if err != nil {
-			return err
-		}
-		if err = b.dst.Connect(ctx); err != nil {
-			return fmt.Errorf("can't connect to %s: %v", b.dst.Kind(), err)
-		}
-		defer func() {
-			if err := b.dst.Close(ctx); err != nil {
-				b.log.Warnf("downloadObjectDiskParts: can't close BackupDestination error: %v", err)
-			}
-		}()
+	if !needToDownloadObjectDisk {
+		return nil
 	}
+	b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, false, backupName)
+	if err != nil {
+		return err
+	}
+	if err = b.dst.Connect(ctx); err != nil {
+		return fmt.Errorf("can't connect to %s: %v", b.dst.Kind(), err)
+	}
+	defer func() {
+		if err := b.dst.Close(ctx); err != nil {
+			b.log.Warnf("downloadObjectDiskParts: can't close BackupDestination error: %v", err)
+		}
+	}()
 
 	for diskName, parts := range backupTable.Parts {
 		diskType, exists := diskTypes[diskName]
@@ -746,7 +747,7 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 			}
 			for _, part := range parts {
 				partPath := path.Join(diskMap[diskName], "backup", backupName, "shadow", dbAndTableDir, diskName, part.Name)
-				filepath.Walk(partPath, func(fPath string, fInfo fs.FileInfo, err error) error {
+				if err := filepath.Walk(partPath, func(fPath string, fInfo fs.FileInfo, err error) error {
 					if err != nil {
 						return err
 					}
@@ -779,7 +780,9 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 						}
 					}
 					return nil
-				})
+				}); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -871,7 +874,7 @@ func (b *Backuper) changeTablePatternFromRestoreDatabaseMapping(tablePattern str
 	return tablePattern
 }
 
-func (b *Backuper) restoreEmbedded(ctx context.Context, backupName string, restoreOnlySchema bool, tablesForRestore ListOfTables, metadataPath string, partitionsNameList map[metadata.TableTitle][]string) error {
+func (b *Backuper) restoreEmbedded(ctx context.Context, backupName string, restoreOnlySchema bool, tablesForRestore ListOfTables, partitionsNameList map[metadata.TableTitle][]string) error {
 	restoreSQL := "Disk(?,?)"
 	tablesSQL := ""
 	l := len(tablesForRestore)

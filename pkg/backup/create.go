@@ -485,27 +485,6 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 	}
 	realSize := map[string]int64{}
 	disksToPartsMap := map[string][]metadata.Part{}
-	needToUploadObjectDisk := false
-	for _, disk := range diskList {
-		if disk.Type == "s3" || disk.Type == "azure_blob_storage" {
-			needToUploadObjectDisk = true
-			break
-		}
-	}
-	if needToUploadObjectDisk {
-		b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, false, backupName)
-		if err != nil {
-			return nil, nil, err
-		}
-		if err := b.dst.Connect(ctx); err != nil {
-			return nil, nil, fmt.Errorf("can't connect to %s: %v", b.dst.Kind(), err)
-		}
-		defer func() {
-			if err := b.dst.Close(ctx); err != nil {
-				b.log.Warnf("uploadObjectDiskParts: can't close BackupDestination error: %v", err)
-			}
-		}()
-	}
 
 	for _, disk := range diskList {
 		select {
@@ -530,8 +509,17 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 			realSize[disk.Name] = size
 			disksToPartsMap[disk.Name] = parts
 			log.WithField("disk", disk.Name).Debug("shadow moved")
-			if disk.Type == "s3" || disk.Type == "azure_blob_storage" {
+			if disk.Type == "s3" || disk.Type == "azure_blob_storage" && len(parts) > 0 {
 				start := time.Now()
+				if b.dst == nil {
+					b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, false, backupName)
+					if err != nil {
+						return nil, nil, err
+					}
+					if err := b.dst.Connect(ctx); err != nil {
+						return nil, nil, fmt.Errorf("can't connect to %s: %v", b.dst.Kind(), err)
+					}
+				}
 				if size, err = b.uploadObjectDiskParts(ctx, backupName, backupShadowPath, disk); err != nil {
 					return disksToPartsMap, realSize, err
 				}
@@ -550,6 +538,11 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 	if version > 21004000 {
 		if err := b.ch.QueryContext(ctx, fmt.Sprintf("ALTER TABLE `%s`.`%s` UNFREEZE WITH NAME '%s'", table.Database, table.Name, shadowBackupUUID)); err != nil {
 			return disksToPartsMap, realSize, err
+		}
+	}
+	if b.dst != nil {
+		if err := b.dst.Close(ctx); err != nil {
+			b.log.Warnf("uploadObjectDiskParts: can't close BackupDestination error: %v", err)
 		}
 	}
 	log.Debug("done")

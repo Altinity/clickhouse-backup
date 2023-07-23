@@ -190,7 +190,10 @@ func (b *Backuper) hasObjectDisks(backupList []LocalBackup, backupName string, d
 		if backup.BackupName == backupName && !strings.Contains(backup.Tags, "embedded") {
 			for _, disk := range disks {
 				if !disk.IsBackup && (disk.Type == "s3" || disk.Type == "azure_blob_storage") {
-					return true
+					backupExists, err := os.ReadDir(path.Join(disk.Path, "backup", backup.BackupName))
+					if err == nil && len(backupExists) > 0 {
+						return true
+					}
 				}
 			}
 		}

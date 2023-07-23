@@ -432,14 +432,20 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 	switch creds.Type {
 	case "s3", "gcs":
 		connection.Type = "s3"
-		s3cfg := config.S3Config{Debug: cfg.S3.Debug}
+		s3cfg := config.S3Config{Debug: cfg.S3.Debug, MaxPartsCount: cfg.S3.MaxPartsCount, Concurrency: 1}
 		s3URL, err := url.Parse(creds.EndPoint)
 		if err != nil {
 			return nil, err
 		}
 		s3cfg.Endpoint = s3URL.Scheme + "://" + s3URL.Host
+		if cfg.S3.Concurrency > 0 {
+			s3cfg.Concurrency = cfg.S3.Concurrency
+		}
+		s3cfg.Region = "us-east-1"
 		if creds.S3Region != "" {
 			s3cfg.Region = creds.S3Region
+		} else if cfg.S3.Region != "" {
+			s3cfg.Region = cfg.S3.Region
 		}
 		if creds.S3StorageClass != "" {
 			s3cfg.StorageClass = creds.S3StorageClass
@@ -479,10 +485,10 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 	case "azblob":
 		connection.Type = "azure_blob_storage"
 		azureCfg := config.AzureBlobConfig{
-			Timeout:       "15m",
-			BufferSize:    2 * 1024 * 1024,
-			MaxBuffers:    3,
-			MaxPartsCount: 5000,
+			Timeout:       cfg.AzureBlob.Timeout,
+			BufferSize:    cfg.AzureBlob.BufferSize,
+			MaxBuffers:    cfg.AzureBlob.MaxBuffers,
+			MaxPartsCount: cfg.AzureBlob.MaxPartsCount,
 		}
 		azureURL, err := url.Parse(creds.EndPoint)
 		if err != nil {

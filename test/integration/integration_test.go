@@ -54,7 +54,7 @@ type TestDataStruct struct {
 	CheckDatabaseOnly  bool
 }
 
-var testData = []TestDataStruct{
+var defaultTestData = []TestDataStruct{
 	{
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
 		Name:   ".inner.table1",
@@ -301,7 +301,8 @@ var testData = []TestDataStruct{
 	},
 }
 
-var incrementData = []TestDataStruct{
+var testData = defaultTestData
+var defaultIncrementData = []TestDataStruct{
 	{
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
 		Name:   ".inner.table1",
@@ -391,6 +392,7 @@ var incrementData = []TestDataStruct{
 		OrderBy: "id",
 	},
 }
+var incrementData = defaultIncrementData
 
 func init() {
 	log.SetHandler(logcli.New(os.Stdout))
@@ -526,7 +528,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
 
-	ch.connectWithWait(r, 1*time.Second, 10*time.Second)
+	ch.connectWithWait(r, 1*time.Second, 1*time.Second)
 
 	r.NoError(dockerCP("config-s3.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_rbac")
@@ -559,7 +561,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 
 	ch.chbackend.Close()
 	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker-compose", "-f", os.Getenv("COMPOSE_FILE"), "restart", "clickhouse"))
-	ch.connectWithWait(r, 2*time.Second, 10*time.Second)
+	ch.connectWithWait(r, 2*time.Second, 8*time.Second)
 
 	log.Info("download+restore RBAC")
 	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
@@ -570,7 +572,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 	// we can't restart clickhouse inside container, we need restart container
 	ch.chbackend.Close()
 	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker-compose", "-f", os.Getenv("COMPOSE_FILE"), "restart", "clickhouse"))
-	ch.connectWithWait(r, 2*time.Second, 10*time.Second)
+	ch.connectWithWait(r, 2*time.Second, 8*time.Second)
 
 	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
 
@@ -630,7 +632,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_configs_backup"))
 
 	ch.chbackend.Close()
-	ch.connectWithWait(r, 2*time.Second, 10*time.Second)
+	ch.connectWithWait(r, 2*time.Second, 8*time.Second)
 
 	selectEmptyResultForAggQuery :=
 		"SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"
@@ -642,7 +644,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "download", "test_configs_backup"))
 
 	ch.chbackend.Close()
-	ch.connectWithWait(r, 2*time.Second, 10*time.Second)
+	ch.connectWithWait(r, 2*time.Second, 8*time.Second)
 
 	settings = ""
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
@@ -1118,6 +1120,7 @@ func fullCleanup(r *require.Assertions, ch *TestClickHouse, backupNames, backupT
 
 func generateTestData(ch *TestClickHouse, r *require.Assertions, remoteStorageType string) {
 	log.Infof("Generate test data %s", remoteStorageType)
+	testData = defaultTestData
 	generateTestDataWithDifferentStoragePolicy(remoteStorageType)
 	for _, data := range testData {
 		if isTableSkip(ch, data, false) {
@@ -1194,6 +1197,7 @@ func generateTestDataWithDifferentStoragePolicy(remoteStorageType string) {
 
 func generateIncrementTestData(ch *TestClickHouse, r *require.Assertions) {
 	log.Info("Generate increment test data")
+	incrementData = defaultIncrementData
 	for _, data := range incrementData {
 		if isTableSkip(ch, data, false) {
 			continue
@@ -2013,18 +2017,18 @@ func (ch *TestClickHouse) connectWithWait(r *require.Assertions, sleepBefore, ti
 			r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", "logs", "clickhouse"))
 			out, dockerErr := dockerExecOut("clickhouse", "clickhouse-client", "--echo", "-q", "'SELECT version()'")
 			r.NoError(dockerErr)
-			ch.chbackend.Log.Warnf(out)
+			ch.chbackend.Log.Debug(out)
 			r.NoError(err)
 		}
 		if err != nil {
-			log.Warnf("clickhouse not ready %v, wait %d seconds", err, i*2)
 			r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", "ps", "-a"))
 			if out, dockerErr := dockerExecOut("clickhouse", "clickhouse-client", "--echo", "-q", "SELECT version()"); dockerErr == nil {
-				log.Warnf(out)
-			} else {
 				log.Info(out)
+			} else {
+				log.Warn(out)
 			}
-			time.Sleep(time.Second * time.Duration(i*2))
+			log.Warnf("clickhouse not ready %v, wait %v seconds", err, (time.Duration(i) * timeOut).Seconds())
+			time.Sleep(time.Duration(i) * timeOut)
 		} else {
 			if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") == 1 {
 				var count uint64
