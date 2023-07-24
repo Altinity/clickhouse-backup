@@ -5,7 +5,7 @@ FROM ${CLICKHOUSE_IMAGE}:${CLICKHOUSE_VERSION} AS builder-base
 USER root
 # TODO remove ugly workaround for musl, https://www.perplexity.ai/search/2ead4c04-060a-4d78-a75f-f26835238438
 RUN rm -fv /etc/apt/sources.list.d/clickhouse.list && \
-    sudo find /etc/apt/ -type f -exec sed -i 's/ru.archive.ubuntu.com/archive.ubuntu.com/g' {} + && \
+    find /etc/apt/ -type f -exec sed -i 's/ru.archive.ubuntu.com/archive.ubuntu.com/g' {} + && \
     ( apt-get update || true ) && \
     apt-get install -y --no-install-recommends gnupg ca-certificates wget && apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 52B59B1571A79DBC054901C0F6BC817356A3D45E && \
     DISTRIB_CODENAME=$(cat /etc/lsb-release | grep DISTRIB_CODENAME | cut -d "=" -f 2) && \
