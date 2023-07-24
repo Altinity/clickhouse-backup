@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"github.com/Altinity/clickhouse-backup/pkg/status"
 	"github.com/Altinity/clickhouse-backup/pkg/storage"
 	"github.com/Altinity/clickhouse-backup/pkg/storage/object_disk"
@@ -742,6 +743,9 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 			return fmt.Errorf("%s disk doesn't present in diskTypes: %v", diskName, diskTypes)
 		}
 		if diskType == "s3" || diskType == "azure_blob_storage" {
+			if err = config.ValidateObjectDiskConfig(b.cfg); err != nil {
+				return err
+			}
 			if err = object_disk.InitCredentialsAndConnections(ctx, b.ch, b.cfg, diskName); err != nil {
 				return err
 			}
