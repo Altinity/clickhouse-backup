@@ -449,6 +449,8 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 		}
 		if creds.S3StorageClass != "" {
 			s3cfg.StorageClass = creds.S3StorageClass
+		} else {
+			s3cfg.StorageClass = cfg.S3.StorageClass
 		}
 		if creds.S3AssumeRole != "" {
 			s3cfg.AssumeRoleARN = creds.S3AssumeRole

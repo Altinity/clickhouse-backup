@@ -64,6 +64,7 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 	clientOptions := make([]option.ClientOption, 0)
 	clientOptions = append(clientOptions, option.WithTelemetryDisabled())
 	endpoint := "https://storage.googleapis.com/storage/v1/"
+
 	if gcs.Config.Endpoint != "" {
 		endpoint = gcs.Config.Endpoint
 		clientOptions = append([]option.ClientOption{option.WithoutAuthentication()}, clientOptions...)
