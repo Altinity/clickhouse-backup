@@ -439,6 +439,7 @@ func TestFIPS(t *testing.T) {
 	defer ch.chbackend.Close()
 	fipsBackupName := fmt.Sprintf("fips_backup_%d", rand.Int())
 	r.NoError(dockerExec("clickhouse", "rm", "-fv", "/etc/apt/sources.list.d/clickhouse.list"))
+	r.NoError(dockerExec("clickhouse", "bash", "-c", "find /etc/apt/ -type f -exec sed -i 's/ru.archive.ubuntu.com/archive.ubuntu.com/g' {} +"))
 	installDebIfNotExists(r, "clickhouse", "curl", "gettext-base", "bsdmainutils", "dnsutils", "git", "ca-certificates")
 	r.NoError(dockerCP("config-s3-fips.yml", "clickhouse:/etc/clickhouse-backup/config.yml.fips-template"))
 	r.NoError(dockerExec("clickhouse", "update-ca-certificates"))
@@ -2456,7 +2457,7 @@ func installDebIfNotExists(r *require.Assertions, container string, pkgs ...stri
 		container,
 		"bash", "-xec",
 		fmt.Sprintf(
-			"export DEBIAN_FRONTEND=noniteractive; if [[ '%d' != $(dpkg -l | grep -c -E \"%s\" ) ]]; then rm -fv /etc/apt/sources.list.d/clickhouse.list; apt-get -y update; apt-get install --no-install-recommends -y %s; fi",
+			"export DEBIAN_FRONTEND=noniteractive; if [[ '%d' != $(dpkg -l | grep -c -E \"%s\" ) ]]; then rm -fv /etc/apt/sources.list.d/clickhouse.list; find /etc/apt/ -type f -exec sed -i 's/ru.archive.ubuntu.com/archive.ubuntu.com/g' {} +; apt-get -y update; apt-get install --no-install-recommends -y %s; fi",
 			len(pkgs), "^ii\\s+"+strings.Join(pkgs, "|^ii\\s+"), strings.Join(pkgs, " "),
 		),
 	))
