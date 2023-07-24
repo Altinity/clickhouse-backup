@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"github.com/Altinity/clickhouse-backup/pkg/partition"
 	"github.com/Altinity/clickhouse-backup/pkg/status"
 	"github.com/Altinity/clickhouse-backup/pkg/storage"
@@ -510,6 +511,9 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 			disksToPartsMap[disk.Name] = parts
 			log.WithField("disk", disk.Name).Debug("shadow moved")
 			if disk.Type == "s3" || disk.Type == "azure_blob_storage" && len(parts) > 0 {
+				if err = config.ValidateObjectDiskConfig(b.cfg); err != nil {
+					return nil, nil, err
+				}
 				start := time.Now()
 				if b.dst == nil {
 					b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, false, backupName)

@@ -418,20 +418,23 @@ func ValidateConfig(cfg *Config) error {
 			cfg.General.FullDuration = duration
 		}
 	}
-	// @TODO add all other storage types
+	return nil
+}
+
+func ValidateObjectDiskConfig(cfg *Config) error {
 	if !cfg.ClickHouse.UseEmbeddedBackupRestore {
 		switch cfg.General.RemoteStorage {
 		case "s3":
-			if cfg.S3.ObjectDiskPath == "" || strings.HasPrefix(cfg.S3.Path, cfg.S3.ObjectDiskPath) {
-				return fmt.Errorf("invalid s3->object_disk_path, shall be not empty and shall not be prefix for s3->path")
+			if cfg.S3.Path != "" && (cfg.S3.ObjectDiskPath == "" || strings.HasPrefix(cfg.S3.Path, cfg.S3.ObjectDiskPath)) {
+				return fmt.Errorf("data in objects disks, invalid s3->object_disk_path config section, shall be not empty and shall not be prefix for s3->path")
 			}
 		case "gcs":
-			if cfg.GCS.ObjectDiskPath == "" || strings.HasPrefix(cfg.GCS.Path, cfg.GCS.ObjectDiskPath) {
-				return fmt.Errorf("invalid gcs->object_disk_path, shall be not empty and shall not be prefix for gcs->path")
+			if cfg.GCS.Path != "" && (cfg.GCS.ObjectDiskPath == "" || strings.HasPrefix(cfg.GCS.Path, cfg.GCS.ObjectDiskPath)) {
+				return fmt.Errorf("data in objects disks, invalid gcs->object_disk_path config section, shall be not empty and shall not be prefix for gcs->path")
 			}
 		case "azblob":
-			if cfg.AzureBlob.ObjectDiskPath == "" || strings.HasPrefix(cfg.AzureBlob.Path, cfg.AzureBlob.ObjectDiskPath) {
-				return fmt.Errorf("invalid azblob->object_disk_path, shall be not empty and shall not be prefix for gcs->path")
+			if cfg.AzureBlob.Path != "" && (cfg.AzureBlob.ObjectDiskPath == "" || strings.HasPrefix(cfg.AzureBlob.Path, cfg.AzureBlob.ObjectDiskPath)) {
+				return fmt.Errorf("data in objects disks, invalid azblob->object_disk_path config section, shall be not empty and shall not be prefix for gcs->path")
 			}
 		}
 	}
