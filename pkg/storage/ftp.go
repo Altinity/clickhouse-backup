@@ -209,7 +209,7 @@ func (f *FTP) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
 }
 
 func (f *FTP) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (int64, error) {
-	return 0, fmt.Errorf("CopyObject not imlemented for %a", f.Kind())
+	return 0, fmt.Errorf("CopyObject not imlemented for %s", f.Kind())
 }
 
 func (f *FTP) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) error {
