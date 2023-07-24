@@ -552,8 +552,8 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 		}
 	}
 
+	commandId, _ := status.Current.Start(fullCommand)
 	go func() {
-		commandId, _ := status.Current.Start(fullCommand)
 		b := backup.NewBackuper(cfg)
 		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, skipCheckPartsColumns, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
 		defer status.Current.Stop(commandId, err)
@@ -857,8 +857,8 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	commandId, ctx := status.Current.Start(fullCommand)
 	go func() {
-		commandId, ctx := status.Current.Start(fullCommand)
 		err, _ := api.metrics.ExecuteWithMetrics("create", 0, func() error {
 			b := backup.NewBackuper(cfg)
 			return b.CreateBackup(backupName, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, checkPartsColumns, api.clickhouseBackupVersion, commandId)
@@ -962,8 +962,8 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	commandId, _ := status.Current.Start(fullCommand)
 	go func() {
-		commandId, _ := status.Current.Start(fullCommand)
 		b := backup.NewBackuper(cfg)
 		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, skipCheckPartsColumns, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
 		defer status.Current.Stop(commandId, err)
@@ -1094,8 +1094,8 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	commandId, ctx := status.Current.Start(fullCommand)
 	go func() {
-		commandId, ctx := status.Current.Start(fullCommand)
 		err, _ := api.metrics.ExecuteWithMetrics("upload", 0, func() error {
 			b := backup.NewBackuper(cfg)
 			return b.Upload(name, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, resume, commandId)
@@ -1218,8 +1218,8 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	commandId, _ := status.Current.Start(fullCommand)
 	go func() {
-		commandId, _ := status.Current.Start(fullCommand)
 		err, _ := api.metrics.ExecuteWithMetrics("restore", 0, func() error {
 			b := backup.NewBackuper(api.config)
 			return b.Restore(name, tablePattern, databaseMappingToRestore, partitionsToBackup, schemaOnly, dataOnly, dropTable, ignoreDependencies, rbacOnly, configsOnly, commandId)
@@ -1289,8 +1289,8 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	commandId, ctx := status.Current.Start(fullCommand)
 	go func() {
-		commandId, ctx := status.Current.Start(fullCommand)
 		err, _ := api.metrics.ExecuteWithMetrics("download", 0, func() error {
 			b := backup.NewBackuper(cfg)
 			return b.Download(name, tablePattern, partitionsToBackup, schemaOnly, resume, commandId)
