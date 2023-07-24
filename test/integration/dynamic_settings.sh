@@ -112,6 +112,10 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_s3.xml
 </yandex>
 EOT
 
+fi
+
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[6-9]+ || "${CLICKHOUSE_VERSION}" =~ ^22\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[1-9]+ ]]; then
+
 cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_gcs.xml
 <yandex>
   <storage_configuration>
