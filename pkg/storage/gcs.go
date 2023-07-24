@@ -64,6 +64,7 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 	clientOptions := make([]option.ClientOption, 0)
 	clientOptions = append(clientOptions, option.WithTelemetryDisabled())
 	endpoint := "https://storage.googleapis.com/storage/v1/"
+
 	if gcs.Config.Endpoint != "" {
 		endpoint = gcs.Config.Endpoint
 		clientOptions = append([]option.ClientOption{option.WithoutAuthentication()}, clientOptions...)
@@ -189,10 +190,34 @@ func (gcs *GCS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 	}, nil
 }
 
-func (gcs *GCS) DeleteFile(ctx context.Context, key string) error {
-	key = path.Join(gcs.Config.Path, key)
+func (gcs *GCS) deleteKey(ctx context.Context, key string) error {
 	object := gcs.client.Bucket(gcs.Config.Bucket).Object(key)
 	return object.Delete(ctx)
+}
+
+func (gcs *GCS) DeleteFile(ctx context.Context, key string) error {
+	key = path.Join(gcs.Config.Path, key)
+	return gcs.deleteKey(ctx, key)
+}
+
+func (gcs *GCS) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) error {
+	key = path.Join(gcs.Config.ObjectDiskPath, key)
+	return gcs.deleteKey(ctx, key)
+}
+
+func (gcs *GCS) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (int64, error) {
+	dstKey = path.Join(gcs.Config.ObjectDiskPath, dstKey)
+	src := gcs.client.Bucket(srcBucket).Object(srcKey)
+	dst := gcs.client.Bucket(gcs.Config.Bucket).Object(dstKey)
+	attrs, err := src.Attrs(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if _, err = dst.CopierFrom(src).Run(ctx); err != nil {
+		return 0, err
+	}
+	log.Debugf("GCS->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, gcs.Config.Bucket, dstKey)
+	return attrs.Size, nil
 }
 
 type gcsFile struct {

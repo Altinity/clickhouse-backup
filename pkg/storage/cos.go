@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"io"
 	"net/http"
@@ -143,6 +144,14 @@ func (c *COS) GetFileReaderWithLocalPath(ctx context.Context, key, _ string) (io
 func (c *COS) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
 	_, err := c.client.Object.Put(ctx, path.Join(c.Config.Path, key), r, nil)
 	return err
+}
+
+func (c *COS) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (int64, error) {
+	return 0, fmt.Errorf("CopyObject not imlemented for %s", c.Kind())
+}
+
+func (c *COS) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) error {
+	return fmt.Errorf("DeleteFileFromObjectDiskBackup not imlemented for %s", c.Kind())
 }
 
 type cosFile struct {

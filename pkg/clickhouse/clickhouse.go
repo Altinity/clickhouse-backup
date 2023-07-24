@@ -144,6 +144,15 @@ func (ch *ClickHouse) GetDisks(ctx context.Context, enrich bool) ([]Disk, error)
 		if disks[i].Name == ch.Config.EmbeddedBackupDisk {
 			disks[i].IsBackup = true
 		}
+		// s3_plain disk could contain relative remote disks path, need transform it to `/var/lib/clickhouse/disks/disk_name`
+		if disks[i].Path != "" && !strings.HasPrefix(disks[i].Path, "/") {
+			for _, d := range disks {
+				if d.Name == "default" {
+					disks[i].Path = path.Join(d.Path, "disks", disks[i].Name) + "/"
+					break
+				}
+			}
+		}
 	}
 	if len(ch.Config.DiskMapping) == 0 {
 		return disks, nil

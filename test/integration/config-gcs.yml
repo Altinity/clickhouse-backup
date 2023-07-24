@@ -11,6 +11,7 @@ clickhouse:
 gcs:
   bucket: altinity-qa-test
   path: backup
+  object_disk_path: object_disks
   credentials_file: /etc/clickhouse-backup/credentials.json
   compression_format: tar
 #  endpoint: http://gcs:8080/storage/v1/

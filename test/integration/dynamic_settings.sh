@@ -95,7 +95,8 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_s3.xml
         <secret_access_key>it-is-my-super-secret-key</secret_access_key>
         -->
         <use_environment_credentials>1</use_environment_credentials>
-        <send_metadata>true</send_metadata>
+        <!-- to avoid slow startup -->
+        <send_metadata>false</send_metadata>
       </disk_s3>
     </disks>
     <policies>
@@ -106,6 +107,37 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_s3.xml
               </s3_only>
           </volumes>
       </s3_only>
+    </policies>
+  </storage_configuration>
+</yandex>
+EOT
+
+fi
+
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[6-9]+ || "${CLICKHOUSE_VERSION}" =~ ^22\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[1-9]+ ]]; then
+
+cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_gcs.xml
+<yandex>
+  <storage_configuration>
+    <disks>
+      <disk_gcs_over_s3>
+        <type>s3</type>
+        <endpoint>https://storage.googleapis.com/${QA_GCS_OVER_S3_BUCKET}/clickhouse_backup_disk_gcs_over_s3/${HOSTNAME}/</endpoint>
+        <access_key_id>${QA_GCS_OVER_S3_ACCESS_KEY}</access_key_id>
+        <secret_access_key>${QA_GCS_OVER_S3_SECRET_KEY}</secret_access_key>
+        <!-- to avoid slow startup -->
+        <send_metadata>false</send_metadata>
+        <support_batch_delete>false</support_batch_delete>
+      </disk_gcs_over_s3>
+    </disks>
+    <policies>
+      <gcs_only>
+          <volumes>
+              <gcs_only>
+                  <disk>disk_gcs_over_s3</disk>
+              </gcs_only>
+          </volumes>
+      </gcs_only>
     </policies>
   </storage_configuration>
 </yandex>
@@ -127,7 +159,8 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_encrypted_s3.x
         <secret_access_key>it-is-my-super-secret-key</secret_access_key>
         -->
         <use_environment_credentials>1</use_environment_credentials>
-        <send_metadata>true</send_metadata>
+        <!-- to avoid slow startup -->
+        <send_metadata>false</send_metadata>
       </disk_s3>
       <disk_s3_encrypted>
         <type>encrypted</type>
@@ -137,7 +170,8 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_encrypted_s3.x
         <key_hex id="0">00112233445566778899aabbccddeeff</key_hex>
         <key_hex id="1">ffeeddccbbaa99887766554433221100</key_hex>
         <current_key_id>1</current_key_id>
-        <send_metadata>true</send_metadata>
+        <!-- to avoid slow startup -->
+        <send_metadata>false</send_metadata>
       </disk_s3_encrypted>
     </disks>
     <policies>
@@ -167,7 +201,6 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3.xml
   <storage_configuration>
     <disks>
       <backups_s3>
-        <send_metadata>true</send_metadata>
         <type>s3</type>
         <endpoint>http://minio:9000/clickhouse/backups_s3/</endpoint>
         <!-- https://github.com/Altinity/clickhouse-backup/issues/691
@@ -176,6 +209,8 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3.xml
         -->
         <use_environment_credentials>1</use_environment_credentials>
         <cache_enabled>false</cache_enabled>
+        <!-- to avoid slow startup -->
+        <send_metadata>false</send_metadata>
       </backups_s3>
     </disks>
   </storage_configuration>
@@ -227,33 +262,42 @@ chown -R clickhouse /var/lib/clickhouse/disks/
 cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_azure.xml
 <?xml version="1.0"?>
 <clickhouse>
-    <storage_configuration>
-        <disks>
-            <azure>
-              <type>azure_blob_storage</type>
-              <storage_account_url>http://azure:10000/devstoreaccount1</storage_account_url>
-              <container_name>azure-disk</container_name>
-              <!--  https://github.com/Azure/Azurite/blob/main/README.md#usage-with-azure-storage-sdks-or-tools -->
-              <account_name>devstoreaccount1</account_name>
-              <account_key>Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==</account_key>
-              <cache_enabled>false</cache_enabled>
-            </azure>
-            <backups_azure>
-              <type>azure_blob_storage</type>
-              <storage_account_url>http://azure:10000/devstoreaccount1</storage_account_url>
-              <container_name>azure-backup-disk</container_name>
-              <!--  https://github.com/Azure/Azurite/blob/main/README.md#usage-with-azure-storage-sdks-or-tools -->
-              <account_name>devstoreaccount1</account_name>
-              <account_key>Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==</account_key>
-              <cache_enabled>false</cache_enabled>
-            </backups_azure>
-        </disks>
-    </storage_configuration>
-    <backups>
-        <allowed_disk>backups_s3</allowed_disk>
-        <allowed_disk>backups_s3_plain</allowed_disk>
-        <allowed_disk>backups_azure</allowed_disk>
-    </backups>
+  <storage_configuration>
+    <disks>
+      <azure>
+        <type>azure_blob_storage</type>
+        <storage_account_url>http://azure:10000/devstoreaccount1</storage_account_url>
+        <container_name>azure-disk</container_name>
+        <!--  https://github.com/Azure/Azurite/blob/main/README.md#usage-with-azure-storage-sdks-or-tools -->
+        <account_name>devstoreaccount1</account_name>
+        <account_key>Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==</account_key>
+        <cache_enabled>false</cache_enabled>
+      </azure>
+      <backups_azure>
+        <type>azure_blob_storage</type>
+        <storage_account_url>http://azure:10000/devstoreaccount1</storage_account_url>
+        <container_name>azure-backup-disk</container_name>
+        <!--  https://github.com/Azure/Azurite/blob/main/README.md#usage-with-azure-storage-sdks-or-tools -->
+        <account_name>devstoreaccount1</account_name>
+        <account_key>Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==</account_key>
+        <cache_enabled>false</cache_enabled>
+      </backups_azure>
+    </disks>
+    <policies>
+      <azure_only>
+        <volumes>
+          <azure_only>
+            <disk>azure</disk>
+          </azure_only>
+        </volumes>
+      </azure_only>
+    </policies>
+  </storage_configuration>
+  <backups>
+      <allowed_disk>backups_s3</allowed_disk>
+      <allowed_disk>backups_s3_plain</allowed_disk>
+      <allowed_disk>backups_azure</allowed_disk>
+  </backups>
 </clickhouse>
 EOT
 

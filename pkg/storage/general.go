@@ -70,11 +70,11 @@ func (bd *BackupDestination) RemoveOldBackups(ctx context.Context, keep int) err
 	bd.Log.WithFields(apexLog.Fields{
 		"operation": "RemoveOldBackups",
 		"duration":  utils.HumanizeDuration(time.Since(start)),
-	}).Info("calculate backup list for delete")
+	}).Info("calculate backup list for deleteKey")
 	for _, backupToDelete := range backupsToDelete {
 		startDelete := time.Now()
 		if err := bd.RemoveBackup(ctx, backupToDelete); err != nil {
-			bd.Log.Warnf("can't delete %s return error : %v", backupToDelete.BackupName, err)
+			bd.Log.Warnf("can't deleteKey %s return error : %v", backupToDelete.BackupName, err)
 		}
 		bd.Log.WithFields(apexLog.Fields{
 			"operation": "RemoveOldBackups",

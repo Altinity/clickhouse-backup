@@ -269,7 +269,10 @@ jobs:
           QA_AWS_SECRET_KEY: ${{ secrets.QA_AWS_SECRET_KEY }}
           QA_AWS_BUCKET: ${{ secrets.QA_AWS_BUCKET }}
           QA_AWS_REGION: ${{ secrets.QA_AWS_REGION }}
-
+          # need for GCP over S3
+          QA_GCS_OVER_S3_ACCESS_KEY: ${{ secrets.QA_GCS_OVER_S3_ACCESS_KEY }}
+          QA_GCS_OVER_S3_SECRET_KEY: ${{ secrets.QA_GCS_OVER_S3_SECRET_KEY }}
+          QA_GCS_OVER_S3_BUCKET: ${{ secrets.QA_GCS_OVER_S3_BUCKET }}
         run: |
           set -x
           echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"

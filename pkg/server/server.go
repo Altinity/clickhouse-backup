@@ -405,8 +405,9 @@ func (api *APIServer) actionsAsyncCommandsHandler(command string, args []string,
 	if !api.config.API.AllowParallel && status.Current.InProgress() {
 		return actionsResults, ErrAPILocked
 	}
+	// to avoid race condition between GET /backup/actions and POST /backup/actions
+	commandId, _ := status.Current.Start(row.Command)
 	go func() {
-		commandId, _ := status.Current.Start(row.Command)
 		err, _ := api.metrics.ExecuteWithMetrics(command, 0, func() error {
 			return api.cliApp.Run(append([]string{"clickhouse-backup", "-c", api.configPath, "--command-id", strconv.FormatInt(int64(commandId), 10)}, args...))
 		})

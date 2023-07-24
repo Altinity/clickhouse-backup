@@ -26,8 +26,10 @@ type RemoteStorage interface {
 	Close(ctx context.Context) error
 	StatFile(ctx context.Context, key string) (RemoteFile, error)
 	DeleteFile(ctx context.Context, key string) error
+	DeleteFileFromObjectDiskBackup(ctx context.Context, key string) error
 	Walk(ctx context.Context, prefix string, recursive bool, fn func(context.Context, RemoteFile) error) error
 	GetFileReader(ctx context.Context, key string) (io.ReadCloser, error)
 	GetFileReaderWithLocalPath(ctx context.Context, key, localPath string) (io.ReadCloser, error)
 	PutFile(ctx context.Context, key string, r io.ReadCloser) error
+	CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (int64, error)
 }
