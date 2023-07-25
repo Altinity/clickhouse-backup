@@ -1383,7 +1383,7 @@ func TestTablePatterns(t *testing.T) {
 }
 
 func TestSkipNotExistsTable(t *testing.T) {
-	t.Skip("TestSkipNotExistsTable is flaky now, need more precise algorithm for pause calculation")
+	//t.Skip("TestSkipNotExistsTable is flaky now, need more precise algorithm for pause calculation")
 	ch := &TestClickHouse{}
 	r := require.New(t)
 	ch.connectWithWait(r, 0*time.Second, 1*time.Second)
@@ -1395,10 +1395,10 @@ func TestSkipNotExistsTable(t *testing.T) {
 	chVersion, err := ch.chbackend.GetVersion(context.Background())
 	r.NoError(err)
 
-	errorCaught := false
+	freezeErrorHandled := false
 	pauseChannel := make(chan int64)
 	resumeChannel := make(chan int64)
-
+	ch.chbackend.Config.LogSQLQueries = true
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
@@ -1407,7 +1407,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 			wg.Done()
 		}()
 		pause := int64(0)
-		pausePercent := int64(93)
+		// pausePercent := int64(90)
 		for i := 0; i < 100; i++ {
 			testBackupName := fmt.Sprintf("not_exists_%d", i)
 			err = ch.chbackend.Query(ifNotExistsCreateSQL)
@@ -1417,18 +1417,36 @@ func TestSkipNotExistsTable(t *testing.T) {
 			pauseChannel <- pause
 			startTime := time.Now()
 			out, err := dockerExecOut("clickhouse", "bash", "-ce", "LOG_LEVEL=debug clickhouse-backup create --table default.if_not_exists "+testBackupName)
-			pause = time.Since(startTime).Nanoseconds() * pausePercent / 100
 			log.Info(out)
+			if (err != nil && strings.Contains(out, "can't freeze")) || (err == nil && !strings.Contains(out, "can't freeze")) {
+				parseTime := func(line string) time.Time {
+					parsedTime, err := time.Parse("2006/01/02 15:04:05.999999", line[:26])
+					if err != nil {
+						r.Failf("%s, Error parsing time: %v", line, err)
+					}
+					return parsedTime
+				}
+				lines := strings.Split(out, "\n")
+				firstTime := parseTime(lines[0])
+				var freezeTime time.Time
+				for _, line := range lines {
+					if strings.Contains(line, "create_table_query") {
+						freezeTime = parseTime(line)
+						break
+					}
+				}
+				pause = (firstTime.Sub(startTime) + freezeTime.Sub(firstTime) + (10 * time.Microsecond)).Nanoseconds()
+			}
 			if err != nil {
 				if !strings.Contains(out, "no tables for backup") {
 					assert.NoError(t, err)
-				} else {
+				} /* else {
 					pausePercent += 1
-				}
+				} */
 			}
 
-			if strings.Contains(out, "warn") && strings.Contains(out, "can't freeze") && strings.Contains(out, "code: 60") && err == nil {
-				errorCaught = true
+			if strings.Contains(out, "code: 60") && err == nil {
+				freezeErrorHandled = true
 				<-resumeChannel
 				r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", testBackupName))
 				break
@@ -1448,8 +1466,9 @@ func TestSkipNotExistsTable(t *testing.T) {
 		}()
 		for pause := range pauseChannel {
 			if pause > 0 {
+				pauseStart := time.Now()
 				time.Sleep(time.Duration(pause) * time.Nanosecond)
-				log.Infof("pause=%s", time.Duration(pause).String())
+				log.Infof("pause=%s pauseStart=%s", time.Duration(pause).String(), pauseStart.String())
 				err = ch.chbackend.DropTable(clickhouse.Table{Database: "default", Name: "if_not_exists"}, ifNotExistsCreateSQL, "", false, chVersion)
 				r.NoError(err)
 			}
@@ -1457,7 +1476,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 		}
 	}()
 	wg.Wait()
-	r.True(errorCaught)
+	r.True(freezeErrorHandled)
 }
 
 func TestProjections(t *testing.T) {

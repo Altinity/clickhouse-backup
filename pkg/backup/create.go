@@ -541,7 +541,12 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 	// Unfreeze to unlock data on S3 disks, https://github.com/Altinity/clickhouse-backup/issues/423
 	if version > 21004000 {
 		if err := b.ch.QueryContext(ctx, fmt.Sprintf("ALTER TABLE `%s`.`%s` UNFREEZE WITH NAME '%s'", table.Database, table.Name, shadowBackupUUID)); err != nil {
-			return disksToPartsMap, realSize, err
+			if (strings.Contains(err.Error(), "code: 60") || strings.Contains(err.Error(), "code: 81")) && b.cfg.ClickHouse.IgnoreNotExistsErrorDuringFreeze {
+				b.ch.Log.Warnf("can't unfreeze table: %v", err)
+			} else {
+				return disksToPartsMap, realSize, err
+			}
+
 		}
 	}
 	if b.dst != nil {
