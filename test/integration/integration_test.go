@@ -1414,11 +1414,13 @@ func TestSkipNotExistsTable(t *testing.T) {
 			r.NoError(err)
 			err = ch.chbackend.Query(ifNotExistsInsertSQL)
 			r.NoError(err)
+			log.Infof("pauseChannel <- %d", pause)
 			pauseChannel <- pause
 			startTime := time.Now()
 			out, err := dockerExecOut("clickhouse", "bash", "-ce", "LOG_LEVEL=debug clickhouse-backup create --table default.if_not_exists "+testBackupName)
 			log.Info(out)
-			if (err != nil && strings.Contains(out, "can't freeze")) || (err == nil && !strings.Contains(out, "can't freeze")) {
+			if (err != nil && (strings.Contains(out, "can't freeze") || strings.Contains(out, "no tables for backup"))) ||
+				(err == nil && !strings.Contains(out, "can't freeze")) {
 				parseTime := func(line string) time.Time {
 					parsedTime, err := time.Parse("2006/01/02 15:04:05.999999", line[:26])
 					if err != nil {
@@ -1465,6 +1467,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 			wg.Done()
 		}()
 		for pause := range pauseChannel {
+			log.Infof("%d <- pauseChannel", pause)
 			if pause > 0 {
 				pauseStart := time.Now()
 				time.Sleep(time.Duration(pause) * time.Nanosecond)
