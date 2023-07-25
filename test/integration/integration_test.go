@@ -1296,7 +1296,7 @@ func generateTestDataWithDifferentStoragePolicy(remoteStorageType string) {
 			addTestDataIfNotExists()
 		}
 		//gcs over s3 support added in 22.6
-		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.6") >= 0 && remoteStorageType == "GCS" {
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.6") >= 0 && remoteStorageType == "GCS" && os.Getenv("QA_GCS_OVER_S3_BUCKET") != "" {
 			testDataWithStoragePolicy.Name = "test_gcs"
 			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 'gcs_only'"
 			addTestDataIfNotExists()

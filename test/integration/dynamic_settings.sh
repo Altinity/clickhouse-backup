@@ -116,6 +116,8 @@ fi
 
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[6-9]+ || "${CLICKHOUSE_VERSION}" =~ ^22\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[1-9]+ ]]; then
 
+if [[ "" != "${QA_GCS_OVER_S3_BUCKET}" ]]; then
+
 cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_gcs.xml
 <yandex>
   <storage_configuration>
@@ -142,6 +144,8 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_gcs.xml
   </storage_configuration>
 </yandex>
 EOT
+
+fi
 
 fi
 

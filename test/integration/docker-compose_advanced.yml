@@ -79,23 +79,22 @@ services:
     networks:
       - clickhouse-backup
 
-  azure_init:
-    image: mcr.microsoft.com/azure-cli:latest
-    command:
-      - /bin/sh
-      - -xc
-      - sleep infinity
-#      - |
-#        az storage container create --debug --name azure-backup-disk &&
-#        az storage container create --debug --name azure-disk
-    depends_on:
-      azure:
-        condition: service_healthy
-    environment:
-      # https://github.com/Azure/Azurite/blob/main/README.md#usage-with-azure-storage-sdks-or-tools
-      AZURE_STORAGE_CONNECTION_STRING: DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azure:10000/devstoreaccount1;
-    networks:
-      - clickhouse-backup
+   #  azure_init:
+   #    image: mcr.microsoft.com/azure-cli:latest
+   #    command:
+   #      - /bin/sh
+   #      - -xc
+   #      - |
+   #        az storage container create --debug --name azure-backup-disk &&
+   #        az storage container create --debug --name azure-disk
+   #    depends_on:
+   #      azure:
+   #        condition: service_healthy
+   #    environment:
+   #      # https://github.com/Azure/Azurite/blob/main/README.md#usage-with-azure-storage-sdks-or-tools
+   #      AZURE_STORAGE_CONNECTION_STRING: DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azure:10000/devstoreaccount1;
+   #    networks:
+   #      - clickhouse-backup
 
   mysql:
     image: docker.io/mysql:${MYSQL_VERSION:-latest}
