@@ -43,7 +43,7 @@ docker run -u $(id -u clickhouse) --rm -it --network host -v "/var/lib/clickhous
    -e S3_BUCKET="clickhouse-backup" \
    -e S3_ACCESS_KEY="access_key" \
    -e S3_SECRET_KEY="secret" \
-   Altinity/clickhouse-backup --help
+   altinity/clickhouse-backup --help
 ```
 
 Build from the sources:
