@@ -689,7 +689,7 @@ func (ch *ClickHouse) FreezeTable(ctx context.Context, table *Table, name string
 	}
 	query := fmt.Sprintf("ALTER TABLE `%s`.`%s` FREEZE %s;", table.Database, table.Name, withNameQuery)
 	if err := ch.QueryContext(ctx, query); err != nil {
-		if (strings.Contains(err.Error(), "code: 60") || strings.Contains(err.Error(), "code: 81")) && ch.Config.IgnoreNotExistsErrorDuringFreeze {
+		if (strings.Contains(err.Error(), "code: 60") || strings.Contains(err.Error(), "code: 81") || strings.Contains(err.Error(), "code: 218")) && ch.Config.IgnoreNotExistsErrorDuringFreeze {
 			ch.Log.Warnf("can't freeze table: %v", err)
 			return nil
 		}
