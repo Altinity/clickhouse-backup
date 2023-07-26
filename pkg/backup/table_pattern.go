@@ -126,7 +126,23 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 		return nil, nil, err
 	}
 	result.Sort(dropTable)
+	for i := 1; i < len(result); i++ {
+		if b.shouldSkipByTableEngine(result[i]) {
+			t := result[i]
+			delete(resultPartitionNames, metadata.TableTitle{Database: t.Database, Table: t.Table})
+			result = append(result[:i], result[i+1:]...)
+		}
+	}
 	return result, resultPartitionNames, nil
+}
+
+func (b *Backuper) shouldSkipByTableEngine(t metadata.TableMetadata) bool {
+	for _, engine := range b.cfg.ClickHouse.SkipTableEngines {
+		if strings.Contains(strings.ToLower(t.Query), fmt.Sprintf("engine=%s(", engine)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (b *Backuper) checkShallSkipped(p string, metadataPath string) ([]string, string, string, string, bool, bool) {

@@ -318,7 +318,7 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 		return nil, err
 	}
 
-	allTablesSQL := ch.prepareGetTablesSQL(tablePattern, skipDatabaseNames, settings, isSystemTablesFieldPresent)
+	allTablesSQL := ch.prepareGetTablesSQL(tablePattern, skipDatabaseNames, ch.Config.SkipTableEngines, settings, isSystemTablesFieldPresent)
 	if err != nil {
 		return nil, err
 	}
@@ -391,7 +391,7 @@ func (ch *ClickHouse) enrichTablesByInnerDependencies(ctx context.Context, table
 		return tables, nil
 	}
 
-	missedTablesSQL := ch.prepareGetTablesSQL(strings.Join(innerTablesMissed, ","), nil, settings, isSystemTablesFieldPresent)
+	missedTablesSQL := ch.prepareGetTablesSQL(strings.Join(innerTablesMissed, ","), nil, nil, settings, isSystemTablesFieldPresent)
 	missedTables := make([]Table, 0)
 	var err error
 	if err = ch.SelectContext(ctx, &missedTables, missedTablesSQL); err != nil {
@@ -409,7 +409,7 @@ func (ch *ClickHouse) enrichTablesByInnerDependencies(ctx context.Context, table
 	return append(missedTables, tables...), nil
 }
 
-func (ch *ClickHouse) prepareGetTablesSQL(tablePattern string, skipDatabases []string, settings map[string]bool, isSystemTablesFieldPresent []IsSystemTablesFieldPresent) string {
+func (ch *ClickHouse) prepareGetTablesSQL(tablePattern string, skipDatabases, skipTableEngines []string, settings map[string]bool, isSystemTablesFieldPresent []IsSystemTablesFieldPresent) string {
 	allTablesSQL := "SELECT database, name, engine "
 	if len(isSystemTablesFieldPresent) > 0 && isSystemTablesFieldPresent[0].IsDataPathPresent > 0 {
 		allTablesSQL += ", data_path "
@@ -434,6 +434,9 @@ func (ch *ClickHouse) prepareGetTablesSQL(tablePattern string, skipDatabases []s
 	}
 	if len(skipDatabases) > 0 {
 		allTablesSQL += fmt.Sprintf(" AND database NOT IN ('%s')", strings.Join(skipDatabases, "','"))
+	}
+	if len(skipTableEngines) > 0 {
+		allTablesSQL += fmt.Sprintf("AND engine NOT IN ('%s')", strings.Join(skipTableEngines, "','"))
 	}
 	// try to upload big tables first
 	if len(isSystemTablesFieldPresent) > 0 && isSystemTablesFieldPresent[0].IsTotalBytesPresent > 0 {
