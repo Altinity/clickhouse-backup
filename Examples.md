@@ -46,7 +46,7 @@ clickhouse-backup restore --rm backup_name
 Use services like https://healthchecks.io or https://deadmanssnitch.com.
 Or use `clickhouse-backup server` and prometheus endpoint :7171/metrics, look alerts examples on https://github.com/Altinity/clickhouse-operator/blob/master/deploy/prometheus/prometheus-alert-rules-backup.yaml
 
-## How to make backup / restore sharded cluster 
+## How to make backup / restore sharded cluster
 ### BACKUP
 run only on the first replica for each shard
 ```bash
