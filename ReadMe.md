@@ -389,11 +389,14 @@ clickhouse:
   # The format for this env variable is "disk_name1:disk_path1,disk_name2:disk_path2". For YAML please continue using map syntax 
   disk_mapping: {}
   # CLICKHOUSE_SKIP_TABLES, the list of tables (pattern are allowed) which are ignored during backup and restore process
-  # The format for this env variable is "pattern1,pattern2,pattern3". For YAML please continue using map syntax 
+  # The format for this env variable is "pattern1,pattern2,pattern3". For YAML please continue using list syntax 
   skip_tables:                     
     - system.*
     - INFORMATION_SCHEMA.*
     - information_schema.*
+  # CLICKHOUSE_SKIP_TABLE_ENGINES, the list of tables engines which are ignored during backup, upload, download, restore process
+  # The format for this env variable is "Engine1,Engine2,engine3". For YAML please continue using list syntax 
+  skip_table_engines: [] 
   timeout: 5m                  # CLICKHOUSE_TIMEOUT
   freeze_by_part: false        # CLICKHOUSE_FREEZE_BY_PART, allow freezing by part instead of freezing the whole table
   freeze_by_part_where: ""     # CLICKHOUSE_FREEZE_BY_PART_WHERE, allow parts filtering during freezing when freeze_by_part: true
@@ -421,6 +424,7 @@ azblob:
   use_managed_identity: false  # AZBLOB_USE_MANAGED_IDENTITY
   container: ""                # AZBLOB_CONTAINER
   path: ""                     # AZBLOB_PATH, `system.macros` values could be applied as {macro_name}
+  object_disk_path: ""         # AZBLOB_OBJECT_DISK_PATH, path for backup of part from `azure_blob_storage` object disk, if disk present, then shall not be zero and shall not be prefixed by `path`   
   compression_level: 1         # AZBLOB_COMPRESSION_LEVEL
   compression_format: tar      # AZBLOB_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   sse_key: ""                  # AZBLOB_SSE_KEY
@@ -437,6 +441,7 @@ s3:
   assume_role_arn: ""              # S3_ASSUME_ROLE_ARN
   force_path_style: false          # S3_FORCE_PATH_STYLE
   path: ""                         # S3_PATH, `system.macros` values could be applied as {macro_name} 
+  object_disk_path: ""             # S3_OBJECT_DISK_PATH, path for backup of part from `s3` object disk, if disk present, then shall not be zero and shall not be prefixed by `path`   
   disable_ssl: false               # S3_DISABLE_SSL
   compression_level: 1             # S3_COMPRESSION_LEVEL
   compression_format: tar          # S3_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
@@ -471,6 +476,7 @@ gcs:
   credentials_json_encoded: "" # GCS_CREDENTIALS_JSON_ENCODED
   bucket: ""                   # GCS_BUCKET
   path: ""                     # GCS_PATH, `system.macros` values could be applied as {macro_name}
+  object_disk_path: ""         # GCS_OBJECT_DISK_PATH, path for backup of part from `s3` object disk (clickhouse support only gcs over s3 protocol), if disk present, then shall not be zero and shall not be prefixed by `path`    
   compression_level: 1         # GCS_COMPRESSION_LEVEL
   compression_format: tar      # GCS_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   storage_class: STANDARD      # GCS_STORAGE_CLASS

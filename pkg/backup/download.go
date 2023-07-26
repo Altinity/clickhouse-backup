@@ -203,6 +203,9 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			if err != nil {
 				return err
 			}
+			if b.shouldSkipByTableEngine(*downloadedMetadata) {
+				return nil
+			}
 			tableMetadataAfterDownload[idx] = *downloadedMetadata
 			atomic.AddUint64(&metadataSize, size)
 			return nil
