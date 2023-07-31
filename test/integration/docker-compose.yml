@@ -11,7 +11,7 @@ services:
 
   ftp:
     image: docker.io/fauria/vsftpd:latest
-    container_name: ftp
+    hostname: ftp
     environment:
       FTP_USER: test_backup
       FTP_PASS: test_backup
@@ -44,7 +44,7 @@ services:
 # todo need to reproduce download after upload
 #  gcs:
 #    image: fsouza/fake-gcs-server:latest
-#    container_name: gcs
+#    hostname: gcs
 #    entrypoint:
 #      - /bin/sh
 #    command:
@@ -85,7 +85,7 @@ services:
 
   zookeeper:
     image: docker.io/zookeeper:${ZOOKEEPER_VERSION:-latest}
-    container_name: zookeeper
+    hostname: zookeeper
     environment:
       ZOO_4LW_COMMANDS_WHITELIST: "*"
     networks:
@@ -98,9 +98,59 @@ services:
       start_period: 2s
 
 
+  clickhouse-backup:
+    image: docker.io/${CLICKHOUSE_IMAGE:-yandex/clickhouse-server}:${CLICKHOUSE_VERSION:-1.1.54390}
+    hostname: clickhouse-backup
+    container_name: clickhouse-backup
+    user: root
+    entrypoint:
+      - /bin/bash
+      - -xce
+      - sleep infinity
+    healthcheck:
+      test: bash -c "exit 0"
+      interval: 30s
+      timeout: 1s
+      retries: 5
+      start_period: 1s
+    environment:
+      CLICKHOUSE_VERSION: ${CLICKHOUSE_VERSION:-1.1.54394}
+      TZ: UTC
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      S3_DEBUG: "${S3_DEBUG:-false}"
+      GCS_DEBUG: "${GCS_DEBUG:-false}"
+      FTP_DEBUG: "${FTP_DEBUG:-false}"
+      SFTP_DEBUG: "${SFTP_DEBUG:-false}"
+      CLICKHOUSE_DEBUG: "${CLICKHOUSE_DEBUG:-false}"
+      GOCOVERDIR: "/tmp/_coverage_/"
+# fake-gcs-server
+#       STORAGE_EMULATOR_HOST: "http://gsc:8080"
+#       GOOGLE_API_USE_CLIENT_CERTIFICATE: "false"
+# FIPS
+      QA_AWS_ACCESS_KEY: ${QA_AWS_ACCESS_KEY}
+      QA_AWS_SECRET_KEY: ${QA_AWS_SECRET_KEY}
+      QA_AWS_BUCKET: ${QA_AWS_BUCKET}
+      QA_AWS_REGION: ${QA_AWS_REGION}
+# https://github.com/Altinity/clickhouse-backup/issues/691:
+      AWS_ACCESS_KEY_ID: access-key
+      AWS_SECRET_ACCESS_KEY: it-is-my-super-secret-key
+    volumes_from:
+      - clickhouse
+    ports:
+      - "7171:7171"
+# for delve debugger
+      - "40001:40001"
+    networks:
+      - clickhouse-backup
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
   clickhouse:
     image: docker.io/${CLICKHOUSE_IMAGE:-yandex/clickhouse-server}:${CLICKHOUSE_VERSION:-1.1.54390}
+    hostname: clickhouse
     container_name: clickhouse
+    restart: always
     user: root
     environment:
       CLICKHOUSE_VERSION: ${CLICKHOUSE_VERSION:-1.1.54394}
@@ -112,10 +162,10 @@ services:
       SFTP_DEBUG: "${SFTP_DEBUG:-false}"
       CLICKHOUSE_DEBUG: "${CLICKHOUSE_DEBUG:-false}"
       GOCOVERDIR: "/tmp/_coverage_/"
-      # fake-gcs-server
-#      STORAGE_EMULATOR_HOST: "http://gsc:8080"
-#      GOOGLE_API_USE_CLIENT_CERTIFICATE: "false"
-      # FIPS
+# fake-gcs-server
+#       STORAGE_EMULATOR_HOST: "http://gsc:8080"
+#       GOOGLE_API_USE_CLIENT_CERTIFICATE: "false"
+# FIPS
       QA_AWS_ACCESS_KEY: ${QA_AWS_ACCESS_KEY}
       QA_AWS_SECRET_KEY: ${QA_AWS_SECRET_KEY}
       QA_AWS_BUCKET: ${QA_AWS_BUCKET}
@@ -129,27 +179,30 @@ services:
       QA_GCS_OVER_S3_BUCKET: "${QA_GCS_OVER_S3_BUCKET}"
       AWS_EC2_METADATA_DISABLED: "true"
     volumes:
-      - ./backup-user.xml:/etc/clickhouse-server/users.d/backup-user.xml
+# clickhouse-backup related files requires for some tests
       - ${CLICKHOUSE_BACKUP_BIN:-../../clickhouse-backup/clickhouse-backup-race}:/usr/bin/clickhouse-backup
       - ${CLICKHOUSE_BACKUP_BIN_FIPS:-../../clickhouse-backup/clickhouse-backup-race-fips}:/usr/bin/clickhouse-backup-fips
       - ./credentials.json:/etc/clickhouse-backup/credentials.json
+      - ./_coverage_/:/tmp/_coverage_/
+# for local debug
+      - ./install_delve.sh:/tmp/install_delve.sh
+# clickhouse configuration
+      - ./backup-user.xml:/etc/clickhouse-server/users.d/backup-user.xml
       - ./server.crt:/etc/clickhouse-server/server.crt
       - ./server.key:/etc/clickhouse-server/server.key
       - ./dhparam.pem:/etc/clickhouse-server/dhparam.pem
       - ./ssl.xml:/etc/clickhouse-server/config.d/ssl.xml
       - ./cluster.xml:/etc/clickhouse-server/config.d/cluster.xml
-      - ./_coverage_/:/tmp/_coverage_/
+      - /var/lib/clickhouse
+      - /hdd1_data
+      - /hdd2_data
+      - /hdd3_data
 # uncomment only when you need clickhouse logs
 #      - ./clickhouse-server.log:/var/log/clickhouse-server/clickhouse-server.log
 #      - ./clickhouse-server.err.log:/var/log/clickhouse-server/clickhouse-server.err.log
-# uncomment only for local debug
-#      - ./install_delve.sh:/tmp/install_delve.sh
     ports:
       - "8123:8123"
       - "9000:9000"
-      - "7171:7171"
-# uncomment for delve debugger
-#       - "40001:40001"
     networks:
       - clickhouse-backup
     links:
@@ -178,7 +231,7 @@ services:
   all_services_ready:
     image: hello-world
     depends_on:
-      clickhouse:
+      clickhouse-backup:
         condition: service_healthy
 
 networks:

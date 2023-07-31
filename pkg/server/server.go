@@ -184,7 +184,7 @@ func (api *APIServer) Restart() error {
 		go func() {
 			err = api.server.ListenAndServeTLS(api.config.API.CertificateFile, api.config.API.PrivateKeyFile)
 			if err != nil {
-				if err == http.ErrServerClosed {
+				if errors.Is(err, http.ErrServerClosed) {
 					log.Warnf("ListenAndServeTLS get signal: %s", err.Error())
 				} else {
 					log.Fatalf("ListenAndServeTLS error: %s", err.Error())
@@ -195,7 +195,7 @@ func (api *APIServer) Restart() error {
 	} else {
 		go func() {
 			if err = api.server.ListenAndServe(); err != nil {
-				if err == http.ErrServerClosed {
+				if errors.Is(err, http.ErrServerClosed) {
 					log.Warnf("ListenAndServe get signal: %s", err.Error())
 				} else {
 					log.Fatalf("ListenAndServe error: %s", err.Error())
@@ -808,8 +808,8 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	partitionsToBackup := make([]string, 0)
 	backupName := backup.NewBackupName()
 	schemaOnly := false
-	rbacOnly := false
-	configsOnly := false
+	createRBAC := false
+	createConfigs := false
 	checkPartsColumns := true
 	fullCommand := "create"
 	query := r.URL.Query()
@@ -828,14 +828,14 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if rbac, exist := query["rbac"]; exist {
-		rbacOnly, _ = strconv.ParseBool(rbac[0])
-		if rbacOnly {
+		createRBAC, _ = strconv.ParseBool(rbac[0])
+		if createRBAC {
 			fullCommand = fmt.Sprintf("%s --rbac", fullCommand)
 		}
 	}
 	if configs, exist := query["configs"]; exist {
-		configsOnly, _ = strconv.ParseBool(configs[0])
-		if configsOnly {
+		createConfigs, _ = strconv.ParseBool(configs[0])
+		if createConfigs {
 			fullCommand = fmt.Sprintf("%s --configs", fullCommand)
 		}
 	}
@@ -861,7 +861,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("create", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.CreateBackup(backupName, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, checkPartsColumns, api.clickhouseBackupVersion, commandId)
+			return b.CreateBackup(backupName, tablePattern, partitionsToBackup, schemaOnly, createRBAC, false, createConfigs, false, checkPartsColumns, api.clickhouseBackupVersion, commandId)
 		})
 		if err != nil {
 			api.log.Errorf("API /backup/create error: %v", err)
@@ -1151,8 +1151,8 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	dataOnly := false
 	dropTable := false
 	ignoreDependencies := false
-	rbacOnly := false
-	configsOnly := false
+	restoreRBAC := false
+	restoreConfigs := false
 	fullCommand := "restore"
 
 	query := r.URL.Query()
@@ -1200,11 +1200,11 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		fullCommand += " --ignore-dependencies"
 	}
 	if _, exist := query["rbac"]; exist {
-		rbacOnly = true
+		restoreRBAC = true
 		fullCommand += " --rbac"
 	}
 	if _, exist := query["configs"]; exist {
-		configsOnly = true
+		restoreConfigs = true
 		fullCommand += " --configs"
 	}
 
@@ -1222,7 +1222,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore", 0, func() error {
 			b := backup.NewBackuper(api.config)
-			return b.Restore(name, tablePattern, databaseMappingToRestore, partitionsToBackup, schemaOnly, dataOnly, dropTable, ignoreDependencies, rbacOnly, configsOnly, commandId)
+			return b.Restore(name, tablePattern, databaseMappingToRestore, partitionsToBackup, schemaOnly, dataOnly, dropTable, ignoreDependencies, restoreRBAC, false, restoreConfigs, false, commandId)
 		})
 		status.Current.Stop(commandId, err)
 		if err != nil {

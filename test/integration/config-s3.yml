@@ -13,7 +13,7 @@ clickhouse:
   # wrong disk name mapping for https://github.com/Altinity/clickhouse-backup/issues/676
   disk_mapping:
     default-gp3: /var/lib/clickhouse
-  host: 127.0.0.1
+  host: clickhouse
   port: 9440
   username: backup
   password: meow=& 123?*%# МЯУ
@@ -21,7 +21,7 @@ clickhouse:
   skip_verify: true
   sync_replicated_tables: true
   timeout: 2s
-  restart_command: bash -c 'echo "FAKE RESTART"'
+  restart_command: "sql:SYSTEM RELOAD USERS; sql:SYSTEM RELOAD CONFIG; sql:SYSTEM SHUTDOWN"
   backup_mutations: true
 s3:
   access_key: access-key
@@ -39,5 +39,5 @@ s3:
 api:
   listen: :7171
   create_integration_tables: true
-  integration_tables_host: "localhost"
+  integration_tables_host: "clickhouse-backup"
   allow_parallel: true

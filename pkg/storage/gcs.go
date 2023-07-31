@@ -3,7 +3,9 @@ package storage
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"google.golang.org/api/iterator"
 	"io"
 	"net/http"
 	"path"
@@ -15,7 +17,6 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/apex/log"
-	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 	googleHTTPTransport "google.golang.org/api/transport/http"
 )
@@ -119,26 +120,25 @@ func (gcs *GCS) Walk(ctx context.Context, gcsPath string, recursive bool, proces
 	})
 	for {
 		object, err := it.Next()
-		switch err {
-		case nil:
-			if object.Prefix != "" {
-				if err := process(ctx, &gcsFile{
-					name: strings.TrimPrefix(object.Prefix, rootPath),
-				}); err != nil {
-					return err
-				}
-				continue
-			}
+		if errors.Is(err, iterator.Done) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if object.Prefix != "" {
 			if err := process(ctx, &gcsFile{
-				size:         object.Size,
-				lastModified: object.Updated,
-				name:         strings.TrimPrefix(object.Name, rootPath),
+				name: strings.TrimPrefix(object.Prefix, rootPath),
 			}); err != nil {
 				return err
 			}
-		case iterator.Done:
-			return nil
-		default:
+			continue
+		}
+		if err := process(ctx, &gcsFile{
+			size:         object.Size,
+			lastModified: object.Updated,
+			name:         strings.TrimPrefix(object.Name, rootPath),
+		}); err != nil {
 			return err
 		}
 	}
@@ -178,7 +178,7 @@ func (gcs *GCS) PutFile(ctx context.Context, key string, r io.ReadCloser) error 
 func (gcs *GCS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 	objAttr, err := gcs.client.Bucket(gcs.Config.Bucket).Object(path.Join(gcs.Config.Path, key)).Attrs(ctx)
 	if err != nil {
-		if err == storage.ErrObjectNotExist {
+		if errors.Is(err, storage.ErrObjectNotExist) {
 			return nil, ErrNotFound
 		}
 		return nil, err

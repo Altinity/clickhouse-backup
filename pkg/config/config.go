@@ -507,7 +507,7 @@ func DefaultConfig() *Config {
 			SyncReplicatedTables:             false,
 			LogSQLQueries:                    true,
 			ConfigDir:                        "/etc/clickhouse-server/",
-			RestartCommand:                   "systemctl restart clickhouse-server",
+			RestartCommand:                   "exec:systemctl restart clickhouse-server",
 			IgnoreNotExistsErrorDuringFreeze: true,
 			CheckReplicasBeforeAttach:        true,
 			UseEmbeddedBackupRestore:         false,

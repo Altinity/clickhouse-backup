@@ -144,7 +144,7 @@ func (s *S3) Connect(ctx context.Context) error {
 
 	if s.Config.Debug {
 		awsConfig.Logger = newS3Logger(s.Log)
-		awsConfig.ClientLogMode = aws.LogRetries | aws.LogRequestWithBody | aws.LogResponseWithBody
+		awsConfig.ClientLogMode = aws.LogRetries | aws.LogRequest | aws.LogResponse
 	}
 
 	httpTransport := http.DefaultTransport

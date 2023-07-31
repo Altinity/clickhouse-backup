@@ -633,7 +633,7 @@ func (ch *ClickHouse) FreezeTableOldWay(ctx context.Context, table *Table, name 
 		PartitionID string `ch:"partition_id"`
 	}
 	q := fmt.Sprintf("SELECT DISTINCT partition_id FROM `system`.`parts` WHERE database='%s' AND table='%s' %s", table.Database, table.Name, ch.Config.FreezeByPartWhere)
-	if err := ch.conn.Select(ctx, &partitions, q); err != nil {
+	if err := ch.SelectContext(ctx, &partitions, q); err != nil {
 		return fmt.Errorf("can't get partitions for '%s.%s': %w", table.Database, table.Name, err)
 	}
 	withNameQuery := ""

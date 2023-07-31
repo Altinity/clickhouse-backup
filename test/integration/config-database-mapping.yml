@@ -7,7 +7,7 @@ general:
   restore_database_mapping:
     database1: default
 clickhouse:
-  host: 127.0.0.1
+  host: clickhouse
   port: 9440
   username: backup
   password: meow=& 123?*%# МЯУ

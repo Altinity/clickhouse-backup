@@ -459,7 +459,7 @@ func (b *Backuper) uploadAndArchiveBackupRelatedDir(ctx context.Context, localBa
 	}
 	remoteUploaded, err := b.dst.StatFile(ctx, remoteFile)
 	if err != nil {
-		return 0, fmt.Errorf("can't check uploaded %s file: %v", remoteFile, err)
+		return 0, fmt.Errorf("can't check uploaded remoteFile: %s, error: %v", remoteFile, err)
 	}
 	if b.resume {
 		b.resumableState.AppendToState(remoteFile, remoteUploaded.Size())
@@ -557,7 +557,7 @@ breakByError:
 					}
 					remoteFile, err := b.dst.StatFile(ctx, remoteDataFile)
 					if err != nil {
-						return fmt.Errorf("can't check uploaded file: %v", err)
+						return fmt.Errorf("can't check uploaded remoteDataFile: %s, error: %v", remoteDataFile, err)
 					}
 					atomic.AddInt64(&uploadedBytes, remoteFile.Size())
 					if b.resume {

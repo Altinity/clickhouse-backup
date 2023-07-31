@@ -10,7 +10,7 @@ general:
     - "_temporary_and_external_tables.*"
   restore_schema_on_cluster: "{cluster}"
 clickhouse:
-  host: 127.0.0.1
+  host: clickhouse
   port: 9440
   username: backup
   password: meow=& 123?*%# МЯУ

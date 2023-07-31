@@ -7,5 +7,6 @@ export AWS_SECRET_ACCESS_KEY=it-is-my-super-secret-key
 export KOPIA_KEEP_LAST=7
 export KOPIA_PASSWORD=kopia-repo-password
 export KOPIA_CHECK_FOR_UPDATES=false
+export CLICKHOUSE_PARAMS="--host '$(yq '.clickhouse.host' /etc/clickhouse-backup/config.yml)' --port '$(yq '.clickhouse.port' /etc/clickhouse-backup/config.yml)' --user '$(yq '.clickhouse.username' /etc/clickhouse-backup/config.yml)' --password '$(yq '.clickhouse.password' /etc/clickhouse-backup/config.yml)'"
 kopia repository connect s3 --endpoint=${KOPIA_S3_ENDPOINT} --disable-tls --bucket=${KOPIA_S3_BUCKET} --access-key=${AWS_ACCESS_KEY_ID} --secret-access-key=${AWS_SECRET_ACCESS_KEY} || kopia repository create s3 --endpoint=${KOPIA_S3_ENDPOINT} --disable-tls --bucket=${KOPIA_S3_BUCKET} --access-key=${AWS_ACCESS_KEY_ID} --secret-access-key=${AWS_SECRET_ACCESS_KEY}
 kopia policy set --global  --keep-latest=${KOPIA_KEEP_LAST}

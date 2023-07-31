@@ -34,7 +34,7 @@ import (
 var CreateDatabaseRE = regexp.MustCompile(`(?m)^CREATE DATABASE (\s*)(\S+)(\s*)`)
 
 // Restore - restore tables matched by tablePattern from backupName
-func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, partitions []string, schemaOnly, dataOnly, dropTable, ignoreDependencies, rbacOnly, configsOnly bool, commandId int) error {
+func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, partitions []string, schemaOnly, dataOnly, dropTable, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly bool, commandId int) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return err
@@ -116,7 +116,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 		}
 		if len(backupMetadata.Tables) == 0 {
 			log.Warnf("'%s' doesn't contains tables for restore", backupName)
-			if (!rbacOnly) && (!configsOnly) {
+			if (!restoreRBAC) && (!restoreConfigs) {
 				return nil
 			}
 		}
@@ -124,13 +124,13 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 		return err
 	}
 	needRestart := false
-	if rbacOnly && !b.isEmbedded {
+	if (rbacOnly || restoreRBAC) && !b.isEmbedded {
 		if err := b.restoreRBAC(ctx, backupName, disks); err != nil {
 			return err
 		}
 		needRestart = true
 	}
-	if configsOnly && !b.isEmbedded {
+	if (configsOnly || restoreConfigs) && !b.isEmbedded {
 		if err := b.restoreConfigs(backupName, disks); err != nil {
 			return err
 		}
@@ -138,23 +138,11 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 	}
 
 	if needRestart {
-		log.Warnf("%s contains `access` or `configs` directory, so we need exec %s", backupName, b.ch.Config.RestartCommand)
-		cmd, err := shellwords.Parse(b.ch.Config.RestartCommand)
-		if err != nil {
+		if err := b.restartClickHouse(ctx, backupName, log); err != nil {
 			return err
 		}
-		ctx, cancel := context.WithTimeout(ctx, 180*time.Second)
-		defer cancel()
-		log.Infof("run %s", b.ch.Config.RestartCommand)
-		var out []byte
-		if len(cmd) > 1 {
-			out, err = exec.CommandContext(ctx, cmd[0], cmd[1:]...).CombinedOutput()
-		} else {
-			out, err = exec.CommandContext(ctx, cmd[0]).CombinedOutput()
-		}
-		if err != nil {
-			log.Debug(string(out))
-			return err
+		if rbacOnly || configsOnly {
+			return nil
 		}
 	}
 
@@ -169,6 +157,64 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 		}
 	}
 	log.Info("done")
+	return nil
+}
+
+func (b *Backuper) restartClickHouse(ctx context.Context, backupName string, log *apexLog.Entry) error {
+	log.Warnf("%s contains `access` or `configs` directory, so we need exec %s", backupName, b.ch.Config.RestartCommand)
+	for _, cmd := range strings.Split(b.ch.Config.RestartCommand, ";") {
+		cmd = strings.Trim(cmd, " \t\r\n")
+		if strings.HasPrefix(cmd, "sql:") {
+			cmd = strings.TrimPrefix(cmd, "sql:")
+			if err := b.ch.QueryContext(ctx, cmd); err != nil {
+				log.Warnf("restart sql: %s, error: %v", cmd, err)
+			}
+		}
+		if strings.HasPrefix(cmd, "exec:") {
+			cmd = strings.TrimPrefix(cmd, "exec:")
+			if err := b.executeShellCommandWithTimeout(ctx, cmd, log); err != nil {
+				return err
+			}
+		}
+	}
+	b.ch.Close()
+	closeCtx, cancel := context.WithTimeout(ctx, 180*time.Second)
+	defer cancel()
+
+breakByReconnect:
+	for i := 1; i <= 60; i++ {
+		select {
+		case <-closeCtx.Done():
+			return fmt.Errorf("reconnect after '%s' timeout exceeded", b.ch.Config.RestartCommand)
+		default:
+			if err := b.ch.Connect(); err == nil {
+				break breakByReconnect
+			}
+			log.Infof("wait 3 seconds")
+			time.Sleep(3 * time.Second)
+		}
+	}
+	return nil
+}
+
+func (b *Backuper) executeShellCommandWithTimeout(ctx context.Context, cmd string, log *apexLog.Entry) error {
+	shellCmd, err := shellwords.Parse(cmd)
+	if err != nil {
+		return err
+	}
+	shellCtx, shellCancel := context.WithTimeout(ctx, 180*time.Second)
+	defer shellCancel()
+	log.Infof("run %s", cmd)
+	var out []byte
+	if len(shellCmd) > 1 {
+		out, err = exec.CommandContext(shellCtx, shellCmd[0], shellCmd[1:]...).CombinedOutput()
+	} else {
+		out, err = exec.CommandContext(shellCtx, shellCmd[0]).CombinedOutput()
+	}
+	if err != nil {
+		log.Debug(string(out))
+		log.Warnf("restart exec: %s, error: %v", cmd, err)
+	}
 	return nil
 }
 

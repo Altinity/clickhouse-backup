@@ -50,7 +50,7 @@ func NewBackupName() string {
 
 // CreateBackup - create new backup of all tables matched by tablePattern
 // If backupName is empty string will use default backup name
-func (b *Backuper) CreateBackup(backupName, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, skipCheckPartsColumns bool, version string, commandId int) error {
+func (b *Backuper) CreateBackup(backupName, tablePattern string, partitions []string, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, skipCheckPartsColumns bool, version string, commandId int) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return err
@@ -59,7 +59,7 @@ func (b *Backuper) CreateBackup(backupName, tablePattern string, partitions []st
 	defer cancel()
 
 	startBackup := time.Now()
-	doBackupData := !schemaOnly
+	doBackupData := !schemaOnly && !rbacOnly && !configsOnly
 	if backupName == "" {
 		backupName = NewBackupName()
 	}
@@ -115,9 +115,9 @@ func (b *Backuper) CreateBackup(backupName, tablePattern string, partitions []st
 	partitionsIdMap, partitionsNameList := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, tables, nil, partitions)
 	// create
 	if b.cfg.ClickHouse.UseEmbeddedBackupRestore {
-		err = b.createBackupEmbedded(ctx, backupName, tablePattern, partitionsNameList, partitionsIdMap, schemaOnly, rbacOnly, configsOnly, tables, allDatabases, allFunctions, disks, diskMap, diskTypes, log, startBackup, version)
+		err = b.createBackupEmbedded(ctx, backupName, tablePattern, partitionsNameList, partitionsIdMap, schemaOnly, createRBAC, createConfigs, tables, allDatabases, allFunctions, disks, diskMap, diskTypes, log, startBackup, version)
 	} else {
-		err = b.createBackupLocal(ctx, backupName, partitionsIdMap, tables, doBackupData, schemaOnly, rbacOnly, configsOnly, version, disks, diskMap, diskTypes, allDatabases, allFunctions, log, startBackup)
+		err = b.createBackupLocal(ctx, backupName, partitionsIdMap, tables, doBackupData, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, version, disks, diskMap, diskTypes, allDatabases, allFunctions, log, startBackup)
 	}
 	if err != nil {
 		return err
@@ -130,7 +130,7 @@ func (b *Backuper) CreateBackup(backupName, tablePattern string, partitions []st
 	return nil
 }
 
-func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, tables []clickhouse.Table, doBackupData bool, schemaOnly bool, rbacOnly bool, configsOnly bool, version string, disks []clickhouse.Disk, diskMap, diskTypes map[string]string, allDatabases []clickhouse.Database, allFunctions []clickhouse.Function, log *apexLog.Entry, startBackup time.Time) error {
+func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, tables []clickhouse.Table, doBackupData bool, schemaOnly bool, createRBAC, rbacOnly bool, createConfigs, configsOnly bool, version string, disks []clickhouse.Disk, diskMap, diskTypes map[string]string, allDatabases []clickhouse.Database, allFunctions []clickhouse.Function, log *apexLog.Entry, startBackup time.Time) error {
 	// Create backup dir on all clickhouse disks
 	for _, disk := range disks {
 		if err := filesystemhelper.Mkdir(path.Join(disk.Path, "backup"), b.ch, disks); err != nil {
@@ -199,45 +199,46 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 				}
 			}
 			log.Debug("create metadata")
-
-			metadataSize, err := b.createTableMetadata(path.Join(backupPath, "metadata"), metadata.TableMetadata{
-				Table:        table.Name,
-				Database:     table.Database,
-				Query:        table.CreateTableQuery,
-				TotalBytes:   table.TotalBytes,
-				Size:         realSize,
-				Parts:        disksToPartsMap,
-				Mutations:    inProgressMutations,
-				MetadataOnly: schemaOnly,
-			}, disks)
-			if err != nil {
-				if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks); removeBackupErr != nil {
-					log.Error(removeBackupErr.Error())
+			if schemaOnly || doBackupData {
+				metadataSize, err := b.createTableMetadata(path.Join(backupPath, "metadata"), metadata.TableMetadata{
+					Table:        table.Name,
+					Database:     table.Database,
+					Query:        table.CreateTableQuery,
+					TotalBytes:   table.TotalBytes,
+					Size:         realSize,
+					Parts:        disksToPartsMap,
+					Mutations:    inProgressMutations,
+					MetadataOnly: schemaOnly,
+				}, disks)
+				if err != nil {
+					if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks); removeBackupErr != nil {
+						log.Error(removeBackupErr.Error())
+					}
+					return err
 				}
-				return err
+				backupMetadataSize += metadataSize
+				tableMetas = append(tableMetas, metadata.TableTitle{
+					Database: table.Database,
+					Table:    table.Name,
+				})
 			}
-			backupMetadataSize += metadataSize
-			tableMetas = append(tableMetas, metadata.TableTitle{
-				Database: table.Database,
-				Table:    table.Name,
-			})
 			log.Infof("done")
 		}
 	}
 	backupRBACSize, backupConfigSize := uint64(0), uint64(0)
 
-	if rbacOnly {
-		if backupRBACSize, err = b.createRBACBackup(ctx, backupPath, disks); err != nil {
+	if createRBAC || rbacOnly {
+		if backupRBACSize, err = b.createBackupRBAC(ctx, backupPath, disks); err != nil {
 			log.Errorf("error during do RBAC backup: %v", err)
 		} else {
-			log.WithField("size", utils.FormatBytes(backupRBACSize)).Info("done createRBACBackup")
+			log.WithField("size", utils.FormatBytes(backupRBACSize)).Info("done createBackupRBAC")
 		}
 	}
-	if configsOnly {
-		if backupConfigSize, err = b.createConfigBackup(ctx, backupPath); err != nil {
+	if createConfigs || configsOnly {
+		if backupConfigSize, err = b.createBackupConfigs(ctx, backupPath); err != nil {
 			log.Errorf("error during do CONFIG backup: %v", err)
 		} else {
-			log.WithField("size", utils.FormatBytes(backupConfigSize)).Info("done createConfigBackup")
+			log.WithField("size", utils.FormatBytes(backupConfigSize)).Info("done createBackupConfigs")
 		}
 	}
 
@@ -249,11 +250,11 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 	return nil
 }
 
-func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePattern string, partitionsNameList map[metadata.TableTitle][]string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, schemaOnly, rbacOnly, configsOnly bool, tables []clickhouse.Table, allDatabases []clickhouse.Database, allFunctions []clickhouse.Function, disks []clickhouse.Disk, diskMap, diskTypes map[string]string, log *apexLog.Entry, startBackup time.Time, backupVersion string) error {
+func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePattern string, partitionsNameList map[metadata.TableTitle][]string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, schemaOnly, createRBAC, createConfigs bool, tables []clickhouse.Table, allDatabases []clickhouse.Database, allFunctions []clickhouse.Function, disks []clickhouse.Disk, diskMap, diskTypes map[string]string, log *apexLog.Entry, startBackup time.Time, backupVersion string) error {
 	if _, isBackupDiskExists := diskMap[b.cfg.ClickHouse.EmbeddedBackupDisk]; !isBackupDiskExists {
 		return fmt.Errorf("backup disk `%s` not exists in system.disks", b.cfg.ClickHouse.EmbeddedBackupDisk)
 	}
-	if rbacOnly || configsOnly {
+	if createRBAC || createConfigs {
 		return fmt.Errorf("`use_embedded_backup_restore: true` doesn't support --rbac, --configs parameters")
 	}
 	l := 0
@@ -412,8 +413,8 @@ func (b *Backuper) getPartsFromBackupDisk(backupPath string, table clickhouse.Ta
 	return parts, nil
 }
 
-func (b *Backuper) createConfigBackup(ctx context.Context, backupPath string) (uint64, error) {
-	log := b.log.WithField("logger", "createConfigBackup")
+func (b *Backuper) createBackupConfigs(ctx context.Context, backupPath string) (uint64, error) {
+	log := b.log.WithField("logger", "createBackupConfigs")
 	select {
 	case <-ctx.Done():
 		return 0, ctx.Err()
@@ -431,8 +432,8 @@ func (b *Backuper) createConfigBackup(ctx context.Context, backupPath string) (u
 	}
 }
 
-func (b *Backuper) createRBACBackup(ctx context.Context, backupPath string, disks []clickhouse.Disk) (uint64, error) {
-	log := b.log.WithField("logger", "createRBACBackup")
+func (b *Backuper) createBackupRBAC(ctx context.Context, backupPath string, disks []clickhouse.Disk) (uint64, error) {
+	log := b.log.WithField("logger", "createBackupRBAC")
 	select {
 	case <-ctx.Done():
 		return 0, ctx.Err()
