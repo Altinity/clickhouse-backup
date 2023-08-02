@@ -8,7 +8,7 @@
 [![Coverage Status](https://coveralls.io/repos/github/Altinity/clickhouse-backup/badge.svg)](https://coveralls.io/github/Altinity/clickhouse-backup)
 
 A tool for easy ClickHouse backup and restore with support for many cloud and non-cloud storage types.
-To make data backup `clickhouse-backup` requires access to the same files as `clickhouse-server` in `/var/lib/clickhouse` folders. 
+To make data backup `clickhouse-backup` requires access to the same files as `clickhouse-server` in `/var/lib/clickhouse` folders.
 So prefer running `clickhouse-backup` on the same host or same Kubernetes Pod or the neighbor container on the same host where `clickhouse-server` ran.
 You can backup only schema from remote hosts.
 
@@ -67,7 +67,7 @@ OPTIONS:
    --config value, -c value                 Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --all, -a                                print table even when match with skip_tables pattern
    --table value, --tables value, -t value  list tables only match with table name patterns, separated by comma, allow ? and * as wildcard
-   
+
 ```
 ### CLI command - create
 ```
@@ -93,7 +93,7 @@ look to system.parts partition and partition_id fields for details https://click
    --rbac, --backup-rbac, --do-backup-rbac           Backup RBAC related objects
    --configs, --backup-configs, --do-backup-configs  Backup 'clickhouse-server' configuration files
    --skip-check-parts-columns                        skip check system.parts_columns to disallow backup inconsistent column types for data parts
-   
+
 ```
 ### CLI command - create_remote
 ```
@@ -122,7 +122,7 @@ look to system.parts partition and partition_id fields for details https://click
    --configs, --backup-configs, --do-backup-configs  Backup and upload 'clickhouse-server' configuration files
    --resume, --resumable                             Save intermediate upload state and resume upload if backup exists on remote storage, ignore when 'remote_storage: custom' or 'use_embedded_backup_restore: true'
    --skip-check-parts-columns                        skip check system.parts_columns to disallow backup inconsistent column types for data parts
-   
+
 ```
 ### CLI command - upload
 ```
@@ -145,7 +145,7 @@ values depends on field types in your table, use single quote for String and Dat
 look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
    --schema, -s           Upload schemas only
    --resume, --resumable  Save intermediate upload state and resume upload if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
-   
+
 ```
 ### CLI command - list
 ```
@@ -157,7 +157,7 @@ USAGE:
 
 OPTIONS:
    --config value, -c value  Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-   
+
 ```
 ### CLI command - download
 ```
@@ -178,7 +178,7 @@ values depends on field types in your table, use single quote for String and Dat
 look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
    --schema, -s           Download schema only
    --resume, --resumable  Save intermediate download state and resume download if backup exists on local storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
-   
+
 ```
 ### CLI command - restore
 ```
@@ -204,7 +204,7 @@ look to system.parts partition and partition_id fields for details https://click
    -i, --ignore-dependencies                           Ignore dependencies when drop exists schema objects
    --rbac, --restore-rbac, --do-restore-rbac           Restore RBAC related objects
    --configs, --restore-configs, --do-restore-configs  Restore 'clickhouse-server' CONFIG related files
-   
+
 ```
 ### CLI command - restore_remote
 ```
@@ -231,7 +231,7 @@ look to system.parts partition and partition_id fields for details https://click
    --rbac, --restore-rbac, --do-restore-rbac           Download and Restore RBAC related objects
    --configs, --restore-configs, --do-restore-configs  Download and Restore 'clickhouse-server' CONFIG related files
    --resume, --resumable                               Save intermediate upload state and resume upload if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
-   
+
 ```
 ### CLI command - delete
 ```
@@ -243,7 +243,7 @@ USAGE:
 
 OPTIONS:
    --config value, -c value  Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-   
+
 ```
 ### CLI command - default-config
 ```
@@ -255,7 +255,7 @@ USAGE:
 
 OPTIONS:
    --config value, -c value  Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-   
+
 ```
 ### CLI command - print-config
 ```
@@ -267,7 +267,7 @@ USAGE:
 
 OPTIONS:
    --config value, -c value  Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-   
+
 ```
 ### CLI command - clean
 ```
@@ -279,7 +279,7 @@ USAGE:
 
 OPTIONS:
    --config value, -c value  Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-   
+
 ```
 ### CLI command - clean_remote_broken
 ```
@@ -291,7 +291,7 @@ USAGE:
 
 OPTIONS:
    --config value, -c value  Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-   
+
 ```
 ### CLI command - watch
 ```
@@ -320,7 +320,7 @@ look to system.parts partition and partition_id fields for details https://click
    --rbac, --backup-rbac, --do-backup-rbac           Backup RBAC related objects only
    --configs, --backup-configs, --do-backup-configs  Backup `clickhouse-server' configuration files only
    --skip-check-parts-columns                        skip check system.parts_columns to disallow backup inconsistent column types for data parts
-   
+
 ```
 ### CLI command - server
 ```
@@ -336,7 +336,7 @@ OPTIONS:
    --watch-interval value              Interval for run 'create_remote' + 'delete local' for incremental backup, look format https://pkg.go.dev/time#ParseDuration
    --full-interval value               Interval for run 'create_remote'+'delete local' when stop create incremental backup sequence and create full backup, look format https://pkg.go.dev/time#ParseDuration
    --watch-backup-name-template value  Template for new backup name, could contain names from system.macros, {type} - full or incremental and {time:LAYOUT}, look to https://go.dev/src/time/format.go for layout examples
-   
+
 ```
 
 ## Default Config
@@ -351,70 +351,70 @@ general:
   max_file_size: 1073741824      # MAX_FILE_SIZE, 1G by default, useless when upload_by_part is true, use for split data parts files by archives
   disable_progress_bar: true     # DISABLE_PROGRESS_BAR, show progress bar during upload and download, makes sense only when `upload_concurrency` and `download_concurrency` is 1
   backups_to_keep_local: 0       # BACKUPS_TO_KEEP_LOCAL, how many latest local backup should be kept, 0 means all created backups will be stored on local disk
-                                 # -1 means backup will keep after `create` but will delete after `create_remote` command  
+                                 # -1 means backup will keep after `create` but will delete after `create_remote` command
                                  # You shall run `clickhouse-backup delete local <backup_name>` command to remove temporary backup files from the local disk
-  backups_to_keep_remote: 0      # BACKUPS_TO_KEEP_REMOTE, how many latest backup should be kept on remote storage, 0 means all uploaded backups will be stored on remote storage. 
+  backups_to_keep_remote: 0      # BACKUPS_TO_KEEP_REMOTE, how many latest backup should be kept on remote storage, 0 means all uploaded backups will be stored on remote storage.
                                  # If old backups are required for newer incremental backup then it won't be deleted. Be careful with long incremental backup sequences.
   log_level: info                # LOG_LEVEL, a choice from `debug`, `info`, `warn`, `error`
   allow_empty_backups: false     # ALLOW_EMPTY_BACKUPS
   # concurrency means parallel tables and parallel parts inside tables
   # for example 4 means max 4 parallel tables and 4 parallel parts inside one table, so equals 16 concurrent streams
-  download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255, by default, the value is round(sqrt(AVAILABLE_CPU_CORES / 2))  
+  download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255, by default, the value is round(sqrt(AVAILABLE_CPU_CORES / 2))
   upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255, by default, the value is round(sqrt(AVAILABLE_CPU_CORES / 2))
 
-  # RESTORE_SCHEMA_ON_CLUSTER, execute all schema related SQL queries with `ON CLUSTER` clause as Distributed DDL. 
+  # RESTORE_SCHEMA_ON_CLUSTER, execute all schema related SQL queries with `ON CLUSTER` clause as Distributed DDL.
   # Check `system.clusters` table for the correct cluster name, also `system.macros` can be used.
   # This isn't applicable when `use_embedded_backup_restore: true`
-  restore_schema_on_cluster: ""   
+  restore_schema_on_cluster: ""
   upload_by_part: true           # UPLOAD_BY_PART
   download_by_part: true         # DOWNLOAD_BY_PART
   use_resumable_state: true      # USE_RESUMABLE_STATE, allow resume upload and download according to the <backup_name>.resumable file
 
   # RESTORE_DATABASE_MAPPING, restore rules from backup databases to target databases, which is useful when changing destination database, all atomic tables will be created with new UUIDs.
   # The format for this env variable is "src_db1:target_db1,src_db2:target_db2". For YAML please continue using map syntax
-  restore_database_mapping: {}   
+  restore_database_mapping: {}
   retries_on_failure: 3          # RETRIES_ON_FAILURE, how many times to retry after a failure during upload or download
   retries_pause: 30s             # RETRIES_PAUSE, duration time to pause after each download or upload failure
 
-  watch_interval: 1h       # WATCH_INTERVAL, use only for `watch` command, backup will create every 1h 
-  full_interval: 24h       # FULL_INTERVAL, use only for `watch` command, full backup will create every 24h 
+  watch_interval: 1h       # WATCH_INTERVAL, use only for `watch` command, backup will create every 1h
+  full_interval: 24h       # FULL_INTERVAL, use only for `watch` command, full backup will create every 24h
   watch_backup_name_template: "shard{shard}-{type}-{time:20060102150405}" # WATCH_BACKUP_NAME_TEMPLATE, used only for `watch` command, macros values will apply from `system.macros` for time:XXX, look format in https://go.dev/src/time/format.go
-  
+
 clickhouse:
   username: default                # CLICKHOUSE_USERNAME
   password: ""                     # CLICKHOUSE_PASSWORD
   host: localhost                  # CLICKHOUSE_HOST, To make backup data `clickhouse-backup` requires access to the same file system as clickhouse-server, so `host` should localhost or address of another docker container on the same machine, or IP address bound to some network interface on the same host.
   port: 9000                       # CLICKHOUSE_PORT, don't use 8123, clickhouse-backup doesn't support HTTP protocol
   # CLICKHOUSE_DISK_MAPPING, use this mapping when your `system.disks` are different between the source and destination clusters during backup and restore process
-  # The format for this env variable is "disk_name1:disk_path1,disk_name2:disk_path2". For YAML please continue using map syntax 
+  # The format for this env variable is "disk_name1:disk_path1,disk_name2:disk_path2". For YAML please continue using map syntax
   disk_mapping: {}
   # CLICKHOUSE_SKIP_TABLES, the list of tables (pattern are allowed) which are ignored during backup and restore process
-  # The format for this env variable is "pattern1,pattern2,pattern3". For YAML please continue using list syntax 
-  skip_tables:                     
+  # The format for this env variable is "pattern1,pattern2,pattern3". For YAML please continue using list syntax
+  skip_tables:
     - system.*
     - INFORMATION_SCHEMA.*
     - information_schema.*
   # CLICKHOUSE_SKIP_TABLE_ENGINES, the list of tables engines which are ignored during backup, upload, download, restore process
-  # The format for this env variable is "Engine1,Engine2,engine3". For YAML please continue using list syntax 
-  skip_table_engines: [] 
+  # The format for this env variable is "Engine1,Engine2,engine3". For YAML please continue using list syntax
+  skip_table_engines: []
   timeout: 5m                  # CLICKHOUSE_TIMEOUT
   freeze_by_part: false        # CLICKHOUSE_FREEZE_BY_PART, allow freezing by part instead of freezing the whole table
   freeze_by_part_where: ""     # CLICKHOUSE_FREEZE_BY_PART_WHERE, allow parts filtering during freezing when freeze_by_part: true
   secure: false                # CLICKHOUSE_SECURE, use TLS encryption for connection
   skip_verify: false           # CLICKHOUSE_SKIP_VERIFY, skip certificate verification and allow potential certificate warnings
   sync_replicated_tables: true # CLICKHOUSE_SYNC_REPLICATED_TABLES
-  tls_key: ""                  # CLICKHOUSE_TLS_KEY, filename with TLS key file 
-  tls_cert: ""                 # CLICKHOUSE_TLS_CERT, filename with TLS certificate file 
-  tls_ca: ""                   # CLICKHOUSE_TLS_CA, filename with TLS custom authority file 
+  tls_key: ""                  # CLICKHOUSE_TLS_KEY, filename with TLS key file
+  tls_cert: ""                 # CLICKHOUSE_TLS_CERT, filename with TLS certificate file
+  tls_ca: ""                   # CLICKHOUSE_TLS_CA, filename with TLS custom authority file
   log_sql_queries: true        # CLICKHOUSE_LOG_SQL_QUERIES, enable logging `clickhouse-backup` SQL queries on `system.query_log` table inside clickhouse-server
   debug: false                 # CLICKHOUSE_DEBUG
   config_dir:      "/etc/clickhouse-server"              # CLICKHOUSE_CONFIG_DIR
   # CLICKHOUSE_RESTART_COMMAND, use this command when restoring with --rbac, --rbac-only or --configs, --configs-only options
   # will split command by ; and execute one by one, all errors will logged and ignore
   # available prefixes
-  # - sql: will execute SQL query 
+  # - sql: will execute SQL query
   # - exec: will execute command via shell
-  restart_command: "sql:SYSTEM SHUTDOWN" 
+  restart_command: "sql:SYSTEM SHUTDOWN"
   ignore_not_exists_error_during_freeze: true # CLICKHOUSE_IGNORE_NOT_EXISTS_ERROR_DURING_FREEZE, helps to avoid backup failures when running frequent CREATE / DROP tables and databases during backup, `clickhouse-backup` will ignore `code: 60` and `code: 81` errors during execution of `ALTER TABLE ... FREEZE`
   check_replicas_before_attach: true # CLICKHOUSE_CHECK_REPLICAS_BEFORE_ATTACH, helps avoiding concurrent ATTACH PART execution when restoring ReplicatedMergeTree tables
   use_embedded_backup_restore: false # CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE, use BACKUP / RESTORE SQL statements instead of regular SQL queries to use features of modern ClickHouse server versions
@@ -429,7 +429,7 @@ azblob:
   use_managed_identity: false  # AZBLOB_USE_MANAGED_IDENTITY
   container: ""                # AZBLOB_CONTAINER
   path: ""                     # AZBLOB_PATH, `system.macros` values could be applied as {macro_name}
-  object_disk_path: ""         # AZBLOB_OBJECT_DISK_PATH, path for backup of part from `azure_blob_storage` object disk, if disk present, then shall not be zero and shall not be prefixed by `path`   
+  object_disk_path: ""         # AZBLOB_OBJECT_DISK_PATH, path for backup of part from `azure_blob_storage` object disk, if disk present, then shall not be zero and shall not be prefixed by `path`
   compression_level: 1         # AZBLOB_COMPRESSION_LEVEL
   compression_format: tar      # AZBLOB_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   sse_key: ""                  # AZBLOB_SSE_KEY
@@ -445,8 +445,8 @@ s3:
   acl: private                     # S3_ACL
   assume_role_arn: ""              # S3_ASSUME_ROLE_ARN
   force_path_style: false          # S3_FORCE_PATH_STYLE
-  path: ""                         # S3_PATH, `system.macros` values could be applied as {macro_name} 
-  object_disk_path: ""             # S3_OBJECT_DISK_PATH, path for backup of part from `s3` object disk, if disk present, then shall not be zero and shall not be prefixed by `path`   
+  path: ""                         # S3_PATH, `system.macros` values could be applied as {macro_name}
+  object_disk_path: ""             # S3_OBJECT_DISK_PATH, path for backup of part from `s3` object disk, if disk present, then shall not be zero and shall not be prefixed by `path`
   disable_ssl: false               # S3_DISABLE_SSL
   compression_level: 1             # S3_COMPRESSION_LEVEL
   compression_format: tar          # S3_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
@@ -458,8 +458,8 @@ s3:
   sse_customer_key_md5: ""         # S3_SSE_CUSTOMER_KEY_MD5, 128-bit MD5 digest of the encryption key according to RFC 1321
   sse_kms_encryption_context: ""   # S3_SSE_KMS_ENCRYPTION_CONTEXT, base64-encoded UTF-8 string holding a JSON with the encryption context
                                    # Specifies the Amazon Web Services KMS Encryption Context to use for object encryption.
-                                   # This is a collection of non-secret key-value pairs that represent additional authenticated data. 
-                                   # When you use an encryption context to encrypt data, you must specify the same (an exact case-sensitive match) 
+                                   # This is a collection of non-secret key-value pairs that represent additional authenticated data.
+                                   # When you use an encryption context to encrypt data, you must specify the same (an exact case-sensitive match)
                                    # encryption context to decrypt the data. An encryption context is supported only on operations with symmetric encryption KMS keys
   disable_cert_verification: false # S3_DISABLE_CERT_VERIFICATION
   use_custom_storage_class: false  # S3_USE_CUSTOM_STORAGE_CLASS
@@ -470,9 +470,9 @@ s3:
   allow_multipart_download: false  # S3_ALLOW_MULTIPART_DOWNLOAD, allow faster download and upload speeds, but will require additional disk space, download_concurrency * part size in worst case
 
   # S3_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
-  # The format for this env variable is "key1:value1,key2:value2". For YAML please continue using map syntax 
+  # The format for this env variable is "key1:value1,key2:value2". For YAML please continue using map syntax
   object_labels: {}
-  # S3_CUSTOM_STORAGE_CLASS_MAP, allow setup storage class depending on the backup name regexp pattern, format nameRegexp > className  
+  # S3_CUSTOM_STORAGE_CLASS_MAP, allow setup storage class depending on the backup name regexp pattern, format nameRegexp > className
   custom_storage_class_map: {}
   debug: false                     # S3_DEBUG
 gcs:
@@ -481,16 +481,16 @@ gcs:
   credentials_json_encoded: "" # GCS_CREDENTIALS_JSON_ENCODED
   bucket: ""                   # GCS_BUCKET
   path: ""                     # GCS_PATH, `system.macros` values could be applied as {macro_name}
-  object_disk_path: ""         # GCS_OBJECT_DISK_PATH, path for backup of part from `s3` object disk (clickhouse support only gcs over s3 protocol), if disk present, then shall not be zero and shall not be prefixed by `path`    
+  object_disk_path: ""         # GCS_OBJECT_DISK_PATH, path for backup of part from `s3` object disk (clickhouse support only gcs over s3 protocol), if disk present, then shall not be zero and shall not be prefixed by `path`
   compression_level: 1         # GCS_COMPRESSION_LEVEL
   compression_format: tar      # GCS_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   storage_class: STANDARD      # GCS_STORAGE_CLASS
 
   # GCS_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
-  # The format for this env variable is "key1:value1,key2:value2". For YAML please continue using map syntax 
+  # The format for this env variable is "key1:value1,key2:value2". For YAML please continue using map syntax
   object_labels: {}
-  # GCS_CUSTOM_STORAGE_CLASS_MAP, allow setup storage class depends on backup name regexp pattern, format nameRegexp > className  
-  custom_storage_class_map: {}  
+  # GCS_CUSTOM_STORAGE_CLASS_MAP, allow setup storage class depends on backup name regexp pattern, format nameRegexp > className
+  custom_storage_class_map: {}
   debug: false                 # GCS_DEBUG
 cos:
   url: ""                      # COS_URL
@@ -517,11 +517,11 @@ sftp:
   port: 22                     # SFTP_PORT
   key: ""                      # SFTP_KEY
   path: ""                     # SFTP_PATH, `system.macros` values could be applied as {macro_name}
-  concurrency: 1               # SFTP_CONCURRENCY     
+  concurrency: 1               # SFTP_CONCURRENCY
   compression_format: tar      # SFTP_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   compression_level: 1         # SFTP_COMPRESSION_LEVEL
   debug: false                 # SFTP_DEBUG
-custom:  
+custom:
   upload_command: ""           # CUSTOM_UPLOAD_COMMAND
   download_command: ""         # CUSTOM_DOWNLOAD_COMMAND
   delete_command: ""           # CUSTOM_DELETE_COMMAND
@@ -535,15 +535,15 @@ api:
   password: ""                 # API_PASSWORD
   secure: false                # API_SECURE, use TLS for listen API socket
   ca_cert_file: ""             # API_CA_CERT_FILE
-                               # openssl genrsa -out /etc/clickhouse-backup/ca-key.pem 4096 
+                               # openssl genrsa -out /etc/clickhouse-backup/ca-key.pem 4096
                                # openssl req -subj "/O=altinity" -x509 -new -nodes -key /etc/clickhouse-backup/ca-key.pem -sha256 -days 365 -out /etc/clickhouse-backup/ca-cert.pem
   private_key_file: ""         # API_PRIVATE_KEY_FILE, openssl genrsa -out /etc/clickhouse-backup/server-key.pem 4096
-  certificate_file: ""         # API_CERTIFICATE_FILE, 
+  certificate_file: ""         # API_CERTIFICATE_FILE,
                                # openssl req -subj "/CN=localhost" -addext "subjectAltName = DNS:localhost,DNS:*.cluster.local" -new -key /etc/clickhouse-backup/server-key.pem -out /etc/clickhouse-backup/server-req.csr
-                               # openssl x509 -req -days 365000 -extensions SAN -extfile <(printf "\n[SAN]\nsubjectAltName=DNS:localhost,DNS:*.cluster.local") -in /etc/clickhouse-backup/server-req.csr -out /etc/clickhouse-backup/server-cert.pem -CA /etc/clickhouse-backup/ca-cert.pem -CAkey /etc/clickhouse-backup/ca-key.pem -CAcreateserial 
+                               # openssl x509 -req -days 365000 -extensions SAN -extfile <(printf "\n[SAN]\nsubjectAltName=DNS:localhost,DNS:*.cluster.local") -in /etc/clickhouse-backup/server-req.csr -out /etc/clickhouse-backup/server-cert.pem -CA /etc/clickhouse-backup/ca-cert.pem -CAkey /etc/clickhouse-backup/ca-key.pem -CAcreateserial
   integration_tables_host: ""  # API_INTEGRATION_TABLES_HOST, allow using DNS name to connect in `system.backup_list` and `system.backup_actions`
   allow_parallel: false        # API_ALLOW_PARALLEL, enable parallel operations, this allows for significant memory allocation and spawns go-routines, don't enable it if you are not sure
-  create_integration_tables: false # API_CREATE_INTEGRATION_TABLES, create `system.backup_list` and `system.backup_actions` 
+  create_integration_tables: false # API_CREATE_INTEGRATION_TABLES, create `system.backup_list` and `system.backup_actions`
   complete_resumable_after_restart: true # API_COMPLETE_RESUMABLE_AFTER_RESTART, after API server startup, if `/var/lib/clickhouse/backup/*/(upload|download).state` present, then operation will continue in the background
 
 ```
@@ -564,7 +564,7 @@ High value for `S3_CONCURRENCY` and high value for `S3_PART_SIZE` will allocate 
 
 All custom commands could use go-template language, for example, you can use `{{ .cfg.* }}` `{{ .backupName }}` `{{ .diffFromRemote }}`.
 Custom `list_command` shall return JSON which is compatible with `metadata.Backup` type with [JSONEachRow](https://clickhouse.com/docs/en/interfaces/formats/#jsoneachrow) format.
-For examples, see [restic](https://github.com/Altinity/clickhouse-backup/tree/master/test/integration/restic/), [rsync](https://github.com/Altinity/clickhouse-backup/tree/master/test/integration/rsync/) and [kopia](https://github.com/Altinity/clickhouse-backup/tree/master/test/integration/kopia/). Feel free to add yours too. 
+For examples, see [restic](https://github.com/Altinity/clickhouse-backup/tree/master/test/integration/restic/), [rsync](https://github.com/Altinity/clickhouse-backup/tree/master/test/integration/rsync/) and [kopia](https://github.com/Altinity/clickhouse-backup/tree/master/test/integration/kopia/). Feel free to add yours too.
 
 ## ATTENTION!
 
@@ -752,15 +752,21 @@ In order to make backups to S3, the following permissions shall be set:
 ```bash
 #!/bin/bash
 BACKUP_NAME=my_backup_$(date -u +%Y-%m-%dT%H-%M-%S)
-clickhouse-backup create $BACKUP_NAME >> /var/log/clickhouse-backup.log
-if [[ $? != 0 ]]; then
-  echo "clickhouse-backup create $BACKUP_NAME FAILED and return $? exit code"
+clickhouse-backup create $BACKUP_NAME >> /var/log/clickhouse-backup.log 2>&1
+exit_code=$?
+if [[ $exit_code != 0 ]]; then
+  echo "clickhouse-backup create $BACKUP_NAME FAILED and return $exit_code exit code"
+  exit $exit_code
 fi
 
-clickhouse-backup upload $BACKUP_NAME >> /var/log/clickhouse-backup.log
-if [[ $? != 0 ]]; then
-  echo "clickhouse-backup upload $BACKUP_NAME FAILED and return $? exit code"
+clickhouse-backup upload $BACKUP_NAME >> /var/log/clickhouse-backup.log 2>&1
+exit_code=$?
+if [[ $exit_code != 0 ]]; then
+  echo "clickhouse-backup upload $BACKUP_NAME FAILED and return $exit_code exit code"
+  exit $exit_code
 fi
+```
+
 ```
 
 ### More use cases of clickhouse-backup
