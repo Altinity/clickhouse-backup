@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/Altinity/clickhouse-backup/pkg/config"
+	"github.com/Altinity/clickhouse-backup/pkg/keeper"
 	"github.com/Altinity/clickhouse-backup/pkg/partition"
 	"github.com/Altinity/clickhouse-backup/pkg/status"
 	"github.com/Altinity/clickhouse-backup/pkg/storage"
@@ -229,14 +230,14 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 
 	if createRBAC || rbacOnly {
 		if backupRBACSize, err = b.createBackupRBAC(ctx, backupPath, disks); err != nil {
-			log.Errorf("error during do RBAC backup: %v", err)
+			log.Fatalf("error during do RBAC backup: %v", err)
 		} else {
 			log.WithField("size", utils.FormatBytes(backupRBACSize)).Info("done createBackupRBAC")
 		}
 	}
 	if createConfigs || configsOnly {
 		if backupConfigSize, err = b.createBackupConfigs(ctx, backupPath); err != nil {
-			log.Errorf("error during do CONFIG backup: %v", err)
+			log.Fatalf("error during do CONFIG backup: %v", err)
 		} else {
 			log.WithField("size", utils.FormatBytes(backupConfigSize)).Info("done createBackupConfigs")
 		}
@@ -451,8 +452,43 @@ func (b *Backuper) createBackupRBAC(ctx context.Context, backupPath string, disk
 				return false, nil
 			},
 		})
-		return rbacDataSize, copyErr
+		if copyErr != nil {
+			return 0, copyErr
+		}
+		replicatedRBACDataSize, err := b.createBackupRBACReplicated(ctx, rbacBackup)
+		if err != nil {
+			return 0, err
+		}
+		return rbacDataSize + replicatedRBACDataSize, nil
 	}
+}
+
+func (b *Backuper) createBackupRBACReplicated(ctx context.Context, rbacBackup string) (replicatedRBACDataSize uint64, err error) {
+	replicatedRBAC := make([]struct {
+		Name string `ch:"name"`
+	}, 0)
+	rbacDataSize := uint64(0)
+	if err = b.ch.SelectContext(ctx, &replicatedRBAC, "SELECT name FROM system.user_directories WHERE type='replicated'"); err == nil && len(replicatedRBAC) > 0 {
+		k := keeper.Keeper{Log: b.log.WithField("logger", "keeper")}
+		if err = k.Connect(ctx, b.ch, b.cfg); err != nil {
+			return 0, err
+		}
+		defer k.Close()
+		for _, userDirectory := range replicatedRBAC {
+			replicatedAccessPath, err := k.GetReplicatedAccessPath(userDirectory.Name)
+			if err != nil {
+				return 0, err
+			}
+			dumpFile := path.Join(rbacBackup, userDirectory.Name+".jsonl")
+			b.log.WithField("logger", "createBackupRBACReplicated").Infof("keeper.Dump %s -> %s", replicatedAccessPath, dumpFile)
+			dumpRBACSize, dumpErr := k.Dump(replicatedAccessPath, dumpFile)
+			if dumpErr != nil {
+				return 0, dumpErr
+			}
+			rbacDataSize += uint64(dumpRBACSize)
+		}
+	}
+	return rbacDataSize, nil
 }
 
 func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBackupUUID string, diskList []clickhouse.Disk, table *clickhouse.Table, partitionsIdsMap common.EmptyMap) (map[string][]metadata.Part, map[string]int64, error) {

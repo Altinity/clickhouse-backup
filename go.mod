@@ -20,6 +20,7 @@ require (
 	github.com/djherbis/nio/v3 v3.0.1
 	github.com/eapache/go-resiliency v1.3.0
 	github.com/go-logfmt/logfmt v0.6.0
+	github.com/go-zookeeper/zk v1.0.3
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/google/uuid v1.3.0
 	github.com/gorilla/mux v1.8.0

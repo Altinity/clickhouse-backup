@@ -244,7 +244,7 @@ func InitCredentialsAndConnections(ctx context.Context, ch *clickhouse.ClickHous
 	}
 	if _, exists := DisksConnections[diskName]; !exists {
 		if DisksConnections == nil {
-			DisksConnections = make(map[string]ObjectStorageConnection, 0)
+			DisksConnections = make(map[string]ObjectStorageConnection)
 		}
 		connection, err := makeObjectDiskConnection(ctx, ch, cfg, diskName)
 		if err != nil {
@@ -292,22 +292,13 @@ func WriteMetadataToFile(metadata *Metadata, path string) error {
 }
 
 func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) (map[string]ObjectStorageCredentials, error) {
-	credentials := make(map[string]ObjectStorageCredentials, 0)
+	credentials := make(map[string]ObjectStorageCredentials)
 	if version, err := ch.GetVersion(ctx); err != nil {
 		return nil, err
 	} else if version <= 20006000 {
 		return credentials, nil
 	}
-	preprocessedConfigPath, err := ch.GetPreprocessedConfigPath(ctx)
-	if err != nil {
-		return nil, err
-	}
-	configFile := path.Join(preprocessedConfigPath, "config.xml")
-	f, err := os.Open(configFile)
-	if err != nil {
-		return nil, err
-	}
-	doc, err := xmlquery.Parse(f)
+	configFile, doc, err := ch.ParseXML(ctx, "config.xml")
 	if err != nil {
 		return nil, err
 	}

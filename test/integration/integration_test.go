@@ -1080,7 +1080,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 			}
 		}
 		if !found {
-			r.NoError(dockerExec("clickhouse", "cat", "/var/log/clickhouse-server/clickhouse-server.log"))
+			//r.NoError(dockerExec("clickhouse", "cat", "/var/log/clickhouse-server/clickhouse-server.log"))
 			r.Failf("wrong RBAC", "SHOW %s, %#v doesn't contain %#v", rbacType, rbacRows, expectedValue)
 		}
 	}

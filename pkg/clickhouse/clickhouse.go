@@ -975,7 +975,7 @@ func (ch *ClickHouse) SelectSingleRow(ctx context.Context, dest interface{}, que
 
 func (ch *ClickHouse) SelectSingleRowNoCtx(dest interface{}, query string, args ...interface{}) error {
 	err := ch.conn.QueryRow(context.Background(), ch.LogQuery(query, args...), args...).Scan(dest)
-	if err != nil && err == sql.ErrNoRows {
+	if err != nil && errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	return err
@@ -1004,13 +1004,24 @@ func (ch *ClickHouse) IsAtomic(database string) (bool, error) {
 	return isDatabaseAtomic == "Atomic", nil
 }
 
-// GetAccessManagementPath @todo think about how to properly extract access_management_path from /etc/clickhouse-server/
+// GetAccessManagementPath extract path from following sources system.user_directories, access_control_path from /var/lib/clickhouse/preprocessed_configs/config.xml, system.disks
 func (ch *ClickHouse) GetAccessManagementPath(ctx context.Context, disks []Disk) (string, error) {
 	accessPath := "/var/lib/clickhouse/access"
 	rows := make([]struct {
 		AccessPath string `ch:"access_path"`
 	}, 0)
 	if err := ch.SelectContext(ctx, &rows, "SELECT JSONExtractString(params,'path') AS access_path FROM system.user_directories WHERE type='local directory'"); err != nil || len(rows) == 0 {
+		configFile, doc, err := ch.ParseXML(ctx, "config.xml")
+		if err != nil {
+			ch.Log.Warnf("can't parse config.xml from %s, error: %v", configFile, err)
+		}
+		if err == nil {
+			accessControlPathNode := doc.SelectElement("access_control_path")
+			if accessControlPathNode != nil {
+				return accessControlPathNode.InnerText(), nil
+			}
+		}
+
 		if disks == nil {
 			disks, err = ch.GetDisks(ctx, false)
 			if err != nil {
@@ -1018,7 +1029,7 @@ func (ch *ClickHouse) GetAccessManagementPath(ctx context.Context, disks []Disk)
 			}
 		}
 		for _, disk := range disks {
-			if _, err := os.Stat(path.Join(disk.Path, "access")); !os.IsNotExist(err) {
+			if fInfo, err := os.Stat(path.Join(disk.Path, "access")); err == nil && fInfo.IsDir() {
 				accessPath = path.Join(disk.Path, "access")
 				break
 			}
@@ -1201,6 +1212,23 @@ func (ch *ClickHouse) GetPreprocessedConfigPath(ctx context.Context) (string, er
 	return path.Join("/", path.Join(paths[:len(paths)-1]...), "preprocessed_configs"), nil
 }
 
+func (ch *ClickHouse) ParseXML(ctx context.Context, configName string) (configFile string, doc *xmlquery.Node, err error) {
+	preprocessedConfigPath, err := ch.GetPreprocessedConfigPath(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	configFile = path.Join(preprocessedConfigPath, configName)
+	f, err := os.Open(configFile)
+	if err != nil {
+		return "", nil, err
+	}
+	doc, err = xmlquery.Parse(f)
+	if err != nil {
+		return "", nil, err
+	}
+	return configFile, doc, nil
+}
+
 var preprocessedXMLSettings map[string]map[string]string
 
 // GetPreprocessedXMLSettings - @todo think about from_end and from_zookeeper corner cases
@@ -1211,7 +1239,7 @@ func (ch *ClickHouse) GetPreprocessedXMLSettings(ctx context.Context, settingsXP
 	}
 	resultSettings := make(map[string]string, len(settingsXPath))
 	if _, exists := preprocessedXMLSettings[fileName]; !exists {
-		preprocessedXMLSettings[fileName] = make(map[string]string, 0)
+		preprocessedXMLSettings[fileName] = make(map[string]string)
 	}
 	var doc *xmlquery.Node
 	for settingName, xpathExpr := range settingsXPath {

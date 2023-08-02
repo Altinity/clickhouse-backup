@@ -3,6 +3,7 @@ IMPROVEMENTS
 - first implementation for properly backup S3/GCS/Azure disks, support server-side copy to back up bucket during `clickhouse-backup` create and during `clickhouse-backup restore`, requires add `object_disk_path` to `s3`,`gcs`,`azblob` section, fix [447](https://github.com/Altinity/clickhouse-backup/issues/447)
 - Implementation blacklist for table engines during backup / download / upload / restore [537](https://github.com/Altinity/clickhouse-backup/issues/537)
 - restore RBAC / configs, refactoring restart clickhouse-server via `sql:SYSTEM SHUTDOWN` or `exec:systemctl restart clickhouse-server`, add `--rbac-only` and `--configs-only` options to `create`, `upload`, `download`, `restore` command. fix [706]https://github.com/Altinity/clickhouse-backup/issues/706
+- Backup/Restore RBAC related objects from Zookeeper via direct connection to zookeeper/keeper, fix [604](https://github.com/Altinity/clickhouse-backup/issues/604)
 
 BUG FIXES
 - fix possible create backup failures during UNFREEZE not exists tables, affected 2.2.7+ version, fix [704](https://github.com/Altinity/clickhouse-backup/issues/704)

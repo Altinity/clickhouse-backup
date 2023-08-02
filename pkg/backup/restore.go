@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/Altinity/clickhouse-backup/pkg/config"
+	"github.com/Altinity/clickhouse-backup/pkg/keeper"
 	"github.com/Altinity/clickhouse-backup/pkg/status"
 	"github.com/Altinity/clickhouse-backup/pkg/storage"
 	"github.com/Altinity/clickhouse-backup/pkg/storage/object_disk"
@@ -277,7 +278,7 @@ func (b *Backuper) restoreRBAC(ctx context.Context, backupName string, disks []c
 	if err != nil {
 		return err
 	}
-	if err = b.restoreBackupRelatedDir(backupName, "access", accessPath, disks); err == nil {
+	if err = b.restoreBackupRelatedDir(backupName, "access", accessPath, disks, []string{"*.jsonl"}); err == nil {
 		markFile := path.Join(accessPath, "need_rebuild_lists.mark")
 		log.Infof("create %s for properly rebuild RBAC after restart clickhouse-server", markFile)
 		file, err := os.Create(markFile)
@@ -298,22 +299,81 @@ func (b *Backuper) restoreRBAC(ctx context.Context, backupName string, disks []c
 			}
 		}
 	}
-	if !os.IsNotExist(err) {
+	if err != nil && !os.IsNotExist(err) {
 		return err
+	}
+	if err = b.restoreRBACReplicated(ctx, backupName, "access", disks); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (b *Backuper) restoreRBACReplicated(ctx context.Context, backupName string, backupPrefixDir string, disks []clickhouse.Disk) error {
+	log := b.log.WithField("logger", "restoreRBACReplicated")
+	defaultDataPath, err := b.ch.GetDefaultPath(disks)
+	if err != nil {
+		return ErrUnknownClickhouseDataPath
+	}
+	srcBackupDir := path.Join(defaultDataPath, "backup", backupName, backupPrefixDir)
+	info, err := os.Stat(srcBackupDir)
+	if err != nil {
+		return err
+	}
+
+	if !info.IsDir() {
+		return fmt.Errorf("%s is not a dir", srcBackupDir)
+	}
+	replicatedRBAC := make([]struct {
+		Name string `ch:"name"`
+	}, 0)
+	if err = b.ch.SelectContext(ctx, &replicatedRBAC, "SELECT name FROM system.user_directories WHERE type='replicated'"); err == nil && len(replicatedRBAC) > 0 {
+		jsonLFiles, err := filepathx.Glob(path.Join(srcBackupDir, "*.jsonl"))
+		if err != nil {
+			return err
+		}
+		if len(jsonLFiles) == 0 {
+			return nil
+		}
+		k := keeper.Keeper{Log: b.log.WithField("logger", "keeper")}
+		if err = k.Connect(ctx, b.ch, b.cfg); err != nil {
+			return err
+		}
+		defer k.Close()
+		restoreReplicatedRBACMap := make(map[string]string, len(jsonLFiles))
+		for _, jsonLFile := range jsonLFiles {
+			for _, userDirectory := range replicatedRBAC {
+				if strings.HasSuffix(jsonLFile, userDirectory.Name+".jsonl") {
+					restoreReplicatedRBACMap[jsonLFile] = userDirectory.Name
+				}
+			}
+			if _, exists := restoreReplicatedRBACMap[jsonLFile]; !exists {
+				restoreReplicatedRBACMap[jsonLFile] = replicatedRBAC[0].Name
+			}
+		}
+		for jsonLFile, userDirectoryName := range restoreReplicatedRBACMap {
+			replicatedAccessPath, err := k.GetReplicatedAccessPath(userDirectoryName)
+			if err != nil {
+				return err
+			}
+			log.Infof("keeper.Restore(%s) -> %s", jsonLFile, replicatedAccessPath)
+			if err := k.Restore(jsonLFile, replicatedAccessPath); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
 
 // restoreConfigs - copy backup_name/configs folder to /etc/clickhouse-server/
 func (b *Backuper) restoreConfigs(backupName string, disks []clickhouse.Disk) error {
-	if err := b.restoreBackupRelatedDir(backupName, "configs", b.ch.Config.ConfigDir, disks); err != nil && os.IsNotExist(err) {
+	if err := b.restoreBackupRelatedDir(backupName, "configs", b.ch.Config.ConfigDir, disks, nil); err != nil && os.IsNotExist(err) {
 		return nil
 	} else {
 		return err
 	}
 }
 
-func (b *Backuper) restoreBackupRelatedDir(backupName, backupPrefixDir, destinationDir string, disks []clickhouse.Disk) error {
+func (b *Backuper) restoreBackupRelatedDir(backupName, backupPrefixDir, destinationDir string, disks []clickhouse.Disk, skipPatterns []string) error {
 	log := b.log.WithField("logger", "restoreBackupRelatedDir")
 	defaultDataPath, err := b.ch.GetDefaultPath(disks)
 	if err != nil {
@@ -329,9 +389,19 @@ func (b *Backuper) restoreBackupRelatedDir(backupName, backupPrefixDir, destinat
 		return fmt.Errorf("%s is not a dir", srcBackupDir)
 	}
 	log.Debugf("copy %s -> %s", srcBackupDir, destinationDir)
-	copyOptions := recursiveCopy.Options{OnDirExists: func(src, dest string) recursiveCopy.DirExistsAction {
-		return recursiveCopy.Merge
-	}}
+	copyOptions := recursiveCopy.Options{
+		OnDirExists: func(src, dest string) recursiveCopy.DirExistsAction {
+			return recursiveCopy.Merge
+		},
+		Skip: func(srcinfo os.FileInfo, src, dest string) (bool, error) {
+			for _, pattern := range skipPatterns {
+				if matched, matchErr := filepath.Match(pattern, filepath.Base(src)); matchErr != nil || matched {
+					return true, matchErr
+				}
+			}
+			return false, nil
+		},
+	}
 	if err := recursiveCopy.Copy(srcBackupDir, destinationDir, copyOptions); err != nil {
 		return err
 	}

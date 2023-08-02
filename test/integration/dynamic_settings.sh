@@ -355,3 +355,21 @@ cat <<EOT > /etc/clickhouse-server/users.d/allow_experimental_database_materiali
 EOT
 
 fi
+
+# zookeeper RBAC available from 21.9
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.9 || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9] ]]; then
+
+cat <<EOT > /etc/clickhouse-server/config.d/replicated_user_directories.xml
+<yandex>
+  <user_directories replace="replace">
+    <users_xml>
+      <path>users.xml</path>
+    </users_xml>
+    <replicated>
+        <zookeeper_path>/clickhouse/access</zookeeper_path>
+    </replicated>
+  </user_directories>
+</yandex>
+EOT
+
+fi
