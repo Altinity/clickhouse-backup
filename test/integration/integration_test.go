@@ -924,6 +924,9 @@ func TestInnerTablesMaterializedView(t *testing.T) {
 	ch.queryWithNoError(r, "DROP DATABASE test_mv")
 }
 func TestFIPS(t *testing.T) {
+	if os.Getenv("QA_AWS_ACCESS_KEY") == "" {
+		t.Skip("QA_AWS_ACCESS_KEY is empty, TestFIPS will skip")
+	}
 	ch := &TestClickHouse{}
 	r := require.New(t)
 	ch.connectWithWait(r, 1*time.Second, 10*time.Second)
