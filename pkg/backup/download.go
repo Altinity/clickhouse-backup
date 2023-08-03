@@ -440,10 +440,12 @@ func (b *Backuper) downloadBackupRelatedDir(ctx context.Context, remoteBackup st
 			return uint64(processedSize), nil
 		}
 	}
-
 	if remoteBackup.DataFormat == DirectoryFormat {
 		if err := b.dst.DownloadPath(ctx, 0, remoteSource, localDir, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration); err != nil {
-			return 0, err
+			//SFTP can't walk on non exists paths and return error
+			if !strings.Contains(err.Error(), "not exist") {
+				return 0, err
+			}
 		}
 		downloadedBytes := int64(0)
 		if _, err := os.Stat(localDir); err != nil && os.IsNotExist(err) {
