@@ -1121,7 +1121,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 
 	ch.chbackend.Close()
 	ch.connectWithWait(r, 1*time.Second, 1*time.Second)
-
+	ch.queryWithNoError(r, "SYSTEM RELOAD CONFIG")
 	selectEmptyResultForAggQuery := "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"
 	var settings string
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&settings, selectEmptyResultForAggQuery))

@@ -190,7 +190,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 			// https://github.com/Altinity/clickhouse-backup/issues/529
 			log.Debug("get in progress mutations list")
 			inProgressMutations := make([]metadata.MutationMetadata, 0)
-			if b.cfg.ClickHouse.BackupMutations {
+			if b.cfg.ClickHouse.BackupMutations && !schemaOnly && !rbacOnly && !configsOnly {
 				inProgressMutations, err = b.ch.GetInProgressMutations(ctx, table.Database, table.Name)
 				if err != nil {
 					log.Error(err.Error())
