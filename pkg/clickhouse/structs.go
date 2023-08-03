@@ -4,6 +4,14 @@ import (
 	"time"
 )
 
+type ShardBackupType string
+
+const (
+	ShardBackupFull   = "full"
+	ShardBackupNone   = "none"
+	ShardBackupSchema = "schema-only"
+)
+
 // Table - ClickHouse table struct
 type Table struct {
 	// common fields for all `clickhouse-server` versions
@@ -17,6 +25,7 @@ type Table struct {
 	CreateTableQuery string   `ch:"create_table_query"`
 	TotalBytes       uint64   `ch:"total_bytes"`
 	Skip             bool
+	BackupType       ShardBackupType
 }
 
 // IsSystemTablesFieldPresent - ClickHouse `system.tables` varius field flags

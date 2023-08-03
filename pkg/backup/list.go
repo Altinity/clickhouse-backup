@@ -4,9 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/pkg/custom"
-	"github.com/Altinity/clickhouse-backup/pkg/status"
-	apexLog "github.com/apex/log"
 	"io"
 	"os"
 	"path"
@@ -15,9 +12,13 @@ import (
 	"text/tabwriter"
 
 	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/pkg/custom"
 	"github.com/Altinity/clickhouse-backup/pkg/metadata"
+	"github.com/Altinity/clickhouse-backup/pkg/status"
 	"github.com/Altinity/clickhouse-backup/pkg/storage"
 	"github.com/Altinity/clickhouse-backup/pkg/utils"
+
+	apexLog "github.com/apex/log"
 )
 
 // List - list backups to stdout from command line
@@ -368,7 +369,7 @@ func (b *Backuper) GetRemoteBackups(ctx context.Context, parseMetadata bool) ([]
 	return backupList, err
 }
 
-// GetTables - get all tables for use by PrintTables and API
+// GetTables - get all tables for use by CreateBackup, PrintTables, and API
 func (b *Backuper) GetTables(ctx context.Context, tablePattern string) ([]clickhouse.Table, error) {
 	if !b.ch.IsOpen {
 		if err := b.ch.Connect(); err != nil {
@@ -380,6 +381,9 @@ func (b *Backuper) GetTables(ctx context.Context, tablePattern string) ([]clickh
 	allTables, err := b.ch.GetTables(ctx, tablePattern)
 	if err != nil {
 		return []clickhouse.Table{}, fmt.Errorf("can't get tables: %v", err)
+	}
+	if err := b.populateBackupShardField(ctx, allTables); err != nil {
+		return nil, err
 	}
 	return allTables, nil
 }
@@ -416,7 +420,7 @@ func (b *Backuper) PrintTables(printAll bool, tablePattern string) error {
 			}
 			continue
 		}
-		if bytes, err := fmt.Fprintf(w, "%s.%s\t%s\t%v\t\n", table.Database, table.Name, utils.FormatBytes(table.TotalBytes), strings.Join(tableDisks, ",")); err != nil {
+		if bytes, err := fmt.Fprintf(w, "%s.%s\t%s\t%v\t%v\n", table.Database, table.Name, utils.FormatBytes(table.TotalBytes), strings.Join(tableDisks, ","), table.BackupType); err != nil {
 			log.Errorf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
 		}
 	}
