@@ -1102,7 +1102,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 
 // TestDoRestoreConfigs - require direct access to `/etc/clickhouse-backup/`, so executed inside `clickhouse` container
 func TestDoRestoreConfigs(t *testing.T) {
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "1.1.54391") == -1 {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "1.1.54391") < 0 {
 		t.Skipf("Test skipped, users.d is not available for %s version", os.Getenv("CLICKHOUSE_VERSION"))
 	}
 	ch := &TestClickHouse{}
@@ -1116,7 +1116,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "create", "--configs", "--configs-only", "test_configs_backup"))
 	ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_configs")
-	r.NoError(dockerExec("clickhouse", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 clickhouse-backup upload test_configs_backup"))
+	r.NoError(dockerExec("clickhouse", "bash", "-xec", "S3_COMPRESSION_FORMAT=none ALLOW_EMPTY_BACKUPS=1 clickhouse-backup upload test_configs_backup"))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "delete", "local", "test_configs_backup"))
 
 	ch.chbackend.Close()

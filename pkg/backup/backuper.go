@@ -14,6 +14,8 @@ import (
 	apexLog "github.com/apex/log"
 )
 
+const DirectoryFormat = "directory"
+
 var errShardOperationUnsupported = errors.New("sharded operations are not supported")
 
 // versioner is an interface for determining the version of Clickhouse

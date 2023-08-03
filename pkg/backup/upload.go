@@ -204,7 +204,7 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	if b.cfg.GetCompressionFormat() != "none" {
 		backupMetadata.DataFormat = b.cfg.GetCompressionFormat()
 	} else {
-		backupMetadata.DataFormat = "directory"
+		backupMetadata.DataFormat = DirectoryFormat
 	}
 	newBackupMetadataBody, err := json.MarshalIndent(backupMetadata, "", "\t")
 	if err != nil {
@@ -419,24 +419,31 @@ func (b *Backuper) validateUploadParams(ctx context.Context, backupName string, 
 func (b *Backuper) uploadConfigData(ctx context.Context, backupName string) (uint64, error) {
 	configBackupPath := path.Join(b.DefaultDataPath, "backup", backupName, "configs")
 	configFilesGlobPattern := path.Join(configBackupPath, "**/*.*")
+	if b.cfg.GetCompressionFormat() == "none" {
+		remoteConfigsDir := path.Join(backupName, "configs")
+		return b.uploadBackupRelatedDir(ctx, configBackupPath, configFilesGlobPattern, remoteConfigsDir)
+	}
 	remoteConfigsArchive := path.Join(backupName, fmt.Sprintf("configs.%s", b.cfg.GetArchiveExtension()))
-	return b.uploadAndArchiveBackupRelatedDir(ctx, configBackupPath, configFilesGlobPattern, remoteConfigsArchive)
-
+	return b.uploadBackupRelatedDir(ctx, configBackupPath, configFilesGlobPattern, remoteConfigsArchive)
 }
 
 func (b *Backuper) uploadRBACData(ctx context.Context, backupName string) (uint64, error) {
 	rbacBackupPath := path.Join(b.DefaultDataPath, "backup", backupName, "access")
 	accessFilesGlobPattern := path.Join(rbacBackupPath, "*.*")
+	if b.cfg.GetCompressionFormat() == "none" {
+		remoteRBACDir := path.Join(backupName, "access")
+		return b.uploadBackupRelatedDir(ctx, rbacBackupPath, accessFilesGlobPattern, remoteRBACDir)
+	}
 	remoteRBACArchive := path.Join(backupName, fmt.Sprintf("access.%s", b.cfg.GetArchiveExtension()))
-	return b.uploadAndArchiveBackupRelatedDir(ctx, rbacBackupPath, accessFilesGlobPattern, remoteRBACArchive)
+	return b.uploadBackupRelatedDir(ctx, rbacBackupPath, accessFilesGlobPattern, remoteRBACArchive)
 }
 
-func (b *Backuper) uploadAndArchiveBackupRelatedDir(ctx context.Context, localBackupRelatedDir, localFilesGlobPattern, remoteFile string) (uint64, error) {
+func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelatedDir, localFilesGlobPattern, destinationRemote string) (uint64, error) {
 	if _, err := os.Stat(localBackupRelatedDir); os.IsNotExist(err) {
 		return 0, nil
 	}
 	if b.resume {
-		if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(remoteFile); isProcessed {
+		if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(destinationRemote); isProcessed {
 			return uint64(processedSize), nil
 		}
 	}
@@ -445,24 +452,38 @@ func (b *Backuper) uploadAndArchiveBackupRelatedDir(ctx context.Context, localBa
 	if localFiles, err = filepathx.Glob(localFilesGlobPattern); err != nil || localFiles == nil || len(localFiles) == 0 {
 		return 0, fmt.Errorf("list %s return list=%v with err=%v", localFilesGlobPattern, localFiles, err)
 	}
-	for i := range localFiles {
-		localFiles[i] = strings.Replace(localFiles[i], localBackupRelatedDir, "", 1)
-	}
 
+	for i := 0; i < len(localFiles); i++ {
+		if fileInfo, err := os.Stat(localFiles[i]); err == nil && fileInfo.IsDir() {
+			localFiles = append(localFiles[:i], localFiles[i+1:]...)
+			i--
+		} else {
+			localFiles[i] = strings.Replace(localFiles[i], localBackupRelatedDir, "", 1)
+		}
+	}
+	if b.cfg.GetCompressionFormat() == "none" {
+		remoteUploadedBytes := int64(0)
+		if remoteUploadedBytes, err = b.dst.UploadPath(ctx, 0, localBackupRelatedDir, localFiles, destinationRemote, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration); err != nil {
+			return 0, fmt.Errorf("can't RBAC or config upload %s: %v", destinationRemote, err)
+		}
+		if b.resume {
+			b.resumableState.AppendToState(destinationRemote, remoteUploadedBytes)
+		}
+		return uint64(remoteUploadedBytes), nil
+	}
 	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
 	err = retry.RunCtx(ctx, func(ctx context.Context) error {
-		return b.dst.UploadCompressedStream(ctx, localBackupRelatedDir, localFiles, remoteFile)
+		return b.dst.UploadCompressedStream(ctx, localBackupRelatedDir, localFiles, destinationRemote)
 	})
-
 	if err != nil {
-		return 0, fmt.Errorf("can't RBAC or config upload: %v", err)
+		return 0, fmt.Errorf("can't RBAC or config upload compressed %s: %v", destinationRemote, err)
 	}
-	remoteUploaded, err := b.dst.StatFile(ctx, remoteFile)
+	remoteUploaded, err := b.dst.StatFile(ctx, destinationRemote)
 	if err != nil {
-		return 0, fmt.Errorf("can't check uploaded remoteFile: %s, error: %v", remoteFile, err)
+		return 0, fmt.Errorf("can't check uploaded destinationRemote: %s, error: %v", destinationRemote, err)
 	}
 	if b.resume {
-		b.resumableState.AppendToState(remoteFile, remoteUploaded.Size())
+		b.resumableState.AppendToState(destinationRemote, remoteUploaded.Size())
 	}
 	return uint64(remoteUploaded.Size()), nil
 }

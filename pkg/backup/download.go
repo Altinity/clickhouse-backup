@@ -14,8 +14,10 @@ import (
 	"github.com/Altinity/clickhouse-backup/pkg/status"
 	"github.com/eapache/go-resiliency/retrier"
 	"io"
+	"io/fs"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -159,7 +161,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 
 	if !schemaOnly && !b.cfg.General.DownloadByPart && remoteBackup.RequiredBackup != "" {
 		err := b.Download(remoteBackup.RequiredBackup, tablePattern, partitions, schemaOnly, b.resume, commandId)
-		if err != nil && err != ErrBackupIsAlreadyExists {
+		if err != nil && !errors.Is(err, ErrBackupIsAlreadyExists) {
 			return err
 		}
 	}
@@ -330,7 +332,7 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 	metadataFiles := map[string]string{}
 	remoteMedataPrefix := path.Join(backupName, "metadata", common.TablePathEncode(tableTitle.Database), common.TablePathEncode(tableTitle.Table))
 	metadataFiles[fmt.Sprintf("%s.json", remoteMedataPrefix)] = path.Join(b.DefaultDataPath, "backup", backupName, "metadata", common.TablePathEncode(tableTitle.Database), fmt.Sprintf("%s.json", common.TablePathEncode(tableTitle.Table)))
-	partitionsIdMap := make(map[metadata.TableTitle]common.EmptyMap, 0)
+	partitionsIdMap := make(map[metadata.TableTitle]common.EmptyMap)
 	if b.isEmbedded {
 		metadataFiles[fmt.Sprintf("%s.sql", remoteMedataPrefix)] = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata", common.TablePathEncode(tableTitle.Database), fmt.Sprintf("%s.sql", common.TablePathEncode(tableTitle.Table)))
 		metadataFiles[fmt.Sprintf("%s.json", remoteMedataPrefix)] = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata", common.TablePathEncode(tableTitle.Database), fmt.Sprintf("%s.json", common.TablePathEncode(tableTitle.Table)))
@@ -425,28 +427,59 @@ func (b *Backuper) downloadConfigData(ctx context.Context, remoteBackup storage.
 
 func (b *Backuper) downloadBackupRelatedDir(ctx context.Context, remoteBackup storage.Backup, prefix string) (uint64, error) {
 	log := b.log.WithField("logger", "downloadBackupRelatedDir")
-	archiveFile := fmt.Sprintf("%s.%s", prefix, b.cfg.GetArchiveExtension())
-	remoteFile := path.Join(remoteBackup.BackupName, archiveFile)
+
+	localDir := path.Join(b.DefaultDataPath, "backup", remoteBackup.BackupName, prefix)
+
+	if remoteBackup.DataFormat != DirectoryFormat {
+		prefix = fmt.Sprintf("%s.%s", prefix, b.cfg.GetArchiveExtension())
+	}
+	remoteSource := path.Join(remoteBackup.BackupName, prefix)
+
 	if b.resume {
-		if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(remoteFile); isProcessed {
+		if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(remoteSource); isProcessed {
 			return uint64(processedSize), nil
 		}
 	}
-	localDir := path.Join(b.DefaultDataPath, "backup", remoteBackup.BackupName, prefix)
-	remoteFileInfo, err := b.dst.StatFile(ctx, remoteFile)
+
+	if remoteBackup.DataFormat == DirectoryFormat {
+		if err := b.dst.DownloadPath(ctx, 0, remoteSource, localDir, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration); err != nil {
+			return 0, err
+		}
+		downloadedBytes := int64(0)
+		if _, err := os.Stat(localDir); err != nil && os.IsNotExist(err) {
+			return 0, nil
+		}
+		if err := filepath.Walk(localDir, func(fPath string, fInfo fs.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if fInfo.IsDir() {
+				return nil
+			}
+			downloadedBytes += fInfo.Size()
+			return nil
+		}); err != nil {
+			return 0, err
+		}
+		if b.resume {
+			b.resumableState.AppendToState(remoteSource, downloadedBytes)
+		}
+		return uint64(downloadedBytes), nil
+	}
+	remoteFileInfo, err := b.dst.StatFile(ctx, remoteSource)
 	if err != nil {
-		log.Debugf("%s not exists on remote storage, skip download", remoteFile)
+		log.Debugf("%s not exists on remote storage, skip download", remoteSource)
 		return 0, nil
 	}
 	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
 	err = retry.RunCtx(ctx, func(ctx context.Context) error {
-		return b.dst.DownloadCompressedStream(ctx, remoteFile, localDir)
+		return b.dst.DownloadCompressedStream(ctx, remoteSource, localDir)
 	})
 	if err != nil {
 		return 0, err
 	}
 	if b.resume {
-		b.resumableState.AppendToState(remoteFile, remoteFileInfo.Size())
+		b.resumableState.AppendToState(remoteSource, remoteFileInfo.Size())
 	}
 	return uint64(remoteFileInfo.Size()), nil
 }
@@ -458,9 +491,9 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 	s := semaphore.NewWeighted(int64(b.cfg.General.DownloadConcurrency))
 	g, dataCtx := errgroup.WithContext(ctx)
 
-	if remoteBackup.DataFormat != "directory" {
+	if remoteBackup.DataFormat != DirectoryFormat {
 		capacity := 0
-		downloadOffset := make(map[string]int, 0)
+		downloadOffset := make(map[string]int)
 		for disk := range table.Files {
 			capacity += len(table.Files[disk])
 			downloadOffset[disk] = 0
@@ -781,7 +814,7 @@ func (b *Backuper) findDiffOnePart(ctx context.Context, requiredBackup *metadata
 	log.Debugf("start")
 	tableRemoteFiles := make(map[string]string)
 	// find same disk and part name archive
-	if requiredBackup.DataFormat != "directory" {
+	if requiredBackup.DataFormat != DirectoryFormat {
 		if tableRemoteFile, tableLocalDir, err := b.findDiffOnePartArchive(ctx, requiredBackup, table, localDisk, remoteDisk, part); err == nil {
 			tableRemoteFiles[tableRemoteFile] = tableLocalDir
 			return tableRemoteFiles, nil, true

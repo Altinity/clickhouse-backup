@@ -139,7 +139,7 @@ services:
     ports:
       - "7171:7171"
 # for delve debugger
-      - "40001:40001"
+#      - "40001:40001"
     networks:
       - clickhouse-backup
     depends_on:
@@ -203,6 +203,8 @@ services:
     ports:
       - "8123:8123"
       - "9000:9000"
+# for delve debugger
+      - "40001:40001"
     networks:
       - clickhouse-backup
     links:
