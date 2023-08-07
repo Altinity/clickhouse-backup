@@ -115,15 +115,6 @@ func (s *S3) Connect(ctx context.Context) error {
 	if s.Config.Region != "" {
 		awsConfig.Region = s.Config.Region
 	}
-	if s.Config.AccessKey != "" && s.Config.SecretKey != "" {
-		awsConfig.Credentials = credentials.StaticCredentialsProvider{
-			Value: aws.Credentials{
-				AccessKeyID:     s.Config.AccessKey,
-				SecretAccessKey: s.Config.SecretKey,
-			},
-		}
-	}
-
 	awsRoleARN := os.Getenv("AWS_ROLE_ARN")
 	if s.Config.AssumeRoleARN != "" || awsRoleARN != "" {
 		stsClient := sts.NewFromConfig(awsConfig)
@@ -140,6 +131,15 @@ func (s *S3) Connect(ctx context.Context) error {
 		awsConfig.Credentials = stscreds.NewWebIdentityRoleProvider(
 			stsClient, awsRoleARN, stscreds.IdentityTokenFile(awsWebIdentityTokenFile),
 		)
+	}
+
+	if s.Config.AccessKey != "" && s.Config.SecretKey != "" {
+		awsConfig.Credentials = credentials.StaticCredentialsProvider{
+			Value: aws.Credentials{
+				AccessKeyID:     s.Config.AccessKey,
+				SecretAccessKey: s.Config.SecretKey,
+			},
+		}
 	}
 
 	if s.Config.Debug {
