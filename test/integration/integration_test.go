@@ -932,7 +932,6 @@ func TestFIPS(t *testing.T) {
 	ch.connectWithWait(r, 1*time.Second, 10*time.Second)
 	defer ch.chbackend.Close()
 	fipsBackupName := fmt.Sprintf("fips_backup_%d", rand.Int())
-	r.NoError(dockerExec("clickhouse", "rm", "-fv", "/etc/apt/sources.list.d/clickhouse.list"))
 	installDebIfNotExists(r, "clickhouse", "curl", "gettext-base", "bsdmainutils", "dnsutils", "git", "ca-certificates")
 	r.NoError(dockerCP("config-s3-fips.yml", "clickhouse:/etc/clickhouse-backup/config.yml.fips-template"))
 	r.NoError(dockerExec("clickhouse", "update-ca-certificates"))
@@ -958,6 +957,7 @@ func TestFIPS(t *testing.T) {
 	generateCerts("rsa", "4096", "")
 	createSQL := "CREATE TABLE default.fips_table (v UInt64) ENGINE=MergeTree() ORDER BY tuple()"
 	ch.queryWithNoError(r, createSQL)
+	ch.queryWithNoError(r, "INSERT INTO default.fips_table SELECT number FROM numbers(1000)")
 	r.NoError(dockerExec("clickhouse", "bash", "-ce", "clickhouse-backup-fips create_remote --tables=default.fips_table "+fipsBackupName))
 	r.NoError(dockerExec("clickhouse", "bash", "-ce", "clickhouse-backup-fips delete local "+fipsBackupName))
 	r.NoError(dockerExec("clickhouse", "bash", "-ce", "clickhouse-backup-fips restore_remote --tables=default.fips_table "+fipsBackupName))

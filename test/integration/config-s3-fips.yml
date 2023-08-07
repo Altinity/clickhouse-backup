@@ -35,6 +35,7 @@ s3:
   compression_format: tar
   allow_multipart_download: true
   concurrency: 3
+  storage_class: GLACIER
 api:
   listen: :7171
   create_integration_tables: true
