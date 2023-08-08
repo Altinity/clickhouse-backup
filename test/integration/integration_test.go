@@ -932,7 +932,6 @@ func TestFIPS(t *testing.T) {
 	ch.connectWithWait(r, 1*time.Second, 10*time.Second)
 	defer ch.chbackend.Close()
 	fipsBackupName := fmt.Sprintf("fips_backup_%d", rand.Int())
-	r.NoError(dockerExec("clickhouse", "rm", "-fv", "/etc/apt/sources.list.d/clickhouse.list"))
 	installDebIfNotExists(r, "clickhouse", "curl", "gettext-base", "bsdmainutils", "dnsutils", "git", "ca-certificates")
 	r.NoError(dockerCP("config-s3-fips.yml", "clickhouse:/etc/clickhouse-backup/config.yml.fips-template"))
 	r.NoError(dockerExec("clickhouse", "update-ca-certificates"))
@@ -953,11 +952,12 @@ func TestFIPS(t *testing.T) {
 		r.NoError(dockerExec("clickhouse", "bash", "-xce", "openssl req -subj \"/CN=localhost\" -addext \"subjectAltName = DNS:localhost,DNS:*.cluster.local\" -new -key /etc/clickhouse-backup/server-key.pem -out /etc/clickhouse-backup/server-req.csr"))
 		r.NoError(dockerExec("clickhouse", "bash", "-xce", "openssl x509 -req -days 365000 -extensions SAN -extfile <(printf \"\\n[SAN]\\nsubjectAltName=DNS:localhost,DNS:*.cluster.local\") -in /etc/clickhouse-backup/server-req.csr -out /etc/clickhouse-backup/server-cert.pem -CA /etc/clickhouse-backup/ca-cert.pem -CAkey /etc/clickhouse-backup/ca-key.pem -CAcreateserial"))
 	}
-	r.NoError(dockerExec("clickhouse", "bash", "-c", "cat /etc/clickhouse-backup/config.yml.fips-template | envsubst > /etc/clickhouse-backup/config.yml"))
+	r.NoError(dockerExec("clickhouse", "bash", "-xec", "cat /etc/clickhouse-backup/config.yml.fips-template | envsubst > /etc/clickhouse-backup/config.yml"))
 
 	generateCerts("rsa", "4096", "")
 	createSQL := "CREATE TABLE default.fips_table (v UInt64) ENGINE=MergeTree() ORDER BY tuple()"
 	ch.queryWithNoError(r, createSQL)
+	ch.queryWithNoError(r, "INSERT INTO default.fips_table SELECT number FROM numbers(1000)")
 	r.NoError(dockerExec("clickhouse", "bash", "-ce", "clickhouse-backup-fips create_remote --tables=default.fips_table "+fipsBackupName))
 	r.NoError(dockerExec("clickhouse", "bash", "-ce", "clickhouse-backup-fips delete local "+fipsBackupName))
 	r.NoError(dockerExec("clickhouse", "bash", "-ce", "clickhouse-backup-fips restore_remote --tables=default.fips_table "+fipsBackupName))
@@ -1156,6 +1156,20 @@ func TestDoRestoreConfigs(t *testing.T) {
 	r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/etc/clickhouse-server/users.d/test_config.xml"))
 
 	ch.chbackend.Close()
+}
+
+func TestIntegrationS3Glacier(t *testing.T) {
+	if isTestShouldSkip("GLACIER_TESTS") {
+		t.Skip("Skipping GLACIER integration tests...")
+		return
+	}
+	r := require.New(t)
+	r.NoError(dockerCP("config-s3-glacier.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml.s3glacier-template"))
+	installDebIfNotExists(r, "clickhouse-backup", "curl", "gettext-base", "bsdmainutils", "dnsutils", "git", "ca-certificates")
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config.yml.s3glacier-template | envsubst > /etc/clickhouse-backup/config.yml"))
+	dockerExecTimeout = 60 * time.Minute
+	runMainIntegrationScenario(t, "GLACIER")
+	dockerExecTimeout = 3 * time.Minute
 }
 
 func TestIntegrationS3(t *testing.T) {
@@ -2412,6 +2426,8 @@ func (ch *TestClickHouse) queryWithNoError(r *require.Assertions, query string, 
 	r.NoError(err)
 }
 
+var dockerExecTimeout = 180 * time.Second
+
 func dockerExec(container string, cmd ...string) error {
 	out, err := dockerExecOut(container, cmd...)
 	log.Info(out)
@@ -2421,7 +2437,7 @@ func dockerExec(container string, cmd ...string) error {
 func dockerExecOut(container string, cmd ...string) (string, error) {
 	dcmd := []string{"exec", container}
 	dcmd = append(dcmd, cmd...)
-	return utils.ExecCmdOut(context.Background(), 180*time.Second, "docker", dcmd...)
+	return utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", dcmd...)
 }
 
 func dockerCP(src, dst string) error {
@@ -2490,7 +2506,7 @@ func installDebIfNotExists(r *require.Assertions, container string, pkgs ...stri
 		container,
 		"bash", "-xec",
 		fmt.Sprintf(
-			"export DEBIAN_FRONTEND=noniteractive; if [[ '%d' != $(dpkg -l | grep -c -E \"%s\" ) ]]; then rm -fv /etc/apt/sources.list.d/clickhouse.list; find /etc/apt/ -type f -exec sed -i 's/ru.archive.ubuntu.com/archive.ubuntu.com/g' {} +; apt-get -y update; apt-get install --no-install-recommends -y %s; fi",
+			"export DEBIAN_FRONTEND=noniteractive; if [[ '%d' != $(dpkg -l | grep -c -E \"%s\" ) ]]; then rm -fv /etc/apt/sources.list.d/clickhouse.list; find /etc/apt/ -type f -name *.list -exec sed -i 's/ru.archive.ubuntu.com/archive.ubuntu.com/g' {} +; apt-get -y update; apt-get install --no-install-recommends -y %s; fi",
 			len(pkgs), "^ii\\s+"+strings.Join(pkgs, "|^ii\\s+"), strings.Join(pkgs, " "),
 		),
 	))
