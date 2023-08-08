@@ -144,7 +144,7 @@ func (s *S3) Connect(ctx context.Context) error {
 
 	if s.Config.Debug {
 		awsConfig.Logger = newS3Logger(s.Log)
-		awsConfig.ClientLogMode = aws.LogRetries | aws.LogRequest | aws.LogResponse
+		awsConfig.ClientLogMode = aws.LogRetries | aws.LogRequest | aws.LogResponseWithBody
 	}
 
 	httpTransport := http.DefaultTransport
@@ -630,7 +630,8 @@ func (s *S3) restoreObject(ctx context.Context, key string) error {
 		}
 
 		if res.Restore != nil && *res.Restore == "ongoing-request=\"true\"" {
-			s.Log.Debugf("%s still not restored, will wait %d seconds", key, i*5)
+			i += 1
+			s.Log.Warnf("%s still not restored, will wait %d seconds", key, i*5)
 			time.Sleep(time.Duration(i*5) * time.Second)
 		} else {
 			return nil

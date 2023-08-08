@@ -17,7 +17,7 @@ clickhouse:
   secure: true
   skip_verify: true
   sync_replicated_tables: true
-  timeout: 2s
+  timeout: 1h
   restart_command: bash -c 'echo "FAKE RESTART"'
   backup_mutations: true
 # secrets for `FISP` will provide from `.env` or from GitHub actions secrets
@@ -33,14 +33,12 @@ s3:
   object_disk_path: object_disks/{cluster}/{shard}
   disable_ssl: false
   compression_format: tar
-  allow_multipart_download: true
-  concurrency: 3
+  allow_multipart_download: false
+  concurrency: 4
+  # storage_class: GLACIER, 6000 seconds test execution
+  storage_class: GLACIER_IR
 api:
   listen: :7171
   create_integration_tables: true
   integration_tables_host: "localhost"
   allow_parallel: false
-  secure: true
-  ca_cert_file: /etc/clickhouse-backup/ca-cert.pem
-  private_key_file: /etc/clickhouse-backup/server-key.pem
-  certificate_file: /etc/clickhouse-backup/server-cert.pem
