@@ -1161,22 +1161,37 @@ func (ch *ClickHouse) CheckSystemPartsColumns(ctx context.Context, table *Table)
 		}
 	}
 	ch.isPartsColumnPresent = 1
-	isPartsColumnsInconsistent := make([]struct {
+	partColumnsDataTypes := make([]struct {
 		Column string   `ch:"column"`
 		Types  []string `ch:"uniq_types"`
 	}, 0)
 	partsColumnsSQL := "SELECT column, groupUniqArray(type) AS uniq_types " +
 		"FROM system.parts_columns " +
-		"WHERE active AND database=? AND table=? " +
+		"WHERE active AND database=? AND table=? AND type NOT LIKE 'Enum%' AND type NOT LIKE 'Tuple(%' " +
 		"GROUP BY column HAVING length(uniq_types) > 1"
-	if err := ch.SelectContext(ctx, &isPartsColumnsInconsistent, partsColumnsSQL, table.Database, table.Name); err != nil {
+	if err := ch.SelectContext(ctx, &partColumnsDataTypes, partsColumnsSQL, table.Database, table.Name); err != nil {
 		return err
 	}
-	if len(isPartsColumnsInconsistent) > 0 {
-		for i := range isPartsColumnsInconsistent {
-			ch.Log.Errorf("`%s`.`%s` have inconsistent data types %#v for \"%s\" column", table.Database, table.Name, isPartsColumnsInconsistent[i].Types, isPartsColumnsInconsistent[i].Column)
+	isPartColumnsInconsistentDataTypes := false
+	if len(partColumnsDataTypes) > 0 {
+		for i := range partColumnsDataTypes {
+			isNullablePresent := false
+			isNotNullablePresent := false
+			for _, dataType := range partColumnsDataTypes[i].Types {
+				if strings.Contains(dataType, "Nullable") {
+					isNullablePresent = true
+				} else {
+					isNotNullablePresent = true
+				}
+			}
+			if !isNullablePresent && isNotNullablePresent {
+				ch.Log.Errorf("`%s`.`%s` have inconsistent data types %#v for \"%s\" column", table.Database, table.Name, partColumnsDataTypes[i].Types, partColumnsDataTypes[i].Column)
+				isPartColumnsInconsistentDataTypes = true
+			}
 		}
-		return fmt.Errorf("`%s`.`%s` have inconsistent data types for active data part in system.parts_columns", table.Database, table.Name)
+		if isPartColumnsInconsistentDataTypes {
+			return fmt.Errorf("`%s`.`%s` have inconsistent data types for active data part in system.parts_columns", table.Database, table.Name)
+		}
 	}
 	return nil
 }
