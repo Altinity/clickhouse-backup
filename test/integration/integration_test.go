@@ -1571,9 +1571,9 @@ func TestIntegrationS3Glacier(t *testing.T) {
 	r := require.New(t)
 	r.NoError(dockerCP("config-s3-glacier.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml.s3glacier-template"))
 	installDebIfNotExists(r, "clickhouse-backup", "curl", "gettext-base", "bsdmainutils", "dnsutils", "git", "ca-certificates")
-	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config.yml.s3glacier-template | envsubst > /etc/clickhouse-backup/config.yml"))
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config.yml.s3glacier-template | envsubst > /etc/clickhouse-backup/config-s3-glacier.yml"))
 	dockerExecTimeout = 60 * time.Minute
-	runMainIntegrationScenario(t, "GLACIER")
+	runMainIntegrationScenario(t, "GLACIER", "config-s3-glacier.yml")
 	dockerExecTimeout = 3 * time.Minute
 }
 
