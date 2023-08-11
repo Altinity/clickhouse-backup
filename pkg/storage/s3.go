@@ -115,15 +115,6 @@ func (s *S3) Connect(ctx context.Context) error {
 	if s.Config.Region != "" {
 		awsConfig.Region = s.Config.Region
 	}
-	if s.Config.AccessKey != "" && s.Config.SecretKey != "" {
-		awsConfig.Credentials = credentials.StaticCredentialsProvider{
-			Value: aws.Credentials{
-				AccessKeyID:     s.Config.AccessKey,
-				SecretAccessKey: s.Config.SecretKey,
-			},
-		}
-	}
-
 	awsRoleARN := os.Getenv("AWS_ROLE_ARN")
 	if s.Config.AssumeRoleARN != "" || awsRoleARN != "" {
 		stsClient := sts.NewFromConfig(awsConfig)
@@ -142,9 +133,18 @@ func (s *S3) Connect(ctx context.Context) error {
 		)
 	}
 
+	if s.Config.AccessKey != "" && s.Config.SecretKey != "" {
+		awsConfig.Credentials = credentials.StaticCredentialsProvider{
+			Value: aws.Credentials{
+				AccessKeyID:     s.Config.AccessKey,
+				SecretAccessKey: s.Config.SecretKey,
+			},
+		}
+	}
+
 	if s.Config.Debug {
 		awsConfig.Logger = newS3Logger(s.Log)
-		awsConfig.ClientLogMode = aws.LogRetries | aws.LogRequest | aws.LogResponse
+		awsConfig.ClientLogMode = aws.LogRetries | aws.LogRequest | aws.LogResponseWithBody
 	}
 
 	httpTransport := http.DefaultTransport
@@ -197,14 +197,36 @@ func (s *S3) Close(ctx context.Context) error {
 }
 
 func (s *S3) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {
-	resp, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+	getRequest := &s3.GetObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
 		Key:    aws.String(path.Join(s.Config.Path, key)),
-	})
+	}
+	resp, err := s.client.GetObject(ctx, getRequest)
 	if err != nil {
+		var opError *smithy.OperationError
+		if errors.As(err, &opError) {
+			var httpErr *awsV2http.ResponseError
+			if errors.As(opError.Err, &httpErr) {
+				var stateErr *s3types.InvalidObjectState
+				if errors.As(httpErr, &stateErr) {
+					if strings.Contains(string(stateErr.StorageClass), "GLACIER") {
+						s.Log.Warnf("GetFileReader %s, storageClass %s receive error: %s", key, stateErr.StorageClass, stateErr.Error())
+						if restoreErr := s.restoreObject(ctx, key); restoreErr != nil {
+							s.Log.Warnf("restoreObject %s, return error: %v", key, restoreErr)
+							return nil, err
+						}
+						if resp, err = s.client.GetObject(ctx, getRequest); err != nil {
+							s.Log.Warnf("second GetObject %s, return error: %v", key, err)
+							return nil, err
+						}
+						return resp.Body, nil
+					}
+				}
+			}
+			return nil, err
+		}
 		return nil, err
 	}
-
 	return resp.Body, nil
 }
 
@@ -337,7 +359,7 @@ func (s *S3) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 		}
 		return nil, err
 	}
-	return &s3File{head.ContentLength, *head.LastModified, key}, nil
+	return &s3File{head.ContentLength, *head.LastModified, string(head.StorageClass), key}, nil
 }
 
 func (s *S3) Walk(ctx context.Context, s3Path string, recursive bool, process func(ctx context.Context, r RemoteFile) error) error {
@@ -355,6 +377,7 @@ func (s *S3) Walk(ctx context.Context, s3Path string, recursive bool, process fu
 				s3Files <- &s3File{
 					c.Size,
 					*c.LastModified,
+					string(c.StorageClass),
 					strings.TrimPrefix(*c.Key, path.Join(s.Config.Path, s3Path)),
 				}
 			}
@@ -580,9 +603,46 @@ func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (
 	return srcSize, nil
 }
 
+func (s *S3) restoreObject(ctx context.Context, key string) error {
+	restoreRequest := s3.RestoreObjectInput{
+		Bucket: aws.String(s.Config.Bucket),
+		Key:    aws.String(path.Join(s.Config.Path, key)),
+		RestoreRequest: &s3types.RestoreRequest{
+			Days: 1,
+			GlacierJobParameters: &s3types.GlacierJobParameters{
+				Tier: s3types.Tier("Expedited"),
+			},
+		},
+	}
+	_, err := s.client.RestoreObject(ctx, &restoreRequest)
+	if err != nil {
+		return err
+	}
+	i := 0
+	for {
+		headObjectRequest := &s3.HeadObjectInput{
+			Bucket: aws.String(s.Config.Bucket),
+			Key:    aws.String(path.Join(s.Config.Path, key)),
+		}
+		res, err := s.client.HeadObject(ctx, headObjectRequest)
+		if err != nil {
+			return fmt.Errorf("restoreObject: failed to head %s object metadata, %v", path.Join(s.Config.Path, key), err)
+		}
+
+		if res.Restore != nil && *res.Restore == "ongoing-request=\"true\"" {
+			i += 1
+			s.Log.Warnf("%s still not restored, will wait %d seconds", key, i*5)
+			time.Sleep(time.Duration(i*5) * time.Second)
+		} else {
+			return nil
+		}
+	}
+}
+
 type s3File struct {
 	size         int64
 	lastModified time.Time
+	storageClass string
 	name         string
 }
 
@@ -596,4 +656,8 @@ func (f *s3File) Name() string {
 
 func (f *s3File) LastModified() time.Time {
 	return f.lastModified
+}
+
+func (f *s3File) StorageClass() string {
+	return f.storageClass
 }

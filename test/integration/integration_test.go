@@ -1499,12 +1499,13 @@ func TestFIPS(t *testing.T) {
 		r.NoError(dockerExec("clickhouse", "bash", "-xce", "openssl req -subj \"/CN=localhost\" -addext \"subjectAltName = DNS:localhost,DNS:*.cluster.local\" -new -key /etc/clickhouse-backup/server-key.pem -out /etc/clickhouse-backup/server-req.csr"))
 		r.NoError(dockerExec("clickhouse", "bash", "-xce", "openssl x509 -req -days 365000 -extensions SAN -extfile <(printf \"\\n[SAN]\\nsubjectAltName=DNS:localhost,DNS:*.cluster.local\") -in /etc/clickhouse-backup/server-req.csr -out /etc/clickhouse-backup/server-cert.pem -CA /etc/clickhouse-backup/ca-cert.pem -CAkey /etc/clickhouse-backup/ca-key.pem -CAcreateserial"))
 	}
-	r.NoError(dockerExec("clickhouse", "bash", "-c", "cat /etc/clickhouse-backup/config-s3-fips.yml.template | envsubst > /etc/clickhouse-backup/config-s3-fips.yml"))
+	r.NoError(dockerExec("clickhouse", "bash", "-xec", "cat /etc/clickhouse-backup/config-s3-fips.yml.template | envsubst > /etc/clickhouse-backup/config-s3-fips.yml"))
 
 	generateCerts("rsa", "4096", "")
 	ch.queryWithNoError(r, "CREATE DATABASE "+t.Name())
 	createSQL := "CREATE TABLE " + t.Name() + ".fips_table (v UInt64) ENGINE=MergeTree() ORDER BY tuple()"
 	ch.queryWithNoError(r, createSQL)
+	ch.queryWithNoError(r, "INSERT INTO "+t.Name()+".fips_table SELECT number FROM numbers(1000)")
 	r.NoError(dockerExec("clickhouse", "bash", "-ce", "clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml create_remote --tables="+t.Name()+".fips_table "+fipsBackupName))
 	r.NoError(dockerExec("clickhouse", "bash", "-ce", "clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml delete local "+fipsBackupName))
 	r.NoError(dockerExec("clickhouse", "bash", "-ce", "clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml restore_remote --tables="+t.Name()+".fips_table "+fipsBackupName))
@@ -1560,6 +1561,20 @@ func TestFIPS(t *testing.T) {
 	r.NoError(ch.chbackend.DropTable(clickhouse.Table{Database: t.Name(), Name: "fips_table"}, createSQL, "", false, 0))
 	r.NoError(ch.dropDatabase(t.Name()))
 
+}
+
+func TestIntegrationS3Glacier(t *testing.T) {
+	if isTestShouldSkip("GLACIER_TESTS") {
+		t.Skip("Skipping GLACIER integration tests...")
+		return
+	}
+	r := require.New(t)
+	r.NoError(dockerCP("config-s3-glacier.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml.s3glacier-template"))
+	installDebIfNotExists(r, "clickhouse-backup", "curl", "gettext-base", "bsdmainutils", "dnsutils", "git", "ca-certificates")
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config.yml.s3glacier-template | envsubst > /etc/clickhouse-backup/config.yml"))
+	dockerExecTimeout = 60 * time.Minute
+	runMainIntegrationScenario(t, "GLACIER")
+	dockerExecTimeout = 3 * time.Minute
 }
 
 func TestIntegrationS3(t *testing.T) {
@@ -2427,6 +2442,8 @@ func (ch *TestClickHouse) queryWithNoError(r *require.Assertions, query string, 
 	r.NoError(err)
 }
 
+var dockerExecTimeout = 180 * time.Second
+
 func dockerExec(container string, cmd ...string) error {
 	out, err := dockerExecOut(container, cmd...)
 	log.Info(out)
@@ -2436,7 +2453,7 @@ func dockerExec(container string, cmd ...string) error {
 func dockerExecOut(container string, cmd ...string) (string, error) {
 	dcmd := []string{"exec", container}
 	dcmd = append(dcmd, cmd...)
-	return utils.ExecCmdOut(context.Background(), 180*time.Second, "docker", dcmd...)
+	return utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", dcmd...)
 }
 
 func dockerCP(src, dst string) error {
