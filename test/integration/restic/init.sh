@@ -4,5 +4,6 @@ export RESTIC_REPOSITORY=s3:http://minio:9000/clickhouse/restic/cluster_name/sha
 export AWS_ACCESS_KEY_ID=access-key
 export AWS_SECRET_ACCESS_KEY=it-is-my-super-secret-key
 export RESTIC_KEEP_LAST=7
-export CLICKHOUSE_PARAMS="--host '$(yq '.clickhouse.host' /etc/clickhouse-backup/config.yml)' --port '$(yq '.clickhouse.port' /etc/clickhouse-backup/config.yml)' --user '$(yq '.clickhouse.username' /etc/clickhouse-backup/config.yml)' --password '$(yq '.clickhouse.password' /etc/clickhouse-backup/config.yml)'"
+export CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-custom-restic.yml
+export CLICKHOUSE_PARAMS="--host '$(yq '.clickhouse.host' ${CLICKHOUSE_BACKUP_CONFIG})' --port '$(yq '.clickhouse.port' ${CLICKHOUSE_BACKUP_CONFIG})' --user '$(yq '.clickhouse.username' ${CLICKHOUSE_BACKUP_CONFIG})' --password '$(yq '.clickhouse.password' ${CLICKHOUSE_BACKUP_CONFIG})'"
 restic cat config > /dev/null || restic init

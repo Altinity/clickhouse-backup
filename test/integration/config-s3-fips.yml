@@ -36,7 +36,7 @@ s3:
   allow_multipart_download: true
   concurrency: 3
 api:
-  listen: :7171
+  listen: :7172
   create_integration_tables: true
   integration_tables_host: "localhost"
   allow_parallel: false

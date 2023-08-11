@@ -230,6 +230,21 @@ services:
       - ${CLICKHOUSE_BACKUP_BIN:-../../clickhouse-backup/clickhouse-backup-race}:/usr/bin/clickhouse-backup
       - ${CLICKHOUSE_BACKUP_BIN_FIPS:-../../clickhouse-backup/clickhouse-backup-race-fips}:/usr/bin/clickhouse-backup-fips
       - ./credentials.json:/etc/clickhouse-backup/credentials.json
+      - ./config-azblob.yml:/etc/clickhouse-backup/config-azblob.yml
+      - ./config-azblob-embedded.yml:/etc/clickhouse-backup/config-azblob-embedded.yml
+      - ./config-custom-kopia.yml:/etc/clickhouse-backup/config-custom-kopia.yml
+      - ./config-custom-restic.yml:/etc/clickhouse-backup/config-custom-restic.yml
+      - ./config-custom-rsync.yml:/etc/clickhouse-backup/config-custom-rsync.yml
+      - ./config-database-mapping.yml:/etc/clickhouse-backup/config-database-mapping.yml
+      - ./config-ftp.yaml:/etc/clickhouse-backup/config-ftp.yaml
+      - ./config-gcs.yml:/etc/clickhouse-backup/config-gcs.yml
+      - ./config-s3.yml:/etc/clickhouse-backup/config-s3.yml
+      - ./config-s3-embedded.yml:/etc/clickhouse-backup/config-s3-embedded.yml
+      - ./config-s3-fips.yml:/etc/clickhouse-backup/config-s3-fips.yml.template
+      - ./config-s3-nodelete.yml:/etc/clickhouse-backup/config-s3-nodelete.yml
+      - ./config-s3-plain-embedded.yml:/etc/clickhouse-backup/config-s3-plain-embedded.yml
+      - ./config-sftp-auth-key.yaml:/etc/clickhouse-backup/config-sftp-auth-key.yaml
+      - ./config-sftp-auth-password.yaml:/etc/clickhouse-backup/config-sftp-auth-password.yaml
       - ./_coverage_/:/tmp/_coverage_/
 # for local debug
       - ./install_delve.sh:/tmp/install_delve.sh
