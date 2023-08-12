@@ -908,16 +908,14 @@ func (ch *ClickHouse) SelectSingleRowNoCtx(dest interface{}, query string, args 
 }
 
 func (ch *ClickHouse) LogQuery(query string, args ...interface{}) string {
-	var logF *zerolog.Event
+	level := zerolog.InfoLevel
 	if !ch.Config.LogSQLQueries {
-		logF = log.Debug()
-	} else {
-		logF = log.Info()
+		level = zerolog.DebugLevel
 	}
 	if len(args) > 0 {
-		logF.Msg(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(fmt.Sprintf("%s with args %v", query, args)))
+		log.WithLevel(level).Msgf(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(fmt.Sprintf("%s with args %v", query, args)))
 	} else {
-		logF.Msg(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(query))
+		log.WithLevel(level).Msg(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(query))
 	}
 	return query
 }
