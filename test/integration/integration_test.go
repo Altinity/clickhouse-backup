@@ -1484,7 +1484,7 @@ func TestFIPS(t *testing.T) {
 	fipsBackupName := fmt.Sprintf("fips_backup_%d", rand.Int())
 	r.NoError(dockerExec("clickhouse", "rm", "-fv", "/etc/apt/sources.list.d/clickhouse.list"))
 	installDebIfNotExists(r, "clickhouse", "ca-certificates", "curl", "gettext-base", "bsdmainutils", "dnsutils", "git")
-	r.NoError(dockerExec("clickhouse-backup", "update-ca-certificates"))
+	r.NoError(dockerExec("clickhouse", "update-ca-certificates"))
 	r.NoError(dockerCP("config-s3-fips.yml", "clickhouse:/etc/clickhouse-backup/config.yml.fips-template"))
 	r.NoError(dockerExec("clickhouse", "git", "clone", "--depth", "1", "https://github.com/drwetter/testssl.sh.git", "/opt/testssl"))
 	r.NoError(dockerExec("clickhouse", "chmod", "+x", "/opt/testssl/testssl.sh"))
