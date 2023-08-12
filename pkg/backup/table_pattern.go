@@ -126,7 +126,7 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 		return nil, nil, err
 	}
 	result.Sort(dropTable)
-	for i := 1; i < len(result); i++ {
+	for i := 0; i < len(result); i++ {
 		if b.shouldSkipByTableEngine(result[i]) {
 			t := result[i]
 			delete(resultPartitionNames, metadata.TableTitle{Database: t.Database, Table: t.Table})
@@ -138,8 +138,19 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 
 func (b *Backuper) shouldSkipByTableEngine(t metadata.TableMetadata) bool {
 	for _, engine := range b.cfg.ClickHouse.SkipTableEngines {
-		if strings.Contains(strings.ToLower(t.Query), fmt.Sprintf("engine=%s(", engine)) {
+		if engine == "MaterializedView" && (strings.HasPrefix(t.Query, "ATTACH MATERIALIZED VIEW") || strings.HasPrefix(t.Query, "CREATE MATERIALIZED VIEW")) {
+			b.log.Warnf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
 			return true
+		}
+		if engine == "View" && strings.HasPrefix(t.Query, "CREATE VIEW") {
+			b.log.Warnf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
+			return true
+		}
+		if shouldSkip, err := regexp.MatchString(fmt.Sprintf("(?mi)ENGINE\\s*=\\s*%s\\(", engine), t.Query); err == nil && shouldSkip {
+			b.log.Warnf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
+			return true
+		} else if err != nil {
+			b.log.Warnf("shouldSkipByTableEngine engine=%s return error: %v", engine, err)
 		}
 	}
 	return false

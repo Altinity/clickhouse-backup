@@ -14,7 +14,9 @@ BUG FIXES
 - fix too strict `system.parts_columns` check when backup create, exclude Enum and Tuple (JSON) and Nullable(Type) vs Type corner cases, fix [685](https://github.com/Altinity/clickhouse-backup/issues/685), fix [699](https://github.com/Altinity/clickhouse-backup/issues/699)  
 - fix `--rbac` behavior when /var/lib/clickhouse/access not exists
 - restore functions via `CREATE OR REPLACE`
-- fix apply skip_databases and get tables for corner case --tables="*pattern.*"
+- fix `skip_databases` behavior for corner case `--tables="*pattern.*"`
+- fix `skip_database_engines` behavior
+
 # v2.3.2
 BUG FIXES
 - fix error when `backups_to_keep_local: -1`, fix [698](https://github.com/Altinity/clickhouse-backup/issues/698)

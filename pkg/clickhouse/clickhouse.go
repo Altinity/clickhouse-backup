@@ -436,7 +436,7 @@ func (ch *ClickHouse) prepareGetTablesSQL(tablePattern string, skipDatabases, sk
 		allTablesSQL += fmt.Sprintf(" AND database NOT IN ('%s')", strings.Join(skipDatabases, "','"))
 	}
 	if len(skipTableEngines) > 0 {
-		allTablesSQL += fmt.Sprintf("AND engine NOT IN ('%s')", strings.Join(skipTableEngines, "','"))
+		allTablesSQL += fmt.Sprintf(" AND engine NOT IN ('%s')", strings.Join(skipTableEngines, "','"))
 	}
 	// try to upload big tables first
 	if len(isSystemTablesFieldPresent) > 0 && isSystemTablesFieldPresent[0].IsTotalBytesPresent > 0 {
