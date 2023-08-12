@@ -550,6 +550,9 @@ func TestDoRestoreConfigs(t *testing.T) {
 	selectEmptyResultForAggQuery := "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"
 	var settings string
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&settings, selectEmptyResultForAggQuery))
+	if settings != "1" {
+		r.NoError(dockerExec("clickhouse", "grep", "empty_result_for_aggregation_by_empty_set", "-r", "/var/lib/clickhouse/preprocessed_configs/"))
+	}
 	r.Equal("1", settings, "expect empty_result_for_aggregation_by_empty_set=1")
 
 	r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/etc/clickhouse-server/users.d/test_config.xml"))
