@@ -544,9 +544,9 @@ func TestDoRestoreConfigs(t *testing.T) {
 	r.NoError(dockerExec("clickhouse", "bash", "-xec", "CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml S3_COMPRESSION_FORMAT=none ALLOW_EMPTY_BACKUPS=1 clickhouse-backup upload test_configs_backup"))
 	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_configs_backup"))
 
+	ch.queryWithNoError(r, "SYSTEM RELOAD CONFIG")
 	ch.chbackend.Close()
 	ch.connectWithWait(r, 1*time.Second, 1*time.Second)
-	ch.queryWithNoError(r, "SYSTEM RELOAD CONFIG")
 	selectEmptyResultForAggQuery := "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"
 	var settings string
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&settings, selectEmptyResultForAggQuery))
