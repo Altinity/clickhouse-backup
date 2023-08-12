@@ -450,11 +450,14 @@ func (b *Backuper) createBackupRBAC(ctx context.Context, backupPath string, disk
 		if err != nil {
 			return 0, err
 		}
-		var fInfo os.FileInfo
-		if fInfo, err = os.Stat(accessPath); err != nil && !os.IsNotExist(err) {
+		accessPathInfo, err := os.Stat(accessPath)
+		if err != nil && !os.IsNotExist(err) {
 			return 0, err
 		}
-		if fInfo.IsDir() {
+		if err == nil && !accessPathInfo.IsDir() {
+			return 0, fmt.Errorf("%s is not directory", accessPath)
+		}
+		if err == nil {
 			log.Debugf("copy %s -> %s", accessPath, rbacBackup)
 			copyErr := recursiveCopy.Copy(accessPath, rbacBackup, recursiveCopy.Options{
 				Skip: func(srcinfo os.FileInfo, src, dest string) (bool, error) {
@@ -464,6 +467,10 @@ func (b *Backuper) createBackupRBAC(ctx context.Context, backupPath string, disk
 			})
 			if copyErr != nil {
 				return 0, copyErr
+			}
+		} else {
+			if err = os.MkdirAll(rbacBackup, 0755); err != nil {
+				return 0, err
 			}
 		}
 		replicatedRBACDataSize, err := b.createBackupRBACReplicated(ctx, rbacBackup)

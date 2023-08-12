@@ -15,7 +15,7 @@ clickhouse:
   username: backup
   password: meow=& 123?*%# МЯУ
   sync_replicated_tables: true
-  timeout: 2s
+  timeout: 5s
   restart_command: "sql:SYSTEM RELOAD USERS; sql:SYSTEM RELOAD CONFIG; sql:SYSTEM SHUTDOWN"
 custom:
   upload_command: /custom/restic/upload.sh {{ .backupName }} {{ .diffFromRemote }}

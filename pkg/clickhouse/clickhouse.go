@@ -436,7 +436,7 @@ func (ch *ClickHouse) prepareGetTablesSQL(tablePattern string, skipDatabases, sk
 		allTablesSQL += fmt.Sprintf(" AND database NOT IN ('%s')", strings.Join(skipDatabases, "','"))
 	}
 	if len(skipTableEngines) > 0 {
-		allTablesSQL += fmt.Sprintf("AND engine NOT IN ('%s')", strings.Join(skipTableEngines, "','"))
+		allTablesSQL += fmt.Sprintf(" AND engine NOT IN ('%s')", strings.Join(skipTableEngines, "','"))
 	}
 	// try to upload big tables first
 	if len(isSystemTablesFieldPresent) > 0 && isSystemTablesFieldPresent[0].IsTotalBytesPresent > 0 {
@@ -508,18 +508,19 @@ func (ch *ClickHouse) GetDatabases(ctx context.Context, cfg *config.Config, tabl
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
+		fileMatchToRE := strings.NewReplacer("*", ".*", "?", ".", "(", "\\(", ")", "\\)", "[", "\\[", "]", "\\]", "$", "\\$", "^", "\\^")
 		if len(bypassDatabases) > 0 {
 			allDatabasesSQL := fmt.Sprintf(
-				"SELECT name, engine FROM system.databases WHERE name NOT IN ('%s') AND name IN ('%s')",
-				strings.Join(skipDatabases, "','"), strings.Join(bypassDatabases, "','"),
+				"SELECT name, engine FROM system.databases WHERE NOT match(name,'^(%s)$') AND match(name,'^(%s)$')",
+				fileMatchToRE.Replace(strings.Join(skipDatabases, "|")), fileMatchToRE.Replace(strings.Join(bypassDatabases, "|")),
 			)
 			if err := ch.StructSelect(&allDatabases, allDatabasesSQL); err != nil {
 				return nil, err
 			}
 		} else {
 			allDatabasesSQL := fmt.Sprintf(
-				"SELECT name, engine FROM system.databases WHERE name NOT IN ('%s')",
-				strings.Join(skipDatabases, "','"),
+				"SELECT name, engine FROM system.databases WHERE NOT match(name,'^(%s)$')",
+				fileMatchToRE.Replace(strings.Join(skipDatabases, "|")),
 			)
 			if err := ch.StructSelect(&allDatabases, allDatabasesSQL); err != nil {
 				return nil, err
@@ -1054,6 +1055,9 @@ func (ch *ClickHouse) GetUserDefinedFunctions(ctx context.Context) ([]Function, 
 
 	if err := ch.SelectContext(ctx, &allFunctions, allFunctionsSQL); err != nil {
 		return nil, err
+	}
+	for i := range allFunctions {
+		allFunctions[i].CreateQuery = strings.Replace(allFunctions[i].CreateQuery, "CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1)
 	}
 	return allFunctions, nil
 }
