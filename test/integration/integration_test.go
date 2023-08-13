@@ -700,7 +700,7 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 	r := require.New(t)
 	r.NoError(dockerCP("config-database-mapping.yml", "clickhouse:/etc/clickhouse-backup/config.yml"))
 	ch := &TestClickHouse{}
-	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second)
+	ch.connectWithWait(r, 500*time.Millisecond, 5*time.Second)
 	defer ch.chbackend.Close()
 	checkRecordset := func(expectedRows int, expectedCount uint64, query string) {
 		result := make([]struct {
