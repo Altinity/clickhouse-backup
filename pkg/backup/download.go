@@ -406,12 +406,12 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 			b.resumableState.AppendToState(localMetadataFile, written)
 		}
 	}
-	log.Info().
-		Str("operation", "download_metadata").
-		Str("backup", backupName).
-		Str("duration", utils.HumanizeDuration(time.Since(start))).
-		Str("size", utils.FormatBytes(size)).
-		Msg("done")
+	log.Info().Fields(map[string]string{
+		"operation": "download_metadata",
+		"backup":    backupName,
+		"duration":  utils.HumanizeDuration(time.Since(start)),
+		"size":      utils.FormatBytes(size),
+	}).Msg("done")
 	return &tableMetadata, size, nil
 }
 
