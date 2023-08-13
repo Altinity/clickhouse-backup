@@ -5,7 +5,7 @@ general:
   download_concurrency: 4
   restore_schema_on_cluster: "{cluster}"
 clickhouse:
-  host: 127.0.0.1
+  host: clickhouse
   port: 9000
   restart_command: bash -c 'echo "FAKE RESTART"'
 azblob:
@@ -15,4 +15,5 @@ azblob:
   endpoint_schema: http
   container: container1
   path: backup
+  object_disk_path: object_disks
   compression_format: tar

@@ -1,5 +1,5 @@
 <yandex>
-    <listen_host>0.0.0.0</listen_host>
+    <listen_host replace="replace">0.0.0.0</listen_host>
     <tcp_port_secure>9440</tcp_port_secure>
     <openSSL>
         <server>

@@ -11,10 +11,11 @@ type TableTitle struct {
 
 type BackupMetadata struct {
 	BackupName              string            `json:"backup_name"`
-	Disks                   map[string]string `json:"disks"` // "default": "/var/lib/clickhouse"
+	Disks                   map[string]string `json:"disks"`      // "default": "/var/lib/clickhouse"
+	DiskTypes               map[string]string `json:"disk_types"` // "default": "local"
 	ClickhouseBackupVersion string            `json:"version"`
 	CreationDate            time.Time         `json:"creation_date"`
-	Tags                    string            `json:"tags,omitempty"` // example "type=manual", "type=scheduled", "hostname": "", "shard="
+	Tags                    string            `json:"tags,omitempty"` // "regular,embedded"
 	ClickHouseVersion       string            `json:"clickhouse_version,omitempty"`
 	DataSize                uint64            `json:"data_size,omitempty"`
 	MetadataSize            uint64            `json:"metadata_size"`

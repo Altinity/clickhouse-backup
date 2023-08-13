@@ -4,15 +4,18 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	apexLog "github.com/apex/log"
 	"io"
 	"net/http"
 	"os"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	awsV2Config "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
@@ -27,6 +30,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 )
 
 type S3LogToZeroLogAdapter struct {
@@ -46,6 +50,39 @@ func (S3LogToApexLogAdapter S3LogToZeroLogAdapter) Logf(severity awsV2Logging.Cl
 	} else {
 		S3LogToApexLogAdapter.logger.Info().Msg(msg)
 	}
+}
+
+// RecalculateV4Signature allow GCS over S3, remove Accept-Encoding header from sign https://stackoverflow.com/a/74382598/1204665, https://github.com/aws/aws-sdk-go-v2/issues/1816
+type RecalculateV4Signature struct {
+	next      http.RoundTripper
+	signer    *v4.Signer
+	awsConfig aws.Config
+}
+
+func (lt *RecalculateV4Signature) RoundTrip(req *http.Request) (*http.Response, error) {
+	// store for later use
+	acceptEncodingValue := req.Header.Get("Accept-Encoding")
+
+	// delete the header so the header doesn't account for in the signature
+	req.Header.Del("Accept-Encoding")
+
+	// sign with the same date
+	timeString := req.Header.Get("X-Amz-Date")
+	timeDate, _ := time.Parse("20060102T150405Z", timeString)
+
+	creds, err := lt.awsConfig.Credentials.Retrieve(req.Context())
+	if err != nil {
+		return nil, err
+	}
+	err = lt.signer.SignHTTP(req.Context(), creds, req, v4.GetPayloadHash(req.Context()), "s3", lt.awsConfig.Region, timeDate)
+	if err != nil {
+		return nil, err
+	}
+	// Reset Accept-Encoding if desired
+	req.Header.Set("Accept-Encoding", acceptEncodingValue)
+
+	// follows up the original round tripper
+	return lt.next.RoundTrip(req)
 }
 
 // S3 - presents methods for manipulate data on s3
@@ -79,15 +116,6 @@ func (s *S3) Connect(ctx context.Context) error {
 	if s.Config.Region != "" {
 		awsConfig.Region = s.Config.Region
 	}
-	if s.Config.AccessKey != "" && s.Config.SecretKey != "" {
-		awsConfig.Credentials = credentials.StaticCredentialsProvider{
-			Value: aws.Credentials{
-				AccessKeyID:     s.Config.AccessKey,
-				SecretAccessKey: s.Config.SecretKey,
-			},
-		}
-	}
-
 	awsRoleARN := os.Getenv("AWS_ROLE_ARN")
 	if s.Config.AssumeRoleARN != "" || awsRoleARN != "" {
 		stsClient := sts.NewFromConfig(awsConfig)
@@ -106,16 +134,26 @@ func (s *S3) Connect(ctx context.Context) error {
 		)
 	}
 
+	if s.Config.AccessKey != "" && s.Config.SecretKey != "" {
+		awsConfig.Credentials = credentials.StaticCredentialsProvider{
+			Value: aws.Credentials{
+				AccessKeyID:     s.Config.AccessKey,
+				SecretAccessKey: s.Config.SecretKey,
+			},
+		}
+	}
+
 	if s.Config.Debug {
 		awsConfig.Logger = newS3Logger(log.Logger)
 		awsConfig.ClientLogMode = aws.LogRetries | aws.LogRequest | aws.LogResponse
 	}
 
+	httpTransport := http.DefaultTransport
 	if s.Config.DisableCertVerification {
-		tr := &http.Transport{
+		httpTransport = &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		}
-		awsConfig.HTTPClient = &http.Client{Transport: tr}
+		awsConfig.HTTPClient = &http.Client{Transport: httpTransport}
 	}
 
 	if s.Config.Endpoint != "" {
@@ -129,6 +167,11 @@ func (s *S3) Connect(ctx context.Context) error {
 			}, nil
 		})
 
+	}
+	// allow GCS over S3, remove Accept-Encoding header from sign https://stackoverflow.com/a/74382598/1204665, https://github.com/aws/aws-sdk-go-v2/issues/1816
+	if strings.Contains(s.Config.Endpoint, "storage.googleapis.com") {
+		// Assign custom client with our own transport
+		awsConfig.HTTPClient = &http.Client{Transport: &RecalculateV4Signature{httpTransport, v4.NewSigner(), awsConfig}}
 	}
 	s.client = s3.NewFromConfig(awsConfig, func(o *s3.Options) {
 		o.UsePathStyle = s.Config.ForcePathStyle
@@ -155,14 +198,36 @@ func (s *S3) Close(ctx context.Context) error {
 }
 
 func (s *S3) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {
-	resp, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+	getRequest := &s3.GetObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
 		Key:    aws.String(path.Join(s.Config.Path, key)),
-	})
+	}
+	resp, err := s.client.GetObject(ctx, getRequest)
 	if err != nil {
+		var opError *smithy.OperationError
+		if errors.As(err, &opError) {
+			var httpErr *awsV2http.ResponseError
+			if errors.As(opError.Err, &httpErr) {
+				var stateErr *s3types.InvalidObjectState
+				if errors.As(httpErr, &stateErr) {
+					if strings.Contains(string(stateErr.StorageClass), "GLACIER") {
+						log.Warn().Msgf("GetFileReader %s, storageClass %s receive error: %s", key, stateErr.StorageClass, stateErr.Error())
+						if restoreErr := s.restoreObject(ctx, key); restoreErr != nil {
+							log.Warn().Msgf("restoreObject %s, return error: %v", key, restoreErr)
+							return nil, err
+						}
+						if resp, err = s.client.GetObject(ctx, getRequest); err != nil {
+							log.Warn().Msgf("second GetObject %s, return error: %v", key, err)
+							return nil, err
+						}
+						return resp.Body, nil
+					}
+				}
+			}
+			return nil, err
+		}
 		return nil, err
 	}
-
 	return resp.Body, nil
 }
 
@@ -228,22 +293,32 @@ func (s *S3) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
 	return err
 }
 
-func (s *S3) DeleteFile(ctx context.Context, key string) error {
+func (s *S3) deleteKey(ctx context.Context, key string) error {
 	params := &s3.DeleteObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
-		Key:    aws.String(path.Join(s.Config.Path, key)),
+		Key:    aws.String(key),
 	}
 	if s.versioning {
 		objVersion, err := s.getObjectVersion(ctx, key)
 		if err != nil {
-			return errors.Wrapf(err, "DeleteFile, obtaining object version %+v", params)
+			return errors.Wrapf(err, "deleteKey, obtaining object version %+v", params)
 		}
 		params.VersionId = objVersion
 	}
 	if _, err := s.client.DeleteObject(ctx, params); err != nil {
-		return errors.Wrapf(err, "DeleteFile, deleting object %+v", params)
+		return errors.Wrapf(err, "deleteKey, deleting object %+v", params)
 	}
 	return nil
+}
+
+func (s *S3) DeleteFile(ctx context.Context, key string) error {
+	key = path.Join(s.Config.Path, key)
+	return s.deleteKey(ctx, key)
+}
+
+func (s *S3) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) error {
+	key = path.Join(s.Config.ObjectDiskPath, key)
+	return s.deleteKey(ctx, key)
 }
 
 func (s *S3) isVersioningEnabled(ctx context.Context) bool {
@@ -285,7 +360,7 @@ func (s *S3) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 		}
 		return nil, err
 	}
-	return &s3File{head.ContentLength, *head.LastModified, key}, nil
+	return &s3File{head.ContentLength, *head.LastModified, string(head.StorageClass), key}, nil
 }
 
 func (s *S3) Walk(ctx context.Context, s3Path string, recursive bool, process func(ctx context.Context, r RemoteFile) error) error {
@@ -303,6 +378,7 @@ func (s *S3) Walk(ctx context.Context, s3Path string, recursive bool, process fu
 				s3Files <- &s3File{
 					c.Size,
 					*c.LastModified,
+					string(c.StorageClass),
 					strings.TrimPrefix(*c.Key, path.Join(s.Config.Path, s3Path)),
 				}
 			}
@@ -346,9 +422,228 @@ func (s *S3) remotePager(ctx context.Context, s3Path string, recursive bool, pro
 	return nil
 }
 
+func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (int64, error) {
+	dstKey = path.Join(s.Config.ObjectDiskPath, dstKey)
+	if strings.Contains(s.Config.Endpoint, "storage.googleapis.com") {
+		params := s3.CopyObjectInput{
+			Bucket:       aws.String(s.Config.Bucket),
+			Key:          aws.String(dstKey),
+			CopySource:   aws.String(path.Join(srcBucket, srcKey)),
+			StorageClass: s3types.StorageClass(strings.ToUpper(s.Config.StorageClass)),
+		}
+		// https://github.com/Altinity/clickhouse-backup/issues/588
+		if len(s.Config.ObjectLabels) > 0 {
+			tags := ""
+			for k, v := range s.Config.ObjectLabels {
+				if tags != "" {
+					tags += "&"
+				}
+				tags += k + "=" + v
+			}
+			params.Tagging = aws.String(tags)
+		}
+		if s.Config.SSE != "" {
+			params.ServerSideEncryption = s3types.ServerSideEncryption(s.Config.SSE)
+		}
+		if s.Config.SSEKMSKeyId != "" {
+			params.SSEKMSKeyId = aws.String(s.Config.SSEKMSKeyId)
+		}
+		if s.Config.SSECustomerAlgorithm != "" {
+			params.SSECustomerAlgorithm = aws.String(s.Config.SSECustomerAlgorithm)
+		}
+		if s.Config.SSECustomerKey != "" {
+			params.SSECustomerKey = aws.String(s.Config.SSECustomerKey)
+		}
+		if s.Config.SSECustomerKeyMD5 != "" {
+			params.SSECustomerKeyMD5 = aws.String(s.Config.SSECustomerKeyMD5)
+		}
+		if s.Config.SSEKMSEncryptionContext != "" {
+			params.SSEKMSEncryptionContext = aws.String(s.Config.SSEKMSEncryptionContext)
+		}
+		_, err := s.client.CopyObject(ctx, &params)
+		if err != nil {
+			return 0, err
+		}
+		dstObjResp, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
+			Bucket: aws.String(s.Config.Bucket),
+			Key:    aws.String(dstKey),
+		})
+		if err != nil {
+			return 0, err
+		}
+		return dstObjResp.ContentLength, nil
+	}
+	// Get the size of the source object
+	sourceObjResp, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(srcBucket),
+		Key:    aws.String(srcKey),
+	})
+	if err != nil {
+		return 0, err
+	}
+	srcSize := sourceObjResp.ContentLength
+	// Initiate a multipart upload
+	params := s3.CreateMultipartUploadInput{
+		Bucket:       aws.String(s.Config.Bucket),
+		Key:          aws.String(dstKey),
+		StorageClass: s3types.StorageClass(strings.ToUpper(s.Config.StorageClass)),
+	}
+	// https://github.com/Altinity/clickhouse-backup/issues/588
+	if len(s.Config.ObjectLabels) > 0 {
+		tags := ""
+		for k, v := range s.Config.ObjectLabels {
+			if tags != "" {
+				tags += "&"
+			}
+			tags += k + "=" + v
+		}
+		params.Tagging = aws.String(tags)
+	}
+	if s.Config.SSE != "" {
+		params.ServerSideEncryption = s3types.ServerSideEncryption(s.Config.SSE)
+	}
+	if s.Config.SSEKMSKeyId != "" {
+		params.SSEKMSKeyId = aws.String(s.Config.SSEKMSKeyId)
+	}
+	if s.Config.SSECustomerAlgorithm != "" {
+		params.SSECustomerAlgorithm = aws.String(s.Config.SSECustomerAlgorithm)
+	}
+	if s.Config.SSECustomerKey != "" {
+		params.SSECustomerKey = aws.String(s.Config.SSECustomerKey)
+	}
+	if s.Config.SSECustomerKeyMD5 != "" {
+		params.SSECustomerKeyMD5 = aws.String(s.Config.SSECustomerKeyMD5)
+	}
+	if s.Config.SSEKMSEncryptionContext != "" {
+		params.SSEKMSEncryptionContext = aws.String(s.Config.SSEKMSEncryptionContext)
+	}
+
+	initResp, err := s.client.CreateMultipartUpload(ctx, &params)
+	if err != nil {
+		return 0, err
+	}
+
+	// Get the upload ID
+	uploadID := initResp.UploadId
+
+	// Set the part size (e.g., 5 MB)
+	partSize := srcSize / s.Config.MaxPartsCount
+	if partSize < 5*1024*1024 {
+		partSize = 5 * 1014 * 1024
+	}
+
+	// Calculate the number of parts
+	numParts := (srcSize + partSize - 1) / partSize
+
+	copyPartSemaphore := semaphore.NewWeighted(int64(s.Config.Concurrency))
+	copyPartErrGroup, ctx := errgroup.WithContext(ctx)
+
+	var mu sync.Mutex
+	var parts []s3types.CompletedPart
+
+	// Copy each part of the object
+	for partNumber := int64(1); partNumber <= numParts; partNumber++ {
+		if err := copyPartSemaphore.Acquire(ctx, 1); err != nil {
+			apexLog.Errorf("can't acquire semaphore during CopyObject data parts: %v", err)
+			break
+		}
+		// Calculate the byte range for the part
+		start := (partNumber - 1) * partSize
+		end := partNumber * partSize
+		if end > srcSize {
+			end = srcSize
+		}
+		currentPartNumber := int32(partNumber)
+
+		copyPartErrGroup.Go(func() error {
+			defer copyPartSemaphore.Release(1)
+			// Copy the part
+			partResp, err := s.client.UploadPartCopy(ctx, &s3.UploadPartCopyInput{
+				Bucket:          aws.String(s.Config.Bucket),
+				Key:             aws.String(dstKey),
+				CopySource:      aws.String(srcBucket + "/" + srcKey),
+				CopySourceRange: aws.String(fmt.Sprintf("bytes=%d-%d", start, end-1)),
+				UploadId:        uploadID,
+				PartNumber:      currentPartNumber,
+			})
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			parts = append(parts, s3types.CompletedPart{
+				ETag:       partResp.CopyPartResult.ETag,
+				PartNumber: currentPartNumber,
+			})
+			return nil
+		})
+	}
+	if err := copyPartErrGroup.Wait(); err != nil {
+		_, abortErr := s.client.AbortMultipartUpload(context.Background(), &s3.AbortMultipartUploadInput{
+			Bucket:   aws.String(s.Config.Bucket),
+			Key:      aws.String(dstKey),
+			UploadId: uploadID,
+		})
+		if abortErr != nil {
+			return 0, fmt.Errorf("aborting CopyObject multipart upload: %v, original error was: %v", abortErr, err)
+		}
+		return 0, fmt.Errorf("one of CopyObject go-routine return error: %v", err)
+	}
+
+	// Complete the multipart upload
+	_, err = s.client.CompleteMultipartUpload(context.Background(), &s3.CompleteMultipartUploadInput{
+		Bucket:          aws.String(s.Config.Bucket),
+		Key:             aws.String(dstKey),
+		UploadId:        uploadID,
+		MultipartUpload: &s3types.CompletedMultipartUpload{Parts: parts},
+	})
+	if err != nil {
+		return 0, fmt.Errorf("complete CopyObject multipart upload: %v", err)
+	}
+	log.Debug().Msgf("S3->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, s.Config.Bucket, dstKey)
+	return srcSize, nil
+}
+
+func (s *S3) restoreObject(ctx context.Context, key string) error {
+	restoreRequest := s3.RestoreObjectInput{
+		Bucket: aws.String(s.Config.Bucket),
+		Key:    aws.String(path.Join(s.Config.Path, key)),
+		RestoreRequest: &s3types.RestoreRequest{
+			Days: 1,
+			GlacierJobParameters: &s3types.GlacierJobParameters{
+				Tier: s3types.Tier("Expedited"),
+			},
+		},
+	}
+	_, err := s.client.RestoreObject(ctx, &restoreRequest)
+	if err != nil {
+		return err
+	}
+	i := 0
+	for {
+		headObjectRequest := &s3.HeadObjectInput{
+			Bucket: aws.String(s.Config.Bucket),
+			Key:    aws.String(path.Join(s.Config.Path, key)),
+		}
+		res, err := s.client.HeadObject(ctx, headObjectRequest)
+		if err != nil {
+			return fmt.Errorf("restoreObject: failed to head %s object metadata, %v", path.Join(s.Config.Path, key), err)
+		}
+
+		if res.Restore != nil && *res.Restore == "ongoing-request=\"true\"" {
+			i += 1
+			log.Warn().Msgf("%s still not restored, will wait %d seconds", key, i*5)
+			time.Sleep(time.Duration(i*5) * time.Second)
+		} else {
+			return nil
+		}
+	}
+}
+
 type s3File struct {
 	size         int64
 	lastModified time.Time
+	storageClass string
 	name         string
 }
 
@@ -362,4 +657,8 @@ func (f *s3File) Name() string {
 
 func (f *s3File) LastModified() time.Time {
 	return f.lastModified
+}
+
+func (f *s3File) StorageClass() string {
+	return f.storageClass
 }

@@ -238,6 +238,14 @@ func (sftp *SFTP) PutFile(ctx context.Context, key string, localFile io.ReadClos
 	return nil
 }
 
+func (sftp *SFTP) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (int64, error) {
+	return 0, fmt.Errorf("CopyObject not imlemented for %s", sftp.Kind())
+}
+
+func (sftp *SFTP) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) error {
+	return fmt.Errorf("DeleteFileFromObjectDiskBackup not imlemented for %s", sftp.Kind())
+}
+
 // Implement RemoteFile
 type sftpFile struct {
 	size         int64

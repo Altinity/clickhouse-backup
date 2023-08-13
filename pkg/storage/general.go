@@ -428,7 +428,7 @@ func (bd *BackupDestination) UploadCompressedStream(ctx context.Context, baseLoc
 	defer bar.Finish()
 	pipeBuffer := buffer.New(BufferSize)
 	body, w := nio.Pipe(pipeBuffer)
-	g, ctx := errgroup.WithContext(context.Background())
+	g, ctx := errgroup.WithContext(ctx)
 
 	var writerErr, readerErr error
 	g.Go(func() error {

@@ -56,6 +56,7 @@ type GeneralConfig struct {
 	WatchInterval           string            `yaml:"watch_interval" envconfig:"WATCH_INTERVAL"`
 	FullInterval            string            `yaml:"full_interval" envconfig:"FULL_INTERVAL"`
 	WatchBackupNameTemplate string            `yaml:"watch_backup_name_template" envconfig:"WATCH_BACKUP_NAME_TEMPLATE"`
+	ShardedOperationMode    string            `yaml:"sharded_operation_mode" envconfig:"SHARDED_OPERATION_MODE"`
 	RetriesDuration         time.Duration
 	WatchDuration           time.Duration
 	FullDuration            time.Duration
@@ -68,6 +69,7 @@ type GCSConfig struct {
 	CredentialsJSONEncoded string            `yaml:"credentials_json_encoded" envconfig:"GCS_CREDENTIALS_JSON_ENCODED"`
 	Bucket                 string            `yaml:"bucket" envconfig:"GCS_BUCKET"`
 	Path                   string            `yaml:"path" envconfig:"GCS_PATH"`
+	ObjectDiskPath         string            `yaml:"object_disk_path" envconfig:"GCS_OBJECT_DISK_PATH"`
 	CompressionLevel       int               `yaml:"compression_level" envconfig:"GCS_COMPRESSION_LEVEL"`
 	CompressionFormat      string            `yaml:"compression_format" envconfig:"GCS_COMPRESSION_FORMAT"`
 	Debug                  bool              `yaml:"debug" envconfig:"GCS_DEBUG"`
@@ -87,6 +89,7 @@ type AzureBlobConfig struct {
 	UseManagedIdentity    bool   `yaml:"use_managed_identity" envconfig:"AZBLOB_USE_MANAGED_IDENTITY"`
 	Container             string `yaml:"container" envconfig:"AZBLOB_CONTAINER"`
 	Path                  string `yaml:"path" envconfig:"AZBLOB_PATH"`
+	ObjectDiskPath        string `yaml:"object_disk_path" envconfig:"AZBLOB_OBJECT_DISK_PATH"`
 	CompressionLevel      int    `yaml:"compression_level" envconfig:"AZBLOB_COMPRESSION_LEVEL"`
 	CompressionFormat     string `yaml:"compression_format" envconfig:"AZBLOB_COMPRESSION_FORMAT"`
 	SSEKey                string `yaml:"sse_key" envconfig:"AZBLOB_SSE_KEY"`
@@ -107,6 +110,7 @@ type S3Config struct {
 	AssumeRoleARN           string            `yaml:"assume_role_arn" envconfig:"S3_ASSUME_ROLE_ARN"`
 	ForcePathStyle          bool              `yaml:"force_path_style" envconfig:"S3_FORCE_PATH_STYLE"`
 	Path                    string            `yaml:"path" envconfig:"S3_PATH"`
+	ObjectDiskPath          string            `yaml:"object_disk_path" envconfig:"S3_OBJECT_DISK_PATH"`
 	DisableSSL              bool              `yaml:"disable_ssl" envconfig:"S3_DISABLE_SSL"`
 	CompressionLevel        int               `yaml:"compression_level" envconfig:"S3_COMPRESSION_LEVEL"`
 	CompressionFormat       string            `yaml:"compression_format" envconfig:"S3_COMPRESSION_FORMAT"`
@@ -148,6 +152,7 @@ type FTPConfig struct {
 	Password          string `yaml:"password" envconfig:"FTP_PASSWORD"`
 	TLS               bool   `yaml:"tls" envconfig:"FTP_TLS"`
 	Path              string `yaml:"path" envconfig:"FTP_PATH"`
+	ObjectDiskPath    string `yaml:"object_disk_path" envconfig:"FTP_OBJECT_DISK_PATH"`
 	CompressionFormat string `yaml:"compression_format" envconfig:"FTP_COMPRESSION_FORMAT"`
 	CompressionLevel  int    `yaml:"compression_level" envconfig:"FTP_COMPRESSION_LEVEL"`
 	Concurrency       uint8  `yaml:"concurrency" envconfig:"FTP_CONCURRENCY"`
@@ -162,6 +167,7 @@ type SFTPConfig struct {
 	Password          string `yaml:"password" envconfig:"SFTP_PASSWORD"`
 	Key               string `yaml:"key" envconfig:"SFTP_KEY"`
 	Path              string `yaml:"path" envconfig:"SFTP_PATH"`
+	ObjectDiskPath    string `yaml:"object_disk_path" envconfig:"SFTP_OBJECT_DISK_PATH"`
 	CompressionFormat string `yaml:"compression_format" envconfig:"SFTP_COMPRESSION_FORMAT"`
 	CompressionLevel  int    `yaml:"compression_level" envconfig:"SFTP_COMPRESSION_LEVEL"`
 	Concurrency       int    `yaml:"concurrency" envconfig:"SFTP_CONCURRENCY"`
@@ -186,6 +192,7 @@ type ClickHouseConfig struct {
 	Port                             uint              `yaml:"port" envconfig:"CLICKHOUSE_PORT"`
 	DiskMapping                      map[string]string `yaml:"disk_mapping" envconfig:"CLICKHOUSE_DISK_MAPPING"`
 	SkipTables                       []string          `yaml:"skip_tables" envconfig:"CLICKHOUSE_SKIP_TABLES"`
+	SkipTableEngines                 []string          `yaml:"skip_table_engines" envconfig:"CLICKHOUSE_SKIP_TABLE_ENGINES"`
 	Timeout                          string            `yaml:"timeout" envconfig:"CLICKHOUSE_TIMEOUT"`
 	FreezeByPart                     bool              `yaml:"freeze_by_part" envconfig:"CLICKHOUSE_FREEZE_BY_PART"`
 	FreezeByPartWhere                string            `yaml:"freeze_by_part_where" envconfig:"CLICKHOUSE_FREEZE_BY_PART_WHERE"`
@@ -217,6 +224,8 @@ type APIConfig struct {
 	Secure                        bool   `yaml:"secure" envconfig:"API_SECURE"`
 	CertificateFile               string `yaml:"certificate_file" envconfig:"API_CERTIFICATE_FILE"`
 	PrivateKeyFile                string `yaml:"private_key_file" envconfig:"API_PRIVATE_KEY_FILE"`
+	CAKeyFile                     string `yaml:"ca_cert_file" envconfig:"API_CA_KEY_FILE"`
+	CACertFile                    string `yaml:"ca_key_file" envconfig:"API_CA_CERT_FILE"`
 	CreateIntegrationTables       bool   `yaml:"create_integration_tables" envconfig:"API_CREATE_INTEGRATION_TABLES"`
 	IntegrationTablesHost         string `yaml:"integration_tables_host" envconfig:"API_INTEGRATION_TABLES_HOST"`
 	AllowParallel                 bool   `yaml:"allow_parallel" envconfig:"API_ALLOW_PARALLEL"`
@@ -415,6 +424,26 @@ func ValidateConfig(cfg *Config) error {
 	return nil
 }
 
+func ValidateObjectDiskConfig(cfg *Config) error {
+	if !cfg.ClickHouse.UseEmbeddedBackupRestore {
+		switch cfg.General.RemoteStorage {
+		case "s3":
+			if cfg.S3.Path != "" && (cfg.S3.ObjectDiskPath == "" || strings.HasPrefix(cfg.S3.Path, cfg.S3.ObjectDiskPath)) {
+				return fmt.Errorf("data in objects disks, invalid s3->object_disk_path config section, shall be not empty and shall not be prefix for s3->path")
+			}
+		case "gcs":
+			if cfg.GCS.Path != "" && (cfg.GCS.ObjectDiskPath == "" || strings.HasPrefix(cfg.GCS.Path, cfg.GCS.ObjectDiskPath)) {
+				return fmt.Errorf("data in objects disks, invalid gcs->object_disk_path config section, shall be not empty and shall not be prefix for gcs->path")
+			}
+		case "azblob":
+			if cfg.AzureBlob.Path != "" && (cfg.AzureBlob.ObjectDiskPath == "" || strings.HasPrefix(cfg.AzureBlob.Path, cfg.AzureBlob.ObjectDiskPath)) {
+				return fmt.Errorf("data in objects disks, invalid azblob->object_disk_path config section, shall be not empty and shall not be prefix for gcs->path")
+			}
+		}
+	}
+	return nil
+}
+
 // PrintConfig - print default / current config to stdout
 func PrintConfig(ctx *cli.Context) error {
 	var cfg *Config
@@ -431,10 +460,15 @@ func PrintConfig(ctx *cli.Context) error {
 func DefaultConfig() *Config {
 	uploadConcurrency := uint8(1)
 	downloadConcurrency := uint8(1)
-
 	if runtime.NumCPU() > 1 {
 		uploadConcurrency = uint8(math.Round(math.Sqrt(float64(runtime.NumCPU() / 2))))
 		downloadConcurrency = uint8(runtime.NumCPU() / 2)
+	}
+	if uploadConcurrency < 1 {
+		uploadConcurrency = 1
+	}
+	if downloadConcurrency < 1 {
+		downloadConcurrency = 1
 	}
 	return &Config{
 		General: GeneralConfig{
@@ -475,7 +509,7 @@ func DefaultConfig() *Config {
 			SyncReplicatedTables:             false,
 			LogSQLQueries:                    true,
 			ConfigDir:                        "/etc/clickhouse-server/",
-			RestartCommand:                   "systemctl restart clickhouse-server",
+			RestartCommand:                   "exec:systemctl restart clickhouse-server",
 			IgnoreNotExistsErrorDuringFreeze: true,
 			CheckReplicasBeforeAttach:        true,
 			UseEmbeddedBackupRestore:         false,

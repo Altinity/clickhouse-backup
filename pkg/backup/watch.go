@@ -67,7 +67,7 @@ func (b *Backuper) ValidateWatchParams(watchInterval, fullInterval, watchBackupN
 //
 // - each watch-interval, run create_remote increment --diff-from=prev-name + delete local increment, even when upload failed
 //   - save previous backup type incremental, next try will also incremental, until reach full interval
-func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern string, partitions []string, schemaOnly, rbac, backupConfig, skipCheckPartsColumns bool, version string, commandId int, metrics metrics.APIMetricsInterface, cliCtx *cli.Context) error {
+func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern string, partitions []string, schemaOnly, backupRBAC, backupConfigs, skipCheckPartsColumns bool, version string, commandId int, metrics metrics.APIMetricsInterface, cliCtx *cli.Context) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return err
@@ -117,14 +117,14 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 			}
 			if metrics != nil {
 				createRemoteErr, createRemoteErrCount = metrics.ExecuteWithMetrics("create_remote", createRemoteErrCount, func() error {
-					return b.CreateToRemote(backupName, "", diffFromRemote, tablePattern, partitions, schemaOnly, rbac, backupConfig, skipCheckPartsColumns, false, version, commandId)
+					return b.CreateToRemote(backupName, "", diffFromRemote, tablePattern, partitions, schemaOnly, backupRBAC, false, backupConfigs, false, skipCheckPartsColumns, false, version, commandId)
 				})
 				deleteLocalErr, deleteLocalErrCount = metrics.ExecuteWithMetrics("delete", deleteLocalErrCount, func() error {
 					return b.RemoveBackupLocal(ctx, backupName, nil)
 				})
 
 			} else {
-				createRemoteErr = b.CreateToRemote(backupName, "", diffFromRemote, tablePattern, partitions, schemaOnly, rbac, backupConfig, skipCheckPartsColumns, false, version, commandId)
+				createRemoteErr = b.CreateToRemote(backupName, "", diffFromRemote, tablePattern, partitions, schemaOnly, backupRBAC, false, backupConfigs, false, skipCheckPartsColumns, false, version, commandId)
 				if createRemoteErr != nil {
 					log.Error().Fields(map[string]interface{}{
 						"backup":    backupName,

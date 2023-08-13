@@ -10,14 +10,14 @@ general:
     - "_temporary_and_external_tables.*"
   restore_schema_on_cluster: "{cluster}"
 clickhouse:
-  host: 127.0.0.1
+  host: clickhouse
   port: 9440
   username: backup
   password: meow=& 123?*%# МЯУ
   secure: true
   skip_verify: true
   sync_replicated_tables: true
-  timeout: 2s
+  timeout: 1s
   restart_command: bash -c 'echo "FAKE RESTART"'
 s3:
   access_key: nodelete
@@ -26,7 +26,8 @@ s3:
   endpoint: http://minio:9000
   acl: private
   force_path_style: true
-  path: backup
+  path: backup/{cluster}/{shard}
+  object_disk_path: object_disk/{cluster}/{shard}
   disable_ssl: true
   compression_format: tar
 api:

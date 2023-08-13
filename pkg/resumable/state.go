@@ -27,7 +27,7 @@ func NewState(defaultDiskPath, backupName, command string, params map[string]int
 		mx:           &sync.RWMutex{},
 	}
 	fp, err := os.OpenFile(s.stateFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		log.Warn().Msgf("can't open %s error: %v", s.stateFile, err)
 	}
 	s.fp = fp

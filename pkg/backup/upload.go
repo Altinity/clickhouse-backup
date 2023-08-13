@@ -87,7 +87,10 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	}
 	var tablesForUpload ListOfTables
 	b.isEmbedded = strings.Contains(backupMetadata.Tags, "embedded")
-
+	// will ignore partitions cause can't manipulate .backup
+	if b.isEmbedded {
+		partitions = make([]string, 0)
+	}
 	if len(backupMetadata.Tables) != 0 {
 		tablesForUpload, err = b.prepareTableListToUpload(ctx, backupName, tablePattern, partitions)
 		if err != nil {
@@ -196,7 +199,7 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	if b.cfg.GetCompressionFormat() != "none" {
 		backupMetadata.DataFormat = b.cfg.GetCompressionFormat()
 	} else {
-		backupMetadata.DataFormat = "directory"
+		backupMetadata.DataFormat = DirectoryFormat
 	}
 	newBackupMetadataBody, err := json.MarshalIndent(backupMetadata, "", "\t")
 	if err != nil {
@@ -210,9 +213,6 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 		})
 		if err != nil {
 			return fmt.Errorf("can't upload %s: %v", remoteBackupMetaFile, err)
-		}
-		if b.resume {
-			b.resumableState.AppendToState(remoteBackupMetaFile, int64(len(newBackupMetadataBody)))
 		}
 	}
 	if b.isEmbedded {
@@ -271,14 +271,12 @@ func (b *Backuper) uploadSingleBackupFile(ctx context.Context, localFile, remote
 	return nil
 }
 
-func (b *Backuper) prepareTableListToUpload(ctx context.Context, backupName string, tablePattern string, partitions []string) (ListOfTables, error) {
-	var tablesForUpload ListOfTables
-	var err error
+func (b *Backuper) prepareTableListToUpload(ctx context.Context, backupName string, tablePattern string, partitions []string) (tablesForUpload ListOfTables, err error) {
 	metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
 	if b.isEmbedded {
 		metadataPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
 	}
-	tablesForUpload, err = getTableListByPatternLocal(ctx, b.cfg, b.ch, metadataPath, tablePattern, false, partitions)
+	tablesForUpload, _, err = b.getTableListByPatternLocal(ctx, metadataPath, tablePattern, false, partitions)
 	if err != nil {
 		return nil, err
 	}
@@ -294,8 +292,8 @@ func (b *Backuper) getTablesForUploadDiffLocal(ctx context.Context, diffFrom str
 	if len(diffFromBackup.Tables) != 0 {
 		backupMetadata.RequiredBackup = diffFrom
 		metadataPath := path.Join(b.DefaultDataPath, "backup", diffFrom, "metadata")
-		// empty partitions, because we can not filter
-		diffTablesList, err := getTableListByPatternLocal(ctx, b.cfg, b.ch, metadataPath, tablePattern, false, []string{})
+		// empty partitions, because we don't want filter
+		diffTablesList, _, err := b.getTableListByPatternLocal(ctx, metadataPath, tablePattern, false, []string{})
 		if err != nil {
 			return nil, err
 		}
@@ -353,6 +351,9 @@ func (b *Backuper) validateUploadParams(ctx context.Context, backupName string, 
 		_ = b.PrintLocalBackups(ctx, "all")
 		return fmt.Errorf("select backup for upload")
 	}
+	if b.cfg.General.UploadConcurrency == 0 {
+		return fmt.Errorf("`upload_concurrency` shall be more than zero")
+	}
 	if backupName == diffFrom || backupName == diffFromRemote {
 		return fmt.Errorf("you cannot upload diff from the same backup")
 	}
@@ -367,6 +368,28 @@ func (b *Backuper) validateUploadParams(ctx context.Context, backupName string, 
 	}
 	if (diffFrom != "" || diffFromRemote != "") && b.cfg.ClickHouse.UseEmbeddedBackupRestore {
 		log.Warn().Msgf("--diff-from and --diff-from-remote not compatible with backups created with `use_embedded_backup_restore: true`")
+	}
+
+	if b.cfg.ClickHouse.UseEmbeddedBackupRestore {
+		fatalMsg := fmt.Sprintf("`general->remote_storage: %s` `clickhouse->use_embedded_backup_restore: %v` require %s->compression_format: none, actual %%s", b.cfg.General.RemoteStorage, b.cfg.ClickHouse.UseEmbeddedBackupRestore, b.cfg.General.RemoteStorage)
+		if b.cfg.General.RemoteStorage == "s3" && b.cfg.S3.CompressionFormat != "none" {
+			log.Fatal().Stack().Msgf(fatalMsg, b.cfg.S3.CompressionFormat)
+		}
+		if b.cfg.General.RemoteStorage == "gcs" && b.cfg.GCS.CompressionFormat != "none" {
+			log.Fatal().Stack().Msgf(fatalMsg, b.cfg.GCS.CompressionFormat)
+		}
+		if b.cfg.General.RemoteStorage == "azblob" && b.cfg.AzureBlob.CompressionFormat != "none" {
+			log.Fatal().Stack().Msgf(fatalMsg, b.cfg.AzureBlob.CompressionFormat)
+		}
+		if b.cfg.General.RemoteStorage == "sftp" && b.cfg.SFTP.CompressionFormat != "none" {
+			log.Fatal().Stack().Msgf(fatalMsg, b.cfg.SFTP.CompressionFormat)
+		}
+		if b.cfg.General.RemoteStorage == "ftp" && b.cfg.FTP.CompressionFormat != "none" {
+			log.Fatal().Stack().Msgf(fatalMsg, b.cfg.FTP.CompressionFormat)
+		}
+		if b.cfg.General.RemoteStorage == "cos" && b.cfg.COS.CompressionFormat != "none" {
+			log.Fatal().Stack().Msgf(fatalMsg, b.cfg.COS.CompressionFormat)
+		}
 	}
 	if b.cfg.General.RemoteStorage == "custom" && b.resume {
 		return fmt.Errorf("can't resume for `remote_storage: custom`")
@@ -393,24 +416,31 @@ func (b *Backuper) validateUploadParams(ctx context.Context, backupName string, 
 func (b *Backuper) uploadConfigData(ctx context.Context, backupName string) (uint64, error) {
 	configBackupPath := path.Join(b.DefaultDataPath, "backup", backupName, "configs")
 	configFilesGlobPattern := path.Join(configBackupPath, "**/*.*")
+	if b.cfg.GetCompressionFormat() == "none" {
+		remoteConfigsDir := path.Join(backupName, "configs")
+		return b.uploadBackupRelatedDir(ctx, configBackupPath, configFilesGlobPattern, remoteConfigsDir)
+	}
 	remoteConfigsArchive := path.Join(backupName, fmt.Sprintf("configs.%s", b.cfg.GetArchiveExtension()))
-	return b.uploadAndArchiveBackupRelatedDir(ctx, configBackupPath, configFilesGlobPattern, remoteConfigsArchive)
-
+	return b.uploadBackupRelatedDir(ctx, configBackupPath, configFilesGlobPattern, remoteConfigsArchive)
 }
 
 func (b *Backuper) uploadRBACData(ctx context.Context, backupName string) (uint64, error) {
 	rbacBackupPath := path.Join(b.DefaultDataPath, "backup", backupName, "access")
 	accessFilesGlobPattern := path.Join(rbacBackupPath, "*.*")
+	if b.cfg.GetCompressionFormat() == "none" {
+		remoteRBACDir := path.Join(backupName, "access")
+		return b.uploadBackupRelatedDir(ctx, rbacBackupPath, accessFilesGlobPattern, remoteRBACDir)
+	}
 	remoteRBACArchive := path.Join(backupName, fmt.Sprintf("access.%s", b.cfg.GetArchiveExtension()))
-	return b.uploadAndArchiveBackupRelatedDir(ctx, rbacBackupPath, accessFilesGlobPattern, remoteRBACArchive)
+	return b.uploadBackupRelatedDir(ctx, rbacBackupPath, accessFilesGlobPattern, remoteRBACArchive)
 }
 
-func (b *Backuper) uploadAndArchiveBackupRelatedDir(ctx context.Context, localBackupRelatedDir, localFilesGlobPattern, remoteFile string) (uint64, error) {
+func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelatedDir, localFilesGlobPattern, destinationRemote string) (uint64, error) {
 	if _, err := os.Stat(localBackupRelatedDir); os.IsNotExist(err) {
 		return 0, nil
 	}
 	if b.resume {
-		if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(remoteFile); isProcessed {
+		if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(destinationRemote); isProcessed {
 			return uint64(processedSize), nil
 		}
 	}
@@ -419,24 +449,38 @@ func (b *Backuper) uploadAndArchiveBackupRelatedDir(ctx context.Context, localBa
 	if localFiles, err = filepathx.Glob(localFilesGlobPattern); err != nil || localFiles == nil || len(localFiles) == 0 {
 		return 0, fmt.Errorf("list %s return list=%v with err=%v", localFilesGlobPattern, localFiles, err)
 	}
-	for i := range localFiles {
-		localFiles[i] = strings.Replace(localFiles[i], localBackupRelatedDir, "", 1)
-	}
 
+	for i := 0; i < len(localFiles); i++ {
+		if fileInfo, err := os.Stat(localFiles[i]); err == nil && fileInfo.IsDir() {
+			localFiles = append(localFiles[:i], localFiles[i+1:]...)
+			i--
+		} else {
+			localFiles[i] = strings.Replace(localFiles[i], localBackupRelatedDir, "", 1)
+		}
+	}
+	if b.cfg.GetCompressionFormat() == "none" {
+		remoteUploadedBytes := int64(0)
+		if remoteUploadedBytes, err = b.dst.UploadPath(ctx, 0, localBackupRelatedDir, localFiles, destinationRemote, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration); err != nil {
+			return 0, fmt.Errorf("can't RBAC or config upload %s: %v", destinationRemote, err)
+		}
+		if b.resume {
+			b.resumableState.AppendToState(destinationRemote, remoteUploadedBytes)
+		}
+		return uint64(remoteUploadedBytes), nil
+	}
 	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
 	err = retry.RunCtx(ctx, func(ctx context.Context) error {
-		return b.dst.UploadCompressedStream(ctx, localBackupRelatedDir, localFiles, remoteFile)
+		return b.dst.UploadCompressedStream(ctx, localBackupRelatedDir, localFiles, destinationRemote)
 	})
-
 	if err != nil {
-		return 0, fmt.Errorf("can't RBAC or config upload: %v", err)
+		return 0, fmt.Errorf("can't RBAC or config upload compressed %s: %v", destinationRemote, err)
 	}
-	remoteUploaded, err := b.dst.StatFile(ctx, remoteFile)
+	remoteUploaded, err := b.dst.StatFile(ctx, destinationRemote)
 	if err != nil {
-		return 0, fmt.Errorf("can't check uploaded %s file: %v", remoteFile, err)
+		return 0, fmt.Errorf("can't check uploaded destinationRemote: %s, error: %v", destinationRemote, err)
 	}
 	if b.resume {
-		b.resumableState.AppendToState(remoteFile, remoteUploaded.Size())
+		b.resumableState.AppendToState(destinationRemote, remoteUploaded.Size())
 	}
 	return uint64(remoteUploaded.Size()), nil
 }
@@ -453,8 +497,8 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, table
 	g, ctx := errgroup.WithContext(ctx)
 	var uploadedBytes int64
 
-	splitParts := make(map[string][]metadata.SplitPartFiles, 0)
-	splitPartsOffset := make(map[string]int, 0)
+	splitParts := make(map[string][]metadata.SplitPartFiles)
+	splitPartsOffset := make(map[string]int)
 	splitPartsCapacity := 0
 	for disk := range table.Parts {
 		backupPath := b.getLocalBackupDataPathForTable(backupName, disk, dbAndTablePath)
@@ -530,7 +574,7 @@ breakByError:
 					}
 					remoteFile, err := b.dst.StatFile(ctx, remoteDataFile)
 					if err != nil {
-						return fmt.Errorf("can't check uploaded file: %v", err)
+						return fmt.Errorf("can't check uploaded remoteDataFile: %s, error: %v", remoteDataFile, err)
 					}
 					atomic.AddInt64(&uploadedBytes, remoteFile.Size())
 					if b.resume {

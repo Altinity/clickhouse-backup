@@ -46,7 +46,7 @@ clickhouse-backup restore --rm backup_name
 Use services like https://healthchecks.io or https://deadmanssnitch.com.
 Or use `clickhouse-backup server` and prometheus endpoint :7171/metrics, look alerts examples on https://github.com/Altinity/clickhouse-operator/blob/master/deploy/prometheus/prometheus-alert-rules-backup.yaml
 
-## How to make backup / restore sharded cluster 
+## How to make backup / restore sharded cluster
 ### BACKUP
 run only on the first replica for each shard
 ```bash
@@ -505,9 +505,128 @@ spec:
             - name: clickhouse-backup
 ```
 
+### How to use clickhouse-backup + clickhouse-operator in FIPS compatible mode in Kubernetes for S3
+
+use `altinity/clickhouse-backup:X.X.X-fips` as image (where X.X.X version number) 
+run following commands to generate self-signed TLS keys for secure clickhouse-backup API endpoint,
+you need periodically renew this certs, use https://github.com/cert-manager/cert-manager for it in kubernetes
+```bash
+   openssl genrsa -out ca-key.pem 4096
+   openssl req -subj "/O=altinity" -x509 -new -nodes -key ca-key.pem -sha256 -days 365000 -out ca-cert.pem
+   openssl genrsa -out server-key.pem 4096
+   openssl req -subj "/CN=localhost" -addext "subjectAltName = DNS:localhost,DNS:*.cluster.local" -new -key server-key.pem -out server-req.csr
+   openssl x509 -req -days 365 -extensions SAN -extfile <(printf "\n[SAN]\nsubjectAltName=DNS:localhost,DNS:*.cluster.local") -in server-req.csr -out server-cert.pem -CA ca-cert.pem -CAkey ca-key.pem -CAcreateserial
+```
+
+create following `ConfigMap` + `ClickHouseInstallation` kubernetes manifest
+```yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+   name: backup-tls-certs
+data:
+   ca-key.pem: |-
+      -----BEGIN PRIVATE KEY-----
+      data from openssl related command described above
+      -----END PRIVATE KEY-----
+   ca-cert.pem: |-
+      -----BEGIN PRIVATE KEY-----
+      data from openssl related command described above
+      -----END PRIVATE KEY-----
+   server-key.pem: |-
+      -----BEGIN PRIVATE KEY-----
+      data from openssl related command described above
+      -----END PRIVATE KEY-----
+   server-cert.pem: |-
+      -----BEGIN CERTIFICATE-----
+      data from openssl related command described above
+      -----END CERTIFICATE-----      
+---
+apiVersion: clickhouse.altinity.com/v1
+kind: ClickHouseInstallation
+metadata:
+  name: fips-example
+spec:
+   defaults:
+      templates:
+         podTemplate: clickhouse-backup-fips
+         dataVolumeClaimTemplate: data-volume
+   configuration:
+      clusters:
+         - name: default
+           layout:
+              shardsCount: 1
+              replicasCount: 1
+   templates:
+      volumeClaimTemplates:
+         - name: data-volume
+           spec:
+              accessModes:
+                 - ReadWriteOnce
+              resources:
+                 requests:
+                    storage: 10Gi
+      podTemplates:
+         - name: clickhouse-backup-fips
+           spec:
+              securityContext:
+                 runAsUser: 101
+                 runAsGroup: 101
+                 fsGroup: 101
+              containers:
+                 - name: clickhouse
+                   image: clickhouse/clickhouse-server:latest
+                   command:
+                      - clickhouse-server
+                      - --config-file=/etc/clickhouse-server/config.xml
+                 - name: clickhouse-backup
+                   image: altinity/clickhouse-backup:latest-fips
+                   imagePullPolicy: Always
+                   command:
+                      - bash
+                      - -xc
+                      - "/bin/clickhouse-backup server"
+                   env:
+                      - name: AWS_USE_FIPS_ENDPOINT
+                        value: "true"
+                      # use properly value  
+                      - name: AWS_REGION
+                        value: us-east-2
+                      - name: API_SECURE
+                        value: "true"
+                      - name: API_PRIVATE_KEY_FILE
+                        value: "/etc/ssl/clickhouse-backup/server-key.pem"
+                      - name: API_CERTIFICATE_FILE
+                        value: "/etc/ssl/clickhouse-backup/server-cert.pem"
+                      - name: API_LISTEN
+                        value: "0.0.0.0:7171"
+                      # INSERT INTO system.backup_actions to execute backup
+                      - name: API_CREATE_INTEGRATION_TABLES
+                        value: "true"
+                      - name: BACKUPS_TO_KEEP_REMOTE
+                        value: "3"
+                      - name: REMOTE_STORAGE
+                        value: "s3"
+                      # change it to production bucket name  
+                      - name: S3_BUCKET
+                        value: bucket-name
+                      # {shard} macro defined by clickhouse-operator
+                      - name: S3_PATH
+                        value: backup/shard-{shard}
+                      - name: S3_ACCESS_KEY
+                        value: backup-access-key
+                      - name: S3_SECRET_KEY
+                        value: backup-secret-key
+                   # require to avoid double scraping clickhouse and clickhouse-backup containers
+                   ports:
+                      - name: backup-rest
+                        containerPort: 7171
+```
+
 ## How do incremental backups work to remote storage
 - Incremental backup calculate increment only during execute `upload` or `create_remote` command or similar REST API request.
-- Currently, incremental backup calculate increment only on table parts level, look to ClickHouse documentation to fill the difference between [data parts](https://clickhouse.tech/docs/en/operations/system-tables/parts/) and [table partitions](https://clickhouse.tech/docs/en/operations/system-tables/partitions/).  
+- When `use_embedded_backup_restore: false`, then incremental backup calculate increment only on table parts level, else increment backups also calculates based on `checksums.txt` for 23.3+ clickhouse version, look to ClickHouse documentation to fill the difference between [data parts](https://clickhouse.tech/docs/en/operations/system-tables/parts/) and [table partitions](https://clickhouse.tech/docs/en/operations/system-tables/partitions/).  
 - To calculate increment, backup which listed on `--diff-from` parameter is required to be present as local backup, look to `clickhouse-backup list` command results for ensure.
 - Currently, during execute `clickhouse-backup upload --diff-from=base_backup` don't check `base_backup` exits on remote storage, be careful.
 - During upload operation `base_backup` added to current backup metadata as required. All data parts which exists in `base_backup` also mark in backup metadata table level with `required` flag and skip data uploading. 

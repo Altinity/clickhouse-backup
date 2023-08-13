@@ -96,7 +96,8 @@ def all_engines(self):
             tables = clickhouse.query("SHOW TABLES").output
 
             with By("I expect MergeTree fully restored"):
-                assert table_data == clickhouse.query(f"SELECT * FROM {name_prefix}").output, error()
+                output = clickhouse.query(f"SELECT * FROM {name_prefix}").output
+                assert table_data == output, error()
 
             with And("I expect other tables schema restored"):
                 for table_name in table_names:
@@ -263,7 +264,7 @@ def materializedpostgresql(self):
             for i in range(10):
                 random_value = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
                 postgres.cmd(f"psql -Utest --dbname=pgdb -c \"INSERT INTO pg_table (id, name) VALUES ({i}, '{random_value}');\"")
-            debug(postgres.cmd(f"psql -Utest --dbname=pgdb -c \"select * from pg_table\"").output)
+            debug(postgres.cmd(f"psql -P pager=off -Utest --dbname=pgdb -c \"select * from pg_table\"").output)
 
         with And("I create MaterializedPostgreSQL"):
             clickhouse.query(

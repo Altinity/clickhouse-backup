@@ -12,7 +12,7 @@ on:
 jobs:
   build:
     name: Build
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         golang-version:
@@ -26,6 +26,11 @@ jobs:
         uses: actions/setup-go@v3
         with:
           go-version: '^${{ matrix.golang-version }}'
+
+      - name: Setup musl
+        id: setup-musl
+        run: |
+          sudo apt-get install -y musl-tools musl-dev
 
       - name: Cache golang
         id: cache-golang
@@ -41,13 +46,14 @@ jobs:
         if: |
           steps.cache-golang.outputs.cache-hit != 'true'
 
-
       - name: Build clickhouse-backup binary
-        id: make
+        id: make-race
         env:
-          GOROOT: ${{ env.GOROOT_1_19_X64 }}
+          GOROOT: ${{ env.GOROOT_1_20_X64 }}
         run: |
-          make build-race build/linux/amd64/clickhouse-backup build/linux/arm64/clickhouse-backup config test
+          make build/linux/amd64/clickhouse-backup build/linux/arm64/clickhouse-backup
+          make build/linux/amd64/clickhouse-backup-fips build/linux/arm64/clickhouse-backup-fips 
+          make build-race build-race-fips config test
 
       - name: Report unittest coverage
         uses: coverallsapp/github-action@v2
@@ -86,6 +92,8 @@ jobs:
           path: |
             build/linux/amd64/clickhouse-backup
             build/linux/arm64/clickhouse-backup
+            build/linux/amd64/clickhouse-backup-fips
+            build/linux/arm64/clickhouse-backup-fips
           if-no-files-found: error
           retention-days: 1
 
@@ -93,8 +101,8 @@ jobs:
         with:
           name: build-test-artifacts
           path: |
-            clickhouse-backup/clickhouse-backup
             clickhouse-backup/clickhouse-backup-race
+            clickhouse-backup/clickhouse-backup-race-fips
           if-no-files-found: error
           retention-days: 1
     outputs:
@@ -248,13 +256,23 @@ jobs:
         env:
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
           # don't change it to avoid broken CI/CD!!!
-          RUN_TESTS: ".+"
+          # RUN_TESTS: "TestFIPS"
           # LOG_LEVEL: "debug"
           # FTP_DEBUG: "true"
+          # S3_DEBUG: "true"
           CGO_ENABLED: 0
           GCS_TESTS: ${{ needs.build.outputs.GCS_TESTS }}
           RUN_ADVANCED_TESTS: 1
           AZURE_TESTS: 1
+          # need for FIPS
+          QA_AWS_ACCESS_KEY: ${{ secrets.QA_AWS_ACCESS_KEY }}
+          QA_AWS_SECRET_KEY: ${{ secrets.QA_AWS_SECRET_KEY }}
+          QA_AWS_BUCKET: ${{ secrets.QA_AWS_BUCKET }}
+          QA_AWS_REGION: ${{ secrets.QA_AWS_REGION }}
+          # need for GCP over S3
+          QA_GCS_OVER_S3_ACCESS_KEY: ${{ secrets.QA_GCS_OVER_S3_ACCESS_KEY }}
+          QA_GCS_OVER_S3_SECRET_KEY: ${{ secrets.QA_GCS_OVER_S3_SECRET_KEY }}
+          QA_GCS_OVER_S3_BUCKET: ${{ secrets.QA_GCS_OVER_S3_BUCKET }}
         run: |
           set -x
           echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"
@@ -343,6 +361,7 @@ jobs:
             export DOCKER_REGISTRY=${DOCKER_REGISTRY:-docker.io}
             echo ${DOCKER_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin ${DOCKER_REGISTRY}
             docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG} --target=image_short --pull --push .
+            docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}-fips --target=image_fips --pull --push .
             docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}-full:${DOCKER_TAG} --target=image_full --pull --push .
           fi
 

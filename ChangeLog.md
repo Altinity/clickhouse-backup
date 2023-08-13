@@ -1,11 +1,54 @@
-# v2.3.0 (not yet released)
+# v2.4.0 (not released yet)
 IMPROVEMENTS
+- first implementation for properly backup S3/GCS/Azure disks, support server-side copy to back up bucket during `clickhouse-backup` create and during `clickhouse-backup restore`, requires add `object_disk_path` to `s3`,`gcs`,`azblob` section, fix [447](https://github.com/Altinity/clickhouse-backup/issues/447)
+- Implementation blacklist for table engines during backup / download / upload / restore [537](https://github.com/Altinity/clickhouse-backup/issues/537)
+- restore RBAC / configs, refactoring restart clickhouse-server via `sql:SYSTEM SHUTDOWN` or `exec:systemctl restart clickhouse-server`, add `--rbac-only` and `--configs-only` options to `create`, `upload`, `download`, `restore` command. fix [706]https://github.com/Altinity/clickhouse-backup/issues/706
+- Backup/Restore RBAC related objects from Zookeeper via direct connection to zookeeper/keeper, fix [604](https://github.com/Altinity/clickhouse-backup/issues/604)
+- Add `SHARDED_OPERATION_MODE` option, to easy create backup for sharded cluster, available values `none` (no sharding), `table` (table granularity), `database` (database granularity), `first-replica` (on the lexicographically sorted first active replica), thanks @mskwon, fix [639](https://github.com/Altinity/clickhouse-backup/issues/639), fix [648](https://github.com/Altinity/clickhouse-backup/pull/648)
+- Add support for `compression_format: none` for upload and download backups created with `--rbac` / `--rbac-only` or `--configs` / `--configs-only` options, fix [713](https://github.com/Altinity/clickhouse-backup/issues/713)
+- Add support for s3 `GLACIER` storage class, when GET return error, then, it requires 5 minutes per key and restore could be slow. Use `GLACIER_IR`, it looks more robust, fix [614](https://github.com/Altinity/clickhouse-backup/issues/614)
+- Try Make ./tests/integration/ test parallel fix [721](https://github.com/Altinity/clickhouse-backup/issues/721)
+ 
+BUG FIXES
+- fix possible create backup failures during UNFREEZE not exists tables, affected 2.2.7+ version, fix [704](https://github.com/Altinity/clickhouse-backup/issues/704)
+- fix too strict `system.parts_columns` check when backup create, exclude Enum and Tuple (JSON) and Nullable(Type) vs Type corner cases, fix [685](https://github.com/Altinity/clickhouse-backup/issues/685), fix [699](https://github.com/Altinity/clickhouse-backup/issues/699)  
+- fix `--rbac` behavior when /var/lib/clickhouse/access not exists
+- restore functions via `CREATE OR REPLACE`
+- fix `skip_databases` behavior for corner case `--tables="*pattern.*"`
+- fix `skip_database_engines` behavior
+
+# v2.3.2
+BUG FIXES
+- fix error when `backups_to_keep_local: -1`, fix [698](https://github.com/Altinity/clickhouse-backup/issues/698)
+- minimal value for `download_concurrency` and `upload_concurrency` 1, fix [688](https://github.com/Altinity/clickhouse-backup/issues/688)
+- do not create UDF when use --data flag, fix [697](https://github.com/Altinity/clickhouse-backup/issues/697)
+
+# v2.3.1
+IMPROVEMENTS
+- add support `use_environment_credentials` option inside `clickhouse-server` backup object disk definition, fix [691](https://github.com/Altinity/clickhouse-backup/issues/691)
+- add but skip tests for `azure_blob_storage` backup disk for `use_embbeded_backup_restore: true`, it works, but slow, look https://github.com/ClickHouse/ClickHouse/issues/52088 for details
+
+BUG FIXES
+- fix static build for FIPS compatible mode fix [693](https://github.com/Altinity/clickhouse-backup/issues/693)
+- complete success/failure server callback notification even when main context canceled, fix [680](https://github.com/Altinity/clickhouse-backup/pull/680)
+- `clean` command will not return error when shadow directory not exists, fix [686](https://github.com/Altinity/clickhouse-backup/issues/686)
+
+# v2.3.0
+IMPROVEMENTS
+- add FIPS compatible builds and examples, fix [656](https://github.com/Altinity/clickhouse-backup/issues/656), fix [674](https://github.com/Altinity/clickhouse-backup/issues/674)
+- improve support for `use_embedded_backup_restore: true`, applied ugly workaround in test to avoid https://github.com/ClickHouse/ClickHouse/issues/43971, and applied restore workaround to resolve https://github.com/ClickHouse/ClickHouse/issues/42709
 - migrate to `clickhouse-go/v2`, fix [540](https://github.com/Altinity/clickhouse-backup/issues/540), close [562](https://github.com/Altinity/clickhouse-backup/pull/562)
 - add documentation for `AWS_ARN_ROLE` and `AWS_WEB_IDENTITY_TOKEN_FILE`, fix [563](https://github.com/Altinity/clickhouse-backup/issues/563)
 - migrate from `apex/log` to `rs/zerolog`, fix RaceConditions, fix [624](https://github.com/Altinity/clickhouse-backup/issues/624),see details https://github.com/apex/log/issues/103
 
 BUG FIXES
+- hotfix wrong empty files when disk_mapping contains not exists during create, affected 2.2.7 version, look details [676](https://github.com/Altinity/clickhouse-backup/issues/676#issue-1771732489) 
 - add `FTP_ADDRESS` and `SFTP_PORT` in Default config Readme.md section fix [668](https://github.com/Altinity/clickhouse-backup/issues/668)
+- when use `--tables=db.materialized_view` pattern, then create/restore backup also for `.inner.materialized_view` or `.inner_id.uuid`, fix [613](https://github.com/Altinity/clickhouse-backup/issues/613)
+
+# v2.2.8
+BUG FIXES
+- hotfix wrong empty files when disk_mapping contains not exists during create, affected 2.2.7 version, look details [676](https://github.com/Altinity/clickhouse-backup/issues/676#issue-1771732489)
 
 # v2.2.7
 IMPROVEMENTS

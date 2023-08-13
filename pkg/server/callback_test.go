@@ -29,7 +29,9 @@ func TestParseCallback(t *testing.T) {
 
 	passToChanHandler := func(ch chan *payload) http.HandlerFunc {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			defer r.Body.Close()
+			defer func() {
+				_ = r.Body.Close()
+			}()
 
 			var data payload
 			if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
@@ -54,113 +56,143 @@ func TestParseCallback(t *testing.T) {
 	srv := httptest.NewServer(router)
 	defer srv.Close()
 
-	t.Log("Test empty callback")
-	values := url.Values{}
-	cb, err := parseCallback(values)
-	if err != nil {
-		t.Fatalf("unexpected error when getting callback for empty values: %v", err)
-	}
-	if err := cb(ctx, nil); err != nil {
-		t.Fatalf("unexpected error when calling callback for empty values: %v", err)
-	}
-
-	t.Log("Test invalid callback URL")
-	values = url.Values{
-		"callback": []string{
-			"valid",
-			"invalid%",
+	t.Run("Test empty callback",
+		func(t *testing.T) {
+			values := url.Values{}
+			cb, err := parseCallback(values)
+			if err != nil {
+				t.Fatalf("unexpected error when getting callback for empty values: %v", err)
+			}
+			if err := cb(ctx, nil); err != nil {
+				t.Fatalf("unexpected error when calling callback for empty values: %v", err)
+			}
 		},
-	}
-	_, err = parseCallback(values)
-	if err == nil {
-		t.Fatalf("expected error when passing invalid callback URL")
-	}
+	)
 
-	t.Log("Test normal callbacks")
-	values = url.Values{
-		"callback": []string{
-			url.QueryEscape(srv.URL + goodEndpoint1),
-			url.QueryEscape(srv.URL + goodEndpoint2),
+	t.Run("Test invalid callback URL",
+		func(t *testing.T) {
+			values := url.Values{
+				"callback": []string{
+					"valid",
+					"invalid%",
+				},
+			}
+			_, err := parseCallback(values)
+			if err == nil {
+				t.Fatalf("expected error when passing invalid callback URL")
+			}
 		},
-	}
-	cb, err = parseCallback(values)
-	if err != nil {
-		t.Fatalf("unexpected error when getting callback for good endpoints: %v", err)
-	}
-	pl := payload{Key: "a", Val: "b"}
-	if err := cb(ctx, pl); err != nil {
-		t.Fatalf("unexpected error when calling callbacks for good endpoints: %v", err)
-	}
+	)
 
-	if val1 := <-goodChan1; !reflect.DeepEqual(val1, &pl) {
-		t.Fatalf("expected %v, got %v", pl, val1)
-	}
-	if val2 := <-goodChan2; !reflect.DeepEqual(val2, &pl) {
-		t.Fatalf("expected %v, got %v", pl, val2)
-	}
+	t.Run("Test normal callbacks",
+		func(t *testing.T) {
+			values := url.Values{
+				"callback": []string{
+					url.QueryEscape(srv.URL + goodEndpoint1),
+					url.QueryEscape(srv.URL + goodEndpoint2),
+				},
+			}
+			cb, err := parseCallback(values)
+			if err != nil {
+				t.Fatalf("unexpected error when getting callback for good endpoints: %v", err)
+			}
+			pl := payload{Key: "a", Val: "b"}
+			if err := cb(ctx, pl); err != nil {
+				t.Fatalf("unexpected error when calling callbacks for good endpoints: %v", err)
+			}
 
-	t.Log("Test bad callback - unresponsive host")
-	values = url.Values{
-		"callback": []string{
-			url.QueryEscape(srv.URL + goodEndpoint1),
-			url.QueryEscape("invalid.url.local"),
+			if val1 := <-goodChan1; !reflect.DeepEqual(val1, &pl) {
+				t.Fatalf("expected %v, got %v", pl, val1)
+			}
+			if val2 := <-goodChan2; !reflect.DeepEqual(val2, &pl) {
+				t.Fatalf("expected %v, got %v", pl, val2)
+			}
 		},
-	}
-	cb, err = parseCallback(values)
-	if err != nil {
-		t.Fatalf("unexpected error when getting callback for bad host: %v", err)
-	}
-	pl = payload{Key: "c", Val: "d"}
-	if err := cb(ctx, pl); err == nil {
-		t.Fatalf("expected error when calling bad host callback")
-	}
+	)
 
-	if val1 := <-goodChan1; !reflect.DeepEqual(val1, &pl) {
-		t.Fatalf("expected %v, got %v", pl, val1)
-	}
+	t.Run("Test bad callback - unresponsive host",
+		func(t *testing.T) {
+			values := url.Values{
+				"callback": []string{
+					url.QueryEscape(srv.URL + goodEndpoint1),
+					url.QueryEscape("invalid.url.local"),
+				},
+			}
+			cb, err := parseCallback(values)
+			if err != nil {
+				t.Fatalf("unexpected error when getting callback for bad host: %v", err)
+			}
+			pl := payload{Key: "c", Val: "d"}
+			if err := cb(ctx, pl); err == nil {
+				t.Fatalf("expected error when calling bad host callback")
+			}
 
-	t.Log("Test bad callback - invalid endpoint")
-	values = url.Values{
-		"callback": []string{
-			url.QueryEscape(srv.URL + goodEndpoint1),
-			url.QueryEscape(srv.URL + badEndpoint),
+			if val1 := <-goodChan1; !reflect.DeepEqual(val1, &pl) {
+				t.Fatalf("expected %v, got %v", pl, val1)
+			}
 		},
-	}
-	cb, err = parseCallback(values)
-	if err != nil {
-		t.Fatalf("unexpected error when getting callback for bad endpoint: %v", err)
-	}
-	pl = payload{Key: "e", Val: "f"}
-	if err := cb(ctx, pl); err == nil {
-		t.Fatalf("expected error when calling bad endpoint callback")
-	}
+	)
 
-	if val1 := <-goodChan1; !reflect.DeepEqual(val1, &pl) {
-		t.Fatalf("expected %v, got %v", pl, val1)
-	}
+	t.Run("Test bad callback - invalid endpoint",
+		func(t *testing.T) {
+			values := url.Values{
+				"callback": []string{
+					url.QueryEscape(srv.URL + goodEndpoint1),
+					url.QueryEscape(srv.URL + badEndpoint),
+				},
+			}
+			cb, err := parseCallback(values)
+			if err != nil {
+				t.Fatalf("unexpected error when getting callback for bad endpoint: %v", err)
+			}
+			pl := payload{Key: "e", Val: "f"}
+			if err := cb(ctx, pl); err == nil {
+				t.Fatalf("expected error when calling bad endpoint callback")
+			}
 
-	t.Log("Test nil context error")
-	values = url.Values{
-		"callback": []string{
-			url.QueryEscape(srv.URL + goodEndpoint1),
+			if val1 := <-goodChan1; !reflect.DeepEqual(val1, &pl) {
+				t.Fatalf("expected %v, got %v", pl, val1)
+			}
 		},
-	}
-	cb, err = parseCallback(values)
-	if err != nil {
-		t.Fatalf("unexpected error when getting callback for good endpoint: %v", err)
-	}
-	pl = payload{}
-	if err := cb(nil, pl); err == nil {
-		t.Fatalf("expected error when passing nil context to callback function")
-	}
+	)
 
-	t.Log("Test bad payload")
-	type recursive struct {
-		Ref *recursive `json:"Ref"`
-	}
-	badPl := recursive{}
-	badPl.Ref = &badPl
-	if err := cb(ctx, badPl); err == nil {
-		t.Fatalf("expected error when passing unmarshalable payload")
-	}
+	t.Run("Test nil context error",
+		func(t *testing.T) {
+			values := url.Values{
+				"callback": []string{
+					url.QueryEscape(srv.URL + goodEndpoint1),
+				},
+			}
+			cb, err := parseCallback(values)
+			if err != nil {
+				t.Fatalf("unexpected error when getting callback for good endpoint: %v", err)
+			}
+			pl := payload{}
+			if err := cb(nil, pl); err == nil {
+				t.Fatalf("expected error when passing nil context to callback function")
+			}
+		},
+	)
+
+	t.Run("Test bad payload",
+		func(t *testing.T) {
+			values := url.Values{
+				"callback": []string{
+					url.QueryEscape(srv.URL + goodEndpoint1),
+				},
+			}
+			cb, err := parseCallback(values)
+			if err != nil {
+				t.Fatalf("unexpected error when getting callback for good endpoint: %v", err)
+			}
+			type recursive struct {
+				Ref *recursive `json:"Ref"`
+			}
+			badPl := recursive{}
+			badPl.Ref = &badPl
+			if err := cb(ctx, badPl); err == nil {
+				t.Fatalf("expected error when passing unmarshalable payload")
+			}
+		},
+	)
 }

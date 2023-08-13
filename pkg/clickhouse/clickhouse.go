@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/rs/zerolog"
 	"os"
 	"path"
 	"path/filepath"
@@ -21,6 +20,8 @@ import (
 	"github.com/Altinity/clickhouse-backup/pkg/metadata"
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/antchfx/xmlquery"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
 
@@ -125,7 +126,7 @@ func (ch *ClickHouse) Connect() error {
 }
 
 // GetDisks - return data from system.disks table
-func (ch *ClickHouse) GetDisks(ctx context.Context) ([]Disk, error) {
+func (ch *ClickHouse) GetDisks(ctx context.Context, enrich bool) ([]Disk, error) {
 	version, err := ch.GetVersion(ctx)
 	if err != nil {
 		return nil, err
@@ -143,6 +144,15 @@ func (ch *ClickHouse) GetDisks(ctx context.Context) ([]Disk, error) {
 		if disks[i].Name == ch.Config.EmbeddedBackupDisk {
 			disks[i].IsBackup = true
 		}
+		// s3_plain disk could contain relative remote disks path, need transform it to `/var/lib/clickhouse/disks/disk_name`
+		if disks[i].Path != "" && !strings.HasPrefix(disks[i].Path, "/") {
+			for _, d := range disks {
+				if d.Name == "default" {
+					disks[i].Path = path.Join(d.Path, "disks", disks[i].Name) + "/"
+					break
+				}
+			}
+		}
 	}
 	if len(ch.Config.DiskMapping) == 0 {
 		return disks, nil
@@ -157,12 +167,15 @@ func (ch *ClickHouse) GetDisks(ctx context.Context) ([]Disk, error) {
 			delete(dm, disks[i].Name)
 		}
 	}
-	for k, v := range dm {
-		disks = append(disks, Disk{
-			Name: k,
-			Path: v,
-			Type: "local",
-		})
+	// https://github.com/Altinity/clickhouse-backup/issues/676#issuecomment-1606547960
+	if enrich {
+		for k, v := range dm {
+			disks = append(disks, Disk{
+				Name: k,
+				Path: v,
+				Type: "local",
+			})
+		}
 	}
 	return disks, nil
 }
@@ -291,7 +304,21 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 	for i, s := range skipDatabases {
 		skipDatabaseNames[i] = s.Name
 	}
-	allTablesSQL, err := ch.prepareAllTablesSQL(ctx, tablePattern, err, skipDatabaseNames, settings)
+	isSystemTablesFieldPresent := make([]IsSystemTablesFieldPresent, 0)
+	isFieldPresentSQL := `
+		SELECT 
+			countIf(name='data_path') is_data_path_present, 
+			countIf(name='data_paths') is_data_paths_present, 
+			countIf(name='uuid') is_uuid_present, 
+			countIf(name='create_table_query') is_create_table_query_present, 
+			countIf(name='total_bytes') is_total_bytes_present 
+		FROM system.columns WHERE database='system' AND table='tables'
+	`
+	if err = ch.SelectContext(ctx, &isSystemTablesFieldPresent, isFieldPresentSQL); err != nil {
+		return nil, err
+	}
+
+	allTablesSQL := ch.prepareGetTablesSQL(tablePattern, skipDatabaseNames, ch.Config.SkipTableEngines, settings, isSystemTablesFieldPresent)
 	if err != nil {
 		return nil, err
 	}
@@ -324,32 +351,65 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 	}
 	for i, table := range tables {
 		if table.TotalBytes == 0 && !table.Skip && strings.HasSuffix(table.Engine, "Tree") {
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			default:
-				tables[i].TotalBytes = ch.getTableSizeFromParts(ctx, tables[i])
-			}
+			tables[i].TotalBytes = ch.getTableSizeFromParts(ctx, tables[i])
+		}
+	}
+	// https://github.com/Altinity/clickhouse-backup/issues/613
+	if !ch.Config.UseEmbeddedBackupRestore {
+		if tables, err = ch.enrichTablesByInnerDependencies(ctx, tables, metadataPath, settings, isSystemTablesFieldPresent); err != nil {
+			return nil, err
 		}
 	}
 	return tables, nil
 }
 
-func (ch *ClickHouse) prepareAllTablesSQL(ctx context.Context, tablePattern string, err error, skipDatabases []string, settings map[string]bool) (string, error) {
-	isSystemTablesFieldPresent := make([]IsSystemTablesFieldPresent, 0)
-	isFieldPresentSQL := `
-		SELECT 
-			countIf(name='data_path') is_data_path_present, 
-			countIf(name='data_paths') is_data_paths_present, 
-			countIf(name='uuid') is_uuid_present, 
-			countIf(name='create_table_query') is_create_table_query_present, 
-			countIf(name='total_bytes') is_total_bytes_present 
-		FROM system.columns WHERE database='system' AND table='tables'
-	`
-	if err = ch.SelectContext(ctx, &isSystemTablesFieldPresent, isFieldPresentSQL); err != nil {
-		return "", err
+// https://github.com/Altinity/clickhouse-backup/issues/613
+func (ch *ClickHouse) enrichTablesByInnerDependencies(ctx context.Context, tables []Table, metadataPath string, settings map[string]bool, isSystemTablesFieldPresent []IsSystemTablesFieldPresent) ([]Table, error) {
+	innerTablesMissed := make([]string, 0)
+	for _, t := range tables {
+		if !t.Skip && (strings.HasPrefix(t.CreateTableQuery, "ATTACH MATERIALIZED") || strings.HasPrefix(t.CreateTableQuery, "CREATE MATERIALIZED")) {
+			if strings.Contains(t.CreateTableQuery, " TO ") && !strings.Contains(t.CreateTableQuery, " TO INNER UUID") {
+				continue
+			}
+			found := false
+			for j := range tables {
+				if tables[j].Database == t.Database && (tables[j].Name == ".inner."+t.Name || tables[j].Name == ".inner_id."+t.UUID) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				missedInnerTableName := ".inner." + t.Name
+				if t.UUID != "" {
+					missedInnerTableName = ".inner_id." + t.UUID
+				}
+				innerTablesMissed = append(innerTablesMissed, fmt.Sprintf("%s.%s", t.Database, missedInnerTableName))
+			}
+		}
+	}
+	if len(innerTablesMissed) == 0 {
+		return tables, nil
 	}
 
+	missedTablesSQL := ch.prepareGetTablesSQL(strings.Join(innerTablesMissed, ","), nil, nil, settings, isSystemTablesFieldPresent)
+	missedTables := make([]Table, 0)
+	var err error
+	if err = ch.SelectContext(ctx, &missedTables, missedTablesSQL); err != nil {
+		return nil, err
+	}
+	if len(missedTables) == 0 {
+		return tables, nil
+	}
+	for i, t := range missedTables {
+		missedTables[i] = ch.fixVariousVersions(ctx, t, metadataPath)
+		if t.TotalBytes == 0 && !t.Skip && strings.HasSuffix(t.Engine, "Tree") {
+			missedTables[i].TotalBytes = ch.getTableSizeFromParts(ctx, missedTables[i])
+		}
+	}
+	return append(missedTables, tables...), nil
+}
+
+func (ch *ClickHouse) prepareGetTablesSQL(tablePattern string, skipDatabases, skipTableEngines []string, settings map[string]bool, isSystemTablesFieldPresent []IsSystemTablesFieldPresent) string {
 	allTablesSQL := "SELECT database, name, engine "
 	if len(isSystemTablesFieldPresent) > 0 && isSystemTablesFieldPresent[0].IsDataPathPresent > 0 {
 		allTablesSQL += ", data_path "
@@ -369,18 +429,21 @@ func (ch *ClickHouse) prepareAllTablesSQL(ctx context.Context, tablePattern stri
 
 	allTablesSQL += "  FROM system.tables WHERE is_temporary = 0"
 	if tablePattern != "" {
-		replacer := strings.NewReplacer(".", "\\.", ",", "|", "*", ".*", "?", ".", " ", "", "'", "")
-		allTablesSQL += fmt.Sprintf(" AND match(concat(database,'.',name),'%s') ", replacer.Replace(tablePattern))
+		replacer := strings.NewReplacer(".", "\\.", ",", "$|^", "*", ".*", "?", ".", " ", "", "`", "", `"`, "", "-", "\\-")
+		allTablesSQL += fmt.Sprintf(" AND match(concat(database,'.',name),'^%s$') ", replacer.Replace(tablePattern))
 	}
 	if len(skipDatabases) > 0 {
 		allTablesSQL += fmt.Sprintf(" AND database NOT IN ('%s')", strings.Join(skipDatabases, "','"))
+	}
+	if len(skipTableEngines) > 0 {
+		allTablesSQL += fmt.Sprintf(" AND engine NOT IN ('%s')", strings.Join(skipTableEngines, "','"))
 	}
 	// try to upload big tables first
 	if len(isSystemTablesFieldPresent) > 0 && isSystemTablesFieldPresent[0].IsTotalBytesPresent > 0 {
 		allTablesSQL += " ORDER BY total_bytes DESC"
 	}
 	allTablesSQL = ch.addSettingsSQL(allTablesSQL, settings)
-	return allTablesSQL, nil
+	return allTablesSQL
 }
 
 func (ch *ClickHouse) addSettingsSQL(inputSQL string, settings map[string]bool) string {
@@ -406,24 +469,35 @@ func (ch *ClickHouse) addSettingsSQL(inputSQL string, settings map[string]bool) 
 	return inputSQL
 }
 
+var tableNameSuffixRE = regexp.MustCompile("\\.\"[^\"]+\"$|\\.`[^`]+`$|\\.[a-zA-Z0-9\\-_]+$")
+
 // GetDatabases - return slice of all non system databases for backup
 func (ch *ClickHouse) GetDatabases(ctx context.Context, cfg *config.Config, tablePattern string) ([]Database, error) {
 	allDatabases := make([]Database, 0)
 	skipDatabases := []string{"system", "INFORMATION_SCHEMA", "information_schema", "_temporary_and_external_tables"}
 	bypassDatabases := make([]string, 0)
-	var skipTablesPatterns, bypassTablesPatterns []string
-	skipTablesPatterns = append(skipTablesPatterns, cfg.ClickHouse.SkipTables...)
-	bypassTablesPatterns = append(bypassTablesPatterns, strings.Split(tablePattern, ",")...)
+	skipTablesPatterns := make([]string, 0)
+	bypassTablesPatterns := make([]string, 0)
+	if len(cfg.ClickHouse.SkipTables) > 0 {
+		skipTablesPatterns = append(skipTablesPatterns, cfg.ClickHouse.SkipTables...)
+	}
+	if tablePattern != "" {
+		bypassTablesPatterns = append(bypassTablesPatterns, strings.Split(tablePattern, ",")...)
+	}
 	for _, pattern := range skipTablesPatterns {
 		pattern = strings.Trim(pattern, " \r\t\n")
 		if strings.HasSuffix(pattern, ".*") {
-			skipDatabases = append(skipDatabases, strings.TrimSuffix(pattern, ".*"))
+			skipDatabases = common.AddStringToSliceIfNotExists(skipDatabases, strings.Trim(strings.TrimSuffix(pattern, ".*"), "\"` "))
+		} else {
+			skipDatabases = common.AddStringToSliceIfNotExists(skipDatabases, strings.Trim(tableNameSuffixRE.ReplaceAllString(pattern, ""), "\"` "))
 		}
 	}
 	for _, pattern := range bypassTablesPatterns {
 		pattern = strings.Trim(pattern, " \r\t\n")
 		if strings.HasSuffix(pattern, ".*") {
-			bypassDatabases = append(bypassDatabases, strings.TrimSuffix(pattern, ".*"))
+			bypassDatabases = common.AddStringToSliceIfNotExists(bypassDatabases, strings.Trim(strings.TrimSuffix(pattern, ".*"), "\"` "))
+		} else {
+			bypassDatabases = common.AddStringToSliceIfNotExists(bypassDatabases, strings.Trim(tableNameSuffixRE.ReplaceAllString(pattern, ""), "\"` "))
 		}
 	}
 	metadataPath, err := ch.getMetadataPath(ctx)
@@ -434,18 +508,19 @@ func (ch *ClickHouse) GetDatabases(ctx context.Context, cfg *config.Config, tabl
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
+		fileMatchToRE := strings.NewReplacer("*", ".*", "?", ".", "(", "\\(", ")", "\\)", "[", "\\[", "]", "\\]", "$", "\\$", "^", "\\^")
 		if len(bypassDatabases) > 0 {
 			allDatabasesSQL := fmt.Sprintf(
-				"SELECT name, engine FROM system.databases WHERE name NOT IN ('%s') AND name IN ('%s')",
-				strings.Join(skipDatabases, "','"), strings.Join(bypassDatabases, "','"),
+				"SELECT name, engine FROM system.databases WHERE NOT match(name,'^(%s)$') AND match(name,'^(%s)$')",
+				fileMatchToRE.Replace(strings.Join(skipDatabases, "|")), fileMatchToRE.Replace(strings.Join(bypassDatabases, "|")),
 			)
 			if err := ch.StructSelect(&allDatabases, allDatabasesSQL); err != nil {
 				return nil, err
 			}
 		} else {
 			allDatabasesSQL := fmt.Sprintf(
-				"SELECT name, engine FROM system.databases WHERE name NOT IN ('%s')",
-				strings.Join(skipDatabases, "','"),
+				"SELECT name, engine FROM system.databases WHERE NOT match(name,'^(%s)$')",
+				fileMatchToRE.Replace(strings.Join(skipDatabases, "|")),
 			)
 			if err := ch.StructSelect(&allDatabases, allDatabasesSQL); err != nil {
 				return nil, err
@@ -503,7 +578,7 @@ func (ch *ClickHouse) fixVariousVersions(ctx context.Context, t Table, metadataP
 	if t.UUID == "00000000-0000-0000-0000-000000000000" {
 		t.UUID = ""
 	}
-	// version 1.1.54394 no has query column
+	// version 1.1.54394 has no query column
 	if strings.TrimSpace(t.CreateTableQuery) == "" {
 		t.CreateTableQuery = ch.ShowCreateTable(ctx, t.Database, t.Name)
 	}
@@ -559,7 +634,7 @@ func (ch *ClickHouse) FreezeTableOldWay(ctx context.Context, table *Table, name 
 		PartitionID string `ch:"partition_id"`
 	}
 	q := fmt.Sprintf("SELECT DISTINCT partition_id FROM `system`.`parts` WHERE database='%s' AND table='%s' %s", table.Database, table.Name, ch.Config.FreezeByPartWhere)
-	if err := ch.conn.Select(ctx, &partitions, q); err != nil {
+	if err := ch.SelectContext(ctx, &partitions, q); err != nil {
 		return fmt.Errorf("can't get partitions for '%s.%s': %w", table.Database, table.Name, err)
 	}
 	withNameQuery := ""
@@ -618,7 +693,7 @@ func (ch *ClickHouse) FreezeTable(ctx context.Context, table *Table, name string
 	}
 	query := fmt.Sprintf("ALTER TABLE `%s`.`%s` FREEZE %s;", table.Database, table.Name, withNameQuery)
 	if err := ch.QueryContext(ctx, query); err != nil {
-		if (strings.Contains(err.Error(), "code: 60") || strings.Contains(err.Error(), "code: 81")) && ch.Config.IgnoreNotExistsErrorDuringFreeze {
+		if (strings.Contains(err.Error(), "code: 60") || strings.Contains(err.Error(), "code: 81") || strings.Contains(err.Error(), "code: 218")) && ch.Config.IgnoreNotExistsErrorDuringFreeze {
 			log.Warn().Msgf("can't freeze table: %v", err)
 			return nil
 		}
@@ -901,7 +976,7 @@ func (ch *ClickHouse) SelectSingleRow(ctx context.Context, dest interface{}, que
 
 func (ch *ClickHouse) SelectSingleRowNoCtx(dest interface{}, query string, args ...interface{}) error {
 	err := ch.conn.QueryRow(context.Background(), ch.LogQuery(query, args...), args...).Scan(dest)
-	if err != nil && err == sql.ErrNoRows {
+	if err != nil && errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	return err
@@ -928,21 +1003,32 @@ func (ch *ClickHouse) IsAtomic(database string) (bool, error) {
 	return isDatabaseAtomic == "Atomic", nil
 }
 
-// GetAccessManagementPath @todo think about how to properly extract access_management_path from /etc/clickhouse-server/
+// GetAccessManagementPath extract path from following sources system.user_directories, access_control_path from /var/lib/clickhouse/preprocessed_configs/config.xml, system.disks
 func (ch *ClickHouse) GetAccessManagementPath(ctx context.Context, disks []Disk) (string, error) {
 	accessPath := "/var/lib/clickhouse/access"
 	rows := make([]struct {
 		AccessPath string `ch:"access_path"`
 	}, 0)
 	if err := ch.SelectContext(ctx, &rows, "SELECT JSONExtractString(params,'path') AS access_path FROM system.user_directories WHERE type='local directory'"); err != nil || len(rows) == 0 {
+		configFile, doc, err := ch.ParseXML(ctx, "config.xml")
+		if err != nil {
+			log.Warn().Msgf("can't parse config.xml from %s, error: %v", configFile, err)
+		}
+		if err == nil {
+			accessControlPathNode := doc.SelectElement("access_control_path")
+			if accessControlPathNode != nil {
+				return accessControlPathNode.InnerText(), nil
+			}
+		}
+
 		if disks == nil {
-			disks, err = ch.GetDisks(ctx)
+			disks, err = ch.GetDisks(ctx, false)
 			if err != nil {
 				return "", err
 			}
 		}
 		for _, disk := range disks {
-			if _, err := os.Stat(path.Join(disk.Path, "access")); !os.IsNotExist(err) {
+			if fInfo, err := os.Stat(path.Join(disk.Path, "access")); err == nil && fInfo.IsDir() {
 				accessPath = path.Join(disk.Path, "access")
 				break
 			}
@@ -967,6 +1053,9 @@ func (ch *ClickHouse) GetUserDefinedFunctions(ctx context.Context) ([]Function, 
 
 	if err := ch.SelectContext(ctx, &allFunctions, allFunctionsSQL); err != nil {
 		return nil, err
+	}
+	for i := range allFunctions {
+		allFunctions[i].CreateQuery = strings.Replace(allFunctions[i].CreateQuery, "CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1)
 	}
 	return allFunctions, nil
 }
@@ -1074,22 +1163,37 @@ func (ch *ClickHouse) CheckSystemPartsColumns(ctx context.Context, table *Table)
 		}
 	}
 	ch.isPartsColumnPresent = 1
-	isPartsColumnsInconsistent := make([]struct {
+	partColumnsDataTypes := make([]struct {
 		Column string   `ch:"column"`
 		Types  []string `ch:"uniq_types"`
 	}, 0)
 	partsColumnsSQL := "SELECT column, groupUniqArray(type) AS uniq_types " +
 		"FROM system.parts_columns " +
-		"WHERE active AND database=? AND table=? " +
+		"WHERE active AND database=? AND table=? AND type NOT LIKE 'Enum%' AND type NOT LIKE 'Tuple(%' " +
 		"GROUP BY column HAVING length(uniq_types) > 1"
-	if err := ch.SelectContext(ctx, &isPartsColumnsInconsistent, partsColumnsSQL, table.Database, table.Name); err != nil {
+	if err := ch.SelectContext(ctx, &partColumnsDataTypes, partsColumnsSQL, table.Database, table.Name); err != nil {
 		return err
 	}
-	if len(isPartsColumnsInconsistent) > 0 {
-		for i := range isPartsColumnsInconsistent {
-			log.Error().Msgf("`%s`.`%s` have inconsistent data types %#v for \"%s\" column", table.Database, table.Name, isPartsColumnsInconsistent[i].Types, isPartsColumnsInconsistent[i].Column)
+	isPartColumnsInconsistentDataTypes := false
+	if len(partColumnsDataTypes) > 0 {
+		for i := range partColumnsDataTypes {
+			isNullablePresent := false
+			isNotNullablePresent := false
+			for _, dataType := range partColumnsDataTypes[i].Types {
+				if strings.Contains(dataType, "Nullable") {
+					isNullablePresent = true
+				} else {
+					isNotNullablePresent = true
+				}
+			}
+			if !isNullablePresent && isNotNullablePresent {
+				log.Error().Msgf("`%s`.`%s` have inconsistent data types %#v for \"%s\" column", table.Database, table.Name, partColumnsDataTypes[i].Types, partColumnsDataTypes[i].Column)
+				isPartColumnsInconsistentDataTypes = true
+			}
 		}
-		return fmt.Errorf("`%s`.`%s` have inconsistent data types for active data part in system.parts_columns", table.Database, table.Name)
+		if isPartColumnsInconsistentDataTypes {
+			return fmt.Errorf("`%s`.`%s` have inconsistent data types for active data part in system.parts_columns", table.Database, table.Name)
+		}
 	}
 	return nil
 }
@@ -1114,4 +1218,64 @@ func (ch *ClickHouse) CheckSettingsExists(ctx context.Context, settings map[stri
 		settings[item.Name] = item.IsPresent > 0
 	}
 	return settings, nil
+}
+
+func (ch *ClickHouse) GetPreprocessedConfigPath(ctx context.Context) (string, error) {
+	metadataPath, err := ch.getMetadataPath(ctx)
+	if err != nil {
+		return "/var/lib/clickhouse/preprocessed_configs", err
+	}
+	paths := strings.Split(metadataPath, "/")
+	return path.Join("/", path.Join(paths[:len(paths)-1]...), "preprocessed_configs"), nil
+}
+
+func (ch *ClickHouse) ParseXML(ctx context.Context, configName string) (configFile string, doc *xmlquery.Node, err error) {
+	preprocessedConfigPath, err := ch.GetPreprocessedConfigPath(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	configFile = path.Join(preprocessedConfigPath, configName)
+	f, err := os.Open(configFile)
+	if err != nil {
+		return "", nil, err
+	}
+	doc, err = xmlquery.Parse(f)
+	if err != nil {
+		return "", nil, err
+	}
+	return configFile, doc, nil
+}
+
+var preprocessedXMLSettings map[string]map[string]string
+
+// GetPreprocessedXMLSettings - @todo think about from_end and from_zookeeper corner cases
+func (ch *ClickHouse) GetPreprocessedXMLSettings(ctx context.Context, settingsXPath map[string]string, fileName string) (map[string]string, error) {
+	preprocessedPath, err := ch.GetPreprocessedConfigPath(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resultSettings := make(map[string]string, len(settingsXPath))
+	if _, exists := preprocessedXMLSettings[fileName]; !exists {
+		preprocessedXMLSettings[fileName] = make(map[string]string)
+	}
+	var doc *xmlquery.Node
+	for settingName, xpathExpr := range settingsXPath {
+		if value, exists := preprocessedXMLSettings[fileName][settingName]; exists {
+			resultSettings[settingName] = value
+		} else {
+			if doc == nil {
+				f, err := os.Open(path.Join(preprocessedPath, fileName))
+				if err != nil {
+					return nil, err
+				}
+				if doc, err = xmlquery.Parse(f); err != nil {
+					return nil, err
+				}
+			}
+			for _, node := range xmlquery.Find(doc, xpathExpr) {
+				resultSettings[settingName] = node.InnerText()
+			}
+		}
+	}
+	return resultSettings, nil
 }

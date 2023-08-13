@@ -5,12 +5,13 @@ general:
   download_concurrency: 4
   restore_schema_on_cluster: "{cluster}"
 clickhouse:
-  host: 127.0.0.1
+  host: clickhouse
   port: 9000
   restart_command: bash -c 'echo "FAKE RESTART"'
 gcs:
   bucket: altinity-qa-test
   path: backup
+  object_disk_path: object_disks
   credentials_file: /etc/clickhouse-backup/credentials.json
   compression_format: tar
 #  endpoint: http://gcs:8080/storage/v1/
