@@ -483,6 +483,10 @@ func ShallSkipDatabase(cfg *config.Config, targetDB, tablePattern string) bool {
 			if strings.HasSuffix(pattern, ".*") && strings.TrimSuffix(pattern, ".*") == targetDB {
 				return false
 			}
+			// https://github.com/Altinity/clickhouse-backup/issues/663
+			if matched, err := filepath.Match(pattern, targetDB+"."); err == nil && matched {
+				return false
+			}
 		}
 		return true
 	}
@@ -492,7 +496,8 @@ func ShallSkipDatabase(cfg *config.Config, targetDB, tablePattern string) bool {
 		skipTablesPatterns = append(skipTablesPatterns, cfg.ClickHouse.SkipTables...)
 		for _, pattern := range skipTablesPatterns {
 			pattern = strings.Trim(pattern, " \r\t\n")
-			if strings.HasSuffix(pattern, ".*") && strings.TrimSuffix(pattern, ".*") == targetDB {
+			// https://github.com/Altinity/clickhouse-backup/issues/663
+			if matched, err := filepath.Match(pattern, targetDB+"."); err == nil && matched {
 				return true
 			}
 		}

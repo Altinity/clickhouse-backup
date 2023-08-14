@@ -225,10 +225,11 @@ func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB, tablePatt
 		targetDB = database.Name
 	}
 	// https://github.com/Altinity/clickhouse-backup/issues/583
+	// https://github.com/Altinity/clickhouse-backup/issues/663
 	if ShallSkipDatabase(b.cfg, targetDB, tablePattern) {
 		return nil
 	}
-	//https://github.com/Altinity/clickhouse-backup/issues/514
+	// https://github.com/Altinity/clickhouse-backup/issues/514
 	if schemaOnly && dropTable {
 		onCluster := ""
 		if b.cfg.General.RestoreSchemaOnCluster != "" {
