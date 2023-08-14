@@ -318,9 +318,9 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 		return result[i].UploadDate.Before(result[j].UploadDate)
 	})
 	if err = bd.saveMetadataCache(ctx, listCache, result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("bd.saveMetadataCache return error: %v", err)
 	}
-	return result, err
+	return result, nil
 }
 
 func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remotePath string, localPath string) error {

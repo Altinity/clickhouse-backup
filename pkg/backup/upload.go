@@ -74,7 +74,7 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 
 	remoteBackups, err := b.dst.BackupList(ctx, false, "")
 	if err != nil {
-		return err
+		return fmt.Errorf("b.dst.BackupList return error: %v", err)
 	}
 	for i := range remoteBackups {
 		if backupName == remoteBackups[i].BackupName {
@@ -87,7 +87,7 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	}
 	backupMetadata, err := b.ReadBackupMetadataLocal(ctx, backupName)
 	if err != nil {
-		return err
+		return fmt.Errorf("b.ReadBackupMetadataLocal return error: %v", err)
 	}
 	var tablesForUpload ListOfTables
 	b.isEmbedded = strings.Contains(backupMetadata.Tags, "embedded")
@@ -98,7 +98,7 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	if len(backupMetadata.Tables) != 0 {
 		tablesForUpload, err = b.prepareTableListToUpload(ctx, backupName, tablePattern, partitions)
 		if err != nil {
-			return err
+			return fmt.Errorf("b.prepareTableListToUpload return error: %v", err)
 		}
 	}
 	tablesForUploadFromDiff := map[metadata.TableTitle]metadata.TableMetadata{}
@@ -106,13 +106,13 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	if diffFrom != "" && !b.isEmbedded {
 		tablesForUploadFromDiff, err = b.getTablesForUploadDiffLocal(ctx, diffFrom, backupMetadata, tablePattern)
 		if err != nil {
-			return err
+			return fmt.Errorf("b.getTablesForUploadDiffLocal return error: %v", err)
 		}
 	}
 	if diffFromRemote != "" && !b.isEmbedded {
 		tablesForUploadFromDiff, err = b.getTablesForUploadDiffRemote(ctx, diffFromRemote, backupMetadata, tablePattern)
 		if err != nil {
-			return err
+			return fmt.Errorf("b.getTablesForUploadDiffRemote return error: %v", err)
 		}
 	}
 	if b.resume {
@@ -181,12 +181,12 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	if !b.isEmbedded {
 		// upload rbac for backup
 		if backupMetadata.RBACSize, err = b.uploadRBACData(ctx, backupName); err != nil {
-			return err
+			return fmt.Errorf("b.uploadRBACData return error: %v", err)
 		}
 
 		// upload configs for backup
 		if backupMetadata.ConfigSize, err = b.uploadConfigData(ctx, backupName); err != nil {
-			return err
+			return fmt.Errorf("b.uploadConfigData return error: %v", err)
 		}
 	}
 
@@ -224,7 +224,7 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 		localClickHouseBackupFile := path.Join(b.EmbeddedBackupDataPath, backupName, ".backup")
 		remoteClickHouseBackupFile := path.Join(backupName, ".backup")
 		if err = b.uploadSingleBackupFile(ctx, localClickHouseBackupFile, remoteClickHouseBackupFile); err != nil {
-			return err
+			return fmt.Errorf("b.uploadSingleBackupFile return error: %v", err)
 		}
 	}
 	if b.resume {
