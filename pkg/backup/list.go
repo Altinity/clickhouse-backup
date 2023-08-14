@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ricochet2200/go-disk-usage/du"
 	"io"
 	"os"
 	"path"
@@ -173,7 +174,7 @@ func (b *Backuper) GetLocalBackups(ctx context.Context, disks []clickhouse.Disk)
 	}
 	if disks == nil {
 		disks = []clickhouse.Disk{
-			{Name: "default", Path: "/var/lib/clickhouse"},
+			{Name: "default", Path: "/var/lib/clickhouse", Type: "local", FreeSpace: du.NewDiskUsage("/var/lib/clickhouse").Free()},
 		}
 	}
 	defaultDataPath, err := b.ch.GetDefaultPath(disks)

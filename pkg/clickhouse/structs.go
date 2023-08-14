@@ -38,10 +38,11 @@ type IsSystemTablesFieldPresent struct {
 }
 
 type Disk struct {
-	Name     string `ch:"name"`
-	Path     string `ch:"path"`
-	Type     string `ch:"type"`
-	IsBackup bool
+	Name      string `ch:"name"`
+	Path      string `ch:"path"`
+	Type      string `ch:"type"`
+	FreeSpace uint64 `ch:"free_space"`
+	IsBackup  bool
 }
 
 // Database - Clickhouse system.databases struct

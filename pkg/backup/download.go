@@ -15,6 +15,7 @@ import (
 	"github.com/eapache/go-resiliency/retrier"
 	"io"
 	"io/fs"
+	"math/rand"
 	"os"
 	"path"
 	"path/filepath"
@@ -219,9 +220,16 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	if !schemaOnly {
 		for _, t := range tableMetadataAfterDownload {
 			for disk := range t.Parts {
+				// https://github.com/Altinity/clickhouse-backup/issues/561, @todo think about calculate size of each part and rebalancing t.Parts
 				if _, diskExists := b.DiskToPathMap[disk]; !diskExists && disk != b.cfg.ClickHouse.EmbeddedBackupDisk {
-					b.DiskToPathMap[disk] = b.DiskToPathMap["default"]
-					log.Warnf("table '%s.%s' require disk '%s' that not found in clickhouse table system.disks, you can add nonexistent disks to `disk_mapping` in  `clickhouse` config section, data will download to %s", t.Database, t.Table, disk, b.DiskToPathMap["default"])
+					var diskPath string
+					var diskPathErr error
+					diskPath, disks, diskPathErr = b.getDiskPathForNonExistsDisk(disk, disks, remoteBackup, t)
+					if diskPathErr != nil {
+						return diskPathErr
+					}
+					b.DiskToPathMap[disk] = diskPath
+					log.Warnf("table '%s.%s' require disk '%s' that not found in clickhouse table system.disks, you can add nonexistent disks to `disk_mapping` in `clickhouse` config section, data will download to %s", t.Database, t.Table, disk, b.DiskToPathMap[disk])
 				}
 			}
 		}
@@ -963,4 +971,46 @@ func (b *Backuper) downloadSingleBackupFile(ctx context.Context, remoteFile stri
 		b.resumableState.AppendToState(remoteFile, 0)
 	}
 	return nil
+}
+
+// getDiskPathForNonExistsDisk - https://github.com/Altinity/clickhouse-backup/issues/561
+// allow to Restore to new server with different storage policy, different disk count,
+// implements `least_used` for normal disk and `round_robin` for Object disks
+func (b *Backuper) getDiskPathForNonExistsDisk(disk string, disks []clickhouse.Disk, remoteBackup storage.Backup, t metadata.TableMetadata) (string, []clickhouse.Disk, error) {
+	diskType, ok := remoteBackup.DiskTypes[disk]
+	if !ok {
+		return "", disks, fmt.Errorf("diskType for %s not found in %#v in %s/metadata.json", disk, remoteBackup.DiskTypes, remoteBackup.BackupName)
+	}
+	var filteredDisks []clickhouse.Disk
+	for _, d := range disks {
+		if !d.IsBackup && d.Type == diskType {
+			filteredDisks = append(filteredDisks, d)
+		}
+	}
+	if len(filteredDisks) == 0 {
+		return "", disks, fmt.Errorf("diskType: %s not found in system.disks", diskType)
+	}
+	// round_robin for non-local disks
+	if diskType != "local" {
+		roundRobinIdx := rand.Intn(len(filteredDisks))
+		return filteredDisks[roundRobinIdx].Path, disks, nil
+	}
+	// least_used for local
+	freeSpace := uint64(0)
+	leastUsedIdx := -1
+	for idx, d := range filteredDisks {
+		if filteredDisks[idx].FreeSpace > freeSpace {
+			freeSpace = d.FreeSpace
+			leastUsedIdx = idx
+		}
+	}
+	if leastUsedIdx < 0 {
+		return "", disks, fmt.Errorf("%s free space, not found in system.disks with `local` type", utils.FormatBytes(t.TotalBytes))
+	}
+	for idx := range disks {
+		if disks[idx].Name == filteredDisks[leastUsedIdx].Name {
+			disks[idx].FreeSpace -= t.TotalBytes
+		}
+	}
+	return filteredDisks[leastUsedIdx].Path, disks, nil
 }
