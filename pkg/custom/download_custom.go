@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"github.com/Altinity/clickhouse-backup/pkg/utils"
-	"github.com/apex/log"
 	"github.com/eapache/go-resiliency/retrier"
+	"github.com/rs/zerolog/log"
 	"time"
 )
 
@@ -39,15 +39,15 @@ func Download(ctx context.Context, cfg *config.Config, backupName string, tableP
 		return utils.ExecCmd(ctx, cfg.Custom.CommandTimeoutDuration, args[0], args[1:]...)
 	})
 	if err == nil {
-		log.
-			WithField("operation", "download_custom").
-			WithField("duration", utils.HumanizeDuration(time.Since(startCustomDownload))).
-			Info("done")
+		log.Info().
+			Str("operation", "download_custom").
+			Str("duration", utils.HumanizeDuration(time.Since(startCustomDownload))).
+			Msg("done")
 		return nil
 	} else {
-		log.
-			WithField("operation", "download_custom").
-			Error(err.Error())
+		log.Error().
+			Str("operation", "download_custom").
+			Err(err).Send()
 		return err
 	}
 }

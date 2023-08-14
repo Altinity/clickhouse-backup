@@ -6,11 +6,14 @@ import (
 	"context"
 	"fmt"
 	"github.com/Altinity/clickhouse-backup/pkg/config"
-	"github.com/Altinity/clickhouse-backup/pkg/logcli"
+	"github.com/Altinity/clickhouse-backup/pkg/log_helper"
 	"github.com/Altinity/clickhouse-backup/pkg/partition"
 	"github.com/Altinity/clickhouse-backup/pkg/status"
 	"github.com/Altinity/clickhouse-backup/pkg/utils"
 	"github.com/google/uuid"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/pkgerrors"
+	stdlog "log"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -23,7 +26,7 @@ import (
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
-	"github.com/apex/log"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/mod/semver"
 
 	_ "github.com/ClickHouse/clickhouse-go/v2"
@@ -58,16 +61,16 @@ var defaultTestData = []TestDataStruct{
 	{
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
 		Name:   ".inner.table1",
-		Schema: "(Date Date, TimeStamp DateTime, Log String) ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)",
+		Schema: "(Date Date, TimeStamp DateTime, Logger String) ENGINE = MergeTree(Date, (TimeStamp, Logger), 8192)",
 		Rows: []map[string]interface{}{
-			{"Date": toDate("2018-10-23"), "TimeStamp": toTS("2018-10-23 07:37:14"), "Log": "One"},
-			{"Date": toDate("2018-10-23"), "TimeStamp": toTS("2018-10-23 07:37:15"), "Log": "Two"},
-			{"Date": toDate("2018-10-24"), "TimeStamp": toTS("2018-10-24 07:37:16"), "Log": "Three"},
-			{"Date": toDate("2018-10-24"), "TimeStamp": toTS("2018-10-24 07:37:17"), "Log": "Four"},
-			{"Date": toDate("2019-10-25"), "TimeStamp": toTS("2019-01-25 07:37:18"), "Log": "Five"},
-			{"Date": toDate("2019-10-25"), "TimeStamp": toTS("2019-01-25 07:37:19"), "Log": "Six"},
+			{"Date": toDate("2018-10-23"), "TimeStamp": toTS("2018-10-23 07:37:14"), "Logger": "One"},
+			{"Date": toDate("2018-10-23"), "TimeStamp": toTS("2018-10-23 07:37:15"), "Logger": "Two"},
+			{"Date": toDate("2018-10-24"), "TimeStamp": toTS("2018-10-24 07:37:16"), "Logger": "Three"},
+			{"Date": toDate("2018-10-24"), "TimeStamp": toTS("2018-10-24 07:37:17"), "Logger": "Four"},
+			{"Date": toDate("2019-10-25"), "TimeStamp": toTS("2019-01-25 07:37:18"), "Logger": "Five"},
+			{"Date": toDate("2019-10-25"), "TimeStamp": toTS("2019-01-25 07:37:19"), "Logger": "Six"},
 		},
-		Fields:  []string{"Date", "TimeStamp", "Log"},
+		Fields:  []string{"Date", "TimeStamp", "Logger"},
 		OrderBy: "TimeStamp",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
@@ -305,11 +308,11 @@ var defaultIncrementData = []TestDataStruct{
 	{
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
 		Name:   ".inner.table1",
-		Schema: "(Date Date, TimeStamp DateTime, Log String) ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)",
+		Schema: "(Date Date, TimeStamp DateTime, Logger String) ENGINE = MergeTree(Date, (TimeStamp, Logger), 8192)",
 		Rows: []map[string]interface{}{
-			{"Date": toDate("2019-10-26"), "TimeStamp": toTS("2019-01-26 07:37:19"), "Log": "Seven"},
+			{"Date": toDate("2019-10-26"), "TimeStamp": toTS("2019-01-26 07:37:19"), "Logger": "Seven"},
 		},
-		Fields:  []string{"Date", "TimeStamp", "Log"},
+		Fields:  []string{"Date", "TimeStamp", "Logger"},
 		OrderBy: "TimeStamp",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
@@ -393,12 +396,16 @@ var defaultIncrementData = []TestDataStruct{
 }
 
 func init() {
-	log.SetHandler(logcli.New(os.Stdout))
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixMs
+	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
+	consoleWriter := zerolog.ConsoleWriter{Out: os.Stdout, NoColor: true, TimeFormat: "2006-01-02 15:04:05.000"}
+	log.Logger = zerolog.New(zerolog.SyncWriter(consoleWriter)).With().Timestamp().Logger()
+	stdlog.SetOutput(log.Logger)
 	logLevel := "info"
 	if os.Getenv("LOG_LEVEL") != "" {
 		logLevel = os.Getenv("LOG_LEVEL")
 	}
-	log.SetLevelFromString(logLevel)
+	log_helper.SetLogLevelFromString(logLevel)
 	r := require.New(&testing.T{})
 	installDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
 	r.NoError(dockerExec("clickhouse-backup", "update-ca-certificates"))
@@ -457,7 +464,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 	ch.queryWithNoError(r, "DROP ROLE IF EXISTS test_rbac")
 	ch.queryWithNoError(r, "DROP USER IF EXISTS test_rbac")
 
-	log.Info("create RBAC related objects")
+	log.Info().Msg("create RBAC related objects")
 	ch.queryWithNoError(r, "CREATE SETTINGS PROFILE test_rbac SETTINGS max_execution_time=60")
 	ch.queryWithNoError(r, "CREATE ROLE test_rbac SETTINGS PROFILE 'test_rbac'")
 	ch.queryWithNoError(r, "CREATE USER test_rbac IDENTIFIED BY 'test_rbac' DEFAULT ROLE test_rbac")
@@ -469,14 +476,14 @@ func TestDoRestoreRBAC(t *testing.T) {
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_rbac_backup"))
 	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
 
-	log.Info("drop all RBAC related objects after backup")
+	log.Info().Msg("drop all RBAC related objects after backup")
 	ch.queryWithNoError(r, "DROP SETTINGS PROFILE test_rbac")
 	ch.queryWithNoError(r, "DROP QUOTA test_rbac")
 	ch.queryWithNoError(r, "DROP ROW POLICY test_rbac ON default.test_rbac")
 	ch.queryWithNoError(r, "DROP ROLE test_rbac")
 	ch.queryWithNoError(r, "DROP USER test_rbac")
 
-	log.Info("download+restore RBAC")
+	log.Info().Msg("download+restore RBAC")
 	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
 	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup download test_rbac_backup"))
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--rm", "--rbac", "--rbac-only", "test_rbac_backup"))
@@ -624,7 +631,7 @@ func TestLongListRemote(t *testing.T) {
 	cacheClearDuration := time.Since(startCacheClear)
 
 	r.Greater(cacheClearDuration, cashedDuration)
-	log.Infof("noCacheDuration=%s cachedDuration=%s cacheClearDuration=%s", noCacheDuration.String(), cashedDuration.String(), cacheClearDuration.String())
+	log.Info().Msgf("noCacheDuration=%s cachedDuration=%s cacheClearDuration=%s", noCacheDuration.String(), cashedDuration.String(), cacheClearDuration.String())
 
 	testListRemoteAllBackups := make([]string, totalCacheCount)
 	for i := 0; i < totalCacheCount; i++ {
@@ -648,7 +655,7 @@ func TestServerAPI(t *testing.T) {
 	randFields := 10
 	fillDatabaseForAPIServer(maxTables, minFields, randFields, ch, r, fieldTypes)
 
-	log.Info("Run `clickhouse-backup server --watch` in background")
+	log.Info().Msg("Run `clickhouse-backup server --watch` in background")
 	r.NoError(dockerExec("-d", "clickhouse-backup", "bash", "-ce", "clickhouse-backup server --watch &>>/tmp/clickhouse-backup-server.log"))
 	time.Sleep(1 * time.Second)
 
@@ -656,7 +663,7 @@ func TestServerAPI(t *testing.T) {
 
 	testAPIBackupTables(r)
 
-	log.Info("Check /backup/actions")
+	log.Info().Msg("Check /backup/actions")
 	ch.queryWithNoError(r, "SELECT count() FROM system.backup_actions")
 
 	testAPIBackupUpload(r)
@@ -681,7 +688,7 @@ func TestServerAPI(t *testing.T) {
 
 func testAPIRestart(r *require.Assertions, ch *TestClickHouse) {
 	out, err := dockerExecOut("clickhouse-backup", "bash", "-ce", "curl -sfL -XPOST 'http://localhost:7171/restart'")
-	log.Debug(out)
+	log.Debug().Msg(out)
 	r.NoError(err)
 	r.Contains(out, "acknowledged")
 
@@ -696,7 +703,7 @@ func testAPIRestart(r *require.Assertions, ch *TestClickHouse) {
 func runClickHouseClientInsertSystemBackupActions(r *require.Assertions, ch *TestClickHouse, commands []string, needWait bool) {
 	sql := "INSERT INTO system.backup_actions(command) " + "VALUES ('" + strings.Join(commands, "'),('") + "')"
 	out, err := dockerExecOut("clickhouse", "bash", "-ce", fmt.Sprintf("clickhouse client --echo -mn -q \"%s\"", sql))
-	log.Debug(out)
+	log.Debug().Msg(out)
 	r.NoError(err)
 	if needWait {
 		for _, command := range commands {
@@ -745,10 +752,10 @@ func testAPIBackupActions(r *require.Assertions, ch *TestClickHouse) {
 }
 
 func testAPIWatchAndKill(r *require.Assertions, ch *TestClickHouse) {
-	log.Info("Check /backup/watch + /backup/kill")
+	log.Info().Msg("Check /backup/watch + /backup/kill")
 	runKillCommand := func(command string) {
 		out, err := dockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL 'http://localhost:7171/backup/kill?command=%s'", command))
-		log.Debug(out)
+		log.Debug().Msg(out)
 		r.NoError(err)
 	}
 	checkWatchBackup := func(expectedCount uint64) {
@@ -775,7 +782,7 @@ func testAPIWatchAndKill(r *require.Assertions, ch *TestClickHouse) {
 	checkCanceledCommand(1)
 
 	out, err := dockerExecOut("clickhouse-backup", "bash", "-ce", "curl -sfL 'http://localhost:7171/backup/watch'")
-	log.Debug(out)
+	log.Debug().Msg(out)
 	r.NoError(err)
 	time.Sleep(7 * time.Second)
 
@@ -785,15 +792,15 @@ func testAPIWatchAndKill(r *require.Assertions, ch *TestClickHouse) {
 }
 
 func testAPIBackupDelete(r *require.Assertions) {
-	log.Info("Check /backup/delete/{where}/{name}")
+	log.Info().Msg("Check /backup/delete/{where}/{name}")
 	for i := 1; i <= apiBackupNumber; i++ {
 		out, err := dockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/delete/local/z_backup_%d'", i))
-		log.Infof(out)
+		log.Info().Msgf(out)
 		r.NoError(err)
 		r.NotContains(out, "another operation is currently running")
 		r.NotContains(out, "\"status\":\"error\"")
 		out, err = dockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/delete/remote/z_backup_%d'", i))
-		log.Infof(out)
+		log.Info().Msgf(out)
 		r.NoError(err)
 		r.NotContains(out, "another operation is currently running")
 		r.NotContains(out, "\"status\":\"error\"")
@@ -804,7 +811,7 @@ func testAPIBackupDelete(r *require.Assertions) {
 }
 
 func testAPIMetrics(r *require.Assertions, ch *TestClickHouse) {
-	log.Info("Check /metrics clickhouse_backup_last_backup_size_remote")
+	log.Info().Msg("Check /metrics clickhouse_backup_last_backup_size_remote")
 	var lastRemoteSize int64
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&lastRemoteSize, "SELECT size FROM system.backup_list WHERE name='z_backup_5' AND location='remote'"))
 
@@ -818,11 +825,11 @@ func testAPIMetrics(r *require.Assertions, ch *TestClickHouse) {
 	r.Greater(uint64(lastRemoteSize), realTotalBytes)
 
 	out, err := dockerExecOut("clickhouse-backup", "curl", "-sL", "http://localhost:7171/metrics")
-	log.Debug(out)
+	log.Debug().Msg(out)
 	r.NoError(err)
 	r.Contains(out, fmt.Sprintf("clickhouse_backup_last_backup_size_remote %d", lastRemoteSize))
 
-	log.Info("Check /metrics clickhouse_backup_number_backups_*")
+	log.Info().Msg("Check /metrics clickhouse_backup_number_backups_*")
 	r.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_local %d", apiBackupNumber))
 	// +1 watch backup
 	r.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_remote %d", apiBackupNumber+1))
@@ -831,13 +838,13 @@ func testAPIMetrics(r *require.Assertions, ch *TestClickHouse) {
 }
 
 func testAPIDeleteLocalDownloadRestore(r *require.Assertions) {
-	log.Info("Check /backup/delete/local/{name} + /backup/download/{name} + /backup/restore/{name}?rm=1")
+	log.Info().Msg("Check /backup/delete/local/{name} + /backup/download/{name} + /backup/restore/{name}?rm=1")
 	out, err := dockerExecOut(
 		"clickhouse-backup",
 		"bash", "-xe", "-c",
 		fmt.Sprintf("for i in {1..%d}; do date; curl -sfL -XPOST \"http://localhost:7171/backup/delete/local/z_backup_$i\"; curl -sfL -XPOST \"http://localhost:7171/backup/download/z_backup_$i\"; sleep 2; curl -sfL -XPOST \"http://localhost:7171/backup/restore/z_backup_$i?rm=1\"; sleep 8; done", apiBackupNumber),
 	)
-	log.Debug(out)
+	log.Debug().Msg(out)
 	r.NoError(err)
 	r.NotContains(out, "another operation is currently running")
 	r.NotContains(out, "\"status\":\"error\"")
@@ -850,27 +857,27 @@ func testAPIDeleteLocalDownloadRestore(r *require.Assertions) {
 }
 
 func testAPIBackupList(t *testing.T, r *require.Assertions) {
-	log.Info("Check /backup/list")
+	log.Info().Msg("Check /backup/list")
 	out, err := dockerExecOut("clickhouse-backup", "bash", "-ce", "curl -sfL 'http://localhost:7171/backup/list'")
-	log.Debug(out)
+	log.Debug().Msg(out)
 	r.NoError(err)
 	for i := 1; i <= apiBackupNumber; i++ {
 		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"regular\"}", i)), out))
 		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar, regular\"}", i)), out))
 	}
 
-	log.Info("Check /backup/list/local")
+	log.Info().Msg("Check /backup/list/local")
 	out, err = dockerExecOut("clickhouse-backup", "bash", "-ce", "curl -sfL 'http://localhost:7171/backup/list/local'")
-	log.Debug(out)
+	log.Debug().Msg(out)
 	r.NoError(err)
 	for i := 1; i <= apiBackupNumber; i++ {
 		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"regular\"}", i)), out))
 		r.True(assert.NotRegexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar, regular\"}", i)), out))
 	}
 
-	log.Info("Check /backup/list/remote")
+	log.Info().Msg("Check /backup/list/remote")
 	out, err = dockerExecOut("clickhouse-backup", "bash", "-ce", "curl -sfL 'http://localhost:7171/backup/list/remote'")
-	log.Debug(out)
+	log.Debug().Msg(out)
 	r.NoError(err)
 	for i := 1; i <= apiBackupNumber; i++ {
 		r.True(assert.NotRegexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"regular\"}", i)), out))
@@ -879,13 +886,13 @@ func testAPIBackupList(t *testing.T, r *require.Assertions) {
 }
 
 func testAPIBackupUpload(r *require.Assertions) {
-	log.Info("Check /backup/upload")
+	log.Info().Msg("Check /backup/upload")
 	out, err := dockerExecOut(
 		"clickhouse-backup",
 		"bash", "-xe", "-c",
 		fmt.Sprintf("for i in {1..%d}; do date; curl -sfL -XPOST \"http://localhost:7171/backup/upload/z_backup_$i\"; sleep 2; done", apiBackupNumber),
 	)
-	log.Debug(out)
+	log.Debug().Msg(out)
 	r.NoError(err)
 	r.NotContains(out, "\"status\":\"error\"")
 	r.NotContains(out, "another operation is currently running")
@@ -895,12 +902,12 @@ func testAPIBackupUpload(r *require.Assertions) {
 }
 
 func testAPIBackupTables(r *require.Assertions) {
-	log.Info("Check /backup/tables")
+	log.Info().Msg("Check /backup/tables")
 	out, err := dockerExecOut(
 		"clickhouse-backup",
 		"bash", "-xe", "-c", "curl -sfL \"http://localhost:7171/backup/tables\"",
 	)
-	log.Debug(out)
+	log.Debug().Msg(out)
 	r.NoError(err)
 	r.Contains(out, "long_schema")
 	r.NotContains(out, "Connection refused")
@@ -910,12 +917,12 @@ func testAPIBackupTables(r *require.Assertions) {
 	r.NotContains(out, "INFORMATION_SCHEMA")
 	r.NotContains(out, "information_schema")
 
-	log.Info("Check /backup/tables/all")
+	log.Info().Msg("Check /backup/tables/all")
 	out, err = dockerExecOut(
 		"clickhouse-backup",
 		"bash", "-xe", "-c", "curl -sfL \"http://localhost:7171/backup/tables/all\"",
 	)
-	log.Debug(out)
+	log.Debug().Msg(out)
 	r.NoError(err)
 	r.Contains(out, "long_schema")
 	r.Contains(out, "system")
@@ -929,13 +936,13 @@ func testAPIBackupTables(r *require.Assertions) {
 }
 
 func testAPIBackupCreate(r *require.Assertions) {
-	log.Info("Check /backup/create")
+	log.Info().Msg("Check /backup/create")
 	out, err := dockerExecOut(
 		"clickhouse-backup",
 		"bash", "-xe", "-c",
 		fmt.Sprintf("sleep 3; for i in {1..%d}; do date; curl -sfL -XPOST \"http://localhost:7171/backup/create?table=long_schema.*&name=z_backup_$i\"; sleep 1.5; done", apiBackupNumber),
 	)
-	log.Debug(out)
+	log.Debug().Msg(out)
 	r.NoError(err)
 	r.NotContains(out, "Connection refused")
 	r.NotContains(out, "another operation is currently running")
@@ -947,7 +954,7 @@ func testAPIBackupCreate(r *require.Assertions) {
 }
 
 func fillDatabaseForAPIServer(maxTables int, minFields int, randFields int, ch *TestClickHouse, r *require.Assertions, fieldTypes []string) {
-	log.Infof("Create %d `long_schema`.`t%%d` tables with with %d..%d fields...", maxTables, minFields, minFields+randFields)
+	log.Info().Msgf("Create %d `long_schema`.`t%%d` tables with with %d..%d fields...", maxTables, minFields, minFields+randFields)
 	ch.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS long_schema")
 	for i := 0; i < maxTables; i++ {
 		sql := fmt.Sprintf("CREATE TABLE long_schema.t%d (id UInt64", i)
@@ -961,7 +968,7 @@ func fillDatabaseForAPIServer(maxTables int, minFields int, randFields int, ch *
 		sql = fmt.Sprintf("INSERT INTO long_schema.t%d(id) SELECT number FROM numbers(100)", i)
 		ch.queryWithNoError(r, sql)
 	}
-	log.Info("...DONE")
+	log.Info().Msg("...DONE")
 }
 
 func TestSkipNotExistsTable(t *testing.T) {
@@ -974,7 +981,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 	ch.connectWithWait(r, 0*time.Second, 1*time.Second)
 	defer ch.chbackend.Close()
 
-	log.Info("Check skip not exist errors")
+	log.Info().Msg("Check skip not exist errors")
 	ch.queryWithNoError(r, "CREATE DATABASE freeze_not_exists")
 	ifNotExistsCreateSQL := "CREATE TABLE IF NOT EXISTS freeze_not_exists.freeze_not_exists (id UInt64) ENGINE=MergeTree() ORDER BY id"
 	ifNotExistsInsertSQL := "INSERT INTO freeze_not_exists.freeze_not_exists SELECT number FROM numbers(1000)"
@@ -1001,19 +1008,19 @@ func TestSkipNotExistsTable(t *testing.T) {
 			err = ch.chbackend.Query(ifNotExistsInsertSQL)
 			r.NoError(err)
 			if i < 5 {
-				log.Infof("pauseChannel <- %d", 0)
+				log.Info().Msgf("pauseChannel <- %d", 0)
 				pauseChannel <- 0
 			} else {
-				log.Infof("pauseChannel <- %d", pause/i)
+				log.Info().Msgf("pauseChannel <- %d", pause/i)
 				pauseChannel <- pause / i
 			}
 			startTime := time.Now()
 			out, err := dockerExecOut("clickhouse-backup", "bash", "-ce", "LOG_LEVEL=debug CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup create --table freeze_not_exists.freeze_not_exists "+testBackupName)
-			log.Info(out)
+			log.Info().Msg(out)
 			if (err != nil && (strings.Contains(out, "can't freeze") || strings.Contains(out, "no tables for backup"))) ||
 				(err == nil && !strings.Contains(out, "can't freeze")) {
 				parseTime := func(line string) time.Time {
-					parsedTime, err := time.Parse("2006/01/02 15:04:05.999999", line[:26])
+					parsedTime, err := time.Parse("2006-01-02 15:04:05.999", line[:23])
 					if err != nil {
 						r.Failf("Error parsing time", "%s, : %v", line, err)
 					}
@@ -1060,11 +1067,11 @@ func TestSkipNotExistsTable(t *testing.T) {
 			wg.Done()
 		}()
 		for pause := range pauseChannel {
-			log.Infof("%d <- pauseChannel", pause)
+			log.Info().Msgf("%d <- pauseChannel", pause)
 			if pause > 0 {
 				pauseStart := time.Now()
 				time.Sleep(time.Duration(pause) * time.Nanosecond)
-				log.Infof("pause=%s pauseStart=%s", time.Duration(pause).String(), pauseStart.String())
+				log.Info().Msgf("pause=%s pauseStart=%s", time.Duration(pause).String(), pauseStart.String())
 				err = ch.chbackend.DropTable(clickhouse.Table{Database: "freeze_not_exists", Name: "freeze_not_exists"}, ifNotExistsCreateSQL, "", false, chVersion)
 				r.NoError(err)
 			}
@@ -1516,7 +1523,7 @@ func TestFIPS(t *testing.T) {
 	r.NoError(dockerExec("clickhouse", "bash", "-ce", "clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml delete local "+fipsBackupName))
 	r.NoError(dockerExec("clickhouse", "bash", "-ce", "clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml delete remote "+fipsBackupName))
 
-	log.Info("Run `clickhouse-backup-fips server` in background")
+	log.Info().Msg("Run `clickhouse-backup-fips server` in background")
 	r.NoError(dockerExec("-d", "clickhouse", "bash", "-ce", "AWS_USE_FIPS_ENDPOINT=true clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml server &>>/tmp/clickhouse-backup-server-fips.log"))
 	time.Sleep(1 * time.Second)
 
@@ -1539,7 +1546,7 @@ func TestFIPS(t *testing.T) {
 
 	testTLSCerts := func(certType, keyLength, curveName string, cipherList ...string) {
 		generateCerts(certType, keyLength, curveName)
-		log.Infof("Run `clickhouse-backup-fips server` in background for %s %s %s", certType, keyLength, curveName)
+		log.Info().Msgf("Run `clickhouse-backup-fips server` in background for %s %s %s", certType, keyLength, curveName)
 		r.NoError(dockerExec("-d", "clickhouse", "bash", "-ce", "AWS_USE_FIPS_ENDPOINT=true clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml server &>>/tmp/clickhouse-backup-server-fips.log"))
 		time.Sleep(1 * time.Second)
 
@@ -1695,32 +1702,32 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 	ch.queryWithNoError(r, "CREATE VIEW database1.v1 AS SELECT * FROM database1.t1")
 	ch.queryWithNoError(r, "INSERT INTO database1.t1 SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
 
-	log.Info("Create backup")
+	log.Info().Msg("Create backup")
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "create", testBackupName))
 
-	log.Info("Restore schema")
+	log.Info().Msg("Restore schema")
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--schema", "--rm", "--restore-database-mapping", "database1:database2", "--tables", "database1.*", testBackupName))
 
-	log.Info("Check result database1")
+	log.Info().Msg("Check result database1")
 	ch.queryWithNoError(r, "INSERT INTO database1.t1 SELECT '2023-01-01 00:00:00', number FROM numbers(10)")
 	checkRecordset(1, 20, "SELECT count() FROM database1.t1")
 	checkRecordset(1, 20, "SELECT count() FROM database1.d1")
 	checkRecordset(1, 20, "SELECT count() FROM database1.mv1")
 	checkRecordset(1, 20, "SELECT count() FROM database1.v1")
 
-	log.Info("Drop database1")
+	log.Info().Msg("Drop database1")
 	r.NoError(ch.dropDatabase("database1"))
 
-	log.Info("Restore data")
+	log.Info().Msg("Restore data")
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--data", "--restore-database-mapping", "database1:database2", "--tables", "database1.*", testBackupName))
 
-	log.Info("Check result database2")
+	log.Info().Msg("Check result database2")
 	checkRecordset(1, 10, "SELECT count() FROM database2.t1")
 	checkRecordset(1, 10, "SELECT count() FROM database2.d1")
 	checkRecordset(1, 10, "SELECT count() FROM database2.mv1")
 	checkRecordset(1, 10, "SELECT count() FROM database2.v1")
 
-	log.Info("Check database1 not exists")
+	log.Info().Msg("Check database1 not exists")
 	checkRecordset(1, 0, "SELECT count() FROM system.databases WHERE name='database1'")
 
 	fullCleanup(t, r, ch, []string{testBackupName}, []string{"local"}, databaseList, true, true, "config-database-mapping.yml")
@@ -1816,20 +1823,20 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 	incrementBackupName := fmt.Sprintf("%s_increment_%d", t.Name(), rand.Int())
 	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Atomic, Issue331Ordinary}
 	tablesPattern := fmt.Sprintf("*_%s.*", t.Name())
-	log.Info("Clean before start")
+	log.Info().Msg("Clean before start")
 	fullCleanup(t, r, ch, []string{testBackupName, incrementBackupName}, []string{"remote", "local"}, databaseList, false, false, backupConfig)
 
 	r.NoError(dockerExec("minio", "mc", "ls", "local/clickhouse/disk_s3"))
 	testData := generateTestData(t, r, ch, remoteStorageType, defaultTestData)
 
 	r.NoError(dockerExec("minio", "mc", "ls", "local/clickhouse/disk_s3"))
-	log.Info("Create backup")
+	log.Info().Msg("Create backup")
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables", tablesPattern, testBackupName))
 	generateIncrementTestData(t, ch, r, defaultIncrementData)
 
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables", tablesPattern, incrementBackupName))
 
-	log.Info("Upload")
+	log.Info().Msg("Upload")
 	uploadCmd := fmt.Sprintf("%s_COMPRESSION_FORMAT=zstd CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/%s clickhouse-backup upload --resume %s", remoteStorageType, backupConfig, testBackupName)
 	checkResumeAlreadyProcessed(uploadCmd, testBackupName, "upload", r, remoteStorageType)
 
@@ -1845,7 +1852,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 	out, err = dockerExecOut("clickhouse-backup", "bash", "-ce", "ls -lha "+backupDir+" | grep "+t.Name())
 	r.NoError(err)
 	r.Equal(2, len(strings.Split(strings.Trim(out, " \t\r\n"), "\n")), "expect '2' backups exists in backup directory")
-	log.Info("Delete backup")
+	log.Info().Msg("Delete backup")
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", testBackupName))
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", incrementBackupName))
 	out, err = dockerExecOut("clickhouse-backup", "bash", "-ce", "ls -lha "+backupDir+" | grep "+t.Name())
@@ -1854,20 +1861,20 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 
 	dropDatabasesFromTestDataDataSet(t, r, ch, databaseList)
 
-	log.Info("Download")
+	log.Info().Msg("Download")
 	downloadCmd := fmt.Sprintf("clickhouse-backup -c /etc/clickhouse-backup/%s download --resume %s", backupConfig, testBackupName)
 	checkResumeAlreadyProcessed(downloadCmd, testBackupName, "download", r, remoteStorageType)
 
-	log.Info("Restore schema")
+	log.Info().Msg("Restore schema")
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--schema", testBackupName))
 
-	log.Info("Restore data")
+	log.Info().Msg("Restore data")
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--data", testBackupName))
 
-	log.Info("Full restore with rm")
+	log.Info().Msg("Full restore with rm")
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--rm", testBackupName))
 
-	log.Info("Check data")
+	log.Info().Msg("Check data")
 	for i := range testData {
 		if testData[i].CheckDatabaseOnly {
 			r.NoError(ch.checkDatabaseEngine(t, testData[i]))
@@ -1881,17 +1888,17 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 	// test increment
 	dropDatabasesFromTestDataDataSet(t, r, ch, databaseList)
 
-	log.Info("Delete backup")
+	log.Info().Msg("Delete backup")
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", testBackupName))
 
-	log.Info("Download increment")
+	log.Info().Msg("Download increment")
 	downloadCmd = fmt.Sprintf("clickhouse-backup -c /etc/clickhouse-backup/%s download --resume %s", backupConfig, incrementBackupName)
 	checkResumeAlreadyProcessed(downloadCmd, incrementBackupName, "download", r, remoteStorageType)
 
-	log.Info("Restore")
+	log.Info().Msg("Restore")
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--schema", "--data", incrementBackupName))
 
-	log.Info("Check increment data")
+	log.Info().Msg("Check increment data")
 	for i := range testData {
 		testDataItem := testData[i]
 		if isTableSkip(ch, testDataItem, true) || testDataItem.IsDictionary {
@@ -1911,7 +1918,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 	}
 
 	// test end
-	log.Info("Clean after finish")
+	log.Info().Msg("Clean after finish")
 	// CUSTOM and EMBEDDED download increment doesn't download full
 	if remoteStorageType == "CUSTOM" || strings.HasPrefix(remoteStorageType, "EMBEDDED") {
 		fullCleanup(t, r, ch, []string{incrementBackupName}, []string{"local"}, nil, true, false, backupConfig)
@@ -1922,7 +1929,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 }
 
 func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, ch *TestClickHouse, remoteStorageType string, backupConfig string) {
-	log.Info("testBackupSpecifiedPartitions started")
+	log.Info().Msg("testBackupSpecifiedPartitions started")
 	var err error
 	var out string
 	var result, expectedCount uint64
@@ -2034,7 +2041,7 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, ch *Test
 	if err = ch.dropDatabase(dbName); err != nil {
 		t.Fatal(err)
 	}
-	log.Info("testBackupSpecifiedPartitions finish")
+	log.Info().Msg("testBackupSpecifiedPartitions finish")
 }
 
 func checkResumeAlreadyProcessed(backupCmd, testBackupName, resumeKind string, r *require.Assertions, remoteStorageType string) {
@@ -2045,7 +2052,7 @@ func checkResumeAlreadyProcessed(backupCmd, testBackupName, resumeKind string, r
 		backupCmd = fmt.Sprintf("%s; cat /var/lib/clickhouse/backup/%s/%s.state; %s", backupCmd, testBackupName, resumeKind, backupCmd)
 	}
 	out, err := dockerExecOut("clickhouse-backup", "bash", "-xce", backupCmd)
-	log.Info(out)
+	log.Info().Msg(out)
 	r.NoError(err)
 	if strings.Contains(backupCmd, "--resume") {
 		r.Contains(out, "already processed")
@@ -2077,7 +2084,7 @@ func fullCleanup(t *testing.T, r *require.Assertions, ch *TestClickHouse, backup
 }
 
 func generateTestData(t *testing.T, r *require.Assertions, ch *TestClickHouse, remoteStorageType string, testData []TestDataStruct) []TestDataStruct {
-	log.Infof("Generate test data %s with _%s suffix", remoteStorageType, t.Name())
+	log.Info().Msgf("Generate test data %s with _%s suffix", remoteStorageType, t.Name())
 	testData = generateTestDataWithDifferentStoragePolicy(remoteStorageType, testData)
 	for _, data := range testData {
 		if isTableSkip(ch, data, false) {
@@ -2155,7 +2162,7 @@ func generateTestDataWithDifferentStoragePolicy(remoteStorageType string, testDa
 }
 
 func generateIncrementTestData(t *testing.T, ch *TestClickHouse, r *require.Assertions, incrementData []TestDataStruct) {
-	log.Info("Generate increment test data")
+	log.Info().Msg("Generate increment test data")
 	for _, data := range incrementData {
 		if isTableSkip(ch, data, false) {
 			continue
@@ -2165,7 +2172,7 @@ func generateIncrementTestData(t *testing.T, ch *TestClickHouse, r *require.Asse
 }
 
 func dropDatabasesFromTestDataDataSet(t *testing.T, r *require.Assertions, ch *TestClickHouse, databaseList []string) {
-	log.Info("Drop all databases")
+	log.Info().Msg("Drop all databases")
 	for _, db := range databaseList {
 		r.NoError(ch.dropDatabase(db + "_" + t.Name()))
 	}
@@ -2185,17 +2192,17 @@ func (ch *TestClickHouse) connectWithWait(r *require.Assertions, sleepBefore, ti
 			r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", "logs", "clickhouse"))
 			out, dockerErr := dockerExecOut("clickhouse", "clickhouse client", "--echo", "-q", "'SELECT version()'")
 			r.NoError(dockerErr)
-			ch.chbackend.Log.Debug(out)
+			log.Warn().Msg(out)
 			r.NoError(err)
 		}
 		if err != nil {
 			r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", "ps", "-a"))
 			if out, dockerErr := dockerExecOut("clickhouse", "clickhouse client", "--echo", "-q", "SELECT version()"); dockerErr == nil {
-				log.Info(out)
+				log.Warn().Msg(out)
 			} else {
-				log.Warn(out)
+				log.Info().Msg(out)
 			}
-			log.Warnf("clickhouse not ready %v, wait %v seconds", err, (time.Duration(i) * timeOut).Seconds())
+			log.Warn().Msgf("clickhouse not ready %v, wait %v seconds", err, (time.Duration(i) * timeOut).Seconds())
 			time.Sleep(time.Duration(i) * timeOut)
 		} else {
 			if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") == 1 {
@@ -2204,7 +2211,7 @@ func (ch *TestClickHouse) connectWithWait(r *require.Assertions, sleepBefore, ti
 				if err == nil {
 					break
 				} else {
-					log.Warnf("mysql not ready %v, wait %d seconds", err, i)
+					log.Warn().Msgf("mysql not ready %v, wait %d seconds", err, i)
 					time.Sleep(time.Second * time.Duration(i))
 				}
 			} else {
@@ -2221,7 +2228,6 @@ func (ch *TestClickHouse) connect(timeOut string) error {
 			Port:    9000,
 			Timeout: timeOut,
 		},
-		Log: log.WithField("logger", "integration-test"),
 	}
 	var err error
 	for i := 0; i < 3; i++ {
@@ -2306,7 +2312,7 @@ func (ch *TestClickHouse) createTestSchema(t *testing.T, data TestDataStruct, re
 			substitution := "MergeTree() PARTITION BY toYYYYMMDD($1) ORDER BY $2 SETTINGS index_granularity=$3"
 			createSQL = mergeTreeOldSyntax.ReplaceAllString(createSQL, substitution)
 		} else {
-			log.Fatalf("Wrong %s, matches=%#v", createSQL, matches)
+			log.Fatal().Stack().Msgf("Wrong %s, matches=%#v", createSQL, matches)
 		}
 	}
 	if !data.IsFunction {
@@ -2366,7 +2372,7 @@ func (ch *TestClickHouse) checkData(t *testing.T, data TestDataStruct, r *requir
 	assert.NotNil(t, data.Rows)
 	data.Database += "_" + t.Name()
 	data.Name += "_" + t.Name()
-	log.Infof("Check '%d' rows in '%s.%s'\n", len(data.Rows), data.Database, data.Name)
+	log.Info().Msgf("Check '%d' rows in '%s.%s'\n", len(data.Rows), data.Database, data.Name)
 	selectSQL := fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY `%s`", data.Database, data.Name, strings.Replace(data.OrderBy, "{test}", t.Name(), -1))
 
 	if data.IsFunction && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") == -1 {
@@ -2375,7 +2381,7 @@ func (ch *TestClickHouse) checkData(t *testing.T, data TestDataStruct, r *requir
 	if data.IsFunction {
 		selectSQL = fmt.Sprintf("SELECT %s(number, number+1) AS test_result FROM numbers(%d)", data.Name, len(data.Rows))
 	}
-	log.Debug(selectSQL)
+	log.Debug().Msg(selectSQL)
 	rows, err := ch.chbackend.GetConn().Query(context.Background(), selectSQL)
 	if err != nil {
 		return err
@@ -2450,7 +2456,7 @@ var dockerExecTimeout = 180 * time.Second
 
 func dockerExec(container string, cmd ...string) error {
 	out, err := dockerExecOut(container, cmd...)
-	log.Info(out)
+	log.Info().Msg(out)
 	return err
 }
 
@@ -2463,9 +2469,9 @@ func dockerExecOut(container string, cmd ...string) (string, error) {
 func dockerCP(src, dst string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	dcmd := []string{"cp", src, dst}
-	log.Infof("docker %s", strings.Join(dcmd, " "))
+	log.Info().Msgf("docker %s", strings.Join(dcmd, " "))
 	out, err := exec.CommandContext(ctx, "docker", dcmd...).CombinedOutput()
-	log.Info(string(out))
+	log.Info().Msg(string(out))
 	cancel()
 	return err
 }

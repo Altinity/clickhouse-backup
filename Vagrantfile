@@ -101,7 +101,7 @@ Vagrant.configure(2) do |config|
     apt-get install --no-install-recommends -y clickhouse-client clickhouse-server
 
     # golang
-    export GOLANG_VERSION=1.20
+    export GOLANG_VERSION=1.21
     apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 52B59B1571A79DBC054901C0F6BC817356A3D45E
     add-apt-repository ppa:longsleep/golang-backports
     apt-get install --no-install-recommends -y golang-${GOLANG_VERSION}

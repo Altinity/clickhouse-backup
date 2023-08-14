@@ -7,9 +7,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/pkg/common"
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/antchfx/xmlquery"
 	"os"
 	"path"
 	"path/filepath"
@@ -18,16 +15,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Altinity/clickhouse-backup/pkg/common"
 	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"github.com/Altinity/clickhouse-backup/pkg/metadata"
 	"github.com/ClickHouse/clickhouse-go/v2"
-	apexLog "github.com/apex/log"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/antchfx/xmlquery"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 )
 
 // ClickHouse - provide
 type ClickHouse struct {
 	Config               *config.ClickHouseConfig
-	Log                  *apexLog.Entry
 	conn                 driver.Conn
 	disks                []Disk
 	version              int
@@ -39,7 +39,7 @@ type ClickHouse struct {
 func (ch *ClickHouse) Connect() error {
 	if ch.IsOpen {
 		if err := ch.conn.Close(); err != nil {
-			ch.Log.Errorf("close previous connection error: %v", err)
+			log.Error().Msgf("close previous connection error: %v", err)
 		}
 	}
 	ch.IsOpen = false
@@ -56,9 +56,9 @@ func (ch *ClickHouse) Connect() error {
 			Password: ch.Config.Password,
 		},
 		Settings: clickhouse.Settings{
-			"connect_timeout": int(timeout.Seconds()),
-			"receive_timeout": int(timeout.Seconds()),
-			"send_timeout":    int(timeout.Seconds()),
+			//	"connect_timeout": int(timeout.Seconds()),
+			//	"receive_timeout": int(timeout.Seconds()),
+			//	"send_timeout":    int(timeout.Seconds()),
 		},
 		MaxOpenConns:    1,
 		ConnMaxLifetime: 0,
@@ -79,7 +79,7 @@ func (ch *ClickHouse) Connect() error {
 			if ch.Config.TLSCert != "" || ch.Config.TLSKey != "" {
 				cert, err := tls.LoadX509KeyPair(ch.Config.TLSCert, ch.Config.TLSKey)
 				if err != nil {
-					ch.Log.Errorf("tls.LoadX509KeyPair error: %v", err)
+					log.Error().Msgf("tls.LoadX509KeyPair error: %v", err)
 					return err
 				}
 				tlsConfig.Certificates = []tls.Certificate{cert}
@@ -87,12 +87,12 @@ func (ch *ClickHouse) Connect() error {
 			if ch.Config.TLSCa != "" {
 				caCert, err := os.ReadFile(ch.Config.TLSCa)
 				if err != nil {
-					ch.Log.Errorf("read `tls_ca` file %s return error: %v ", ch.Config.TLSCa, err)
+					log.Error().Msgf("read `tls_ca` file %s return error: %v ", ch.Config.TLSCa, err)
 					return err
 				}
 				caCertPool := x509.NewCertPool()
 				if caCertPool.AppendCertsFromPEM(caCert) != true {
-					ch.Log.Errorf("AppendCertsFromPEM %s return false", ch.Config.TLSCa)
+					log.Error().Msgf("AppendCertsFromPEM %s return false", ch.Config.TLSCa)
 					return fmt.Errorf("AppendCertsFromPEM %s return false", ch.Config.TLSCa)
 				}
 				tlsConfig.RootCAs = caCertPool
@@ -105,23 +105,23 @@ func (ch *ClickHouse) Connect() error {
 	}
 
 	if ch.conn, err = clickhouse.Open(opt); err != nil {
-		ch.Log.Errorf("clickhouse connection: %s, sql.Open return error: %v", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
+		log.Error().Msgf("clickhouse connection: %s, clickhouse.Open return error: %v", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
 		return err
 	}
 
-	logFunc := ch.Log.Infof
+	logFunc := log.Info()
 	if !ch.Config.LogSQLQueries {
-		logFunc = ch.Log.Debugf
+		logFunc = log.Debug()
 	}
-	logFunc("clickhouse connection prepared: %s run ping", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
+	logFunc.Stack().Msgf("clickhouse connection prepared: %s run ping", fmt.Sprintf("tcp://%v:%v?timeout=%v", ch.Config.Host, ch.Config.Port, ch.Config.Timeout))
 	err = ch.conn.Ping(context.Background())
 	if err != nil {
-		ch.Log.Errorf("clickhouse connection ping: %s return error: %v", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
+		log.Error().Msgf("clickhouse connection ping: %s return error: %v", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
 		return err
 	} else {
 		ch.IsOpen = true
 	}
-	logFunc("clickhouse connection open: %s", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
+	logFunc.Stack().Msgf("clickhouse connection open: %s", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
 	return err
 }
 
@@ -272,13 +272,13 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 func (ch *ClickHouse) Close() {
 	if ch.IsOpen {
 		if err := ch.conn.Close(); err != nil {
-			ch.Log.Warnf("can't close clickhouse connection: %v", err)
+			log.Warn().Msgf("can't close clickhouse connection: %v", err)
 		}
 	}
 	if ch.Config.LogSQLQueries {
-		ch.Log.Info("clickhouse connection closed")
+		log.Info().Msg("clickhouse connection closed")
 	} else {
-		ch.Log.Debug("clickhouse connection closed")
+		log.Debug().Msg("clickhouse connection closed")
 	}
 	ch.IsOpen = false
 }
@@ -536,7 +536,7 @@ func (ch *ClickHouse) GetDatabases(ctx context.Context, cfg *config.Config, tabl
 			var result string
 			// 19.4 doesn't have /var/lib/clickhouse/metadata/default.sql
 			if err := ch.SelectSingleRow(ctx, &result, showDatabaseSQL); err != nil {
-				ch.Log.Warnf("can't get create database query: %v", err)
+				log.Warn().Msgf("can't get create database query: %v", err)
 				allDatabases[i].Query = fmt.Sprintf("CREATE DATABASE `%s` ENGINE = %s", db.Name, db.Engine)
 			} else {
 				// 23.3+ masked secrets https://github.com/Altinity/clickhouse-backup/issues/640
@@ -561,7 +561,7 @@ func (ch *ClickHouse) getTableSizeFromParts(ctx context.Context, table Table) ui
 	}
 	query := fmt.Sprintf("SELECT sum(bytes_on_disk) as size FROM system.parts WHERE active AND database='%s' AND table='%s' GROUP BY database, table", table.Database, table.Name)
 	if err := ch.SelectContext(ctx, &tablesSize, query); err != nil {
-		ch.Log.Warnf("error parsing tablesSize: %v", err)
+		log.Warn().Msgf("error parsing tablesSize: %v", err)
 	}
 	if len(tablesSize) > 0 {
 		return tablesSize[0].Size
@@ -592,7 +592,7 @@ func (ch *ClickHouse) fixVariousVersions(ctx context.Context, t Table, metadataP
 	if strings.Contains(t.CreateTableQuery, "'[HIDDEN]'") {
 		tableSQLPath := path.Join(metadataPath, common.TablePathEncode(t.Database), common.TablePathEncode(t.Name)+".sql")
 		if attachSQL, err := os.ReadFile(tableSQLPath); err != nil {
-			ch.Log.Warnf("can't read %s: %v", tableSQLPath, err)
+			log.Warn().Msgf("can't read %s: %v", tableSQLPath, err)
 		} else {
 			t.CreateTableQuery = strings.Replace(string(attachSQL), "ATTACH", "CREATE", 1)
 			t.CreateTableQuery = strings.Replace(t.CreateTableQuery, " _ ", " `"+t.Database+"`.`"+t.Name+"` ", 1)
@@ -611,7 +611,7 @@ func (ch *ClickHouse) GetVersion(ctx context.Context) (int, error) {
 	var err error
 	query := "SELECT value FROM `system`.`build_options` where name='VERSION_INTEGER'"
 	if err = ch.SelectSingleRow(ctx, &result, query); err != nil {
-		ch.Log.Warnf("can't get ClickHouse version: %v", err)
+		log.Warn().Msgf("can't get ClickHouse version: %v", err)
 		return 0, nil
 	}
 	ch.version, err = strconv.Atoi(result)
@@ -642,7 +642,7 @@ func (ch *ClickHouse) FreezeTableOldWay(ctx context.Context, table *Table, name 
 		withNameQuery = fmt.Sprintf("WITH NAME '%s'", name)
 	}
 	for _, item := range partitions {
-		ch.Log.Debugf("  partition '%v'", item.PartitionID)
+		log.Debug().Msgf("  partition '%v'", item.PartitionID)
 		query := fmt.Sprintf(
 			"ALTER TABLE `%v`.`%v` FREEZE PARTITION ID '%v' %s;",
 			table.Database,
@@ -660,7 +660,7 @@ func (ch *ClickHouse) FreezeTableOldWay(ctx context.Context, table *Table, name 
 		}
 		if err := ch.QueryContext(ctx, query); err != nil {
 			if (strings.Contains(err.Error(), "code: 60") || strings.Contains(err.Error(), "code: 81")) && ch.Config.IgnoreNotExistsErrorDuringFreeze {
-				ch.Log.Warnf("can't freeze partition: %v", err)
+				log.Warn().Msgf("can't freeze partition: %v", err)
 			} else {
 				return fmt.Errorf("can't freeze partition '%s': %w", item.PartitionID, err)
 			}
@@ -679,9 +679,9 @@ func (ch *ClickHouse) FreezeTable(ctx context.Context, table *Table, name string
 	if strings.HasPrefix(table.Engine, "Replicated") && ch.Config.SyncReplicatedTables {
 		query := fmt.Sprintf("SYSTEM SYNC REPLICA `%s`.`%s`;", table.Database, table.Name)
 		if err := ch.QueryContext(ctx, query); err != nil {
-			ch.Log.Warnf("can't sync replica: %v", err)
+			log.Warn().Msgf("can't sync replica: %v", err)
 		} else {
-			ch.Log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Debugf("replica synced")
+			log.Debug().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Msg("replica synced")
 		}
 	}
 	if version < 19001005 || ch.Config.FreezeByPart {
@@ -694,7 +694,7 @@ func (ch *ClickHouse) FreezeTable(ctx context.Context, table *Table, name string
 	query := fmt.Sprintf("ALTER TABLE `%s`.`%s` FREEZE %s;", table.Database, table.Name, withNameQuery)
 	if err := ch.QueryContext(ctx, query); err != nil {
 		if (strings.Contains(err.Error(), "code: 60") || strings.Contains(err.Error(), "code: 81") || strings.Contains(err.Error(), "code: 218")) && ch.Config.IgnoreNotExistsErrorDuringFreeze {
-			ch.Log.Warnf("can't freeze table: %v", err)
+			log.Warn().Msgf("can't freeze table: %v", err)
 			return nil
 		}
 		return fmt.Errorf("can't freeze table: %v", err)
@@ -718,7 +718,7 @@ func (ch *ClickHouse) AttachDataParts(table metadata.TableMetadata, disks []Disk
 				if err := ch.Query(query); err != nil {
 					return err
 				}
-				ch.Log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).WithField("disk", disk.Name).WithField("part", part.Name).Debug("attached")
+				log.Debug().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).Str("disk", disk.Name).Str("part", part.Name).Msg("attached")
 			}
 		}
 	}
@@ -731,7 +731,7 @@ var uuidRE = regexp.MustCompile(`UUID '([^']+)'`)
 // AttachTable - execute ATTACH TABLE  command for specific table
 func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetadata) error {
 	if len(table.Parts) == 0 {
-		apexLog.Warnf("no data parts for restore for `%s`.`%s`", table.Database, table.Table)
+		log.Warn().Msgf("no data parts for restore for `%s`.`%s`", table.Database, table.Table)
 		return nil
 	}
 	canContinue, err := ch.CheckReplicationInProgress(table)
@@ -778,7 +778,7 @@ func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetad
 		return err
 	}
 
-	ch.Log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).Debug("attached")
+	log.Debug().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).Msg("attached")
 	return nil
 }
 func (ch *ClickHouse) ShowCreateTable(ctx context.Context, database, name string) string {
@@ -909,7 +909,7 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 	if onCluster != "" && distributedRE.MatchString(query) {
 		matches := distributedRE.FindAllStringSubmatch(query, -1)
 		if onCluster != strings.Trim(matches[0][2], "'\" ") {
-			apexLog.Warnf("Will replace cluster ENGINE=Distributed %s -> %s", matches[0][2], onCluster)
+			log.Warn().Msgf("Will replace cluster ENGINE=Distributed %s -> %s", matches[0][2], onCluster)
 			query = distributedRE.ReplaceAllString(query, fmt.Sprintf("${1}(%s,${3})", onCluster))
 		}
 	}
@@ -932,7 +932,7 @@ func (ch *ClickHouse) IsClickhouseShadow(path string) bool {
 	}
 	defer func() {
 		if err := d.Close(); err != nil {
-			ch.Log.Warnf("can't close directory %v", err)
+			log.Warn().Msgf("can't close directory %v", err)
 		}
 	}()
 	names, err := d.Readdirnames(-1)
@@ -983,16 +983,14 @@ func (ch *ClickHouse) SelectSingleRowNoCtx(dest interface{}, query string, args 
 }
 
 func (ch *ClickHouse) LogQuery(query string, args ...interface{}) string {
-	var logF func(msg string)
+	level := zerolog.InfoLevel
 	if !ch.Config.LogSQLQueries {
-		logF = ch.Log.Debug
-	} else {
-		logF = ch.Log.Info
+		level = zerolog.DebugLevel
 	}
 	if len(args) > 0 {
-		logF(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(fmt.Sprintf("%s with args %v", query, args)))
+		log.WithLevel(level).Msgf(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(fmt.Sprintf("%s with args %v", query, args)))
 	} else {
-		logF(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(query))
+		log.WithLevel(level).Msg(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(query))
 	}
 	return query
 }
@@ -1014,7 +1012,7 @@ func (ch *ClickHouse) GetAccessManagementPath(ctx context.Context, disks []Disk)
 	if err := ch.SelectContext(ctx, &rows, "SELECT JSONExtractString(params,'path') AS access_path FROM system.user_directories WHERE type='local directory'"); err != nil || len(rows) == 0 {
 		configFile, doc, err := ch.ParseXML(ctx, "config.xml")
 		if err != nil {
-			ch.Log.Warnf("can't parse config.xml from %s, error: %v", configFile, err)
+			log.Warn().Msgf("can't parse config.xml from %s, error: %v", configFile, err)
 		}
 		if err == nil {
 			accessControlPathNode := doc.SelectElement("access_control_path")
@@ -1138,10 +1136,10 @@ func (ch *ClickHouse) CheckReplicationInProgress(table metadata.TableMetadata) (
 			return false, fmt.Errorf("invalid result for check exists replicas: %+v", existsReplicas)
 		}
 		if existsReplicas[0].InProgress > 0 {
-			ch.Log.Warnf("%s.%s skipped cause system.replicas entry already exists and replication in progress from another replica", table.Database, table.Table)
+			log.Warn().Msgf("%s.%s skipped cause system.replicas entry already exists and replication in progress from another replica", table.Database, table.Table)
 			return false, nil
 		} else {
-			ch.Log.Infof("replication_in_progress status = %+v", existsReplicas)
+			log.Info().Msgf("replication_in_progress status = %+v", existsReplicas)
 		}
 	}
 	return true, nil
@@ -1189,7 +1187,7 @@ func (ch *ClickHouse) CheckSystemPartsColumns(ctx context.Context, table *Table)
 				}
 			}
 			if !isNullablePresent && isNotNullablePresent {
-				ch.Log.Errorf("`%s`.`%s` have inconsistent data types %#v for \"%s\" column", table.Database, table.Name, partColumnsDataTypes[i].Types, partColumnsDataTypes[i].Column)
+				log.Error().Msgf("`%s`.`%s` have inconsistent data types %#v for \"%s\" column", table.Database, table.Name, partColumnsDataTypes[i].Types, partColumnsDataTypes[i].Column)
 				isPartColumnsInconsistentDataTypes = true
 			}
 		}

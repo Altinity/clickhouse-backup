@@ -471,7 +471,7 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 		}
 		// need for CopyObject
 		s3cfg.ObjectDiskPath = s3cfg.Path
-		connection.S3 = &storage.S3{Config: &s3cfg, Log: apexLog.WithField("logger", "S3")}
+		connection.S3 = &storage.S3{Config: &s3cfg}
 		if err = connection.S3.Connect(ctx); err != nil {
 			return nil, err
 		}

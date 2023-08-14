@@ -3,6 +3,8 @@ package backup
 import (
 	"context"
 	"fmt"
+	"github.com/Altinity/clickhouse-backup/pkg/storage/object_disk"
+	apexLog "github.com/apex/log"
 	"io/fs"
 	"os"
 	"path"
@@ -15,16 +17,14 @@ import (
 	"github.com/Altinity/clickhouse-backup/pkg/custom"
 	"github.com/Altinity/clickhouse-backup/pkg/status"
 	"github.com/Altinity/clickhouse-backup/pkg/storage"
-	"github.com/Altinity/clickhouse-backup/pkg/storage/object_disk"
 	"github.com/Altinity/clickhouse-backup/pkg/utils"
 
-	apexLog "github.com/apex/log"
 	"github.com/pkg/errors"
+	"github.com/rs/zerolog/log"
 )
 
 // Clean - removed all data in shadow folder
 func (b *Backuper) Clean(ctx context.Context) error {
-	log := b.log.WithField("logger", "Clean")
 	if err := b.ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
@@ -42,7 +42,7 @@ func (b *Backuper) Clean(ctx context.Context) error {
 		if err := b.cleanDir(shadowDir); err != nil {
 			return fmt.Errorf("can't clean '%s': %v", shadowDir, err)
 		}
-		log.Info(shadowDir)
+		log.Info().Msg(shadowDir)
 	}
 	return nil
 }
@@ -109,7 +109,6 @@ func (b *Backuper) RemoveOldBackupsLocal(ctx context.Context, keepLastBackup boo
 }
 
 func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, disks []clickhouse.Disk) error {
-	log := b.log.WithField("logger", "RemoveBackupLocal")
 	var err error
 	start := time.Now()
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
@@ -139,7 +138,7 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 		}
 		defer func() {
 			if err := bd.Close(ctx); err != nil {
-				b.log.Warnf("can't close BackupDestination error: %v", err)
+				log.Warn().Msgf("can't close BackupDestination error: %v", err)
 			}
 		}()
 		b.dst = bd
@@ -154,7 +153,7 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 			}
 			if !skip && strings.Contains(backup.Tags, "embedded") {
 				if err = b.cleanLocalEmbedded(ctx, backup, disks); err != nil {
-					log.Warnf("b.cleanRemoteEmbedded return error: %v", err)
+					log.Warn().Msgf("b.cleanRemoteEmbedded return error: %v", err)
 					return err
 				}
 			}
@@ -169,16 +168,16 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 						return err
 					}
 				}
-				log.Debugf("remove '%s'", backupPath)
+				log.Debug().Msgf("remove '%s'", backupPath)
 				if err = os.RemoveAll(backupPath); err != nil {
 					return err
 				}
 			}
-			log.WithField("operation", "delete").
-				WithField("location", "local").
-				WithField("backup", backupName).
-				WithField("duration", utils.HumanizeDuration(time.Since(start))).
-				Info("done")
+			log.Info().Str("operation", "delete").
+				Str("location", "local").
+				Str("backup", backupName).
+				Str("duration", utils.HumanizeDuration(time.Since(start))).
+				Msg("done")
 			return nil
 		}
 	}
@@ -280,12 +279,11 @@ func (b *Backuper) skipIfTheSameRemoteBackupPresent(ctx context.Context, backupN
 }
 
 func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) error {
-	log := b.log.WithField("logger", "RemoveBackupRemote")
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 	start := time.Now()
 	if b.cfg.General.RemoteStorage == "none" {
 		err := errors.New("aborted: RemoteStorage set to \"none\"")
-		log.Error(err.Error())
+		log.Error().Msg(err.Error())
 		return err
 	}
 	if b.cfg.General.RemoteStorage == "custom" {
@@ -306,7 +304,7 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 	}
 	defer func() {
 		if err := bd.Close(ctx); err != nil {
-			b.log.Warnf("can't close BackupDestination error: %v", err)
+			log.Warn().Msgf("can't close BackupDestination error: %v", err)
 		}
 	}()
 
@@ -323,25 +321,25 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 			} else if !skip {
 				if strings.Contains(backup.Tags, "embedded") {
 					if err = b.cleanRemoteEmbedded(ctx, backup, bd); err != nil {
-						log.Warnf("b.cleanRemoteEmbedded return error: %v", err)
+						log.Warn().Msgf("b.cleanRemoteEmbedded return error: %v", err)
 						return err
 					}
 				} else if err = b.cleanRemoteBackupObjectDisks(ctx, backup); err != nil {
-					log.Warnf("b.cleanRemoteBackupObjectDisks return error: %v", err)
+					log.Warn().Msgf("b.cleanRemoteBackupObjectDisks return error: %v", err)
 					return err
 				}
 			}
 
 			if err = bd.RemoveBackup(ctx, backup); err != nil {
-				log.Warnf("bd.RemoveBackup return error: %v", err)
+				log.Warn().Msgf("bd.RemoveBackup return error: %v", err)
 				return err
 			}
-			log.WithFields(apexLog.Fields{
+			log.Info().Fields(map[string]interface{}{
 				"backup":    backupName,
 				"location":  "remote",
 				"operation": "delete",
 				"duration":  utils.HumanizeDuration(time.Since(start)),
-			}).Info("done")
+			}).Msg("done")
 			return nil
 		}
 	}
@@ -369,7 +367,7 @@ func (b *Backuper) cleanRemoteBackupObjectDisks(ctx context.Context, backup stor
 					if err := b.dst.DownloadCompressedStream(ctx, fName, localPath); err != nil {
 						return err
 					}
-					filepath.Walk(localPath, func(fPath string, fInfo fs.FileInfo, err error) error {
+					if err := filepath.Walk(localPath, func(fPath string, fInfo fs.FileInfo, err error) error {
 						if err != nil {
 							return err
 						}
@@ -387,7 +385,9 @@ func (b *Backuper) cleanRemoteBackupObjectDisks(ctx context.Context, backup stor
 							}
 						}
 						return nil
-					})
+					}); err != nil {
+						return err
+					}
 					if err := os.RemoveAll(localPath); err != nil {
 						return err
 					}

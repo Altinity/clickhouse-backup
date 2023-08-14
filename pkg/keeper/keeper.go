@@ -5,9 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"github.com/antchfx/xmlquery"
-	"github.com/apex/log"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"os"
 	"path"
 	"strconv"
@@ -19,21 +19,21 @@ import (
 )
 
 type LogKeeperToApexLogAdapter struct {
-	apexLog *log.Logger
+	log zerolog.Logger
 }
 
-func newKeeperLogger(log *log.Entry) LogKeeperToApexLogAdapter {
+func newKeeperLogger() LogKeeperToApexLogAdapter {
 	return LogKeeperToApexLogAdapter{
-		apexLog: log.Logger,
+		log: log.Logger,
 	}
 }
 
 func (KeeperLogToApexLogAdapter LogKeeperToApexLogAdapter) Printf(msg string, args ...interface{}) {
 	msg = fmt.Sprintf("[keeper] %s", msg)
 	if len(args) > 0 {
-		KeeperLogToApexLogAdapter.apexLog.Debugf(msg, args...)
+		KeeperLogToApexLogAdapter.log.Debug().Msgf(msg, args...)
 	} else {
-		KeeperLogToApexLogAdapter.apexLog.Debug(msg)
+		KeeperLogToApexLogAdapter.log.Debug().Msg(msg)
 	}
 }
 
@@ -44,14 +44,14 @@ type keeperDumpNode struct {
 
 type Keeper struct {
 	conn          *zk.Conn
-	Log           *log.Entry
+	Log           zerolog.Logger
 	root          string
 	doc           *xmlquery.Node
 	xmlConfigFile string
 }
 
 // Connect - connect to any zookeeper server from /var/lib/clickhouse/preprocessed_configs/config.xml
-func (k *Keeper) Connect(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Config) error {
+func (k *Keeper) Connect(ctx context.Context, ch *clickhouse.ClickHouse) error {
 	configFile, doc, err := ch.ParseXML(ctx, "config.xml")
 	if err != nil {
 		return fmt.Errorf("can't parse config.xml from %s, error: %v", configFile, err)
@@ -67,7 +67,7 @@ func (k *Keeper) Connect(ctx context.Context, ch *clickhouse.ClickHouse, cfg *co
 		if sessionTimeoutMs, err := strconv.ParseInt(sessionTimeoutMsNode.InnerText(), 10, 64); err == nil {
 			sessionTimeout = time.Duration(sessionTimeoutMs) * time.Millisecond
 		} else {
-			k.Log.Warnf("can't parse /zookeeper/session_timeout_ms in %s, value: %v, error: %v ", configFile, sessionTimeoutMsNode.InnerText(), err)
+			k.Log.Warn().Msgf("can't parse /zookeeper/session_timeout_ms in %s, value: %v, error: %v ", configFile, sessionTimeoutMsNode.InnerText(), err)
 		}
 	}
 	nodeList := zookeeperNode.SelectElements("node")
@@ -87,7 +87,7 @@ func (k *Keeper) Connect(ctx context.Context, ch *clickhouse.ClickHouse, cfg *co
 		}
 		keeperHosts[i] = fmt.Sprintf("%s:%s", hostNode.InnerText(), port)
 	}
-	conn, _, err := zk.Connect(keeperHosts, sessionTimeout, zk.WithLogger(newKeeperLogger(k.Log)))
+	conn, _, err := zk.Connect(keeperHosts, sessionTimeout, zk.WithLogger(newKeeperLogger()))
 	if err != nil {
 		return err
 	}
@@ -119,7 +119,7 @@ func (k *Keeper) Dump(prefix, dumpFile string) (int, error) {
 	}
 	defer func() {
 		if err = f.Close(); err != nil {
-			k.Log.Warnf("can't close %s: %v", dumpFile, err)
+			k.Log.Warn().Msgf("can't close %s: %v", dumpFile, err)
 		}
 	}()
 	if !strings.HasPrefix(prefix, "/") && k.root != "" {
@@ -175,7 +175,7 @@ func (k *Keeper) Restore(dumpFile, prefix string) error {
 	}
 	defer func() {
 		if err = f.Close(); err != nil {
-			k.Log.Warnf("can't close %s: %v", dumpFile, err)
+			k.Log.Warn().Msgf("can't close %s: %v", dumpFile, err)
 		}
 	}()
 	if !strings.HasPrefix(prefix, "/") && k.root != "" {

@@ -3,7 +3,7 @@ package utils
 import (
 	"context"
 	"fmt"
-	"github.com/apex/log"
+	"github.com/rs/zerolog/log"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -47,27 +47,27 @@ func HumanizeDuration(d time.Duration) string {
 	if d >= year {
 		years := d / year
 		if _, err := fmt.Fprintf(&b, "%dy", years); err != nil {
-			log.Warnf("HumanizeDuration error: %v", err)
+			log.Warn().Msgf("HumanizeDuration error: %v", err)
 		}
 		d -= years * year
 	}
 	days := d / day
 	d -= days * day
 	if _, err := fmt.Fprintf(&b, "%dd%s", days, d); err != nil {
-		log.Warnf("HumanizeDuration error: %v", err)
+		log.Warn().Msgf("HumanizeDuration error: %v", err)
 	}
 	return b.String()
 }
 
 func ExecCmd(ctx context.Context, timeout time.Duration, cmd string, args ...string) error {
 	out, err := ExecCmdOut(ctx, timeout, cmd, args...)
-	log.Info(out)
+	log.Info().Msg(out)
 	return err
 }
 
 func ExecCmdOut(ctx context.Context, timeout time.Duration, cmd string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
-	log.Infof("%s %s", cmd, strings.Join(args, " "))
+	log.Info().Msgf("%s %s", cmd, strings.Join(args, " "))
 	out, err := exec.CommandContext(ctx, cmd, args...).CombinedOutput()
 	cancel()
 	return string(out), err

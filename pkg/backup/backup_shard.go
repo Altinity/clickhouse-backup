@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/rs/zerolog/log"
 	"hash/fnv"
 )
 
@@ -94,7 +95,9 @@ func fnvShardReplicaFromString(str string, activeReplicas []string) (string, err
 	}
 
 	h := fnv.New32a()
-	h.Write([]byte(str))
+	if _, err := h.Write([]byte(str)); err != nil {
+		log.Fatal().Stack().Msgf("can't write %s", str)
+	}
 	i := h.Sum32() % uint32(len(activeReplicas))
 	return activeReplicas[i], nil
 }

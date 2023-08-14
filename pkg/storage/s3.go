@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	apexLog "github.com/apex/log"
 	"io"
 	"net/http"
 	"os"
@@ -13,7 +14,6 @@ import (
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/pkg/config"
-	apexLog "github.com/apex/log"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	awsV2Config "github.com/aws/aws-sdk-go-v2/config"
@@ -27,26 +27,28 @@ import (
 	awsV2Logging "github.com/aws/smithy-go/logging"
 	awsV2http "github.com/aws/smithy-go/transport/http"
 	"github.com/pkg/errors"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 )
 
-type S3LogToApexLogAdapter struct {
-	apexLog *apexLog.Logger
+type S3LogToZeroLogAdapter struct {
+	logger zerolog.Logger
 }
 
-func newS3Logger(log *apexLog.Entry) S3LogToApexLogAdapter {
-	return S3LogToApexLogAdapter{
-		apexLog: log.Logger,
+func newS3Logger(logger zerolog.Logger) S3LogToZeroLogAdapter {
+	return S3LogToZeroLogAdapter{
+		logger: logger,
 	}
 }
 
-func (S3LogToApexLogAdapter S3LogToApexLogAdapter) Logf(severity awsV2Logging.Classification, msg string, args ...interface{}) {
+func (S3LogToApexLogAdapter S3LogToZeroLogAdapter) Logf(severity awsV2Logging.Classification, msg string, args ...interface{}) {
 	msg = fmt.Sprintf("[s3:%s] %s", severity, msg)
 	if len(args) > 0 {
-		S3LogToApexLogAdapter.apexLog.Infof(msg, args...)
+		S3LogToApexLogAdapter.logger.Info().Msgf(msg, args...)
 	} else {
-		S3LogToApexLogAdapter.apexLog.Info(msg)
+		S3LogToApexLogAdapter.logger.Info().Msg(msg)
 	}
 }
 
@@ -89,7 +91,6 @@ type S3 struct {
 	uploader    *s3manager.Uploader
 	downloader  *s3manager.Downloader
 	Config      *config.S3Config
-	Log         *apexLog.Entry
 	PartSize    int64
 	Concurrency int
 	BufferSize  int
@@ -143,8 +144,8 @@ func (s *S3) Connect(ctx context.Context) error {
 	}
 
 	if s.Config.Debug {
-		awsConfig.Logger = newS3Logger(s.Log)
-		awsConfig.ClientLogMode = aws.LogRetries | aws.LogRequest | aws.LogResponseWithBody
+		awsConfig.Logger = newS3Logger(log.Logger)
+		awsConfig.ClientLogMode = aws.LogRetries | aws.LogRequest | aws.LogResponse
 	}
 
 	httpTransport := http.DefaultTransport
@@ -210,13 +211,13 @@ func (s *S3) GetFileReader(ctx context.Context, key string) (io.ReadCloser, erro
 				var stateErr *s3types.InvalidObjectState
 				if errors.As(httpErr, &stateErr) {
 					if strings.Contains(string(stateErr.StorageClass), "GLACIER") {
-						s.Log.Warnf("GetFileReader %s, storageClass %s receive error: %s", key, stateErr.StorageClass, stateErr.Error())
+						log.Warn().Msgf("GetFileReader %s, storageClass %s receive error: %s", key, stateErr.StorageClass, stateErr.Error())
 						if restoreErr := s.restoreObject(ctx, key); restoreErr != nil {
-							s.Log.Warnf("restoreObject %s, return error: %v", key, restoreErr)
+							log.Warn().Msgf("restoreObject %s, return error: %v", key, restoreErr)
 							return nil, err
 						}
 						if resp, err = s.client.GetObject(ctx, getRequest); err != nil {
-							s.Log.Warnf("second GetObject %s, return error: %v", key, err)
+							log.Warn().Msgf("second GetObject %s, return error: %v", key, err)
 							return nil, err
 						}
 						return resp.Body, nil
@@ -599,7 +600,7 @@ func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (
 	if err != nil {
 		return 0, fmt.Errorf("complete CopyObject multipart upload: %v", err)
 	}
-	s.Log.Debugf("S3->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, s.Config.Bucket, dstKey)
+	log.Debug().Msgf("S3->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, s.Config.Bucket, dstKey)
 	return srcSize, nil
 }
 
@@ -631,7 +632,7 @@ func (s *S3) restoreObject(ctx context.Context, key string) error {
 
 		if res.Restore != nil && *res.Restore == "ongoing-request=\"true\"" {
 			i += 1
-			s.Log.Warnf("%s still not restored, will wait %d seconds", key, i*5)
+			log.Warn().Msgf("%s still not restored, will wait %d seconds", key, i*5)
 			time.Sleep(time.Duration(i*5) * time.Second)
 		} else {
 			return nil

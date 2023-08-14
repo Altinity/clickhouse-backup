@@ -7,7 +7,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"github.com/Altinity/clickhouse-backup/pkg/storage"
 	"github.com/Altinity/clickhouse-backup/pkg/utils"
-	"github.com/apex/log"
+	"github.com/rs/zerolog/log"
 	"strings"
 	"time"
 )
@@ -32,15 +32,15 @@ func List(ctx context.Context, cfg *config.Config) ([]storage.Backup, error) {
 				}
 			}
 		}
-		log.
-			WithField("operation", "list_custom").
-			WithField("duration", utils.HumanizeDuration(time.Since(startCustomList))).
-			Info("done")
+		log.Info().
+			Str("operation", "list_custom").
+			Str("duration", utils.HumanizeDuration(time.Since(startCustomList))).
+			Msg("done")
 		return backupList, nil
 	} else {
-		log.
-			WithField("operation", "list_custom").
-			Error(err.Error())
+		log.Error().
+			Str("operation", "list_custom").
+			Err(err).Send()
 		return nil, err
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"google.golang.org/api/iterator"
 	"io"
 	"net/http"
 	"path"
@@ -16,7 +15,8 @@ import (
 	"google.golang.org/api/option/internaloption"
 
 	"cloud.google.com/go/storage"
-	"github.com/apex/log"
+	"github.com/rs/zerolog/log"
+	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 	googleHTTPTransport "google.golang.org/api/transport/http"
 )
@@ -38,11 +38,11 @@ func (w debugGCSTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 			logMsg += fmt.Sprintf("%v: %v\n", h, v)
 		}
 	}
-	log.Info(logMsg)
+	log.Info().Msg(logMsg)
 
 	resp, err := w.base.RoundTrip(r)
 	if err != nil {
-		log.Errorf("GCS_ERROR: %v", err)
+		log.Error().Msgf("GCS_ERROR: %v", err)
 		return resp, err
 	}
 	logMsg = fmt.Sprintf("<<< [GCS_RESPONSE] <<< %v %v\n", r.Method, r.URL.String())
@@ -51,7 +51,7 @@ func (w debugGCSTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 			logMsg += fmt.Sprintf("%v: %v\n", h, v)
 		}
 	}
-	log.Info(logMsg)
+	log.Info().Msg(logMsg)
 	return resp, err
 }
 
@@ -167,7 +167,7 @@ func (gcs *GCS) PutFile(ctx context.Context, key string, r io.ReadCloser) error 
 	}
 	defer func() {
 		if err := writer.Close(); err != nil {
-			log.Warnf("can't close writer: %+v", err)
+			log.Warn().Msgf("can't close writer: %+v", err)
 		}
 	}()
 	buffer := make([]byte, 512*1024)
@@ -216,7 +216,7 @@ func (gcs *GCS) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string
 	if _, err = dst.CopierFrom(src).Run(ctx); err != nil {
 		return 0, err
 	}
-	log.Debugf("GCS->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, gcs.Config.Bucket, dstKey)
+	log.Debug().Msgf("GCS->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, gcs.Config.Bucket, dstKey)
 	return attrs.Size, nil
 }
 

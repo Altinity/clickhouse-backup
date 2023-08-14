@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/apex/log"
 	libSFTP "github.com/pkg/sftp"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -27,7 +27,7 @@ type SFTP struct {
 
 func (sftp *SFTP) Debug(msg string, v ...interface{}) {
 	if sftp.Config.Debug {
-		log.Infof(msg, v...)
+		log.Info().Msgf(msg, v...)
 	}
 }
 
@@ -140,7 +140,7 @@ func (sftp *SFTP) DeleteDirectory(ctx context.Context, dirPath string) error {
 	sftp.Debug("[SFTP_DEBUG] DeleteDirectory %s", dirPath)
 	defer func() {
 		if err := sftp.sftpClient.RemoveDirectory(dirPath); err != nil {
-			log.Warnf("RemoveDirectory err=%v", err)
+			log.Warn().Msgf("RemoveDirectory err=%v", err)
 		}
 	}()
 
@@ -153,11 +153,11 @@ func (sftp *SFTP) DeleteDirectory(ctx context.Context, dirPath string) error {
 		filePath := path.Join(dirPath, file.Name())
 		if file.IsDir() {
 			if err := sftp.DeleteDirectory(ctx, filePath); err != nil {
-				log.Warnf("sftp.DeleteDirectory(%s) err=%v", filePath, err)
+				log.Warn().Msgf("sftp.DeleteDirectory(%s) err=%v", filePath, err)
 			}
 		} else {
 			if err := sftp.sftpClient.Remove(filePath); err != nil {
-				log.Warnf("sftp.Remove(%s) err=%v", filePath, err)
+				log.Warn().Msgf("sftp.Remove(%s) err=%v", filePath, err)
 			}
 		}
 	}
@@ -221,7 +221,7 @@ func (sftp *SFTP) GetFileReaderWithLocalPath(ctx context.Context, key, _ string)
 func (sftp *SFTP) PutFile(ctx context.Context, key string, localFile io.ReadCloser) error {
 	filePath := path.Join(sftp.Config.Path, key)
 	if err := sftp.sftpClient.MkdirAll(path.Dir(filePath)); err != nil {
-		log.Warnf("sftp.sftpClient.MkdirAll(%s) err=%v", path.Dir(filePath), err)
+		log.Warn().Msgf("sftp.sftpClient.MkdirAll(%s) err=%v", path.Dir(filePath), err)
 	}
 	remoteFile, err := sftp.sftpClient.Create(filePath)
 	if err != nil {
@@ -229,7 +229,7 @@ func (sftp *SFTP) PutFile(ctx context.Context, key string, localFile io.ReadClos
 	}
 	defer func() {
 		if err := remoteFile.Close(); err != nil {
-			log.Warnf("can't close %s err=%v", filePath, err)
+			log.Warn().Msgf("can't close %s err=%v", filePath, err)
 		}
 	}()
 	if _, err = remoteFile.ReadFrom(localFile); err != nil {

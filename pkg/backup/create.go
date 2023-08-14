@@ -22,10 +22,9 @@ import (
 	"github.com/Altinity/clickhouse-backup/pkg/storage"
 	"github.com/Altinity/clickhouse-backup/pkg/storage/object_disk"
 	"github.com/Altinity/clickhouse-backup/pkg/utils"
-
-	apexLog "github.com/apex/log"
 	"github.com/google/uuid"
 	recursiveCopy "github.com/otiai10/copy"
+	"github.com/rs/zerolog/log"
 )
 
 const (
@@ -66,10 +65,6 @@ func (b *Backuper) CreateBackup(backupName, tablePattern string, partitions []st
 		backupName = NewBackupName()
 	}
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
-	log := b.log.WithFields(apexLog.Fields{
-		"backup":    backupName,
-		"operation": "create",
-	})
 	if err := b.ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
@@ -117,9 +112,9 @@ func (b *Backuper) CreateBackup(backupName, tablePattern string, partitions []st
 	partitionsIdMap, partitionsNameList := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, tables, nil, partitions)
 	// create
 	if b.cfg.ClickHouse.UseEmbeddedBackupRestore {
-		err = b.createBackupEmbedded(ctx, backupName, tablePattern, partitionsNameList, partitionsIdMap, schemaOnly, createRBAC, createConfigs, tables, allDatabases, allFunctions, disks, diskMap, diskTypes, log, startBackup, version)
+		err = b.createBackupEmbedded(ctx, backupName, tablePattern, partitionsNameList, partitionsIdMap, schemaOnly, createRBAC, createConfigs, tables, allDatabases, allFunctions, disks, diskMap, diskTypes, startBackup, version)
 	} else {
-		err = b.createBackupLocal(ctx, backupName, partitionsIdMap, tables, doBackupData, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, version, disks, diskMap, diskTypes, allDatabases, allFunctions, log, startBackup)
+		err = b.createBackupLocal(ctx, backupName, partitionsIdMap, tables, doBackupData, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, version, disks, diskMap, diskTypes, allDatabases, allFunctions, startBackup)
 	}
 	if err != nil {
 		return err
@@ -132,7 +127,7 @@ func (b *Backuper) CreateBackup(backupName, tablePattern string, partitions []st
 	return nil
 }
 
-func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, tables []clickhouse.Table, doBackupData bool, schemaOnly bool, createRBAC, rbacOnly bool, createConfigs, configsOnly bool, version string, disks []clickhouse.Disk, diskMap, diskTypes map[string]string, allDatabases []clickhouse.Database, allFunctions []clickhouse.Function, log *apexLog.Entry, startBackup time.Time) error {
+func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, tables []clickhouse.Table, doBackupData bool, schemaOnly bool, createRBAC, rbacOnly bool, createConfigs, configsOnly bool, version string, disks []clickhouse.Disk, diskMap, diskTypes map[string]string, allDatabases []clickhouse.Database, allFunctions []clickhouse.Function, startBackup time.Time) error {
 	// Create backup dir on all clickhouse disks
 	for _, disk := range disks {
 		if err := filesystemhelper.Mkdir(path.Join(disk.Path, "backup"), b.ch, disks); err != nil {
@@ -149,7 +144,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 	}
 	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
 		if err = filesystemhelper.Mkdir(backupPath, b.ch, disks); err != nil {
-			log.Errorf("can't create directory %s: %v", backupPath, err)
+			log.Error().Msgf("can't create directory %s: %v", backupPath, err)
 			return err
 		}
 	}
@@ -161,24 +156,23 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
-			log := log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Name))
 			if table.Skip {
 				continue
 			}
 			var realSize map[string]int64
 			var disksToPartsMap map[string][]metadata.Part
 			if doBackupData && table.BackupType == clickhouse.ShardBackupFull {
-				log.Debug("create data")
+				log.Debug().Msg("create data")
 				shadowBackupUUID := strings.ReplaceAll(uuid.New().String(), "-", "")
 				disksToPartsMap, realSize, err = b.AddTableToBackup(ctx, backupName, shadowBackupUUID, disks, &table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}])
 				if err != nil {
-					log.Error(err.Error())
+					log.Error().Msg(err.Error())
 					if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks); removeBackupErr != nil {
-						log.Error(removeBackupErr.Error())
+						log.Error().Msg(removeBackupErr.Error())
 					}
 					// fix corner cases after https://github.com/Altinity/clickhouse-backup/issues/379
 					if cleanShadowErr := b.Clean(ctx); cleanShadowErr != nil {
-						log.Error(cleanShadowErr.Error())
+						log.Error().Msg(cleanShadowErr.Error())
 					}
 					return err
 				}
@@ -188,19 +182,19 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 				}
 			}
 			// https://github.com/Altinity/clickhouse-backup/issues/529
-			log.Debug("get in progress mutations list")
+			log.Debug().Msg("get in progress mutations list")
 			inProgressMutations := make([]metadata.MutationMetadata, 0)
 			if b.cfg.ClickHouse.BackupMutations && !schemaOnly && !rbacOnly && !configsOnly {
 				inProgressMutations, err = b.ch.GetInProgressMutations(ctx, table.Database, table.Name)
 				if err != nil {
-					log.Error(err.Error())
+					log.Error().Msg(err.Error())
 					if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks); removeBackupErr != nil {
-						log.Error(removeBackupErr.Error())
+						log.Error().Msg(removeBackupErr.Error())
 					}
 					return err
 				}
 			}
-			log.Debug("create metadata")
+			log.Debug().Msg("create metadata")
 			if schemaOnly || doBackupData {
 				metadataSize, err := b.createTableMetadata(path.Join(backupPath, "metadata"), metadata.TableMetadata{
 					Table:        table.Name,
@@ -214,7 +208,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 				}, disks)
 				if err != nil {
 					if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks); removeBackupErr != nil {
-						log.Error(removeBackupErr.Error())
+						log.Error().Msg(removeBackupErr.Error())
 					}
 					return err
 				}
@@ -224,35 +218,35 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 					Table:    table.Name,
 				})
 			}
-			log.Infof("done")
+			log.Info().Str("database", table.Database).Str("table", table.Name).Msgf("done")
 		}
 	}
 	backupRBACSize, backupConfigSize := uint64(0), uint64(0)
 
 	if createRBAC || rbacOnly {
 		if backupRBACSize, err = b.createBackupRBAC(ctx, backupPath, disks); err != nil {
-			log.Fatalf("error during do RBAC backup: %v", err)
+			log.Fatal().Msgf("error during do RBAC backup: %v", err)
 		} else {
-			log.WithField("size", utils.FormatBytes(backupRBACSize)).Info("done createBackupRBAC")
+			log.Info().Str("size", utils.FormatBytes(backupRBACSize)).Msg("done createRBACBackup")
 		}
 	}
 	if createConfigs || configsOnly {
 		if backupConfigSize, err = b.createBackupConfigs(ctx, backupPath); err != nil {
-			log.Fatalf("error during do CONFIG backup: %v", err)
+			log.Fatal().Msgf("error during do CONFIG backup: %v", err)
 		} else {
-			log.WithField("size", utils.FormatBytes(backupConfigSize)).Info("done createBackupConfigs")
+			log.Info().Str("size", utils.FormatBytes(backupConfigSize)).Msg("done createBackupConfigs")
 		}
 	}
 
 	backupMetaFile := path.Join(defaultPath, "backup", backupName, "metadata.json")
-	if err := b.createBackupMetadata(ctx, backupMetaFile, backupName, version, "regular", diskMap, diskTypes, disks, backupDataSize, backupMetadataSize, backupRBACSize, backupConfigSize, tableMetas, allDatabases, allFunctions, log); err != nil {
+	if err := b.createBackupMetadata(ctx, backupMetaFile, backupName, version, "regular", diskMap, diskTypes, disks, backupDataSize, backupMetadataSize, backupRBACSize, backupConfigSize, tableMetas, allDatabases, allFunctions); err != nil {
 		return err
 	}
-	log.WithField("duration", utils.HumanizeDuration(time.Since(startBackup))).Info("done")
+	log.Info().Str("operation", "create").Str("duration", utils.HumanizeDuration(time.Since(startBackup))).Msg("done")
 	return nil
 }
 
-func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePattern string, partitionsNameList map[metadata.TableTitle][]string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, schemaOnly, createRBAC, createConfigs bool, tables []clickhouse.Table, allDatabases []clickhouse.Database, allFunctions []clickhouse.Function, disks []clickhouse.Disk, diskMap, diskTypes map[string]string, log *apexLog.Entry, startBackup time.Time, backupVersion string) error {
+func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePattern string, partitionsNameList map[metadata.TableTitle][]string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, schemaOnly, createRBAC, createConfigs bool, tables []clickhouse.Table, allDatabases []clickhouse.Database, allFunctions []clickhouse.Function, disks []clickhouse.Disk, diskMap, diskTypes map[string]string, startBackup time.Time, backupVersion string) error {
 	// TODO: Implement sharded backup operations for embedded backups
 	if doesShard(b.cfg.General.ShardedOperationMode) {
 		return fmt.Errorf("cannot perform embedded backup: %w", errShardOperationUnsupported)
@@ -336,7 +330,7 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePa
 		}{Size: 0})
 	}
 
-	log.Debug("calculate parts list from embedded backup disk")
+	log.Debug().Msg("calculate parts list from embedded backup disk")
 	for _, table := range tables {
 		select {
 		case <-ctx.Done():
@@ -348,7 +342,7 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePa
 			disksToPartsMap, err := b.getPartsFromBackupDisk(backupPath, table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}])
 			if err != nil {
 				if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks); removeBackupErr != nil {
-					log.Error(removeBackupErr.Error())
+					log.Error().Msg(removeBackupErr.Error())
 				}
 				return err
 			}
@@ -363,7 +357,7 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePa
 			}, disks)
 			if err != nil {
 				if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks); removeBackupErr != nil {
-					log.Error(removeBackupErr.Error())
+					log.Error().Msg(removeBackupErr.Error())
 				}
 				return err
 			}
@@ -371,14 +365,14 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePa
 		}
 	}
 	backupMetaFile := path.Join(diskMap[b.cfg.ClickHouse.EmbeddedBackupDisk], backupName, "metadata.json")
-	if err := b.createBackupMetadata(ctx, backupMetaFile, backupName, backupVersion, "embedded", diskMap, diskTypes, disks, backupDataSize[0].Size, backupMetadataSize, 0, 0, tableMetas, allDatabases, allFunctions, log); err != nil {
+	if err := b.createBackupMetadata(ctx, backupMetaFile, backupName, backupVersion, "embedded", diskMap, diskTypes, disks, backupDataSize[0].Size, backupMetadataSize, 0, 0, tableMetas, allDatabases, allFunctions); err != nil {
 		return err
 	}
 
-	log.WithFields(apexLog.Fields{
+	log.Info().Fields(map[string]interface{}{
 		"operation": "create_embedded",
 		"duration":  utils.HumanizeDuration(time.Since(startBackup)),
-	}).Info("done")
+	}).Msg("done")
 
 	return nil
 }
@@ -420,14 +414,13 @@ func (b *Backuper) getPartsFromBackupDisk(backupPath string, table clickhouse.Ta
 }
 
 func (b *Backuper) createBackupConfigs(ctx context.Context, backupPath string) (uint64, error) {
-	log := b.log.WithField("logger", "createBackupConfigs")
 	select {
 	case <-ctx.Done():
 		return 0, ctx.Err()
 	default:
 		backupConfigSize := uint64(0)
 		configBackupPath := path.Join(backupPath, "configs")
-		log.Debugf("copy %s -> %s", b.cfg.ClickHouse.ConfigDir, configBackupPath)
+		log.Debug().Msgf("copy %s -> %s", b.cfg.ClickHouse.ConfigDir, configBackupPath)
 		copyErr := recursiveCopy.Copy(b.cfg.ClickHouse.ConfigDir, configBackupPath, recursiveCopy.Options{
 			Skip: func(srcinfo os.FileInfo, src, dest string) (bool, error) {
 				backupConfigSize += uint64(srcinfo.Size())
@@ -439,7 +432,6 @@ func (b *Backuper) createBackupConfigs(ctx context.Context, backupPath string) (
 }
 
 func (b *Backuper) createBackupRBAC(ctx context.Context, backupPath string, disks []clickhouse.Disk) (uint64, error) {
-	log := b.log.WithField("logger", "createBackupRBAC")
 	select {
 	case <-ctx.Done():
 		return 0, ctx.Err()
@@ -458,7 +450,7 @@ func (b *Backuper) createBackupRBAC(ctx context.Context, backupPath string, disk
 			return 0, fmt.Errorf("%s is not directory", accessPath)
 		}
 		if err == nil {
-			log.Debugf("copy %s -> %s", accessPath, rbacBackup)
+			log.Debug().Msgf("copy %s -> %s", accessPath, rbacBackup)
 			copyErr := recursiveCopy.Copy(accessPath, rbacBackup, recursiveCopy.Options{
 				Skip: func(srcinfo os.FileInfo, src, dest string) (bool, error) {
 					rbacDataSize += uint64(srcinfo.Size())
@@ -487,8 +479,8 @@ func (b *Backuper) createBackupRBACReplicated(ctx context.Context, rbacBackup st
 	}, 0)
 	rbacDataSize := uint64(0)
 	if err = b.ch.SelectContext(ctx, &replicatedRBAC, "SELECT name FROM system.user_directories WHERE type='replicated'"); err == nil && len(replicatedRBAC) > 0 {
-		k := keeper.Keeper{Log: b.log.WithField("logger", "keeper")}
-		if err = k.Connect(ctx, b.ch, b.cfg); err != nil {
+		k := keeper.Keeper{}
+		if err = k.Connect(ctx, b.ch); err != nil {
 			return 0, err
 		}
 		defer k.Close()
@@ -498,7 +490,7 @@ func (b *Backuper) createBackupRBACReplicated(ctx context.Context, rbacBackup st
 				return 0, err
 			}
 			dumpFile := path.Join(rbacBackup, userDirectory.Name+".jsonl")
-			b.log.WithField("logger", "createBackupRBACReplicated").Infof("keeper.Dump %s -> %s", replicatedAccessPath, dumpFile)
+			log.Info().Str("logger", "createBackupRBACReplicated").Msgf("keeper.Dump %s -> %s", replicatedAccessPath, dumpFile)
 			dumpRBACSize, dumpErr := k.Dump(replicatedAccessPath, dumpFile)
 			if dumpErr != nil {
 				return 0, dumpErr
@@ -510,18 +502,18 @@ func (b *Backuper) createBackupRBACReplicated(ctx context.Context, rbacBackup st
 }
 
 func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBackupUUID string, diskList []clickhouse.Disk, table *clickhouse.Table, partitionsIdsMap common.EmptyMap) (map[string][]metadata.Part, map[string]int64, error) {
-	log := b.log.WithFields(apexLog.Fields{
+	logger := log.With().Fields(map[string]interface{}{
 		"backup":    backupName,
 		"operation": "create",
 		"table":     fmt.Sprintf("%s.%s", table.Database, table.Name),
-	})
+	}).Logger()
 	if backupName == "" {
 		return nil, nil, fmt.Errorf("backupName is not defined")
 	}
 
 	if !strings.HasSuffix(table.Engine, "MergeTree") && table.Engine != "MaterializedMySQL" && table.Engine != "MaterializedPostgreSQL" {
 		if table.Engine != "MaterializedView" {
-			log.WithField("engine", table.Engine).Warnf("supports only schema backup")
+			logger.Warn().Str("engine", table.Engine).Msg("supports only schema backup")
 		}
 		return nil, nil, nil
 	}
@@ -534,7 +526,7 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 	if err := b.ch.FreezeTable(ctx, table, shadowBackupUUID); err != nil {
 		return nil, nil, err
 	}
-	log.Debug("frozen")
+	logger.Debug().Msg("frozen")
 	version, err := b.ch.GetVersion(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -564,7 +556,7 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 			}
 			realSize[disk.Name] = size
 			disksToPartsMap[disk.Name] = parts
-			log.WithField("disk", disk.Name).Debug("shadow moved")
+			logger.Debug().Str("disk", disk.Name).Msg("shadow moved")
 			if disk.Type == "s3" || disk.Type == "azure_blob_storage" && len(parts) > 0 {
 				if err = config.ValidateObjectDiskConfig(b.cfg); err != nil {
 					return nil, nil, err
@@ -583,7 +575,7 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 					return disksToPartsMap, realSize, err
 				}
 				realSize[disk.Name] += size
-				log.WithField("disk", disk.Name).WithField("duration", utils.HumanizeDuration(time.Since(start))).Info("object_disk data uploaded")
+				logger.Info().Str("disk", disk.Name).Str("duration", utils.HumanizeDuration(time.Since(start))).Msg("object_disk data uploaded")
 			}
 			// Clean all the files under the shadowPath, cause UNFREEZE unavailable
 			if version < 21004000 {
@@ -597,7 +589,7 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 	if version > 21004000 {
 		if err := b.ch.QueryContext(ctx, fmt.Sprintf("ALTER TABLE `%s`.`%s` UNFREEZE WITH NAME '%s'", table.Database, table.Name, shadowBackupUUID)); err != nil {
 			if (strings.Contains(err.Error(), "code: 60") || strings.Contains(err.Error(), "code: 81") || strings.Contains(err.Error(), "code: 218")) && b.cfg.ClickHouse.IgnoreNotExistsErrorDuringFreeze {
-				b.ch.Log.Warnf("can't unfreeze table: %v", err)
+				logger.Warn().Msgf("can't unfreeze table: %v", err)
 			} else {
 				return disksToPartsMap, realSize, err
 			}
@@ -606,10 +598,10 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 	}
 	if b.dst != nil {
 		if err := b.dst.Close(ctx); err != nil {
-			b.log.Warnf("uploadObjectDiskParts: can't close BackupDestination error: %v", err)
+			logger.Warn().Msgf("uploadObjectDiskParts: can't close BackupDestination error: %v", err)
 		}
 	}
-	log.Debug("done")
+	logger.Debug().Msg("done")
 	return disksToPartsMap, realSize, nil
 }
 
@@ -660,7 +652,7 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName, backup
 	return size, nil
 }
 
-func (b *Backuper) createBackupMetadata(ctx context.Context, backupMetaFile, backupName, version, tags string, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, backupDataSize, backupMetadataSize, backupRBACSize, backupConfigSize uint64, tableMetas []metadata.TableTitle, allDatabases []clickhouse.Database, allFunctions []clickhouse.Function, log *apexLog.Entry) error {
+func (b *Backuper) createBackupMetadata(ctx context.Context, backupMetaFile, backupName, version, tags string, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, backupDataSize, backupMetadataSize, backupRBACSize, backupConfigSize uint64, tableMetas []metadata.TableTitle, allDatabases []clickhouse.Database, allFunctions []clickhouse.Function) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -697,7 +689,7 @@ func (b *Backuper) createBackupMetadata(ctx context.Context, backupMetaFile, bac
 			return err
 		}
 		if err := filesystemhelper.Chown(backupMetaFile, b.ch, disks, false); err != nil {
-			log.Warnf("can't chown %s: %v", backupMetaFile, err)
+			log.Warn().Msgf("can't chown %s: %v", backupMetaFile, err)
 		}
 		return nil
 	}
