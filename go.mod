@@ -25,6 +25,7 @@ require (
 	github.com/google/uuid v1.3.0
 	github.com/gorilla/mux v1.8.0
 	github.com/jlaffaye/ftp v0.2.0
+	github.com/jolestar/go-commons-pool v2.0.0+incompatible
 	github.com/jolestar/go-commons-pool/v2 v2.1.2
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/klauspost/compress v1.16.6

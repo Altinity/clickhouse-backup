@@ -5,11 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
-	"github.com/Altinity/clickhouse-backup/pkg/custom"
-	"github.com/Altinity/clickhouse-backup/pkg/resumable"
-	"github.com/Altinity/clickhouse-backup/pkg/status"
-	"github.com/eapache/go-resiliency/retrier"
 	"io"
 	"os"
 	"path"
@@ -19,6 +14,12 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/pkg/custom"
+	"github.com/Altinity/clickhouse-backup/pkg/resumable"
+	"github.com/Altinity/clickhouse-backup/pkg/status"
+	"github.com/eapache/go-resiliency/retrier"
 
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
@@ -130,7 +131,7 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 
 	log.Debugf("prepare table concurrent semaphore with concurrency=%d len(tablesForUpload)=%d", b.cfg.General.UploadConcurrency, len(tablesForUpload))
 	uploadSemaphore := semaphore.NewWeighted(int64(b.cfg.General.UploadConcurrency))
-	uploadGroup, uploadCtx := errgroup.WithContext(ctx)
+	uploadGroup, uploadCtx := errgroup.WithContext(context.Background())
 
 	for i, table := range tablesForUpload {
 		if err := uploadSemaphore.Acquire(uploadCtx, 1); err != nil {
