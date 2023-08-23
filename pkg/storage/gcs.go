@@ -217,8 +217,7 @@ func (gcs *GCS) PutFile(ctx context.Context, key string, r io.ReadCloser) error 
 	key = path.Join(gcs.Config.Path, key)
 	obj := pClient.Bucket(gcs.Config.Bucket).Object(key)
 
-	writer_ctx := context.Background()
-	writer := obj.NewWriter(writer_ctx)
+	writer := obj.NewWriter(ctx)
 	writer.StorageClass = gcs.Config.StorageClass
 	if len(gcs.Config.ObjectLabels) > 0 {
 		writer.Metadata = gcs.Config.ObjectLabels
