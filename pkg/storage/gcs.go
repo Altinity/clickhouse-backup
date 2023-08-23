@@ -242,8 +242,7 @@ func (gcs *GCS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 		return nil, err
 	}
 	pClient := pClientObj.(*clientObject).Client
-	gcs_ctx := context.Background()
-	objAttr, err := pClient.Bucket(gcs.Config.Bucket).Object(path.Join(gcs.Config.Path, key)).Attrs(gcs_ctx)
+	objAttr, err := pClient.Bucket(gcs.Config.Bucket).Object(path.Join(gcs.Config.Path, key)).Attrs(ctx)
 	if err != nil {
 		if errors.Is(err, storage.ErrObjectNotExist) {
 			return nil, ErrNotFound
@@ -267,8 +266,7 @@ func (gcs *GCS) deleteKey(ctx context.Context, key string) error {
 	}
 	pClient := pClientObj.(*clientObject).Client
 	object := pClient.Bucket(gcs.Config.Bucket).Object(key)
-	gcs_ctx := context.Background()
-	err = object.Delete(gcs_ctx)
+	err = object.Delete(ctx)
 	if err != nil {
 		gcs.clientPool.InvalidateObject(ctx, pClientObj)
 		return err
@@ -297,13 +295,12 @@ func (gcs *GCS) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string
 	dstKey = path.Join(gcs.Config.ObjectDiskPath, dstKey)
 	src := pClient.Bucket(srcBucket).Object(srcKey)
 	dst := pClient.Bucket(gcs.Config.Bucket).Object(dstKey)
-	gcs_ctx := context.Background()
-	attrs, err := src.Attrs(gcs_ctx)
+	attrs, err := src.Attrs(ctx)
 	if err != nil {
 		gcs.clientPool.InvalidateObject(ctx, pClientObj)
 		return 0, err
 	}
-	if _, err = dst.CopierFrom(src).Run(gcs_ctx); err != nil {
+	if _, err = dst.CopierFrom(src).Run(ctx); err != nil {
 		gcs.clientPool.InvalidateObject(ctx, pClientObj)
 		return 0, err
 	}
