@@ -14,7 +14,7 @@ import (
 	"google.golang.org/api/iterator"
 
 	"github.com/Altinity/clickhouse-backup/pkg/config"
-	pool "github.com/jolestar/go-commons-pool"
+	pool "github.com/jolestar/go-commons-pool/v2"
 	"google.golang.org/api/option/internaloption"
 
 	"cloud.google.com/go/storage"
