@@ -79,7 +79,7 @@ type GCSConfig struct {
 	CustomStorageClassMap  map[string]string `yaml:"custom_storage_class_map" envconfig:"GCS_CUSTOM_STORAGE_CLASS_MAP"`
 	// NOTE: ClientPoolSize should be atleast 2 times bigger than
 	// 			UploadConcurrency or DownloadConcurrency in each upload and download case
-	ClientPoolSize int `yaml:"client_pool_size" envconfig:"CLIENT_POOL_SIZE"`
+	ClientPoolSize int `yaml:"client_pool_size" envconfig:"GCS_CLIENT_POOL_SIZE"`
 }
 
 // AzureBlobConfig - Azure Blob settings section
