@@ -131,7 +131,7 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 
 	log.Debugf("prepare table concurrent semaphore with concurrency=%d len(tablesForUpload)=%d", b.cfg.General.UploadConcurrency, len(tablesForUpload))
 	uploadSemaphore := semaphore.NewWeighted(int64(b.cfg.General.UploadConcurrency))
-	uploadGroup, uploadCtx := errgroup.WithContext(context.Background())
+	uploadGroup, uploadCtx := errgroup.WithContext(ctx)
 
 	for i, table := range tablesForUpload {
 		if err := uploadSemaphore.Acquire(uploadCtx, 1); err != nil {
