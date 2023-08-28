@@ -84,7 +84,8 @@ services:
    #      - clickhouse-backup
 
   zookeeper:
-    image: docker.io/zookeeper:${ZOOKEEPER_VERSION:-latest}
+    # @TODO back :latest default value after resolve https://github.com/ClickHouse/ClickHouse/issues/53749
+    image: ${ZOOKEEPER_IMAGE:-docker.io/zookeeper}:${ZOOKEEPER_VERSION:-3.8.2}
     hostname: zookeeper
     environment:
       ZOO_4LW_COMMANDS_WHITELIST: "*"
