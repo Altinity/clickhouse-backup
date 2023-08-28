@@ -10,6 +10,7 @@ IMPROVEMENTS
 - restore functions via `CREATE OR REPLACE` for more atomic behavior
 - prepare to Make ./tests/integration/ test parallel fix [721](https://github.com/Altinity/clickhouse-backup/issues/721)
 - touch `/var/lib/clickhouse/flags/force_drop_table` before every DROP TABLE execution, fix [683](https://github.com/Altinity/clickhouse-backup/issues/683)
+- add support connection pool for google cloud storage, `GCS_CLIENT_POOL_SIZE`, fix [724](https://github.com/Altinity/clickhouse-backup/issues/724)
 
 BUG FIXES
 - fix possible create backup failures during UNFREEZE not exists tables, affected 2.2.7+ version, fix [704](https://github.com/Altinity/clickhouse-backup/issues/704)

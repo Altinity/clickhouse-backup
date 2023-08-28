@@ -486,7 +486,7 @@ gcs:
   compression_level: 1         # GCS_COMPRESSION_LEVEL
   compression_format: tar      # GCS_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   storage_class: STANDARD      # GCS_STORAGE_CLASS
-
+  client_pool_size: 500        # GCS_CLIENT_POOL_SIZE, should be at least 2 times bigger than `UPLOAD_CONCURRENCY` or `DOWNLOAD_CONCURRENCY` in each upload and download case
   # GCS_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
   # The format for this env variable is "key1:value1,key2:value2". For YAML please continue using map syntax
   object_labels: {}
