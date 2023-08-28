@@ -1518,12 +1518,20 @@ func (api *APIServer) CreateIntegrationTables() error {
 	if version >= 21001000 {
 		settings = "SETTINGS input_format_skip_unknown_fields=1"
 	}
+	disks, err := ch.GetDisks(context.Background(), true)
+	if err != nil {
+		return err
+	}
+	defaultDataPath, err := ch.GetDefaultPath(disks)
+	if err != nil {
+		return err
+	}
 	query := fmt.Sprintf("CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String) ENGINE=URL('%s://%s:%s/backup/actions%s', JSONEachRow) %s", schema, host, port, auth, settings)
-	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_actions"}, query, true, false, "", 0); err != nil {
+	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_actions"}, query, true, false, "", 0, defaultDataPath); err != nil {
 		return err
 	}
 	query = fmt.Sprintf("CREATE TABLE system.backup_list (name String, created DateTime, size Int64, location String, required String, desc String) ENGINE=URL('%s://%s:%s/backup/list%s', JSONEachRow) %s", schema, host, port, auth, settings)
-	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_list"}, query, true, false, "", 0); err != nil {
+	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_list"}, query, true, false, "", 0, defaultDataPath); err != nil {
 		return err
 	}
 	return nil

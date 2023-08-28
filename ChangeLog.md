@@ -9,7 +9,8 @@ IMPROVEMENTS
 - Add support for s3 `GLACIER` storage class, when GET return error, then, it requires 5 minutes per key and restore could be slow. Use `GLACIER_IR`, it looks more robust, fix [614](https://github.com/Altinity/clickhouse-backup/issues/614)
 - restore functions via `CREATE OR REPLACE` for more atomic behavior
 - prepare to Make ./tests/integration/ test parallel fix [721](https://github.com/Altinity/clickhouse-backup/issues/721)
- 
+- touch `/var/lib/clickhouse/flags/force_drop_table` before every DROP TABLE execution, fix [683](https://github.com/Altinity/clickhouse-backup/issues/683)
+
 BUG FIXES
 - fix possible create backup failures during UNFREEZE not exists tables, affected 2.2.7+ version, fix [704](https://github.com/Altinity/clickhouse-backup/issues/704)
 - fix too strict `system.parts_columns` check when backup create, exclude Enum and Tuple (JSON) and Nullable(Type) vs Type corner cases, fix [685](https://github.com/Altinity/clickhouse-backup/issues/685), fix [699](https://github.com/Altinity/clickhouse-backup/issues/699)  

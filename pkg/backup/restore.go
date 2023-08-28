@@ -66,16 +66,16 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 	if err != nil {
 		return err
 	}
-	defaultDataPath, err := b.ch.GetDefaultPath(disks)
+	b.DefaultDataPath, err = b.ch.GetDefaultPath(disks)
 	if err != nil {
 		log.Warnf("%v", err)
 		return ErrUnknownClickhouseDataPath
 	}
-	backupMetafileLocalPaths := []string{path.Join(defaultDataPath, "backup", backupName, "metadata.json")}
+	backupMetafileLocalPaths := []string{path.Join(b.DefaultDataPath, "backup", backupName, "metadata.json")}
 	var backupMetadataBody []byte
-	embeddedBackupPath, err := b.ch.GetEmbeddedBackupPath(disks)
-	if err == nil && embeddedBackupPath != "" {
-		backupMetafileLocalPaths = append(backupMetafileLocalPaths, path.Join(embeddedBackupPath, backupName, "metadata.json"))
+	b.EmbeddedBackupDataPath, err = b.ch.GetEmbeddedBackupPath(disks)
+	if err == nil && b.EmbeddedBackupDataPath != "" {
+		backupMetafileLocalPaths = append(backupMetafileLocalPaths, path.Join(b.EmbeddedBackupDataPath, backupName, "metadata.json"))
 	} else if b.cfg.ClickHouse.UseEmbeddedBackupRestore && b.cfg.ClickHouse.EmbeddedBackupDisk == "" {
 		log.Warnf("%v", err)
 	} else if err != nil {
@@ -83,8 +83,8 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 	}
 	for _, metadataPath := range backupMetafileLocalPaths {
 		backupMetadataBody, err = os.ReadFile(metadataPath)
-		if err == nil && embeddedBackupPath != "" {
-			b.isEmbedded = strings.HasPrefix(metadataPath, embeddedBackupPath)
+		if err == nil && b.EmbeddedBackupDataPath != "" {
+			b.isEmbedded = strings.HasPrefix(metadataPath, b.EmbeddedBackupDataPath)
 			break
 		}
 	}
@@ -148,7 +148,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 	}
 
 	if schemaOnly || (schemaOnly == dataOnly) {
-		if err := b.RestoreSchema(ctx, backupName, tablePattern, dropTable, ignoreDependencies, disks); err != nil {
+		if err := b.RestoreSchema(ctx, backupName, tablePattern, dropTable, ignoreDependencies); err != nil {
 			return err
 		}
 	}
@@ -246,6 +246,9 @@ func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB, tablePatt
 				settings = "SETTINGS check_table_dependencies=0"
 			}
 		}
+		if _, err := os.Create(path.Join(b.DefaultDataPath, "/flags/force_drop_table")); err != nil {
+			return err
+		}
 		if err := b.ch.QueryContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s` %s SYNC %s", targetDB, onCluster, settings)); err != nil {
 			return err
 		}
@@ -303,19 +306,15 @@ func (b *Backuper) restoreRBAC(ctx context.Context, backupName string, disks []c
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if err = b.restoreRBACReplicated(ctx, backupName, "access", disks); err != nil {
+	if err = b.restoreRBACReplicated(ctx, backupName, "access"); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (b *Backuper) restoreRBACReplicated(ctx context.Context, backupName string, backupPrefixDir string, disks []clickhouse.Disk) error {
+func (b *Backuper) restoreRBACReplicated(ctx context.Context, backupName string, backupPrefixDir string) error {
 	log := b.log.WithField("logger", "restoreRBACReplicated")
-	defaultDataPath, err := b.ch.GetDefaultPath(disks)
-	if err != nil {
-		return ErrUnknownClickhouseDataPath
-	}
-	srcBackupDir := path.Join(defaultDataPath, "backup", backupName, backupPrefixDir)
+	srcBackupDir := path.Join(b.DefaultDataPath, "backup", backupName, backupPrefixDir)
 	info, err := os.Stat(srcBackupDir)
 	if err != nil {
 		return err
@@ -376,11 +375,7 @@ func (b *Backuper) restoreConfigs(backupName string, disks []clickhouse.Disk) er
 
 func (b *Backuper) restoreBackupRelatedDir(backupName, backupPrefixDir, destinationDir string, disks []clickhouse.Disk, skipPatterns []string) error {
 	log := b.log.WithField("logger", "restoreBackupRelatedDir")
-	defaultDataPath, err := b.ch.GetDefaultPath(disks)
-	if err != nil {
-		return ErrUnknownClickhouseDataPath
-	}
-	srcBackupDir := path.Join(defaultDataPath, "backup", backupName, backupPrefixDir)
+	srcBackupDir := path.Join(b.DefaultDataPath, "backup", backupName, backupPrefixDir)
 	info, err := os.Stat(srcBackupDir)
 	if err != nil {
 		return err
@@ -421,27 +416,19 @@ func (b *Backuper) restoreBackupRelatedDir(backupName, backupPrefixDir, destinat
 }
 
 // RestoreSchema - restore schemas matched by tablePattern from backupName
-func (b *Backuper) RestoreSchema(ctx context.Context, backupName, tablePattern string, dropTable, ignoreDependencies bool, disks []clickhouse.Disk) error {
+func (b *Backuper) RestoreSchema(ctx context.Context, backupName, tablePattern string, dropTable, ignoreDependencies bool) error {
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "restore",
 	})
 
-	defaultDataPath, err := b.ch.GetDefaultPath(disks)
-	if err != nil {
-		return ErrUnknownClickhouseDataPath
-	}
 	version, err := b.ch.GetVersion(ctx)
 	if err != nil {
 		return err
 	}
-	metadataPath := path.Join(defaultDataPath, "backup", backupName, "metadata")
+	metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
 	if b.isEmbedded {
-		defaultDataPath, err = b.ch.GetEmbeddedBackupPath(disks)
-		if err != nil {
-			return err
-		}
-		metadataPath = path.Join(defaultDataPath, backupName, "metadata")
+		metadataPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
 	}
 	info, err := os.Stat(metadataPath)
 	if err != nil {
@@ -472,7 +459,7 @@ func (b *Backuper) RestoreSchema(ctx context.Context, backupName, tablePattern s
 	}
 	var restoreErr error
 	if b.isEmbedded {
-		restoreErr = b.restoreSchemaEmbedded(ctx, backupName, tablesForRestore, defaultDataPath)
+		restoreErr = b.restoreSchemaEmbedded(ctx, backupName, tablesForRestore)
 	} else {
 		restoreErr = b.restoreSchemaRegular(tablesForRestore, version, log)
 	}
@@ -486,8 +473,8 @@ var UUIDWithMergeTreeRE = regexp.MustCompile(`^(.+)(UUID)(\s+)'([^']+)'(.+)({uui
 
 var emptyReplicatedMergeTreeRE = regexp.MustCompile(`(?m)Replicated(MergeTree|ReplacingMergeTree|SummingMergeTree|AggregatingMergeTree|CollapsingMergeTree|VersionedCollapsingMergeTree|GraphiteMergeTree)\s*\(([^']*)\)(.*)`)
 
-func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string, tablesForRestore ListOfTables, defaultDataPath string) error {
-	metadataPath := path.Join(defaultDataPath, backupName, "metadata")
+func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string, tablesForRestore ListOfTables) error {
+	metadataPath := path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
 	if err := filepath.Walk(metadataPath, func(filePath string, info fs.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -590,7 +577,7 @@ func (b *Backuper) restoreSchemaRegular(tablesForRestore ListOfTables, version i
 			restoreErr = b.ch.CreateTable(clickhouse.Table{
 				Database: schema.Database,
 				Name:     schema.Table,
-			}, schema.Query, false, false, b.cfg.General.RestoreSchemaOnCluster, version)
+			}, schema.Query, false, false, b.cfg.General.RestoreSchemaOnCluster, version, b.DefaultDataPath)
 
 			if restoreErr != nil {
 				restoreRetries++
@@ -636,7 +623,7 @@ func (b *Backuper) dropExistsTables(tablesForDrop ListOfTables, ignoreDependenci
 					dropErr = b.ch.DropTable(clickhouse.Table{
 						Database: schema.Database,
 						Name:     schema.Table,
-					}, query, b.cfg.General.RestoreSchemaOnCluster, ignoreDependencies, version)
+					}, query, b.cfg.General.RestoreSchemaOnCluster, ignoreDependencies, version, b.DefaultDataPath)
 					if dropErr == nil {
 						tablesForDrop[i].Query = query
 					}
@@ -645,7 +632,7 @@ func (b *Backuper) dropExistsTables(tablesForDrop ListOfTables, ignoreDependenci
 				dropErr = b.ch.DropTable(clickhouse.Table{
 					Database: schema.Database,
 					Name:     schema.Table,
-				}, schema.Query, b.cfg.General.RestoreSchemaOnCluster, ignoreDependencies, version)
+				}, schema.Query, b.cfg.General.RestoreSchemaOnCluster, ignoreDependencies, version, b.DefaultDataPath)
 			}
 
 			if dropErr != nil {
@@ -678,11 +665,7 @@ func (b *Backuper) RestoreData(ctx context.Context, backupName string, tablePatt
 		"backup":    backupName,
 		"operation": "restore",
 	})
-	defaultDataPath, err := b.ch.GetDefaultPath(disks)
-	if err != nil {
-		return ErrUnknownClickhouseDataPath
-	}
-	if b.ch.IsClickhouseShadow(path.Join(defaultDataPath, "backup", backupName, "shadow")) {
+	if b.ch.IsClickhouseShadow(path.Join(b.DefaultDataPath, "backup", backupName, "shadow")) {
 		return fmt.Errorf("backups created in v0.0.1 is not supported now")
 	}
 	backup, _, err := b.getLocalBackup(ctx, backupName, disks)
@@ -708,9 +691,9 @@ func (b *Backuper) RestoreData(ctx context.Context, backupName string, tablePatt
 	}
 	var tablesForRestore ListOfTables
 	var partitionsNameList map[metadata.TableTitle][]string
-	metadataPath := path.Join(defaultDataPath, "backup", backupName, "metadata")
+	metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
 	if b.isEmbedded {
-		metadataPath = path.Join(diskMap[b.cfg.ClickHouse.EmbeddedBackupDisk], backupName, "metadata")
+		metadataPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
 	}
 	if backup.Legacy {
 		tablesForRestore, err = b.ch.GetBackupTablesLegacy(backupName, disks)

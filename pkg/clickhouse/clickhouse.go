@@ -827,7 +827,7 @@ func (ch *ClickHouse) addOnClusterToCreateDatabase(cluster string, query string)
 }
 
 // DropTable - drop ClickHouse table
-func (ch *ClickHouse) DropTable(table Table, query string, onCluster string, ignoreDependencies bool, version int) error {
+func (ch *ClickHouse) DropTable(table Table, query string, onCluster string, ignoreDependencies bool, version int, defaultDataPath string) error {
 	var isAtomic bool
 	var err error
 	if isAtomic, err = ch.IsAtomic(table.Database); err != nil {
@@ -847,6 +847,11 @@ func (ch *ClickHouse) DropTable(table Table, query string, onCluster string, ign
 	if ignoreDependencies {
 		dropQuery += " SETTINGS check_table_dependencies=0"
 	}
+	if defaultDataPath != "" {
+		if _, err = os.Create(path.Join(defaultDataPath, "/flags/force_drop_table")); err != nil {
+			return err
+		}
+	}
 	if err = ch.Query(dropQuery); err != nil {
 		return err
 	}
@@ -862,10 +867,10 @@ var onClusterRe = regexp.MustCompile(`(?im)\s+ON\s+CLUSTER\s+`)
 var distributedRE = regexp.MustCompile(`(Distributed)\(([^,]+),([^)]+)\)`)
 
 // CreateTable - create ClickHouse table
-func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDependencies bool, onCluster string, version int) error {
+func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDependencies bool, onCluster string, version int, defaultDataPath string) error {
 	var err error
 	if dropTable {
-		if err = ch.DropTable(table, query, onCluster, ignoreDependencies, version); err != nil {
+		if err = ch.DropTable(table, query, onCluster, ignoreDependencies, version, defaultDataPath); err != nil {
 			return err
 		}
 	}

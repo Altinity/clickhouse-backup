@@ -1065,7 +1065,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 				pauseStart := time.Now()
 				time.Sleep(time.Duration(pause) * time.Nanosecond)
 				log.Infof("pause=%s pauseStart=%s", time.Duration(pause).String(), pauseStart.String())
-				err = ch.chbackend.DropTable(clickhouse.Table{Database: "freeze_not_exists", Name: "freeze_not_exists"}, ifNotExistsCreateSQL, "", false, chVersion)
+				err = ch.chbackend.DropTable(clickhouse.Table{Database: "freeze_not_exists", Name: "freeze_not_exists"}, ifNotExistsCreateSQL, "", false, chVersion, "")
 				r.NoError(err)
 			}
 			resumeChannel <- 1
@@ -1383,7 +1383,7 @@ func TestRestoreMutationInProgress(t *testing.T) {
 	r.NoError(createErr)
 	r.NotContains(out, "have inconsistent data types")
 
-	r.NoError(ch.chbackend.DropTable(clickhouse.Table{Database: t.Name(), Name: "test_restore_mutation_in_progress"}, "", "", false, version))
+	r.NoError(ch.chbackend.DropTable(clickhouse.Table{Database: t.Name(), Name: "test_restore_mutation_in_progress"}, "", "", false, version, ""))
 	var restoreErr error
 	restoreErr = dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--rm", "--tables="+t.Name()+".test_restore_mutation_in_progress", "test_restore_mutation_in_progress")
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.8") < 0 {
@@ -1436,7 +1436,7 @@ func TestRestoreMutationInProgress(t *testing.T) {
 
 	r.NoError(dockerExec("clickhouse", "clickhouse", "client", "-q", "SELECT * FROM system.mutations FORMAT Vertical"))
 
-	r.NoError(ch.chbackend.DropTable(clickhouse.Table{Database: t.Name(), Name: "test_restore_mutation_in_progress"}, "", "", false, version))
+	r.NoError(ch.chbackend.DropTable(clickhouse.Table{Database: t.Name(), Name: "test_restore_mutation_in_progress"}, "", "", false, version, ""))
 	r.NoError(ch.dropDatabase(t.Name()))
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_restore_mutation_in_progress"))
 }
@@ -1562,7 +1562,7 @@ func TestFIPS(t *testing.T) {
 	// https://www.perplexity.ai/search/0920f1e8-59ec-4e14-b779-ba7b2e037196
 	testTLSCerts("rsa", "4096", "", "ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-AES256-GCM-SHA384", "AES128-GCM-SHA256", "AES256-GCM-SHA384")
 	testTLSCerts("ecdsa", "", "prime256v1", "ECDHE-ECDSA-AES128-GCM-SHA256", "ECDHE-ECDSA-AES256-GCM-SHA384")
-	r.NoError(ch.chbackend.DropTable(clickhouse.Table{Database: t.Name(), Name: "fips_table"}, createSQL, "", false, 0))
+	r.NoError(ch.chbackend.DropTable(clickhouse.Table{Database: t.Name(), Name: "fips_table"}, createSQL, "", false, 0, ""))
 	r.NoError(ch.dropDatabase(t.Name()))
 
 }
@@ -2320,7 +2320,7 @@ func (ch *TestClickHouse) createTestSchema(t *testing.T, data TestDataStruct, re
 			Name:     data.Name,
 		},
 		createSQL,
-		false, false, "", 0,
+		false, false, "", 0, "/var/lib/clickhouse",
 	)
 	return err
 }
