@@ -768,8 +768,6 @@ if [[ $exit_code != 0 ]]; then
 fi
 ```
 
-```
-
 ### More use cases of clickhouse-backup
 
 - [How to convert MergeTree to ReplicatedMergeTree](Examples.md#how-to-convert-mergetree-to-replicatedmergetree)
