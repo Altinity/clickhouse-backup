@@ -343,10 +343,12 @@ func (s *S3) getObjectVersion(ctx context.Context, key string) (*string, error) 
 }
 
 func (s *S3) StatFile(ctx context.Context, key string) (RemoteFile, error) {
-	head, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
+	params := &s3.HeadObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
 		Key:    aws.String(path.Join(s.Config.Path, key)),
-	})
+	}
+	s.enrichHeadParamsWithSSE(params)
+	head, err := s.client.HeadObject(ctx, params)
 	if err != nil {
 		var opError *smithy.OperationError
 		if errors.As(err, &opError) {
@@ -463,10 +465,12 @@ func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (
 		if err != nil {
 			return 0, err
 		}
-		dstObjResp, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
+		dstHeadParams := &s3.HeadObjectInput{
 			Bucket: aws.String(s.Config.Bucket),
 			Key:    aws.String(dstKey),
-		})
+		}
+		s.enrichHeadParamsWithSSE(dstHeadParams)
+		dstObjResp, err := s.client.HeadObject(ctx, dstHeadParams)
 		if err != nil {
 			return 0, err
 		}
@@ -620,11 +624,12 @@ func (s *S3) restoreObject(ctx context.Context, key string) error {
 	}
 	i := 0
 	for {
-		headObjectRequest := &s3.HeadObjectInput{
+		restoreHeadParams := &s3.HeadObjectInput{
 			Bucket: aws.String(s.Config.Bucket),
 			Key:    aws.String(path.Join(s.Config.Path, key)),
 		}
-		res, err := s.client.HeadObject(ctx, headObjectRequest)
+		s.enrichHeadParamsWithSSE(restoreHeadParams)
+		res, err := s.client.HeadObject(ctx, restoreHeadParams)
 		if err != nil {
 			return fmt.Errorf("restoreObject: failed to head %s object metadata, %v", path.Join(s.Config.Path, key), err)
 		}
@@ -636,6 +641,18 @@ func (s *S3) restoreObject(ctx context.Context, key string) error {
 		} else {
 			return nil
 		}
+	}
+}
+
+func (s *S3) enrichHeadParamsWithSSE(headParams *s3.HeadObjectInput) {
+	if s.Config.SSECustomerAlgorithm != "" {
+		headParams.SSECustomerAlgorithm = aws.String(s.Config.SSECustomerAlgorithm)
+	}
+	if s.Config.SSECustomerKey != "" {
+		headParams.SSECustomerKey = aws.String(s.Config.SSECustomerKey)
+	}
+	if s.Config.SSECustomerKeyMD5 != "" {
+		headParams.SSECustomerKeyMD5 = aws.String(s.Config.SSECustomerKeyMD5)
 	}
 }
 

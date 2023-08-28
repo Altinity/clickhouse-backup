@@ -16,6 +16,7 @@ BUG FIXES
 - fix `--rbac` behavior when /var/lib/clickhouse/access not exists
 - fix `skip_database_engines` behavior
 - fix `skip_databases` behavior during restore for corner case `db.prefix*` and corner cases when conflict with `--tables="*pattern.*"`, fix [663](https://github.com/Altinity/clickhouse-backup/issues/663) 
+- fix S3 head object Server Side Encryption parameters, fix [709](https://github.com/Altinity/clickhouse-backup/issues/709) 
 
 # v2.3.2
 BUG FIXES
