@@ -10,7 +10,6 @@ import (
 	"github.com/Altinity/clickhouse-backup/pkg/common"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/antchfx/xmlquery"
-	"github.com/ricochet2200/go-disk-usage/du"
 	"os"
 	"path"
 	"path/filepath"
@@ -30,6 +29,7 @@ type ClickHouse struct {
 	Config               *config.ClickHouseConfig
 	Log                  *apexLog.Entry
 	conn                 driver.Conn
+	disks                []Disk
 	version              int
 	isPartsColumnPresent int8
 	IsOpen               bool
@@ -218,10 +218,9 @@ func (ch *ClickHouse) getDisksFromSystemSettings(ctx context.Context) ([]Disk, e
 		dataPathArray := strings.Split(metadataPath, "/")
 		clickhouseData := path.Join(dataPathArray[:len(dataPathArray)-1]...)
 		return []Disk{{
-			Name:      "default",
-			Path:      path.Join("/", clickhouseData),
-			Type:      "local",
-			FreeSpace: du.NewDiskUsage(path.Join("/", clickhouseData)).Free(),
+			Name: "default",
+			Path: path.Join("/", clickhouseData),
+			Type: "local",
 		}}, nil
 	}
 }
@@ -252,24 +251,18 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
-		type DiskFields struct {
-			DiskTypePresent  uint64 `ch:"is_disk_type_present"`
-			FreeSpacePresent uint64 `ch:"is_free_space_present"`
-		}
-		diskFields := make([]DiskFields, 0)
-		if err := ch.SelectContext(ctx, &diskFields, "SELECT countIf(name='type') AS is_disk_type_present, countIf(name='free_space') AS is_free_space_present FROM system.columns WHERE database='system' AND table='disks'"); err != nil {
+		isDiskType := make([]struct {
+			Present uint64 `ch:"is_disk_type_present"`
+		}, 0)
+		if err := ch.SelectContext(ctx, &isDiskType, "SELECT count() is_disk_type_present FROM system.columns WHERE database='system' AND table='disks' AND name='type'"); err != nil {
 			return nil, err
 		}
 		diskTypeSQL := "'local'"
-		if len(diskFields) > 0 && diskFields[0].DiskTypePresent > 0 {
+		if len(isDiskType) > 0 && isDiskType[0].Present > 0 {
 			diskTypeSQL = "any(type)"
 		}
-		diskFreeSpaceSQL := "0"
-		if len(diskFields) > 0 && diskFields[0].FreeSpacePresent > 0 {
-			diskFreeSpaceSQL = "min(free_space)"
-		}
 		var result []Disk
-		query := fmt.Sprintf("SELECT path, any(name) AS name, %s AS type, %s AS free_space FROM system.disks GROUP BY path", diskTypeSQL, diskFreeSpaceSQL)
+		query := fmt.Sprintf("SELECT path, any(name) AS name, %s AS type FROM system.disks GROUP BY path", diskTypeSQL)
 		err := ch.SelectContext(ctx, &result, query)
 		return result, err
 	}

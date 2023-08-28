@@ -4,12 +4,11 @@ IMPROVEMENTS
 - Implementation blacklist for table engines during backup / download / upload / restore [537](https://github.com/Altinity/clickhouse-backup/issues/537)
 - restore RBAC / configs, refactoring restart clickhouse-server via `sql:SYSTEM SHUTDOWN` or `exec:systemctl restart clickhouse-server`, add `--rbac-only` and `--configs-only` options to `create`, `upload`, `download`, `restore` command. fix [706]https://github.com/Altinity/clickhouse-backup/issues/706
 - Backup/Restore RBAC related objects from Zookeeper via direct connection to zookeeper/keeper, fix [604](https://github.com/Altinity/clickhouse-backup/issues/604)
-- add `SHARDED_OPERATION_MODE` option, to easy create backup for sharded cluster, available values `none` (no sharding), `table` (table granularity), `database` (database granularity), `first-replica` (on the lexicographically sorted first active replica), thanks @mskwon, fix [639](https://github.com/Altinity/clickhouse-backup/issues/639), fix [648](https://github.com/Altinity/clickhouse-backup/pull/648)
-- add support for `compression_format: none` for upload and download backups created with `--rbac` / `--rbac-only` or `--configs` / `--configs-only` options, fix [713](https://github.com/Altinity/clickhouse-backup/issues/713)
-- add support for s3 `GLACIER` storage class, when GET return error, then, it requires 5 minutes per key and restore could be slow. Use `GLACIER_IR`, it looks more robust, fix [614](https://github.com/Altinity/clickhouse-backup/issues/614)
+- Add `SHARDED_OPERATION_MODE` option, to easy create backup for sharded cluster, available values `none` (no sharding), `table` (table granularity), `database` (database granularity), `first-replica` (on the lexicographically sorted first active replica), thanks @mskwon, fix [639](https://github.com/Altinity/clickhouse-backup/issues/639), fix [648](https://github.com/Altinity/clickhouse-backup/pull/648)
+- Add support for `compression_format: none` for upload and download backups created with `--rbac` / `--rbac-only` or `--configs` / `--configs-only` options, fix [713](https://github.com/Altinity/clickhouse-backup/issues/713)
+- Add support for s3 `GLACIER` storage class, when GET return error, then, it requires 5 minutes per key and restore could be slow. Use `GLACIER_IR`, it looks more robust, fix [614](https://github.com/Altinity/clickhouse-backup/issues/614)
 - restore functions via `CREATE OR REPLACE` for more atomic behavior
 - prepare to Make ./tests/integration/ test parallel fix [721](https://github.com/Altinity/clickhouse-backup/issues/721)
-- add more precise disk re-balancing for not exists disks, during download, partial fix [561](https://github.com/Altinity/clickhouse-backup/issues/561)
  
 BUG FIXES
 - fix possible create backup failures during UNFREEZE not exists tables, affected 2.2.7+ version, fix [704](https://github.com/Altinity/clickhouse-backup/issues/704)
@@ -17,6 +16,7 @@ BUG FIXES
 - fix `--rbac` behavior when /var/lib/clickhouse/access not exists
 - fix `skip_database_engines` behavior
 - fix `skip_databases` behavior during restore for corner case `db.prefix*` and corner cases when conflict with `--tables="*pattern.*"`, fix [663](https://github.com/Altinity/clickhouse-backup/issues/663) 
+- fix S3 head object Server Side Encryption parameters, fix [709](https://github.com/Altinity/clickhouse-backup/issues/709) 
 
 # v2.3.2
 BUG FIXES
