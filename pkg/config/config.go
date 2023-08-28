@@ -3,12 +3,13 @@ package config
 import (
 	"crypto/tls"
 	"fmt"
-	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"math"
 	"os"
 	"runtime"
 	"strings"
 	"time"
+
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 
 	"github.com/apex/log"
 	"github.com/kelseyhightower/envconfig"
@@ -76,6 +77,9 @@ type GCSConfig struct {
 	StorageClass           string            `yaml:"storage_class" envconfig:"GCS_STORAGE_CLASS"`
 	ObjectLabels           map[string]string `yaml:"object_labels" envconfig:"GCS_OBJECT_LABELS"`
 	CustomStorageClassMap  map[string]string `yaml:"custom_storage_class_map" envconfig:"GCS_CUSTOM_STORAGE_CLASS_MAP"`
+	// NOTE: ClientPoolSize should be atleast 2 times bigger than
+	// 			UploadConcurrency or DownloadConcurrency in each upload and download case
+	ClientPoolSize int `yaml:"client_pool_size" envconfig:"GCS_CLIENT_POOL_SIZE"`
 }
 
 // AzureBlobConfig - Azure Blob settings section
@@ -544,6 +548,7 @@ func DefaultConfig() *Config {
 			CompressionLevel:  1,
 			CompressionFormat: "tar",
 			StorageClass:      "STANDARD",
+			ClientPoolSize:    500,
 		},
 		COS: COSConfig{
 			RowURL:            "",
