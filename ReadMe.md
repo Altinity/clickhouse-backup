@@ -18,15 +18,27 @@ You can backup only schema from remote hosts.
 - Efficient storing of multiple backups on the file system
 - Uploading and downloading with streaming compression
 - Works with AWS, GCS, Azure, Tencent COS, FTP, SFTP
-- **Support of Atomic Database Engine**
-- **Support of multi disks installations**
+- **Support for Atomic Database Engine**
+- **Support for multi disks installations**
 - **Support for custom remote storage types via `rclone`, `kopia`, `restic`, `rsync` etc**
-- Support of incremental backups on remote storage
+- Support for incremental backups on remote storage
 
 ## Limitations
 
 - ClickHouse above 1.1.54394 is supported
 - Only MergeTree family tables engines (more table types for `clickhouse-server` 22.7+ and `USE_EMBEDDED_BACKUP_RESTORE=true`)
+
+## Support 
+
+Altinity is the primary maintainer of clickhouse-backup. We offer a range of software and 
+services related to ClickHouse. 
+
+- [Official website](https://altinity.com/) - Get a high level overview of Altinity and our offerings.
+- [Altinity.Cloud](https://altinity.com/cloud-database/) - Run ClickHouse in our cloud or yours.
+- [Altinity Support](https://altinity.com/support/) - Get Enterprise-class support for ClickHouse.
+- [Slack](https://altinitydbworkspace.slack.com/join/shared_invite/zt-1togw9b4g-N0ZOXQyEyPCBh_7IEHUjdw#/shared-invite/email) - Talk directly with ClickHouse users and Altinity devs.
+- [Contact us](https://hubs.la/Q020sH3Z0) - Contact Altinity with your questions or issues.
+- [Free consultation](https://hubs.la/Q020sHkv0) - Get a free consultation with a ClickHouse expert today.
 
 ## Installation
 
