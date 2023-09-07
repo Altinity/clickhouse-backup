@@ -1,4 +1,4 @@
-# v2.4.1 (not released yet)
+# v2.4.1
 IMPROVEMENTS
 - switch to go-1.21
 - add clickhouse-server:23.8 for integration and testflows tests
