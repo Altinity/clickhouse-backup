@@ -2,6 +2,10 @@
 IMPROVEMENTS
 - switch to go-1.21
 - add clickhouse-server:23.8 for integration and testflows tests
+- add `FTP_SKIP_TLS_VERIFY` config option fix [742](https://github.com/Altinity/clickhouse-backup/issues/742)
+
+BUG FIXES
+- fix calculation part size for `S3` and buffer size for `Azure` to avoid errors for upload big files, fix [739](https://github.com/Altinity/clickhouse-backup/issues/739) thanks @rodrigargar
 
 # v2.4.0
 IMPROVEMENTS

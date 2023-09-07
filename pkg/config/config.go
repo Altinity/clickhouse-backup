@@ -154,6 +154,7 @@ type FTPConfig struct {
 	Username          string `yaml:"username" envconfig:"FTP_USERNAME"`
 	Password          string `yaml:"password" envconfig:"FTP_PASSWORD"`
 	TLS               bool   `yaml:"tls" envconfig:"FTP_TLS"`
+	SkipTLSVerify     bool   `yaml:"skip_tls_verify" envconfig:"FTP_SKIP_TLS_VERIFY"`
 	Path              string `yaml:"path" envconfig:"FTP_PATH"`
 	ObjectDiskPath    string `yaml:"object_disk_path" envconfig:"FTP_OBJECT_DISK_PATH"`
 	CompressionFormat string `yaml:"compression_format" envconfig:"FTP_COMPRESSION_FORMAT"`

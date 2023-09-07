@@ -43,7 +43,7 @@ func (f *FTP) Connect(ctx context.Context) error {
 		options = append(options, ftp.DialWithDebugOutput(os.Stdout))
 	}
 	if f.Config.TLS {
-		tlsConfig := tls.Config{}
+		tlsConfig := tls.Config{InsecureSkipVerify: f.Config.SkipTLSVerify}
 		options = append(options, ftp.DialWithTLS(&tlsConfig))
 	}
 	f.clients = pool.NewObjectPoolWithDefaultConfig(ctx, &ftpPoolFactory{options: options, ftp: f})
