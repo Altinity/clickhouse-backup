@@ -519,6 +519,7 @@ ftp:
   username: ""                 # FTP_USERNAME
   password: ""                 # FTP_PASSWORD
   tls: false                   # FTP_TLS
+  tls_skip_verify: false       # FTP_TLS_SKIP_VERIFY
   path: ""                     # FTP_PATH, `system.macros` values could be applied as {macro_name}
   compression_format: tar      # FTP_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   compression_level: 1         # FTP_COMPRESSION_LEVEL
