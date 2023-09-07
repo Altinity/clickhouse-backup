@@ -825,6 +825,7 @@ func testAPIMetrics(r *require.Assertions, ch *TestClickHouse) {
 	log.Info("Check /metrics clickhouse_backup_number_backups_*")
 	r.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_local %d", apiBackupNumber))
 	// +1 watch backup
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "list", "remote"))
 	r.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_remote %d", apiBackupNumber+1))
 	r.Contains(out, "clickhouse_backup_number_backups_local_expected 0")
 	r.Contains(out, "clickhouse_backup_number_backups_remote_expected 0")
