@@ -435,7 +435,8 @@ func TestS3NoDeletePermission(t *testing.T) {
 	r.Error(dockerExec("clickhouse-backup", "clickhouse-backup", "delete", "remote", "no_delete_backup"))
 	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Atomic, Issue331Ordinary}
 	dropDatabasesFromTestDataDataSet(t, r, ch, databaseList)
-	r.NoError(dockerExec("minio", "bash", "-ce", "rm -rf /data/clickhouse/*"))
+	r.NoError(dockerExec("minio", "bash", "-ce", "rm -rfv /data/clickhouse/*"))
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-ce", "rm -rfv /tmp/*"))
 }
 
 // TestDoRestoreRBAC need clickhouse-server restart, no parallel
