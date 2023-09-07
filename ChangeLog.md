@@ -6,6 +6,7 @@ IMPROVEMENTS
 
 BUG FIXES
 - fix calculation part size for `S3` and buffer size for `Azure` to avoid errors for upload big files, fix [739](https://github.com/Altinity/clickhouse-backup/issues/739) thanks @rodrigargar
+- fix GetFileReader for SSE encryption in `S3`, again fix [709](https://github.com/Altinity/clickhouse-backup/issues/709)
 
 # v2.4.0
 IMPROVEMENTS

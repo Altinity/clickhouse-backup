@@ -197,11 +197,20 @@ func (s *S3) Close(ctx context.Context) error {
 }
 
 func (s *S3) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {
-	getRequest := &s3.GetObjectInput{
+	params := &s3.GetObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
 		Key:    aws.String(path.Join(s.Config.Path, key)),
 	}
-	resp, err := s.client.GetObject(ctx, getRequest)
+	if s.Config.SSECustomerAlgorithm != "" {
+		params.SSECustomerAlgorithm = aws.String(s.Config.SSECustomerAlgorithm)
+	}
+	if s.Config.SSECustomerKey != "" {
+		params.SSECustomerKey = aws.String(s.Config.SSECustomerKey)
+	}
+	if s.Config.SSECustomerKeyMD5 != "" {
+		params.SSECustomerKeyMD5 = aws.String(s.Config.SSECustomerKeyMD5)
+	}
+	resp, err := s.client.GetObject(ctx, params)
 	if err != nil {
 		var opError *smithy.OperationError
 		if errors.As(err, &opError) {
@@ -215,7 +224,7 @@ func (s *S3) GetFileReader(ctx context.Context, key string) (io.ReadCloser, erro
 							s.Log.Warnf("restoreObject %s, return error: %v", key, restoreErr)
 							return nil, err
 						}
-						if resp, err = s.client.GetObject(ctx, getRequest); err != nil {
+						if resp, err = s.client.GetObject(ctx, params); err != nil {
 							s.Log.Warnf("second GetObject %s, return error: %v", key, err)
 							return nil, err
 						}
@@ -531,7 +540,7 @@ func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (
 
 	// Set the part size (e.g., 5 MB)
 	partSize := srcSize / s.Config.MaxPartsCount
-	if srcSize % s.Config.MaxPartsCount > 0 {
+	if srcSize%s.Config.MaxPartsCount > 0 {
 		partSize++
 	}
 	if partSize < 5*1024*1024 {
