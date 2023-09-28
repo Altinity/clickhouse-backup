@@ -174,8 +174,7 @@ func (gcs *GCS) GetFileReader(ctx context.Context, key string) (io.ReadCloser, e
 	obj := pClient.Bucket(gcs.Config.Bucket).Object(path.Join(gcs.Config.Path, key))
 	reader, err := obj.NewReader(ctx)
 	if err != nil {
-		// gcs.clientPool.InvalidateObject(ctx, pClientObj)
-		gcs.clientPool.ReturnObject(ctx, pClientObj)
+		gcs.clientPool.InvalidateObject(ctx, pClientObj)
 		return nil, err
 	}
 	gcs.clientPool.ReturnObject(ctx, pClientObj)
@@ -204,8 +203,8 @@ func (gcs *GCS) PutFile(ctx context.Context, key string, r io.ReadCloser) error 
 	defer func() {
 		if err := writer.Close(); err != nil {
 			log.Warnf("can't close writer: %+v", err)
-			// gcs.clientPool.InvalidateObject(ctx, pClientObj)
-			gcs.clientPool.ReturnObject(ctx, pClientObj)
+			gcs.clientPool.InvalidateObject(ctx, pClientObj)
+
 			return
 		}
 		gcs.clientPool.ReturnObject(ctx, pClientObj)
@@ -240,8 +239,7 @@ func (gcs *GCS) deleteKey(ctx context.Context, key string) error {
 	object := pClient.Bucket(gcs.Config.Bucket).Object(key)
 	err = object.Delete(ctx)
 	if err != nil {
-		// gcs.clientPool.InvalidateObject(ctx, pClientObj)
-		gcs.clientPool.ReturnObject(ctx, pClientObj)
+		gcs.clientPool.InvalidateObject(ctx, pClientObj)
 		return err
 	}
 	gcs.clientPool.ReturnObject(ctx, pClientObj)
@@ -270,13 +268,11 @@ func (gcs *GCS) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string
 	dst := pClient.Bucket(gcs.Config.Bucket).Object(dstKey)
 	attrs, err := src.Attrs(ctx)
 	if err != nil {
-		// gcs.clientPool.InvalidateObject(ctx, pClientObj)
-		gcs.clientPool.ReturnObject(ctx, pClientObj)
+		gcs.clientPool.InvalidateObject(ctx, pClientObj)
 		return 0, err
 	}
 	if _, err = dst.CopierFrom(src).Run(ctx); err != nil {
-		// gcs.clientPool.InvalidateObject(ctx, pClientObj)
-		gcs.clientPool.ReturnObject(ctx, pClientObj)
+		gcs.clientPool.InvalidateObject(ctx, pClientObj)
 		return 0, err
 	}
 	log.Debugf("GCS->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, gcs.Config.Bucket, dstKey)
