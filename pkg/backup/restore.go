@@ -862,7 +862,7 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 					if err != nil {
 						return err
 					}
-					if objMeta.StorageObjectCount < 1 {
+					if objMeta.StorageObjectCount < 1 && objMeta.Version != object_disk.VersionRelativePath {
 						return fmt.Errorf("%s: invalid object_dist.Metadata: %#v", fPath, objMeta)
 					}
 					var srcBucket, srcKey string

@@ -1,3 +1,7 @@
+# v2.4.2
+BUG FIXES
+- fix restore for object disk frozen_metadata.txt fix [752](https://github.com/Altinity/clickhouse-backup/issues/752)
+
 # v2.4.1
 IMPROVEMENTS
 - switch to go-1.21
