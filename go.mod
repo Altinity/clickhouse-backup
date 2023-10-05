@@ -37,6 +37,7 @@ require (
 	github.com/stretchr/testify v1.8.4
 	github.com/tencentyun/cos-go-sdk-v5 v0.7.41
 	github.com/urfave/cli v1.22.14
+	github.com/xyproto/gionice v1.3.0
 	github.com/yargevad/filepathx v1.0.0
 	golang.org/x/crypto v0.10.0
 	golang.org/x/mod v0.8.0
