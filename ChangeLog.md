@@ -4,6 +4,7 @@ IMPROVEMENTS
 
 BUG FIXES
 - fix restore for object disk frozen_metadata.txt fix [752](https://github.com/Altinity/clickhouse-backup/issues/752)
+- fix more corner cases for `check_parts_columns: true`, fix [747](https://github.com/Altinity/clickhouse-backup/issues/747)
 
 # v2.4.1
 IMPROVEMENTS

@@ -1152,24 +1152,11 @@ func (ch *ClickHouse) CheckReplicationInProgress(table metadata.TableMetadata) (
 	return true, nil
 }
 
+var isDateWithTzRE = regexp.MustCompile(`^Date[^(]+\(.+\)`)
+
 // CheckSystemPartsColumns check data parts types consistency https://github.com/Altinity/clickhouse-backup/issues/529#issuecomment-1554460504
 func (ch *ClickHouse) CheckSystemPartsColumns(ctx context.Context, table *Table) error {
-	if ch.isPartsColumnPresent == -1 {
-		return nil
-	}
-	if ch.isPartsColumnPresent == 0 {
-		isPartsColumn := make([]struct {
-			Present uint64 `ch:"is_parts_column_present"`
-		}, 0)
-		if err := ch.SelectContext(ctx, &isPartsColumn, "SELECT count() is_parts_column_present FROM system.tables WHERE database='system' AND name='parts_columns'"); err != nil {
-			return err
-		}
-		if len(isPartsColumn) != 1 || isPartsColumn[0].Present != 1 {
-			ch.isPartsColumnPresent = -1
-			return nil
-		}
-	}
-	ch.isPartsColumnPresent = 1
+	var err error
 	partColumnsDataTypes := make([]struct {
 		Column string   `ch:"column"`
 		Types  []string `ch:"uniq_types"`
@@ -1178,7 +1165,7 @@ func (ch *ClickHouse) CheckSystemPartsColumns(ctx context.Context, table *Table)
 		"FROM system.parts_columns " +
 		"WHERE active AND database=? AND table=? AND type NOT LIKE 'Enum%' AND type NOT LIKE 'Tuple(%' " +
 		"GROUP BY column HAVING length(uniq_types) > 1"
-	if err := ch.SelectContext(ctx, &partColumnsDataTypes, partsColumnsSQL, table.Database, table.Name); err != nil {
+	if err = ch.SelectContext(ctx, &partColumnsDataTypes, partsColumnsSQL, table.Database, table.Name); err != nil {
 		return err
 	}
 	isPartColumnsInconsistentDataTypes := false
@@ -1186,14 +1173,43 @@ func (ch *ClickHouse) CheckSystemPartsColumns(ctx context.Context, table *Table)
 		for i := range partColumnsDataTypes {
 			isNullablePresent := false
 			isNotNullablePresent := false
+			isDatePresent := false
+			isDateTZPresent := false
+			var baseDataType string
 			for _, dataType := range partColumnsDataTypes[i].Types {
+				currentDataType := dataType
+				for _, compatiblePrefix := range []string{"Nullable(", "LowCardinality("} {
+					if strings.HasPrefix(currentDataType, compatiblePrefix) {
+						currentDataType = strings.TrimPrefix(currentDataType, compatiblePrefix)
+						currentDataType = strings.TrimSuffix(currentDataType, ")")
+					}
+				}
+				if strings.Contains(currentDataType, "(") {
+					currentDataType = currentDataType[:strings.Index(currentDataType, "(")]
+				}
+				if baseDataType == "" {
+					baseDataType = currentDataType
+				} else if baseDataType != currentDataType {
+					ch.Log.Errorf("`%s`.`%s` have incompatible data types %#v for \"%s\" column", baseDataType, currentDataType, table.Database, table.Name, partColumnsDataTypes[i].Types, partColumnsDataTypes[i].Column)
+					isPartColumnsInconsistentDataTypes = true
+					break
+				}
 				if strings.Contains(dataType, "Nullable") {
 					isNullablePresent = true
 				} else {
 					isNotNullablePresent = true
 				}
+				if strings.HasPrefix(dataType, "Date") {
+					isDatePresent = true
+					if !isDateTZPresent {
+						isDateTZPresent = isDateWithTzRE.MatchString(dataType)
+					}
+				}
 			}
 			if !isNullablePresent && isNotNullablePresent {
+				if isDatePresent && isDateTZPresent {
+					continue
+				}
 				ch.Log.Errorf("`%s`.`%s` have inconsistent data types %#v for \"%s\" column", table.Database, table.Name, partColumnsDataTypes[i].Types, partColumnsDataTypes[i].Column)
 				isPartColumnsInconsistentDataTypes = true
 			}

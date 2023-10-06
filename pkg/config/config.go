@@ -331,12 +331,10 @@ func LoadConfig(configLocation string) (*Config, error) {
 			return cfg, err
 		}
 		if err = gionice.SetIDPri(0, nicePriority, 7, gionice.IOPRIO_WHO_PGRP); err != nil {
-			log.Fatalf("SUKA1 %v", err)
 			return cfg, err
 		}
 	}
 	if err = gionice.SetNicePri(0, gionice.PRIO_PROCESS, cfg.General.CPUNicePriority); err != nil {
-		log.Fatalf("SUKA2 cfg.General.CPUNicePriority=%d, err=%v", cfg.General.CPUNicePriority, err)
 		return cfg, err
 	}
 
