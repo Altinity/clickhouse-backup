@@ -1190,7 +1190,7 @@ func (ch *ClickHouse) CheckSystemPartsColumns(ctx context.Context, table *Table)
 				if baseDataType == "" {
 					baseDataType = currentDataType
 				} else if baseDataType != currentDataType {
-					ch.Log.Errorf("`%s`.`%s` have incompatible data types %#v for \"%s\" column", baseDataType, currentDataType, table.Database, table.Name, partColumnsDataTypes[i].Types, partColumnsDataTypes[i].Column)
+					ch.Log.Errorf("`%s`.`%s` have incompatible data types %#v for \"%s\" column", table.Database, table.Name, partColumnsDataTypes[i].Types, partColumnsDataTypes[i].Column)
 					isPartColumnsInconsistentDataTypes = true
 					break
 				}
