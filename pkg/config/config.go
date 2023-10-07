@@ -331,11 +331,11 @@ func LoadConfig(configLocation string) (*Config, error) {
 			return cfg, err
 		}
 		if err = gionice.SetIDPri(0, nicePriority, 7, gionice.IOPRIO_WHO_PGRP); err != nil {
-			return cfg, err
+			log.Warnf("can't set i/o priority %s, error: %v", cfg.General.IONicePriority, err)
 		}
 	}
 	if err = gionice.SetNicePri(0, gionice.PRIO_PROCESS, cfg.General.CPUNicePriority); err != nil {
-		return cfg, err
+		log.Warnf("can't set CPU priority %s, error: %v", cfg.General.CPUNicePriority, err)
 	}
 
 	return cfg, nil
