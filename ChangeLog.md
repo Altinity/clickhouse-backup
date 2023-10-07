@@ -5,7 +5,8 @@ IMPROVEMENTS
 BUG FIXES
 - fix restore for object disk frozen_metadata.txt fix [752](https://github.com/Altinity/clickhouse-backup/issues/752)
 - fix more corner cases for `check_parts_columns: true`, fix [747](https://github.com/Altinity/clickhouse-backup/issues/747)
-
+- fix applying macros to s3 endpoint in object disk during restore embedded backups, fix [750](https://github.com/Altinity/clickhouse-backup/issues/750)
+ 
 # v2.4.1
 IMPROVEMENTS
 - switch to go-1.21
