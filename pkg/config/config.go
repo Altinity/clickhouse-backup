@@ -571,7 +571,7 @@ func DefaultConfig() *Config {
 			CompressionLevel:  1,
 			CompressionFormat: "tar",
 			StorageClass:      "STANDARD",
-			ClientPoolSize:    500,
+			ClientPoolSize:    int(max(uploadConcurrency, downloadConcurrency)) * 3,
 		},
 		COS: COSConfig{
 			RowURL:            "",
