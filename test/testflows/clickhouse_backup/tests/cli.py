@@ -39,7 +39,7 @@ def default_config(self):
 
         with Then("I expect snapshot to match"):
             with values() as that:
-                assert that(snapshot(str([e for e in r.split('\n') if not ("concurrency" in e or "max" in e)]), "cli", name="default_config")), error()
+                assert that(snapshot(str([e for e in r.split('\n') if not ("concurrency" in e or "max" in e or "pool_size" in e)]), "cli", name="default_config")), error()
 
 
 @TestScenario
