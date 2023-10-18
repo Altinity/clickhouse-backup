@@ -575,9 +575,9 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 					if err != nil {
 						return nil, nil, err
 					}
-					if err := b.dst.Connect(ctx); err != nil {
-						return nil, nil, fmt.Errorf("can't connect to %s: %v", b.dst.Kind(), err)
-					}
+				}
+				if err := b.dst.Connect(ctx); err != nil {
+					return nil, nil, fmt.Errorf("can't connect to %s: %v", b.dst.Kind(), err)
 				}
 				if size, err = b.uploadObjectDiskParts(ctx, backupName, backupShadowPath, disk); err != nil {
 					return disksToPartsMap, realSize, err

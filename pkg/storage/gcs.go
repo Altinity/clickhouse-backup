@@ -168,7 +168,7 @@ func (gcs *GCS) Walk(ctx context.Context, gcsPath string, recursive bool, proces
 func (gcs *GCS) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
 	if err != nil {
-		log.Errorf("can't get client connection from pool: %+v", err)
+		log.Errorf("gcs.GetFileReader: gcs.clientPool.BorrowObject error: %+v", err)
 		return nil, err
 	}
 	pClient := pClientObj.(*clientObject).Client
@@ -176,12 +176,12 @@ func (gcs *GCS) GetFileReader(ctx context.Context, key string) (io.ReadCloser, e
 	reader, err := obj.NewReader(ctx)
 	if err != nil {
 		if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
-			log.Warnf("GetFileReader: gcs.clientPool.InvalidateObject error: %v ", pErr)
+			log.Warnf("gcs.GetFileReader: gcs.clientPool.InvalidateObject error: %v ", pErr)
 		}
 		return nil, err
 	}
 	if pErr := gcs.clientPool.ReturnObject(ctx, pClientObj); pErr != nil {
-		log.Warnf("GetFileReader: gcs.clientPool.ReturnObject error: %v ", pErr)
+		log.Warnf("gcs.GetFileReader: gcs.clientPool.ReturnObject error: %v ", pErr)
 	}
 	return reader, nil
 }
@@ -193,7 +193,7 @@ func (gcs *GCS) GetFileReaderWithLocalPath(ctx context.Context, key, _ string) (
 func (gcs *GCS) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
 	if err != nil {
-		log.Errorf("can't get client connection from pool: %+v", err)
+		log.Errorf("gcs.PutFile: gcs.clientPool.BorrowObject error: %+v", err)
 		return err
 	}
 	pClient := pClientObj.(*clientObject).Client
@@ -240,7 +240,7 @@ func (gcs *GCS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 func (gcs *GCS) deleteKey(ctx context.Context, key string) error {
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
 	if err != nil {
-		log.Errorf("can't get client connection from pool: %+v", err)
+		log.Errorf("gcs.deleteKey: gcs.clientPool.BorrowObject error: %+v", err)
 		return err
 	}
 	pClient := pClientObj.(*clientObject).Client
@@ -271,7 +271,7 @@ func (gcs *GCS) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) 
 func (gcs *GCS) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (int64, error) {
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
 	if err != nil {
-		log.Errorf("can't get client connection from pool: %+v", err)
+		log.Errorf("gcs.CopyObject: gcs.clientPool.BorrowObject error: %+v", err)
 		return 0, err
 	}
 	pClient := pClientObj.(*clientObject).Client
