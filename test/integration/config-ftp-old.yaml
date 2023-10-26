@@ -5,7 +5,7 @@ general:
   download_concurrency: 4
   restore_schema_on_cluster: "{cluster}"
 clickhouse:
-  restore_as_attach: true
+  restore_as_attach: false
   host: clickhouse
   port: 9440
   username: backup

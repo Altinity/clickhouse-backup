@@ -237,6 +237,7 @@ services:
       - ./config-custom-rsync.yml:/etc/clickhouse-backup/config-custom-rsync.yml
       - ./config-database-mapping.yml:/etc/clickhouse-backup/config-database-mapping.yml
       - ./config-ftp.yaml:/etc/clickhouse-backup/config-ftp.yaml
+      - ./config-ftp-old.yaml:/etc/clickhouse-backup/config-ftp-old.yaml
       - ./config-gcs.yml:/etc/clickhouse-backup/config-gcs.yml
       - ./config-s3.yml:/etc/clickhouse-backup/config-s3.yml
       - ./config-s3-embedded.yml:/etc/clickhouse-backup/config-s3-embedded.yml

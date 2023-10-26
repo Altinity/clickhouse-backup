@@ -1,6 +1,9 @@
 # v2.5.0 (not released yet)
-IMPRVEMENTS
+IMPROVEMENTS
 - add `list` command to API /backup/actions, fix [772](https://github.com/Altinity/clickhouse-backup/issues/772)
+
+BUG FIXES
+- fix behavior for `restore_as_attach: true` for non-replicated MergeTree fix [773](https://github.com/Altinity/clickhouse-backup/issues/773)
 
 # v2.4.2
 IMPROVEMENTS

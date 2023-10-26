@@ -989,7 +989,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 	resumeChannel := make(chan int64)
 	ch.chbackend.Config.LogSQLQueries = true
 	wg := sync.WaitGroup{}
-	wg.Add(1)
+	wg.Add(2)
 	go func() {
 		defer func() {
 			close(pauseChannel)
@@ -1045,6 +1045,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 
 			if strings.Contains(out, "code: 60") && err == nil {
 				freezeErrorHandled = true
+				log.Info("CODE 60 catched")
 				<-resumeChannel
 				r.NoError(dockerExec("clickhouse-backup", "bash", "-ec", "CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup delete local "+testBackupName))
 				break
@@ -1056,7 +1057,6 @@ func TestSkipNotExistsTable(t *testing.T) {
 			<-resumeChannel
 		}
 	}()
-	wg.Add(1)
 	go func() {
 		defer func() {
 			close(resumeChannel)
@@ -1075,7 +1075,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 		}
 	}()
 	wg.Wait()
-	r.True(freezeErrorHandled)
+	r.True(freezeErrorHandled, "freezeErrorHandled false")
 	dropDbSQL := "DROP DATABASE freeze_not_exists"
 	if isAtomic, err := ch.chbackend.IsAtomic("freeze_not_exists"); err == nil && isAtomic {
 		dropDbSQL += " SYNC"
@@ -1658,7 +1658,11 @@ func TestIntegrationSFTPAuthPassword(t *testing.T) {
 
 func TestIntegrationFTP(t *testing.T) {
 	//t.Parallel()
-	runMainIntegrationScenario(t, "FTP", "config-ftp.yaml")
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 1 {
+		runMainIntegrationScenario(t, "FTP", "config-ftp.yaml")
+	} else {
+		runMainIntegrationScenario(t, "FTP", "config-ftp-old.yaml")
+	}
 }
 
 func TestIntegrationSFTPAuthKey(t *testing.T) {

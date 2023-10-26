@@ -742,13 +742,17 @@ func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetad
 		return nil
 	}
 
+	if ch.version <= 21003000 {
+		return fmt.Errorf("your clickhouse-server version doesn't support SYSTEM RESTORE REPLICA statement, use `restore_as_attach: false` in config")
+	}
 	query := fmt.Sprintf("DETACH TABLE `%s`.`%s`", table.Database, table.Table)
 	if err := ch.Query(query); err != nil {
 		return err
 	}
-	if matches := replicatedMergeTreeRE.FindStringSubmatch(table.Query); len(matches) > 0 {
-		zkPath := strings.Trim(matches[2], "' \r\n\t")
-		replicaName := strings.Trim(matches[3], "' \r\n\t")
+	replicatedMatches := replicatedMergeTreeRE.FindStringSubmatch(table.Query)
+	if len(replicatedMatches) > 0 {
+		zkPath := strings.Trim(replicatedMatches[2], "' \r\n\t")
+		replicaName := strings.Trim(replicatedMatches[3], "' \r\n\t")
 		if strings.Contains(zkPath, "{uuid}") {
 			if uuidMatches := uuidRE.FindStringSubmatch(table.Query); len(uuidMatches) > 0 {
 				zkPath = strings.Replace(zkPath, "{uuid}", uuidMatches[1], 1)
@@ -773,11 +777,12 @@ func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetad
 		return err
 	}
 
-	query = fmt.Sprintf("SYSTEM RESTORE REPLICA `%s`.`%s`", table.Database, table.Table)
-	if err := ch.Query(query); err != nil {
-		return err
+	if len(replicatedMatches) > 0 {
+		query = fmt.Sprintf("SYSTEM RESTORE REPLICA `%s`.`%s`", table.Database, table.Table)
+		if err := ch.Query(query); err != nil {
+			return err
+		}
 	}
-
 	ch.Log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).Debug("attached")
 	return nil
 }
