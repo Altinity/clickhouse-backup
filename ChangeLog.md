@@ -1,3 +1,7 @@
+# v2.5.0 (not released yet)
+IMPRVEMENTS
+- add `list` command to API /backup/actions, fix [772](https://github.com/Altinity/clickhouse-backup/issues/772)
+
 # v2.4.2
 IMPROVEMENTS
 - add `cpu_nice_priority` and `io_nice_priority` to config, which allow us to throttle CPU and IO usage for the whole `clickhouse-backup` process, fix [757](https://github.com/Altinity/clickhouse-backup/issues/757)

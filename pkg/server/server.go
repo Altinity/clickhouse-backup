@@ -358,7 +358,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 				api.writeError(w, http.StatusInternalServerError, row.Command, err)
 				return
 			}
-		case "create", "restore", "upload", "download", "create_remote", "restore_remote":
+		case "create", "restore", "upload", "download", "create_remote", "restore_remote", "list":
 			actionsResults, err = api.actionsAsyncCommandsHandler(command, args, row, actionsResults)
 			if err != nil {
 				api.writeError(w, http.StatusInternalServerError, row.Command, err)

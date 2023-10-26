@@ -5,6 +5,7 @@
 [![GoDoc](https://godoc.org/github.com/Altinity/clickhouse-backup?status.svg)](http://godoc.org/github.com/Altinity/clickhouse-backup)
 [![Telegram](https://img.shields.io/badge/telegram-join%20chat-3796cd.svg)](https://t.me/clickhousebackup)
 [![Docker Image](https://img.shields.io/docker/pulls/altinity/clickhouse-backup.svg)](https://hub.docker.com/r/altinity/clickhouse-backup)
+[![Downloads](https://img.shields.io/github/downloads/Altinity/clickhouse-backup/total.svg)](http://github.com/Altinity/clickhouse-backup/releases)
 [![Coverage Status](https://coveralls.io/repos/github/Altinity/clickhouse-backup/badge.svg)](https://coveralls.io/github/Altinity/clickhouse-backup)
 
 A tool for easy ClickHouse backup and restore with support for many cloud and non-cloud storage types.
