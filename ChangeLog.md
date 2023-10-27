@@ -1,16 +1,17 @@
-# v2.5.0 (not released yet)
+# v2.4.3
 IMPROVEMENTS
 - add `list` command to API /backup/actions, fix [772](https://github.com/Altinity/clickhouse-backup/issues/772)
 
 BUG FIXES
-- fix behavior for `restore_as_attach: true` for non-replicated MergeTree fix [773](https://github.com/Altinity/clickhouse-backup/issues/773)
+- fix behavior for `restore_as_attach: true` for non-replicated MergeTree, fix [773](https://github.com/Altinity/clickhouse-backup/issues/773)
+- tables with `ENGINE=Dictionary` shall create after all `dictionaries` to avoid retry, fix [771](https://github.com/Altinity/clickhouse-backup/issues/771)
 
 # v2.4.2
 IMPROVEMENTS
 - add `cpu_nice_priority` and `io_nice_priority` to config, which allow us to throttle CPU and IO usage for the whole `clickhouse-backup` process, fix [757](https://github.com/Altinity/clickhouse-backup/issues/757)
 
 BUG FIXES
-- fix restore for object disk frozen_metadata.txt fix [752](https://github.com/Altinity/clickhouse-backup/issues/752)
+- fix restore for object disk frozen_metadata.txt, fix [752](https://github.com/Altinity/clickhouse-backup/issues/752)
 - fix more corner cases for `check_parts_columns: true`, fix [747](https://github.com/Altinity/clickhouse-backup/issues/747)
 - fix applying macros to s3 endpoint in object disk during restore embedded backups, fix [750](https://github.com/Altinity/clickhouse-backup/issues/750)
 - rewrite GCS clients pool, set default GCS_CLIENT_POOL_SIZE as max(upload_concurrency, download_concurrency) * 3  to avoid stuck, fix [753](https://github.com/Altinity/clickhouse-backup/pull/753), thanks @minguyen-jumptrading
