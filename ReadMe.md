@@ -581,7 +581,7 @@ High value for `S3_CONCURRENCY` and high value for `S3_PART_SIZE` will allocate 
 ## remote_storage: custom
 
 All custom commands could use go-template language, for example, you can use `{{ .cfg.* }}` `{{ .backupName }}` `{{ .diffFromRemote }}`.
-Custom `list_command` shall return JSON which is compatible with `metadata.Backup` type with [JSONEachRow](https://clickhouse.com/docs/en/interfaces/formats/#jsoneachrow) format.
+Custom `list_command` shall return JSON which is compatible with `metadata.BackupMetadata` type with [JSONEachRow](https://clickhouse.com/docs/en/interfaces/formats/#jsoneachrow) format.
 For examples, see [restic](https://github.com/Altinity/clickhouse-backup/tree/master/test/integration/restic/), [rsync](https://github.com/Altinity/clickhouse-backup/tree/master/test/integration/rsync/) and [kopia](https://github.com/Altinity/clickhouse-backup/tree/master/test/integration/kopia/). Feel free to add yours too.
 
 ## ATTENTION!
