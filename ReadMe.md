@@ -756,7 +756,10 @@ In order to make backups to S3, the following permissions shall be set:
         {
             "Sid": "clickhouse-backup-s3-access-to-bucket",
             "Effect": "Allow",
-            "Action": "s3:ListBucket",
+            "Action": [
+                "s3:ListBucket",
+                "s3:GetBucketVersioning"
+            ],
             "Resource": "arn:aws:s3:::BUCKET_NAME"
         }
     ]
