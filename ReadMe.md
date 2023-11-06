@@ -749,7 +749,8 @@ In order to make backups to S3, the following permissions shall be set:
             "Effect": "Allow",
             "Action": [
                 "s3:PutObject",
-                "s3:GetObject"
+                "s3:GetObject",
+                "s3:DeleteObject"
             ],
             "Resource": "arn:aws:s3:::BUCKET_NAME/*"
         },
