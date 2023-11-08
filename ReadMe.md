@@ -600,6 +600,7 @@ Use the `clickhouse-backup server` command to run as a REST API server. In gener
 List all current applicable HTTP routes
 
 > **POST /**
+
 > **POST /restart**
 
 Restart HTTP server, close all current connections, close listen socket, open listen socket again, all background go-routines breaks with contexts
