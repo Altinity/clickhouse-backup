@@ -17,15 +17,15 @@ pip3 install -r ./test/testflows/requirements.txt
 ```
 
 ## Execution
-Make clickhouse-backup binary
+Make the clickhouse-backup binary:
 ```bash
 make build-race-docker
 ```
 
-Some environment variables required to be set up before test execution:
+Some environment variables must be set up before test execution:
 * `export CLICKHOUSE_TESTS_DIR=/home/username/clickhouse-backup/test/testflows/clickhouse_backup`
   - (this variable must point to the folder containing `regression.py`)
-* In order to test cloud platforms (AWS S3 and GCS), you will need the following variables to contain valid credentials (otherwise, the corresponding tests will fail):
+* In order to test cloud platforms (AWS S3 and GCS), you will need the following variables to contain valid credentials, otherwise the corresponding tests will fail:
   - `QA_AWS_ACCESS_KEY`
   - `QA_AWS_ENDPOINT`
   - `QA_AWS_SECRET_KEY`
@@ -34,7 +34,7 @@ Some environment variables required to be set up before test execution:
   - `QA_GCS_CRED_JSON`
   - `QA_GCS_CRED_JSON_ENCODED`
 
-You can do it with something like that:
+Sample setup script:
 
 ```bash
 cat > /home/username/clickhouse-backup/test/testflows/.env <<EOT
@@ -51,13 +51,13 @@ source /home/username/clickhouse-backup/test/testflows/.env
 ```
 
 
-### To execute the test suite, execute the following commands:
+### To execute the test suite, execute the following command:
 
 ```bash
 python3 ./test/testflows/clickhouse_backup/regression.py
 ```
 
-If you need only one certain test, you may execute
+Use this syntax to run only one test: 
 
 ```bash
 python3 ./test/testflows/clickhouse_backup/regression.py --only "/clickhouse backup/path to test/"
