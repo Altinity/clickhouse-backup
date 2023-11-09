@@ -293,7 +293,9 @@ func WriteMetadataToFile(metadata *Metadata, path string) error {
 
 func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) (map[string]ObjectStorageCredentials, error) {
 	credentials := make(map[string]ObjectStorageCredentials)
-	if version, err := ch.GetVersion(ctx); err != nil {
+	var version int
+	var err error
+	if version, err = ch.GetVersion(ctx); err != nil {
 		return nil, err
 	} else if version <= 20006000 {
 		return credentials, nil
@@ -320,16 +322,21 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) (
 				}
 				if endPointNode := d.SelectElement("endpoint"); endPointNode != nil {
 					creds.EndPoint = strings.Trim(endPointNode.InnerText(), "\r\n \t")
+					// macros works only after 23.3+ https://github.com/Altinity/clickhouse-backup/issues/750
+					if version > 23003000 {
+						if creds.EndPoint, err = ch.ApplyMacros(ctx, creds.EndPoint); err != nil {
+							return nil, fmt.Errorf("%s -> /%s/storage_configuration/disks/%s apply macros to <endpoint> error: %v", configFile, root.Data, diskName, err)
+						}
+					}
 				} else {
 					return nil, fmt.Errorf("%s -> /%s/storage_configuration/disks/%s doesn't contains <endpoint>", configFile, root.Data, diskName)
 				}
 				if regionNode := d.SelectElement("region"); regionNode != nil {
 					creds.S3Region = strings.Trim(regionNode.InnerText(), "\r\n \t")
 				}
+				creds.S3StorageClass = "STANDARD"
 				if storageClassNode := d.SelectElement("s3_storage_class"); storageClassNode != nil {
 					creds.S3StorageClass = strings.Trim(storageClassNode.InnerText(), "\r\n \t")
-				} else {
-					creds.S3StorageClass = "STANDARD"
 				}
 				accessKeyNode := d.SelectElement("access_key_id")
 				secretKeyNode := d.SelectElement("secret_access_key")

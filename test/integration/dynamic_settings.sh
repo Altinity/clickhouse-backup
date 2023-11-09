@@ -89,7 +89,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_s3.xml
     <disks>
       <disk_s3>
         <type>s3</type>
-        <endpoint>http://minio:9000/clickhouse/disk_s3/</endpoint>
+        <endpoint>http://minio:9000/clickhouse/disk_s3/{cluster}/{shard}/</endpoint>
         <!-- https://github.com/Altinity/clickhouse-backup/issues/691
         <access_key_id>access-key</access_key_id>
         <secret_access_key>it-is-my-super-secret-key</secret_access_key>
@@ -124,7 +124,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_gcs.xml
     <disks>
       <disk_gcs_over_s3>
         <type>s3</type>
-        <endpoint>https://storage.googleapis.com/${QA_GCS_OVER_S3_BUCKET}/clickhouse_backup_disk_gcs_over_s3/${HOSTNAME}/</endpoint>
+        <endpoint>https://storage.googleapis.com/${QA_GCS_OVER_S3_BUCKET}/clickhouse_backup_disk_gcs_over_s3/${HOSTNAME}/{cluster}/{shard}/</endpoint>
         <access_key_id>${QA_GCS_OVER_S3_ACCESS_KEY}</access_key_id>
         <secret_access_key>${QA_GCS_OVER_S3_SECRET_KEY}</secret_access_key>
         <!-- to avoid slow startup -->
@@ -206,7 +206,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3.xml
     <disks>
       <backups_s3>
         <type>s3</type>
-        <endpoint>http://minio:9000/clickhouse/backups_s3/</endpoint>
+        <endpoint>http://minio:9000/clickhouse/backups_s3/{cluster}/{shard}/</endpoint>
         <!-- https://github.com/Altinity/clickhouse-backup/issues/691
         <access_key_id>access-key</access_key_id>
         <secret_access_key>it-is-my-super-secret-key</secret_access_key>
@@ -243,7 +243,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3_plai
     <disks>
       <backups_s3_plain>
         <type>s3_plain</type>
-        <endpoint>http://minio:9000/clickhouse/backups_s3_plain/</endpoint>
+        <endpoint>http://minio:9000/clickhouse/backups_s3_plain/{cluster}/{shard}/</endpoint>
         <!-- https://github.com/Altinity/clickhouse-backup/issues/691
         <access_key_id>access-key</access_key_id>
         <secret_access_key>it-is-my-super-secret-key</secret_access_key>

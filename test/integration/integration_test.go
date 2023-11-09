@@ -989,7 +989,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 	resumeChannel := make(chan int64)
 	ch.chbackend.Config.LogSQLQueries = true
 	wg := sync.WaitGroup{}
-	wg.Add(1)
+	wg.Add(2)
 	go func() {
 		defer func() {
 			close(pauseChannel)
@@ -1045,6 +1045,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 
 			if strings.Contains(out, "code: 60") && err == nil {
 				freezeErrorHandled = true
+				log.Info("CODE 60 catched")
 				<-resumeChannel
 				r.NoError(dockerExec("clickhouse-backup", "bash", "-ec", "CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup delete local "+testBackupName))
 				break
@@ -1056,7 +1057,6 @@ func TestSkipNotExistsTable(t *testing.T) {
 			<-resumeChannel
 		}
 	}()
-	wg.Add(1)
 	go func() {
 		defer func() {
 			close(resumeChannel)
@@ -1075,7 +1075,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 		}
 	}()
 	wg.Wait()
-	r.True(freezeErrorHandled)
+	r.True(freezeErrorHandled, "freezeErrorHandled false")
 	dropDbSQL := "DROP DATABASE freeze_not_exists"
 	if isAtomic, err := ch.chbackend.IsAtomic("freeze_not_exists"); err == nil && isAtomic {
 		dropDbSQL += " SYNC"
@@ -1168,6 +1168,51 @@ func TestProjections(t *testing.T) {
 
 }
 
+func TestCheckSystemPartsColumns(t *testing.T) {
+	var err error
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.3") == -1 {
+		t.Skipf("Test skipped, system.parts_columns have inconsistency only in 23.3+, current version %s", os.Getenv("CLICKHOUSE_VERSION"))
+	}
+	//t.Parallel()
+	ch := &TestClickHouse{}
+	r := require.New(t)
+	ch.connectWithWait(r, 0*time.Second, 1*time.Second)
+	defer ch.chbackend.Close()
+	r.NoError(dockerCP("config-s3.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
+	version, err := ch.chbackend.GetVersion(context.Background())
+	r.NoError(err)
+	ch.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+t.Name())
+
+	// test compatible data types
+	createSQL := "CREATE TABLE " + t.Name() + ".test_system_parts_columns(dt DateTime, v UInt64) ENGINE=MergeTree() ORDER BY tuple()"
+	ch.queryWithNoError(r, createSQL)
+	ch.queryWithNoError(r, "INSERT INTO "+t.Name()+".test_system_parts_columns SELECT today() - INTERVAL number DAY, number FROM numbers(10)")
+
+	ch.queryWithNoError(r, "ALTER TABLE "+t.Name()+".test_system_parts_columns MODIFY COLUMN dt Nullable(DateTime('Europe/Moscow')), MODIFY COLUMN v Nullable(UInt64)", t.Name())
+	ch.queryWithNoError(r, "INSERT INTO "+t.Name()+".test_system_parts_columns SELECT today() - INTERVAL number DAY, number FROM numbers(10)")
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "create", "test_system_parts_columns"))
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "delete", "local", "test_system_parts_columns"))
+	r.NoError(ch.chbackend.DropTable(clickhouse.Table{Database: t.Name(), Name: "test_system_parts_columns"}, createSQL, "", false, version, ""))
+
+	// test incompatible data types
+	ch.queryWithNoError(r, "CREATE TABLE "+t.Name()+".test_system_parts_columns(dt Date, v String) ENGINE=MergeTree() PARTITION BY dt ORDER BY tuple()")
+	ch.queryWithNoError(r, "INSERT INTO "+t.Name()+".test_system_parts_columns SELECT today() - INTERVAL number DAY, if(number>0,'a',toString(number)) FROM numbers(2)")
+
+	mutationSQL := "ALTER TABLE " + t.Name() + ".test_system_parts_columns MODIFY COLUMN v UInt64"
+	err = ch.chbackend.QueryContext(context.Background(), mutationSQL)
+	if err != nil {
+		errStr := strings.ToLower(err.Error())
+		r.True(strings.Contains(errStr, "code: 341") || strings.Contains(errStr, "code: 517") || strings.Contains(errStr, "code: 524") || strings.Contains(errStr, "timeout"), "UNKNOWN ERROR: %s", err.Error())
+		t.Logf("%s RETURN EXPECTED ERROR=%#v", mutationSQL, err)
+	}
+	ch.queryWithNoError(r, "INSERT INTO "+t.Name()+".test_system_parts_columns SELECT today() - INTERVAL number DAY, number FROM numbers(10)")
+	r.Error(dockerExec("clickhouse-backup", "clickhouse-backup", "create", "test_system_parts_columns"))
+	r.Error(dockerExec("clickhouse-backup", "clickhouse-backup", "delete", "local", "test_system_parts_columns"))
+
+	r.NoError(ch.chbackend.DropTable(clickhouse.Table{Database: t.Name(), Name: "test_system_parts_columns"}, createSQL, "", false, version, ""))
+	r.NoError(ch.dropDatabase(t.Name()))
+
+}
 func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	if isTestShouldSkip("RUN_ADVANCED_TESTS") {
 		t.Skip("Skipping Advanced integration tests...")
@@ -1218,8 +1263,7 @@ func TestSyncReplicaTimeout(t *testing.T) {
 	ch.connectWithWait(r, 0*time.Millisecond, 2*time.Second)
 	defer ch.chbackend.Close()
 
-	createDbSQL := "CREATE DATABASE IF NOT EXISTS " + t.Name()
-	ch.queryWithNoError(r, createDbSQL)
+	ch.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+t.Name())
 	dropReplTables := func() {
 		for _, table := range []string{"repl1", "repl2"} {
 			query := "DROP TABLE IF EXISTS " + t.Name() + "." + table
@@ -1614,7 +1658,11 @@ func TestIntegrationSFTPAuthPassword(t *testing.T) {
 
 func TestIntegrationFTP(t *testing.T) {
 	//t.Parallel()
-	runMainIntegrationScenario(t, "FTP", "config-ftp.yaml")
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 1 {
+		runMainIntegrationScenario(t, "FTP", "config-ftp.yaml")
+	} else {
+		runMainIntegrationScenario(t, "FTP", "config-ftp-old.yaml")
+	}
 }
 
 func TestIntegrationSFTPAuthKey(t *testing.T) {

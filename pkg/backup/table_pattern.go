@@ -416,8 +416,15 @@ func getTableListByPatternRemote(ctx context.Context, b *Backuper, remoteBackupM
 	return result, nil
 }
 
+var lowPriorityEnginesRE = regexp.MustCompile(`ENGINE = (Distributed|Dictionary|Merge)\(`)
+var streamingEnginesRE = regexp.MustCompile(`ENGINE = (Kafka|NATS|RabbitMQ|S3Queue)`)
+
 func getOrderByEngine(query string, dropTable bool) int64 {
-	if strings.Contains(query, "ENGINE = Distributed") || strings.Contains(query, "ENGINE = Kafka") || strings.Contains(query, "ENGINE = RabbitMQ") {
+	if lowPriorityEnginesRE.MatchString(query) {
+		return 5
+	}
+
+	if streamingEnginesRE.MatchString(query) {
 		return 4
 	}
 	if strings.HasPrefix(query, "CREATE DICTIONARY") {

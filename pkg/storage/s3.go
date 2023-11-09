@@ -144,7 +144,7 @@ func (s *S3) Connect(ctx context.Context) error {
 
 	if s.Config.Debug {
 		awsConfig.Logger = newS3Logger(s.Log)
-		awsConfig.ClientLogMode = aws.LogRetries | aws.LogRequest | aws.LogResponseWithBody
+		awsConfig.ClientLogMode = aws.LogRetries | aws.LogRequest
 	}
 
 	httpTransport := http.DefaultTransport
@@ -170,7 +170,9 @@ func (s *S3) Connect(ctx context.Context) error {
 	// allow GCS over S3, remove Accept-Encoding header from sign https://stackoverflow.com/a/74382598/1204665, https://github.com/aws/aws-sdk-go-v2/issues/1816
 	if strings.Contains(s.Config.Endpoint, "storage.googleapis.com") {
 		// Assign custom client with our own transport
-		awsConfig.HTTPClient = &http.Client{Transport: &RecalculateV4Signature{httpTransport, v4.NewSigner(), awsConfig}}
+		awsConfig.HTTPClient = &http.Client{Transport: &RecalculateV4Signature{httpTransport, v4.NewSigner(func(signer *v4.SignerOptions) {
+			signer.DisableURIPathEscaping = true
+		}), awsConfig}}
 	}
 	s.client = s3.NewFromConfig(awsConfig, func(o *s3.Options) {
 		o.UsePathStyle = s.Config.ForcePathStyle

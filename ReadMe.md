@@ -5,6 +5,7 @@
 [![GoDoc](https://godoc.org/github.com/Altinity/clickhouse-backup?status.svg)](http://godoc.org/github.com/Altinity/clickhouse-backup)
 [![Telegram](https://img.shields.io/badge/telegram-join%20chat-3796cd.svg)](https://t.me/clickhousebackup)
 [![Docker Image](https://img.shields.io/docker/pulls/altinity/clickhouse-backup.svg)](https://hub.docker.com/r/altinity/clickhouse-backup)
+[![Downloads](https://img.shields.io/github/downloads/Altinity/clickhouse-backup/total.svg)](http://github.com/Altinity/clickhouse-backup/releases)
 [![Coverage Status](https://coveralls.io/repos/github/Altinity/clickhouse-backup/badge.svg)](https://coveralls.io/github/Altinity/clickhouse-backup)
 
 A tool for easy ClickHouse backup and restore with support for many cloud and non-cloud storage types.
@@ -395,6 +396,9 @@ general:
   watch_backup_name_template: "shard{shard}-{type}-{time:20060102150405}" # WATCH_BACKUP_NAME_TEMPLATE, used only for `watch` command, macros values will apply from `system.macros` for time:XXX, look format in https://go.dev/src/time/format.go
 
   sharded_operation_mode: none       # SHARDED_OPERATION_MODE, how different replicas will shard backing up data for tables. Options are: none (no sharding), table (table granularity), database (database granularity), first-replica (on the lexicographically sorted first active replica). If left empty, then the "none" option will be set as default.
+  
+  cpu_nice_priority: 15    # CPU niceness priority, to allow throttling СЗГ intensive operation, more details https://manpages.ubuntu.com/manpages/xenial/man1/nice.1.html
+  io_nice_priority: "idle" # IO niceness priority, to allow throttling disk intensive operation, more details https://manpages.ubuntu.com/manpages/xenial/man1/ionice.1.html
 clickhouse:
   username: default                # CLICKHOUSE_USERNAME
   password: ""                     # CLICKHOUSE_PASSWORD
@@ -500,7 +504,7 @@ gcs:
   compression_level: 1         # GCS_COMPRESSION_LEVEL
   compression_format: tar      # GCS_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   storage_class: STANDARD      # GCS_STORAGE_CLASS
-  client_pool_size: 500        # GCS_CLIENT_POOL_SIZE, should be at least 2 times bigger than `UPLOAD_CONCURRENCY` or `DOWNLOAD_CONCURRENCY` in each upload and download case
+  client_pool_size: 500        # GCS_CLIENT_POOL_SIZE, default max(upload_concurrency, download concurrency) * 3, should be at least 3 times bigger than `UPLOAD_CONCURRENCY` or `DOWNLOAD_CONCURRENCY` in each upload and download case to avoid stuck
   # GCS_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
   # The format for this env variable is "key1:value1,key2:value2". For YAML please continue using map syntax
   object_labels: {}
@@ -579,7 +583,7 @@ For `compression_format`, a good default is `tar`, which uses less CPU. In most 
 ## remote_storage: custom
 
 All custom commands use the go-template language. For example, you can use `{{ .cfg.* }}` `{{ .backupName }}` `{{ .diffFromRemote }}`.
-A custom `list_command` returns JSON which is compatible with the `metadata.Backup` type with [JSONEachRow](https://clickhouse.com/docs/en/interfaces/formats/#jsoneachrow) format.
+A custom `list_command` returns JSON which is compatible with the `metadata.BackupMetadata` type with [JSONEachRow](https://clickhouse.com/docs/en/interfaces/formats/#jsoneachrow) format.
 For examples, see [restic](https://github.com/Altinity/clickhouse-backup/tree/master/test/integration/restic/), [rsync](https://github.com/Altinity/clickhouse-backup/tree/master/test/integration/rsync/) and [kopia](https://github.com/Altinity/clickhouse-backup/tree/master/test/integration/kopia/). Feel free to add yours too.
 
 ## ATTENTION!
@@ -597,7 +601,7 @@ Use the `clickhouse-backup server` command to run as a REST API server. In gener
 
 List all current applicable HTTP routes
 
-> **POST /** 
+> **POST /**
 
 > **POST /restart**
 
@@ -748,14 +752,18 @@ In order to make backups to S3, the following permissions should be set:
             "Effect": "Allow",
             "Action": [
                 "s3:PutObject",
-                "s3:GetObject"
+                "s3:GetObject",
+                "s3:DeleteObject"
             ],
             "Resource": "arn:aws:s3:::BUCKET_NAME/*"
         },
         {
             "Sid": "clickhouse-backup-s3-access-to-bucket",
             "Effect": "Allow",
-            "Action": "s3:ListBucket",
+            "Action": [
+                "s3:ListBucket",
+                "s3:GetBucketVersioning"
+            ],
             "Resource": "arn:aws:s3:::BUCKET_NAME"
         }
     ]

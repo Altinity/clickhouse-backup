@@ -107,8 +107,8 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 				}
 			}
 		}
-		// do not create UDF when use --data flag, https://github.com/Altinity/clickhouse-backup/issues/697
-		if schemaOnly || (schemaOnly == dataOnly) {
+		// do not create UDF when use --data, --rbac-only, --configs-only flags, https://github.com/Altinity/clickhouse-backup/issues/697
+		if schemaOnly || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
 			for _, function := range backupMetadata.Functions {
 				if err = b.ch.CreateUserDefinedFunction(function.Name, function.CreateQuery, b.cfg.General.RestoreSchemaOnCluster); err != nil {
 					return err
@@ -862,7 +862,7 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 					if err != nil {
 						return err
 					}
-					if objMeta.StorageObjectCount < 1 {
+					if objMeta.StorageObjectCount < 1 && objMeta.Version != object_disk.VersionRelativePath {
 						return fmt.Errorf("%s: invalid object_dist.Metadata: %#v", fPath, objMeta)
 					}
 					var srcBucket, srcKey string

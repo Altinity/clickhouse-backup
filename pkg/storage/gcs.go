@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -103,7 +102,7 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 		clientOptions = append(clientOptions, option.WithHTTPClient(debugClient))
 	}
 
-	factory := pool.NewPooledObjectFactory(
+	factory := pool.NewPooledObjectFactorySimple(
 		func(context.Context) (interface{}, error) {
 			sClient, err := storage.NewClient(ctx, clientOptions...)
 			if err != nil {
@@ -113,17 +112,6 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 					Client: sClient,
 				},
 				nil
-		}, func(ctx context.Context, object *pool.PooledObject) error {
-			// destroy
-			return object.Object.(*clientObject).Client.Close()
-		}, func(ctx context.Context, object *pool.PooledObject) bool {
-			return true
-		}, func(ctx context.Context, object *pool.PooledObject) error {
-			// activate do nothing
-			return nil
-		}, func(ctx context.Context, object *pool.PooledObject) error {
-			// passivate do nothing
-			return nil
 		})
 	gcs.clientPool = pool.NewObjectPoolWithDefaultConfig(ctx, factory)
 	gcs.clientPool.Config.MaxTotal = gcs.Config.ClientPoolSize
@@ -132,17 +120,11 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 }
 
 func (gcs *GCS) Close(ctx context.Context) error {
+	gcs.clientPool.Close(ctx)
 	return gcs.client.Close()
 }
 
 func (gcs *GCS) Walk(ctx context.Context, gcsPath string, recursive bool, process func(ctx context.Context, r RemoteFile) error) error {
-	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
-	if err != nil {
-		log.Errorf("can't get client connection from pool: %+v", err)
-		return err
-	}
-	pClient := pClientObj.(*clientObject).Client
-
 	rootPath := path.Join(gcs.Config.Path, gcsPath)
 	prefix := rootPath + "/"
 	if rootPath == "/" {
@@ -152,35 +134,32 @@ func (gcs *GCS) Walk(ctx context.Context, gcsPath string, recursive bool, proces
 	if !recursive {
 		delimiter = "/"
 	}
-	it := pClient.Bucket(gcs.Config.Bucket).Objects(ctx, &storage.Query{
+	it := gcs.client.Bucket(gcs.Config.Bucket).Objects(ctx, &storage.Query{
 		Prefix:    prefix,
 		Delimiter: delimiter,
 	})
 	for {
 		object, err := it.Next()
-		if errors.Is(err, iterator.Done) {
-			gcs.clientPool.ReturnObject(ctx, pClientObj)
-			return nil
-		}
-		if err != nil {
-			gcs.clientPool.InvalidateObject(ctx, pClientObj)
-			return err
-		}
-		if object.Prefix != "" {
+		switch err {
+		case nil:
+			if object.Prefix != "" {
+				if err := process(ctx, &gcsFile{
+					name: strings.TrimPrefix(object.Prefix, rootPath),
+				}); err != nil {
+					return err
+				}
+				continue
+			}
 			if err := process(ctx, &gcsFile{
-				name: strings.TrimPrefix(object.Prefix, rootPath),
+				size:         object.Size,
+				lastModified: object.Updated,
+				name:         strings.TrimPrefix(object.Name, rootPath),
 			}); err != nil {
-				gcs.clientPool.InvalidateObject(ctx, pClientObj)
 				return err
 			}
-			continue
-		}
-		if err := process(ctx, &gcsFile{
-			size:         object.Size,
-			lastModified: object.Updated,
-			name:         strings.TrimPrefix(object.Name, rootPath),
-		}); err != nil {
-			gcs.clientPool.InvalidateObject(ctx, pClientObj)
+		case iterator.Done:
+			return nil
+		default:
 			return err
 		}
 	}
@@ -189,17 +168,21 @@ func (gcs *GCS) Walk(ctx context.Context, gcsPath string, recursive bool, proces
 func (gcs *GCS) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
 	if err != nil {
-		log.Errorf("can't get client connection from pool: %+v", err)
+		log.Errorf("gcs.GetFileReader: gcs.clientPool.BorrowObject error: %+v", err)
 		return nil, err
 	}
 	pClient := pClientObj.(*clientObject).Client
 	obj := pClient.Bucket(gcs.Config.Bucket).Object(path.Join(gcs.Config.Path, key))
 	reader, err := obj.NewReader(ctx)
 	if err != nil {
-		gcs.clientPool.InvalidateObject(ctx, pClientObj)
+		if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
+			log.Warnf("gcs.GetFileReader: gcs.clientPool.InvalidateObject error: %v ", pErr)
+		}
 		return nil, err
 	}
-	gcs.clientPool.ReturnObject(ctx, pClientObj)
+	if pErr := gcs.clientPool.ReturnObject(ctx, pClientObj); pErr != nil {
+		log.Warnf("gcs.GetFileReader: gcs.clientPool.ReturnObject error: %v ", pErr)
+	}
 	return reader, nil
 }
 
@@ -210,7 +193,7 @@ func (gcs *GCS) GetFileReaderWithLocalPath(ctx context.Context, key, _ string) (
 func (gcs *GCS) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
 	if err != nil {
-		log.Errorf("can't get client connection from pool: %+v", err)
+		log.Errorf("gcs.PutFile: gcs.clientPool.BorrowObject error: %+v", err)
 		return err
 	}
 	pClient := pClientObj.(*clientObject).Client
@@ -224,33 +207,29 @@ func (gcs *GCS) PutFile(ctx context.Context, key string, r io.ReadCloser) error 
 	}
 	defer func() {
 		if err := writer.Close(); err != nil {
-			log.Warnf("can't close writer: %+v", err)
-			gcs.clientPool.InvalidateObject(ctx, pClientObj)
+			log.Warnf("gcs.PutFile: can't close writer: %+v", err)
+			if err = gcs.clientPool.InvalidateObject(ctx, pClientObj); err != nil {
+				log.Warnf("gcs.PutFile: gcs.clientPool.InvalidateObject error: %+v", err)
+			}
 			return
 		}
-		gcs.clientPool.ReturnObject(ctx, pClientObj)
+		if err = gcs.clientPool.ReturnObject(ctx, pClientObj); err != nil {
+			log.Warnf("gcs.PutFile: gcs.clientPool.ReturnObject error: %+v", err)
+		}
 	}()
-	buffer := make([]byte, 512*1024)
+	buffer := make([]byte, 128*1024)
 	_, err = io.CopyBuffer(writer, r, buffer)
 	return err
 }
 
 func (gcs *GCS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
-	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
+	objAttr, err := gcs.client.Bucket(gcs.Config.Bucket).Object(path.Join(gcs.Config.Path, key)).Attrs(ctx)
 	if err != nil {
-		log.Errorf("can't get client connection from pool: %+v", err)
-		return nil, err
-	}
-	pClient := pClientObj.(*clientObject).Client
-	objAttr, err := pClient.Bucket(gcs.Config.Bucket).Object(path.Join(gcs.Config.Path, key)).Attrs(ctx)
-	if err != nil {
-		if errors.Is(err, storage.ErrObjectNotExist) {
+		if err == storage.ErrObjectNotExist {
 			return nil, ErrNotFound
 		}
-		gcs.clientPool.InvalidateObject(ctx, pClientObj)
 		return nil, err
 	}
-	gcs.clientPool.ReturnObject(ctx, pClientObj)
 	return &gcsFile{
 		size:         objAttr.Size,
 		lastModified: objAttr.Updated,
@@ -261,17 +240,21 @@ func (gcs *GCS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 func (gcs *GCS) deleteKey(ctx context.Context, key string) error {
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
 	if err != nil {
-		log.Errorf("can't get client connection from pool: %+v", err)
+		log.Errorf("gcs.deleteKey: gcs.clientPool.BorrowObject error: %+v", err)
 		return err
 	}
 	pClient := pClientObj.(*clientObject).Client
 	object := pClient.Bucket(gcs.Config.Bucket).Object(key)
 	err = object.Delete(ctx)
 	if err != nil {
-		gcs.clientPool.InvalidateObject(ctx, pClientObj)
+		if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
+			log.Warnf("gcs.deleteKey: gcs.clientPool.InvalidateObject error: %+v", pErr)
+		}
 		return err
 	}
-	gcs.clientPool.ReturnObject(ctx, pClientObj)
+	if pErr := gcs.clientPool.ReturnObject(ctx, pClientObj); pErr != nil {
+		log.Warnf("gcs.deleteKey: gcs.clientPool.ReturnObject error: %+v", pErr)
+	}
 	return nil
 }
 
@@ -288,7 +271,7 @@ func (gcs *GCS) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) 
 func (gcs *GCS) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (int64, error) {
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
 	if err != nil {
-		log.Errorf("can't get client connection from pool: %+v", err)
+		log.Errorf("gcs.CopyObject: gcs.clientPool.BorrowObject error: %+v", err)
 		return 0, err
 	}
 	pClient := pClientObj.(*clientObject).Client
@@ -297,15 +280,21 @@ func (gcs *GCS) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string
 	dst := pClient.Bucket(gcs.Config.Bucket).Object(dstKey)
 	attrs, err := src.Attrs(ctx)
 	if err != nil {
-		gcs.clientPool.InvalidateObject(ctx, pClientObj)
+		if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
+			log.Warnf("gcs.CopyObject: gcs.clientPool.InvalidateObject error: %+v", pErr)
+		}
 		return 0, err
 	}
 	if _, err = dst.CopierFrom(src).Run(ctx); err != nil {
-		gcs.clientPool.InvalidateObject(ctx, pClientObj)
+		if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
+			log.Warnf("gcs.CopyObject: gcs.clientPool.InvalidateObject error: %+v", pErr)
+		}
 		return 0, err
 	}
 	log.Debugf("GCS->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, gcs.Config.Bucket, dstKey)
-	gcs.clientPool.ReturnObject(ctx, pClientObj)
+	if pErr := gcs.clientPool.ReturnObject(ctx, pClientObj); pErr != nil {
+		log.Warnf("gcs.CopyObject: gcs.clientPool.ReturnObject error: %+v", pErr)
+	}
 	return attrs.Size, nil
 }
 

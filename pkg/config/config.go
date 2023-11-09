@@ -57,6 +57,8 @@ type GeneralConfig struct {
 	FullInterval            string            `yaml:"full_interval" envconfig:"FULL_INTERVAL"`
 	WatchBackupNameTemplate string            `yaml:"watch_backup_name_template" envconfig:"WATCH_BACKUP_NAME_TEMPLATE"`
 	ShardedOperationMode    string            `yaml:"sharded_operation_mode" envconfig:"SHARDED_OPERATION_MODE"`
+	CPUNicePriority         int               `yaml:"cpu_nice_priority" envconfig:"CPU_NICE_PRIORITY"`
+	IONicePriority          string            `yaml:"io_nice_priority" envconfig:"IO_NICE_PRIORITY"`
 	RetriesDuration         time.Duration
 	WatchDuration           time.Duration
 	FullDuration            time.Duration
@@ -303,7 +305,7 @@ func LoadConfig(configLocation string) (*Config, error) {
 		return nil, err
 	}
 
-	//auto tuning upload_concurrency for storage types which not have SDK level concurrency, https://github.com/Altinity/clickhouse-backup/issues/658
+	//auto-tuning upload_concurrency for storage types which not have SDK level concurrency, https://github.com/Altinity/clickhouse-backup/issues/658
 	cfgWithoutDefault := &Config{}
 	if err := yaml.Unmarshal(configYaml, &cfgWithoutDefault); err != nil {
 		return nil, fmt.Errorf("can't parse config file: %v", err)
@@ -318,7 +320,14 @@ func LoadConfig(configLocation string) (*Config, error) {
 	cfg.S3.Path = strings.TrimPrefix(cfg.S3.Path, "/")
 	cfg.GCS.Path = strings.TrimPrefix(cfg.GCS.Path, "/")
 	log.SetLevelFromString(cfg.General.LogLevel)
-	return cfg, ValidateConfig(cfg)
+
+	if err = ValidateConfig(cfg); err != nil {
+		return cfg, err
+	}
+	if err = cfg.SetPriority(); err != nil {
+		return cfg, err
+	}
+	return cfg, nil
 }
 
 func ValidateConfig(cfg *Config) error {
@@ -497,6 +506,8 @@ func DefaultConfig() *Config {
 			FullDuration:            24 * time.Hour,
 			WatchBackupNameTemplate: "shard{shard}-{type}-{time:20060102150405}",
 			RestoreDatabaseMapping:  make(map[string]string, 0),
+			IONicePriority:          "idle",
+			CPUNicePriority:         15,
 		},
 		ClickHouse: ClickHouseConfig{
 			Username: "default",
@@ -549,7 +560,7 @@ func DefaultConfig() *Config {
 			CompressionLevel:  1,
 			CompressionFormat: "tar",
 			StorageClass:      "STANDARD",
-			ClientPoolSize:    500,
+			ClientPoolSize:    int(max(uploadConcurrency, downloadConcurrency)) * 3,
 		},
 		COS: COSConfig{
 			RowURL:            "",
