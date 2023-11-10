@@ -9,9 +9,11 @@
 [![Coverage Status](https://coveralls.io/repos/github/Altinity/clickhouse-backup/badge.svg)](https://coveralls.io/github/Altinity/clickhouse-backup)
 
 A tool for easy ClickHouse backup and restore with support for many cloud and non-cloud storage types.
-To make data backup `clickhouse-backup` requires access to the same files as `clickhouse-server` in `/var/lib/clickhouse` folders.
-So prefer running `clickhouse-backup` on the same host or same Kubernetes Pod or the neighbor container on the same host where `clickhouse-server` ran.
-You can backup only schema from remote hosts.
+To backup data, `clickhouse-backup` requires access to the same files as `clickhouse-server` in `/var/lib/clickhouse` folders.
+For that reason, it's prefereable to run `clickhouse-backup` on the same host or same Kubernetes Pod or the neighbor container on the same host where `clickhouse-server` ran.
+
+
+**TODO** You can backup only schema from remote hosts.
 
 ## Features
 
@@ -49,7 +51,7 @@ Download the latest binary from the [releases](https://github.com/Altinity/click
 tar -zxvf clickhouse-backup.tar.gz
 ```
 
-Use the official tiny Docker image and run it on host with `clickhouse-server` installed:
+Use the official tiny Docker image and run it on a host with `clickhouse-server` installed:
 
 ```shell
 docker run -u $(id -u clickhouse) --rm -it --network host -v "/var/lib/clickhouse:/var/lib/clickhouse" \
@@ -71,21 +73,21 @@ GO111MODULE=on go get github.com/Altinity/clickhouse-backup/cmd/clickhouse-backu
 ### CLI command - tables
 ```
 NAME:
-   clickhouse-backup tables - List of tables, exclude skip_tables
+   clickhouse-backup-race tables - List of tables, exclude skip_tables
 
 USAGE:
    clickhouse-backup tables [-t, --tables=<db>.<table>]] [--all]
 
 OPTIONS:
    --config value, -c value                 Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-   --all, -a                                print table even when match with skip_tables pattern
-   --table value, --tables value, -t value  list tables only match with table name patterns, separated by comma, allow ? and * as wildcard
-
+   --all, -a                                Print table even when match with skip_tables pattern
+   --table value, --tables value, -t value  List tables only match with table name patterns, separated by comma, allow ? and * as wildcard
+   
 ```
 ### CLI command - create
 ```
 NAME:
-   clickhouse-backup create - Create new backup
+   clickhouse-backup-race create - Create new backup
 
 USAGE:
    clickhouse-backup create [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--rbac] [--configs] [--skip-check-parts-columns] <backup_name>
@@ -95,23 +97,25 @@ DESCRIPTION:
 
 OPTIONS:
    --config value, -c value                 Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-   --table value, --tables value, -t value  create backup only matched with table name patterns, separated by comma, allow ? and * as wildcard
-   --partitions partition_id                create backup only for selected partition names, separated by comma
-if PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
-if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
-if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
-values depends on field types in your table, use single quote for String and Date/DateTime related types
-look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
-   --schema, -s                                      Backup schemas only
+   --table value, --tables value, -t value  Create backup only matched with table name patterns, separated by comma, allow ? and * as wildcard
+   --partitions partition_id                Create backup only for selected partition names, separated by comma
+If PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
+If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
+If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
+Values depends on field types in your table, use single quotes for String and Date/DateTime related types
+Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
+   --schema, -s                                      Backup schemas only, will skip data
    --rbac, --backup-rbac, --do-backup-rbac           Backup RBAC related objects
    --configs, --backup-configs, --do-backup-configs  Backup 'clickhouse-server' configuration files
-   --skip-check-parts-columns                        skip check system.parts_columns to disallow backup inconsistent column types for data parts
-
+   --rbac-only                                       Backup RBAC related objects only, will skip backup data, will backup schema only if --schema added
+   --configs-only                                    Backup 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
+   --skip-check-parts-columns                        Skip check system.parts_columns to disallow backup inconsistent column types for data parts
+   
 ```
 ### CLI command - create_remote
 ```
 NAME:
-   clickhouse-backup create_remote - Create and upload new backup
+   clickhouse-backup-race create_remote - Create and upload new backup
 
 USAGE:
    clickhouse-backup create_remote [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--diff-from=<local_backup_name>] [--diff-from-remote=<local_backup_name>] [--schema] [--rbac] [--configs] [--resumable] [--skip-check-parts-columns] <backup_name>
@@ -121,61 +125,63 @@ DESCRIPTION:
 
 OPTIONS:
    --config value, -c value                 Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-   --table value, --tables value, -t value  create and upload backup only matched with table name patterns, separated by comma, allow ? and * as wildcard
-   --partitions partition_id                create and upload backup only for selected partition names, separated by comma
-if PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
-if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
-if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
-values depends on field types in your table, use single quote for String and Date/DateTime related types
-look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
-   --diff-from value                                 local backup name which used to upload current backup as incremental
-   --diff-from-remote value                          remote backup name which used to upload current backup as incremental
-   --schema, -s                                      Backup and upload metadata schema only
+   --table value, --tables value, -t value  Create and upload backup only matched with table name patterns, separated by comma, allow ? and * as wildcard
+   --partitions partition_id                Create and upload backup only for selected partition names, separated by comma
+If PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
+If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
+If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
+Values depends on field types in your table, use single quotes for String and Date/DateTime related types
+Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
+   --diff-from value                                 Local backup name which used to upload current backup as incremental
+   --diff-from-remote value                          Remote backup name which used to upload current backup as incremental
+   --schema, -s                                      Backup and upload metadata schema only, will skip data backup
    --rbac, --backup-rbac, --do-backup-rbac           Backup and upload RBAC related objects
    --configs, --backup-configs, --do-backup-configs  Backup and upload 'clickhouse-server' configuration files
+   --rbac-only                                       Backup RBAC related objects only, will skip backup data, will backup schema only if --schema added
+   --configs-only                                    Backup 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
    --resume, --resumable                             Save intermediate upload state and resume upload if backup exists on remote storage, ignore when 'remote_storage: custom' or 'use_embedded_backup_restore: true'
-   --skip-check-parts-columns                        skip check system.parts_columns to disallow backup inconsistent column types for data parts
-
+   --skip-check-parts-columns                        Skip check system.parts_columns to disallow backup inconsistent column types for data parts
+   
 ```
 ### CLI command - upload
 ```
 NAME:
-   clickhouse-backup upload - Upload backup to remote storage
+   clickhouse-backup-race upload - Upload backup to remote storage
 
 USAGE:
    clickhouse-backup upload [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--diff-from=<local_backup_name>] [--diff-from-remote=<remote_backup_name>] [--resumable] <backup_name>
 
 OPTIONS:
    --config value, -c value                 Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-   --diff-from value                        local backup name which used to upload current backup as incremental
-   --diff-from-remote value                 remote backup name which used to upload current backup as incremental
+   --diff-from value                        Local backup name which used to upload current backup as incremental
+   --diff-from-remote value                 Remote backup name which used to upload current backup as incremental
    --table value, --tables value, -t value  Upload data only for matched table name patterns, separated by comma, allow ? and * as wildcard
    --partitions partition_id                Upload backup only for selected partition names, separated by comma
-if PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
-if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
-if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
-values depends on field types in your table, use single quote for String and Date/DateTime related types
-look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
+If PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
+If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
+If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
+Values depends on field types in your table, use single quotes for String and Date/DateTime related types
+Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
    --schema, -s           Upload schemas only
    --resume, --resumable  Save intermediate upload state and resume upload if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
-
+   
 ```
 ### CLI command - list
 ```
 NAME:
-   clickhouse-backup list - List of backups
+   clickhouse-backup-race list - List of backups
 
 USAGE:
    clickhouse-backup list [all|local|remote] [latest|previous]
 
 OPTIONS:
    --config value, -c value  Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-
+   
 ```
 ### CLI command - download
 ```
 NAME:
-   clickhouse-backup download - Download backup from remote storage
+   clickhouse-backup-race download - Download backup from remote storage
 
 USAGE:
    clickhouse-backup download [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--resumable] <backup_name>
@@ -184,19 +190,19 @@ OPTIONS:
    --config value, -c value                 Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --table value, --tables value, -t value  Download objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
    --partitions partition_id                Download backup data only for selected partition names, separated by comma
-if PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
-if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
-if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
-values depends on field types in your table, use single quote for String and Date/DateTime related types
-look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
+If PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
+If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
+If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
+Values depends on field types in your table, use single quotes for String and Date/DateTime related types
+Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
    --schema, -s           Download schema only
    --resume, --resumable  Save intermediate download state and resume download if backup exists on local storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
-
+   
 ```
 ### CLI command - restore
 ```
 NAME:
-   clickhouse-backup restore - Create schema and restore data from backup
+   clickhouse-backup-race restore - Create schema and restore data from backup
 
 USAGE:
    clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] <backup_name>
@@ -206,23 +212,25 @@ OPTIONS:
    --table value, --tables value, -t value     Restore only database and objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
    --restore-database-mapping value, -m value  Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.
    --partitions partition_id                   Restore backup only for selected partition names, separated by comma
-if PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
-if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
-if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
-values depends on field types in your table, use single quote for String and Date/DateTime related types
-look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
+If PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
+If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
+If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
+Values depends on field types in your table, use single quotes for String and Date/DateTime related types
+Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
    --schema, -s                                        Restore schema only
    --data, -d                                          Restore data only
    --rm, --drop                                        Drop exists schema objects before restore
    -i, --ignore-dependencies                           Ignore dependencies when drop exists schema objects
    --rbac, --restore-rbac, --do-restore-rbac           Restore RBAC related objects
    --configs, --restore-configs, --do-restore-configs  Restore 'clickhouse-server' CONFIG related files
-
+   --rbac-only                                         Restore RBAC related objects only, will skip backup data, will backup schema only if --schema added
+   --configs-only                                      Restore 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
+   
 ```
 ### CLI command - restore_remote
 ```
 NAME:
-   clickhouse-backup restore_remote - Download and restore
+   clickhouse-backup-race restore_remote - Download and restore
 
 USAGE:
    clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--skip-rbac] [--skip-configs] [--resumable] <backup_name>
@@ -232,84 +240,86 @@ OPTIONS:
    --table value, --tables value, -t value     Download and restore objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
    --restore-database-mapping value, -m value  Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.
    --partitions partition_id                   Download and restore backup only for selected partition names, separated by comma
-if PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
-if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
-if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
-values depends on field types in your table, use single quote for String and Date/DateTime related types
-look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
+If PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
+If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
+If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
+Values depends on field types in your table, use single quotes for String and Date/DateTime related types
+Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
    --schema, -s                                        Download and Restore schema only
    --data, -d                                          Download and Restore data only
    --rm, --drop                                        Drop schema objects before restore
    -i, --ignore-dependencies                           Ignore dependencies when drop exists schema objects
    --rbac, --restore-rbac, --do-restore-rbac           Download and Restore RBAC related objects
    --configs, --restore-configs, --do-restore-configs  Download and Restore 'clickhouse-server' CONFIG related files
+   --rbac-only                                         Restore RBAC related objects only, will skip backup data, will backup schema only if --schema added
+   --configs-only                                      Restore 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
    --resume, --resumable                               Save intermediate upload state and resume upload if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
-
+   
 ```
 ### CLI command - delete
 ```
 NAME:
-   clickhouse-backup delete - Delete specific backup
+   clickhouse-backup-race delete - Delete specific backup
 
 USAGE:
    clickhouse-backup delete <local|remote> <backup_name>
 
 OPTIONS:
    --config value, -c value  Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-
+   
 ```
 ### CLI command - default-config
 ```
 NAME:
-   clickhouse-backup default-config - Print default config
+   clickhouse-backup-race default-config - Print default config
 
 USAGE:
-   clickhouse-backup default-config [command options] [arguments...]
+   clickhouse-backup-race default-config [command options] [arguments...]
 
 OPTIONS:
    --config value, -c value  Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-
+   
 ```
 ### CLI command - print-config
 ```
 NAME:
-   clickhouse-backup print-config - Print current config merged with environment variables
+   clickhouse-backup-race print-config - Print current config merged with environment variables
 
 USAGE:
-   clickhouse-backup print-config [command options] [arguments...]
+   clickhouse-backup-race print-config [command options] [arguments...]
 
 OPTIONS:
    --config value, -c value  Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-
+   
 ```
 ### CLI command - clean
 ```
 NAME:
-   clickhouse-backup clean - Remove data in 'shadow' folder from all 'path' folders available from 'system.disks'
+   clickhouse-backup-race clean - Remove data in 'shadow' folder from all 'path' folders available from 'system.disks'
 
 USAGE:
-   clickhouse-backup clean [command options] [arguments...]
+   clickhouse-backup-race clean [command options] [arguments...]
 
 OPTIONS:
    --config value, -c value  Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-
+   
 ```
 ### CLI command - clean_remote_broken
 ```
 NAME:
-   clickhouse-backup clean_remote_broken - Remove all broken remote backups
+   clickhouse-backup-race clean_remote_broken - Remove all broken remote backups
 
 USAGE:
-   clickhouse-backup clean_remote_broken [command options] [arguments...]
+   clickhouse-backup-race clean_remote_broken [command options] [arguments...]
 
 OPTIONS:
    --config value, -c value  Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-
+   
 ```
 ### CLI command - watch
 ```
 NAME:
-   clickhouse-backup watch - Run infinite loop which create full + incremental backup sequence to allow efficient backup sequences
+   clickhouse-backup-race watch - Run infinite loop which create full + incremental backup sequence to allow efficient backup sequences
 
 USAGE:
    clickhouse-backup watch [--watch-interval=1h] [--full-interval=24h] [--watch-backup-name-template=shard{shard}-{type}-{time:20060102150405}] [-t, --tables=<db>.<table>] [--partitions=<partitions_names>] [--schema] [--rbac] [--configs] [--skip-check-parts-columns]
@@ -323,55 +333,55 @@ OPTIONS:
    --full-interval value                    Interval for run 'create_remote'+'delete local' when stop create incremental backup sequence and create full backup, look format https://pkg.go.dev/time#ParseDuration
    --watch-backup-name-template value       Template for new backup name, could contain names from system.macros, {type} - full or incremental and {time:LAYOUT}, look to https://go.dev/src/time/format.go for layout examples
    --table value, --tables value, -t value  Create and upload only objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
-   --partitions partition_id                partition names, separated by comma
-if PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
-if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
-if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
-values depends on field types in your table, use single quote for String and Date/DateTime related types
-look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
+   --partitions partition_id                Partitions names, separated by comma
+If PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
+If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
+If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
+Values depends on field types in your table, use single quotes for String and Date/DateTime related types
+Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
    --schema, -s                                      Schemas only
    --rbac, --backup-rbac, --do-backup-rbac           Backup RBAC related objects only
    --configs, --backup-configs, --do-backup-configs  Backup `clickhouse-server' configuration files only
-   --skip-check-parts-columns                        skip check system.parts_columns to disallow backup inconsistent column types for data parts
-
+   --skip-check-parts-columns                        Skip check system.parts_columns to disallow backup inconsistent column types for data parts
+   
 ```
 ### CLI command - server
 ```
 NAME:
-   clickhouse-backup server - Run API server
+   clickhouse-backup-race server - Run API server
 
 USAGE:
-   clickhouse-backup server [command options] [arguments...]
+   clickhouse-backup-race server [command options] [arguments...]
 
 OPTIONS:
    --config value, -c value            Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-   --watch                             run watch go-routine for 'create_remote' + 'delete local', after API server startup
+   --watch                             Run watch go-routine for 'create_remote' + 'delete local', after API server startup
    --watch-interval value              Interval for run 'create_remote' + 'delete local' for incremental backup, look format https://pkg.go.dev/time#ParseDuration
    --full-interval value               Interval for run 'create_remote'+'delete local' when stop create incremental backup sequence and create full backup, look format https://pkg.go.dev/time#ParseDuration
    --watch-backup-name-template value  Template for new backup name, could contain names from system.macros, {type} - full or incremental and {time:LAYOUT}, look to https://go.dev/src/time/format.go for layout examples
-
+   
 ```
 
 ## Default Config
 
-By default, the config file is located at `/etc/clickhouse-backup/config.yml`, but it can be redefined via `CLICKHOUSE_BACKUP_CONFIG` environment variable.
+By default, the config file is located at `/etc/clickhouse-backup/config.yml`, but it can be redefined via the `CLICKHOUSE_BACKUP_CONFIG` environment variable.
 All options can be overwritten via environment variables.
 Use `clickhouse-backup print-config` to print current config.
 
 ```yaml
 general:
-  remote_storage: none           # REMOTE_STORAGE, if `none` then `upload` and  `download` command will fail
-  max_file_size: 1073741824      # MAX_FILE_SIZE, 1G by default, useless when upload_by_part is true, use for split data parts files by archives
+  remote_storage: none           # REMOTE_STORAGE, if `none` then `upload` and `download` commands will fail
+  max_file_size: 1073741824      # MAX_FILE_SIZE, 1G by default, useless when upload_by_part is true, use to split data parts files by archives
   disable_progress_bar: true     # DISABLE_PROGRESS_BAR, show progress bar during upload and download, makes sense only when `upload_concurrency` and `download_concurrency` is 1
   backups_to_keep_local: 0       # BACKUPS_TO_KEEP_LOCAL, how many latest local backup should be kept, 0 means all created backups will be stored on local disk
                                  # -1 means backup will keep after `create` but will delete after `create_remote` command
-                                 # You shall run `clickhouse-backup delete local <backup_name>` command to remove temporary backup files from the local disk
+                                 # You can run `clickhouse-backup delete local <backup_name>` command to remove temporary backup files from the local disk
   backups_to_keep_remote: 0      # BACKUPS_TO_KEEP_REMOTE, how many latest backup should be kept on remote storage, 0 means all uploaded backups will be stored on remote storage.
                                  # If old backups are required for newer incremental backup then it won't be deleted. Be careful with long incremental backup sequences.
   log_level: info                # LOG_LEVEL, a choice from `debug`, `info`, `warn`, `error`
   allow_empty_backups: false     # ALLOW_EMPTY_BACKUPS
-  # concurrency means parallel tables and parallel parts inside tables
-  # for example 4 means max 4 parallel tables and 4 parallel parts inside one table, so equals 16 concurrent streams
+  # Concurrency means parallel tables and parallel parts inside tables
+  # For example, 4 means max 4 parallel tables and 4 parallel parts inside one table, so equals 16 concurrent streams
   download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255, by default, the value is round(sqrt(AVAILABLE_CPU_CORES / 2))
   upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255, by default, the value is round(sqrt(AVAILABLE_CPU_CORES / 2))
 
@@ -445,7 +455,7 @@ azblob:
   sas: ""                      # AZBLOB_SAS
   use_managed_identity: false  # AZBLOB_USE_MANAGED_IDENTITY
   container: ""                # AZBLOB_CONTAINER
-  path: ""                     # AZBLOB_PATH, `system.macros` values could be applied as {macro_name}
+  path: ""                     # AZBLOB_PATH, `system.macros` values can be applied as {macro_name}
   object_disk_path: ""         # AZBLOB_OBJECT_DISK_PATH, path for backup of part from `azure_blob_storage` object disk, if disk present, then shall not be zero and shall not be prefixed by `path`
   compression_level: 1         # AZBLOB_COMPRESSION_LEVEL
   compression_format: tar      # AZBLOB_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
@@ -462,12 +472,12 @@ s3:
   acl: private                     # S3_ACL
   assume_role_arn: ""              # S3_ASSUME_ROLE_ARN
   force_path_style: false          # S3_FORCE_PATH_STYLE
-  path: ""                         # S3_PATH, `system.macros` values could be applied as {macro_name}
+  path: ""                         # S3_PATH, `system.macros` values can be applied as {macro_name}
   object_disk_path: ""             # S3_OBJECT_DISK_PATH, path for backup of part from `s3` object disk, if disk present, then shall not be zero and shall not be prefixed by `path`
   disable_ssl: false               # S3_DISABLE_SSL
   compression_level: 1             # S3_COMPRESSION_LEVEL
   compression_format: tar          # S3_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
-  # look details in https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingKMSEncryption.html
+  # look at details in https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingKMSEncryption.html
   sse: ""                          # S3_SSE, empty (default), AES256, or aws:kms
   sse_kms_key_id: ""               # S3_SSE_KMS_KEY_ID, if S3_SSE is aws:kms then specifies the ID of the Amazon Web Services Key Management Service
   sse_customer_algorithm: ""       # S3_SSE_CUSTOMER_ALGORITHM, encryption algorithm, for example, AES256
@@ -497,7 +507,7 @@ gcs:
   credentials_json: ""         # GCS_CREDENTIALS_JSON
   credentials_json_encoded: "" # GCS_CREDENTIALS_JSON_ENCODED
   bucket: ""                   # GCS_BUCKET
-  path: ""                     # GCS_PATH, `system.macros` values could be applied as {macro_name}
+  path: ""                     # GCS_PATH, `system.macros` values can be applied as {macro_name}
   object_disk_path: ""         # GCS_OBJECT_DISK_PATH, path for backup of part from `s3` object disk (clickhouse support only gcs over s3 protocol), if disk present, then shall not be zero and shall not be prefixed by `path`
   compression_level: 1         # GCS_COMPRESSION_LEVEL
   compression_format: tar      # GCS_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
@@ -515,7 +525,7 @@ cos:
   timeout: 2m                  # COS_TIMEOUT
   secret_id: ""                # COS_SECRET_ID
   secret_key: ""               # COS_SECRET_KEY
-  path: ""                     # COS_PATH, `system.macros` values could be applied as {macro_name}
+  path: ""                     # COS_PATH, `system.macros` values can be applied as {macro_name}
   compression_format: tar      # COS_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   compression_level: 1         # COS_COMPRESSION_LEVEL
 ftp:
@@ -525,7 +535,7 @@ ftp:
   password: ""                 # FTP_PASSWORD
   tls: false                   # FTP_TLS
   tls_skip_verify: false       # FTP_TLS_SKIP_VERIFY
-  path: ""                     # FTP_PATH, `system.macros` values could be applied as {macro_name}
+  path: ""                     # FTP_PATH, `system.macros` values can be applied as {macro_name}
   compression_format: tar      # FTP_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   compression_level: 1         # FTP_COMPRESSION_LEVEL
   debug: false                 # FTP_DEBUG
@@ -535,7 +545,7 @@ sftp:
   password: ""                 # SFTP_PASSWORD
   port: 22                     # SFTP_PORT
   key: ""                      # SFTP_KEY
-  path: ""                     # SFTP_PATH, `system.macros` values could be applied as {macro_name}
+  path: ""                     # SFTP_PATH, `system.macros` values can be applied as {macro_name}
   concurrency: 1               # SFTP_CONCURRENCY
   compression_format: tar      # SFTP_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   compression_level: 1         # SFTP_COMPRESSION_LEVEL
@@ -569,28 +579,28 @@ api:
 
 ## Concurrency, CPU and Memory usage recommendation
 
-`upload_concurrency` and `download concurrency` define how much parallel download / upload go-routines will start independently of the remote storage type.
-In 1.3.0+ it means how many parallel data parts will be uploaded, assuming `upload_by_part` and `download_by_part` are `true` (which is default value).
+`upload_concurrency` and `download_concurrency` define how many parallel download / upload go-routines will start independently of the remote storage type.
+In 1.3.0+ it means how many parallel data parts will be uploaded, assuming `upload_by_part` and `download_by_part` are `true` (which is the default value).
 
-`concurrency` in `s3` section means how much concurrent `upload` streams will run during multipart upload in each upload go-routine
-High value for `S3_CONCURRENCY` and high value for `S3_PART_SIZE` will allocate a lot of memory for buffers inside AWS golang SDK.
+`concurrency` in the `s3` section means how many concurrent `upload` streams will run during multipart upload in each upload go-routine.
+A high value for `S3_CONCURRENCY` and a high value for `S3_PART_SIZE` will allocate a lot of memory for buffers inside the AWS golang SDK.
 
-`concurrency` in `sftp` section means how many concurrent request will be used for `upload` and `download` for each file.
+`concurrency` in the `sftp` section means how many concurrent request will be used for `upload` and `download` for each file.
 
-`compression_format`, a good default is `tar` for using less CPU. In most cases the data in clickhouse is already compressed, so you may not get a lot of space savings when double compress.
+For `compression_format`, a good default is `tar`, which uses less CPU. In most cases the data in clickhouse is already compressed, so you may not get a lot of space savings when compressing already-compressed data.
 
 ## remote_storage: custom
 
-All custom commands could use go-template language, for example, you can use `{{ .cfg.* }}` `{{ .backupName }}` `{{ .diffFromRemote }}`.
-Custom `list_command` shall return JSON which is compatible with `metadata.BackupMetadata` type with [JSONEachRow](https://clickhouse.com/docs/en/interfaces/formats/#jsoneachrow) format.
+All custom commands use the go-template language. For example, you can use `{{ .cfg.* }}` `{{ .backupName }}` `{{ .diffFromRemote }}`.
+A custom `list_command` returns JSON which is compatible with the `metadata.BackupMetadata` type with [JSONEachRow](https://clickhouse.com/docs/en/interfaces/formats/#jsoneachrow) format.
 For examples, see [restic](https://github.com/Altinity/clickhouse-backup/tree/master/test/integration/restic/), [rsync](https://github.com/Altinity/clickhouse-backup/tree/master/test/integration/rsync/) and [kopia](https://github.com/Altinity/clickhouse-backup/tree/master/test/integration/kopia/). Feel free to add yours too.
 
 ## ATTENTION!
 
-Never change files permissions in `/var/lib/clickhouse/backup`.
+**Never change file permissions in `/var/lib/clickhouse/backup`.**
 This path contains hard links. Permissions on all hard links to the same data on disk are always identical.
 That means that if you change the permissions/owner/attributes on a hard link in backup path, permissions on files with which ClickHouse works will be changed too.
-That might lead to data corruption.
+That can lead to data corruption.
 
 ## API
 
@@ -601,6 +611,7 @@ Use the `clickhouse-backup server` command to run as a REST API server. In gener
 List all current applicable HTTP routes
 
 > **POST /**
+
 > **POST /restart**
 
 Restart HTTP server, close all current connections, close listen socket, open listen socket again, all background go-routines breaks with contexts
@@ -636,7 +647,7 @@ Create new backup: `curl -s localhost:7171/backup/create -X POST | jq .`
 - Optional query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens"}`.
 - Additional example: `curl -s 'localhost:7171/backup/create?table=default.billing&name=billing_test' -X POST`
 
-Note: this operation is async, so the API will return once the operation has started.
+Note: this operation is asynchronous, so the API will return once the operation has started.
 
 > **POST /backup/watch**
 
@@ -653,7 +664,7 @@ You can't run watch twice with the same parameters even when `allow_parallel: tr
 - Optional query argument `configs` works the same as the `--configs` CLI argument (backup configs).
 - Additional example: `curl -s 'localhost:7171/backup/watch?table=default.billing&watch_interval=1h&full_interval=24h' -X POST`
 
-Note: this operation is async and can stop only with `kill -s SIGHUP $(pgrep -f clickhouse-backup)` or call `/restart`, `/backup/kill`. The API will return immediately once the operation has started.
+Note: this operation is asynchronous and can only be stopped with `kill -s SIGHUP $(pgrep -f clickhouse-backup)` or call `/restart`, `/backup/kill`. The API will return immediately once the operation has started.
 
 > **POST /backup/clean**
 
@@ -676,13 +687,13 @@ Upload backup to remote storage: `curl -s localhost:7171/backup/upload/<BACKUP_N
 - Optional query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate upload state and resume upload if data already exists on remote storage).
 - Optional query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens"}`.
 
-Note: this operation is async, so the API will return once the operation has started.
+Note: this operation is asynchronous, so the API will return once the operation has started.
 
 > **GET /backup/list/{where}**
 
-Print list of backups: `curl -s localhost:7171/backup/list | jq .`
-Print list only local backups: `curl -s localhost:7171/backup/list/local | jq .`
-Print list only remote backups: `curl -s localhost:7171/backup/list/remote | jq .`
+Print a list of backups: `curl -s localhost:7171/backup/list | jq .`
+Print a list of only local backups: `curl -s localhost:7171/backup/list/local | jq .`
+Print a list of only remote backups: `curl -s localhost:7171/backup/list/remote | jq .`
 
 Note: The `Size` field will not be set for the local backups that have just been created or are in progress.
 Note: The `Size` field will not be set for the remote backups with upload status in progress.
@@ -697,7 +708,7 @@ Download backup from remote storage: `curl -s localhost:7171/backup/download/<BA
 - Optional query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate download state and resume download if it already exists on local storage).
 - Optional query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens"}`.
 
-Note: this operation is async, so the API will return once the operation has started.
+Note: this operation is asynchronous, so the API will return once the operation has started.
 
 > **POST /backup/restore**
 
@@ -722,7 +733,7 @@ Delete specific local backup: `curl -s localhost:7171/backup/delete/local/<BACKU
 
 > **GET /backup/status**
 
-Display list of currently running async operation: `curl -s localhost:7171/backup/status | jq .`
+Display list of currently running asynchronous operations: `curl -s localhost:7171/backup/status | jq .`
 
 > **POST /backup/actions**
 
@@ -739,7 +750,7 @@ Display a list of all operations from start of API server: `curl -s localhost:71
 
 ### S3
 
-In order to make backups to S3, the following permissions shall be set:
+In order to make backups to S3, the following permissions should be set:
 
 ```json
 {
@@ -750,7 +761,8 @@ In order to make backups to S3, the following permissions shall be set:
             "Effect": "Allow",
             "Action": [
                 "s3:PutObject",
-                "s3:GetObject"
+                "s3:GetObject",
+                "s3:DeleteObject"
             ],
             "Resource": "arn:aws:s3:::BUCKET_NAME/*"
         },
@@ -794,14 +806,14 @@ fi
 - [How to convert MergeTree to ReplicatedMergeTree](Examples.md#how-to-convert-mergetree-to-replicatedmergetree)
 - [How to store backups on NFS or another server](Examples.md#how-to-store-backups-on-nfs-backup-drive-or-another-server-via-sftp)
 - [How to move data to another clickhouse server](Examples.md#how-to-move-data-to-another-clickhouse-server)
-- [How to reduce number of partitions](Examples.md#How-to-reduce-number-of-partitions)
-- [How to monitor that backups created and uploaded correctly](Examples.md#how-to-monitor-that-backups-created-and-uploaded-correctly)
-- [How to make backup / restore sharded cluster](Examples.md#how-to-make-backup--restore-sharded-cluster)
-- [How to make backup sharded cluster with Ansible](Examples.md#how-to-make-backup-sharded-cluster-with-ansible)
-- [How to make back up database with several terabytes of data](Examples.md#how-to-make-backup-database-with-several-terabytes-of-data)
+- [How to reduce the number of partitions](Examples.md#How-to-reduce-the-number-of-partitions)
+- [How to monitor that backups created and uploaded correctly](Examples.md#how-to-monitor-that-backups-were-created-and-uploaded-correctly)
+- [How to back up / restore a sharded cluster](Examples.md#how-to-back-up--restore-a-sharded-cluster)
+- [How to back up a sharded cluster with Ansible](Examples.md#how-to-back-up-a-sharded-cluster-with-ansible)
+- [How to back up a database with several terabytes of data](Examples.md#how-to-back-up-a-database-with-several-terabytes-of-data)
 - [How to use clickhouse-backup in Kubernetes](Examples.md#how-to-use-clickhouse-backup-in-kubernetes)
-- [How do incremental backups work to remote storage](Examples.md#how-do-incremental-backups-work-to-remote-storage)
-- [How to watch backups work](Examples.md#how-to-work-watch-command)
+- [How to do incremental backups work to remote storage](Examples.md#how-incremental-backups-work-with-remote-storage)
+- [How to watch backups work](Examples.md#how-to-watch-backups-work)
 
 ## Original Author
 Altinity wants to thank @[AlexAkulov](https://github.com/AlexAkulov) for creating this tool and for his valuable contributions.

@@ -1,3 +1,7 @@
+# v2.4.4
+BUG FIXES
+- remove aws.LogResponseWithBody for `S3_DEBUG` to avoid too many logs (affected 2.4.0+ versions)
+
 # v2.4.3
 IMPROVEMENTS
 - add `list` command to API /backup/actions, fix [772](https://github.com/Altinity/clickhouse-backup/issues/772)
