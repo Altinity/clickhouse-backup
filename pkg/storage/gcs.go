@@ -2,9 +2,11 @@ package storage
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"path"
 	"strings"
@@ -65,6 +67,19 @@ func (gcs *GCS) Kind() string {
 	return "GCS"
 }
 
+type rewriteTransport struct {
+	base http.RoundTripper
+}
+
+// forces requests to target varnish and use HTTP, required to get uploading
+// via varnish working
+func (r rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Scheme == "https" {
+		req.URL.Scheme = "http"
+	}
+	return r.base.RoundTrip(req)
+}
+
 // Connect - connect to GCS
 func (gcs *GCS) Connect(ctx context.Context) error {
 	var err error
@@ -83,6 +98,47 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 		clientOptions = append(clientOptions, option.WithCredentialsJSON(d))
 	} else if gcs.Config.CredentialsFile != "" {
 		clientOptions = append(clientOptions, option.WithCredentialsFile(gcs.Config.CredentialsFile))
+	}
+
+	if gcs.Config.ForceHttp {
+		customTransport := &http.Transport{
+			WriteBufferSize: 8388608,
+			Proxy:           http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			ForceAttemptHTTP2:     false,
+			MaxIdleConns:          100,
+			MaxIdleConnsPerHost:   100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		}
+		// must set ForceAttemptHTTP2 to false so that when a custom TLSClientConfig
+		// is provided Golang does not setup HTTP/2 transport
+		customTransport.ForceAttemptHTTP2 = false
+		customTransport.TLSClientConfig = &tls.Config{
+			NextProtos: []string{"http/1.1"},
+		}
+		// These clientOptions are passed in by storage.NewClient. However, to set a custom HTTP client
+		// we must pass all these in manually.
+
+		if gcs.Config.Endpoint == "" {
+			clientOptions = append([]option.ClientOption{option.WithScopes(storage.ScopeFullControl)}, clientOptions...)
+		}
+		clientOptions = append(clientOptions, internaloption.WithDefaultEndpoint(endpoint))
+
+		customRountripper := &rewriteTransport{base: customTransport}
+		gcpTransport, _, err := googleHTTPTransport.NewClient(ctx, clientOptions...)
+		transport, err := googleHTTPTransport.NewTransport(ctx, customRountripper, clientOptions...)
+		gcpTransport.Transport = transport
+		if err != nil {
+			return fmt.Errorf("failed to create GCP transport: %v", err)
+		}
+
+		clientOptions = append(clientOptions, option.WithHTTPClient(gcpTransport))
+
 	}
 
 	if gcs.Config.Debug {
@@ -114,7 +170,7 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 				nil
 		})
 	gcs.clientPool = pool.NewObjectPoolWithDefaultConfig(ctx, factory)
-	gcs.clientPool.Config.MaxTotal = gcs.Config.ClientPoolSize
+	gcs.clientPool.Config.MaxTotal = gcs.Config.ClientPoolSize * 3
 	gcs.client, err = storage.NewClient(ctx, clientOptions...)
 	return err
 }
@@ -199,27 +255,28 @@ func (gcs *GCS) PutFile(ctx context.Context, key string, r io.ReadCloser) error 
 	pClient := pClientObj.(*clientObject).Client
 	key = path.Join(gcs.Config.Path, key)
 	obj := pClient.Bucket(gcs.Config.Bucket).Object(key)
-
 	writer := obj.NewWriter(ctx)
 	writer.StorageClass = gcs.Config.StorageClass
+	writer.ChunkRetryDeadline = 60 * time.Minute
 	if len(gcs.Config.ObjectLabels) > 0 {
 		writer.Metadata = gcs.Config.ObjectLabels
 	}
 	defer func() {
-		if err := writer.Close(); err != nil {
-			log.Warnf("gcs.PutFile: can't close writer: %+v", err)
-			if err = gcs.clientPool.InvalidateObject(ctx, pClientObj); err != nil {
-				log.Warnf("gcs.PutFile: gcs.clientPool.InvalidateObject error: %+v", err)
-			}
-			return
-		}
-		if err = gcs.clientPool.ReturnObject(ctx, pClientObj); err != nil {
+		if err := gcs.clientPool.ReturnObject(ctx, pClientObj); err != nil {
 			log.Warnf("gcs.PutFile: gcs.clientPool.ReturnObject error: %+v", err)
 		}
 	}()
 	buffer := make([]byte, 128*1024)
 	_, err = io.CopyBuffer(writer, r, buffer)
-	return err
+	if err != nil {
+		log.Warnf("gcs.PutFile: can't copy buffer: %+v", err)
+		return err
+	}
+	if err = writer.Close(); err != nil {
+		log.Warnf("gcs.PutFile: can't close writer: %+v", err)
+		return err
+	}
+	return nil
 }
 
 func (gcs *GCS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
