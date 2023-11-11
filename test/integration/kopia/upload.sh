@@ -7,14 +7,23 @@ DIFF_FROM_REMOTE=${2:-}
 DIFF_FROM_REMOTE_CMD=""
 LOCAL_PATHS=$(eval "clickhouse client $CLICKHOUSE_PARAMS -q \"SELECT concat(trim(TRAILING '/' FROM path),'/backup/','${BACKUP_NAME}') FROM system.disks FORMAT TSVRaw\" | awk '{printf(\"%s \",\$0)} END { printf \"\n\" }' || clickhouse client $CLICKHOUSE_PARAMS -q \"SELECT concat(replaceRegexpOne(metadata_path,'/metadata.*$',''),'/backup/','${BACKUP_NAME}') FROM system.tables WHERE database = 'system' AND metadata_path!='' LIMIT 1 FORMAT TSVRaw\" | awk '{printf(\"%s \",\$0)} END { printf \"\n\" }'")
 if [[ "" != "${DIFF_FROM_REMOTE}" ]]; then
-#  DIFF_FROM_REMOTE_CMD="--parent ${DIFF_FROM_REMOTE}"
-  DIFF_FROM_REMOTE_CMD=""
+  DIFF_FROM_REMOTE_CMD="--parent ${DIFF_FROM_REMOTE}"
 fi
 SNAPSHOT_SOURCES=""
 for dir in $(echo "${LOCAL_PATHS}"); do
-  echo "${dir}"
   if [[ -d "${dir}" ]]; then
-    SNAPSHOT_SOURCES="${dir} ${SNAPSHOT_SOURCES}"
+    upload_dir="$(dirname "${dir}")/last_upload"
+    cp -rl "${dir}" "${upload_dir}"
+    SNAPSHOT_SOURCES="${upload_dir} ${SNAPSHOT_SOURCES}"
   fi
 done
+
 kopia snapshot create $DIFF_FROM_REMOTE_CMD --fail-fast --tags="backup_name:${BACKUP_NAME}"  $SNAPSHOT_SOURCES
+
+for dir in $(echo "${LOCAL_PATHS}"); do
+  if [[ -d "${dir}" ]]; then
+    upload_dir="$(dirname "${dir}")/last_upload"
+    rm -rf "${upload_dir}"
+  fi
+done
+

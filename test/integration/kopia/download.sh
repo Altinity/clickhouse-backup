@@ -7,4 +7,5 @@ ${CUR_DIR}/list.sh | grep "${BACKUP_NAME}" | while IFS= read -r line; do
   SNAPSHOT_ID=$(echo "${line}" | jq -r -c -M .snapshot_id)
   SNAPSHOT_PATH=$(echo "${line}" | jq -r -c -M .snapshot_path)
   kopia restore "${SNAPSHOT_ID}"  --skip-existing ${SNAPSHOT_PATH}
+  mv ${SNAPSHOT_PATH} $(dirname ${SNAPSHOT_PATH})/${BACKUP_NAME}
 done
