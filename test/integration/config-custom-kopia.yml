@@ -18,7 +18,7 @@ clickhouse:
   timeout: 5s
   restart_command: "sql:SYSTEM RELOAD USERS; sql:SYSTEM RELOAD CONFIG; sql:SYSTEM SHUTDOWN"
 custom:
-  # all `kopia` uploads are incremental
+  # all `kopia` uploads are incremental we don't need {{ .diffFromRemote }}
   upload_command: /custom/kopia/upload.sh {{ .backupName }}
   download_command: /custom/kopia/download.sh {{ .backupName }}
   delete_command:  /custom/kopia/delete.sh {{ .backupName }}

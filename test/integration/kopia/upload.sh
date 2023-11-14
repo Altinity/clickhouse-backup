@@ -12,7 +12,7 @@ fi
 SNAPSHOT_SOURCES=""
 for dir in $(echo "${LOCAL_PATHS}"); do
   if [[ -d "${dir}" ]]; then
-    upload_dir="$(dirname "${dir}")/last_upload"
+    upload_dir="$(dirname "${dir}")/latest"
     cp -rl "${dir}" "${upload_dir}"
     SNAPSHOT_SOURCES="${upload_dir} ${SNAPSHOT_SOURCES}"
   fi
@@ -22,7 +22,7 @@ kopia snapshot create $DIFF_FROM_REMOTE_CMD --fail-fast --tags="backup_name:${BA
 
 for dir in $(echo "${LOCAL_PATHS}"); do
   if [[ -d "${dir}" ]]; then
-    upload_dir="$(dirname "${dir}")/last_upload"
+    upload_dir="$(dirname "${dir}")/latest"
     rm -rf "${upload_dir}"
   fi
 done
