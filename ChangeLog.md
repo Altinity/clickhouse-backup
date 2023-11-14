@@ -1,3 +1,7 @@
+# v2.4.5
+BUG FIXES
+- add aws.LogResponse for `S3_DEBUG`  (affected 2.4.4+ versions)
+
 # v2.4.4
 BUG FIXES
 - remove aws.LogResponseWithBody for `S3_DEBUG` to avoid too many logs (affected 2.4.0+ versions)
