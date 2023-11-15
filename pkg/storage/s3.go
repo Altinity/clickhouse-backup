@@ -311,12 +311,12 @@ func (s *S3) deleteKey(ctx context.Context, key string) error {
 	if s.versioning {
 		objVersion, err := s.getObjectVersion(ctx, key)
 		if err != nil {
-			return errors.Wrapf(err, "deleteKey, obtaining object version %+v", params)
+			return errors.Wrapf(err, "deleteKey, obtaining object version bucket: %s key: %s", s.Config.Bucket, key)
 		}
 		params.VersionId = objVersion
 	}
 	if _, err := s.client.DeleteObject(ctx, params); err != nil {
-		return errors.Wrapf(err, "deleteKey, deleting object %+v", params)
+		return errors.Wrapf(err, "deleteKey, deleting object bucket: %s key: %s version: %v", s.Config.Bucket, key, params.VersionId)
 	}
 	return nil
 }
