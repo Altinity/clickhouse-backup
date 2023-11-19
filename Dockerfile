@@ -101,7 +101,7 @@ FROM ${CLICKHOUSE_IMAGE}:${CLICKHOUSE_VERSION} AS image_full
 ARG TARGETPLATFORM
 MAINTAINER Eugene Klimov <eklimov@altinity.com>
 
-RUN apt-get update && apt-get install -y gpg && wget -qO- https://kopia.io/signing-key | gpg --dearmor -o /usr/share/keyrings/kopia-keyring.gpg && \
+RUN apt-get update && apt-get install -y gpg xxd bsdmainutils && wget -qO- https://kopia.io/signing-key | gpg --dearmor -o /usr/share/keyrings/kopia-keyring.gpg && \
     echo "deb [signed-by=/usr/share/keyrings/kopia-keyring.gpg] http://packages.kopia.io/apt/ stable main" > /etc/apt/sources.list.d/kopia.list && \
     wget -c "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)" -O /usr/bin/yq && chmod +x /usr/bin/yq && \
     apt-get update -y && \

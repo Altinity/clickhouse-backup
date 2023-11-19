@@ -409,7 +409,7 @@ func init() {
 	// kopia
 	r.NoError(dockerExec("clickhouse-backup", "bash", "-ce", "curl -sfL https://kopia.io/signing-key | gpg --dearmor -o /usr/share/keyrings/kopia-keyring.gpg"))
 	r.NoError(dockerExec("clickhouse-backup", "bash", "-ce", "echo 'deb [signed-by=/usr/share/keyrings/kopia-keyring.gpg] https://packages.kopia.io/apt/ stable main' > /etc/apt/sources.list.d/kopia.list"))
-	installDebIfNotExists(r, "clickhouse-backup", "kopia")
+	installDebIfNotExists(r, "clickhouse-backup", "kopia", "xxd", "bsdmainutils")
 	// restic
 	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "RELEASE_TAG=$(curl -H 'Accept: application/json' -sL https://github.com/restic/restic/releases/latest | jq -c -r -M '.tag_name'); RELEASE=$(echo ${RELEASE_TAG} | sed -e 's/v//'); curl -sfL \"https://github.com/restic/restic/releases/download/${RELEASE_TAG}/restic_${RELEASE}_linux_amd64.bz2\" | bzip2 -d > /bin/restic; chmod +x /bin/restic"))
 }
@@ -2573,12 +2573,13 @@ func isTestShouldSkip(envName string) bool {
 }
 
 func installDebIfNotExists(r *require.Assertions, container string, pkgs ...string) {
-	r.NoError(dockerExec(
+	err := dockerExec(
 		container,
 		"bash", "-xec",
 		fmt.Sprintf(
 			"export DEBIAN_FRONTEND=noniteractive; if [[ '%d' != $(dpkg -l | grep -c -E \"%s\" ) ]]; then rm -fv /etc/apt/sources.list.d/clickhouse.list; find /etc/apt/ -type f -name *.list -exec sed -i 's/ru.archive.ubuntu.com/archive.ubuntu.com/g' {} +; apt-get -y update; apt-get install --no-install-recommends -y %s; fi",
 			len(pkgs), "^ii\\s+"+strings.Join(pkgs, "|^ii\\s+"), strings.Join(pkgs, " "),
 		),
-	))
+	)
+	r.NoError(err)
 }

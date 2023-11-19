@@ -12,9 +12,13 @@ fi
 SNAPSHOT_SOURCES=""
 for dir in $(echo "${LOCAL_PATHS}"); do
   if [[ -d "${dir}" ]]; then
-    upload_dir="$(dirname "${dir}")/latest"
-    cp -rl "${dir}" "${upload_dir}"
-    SNAPSHOT_SOURCES="${upload_dir} ${SNAPSHOT_SOURCES}"
+    UPLOAD_DIR="$(dirname "${dir}")/latest"
+    rm -rf "${UPLOAD_DIR}"
+    cp -rl "${dir}" "${UPLOAD_DIR}"
+    find "${UPLOAD_DIR}" -type f -name checksums.txt | while read CHECKSUMS_FILE; do
+      "${CUR_DIR}/checksum_parser.sh" "${CHECKSUMS_FILE}" "upload" "${UPLOAD_DIR}"
+    done
+    SNAPSHOT_SOURCES="${UPLOAD_DIR} ${SNAPSHOT_SOURCES}"
   fi
 done
 
@@ -22,8 +26,8 @@ kopia snapshot create $DIFF_FROM_REMOTE_CMD --fail-fast --tags="backup_name:${BA
 
 for dir in $(echo "${LOCAL_PATHS}"); do
   if [[ -d "${dir}" ]]; then
-    upload_dir="$(dirname "${dir}")/latest"
-    rm -rf "${upload_dir}"
+    UPLOAD_DIR="$(dirname "${dir}")/latest"
+    rm -rfv "${UPLOAD_DIR}"
   fi
 done
 
