@@ -19,6 +19,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/pkg/custom"
 	"github.com/Altinity/clickhouse-backup/pkg/resumable"
 	"github.com/Altinity/clickhouse-backup/pkg/status"
+	"github.com/Altinity/clickhouse-backup/pkg/storage"
 	"github.com/eapache/go-resiliency/retrier"
 
 	"golang.org/x/sync/errgroup"
@@ -479,7 +480,13 @@ func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelate
 	if err != nil {
 		return 0, fmt.Errorf("can't RBAC or config upload compressed %s: %v", destinationRemote, err)
 	}
-	remoteUploaded, err := b.dst.StatFile(ctx, destinationRemote)
+
+	var remoteUploaded storage.RemoteFile
+	retry = retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
+	err = retry.RunCtx(ctx, func(ctx context.Context) error {
+		remoteUploaded, err = b.dst.StatFile(ctx, destinationRemote)
+		return err
+	})
 	if err != nil {
 		return 0, fmt.Errorf("can't check uploaded destinationRemote: %s, error: %v", destinationRemote, err)
 	}
@@ -577,7 +584,13 @@ breakByError:
 						log.Errorf("UploadCompressedStream return error: %v", err)
 						return fmt.Errorf("can't upload: %v", err)
 					}
-					remoteFile, err := b.dst.StatFile(ctx, remoteDataFile)
+
+					var remoteFile storage.RemoteFile
+					retry = retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
+					err = retry.RunCtx(ctx, func(ctx context.Context) error {
+						remoteFile, err = b.dst.StatFile(ctx, remoteDataFile)
+						return err
+					})
 					if err != nil {
 						return fmt.Errorf("can't check uploaded remoteDataFile: %s, error: %v", remoteDataFile, err)
 					}

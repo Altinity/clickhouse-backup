@@ -519,6 +519,7 @@ gcs:
   # GCS_CUSTOM_STORAGE_CLASS_MAP, allow setup storage class depends on backup name regexp pattern, format nameRegexp > className
   custom_storage_class_map: {}
   debug: false                 # GCS_DEBUG
+  force_http: false            # GCS_FORCE_HTTP
 cos:
   url: ""                      # COS_URL
   timeout: 2m                  # COS_TIMEOUT
