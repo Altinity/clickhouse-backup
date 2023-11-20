@@ -3,6 +3,9 @@ IMPROVEMENTS
 - make 'kopia' custom scripts really increment fix [781](https://github.com/Altinity/clickhouse-backup/issues/781) 
 - add `force_http` and improve retries in GCS upload [784](https://github.com/Altinity/clickhouse-backup/pull/784), thanks @minguyen9988
 
+BUG FIXES
+- add `Array(Tuple())` to exclude list for `check_parts_columns:true' fix [789](https://github.com/Altinity/clickhouse-backup/issues/789)
+
 # v2.4.5
 BUG FIXES
 - add aws.LogResponse for `S3_DEBUG`  (affected 2.4.4+ versions)
