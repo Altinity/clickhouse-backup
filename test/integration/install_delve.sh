@@ -26,6 +26,7 @@ CGO_ENABLED=0 GO111MODULE=on go install -ldflags "-s -w -extldflags '-static'" g
 # CLICKHOUSE_TIMEOUT=3m CLICKHOUSE_DEBUG=true LOG_LEVEL=debug /root/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /usr/bin/clickhouse-backup -- watch --watch-interval=1m --full-interval=2m
 # LOG_LEVEL=debug /root/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /usr/bin/clickhouse-backup -- restore --data --restore-database-mapping database1:database2 --tables database1.* test_restore_database_mapping
 # S3_DEBUG=true /root/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /usr/bin/clickhouse-backup -- upload test_rbac_backup
+# S3_DEBUG=true /root/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /usr/bin/clickhouse-backup -- -c /etc/clickhouse-backup/config-s3.yml delete remote full_backup_339504125792808941
 # run integration_test.go under debug, run from host OS not inside docker
 # go test -timeout 30m -failfast -tags=integration -run "TestIntegrationEmbedded" -v ./test/integration/integration_test.go -c -o ./test/integration/integration_test
 # sudo -H bash -c 'export CLICKHOUSE_IMAGE=clickhouse/clickhouse-server; export COMPOSE_FILE=docker-compose_advanced.yml; export CLICKHOUSE_VERSION=head; cd ./test/integration/; /root/go/bin/dlv --listen=127.0.0.1:40002 --headless=true --api-version=2 --accept-multiclient exec ./integration_test -- -test.timeout 30m -test.failfast -test.run "TestIntegrationEmbedded"'

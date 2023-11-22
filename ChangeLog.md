@@ -5,6 +5,7 @@ IMPROVEMENTS
 
 BUG FIXES
 - add `Array(Tuple())` to exclude list for `check_parts_columns:true' fix [789](https://github.com/Altinity/clickhouse-backup/issues/789)
+- fix `delete remote` command for s3 buckets with enabled versioning fix [782](https://github.com/Altinity/clickhouse-backup/issues/782)
 
 # v2.4.5
 BUG FIXES
