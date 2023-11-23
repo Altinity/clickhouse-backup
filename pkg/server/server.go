@@ -1494,7 +1494,10 @@ func (api *APIServer) CreateIntegrationTables() error {
 		return fmt.Errorf("can't connect to clickhouse: %w", err)
 	}
 	defer ch.Close()
-	port := strings.Split(api.config.API.ListenAddr, ":")[1]
+	port := "80"
+	if strings.Contains(api.config.API.ListenAddr, ":") {
+		port = api.config.API.ListenAddr[strings.Index(api.config.API.ListenAddr, ":"):]
+	}
 	auth := ""
 	if api.config.API.Username != "" || api.config.API.Password != "" {
 		params := url.Values{}

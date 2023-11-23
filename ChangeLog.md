@@ -1,4 +1,4 @@
-# v2.5.0 (not released yet)
+# v2.4.6
 IMPROVEMENTS
 - make 'kopia' custom scripts really increment fix [781](https://github.com/Altinity/clickhouse-backup/issues/781) 
 - add `force_http` and improve retries in GCS upload [784](https://github.com/Altinity/clickhouse-backup/pull/784), thanks @minguyen9988
@@ -6,6 +6,7 @@ IMPROVEMENTS
 BUG FIXES
 - add `Array(Tuple())` to exclude list for `check_parts_columns:true' fix [789](https://github.com/Altinity/clickhouse-backup/issues/789)
 - fix `delete remote` command for s3 buckets with enabled versioning fix [782](https://github.com/Altinity/clickhouse-backup/issues/782)
+- fix panic during create integration tables when `API_LISTEN` doesn't contain ":" character, fix [790](https://github.com/Altinity/clickhouse-backup/issues/790)
 
 # v2.4.5
 BUG FIXES
