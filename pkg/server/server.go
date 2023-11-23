@@ -1496,7 +1496,7 @@ func (api *APIServer) CreateIntegrationTables() error {
 	defer ch.Close()
 	port := "80"
 	if strings.Contains(api.config.API.ListenAddr, ":") {
-		port = api.config.API.ListenAddr[strings.Index(api.config.API.ListenAddr, ":"):]
+		port = api.config.API.ListenAddr[strings.Index(api.config.API.ListenAddr, ":")+1:]
 	}
 	auth := ""
 	if api.config.API.Username != "" || api.config.API.Password != "" {
