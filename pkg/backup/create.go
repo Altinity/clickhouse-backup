@@ -291,7 +291,15 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePa
 		tablesSQL += "TABLE `" + table.Database + "`.`" + table.Name + "`"
 		tableSizeSQL += "'" + table.Database + "." + table.Name + "'"
 		if nameList, exists := partitionsNameList[metadata.TableTitle{Database: table.Database, Table: table.Name}]; exists && len(nameList) > 0 {
-			tablesSQL += fmt.Sprintf(" PARTITIONS '%s'", strings.Join(nameList, "','"))
+			partitionsSQL := ""
+			for _, partitionName := range nameList {
+				if strings.HasPrefix(partitionName, "(") {
+					partitionsSQL += partitionName + ","
+				} else {
+					partitionsSQL += "'" + partitionName + "',"
+				}
+			}
+			tablesSQL += fmt.Sprintf(" PARTITIONS %s", partitionsSQL[:len(partitionsSQL)-1])
 		}
 		if i < l {
 			tablesSQL += ", "
