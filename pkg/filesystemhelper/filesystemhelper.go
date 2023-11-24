@@ -3,6 +3,7 @@ package filesystemhelper
 import (
 	"fmt"
 	"github.com/Altinity/clickhouse-backup/pkg/utils"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -189,7 +190,17 @@ func IsPartInPartition(partName string, partitionsBackupMap common.EmptyMap) boo
 
 func IsFileInPartition(disk, fileName string, partitionsBackupMap common.EmptyMap) bool {
 	fileName = strings.TrimPrefix(fileName, disk+"_")
-	_, ok := partitionsBackupMap[strings.Split(fileName, "_")[0]]
+	fileName = strings.Split(fileName, "_")[0]
+	if strings.Contains(fileName, "%") {
+		decodedFileName, err := url.QueryUnescape(fileName)
+		if err != nil {
+			apexLog.Warnf("error decoding %s: %v", fileName, err)
+			apexLog.Debugf("%s not found in %s, file will filtered", fileName, partitionsBackupMap)
+			return false
+		}
+		fileName = decodedFileName
+	}
+	_, ok := partitionsBackupMap[fileName]
 	return ok
 }
 

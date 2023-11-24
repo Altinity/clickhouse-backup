@@ -9,6 +9,7 @@ import (
 	apexLog "github.com/apex/log"
 	"github.com/google/uuid"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -95,16 +96,22 @@ func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, datab
 	}, 0)
 	sql := "SELECT name FROM system.columns WHERE database=? AND table=? AND is_in_partition_key"
 	oldVersion := false
+	partitionByMatches := PartitionByRE.FindStringSubmatch(createQuery)
 	if err := ch.SelectContext(ctx, &columns, sql, database, partitionIdTable); err != nil {
-		matches := PartitionByRE.FindStringSubmatch(createQuery)
-		if len(matches) == 0 {
+		if len(partitionByMatches) == 0 {
 			if dropErr := dropPartitionIdTable(ch, database, partitionIdTable); dropErr != nil {
 				return "", "", dropErr
 			}
 			return "", "", fmt.Errorf("can't get is_in_partition_key column names from for table `%s`.`%s`: %v", database, partitionIdTable, err)
 		}
-		columns = extractPartitionByFieldNames(matches[1])
+		columns = extractPartitionByFieldNames(partitionByMatches[1])
 		oldVersion = true
+	}
+	// to the same order of fields as described in PARTITION BY clause, fix
+	if len(partitionByMatches) == 2 && partitionByMatches[1] != "" {
+		sort.Slice(columns, func(i int, j int) bool {
+			return strings.Index(partitionByMatches[1], columns[i].Name) < strings.Index(partitionByMatches[1], columns[j].Name)
+		})
 	}
 	defer func() {
 		if dropErr := dropPartitionIdTable(ch, database, partitionIdTable); dropErr != nil {
