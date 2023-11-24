@@ -1985,8 +1985,8 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, ch *Test
 	ch.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+dbName)
 	ch.queryWithNoError(r, "DROP TABLE IF EXISTS "+dbName+".t1")
 	ch.queryWithNoError(r, "DROP TABLE IF EXISTS "+dbName+".t2")
-	ch.queryWithNoError(r, "CREATE TABLE "+dbName+".t1 (dt Date, category Int8, v UInt64) ENGINE=MergeTree() PARTITION BY (category, toYYYYMMDD(dt)) ORDER BY dt")
-	ch.queryWithNoError(r, "CREATE TABLE "+dbName+".t2 (dt String, category Int8, v UInt64) ENGINE=MergeTree() PARTITION BY (category, dt) ORDER BY dt")
+	ch.queryWithNoError(r, "CREATE TABLE "+dbName+".t1 (dt Date, category Int64, v UInt64) ENGINE=MergeTree() PARTITION BY (category, toYYYYMMDD(dt)) ORDER BY dt")
+	ch.queryWithNoError(r, "CREATE TABLE "+dbName+".t2 (dt String, category Int64, v UInt64) ENGINE=MergeTree() PARTITION BY (category, dt) ORDER BY dt")
 	for _, dt := range []string{"2022-01-01", "2022-01-02", "2022-01-03", "2022-01-04"} {
 		ch.queryWithNoError(r, fmt.Sprintf("INSERT INTO "+dbName+".t1(dt, v) SELECT '%s', number FROM numbers(10)", dt))
 		ch.queryWithNoError(r, fmt.Sprintf("INSERT INTO "+dbName+".t2(dt, v) SELECT '%s', number FROM numbers(10)", dt))

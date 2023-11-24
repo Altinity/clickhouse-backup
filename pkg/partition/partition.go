@@ -8,6 +8,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/pkg/metadata"
 	apexLog "github.com/apex/log"
 	"github.com/google/uuid"
+	"github.com/pkg/errors"
 	"regexp"
 	"sort"
 	"strconv"
@@ -49,7 +50,7 @@ var SettingsRE = regexp.MustCompile(`(?mi)\s*SETTINGS.*`)
 var OrderByRE = regexp.MustCompile(`(?mi)\s*ORDER BY.*`)
 var FunctionsRE = regexp.MustCompile(`(?i)\w+\(`)
 var StringsRE = regexp.MustCompile(`(?i)'[^']+'`)
-var SpecialCharsRE = regexp.MustCompile(`(?i)[)*+\-/\\]+`)
+var SpecialCharsRE = regexp.MustCompile(`(?i)[)(*+\-/\\,]+`)
 var FieldsNamesRE = regexp.MustCompile("(?i)\\w+|`[^`]+`\\.`[^`]+`|\"[^\"]+\"")
 
 func extractPartitionByFieldNames(s string) []struct {
@@ -60,7 +61,7 @@ func extractPartitionByFieldNames(s string) []struct {
 	s = FunctionsRE.ReplaceAllString(s, "")
 	s = StringsRE.ReplaceAllString(s, "")
 	s = SpecialCharsRE.ReplaceAllString(s, "")
-	matches := FieldsNamesRE.FindStringSubmatch(s)
+	matches := FieldsNamesRE.FindAllString(s, -1)
 	columns := make([]struct {
 		Name string `ch:"name"`
 	}, len(matches))
@@ -107,7 +108,7 @@ func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, datab
 		columns = extractPartitionByFieldNames(partitionByMatches[1])
 		oldVersion = true
 	}
-	// to the same order of fields as described in PARTITION BY clause, fix
+	// to the same order of fields as described in PARTITION BY clause, https://github.com/Altinity/clickhouse-backup/issues/791
 	if len(partitionByMatches) == 2 && partitionByMatches[1] != "" {
 		sort.Slice(columns, func(i int, j int) bool {
 			return strings.Index(partitionByMatches[1], columns[i].Name) < strings.Index(partitionByMatches[1], columns[j].Name)
@@ -142,13 +143,13 @@ func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, datab
 		)
 		batch, err := ch.GetConn().PrepareBatch(ctx, sql)
 		if err != nil {
-			return "", "", err
+			return "", "", errors.Wrapf(err, "PrepareBatch sql=%s partitionInsert=%#v", sql, partitionInsert)
 		}
 		if err = batch.Append(partitionInsert...); err != nil {
-			return "", "", err
+			return "", "", errors.Wrapf(err, "batch.Append sql=%s partitionInsert=%#v", sql, partitionInsert)
 		}
 		if err = batch.Send(); err != nil {
-			return "", "", err
+			return "", "", errors.Wrapf(err, "batch.Send sql=%s partitionInsert=%#v", sql, partitionInsert)
 		}
 	}
 	if err != nil {
