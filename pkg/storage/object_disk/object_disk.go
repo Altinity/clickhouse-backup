@@ -503,7 +503,7 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 			azureCfg.AccountName = creds.AzureAccountName
 		}
 		if azureURL.Path != "" {
-			azureCfg.Path = strings.Trim(azureURL.Path, "/")
+			azureCfg.Path = azureURL.Path
 			if azureCfg.AccountName != "" && strings.HasPrefix(azureCfg.Path, "/"+creds.AzureAccountName) {
 				azureCfg.Path = strings.TrimPrefix(azureURL.Path, "/"+creds.AzureAccountName)
 			}
