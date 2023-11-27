@@ -1,3 +1,7 @@
+# v2.4.8
+BUG FIXES
+- fix Object Disks path parsing from config, remove unnecessary "/"
+
 # v2.4.7
 BUG FIXES
 - `--partitions=(v1,'v2')` could calculate wrong partition expression if system.columns will return fields in different order than they described in PARTITION BY clause, fix [791](https://github.com/Altinity/clickhouse-backup/issues/791)

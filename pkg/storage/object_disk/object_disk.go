@@ -468,7 +468,7 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 			if len(hostParts) >= 3 {
 				s3cfg.Region = hostParts[2]
 			}
-			s3cfg.Path = s3URL.Path
+			s3cfg.Path = strings.Trim(s3URL.Path, "/")
 			s3cfg.ForcePathStyle = false
 		} else {
 			pathItems := strings.Split(strings.Trim(s3URL.Path, "/"), "/")
@@ -503,7 +503,7 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 			azureCfg.AccountName = creds.AzureAccountName
 		}
 		if azureURL.Path != "" {
-			azureCfg.Path = azureURL.Path
+			azureCfg.Path = strings.Trim(azureURL.Path, "/")
 			if azureCfg.AccountName != "" && strings.HasPrefix(azureCfg.Path, "/"+creds.AzureAccountName) {
 				azureCfg.Path = strings.TrimPrefix(azureURL.Path, "/"+creds.AzureAccountName)
 			}
