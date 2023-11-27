@@ -264,11 +264,14 @@ func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath stri
 
 func (s *S3) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
 	params := s3.PutObjectInput{
-		ACL:          s3types.ObjectCannedACL(s.Config.ACL),
 		Bucket:       aws.String(s.Config.Bucket),
 		Key:          aws.String(path.Join(s.Config.Path, key)),
 		Body:         r,
 		StorageClass: s3types.StorageClass(strings.ToUpper(s.Config.StorageClass)),
+	}
+	// ACL shall be optional, fix https://github.com/Altinity/clickhouse-backup/issues/785
+	if s.Config.ACL != "" {
+		params.ACL = s3types.ObjectCannedACL(s.Config.ACL)
 	}
 	// https://github.com/Altinity/clickhouse-backup/issues/588
 	if len(s.Config.ObjectLabels) > 0 {

@@ -469,7 +469,10 @@ s3:
   bucket: ""                       # S3_BUCKET
   endpoint: ""                     # S3_ENDPOINT
   region: us-east-1                # S3_REGION
-  acl: private                     # S3_ACL
+  # AWS changed S3 defaults in April 2023 so that all new buckets have ACL disabled: https://aws.amazon.com/blogs/aws/heads-up-amazon-s3-security-changes-are-coming-in-april-of-2023/
+  # They also recommend that ACLs are disabled: https://docs.aws.amazon.com/AmazonS3/latest/userguide/ensure-object-ownership.html
+  # use `acl: ""` if you see "api error AccessControlListNotSupported: The bucket does not allow ACLs"
+  acl: private                     # S3_ACL 
   assume_role_arn: ""              # S3_ASSUME_ROLE_ARN
   force_path_style: false          # S3_FORCE_PATH_STYLE
   path: ""                         # S3_PATH, `system.macros` values can be applied as {macro_name}

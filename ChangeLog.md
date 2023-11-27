@@ -1,6 +1,7 @@
 # v2.4.8
 BUG FIXES
 - fix Object Disks path parsing from config, remove unnecessary "/"
+- if `S3_ACL` is empty then will not use ACL in PutObject, fix [785](https://github.com/Altinity/clickhouse-backup/issues/785) 
 
 # v2.4.7
 BUG FIXES
