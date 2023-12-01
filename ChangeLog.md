@@ -1,6 +1,7 @@
 # v2.4.9
 BUG FIXES
 - fix list remote command date parsing for all `remote_storage: custom` integration examples
+- clickhouse-backup should not fail when --rbac used but rbac object is not present in backup, but it should log warnings/errors, partial fix [793](https://github.com/Altinity/clickhouse-backup/issues/793)
 
 # v2.4.8
 BUG FIXES

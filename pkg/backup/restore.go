@@ -306,7 +306,10 @@ func (b *Backuper) restoreRBAC(ctx context.Context, backupName string, disks []c
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if err = b.restoreRBACReplicated(ctx, backupName, "access"); err != nil {
+	if err != nil && os.IsNotExist(err) {
+		return nil
+	}
+	if err = b.restoreRBACReplicated(ctx, backupName, "access"); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil
@@ -317,6 +320,7 @@ func (b *Backuper) restoreRBACReplicated(ctx context.Context, backupName string,
 	srcBackupDir := path.Join(b.DefaultDataPath, "backup", backupName, backupPrefixDir)
 	info, err := os.Stat(srcBackupDir)
 	if err != nil {
+		log.Warnf("stat: %s error: %v", srcBackupDir, err)
 		return err
 	}
 
@@ -378,6 +382,7 @@ func (b *Backuper) restoreBackupRelatedDir(backupName, backupPrefixDir, destinat
 	srcBackupDir := path.Join(b.DefaultDataPath, "backup", backupName, backupPrefixDir)
 	info, err := os.Stat(srcBackupDir)
 	if err != nil {
+		log.Warnf("stat: %s error: %v", srcBackupDir, err)
 		return err
 	}
 
