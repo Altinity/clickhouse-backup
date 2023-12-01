@@ -44,7 +44,7 @@ type Backup struct {
 	Legacy        bool
 	FileExtension string
 	Broken        string
-	UploadDate    time.Time
+	UploadDate    time.Time `json:"upload_date"`
 }
 
 type BackupDestination struct {
@@ -633,7 +633,7 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 		// https://github.com/Altinity/clickhouse-backup/issues/317
 		if bufferSize <= 0 {
 			bufferSize = int(cfg.General.MaxFileSize) / cfg.AzureBlob.MaxPartsCount
-			if int(cfg.General.MaxFileSize) % cfg.AzureBlob.MaxPartsCount > 0 {
+			if int(cfg.General.MaxFileSize)%cfg.AzureBlob.MaxPartsCount > 0 {
 				bufferSize++
 			}
 			if bufferSize < 2*1024*1024 {
@@ -655,7 +655,7 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 		partSize := cfg.S3.PartSize
 		if cfg.S3.PartSize <= 0 {
 			partSize = cfg.General.MaxFileSize / cfg.S3.MaxPartsCount
-			if cfg.General.MaxFileSize % cfg.S3.MaxPartsCount > 0 {
+			if cfg.General.MaxFileSize%cfg.S3.MaxPartsCount > 0 {
 				partSize++
 			}
 			if partSize < 5*1024*1024 {

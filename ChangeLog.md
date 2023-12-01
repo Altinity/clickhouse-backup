@@ -1,3 +1,7 @@
+# v2.4.9
+BUG FIXES
+- fix list remote command date parsing for all `remote_storage: custom` integration examples
+
 # v2.4.8
 BUG FIXES
 - fix Object Disks path parsing from config, remove unnecessary "/"
