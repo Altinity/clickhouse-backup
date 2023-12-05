@@ -399,10 +399,12 @@ func init() {
 		logLevel = os.Getenv("LOG_LEVEL")
 	}
 	log.SetLevelFromString(logLevel)
-	/*
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "1.1.54394") <= 0 {
 		r := require.New(&testing.T{})
 		installDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
 		r.NoError(dockerExec("clickhouse-backup", "update-ca-certificates"))
+	}
+	/*
 		r.NoError(dockerExec("clickhouse-backup", "bash", "-xce", "command -v yq || curl -sL \"https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)\" -o /usr/bin/yq && chmod +x /usr/bin/yq"))
 		installDebIfNotExists(r, "clickhouse-backup", "jq", "bzip2", "pgp", "git")
 		// rsync
