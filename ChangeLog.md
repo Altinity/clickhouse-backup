@@ -1,6 +1,7 @@
 # v2.4.10
 IMPROVEMENTS
 - update go modules to latest versions
+- add `S3_REQUEST_PAYER` config parameter, look https://docs.aws.amazon.com/AmazonS3/latest/userguide/RequesterPaysBuckets.html for details, fix [795](https://github.com/Altinity/clickhouse-backup/issues/795)
 
 # v2.4.9
 BUG FIXES

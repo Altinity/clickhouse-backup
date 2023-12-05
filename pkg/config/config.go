@@ -135,6 +135,7 @@ type S3Config struct {
 	MaxPartsCount           int64             `yaml:"max_parts_count" envconfig:"S3_MAX_PARTS_COUNT"`
 	AllowMultipartDownload  bool              `yaml:"allow_multipart_download" envconfig:"S3_ALLOW_MULTIPART_DOWNLOAD"`
 	ObjectLabels            map[string]string `yaml:"object_labels" envconfig:"S3_OBJECT_LABELS"`
+	RequestPayer            string            `yaml:"request_payer" envconfig:"S3_REQUEST_PAYER"`
 	Debug                   bool              `yaml:"debug" envconfig:"S3_DEBUG"`
 }
 
