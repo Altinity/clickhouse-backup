@@ -1,3 +1,7 @@
+# v2.4.10
+IMPROVEMENTS
+- update go modules to latest versions
+
 # v2.4.9
 BUG FIXES
 - fix list remote command date parsing for all `remote_storage: custom` integration examples

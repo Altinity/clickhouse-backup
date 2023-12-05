@@ -375,7 +375,7 @@ func (s *S3) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 		}
 		return nil, err
 	}
-	return &s3File{head.ContentLength, *head.LastModified, string(head.StorageClass), key}, nil
+	return &s3File{*head.ContentLength, *head.LastModified, string(head.StorageClass), key}, nil
 }
 
 func (s *S3) Walk(ctx context.Context, s3Path string, recursive bool, process func(ctx context.Context, r RemoteFile) error) error {
@@ -391,7 +391,7 @@ func (s *S3) Walk(ctx context.Context, s3Path string, recursive bool, process fu
 			}
 			for _, c := range page.Contents {
 				s3Files <- &s3File{
-					c.Size,
+					*c.Size,
 					*c.LastModified,
 					string(c.StorageClass),
 					strings.TrimPrefix(*c.Key, path.Join(s.Config.Path, s3Path)),
@@ -418,7 +418,7 @@ func (s *S3) remotePager(ctx context.Context, s3Path string, recursive bool, pro
 	}
 	params := &s3.ListObjectsV2Input{
 		Bucket:  aws.String(s.Config.Bucket), // Required
-		MaxKeys: 1000,
+		MaxKeys: aws.Int32(1000),
 		Prefix:  aws.String(prefix),
 	}
 	if !recursive {
@@ -488,7 +488,7 @@ func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (
 		if err != nil {
 			return 0, err
 		}
-		return dstObjResp.ContentLength, nil
+		return *dstObjResp.ContentLength, nil
 	}
 	// Get the size of the source object
 	sourceObjResp, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
@@ -498,7 +498,7 @@ func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (
 	if err != nil {
 		return 0, err
 	}
-	srcSize := sourceObjResp.ContentLength
+	srcSize := *sourceObjResp.ContentLength
 	// Initiate a multipart upload
 	params := s3.CreateMultipartUploadInput{
 		Bucket:       aws.String(s.Config.Bucket),
@@ -584,7 +584,7 @@ func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (
 				CopySource:      aws.String(srcBucket + "/" + srcKey),
 				CopySourceRange: aws.String(fmt.Sprintf("bytes=%d-%d", start, end-1)),
 				UploadId:        uploadID,
-				PartNumber:      currentPartNumber,
+				PartNumber:      aws.Int32(currentPartNumber),
 			})
 			if err != nil {
 				return err
@@ -593,7 +593,7 @@ func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (
 			defer mu.Unlock()
 			parts = append(parts, s3types.CompletedPart{
 				ETag:       partResp.CopyPartResult.ETag,
-				PartNumber: currentPartNumber,
+				PartNumber: aws.Int32(currentPartNumber),
 			})
 			return nil
 		})
@@ -629,7 +629,7 @@ func (s *S3) restoreObject(ctx context.Context, key string) error {
 		Bucket: aws.String(s.Config.Bucket),
 		Key:    aws.String(path.Join(s.Config.Path, key)),
 		RestoreRequest: &s3types.RestoreRequest{
-			Days: 1,
+			Days: aws.Int32(1),
 			GlacierJobParameters: &s3types.GlacierJobParameters{
 				Tier: s3types.Tier("Expedited"),
 			},
