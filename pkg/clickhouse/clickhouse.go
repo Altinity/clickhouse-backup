@@ -296,7 +296,7 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 	skipDatabases := make([]struct {
 		Name string `ch:"name"`
 	}, 0)
-	// MaterializedPostgreSQL doesn't support FREEZE look https://github.com/Altinity/clickhouse-backup/issues/550
+	// MaterializedPostgreSQL doesn't support FREEZE look https://github.com/Altinity/clickhouse-backup/issues/550 and https://github.com/ClickHouse/ClickHouse/issues/32902
 	if err = ch.SelectContext(ctx, &skipDatabases, "SELECT name FROM system.databases WHERE engine IN ('MySQL','PostgreSQL','MaterializedPostgreSQL')"); err != nil {
 		return nil, err
 	}

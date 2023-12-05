@@ -399,19 +399,21 @@ func init() {
 		logLevel = os.Getenv("LOG_LEVEL")
 	}
 	log.SetLevelFromString(logLevel)
-	r := require.New(&testing.T{})
-	installDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
-	r.NoError(dockerExec("clickhouse-backup", "update-ca-certificates"))
-	r.NoError(dockerExec("clickhouse-backup", "bash", "-xce", "curl -sL \"https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)\" -o /usr/bin/yq && chmod +x /usr/bin/yq"))
-	installDebIfNotExists(r, "clickhouse-backup", "jq", "bzip2", "pgp", "git")
-	// rsync
-	installDebIfNotExists(r, "clickhouse-backup", "openssh-client", "rsync")
-	// kopia
-	r.NoError(dockerExec("clickhouse-backup", "bash", "-ce", "curl -sfL https://kopia.io/signing-key | gpg --dearmor -o /usr/share/keyrings/kopia-keyring.gpg"))
-	r.NoError(dockerExec("clickhouse-backup", "bash", "-ce", "echo 'deb [signed-by=/usr/share/keyrings/kopia-keyring.gpg] https://packages.kopia.io/apt/ stable main' > /etc/apt/sources.list.d/kopia.list"))
-	installDebIfNotExists(r, "clickhouse-backup", "kopia", "xxd", "bsdmainutils", "parallel")
-	// restic
-	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "RELEASE_TAG=$(curl -H 'Accept: application/json' -sL https://github.com/restic/restic/releases/latest | jq -c -r -M '.tag_name'); RELEASE=$(echo ${RELEASE_TAG} | sed -e 's/v//'); curl -sfL \"https://github.com/restic/restic/releases/download/${RELEASE_TAG}/restic_${RELEASE}_linux_amd64.bz2\" | bzip2 -d > /bin/restic; chmod +x /bin/restic"))
+	/*
+		r := require.New(&testing.T{})
+		installDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
+		r.NoError(dockerExec("clickhouse-backup", "update-ca-certificates"))
+		r.NoError(dockerExec("clickhouse-backup", "bash", "-xce", "command -v yq || curl -sL \"https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)\" -o /usr/bin/yq && chmod +x /usr/bin/yq"))
+		installDebIfNotExists(r, "clickhouse-backup", "jq", "bzip2", "pgp", "git")
+		// rsync
+		installDebIfNotExists(r, "clickhouse-backup", "openssh-client", "rsync")
+		// kopia
+		r.NoError(dockerExec("clickhouse-backup", "bash", "-ce", "curl -sfL https://kopia.io/signing-key | gpg --dearmor -o /usr/share/keyrings/kopia-keyring.gpg"))
+		r.NoError(dockerExec("clickhouse-backup", "bash", "-ce", "echo 'deb [signed-by=/usr/share/keyrings/kopia-keyring.gpg] https://packages.kopia.io/apt/ stable main' > /etc/apt/sources.list.d/kopia.list"))
+		installDebIfNotExists(r, "clickhouse-backup", "kopia", "xxd", "bsdmainutils", "parallel")
+		// restic
+		r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "command -v restic || RELEASE_TAG=$(curl -H 'Accept: application/json' -sL https://github.com/restic/restic/releases/latest | jq -c -r -M '.tag_name'); RELEASE=$(echo ${RELEASE_TAG} | sed -e 's/v//'); curl -sfL \"https://github.com/restic/restic/releases/download/${RELEASE_TAG}/restic_${RELEASE}_linux_amd64.bz2\" | bzip2 -d > /bin/restic; chmod +x /bin/restic"))
+	*/
 }
 
 // TestS3NoDeletePermission - no parallel
@@ -1674,17 +1676,35 @@ func TestIntegrationSFTPAuthKey(t *testing.T) {
 func TestIntegrationCustomKopia(t *testing.T) {
 	//t.Parallel()
 	r := require.New(t)
+	installDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
+	r.NoError(dockerExec("clickhouse-backup", "update-ca-certificates"))
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xce", "command -v yq || curl -sL \"https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)\" -o /usr/bin/yq && chmod +x /usr/bin/yq"))
+	installDebIfNotExists(r, "clickhouse-backup", "jq", "bzip2", "pgp", "git")
+
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-ce", "curl -sfL https://kopia.io/signing-key | gpg --dearmor -o /usr/share/keyrings/kopia-keyring.gpg"))
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-ce", "echo 'deb [signed-by=/usr/share/keyrings/kopia-keyring.gpg] https://packages.kopia.io/apt/ stable main' > /etc/apt/sources.list.d/kopia.list"))
+	installDebIfNotExists(r, "clickhouse-backup", "kopia", "xxd", "bsdmainutils", "parallel")
+
 	runIntegrationCustom(t, r, "kopia")
 }
 func TestIntegrationCustomRestic(t *testing.T) {
 	//t.Parallel()
 	r := require.New(t)
+	installDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
+	r.NoError(dockerExec("clickhouse-backup", "update-ca-certificates"))
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xce", "command -v yq || curl -sL \"https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)\" -o /usr/bin/yq && chmod +x /usr/bin/yq"))
+	installDebIfNotExists(r, "clickhouse-backup", "jq", "bzip2", "pgp", "git")
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "command -v restic || RELEASE_TAG=$(curl -H 'Accept: application/json' -sL https://github.com/restic/restic/releases/latest | jq -c -r -M '.tag_name'); RELEASE=$(echo ${RELEASE_TAG} | sed -e 's/v//'); curl -sfL \"https://github.com/restic/restic/releases/download/${RELEASE_TAG}/restic_${RELEASE}_linux_amd64.bz2\" | bzip2 -d > /bin/restic; chmod +x /bin/restic"))
 	runIntegrationCustom(t, r, "restic")
 }
 
 func TestIntegrationCustomRsync(t *testing.T) {
 	r := require.New(t)
 	uploadSSHKeys(r, "clickhouse-backup")
+	installDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
+	r.NoError(dockerExec("clickhouse-backup", "update-ca-certificates"))
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xce", "command -v yq || curl -sL \"https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)\" -o /usr/bin/yq && chmod +x /usr/bin/yq"))
+	installDebIfNotExists(r, "clickhouse-backup", "jq", "openssh-client", "rsync")
 	//t.Parallel()
 	runIntegrationCustom(t, r, "rsync")
 }
@@ -1778,7 +1798,7 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 }
 
 func TestMySQLMaterialized(t *testing.T) {
-	t.Skipf("Wait when fix DROP TABLE not supported by MaterializedMySQL, just attach will not help")
+	t.Skipf("Wait when fix DROP TABLE not supported by MaterializedMySQL, just attach will not help, https://github.com/ClickHouse/ClickHouse/issues/57543")
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.12") == -1 {
 		t.Skipf("MaterializedMySQL doens't support for clickhouse version %s", os.Getenv("CLICKHOUSE_VERSION"))
 	}
@@ -1809,11 +1829,14 @@ func TestMySQLMaterialized(t *testing.T) {
 }
 
 func TestPostgreSQLMaterialized(t *testing.T) {
-	t.Skipf("Wait when fix https://github.com/ClickHouse/ClickHouse/issues/44250")
-
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.11") == -1 {
 		t.Skipf("MaterializedPostgreSQL doens't support for clickhouse version %s", os.Getenv("CLICKHOUSE_VERSION"))
 	}
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.10") == -1 {
+		t.Skipf("Serial type, support in 23.10+, look https://github.com/ClickHouse/ClickHouse/issues/44250")
+	}
+	t.Skip("FREEZE don't support for MaterializedPostgreSQL, https://github.com/ClickHouse/ClickHouse/issues/32902")
+
 	//t.Parallel()
 	r := require.New(t)
 	r.NoError(dockerExec("pgsql", "bash", "-ce", "echo 'CREATE DATABASE ch_pgsql_repl' | PGPASSWORD=root psql -v ON_ERROR_STOP=1 -U root"))
@@ -1821,12 +1844,21 @@ func TestPostgreSQLMaterialized(t *testing.T) {
 	ch := &TestClickHouse{}
 	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second)
 	defer ch.chbackend.Close()
-
 	ch.queryWithNoError(r,
 		"CREATE DATABASE ch_pgsql_repl ENGINE=MaterializedPostgreSQL('pgsql:5432','ch_pgsql_repl','root','root') "+
-			"SETTINGS materialized_postgresql_allow_automatic_update = 1, materialized_postgresql_schema = 'public'",
+			"SETTINGS materialized_postgresql_schema = 'public'",
 	)
-	time.Sleep(1 * time.Second)
+	// time to initial snapshot
+	count := uint64(0)
+	for {
+		err := ch.chbackend.SelectSingleRowNoCtx(&count, "SELECT count() FROM system.tables WHERE database='ch_pgsql_repl'")
+		r.NoError(err)
+		if count > 0 {
+			break
+		}
+		t.Logf("ch_pgsql_repl contains %d tables, wait 5 seconds", count)
+		time.Sleep(5 * time.Second)
+	}
 
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "test_pgsql_materialized"))
 	ch.queryWithNoError(r, "DROP DATABASE ch_pgsql_repl")

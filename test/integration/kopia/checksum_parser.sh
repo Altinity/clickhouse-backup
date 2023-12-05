@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -eo pipefail
 command -v clickhouse-compressor || exit 0
 CHECKSUM_FILE=$1
 ACTION=$2

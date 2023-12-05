@@ -100,6 +100,7 @@ services:
     image: docker.io/mysql:${MYSQL_VERSION:-latest}
     command: --default-authentication-plugin=mysql_native_password --gtid_mode=on --enforce_gtid_consistency=ON
     hostname: mysql
+    container_name: mysql
     environment:
       MYSQL_ROOT_PASSWORD: "root"
     ports:
@@ -114,6 +115,7 @@ services:
   pgsql:
     image: docker.io/postgres:${PGSQL_VERSION:-latest}
     hostname: pgsql
+    container_name: pgsql
     environment:
       POSTGRES_USER: "root"
       POSTGRES_PASSWORD: "root"
