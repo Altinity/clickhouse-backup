@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -575,7 +576,10 @@ func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (
 		}
 		return 0, fmt.Errorf("one of CopyObject go-routine return error: %v", err)
 	}
-
+	// Parts must be ordered by part number.
+	sort.Slice(parts, func(i int, j int) bool {
+		return *parts[i].PartNumber < *parts[j].PartNumber
+	})
 	// Complete the multipart upload
 	completeMultipartUploadParams := &s3.CompleteMultipartUploadInput{
 		Bucket:          aws.String(s.Config.Bucket),

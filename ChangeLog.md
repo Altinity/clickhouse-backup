@@ -1,3 +1,7 @@
+# v2.4.11
+BUG FIXES
+- fix CopyObject multipart upload complete Parts must be ordered by part number, for backup S3 disks
+
 # v2.4.10
 IMPROVEMENTS
 - update go modules to latest versions
