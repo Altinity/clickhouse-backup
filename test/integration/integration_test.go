@@ -1080,7 +1080,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 	}()
 	wg.Wait()
 	r.True(freezeErrorHandled, "freezeErrorHandled false")
-	dropDbSQL := "DROP DATABASE freeze_not_exists"
+	dropDbSQL := "DROP DATABASE IF EXISTS freeze_not_exists"
 	if isAtomic, err := ch.chbackend.IsAtomic("freeze_not_exists"); err == nil && isAtomic {
 		dropDbSQL += " SYNC"
 	}
@@ -2528,6 +2528,9 @@ func (ch *TestClickHouse) checkDatabaseEngine(t *testing.T, data TestDataStruct)
 
 func (ch *TestClickHouse) queryWithNoError(r *require.Assertions, query string, args ...interface{}) {
 	err := ch.chbackend.Query(query, args...)
+	if err != nil {
+		ch.chbackend.Log.Errorf("queryWithNoError error: %v", err)
+	}
 	r.NoError(err)
 }
 
