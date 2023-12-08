@@ -452,6 +452,7 @@ func (s *S3) remotePager(ctx context.Context, s3Path string, recursive bool, pro
 }
 
 func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (int64, error) {
+	s.Log.Debugf("S3->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, s.Config.Bucket, dstKey)
 	dstKey = path.Join(s.Config.ObjectDiskPath, dstKey)
 	if strings.Contains(s.Config.Endpoint, "storage.googleapis.com") {
 		params := &s3.CopyObjectInput{
@@ -487,6 +488,21 @@ func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (
 		return 0, err
 	}
 	srcSize := *sourceObjResp.ContentLength
+	// just copy object without multipart
+	if srcSize == 0 {
+		params := &s3.CopyObjectInput{
+			Bucket:       aws.String(s.Config.Bucket),
+			Key:          aws.String(dstKey),
+			CopySource:   aws.String(path.Join(srcBucket, srcKey)),
+			StorageClass: s3types.StorageClass(strings.ToUpper(s.Config.StorageClass)),
+		}
+		s.enrichCopyObjectParams(params)
+		_, err := s.client.CopyObject(ctx, params)
+		if err != nil {
+			return 0, err
+		}
+		return srcSize, nil
+	}
 	// Initiate a multipart upload
 	createMultipartUploadParams := &s3.CreateMultipartUploadInput{
 		Bucket:       aws.String(s.Config.Bucket),
@@ -594,7 +610,6 @@ func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (
 	if err != nil {
 		return 0, fmt.Errorf("complete CopyObject multipart upload: %v", err)
 	}
-	s.Log.Debugf("S3->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, s.Config.Bucket, dstKey)
 	return srcSize, nil
 }
 

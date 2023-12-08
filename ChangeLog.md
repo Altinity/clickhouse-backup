@@ -1,3 +1,7 @@
+# v2.4.12
+BUG FIXES
+- fix CopyObject to use simple CopyObject call, instead of multipart for zero object size, for backup S3 disks
+
 # v2.4.11
 BUG FIXES
 - fix CopyObject multipart upload complete Parts must be ordered by part number, for backup S3 disks
