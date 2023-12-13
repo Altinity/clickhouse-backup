@@ -452,8 +452,8 @@ func (s *S3) remotePager(ctx context.Context, s3Path string, recursive bool, pro
 }
 
 func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (int64, error) {
-	s.Log.Debugf("S3->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, s.Config.Bucket, dstKey)
 	dstKey = path.Join(s.Config.ObjectDiskPath, dstKey)
+	s.Log.Debugf("S3->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, s.Config.Bucket, dstKey)
 	if strings.Contains(s.Config.Endpoint, "storage.googleapis.com") {
 		params := &s3.CopyObjectInput{
 			Bucket:       aws.String(s.Config.Bucket),

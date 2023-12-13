@@ -435,7 +435,6 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 		if err != nil {
 			return nil, err
 		}
-		s3cfg.Endpoint = s3URL.Scheme + "://" + s3URL.Host
 		if cfg.S3.Concurrency > 0 {
 			s3cfg.Concurrency = cfg.S3.Concurrency
 		}
@@ -471,6 +470,7 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 			s3cfg.Path = strings.Trim(s3URL.Path, "/")
 			s3cfg.ForcePathStyle = false
 		} else {
+			s3cfg.Endpoint = s3URL.Scheme + "://" + s3URL.Host
 			pathItems := strings.Split(strings.Trim(s3URL.Path, "/"), "/")
 			s3cfg.Bucket = pathItems[0]
 			s3cfg.Path = path.Join(pathItems[1:]...)

@@ -1,3 +1,7 @@
+# v2.4.13
+BUG FIXES
+- fix object_disk.CopyObject during restore to allow use properly S3 endpoint
+
 # v2.4.12
 BUG FIXES
 - fix CopyObject to use simple CopyObject call, instead of multipart for zero object size, for backup S3 disks
