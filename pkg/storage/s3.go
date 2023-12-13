@@ -116,22 +116,18 @@ func (s *S3) Connect(ctx context.Context) error {
 	if s.Config.Region != "" {
 		awsConfig.Region = s.Config.Region
 	}
+	// AWS IRSA handling, look https://github.com/Altinity/clickhouse-backup/issues/798
 	awsRoleARN := os.Getenv("AWS_ROLE_ARN")
-	if s.Config.AssumeRoleARN != "" || awsRoleARN != "" {
-		stsClient := sts.NewFromConfig(awsConfig)
-		if awsRoleARN != "" {
-			awsConfig.Credentials = stscreds.NewAssumeRoleProvider(stsClient, awsRoleARN)
-		} else {
-			awsConfig.Credentials = stscreds.NewAssumeRoleProvider(stsClient, s.Config.AssumeRoleARN)
-		}
-	}
-
 	awsWebIdentityTokenFile := os.Getenv("AWS_WEB_IDENTITY_TOKEN_FILE")
+	stsClient := sts.NewFromConfig(awsConfig)
 	if awsRoleARN != "" && awsWebIdentityTokenFile != "" {
-		stsClient := sts.NewFromConfig(awsConfig)
 		awsConfig.Credentials = stscreds.NewWebIdentityRoleProvider(
 			stsClient, awsRoleARN, stscreds.IdentityTokenFile(awsWebIdentityTokenFile),
 		)
+	} else if awsRoleARN != "" {
+		awsConfig.Credentials = stscreds.NewAssumeRoleProvider(stsClient, awsRoleARN)
+	} else if s.Config.AssumeRoleARN != "" {
+		awsConfig.Credentials = stscreds.NewAssumeRoleProvider(stsClient, s.Config.AssumeRoleARN)
 	}
 
 	if s.Config.AccessKey != "" && s.Config.SecretKey != "" {

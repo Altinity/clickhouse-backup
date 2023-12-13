@@ -1,6 +1,7 @@
 # v2.4.13
 BUG FIXES
 - fix object_disk.CopyObject during restore to allow use properly S3 endpoint
+- fix AWS IRSA environments handler, fix [798](https://github.com/Altinity/clickhouse-backup/issues/798)
 
 # v2.4.12
 BUG FIXES
