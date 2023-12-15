@@ -220,6 +220,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		}
 		log.Debugf("prepare table SHADOW concurrent semaphore with concurrency=%d len(tableMetadataAfterDownload)=%d", b.cfg.General.DownloadConcurrency, len(tableMetadataAfterDownload))
 		dataGroup, dataCtx := errgroup.WithContext(ctx)
+		dataGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
 
 		for i, tableMetadata := range tableMetadataAfterDownload {
 			if tableMetadata.MetadataOnly {
