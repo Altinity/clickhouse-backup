@@ -7,8 +7,8 @@ import (
 	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"github.com/Altinity/clickhouse-backup/pkg/keeper"
 	"github.com/Altinity/clickhouse-backup/pkg/status"
-	"github.com/Altinity/clickhouse-backup/pkg/storage"
 	"github.com/Altinity/clickhouse-backup/pkg/storage/object_disk"
+	"golang.org/x/sync/errgroup"
 	"io/fs"
 	"net/url"
 	"os"
@@ -814,6 +814,8 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 	log := apexLog.WithFields(apexLog.Fields{"operation": "downloadObjectDiskParts"})
 	start := time.Now()
 	dbAndTableDir := path.Join(common.TablePathEncode(backupTable.Database), common.TablePathEncode(backupTable.Table))
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	var err error
 	needToDownloadObjectDisk := false
 	for diskName := range backupTable.Parts {
@@ -829,19 +831,6 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 	if !needToDownloadObjectDisk {
 		return nil
 	}
-	b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, false, backupName)
-	if err != nil {
-		return err
-	}
-	if err = b.dst.Connect(ctx); err != nil {
-		return fmt.Errorf("can't connect to %s: %v", b.dst.Kind(), err)
-	}
-	defer func() {
-		if err := b.dst.Close(ctx); err != nil {
-			b.log.Warnf("downloadObjectDiskParts: can't close BackupDestination error: %v", err)
-		}
-	}()
-
 	for diskName, parts := range backupTable.Parts {
 		diskType, exists := diskTypes[diskName]
 		if !exists {
@@ -854,9 +843,11 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 			if err = object_disk.InitCredentialsAndConnections(ctx, b.ch, b.cfg, diskName); err != nil {
 				return err
 			}
+			downloadObjectDiskPartsWorkingGroup, ctx := errgroup.WithContext(ctx)
+			downloadObjectDiskPartsWorkingGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
 			for _, part := range parts {
 				partPath := path.Join(diskMap[diskName], "backup", backupName, "shadow", dbAndTableDir, diskName, part.Name)
-				if err := filepath.Walk(partPath, func(fPath string, fInfo fs.FileInfo, err error) error {
+				walkErr := filepath.Walk(partPath, func(fPath string, fInfo fs.FileInfo, err error) error {
 					if err != nil {
 						return err
 					}
@@ -870,28 +861,35 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 					if objMeta.StorageObjectCount < 1 && objMeta.Version != object_disk.VersionRelativePath {
 						return fmt.Errorf("%s: invalid object_disk.Metadata: %#v", fPath, objMeta)
 					}
-					var srcBucket, srcKey string
-					for _, storageObject := range objMeta.StorageObjects {
-						if b.cfg.General.RemoteStorage == "s3" && diskType == "s3" {
-							srcBucket = b.cfg.S3.Bucket
-							srcKey = path.Join(b.cfg.S3.ObjectDiskPath, backupName, diskName, storageObject.ObjectRelativePath)
-						} else if b.cfg.General.RemoteStorage == "gcs" && diskType == "s3" {
-							srcBucket = b.cfg.GCS.Bucket
-							srcKey = path.Join(b.cfg.GCS.ObjectDiskPath, backupName, diskName, storageObject.ObjectRelativePath)
-						} else if b.cfg.General.RemoteStorage == "azblob" && diskType == "azure_blob_storage" {
-							srcBucket = b.cfg.AzureBlob.Container
-							srcKey = path.Join(b.cfg.AzureBlob.ObjectDiskPath, backupName, diskName, storageObject.ObjectRelativePath)
-						} else {
-							return fmt.Errorf("incompatible object_disk[%s].Type=%s amd remote_storage: %s", diskName, diskType, b.cfg.General.RemoteStorage)
+					downloadObjectDiskPartsWorkingGroup.Go(func() error {
+						var srcBucket, srcKey string
+						for _, storageObject := range objMeta.StorageObjects {
+							if b.cfg.General.RemoteStorage == "s3" && diskType == "s3" {
+								srcBucket = b.cfg.S3.Bucket
+								srcKey = path.Join(b.cfg.S3.ObjectDiskPath, backupName, diskName, storageObject.ObjectRelativePath)
+							} else if b.cfg.General.RemoteStorage == "gcs" && diskType == "s3" {
+								srcBucket = b.cfg.GCS.Bucket
+								srcKey = path.Join(b.cfg.GCS.ObjectDiskPath, backupName, diskName, storageObject.ObjectRelativePath)
+							} else if b.cfg.General.RemoteStorage == "azblob" && diskType == "azure_blob_storage" {
+								srcBucket = b.cfg.AzureBlob.Container
+								srcKey = path.Join(b.cfg.AzureBlob.ObjectDiskPath, backupName, diskName, storageObject.ObjectRelativePath)
+							} else {
+								return fmt.Errorf("incompatible object_disk[%s].Type=%s amd remote_storage: %s", diskName, diskType, b.cfg.General.RemoteStorage)
+							}
+							if err = object_disk.CopyObject(ctx, b.ch, b.cfg, diskName, srcBucket, srcKey, storageObject.ObjectRelativePath); err != nil {
+								return fmt.Errorf("object_disk.CopyObject error: %v", err)
+							}
 						}
-						if err = object_disk.CopyObject(ctx, b.ch, b.cfg, diskName, srcBucket, srcKey, storageObject.ObjectRelativePath); err != nil {
-							return fmt.Errorf("object_disk.CopyObject error: %v", err)
-						}
-					}
+						return nil
+					})
 					return nil
-				}); err != nil {
-					return err
+				})
+				if walkErr != nil {
+					return walkErr
 				}
+			}
+			if wgWaitErr := downloadObjectDiskPartsWorkingGroup.Wait(); wgWaitErr != nil {
+				return fmt.Errorf("one of downloadObjectDiskParts go-routine return error: %v", wgWaitErr)
 			}
 		}
 	}

@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
-	"golang.org/x/sync/semaphore"
 
 	"github.com/Altinity/clickhouse-backup/pkg/common"
 	"github.com/Altinity/clickhouse-backup/pkg/metadata"
@@ -72,7 +71,6 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	if err != nil {
 		return err
 	}
-	ctx, cancel = context.WithCancel(ctx)
 	defer cancel()
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 	if err := b.ch.Connect(); err != nil {
@@ -189,18 +187,13 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 
 	log.Debugf("prepare table METADATA concurrent semaphore with concurrency=%d len(tablesForDownload)=%d", b.cfg.General.DownloadConcurrency, len(tablesForDownload))
 	tableMetadataAfterDownload := make([]metadata.TableMetadata, len(tablesForDownload))
-	downloadSemaphore := semaphore.NewWeighted(int64(b.cfg.General.DownloadConcurrency))
 	metadataGroup, metadataCtx := errgroup.WithContext(ctx)
+	metadataGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
 	for i, t := range tablesForDownload {
-		if err := downloadSemaphore.Acquire(metadataCtx, 1); err != nil {
-			log.Errorf("can't acquire semaphore during Download metadata: %v", err)
-			break
-		}
 		metadataLogger := log.WithField("table_metadata", fmt.Sprintf("%s.%s", t.Database, t.Table))
 		idx := i
 		tableTitle := t
 		metadataGroup.Go(func() error {
-			defer downloadSemaphore.Release(1)
 			downloadedMetadata, size, err := b.downloadTableMetadata(metadataCtx, backupName, disks, metadataLogger, tableTitle, schemaOnly, partitions)
 			if err != nil {
 				return err
@@ -232,14 +225,9 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			if tableMetadata.MetadataOnly {
 				continue
 			}
-			if err := downloadSemaphore.Acquire(dataCtx, 1); err != nil {
-				log.Errorf("can't acquire semaphore during Download table data: %v", err)
-				break
-			}
 			dataSize += tableMetadata.TotalBytes
 			idx := i
 			dataGroup.Go(func() error {
-				defer downloadSemaphore.Release(1)
 				start := time.Now()
 				if err := b.downloadTableData(dataCtx, remoteBackup.BackupMetadata, tableMetadataAfterDownload[idx]); err != nil {
 					return err
@@ -489,9 +477,10 @@ func (b *Backuper) downloadBackupRelatedDir(ctx context.Context, remoteBackup st
 func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.BackupMetadata, table metadata.TableMetadata) error {
 	log := b.log.WithField("logger", "downloadTableData")
 	dbAndTableDir := path.Join(common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
-
-	s := semaphore.NewWeighted(int64(b.cfg.General.DownloadConcurrency))
-	g, dataCtx := errgroup.WithContext(ctx)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	dataGroup, dataCtx := errgroup.WithContext(ctx)
+	dataGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
 
 	if remoteBackup.DataFormat != DirectoryFormat {
 		capacity := 0
@@ -501,22 +490,16 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 			downloadOffset[disk] = 0
 		}
 		log.Debugf("start %s.%s with concurrency=%d len(table.Files[...])=%d", table.Database, table.Table, b.cfg.General.DownloadConcurrency, capacity)
-	breakByErrorArchive:
 		for common.SumMapValuesInt(downloadOffset) < capacity {
 			for disk := range table.Files {
 				if downloadOffset[disk] >= len(table.Files[disk]) {
 					continue
 				}
 				archiveFile := table.Files[disk][downloadOffset[disk]]
-				if err := s.Acquire(dataCtx, 1); err != nil {
-					log.Errorf("can't acquire semaphore %s archive: %v", archiveFile, err)
-					break breakByErrorArchive
-				}
 				tableLocalDir := b.getLocalBackupDataPathForTable(remoteBackup.BackupName, disk, dbAndTableDir)
 				downloadOffset[disk] += 1
 				tableRemoteFile := path.Join(remoteBackup.BackupName, "shadow", common.TablePathEncode(table.Database), common.TablePathEncode(table.Table), archiveFile)
-				g.Go(func() error {
-					defer s.Release(1)
+				dataGroup.Go(func() error {
 					log.Debugf("start download %s", tableRemoteFile)
 					if b.resume && b.resumableState.IsAlreadyProcessedBool(tableRemoteFile) {
 						return nil
@@ -543,7 +526,6 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 		}
 		log.Debugf("start %s.%s with concurrency=%d len(table.Parts[...])=%d", table.Database, table.Table, b.cfg.General.DownloadConcurrency, capacity)
 
-	breakByErrorDirectory:
 		for disk, parts := range table.Parts {
 			tableRemotePath := path.Join(remoteBackup.BackupName, "shadow", dbAndTableDir, disk)
 			diskPath := b.DiskToPathMap[disk]
@@ -556,13 +538,8 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 					continue
 				}
 				partRemotePath := path.Join(tableRemotePath, part.Name)
-				if err := s.Acquire(dataCtx, 1); err != nil {
-					log.Errorf("can't acquire semaphore %s directory: %v", partRemotePath, err)
-					break breakByErrorDirectory
-				}
 				partLocalPath := path.Join(tableLocalPath, part.Name)
-				g.Go(func() error {
-					defer s.Release(1)
+				dataGroup.Go(func() error {
 					log.Debugf("start %s -> %s", partRemotePath, partLocalPath)
 					if b.resume && b.resumableState.IsAlreadyProcessedBool(partRemotePath) {
 						return nil
@@ -579,7 +556,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 			}
 		}
 	}
-	if err := g.Wait(); err != nil {
+	if err := dataGroup.Wait(); err != nil {
 		return fmt.Errorf("one of downloadTableData go-routine return error: %v", err)
 	}
 
@@ -597,14 +574,14 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 	log := b.log.WithField("operation", "downloadDiffParts")
 	log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).Debug("start")
 	start := time.Now()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	downloadedDiffParts := uint32(0)
-	s := semaphore.NewWeighted(int64(b.cfg.General.DownloadConcurrency))
 	downloadDiffGroup, downloadDiffCtx := errgroup.WithContext(ctx)
-
+	downloadDiffGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
 	diffRemoteFilesCache := map[string]*sync.Mutex{}
 	diffRemoteFilesLock := &sync.Mutex{}
 
-breakByError:
 	for disk, parts := range table.Parts {
 		for _, part := range parts {
 			newPath := path.Join(b.DiskToPathMap[disk], "backup", remoteBackup.BackupName, "shadow", dbAndTableDir, disk, part.Name)
@@ -620,14 +597,9 @@ breakByError:
 				return fmt.Errorf("%s stat return error: %v", existsPath, err)
 			}
 			if err != nil && os.IsNotExist(err) {
-				if err := s.Acquire(downloadDiffCtx, 1); err != nil {
-					log.Errorf("can't acquire semaphore during downloadDiffParts: %v", err)
-					break breakByError
-				}
 				partForDownload := part
 				diskForDownload := disk
 				downloadDiffGroup.Go(func() error {
-					defer s.Release(1)
 					tableRemoteFiles, err := b.findDiffBackupFilesRemote(downloadDiffCtx, remoteBackup, table, diskForDownload, partForDownload, log)
 					if err != nil {
 						return err

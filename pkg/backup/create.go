@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"golang.org/x/sync/errgroup"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
@@ -624,11 +626,20 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName, backupShadowPath string, disk clickhouse.Disk) (int64, error) {
 	var size int64
 	var err error
+	var sizeMutex sync.Mutex
 	if err = object_disk.InitCredentialsAndConnections(ctx, b.ch, b.cfg, disk.Name); err != nil {
 		return 0, err
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	uploadObjectDiskPartsWorkingGroup, ctx := errgroup.WithContext(ctx)
+	uploadObjectDiskPartsWorkingGroup.SetLimit(int(b.cfg.General.UploadConcurrency))
+	srcDiskConnection, exists := object_disk.DisksConnections[disk.Name]
+	if !exists {
+		return 0, fmt.Errorf("uploadObjectDiskParts: %s not present in object_disk.DisksConnections", disk.Name)
+	}
 
-	if err := filepath.Walk(backupShadowPath, func(fPath string, fInfo os.FileInfo, err error) error {
+	walkErr := filepath.Walk(backupShadowPath, func(fPath string, fInfo os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -640,30 +651,36 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName, backup
 			return err
 		}
 		var realSize, objSize int64
-		// @TODO think about parallelization here after test pass
-		for _, storageObject := range objPartFileMeta.StorageObjects {
-			srcDiskConnection, exists := object_disk.DisksConnections[disk.Name]
-			if !exists {
-				return fmt.Errorf("uploadObjectDiskParts: %s not present in object_disk.DisksConnections", disk.Name)
+
+		uploadObjectDiskPartsWorkingGroup.Go(func() error {
+			for _, storageObject := range objPartFileMeta.StorageObjects {
+				if objSize, err = b.dst.CopyObject(
+					ctx,
+					srcDiskConnection.GetRemoteBucket(),
+					path.Join(srcDiskConnection.GetRemotePath(), storageObject.ObjectRelativePath),
+					path.Join(backupName, disk.Name, storageObject.ObjectRelativePath),
+				); err != nil {
+					return err
+				}
+				realSize += objSize
 			}
-			if objSize, err = b.dst.CopyObject(
-				ctx,
-				srcDiskConnection.GetRemoteBucket(),
-				path.Join(srcDiskConnection.GetRemotePath(), storageObject.ObjectRelativePath),
-				path.Join(backupName, disk.Name, storageObject.ObjectRelativePath),
-			); err != nil {
-				return err
+			sizeMutex.Lock()
+			if realSize > objPartFileMeta.TotalSize {
+				size += realSize
+			} else {
+				size += objPartFileMeta.TotalSize
 			}
-			realSize += objSize
-		}
-		if realSize > objPartFileMeta.TotalSize {
-			size += realSize
-		} else {
-			size += objPartFileMeta.TotalSize
-		}
+			sizeMutex.Unlock()
+			return nil
+		})
 		return nil
-	}); err != nil {
+	})
+	if walkErr != nil {
 		return 0, err
+	}
+
+	if wgWaitErr := uploadObjectDiskPartsWorkingGroup.Wait(); wgWaitErr != nil {
+		return 0, fmt.Errorf("one of uploadObjectDiskParts go-routine return error: %v", wgWaitErr)
 	}
 	return size, nil
 }

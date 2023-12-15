@@ -23,7 +23,6 @@ import (
 	"github.com/eapache/go-resiliency/retrier"
 
 	"golang.org/x/sync/errgroup"
-	"golang.org/x/sync/semaphore"
 
 	"github.com/Altinity/clickhouse-backup/pkg/common"
 	"github.com/Altinity/clickhouse-backup/pkg/filesystemhelper"
@@ -131,14 +130,10 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	metadataSize := int64(0)
 
 	log.Debugf("prepare table concurrent semaphore with concurrency=%d len(tablesForUpload)=%d", b.cfg.General.UploadConcurrency, len(tablesForUpload))
-	uploadSemaphore := semaphore.NewWeighted(int64(b.cfg.General.UploadConcurrency))
 	uploadGroup, uploadCtx := errgroup.WithContext(ctx)
+	uploadGroup.SetLimit(int(b.cfg.General.UploadConcurrency))
 
 	for i, table := range tablesForUpload {
-		if err := uploadSemaphore.Acquire(uploadCtx, 1); err != nil {
-			log.Errorf("can't acquire semaphore during Upload table: %v", err)
-			break
-		}
 		start := time.Now()
 		if !schemaOnly {
 			if diffTable, diffExists := tablesForUploadFromDiff[metadata.TableTitle{
@@ -151,7 +146,6 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 		}
 		idx := i
 		uploadGroup.Go(func() error {
-			defer uploadSemaphore.Release(1)
 			var uploadedBytes int64
 			if !schemaOnly {
 				var files map[string][]string
@@ -505,12 +499,14 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, table
 	}
 	log := b.log.WithField("logger", "uploadTableData")
 	log.Debugf("start %s.%s with concurrency=%d len(table.Parts[...])=%d", table.Database, table.Table, b.cfg.General.UploadConcurrency, capacity)
-	s := semaphore.NewWeighted(int64(b.cfg.General.UploadConcurrency))
-	g, ctx := errgroup.WithContext(ctx)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	dataGroup, ctx := errgroup.WithContext(ctx)
+	dataGroup.SetLimit(int(b.cfg.General.UploadConcurrency))
 	var uploadedBytes int64
 
-	splitParts := make(map[string][]metadata.SplitPartFiles, 0)
-	splitPartsOffset := make(map[string]int, 0)
+	splitParts := make(map[string][]metadata.SplitPartFiles)
+	splitPartsOffset := make(map[string]int)
 	splitPartsCapacity := 0
 	for disk := range table.Parts {
 		backupPath := b.getLocalBackupDataPathForTable(backupName, disk, dbAndTablePath)
@@ -522,15 +518,10 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, table
 		splitPartsOffset[disk] = 0
 		splitPartsCapacity += len(splitPartsList)
 	}
-breakByError:
 	for common.SumMapValuesInt(splitPartsOffset) < splitPartsCapacity {
 		for disk := range table.Parts {
 			if splitPartsOffset[disk] >= len(splitParts[disk]) {
 				continue
-			}
-			if err := s.Acquire(ctx, 1); err != nil {
-				log.Errorf("can't acquire semaphore during Upload data parts: %v", err)
-				break breakByError
 			}
 			backupPath := b.getLocalBackupDataPathForTable(backupName, disk, dbAndTablePath)
 			splitPart := splitParts[disk][splitPartsOffset[disk]]
@@ -541,8 +532,7 @@ breakByError:
 			if b.cfg.GetCompressionFormat() == "none" {
 				remotePath := path.Join(baseRemoteDataPath, disk)
 				remotePathFull := path.Join(remotePath, partSuffix)
-				g.Go(func() error {
-					defer s.Release(1)
+				dataGroup.Go(func() error {
 					if b.resume {
 						if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(remotePathFull); isProcessed {
 							atomic.AddInt64(&uploadedBytes, processedSize)
@@ -567,8 +557,7 @@ breakByError:
 				uploadedFiles[disk] = append(uploadedFiles[disk], fileName)
 				remoteDataFile := path.Join(baseRemoteDataPath, fileName)
 				localFiles := partFiles
-				g.Go(func() error {
-					defer s.Release(1)
+				dataGroup.Go(func() error {
 					if b.resume {
 						if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(remoteDataFile); isProcessed {
 							atomic.AddInt64(&uploadedBytes, processedSize)
@@ -604,7 +593,7 @@ breakByError:
 			}
 		}
 	}
-	if err := g.Wait(); err != nil {
+	if err := dataGroup.Wait(); err != nil {
 		return nil, 0, fmt.Errorf("one of uploadTableData go-routine return error: %v", err)
 	}
 	log.Debugf("finish %s.%s with concurrency=%d len(table.Parts[...])=%d uploadedFiles=%v, uploadedBytes=%v", table.Database, table.Table, b.cfg.General.UploadConcurrency, capacity, uploadedFiles, uploadedBytes)

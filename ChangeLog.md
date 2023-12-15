@@ -1,3 +1,8 @@
+# v2.4.14
+IMPROVEMENTS
+- refactoring `semaphore.NewWeighted()` to `errgroup.SetLimit()`
+- add parallelization to `create` and `restore` command during call `CopyObject` 
+
 # v2.4.13
 BUG FIXES
 - fix object_disk.CopyObject during restore to allow use properly S3 endpoint
