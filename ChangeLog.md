@@ -1,3 +1,7 @@
+# v2.4.15
+BUG FIXES
+- fix `create` and `restore` command for ReplicatedMergeTree tables with `frozen_metadata.txt` parsing
+
 # v2.4.14
 IMPROVEMENTS
 - refactoring `semaphore.NewWeighted()` to `errgroup.SetLimit()`

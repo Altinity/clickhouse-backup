@@ -646,6 +646,9 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName, backup
 		if fInfo.IsDir() {
 			return nil
 		}
+		if fInfo.Name() == "frozen_metadata.txt" {
+			return nil
+		}
 		objPartFileMeta, err := object_disk.ReadMetadataFromFile(fPath)
 		if err != nil {
 			return err

@@ -222,12 +222,16 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3.xml
     <allowed_disk>backups_s3</allowed_disk>
     <allowed_path>/var/lib/clickhouse/backups_embedded/</allowed_path>
   </backups>
-  <merge_tree>
-    <allow_remote_fs_zero_copy_replication>1</allow_remote_fs_zero_copy_replication>
-  </merge_tree>
 </clickhouse>
 EOT
 
+cat <<EOT > /etc/clickhouse-server/config.d/zero_copy_replication.xml
+<yandex>
+  <merge_tree>
+    <allow_remote_fs_zero_copy_replication>1</allow_remote_fs_zero_copy_replication>
+  </merge_tree>
+</yandex>
+EOT
 fi
 
 # s3_plain and azure backup configuration
