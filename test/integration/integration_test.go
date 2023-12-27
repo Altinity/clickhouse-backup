@@ -2221,9 +2221,10 @@ func generateTestDataWithDifferentStoragePolicy(remoteStorageType string, testDa
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 && remoteStorageType == "S3" {
 			testDataWithStoragePolicy.Name = "test_s3_encrypted"
 			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 's3_only_encrypted'"
-			if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.3") >= 0 {
-				testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id SETTINGS storage_policy = 's3_only_encrypted'"
-			}
+			// @todo wait when fix https://github.com/ClickHouse/ClickHouse/issues/58247
+			//if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.12") >= 0 {
+			//	testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id SETTINGS storage_policy = 's3_only_encrypted'"
+			//}
 			addTestDataIfNotExists()
 		}
 		//gcs over s3 support added in 22.6
