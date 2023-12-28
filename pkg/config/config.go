@@ -542,7 +542,7 @@ func DefaultConfig() *Config {
 			BufferSize:        0,
 			MaxBuffers:        3,
 			MaxPartsCount:     5000,
-			Timeout:           "15m",
+			Timeout:           "4h",
 		},
 		S3: S3Config{
 			Region:                  "us-east-1",

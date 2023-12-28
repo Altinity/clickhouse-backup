@@ -1,3 +1,7 @@
+# v2.5.0 (not released yet)
+BUG FIXES
+- increase `AZBLOB_TIMEOUT` to 4h, instead 15m to allow download long size data parts 
+
 # v2.4.15
 BUG FIXES
 - fix `create` and `restore` command for ReplicatedMergeTree tables with `frozen_metadata.txt` parsing
