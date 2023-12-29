@@ -412,8 +412,16 @@ clickhouse:
   password: ""                     # CLICKHOUSE_PASSWORD
   host: localhost                  # CLICKHOUSE_HOST, To make backup data `clickhouse-backup` requires access to the same file system as clickhouse-server, so `host` should localhost or address of another docker container on the same machine, or IP address bound to some network interface on the same host.
   port: 9000                       # CLICKHOUSE_PORT, don't use 8123, clickhouse-backup doesn't support HTTP protocol
-  # CLICKHOUSE_DISK_MAPPING, use this mapping when your `system.disks` are different between the source and destination clusters during backup and restore process
-  # The format for this env variable is "disk_name1:disk_path1,disk_name2:disk_path2". For YAML please continue using map syntax
+  # CLICKHOUSE_DISK_MAPPING, use this mapping when your `system.disks` are different between the source and destination clusters during backup and restore process.
+  # The format for this env variable is "disk_name1:disk_path1,disk_name2:disk_path2". For YAML please continue using map syntax.
+  # If destination disk is different from source backup disk then you need to specify the destination disk in the config file:
+
+  # disk_mapping:
+  #  disk_destination: /var/lib/clickhouse/disks/destination
+  
+  # `disk_destination`  needs to be referenced in backup (source config), and all names from this map (`disk:path`) shall exist in `system.disks` on destination server.
+  # During download of the backup from remote location (s3), if `name` is not present in `disk_mapping` (on the destination server config too) then `default` disk path will used for download.
+  # `disk_mapping` is used to understand during download where downloaded parts shall be unpacked (which disk) on destination server and where to search for data parts directories during restore.
   disk_mapping: {}
   # CLICKHOUSE_SKIP_TABLES, the list of tables (pattern are allowed) which are ignored during backup and restore process
   # The format for this env variable is "pattern1,pattern2,pattern3". For YAML please continue using list syntax
