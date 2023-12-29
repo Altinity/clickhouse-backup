@@ -114,7 +114,7 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 		b.log.Infof("Time before do backup %v", timeBeforeDoBackup)
 		b.log.Infof("Time before do full backup %v", timeBeforeDoFullBackup)
 		if timeBeforeDoBackup > 0 && timeBeforeDoFullBackup > 0 {
-			b.log.Infof("Wainting %d seconds until continue doing backups due watch interval", timeBeforeDoBackup)
+			b.log.Infof("Waiting %d seconds until continue doing backups due watch interval", timeBeforeDoBackup)
 			time.Sleep(b.cfg.General.WatchDuration - now.Sub(lastBackup))
 		}
 		now = time.Now()
