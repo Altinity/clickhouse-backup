@@ -115,7 +115,11 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 		b.log.Infof("Time before do full backup %v", timeBeforeDoFullBackup)
 		if timeBeforeDoBackup > 0 && timeBeforeDoFullBackup > 0 {
 			b.log.Infof("Waiting %d seconds until continue doing backups due watch interval", timeBeforeDoBackup)
-			time.Sleep(b.cfg.General.WatchDuration - now.Sub(lastBackup))
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(b.cfg.General.WatchDuration - now.Sub(lastBackup)):
+			}
 		}
 		now = time.Now()
 		lastBackup = now

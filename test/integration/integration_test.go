@@ -785,7 +785,7 @@ func testAPIWatchAndKill(r *require.Assertions, ch *TestClickHouse) {
 	r.NoError(err)
 	time.Sleep(7 * time.Second)
 
-	checkWatchBackup(2)
+	checkWatchBackup(1)
 	runKillCommand("watch")
 	checkCanceledCommand(2)
 }
