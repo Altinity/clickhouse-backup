@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"github.com/Altinity/clickhouse-backup/pkg/config"
+	"github.com/apex/log"
 	"io"
 	"net/url"
 	"path"
@@ -273,6 +274,7 @@ func (a *AzureBlob) Walk(ctx context.Context, azPath string, recursive bool, pro
 func (a *AzureBlob) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (int64, error) {
 	dstKey = path.Join(a.Config.ObjectDiskPath, dstKey)
 	srcURLString := fmt.Sprintf("%s://%s.%s/%s/%s", a.Config.EndpointSchema, a.Config.AccountName, a.Config.EndpointSuffix, srcBucket, srcKey)
+	log.Debugf("AZBLOB->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, a.Config.Container, dstKey)
 	srcURL, err := url.Parse(srcURLString)
 	if err != nil {
 		return 0, err

@@ -480,7 +480,7 @@ func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (
 	s.enrichHeadParams(headParams)
 	sourceObjResp, err := s.client.HeadObject(ctx, headParams)
 	if err != nil {
-		return 0, err
+		return 0, errors.Wrapf(err, "s3://%s/%s", srcBucket, srcKey)
 	}
 	srcSize := *sourceObjResp.ContentLength
 	// just copy object without multipart
