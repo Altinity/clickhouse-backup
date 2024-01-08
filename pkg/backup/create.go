@@ -593,7 +593,7 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 					return disksToPartsMap, realSize, err
 				}
 				realSize[disk.Name] += size
-				log.WithField("disk", disk.Name).WithField("duration", utils.HumanizeDuration(time.Since(start))).Info("object_disk data uploaded")
+				log.WithField("disk", disk.Name).WithField("duration", utils.HumanizeDuration(time.Since(start))).WithField("size", utils.FormatBytes(uint64(size))).Info("object_disk data uploaded")
 			}
 			// Clean all the files under the shadowPath, cause UNFREEZE unavailable
 			if version < 21004000 {
