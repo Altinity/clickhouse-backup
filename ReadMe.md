@@ -68,6 +68,13 @@ Build from the sources:
 GO111MODULE=on go get github.com/Altinity/clickhouse-backup/cmd/clickhouse-backup
 ```
 
+## Brief description how clickhouse-backup works
+
+Data files is immutable in `clickhouse-server`.
+During backup operation `clickhouse-backup` create file system hard-links to exists `clickhouse-server` data parts via executing `ALTER TABLE ... FREZZE` query. 
+During restore operation `clickhouse-backup` copy hard-links to `detached` folder and execute `ALTER TABLE ... ATTACH PART` query for each data part and each table in backup.
+More detailed description available here https://www.youtube.com/watch?v=megsNh9Q-dw
+
 ## Common CLI Usage
 
 ### CLI command - tables
