@@ -658,8 +658,8 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			if cfg.General.MaxFileSize%cfg.S3.MaxPartsCount > 0 {
 				partSize++
 			}
-			if partSize < 5*1024*1024 {
-				partSize = 5 * 1024 * 1024
+			if partSize < 25*1024*1024 {
+				partSize = 25 * 1024 * 1024
 			}
 			if partSize > 5*1024*1024*1024 {
 				partSize = 5 * 1024 * 1024 * 1024

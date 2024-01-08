@@ -575,7 +575,7 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 			realSize[disk.Name] = size
 			disksToPartsMap[disk.Name] = parts
 			log.WithField("disk", disk.Name).Debug("shadow moved")
-			if disk.Type == "s3" || disk.Type == "azure_blob_storage" && len(parts) > 0 {
+			if (disk.Type == "s3" || disk.Type == "azure_blob_storage") && len(parts) > 0 {
 				if err = config.ValidateObjectDiskConfig(b.cfg); err != nil {
 					return nil, nil, err
 				}

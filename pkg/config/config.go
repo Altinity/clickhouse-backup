@@ -556,7 +556,7 @@ func DefaultConfig() *Config {
 			StorageClass:            string(s3types.StorageClassStandard),
 			Concurrency:             int(downloadConcurrency + 1),
 			PartSize:                0,
-			MaxPartsCount:           5000,
+			MaxPartsCount:           1000,
 		},
 		GCS: GCSConfig{
 			CompressionLevel:  1,
