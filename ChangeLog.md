@@ -1,4 +1,4 @@
-# v2.4.16
+# v2.4.17
 BUG FIXES
 - skip CopyObject execution for keys which have zero size, to allow properly backup S3, GCS over S3 and Azure disks
 
