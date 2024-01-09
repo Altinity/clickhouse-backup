@@ -1,5 +1,9 @@
 # v2.4.16
 BUG FIXES
+- skip CopyObject execution for keys which have zero size, to allow properly backup S3, GCS over S3 and Azure disks
+
+# v2.4.16
+BUG FIXES
 - increase `AZBLOB_TIMEOUT` to 4h, instead 15m to allow download long size data parts 
 - change `S3_MAX_PARTS_COUNT` from `5000` to `1000` and minimal `S3_PART_SIZE` from 5Mb to 25Mb from by default to improve speedup S3 uploading / downloading 
  

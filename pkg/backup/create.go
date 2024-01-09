@@ -657,6 +657,9 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName, backup
 
 		uploadObjectDiskPartsWorkingGroup.Go(func() error {
 			for _, storageObject := range objPartFileMeta.StorageObjects {
+				if storageObject.ObjectSize == 0 {
+					continue
+				}
 				if objSize, err = b.dst.CopyObject(
 					ctx,
 					srcDiskConnection.GetRemoteBucket(),

@@ -873,6 +873,9 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 					downloadObjectDiskPartsWorkingGroup.Go(func() error {
 						var srcBucket, srcKey string
 						for _, storageObject := range objMeta.StorageObjects {
+							if storageObject.ObjectSize == 0 {
+								continue
+							}
 							if b.cfg.General.RemoteStorage == "s3" && diskType == "s3" {
 								srcBucket = b.cfg.S3.Bucket
 								srcKey = path.Join(b.cfg.S3.ObjectDiskPath, backupName, diskName, storageObject.ObjectRelativePath)
