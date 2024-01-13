@@ -1084,7 +1084,13 @@ func TestSkipNotExistsTable(t *testing.T) {
 	if isAtomic, err := ch.chbackend.IsAtomic("freeze_not_exists"); err == nil && isAtomic {
 		dropDbSQL += " SYNC"
 	}
-	ch.queryWithNoError(r, dropDbSQL)
+	// ch.queryWithNoError(r, dropDbSQL)
+	err = ch.chbackend.Query(dropDbSQL)
+	if err != nil {
+		ch.chbackend.Log.Errorf("%s error: %v", dropDbSQL, err)
+	}
+	r.NoError(err)
+	t.Log("TestSkipNotExistsTable DONE, ALL OK")
 }
 
 func TestTablePatterns(t *testing.T) {
