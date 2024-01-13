@@ -785,7 +785,7 @@ func testAPIWatchAndKill(r *require.Assertions, ch *TestClickHouse) {
 	r.NoError(err)
 	time.Sleep(7 * time.Second)
 
-	checkWatchBackup(2)
+	checkWatchBackup(1)
 	runKillCommand("watch")
 	checkCanceledCommand(2)
 }
@@ -2214,31 +2214,35 @@ func generateTestDataWithDifferentStoragePolicy(remoteStorageType string, testDa
 		//s3 disks support after 21.8
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 && remoteStorageType == "S3" {
 			testDataWithStoragePolicy.Name = "test_s3"
-			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 's3_only'"
+			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id SETTINGS storage_policy = 's3_only'"
 			addTestDataIfNotExists()
 		}
 		//encrypted disks support after 21.10
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.10") >= 0 {
 			testDataWithStoragePolicy.Name = "test_hdd3_encrypted"
-			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 'hdd3_only_encrypted'"
+			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id SETTINGS storage_policy = 'hdd3_only_encrypted'"
 			addTestDataIfNotExists()
 		}
 		//encrypted s3 disks support after 21.12
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 && remoteStorageType == "S3" {
 			testDataWithStoragePolicy.Name = "test_s3_encrypted"
 			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 's3_only_encrypted'"
+			// @todo wait when fix https://github.com/ClickHouse/ClickHouse/issues/58247
+			//if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.12") >= 0 {
+			//	testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id SETTINGS storage_policy = 's3_only_encrypted'"
+			//}
 			addTestDataIfNotExists()
 		}
 		//gcs over s3 support added in 22.6
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.6") >= 0 && remoteStorageType == "GCS" && os.Getenv("QA_GCS_OVER_S3_BUCKET") != "" {
 			testDataWithStoragePolicy.Name = "test_gcs"
-			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 'gcs_only'"
+			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id SETTINGS storage_policy = 'gcs_only'"
 			addTestDataIfNotExists()
 		}
 		//check azure_blob_storage only in 23.3+ (added in 22.1)
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.3") >= 0 && remoteStorageType == "AZBLOB" {
 			testDataWithStoragePolicy.Name = "test_azure"
-			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 'azure_only'"
+			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id SETTINGS storage_policy = 'azure_only'"
 			addTestDataIfNotExists()
 		}
 	}

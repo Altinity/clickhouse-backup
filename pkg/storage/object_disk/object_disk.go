@@ -602,6 +602,7 @@ func DeleteFile(ctx context.Context, diskName, remotePath string) error {
 	return remoteStorage.DeleteFile(ctx, remotePath)
 }
 
+/*
 func DeleteFileWithContent(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Config, diskName, localPath string) error {
 	if err := InitCredentialsAndConnections(ctx, ch, cfg, diskName); err != nil {
 		return err
@@ -629,13 +630,13 @@ func GetFileSize(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Con
 	}
 	return fileInfo.Size(), nil
 }
+*/
 
-func CopyObject(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Config, diskName, srcBucket, srcKey, dstPath string) error {
+func CopyObject(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Config, diskName, srcBucket, srcKey, dstPath string) (int64, error) {
 	if err := InitCredentialsAndConnections(ctx, ch, cfg, diskName); err != nil {
-		return err
+		return 0, err
 	}
 	connection := DisksConnections[diskName]
 	remoteStorage := connection.GetRemoteStorage()
-	_, err := remoteStorage.CopyObject(ctx, srcBucket, srcKey, dstPath)
-	return err
+	return remoteStorage.CopyObject(ctx, srcBucket, srcKey, dstPath)
 }

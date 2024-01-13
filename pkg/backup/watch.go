@@ -82,6 +82,55 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 	prevBackupType := ""
 	lastBackup := time.Now()
 	lastFullBackup := time.Now()
+
+	remoteBackups, err := b.GetRemoteBackups(ctx, true)
+	if err != nil {
+		return err
+	}
+	backupTemplateName, err := b.ch.ApplyMacros(ctx, b.cfg.General.WatchBackupNameTemplate)
+	if err != nil {
+		return err
+	}
+	backupTemplateNamePrepR := regexp.MustCompile(`{type}|{time:([^}]+)}`)
+	backupTemplateNameR := regexp.MustCompile(backupTemplateNamePrepR.ReplaceAllString(backupTemplateName, `\S+`))
+
+	for _, remoteBackup := range remoteBackups {
+		if remoteBackup.Broken == "" && backupTemplateNameR.MatchString(remoteBackup.BackupName) {
+			prevBackupName = remoteBackup.BackupName
+			if strings.Contains(remoteBackup.BackupName, "increment") {
+				prevBackupType = "increment"
+				lastBackup = remoteBackup.CreationDate
+			} else {
+				prevBackupType = "full"
+				lastBackup = remoteBackup.CreationDate
+				lastFullBackup = remoteBackup.CreationDate
+			}
+		}
+	}
+	if prevBackupName != "" {
+		now := time.Now()
+		timeBeforeDoBackup := int(b.cfg.General.WatchDuration.Seconds() - now.Sub(lastBackup).Seconds())
+		timeBeforeDoFullBackup := int(b.cfg.General.FullDuration.Seconds() - now.Sub(lastFullBackup).Seconds())
+		b.log.Infof("Time before do backup %v", timeBeforeDoBackup)
+		b.log.Infof("Time before do full backup %v", timeBeforeDoFullBackup)
+		if timeBeforeDoBackup > 0 && timeBeforeDoFullBackup > 0 {
+			b.log.Infof("Waiting %d seconds until continue doing backups due watch interval", timeBeforeDoBackup)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(b.cfg.General.WatchDuration - now.Sub(lastBackup)):
+			}
+		}
+		now = time.Now()
+		lastBackup = now
+		if b.cfg.General.FullDuration.Seconds()-time.Now().Sub(lastFullBackup).Seconds() <= 0 {
+			backupType = "full"
+			lastFullBackup = now
+		} else {
+			backupType = "increment"
+		}
+	}
+
 	createRemoteErrCount := 0
 	deleteLocalErrCount := 0
 	var createRemoteErr error

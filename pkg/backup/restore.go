@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/pkg/common"
@@ -811,8 +812,11 @@ func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName str
 }
 
 func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName string, backupTable metadata.TableMetadata, diskMap, diskTypes map[string]string) error {
-	log := apexLog.WithFields(apexLog.Fields{"operation": "downloadObjectDiskParts"})
-	start := time.Now()
+	log := apexLog.WithFields(apexLog.Fields{
+		"operation": "downloadObjectDiskParts",
+		"table":     fmt.Sprintf("%s.%s", backupTable.Database, backupTable.Table),
+	})
+	size := int64(0)
 	dbAndTableDir := path.Join(common.TablePathEncode(backupTable.Database), common.TablePathEncode(backupTable.Table))
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -843,8 +847,10 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 			if err = object_disk.InitCredentialsAndConnections(ctx, b.ch, b.cfg, diskName); err != nil {
 				return err
 			}
+			start := time.Now()
 			downloadObjectDiskPartsWorkingGroup, ctx := errgroup.WithContext(ctx)
 			downloadObjectDiskPartsWorkingGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
+			sizeMutex := sync.Mutex{}
 			for _, part := range parts {
 				partPath := path.Join(diskMap[diskName], "backup", backupName, "shadow", dbAndTableDir, diskName, part.Name)
 				walkErr := filepath.Walk(partPath, func(fPath string, fInfo fs.FileInfo, err error) error {
@@ -852,6 +858,9 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 						return err
 					}
 					if fInfo.IsDir() {
+						return nil
+					}
+					if fInfo.Name() == "frozen_metadata.txt" {
 						return nil
 					}
 					objMeta, err := object_disk.ReadMetadataFromFile(fPath)
@@ -864,6 +873,9 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 					downloadObjectDiskPartsWorkingGroup.Go(func() error {
 						var srcBucket, srcKey string
 						for _, storageObject := range objMeta.StorageObjects {
+							if storageObject.ObjectSize == 0 {
+								continue
+							}
 							if b.cfg.General.RemoteStorage == "s3" && diskType == "s3" {
 								srcBucket = b.cfg.S3.Bucket
 								srcKey = path.Join(b.cfg.S3.ObjectDiskPath, backupName, diskName, storageObject.ObjectRelativePath)
@@ -876,8 +888,12 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 							} else {
 								return fmt.Errorf("incompatible object_disk[%s].Type=%s amd remote_storage: %s", diskName, diskType, b.cfg.General.RemoteStorage)
 							}
-							if err = object_disk.CopyObject(ctx, b.ch, b.cfg, diskName, srcBucket, srcKey, storageObject.ObjectRelativePath); err != nil {
+							if copiedSize, copyObjectErr := object_disk.CopyObject(ctx, b.ch, b.cfg, diskName, srcBucket, srcKey, storageObject.ObjectRelativePath); copyObjectErr != nil {
 								return fmt.Errorf("object_disk.CopyObject error: %v", err)
+							} else {
+								sizeMutex.Lock()
+								size += copiedSize
+								sizeMutex.Unlock()
 							}
 						}
 						return nil
@@ -891,9 +907,10 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 			if wgWaitErr := downloadObjectDiskPartsWorkingGroup.Wait(); wgWaitErr != nil {
 				return fmt.Errorf("one of downloadObjectDiskParts go-routine return error: %v", wgWaitErr)
 			}
+			log.WithField("disk", diskName).WithField("duration", utils.HumanizeDuration(time.Since(start))).WithField("size", utils.FormatBytes(uint64(size))).Info("object_disk data downloaded")
 		}
 	}
-	log.WithField("duration", utils.HumanizeDuration(time.Since(start))).Debugf("done")
+
 	return nil
 }
 

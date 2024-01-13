@@ -575,7 +575,7 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 			realSize[disk.Name] = size
 			disksToPartsMap[disk.Name] = parts
 			log.WithField("disk", disk.Name).Debug("shadow moved")
-			if disk.Type == "s3" || disk.Type == "azure_blob_storage" && len(parts) > 0 {
+			if (disk.Type == "s3" || disk.Type == "azure_blob_storage") && len(parts) > 0 {
 				if err = config.ValidateObjectDiskConfig(b.cfg); err != nil {
 					return nil, nil, err
 				}
@@ -593,7 +593,7 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 					return disksToPartsMap, realSize, err
 				}
 				realSize[disk.Name] += size
-				log.WithField("disk", disk.Name).WithField("duration", utils.HumanizeDuration(time.Since(start))).Info("object_disk data uploaded")
+				log.WithField("disk", disk.Name).WithField("duration", utils.HumanizeDuration(time.Since(start))).WithField("size", utils.FormatBytes(uint64(size))).Info("object_disk data uploaded")
 			}
 			// Clean all the files under the shadowPath, cause UNFREEZE unavailable
 			if version < 21004000 {
@@ -646,6 +646,9 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName, backup
 		if fInfo.IsDir() {
 			return nil
 		}
+		if fInfo.Name() == "frozen_metadata.txt" {
+			return nil
+		}
 		objPartFileMeta, err := object_disk.ReadMetadataFromFile(fPath)
 		if err != nil {
 			return err
@@ -654,6 +657,9 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName, backup
 
 		uploadObjectDiskPartsWorkingGroup.Go(func() error {
 			for _, storageObject := range objPartFileMeta.StorageObjects {
+				if storageObject.ObjectSize == 0 {
+					continue
+				}
 				if objSize, err = b.dst.CopyObject(
 					ctx,
 					srcDiskConnection.GetRemoteBucket(),

@@ -326,13 +326,14 @@ func (gcs *GCS) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) 
 }
 
 func (gcs *GCS) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (int64, error) {
+	dstKey = path.Join(gcs.Config.ObjectDiskPath, dstKey)
+	log.Debugf("GCS->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, gcs.Config.Bucket, dstKey)
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
 	if err != nil {
 		log.Errorf("gcs.CopyObject: gcs.clientPool.BorrowObject error: %+v", err)
 		return 0, err
 	}
 	pClient := pClientObj.(*clientObject).Client
-	dstKey = path.Join(gcs.Config.ObjectDiskPath, dstKey)
 	src := pClient.Bucket(srcBucket).Object(srcKey)
 	dst := pClient.Bucket(gcs.Config.Bucket).Object(dstKey)
 	attrs, err := src.Attrs(ctx)
@@ -348,7 +349,6 @@ func (gcs *GCS) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string
 		}
 		return 0, err
 	}
-	log.Debugf("GCS->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, gcs.Config.Bucket, dstKey)
 	if pErr := gcs.clientPool.ReturnObject(ctx, pClientObj); pErr != nil {
 		log.Warnf("gcs.CopyObject: gcs.clientPool.ReturnObject error: %+v", pErr)
 	}

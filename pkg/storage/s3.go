@@ -29,7 +29,6 @@ import (
 	awsV2http "github.com/aws/smithy-go/transport/http"
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
-	"golang.org/x/sync/semaphore"
 )
 
 type S3LogToApexLogAdapter struct {
@@ -481,7 +480,7 @@ func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (
 	s.enrichHeadParams(headParams)
 	sourceObjResp, err := s.client.HeadObject(ctx, headParams)
 	if err != nil {
-		return 0, err
+		return 0, errors.Wrapf(err, "s3://%s/%s", srcBucket, srcKey)
 	}
 	srcSize := *sourceObjResp.ContentLength
 	// just copy object without multipart
@@ -519,25 +518,21 @@ func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (
 	if srcSize%s.Config.MaxPartsCount > 0 {
 		partSize++
 	}
-	if partSize < 5*1024*1024 {
-		partSize = 5 * 1024 * 1024
+	if partSize < 25*1024*1024 {
+		partSize = 25 * 1024 * 1024
 	}
 
 	// Calculate the number of parts
 	numParts := (srcSize + partSize - 1) / partSize
 
-	copyPartSemaphore := semaphore.NewWeighted(int64(s.Config.Concurrency))
 	copyPartErrGroup, ctx := errgroup.WithContext(ctx)
+	copyPartErrGroup.SetLimit(s.Config.Concurrency)
 
 	var mu sync.Mutex
 	var parts []s3types.CompletedPart
 
 	// Copy each part of the object
 	for partNumber := int64(1); partNumber <= numParts; partNumber++ {
-		if err := copyPartSemaphore.Acquire(ctx, 1); err != nil {
-			apexLog.Errorf("can't acquire semaphore during CopyObject data parts: %v", err)
-			break
-		}
 		// Calculate the byte range for the part
 		start := (partNumber - 1) * partSize
 		end := partNumber * partSize
@@ -547,7 +542,6 @@ func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (
 		currentPartNumber := int32(partNumber)
 
 		copyPartErrGroup.Go(func() error {
-			defer copyPartSemaphore.Release(1)
 			// Copy the part
 			uploadPartParams := &s3.UploadPartCopyInput{
 				Bucket:          aws.String(s.Config.Bucket),
@@ -573,7 +567,7 @@ func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (
 			return nil
 		})
 	}
-	if err := copyPartErrGroup.Wait(); err != nil {
+	if wgWaitErr := copyPartErrGroup.Wait(); wgWaitErr != nil {
 		abortParams := &s3.AbortMultipartUploadInput{
 			Bucket:   aws.String(s.Config.Bucket),
 			Key:      aws.String(dstKey),
@@ -584,9 +578,9 @@ func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (
 		}
 		_, abortErr := s.client.AbortMultipartUpload(context.Background(), abortParams)
 		if abortErr != nil {
-			return 0, fmt.Errorf("aborting CopyObject multipart upload: %v, original error was: %v", abortErr, err)
+			return 0, fmt.Errorf("aborting CopyObject multipart upload: %v, original error was: %v", abortErr, wgWaitErr)
 		}
-		return 0, fmt.Errorf("one of CopyObject go-routine return error: %v", err)
+		return 0, fmt.Errorf("one of CopyObject go-routine return error: %v", wgWaitErr)
 	}
 	// Parts must be ordered by part number.
 	sort.Slice(parts, func(i int, j int) bool {
