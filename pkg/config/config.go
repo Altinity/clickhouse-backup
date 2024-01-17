@@ -541,7 +541,7 @@ func DefaultConfig() *Config {
 			CompressionFormat: "tar",
 			BufferSize:        0,
 			MaxBuffers:        3,
-			MaxPartsCount:     5000,
+			MaxPartsCount:     256,
 			Timeout:           "4h",
 		},
 		S3: S3Config{
@@ -556,7 +556,7 @@ func DefaultConfig() *Config {
 			StorageClass:            string(s3types.StorageClassStandard),
 			Concurrency:             int(downloadConcurrency + 1),
 			PartSize:                0,
-			MaxPartsCount:           1000,
+			MaxPartsCount:           256,
 		},
 		GCS: GCSConfig{
 			CompressionLevel:  1,

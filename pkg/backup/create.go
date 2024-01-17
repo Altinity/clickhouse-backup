@@ -638,7 +638,7 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName, backup
 	if !exists {
 		return 0, fmt.Errorf("uploadObjectDiskParts: %s not present in object_disk.DisksConnections", disk.Name)
 	}
-
+	srcBucket := srcDiskConnection.GetRemoteBucket()
 	walkErr := filepath.Walk(backupShadowPath, func(fPath string, fInfo os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -662,7 +662,8 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName, backup
 				}
 				if objSize, err = b.dst.CopyObject(
 					ctx,
-					srcDiskConnection.GetRemoteBucket(),
+					storageObject.ObjectSize,
+					srcBucket,
 					path.Join(srcDiskConnection.GetRemotePath(), storageObject.ObjectRelativePath),
 					path.Join(backupName, disk.Name, storageObject.ObjectRelativePath),
 				); err != nil {

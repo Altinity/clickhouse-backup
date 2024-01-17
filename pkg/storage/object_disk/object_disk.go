@@ -309,7 +309,7 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) (
 	for _, d := range disks {
 		diskName := d.Data
 		if diskTypeNode := d.SelectElement("type"); diskTypeNode != nil {
-			diskType := diskTypeNode.InnerText()
+			diskType := strings.Trim(diskTypeNode.InnerText(), "\r\n \t")
 			switch diskType {
 			case "s3", "s3_plain":
 				creds := ObjectStorageCredentials{
@@ -632,11 +632,11 @@ func GetFileSize(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Con
 }
 */
 
-func CopyObject(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Config, diskName, srcBucket, srcKey, dstPath string) (int64, error) {
+func CopyObject(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Config, diskName string, srcSize int64, srcBucket, srcKey, dstPath string) (int64, error) {
 	if err := InitCredentialsAndConnections(ctx, ch, cfg, diskName); err != nil {
 		return 0, err
 	}
 	connection := DisksConnections[diskName]
 	remoteStorage := connection.GetRemoteStorage()
-	return remoteStorage.CopyObject(ctx, srcBucket, srcKey, dstPath)
+	return remoteStorage.CopyObject(ctx, srcSize, srcBucket, srcKey, dstPath)
 }

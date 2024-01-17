@@ -146,7 +146,7 @@ func (c *COS) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
 	return err
 }
 
-func (c *COS) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (int64, error) {
+func (c *COS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
 	return 0, fmt.Errorf("CopyObject not imlemented for %s", c.Kind())
 }
 

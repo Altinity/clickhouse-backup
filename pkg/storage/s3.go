@@ -446,7 +446,7 @@ func (s *S3) remotePager(ctx context.Context, s3Path string, recursive bool, pro
 	return nil
 }
 
-func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (int64, error) {
+func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
 	dstKey = path.Join(s.Config.ObjectDiskPath, dstKey)
 	s.Log.Debugf("S3->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, s.Config.Bucket, dstKey)
 	if strings.Contains(s.Config.Endpoint, "storage.googleapis.com") {
@@ -472,17 +472,6 @@ func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (
 		}
 		return *dstObjResp.ContentLength, nil
 	}
-	// Get the size of the source object
-	headParams := &s3.HeadObjectInput{
-		Bucket: aws.String(srcBucket),
-		Key:    aws.String(srcKey),
-	}
-	s.enrichHeadParams(headParams)
-	sourceObjResp, err := s.client.HeadObject(ctx, headParams)
-	if err != nil {
-		return 0, errors.Wrapf(err, "s3://%s/%s", srcBucket, srcKey)
-	}
-	srcSize := *sourceObjResp.ContentLength
 	// just copy object without multipart
 	if srcSize == 0 {
 		params := &s3.CopyObjectInput{
@@ -518,8 +507,8 @@ func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (
 	if srcSize%s.Config.MaxPartsCount > 0 {
 		partSize++
 	}
-	if partSize < 25*1024*1024 {
-		partSize = 25 * 1024 * 1024
+	if partSize < 5*1024*1024 {
+		partSize = 5 * 1024 * 1024
 	}
 
 	// Calculate the number of parts

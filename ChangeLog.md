@@ -1,3 +1,7 @@
+# v2.4.18
+BUG FIXES
+- remove HeadObject request to calculate source key size in CopyObject, to allow cross region S3 disks backup, fix https://github.com/Altinity/clickhouse-backup/issues/813
+
 # v2.4.17
 BUG FIXES
 - skip CopyObject execution for keys which have zero size, to allow properly backup S3, GCS over S3 and Azure disks

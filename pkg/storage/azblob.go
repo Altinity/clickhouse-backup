@@ -271,7 +271,7 @@ func (a *AzureBlob) Walk(ctx context.Context, azPath string, recursive bool, pro
 	return nil
 }
 
-func (a *AzureBlob) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (int64, error) {
+func (a *AzureBlob) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
 	dstKey = path.Join(a.Config.ObjectDiskPath, dstKey)
 	srcURLString := fmt.Sprintf("%s://%s.%s/%s/%s", a.Config.EndpointSchema, a.Config.AccountName, a.Config.EndpointSuffix, srcBucket, srcKey)
 	log.Debugf("AZBLOB->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, a.Config.Container, dstKey)
@@ -302,7 +302,9 @@ func (a *AzureBlob) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey st
 		copyStatus = dstMeta.CopyStatus()
 		copyStatusDesc = dstMeta.CopyStatusDescription()
 		size = dstMeta.ContentLength()
-		pollCount++
+		if pollCount < 8 {
+			pollCount++
+		}
 	}
 	if copyStatus == azblob.CopyStatusFailed {
 		return 0, fmt.Errorf("azblob->CopyObject got CopyStatusFailed %s", copyStatusDesc)

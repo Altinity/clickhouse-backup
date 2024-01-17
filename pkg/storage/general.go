@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/pkg/config"
@@ -409,7 +410,7 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 
 func (bd *BackupDestination) UploadCompressedStream(ctx context.Context, baseLocalPath string, files []string, remotePath string) error {
 	if _, err := bd.StatFile(ctx, remotePath); err != nil {
-		if err != ErrNotFound && !os.IsNotExist(err) {
+		if !errors.Is(err, ErrNotFound) && !os.IsNotExist(err) {
 			return err
 		}
 	}
@@ -658,8 +659,8 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			if cfg.General.MaxFileSize%cfg.S3.MaxPartsCount > 0 {
 				partSize++
 			}
-			if partSize < 25*1024*1024 {
-				partSize = 25 * 1024 * 1024
+			if partSize < 5*1024*1024 {
+				partSize = 5 * 1024 * 1024
 			}
 			if partSize > 5*1024*1024*1024 {
 				partSize = 5 * 1024 * 1024 * 1024
@@ -763,7 +764,7 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 	}
 }
 
-// https://github.com/Altinity/clickhouse-backup/issues/588
+// ApplyMacrosToObjectLabels https://github.com/Altinity/clickhouse-backup/issues/588
 func ApplyMacrosToObjectLabels(ctx context.Context, objectLabels map[string]string, ch *clickhouse.ClickHouse, backupName string) (map[string]string, error) {
 	var err error
 	for k, v := range objectLabels {
