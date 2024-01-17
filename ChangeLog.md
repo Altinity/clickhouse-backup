@@ -1,6 +1,7 @@
 # v2.4.18
 BUG FIXES
-- remove HeadObject request to calculate source key size in CopyObject, to allow cross region S3 disks backup, fix https://github.com/Altinity/clickhouse-backup/issues/813
+- remove HeadObject request to calculate source key size in CopyObject, to allow cross region S3 disks backup, fix [813](https://github.com/Altinity/clickhouse-backup/issues/813)
+- make optional `/backup/kill` query parameter `command` and optional arguments for `kill` command handled via `/backup/actions`, if omitted then will kill first command in "In progress" status, fix [808](https://github.com/Altinity/clickhouse-backup/issues/808) 
 
 # v2.4.17
 BUG FIXES

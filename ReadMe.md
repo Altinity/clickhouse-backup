@@ -640,7 +640,7 @@ Restart HTTP server, close all current connections, close listen socket, open li
 
 Kill selected command from `GET /backup/actions` command list, kill process should be near immediate, but some go-routines (upload one data part) could continue to run.
 
-- Optional query argument `command` may contain the command name to kill, or if it is omitted then kill the last "in progress" command.
+- Optional query argument `command` may contain the command name to kill, or if it is omitted then kill the first "in progress" command.
 
 > **GET /backup/tables**
 

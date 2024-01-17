@@ -430,10 +430,10 @@ func (api *APIServer) actionsAsyncCommandsHandler(command string, args []string,
 }
 
 func (api *APIServer) actionsKillHandler(row status.ActionRow, args []string, actionsResults []actionsResultsRow) ([]actionsResultsRow, error) {
-	if len(args) <= 1 {
-		return actionsResults, errors.New("kill <command> parameter empty")
+	killCommand := ""
+	if len(args) > 1 {
+		killCommand = args[1]
 	}
-	killCommand := args[1]
 	commandId, _ := status.Current.Start(row.Command)
 	err := status.Current.Cancel(killCommand, fmt.Errorf("canceled from API /backup/actions"))
 	defer status.Current.Stop(commandId, err)
@@ -622,7 +622,7 @@ func (api *APIServer) httpKillHandler(w http.ResponseWriter, r *http.Request) {
 	if exists && len(command) > 0 {
 		err = status.Current.Cancel(command[0], fmt.Errorf("canceled from API /backup/kill"))
 	} else {
-		err = fmt.Errorf("require non empty `command` parameter")
+		err = status.Current.Cancel("", fmt.Errorf("canceled from API /backup/kill"))
 	}
 	if err != nil {
 		api.sendJSONEachRow(w, http.StatusInternalServerError, struct {
