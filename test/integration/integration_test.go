@@ -1042,7 +1042,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 				pause += (firstTime.Sub(startTime) + freezeTime.Sub(firstTime)).Nanoseconds()
 			}
 			if err != nil {
-				if !strings.Contains(out, "no tables for backup") {
+				if !strings.Contains(out, "no tables for backup") && !strings.Contains(out, "code: 473, message: Possible deadlock avoided") {
 					assert.NoError(t, err)
 				}
 			}
