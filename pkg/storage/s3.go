@@ -449,31 +449,8 @@ func (s *S3) remotePager(ctx context.Context, s3Path string, recursive bool, pro
 func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
 	dstKey = path.Join(s.Config.ObjectDiskPath, dstKey)
 	s.Log.Debugf("S3->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, s.Config.Bucket, dstKey)
-	if strings.Contains(s.Config.Endpoint, "storage.googleapis.com") {
-		params := &s3.CopyObjectInput{
-			Bucket:       aws.String(s.Config.Bucket),
-			Key:          aws.String(dstKey),
-			CopySource:   aws.String(path.Join(srcBucket, srcKey)),
-			StorageClass: s3types.StorageClass(strings.ToUpper(s.Config.StorageClass)),
-		}
-		s.enrichCopyObjectParams(params)
-		_, err := s.client.CopyObject(ctx, params)
-		if err != nil {
-			return 0, err
-		}
-		dstHeadParams := &s3.HeadObjectInput{
-			Bucket: aws.String(s.Config.Bucket),
-			Key:    aws.String(dstKey),
-		}
-		s.enrichHeadParams(dstHeadParams)
-		dstObjResp, err := s.client.HeadObject(ctx, dstHeadParams)
-		if err != nil {
-			return 0, err
-		}
-		return *dstObjResp.ContentLength, nil
-	}
 	// just copy object without multipart
-	if srcSize == 0 {
+	if srcSize < 5*1024*1024*1024 || strings.Contains(s.Config.Endpoint, "storage.googleapis.com") {
 		params := &s3.CopyObjectInput{
 			Bucket:       aws.String(s.Config.Bucket),
 			Key:          aws.String(dstKey),

@@ -1,3 +1,7 @@
+# v2.4.19
+BUG FIXES
+- use single s3:CopyObject call instead s3:CreateMultipartUpload+s3:UploadCopyPart+s3:CompleteMultipartUpload for files with size less 5Gb
+
 # v2.4.18
 BUG FIXES
 - remove HeadObject request to calculate source key size in CopyObject, to allow cross region S3 disks backup, fix [813](https://github.com/Altinity/clickhouse-backup/issues/813)
