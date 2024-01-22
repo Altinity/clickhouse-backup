@@ -171,7 +171,7 @@ jobs:
           set +e
           ~/venv/qa/bin/python3 ./test/testflows/clickhouse_backup/regression.py --debug --only="${RUN_TESTS:-*}" --log ./test/testflows/raw.log 
           if [[ "0" != "$?" ]]; then
-            docker-compose -f ${CLICKHOUSE_TESTS_DIR}/docker-compose/docker-compose.yml logs clickhouse_backup
+            docker-compose -f ${CLICKHOUSE_TESTS_DIR}/docker-compose/docker-compose.yml logs zookeeper
             exit 1
           fi
           set -e
@@ -193,16 +193,16 @@ jobs:
           format: golang
           flag-name: testflows-${{ matrix.clickhouse }}
 # todo wait when resolve https://github.com/actions/upload-artifact/issues/270 and uncomment
-#      - name: Upload testflows logs
-#        uses: actions/upload-artifact@v3
-#        with:
-#          name: testflows-logs-and-reports-${{ matrix.clickhouse }}-${{ github.run_id }}
-#          path: |
-#            test/testflows/*.log
-#            test/testflows/*.log.txt
-#            test/testflows/clickhouse_backup/_instances/**/*.log
-#            test/testflows/*.html
-#          retention-days: 7
+      - name: Upload testflows logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: testflows-logs-and-reports-${{ matrix.clickhouse }}-${{ github.run_id }}
+          path: |
+            test/testflows/*.log
+            test/testflows/*.log.txt
+            test/testflows/clickhouse_backup/_instances/**/*.log
+            test/testflows/*.html
+          retention-days: 7
 
   test:
     needs: build
