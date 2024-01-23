@@ -12,7 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
@@ -208,7 +208,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 				}
 				// more precise data size calculation
 				for _, size := range realSize {
-					backupDataSize += uint64(size)
+					atomic.AddUint64(&backupDataSize, uint64(size))
 				}
 			}
 			// https://github.com/Altinity/clickhouse-backup/issues/529
@@ -643,7 +643,6 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName, backupShadowPath string, disk clickhouse.Disk) (int64, error) {
 	var size int64
 	var err error
-	var sizeMutex sync.Mutex
 	if err = object_disk.InitCredentialsAndConnections(ctx, b.ch, b.cfg, disk.Name); err != nil {
 		return 0, err
 	}
@@ -688,13 +687,11 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName, backup
 				}
 				realSize += objSize
 			}
-			sizeMutex.Lock()
 			if realSize > objPartFileMeta.TotalSize {
-				size += realSize
+				atomic.AddInt64(&size, realSize)
 			} else {
-				size += objPartFileMeta.TotalSize
+				atomic.AddInt64(&size, objPartFileMeta.TotalSize)
 			}
-			sizeMutex.Unlock()
 			return nil
 		})
 		return nil

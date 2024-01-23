@@ -525,11 +525,11 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 				return err
 			}
 			mu.Lock()
-			defer mu.Unlock()
 			parts = append(parts, s3types.CompletedPart{
 				ETag:       partResp.CopyPartResult.ETag,
 				PartNumber: aws.Int32(currentPartNumber),
 			})
+			mu.Unlock()
 			return nil
 		})
 	}

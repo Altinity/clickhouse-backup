@@ -239,7 +239,6 @@ func InitCredentialsAndConnections(ctx context.Context, ch *clickhouse.ClickHous
 	var err error
 	var mu sync.Mutex
 	mu.Lock()
-	defer mu.Unlock()
 	if _, exists := DisksCredentials[diskName]; !exists {
 		DisksCredentials, err = getObjectDisksCredentials(ctx, ch)
 		if err != nil {
@@ -256,6 +255,7 @@ func InitCredentialsAndConnections(ctx context.Context, ch *clickhouse.ClickHous
 		}
 		DisksConnections[diskName] = *connection
 	}
+	mu.Unlock()
 	return nil
 }
 

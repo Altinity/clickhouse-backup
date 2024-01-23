@@ -17,7 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/pkg/common"
@@ -850,7 +850,6 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 			start := time.Now()
 			downloadObjectDiskPartsWorkingGroup, ctx := errgroup.WithContext(ctx)
 			downloadObjectDiskPartsWorkingGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
-			sizeMutex := sync.Mutex{}
 			for _, part := range parts {
 				partPath := path.Join(diskMap[diskName], "backup", backupName, "shadow", dbAndTableDir, diskName, part.Name)
 				walkErr := filepath.Walk(partPath, func(fPath string, fInfo fs.FileInfo, err error) error {
@@ -891,9 +890,7 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 							if copiedSize, copyObjectErr := object_disk.CopyObject(ctx, b.ch, b.cfg, diskName, storageObject.ObjectSize, srcBucket, srcKey, storageObject.ObjectRelativePath); copyObjectErr != nil {
 								return fmt.Errorf("object_disk.CopyObject error: %v", err)
 							} else {
-								sizeMutex.Lock()
-								size += copiedSize
-								sizeMutex.Unlock()
+								atomic.AddInt64(&size, copiedSize)
 							}
 						}
 						return nil
