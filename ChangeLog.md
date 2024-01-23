@@ -1,3 +1,7 @@
+# v2.4.20
+IMPROVEMENTS
+- refactoring of `create` command to allow parallel execution of `FREEZE` and `UNFREEZE` and table level parallelization `object_disk.CopyObject`
+
 # v2.4.19
 BUG FIXES
 - use single s3:CopyObject call instead s3:CreateMultipartUpload+s3:UploadCopyPart+s3:CompleteMultipartUpload for files with size less 5Gb

@@ -11,6 +11,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
@@ -236,6 +237,9 @@ var SystemDisks map[string]clickhouse.Disk
 
 func InitCredentialsAndConnections(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Config, diskName string) error {
 	var err error
+	var mu sync.Mutex
+	mu.Lock()
+	defer mu.Unlock()
 	if _, exists := DisksCredentials[diskName]; !exists {
 		DisksCredentials, err = getObjectDisksCredentials(ctx, ch)
 		if err != nil {

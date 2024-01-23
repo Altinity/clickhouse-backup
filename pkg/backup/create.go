@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Altinity/clickhouse-backup/pkg/config"
+	"github.com/Altinity/clickhouse-backup/pkg/storage"
 	"golang.org/x/sync/errgroup"
 	"os"
 	"path"
@@ -15,13 +17,11 @@ import (
 
 	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/pkg/common"
-	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"github.com/Altinity/clickhouse-backup/pkg/filesystemhelper"
 	"github.com/Altinity/clickhouse-backup/pkg/keeper"
 	"github.com/Altinity/clickhouse-backup/pkg/metadata"
 	"github.com/Altinity/clickhouse-backup/pkg/partition"
 	"github.com/Altinity/clickhouse-backup/pkg/status"
-	"github.com/Altinity/clickhouse-backup/pkg/storage"
 	"github.com/Altinity/clickhouse-backup/pkg/storage/object_disk"
 	"github.com/Altinity/clickhouse-backup/pkg/utils"
 
@@ -155,34 +155,56 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 			return err
 		}
 	}
+	isObjectDiskPresent := false
+	for _, disk := range disks {
+		if disk.Type == "s3" || disk.Type == "azure_blob_storage" {
+			isObjectDiskPresent = true
+			break
+		}
+	}
+	if isObjectDiskPresent {
+		if err = config.ValidateObjectDiskConfig(b.cfg); err != nil {
+			return err
+		}
+		b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, false, backupName)
+		if err != nil {
+			return err
+		}
+		if err := b.dst.Connect(ctx); err != nil {
+			return fmt.Errorf("can't connect to %s: %v", b.dst.Kind(), err)
+		}
+		defer b.dst.Close(ctx)
+	}
 	var backupDataSize, backupMetadataSize uint64
+	createBackupWorkingGroup, createCtx := errgroup.WithContext(ctx)
+	createBackupWorkingGroup.SetLimit(int(b.cfg.General.UploadConcurrency))
 
 	var tableMetas []metadata.TableTitle
-	for _, table := range tables {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
+	for _, tableItem := range tables {
+		//to avoid race condition
+		table := tableItem
+		if table.Skip {
+			continue
+		}
+		createBackupWorkingGroup.Go(func() error {
 			log := log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Name))
-			if table.Skip {
-				continue
-			}
 			var realSize map[string]int64
 			var disksToPartsMap map[string][]metadata.Part
 			if doBackupData && table.BackupType == clickhouse.ShardBackupFull {
 				log.Debug("create data")
 				shadowBackupUUID := strings.ReplaceAll(uuid.New().String(), "-", "")
-				disksToPartsMap, realSize, err = b.AddTableToBackup(ctx, backupName, shadowBackupUUID, disks, &table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}])
-				if err != nil {
-					log.Error(err.Error())
-					if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks); removeBackupErr != nil {
+				var addTableToBackupErr error
+				disksToPartsMap, realSize, addTableToBackupErr = b.AddTableToBackup(createCtx, backupName, shadowBackupUUID, disks, &table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}])
+				if addTableToBackupErr != nil {
+					log.Error(addTableToBackupErr.Error())
+					if removeBackupErr := b.RemoveBackupLocal(createCtx, backupName, disks); removeBackupErr != nil {
 						log.Error(removeBackupErr.Error())
 					}
 					// fix corner cases after https://github.com/Altinity/clickhouse-backup/issues/379
 					if cleanShadowErr := b.Clean(ctx); cleanShadowErr != nil {
 						log.Error(cleanShadowErr.Error())
 					}
-					return err
+					return addTableToBackupErr
 				}
 				// more precise data size calculation
 				for _, size := range realSize {
@@ -193,18 +215,19 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 			log.Debug("get in progress mutations list")
 			inProgressMutations := make([]metadata.MutationMetadata, 0)
 			if b.cfg.ClickHouse.BackupMutations && !schemaOnly && !rbacOnly && !configsOnly {
-				inProgressMutations, err = b.ch.GetInProgressMutations(ctx, table.Database, table.Name)
-				if err != nil {
-					log.Error(err.Error())
-					if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks); removeBackupErr != nil {
+				var inProgressMutationsErr error
+				inProgressMutations, inProgressMutationsErr = b.ch.GetInProgressMutations(createCtx, table.Database, table.Name)
+				if inProgressMutationsErr != nil {
+					log.Error(inProgressMutationsErr.Error())
+					if removeBackupErr := b.RemoveBackupLocal(createCtx, backupName, disks); removeBackupErr != nil {
 						log.Error(removeBackupErr.Error())
 					}
-					return err
+					return inProgressMutationsErr
 				}
 			}
 			log.Debug("create metadata")
 			if schemaOnly || doBackupData {
-				metadataSize, err := b.createTableMetadata(path.Join(backupPath, "metadata"), metadata.TableMetadata{
+				metadataSize, createTableMetadataErr := b.createTableMetadata(path.Join(backupPath, "metadata"), metadata.TableMetadata{
 					Table:        table.Name,
 					Database:     table.Database,
 					Query:        table.CreateTableQuery,
@@ -214,11 +237,11 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 					Mutations:    inProgressMutations,
 					MetadataOnly: schemaOnly || table.BackupType == clickhouse.ShardBackupSchema,
 				}, disks)
-				if err != nil {
-					if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks); removeBackupErr != nil {
+				if createTableMetadataErr != nil {
+					if removeBackupErr := b.RemoveBackupLocal(createCtx, backupName, disks); removeBackupErr != nil {
 						log.Error(removeBackupErr.Error())
 					}
-					return err
+					return createTableMetadataErr
 				}
 				backupMetadataSize += metadataSize
 				tableMetas = append(tableMetas, metadata.TableTitle{
@@ -227,20 +250,26 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 				})
 			}
 			log.Infof("done")
-		}
+			return nil
+		})
+	}
+	if wgWaitErr := createBackupWorkingGroup.Wait(); wgWaitErr != nil {
+		return fmt.Errorf("one of createBackupLocal go-routine return error: %v", wgWaitErr)
 	}
 	backupRBACSize, backupConfigSize := uint64(0), uint64(0)
 
 	if createRBAC || rbacOnly {
-		if backupRBACSize, err = b.createBackupRBAC(ctx, backupPath, disks); err != nil {
+		var createRBACErr error
+		if backupRBACSize, createRBACErr = b.createBackupRBAC(ctx, backupPath, disks); createRBACErr != nil {
 			log.Fatalf("error during do RBAC backup: %v", err)
 		} else {
 			log.WithField("size", utils.FormatBytes(backupRBACSize)).Info("done createBackupRBAC")
 		}
 	}
 	if createConfigs || configsOnly {
-		if backupConfigSize, err = b.createBackupConfigs(ctx, backupPath); err != nil {
-			log.Fatalf("error during do CONFIG backup: %v", err)
+		var createConfigsErr error
+		if backupConfigSize, createConfigsErr = b.createBackupConfigs(ctx, backupPath); createConfigsErr != nil {
+			log.Fatalf("error during do CONFIG backup: %v", createConfigsErr)
 		} else {
 			log.WithField("size", utils.FormatBytes(backupConfigSize)).Info("done createBackupConfigs")
 		}
@@ -248,7 +277,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 
 	backupMetaFile := path.Join(defaultPath, "backup", backupName, "metadata.json")
 	if err := b.createBackupMetadata(ctx, backupMetaFile, backupName, version, "regular", diskMap, diskTypes, disks, backupDataSize, backupMetadataSize, backupRBACSize, backupConfigSize, tableMetas, allDatabases, allFunctions, log); err != nil {
-		return err
+		return fmt.Errorf("createBackupMetadata return error: %v", err)
 	}
 	log.WithField("duration", utils.HumanizeDuration(time.Since(startBackup))).Info("done")
 	return nil
@@ -576,19 +605,7 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 			disksToPartsMap[disk.Name] = parts
 			log.WithField("disk", disk.Name).Debug("shadow moved")
 			if (disk.Type == "s3" || disk.Type == "azure_blob_storage") && len(parts) > 0 {
-				if err = config.ValidateObjectDiskConfig(b.cfg); err != nil {
-					return nil, nil, err
-				}
 				start := time.Now()
-				if b.dst == nil {
-					b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, false, backupName)
-					if err != nil {
-						return nil, nil, err
-					}
-				}
-				if err := b.dst.Connect(ctx); err != nil {
-					return nil, nil, fmt.Errorf("can't connect to %s: %v", b.dst.Kind(), err)
-				}
 				if size, err = b.uploadObjectDiskParts(ctx, backupName, backupShadowPath, disk); err != nil {
 					return disksToPartsMap, realSize, err
 				}
