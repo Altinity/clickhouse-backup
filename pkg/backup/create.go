@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -173,9 +174,14 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 		if err := b.dst.Connect(ctx); err != nil {
 			return fmt.Errorf("can't connect to %s: %v", b.dst.Kind(), err)
 		}
-		defer b.dst.Close(ctx)
+		defer func() {
+			if closeErr := b.dst.Close(ctx); closeErr != nil {
+				log.Warnf("can't close connection to %s: %v", b.dst.Kind(), closeErr)
+			}
+		}()
 	}
 	var backupDataSize, backupMetadataSize uint64
+	var metaMutex sync.Mutex
 	createBackupWorkingGroup, createCtx := errgroup.WithContext(ctx)
 	createBackupWorkingGroup.SetLimit(int(b.cfg.General.UploadConcurrency))
 
@@ -243,11 +249,13 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 					}
 					return createTableMetadataErr
 				}
-				backupMetadataSize += metadataSize
+				atomic.AddUint64(&backupMetadataSize, metadataSize)
+				metaMutex.Lock()
 				tableMetas = append(tableMetas, metadata.TableTitle{
 					Database: table.Database,
 					Table:    table.Name,
 				})
+				metaMutex.Unlock()
 			}
 			log.Infof("done")
 			return nil
