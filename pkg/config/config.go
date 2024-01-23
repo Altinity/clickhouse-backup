@@ -220,6 +220,7 @@ type ClickHouseConfig struct {
 	TLSKey                           string            `yaml:"tls_key" envconfig:"CLICKHOUSE_TLS_KEY"`
 	TLSCert                          string            `yaml:"tls_cert" envconfig:"CLICKHOUSE_TLS_CERT"`
 	TLSCa                            string            `yaml:"tls_ca" envconfig:"CLICKHOUSE_TLS_CA"`
+	MaxConnections                   int               `yaml:"max_connections" envconfig:"CLICKHOUSE_MAX_CONNECTIONS"`
 	Debug                            bool              `yaml:"debug" envconfig:"CLICKHOUSE_DEBUG"`
 }
 
