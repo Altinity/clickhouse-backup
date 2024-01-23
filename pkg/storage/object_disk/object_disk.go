@@ -233,12 +233,14 @@ func (c *ObjectStorageConnection) GetRemotePath() string {
 }
 
 var DisksConnections map[string]ObjectStorageConnection
+var DisksConnectionsMutex sync.Mutex
+
 var SystemDisks map[string]clickhouse.Disk
+var SystemDisksMutex sync.Mutex
 
 func InitCredentialsAndConnections(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Config, diskName string) error {
 	var err error
-	var mu sync.Mutex
-	mu.Lock()
+	DisksConnectionsMutex.Lock()
 	if _, exists := DisksCredentials[diskName]; !exists {
 		DisksCredentials, err = getObjectDisksCredentials(ctx, ch)
 		if err != nil {
@@ -255,7 +257,7 @@ func InitCredentialsAndConnections(ctx context.Context, ch *clickhouse.ClickHous
 		}
 		DisksConnections[diskName] = *connection
 	}
-	mu.Unlock()
+	DisksConnectionsMutex.Unlock()
 	return nil
 }
 
@@ -412,6 +414,7 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 		return nil, fmt.Errorf("%s is not present in object_disk.DisksCredentials", diskName)
 	}
 	connection := ObjectStorageConnection{}
+	SystemDisksMutex.Lock()
 	if SystemDisks == nil || len(SystemDisks) == 0 {
 		disks, err := ch.GetDisks(ctx, false)
 		if err != nil {
@@ -422,6 +425,7 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 			SystemDisks[d.Name] = d
 		}
 	}
+	SystemDisksMutex.Unlock()
 	disk, exists := SystemDisks[diskName]
 	if !exists {
 		return nil, fmt.Errorf("%s is not presnet in object_disk.SystemDisks", diskName)
