@@ -165,10 +165,7 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 			if err != nil {
 				return nil, err
 			}
-			return &clientObject{
-					Client: sClient,
-				},
-				nil
+			return &clientObject{Client: sClient}, nil
 		})
 	gcs.clientPool = pool.NewObjectPoolWithDefaultConfig(ctx, factory)
 	gcs.clientPool.Config.MaxTotal = gcs.Config.ClientPoolSize * 3

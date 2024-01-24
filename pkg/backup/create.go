@@ -631,11 +631,6 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 
 		}
 	}
-	if b.dst != nil {
-		if err := b.dst.Close(ctx); err != nil {
-			b.log.Warnf("uploadObjectDiskParts: can't close BackupDestination error: %v", err)
-		}
-	}
 	log.Debug("done")
 	return disksToPartsMap, realSize, nil
 }
