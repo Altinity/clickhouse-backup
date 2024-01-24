@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -196,8 +197,8 @@ func (gcs *GCS) Walk(ctx context.Context, gcsPath string, recursive bool, proces
 	})
 	for {
 		object, err := it.Next()
-		switch err {
-		case nil:
+		switch {
+		case err == nil:
 			if object.Prefix != "" {
 				if err := process(ctx, &gcsFile{
 					name: strings.TrimPrefix(object.Prefix, rootPath),
@@ -213,7 +214,7 @@ func (gcs *GCS) Walk(ctx context.Context, gcsPath string, recursive bool, proces
 			}); err != nil {
 				return err
 			}
-		case iterator.Done:
+		case errors.Is(err, iterator.Done):
 			return nil
 		default:
 			return err
@@ -282,7 +283,7 @@ func (gcs *GCS) PutFile(ctx context.Context, key string, r io.ReadCloser) error 
 func (gcs *GCS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 	objAttr, err := gcs.client.Bucket(gcs.Config.Bucket).Object(path.Join(gcs.Config.Path, key)).Attrs(ctx)
 	if err != nil {
-		if err == storage.ErrObjectNotExist {
+		if errors.Is(err, storage.ErrObjectNotExist) {
 			return nil, ErrNotFound
 		}
 		return nil, err

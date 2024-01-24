@@ -126,7 +126,8 @@ func (a *AzureBlob) Connect(ctx context.Context) error {
 		}
 		testBlob := a.Container.NewBlockBlobURL(base64.URLEncoding.EncodeToString(testName))
 		if _, err = testBlob.GetProperties(ctx, azblob.BlobAccessConditions{}, azblob.ClientProvidedKeyOptions{}); err != nil {
-			if se, ok := err.(azblob.StorageError); !ok || se.ServiceCode() != azblob.ServiceCodeBlobNotFound {
+			var se azblob.StorageError
+			if !errors.As(err, &se) || se.ServiceCode() != azblob.ServiceCodeBlobNotFound {
 				return errors.Wrapf(err, "azblob: failed to access container %s", a.Config.Container)
 			}
 		}
@@ -189,7 +190,8 @@ func (a *AzureBlob) StatFile(ctx context.Context, key string) (RemoteFile, error
 	blob := a.Container.NewBlockBlobURL(path.Join(a.Config.Path, key))
 	r, err := blob.GetProperties(ctx, azblob.BlobAccessConditions{}, a.CPK)
 	if err != nil {
-		if se, ok := err.(azblob.StorageError); !ok || se.ServiceCode() != azblob.ServiceCodeBlobNotFound {
+		var se azblob.StorageError
+		if !errors.As(err, &se) || se.ServiceCode() != azblob.ServiceCodeBlobNotFound {
 			return nil, err
 		}
 		return nil, ErrNotFound
@@ -332,7 +334,8 @@ func (f *azureBlobFile) LastModified() time.Time {
 
 func isContainerAlreadyExists(err error) bool {
 	if err != nil {
-		if storageErr, ok := err.(azblob.StorageError); ok { // This error is a Service-specific
+		var storageErr azblob.StorageError
+		if errors.As(err, &storageErr) { // This error is a Service-specific
 			switch storageErr.ServiceCode() { // Compare serviceCode to ServiceCodeXxx constants
 			case azblob.ServiceCodeContainerAlreadyExists:
 				return true

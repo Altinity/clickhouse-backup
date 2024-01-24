@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/Altinity/clickhouse-backup/pkg/config"
 	"io"
@@ -62,7 +63,8 @@ func (c *COS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 	// file max size is 5Gb
 	resp, err := c.client.Object.Get(ctx, path.Join(c.Config.Path, key), nil)
 	if err != nil {
-		cosErr, ok := err.(*cos.ErrorResponse)
+		var cosErr *cos.ErrorResponse
+		ok := errors.As(err, &cosErr)
 		if ok && cosErr.Code == "NoSuchKey" {
 			return nil, ErrNotFound
 		}

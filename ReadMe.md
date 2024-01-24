@@ -827,7 +827,6 @@ fi
 - [How to convert MergeTree to ReplicatedMergeTree](Examples.md#how-to-convert-mergetree-to-replicatedmergetree)
 - [How to store backups on NFS or another server](Examples.md#how-to-store-backups-on-nfs-backup-drive-or-another-server-via-sftp)
 - [How to move data to another clickhouse server](Examples.md#how-to-move-data-to-another-clickhouse-server)
-- [How to reduce the number of partitions](Examples.md#How-to-reduce-the-number-of-partitions)
 - [How to monitor that backups created and uploaded correctly](Examples.md#how-to-monitor-that-backups-were-created-and-uploaded-correctly)
 - [How to back up / restore a sharded cluster](Examples.md#how-to-back-up--restore-a-sharded-cluster)
 - [How to back up a sharded cluster with Ansible](Examples.md#how-to-back-up-a-sharded-cluster-with-ansible)

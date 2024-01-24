@@ -369,7 +369,7 @@ func (b *Backuper) cleanRemoteBackupObjectDisks(ctx context.Context, backup stor
 					if err := b.dst.DownloadCompressedStream(ctx, fName, localPath); err != nil {
 						return err
 					}
-					filepath.Walk(localPath, func(fPath string, fInfo fs.FileInfo, err error) error {
+					walkErr := filepath.Walk(localPath, func(fPath string, fInfo fs.FileInfo, err error) error {
 						if err != nil {
 							return err
 						}
@@ -388,6 +388,9 @@ func (b *Backuper) cleanRemoteBackupObjectDisks(ctx context.Context, backup stor
 						}
 						return nil
 					})
+					if walkErr != nil {
+						b.log.Warnf("filepath.Walk(%s) return error: %v", localPath, walkErr)
+					}
 					if err := os.RemoveAll(localPath); err != nil {
 						return err
 					}

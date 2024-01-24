@@ -17,7 +17,7 @@ func (cfg *Config) SetPriority() error {
 		}
 	}
 	if err = gionice.SetNicePri(0, gionice.PRIO_PROCESS, cfg.General.CPUNicePriority); err != nil {
-		log.Warnf("can't set CPU priority %s, error: %v", cfg.General.CPUNicePriority, err)
+		log.Warnf("can't set CPU priority %v, error: %v", cfg.General.CPUNicePriority, err)
 	}
 	return nil
 }

@@ -29,7 +29,11 @@ func TestParseCallback(t *testing.T) {
 
 	passToChanHandler := func(ch chan *payload) http.HandlerFunc {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			defer r.Body.Close()
+			defer func() {
+				if err := r.Body.Close(); err != nil {
+					t.Fatalf("can't close r.Body: %v", err)
+				}
+			}()
 
 			var data payload
 			if err := json.NewDecoder(r.Body).Decode(&data); err != nil {

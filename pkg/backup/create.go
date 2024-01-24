@@ -202,14 +202,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 				var addTableToBackupErr error
 				disksToPartsMap, realSize, addTableToBackupErr = b.AddTableToBackup(createCtx, backupName, shadowBackupUUID, disks, &table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}])
 				if addTableToBackupErr != nil {
-					log.Error(addTableToBackupErr.Error())
-					if removeBackupErr := b.RemoveBackupLocal(createCtx, backupName, disks); removeBackupErr != nil {
-						log.Error(removeBackupErr.Error())
-					}
-					// fix corner cases after https://github.com/Altinity/clickhouse-backup/issues/379
-					if cleanShadowErr := b.Clean(ctx); cleanShadowErr != nil {
-						log.Error(cleanShadowErr.Error())
-					}
+					log.Errorf("b.AddTableToBackup error: %v", addTableToBackupErr)
 					return addTableToBackupErr
 				}
 				// more precise data size calculation
@@ -224,10 +217,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 				var inProgressMutationsErr error
 				inProgressMutations, inProgressMutationsErr = b.ch.GetInProgressMutations(createCtx, table.Database, table.Name)
 				if inProgressMutationsErr != nil {
-					log.Error(inProgressMutationsErr.Error())
-					if removeBackupErr := b.RemoveBackupLocal(createCtx, backupName, disks); removeBackupErr != nil {
-						log.Error(removeBackupErr.Error())
-					}
+					log.Errorf("b.ch.GetInProgressMutations error: %v", inProgressMutationsErr)
 					return inProgressMutationsErr
 				}
 			}
@@ -244,9 +234,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 					MetadataOnly: schemaOnly || table.BackupType == clickhouse.ShardBackupSchema,
 				}, disks)
 				if createTableMetadataErr != nil {
-					if removeBackupErr := b.RemoveBackupLocal(createCtx, backupName, disks); removeBackupErr != nil {
-						log.Error(removeBackupErr.Error())
-					}
+					log.Errorf("b.createTableMetadata error: %v", createTableMetadataErr)
 					return createTableMetadataErr
 				}
 				atomic.AddUint64(&backupMetadataSize, metadataSize)
@@ -262,6 +250,14 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 		})
 	}
 	if wgWaitErr := createBackupWorkingGroup.Wait(); wgWaitErr != nil {
+		if removeBackupErr := b.RemoveBackupLocal(createCtx, backupName, disks); removeBackupErr != nil {
+			log.Errorf("b.RemoveBackupLocal error: %v", removeBackupErr)
+		}
+		// fix corner cases after https://github.com/Altinity/clickhouse-backup/issues/379
+		if cleanShadowErr := b.Clean(ctx); cleanShadowErr != nil {
+			log.Errorf("b.Clean error: %v", cleanShadowErr)
+			log.Error(cleanShadowErr.Error())
+		}
 		return fmt.Errorf("one of createBackupLocal go-routine return error: %v", wgWaitErr)
 	}
 	backupRBACSize, backupConfigSize := uint64(0), uint64(0)
@@ -658,7 +654,7 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName, backup
 	defer cancel()
 	uploadObjectDiskPartsWorkingGroup, ctx := errgroup.WithContext(ctx)
 	uploadObjectDiskPartsWorkingGroup.SetLimit(int(b.cfg.General.UploadConcurrency))
-	srcDiskConnection, exists := object_disk.DisksConnections[disk.Name]
+	srcDiskConnection, exists := object_disk.DisksConnections.Load(disk.Name)
 	if !exists {
 		return 0, fmt.Errorf("uploadObjectDiskParts: %s not present in object_disk.DisksConnections", disk.Name)
 	}

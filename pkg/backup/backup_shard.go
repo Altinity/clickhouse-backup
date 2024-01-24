@@ -94,7 +94,9 @@ func fnvShardReplicaFromString(str string, activeReplicas []string) (string, err
 	}
 
 	h := fnv.New32a()
-	h.Write([]byte(str))
+	if _, err := h.Write([]byte(str)); err != nil {
+		return "", fmt.Errorf("can't write %s to fnv.New32a")
+	}
 	i := h.Sum32() % uint32(len(activeReplicas))
 	return activeReplicas[i], nil
 }

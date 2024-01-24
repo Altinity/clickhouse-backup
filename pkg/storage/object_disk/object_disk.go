@@ -11,7 +11,6 @@ import (
 	"path"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
@@ -19,6 +18,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/pkg/storage"
 	"github.com/antchfx/xmlquery"
 	apexLog "github.com/apex/log"
+	"github.com/puzpuzpuz/xsync"
 )
 
 type MetadataVersion uint32
@@ -190,7 +190,7 @@ type ObjectStorageCredentials struct {
 	AzureContainerName string
 }
 
-var DisksCredentials map[string]ObjectStorageCredentials
+var DisksCredentials = xsync.NewMapOf[ObjectStorageCredentials]()
 
 type ObjectStorageConnection struct {
 	Type         string
@@ -232,32 +232,24 @@ func (c *ObjectStorageConnection) GetRemotePath() string {
 	return ""
 }
 
-var DisksConnections map[string]ObjectStorageConnection
-var DisksConnectionsMutex sync.Mutex
+var DisksConnections = xsync.NewMapOf[*ObjectStorageConnection]()
 
-var SystemDisks map[string]clickhouse.Disk
-var SystemDisksMutex sync.Mutex
+var SystemDisks = xsync.NewMapOf[clickhouse.Disk]()
 
 func InitCredentialsAndConnections(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Config, diskName string) error {
 	var err error
-	DisksConnectionsMutex.Lock()
-	if _, exists := DisksCredentials[diskName]; !exists {
-		DisksCredentials, err = getObjectDisksCredentials(ctx, ch)
-		if err != nil {
+	if _, exists := DisksCredentials.Load(diskName); !exists {
+		if err = getObjectDisksCredentials(ctx, ch); err != nil {
 			return err
 		}
 	}
-	if _, exists := DisksConnections[diskName]; !exists {
-		if DisksConnections == nil {
-			DisksConnections = make(map[string]ObjectStorageConnection)
-		}
+	if _, exists := DisksConnections.Load(diskName); !exists {
 		connection, err := makeObjectDiskConnection(ctx, ch, cfg, diskName)
 		if err != nil {
 			return err
 		}
-		DisksConnections[diskName] = *connection
+		DisksConnections.Store(diskName, connection)
 	}
-	DisksConnectionsMutex.Unlock()
 	return nil
 }
 
@@ -297,18 +289,17 @@ func WriteMetadataToFile(metadata *Metadata, path string) error {
 	return metadata.writeToFile(metadataFile)
 }
 
-func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) (map[string]ObjectStorageCredentials, error) {
-	credentials := make(map[string]ObjectStorageCredentials)
+func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) error {
 	var version int
 	var err error
 	if version, err = ch.GetVersion(ctx); err != nil {
-		return nil, err
+		return err
 	} else if version <= 20006000 {
-		return credentials, nil
+		return nil
 	}
 	configFile, doc, err := ch.ParseXML(ctx, "config.xml")
 	if err != nil {
-		return nil, err
+		return err
 	}
 	root := xmlquery.FindOne(doc, "/")
 	disks := xmlquery.Find(doc, fmt.Sprintf("/%s/storage_configuration/disks/*", root.Data))
@@ -331,11 +322,11 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) (
 					// macros works only after 23.3+ https://github.com/Altinity/clickhouse-backup/issues/750
 					if version > 23003000 {
 						if creds.EndPoint, err = ch.ApplyMacros(ctx, creds.EndPoint); err != nil {
-							return nil, fmt.Errorf("%s -> /%s/storage_configuration/disks/%s apply macros to <endpoint> error: %v", configFile, root.Data, diskName, err)
+							return fmt.Errorf("%s -> /%s/storage_configuration/disks/%s apply macros to <endpoint> error: %v", configFile, root.Data, diskName, err)
 						}
 					}
 				} else {
-					return nil, fmt.Errorf("%s -> /%s/storage_configuration/disks/%s doesn't contains <endpoint>", configFile, root.Data, diskName)
+					return fmt.Errorf("%s -> /%s/storage_configuration/disks/%s doesn't contains <endpoint>", configFile, root.Data, diskName)
 				}
 				if regionNode := d.SelectElement("region"); regionNode != nil {
 					creds.S3Region = strings.Trim(regionNode.InnerText(), "\r\n \t")
@@ -358,7 +349,7 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) (
 						creds.S3SecretKey = os.Getenv("AWS_SECRET_ACCESS_KEY")
 					}
 				}
-				credentials[diskName] = creds
+				DisksCredentials.Store(diskName, creds)
 				break
 			case "azure_blob_storage":
 				creds := ObjectStorageCredentials{
@@ -366,25 +357,25 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) (
 				}
 				accountUrlNode := d.SelectElement("storage_account_url")
 				if accountUrlNode == nil {
-					return nil, fmt.Errorf("%s -> /%s/storage_configuration/disks/%s doesn't contains <storage_account_url>", configFile, root.Data, diskName)
+					return fmt.Errorf("%s -> /%s/storage_configuration/disks/%s doesn't contains <storage_account_url>", configFile, root.Data, diskName)
 				}
 				creds.EndPoint = strings.Trim(accountUrlNode.InnerText(), "\r\n \t")
 				containerNameNode := d.SelectElement("container_name")
 				if containerNameNode == nil {
-					return nil, fmt.Errorf("%s -> /%s/storage_configuration/disks/%s doesn't contains <container_name>", configFile, root.Data, diskName)
+					return fmt.Errorf("%s -> /%s/storage_configuration/disks/%s doesn't contains <container_name>", configFile, root.Data, diskName)
 				}
 				creds.AzureContainerName = strings.Trim(containerNameNode.InnerText(), "\r\n \t")
 				accountNameNode := d.SelectElement("account_name")
 				if containerNameNode == nil {
-					return nil, fmt.Errorf("%s -> /%s/storage_configuration/disks/%s doesn't contains <account_name>", configFile, root.Data, diskName)
+					return fmt.Errorf("%s -> /%s/storage_configuration/disks/%s doesn't contains <account_name>", configFile, root.Data, diskName)
 				}
 				creds.AzureAccountName = strings.Trim(accountNameNode.InnerText(), "\r\n \t")
 				accountKeyNode := d.SelectElement("account_key")
 				if containerNameNode == nil {
-					return nil, fmt.Errorf("%s -> /%s/storage_configuration/disks/%s doesn't contains <account_key>", configFile, root.Data, diskName)
+					return fmt.Errorf("%s -> /%s/storage_configuration/disks/%s doesn't contains <account_key>", configFile, root.Data, diskName)
 				}
 				creds.AzureAccountKey = strings.Trim(accountKeyNode.InnerText(), "\r\n \t")
-				credentials[diskName] = creds
+				DisksCredentials.Store(diskName, creds)
 				break
 			}
 		}
@@ -395,38 +386,39 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) (
 			diskType := diskTypeNode.InnerText()
 			switch diskType {
 			case "encrypted", "cache":
-				_, exists := credentials[diskName]
+				_, exists := DisksCredentials.Load(diskName)
 				if !exists {
 					if diskNode := d.SelectElement("disk"); diskNode != nil {
 						childDiskName := diskNode.InnerText()
-						credentials[diskName] = credentials[childDiskName]
+						if childCreds, childExists := DisksCredentials.Load(childDiskName); childExists {
+							DisksCredentials.Store(diskName, childCreds)
+						} else {
+							apexLog.Warnf("disk %s with type %s, reference to  childDisk %s which not contains DiskCredentials", diskName, diskType, childDiskName)
+						}
 					}
 				}
 			}
 		}
 	}
-	return credentials, nil
+	return nil
 }
 
 func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Config, diskName string) (*ObjectStorageConnection, error) {
-	creds, exists := DisksCredentials[diskName]
+	creds, exists := DisksCredentials.Load(diskName)
 	if !exists {
 		return nil, fmt.Errorf("%s is not present in object_disk.DisksCredentials", diskName)
 	}
 	connection := ObjectStorageConnection{}
-	SystemDisksMutex.Lock()
-	if SystemDisks == nil || len(SystemDisks) == 0 {
+	if SystemDisks.Size() == 0 {
 		disks, err := ch.GetDisks(ctx, false)
 		if err != nil {
 			return nil, err
 		}
-		SystemDisks = make(map[string]clickhouse.Disk, len(disks))
 		for _, d := range disks {
-			SystemDisks[d.Name] = d
+			SystemDisks.Store(d.Name, d)
 		}
 	}
-	SystemDisksMutex.Unlock()
-	disk, exists := SystemDisks[diskName]
+	disk, exists := SystemDisks.Load(diskName)
 	if !exists {
 		return nil, fmt.Errorf("%s is not presnet in object_disk.SystemDisks", diskName)
 	}
@@ -533,7 +525,7 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 }
 
 func ConvertLocalPathToRemote(diskName, localPath string) (string, error) {
-	connection, exists := DisksConnections[diskName]
+	connection, exists := DisksConnections.Load(diskName)
 	if !exists {
 		return "", fmt.Errorf("%s is not present in object_disk.DisksConnections", diskName)
 	}
@@ -548,7 +540,7 @@ func ConvertLocalPathToRemote(diskName, localPath string) (string, error) {
 }
 
 func GetFileReader(ctx context.Context, diskName, remotePath string) (io.ReadCloser, error) {
-	connection, exists := DisksConnections[diskName]
+	connection, exists := DisksConnections.Load(diskName)
 	if !exists {
 		return nil, fmt.Errorf("%s not exits in object_disk.DisksConnections", diskName)
 	}
@@ -579,7 +571,7 @@ func ReadFileContent(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config
 }
 
 func PutFile(ctx context.Context, diskName, remotePath string, content []byte) error {
-	connection, exists := DisksConnections[diskName]
+	connection, exists := DisksConnections.Load(diskName)
 	if !exists {
 		return fmt.Errorf("%s not exits in object_disk.DisksConnections", diskName)
 	}
@@ -602,7 +594,7 @@ func WriteFileContent(ctx context.Context, ch *clickhouse.ClickHouse, cfg *confi
 }
 
 func DeleteFile(ctx context.Context, diskName, remotePath string) error {
-	connection, exists := DisksConnections[diskName]
+	connection, exists := DisksConnections.Load(diskName)
 	if !exists {
 		return fmt.Errorf("%s not exits in object_disk.DisksConnections", diskName)
 	}
@@ -644,7 +636,7 @@ func CopyObject(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Conf
 	if err := InitCredentialsAndConnections(ctx, ch, cfg, diskName); err != nil {
 		return 0, err
 	}
-	connection := DisksConnections[diskName]
+	connection, _ := DisksConnections.Load(diskName)
 	remoteStorage := connection.GetRemoteStorage()
 	return remoteStorage.CopyObject(ctx, srcSize, srcBucket, srcKey, dstPath)
 }

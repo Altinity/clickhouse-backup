@@ -34,6 +34,7 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/pkg/sftp v1.13.6
 	github.com/prometheus/client_golang v1.17.0
+	github.com/puzpuzpuz/xsync v1.5.2
 	github.com/stretchr/testify v1.8.4
 	github.com/tencentyun/cos-go-sdk-v5 v0.7.45
 	github.com/urfave/cli v1.22.14
