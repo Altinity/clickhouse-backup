@@ -3,7 +3,7 @@ package status
 import (
 	"context"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/pkg/common"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	apexLog "github.com/apex/log"
 	"strings"
 	"sync"

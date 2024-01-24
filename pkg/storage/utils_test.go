@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Altinity/clickhouse-backup/pkg/metadata"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/stretchr/testify/assert"
 )
 

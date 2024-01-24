@@ -62,10 +62,10 @@ docker run -u $(id -u clickhouse) --rm -it --network host -v "/var/lib/clickhous
    altinity/clickhouse-backup --help
 ```
 
-Build from the sources:
+Build from the sources (required go 1.21+):
 
 ```shell
-GO111MODULE=on go get github.com/Altinity/clickhouse-backup/cmd/clickhouse-backup
+go install github.com/Altinity/clickhouse-backup/cmd/clickhouse-backup@latest
 ```
 
 ## Brief description how clickhouse-backup works

@@ -1,4 +1,4 @@
-module github.com/Altinity/clickhouse-backup
+module github.com/Altinity/clickhouse-backup/v2
 
 require (
 	cloud.google.com/go/storage v1.35.1

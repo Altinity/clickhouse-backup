@@ -15,7 +15,7 @@ import (
 
 	"google.golang.org/api/iterator"
 
-	"github.com/Altinity/clickhouse-backup/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	pool "github.com/jolestar/go-commons-pool/v2"
 	"google.golang.org/api/option/internaloption"
 

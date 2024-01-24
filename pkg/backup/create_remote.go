@@ -3,7 +3,7 @@ package backup
 import (
 	"context"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/pkg/status"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 )
 
 func (b *Backuper) CreateToRemote(backupName, diffFrom, diffFromRemote, tablePattern string, partitions []string, schemaOnly, backupRBAC, rbacOnly, backupConfigs, configsOnly, skipCheckPartsColumns, resume bool, version string, commandId int) error {

@@ -2,7 +2,7 @@ package filesystemhelper
 
 import (
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/pkg/utils"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"net/url"
 	"os"
 	"path"
@@ -12,9 +12,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
-	"github.com/Altinity/clickhouse-backup/pkg/common"
-	"github.com/Altinity/clickhouse-backup/pkg/metadata"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	apexLog "github.com/apex/log"
 )
 

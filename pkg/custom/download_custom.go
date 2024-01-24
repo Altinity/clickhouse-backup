@@ -3,8 +3,8 @@ package custom
 import (
 	"context"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/pkg/config"
-	"github.com/Altinity/clickhouse-backup/pkg/utils"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"github.com/apex/log"
 	"github.com/eapache/go-resiliency/retrier"
 	"time"

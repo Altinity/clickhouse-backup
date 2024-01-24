@@ -3,9 +3,9 @@ package backup
 import (
 	"context"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/pkg/config"
-	"github.com/Altinity/clickhouse-backup/pkg/server/metrics"
-	"github.com/Altinity/clickhouse-backup/pkg/status"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/server/metrics"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 	apexLog "github.com/apex/log"
 	"github.com/urfave/cli"
 	"regexp"
