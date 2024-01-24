@@ -11,7 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -167,18 +167,21 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 			return err
 		}
 	}
-	isObjectDiskPresent := false
+	isObjectDiskContainsTables := false
 	for _, disk := range disks {
 		if disk.Type == "s3" || disk.Type == "azure_blob_storage" {
 			for _, table := range tables {
-				if table.DataPath == disk.Path || slices.Contains(table.DataPaths, disk.Path) {
-					isObjectDiskPresent = true
-					break
+				sort.Slice(table.DataPaths, func(i, j int) bool { return len(table.DataPaths[i]) > len(table.DataPaths[j]) })
+				for _, tableDataPath := range table.DataPaths {
+					if strings.HasPrefix(tableDataPath, disk.Path) {
+						isObjectDiskContainsTables = true
+						break
+					}
 				}
 			}
 		}
 	}
-	if isObjectDiskPresent {
+	if isObjectDiskContainsTables {
 		if err = config.ValidateObjectDiskConfig(b.cfg); err != nil {
 			return err
 		}
