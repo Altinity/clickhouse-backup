@@ -213,8 +213,8 @@ func (b *Backuper) executeShellCommandWithTimeout(ctx context.Context, cmd strin
 	} else {
 		out, err = exec.CommandContext(shellCtx, shellCmd[0]).CombinedOutput()
 	}
+	log.Debug(string(out))
 	if err != nil {
-		log.Debug(string(out))
 		log.Warnf("restart exec: %s, error: %v", cmd, err)
 	}
 	return nil

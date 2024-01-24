@@ -21,7 +21,8 @@ clickhouse:
   skip_verify: true
   sync_replicated_tables: true
   timeout: 5s
-  restart_command: "sql:SYSTEM RELOAD USERS; sql:SYSTEM RELOAD CONFIG; sql:SYSTEM SHUTDOWN"
+  restart_command: "sql:SYSTEM RELOAD USERS; sql:SYSTEM RELOAD CONFIG; exec:ls -la /var/lib/clickhouse/access; sql:SYSTEM SHUTDOWN"
+  # restart_command: bash -c 'echo "FAKE RESTART"'
   backup_mutations: true
 s3:
   access_key: access-key
