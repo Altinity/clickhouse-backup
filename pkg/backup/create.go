@@ -125,6 +125,16 @@ func (b *Backuper) CreateBackup(backupName, tablePattern string, partitions []st
 		err = b.createBackupLocal(ctx, backupName, partitionsIdMap, tables, doBackupData, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, version, disks, diskMap, diskTypes, allDatabases, allFunctions, log, startBackup)
 	}
 	if err != nil {
+		// delete local backup if can't create
+		if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks); removeBackupErr != nil {
+			log.Errorf("creating failed -> b.RemoveBackupLocal error: %v", removeBackupErr)
+		}
+		// fix corner cases after https://github.com/Altinity/clickhouse-backup/issues/379
+		if cleanShadowErr := b.Clean(ctx); cleanShadowErr != nil {
+			log.Errorf("creating failed -> b.Clean error: %v", cleanShadowErr)
+			log.Error(cleanShadowErr.Error())
+		}
+
 		return err
 	}
 
@@ -250,14 +260,6 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 		})
 	}
 	if wgWaitErr := createBackupWorkingGroup.Wait(); wgWaitErr != nil {
-		if removeBackupErr := b.RemoveBackupLocal(createCtx, backupName, disks); removeBackupErr != nil {
-			log.Errorf("b.RemoveBackupLocal error: %v", removeBackupErr)
-		}
-		// fix corner cases after https://github.com/Altinity/clickhouse-backup/issues/379
-		if cleanShadowErr := b.Clean(ctx); cleanShadowErr != nil {
-			log.Errorf("b.Clean error: %v", cleanShadowErr)
-			log.Error(cleanShadowErr.Error())
-		}
 		return fmt.Errorf("one of createBackupLocal go-routine return error: %v", wgWaitErr)
 	}
 	backupRBACSize, backupConfigSize := uint64(0), uint64(0)
@@ -390,9 +392,6 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePa
 			}
 			disksToPartsMap, err := b.getPartsFromBackupDisk(backupPath, table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}])
 			if err != nil {
-				if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks); removeBackupErr != nil {
-					log.Error(removeBackupErr.Error())
-				}
 				return err
 			}
 			metadataSize, err := b.createTableMetadata(path.Join(backupPath, "metadata"), metadata.TableMetadata{
@@ -405,9 +404,6 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePa
 				MetadataOnly: schemaOnly,
 			}, disks)
 			if err != nil {
-				if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks); removeBackupErr != nil {
-					log.Error(removeBackupErr.Error())
-				}
 				return err
 			}
 			backupMetadataSize += metadataSize
@@ -739,11 +735,9 @@ func (b *Backuper) createBackupMetadata(ctx context.Context, backupMetaFile, bac
 		}
 		content, err := json.MarshalIndent(&backupMetadata, "", "\t")
 		if err != nil {
-			_ = b.RemoveBackupLocal(ctx, backupName, disks)
 			return fmt.Errorf("can't marshal backup metafile json: %v", err)
 		}
 		if err := os.WriteFile(backupMetaFile, content, 0640); err != nil {
-			_ = b.RemoveBackupLocal(ctx, backupName, disks)
 			return err
 		}
 		if err := filesystemhelper.Chown(backupMetaFile, b.ch, disks, false); err != nil {

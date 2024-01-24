@@ -1218,6 +1218,7 @@ func TestCheckSystemPartsColumns(t *testing.T) {
 	}
 	ch.queryWithNoError(r, "INSERT INTO "+t.Name()+".test_system_parts_columns SELECT today() - INTERVAL number DAY, number FROM numbers(10)")
 	r.Error(dockerExec("clickhouse-backup", "clickhouse-backup", "create", "test_system_parts_columns"))
+	r.Error(dockerExec("clickhouse-backup", "ls", "-lah", "/var/lib/clickhouse/backup/test_system_parts_columns"))
 	r.Error(dockerExec("clickhouse-backup", "clickhouse-backup", "delete", "local", "test_system_parts_columns"))
 
 	r.NoError(ch.chbackend.DropTable(clickhouse.Table{Database: t.Name(), Name: "test_system_parts_columns"}, createSQL, "", false, version, ""))
