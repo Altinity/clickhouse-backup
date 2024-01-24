@@ -61,8 +61,8 @@ func (ch *ClickHouse) Connect() error {
 			"send_timeout":    int(timeout.Seconds()),
 		},
 		MaxOpenConns:    ch.Config.MaxConnections,
-		ConnMaxLifetime: timeout,
-		MaxIdleConns:    0,
+		ConnMaxLifetime: 0, // don't change it, it related to SYSTEM SHUTDOWN behavior for properly rebuild RBAC lists on 20.4-22.3
+		MaxIdleConns:    1,
 		DialTimeout:     timeout,
 		ReadTimeout:     timeout,
 	}

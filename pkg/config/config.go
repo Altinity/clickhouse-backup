@@ -534,6 +534,7 @@ func DefaultConfig() *Config {
 			BackupMutations:                  true,
 			RestoreAsAttach:                  false,
 			CheckPartsColumns:                true,
+			MaxConnections:                   int(downloadConcurrency),
 		},
 		AzureBlob: AzureBlobConfig{
 			EndpointSchema:    "https",
