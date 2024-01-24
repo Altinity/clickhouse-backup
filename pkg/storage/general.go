@@ -760,7 +760,7 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			cfg.General.DisableProgressBar,
 		}, nil
 	default:
-		return nil, fmt.Errorf("storage type '%s' is not supported", cfg.General.RemoteStorage)
+		return nil, fmt.Errorf("NewBackupDestination error: storage type '%s' is not supported", cfg.General.RemoteStorage)
 	}
 }
 

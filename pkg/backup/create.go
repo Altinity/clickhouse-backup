@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -169,8 +170,12 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 	isObjectDiskPresent := false
 	for _, disk := range disks {
 		if disk.Type == "s3" || disk.Type == "azure_blob_storage" {
-			isObjectDiskPresent = true
-			break
+			for _, table := range tables {
+				if table.DataPath == disk.Path || slices.Contains(table.DataPaths, disk.Path) {
+					isObjectDiskPresent = true
+					break
+				}
+			}
 		}
 	}
 	if isObjectDiskPresent {
