@@ -2,7 +2,7 @@
 IMPROVEMENTS
 - refactoring of `create` command to allow parallel execution of `FREEZE` and `UNFREEZE` and table level parallelization `object_disk.CopyObject`
 - add `CLICKHOUSE_MAX_CONNECTIONS` config parameter to allow parallel execution `FREEZE` / `UNFREEZE`
-- change go.mod to allow `go install github.com/Altinity/clickhouse-backup@latest`
+- change go.mod to allow `GO111MODULE=on go install github.com/Altinity/clickhouse-backup/v2/cmd/clickhouse-backup@latest`
 
 # v2.4.19
 BUG FIXES
