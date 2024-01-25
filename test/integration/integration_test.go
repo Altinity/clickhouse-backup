@@ -848,6 +848,10 @@ func testAPIDeleteLocalDownloadRestore(r *require.Assertions) {
 	log.Debug(out)
 	r.NoError(err)
 	r.NotContains(out, "another operation is currently running")
+	r.NotContains(out, "error")
+
+	out, err = dockerExecOut("clickhouse-backup", "curl", "-sfL", "http://localhost:7171/backup/actions?filter=download")
+	r.NoError(err)
 	r.NotContains(out, "\"status\":\"error\"")
 
 	out, err = dockerExecOut("clickhouse-backup", "curl", "http://localhost:7171/metrics")
@@ -895,8 +899,13 @@ func testAPIBackupUpload(r *require.Assertions) {
 	)
 	log.Debug(out)
 	r.NoError(err)
-	r.NotContains(out, "\"status\":\"error\"")
+	r.NotContains(out, "error")
 	r.NotContains(out, "another operation is currently running")
+
+	out, err = dockerExecOut("clickhouse-backup", "curl", "-sfL", "http://localhost:7171/backup/actions?filter=upload")
+	r.NoError(err)
+	r.NotContains(out, "error")
+
 	out, err = dockerExecOut("clickhouse-backup", "curl", "http://localhost:7171/metrics")
 	r.NoError(err)
 	r.Contains(out, "clickhouse_backup_last_upload_status 1")

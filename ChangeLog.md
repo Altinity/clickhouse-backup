@@ -1,3 +1,7 @@
+# v2.4.21
+BUG FIXES
+- refactoring execution UpdateBackupMetrics, to avoid context canceled error, fix [814](https://github.com/Altinity/clickhouse-backup/issues/814)
+
 # v2.4.20
 IMPROVEMENTS
 - refactoring of `create` command to allow parallel execution of `FREEZE` and `UNFREEZE` and table level parallelization `object_disk.CopyObject`

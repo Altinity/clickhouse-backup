@@ -116,8 +116,8 @@ func Run(cliCtx *cli.Context, cliApp *cli.App, configPath string, clickhouseBack
 	}
 
 	go func() {
-		if err := api.UpdateBackupMetrics(context.Background(), false); err != nil {
-			log.Errorf("UpdateBackupMetrics return error: %v", err)
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
+			log.Errorf("UpdateBackupMetrics return error: %v", metricsErr)
 		}
 	}()
 
@@ -390,8 +390,8 @@ func (api *APIServer) actionsDeleteHandler(row status.ActionRow, args []string, 
 	}
 	api.log.Info("DELETED")
 	go func() {
-		if err := api.UpdateBackupMetrics(context.Background(), args[1] == "local"); err != nil {
-			api.log.Errorf("UpdateBackupMetrics return error: %v", err)
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), args[1] == "local"); metricsErr != nil {
+			api.log.Errorf("UpdateBackupMetrics return error: %v", metricsErr)
 		}
 	}()
 	actionsResults = append(actionsResults, actionsResultsRow{
@@ -417,7 +417,7 @@ func (api *APIServer) actionsAsyncCommandsHandler(command string, args []string,
 			return
 		}
 		go func() {
-			if err := api.UpdateBackupMetrics(context.Background(), command == "create" || command == "restore"); err != nil {
+			if err := api.UpdateBackupMetrics(context.Background(), command == "create" || strings.HasPrefix(command, "restore") || command == "download"); err != nil {
 				api.log.Errorf("UpdateBackupMetrics return error: %v", err)
 			}
 		}()
@@ -452,7 +452,7 @@ func (api *APIServer) actionsCleanRemoteBrokenHandler(w http.ResponseWriter, row
 		api.log.Warn(ErrAPILocked.Error())
 		return actionsResults, ErrAPILocked
 	}
-	commandId, ctx := status.Current.Start(command)
+	commandId, _ := status.Current.Start(command)
 	cfg, err := api.ReloadConfig(w, "clean_remote_broken")
 	if err != nil {
 		status.Current.Stop(commandId, err)
@@ -466,10 +466,11 @@ func (api *APIServer) actionsCleanRemoteBrokenHandler(w http.ResponseWriter, row
 		return actionsResults, err
 	}
 	api.log.Info("CLEANED")
-	metricsErr := api.UpdateBackupMetrics(ctx, false)
-	if metricsErr != nil {
-		api.log.Errorf("UpdateBackupMetrics return error: %v", metricsErr)
-	}
+	go func() {
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
+			api.log.Errorf("UpdateBackupMetrics return error: %v", metricsErr)
+		}
+	}()
 	status.Current.Stop(commandId, nil)
 	actionsResults = append(actionsResults, actionsResultsRow{
 		Status:    "success",
@@ -857,7 +858,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	commandId, ctx := status.Current.Start(fullCommand)
+	commandId, _ := status.Current.Start(fullCommand)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("create", 0, func() error {
 			b := backup.NewBackuper(cfg)
@@ -869,12 +870,12 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 			api.errorCallback(context.Background(), err, callback)
 			return
 		}
-		if err := api.UpdateBackupMetrics(ctx, true); err != nil {
-			api.log.Errorf("UpdateBackupMetrics return error: %v", err)
-			status.Current.Stop(commandId, err)
-			api.errorCallback(context.Background(), err, callback)
-			return
-		}
+		go func() {
+			if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
+				api.log.Errorf("UpdateBackupMetrics return error: %v", metricsErr)
+			}
+		}()
+
 		status.Current.Stop(commandId, nil)
 		api.successCallback(context.Background(), callback)
 	}()
@@ -1011,7 +1012,7 @@ func (api *APIServer) httpCleanRemoteBrokenHandler(w http.ResponseWriter, _ *htt
 	if err != nil {
 		return
 	}
-	commandId, ctx := status.Current.Start("clean_remote_broken")
+	commandId, _ := status.Current.Start("clean_remote_broken")
 	defer status.Current.Stop(commandId, err)
 
 	b := backup.NewBackuper(cfg)
@@ -1021,13 +1022,11 @@ func (api *APIServer) httpCleanRemoteBrokenHandler(w http.ResponseWriter, _ *htt
 		api.writeError(w, http.StatusInternalServerError, "clean_remote_broken", err)
 		return
 	}
-
-	err = api.UpdateBackupMetrics(ctx, false)
-	if err != nil {
-		api.log.Errorf("Clean remote broken error: %v", err)
-		api.writeError(w, http.StatusInternalServerError, "clean_remote_broken", err)
-		return
-	}
+	go func() {
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
+			api.log.Errorf("UpdateBackupMetrics return error: %v", metricsErr)
+		}
+	}()
 
 	api.sendJSONEachRow(w, http.StatusOK, struct {
 		Status    string `json:"status"`
@@ -1094,8 +1093,8 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	commandId, ctx := status.Current.Start(fullCommand)
 	go func() {
+		commandId, ctx := status.Current.Start(fullCommand)
 		err, _ := api.metrics.ExecuteWithMetrics("upload", 0, func() error {
 			b := backup.NewBackuper(cfg)
 			return b.Upload(name, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, resume, commandId)
@@ -1106,12 +1105,11 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 			api.errorCallback(context.Background(), err, callback)
 			return
 		}
-		if err := api.UpdateBackupMetrics(ctx, false); err != nil {
-			api.log.Errorf("UpdateBackupMetrics return error: %v", err)
-			status.Current.Stop(commandId, err)
-			api.errorCallback(context.Background(), err, callback)
-			return
-		}
+		go func() {
+			if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
+				api.log.Errorf("UpdateBackupMetrics return error: %v", metricsErr)
+			}
+		}()
 		status.Current.Stop(commandId, nil)
 		api.successCallback(context.Background(), callback)
 	}()
@@ -1289,8 +1287,8 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	commandId, ctx := status.Current.Start(fullCommand)
 	go func() {
+		commandId, _ := status.Current.Start(fullCommand)
 		err, _ := api.metrics.ExecuteWithMetrics("download", 0, func() error {
 			b := backup.NewBackuper(cfg)
 			return b.Download(name, tablePattern, partitionsToBackup, schemaOnly, resume, commandId)
@@ -1301,12 +1299,11 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 			api.errorCallback(context.Background(), err, callback)
 			return
 		}
-		if err := api.UpdateBackupMetrics(ctx, true); err != nil {
-			api.log.Errorf("UpdateBackupMetrics return error: %v", err)
-			status.Current.Stop(commandId, err)
-			api.errorCallback(context.Background(), err, callback)
-			return
-		}
+		go func() {
+			if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
+				api.log.Errorf("UpdateBackupMetrics return error: %v", metricsErr)
+			}
+		}()
 		status.Current.Stop(commandId, nil)
 		api.successCallback(context.Background(), callback)
 	}()
@@ -1351,8 +1348,8 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	go func() {
-		if err := api.UpdateBackupMetrics(context.Background(), vars["where"] == "local"); err != nil {
-			api.log.Errorf("UpdateBackupMetrics return error: %v", err)
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), vars["where"] == "local"); metricsErr != nil {
+			api.log.Errorf("UpdateBackupMetrics return error: %v", metricsErr)
 		}
 	}()
 	api.sendJSONEachRow(w, http.StatusOK, struct {
