@@ -103,15 +103,14 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 
 	if gcs.Config.ForceHttp {
 		customTransport := &http.Transport{
-			WriteBufferSize: 8388608,
+			WriteBufferSize: 128 * 1024,
 			Proxy:           http.ProxyFromEnvironment,
 			DialContext: (&net.Dialer{
 				Timeout:   30 * time.Second,
 				KeepAlive: 30 * time.Second,
 			}).DialContext,
-			ForceAttemptHTTP2:     false,
-			MaxIdleConns:          100,
-			MaxIdleConnsPerHost:   100,
+			MaxIdleConns:          1,
+			MaxIdleConnsPerHost:   1,
 			IdleConnTimeout:       90 * time.Second,
 			TLSHandshakeTimeout:   10 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
@@ -130,9 +129,9 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 		}
 		clientOptions = append(clientOptions, internaloption.WithDefaultEndpoint(endpoint))
 
-		customRountripper := &rewriteTransport{base: customTransport}
+		customRoundTripper := &rewriteTransport{base: customTransport}
 		gcpTransport, _, err := googleHTTPTransport.NewClient(ctx, clientOptions...)
-		transport, err := googleHTTPTransport.NewTransport(ctx, customRountripper, clientOptions...)
+		transport, err := googleHTTPTransport.NewTransport(ctx, customRoundTripper, clientOptions...)
 		gcpTransport.Transport = transport
 		if err != nil {
 			return fmt.Errorf("failed to create GCP transport: %v", err)

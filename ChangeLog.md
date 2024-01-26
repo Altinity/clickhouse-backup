@@ -1,3 +1,7 @@
+# v2.4.22
+BUG FIXES
+- change `S3_MAX_PARTS_COUNT` default value from `256` to `2000` to fix memory usage for s3 which increased for 2.4.16+
+
 # v2.4.21
 BUG FIXES
 - refactoring execution UpdateBackupMetrics, to avoid context canceled error, fix [814](https://github.com/Altinity/clickhouse-backup/issues/814)
@@ -24,7 +28,7 @@ BUG FIXES
 # v2.4.16
 BUG FIXES
 - increase `AZBLOB_TIMEOUT` to 4h, instead 15m to allow download long size data parts 
-- change `S3_MAX_PARTS_COUNT` from `5000` to `1000` and minimal `S3_PART_SIZE` from 5Mb to 25Mb from by default to improve speedup S3 uploading / downloading 
+- change `S3_MAX_PARTS_COUNT` default from `5000` to `256` and minimal `S3_PART_SIZE` from 5Mb to 25Mb from by default to improve speedup S3 uploading / downloading 
  
 # v2.4.15
 BUG FIXES

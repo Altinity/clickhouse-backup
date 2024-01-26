@@ -31,7 +31,7 @@ import (
 
 const (
 	// BufferSize - size of ring buffer between stream handlers
-	BufferSize = 512 * 1024
+	BufferSize = 128 * 1024
 )
 
 type readerWrapperForContext func(p []byte) (n int, err error)
@@ -635,7 +635,7 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 		if bufferSize <= 0 {
 			bufferSize = int(cfg.General.MaxFileSize) / cfg.AzureBlob.MaxPartsCount
 			if int(cfg.General.MaxFileSize)%cfg.AzureBlob.MaxPartsCount > 0 {
-				bufferSize++
+				bufferSize += int(cfg.General.MaxFileSize) % cfg.AzureBlob.MaxPartsCount
 			}
 			if bufferSize < 2*1024*1024 {
 				bufferSize = 2 * 1024 * 1024
@@ -669,7 +669,7 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 		s3Storage := &S3{
 			Config:      &cfg.S3,
 			Concurrency: cfg.S3.Concurrency,
-			BufferSize:  512 * 1024,
+			BufferSize:  128 * 1024,
 			PartSize:    partSize,
 			Log:         log.WithField("logger", "S3"),
 		}
