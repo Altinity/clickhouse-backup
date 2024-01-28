@@ -19,11 +19,11 @@ jobs:
           - "1.21"
     steps:
       - name: Checkout project
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup golang
         id: setup-go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
         with:
           go-version: '^${{ matrix.golang-version }}'
 
@@ -34,7 +34,7 @@ jobs:
 
       - name: Cache golang
         id: cache-golang
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/go/pkg/mod
@@ -76,7 +76,7 @@ jobs:
           fi
           echo "GCS_TESTS=$(if [ -z "${{ secrets.VAULT_PASSWORD }}" ]; then echo "false"; else echo "true"; fi)" >> $GITHUB_OUTPUT
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: build-gcp-credentials
           path: |
@@ -86,7 +86,7 @@ jobs:
         if: |
           steps.secrets.outputs.GCS_TESTS == 'true'
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: build-artifacts
           path: |
@@ -97,7 +97,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: build-test-artifacts
           path: |
@@ -121,9 +121,9 @@ jobs:
           - '23.8'
     steps:
       - name: Checkout project
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: build-test-artifacts
           path: ./clickhouse-backup/
@@ -135,7 +135,7 @@ jobs:
           python3 -m venv ~/venv/qa
 
       - name: Cache python
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         id: cache-python
         with:
           path: ~/venv/qa
@@ -225,29 +225,29 @@ jobs:
           - '23.8'
     steps:
       - name: Checkout project
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup golang
         id: setup-go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
         with:
           go-version: '^${{ matrix.golang-version }}'
 
       - name: Cache golang
         id: cache-golang
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
           key: clickhouse-backup-golang-${{ matrix.golang-version }}-${{ hashFiles('go.mod', '.github/workflows/*.yaml') }}
 
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: build-test-artifacts
           path: ./clickhouse-backup/
 
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: build-gcp-credentials
           path: ./test/integration/
@@ -331,9 +331,9 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout project
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: build-artifacts
           path: ./build/linux/
@@ -346,9 +346,9 @@ jobs:
           echo "docker_tag=${DOCKER_TAG:-dev}" >> $GITHUB_OUTPUT
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
+        uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
       - name: Building docker image
         env:
@@ -382,7 +382,7 @@ jobs:
           failOnError: false
 
       - name: delete build-gcp-credentials
-        uses: geekyeggo/delete-artifact@v2
+        uses: geekyeggo/delete-artifact@v4
         with:
           name: build-gcp-credentials
           failOnError: false
