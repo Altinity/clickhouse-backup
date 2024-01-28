@@ -1,3 +1,7 @@
+# v2.4.23
+IMPROVEMENTS
+- refactoring of `restore` command to allow parallel execution of `ALTER TABLE ... ATTACH PART` and improve parallelization of CopyObject during restore.
+
 # v2.4.22
 BUG FIXES
 - change `S3_MAX_PARTS_COUNT` default value from `256` to `2000` to fix memory usage for s3 which increased for 2.4.16+
