@@ -799,8 +799,7 @@ func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName st
 	if err := b.downloadObjectDiskParts(ctx, backupName, table, diskMap, diskTypes); err != nil {
 		return fmt.Errorf("can't restore object_disk server-side copy data parts '%s.%s': %v", table.Database, table.Table, err)
 	}
-
-	if err := b.ch.AttachTable(ctx, table); err != nil {
+	if err := b.ch.AttachTable(ctx, table, dstTable); err != nil {
 		return fmt.Errorf("can't attach table '%s.%s': %v", table.Database, table.Table, err)
 	}
 	return nil
@@ -814,7 +813,7 @@ func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName str
 	if err := b.downloadObjectDiskParts(ctx, backupName, table, diskMap, diskTypes); err != nil {
 		return fmt.Errorf("can't restore object_disk server-side copy data parts '%s.%s': %v", table.Database, table.Table, err)
 	}
-	if err := b.ch.AttachDataParts(table, disks); err != nil {
+	if err := b.ch.AttachDataParts(table, dstTable, disks); err != nil {
 		return fmt.Errorf("can't attach data parts for table '%s.%s': %v", table.Database, table.Table, err)
 	}
 	return nil

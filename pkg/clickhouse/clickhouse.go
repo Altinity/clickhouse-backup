@@ -703,7 +703,10 @@ func (ch *ClickHouse) FreezeTable(ctx context.Context, table *Table, name string
 }
 
 // AttachDataParts - execute ALTER TABLE ... ATTACH PART command for specific table
-func (ch *ClickHouse) AttachDataParts(table metadata.TableMetadata, disks []Disk) error {
+func (ch *ClickHouse) AttachDataParts(table metadata.TableMetadata, dstTable Table, disks []Disk) error {
+	if dstTable.Database != "" && dstTable.Database != table.Database {
+		table.Database = dstTable.Database
+	}
 	canContinue, err := ch.CheckReplicationInProgress(table)
 	if err != nil {
 		return err
@@ -729,10 +732,13 @@ var replicatedMergeTreeRE = regexp.MustCompile(`Replicated[\w_]*MergeTree\s*\(((
 var uuidRE = regexp.MustCompile(`UUID '([^']+)'`)
 
 // AttachTable - execute ATTACH TABLE  command for specific table
-func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetadata) error {
+func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetadata, dstTable Table) error {
 	if len(table.Parts) == 0 {
 		apexLog.Warnf("no data parts for restore for `%s`.`%s`", table.Database, table.Table)
 		return nil
+	}
+	if dstTable.Database != "" && dstTable.Database != table.Database {
+		table.Database = dstTable.Database
 	}
 	canContinue, err := ch.CheckReplicationInProgress(table)
 	if err != nil {
