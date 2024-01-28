@@ -95,30 +95,30 @@ jobs:
           awk '/^# / {s++} s == 1 {print}' ChangeLog.md > /tmp/release_notes.md
           echo "path=/tmp/release_notes.md" >> $GITHUB_OUTPUT
 
+      # @todo wait when resolve https://github.com/ncipollo/release-action/issues/406
       - name: Create release
         id: create_release
-        uses: ncipollo/release-action@v1
+        uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          allowUpdates: true
-          artifactErrorsFailBuild: true
-          tag: v${{ steps.docker_tag.outputs.docker_tag }}
+          tag_name: v${{ steps.docker_tag.outputs.docker_tag }}
           name: ${{ steps.docker_tag.outputs.docker_tag }}
-          bodyFile: ${{ steps.release_notes.outputs.path }}
+          body_path: ${{ steps.release_notes.outputs.path }}
           draft: true
-          artifacts: |
-            ${{ steps.make_packages.outputs.rpm_amd64 }},
-            ${{ steps.make_packages.outputs.rpm_arm64 }},
-            ${{ steps.make_packages.outputs.deb_amd64 }},
-            ${{ steps.make_packages.outputs.deb_arm64 }},
-            ${{ steps.make_packages.outputs.tgz_linux_amd64 }},
-            ${{ steps.make_packages.outputs.tgz_linux_arm64 }},
-            ${{ steps.make_packages.outputs.tgz_darwin_amd64 }},
-            ${{ steps.make_packages.outputs.tgz_darwin_arm64 }},
-            ${{ steps.make_packages.outputs.tgz_linux_amd64_fips }},
-            ${{ steps.make_packages.outputs.tgz_linux_arm64_fips }},
-#          ${{ steps.make_packages.outputs.tgz_darwin_amd64_fips }},
-#          ${{ steps.make_packages.outputs.tgz_darwin_arm64_fips }},
+          fail_on_unmatched_files: true
+          files: |
+            ${{ steps.make_packages.outputs.rpm_amd64 }}
+            ${{ steps.make_packages.outputs.rpm_arm64 }}
+            ${{ steps.make_packages.outputs.deb_amd64 }}
+            ${{ steps.make_packages.outputs.deb_arm64 }}
+            ${{ steps.make_packages.outputs.tgz_linux_amd64 }}
+            ${{ steps.make_packages.outputs.tgz_linux_arm64 }}
+            ${{ steps.make_packages.outputs.tgz_darwin_amd64 }}
+            ${{ steps.make_packages.outputs.tgz_darwin_arm64 }}
+            ${{ steps.make_packages.outputs.tgz_linux_amd64_fips }}
+            ${{ steps.make_packages.outputs.tgz_linux_arm64_fips }}
+      #          ${{ steps.make_packages.outputs.tgz_darwin_amd64_fips }}
+      #          ${{ steps.make_packages.outputs.tgz_darwin_arm64_fips }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
