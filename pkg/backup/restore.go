@@ -779,7 +779,7 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ta
 			// https://github.com/Altinity/clickhouse-backup/issues/529
 			for _, mutation := range table.Mutations {
 				if err := b.ch.ApplyMutation(restoreCtx, tablesForRestore[idx], mutation); err != nil {
-					log.Warnf("can't apply mutation %s for table `%s`.`%s`	: %v", mutation.Command, tablesForRestore[idx].Database, tablesForRestore[i].Table, err)
+					log.Warnf("can't apply mutation %s for table `%s`.`%s`	: %v", mutation.Command, tablesForRestore[idx].Database, tablesForRestore[idx].Table, err)
 				}
 			}
 			log.Info("done")
