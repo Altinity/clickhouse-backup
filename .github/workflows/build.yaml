@@ -376,7 +376,7 @@ jobs:
     if: always()
     steps:
       - name: delete build-artifacts
-        uses: geekyeggo/delete-artifact@v2
+        uses: geekyeggo/delete-artifact@v4
         with:
           name: build-artifacts
           failOnError: false
