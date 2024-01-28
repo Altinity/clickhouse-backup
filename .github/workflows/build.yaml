@@ -32,19 +32,19 @@ jobs:
         run: |
           sudo apt-get install -y musl-tools musl-dev
 
-      - name: Cache golang
-        id: cache-golang
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: clickhouse-backup-golang-${{ matrix.golang-version }}-${{ hashFiles('go.mod', '.github/workflows/*.yaml') }}
+#      - name: Cache golang
+#        id: cache-golang
+#        uses: actions/cache@v4
+#        with:
+#          path: |
+#            ~/go/pkg/mod
+#            ~/.cache/go-build
+#          key: clickhouse-backup-golang-${{ matrix.golang-version }}-${{ hashFiles('go.mod', '.github/workflows/*.yaml') }}
 
       - name: Install golang dependencies
         run: go mod download -x
-        if: |
-          steps.cache-golang.outputs.cache-hit != 'true'
+#        if: |
+#          steps.cache-golang.outputs.cache-hit != 'true'
 
       - name: Build clickhouse-backup binary
         id: make-race
@@ -233,14 +233,14 @@ jobs:
         with:
           go-version: '^${{ matrix.golang-version }}'
 
-      - name: Cache golang
-        id: cache-golang
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: clickhouse-backup-golang-${{ matrix.golang-version }}-${{ hashFiles('go.mod', '.github/workflows/*.yaml') }}
+#      - name: Cache golang
+#        id: cache-golang
+#        uses: actions/cache@v4
+#        with:
+#          path: |
+#            ~/go/pkg/mod
+#            ~/.cache/go-build
+#          key: clickhouse-backup-golang-${{ matrix.golang-version }}-${{ hashFiles('go.mod', '.github/workflows/*.yaml') }}
 
       - uses: actions/download-artifact@v4
         with:

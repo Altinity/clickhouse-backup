@@ -30,19 +30,19 @@ jobs:
           sudo apt-get install --no-install-recommends -y make
           sudo gem install --no-document fpm
 
-      - name: Cache golang
-        id: cache-golang
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: clickhouse-backup-golang-${{ matrix.golang-version }}-${{ hashFiles('go.mod', '.github/workflows/*.yaml') }}
+#      - name: Cache golang
+#        id: cache-golang
+#        uses: actions/cache@v4
+#        with:
+#          path: |
+#            ~/go/pkg/mod
+#            ~/.cache/go-build
+#          key: clickhouse-backup-golang-${{ matrix.golang-version }}-${{ hashFiles('go.mod', '.github/workflows/*.yaml') }}
 
       - name: Install golang dependencies
         run: go mod download -x
-        if: |
-          steps.cache-golang.outputs.cache-hit != 'true'
+#        if: |
+#          steps.cache-golang.outputs.cache-hit != 'true'
 
       - name: Extract DOCKER_TAG version
         id: docker_tag
