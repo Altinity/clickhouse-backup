@@ -32,9 +32,14 @@ func TestCheckTypesConsistency(t *testing.T) {
 			Name: "Consistent data types",
 			PartColumnsData: []ColumnDataTypes{
 				{
-					Column: "col2",
+					Column: "agg_col",
 					Types:  []string{"AggregateFunction(1, sumMap, Array(UInt16), Array(UInt64))", "AggregateFunction(sumMap, Array(UInt16), Array(UInt64))"},
 				},
+				{
+					Column: "simple_agg_col",
+					Types:  []string{"SimpleAggregateFunction(1, sum, UInt16)", "SimpleAggregateFunction(sum, UInt16)"},
+				},
+
 				{
 					Column: "col3",
 					Types:  []string{"Nullable(Int32)", "Int32"},
@@ -68,8 +73,18 @@ func TestCheckTypesConsistency(t *testing.T) {
 			Name: "Inconsistent AggregateFunction",
 			PartColumnsData: []ColumnDataTypes{
 				{
-					Column: "col2",
+					Column: "agg_col",
 					Types:  []string{"AggregateFunction(1, avg, Array(UInt16), Array(UInt64))", "AggregateFunction(sumMap, Array(UInt16), Array(UInt64))"},
+				},
+			},
+			ExpectedError: expectedErr,
+		},
+		{
+			Name: "Inconsistent SimpleAggregateFunction",
+			PartColumnsData: []ColumnDataTypes{
+				{
+					Column: "simple_agg_col",
+					Types:  []string{"SimpleAggregateFunction(1, sum, UInt16)", "SimpleAggregateFunction(sumMap, Array(UInt16))"},
 				},
 			},
 			ExpectedError: expectedErr,

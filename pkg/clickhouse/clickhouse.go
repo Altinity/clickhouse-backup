@@ -1195,8 +1195,9 @@ func (ch *ClickHouse) CheckTypesConsistency(table *Table, partColumnsDataTypes [
 		isAggregationPresent := false
 		uniqTypes := common.EmptyMap{}
 		for _, dataType := range partColumnsDataTypes[i].Types {
-			isAggregationPresent = strings.HasPrefix(dataType, "AggregateFunction(")
+			isAggregationPresent = strings.Contains(dataType, "AggregateFunction(")
 			if isAggregationPresent {
+				dataType = strings.TrimPrefix(dataType, "SimpleAggregateFunction(")
 				dataType = strings.TrimPrefix(dataType, "AggregateFunction(")
 				dataType = strings.TrimSuffix(dataType, ")")
 				dataType = versioningAggregateRE.ReplaceAllString(dataType, "")
