@@ -1163,69 +1163,50 @@ func (ch *ClickHouse) CheckReplicationInProgress(table metadata.TableMetadata) (
 	return true, nil
 }
 
-var isDateWithTzRE = regexp.MustCompile(`^Date[^(]+\(.+\)`)
-
 // CheckSystemPartsColumns check data parts types consistency https://github.com/Altinity/clickhouse-backup/issues/529#issuecomment-1554460504
 func (ch *ClickHouse) CheckSystemPartsColumns(ctx context.Context, table *Table) error {
 	var err error
-	partColumnsDataTypes := make([]struct {
-		Column string   `ch:"column"`
-		Types  []string `ch:"uniq_types"`
-	}, 0)
+	partColumnsDataTypes := make([]ColumnDataTypes, 0)
 	partsColumnsSQL := "SELECT column, groupUniqArray(type) AS uniq_types " +
 		"FROM system.parts_columns " +
-		"WHERE active AND database=? AND table=? AND type NOT LIKE 'Enum%' AND type NOT LIKE 'Tuple(%' AND type NOT LIKE 'Array(Tuple(%' " +
+		"WHERE active AND database=? AND table=? AND type NOT LIKE 'Enum(%' AND type NOT LIKE 'Tuple(%' AND type NOT LIKE 'Array(Tuple(%' " +
 		"GROUP BY column HAVING length(uniq_types) > 1"
 	if err = ch.SelectContext(ctx, &partColumnsDataTypes, partsColumnsSQL, table.Database, table.Name); err != nil {
 		return err
 	}
-	isPartColumnsInconsistentDataTypes := false
-	if len(partColumnsDataTypes) > 0 {
-		for i := range partColumnsDataTypes {
-			isNullablePresent := false
-			isNotNullablePresent := false
-			isDatePresent := false
-			isDateTZPresent := false
-			var baseDataType string
-			for _, dataType := range partColumnsDataTypes[i].Types {
-				currentDataType := dataType
-				for _, compatiblePrefix := range []string{"Nullable(", "LowCardinality("} {
-					if strings.HasPrefix(currentDataType, compatiblePrefix) {
-						currentDataType = strings.TrimPrefix(currentDataType, compatiblePrefix)
-						currentDataType = strings.TrimSuffix(currentDataType, ")")
-					}
-				}
-				if strings.Contains(currentDataType, "(") {
-					currentDataType = currentDataType[:strings.Index(currentDataType, "(")]
-				}
-				if baseDataType == "" {
-					baseDataType = currentDataType
-				} else if baseDataType != currentDataType {
-					ch.Log.Errorf("`%s`.`%s` have incompatible data types %#v for \"%s\" column", table.Database, table.Name, partColumnsDataTypes[i].Types, partColumnsDataTypes[i].Column)
-					isPartColumnsInconsistentDataTypes = true
-					break
-				}
-				if strings.Contains(dataType, "Nullable") {
-					isNullablePresent = true
-				} else {
-					isNotNullablePresent = true
-				}
-				if strings.HasPrefix(dataType, "Date") {
-					isDatePresent = true
-					if !isDateTZPresent {
-						isDateTZPresent = isDateWithTzRE.MatchString(dataType)
-					}
-				}
-			}
-			if !isNullablePresent && isNotNullablePresent {
-				if isDatePresent && isDateTZPresent {
-					continue
-				}
-				ch.Log.Errorf("`%s`.`%s` have inconsistent data types %#v for \"%s\" column", table.Database, table.Name, partColumnsDataTypes[i].Types, partColumnsDataTypes[i].Column)
-				isPartColumnsInconsistentDataTypes = true
+	return ch.CheckTypesConsistency(table, partColumnsDataTypes)
+}
+
+var dateWithParams = regexp.MustCompile(`^(Date[^(]+)\([^)]+\)`)
+var versioningAggregateRE = regexp.MustCompile(`^[0-9]+,\s*`)
+
+func (ch *ClickHouse) CheckTypesConsistency(table *Table, partColumnsDataTypes []ColumnDataTypes) error {
+	cleanType := func(dataType string) string {
+		for _, compatiblePrefix := range []string{"LowCardinality(", "Nullable("} {
+			if strings.HasPrefix(dataType, compatiblePrefix) {
+				dataType = strings.TrimPrefix(dataType, compatiblePrefix)
+				dataType = strings.TrimSuffix(dataType, ")")
 			}
 		}
-		if isPartColumnsInconsistentDataTypes {
+		dataType = dateWithParams.ReplaceAllString(dataType, "$1")
+		return dataType
+	}
+	for i := range partColumnsDataTypes {
+		isAggregationPresent := false
+		uniqTypes := common.EmptyMap{}
+		for _, dataType := range partColumnsDataTypes[i].Types {
+			isAggregationPresent = strings.HasPrefix(dataType, "AggregateFunction(")
+			if isAggregationPresent {
+				dataType = strings.TrimPrefix(dataType, "AggregateFunction(")
+				dataType = strings.TrimSuffix(dataType, ")")
+				dataType = versioningAggregateRE.ReplaceAllString(dataType, "")
+			} else {
+				dataType = cleanType(dataType)
+			}
+			uniqTypes[dataType] = struct{}{}
+		}
+		if len(uniqTypes) > 1 {
+			ch.Log.Errorf("`%s`.`%s` have incompatible data types %#v for \"%s\" column", table.Database, table.Name, partColumnsDataTypes[i].Types, partColumnsDataTypes[i].Column)
 			return fmt.Errorf("`%s`.`%s` have inconsistent data types for active data part in system.parts_columns", table.Database, table.Name)
 		}
 	}

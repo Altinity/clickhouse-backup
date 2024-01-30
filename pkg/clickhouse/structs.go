@@ -79,3 +79,9 @@ type SystemBackups struct {
 	UncompressedSize  uint64    `ch:"uncompressed_size"`
 	NumFiles          uint64    `ch:"num_files"`
 }
+
+// ColumnDataTypes - info from system.parts_columns
+type ColumnDataTypes struct {
+	Column string   `ch:"column"`
+	Types  []string `ch:"uniq_types"`
+}

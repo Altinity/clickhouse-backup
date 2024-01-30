@@ -1,3 +1,7 @@
+# v2.4.24
+BUG FIXES
+- fix `check_parts_columns` corner cases for AggregateFunction versioning, fix [819](https://github.com/Altinity/clickhouse-backup/issues/819)
+
 # v2.4.23
 IMPROVEMENTS
 - refactoring of `restore` command to allow parallel execution of `ALTER TABLE ... ATTACH PART` and improve parallelization of CopyObject during restore.
