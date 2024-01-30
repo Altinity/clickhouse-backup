@@ -377,7 +377,7 @@ Use `clickhouse-backup print-config` to print current config.
 
 ```yaml
 general:
-  remote_storage: none           # REMOTE_STORAGE, if `none` then `upload` and `download` commands will fail
+  remote_storage: none           # REMOTE_STORAGE, choice from: `azblob`,`gcs`,`s3`, etc; if `none` then `upload` and `download` commands will fail.
   max_file_size: 1073741824      # MAX_FILE_SIZE, 1G by default, useless when upload_by_part is true, use to split data parts files by archives
   disable_progress_bar: true     # DISABLE_PROGRESS_BAR, show progress bar during upload and download, makes sense only when `upload_concurrency` and `download_concurrency` is 1
   backups_to_keep_local: 0       # BACKUPS_TO_KEEP_LOCAL, how many latest local backup should be kept, 0 means all created backups will be stored on local disk
