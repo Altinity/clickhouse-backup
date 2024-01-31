@@ -337,6 +337,9 @@ func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRu
 				underlyingDB := matches[0][3]
 				underlyingDBClean := strings.NewReplacer(" ", "", "'", "").Replace(underlyingDB)
 				if underlyingTargetDB, isUnderlyingMapped := dbMapRule[underlyingDBClean]; isUnderlyingMapped {
+					if !usualIdentifier.MatchString(underlyingTargetDB) {
+						underlyingTargetDB = "`" + underlyingTargetDB + "`"
+					}
 					substitution = fmt.Sprintf("${1}(${2},%s,${4})", strings.Replace(underlyingDB, underlyingDBClean, underlyingTargetDB, 1))
 					originTable.Query = distributedRE.ReplaceAllString(originTable.Query, substitution)
 				}
