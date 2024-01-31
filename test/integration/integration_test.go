@@ -1775,7 +1775,7 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 
 	ch.queryWithNoError(r, "CREATE DATABASE database1")
 	ch.queryWithNoError(r, "CREATE TABLE database1.t1 (dt DateTime, v UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/database1/t1','{replica}') PARTITION BY toYYYYMM(dt) ORDER BY dt")
-	ch.queryWithNoError(r, "CREATE TABLE database1.d1 AS database1.t1 ENGINE=Distributed('{cluster}',database1, t1)")
+	ch.queryWithNoError(r, "CREATE TABLE database1.d1 AS database1.t1 ENGINE=Distributed('{cluster}', 'database1', 't1')")
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.3") < 0 {
 		ch.queryWithNoError(r, "CREATE TABLE database1.t2 AS database1.t1 ENGINE=ReplicatedMergeTree('/clickhouse/tables/database1/t2','{replica}') PARTITION BY toYYYYMM(dt) ORDER BY dt")
 	} else {
