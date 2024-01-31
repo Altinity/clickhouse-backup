@@ -276,6 +276,7 @@ var queryRE = regexp.MustCompile(`(?m)^(CREATE|ATTACH) (TABLE|VIEW|LIVE VIEW|MAT
 var createOrAttachRE = regexp.MustCompile(`(?m)^(CREATE|ATTACH)`)
 var uuidRE = regexp.MustCompile(`UUID '([a-f\d\-]+)'`)
 
+var usualIdentifier = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 var replicatedRE = regexp.MustCompile(`(Replicated[a-zA-Z]*MergeTree)\('([^']+)'([^)]+)\)`)
 var distributedRE = regexp.MustCompile(`(Distributed)\(([^,]+),([^,]+),([^)]+)\)`)
 
@@ -294,13 +295,20 @@ func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRu
 				setMatchedDb := func(clauseTargetDb string) string {
 					if clauseMappedDb, isClauseMapped := dbMapRule[clauseTargetDb]; isClauseMapped {
 						clauseTargetDb = clauseMappedDb
+						if !usualIdentifier.MatchString(clauseTargetDb) {
+							clauseTargetDb = "`" + clauseTargetDb + "`"
+						}
 					}
 					return clauseTargetDb
+				}
+				createTargetDb := targetDB
+				if !usualIdentifier.MatchString(createTargetDb) {
+					createTargetDb = "`" + createTargetDb + "`"
 				}
 				toClauseTargetDb := setMatchedDb(matches[0][10])
 				fromClauseTargetDb := setMatchedDb(matches[0][15])
 				// matching CREATE|ATTACH ... TO .. SELECT ... FROM ... command
-				substitution = fmt.Sprintf("${1} ${2} ${3}%v${5}.${6}${7}${8}${9}%v${11}${12}${13}${14}%v${16}${17}", targetDB, toClauseTargetDb, fromClauseTargetDb)
+				substitution = fmt.Sprintf("${1} ${2} ${3}%v${5}.${6}${7}${8}${9}%v${11}${12}${13}${14}%v${16}${17}", createTargetDb, toClauseTargetDb, fromClauseTargetDb)
 			} else {
 				if originTable.Query == "" {
 					continue
@@ -308,7 +316,7 @@ func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRu
 				return fmt.Errorf("error when try to replace database `%s` to `%s` in query: %s", originTable.Database, targetDB, originTable.Query)
 			}
 			originTable.Query = queryRE.ReplaceAllString(originTable.Query, substitution)
-			if len(uuidRE.FindAllString(originTable.Query, -1)) > 0 {
+			if uuidRE.MatchString(originTable.Query) {
 				newUUID, _ := uuid.NewUUID()
 				substitution = fmt.Sprintf("UUID '%s'", newUUID.String())
 				originTable.Query = uuidRE.ReplaceAllString(originTable.Query, substitution)

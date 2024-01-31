@@ -1770,7 +1770,7 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 	}
 
 	testBackupName := "test_restore_database_mapping"
-	databaseList := []string{"database1", "database2"}
+	databaseList := []string{"database1", "database-2"}
 	fullCleanup(t, r, ch, []string{testBackupName}, []string{"local"}, databaseList, false, false, "config-database-mapping.yml")
 
 	ch.queryWithNoError(r, "CREATE DATABASE database1")
@@ -1789,7 +1789,7 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "create", testBackupName))
 
 	log.Info("Restore schema")
-	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--schema", "--rm", "--restore-database-mapping", "database1:database2", "--tables", "database1.*", testBackupName))
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--schema", "--rm", "--restore-database-mapping", "database1:database-2", "--tables", "database1.*", testBackupName))
 
 	log.Info("Check result database1")
 	ch.queryWithNoError(r, "INSERT INTO database1.t1 SELECT '2023-01-01 00:00:00', number FROM numbers(10)")
@@ -1802,13 +1802,13 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 	r.NoError(ch.dropDatabase("database1"))
 
 	log.Info("Restore data")
-	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--data", "--restore-database-mapping", "database1:database2", "--tables", "database1.*", testBackupName))
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--data", "--restore-database-mapping", "database1:database-2", "--tables", "database1.*", testBackupName))
 
-	log.Info("Check result database2")
-	checkRecordset(1, 10, "SELECT count() FROM database2.t1")
-	checkRecordset(1, 10, "SELECT count() FROM database2.d1")
-	checkRecordset(1, 10, "SELECT count() FROM database2.mv1")
-	checkRecordset(1, 10, "SELECT count() FROM database2.v1")
+	log.Info("Check result database-2")
+	checkRecordset(1, 10, "SELECT count() FROM `database-2`.t1")
+	checkRecordset(1, 10, "SELECT count() FROM `database-2`.d1")
+	checkRecordset(1, 10, "SELECT count() FROM `database-2`.mv1")
+	checkRecordset(1, 10, "SELECT count() FROM `database-2`.v1")
 
 	log.Info("Check database1 not exists")
 	checkRecordset(1, 0, "SELECT count() FROM system.databases WHERE name='database1'")

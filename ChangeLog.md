@@ -1,3 +1,7 @@
+# v2.4.25
+BUG FIXES
+- fix `--restore-table-mapping` corner cases for when destination database contains special characters , fix [820](https://github.com/Altinity/clickhouse-backup/issues/820)
+
 # v2.4.24
 BUG FIXES
 - fix `check_parts_columns` corner cases for `AggregateFunction` and `SimpleAggregateFunction` versioning, fix [819](https://github.com/Altinity/clickhouse-backup/issues/819)
