@@ -637,10 +637,7 @@ func GetFileSize(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Con
 }
 */
 
-func CopyObject(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Config, diskName string, srcSize int64, srcBucket, srcKey, dstPath string) (int64, error) {
-	if err := InitCredentialsAndConnections(ctx, ch, cfg, diskName); err != nil {
-		return 0, err
-	}
+func CopyObject(ctx context.Context, diskName string, srcSize int64, srcBucket, srcKey, dstPath string) (int64, error) {
 	connection, _ := DisksConnections.Load(diskName)
 	remoteStorage := connection.GetRemoteStorage()
 	return remoteStorage.CopyObject(ctx, srcSize, srcBucket, srcKey, dstPath)

@@ -82,7 +82,9 @@ EOT
 fi
 
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.[8-9]|^21\.[0-9]{2} || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
-
+if [[ -f /var/lib/clickhouse/storage_configuration_s3.xml ]]; then
+  cp -fv /var/lib/clickhouse/storage_configuration_s3.xml /etc/clickhouse-server/config.d/storage_configuration_s3.xml
+else
 cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_s3.xml
 <yandex>
   <storage_configuration>
@@ -113,16 +115,20 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_s3.xml
 EOT
 
 fi
+fi
 
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[6-9]+ || "${CLICKHOUSE_VERSION}" =~ ^22\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[1-9]+ ]]; then
 
 if [[ "" != "${QA_GCS_OVER_S3_BUCKET}" ]]; then
+if [[ -f /var/lib/clickhouse/storage_configuration_gcs.xml ]]; then
+  cp -fv /var/lib/clickhouse/storage_configuration_gcs.xml /etc/clickhouse-server/config.d/storage_configuration_gcs.xml
+else
 
 cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_gcs.xml
 <yandex>
   <storage_configuration>
     <disks>
-      <disk_gcs_over_s3>
+      <disk_gcs>
         <type>s3</type>
         <endpoint>https://storage.googleapis.com/${QA_GCS_OVER_S3_BUCKET}/clickhouse_backup_disk_gcs_over_s3/${HOSTNAME}/{cluster}/{shard}/</endpoint>
         <access_key_id>${QA_GCS_OVER_S3_ACCESS_KEY}</access_key_id>
@@ -130,13 +136,13 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_gcs.xml
         <!-- to avoid slow startup -->
         <send_metadata>false</send_metadata>
         <support_batch_delete>false</support_batch_delete>
-      </disk_gcs_over_s3>
+      </disk_gcs>
     </disks>
     <policies>
       <gcs_only>
           <volumes>
               <gcs_only>
-                  <disk>disk_gcs_over_s3</disk>
+                  <disk>disk_gcs</disk>
               </gcs_only>
           </volumes>
       </gcs_only>
@@ -146,10 +152,15 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_gcs.xml
 EOT
 
 fi
+fi
 
 fi
 
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.12 || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
+
+if [[ -f /var/lib/clickhouse/storage_configuration_encrypted_s3.xml ]]; then
+  cp -fv /var/lib/clickhouse/storage_configuration_encrypted_s3.xml /etc/clickhouse-server/config.d/storage_configuration_encrypted_s3.xml
+else
 
 cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_encrypted_s3.xml
 <yandex>
@@ -191,6 +202,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_encrypted_s3.x
 </yandex>
 EOT
 
+fi
 fi
 
 # embedded s3 backup configuration
@@ -267,12 +279,16 @@ EOT
 mkdir -p /var/lib/clickhouse/disks/backups_azure/
 chown -R clickhouse /var/lib/clickhouse/disks/
 
-cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_azure.xml
+if [[ -f /var/lib/clickhouse/backup_storage_configuration_azblob.xml ]]; then
+  cp -fv /var/lib/clickhouse/backup_storage_configuration_azblob.xml /etc/clickhouse-server/config.d/backup_storage_configuration_azblob.xml
+else
+
+cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_azblob.xml
 <?xml version="1.0"?>
 <clickhouse>
   <storage_configuration>
     <disks>
-      <azure>
+      <disk_azure>
         <type>azure_blob_storage</type>
         <storage_account_url>http://azure:10000/devstoreaccount1</storage_account_url>
         <container_name>azure-disk</container_name>
@@ -280,7 +296,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_azure.x
         <account_name>devstoreaccount1</account_name>
         <account_key>Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==</account_key>
         <cache_enabled>false</cache_enabled>
-      </azure>
+      </disk_azure>
       <backups_azure>
         <type>azure_blob_storage</type>
         <storage_account_url>http://azure:10000/devstoreaccount1</storage_account_url>
@@ -295,7 +311,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_azure.x
       <azure_only>
         <volumes>
           <azure_only>
-            <disk>azure</disk>
+            <disk>disk_azure</disk>
           </azure_only>
         </volumes>
       </azure_only>
@@ -308,6 +324,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_azure.x
   </backups>
 </clickhouse>
 EOT
+fi
 
 fi
 

@@ -42,6 +42,7 @@ type FunctionsMeta struct {
 
 type TableMetadata struct {
 	Files                map[string][]string `json:"files,omitempty"`
+	RebalancedFiles      map[string]string   `json:"rebalanced_files,omitempty"`
 	Table                string              `json:"table"`
 	Database             string              `json:"database"`
 	Parts                map[string][]Part   `json:"parts"`
@@ -52,6 +53,7 @@ type TableMetadata struct {
 	DependenciesDatabase string              `json:"dependencies_database,omitempty"`
 	Mutations            []MutationMetadata  `json:"mutations,omitempty"`
 	MetadataOnly         bool                `json:"metadata_only"`
+	LocalFile            string              `json:"local_file,omitempty"`
 }
 
 type MutationMetadata struct {
@@ -60,9 +62,10 @@ type MutationMetadata struct {
 }
 
 type Part struct {
-	Name      string `json:"name"`
-	Required  bool   `json:"required,omitempty"`
-	Partition string `json:"partition,omitempty"`
+	Name           string `json:"name"`
+	Required       bool   `json:"required,omitempty"`
+	RebalancedDisk string `json:"rebalanced_disk,omitempty"`
+	// @todo remove legacy backup fields
 	// Path                              string    `json:"path"`              // TODO: make it relative? look like useless now, can be calculated from Name
 	HashOfAllFiles                    string     `json:"hash_of_all_files,omitempty"` // ???
 	HashOfUncompressedFiles           string     `json:"hash_of_uncompressed_files,omitempty"`
@@ -70,7 +73,6 @@ type Part struct {
 	PartitionID                       string     `json:"partition_id,omitempty"`
 	ModificationTime                  *time.Time `json:"modification_time,omitempty"`
 	Size                              int64      `json:"size,omitempty"`
-	// bytes_on_disk, data_compressed_bytes, data_uncompressed_bytes
 }
 
 type SplitPartFiles struct {

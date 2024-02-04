@@ -115,25 +115,28 @@ func MkdirAll(path string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk) e
 }
 
 // HardlinkBackupPartsToStorage - copy partitions for specific table to detached folder
-func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableMetadata, disks []clickhouse.Disk, tableDataPaths []string, ch *clickhouse.ClickHouse, toDetached bool) error {
+func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableMetadata, disks []clickhouse.Disk, diskMap map[string]string, tableDataPaths []string, ch *clickhouse.ClickHouse, toDetached bool) error {
 	log := apexLog.WithFields(apexLog.Fields{"operation": "HardlinkBackupPartsToStorage"})
 	start := time.Now()
 	dstDataPaths := clickhouse.GetDisksByPaths(disks, tableDataPaths)
 	dbAndTableDir := path.Join(common.TablePathEncode(backupTable.Database), common.TablePathEncode(backupTable.Table))
-	for _, backupDisk := range disks {
-		backupDiskName := backupDisk.Name
-		if len(backupTable.Parts[backupDiskName]) == 0 {
-			log.Debugf("%s disk have no parts", backupDisk.Name)
-			continue
-		}
-		dstParentDir, dstParentDirExists := dstDataPaths[backupDiskName]
-		if !dstParentDirExists {
-			return fmt.Errorf("dstDataPaths=%#v, not contains %s", dstDataPaths, backupDiskName)
-		}
-		if toDetached {
-			dstParentDir = filepath.Join(dstParentDir, "detached")
-		}
+	for backupDiskName := range backupTable.Parts {
 		for _, part := range backupTable.Parts[backupDiskName] {
+			dstParentDir, dstParentDirExists := dstDataPaths[backupDiskName]
+			if !dstParentDirExists && part.RebalancedDisk == "" {
+				return fmt.Errorf("dstDataPaths=%#v, not contains %s", dstDataPaths, backupDiskName)
+			}
+			if !dstParentDirExists && part.RebalancedDisk != "" {
+				backupDiskName = part.RebalancedDisk
+				dstParentDir, dstParentDirExists = dstDataPaths[part.RebalancedDisk]
+				if !dstParentDirExists {
+					return fmt.Errorf("dstDataPaths=%#v, not contains %s", dstDataPaths, part.RebalancedDisk)
+				}
+			}
+			backupDiskPath := diskMap[backupDiskName]
+			if toDetached {
+				dstParentDir = filepath.Join(dstParentDir, "detached")
+			}
 			dstPartPath := filepath.Join(dstParentDir, part.Name)
 			info, err := os.Stat(dstPartPath)
 			if err != nil {
@@ -148,16 +151,16 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 			} else if !info.IsDir() {
 				return fmt.Errorf("'%s' should be directory or absent", dstPartPath)
 			}
-			partPath := path.Join(backupDisk.Path, "backup", backupName, "shadow", dbAndTableDir, backupDisk.Name, part.Name)
+			srcPartPath := path.Join(backupDiskPath, "backup", backupName, "shadow", dbAndTableDir, backupDiskName, part.Name)
 			// Legacy backup support
-			if _, err := os.Stat(partPath); os.IsNotExist(err) {
-				partPath = path.Join(backupDisk.Path, "backup", backupName, "shadow", dbAndTableDir, part.Name)
+			if _, err := os.Stat(srcPartPath); os.IsNotExist(err) {
+				srcPartPath = path.Join(backupDiskPath, "backup", backupName, "shadow", dbAndTableDir, part.Name)
 			}
-			if err := filepath.Walk(partPath, func(filePath string, info os.FileInfo, err error) error {
+			if err := filepath.Walk(srcPartPath, func(filePath string, info os.FileInfo, err error) error {
 				if err != nil {
 					return err
 				}
-				filename := strings.Trim(strings.TrimPrefix(filePath, partPath), "/")
+				filename := strings.Trim(strings.TrimPrefix(filePath, srcPartPath), "/")
 				dstFilePath := filepath.Join(dstPartPath, filename)
 				if info.IsDir() {
 					log.Debugf("MkDir %s", dstFilePath)

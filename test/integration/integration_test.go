@@ -1957,6 +1957,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 	dropDatabasesFromTestDataDataSet(t, r, ch, databaseList)
 
 	log.Info("Download")
+	replaceStorageDiskNameForReBalance(r, ch, remoteStorageType, false)
 	downloadCmd := fmt.Sprintf("clickhouse-backup -c /etc/clickhouse-backup/%s download --resume %s", backupConfig, testBackupName)
 	checkResumeAlreadyProcessed(downloadCmd, testBackupName, "download", r, remoteStorageType)
 
@@ -2009,7 +2010,6 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 		} else {
 			r.NoError(ch.checkData(t, testDataItem, r))
 		}
-
 	}
 
 	// test end
@@ -2021,6 +2021,40 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 	} else {
 		fullCleanup(t, r, ch, []string{testBackupName, incrementBackupName}, []string{"remote", "local"}, databaseList, true, true, backupConfig)
 	}
+	replaceStorageDiskNameForReBalance(r, ch, remoteStorageType, true)
+}
+
+func replaceStorageDiskNameForReBalance(r *require.Assertions, ch *TestClickHouse, remoteStorageType string, isRebalanced bool) {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.3") < 0 {
+		return
+	}
+	if remoteStorageType != "S3" && remoteStorageType != "GCS" && remoteStorageType != "AZBLOB" {
+		return
+	}
+	oldDisk := "disk_" + strings.ToLower(remoteStorageType)
+	newDisk := oldDisk + "_rebalanced"
+	if isRebalanced {
+		oldDisk = "disk_" + strings.ToLower(remoteStorageType) + "_rebalanced"
+		newDisk = strings.TrimSuffix(oldDisk, "_rebalanced")
+	}
+	fileNames := []string{"storage_configuration_" + strings.ToLower(remoteStorageType) + ".xml"}
+	if remoteStorageType == "S3" {
+		fileNames = append(fileNames, "storage_configuration_encrypted_"+strings.ToLower(remoteStorageType)+".xml")
+	}
+	for _, fileName := range fileNames {
+		origFile := "/etc/clickhouse-server/config.d/" + fileName
+		dstFile := "/var/lib/clickhouse/" + fileName
+		sedCmd := fmt.Sprintf("s/<%s>/<%s>/g; s/<\\/%s>/<\\/%s>/g; s/<disk>%s<\\/disk>/<disk>%s<\\/disk>/g", oldDisk, newDisk, oldDisk, newDisk, oldDisk, newDisk)
+		r.NoError(dockerExec("clickhouse", "sed", "-i", sedCmd, origFile))
+		r.NoError(dockerExec("clickhouse", "cp", "-vf", origFile, dstFile))
+	}
+	if isRebalanced {
+		r.NoError(dockerExec("clickhouse", "bash", "-xc", "cp -rfl /var/lib/clickhouse/disks/"+oldDisk+"/*", "/var/lib/clickhouse/disks/"+newDisk+"/"))
+		r.NoError(dockerExec("clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/"+oldDisk+""))
+	}
+	ch.chbackend.Close()
+	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker-compose", "-f", os.Getenv("COMPOSE_FILE"), "restart", "clickhouse"))
+	ch.connectWithWait(r, 3*time.Second, 1*time.Second)
 }
 
 func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, ch *TestClickHouse, remoteStorageType string, backupConfig string) {
@@ -2289,14 +2323,14 @@ func (ch *TestClickHouse) connectWithWait(r *require.Assertions, sleepBefore, ti
 		err := ch.connect(timeOut.String())
 		if i == 10 {
 			r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", "logs", "clickhouse"))
-			out, dockerErr := dockerExecOut("clickhouse", "clickhouse client", "--echo", "-q", "'SELECT version()'")
+			out, dockerErr := dockerExecOut("clickhouse", "clickhouse", "client", "--echo", "-q", "'SELECT version()'")
 			r.NoError(dockerErr)
 			ch.chbackend.Log.Debug(out)
 			r.NoError(err)
 		}
 		if err != nil {
 			r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", "ps", "-a"))
-			if out, dockerErr := dockerExecOut("clickhouse", "clickhouse client", "--echo", "-q", "SELECT version()"); dockerErr == nil {
+			if out, dockerErr := dockerExecOut("clickhouse", "clickhouse", "client", "--echo", "-q", "SELECT version()"); dockerErr == nil {
 				log.Info(out)
 			} else {
 				log.Warn(out)

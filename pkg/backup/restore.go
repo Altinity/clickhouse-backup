@@ -685,11 +685,6 @@ func (b *Backuper) RestoreData(ctx context.Context, backupName string, tablePatt
 		diskMap[disk.Name] = disk.Path
 		diskTypes[disk.Name] = disk.Type
 	}
-	for diskName := range backup.Disks {
-		if _, exists := diskMap[diskName]; !exists {
-			diskMap[diskName] = backup.Disks[diskName]
-		}
-	}
 	for diskName := range backup.DiskTypes {
 		if _, exists := diskTypes[diskName]; !exists {
 			diskTypes[diskName] = backup.DiskTypes[diskName]
@@ -737,7 +732,6 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ta
 	if err != nil {
 		return err
 	}
-	disks = b.adjustDisksFromTablesWithSystemDisks(tablesForRestore, diskMap, diskTypes, disks, log)
 	dstTablesMap := b.prepareDstTablesMap(chTables)
 
 	missingTables := b.checkMissingTables(tablesForRestore, chTables)
@@ -748,6 +742,7 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ta
 	restoreBackupWorkingGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
 
 	for i := range tablesForRestore {
+		tableRestoreStartTime := time.Now()
 		table := tablesForRestore[i]
 		// need mapped database path and original table.Database for HardlinkBackupPartsToStorage
 		dstDatabase := table.Database
@@ -782,7 +777,7 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ta
 					log.Warnf("can't apply mutation %s for table `%s`.`%s`	: %v", mutation.Command, tablesForRestore[idx].Database, tablesForRestore[idx].Table, err)
 				}
 			}
-			log.Info("done")
+			log.WithField("duration", utils.HumanizeDuration(time.Since(tableRestoreStartTime))).Info("done")
 			return nil
 		})
 	}
@@ -793,7 +788,7 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ta
 }
 
 func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName string, table metadata.TableMetadata, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, dstTable clickhouse.Table, log *apexLog.Entry) error {
-	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, table, disks, dstTable.DataPaths, b.ch, false); err != nil {
+	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, table, disks, diskMap, dstTable.DataPaths, b.ch, false); err != nil {
 		return fmt.Errorf("can't copy data to storage '%s.%s': %v", table.Database, table.Table, err)
 	}
 	log.Debug("data to 'storage' copied")
@@ -807,14 +802,14 @@ func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName st
 }
 
 func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName string, table metadata.TableMetadata, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, dstTable clickhouse.Table, log *apexLog.Entry) error {
-	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, table, disks, dstTable.DataPaths, b.ch, true); err != nil {
+	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, table, disks, diskMap, dstTable.DataPaths, b.ch, true); err != nil {
 		return fmt.Errorf("can't copy data to detached '%s.%s': %v", table.Database, table.Table, err)
 	}
 	log.Debug("data to 'detached' copied")
 	if err := b.downloadObjectDiskParts(ctx, backupName, table, diskMap, diskTypes); err != nil {
 		return fmt.Errorf("can't restore object_disk server-side copy data parts '%s.%s': %v", table.Database, table.Table, err)
 	}
-	if err := b.ch.AttachDataParts(table, dstTable, disks); err != nil {
+	if err := b.ch.AttachDataParts(table, dstTable); err != nil {
 		return fmt.Errorf("can't attach data parts for table '%s.%s': %v", table.Database, table.Table, err)
 	}
 	return nil
@@ -853,14 +848,26 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 			return fmt.Errorf("%s disk doesn't present in diskTypes: %v", diskName, diskTypes)
 		}
 		if diskType == "s3" || diskType == "azure_blob_storage" {
-			if err = object_disk.InitCredentialsAndConnections(ctx, b.ch, b.cfg, diskName); err != nil {
+			if _, exists := diskMap[diskName]; !exists {
+				for _, part := range parts {
+					if part.RebalancedDisk != "" {
+						if err = object_disk.InitCredentialsAndConnections(ctx, b.ch, b.cfg, part.RebalancedDisk); err != nil {
+							return err
+						}
+					}
+				}
+			} else if err = object_disk.InitCredentialsAndConnections(ctx, b.ch, b.cfg, diskName); err != nil {
 				return err
 			}
 			start := time.Now()
 			downloadObjectDiskPartsWorkingGroup, downloadCtx := errgroup.WithContext(ctx)
 			downloadObjectDiskPartsWorkingGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
 			for _, part := range parts {
-				partPath := path.Join(diskMap[diskName], "backup", backupName, "shadow", dbAndTableDir, diskName, part.Name)
+				dstDiskName := diskName
+				if part.RebalancedDisk != "" {
+					dstDiskName = part.RebalancedDisk
+				}
+				partPath := path.Join(diskMap[dstDiskName], "backup", backupName, "shadow", dbAndTableDir, dstDiskName, part.Name)
 				walkErr := filepath.Walk(partPath, func(fPath string, fInfo fs.FileInfo, err error) error {
 					if err != nil {
 						return err
@@ -896,8 +903,8 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 							} else {
 								return fmt.Errorf("incompatible object_disk[%s].Type=%s amd remote_storage: %s", diskName, diskType, b.cfg.General.RemoteStorage)
 							}
-							if copiedSize, copyObjectErr := object_disk.CopyObject(downloadCtx, b.ch, b.cfg, diskName, storageObject.ObjectSize, srcBucket, srcKey, storageObject.ObjectRelativePath); copyObjectErr != nil {
-								return fmt.Errorf("object_disk.CopyObject error: %v", err)
+							if copiedSize, copyObjectErr := object_disk.CopyObject(downloadCtx, dstDiskName, storageObject.ObjectSize, srcBucket, srcKey, storageObject.ObjectRelativePath); copyObjectErr != nil {
+								return fmt.Errorf("object_disk.CopyObject error: %v", copyObjectErr)
 							} else {
 								atomic.AddInt64(&size, copiedSize)
 							}
@@ -952,35 +959,6 @@ func (b *Backuper) prepareDstTablesMap(chTables []clickhouse.Table) map[metadata
 		}] = chTable
 	}
 	return dstTablesMap
-}
-
-func (b *Backuper) adjustDisksFromTablesWithSystemDisks(tablesForRestore ListOfTables, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, log *apexLog.Entry) []clickhouse.Disk {
-	for _, t := range tablesForRestore {
-		for disk := range t.Parts {
-			if _, diskExists := diskMap[disk]; !diskExists {
-				if diskTypes[disk] != diskTypes["default"] {
-					log.Fatalf("table '%s.%s' require disk '%s' that not found in clickhouse table system.disks, and have different diskType %s than `default` disk %s", t.Database, t.Table, disk, diskTypes[disk], diskTypes["default"])
-				}
-				log.Warnf("table '%s.%s' require disk '%s' that not found in clickhouse table system.disks, you can add nonexistent disks to `disk_mapping` in  `clickhouse` config section, data will restored to %s", t.Database, t.Table, disk, diskMap["default"])
-				found := false
-				for _, d := range disks {
-					if d.Name == disk {
-						found = true
-						break
-					}
-				}
-				if !found {
-					newDisk := clickhouse.Disk{
-						Name: disk,
-						Path: diskMap["default"],
-						Type: "local",
-					}
-					disks = append(disks, newDisk)
-				}
-			}
-		}
-	}
-	return disks
 }
 
 func (b *Backuper) changeTablePatternFromRestoreDatabaseMapping(tablePattern string) string {

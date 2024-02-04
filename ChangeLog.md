@@ -1,3 +1,7 @@
+# v2.5.0
+IMPROVEMENTS
+- improve re-balance disk during download if disk not exists in system.disks. Use least used for `local` disks and `random` for object disks, fix [561](https://github.com/Altinity/clickhouse-backup/issues/561)
+
 # v2.4.25
 BUG FIXES
 - fix `--restore-table-mapping` corner cases for when destination database contains special characters , fix [820](https://github.com/Altinity/clickhouse-backup/issues/820)

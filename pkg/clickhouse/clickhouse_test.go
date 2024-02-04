@@ -10,7 +10,7 @@ import (
 
 func TestCheckTypesConsistency(t *testing.T) {
 	ch := ClickHouse{
-		Log: apexLog.WithField("logger", "clickhouse"),
+		Log: apexLog.WithField("logger", "test"),
 	}
 	table := &Table{
 		Database: "mydb",
@@ -106,5 +106,20 @@ func TestCheckTypesConsistency(t *testing.T) {
 			err := ch.CheckTypesConsistency(table, tc.PartColumnsData)
 			assert.Equal(t, tc.ExpectedError, err)
 		})
+	}
+}
+
+func TestExtractStoragePolicy(t *testing.T) {
+	ch := ClickHouse{
+		Log: apexLog.WithField("logger", "test"),
+	}
+
+	testCases := map[string]string{
+		"CREATE TABLE `_test.ДБ_atomic__TestIntegrationS3`.test_s3_TestIntegrationS3 UUID '8135780b-0c9a-46a7-94fd-2aebb701eff6' (`id` UInt64) ENGINE = ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/_test.ДБ_atomic__TestIntegrationS3/test_s3_TestIntegrationS3', '{replica}') ORDER BY id SETTINGS storage_policy = 's3_only', index_granularity = 8192": "s3_only",
+		"CREATE TABLE test2 SETTINGS storage_policy = 'default'": "default",
+		"CREATE TABLE test3": "default",
+	}
+	for query, policy := range testCases {
+		assert.Equal(t, policy, ch.ExtractStoragePolicy(query))
 	}
 }

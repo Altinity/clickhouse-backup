@@ -7,9 +7,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/antchfx/xmlquery"
 	"os"
 	"path"
 	"path/filepath"
@@ -18,10 +15,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/antchfx/xmlquery"
 	apexLog "github.com/apex/log"
+	"github.com/ricochet2200/go-disk-usage/du"
 )
 
 // ClickHouse - provide
@@ -29,7 +30,6 @@ type ClickHouse struct {
 	Config               *config.ClickHouseConfig
 	Log                  *apexLog.Entry
 	conn                 driver.Conn
-	disks                []Disk
 	version              int
 	isPartsColumnPresent int8
 	IsOpen               bool
@@ -218,9 +218,11 @@ func (ch *ClickHouse) getDisksFromSystemSettings(ctx context.Context) ([]Disk, e
 		dataPathArray := strings.Split(metadataPath, "/")
 		clickhouseData := path.Join(dataPathArray[:len(dataPathArray)-1]...)
 		return []Disk{{
-			Name: "default",
-			Path: path.Join("/", clickhouseData),
-			Type: "local",
+			Name:            "default",
+			Path:            path.Join("/", clickhouseData),
+			Type:            "local",
+			FreeSpace:       du.NewDiskUsage(path.Join("/", clickhouseData)).Free(),
+			StoragePolicies: []string{"default"},
 		}}, nil
 	}
 }
@@ -251,18 +253,40 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
-		isDiskType := make([]struct {
-			Present uint64 `ch:"is_disk_type_present"`
-		}, 0)
-		if err := ch.SelectContext(ctx, &isDiskType, "SELECT count() is_disk_type_present FROM system.columns WHERE database='system' AND table='disks' AND name='type'"); err != nil {
+		type DiskFields struct {
+			DiskTypePresent      uint64 `ch:"is_disk_type_present"`
+			FreeSpacePresent     uint64 `ch:"is_free_space_present"`
+			StoragePolicyPresent uint64 `ch:"is_storage_policy_present"`
+		}
+		diskFields := make([]DiskFields, 0)
+		if err := ch.SelectContext(ctx, &diskFields,
+			"SELECT countIf(name='type') AS is_disk_type_present, "+
+				"countIf(name='free_space') AS is_free_space_present, "+
+				"countIf(name='disks') AS is_storage_policy_present "+
+				"FROM system.columns WHERE database='system' AND table IN ('disks','storage_policies') ",
+		); err != nil {
 			return nil, err
 		}
 		diskTypeSQL := "'local'"
-		if len(isDiskType) > 0 && isDiskType[0].Present > 0 {
-			diskTypeSQL = "any(type)"
+		if len(diskFields) > 0 && diskFields[0].DiskTypePresent > 0 {
+			diskTypeSQL = "any(d.type)"
+		}
+		diskFreeSpaceSQL := "0"
+		if len(diskFields) > 0 && diskFields[0].FreeSpacePresent > 0 {
+			diskFreeSpaceSQL = "min(d.free_space)"
+		}
+		storagePoliciesSQL := "['default']"
+		joinStoragePoliciesSQL := ""
+		if len(diskFields) > 0 && diskFields[0].StoragePolicyPresent > 0 {
+			storagePoliciesSQL = "groupUniqArray(s.policy_name)"
+			joinStoragePoliciesSQL = " INNER JOIN (SELECT policy_name, arrayJoin(disks) AS disk FROM system.storage_policies) AS s ON s.disk = d.name"
 		}
 		var result []Disk
-		query := fmt.Sprintf("SELECT path, any(name) AS name, %s AS type FROM system.disks GROUP BY path", diskTypeSQL)
+		query := fmt.Sprintf(
+			"SELECT d.path, any(d.name) AS name, %s AS type, %s AS free_space, %s AS storage_policies "+
+				"FROM system.disks AS d %s GROUP BY d.path",
+			diskTypeSQL, diskFreeSpaceSQL, storagePoliciesSQL, joinStoragePoliciesSQL,
+		)
 		err := ch.SelectContext(ctx, &result, query)
 		return result, err
 	}
@@ -703,7 +727,7 @@ func (ch *ClickHouse) FreezeTable(ctx context.Context, table *Table, name string
 }
 
 // AttachDataParts - execute ALTER TABLE ... ATTACH PART command for specific table
-func (ch *ClickHouse) AttachDataParts(table metadata.TableMetadata, dstTable Table, disks []Disk) error {
+func (ch *ClickHouse) AttachDataParts(table metadata.TableMetadata, dstTable Table) error {
 	if dstTable.Database != "" && dstTable.Database != table.Database {
 		table.Database = dstTable.Database
 	}
@@ -714,14 +738,14 @@ func (ch *ClickHouse) AttachDataParts(table metadata.TableMetadata, dstTable Tab
 	if !canContinue {
 		return nil
 	}
-	for _, disk := range disks {
-		for _, part := range table.Parts[disk.Name] {
+	for disk := range table.Parts {
+		for _, part := range table.Parts[disk] {
 			if !strings.HasSuffix(part.Name, ".proj") {
 				query := fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PART '%s'", table.Database, table.Table, part.Name)
 				if err := ch.Query(query); err != nil {
 					return err
 				}
-				ch.Log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).WithField("disk", disk.Name).WithField("part", part.Name).Debug("attached")
+				ch.Log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).WithField("disk", disk).WithField("part", part.Name).Debug("attached")
 			}
 		}
 	}
@@ -1294,4 +1318,16 @@ func (ch *ClickHouse) GetPreprocessedXMLSettings(ctx context.Context, settingsXP
 		}
 	}
 	return resultSettings, nil
+}
+
+var storagePolicyRE = regexp.MustCompile(`SETTINGS.+storage_policy[^=]*=[^']*'([^']+)'`)
+
+func (ch *ClickHouse) ExtractStoragePolicy(query string) string {
+	storagePolicy := "default"
+	matches := storagePolicyRE.FindStringSubmatch(query)
+	if len(matches) > 0 {
+		storagePolicy = matches[1]
+	}
+	apexLog.Debugf("extract storage_policy: %s, query: %s", storagePolicy, query)
+	return storagePolicy
 }
