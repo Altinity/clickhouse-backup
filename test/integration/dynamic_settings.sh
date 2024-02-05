@@ -279,16 +279,16 @@ EOT
 mkdir -p /var/lib/clickhouse/disks/backups_azure/
 chown -R clickhouse /var/lib/clickhouse/disks/
 
-if [[ -f /var/lib/clickhouse/backup_storage_configuration_azblob.xml ]]; then
-  cp -fv /var/lib/clickhouse/backup_storage_configuration_azblob.xml /etc/clickhouse-server/config.d/backup_storage_configuration_azblob.xml
+if [[ -f /var/lib/clickhouse/storage_configuration_azblob.xml ]]; then
+  cp -fv /var/lib/clickhouse/storage_configuration_azblob.xml /etc/clickhouse-server/config.d/backup_storage_configuration_azblob.xml
 else
 
-cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_azblob.xml
+cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_azblob.xml
 <?xml version="1.0"?>
 <clickhouse>
   <storage_configuration>
     <disks>
-      <disk_azure>
+      <disk_azblob>
         <type>azure_blob_storage</type>
         <storage_account_url>http://azure:10000/devstoreaccount1</storage_account_url>
         <container_name>azure-disk</container_name>
@@ -296,7 +296,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_azblob.
         <account_name>devstoreaccount1</account_name>
         <account_key>Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==</account_key>
         <cache_enabled>false</cache_enabled>
-      </disk_azure>
+      </disk_azblob>
       <backups_azure>
         <type>azure_blob_storage</type>
         <storage_account_url>http://azure:10000/devstoreaccount1</storage_account_url>
@@ -311,7 +311,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_azblob.
       <azure_only>
         <volumes>
           <azure_only>
-            <disk>disk_azure</disk>
+            <disk>disk_azblob</disk>
           </azure_only>
         </volumes>
       </azure_only>
