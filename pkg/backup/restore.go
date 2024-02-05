@@ -831,7 +831,7 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 		if !exists {
 			return fmt.Errorf("%s disk doesn't present in diskTypes: %v", diskName, diskTypes)
 		}
-		if diskType == "s3" || diskType == "azure_blob_storage" {
+		if b.isDiskTypeObject(diskType) {
 			if err = config.ValidateObjectDiskConfig(b.cfg); err != nil {
 				return err
 			}
@@ -857,7 +857,7 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 		if !exists {
 			return fmt.Errorf("%s disk doesn't present in diskTypes: %v", diskName, diskTypes)
 		}
-		if diskType == "s3" || diskType == "azure_blob_storage" {
+		if b.isDiskTypeObject(diskType) {
 			if _, exists := diskMap[diskName]; !exists {
 				for _, part := range parts {
 					if part.RebalancedDisk != "" {

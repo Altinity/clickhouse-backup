@@ -126,7 +126,7 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 	if err != nil {
 		return err
 	}
-	hasObjectDisks := b.hasObjectDisks(backupList, backupName, disks)
+	hasObjectDisks := b.hasObjectDisksLocal(backupList, backupName, disks)
 	if hasObjectDisks {
 		bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, false, backupName)
 		if err != nil {
@@ -183,7 +183,7 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 	return fmt.Errorf("'%s' is not found on local storage", backupName)
 }
 
-func (b *Backuper) hasObjectDisks(backupList []LocalBackup, backupName string, disks []clickhouse.Disk) bool {
+func (b *Backuper) hasObjectDisksLocal(backupList []LocalBackup, backupName string, disks []clickhouse.Disk) bool {
 	for _, backup := range backupList {
 		if backup.BackupName == backupName && !strings.Contains(backup.Tags, "embedded") {
 			for _, disk := range disks {
@@ -296,9 +296,10 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 						log.Warnf("b.cleanRemoteEmbedded return error: %v", err)
 						return err
 					}
-				} else if err = b.cleanBackupObjectDisks(ctx, backup.BackupName); err != nil {
-					log.Warnf("b.cleanBackupObjectDisks return error: %v", err)
-					return err
+				} else if b.hasObjectDisksRemote(backup) {
+					if err = b.cleanBackupObjectDisks(ctx, backup.BackupName); err != nil {
+						log.Warnf("b.cleanBackupObjectDisks return error: %v", err)
+					}
 				}
 			}
 
@@ -316,6 +317,15 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 		}
 	}
 	return fmt.Errorf("'%s' is not found on remote storage", backupName)
+}
+
+func (b *Backuper) hasObjectDisksRemote(backup storage.Backup) bool {
+	for _, diskType := range backup.DiskTypes {
+		if b.isDiskTypeObject(diskType) {
+			return true
+		}
+	}
+	return false
 }
 
 func (b *Backuper) cleanRemoteEmbedded(ctx context.Context, backup storage.Backup, bd *storage.BackupDestination) error {
@@ -347,7 +357,7 @@ func (b *Backuper) cleanRemoteEmbedded(ctx context.Context, backup storage.Backu
 func (b *Backuper) cleanBackupObjectDisks(ctx context.Context, backupName string) error {
 	backupPath, err := b.getObjectDiskBackupPath(backupName)
 	if err != nil {
-		return fmt.Errorf("cleanBackupObjectDisks: %s, contains oject disks but b.getObjectDiskBackupPath return error: %v", backupName, err)
+		return fmt.Errorf("cleanBackupObjectDisks: %s, contains object disks but b.getObjectDiskBackupPath return error: %v", backupName, err)
 	}
 	return b.dst.Walk(ctx, backupPath, true, func(ctx context.Context, f storage.RemoteFile) error {
 		if b.dst.Kind() == "azblob" {

@@ -152,3 +152,7 @@ func (b *Backuper) populateBackupShardField(ctx context.Context, tables []clickh
 	}
 	return nil
 }
+
+func (b *Backuper) isDiskTypeObject(diskType string) bool {
+	return diskType == "s3" || diskType == "azure_blob_storage"
+}
