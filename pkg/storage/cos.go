@@ -86,6 +86,10 @@ func (c *COS) DeleteFile(ctx context.Context, key string) error {
 func (c *COS) Walk(ctx context.Context, cosPath string, recursive bool, process func(context.Context, RemoteFile) error) error {
 	// COS needs prefix ended with "/".
 	prefix := path.Join(c.Config.Path, cosPath) + "/"
+	return c.WalkAbsolute(ctx, prefix, recursive, process)
+}
+
+func (c *COS) WalkAbsolute(ctx context.Context, prefix string, recursive bool, process func(context.Context, RemoteFile) error) error {
 
 	delimiter := ""
 	if !recursive {

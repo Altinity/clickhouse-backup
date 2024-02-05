@@ -205,6 +205,10 @@ func (a *AzureBlob) StatFile(ctx context.Context, key string) (RemoteFile, error
 
 func (a *AzureBlob) Walk(ctx context.Context, azPath string, recursive bool, process func(ctx context.Context, r RemoteFile) error) error {
 	prefix := path.Join(a.Config.Path, azPath)
+	return a.WalkAbsolute(ctx, prefix, recursive, process)
+}
+
+func (a *AzureBlob) WalkAbsolute(ctx context.Context, prefix string, recursive bool, process func(ctx context.Context, r RemoteFile) error) error {
 	if prefix == "" || prefix == "/" {
 		prefix = ""
 	} else {

@@ -124,11 +124,14 @@ func (f *FTP) DeleteFile(ctx context.Context, key string) error {
 }
 
 func (f *FTP) Walk(ctx context.Context, ftpPath string, recursive bool, process func(context.Context, RemoteFile) error) error {
+	prefix := path.Join(f.Config.Path, ftpPath)
+	return f.WalkAbsolute(ctx, prefix, recursive, process)
+}
+func (f *FTP) WalkAbsolute(ctx context.Context, prefix string, recursive bool, process func(context.Context, RemoteFile) error) error {
 	client, err := f.getConnectionFromPool(ctx, "Walk")
 	if err != nil {
 		return err
 	}
-	prefix := path.Join(f.Config.Path, ftpPath)
 	if !recursive {
 		entries, err := client.List(prefix)
 		f.returnConnectionToPool(ctx, "Walk", client)

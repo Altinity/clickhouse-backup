@@ -179,6 +179,10 @@ func (gcs *GCS) Close(ctx context.Context) error {
 
 func (gcs *GCS) Walk(ctx context.Context, gcsPath string, recursive bool, process func(ctx context.Context, r RemoteFile) error) error {
 	rootPath := path.Join(gcs.Config.Path, gcsPath)
+	return gcs.WalkAbsolute(ctx, rootPath, recursive, process)
+}
+
+func (gcs *GCS) WalkAbsolute(ctx context.Context, rootPath string, recursive bool, process func(ctx context.Context, r RemoteFile) error) error {
 	prefix := rootPath + "/"
 	if rootPath == "/" {
 		prefix = ""

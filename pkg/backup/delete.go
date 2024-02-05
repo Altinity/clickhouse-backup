@@ -190,6 +190,7 @@ func (b *Backuper) hasObjectDisksLocal(backupList []LocalBackup, backupName stri
 				if !disk.IsBackup && b.isDiskTypeObject(disk.Type) {
 					backupExists, err := os.ReadDir(path.Join(disk.Path, "backup", backup.BackupName))
 					if err == nil && len(backupExists) > 0 {
+						apexLog.Debugf("hasObjectDisksLocal: found object disk %s", disk.Name)
 						return true
 					}
 				}
@@ -355,23 +356,6 @@ func (b *Backuper) cleanRemoteEmbedded(ctx context.Context, backup storage.Backu
 
 // cleanBackupObjectDisks - recursive delete <object_disks_path>/<backupName>
 func (b *Backuper) cleanBackupObjectDisks(ctx context.Context, backupName string) error {
-	backupPath, err := b.getObjectDiskBackupPath(backupName)
-	if err != nil {
-		return fmt.Errorf("cleanBackupObjectDisks: %s, contains object disks but b.getObjectDiskBackupPath return error: %v", backupName, err)
-	}
-	return b.dst.Walk(ctx, backupPath, true, func(ctx context.Context, f storage.RemoteFile) error {
-		if b.dst.Kind() == "azblob" {
-			if f.Size() > 0 || !f.LastModified().IsZero() {
-				return b.dst.DeleteFile(ctx, path.Join(backupPath, f.Name()))
-			} else {
-				return nil
-			}
-		}
-		return b.dst.DeleteFile(ctx, path.Join(backupPath, f.Name()))
-	})
-}
-
-func (b *Backuper) getObjectDiskBackupPath(backupName string) (string, error) {
 	var objectDiskPath string
 	if b.cfg.General.RemoteStorage == "s3" {
 		objectDiskPath = b.cfg.S3.ObjectDiskPath
@@ -380,9 +364,19 @@ func (b *Backuper) getObjectDiskBackupPath(backupName string) (string, error) {
 	} else if b.cfg.General.RemoteStorage == "gcs" {
 		objectDiskPath = b.cfg.GCS.ObjectDiskPath
 	} else {
-		return "", fmt.Errorf("unsupported remote_storage: %s", b.cfg.General.RemoteStorage)
+		return fmt.Errorf("cleanBackupObjectDisks: %s, contains object disks but \"unsupported remote_storage: %s", backupName, b.cfg.General.RemoteStorage)
 	}
-	return path.Join(objectDiskPath, backupName), nil
+	//walk absolute path, delete relative
+	return b.dst.WalkAbsolute(ctx, path.Join(objectDiskPath, backupName), true, func(ctx context.Context, f storage.RemoteFile) error {
+		if b.dst.Kind() == "azblob" {
+			if f.Size() > 0 || !f.LastModified().IsZero() {
+				return b.dst.DeleteFileFromObjectDiskBackup(ctx, path.Join(backupName, f.Name()))
+			} else {
+				return nil
+			}
+		}
+		return b.dst.DeleteFileFromObjectDiskBackup(ctx, path.Join(backupName, f.Name()))
+	})
 }
 
 func (b *Backuper) skipIfSameLocalBackupPresent(ctx context.Context, backupName, tags string) (bool, error) {

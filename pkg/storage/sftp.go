@@ -166,11 +166,14 @@ func (sftp *SFTP) DeleteDirectory(ctx context.Context, dirPath string) error {
 }
 
 func (sftp *SFTP) Walk(ctx context.Context, remotePath string, recursive bool, process func(context.Context, RemoteFile) error) error {
-	dir := path.Join(sftp.Config.Path, remotePath)
-	sftp.Debug("[SFTP_DEBUG] Walk %s, recursive=%v", dir, recursive)
+	prefix := path.Join(sftp.Config.Path, remotePath)
+	return sftp.WalkAbsolute(ctx, prefix, recursive, process)
+}
+func (sftp *SFTP) WalkAbsolute(ctx context.Context, prefix string, recursive bool, process func(context.Context, RemoteFile) error) error {
+	sftp.Debug("[SFTP_DEBUG] Walk %s, recursive=%v", prefix, recursive)
 
 	if recursive {
-		walker := sftp.sftpClient.Walk(dir)
+		walker := sftp.sftpClient.Walk(prefix)
 		for walker.Step() {
 			if err := walker.Err(); err != nil {
 				return err
@@ -179,7 +182,7 @@ func (sftp *SFTP) Walk(ctx context.Context, remotePath string, recursive bool, p
 			if entry == nil {
 				continue
 			}
-			relName, _ := filepath.Rel(dir, walker.Path())
+			relName, _ := filepath.Rel(prefix, walker.Path())
 			err := process(ctx, &sftpFile{
 				size:         entry.Size(),
 				lastModified: entry.ModTime(),
@@ -190,9 +193,9 @@ func (sftp *SFTP) Walk(ctx context.Context, remotePath string, recursive bool, p
 			}
 		}
 	} else {
-		entries, err := sftp.sftpClient.ReadDir(dir)
+		entries, err := sftp.sftpClient.ReadDir(prefix)
 		if err != nil {
-			sftp.Debug("[SFTP_DEBUG] Walk::NonRecursive::ReadDir %s return error %v", dir, err)
+			sftp.Debug("[SFTP_DEBUG] Walk::NonRecursive::ReadDir %s return error %v", prefix, err)
 			return err
 		}
 		for _, entry := range entries {

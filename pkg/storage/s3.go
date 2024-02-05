@@ -388,14 +388,18 @@ func (s *S3) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 }
 
 func (s *S3) Walk(ctx context.Context, s3Path string, recursive bool, process func(ctx context.Context, r RemoteFile) error) error {
+	prefix := path.Join(s.Config.Path, s3Path)
+	return s.WalkAbsolute(ctx, prefix, recursive, process)
+}
+func (s *S3) WalkAbsolute(ctx context.Context, prefix string, recursive bool, process func(ctx context.Context, r RemoteFile) error) error {
 	g, ctx := errgroup.WithContext(ctx)
 	s3Files := make(chan *s3File)
 	g.Go(func() error {
 		defer close(s3Files)
-		return s.remotePager(ctx, path.Join(s.Config.Path, s3Path), recursive, func(page *s3.ListObjectsV2Output) {
+		return s.remotePager(ctx, prefix, recursive, func(page *s3.ListObjectsV2Output) {
 			for _, cp := range page.CommonPrefixes {
 				s3Files <- &s3File{
-					name: strings.TrimPrefix(*cp.Prefix, path.Join(s.Config.Path, s3Path)),
+					name: strings.TrimPrefix(*cp.Prefix, prefix),
 				}
 			}
 			for _, c := range page.Contents {
@@ -403,16 +407,16 @@ func (s *S3) Walk(ctx context.Context, s3Path string, recursive bool, process fu
 					*c.Size,
 					*c.LastModified,
 					string(c.StorageClass),
-					strings.TrimPrefix(*c.Key, path.Join(s.Config.Path, s3Path)),
+					strings.TrimPrefix(*c.Key, prefix),
 				}
 			}
 		})
 	})
 	g.Go(func() error {
 		var err error
-		for s3File := range s3Files {
+		for s3FileItem := range s3Files {
 			if err == nil {
-				err = process(ctx, s3File)
+				err = process(ctx, s3FileItem)
 			}
 		}
 		return err
