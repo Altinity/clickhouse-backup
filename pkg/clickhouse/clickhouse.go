@@ -1193,7 +1193,7 @@ func (ch *ClickHouse) CheckSystemPartsColumns(ctx context.Context, table *Table)
 	partColumnsDataTypes := make([]ColumnDataTypes, 0)
 	partsColumnsSQL := "SELECT column, groupUniqArray(type) AS uniq_types " +
 		"FROM system.parts_columns " +
-		"WHERE active AND database=? AND table=? AND type NOT LIKE 'Enum(%' AND type NOT LIKE 'Tuple(%' AND type NOT LIKE 'Array(Tuple(%' " +
+		"WHERE active AND database=? AND table=? AND type NOT LIKE 'Enum%(%' AND type NOT LIKE 'Tuple(%' AND type NOT LIKE 'Array(Tuple(%' " +
 		"GROUP BY column HAVING length(uniq_types) > 1"
 	if err = ch.SelectContext(ctx, &partColumnsDataTypes, partsColumnsSQL, table.Database, table.Name); err != nil {
 		return err

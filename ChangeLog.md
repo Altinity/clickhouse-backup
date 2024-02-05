@@ -1,6 +1,8 @@
-# v2.5.0
+# v2.4.26
 IMPROVEMENTS
 - improve re-balance disk during download if disk not exists in system.disks. Use least used for `local` disks and `random` for object disks, fix [561](https://github.com/Altinity/clickhouse-backup/issues/561)
+BUG FIXES
+- fix regression `check_parts_columns` for Enum types (2.4.24+), fix [823](https://github.com/Altinity/clickhouse-backup/issues/823) 
 
 # v2.4.25
 BUG FIXES

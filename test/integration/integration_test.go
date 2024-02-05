@@ -1204,12 +1204,12 @@ func TestCheckSystemPartsColumns(t *testing.T) {
 	ch.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+t.Name())
 
 	// test compatible data types
-	createSQL := "CREATE TABLE " + t.Name() + ".test_system_parts_columns(dt DateTime, v UInt64) ENGINE=MergeTree() ORDER BY tuple()"
+	createSQL := "CREATE TABLE " + t.Name() + ".test_system_parts_columns(dt DateTime, v UInt64, e Enum('test' = 1)) ENGINE=MergeTree() ORDER BY tuple()"
 	ch.queryWithNoError(r, createSQL)
-	ch.queryWithNoError(r, "INSERT INTO "+t.Name()+".test_system_parts_columns SELECT today() - INTERVAL number DAY, number FROM numbers(10)")
+	ch.queryWithNoError(r, "INSERT INTO "+t.Name()+".test_system_parts_columns SELECT today() - INTERVAL number DAY, number, 'test' FROM numbers(10)")
 
-	ch.queryWithNoError(r, "ALTER TABLE "+t.Name()+".test_system_parts_columns MODIFY COLUMN dt Nullable(DateTime('Europe/Moscow')), MODIFY COLUMN v Nullable(UInt64)", t.Name())
-	ch.queryWithNoError(r, "INSERT INTO "+t.Name()+".test_system_parts_columns SELECT today() - INTERVAL number DAY, number FROM numbers(10)")
+	ch.queryWithNoError(r, "ALTER TABLE "+t.Name()+".test_system_parts_columns MODIFY COLUMN dt Nullable(DateTime('Europe/Moscow')), MODIFY COLUMN v Nullable(UInt64), MODIFY COLUMN e Enum16('test2'=1, 'test'=2)", t.Name())
+	ch.queryWithNoError(r, "INSERT INTO "+t.Name()+".test_system_parts_columns SELECT today() - INTERVAL number DAY, number, 'test2' FROM numbers(10)")
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "create", "test_system_parts_columns"))
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "delete", "local", "test_system_parts_columns"))
 	r.NoError(ch.chbackend.DropTable(clickhouse.Table{Database: t.Name(), Name: "test_system_parts_columns"}, createSQL, "", false, version, ""))
