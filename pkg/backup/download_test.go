@@ -211,10 +211,8 @@ func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 	invalidRemoteBackup.DataFormat = DirectoryFormat
 	invalidTable := metadata.TableMetadata{
 		Parts: map[string][]metadata.Part{
-			"default":  {{Name: "part_1_1_0"}, {Name: "part_2_2_0"}},
-			"hdd2":     {{Name: "part_3_3_0"}, {Name: "part_4_4_0"}},
-			"s3":       {{Name: "part_5_5_0"}, {Name: "part_6_6_0"}},
-			"s3_disk2": {{Name: "part_7_7_0"}, {Name: "part_8_8_0"}},
+			"default": {{Name: "part_1_1_0"}, {Name: "part_2_2_0"}},
+			"hdd2":    {{Name: "part_3_3_0"}, {Name: "part_4_4_0"}},
 		},
 		RebalancedFiles: nil,
 		Database:        "default",
@@ -227,7 +225,7 @@ func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 		LocalFile:       "/dev/null",
 	}
 	tableMetadataAfterDownload := []metadata.TableMetadata{invalidTable}
-	// not exists diskType
+	// hdd2 not exists diskType
 	delete(invalidRemoteBackup.DiskTypes, "hdd2")
 	err := b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownload, baseDisks, invalidRemoteBackup, log)
 	assert.Error(t, err)
@@ -244,6 +242,13 @@ func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 
 	// invalid storage_policy
 	invalidRemoteBackup.DiskTypes["hdd2"] = "local"
+	invalidTable.Parts = map[string][]metadata.Part{
+		"default":  {{Name: "part_1_1_0"}, {Name: "part_2_2_0"}},
+		"hdd2":     {{Name: "part_3_3_0"}, {Name: "part_4_4_0"}},
+		"s3":       {{Name: "part_5_5_0"}, {Name: "part_6_6_0"}},
+		"s3_disk2": {{Name: "part_7_7_0"}, {Name: "part_8_8_0"}},
+	}
+
 	invalidTable.Table = "test3"
 	invalidTable.Query = "CREATE TABLE default.test3(id UInt64) ENGINE=MergeTree() ORDER BY id SETTINGS storage_policy='invalid'"
 	tableMetadataAfterDownload = []metadata.TableMetadata{invalidTable}
