@@ -728,6 +728,18 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ta
 	if len(b.cfg.General.RestoreDatabaseMapping) > 0 {
 		tablePattern = b.changeTablePatternFromRestoreDatabaseMapping(tablePattern)
 	}
+	var err error
+	if b.cfg.General.RemoteStorage == "s3" {
+		b.cfg.S3.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.S3.ObjectDiskPath)
+	} else if b.cfg.General.RemoteStorage == "gcs" {
+		b.cfg.GCS.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.GCS.ObjectDiskPath)
+	} else if b.cfg.General.RemoteStorage == "azblob" {
+		b.cfg.AzureBlob.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.AzureBlob.ObjectDiskPath)
+	}
+	if err != nil {
+		return err
+	}
+
 	chTables, err := b.ch.GetTables(ctx, tablePattern)
 	if err != nil {
 		return err
@@ -836,13 +848,6 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 				return err
 			}
 			needToDownloadObjectDisk = true
-			if b.cfg.General.RemoteStorage == "s3" {
-				b.cfg.S3.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.S3.ObjectDiskPath)
-			} else if b.cfg.General.RemoteStorage == "gcs" {
-				b.cfg.GCS.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.GCS.ObjectDiskPath)
-			} else if b.cfg.General.RemoteStorage == "azblob" {
-				b.cfg.AzureBlob.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.AzureBlob.ObjectDiskPath)
-			}
 			if err != nil {
 				return err
 			}
