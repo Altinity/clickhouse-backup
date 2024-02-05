@@ -279,7 +279,11 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		joinStoragePoliciesSQL := ""
 		if len(diskFields) > 0 && diskFields[0].StoragePolicyPresent > 0 {
 			storagePoliciesSQL = "groupUniqArray(s.policy_name)"
-			joinStoragePoliciesSQL = " INNER JOIN (SELECT policy_name, arrayJoin(disks) AS disk FROM system.storage_policies) AS s ON s.disk = d.name"
+			joinStoragePoliciesSQL = " INNER JOIN "
+			if ch.Config.UseEmbeddedBackupRestore {
+				joinStoragePoliciesSQL = " LEFT JOIN "
+			}
+			joinStoragePoliciesSQL += "(SELECT policy_name, arrayJoin(disks) AS disk FROM system.storage_policies) AS s ON s.disk = d.name"
 		}
 		var result []Disk
 		query := fmt.Sprintf(
