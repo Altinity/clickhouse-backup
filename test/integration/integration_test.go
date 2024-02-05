@@ -2054,7 +2054,7 @@ func replaceStorageDiskNameForReBalance(r *require.Assertions, ch *TestClickHous
 	}
 	ch.chbackend.Close()
 	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker-compose", "-f", os.Getenv("COMPOSE_FILE"), "restart", "clickhouse"))
-	ch.connectWithWait(r, 3*time.Second, 1*time.Second)
+	ch.connectWithWait(r, 3*time.Second, 1*time.Minute)
 }
 
 func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, ch *TestClickHouse, remoteStorageType string, backupConfig string) {

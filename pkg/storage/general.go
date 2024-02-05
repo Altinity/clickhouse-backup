@@ -629,6 +629,10 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 		if err != nil {
 			return nil, err
 		}
+		azblobStorage.Config.ObjectDiskPath, err = ch.ApplyMacros(ctx, azblobStorage.Config.ObjectDiskPath)
+		if err != nil {
+			return nil, err
+		}
 
 		bufferSize := azblobStorage.Config.BufferSize
 		// https://github.com/Altinity/clickhouse-backup/issues/317
@@ -677,6 +681,10 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 		if err != nil {
 			return nil, err
 		}
+		s3Storage.Config.ObjectDiskPath, err = ch.ApplyMacros(ctx, s3Storage.Config.ObjectDiskPath)
+		if err != nil {
+			return nil, err
+		}
 		// https://github.com/Altinity/clickhouse-backup/issues/588
 		if len(s3Storage.Config.ObjectLabels) > 0 && backupName != "" {
 			objectLabels := s3Storage.Config.ObjectLabels
@@ -696,6 +704,10 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 	case "gcs":
 		googleCloudStorage := &GCS{Config: &cfg.GCS}
 		googleCloudStorage.Config.Path, err = ch.ApplyMacros(ctx, googleCloudStorage.Config.Path)
+		if err != nil {
+			return nil, err
+		}
+		googleCloudStorage.Config.ObjectDiskPath, err = ch.ApplyMacros(ctx, googleCloudStorage.Config.ObjectDiskPath)
 		if err != nil {
 			return nil, err
 		}
