@@ -1,3 +1,9 @@
+# v2.4.28
+IMPROVEMENT
+- refactoring `watch` command, after https://github.com/Altinity/clickhouse-backup/pull/804
+BUG FIXES
+- fix deletion for `object_disk_path` and `embedded` backups, after `upload` to properly respect `backups_to_keep_remote`
+
 # v2.4.27
 BUG FIXES
 - fix deletion for `object_disk_path` (all backups with S3, GCS over S3, AZBLOB disks from 2.4.0-2.4.25 didn't delete properly their data from backup bucket)

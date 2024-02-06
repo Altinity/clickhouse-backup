@@ -9,7 +9,6 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/progressbar"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"github.com/eapache/go-resiliency/retrier"
 	"io"
 	"os"
@@ -58,37 +57,7 @@ type BackupDestination struct {
 
 var metadataCacheLock sync.RWMutex
 
-func (bd *BackupDestination) RemoveOldBackups(ctx context.Context, keep int) error {
-	if keep < 1 {
-		return nil
-	}
-	start := time.Now()
-	backupList, err := bd.BackupList(ctx, true, "")
-	if err != nil {
-		return err
-	}
-	backupsToDelete := GetBackupsToDelete(backupList, keep)
-	bd.Log.WithFields(apexLog.Fields{
-		"operation": "RemoveOldBackups",
-		"duration":  utils.HumanizeDuration(time.Since(start)),
-	}).Info("calculate backup list for deleteKey")
-	for _, backupToDelete := range backupsToDelete {
-		startDelete := time.Now()
-		if err := bd.RemoveBackup(ctx, backupToDelete); err != nil {
-			bd.Log.Warnf("can't deleteKey %s return error : %v", backupToDelete.BackupName, err)
-		}
-		bd.Log.WithFields(apexLog.Fields{
-			"operation": "RemoveOldBackups",
-			"location":  "remote",
-			"backup":    backupToDelete.BackupName,
-			"duration":  utils.HumanizeDuration(time.Since(startDelete)),
-		}).Info("done")
-	}
-	bd.Log.WithFields(apexLog.Fields{"operation": "RemoveOldBackups", "duration": utils.HumanizeDuration(time.Since(start))}).Info("done")
-	return nil
-}
-
-func (bd *BackupDestination) RemoveBackup(ctx context.Context, backup Backup) error {
+func (bd *BackupDestination) RemoveBackupRemote(ctx context.Context, backup Backup) error {
 	if bd.Kind() == "SFTP" || bd.Kind() == "FTP" {
 		return bd.DeleteFile(ctx, backup.BackupName)
 	}

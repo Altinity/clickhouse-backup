@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func GetBackupsToDelete(backups []Backup, keep int) []Backup {
+func GetBackupsToDeleteRemote(backups []Backup, keep int) []Backup {
 	if len(backups) > keep {
 		// sort backup ascending
 		sort.SliceStable(backups, func(i, j int) bool {

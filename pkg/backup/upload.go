@@ -232,9 +232,45 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 		Info("done")
 
 	// Clean
-	if err = b.dst.RemoveOldBackups(ctx, b.cfg.General.BackupsToKeepRemote); err != nil {
+	if err = b.RemoveOldBackupsRemote(ctx); err != nil {
 		return fmt.Errorf("can't remove old backups on remote storage: %v", err)
 	}
+	return nil
+}
+
+func (b *Backuper) RemoveOldBackupsRemote(ctx context.Context) error {
+
+	if b.cfg.General.BackupsToKeepRemote < 1 {
+		return nil
+	}
+	start := time.Now()
+	backupList, err := b.dst.BackupList(ctx, true, "")
+	if err != nil {
+		return err
+	}
+	backupsToDelete := storage.GetBackupsToDeleteRemote(backupList, b.cfg.General.BackupsToKeepRemote)
+	b.dst.Log.WithFields(apexLog.Fields{
+		"operation": "RemoveOldBackupsRemote",
+		"duration":  utils.HumanizeDuration(time.Since(start)),
+	}).Info("calculate backup list for delete remote")
+	for _, backupToDelete := range backupsToDelete {
+		startDelete := time.Now()
+		err = b.cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent(ctx, backupToDelete, b.dst.Log)
+		if err != nil {
+			return err
+		}
+
+		if err := b.dst.RemoveBackupRemote(ctx, backupToDelete); err != nil {
+			b.dst.Log.Warnf("can't deleteKey %s return error : %v", backupToDelete.BackupName, err)
+		}
+		b.dst.Log.WithFields(apexLog.Fields{
+			"operation": "RemoveOldBackupsRemote",
+			"location":  "remote",
+			"backup":    backupToDelete.BackupName,
+			"duration":  utils.HumanizeDuration(time.Since(startDelete)),
+		}).Info("done")
+	}
+	b.dst.Log.WithFields(apexLog.Fields{"operation": "RemoveOldBackupsRemote", "duration": utils.HumanizeDuration(time.Since(start))}).Info("done")
 	return nil
 }
 

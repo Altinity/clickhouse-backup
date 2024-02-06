@@ -29,8 +29,8 @@ func TestGetBackupsToDelete(t *testing.T) {
 		{metadata.BackupMetadata{BackupName: "two"}, false, "", "", timeParse("2019-03-28T19-50-12")},
 		{metadata.BackupMetadata{BackupName: "one"}, false, "", "", timeParse("2019-03-28T19-50-11")},
 	}
-	assert.Equal(t, expectedData, GetBackupsToDelete(testData, 3))
-	assert.Equal(t, []Backup{}, GetBackupsToDelete([]Backup{testData[0]}, 3))
+	assert.Equal(t, expectedData, GetBackupsToDeleteRemote(testData, 3))
+	assert.Equal(t, []Backup{}, GetBackupsToDeleteRemote([]Backup{testData[0]}, 3))
 }
 
 func TestGetBackupsToDeleteWithRequiredBackup(t *testing.T) {
@@ -45,8 +45,8 @@ func TestGetBackupsToDeleteWithRequiredBackup(t *testing.T) {
 	expectedData := []Backup{
 		{metadata.BackupMetadata{BackupName: "1"}, false, "", "", timeParse("2019-03-28T19-50-11")},
 	}
-	assert.Equal(t, expectedData, GetBackupsToDelete(testData, 3))
-	assert.Equal(t, []Backup{}, GetBackupsToDelete([]Backup{testData[0]}, 3))
+	assert.Equal(t, expectedData, GetBackupsToDeleteRemote(testData, 3))
+	assert.Equal(t, []Backup{}, GetBackupsToDeleteRemote([]Backup{testData[0]}, 3))
 
 	// fix https://github.com/Altinity/clickhouse-backup/issues/385
 	testData = []Backup{
@@ -57,8 +57,8 @@ func TestGetBackupsToDeleteWithRequiredBackup(t *testing.T) {
 		{metadata.BackupMetadata{BackupName: "4", RequiredBackup: "3"}, false, "", "", timeParse("2019-03-28T19-50-14")},
 	}
 	expectedData = []Backup{}
-	assert.Equal(t, expectedData, GetBackupsToDelete(testData, 3))
-	assert.Equal(t, []Backup{}, GetBackupsToDelete([]Backup{testData[0]}, 3))
+	assert.Equal(t, expectedData, GetBackupsToDeleteRemote(testData, 3))
+	assert.Equal(t, []Backup{}, GetBackupsToDeleteRemote([]Backup{testData[0]}, 3))
 
 }
 
@@ -73,7 +73,7 @@ func TestGetBackupsToDeleteWithInvalidUploadDate(t *testing.T) {
 	expectedData := []Backup{
 		{metadata.BackupMetadata{BackupName: "1"}, false, "", "", timeParse("2022-03-03T18-08-01")},
 	}
-	assert.Equal(t, expectedData, GetBackupsToDelete(testData, 2))
+	assert.Equal(t, expectedData, GetBackupsToDeleteRemote(testData, 2))
 
 }
 
@@ -123,5 +123,5 @@ func TestGetBackupsToDeleteWithRecursiveRequiredBackups(t *testing.T) {
 		{metadata.BackupMetadata{BackupName: "2022-09-01T21-00-03", RequiredBackup: "2022-09-01T05-00-01"}, false, "", "", timeParse("2022-09-01T21-00-03")},
 		{metadata.BackupMetadata{BackupName: "2022-09-01T05-00-01"}, false, "", "", timeParse("2022-09-01T05-00-01")},
 	}
-	assert.Equal(t, expectedData, GetBackupsToDelete(testData, 6))
+	assert.Equal(t, expectedData, GetBackupsToDeleteRemote(testData, 6))
 }

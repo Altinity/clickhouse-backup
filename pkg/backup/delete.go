@@ -98,10 +98,10 @@ func (b *Backuper) RemoveOldBackupsLocal(ctx context.Context, keepLastBackup boo
 	if err != nil {
 		return err
 	}
-	backupsToDelete := GetBackupsToDelete(backupList, keep)
+	backupsToDelete := GetBackupsToDeleteLocal(backupList, keep)
 	for _, backup := range backupsToDelete {
-		if err := b.RemoveBackupLocal(ctx, backup.BackupName, disks); err != nil {
-			return err
+		if deleteErr := b.RemoveBackupLocal(ctx, backup.BackupName, disks); deleteErr != nil {
+			return deleteErr
 		}
 	}
 	return nil
@@ -146,21 +146,9 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
-			var skip bool
-			skip, err = b.skipIfTheSameRemoteBackupPresent(ctx, backup.BackupName, backup.Tags)
+			err = b.cleanEmbeddedAndObjectDiskLocalIfSameRemoteNotPresent(ctx, backupName, disks, backup, hasObjectDisks, log)
 			if err != nil {
 				return err
-			}
-			if !skip && strings.Contains(backup.Tags, "embedded") {
-				if err = b.cleanLocalEmbedded(ctx, backup, disks); err != nil {
-					log.Warnf("b.cleanLocalEmbedded return error: %v", err)
-					return err
-				}
-			}
-			if !skip && hasObjectDisks {
-				if err = b.cleanBackupObjectDisks(ctx, backupName); err != nil {
-					return err
-				}
 			}
 			for _, disk := range disks {
 				backupPath := path.Join(disk.Path, "backup", backupName)
@@ -181,6 +169,25 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 		}
 	}
 	return fmt.Errorf("'%s' is not found on local storage", backupName)
+}
+
+func (b *Backuper) cleanEmbeddedAndObjectDiskLocalIfSameRemoteNotPresent(ctx context.Context, backupName string, disks []clickhouse.Disk, backup LocalBackup, hasObjectDisks bool, log *apexLog.Entry) error {
+	skip, err := b.skipIfTheSameRemoteBackupPresent(ctx, backup.BackupName, backup.Tags)
+	if err != nil {
+		return err
+	}
+	if !skip && strings.Contains(backup.Tags, "embedded") {
+		if err = b.cleanLocalEmbedded(ctx, backup, disks); err != nil {
+			log.Warnf("b.cleanLocalEmbedded return error: %v", err)
+			return err
+		}
+	}
+	if !skip && hasObjectDisks {
+		if err = b.cleanBackupObjectDisks(ctx, backupName); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (b *Backuper) hasObjectDisksLocal(backupList []LocalBackup, backupName string, disks []clickhouse.Disk) bool {
@@ -289,22 +296,12 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 	}
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
-			if skip, err := b.skipIfSameLocalBackupPresent(ctx, backup.BackupName, backup.Tags); err != nil {
+			err = b.cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent(ctx, backup, log)
+			if err != nil {
 				return err
-			} else if !skip {
-				if strings.Contains(backup.Tags, "embedded") {
-					if err = b.cleanRemoteEmbedded(ctx, backup, bd); err != nil {
-						log.Warnf("b.cleanRemoteEmbedded return error: %v", err)
-						return err
-					}
-				} else if b.hasObjectDisksRemote(backup) {
-					if err = b.cleanBackupObjectDisks(ctx, backup.BackupName); err != nil {
-						log.Warnf("b.cleanBackupObjectDisks return error: %v", err)
-					}
-				}
 			}
 
-			if err = bd.RemoveBackup(ctx, backup); err != nil {
+			if err = bd.RemoveBackupRemote(ctx, backup); err != nil {
 				log.Warnf("bd.RemoveBackup return error: %v", err)
 				return err
 			}
@@ -320,6 +317,24 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 	return fmt.Errorf("'%s' is not found on remote storage", backupName)
 }
 
+func (b *Backuper) cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent(ctx context.Context, backup storage.Backup, log *apexLog.Entry) error {
+	if skip, err := b.skipIfSameLocalBackupPresent(ctx, backup.BackupName, backup.Tags); err != nil {
+		return err
+	} else if !skip {
+		if strings.Contains(backup.Tags, "embedded") {
+			if err = b.cleanRemoteEmbedded(ctx, backup); err != nil {
+				log.Warnf("b.cleanRemoteEmbedded return error: %v", err)
+				return err
+			}
+		} else if b.hasObjectDisksRemote(backup) {
+			if err = b.cleanBackupObjectDisks(ctx, backup.BackupName); err != nil {
+				log.Warnf("b.cleanBackupObjectDisks return error: %v", err)
+			}
+		}
+	}
+	return nil
+}
+
 func (b *Backuper) hasObjectDisksRemote(backup storage.Backup) bool {
 	for _, diskType := range backup.DiskTypes {
 		if b.isDiskTypeObject(diskType) {
@@ -329,13 +344,13 @@ func (b *Backuper) hasObjectDisksRemote(backup storage.Backup) bool {
 	return false
 }
 
-func (b *Backuper) cleanRemoteEmbedded(ctx context.Context, backup storage.Backup, bd *storage.BackupDestination) error {
+func (b *Backuper) cleanRemoteEmbedded(ctx context.Context, backup storage.Backup) error {
 	if err := object_disk.InitCredentialsAndConnections(ctx, b.ch, b.cfg, b.cfg.ClickHouse.EmbeddedBackupDisk); err != nil {
 		return err
 	}
-	return bd.Walk(ctx, backup.BackupName+"/", true, func(ctx context.Context, f storage.RemoteFile) error {
+	return b.dst.Walk(ctx, backup.BackupName+"/", true, func(ctx context.Context, f storage.RemoteFile) error {
 		if !strings.HasSuffix(f.Name(), ".json") {
-			r, err := bd.GetFileReader(ctx, path.Join(backup.BackupName, f.Name()))
+			r, err := b.dst.GetFileReader(ctx, path.Join(backup.BackupName, f.Name()))
 			if err != nil {
 				return err
 			}
