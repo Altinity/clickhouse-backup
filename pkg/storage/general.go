@@ -593,7 +593,10 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 	}
 	switch cfg.General.RemoteStorage {
 	case "azblob":
-		azblobStorage := &AzureBlob{Config: &cfg.AzureBlob}
+		azblobStorage := &AzureBlob{
+			Config: &cfg.AzureBlob,
+			Log:    log.WithField("logger", "AZBLOB"),
+		}
 		azblobStorage.Config.Path, err = ch.ApplyMacros(ctx, azblobStorage.Config.Path)
 		if err != nil {
 			return nil, err

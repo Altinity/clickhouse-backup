@@ -103,6 +103,7 @@ type AzureBlobConfig struct {
 	MaxBuffers            int    `yaml:"buffer_count" envconfig:"AZBLOB_MAX_BUFFERS"`
 	MaxPartsCount         int    `yaml:"max_parts_count" envconfig:"AZBLOB_MAX_PARTS_COUNT"`
 	Timeout               string `yaml:"timeout" envconfig:"AZBLOB_TIMEOUT"`
+	Debug                 bool   `yaml:"debug" envconfig:"AZBLOB_DEBUG"`
 }
 
 // S3Config - s3 settings section

@@ -479,6 +479,7 @@ azblob:
   buffer_size: 0               # AZBLOB_BUFFER_SIZE, if less or eq 0 then it is calculated as max_file_size / max_parts_count, between 2Mb and 4Mb
   max_parts_count: 10000       # AZBLOB_MAX_PARTS_COUNT, number of parts for AZBLOB uploads, for properly calculate buffer size
   max_buffers: 3               # AZBLOB_MAX_BUFFERS
+  debug: false                 # AZBLOB_DEBUG
 s3:
   access_key: ""                   # S3_ACCESS_KEY
   secret_key: ""                   # S3_SECRET_KEY

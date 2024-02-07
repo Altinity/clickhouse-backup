@@ -900,6 +900,13 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 					if objMeta.StorageObjectCount < 1 && objMeta.Version != object_disk.VersionRelativePath {
 						return fmt.Errorf("%s: invalid object_disk.Metadata: %#v", fPath, objMeta)
 					}
+					//to allow delete Object Disk Data after DROP TABLE/DATABASE ...SYNC
+					if objMeta.RefCount > 0 {
+						objMeta.RefCount = 0
+						if writeMetaErr := object_disk.WriteMetadataToFile(objMeta, fPath); writeMetaErr != nil {
+							return fmt.Errorf("%s: object_disk.WriteMetadataToFile return error: %v", fPath, writeMetaErr)
+						}
+					}
 					downloadObjectDiskPartsWorkingGroup.Go(func() error {
 						var srcBucket, srcKey string
 						for _, storageObject := range objMeta.StorageObjects {

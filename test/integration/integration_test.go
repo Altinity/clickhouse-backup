@@ -429,7 +429,7 @@ func TestS3NoDeletePermission(t *testing.T) {
 	r.NoError(dockerCP("config-s3-nodelete.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
 
 	ch := &TestClickHouse{}
-	ch.connectWithWait(r, 500*time.Millisecond, 2*time.Second)
+	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second, 2*time.Second)
 	defer ch.chbackend.Close()
 	generateTestData(t, r, ch, "S3", defaultTestData)
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "create_remote", "no_delete_backup"))
@@ -452,7 +452,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
 
-	ch.connectWithWait(r, 1*time.Second, 1*time.Second)
+	ch.connectWithWait(r, 1*time.Second, 1*time.Second, 1*time.Second)
 
 	ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_rbac")
 	ch.queryWithNoError(r, "CREATE TABLE default.test_rbac (v UInt64) ENGINE=MergeTree() ORDER BY tuple()")
@@ -490,7 +490,7 @@ func TestDoRestoreRBAC(t *testing.T) {
 
 	ch.chbackend.Close()
 	// r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker-compose", "-f", os.Getenv("COMPOSE_FILE"), "restart", "clickhouse"))
-	ch.connectWithWait(r, 2*time.Second, 8*time.Second)
+	ch.connectWithWait(r, 2*time.Second, 2*time.Second, 8*time.Second)
 
 	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
 
@@ -540,7 +540,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 	}
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r, 0*time.Millisecond, 1*time.Second)
+	ch.connectWithWait(r, 0*time.Millisecond, 1*time.Second, 1*time.Second)
 	ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_configs")
 	ch.queryWithNoError(r, "CREATE TABLE default.test_rbac (v UInt64) ENGINE=MergeTree() ORDER BY tuple()")
 
@@ -553,7 +553,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 
 	ch.queryWithNoError(r, "SYSTEM RELOAD CONFIG")
 	ch.chbackend.Close()
-	ch.connectWithWait(r, 1*time.Second, 1*time.Second)
+	ch.connectWithWait(r, 1*time.Second, 1*time.Second, 1*time.Second)
 	selectEmptyResultForAggQuery := "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"
 	var settings string
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&settings, selectEmptyResultForAggQuery))
@@ -567,7 +567,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 
 	r.NoError(ch.chbackend.Query("SYSTEM RELOAD CONFIG"))
 	ch.chbackend.Close()
-	ch.connectWithWait(r, 1*time.Second, 1*time.Second)
+	ch.connectWithWait(r, 1*time.Second, 1*time.Second, 1*time.Second)
 
 	settings = ""
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
@@ -576,7 +576,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 	r.NoError(dockerExec("clickhouse", "bash", "-xec", "CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml CLICKHOUSE_RESTART_COMMAND='sql:SYSTEM RELOAD CONFIG' clickhouse-backup restore --rm --configs --configs-only test_configs_backup"))
 
 	ch.chbackend.Close()
-	ch.connectWithWait(r, 1*time.Second, 1*time.Second)
+	ch.connectWithWait(r, 1*time.Second, 1*time.Second, 1*time.Second)
 
 	settings = ""
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
@@ -597,7 +597,7 @@ func TestDoRestoreConfigs(t *testing.T) {
 func TestLongListRemote(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r, 0*time.Second, 1*time.Second)
+	ch.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Second)
 	defer ch.chbackend.Close()
 	totalCacheCount := 20
 	testBackupName := "test_list_remote"
@@ -643,7 +643,7 @@ func TestLongListRemote(t *testing.T) {
 func TestServerAPI(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r, 0*time.Second, 10*time.Second)
+	ch.connectWithWait(r, 0*time.Second, 1*time.Second, 10*time.Second)
 	defer func() {
 		ch.chbackend.Close()
 	}()
@@ -988,7 +988,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 	//t.Parallel()
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r, 0*time.Second, 1*time.Second)
+	ch.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Second)
 	defer ch.chbackend.Close()
 
 	log.Info("Check skip not exist errors")
@@ -1107,7 +1107,7 @@ func TestTablePatterns(t *testing.T) {
 	//t.Parallel()
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r, 500*time.Millisecond, 5*time.Second)
+	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second, 5*time.Second)
 	defer ch.chbackend.Close()
 
 	testBackupName := "test_backup_patterns"
@@ -1167,7 +1167,7 @@ func TestProjections(t *testing.T) {
 	//t.Parallel()
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r, 0*time.Second, 1*time.Second)
+	ch.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Second)
 	defer ch.chbackend.Close()
 
 	r.NoError(dockerCP("config-s3.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
@@ -1196,7 +1196,7 @@ func TestCheckSystemPartsColumns(t *testing.T) {
 	//t.Parallel()
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r, 0*time.Second, 1*time.Second)
+	ch.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Second)
 	defer ch.chbackend.Close()
 	r.NoError(dockerCP("config-s3.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
 	version, err := ch.chbackend.GetVersion(context.Background())
@@ -1242,7 +1242,7 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	//t.Parallel()
 	r := require.New(t)
 	ch := &TestClickHouse{}
-	ch.connectWithWait(r, 500*time.Millisecond, 2*time.Second)
+	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second, 2*time.Second)
 	backupNames := make([]string, 5)
 	for i := 0; i < 5; i++ {
 		backupNames[i] = fmt.Sprintf("keep_remote_backup_%d", i)
@@ -1281,7 +1281,7 @@ func TestSyncReplicaTimeout(t *testing.T) {
 	//t.Parallel()
 	r := require.New(t)
 	ch := &TestClickHouse{}
-	ch.connectWithWait(r, 0*time.Millisecond, 2*time.Second)
+	ch.connectWithWait(r, 0*time.Millisecond, 1*time.Second, 2*time.Second)
 	defer ch.chbackend.Close()
 
 	ch.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+t.Name())
@@ -1324,7 +1324,7 @@ func TestGetPartitionId(t *testing.T) {
 	//t.Parallel()
 	r := require.New(t)
 	ch := &TestClickHouse{}
-	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second)
+	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second, 1*time.Second)
 	defer ch.chbackend.Close()
 
 	type testData struct {
@@ -1392,7 +1392,7 @@ func TestRestoreMutationInProgress(t *testing.T) {
 	//t.Parallel()
 	r := require.New(t)
 	ch := &TestClickHouse{}
-	ch.connectWithWait(r, 0*time.Second, 5*time.Second)
+	ch.connectWithWait(r, 0*time.Second, 1*time.Second, 5*time.Second)
 	defer ch.chbackend.Close()
 	version, err := ch.chbackend.GetVersion(context.Background())
 	r.NoError(err)
@@ -1513,7 +1513,7 @@ func TestInnerTablesMaterializedView(t *testing.T) {
 	//t.Parallel()
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r, 1*time.Second, 10*time.Second)
+	ch.connectWithWait(r, 1*time.Second, 1*time.Second, 10*time.Second)
 	defer ch.chbackend.Close()
 
 	ch.queryWithNoError(r, "CREATE DATABASE test_mv")
@@ -1547,7 +1547,7 @@ func TestFIPS(t *testing.T) {
 	//t.Parallel()
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r, 1*time.Second, 10*time.Second)
+	ch.connectWithWait(r, 1*time.Second, 1*time.Second, 10*time.Second)
 	defer ch.chbackend.Close()
 	fipsBackupName := fmt.Sprintf("fips_backup_%d", rand.Int())
 	r.NoError(dockerExec("clickhouse", "rm", "-fv", "/etc/apt/sources.list.d/clickhouse.list"))
@@ -1758,7 +1758,7 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 	//t.Parallel()
 	r := require.New(t)
 	ch := &TestClickHouse{}
-	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second)
+	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second, 1*time.Second)
 	defer ch.chbackend.Close()
 	checkRecordset := func(expectedRows int, expectedCount uint64, query string) {
 		result := make([]struct {
@@ -1825,7 +1825,7 @@ func TestMySQLMaterialized(t *testing.T) {
 	r := require.New(t)
 	r.NoError(dockerExec("mysql", "mysql", "-u", "root", "--password=root", "-v", "-e", "CREATE DATABASE ch_mysql_repl"))
 	ch := &TestClickHouse{}
-	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second)
+	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second, 1*time.Second)
 	defer ch.chbackend.Close()
 	engine := "MaterializedMySQL"
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.9") == -1 {
@@ -1861,7 +1861,7 @@ func TestPostgreSQLMaterialized(t *testing.T) {
 	r.NoError(dockerExec("pgsql", "bash", "-ce", "echo 'CREATE DATABASE ch_pgsql_repl' | PGPASSWORD=root psql -v ON_ERROR_STOP=1 -U root"))
 	r.NoError(dockerExec("pgsql", "bash", "-ce", "echo \"CREATE TABLE t1 (id BIGINT PRIMARY KEY, s VARCHAR(255)); INSERT INTO t1(id, s) VALUES(1,'s1'),(2,'s2'),(3,'s3')\" | PGPASSWORD=root psql -v ON_ERROR_STOP=1 -U root -d ch_pgsql_repl"))
 	ch := &TestClickHouse{}
-	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second)
+	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second, 1*time.Second)
 	defer ch.chbackend.Close()
 	ch.queryWithNoError(r,
 		"CREATE DATABASE ch_pgsql_repl ENGINE=MaterializedPostgreSQL('pgsql:5432','ch_pgsql_repl','root','root') "+
@@ -1907,7 +1907,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 
 	r := require.New(t)
 	ch := &TestClickHouse{}
-	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Minute)
+	ch.connectWithWait(r, 500*time.Millisecond, 1500*time.Millisecond, 1*time.Minute)
 	defer ch.chbackend.Close()
 
 	// test for specified partitions backup
@@ -2022,6 +2022,50 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 		fullCleanup(t, r, ch, []string{testBackupName, incrementBackupName}, []string{"remote", "local"}, databaseList, true, true, backupConfig)
 	}
 	replaceStorageDiskNameForReBalance(r, ch, remoteStorageType, true)
+	checkObjectDiskBackupIsEmpty(r, remoteStorageType)
+}
+
+func checkObjectDiskBackupIsEmpty(r *require.Assertions, remoteStorageType string) {
+	if remoteStorageType == "AZBLOB" {
+		r.NoError(dockerExec("azure", "apk", "add", "jq"))
+		checkBlobCollection := func(containerName string, expected string) {
+			out, err := dockerExecOut("azure", "sh", "-c", "jq '.collections[] | select(.name == \"$BLOBS_COLLECTION$\") | .data[] | select(.containerName == \""+containerName+"\") | .name' /data/__azurite_db_blob__.json")
+			r.NoError(err)
+			actual := strings.Trim(out, "\n\r\t ")
+			r.Equal(expected, actual)
+		}
+		checkBlobCollection("container1", "")
+		checkBlobCollection("azure-backup-disk", "")
+		// docker run --network=integration_clickhouse-backup -it --rm mcr.microsoft.com/azure-cli:latest
+		// export AZURE_STORAGE_CONNECTION_STRING="DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azure:10000/devstoreaccount1;"
+		// az storage blob list --container-name azure-disk
+		// az storage blob delete-batch --source azure-disk
+		// az storage blob list --container-name azure-disk
+		checkBlobCollection("azure-disk", "")
+	}
+	checkRemoteDir := func(expected string, container string, cmd ...string) {
+		out, err := dockerExecOut(container, cmd...)
+		r.NoError(err)
+		r.Equal(expected, strings.Trim(out, "\r\n\t "))
+	}
+	if remoteStorageType == "S3" {
+		checkRemoteDir("total 0", "minio", "bash", "-c", "ls -lh /bitnami/minio/data/clickhouse/")
+	}
+	if remoteStorageType == "SFTP" {
+		checkRemoteDir("total 0", "sshd", "bash", "-c", "ls -lh /root/")
+
+	}
+	if remoteStorageType == "FTP" {
+		if strings.Contains(os.Getenv("COMPOSE_FILE"), "advanced") {
+			checkRemoteDir("total 0", "ftp", "bash", "-c", "ls -lh /home/ftpusers/test_backup/backup/")
+		} else {
+			checkRemoteDir("total 0", "ftp", "bash", "-c", "ls -lh /home/vsftpd/test_backup/backup/")
+		}
+	}
+	//todo check gcs backup is empty
+	if remoteStorageType == "GCS" {
+
+	}
 }
 
 func replaceStorageDiskNameForReBalance(r *require.Assertions, ch *TestClickHouse, remoteStorageType string, isRebalanced bool) {
@@ -2054,7 +2098,7 @@ func replaceStorageDiskNameForReBalance(r *require.Assertions, ch *TestClickHous
 	}
 	ch.chbackend.Close()
 	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker-compose", "-f", os.Getenv("COMPOSE_FILE"), "restart", "clickhouse"))
-	ch.connectWithWait(r, 3*time.Second, 1*time.Minute)
+	ch.connectWithWait(r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
 }
 
 func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, ch *TestClickHouse, remoteStorageType string, backupConfig string) {
@@ -2189,6 +2233,7 @@ func checkResumeAlreadyProcessed(backupCmd, testBackupName, resumeKind string, r
 }
 
 func fullCleanup(t *testing.T, r *require.Assertions, ch *TestClickHouse, backupNames, backupTypes, databaseList []string, checkDeleteErr, checkDropErr bool, backupConfig string) {
+	//WTF? why table switched to readonly during drop?
 	for _, backupName := range backupNames {
 		for _, backupType := range backupTypes {
 			err := dockerExec("clickhouse-backup", "bash", "-xce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" delete "+backupType+" "+backupName)
@@ -2232,11 +2277,12 @@ func generateTestData(t *testing.T, r *require.Assertions, ch *TestClickHouse, r
 
 func generateTestDataWithDifferentStoragePolicy(remoteStorageType string, testData []TestDataStruct) []TestDataStruct {
 	for databaseName, databaseEngine := range map[string]string{dbNameOrdinary: "Ordinary", dbNameAtomic: "Atomic"} {
+		rowsCount := 5
 		testDataWithStoragePolicy := TestDataStruct{
 			Database: databaseName, DatabaseEngine: databaseEngine,
 			Rows: func() []map[string]interface{} {
-				result := make([]map[string]interface{}, 100)
-				for i := 0; i < 100; i++ {
+				result := make([]map[string]interface{}, rowsCount)
+				for i := 0; i < rowsCount; i++ {
 					result[i] = map[string]interface{}{"id": uint64(i)}
 				}
 				return result
@@ -2259,35 +2305,35 @@ func generateTestDataWithDifferentStoragePolicy(remoteStorageType string, testDa
 		//s3 disks support after 21.8
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 && remoteStorageType == "S3" {
 			testDataWithStoragePolicy.Name = "test_s3"
-			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id SETTINGS storage_policy = 's3_only'"
+			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id PARTITION BY id SETTINGS storage_policy = 's3_only'"
 			addTestDataIfNotExists()
 		}
 		//encrypted disks support after 21.10
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.10") >= 0 {
 			testDataWithStoragePolicy.Name = "test_hdd3_encrypted"
-			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id SETTINGS storage_policy = 'hdd3_only_encrypted'"
+			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id PARTITION BY id  SETTINGS storage_policy = 'hdd3_only_encrypted'"
 			addTestDataIfNotExists()
 		}
 		//encrypted s3 disks support after 21.12
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 && remoteStorageType == "S3" {
 			testDataWithStoragePolicy.Name = "test_s3_encrypted"
-			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 's3_only_encrypted'"
+			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=MergeTree ORDER BY id PARTITION BY id SETTINGS storage_policy = 's3_only_encrypted'"
 			// @todo wait when fix https://github.com/ClickHouse/ClickHouse/issues/58247
 			//if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.12") >= 0 {
-			//	testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id SETTINGS storage_policy = 's3_only_encrypted'"
+			//	testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id PARTITION BY id SETTINGS storage_policy = 's3_only_encrypted'"
 			//}
 			addTestDataIfNotExists()
 		}
 		//gcs over s3 support added in 22.6
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.6") >= 0 && remoteStorageType == "GCS" && os.Getenv("QA_GCS_OVER_S3_BUCKET") != "" {
 			testDataWithStoragePolicy.Name = "test_gcs"
-			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id SETTINGS storage_policy = 'gcs_only'"
+			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id PARTITION BY id SETTINGS storage_policy = 'gcs_only'"
 			addTestDataIfNotExists()
 		}
 		//check azure_blob_storage only in 23.3+ (added in 22.1)
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.3") >= 0 && remoteStorageType == "AZBLOB" {
 			testDataWithStoragePolicy.Name = "test_azure"
-			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id SETTINGS storage_policy = 'azure_only'"
+			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id PARTITION BY id SETTINGS storage_policy = 'azure_only'"
 			addTestDataIfNotExists()
 		}
 	}
@@ -2305,6 +2351,17 @@ func generateIncrementTestData(t *testing.T, ch *TestClickHouse, r *require.Asse
 }
 
 func dropDatabasesFromTestDataDataSet(t *testing.T, r *require.Assertions, ch *TestClickHouse, databaseList []string) {
+	ch.queryWithNoError(r, "SYSTEM RESTART REPLICAS")
+	type readOnlyTable struct {
+		Database   string `ch:"database"`
+		Table      string `ch:"table"`
+		IsReadOnly string `ch:"is_readonly"`
+	}
+	allReadonly := make([]readOnlyTable, 0)
+	r.NoError(ch.chbackend.StructSelect(&allReadonly, "SELECT database,table,is_readonly FROM system.replicas WHERE is_readonly"))
+	t.Logf("Current ReadOnly replicas %#v", allReadonly)
+
+	r.Equal(0, len(allReadonly))
 	log.Info("Drop all databases")
 	for _, db := range databaseList {
 		r.NoError(ch.dropDatabase(db + "_" + t.Name()))
@@ -2317,7 +2374,7 @@ type TestClickHouse struct {
 	chbackend *clickhouse.ClickHouse
 }
 
-func (ch *TestClickHouse) connectWithWait(r *require.Assertions, sleepBefore, timeOut time.Duration) {
+func (ch *TestClickHouse) connectWithWait(r *require.Assertions, sleepBefore, pollInterval, timeOut time.Duration) {
 	time.Sleep(sleepBefore)
 	for i := 1; i < 11; i++ {
 		err := ch.connect(timeOut.String())
@@ -2335,8 +2392,8 @@ func (ch *TestClickHouse) connectWithWait(r *require.Assertions, sleepBefore, ti
 			} else {
 				log.Warn(out)
 			}
-			log.Warnf("clickhouse not ready %v, wait %v seconds", err, (time.Duration(i) * timeOut).Seconds())
-			time.Sleep(time.Duration(i) * timeOut)
+			log.Warnf("clickhouse not ready %v, wait %v seconds", err, (pollInterval).Seconds())
+			time.Sleep(pollInterval)
 		} else {
 			if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") == 1 {
 				var count uint64
@@ -2472,7 +2529,7 @@ func (ch *TestClickHouse) createTestData(t *testing.T, data TestDataStruct) erro
 		return nil
 	}
 	insertSQL := fmt.Sprintf("INSERT INTO `%s`.`%s`", data.Database, data.Name)
-
+	log.Debug(insertSQL)
 	batch, err := ch.chbackend.GetConn().PrepareBatch(context.Background(), insertSQL)
 
 	if err != nil {

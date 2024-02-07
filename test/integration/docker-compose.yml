@@ -12,6 +12,7 @@ services:
   ftp:
     image: docker.io/fauria/vsftpd:latest
     hostname: ftp
+    container_name: ftp
     environment:
       FTP_USER: test_backup
       FTP_PASS: test_backup
@@ -122,6 +123,7 @@ services:
       GCS_DEBUG: "${GCS_DEBUG:-false}"
       FTP_DEBUG: "${FTP_DEBUG:-false}"
       SFTP_DEBUG: "${SFTP_DEBUG:-false}"
+      AZBLOB_DEBUG: "${AZBLOB_DEBUG:-false}"
       CLICKHOUSE_DEBUG: "${CLICKHOUSE_DEBUG:-false}"
       GOCOVERDIR: "/tmp/_coverage_/"
 # fake-gcs-server
@@ -161,6 +163,7 @@ services:
       GCS_DEBUG: "${GCS_DEBUG:-false}"
       FTP_DEBUG: "${FTP_DEBUG:-false}"
       SFTP_DEBUG: "${SFTP_DEBUG:-false}"
+      AZBLOB_DEBUG: "${AZBLOB_DEBUG:-false}"
       CLICKHOUSE_DEBUG: "${CLICKHOUSE_DEBUG:-false}"
       GOCOVERDIR: "/tmp/_coverage_/"
 # fake-gcs-server

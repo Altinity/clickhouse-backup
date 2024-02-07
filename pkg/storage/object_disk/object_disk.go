@@ -483,6 +483,7 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 		}
 		// need for CopyObject
 		s3cfg.ObjectDiskPath = s3cfg.Path
+		s3cfg.Debug = cfg.S3.Debug
 		connection.S3 = &storage.S3{Config: &s3cfg, Log: apexLog.WithField("logger", "S3")}
 		if err = connection.S3.Connect(ctx); err != nil {
 			return nil, err
@@ -521,7 +522,8 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 		if creds.AzureContainerName != "" {
 			azureCfg.Container = creds.AzureContainerName
 		}
-		connection.AzureBlob = &storage.AzureBlob{Config: &azureCfg}
+		azureCfg.Debug = cfg.AzureBlob.Debug
+		connection.AzureBlob = &storage.AzureBlob{Config: &azureCfg, Log: apexLog.WithField("logger", "AZBLOB")}
 		if err = connection.AzureBlob.Connect(ctx); err != nil {
 			return nil, err
 		}

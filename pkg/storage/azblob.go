@@ -2,12 +2,11 @@ package storage
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
-	"github.com/apex/log"
+	apexLog "github.com/apex/log"
 	"io"
 	"net/url"
 	"path"
@@ -29,8 +28,16 @@ type AzureBlob struct {
 	Pipeline  pipeline.Pipeline
 	CPK       azblob.ClientProvidedKeyOptions
 	Config    *config.AzureBlobConfig
+	Log       *apexLog.Entry
 }
 
+func (a *AzureBlob) logf(msg string, args ...interface{}) {
+	if a.Config.Debug {
+		a.Log.Infof(msg, args...)
+	} else {
+		a.Log.Debugf(msg, args...)
+	}
+}
 func (a *AzureBlob) Kind() string {
 	return "azblob"
 }
@@ -120,18 +127,19 @@ func (a *AzureBlob) Connect(ctx context.Context) error {
 		if err != nil && !isContainerAlreadyExists(err) {
 			return err
 		}
-		testName := make([]byte, 16)
-		if _, err := rand.Read(testName); err != nil {
-			return errors.Wrapf(err, "azblob: failed to generate test blob name")
-		}
-		testBlob := a.Container.NewBlockBlobURL(base64.URLEncoding.EncodeToString(testName))
-		if _, err = testBlob.GetProperties(ctx, azblob.BlobAccessConditions{}, azblob.ClientProvidedKeyOptions{}); err != nil {
-			var se azblob.StorageError
-			if !errors.As(err, &se) || se.ServiceCode() != azblob.ServiceCodeBlobNotFound {
-				return errors.Wrapf(err, "azblob: failed to access container %s", a.Config.Container)
-			}
-		}
-
+		//testName := make([]byte, 16)
+		//if _, err := rand.Read(testName); err != nil {
+		//	return errors.Wrapf(err, "azblob: failed to generate test blob name")
+		//}
+		//testNameStr := base64.URLEncoding.EncodeToString(testName)
+		//a.logf("AZBLOB->try to GetProbperties test blob: %s", testNameStr)
+		//testBlob := a.Container.NewBlockBlobURL(testNameStr)
+		//if _, err = testBlob.GetProperties(ctx, azblob.BlobAccessConditions{}, azblob.ClientProvidedKeyOptions{}); err != nil {
+		//	var se azblob.StorageError
+		//	if !errors.As(err, &se) || se.ServiceCode() != azblob.ServiceCodeBlobNotFound {
+		//		return errors.Wrapf(err, "azblob: failed to access container %s", a.Config.Container)
+		//	}
+		//}
 		if a.Config.SSEKey != "" {
 			key, err := base64.StdEncoding.DecodeString(a.Config.SSEKey)
 			if err != nil {
@@ -145,8 +153,8 @@ func (a *AzureBlob) Connect(ctx context.Context) error {
 			b64sha := base64.StdEncoding.EncodeToString(shakey[:])
 			a.CPK = azblob.NewClientProvidedKeyOptions(&b64key, &b64sha, nil)
 		}
-		return nil
 	}
+	return nil
 }
 
 func (a *AzureBlob) Close(ctx context.Context) error {
@@ -154,6 +162,7 @@ func (a *AzureBlob) Close(ctx context.Context) error {
 }
 
 func (a *AzureBlob) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {
+	a.logf("AZBLOB->GetFileReader %s", key)
 	blob := a.Container.NewBlockBlobURL(path.Join(a.Config.Path, key))
 	r, err := blob.Download(ctx, 0, azblob.CountToEnd, azblob.BlobAccessConditions{}, false, a.CPK)
 	if err != nil {
@@ -167,6 +176,7 @@ func (a *AzureBlob) GetFileReaderWithLocalPath(ctx context.Context, key, _ strin
 }
 
 func (a *AzureBlob) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
+	a.logf("AZBLOB->PutFile %s", key)
 	blob := a.Container.NewBlockBlobURL(path.Join(a.Config.Path, key))
 	bufferSize := a.Config.BufferSize // Configure the size of the rotating buffers that are used when uploading
 	maxBuffers := a.Config.MaxBuffers // Configure the number of rotating buffers that are used when uploading
@@ -175,18 +185,21 @@ func (a *AzureBlob) PutFile(ctx context.Context, key string, r io.ReadCloser) er
 }
 
 func (a *AzureBlob) DeleteFile(ctx context.Context, key string) error {
+	a.logf("AZBLOB->DeleteFile %s", key)
 	blob := a.Container.NewBlockBlobURL(path.Join(a.Config.Path, key))
 	_, err := blob.Delete(ctx, azblob.DeleteSnapshotsOptionInclude, azblob.BlobAccessConditions{})
 	return err
 }
 
 func (a *AzureBlob) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) error {
+	a.logf("AZBLOB->DeleteFileFromObjectDiskBackup %s", key)
 	blob := a.Container.NewBlockBlobURL(path.Join(a.Config.ObjectDiskPath, key))
 	_, err := blob.Delete(ctx, azblob.DeleteSnapshotsOptionInclude, azblob.BlobAccessConditions{})
 	return err
 }
 
 func (a *AzureBlob) StatFile(ctx context.Context, key string) (RemoteFile, error) {
+	a.logf("AZBLOB->StatFile %s", key)
 	blob := a.Container.NewBlockBlobURL(path.Join(a.Config.Path, key))
 	r, err := blob.GetProperties(ctx, azblob.BlobAccessConditions{}, a.CPK)
 	if err != nil {
@@ -209,6 +222,7 @@ func (a *AzureBlob) Walk(ctx context.Context, azPath string, recursive bool, pro
 }
 
 func (a *AzureBlob) WalkAbsolute(ctx context.Context, prefix string, recursive bool, process func(ctx context.Context, r RemoteFile) error) error {
+	a.logf("AZBLOB->WalkAbsolute %s", prefix)
 	if prefix == "" || prefix == "/" {
 		prefix = ""
 	} else {
@@ -279,8 +293,8 @@ func (a *AzureBlob) WalkAbsolute(ctx context.Context, prefix string, recursive b
 
 func (a *AzureBlob) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
 	dstKey = path.Join(a.Config.ObjectDiskPath, dstKey)
+	a.logf("AZBLOB->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, a.Config.Container, dstKey)
 	srcURLString := fmt.Sprintf("%s://%s.%s/%s/%s", a.Config.EndpointSchema, a.Config.AccountName, a.Config.EndpointSuffix, srcBucket, srcKey)
-	log.Debugf("AZBLOB->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, a.Config.Container, dstKey)
 	srcURL, err := url.Parse(srcURLString)
 	if err != nil {
 		return 0, err

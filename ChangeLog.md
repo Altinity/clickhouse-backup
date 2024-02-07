@@ -1,3 +1,11 @@
+# v2.4.29
+IMPROVEMENTS
+- add `AZBLOB_DEBUG` environment and `debug` config parameter in `azblob` section
+
+BUG FIXES
+- force set `RefCount` to 0 during `restore` for parts in S3/GCS over S3/Azure disks, for properly works DROP TABLE / DROP DATABASE
+- ignore frozen-metadata during, create, upload, download, restore command, fix [826](https://github.com/Altinity/clickhouse-backup/issues/826)
+
 # v2.4.28
 IMPROVEMENT
 - refactoring `watch` command, after https://github.com/Altinity/clickhouse-backup/pull/804
