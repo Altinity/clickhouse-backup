@@ -804,7 +804,7 @@ func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName st
 		return fmt.Errorf("can't copy data to storage '%s.%s': %v", table.Database, table.Table, err)
 	}
 	log.Debug("data to 'storage' copied")
-	if err := b.downloadObjectDiskParts(ctx, backupName, table, diskMap, diskTypes); err != nil {
+	if err := b.downloadObjectDiskParts(ctx, backupName, table, diskMap, diskTypes, disks); err != nil {
 		return fmt.Errorf("can't restore object_disk server-side copy data parts '%s.%s': %v", table.Database, table.Table, err)
 	}
 	if err := b.ch.AttachTable(ctx, table, dstTable); err != nil {
@@ -818,7 +818,7 @@ func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName str
 		return fmt.Errorf("can't copy data to detached '%s.%s': %v", table.Database, table.Table, err)
 	}
 	log.Debug("data to 'detached' copied")
-	if err := b.downloadObjectDiskParts(ctx, backupName, table, diskMap, diskTypes); err != nil {
+	if err := b.downloadObjectDiskParts(ctx, backupName, table, diskMap, diskTypes, disks); err != nil {
 		return fmt.Errorf("can't restore object_disk server-side copy data parts '%s.%s': %v", table.Database, table.Table, err)
 	}
 	if err := b.ch.AttachDataParts(table, dstTable); err != nil {
@@ -827,7 +827,7 @@ func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName str
 	return nil
 }
 
-func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName string, backupTable metadata.TableMetadata, diskMap, diskTypes map[string]string) error {
+func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName string, backupTable metadata.TableMetadata, diskMap, diskTypes map[string]string, disks []clickhouse.Disk) error {
 	log := apexLog.WithFields(apexLog.Fields{
 		"operation": "downloadObjectDiskParts",
 		"table":     fmt.Sprintf("%s.%s", backupTable.Database, backupTable.Table),
@@ -837,32 +837,32 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var err error
-	needToDownloadObjectDisk := false
-	for diskName := range backupTable.Parts {
-		diskType, exists := diskTypes[diskName]
-		if !exists {
-			return fmt.Errorf("%s disk doesn't present in diskTypes: %v", diskName, diskTypes)
-		}
-		if b.isDiskTypeObject(diskType) {
-			if err = config.ValidateObjectDiskConfig(b.cfg); err != nil {
-				return err
-			}
-			needToDownloadObjectDisk = true
-			if err != nil {
-				return err
-			}
-			break
-		}
-	}
-	if !needToDownloadObjectDisk {
-		return nil
+	if err = config.ValidateObjectDiskConfig(b.cfg); err != nil {
+		return err
 	}
 	for diskName, parts := range backupTable.Parts {
 		diskType, exists := diskTypes[diskName]
 		if !exists {
 			return fmt.Errorf("%s disk doesn't present in diskTypes: %v", diskName, diskTypes)
 		}
-		if b.isDiskTypeObject(diskType) {
+		isObjectDiskEncrypted := false
+		if diskType == "encrypted" {
+			if diskPath, exists := diskMap[diskName]; !exists {
+				for _, part := range parts {
+					if part.RebalancedDisk != "" {
+						diskPath = diskMap[part.RebalancedDisk]
+						if b.isDiskTypeEncryptedObject(clickhouse.Disk{Type: diskTypes[part.RebalancedDisk], Name: part.RebalancedDisk, Path: diskPath}, disks) {
+							isObjectDiskEncrypted = true
+							break
+						}
+					}
+				}
+			} else {
+				isObjectDiskEncrypted = b.isDiskTypeEncryptedObject(clickhouse.Disk{Type: diskType, Name: diskName, Path: diskPath}, disks)
+			}
+		}
+		isObjectDisk := b.isDiskTypeObject(diskType)
+		if isObjectDisk || isObjectDiskEncrypted {
 			if _, exists := diskMap[diskName]; !exists {
 				for _, part := range parts {
 					if part.RebalancedDisk != "" {
@@ -916,13 +916,13 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 							if storageObject.ObjectSize == 0 {
 								continue
 							}
-							if b.cfg.General.RemoteStorage == "s3" && diskType == "s3" {
+							if b.cfg.General.RemoteStorage == "s3" && (diskType == "s3" || diskType == "encrypted") {
 								srcBucket = b.cfg.S3.Bucket
 								srcKey = path.Join(b.cfg.S3.ObjectDiskPath, backupName, diskName, storageObject.ObjectRelativePath)
-							} else if b.cfg.General.RemoteStorage == "gcs" && diskType == "s3" {
+							} else if b.cfg.General.RemoteStorage == "gcs" && (diskType == "s3" || diskType == "encrypted") {
 								srcBucket = b.cfg.GCS.Bucket
 								srcKey = path.Join(b.cfg.GCS.ObjectDiskPath, backupName, diskName, storageObject.ObjectRelativePath)
-							} else if b.cfg.General.RemoteStorage == "azblob" && diskType == "azure_blob_storage" {
+							} else if b.cfg.General.RemoteStorage == "azblob" && (diskType == "azure_blob_storage" || diskType == "encrypted") {
 								srcBucket = b.cfg.AzureBlob.Container
 								srcKey = path.Join(b.cfg.AzureBlob.ObjectDiskPath, backupName, diskName, storageObject.ObjectRelativePath)
 							} else {

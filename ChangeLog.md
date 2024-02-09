@@ -7,6 +7,7 @@ BUG FIXES
 - use `os.Link` instead `os.Rename` for ClickHouse 21.4+, to properly create backup object disks
 - ignore `frozen_metadata` during, create, upload, download and restore commands, fix [826](https://github.com/Altinity/clickhouse-backup/issues/826)
 - `allow_parallel: true` doesn't work after execute list command, fix [827](https://github.com/Altinity/clickhouse-backup/issues/827)
+- fix corner cases, when disk have encrypted type and underlying disk is object storage 
 
 # v2.4.28
 IMPROVEMENT

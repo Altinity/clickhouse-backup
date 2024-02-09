@@ -194,7 +194,7 @@ func (b *Backuper) hasObjectDisksLocal(backupList []LocalBackup, backupName stri
 	for _, backup := range backupList {
 		if backup.BackupName == backupName && !strings.Contains(backup.Tags, "embedded") {
 			for _, disk := range disks {
-				if !disk.IsBackup && b.isDiskTypeObject(disk.Type) {
+				if !disk.IsBackup && (b.isDiskTypeObject(disk.Type) || b.isDiskTypeEncryptedObject(disk, disks)) {
 					backupExists, err := os.ReadDir(path.Join(disk.Path, "backup", backup.BackupName))
 					if err == nil && len(backupExists) > 0 {
 						apexLog.Debugf("hasObjectDisksLocal: found object disk %s", disk.Name)

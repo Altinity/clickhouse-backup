@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"strings"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
@@ -155,4 +156,21 @@ func (b *Backuper) populateBackupShardField(ctx context.Context, tables []clickh
 
 func (b *Backuper) isDiskTypeObject(diskType string) bool {
 	return diskType == "s3" || diskType == "azure_blob_storage"
+}
+
+func (b *Backuper) isDiskTypeEncryptedObject(disk clickhouse.Disk, disks []clickhouse.Disk) bool {
+	if disk.Type != "encrypted" {
+		return false
+	}
+	underlyingIdx := -1
+	underlyingPath := ""
+	for i, d := range disks {
+		if d.Name != disk.Name && strings.HasPrefix(disk.Path, d.Path) && b.isDiskTypeObject(d.Type) {
+			if d.Path > underlyingPath {
+				underlyingIdx = i
+				underlyingPath = d.Path
+			}
+		}
+	}
+	return underlyingIdx >= 0
 }

@@ -427,7 +427,7 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 	if !exists {
 		return nil, fmt.Errorf("%s is not presnet in object_disk.SystemDisks", diskName)
 	}
-	if disk.Type != "s3" && disk.Type != "s3_plain" && disk.Type != "azure_blob_storage" {
+	if disk.Type != "s3" && disk.Type != "s3_plain" && disk.Type != "azure_blob_storage" && disk.Type != "encrypted" {
 		return nil, fmt.Errorf("%s have unsupported type %s", diskName, disk.Type)
 	}
 	connection.MetadataPath = disk.Path

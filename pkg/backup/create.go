@@ -169,7 +169,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 	}
 	isObjectDiskContainsTables := false
 	for _, disk := range disks {
-		if b.isDiskTypeObject(disk.Type) {
+		if b.isDiskTypeObject(disk.Type) || b.isDiskTypeEncryptedObject(disk, disks) {
 			for _, table := range tables {
 				sort.Slice(table.DataPaths, func(i, j int) bool { return len(table.DataPaths[i]) > len(table.DataPaths[j]) })
 				for _, tableDataPath := range table.DataPaths {
@@ -612,7 +612,7 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 			realSize[disk.Name] = size
 			disksToPartsMap[disk.Name] = parts
 			log.WithField("disk", disk.Name).Debug("shadow moved")
-			if b.isDiskTypeObject(disk.Type) && len(parts) > 0 {
+			if len(parts) > 0 && (b.isDiskTypeObject(disk.Type) || b.isDiskTypeEncryptedObject(disk, diskList)) {
 				start := time.Now()
 				if size, err = b.uploadObjectDiskParts(ctx, backupName, backupShadowPath, disk); err != nil {
 					return disksToPartsMap, realSize, err
