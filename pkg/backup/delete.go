@@ -173,7 +173,7 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 
 func (b *Backuper) cleanEmbeddedAndObjectDiskLocalIfSameRemoteNotPresent(ctx context.Context, backupName string, disks []clickhouse.Disk, backup LocalBackup, hasObjectDisks bool, log *apexLog.Entry) error {
 	skip, err := b.skipIfTheSameRemoteBackupPresent(ctx, backup.BackupName, backup.Tags)
-	log.Debugf("b.skipIfTheSameRemoteBackupPresent return skip=%s", skip)
+	log.Debugf("b.skipIfTheSameRemoteBackupPresent return skip=%v", skip)
 	if err != nil {
 		return err
 	}
