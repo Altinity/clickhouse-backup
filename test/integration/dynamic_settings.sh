@@ -237,11 +237,27 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3.xml
 </clickhouse>
 EOT
 
-cat <<EOT > /etc/clickhouse-server/config.d/zero_copy_replication.xml
+# zero replication is buggy
+#cat <<EOT > /etc/clickhouse-server/config.d/zero_copy_replication.xml
+#<yandex>
+#  <merge_tree>
+#    <allow_remote_fs_zero_copy_replication>1</allow_remote_fs_zero_copy_replication>
+#  </merge_tree>
+#</yandex>
+#EOT
+
+cat <<EOT > /etc/clickhouse-server/config.d/zookeeper_log.xml
 <yandex>
-  <merge_tree>
-    <allow_remote_fs_zero_copy_replication>1</allow_remote_fs_zero_copy_replication>
-  </merge_tree>
+  <zookeeper_log>
+        <database>system</database>
+        <table>zookeeper_log</table>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+        <max_size_rows>1048576</max_size_rows>
+        <reserved_size_rows>8192</reserved_size_rows>
+        <buffer_size_rows_flush_threshold>524288</buffer_size_rows_flush_threshold>
+        <collect_interval_milliseconds>1000</collect_interval_milliseconds>
+        <flush_on_crash>true</flush_on_crash>
+    </zookeeper_log>
 </yandex>
 EOT
 fi

@@ -260,6 +260,8 @@ jobs:
           # don't change it to avoid broken CI/CD!!!
           # RUN_TESTS: "TestFIPS"
           # LOG_LEVEL: "debug"
+          # SFTP_DEBUG: "true"
+          # AZBLOB_DEBUG: "true"
           # FTP_DEBUG: "true"
           # S3_DEBUG: "true"
           CGO_ENABLED: 0

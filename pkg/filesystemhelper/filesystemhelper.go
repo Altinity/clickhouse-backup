@@ -160,6 +160,10 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 				if err != nil {
 					return err
 				}
+				// fix https://github.com/Altinity/clickhouse-backup/issues/826
+				if strings.Contains(info.Name(), "frozen_metadata") {
+					return nil
+				}
 				filename := strings.Trim(strings.TrimPrefix(filePath, srcPartPath), "/")
 				dstFilePath := filepath.Join(dstPartPath, filename)
 				if info.IsDir() {
@@ -207,11 +211,16 @@ func IsFileInPartition(disk, fileName string, partitionsBackupMap common.EmptyMa
 	return ok
 }
 
-func MoveShadow(shadowPath, backupPartsPath string, partitionsBackupMap common.EmptyMap) ([]metadata.Part, int64, error) {
+func MoveShadow(shadowPath, backupPartsPath string, partitionsBackupMap common.EmptyMap, version int) ([]metadata.Part, int64, error) {
 	log := apexLog.WithField("logger", "MoveShadow")
 	size := int64(0)
 	parts := make([]metadata.Part, 0)
 	err := filepath.Walk(shadowPath, func(filePath string, info os.FileInfo, err error) error {
+		// fix https://github.com/Altinity/clickhouse-backup/issues/826
+		if strings.Contains(info.Name(), "frozen_metadata") {
+			return nil
+		}
+
 		// possible relative path
 		// store / 1f9 / 1f9dc899-0de9-41f8-b95c-26c1f0d67d93 / 20181023_2_2_0 / checksums.txt
 		// store / 1f9 / 1f9dc899-0de9-41f8-b95c-26c1f0d67d93 / 20181023_2_2_0 / x.proj / checksums.txt
@@ -239,7 +248,11 @@ func MoveShadow(shadowPath, backupPartsPath string, partitionsBackupMap common.E
 			return nil
 		}
 		size += info.Size()
-		return os.Rename(filePath, dstFilePath)
+		if version < 21004000 {
+			return os.Rename(filePath, dstFilePath)
+		} else {
+			return os.Link(filePath, dstFilePath)
+		}
 	})
 	return parts, size, err
 }

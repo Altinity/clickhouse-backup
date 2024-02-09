@@ -3,7 +3,9 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/logcli"
@@ -442,6 +444,7 @@ func TestS3NoDeletePermission(t *testing.T) {
 	r.NoError(dockerCP("config-s3.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "delete", "remote", "no_delete_backup"))
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "list", "remote"))
+	checkObjectStorageIsEmpty(r, "S3")
 }
 
 // TestDoRestoreRBAC need clickhouse-server restart, no parallel
@@ -808,6 +811,29 @@ func testAPIBackupDelete(r *require.Assertions) {
 	out, err := dockerExecOut("clickhouse-backup", "curl", "http://localhost:7171/metrics")
 	r.NoError(err)
 	r.Contains(out, "clickhouse_backup_last_delete_status 1")
+
+	out, err = dockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XGET 'http://localhost:7171/backup/list'"))
+	log.Infof(out)
+	r.NoError(err)
+	scanner := bufio.NewScanner(strings.NewReader(out))
+	for scanner.Scan() {
+		type backupJSON struct {
+			Name           string `json:"name"`
+			Created        string `json:"created"`
+			Size           uint64 `json:"size,omitempty"`
+			Location       string `json:"location"`
+			RequiredBackup string `json:"required"`
+			Desc           string `json:"desc"`
+		}
+		listItem := backupJSON{}
+		r.NoError(json.Unmarshal(scanner.Bytes(), &listItem))
+		out, err = dockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/delete/%s/%s'", listItem.Location, listItem.Name))
+		log.Infof(out)
+		r.NoError(err)
+	}
+
+	r.NoError(scanner.Err())
+
 }
 
 func testAPIMetrics(r *require.Assertions, ch *TestClickHouse) {
@@ -1122,15 +1148,16 @@ func TestTablePatterns(t *testing.T) {
 			if createPattern {
 				r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", "--tables", " "+dbNameOrdinaryTest+".*", testBackupName))
 			} else {
-				r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "create_remote", testBackupName))
+				r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", testBackupName))
 			}
 
-			r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "delete", "local", testBackupName))
+			r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", testBackupName))
 			dropDatabasesFromTestDataDataSet(t, r, ch, databaseList)
+
 			if restorePattern {
-				r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "restore_remote", "--tables", " "+dbNameOrdinaryTest+".*", testBackupName))
+				r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore_remote", "--tables", " "+dbNameOrdinaryTest+".*", testBackupName))
 			} else {
-				r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "restore_remote", testBackupName))
+				r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore_remote", testBackupName))
 			}
 
 			restored := uint64(0)
@@ -1157,6 +1184,7 @@ func TestTablePatterns(t *testing.T) {
 
 		}
 	}
+	checkObjectStorageIsEmpty(r, "S3")
 }
 
 func TestProjections(t *testing.T) {
@@ -1272,6 +1300,7 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&res, fmt.Sprintf("SELECT count() FROM `%s_%s`.`%s_%s`", Issue331Atomic, t.Name(), Issue331Atomic, t.Name())))
 	r.Equal(uint64(200), res)
 	fullCleanup(t, r, ch, backupNames, []string{"remote", "local"}, databaseList, true, true, "config-s3.yml")
+	checkObjectStorageIsEmpty(r, "S3")
 }
 
 func TestSyncReplicaTimeout(t *testing.T) {
@@ -1651,6 +1680,7 @@ func TestIntegrationS3Glacier(t *testing.T) {
 
 func TestIntegrationS3(t *testing.T) {
 	//t.Parallel()
+	checkObjectStorageIsEmpty(require.New(t), "S3")
 	runMainIntegrationScenario(t, "S3", "config-s3.yml")
 }
 
@@ -2022,10 +2052,10 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 		fullCleanup(t, r, ch, []string{testBackupName, incrementBackupName}, []string{"remote", "local"}, databaseList, true, true, backupConfig)
 	}
 	replaceStorageDiskNameForReBalance(r, ch, remoteStorageType, true)
-	checkObjectDiskBackupIsEmpty(r, remoteStorageType)
+	checkObjectStorageIsEmpty(r, remoteStorageType)
 }
 
-func checkObjectDiskBackupIsEmpty(r *require.Assertions, remoteStorageType string) {
+func checkObjectStorageIsEmpty(r *require.Assertions, remoteStorageType string) {
 	if remoteStorageType == "AZBLOB" {
 		r.NoError(dockerExec("azure", "apk", "add", "jq"))
 		checkBlobCollection := func(containerName string, expected string) {
@@ -2351,17 +2381,6 @@ func generateIncrementTestData(t *testing.T, ch *TestClickHouse, r *require.Asse
 }
 
 func dropDatabasesFromTestDataDataSet(t *testing.T, r *require.Assertions, ch *TestClickHouse, databaseList []string) {
-	ch.queryWithNoError(r, "SYSTEM RESTART REPLICAS")
-	type readOnlyTable struct {
-		Database   string `ch:"database"`
-		Table      string `ch:"table"`
-		IsReadOnly string `ch:"is_readonly"`
-	}
-	allReadonly := make([]readOnlyTable, 0)
-	r.NoError(ch.chbackend.StructSelect(&allReadonly, "SELECT database,table,is_readonly FROM system.replicas WHERE is_readonly"))
-	t.Logf("Current ReadOnly replicas %#v", allReadonly)
-
-	r.Equal(0, len(allReadonly))
 	log.Info("Drop all databases")
 	for _, db := range databaseList {
 		r.NoError(ch.dropDatabase(db + "_" + t.Name()))

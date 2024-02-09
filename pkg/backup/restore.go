@@ -890,19 +890,22 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 					if fInfo.IsDir() {
 						return nil
 					}
-					if fInfo.Name() == "frozen_metadata.txt" {
+					// fix https://github.com/Altinity/clickhouse-backup/issues/826
+					if strings.Contains(fInfo.Name(), "frozen_metadata") {
 						return nil
 					}
 					objMeta, err := object_disk.ReadMetadataFromFile(fPath)
 					if err != nil {
 						return err
 					}
-					if objMeta.StorageObjectCount < 1 && objMeta.Version != object_disk.VersionRelativePath {
+					if objMeta.StorageObjectCount < 1 && objMeta.Version < object_disk.VersionRelativePath {
 						return fmt.Errorf("%s: invalid object_disk.Metadata: %#v", fPath, objMeta)
 					}
-					//to allow delete Object Disk Data after DROP TABLE/DATABASE ...SYNC
-					if objMeta.RefCount > 0 {
+					//to allow deleting Object Disk Data during DROP TABLE/DATABASE ...SYNC
+					if objMeta.RefCount > 0 || objMeta.ReadOnly {
 						objMeta.RefCount = 0
+						objMeta.ReadOnly = false
+						log.Debugf("%s %#v set RefCount=0 and ReadOnly=0", fPath, objMeta.StorageObjects)
 						if writeMetaErr := object_disk.WriteMetadataToFile(objMeta, fPath); writeMetaErr != nil {
 							return fmt.Errorf("%s: object_disk.WriteMetadataToFile return error: %v", fPath, writeMetaErr)
 						}

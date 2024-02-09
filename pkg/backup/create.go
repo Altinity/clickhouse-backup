@@ -605,7 +605,7 @@ func (b *Backuper) AddTableToBackup(ctx context.Context, backupName, shadowBacku
 				return nil, nil, err
 			}
 			// If partitionsIdsMap is not empty, only parts in this partition will back up.
-			parts, size, err := filesystemhelper.MoveShadow(shadowPath, backupShadowPath, partitionsIdsMap)
+			parts, size, err := filesystemhelper.MoveShadow(shadowPath, backupShadowPath, partitionsIdsMap, version)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -665,7 +665,8 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName, backup
 		if fInfo.IsDir() {
 			return nil
 		}
-		if fInfo.Name() == "frozen_metadata.txt" {
+		// fix https://github.com/Altinity/clickhouse-backup/issues/826
+		if strings.Contains(fInfo.Name(), "frozen_metadata") {
 			return nil
 		}
 		objPartFileMeta, err := object_disk.ReadMetadataFromFile(fPath)

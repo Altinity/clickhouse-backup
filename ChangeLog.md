@@ -4,7 +4,9 @@ IMPROVEMENTS
 
 BUG FIXES
 - force set `RefCount` to 0 during `restore` for parts in S3/GCS over S3/Azure disks, for properly works DROP TABLE / DROP DATABASE
-- ignore frozen-metadata during, create, upload, download, restore command, fix [826](https://github.com/Altinity/clickhouse-backup/issues/826)
+- use `os.Link` instead `os.Rename` for ClickHouse 21.4+, to properly create backup object disks
+- ignore `frozen_metadata` during, create, upload, download and restore commands, fix [826](https://github.com/Altinity/clickhouse-backup/issues/826)
+- `allow_parallel: true` doesn't work after execute list command, fix [827](https://github.com/Altinity/clickhouse-backup/issues/827)
 
 # v2.4.28
 IMPROVEMENT
