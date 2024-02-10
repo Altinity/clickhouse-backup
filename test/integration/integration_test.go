@@ -1678,6 +1678,15 @@ func TestIntegrationS3Glacier(t *testing.T) {
 	dockerExecTimeout = 3 * time.Minute
 }
 
+func TestIntegrationAzure(t *testing.T) {
+	if isTestShouldSkip("AZURE_TESTS") {
+		t.Skip("Skipping Azure integration tests...")
+		return
+	}
+	//t.Parallel()
+	runMainIntegrationScenario(t, "AZBLOB", "config-azblob.yml")
+}
+
 func TestIntegrationS3(t *testing.T) {
 	//t.Parallel()
 	checkObjectStorageIsEmpty(require.New(t), "S3")
@@ -1691,15 +1700,6 @@ func TestIntegrationGCS(t *testing.T) {
 	}
 	//t.Parallel()
 	runMainIntegrationScenario(t, "GCS", "config-gcs.yml")
-}
-
-func TestIntegrationAzure(t *testing.T) {
-	if isTestShouldSkip("AZURE_TESTS") {
-		t.Skip("Skipping Azure integration tests...")
-		return
-	}
-	//t.Parallel()
-	runMainIntegrationScenario(t, "AZBLOB", "config-azblob.yml")
 }
 
 func TestIntegrationSFTPAuthPassword(t *testing.T) {
@@ -2064,15 +2064,15 @@ func checkObjectStorageIsEmpty(r *require.Assertions, remoteStorageType string) 
 			actual := strings.Trim(out, "\n\r\t ")
 			r.Equal(expected, actual)
 		}
-		time.Sleep(2 * time.Second)
-		checkBlobCollection("container1", "")
-		checkBlobCollection("azure-backup-disk", "")
+		time.Sleep(5 * time.Second)
 		// docker run --network=integration_clickhouse-backup -it --rm mcr.microsoft.com/azure-cli:latest
 		// export AZURE_STORAGE_CONNECTION_STRING="DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azure:10000/devstoreaccount1;"
 		// az storage blob list --container-name azure-disk
 		// az storage blob delete-batch --source azure-disk
 		// az storage blob list --container-name azure-disk
 		checkBlobCollection("azure-disk", "")
+		checkBlobCollection("container1", "")
+		checkBlobCollection("azure-backup-disk", "")
 	}
 	checkRemoteDir := func(expected string, container string, cmd ...string) {
 		out, err := dockerExecOut(container, cmd...)
