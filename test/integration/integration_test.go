@@ -2064,6 +2064,7 @@ func checkObjectStorageIsEmpty(r *require.Assertions, remoteStorageType string) 
 			actual := strings.Trim(out, "\n\r\t ")
 			r.Equal(expected, actual)
 		}
+		time.Sleep(2 * time.Second)
 		checkBlobCollection("container1", "")
 		checkBlobCollection("azure-backup-disk", "")
 		// docker run --network=integration_clickhouse-backup -it --rm mcr.microsoft.com/azure-cli:latest
