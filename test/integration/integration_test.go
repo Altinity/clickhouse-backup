@@ -2065,6 +2065,7 @@ func checkObjectStorageIsEmpty(r *require.Assertions, remoteStorageType string) 
 			if expected != actual {
 				r.NoError(dockerExec("azure", "sh", "-c", "cat /data/__azurite_db_blob__.json | jq"))
 				r.NoError(dockerExec("azure", "sh", "-c", "stat -c '%y' /data/__azurite_db_blob__.json"))
+				r.NoError(dockerExec("azure", "sh", "-c", "cat /data/debug.log"))
 			}
 			r.Equal(expected, actual)
 		}
