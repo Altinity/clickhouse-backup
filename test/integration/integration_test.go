@@ -2062,6 +2062,10 @@ func checkObjectStorageIsEmpty(r *require.Assertions, remoteStorageType string) 
 			out, err := dockerExecOut("azure", "sh", "-c", "jq '.collections[] | select(.name == \"$BLOBS_COLLECTION$\") | .data[] | select(.containerName == \""+containerName+"\") | .name' /data/__azurite_db_blob__.json")
 			r.NoError(err)
 			actual := strings.Trim(out, "\n\r\t ")
+			if expected != actual {
+				r.NoError(dockerExec("azure", "sh", "-c", "cat /data/__azurite_db_blob__.json | jq"))
+				r.NoError(dockerExec("azure", "sh", "-c", "ls -la /data/__azurite_db_blob__.json"))
+			}
 			r.Equal(expected, actual)
 		}
 		time.Sleep(5 * time.Second)
