@@ -2068,7 +2068,7 @@ func checkObjectStorageIsEmpty(r *require.Assertions, remoteStorageType string) 
 			}
 			r.Equal(expected, actual)
 		}
-		time.Sleep(5 * time.Second)
+		time.Sleep(15 * time.Second)
 		// docker run --network=integration_clickhouse-backup -it --rm mcr.microsoft.com/azure-cli:latest
 		// export AZURE_STORAGE_CONNECTION_STRING="DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azure:10000/devstoreaccount1;"
 		// az storage blob list --container-name azure-disk
