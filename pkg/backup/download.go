@@ -983,27 +983,30 @@ func (b *Backuper) ReadBackupMetadataRemote(ctx context.Context, backupName stri
 
 func (b *Backuper) makePartHardlinks(exists, new string) error {
 	log := apexLog.WithField("logger", "makePartHardlinks")
-	ex, err := os.Open(exists)
+	_, err := os.Stat(exists)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err = ex.Close(); err != nil {
-			log.Warnf("Can't close %s", exists)
-		}
-	}()
-	files, err := ex.Readdirnames(-1)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(new, 0750); err != nil {
+	if err = os.MkdirAll(new, 0750); err != nil {
 		log.Warnf("MkDirAll(%s) error: %v", new, err)
 		return err
 	}
-	for _, f := range files {
-		existsF := path.Join(exists, f)
-		newF := path.Join(new, f)
-		if err := os.Link(existsF, newF); err != nil {
+	if walkErr := filepath.Walk(exists, func(fPath string, fInfo os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		fPath = strings.TrimPrefix(fPath, exists)
+		existsF := path.Join(exists, fPath)
+		newF := path.Join(new, fPath)
+		if fInfo.IsDir() {
+			if err = os.MkdirAll(newF, fInfo.Mode()); err != nil {
+				log.Warnf("MkdirAll(%s) error: %v", fPath, err)
+				return err
+			}
+			return nil
+		}
+
+		if err = os.Link(existsF, newF); err != nil {
 			existsFInfo, existsStatErr := os.Stat(existsF)
 			newFInfo, newStatErr := os.Stat(newF)
 			if existsStatErr != nil || newStatErr != nil || !os.SameFile(existsFInfo, newFInfo) {
@@ -1011,6 +1014,10 @@ func (b *Backuper) makePartHardlinks(exists, new string) error {
 				return err
 			}
 		}
+		return nil
+	}); walkErr != nil {
+		log.Warnf("Link recursively %s -> %s return error: %v", new, exists, walkErr)
+		return walkErr
 	}
 	return nil
 }

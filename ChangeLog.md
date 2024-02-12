@@ -1,3 +1,8 @@
+# v2.4.30
+BUG FIXES
+- fix `download` command corner cases for increment backup for tables with projections, fix [830](https://github.com/Altinity/clickhouse-backup/issues/830)
+- more informative error during try to `restore` not exists local backup
+
 # v2.4.29
 IMPROVEMENTS
 - add `AZBLOB_DEBUG` environment and `debug` config parameter in `azblob` section

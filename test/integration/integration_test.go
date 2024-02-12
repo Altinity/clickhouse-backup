@@ -1199,21 +1199,31 @@ func TestProjections(t *testing.T) {
 	defer ch.chbackend.Close()
 
 	r.NoError(dockerCP("config-s3.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
-	err = ch.chbackend.Query("CREATE TABLE default.table_with_projection(dt DateTime, v UInt64, PROJECTION x (SELECT toStartOfMonth(dt) m, sum(v) GROUP BY m)) ENGINE=MergeTree() ORDER BY dt")
+	err = ch.chbackend.Query("CREATE TABLE default.table_with_projection(dt DateTime, v UInt64, PROJECTION x (SELECT toStartOfMonth(dt) m, sum(v) GROUP BY m)) ENGINE=MergeTree() PARTITION BY toYYYYMMDD(dt) ORDER BY dt")
 	r.NoError(err)
 
-	err = ch.chbackend.Query("INSERT INTO default.table_with_projection SELECT today() - INTERVAL number DAY, number FROM numbers(10)")
-	r.NoError(err)
+	ch.queryWithNoError(r, "INSERT INTO default.table_with_projection SELECT today() - INTERVAL number DAY, number FROM numbers(5)")
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "create_remote", "test_backup_projection_full"))
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "delete", "local", "test_backup_projection_full"))
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "restore_remote", "--rm", "test_backup_projection_full"))
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "delete", "local", "test_backup_projection_full"))
 
-	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "create", "test_backup_projection"))
-	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "restore", "--rm", "test_backup_projection"))
-	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "delete", "local", "test_backup_projection"))
+	ch.queryWithNoError(r, "INSERT INTO default.table_with_projection SELECT today() - INTERVAL number WEEK, number FROM numbers(5)")
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "create_remote", "--diff-from-remote", "test_backup_projection_full", "test_backup_projection_increment"))
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "delete", "local", "test_backup_projection_increment"))
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "restore_remote", "--rm", "test_backup_projection_increment"))
+
 	var counts uint64
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&counts, "SELECT count() FROM default.table_with_projection"))
 	r.Equal(uint64(10), counts)
 	err = ch.chbackend.Query("DROP TABLE default.table_with_projection NO DELAY")
 	r.NoError(err)
 
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "delete", "local", "test_backup_projection_increment"))
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "delete", "local", "test_backup_projection_full"))
+
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "delete", "remote", "test_backup_projection_increment"))
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "delete", "remote", "test_backup_projection_full"))
 }
 
 func TestCheckSystemPartsColumns(t *testing.T) {

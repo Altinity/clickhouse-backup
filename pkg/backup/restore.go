@@ -72,6 +72,12 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 		log.Warnf("%v", err)
 		return ErrUnknownClickhouseDataPath
 	}
+	if b.cfg.General.RestoreSchemaOnCluster != "" {
+		if b.cfg.General.RestoreSchemaOnCluster, err = b.ch.ApplyMacros(ctx, b.cfg.General.RestoreSchemaOnCluster); err != nil {
+			log.Warnf("%v", err)
+			return err
+		}
+	}
 	backupMetafileLocalPaths := []string{path.Join(b.DefaultDataPath, "backup", backupName, "metadata.json")}
 	var backupMetadataBody []byte
 	b.EmbeddedBackupDataPath, err = b.ch.GetEmbeddedBackupPath(disks)
@@ -88,9 +94,6 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 			b.isEmbedded = strings.HasPrefix(metadataPath, b.EmbeddedBackupDataPath)
 			break
 		}
-	}
-	if b.cfg.General.RestoreSchemaOnCluster != "" {
-		b.cfg.General.RestoreSchemaOnCluster, err = b.ch.ApplyMacros(ctx, b.cfg.General.RestoreSchemaOnCluster)
 	}
 	if err == nil {
 		backupMetadata := metadata.BackupMetadata{}
@@ -122,8 +125,11 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 				return nil
 			}
 		}
-	} else if !os.IsNotExist(err) { // Legacy backups don't contain metadata.json
-		return err
+	} else if os.IsNotExist(err) { // Legacy backups don't have metadata.json, but we need handle not exists local backup
+		backupPath := path.Join(b.DefaultDataPath, "backup", backupName)
+		if fInfo, fErr := os.Stat(backupPath); fErr != nil || !fInfo.IsDir() {
+			return fmt.Errorf("'%s' stat return %v, %v", backupPath, fInfo, fErr)
+		}
 	}
 	needRestart := false
 	if (rbacOnly || restoreRBAC) && !b.isEmbedded {
