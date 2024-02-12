@@ -2,6 +2,7 @@
 BUG FIXES
 - fix `download` command corner cases for increment backup for tables with projections, fix [830](https://github.com/Altinity/clickhouse-backup/issues/830)
 - more informative error during try to `restore` not exists local backup
+- fix `upload` command for S3 when object lock policy turned on, fix [829](https://github.com/Altinity/clickhouse-backup/issues/829)
 
 # v2.4.29
 IMPROVEMENTS
