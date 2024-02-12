@@ -257,9 +257,9 @@ jobs:
       - name: Running integration tests
         env:
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
-          # don't change it to avoid broken CI/CD!!!
+          # just options for advanced logging
           # RUN_TESTS: "TestFIPS"
-          LOG_LEVEL: "debug"
+          # LOG_LEVEL: "debug"
           # SFTP_DEBUG: "true"
           # AZBLOB_DEBUG: "true"
           # FTP_DEBUG: "true"
