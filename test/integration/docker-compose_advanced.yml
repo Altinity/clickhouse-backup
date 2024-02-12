@@ -78,6 +78,8 @@ services:
       interval: 1s
       retries: 30
     command: ["azurite", "--debug", "/data/debug.log" , "-l", "/data", "--blobHost", "0.0.0.0","--queueHost", "0.0.0.0", "--tableHost", "0.0.0.0"]
+#    environment:
+#      - AZURITE_DB="mysql://root:root@mysql:3306/azurite_blob"
     networks:
       - clickhouse-backup
 
