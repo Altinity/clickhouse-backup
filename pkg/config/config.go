@@ -583,7 +583,7 @@ func DefaultConfig() *Config {
 		},
 		FTP: FTPConfig{
 			Timeout:           "2m",
-			Concurrency:       downloadConcurrency * 2,
+			Concurrency:       downloadConcurrency * 3,
 			CompressionFormat: "tar",
 			CompressionLevel:  1,
 		},
@@ -591,7 +591,7 @@ func DefaultConfig() *Config {
 			Port:              22,
 			CompressionFormat: "tar",
 			CompressionLevel:  1,
-			Concurrency:       int(downloadConcurrency * 2),
+			Concurrency:       int(downloadConcurrency * 3),
 		},
 		Custom: CustomConfig{
 			CommandTimeout:         "4h",
