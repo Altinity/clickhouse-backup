@@ -1,3 +1,7 @@
+# v2.4.31
+IMPROVEMENTS
+- add `check_sum_algorithm` parameter for `s3` config section with "" default value, to avoid useless CPU usage during upload to S3 storage, additional fix [829](https://github.com/Altinity/clickhouse-backup/issues/829) 
+
 # v2.4.30
 BUG FIXES
 - fix `download` command corner cases for increment backup for tables with projections, fix [830](https://github.com/Altinity/clickhouse-backup/issues/830)

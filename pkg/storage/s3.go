@@ -267,12 +267,15 @@ func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath stri
 
 func (s *S3) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
 	params := s3.PutObjectInput{
-		Bucket:            aws.String(s.Config.Bucket),
-		Key:               aws.String(path.Join(s.Config.Path, key)),
-		Body:              r,
-		StorageClass:      s3types.StorageClass(strings.ToUpper(s.Config.StorageClass)),
-		ChecksumAlgorithm: s3types.ChecksumAlgorithmCrc32,
+		Bucket:       aws.String(s.Config.Bucket),
+		Key:          aws.String(path.Join(s.Config.Path, key)),
+		Body:         r,
+		StorageClass: s3types.StorageClass(strings.ToUpper(s.Config.StorageClass)),
 	}
+	if s.Config.CheckSumAlgorithm != "" {
+		params.ChecksumAlgorithm = s3types.ChecksumAlgorithm(s.Config.CheckSumAlgorithm)
+	}
+
 	// ACL shall be optional, fix https://github.com/Altinity/clickhouse-backup/issues/785
 	if s.Config.ACL != "" {
 		params.ACL = s3types.ObjectCannedACL(s.Config.ACL)
@@ -457,11 +460,10 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 	// just copy object without multipart
 	if srcSize < 5*1024*1024*1024 || strings.Contains(s.Config.Endpoint, "storage.googleapis.com") {
 		params := &s3.CopyObjectInput{
-			Bucket:            aws.String(s.Config.Bucket),
-			Key:               aws.String(dstKey),
-			CopySource:        aws.String(path.Join(srcBucket, srcKey)),
-			StorageClass:      s3types.StorageClass(strings.ToUpper(s.Config.StorageClass)),
-			ChecksumAlgorithm: s3types.ChecksumAlgorithmCrc32,
+			Bucket:       aws.String(s.Config.Bucket),
+			Key:          aws.String(dstKey),
+			CopySource:   aws.String(path.Join(srcBucket, srcKey)),
+			StorageClass: s3types.StorageClass(strings.ToUpper(s.Config.StorageClass)),
 		}
 		s.enrichCopyObjectParams(params)
 		_, err := s.client.CopyObject(ctx, params)
@@ -472,10 +474,9 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 	}
 	// Initiate a multipart upload
 	createMultipartUploadParams := &s3.CreateMultipartUploadInput{
-		Bucket:            aws.String(s.Config.Bucket),
-		Key:               aws.String(dstKey),
-		StorageClass:      s3types.StorageClass(strings.ToUpper(s.Config.StorageClass)),
-		ChecksumAlgorithm: s3types.ChecksumAlgorithmCrc32,
+		Bucket:       aws.String(s.Config.Bucket),
+		Key:          aws.String(dstKey),
+		StorageClass: s3types.StorageClass(strings.ToUpper(s.Config.StorageClass)),
 	}
 	s.enrichCreateMultipartUploadParams(createMultipartUploadParams)
 	initResp, err := s.client.CreateMultipartUpload(ctx, createMultipartUploadParams)
@@ -577,6 +578,9 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 }
 
 func (s *S3) enrichCreateMultipartUploadParams(params *s3.CreateMultipartUploadInput) {
+	if s.Config.CheckSumAlgorithm != "" {
+		params.ChecksumAlgorithm = s3types.ChecksumAlgorithm(s.Config.CheckSumAlgorithm)
+	}
 	if s.Config.RequestPayer != "" {
 		params.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
 	}
@@ -612,6 +616,9 @@ func (s *S3) enrichCreateMultipartUploadParams(params *s3.CreateMultipartUploadI
 }
 
 func (s *S3) enrichCopyObjectParams(params *s3.CopyObjectInput) {
+	if s.Config.CheckSumAlgorithm != "" {
+		params.ChecksumAlgorithm = s3types.ChecksumAlgorithm(s.Config.CheckSumAlgorithm)
+	}
 	// https://github.com/Altinity/clickhouse-backup/issues/588
 	if len(s.Config.ObjectLabels) > 0 {
 		tags := ""

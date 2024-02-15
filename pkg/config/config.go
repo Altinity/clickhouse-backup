@@ -137,6 +137,7 @@ type S3Config struct {
 	AllowMultipartDownload  bool              `yaml:"allow_multipart_download" envconfig:"S3_ALLOW_MULTIPART_DOWNLOAD"`
 	ObjectLabels            map[string]string `yaml:"object_labels" envconfig:"S3_OBJECT_LABELS"`
 	RequestPayer            string            `yaml:"request_payer" envconfig:"S3_REQUEST_PAYER"`
+	CheckSumAlgorithm       string            `yaml:"check_sum_algorithm" envconfig:"S3_CHECKSUM_ALGORITHM"`
 	Debug                   bool              `yaml:"debug" envconfig:"S3_DEBUG"`
 }
 
