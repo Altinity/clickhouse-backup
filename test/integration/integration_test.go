@@ -1651,6 +1651,7 @@ func TestFIPS(t *testing.T) {
 		time.Sleep(1 * time.Second)
 
 		r.NoError(dockerExec("clickhouse", "bash", "-ce", "rm -rf /tmp/testssl* && /opt/testssl/testssl.sh -e -s -oC /tmp/testssl.csv --color 0 --disable-rating --quiet -n min --mode parallel --add-ca /etc/clickhouse-backup/ca-cert.pem localhost:7172"))
+		r.NoError(dockerExec("clickhouse", "cat", "/tmp/testssl.csv"))
 		out, err := dockerExecOut("clickhouse", "bash", "-ce", fmt.Sprintf("grep -c -E '%s' /tmp/testssl.csv", strings.Join(cipherList, "|")))
 		r.NoError(err)
 		r.Equal(strconv.Itoa(len(cipherList)), strings.Trim(out, " \t\r\n"))
