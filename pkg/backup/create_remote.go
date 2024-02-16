@@ -2,7 +2,6 @@ package backup
 
 import (
 	"context"
-	"fmt"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 )
 
@@ -23,8 +22,5 @@ func (b *Backuper) CreateToRemote(backupName, diffFrom, diffFromRemote, tablePat
 		return err
 	}
 
-	if err := b.RemoveOldBackupsLocal(ctx, false, nil); err != nil {
-		return fmt.Errorf("can't remove old local backups: %v", err)
-	}
 	return nil
 }

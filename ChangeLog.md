@@ -1,11 +1,11 @@
 # v2.4.31
 IMPROVEMENTS
 - add `check_sum_algorithm` parameter for `s3` config section with "" default value, to avoid useless CPU usage during upload to `S3` storage, additional fix [829](https://github.com/Altinity/clickhouse-backup/issues/829) 
+- `upload` will delete local backup if upload successful, fix [834](https://github.com/Altinity/clickhouse-backup/issues/834) 
 
 BUG FIXES
 - fix miss checksum for CopyObject in `s3`, fix [835](https://github.com/Altinity/clickhouse-backup/issues/835), affected 2.4.30
-- fix wrong behavior for `restore --rbac-only` and `restore --rbac` for backups which not contains any schema, fix [832](https://github.com/Altinity/clickhouse-backup/issues/832)   
-
+- fix wrong behavior for `restore --rbac-only` and `restore --rbac` for backups which not contains any schema, fix [832](https://github.com/Altinity/clickhouse-backup/issues/832)
 # v2.4.30
 BUG FIXES
 - fix `download` command corner cases for increment backup for tables with projections, fix [830](https://github.com/Altinity/clickhouse-backup/issues/830)

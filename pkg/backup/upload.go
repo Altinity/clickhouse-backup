@@ -235,6 +235,11 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	if err = b.RemoveOldBackupsRemote(ctx); err != nil {
 		return fmt.Errorf("can't remove old backups on remote storage: %v", err)
 	}
+	// fix https://github.com/Altinity/clickhouse-backup/issues/834
+	if err = b.RemoveOldBackupsLocal(ctx, false, nil); err != nil {
+		return fmt.Errorf("can't remove old local backups: %v", err)
+	}
+
 	return nil
 }
 
