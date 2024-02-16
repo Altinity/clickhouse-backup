@@ -534,8 +534,12 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 			}
 			mu.Lock()
 			parts = append(parts, s3types.CompletedPart{
-				ETag:       partResp.CopyPartResult.ETag,
-				PartNumber: aws.Int32(currentPartNumber),
+				ETag:           partResp.CopyPartResult.ETag,
+				PartNumber:     aws.Int32(currentPartNumber),
+				ChecksumCRC32:  partResp.CopyPartResult.ChecksumCRC32,
+				ChecksumCRC32C: partResp.CopyPartResult.ChecksumCRC32C,
+				ChecksumSHA1:   partResp.CopyPartResult.ChecksumSHA1,
+				ChecksumSHA256: partResp.CopyPartResult.ChecksumSHA256,
 			})
 			mu.Unlock()
 			return nil
