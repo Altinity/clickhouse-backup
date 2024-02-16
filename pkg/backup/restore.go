@@ -52,7 +52,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 		"backup":    backupName,
 		"operation": "restore",
 	})
-	doRestoreData := !schemaOnly || dataOnly
+	doRestoreData := (!schemaOnly && !rbacOnly && !configsOnly) || dataOnly
 
 	if err := b.ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
@@ -120,8 +120,14 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 			}
 		}
 		if len(backupMetadata.Tables) == 0 {
-			log.Warnf("'%s' doesn't contains tables for restore", backupName)
-			if (!restoreRBAC) && (!restoreConfigs) {
+			// corner cases for https://github.com/Altinity/clickhouse-backup/issues/832
+			if !restoreRBAC && !rbacOnly && !restoreConfigs && !configsOnly {
+				if !b.cfg.General.AllowEmptyBackups {
+					err = fmt.Errorf("'%s' doesn't contains tables for restore, if you need it, you can setup `allow_empty_backups: true` in `general` config section", backupName)
+					log.Errorf("%v", err)
+					return err
+				}
+				log.Warnf("'%s' doesn't contains tables for restore", backupName)
 				return nil
 			}
 		}
@@ -136,12 +142,14 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 		if err := b.restoreRBAC(ctx, backupName, disks); err != nil {
 			return err
 		}
+		log.Infof("RBAC successfully restored")
 		needRestart = true
 	}
 	if (configsOnly || restoreConfigs) && !b.isEmbedded {
 		if err := b.restoreConfigs(backupName, disks); err != nil {
 			return err
 		}
+		log.Infof("CONFIGS successfully restored")
 		needRestart = true
 	}
 
@@ -154,12 +162,12 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 		}
 	}
 
-	if schemaOnly || (schemaOnly == dataOnly) {
+	if schemaOnly || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
 		if err := b.RestoreSchema(ctx, backupName, tablePattern, dropTable, ignoreDependencies); err != nil {
 			return err
 		}
 	}
-	if dataOnly || (schemaOnly == dataOnly) {
+	if dataOnly || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
 		if err := b.RestoreData(ctx, backupName, tablePattern, partitions, disks); err != nil {
 			return err
 		}
@@ -443,8 +451,15 @@ func (b *Backuper) RestoreSchema(ctx context.Context, backupName, tablePattern s
 		metadataPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
 	}
 	info, err := os.Stat(metadataPath)
+	// corner cases for https://github.com/Altinity/clickhouse-backup/issues/832
 	if err != nil {
-		return err
+		if !b.cfg.General.AllowEmptyBackups {
+			return err
+		}
+		if !os.IsNotExist(err) {
+			return err
+		}
+		return nil
 	}
 	if !info.IsDir() {
 		return fmt.Errorf("%s is not a dir", metadataPath)
@@ -708,6 +723,11 @@ func (b *Backuper) RestoreData(ctx context.Context, backupName string, tablePatt
 		tablesForRestore, partitionsNameList, err = b.getTableListByPatternLocal(ctx, metadataPath, tablePattern, false, partitions)
 	}
 	if err != nil {
+		// fix https://github.com/Altinity/clickhouse-backup/issues/832
+		if b.cfg.General.AllowEmptyBackups && os.IsNotExist(err) {
+			log.Warnf("%v", err)
+			return nil
+		}
 		return err
 	}
 	if len(tablesForRestore) == 0 {
