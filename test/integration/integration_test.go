@@ -488,7 +488,14 @@ func TestDoRestoreRBAC(t *testing.T) {
 	log.Info("download+restore RBAC")
 	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
 	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup download test_rbac_backup"))
-	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--rm", "--rbac", "--rbac-only", "test_rbac_backup"))
+
+	out, err := dockerExecOut("clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore --rm --rbac test_rbac_backup")
+	r.Contains(out, "RBAC successfully restored")
+	r.NoError(err)
+
+	out, err = dockerExecOut("clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore --rm --rbac-only test_rbac_backup")
+	r.Contains(out, "RBAC successfully restored")
+	r.NoError(err)
 	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
 
 	ch.chbackend.Close()
