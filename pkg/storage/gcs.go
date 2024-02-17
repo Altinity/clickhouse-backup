@@ -90,15 +90,18 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 
 	if gcs.Config.Endpoint != "" {
 		endpoint = gcs.Config.Endpoint
-		clientOptions = append([]option.ClientOption{option.WithoutAuthentication()}, clientOptions...)
 		clientOptions = append(clientOptions, option.WithEndpoint(endpoint))
-	} else if gcs.Config.CredentialsJSON != "" {
+	}
+
+	if gcs.Config.CredentialsJSON != "" {
 		clientOptions = append(clientOptions, option.WithCredentialsJSON([]byte(gcs.Config.CredentialsJSON)))
 	} else if gcs.Config.CredentialsJSONEncoded != "" {
 		d, _ := base64.StdEncoding.DecodeString(gcs.Config.CredentialsJSONEncoded)
 		clientOptions = append(clientOptions, option.WithCredentialsJSON(d))
 	} else if gcs.Config.CredentialsFile != "" {
 		clientOptions = append(clientOptions, option.WithCredentialsFile(gcs.Config.CredentialsFile))
+	} else {
+		clientOptions = append(clientOptions, option.WithoutAuthentication())
 	}
 
 	if gcs.Config.ForceHttp {

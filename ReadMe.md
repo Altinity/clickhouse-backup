@@ -529,6 +529,7 @@ gcs:
   credentials_file: ""         # GCS_CREDENTIALS_FILE
   credentials_json: ""         # GCS_CREDENTIALS_JSON
   credentials_json_encoded: "" # GCS_CREDENTIALS_JSON_ENCODED
+  endpoint: ""                 # GCS_ENDPOINT, use it for custom GCS endpoint/compatible storage. For example, when using custom endpoint via private service connect
   bucket: ""                   # GCS_BUCKET
   path: ""                     # GCS_PATH, `system.macros` values can be applied as {macro_name}
   object_disk_path: ""         # GCS_OBJECT_DISK_PATH, path for backup of part from `s3` object disk (clickhouse support only gcs over s3 protocol), if disk present, then shall not be zero and shall not be prefixed by `path`
