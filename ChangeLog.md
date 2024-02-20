@@ -1,3 +1,7 @@
+# v2.4.32
+BUG FIXES
+- fix wrong config validation for `object_disk_path` even when no object disk present in backup during `restore`, fix [842](https://github.com/Altinity/clickhouse-backup/issues/842)
+
 # v2.4.31
 IMPROVEMENTS
 - add `check_sum_algorithm` parameter for `s3` config section with "" default value, to avoid useless CPU usage during upload to `S3` storage, additional fix [829](https://github.com/Altinity/clickhouse-backup/issues/829) 
