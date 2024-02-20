@@ -208,6 +208,8 @@ type ClickHouseConfig struct {
 	FreezeByPartWhere                string            `yaml:"freeze_by_part_where" envconfig:"CLICKHOUSE_FREEZE_BY_PART_WHERE"`
 	UseEmbeddedBackupRestore         bool              `yaml:"use_embedded_backup_restore" envconfig:"CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE"`
 	EmbeddedBackupDisk               string            `yaml:"embedded_backup_disk" envconfig:"CLICKHOUSE_EMBEDDED_BACKUP_DISK"`
+	EmbeddedBackupThreads            uint8             `yaml:"embedded_backup_threads" envconfig:"CLICKHOUSE_EMBEDDED_BACKUP_THREADS"`
+	EmbeddedRestoreThreads           uint8             `yaml:"embedded_restore_threads" envconfig:"CLICKHOUSE_EMBEDDED_RESTORE_THREADS"`
 	BackupMutations                  bool              `yaml:"backup_mutations" envconfig:"CLICKHOUSE_BACKUP_MUTATIONS"`
 	RestoreAsAttach                  bool              `yaml:"restore_as_attach" envconfig:"CLICKHOUSE_RESTORE_AS_ATTACH"`
 	CheckPartsColumns                bool              `yaml:"check_parts_columns" envconfig:"CLICKHOUSE_CHECK_PARTS_COLUMNS"`

@@ -302,7 +302,7 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePa
 	if doesShard(b.cfg.General.ShardedOperationMode) {
 		return fmt.Errorf("cannot perform embedded backup: %w", errShardOperationUnsupported)
 	}
-	if _, isBackupDiskExists := diskMap[b.cfg.ClickHouse.EmbeddedBackupDisk]; !isBackupDiskExists {
+	if _, isBackupDiskExists := diskMap[b.cfg.ClickHouse.EmbeddedBackupDisk]; !isBackupDiskExists && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
 		return fmt.Errorf("backup disk `%s` not exists in system.disks", b.cfg.ClickHouse.EmbeddedBackupDisk)
 	}
 	if createRBAC || createConfigs {
@@ -322,7 +322,6 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePa
 	tableSizeSQL := ""
 	i := 0
 	backupMetadataSize := uint64(0)
-	backupPath := path.Join(diskMap[b.cfg.ClickHouse.EmbeddedBackupDisk], backupName)
 	for _, table := range tables {
 		if table.Skip {
 			continue
@@ -351,12 +350,23 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePa
 			tableSizeSQL += ", "
 		}
 	}
-	backupSQL := fmt.Sprintf("BACKUP %s TO Disk(?,?)", tablesSQL)
-	if schemaOnly {
-		backupSQL += " SETTINGS structure_only=1, show_table_uuid_in_table_create_query_if_not_nil=1"
-	}
 	backupResult := make([]clickhouse.SystemBackups, 0)
-	if err := b.ch.SelectContext(ctx, &backupResult, backupSQL, b.cfg.ClickHouse.EmbeddedBackupDisk, backupName); err != nil {
+	embeddedBackupDestination, err := b.getEmbeddedBackupDestination(ctx, backupName)
+	if err != nil {
+		return err
+	}
+	backupSQL := fmt.Sprintf("BACKUP %s TO %s", tablesSQL, embeddedBackupDestination)
+	backupSettings := make([]string, 0)
+	if schemaOnly {
+		backupSettings = append(backupSettings, "structure_only=1", "show_table_uuid_in_table_create_query_if_not_nil=1")
+	}
+	if b.cfg.ClickHouse.EmbeddedBackupThreads > 0 {
+		backupSettings = append(backupSettings, fmt.Sprintf("backup_threads=%d", b.cfg.ClickHouse.EmbeddedBackupThreads))
+	}
+	if len(backupSettings) > 0 {
+		backupSQL += " SETTINGS " + strings.Join(backupSettings, ", ")
+	}
+	if err := b.ch.SelectContext(ctx, &backupResult, backupSQL); err != nil {
 		return fmt.Errorf("backup error: %v", err)
 	}
 	if len(backupResult) != 1 || (backupResult[0].Status != "BACKUP_COMPLETE" && backupResult[0].Status != "BACKUP_CREATED") {
@@ -390,6 +400,7 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePa
 	}
 
 	log.Debug("calculate parts list from embedded backup disk")
+	backupPath := path.Join(diskMap[b.cfg.ClickHouse.EmbeddedBackupDisk], backupName)
 	for _, table := range tables {
 		select {
 		case <-ctx.Done():

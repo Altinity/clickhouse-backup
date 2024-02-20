@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
+	"os"
 	"path"
 	"strings"
 
@@ -173,4 +175,45 @@ func (b *Backuper) isDiskTypeEncryptedObject(disk clickhouse.Disk, disks []click
 		}
 	}
 	return underlyingIdx >= 0
+}
+
+func (b *Backuper) getEmbeddedBackupDestination(ctx context.Context, backupName string) (string, error) {
+	if b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
+		return fmt.Sprintf("Disk('%s','%s')", b.cfg.ClickHouse.EmbeddedBackupDisk, backupName), nil
+	}
+	if b.cfg.General.RemoteStorage == "s3" {
+		s3Endpoint, err := b.ch.ApplyMacros(ctx, b.buildS3DestinationEndpoint())
+		if err != nil {
+			return "", err
+		}
+		if b.cfg.S3.AssumeRoleARN != "" || (b.cfg.S3.AccessKey == "" && os.Getenv("AWS_ACCESS_KEY_ID") != "") {
+			return fmt.Sprintf("S3('%s/%s')", s3Endpoint, backupName), nil
+		}
+
+	}
+	if b.cfg.General.RemoteStorage == "gcs" {
+
+	}
+	if b.cfg.General.RemoteStorage == "azblob" {
+
+	}
+	return "", fmt.Errorf("empty clickhouse->embedded_backup_disk and invalid general->remote_storage: %s", b.cfg.General.RemoteStorage)
+}
+
+func (b *Backuper) buildS3DestinationEndpoint() string {
+	url := url.URL{}
+	url.Scheme = "https"
+	if b.cfg.S3.DisableSSL {
+		url.Scheme = "http"
+	}
+	url.Host = b.cfg.S3.Endpoint
+	if url.Host == "" && b.cfg.S3.Region != "" && !b.cfg.S3.ForcePathStyle {
+		url.Host = "s3." + b.cfg.S3.Region + ".amazonaws.com"
+		url.Path = path.Join(b.cfg.S3.Bucket, b.cfg.S3.ObjectDiskPath)
+	}
+	if url.Host == "" && b.cfg.S3.Bucket != "" && b.cfg.S3.ForcePathStyle {
+		url.Host = b.cfg.S3.Bucket + "." + "s3.amazonaws.com"
+		url.Path = b.cfg.S3.ObjectDiskPath
+	}
+	return url.String()
 }
