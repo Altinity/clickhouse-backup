@@ -1726,7 +1726,7 @@ func TestIntegrationGCSWithCustomEndpoint(t *testing.T) {
 		return
 	}
 	//t.Parallel()
-	runMainIntegrationScenario(t, "GCS", "config-gcs-custom-endpoint.yml")
+	runMainIntegrationScenario(t, "GCS_EMULATOR", "config-gcs-custom-endpoint.yml")
 }
 
 func TestIntegrationSFTPAuthPassword(t *testing.T) {
@@ -2127,8 +2127,8 @@ func checkObjectStorageIsEmpty(t *testing.T, r *require.Assertions, remoteStorag
 			checkRemoteDir("total 0", "ftp", "bash", "-c", "ls -lh /home/vsftpd/test_backup/backup/")
 		}
 	}
-	if remoteStorageType == "GCS" {
-		checkRemoteDir("total 0", "gcs", "bash", "-c", "ls -lh /data/clickhouse-backup-test-gcs")
+	if remoteStorageType == "GCS_EMULATOR" {
+		checkRemoteDir("total 0", "gcs", "sh", "-c", "ls -lh /data/altinity-qa-test/")
 	}
 }
 

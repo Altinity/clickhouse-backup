@@ -60,6 +60,7 @@ services:
   gcs:
     image: fsouza/fake-gcs-server:latest
     hostname: gcs
+    container_name: gcs
     entrypoint:
       - /bin/sh
     command:
