@@ -130,12 +130,14 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_gcs.xml
     <disks>
       <disk_gcs>
         <type>s3</type>
-        <endpoint>https://storage.googleapis.com/${QA_GCS_OVER_S3_BUCKET}/clickhouse_backup_disk_gcs_over_s3/${HOSTNAME}/{cluster}/{shard}/</endpoint>
-        <access_key_id>${QA_GCS_OVER_S3_ACCESS_KEY}</access_key_id>
-        <secret_access_key>${QA_GCS_OVER_S3_SECRET_KEY}</secret_access_key>
+        <endpoint>http://gcs:8080/${QA_GCS_OVER_S3_BUCKET}/disk_gcs/{cluster}/{shard}/</endpoint>
+        <!-- https://github.com/Altinity/clickhouse-backup/issues/691
+        <access_key_id>access-key</access_key_id>
+        <secret_access_key>it-is-my-super-secret-key</secret_access_key>
+        -->
+        <use_environment_credentials>1</use_environment_credentials>
         <!-- to avoid slow startup -->
         <send_metadata>false</send_metadata>
-        <support_batch_delete>false</support_batch_delete>
       </disk_gcs>
     </disks>
     <policies>

@@ -43,17 +43,18 @@ services:
       - clickhouse-backup
 
 # todo need to reproduce download after upload
-#  gcs:
-#    image: fsouza/fake-gcs-server:latest
-#    hostname: gcs
-#    entrypoint:
-#      - /bin/sh
-#    command:
-#      - -c
-#      - "mkdir -p /data/clickhouse-backup-test-gcs && fake-gcs-server -data /data -scheme http -port 8080 -public-host gsc:8080"
-#    networks:
-#      - clickhouse-backup
-
+  gcs:
+    image: fsouza/fake-gcs-server:latest
+    hostname: gcs
+    entrypoint:
+      - /bin/sh
+    command:
+      - -c
+      - "mkdir -p /data/altinity-qa-test && mkdir -p /data/${QA_GCS_OVER_S3_BUCKET} && fake-gcs-server -data /data -scheme http -port 8080 -public-host gcs:8080"
+    networks:
+      - clickhouse-backup
+    environment:
+      QA_GCS_OVER_S3_BUCKET: "${QA_GCS_OVER_S3_BUCKET}"
 
   azure:
     image: mcr.microsoft.com/azure-storage/azurite:latest
@@ -126,9 +127,6 @@ services:
       AZBLOB_DEBUG: "${AZBLOB_DEBUG:-false}"
       CLICKHOUSE_DEBUG: "${CLICKHOUSE_DEBUG:-false}"
       GOCOVERDIR: "/tmp/_coverage_/"
-# fake-gcs-server
-#       STORAGE_EMULATOR_HOST: "http://gsc:8080"
-#       GOOGLE_API_USE_CLIENT_CERTIFICATE: "false"
 # FIPS
       QA_AWS_ACCESS_KEY: ${QA_AWS_ACCESS_KEY}
       QA_AWS_SECRET_KEY: ${QA_AWS_SECRET_KEY}
@@ -166,9 +164,6 @@ services:
       AZBLOB_DEBUG: "${AZBLOB_DEBUG:-false}"
       CLICKHOUSE_DEBUG: "${CLICKHOUSE_DEBUG:-false}"
       GOCOVERDIR: "/tmp/_coverage_/"
-# fake-gcs-server
-#       STORAGE_EMULATOR_HOST: "http://gsc:8080"
-#       GOOGLE_API_USE_CLIENT_CERTIFICATE: "false"
 # FIPS
       QA_AWS_ACCESS_KEY: ${QA_AWS_ACCESS_KEY}
       QA_AWS_SECRET_KEY: ${QA_AWS_SECRET_KEY}
@@ -196,6 +191,7 @@ services:
       - ./config-ftp.yaml:/etc/clickhouse-backup/config-ftp.yaml
       - ./config-ftp-old.yaml:/etc/clickhouse-backup/config-ftp-old.yaml
       - ./config-gcs.yml:/etc/clickhouse-backup/config-gcs.yml
+      - ./config-gcs-custom-endpoint.yml:/etc/clickhouse-backup/config-gcs-custom-endpoint.yml
       - ./config-s3.yml:/etc/clickhouse-backup/config-s3.yml
       - ./config-s3-embedded.yml:/etc/clickhouse-backup/config-s3-embedded.yml
       - ./config-s3-fips.yml:/etc/clickhouse-backup/config-s3-fips.yml.template
