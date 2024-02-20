@@ -1720,6 +1720,15 @@ func TestIntegrationGCS(t *testing.T) {
 	runMainIntegrationScenario(t, "GCS", "config-gcs.yml")
 }
 
+func TestIntegrationGCSWithCustomEndpoint(t *testing.T) {
+	if isTestShouldSkip("GCS_TESTS") {
+		t.Skip("Skipping GCS integration tests...")
+		return
+	}
+	//t.Parallel()
+	runMainIntegrationScenario(t, "GCS_EMULATOR", "config-gcs-custom-endpoint.yml")
+}
+
 func TestIntegrationSFTPAuthPassword(t *testing.T) {
 	//t.Parallel()
 	runMainIntegrationScenario(t, "SFTP", "config-sftp-auth-password.yaml")
@@ -2110,7 +2119,6 @@ func checkObjectStorageIsEmpty(t *testing.T, r *require.Assertions, remoteStorag
 	}
 	if remoteStorageType == "SFTP" {
 		checkRemoteDir("total 0", "sshd", "bash", "-c", "ls -lh /root/")
-
 	}
 	if remoteStorageType == "FTP" {
 		if strings.Contains(os.Getenv("COMPOSE_FILE"), "advanced") {
@@ -2119,9 +2127,8 @@ func checkObjectStorageIsEmpty(t *testing.T, r *require.Assertions, remoteStorag
 			checkRemoteDir("total 0", "ftp", "bash", "-c", "ls -lh /home/vsftpd/test_backup/backup/")
 		}
 	}
-	//todo check gcs backup is empty
-	if remoteStorageType == "GCS" {
-
+	if remoteStorageType == "GCS_EMULATOR" {
+		checkRemoteDir("total 0", "gcs", "sh", "-c", "ls -lh /data/altinity-qa-test/")
 	}
 }
 
