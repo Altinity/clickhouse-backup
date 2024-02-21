@@ -1722,7 +1722,7 @@ func TestIntegrationGCS(t *testing.T) {
 
 func TestIntegrationGCSWithCustomEndpoint(t *testing.T) {
 	if isTestShouldSkip("GCS_TESTS") {
-		t.Skip("Skipping GCS integration tests...")
+		t.Skip("Skipping GCS_EMULATOR integration tests...")
 		return
 	}
 	//t.Parallel()
