@@ -396,6 +396,9 @@ fi
 # zookeeper RBAC available from 21.9
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.9 || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9] ]]; then
 
+mkdir -p /var/lib/clickhouse/access
+chown clickhouse:clickhouse /var/lib/clickhouse/access
+
 cat <<EOT > /etc/clickhouse-server/config.d/replicated_user_directories.xml
 <yandex>
   <user_directories replace="replace">
