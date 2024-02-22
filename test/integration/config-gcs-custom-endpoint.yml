@@ -27,4 +27,4 @@ gcs:
   object_disk_path: object_disks/{cluster}/{shard}
   compression_format: tar
   endpoint: http://gcs:8080/storage/v1/
-  skip_credential: true
+  skip_credentials: true
