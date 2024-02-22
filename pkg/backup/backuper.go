@@ -177,30 +177,67 @@ func (b *Backuper) isDiskTypeEncryptedObject(disk clickhouse.Disk, disks []click
 	return underlyingIdx >= 0
 }
 
-func (b *Backuper) getEmbeddedBackupDestination(ctx context.Context, backupName string) (string, error) {
+func (b *Backuper) getEmbeddedBackupLocation(ctx context.Context, backupName string) (string, error) {
 	if b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
 		return fmt.Sprintf("Disk('%s','%s')", b.cfg.ClickHouse.EmbeddedBackupDisk, backupName), nil
 	}
+
+	if err := b.applyMacrosToObjectDiskPath(ctx); err != nil {
+		return "", err
+	}
 	if b.cfg.General.RemoteStorage == "s3" {
-		s3Endpoint, err := b.ch.ApplyMacros(ctx, b.buildS3DestinationEndpoint())
+		s3Endpoint, err := b.ch.ApplyMacros(ctx, b.buildEmbeddedLocationS3())
 		if err != nil {
 			return "", err
 		}
-		if b.cfg.S3.AssumeRoleARN != "" || (b.cfg.S3.AccessKey == "" && os.Getenv("AWS_ACCESS_KEY_ID") != "") {
-			return fmt.Sprintf("S3('%s/%s')", s3Endpoint, backupName), nil
+		if b.cfg.S3.AccessKey != "" {
+			return fmt.Sprintf("S3('%s/%s','%s','%s')", s3Endpoint, backupName, b.cfg.S3.AccessKey, b.cfg.S3.SecretKey), nil
 		}
-
+		if os.Getenv("AWS_ACCESS_KEY_ID") != "" {
+			return fmt.Sprintf("S3('%s/%s','%s','%s')", s3Endpoint, backupName, os.Getenv("AWS_ACCESS_KEY_ID"), os.Getenv("AWS_SECRET_ACCESS_KEY")), nil
+		}
+		return "", fmt.Errorf("provide s3->access_key and s3->secret_key in config to allow embedded backup without `clickhouse->embedded_backup_disk`")
 	}
 	if b.cfg.General.RemoteStorage == "gcs" {
+		gcsEndpoint, err := b.ch.ApplyMacros(ctx, b.buildEmbeddedLocationGCS())
+		if err != nil {
+			return "", err
+		}
+		if b.cfg.GCS.EmbeddedAccessKey != "" {
+			return fmt.Sprintf("S3('%s/%s','%s','%s')", gcsEndpoint, backupName, b.cfg.GCS.EmbeddedAccessKey, b.cfg.GCS.EmbeddedSecretKey), nil
+		}
+		if os.Getenv("AWS_ACCESS_KEY_ID") != "" {
+			return fmt.Sprintf("S3('%s/%s','%s','%s')", gcsEndpoint, backupName, os.Getenv("AWS_ACCESS_KEY_ID"), os.Getenv("AWS_SECRET_ACCESS_KEY")), nil
+		}
+		return "", fmt.Errorf("provide gcs->embedded_access_key and gcs->embedded_secret_key in config to allow embedded backup without `clickhouse->embedded_backup_disk`")
 
 	}
 	if b.cfg.General.RemoteStorage == "azblob" {
-
+		azblobEndpoint, err := b.ch.ApplyMacros(ctx, b.buildEmbeddedLocationAZBLOB())
+		if err != nil {
+			return "", err
+		}
+		if b.cfg.AzureBlob.Container != "" {
+			return fmt.Sprintf("AzureBlobStorage('%s','%s','%s/%s')", azblobEndpoint, b.cfg.AzureBlob.Container, b.cfg.AzureBlob.ObjectDiskPath, backupName), nil
+		}
+		return "", fmt.Errorf("provide azblob->container and azblob->account_name, azblob->account_key in config to allow embedded backup without `clickhouse->embedded_backup_disk`")
 	}
 	return "", fmt.Errorf("empty clickhouse->embedded_backup_disk and invalid general->remote_storage: %s", b.cfg.General.RemoteStorage)
 }
 
-func (b *Backuper) buildS3DestinationEndpoint() string {
+func (b *Backuper) applyMacrosToObjectDiskPath(ctx context.Context) error {
+	var err error
+	if b.cfg.General.RemoteStorage == "s3" {
+		b.cfg.S3.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.S3.ObjectDiskPath)
+	} else if b.cfg.General.RemoteStorage == "gcs" {
+		b.cfg.GCS.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.GCS.ObjectDiskPath)
+	} else if b.cfg.General.RemoteStorage == "azblob" {
+		b.cfg.AzureBlob.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.AzureBlob.ObjectDiskPath)
+	}
+	return err
+}
+
+func (b *Backuper) buildEmbeddedLocationS3() string {
 	url := url.URL{}
 	url.Scheme = "https"
 	if b.cfg.S3.DisableSSL {
@@ -212,8 +249,37 @@ func (b *Backuper) buildS3DestinationEndpoint() string {
 		url.Path = path.Join(b.cfg.S3.Bucket, b.cfg.S3.ObjectDiskPath)
 	}
 	if url.Host == "" && b.cfg.S3.Bucket != "" && b.cfg.S3.ForcePathStyle {
-		url.Host = b.cfg.S3.Bucket + "." + "s3.amazonaws.com"
+		url.Host = b.cfg.S3.Bucket + "." + "s3." + b.cfg.S3.Region + ".amazonaws.com"
 		url.Path = b.cfg.S3.ObjectDiskPath
 	}
 	return url.String()
+}
+
+func (b *Backuper) buildEmbeddedLocationGCS() string {
+	url := url.URL{}
+	url.Scheme = "https"
+	if b.cfg.GCS.ForceHttp {
+		url.Scheme = "http"
+	}
+	if b.cfg.GCS.Endpoint != "" {
+		if !strings.HasPrefix(b.cfg.GCS.Endpoint, "http") {
+			url.Host = b.cfg.GCS.Endpoint
+		} else {
+			newUrl, _ := url.Parse(b.cfg.GCS.Endpoint)
+			url = *newUrl
+		}
+	}
+	if url.Host == "" {
+		url.Host = "storage.googleapis.com"
+	}
+	url.Path = path.Join(b.cfg.GCS.Bucket, b.cfg.GCS.ObjectDiskPath)
+	return url.String()
+}
+
+func (b *Backuper) buildEmbeddedLocationAZBLOB() string {
+	url := url.URL{}
+	url.Scheme = b.cfg.AzureBlob.EndpointSchema
+	url.Host = b.cfg.AzureBlob.EndpointSuffix
+	url.Path = b.cfg.AzureBlob.AccountName
+	return fmt.Sprintf("DefaultEndpointsProtocol=%s;AccountName=%s;AccountKey=%s;BlobEndpoint=%s;", b.cfg.AzureBlob.EndpointSchema, b.cfg.AzureBlob.AccountName, b.cfg.AzureBlob.AccountKey, url.String())
 }

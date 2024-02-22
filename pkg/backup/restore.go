@@ -754,15 +754,7 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ta
 	if len(b.cfg.General.RestoreDatabaseMapping) > 0 {
 		tablePattern = b.changeTablePatternFromRestoreDatabaseMapping(tablePattern)
 	}
-	var err error
-	if b.cfg.General.RemoteStorage == "s3" {
-		b.cfg.S3.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.S3.ObjectDiskPath)
-	} else if b.cfg.General.RemoteStorage == "gcs" {
-		b.cfg.GCS.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.GCS.ObjectDiskPath)
-	} else if b.cfg.General.RemoteStorage == "azblob" {
-		b.cfg.AzureBlob.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.AzureBlob.ObjectDiskPath)
-	}
-	if err != nil {
+	if err := b.applyMacrosToObjectDiskPath(ctx); err != nil {
 		return err
 	}
 
@@ -1035,7 +1027,6 @@ func (b *Backuper) changeTablePatternFromRestoreDatabaseMapping(tablePattern str
 }
 
 func (b *Backuper) restoreEmbedded(ctx context.Context, backupName string, restoreOnlySchema bool, tablesForRestore ListOfTables, partitionsNameList map[metadata.TableTitle][]string) error {
-	restoreSQL := "Disk(?,?)"
 	tablesSQL := ""
 	l := len(tablesForRestore)
 	for i, t := range tablesForRestore {
@@ -1072,7 +1063,11 @@ func (b *Backuper) restoreEmbedded(ctx context.Context, backupName string, resto
 	if restoreOnlySchema {
 		settings = "SETTINGS structure_only=1"
 	}
-	restoreSQL = fmt.Sprintf("RESTORE %s FROM %s %s", tablesSQL, restoreSQL, settings)
+	embeddedBackupDestination, err := b.getEmbeddedBackupLocation(ctx, backupName)
+	if err != nil {
+		return err
+	}
+	restoreSQL := fmt.Sprintf("RESTORE %s FROM %s %s", tablesSQL, embeddedBackupDestination, settings)
 	restoreResults := make([]clickhouse.SystemBackups, 0)
 	if err := b.ch.SelectContext(ctx, &restoreResults, restoreSQL, b.cfg.ClickHouse.EmbeddedBackupDisk, backupName); err != nil {
 		return fmt.Errorf("restore error: %v", err)

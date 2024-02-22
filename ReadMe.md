@@ -529,6 +529,9 @@ gcs:
   credentials_file: ""         # GCS_CREDENTIALS_FILE
   credentials_json: ""         # GCS_CREDENTIALS_JSON
   credentials_json_encoded: "" # GCS_CREDENTIALS_JSON_ENCODED
+  # look https://cloud.google.com/storage/docs/authentication/managing-hmackeys#create how to get HMAC keys for access to bucket
+  embedded_access_key: ""      # GCS_EMBEDDED_ACCESS_KEY, use it when `use_embedded_backup_restore: true`, `embedded_backup_disk: ""`, `remote_storage: gcs`
+  embedded_secret_key: ""      # GCS_EMBEDDED_SECRET_KEY, use it when `use_embedded_backup_restore: true`, `embedded_backup_disk: ""`, `remote_storage: gcs`
   endpoint: ""                 # GCS_ENDPOINT, use it for custom GCS endpoint/compatible storage. For example, when using custom endpoint via private service connect
   bucket: ""                   # GCS_BUCKET
   path: ""                     # GCS_PATH, `system.macros` values can be applied as {macro_name}

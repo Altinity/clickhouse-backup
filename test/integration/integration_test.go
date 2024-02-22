@@ -1803,9 +1803,14 @@ func TestIntegrationEmbedded(t *testing.T) {
 	//CUSTOM backup create folder in each disk
 	r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_s3/backup/"))
 	runMainIntegrationScenario(t, "EMBEDDED_S3", "config-s3-embedded.yml")
-	//@TODO uncomment when resolve slow azure BACKUP/RESTORE https://github.com/ClickHouse/ClickHouse/issues/52088
-	//r.NoError(dockerExec("clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_azure/backup/"))
-	//runMainIntegrationScenario(t, "EMBEDDED_AZURE", "config-azblob-embedded.yml")
+	runMainIntegrationScenario(t, "EMBEDDED_S3_URL", "config-s3-embedded-url.yml")
+
+	//@TODO uncomment when resolve slow azure BACKUP/RESTORE https://github.com/ClickHouse/ClickHouse/issues/52088, https://github.com/Azure/Azurite/issues/2053
+	if version == "head" || compareVersion(version, "24.2") >= 0 {
+		r.NoError(dockerExec("clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_azure/backup/"))
+		runMainIntegrationScenario(t, "EMBEDDED_AZURE", "config-azblob-embedded.yml")
+		runMainIntegrationScenario(t, "EMBEDDED_AZURE_URL", "config-azblob-embedded-url.yml")
+	}
 	//@TODO think about how to implements embedded backup for s3_plain disks
 	//r.NoError(dockerExec("clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_s3_plain/backup/"))
 	//runMainIntegrationScenario(t, "EMBEDDED_S3_PLAIN", "config-s3-plain-embedded.yml")
@@ -1992,13 +1997,12 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 	uploadCmd := fmt.Sprintf("%s_COMPRESSION_FORMAT=zstd CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/%s clickhouse-backup upload --resume %s", remoteStorageType, backupConfig, testBackupName)
 	checkResumeAlreadyProcessed(uploadCmd, testBackupName, "upload", r, remoteStorageType)
 
-	//diffFrom := []string{"--diff-from", "--diff-from-remote"}[rand.Intn(2)]
 	diffFrom := "--diff-from-remote"
 	uploadCmd = fmt.Sprintf("clickhouse-backup -c /etc/clickhouse-backup/%s upload %s %s %s --resume", backupConfig, incrementBackupName, diffFrom, testBackupName)
 	checkResumeAlreadyProcessed(uploadCmd, incrementBackupName, "upload", r, remoteStorageType)
 
 	backupDir := "/var/lib/clickhouse/backup"
-	if strings.HasPrefix(remoteStorageType, "EMBEDDED") {
+	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && !strings.HasPrefix(remoteStorageType, "_URL") {
 		backupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED"))
 	}
 	out, err = dockerExecOut("clickhouse-backup", "bash", "-ce", "ls -lha "+backupDir+" | grep "+t.Name())

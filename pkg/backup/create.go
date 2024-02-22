@@ -56,7 +56,7 @@ func NewBackupName() string {
 
 // CreateBackup - create new backup of all tables matched by tablePattern
 // If backupName is empty string will use default backup name
-func (b *Backuper) CreateBackup(backupName, tablePattern string, partitions []string, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, skipCheckPartsColumns bool, version string, commandId int) error {
+func (b *Backuper) CreateBackup(backupName, tablePattern, embeddedBaseBackup string, partitions []string, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, skipCheckPartsColumns bool, version string, commandId int) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return err
@@ -121,7 +121,7 @@ func (b *Backuper) CreateBackup(backupName, tablePattern string, partitions []st
 	partitionsIdMap, partitionsNameList := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, tables, nil, partitions)
 	// create
 	if b.cfg.ClickHouse.UseEmbeddedBackupRestore {
-		err = b.createBackupEmbedded(ctx, backupName, tablePattern, partitionsNameList, partitionsIdMap, schemaOnly, createRBAC, createConfigs, tables, allDatabases, allFunctions, disks, diskMap, diskTypes, log, startBackup, version)
+		err = b.createBackupEmbedded(ctx, backupName, tablePattern, embeddedBaseBackup, partitionsNameList, partitionsIdMap, schemaOnly, createRBAC, createConfigs, tables, allDatabases, allFunctions, disks, diskMap, diskTypes, log, startBackup, version)
 	} else {
 		err = b.createBackupLocal(ctx, backupName, partitionsIdMap, tables, doBackupData, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, version, disks, diskMap, diskTypes, allDatabases, allFunctions, log, startBackup)
 	}
@@ -297,7 +297,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName string, par
 	return nil
 }
 
-func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePattern string, partitionsNameList map[metadata.TableTitle][]string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, schemaOnly, createRBAC, createConfigs bool, tables []clickhouse.Table, allDatabases []clickhouse.Database, allFunctions []clickhouse.Function, disks []clickhouse.Disk, diskMap, diskTypes map[string]string, log *apexLog.Entry, startBackup time.Time, backupVersion string) error {
+func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePattern, baseBackup string, partitionsNameList map[metadata.TableTitle][]string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, schemaOnly, createRBAC, createConfigs bool, tables []clickhouse.Table, allDatabases []clickhouse.Database, allFunctions []clickhouse.Function, disks []clickhouse.Disk, diskMap, diskTypes map[string]string, log *apexLog.Entry, startBackup time.Time, backupVersion string) error {
 	// TODO: Implement sharded backup operations for embedded backups
 	if doesShard(b.cfg.General.ShardedOperationMode) {
 		return fmt.Errorf("cannot perform embedded backup: %w", errShardOperationUnsupported)
@@ -350,22 +350,25 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePa
 			tableSizeSQL += ", "
 		}
 	}
-	backupResult := make([]clickhouse.SystemBackups, 0)
-	embeddedBackupDestination, err := b.getEmbeddedBackupDestination(ctx, backupName)
+	embeddedBackupDestination, err := b.getEmbeddedBackupLocation(ctx, backupName)
 	if err != nil {
 		return err
 	}
 	backupSQL := fmt.Sprintf("BACKUP %s TO %s", tablesSQL, embeddedBackupDestination)
-	backupSettings := make([]string, 0)
+	backupSettings := []string{"show_table_uuid_in_table_create_query_if_not_nil=1"}
 	if schemaOnly {
-		backupSettings = append(backupSettings, "structure_only=1", "show_table_uuid_in_table_create_query_if_not_nil=1")
+		backupSettings = append(backupSettings, "structure_only=1")
 	}
 	if b.cfg.ClickHouse.EmbeddedBackupThreads > 0 {
 		backupSettings = append(backupSettings, fmt.Sprintf("backup_threads=%d", b.cfg.ClickHouse.EmbeddedBackupThreads))
 	}
+	if baseBackup != "" {
+		backupSettings = append(backupSettings, fmt.Sprintf("base_backup='%s'", baseBackup))
+	}
 	if len(backupSettings) > 0 {
 		backupSQL += " SETTINGS " + strings.Join(backupSettings, ", ")
 	}
+	backupResult := make([]clickhouse.SystemBackups, 0)
 	if err := b.ch.SelectContext(ctx, &backupResult, backupSQL); err != nil {
 		return fmt.Errorf("backup error: %v", err)
 	}
@@ -400,7 +403,11 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePa
 	}
 
 	log.Debug("calculate parts list from embedded backup disk")
-	backupPath := path.Join(diskMap[b.cfg.ClickHouse.EmbeddedBackupDisk], backupName)
+	backupPath := b.DefaultDataPath
+	if b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
+		backupPath = diskMap[b.cfg.ClickHouse.EmbeddedBackupDisk]
+	}
+	backupPath = path.Join(backupPath, backupName)
 	for _, table := range tables {
 		select {
 		case <-ctx.Done():
@@ -409,7 +416,12 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePa
 			if table.Skip {
 				continue
 			}
-			disksToPartsMap, err := b.getPartsFromBackupDisk(backupPath, table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}])
+			var disksToPartsMap map[string][]metadata.Part
+			if b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
+				disksToPartsMap, err = b.getPartsFromLocalEmbeddedBackupDisk(backupPath, table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}])
+			} else {
+				disksToPartsMap, err = b.getPartsFromRemoteEmbeddedBackup(backupPath, table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}])
+			}
 			if err != nil {
 				return err
 			}
@@ -428,7 +440,7 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePa
 			backupMetadataSize += metadataSize
 		}
 	}
-	backupMetaFile := path.Join(diskMap[b.cfg.ClickHouse.EmbeddedBackupDisk], backupName, "metadata.json")
+	backupMetaFile := path.Join(backupPath, "metadata.json")
 	if err := b.createBackupMetadata(ctx, backupMetaFile, backupName, backupVersion, "embedded", diskMap, diskTypes, disks, backupDataSize[0].Size, backupMetadataSize, 0, 0, tableMetas, allDatabases, allFunctions, log); err != nil {
 		return err
 	}
@@ -441,7 +453,12 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, tablePa
 	return nil
 }
 
-func (b *Backuper) getPartsFromBackupDisk(backupPath string, table clickhouse.Table, partitionsIdsMap common.EmptyMap) (map[string][]metadata.Part, error) {
+func (b *Backuper) getPartsFromRemoteEmbeddedBackup(backupPath string, table clickhouse.Table, partitionsIdsMap common.EmptyMap) (map[string][]metadata.Part, error) {
+	parts := map[string][]metadata.Part{}
+	return parts, nil
+}
+
+func (b *Backuper) getPartsFromLocalEmbeddedBackupDisk(backupPath string, table clickhouse.Table, partitionsIdsMap common.EmptyMap) (map[string][]metadata.Part, error) {
 	parts := map[string][]metadata.Part{}
 	dirList, err := os.ReadDir(path.Join(backupPath, "data", common.TablePathEncode(table.Database), common.TablePathEncode(table.Name)))
 	if err != nil {
