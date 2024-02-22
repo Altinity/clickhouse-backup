@@ -529,6 +529,7 @@ gcs:
   credentials_file: ""         # GCS_CREDENTIALS_FILE
   credentials_json: ""         # GCS_CREDENTIALS_JSON
   credentials_json_encoded: "" # GCS_CREDENTIALS_JSON_ENCODED
+  skip_credential: false       # GCS_SKIP_CREDENTIAL
   endpoint: ""                 # GCS_ENDPOINT, use it for custom GCS endpoint/compatible storage. For example, when using custom endpoint via private service connect
   bucket: ""                   # GCS_BUCKET
   path: ""                     # GCS_PATH, `system.macros` values can be applied as {macro_name}
