@@ -100,7 +100,7 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 		clientOptions = append(clientOptions, option.WithCredentialsJSON(d))
 	} else if gcs.Config.CredentialsFile != "" {
 		clientOptions = append(clientOptions, option.WithCredentialsFile(gcs.Config.CredentialsFile))
-	} else if gcs.Config.SkipCredential {
+	} else if gcs.Config.SkipCredentials {
 		clientOptions = append(clientOptions, option.WithoutAuthentication())
 	}
 
