@@ -177,17 +177,17 @@ func (b *Backuper) cleanEmbeddedAndObjectDiskLocalIfSameRemoteNotPresent(ctx con
 	if err != nil {
 		return err
 	}
+	if !skip && (hasObjectDisks || (strings.Contains(backup.Tags, "embedded") && b.cfg.ClickHouse.EmbeddedBackupDisk == "")) {
+		if err = b.cleanBackupObjectDisks(ctx, backupName); err != nil {
+			log.Warnf("b.cleanBackupObjectDisks return error: %v", err)
+			return err
+		}
+	}
 	if !skip && strings.Contains(backup.Tags, "embedded") {
 		if err = b.cleanLocalEmbedded(ctx, backup, disks); err != nil {
 			log.Warnf("b.cleanLocalEmbedded return error: %v", err)
 			return err
 		}
-	}
-	if !skip && hasObjectDisks {
-		if err = b.cleanBackupObjectDisks(ctx, backupName); err != nil {
-			return err
-		}
-		log.Debugf("b.cleanBackupObjectDisks return skip=%v", err)
 	}
 	return nil
 }

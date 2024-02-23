@@ -243,6 +243,7 @@ services:
       - ./credentials.json:/etc/clickhouse-backup/credentials.json
       - ./config-azblob.yml:/etc/clickhouse-backup/config-azblob.yml
       - ./config-azblob-embedded.yml:/etc/clickhouse-backup/config-azblob-embedded.yml
+      - ./config-azblob-embedded-url.yml:/etc/clickhouse-backup/config-azblob-embedded-url.yml
       - ./config-custom-kopia.yml:/etc/clickhouse-backup/config-custom-kopia.yml
       - ./config-custom-restic.yml:/etc/clickhouse-backup/config-custom-restic.yml
       - ./config-custom-rsync.yml:/etc/clickhouse-backup/config-custom-rsync.yml
@@ -253,6 +254,7 @@ services:
       - ./config-gcs-custom-endpoint.yml:/etc/clickhouse-backup/config-gcs-custom-endpoint.yml
       - ./config-s3.yml:/etc/clickhouse-backup/config-s3.yml
       - ./config-s3-embedded.yml:/etc/clickhouse-backup/config-s3-embedded.yml
+      - ./config-s3-embedded-url.yml:/etc/clickhouse-backup/config-s3-embedded-url.yml
       - ./config-s3-fips.yml:/etc/clickhouse-backup/config-s3-fips.yml.template
       - ./config-s3-nodelete.yml:/etc/clickhouse-backup/config-s3-nodelete.yml
       - ./config-s3-plain-embedded.yml:/etc/clickhouse-backup/config-s3-plain-embedded.yml

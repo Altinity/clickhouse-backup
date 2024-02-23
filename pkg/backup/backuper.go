@@ -92,6 +92,9 @@ func (b *Backuper) init(ctx context.Context, disks []clickhouse.Disk, backupName
 			b.EmbeddedBackupDataPath = disk.Path
 		}
 	}
+	if b.cfg.ClickHouse.UseEmbeddedBackupRestore && b.EmbeddedBackupDataPath == "" {
+		b.EmbeddedBackupDataPath = b.DefaultDataPath
+	}
 	b.DiskToPathMap = diskMap
 	if b.cfg.General.RemoteStorage != "none" && b.cfg.General.RemoteStorage != "custom" {
 		b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, true, backupName)
@@ -240,15 +243,22 @@ func (b *Backuper) applyMacrosToObjectDiskPath(ctx context.Context) error {
 func (b *Backuper) buildEmbeddedLocationS3() string {
 	url := url.URL{}
 	url.Scheme = "https"
+	if strings.HasPrefix(b.cfg.S3.Endpoint, "http") {
+		newUrl, _ := url.Parse(b.cfg.S3.Endpoint)
+		url = *newUrl
+		url.Path = path.Join(b.cfg.S3.Bucket, b.cfg.S3.ObjectDiskPath)
+	} else {
+		url.Host = b.cfg.S3.Endpoint
+		url.Path = path.Join(b.cfg.S3.Bucket, b.cfg.S3.ObjectDiskPath)
+	}
 	if b.cfg.S3.DisableSSL {
 		url.Scheme = "http"
 	}
-	url.Host = b.cfg.S3.Endpoint
-	if url.Host == "" && b.cfg.S3.Region != "" && !b.cfg.S3.ForcePathStyle {
+	if url.Host == "" && b.cfg.S3.Region != "" && b.cfg.S3.ForcePathStyle {
 		url.Host = "s3." + b.cfg.S3.Region + ".amazonaws.com"
 		url.Path = path.Join(b.cfg.S3.Bucket, b.cfg.S3.ObjectDiskPath)
 	}
-	if url.Host == "" && b.cfg.S3.Bucket != "" && b.cfg.S3.ForcePathStyle {
+	if url.Host == "" && b.cfg.S3.Bucket != "" && !b.cfg.S3.ForcePathStyle {
 		url.Host = b.cfg.S3.Bucket + "." + "s3." + b.cfg.S3.Region + ".amazonaws.com"
 		url.Path = b.cfg.S3.ObjectDiskPath
 	}

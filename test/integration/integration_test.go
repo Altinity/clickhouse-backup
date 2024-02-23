@@ -447,160 +447,179 @@ func TestS3NoDeletePermission(t *testing.T) {
 	checkObjectStorageIsEmpty(t, r, "S3")
 }
 
-// TestDoRestoreRBAC need clickhouse-server restart, no parallel
-func TestDoRestoreRBAC(t *testing.T) {
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.4") == -1 {
+// TestRBAC need clickhouse-server restart, no parallel
+func TestRBAC(t *testing.T) {
+	chVersion := os.Getenv("CLICKHOUSE_VERSION")
+	if compareVersion(chVersion, "20.4") < 0 {
 		t.Skipf("Test skipped, RBAC not available for %s version", os.Getenv("CLICKHOUSE_VERSION"))
 	}
 	ch := &TestClickHouse{}
 	r := require.New(t)
+	testRBACScenario := func(config string) {
+		ch.connectWithWait(r, 1*time.Second, 1*time.Second, 1*time.Second)
 
-	ch.connectWithWait(r, 1*time.Second, 1*time.Second, 1*time.Second)
+		ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_rbac")
+		ch.queryWithNoError(r, "CREATE TABLE default.test_rbac (v UInt64) ENGINE=MergeTree() ORDER BY tuple()")
 
-	ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_rbac")
-	ch.queryWithNoError(r, "CREATE TABLE default.test_rbac (v UInt64) ENGINE=MergeTree() ORDER BY tuple()")
+		ch.queryWithNoError(r, "DROP SETTINGS PROFILE  IF EXISTS test_rbac")
+		ch.queryWithNoError(r, "DROP QUOTA IF EXISTS test_rbac")
+		ch.queryWithNoError(r, "DROP ROW POLICY IF EXISTS test_rbac ON default.test_rbac")
+		ch.queryWithNoError(r, "DROP ROLE IF EXISTS test_rbac")
+		ch.queryWithNoError(r, "DROP USER IF EXISTS test_rbac")
 
-	ch.queryWithNoError(r, "DROP SETTINGS PROFILE  IF EXISTS test_rbac")
-	ch.queryWithNoError(r, "DROP QUOTA IF EXISTS test_rbac")
-	ch.queryWithNoError(r, "DROP ROW POLICY IF EXISTS test_rbac ON default.test_rbac")
-	ch.queryWithNoError(r, "DROP ROLE IF EXISTS test_rbac")
-	ch.queryWithNoError(r, "DROP USER IF EXISTS test_rbac")
+		log.Info("create RBAC related objects")
+		ch.queryWithNoError(r, "CREATE SETTINGS PROFILE test_rbac SETTINGS max_execution_time=60")
+		ch.queryWithNoError(r, "CREATE ROLE test_rbac SETTINGS PROFILE 'test_rbac'")
+		ch.queryWithNoError(r, "CREATE USER test_rbac IDENTIFIED BY 'test_rbac' DEFAULT ROLE test_rbac")
+		ch.queryWithNoError(r, "CREATE QUOTA test_rbac KEYED BY user_name FOR INTERVAL 1 hour NO LIMITS TO test_rbac")
+		ch.queryWithNoError(r, "CREATE ROW POLICY test_rbac ON default.test_rbac USING 1=1 AS RESTRICTIVE TO test_rbac")
 
-	log.Info("create RBAC related objects")
-	ch.queryWithNoError(r, "CREATE SETTINGS PROFILE test_rbac SETTINGS max_execution_time=60")
-	ch.queryWithNoError(r, "CREATE ROLE test_rbac SETTINGS PROFILE 'test_rbac'")
-	ch.queryWithNoError(r, "CREATE USER test_rbac IDENTIFIED BY 'test_rbac' DEFAULT ROLE test_rbac")
-	ch.queryWithNoError(r, "CREATE QUOTA test_rbac KEYED BY user_name FOR INTERVAL 1 hour NO LIMITS TO test_rbac")
-	ch.queryWithNoError(r, "CREATE ROW POLICY test_rbac ON default.test_rbac USING 1=1 AS RESTRICTIVE TO test_rbac")
+		r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", config, "create", "--rbac", "--rbac-only", "test_rbac_backup"))
+		r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 CLICKHOUSE_BACKUP_CONFIG="+config+" clickhouse-backup upload test_rbac_backup"))
+		r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "local", "test_rbac_backup"))
+		r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
 
-	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "--rbac", "--rbac-only", "test_rbac_backup"))
-	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup upload test_rbac_backup"))
-	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_rbac_backup"))
-	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
+		log.Info("drop all RBAC related objects after backup")
+		ch.queryWithNoError(r, "DROP SETTINGS PROFILE test_rbac")
+		ch.queryWithNoError(r, "DROP QUOTA test_rbac")
+		ch.queryWithNoError(r, "DROP ROW POLICY test_rbac ON default.test_rbac")
+		ch.queryWithNoError(r, "DROP ROLE test_rbac")
+		ch.queryWithNoError(r, "DROP USER test_rbac")
 
-	log.Info("drop all RBAC related objects after backup")
-	ch.queryWithNoError(r, "DROP SETTINGS PROFILE test_rbac")
-	ch.queryWithNoError(r, "DROP QUOTA test_rbac")
-	ch.queryWithNoError(r, "DROP ROW POLICY test_rbac ON default.test_rbac")
-	ch.queryWithNoError(r, "DROP ROLE test_rbac")
-	ch.queryWithNoError(r, "DROP USER test_rbac")
+		log.Info("download+restore RBAC")
+		r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
+		r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 CLICKHOUSE_BACKUP_CONFIG="+config+" clickhouse-backup download test_rbac_backup"))
 
-	log.Info("download+restore RBAC")
-	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
-	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup download test_rbac_backup"))
-
-	out, err := dockerExecOut("clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore --rm --rbac test_rbac_backup")
-	r.Contains(out, "RBAC successfully restored")
-	r.NoError(err)
-
-	out, err = dockerExecOut("clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore --rm --rbac-only test_rbac_backup")
-	r.Contains(out, "RBAC successfully restored")
-	r.NoError(err)
-	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
-
-	ch.chbackend.Close()
-	// r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker-compose", "-f", os.Getenv("COMPOSE_FILE"), "restart", "clickhouse"))
-	ch.connectWithWait(r, 2*time.Second, 2*time.Second, 8*time.Second)
-
-	r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
-
-	rbacTypes := map[string]string{
-		"PROFILES": "test_rbac",
-		"QUOTAS":   "test_rbac",
-		"POLICIES": "test_rbac ON default.test_rbac",
-		"ROLES":    "test_rbac",
-		"USERS":    "test_rbac",
-	}
-	for rbacType, expectedValue := range rbacTypes {
-		var rbacRows []struct {
-			Name string `ch:"name"`
-		}
-		err := ch.chbackend.Select(&rbacRows, fmt.Sprintf("SHOW %s", rbacType))
+		out, err := dockerExecOut("clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 clickhouse-backup -c "+config+" restore --rm --rbac test_rbac_backup")
+		r.Contains(out, "RBAC successfully restored")
 		r.NoError(err)
-		found := false
-		for _, row := range rbacRows {
-			if expectedValue == row.Name {
-				found = true
-				break
+
+		out, err = dockerExecOut("clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 clickhouse-backup -c "+config+" restore --rm --rbac-only test_rbac_backup")
+		r.Contains(out, "RBAC successfully restored")
+		r.NoError(err)
+		r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
+
+		ch.chbackend.Close()
+		// r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker-compose", "-f", os.Getenv("COMPOSE_FILE"), "restart", "clickhouse"))
+		ch.connectWithWait(r, 2*time.Second, 2*time.Second, 8*time.Second)
+
+		r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
+
+		rbacTypes := map[string]string{
+			"PROFILES": "test_rbac",
+			"QUOTAS":   "test_rbac",
+			"POLICIES": "test_rbac ON default.test_rbac",
+			"ROLES":    "test_rbac",
+			"USERS":    "test_rbac",
+		}
+		for rbacType, expectedValue := range rbacTypes {
+			var rbacRows []struct {
+				Name string `ch:"name"`
+			}
+			err := ch.chbackend.Select(&rbacRows, fmt.Sprintf("SHOW %s", rbacType))
+			r.NoError(err)
+			found := false
+			for _, row := range rbacRows {
+				if expectedValue == row.Name {
+					found = true
+					break
+				}
+			}
+			if !found {
+				//r.NoError(dockerExec("clickhouse", "cat", "/var/log/clickhouse-server/clickhouse-server.log"))
+				r.Failf("wrong RBAC", "SHOW %s, %#v doesn't contain %#v", rbacType, rbacRows, expectedValue)
 			}
 		}
-		if !found {
-			//r.NoError(dockerExec("clickhouse", "cat", "/var/log/clickhouse-server/clickhouse-server.log"))
-			r.Failf("wrong RBAC", "SHOW %s, %#v doesn't contain %#v", rbacType, rbacRows, expectedValue)
-		}
+		r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "local", "test_rbac_backup"))
+		r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "remote", "test_rbac_backup"))
+
+		ch.queryWithNoError(r, "DROP SETTINGS PROFILE test_rbac")
+		ch.queryWithNoError(r, "DROP QUOTA test_rbac")
+		ch.queryWithNoError(r, "DROP ROW POLICY test_rbac ON default.test_rbac")
+		ch.queryWithNoError(r, "DROP ROLE test_rbac")
+		ch.queryWithNoError(r, "DROP USER test_rbac")
+		ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_rbac")
+		ch.chbackend.Close()
 	}
-	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_rbac_backup"))
-	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "remote", "test_rbac_backup"))
-
-	ch.queryWithNoError(r, "DROP SETTINGS PROFILE test_rbac")
-	ch.queryWithNoError(r, "DROP QUOTA test_rbac")
-	ch.queryWithNoError(r, "DROP ROW POLICY test_rbac ON default.test_rbac")
-	ch.queryWithNoError(r, "DROP ROLE test_rbac")
-	ch.queryWithNoError(r, "DROP USER test_rbac")
-	ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_rbac")
-	ch.chbackend.Close()
-
+	testRBACScenario("/etc/clickhouse-backup/config-s3.yml")
+	if chVersion == "head" || compareVersion(chVersion, "24.1") >= 0 {
+		testRBACScenario("/etc/clickhouse-backup/config-s3-embedded.yml")
+		testRBACScenario("/etc/clickhouse-backup/config-s3-embedded-url.yml")
+		testRBACScenario("/etc/clickhouse-backup/config-azblob-embedded.yml")
+	}
+	if chVersion == "head" || compareVersion(chVersion, "24.2") >= 0 {
+		testRBACScenario("/etc/clickhouse-backup/config-azblob-embedded-url.yml")
+	}
 }
 
-// TestDoRestoreConfigs - require direct access to `/etc/clickhouse-backup/`, so executed inside `clickhouse` container
+// TestConfigs - require direct access to `/etc/clickhouse-backup/`, so executed inside `clickhouse` container
 // need clickhouse-server restart, no parallel
-func TestDoRestoreConfigs(t *testing.T) {
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "1.1.54391") < 0 {
-		t.Skipf("Test skipped, users.d is not available for %s version", os.Getenv("CLICKHOUSE_VERSION"))
-	}
+func TestConfigs(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
-	ch.connectWithWait(r, 0*time.Millisecond, 1*time.Second, 1*time.Second)
-	ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_configs")
-	ch.queryWithNoError(r, "CREATE TABLE default.test_rbac (v UInt64) ENGINE=MergeTree() ORDER BY tuple()")
+	testConfigsScenario := func(config string) {
+		ch.connectWithWait(r, 0*time.Millisecond, 1*time.Second, 1*time.Second)
+		ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_configs")
+		ch.queryWithNoError(r, "CREATE TABLE default.test_configs (v UInt64) ENGINE=MergeTree() ORDER BY tuple()")
 
-	r.NoError(dockerExec("clickhouse", "bash", "-ce", "echo '<yandex><profiles><default><empty_result_for_aggregation_by_empty_set>1</empty_result_for_aggregation_by_empty_set></default></profiles></yandex>' > /etc/clickhouse-server/users.d/test_config.xml"))
+		r.NoError(dockerExec("clickhouse", "bash", "-ce", "echo '<yandex><profiles><default><empty_result_for_aggregation_by_empty_set>1</empty_result_for_aggregation_by_empty_set></default></profiles></yandex>' > /etc/clickhouse-server/users.d/test_config.xml"))
 
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "--configs", "--configs-only", "test_configs_backup"))
-	ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_configs")
-	r.NoError(dockerExec("clickhouse", "bash", "-xec", "CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml S3_COMPRESSION_FORMAT=none ALLOW_EMPTY_BACKUPS=1 clickhouse-backup upload test_configs_backup"))
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_configs_backup"))
+		r.NoError(dockerExec("clickhouse", "clickhouse-backup", "-c", config, "create", "--configs", "--configs-only", "test_configs_backup"))
+		ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_configs")
+		r.NoError(dockerExec("clickhouse", "bash", "-xec", "CLICKHOUSE_BACKUP_CONFIG="+config+" S3_COMPRESSION_FORMAT=none ALLOW_EMPTY_BACKUPS=1 clickhouse-backup upload test_configs_backup"))
+		r.NoError(dockerExec("clickhouse", "clickhouse-backup", "-c", config, "delete", "local", "test_configs_backup"))
 
-	ch.queryWithNoError(r, "SYSTEM RELOAD CONFIG")
-	ch.chbackend.Close()
-	ch.connectWithWait(r, 1*time.Second, 1*time.Second, 1*time.Second)
-	selectEmptyResultForAggQuery := "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"
-	var settings string
-	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&settings, selectEmptyResultForAggQuery))
-	if settings != "1" {
-		r.NoError(dockerExec("clickhouse", "grep", "empty_result_for_aggregation_by_empty_set", "-r", "/var/lib/clickhouse/preprocessed_configs/"))
+		ch.queryWithNoError(r, "SYSTEM RELOAD CONFIG")
+		ch.chbackend.Close()
+		ch.connectWithWait(r, 1*time.Second, 1*time.Second, 1*time.Second)
+		selectEmptyResultForAggQuery := "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"
+		var settings string
+		r.NoError(ch.chbackend.SelectSingleRowNoCtx(&settings, selectEmptyResultForAggQuery))
+		if settings != "1" {
+			r.NoError(dockerExec("clickhouse", "grep", "empty_result_for_aggregation_by_empty_set", "-r", "/var/lib/clickhouse/preprocessed_configs/"))
+		}
+		r.Equal("1", settings, "expect empty_result_for_aggregation_by_empty_set=1")
+
+		r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/etc/clickhouse-server/users.d/test_config.xml"))
+		r.NoError(dockerExec("clickhouse", "bash", "-xec", "CLICKHOUSE_BACKUP_CONFIG="+config+" ALLOW_EMPTY_BACKUPS=1 clickhouse-backup download test_configs_backup"))
+
+		r.NoError(ch.chbackend.Query("SYSTEM RELOAD CONFIG"))
+		ch.chbackend.Close()
+		ch.connectWithWait(r, 1*time.Second, 1*time.Second, 1*time.Second)
+
+		settings = ""
+		r.NoError(ch.chbackend.SelectSingleRowNoCtx(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
+		r.Equal("0", settings, "expect empty_result_for_aggregation_by_empty_set=0")
+
+		r.NoError(dockerExec("clickhouse", "bash", "-xec", "CLICKHOUSE_BACKUP_CONFIG="+config+" CLICKHOUSE_RESTART_COMMAND='sql:SYSTEM RELOAD CONFIG' clickhouse-backup restore --rm --configs --configs-only test_configs_backup"))
+
+		ch.chbackend.Close()
+		ch.connectWithWait(r, 1*time.Second, 1*time.Second, 1*time.Second)
+
+		settings = ""
+		r.NoError(ch.chbackend.SelectSingleRowNoCtx(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
+		r.Equal("1", settings, "expect empty_result_for_aggregation_by_empty_set=1")
+
+		isTestConfigsTablePresent := 0
+		r.NoError(ch.chbackend.SelectSingleRowNoCtx(&isTestConfigsTablePresent, "SELECT count() FROM system.tables WHERE database='default' AND name='test_configs' SETTINGS empty_result_for_aggregation_by_empty_set=1"))
+		r.Equal(0, isTestConfigsTablePresent, "expect default.test_configs is not present")
+
+		r.NoError(dockerExec("clickhouse", "clickhouse-backup", "-c", config, "delete", "local", "test_configs_backup"))
+		r.NoError(dockerExec("clickhouse", "clickhouse-backup", "-c", config, "delete", "remote", "test_configs_backup"))
+		r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/etc/clickhouse-server/users.d/test_config.xml"))
+
+		ch.chbackend.Close()
 	}
-	r.Equal("1", settings, "expect empty_result_for_aggregation_by_empty_set=1")
-
-	r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/etc/clickhouse-server/users.d/test_config.xml"))
-	r.NoError(dockerExec("clickhouse", "bash", "-xec", "CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml ALLOW_EMPTY_BACKUPS=1 clickhouse-backup download test_configs_backup"))
-
-	r.NoError(ch.chbackend.Query("SYSTEM RELOAD CONFIG"))
-	ch.chbackend.Close()
-	ch.connectWithWait(r, 1*time.Second, 1*time.Second, 1*time.Second)
-
-	settings = ""
-	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
-	r.Equal("0", settings, "expect empty_result_for_aggregation_by_empty_set=0")
-
-	r.NoError(dockerExec("clickhouse", "bash", "-xec", "CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml CLICKHOUSE_RESTART_COMMAND='sql:SYSTEM RELOAD CONFIG' clickhouse-backup restore --rm --configs --configs-only test_configs_backup"))
-
-	ch.chbackend.Close()
-	ch.connectWithWait(r, 1*time.Second, 1*time.Second, 1*time.Second)
-
-	settings = ""
-	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
-	r.Equal("1", settings, "expect empty_result_for_aggregation_by_empty_set=1")
-
-	isTestConfigsTablePresent := 0
-	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&isTestConfigsTablePresent, "SELECT count() FROM system.tables WHERE database='default' AND name='test_configs' SETTINGS empty_result_for_aggregation_by_empty_set=1"))
-	r.Equal(0, isTestConfigsTablePresent, "expect default.test_configs is not present")
-
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_configs_backup"))
-	r.NoError(dockerExec("clickhouse", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "remote", "test_configs_backup"))
-	r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/etc/clickhouse-server/users.d/test_config.xml"))
-
-	ch.chbackend.Close()
+	testConfigsScenario("/etc/clickhouse-backup/config-s3.yml")
+	chVersion := os.Getenv("CLICKHOUSE_VERSION")
+	if chVersion == "head" || compareVersion(chVersion, "24.1") >= 0 {
+		testConfigsScenario("/etc/clickhouse-backup/config-s3-embedded.yml")
+		testConfigsScenario("/etc/clickhouse-backup/config-s3-embedded-url.yml")
+		testConfigsScenario("/etc/clickhouse-backup/config-azblob-embedded.yml")
+	}
+	if chVersion == "head" || compareVersion(chVersion, "24.2") >= 0 {
+		testConfigsScenario("/etc/clickhouse-backup/config-azblob-embedded-url.yml")
+	}
 }
 
 // TestLongListRemote - no parallel, cause need to restart minito
@@ -1802,14 +1821,14 @@ func TestIntegrationEmbedded(t *testing.T) {
 	r := require.New(t)
 	//CUSTOM backup create folder in each disk
 	r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_s3/backup/"))
-	runMainIntegrationScenario(t, "EMBEDDED_S3", "config-s3-embedded.yml")
 	runMainIntegrationScenario(t, "EMBEDDED_S3_URL", "config-s3-embedded-url.yml")
+	runMainIntegrationScenario(t, "EMBEDDED_S3", "config-s3-embedded.yml")
 
 	//@TODO uncomment when resolve slow azure BACKUP/RESTORE https://github.com/ClickHouse/ClickHouse/issues/52088, https://github.com/Azure/Azurite/issues/2053
 	if version == "head" || compareVersion(version, "24.2") >= 0 {
 		r.NoError(dockerExec("clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_azure/backup/"))
-		runMainIntegrationScenario(t, "EMBEDDED_AZURE", "config-azblob-embedded.yml")
 		runMainIntegrationScenario(t, "EMBEDDED_AZURE_URL", "config-azblob-embedded-url.yml")
+		runMainIntegrationScenario(t, "EMBEDDED_AZURE", "config-azblob-embedded.yml")
 	}
 	//@TODO think about how to implements embedded backup for s3_plain disks
 	//r.NoError(dockerExec("clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_s3_plain/backup/"))

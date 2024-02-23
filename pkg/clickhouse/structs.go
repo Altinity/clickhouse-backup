@@ -87,3 +87,8 @@ type ColumnDataTypes struct {
 	Column string   `ch:"column"`
 	Types  []string `ch:"uniq_types"`
 }
+
+// BackupDataSize - info from system.parts or system.tables when embedded BACKUP statement return zero size
+type BackupDataSize struct {
+	Size uint64 `ch:"backup_data_size"`
+}

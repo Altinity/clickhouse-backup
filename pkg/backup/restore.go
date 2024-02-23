@@ -1059,17 +1059,24 @@ func (b *Backuper) restoreEmbedded(ctx context.Context, backupName string, resto
 			}
 		}
 	}
-	settings := ""
+	var settings []string
 	if restoreOnlySchema {
-		settings = "SETTINGS structure_only=1"
+		settings = append(settings, "structure_only=1")
 	}
-	embeddedBackupDestination, err := b.getEmbeddedBackupLocation(ctx, backupName)
+	if b.cfg.ClickHouse.EmbeddedRestoreThreads > 0 {
+		settings = append(settings, fmt.Sprintf("restore_threads=%d", b.cfg.ClickHouse.EmbeddedRestoreThreads))
+	}
+	embeddedBackupLocation, err := b.getEmbeddedBackupLocation(ctx, backupName)
 	if err != nil {
 		return err
 	}
-	restoreSQL := fmt.Sprintf("RESTORE %s FROM %s %s", tablesSQL, embeddedBackupDestination, settings)
+	settingsStr := ""
+	if len(settings) > 0 {
+		settingsStr = "SETTINGS " + strings.Join(settings, ", ")
+	}
+	restoreSQL := fmt.Sprintf("RESTORE %s FROM %s %s", tablesSQL, embeddedBackupLocation, settingsStr)
 	restoreResults := make([]clickhouse.SystemBackups, 0)
-	if err := b.ch.SelectContext(ctx, &restoreResults, restoreSQL, b.cfg.ClickHouse.EmbeddedBackupDisk, backupName); err != nil {
+	if err := b.ch.SelectContext(ctx, &restoreResults, restoreSQL); err != nil {
 		return fmt.Errorf("restore error: %v", err)
 	}
 	if len(restoreResults) == 0 || restoreResults[0].Status != "RESTORED" {
