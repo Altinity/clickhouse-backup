@@ -111,6 +111,12 @@ func printBackupsLocal(ctx context.Context, w io.Writer, backupList []LocalBacku
 					size = utils.FormatBytes(backup.CompressedSize + backup.MetadataSize)
 				}
 				description := backup.DataFormat
+				if backup.Tags != "" {
+					if description != "" {
+						description += ", "
+					}
+					description += backup.Tags
+				}
 				creationDate := backup.CreationDate.Format("02/01/2006 15:04:05")
 				if backup.Legacy {
 					size = "???"

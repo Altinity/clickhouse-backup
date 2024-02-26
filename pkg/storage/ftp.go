@@ -127,6 +127,7 @@ func (f *FTP) Walk(ctx context.Context, ftpPath string, recursive bool, process 
 	prefix := path.Join(f.Config.Path, ftpPath)
 	return f.WalkAbsolute(ctx, prefix, recursive, process)
 }
+
 func (f *FTP) WalkAbsolute(ctx context.Context, prefix string, recursive bool, process func(context.Context, RemoteFile) error) error {
 	client, err := f.getConnectionFromPool(ctx, "Walk")
 	if err != nil {
@@ -178,12 +179,15 @@ func (f *FTP) WalkAbsolute(ctx context.Context, prefix string, recursive bool, p
 }
 
 func (f *FTP) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {
-	f.Log.Debugf("GetFileReader key=%s", key)
+	return f.GetFileReaderAbsolute(ctx, path.Join(f.Config.Path, key))
+}
+func (f *FTP) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadCloser, error) {
+	f.Log.Debugf("GetFileReaderAbsolute key=%s", key)
 	client, err := f.getConnectionFromPool(ctx, "GetFileReader")
 	if err != nil {
 		return nil, err
 	}
-	resp, err := client.Retr(path.Join(f.Config.Path, key))
+	resp, err := client.Retr(key)
 	return &FTPFileReader{
 		Response: resp,
 		pool:     f,
@@ -197,18 +201,21 @@ func (f *FTP) GetFileReaderWithLocalPath(ctx context.Context, key, _ string) (io
 }
 
 func (f *FTP) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
-	f.Log.Debugf("PutFile key=%s", key)
+	return f.PutFileAbsolute(ctx, path.Join(f.Config.Path, key), r)
+}
+
+func (f *FTP) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser) error {
+	f.Log.Debugf("PutFileAbsolute key=%s", key)
 	client, err := f.getConnectionFromPool(ctx, "PutFile")
 	defer f.returnConnectionToPool(ctx, "PutFile", client)
 	if err != nil {
 		return err
 	}
-	k := path.Join(f.Config.Path, key)
-	err = f.MkdirAll(path.Dir(k), client)
+	err = f.MkdirAll(path.Dir(key), client)
 	if err != nil {
 		return err
 	}
-	return client.Stor(k, r)
+	return client.Stor(key, r)
 }
 
 func (f *FTP) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {

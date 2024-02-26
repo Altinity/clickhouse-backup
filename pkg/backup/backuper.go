@@ -73,7 +73,7 @@ func WithBackupSharder(s backupSharder) BackuperOpt {
 	}
 }
 
-func (b *Backuper) init(ctx context.Context, disks []clickhouse.Disk, backupName string) error {
+func (b *Backuper) initDisksPathdsAndBackupDestination(ctx context.Context, disks []clickhouse.Disk, backupName string) error {
 	var err error
 	if disks == nil {
 		disks, err = b.ch.GetDisks(ctx, true)
@@ -292,4 +292,16 @@ func (b *Backuper) buildEmbeddedLocationAZBLOB() string {
 	url.Host = b.cfg.AzureBlob.EndpointSuffix
 	url.Path = b.cfg.AzureBlob.AccountName
 	return fmt.Sprintf("DefaultEndpointsProtocol=%s;AccountName=%s;AccountKey=%s;BlobEndpoint=%s;", b.cfg.AzureBlob.EndpointSchema, b.cfg.AzureBlob.AccountName, b.cfg.AzureBlob.AccountKey, url.String())
+}
+
+func (b *Backuper) getObjectDiskPath() (string, error) {
+	if b.cfg.General.RemoteStorage == "s3" {
+		return b.cfg.S3.ObjectDiskPath, nil
+	} else if b.cfg.General.RemoteStorage == "azblob" {
+		return b.cfg.AzureBlob.ObjectDiskPath, nil
+	} else if b.cfg.General.RemoteStorage == "gcs" {
+		return b.cfg.GCS.ObjectDiskPath, nil
+	} else {
+		return "", fmt.Errorf("cleanBackupObjectDisks: requesst object disks path but have unsupported remote_storage: %s", b.cfg.General.RemoteStorage)
+	}
 }

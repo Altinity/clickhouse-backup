@@ -2021,7 +2021,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 	checkResumeAlreadyProcessed(uploadCmd, incrementBackupName, "upload", r, remoteStorageType)
 
 	backupDir := "/var/lib/clickhouse/backup"
-	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && !strings.HasPrefix(remoteStorageType, "_URL") {
+	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && !strings.HasSuffix(remoteStorageType, "_URL") {
 		backupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED"))
 	}
 	out, err = dockerExecOut("clickhouse-backup", "bash", "-ce", "ls -lha "+backupDir+" | grep "+t.Name())
@@ -2106,7 +2106,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 }
 
 func checkObjectStorageIsEmpty(t *testing.T, r *require.Assertions, remoteStorageType string) {
-	if remoteStorageType == "AZBLOB" {
+	if remoteStorageType == "AZBLOB" || remoteStorageType == "AZBLOB_EMBEDDED_URL" {
 		t.Log("wait when resolve https://github.com/Azure/Azurite/issues/2362")
 		/*
 			r.NoError(dockerExec("azure", "apk", "add", "jq"))
@@ -2137,7 +2137,7 @@ func checkObjectStorageIsEmpty(t *testing.T, r *require.Assertions, remoteStorag
 		r.NoError(err)
 		r.Equal(expected, strings.Trim(out, "\r\n\t "))
 	}
-	if remoteStorageType == "S3" {
+	if remoteStorageType == "S3" || remoteStorageType == "S3_EMBEDDED_URL" {
 		checkRemoteDir("total 0", "minio", "bash", "-c", "ls -lh /bitnami/minio/data/clickhouse/")
 	}
 	if remoteStorageType == "SFTP" {
@@ -2213,28 +2213,44 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, ch *Test
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName))
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "download", "--partitions=(0,'2022-01-02'),(0,'2022-01-03')", fullBackupName))
 	fullBackupDir := "/var/lib/clickhouse/backup/" + fullBackupName + "/shadow/" + dbName + "/t?/default/"
+	// embedded storage with embedded disks contain object disk files and will download additional data parts
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") {
 		fullBackupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED")) + "/" + fullBackupName + "/data/" + dbName + "/t?"
+	}
+	// embedded storage without embedded disks doesn't contain `shadow` and contain only `metadata`
+	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && strings.HasSuffix(remoteStorageType, "_URL") {
+		fullBackupDir = "/var/lib/clickhouse/backup/" + fullBackupName + "/metadata/" + dbName + "/t?.json"
 	}
 	out, err = dockerExecOut("clickhouse-backup", "bash", "-c", "ls -la "+fullBackupDir+" | wc -l")
 	r.NoError(err)
 	expectedLines := "13"
 	// custom storage doesn't support --partitions for upload / download now
-	// embedded storage contain hardLink files and will download additional data parts
+	// embedded storage with embedded disks contain hardLink files and will download additional data parts
 	if remoteStorageType == "CUSTOM" || strings.HasPrefix(remoteStorageType, "EMBEDDED") {
 		expectedLines = "17"
+	}
+	// embedded storage without embedded disks doesn't contain `shadow` and contain only `metadata`
+	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && strings.HasSuffix(remoteStorageType, "_URL") {
+		expectedLines = "2"
 	}
 	r.Equal(expectedLines, strings.Trim(out, "\r\n\t "))
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName))
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "download", fullBackupName))
 
+	expectedLines = "17"
 	fullBackupDir = "/var/lib/clickhouse/backup/" + fullBackupName + "/shadow/" + dbName + "/t?/default/"
+	// embedded storage with embedded disks contain hardLink files and will download additional data parts
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") {
 		fullBackupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED")) + "/" + fullBackupName + "/data/" + dbName + "/t?"
 	}
+	// embedded storage without embedded disks doesn't contain `shadow` and contain only `metadata`
+	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && strings.HasSuffix(remoteStorageType, "_URL") {
+		fullBackupDir = "/var/lib/clickhouse/backup/" + fullBackupName + "/metadata/" + dbName + "/t?.json"
+		expectedLines = "2"
+	}
 	out, err = dockerExecOut("clickhouse-backup", "bash", "-c", "ls -la "+fullBackupDir+"| wc -l")
 	r.NoError(err)
-	r.Equal("17", strings.Trim(out, "\r\n\t "))
+	r.Equal(expectedLines, strings.Trim(out, "\r\n\t "))
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--partitions=(0,'2022-01-02'),(0,'2022-01-03')", fullBackupName))
 	result = 0
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT sum(c) FROM (SELECT count() AS c FROM "+dbName+".t1 UNION ALL SELECT count() AS c FROM "+dbName+".t2)"))
@@ -2249,24 +2265,36 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, ch *Test
 
 	// check create + partitions
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables="+dbName+".t1", "--partitions=(0,'2022-01-02'),(0,'2022-01-03')", partitionBackupName))
+	expectedLines = "5"
 	partitionBackupDir := "/var/lib/clickhouse/backup/" + partitionBackupName + "/shadow/" + dbName + "/t1/default/"
-	if strings.HasPrefix(remoteStorageType, "EMBEDDED") {
+	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && !strings.HasSuffix(remoteStorageType, "_URL") {
 		partitionBackupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED")) + "/" + partitionBackupName + "/data/" + dbName + "/t1"
+	}
+	//embedded backup without disk have only local metadata
+	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && strings.HasSuffix(remoteStorageType, "_URL") {
+		partitionBackupDir = "/var/lib/clickhouse/backup/" + partitionBackupName + "/metadata/" + dbName + "/t?.json"
+		expectedLines = "1"
 	}
 	out, err = dockerExecOut("clickhouse-backup", "bash", "-c", "ls -la "+partitionBackupDir+"| wc -l")
 	r.NoError(err)
-	r.Equal("5", strings.Trim(out, "\r\n\t "))
+	r.Equal(expectedLines, strings.Trim(out, "\r\n\t "))
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", partitionBackupName))
 
 	// check create > upload + partitions
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables="+dbName+".t1", partitionBackupName))
 	partitionBackupDir = "/var/lib/clickhouse/backup/" + partitionBackupName + "/shadow/" + dbName + "/t1/default/"
-	if strings.HasPrefix(remoteStorageType, "EMBEDDED") {
+	expectedLines = "7"
+	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && !strings.HasSuffix(remoteStorageType, "_URL") {
 		partitionBackupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED")) + "/" + partitionBackupName + "/data/" + dbName + "/t1"
+	}
+	//embedded backup without disk have only local metadata
+	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && strings.HasSuffix(remoteStorageType, "_URL") {
+		partitionBackupDir = "/var/lib/clickhouse/backup/" + partitionBackupName + "/metadata/" + dbName + "/t?.json"
+		expectedLines = "1"
 	}
 	out, err = dockerExecOut("clickhouse-backup", "bash", "-c", "ls -la "+partitionBackupDir+" | wc -l")
 	r.NoError(err)
-	r.Equal("7", strings.Trim(out, "\r\n\t "))
+	r.Equal(expectedLines, strings.Trim(out, "\r\n\t "))
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "upload", "--tables="+dbName+".t1", "--partitions=0-20220102,0-20220103", partitionBackupName))
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", partitionBackupName))
 

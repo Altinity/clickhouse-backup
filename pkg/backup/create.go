@@ -402,10 +402,10 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName string, 
 				var disksToPartsMap map[string][]metadata.Part
 				if doBackupData {
 					if b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
-						log.Debugf("calculate parts list `%s`.`%s` from embedded backup disk `%s`")
+						log.Debugf("calculate parts list `%s`.`%s` from embedded backup disk `%s`", table.Database, table.Name, b.cfg.ClickHouse.EmbeddedBackupDisk)
 						disksToPartsMap, err = b.getPartsFromLocalEmbeddedBackupDisk(backupPath, table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}])
 					} else {
-						log.Debugf("calculate parts list `%s`.`%s` from embedded backup remote destination")
+						log.Debugf("calculate parts list `%s`.`%s` from embedded backup remote destination", table.Database, table.Name)
 						disksToPartsMap, err = b.getPartsFromRemoteEmbeddedBackup(ctx, backupName, table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}], log)
 					}
 				}

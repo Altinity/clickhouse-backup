@@ -169,6 +169,7 @@ func (sftp *SFTP) Walk(ctx context.Context, remotePath string, recursive bool, p
 	prefix := path.Join(sftp.Config.Path, remotePath)
 	return sftp.WalkAbsolute(ctx, prefix, recursive, process)
 }
+
 func (sftp *SFTP) WalkAbsolute(ctx context.Context, prefix string, recursive bool, process func(context.Context, RemoteFile) error) error {
 	sftp.Debug("[SFTP_DEBUG] Walk %s, recursive=%v", prefix, recursive)
 
@@ -213,8 +214,11 @@ func (sftp *SFTP) WalkAbsolute(ctx context.Context, prefix string, recursive boo
 }
 
 func (sftp *SFTP) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {
-	filePath := path.Join(sftp.Config.Path, key)
-	return sftp.sftpClient.OpenFile(filePath, syscall.O_RDWR)
+	return sftp.GetFileReaderAbsolute(ctx, path.Join(sftp.Config.Path, key))
+}
+
+func (sftp *SFTP) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadCloser, error) {
+	return sftp.sftpClient.OpenFile(key, syscall.O_RDWR)
 }
 
 func (sftp *SFTP) GetFileReaderWithLocalPath(ctx context.Context, key, _ string) (io.ReadCloser, error) {
@@ -222,17 +226,20 @@ func (sftp *SFTP) GetFileReaderWithLocalPath(ctx context.Context, key, _ string)
 }
 
 func (sftp *SFTP) PutFile(ctx context.Context, key string, localFile io.ReadCloser) error {
-	filePath := path.Join(sftp.Config.Path, key)
-	if err := sftp.sftpClient.MkdirAll(path.Dir(filePath)); err != nil {
-		log.Warnf("sftp.sftpClient.MkdirAll(%s) err=%v", path.Dir(filePath), err)
+	return sftp.PutFileAbsolute(ctx, path.Join(sftp.Config.Path, key), localFile)
+}
+
+func (sftp *SFTP) PutFileAbsolute(ctx context.Context, key string, localFile io.ReadCloser) error {
+	if err := sftp.sftpClient.MkdirAll(path.Dir(key)); err != nil {
+		log.Warnf("sftp.sftpClient.MkdirAll(%s) err=%v", path.Dir(key), err)
 	}
-	remoteFile, err := sftp.sftpClient.Create(filePath)
+	remoteFile, err := sftp.sftpClient.Create(key)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if err := remoteFile.Close(); err != nil {
-			log.Warnf("can't close %s err=%v", filePath, err)
+			log.Warnf("can't close %s err=%v", key, err)
 		}
 	}()
 	if _, err = remoteFile.ReadFrom(localFile); err != nil {

@@ -181,11 +181,8 @@ func (ch *ClickHouse) GetDisks(ctx context.Context, enrich bool) ([]Disk, error)
 }
 
 func (ch *ClickHouse) GetEmbeddedBackupPath(disks []Disk) (string, error) {
-	if !ch.Config.UseEmbeddedBackupRestore {
+	if !ch.Config.UseEmbeddedBackupRestore || ch.Config.EmbeddedBackupDisk == "" {
 		return "", nil
-	}
-	if ch.Config.EmbeddedBackupDisk == "" {
-		return "", fmt.Errorf("please setup `clickhouse->embedded_backup_disk` in config or CLICKHOUSE_EMBEDDED_BACKUP_DISK environment variable")
 	}
 	for _, d := range disks {
 		if d.Name == ch.Config.EmbeddedBackupDisk {

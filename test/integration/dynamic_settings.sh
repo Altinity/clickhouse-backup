@@ -44,7 +44,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration.xml
 </yandex>
 EOT
 
-if [[ "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
 
   if [[ ! -d /hdd3_data ]]; then
     mkdir -pv /hdd3_data
@@ -93,8 +93,8 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_s3.xml
         <type>s3</type>
         <endpoint>http://minio:9000/clickhouse/disk_s3/{cluster}/{shard}/</endpoint>
         <!-- https://github.com/Altinity/clickhouse-backup/issues/691
-        <access_key_id>access-key</access_key_id>
-        <secret_access_key>it-is-my-super-secret-key</secret_access_key>
+        <access_key_id>access_key</access_key_id>
+        <secret_access_key>it_is_my_super_secret_key</secret_access_key>
         -->
         <use_environment_credentials>1</use_environment_credentials>
         <!-- to avoid slow startup -->
@@ -170,8 +170,8 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_encrypted_s3.x
         <type>s3</type>
         <endpoint>http://minio:9000/clickhouse/disk_s3/</endpoint>
         <!-- https://github.com/Altinity/clickhouse-backup/issues/691
-        <access_key_id>access-key</access_key_id>
-        <secret_access_key>it-is-my-super-secret-key</secret_access_key>
+        <access_key_id>access_key</access_key_id>
+        <secret_access_key>it_is_my_super_secret_key</secret_access_key>
         -->
         <use_environment_credentials>1</use_environment_credentials>
         <!-- to avoid slow startup -->
@@ -220,8 +220,8 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3.xml
         <type>s3</type>
         <endpoint>http://minio:9000/clickhouse/backups_s3/{cluster}/{shard}/</endpoint>
         <!-- https://github.com/Altinity/clickhouse-backup/issues/691
-        <access_key_id>access-key</access_key_id>
-        <secret_access_key>it-is-my-super-secret-key</secret_access_key>
+        <access_key_id>access_key</access_key_id>
+        <secret_access_key>it_is_my_super_secret_key</secret_access_key>
         -->
         <use_environment_credentials>1</use_environment_credentials>
         <cache_enabled>false</cache_enabled>
@@ -277,8 +277,8 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3_plai
         <type>s3_plain</type>
         <endpoint>http://minio:9000/clickhouse/backups_s3_plain/{cluster}/{shard}/</endpoint>
         <!-- https://github.com/Altinity/clickhouse-backup/issues/691
-        <access_key_id>access-key</access_key_id>
-        <secret_access_key>it-is-my-super-secret-key</secret_access_key>
+        <access_key_id>access_key</access_key_id>
+        <secret_access_key>it_is_my_super_secret_key</secret_access_key>
         -->
         <use_environment_credentials>1</use_environment_credentials>
         <cache_enabled>false</cache_enabled>

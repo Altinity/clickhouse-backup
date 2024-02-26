@@ -195,9 +195,13 @@ func (s *S3) Close(ctx context.Context) error {
 }
 
 func (s *S3) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {
+	return s.GetFileReaderAbsolute(ctx, path.Join(s.Config.Path, key))
+}
+
+func (s *S3) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadCloser, error) {
 	params := &s3.GetObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
-		Key:    aws.String(path.Join(s.Config.Path, key)),
+		Key:    aws.String(key),
 	}
 	s.enrichGetObjectParams(params)
 	resp, err := s.client.GetObject(ctx, params)
@@ -266,9 +270,13 @@ func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath stri
 }
 
 func (s *S3) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
+	return s.PutFileAbsolute(ctx, path.Join(s.Config.Path, key), r)
+}
+
+func (s *S3) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser) error {
 	params := s3.PutObjectInput{
 		Bucket:       aws.String(s.Config.Bucket),
-		Key:          aws.String(path.Join(s.Config.Path, key)),
+		Key:          aws.String(key),
 		Body:         r,
 		StorageClass: s3types.StorageClass(strings.ToUpper(s.Config.StorageClass)),
 	}
@@ -395,6 +403,7 @@ func (s *S3) Walk(ctx context.Context, s3Path string, recursive bool, process fu
 	prefix := path.Join(s.Config.Path, s3Path)
 	return s.WalkAbsolute(ctx, prefix, recursive, process)
 }
+
 func (s *S3) WalkAbsolute(ctx context.Context, prefix string, recursive bool, process func(ctx context.Context, r RemoteFile) error) error {
 	g, ctx := errgroup.WithContext(ctx)
 	s3Files := make(chan *s3File)

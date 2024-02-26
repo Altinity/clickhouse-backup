@@ -162,8 +162,12 @@ func (a *AzureBlob) Close(ctx context.Context) error {
 }
 
 func (a *AzureBlob) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {
-	a.logf("AZBLOB->GetFileReader %s", key)
-	blob := a.Container.NewBlockBlobURL(path.Join(a.Config.Path, key))
+	return a.GetFileReaderAbsolute(ctx, path.Join(a.Config.Path, key))
+}
+
+func (a *AzureBlob) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadCloser, error) {
+	a.logf("AZBLOB->GetFileReaderAbsolute %s", key)
+	blob := a.Container.NewBlockBlobURL(key)
 	r, err := blob.Download(ctx, 0, azblob.CountToEnd, azblob.BlobAccessConditions{}, false, a.CPK)
 	if err != nil {
 		return nil, err
@@ -176,8 +180,12 @@ func (a *AzureBlob) GetFileReaderWithLocalPath(ctx context.Context, key, _ strin
 }
 
 func (a *AzureBlob) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
-	a.logf("AZBLOB->PutFile %s", key)
-	blob := a.Container.NewBlockBlobURL(path.Join(a.Config.Path, key))
+	return a.PutFileAbsolute(ctx, path.Join(a.Config.Path, key), r)
+}
+
+func (a *AzureBlob) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser) error {
+	a.logf("AZBLOB->PutFileAbsolute %s", key)
+	blob := a.Container.NewBlockBlobURL(key)
 	bufferSize := a.Config.BufferSize // Configure the size of the rotating buffers that are used when uploading
 	maxBuffers := a.Config.MaxBuffers // Configure the number of rotating buffers that are used when uploading
 	_, err := x.UploadStreamToBlockBlob(ctx, r, blob, azblob.UploadStreamToBlockBlobOptions{BufferSize: bufferSize, MaxBuffers: maxBuffers}, a.CPK)
