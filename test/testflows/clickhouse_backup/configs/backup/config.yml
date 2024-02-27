@@ -76,13 +76,13 @@ general:
   upload_concurrency: 2
 s3:
   access_key: access_key
-  secret_key: it_is_my_super_secret_key
   acl: private
   bucket: altinity-qa-test
   debug: false
   disable_ssl: true
   endpoint: http://minio:9000
   force_path_style: true
+  secret_key: it_is_my_super_secret_key
 sftp:
   address: sftp_server
   compression_format: tar
