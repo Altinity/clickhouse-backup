@@ -542,12 +542,12 @@ func TestRBAC(t *testing.T) {
 		ch.chbackend.Close()
 	}
 	testRBACScenario("/etc/clickhouse-backup/config-s3.yml")
-	if chVersion == "head" || compareVersion(chVersion, "24.1") >= 0 {
+	if compareVersion(chVersion, "24.1") >= 0 {
 		testRBACScenario("/etc/clickhouse-backup/config-s3-embedded.yml")
 		testRBACScenario("/etc/clickhouse-backup/config-s3-embedded-url.yml")
 		testRBACScenario("/etc/clickhouse-backup/config-azblob-embedded.yml")
 	}
-	if chVersion == "head" || compareVersion(chVersion, "24.2") >= 0 {
+	if compareVersion(chVersion, "24.2") >= 0 {
 		testRBACScenario("/etc/clickhouse-backup/config-azblob-embedded-url.yml")
 	}
 }
@@ -612,12 +612,12 @@ func TestConfigs(t *testing.T) {
 	}
 	testConfigsScenario("/etc/clickhouse-backup/config-s3.yml")
 	chVersion := os.Getenv("CLICKHOUSE_VERSION")
-	if chVersion == "head" || compareVersion(chVersion, "24.1") >= 0 {
+	if compareVersion(chVersion, "24.1") >= 0 {
 		testConfigsScenario("/etc/clickhouse-backup/config-s3-embedded.yml")
 		testConfigsScenario("/etc/clickhouse-backup/config-s3-embedded-url.yml")
 		testConfigsScenario("/etc/clickhouse-backup/config-azblob-embedded.yml")
 	}
-	if chVersion == "head" || compareVersion(chVersion, "24.2") >= 0 {
+	if compareVersion(chVersion, "24.2") >= 0 {
 		testConfigsScenario("/etc/clickhouse-backup/config-azblob-embedded-url.yml")
 	}
 }
@@ -1814,22 +1814,30 @@ func TestIntegrationEmbedded(t *testing.T) {
 	//t.Skipf("Test skipped, wait 23.8, RESTORE Ordinary table and RESTORE MATERIALIZED VIEW and {uuid} not works for %s version, look https://github.com/ClickHouse/ClickHouse/issues/43971 and https://github.com/ClickHouse/ClickHouse/issues/42709", os.Getenv("CLICKHOUSE_VERSION"))
 	//dependencies restore https://github.com/ClickHouse/ClickHouse/issues/39416, fixed in 23.3
 	version := os.Getenv("CLICKHOUSE_VERSION")
-	if version != "head" && compareVersion(version, "23.3") < 0 {
+	if compareVersion(version, "23.3") < 0 {
 		t.Skipf("Test skipped, BACKUP/RESTORE not production ready for %s version", version)
 	}
 	//t.Parallel()
 	r := require.New(t)
+	//@TODO clickhouse-server don't close connection properly after FIN from azurite during BACKUP/RESTORE https://github.com/ClickHouse/ClickHouse/issues/60447, https://github.com/Azure/Azurite/issues/2053
+	//CUSTOM backup create folder in each disk
+	//r.NoError(dockerExec("azure", "apk", "add", "tcpdump"))
+	//r.NoError(dockerExecBackground("azure", "tcpdump", "-i", "any", "-w", "/tmp/azurite_http.pcap", "port", "10000"))
+	//r.NoError(dockerExec("clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_azure/backup/"))
+	//if compareVersion(version, "24.2") >= 0 {
+	//	runMainIntegrationScenario(t, "EMBEDDED_AZURE_URL", "config-azblob-embedded-url.yml")
+	//}
+	//runMainIntegrationScenario(t, "EMBEDDED_AZURE", "config-azblob-embedded.yml")
+	//r.NoError(dockerExec("azure", "pkill", "tcpdump"))
+	//r.NoError(dockerCP("azure:/tmp/azurite_http.pcap", "./azurite_http.pcap"))
+
+	if compareVersion(version, "23.8") >= 0 {
+		runMainIntegrationScenario(t, "EMBEDDED_S3_URL", "config-s3-embedded-url.yml")
+	}
 	//CUSTOM backup create folder in each disk
 	r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_s3/backup/"))
-	runMainIntegrationScenario(t, "EMBEDDED_S3_URL", "config-s3-embedded-url.yml")
 	runMainIntegrationScenario(t, "EMBEDDED_S3", "config-s3-embedded.yml")
 
-	//@TODO uncomment when resolve slow azure BACKUP/RESTORE https://github.com/ClickHouse/ClickHouse/issues/52088, https://github.com/Azure/Azurite/issues/2053
-	if version == "head" || compareVersion(version, "24.2") >= 0 {
-		r.NoError(dockerExec("clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_azure/backup/"))
-		runMainIntegrationScenario(t, "EMBEDDED_AZURE_URL", "config-azblob-embedded-url.yml")
-		runMainIntegrationScenario(t, "EMBEDDED_AZURE", "config-azblob-embedded.yml")
-	}
 	//@TODO think about how to implements embedded backup for s3_plain disks
 	//r.NoError(dockerExec("clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_s3_plain/backup/"))
 	//runMainIntegrationScenario(t, "EMBEDDED_S3_PLAIN", "config-s3-plain-embedded.yml")
@@ -2751,6 +2759,18 @@ func (ch *TestClickHouse) queryWithNoError(r *require.Assertions, query string, 
 }
 
 var dockerExecTimeout = 180 * time.Second
+
+func dockerExecBackground(container string, cmd ...string) error {
+	out, err := dockerExecBackgroundOut(container, cmd...)
+	log.Info(out)
+	return err
+}
+
+func dockerExecBackgroundOut(container string, cmd ...string) (string, error) {
+	dcmd := []string{"exec", "-d", container}
+	dcmd = append(dcmd, cmd...)
+	return utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", dcmd...)
+}
 
 func dockerExec(container string, cmd ...string) error {
 	out, err := dockerExecOut(container, cmd...)
