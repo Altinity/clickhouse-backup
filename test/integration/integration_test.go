@@ -1832,6 +1832,10 @@ func TestIntegrationEmbedded(t *testing.T) {
 	//r.NoError(dockerCP("azure:/tmp/azurite_http.pcap", "./azurite_http.pcap"))
 
 	if compareVersion(version, "23.8") >= 0 {
+		//@todo think about named collections to avoid show credentials in logs look to https://github.com/fsouza/fake-gcs-server/issues/1330
+		//installDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "gettext-base")
+		//r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config-gcs-embedded-url.yml.template | envsubst > /etc/clickhouse-backup/config-gcs-embedded-url.yml"))
+		//runMainIntegrationScenario(t, "EMBEDDED_GCS_URL", "config-gcs-embedded-url.yml")
 		runMainIntegrationScenario(t, "EMBEDDED_S3_URL", "config-s3-embedded-url.yml")
 	}
 	//CUSTOM backup create folder in each disk

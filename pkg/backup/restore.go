@@ -529,7 +529,6 @@ func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string,
 	if err != nil {
 		return err
 	}
-	/*}*/
 	return b.restoreEmbedded(ctx, backupName, true, tablesForRestore, nil)
 }
 

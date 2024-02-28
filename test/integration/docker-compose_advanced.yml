@@ -184,6 +184,10 @@ services:
       QA_AWS_SECRET_KEY: ${QA_AWS_SECRET_KEY}
       QA_AWS_BUCKET: ${QA_AWS_BUCKET}
       QA_AWS_REGION: ${QA_AWS_REGION}
+# GCS over S3 embedded backups
+      QA_GCS_OVER_S3_ACCESS_KEY: "${QA_GCS_OVER_S3_ACCESS_KEY}"
+      QA_GCS_OVER_S3_SECRET_KEY: "${QA_GCS_OVER_S3_SECRET_KEY}"
+      QA_GCS_OVER_S3_BUCKET: "${QA_GCS_OVER_S3_BUCKET}"
 # https://github.com/Altinity/clickhouse-backup/issues/691:
       AWS_ACCESS_KEY_ID: access_key
       AWS_SECRET_ACCESS_KEY: it_is_my_super_secret_key
@@ -252,6 +256,7 @@ services:
       - ./config-ftp.yaml:/etc/clickhouse-backup/config-ftp.yaml
       - ./config-ftp-old.yaml:/etc/clickhouse-backup/config-ftp-old.yaml
       - ./config-gcs.yml:/etc/clickhouse-backup/config-gcs.yml
+      - ./config-gcs-embedded-url.yml:/etc/clickhouse-backup/config-gcs-embedded-url.yml.template
       - ./config-gcs-custom-endpoint.yml:/etc/clickhouse-backup/config-gcs-custom-endpoint.yml
       - ./config-s3.yml:/etc/clickhouse-backup/config-s3.yml
       - ./config-s3-embedded.yml:/etc/clickhouse-backup/config-s3-embedded.yml
