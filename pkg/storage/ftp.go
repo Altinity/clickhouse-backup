@@ -48,7 +48,7 @@ func (f *FTP) Connect(ctx context.Context) error {
 	}
 	f.clients = pool.NewObjectPoolWithDefaultConfig(ctx, &ftpPoolFactory{options: options, ftp: f})
 	if f.Config.Concurrency > 1 {
-		f.clients.Config.MaxTotal = int(f.Config.Concurrency) * 3
+		f.clients.Config.MaxTotal = int(f.Config.Concurrency) * 4
 	}
 
 	f.dirCacheMutex.Lock()
