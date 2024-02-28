@@ -1,3 +1,7 @@
+# v2.5.0 (not released yet)
+IMPROVEMENTS
+- added support for `use_embedded_backup_restore: true` with empty `embedded_backup_disk` value, tested on S3/GCS over S3/AzureBlobStorage, fix [695](https://github.com/Altinity/clickhouse-backup/issues/695)
+
 # v2.4.33
 BUG FIXES
 - fixed wrong anonymous authorization for service account for GCS, added `GCS_SKIP_CREDENTIALS` fix [848](https://github.com/Altinity/clickhouse-backup/issues/848), fix [847](https://github.com/Altinity/clickhouse-backup/pull/847), thanks @sanadhis
