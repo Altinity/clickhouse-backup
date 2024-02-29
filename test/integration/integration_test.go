@@ -2220,7 +2220,7 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, ch *Test
 		ch.queryWithNoError(r, fmt.Sprintf("INSERT INTO "+dbName+".t2(dt, v) SELECT '%s', number FROM numbers(10)", dt))
 	}
 
-	// check create_remote full > download + partitions > delete local > download > restore --partitions > restore
+	// check create_remote full > download + partitions > restore --data --partitions > delete local > download > restore --partitions > restore
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create_remote", "--tables="+dbName+".t*", fullBackupName))
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName))
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "download", "--partitions=(0,'2022-01-02'),(0,'2022-01-03')", fullBackupName))
@@ -2246,6 +2246,25 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, ch *Test
 		expectedLines = "2"
 	}
 	r.Equal(expectedLines, strings.Trim(out, "\r\n\t "))
+	checkRestoredDataWithPartitions := func() {
+		result = 0
+		r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT sum(c) FROM (SELECT count() AS c FROM "+dbName+".t1 UNION ALL SELECT count() AS c FROM "+dbName+".t2)"))
+		expectedCount = 40
+		r.Equal(expectedCount, result, fmt.Sprintf("expect count=%d", expectedCount))
+		r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", fullBackupName))
+		result = 0
+		r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT sum(c) FROM (SELECT count() AS c FROM "+dbName+".t1 UNION ALL SELECT count() AS c FROM "+dbName+".t2)"))
+		r.Equal(uint64(80), result, "expect count=80")
+		r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", fullBackupName))
+		r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName))
+	}
+
+	out, err = dockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--data", "--partitions=(0,'2022-01-02'),(0,'2022-01-03')", fullBackupName)
+	t.Log(out)
+	r.NoError(err)
+	r.Contains(out, "DROP PARTITION")
+	checkRestoredDataWithPartitions()
+
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName))
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "download", fullBackupName))
 
@@ -2263,18 +2282,10 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, ch *Test
 	out, err = dockerExecOut("clickhouse-backup", "bash", "-c", "ls -la "+fullBackupDir+"| wc -l")
 	r.NoError(err)
 	r.Equal(expectedLines, strings.Trim(out, "\r\n\t "))
-	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--partitions=(0,'2022-01-02'),(0,'2022-01-03')", fullBackupName))
-	result = 0
-	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT sum(c) FROM (SELECT count() AS c FROM "+dbName+".t1 UNION ALL SELECT count() AS c FROM "+dbName+".t2)"))
-	expectedCount = 40
-	r.Equal(expectedCount, result, fmt.Sprintf("expect count=%d", expectedCount))
-	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", fullBackupName))
-	result = 0
-	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT sum(c) FROM (SELECT count() AS c FROM "+dbName+".t1 UNION ALL SELECT count() AS c FROM "+dbName+".t2)"))
-	r.Equal(uint64(80), result, "expect count=80")
-	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", fullBackupName))
-	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName))
-
+	out, err = dockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--partitions=(0,'2022-01-02'),(0,'2022-01-03')", fullBackupName)
+	r.NoError(err)
+	r.NotContains(out, "DROP PARTITION")
+	checkRestoredDataWithPartitions()
 	// check create + partitions
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables="+dbName+".t1", "--partitions=(0,'2022-01-02'),(0,'2022-01-03')", partitionBackupName))
 	expectedLines = "5"

@@ -501,8 +501,11 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 	if srcSize%s.Config.MaxPartsCount > 0 {
 		partSize++
 	}
-	if partSize < 5*1024*1024 {
-		partSize = 5 * 1024 * 1024
+	if partSize < 10*1024*1024 {
+		partSize = 10 * 1024 * 1024
+	}
+	if partSize > 5*1024*1024*1024 {
+		partSize = 5 * 1024 * 1024 * 1024
 	}
 
 	// Calculate the number of parts

@@ -96,47 +96,40 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 			break
 		}
 	}
-	if err == nil {
-		backupMetadata := metadata.BackupMetadata{}
-		if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
-			return err
-		}
-		b.isEmbedded = strings.Contains(backupMetadata.Tags, "embedded")
-
-		if schemaOnly || doRestoreData {
-			for _, database := range backupMetadata.Databases {
-				targetDB := database.Name
-				if !IsInformationSchema(targetDB) {
-					if err = b.restoreEmptyDatabase(ctx, targetDB, tablePattern, database, dropTable, schemaOnly, ignoreDependencies); err != nil {
-						return err
-					}
-				}
-			}
-		}
-		// do not create UDF when use --data, --rbac-only, --configs-only flags, https://github.com/Altinity/clickhouse-backup/issues/697
-		if schemaOnly || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
-			for _, function := range backupMetadata.Functions {
-				if err = b.ch.CreateUserDefinedFunction(function.Name, function.CreateQuery, b.cfg.General.RestoreSchemaOnCluster); err != nil {
-					return err
-				}
-			}
-		}
-		if len(backupMetadata.Tables) == 0 {
-			// corner cases for https://github.com/Altinity/clickhouse-backup/issues/832
-			if !restoreRBAC && !rbacOnly && !restoreConfigs && !configsOnly {
-				if !b.cfg.General.AllowEmptyBackups {
-					err = fmt.Errorf("'%s' doesn't contains tables for restore, if you need it, you can setup `allow_empty_backups: true` in `general` config section", backupName)
-					log.Errorf("%v", err)
-					return err
-				}
-				log.Warnf("'%s' doesn't contains tables for restore", backupName)
-				return nil
-			}
-		}
-	} else if os.IsNotExist(err) { // Legacy backups don't have metadata.json, but we need handle not exists local backup
+	if os.IsNotExist(err) { // Legacy backups don't have metadata.json, but we need handle not exists local backup
 		backupPath := path.Join(b.DefaultDataPath, "backup", backupName)
 		if fInfo, fErr := os.Stat(backupPath); fErr != nil || !fInfo.IsDir() {
 			return fmt.Errorf("'%s' stat return %v, %v", backupPath, fInfo, fErr)
+		}
+	} else if err != nil {
+		return err
+	}
+	backupMetadata := metadata.BackupMetadata{}
+	if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
+		return err
+	}
+	b.isEmbedded = strings.Contains(backupMetadata.Tags, "embedded")
+
+	if schemaOnly || doRestoreData {
+		for _, database := range backupMetadata.Databases {
+			targetDB := database.Name
+			if !IsInformationSchema(targetDB) {
+				if err = b.restoreEmptyDatabase(ctx, targetDB, tablePattern, database, dropTable, schemaOnly, ignoreDependencies); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if len(backupMetadata.Tables) == 0 {
+		// corner cases for https://github.com/Altinity/clickhouse-backup/issues/832
+		if !restoreRBAC && !rbacOnly && !restoreConfigs && !configsOnly {
+			if !b.cfg.General.AllowEmptyBackups {
+				err = fmt.Errorf("'%s' doesn't contains tables for restore, if you need it, you can setup `allow_empty_backups: true` in `general` config section", backupName)
+				log.Errorf("%v", err)
+				return err
+			}
+			log.Warnf("'%s' doesn't contains tables for restore", backupName)
+			return nil
 		}
 	}
 	needRestart := false
@@ -177,18 +170,83 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 			}
 		}()
 	}
-	if schemaOnly || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
-		if err := b.RestoreSchema(ctx, backupName, tablePattern, dropTable, ignoreDependencies); err != nil {
+	var tablesForRestore ListOfTables
+	var partitionsNames map[metadata.TableTitle][]string
+	if tablePattern == "" {
+		tablePattern = "*"
+	}
+	metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
+	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
+		metadataPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
+	}
+
+	if !rbacOnly && !configsOnly {
+		tablesForRestore, partitionsNames, err = b.getTablesForRestoreLocal(ctx, backupName, metadataPath, tablePattern, dropTable, partitions)
+		if err != nil {
 			return err
 		}
 	}
-	if dataOnly || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
-		if err := b.RestoreData(ctx, backupName, tablePattern, partitions, disks); err != nil {
+	if schemaOnly || dropTable || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
+		if err = b.RestoreSchema(ctx, backupName, tablesForRestore, ignoreDependencies); err != nil {
 			return err
+		}
+	}
+	// https://github.com/Altinity/clickhouse-backup/issues/756
+	if dataOnly && !schemaOnly && !rbacOnly && !configsOnly && len(partitions) > 0 {
+		if err = b.dropExistPartitions(ctx, tablesForRestore, partitionsNames, partitions); err != nil {
+			return err
+		}
+
+	}
+	if dataOnly || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
+		if err := b.RestoreData(ctx, backupName, metadataPath, tablePattern, partitions, disks); err != nil {
+			return err
+		}
+	}
+	// do not create UDF when use --data, --rbac-only, --configs-only flags, https://github.com/Altinity/clickhouse-backup/issues/697
+	if schemaOnly || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
+		for _, function := range backupMetadata.Functions {
+			if err = b.ch.CreateUserDefinedFunction(function.Name, function.CreateQuery, b.cfg.General.RestoreSchemaOnCluster); err != nil {
+				return err
+			}
 		}
 	}
 	log.Info("done")
 	return nil
+}
+
+func (b *Backuper) getTablesForRestoreLocal(ctx context.Context, backupName string, metadataPath string, tablePattern string, dropTable bool, partitions []string) (ListOfTables, map[metadata.TableTitle][]string, error) {
+	var tablesForRestore ListOfTables
+	var partitionsNames map[metadata.TableTitle][]string
+	info, err := os.Stat(metadataPath)
+	// corner cases for https://github.com/Altinity/clickhouse-backup/issues/832
+	if err != nil {
+		if !b.cfg.General.AllowEmptyBackups {
+			return nil, nil, err
+		}
+		if !os.IsNotExist(err) {
+			return nil, nil, err
+		}
+		return nil, nil, nil
+	}
+	if !info.IsDir() {
+		return nil, nil, fmt.Errorf("%s is not a dir", metadataPath)
+	}
+	tablesForRestore, partitionsNames, err = b.getTableListByPatternLocal(ctx, metadataPath, tablePattern, dropTable, partitions)
+	if err != nil {
+		return nil, nil, err
+	}
+	// if restore-database-mapping specified, create database in mapping rules instead of in backup files.
+	if len(b.cfg.General.RestoreDatabaseMapping) > 0 {
+		err = changeTableQueryToAdjustDatabaseMapping(&tablesForRestore, b.cfg.General.RestoreDatabaseMapping)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	if len(tablesForRestore) == 0 {
+		return nil, nil, fmt.Errorf("no have found schemas by %s in %s", tablePattern, backupName)
+	}
+	return tablesForRestore, partitionsNames, nil
 }
 
 func (b *Backuper) restartClickHouse(ctx context.Context, backupName string, log *apexLog.Entry) error {
@@ -450,8 +508,24 @@ func (b *Backuper) restoreBackupRelatedDir(backupName, backupPrefixDir, destinat
 	return nil
 }
 
+// execute ALTER TABLE db.table DROP PARTITION for corner case when we try to restore backup with the same structure, https://github.com/Altinity/clickhouse-backup/issues/756
+func (b *Backuper) dropExistPartitions(ctx context.Context, tablesForRestore ListOfTables, partitionsIdMap map[metadata.TableTitle][]string, partitions []string) error {
+	for _, table := range tablesForRestore {
+		partitionsIds, isExists := partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Table}]
+		if !isExists {
+			return fmt.Errorf("`%s`.`%s` doesn't contains %#v partitions", table.Database, table.Table, partitions)
+		}
+		partitionsSQL := fmt.Sprintf("DROP PARTITION %s", strings.Join(partitionsIds, ", DROP PARTITION "))
+		err := b.ch.QueryContext(ctx, fmt.Sprintf("ALTER TABLE `%s`.`%s` %s SETTINGS mutations_sync=2", table.Database, table.Table, partitionsSQL))
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // RestoreSchema - restore schemas matched by tablePattern from backupName
-func (b *Backuper) RestoreSchema(ctx context.Context, backupName, tablePattern string, dropTable, ignoreDependencies bool) error {
+func (b *Backuper) RestoreSchema(ctx context.Context, backupName string, tablesForRestore ListOfTables, ignoreDependencies bool) error {
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "restore_schema",
@@ -460,41 +534,6 @@ func (b *Backuper) RestoreSchema(ctx context.Context, backupName, tablePattern s
 	version, err := b.ch.GetVersion(ctx)
 	if err != nil {
 		return err
-	}
-	metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
-	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
-		metadataPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
-	}
-	info, err := os.Stat(metadataPath)
-	// corner cases for https://github.com/Altinity/clickhouse-backup/issues/832
-	if err != nil {
-		if !b.cfg.General.AllowEmptyBackups {
-			return err
-		}
-		if !os.IsNotExist(err) {
-			return err
-		}
-		return nil
-	}
-	if !info.IsDir() {
-		return fmt.Errorf("%s is not a dir", metadataPath)
-	}
-	if tablePattern == "" {
-		tablePattern = "*"
-	}
-	tablesForRestore, _, err := b.getTableListByPatternLocal(ctx, metadataPath, tablePattern, dropTable, nil)
-	if err != nil {
-		return err
-	}
-	// if restore-database-mapping specified, create database in mapping rules instead of in backup files.
-	if len(b.cfg.General.RestoreDatabaseMapping) > 0 {
-		err = changeTableQueryToAdjustDatabaseMapping(&tablesForRestore, b.cfg.General.RestoreDatabaseMapping)
-		if err != nil {
-			return err
-		}
-	}
-	if len(tablesForRestore) == 0 {
-		return fmt.Errorf("no have found schemas by %s in %s", tablePattern, backupName)
 	}
 	if dropErr := b.dropExistsTables(tablesForRestore, ignoreDependencies, version, log); dropErr != nil {
 		return dropErr
@@ -743,6 +782,7 @@ func (b *Backuper) dropExistsTables(tablesForDrop ListOfTables, ignoreDependenci
 					}, query, b.cfg.General.RestoreSchemaOnCluster, ignoreDependencies, version, b.DefaultDataPath)
 					if dropErr == nil {
 						tablesForDrop[i].Query = query
+						break
 					}
 				}
 			} else {
@@ -776,7 +816,7 @@ func (b *Backuper) dropExistsTables(tablesForDrop ListOfTables, ignoreDependenci
 }
 
 // RestoreData - restore data for tables matched by tablePattern from backupName
-func (b *Backuper) RestoreData(ctx context.Context, backupName string, tablePattern string, partitions []string, disks []clickhouse.Disk) error {
+func (b *Backuper) RestoreData(ctx context.Context, backupName string, metadataPath, tablePattern string, partitions []string, disks []clickhouse.Disk) error {
 	startRestore := time.Now()
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
@@ -803,10 +843,6 @@ func (b *Backuper) RestoreData(ctx context.Context, backupName string, tablePatt
 	}
 	var tablesForRestore ListOfTables
 	var partitionsNameList map[metadata.TableTitle][]string
-	metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
-	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
-		metadataPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
-	}
 	if backup.Legacy {
 		tablesForRestore, err = b.ch.GetBackupTablesLegacy(backupName, disks)
 	} else {
