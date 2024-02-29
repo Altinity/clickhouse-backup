@@ -69,6 +69,10 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 	if err != nil {
 		return err
 	}
+	version, err := b.ch.GetVersion(ctx)
+	if err != nil {
+		return err
+	}
 	b.DefaultDataPath, err = b.ch.GetDefaultPath(disks)
 	if err != nil {
 		log.Warnf("%v", err)
@@ -114,7 +118,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 		for _, database := range backupMetadata.Databases {
 			targetDB := database.Name
 			if !IsInformationSchema(targetDB) {
-				if err = b.restoreEmptyDatabase(ctx, targetDB, tablePattern, database, dropTable, schemaOnly, ignoreDependencies); err != nil {
+				if err = b.restoreEmptyDatabase(ctx, targetDB, tablePattern, database, dropTable, schemaOnly, ignoreDependencies, version); err != nil {
 					return err
 				}
 			}
@@ -187,13 +191,13 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 		}
 	}
 	if schemaOnly || dropTable || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
-		if err = b.RestoreSchema(ctx, backupName, tablesForRestore, ignoreDependencies); err != nil {
+		if err = b.RestoreSchema(ctx, backupName, tablesForRestore, ignoreDependencies, version); err != nil {
 			return err
 		}
 	}
 	// https://github.com/Altinity/clickhouse-backup/issues/756
 	if dataOnly && !schemaOnly && !rbacOnly && !configsOnly && len(partitions) > 0 {
-		if err = b.dropExistPartitions(ctx, tablesForRestore, partitionsNames, partitions); err != nil {
+		if err = b.dropExistPartitions(ctx, tablesForRestore, partitionsNames, partitions, version); err != nil {
 			return err
 		}
 
@@ -307,7 +311,7 @@ func (b *Backuper) executeShellCommandWithTimeout(ctx context.Context, cmd strin
 	return nil
 }
 
-func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB, tablePattern string, database metadata.DatabasesMeta, dropTable, schemaOnly, ignoreDependencies bool) error {
+func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB, tablePattern string, database metadata.DatabasesMeta, dropTable, schemaOnly, ignoreDependencies bool, version int) error {
 	isMapped := false
 	if targetDB, isMapped = b.cfg.General.RestoreDatabaseMapping[database.Name]; !isMapped {
 		targetDB = database.Name
@@ -326,10 +330,6 @@ func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB, tablePatt
 		// https://github.com/Altinity/clickhouse-backup/issues/651
 		settings := ""
 		if ignoreDependencies {
-			version, err := b.ch.GetVersion(ctx)
-			if err != nil {
-				return err
-			}
 			if version >= 21012000 {
 				settings = "SETTINGS check_table_dependencies=0"
 			}
@@ -509,14 +509,18 @@ func (b *Backuper) restoreBackupRelatedDir(backupName, backupPrefixDir, destinat
 }
 
 // execute ALTER TABLE db.table DROP PARTITION for corner case when we try to restore backup with the same structure, https://github.com/Altinity/clickhouse-backup/issues/756
-func (b *Backuper) dropExistPartitions(ctx context.Context, tablesForRestore ListOfTables, partitionsIdMap map[metadata.TableTitle][]string, partitions []string) error {
+func (b *Backuper) dropExistPartitions(ctx context.Context, tablesForRestore ListOfTables, partitionsIdMap map[metadata.TableTitle][]string, partitions []string, version int) error {
 	for _, table := range tablesForRestore {
 		partitionsIds, isExists := partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Table}]
 		if !isExists {
 			return fmt.Errorf("`%s`.`%s` doesn't contains %#v partitions", table.Database, table.Table, partitions)
 		}
 		partitionsSQL := fmt.Sprintf("DROP PARTITION %s", strings.Join(partitionsIds, ", DROP PARTITION "))
-		err := b.ch.QueryContext(ctx, fmt.Sprintf("ALTER TABLE `%s`.`%s` %s SETTINGS mutations_sync=2", table.Database, table.Table, partitionsSQL))
+		settings := ""
+		if version >= 19017000 {
+			settings = "SETTINGS mutations_sync=2"
+		}
+		err := b.ch.QueryContext(ctx, fmt.Sprintf("ALTER TABLE `%s`.`%s` %s %s", table.Database, table.Table, partitionsSQL, settings))
 		if err != nil {
 			return err
 		}
@@ -525,22 +529,18 @@ func (b *Backuper) dropExistPartitions(ctx context.Context, tablesForRestore Lis
 }
 
 // RestoreSchema - restore schemas matched by tablePattern from backupName
-func (b *Backuper) RestoreSchema(ctx context.Context, backupName string, tablesForRestore ListOfTables, ignoreDependencies bool) error {
+func (b *Backuper) RestoreSchema(ctx context.Context, backupName string, tablesForRestore ListOfTables, ignoreDependencies bool, version int) error {
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "restore_schema",
 	})
 
-	version, err := b.ch.GetVersion(ctx)
-	if err != nil {
-		return err
-	}
 	if dropErr := b.dropExistsTables(tablesForRestore, ignoreDependencies, version, log); dropErr != nil {
 		return dropErr
 	}
 	var restoreErr error
 	if b.isEmbedded {
-		restoreErr = b.restoreSchemaEmbedded(ctx, backupName, tablesForRestore, log)
+		restoreErr = b.restoreSchemaEmbedded(ctx, backupName, tablesForRestore, version)
 	} else {
 		restoreErr = b.restoreSchemaRegular(tablesForRestore, version, log)
 	}
@@ -554,16 +554,12 @@ var UUIDWithMergeTreeRE = regexp.MustCompile(`^(.+)(UUID)(\s+)'([^']+)'(.+)({uui
 
 var emptyReplicatedMergeTreeRE = regexp.MustCompile(`(?m)Replicated(MergeTree|ReplacingMergeTree|SummingMergeTree|AggregatingMergeTree|CollapsingMergeTree|VersionedCollapsingMergeTree|GraphiteMergeTree)\s*\(([^']*)\)(.*)`)
 
-func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string, tablesForRestore ListOfTables, log *apexLog.Entry) error {
+func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string, tablesForRestore ListOfTables, version int) error {
 	var err error
-	chVersion, err := b.ch.GetVersion(ctx)
-	if err != nil {
-		return err
-	}
 	if b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
-		err = b.fixEmbeddedMetadataLocal(ctx, backupName, chVersion)
+		err = b.fixEmbeddedMetadataLocal(ctx, backupName, version)
 	} else {
-		err = b.fixEmbeddedMetadataRemote(ctx, backupName, chVersion)
+		err = b.fixEmbeddedMetadataRemote(ctx, backupName, version)
 	}
 	if err != nil {
 		return err
