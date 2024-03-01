@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -301,6 +302,9 @@ func (cfg *Config) GetCompressionFormat() string {
 	}
 }
 
+var freezeByPartBeginAndRE = regexp.MustCompile(`(?im)^\s*AND\s+`)
+
+
 // LoadConfig - load config from file + environment variables
 func LoadConfig(configLocation string) (*Config, error) {
 	cfg := DefaultConfig()
@@ -329,6 +333,12 @@ func LoadConfig(configLocation string) (*Config, error) {
 	cfg.AzureBlob.Path = strings.TrimPrefix(cfg.AzureBlob.Path, "/")
 	cfg.S3.Path = strings.TrimPrefix(cfg.S3.Path, "/")
 	cfg.GCS.Path = strings.TrimPrefix(cfg.GCS.Path, "/")
+
+	// https://github.com/Altinity/clickhouse-backup/issues/855
+	if cfg.ClickHouse.FreezeByPart && cfg.ClickHouse.FreezeByPartWhere != "" && !freezeByPartBeginAndRE.MatchString(cfg.ClickHouse.FreezeByPartWhere) {
+		cfg.ClickHouse.FreezeByPartWhere = " AND " + cfg.ClickHouse.FreezeByPartWhere
+	}
+
 	log.SetLevelFromString(cfg.General.LogLevel)
 
 	if err = ValidateConfig(cfg); err != nil {

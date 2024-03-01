@@ -649,9 +649,9 @@ func (ch *ClickHouse) GetVersionDescribe(ctx context.Context) string {
 	return result
 }
 
-// FreezeTableOldWay - freeze all partitions in table one by one
-// This way using for ClickHouse below v19.1
-func (ch *ClickHouse) FreezeTableOldWay(ctx context.Context, table *Table, name string) error {
+// FreezeTableByParts - freeze all partitions in table one by one
+// also ally `freeze_by_part_where`
+func (ch *ClickHouse) FreezeTableByParts(ctx context.Context, table *Table, name string) error {
 	var partitions []struct {
 		PartitionID string `ch:"partition_id"`
 	}
@@ -707,7 +707,7 @@ func (ch *ClickHouse) FreezeTable(ctx context.Context, table *Table, name string
 		}
 	}
 	if version < 19001005 || ch.Config.FreezeByPart {
-		return ch.FreezeTableOldWay(ctx, table, name)
+		return ch.FreezeTableByParts(ctx, table, name)
 	}
 	withNameQuery := ""
 	if name != "" {

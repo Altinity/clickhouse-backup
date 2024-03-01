@@ -8,6 +8,7 @@ BUG FIXES
 - changed minimal part size for multipart upload in CopyObject from `5Mb` to `10Mb`
 - restore SQL UDF functions after restore tables
 - execute `ALTER TABLE ... DROP PARTITION` instead of `DROP TABLE` for `restore` and `restore_remote` with parameters `--data --partitions=...`, fix [756](https://github.com/Altinity/clickhouse-backup/issues/756) 
+- fix wrong behavior for `freeze_by_part` + `freeze_by_part_where`, fix [855](https://github.com/Altinity/clickhouse-backup/issues/855)
 
 # v2.4.33
 BUG FIXES
