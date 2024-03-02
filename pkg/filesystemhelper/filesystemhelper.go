@@ -120,6 +120,23 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 	start := time.Now()
 	dstDataPaths := clickhouse.GetDisksByPaths(disks, tableDataPaths)
 	dbAndTableDir := path.Join(common.TablePathEncode(backupTable.Database), common.TablePathEncode(backupTable.Table))
+	if !toDetached {
+		for backupDiskName := range backupTable.Parts {
+			dstParentDir, dstParentDirExists := dstDataPaths[backupDiskName]
+			if dstParentDirExists {
+				// avoid to restore to non-empty to avoid attach in already dropped partitions, corner case
+				existsFiles, err := os.ReadDir(dstParentDir)
+				if err != nil && !os.IsNotExist(err) {
+					return err
+				}
+				for _, f := range existsFiles {
+					if f.Name() != "detached" && !strings.HasSuffix(f.Name(), ".txt") {
+						return fmt.Errorf("%s contains exists data %v, we can't restore directly via ATTACH TABLE, use `clickhouse->restore_as_attach=false` in your config", dstParentDir, existsFiles)
+					}
+				}
+			}
+		}
+	}
 	for backupDiskName := range backupTable.Parts {
 		for _, part := range backupTable.Parts[backupDiskName] {
 			dstParentDir, dstParentDirExists := dstDataPaths[backupDiskName]
@@ -137,17 +154,6 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 			if toDetached {
 				dstParentDir = filepath.Join(dstParentDir, "detached")
 
-			} else {
-				// avoid to restore to non-empty to avoid attach in already dropped partitions, corner case
-				existsFiles, err := os.ReadDir(dstParentDir)
-				if err != nil && !os.IsNotExist(err) {
-					return err
-				}
-				for _, f := range existsFiles {
-					if f.Name() != "detached" && !strings.HasSuffix(f.Name(), ".txt") && !strings.HasPrefix(f.Name(), "tmp") {
-						return fmt.Errorf("%s contains exists data, we can't restore directly via ATTACH TABLE, use `clickhouse->restore_as_attach=false` in your config", dstParentDir)
-					}
-				}
 			}
 			dstPartPath := filepath.Join(dstParentDir, part.Name)
 			info, err := os.Stat(dstPartPath)
