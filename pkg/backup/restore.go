@@ -862,10 +862,8 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 	dbAndTableDir := path.Join(common.TablePathEncode(backupTable.Database), common.TablePathEncode(backupTable.Table))
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
 	var err error
-	if err = config.ValidateObjectDiskConfig(b.cfg); err != nil {
-		return err
-	}
 	for diskName, parts := range backupTable.Parts {
 		diskType, exists := diskTypes[diskName]
 		if !exists {
@@ -889,6 +887,9 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 		}
 		isObjectDisk := b.isDiskTypeObject(diskType)
 		if isObjectDisk || isObjectDiskEncrypted {
+			if err = config.ValidateObjectDiskConfig(b.cfg); err != nil {
+				return err
+			}
 			if _, exists := diskMap[diskName]; !exists {
 				for _, part := range parts {
 					if part.RebalancedDisk != "" {

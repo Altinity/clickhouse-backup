@@ -69,6 +69,7 @@ type GCSConfig struct {
 	CredentialsFile        string            `yaml:"credentials_file" envconfig:"GCS_CREDENTIALS_FILE"`
 	CredentialsJSON        string            `yaml:"credentials_json" envconfig:"GCS_CREDENTIALS_JSON"`
 	CredentialsJSONEncoded string            `yaml:"credentials_json_encoded" envconfig:"GCS_CREDENTIALS_JSON_ENCODED"`
+	SkipCredentials        bool              `yaml:"skip_credentials" envconfig:"GCS_SKIP_CREDENTIALS"`
 	Bucket                 string            `yaml:"bucket" envconfig:"GCS_BUCKET"`
 	Path                   string            `yaml:"path" envconfig:"GCS_PATH"`
 	ObjectDiskPath         string            `yaml:"object_disk_path" envconfig:"GCS_OBJECT_DISK_PATH"`

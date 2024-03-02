@@ -1600,7 +1600,7 @@ func TestFIPS(t *testing.T) {
 	installDebIfNotExists(r, "clickhouse", "ca-certificates", "curl", "gettext-base", "bsdmainutils", "dnsutils", "git")
 	r.NoError(dockerExec("clickhouse", "update-ca-certificates"))
 	r.NoError(dockerCP("config-s3-fips.yml", "clickhouse:/etc/clickhouse-backup/config.yml.fips-template"))
-	r.NoError(dockerExec("clickhouse", "git", "clone", "--depth", "1", "https://github.com/drwetter/testssl.sh.git", "/opt/testssl"))
+	r.NoError(dockerExec("clickhouse", "git", "clone", "--depth", "1", "--branch", "v3.2rc3", "https://github.com/drwetter/testssl.sh.git", "/opt/testssl"))
 	r.NoError(dockerExec("clickhouse", "chmod", "+x", "/opt/testssl/testssl.sh"))
 
 	generateCerts := func(certType, keyLength, curveType string) {
@@ -1659,7 +1659,7 @@ func TestFIPS(t *testing.T) {
 
 		r.NoError(dockerExec("clickhouse", "bash", "-ce", "rm -rf /tmp/testssl* && /opt/testssl/testssl.sh -e -s -oC /tmp/testssl.csv --color 0 --disable-rating --quiet -n min --mode parallel --add-ca /etc/clickhouse-backup/ca-cert.pem localhost:7172"))
 		r.NoError(dockerExec("clickhouse", "cat", "/tmp/testssl.csv"))
-		out, err := dockerExecOut("clickhouse", "bash", "-ce", fmt.Sprintf("grep -o -E '%s' /tmp/testssl.csv | wc -l", strings.Join(cipherList, "|")))
+		out, err := dockerExecOut("clickhouse", "bash", "-ce", fmt.Sprintf("grep -o -E '%s' /tmp/testssl.csv | uniq | wc -l", strings.Join(cipherList, "|")))
 		r.NoError(err)
 		r.Equal(strconv.Itoa(len(cipherList)), strings.Trim(out, " \t\r\n"))
 
@@ -1718,6 +1718,15 @@ func TestIntegrationGCS(t *testing.T) {
 	}
 	//t.Parallel()
 	runMainIntegrationScenario(t, "GCS", "config-gcs.yml")
+}
+
+func TestIntegrationGCSWithCustomEndpoint(t *testing.T) {
+	if isTestShouldSkip("GCS_TESTS") {
+		t.Skip("Skipping GCS_EMULATOR integration tests...")
+		return
+	}
+	//t.Parallel()
+	runMainIntegrationScenario(t, "GCS_EMULATOR", "config-gcs-custom-endpoint.yml")
 }
 
 func TestIntegrationSFTPAuthPassword(t *testing.T) {
@@ -2110,7 +2119,6 @@ func checkObjectStorageIsEmpty(t *testing.T, r *require.Assertions, remoteStorag
 	}
 	if remoteStorageType == "SFTP" {
 		checkRemoteDir("total 0", "sshd", "bash", "-c", "ls -lh /root/")
-
 	}
 	if remoteStorageType == "FTP" {
 		if strings.Contains(os.Getenv("COMPOSE_FILE"), "advanced") {
@@ -2119,9 +2127,8 @@ func checkObjectStorageIsEmpty(t *testing.T, r *require.Assertions, remoteStorag
 			checkRemoteDir("total 0", "ftp", "bash", "-c", "ls -lh /home/vsftpd/test_backup/backup/")
 		}
 	}
-	//todo check gcs backup is empty
-	if remoteStorageType == "GCS" {
-
+	if remoteStorageType == "GCS_EMULATOR" {
+		checkRemoteDir("total 0", "gcs", "sh", "-c", "ls -lh /data/altinity-qa-test/")
 	}
 }
 
