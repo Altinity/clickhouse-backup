@@ -515,7 +515,7 @@ s3:
   part_size: 0                     # S3_PART_SIZE, if less or eq 0 then it is calculated as max_file_size / max_parts_count, between 5MB and 5Gb
   max_parts_count: 10000           # S3_MAX_PARTS_COUNT, number of parts for S3 multipart uploads
   allow_multipart_download: false  # S3_ALLOW_MULTIPART_DOWNLOAD, allow faster download and upload speeds, but will require additional disk space, download_concurrency * part size in worst case
-  checksum_algorithm: ""           # S3_CHECKSUM_ALGORITHM, use it when you use object lock which allow to avoid delete keys from bucket until some timeout after creation, use CRC32 as fastets
+  checksum_algorithm: ""           # S3_CHECKSUM_ALGORITHM, use it when you use object lock which allow to avoid delete keys from bucket until some timeout after creation, use CRC32 as fastest
 
   # S3_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
   # The format for this env variable is "key1:value1,key2:value2". For YAML please continue using map syntax
