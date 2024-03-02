@@ -182,8 +182,8 @@ services:
     image: minio/minio:${MINIO_VERSION:-latest}
     hostname: minio
     environment:
-      MINIO_ACCESS_KEY: access-key
-      MINIO_SECRET_KEY: it-is-my-super-secret-key
+      MINIO_ACCESS_KEY: access_key
+      MINIO_SECRET_KEY: it_is_my_super_secret_key
     entrypoint: sh
     command: -c 'mkdir -p doc_gen_minio/export/clickhouse && minio server doc_gen_minio/export'
     healthcheck:

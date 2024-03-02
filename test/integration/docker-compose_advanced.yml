@@ -40,11 +40,11 @@ services:
     image: docker.io/bitnami/minio:${MINIO_VERSION:-latest}
     container_name: minio
     environment:
-      MINIO_ACCESS_KEY: access-key
-      MINIO_SECRET_KEY: it-is-my-super-secret-key
+      MINIO_ACCESS_KEY: access_key
+      MINIO_SECRET_KEY: it_is_my_super_secret_key
       MINIO_DEFAULT_BUCKETS: 'clickhouse'
-      MINIO_ROOT_USER: access-key
-      MINIO_ROOT_PASSWORD: it-is-my-super-secret-key
+      MINIO_ROOT_USER: access_key
+      MINIO_ROOT_PASSWORD: it_is_my_super_secret_key
     healthcheck:
       test: curl -sL http://localhost:9000/
       interval: 10s
@@ -184,9 +184,13 @@ services:
       QA_AWS_SECRET_KEY: ${QA_AWS_SECRET_KEY}
       QA_AWS_BUCKET: ${QA_AWS_BUCKET}
       QA_AWS_REGION: ${QA_AWS_REGION}
+# GCS over S3 embedded backups
+      QA_GCS_OVER_S3_ACCESS_KEY: "${QA_GCS_OVER_S3_ACCESS_KEY}"
+      QA_GCS_OVER_S3_SECRET_KEY: "${QA_GCS_OVER_S3_SECRET_KEY}"
+      QA_GCS_OVER_S3_BUCKET: "${QA_GCS_OVER_S3_BUCKET}"
 # https://github.com/Altinity/clickhouse-backup/issues/691:
-      AWS_ACCESS_KEY_ID: access-key
-      AWS_SECRET_ACCESS_KEY: it-is-my-super-secret-key
+      AWS_ACCESS_KEY_ID: access_key
+      AWS_SECRET_ACCESS_KEY: it_is_my_super_secret_key
     volumes_from:
       - clickhouse
     ports:
@@ -207,6 +211,7 @@ services:
     user: root
     environment:
       CLICKHOUSE_VERSION: ${CLICKHOUSE_VERSION:-19.17}
+      CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS: "true"
       TZ: UTC
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       S3_DEBUG: "${S3_DEBUG:-false}"
@@ -222,8 +227,8 @@ services:
       QA_AWS_BUCKET: ${QA_AWS_BUCKET}
       QA_AWS_REGION: ${QA_AWS_REGION}
 # https://github.com/Altinity/clickhouse-backup/issues/691:
-      AWS_ACCESS_KEY_ID: access-key
-      AWS_SECRET_ACCESS_KEY: it-is-my-super-secret-key
+      AWS_ACCESS_KEY_ID: access_key
+      AWS_SECRET_ACCESS_KEY: it_is_my_super_secret_key
 #     GCS over S3 object disk
       QA_GCS_OVER_S3_ACCESS_KEY: "${QA_GCS_OVER_S3_ACCESS_KEY}"
       QA_GCS_OVER_S3_SECRET_KEY: "${QA_GCS_OVER_S3_SECRET_KEY}"
@@ -243,6 +248,7 @@ services:
       - ./credentials.json:/etc/clickhouse-backup/credentials.json
       - ./config-azblob.yml:/etc/clickhouse-backup/config-azblob.yml
       - ./config-azblob-embedded.yml:/etc/clickhouse-backup/config-azblob-embedded.yml
+      - ./config-azblob-embedded-url.yml:/etc/clickhouse-backup/config-azblob-embedded-url.yml
       - ./config-custom-kopia.yml:/etc/clickhouse-backup/config-custom-kopia.yml
       - ./config-custom-restic.yml:/etc/clickhouse-backup/config-custom-restic.yml
       - ./config-custom-rsync.yml:/etc/clickhouse-backup/config-custom-rsync.yml
@@ -250,9 +256,11 @@ services:
       - ./config-ftp.yaml:/etc/clickhouse-backup/config-ftp.yaml
       - ./config-ftp-old.yaml:/etc/clickhouse-backup/config-ftp-old.yaml
       - ./config-gcs.yml:/etc/clickhouse-backup/config-gcs.yml
+      - ./config-gcs-embedded-url.yml:/etc/clickhouse-backup/config-gcs-embedded-url.yml.template
       - ./config-gcs-custom-endpoint.yml:/etc/clickhouse-backup/config-gcs-custom-endpoint.yml
       - ./config-s3.yml:/etc/clickhouse-backup/config-s3.yml
       - ./config-s3-embedded.yml:/etc/clickhouse-backup/config-s3-embedded.yml
+      - ./config-s3-embedded-url.yml:/etc/clickhouse-backup/config-s3-embedded-url.yml
       - ./config-s3-fips.yml:/etc/clickhouse-backup/config-s3-fips.yml.template
       - ./config-s3-nodelete.yml:/etc/clickhouse-backup/config-s3-nodelete.yml
       - ./config-s3-plain-embedded.yml:/etc/clickhouse-backup/config-s3-plain-embedded.yml

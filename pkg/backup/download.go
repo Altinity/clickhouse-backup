@@ -117,7 +117,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	if b.cfg.General.RemoteStorage == "custom" {
 		return custom.Download(ctx, b.cfg, backupName, tablePattern, partitions, schemaOnly)
 	}
-	if err := b.init(ctx, disks, ""); err != nil {
+	if err := b.initDisksPathdsAndBackupDestination(ctx, disks, ""); err != nil {
 		return err
 	}
 	defer func() {
@@ -243,16 +243,14 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		}
 	}
 	var rbacSize, configSize uint64
-	if !b.isEmbedded {
-		rbacSize, err = b.downloadRBACData(ctx, remoteBackup)
-		if err != nil {
-			return fmt.Errorf("download RBAC error: %v", err)
-		}
+	rbacSize, err = b.downloadRBACData(ctx, remoteBackup)
+	if err != nil {
+		return fmt.Errorf("download RBAC error: %v", err)
+	}
 
-		configSize, err = b.downloadConfigData(ctx, remoteBackup)
-		if err != nil {
-			return fmt.Errorf("download CONFIGS error: %v", err)
-		}
+	configSize, err = b.downloadConfigData(ctx, remoteBackup)
+	if err != nil {
+		return fmt.Errorf("download CONFIGS error: %v", err)
 	}
 
 	backupMetadata := remoteBackup.BackupMetadata
@@ -260,7 +258,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	backupMetadata.DataSize = dataSize
 	backupMetadata.MetadataSize = metadataSize
 
-	if b.isEmbedded {
+	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
 		localClickHouseBackupFile := path.Join(b.EmbeddedBackupDataPath, backupName, ".backup")
 		remoteClickHouseBackupFile := path.Join(backupName, ".backup")
 		if err = b.downloadSingleBackupFile(ctx, remoteClickHouseBackupFile, localClickHouseBackupFile, disks); err != nil {
@@ -275,7 +273,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	backupMetadata.RBACSize = rbacSize
 
 	backupMetafileLocalPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata.json")
-	if b.isEmbedded {
+	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
 		backupMetafileLocalPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata.json")
 	}
 	if err := backupMetadata.Save(backupMetafileLocalPath); err != nil {
@@ -415,7 +413,7 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 	remoteMedataPrefix := path.Join(backupName, "metadata", common.TablePathEncode(tableTitle.Database), common.TablePathEncode(tableTitle.Table))
 	metadataFiles[fmt.Sprintf("%s.json", remoteMedataPrefix)] = path.Join(b.DefaultDataPath, "backup", backupName, "metadata", common.TablePathEncode(tableTitle.Database), fmt.Sprintf("%s.json", common.TablePathEncode(tableTitle.Table)))
 	partitionsIdMap := make(map[metadata.TableTitle]common.EmptyMap)
-	if b.isEmbedded {
+	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
 		metadataFiles[fmt.Sprintf("%s.sql", remoteMedataPrefix)] = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata", common.TablePathEncode(tableTitle.Database), fmt.Sprintf("%s.sql", common.TablePathEncode(tableTitle.Table)))
 		metadataFiles[fmt.Sprintf("%s.json", remoteMedataPrefix)] = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata", common.TablePathEncode(tableTitle.Database), fmt.Sprintf("%s.json", common.TablePathEncode(tableTitle.Table)))
 	}

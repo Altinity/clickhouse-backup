@@ -64,7 +64,7 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	if _, disks, err = b.getLocalBackup(ctx, backupName, nil); err != nil {
 		return fmt.Errorf("can't find local backup: %v", err)
 	}
-	if err := b.init(ctx, disks, backupName); err != nil {
+	if err := b.initDisksPathdsAndBackupDestination(ctx, disks, backupName); err != nil {
 		return err
 	}
 	defer func() {
@@ -147,7 +147,8 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 		idx := i
 		uploadGroup.Go(func() error {
 			var uploadedBytes int64
-			if !schemaOnly {
+			//skip upload data for embedded backup with empty embedded_backup_disk
+			if !schemaOnly && (!b.isEmbedded || b.cfg.ClickHouse.EmbeddedBackupDisk != "") {
 				var files map[string][]string
 				var err error
 				files, uploadedBytes, err = b.uploadTableData(uploadCtx, backupName, tablesForUpload[idx])
@@ -174,16 +175,14 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 		return fmt.Errorf("one of upload table go-routine return error: %v", err)
 	}
 
-	if !b.isEmbedded {
-		// upload rbac for backup
-		if backupMetadata.RBACSize, err = b.uploadRBACData(ctx, backupName); err != nil {
-			return fmt.Errorf("b.uploadRBACData return error: %v", err)
-		}
+	// upload rbac for backup
+	if backupMetadata.RBACSize, err = b.uploadRBACData(ctx, backupName); err != nil {
+		return fmt.Errorf("b.uploadRBACData return error: %v", err)
+	}
 
-		// upload configs for backup
-		if backupMetadata.ConfigSize, err = b.uploadConfigData(ctx, backupName); err != nil {
-			return fmt.Errorf("b.uploadConfigData return error: %v", err)
-		}
+	// upload configs for backup
+	if backupMetadata.ConfigSize, err = b.uploadConfigData(ctx, backupName); err != nil {
+		return fmt.Errorf("b.uploadConfigData return error: %v", err)
 	}
 
 	// upload metadata for backup
@@ -216,7 +215,7 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 			return fmt.Errorf("can't upload %s: %v", remoteBackupMetaFile, err)
 		}
 	}
-	if b.isEmbedded {
+	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
 		localClickHouseBackupFile := path.Join(b.EmbeddedBackupDataPath, backupName, ".backup")
 		remoteClickHouseBackupFile := path.Join(backupName, ".backup")
 		if err = b.uploadSingleBackupFile(ctx, localClickHouseBackupFile, remoteClickHouseBackupFile); err != nil {
@@ -312,7 +311,7 @@ func (b *Backuper) uploadSingleBackupFile(ctx context.Context, localFile, remote
 
 func (b *Backuper) prepareTableListToUpload(ctx context.Context, backupName string, tablePattern string, partitions []string) (tablesForUpload ListOfTables, err error) {
 	metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
-	if b.isEmbedded {
+	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
 		metadataPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
 	}
 	tablesForUpload, _, err = b.getTableListByPatternLocal(ctx, metadataPath, tablePattern, false, partitions)
@@ -454,7 +453,12 @@ func (b *Backuper) validateUploadParams(ctx context.Context, backupName string, 
 }
 
 func (b *Backuper) uploadConfigData(ctx context.Context, backupName string) (uint64, error) {
-	configBackupPath := path.Join(b.DefaultDataPath, "backup", backupName, "configs")
+	backupPath := b.DefaultDataPath
+	configBackupPath := path.Join(backupPath, "backup", backupName, "configs")
+	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
+		backupPath = b.EmbeddedBackupDataPath
+		configBackupPath = path.Join(backupPath, backupName, "configs")
+	}
 	configFilesGlobPattern := path.Join(configBackupPath, "**/*.*")
 	if b.cfg.GetCompressionFormat() == "none" {
 		remoteConfigsDir := path.Join(backupName, "configs")
@@ -465,7 +469,12 @@ func (b *Backuper) uploadConfigData(ctx context.Context, backupName string) (uin
 }
 
 func (b *Backuper) uploadRBACData(ctx context.Context, backupName string) (uint64, error) {
-	rbacBackupPath := path.Join(b.DefaultDataPath, "backup", backupName, "access")
+	backupPath := b.DefaultDataPath
+	rbacBackupPath := path.Join(backupPath, "backup", backupName, "access")
+	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
+		backupPath = b.EmbeddedBackupDataPath
+		rbacBackupPath = path.Join(backupPath, backupName, "access")
+	}
 	accessFilesGlobPattern := path.Join(rbacBackupPath, "*.*")
 	if b.cfg.GetCompressionFormat() == "none" {
 		remoteRBACDir := path.Join(backupName, "access")
@@ -678,6 +687,9 @@ func (b *Backuper) uploadTableMetadataRegular(ctx context.Context, backupName st
 }
 
 func (b *Backuper) uploadTableMetadataEmbedded(ctx context.Context, backupName string, tableMetadata metadata.TableMetadata) (int64, error) {
+	if b.cfg.ClickHouse.EmbeddedBackupDisk == "" {
+		return 0, nil
+	}
 	remoteTableMetaFile := path.Join(backupName, "metadata", common.TablePathEncode(tableMetadata.Database), fmt.Sprintf("%s.sql", common.TablePathEncode(tableMetadata.Table)))
 	if b.resume {
 		if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(remoteTableMetaFile); isProcessed {

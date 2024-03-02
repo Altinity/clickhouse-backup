@@ -226,13 +226,17 @@ func (gcs *GCS) WalkAbsolute(ctx context.Context, rootPath string, recursive boo
 }
 
 func (gcs *GCS) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {
+	return gcs.GetFileReaderAbsolute(ctx, path.Join(gcs.Config.Path, key))
+}
+
+func (gcs *GCS) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadCloser, error) {
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
 	if err != nil {
 		apexLog.Errorf("gcs.GetFileReader: gcs.clientPool.BorrowObject error: %+v", err)
 		return nil, err
 	}
 	pClient := pClientObj.(*clientObject).Client
-	obj := pClient.Bucket(gcs.Config.Bucket).Object(path.Join(gcs.Config.Path, key))
+	obj := pClient.Bucket(gcs.Config.Bucket).Object(key)
 	reader, err := obj.NewReader(ctx)
 	if err != nil {
 		if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
@@ -251,13 +255,16 @@ func (gcs *GCS) GetFileReaderWithLocalPath(ctx context.Context, key, _ string) (
 }
 
 func (gcs *GCS) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
+	return gcs.PutFileAbsolute(ctx, path.Join(gcs.Config.Path, key), r)
+}
+
+func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser) error {
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
 	if err != nil {
 		apexLog.Errorf("gcs.PutFile: gcs.clientPool.BorrowObject error: %+v", err)
 		return err
 	}
 	pClient := pClientObj.(*clientObject).Client
-	key = path.Join(gcs.Config.Path, key)
 	obj := pClient.Bucket(gcs.Config.Bucket).Object(key)
 	writer := obj.NewWriter(ctx)
 	writer.StorageClass = gcs.Config.StorageClass

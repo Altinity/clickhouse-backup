@@ -1,3 +1,15 @@
+# v2.5.0 (not released yet)
+IMPROVEMENTS
+- added support for `use_embedded_backup_restore: true` with empty `embedded_backup_disk` value, tested on S3/GCS over S3/AzureBlobStorage, fix [695](https://github.com/Altinity/clickhouse-backup/issues/695)
+- `--rbac, --rbac-only, --configs, --configs-only` now works with `use_embedded_backup_restore: true`
+
+BUG FIXES
+- continue `S3_MAX_PARTS_COUNT` default value from `2000` to `4000` to continue decrease memory usage for S3 
+- changed minimal part size for multipart upload in CopyObject from `5Mb` to `10Mb`
+- restore SQL UDF functions after restore tables
+- execute `ALTER TABLE ... DROP PARTITION` instead of `DROP TABLE` for `restore` and `restore_remote` with parameters `--data --partitions=...`, fix [756](https://github.com/Altinity/clickhouse-backup/issues/756) 
+- fix wrong behavior for `freeze_by_part` + `freeze_by_part_where`, fix [855](https://github.com/Altinity/clickhouse-backup/issues/855)
+
 # v2.4.33
 BUG FIXES
 - fixed wrong anonymous authorization for service account for GCS, added `GCS_SKIP_CREDENTIALS` fix [848](https://github.com/Altinity/clickhouse-backup/issues/848), fix [847](https://github.com/Altinity/clickhouse-backup/pull/847), thanks @sanadhis

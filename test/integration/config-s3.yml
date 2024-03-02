@@ -25,8 +25,8 @@ clickhouse:
   # restart_command: bash -c 'echo "FAKE RESTART"'
   backup_mutations: true
 s3:
-  access_key: access-key
-  secret_key: it-is-my-super-secret-key
+  access_key: access_key
+  secret_key: it_is_my_super_secret_key
   bucket: clickhouse
   endpoint: http://minio:9000
   acl: private
