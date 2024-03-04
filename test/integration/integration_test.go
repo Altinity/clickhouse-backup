@@ -2251,7 +2251,8 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, ch *Test
 		r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT sum(c) FROM (SELECT count() AS c FROM "+dbName+".t1 UNION ALL SELECT count() AS c FROM "+dbName+".t2)"))
 		r.Equal(expectedCount, result, "expect count=%d", expectedCount)
 	}
-	if remoteStorageType == "FTP" {
+
+	if remoteStorageType == "FTP" && !strings.Contains(backupConfig, "old") {
 		// during DROP PARTITION, we create empty covered part, and cant restore via ATTACH TABLE properly, https://github.com/Altinity/clickhouse-backup/issues/756
 		out, err = dockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" restore --data --partitions=\"(0,'2022-01-02'),(0,'2022-01-03')\" "+fullBackupName)
 		r.Error(err)
