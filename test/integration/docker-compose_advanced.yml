@@ -143,6 +143,10 @@ services:
     volumes:
       - ./clickhouse-keeper.xml:/etc/clickhouse-keeper/conf.d/clickhouse-keeper.xml
       - /var/lib/clickhouse
+      - /var/lib/clickhouse-keeper
+    environment:
+      - CLICKHOUSE_UID=0
+      - CLICKHOUSE_GID=0
     networks:
       - clickhouse-backup
     healthcheck:
