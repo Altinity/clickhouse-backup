@@ -138,6 +138,8 @@ services:
       timeout: 5s
       retries: 40
       start_period: 10s
+    cap_add:
+      - SYS_NICE
     depends_on:
       clickhouse1:
         condition: service_healthy

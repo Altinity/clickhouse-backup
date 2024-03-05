@@ -37,10 +37,16 @@ func main() {
 	}
 	cliapp.Flags = []cli.Flag{
 		cli.StringFlag{
-			Name:   "config, c",
-			Value:  config.DefaultConfigPath,
-			Usage:  "Config 'FILE' name.",
-			EnvVar: "CLICKHOUSE_BACKUP_CONFIG",
+			Name:     "config, c",
+			Value:    config.DefaultConfigPath,
+			Usage:    "Config 'FILE' name.",
+			EnvVar:   "CLICKHOUSE_BACKUP_CONFIG",
+			Required: false,
+		},
+		cli.StringSliceFlag{
+			Name:     "environment-override, env",
+			Usage:    "override any environment variable via CLI parameter",
+			Required: false,
 		},
 		cli.IntFlag{
 			Name:     "command-id",

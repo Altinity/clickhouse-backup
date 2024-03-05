@@ -748,7 +748,8 @@ func runClickHouseClientInsertSystemBackupActions(r *require.Assertions, ch *Tes
 	}
 }
 func testAPIBackupActions(r *require.Assertions, ch *TestClickHouse) {
-	runClickHouseClientInsertSystemBackupActions(r, ch, []string{"create_remote actions_backup1"}, true)
+	// STANDARD_IA for https://github.com/Altinity/clickhouse-backup/issues/821
+	runClickHouseClientInsertSystemBackupActions(r, ch, []string{"create_remote --env S3_STORAGE_CLASS=STANDARD_IA actions_backup1"}, true)
 	runClickHouseClientInsertSystemBackupActions(r, ch, []string{"delete local actions_backup1", "restore_remote --rm actions_backup1"}, true)
 	runClickHouseClientInsertSystemBackupActions(r, ch, []string{"delete local actions_backup1", "delete remote actions_backup1"}, false)
 
@@ -1172,7 +1173,7 @@ func TestTablePatterns(t *testing.T) {
 			fullCleanup(t, r, ch, []string{testBackupName}, []string{"remote", "local"}, databaseList, false, false, "config-s3.yml")
 			generateTestData(t, r, ch, "S3", defaultTestData)
 			if createPattern {
-				r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", "--tables", " "+dbNameOrdinaryTest+".*", testBackupName))
+				r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", "--env", "S3_STORAGE_CLASS=STANDARD_IA", "--tables", " "+dbNameOrdinaryTest+".*", testBackupName))
 			} else {
 				r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", testBackupName))
 			}

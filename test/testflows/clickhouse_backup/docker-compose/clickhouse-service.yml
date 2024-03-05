@@ -22,7 +22,9 @@ services:
       start_period: 2s
     environment:
       CLICKHOUSE_VERSION: ${CLICKHOUSE_VERSION:-23.3}
+      CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS: "true"
     cap_add:
       - SYS_PTRACE
+      - SYS_NICE
     security_opt:
       - label:disable

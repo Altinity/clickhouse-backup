@@ -304,7 +304,6 @@ func (cfg *Config) GetCompressionFormat() string {
 
 var freezeByPartBeginAndRE = regexp.MustCompile(`(?im)^\s*AND\s+`)
 
-
 // LoadConfig - load config from file + environment variables
 func LoadConfig(configLocation string) (*Config, error) {
 	cfg := DefaultConfig()
@@ -617,6 +616,7 @@ func DefaultConfig() *Config {
 }
 
 func GetConfigFromCli(ctx *cli.Context) *Config {
+	OverrideEnvVars(ctx)
 	configPath := GetConfigPath(ctx)
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
@@ -636,4 +636,19 @@ func GetConfigPath(ctx *cli.Context) string {
 		return os.Getenv("CLICKHOUSE_BACKUP_CONFIG")
 	}
 	return DefaultConfigPath
+}
+
+func OverrideEnvVars(ctx *cli.Context) {
+	env := ctx.StringSlice("env")
+	if len(env) > 0 {
+		for _, v := range env {
+			envVariable := strings.SplitN(v, "=", 1)
+			if len(envVariable) < 2 {
+				envVariable[1] = "true"
+			}
+			if err := os.Setenv(envVariable[0], envVariable[1]); err != nil {
+				log.Warnf("can't override %s=%s, error: %v", envVariable[0], envVariable[1], err)
+			}
+		}
+	}
 }
