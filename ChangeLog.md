@@ -2,7 +2,8 @@
 IMPROVEMENTS
 - added support for `use_embedded_backup_restore: true` with empty `embedded_backup_disk` value, tested on S3/GCS over S3/AzureBlobStorage, fix [695](https://github.com/Altinity/clickhouse-backup/issues/695)
 - `--rbac, --rbac-only, --configs, --configs-only` now works with `use_embedded_backup_restore: true`
-
+-- `--data` for `restore` with `use_embedded_backup_restore: true` will use `allow_non_empty_tables=true` to allow fix [756](https://github.com/Altinity/clickhouse-backup/issues/756)
+ 
 BUG FIXES
 - continue `S3_MAX_PARTS_COUNT` default value from `2000` to `4000` to continue decrease memory usage for S3 
 - changed minimal part size for multipart upload in CopyObject from `5Mb` to `10Mb`
