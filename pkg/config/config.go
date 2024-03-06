@@ -642,10 +642,11 @@ func OverrideEnvVars(ctx *cli.Context) {
 	env := ctx.StringSlice("env")
 	if len(env) > 0 {
 		for _, v := range env {
-			envVariable := strings.SplitN(v, "=", 1)
+			envVariable := strings.SplitN(v, "=", 2)
 			if len(envVariable) < 2 {
-				envVariable[1] = "true"
+				envVariable = append(envVariable, "true")
 			}
+			log.Infof("override %s=%s", envVariable[0], envVariable[1])
 			if err := os.Setenv(envVariable[0], envVariable[1]); err != nil {
 				log.Warnf("can't override %s=%s, error: %v", envVariable[0], envVariable[1], err)
 			}

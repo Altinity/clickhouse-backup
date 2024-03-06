@@ -3,7 +3,7 @@ version: '2.4'
 services:
   zookeeper:
     # @TODO back :latest default value after resolve https://github.com/ClickHouse/ClickHouse/issues/53749
-    image: ${ZOOKEEPER_IMAGE:-docker.io/zookeeper}:${ZOOKEEPER_VERSION:-3.8.3}
+    image: ${ZOOKEEPER_IMAGE:-docker.io/zookeeper}:${ZOOKEEPER_VERSION:-3.8.4}
     expose:
       - "2181"
     environment:
