@@ -1173,6 +1173,7 @@ func TestTablePatterns(t *testing.T) {
 			fullCleanup(t, r, ch, []string{testBackupName}, []string{"remote", "local"}, databaseList, false, false, "config-s3.yml")
 			generateTestData(t, r, ch, "S3", defaultTestData)
 			if createPattern {
+				// --env for check corner cases https://github.com/Altinity/clickhouse-backup/issues/821
 				r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", "--env", "S3_STORAGE_CLASS=STANDARD_IA", "--tables", " "+dbNameOrdinaryTest+".*", testBackupName))
 			} else {
 				r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", testBackupName))
