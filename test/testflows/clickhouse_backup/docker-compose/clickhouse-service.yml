@@ -4,6 +4,7 @@ services:
   clickhouse:
     image: ${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server}:${CLICKHOUSE_VERSION:-23.3}
     volumes:
+      - "${CLICKHOUSE_TESTS_DIR}/docker-compose/custom_entrypoint.sh:/custom_entrypoint.sh"
       - "${CLICKHOUSE_TESTS_DIR}/docker-compose/dynamic_settings.sh:/docker-entrypoint-initdb.d/dynamic_settings.sh"
       - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse/ssl:/etc/clickhouse-server/ssl"
       - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse/config.d/common.xml:/etc/clickhouse-server/config.d/common.xml"
@@ -20,6 +21,12 @@ services:
       timeout: 2s
       retries: 40
       start_period: 2s
+    # to avoid backward incompatibility ;(
+    # https://t.me/clickhouse_ru/359960
+    # https://t.me/clickhouse_ru/359968
+    # https://t.me/clickhouse_ru/362378
+    entrypoint:
+      - "/custom_entrypoint.sh"
     environment:
       CLICKHOUSE_VERSION: ${CLICKHOUSE_VERSION:-23.3}
       CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS: "true"
