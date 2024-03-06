@@ -7,6 +7,8 @@
 if [ $# -ne 0 ]; then
     /entrypoint.sh "$@"
 else
-    /docker-entrypoint-initdb.d/dynamic_settings.sh
+    for script in /docker-entrypoint-initdb.d/*.sh; do
+      $script
+    done
     /entrypoint.sh
 fi
