@@ -566,7 +566,7 @@ func TestConfigs(t *testing.T) {
 
 		r.NoError(dockerExec("clickhouse", "clickhouse-backup", "-c", config, "create", "--configs", "--configs-only", "test_configs_backup"))
 		ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_configs")
-		r.NoError(dockerExec("clickhouse", "bash", "-xec", "CLICKHOUSE_BACKUP_CONFIG="+config+" S3_COMPRESSION_FORMAT=none ALLOW_EMPTY_BACKUPS=1 clickhouse-backup upload test_configs_backup"))
+		r.NoError(dockerExec("clickhouse", "bash", "-xec", "clickhouse-backup upload --env CLICKHOUSE_BACKUP_CONFIG="+config+" --env S3_COMPRESSION_FORMAT=none --env ALLOW_EMPTY_BACKUPS=1 test_configs_backup"))
 		r.NoError(dockerExec("clickhouse", "clickhouse-backup", "-c", config, "delete", "local", "test_configs_backup"))
 
 		ch.queryWithNoError(r, "SYSTEM RELOAD CONFIG")
