@@ -652,7 +652,7 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName, backup
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	uploadObjectDiskPartsWorkingGroup, ctx := errgroup.WithContext(ctx)
-	uploadObjectDiskPartsWorkingGroup.SetLimit(int(b.cfg.General.UploadConcurrency))
+	uploadObjectDiskPartsWorkingGroup.SetLimit(int(b.cfg.General.UploadConcurrency * b.cfg.General.UploadConcurrency))
 	srcDiskConnection, exists := object_disk.DisksConnections.Load(disk.Name)
 	if !exists {
 		return 0, fmt.Errorf("uploadObjectDiskParts: %s not present in object_disk.DisksConnections", disk.Name)
@@ -669,13 +669,13 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName, backup
 		if strings.Contains(fInfo.Name(), "frozen_metadata") {
 			return nil
 		}
-		objPartFileMeta, err := object_disk.ReadMetadataFromFile(fPath)
-		if err != nil {
-			return err
-		}
 		var realSize, objSize int64
 
 		uploadObjectDiskPartsWorkingGroup.Go(func() error {
+			objPartFileMeta, readMetadataErr := object_disk.ReadMetadataFromFile(fPath)
+			if readMetadataErr != nil {
+				return readMetadataErr
+			}
 			for _, storageObject := range objPartFileMeta.StorageObjects {
 				if storageObject.ObjectSize == 0 {
 					continue
