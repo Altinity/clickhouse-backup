@@ -268,7 +268,7 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		if len(diskFields) > 0 && diskFields[0].DiskTypePresent > 0 {
 			diskTypeSQL = "any(d.type)"
 		}
-		diskFreeSpaceSQL := "0"
+		diskFreeSpaceSQL := "toUInt64(0)"
 		if len(diskFields) > 0 && diskFields[0].FreeSpacePresent > 0 {
 			diskFreeSpaceSQL = "min(d.free_space)"
 		}
