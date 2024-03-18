@@ -136,6 +136,15 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 	return result, resultPartitionNames, nil
 }
 
+func (b *Backuper) shouldSkipByTableName(tableFullName string) bool {
+	shallSkipped := false
+	for _, skipPattern := range b.cfg.ClickHouse.SkipTables {
+		if shallSkipped, _ = filepath.Match(skipPattern, tableFullName); shallSkipped {
+			break
+		}
+	}
+	return shallSkipped
+}
 func (b *Backuper) shouldSkipByTableEngine(t metadata.TableMetadata) bool {
 	for _, engine := range b.cfg.ClickHouse.SkipTableEngines {
 		if engine == "MaterializedView" && (strings.HasPrefix(t.Query, "ATTACH MATERIALIZED VIEW") || strings.HasPrefix(t.Query, "CREATE MATERIALIZED VIEW")) {
@@ -146,7 +155,7 @@ func (b *Backuper) shouldSkipByTableEngine(t metadata.TableMetadata) bool {
 			b.log.Warnf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
 			return true
 		}
-		if shouldSkip, err := regexp.MatchString(fmt.Sprintf("(?mi)ENGINE\\s*=\\s*%s\\(", engine), t.Query); err == nil && shouldSkip {
+		if shouldSkip, err := regexp.MatchString(fmt.Sprintf("(?mi)ENGINE\\s*=\\s*%s[\\(\\s]", engine), t.Query); err == nil && shouldSkip {
 			b.log.Warnf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
 			return true
 		} else if err != nil {
@@ -168,12 +177,7 @@ func (b *Backuper) checkShallSkipped(p string, metadataPath string) ([]string, s
 	}
 	table, _ := url.PathUnescape(names[1])
 	tableFullName := fmt.Sprintf("%s.%s", database, table)
-	shallSkipped := false
-	for _, skipPattern := range b.cfg.ClickHouse.SkipTables {
-		if shallSkipped, _ = filepath.Match(skipPattern, tableFullName); shallSkipped {
-			break
-		}
-	}
+	shallSkipped := b.shouldSkipByTableName(tableFullName)
 	return names, database, table, tableFullName, shallSkipped, true
 }
 
@@ -384,11 +388,8 @@ func getTableListByPatternRemote(ctx context.Context, b *Backuper, remoteBackupM
 			continue
 		}
 		tableName := fmt.Sprintf("%s.%s", t.Database, t.Table)
-		shallSkipped := false
-		for _, skipPattern := range b.cfg.ClickHouse.SkipTables {
-			if shallSkipped, _ = filepath.Match(skipPattern, tableName); shallSkipped {
-				break
-			}
+		if shallSkipped := b.shouldSkipByTableName(tableName); shallSkipped {
+			continue
 		}
 	tablePatterns:
 		for _, p := range tablePatterns {
@@ -396,7 +397,7 @@ func getTableListByPatternRemote(ctx context.Context, b *Backuper, remoteBackupM
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			default:
-				if matched, _ := filepath.Match(strings.Trim(p, " \t\r\n"), tableName); !matched || shallSkipped {
+				if matched, _ := filepath.Match(strings.Trim(p, " \t\r\n"), tableName); !matched {
 					continue
 				}
 				tmReader, err := b.dst.GetFileReader(ctx, path.Join(metadataPath, common.TablePathEncode(t.Database), fmt.Sprintf("%s.json", common.TablePathEncode(t.Table))))

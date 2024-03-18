@@ -1,3 +1,7 @@
+# v2.4.34 (not released yet)
+BUG FIXES
+- fixed wrong behavior for CLICKHOUSE_SKIP_TABLES_ENGINES for engine=EngineName without parameters
+
 # v2.4.33
 BUG FIXES
 - fixed wrong anonymous authorization for service account for GCS, added `GCS_SKIP_CREDENTIALS` fix [848](https://github.com/Altinity/clickhouse-backup/issues/848), fix [847](https://github.com/Altinity/clickhouse-backup/pull/847), thanks @sanadhis

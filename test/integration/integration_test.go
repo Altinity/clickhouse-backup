@@ -1136,6 +1136,97 @@ func TestSkipNotExistsTable(t *testing.T) {
 	t.Log("TestSkipNotExistsTable DONE, ALL OK")
 }
 
+func TestSkipTablesAndSkipTableEngines(t *testing.T) {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.3") < 0 {
+		t.Skipf("TestSkipTablesAndSkipTableEngines requires engine=Kafka which not supported in %s version", os.Getenv("CLICKHOUSE_VERSION"))
+	}
+	//t.Parallel()
+	ch := &TestClickHouse{}
+	r := require.New(t)
+	ch.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Second)
+	defer ch.chbackend.Close()
+	ch.queryWithNoError(r, "CREATE DATABASE test_skip_tables")
+	ch.queryWithNoError(r, "CREATE TABLE IF NOT EXISTS test_skip_tables.test_merge_tree (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	ch.queryWithNoError(r, "CREATE TABLE IF NOT EXISTS test_skip_tables.test_memory (id UInt64) ENGINE=Memory")
+	// create
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLES=*.test_merge_tree clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml create skip_merge_tree"))
+	r.Error(dockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_merge_tree/metadata/test_skip_tables/test_merge_tree.json"))
+	r.NoError(dockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_merge_tree/metadata/test_skip_tables/test_memory.json"))
+
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLE_ENGINES=memory clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml create skip_memory"))
+	r.NoError(dockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_memory/metadata/test_skip_tables/test_merge_tree.json"))
+	r.Error(dockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_memory/metadata/test_skip_tables/test_memory.json"))
+
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local skip_merge_tree"))
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local skip_memory"))
+
+	//upload
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml create test_skip_full_backup"))
+
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "USE_RESUMABLE_STATE=0 CLICKHOUSE_SKIP_TABLES=*.test_memory clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload test_skip_full_backup"))
+	r.NoError(dockerExec("minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_merge_tree.json"))
+	r.Error(dockerExec("minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_memory.json"))
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete remote test_skip_full_backup"))
+
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "USE_RESUMABLE_STATE=0 CLICKHOUSE_SKIP_TABLE_ENGINES=MergeTree clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload test_skip_full_backup"))
+	r.Error(dockerExec("minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_merge_tree.json"))
+	r.NoError(dockerExec("minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_memory.json"))
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete remote test_skip_full_backup"))
+
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "USE_RESUMABLE_STATE=0 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload test_skip_full_backup"))
+	r.NoError(dockerExec("minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_merge_tree.json"))
+	r.NoError(dockerExec("minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_memory.json"))
+
+	//download
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local test_skip_full_backup"))
+
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "USE_RESUMABLE_STATE=0 CLICKHOUSE_SKIP_TABLES=*.test_memory clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml download test_skip_full_backup"))
+	r.NoError(dockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_merge_tree.json"))
+	r.Error(dockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_memory.json"))
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "USE_RESUMABLE_STATE=0 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local test_skip_full_backup"))
+
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "USE_RESUMABLE_STATE=0 CLICKHOUSE_SKIP_TABLE_ENGINES=MergeTree clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml download test_skip_full_backup"))
+	r.Error(dockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_merge_tree.json"))
+	r.NoError(dockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_memory.json"))
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local test_skip_full_backup"))
+
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "USE_RESUMABLE_STATE=0 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml download test_skip_full_backup"))
+	r.NoError(dockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_merge_tree.json"))
+	r.NoError(dockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_memory.json"))
+
+	//restore
+	ch.queryWithNoError(r, "DROP DATABASE test_skip_tables SYNC")
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLES=*.test_memory clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore test_skip_full_backup"))
+	result := uint64(0)
+	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT count() FROM system.tables WHERE database='test_skip_tables' AND table='test_merge_tree'"))
+	r.Equal(uint64(1), result)
+	result = uint64(1)
+	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT count() FROM system.tables WHERE database='test_skip_tables' AND table='test_memory'"))
+	r.Equal(uint64(0), result)
+
+	ch.queryWithNoError(r, "DROP DATABASE test_skip_tables SYNC")
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLE_ENGINES=MergeTree clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore test_skip_full_backup"))
+	result = uint64(1)
+	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT count() FROM system.tables WHERE database='test_skip_tables' AND table='test_merge_tree'"))
+	r.Equal(uint64(0), result)
+	result = uint64(0)
+	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT count() FROM system.tables WHERE database='test_skip_tables' AND table='test_memory'"))
+	r.Equal(uint64(1), result)
+
+	ch.queryWithNoError(r, "DROP DATABASE test_skip_tables SYNC")
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore test_skip_full_backup"))
+	result = uint64(0)
+	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT count() FROM system.tables WHERE database='test_skip_tables' AND table='test_merge_tree'"))
+	r.Equal(uint64(1), result)
+	result = uint64(0)
+	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT count() FROM system.tables WHERE database='test_skip_tables' AND table='test_memory'"))
+	r.Equal(uint64(1), result)
+
+	ch.queryWithNoError(r, "DROP DATABASE test_skip_tables SYNC")
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local test_skip_full_backup"))
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete remote test_skip_full_backup"))
+}
+
 func TestTablePatterns(t *testing.T) {
 	//t.Parallel()
 	ch := &TestClickHouse{}
