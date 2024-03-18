@@ -1192,7 +1192,11 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	r.NoError(dockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_memory.json"))
 
 	//restore
-	ch.queryWithNoError(r, "DROP DATABASE test_skip_tables SYNC")
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "1.1.54394") > 0 {
+		ch.queryWithNoError(r, "DROP DATABASE test_skip_tables SYNC")
+	} else {
+		ch.queryWithNoError(r, "DROP DATABASE test_skip_tables")
+	}
 	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLES=*.test_memory clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore test_skip_full_backup"))
 	result := uint64(0)
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT count() FROM system.tables WHERE database='test_skip_tables' AND name='test_merge_tree'"))
@@ -1201,7 +1205,11 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT count() FROM system.tables WHERE database='test_skip_tables' AND name='test_memory'"))
 	r.Equal(uint64(0), result)
 
-	ch.queryWithNoError(r, "DROP DATABASE test_skip_tables SYNC")
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "1.1.54394") > 0 {
+		ch.queryWithNoError(r, "DROP DATABASE test_skip_tables SYNC")
+	} else {
+		ch.queryWithNoError(r, "DROP DATABASE test_skip_tables")
+	}
 	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLE_ENGINES=MergeTree clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore test_skip_full_backup"))
 	result = uint64(1)
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT count() FROM system.tables WHERE database='test_skip_tables' AND name='test_merge_tree'"))
@@ -1210,7 +1218,11 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT count() FROM system.tables WHERE database='test_skip_tables' AND name='test_memory'"))
 	r.Equal(uint64(1), result)
 
-	ch.queryWithNoError(r, "DROP DATABASE test_skip_tables SYNC")
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "1.1.54394") > 0 {
+		ch.queryWithNoError(r, "DROP DATABASE test_skip_tables SYNC")
+	} else {
+		ch.queryWithNoError(r, "DROP DATABASE test_skip_tables")
+	}
 	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore test_skip_full_backup"))
 	result = uint64(0)
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT count() FROM system.tables WHERE database='test_skip_tables' AND name='test_merge_tree'"))
@@ -1219,7 +1231,11 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT count() FROM system.tables WHERE database='test_skip_tables' AND name='test_memory'"))
 	r.Equal(uint64(1), result)
 
-	ch.queryWithNoError(r, "DROP DATABASE test_skip_tables SYNC")
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "1.1.54394") > 0 {
+		ch.queryWithNoError(r, "DROP DATABASE test_skip_tables SYNC")
+	} else {
+		ch.queryWithNoError(r, "DROP DATABASE test_skip_tables")
+	}
 	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local test_skip_full_backup"))
 	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete remote test_skip_full_backup"))
 }
