@@ -1192,8 +1192,8 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	r.NoError(dockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_memory.json"))
 
 	//restore
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "1.1.54394") > 0 {
-		ch.queryWithNoError(r, "DROP DATABASE test_skip_tables SYNC")
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.7") >= 0 {
+		ch.queryWithNoError(r, "DROP DATABASE test_skip_tables NO DELAY")
 	} else {
 		ch.queryWithNoError(r, "DROP DATABASE test_skip_tables")
 	}
@@ -1205,8 +1205,8 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT count() FROM system.tables WHERE database='test_skip_tables' AND name='test_memory'"))
 	r.Equal(uint64(0), result)
 
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "1.1.54394") > 0 {
-		ch.queryWithNoError(r, "DROP DATABASE test_skip_tables SYNC")
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.7") >= 0 {
+		ch.queryWithNoError(r, "DROP DATABASE test_skip_tables NO DELAY")
 	} else {
 		ch.queryWithNoError(r, "DROP DATABASE test_skip_tables")
 	}
@@ -1218,8 +1218,8 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT count() FROM system.tables WHERE database='test_skip_tables' AND name='test_memory'"))
 	r.Equal(uint64(1), result)
 
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "1.1.54394") > 0 {
-		ch.queryWithNoError(r, "DROP DATABASE test_skip_tables SYNC")
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.7") >= 0 {
+		ch.queryWithNoError(r, "DROP DATABASE test_skip_tables NO DELAY")
 	} else {
 		ch.queryWithNoError(r, "DROP DATABASE test_skip_tables")
 	}
@@ -1231,8 +1231,8 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT count() FROM system.tables WHERE database='test_skip_tables' AND name='test_memory'"))
 	r.Equal(uint64(1), result)
 
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "1.1.54394") > 0 {
-		ch.queryWithNoError(r, "DROP DATABASE test_skip_tables SYNC")
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.7") >= 0 {
+		ch.queryWithNoError(r, "DROP DATABASE test_skip_tables NO DELAY")
 	} else {
 		ch.queryWithNoError(r, "DROP DATABASE test_skip_tables")
 	}
