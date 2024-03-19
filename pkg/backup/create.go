@@ -56,7 +56,7 @@ func NewBackupName() string {
 
 // CreateBackup - create new backup of all tables matched by tablePattern
 // If backupName is empty string will use default backup name
-func (b *Backuper) CreateBackup(backupName, tablePattern, embeddedBaseBackup string, partitions []string, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, skipCheckPartsColumns bool, version string, commandId int) error {
+func (b *Backuper) CreateBackup(backupName, tablePattern, diffFromRemote string, partitions []string, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, skipCheckPartsColumns bool, version string, commandId int) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return err
@@ -126,7 +126,7 @@ func (b *Backuper) CreateBackup(backupName, tablePattern, embeddedBaseBackup str
 	backupRBACSize, backupConfigSize := b.createRBACAndConfigsIfNecessary(ctx, backupName, createRBAC, rbacOnly, createConfigs, configsOnly, disks, diskMap, log)
 
 	if b.cfg.ClickHouse.UseEmbeddedBackupRestore {
-		err = b.createBackupEmbedded(ctx, backupName, doBackupData, schemaOnly, version, tablePattern, embeddedBaseBackup, partitionsNameList, partitionsIdMap, tables, allDatabases, allFunctions, disks, diskMap, diskTypes, backupRBACSize, backupConfigSize, log, startBackup)
+		err = b.createBackupEmbedded(ctx, backupName, doBackupData, schemaOnly, version, tablePattern, diffFromRemote, partitionsNameList, partitionsIdMap, tables, allDatabases, allFunctions, disks, diskMap, diskTypes, backupRBACSize, backupConfigSize, log, startBackup)
 	} else {
 		err = b.createBackupLocal(ctx, backupName, doBackupData, schemaOnly, rbacOnly, configsOnly, version, partitionsIdMap, tables, disks, diskMap, diskTypes, allDatabases, allFunctions, backupRBACSize, backupConfigSize, log, startBackup)
 	}

@@ -96,7 +96,7 @@ func main() {
 			Description: "Create new backup",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CreateBackup(c.Args().First(), c.String("t"), c.String("embbedded-base-backup"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("skip-check-parts-columns"), version, c.Int("command-id"))
+				return b.CreateBackup(c.Args().First(), c.String("t"), c.String("diff-from-remote"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("skip-check-parts-columns"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -105,9 +105,9 @@ func main() {
 					Usage:  "Create backup only matched with table name patterns, separated by comma, allow ? and * as wildcard",
 				},
 				cli.StringFlag{
-					Name:   "embbedded-base-backup",
+					Name:   "diff-from-remote",
 					Hidden: false,
-					Usage:  "Create incremental embedded backup based on other backup name",
+					Usage:  "Create incremental embedded backup or upload incremental object disk data based on other remote backup name",
 				},
 				cli.StringSliceFlag{
 					Name:   "partitions",
