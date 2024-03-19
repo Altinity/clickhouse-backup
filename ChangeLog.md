@@ -1,4 +1,4 @@
-# v2.4.34 (not released yet)
+# v2.4.34
 BUG FIXES
 - fixed wrong behavior for CLICKHOUSE_SKIP_TABLES_ENGINES for engine=EngineName without parameters
 
