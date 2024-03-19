@@ -187,7 +187,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	}
 
 	log.Debugf("prepare table METADATA concurrent semaphore with concurrency=%d len(tablesForDownload)=%d", b.cfg.General.DownloadConcurrency, len(tablesForDownload))
-	tableMetadataAfterDownload := make([]metadata.TableMetadata, len(tablesForDownload))
+	tableMetadataAfterDownload := make([]*metadata.TableMetadata, len(tablesForDownload))
 	metadataGroup, metadataCtx := errgroup.WithContext(ctx)
 	metadataGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
 	for i, t := range tablesForDownload {
@@ -199,10 +199,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			if err != nil {
 				return err
 			}
-			if b.shouldSkipByTableEngine(*downloadedMetadata) {
-				return nil
-			}
-			tableMetadataAfterDownload[idx] = *downloadedMetadata
+			tableMetadataAfterDownload[idx] = downloadedMetadata
 			atomic.AddUint64(&metadataSize, size)
 			return nil
 		})
@@ -219,14 +216,14 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		dataGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
 
 		for i, tableMetadata := range tableMetadataAfterDownload {
-			if tableMetadata.MetadataOnly {
+			if tableMetadata == nil || tableMetadata.MetadataOnly {
 				continue
 			}
 			dataSize += tableMetadata.TotalBytes
 			idx := i
 			dataGroup.Go(func() error {
 				start := time.Now()
-				if err := b.downloadTableData(dataCtx, remoteBackup.BackupMetadata, tableMetadataAfterDownload[idx]); err != nil {
+				if err := b.downloadTableData(dataCtx, remoteBackup.BackupMetadata, *tableMetadataAfterDownload[idx]); err != nil {
 					return err
 				}
 				log.
@@ -298,7 +295,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	return nil
 }
 
-func (b *Backuper) reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownload []metadata.TableMetadata, disks []clickhouse.Disk, remoteBackup storage.Backup, log *apexLog.Entry) error {
+func (b *Backuper) reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownload []*metadata.TableMetadata, disks []clickhouse.Disk, remoteBackup storage.Backup, log *apexLog.Entry) error {
 	var disksByStoragePolicyAndType map[string]map[string][]clickhouse.Disk
 	filterDisksByTypeAndStoragePolicies := func(disk string, diskType string, disks []clickhouse.Disk, remoteBackup storage.Backup, t metadata.TableMetadata) (string, []clickhouse.Disk, error) {
 		_, ok := remoteBackup.DiskTypes[disk]
@@ -328,10 +325,10 @@ func (b *Backuper) reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDown
 	}
 
 	for i, t := range tableMetadataAfterDownload {
-		isRebalanced := false
-		if t.TotalBytes == 0 {
+		if t == nil || t.TotalBytes == 0 {
 			continue
 		}
+		isRebalanced := false
 		totalFiles := 0
 		for disk := range t.Files {
 			totalFiles += len(t.Files[disk])
@@ -348,7 +345,7 @@ func (b *Backuper) reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDown
 		for disk := range t.Parts {
 			if _, diskExists := b.DiskToPathMap[disk]; !diskExists && disk != b.cfg.ClickHouse.EmbeddedBackupDisk {
 				diskType := remoteBackup.DiskTypes[disk]
-				storagePolicy, filteredDisks, err := filterDisksByTypeAndStoragePolicies(disk, diskType, disks, remoteBackup, t)
+				storagePolicy, filteredDisks, err := filterDisksByTypeAndStoragePolicies(disk, diskType, disks, remoteBackup, *t)
 				if err != nil {
 					return err
 				}
@@ -475,6 +472,9 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 		} else {
 			if err = json.Unmarshal(tmBody, &tableMetadata); err != nil {
 				return nil, 0, err
+			}
+			if b.shouldSkipByTableEngine(tableMetadata) || b.shouldSkipByTableName(fmt.Sprintf("%s.%s", tableMetadata.Database, tableMetadata.Table)) {
+				return nil, 0, nil
 			}
 			partitionsIdMap, _ = partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, []metadata.TableMetadata{tableMetadata}, partitions)
 			filterPartsAndFilesByPartitionsFilter(tableMetadata, partitionsIdMap[metadata.TableTitle{Database: tableMetadata.Database, Table: tableMetadata.Table}])
