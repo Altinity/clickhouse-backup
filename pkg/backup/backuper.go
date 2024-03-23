@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"net/url"
 	"os"
 	"path"
@@ -304,4 +305,62 @@ func (b *Backuper) getObjectDiskPath() (string, error) {
 	} else {
 		return "", fmt.Errorf("cleanBackupObjectDisks: requesst object disks path but have unsupported remote_storage: %s", b.cfg.General.RemoteStorage)
 	}
+}
+
+func (b *Backuper) getTablesDiffFromLocal(ctx context.Context, diffFrom string, tablePattern string) (tablesForUploadFromDiff map[metadata.TableTitle]metadata.TableMetadata, err error) {
+	tablesForUploadFromDiff = make(map[metadata.TableTitle]metadata.TableMetadata)
+	diffFromBackup, err := b.ReadBackupMetadataLocal(ctx, diffFrom)
+	if err != nil {
+		return nil, err
+	}
+	if len(diffFromBackup.Tables) != 0 {
+		metadataPath := path.Join(b.DefaultDataPath, "backup", diffFrom, "metadata")
+		// empty partitions, because we don't want filter
+		diffTablesList, _, err := b.getTableListByPatternLocal(ctx, metadataPath, tablePattern, false, []string{})
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range diffTablesList {
+			tablesForUploadFromDiff[metadata.TableTitle{
+				Database: t.Database,
+				Table:    t.Table,
+			}] = t
+		}
+	}
+	return tablesForUploadFromDiff, nil
+}
+
+func (b *Backuper) getTablesDiffFromRemote(ctx context.Context, diffFromRemote string, tablePattern string) (tablesForUploadFromDiff map[metadata.TableTitle]metadata.TableMetadata, err error) {
+	tablesForUploadFromDiff = make(map[metadata.TableTitle]metadata.TableMetadata)
+	backupList, err := b.dst.BackupList(ctx, true, diffFromRemote)
+	if err != nil {
+		return nil, err
+	}
+	var diffRemoteMetadata *metadata.BackupMetadata
+	for _, backup := range backupList {
+		if backup.BackupName == diffFromRemote {
+			if backup.Legacy {
+				return nil, fmt.Errorf("%s have legacy format and can't be used as diff-from-remote source", diffFromRemote)
+			}
+			diffRemoteMetadata = &backup.BackupMetadata
+			break
+		}
+	}
+	if diffRemoteMetadata == nil {
+		return nil, fmt.Errorf("%s not found on remote storage", diffFromRemote)
+	}
+
+	if len(diffRemoteMetadata.Tables) != 0 {
+		diffTablesList, err := getTableListByPatternRemote(ctx, b, diffRemoteMetadata, tablePattern, false)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range diffTablesList {
+			tablesForUploadFromDiff[metadata.TableTitle{
+				Database: t.Database,
+				Table:    t.Table,
+			}] = t
+		}
+	}
+	return tablesForUploadFromDiff, nil
 }

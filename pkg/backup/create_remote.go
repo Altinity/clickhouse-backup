@@ -15,7 +15,7 @@ func (b *Backuper) CreateToRemote(backupName, diffFrom, diffFromRemote, tablePat
 	if backupName == "" {
 		backupName = NewBackupName()
 	}
-	if err := b.CreateBackup(backupName, tablePattern, diffFromRemote, partitions, schemaOnly, backupRBAC, rbacOnly, backupConfigs, configsOnly, skipCheckPartsColumns, version, commandId); err != nil {
+	if err := b.CreateBackup(backupName, diffFromRemote, tablePattern, partitions, schemaOnly, backupRBAC, rbacOnly, backupConfigs, configsOnly, skipCheckPartsColumns, version, commandId); err != nil {
 		return err
 	}
 	if err := b.Upload(backupName, diffFrom, diffFromRemote, tablePattern, partitions, schemaOnly, resume, commandId); err != nil {

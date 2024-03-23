@@ -2296,7 +2296,7 @@ func replaceStorageDiskNameForReBalance(r *require.Assertions, ch *TestClickHous
 		r.NoError(dockerExec("clickhouse", "cp", "-vf", origFile, dstFile))
 	}
 	if isRebalanced {
-		r.NoError(dockerExec("clickhouse", "bash", "-xc", "cp -rfl /var/lib/clickhouse/disks/"+oldDisk+"/*", "/var/lib/clickhouse/disks/"+newDisk+"/"))
+		r.NoError(dockerExec("clickhouse", "bash", "-xc", "cp -aflv -t /var/lib/clickhouse/disks/"+newDisk+"/ /var/lib/clickhouse/disks/"+oldDisk+"/*"))
 		r.NoError(dockerExec("clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/"+oldDisk+""))
 	}
 	ch.chbackend.Close()

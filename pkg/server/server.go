@@ -806,7 +806,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	tablePattern := ""
-	embeddedBaseBackup := ""
+	diffFromRemote := ""
 	partitionsToBackup := make([]string, 0)
 	backupName := backup.NewBackupName()
 	schemaOnly := false
@@ -819,8 +819,8 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		tablePattern = tp[0]
 		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
 	}
-	if baseBackup, exists := query["embedded-base-backup"]; exists {
-		embeddedBaseBackup = baseBackup[0]
+	if baseBackup, exists := query["diff-from-remote"]; exists {
+		diffFromRemote = baseBackup[0]
 	}
 	if partitions, exist := query["partitions"]; exist {
 		partitionsToBackup = strings.Split(partitions[0], ",")
@@ -866,7 +866,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("create", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.CreateBackup(backupName, tablePattern, embeddedBaseBackup, partitionsToBackup, schemaOnly, createRBAC, false, createConfigs, false, checkPartsColumns, api.clickhouseBackupVersion, commandId)
+			return b.CreateBackup(backupName, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, createRBAC, false, createConfigs, false, checkPartsColumns, api.clickhouseBackupVersion, commandId)
 		})
 		if err != nil {
 			api.log.Errorf("API /backup/create error: %v", err)

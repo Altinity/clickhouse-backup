@@ -105,16 +105,18 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 	tablesForUploadFromDiff := map[metadata.TableTitle]metadata.TableMetadata{}
 
 	if diffFrom != "" && !b.isEmbedded {
-		tablesForUploadFromDiff, err = b.getTablesForUploadDiffLocal(ctx, diffFrom, backupMetadata, tablePattern)
+		tablesForUploadFromDiff, err = b.getTablesDiffFromLocal(ctx, diffFrom, tablePattern)
 		if err != nil {
-			return fmt.Errorf("b.getTablesForUploadDiffLocal return error: %v", err)
+			return fmt.Errorf("b.getTablesDiffFromLocal return error: %v", err)
 		}
+		backupMetadata.RequiredBackup = diffFrom
 	}
 	if diffFromRemote != "" && !b.isEmbedded {
-		tablesForUploadFromDiff, err = b.getTablesForUploadDiffRemote(ctx, diffFromRemote, backupMetadata, tablePattern)
+		tablesForUploadFromDiff, err = b.getTablesDiffFromRemote(ctx, diffFromRemote, tablePattern)
 		if err != nil {
-			return fmt.Errorf("b.getTablesForUploadDiffRemote return error: %v", err)
+			return fmt.Errorf("b.getTablesDiffFromRemote return error: %v", err)
 		}
+		backupMetadata.RequiredBackup = diffFromRemote
 	}
 	if b.resume {
 		b.resumableState = resumable.NewState(b.DefaultDataPath, backupName, "upload", map[string]interface{}{
@@ -319,66 +321,6 @@ func (b *Backuper) prepareTableListToUpload(ctx context.Context, backupName stri
 		return nil, err
 	}
 	return tablesForUpload, nil
-}
-
-func (b *Backuper) getTablesForUploadDiffLocal(ctx context.Context, diffFrom string, backupMetadata *metadata.BackupMetadata, tablePattern string) (tablesForUploadFromDiff map[metadata.TableTitle]metadata.TableMetadata, err error) {
-	tablesForUploadFromDiff = make(map[metadata.TableTitle]metadata.TableMetadata)
-	diffFromBackup, err := b.ReadBackupMetadataLocal(ctx, diffFrom)
-	if err != nil {
-		return nil, err
-	}
-	if len(diffFromBackup.Tables) != 0 {
-		backupMetadata.RequiredBackup = diffFrom
-		metadataPath := path.Join(b.DefaultDataPath, "backup", diffFrom, "metadata")
-		// empty partitions, because we don't want filter
-		diffTablesList, _, err := b.getTableListByPatternLocal(ctx, metadataPath, tablePattern, false, []string{})
-		if err != nil {
-			return nil, err
-		}
-		for _, t := range diffTablesList {
-			tablesForUploadFromDiff[metadata.TableTitle{
-				Database: t.Database,
-				Table:    t.Table,
-			}] = t
-		}
-	}
-	return tablesForUploadFromDiff, nil
-}
-
-func (b *Backuper) getTablesForUploadDiffRemote(ctx context.Context, diffFromRemote string, backupMetadata *metadata.BackupMetadata, tablePattern string) (tablesForUploadFromDiff map[metadata.TableTitle]metadata.TableMetadata, err error) {
-	tablesForUploadFromDiff = make(map[metadata.TableTitle]metadata.TableMetadata)
-	backupList, err := b.dst.BackupList(ctx, true, diffFromRemote)
-	if err != nil {
-		return nil, err
-	}
-	var diffRemoteMetadata *metadata.BackupMetadata
-	for _, backup := range backupList {
-		if backup.BackupName == diffFromRemote {
-			if backup.Legacy {
-				return nil, fmt.Errorf("%s have legacy format and can't be used as diff-from-remote source", diffFromRemote)
-			}
-			diffRemoteMetadata = &backup.BackupMetadata
-			break
-		}
-	}
-	if diffRemoteMetadata == nil {
-		return nil, fmt.Errorf("%s not found on remote storage", diffFromRemote)
-	}
-
-	if len(diffRemoteMetadata.Tables) != 0 {
-		backupMetadata.RequiredBackup = diffFromRemote
-		diffTablesList, err := getTableListByPatternRemote(ctx, b, diffRemoteMetadata, tablePattern, false)
-		if err != nil {
-			return nil, err
-		}
-		for _, t := range diffTablesList {
-			tablesForUploadFromDiff[metadata.TableTitle{
-				Database: t.Database,
-				Table:    t.Table,
-			}] = t
-		}
-	}
-	return tablesForUploadFromDiff, nil
 }
 
 func (b *Backuper) validateUploadParams(ctx context.Context, backupName string, diffFrom string, diffFromRemote string) error {

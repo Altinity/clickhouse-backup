@@ -265,7 +265,6 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 
 	backupMetadata.CompressedSize = 0
 	backupMetadata.DataFormat = ""
-	backupMetadata.RequiredBackup = ""
 	backupMetadata.ConfigSize = configSize
 	backupMetadata.RBACSize = rbacSize
 
@@ -737,7 +736,7 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 									return fmt.Errorf("after downloadDiffRemoteFile %s exists but is not directory", downloadedPartPath)
 								}
 								if err = b.makePartHardlinks(downloadedPartPath, existsPath); err != nil {
-									return fmt.Errorf("can't to add link to exists part %s -> %s error: %v", newPath, existsPath, err)
+									return fmt.Errorf("can't to add link to exists part %s -> %s error: %v", downloadedPartPath, existsPath, err)
 								}
 							}
 							if err != nil && !os.IsNotExist(err) {
@@ -836,7 +835,7 @@ func (b *Backuper) findDiffBackupFilesRemote(ctx context.Context, backup metadat
 	}
 
 	// recursive find if part in RequiredBackup also Required
-	tableRemoteFiles, found, err := b.findDiffRecursive(ctx, requiredBackup, log, table, requiredTable, part, disk)
+	tableRemoteFiles, found, err := b.findDiffRecursive(ctx, requiredBackup, table, requiredTable, part, disk, log)
 	if found {
 		return tableRemoteFiles, nil
 	}
@@ -877,7 +876,7 @@ func (b *Backuper) findDiffBackupFilesRemote(ctx context.Context, backup metadat
 	return nil, fmt.Errorf("%s.%s %s not found on %s and all required backups sequence", table.Database, table.Table, part.Name, requiredBackup.BackupName)
 }
 
-func (b *Backuper) findDiffRecursive(ctx context.Context, requiredBackup *metadata.BackupMetadata, log *apexLog.Entry, table metadata.TableMetadata, requiredTable *metadata.TableMetadata, part metadata.Part, disk string) (map[string]string, bool, error) {
+func (b *Backuper) findDiffRecursive(ctx context.Context, requiredBackup *metadata.BackupMetadata, table metadata.TableMetadata, requiredTable *metadata.TableMetadata, part metadata.Part, disk string, log *apexLog.Entry) (map[string]string, bool, error) {
 	log.WithFields(apexLog.Fields{"database": table.Database, "table": table.Table, "part": part.Name, "logger": "findDiffRecursive"}).Debugf("start")
 	found := false
 	for _, requiredParts := range requiredTable.Parts {
