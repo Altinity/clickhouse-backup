@@ -1,3 +1,7 @@
+# v2.4.35
+IMPROVEMENTS
+- set part size for `s3:CopyObject` minimum 128Mb, look details https://repost.aws/questions/QUtW2_XaALTK63wv9XLSywiQ/s3-sync-command-is-slow-to-start-on-some-data
+
 # v2.4.34
 BUG FIXES
 - fixed wrong behavior for CLICKHOUSE_SKIP_TABLES_ENGINES for engine=EngineName without parameters
