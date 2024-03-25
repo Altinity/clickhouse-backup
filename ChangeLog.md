@@ -14,6 +14,10 @@ BUG FIXES
 - fix wrong behavior for `freeze_by_part` + `freeze_by_part_where`, fix [855](https://github.com/Altinity/clickhouse-backup/issues/855)
 - apply `CLICKHOUSE_SKIP_TABLES_ENGINES` during `create` command
 
+# v2.4.35
+IMPROVEMENTS
+- set part size for `s3:CopyObject` minimum 128Mb, look details https://repost.aws/questions/QUtW2_XaALTK63wv9XLSywiQ/s3-sync-command-is-slow-to-start-on-some-data
+
 # v2.4.34
 BUG FIXES
 - fixed wrong behavior for CLICKHOUSE_SKIP_TABLES_ENGINES for engine=EngineName without parameters

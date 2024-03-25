@@ -501,9 +501,11 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 	if srcSize%s.Config.MaxPartsCount > 0 {
 		partSize++
 	}
-	if partSize < 10*1024*1024 {
-		partSize = 10 * 1024 * 1024
+	// 128Mb part size recommendation from https://repost.aws/questions/QUtW2_XaALTK63wv9XLSywiQ/s3-sync-command-is-slow-to-start-on-some-data
+	if partSize < 128*1024*1024 {
+		partSize = 128 * 1024 * 1024
 	}
+
 	if partSize > 5*1024*1024*1024 {
 		partSize = 5 * 1024 * 1024 * 1024
 	}
