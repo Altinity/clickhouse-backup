@@ -294,7 +294,7 @@ services:
       - "8123:8123"
       - "9000:9000"
 # for delve debugger
-#      - "40001:40001"
+      - "40002:40002"
     networks:
       - clickhouse-backup
     links:

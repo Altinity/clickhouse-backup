@@ -179,9 +179,11 @@ func (b *Backuper) cleanEmbeddedAndObjectDiskLocalIfSameRemoteNotPresent(ctx con
 		return err
 	}
 	if !skip && (hasObjectDisks || (b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk == "")) {
-		if err = b.cleanBackupObjectDisks(ctx, backupName); err != nil {
-			log.Warnf("b.cleanBackupObjectDisks return error: %v", err)
+		if deletedKeys, deleteErr := b.cleanBackupObjectDisks(ctx, backupName); deleteErr != nil {
+			log.Warnf("b.cleanBackupObjectDisks return error: %v", deleteErr)
 			return err
+		} else {
+			log.Infof("cleanBackupObjectDisks deleted %d keys", deletedKeys)
 		}
 	}
 	if !skip && (b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "") {
@@ -335,8 +337,10 @@ func (b *Backuper) cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent(ctx con
 			return nil
 		}
 		if b.hasObjectDisksRemote(backup) || (b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk == "") {
-			if err = b.cleanBackupObjectDisks(ctx, backup.BackupName); err != nil {
-				log.Warnf("b.cleanBackupObjectDisks return error: %v", err)
+			if deletedKeys, deleteErr := b.cleanBackupObjectDisks(ctx, backup.BackupName); deleteErr != nil {
+				log.Warnf("b.cleanBackupObjectDisks return error: %v", deleteErr)
+			} else {
+				log.Infof("cleanBackupObjectDisks deleted %d keys", deletedKeys)
 			}
 			return nil
 		}
@@ -379,22 +383,26 @@ func (b *Backuper) cleanRemoteEmbedded(ctx context.Context, backup storage.Backu
 }
 
 // cleanBackupObjectDisks - recursive delete <object_disks_path>/<backupName>
-func (b *Backuper) cleanBackupObjectDisks(ctx context.Context, backupName string) error {
+func (b *Backuper) cleanBackupObjectDisks(ctx context.Context, backupName string) (uint, error) {
 	objectDiskPath, err := b.getObjectDiskPath()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	//walk absolute path, delete relative
-	return b.dst.WalkAbsolute(ctx, path.Join(objectDiskPath, backupName), true, func(ctx context.Context, f storage.RemoteFile) error {
+	deletedKeys := uint(0)
+	walkErr := b.dst.WalkAbsolute(ctx, path.Join(objectDiskPath, backupName), true, func(ctx context.Context, f storage.RemoteFile) error {
 		if b.dst.Kind() == "azblob" {
 			if f.Size() > 0 || !f.LastModified().IsZero() {
+				deletedKeys += 1
 				return b.dst.DeleteFileFromObjectDiskBackup(ctx, path.Join(backupName, f.Name()))
 			} else {
 				return nil
 			}
 		}
+		deletedKeys += 1
 		return b.dst.DeleteFileFromObjectDiskBackup(ctx, path.Join(backupName, f.Name()))
 	})
+	return deletedKeys, walkErr
 }
 
 func (b *Backuper) skipIfSameLocalBackupPresent(ctx context.Context, backupName, tags string) (bool, error) {

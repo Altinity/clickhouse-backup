@@ -252,16 +252,16 @@ func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap 
 		if len(partitionsBackupMap) != 0 && !IsPartInPartition(pathParts[3], partitionsBackupMap) {
 			return nil
 		}
+		var isRequiredPartFound, partExists bool
 		if tableDiffFromRemote.Database != "" && tableDiffFromRemote.Table != "" && len(tableDiffFromRemote.Parts) > 0 && len(tableDiffFromRemote.Parts[disk.Name]) > 0 {
-			var isRequiredPartAdded, partExists bool
-			parts, isRequiredPartAdded, partExists = addRequiredPartIfNotExists(parts, pathParts[3], tableDiffFromRemote, disk)
-			if isRequiredPartAdded || partExists {
+			parts, isRequiredPartFound, partExists = addRequiredPartIfNotExists(parts, pathParts[3], tableDiffFromRemote, disk)
+			if isRequiredPartFound {
 				return nil
 			}
 		}
 		dstFilePath := filepath.Join(backupPartsPath, pathParts[3])
 		if info.IsDir() {
-			if !strings.HasSuffix(pathParts[3], ".proj") {
+			if !strings.HasSuffix(pathParts[3], ".proj") && !isRequiredPartFound && !partExists {
 				parts = append(parts, metadata.Part{
 					Name: pathParts[3],
 				})
@@ -283,26 +283,26 @@ func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap 
 }
 
 func addRequiredPartIfNotExists(parts []metadata.Part, relativePath string, tableDiffFromRemote metadata.TableMetadata, disk clickhouse.Disk) ([]metadata.Part, bool, bool) {
-	isRequiredPartAdded := false
+	isRequiredPartFound := false
 	exists := false
-	for _, p := range parts {
-		if p.Name == relativePath || strings.HasPrefix(relativePath, p.Name+"/") {
-			exists = true
-			break
-		}
-	}
-	if !exists {
-		for _, diffPart := range tableDiffFromRemote.Parts[disk.Name] {
-			if diffPart.Name == relativePath || strings.HasPrefix(relativePath, diffPart.Name+"/") {
+	for _, diffPart := range tableDiffFromRemote.Parts[disk.Name] {
+		if diffPart.Name == relativePath || strings.HasPrefix(relativePath, diffPart.Name+"/") {
+			for _, p := range parts {
+				if p.Name == relativePath || strings.HasPrefix(relativePath, p.Name+"/") {
+					exists = true
+					break
+				}
+			}
+			if !exists {
 				parts = append(parts, metadata.Part{
 					Name:     relativePath,
 					Required: true,
 				})
-				isRequiredPartAdded = true
 			}
+			isRequiredPartFound = true
 		}
 	}
-	return parts, isRequiredPartAdded, exists
+	return parts, isRequiredPartFound, exists
 }
 
 func IsDuplicatedParts(part1, part2 string) error {

@@ -223,7 +223,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			idx := i
 			dataGroup.Go(func() error {
 				start := time.Now()
-				if err := b.downloadTableData(dataCtx, remoteBackup.BackupMetadata, *tableMetadataAfterDownload[idx]); err != nil {
+				if err := b.downloadTableData(dataCtx, remoteBackup.BackupMetadata, *tableMetadataAfterDownload[idx], disks); err != nil {
 					return err
 				}
 				log.
@@ -285,6 +285,21 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 
 	if b.resume {
 		b.resumableState.Close()
+	}
+
+	//clean partially downloaded requiredBackup
+	if remoteBackup.RequiredBackup != "" {
+		if localBackups, _, err = b.GetLocalBackups(ctx, disks); err == nil {
+			for _, localBackup := range localBackups {
+				if localBackup.BackupName != remoteBackup.BackupName && localBackup.DataSize+localBackup.CompressedSize+localBackup.MetadataSize == 0 {
+					if err = b.RemoveBackupLocal(ctx, localBackup.BackupName, disks); err != nil {
+						return fmt.Errorf("downloadWithDiff -> RemoveBackupLocal cleaning error: %v", err)
+					}
+				}
+			}
+		} else {
+			return fmt.Errorf("downloadWithDiff -> GetLocalBackups cleaning error: %v", err)
+		}
 	}
 
 	log.
@@ -567,7 +582,7 @@ func (b *Backuper) downloadBackupRelatedDir(ctx context.Context, remoteBackup st
 	return uint64(remoteFileInfo.Size()), nil
 }
 
-func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.BackupMetadata, table metadata.TableMetadata) error {
+func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.BackupMetadata, table metadata.TableMetadata, disks []clickhouse.Disk) error {
 	log := b.log.WithField("logger", "downloadTableData")
 	dbAndTableDir := path.Join(common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
 	ctx, cancel := context.WithCancel(ctx)
@@ -664,8 +679,8 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 		return fmt.Errorf("one of downloadTableData go-routine return error: %v", err)
 	}
 
-	if !b.isEmbedded {
-		err := b.downloadDiffParts(ctx, remoteBackup, table, dbAndTableDir)
+	if !b.isEmbedded && remoteBackup.RequiredBackup != "" {
+		err := b.downloadDiffParts(ctx, remoteBackup, table, dbAndTableDir, disks)
 		if err != nil {
 			return err
 		}
@@ -674,7 +689,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 	return nil
 }
 
-func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.BackupMetadata, table metadata.TableMetadata, dbAndTableDir string) error {
+func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.BackupMetadata, table metadata.TableMetadata, dbAndTableDir string, disks []clickhouse.Disk) error {
 	log := b.log.WithField("operation", "downloadDiffParts")
 	log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).Debug("start")
 	start := time.Now()

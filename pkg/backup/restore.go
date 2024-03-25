@@ -160,8 +160,13 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 			return nil
 		}
 	}
-
-	if b.cfg.ClickHouse.UseEmbeddedBackupRestore && b.cfg.ClickHouse.EmbeddedBackupDisk == "" {
+	isObjectDiskPresents := false
+	for _, d := range disks {
+		if isObjectDiskPresents = b.isDiskTypeObject(d.Type); isObjectDiskPresents {
+			break
+		}
+	}
+	if (b.cfg.ClickHouse.UseEmbeddedBackupRestore && b.cfg.ClickHouse.EmbeddedBackupDisk == "") || isObjectDiskPresents {
 		if b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, false, backupName); err != nil {
 			return err
 		}
@@ -1028,10 +1033,10 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 				srcDiskName := diskName
 				// copy from required backup for required data parts, https://github.com/Altinity/clickhouse-backup/issues/865
 				if part.Required && backupMetadata.RequiredBackup != "" {
-					var findRecusiveErr error
-					srcBackupName, srcDiskName, findRecusiveErr = b.findObjectDiskPartRecursive(backupMetadata, backupTable, part, diskName)
-					if findRecusiveErr != nil {
-						return findRecusiveErr
+					var findRecursiveErr error
+					srcBackupName, srcDiskName, findRecursiveErr = b.findObjectDiskPartRecursive(ctx, backupMetadata, backupTable, part, diskName, log)
+					if findRecursiveErr != nil {
+						return findRecursiveErr
 					}
 				}
 				walkErr := filepath.Walk(partPath, func(fPath string, fInfo fs.FileInfo, err error) error {
@@ -1103,8 +1108,32 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 	return nil
 }
 
-func (b *Backuper) findObjectDiskPartRecursive(backupMetadata metadata.BackupMetadata, table metadata.TableMetadata, part metadata.Part, name string) (string, string, error) {
-	return "", "", fmt.Errorf("not implemented")
+func (b *Backuper) findObjectDiskPartRecursive(ctx context.Context, backup metadata.BackupMetadata, table metadata.TableMetadata, part metadata.Part, diskName string, log *apexLog.Entry) (string, string, error) {
+	if !part.Required {
+		return backup.BackupName, diskName, nil
+	}
+	if part.Required && backup.RequiredBackup == "" {
+		return "", "", fmt.Errorf("part %s have required flag, in %s but backup.RequiredBackup is empty", part.Name, backup.BackupName)
+	}
+	requiredBackup, err := b.ReadBackupMetadataRemote(ctx, backup.RequiredBackup)
+	if err != nil {
+		return "", "", err
+	}
+	var requiredTable *metadata.TableMetadata
+	requiredTable, err = b.downloadTableMetadataIfNotExists(ctx, requiredBackup.BackupName, log, metadata.TableTitle{Database: table.Database, Table: table.Table})
+	// @todo think about add check what if disk type could changed (should already restricted, cause upload seek part in the same disk name)
+	for requiredDiskName, parts := range requiredTable.Parts {
+		for _, requiredPart := range parts {
+			if requiredPart.Name == part.Name {
+				if requiredPart.Required {
+					return b.findObjectDiskPartRecursive(ctx, *requiredBackup, *requiredTable, requiredPart, requiredDiskName, log)
+				}
+				return requiredBackup.BackupName, requiredDiskName, nil
+			}
+		}
+
+	}
+	return "", "", fmt.Errorf("part %s have required flag in %s, but not found in %s", part.Name, backup.BackupName, backup.RequiredBackup)
 }
 
 func (b *Backuper) checkMissingTables(tablesForRestore ListOfTables, chTables []clickhouse.Table) []string {
