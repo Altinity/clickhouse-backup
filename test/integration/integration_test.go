@@ -1346,14 +1346,17 @@ func TestProjections(t *testing.T) {
 	var counts uint64
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&counts, "SELECT count() FROM default.table_with_projection"))
 	r.Equal(uint64(10), counts)
+	counts = 0
+	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&counts, "SELECT count() FROM system.parts WHERE database='default' AND table='table_with_projection' AND has(projections,'x')"))
+	r.Equal(uint64(10), counts)
+
 	err = ch.chbackend.Query("DROP TABLE default.table_with_projection NO DELAY")
 	r.NoError(err)
 
-	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "delete", "local", "test_backup_projection_increment"))
-	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "delete", "local", "test_backup_projection_full"))
-
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "delete", "remote", "test_backup_projection_increment"))
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "delete", "remote", "test_backup_projection_full"))
+
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "delete", "local", "test_backup_projection_increment"))
 }
 
 func TestCheckSystemPartsColumns(t *testing.T) {
