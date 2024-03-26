@@ -1435,11 +1435,24 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	}
 	latestIncrementBackup := fmt.Sprintf("keep_remote_backup_%d", len(backupNames)-1)
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "download", latestIncrementBackup))
+	out, err = dockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml list local")
+	r.NoError(err)
+	prevIncrementBackup := fmt.Sprintf("keep_remote_backup_%d", len(backupNames)-2)
+	for _, backupName := range backupNames {
+		if backupName == latestIncrementBackup {
+			r.Contains(out, backupName)
+		} else if backupName == prevIncrementBackup {
+			r.Contains(out, "+"+backupName)
+		} else {
+			r.NotContains(out, backupName)
+		}
+	}
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--rm", latestIncrementBackup))
 	var res uint64
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&res, fmt.Sprintf("SELECT count() FROM `%s_%s`.`%s_%s`", Issue331Atomic, t.Name(), Issue331Atomic, t.Name())))
 	r.Equal(uint64(200), res)
-	fullCleanup(t, r, ch, backupNames, []string{"remote", "local"}, databaseList, true, true, "config-s3.yml")
+	fullCleanup(t, r, ch, []string{latestIncrementBackup}, []string{"local"}, nil, true, true, "config-s3.yml")
+	fullCleanup(t, r, ch, backupNames, []string{"remote"}, databaseList, true, true, "config-s3.yml")
 	checkObjectStorageIsEmpty(t, r, "S3")
 }
 
