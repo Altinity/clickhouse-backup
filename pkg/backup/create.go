@@ -496,6 +496,7 @@ func (b *Backuper) generateEmbeddedBackupSQL(ctx context.Context, backupName str
 	if b.cfg.ClickHouse.EmbeddedBackupThreads > 0 {
 		backupSettings = append(backupSettings, fmt.Sprintf("backup_threads=%d", b.cfg.ClickHouse.EmbeddedBackupThreads))
 	}
+	// incremental native backup https://github.com/Altinity/clickhouse-backup/issues/735
 	if baseBackup != "" {
 		backupSettings = append(backupSettings, fmt.Sprintf("base_backup='%s'", baseBackup))
 	}
