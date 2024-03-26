@@ -2228,13 +2228,9 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 
 	// test end
 	log.Info("Clean after finish")
-	// CUSTOM and EMBEDDED download increment doesn't download full
-	if remoteStorageType == "CUSTOM" || strings.HasPrefix(remoteStorageType, "EMBEDDED") {
-		fullCleanup(t, r, ch, []string{incrementBackupName}, []string{"local"}, nil, true, false, backupConfig)
-		fullCleanup(t, r, ch, []string{testBackupName, incrementBackupName}, []string{"remote"}, databaseList, true, true, backupConfig)
-	} else {
-		fullCleanup(t, r, ch, []string{testBackupName, incrementBackupName}, []string{"remote", "local"}, databaseList, true, true, backupConfig)
-	}
+	// during download increment, partially downloaded  full will clean
+	fullCleanup(t, r, ch, []string{incrementBackupName}, []string{"local"}, nil, true, false, backupConfig)
+	fullCleanup(t, r, ch, []string{testBackupName, incrementBackupName}, []string{"remote"}, databaseList, true, true, backupConfig)
 	replaceStorageDiskNameForReBalance(r, ch, remoteStorageType, true)
 	checkObjectStorageIsEmpty(t, r, remoteStorageType)
 }
