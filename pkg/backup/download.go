@@ -195,7 +195,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		idx := i
 		tableTitle := t
 		metadataGroup.Go(func() error {
-			downloadedMetadata, size, err := b.downloadTableMetadata(metadataCtx, backupName, disks, metadataLogger, tableTitle, schemaOnly, partitions)
+			downloadedMetadata, size, err := b.downloadTableMetadata(metadataCtx, backupName, disks, metadataLogger, tableTitle, schemaOnly, partitions, b.resume)
 			if err != nil {
 				return err
 			}
@@ -413,11 +413,11 @@ func (b *Backuper) downloadTableMetadataIfNotExists(ctx context.Context, backupN
 		return tm, nil
 	}
 	// we always download full metadata in this case without filter by partitions
-	tm, _, err := b.downloadTableMetadata(ctx, backupName, nil, log.WithFields(apexLog.Fields{"operation": "downloadTableMetadataIfNotExists", "backupName": backupName, "table_metadata_diff": fmt.Sprintf("%s.%s", tableTitle.Database, tableTitle.Table)}), tableTitle, false, nil)
+	tm, _, err := b.downloadTableMetadata(ctx, backupName, nil, log.WithFields(apexLog.Fields{"operation": "downloadTableMetadataIfNotExists", "backupName": backupName, "table_metadata_diff": fmt.Sprintf("%s.%s", tableTitle.Database, tableTitle.Table)}), tableTitle, false, nil, false)
 	return tm, err
 }
 
-func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string, disks []clickhouse.Disk, log *apexLog.Entry, tableTitle metadata.TableTitle, schemaOnly bool, partitions []string) (*metadata.TableMetadata, uint64, error) {
+func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string, disks []clickhouse.Disk, log *apexLog.Entry, tableTitle metadata.TableTitle, schemaOnly bool, partitions []string, resume bool) (*metadata.TableMetadata, uint64, error) {
 	start := time.Now()
 	size := uint64(0)
 	metadataFiles := map[string]string{}
@@ -430,7 +430,7 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 	}
 	var tableMetadata metadata.TableMetadata
 	for remoteMetadataFile, localMetadataFile := range metadataFiles {
-		if b.resume {
+		if resume {
 			isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(localMetadataFile)
 			if isProcessed && strings.HasSuffix(localMetadataFile, ".json") {
 				tmBody, err := os.ReadFile(localMetadataFile)
@@ -502,7 +502,7 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 			size += jsonSize
 			tableMetadata.LocalFile = localMetadataFile
 		}
-		if b.resume {
+		if resume {
 			b.resumableState.AppendToState(localMetadataFile, written)
 		}
 	}
