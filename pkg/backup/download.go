@@ -294,6 +294,8 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 				if localBackup.BackupName != remoteBackup.BackupName && localBackup.DataSize+localBackup.CompressedSize+localBackup.MetadataSize == 0 {
 					if err = b.RemoveBackupLocal(ctx, localBackup.BackupName, disks); err != nil {
 						return fmt.Errorf("downloadWithDiff -> RemoveBackupLocal cleaning error: %v", err)
+					} else {
+						b.log.Infof("partial required backup %s deleted", localBackup.BackupName)
 					}
 				}
 			}
@@ -727,6 +729,17 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 				return fmt.Errorf("%s stat return error: %v", existsPath, err)
 			}
 			if err != nil && os.IsNotExist(err) {
+				//if existPath already processed then expect non empty newPath
+				if b.resume && b.resumableState.IsAlreadyProcessedBool(existsPath) {
+					if newPathDirList, newPathDirErr := os.ReadDir(newPath); newPathDirErr != nil {
+						newPathDirErr = fmt.Errorf("os.ReadDir(%s) error: %v", newPath, newPathDirErr)
+						log.Error(newPathDirErr.Error())
+						return newPathDirErr
+					} else if len(newPathDirList) == 0 {
+						return fmt.Errorf("os.ReadDir(%s) expect return non empty list", newPath)
+					}
+					continue
+				}
 				partForDownload := part
 				diskForDownload := disk
 				if !diskExists {
@@ -751,11 +764,11 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 									return fmt.Errorf("after downloadDiffRemoteFile %s exists but is not directory", downloadedPartPath)
 								}
 								if err = b.makePartHardlinks(downloadedPartPath, existsPath); err != nil {
-									return fmt.Errorf("can't to add link to exists part %s -> %s error: %v", downloadedPartPath, existsPath, err)
+									return fmt.Errorf("can't to add link to rebalanced part %s -> %s error: %v", downloadedPartPath, existsPath, err)
 								}
 							}
 							if err != nil && !os.IsNotExist(err) {
-								return fmt.Errorf("after downloadDiffRemoteFile %s stat return error: %v", downloadedPartPath, err)
+								return fmt.Errorf("after downloadDiffRemoteFile os.Stat(%s) return error: %v", downloadedPartPath, err)
 							}
 						}
 						atomic.AddUint32(&downloadedDiffParts, 1)
@@ -786,6 +799,9 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 
 func (b *Backuper) downloadDiffRemoteFile(ctx context.Context, diffRemoteFilesLock *sync.Mutex, diffRemoteFilesCache map[string]*sync.Mutex, tableRemoteFile string, tableLocalDir string) error {
 	log := b.log.WithField("logger", "downloadDiffRemoteFile")
+	if b.resume && b.resumableState.IsAlreadyProcessedBool(tableRemoteFile) {
+		return nil
+	}
 	diffRemoteFilesLock.Lock()
 	namedLock, isCached := diffRemoteFilesCache[tableRemoteFile]
 	if isCached {
@@ -817,6 +833,9 @@ func (b *Backuper) downloadDiffRemoteFile(ctx context.Context, diffRemoteFilesLo
 			}
 		}
 		namedLock.Unlock()
+		if b.resume {
+			b.resumableState.AppendToState(tableRemoteFile, 0)
+		}
 		log.Debugf("finish download from %s", tableRemoteFile)
 	}
 	return nil
@@ -1022,7 +1041,7 @@ func (b *Backuper) makePartHardlinks(exists, new string) error {
 			existsFInfo, existsStatErr := os.Stat(existsF)
 			newFInfo, newStatErr := os.Stat(newF)
 			if existsStatErr != nil || newStatErr != nil || !os.SameFile(existsFInfo, newFInfo) {
-				log.Warnf("Link %s -> %s error: %v", newF, existsF, err)
+				log.Warnf("Link %s -> %s error: %v, existsStatErr: %v newStatErr: %v", existsF, newF, err, existsStatErr, newStatErr)
 				return err
 			}
 		}
