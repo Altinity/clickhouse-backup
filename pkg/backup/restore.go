@@ -161,9 +161,11 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 		}
 	}
 	isObjectDiskPresents := false
-	for _, d := range disks {
-		if isObjectDiskPresents = b.isDiskTypeObject(d.Type); isObjectDiskPresents {
-			break
+	if b.cfg.General.RemoteStorage != "custom" {
+		for _, d := range disks {
+			if isObjectDiskPresents = b.isDiskTypeObject(d.Type); isObjectDiskPresents {
+				break
+			}
 		}
 	}
 	if (b.cfg.ClickHouse.UseEmbeddedBackupRestore && b.cfg.ClickHouse.EmbeddedBackupDisk == "") || isObjectDiskPresents {
