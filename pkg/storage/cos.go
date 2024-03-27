@@ -136,7 +136,11 @@ func (c *COS) WalkAbsolute(ctx context.Context, prefix string, recursive bool, p
 }
 
 func (c *COS) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {
-	resp, err := c.client.Object.Get(ctx, path.Join(c.Config.Path, key), nil)
+	return c.GetFileReaderAbsolute(ctx, path.Join(c.Config.Path, key))
+}
+
+func (c *COS) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadCloser, error) {
+	resp, err := c.client.Object.Get(ctx, key, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +152,11 @@ func (c *COS) GetFileReaderWithLocalPath(ctx context.Context, key, _ string) (io
 }
 
 func (c *COS) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
-	_, err := c.client.Object.Put(ctx, path.Join(c.Config.Path, key), r, nil)
+	return c.PutFileAbsolute(ctx, path.Join(c.Config.Path, key), r)
+}
+
+func (c *COS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser) error {
+	_, err := c.client.Object.Put(ctx, key, r, nil)
 	return err
 }
 

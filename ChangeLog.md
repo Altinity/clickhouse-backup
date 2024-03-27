@@ -1,3 +1,25 @@
+# v2.5.0 (not released yet)
+IMPROVEMENTS
+- added `--delete-source` parameter for `upload` and `create_remote` commands to explicitly delete local backup after upload, fix [777](https://github.com/Altinity/clickhouse-backup/issues/777)
+- added support for `--env ENV_NAME=value` cli parameter for allow dynamically override any config parameter, fix [821](https://github.com/Altinity/clickhouse-backup/issues/821)
+- added support for `use_embedded_backup_restore: true` with empty `embedded_backup_disk` value, tested on S3/GCS over S3/AzureBlobStorage, fix [695](https://github.com/Altinity/clickhouse-backup/issues/695)
+- `--rbac, --rbac-only, --configs, --configs-only` now works with `use_embedded_backup_restore: true`
+-- `--data` for `restore` with `use_embedded_backup_restore: true` will use `allow_non_empty_tables=true` to allow fix [756](https://github.com/Altinity/clickhouse-backup/issues/756)
+- added `--diff-from-remote` parameter for `create` command, will copy only new data parts object disk data, also allows to download properly object disk data from required backup during `restore`, fix [865](https://github.com/Altinity/clickhouse-backup/issues/865)
+- added support of native Clickhouse incremental backup for `use_embedded_backup_restore: true` fix [735](https://github.com/Altinity/clickhouse-backup/issues/735)
+- added `GCS_CHUNK_SIZE` config parameter, try to speedup GCS upload fix [874](https://github.com/Altinity/clickhouse-backup/pull/874), thanks @dermasmid
+- switched to golang 1.22
+- added `clickhouse-server:24.3` to CI/CD pipelines
+
+BUG FIXES
+- continue `S3_MAX_PARTS_COUNT` default value from `2000` to `4000` to continue decrease memory usage for S3 
+- changed minimal part size for multipart upload in CopyObject from `5Mb` to `10Mb`
+- restore SQL UDF functions after restore tables
+- execute `ALTER TABLE ... DROP PARTITION` instead of `DROP TABLE` for `restore` and `restore_remote` with parameters `--data --partitions=...`, fix [756](https://github.com/Altinity/clickhouse-backup/issues/756) 
+- fix wrong behavior for `freeze_by_part` + `freeze_by_part_where`, fix [855](https://github.com/Altinity/clickhouse-backup/issues/855)
+- apply `CLICKHOUSE_SKIP_TABLES_ENGINES` during `create` command
+- fixed behavior for upload / download when .inner. table missing for MATERIALIZED VIEW  by table pattern, fix [765](https://github.com/Altinity/clickhouse-backup/issues/765)
+
 # v2.4.35
 IMPROVEMENTS
 - set part size for `s3:CopyObject` minimum 128Mb, look details https://repost.aws/questions/QUtW2_XaALTK63wv9XLSywiQ/s3-sync-command-is-slow-to-start-on-some-data

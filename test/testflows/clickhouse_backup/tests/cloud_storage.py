@@ -1,4 +1,5 @@
 import os
+
 from clickhouse_backup.requirements.requirements import *
 from clickhouse_backup.tests.common import *
 from clickhouse_backup.tests.steps import *
@@ -166,8 +167,8 @@ def s3_minio(self):
         fields_to_modify={
             "general": {"remote_storage": "s3"},
             "s3": {
-                "access_key": "access-key",
-                "secret_key": "it-is-my-super-secret-key",
+                "access_key": "access_key",
+                "secret_key": "it_is_my_super_secret_key",
                 "endpoint": "http://minio:9000",
                 "disable_ssl": True,
                 "region": "us-west-2", "bucket": "clickhouse"

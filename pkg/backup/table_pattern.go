@@ -251,6 +251,7 @@ func (b *Backuper) enrichTablePatternsByInnerDependencies(metadataPath string, t
 					innerTableFile = path.Join(innerTableFile, common.TablePathEncode(fmt.Sprintf(".inner.%s", table)))
 					innerTableName += fmt.Sprintf(".inner.%s", table)
 				}
+				// https://github.com/Altinity/clickhouse-backup/issues/765, .inner. table could be dropped manually, .inner. table is required for ATTACH
 				if _, err := os.Stat(path.Join(metadataPath, innerTableFile+".json")); err != nil {
 					return err
 				}

@@ -126,14 +126,14 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 			}
 			if metrics != nil {
 				createRemoteErr, createRemoteErrCount = metrics.ExecuteWithMetrics("create_remote", createRemoteErrCount, func() error {
-					return b.CreateToRemote(backupName, "", diffFromRemote, tablePattern, partitions, schemaOnly, backupRBAC, false, backupConfigs, false, skipCheckPartsColumns, false, version, commandId)
+					return b.CreateToRemote(backupName, false, "", diffFromRemote, tablePattern, partitions, schemaOnly, backupRBAC, false, backupConfigs, false, skipCheckPartsColumns, false, version, commandId)
 				})
 				deleteLocalErr, deleteLocalErrCount = metrics.ExecuteWithMetrics("delete", deleteLocalErrCount, func() error {
 					return b.RemoveBackupLocal(ctx, backupName, nil)
 				})
 
 			} else {
-				createRemoteErr = b.CreateToRemote(backupName, "", diffFromRemote, tablePattern, partitions, schemaOnly, backupRBAC, false, backupConfigs, false, skipCheckPartsColumns, false, version, commandId)
+				createRemoteErr = b.CreateToRemote(backupName, false, "", diffFromRemote, tablePattern, partitions, schemaOnly, backupRBAC, false, backupConfigs, false, skipCheckPartsColumns, false, version, commandId)
 				if createRemoteErr != nil {
 					log.Errorf("create_remote %s return error: %v", backupName, createRemoteErr)
 					createRemoteErrCount += 1

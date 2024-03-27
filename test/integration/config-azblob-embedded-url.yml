@@ -1,6 +1,6 @@
 general:
   disable_progress_bar: true
-  remote_storage: s3
+  remote_storage: azblob
   upload_concurrency: 4
   download_concurrency: 4
   skip_tables:
@@ -20,17 +20,15 @@ clickhouse:
   timeout: 4h
   restart_command: bash -c 'echo "FAKE RESTART"'
   use_embedded_backup_restore: true
-  embedded_backup_disk: backups_s3
-s3:
-  access_key: access_key
-  secret_key: it_is_my_super_secret_key
-  bucket: clickhouse
-  endpoint: http://minio:9000
-  acl: private
-  force_path_style: true
-  path: backup/{cluster}/{shard}
+  embedded_backup_disk: ""
+azblob:
+  account_name: devstoreaccount1
+  account_key: Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==
+  endpoint_suffix: azure:10000
+  endpoint_schema: http
+  container: container1
   object_disk_path: object_disk/{cluster}/{shard}
-  disable_ssl: true
+  path: backup
   compression_format: none
 api:
   listen: :7171

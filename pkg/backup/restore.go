@@ -7,8 +7,10 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/keeper"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage/object_disk"
 	"golang.org/x/sync/errgroup"
+	"io"
 	"io/fs"
 	"net/url"
 	"os"
@@ -43,6 +45,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 	}
 	ctx, cancel = context.WithCancel(ctx)
 	defer cancel()
+	startRestore := time.Now()
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 	if err := b.prepareRestoreDatabaseMapping(databaseMapping); err != nil {
 		return err
@@ -67,6 +70,10 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 	if err != nil {
 		return err
 	}
+	version, err := b.ch.GetVersion(ctx)
+	if err != nil {
+		return err
+	}
 	b.DefaultDataPath, err = b.ch.GetDefaultPath(disks)
 	if err != nil {
 		log.Warnf("%v", err)
@@ -84,68 +91,61 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 	if err == nil && b.EmbeddedBackupDataPath != "" {
 		backupMetafileLocalPaths = append(backupMetafileLocalPaths, path.Join(b.EmbeddedBackupDataPath, backupName, "metadata.json"))
 	} else if b.cfg.ClickHouse.UseEmbeddedBackupRestore && b.cfg.ClickHouse.EmbeddedBackupDisk == "" {
-		log.Warnf("%v", err)
+		b.EmbeddedBackupDataPath = b.DefaultDataPath
 	} else if err != nil {
 		return err
 	}
 	for _, metadataPath := range backupMetafileLocalPaths {
 		backupMetadataBody, err = os.ReadFile(metadataPath)
-		if err == nil && b.EmbeddedBackupDataPath != "" {
-			b.isEmbedded = strings.HasPrefix(metadataPath, b.EmbeddedBackupDataPath)
+		if err == nil {
 			break
 		}
 	}
-	if err == nil {
-		backupMetadata := metadata.BackupMetadata{}
-		if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
-			return err
-		}
-
-		if schemaOnly || doRestoreData {
-			for _, database := range backupMetadata.Databases {
-				targetDB := database.Name
-				if !IsInformationSchema(targetDB) {
-					if err = b.restoreEmptyDatabase(ctx, targetDB, tablePattern, database, dropTable, schemaOnly, ignoreDependencies); err != nil {
-						return err
-					}
-				}
-			}
-		}
-		// do not create UDF when use --data, --rbac-only, --configs-only flags, https://github.com/Altinity/clickhouse-backup/issues/697
-		if schemaOnly || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
-			for _, function := range backupMetadata.Functions {
-				if err = b.ch.CreateUserDefinedFunction(function.Name, function.CreateQuery, b.cfg.General.RestoreSchemaOnCluster); err != nil {
-					return err
-				}
-			}
-		}
-		if len(backupMetadata.Tables) == 0 {
-			// corner cases for https://github.com/Altinity/clickhouse-backup/issues/832
-			if !restoreRBAC && !rbacOnly && !restoreConfigs && !configsOnly {
-				if !b.cfg.General.AllowEmptyBackups {
-					err = fmt.Errorf("'%s' doesn't contains tables for restore, if you need it, you can setup `allow_empty_backups: true` in `general` config section", backupName)
-					log.Errorf("%v", err)
-					return err
-				}
-				log.Warnf("'%s' doesn't contains tables for restore", backupName)
-				return nil
-			}
-		}
-	} else if os.IsNotExist(err) { // Legacy backups don't have metadata.json, but we need handle not exists local backup
+	if os.IsNotExist(err) { // Legacy backups don't have metadata.json, but we need handle not exists local backup
 		backupPath := path.Join(b.DefaultDataPath, "backup", backupName)
 		if fInfo, fErr := os.Stat(backupPath); fErr != nil || !fInfo.IsDir() {
 			return fmt.Errorf("'%s' stat return %v, %v", backupPath, fInfo, fErr)
 		}
+	} else if err != nil {
+		return err
+	}
+	backupMetadata := metadata.BackupMetadata{}
+	if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
+		return err
+	}
+	b.isEmbedded = strings.Contains(backupMetadata.Tags, "embedded")
+
+	if schemaOnly || doRestoreData {
+		for _, database := range backupMetadata.Databases {
+			targetDB := database.Name
+			if !IsInformationSchema(targetDB) {
+				if err = b.restoreEmptyDatabase(ctx, targetDB, tablePattern, database, dropTable, schemaOnly, ignoreDependencies, version); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if len(backupMetadata.Tables) == 0 {
+		// corner cases for https://github.com/Altinity/clickhouse-backup/issues/832
+		if !restoreRBAC && !rbacOnly && !restoreConfigs && !configsOnly {
+			if !b.cfg.General.AllowEmptyBackups {
+				err = fmt.Errorf("'%s' doesn't contains tables for restore, if you need it, you can setup `allow_empty_backups: true` in `general` config section", backupName)
+				log.Errorf("%v", err)
+				return err
+			}
+			log.Warnf("'%s' doesn't contains tables for restore", backupName)
+			return nil
+		}
 	}
 	needRestart := false
-	if (rbacOnly || restoreRBAC) && !b.isEmbedded {
+	if rbacOnly || restoreRBAC {
 		if err := b.restoreRBAC(ctx, backupName, disks); err != nil {
 			return err
 		}
 		log.Infof("RBAC successfully restored")
 		needRestart = true
 	}
-	if (configsOnly || restoreConfigs) && !b.isEmbedded {
+	if configsOnly || restoreConfigs {
 		if err := b.restoreConfigs(backupName, disks); err != nil {
 			return err
 		}
@@ -161,19 +161,104 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 			return nil
 		}
 	}
-
-	if schemaOnly || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
-		if err := b.RestoreSchema(ctx, backupName, tablePattern, dropTable, ignoreDependencies); err != nil {
+	isObjectDiskPresents := false
+	if b.cfg.General.RemoteStorage != "custom" {
+		for _, d := range disks {
+			if isObjectDiskPresents = b.isDiskTypeObject(d.Type); isObjectDiskPresents {
+				break
+			}
+		}
+	}
+	if (b.cfg.ClickHouse.UseEmbeddedBackupRestore && b.cfg.ClickHouse.EmbeddedBackupDisk == "") || isObjectDiskPresents {
+		if b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, false, backupName); err != nil {
 			return err
 		}
+		if err = b.dst.Connect(ctx); err != nil {
+			return fmt.Errorf("restoreBackupEmbedded: can't connect to %s: %v", b.dst.Kind(), err)
+		}
+		defer func() {
+			if err := b.dst.Close(ctx); err != nil {
+				b.log.Warnf("can't close BackupDestination error: %v", err)
+			}
+		}()
+	}
+	var tablesForRestore ListOfTables
+	var partitionsNames map[metadata.TableTitle][]string
+	if tablePattern == "" {
+		tablePattern = "*"
+	}
+	metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
+	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
+		metadataPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
+	}
+
+	if !rbacOnly && !configsOnly {
+		tablesForRestore, partitionsNames, err = b.getTablesForRestoreLocal(ctx, backupName, metadataPath, tablePattern, dropTable, partitions)
+		if err != nil {
+			return err
+		}
+	}
+	if schemaOnly || dropTable || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
+		if err = b.RestoreSchema(ctx, backupName, tablesForRestore, ignoreDependencies, version); err != nil {
+			return err
+		}
+	}
+	// https://github.com/Altinity/clickhouse-backup/issues/756
+	if dataOnly && !schemaOnly && !rbacOnly && !configsOnly && len(partitions) > 0 {
+		if err = b.dropExistPartitions(ctx, tablesForRestore, partitionsNames, partitions, version); err != nil {
+			return err
+		}
+
 	}
 	if dataOnly || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
-		if err := b.RestoreData(ctx, backupName, tablePattern, partitions, disks); err != nil {
+		if err := b.RestoreData(ctx, backupName, backupMetadata, dataOnly, metadataPath, tablePattern, partitions, disks); err != nil {
 			return err
 		}
 	}
-	log.Info("done")
+	// do not create UDF when use --data, --rbac-only, --configs-only flags, https://github.com/Altinity/clickhouse-backup/issues/697
+	if schemaOnly || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
+		for _, function := range backupMetadata.Functions {
+			if err = b.ch.CreateUserDefinedFunction(function.Name, function.CreateQuery, b.cfg.General.RestoreSchemaOnCluster); err != nil {
+				return err
+			}
+		}
+	}
+	log.WithField("duration", utils.HumanizeDuration(time.Since(startRestore))).Info("done")
 	return nil
+}
+
+func (b *Backuper) getTablesForRestoreLocal(ctx context.Context, backupName string, metadataPath string, tablePattern string, dropTable bool, partitions []string) (ListOfTables, map[metadata.TableTitle][]string, error) {
+	var tablesForRestore ListOfTables
+	var partitionsNames map[metadata.TableTitle][]string
+	info, err := os.Stat(metadataPath)
+	// corner cases for https://github.com/Altinity/clickhouse-backup/issues/832
+	if err != nil {
+		if !b.cfg.General.AllowEmptyBackups {
+			return nil, nil, err
+		}
+		if !os.IsNotExist(err) {
+			return nil, nil, err
+		}
+		return nil, nil, nil
+	}
+	if !info.IsDir() {
+		return nil, nil, fmt.Errorf("%s is not a dir", metadataPath)
+	}
+	tablesForRestore, partitionsNames, err = b.getTableListByPatternLocal(ctx, metadataPath, tablePattern, dropTable, partitions)
+	if err != nil {
+		return nil, nil, err
+	}
+	// if restore-database-mapping specified, create database in mapping rules instead of in backup files.
+	if len(b.cfg.General.RestoreDatabaseMapping) > 0 {
+		err = changeTableQueryToAdjustDatabaseMapping(&tablesForRestore, b.cfg.General.RestoreDatabaseMapping)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	if len(tablesForRestore) == 0 {
+		return nil, nil, fmt.Errorf("no have found schemas by %s in %s", tablePattern, backupName)
+	}
+	return tablesForRestore, partitionsNames, nil
 }
 
 func (b *Backuper) restartClickHouse(ctx context.Context, backupName string, log *apexLog.Entry) error {
@@ -234,7 +319,7 @@ func (b *Backuper) executeShellCommandWithTimeout(ctx context.Context, cmd strin
 	return nil
 }
 
-func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB, tablePattern string, database metadata.DatabasesMeta, dropTable, schemaOnly, ignoreDependencies bool) error {
+func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB, tablePattern string, database metadata.DatabasesMeta, dropTable, schemaOnly, ignoreDependencies bool, version int) error {
 	isMapped := false
 	if targetDB, isMapped = b.cfg.General.RestoreDatabaseMapping[database.Name]; !isMapped {
 		targetDB = database.Name
@@ -253,10 +338,6 @@ func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB, tablePatt
 		// https://github.com/Altinity/clickhouse-backup/issues/651
 		settings := ""
 		if ignoreDependencies {
-			version, err := b.ch.GetVersion(ctx)
-			if err != nil {
-				return err
-			}
 			if version >= 21012000 {
 				settings = "SETTINGS check_table_dependencies=0"
 			}
@@ -435,64 +516,47 @@ func (b *Backuper) restoreBackupRelatedDir(backupName, backupPrefixDir, destinat
 	return nil
 }
 
-// RestoreSchema - restore schemas matched by tablePattern from backupName
-func (b *Backuper) RestoreSchema(ctx context.Context, backupName, tablePattern string, dropTable, ignoreDependencies bool) error {
-	log := apexLog.WithFields(apexLog.Fields{
-		"backup":    backupName,
-		"operation": "restore",
-	})
-
-	version, err := b.ch.GetVersion(ctx)
-	if err != nil {
-		return err
-	}
-	metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
-	if b.isEmbedded {
-		metadataPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
-	}
-	info, err := os.Stat(metadataPath)
-	// corner cases for https://github.com/Altinity/clickhouse-backup/issues/832
-	if err != nil {
-		if !b.cfg.General.AllowEmptyBackups {
-			return err
+// execute ALTER TABLE db.table DROP PARTITION for corner case when we try to restore backup with the same structure, https://github.com/Altinity/clickhouse-backup/issues/756
+func (b *Backuper) dropExistPartitions(ctx context.Context, tablesForRestore ListOfTables, partitionsIdMap map[metadata.TableTitle][]string, partitions []string, version int) error {
+	for _, table := range tablesForRestore {
+		partitionsIds, isExists := partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Table}]
+		if !isExists {
+			return fmt.Errorf("`%s`.`%s` doesn't contains %#v partitions", table.Database, table.Table, partitions)
 		}
-		if !os.IsNotExist(err) {
-			return err
+		partitionsSQL := fmt.Sprintf("DROP PARTITION %s", strings.Join(partitionsIds, ", DROP PARTITION "))
+		settings := ""
+		if version >= 19017000 {
+			settings = "SETTINGS mutations_sync=2"
 		}
-		return nil
-	}
-	if !info.IsDir() {
-		return fmt.Errorf("%s is not a dir", metadataPath)
-	}
-	if tablePattern == "" {
-		tablePattern = "*"
-	}
-	tablesForRestore, _, err := b.getTableListByPatternLocal(ctx, metadataPath, tablePattern, dropTable, nil)
-	if err != nil {
-		return err
-	}
-	// if restore-database-mapping specified, create database in mapping rules instead of in backup files.
-	if len(b.cfg.General.RestoreDatabaseMapping) > 0 {
-		err = changeTableQueryToAdjustDatabaseMapping(&tablesForRestore, b.cfg.General.RestoreDatabaseMapping)
+		err := b.ch.QueryContext(ctx, fmt.Sprintf("ALTER TABLE `%s`.`%s` %s %s", table.Database, table.Table, partitionsSQL, settings))
 		if err != nil {
 			return err
 		}
 	}
-	if len(tablesForRestore) == 0 {
-		return fmt.Errorf("no have found schemas by %s in %s", tablePattern, backupName)
-	}
+	return nil
+}
+
+// RestoreSchema - restore schemas matched by tablePattern from backupName
+func (b *Backuper) RestoreSchema(ctx context.Context, backupName string, tablesForRestore ListOfTables, ignoreDependencies bool, version int) error {
+	log := apexLog.WithFields(apexLog.Fields{
+		"backup":    backupName,
+		"operation": "restore_schema",
+	})
+	startRestoreSchema := time.Now()
+
 	if dropErr := b.dropExistsTables(tablesForRestore, ignoreDependencies, version, log); dropErr != nil {
 		return dropErr
 	}
 	var restoreErr error
 	if b.isEmbedded {
-		restoreErr = b.restoreSchemaEmbedded(ctx, backupName, tablesForRestore)
+		restoreErr = b.restoreSchemaEmbedded(ctx, backupName, tablesForRestore, version)
 	} else {
 		restoreErr = b.restoreSchemaRegular(tablesForRestore, version, log)
 	}
 	if restoreErr != nil {
 		return restoreErr
 	}
+	log.WithField("duration", utils.HumanizeDuration(time.Since(startRestoreSchema))).Info("done")
 	return nil
 }
 
@@ -500,9 +564,62 @@ var UUIDWithMergeTreeRE = regexp.MustCompile(`^(.+)(UUID)(\s+)'([^']+)'(.+)({uui
 
 var emptyReplicatedMergeTreeRE = regexp.MustCompile(`(?m)Replicated(MergeTree|ReplacingMergeTree|SummingMergeTree|AggregatingMergeTree|CollapsingMergeTree|VersionedCollapsingMergeTree|GraphiteMergeTree)\s*\(([^']*)\)(.*)`)
 
-func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string, tablesForRestore ListOfTables) error {
+func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string, tablesForRestore ListOfTables, version int) error {
+	var err error
+	if b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
+		err = b.fixEmbeddedMetadataLocal(ctx, backupName, version)
+	} else {
+		err = b.fixEmbeddedMetadataRemote(ctx, backupName, version)
+	}
+	if err != nil {
+		return err
+	}
+	return b.restoreEmbedded(ctx, backupName, true, false, tablesForRestore, nil)
+}
+
+func (b *Backuper) fixEmbeddedMetadataRemote(ctx context.Context, backupName string, chVersion int) error {
+	objectDiskPath, err := b.getObjectDiskPath()
+	if err != nil {
+		return err
+	}
+	if walkErr := b.dst.WalkAbsolute(ctx, path.Join(objectDiskPath, backupName, "metadata"), true, func(ctx context.Context, fInfo storage.RemoteFile) error {
+		if err != nil {
+			return err
+		}
+		if !strings.HasSuffix(fInfo.Name(), ".sql") {
+			return nil
+		}
+		var fReader io.ReadCloser
+		remoteFilePath := path.Join(objectDiskPath, backupName, "metadata", fInfo.Name())
+		fReader, err = b.dst.GetFileReaderAbsolute(ctx, path.Join(objectDiskPath, backupName, "metadata", fInfo.Name()))
+		if err != nil {
+			return err
+		}
+		var sqlBytes []byte
+		sqlBytes, err = io.ReadAll(fReader)
+		if err != nil {
+			return err
+		}
+		sqlQuery, sqlMetadataChanged, fixSqlErr := b.fixEmbeddedMetadataSQLQuery(ctx, sqlBytes, remoteFilePath, chVersion)
+		if fixSqlErr != nil {
+			return fixSqlErr
+		}
+		if sqlMetadataChanged {
+			err = b.dst.PutFileAbsolute(ctx, remoteFilePath, io.NopCloser(strings.NewReader(sqlQuery)))
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}); walkErr != nil {
+		return walkErr
+	}
+	return nil
+}
+
+func (b *Backuper) fixEmbeddedMetadataLocal(ctx context.Context, backupName string, chVersion int) error {
 	metadataPath := path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
-	if err := filepath.Walk(metadataPath, func(filePath string, info fs.FileInfo, err error) error {
+	if walkErr := filepath.Walk(metadataPath, func(filePath string, info fs.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -517,23 +634,11 @@ func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string,
 		if err != nil {
 			return err
 		}
-		sqlQuery := string(sqlBytes)
-		if strings.Contains(sqlQuery, "{uuid}") {
-			if UUIDWithMergeTreeRE.Match(sqlBytes) {
-				sqlQuery = UUIDWithMergeTreeRE.ReplaceAllString(sqlQuery, "$1$2$3'$4'$5$4$7")
-			} else {
-				apexLog.Warnf("%s contains `{uuid}` macro, but not contains UUID in table definition, will replace to `{database}/{table}` see https://github.com/ClickHouse/ClickHouse/issues/42709 for details", filePath)
-				filePathParts := strings.Split(filePath, "/")
-				database, err := url.QueryUnescape(filePathParts[len(filePathParts)-3])
-				if err != nil {
-					return err
-				}
-				table, err := url.QueryUnescape(filePathParts[len(filePathParts)-2])
-				if err != nil {
-					return err
-				}
-				sqlQuery = strings.Replace(sqlQuery, "{uuid}", database+"/"+table, 1)
-			}
+		sqlQuery, sqlMetadataChanged, fixSqlErr := b.fixEmbeddedMetadataSQLQuery(ctx, sqlBytes, filePath, chVersion)
+		if fixSqlErr != nil {
+			return fixSqlErr
+		}
+		if sqlMetadataChanged {
 			if err = object_disk.WriteFileContent(ctx, b.ch, b.cfg, b.cfg.ClickHouse.EmbeddedBackupDisk, filePath, []byte(sqlQuery)); err != nil {
 				return err
 			}
@@ -543,28 +648,58 @@ func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string,
 				return err
 			}
 		}
-		if emptyReplicatedMergeTreeRE.MatchString(sqlQuery) {
-			replicaXMLSettings := map[string]string{"default_replica_path": "//default_replica_path", "default_replica_name": "//default_replica_name"}
-			settings, err := b.ch.GetPreprocessedXMLSettings(ctx, replicaXMLSettings, "config.xml")
-			if err != nil {
-				return err
-			}
-			if len(settings) != 2 {
-				apexLog.Fatalf("can't get %#v from preprocessed_configs/config.xml", replicaXMLSettings)
-			}
-			apexLog.Warnf("%s contains `ReplicatedMergeTree()` without parameters, will replace to '%s` and `%s` see https://github.com/ClickHouse/ClickHouse/issues/42709 for details", filePath, settings["default_replica_path"], settings["default_replica_name"])
-			matches := emptyReplicatedMergeTreeRE.FindStringSubmatch(sqlQuery)
-			substitution := fmt.Sprintf("$1$2('%s','%s')$4", settings["default_replica_path"], settings["default_replica_name"])
-			if matches[2] != "" {
-				substitution = fmt.Sprintf("$1$2('%s','%s',$3)$4", settings["default_replica_path"], settings["default_replica_name"])
-			}
-			sqlQuery = emptyReplicatedMergeTreeRE.ReplaceAllString(sqlQuery, substitution)
-		}
 		return nil
-	}); err != nil {
-		return err
+	}); walkErr != nil {
+		return walkErr
 	}
-	return b.restoreEmbedded(ctx, backupName, true, tablesForRestore, nil)
+	return nil
+}
+
+func (b *Backuper) fixEmbeddedMetadataSQLQuery(ctx context.Context, sqlBytes []byte, filePath string, version int) (string, bool, error) {
+	sqlQuery := string(sqlBytes)
+	sqlMetadataChanged := false
+	if strings.Contains(sqlQuery, "{uuid}") {
+		if UUIDWithMergeTreeRE.Match(sqlBytes) && version < 23009000 {
+			sqlQuery = UUIDWithMergeTreeRE.ReplaceAllString(sqlQuery, "$1$2$3'$4'$5$4$7")
+		} else {
+			apexLog.Warnf("%s contains `{uuid}` macro, will replace to `{database}/{table}` see https://github.com/ClickHouse/ClickHouse/issues/42709 for details", filePath)
+			filePathParts := strings.Split(filePath, "/")
+			database, err := url.QueryUnescape(filePathParts[len(filePathParts)-3])
+			if err != nil {
+				return "", false, err
+			}
+			table, err := url.QueryUnescape(filePathParts[len(filePathParts)-2])
+			if err != nil {
+				return "", false, err
+			}
+			lastIndex := strings.LastIndex(sqlQuery, "{uuid}")
+			sqlQuery = sqlQuery[:lastIndex] + strings.Replace(sqlQuery[lastIndex:], "{uuid}", database+"/"+table, 1)
+			// create materialized view corner case
+			if strings.Contains(sqlQuery, "{uuid}") {
+				sqlQuery = UUIDWithMergeTreeRE.ReplaceAllString(sqlQuery, "$1$2$3'$4'$5$4$7")
+			}
+		}
+		sqlMetadataChanged = true
+	}
+	if emptyReplicatedMergeTreeRE.MatchString(sqlQuery) {
+		replicaXMLSettings := map[string]string{"default_replica_path": "//default_replica_path", "default_replica_name": "//default_replica_name"}
+		settings, err := b.ch.GetPreprocessedXMLSettings(ctx, replicaXMLSettings, "config.xml")
+		if err != nil {
+			return "", false, err
+		}
+		if len(settings) != 2 {
+			apexLog.Fatalf("can't get %#v from preprocessed_configs/config.xml", replicaXMLSettings)
+		}
+		apexLog.Warnf("%s contains `ReplicatedMergeTree()` without parameters, will replace to '%s` and `%s` see https://github.com/ClickHouse/ClickHouse/issues/42709 for details", filePath, settings["default_replica_path"], settings["default_replica_name"])
+		matches := emptyReplicatedMergeTreeRE.FindStringSubmatch(sqlQuery)
+		substitution := fmt.Sprintf("$1$2('%s','%s')$4", settings["default_replica_path"], settings["default_replica_name"])
+		if matches[2] != "" {
+			substitution = fmt.Sprintf("$1$2('%s','%s',$3)$4", settings["default_replica_path"], settings["default_replica_name"])
+		}
+		sqlQuery = emptyReplicatedMergeTreeRE.ReplaceAllString(sqlQuery, substitution)
+		sqlMetadataChanged = true
+	}
+	return sqlQuery, sqlMetadataChanged, nil
 }
 
 func (b *Backuper) restoreSchemaRegular(tablesForRestore ListOfTables, version int, log *apexLog.Entry) error {
@@ -653,6 +788,7 @@ func (b *Backuper) dropExistsTables(tablesForDrop ListOfTables, ignoreDependenci
 					}, query, b.cfg.General.RestoreSchemaOnCluster, ignoreDependencies, version, b.DefaultDataPath)
 					if dropErr == nil {
 						tablesForDrop[i].Query = query
+						break
 					}
 				}
 			} else {
@@ -686,11 +822,11 @@ func (b *Backuper) dropExistsTables(tablesForDrop ListOfTables, ignoreDependenci
 }
 
 // RestoreData - restore data for tables matched by tablePattern from backupName
-func (b *Backuper) RestoreData(ctx context.Context, backupName string, tablePattern string, partitions []string, disks []clickhouse.Disk) error {
-	startRestore := time.Now()
+func (b *Backuper) RestoreData(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, dataOnly bool, metadataPath, tablePattern string, partitions []string, disks []clickhouse.Disk) error {
+	startRestoreData := time.Now()
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
-		"operation": "restore",
+		"operation": "restore_data",
 	})
 	if b.ch.IsClickhouseShadow(path.Join(b.DefaultDataPath, "backup", backupName, "shadow")) {
 		return fmt.Errorf("backups created in v0.0.1 is not supported now")
@@ -713,10 +849,6 @@ func (b *Backuper) RestoreData(ctx context.Context, backupName string, tablePatt
 	}
 	var tablesForRestore ListOfTables
 	var partitionsNameList map[metadata.TableTitle][]string
-	metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
-	if b.isEmbedded {
-		metadataPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
-	}
 	if backup.Legacy {
 		tablesForRestore, err = b.ch.GetBackupTablesLegacy(backupName, disks)
 	} else {
@@ -735,34 +867,26 @@ func (b *Backuper) RestoreData(ctx context.Context, backupName string, tablePatt
 	}
 	log.Debugf("found %d tables with data in backup", len(tablesForRestore))
 	if b.isEmbedded {
-		err = b.restoreDataEmbedded(ctx, backupName, tablesForRestore, partitionsNameList)
+		err = b.restoreDataEmbedded(ctx, backupName, dataOnly, tablesForRestore, partitionsNameList)
 	} else {
-		err = b.restoreDataRegular(ctx, backupName, tablePattern, tablesForRestore, diskMap, diskTypes, disks, log)
+		err = b.restoreDataRegular(ctx, backupName, backupMetadata, tablePattern, tablesForRestore, diskMap, diskTypes, disks, log)
 	}
 	if err != nil {
 		return err
 	}
-	log.WithField("duration", utils.HumanizeDuration(time.Since(startRestore))).Info("done")
+	log.WithField("duration", utils.HumanizeDuration(time.Since(startRestoreData))).Info("done")
 	return nil
 }
 
-func (b *Backuper) restoreDataEmbedded(ctx context.Context, backupName string, tablesForRestore ListOfTables, partitionsNameList map[metadata.TableTitle][]string) error {
-	return b.restoreEmbedded(ctx, backupName, false, tablesForRestore, partitionsNameList)
+func (b *Backuper) restoreDataEmbedded(ctx context.Context, backupName string, dataOnly bool, tablesForRestore ListOfTables, partitionsNameList map[metadata.TableTitle][]string) error {
+	return b.restoreEmbedded(ctx, backupName, false, dataOnly, tablesForRestore, partitionsNameList)
 }
 
-func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, tablePattern string, tablesForRestore ListOfTables, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, log *apexLog.Entry) error {
+func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, tablePattern string, tablesForRestore ListOfTables, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, log *apexLog.Entry) error {
 	if len(b.cfg.General.RestoreDatabaseMapping) > 0 {
 		tablePattern = b.changeTablePatternFromRestoreDatabaseMapping(tablePattern)
 	}
-	var err error
-	if b.cfg.General.RemoteStorage == "s3" {
-		b.cfg.S3.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.S3.ObjectDiskPath)
-	} else if b.cfg.General.RemoteStorage == "gcs" {
-		b.cfg.GCS.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.GCS.ObjectDiskPath)
-	} else if b.cfg.General.RemoteStorage == "azblob" {
-		b.cfg.AzureBlob.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.AzureBlob.ObjectDiskPath)
-	}
-	if err != nil {
+	if err := b.applyMacrosToObjectDiskPath(ctx); err != nil {
 		return err
 	}
 
@@ -801,11 +925,11 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ta
 		restoreBackupWorkingGroup.Go(func() error {
 			// https://github.com/Altinity/clickhouse-backup/issues/529
 			if b.cfg.ClickHouse.RestoreAsAttach {
-				if restoreErr := b.restoreDataRegularByAttach(restoreCtx, backupName, table, diskMap, diskTypes, disks, dstTable, log); restoreErr != nil {
+				if restoreErr := b.restoreDataRegularByAttach(restoreCtx, backupName, backupMetadata, table, diskMap, diskTypes, disks, dstTable, log); restoreErr != nil {
 					return restoreErr
 				}
 			} else {
-				if restoreErr := b.restoreDataRegularByParts(restoreCtx, backupName, table, diskMap, diskTypes, disks, dstTable, log); restoreErr != nil {
+				if restoreErr := b.restoreDataRegularByParts(restoreCtx, backupName, backupMetadata, table, diskMap, diskTypes, disks, dstTable, log); restoreErr != nil {
 					return restoreErr
 				}
 			}
@@ -825,12 +949,12 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ta
 	return nil
 }
 
-func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName string, table metadata.TableMetadata, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, dstTable clickhouse.Table, log *apexLog.Entry) error {
+func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, table metadata.TableMetadata, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, dstTable clickhouse.Table, log *apexLog.Entry) error {
 	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, table, disks, diskMap, dstTable.DataPaths, b.ch, false); err != nil {
 		return fmt.Errorf("can't copy data to storage '%s.%s': %v", table.Database, table.Table, err)
 	}
 	log.Debug("data to 'storage' copied")
-	if err := b.downloadObjectDiskParts(ctx, backupName, table, diskMap, diskTypes, disks); err != nil {
+	if err := b.downloadObjectDiskParts(ctx, backupName, backupMetadata, table, diskMap, diskTypes, disks); err != nil {
 		return fmt.Errorf("can't restore object_disk server-side copy data parts '%s.%s': %v", table.Database, table.Table, err)
 	}
 	if err := b.ch.AttachTable(ctx, table, dstTable); err != nil {
@@ -839,12 +963,12 @@ func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName st
 	return nil
 }
 
-func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName string, table metadata.TableMetadata, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, dstTable clickhouse.Table, log *apexLog.Entry) error {
+func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, table metadata.TableMetadata, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, dstTable clickhouse.Table, log *apexLog.Entry) error {
 	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, table, disks, diskMap, dstTable.DataPaths, b.ch, true); err != nil {
 		return fmt.Errorf("can't copy data to detached '%s.%s': %v", table.Database, table.Table, err)
 	}
 	log.Debug("data to 'detached' copied")
-	if err := b.downloadObjectDiskParts(ctx, backupName, table, diskMap, diskTypes, disks); err != nil {
+	if err := b.downloadObjectDiskParts(ctx, backupName, backupMetadata, table, diskMap, diskTypes, disks); err != nil {
 		return fmt.Errorf("can't restore object_disk server-side copy data parts '%s.%s': %v", table.Database, table.Table, err)
 	}
 	if err := b.ch.AttachDataParts(table, dstTable); err != nil {
@@ -853,7 +977,7 @@ func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName str
 	return nil
 }
 
-func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName string, backupTable metadata.TableMetadata, diskMap, diskTypes map[string]string, disks []clickhouse.Disk) error {
+func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, backupTable metadata.TableMetadata, diskMap, diskTypes map[string]string, disks []clickhouse.Disk) error {
 	log := apexLog.WithFields(apexLog.Fields{
 		"operation": "downloadObjectDiskParts",
 		"table":     fmt.Sprintf("%s.%s", backupTable.Database, backupTable.Table),
@@ -910,6 +1034,16 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 					dstDiskName = part.RebalancedDisk
 				}
 				partPath := path.Join(diskMap[dstDiskName], "backup", backupName, "shadow", dbAndTableDir, dstDiskName, part.Name)
+				srcBackupName := backupName
+				srcDiskName := diskName
+				// copy from required backup for required data parts, https://github.com/Altinity/clickhouse-backup/issues/865
+				if part.Required && backupMetadata.RequiredBackup != "" {
+					var findRecursiveErr error
+					srcBackupName, srcDiskName, findRecursiveErr = b.findObjectDiskPartRecursive(ctx, backupMetadata, backupTable, part, diskName, log)
+					if findRecursiveErr != nil {
+						return findRecursiveErr
+					}
+				}
 				walkErr := filepath.Walk(partPath, func(fPath string, fInfo fs.FileInfo, err error) error {
 					if err != nil {
 						return err
@@ -945,13 +1079,13 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 							}
 							if b.cfg.General.RemoteStorage == "s3" && (diskType == "s3" || diskType == "encrypted") {
 								srcBucket = b.cfg.S3.Bucket
-								srcKey = path.Join(b.cfg.S3.ObjectDiskPath, backupName, diskName, storageObject.ObjectRelativePath)
+								srcKey = path.Join(b.cfg.S3.ObjectDiskPath, srcBackupName, srcDiskName, storageObject.ObjectRelativePath)
 							} else if b.cfg.General.RemoteStorage == "gcs" && (diskType == "s3" || diskType == "encrypted") {
 								srcBucket = b.cfg.GCS.Bucket
-								srcKey = path.Join(b.cfg.GCS.ObjectDiskPath, backupName, diskName, storageObject.ObjectRelativePath)
+								srcKey = path.Join(b.cfg.GCS.ObjectDiskPath, srcBackupName, srcDiskName, storageObject.ObjectRelativePath)
 							} else if b.cfg.General.RemoteStorage == "azblob" && (diskType == "azure_blob_storage" || diskType == "encrypted") {
 								srcBucket = b.cfg.AzureBlob.Container
-								srcKey = path.Join(b.cfg.AzureBlob.ObjectDiskPath, backupName, diskName, storageObject.ObjectRelativePath)
+								srcKey = path.Join(b.cfg.AzureBlob.ObjectDiskPath, srcBackupName, srcDiskName, storageObject.ObjectRelativePath)
 							} else {
 								return fmt.Errorf("incompatible object_disk[%s].Type=%s amd remote_storage: %s", diskName, diskType, b.cfg.General.RemoteStorage)
 							}
@@ -977,6 +1111,34 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 	}
 
 	return nil
+}
+
+func (b *Backuper) findObjectDiskPartRecursive(ctx context.Context, backup metadata.BackupMetadata, table metadata.TableMetadata, part metadata.Part, diskName string, log *apexLog.Entry) (string, string, error) {
+	if !part.Required {
+		return backup.BackupName, diskName, nil
+	}
+	if part.Required && backup.RequiredBackup == "" {
+		return "", "", fmt.Errorf("part %s have required flag, in %s but backup.RequiredBackup is empty", part.Name, backup.BackupName)
+	}
+	requiredBackup, err := b.ReadBackupMetadataRemote(ctx, backup.RequiredBackup)
+	if err != nil {
+		return "", "", err
+	}
+	var requiredTable *metadata.TableMetadata
+	requiredTable, err = b.downloadTableMetadataIfNotExists(ctx, requiredBackup.BackupName, log, metadata.TableTitle{Database: table.Database, Table: table.Table})
+	// @todo think about add check what if disk type could changed (should already restricted, cause upload seek part in the same disk name)
+	for requiredDiskName, parts := range requiredTable.Parts {
+		for _, requiredPart := range parts {
+			if requiredPart.Name == part.Name {
+				if requiredPart.Required {
+					return b.findObjectDiskPartRecursive(ctx, *requiredBackup, *requiredTable, requiredPart, requiredDiskName, log)
+				}
+				return requiredBackup.BackupName, requiredDiskName, nil
+			}
+		}
+
+	}
+	return "", "", fmt.Errorf("part %s have required flag in %s, but not found in %s", part.Name, backup.BackupName, backup.RequiredBackup)
 }
 
 func (b *Backuper) checkMissingTables(tablesForRestore ListOfTables, chTables []clickhouse.Table) []string {
@@ -1034,8 +1196,7 @@ func (b *Backuper) changeTablePatternFromRestoreDatabaseMapping(tablePattern str
 	return tablePattern
 }
 
-func (b *Backuper) restoreEmbedded(ctx context.Context, backupName string, restoreOnlySchema bool, tablesForRestore ListOfTables, partitionsNameList map[metadata.TableTitle][]string) error {
-	restoreSQL := "Disk(?,?)"
+func (b *Backuper) restoreEmbedded(ctx context.Context, backupName string, schemaOnly, dataOnly bool, tablesForRestore ListOfTables, partitionsNameList map[metadata.TableTitle][]string) error {
 	tablesSQL := ""
 	l := len(tablesForRestore)
 	for i, t := range tablesForRestore {
@@ -1068,13 +1229,27 @@ func (b *Backuper) restoreEmbedded(ctx context.Context, backupName string, resto
 			}
 		}
 	}
-	settings := ""
-	if restoreOnlySchema {
-		settings = "SETTINGS structure_only=1"
+	var settings []string
+	if schemaOnly {
+		settings = append(settings, "structure_only=1")
 	}
-	restoreSQL = fmt.Sprintf("RESTORE %s FROM %s %s", tablesSQL, restoreSQL, settings)
+	if dataOnly {
+		settings = append(settings, "allow_non_empty_tables=1")
+	}
+	if b.cfg.ClickHouse.EmbeddedRestoreThreads > 0 {
+		settings = append(settings, fmt.Sprintf("restore_threads=%d", b.cfg.ClickHouse.EmbeddedRestoreThreads))
+	}
+	embeddedBackupLocation, err := b.getEmbeddedBackupLocation(ctx, backupName)
+	if err != nil {
+		return err
+	}
+	settingsStr := ""
+	if len(settings) > 0 {
+		settingsStr = "SETTINGS " + strings.Join(settings, ", ")
+	}
+	restoreSQL := fmt.Sprintf("RESTORE %s FROM %s %s", tablesSQL, embeddedBackupLocation, settingsStr)
 	restoreResults := make([]clickhouse.SystemBackups, 0)
-	if err := b.ch.SelectContext(ctx, &restoreResults, restoreSQL, b.cfg.ClickHouse.EmbeddedBackupDisk, backupName); err != nil {
+	if err := b.ch.SelectContext(ctx, &restoreResults, restoreSQL); err != nil {
 		return fmt.Errorf("restore error: %v", err)
 	}
 	if len(restoreResults) == 0 || restoreResults[0].Status != "RESTORED" {

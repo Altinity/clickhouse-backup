@@ -8,9 +8,13 @@ clickhouse:
   host: clickhouse
   port: 9000
   restart_command: bash -c 'echo "FAKE RESTART"'
+  use_embedded_backup_restore: true
+  timeout: 4h
 gcs:
-  bucket: altinity-qa-test
+  bucket: "${QA_GCS_OVER_S3_BUCKET}"
   path: backup/{cluster}/{shard}
   object_disk_path: object_disks/{cluster}/{shard}
   credentials_file: /etc/clickhouse-backup/credentials.json
-  compression_format: tar
+  embedded_access_key: "${QA_GCS_OVER_S3_ACCESS_KEY}"
+  embedded_secret_key: "${QA_GCS_OVER_S3_SECRET_KEY}"
+  compression_format: none

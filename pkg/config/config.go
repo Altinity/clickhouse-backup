@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -69,6 +70,8 @@ type GCSConfig struct {
 	CredentialsFile        string            `yaml:"credentials_file" envconfig:"GCS_CREDENTIALS_FILE"`
 	CredentialsJSON        string            `yaml:"credentials_json" envconfig:"GCS_CREDENTIALS_JSON"`
 	CredentialsJSONEncoded string            `yaml:"credentials_json_encoded" envconfig:"GCS_CREDENTIALS_JSON_ENCODED"`
+	EmbeddedAccessKey      string            `yaml:"embedded_access_key" envconfig:"GCS_EMBEDDED_ACCESS_KEY"`
+	EmbeddedSecretKey      string            `yaml:"embedded_secret_key" envconfig:"GCS_EMBEDDED_SECRET_KEY"`
 	SkipCredentials        bool              `yaml:"skip_credentials" envconfig:"GCS_SKIP_CREDENTIALS"`
 	Bucket                 string            `yaml:"bucket" envconfig:"GCS_BUCKET"`
 	Path                   string            `yaml:"path" envconfig:"GCS_PATH"`
@@ -210,6 +213,8 @@ type ClickHouseConfig struct {
 	FreezeByPartWhere                string            `yaml:"freeze_by_part_where" envconfig:"CLICKHOUSE_FREEZE_BY_PART_WHERE"`
 	UseEmbeddedBackupRestore         bool              `yaml:"use_embedded_backup_restore" envconfig:"CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE"`
 	EmbeddedBackupDisk               string            `yaml:"embedded_backup_disk" envconfig:"CLICKHOUSE_EMBEDDED_BACKUP_DISK"`
+	EmbeddedBackupThreads            uint8             `yaml:"embedded_backup_threads" envconfig:"CLICKHOUSE_EMBEDDED_BACKUP_THREADS"`
+	EmbeddedRestoreThreads           uint8             `yaml:"embedded_restore_threads" envconfig:"CLICKHOUSE_EMBEDDED_RESTORE_THREADS"`
 	BackupMutations                  bool              `yaml:"backup_mutations" envconfig:"CLICKHOUSE_BACKUP_MUTATIONS"`
 	RestoreAsAttach                  bool              `yaml:"restore_as_attach" envconfig:"CLICKHOUSE_RESTORE_AS_ATTACH"`
 	CheckPartsColumns                bool              `yaml:"check_parts_columns" envconfig:"CLICKHOUSE_CHECK_PARTS_COLUMNS"`
@@ -298,6 +303,8 @@ func (cfg *Config) GetCompressionFormat() string {
 	}
 }
 
+var freezeByPartBeginAndRE = regexp.MustCompile(`(?im)^\s*AND\s+`)
+
 // LoadConfig - load config from file + environment variables
 func LoadConfig(configLocation string) (*Config, error) {
 	cfg := DefaultConfig()
@@ -326,6 +333,12 @@ func LoadConfig(configLocation string) (*Config, error) {
 	cfg.AzureBlob.Path = strings.TrimPrefix(cfg.AzureBlob.Path, "/")
 	cfg.S3.Path = strings.TrimPrefix(cfg.S3.Path, "/")
 	cfg.GCS.Path = strings.TrimPrefix(cfg.GCS.Path, "/")
+
+	// https://github.com/Altinity/clickhouse-backup/issues/855
+	if cfg.ClickHouse.FreezeByPart && cfg.ClickHouse.FreezeByPartWhere != "" && !freezeByPartBeginAndRE.MatchString(cfg.ClickHouse.FreezeByPartWhere) {
+		cfg.ClickHouse.FreezeByPartWhere = " AND " + cfg.ClickHouse.FreezeByPartWhere
+	}
+
 	log.SetLevelFromString(cfg.General.LogLevel)
 
 	if err = ValidateConfig(cfg); err != nil {
@@ -562,7 +575,7 @@ func DefaultConfig() *Config {
 			StorageClass:            string(s3types.StorageClassStandard),
 			Concurrency:             int(downloadConcurrency + 1),
 			PartSize:                0,
-			MaxPartsCount:           2000,
+			MaxPartsCount:           4000,
 		},
 		GCS: GCSConfig{
 			CompressionLevel:  1,
@@ -604,6 +617,7 @@ func DefaultConfig() *Config {
 }
 
 func GetConfigFromCli(ctx *cli.Context) *Config {
+	OverrideEnvVars(ctx)
 	configPath := GetConfigPath(ctx)
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
@@ -623,4 +637,20 @@ func GetConfigPath(ctx *cli.Context) string {
 		return os.Getenv("CLICKHOUSE_BACKUP_CONFIG")
 	}
 	return DefaultConfigPath
+}
+
+func OverrideEnvVars(ctx *cli.Context) {
+	env := ctx.StringSlice("env")
+	if len(env) > 0 {
+		for _, v := range env {
+			envVariable := strings.SplitN(v, "=", 2)
+			if len(envVariable) < 2 {
+				envVariable = append(envVariable, "true")
+			}
+			log.Infof("override %s=%s", envVariable[0], envVariable[1])
+			if err := os.Setenv(envVariable[0], envVariable[1]); err != nil {
+				log.Warnf("can't override %s=%s, error: %v", envVariable[0], envVariable[1], err)
+			}
+		}
+	}
 }
