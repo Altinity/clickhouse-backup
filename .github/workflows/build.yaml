@@ -181,6 +181,8 @@ jobs:
           tfs --debug --no-colors report results -a "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/" ./test/testflows/raw.log - --confidential --copyright "Altinity LTD" --logo ./test/testflows/altinity.png | ~/venv/qa/bin/tfs --debug --no-colors document convert > ./test/testflows/report.html
           sudo chmod -Rv +rx test/testflows/clickhouse_backup/_instances
       - name: Format testflows coverage
+        env:
+          GOROOT: ${{ env.GOROOT_1_22_X64 }}
         run: |
           sudo chmod -Rv a+rw test/testflows/_coverage_/
           ls -la test/testflows/_coverage_
@@ -257,6 +259,7 @@ jobs:
 
       - name: Running integration tests
         env:
+          GOROOT: ${{ env.GOROOT_1_22_X64 }}
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
           # just options for advanced logging
           # RUN_TESTS: "TestFIPS"
@@ -304,6 +307,8 @@ jobs:
           docker-compose -f test/integration/${COMPOSE_FILE} ps -a
           go test -timeout 60m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
       - name: Format integration coverage
+        env:
+          GOROOT: ${{ env.GOROOT_1_22_X64 }}
         run: |
           sudo chmod -Rv a+rw test/integration/_coverage_/
           ls -la test/integration/_coverage_ 
