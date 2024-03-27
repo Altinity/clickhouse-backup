@@ -7,6 +7,7 @@ IMPROVEMENTS
 -- `--data` for `restore` with `use_embedded_backup_restore: true` will use `allow_non_empty_tables=true` to allow fix [756](https://github.com/Altinity/clickhouse-backup/issues/756)
 - added `--diff-from-remote` parameter for `create` command, will copy only new data parts object disk data, also allows to download properly object disk data from required backup during `restore`, fix [865](https://github.com/Altinity/clickhouse-backup/issues/865)
 - added support of native Clickhouse incremental backup for `use_embedded_backup_restore: true` fix [735](https://github.com/Altinity/clickhouse-backup/issues/735)
+- added `GCS_CHUNK_SIZE` config parameter, try to speedup GCS upload fix [874](https://github.com/Altinity/clickhouse-backup/pull/874), thanks @dermasmid
 - switched to golang 1.22
 
 BUG FIXES
