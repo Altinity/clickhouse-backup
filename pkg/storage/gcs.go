@@ -260,6 +260,7 @@ func (gcs *GCS) PutFile(ctx context.Context, key string, r io.ReadCloser) error 
 	key = path.Join(gcs.Config.Path, key)
 	obj := pClient.Bucket(gcs.Config.Bucket).Object(key)
 	writer := obj.NewWriter(ctx)
+	writer.ChunkSize = gcs.Config.ChunkSize
 	writer.StorageClass = gcs.Config.StorageClass
 	writer.ChunkRetryDeadline = 60 * time.Minute
 	if len(gcs.Config.ObjectLabels) > 0 {
