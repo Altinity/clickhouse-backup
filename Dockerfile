@@ -15,16 +15,16 @@ RUN rm -fv /etc/apt/sources.list.d/clickhouse.list && \
     echo "deb https://ppa.launchpadcontent.net/longsleep/golang-backports/ubuntu ${DISTRIB_CODENAME} main" > /etc/apt/sources.list.d/golang.list && \
     echo "deb-src https://ppa.launchpadcontent.net/longsleep/golang-backports/ubuntu ${DISTRIB_CODENAME} main" >> /etc/apt/sources.list.d/golang.list && \
     ( apt-get update || true ) && \
-    apt-get install -y --no-install-recommends libc-dev golang-1.21 make git gcc musl-dev musl-tools && \
+    apt-get install -y --no-install-recommends libc-dev golang-1.22 make git gcc musl-dev musl-tools && \
     wget -q -P /root/ https://musl.cc/aarch64-linux-musl-cross.tgz && \
     tar -xvf /root/aarch64-linux-musl-cross.tgz -C /root/ && \
     mkdir -p /root/go/
 
-RUN ln -nsfv /usr/lib/go-1.21/bin/go /usr/bin/go
+RUN ln -nsfv /usr/lib/go-1.22/bin/go /usr/bin/go
 VOLUME /root/.cache/go
 ENV GOCACHE=/root/.cache/go
 ENV GOPATH=/root/go/
-ENV GOROOT=/usr/lib/go-1.21/
+ENV GOROOT=/usr/lib/go-1.22/
 RUN go env
 WORKDIR /src/
 # cache modules when go.mod go.sum changed
