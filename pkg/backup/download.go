@@ -526,6 +526,9 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 // @todo think about parallel download if sequentially will slow
 func (b *Backuper) downloadMissedInnerTablesMetadata(ctx context.Context, backupName string, metadataSize uint64, tablesForDownload []metadata.TableTitle, tableMetadataAfterDownload []*metadata.TableMetadata, disks []clickhouse.Disk, schemaOnly bool, partitions []string, log *apexLog.Entry) ([]*metadata.TableMetadata, []metadata.TableTitle, uint64, error) {
 	for _, t := range tableMetadataAfterDownload {
+		if t == nil {
+			continue
+		}
 		if strings.HasPrefix(t.Query, "ATTACH MATERIALIZED") || strings.HasPrefix(t.Query, "CREATE MATERIALIZED") {
 			if strings.Contains(t.Query, " TO ") && !strings.Contains(t.Query, " TO INNER UUID") {
 				continue
