@@ -45,6 +45,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 	}
 	ctx, cancel = context.WithCancel(ctx)
 	defer cancel()
+	startRestore := time.Now()
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 	if err := b.prepareRestoreDatabaseMapping(databaseMapping); err != nil {
 		return err
@@ -222,7 +223,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 			}
 		}
 	}
-	log.Info("done")
+	log.WithField("duration", utils.HumanizeDuration(time.Since(startRestore))).Info("done")
 	return nil
 }
 
@@ -541,6 +542,7 @@ func (b *Backuper) RestoreSchema(ctx context.Context, backupName string, tablesF
 		"backup":    backupName,
 		"operation": "restore_schema",
 	})
+	startRestoreSchema := time.Now()
 
 	if dropErr := b.dropExistsTables(tablesForRestore, ignoreDependencies, version, log); dropErr != nil {
 		return dropErr
@@ -554,6 +556,7 @@ func (b *Backuper) RestoreSchema(ctx context.Context, backupName string, tablesF
 	if restoreErr != nil {
 		return restoreErr
 	}
+	log.WithField("duration", utils.HumanizeDuration(time.Since(startRestoreSchema))).Info("done")
 	return nil
 }
 
@@ -820,7 +823,7 @@ func (b *Backuper) dropExistsTables(tablesForDrop ListOfTables, ignoreDependenci
 
 // RestoreData - restore data for tables matched by tablePattern from backupName
 func (b *Backuper) RestoreData(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, dataOnly bool, metadataPath, tablePattern string, partitions []string, disks []clickhouse.Disk) error {
-	startRestore := time.Now()
+	startRestoreData := time.Now()
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "restore_data",
@@ -871,7 +874,7 @@ func (b *Backuper) RestoreData(ctx context.Context, backupName string, backupMet
 	if err != nil {
 		return err
 	}
-	log.WithField("duration", utils.HumanizeDuration(time.Since(startRestore))).Info("done")
+	log.WithField("duration", utils.HumanizeDuration(time.Since(startRestoreData))).Info("done")
 	return nil
 }
 
