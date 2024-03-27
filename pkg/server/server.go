@@ -1054,6 +1054,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	vars := mux.Vars(r)
 	query := r.URL.Query()
+	deleteSource := false
 	diffFrom := ""
 	diffFromRemote := ""
 	name := utils.CleanBackupNameRE.ReplaceAllString(vars["name"], "")
@@ -1062,6 +1063,11 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	schemaOnly := false
 	resume := false
 	fullCommand := "upload"
+
+	if _, exist := query["delete-source"]; exist {
+		deleteSource = true
+		fullCommand = fmt.Sprintf("%s --deleteSource", fullCommand)
+	}
 
 	if df, exist := query["diff-from"]; exist {
 		diffFrom = df[0]
@@ -1101,7 +1107,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		commandId, _ := status.Current.Start(fullCommand)
 		err, _ := api.metrics.ExecuteWithMetrics("upload", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.Upload(name, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, resume, commandId)
+			return b.Upload(name, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, resume, commandId)
 		})
 		if err != nil {
 			api.log.Errorf("Upload error: %v", err)

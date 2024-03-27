@@ -707,6 +707,7 @@ Note: this operation is sync, and could take a lot of time, increase http timeou
 
 Upload backup to remote storage: `curl -s localhost:7171/backup/upload/<BACKUP_NAME> -X POST | jq .`
 
+- Optional query argument `delete-source` works the same as the `--delete-source` CLI argument.
 - Optional query argument `diff-from` works the same as the `--diff-from` CLI argument.
 - Optional query argument `diff-from-remote` works the same as the `--diff-from-remote` CLI argument.
 - Optional query argument `table` works the same as the `--table value` CLI argument.

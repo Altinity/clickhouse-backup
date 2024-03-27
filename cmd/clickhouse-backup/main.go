@@ -158,7 +158,7 @@ func main() {
 			Description: "Create and upload",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CreateToRemote(c.Args().First(), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), c.Bool("skip-check-parts-columns"), version, c.Int("command-id"))
+				return b.CreateToRemote(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), c.Bool("skip-check-parts-columns"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -221,6 +221,11 @@ func main() {
 					Hidden: false,
 					Usage:  "Skip check system.parts_columns to disallow backup inconsistent column types for data parts",
 				},
+				cli.BoolFlag{
+					Name:   "delete, delete-source, delete-local",
+					Hidden: false,
+					Usage:  "explicitly delete local backup after upload",
+				},
 			),
 		},
 		{
@@ -229,7 +234,7 @@ func main() {
 			UsageText: "clickhouse-backup upload [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--diff-from=<local_backup_name>] [--diff-from-remote=<remote_backup_name>] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Upload(c.Args().First(), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("resume"), c.Int("command-id"))
+				return b.Upload(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("resume"), c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -266,6 +271,11 @@ func main() {
 					Name:   "resume, resumable",
 					Hidden: false,
 					Usage:  "Save intermediate upload state and resume upload if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'",
+				},
+				cli.BoolFlag{
+					Name:   "delete, delete-source, delete-local",
+					Hidden: false,
+					Usage:  "explicitly delete local backup after upload",
 				},
 			),
 		},

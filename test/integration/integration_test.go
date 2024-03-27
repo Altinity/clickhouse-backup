@@ -1727,9 +1727,8 @@ func TestInnerTablesMaterializedView(t *testing.T) {
 	r.Equal(uint64(100), rowCnt)
 
 	r.NoError(ch.dropDatabase("test_mv"))
-
-	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "upload", "test_mv", "--tables=test_mv.mv_with*,test_mv.dst*"))
-	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_mv"))
+	// https://github.com/Altinity/clickhouse-backup/issues/777
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "upload", "test_mv", "--delete-source", "--tables=test_mv.mv_with*,test_mv.dst*"))
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "download", "test_mv", "--tables=test_mv.mv_with*,test_mv.dst*"))
 
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "test_mv", "--tables=test_mv.mv_with*,test_mv.dst*"))

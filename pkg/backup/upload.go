@@ -32,7 +32,7 @@ import (
 	"github.com/yargevad/filepathx"
 )
 
-func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern string, partitions []string, schemaOnly, resume bool, commandId int) error {
+func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFromRemote, tablePattern string, partitions []string, schemaOnly, resume bool, commandId int) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return err
@@ -232,15 +232,21 @@ func (b *Backuper) Upload(backupName, diffFrom, diffFromRemote, tablePattern str
 		WithField("size", utils.FormatBytes(uint64(compressedDataSize)+uint64(metadataSize)+uint64(len(newBackupMetadataBody))+backupMetadata.RBACSize+backupMetadata.ConfigSize)).
 		Info("done")
 
-	// Clean
+	// Remote old backup retention
 	if err = b.RemoveOldBackupsRemote(ctx); err != nil {
 		return fmt.Errorf("can't remove old backups on remote storage: %v", err)
 	}
-	// fix https://github.com/Altinity/clickhouse-backup/issues/834
+	// Local old backup retention, fix https://github.com/Altinity/clickhouse-backup/issues/834
 	if err = b.RemoveOldBackupsLocal(ctx, false, nil); err != nil {
 		return fmt.Errorf("can't remove old local backups: %v", err)
 	}
 
+	// explicitly delete local backup after successful upload, fix https://github.com/Altinity/clickhouse-backup/issues/777
+	if b.cfg.General.BackupsToKeepLocal >= 0 && deleteSource {
+		if err = b.RemoveBackupLocal(ctx, backupName, disks); err != nil {
+			return fmt.Errorf("can't explicitly delete local source backup: %v", err)
+		}
+	}
 	return nil
 }
 
