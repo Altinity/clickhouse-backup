@@ -114,12 +114,20 @@ jobs:
     runs-on: ubuntu-22.04
     strategy:
       matrix:
+        golang-version:
+          - "1.22"
         clickhouse:
           - '22.3'
           - '22.8'
           - '23.3'
           - '23.8'
     steps:
+      - name: Setup golang
+        id: setup-go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '^${{ matrix.golang-version }}'
+
       - name: Checkout project
         uses: actions/checkout@v4
 
