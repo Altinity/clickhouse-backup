@@ -634,35 +634,35 @@ That can lead to data corruption.
 
 Use the `clickhouse-backup server` command to run as a REST API server. In general, the API attempts to mirror the CLI commands.
 
-> **GET /**
+### GET /
 
 List all current applicable HTTP routes
 
-> **POST /**
+### POST /
 
-> **POST /restart**
+### POST /restart
 
 Restart HTTP server, close all current connections, close listen socket, open listen socket again, all background go-routines breaks with contexts
 
-> **GET /backup/kill**
+### GET /backup/kill
 
 Kill selected command from `GET /backup/actions` command list, kill process should be near immediate, but some go-routines (upload one data part) could continue to run.
 
 - Optional query argument `command` may contain the command name to kill, or if it is omitted then kill the first "in progress" command.
 
-> **GET /backup/tables**
+### GET /backup/tables
 
 Print list of tables: `curl -s localhost:7171/backup/tables | jq .`, exclude pattern matched tables from `skip_tables` configuration parameters
 
 - Optional query argument `table` works the same as the `--table value` CLI argument.
 
-> **GET /backup/tables/all**
+### GET /backup/tables/all
 
 Print list of tables: `curl -s localhost:7171/backup/tables/all | jq .`, ignore `skip_tables` configuration parameters.
 
 - Optional query argument `table` works the same as the `--table value` CLI argument.
 
-> **POST /backup/create**
+### POST /backup/create
 
 Create new backup: `curl -s localhost:7171/backup/create -X POST | jq .`
 
@@ -677,7 +677,7 @@ Create new backup: `curl -s localhost:7171/backup/create -X POST | jq .`
 
 Note: this operation is asynchronous, so the API will return once the operation has started.
 
-> **POST /backup/watch**
+### POST /backup/watch
 
 Run background watch process and create full+incremental backups sequence: `curl -s localhost:7171/backup/watch -X POST | jq .`
 You can't run watch twice with the same parameters even when `allow_parallel: true`
@@ -694,16 +694,16 @@ You can't run watch twice with the same parameters even when `allow_parallel: tr
 
 Note: this operation is asynchronous and can only be stopped with `kill -s SIGHUP $(pgrep -f clickhouse-backup)` or call `/restart`, `/backup/kill`. The API will return immediately once the operation has started.
 
-> **POST /backup/clean**
+### POST /backup/clean
 
 Clean the `shadow` folders using all available paths from `system.disks`
 
-> **POST /backup/clean/remote_broken**
+### POST /backup/clean/remote_broken
 
 Remove
 Note: this operation is sync, and could take a lot of time, increase http timeouts during call
 
-> **POST /backup/upload**
+### POST /backup/upload
 
 Upload backup to remote storage: `curl -s localhost:7171/backup/upload/<BACKUP_NAME> -X POST | jq .`
 
@@ -717,7 +717,7 @@ Upload backup to remote storage: `curl -s localhost:7171/backup/upload/<BACKUP_N
 
 Note: this operation is asynchronous, so the API will return once the operation has started.
 
-> **GET /backup/list/{where}**
+### GET /backup/list/{where}
 
 Print a list of backups: `curl -s localhost:7171/backup/list | jq .`
 Print a list of only local backups: `curl -s localhost:7171/backup/list/local | jq .`
@@ -726,7 +726,7 @@ Print a list of only remote backups: `curl -s localhost:7171/backup/list/remote 
 Note: The `Size` field will not be set for the local backups that have just been created or are in progress.
 Note: The `Size` field will not be set for the remote backups with upload status in progress.
 
-> **POST /backup/download**
+### POST /backup/download
 
 Download backup from remote storage: `curl -s localhost:7171/backup/download/<BACKUP_NAME> -X POST | jq .`
 
@@ -738,7 +738,7 @@ Download backup from remote storage: `curl -s localhost:7171/backup/download/<BA
 
 Note: this operation is asynchronous, so the API will return once the operation has started.
 
-> **POST /backup/restore**
+### POST /backup/restore
 
 Create schema and restore data from backup: `curl -s localhost:7171/backup/restore/<BACKUP_NAME> -X POST | jq .`
 
@@ -753,21 +753,21 @@ Create schema and restore data from backup: `curl -s localhost:7171/backup/resto
 - Optional query argument `restore_database_mapping` works the same as the `--restore-database-mapping` CLI argument.
 - Optional query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens"}`.
 
-> **POST /backup/delete**
+### POST /backup/delete
 
 Delete specific remote backup: `curl -s localhost:7171/backup/delete/remote/<BACKUP_NAME> -X POST | jq .`
 
 Delete specific local backup: `curl -s localhost:7171/backup/delete/local/<BACKUP_NAME> -X POST | jq .`
 
-> **GET /backup/status**
+### GET /backup/status
 
 Display list of currently running asynchronous operations: `curl -s localhost:7171/backup/status | jq .`
 
-> **POST /backup/actions**
+### POST /backup/actions
 
 Execute multiple backup actions: `curl -X POST -d '{"command":"create test_backup"}' -s localhost:7171/backup/actions`
 
-> **GET /backup/actions**
+### GET /backup/actions
 
 Display a list of all operations from start of API server: `curl -s localhost:7171/backup/actions | jq .`
 
