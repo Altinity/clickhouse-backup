@@ -207,6 +207,13 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	if err := metadataGroup.Wait(); err != nil {
 		return fmt.Errorf("one of Download Metadata go-routine return error: %v", err)
 	}
+	// download, missed .inner. tables, https://github.com/Altinity/clickhouse-backup/issues/765
+	var missedInnerTableErr error
+	tableMetadataAfterDownload, tablesForDownload, metadataSize, missedInnerTableErr = b.downloadMissedInnerTablesMetadata(ctx, backupName, metadataSize, tablesForDownload, tableMetadataAfterDownload, disks, schemaOnly, partitions, log)
+	if missedInnerTableErr != nil {
+		return missedInnerTableErr
+	}
+
 	if !schemaOnly {
 		if reBalanceErr := b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownload, disks, remoteBackup, log); reBalanceErr != nil {
 			return reBalanceErr
@@ -513,6 +520,43 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 		WithField("size", utils.FormatBytes(size)).
 		Info("done")
 	return &tableMetadata, size, nil
+}
+
+// downloadMissedInnerTablesMetadata - download, missed .inner. tables if materialized view query not contains `TO db.table` clause, https://github.com/Altinity/clickhouse-backup/issues/765
+// @todo think about parallel download if sequentially will slow
+func (b *Backuper) downloadMissedInnerTablesMetadata(ctx context.Context, backupName string, metadataSize uint64, tablesForDownload []metadata.TableTitle, tableMetadataAfterDownload []*metadata.TableMetadata, disks []clickhouse.Disk, schemaOnly bool, partitions []string, log *apexLog.Entry) ([]*metadata.TableMetadata, []metadata.TableTitle, uint64, error) {
+	for _, t := range tableMetadataAfterDownload {
+		if strings.HasPrefix(t.Query, "ATTACH MATERIALIZED") || strings.HasPrefix(t.Query, "CREATE MATERIALIZED") {
+			if strings.Contains(t.Query, " TO ") && !strings.Contains(t.Query, " TO INNER UUID") {
+				continue
+			}
+			var innerTableName string
+			if matches := uuidRE.FindStringSubmatch(t.Query); len(matches) > 0 {
+				innerTableName = fmt.Sprintf(".inner_id.%s", matches[1])
+			} else {
+				innerTableName = fmt.Sprintf(".inner.%s", t.Table)
+			}
+			innerTableExists := false
+			for _, existsTable := range tablesForDownload {
+				if existsTable.Table == innerTableName && existsTable.Database == t.Database {
+					innerTableExists = true
+					break
+				}
+			}
+			if !innerTableExists {
+				innerTableTitle := metadata.TableTitle{Database: t.Database, Table: innerTableName}
+				metadataLogger := log.WithField("missed_inner_metadata", fmt.Sprintf("%s.%s", innerTableTitle.Database, innerTableTitle.Table))
+				innerTableMetadata, size, err := b.downloadTableMetadata(ctx, backupName, disks, metadataLogger, innerTableTitle, schemaOnly, partitions, b.resume)
+				if err != nil {
+					return tableMetadataAfterDownload, tablesForDownload, metadataSize, err
+				}
+				metadataSize += size
+				tablesForDownload = append(tablesForDownload, innerTableTitle)
+				tableMetadataAfterDownload = append(tableMetadataAfterDownload, innerTableMetadata)
+			}
+		}
+	}
+	return tableMetadataAfterDownload, tablesForDownload, metadataSize, nil
 }
 
 func (b *Backuper) downloadRBACData(ctx context.Context, remoteBackup storage.Backup) (uint64, error) {

@@ -1709,7 +1709,8 @@ func TestInnerTablesMaterializedView(t *testing.T) {
 	ch.queryWithNoError(r, "CREATE MATERIALIZED VIEW test_mv.mv_with_inner (v UInt64) ENGINE=MergeTree() ORDER BY v AS SELECT v FROM test_mv.src_table")
 	ch.queryWithNoError(r, "CREATE MATERIALIZED VIEW test_mv.mv_with_dst TO test_mv.dst_table AS SELECT v FROM test_mv.src_table")
 	ch.queryWithNoError(r, "INSERT INTO test_mv.src_table SELECT number FROM numbers(100)")
-	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "create", "test_mv", "--tables=test_mv.mv_with*,test_mv.dst*"))
+
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "test_mv", "--tables=test_mv.mv_with*,test_mv.dst*"))
 	dropSQL := "DROP DATABASE test_mv"
 	isAtomic, err := ch.chbackend.IsAtomic("test_mv")
 	r.NoError(err)
@@ -1717,14 +1718,28 @@ func TestInnerTablesMaterializedView(t *testing.T) {
 		dropSQL += " NO DELAY"
 	}
 	ch.queryWithNoError(r, dropSQL)
-	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "test_mv", "--tables=test_mv.mv_with*,test_mv.dst*"))
 	var rowCnt uint64
+
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "test_mv", "--tables=test_mv.mv_with*,test_mv.dst*"))
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&rowCnt, "SELECT count() FROM test_mv.mv_with_inner"))
 	r.Equal(uint64(100), rowCnt)
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&rowCnt, "SELECT count() FROM test_mv.mv_with_dst"))
 	r.Equal(uint64(100), rowCnt)
+
 	r.NoError(ch.dropDatabase("test_mv"))
+
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "upload", "test_mv", "--tables=test_mv.mv_with*,test_mv.dst*"))
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_mv"))
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "download", "test_mv", "--tables=test_mv.mv_with*,test_mv.dst*"))
+
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "test_mv", "--tables=test_mv.mv_with*,test_mv.dst*"))
+	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&rowCnt, "SELECT count() FROM test_mv.mv_with_inner"))
+	r.Equal(uint64(100), rowCnt)
+	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&rowCnt, "SELECT count() FROM test_mv.mv_with_dst"))
+	r.Equal(uint64(100), rowCnt)
+
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_mv"))
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "remote", "test_mv"))
 }
 
 func TestFIPS(t *testing.T) {

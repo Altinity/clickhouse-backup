@@ -15,6 +15,7 @@ BUG FIXES
 - execute `ALTER TABLE ... DROP PARTITION` instead of `DROP TABLE` for `restore` and `restore_remote` with parameters `--data --partitions=...`, fix [756](https://github.com/Altinity/clickhouse-backup/issues/756) 
 - fix wrong behavior for `freeze_by_part` + `freeze_by_part_where`, fix [855](https://github.com/Altinity/clickhouse-backup/issues/855)
 - apply `CLICKHOUSE_SKIP_TABLES_ENGINES` during `create` command
+- fixed behavior for upload / download when .inner. table missing for MATERIALIZED VIEW  by table pattern, fix [765](https://github.com/Altinity/clickhouse-backup/issues/765)
 
 # v2.4.35
 IMPROVEMENTS
