@@ -270,8 +270,9 @@ jobs:
           GOROOT: ${{ env.GOROOT_1_22_X64 }}
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
           # just options for advanced logging
-          # RUN_TESTS: "TestFIPS"
-          # LOG_LEVEL: "debug"
+          RUN_TESTS: "TestIntegrationGCS"
+          LOG_LEVEL: "debug"
+          GCS_DEBUG: "true"
           # SFTP_DEBUG: "true"
           # AZBLOB_DEBUG: "true"
           # FTP_DEBUG: "true"
