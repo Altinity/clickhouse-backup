@@ -55,7 +55,7 @@ jobs:
       - name: Prepare binaries
         id: make
         env:
-          GOROOT: ${{ env.GOROOT_1_20_X64 }}
+          GOROOT: ${{ env.GOROOT_1_22_X64 }}
         run: |
           make build build-fips config test
           #make build-fips-darwin
