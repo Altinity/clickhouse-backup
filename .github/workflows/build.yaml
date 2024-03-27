@@ -183,7 +183,8 @@ jobs:
       - name: Format testflows coverage
         run: |
           sudo chmod -Rv a+rw test/testflows/_coverage_/
-          ls -la test/testflows/_coverage_ 
+          ls -la test/testflows/_coverage_
+          go env
           go tool covdata textfmt -i test/testflows/_coverage_/ -o test/testflows/_coverage_/coverage.out
       - name: Report testflows coverage
         uses: coverallsapp/github-action@v2
@@ -192,7 +193,7 @@ jobs:
           parallel: true
           format: golang
           flag-name: testflows-${{ matrix.clickhouse }}
-# todo wait when resolve https://github.com/actions/upload-artifact/issues/270 and uncomment
+      # todo possible failures  https://github.com/actions/upload-artifact/issues/270
       - name: Upload testflows logs
         uses: actions/upload-artifact@v4
         with:
