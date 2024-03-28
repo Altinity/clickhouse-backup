@@ -525,6 +525,9 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 // downloadMissedInnerTablesMetadata - download, missed .inner. tables if materialized view query not contains `TO db.table` clause, https://github.com/Altinity/clickhouse-backup/issues/765
 // @todo think about parallel download if sequentially will slow
 func (b *Backuper) downloadMissedInnerTablesMetadata(ctx context.Context, backupName string, metadataSize uint64, tablesForDownload []metadata.TableTitle, tableMetadataAfterDownload []*metadata.TableMetadata, disks []clickhouse.Disk, schemaOnly bool, partitions []string, log *apexLog.Entry) ([]*metadata.TableMetadata, []metadata.TableTitle, uint64, error) {
+	if b.isEmbedded {
+		return tableMetadataAfterDownload, tablesForDownload, metadataSize, nil
+	}
 	for _, t := range tableMetadataAfterDownload {
 		if t == nil {
 			continue

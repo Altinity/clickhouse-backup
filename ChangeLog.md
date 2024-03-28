@@ -9,7 +9,6 @@ IMPROVEMENTS
 - added support of native Clickhouse incremental backup for `use_embedded_backup_restore: true` fix [735](https://github.com/Altinity/clickhouse-backup/issues/735)
 - added `GCS_CHUNK_SIZE` config parameter, try to speedup GCS upload fix [874](https://github.com/Altinity/clickhouse-backup/pull/874), thanks @dermasmid
 - switched to golang 1.22
-- added `clickhouse-server:24.3` to CI/CD pipelines
 
 BUG FIXES
 - continue `S3_MAX_PARTS_COUNT` default value from `2000` to `4000` to continue decrease memory usage for S3 
