@@ -117,8 +117,8 @@ def populate_table(self, node, table_name, columns, database="default", size=10,
 
         str_random_schema = ", ".join(random_schema)
         str_insert_columns = ", ".join(insert_columns)
-
-        node.query(f"INSERT INTO {database}.{table_name} ({str_insert_columns}) SELECT * FROM generateRandom('{str_random_schema}', NULL, 10, 2) LIMIT {size}")
+        # @todo return NULL to random_seed generateRandom parameter when resolve https://github.com/ClickHouse/ClickHouse/issues/62092
+        node.query(f"INSERT INTO {database}.{table_name} ({str_insert_columns}) SELECT * FROM generateRandom('{str_random_schema}', {random.randint(1,10000)}, 10, 2) LIMIT {size}")
 
 
 @TestStep(Given)
