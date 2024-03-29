@@ -251,13 +251,15 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		return nil, ctx.Err()
 	default:
 		type DiskFields struct {
-			DiskTypePresent      uint64 `ch:"is_disk_type_present"`
-			FreeSpacePresent     uint64 `ch:"is_free_space_present"`
-			StoragePolicyPresent uint64 `ch:"is_storage_policy_present"`
+			DiskTypePresent          uint64 `ch:"is_disk_type_present"`
+			ObjectStorageTypePresent uint64 `ch:"is_object_storage_type_present"`
+			FreeSpacePresent         uint64 `ch:"is_free_space_present"`
+			StoragePolicyPresent     uint64 `ch:"is_storage_policy_present"`
 		}
 		diskFields := make([]DiskFields, 0)
 		if err := ch.SelectContext(ctx, &diskFields,
 			"SELECT countIf(name='type') AS is_disk_type_present, "+
+				"countIf(name='object_storage_type') AS is_object_storage_type_present, "+
 				"countIf(name='free_space') AS is_free_space_present, "+
 				"countIf(name='disks') AS is_storage_policy_present "+
 				"FROM system.columns WHERE database='system' AND table IN ('disks','storage_policies') ",
@@ -268,6 +270,10 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		if len(diskFields) > 0 && diskFields[0].DiskTypePresent > 0 {
 			diskTypeSQL = "any(d.type)"
 		}
+		if len(diskFields) > 0 && diskFields[0].ObjectStorageTypePresent > 0 {
+			diskTypeSQL = "any(lower(if(d.type='ObjectStorage',d.object_storage_type,d.type)))"
+		}
+
 		diskFreeSpaceSQL := "toUInt64(0)"
 		if len(diskFields) > 0 && diskFields[0].FreeSpacePresent > 0 {
 			diskFreeSpaceSQL = "min(d.free_space)"

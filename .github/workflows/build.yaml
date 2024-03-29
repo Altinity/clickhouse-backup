@@ -121,8 +121,7 @@ jobs:
           - '22.8'
           - '23.3'
           - '23.8'
-          # wait when resolve https://github.com/ClickHouse/ClickHouse/issues/62018
-          # - '24.3'
+          - '24.3'
     steps:
       - name: Setup golang
         id: setup-go
@@ -236,8 +235,7 @@ jobs:
           - '22.8'
           - '23.3'
           - '23.8'
-          # wait when resolve https://github.com/ClickHouse/ClickHouse/issues/62018
-          # - '24.3'
+          - '24.3'
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
