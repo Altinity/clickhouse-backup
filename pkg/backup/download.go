@@ -262,7 +262,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	backupMetadata.DataSize = dataSize
 	backupMetadata.MetadataSize = metadataSize
 
-	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
+	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" && backupMetadata.Tables != nil && len(backupMetadata.Tables) > 0 {
 		localClickHouseBackupFile := path.Join(b.EmbeddedBackupDataPath, backupName, ".backup")
 		remoteClickHouseBackupFile := path.Join(backupName, ".backup")
 		if err = b.downloadSingleBackupFile(ctx, remoteClickHouseBackupFile, localClickHouseBackupFile, disks); err != nil {

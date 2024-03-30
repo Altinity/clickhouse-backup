@@ -656,7 +656,7 @@ func (ch *ClickHouse) GetVersion(ctx context.Context) (int, error) {
 
 func (ch *ClickHouse) GetVersionDescribe(ctx context.Context) string {
 	var result string
-	query := "SELECT value FROM `system`.`build_options` where name='VERSION_DESCRIBE'"
+	query := "SELECT value FROM `system`.`build_options` WHERE name='VERSION_DESCRIBE'"
 	if err := ch.SelectSingleRow(ctx, &result, query); err != nil {
 		return ""
 	}

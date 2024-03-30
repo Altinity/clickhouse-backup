@@ -332,19 +332,21 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 	if !schemaOnly && !doBackupData {
 		backupDataSize = append(backupDataSize, clickhouse.BackupDataSize{Size: 0})
 	}
-	l := 0
-	for _, table := range tables {
-		if !table.Skip {
-			l += 1
-		}
-	}
-	if l == 0 && (schemaOnly || doBackupData) {
-		return fmt.Errorf("`use_embedded_backup_restore: true` not found tables for backup, check your parameter --tables=%v", tablePattern)
-	}
-	tablesTitle := make([]metadata.TableTitle, l)
+	var tablesTitle []metadata.TableTitle
 
 	if schemaOnly || doBackupData {
-		if _, isBackupDiskExists := diskMap[b.cfg.ClickHouse.EmbeddedBackupDisk]; !isBackupDiskExists && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
+		l := 0
+		for _, table := range tables {
+			if !table.Skip {
+				l += 1
+			}
+		}
+		if l == 0 {
+			return fmt.Errorf("`use_embedded_backup_restore: true` not found tables for backup, check your parameter --tables=%v", tablePattern)
+		}
+		tablesTitle = make([]metadata.TableTitle, l)
+
+		if _, isBackupDiskExists := diskMap[b.cfg.ClickHouse.EmbeddedBackupDisk]; b.cfg.ClickHouse.EmbeddedBackupDisk != "" && !isBackupDiskExists {
 			return fmt.Errorf("backup disk `%s` not exists in system.disks", b.cfg.ClickHouse.EmbeddedBackupDisk)
 		}
 		if b.cfg.ClickHouse.EmbeddedBackupDisk == "" {
