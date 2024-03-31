@@ -543,7 +543,6 @@ func (b *Backuper) RestoreSchema(ctx context.Context, backupName string, tablesF
 		"operation": "restore_schema",
 	})
 	startRestoreSchema := time.Now()
-
 	if dropErr := b.dropExistsTables(tablesForRestore, ignoreDependencies, version, log); dropErr != nil {
 		return dropErr
 	}
@@ -566,6 +565,13 @@ var emptyReplicatedMergeTreeRE = regexp.MustCompile(`(?m)Replicated(MergeTree|Re
 
 func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string, tablesForRestore ListOfTables, version int) error {
 	var err error
+	if tablesForRestore == nil || len(tablesForRestore) == 0 {
+		if !b.cfg.General.AllowEmptyBackups {
+			return fmt.Errorf("no tables for restore")
+		}
+		b.log.Warnf("no tables for restore in embeddded backup %s/metadata.json", backupName)
+		return nil
+	}
 	if b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
 		err = b.fixEmbeddedMetadataLocal(ctx, backupName, version)
 	} else {
@@ -1083,7 +1089,7 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 							} else if b.cfg.General.RemoteStorage == "gcs" && (diskType == "s3" || diskType == "encrypted") {
 								srcBucket = b.cfg.GCS.Bucket
 								srcKey = path.Join(b.cfg.GCS.ObjectDiskPath, srcBackupName, srcDiskName, storageObject.ObjectRelativePath)
-							} else if b.cfg.General.RemoteStorage == "azblob" && (diskType == "azure_blob_storage" || diskType == "encrypted") {
+							} else if b.cfg.General.RemoteStorage == "azblob" && (diskType == "azure_blob_storage" || diskType == "azure" || diskType == "encrypted") {
 								srcBucket = b.cfg.AzureBlob.Container
 								srcKey = path.Join(b.cfg.AzureBlob.ObjectDiskPath, srcBackupName, srcDiskName, storageObject.ObjectRelativePath)
 							} else {

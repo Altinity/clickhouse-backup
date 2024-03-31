@@ -161,7 +161,7 @@ func (b *Backuper) populateBackupShardField(ctx context.Context, tables []clickh
 }
 
 func (b *Backuper) isDiskTypeObject(diskType string) bool {
-	return diskType == "s3" || diskType == "azure_blob_storage"
+	return diskType == "s3" || diskType == "azure_blob_storage" || diskType == "azure"
 }
 
 func (b *Backuper) isDiskTypeEncryptedObject(disk clickhouse.Disk, disks []clickhouse.Disk) bool {

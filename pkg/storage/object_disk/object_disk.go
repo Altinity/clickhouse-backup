@@ -204,7 +204,7 @@ func (c *ObjectStorageConnection) GetRemoteStorage() storage.RemoteStorage {
 	switch c.Type {
 	case "s3":
 		return c.S3
-	case "azure_blob_storage":
+	case "azure", "azure_blob_storage":
 		return c.AzureBlob
 	}
 	apexLog.Fatalf("invalid ObjectStorageConnection.type %s", c.Type)
@@ -215,7 +215,7 @@ func (c *ObjectStorageConnection) GetRemoteBucket() string {
 	switch c.Type {
 	case "s3":
 		return c.S3.Config.Bucket
-	case "azure_blob_storage":
+	case "azure", "azure_blob_storage":
 		return c.AzureBlob.Config.Container
 	}
 	apexLog.Fatalf("invalid ObjectStorageConnection.type %s", c.Type)
@@ -226,7 +226,7 @@ func (c *ObjectStorageConnection) GetRemotePath() string {
 	switch c.Type {
 	case "s3":
 		return c.S3.Config.Path
-	case "azure_blob_storage":
+	case "azure", "azure_blob_storage":
 		return c.AzureBlob.Config.Path
 	}
 	apexLog.Fatalf("invalid ObjectStorageConnection.type %s", c.Type)
@@ -356,7 +356,7 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) e
 				}
 				DisksCredentials.Store(diskName, creds)
 				break
-			case "azure_blob_storage":
+			case "azure", "azure_blob_storage":
 				creds := ObjectStorageCredentials{
 					Type: "azblob",
 				}
@@ -427,7 +427,7 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 	if !exists {
 		return nil, fmt.Errorf("%s is not presnet in object_disk.SystemDisks", diskName)
 	}
-	if disk.Type != "s3" && disk.Type != "s3_plain" && disk.Type != "azure_blob_storage" && disk.Type != "encrypted" {
+	if disk.Type != "s3" && disk.Type != "s3_plain" && disk.Type != "azure_blob_storage" && disk.Type != "azure" && disk.Type != "encrypted" {
 		return nil, fmt.Errorf("%s have unsupported type %s", diskName, disk.Type)
 	}
 	connection.MetadataPath = disk.Path
