@@ -224,7 +224,7 @@ func main() {
 				cli.BoolFlag{
 					Name:   "delete, delete-source, delete-local",
 					Hidden: false,
-					Usage:  "explicitly delete local backup after upload",
+					Usage:  "explicitly delete local backup during upload",
 				},
 			),
 		},
@@ -275,7 +275,7 @@ func main() {
 				cli.BoolFlag{
 					Name:   "delete, delete-source, delete-local",
 					Hidden: false,
-					Usage:  "explicitly delete local backup after upload",
+					Usage:  "explicitly delete local backup during upload",
 				},
 			),
 		},

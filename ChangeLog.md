@@ -1,6 +1,6 @@
 # v2.5.0 (not released yet)
 IMPROVEMENTS
-- added `--delete-source` parameter for `upload` and `create_remote` commands to explicitly delete local backup after upload, fix [777](https://github.com/Altinity/clickhouse-backup/issues/777)
+- added `--delete-source` parameter for `upload` and `create_remote` commands to explicitly delete local backup during upload, fix [777](https://github.com/Altinity/clickhouse-backup/issues/777)
 - added support for `--env ENV_NAME=value` cli parameter for allow dynamically override any config parameter, fix [821](https://github.com/Altinity/clickhouse-backup/issues/821)
 - added support for `use_embedded_backup_restore: true` with empty `embedded_backup_disk` value, tested on S3/GCS over S3/AzureBlobStorage, fix [695](https://github.com/Altinity/clickhouse-backup/issues/695)
 - `--rbac, --rbac-only, --configs, --configs-only` now works with `use_embedded_backup_restore: true`

@@ -153,7 +153,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 			if !schemaOnly && (!b.isEmbedded || b.cfg.ClickHouse.EmbeddedBackupDisk != "") {
 				var files map[string][]string
 				var err error
-				files, uploadedBytes, err = b.uploadTableData(uploadCtx, backupName, tablesForUpload[idx])
+				files, uploadedBytes, err = b.uploadTableData(uploadCtx, backupName, deleteSource, tablesForUpload[idx])
 				if err != nil {
 					return err
 				}
@@ -488,7 +488,7 @@ func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelate
 	return uint64(remoteUploaded.Size()), nil
 }
 
-func (b *Backuper) uploadTableData(ctx context.Context, backupName string, table metadata.TableMetadata) (map[string][]string, int64, error) {
+func (b *Backuper) uploadTableData(ctx context.Context, backupName string, deleteSource bool, table metadata.TableMetadata) (map[string][]string, int64, error) {
 	dbAndTablePath := path.Join(common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
 	uploadedFiles := map[string][]string{}
 	capacity := 0
@@ -547,7 +547,14 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, table
 							b.resumableState.AppendToState(remotePathFull, uploadPathBytes)
 						}
 					}
-					log.Debugf("finish upload %d files to %s", len(partFiles), remotePath)
+					// https://github.com/Altinity/clickhouse-backup/issues/777
+					if deleteSource {
+						for _, f := range partFiles {
+							if err := os.Remove(path.Join(backupPath, f)); err != nil {
+								return fmt.Errorf("can't remove %s, %v", path.Join(backupPath, f), err)
+							}
+						}
+					}
 					return nil
 				})
 			} else {
@@ -584,6 +591,14 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, table
 					atomic.AddInt64(&uploadedBytes, remoteFile.Size())
 					if b.resume {
 						b.resumableState.AppendToState(remoteDataFile, remoteFile.Size())
+					}
+					// https://github.com/Altinity/clickhouse-backup/issues/777
+					if deleteSource {
+						for _, f := range localFiles {
+							if err = os.Remove(path.Join(backupPath, f)); err != nil {
+								return fmt.Errorf("can't remove %s, %v", path.Join(backupPath, f), err)
+							}
+						}
 					}
 					log.Debugf("finish upload to %s", remoteDataFile)
 					return nil
