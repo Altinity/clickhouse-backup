@@ -656,16 +656,22 @@ func (api *APIServer) httpTablesHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	b := backup.NewBackuper(cfg)
 	q := r.URL.Query()
-	tables, err := b.GetTables(context.Background(), q.Get("table"))
+	var tables []clickhouse.Table
+	// https://github.com/Altinity/clickhouse-backup/issues/778
+	if q.Get("remote_backup") != "" {
+		tables, err = b.GetTablesRemote(context.Background(), q.Get("remote_backup"), q.Get("table"))
+	} else {
+		tables, err = b.GetTables(context.Background(), q.Get("table"))
+	}
 	if err != nil {
 		api.writeError(w, http.StatusInternalServerError, "tables", err)
 		return
 	}
-	if r.URL.Path != "/backup/tables/all" {
-		tables := api.getTablesWithSkip(tables)
+	if r.URL.Path == "/backup/tables/all" {
 		api.sendJSONEachRow(w, http.StatusOK, tables)
 		return
 	}
+	tables = api.getTablesWithSkip(tables)
 	api.sendJSONEachRow(w, http.StatusOK, tables)
 }
 

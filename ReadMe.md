@@ -655,13 +655,15 @@ Kill selected command from `GET /backup/actions` command list, kill process shou
 
 Print list of tables: `curl -s localhost:7171/backup/tables | jq .`, exclude pattern matched tables from `skip_tables` configuration parameters
 
-- Optional query argument `table` works the same as the `--table value` CLI argument.
+- Optional query argument `table` works the same as the `--table=pattern` CLI argument.
+- Optional query argument `remote_backup`works the same as `--remote-backup=name` CLI argument.
 
 ### GET /backup/tables/all
 
 Print list of tables: `curl -s localhost:7171/backup/tables/all | jq .`, ignore `skip_tables` configuration parameters.
 
 - Optional query argument `table` works the same as the `--table value` CLI argument.
+- Optional query argument `remote_backup`works the same as `--remote-backup=name` CLI argument.
 
 ### POST /backup/create
 

@@ -8,6 +8,7 @@ IMPROVEMENTS
 - added `--diff-from-remote` parameter for `create` command, will copy only new data parts object disk data, also allows to download properly object disk data from required backup during `restore`, fix [865](https://github.com/Altinity/clickhouse-backup/issues/865)
 - added support of native Clickhouse incremental backup for `use_embedded_backup_restore: true` fix [735](https://github.com/Altinity/clickhouse-backup/issues/735)
 - added `GCS_CHUNK_SIZE` config parameter, try to speedup GCS upload fix [874](https://github.com/Altinity/clickhouse-backup/pull/874), thanks @dermasmid
+- added `--remote-backup` cli parameter to `tables` command and `GET /backup/table`, fix [778](https://github.com/Altinity/clickhouse-backup/issues/778)
 - switched to golang 1.22
 - added `clickhouse/clickhouse-server:24.3` to CI/CD
 

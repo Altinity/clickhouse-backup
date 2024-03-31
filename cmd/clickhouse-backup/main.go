@@ -71,10 +71,10 @@ func main() {
 		{
 			Name:      "tables",
 			Usage:     "List of tables, exclude skip_tables",
-			UsageText: "clickhouse-backup tables [-t, --tables=<db>.<table>]] [--all]",
+			UsageText: "clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--all]",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.PrintTables(c.Bool("all"), c.String("table"))
+				return b.PrintTables(c.Bool("all"), c.String("table"), c.String("remote-backup"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.BoolFlag{
@@ -86,6 +86,11 @@ func main() {
 					Name:   "table, tables, t",
 					Hidden: false,
 					Usage:  "List tables only match with table name patterns, separated by comma, allow ? and * as wildcard",
+				},
+				cli.StringFlag{
+					Name:   "remote-backup",
+					Hidden: false,
+					Usage:  "List tables from remote backup",
 				},
 			),
 		},

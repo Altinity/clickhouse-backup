@@ -692,10 +692,12 @@ func TestServerAPI(t *testing.T) {
 
 	testAPIBackupTables(r)
 
+	testAPIBackupUpload(r)
+
+	testAPIBackupTablesRemote(r)
+
 	log.Info("Check /backup/actions")
 	ch.queryWithNoError(r, "SELECT count() FROM system.backup_actions")
-
-	testAPIBackupUpload(r)
 
 	testAPIBackupList(t, r)
 
@@ -997,6 +999,25 @@ func testAPIBackupTables(r *require.Assertions) {
 	}
 }
 
+func testAPIBackupTablesRemote(r *require.Assertions) {
+
+	log.Info("Check /backup/tables?remote_backup=z_backup_1")
+	out, err := dockerExecOut(
+		"clickhouse-backup",
+		"bash", "-xe", "-c", "curl -sfL \"http://localhost:7171/backup/tables?remote_backup=z_backup_1\"",
+	)
+	log.Debug(out)
+	r.NoError(err)
+	r.Contains(out, "long_schema")
+	r.NotContains(out, "system")
+	r.NotContains(out, "Connection refused")
+	r.NotContains(out, "another operation is currently running")
+	r.NotContains(out, "\"status\":\"error\"")
+	r.NotContains(out, "INFORMATION_SCHEMA")
+	r.NotContains(out, "information_schema")
+
+}
+
 func testAPIBackupCreate(r *require.Assertions) {
 	log.Info("Check /backup/create")
 	out, err := dockerExecOut(
@@ -1277,8 +1298,24 @@ func TestTablePatterns(t *testing.T) {
 			generateTestData(t, r, ch, "S3", defaultTestData)
 			if createPattern {
 				r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", "--tables", " "+dbNameOrdinaryTest+".*", testBackupName))
+				out, err := dockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "tables", "--tables", " "+dbNameOrdinaryTest+".*", testBackupName)
+				r.NoError(err)
+				r.Contains(out, dbNameOrdinaryTest)
+				r.NotContains(out, dbNameAtomicTest)
+				out, err = dockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "tables", "--remote-backup", testBackupName, "--tables", " "+dbNameOrdinaryTest+".*", testBackupName)
+				r.NoError(err)
+				r.Contains(out, dbNameOrdinaryTest)
+				r.NotContains(out, dbNameAtomicTest)
 			} else {
 				r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", testBackupName))
+				out, err := dockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "tables", testBackupName)
+				r.NoError(err)
+				r.Contains(out, dbNameOrdinaryTest)
+				r.Contains(out, dbNameAtomicTest)
+				out, err = dockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "tables", "--remote-backup", testBackupName, testBackupName)
+				r.NoError(err)
+				r.Contains(out, dbNameOrdinaryTest)
+				r.Contains(out, dbNameAtomicTest)
 			}
 
 			r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", testBackupName))
