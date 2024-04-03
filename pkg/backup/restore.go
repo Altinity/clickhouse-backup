@@ -509,12 +509,12 @@ func (b *Backuper) resolveRBACConflictIfExist(ctx context.Context, sql string, a
 
 func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, accessPath string, version int, k *keeper.Keeper, replicatedUserDirectories []clickhouse.UserDirectory) (bool, string, string) {
 	//search in sql system.users, system.quotas, system.row_policies, system.roles, system.settings_profiles
-	if version > 200005000 {
+	if version > 20005000 {
 		var rbacSystemTableNames = map[string]string{
 			"ROLE":             "roles",
 			"ROW POLICY":       "row_policies",
 			"SETTINGS PROFILE": "settings_profiles",
-			"QUOTA":            "quotes",
+			"QUOTA":            "quotas",
 			"USER":             "users",
 		}
 		systemTable, systemTableExists := rbacSystemTableNames[kind]
@@ -522,10 +522,10 @@ func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, a
 			b.log.Errorf("unsupported RBAC object kind: %s", kind)
 			return false, "", ""
 		}
-		isRBACExistsSQL := fmt.Sprintf("SELECT id, name FROM `system`.`%s` WHERE name=? LIMIT 1", systemTable)
+		isRBACExistsSQL := fmt.Sprintf("SELECT toString(id) AS id, name FROM `system`.`%s` WHERE name=? LIMIT 1", systemTable)
 		existsRBACRow := make([]clickhouse.RBACObject, 0)
-		if err := b.ch.SelectSingleRow(ctx, &existsRBACRow, isRBACExistsSQL, name); err != nil {
-			b.log.Errorf("RBAC object resolve failed kind: %s, name: %s, error: %v", kind, name, err)
+		if err := b.ch.SelectContext(ctx, &existsRBACRow, isRBACExistsSQL, name); err != nil {
+			b.log.Fatalf("RBAC object resolve failed kind: %s, name: %s, error: %v", kind, name, err)
 			return false, "", ""
 		}
 		if len(existsRBACRow) == 0 {
@@ -598,7 +598,7 @@ func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, a
 func (b *Backuper) dropExistsRBAC(ctx context.Context, kind string, name string, accessPath string, rbacType, rbacObjectId string, k *keeper.Keeper) error {
 	//sql
 	if rbacType == "sql" {
-		dropSQL := fmt.Sprintf("DROP %s IF EXISTS `%s`", kind, name)
+		dropSQL := fmt.Sprintf("DROP %s IF EXISTS %s", kind, name)
 		return b.ch.QueryContext(ctx, dropSQL)
 	}
 	//local
@@ -670,8 +670,17 @@ func (b *Backuper) detectRBACObject(sql string) (string, string, error) {
 		detectErr = fmt.Errorf("unable to detect RBAC object kind from SQL query: %s", sql)
 		return kind, name, detectErr
 	}
-	name = strings.TrimSpace(strings.SplitN(name, " ", 2)[0])
-	name = strings.Trim(name, " `")
+	names := strings.SplitN(name, " ", 2)
+	if len(names) > 1 && strings.HasPrefix(names[1], "ON ") {
+		names = strings.SplitN(name, " ", 4)
+		name = strings.Join(names[0:3], " ")
+	} else {
+		name = names[0]
+	}
+	if kind != "ROW POLICY" {
+		name = strings.Trim(name, "`")
+	}
+	name = strings.TrimSpace(name)
 	if name == "" {
 		detectErr = fmt.Errorf("unable to detect RBAC object name from SQL query: %s", sql)
 		return kind, name, detectErr

@@ -34,9 +34,9 @@ func TestDetectRBACObject(t *testing.T) {
 			expectedErr:  nil,
 		},
 		{
-			inputSQL:     "ATTACH ROW POLICY test_rbac ON default.test_rbac AS restrictive FOR SELECT USING 1 = 1 TO ID('e1469fb8-e014-c22b-4e5c-406134320f91');\n",
+			inputSQL:     "ATTACH ROW POLICY `test_rbac` ON default.test_rbac AS restrictive FOR SELECT USING 1 = 1 TO ID('e1469fb8-e014-c22b-4e5c-406134320f91');\n",
 			expectedKind: "ROW POLICY",
-			expectedName: "test_rbac",
+			expectedName: "`test_rbac` ON default.test_rbac",
 			expectedErr:  nil,
 		},
 		{
@@ -64,10 +64,10 @@ func TestDetectRBACObject(t *testing.T) {
 			expectedErr:  fmt.Errorf("unable to detect RBAC object kind from SQL query: INVALID SQL"),
 		},
 		{
-			inputSQL:     "ATTACH USER ``",
+			inputSQL:     "ATTACH USER  ",
 			expectedKind: "USER",
 			expectedName: "",
-			expectedErr:  fmt.Errorf("unable to detect RBAC object name from SQL query: ATTACH USER ``"),
+			expectedErr:  fmt.Errorf("unable to detect RBAC object name from SQL query: ATTACH USER  "),
 		},
 	}
 
