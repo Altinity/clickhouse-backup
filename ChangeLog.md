@@ -22,6 +22,7 @@ BUG FIXES
 - fix wrong behavior for `freeze_by_part` + `freeze_by_part_where`, fix [855](https://github.com/Altinity/clickhouse-backup/issues/855)
 - apply `CLICKHOUSE_SKIP_TABLES_ENGINES` during `create` command
 - fixed behavior for upload / download when .inner. table missing for MATERIALIZED VIEW  by table pattern, fix [765](https://github.com/Altinity/clickhouse-backup/issues/765)
+- fixed `ObjectDisks` + `CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE: true` - shall skip upload object disk content, fix [799](https://github.com/Altinity/clickhouse-backup/issues/799)
 
 # v2.4.35
 IMPROVEMENTS
