@@ -81,6 +81,9 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	if skipCheckPartsColumns && b.cfg.ClickHouse.CheckPartsColumns {
 		b.cfg.ClickHouse.CheckPartsColumns = false
 	}
+	if b.cfg.General.RBACBackupAlways {
+		createRBAC = true
+	}
 
 	allDatabases, err := b.ch.GetDatabases(ctx, b.cfg, tablePattern)
 	if err != nil {
@@ -645,7 +648,7 @@ func (b *Backuper) createBackupRBACReplicated(ctx context.Context, rbacBackup st
 	rbacDataSize := uint64(0)
 	if err = b.ch.SelectContext(ctx, &replicatedRBAC, "SELECT name FROM system.user_directories WHERE type='replicated'"); err == nil && len(replicatedRBAC) > 0 {
 		k := keeper.Keeper{Log: b.log.WithField("logger", "keeper")}
-		if err = k.Connect(ctx, b.ch, b.cfg); err != nil {
+		if err = k.Connect(ctx, b.ch); err != nil {
 			return 0, err
 		}
 		defer k.Close()

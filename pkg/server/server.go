@@ -1163,7 +1163,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	partitionsToBackup := make([]string, 0)
 	schemaOnly := false
 	dataOnly := false
-	dropTable := false
+	dropExists := false
 	ignoreDependencies := false
 	restoreRBAC := false
 	restoreConfigs := false
@@ -1202,11 +1202,11 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		fullCommand += " --data"
 	}
 	if _, exist := query["drop"]; exist {
-		dropTable = true
+		dropExists = true
 		fullCommand += " --drop"
 	}
 	if _, exist := query["rm"]; exist {
-		dropTable = true
+		dropExists = true
 		fullCommand += " --rm"
 	}
 	if _, exists := query["ignore_dependencies"]; exists {
@@ -1236,7 +1236,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore", 0, func() error {
 			b := backup.NewBackuper(api.config)
-			return b.Restore(name, tablePattern, databaseMappingToRestore, partitionsToBackup, schemaOnly, dataOnly, dropTable, ignoreDependencies, restoreRBAC, false, restoreConfigs, false, commandId)
+			return b.Restore(name, tablePattern, databaseMappingToRestore, partitionsToBackup, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, false, restoreConfigs, false, commandId)
 		})
 		status.Current.Stop(commandId, err)
 		if err != nil {

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/antchfx/xmlquery"
 	"github.com/apex/log"
 	"os"
@@ -37,7 +36,7 @@ func (KeeperLogToApexLogAdapter LogKeeperToApexLogAdapter) Printf(msg string, ar
 	}
 }
 
-type keeperDumpNode struct {
+type DumpNode struct {
 	Path  string `json:"path"`
 	Value string `json:"value"`
 }
@@ -51,7 +50,7 @@ type Keeper struct {
 }
 
 // Connect - connect to any zookeeper server from /var/lib/clickhouse/preprocessed_configs/config.xml
-func (k *Keeper) Connect(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Config) error {
+func (k *Keeper) Connect(ctx context.Context, ch *clickhouse.ClickHouse) error {
 	configFile, doc, err := ch.ParseXML(ctx, "config.xml")
 	if err != nil {
 		return fmt.Errorf("can't parse config.xml from %s, error: %v", configFile, err)
@@ -137,15 +136,15 @@ func (k *Keeper) dumpNodeRecursive(prefix, nodePath string, f *os.File) (int, er
 	if err != nil {
 		return 0, err
 	}
-	bytes, err := k.writeJsonString(f, keeperDumpNode{Path: nodePath, Value: string(value)})
+	bytes, err := k.writeJsonString(f, DumpNode{Path: nodePath, Value: string(value)})
 	if err != nil {
 		return 0, err
 	}
-	childs, _, err := k.conn.Children(path.Join(prefix, nodePath))
+	children, _, err := k.conn.Children(path.Join(prefix, nodePath))
 	if err != nil {
 		return 0, err
 	}
-	for _, childPath := range childs {
+	for _, childPath := range children {
 		if childBytes, err := k.dumpNodeRecursive(prefix, path.Join(nodePath, childPath), f); err != nil {
 			return 0, err
 		} else {
@@ -155,7 +154,7 @@ func (k *Keeper) dumpNodeRecursive(prefix, nodePath string, f *os.File) (int, er
 	return bytes, nil
 }
 
-func (k *Keeper) writeJsonString(f *os.File, node keeperDumpNode) (int, error) {
+func (k *Keeper) writeJsonString(f *os.File, node DumpNode) (int, error) {
 	jsonLine, err := json.Marshal(node)
 	if err != nil {
 		return 0, err
@@ -183,7 +182,7 @@ func (k *Keeper) Restore(dumpFile, prefix string) error {
 	}
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
-		node := keeperDumpNode{}
+		node := DumpNode{}
 		if err = json.Unmarshal(scanner.Bytes(), &node); err != nil {
 			return err
 		}
@@ -207,6 +206,39 @@ func (k *Keeper) Restore(dumpFile, prefix string) error {
 	return nil
 }
 
+type WalkCallBack = func(node DumpNode) (bool, error)
+
+func (k *Keeper) Walk(prefix, relativePath string, recursive bool, callback WalkCallBack) error {
+	nodePath := path.Join(prefix, relativePath)
+	value, stat, err := k.conn.Get(nodePath)
+	k.Log.Debugf("Walk->get(%s) = %v, err = %v", nodePath, string(value), err)
+	if err != nil {
+		return err
+	}
+	var isDone bool
+	if isDone, err = callback(DumpNode{Path: nodePath, Value: string(value)}); err != nil {
+		return err
+	}
+	if isDone {
+		return nil
+	}
+	if recursive && stat.NumChildren > 0 {
+		children, _, err := k.conn.Children(path.Join(prefix, relativePath))
+		if err != nil {
+			return err
+		}
+		for _, childPath := range children {
+			if childErr := k.Walk(prefix, path.Join(relativePath, childPath), recursive, callback); childErr != nil {
+				return childErr
+			}
+		}
+	}
+	return nil
+}
+
+func (k *Keeper) Delete(nodePath string) error {
+	return k.conn.Delete(nodePath, -1)
+}
 func (k *Keeper) Close() {
 	k.conn.Close()
 }

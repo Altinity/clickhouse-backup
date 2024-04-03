@@ -76,16 +76,17 @@ COPY --from=builder-fips /src/build/ /src/build/
 CMD /src/build/${TARGETPLATFORM}/clickhouse-backup-fips --help
 
 
-FROM alpine:3.18 AS image_short
+FROM alpine:3.19 AS image_short
 ARG TARGETPLATFORM
 MAINTAINER Eugene Klimov <eklimov@altinity.com>
 RUN addgroup -S -g 101 clickhouse \
     && adduser -S -h /var/lib/clickhouse -s /bin/bash -G clickhouse -g "ClickHouse server" -u 101 clickhouse
-RUN apk update && apk add --no-cache ca-certificates tzdata bash curl && update-ca-certificates
+RUN apk update && apk add --no-cache ca-certificates tzdata bash curl libcap-setcap && update-ca-certificates
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 COPY build/${TARGETPLATFORM}/clickhouse-backup /bin/clickhouse-backup
 RUN chmod +x /bin/clickhouse-backup
+RUN setcap cap_sys_nice=+ep /bin/clickhouse-backup
 # USER clickhouse
 ENTRYPOINT ["/entrypoint.sh"]
 CMD [ "/bin/clickhouse-backup", "--help" ]
@@ -96,6 +97,7 @@ ARG TARGETPLATFORM
 MAINTAINER Eugene Klimov <eklimov@altinity.com>
 COPY build/${TARGETPLATFORM}/clickhouse-backup-fips /bin/clickhouse-backup
 RUN chmod +x /bin/clickhouse-backup
+RUN setcap cap_sys_nice=+ep /bin/clickhouse-backup
 
 
 FROM ${CLICKHOUSE_IMAGE}:${CLICKHOUSE_VERSION} AS image_full
@@ -106,7 +108,7 @@ RUN apt-get update && apt-get install -y gpg xxd bsdmainutils parallel && wget -
     echo "deb [signed-by=/usr/share/keyrings/kopia-keyring.gpg] https://packages.kopia.io/apt/ stable main" > /etc/apt/sources.list.d/kopia.list && \
     wget -c "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)" -O /usr/bin/yq && chmod +x /usr/bin/yq && \
     apt-get update -y && \
-    apt-get install -y ca-certificates tzdata bash curl restic rsync rclone jq gpg kopia && \
+    apt-get install -y ca-certificates tzdata bash curl restic rsync rclone jq gpg kopia libcap2-bin && \
     update-ca-certificates && \
     rm -rf /var/lib/apt/lists/* && rm -rf /var/cache/apt/*
 
@@ -114,6 +116,7 @@ COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 COPY build/${TARGETPLATFORM}/clickhouse-backup /bin/clickhouse-backup
 RUN chmod +x /bin/clickhouse-backup
+RUN setcap cap_sys_nice=+ep /bin/clickhouse-backup
 
 # USER clickhouse
 

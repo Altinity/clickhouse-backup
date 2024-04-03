@@ -92,3 +92,12 @@ type ColumnDataTypes struct {
 type BackupDataSize struct {
 	Size uint64 `ch:"backup_data_size"`
 }
+
+type UserDirectory struct {
+	Name string `ch:"name"`
+}
+
+type RBACObject struct {
+	Id   string `ch:"id"`
+	Name string `ch:"name"`
+}

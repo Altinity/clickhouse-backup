@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -38,7 +39,7 @@ import (
 var CreateDatabaseRE = regexp.MustCompile(`(?m)^CREATE DATABASE (\s*)(\S+)(\s*)`)
 
 // Restore - restore tables matched by tablePattern from backupName
-func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, partitions []string, schemaOnly, dataOnly, dropTable, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly bool, commandId int) error {
+func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, partitions []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly bool, commandId int) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return err
@@ -119,7 +120,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 		for _, database := range backupMetadata.Databases {
 			targetDB := database.Name
 			if !IsInformationSchema(targetDB) {
-				if err = b.restoreEmptyDatabase(ctx, targetDB, tablePattern, database, dropTable, schemaOnly, ignoreDependencies, version); err != nil {
+				if err = b.restoreEmptyDatabase(ctx, targetDB, tablePattern, database, dropExists, schemaOnly, ignoreDependencies, version); err != nil {
 					return err
 				}
 			}
@@ -139,7 +140,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 	}
 	needRestart := false
 	if rbacOnly || restoreRBAC {
-		if err := b.restoreRBAC(ctx, backupName, disks); err != nil {
+		if err := b.restoreRBAC(ctx, backupName, disks, version, dropExists); err != nil {
 			return err
 		}
 		log.Infof("RBAC successfully restored")
@@ -193,12 +194,12 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 	}
 
 	if !rbacOnly && !configsOnly {
-		tablesForRestore, partitionsNames, err = b.getTablesForRestoreLocal(ctx, backupName, metadataPath, tablePattern, dropTable, partitions)
+		tablesForRestore, partitionsNames, err = b.getTablesForRestoreLocal(ctx, backupName, metadataPath, tablePattern, dropExists, partitions)
 		if err != nil {
 			return err
 		}
 	}
-	if schemaOnly || dropTable || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
+	if schemaOnly || dropExists || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
 		if err = b.RestoreSchema(ctx, backupName, tablesForRestore, ignoreDependencies, version); err != nil {
 			return err
 		}
@@ -372,12 +373,27 @@ func (b *Backuper) prepareRestoreDatabaseMapping(databaseMapping []string) error
 }
 
 // restoreRBAC - copy backup_name>/rbac folder to access_data_path
-func (b *Backuper) restoreRBAC(ctx context.Context, backupName string, disks []clickhouse.Disk) error {
+func (b *Backuper) restoreRBAC(ctx context.Context, backupName string, disks []clickhouse.Disk, version int, dropExists bool) error {
 	log := b.log.WithField("logger", "restoreRBAC")
 	accessPath, err := b.ch.GetAccessManagementPath(ctx, nil)
 	if err != nil {
 		return err
 	}
+	var k *keeper.Keeper
+	replicatedUserDirectories := make([]clickhouse.UserDirectory, 0)
+	if err = b.ch.SelectContext(ctx, &replicatedUserDirectories, "SELECT name FROM system.user_directories WHERE type='replicated'"); err == nil && len(replicatedUserDirectories) > 0 {
+		k = &keeper.Keeper{Log: b.log.WithField("logger", "keeper")}
+		if connErr := k.Connect(ctx, b.ch); connErr != nil {
+			return fmt.Errorf("but can't connect to keeper: %v", connErr)
+		}
+		defer k.Close()
+	}
+
+	// https://github.com/Altinity/clickhouse-backup/issues/851
+	if err = b.restoreRBACResolveAllConflicts(ctx, backupName, accessPath, version, k, replicatedUserDirectories, dropExists); err != nil {
+		return err
+	}
+
 	if err = b.restoreBackupRelatedDir(backupName, "access", accessPath, disks, []string{"*.jsonl"}); err == nil {
 		markFile := path.Join(accessPath, "need_rebuild_lists.mark")
 		log.Infof("create %s for properly rebuild RBAC after restart clickhouse-server", markFile)
@@ -405,13 +421,269 @@ func (b *Backuper) restoreRBAC(ctx context.Context, backupName string, disks []c
 	if err != nil && os.IsNotExist(err) {
 		return nil
 	}
-	if err = b.restoreRBACReplicated(ctx, backupName, "access"); err != nil && !os.IsNotExist(err) {
+	if err = b.restoreRBACReplicated(backupName, "access", k, replicatedUserDirectories); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil
 }
 
-func (b *Backuper) restoreRBACReplicated(ctx context.Context, backupName string, backupPrefixDir string) error {
+func (b *Backuper) restoreRBACResolveAllConflicts(ctx context.Context, backupName string, accessPath string, version int, k *keeper.Keeper, replicatedUserDirectories []clickhouse.UserDirectory, dropExists bool) error {
+	backupAccessPath := path.Join(b.DefaultDataPath, "backup", backupName, "access")
+
+	walkErr := filepath.Walk(backupAccessPath, func(fPath string, fInfo fs.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if fInfo.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(fPath, ".sql") {
+			sql, readErr := os.ReadFile(fPath)
+			if readErr != nil {
+				return readErr
+			}
+			if resolveErr := b.resolveRBACConflictIfExist(ctx, string(sql), accessPath, version, k, replicatedUserDirectories, dropExists); resolveErr != nil {
+				return resolveErr
+			}
+			b.log.Debugf("%s b.resolveRBACConflictIfExist(%s) no error", fPath, string(sql))
+		}
+		if strings.HasSuffix(fPath, ".jsonl") {
+			file, openErr := os.Open(fPath)
+			if openErr != nil {
+				return openErr
+			}
+
+			scanner := bufio.NewScanner(file)
+			for scanner.Scan() {
+				line := scanner.Text()
+				data := keeper.DumpNode{}
+				jsonErr := json.Unmarshal([]byte(line), &data)
+				if jsonErr != nil {
+					b.log.Errorf("can't %s json.Unmarshal error: %v line: %s", fPath, line, jsonErr)
+					continue
+				}
+				if strings.HasPrefix(data.Path, "uuid/") {
+					if resolveErr := b.resolveRBACConflictIfExist(ctx, data.Value, accessPath, version, k, replicatedUserDirectories, dropExists); resolveErr != nil {
+						return resolveErr
+					}
+					b.log.Debugf("%s:%s b.resolveRBACConflictIfExist(%s) no error", fPath, data.Path, data.Value)
+				}
+
+			}
+			if scanErr := scanner.Err(); scanErr != nil {
+				return scanErr
+			}
+
+			if closeErr := file.Close(); closeErr != nil {
+				b.log.Warnf("can't close %s error: %v", fPath, closeErr)
+			}
+
+		}
+		return nil
+	})
+	if !os.IsNotExist(walkErr) {
+		return walkErr
+	}
+	return nil
+}
+
+func (b *Backuper) resolveRBACConflictIfExist(ctx context.Context, sql string, accessPath string, version int, k *keeper.Keeper, replicatedUserDirectories []clickhouse.UserDirectory, dropExists bool) error {
+	kind, name, detectErr := b.detectRBACObject(sql)
+	if detectErr != nil {
+		return detectErr
+	}
+	if isExists, existsRBACType, existsRBACObjectId := b.isRBACExists(ctx, kind, name, accessPath, version, k, replicatedUserDirectories); isExists {
+		b.log.Warnf("RBAC object kind=%s, name=%s already present, will %s", kind, name, b.cfg.General.RBACConflictResolution)
+		if b.cfg.General.RBACConflictResolution == "recreate" || dropExists {
+			if dropErr := b.dropExistsRBAC(ctx, kind, name, accessPath, existsRBACType, existsRBACObjectId, k); dropErr != nil {
+				return dropErr
+			}
+			return nil
+		}
+		if b.cfg.General.RBACConflictResolution == "fail" {
+			return fmt.Errorf("RBAC object kind=%s, name=%s already present, change ", kind, name)
+		}
+	}
+	return nil
+}
+
+func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, accessPath string, version int, k *keeper.Keeper, replicatedUserDirectories []clickhouse.UserDirectory) (bool, string, string) {
+	//search in sql system.users, system.quotas, system.row_policies, system.roles, system.settings_profiles
+	if version > 200005000 {
+		var rbacSystemTableNames = map[string]string{
+			"ROLE":             "roles",
+			"ROW POLICY":       "row_policies",
+			"SETTINGS PROFILE": "settings_profiles",
+			"QUOTA":            "quotes",
+			"USER":             "users",
+		}
+		systemTable, systemTableExists := rbacSystemTableNames[kind]
+		if !systemTableExists {
+			b.log.Errorf("unsupported RBAC object kind: %s", kind)
+			return false, "", ""
+		}
+		isRBACExistsSQL := fmt.Sprintf("SELECT id, name FROM `system`.`%s` WHERE name=? LIMIT 1", systemTable)
+		existsRBACRow := make([]clickhouse.RBACObject, 0)
+		if err := b.ch.SelectSingleRow(ctx, &existsRBACRow, isRBACExistsSQL, name); err != nil {
+			b.log.Errorf("RBAC object resolve failed kind: %s, name: %s, error: %v", kind, name, err)
+			return false, "", ""
+		}
+		if len(existsRBACRow) == 0 {
+			return false, "", ""
+		}
+		return true, "sql", existsRBACRow[0].Id
+	}
+
+	checkRBACExists := func(sql string) bool {
+		existsKind, existsName, detectErr := b.detectRBACObject(sql)
+		if detectErr != nil {
+			b.log.Warnf("isRBACExists error: %v", detectErr)
+			return false
+		}
+		if existsKind == kind && existsName == name {
+			return true
+		}
+		return false
+	}
+
+	// search in local user directory
+	if sqlFiles, globErr := filepath.Glob(path.Join(accessPath, "*.sql")); globErr == nil {
+		for _, f := range sqlFiles {
+			sql, readErr := os.ReadFile(f)
+			if readErr != nil {
+				b.log.Warnf("read %s error: %v", f, readErr)
+				continue
+			}
+			if checkRBACExists(string(sql)) {
+				return true, "local", strings.TrimSuffix(filepath.Base(f), filepath.Ext(f))
+			}
+		}
+	} else {
+		b.log.Warnf("access/*.sql error: %v", globErr)
+	}
+
+	//search in keeper replicated user directory
+	if k != nil && len(replicatedUserDirectories) > 0 {
+		for _, userDirectory := range replicatedUserDirectories {
+			replicatedAccessPath, getAccessErr := k.GetReplicatedAccessPath(userDirectory.Name)
+			if getAccessErr != nil {
+				b.log.Warnf("b.isRBACExists -> k.GetReplicatedAccessPath error: %v", getAccessErr)
+				continue
+			}
+			isExists := false
+			existsObjectId := ""
+			walkErr := k.Walk(replicatedAccessPath, "uuid", true, func(node keeper.DumpNode) (bool, error) {
+				if node.Value == "" {
+					return false, nil
+				}
+				if checkRBACExists(node.Value) {
+					isExists = true
+					existsObjectId = strings.TrimPrefix(node.Path, path.Join(replicatedAccessPath, "uuid")+"/")
+					return true, nil
+				}
+				return false, nil
+			})
+			if walkErr != nil {
+				b.log.Warnf("b.isRBACExists -> k.Walk error: %v", walkErr)
+				continue
+			}
+			if isExists {
+				return true, userDirectory.Name, existsObjectId
+			}
+		}
+	}
+	return false, "", ""
+}
+
+func (b *Backuper) dropExistsRBAC(ctx context.Context, kind string, name string, accessPath string, rbacType, rbacObjectId string, k *keeper.Keeper) error {
+	//sql
+	if rbacType == "sql" {
+		dropSQL := fmt.Sprintf("DROP %s IF EXISTS `%s`", kind, name)
+		return b.ch.QueryContext(ctx, dropSQL)
+	}
+	//local
+	if rbacType == "local" {
+		return os.Remove(path.Join(accessPath, rbacObjectId+".sql"))
+	}
+	//keeper
+	var keeperPrefixesRBAC = map[string]string{
+		"ROLE":             "R",
+		"ROW POLICY":       "P",
+		"SETTINGS PROFILE": "S",
+		"QUOTA":            "Q",
+		"USER":             "U",
+	}
+	keeperRBACTypePrefix, isKeeperRBACTypePrefixExists := keeperPrefixesRBAC[kind]
+	if !isKeeperRBACTypePrefixExists {
+		return fmt.Errorf("unsupported RBAC kind: %s", kind)
+	}
+	prefix, err := k.GetReplicatedAccessPath(rbacType)
+	if err != nil {
+		return fmt.Errorf("b.dropExistsRBAC -> k.GetReplicatedAccessPath error: %v", err)
+	}
+	deletedNodes := []string{
+		path.Join(prefix, "uuid", rbacObjectId),
+	}
+	walkErr := k.Walk(prefix, keeperRBACTypePrefix, true, func(node keeper.DumpNode) (bool, error) {
+		if node.Value == rbacObjectId {
+			deletedNodes = append(deletedNodes, node.Path)
+		}
+		return false, nil
+	})
+	if walkErr != nil {
+		return fmt.Errorf("b.dropExistsRBAC -> k.Walk(%s/%s) error: %v", prefix, keeperRBACTypePrefix, walkErr)
+	}
+
+	for _, nodePath := range deletedNodes {
+		if deleteErr := k.Delete(nodePath); deleteErr != nil {
+			return fmt.Errorf("b.dropExistsRBAC -> k.Delete(%s) error: %v", nodePath, deleteErr)
+		}
+	}
+	return nil
+}
+
+func (b *Backuper) detectRBACObject(sql string) (string, string, error) {
+	var kind, name string
+	var detectErr error
+
+	// Define the map of prefixes and their corresponding kinds.
+	prefixes := map[string]string{
+		"ATTACH ROLE":             "ROLE",
+		"ATTACH ROW POLICY":       "ROW POLICY",
+		"ATTACH SETTINGS PROFILE": "SETTINGS PROFILE",
+		"ATTACH QUOTA":            "QUOTA",
+		"ATTACH USER":             "USER",
+	}
+
+	// Iterate over the prefixes to find a match.
+	for prefix, k := range prefixes {
+		if strings.HasPrefix(sql, prefix) {
+			kind = k
+			// Extract the name from the SQL query.
+			name = strings.TrimSpace(strings.TrimPrefix(sql, prefix))
+			break
+		}
+	}
+
+	// If no match is found, return an error.
+	if kind == "" {
+		detectErr = fmt.Errorf("unable to detect RBAC object kind from SQL query: %s", sql)
+		return kind, name, detectErr
+	}
+	name = strings.TrimSpace(strings.SplitN(name, " ", 2)[0])
+	name = strings.Trim(name, " `")
+	if name == "" {
+		detectErr = fmt.Errorf("unable to detect RBAC object name from SQL query: %s", sql)
+		return kind, name, detectErr
+	}
+	return kind, name, detectErr
+}
+
+// @todo think about restore RBAC from replicated to local *.sql
+func (b *Backuper) restoreRBACReplicated(backupName string, backupPrefixDir string, k *keeper.Keeper, replicatedUserDirectories []clickhouse.UserDirectory) error {
+	if k == nil || len(replicatedUserDirectories) == 0 {
+		return nil
+	}
 	log := b.log.WithField("logger", "restoreRBACReplicated")
 	srcBackupDir := path.Join(b.DefaultDataPath, "backup", backupName, backupPrefixDir)
 	info, err := os.Stat(srcBackupDir)
@@ -423,42 +695,32 @@ func (b *Backuper) restoreRBACReplicated(ctx context.Context, backupName string,
 	if !info.IsDir() {
 		return fmt.Errorf("%s is not a dir", srcBackupDir)
 	}
-	replicatedRBAC := make([]struct {
-		Name string `ch:"name"`
-	}, 0)
-	if err = b.ch.SelectContext(ctx, &replicatedRBAC, "SELECT name FROM system.user_directories WHERE type='replicated'"); err == nil && len(replicatedRBAC) > 0 {
-		jsonLFiles, err := filepathx.Glob(path.Join(srcBackupDir, "*.jsonl"))
+	jsonLFiles, err := filepathx.Glob(path.Join(srcBackupDir, "*.jsonl"))
+	if err != nil {
+		return err
+	}
+	if len(jsonLFiles) == 0 {
+		return nil
+	}
+	restoreReplicatedRBACMap := make(map[string]string, len(jsonLFiles))
+	for _, jsonLFile := range jsonLFiles {
+		for _, userDirectory := range replicatedUserDirectories {
+			if strings.HasSuffix(jsonLFile, userDirectory.Name+".jsonl") {
+				restoreReplicatedRBACMap[jsonLFile] = userDirectory.Name
+			}
+		}
+		if _, exists := restoreReplicatedRBACMap[jsonLFile]; !exists {
+			restoreReplicatedRBACMap[jsonLFile] = replicatedUserDirectories[0].Name
+		}
+	}
+	for jsonLFile, userDirectoryName := range restoreReplicatedRBACMap {
+		replicatedAccessPath, err := k.GetReplicatedAccessPath(userDirectoryName)
 		if err != nil {
 			return err
 		}
-		if len(jsonLFiles) == 0 {
-			return nil
-		}
-		k := keeper.Keeper{Log: b.log.WithField("logger", "keeper")}
-		if err = k.Connect(ctx, b.ch, b.cfg); err != nil {
+		log.Infof("keeper.Restore(%s) -> %s", jsonLFile, replicatedAccessPath)
+		if err := k.Restore(jsonLFile, replicatedAccessPath); err != nil {
 			return err
-		}
-		defer k.Close()
-		restoreReplicatedRBACMap := make(map[string]string, len(jsonLFiles))
-		for _, jsonLFile := range jsonLFiles {
-			for _, userDirectory := range replicatedRBAC {
-				if strings.HasSuffix(jsonLFile, userDirectory.Name+".jsonl") {
-					restoreReplicatedRBACMap[jsonLFile] = userDirectory.Name
-				}
-			}
-			if _, exists := restoreReplicatedRBACMap[jsonLFile]; !exists {
-				restoreReplicatedRBACMap[jsonLFile] = replicatedRBAC[0].Name
-			}
-		}
-		for jsonLFile, userDirectoryName := range restoreReplicatedRBACMap {
-			replicatedAccessPath, err := k.GetReplicatedAccessPath(userDirectoryName)
-			if err != nil {
-				return err
-			}
-			log.Infof("keeper.Restore(%s) -> %s", jsonLFile, replicatedAccessPath)
-			if err := k.Restore(jsonLFile, replicatedAccessPath); err != nil {
-				return err
-			}
 		}
 	}
 	return nil

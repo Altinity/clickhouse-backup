@@ -460,41 +460,48 @@ func TestRBAC(t *testing.T) {
 
 		ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_rbac")
 		ch.queryWithNoError(r, "CREATE TABLE default.test_rbac (v UInt64) ENGINE=MergeTree() ORDER BY tuple()")
-
-		ch.queryWithNoError(r, "DROP SETTINGS PROFILE  IF EXISTS test_rbac")
+		ch.queryWithNoError(r, "DROP SETTINGS PROFILE IF EXISTS test_rbac")
 		ch.queryWithNoError(r, "DROP QUOTA IF EXISTS test_rbac")
 		ch.queryWithNoError(r, "DROP ROW POLICY IF EXISTS test_rbac ON default.test_rbac")
 		ch.queryWithNoError(r, "DROP ROLE IF EXISTS test_rbac")
 		ch.queryWithNoError(r, "DROP USER IF EXISTS test_rbac")
 
-		log.Info("create RBAC related objects")
-		ch.queryWithNoError(r, "CREATE SETTINGS PROFILE test_rbac SETTINGS max_execution_time=60")
-		ch.queryWithNoError(r, "CREATE ROLE test_rbac SETTINGS PROFILE 'test_rbac'")
-		ch.queryWithNoError(r, "CREATE USER test_rbac IDENTIFIED BY 'test_rbac' DEFAULT ROLE test_rbac")
-		ch.queryWithNoError(r, "CREATE QUOTA test_rbac KEYED BY user_name FOR INTERVAL 1 hour NO LIMITS TO test_rbac")
-		ch.queryWithNoError(r, "CREATE ROW POLICY test_rbac ON default.test_rbac USING 1=1 AS RESTRICTIVE TO test_rbac")
+		creatAllRBAC := func(drop bool) {
+			if drop {
+				log.Info("drop all RBAC related objects after backup")
+				ch.queryWithNoError(r, "DROP SETTINGS PROFILE test_rbac")
+				ch.queryWithNoError(r, "DROP QUOTA test_rbac")
+				ch.queryWithNoError(r, "DROP ROW POLICY test_rbac ON default.test_rbac")
+				ch.queryWithNoError(r, "DROP ROLE test_rbac")
+				ch.queryWithNoError(r, "DROP USER test_rbac")
+			}
+			log.Info("create RBAC related objects")
+			ch.queryWithNoError(r, "CREATE SETTINGS PROFILE test_rbac SETTINGS max_execution_time=60")
+			ch.queryWithNoError(r, "CREATE ROLE test_rbac SETTINGS PROFILE 'test_rbac'")
+			ch.queryWithNoError(r, "CREATE USER test_rbac IDENTIFIED BY 'test_rbac' DEFAULT ROLE test_rbac")
+			ch.queryWithNoError(r, "CREATE QUOTA test_rbac KEYED BY user_name FOR INTERVAL 1 hour NO LIMITS TO test_rbac")
+			ch.queryWithNoError(r, "CREATE ROW POLICY test_rbac ON default.test_rbac USING 1=1 AS RESTRICTIVE TO test_rbac")
+		}
+		creatAllRBAC(false)
 
 		r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", config, "create", "--rbac", "--rbac-only", "test_rbac_backup"))
 		r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 CLICKHOUSE_BACKUP_CONFIG="+config+" clickhouse-backup upload test_rbac_backup"))
 		r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "local", "test_rbac_backup"))
 		r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
 
-		log.Info("drop all RBAC related objects after backup")
-		ch.queryWithNoError(r, "DROP SETTINGS PROFILE test_rbac")
-		ch.queryWithNoError(r, "DROP QUOTA test_rbac")
-		ch.queryWithNoError(r, "DROP ROW POLICY test_rbac ON default.test_rbac")
-		ch.queryWithNoError(r, "DROP ROLE test_rbac")
-		ch.queryWithNoError(r, "DROP USER test_rbac")
+		log.Info("create conflicted RBAC objects")
+		creatAllRBAC(true)
 
 		log.Info("download+restore RBAC")
-		r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
 		r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 CLICKHOUSE_BACKUP_CONFIG="+config+" clickhouse-backup download test_rbac_backup"))
 
 		out, err := dockerExecOut("clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 clickhouse-backup -c "+config+" restore --rm --rbac test_rbac_backup")
+		log.Debug(out)
 		r.Contains(out, "RBAC successfully restored")
 		r.NoError(err)
 
 		out, err = dockerExecOut("clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 clickhouse-backup -c "+config+" restore --rm --rbac-only test_rbac_backup")
+		log.Debug(out)
 		r.Contains(out, "RBAC successfully restored")
 		r.NoError(err)
 		r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))

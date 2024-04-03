@@ -9,6 +9,8 @@ IMPROVEMENTS
 - added support of native Clickhouse incremental backup for `use_embedded_backup_restore: true` fix [735](https://github.com/Altinity/clickhouse-backup/issues/735)
 - added `GCS_CHUNK_SIZE` config parameter, try to speedup GCS upload fix [874](https://github.com/Altinity/clickhouse-backup/pull/874), thanks @dermasmid
 - added `--remote-backup` cli parameter to `tables` command and `GET /backup/table`, fix [778](https://github.com/Altinity/clickhouse-backup/issues/778)
+- added `rbac_always_backup: true` option to default config, will create backup for RBAC objects automatically, restore still require `--rbac` to avoid destructive actions, fix [793](https://github.com/Altinity/clickhouse-backup/issues/793)
+- added `rbac_conflict_resolution: recreate` option for RBAC object name conflicts during restore, fix [851](https://github.com/Altinity/clickhouse-backup/issues/851) 
 - switched to golang 1.22
 - added `clickhouse/clickhouse-server:24.3` to CI/CD
 

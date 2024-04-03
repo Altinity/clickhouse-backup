@@ -60,6 +60,8 @@ type GeneralConfig struct {
 	ShardedOperationMode    string            `yaml:"sharded_operation_mode" envconfig:"SHARDED_OPERATION_MODE"`
 	CPUNicePriority         int               `yaml:"cpu_nice_priority" envconfig:"CPU_NICE_PRIORITY"`
 	IONicePriority          string            `yaml:"io_nice_priority" envconfig:"IO_NICE_PRIORITY"`
+	RBACBackupAlways        bool              `yaml:"rbac_backup_always" envconfig:"RBAC_BACKUP_ALWAYS"`
+	RBACConflictResolution  string            `yaml:"rbac_conflict_resolution" envconfig:"RBAC_CONFLICT_RESOLUTION"`
 	RetriesDuration         time.Duration
 	WatchDuration           time.Duration
 	FullDuration            time.Duration
@@ -528,6 +530,8 @@ func DefaultConfig() *Config {
 			RestoreDatabaseMapping:  make(map[string]string, 0),
 			IONicePriority:          "idle",
 			CPUNicePriority:         15,
+			RBACBackupAlways:        true,
+			RBACConflictResolution:  "recreate",
 		},
 		ClickHouse: ClickHouseConfig{
 			Username: "default",
