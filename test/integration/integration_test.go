@@ -492,6 +492,8 @@ func TestRBAC(t *testing.T) {
 		log.Info("create conflicted RBAC objects")
 		creatAllRBAC(true)
 
+		r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
+
 		log.Info("download+restore RBAC")
 		r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 CLICKHOUSE_BACKUP_CONFIG="+config+" clickhouse-backup download test_rbac_backup"))
 
