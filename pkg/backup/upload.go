@@ -444,7 +444,11 @@ func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelate
 	var localFiles []string
 	var err error
 	if localFiles, err = filepathx.Glob(localFilesGlobPattern); err != nil || localFiles == nil || len(localFiles) == 0 {
-		return 0, fmt.Errorf("list %s return list=%v with err=%v", localFilesGlobPattern, localFiles, err)
+		if !b.cfg.General.RBACBackupAlways {
+			return 0, fmt.Errorf("list %s return list=%v with err=%v", localFilesGlobPattern, localFiles, err)
+		}
+		b.log.Warnf("list %s return list=%v with err=%v", localFilesGlobPattern, localFiles, err)
+		return 0, nil
 	}
 
 	for i := 0; i < len(localFiles); i++ {
