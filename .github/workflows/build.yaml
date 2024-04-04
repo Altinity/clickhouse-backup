@@ -123,14 +123,14 @@ jobs:
           - '23.8'
           - '24.3'
     steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
       - name: Setup golang
         id: setup-go
         uses: actions/setup-go@v5
         with:
           go-version: '^${{ matrix.golang-version }}'
-
-      - name: Checkout project
-        uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4
         with:
