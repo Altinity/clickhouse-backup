@@ -47,6 +47,10 @@ type Backup struct {
 	UploadDate    time.Time `json:"upload_date"`
 }
 
+func (b *Backup) GetFullSize() uint64 {
+	return b.DataSize + b.MetadataSize + b.ConfigSize + b.RBACSize
+}
+
 type BackupDestination struct {
 	RemoteStorage
 	Log                *apexLog.Entry
