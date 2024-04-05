@@ -104,25 +104,32 @@ func (ch *ClickHouse) Connect() error {
 		opt.Settings["log_queries"] = 0
 	}
 
-	if ch.conn, err = clickhouse.Open(opt); err != nil {
-		ch.Log.Errorf("clickhouse connection: %s, sql.Open return error: %v", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
-		return err
-	}
-
 	logFunc := ch.Log.Infof
 	if !ch.Config.LogSQLQueries {
 		logFunc = ch.Log.Debugf
 	}
-	logFunc("clickhouse connection prepared: %s run ping", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
-	err = ch.conn.Ping(context.Background())
-	if err != nil {
-		ch.Log.Errorf("clickhouse connection ping: %s return error: %v", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
-		return err
-	} else {
-		ch.IsOpen = true
+	// infinite reconnect until success, fix https://github.com/Altinity/clickhouse-backup/issues/857
+	for {
+		for {
+			ch.conn, err = clickhouse.Open(opt)
+			if err == nil {
+				break
+			}
+			ch.Log.Warnf("clickhouse connection: %s, sql.Open return error: %v, will wait 5 second to reconnect", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
+			time.Sleep(5 * time.Second)
+		}
+		logFunc("clickhouse connection prepared: %s run ping", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
+		err = ch.conn.Ping(context.Background())
+		if err == nil {
+			logFunc("clickhouse connection success: %s", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
+			ch.IsOpen = true
+			break
+		}
+		ch.Log.Warnf("clickhouse connection ping: %s return error: %v, will wait 5 second to reconnect", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
+		time.Sleep(5 * time.Second)
 	}
-	logFunc("clickhouse connection open: %s", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
-	return err
+
+	return nil
 }
 
 // GetDisks - return data from system.disks table

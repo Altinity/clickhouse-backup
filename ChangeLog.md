@@ -26,6 +26,7 @@ BUG FIXES
 - apply `CLICKHOUSE_SKIP_TABLES_ENGINES` during `create` command
 - fixed behavior for upload / download when .inner. table missing for MATERIALIZED VIEW  by table pattern, fix [765](https://github.com/Altinity/clickhouse-backup/issues/765)
 - fixed `ObjectDisks` + `CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE: true` - shall skip upload object disk content, fix [799](https://github.com/Altinity/clickhouse-backup/issues/799)
+- fixed connection to clickhouse-server behavior when long clickhouse-server startup time and `docker-entrypoint.d` processing, will infinite reconnect each 5 seconds, until success, fix [857](https://github.com/Altinity/clickhouse-backup/issues/857)
 
 # v2.4.35
 IMPROVEMENTS
