@@ -126,8 +126,10 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	}
 	partitionsIdMap, partitionsNameList := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, tables, nil, partitions)
 	doBackupData := !schemaOnly && !rbacOnly && !configsOnly
-	backupRBACSize, backupConfigSize := b.createRBACAndConfigsIfNecessary(ctx, backupName, createRBAC, rbacOnly, createConfigs, configsOnly, disks, diskMap, log)
-
+	backupRBACSize, backupConfigSize, rbacAndConfigsErr := b.createRBACAndConfigsIfNecessary(ctx, backupName, createRBAC, rbacOnly, createConfigs, configsOnly, disks, diskMap, log)
+	if rbacAndConfigsErr != nil {
+		return rbacAndConfigsErr
+	}
 	if b.cfg.ClickHouse.UseEmbeddedBackupRestore {
 		err = b.createBackupEmbedded(ctx, backupName, diffFromRemote, doBackupData, schemaOnly, version, tablePattern, partitionsNameList, partitionsIdMap, tables, allDatabases, allFunctions, disks, diskMap, diskTypes, backupRBACSize, backupConfigSize, log, startBackup)
 	} else {
@@ -154,7 +156,7 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	return nil
 }
 
-func (b *Backuper) createRBACAndConfigsIfNecessary(ctx context.Context, backupName string, createRBAC bool, rbacOnly bool, createConfigs bool, configsOnly bool, disks []clickhouse.Disk, diskMap map[string]string, log *apexLog.Entry) (uint64, uint64) {
+func (b *Backuper) createRBACAndConfigsIfNecessary(ctx context.Context, backupName string, createRBAC bool, rbacOnly bool, createConfigs bool, configsOnly bool, disks []clickhouse.Disk, diskMap map[string]string, log *apexLog.Entry) (uint64, uint64, error) {
 	backupRBACSize, backupConfigSize := uint64(0), uint64(0)
 	backupPath := path.Join(b.DefaultDataPath, "backup")
 	if b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
@@ -177,7 +179,12 @@ func (b *Backuper) createRBACAndConfigsIfNecessary(ctx context.Context, backupNa
 			log.WithField("size", utils.FormatBytes(backupConfigSize)).Info("done createBackupConfigs")
 		}
 	}
-	return backupRBACSize, backupConfigSize
+	if backupRBACSize > 0 || backupConfigSize > 0 {
+		if chownErr := filesystemhelper.Chown(backupPath, b.ch, disks, true); chownErr != nil {
+			return backupRBACSize, backupConfigSize, chownErr
+		}
+	}
+	return backupRBACSize, backupConfigSize, nil
 }
 
 func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRemote string, doBackupData, schemaOnly, rbacOnly, configsOnly bool, backupVersion string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, tables []clickhouse.Table, tablePattern string, disks []clickhouse.Disk, diskMap, diskTypes map[string]string, allDatabases []clickhouse.Database, allFunctions []clickhouse.Function, backupRBACSize, backupConfigSize uint64, log *apexLog.Entry, startBackup time.Time) error {
