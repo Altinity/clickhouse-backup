@@ -461,7 +461,7 @@ func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelate
 	}
 	if b.cfg.GetCompressionFormat() == "none" {
 		remoteUploadedBytes := int64(0)
-		if remoteUploadedBytes, err = b.dst.UploadPath(ctx, 0, localBackupRelatedDir, localFiles, destinationRemote, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration); err != nil {
+		if remoteUploadedBytes, err = b.dst.UploadPath(ctx, localBackupRelatedDir, localFiles, destinationRemote, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b.cfg.General.UploadMaxBytesPerSecond); err != nil {
 			return 0, fmt.Errorf("can't RBAC or config upload %s: %v", destinationRemote, err)
 		}
 		if b.resume {
@@ -471,7 +471,7 @@ func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelate
 	}
 	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
 	err = retry.RunCtx(ctx, func(ctx context.Context) error {
-		return b.dst.UploadCompressedStream(ctx, localBackupRelatedDir, localFiles, destinationRemote)
+		return b.dst.UploadCompressedStream(ctx, localBackupRelatedDir, localFiles, destinationRemote, b.cfg.General.UploadMaxBytesPerSecond)
 	})
 	if err != nil {
 		return 0, fmt.Errorf("can't RBAC or config upload compressed %s: %v", destinationRemote, err)
@@ -542,7 +542,7 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 						}
 					}
 					log.Debugf("start upload %d files to %s", len(partFiles), remotePath)
-					if uploadPathBytes, err := b.dst.UploadPath(ctx, 0, backupPath, partFiles, remotePath, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration); err != nil {
+					if uploadPathBytes, err := b.dst.UploadPath(ctx, backupPath, partFiles, remotePath, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b.cfg.General.UploadMaxBytesPerSecond); err != nil {
 						log.Errorf("UploadPath return error: %v", err)
 						return fmt.Errorf("can't upload: %v", err)
 					} else {
@@ -576,7 +576,7 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 					log.Debugf("start upload %d files to %s", len(localFiles), remoteDataFile)
 					retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
 					err := retry.RunCtx(ctx, func(ctx context.Context) error {
-						return b.dst.UploadCompressedStream(ctx, backupPath, localFiles, remoteDataFile)
+						return b.dst.UploadCompressedStream(ctx, backupPath, localFiles, remoteDataFile, b.cfg.General.UploadMaxBytesPerSecond)
 					})
 					if err != nil {
 						log.Errorf("UploadCompressedStream return error: %v", err)

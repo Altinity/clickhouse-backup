@@ -2,6 +2,8 @@ general:
   disable_progress_bar: true
   remote_storage: ftp
   upload_concurrency: 4
+  upload_max_bytes_per_second:  10240
+  download_max_bytes_per_second:  10240
   download_concurrency: 4
   restore_schema_on_cluster: "{cluster}"
 clickhouse:

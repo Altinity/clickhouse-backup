@@ -58,7 +58,7 @@ func (b *Backuper) legacyDownload(ctx context.Context, backupName string) error 
 	}()
 	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
 	err = retry.RunCtx(ctx, func(ctx context.Context) error {
-		return bd.DownloadCompressedStream(ctx, backupName, path.Join(b.DefaultDataPath, "backup", backupName))
+		return bd.DownloadCompressedStream(ctx, backupName, path.Join(b.DefaultDataPath, "backup", backupName), b.cfg.General.DownloadMaxBytesPerSecond)
 	})
 	if err != nil {
 		return err
@@ -230,7 +230,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			idx := i
 			dataGroup.Go(func() error {
 				start := time.Now()
-				if err := b.downloadTableData(dataCtx, remoteBackup.BackupMetadata, *tableMetadataAfterDownload[idx], disks); err != nil {
+				if err := b.downloadTableData(dataCtx, remoteBackup.BackupMetadata, *tableMetadataAfterDownload[idx]); err != nil {
 					return err
 				}
 				log.
@@ -589,7 +589,7 @@ func (b *Backuper) downloadBackupRelatedDir(ctx context.Context, remoteBackup st
 		}
 	}
 	if remoteBackup.DataFormat == DirectoryFormat {
-		if err := b.dst.DownloadPath(ctx, 0, remoteSource, localDir, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration); err != nil {
+		if err := b.dst.DownloadPath(ctx, remoteSource, localDir, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b.cfg.General.DownloadMaxBytesPerSecond); err != nil {
 			//SFTP can't walk on non exists paths and return error
 			if !strings.Contains(err.Error(), "not exist") {
 				return 0, err
@@ -623,7 +623,7 @@ func (b *Backuper) downloadBackupRelatedDir(ctx context.Context, remoteBackup st
 	}
 	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
 	err = retry.RunCtx(ctx, func(ctx context.Context) error {
-		return b.dst.DownloadCompressedStream(ctx, remoteSource, localDir)
+		return b.dst.DownloadCompressedStream(ctx, remoteSource, localDir, b.cfg.General.DownloadMaxBytesPerSecond)
 	})
 	if err != nil {
 		return 0, err
@@ -634,7 +634,7 @@ func (b *Backuper) downloadBackupRelatedDir(ctx context.Context, remoteBackup st
 	return uint64(remoteFileInfo.Size()), nil
 }
 
-func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.BackupMetadata, table metadata.TableMetadata, disks []clickhouse.Disk) error {
+func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.BackupMetadata, table metadata.TableMetadata) error {
 	log := b.log.WithField("logger", "downloadTableData")
 	dbAndTableDir := path.Join(common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
 	ctx, cancel := context.WithCancel(ctx)
@@ -671,7 +671,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 					}
 					retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
 					err := retry.RunCtx(dataCtx, func(dataCtx context.Context) error {
-						return b.dst.DownloadCompressedStream(dataCtx, tableRemoteFile, tableLocalDir)
+						return b.dst.DownloadCompressedStream(dataCtx, tableRemoteFile, tableLocalDir, b.cfg.General.DownloadMaxBytesPerSecond)
 					})
 					if err != nil {
 						return err
@@ -715,7 +715,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 					if b.resume && b.resumableState.IsAlreadyProcessedBool(partRemotePath) {
 						return nil
 					}
-					if err := b.dst.DownloadPath(dataCtx, 0, partRemotePath, partLocalPath, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration); err != nil {
+					if err := b.dst.DownloadPath(dataCtx, partRemotePath, partLocalPath, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b.cfg.General.DownloadMaxBytesPerSecond); err != nil {
 						return err
 					}
 					if b.resume {
@@ -732,7 +732,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 	}
 
 	if !b.isEmbedded && remoteBackup.RequiredBackup != "" {
-		err := b.downloadDiffParts(ctx, remoteBackup, table, dbAndTableDir, disks)
+		err := b.downloadDiffParts(ctx, remoteBackup, table, dbAndTableDir)
 		if err != nil {
 			return err
 		}
@@ -741,7 +741,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 	return nil
 }
 
-func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.BackupMetadata, table metadata.TableMetadata, dbAndTableDir string, disks []clickhouse.Disk) error {
+func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.BackupMetadata, table metadata.TableMetadata, dbAndTableDir string) error {
 	log := b.log.WithField("operation", "downloadDiffParts")
 	log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).Debug("start")
 	start := time.Now()
@@ -869,7 +869,7 @@ func (b *Backuper) downloadDiffRemoteFile(ctx context.Context, diffRemoteFilesLo
 		if path.Ext(tableRemoteFile) != "" {
 			retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
 			err := retry.RunCtx(ctx, func(ctx context.Context) error {
-				return b.dst.DownloadCompressedStream(ctx, tableRemoteFile, tableLocalDir)
+				return b.dst.DownloadCompressedStream(ctx, tableRemoteFile, tableLocalDir, b.cfg.General.DownloadMaxBytesPerSecond)
 			})
 			if err != nil {
 				log.Warnf("DownloadCompressedStream %s -> %s return error: %v", tableRemoteFile, tableLocalDir, err)
@@ -877,7 +877,7 @@ func (b *Backuper) downloadDiffRemoteFile(ctx context.Context, diffRemoteFilesLo
 			}
 		} else {
 			// remoteFile could be a directory
-			if err := b.dst.DownloadPath(ctx, 0, tableRemoteFile, tableLocalDir, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration); err != nil {
+			if err := b.dst.DownloadPath(ctx, tableRemoteFile, tableLocalDir, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b.cfg.General.DownloadMaxBytesPerSecond); err != nil {
 				log.Warnf("DownloadPath %s -> %s return error: %v", tableRemoteFile, tableLocalDir, err)
 				return err
 			}
