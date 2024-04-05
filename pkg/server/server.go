@@ -782,16 +782,17 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 				}
 				description += b.Tags
 			}
+			fullSize := b.GetFullSize()
 			backupsJSON = append(backupsJSON, backupJSON{
 				Name:           b.BackupName,
 				Created:        b.CreationDate.Format(common.TimeFormat),
-				Size:           b.DataSize + b.MetadataSize,
+				Size:           fullSize,
 				Location:       "remote",
 				RequiredBackup: b.RequiredBackup,
 				Desc:           description,
 			})
 			if i == len(remoteBackups)-1 {
-				api.metrics.LastBackupSizeRemote.Set(float64(b.DataSize + b.MetadataSize + b.ConfigSize + b.RBACSize))
+				api.metrics.LastBackupSizeRemote.Set(float64(fullSize))
 			}
 		}
 		api.metrics.NumberBackupsRemoteBroken.Set(float64(brokenBackups))
@@ -1432,7 +1433,7 @@ func (api *APIServer) UpdateBackupMetrics(ctx context.Context, onlyLocal bool) e
 			}
 		}
 		lastBackup := remoteBackups[numberBackupsRemote-1]
-		lastSizeRemote = lastBackup.DataSize + lastBackup.MetadataSize + lastBackup.ConfigSize + lastBackup.RBACSize
+		lastSizeRemote = lastBackup.GetFullSize()
 		lastBackupCreateRemote = &lastBackup.CreationDate
 		lastBackupUpload = &lastBackup.UploadDate
 		api.metrics.LastBackupSizeRemote.Set(float64(lastSizeRemote))
