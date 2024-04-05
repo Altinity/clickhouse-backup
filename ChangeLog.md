@@ -14,6 +14,7 @@ IMPROVEMENTS
 - added `upload_max_bytes_per_seconds` and `download_max_bytes_per_seconds` config options to allow throttling without CAP_SYS_NICE, fix [817](https://github.com/Altinity/clickhouse-backup/issues/817)
 - removed `disable_progress_bar` config option and related progress bar code
 - switched to golang 1.22
+- updated all third-party SDK to latest versions
 - added `clickhouse/clickhouse-server:24.3` to CI/CD
 
 BUG FIXES
