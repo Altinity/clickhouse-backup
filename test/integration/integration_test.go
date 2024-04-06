@@ -468,7 +468,7 @@ func TestRBAC(t *testing.T) {
 
 		creatAllRBAC := func(drop bool) {
 			if drop {
-				log.Info("drop all RBAC related objects after backup")
+				log.Info("drop all RBAC related objects")
 				ch.queryWithNoError(r, "DROP SETTINGS PROFILE test_rbac")
 				ch.queryWithNoError(r, "DROP QUOTA test_rbac")
 				ch.queryWithNoError(r, "DROP ROW POLICY test_rbac ON default.test_rbac")

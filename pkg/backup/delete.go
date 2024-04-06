@@ -156,7 +156,7 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 				if disk.IsBackup {
 					backupPath = path.Join(disk.Path, backupName)
 				}
-				log.Debugf("remove '%s'", backupPath)
+				log.Infof("remove '%s'", backupPath)
 				if err = os.RemoveAll(backupPath); err != nil {
 					return err
 				}

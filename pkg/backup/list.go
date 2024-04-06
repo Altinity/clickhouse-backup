@@ -184,23 +184,34 @@ func (b *Backuper) GetLocalBackups(ctx context.Context, disks []clickhouse.Disk)
 			},
 		}
 	}
-	defaultDataPath, err := b.ch.GetDefaultPath(disks)
-	if err != nil {
-		return nil, nil, err
-	}
 	var result []LocalBackup
-	allBackupPaths := []string{path.Join(defaultDataPath, "backup")}
-	if b.cfg.ClickHouse.UseEmbeddedBackupRestore {
-		for _, disk := range disks {
-			select {
-			case <-ctx.Done():
-				return nil, nil, ctx.Err()
-			default:
-				if disk.IsBackup || disk.Name == b.cfg.ClickHouse.EmbeddedBackupDisk {
-					allBackupPaths = append(allBackupPaths, disk.Path)
-				}
+	allBackupPaths := []string{}
+	for _, disk := range disks {
+		if disk.IsBackup || disk.Name == b.cfg.ClickHouse.EmbeddedBackupDisk {
+			allBackupPaths = append(allBackupPaths, disk.Path)
+		} else {
+			allBackupPaths = append(allBackupPaths, path.Join(disk.Path, "backup"))
+		}
+	}
+	addBrokenBackupIfNotExists := func(result []LocalBackup, name string, info os.FileInfo, broken string) []LocalBackup {
+		backupAlreadyExists := false
+		for _, backup := range result {
+			if backup.BackupName == name {
+				backupAlreadyExists = true
+				break
 			}
 		}
+		// add broken backup if not exists
+		if !backupAlreadyExists {
+			result = append(result, LocalBackup{
+				BackupMetadata: metadata.BackupMetadata{
+					BackupName:   name,
+					CreationDate: info.ModTime(),
+				},
+				Broken: broken,
+			})
+		}
+		return result
 	}
 	l := len(allBackupPaths)
 	for i, backupPath := range allBackupPaths {
@@ -234,20 +245,34 @@ func (b *Backuper) GetLocalBackups(ctx context.Context, disks []clickhouse.Disk)
 				backupMetadataBody, err := os.ReadFile(backupMetafilePath)
 				if err != nil {
 					if !os.IsNotExist(err) {
-						return result, disks, err
+						b.log.Warnf("list can't read %s error: %s", backupMetafilePath, err)
 					}
+					result = addBrokenBackupIfNotExists(result, name, info, "broken metadata.json not found")
 					continue
 				}
 				var backupMetadata metadata.BackupMetadata
-				if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
-					return nil, disks, err
+				if parseErr := json.Unmarshal(backupMetadataBody, &backupMetadata); parseErr != nil {
+					result = addBrokenBackupIfNotExists(result, name, info, fmt.Sprintf("parse metadata.json error: %v", parseErr))
+					continue
 				}
-				result = append(result, LocalBackup{
-					BackupMetadata: backupMetadata,
-				})
+				brokenBackupIsAlreadyExists := false
+				for i, backup := range result {
+					if backup.BackupName == backupMetadata.BackupName {
+						brokenBackupIsAlreadyExists = true
+						result[i].BackupMetadata = backupMetadata
+						result[i].Broken = ""
+						break
+					}
+				}
+				if !brokenBackupIsAlreadyExists {
+					result = append(result, LocalBackup{
+						BackupMetadata: backupMetadata,
+					})
+				}
+
 			}
 			if closeErr := d.Close(); closeErr != nil {
-				log.Errorf("can't close %s openError: %v", backupPath, closeErr)
+				log.Errorf("can't close %s error: %v", backupPath, closeErr)
 			}
 		}
 	}

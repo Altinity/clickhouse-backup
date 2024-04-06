@@ -144,7 +144,6 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 			log.Errorf("creating failed -> b.Clean error: %v", cleanShadowErr)
 			log.Error(cleanShadowErr.Error())
 		}
-
 		return err
 	}
 
@@ -623,20 +622,27 @@ func (b *Backuper) createBackupRBAC(ctx context.Context, backupPath string, disk
 		if err == nil && !accessPathInfo.IsDir() {
 			return 0, fmt.Errorf("%s is not directory", accessPath)
 		}
-		if err == nil {
+		if err != nil {
+			return 0, err
+		}
+		rbacSQLFiles, err := filepath.Glob(path.Join(accessPath, "*.sql"))
+		if err != nil {
+			return 0, err
+		}
+		if len(rbacSQLFiles) != 0 {
 			log.Debugf("copy %s -> %s", accessPath, rbacBackup)
 			copyErr := recursiveCopy.Copy(accessPath, rbacBackup, recursiveCopy.Options{
 				Skip: func(srcinfo os.FileInfo, src, dest string) (bool, error) {
-					rbacDataSize += uint64(srcinfo.Size())
-					return false, nil
+					if strings.HasSuffix(src, "*.sql") {
+						rbacDataSize += uint64(srcinfo.Size())
+						return false, nil
+					} else {
+						return true, nil
+					}
 				},
 			})
 			if copyErr != nil {
 				return 0, copyErr
-			}
-		} else {
-			if err = os.MkdirAll(rbacBackup, 0755); err != nil {
-				return 0, err
 			}
 		}
 		replicatedRBACDataSize, err := b.createBackupRBACReplicated(ctx, rbacBackup)
@@ -662,6 +668,14 @@ func (b *Backuper) createBackupRBACReplicated(ctx context.Context, rbacBackup st
 			replicatedAccessPath, err := k.GetReplicatedAccessPath(userDirectory.Name)
 			if err != nil {
 				return 0, err
+			}
+			rbacUUIDObjectsCount, err := k.ChildCount(replicatedAccessPath, "uuid")
+			if err != nil {
+				return 0, err
+			}
+			if rbacUUIDObjectsCount == 0 {
+				b.log.WithField("logger", "createBackupRBACReplicated").Warnf("%s/%s have no childs, skip Dump", replicatedAccessPath, "uuid")
+				continue
 			}
 			dumpFile := path.Join(rbacBackup, userDirectory.Name+".jsonl")
 			b.log.WithField("logger", "createBackupRBACReplicated").Infof("keeper.Dump %s -> %s", replicatedAccessPath, dumpFile)

@@ -29,7 +29,9 @@ BUG FIXES
 - fixed `ObjectDisks` + `CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE: true` - shall skip upload object disk content, fix [799](https://github.com/Altinity/clickhouse-backup/issues/799)
 - fixed connection to clickhouse-server behavior when long clickhouse-server startup time and `docker-entrypoint.d` processing, will infinite reconnect each 5 seconds, until success, fix [857](https://github.com/Altinity/clickhouse-backup/issues/857)
 - fixed `USE_EMBEDDED_BACKUP_RESTORE=true` behavior to allow use backup disk with type `local`, fix [882](https://github.com/Altinity/clickhouse-backup/issues/882)
-
+- fixed wrong list command behavior, it shall  scann all system.disks path not only default disk to find pratially created backups, fix [873](https://github.com/Altinity/clickhouse-backup/issues/873)
+- fixed create `--rbac` behavior, don't create access folder if no RBAC objects is present
+- 
 # v2.4.35
 IMPROVEMENTS
 - set part size for `s3:CopyObject` minimum 128Mb, look details https://repost.aws/questions/QUtW2_XaALTK63wv9XLSywiQ/s3-sync-command-is-slow-to-start-on-some-data

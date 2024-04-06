@@ -131,6 +131,11 @@ func (k *Keeper) Dump(prefix, dumpFile string) (int, error) {
 	return bytes, nil
 }
 
+func (k *Keeper) ChildCount(prefix, nodePath string) (int, error) {
+	childrenNodes, _, err := k.conn.Children(path.Join(prefix, nodePath))
+	return len(childrenNodes), err
+}
+
 func (k *Keeper) dumpNodeRecursive(prefix, nodePath string, f *os.File) (int, error) {
 	value, _, err := k.conn.Get(path.Join(prefix, nodePath))
 	if err != nil {
