@@ -264,14 +264,14 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3.xml
 </clickhouse>
 EOT
 
-# zero replication is buggy, be carefull
-cat <<EOT > /etc/clickhouse-server/config.d/zero_copy_replication.xml
-<yandex>
-  <merge_tree>
-    <allow_remote_fs_zero_copy_replication>1</allow_remote_fs_zero_copy_replication>
-  </merge_tree>
-</yandex>
-EOT
+# zero replication is buggy,  can't freeze table: code: 344, message: FREEZE PARTITION queries are disabled.
+#cat <<EOT > /etc/clickhouse-server/config.d/zero_copy_replication.xml
+#<yandex>
+#  <merge_tree>
+#    <allow_remote_fs_zero_copy_replication>1</allow_remote_fs_zero_copy_replication>
+#  </merge_tree>
+#</yandex>
+#EOT
 
 cat <<EOT > /etc/clickhouse-server/config.d/zookeeper_log.xml
 <yandex>
