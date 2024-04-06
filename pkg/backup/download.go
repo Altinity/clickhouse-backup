@@ -39,34 +39,6 @@ var (
 	ErrBackupIsAlreadyExists = errors.New("backup is already exists")
 )
 
-func (b *Backuper) legacyDownload(ctx context.Context, backupName string) error {
-	log := b.log.WithFields(apexLog.Fields{
-		"backup":    backupName,
-		"operation": "download_legacy",
-	})
-	bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, true, "")
-	if err != nil {
-		return err
-	}
-	if err := bd.Connect(ctx); err != nil {
-		return err
-	}
-	defer func() {
-		if err := bd.Close(ctx); err != nil {
-			b.log.Warnf("can't close BackupDestination error: %v", err)
-		}
-	}()
-	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
-	err = retry.RunCtx(ctx, func(ctx context.Context) error {
-		return bd.DownloadCompressedStream(ctx, backupName, path.Join(b.DefaultDataPath, "backup", backupName), b.cfg.General.DownloadMaxBytesPerSecond)
-	})
-	if err != nil {
-		return err
-	}
-	log.Info("done")
-	return nil
-}
-
 func (b *Backuper) Download(backupName string, tablePattern string, partitions []string, schemaOnly, resume bool, commandId int) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
@@ -141,17 +113,6 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	}
 	if !found {
 		return fmt.Errorf("'%s' is not found on remote storage", backupName)
-	}
-	//look https://github.com/Altinity/clickhouse-backup/discussions/266 need download legacy before check for empty backup
-	if remoteBackup.Legacy {
-		if tablePattern != "" {
-			return fmt.Errorf("'%s' is old format backup and doesn't supports download of specific tables", backupName)
-		}
-		if schemaOnly {
-			return fmt.Errorf("'%s' is old format backup and doesn't supports download of schema only", backupName)
-		}
-		log.Warnf("'%s' is old-format backup", backupName)
-		return b.legacyDownload(ctx, backupName)
 	}
 	if len(remoteBackup.Tables) == 0 && !b.cfg.General.AllowEmptyBackups {
 		return fmt.Errorf("'%s' is empty backup", backupName)

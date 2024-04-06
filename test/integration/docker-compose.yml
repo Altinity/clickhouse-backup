@@ -198,6 +198,7 @@ services:
       - ./config-s3.yml:/etc/clickhouse-backup/config-s3.yml
       - ./config-s3-embedded.yml:/etc/clickhouse-backup/config-s3-embedded.yml
       - ./config-s3-embedded-url.yml:/etc/clickhouse-backup/config-s3-embedded-url.yml
+      - ./config-s3-embedded-local.yml:/etc/clickhouse-backup/config-s3-embedded-local.yml
       - ./config-s3-fips.yml:/etc/clickhouse-backup/config-s3-fips.yml.template
       - ./config-s3-nodelete.yml:/etc/clickhouse-backup/config-s3-nodelete.yml
       - ./config-s3-plain-embedded.yml:/etc/clickhouse-backup/config-s3-plain-embedded.yml

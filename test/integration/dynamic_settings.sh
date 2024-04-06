@@ -205,6 +205,32 @@ EOT
 fi
 fi
 
+# embedded local backup configuration
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[6-9] || "${CLICKHOUSE_VERSION}" =~ ^22\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[0-9]+ ]]; then
+
+mkdir -p /var/lib/clickhouse/disks/backups_local/ /var/lib/clickhouse/backups_embedded/
+chown -R clickhouse /var/lib/clickhouse/disks/ /var/lib/clickhouse/backups_embedded/
+
+cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_local.xml
+<?xml version="1.0"?>
+<clickhouse>
+  <storage_configuration>
+    <disks>
+      <backups_local>
+        <type>local</type>
+        <path>/var/lib/clickhouse/disks/backups_local/</path>
+      </backups_local>
+    </disks>
+  </storage_configuration>
+  <backups>
+    <allowed_disk>backups_local</allowed_disk>
+    <allowed_path>/var/lib/clickhouse/backups_embedded/</allowed_path>
+  </backups>
+</clickhouse>
+EOT
+
+fi
+
 # embedded s3 backup configuration
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[6-9] || "${CLICKHOUSE_VERSION}" =~ ^22\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[0-9]+ ]]; then
 
@@ -231,20 +257,21 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3.xml
     </disks>
   </storage_configuration>
   <backups>
+    <allowed_disk>backups_local</allowed_disk>
     <allowed_disk>backups_s3</allowed_disk>
     <allowed_path>/var/lib/clickhouse/backups_embedded/</allowed_path>
   </backups>
 </clickhouse>
 EOT
 
-# zero replication is buggy
-#cat <<EOT > /etc/clickhouse-server/config.d/zero_copy_replication.xml
-#<yandex>
-#  <merge_tree>
-#    <allow_remote_fs_zero_copy_replication>1</allow_remote_fs_zero_copy_replication>
-#  </merge_tree>
-#</yandex>
-#EOT
+# zero replication is buggy, be carefull
+cat <<EOT > /etc/clickhouse-server/config.d/zero_copy_replication.xml
+<yandex>
+  <merge_tree>
+    <allow_remote_fs_zero_copy_replication>1</allow_remote_fs_zero_copy_replication>
+  </merge_tree>
+</yandex>
+EOT
 
 cat <<EOT > /etc/clickhouse-server/config.d/zookeeper_log.xml
 <yandex>
@@ -286,6 +313,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3_plai
     </disks>
   </storage_configuration>
   <backups>
+    <allowed_disk>backups_local</allowed_disk>
     <allowed_disk>backups_s3</allowed_disk>
     <allowed_disk>backups_s3_plain</allowed_disk>
   </backups>
@@ -334,6 +362,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_azblob.xml
     </policies>
   </storage_configuration>
   <backups>
+      <allowed_disk>backups_local</allowed_disk>
       <allowed_disk>backups_s3</allowed_disk>
       <allowed_disk>backups_s3_plain</allowed_disk>
       <allowed_disk>backups_azure</allowed_disk>

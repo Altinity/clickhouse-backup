@@ -737,9 +737,6 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, item := range localBackups {
 			description := item.DataFormat
-			if item.Legacy {
-				description = "old-format"
-			}
 			if item.Broken != "" {
 				description = item.Broken
 			}
@@ -769,9 +766,6 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		for i, b := range remoteBackups {
 			description := b.DataFormat
-			if b.Legacy {
-				description = "old-format"
-			}
 			if b.Broken != "" {
 				description = b.Broken
 				brokenBackups++

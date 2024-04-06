@@ -214,7 +214,7 @@ func (b *Backuper) hasObjectDisksLocal(backupList []LocalBackup, backupName stri
 
 func (b *Backuper) cleanLocalEmbedded(ctx context.Context, backup LocalBackup, disks []clickhouse.Disk) error {
 	for _, disk := range disks {
-		if disk.Name == b.cfg.ClickHouse.EmbeddedBackupDisk {
+		if disk.Name == b.cfg.ClickHouse.EmbeddedBackupDisk && disk.Type != "local" {
 			if err := object_disk.InitCredentialsAndConnections(ctx, b.ch, b.cfg, disk.Name); err != nil {
 				return err
 			}

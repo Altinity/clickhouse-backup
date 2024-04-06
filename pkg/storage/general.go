@@ -39,7 +39,6 @@ func (readerWrapper readerWrapperForContext) Read(p []byte) (n int, err error) {
 
 type Backup struct {
 	metadata.BackupMetadata
-	Legacy        bool
 	FileExtension string
 	Broken        string
 	UploadDate    time.Time `json:"upload_date"`
@@ -62,10 +61,6 @@ func (bd *BackupDestination) RemoveBackupRemote(ctx context.Context, backup Back
 	if bd.Kind() == "SFTP" || bd.Kind() == "FTP" {
 		return bd.DeleteFile(ctx, backup.BackupName)
 	}
-	if backup.Legacy {
-		archiveName := fmt.Sprintf("%s.%s", backup.BackupName, backup.FileExtension)
-		return bd.DeleteFile(ctx, archiveName)
-	}
 	return bd.Walk(ctx, backup.BackupName+"/", true, func(ctx context.Context, f RemoteFile) error {
 		if bd.Kind() == "azblob" {
 			if f.Size() > 0 || !f.LastModified().IsZero() {
@@ -76,15 +71,6 @@ func (bd *BackupDestination) RemoveBackupRemote(ctx context.Context, backup Back
 		}
 		return bd.DeleteFile(ctx, path.Join(backup.BackupName, f.Name()))
 	})
-}
-
-func isLegacyBackup(backupName string) (bool, string, string) {
-	for _, suffix := range config.ArchiveExtensions {
-		if strings.HasSuffix(backupName, "."+suffix) {
-			return true, strings.TrimSuffix(backupName, "."+suffix), suffix
-		}
-	}
-	return false, backupName, ""
 }
 
 func (bd *BackupDestination) loadMetadataCache(ctx context.Context) (map[string]Backup, error) {
@@ -180,20 +166,6 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 		return nil, err
 	}
 	err = bd.Walk(ctx, "/", false, func(ctx context.Context, o RemoteFile) error {
-		// Legacy backup
-		if ok, backupName, fileExtension := isLegacyBackup(strings.TrimPrefix(o.Name(), "/")); ok {
-			result = append(result, Backup{
-				metadata.BackupMetadata{
-					BackupName: backupName,
-					DataSize:   uint64(o.Size()),
-				},
-				true,
-				fileExtension,
-				"",
-				o.LastModified(),
-			})
-			return nil
-		}
 		backupName := strings.Trim(o.Name(), "/")
 		if !parseMetadata || (parseMetadataOnly != "" && parseMetadataOnly != backupName) {
 			if cachedMetadata, isCached := listCache[backupName]; isCached {
@@ -203,7 +175,6 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 					BackupMetadata: metadata.BackupMetadata{
 						BackupName: backupName,
 					},
-					Legacy: false,
 				})
 			}
 			return nil
@@ -218,7 +189,6 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 				metadata.BackupMetadata{
 					BackupName: backupName,
 				},
-				false,
 				"",
 				"broken (can't stat metadata.json)",
 				o.LastModified(), // folder
@@ -232,7 +202,6 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 				metadata.BackupMetadata{
 					BackupName: backupName,
 				},
-				false,
 				"",
 				"broken (can't open metadata.json)",
 				o.LastModified(), // folder
@@ -246,7 +215,6 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 				metadata.BackupMetadata{
 					BackupName: backupName,
 				},
-				false,
 				"",
 				"broken (can't read metadata.json)",
 				o.LastModified(), // folder
@@ -263,7 +231,6 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 				metadata.BackupMetadata{
 					BackupName: backupName,
 				},
-				false,
 				"",
 				"broken (bad metadata.json)",
 				o.LastModified(), // folder
@@ -271,9 +238,7 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 			result = append(result, brokenBackup)
 			return nil
 		}
-		goodBackup := Backup{
-			m, false, "", "", mf.LastModified(),
-		}
+		goodBackup := Backup{m, "", "", mf.LastModified()}
 		listCache[backupName] = goodBackup
 		result = append(result, goodBackup)
 		return nil

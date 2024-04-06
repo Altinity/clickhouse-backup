@@ -339,9 +339,6 @@ func (b *Backuper) getTablesDiffFromRemote(ctx context.Context, diffFromRemote s
 	var diffRemoteMetadata *metadata.BackupMetadata
 	for _, backup := range backupList {
 		if backup.BackupName == diffFromRemote {
-			if backup.Legacy {
-				return nil, fmt.Errorf("%s have legacy format and can't be used as diff-from-remote source", diffFromRemote)
-			}
 			diffRemoteMetadata = &backup.BackupMetadata
 			break
 		}

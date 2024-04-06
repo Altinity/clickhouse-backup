@@ -943,7 +943,7 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 		return errors.New(fmt.Sprintf("schema query ```%s``` doesn't contains table name `%s`", query, table.Name))
 	}
 
-	// fix restore schema for legacy backup
+	// fix schema for restore
 	// see https://github.com/Altinity/clickhouse-backup/issues/268
 	// https://github.com/Altinity/clickhouse-backup/issues/297
 	// https://github.com/Altinity/clickhouse-backup/issues/331
@@ -982,31 +982,6 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 // GetConn - return current connection
 func (ch *ClickHouse) GetConn() driver.Conn {
 	return ch.conn
-}
-
-func (ch *ClickHouse) IsClickhouseShadow(path string) bool {
-	d, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	defer func() {
-		if err := d.Close(); err != nil {
-			ch.Log.Warnf("can't close directory %v", err)
-		}
-	}()
-	names, err := d.Readdirnames(-1)
-	if err != nil {
-		return false
-	}
-	for _, name := range names {
-		if name == "increment.txt" {
-			continue
-		}
-		if _, err := strconv.Atoi(name); err != nil {
-			return false
-		}
-	}
-	return true
 }
 
 func (ch *ClickHouse) StructSelect(dest interface{}, query string, args ...interface{}) error {

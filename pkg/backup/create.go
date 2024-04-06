@@ -45,7 +45,6 @@ var (
 
 type LocalBackup struct {
 	metadata.BackupMetadata
-	Legacy bool
 	Broken string
 }
 

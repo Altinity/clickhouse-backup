@@ -2001,6 +2001,19 @@ func TestIntegrationEmbedded(t *testing.T) {
 	}
 	//t.Parallel()
 	r := require.New(t)
+	if compareVersion(version, "24.3") >= 0 {
+		//CUSTOM backup create folder in each disk, need to clear
+		r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_local/backup/"))
+		runMainIntegrationScenario(t, "EMBEDDED_LOCAL", "config-s3-embedded-local.yml")
+	}
+	//CUSTOM backup create folder in each disk, need to clear
+	r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_s3/backup/"))
+	runMainIntegrationScenario(t, "EMBEDDED_S3", "config-s3-embedded.yml")
+
+	//@TODO think about how to implements embedded backup for s3_plain disks
+	//r.NoError(dockerExec("clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_s3_plain/backup/"))
+	//runMainIntegrationScenario(t, "EMBEDDED_S3_PLAIN", "config-s3-plain-embedded.yml")
+
 	//@TODO clickhouse-server don't close connection properly after FIN from azurite during BACKUP/RESTORE https://github.com/ClickHouse/ClickHouse/issues/60447, https://github.com/Azure/Azurite/issues/2053
 	//CUSTOM backup create folder in each disk
 	//r.NoError(dockerExec("azure", "apk", "add", "tcpdump"))
@@ -2014,19 +2027,12 @@ func TestIntegrationEmbedded(t *testing.T) {
 	//r.NoError(dockerCP("azure:/tmp/azurite_http.pcap", "./azurite_http.pcap"))
 
 	if compareVersion(version, "23.8") >= 0 {
-		//@todo think about named collections to avoid show credentials in logs look to https://github.com/fsouza/fake-gcs-server/issues/1330
+		//@todo think about named collections to avoid show credentials in logs look to https://github.com/fsouza/fake-gcs-server/issues/1330, https://github.com/fsouza/fake-gcs-server/pull/1164
 		//installDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "gettext-base")
 		//r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config-gcs-embedded-url.yml.template | envsubst > /etc/clickhouse-backup/config-gcs-embedded-url.yml"))
 		//runMainIntegrationScenario(t, "EMBEDDED_GCS_URL", "config-gcs-embedded-url.yml")
 		runMainIntegrationScenario(t, "EMBEDDED_S3_URL", "config-s3-embedded-url.yml")
 	}
-	//CUSTOM backup create folder in each disk
-	r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_s3/backup/"))
-	runMainIntegrationScenario(t, "EMBEDDED_S3", "config-s3-embedded.yml")
-
-	//@TODO think about how to implements embedded backup for s3_plain disks
-	//r.NoError(dockerExec("clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_s3_plain/backup/"))
-	//runMainIntegrationScenario(t, "EMBEDDED_S3_PLAIN", "config-s3-plain-embedded.yml")
 }
 
 func TestRestoreDatabaseMapping(t *testing.T) {

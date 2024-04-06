@@ -170,10 +170,6 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 				return fmt.Errorf("'%s' should be directory or absent", dstPartPath)
 			}
 			srcPartPath := path.Join(backupDiskPath, "backup", backupName, "shadow", dbAndTableDir, backupDiskName, part.Name)
-			// Legacy backup support
-			if _, err := os.Stat(srcPartPath); os.IsNotExist(err) {
-				srcPartPath = path.Join(backupDiskPath, "backup", backupName, "shadow", dbAndTableDir, part.Name)
-			}
 			if err := filepath.Walk(srcPartPath, func(filePath string, info os.FileInfo, err error) error {
 				if err != nil {
 					return err

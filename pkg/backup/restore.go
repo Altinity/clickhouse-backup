@@ -102,12 +102,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 			break
 		}
 	}
-	if os.IsNotExist(err) { // Legacy backups don't have metadata.json, but we need handle not exists local backup
-		backupPath := path.Join(b.DefaultDataPath, "backup", backupName)
-		if fInfo, fErr := os.Stat(backupPath); fErr != nil || !fInfo.IsDir() {
-			return fmt.Errorf("'%s' stat return %v, %v", backupPath, fInfo, fErr)
-		}
-	} else if err != nil {
+	if err != nil {
 		return err
 	}
 	backupMetadata := metadata.BackupMetadata{}
@@ -200,7 +195,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 		}
 	}
 	if schemaOnly || dropExists || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
-		if err = b.RestoreSchema(ctx, backupName, tablesForRestore, ignoreDependencies, version); err != nil {
+		if err = b.RestoreSchema(ctx, backupName, backupMetadata, disks, tablesForRestore, ignoreDependencies, version); err != nil {
 			return err
 		}
 	}
@@ -812,7 +807,7 @@ func (b *Backuper) dropExistPartitions(ctx context.Context, tablesForRestore Lis
 }
 
 // RestoreSchema - restore schemas matched by tablePattern from backupName
-func (b *Backuper) RestoreSchema(ctx context.Context, backupName string, tablesForRestore ListOfTables, ignoreDependencies bool, version int) error {
+func (b *Backuper) RestoreSchema(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, disks []clickhouse.Disk, tablesForRestore ListOfTables, ignoreDependencies bool, version int) error {
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "restore_schema",
@@ -823,7 +818,7 @@ func (b *Backuper) RestoreSchema(ctx context.Context, backupName string, tablesF
 	}
 	var restoreErr error
 	if b.isEmbedded {
-		restoreErr = b.restoreSchemaEmbedded(ctx, backupName, tablesForRestore, version)
+		restoreErr = b.restoreSchemaEmbedded(ctx, backupName, backupMetadata, disks, tablesForRestore, version)
 	} else {
 		restoreErr = b.restoreSchemaRegular(tablesForRestore, version, log)
 	}
@@ -838,7 +833,7 @@ var UUIDWithMergeTreeRE = regexp.MustCompile(`^(.+)(UUID)(\s+)'([^']+)'(.+)({uui
 
 var emptyReplicatedMergeTreeRE = regexp.MustCompile(`(?m)Replicated(MergeTree|ReplacingMergeTree|SummingMergeTree|AggregatingMergeTree|CollapsingMergeTree|VersionedCollapsingMergeTree|GraphiteMergeTree)\s*\(([^']*)\)(.*)`)
 
-func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string, tablesForRestore ListOfTables, version int) error {
+func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, disks []clickhouse.Disk, tablesForRestore ListOfTables, version int) error {
 	var err error
 	if tablesForRestore == nil || len(tablesForRestore) == 0 {
 		if !b.cfg.General.AllowEmptyBackups {
@@ -848,7 +843,7 @@ func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string,
 		return nil
 	}
 	if b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
-		err = b.fixEmbeddedMetadataLocal(ctx, backupName, version)
+		err = b.fixEmbeddedMetadataLocal(ctx, backupName, backupMetadata, disks, version)
 	} else {
 		err = b.fixEmbeddedMetadataRemote(ctx, backupName, version)
 	}
@@ -898,13 +893,32 @@ func (b *Backuper) fixEmbeddedMetadataRemote(ctx context.Context, backupName str
 	return nil
 }
 
-func (b *Backuper) fixEmbeddedMetadataLocal(ctx context.Context, backupName string, chVersion int) error {
+func (b *Backuper) fixEmbeddedMetadataLocal(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, disks []clickhouse.Disk, chVersion int) error {
 	metadataPath := path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
 	if walkErr := filepath.Walk(metadataPath, func(filePath string, info fs.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if !strings.HasSuffix(filePath, ".sql") {
+			return nil
+		}
+		if backupMetadata.DiskTypes[b.cfg.ClickHouse.EmbeddedBackupDisk] == "local" {
+			sqlBytes, err := os.ReadFile(filePath)
+			if err != nil {
+				return err
+			}
+			sqlQuery, sqlMetadataChanged, fixSqlErr := b.fixEmbeddedMetadataSQLQuery(ctx, sqlBytes, filePath, chVersion)
+			if fixSqlErr != nil {
+				return fixSqlErr
+			}
+			if sqlMetadataChanged {
+				if err = os.WriteFile(filePath, []byte(sqlQuery), 0644); err != nil {
+					return err
+				}
+				if err = filesystemhelper.Chown(filePath, b.ch, disks, false); err != nil {
+					return err
+				}
+			}
 			return nil
 		}
 		sqlMetadata, err := object_disk.ReadMetadataFromFile(filePath)
@@ -1104,18 +1118,12 @@ func (b *Backuper) dropExistsTables(tablesForDrop ListOfTables, ignoreDependenci
 
 // RestoreData - restore data for tables matched by tablePattern from backupName
 func (b *Backuper) RestoreData(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, dataOnly bool, metadataPath, tablePattern string, partitions []string, disks []clickhouse.Disk) error {
+	var err error
 	startRestoreData := time.Now()
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "restore_data",
 	})
-	if b.ch.IsClickhouseShadow(path.Join(b.DefaultDataPath, "backup", backupName, "shadow")) {
-		return fmt.Errorf("backups created in v0.0.1 is not supported now")
-	}
-	backup, _, err := b.getLocalBackup(ctx, backupName, disks)
-	if err != nil {
-		return fmt.Errorf("can't restore: %v", err)
-	}
 
 	diskMap := make(map[string]string, len(disks))
 	diskTypes := make(map[string]string, len(disks))
@@ -1123,18 +1131,14 @@ func (b *Backuper) RestoreData(ctx context.Context, backupName string, backupMet
 		diskMap[disk.Name] = disk.Path
 		diskTypes[disk.Name] = disk.Type
 	}
-	for diskName := range backup.DiskTypes {
+	for diskName := range backupMetadata.DiskTypes {
 		if _, exists := diskTypes[diskName]; !exists {
-			diskTypes[diskName] = backup.DiskTypes[diskName]
+			diskTypes[diskName] = backupMetadata.DiskTypes[diskName]
 		}
 	}
 	var tablesForRestore ListOfTables
 	var partitionsNameList map[metadata.TableTitle][]string
-	if backup.Legacy {
-		tablesForRestore, err = b.ch.GetBackupTablesLegacy(backupName, disks)
-	} else {
-		tablesForRestore, partitionsNameList, err = b.getTableListByPatternLocal(ctx, metadataPath, tablePattern, false, partitions)
-	}
+	tablesForRestore, partitionsNameList, err = b.getTableListByPatternLocal(ctx, metadataPath, tablePattern, false, partitions)
 	if err != nil {
 		// fix https://github.com/Altinity/clickhouse-backup/issues/832
 		if b.cfg.General.AllowEmptyBackups && os.IsNotExist(err) {

@@ -1,5 +1,7 @@
 # v2.5.0 (not released yet)
 IMPROVEMENTS
+- complete removed support for legacy backups, created with version prior v1.0 
+- removed `disable_progress_bar` config option and related progress bar code
 - added `--delete-source` parameter for `upload` and `create_remote` commands to explicitly delete local backup during upload, fix [777](https://github.com/Altinity/clickhouse-backup/issues/777)
 - added support for `--env ENV_NAME=value` cli parameter for allow dynamically override any config parameter, fix [821](https://github.com/Altinity/clickhouse-backup/issues/821)
 - added support for `use_embedded_backup_restore: true` with empty `embedded_backup_disk` value, tested on S3/GCS over S3/AzureBlobStorage, fix [695](https://github.com/Altinity/clickhouse-backup/issues/695)
@@ -12,7 +14,6 @@ IMPROVEMENTS
 - added `rbac_always_backup: true` option to default config, will create backup for RBAC objects automatically, restore still require `--rbac` to avoid destructive actions, fix [793](https://github.com/Altinity/clickhouse-backup/issues/793)
 - added `rbac_conflict_resolution: recreate` option for RBAC object name conflicts during restore, fix [851](https://github.com/Altinity/clickhouse-backup/issues/851)
 - added `upload_max_bytes_per_seconds` and `download_max_bytes_per_seconds` config options to allow throttling without CAP_SYS_NICE, fix [817](https://github.com/Altinity/clickhouse-backup/issues/817)
-- removed `disable_progress_bar` config option and related progress bar code
 - switched to golang 1.22
 - updated all third-party SDK to latest versions
 - added `clickhouse/clickhouse-server:24.3` to CI/CD
@@ -27,6 +28,7 @@ BUG FIXES
 - fixed behavior for upload / download when .inner. table missing for MATERIALIZED VIEW  by table pattern, fix [765](https://github.com/Altinity/clickhouse-backup/issues/765)
 - fixed `ObjectDisks` + `CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE: true` - shall skip upload object disk content, fix [799](https://github.com/Altinity/clickhouse-backup/issues/799)
 - fixed connection to clickhouse-server behavior when long clickhouse-server startup time and `docker-entrypoint.d` processing, will infinite reconnect each 5 seconds, until success, fix [857](https://github.com/Altinity/clickhouse-backup/issues/857)
+- fixed `USE_EMBEDDED_BACKUP_RESTORE=true` behavior to allow use backup disk with type `local`, fix [882](https://github.com/Altinity/clickhouse-backup/issues/882)
 
 # v2.4.35
 IMPROVEMENTS

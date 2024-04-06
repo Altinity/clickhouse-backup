@@ -61,9 +61,6 @@ func printBackupsRemote(w io.Writer, backupList []storage.Backup, format string)
 			}
 			description := backup.DataFormat
 			uploadDate := backup.UploadDate.Format("02/01/2006 15:04:05")
-			if backup.Legacy {
-				description += ", old-format"
-			}
 			if backup.Tags != "" {
 				description += ", " + backup.Tags
 			}
@@ -119,9 +116,6 @@ func printBackupsLocal(ctx context.Context, w io.Writer, backupList []LocalBacku
 					description += backup.Tags
 				}
 				creationDate := backup.CreationDate.Format("02/01/2006 15:04:05")
-				if backup.Legacy {
-					size = "???"
-				}
 				required := ""
 				if backup.RequiredBackup != "" {
 					required = "+" + backup.RequiredBackup
@@ -238,15 +232,10 @@ func (b *Backuper) GetLocalBackups(ctx context.Context, disks []clickhouse.Disk)
 				}
 				backupMetafilePath := path.Join(backupPath, name, "metadata.json")
 				backupMetadataBody, err := os.ReadFile(backupMetafilePath)
-				if os.IsNotExist(err) {
-					// Legacy backup
-					result = append(result, LocalBackup{
-						BackupMetadata: metadata.BackupMetadata{
-							BackupName:   name,
-							CreationDate: info.ModTime(),
-						},
-						Legacy: true,
-					})
+				if err != nil {
+					if !os.IsNotExist(err) {
+						return result, disks, err
+					}
 					continue
 				}
 				var backupMetadata metadata.BackupMetadata
@@ -255,7 +244,6 @@ func (b *Backuper) GetLocalBackups(ctx context.Context, disks []clickhouse.Disk)
 				}
 				result = append(result, LocalBackup{
 					BackupMetadata: backupMetadata,
-					Legacy:         false,
 				})
 			}
 			if closeErr := d.Close(); closeErr != nil {
