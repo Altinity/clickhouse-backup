@@ -677,6 +677,9 @@ func (b *Backuper) createBackupRBACReplicated(ctx context.Context, rbacBackup st
 				b.log.WithField("logger", "createBackupRBACReplicated").Warnf("%s/%s have no childs, skip Dump", replicatedAccessPath, "uuid")
 				continue
 			}
+			if err = os.MkdirAll(rbacBackup, 0755); err != nil {
+				return 0, err
+			}
 			dumpFile := path.Join(rbacBackup, userDirectory.Name+".jsonl")
 			b.log.WithField("logger", "createBackupRBACReplicated").Infof("keeper.Dump %s -> %s", replicatedAccessPath, dumpFile)
 			dumpRBACSize, dumpErr := k.Dump(replicatedAccessPath, dumpFile)
