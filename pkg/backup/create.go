@@ -622,8 +622,8 @@ func (b *Backuper) createBackupRBAC(ctx context.Context, backupPath string, disk
 		if err == nil && !accessPathInfo.IsDir() {
 			return 0, fmt.Errorf("%s is not directory", accessPath)
 		}
-		if err != nil {
-			return 0, err
+		if os.IsNotExist(err) {
+			return 0, nil
 		}
 		rbacSQLFiles, err := filepath.Glob(path.Join(accessPath, "*.sql"))
 		if err != nil {
