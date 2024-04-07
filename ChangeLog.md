@@ -31,7 +31,7 @@ BUG FIXES
 - fixed `USE_EMBEDDED_BACKUP_RESTORE=true` behavior to allow use backup disk with type `local`, fix [882](https://github.com/Altinity/clickhouse-backup/issues/882)
 - fixed wrong list command behavior, it shall  scann all system.disks path not only default disk to find pratially created backups, fix [873](https://github.com/Altinity/clickhouse-backup/issues/873)
 - fixed create `--rbac` behavior, don't create access folder if no RBAC objects is present
-- 
+- fixed behavior when `system.disks` contains disk which not present in any `storage_policies`, fix [845](https://github.com/Altinity/clickhouse-backup/issues/845)
 # v2.4.35
 IMPROVEMENTS
 - set part size for `s3:CopyObject` minimum 128Mb, look details https://repost.aws/questions/QUtW2_XaALTK63wv9XLSywiQ/s3-sync-command-is-slow-to-start-on-some-data

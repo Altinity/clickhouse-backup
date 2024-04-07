@@ -289,6 +289,7 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		joinStoragePoliciesSQL := ""
 		if len(diskFields) > 0 && diskFields[0].StoragePolicyPresent > 0 {
 			storagePoliciesSQL = "groupUniqArray(s.policy_name)"
+			// LEFT JOIN to allow disks which not have policy, https://github.com/Altinity/clickhouse-backup/issues/845
 			joinStoragePoliciesSQL = " LEFT JOIN "
 			joinStoragePoliciesSQL += "(SELECT policy_name, arrayJoin(disks) AS disk FROM system.storage_policies) AS s ON s.disk = d.name"
 		}
