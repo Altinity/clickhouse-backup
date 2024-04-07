@@ -757,10 +757,10 @@ func (b *Backuper) restoreBackupRelatedDir(backupName, backupPrefixDir, destinat
 	}
 	log.Debugf("copy %s -> %s", srcBackupDir, destinationDir)
 	copyOptions := recursiveCopy.Options{
-		OnDirExists: func(src, dest string) recursiveCopy.DirExistsAction {
+		OnDirExists: func(src, dst string) recursiveCopy.DirExistsAction {
 			return recursiveCopy.Merge
 		},
-		Skip: func(srcinfo os.FileInfo, src, dest string) (bool, error) {
+		Skip: func(srcinfo os.FileInfo, src, dst string) (bool, error) {
 			for _, pattern := range skipPatterns {
 				if matched, matchErr := filepath.Match(pattern, filepath.Base(src)); matchErr != nil || matched {
 					return true, matchErr

@@ -112,6 +112,7 @@ services:
       - "7171:7171"
     environment:
       - DEBIAN_FRONTEND=noninteractive
+      - LOG_LEVEL=${LOG_LEVEL:-info}
       - GCS_CREDENTIALS_JSON=${QA_GCS_CRED_JSON:-}
       - GCS_CREDENTIALS_JSON_ENCODED=${QA_GCS_CRED_JSON_ENCODED:-}
       - CLICKHOUSE_HOST=clickhouse1

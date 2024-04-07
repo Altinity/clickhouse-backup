@@ -632,8 +632,11 @@ func (b *Backuper) createBackupRBAC(ctx context.Context, backupPath string, disk
 		if len(rbacSQLFiles) != 0 {
 			log.Debugf("copy %s -> %s", accessPath, rbacBackup)
 			copyErr := recursiveCopy.Copy(accessPath, rbacBackup, recursiveCopy.Options{
-				Skip: func(srcinfo os.FileInfo, src, dest string) (bool, error) {
-					if strings.HasSuffix(src, "*.sql") {
+				OnDirExists: func(src, dst string) recursiveCopy.DirExistsAction {
+					return recursiveCopy.Replace
+				},
+				Skip: func(srcinfo os.FileInfo, src, dst string) (bool, error) {
+					if strings.HasSuffix(src, ".sql") {
 						rbacDataSize += uint64(srcinfo.Size())
 						return false, nil
 					} else {
