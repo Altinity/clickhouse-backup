@@ -1,4 +1,4 @@
-# v2.5.0 (not released yet)
+# v2.5.0
 IMPROVEMENTS
 - complete removed support for legacy backups, created with version prior v1.0 
 - removed `disable_progress_bar` config option and related progress bar code
@@ -14,6 +14,7 @@ IMPROVEMENTS
 - added `rbac_always_backup: true` option to default config, will create backup for RBAC objects automatically, restore still require `--rbac` to avoid destructive actions, fix [793](https://github.com/Altinity/clickhouse-backup/issues/793)
 - added `rbac_conflict_resolution: recreate` option for RBAC object name conflicts during restore, fix [851](https://github.com/Altinity/clickhouse-backup/issues/851)
 - added `upload_max_bytes_per_seconds` and `download_max_bytes_per_seconds` config options to allow throttling without CAP_SYS_NICE, fix [817](https://github.com/Altinity/clickhouse-backup/issues/817)
+- added `clickhouse_backup_in_progress_commands` metric, fix [836](https://github.com/Altinity/clickhouse-backup/issues/836)
 - switched to golang 1.22
 - updated all third-party SDK to latest versions
 - added `clickhouse/clickhouse-server:24.3` to CI/CD
@@ -32,6 +33,7 @@ BUG FIXES
 - fixed wrong list command behavior, it shall  scann all system.disks path not only default disk to find pratially created backups, fix [873](https://github.com/Altinity/clickhouse-backup/issues/873)
 - fixed create `--rbac` behavior, don't create access folder if no RBAC objects is present
 - fixed behavior when `system.disks` contains disk which not present in any `storage_policies`, fix [845](https://github.com/Altinity/clickhouse-backup/issues/845)
+
 # v2.4.35
 IMPROVEMENTS
 - set part size for `s3:CopyObject` minimum 128Mb, look details https://repost.aws/questions/QUtW2_XaALTK63wv9XLSywiQ/s3-sync-command-is-slow-to-start-on-some-data

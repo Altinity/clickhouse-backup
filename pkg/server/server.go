@@ -560,7 +560,6 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 		defer status.Current.Stop(commandId, err)
 		if err != nil {
 			api.log.Errorf("Watch error: %v", err)
-			return
 		}
 	}()
 
