@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -46,7 +47,7 @@ func printBackupsRemote(w io.Writer, backupList []storage.Backup, format string)
 		fmt.Println(backupList[len(backupList)-1].BackupName)
 	case "penult", "prev", "previous", "p":
 		if len(backupList) < 2 {
-			return fmt.Errorf("no penult backup is found")
+			return fmt.Errorf("no previous backup is found")
 		}
 		fmt.Println(backupList[len(backupList)-2].BackupName)
 	case "all", "":
@@ -60,9 +61,6 @@ func printBackupsRemote(w io.Writer, backupList []storage.Backup, format string)
 			}
 			description := backup.DataFormat
 			uploadDate := backup.UploadDate.Format("02/01/2006 15:04:05")
-			if backup.Legacy {
-				description += ", old-format"
-			}
 			if backup.Tags != "" {
 				description += ", " + backup.Tags
 			}
@@ -111,10 +109,13 @@ func printBackupsLocal(ctx context.Context, w io.Writer, backupList []LocalBacku
 					size = utils.FormatBytes(backup.CompressedSize + backup.MetadataSize)
 				}
 				description := backup.DataFormat
-				creationDate := backup.CreationDate.Format("02/01/2006 15:04:05")
-				if backup.Legacy {
-					size = "???"
+				if backup.Tags != "" {
+					if description != "" {
+						description += ", "
+					}
+					description += backup.Tags
 				}
+				creationDate := backup.CreationDate.Format("02/01/2006 15:04:05")
 				required := ""
 				if backup.RequiredBackup != "" {
 					required = "+" + backup.RequiredBackup
@@ -183,23 +184,34 @@ func (b *Backuper) GetLocalBackups(ctx context.Context, disks []clickhouse.Disk)
 			},
 		}
 	}
-	defaultDataPath, err := b.ch.GetDefaultPath(disks)
-	if err != nil {
-		return nil, nil, err
-	}
 	var result []LocalBackup
-	allBackupPaths := []string{path.Join(defaultDataPath, "backup")}
-	if b.cfg.ClickHouse.UseEmbeddedBackupRestore {
-		for _, disk := range disks {
-			select {
-			case <-ctx.Done():
-				return nil, nil, ctx.Err()
-			default:
-				if disk.IsBackup || disk.Name == b.cfg.ClickHouse.EmbeddedBackupDisk {
-					allBackupPaths = append(allBackupPaths, disk.Path)
-				}
+	allBackupPaths := []string{}
+	for _, disk := range disks {
+		if disk.IsBackup || disk.Name == b.cfg.ClickHouse.EmbeddedBackupDisk {
+			allBackupPaths = append(allBackupPaths, disk.Path)
+		} else {
+			allBackupPaths = append(allBackupPaths, path.Join(disk.Path, "backup"))
+		}
+	}
+	addBrokenBackupIfNotExists := func(result []LocalBackup, name string, info os.FileInfo, broken string) []LocalBackup {
+		backupAlreadyExists := false
+		for _, backup := range result {
+			if backup.BackupName == name {
+				backupAlreadyExists = true
+				break
 			}
 		}
+		// add broken backup if not exists
+		if !backupAlreadyExists {
+			result = append(result, LocalBackup{
+				BackupMetadata: metadata.BackupMetadata{
+					BackupName:   name,
+					CreationDate: info.ModTime(),
+				},
+				Broken: broken,
+			})
+		}
+		return result
 	}
 	l := len(allBackupPaths)
 	for i, backupPath := range allBackupPaths {
@@ -231,28 +243,36 @@ func (b *Backuper) GetLocalBackups(ctx context.Context, disks []clickhouse.Disk)
 				}
 				backupMetafilePath := path.Join(backupPath, name, "metadata.json")
 				backupMetadataBody, err := os.ReadFile(backupMetafilePath)
-				if os.IsNotExist(err) {
-					// Legacy backup
-					result = append(result, LocalBackup{
-						BackupMetadata: metadata.BackupMetadata{
-							BackupName:   name,
-							CreationDate: info.ModTime(),
-						},
-						Legacy: true,
-					})
+				if err != nil {
+					if !os.IsNotExist(err) {
+						b.log.Warnf("list can't read %s error: %s", backupMetafilePath, err)
+					}
+					result = addBrokenBackupIfNotExists(result, name, info, "broken metadata.json not found")
 					continue
 				}
 				var backupMetadata metadata.BackupMetadata
-				if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
-					return nil, disks, err
+				if parseErr := json.Unmarshal(backupMetadataBody, &backupMetadata); parseErr != nil {
+					result = addBrokenBackupIfNotExists(result, name, info, fmt.Sprintf("parse metadata.json error: %v", parseErr))
+					continue
 				}
-				result = append(result, LocalBackup{
-					BackupMetadata: backupMetadata,
-					Legacy:         false,
-				})
+				brokenBackupIsAlreadyExists := false
+				for i, backup := range result {
+					if backup.BackupName == backupMetadata.BackupName {
+						brokenBackupIsAlreadyExists = true
+						result[i].BackupMetadata = backupMetadata
+						result[i].Broken = ""
+						break
+					}
+				}
+				if !brokenBackupIsAlreadyExists {
+					result = append(result, LocalBackup{
+						BackupMetadata: backupMetadata,
+					})
+				}
+
 			}
 			if closeErr := d.Close(); closeErr != nil {
-				log.Errorf("can't close %s openError: %v", backupPath, closeErr)
+				log.Errorf("can't close %s error: %v", backupPath, closeErr)
 			}
 		}
 	}
@@ -396,14 +416,33 @@ func (b *Backuper) GetTables(ctx context.Context, tablePattern string) ([]clickh
 }
 
 // PrintTables - print all tables suitable for backup
-func (b *Backuper) PrintTables(printAll bool, tablePattern string) error {
+func (b *Backuper) PrintTables(printAll bool, tablePattern, remoteBackup string) error {
+	var err error
 	ctx, cancel, _ := status.Current.GetContextWithCancel(status.NotFromAPI)
 	defer cancel()
-	if err := b.ch.Connect(); err != nil {
+	if err = b.ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
 	defer b.ch.Close()
-	log := b.log.WithField("logger", "PrintTables")
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', tabwriter.DiscardEmptyColumns)
+	if remoteBackup == "" {
+		if err = b.printTablesLocal(ctx, tablePattern, printAll, w); err != nil {
+			return err
+		}
+	} else {
+		if err = b.printTablesRemote(ctx, remoteBackup, tablePattern, printAll, w); err != nil {
+			return err
+		}
+
+	}
+	if err := w.Flush(); err != nil {
+		b.log.Errorf("can't flush tabular writer error: %v", err)
+	}
+	return nil
+}
+
+func (b *Backuper) printTablesLocal(ctx context.Context, tablePattern string, printAll bool, w *tabwriter.Writer) error {
+	log := b.log.WithField("logger", "PrintTablesLocal")
 	allTables, err := b.GetTables(ctx, tablePattern)
 	if err != nil {
 		return err
@@ -412,7 +451,6 @@ func (b *Backuper) PrintTables(printAll bool, tablePattern string) error {
 	if err != nil {
 		return err
 	}
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', tabwriter.DiscardEmptyColumns)
 	for _, table := range allTables {
 		if table.Skip && !printAll {
 			continue
@@ -431,8 +469,87 @@ func (b *Backuper) PrintTables(printAll bool, tablePattern string) error {
 			log.Errorf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
 		}
 	}
-	if err := w.Flush(); err != nil {
-		log.Errorf("can't flush tabular writer error: %v", err)
+	return nil
+}
+
+func (b *Backuper) GetTablesRemote(ctx context.Context, backupName string, tablePattern string) ([]clickhouse.Table, error) {
+	if !b.ch.IsOpen {
+		if err := b.ch.Connect(); err != nil {
+			return []clickhouse.Table{}, fmt.Errorf("can't connect to clickhouse: %v", err)
+		}
+		defer b.ch.Close()
 	}
+	if b.cfg.General.RemoteStorage == "none" || b.cfg.General.RemoteStorage == "custom" {
+		return nil, fmt.Errorf("GetTablesRemote does not support `none` and `custom` remote storage")
+	}
+	if b.dst == nil {
+		bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, false, "")
+		if err != nil {
+			return nil, err
+		}
+		err = bd.Connect(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("can't connect to remote storage: %v", err)
+		}
+		defer func() {
+			if err := bd.Close(ctx); err != nil {
+				b.log.Warnf("can't close BackupDestination error: %v", err)
+			}
+		}()
+
+		b.dst = bd
+	}
+	backupList, err := b.dst.BackupList(ctx, true, backupName)
+	if err != nil {
+		return nil, err
+	}
+
+	var tables []clickhouse.Table
+	tablePatterns := []string{"*"}
+
+	if tablePattern != "" {
+		tablePatterns = strings.Split(tablePattern, ",")
+	}
+
+	for _, remoteBackup := range backupList {
+		if remoteBackup.BackupName == backupName {
+			for _, t := range remoteBackup.Tables {
+				isInformationSchema := IsInformationSchema(t.Database)
+				tableName := fmt.Sprintf("%s.%s", t.Database, t.Table)
+				shallSkipped := b.shouldSkipByTableName(tableName)
+				matched := false
+				for _, p := range tablePatterns {
+					if matched, _ = filepath.Match(strings.Trim(p, " \t\r\n"), tableName); matched {
+						break
+					}
+				}
+				tables = append(tables, clickhouse.Table{
+					Database: t.Database,
+					Name:     t.Table,
+					Skip:     !matched || (isInformationSchema || shallSkipped),
+				})
+			}
+		}
+	}
+
+	return tables, nil
+}
+
+// printTablesRemote https://github.com/Altinity/clickhouse-backup/issues/778
+func (b *Backuper) printTablesRemote(ctx context.Context, backupName string, tablePattern string, printAll bool, w *tabwriter.Writer) error {
+	tables, err := b.GetTablesRemote(ctx, backupName, tablePattern)
+	if err != nil {
+		return err
+	}
+
+	for _, t := range tables {
+		if t.Skip && !printAll {
+			continue
+		}
+		if bytes, err := fmt.Fprintf(w, "%s.%s\tskip=%v\n", t.Database, t.Name, t.Skip); err != nil {
+			b.log.Errorf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
+		}
+	}
+
 	return nil
 }

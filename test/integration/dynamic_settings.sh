@@ -44,7 +44,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration.xml
 </yandex>
 EOT
 
-if [[ "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
 
   if [[ ! -d /hdd3_data ]]; then
     mkdir -pv /hdd3_data
@@ -93,8 +93,8 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_s3.xml
         <type>s3</type>
         <endpoint>http://minio:9000/clickhouse/disk_s3/{cluster}/{shard}/</endpoint>
         <!-- https://github.com/Altinity/clickhouse-backup/issues/691
-        <access_key_id>access-key</access_key_id>
-        <secret_access_key>it-is-my-super-secret-key</secret_access_key>
+        <access_key_id>access_key</access_key_id>
+        <secret_access_key>it_is_my_super_secret_key</secret_access_key>
         -->
         <use_environment_credentials>1</use_environment_credentials>
         <!-- to avoid slow startup -->
@@ -170,8 +170,8 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_encrypted_s3.x
         <type>s3</type>
         <endpoint>http://minio:9000/clickhouse/disk_s3/</endpoint>
         <!-- https://github.com/Altinity/clickhouse-backup/issues/691
-        <access_key_id>access-key</access_key_id>
-        <secret_access_key>it-is-my-super-secret-key</secret_access_key>
+        <access_key_id>access_key</access_key_id>
+        <secret_access_key>it_is_my_super_secret_key</secret_access_key>
         -->
         <use_environment_credentials>1</use_environment_credentials>
         <!-- to avoid slow startup -->
@@ -205,6 +205,32 @@ EOT
 fi
 fi
 
+# embedded local backup configuration
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[6-9] || "${CLICKHOUSE_VERSION}" =~ ^22\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[0-9]+ ]]; then
+
+mkdir -p /var/lib/clickhouse/disks/backups_local/ /var/lib/clickhouse/backups_embedded/
+chown -R clickhouse /var/lib/clickhouse/disks/ /var/lib/clickhouse/backups_embedded/
+
+cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_local.xml
+<?xml version="1.0"?>
+<clickhouse>
+  <storage_configuration>
+    <disks>
+      <backups_local>
+        <type>local</type>
+        <path>/var/lib/clickhouse/disks/backups_local/</path>
+      </backups_local>
+    </disks>
+  </storage_configuration>
+  <backups>
+    <allowed_disk>backups_local</allowed_disk>
+    <allowed_path>/var/lib/clickhouse/backups_embedded/</allowed_path>
+  </backups>
+</clickhouse>
+EOT
+
+fi
+
 # embedded s3 backup configuration
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[6-9] || "${CLICKHOUSE_VERSION}" =~ ^22\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[0-9]+ ]]; then
 
@@ -220,8 +246,8 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3.xml
         <type>s3</type>
         <endpoint>http://minio:9000/clickhouse/backups_s3/{cluster}/{shard}/</endpoint>
         <!-- https://github.com/Altinity/clickhouse-backup/issues/691
-        <access_key_id>access-key</access_key_id>
-        <secret_access_key>it-is-my-super-secret-key</secret_access_key>
+        <access_key_id>access_key</access_key_id>
+        <secret_access_key>it_is_my_super_secret_key</secret_access_key>
         -->
         <use_environment_credentials>1</use_environment_credentials>
         <cache_enabled>false</cache_enabled>
@@ -231,17 +257,20 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3.xml
     </disks>
   </storage_configuration>
   <backups>
+    <allowed_disk>backups_local</allowed_disk>
     <allowed_disk>backups_s3</allowed_disk>
     <allowed_path>/var/lib/clickhouse/backups_embedded/</allowed_path>
   </backups>
 </clickhouse>
 EOT
 
-# zero replication is buggy
+# zero replication is buggy,  can't freeze table: code: 344, message: FREEZE PARTITION queries are disabled.
+# https://github.com/ClickHouse/ClickHouse/issues/62167#issuecomment-2031774983
 #cat <<EOT > /etc/clickhouse-server/config.d/zero_copy_replication.xml
 #<yandex>
 #  <merge_tree>
 #    <allow_remote_fs_zero_copy_replication>1</allow_remote_fs_zero_copy_replication>
+#    <disable_freeze_partition_for_zero_copy_replication>0</disable_freeze_partition_for_zero_copy_replication>
 #  </merge_tree>
 #</yandex>
 #EOT
@@ -277,8 +306,8 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3_plai
         <type>s3_plain</type>
         <endpoint>http://minio:9000/clickhouse/backups_s3_plain/{cluster}/{shard}/</endpoint>
         <!-- https://github.com/Altinity/clickhouse-backup/issues/691
-        <access_key_id>access-key</access_key_id>
-        <secret_access_key>it-is-my-super-secret-key</secret_access_key>
+        <access_key_id>access_key</access_key_id>
+        <secret_access_key>it_is_my_super_secret_key</secret_access_key>
         -->
         <use_environment_credentials>1</use_environment_credentials>
         <cache_enabled>false</cache_enabled>
@@ -286,6 +315,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3_plai
     </disks>
   </storage_configuration>
   <backups>
+    <allowed_disk>backups_local</allowed_disk>
     <allowed_disk>backups_s3</allowed_disk>
     <allowed_disk>backups_s3_plain</allowed_disk>
   </backups>
@@ -334,6 +364,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_azblob.xml
     </policies>
   </storage_configuration>
   <backups>
+      <allowed_disk>backups_local</allowed_disk>
       <allowed_disk>backups_s3</allowed_disk>
       <allowed_disk>backups_s3_plain</allowed_disk>
       <allowed_disk>backups_azure</allowed_disk>

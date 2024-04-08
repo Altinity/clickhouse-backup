@@ -65,14 +65,6 @@ type Part struct {
 	Name           string `json:"name"`
 	Required       bool   `json:"required,omitempty"`
 	RebalancedDisk string `json:"rebalanced_disk,omitempty"`
-	// @todo remove legacy backup fields
-	// Path                              string    `json:"path"`              // TODO: make it relative? look like useless now, can be calculated from Name
-	HashOfAllFiles                    string     `json:"hash_of_all_files,omitempty"` // ???
-	HashOfUncompressedFiles           string     `json:"hash_of_uncompressed_files,omitempty"`
-	UncompressedHashOfCompressedFiles string     `json:"uncompressed_hash_of_compressed_files,omitempty"` // ???
-	PartitionID                       string     `json:"partition_id,omitempty"`
-	ModificationTime                  *time.Time `json:"modification_time,omitempty"`
-	Size                              int64      `json:"size,omitempty"`
 }
 
 type SplitPartFiles struct {

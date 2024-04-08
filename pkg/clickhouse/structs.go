@@ -19,7 +19,7 @@ type Table struct {
 	Name     string `ch:"name"`
 	Engine   string `ch:"engine"`
 	// fields depends on `clickhouse-server` version
-	DataPath         string   `ch:"data_path"` // For legacy support
+	DataPath         string   `ch:"data_path"`
 	DataPaths        []string `ch:"data_paths"`
 	UUID             string   `ch:"uuid"`
 	CreateTableQuery string   `ch:"create_table_query"`
@@ -86,4 +86,18 @@ type SystemBackups struct {
 type ColumnDataTypes struct {
 	Column string   `ch:"column"`
 	Types  []string `ch:"uniq_types"`
+}
+
+// BackupDataSize - info from system.parts or system.tables when embedded BACKUP statement return zero size
+type BackupDataSize struct {
+	Size uint64 `ch:"backup_data_size"`
+}
+
+type UserDirectory struct {
+	Name string `ch:"name"`
+}
+
+type RBACObject struct {
+	Id   string `ch:"id"`
+	Name string `ch:"name"`
 }

@@ -37,10 +37,16 @@ func main() {
 	}
 	cliapp.Flags = []cli.Flag{
 		cli.StringFlag{
-			Name:   "config, c",
-			Value:  config.DefaultConfigPath,
-			Usage:  "Config 'FILE' name.",
-			EnvVar: "CLICKHOUSE_BACKUP_CONFIG",
+			Name:     "config, c",
+			Value:    config.DefaultConfigPath,
+			Usage:    "Config 'FILE' name.",
+			EnvVar:   "CLICKHOUSE_BACKUP_CONFIG",
+			Required: false,
+		},
+		cli.StringSliceFlag{
+			Name:     "environment-override, env",
+			Usage:    "override any environment variable via CLI parameter",
+			Required: false,
 		},
 		cli.IntFlag{
 			Name:     "command-id",
@@ -65,10 +71,10 @@ func main() {
 		{
 			Name:      "tables",
 			Usage:     "List of tables, exclude skip_tables",
-			UsageText: "clickhouse-backup tables [-t, --tables=<db>.<table>]] [--all]",
+			UsageText: "clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--all]",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.PrintTables(c.Bool("all"), c.String("table"))
+				return b.PrintTables(c.Bool("all"), c.String("table"), c.String("remote-backup"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.BoolFlag{
@@ -81,6 +87,11 @@ func main() {
 					Hidden: false,
 					Usage:  "List tables only match with table name patterns, separated by comma, allow ? and * as wildcard",
 				},
+				cli.StringFlag{
+					Name:   "remote-backup",
+					Hidden: false,
+					Usage:  "List tables from remote backup",
+				},
 			),
 		},
 		{
@@ -90,13 +101,18 @@ func main() {
 			Description: "Create new backup",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CreateBackup(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("skip-check-parts-columns"), version, c.Int("command-id"))
+				return b.CreateBackup(c.Args().First(), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("skip-check-parts-columns"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
 					Name:   "table, tables, t",
 					Hidden: false,
 					Usage:  "Create backup only matched with table name patterns, separated by comma, allow ? and * as wildcard",
+				},
+				cli.StringFlag{
+					Name:   "diff-from-remote",
+					Hidden: false,
+					Usage:  "Create incremental embedded backup or upload incremental object disk data based on other remote backup name",
 				},
 				cli.StringSliceFlag{
 					Name:   "partitions",
@@ -147,7 +163,7 @@ func main() {
 			Description: "Create and upload",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CreateToRemote(c.Args().First(), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), c.Bool("skip-check-parts-columns"), version, c.Int("command-id"))
+				return b.CreateToRemote(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), c.Bool("skip-check-parts-columns"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -210,6 +226,11 @@ func main() {
 					Hidden: false,
 					Usage:  "Skip check system.parts_columns to disallow backup inconsistent column types for data parts",
 				},
+				cli.BoolFlag{
+					Name:   "delete, delete-source, delete-local",
+					Hidden: false,
+					Usage:  "explicitly delete local backup during upload",
+				},
 			),
 		},
 		{
@@ -218,7 +239,7 @@ func main() {
 			UsageText: "clickhouse-backup upload [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--diff-from=<local_backup_name>] [--diff-from-remote=<remote_backup_name>] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Upload(c.Args().First(), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("resume"), c.Int("command-id"))
+				return b.Upload(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("resume"), c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -255,6 +276,11 @@ func main() {
 					Name:   "resume, resumable",
 					Hidden: false,
 					Usage:  "Save intermediate upload state and resume upload if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'",
+				},
+				cli.BoolFlag{
+					Name:   "delete, delete-source, delete-local",
+					Hidden: false,
+					Usage:  "explicitly delete local backup during upload",
 				},
 			),
 		},
@@ -310,7 +336,7 @@ func main() {
 			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Restore(c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("ignore-dependencies"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Int("command-id"))
+				return b.Restore(c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("partitions"), c.Bool("schema"), c.Bool("data"), c.Bool("drop"), c.Bool("ignore-dependencies"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{

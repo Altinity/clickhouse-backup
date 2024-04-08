@@ -1,4 +1,5 @@
 import os
+
 from clickhouse_backup.requirements.requirements import *
 from clickhouse_backup.tests.common import *
 from clickhouse_backup.tests.steps import *
@@ -47,7 +48,7 @@ def incremental_remote_storage(self):
                 time.sleep(10)
 
             with And("I save table contents"):
-                contents_before = clickhouse.query(f"SELECT * FROM {table_name}").output.split('\n')
+                contents_before = clickhouse.query(f"SELECT * FROM {table_name} FORMAT TSVRaw").output.split('\n')
 
         with And("I do create_remote --diff-from-remote"):
             backup.cmd(f"clickhouse-backup create_remote --diff-from-remote={table_name}_1 {table_name}_2")
@@ -71,7 +72,7 @@ def incremental_remote_storage(self):
                 assert table_name in r, error()
 
             with And("I check table contents are restored"):
-                contents_after = clickhouse.query(f"SELECT * FROM {table_name} ORDER BY OrderBy").output.split('\n')
+                contents_after = clickhouse.query(f"SELECT * FROM {table_name} ORDER BY OrderBy FORMAT TSVRaw").output.split('\n')
 
                 for line in contents_after:
                     assert line in contents_before, error()
@@ -166,8 +167,8 @@ def s3_minio(self):
         fields_to_modify={
             "general": {"remote_storage": "s3"},
             "s3": {
-                "access_key": "access-key",
-                "secret_key": "it-is-my-super-secret-key",
+                "access_key": "access_key",
+                "secret_key": "it_is_my_super_secret_key",
                 "endpoint": "http://minio:9000",
                 "disable_ssl": True,
                 "region": "us-west-2", "bucket": "clickhouse"

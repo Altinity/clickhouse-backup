@@ -104,25 +104,32 @@ func (ch *ClickHouse) Connect() error {
 		opt.Settings["log_queries"] = 0
 	}
 
-	if ch.conn, err = clickhouse.Open(opt); err != nil {
-		ch.Log.Errorf("clickhouse connection: %s, sql.Open return error: %v", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
-		return err
-	}
-
 	logFunc := ch.Log.Infof
 	if !ch.Config.LogSQLQueries {
 		logFunc = ch.Log.Debugf
 	}
-	logFunc("clickhouse connection prepared: %s run ping", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
-	err = ch.conn.Ping(context.Background())
-	if err != nil {
-		ch.Log.Errorf("clickhouse connection ping: %s return error: %v", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
-		return err
-	} else {
-		ch.IsOpen = true
+	// infinite reconnect until success, fix https://github.com/Altinity/clickhouse-backup/issues/857
+	for {
+		for {
+			ch.conn, err = clickhouse.Open(opt)
+			if err == nil {
+				break
+			}
+			ch.Log.Warnf("clickhouse connection: %s, sql.Open return error: %v, will wait 5 second to reconnect", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
+			time.Sleep(5 * time.Second)
+		}
+		logFunc("clickhouse connection prepared: %s run ping", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
+		err = ch.conn.Ping(context.Background())
+		if err == nil {
+			logFunc("clickhouse connection success: %s", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
+			ch.IsOpen = true
+			break
+		}
+		ch.Log.Warnf("clickhouse connection ping: %s return error: %v, will wait 5 second to reconnect", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
+		time.Sleep(5 * time.Second)
 	}
-	logFunc("clickhouse connection open: %s", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
-	return err
+
+	return nil
 }
 
 // GetDisks - return data from system.disks table
@@ -181,11 +188,8 @@ func (ch *ClickHouse) GetDisks(ctx context.Context, enrich bool) ([]Disk, error)
 }
 
 func (ch *ClickHouse) GetEmbeddedBackupPath(disks []Disk) (string, error) {
-	if !ch.Config.UseEmbeddedBackupRestore {
+	if !ch.Config.UseEmbeddedBackupRestore || ch.Config.EmbeddedBackupDisk == "" {
 		return "", nil
-	}
-	if ch.Config.EmbeddedBackupDisk == "" {
-		return "", fmt.Errorf("please setup `clickhouse->embedded_backup_disk` in config or CLICKHOUSE_EMBEDDED_BACKUP_DISK environment variable")
 	}
 	for _, d := range disks {
 		if d.Name == ch.Config.EmbeddedBackupDisk {
@@ -254,13 +258,15 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		return nil, ctx.Err()
 	default:
 		type DiskFields struct {
-			DiskTypePresent      uint64 `ch:"is_disk_type_present"`
-			FreeSpacePresent     uint64 `ch:"is_free_space_present"`
-			StoragePolicyPresent uint64 `ch:"is_storage_policy_present"`
+			DiskTypePresent          uint64 `ch:"is_disk_type_present"`
+			ObjectStorageTypePresent uint64 `ch:"is_object_storage_type_present"`
+			FreeSpacePresent         uint64 `ch:"is_free_space_present"`
+			StoragePolicyPresent     uint64 `ch:"is_storage_policy_present"`
 		}
 		diskFields := make([]DiskFields, 0)
 		if err := ch.SelectContext(ctx, &diskFields,
 			"SELECT countIf(name='type') AS is_disk_type_present, "+
+				"countIf(name='object_storage_type') AS is_object_storage_type_present, "+
 				"countIf(name='free_space') AS is_free_space_present, "+
 				"countIf(name='disks') AS is_storage_policy_present "+
 				"FROM system.columns WHERE database='system' AND table IN ('disks','storage_policies') ",
@@ -271,6 +277,10 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		if len(diskFields) > 0 && diskFields[0].DiskTypePresent > 0 {
 			diskTypeSQL = "any(d.type)"
 		}
+		if len(diskFields) > 0 && diskFields[0].ObjectStorageTypePresent > 0 {
+			diskTypeSQL = "any(lower(if(d.type='ObjectStorage',d.object_storage_type,d.type)))"
+		}
+
 		diskFreeSpaceSQL := "toUInt64(0)"
 		if len(diskFields) > 0 && diskFields[0].FreeSpacePresent > 0 {
 			diskFreeSpaceSQL = "min(d.free_space)"
@@ -279,10 +289,8 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		joinStoragePoliciesSQL := ""
 		if len(diskFields) > 0 && diskFields[0].StoragePolicyPresent > 0 {
 			storagePoliciesSQL = "groupUniqArray(s.policy_name)"
-			joinStoragePoliciesSQL = " INNER JOIN "
-			if ch.Config.UseEmbeddedBackupRestore {
-				joinStoragePoliciesSQL = " LEFT JOIN "
-			}
+			// LEFT JOIN to allow disks which not have policy, https://github.com/Altinity/clickhouse-backup/issues/845
+			joinStoragePoliciesSQL = " LEFT JOIN "
 			joinStoragePoliciesSQL += "(SELECT policy_name, arrayJoin(disks) AS disk FROM system.storage_policies) AS s ON s.disk = d.name"
 		}
 		var result []Disk
@@ -367,6 +375,14 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 		}
 		if ch.Config.UseEmbeddedBackupRestore && (strings.HasPrefix(t.Name, ".inner_id.") /*|| strings.HasPrefix(t.Name, ".inner.")*/) {
 			t.Skip = true
+		}
+		if len(ch.Config.SkipTableEngines) > 0 {
+			for _, engine := range ch.Config.SkipTableEngines {
+				if t.Engine == engine {
+					t.Skip = true
+					break
+				}
+			}
 		}
 		if t.Skip {
 			tables[i] = t
@@ -648,16 +664,16 @@ func (ch *ClickHouse) GetVersion(ctx context.Context) (int, error) {
 
 func (ch *ClickHouse) GetVersionDescribe(ctx context.Context) string {
 	var result string
-	query := "SELECT value FROM `system`.`build_options` where name='VERSION_DESCRIBE'"
+	query := "SELECT value FROM `system`.`build_options` WHERE name='VERSION_DESCRIBE'"
 	if err := ch.SelectSingleRow(ctx, &result, query); err != nil {
 		return ""
 	}
 	return result
 }
 
-// FreezeTableOldWay - freeze all partitions in table one by one
-// This way using for ClickHouse below v19.1
-func (ch *ClickHouse) FreezeTableOldWay(ctx context.Context, table *Table, name string) error {
+// FreezeTableByParts - freeze all partitions in table one by one
+// also ally `freeze_by_part_where`
+func (ch *ClickHouse) FreezeTableByParts(ctx context.Context, table *Table, name string) error {
 	var partitions []struct {
 		PartitionID string `ch:"partition_id"`
 	}
@@ -713,7 +729,7 @@ func (ch *ClickHouse) FreezeTable(ctx context.Context, table *Table, name string
 		}
 	}
 	if version < 19001005 || ch.Config.FreezeByPart {
-		return ch.FreezeTableOldWay(ctx, table, name)
+		return ch.FreezeTableByParts(ctx, table, name)
 	}
 	withNameQuery := ""
 	if name != "" {
@@ -928,7 +944,7 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 		return errors.New(fmt.Sprintf("schema query ```%s``` doesn't contains table name `%s`", query, table.Name))
 	}
 
-	// fix restore schema for legacy backup
+	// fix schema for restore
 	// see https://github.com/Altinity/clickhouse-backup/issues/268
 	// https://github.com/Altinity/clickhouse-backup/issues/297
 	// https://github.com/Altinity/clickhouse-backup/issues/331
@@ -967,31 +983,6 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 // GetConn - return current connection
 func (ch *ClickHouse) GetConn() driver.Conn {
 	return ch.conn
-}
-
-func (ch *ClickHouse) IsClickhouseShadow(path string) bool {
-	d, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	defer func() {
-		if err := d.Close(); err != nil {
-			ch.Log.Warnf("can't close directory %v", err)
-		}
-	}()
-	names, err := d.Readdirnames(-1)
-	if err != nil {
-		return false
-	}
-	for _, name := range names {
-		if name == "increment.txt" {
-			continue
-		}
-		if _, err := strconv.Atoi(name); err != nil {
-			return false
-		}
-	}
-	return true
 }
 
 func (ch *ClickHouse) StructSelect(dest interface{}, query string, args ...interface{}) error {

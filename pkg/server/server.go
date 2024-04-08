@@ -560,7 +560,6 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 		defer status.Current.Stop(commandId, err)
 		if err != nil {
 			api.log.Errorf("Watch error: %v", err)
-			return
 		}
 	}()
 
@@ -656,16 +655,22 @@ func (api *APIServer) httpTablesHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	b := backup.NewBackuper(cfg)
 	q := r.URL.Query()
-	tables, err := b.GetTables(context.Background(), q.Get("table"))
+	var tables []clickhouse.Table
+	// https://github.com/Altinity/clickhouse-backup/issues/778
+	if q.Get("remote_backup") != "" {
+		tables, err = b.GetTablesRemote(context.Background(), q.Get("remote_backup"), q.Get("table"))
+	} else {
+		tables, err = b.GetTables(context.Background(), q.Get("table"))
+	}
 	if err != nil {
 		api.writeError(w, http.StatusInternalServerError, "tables", err)
 		return
 	}
-	if r.URL.Path != "/backup/tables/all" {
-		tables := api.getTablesWithSkip(tables)
+	if r.URL.Path == "/backup/tables/all" {
 		api.sendJSONEachRow(w, http.StatusOK, tables)
 		return
 	}
+	tables = api.getTablesWithSkip(tables)
 	api.sendJSONEachRow(w, http.StatusOK, tables)
 }
 
@@ -731,9 +736,6 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, item := range localBackups {
 			description := item.DataFormat
-			if item.Legacy {
-				description = "old-format"
-			}
 			if item.Broken != "" {
 				description = item.Broken
 			}
@@ -763,9 +765,6 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		for i, b := range remoteBackups {
 			description := b.DataFormat
-			if b.Legacy {
-				description = "old-format"
-			}
 			if b.Broken != "" {
 				description = b.Broken
 				brokenBackups++
@@ -776,16 +775,17 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 				}
 				description += b.Tags
 			}
+			fullSize := b.GetFullSize()
 			backupsJSON = append(backupsJSON, backupJSON{
 				Name:           b.BackupName,
 				Created:        b.CreationDate.Format(common.TimeFormat),
-				Size:           b.DataSize + b.MetadataSize,
+				Size:           fullSize,
 				Location:       "remote",
 				RequiredBackup: b.RequiredBackup,
 				Desc:           description,
 			})
 			if i == len(remoteBackups)-1 {
-				api.metrics.LastBackupSizeRemote.Set(float64(b.DataSize + b.MetadataSize + b.ConfigSize + b.RBACSize))
+				api.metrics.LastBackupSizeRemote.Set(float64(fullSize))
 			}
 		}
 		api.metrics.NumberBackupsRemoteBroken.Set(float64(brokenBackups))
@@ -806,6 +806,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	tablePattern := ""
+	diffFromRemote := ""
 	partitionsToBackup := make([]string, 0)
 	backupName := backup.NewBackupName()
 	schemaOnly := false
@@ -817,6 +818,9 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	if tp, exist := query["table"]; exist {
 		tablePattern = tp[0]
 		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
+	}
+	if baseBackup, exists := query["diff-from-remote"]; exists {
+		diffFromRemote = baseBackup[0]
 	}
 	if partitions, exist := query["partitions"]; exist {
 		partitionsToBackup = strings.Split(partitions[0], ",")
@@ -862,7 +866,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("create", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.CreateBackup(backupName, tablePattern, partitionsToBackup, schemaOnly, createRBAC, false, createConfigs, false, checkPartsColumns, api.clickhouseBackupVersion, commandId)
+			return b.CreateBackup(backupName, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, createRBAC, false, createConfigs, false, checkPartsColumns, api.clickhouseBackupVersion, commandId)
 		})
 		if err != nil {
 			api.log.Errorf("API /backup/create error: %v", err)
@@ -1050,6 +1054,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	vars := mux.Vars(r)
 	query := r.URL.Query()
+	deleteSource := false
 	diffFrom := ""
 	diffFromRemote := ""
 	name := utils.CleanBackupNameRE.ReplaceAllString(vars["name"], "")
@@ -1058,6 +1063,11 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	schemaOnly := false
 	resume := false
 	fullCommand := "upload"
+
+	if _, exist := query["delete-source"]; exist {
+		deleteSource = true
+		fullCommand = fmt.Sprintf("%s --deleteSource", fullCommand)
+	}
 
 	if df, exist := query["diff-from"]; exist {
 		diffFrom = df[0]
@@ -1097,7 +1107,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		commandId, _ := status.Current.Start(fullCommand)
 		err, _ := api.metrics.ExecuteWithMetrics("upload", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.Upload(name, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, resume, commandId)
+			return b.Upload(name, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, resume, commandId)
 		})
 		if err != nil {
 			api.log.Errorf("Upload error: %v", err)
@@ -1147,7 +1157,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	partitionsToBackup := make([]string, 0)
 	schemaOnly := false
 	dataOnly := false
-	dropTable := false
+	dropExists := false
 	ignoreDependencies := false
 	restoreRBAC := false
 	restoreConfigs := false
@@ -1186,11 +1196,11 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		fullCommand += " --data"
 	}
 	if _, exist := query["drop"]; exist {
-		dropTable = true
+		dropExists = true
 		fullCommand += " --drop"
 	}
 	if _, exist := query["rm"]; exist {
-		dropTable = true
+		dropExists = true
 		fullCommand += " --rm"
 	}
 	if _, exists := query["ignore_dependencies"]; exists {
@@ -1220,7 +1230,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore", 0, func() error {
 			b := backup.NewBackuper(api.config)
-			return b.Restore(name, tablePattern, databaseMappingToRestore, partitionsToBackup, schemaOnly, dataOnly, dropTable, ignoreDependencies, restoreRBAC, false, restoreConfigs, false, commandId)
+			return b.Restore(name, tablePattern, databaseMappingToRestore, partitionsToBackup, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, false, restoreConfigs, false, commandId)
 		})
 		status.Current.Stop(commandId, err)
 		if err != nil {
@@ -1416,7 +1426,7 @@ func (api *APIServer) UpdateBackupMetrics(ctx context.Context, onlyLocal bool) e
 			}
 		}
 		lastBackup := remoteBackups[numberBackupsRemote-1]
-		lastSizeRemote = lastBackup.DataSize + lastBackup.MetadataSize + lastBackup.ConfigSize + lastBackup.RBACSize
+		lastSizeRemote = lastBackup.GetFullSize()
 		lastBackupCreateRemote = &lastBackup.CreationDate
 		lastBackupUpload = &lastBackup.UploadDate
 		api.metrics.LastBackupSizeRemote.Set(float64(lastSizeRemote))

@@ -120,6 +120,23 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 	start := time.Now()
 	dstDataPaths := clickhouse.GetDisksByPaths(disks, tableDataPaths)
 	dbAndTableDir := path.Join(common.TablePathEncode(backupTable.Database), common.TablePathEncode(backupTable.Table))
+	if !toDetached {
+		for backupDiskName := range backupTable.Parts {
+			dstParentDir, dstParentDirExists := dstDataPaths[backupDiskName]
+			if dstParentDirExists {
+				// avoid to restore to non-empty to avoid attach in already dropped partitions, corner case
+				existsFiles, err := os.ReadDir(dstParentDir)
+				if err != nil && !os.IsNotExist(err) {
+					return err
+				}
+				for _, f := range existsFiles {
+					if f.Name() != "detached" && !strings.HasSuffix(f.Name(), ".txt") {
+						return fmt.Errorf("%s contains exists data %v, we can't restore directly via ATTACH TABLE, use `clickhouse->restore_as_attach=false` in your config", dstParentDir, existsFiles)
+					}
+				}
+			}
+		}
+	}
 	for backupDiskName := range backupTable.Parts {
 		for _, part := range backupTable.Parts[backupDiskName] {
 			dstParentDir, dstParentDirExists := dstDataPaths[backupDiskName]
@@ -136,6 +153,7 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 			backupDiskPath := diskMap[backupDiskName]
 			if toDetached {
 				dstParentDir = filepath.Join(dstParentDir, "detached")
+
 			}
 			dstPartPath := filepath.Join(dstParentDir, part.Name)
 			info, err := os.Stat(dstPartPath)
@@ -152,10 +170,6 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 				return fmt.Errorf("'%s' should be directory or absent", dstPartPath)
 			}
 			srcPartPath := path.Join(backupDiskPath, "backup", backupName, "shadow", dbAndTableDir, backupDiskName, part.Name)
-			// Legacy backup support
-			if _, err := os.Stat(srcPartPath); os.IsNotExist(err) {
-				srcPartPath = path.Join(backupDiskPath, "backup", backupName, "shadow", dbAndTableDir, part.Name)
-			}
 			if err := filepath.Walk(srcPartPath, func(filePath string, info os.FileInfo, err error) error {
 				if err != nil {
 					return err
@@ -211,8 +225,8 @@ func IsFileInPartition(disk, fileName string, partitionsBackupMap common.EmptyMa
 	return ok
 }
 
-func MoveShadow(shadowPath, backupPartsPath string, partitionsBackupMap common.EmptyMap, version int) ([]metadata.Part, int64, error) {
-	log := apexLog.WithField("logger", "MoveShadow")
+func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap common.EmptyMap, tableDiffFromRemote metadata.TableMetadata, disk clickhouse.Disk, version int) ([]metadata.Part, int64, error) {
+	log := apexLog.WithField("logger", "MoveShadowToBackup")
 	size := int64(0)
 	parts := make([]metadata.Part, 0)
 	err := filepath.Walk(shadowPath, func(filePath string, info os.FileInfo, err error) error {
@@ -234,9 +248,16 @@ func MoveShadow(shadowPath, backupPartsPath string, partitionsBackupMap common.E
 		if len(partitionsBackupMap) != 0 && !IsPartInPartition(pathParts[3], partitionsBackupMap) {
 			return nil
 		}
+		var isRequiredPartFound, partExists bool
+		if tableDiffFromRemote.Database != "" && tableDiffFromRemote.Table != "" && len(tableDiffFromRemote.Parts) > 0 && len(tableDiffFromRemote.Parts[disk.Name]) > 0 {
+			parts, isRequiredPartFound, partExists = addRequiredPartIfNotExists(parts, pathParts[3], tableDiffFromRemote, disk)
+			if isRequiredPartFound {
+				return nil
+			}
+		}
 		dstFilePath := filepath.Join(backupPartsPath, pathParts[3])
 		if info.IsDir() {
-			if !strings.HasSuffix(pathParts[3], ".proj") {
+			if !strings.HasSuffix(pathParts[3], ".proj") && !isRequiredPartFound && !partExists {
 				parts = append(parts, metadata.Part{
 					Name: pathParts[3],
 				})
@@ -255,6 +276,29 @@ func MoveShadow(shadowPath, backupPartsPath string, partitionsBackupMap common.E
 		}
 	})
 	return parts, size, err
+}
+
+func addRequiredPartIfNotExists(parts []metadata.Part, relativePath string, tableDiffFromRemote metadata.TableMetadata, disk clickhouse.Disk) ([]metadata.Part, bool, bool) {
+	isRequiredPartFound := false
+	exists := false
+	for _, diffPart := range tableDiffFromRemote.Parts[disk.Name] {
+		if diffPart.Name == relativePath || strings.HasPrefix(relativePath, diffPart.Name+"/") {
+			for _, p := range parts {
+				if p.Name == relativePath || strings.HasPrefix(relativePath, p.Name+"/") {
+					exists = true
+					break
+				}
+			}
+			if !exists {
+				parts = append(parts, metadata.Part{
+					Name:     relativePath,
+					Required: true,
+				})
+			}
+			isRequiredPartFound = true
+		}
+	}
+	return parts, isRequiredPartFound, exists
 }
 
 func IsDuplicatedParts(part1, part2 string) error {

@@ -4,11 +4,9 @@ import (
 	"archive/tar"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/progressbar"
 	"github.com/eapache/go-resiliency/retrier"
 	"io"
 	"os"
@@ -41,18 +39,20 @@ func (readerWrapper readerWrapperForContext) Read(p []byte) (n int, err error) {
 
 type Backup struct {
 	metadata.BackupMetadata
-	Legacy        bool
 	FileExtension string
 	Broken        string
 	UploadDate    time.Time `json:"upload_date"`
 }
 
+func (b *Backup) GetFullSize() uint64 {
+	return b.DataSize + b.MetadataSize + b.ConfigSize + b.RBACSize
+}
+
 type BackupDestination struct {
 	RemoteStorage
-	Log                *apexLog.Entry
-	compressionFormat  string
-	compressionLevel   int
-	disableProgressBar bool
+	Log               *apexLog.Entry
+	compressionFormat string
+	compressionLevel  int
 }
 
 var metadataCacheLock sync.RWMutex
@@ -60,10 +60,6 @@ var metadataCacheLock sync.RWMutex
 func (bd *BackupDestination) RemoveBackupRemote(ctx context.Context, backup Backup) error {
 	if bd.Kind() == "SFTP" || bd.Kind() == "FTP" {
 		return bd.DeleteFile(ctx, backup.BackupName)
-	}
-	if backup.Legacy {
-		archiveName := fmt.Sprintf("%s.%s", backup.BackupName, backup.FileExtension)
-		return bd.DeleteFile(ctx, archiveName)
 	}
 	return bd.Walk(ctx, backup.BackupName+"/", true, func(ctx context.Context, f RemoteFile) error {
 		if bd.Kind() == "azblob" {
@@ -75,15 +71,6 @@ func (bd *BackupDestination) RemoveBackupRemote(ctx context.Context, backup Back
 		}
 		return bd.DeleteFile(ctx, path.Join(backup.BackupName, f.Name()))
 	})
-}
-
-func isLegacyBackup(backupName string) (bool, string, string) {
-	for _, suffix := range config.ArchiveExtensions {
-		if strings.HasSuffix(backupName, "."+suffix) {
-			return true, strings.TrimSuffix(backupName, "."+suffix), suffix
-		}
-	}
-	return false, backupName, ""
 }
 
 func (bd *BackupDestination) loadMetadataCache(ctx context.Context) (map[string]Backup, error) {
@@ -179,20 +166,6 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 		return nil, err
 	}
 	err = bd.Walk(ctx, "/", false, func(ctx context.Context, o RemoteFile) error {
-		// Legacy backup
-		if ok, backupName, fileExtension := isLegacyBackup(strings.TrimPrefix(o.Name(), "/")); ok {
-			result = append(result, Backup{
-				metadata.BackupMetadata{
-					BackupName: backupName,
-					DataSize:   uint64(o.Size()),
-				},
-				true,
-				fileExtension,
-				"",
-				o.LastModified(),
-			})
-			return nil
-		}
 		backupName := strings.Trim(o.Name(), "/")
 		if !parseMetadata || (parseMetadataOnly != "" && parseMetadataOnly != backupName) {
 			if cachedMetadata, isCached := listCache[backupName]; isCached {
@@ -202,7 +175,6 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 					BackupMetadata: metadata.BackupMetadata{
 						BackupName: backupName,
 					},
-					Legacy: false,
 				})
 			}
 			return nil
@@ -217,7 +189,6 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 				metadata.BackupMetadata{
 					BackupName: backupName,
 				},
-				false,
 				"",
 				"broken (can't stat metadata.json)",
 				o.LastModified(), // folder
@@ -231,7 +202,6 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 				metadata.BackupMetadata{
 					BackupName: backupName,
 				},
-				false,
 				"",
 				"broken (can't open metadata.json)",
 				o.LastModified(), // folder
@@ -245,7 +215,6 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 				metadata.BackupMetadata{
 					BackupName: backupName,
 				},
-				false,
 				"",
 				"broken (can't read metadata.json)",
 				o.LastModified(), // folder
@@ -262,7 +231,6 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 				metadata.BackupMetadata{
 					BackupName: backupName,
 				},
-				false,
 				"",
 				"broken (bad metadata.json)",
 				o.LastModified(), // folder
@@ -270,9 +238,7 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 			result = append(result, brokenBackup)
 			return nil
 		}
-		goodBackup := Backup{
-			m, false, "", "", mf.LastModified(),
-		}
+		goodBackup := Backup{m, "", "", mf.LastModified()}
 		listCache[backupName] = goodBackup
 		result = append(result, goodBackup)
 		return nil
@@ -293,17 +259,16 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 	return result, nil
 }
 
-func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remotePath string, localPath string) error {
+func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remotePath string, localPath string, maxSpeed uint64) error {
 	if err := os.MkdirAll(localPath, 0750); err != nil {
 		return err
 	}
 	// get this first as GetFileReader blocks the ftp control channel
-	file, err := bd.StatFile(ctx, remotePath)
+	remoteFileInfo, err := bd.StatFile(ctx, remotePath)
 	if err != nil {
 		return err
 	}
-	filesize := file.Size()
-
+	startTime := time.Now()
 	reader, err := bd.GetFileReaderWithLocalPath(ctx, remotePath, localPath)
 	if err != nil {
 		return err
@@ -321,11 +286,8 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 		}
 	}()
 
-	bar := progressbar.StartNewByteBar(!bd.disableProgressBar, filesize)
 	buf := buffer.New(BufferSize)
-	defer bar.Finish()
 	bufReader := nio.NewReader(reader, buf)
-	proxyReader := bar.NewProxyReader(bufReader)
 	compressionFormat := bd.compressionFormat
 	if !checkArchiveExtension(path.Ext(remotePath), compressionFormat) {
 		bd.Log.Warnf("remote file backup extension %s not equal with %s", remotePath, compressionFormat)
@@ -335,7 +297,7 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 	if err != nil {
 		return err
 	}
-	if err := z.Extract(ctx, proxyReader, nil, func(ctx context.Context, file archiver.File) error {
+	if err := z.Extract(ctx, bufReader, nil, func(ctx context.Context, file archiver.File) error {
 		f, err := file.Open()
 		if err != nil {
 			return fmt.Errorf("can't open %s", file.NameInArchive)
@@ -374,15 +336,11 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 	}); err != nil {
 		return err
 	}
+	bd.throttleSpeed(startTime, remoteFileInfo.Size(), maxSpeed)
 	return nil
 }
 
-func (bd *BackupDestination) UploadCompressedStream(ctx context.Context, baseLocalPath string, files []string, remotePath string) error {
-	if _, err := bd.StatFile(ctx, remotePath); err != nil {
-		if !errors.Is(err, ErrNotFound) && !os.IsNotExist(err) {
-			return err
-		}
-	}
+func (bd *BackupDestination) UploadCompressedStream(ctx context.Context, baseLocalPath string, files []string, remotePath string, maxSpeed uint64) error {
 	var totalBytes int64
 	for _, filename := range files {
 		fInfo, err := os.Stat(path.Join(baseLocalPath, filename))
@@ -393,12 +351,10 @@ func (bd *BackupDestination) UploadCompressedStream(ctx context.Context, baseLoc
 			totalBytes += fInfo.Size()
 		}
 	}
-	bar := progressbar.StartNewByteBar(!bd.disableProgressBar, totalBytes)
-	defer bar.Finish()
 	pipeBuffer := buffer.New(BufferSize)
 	body, w := nio.Pipe(pipeBuffer)
 	g, ctx := errgroup.WithContext(ctx)
-
+	startTime := time.Now()
 	var writerErr, readerErr error
 	g.Go(func() error {
 		defer func() {
@@ -426,7 +382,7 @@ func (bd *BackupDestination) UploadCompressedStream(ctx context.Context, baseLoc
 			if !info.Mode().IsRegular() {
 				continue
 			}
-			bar.Add64(info.Size())
+
 			file := archiver.File{
 				FileInfo:      info,
 				NameInArchive: f,
@@ -457,24 +413,14 @@ func (bd *BackupDestination) UploadCompressedStream(ctx context.Context, baseLoc
 		readerErr = bd.PutFile(ctx, remotePath, body)
 		return readerErr
 	})
-	return g.Wait()
+	if waitErr := g.Wait(); waitErr != nil {
+		return waitErr
+	}
+	bd.throttleSpeed(startTime, totalBytes, maxSpeed)
+	return nil
 }
 
-func (bd *BackupDestination) DownloadPath(ctx context.Context, size int64, remotePath string, localPath string, RetriesOnFailure int, RetriesDuration time.Duration) error {
-	var bar *progressbar.Bar
-	if !bd.disableProgressBar {
-		totalBytes := size
-		if size == 0 {
-			if err := bd.Walk(ctx, remotePath, true, func(ctx context.Context, f RemoteFile) error {
-				totalBytes += f.Size()
-				return nil
-			}); err != nil {
-				return err
-			}
-		}
-		bar = progressbar.StartNewByteBar(!bd.disableProgressBar, totalBytes)
-		defer bar.Finish()
-	}
+func (bd *BackupDestination) DownloadPath(ctx context.Context, remotePath string, localPath string, RetriesOnFailure int, RetriesDuration time.Duration, maxSpeed uint64) error {
 	log := bd.Log.WithFields(apexLog.Fields{
 		"path":      remotePath,
 		"operation": "download",
@@ -485,6 +431,7 @@ func (bd *BackupDestination) DownloadPath(ctx context.Context, size int64, remot
 		}
 		retry := retrier.New(retrier.ConstantBackoff(RetriesOnFailure, RetriesDuration), nil)
 		err := retry.RunCtx(ctx, func(ctx context.Context) error {
+			startTime := time.Now()
 			r, err := bd.GetFileReader(ctx, path.Join(remotePath, f.Name()))
 			if err != nil {
 				log.Error(err.Error())
@@ -501,7 +448,7 @@ func (bd *BackupDestination) DownloadPath(ctx context.Context, size int64, remot
 				log.Error(err.Error())
 				return err
 			}
-			if _, err := io.CopyBuffer(dst, r, nil); err != nil {
+			if _, err := io.Copy(dst, r); err != nil {
 				log.Error(err.Error())
 				return err
 			}
@@ -513,38 +460,33 @@ func (bd *BackupDestination) DownloadPath(ctx context.Context, size int64, remot
 				log.Error(err.Error())
 				return err
 			}
+
+			if dstFileInfo, err := os.Stat(dstFilePath); err == nil {
+				bd.throttleSpeed(startTime, dstFileInfo.Size(), maxSpeed)
+			} else {
+				return err
+			}
+
 			return nil
 		})
 		if err != nil {
 			return err
 		}
-		if !bd.disableProgressBar {
-			bar.Add64(f.Size())
-		}
 		return nil
 	})
 }
 
-func (bd *BackupDestination) UploadPath(ctx context.Context, size int64, baseLocalPath string, files []string, remotePath string, RetriesOnFailure int, RetriesDuration time.Duration) (int64, error) {
-	var bar *progressbar.Bar
-	totalBytes := size
-	if size == 0 {
-		for _, filename := range files {
-			fInfo, err := os.Stat(filepath.Clean(path.Join(baseLocalPath, filename)))
-			if err != nil {
-				return 0, err
-			}
-			if fInfo.Mode().IsRegular() {
-				totalBytes += fInfo.Size()
-			}
-		}
-	}
-	if !bd.disableProgressBar {
-		bar = progressbar.StartNewByteBar(!bd.disableProgressBar, totalBytes)
-		defer bar.Finish()
-	}
-
+func (bd *BackupDestination) UploadPath(ctx context.Context, baseLocalPath string, files []string, remotePath string, RetriesOnFailure int, RetriesDuration time.Duration, maxSpeed uint64) (int64, error) {
+	totalBytes := int64(0)
 	for _, filename := range files {
+		startTime := time.Now()
+		fInfo, err := os.Stat(filepath.Clean(path.Join(baseLocalPath, filename)))
+		if err != nil {
+			return 0, err
+		}
+		if fInfo.Mode().IsRegular() {
+			totalBytes += fInfo.Size()
+		}
 		f, err := os.Open(filepath.Clean(path.Join(baseLocalPath, filename)))
 		if err != nil {
 			return 0, err
@@ -562,17 +504,26 @@ func (bd *BackupDestination) UploadPath(ctx context.Context, size int64, baseLoc
 			closeFile()
 			return 0, err
 		}
-		fi, err := f.Stat()
-		if err != nil {
-			return 0, err
-		}
-		if !bd.disableProgressBar {
-			bar.Add64(fi.Size())
-		}
 		closeFile()
+		bd.throttleSpeed(startTime, fInfo.Size(), maxSpeed)
 	}
 
 	return totalBytes, nil
+}
+
+func (bd *BackupDestination) throttleSpeed(startTime time.Time, size int64, maxSpeed uint64) {
+	if maxSpeed > 0 && size > 0 {
+		timeSince := time.Since(startTime).Nanoseconds()
+		currentSpeed := uint64(size*1000000000) / uint64(timeSince)
+		if currentSpeed > maxSpeed {
+
+			// Calculate how long to sleep to reduce the average speed to maxSpeed
+			excessSpeed := currentSpeed - maxSpeed
+			excessData := uint64(size) - (maxSpeed * uint64(timeSince) / 1000000000)
+			sleepTime := time.Duration((excessData*1000000000)/excessSpeed) * time.Nanosecond
+			time.Sleep(sleepTime)
+		}
+	}
 }
 
 func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhouse.ClickHouse, calcMaxSize bool, backupName string) (*BackupDestination, error) {
@@ -626,7 +577,6 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			log.WithField("logger", "azure"),
 			cfg.AzureBlob.CompressionFormat,
 			cfg.AzureBlob.CompressionLevel,
-			cfg.General.DisableProgressBar,
 		}, nil
 	case "s3":
 		partSize := cfg.S3.PartSize
@@ -671,7 +621,6 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			log.WithField("logger", "s3"),
 			cfg.S3.CompressionFormat,
 			cfg.S3.CompressionLevel,
-			cfg.General.DisableProgressBar,
 		}, nil
 	case "gcs":
 		googleCloudStorage := &GCS{Config: &cfg.GCS}
@@ -697,7 +646,6 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			log.WithField("logger", "gcs"),
 			cfg.GCS.CompressionFormat,
 			cfg.GCS.CompressionLevel,
-			cfg.General.DisableProgressBar,
 		}, nil
 	case "cos":
 		tencentStorage := &COS{Config: &cfg.COS}
@@ -710,7 +658,6 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			log.WithField("logger", "cos"),
 			cfg.COS.CompressionFormat,
 			cfg.COS.CompressionLevel,
-			cfg.General.DisableProgressBar,
 		}, nil
 	case "ftp":
 		ftpStorage := &FTP{
@@ -726,7 +673,6 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			log.WithField("logger", "FTP"),
 			cfg.FTP.CompressionFormat,
 			cfg.FTP.CompressionLevel,
-			cfg.General.DisableProgressBar,
 		}, nil
 	case "sftp":
 		sftpStorage := &SFTP{
@@ -741,7 +687,6 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			log.WithField("logger", "SFTP"),
 			cfg.SFTP.CompressionFormat,
 			cfg.SFTP.CompressionLevel,
-			cfg.General.DisableProgressBar,
 		}, nil
 	default:
 		return nil, fmt.Errorf("NewBackupDestination error: storage type '%s' is not supported", cfg.General.RemoteStorage)

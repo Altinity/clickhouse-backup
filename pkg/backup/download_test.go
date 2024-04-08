@@ -90,7 +90,6 @@ var remoteBackup = storage.Backup{
 		DataFormat:     "tar",
 		RequiredBackup: "",
 	},
-	Legacy:     false,
 	UploadDate: time.Now(),
 }
 

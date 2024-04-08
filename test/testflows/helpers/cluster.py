@@ -2,10 +2,9 @@ import glob
 import inspect
 import os
 import tempfile
+import testflows.settings as settings
 import threading
 import time
-
-import testflows.settings as settings
 from testflows.asserts import error
 from testflows.connect import Shell as ShellBase
 from testflows.core import *

@@ -379,7 +379,6 @@ Use `clickhouse-backup print-config` to print current config.
 general:
   remote_storage: none           # REMOTE_STORAGE, choice from: `azblob`,`gcs`,`s3`, etc; if `none` then `upload` and `download` commands will fail.
   max_file_size: 1073741824      # MAX_FILE_SIZE, 1G by default, useless when upload_by_part is true, use to split data parts files by archives
-  disable_progress_bar: true     # DISABLE_PROGRESS_BAR, show progress bar during upload and download, makes sense only when `upload_concurrency` and `download_concurrency` is 1
   backups_to_keep_local: 0       # BACKUPS_TO_KEEP_LOCAL, how many latest local backup should be kept, 0 means all created backups will be stored on local disk
                                  # -1 means backup will keep after `create` but will delete after `create_remote` command
                                  # You can run `clickhouse-backup delete local <backup_name>` command to remove temporary backup files from the local disk
@@ -391,7 +390,11 @@ general:
   # For example, 4 means max 4 parallel tables and 4 parallel parts inside one table, so equals 16 concurrent streams
   download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255, by default, the value is round(sqrt(AVAILABLE_CPU_CORES / 2))
   upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255, by default, the value is round(sqrt(AVAILABLE_CPU_CORES / 2))
-
+  
+  # Throttling speed for upload and download, calculates on part level, not the socket level, it means short period for high traffic values and then time to sleep 
+  download_max_bytes_per_second: 0  # DOWNLOAD_MAX_BYTES_PER_SECOND, 0 means no throttling 
+  upload_max_bytes_per_second: 0    # UPLOAD_MAX_BYTES_PER_SECOND, 0 means no throttling
+  
   # RESTORE_SCHEMA_ON_CLUSTER, execute all schema related SQL queries with `ON CLUSTER` clause as Distributed DDL.
   # Check `system.clusters` table for the correct cluster name, also `system.macros` can be used.
   # This isn't applicable when `use_embedded_backup_restore: true`
@@ -414,6 +417,9 @@ general:
   
   cpu_nice_priority: 15    # CPU niceness priority, to allow throttling СЗГ intensive operation, more details https://manpages.ubuntu.com/manpages/xenial/man1/nice.1.html
   io_nice_priority: "idle" # IO niceness priority, to allow throttling disk intensive operation, more details https://manpages.ubuntu.com/manpages/xenial/man1/ionice.1.html
+  
+  rbac_backup_always: true # always, backup RBAC objects
+  rbac_resolve_conflicts: "recreate"  # action, when RBAC object with the same name already exists, allow "recreate", "ignore", "fail" values
 clickhouse:
   username: default                # CLICKHOUSE_USERNAME
   password: ""                     # CLICKHOUSE_PASSWORD
@@ -456,11 +462,14 @@ clickhouse:
   # available prefixes
   # - sql: will execute SQL query
   # - exec: will execute command via shell
-  restart_command: "sql:SYSTEM SHUTDOWN"
+  restart_command: "exec:systemctl restart clickhouse-server" 
   ignore_not_exists_error_during_freeze: true # CLICKHOUSE_IGNORE_NOT_EXISTS_ERROR_DURING_FREEZE, helps to avoid backup failures when running frequent CREATE / DROP tables and databases during backup, `clickhouse-backup` will ignore `code: 60` and `code: 81` errors during execution of `ALTER TABLE ... FREEZE`
   check_replicas_before_attach: true # CLICKHOUSE_CHECK_REPLICAS_BEFORE_ATTACH, helps avoiding concurrent ATTACH PART execution when restoring ReplicatedMergeTree tables
   use_embedded_backup_restore: false # CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE, use BACKUP / RESTORE SQL statements instead of regular SQL queries to use features of modern ClickHouse server versions
-  backup_mutations: true # CLICKHOUSE_BACKUP_MUTATIONS, allow backup mutations from system.mutations WHERE is_done AND apply it during restore
+  embedded_backup_disk: ""  # CLICKHOUSE_EMBEDDED_BACKUP_DISK - disk from system.disks which will use when `use_embedded_backup_restore: true` 
+  embedded_backup_threads: 0 # CLICKHOUSE_EMBEDDED_BACKUP_THREADS - how many threads will use for BACKUP sql command when `use_embedded_backup_restore: true`, 0 means - equal available CPU cores  
+  embedded_restore_threads: 0 # CLICKHOUSE_EMBEDDED_RESTORE_THREADS - how many threads will use for RESTORE sql command when `use_embedded_backup_restore: true`, 0 means - equal available CPU cores  
+  backup_mutations: true # CLICKHOUSE_BACKUP_MUTATIONS, allow backup mutations from system.mutations WHERE is_done=0 and apply it during restore
   restore_as_attach: false # CLICKHOUSE_RESTORE_AS_ATTACH, allow restore tables which have inconsistent data parts structure and mutations in progress
   check_parts_columns: true # CLICKHOUSE_CHECK_PARTS_COLUMNS, check data types from system.parts_columns during create backup to guarantee mutation is complete
   max_connections: 0 # CLICKHOUSE_MAX_CONNECTIONS, how many parallel connections could be opened during operations
@@ -529,6 +538,9 @@ gcs:
   credentials_file: ""         # GCS_CREDENTIALS_FILE
   credentials_json: ""         # GCS_CREDENTIALS_JSON
   credentials_json_encoded: "" # GCS_CREDENTIALS_JSON_ENCODED
+  # look https://cloud.google.com/storage/docs/authentication/managing-hmackeys#create how to get HMAC keys for access to bucket
+  embedded_access_key: ""      # GCS_EMBEDDED_ACCESS_KEY, use it when `use_embedded_backup_restore: true`, `embedded_backup_disk: ""`, `remote_storage: gcs`
+  embedded_secret_key: ""      # GCS_EMBEDDED_SECRET_KEY, use it when `use_embedded_backup_restore: true`, `embedded_backup_disk: ""`, `remote_storage: gcs`
   skip_credentials: false      # GCS_SKIP_CREDENTIALS, skip add credentials to requests to allow anonymous access to bucket
   endpoint: ""                 # GCS_ENDPOINT, use it for custom GCS endpoint/compatible storage. For example, when using custom endpoint via private service connect
   bucket: ""                   # GCS_BUCKET
@@ -632,35 +644,37 @@ That can lead to data corruption.
 
 Use the `clickhouse-backup server` command to run as a REST API server. In general, the API attempts to mirror the CLI commands.
 
-> **GET /**
+### GET /
 
 List all current applicable HTTP routes
 
-> **POST /**
+### POST /
 
-> **POST /restart**
+### POST /restart
 
 Restart HTTP server, close all current connections, close listen socket, open listen socket again, all background go-routines breaks with contexts
 
-> **GET /backup/kill**
+### GET /backup/kill
 
 Kill selected command from `GET /backup/actions` command list, kill process should be near immediate, but some go-routines (upload one data part) could continue to run.
 
 - Optional query argument `command` may contain the command name to kill, or if it is omitted then kill the first "in progress" command.
 
-> **GET /backup/tables**
+### GET /backup/tables
 
 Print list of tables: `curl -s localhost:7171/backup/tables | jq .`, exclude pattern matched tables from `skip_tables` configuration parameters
 
-- Optional query argument `table` works the same as the `--table value` CLI argument.
+- Optional query argument `table` works the same as the `--table=pattern` CLI argument.
+- Optional query argument `remote_backup`works the same as `--remote-backup=name` CLI argument.
 
-> **GET /backup/tables/all**
+### GET /backup/tables/all
 
 Print list of tables: `curl -s localhost:7171/backup/tables/all | jq .`, ignore `skip_tables` configuration parameters.
 
 - Optional query argument `table` works the same as the `--table value` CLI argument.
+- Optional query argument `remote_backup`works the same as `--remote-backup=name` CLI argument.
 
-> **POST /backup/create**
+### POST /backup/create
 
 Create new backup: `curl -s localhost:7171/backup/create -X POST | jq .`
 
@@ -675,7 +689,7 @@ Create new backup: `curl -s localhost:7171/backup/create -X POST | jq .`
 
 Note: this operation is asynchronous, so the API will return once the operation has started.
 
-> **POST /backup/watch**
+### POST /backup/watch
 
 Run background watch process and create full+incremental backups sequence: `curl -s localhost:7171/backup/watch -X POST | jq .`
 You can't run watch twice with the same parameters even when `allow_parallel: true`
@@ -692,19 +706,20 @@ You can't run watch twice with the same parameters even when `allow_parallel: tr
 
 Note: this operation is asynchronous and can only be stopped with `kill -s SIGHUP $(pgrep -f clickhouse-backup)` or call `/restart`, `/backup/kill`. The API will return immediately once the operation has started.
 
-> **POST /backup/clean**
+### POST /backup/clean
 
 Clean the `shadow` folders using all available paths from `system.disks`
 
-> **POST /backup/clean/remote_broken**
+### POST /backup/clean/remote_broken
 
 Remove
 Note: this operation is sync, and could take a lot of time, increase http timeouts during call
 
-> **POST /backup/upload**
+### POST /backup/upload
 
 Upload backup to remote storage: `curl -s localhost:7171/backup/upload/<BACKUP_NAME> -X POST | jq .`
 
+- Optional query argument `delete-source` works the same as the `--delete-source` CLI argument.
 - Optional query argument `diff-from` works the same as the `--diff-from` CLI argument.
 - Optional query argument `diff-from-remote` works the same as the `--diff-from-remote` CLI argument.
 - Optional query argument `table` works the same as the `--table value` CLI argument.
@@ -715,7 +730,7 @@ Upload backup to remote storage: `curl -s localhost:7171/backup/upload/<BACKUP_N
 
 Note: this operation is asynchronous, so the API will return once the operation has started.
 
-> **GET /backup/list/{where}**
+### GET /backup/list/{where}
 
 Print a list of backups: `curl -s localhost:7171/backup/list | jq .`
 Print a list of only local backups: `curl -s localhost:7171/backup/list/local | jq .`
@@ -724,7 +739,7 @@ Print a list of only remote backups: `curl -s localhost:7171/backup/list/remote 
 Note: The `Size` field will not be set for the local backups that have just been created or are in progress.
 Note: The `Size` field will not be set for the remote backups with upload status in progress.
 
-> **POST /backup/download**
+### POST /backup/download
 
 Download backup from remote storage: `curl -s localhost:7171/backup/download/<BACKUP_NAME> -X POST | jq .`
 
@@ -736,7 +751,7 @@ Download backup from remote storage: `curl -s localhost:7171/backup/download/<BA
 
 Note: this operation is asynchronous, so the API will return once the operation has started.
 
-> **POST /backup/restore**
+### POST /backup/restore
 
 Create schema and restore data from backup: `curl -s localhost:7171/backup/restore/<BACKUP_NAME> -X POST | jq .`
 
@@ -751,21 +766,21 @@ Create schema and restore data from backup: `curl -s localhost:7171/backup/resto
 - Optional query argument `restore_database_mapping` works the same as the `--restore-database-mapping` CLI argument.
 - Optional query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens"}`.
 
-> **POST /backup/delete**
+### POST /backup/delete
 
 Delete specific remote backup: `curl -s localhost:7171/backup/delete/remote/<BACKUP_NAME> -X POST | jq .`
 
 Delete specific local backup: `curl -s localhost:7171/backup/delete/local/<BACKUP_NAME> -X POST | jq .`
 
-> **GET /backup/status**
+### GET /backup/status
 
 Display list of currently running asynchronous operations: `curl -s localhost:7171/backup/status | jq .`
 
-> **POST /backup/actions**
+### POST /backup/actions
 
 Execute multiple backup actions: `curl -X POST -d '{"command":"create test_backup"}' -s localhost:7171/backup/actions`
 
-> **GET /backup/actions**
+### GET /backup/actions
 
 Display a list of all operations from start of API server: `curl -s localhost:7171/backup/actions | jq .`
 

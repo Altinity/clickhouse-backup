@@ -1,3 +1,39 @@
+# v2.5.0
+IMPROVEMENTS
+- complete removed support for legacy backups, created with version prior v1.0 
+- removed `disable_progress_bar` config option and related progress bar code
+- added `--delete-source` parameter for `upload` and `create_remote` commands to explicitly delete local backup during upload, fix [777](https://github.com/Altinity/clickhouse-backup/issues/777)
+- added support for `--env ENV_NAME=value` cli parameter for allow dynamically override any config parameter, fix [821](https://github.com/Altinity/clickhouse-backup/issues/821)
+- added support for `use_embedded_backup_restore: true` with empty `embedded_backup_disk` value, tested on S3/GCS over S3/AzureBlobStorage, fix [695](https://github.com/Altinity/clickhouse-backup/issues/695)
+- `--rbac, --rbac-only, --configs, --configs-only` now works with `use_embedded_backup_restore: true`
+-- `--data` for `restore` with `use_embedded_backup_restore: true` will use `allow_non_empty_tables=true` to allow fix [756](https://github.com/Altinity/clickhouse-backup/issues/756)
+- added `--diff-from-remote` parameter for `create` command, will copy only new data parts object disk data, also allows to download properly object disk data from required backup during `restore`, fix [865](https://github.com/Altinity/clickhouse-backup/issues/865)
+- added support of native Clickhouse incremental backup for `use_embedded_backup_restore: true` fix [735](https://github.com/Altinity/clickhouse-backup/issues/735)
+- added `GCS_CHUNK_SIZE` config parameter, try to speedup GCS upload fix [874](https://github.com/Altinity/clickhouse-backup/pull/874), thanks @dermasmid
+- added `--remote-backup` cli parameter to `tables` command and `GET /backup/table`, fix [778](https://github.com/Altinity/clickhouse-backup/issues/778)
+- added `rbac_always_backup: true` option to default config, will create backup for RBAC objects automatically, restore still require `--rbac` to avoid destructive actions, fix [793](https://github.com/Altinity/clickhouse-backup/issues/793)
+- added `rbac_conflict_resolution: recreate` option for RBAC object name conflicts during restore, fix [851](https://github.com/Altinity/clickhouse-backup/issues/851)
+- added `upload_max_bytes_per_seconds` and `download_max_bytes_per_seconds` config options to allow throttling without CAP_SYS_NICE, fix [817](https://github.com/Altinity/clickhouse-backup/issues/817)
+- added `clickhouse_backup_in_progress_commands` metric, fix [836](https://github.com/Altinity/clickhouse-backup/issues/836)
+- switched to golang 1.22
+- updated all third-party SDK to latest versions
+- added `clickhouse/clickhouse-server:24.3` to CI/CD
+
+BUG FIXES
+- continue `S3_MAX_PARTS_COUNT` default value from `2000` to `4000` to continue decrease memory usage for S3 
+- changed minimal part size for multipart upload in CopyObject from `5Mb` to `10Mb`
+- restore SQL UDF functions after restore tables
+- execute `ALTER TABLE ... DROP PARTITION` instead of `DROP TABLE` for `restore` and `restore_remote` with parameters `--data --partitions=...`, fix [756](https://github.com/Altinity/clickhouse-backup/issues/756) 
+- fix wrong behavior for `freeze_by_part` + `freeze_by_part_where`, fix [855](https://github.com/Altinity/clickhouse-backup/issues/855)
+- apply `CLICKHOUSE_SKIP_TABLES_ENGINES` during `create` command
+- fixed behavior for upload / download when .inner. table missing for MATERIALIZED VIEW  by table pattern, fix [765](https://github.com/Altinity/clickhouse-backup/issues/765)
+- fixed `ObjectDisks` + `CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE: true` - shall skip upload object disk content, fix [799](https://github.com/Altinity/clickhouse-backup/issues/799)
+- fixed connection to clickhouse-server behavior when long clickhouse-server startup time and `docker-entrypoint.d` processing, will infinite reconnect each 5 seconds, until success, fix [857](https://github.com/Altinity/clickhouse-backup/issues/857)
+- fixed `USE_EMBEDDED_BACKUP_RESTORE=true` behavior to allow use backup disk with type `local`, fix [882](https://github.com/Altinity/clickhouse-backup/issues/882)
+- fixed wrong list command behavior, it shall  scann all system.disks path not only default disk to find pratially created backups, fix [873](https://github.com/Altinity/clickhouse-backup/issues/873)
+- fixed create `--rbac` behavior, don't create access folder if no RBAC objects is present
+- fixed behavior when `system.disks` contains disk which not present in any `storage_policies`, fix [845](https://github.com/Altinity/clickhouse-backup/issues/845)
+
 # v2.4.35
 IMPROVEMENTS
 - set part size for `s3:CopyObject` minimum 128Mb, look details https://repost.aws/questions/QUtW2_XaALTK63wv9XLSywiQ/s3-sync-command-is-slow-to-start-on-some-data

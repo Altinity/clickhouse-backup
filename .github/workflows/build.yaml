@@ -16,7 +16,7 @@ jobs:
     strategy:
       matrix:
         golang-version:
-          - "1.21"
+          - "1.22"
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
@@ -49,7 +49,7 @@ jobs:
       - name: Build clickhouse-backup binary
         id: make-race
         env:
-          GOROOT: ${{ env.GOROOT_1_20_X64 }}
+          GOROOT: ${{ env.GOROOT_1_22_X64 }}
         run: |
           make build/linux/amd64/clickhouse-backup build/linux/arm64/clickhouse-backup
           make build/linux/amd64/clickhouse-backup-fips build/linux/arm64/clickhouse-backup-fips 
@@ -114,14 +114,23 @@ jobs:
     runs-on: ubuntu-22.04
     strategy:
       matrix:
+        golang-version:
+          - "1.22"
         clickhouse:
           - '22.3'
           - '22.8'
           - '23.3'
           - '23.8'
+          - '24.3'
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
+
+      - name: Setup golang
+        id: setup-go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '^${{ matrix.golang-version }}'
 
       - uses: actions/download-artifact@v4
         with:
@@ -181,9 +190,12 @@ jobs:
           tfs --debug --no-colors report results -a "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/" ./test/testflows/raw.log - --confidential --copyright "Altinity LTD" --logo ./test/testflows/altinity.png | ~/venv/qa/bin/tfs --debug --no-colors document convert > ./test/testflows/report.html
           sudo chmod -Rv +rx test/testflows/clickhouse_backup/_instances
       - name: Format testflows coverage
+        env:
+          GOROOT: ${{ env.GOROOT_1_22_X64 }}
         run: |
           sudo chmod -Rv a+rw test/testflows/_coverage_/
-          ls -la test/testflows/_coverage_ 
+          ls -la test/testflows/_coverage_
+          go env
           go tool covdata textfmt -i test/testflows/_coverage_/ -o test/testflows/_coverage_/coverage.out
       - name: Report testflows coverage
         uses: coverallsapp/github-action@v2
@@ -192,7 +204,7 @@ jobs:
           parallel: true
           format: golang
           flag-name: testflows-${{ matrix.clickhouse }}
-# todo wait when resolve https://github.com/actions/upload-artifact/issues/270 and uncomment
+      # todo possible failures  https://github.com/actions/upload-artifact/issues/270
       - name: Upload testflows logs
         uses: actions/upload-artifact@v4
         with:
@@ -211,7 +223,7 @@ jobs:
     strategy:
       matrix:
         golang-version:
-          - "1.21"
+          - "1.22"
         clickhouse:
           - '1.1.54394'
           - '19.17'
@@ -223,6 +235,7 @@ jobs:
           - '22.8'
           - '23.3'
           - '23.8'
+          - '24.3'
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
@@ -256,10 +269,12 @@ jobs:
 
       - name: Running integration tests
         env:
+          GOROOT: ${{ env.GOROOT_1_22_X64 }}
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
-          # just options for advanced logging
-          # RUN_TESTS: "TestFIPS"
+          # options for advanced debug CI/CD
+          # RUN_TESTS: "TestIntegrationGCS"
           # LOG_LEVEL: "debug"
+          # GCS_DEBUG: "true"
           # SFTP_DEBUG: "true"
           # AZBLOB_DEBUG: "true"
           # FTP_DEBUG: "true"
@@ -303,6 +318,8 @@ jobs:
           docker-compose -f test/integration/${COMPOSE_FILE} ps -a
           go test -timeout 60m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
       - name: Format integration coverage
+        env:
+          GOROOT: ${{ env.GOROOT_1_22_X64 }}
         run: |
           sudo chmod -Rv a+rw test/integration/_coverage_/
           ls -la test/integration/_coverage_ 
