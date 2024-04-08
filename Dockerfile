@@ -81,12 +81,12 @@ ARG TARGETPLATFORM
 MAINTAINER Eugene Klimov <eklimov@altinity.com>
 RUN addgroup -S -g 101 clickhouse \
     && adduser -S -h /var/lib/clickhouse -s /bin/bash -G clickhouse -g "ClickHouse server" -u 101 clickhouse
-RUN apk update && apk add --no-cache ca-certificates tzdata bash curl libcap-setcap && update-ca-certificates
+RUN apk update && apk add --no-cache ca-certificates tzdata bash curl && update-ca-certificates
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 COPY build/${TARGETPLATFORM}/clickhouse-backup /bin/clickhouse-backup
 RUN chmod +x /bin/clickhouse-backup
-RUN setcap cap_sys_nice=+ep /bin/clickhouse-backup
+# RUN apk add --no-cache libcap-setcap libcap-getcap && setcap cap_sys_nice=+ep /bin/clickhouse-backup
 # USER clickhouse
 ENTRYPOINT ["/entrypoint.sh"]
 CMD [ "/bin/clickhouse-backup", "--help" ]
@@ -97,7 +97,7 @@ ARG TARGETPLATFORM
 MAINTAINER Eugene Klimov <eklimov@altinity.com>
 COPY build/${TARGETPLATFORM}/clickhouse-backup-fips /bin/clickhouse-backup
 RUN chmod +x /bin/clickhouse-backup
-RUN setcap cap_sys_nice=+ep /bin/clickhouse-backup
+# RUN apk add --no-cache libcap-setcap libcap-getcap && setcap cap_sys_nice=+ep /bin/clickhouse-backup
 
 
 FROM ${CLICKHOUSE_IMAGE}:${CLICKHOUSE_VERSION} AS image_full
@@ -116,9 +116,7 @@ COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 COPY build/${TARGETPLATFORM}/clickhouse-backup /bin/clickhouse-backup
 RUN chmod +x /bin/clickhouse-backup
-RUN setcap cap_sys_nice=+ep /bin/clickhouse-backup
-
+# RUN apk add --no-cache libcap-setcap libcap-getcap && setcap cap_sys_nice=+ep /bin/clickhouse-backup
 # USER clickhouse
-
 ENTRYPOINT ["/entrypoint.sh"]
 CMD [ "/bin/clickhouse-backup", "--help" ]
