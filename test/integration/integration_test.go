@@ -2197,6 +2197,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 	// main test scenario
 	testBackupName := fmt.Sprintf("%s_full_%d", t.Name(), rand.Int())
 	incrementBackupName := fmt.Sprintf("%s_increment_%d", t.Name(), rand.Int())
+	incrementBackupName2 := fmt.Sprintf("%s_increment2_%d", t.Name(), rand.Int())
 	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Atomic, Issue331Ordinary}
 	tablesPattern := fmt.Sprintf("*_%s.*", t.Name())
 	log.Info("Clean before start")
@@ -2206,18 +2207,23 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 	testData := generateTestData(t, r, ch, remoteStorageType, defaultTestData)
 
 	r.NoError(dockerExec("minio", "mc", "ls", "local/clickhouse/disk_s3"))
+
 	log.Info("Create backup")
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables", tablesPattern, testBackupName))
-	generateIncrementTestData(t, ch, r, defaultIncrementData)
 
+	generateIncrementTestData(t, ch, r, defaultIncrementData)
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables", tablesPattern, incrementBackupName))
+
+	log.Info("create --diff-from-remote backup")
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--diff-from-remote", testBackupName, "--tables", tablesPattern, incrementBackupName2))
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", incrementBackupName2))
 
 	log.Info("Upload")
 	uploadCmd := fmt.Sprintf("%s_COMPRESSION_FORMAT=zstd CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/%s clickhouse-backup upload --resume %s", remoteStorageType, backupConfig, testBackupName)
 	checkResumeAlreadyProcessed(uploadCmd, testBackupName, "upload", r, remoteStorageType)
 
-	diffFrom := "--diff-from-remote"
-	uploadCmd = fmt.Sprintf("clickhouse-backup -c /etc/clickhouse-backup/%s upload %s %s %s --resume", backupConfig, incrementBackupName, diffFrom, testBackupName)
+	log.Info("Upload increment")
+	uploadCmd = fmt.Sprintf("clickhouse-backup -c /etc/clickhouse-backup/%s upload %s --diff-from-remote %s --resume", backupConfig, incrementBackupName, testBackupName)
 	checkResumeAlreadyProcessed(uploadCmd, incrementBackupName, "upload", r, remoteStorageType)
 
 	backupDir := "/var/lib/clickhouse/backup"

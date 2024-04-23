@@ -135,7 +135,30 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 			} else {
 				createRemoteErr = b.CreateToRemote(backupName, false, "", diffFromRemote, tablePattern, partitions, schemaOnly, backupRBAC, false, backupConfigs, false, skipCheckPartsColumns, false, version, commandId)
 				if createRemoteErr != nil {
-					log.Errorf("create_remote %s return error: %v", backupName, createRemoteErr)
+					cmd := "create_remote"
+					if diffFromRemote != "" {
+						cmd += " --diff-from-remote=" + diffFromRemote
+					}
+					if tablePattern != "" {
+						cmd += " --tables=" + tablePattern
+					}
+					if len(partitions) > 0 {
+						cmd += " --partition=" + strings.Join(partitions, ",")
+					}
+					if schemaOnly {
+						cmd += " --schema"
+					}
+					if backupRBAC {
+						cmd += " --rbac"
+					}
+					if backupConfigs {
+						cmd += " --configs"
+					}
+					if skipCheckPartsColumns {
+						cmd += " --skip-check-parts-columns"
+					}
+					cmd += " " + backupName
+					log.Errorf("%s return error: %v", cmd, createRemoteErr)
 					createRemoteErrCount += 1
 				} else {
 					createRemoteErrCount = 0

@@ -216,7 +216,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 			}
 		}
 	}
-	if isObjectDiskContainsTables || diffFromRemote != "" {
+	if isObjectDiskContainsTables || (diffFromRemote != "" && b.cfg.General.RemoteStorage != "custom") {
 		var err error
 		if err = config.ValidateObjectDiskConfig(b.cfg); err != nil {
 			return err
@@ -235,7 +235,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 		}()
 	}
 	var tablesDiffFromRemote map[metadata.TableTitle]metadata.TableMetadata
-	if diffFromRemote != "" {
+	if diffFromRemote != "" && b.cfg.General.RemoteStorage != "custom" {
 		var diffFromRemoteErr error
 		tablesDiffFromRemote, diffFromRemoteErr = b.getTablesDiffFromRemote(ctx, diffFromRemote, tablePattern)
 		if diffFromRemoteErr != nil {
