@@ -123,8 +123,8 @@ func (s *S3) Connect(ctx context.Context) error {
 		awsConfig.Credentials = stscreds.NewWebIdentityRoleProvider(
 			stsClient, awsRoleARN, stscreds.IdentityTokenFile(awsWebIdentityTokenFile),
 		)
-		// backup role S3_ASSUME_ROLE_ARN have high priority than AWS_ROLE_ARN see https://github.com/Altinity/clickhouse-backup/issues/898
 	} else if s.Config.AssumeRoleARN != "" {
+		// backup role S3_ASSUME_ROLE_ARN have high priority than AWS_ROLE_ARN see https://github.com/Altinity/clickhouse-backup/issues/898
 		awsConfig.Credentials = stscreds.NewAssumeRoleProvider(stsClient, s.Config.AssumeRoleARN)
 	} else if awsRoleARN != "" {
 		awsConfig.Credentials = stscreds.NewAssumeRoleProvider(stsClient, awsRoleARN)
