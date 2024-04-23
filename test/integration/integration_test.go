@@ -2214,9 +2214,12 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 	generateIncrementTestData(t, ch, r, defaultIncrementData)
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables", tablesPattern, incrementBackupName))
 
-	log.Info("create --diff-from-remote backup")
-	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--diff-from-remote", testBackupName, "--tables", tablesPattern, incrementBackupName2))
-	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", incrementBackupName2))
+	// https://github.com/Altinity/clickhouse-backup/pull/900
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 {
+		log.Info("create --diff-from-remote backup")
+		r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--diff-from-remote", testBackupName, "--tables", tablesPattern, incrementBackupName2))
+		r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", incrementBackupName2))
+	}
 
 	log.Info("Upload")
 	uploadCmd := fmt.Sprintf("%s_COMPRESSION_FORMAT=zstd CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/%s clickhouse-backup upload --resume %s", remoteStorageType, backupConfig, testBackupName)
