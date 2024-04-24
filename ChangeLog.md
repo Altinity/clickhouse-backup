@@ -1,6 +1,6 @@
 # v2.5.2
 BUG FIXES
-- fixed issue after [865](https://github.com/Altinity/clickhouse-backup/pull/865) we can't use `create_remote --diff-from-remote` for `remote_storage: custom`, affected versions 2.5.0, 2.5.1, fix [900](https://github.com/Altinity/clickhouse-backup/pull/900)
+- fixed issue after [865](https://github.com/Altinity/clickhouse-backup/pull/865) we can't use `create_remote --diff-from-remote` for `remote_storage: custom`, affected versions 2.5.0, 2.5.1, fix [900](https://github.com/Altinity/clickhouse-backup/issue/900)
 
 # v2.5.1
 BUG FIXES
