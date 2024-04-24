@@ -508,7 +508,11 @@ func (b *Backuper) generateEmbeddedBackupSQL(ctx context.Context, backupName str
 	}
 	// incremental native backup https://github.com/Altinity/clickhouse-backup/issues/735
 	if baseBackup != "" {
-		backupSettings = append(backupSettings, fmt.Sprintf("base_backup='%s'", baseBackup))
+		baseBackup, err = b.getEmbeddedBackupLocation(ctx, baseBackup)
+		if err != nil {
+			return "", "", err
+		}
+		backupSettings = append(backupSettings, "base_backup="+baseBackup)
 	}
 	if len(backupSettings) > 0 {
 		backupSQL += " SETTINGS " + strings.Join(backupSettings, ", ")

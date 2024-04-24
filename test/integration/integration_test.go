@@ -1479,7 +1479,7 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	}
 	out, err := dockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml list local")
 	r.NoError(err)
-	// shall not delete any backup, cause all deleted backup have links as required in other backups
+	// shall not delete any backup, cause all deleted backups have links as required in other backups
 	for _, backupName := range backupNames {
 		r.Contains(out, backupName)
 		r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupName))
@@ -2002,11 +2002,11 @@ func TestIntegrationEmbedded(t *testing.T) {
 	//t.Parallel()
 	r := require.New(t)
 	if compareVersion(version, "24.3") >= 0 {
-		//CUSTOM backup create folder in each disk, need to clear
+		//CUSTOM backup creates folder in each disk, need to clear
 		r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_local/backup/"))
 		runMainIntegrationScenario(t, "EMBEDDED_LOCAL", "config-s3-embedded-local.yml")
 	}
-	//CUSTOM backup create folder in each disk, need to clear
+	//CUSTOM backup creates folder in each disk, need to clear
 	r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_s3/backup/"))
 	runMainIntegrationScenario(t, "EMBEDDED_S3", "config-s3-embedded.yml")
 
@@ -2303,7 +2303,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 
 	// test end
 	log.Info("Clean after finish")
-	// during download increment, partially downloaded  full will clean
+	// during download increment, partially downloaded full will clean
 	fullCleanup(t, r, ch, []string{incrementBackupName}, []string{"local"}, nil, true, false, backupConfig)
 	fullCleanup(t, r, ch, []string{testBackupName, incrementBackupName}, []string{"remote"}, databaseList, true, true, backupConfig)
 	replaceStorageDiskNameForReBalance(r, ch, remoteStorageType, true)
@@ -2418,7 +2418,7 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, ch *Test
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName))
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "download", "--partitions=(0,'2022-01-02'),(0,'2022-01-03')", fullBackupName))
 	fullBackupDir := "/var/lib/clickhouse/backup/" + fullBackupName + "/shadow/" + dbName + "/t?/default/"
-	// embedded storage with embedded disks contain object disk files and will download additional data parts
+	// embedded storage with embedded disks contains object disk files and will download additional data parts
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") {
 		fullBackupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED")) + "/" + fullBackupName + "/data/" + dbName + "/t?"
 	}
@@ -2464,7 +2464,7 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, ch *Test
 
 	expectedLines = "17"
 	fullBackupDir = "/var/lib/clickhouse/backup/" + fullBackupName + "/shadow/" + dbName + "/t?/default/"
-	// embedded storage with embedded disks contain hardLink files and will download additional data parts
+	// embedded storage with embedded disks contains hardLink files and will download additional data parts
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") {
 		fullBackupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED")) + "/" + fullBackupName + "/data/" + dbName + "/t?"
 	}
@@ -2495,7 +2495,7 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, ch *Test
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && !strings.HasSuffix(remoteStorageType, "_URL") {
 		partitionBackupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED")) + "/" + partitionBackupName + "/data/" + dbName + "/t1"
 	}
-	//embedded backup without disk have only local metadata
+	//embedded backup without a disk has only local metadata
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && strings.HasSuffix(remoteStorageType, "_URL") {
 		partitionBackupDir = "/var/lib/clickhouse/backup/" + partitionBackupName + "/metadata/" + dbName + "/t?.json"
 		expectedLines = "1"
@@ -2512,7 +2512,7 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, ch *Test
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && !strings.HasSuffix(remoteStorageType, "_URL") {
 		partitionBackupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED")) + "/" + partitionBackupName + "/data/" + dbName + "/t1"
 	}
-	//embedded backup without disk have only local metadata
+	//embedded backup without a disk has only local metadata
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && strings.HasSuffix(remoteStorageType, "_URL") {
 		partitionBackupDir = "/var/lib/clickhouse/backup/" + partitionBackupName + "/metadata/" + dbName + "/t?.json"
 		expectedLines = "1"
@@ -2573,7 +2573,6 @@ func checkResumeAlreadyProcessed(backupCmd, testBackupName, resumeKind string, r
 }
 
 func fullCleanup(t *testing.T, r *require.Assertions, ch *TestClickHouse, backupNames, backupTypes, databaseList []string, checkDeleteErr, checkDropErr bool, backupConfig string) {
-	//WTF? why table switched to readonly during drop?
 	for _, backupName := range backupNames {
 		for _, backupType := range backupTypes {
 			err := dockerExec("clickhouse-backup", "bash", "-xce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" delete "+backupType+" "+backupName)
@@ -2977,17 +2976,17 @@ func (ch *TestClickHouse) queryWithNoError(r *require.Assertions, query string, 
 
 var dockerExecTimeout = 180 * time.Second
 
-func dockerExecBackground(container string, cmd ...string) error {
-	out, err := dockerExecBackgroundOut(container, cmd...)
-	log.Info(out)
-	return err
-}
+//func dockerExecBackground(container string, cmd ...string) error {
+//	out, err := dockerExecBackgroundOut(container, cmd...)
+//	log.Info(out)
+//	return err
+//}
 
-func dockerExecBackgroundOut(container string, cmd ...string) (string, error) {
-	dcmd := []string{"exec", "-d", container}
-	dcmd = append(dcmd, cmd...)
-	return utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", dcmd...)
-}
+//func dockerExecBackgroundOut(container string, cmd ...string) (string, error) {
+//	dcmd := []string{"exec", "-d", container}
+//	dcmd = append(dcmd, cmd...)
+//	return utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", dcmd...)
+//}
 
 func dockerExec(container string, cmd ...string) error {
 	out, err := dockerExecOut(container, cmd...)

@@ -1,3 +1,7 @@
+# v2.5.3
+BUG FIXES
+- fixed `Unknown setting base_backup` for `use_embedded_backup_restore: true` and `create --diff-from-remote`, affected 2.5.0+ versions, fix [735](https://github.com/Altinity/clickhouse-backup/issues/735)
+
 # v2.5.2
 BUG FIXES
 - fixed issue after [865](https://github.com/Altinity/clickhouse-backup/pull/865) we can't use `create_remote --diff-from-remote` for `remote_storage: custom`, affected versions 2.5.0, 2.5.1, fix [900](https://github.com/Altinity/clickhouse-backup/issue/900)
