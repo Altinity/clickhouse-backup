@@ -83,12 +83,14 @@ NAME:
    clickhouse-backup tables - List of tables, exclude skip_tables
 
 USAGE:
-   clickhouse-backup tables [-t, --tables=<db>.<table>]] [--all]
+   clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--all]
 
 OPTIONS:
-   --config value, -c value                 Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-   --all, -a                                Print table even when match with skip_tables pattern
-   --table value, --tables value, -t value  List tables only match with table name patterns, separated by comma, allow ? and * as wildcard
+   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value  override any environment variable via CLI parameter
+   --all, -a                                  Print table even when match with skip_tables pattern
+   --table value, --tables value, -t value    List tables only match with table name patterns, separated by comma, allow ? and * as wildcard
+   --remote-backup value                      List tables from remote backup
    
 ```
 ### CLI command - create
@@ -103,9 +105,11 @@ DESCRIPTION:
    Create new backup
 
 OPTIONS:
-   --config value, -c value                 Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-   --table value, --tables value, -t value  Create backup only matched with table name patterns, separated by comma, allow ? and * as wildcard
-   --partitions partition_id                Create backup only for selected partition names, separated by comma
+   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value  override any environment variable via CLI parameter
+   --table value, --tables value, -t value    Create backup only matched with table name patterns, separated by comma, allow ? and * as wildcard
+   --diff-from-remote value                   Create incremental embedded backup or upload incremental object disk data based on other remote backup name
+   --partitions partition_id                  Create backup only for selected partition names, separated by comma
 If PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
 If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
 If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
@@ -131,9 +135,10 @@ DESCRIPTION:
    Create and upload
 
 OPTIONS:
-   --config value, -c value                 Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-   --table value, --tables value, -t value  Create and upload backup only matched with table name patterns, separated by comma, allow ? and * as wildcard
-   --partitions partition_id                Create and upload backup only for selected partition names, separated by comma
+   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value  override any environment variable via CLI parameter
+   --table value, --tables value, -t value    Create and upload backup only matched with table name patterns, separated by comma, allow ? and * as wildcard
+   --partitions partition_id                  Create and upload backup only for selected partition names, separated by comma
 If PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
 If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
 If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
@@ -148,6 +153,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --configs-only                                    Backup 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
    --resume, --resumable                             Save intermediate upload state and resume upload if backup exists on remote storage, ignore when 'remote_storage: custom' or 'use_embedded_backup_restore: true'
    --skip-check-parts-columns                        Skip check system.parts_columns to disallow backup inconsistent column types for data parts
+   --delete, --delete-source, --delete-local         explicitly delete local backup during upload
    
 ```
 ### CLI command - upload
@@ -159,18 +165,20 @@ USAGE:
    clickhouse-backup upload [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--diff-from=<local_backup_name>] [--diff-from-remote=<remote_backup_name>] [--resumable] <backup_name>
 
 OPTIONS:
-   --config value, -c value                 Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-   --diff-from value                        Local backup name which used to upload current backup as incremental
-   --diff-from-remote value                 Remote backup name which used to upload current backup as incremental
-   --table value, --tables value, -t value  Upload data only for matched table name patterns, separated by comma, allow ? and * as wildcard
-   --partitions partition_id                Upload backup only for selected partition names, separated by comma
+   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value  override any environment variable via CLI parameter
+   --diff-from value                          Local backup name which used to upload current backup as incremental
+   --diff-from-remote value                   Remote backup name which used to upload current backup as incremental
+   --table value, --tables value, -t value    Upload data only for matched table name patterns, separated by comma, allow ? and * as wildcard
+   --partitions partition_id                  Upload backup only for selected partition names, separated by comma
 If PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
 If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
 If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
 Values depends on field types in your table, use single quotes for String and Date/DateTime related types
 Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
-   --schema, -s           Upload schemas only
-   --resume, --resumable  Save intermediate upload state and resume upload if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
+   --schema, -s                               Upload schemas only
+   --resume, --resumable                      Save intermediate upload state and resume upload if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
+   --delete, --delete-source, --delete-local  explicitly delete local backup during upload
    
 ```
 ### CLI command - list
@@ -182,7 +190,8 @@ USAGE:
    clickhouse-backup list [all|local|remote] [latest|previous]
 
 OPTIONS:
-   --config value, -c value  Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value  override any environment variable via CLI parameter
    
 ```
 ### CLI command - download
@@ -194,9 +203,10 @@ USAGE:
    clickhouse-backup download [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--resumable] <backup_name>
 
 OPTIONS:
-   --config value, -c value                 Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-   --table value, --tables value, -t value  Download objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
-   --partitions partition_id                Download backup data only for selected partition names, separated by comma
+   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value  override any environment variable via CLI parameter
+   --table value, --tables value, -t value    Download objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
+   --partitions partition_id                  Download backup data only for selected partition names, separated by comma
 If PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
 If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
 If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
@@ -216,6 +226,7 @@ USAGE:
 
 OPTIONS:
    --config value, -c value                    Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value   override any environment variable via CLI parameter
    --table value, --tables value, -t value     Restore only database and objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
    --restore-database-mapping value, -m value  Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.
    --partitions partition_id                   Restore backup only for selected partition names, separated by comma
@@ -244,6 +255,7 @@ USAGE:
 
 OPTIONS:
    --config value, -c value                    Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value   override any environment variable via CLI parameter
    --table value, --tables value, -t value     Download and restore objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
    --restore-database-mapping value, -m value  Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.
    --partitions partition_id                   Download and restore backup only for selected partition names, separated by comma
@@ -272,7 +284,8 @@ USAGE:
    clickhouse-backup delete <local|remote> <backup_name>
 
 OPTIONS:
-   --config value, -c value  Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value  override any environment variable via CLI parameter
    
 ```
 ### CLI command - default-config
@@ -284,7 +297,8 @@ USAGE:
    clickhouse-backup default-config [command options] [arguments...]
 
 OPTIONS:
-   --config value, -c value  Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value  override any environment variable via CLI parameter
    
 ```
 ### CLI command - print-config
@@ -296,7 +310,8 @@ USAGE:
    clickhouse-backup print-config [command options] [arguments...]
 
 OPTIONS:
-   --config value, -c value  Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value  override any environment variable via CLI parameter
    
 ```
 ### CLI command - clean
@@ -308,7 +323,8 @@ USAGE:
    clickhouse-backup clean [command options] [arguments...]
 
 OPTIONS:
-   --config value, -c value  Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value  override any environment variable via CLI parameter
    
 ```
 ### CLI command - clean_remote_broken
@@ -320,7 +336,8 @@ USAGE:
    clickhouse-backup clean_remote_broken [command options] [arguments...]
 
 OPTIONS:
-   --config value, -c value  Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value  override any environment variable via CLI parameter
    
 ```
 ### CLI command - watch
@@ -335,12 +352,13 @@ DESCRIPTION:
    Execute create_remote + delete local, create full backup every `--full-interval`, create and upload incremental backup every `--watch-interval` use previous backup as base with `--diff-from-remote` option, use `backups_to_keep_remote` config option for properly deletion remote backups, will delete old backups which not have references from other backups
 
 OPTIONS:
-   --config value, -c value                 Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-   --watch-interval value                   Interval for run 'create_remote' + 'delete local' for incremental backup, look format https://pkg.go.dev/time#ParseDuration
-   --full-interval value                    Interval for run 'create_remote'+'delete local' when stop create incremental backup sequence and create full backup, look format https://pkg.go.dev/time#ParseDuration
-   --watch-backup-name-template value       Template for new backup name, could contain names from system.macros, {type} - full or incremental and {time:LAYOUT}, look to https://go.dev/src/time/format.go for layout examples
-   --table value, --tables value, -t value  Create and upload only objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
-   --partitions partition_id                Partitions names, separated by comma
+   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value  override any environment variable via CLI parameter
+   --watch-interval value                     Interval for run 'create_remote' + 'delete local' for incremental backup, look format https://pkg.go.dev/time#ParseDuration
+   --full-interval value                      Interval for run 'create_remote'+'delete local' when stop create incremental backup sequence and create full backup, look format https://pkg.go.dev/time#ParseDuration
+   --watch-backup-name-template value         Template for new backup name, could contain names from system.macros, {type} - full or incremental and {time:LAYOUT}, look to https://go.dev/src/time/format.go for layout examples
+   --table value, --tables value, -t value    Create and upload only objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
+   --partitions partition_id                  Partitions names, separated by comma
 If PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
 If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
 If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format
@@ -361,11 +379,12 @@ USAGE:
    clickhouse-backup server [command options] [arguments...]
 
 OPTIONS:
-   --config value, -c value            Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-   --watch                             Run watch go-routine for 'create_remote' + 'delete local', after API server startup
-   --watch-interval value              Interval for run 'create_remote' + 'delete local' for incremental backup, look format https://pkg.go.dev/time#ParseDuration
-   --full-interval value               Interval for run 'create_remote'+'delete local' when stop create incremental backup sequence and create full backup, look format https://pkg.go.dev/time#ParseDuration
-   --watch-backup-name-template value  Template for new backup name, could contain names from system.macros, {type} - full or incremental and {time:LAYOUT}, look to https://go.dev/src/time/format.go for layout examples
+   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value  override any environment variable via CLI parameter
+   --watch                                    Run watch go-routine for 'create_remote' + 'delete local', after API server startup
+   --watch-interval value                     Interval for run 'create_remote' + 'delete local' for incremental backup, look format https://pkg.go.dev/time#ParseDuration
+   --full-interval value                      Interval for run 'create_remote'+'delete local' when stop create incremental backup sequence and create full backup, look format https://pkg.go.dev/time#ParseDuration
+   --watch-backup-name-template value         Template for new backup name, could contain names from system.macros, {type} - full or incremental and {time:LAYOUT}, look to https://go.dev/src/time/format.go for layout examples
    
 ```
 
