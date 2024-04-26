@@ -1,3 +1,7 @@
+# v2.5.4
+IMPROVEMENTS
+- add `info` logging for `uploadObjectDiskParts` and `downloadObjectDiskParts` operation
+
 # v2.5.3
 BUG FIXES
 - fixed `Unknown setting base_backup` for `use_embedded_backup_restore: true` and `create --diff-from-remote`, affected 2.5.0+ versions, fix [735](https://github.com/Altinity/clickhouse-backup/issues/735)

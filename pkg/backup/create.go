@@ -757,11 +757,12 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 			log.WithField("disk", disk.Name).Debug("shadow moved")
 			if len(parts) > 0 && (b.isDiskTypeObject(disk.Type) || b.isDiskTypeEncryptedObject(disk, diskList)) {
 				start := time.Now()
+				log.WithField("disk", disk.Name).Info("upload object_disk start")
 				if size, err = b.uploadObjectDiskParts(ctx, backupName, tablesDiffFromRemote[metadata.TableTitle{Database: table.Database, Table: table.Name}], backupShadowPath, disk); err != nil {
 					return disksToPartsMap, realSize, err
 				}
 				realSize[disk.Name] += size
-				log.WithField("disk", disk.Name).WithField("duration", utils.HumanizeDuration(time.Since(start))).WithField("size", utils.FormatBytes(uint64(size))).Info("object_disk data uploaded")
+				log.WithField("disk", disk.Name).WithField("duration", utils.HumanizeDuration(time.Since(start))).WithField("size", utils.FormatBytes(uint64(size))).Info("upload object_disk finish")
 			}
 			// Clean all the files under the shadowPath, cause UNFREEZE unavailable
 			if version < 21004000 {
