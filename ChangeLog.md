@@ -1,3 +1,7 @@
+# v2.5.5
+BUG FIXES
+- fixed `create --rbac` behavior when /var/lib/clickhouse/access not exists but present only `replicated` system.user_directories, fix [904](https://github.com/Altinity/clickhouse-backup/issues/904)
+
 # v2.5.4
 IMPROVEMENTS
 - add `info` logging for `uploadObjectDiskParts` and `downloadObjectDiskParts` operation

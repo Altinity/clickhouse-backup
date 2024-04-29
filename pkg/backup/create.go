@@ -615,23 +615,27 @@ func (b *Backuper) createBackupRBAC(ctx context.Context, backupPath string, disk
 	default:
 		rbacDataSize := uint64(0)
 		rbacBackup := path.Join(backupPath, "access")
+		replicatedRBACDataSize, err := b.createBackupRBACReplicated(ctx, rbacBackup)
+		if err != nil {
+			return 0, err
+		}
 		accessPath, err := b.ch.GetAccessManagementPath(ctx, disks)
 		if err != nil {
 			return 0, err
 		}
 		accessPathInfo, err := os.Stat(accessPath)
 		if err != nil && !os.IsNotExist(err) {
-			return 0, err
+			return rbacDataSize + replicatedRBACDataSize, err
 		}
 		if err == nil && !accessPathInfo.IsDir() {
-			return 0, fmt.Errorf("%s is not directory", accessPath)
+			return rbacDataSize + replicatedRBACDataSize, fmt.Errorf("%s is not directory", accessPath)
 		}
 		if os.IsNotExist(err) {
-			return 0, nil
+			return rbacDataSize + replicatedRBACDataSize, nil
 		}
 		rbacSQLFiles, err := filepath.Glob(path.Join(accessPath, "*.sql"))
 		if err != nil {
-			return 0, err
+			return rbacDataSize + replicatedRBACDataSize, err
 		}
 		if len(rbacSQLFiles) != 0 {
 			log.Debugf("copy %s -> %s", accessPath, rbacBackup)
@@ -651,10 +655,6 @@ func (b *Backuper) createBackupRBAC(ctx context.Context, backupPath string, disk
 			if copyErr != nil {
 				return 0, copyErr
 			}
-		}
-		replicatedRBACDataSize, err := b.createBackupRBACReplicated(ctx, rbacBackup)
-		if err != nil {
-			return 0, err
 		}
 		return rbacDataSize + replicatedRBACDataSize, nil
 	}
