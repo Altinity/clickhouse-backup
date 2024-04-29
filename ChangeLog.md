@@ -1,4 +1,7 @@
 # v2.5.5
+IMPROVEMENTS
+- added `object_disk_server_side_copy_concurrency` with default value `32`, to avoid slow `create` or `restore` backup process which was restricted by `upload_concurrency` or `download_concurrency` options, fix [903](https://github.com/Altinity/clickhouse-backup/issues/903)
+
 BUG FIXES
 - fixed `create --rbac` behavior when /var/lib/clickhouse/access not exists but present only `replicated` system.user_directories, fix [904](https://github.com/Altinity/clickhouse-backup/issues/904)
 

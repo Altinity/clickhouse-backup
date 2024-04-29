@@ -515,7 +515,7 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 	numParts := (srcSize + partSize - 1) / partSize
 
 	copyPartErrGroup, ctx := errgroup.WithContext(ctx)
-	copyPartErrGroup.SetLimit(s.Config.Concurrency)
+	copyPartErrGroup.SetLimit(s.Config.Concurrency * s.Config.Concurrency)
 
 	var mu sync.Mutex
 	var parts []s3types.CompletedPart

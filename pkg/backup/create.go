@@ -246,7 +246,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 	var backupDataSize, backupMetadataSize uint64
 	var metaMutex sync.Mutex
 	createBackupWorkingGroup, createCtx := errgroup.WithContext(ctx)
-	createBackupWorkingGroup.SetLimit(int(b.cfg.General.UploadConcurrency))
+	createBackupWorkingGroup.SetLimit(b.cfg.ClickHouse.MaxConnections)
 
 	var tableMetas []metadata.TableTitle
 	for _, tableItem := range tables {
@@ -796,7 +796,7 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	uploadObjectDiskPartsWorkingGroup, ctx := errgroup.WithContext(ctx)
-	uploadObjectDiskPartsWorkingGroup.SetLimit(int(b.cfg.General.UploadConcurrency * b.cfg.General.UploadConcurrency))
+	uploadObjectDiskPartsWorkingGroup.SetLimit(int(b.cfg.General.ObjectDiskServerSizeCopyConcurrency))
 	srcDiskConnection, exists := object_disk.DisksConnections.Load(disk.Name)
 	if !exists {
 		return 0, fmt.Errorf("uploadObjectDiskParts: %s not present in object_disk.DisksConnections", disk.Name)

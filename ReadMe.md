@@ -414,6 +414,9 @@ general:
   download_max_bytes_per_second: 0  # DOWNLOAD_MAX_BYTES_PER_SECOND, 0 means no throttling 
   upload_max_bytes_per_second: 0    # UPLOAD_MAX_BYTES_PER_SECOND, 0 means no throttling
   
+  # when table data contains in system.disks with type=ObjectStorage, then we need execute remote copy object in object storage service provider, this parameter can restrict how many files will copied in parallel  for each table 
+  object_disk_server_side_copy_concurrency: 32 
+  
   # RESTORE_SCHEMA_ON_CLUSTER, execute all schema related SQL queries with `ON CLUSTER` clause as Distributed DDL.
   # Check `system.clusters` table for the correct cluster name, also `system.macros` can be used.
   # This isn't applicable when `use_embedded_backup_restore: true`

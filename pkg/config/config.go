@@ -38,34 +38,35 @@ type Config struct {
 
 // GeneralConfig - general setting section
 type GeneralConfig struct {
-	RemoteStorage             string            `yaml:"remote_storage" envconfig:"REMOTE_STORAGE"`
-	MaxFileSize               int64             `yaml:"max_file_size" envconfig:"MAX_FILE_SIZE"`
-	BackupsToKeepLocal        int               `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL"`
-	BackupsToKeepRemote       int               `yaml:"backups_to_keep_remote" envconfig:"BACKUPS_TO_KEEP_REMOTE"`
-	LogLevel                  string            `yaml:"log_level" envconfig:"LOG_LEVEL"`
-	AllowEmptyBackups         bool              `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
-	DownloadConcurrency       uint8             `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
-	UploadConcurrency         uint8             `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
-	UploadMaxBytesPerSecond   uint64            `yaml:"upload_max_bytes_per_second" envconfig:"UPLOAD_MAX_BYTES_PER_SECOND"`
-	DownloadMaxBytesPerSecond uint64            `yaml:"download_max_bytes_per_second" envconfig:"DOWNLOAD_MAX_BYTES_PER_SECOND"`
-	UseResumableState         bool              `yaml:"use_resumable_state" envconfig:"USE_RESUMABLE_STATE"`
-	RestoreSchemaOnCluster    string            `yaml:"restore_schema_on_cluster" envconfig:"RESTORE_SCHEMA_ON_CLUSTER"`
-	UploadByPart              bool              `yaml:"upload_by_part" envconfig:"UPLOAD_BY_PART"`
-	DownloadByPart            bool              `yaml:"download_by_part" envconfig:"DOWNLOAD_BY_PART"`
-	RestoreDatabaseMapping    map[string]string `yaml:"restore_database_mapping" envconfig:"RESTORE_DATABASE_MAPPING"`
-	RetriesOnFailure          int               `yaml:"retries_on_failure" envconfig:"RETRIES_ON_FAILURE"`
-	RetriesPause              string            `yaml:"retries_pause" envconfig:"RETRIES_PAUSE"`
-	WatchInterval             string            `yaml:"watch_interval" envconfig:"WATCH_INTERVAL"`
-	FullInterval              string            `yaml:"full_interval" envconfig:"FULL_INTERVAL"`
-	WatchBackupNameTemplate   string            `yaml:"watch_backup_name_template" envconfig:"WATCH_BACKUP_NAME_TEMPLATE"`
-	ShardedOperationMode      string            `yaml:"sharded_operation_mode" envconfig:"SHARDED_OPERATION_MODE"`
-	CPUNicePriority           int               `yaml:"cpu_nice_priority" envconfig:"CPU_NICE_PRIORITY"`
-	IONicePriority            string            `yaml:"io_nice_priority" envconfig:"IO_NICE_PRIORITY"`
-	RBACBackupAlways          bool              `yaml:"rbac_backup_always" envconfig:"RBAC_BACKUP_ALWAYS"`
-	RBACConflictResolution    string            `yaml:"rbac_conflict_resolution" envconfig:"RBAC_CONFLICT_RESOLUTION"`
-	RetriesDuration           time.Duration
-	WatchDuration             time.Duration
-	FullDuration              time.Duration
+	RemoteStorage                       string            `yaml:"remote_storage" envconfig:"REMOTE_STORAGE"`
+	MaxFileSize                         int64             `yaml:"max_file_size" envconfig:"MAX_FILE_SIZE"`
+	BackupsToKeepLocal                  int               `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL"`
+	BackupsToKeepRemote                 int               `yaml:"backups_to_keep_remote" envconfig:"BACKUPS_TO_KEEP_REMOTE"`
+	LogLevel                            string            `yaml:"log_level" envconfig:"LOG_LEVEL"`
+	AllowEmptyBackups                   bool              `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
+	DownloadConcurrency                 uint8             `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
+	UploadConcurrency                   uint8             `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
+	UploadMaxBytesPerSecond             uint64            `yaml:"upload_max_bytes_per_second" envconfig:"UPLOAD_MAX_BYTES_PER_SECOND"`
+	DownloadMaxBytesPerSecond           uint64            `yaml:"download_max_bytes_per_second" envconfig:"DOWNLOAD_MAX_BYTES_PER_SECOND"`
+	ObjectDiskServerSizeCopyConcurrency uint8             `yaml:"object_disk_server_side_copy_concurrency" envconfig:"OBJECT_DISK_SERVER_SIDE_COPY_CONCURRENCY"`
+	UseResumableState                   bool              `yaml:"use_resumable_state" envconfig:"USE_RESUMABLE_STATE"`
+	RestoreSchemaOnCluster              string            `yaml:"restore_schema_on_cluster" envconfig:"RESTORE_SCHEMA_ON_CLUSTER"`
+	UploadByPart                        bool              `yaml:"upload_by_part" envconfig:"UPLOAD_BY_PART"`
+	DownloadByPart                      bool              `yaml:"download_by_part" envconfig:"DOWNLOAD_BY_PART"`
+	RestoreDatabaseMapping              map[string]string `yaml:"restore_database_mapping" envconfig:"RESTORE_DATABASE_MAPPING"`
+	RetriesOnFailure                    int               `yaml:"retries_on_failure" envconfig:"RETRIES_ON_FAILURE"`
+	RetriesPause                        string            `yaml:"retries_pause" envconfig:"RETRIES_PAUSE"`
+	WatchInterval                       string            `yaml:"watch_interval" envconfig:"WATCH_INTERVAL"`
+	FullInterval                        string            `yaml:"full_interval" envconfig:"FULL_INTERVAL"`
+	WatchBackupNameTemplate             string            `yaml:"watch_backup_name_template" envconfig:"WATCH_BACKUP_NAME_TEMPLATE"`
+	ShardedOperationMode                string            `yaml:"sharded_operation_mode" envconfig:"SHARDED_OPERATION_MODE"`
+	CPUNicePriority                     int               `yaml:"cpu_nice_priority" envconfig:"CPU_NICE_PRIORITY"`
+	IONicePriority                      string            `yaml:"io_nice_priority" envconfig:"IO_NICE_PRIORITY"`
+	RBACBackupAlways                    bool              `yaml:"rbac_backup_always" envconfig:"RBAC_BACKUP_ALWAYS"`
+	RBACConflictResolution              string            `yaml:"rbac_conflict_resolution" envconfig:"RBAC_CONFLICT_RESOLUTION"`
+	RetriesDuration                     time.Duration
+	WatchDuration                       time.Duration
+	FullDuration                        time.Duration
 }
 
 // GCSConfig - GCS settings section
@@ -508,30 +509,31 @@ func DefaultConfig() *Config {
 	}
 	return &Config{
 		General: GeneralConfig{
-			RemoteStorage:           "none",
-			MaxFileSize:             0,
-			BackupsToKeepLocal:      0,
-			BackupsToKeepRemote:     0,
-			LogLevel:                "info",
-			UploadConcurrency:       uploadConcurrency,
-			DownloadConcurrency:     downloadConcurrency,
-			RestoreSchemaOnCluster:  "",
-			UploadByPart:            true,
-			DownloadByPart:          true,
-			UseResumableState:       true,
-			RetriesOnFailure:        3,
-			RetriesPause:            "30s",
-			RetriesDuration:         100 * time.Millisecond,
-			WatchInterval:           "1h",
-			WatchDuration:           1 * time.Hour,
-			FullInterval:            "24h",
-			FullDuration:            24 * time.Hour,
-			WatchBackupNameTemplate: "shard{shard}-{type}-{time:20060102150405}",
-			RestoreDatabaseMapping:  make(map[string]string, 0),
-			IONicePriority:          "idle",
-			CPUNicePriority:         15,
-			RBACBackupAlways:        true,
-			RBACConflictResolution:  "recreate",
+			RemoteStorage:                       "none",
+			MaxFileSize:                         0,
+			BackupsToKeepLocal:                  0,
+			BackupsToKeepRemote:                 0,
+			LogLevel:                            "info",
+			UploadConcurrency:                   uploadConcurrency,
+			DownloadConcurrency:                 downloadConcurrency,
+			ObjectDiskServerSizeCopyConcurrency: 32,
+			RestoreSchemaOnCluster:              "",
+			UploadByPart:                        true,
+			DownloadByPart:                      true,
+			UseResumableState:                   true,
+			RetriesOnFailure:                    3,
+			RetriesPause:                        "30s",
+			RetriesDuration:                     100 * time.Millisecond,
+			WatchInterval:                       "1h",
+			WatchDuration:                       1 * time.Hour,
+			FullInterval:                        "24h",
+			FullDuration:                        24 * time.Hour,
+			WatchBackupNameTemplate:             "shard{shard}-{type}-{time:20060102150405}",
+			RestoreDatabaseMapping:              make(map[string]string, 0),
+			IONicePriority:                      "idle",
+			CPUNicePriority:                     15,
+			RBACBackupAlways:                    true,
+			RBACConflictResolution:              "recreate",
 		},
 		ClickHouse: ClickHouseConfig{
 			Username: "default",
