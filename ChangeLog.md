@@ -1,3 +1,7 @@
+# v2.5.6
+BUG FIXES
+- skip `ValidateObjectDiskConfig` for `--diff-from-remote` when object disk doesn't contains data fix [910](https://github.com/Altinity/clickhouse-backup/issues/910)
+
 # v2.5.5
 IMPROVEMENTS
 - added `object_disk_server_side_copy_concurrency` with default value `32`, to avoid slow `create` or `restore` backup process which was restricted by `upload_concurrency` or `download_concurrency` options, fix [903](https://github.com/Altinity/clickhouse-backup/issues/903)

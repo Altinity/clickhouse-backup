@@ -216,16 +216,21 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 			}
 		}
 	}
-	if isObjectDiskContainsTables || (diffFromRemote != "" && b.cfg.General.RemoteStorage != "custom") {
-		var err error
+
+	var err error
+	// https://github.com/Altinity/clickhouse-backup/issues/910
+	if isObjectDiskContainsTables {
 		if err = config.ValidateObjectDiskConfig(b.cfg); err != nil {
 			return err
 		}
+	}
+
+	if isObjectDiskContainsTables || (diffFromRemote != "" && b.cfg.General.RemoteStorage != "custom") {
 		b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, false, backupName)
 		if err != nil {
 			return err
 		}
-		if err := b.dst.Connect(ctx); err != nil {
+		if err = b.dst.Connect(ctx); err != nil {
 			return fmt.Errorf("can't connect to %s: %v", b.dst.Kind(), err)
 		}
 		defer func() {
