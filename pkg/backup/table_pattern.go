@@ -155,11 +155,13 @@ func (b *Backuper) shouldSkipByTableEngine(t metadata.TableMetadata) bool {
 			b.log.Warnf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
 			return true
 		}
-		if shouldSkip, err := regexp.MatchString(fmt.Sprintf("(?mi)ENGINE\\s*=\\s*%s[\\(\\s]", engine), t.Query); err == nil && shouldSkip {
-			b.log.Warnf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
-			return true
-		} else if err != nil {
-			b.log.Warnf("shouldSkipByTableEngine engine=%s return error: %v", engine, err)
+		if engine != "" {
+			if shouldSkip, err := regexp.MatchString(fmt.Sprintf("(?mi)ENGINE\\s*=\\s*%s[\\(\\s]", engine), t.Query); err == nil && shouldSkip {
+				b.log.Warnf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
+				return true
+			} else if err != nil {
+				b.log.Warnf("shouldSkipByTableEngine engine=%s return error: %v", engine, err)
+			}
 		}
 	}
 	return false

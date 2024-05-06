@@ -1,3 +1,8 @@
+# v2.5.7
+BUG FIXES
+- wrong skip tables by engine when empty variables value `CLICKHOUSE_SKIP_TABLE_ENGINES=engine,` instead of `CLICKHOUSE_SKIP_TABLE_ENGINES=engine` fix [915](https://github.com/Altinity/clickhouse-backup/issues/915)
+- restore stop works, if RBAC objects present in backup but user which used for connect to clickhouse don't have RBAC GRANTS or `access_management`, 2.5.0+ affected, fix [914](https://github.com/Altinity/clickhouse-backup/issues/914)
+
 # v2.5.6
 BUG FIXES
 - skip `ValidateObjectDiskConfig` for `--diff-from-remote` when object disk doesn't contains data fix [910](https://github.com/Altinity/clickhouse-backup/issues/910)
