@@ -95,10 +95,9 @@ jobs:
           awk '/^# / {s++} s == 1 {print}' ChangeLog.md > /tmp/release_notes.md
           echo "path=/tmp/release_notes.md" >> $GITHUB_OUTPUT
 
-      # @todo wait when resolve https://github.com/ncipollo/release-action/issues/406
       - name: Create release
         id: create_release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
           tag_name: v${{ steps.docker_tag.outputs.docker_tag }}

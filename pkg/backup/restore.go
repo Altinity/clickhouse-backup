@@ -520,7 +520,7 @@ func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, a
 		isRBACExistsSQL := fmt.Sprintf("SELECT toString(id) AS id, name FROM `system`.`%s` WHERE name=? LIMIT 1", systemTable)
 		existsRBACRow := make([]clickhouse.RBACObject, 0)
 		if err := b.ch.SelectContext(ctx, &existsRBACRow, isRBACExistsSQL, name); err != nil {
-			b.log.Fatalf("RBAC object resolve failed kind: %s, name: %s, error: %v", kind, name, err)
+			b.log.Warnf("RBAC object resolve failed, check SQL GRANTS or <access_management> settings for user which you use to connect to clickhouse-server, kind: %s, name: %s, error: %v", kind, name, err)
 			return false, "", ""
 		}
 		if len(existsRBACRow) == 0 {
