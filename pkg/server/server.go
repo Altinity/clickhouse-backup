@@ -1641,8 +1641,12 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 					if err != nil {
 						return err
 					}
+
 					if err = os.Remove(stateFile); err != nil {
-						return err
+						if api.config.General.BackupsToKeepLocal >= 0 {
+							return err
+						}
+						api.log.WithField("operation", "ResumeOperationsAfterRestart").Warnf("remove %s return error: ", err)
 					}
 				default:
 					return fmt.Errorf("unkown command for state file %s", stateFile)

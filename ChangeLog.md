@@ -1,3 +1,7 @@
+# v2.5.8
+BUG FIXES
+- fix corner cases for `ResumeOperationsAfterRestart` and `keep_backup_local: -1` behavior
+
 # v2.5.7
 BUG FIXES
 - wrong skip tables by engine when empty variables value `CLICKHOUSE_SKIP_TABLE_ENGINES=engine,` instead of `CLICKHOUSE_SKIP_TABLE_ENGINES=engine` fix [915](https://github.com/Altinity/clickhouse-backup/issues/915)
