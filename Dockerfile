@@ -78,7 +78,16 @@ CMD /src/build/${TARGETPLATFORM}/clickhouse-backup-fips --help
 
 FROM alpine:3.19 AS image_short
 ARG TARGETPLATFORM
+ARG VERSION=unknown
 MAINTAINER Eugene Klimov <eklimov@altinity.com>
+LABEL "org.opencontainers.image.version"=${VERSION}
+LABEL "org.opencontainers.image.vendor"="Altinity Inc."
+LABEL "org.opencontainers.image.licenses"="MIT"
+LABEL "org.opencontainers.image.title"="Altinity Backup for ClickHouse"
+LABEL "org.opencontainers.image.description"="A tool for easy ClickHouse backup and restore with support for many cloud and non-cloud storage types."
+LABEL "org.opencontainers.image.source"="https://github.com/Altinity/clickhouse-backup"
+LABEL "org.opencontainers.image.documentation"="https://github.com/Altinity/clickhouse-backup/blob/master/Manual.md"
+
 RUN addgroup -S -g 101 clickhouse \
     && adduser -S -h /var/lib/clickhouse -s /bin/bash -G clickhouse -g "ClickHouse server" -u 101 clickhouse
 RUN apk update && apk add --no-cache ca-certificates tzdata bash curl && update-ca-certificates
@@ -94,6 +103,15 @@ CMD [ "/bin/clickhouse-backup", "--help" ]
 
 FROM image_short AS image_fips
 ARG TARGETPLATFORM
+ARG VERSION=unknown
+LABEL "org.opencontainers.image.version"=${VERSION}
+LABEL "org.opencontainers.image.vendor"="Altinity Inc."
+LABEL "org.opencontainers.image.licenses"="MIT"
+LABEL "org.opencontainers.image.title"="Altinity Backup for ClickHouse"
+LABEL "org.opencontainers.image.description"="A tool for easy ClickHouse backup and restore with support for many cloud and non-cloud storage types."
+LABEL "org.opencontainers.image.source"="https://github.com/Altinity/clickhouse-backup"
+LABEL "org.opencontainers.image.documentation"="https://github.com/Altinity/clickhouse-backup/blob/master/Manual.md"
+
 MAINTAINER Eugene Klimov <eklimov@altinity.com>
 COPY build/${TARGETPLATFORM}/clickhouse-backup-fips /bin/clickhouse-backup
 RUN chmod +x /bin/clickhouse-backup
@@ -102,7 +120,15 @@ RUN chmod +x /bin/clickhouse-backup
 
 FROM ${CLICKHOUSE_IMAGE}:${CLICKHOUSE_VERSION} AS image_full
 ARG TARGETPLATFORM
+ARG VERSION=unknown
 MAINTAINER Eugene Klimov <eklimov@altinity.com>
+LABEL "org.opencontainers.image.version"=${VERSION}
+LABEL "org.opencontainers.image.vendor"="Altinity Inc."
+LABEL "org.opencontainers.image.licenses"="MIT"
+LABEL "org.opencontainers.image.title"="Altinity Backup for ClickHouse"
+LABEL "org.opencontainers.image.description"="A tool for easy ClickHouse backup and restore with support for many cloud and non-cloud storage types."
+LABEL "org.opencontainers.image.source"="https://github.com/Altinity/clickhouse-backup"
+LABEL "org.opencontainers.image.documentation"="https://github.com/Altinity/clickhouse-backup/blob/master/Manual.md"
 
 RUN apt-get update && apt-get install -y gpg xxd bsdmainutils parallel && wget -qO- https://kopia.io/signing-key | gpg --dearmor -o /usr/share/keyrings/kopia-keyring.gpg && \
     echo "deb [signed-by=/usr/share/keyrings/kopia-keyring.gpg] https://packages.kopia.io/apt/ stable main" > /etc/apt/sources.list.d/kopia.list && \
