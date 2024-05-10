@@ -546,7 +546,7 @@ func DefaultConfig() *Config {
 				"information_schema.*",
 				"_temporary_and_external_tables.*",
 			},
-			Timeout:                          "5m",
+			Timeout:                          "30m",
 			SyncReplicatedTables:             false,
 			LogSQLQueries:                    true,
 			ConfigDir:                        "/etc/clickhouse-server/",

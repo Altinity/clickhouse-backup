@@ -1,4 +1,8 @@
 # v2.5.8
+IMPROVEMENTS
+- added OCI compliant labels to containers
+- increased default clickhouse queries timeout from `5m` to `30m` for allow freeze very large tables with object disks
+
 BUG FIXES
 - fix corner cases for `ResumeOperationsAfterRestart` and `keep_backup_local: -1` behavior
 
