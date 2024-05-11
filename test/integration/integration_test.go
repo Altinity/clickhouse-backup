@@ -466,7 +466,7 @@ func TestRBAC(t *testing.T) {
 		ch.queryWithNoError(r, "DROP ROLE IF EXISTS test_rbac")
 		ch.queryWithNoError(r, "DROP USER IF EXISTS test_rbac")
 
-		creatAllRBAC := func(drop bool) {
+		createRBACObjects := func(drop bool) {
 			if drop {
 				log.Info("drop all RBAC related objects")
 				ch.queryWithNoError(r, "DROP SETTINGS PROFILE test_rbac")
@@ -482,15 +482,15 @@ func TestRBAC(t *testing.T) {
 			ch.queryWithNoError(r, "CREATE QUOTA test_rbac KEYED BY user_name FOR INTERVAL 1 hour NO LIMITS TO test_rbac")
 			ch.queryWithNoError(r, "CREATE ROW POLICY test_rbac ON default.test_rbac USING 1=1 AS RESTRICTIVE TO test_rbac")
 		}
-		creatAllRBAC(false)
+		createRBACObjects(false)
 
-		r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", config, "create", "--rbac", "--rbac-only", "test_rbac_backup"))
+		r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", config, "create", "--rbac", "--rbac-only", "--env", "S3_COMPRESSION_FORMAT=zstd", "test_rbac_backup"))
 		r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 CLICKHOUSE_BACKUP_CONFIG="+config+" clickhouse-backup upload test_rbac_backup"))
 		r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "local", "test_rbac_backup"))
 		r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
 
 		log.Info("create conflicted RBAC objects")
-		creatAllRBAC(true)
+		createRBACObjects(true)
 
 		r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
 
@@ -575,7 +575,11 @@ func TestConfigs(t *testing.T) {
 
 		r.NoError(dockerExec("clickhouse", "clickhouse-backup", "-c", config, "create", "--configs", "--configs-only", "test_configs_backup"))
 		ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_configs")
-		r.NoError(dockerExec("clickhouse", "bash", "-xec", "clickhouse-backup upload --env CLICKHOUSE_BACKUP_CONFIG="+config+" --env S3_COMPRESSION_FORMAT=none --env ALLOW_EMPTY_BACKUPS=1 test_configs_backup"))
+		compression := ""
+		if !strings.Contains(config, "embedded") {
+			compression = "--env AZBLOB_COMPRESSION_FORMAT=zstd --env S3_COMPRESSION_FORMAT=zstd"
+		}
+		r.NoError(dockerExec("clickhouse", "bash", "-xec", "clickhouse-backup upload "+compression+" --env CLICKHOUSE_BACKUP_CONFIG="+config+" --env S3_COMPRESSION_FORMAT=none --env ALLOW_EMPTY_BACKUPS=1 test_configs_backup"))
 		r.NoError(dockerExec("clickhouse", "clickhouse-backup", "-c", config, "delete", "local", "test_configs_backup"))
 
 		ch.queryWithNoError(r, "SYSTEM RELOAD CONFIG")

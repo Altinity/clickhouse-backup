@@ -39,9 +39,8 @@ func (readerWrapper readerWrapperForContext) Read(p []byte) (n int, err error) {
 
 type Backup struct {
 	metadata.BackupMetadata
-	FileExtension string
-	Broken        string
-	UploadDate    time.Time `json:"upload_date"`
+	Broken     string
+	UploadDate time.Time `json:"upload_date"`
 }
 
 func (b *Backup) GetFullSize() uint64 {

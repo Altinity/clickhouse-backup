@@ -540,7 +540,7 @@ func (b *Backuper) downloadBackupRelatedDir(ctx context.Context, remoteBackup st
 	localDir := path.Join(b.DefaultDataPath, "backup", remoteBackup.BackupName, prefix)
 
 	if remoteBackup.DataFormat != DirectoryFormat {
-		prefix = fmt.Sprintf("%s.%s", prefix, b.cfg.GetArchiveExtension())
+		prefix = fmt.Sprintf("%s.%s", prefix, config.ArchiveExtensions[remoteBackup.DataFormat])
 	}
 	remoteSource := path.Join(remoteBackup.BackupName, prefix)
 

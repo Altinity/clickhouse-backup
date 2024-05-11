@@ -1,10 +1,11 @@
 # v2.5.8
 IMPROVEMENTS
-- added OCI compliant labels to containers
+- added OCI compliant labels to containers, thanks https://github.com/denisok
 - increased default clickhouse queries timeout from `5m` to `30m` for allow freeze very large tables with object disks
 
-BUG FIXES
-- fix corner cases for `ResumeOperationsAfterRestart` and `keep_backup_local: -1` behavior
+- BUG FIXES
+- fix corner cases for `ResumeOperationsAfterRestart` and `keep_backup_local: -1` behavior 
+- fix wrong file extension recognition during download for `access` and `configs` , fix https://github.com/Altinity/clickhouse-backup/issues/921   
 
 # v2.5.7
 BUG FIXES
