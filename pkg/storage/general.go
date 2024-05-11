@@ -188,7 +188,6 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 				metadata.BackupMetadata{
 					BackupName: backupName,
 				},
-				"",
 				"broken (can't stat metadata.json)",
 				o.LastModified(), // folder
 			}
@@ -201,7 +200,6 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 				metadata.BackupMetadata{
 					BackupName: backupName,
 				},
-				"",
 				"broken (can't open metadata.json)",
 				o.LastModified(), // folder
 			}
@@ -214,7 +212,6 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 				metadata.BackupMetadata{
 					BackupName: backupName,
 				},
-				"",
 				"broken (can't read metadata.json)",
 				o.LastModified(), // folder
 			}
@@ -230,14 +227,13 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 				metadata.BackupMetadata{
 					BackupName: backupName,
 				},
-				"",
 				"broken (bad metadata.json)",
 				o.LastModified(), // folder
 			}
 			result = append(result, brokenBackup)
 			return nil
 		}
-		goodBackup := Backup{m, "", "", mf.LastModified()}
+		goodBackup := Backup{m, "", mf.LastModified()}
 		listCache[backupName] = goodBackup
 		result = append(result, goodBackup)
 		return nil
