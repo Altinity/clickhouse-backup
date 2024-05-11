@@ -1465,7 +1465,7 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	//t.Parallel()
 	r := require.New(t)
 	ch := &TestClickHouse{}
-	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second, 2*time.Second)
+	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second, 5*time.Second)
 	backupNames := make([]string, 5)
 	for i := 0; i < 5; i++ {
 		backupNames[i] = fmt.Sprintf("keep_remote_backup_%d", i)
