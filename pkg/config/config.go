@@ -15,7 +15,6 @@ import (
 	"github.com/apex/log"
 	"github.com/kelseyhightower/envconfig"
 	"github.com/urfave/cli"
-	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -252,6 +251,7 @@ type APIConfig struct {
 	IntegrationTablesHost         string `yaml:"integration_tables_host" envconfig:"API_INTEGRATION_TABLES_HOST"`
 	AllowParallel                 bool   `yaml:"allow_parallel" envconfig:"API_ALLOW_PARALLEL"`
 	CompleteResumableAfterRestart bool   `yaml:"complete_resumable_after_restart" envconfig:"API_COMPLETE_RESUMABLE_AFTER_RESTART"`
+	WatchIsMainProcess            bool   `yaml:"watch_is_main_process" envconfig:"WATCH_IS_MAIN_PROCESS"`
 }
 
 // ArchiveExtensions - list of available compression formats and associated file extensions

@@ -160,6 +160,14 @@ func (api *APIServer) RunWatch(cliCtx *cli.Context) {
 		api.clickhouseBackupVersion, commandId, api.GetMetrics(), cliCtx,
 	)
 	status.Current.Stop(commandId, err)
+	if api.config.API.WatchIsMainProcess {
+		// Do not stop server if 'watch' was canceled by the user command
+		if errors.Is(err, context.Canceled) {
+			return
+		}
+		status.Current.CancelAll("canceled because main watch process stopped unexpectedly")
+		_ = api.server.Close()
+	}
 }
 
 // Stop cancel all running commands, @todo think about graceful period
