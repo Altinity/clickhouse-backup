@@ -397,13 +397,13 @@ jobs:
     if: always()
     steps:
       - name: delete build-artifacts
-        uses: geekyeggo/delete-artifact@v4
+        uses: geekyeggo/delete-artifact@v5
         with:
           name: build-artifacts
           failOnError: false
 
       - name: delete build-gcp-credentials
-        uses: geekyeggo/delete-artifact@v4
+        uses: geekyeggo/delete-artifact@v5
         with:
           name: build-gcp-credentials
           failOnError: false
