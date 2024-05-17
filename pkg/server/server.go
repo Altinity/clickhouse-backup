@@ -159,15 +159,7 @@ func (api *APIServer) RunWatch(cliCtx *cli.Context) {
 		"*.*", nil, false, false, false, false,
 		api.clickhouseBackupVersion, commandId, api.GetMetrics(), cliCtx,
 	)
-	status.Current.Stop(commandId, err)
-	if api.config.API.WatchIsMainProcess {
-		// Do not stop server if 'watch' was canceled by the user command
-		if errors.Is(err, context.Canceled) {
-			return
-		}
-		status.Current.CancelAll("canceled because main watch process stopped unexpectedly")
-		_ = api.server.Close()
-	}
+	api.handleWatchResponse(commandId, err)
 }
 
 // Stop cancel all running commands, @todo think about graceful period
@@ -565,10 +557,7 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 	go func() {
 		b := backup.NewBackuper(cfg)
 		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, skipCheckPartsColumns, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
-		defer status.Current.Stop(commandId, err)
-		if err != nil {
-			api.log.Errorf("Watch error: %v", err)
-		}
+		api.handleWatchResponse(commandId, err)
 	}()
 
 	actionsResults = append(actionsResults, actionsResultsRow{
@@ -576,6 +565,19 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 		Operation: row.Command,
 	})
 	return actionsResults, nil
+}
+
+func (api *APIServer) handleWatchResponse(watchCommandId int, err error) {
+	status.Current.Stop(watchCommandId, err)
+	api.log.Errorf("Watch error: %v", err)
+	if api.config.API.WatchIsMainProcess {
+		// Do not stop server if 'watch' was canceled by the user command
+		if errors.Is(err, context.Canceled) {
+			return
+		}
+		status.Current.CancelAll("canceled because main watch process stopped unexpectedly")
+		_ = api.server.Close()
+	}
 }
 
 func (api *APIServer) actionsLog(w http.ResponseWriter, r *http.Request) {
