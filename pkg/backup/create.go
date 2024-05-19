@@ -486,10 +486,12 @@ func (b *Backuper) generateEmbeddedBackupSQL(ctx context.Context, backupName str
 		if nameList, exists := partitionsNameList[metadata.TableTitle{Database: table.Database, Table: table.Name}]; exists && len(nameList) > 0 {
 			partitionsSQL := ""
 			for _, partitionName := range nameList {
-				if strings.HasPrefix(partitionName, "(") {
-					partitionsSQL += partitionName + ","
-				} else {
-					partitionsSQL += "'" + partitionName + "',"
+				if partitionName != "*" {
+					if strings.HasPrefix(partitionName, "(") {
+						partitionsSQL += partitionName + ","
+					} else {
+						partitionsSQL += "'" + partitionName + "',"
+					}
 				}
 			}
 			tablesSQL += fmt.Sprintf(" PARTITIONS %s", partitionsSQL[:len(partitionsSQL)-1])
@@ -583,9 +585,15 @@ func (b *Backuper) fillEmbeddedPartsFromDirList(partitionsIdsMap common.EmptyMap
 				found = true
 				break
 			}
+			if strings.Contains(prefix, "*") {
+				if matched, err := filepath.Match(dirName, prefix); err == nil && matched {
+					found = true
+					break
+				}
+			}
 		}
 		if found {
-			parts[diskName] = append(parts[b.cfg.ClickHouse.EmbeddedBackupDisk], metadata.Part{
+			parts[diskName] = append(parts[diskName], metadata.Part{
 				Name: dirName,
 			})
 		}

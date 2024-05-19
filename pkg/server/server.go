@@ -532,7 +532,7 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 			fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
 		}
 		if matchParam, partitions := simpleParseArg(i, args, "--partitions"); matchParam {
-			partitionsToBackup = strings.Split(partitions, ",")
+			partitionsToBackup = append(partitionsToBackup, partitions)
 			fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, partitions)
 		}
 		if matchParam, _ = simpleParseArg(i, args, "--schema"); matchParam {
@@ -833,8 +833,8 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		diffFromRemote = baseBackup[0]
 	}
 	if partitions, exist := query["partitions"]; exist {
-		partitionsToBackup = strings.Split(partitions[0], ",")
-		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, partitions)
+		partitionsToBackup = append(partitionsToBackup, partitions...)
+		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, strings.Join(partitions, "\" --partitions=\""))
 	}
 	if schema, exist := query["schema"]; exist {
 		schemaOnly, _ = strconv.ParseBool(schema[0])
@@ -943,8 +943,8 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
 	}
 	if partitions, exist := query["partitions"]; exist {
-		partitionsToBackup = strings.Split(partitions[0], ",")
-		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, partitions)
+		partitionsToBackup = append(partitionsToBackup, partitions...)
+		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, strings.Join(partitions, "\" --partitions=\""))
 	}
 	if schema, exist := query["schema"]; exist {
 		schemaOnly, _ = strconv.ParseBool(schema[0])
@@ -1092,8 +1092,8 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
 	}
 	if partitions, exist := query["partitions"]; exist {
-		partitionsToBackup = strings.Split(partitions[0], ",")
-		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, partitions)
+		partitionsToBackup = append(partitionsToBackup, partitions...)
+		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, strings.Join(partitions, "\" --partitions=\""))
 	}
 	if _, exist := query["schema"]; exist {
 		schemaOnly = true
@@ -1194,8 +1194,8 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		fullCommand = fmt.Sprintf("%s --restore-database-mapping=\"%s\"", fullCommand, strings.Join(databaseMappingToRestore, ","))
 	}
 	if partitions, exist := query["partitions"]; exist {
-		partitionsToBackup = partitions
-		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, strings.Join(partitions, ","))
+		partitionsToBackup = append(partitionsToBackup, partitions...)
+		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, strings.Join(partitions, "\" --partitions=\""))
 	}
 	if _, exist := query["schema"]; exist {
 		schemaOnly = true
@@ -1287,8 +1287,8 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
 	}
 	if partitions, exist := query["partitions"]; exist {
-		partitionsToBackup = partitions
-		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, strings.Join(partitions, ","))
+		partitionsToBackup = append(partitionsToBackup, partitions...)
+		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, strings.Join(partitions, "\" --partitions=\""))
 	}
 	if _, exist := query["schema"]; exist {
 		schemaOnly = true
@@ -1636,9 +1636,9 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 					if partitions, ok := params["partitions"]; ok && len(partitions.([]interface{})) > 0 {
 						partitionsStr := make([]string, len(partitions.([]interface{})))
 						for j, v := range partitions.([]interface{}) {
-							partitionsStr[j] = v.(string)
+							partitionsStr[j] = fmt.Sprintf("--partitions=\"%s\"", v.(string))
 						}
-						args = append(args, fmt.Sprintf("--partitions=\"%s\"", strings.Join(partitionsStr, ",")))
+						args = append(args, partitionsStr...)
 					}
 					args = append(args, "--resumable=1", backupName)
 					fullCommand := strings.Join(args, " ")

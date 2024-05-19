@@ -147,11 +147,15 @@ func (b *Backuper) shouldSkipByTableName(tableFullName string) bool {
 }
 func (b *Backuper) shouldSkipByTableEngine(t metadata.TableMetadata) bool {
 	for _, engine := range b.cfg.ClickHouse.SkipTableEngines {
-		if engine == "MaterializedView" && (strings.HasPrefix(t.Query, "ATTACH MATERIALIZED VIEW") || strings.HasPrefix(t.Query, "CREATE MATERIALIZED VIEW")) {
+		if strings.ToLower(engine) == "dictionary" && (strings.HasPrefix(t.Query, "ATTACH DICTIONARY") || strings.HasPrefix(t.Query, "CREATE DICTIONARY")) {
 			b.log.Warnf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
 			return true
 		}
-		if engine == "View" && strings.HasPrefix(t.Query, "CREATE VIEW") {
+		if strings.ToLower(engine) == "materializedview" && (strings.HasPrefix(t.Query, "ATTACH MATERIALIZED VIEW") || strings.HasPrefix(t.Query, "CREATE MATERIALIZED VIEW")) {
+			b.log.Warnf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
+			return true
+		}
+		if strings.ToLower(engine) == "view" && strings.HasPrefix(t.Query, "CREATE VIEW") {
 			b.log.Warnf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
 			return true
 		}

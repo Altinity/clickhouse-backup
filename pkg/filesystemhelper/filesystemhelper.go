@@ -205,8 +205,20 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 }
 
 func IsPartInPartition(partName string, partitionsBackupMap common.EmptyMap) bool {
-	_, ok := partitionsBackupMap[strings.Split(partName, "_")[0]]
-	return ok
+	partitionId := strings.Split(partName, "_")[0]
+	if _, exists := partitionsBackupMap[partitionId]; exists {
+		return true
+	}
+	for pattern := range partitionsBackupMap {
+		if matched, err := filepath.Match(pattern, partitionId); err == nil && matched {
+			return true
+		} else if err != nil {
+			apexLog.Warnf("error filepath.Match(%s, %s) error: %v", pattern, partitionId, err)
+			apexLog.Debugf("%s not found in %s, file will filtered", partitionId, partitionsBackupMap)
+			return false
+		}
+	}
+	return false
 }
 
 func IsFileInPartition(disk, fileName string, partitionsBackupMap common.EmptyMap) bool {
@@ -221,8 +233,19 @@ func IsFileInPartition(disk, fileName string, partitionsBackupMap common.EmptyMa
 		}
 		fileName = decodedFileName
 	}
-	_, ok := partitionsBackupMap[fileName]
-	return ok
+	if _, exists := partitionsBackupMap[fileName]; exists {
+		return true
+	}
+	for pattern := range partitionsBackupMap {
+		if matched, err := filepath.Match(pattern, fileName); err == nil && matched {
+			return true
+		} else if err != nil {
+			apexLog.Warnf("error filepath.Match(%s, %s) error: %v", pattern, fileName, err)
+			apexLog.Debugf("%s not found in %s, file will filtered", fileName, partitionsBackupMap)
+			return false
+		}
+	}
+	return false
 }
 
 func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap common.EmptyMap, tableDiffFromRemote metadata.TableMetadata, disk clickhouse.Disk, version int) ([]metadata.Part, int64, error) {

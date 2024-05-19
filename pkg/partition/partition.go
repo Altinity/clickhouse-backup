@@ -9,6 +9,7 @@ import (
 	apexLog "github.com/apex/log"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -202,6 +203,12 @@ func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.C
 	// to allow use --partitions val1 --partitions val2, https://github.com/Altinity/clickhouse-backup/issues/425#issuecomment-1149855063
 	for _, partitionArg := range partitions {
 		partitionArg = strings.Trim(partitionArg, " \t")
+		tablePattern := "*.*"
+		// when PARTITION BY is table specific, https://github.com/Altinity/clickhouse-backup/issues/916
+		if tablePatternDelimiterIndex := strings.Index(partitionArg, ":"); tablePatternDelimiterIndex != -1 {
+			tablePattern = partitionArg[:tablePatternDelimiterIndex]
+			partitionArg = strings.TrimPrefix(partitionArg, tablePattern+":")
+		}
 		// when PARTITION BY clause return partition_id field as hash, https://github.com/Altinity/clickhouse-backup/issues/602
 		if strings.HasPrefix(partitionArg, "(") {
 			partitionArg = strings.TrimSuffix(strings.TrimPrefix(partitionArg, "("), ")")
@@ -211,7 +218,7 @@ func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.C
 					if partitionId, partitionName, err := GetPartitionIdAndName(ctx, ch, t.Database, t.Name, t.CreateTableQuery, partitionTuple); err != nil {
 						apexLog.Fatalf("partition.GetPartitionIdAndName error: %v", err)
 					} else if partitionId != "" {
-						addItemToIdMapAndNameListIfNotExists(partitionId, partitionName, t.Database, t.Name, partitionsIdMap, partitionsNameList)
+						addItemToIdMapAndNameListIfNotExists(partitionId, partitionName, t.Database, t.Name, partitionsIdMap, partitionsNameList, tablePattern)
 					}
 				}
 				for _, t := range tablesFromMetadata {
@@ -219,7 +226,7 @@ func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.C
 					if partitionId, partitionName, err := GetPartitionIdAndName(ctx, ch, t.Database, t.Table, t.Query, partitionTuple); err != nil {
 						apexLog.Fatalf("partition.GetPartitionIdAndName error: %v", err)
 					} else if partitionId != "" {
-						addItemToIdMapAndNameListIfNotExists(partitionId, partitionName, t.Database, t.Table, partitionsIdMap, partitionsNameList)
+						addItemToIdMapAndNameListIfNotExists(partitionId, partitionName, t.Database, t.Table, partitionsIdMap, partitionsNameList, tablePattern)
 					}
 				}
 			}
@@ -229,11 +236,11 @@ func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.C
 				item = strings.Trim(item, " \t")
 				for _, t := range tablesFromClickHouse {
 					createIdMapAndNameListIfNotExists(t.Database, t.Name, partitionsIdMap, partitionsNameList)
-					addItemToIdMapAndNameListIfNotExists(item, item, t.Database, t.Name, partitionsIdMap, partitionsNameList)
+					addItemToIdMapAndNameListIfNotExists(item, item, t.Database, t.Name, partitionsIdMap, partitionsNameList, tablePattern)
 				}
 				for _, t := range tablesFromMetadata {
 					createIdMapAndNameListIfNotExists(t.Database, t.Table, partitionsIdMap, partitionsNameList)
-					addItemToIdMapAndNameListIfNotExists(item, item, t.Database, t.Table, partitionsIdMap, partitionsNameList)
+					addItemToIdMapAndNameListIfNotExists(item, item, t.Database, t.Table, partitionsIdMap, partitionsNameList, tablePattern)
 				}
 			}
 		}
@@ -241,18 +248,22 @@ func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.C
 	return partitionsIdMap, partitionsNameList
 }
 
-func addItemToIdMapAndNameListIfNotExists(partitionId, partitionName, database string, table string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, partitionsNameList map[metadata.TableTitle][]string) {
-	if partitionId != "" {
-		partitionsIdMap[metadata.TableTitle{
-			Database: database, Table: table,
-		}][partitionId] = struct{}{}
-	}
-	if partitionName != "" {
-		partitionsNameList[metadata.TableTitle{
-			Database: database, Table: table,
-		}] = common.AddStringToSliceIfNotExists(partitionsNameList[metadata.TableTitle{
-			Database: database, Table: table,
-		}], partitionName)
+func addItemToIdMapAndNameListIfNotExists(partitionId, partitionName, database, table string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, partitionsNameList map[metadata.TableTitle][]string, tablePattern string) {
+	if matched, err := filepath.Match(tablePattern, database+"."+table); err == nil && matched {
+		if partitionId != "" {
+			partitionsIdMap[metadata.TableTitle{
+				Database: database, Table: table,
+			}][partitionId] = struct{}{}
+		}
+		if partitionName != "" {
+			partitionsNameList[metadata.TableTitle{
+				Database: database, Table: table,
+			}] = common.AddStringToSliceIfNotExists(partitionsNameList[metadata.TableTitle{
+				Database: database, Table: table,
+			}], partitionName)
+		}
+	} else if err != nil {
+		apexLog.Errorf("wrong --partitions table specific pattern matching: %v", err)
 	}
 }
 

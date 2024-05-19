@@ -1,3 +1,7 @@
+# v2.5.9
+IMPROVEMENTS
+- add to `--partitions` CLI and API parameter additional format `tablesPattern:partition1,partitionX` or `tablesPattern:(partition1),(partitionX)` fix https://github.com/Altinity/clickhouse-backup/issues/916
+
 # v2.5.8
 IMPROVEMENTS
 - added OCI compliant labels to containers, thanks https://github.com/denisok

@@ -2420,7 +2420,7 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, ch *Test
 	// check create_remote full > download + partitions > restore --data --partitions > delete local > download > restore --partitions > restore
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create_remote", "--tables="+dbName+".t*", fullBackupName))
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName))
-	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "download", "--partitions=(0,'2022-01-02'),(0,'2022-01-03')", fullBackupName))
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "download", "--partitions="+dbName+".t?:(0,'2022-01-02'),(0,'2022-01-03')", fullBackupName))
 	fullBackupDir := "/var/lib/clickhouse/backup/" + fullBackupName + "/shadow/" + dbName + "/t?/default/"
 	// embedded storage with embedded disks contains object disk files and will download additional data parts
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") {

@@ -121,6 +121,7 @@ func main() {
 						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
 						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
 						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
 						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
 						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
@@ -178,6 +179,7 @@ func main() {
 						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
 						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
 						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
 						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
 						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
@@ -264,6 +266,7 @@ func main() {
 						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
 						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
 						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
 						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
 						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
@@ -315,6 +318,7 @@ func main() {
 						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
 						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
 						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
 						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
 						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
@@ -356,6 +360,7 @@ func main() {
 						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
 						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
 						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
 						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
 						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
@@ -427,6 +432,7 @@ func main() {
 						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
 						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
 						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
 						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
 						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
@@ -567,6 +573,7 @@ func main() {
 						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
 						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
 						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
 						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
 						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
