@@ -1040,7 +1040,7 @@ func testAPIBackupVersion(r *require.Assertions) {
 	apiVersion, err := dockerExecOut("clickhouse-backup", "bash", "-ce", "curl -sL http://localhost:7171/backup/version | jq -r .version")
 	r.NoError(err)
 	r.Equal(cliVersion, apiVersion)
-	tablesVersion, err := dockerExecOut("clickhouse", "bash", "-ce", "clickhouse-client -q 'SELECT * FROM system.backup_version FORMAT TSVRaw'")
+	tablesVersion, err := dockerExecOut("clickhouse", "bash", "-ce", "clickhouse client -q 'SELECT * FROM system.backup_version FORMAT TSVRaw'")
 	r.NoError(err)
 	r.Equal(cliVersion, tablesVersion)
 }
