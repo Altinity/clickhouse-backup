@@ -1,13 +1,19 @@
 # v2.5.9
 IMPROVEMENTS
-- add to `--partitions` CLI and API parameter additional format `tablesPattern:partition1,partitionX` or `tablesPattern:(partition1),(partitionX)` fix https://github.com/Altinity/clickhouse-backup/issues/916
+- added to `--partitions` CLI and API parameter additional format `tablesPattern:partition1,partitionX` or `tablesPattern:(partition1),(partitionX)` fix https://github.com/Altinity/clickhouse-backup/issues/916
+- added system.backup_version and version into logs fix [917](https://github.com/Altinity/clickhouse-backup/issues/917) 
+- added progress=X/Y to logs fix [918](https://github.com/Altinity/clickhouse-backup/issues/918)
+
+BUG FIXES
+- allow stopping api server when watch command is stopped, fix [922](https://github.com/Altinity/clickhouse-backup/pull/922), thanks @tadus21
+- fixed corner case for --env=CLICKHOUSE_SKIP_TABLE_ENGINES=dictionary,view 
 
 # v2.5.8
 IMPROVEMENTS
 - added OCI compliant labels to containers, thanks https://github.com/denisok
 - increased default clickhouse queries timeout from `5m` to `30m` for allow freeze very large tables with object disks
 
-- BUG FIXES
+BUG FIXES
 - fix corner cases for `ResumeOperationsAfterRestart` and `keep_backup_local: -1` behavior 
 - fix wrong file extension recognition during download for `access` and `configs` , fix https://github.com/Altinity/clickhouse-backup/issues/921   
 

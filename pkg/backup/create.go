@@ -254,12 +254,13 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 	createBackupWorkingGroup.SetLimit(b.cfg.ClickHouse.MaxConnections)
 
 	var tableMetas []metadata.TableTitle
-	for _, tableItem := range tables {
+	for tableIdx, tableItem := range tables {
 		//to avoid race condition
 		table := tableItem
 		if table.Skip {
 			continue
 		}
+		idx := tableIdx
 		createBackupWorkingGroup.Go(func() error {
 			log := log.WithField("table", fmt.Sprintf("%s.%s", table.Database, table.Name))
 			var realSize map[string]int64
@@ -313,7 +314,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 				})
 				metaMutex.Unlock()
 			}
-			log.Infof("done")
+			log.WithField("progress", fmt.Sprintf("table %d total %d", idx, len(tables))).Infof("done")
 			return nil
 		})
 	}
@@ -325,7 +326,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 	if err := b.createBackupMetadata(ctx, backupMetaFile, backupName, diffFromRemote, backupVersion, "regular", diskMap, diskTypes, disks, backupDataSize, backupMetadataSize, backupRBACSize, backupConfigSize, tableMetas, allDatabases, allFunctions, log); err != nil {
 		return fmt.Errorf("createBackupMetadata return error: %v", err)
 	}
-	log.WithField("duration", utils.HumanizeDuration(time.Since(startBackup))).Info("done")
+	log.WithField("version", backupVersion).WithField("duration", utils.HumanizeDuration(time.Since(startBackup))).Info("done")
 	return nil
 }
 
@@ -462,6 +463,7 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 	log.WithFields(apexLog.Fields{
 		"operation": "create_embedded",
 		"duration":  utils.HumanizeDuration(time.Since(startBackup)),
+		"version":   backupVersion,
 	}).Info("done")
 
 	return nil

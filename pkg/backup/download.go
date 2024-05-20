@@ -39,7 +39,7 @@ var (
 	ErrBackupIsAlreadyExists = errors.New("backup is already exists")
 )
 
-func (b *Backuper) Download(backupName string, tablePattern string, partitions []string, schemaOnly, resume bool, commandId int) error {
+func (b *Backuper) Download(backupName string, tablePattern string, partitions []string, schemaOnly, resume bool, backupVersion string, commandId int) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return err
@@ -120,7 +120,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	tablesForDownload := parseTablePatternForDownload(remoteBackup.Tables, tablePattern)
 
 	if !schemaOnly && !b.cfg.General.DownloadByPart && remoteBackup.RequiredBackup != "" {
-		err := b.Download(remoteBackup.RequiredBackup, tablePattern, partitions, schemaOnly, b.resume, commandId)
+		err := b.Download(remoteBackup.RequiredBackup, tablePattern, partitions, schemaOnly, b.resume, backupVersion, commandId)
 		if err != nil && !errors.Is(err, ErrBackupIsAlreadyExists) {
 			return err
 		}
@@ -172,7 +172,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	var missedInnerTableErr error
 	tableMetadataAfterDownload, tablesForDownload, metadataSize, missedInnerTableErr = b.downloadMissedInnerTablesMetadata(ctx, backupName, metadataSize, tablesForDownload, tableMetadataAfterDownload, disks, schemaOnly, partitions, log)
 	if missedInnerTableErr != nil {
-		return missedInnerTableErr
+		return fmt.Errorf("b.downloadMissedInnerTablesMetadata error: %v", missedInnerTableErr)
 	}
 
 	if !schemaOnly {
@@ -194,12 +194,14 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 				if err := b.downloadTableData(dataCtx, remoteBackup.BackupMetadata, *tableMetadataAfterDownload[idx]); err != nil {
 					return err
 				}
-				log.
-					WithField("operation", "download_data").
-					WithField("table", fmt.Sprintf("%s.%s", tableMetadataAfterDownload[idx].Database, tableMetadataAfterDownload[idx].Table)).
-					WithField("duration", utils.HumanizeDuration(time.Since(start))).
-					WithField("size", utils.FormatBytes(tableMetadataAfterDownload[idx].TotalBytes)).
-					Info("done")
+				log.WithFields(apexLog.Fields{
+					"operation": "download_data",
+					"table":     fmt.Sprintf("%s.%s", tableMetadataAfterDownload[idx].Database, tableMetadataAfterDownload[idx].Table),
+					"progress":  fmt.Sprintf("%d/%d", idx, len(tableMetadataAfterDownload)),
+					"duration":  utils.HumanizeDuration(time.Since(start)),
+					"size":      utils.FormatBytes(tableMetadataAfterDownload[idx].TotalBytes),
+					"version":   backupVersion,
+				}).Info("done")
 				return nil
 			})
 		}
@@ -235,7 +237,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	backupMetadata.DataFormat = ""
 	backupMetadata.ConfigSize = configSize
 	backupMetadata.RBACSize = rbacSize
-
+	backupMetadata.ClickhouseBackupVersion = backupVersion
 	backupMetafileLocalPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata.json")
 	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
 		backupMetafileLocalPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata.json")
@@ -272,10 +274,11 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		}
 	}
 
-	log.
-		WithField("duration", utils.HumanizeDuration(time.Since(startDownload))).
-		WithField("size", utils.FormatBytes(dataSize+metadataSize+rbacSize+configSize)).
-		Info("done")
+	log.WithFields(apexLog.Fields{
+		"duration": utils.HumanizeDuration(time.Since(startDownload)),
+		"size":     utils.FormatBytes(dataSize + metadataSize + rbacSize + configSize),
+		"version":  backupVersion,
+	}).Info("done")
 	return nil
 }
 

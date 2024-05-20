@@ -691,7 +691,7 @@ func TestServerAPI(t *testing.T) {
 	}()
 	r.NoError(dockerCP("config-s3.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
 	fieldTypes := []string{"UInt64", "String", "Int"}
-	installDebIfNotExists(r, "clickhouse-backup", "curl")
+	installDebIfNotExists(r, "clickhouse-backup", "curl", "jq")
 	maxTables := 10
 	minFields := 10
 	randFields := 10
@@ -700,6 +700,8 @@ func TestServerAPI(t *testing.T) {
 	log.Info("Run `clickhouse-backup server --watch` in background")
 	r.NoError(dockerExec("-d", "clickhouse-backup", "bash", "-ce", "clickhouse-backup server --watch &>>/tmp/clickhouse-backup-server.log"))
 	time.Sleep(1 * time.Second)
+
+	testAPIBackupVersion(r)
 
 	testAPIBackupCreate(r)
 
@@ -1029,6 +1031,18 @@ func testAPIBackupTablesRemote(r *require.Assertions) {
 	r.NotContains(out, "INFORMATION_SCHEMA")
 	r.NotContains(out, "information_schema")
 
+}
+
+func testAPIBackupVersion(r *require.Assertions) {
+	log.Info("Check /backup/version")
+	cliVersion, err := dockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup --version 2>/dev/null --version | grep 'Version' | cut -d ':' -f 2 | xargs")
+	r.NoError(err)
+	apiVersion, err := dockerExecOut("clickhouse-backup", "bash", "-ce", "curl -sL http://localhost:7171/backup/version | jq -r .version")
+	r.NoError(err)
+	r.Equal(cliVersion, apiVersion)
+	tablesVersion, err := dockerExecOut("clickhouse", "bash", "-ce", "clickhouse-client -q 'SELECT * FROM system.backup_version FORMAT TSVRaw'")
+	r.NoError(err)
+	r.Equal(cliVersion, tablesVersion)
 }
 
 func testAPIBackupCreate(r *require.Assertions) {
