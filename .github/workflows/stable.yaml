@@ -31,4 +31,4 @@ jobs:
           DOCKER_IMAGE: ${{ secrets.DOCKER_IMAGE }}
           DOCKER_REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
         run: |
-          docker buildx imagetools create --progress plain --tag ${DOCKER_REGISTRY:-docker.io}/${DOCKER_REPO}/${DOCKER_IMAGE}:stable ${DOCKER_REGISTRY:-docker.io}/${DOCKER_REPO}/${DOCKER_IMAGE}:${{ github.event.inputs.docker_tag }}:${{ github.event.inputs.docker_tag }}
+          docker buildx imagetools create --progress plain --tag ${DOCKER_REGISTRY:-docker.io}/${DOCKER_REPO}/${DOCKER_IMAGE}:stable ${DOCKER_REGISTRY:-docker.io}/${DOCKER_REPO}/${DOCKER_IMAGE}:${{ github.event.inputs.docker_tag }}
