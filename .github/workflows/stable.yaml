@@ -29,8 +29,8 @@ jobs:
           DOCKER_IMAGE: ${{ secrets.DOCKER_IMAGE }}
           DOCKER_REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
         run: |
-          docker tag ${DOCKER_REGISTRY:-docker.io}/${DOCKER_REPO}/${DOCKER_IMAGE}:${{ github.event.inputs.docker_tag }} ${DOCKER_REGISTRY:-docker.io}/${DOCKER_REPO}/${DOCKER_IMAGE}:stable
+          docker tag ${DOCKER_REGISTRY:-docker.io}/${DOCKER_REPO}/${DOCKER_IMAGE}:${{ github.event.inputs.docker_tag }} ${DOCKER_REPO}/${DOCKER_IMAGE}:stable
           docker image ls | grep ${DOCKER_IMAGE}| grep stable
 
       - name: Push clickhouse-backup stable
-        run: docker push ${DOCKER_REGISTRY:-docker.io}/${DOCKER_REPO}/${DOCKER_IMAGE}:stable
+        run: docker push ${DOCKER_REPO}/${DOCKER_IMAGE}:stable
