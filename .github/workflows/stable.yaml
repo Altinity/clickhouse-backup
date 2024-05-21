@@ -1,0 +1,35 @@
+name: Make stable docker tag
+
+on:
+  workflow_dispatch:
+    inputs:
+      git_tag_name:
+        description: 'Git Tag Name'
+        required: true
+
+jobs:
+  docker-tag-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Pull clickhouse-backup image
+        run: docker pull altinity/clickhouse-backup:${{ github.event.inputs.git_tag_name }}
+
+      - name: Tag clickhouse-backup image as stable
+        env:
+          DOCKER_REPO: ${{ secrets.DOCKER_REPO }}
+          DOCKER_IMAGE: ${{ secrets.DOCKER_IMAGE }}
+          DOCKER_REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
+        run: |
+          docker tag ${DOCKER_REGISTRY:-docker.io}/${DOCKER_REPO}/${DOCKER_IMAGE}:stable ${DOCKER_REGISTRY:-docker.io}/${DOCKER_REPO}/${DOCKER_IMAGE}:${{ github.event.inputs.git_tag_name }}
+
+      - name: Push clickhouse-backup stable
+        run: docker push ${DOCKER_REGISTRY:-docker.io}/${DOCKER_REPO}/${DOCKER_IMAGE}:stable
