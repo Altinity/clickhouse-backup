@@ -73,12 +73,21 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	if err != nil {
 		return err
 	}
+	b.DefaultDataPath, err = b.ch.GetDefaultPath(disks)
+	if err != nil {
+		return err
+	}
+
 	for i := range localBackups {
 		if backupName == localBackups[i].BackupName {
+			if strings.Contains(localBackups[i].Tags, "embedded") || b.cfg.General.RemoteStorage == "custom" {
+				return ErrBackupIsAlreadyExists
+			}
 			if !b.resume {
 				return ErrBackupIsAlreadyExists
 			} else {
-				if strings.Contains(localBackups[i].Tags, "embedded") || b.cfg.General.RemoteStorage == "custom" {
+				_, isResumeExists := os.Stat(path.Join(b.DefaultDataPath, "backup", backupName, "download.state"))
+				if errors.Is(isResumeExists, os.ErrNotExist) {
 					return ErrBackupIsAlreadyExists
 				}
 				log.Warnf("%s already exists will try to resume download", backupName)
@@ -89,7 +98,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	if b.cfg.General.RemoteStorage == "custom" {
 		return custom.Download(ctx, b.cfg, backupName, tablePattern, partitions, schemaOnly)
 	}
-	if err := b.initDisksPathdsAndBackupDestination(ctx, disks, ""); err != nil {
+	if err := b.initDisksPathsAndBackupDestination(ctx, disks, ""); err != nil {
 		return err
 	}
 	defer func() {

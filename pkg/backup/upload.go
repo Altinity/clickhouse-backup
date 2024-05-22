@@ -64,7 +64,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	if _, disks, err = b.getLocalBackup(ctx, backupName, nil); err != nil {
 		return fmt.Errorf("can't find local backup: %v", err)
 	}
-	if err := b.initDisksPathdsAndBackupDestination(ctx, disks, backupName); err != nil {
+	if err := b.initDisksPathsAndBackupDestination(ctx, disks, backupName); err != nil {
 		return err
 	}
 	defer func() {

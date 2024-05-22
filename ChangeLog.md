@@ -1,3 +1,7 @@
+# v2.5.10
+BUG FIXES
+- fix corner case when `use_resumable_state: true` and trying download already present local backup don't return error backup already exists [926](https://github.com/Altinity/clickhouse-backup/issues/926)
+
 # v2.5.9
 IMPROVEMENTS
 - add to `--partitions` CLI and API parameter additional format `tablesPattern:partition1,partitionX` or `tablesPattern:(partition1),(partitionX)` fix https://github.com/Altinity/clickhouse-backup/issues/916
@@ -7,7 +11,7 @@ IMPROVEMENTS
 - added OCI compliant labels to containers, thanks https://github.com/denisok
 - increased default clickhouse queries timeout from `5m` to `30m` for allow freeze very large tables with object disks
 
-- BUG FIXES
+BUG FIXES
 - fix corner cases for `ResumeOperationsAfterRestart` and `keep_backup_local: -1` behavior 
 - fix wrong file extension recognition during download for `access` and `configs` , fix https://github.com/Altinity/clickhouse-backup/issues/921   
 

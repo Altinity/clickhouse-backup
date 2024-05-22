@@ -74,7 +74,7 @@ func WithBackupSharder(s backupSharder) BackuperOpt {
 	}
 }
 
-func (b *Backuper) initDisksPathdsAndBackupDestination(ctx context.Context, disks []clickhouse.Disk, backupName string) error {
+func (b *Backuper) initDisksPathsAndBackupDestination(ctx context.Context, disks []clickhouse.Disk, backupName string) error {
 	var err error
 	if disks == nil {
 		disks, err = b.ch.GetDisks(ctx, true)
