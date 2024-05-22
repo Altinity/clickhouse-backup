@@ -376,12 +376,10 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 		if ch.Config.UseEmbeddedBackupRestore && (strings.HasPrefix(t.Name, ".inner_id.") /*|| strings.HasPrefix(t.Name, ".inner.")*/) {
 			t.Skip = true
 		}
-		if len(ch.Config.SkipTableEngines) > 0 {
-			for _, engine := range ch.Config.SkipTableEngines {
-				if t.Engine == engine {
-					t.Skip = true
-					break
-				}
+		for _, engine := range ch.Config.SkipTableEngines {
+			if t.Engine == engine {
+				t.Skip = true
+				break
 			}
 		}
 		if t.Skip {

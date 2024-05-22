@@ -99,7 +99,7 @@ func Run(cliCtx *cli.Context, cliApp *cli.App, configPath string, clickhouseBack
 	}
 	api.metrics.RegisterMetrics()
 
-	log.Infof("Starting API server on %s", api.config.API.ListenAddr)
+	log.Infof("Starting API server %s on %s", api.cliApp.Version, api.config.API.ListenAddr)
 	sigterm := make(chan os.Signal, 1)
 	signal.Notify(sigterm, os.Interrupt, syscall.SIGTERM)
 	sighup := make(chan os.Signal, 1)
@@ -169,7 +169,7 @@ func (api *APIServer) Stop() error {
 }
 
 func (api *APIServer) Restart() error {
-	log := apexLog.WithField("logger", "server.Restart")
+	log := apexLog.WithField("logger", "server.Restart").WithField("version", api.cliApp.Version)
 	_, err := api.ReloadConfig(nil, "restart")
 	if err != nil {
 		return err
@@ -221,6 +221,7 @@ func (api *APIServer) registerHTTPHandlers() *http.Server {
 	r.HandleFunc("/", api.httpRootHandler).Methods("GET", "HEAD")
 	r.HandleFunc("/", api.httpRestartHandler).Methods("POST")
 	r.HandleFunc("/restart", api.httpRestartHandler).Methods("POST", "GET")
+	r.HandleFunc("/backup/version", api.httpVersionHandler).Methods("GET", "HEAD")
 	r.HandleFunc("/backup/kill", api.httpKillHandler).Methods("POST", "GET")
 	r.HandleFunc("/backup/watch", api.httpWatchHandler).Methods("POST", "GET")
 	r.HandleFunc("/backup/tables", api.httpTablesHandler).Methods("GET")
@@ -331,7 +332,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 			api.writeError(w, http.StatusBadRequest, string(line), err)
 			return
 		}
-		api.log.Infof("/backup/actions call: %s", row.Command)
+		api.log.WithField("version", api.cliApp.Version).Infof("/backup/actions call: %s", row.Command)
 		args, err := shlex.Split(row.Command)
 		if err != nil {
 			api.writeError(w, http.StatusBadRequest, "", err)
@@ -605,7 +606,7 @@ func (api *APIServer) httpRootHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
 
-	_, _ = fmt.Fprintln(w, "Documentation: https://github.com/Altinity/clickhouse-backup#api")
+	_, _ = fmt.Fprintf(w, "Version: %s\nDocumentation: https://github.com/Altinity/clickhouse-backup#api\n", api.cliApp.Version)
 	for _, r := range api.routes {
 		_, _ = fmt.Fprintln(w, r)
 	}
@@ -623,6 +624,15 @@ func (api *APIServer) httpRestartHandler(w http.ResponseWriter, _ *http.Request)
 	defer func() {
 		api.restart <- struct{}{}
 	}()
+}
+
+// httpVersionHandler
+func (api *APIServer) httpVersionHandler(w http.ResponseWriter, _ *http.Request) {
+	api.sendJSONEachRow(w, http.StatusOK, struct {
+		Version string `json:"version"`
+	}{
+		Version: api.cliApp.Version,
+	})
 }
 
 // httpKillHandler - kill selected command if it InProgress
@@ -1117,7 +1127,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		commandId, _ := status.Current.Start(fullCommand)
 		err, _ := api.metrics.ExecuteWithMetrics("upload", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.Upload(name, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, resume, commandId)
+			return b.Upload(name, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, resume, api.cliApp.Version, commandId)
 		})
 		if err != nil {
 			api.log.Errorf("Upload error: %v", err)
@@ -1240,7 +1250,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore", 0, func() error {
 			b := backup.NewBackuper(api.config)
-			return b.Restore(name, tablePattern, databaseMappingToRestore, partitionsToBackup, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, false, restoreConfigs, false, commandId)
+			return b.Restore(name, tablePattern, databaseMappingToRestore, partitionsToBackup, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, false, restoreConfigs, false, api.cliApp.Version, commandId)
 		})
 		status.Current.Stop(commandId, err)
 		if err != nil {
@@ -1311,7 +1321,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		commandId, _ := status.Current.Start(fullCommand)
 		err, _ := api.metrics.ExecuteWithMetrics("download", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.Download(name, tablePattern, partitionsToBackup, schemaOnly, resume, commandId)
+			return b.Download(name, tablePattern, partitionsToBackup, schemaOnly, resume, api.cliApp.Version, commandId)
 		})
 		if err != nil {
 			api.log.Errorf("API /backup/download error: %v", err)
@@ -1552,6 +1562,10 @@ func (api *APIServer) CreateIntegrationTables() error {
 	}
 	query = fmt.Sprintf("CREATE TABLE system.backup_list (name String, created DateTime, size Int64, location String, required String, desc String) ENGINE=URL('%s://%s:%s/backup/list%s', JSONEachRow) %s", schema, host, port, auth, settings)
 	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_list"}, query, true, false, "", 0, defaultDataPath); err != nil {
+		return err
+	}
+	query = fmt.Sprintf("CREATE TABLE system.backup_version (version String) ENGINE=URL('%s://%s:%s/backup/version%s', JSONEachRow) %s", schema, host, port, auth, settings)
+	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_version"}, query, true, false, "", 0, defaultDataPath); err != nil {
 		return err
 	}
 	return nil

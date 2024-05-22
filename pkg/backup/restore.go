@@ -39,7 +39,7 @@ import (
 var CreateDatabaseRE = regexp.MustCompile(`(?m)^CREATE DATABASE (\s*)(\S+)(\s*)`)
 
 // Restore - restore tables matched by tablePattern from backupName
-func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, partitions []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly bool, commandId int) error {
+func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, partitions []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly bool, backupVersion string, commandId int) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return err
@@ -219,7 +219,10 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 			}
 		}
 	}
-	log.WithField("duration", utils.HumanizeDuration(time.Since(startRestore))).Info("done")
+	log.WithFields(apexLog.Fields{
+		"duration": utils.HumanizeDuration(time.Since(startRestore)),
+		"version":  backupVersion,
+	}).Info("done")
 	return nil
 }
 
@@ -1224,7 +1227,10 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ba
 					log.Warnf("can't apply mutation %s for table `%s`.`%s`	: %v", mutation.Command, tablesForRestore[idx].Database, tablesForRestore[idx].Table, err)
 				}
 			}
-			log.WithField("duration", utils.HumanizeDuration(time.Since(tableRestoreStartTime))).Info("done")
+			log.WithFields(apexLog.Fields{
+				"duration": utils.HumanizeDuration(time.Since(tableRestoreStartTime)),
+				"progress": fmt.Sprintf("%d/%d", idx, len(tablesForRestore)),
+			}).Info("done")
 			return nil
 		})
 	}

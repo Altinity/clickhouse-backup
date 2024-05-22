@@ -4,7 +4,13 @@ BUG FIXES
 
 # v2.5.9
 IMPROVEMENTS
-- add to `--partitions` CLI and API parameter additional format `tablesPattern:partition1,partitionX` or `tablesPattern:(partition1),(partitionX)` fix https://github.com/Altinity/clickhouse-backup/issues/916
+- added to `--partitions` CLI and API parameter additional format `tablesPattern:partition1,partitionX` or `tablesPattern:(partition1),(partitionX)` fix https://github.com/Altinity/clickhouse-backup/issues/916
+- added system.backup_version and version into logs fix [917](https://github.com/Altinity/clickhouse-backup/issues/917) 
+- added progress=X/Y to logs fix [918](https://github.com/Altinity/clickhouse-backup/issues/918)
+
+BUG FIXES
+- allow stopping api server when watch command is stopped, fix [922](https://github.com/Altinity/clickhouse-backup/pull/922), thanks @tadus21
+- fixed corner case for --env=CLICKHOUSE_SKIP_TABLE_ENGINES=dictionary,view 
 
 # v2.5.8
 IMPROVEMENTS

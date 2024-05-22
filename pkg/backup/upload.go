@@ -32,7 +32,7 @@ import (
 	"github.com/yargevad/filepathx"
 )
 
-func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFromRemote, tablePattern string, partitions []string, schemaOnly, resume bool, commandId int) error {
+func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFromRemote, tablePattern string, partitions []string, schemaOnly, resume bool, backupVersion string, commandId int) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return err
@@ -165,11 +165,13 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 				return err
 			}
 			atomic.AddInt64(&metadataSize, tableMetadataSize)
-			log.
-				WithField("table", fmt.Sprintf("%s.%s", tablesForUpload[idx].Database, tablesForUpload[idx].Table)).
-				WithField("duration", utils.HumanizeDuration(time.Since(start))).
-				WithField("size", utils.FormatBytes(uint64(uploadedBytes+tableMetadataSize))).
-				Info("done")
+			log.WithFields(apexLog.Fields{
+				"table":    fmt.Sprintf("%s.%s", tablesForUpload[idx].Database, tablesForUpload[idx].Table),
+				"progress": fmt.Sprintf("%d/%d", idx, len(tablesForUpload)),
+				"duration": utils.HumanizeDuration(time.Since(start)),
+				"size":     utils.FormatBytes(uint64(uploadedBytes + tableMetadataSize)),
+				"version":  backupVersion,
+			}).Info("done")
 			return nil
 		})
 	}
@@ -203,6 +205,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	} else {
 		backupMetadata.DataFormat = DirectoryFormat
 	}
+	backupMetadata.ClickhouseBackupVersion = backupVersion
 	newBackupMetadataBody, err := json.MarshalIndent(backupMetadata, "", "\t")
 	if err != nil {
 		return err
@@ -227,10 +230,11 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	if b.resume {
 		b.resumableState.Close()
 	}
-	log.
-		WithField("duration", utils.HumanizeDuration(time.Since(startUpload))).
-		WithField("size", utils.FormatBytes(uint64(compressedDataSize)+uint64(metadataSize)+uint64(len(newBackupMetadataBody))+backupMetadata.RBACSize+backupMetadata.ConfigSize)).
-		Info("done")
+	log.WithFields(apexLog.Fields{
+		"duration": utils.HumanizeDuration(time.Since(startUpload)),
+		"size":     utils.FormatBytes(uint64(compressedDataSize) + uint64(metadataSize) + uint64(len(newBackupMetadataBody)) + backupMetadata.RBACSize + backupMetadata.ConfigSize),
+		"version":  backupVersion,
+	}).Info("done")
 
 	// Remote old backup retention
 	if err = b.RemoveOldBackupsRemote(ctx); err != nil {
