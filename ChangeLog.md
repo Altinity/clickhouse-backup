@@ -1,6 +1,8 @@
 # v2.5.10
 BUG FIXES
-- fix corner case when `use_resumable_state: true` and trying download already present local backup don't return error backup already exists [926](https://github.com/Altinity/clickhouse-backup/issues/926)
+- fixed corner case when `use_resumable_state: true` and trying download already present local backup don't return error backup already exists [926](https://github.com/Altinity/clickhouse-backup/issues/926)
+- fixed another corner case for `restore --data=1 --env=CLICKHOUSE_SKIP_TABLE_ENGINES=dictionary,view`
+
 
 # v2.5.9
 IMPROVEMENTS

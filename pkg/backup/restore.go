@@ -207,7 +207,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 
 	}
 	if dataOnly || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
-		if err := b.RestoreData(ctx, backupName, backupMetadata, dataOnly, metadataPath, tablePattern, partitions, disks); err != nil {
+		if err := b.RestoreData(ctx, backupName, backupMetadata, dataOnly, tablePattern, tablesForRestore, partitionsNames, disks); err != nil {
 			return err
 		}
 	}
@@ -255,7 +255,7 @@ func (b *Backuper) getTablesForRestoreLocal(ctx context.Context, backupName stri
 		}
 	}
 	if len(tablesForRestore) == 0 {
-		return nil, nil, fmt.Errorf("no have found schemas by %s in %s", tablePattern, backupName)
+		return nil, nil, fmt.Errorf("not found schemas by %s in %s, also check skip_tables and skip_table_engines setting", tablePattern, backupName)
 	}
 	return tablesForRestore, partitionsNames, nil
 }
@@ -1120,13 +1120,22 @@ func (b *Backuper) dropExistsTables(tablesForDrop ListOfTables, ignoreDependenci
 }
 
 // RestoreData - restore data for tables matched by tablePattern from backupName
-func (b *Backuper) RestoreData(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, dataOnly bool, metadataPath, tablePattern string, partitions []string, disks []clickhouse.Disk) error {
+func (b *Backuper) RestoreData(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, dataOnly bool, tablePattern string, tablesForRestore ListOfTables, partitionsNameList map[metadata.TableTitle][]string, disks []clickhouse.Disk) error {
 	var err error
 	startRestoreData := time.Now()
 	log := apexLog.WithFields(apexLog.Fields{
 		"backup":    backupName,
 		"operation": "restore_data",
 	})
+
+	if len(tablesForRestore) == 0 {
+		if b.cfg.General.AllowEmptyBackups {
+			log.Warnf("not found schemas by %s in %s", tablePattern, backupName)
+			return nil
+		}
+		return fmt.Errorf("not found schemas schemas by %s in %s", tablePattern, backupName)
+	}
+	log.Debugf("found %d tables with data in backup", len(tablesForRestore))
 
 	diskMap := make(map[string]string, len(disks))
 	diskTypes := make(map[string]string, len(disks))
@@ -1139,21 +1148,6 @@ func (b *Backuper) RestoreData(ctx context.Context, backupName string, backupMet
 			diskTypes[diskName] = backupMetadata.DiskTypes[diskName]
 		}
 	}
-	var tablesForRestore ListOfTables
-	var partitionsNameList map[metadata.TableTitle][]string
-	tablesForRestore, partitionsNameList, err = b.getTableListByPatternLocal(ctx, metadataPath, tablePattern, false, partitions)
-	if err != nil {
-		// fix https://github.com/Altinity/clickhouse-backup/issues/832
-		if b.cfg.General.AllowEmptyBackups && os.IsNotExist(err) {
-			log.Warnf("%v", err)
-			return nil
-		}
-		return err
-	}
-	if len(tablesForRestore) == 0 {
-		return fmt.Errorf("no have found schemas by %s in %s", tablePattern, backupName)
-	}
-	log.Debugf("found %d tables with data in backup", len(tablesForRestore))
 	if b.isEmbedded {
 		err = b.restoreDataEmbedded(ctx, backupName, dataOnly, tablesForRestore, partitionsNameList)
 	} else {
