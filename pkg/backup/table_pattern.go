@@ -147,6 +147,7 @@ func (b *Backuper) shouldSkipByTableName(tableFullName string) bool {
 }
 func (b *Backuper) shouldSkipByTableEngine(t metadata.TableMetadata) bool {
 	for _, engine := range b.cfg.ClickHouse.SkipTableEngines {
+		b.log.Debugf("engine=%s query=%s", engine, t.Query)
 		if strings.ToLower(engine) == "dictionary" && (strings.HasPrefix(t.Query, "ATTACH DICTIONARY") || strings.HasPrefix(t.Query, "CREATE DICTIONARY")) {
 			b.log.Warnf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
 			return true
@@ -160,7 +161,7 @@ func (b *Backuper) shouldSkipByTableEngine(t metadata.TableMetadata) bool {
 			return true
 		}
 		if engine != "" {
-			if shouldSkip, err := regexp.MatchString(fmt.Sprintf("(?mi)ENGINE\\s*=\\s*%s[\\(\\s]", engine), t.Query); err == nil && shouldSkip {
+			if shouldSkip, err := regexp.MatchString(fmt.Sprintf("(?mi)ENGINE\\s*=\\s*%s([\\(\\s]|\\s+)", engine), t.Query); err == nil && shouldSkip {
 				b.log.Warnf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
 				return true
 			} else if err != nil {

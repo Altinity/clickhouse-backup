@@ -167,7 +167,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 			atomic.AddInt64(&metadataSize, tableMetadataSize)
 			log.WithFields(apexLog.Fields{
 				"table":    fmt.Sprintf("%s.%s", tablesForUpload[idx].Database, tablesForUpload[idx].Table),
-				"progress": fmt.Sprintf("%d/%d", idx, len(tablesForUpload)),
+				"progress": fmt.Sprintf("%d/%d", idx+1, len(tablesForUpload)),
 				"duration": utils.HumanizeDuration(time.Since(start)),
 				"size":     utils.FormatBytes(uint64(uploadedBytes + tableMetadataSize)),
 				"version":  backupVersion,

@@ -206,7 +206,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 				log.WithFields(apexLog.Fields{
 					"operation": "download_data",
 					"table":     fmt.Sprintf("%s.%s", tableMetadataAfterDownload[idx].Database, tableMetadataAfterDownload[idx].Table),
-					"progress":  fmt.Sprintf("%d/%d", idx, len(tableMetadataAfterDownload)),
+					"progress":  fmt.Sprintf("%d/%d", idx+1, len(tableMetadataAfterDownload)),
 					"duration":  utils.HumanizeDuration(time.Since(start)),
 					"size":      utils.FormatBytes(tableMetadataAfterDownload[idx].TotalBytes),
 					"version":   backupVersion,

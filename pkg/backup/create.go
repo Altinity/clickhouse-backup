@@ -314,7 +314,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 				})
 				metaMutex.Unlock()
 			}
-			log.WithField("progress", fmt.Sprintf("table %d total %d", idx, len(tables))).Infof("done")
+			log.WithField("progress", fmt.Sprintf("%d/%d", idx+1, len(tables))).Infof("done")
 			return nil
 		})
 	}
