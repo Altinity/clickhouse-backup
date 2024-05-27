@@ -834,6 +834,7 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 			partPaths := strings.SplitN(strings.TrimPrefix(fPath, backupShadowPath), "/", 2)
 			for _, part := range tableDiffFromRemote.Parts[disk.Name] {
 				if part.Name == partPaths[0] {
+					b.log.Debugf("%s exists in diff-from-remote backup", part.Name)
 					return nil
 				}
 			}
@@ -844,9 +845,11 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 				return readMetadataErr
 			}
 			for _, storageObject := range objPartFileMeta.StorageObjects {
+				//b.log.WithField("object_file", fPath).WithField("size", storageObject.ObjectSize).WithField("object_key", storageObject.ObjectRelativePath).Debug("prepare CopyObject")
 				if storageObject.ObjectSize == 0 {
 					continue
 				}
+				//b.log.WithField("object_file", fPath).Debug("start copy")
 				if objSize, err = b.dst.CopyObject(
 					ctx,
 					storageObject.ObjectSize,
