@@ -1504,7 +1504,7 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	fullCleanup(t, r, ch, backupNames, []string{"remote", "local"}, databaseList, false, false, "config-s3.yml")
 	generateTestData(t, r, ch, "S3", defaultTestData)
 	for i, backupName := range backupNames {
-		generateIncrementTestData(t, ch, r, defaultIncrementData)
+		_ = generateIncrementTestData(t, r, ch, "S3", defaultIncrementData)
 		if i == 0 {
 			r.NoError(dockerExec("clickhouse-backup", "bash", "-ce", fmt.Sprintf("BACKUPS_TO_KEEP_REMOTE=3 CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup create_remote %s", backupName)))
 		} else {
@@ -2245,7 +2245,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 	log.Info("Create backup")
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables", tablesPattern, testBackupName))
 
-	generateIncrementTestData(t, ch, r, defaultIncrementData)
+	incrementData := generateIncrementTestData(t, r, ch, remoteStorageType, defaultIncrementData)
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables", tablesPattern, incrementBackupName))
 
 	log.Info("Upload full")
@@ -2256,6 +2256,8 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 {
 		log.Info("create --diff-from-remote backup")
 		r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--diff-from-remote", testBackupName, "--tables", tablesPattern, incrementBackupName2))
+		r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "upload", incrementBackupName2))
+		r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", incrementBackupName2))
 		r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", incrementBackupName2))
 	}
 
@@ -2301,7 +2303,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 			if isTableSkip(ch, testData[i], true) {
 				continue
 			}
-			r.NoError(ch.checkData(t, testData[i], r))
+			r.NoError(ch.checkData(t, r, testData[i]))
 		}
 	}
 	// test increment
@@ -2323,7 +2325,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 		if isTableSkip(ch, testDataItem, true) || testDataItem.IsDictionary {
 			continue
 		}
-		for _, incrementDataItem := range defaultIncrementData {
+		for _, incrementDataItem := range incrementData {
 			if testDataItem.Database == incrementDataItem.Database && testDataItem.Name == incrementDataItem.Name {
 				testDataItem.Rows = append(testDataItem.Rows, incrementDataItem.Rows...)
 			}
@@ -2331,7 +2333,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 		if testDataItem.CheckDatabaseOnly {
 			r.NoError(ch.checkDatabaseEngine(t, testDataItem))
 		} else {
-			r.NoError(ch.checkData(t, testDataItem, r))
+			r.NoError(ch.checkData(t, r, testDataItem))
 		}
 	}
 
@@ -2632,7 +2634,7 @@ func fullCleanup(t *testing.T, r *require.Assertions, ch *TestClickHouse, backup
 
 func generateTestData(t *testing.T, r *require.Assertions, ch *TestClickHouse, remoteStorageType string, testData []TestDataStruct) []TestDataStruct {
 	log.Infof("Generate test data %s with _%s suffix", remoteStorageType, t.Name())
-	testData = generateTestDataWithDifferentStoragePolicy(remoteStorageType, testData)
+	testData = generateTestDataWithDifferentStoragePolicy(remoteStorageType, 0, 5, testData)
 	for _, data := range testData {
 		if isTableSkip(ch, data, false) {
 			continue
@@ -2648,15 +2650,14 @@ func generateTestData(t *testing.T, r *require.Assertions, ch *TestClickHouse, r
 	return testData
 }
 
-func generateTestDataWithDifferentStoragePolicy(remoteStorageType string, testData []TestDataStruct) []TestDataStruct {
+func generateTestDataWithDifferentStoragePolicy(remoteStorageType string, offset, rowsCount int, testData []TestDataStruct) []TestDataStruct {
 	for databaseName, databaseEngine := range map[string]string{dbNameOrdinary: "Ordinary", dbNameAtomic: "Atomic"} {
-		rowsCount := 5
 		testDataWithStoragePolicy := TestDataStruct{
 			Database: databaseName, DatabaseEngine: databaseEngine,
 			Rows: func() []map[string]interface{} {
 				result := make([]map[string]interface{}, rowsCount)
 				for i := 0; i < rowsCount; i++ {
-					result[i] = map[string]interface{}{"id": uint64(i)}
+					result[i] = map[string]interface{}{"id": uint64(i + offset)}
 				}
 				return result
 			}(),
@@ -2713,14 +2714,16 @@ func generateTestDataWithDifferentStoragePolicy(remoteStorageType string, testDa
 	return testData
 }
 
-func generateIncrementTestData(t *testing.T, ch *TestClickHouse, r *require.Assertions, incrementData []TestDataStruct) {
-	log.Info("Generate increment test data")
+func generateIncrementTestData(t *testing.T, r *require.Assertions, ch *TestClickHouse, remoteStorageType string, incrementData []TestDataStruct) []TestDataStruct {
+	log.Infof("Generate increment test data for %s", remoteStorageType)
+	incrementData = generateTestDataWithDifferentStoragePolicy(remoteStorageType, 5, 5, incrementData)
 	for _, data := range incrementData {
 		if isTableSkip(ch, data, false) {
 			continue
 		}
 		r.NoError(ch.createTestData(t, data))
 	}
+	return incrementData
 }
 
 func dropDatabasesFromTestDataDataSet(t *testing.T, r *require.Assertions, ch *TestClickHouse, databaseList []string) {
@@ -2921,7 +2924,7 @@ func (ch *TestClickHouse) dropDatabase(database string) (err error) {
 	return ch.chbackend.Query(dropDatabaseSQL)
 }
 
-func (ch *TestClickHouse) checkData(t *testing.T, data TestDataStruct, r *require.Assertions) error {
+func (ch *TestClickHouse) checkData(t *testing.T, r *require.Assertions, data TestDataStruct) error {
 	assert.NotNil(t, data.Rows)
 	data.Database += "_" + t.Name()
 	data.Name += "_" + t.Name()
