@@ -1442,6 +1442,7 @@ func TestProjections(t *testing.T) {
 
 func TestCheckSystemPartsColumns(t *testing.T) {
 	var err error
+	var version int
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.3") == -1 {
 		t.Skipf("Test skipped, system.parts_columns have inconsistency only in 23.3+, current version %s", os.Getenv("CLICKHOUSE_VERSION"))
 	}
@@ -1450,6 +1451,9 @@ func TestCheckSystemPartsColumns(t *testing.T) {
 	r := require.New(t)
 	ch.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Second)
 	defer ch.chbackend.Close()
+	version, err = ch.chbackend.GetVersion(context.Background())
+	r.NoError(err)
+
 	r.NoError(dockerCP("config-s3.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
 	ch.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+t.Name())
 
@@ -1462,6 +1466,7 @@ func TestCheckSystemPartsColumns(t *testing.T) {
 	ch.queryWithNoError(r, "INSERT INTO "+t.Name()+".test_system_parts_columns SELECT today() - INTERVAL number DAY, number, 'test2' FROM numbers(10)")
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "create", "test_system_parts_columns"))
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "delete", "local", "test_system_parts_columns"))
+
 	r.NoError(ch.chbackend.DropTable(clickhouse.Table{Database: t.Name(), Name: "test_system_parts_columns"}, createSQL, "", false, version, ""))
 
 	// test incompatible data types
@@ -1670,6 +1675,8 @@ func TestRestoreMutationInProgress(t *testing.T) {
 	}
 	createDbSQL := "CREATE DATABASE IF NOT EXISTS " + t.Name()
 	ch.queryWithNoError(r, createDbSQL)
+	version, err := ch.chbackend.GetVersion(context.Background())
+	r.NoError(err)
 
 	createSQL := fmt.Sprintf("CREATE TABLE %s.test_restore_mutation_in_progress %s (id UInt64, attr String) ENGINE=ReplicatedMergeTree('%s','{replica}') PARTITION BY id ORDER BY id", t.Name(), onCluster, zkPath)
 	ch.queryWithNoError(r, createSQL)
@@ -2216,13 +2223,10 @@ func uploadSSHKeys(r *require.Assertions, container string) {
 func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig string) {
 	var out string
 	var err error
-	var version int
 	r := require.New(t)
 	ch := &TestClickHouse{}
 	ch.connectWithWait(r, 500*time.Millisecond, 1500*time.Millisecond, 1*time.Minute)
 	defer ch.chbackend.Close()
-	version, err = ch.chbackend.GetVersion(context.Background())
-	r.NoError(err)
 	// test for specified partitions backup
 	testBackupSpecifiedPartitions(t, r, ch, remoteStorageType, backupConfig)
 
