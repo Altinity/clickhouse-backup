@@ -439,10 +439,8 @@ func TestS3NoDeletePermission(t *testing.T) {
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "restore_remote", "no_delete_backup"))
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "delete", "local", "no_delete_backup"))
 	r.Error(dockerExec("clickhouse-backup", "clickhouse-backup", "delete", "remote", "no_delete_backup"))
-	version, err := ch.chbackend.GetVersion(context.Background())
-	r.NoError(err)
 	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Atomic, Issue331Ordinary}
-	dropDatabasesFromTestDataDataSet(t, r, ch, databaseList, version)
+	dropDatabasesFromTestDataDataSet(t, r, ch, databaseList)
 	r.NoError(dockerCP("config-s3.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "delete", "remote", "no_delete_backup"))
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "list", "remote"))
@@ -681,9 +679,7 @@ func TestLongListRemote(t *testing.T) {
 	for i := 0; i < totalCacheCount; i++ {
 		testListRemoteAllBackups[i] = fmt.Sprintf("%s_%d", testBackupName, i)
 	}
-	version, err := ch.chbackend.GetVersion(context.Background())
-	r.NoError(err)
-	fullCleanup(t, r, ch, testListRemoteAllBackups, []string{"remote", "local"}, []string{}, true, true, "config-s3.yml", version)
+	fullCleanup(t, r, ch, testListRemoteAllBackups, []string{"remote", "local"}, []string{}, true, true, "config-s3.yml")
 }
 
 func TestServerAPI(t *testing.T) {
@@ -1338,11 +1334,9 @@ func TestTablePatterns(t *testing.T) {
 	databaseList := []string{dbNameOrdinary, dbNameAtomic}
 	var dbNameOrdinaryTest = dbNameOrdinary + "_" + t.Name()
 	var dbNameAtomicTest = dbNameAtomic + "_" + t.Name()
-	version, err := ch.chbackend.GetVersion(context.Background())
-	r.NoError(err)
 	for _, createPattern := range []bool{true, false} {
 		for _, restorePattern := range []bool{true, false} {
-			fullCleanup(t, r, ch, []string{testBackupName}, []string{"remote", "local"}, databaseList, false, false, "config-s3.yml", version)
+			fullCleanup(t, r, ch, []string{testBackupName}, []string{"remote", "local"}, databaseList, false, false, "config-s3.yml")
 			generateTestData(t, r, ch, "S3", defaultTestData)
 			if createPattern {
 				r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", "--tables", " "+dbNameOrdinaryTest+".*", testBackupName))
@@ -1367,7 +1361,7 @@ func TestTablePatterns(t *testing.T) {
 			}
 
 			r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", testBackupName))
-			dropDatabasesFromTestDataDataSet(t, r, ch, databaseList, version)
+			dropDatabasesFromTestDataDataSet(t, r, ch, databaseList)
 
 			if restorePattern {
 				r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore_remote", "--tables", " "+dbNameOrdinaryTest+".*", testBackupName))
@@ -1395,7 +1389,7 @@ func TestTablePatterns(t *testing.T) {
 				r.NotZero(restored)
 			}
 
-			fullCleanup(t, r, ch, []string{testBackupName}, []string{"remote", "local"}, databaseList, true, true, "config-s3.yml", version)
+			fullCleanup(t, r, ch, []string{testBackupName}, []string{"remote", "local"}, databaseList, true, true, "config-s3.yml")
 
 		}
 	}
@@ -1457,8 +1451,6 @@ func TestCheckSystemPartsColumns(t *testing.T) {
 	ch.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Second)
 	defer ch.chbackend.Close()
 	r.NoError(dockerCP("config-s3.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
-	version, err := ch.chbackend.GetVersion(context.Background())
-	r.NoError(err)
 	ch.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+t.Name())
 
 	// test compatible data types
@@ -1501,15 +1493,13 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	r := require.New(t)
 	ch := &TestClickHouse{}
 	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second, 5*time.Second)
-	version, err := ch.chbackend.GetVersion(context.Background())
-	r.NoError(err)
 
 	backupNames := make([]string, 5)
 	for i := 0; i < 5; i++ {
 		backupNames[i] = fmt.Sprintf("keep_remote_backup_%d", i)
 	}
 	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Atomic, Issue331Ordinary}
-	fullCleanup(t, r, ch, backupNames, []string{"remote", "local"}, databaseList, false, false, "config-s3.yml", version)
+	fullCleanup(t, r, ch, backupNames, []string{"remote", "local"}, databaseList, false, false, "config-s3.yml")
 	generateTestData(t, r, ch, "S3", defaultTestData)
 	for backupNumber, backupName := range backupNames {
 		if backupNumber == 0 {
@@ -1544,8 +1534,8 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	var res uint64
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&res, fmt.Sprintf("SELECT count() FROM `%s_%s`.`%s_%s`", Issue331Atomic, t.Name(), Issue331Atomic, t.Name())))
 	r.Equal(uint64(100+20*4), res)
-	fullCleanup(t, r, ch, []string{latestIncrementBackup}, []string{"local"}, nil, true, true, "config-s3.yml", version)
-	fullCleanup(t, r, ch, backupNames, []string{"remote"}, databaseList, true, true, "config-s3.yml", version)
+	fullCleanup(t, r, ch, []string{latestIncrementBackup}, []string{"local"}, nil, true, true, "config-s3.yml")
+	fullCleanup(t, r, ch, backupNames, []string{"remote"}, databaseList, true, true, "config-s3.yml")
 	checkObjectStorageIsEmpty(t, r, "S3")
 }
 
@@ -1669,8 +1659,6 @@ func TestRestoreMutationInProgress(t *testing.T) {
 	ch := &TestClickHouse{}
 	ch.connectWithWait(r, 0*time.Second, 1*time.Second, 5*time.Second)
 	defer ch.chbackend.Close()
-	version, err := ch.chbackend.GetVersion(context.Background())
-	r.NoError(err)
 	zkPath := "/clickhouse/tables/{shard}/" + t.Name() + "/test_restore_mutation_in_progress"
 	onCluster := ""
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 {
@@ -2083,8 +2071,6 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 	ch := &TestClickHouse{}
 	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second, 1*time.Second)
 	defer ch.chbackend.Close()
-	version, err := ch.chbackend.GetVersion(context.Background())
-	r.NoError(err)
 
 	checkRecordset := func(expectedRows int, expectedCount uint64, query string) {
 		result := make([]struct {
@@ -2097,7 +2083,7 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 
 	testBackupName := "test_restore_database_mapping"
 	databaseList := []string{"database1", "database-2"}
-	fullCleanup(t, r, ch, []string{testBackupName}, []string{"local"}, databaseList, false, false, "config-database-mapping.yml", version)
+	fullCleanup(t, r, ch, []string{testBackupName}, []string{"local"}, databaseList, false, false, "config-database-mapping.yml")
 
 	ch.queryWithNoError(r, "CREATE DATABASE database1")
 	ch.queryWithNoError(r, "CREATE TABLE database1.t1 (dt DateTime, v UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/database1/t1','{replica}') PARTITION BY toYYYYMM(dt) ORDER BY dt")
@@ -2139,7 +2125,7 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 	log.Info("Check database1 not exists")
 	checkRecordset(1, 0, "SELECT count() FROM system.databases WHERE name='database1'")
 
-	fullCleanup(t, r, ch, []string{testBackupName}, []string{"local"}, databaseList, true, true, "config-database-mapping.yml", version)
+	fullCleanup(t, r, ch, []string{testBackupName}, []string{"local"}, databaseList, true, true, "config-database-mapping.yml")
 }
 
 func TestMySQLMaterialized(t *testing.T) {
@@ -2247,7 +2233,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Atomic, Issue331Ordinary}
 	tablesPattern := fmt.Sprintf("*_%s.*", t.Name())
 	log.Info("Clean before start")
-	fullCleanup(t, r, ch, []string{testBackupName, incrementBackupName}, []string{"remote", "local"}, databaseList, false, false, backupConfig, version)
+	fullCleanup(t, r, ch, []string{testBackupName, incrementBackupName}, []string{"remote", "local"}, databaseList, false, false, backupConfig)
 
 	r.NoError(dockerExec("minio", "mc", "ls", "local/clickhouse/disk_s3"))
 	testData := generateTestData(t, r, ch, remoteStorageType, defaultTestData)
@@ -2291,7 +2277,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 	r.NotNil(err)
 	r.Equal("", strings.Trim(out, " \t\r\n"), "expect '0' backup exists in backup directory")
 
-	dropDatabasesFromTestDataDataSet(t, r, ch, databaseList, version)
+	dropDatabasesFromTestDataDataSet(t, r, ch, databaseList)
 
 	log.Info("Download")
 	replaceStorageDiskNameForReBalance(r, ch, remoteStorageType, false)
@@ -2319,7 +2305,7 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 		}
 	}
 	// test increment
-	dropDatabasesFromTestDataDataSet(t, r, ch, databaseList, version)
+	dropDatabasesFromTestDataDataSet(t, r, ch, databaseList)
 
 	log.Info("Delete backup")
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", testBackupName))
@@ -2352,8 +2338,8 @@ func runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig st
 	// test end
 	log.Info("Clean after finish")
 	// during download increment, partially downloaded full will clean
-	fullCleanup(t, r, ch, []string{incrementBackupName}, []string{"local"}, nil, true, false, backupConfig, version)
-	fullCleanup(t, r, ch, []string{testBackupName, incrementBackupName}, []string{"remote"}, databaseList, true, true, backupConfig, version)
+	fullCleanup(t, r, ch, []string{incrementBackupName}, []string{"local"}, nil, true, false, backupConfig)
+	fullCleanup(t, r, ch, []string{testBackupName, incrementBackupName}, []string{"remote"}, databaseList, true, true, backupConfig)
 	replaceStorageDiskNameForReBalance(r, ch, remoteStorageType, true)
 	checkObjectStorageIsEmpty(t, r, remoteStorageType)
 }
@@ -2620,7 +2606,7 @@ func checkResumeAlreadyProcessed(backupCmd, testBackupName, resumeKind string, r
 	}
 }
 
-func fullCleanup(t *testing.T, r *require.Assertions, ch *TestClickHouse, backupNames, backupTypes, databaseList []string, checkDeleteErr, checkDropErr bool, backupConfig string, version int) {
+func fullCleanup(t *testing.T, r *require.Assertions, ch *TestClickHouse, backupNames, backupTypes, databaseList []string, checkDeleteErr, checkDropErr bool, backupConfig string) {
 	for _, backupName := range backupNames {
 		for _, backupType := range backupTypes {
 			err := dockerExec("clickhouse-backup", "bash", "-xce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" delete "+backupType+" "+backupName)
@@ -2641,7 +2627,7 @@ func fullCleanup(t *testing.T, r *require.Assertions, ch *TestClickHouse, backup
 		}
 	}
 
-	dropDatabasesFromTestDataDataSet(t, r, ch, databaseList, version)
+	dropDatabasesFromTestDataDataSet(t, r, ch, databaseList)
 }
 
 func generateTestData(t *testing.T, r *require.Assertions, ch *TestClickHouse, remoteStorageType string, testData []TestDataStruct) []TestDataStruct {
@@ -2739,15 +2725,10 @@ func generateIncrementTestData(t *testing.T, r *require.Assertions, ch *TestClic
 	return incrementData
 }
 
-func dropDatabasesFromTestDataDataSet(t *testing.T, r *require.Assertions, ch *TestClickHouse, databaseList []string, version int) {
+func dropDatabasesFromTestDataDataSet(t *testing.T, r *require.Assertions, ch *TestClickHouse, databaseList []string) {
 	log.Info("Drop all databases")
 	for _, db := range databaseList {
-		tableList := []clickhouse.Table{}
 		db = db + "_" + t.Name()
-		r.NoError(ch.chbackend.StructSelect(&tableList, "SELECT t.database, t.name, t.create_table_query, t.engine FROM system.tables AS t INNER JOIN system.databases AS d ON t.database=? AND t.database=d.name AND d.engine NOT IN ('MySQL','PostgreSQL')", db))
-		for _, table := range tableList {
-			r.NoError(ch.chbackend.DropTable(table, table.CreateTableQuery, "", true, version, ""))
-		}
 		r.NoError(ch.dropDatabase(db))
 	}
 }
