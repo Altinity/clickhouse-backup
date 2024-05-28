@@ -633,12 +633,14 @@ spec:
 
 ## How incremental backups work with remote storage
 - Incremental backup calculates the increment only while executing `upload` or `create_remote` commands or similar REST API requests.
-- When `use_embedded_backup_restore: false`, then incremental backup calculates the increment only on the table parts level; otherwise the increment is also calculated based on `checksums.txt`. For ClickHouse version 23.3+, see the ClickHouse documentation to find the difference between [data parts](https://clickhouse.tech/docs/en/operations/system-tables/parts/) and [table partitions](https://clickhouse.tech/docs/en/operations/system-tables/partitions/). Currently `clickhouse-backup` does not support incremental backups when `use_embedded_backup_restore: true`. 
+- When `use_embedded_backup_restore: false`, then incremental backup calculates the increment only on the table parts level.  
+- When `use_embedded_backup_restore: true`, then incremental backup calculates by the checksums on file level, this approach more effective.
+- For ClickHouse version 23.3+, see the ClickHouse documentation to find the difference between [data parts](https://clickhouse.com/docs/en/operations/system-tables/parts/) and [table partitions](https://clickhouse.com/docs/en/engines/table-engines/mergetree-family/custom-partitioning-key).
 - To calculate the increment, the backup listed on the `--diff-from` parameter is required to be present as a local backup. Check the `clickhouse-backup list` command results for errors.
-- During upload, `base_backup` is added to current backup metadata as required. All data parts that exist in `base_backup` also mark in the backup metadata table level with `required` flag and skip data uploading. 
-- During download, if a backup contains link to a `required` backup, each table which contains parts marked as `required` will download these parts to local storage after complete downloading for non `required` parts. If you have a chain of incremental backups and required parts exist in this chain, then this action applies recursively. 
-- The size of the increment depends not only on the intensity of your data ingestion but also on the intensity of background merges for data parts in your tables. Please increase how many rows you will ingest during one INSERT query and don't do frequent [table data mutations](https://clickhouse.tech/docs/en/operations/system-tables/mutations/).
-- See the [ClickHouse documentation](https://clickhouse.tech/docs/en/engines/table-engines/mergetree-family/mergetree/) for information on how the `*MergeTree` table engine works.
+- During upload, `base_backup` is added to current backup metadata as `required_backup` in `backup_name/metadata.json`. All data parts that exist in `base_backup` also mark in the backup metadata table level with `required` flag in `backup_name/metadata/database/table.json` and skip data uploading. 
+- During download, if a backup contains link to a `required_backup`, each table which contains parts marked as `required` will download these parts to local storage after complete downloading for non `required` parts. If you have a chain of incremental backups and required parts exist in this chain, then this action applies recursively. 
+- The size of the increment depends not only on the intensity of your data ingestion but also on the intensity of background merges for data parts in your tables. Please increase how many rows you will ingest during one INSERT query and don't do frequent [table data mutations](https://clickhouse.com/docs/en/operations/system-tables/mutations/).
+- See the [ClickHouse documentation](https://clickhouse.com/docs/en/engines/table-engines/mergetree-family/mergetree/) for information on how the `*MergeTree` table engine works.
 
 ## How to watch backups work
 The current implementation is simple and will improve in next releases. 
