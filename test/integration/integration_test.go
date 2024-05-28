@@ -1505,12 +1505,13 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	}
 	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Atomic, Issue331Ordinary}
 	fullCleanup(t, r, ch, backupNames, []string{"remote", "local"}, databaseList, false, false, "config-s3.yml")
+	incrementData := defaultIncrementData
 	generateTestData(t, r, ch, "S3", defaultTestData)
 	for backupNumber, backupName := range backupNames {
 		if backupNumber == 0 {
 			r.NoError(dockerExec("clickhouse-backup", "bash", "-ce", fmt.Sprintf("BACKUPS_TO_KEEP_REMOTE=3 CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup create_remote %s", backupName)))
 		} else {
-			defaultIncrementData = generateIncrementTestData(t, r, ch, "S3", defaultIncrementData, backupNumber)
+			incrementData = generateIncrementTestData(t, r, ch, "S3", incrementData, backupNumber)
 			r.NoError(dockerExec("clickhouse-backup", "bash", "-ce", fmt.Sprintf("BACKUPS_TO_KEEP_REMOTE=3 CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup create_remote --diff-from-remote=%s %s", backupNames[backupNumber-1], backupName)))
 		}
 	}
