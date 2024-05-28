@@ -160,7 +160,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 				atomic.AddInt64(&compressedDataSize, uploadedBytes)
 				tablesForUpload[idx].Files = files
 			}
-			tableMetadataSize, err := b.uploadTableMetadata(uploadCtx, backupName, tablesForUpload[idx])
+			tableMetadataSize, err := b.uploadTableMetadata(uploadCtx, backupName, backupMetadata.RequiredBackup, tablesForUpload[idx])
 			if err != nil {
 				return err
 			}
@@ -621,9 +621,9 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 	return uploadedFiles, uploadedBytes, nil
 }
 
-func (b *Backuper) uploadTableMetadata(ctx context.Context, backupName string, tableMetadata metadata.TableMetadata) (int64, error) {
+func (b *Backuper) uploadTableMetadata(ctx context.Context, backupName string, requiredBackupName string, tableMetadata metadata.TableMetadata) (int64, error) {
 	if b.isEmbedded {
-		if sqlSize, err := b.uploadTableMetadataEmbedded(ctx, backupName, tableMetadata); err != nil {
+		if sqlSize, err := b.uploadTableMetadataEmbedded(ctx, backupName, requiredBackupName, tableMetadata); err != nil {
 			return sqlSize, err
 		} else {
 			jsonSize, err := b.uploadTableMetadataRegular(ctx, backupName, tableMetadata)
@@ -657,7 +657,7 @@ func (b *Backuper) uploadTableMetadataRegular(ctx context.Context, backupName st
 	return int64(len(content)), nil
 }
 
-func (b *Backuper) uploadTableMetadataEmbedded(ctx context.Context, backupName string, tableMetadata metadata.TableMetadata) (int64, error) {
+func (b *Backuper) uploadTableMetadataEmbedded(ctx context.Context, backupName string, requiredBackupName string, tableMetadata metadata.TableMetadata) (int64, error) {
 	if b.cfg.ClickHouse.EmbeddedBackupDisk == "" {
 		return 0, nil
 	}
@@ -669,9 +669,21 @@ func (b *Backuper) uploadTableMetadataEmbedded(ctx context.Context, backupName s
 	}
 	log := b.log.WithField("logger", "uploadTableMetadataEmbedded")
 	localTableMetaFile := path.Join(b.EmbeddedBackupDataPath, backupName, "metadata", common.TablePathEncode(tableMetadata.Database), fmt.Sprintf("%s.sql", common.TablePathEncode(tableMetadata.Table)))
-	localReader, err := os.Open(localTableMetaFile)
+	var info os.FileInfo
+	var localReader *os.File
+	var err error
+	localReader, err = os.Open(localTableMetaFile)
 	if err != nil {
-		return 0, fmt.Errorf("can't open %s: %v", localTableMetaFile, err)
+		err = fmt.Errorf("can't open %s: %v", localTableMetaFile, err)
+		if requiredBackupName != "" {
+			log.Warnf("%v", err)
+			return 0, nil
+		} else {
+			return 0, err
+		}
+	}
+	if info, err = os.Stat(localTableMetaFile); err != nil {
+		return 0, err
 	}
 	defer func() {
 		if err := localReader.Close(); err != nil {
@@ -685,14 +697,10 @@ func (b *Backuper) uploadTableMetadataEmbedded(ctx context.Context, backupName s
 	if err != nil {
 		return 0, fmt.Errorf("can't embeeded upload metadata: %v", err)
 	}
-	if info, err := os.Stat(localTableMetaFile); err != nil {
-		return 0, fmt.Errorf("stat %s error: %v", localTableMetaFile, err)
-	} else {
-		if b.resume {
-			b.resumableState.AppendToState(remoteTableMetaFile, info.Size())
-		}
-		return info.Size(), nil
+	if b.resume {
+		b.resumableState.AppendToState(remoteTableMetaFile, info.Size())
 	}
+	return info.Size(), nil
 }
 
 func (b *Backuper) markDuplicatedParts(backup *metadata.BackupMetadata, existsTable *metadata.TableMetadata, newTable *metadata.TableMetadata, checkLocal bool) {

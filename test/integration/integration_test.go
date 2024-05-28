@@ -1296,7 +1296,8 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	} else {
 		ch.queryWithNoError(r, "DROP DATABASE test_skip_tables")
 	}
-	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLE_ENGINES=memory,materializedview clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore test_skip_full_backup"))
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLE_ENGINES=memory,materializedview clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore --schema test_skip_full_backup"))
+	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLE_ENGINES=memory,materializedview clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore --data test_skip_full_backup"))
 	result = uint64(0)
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT count() FROM system.tables WHERE database='test_skip_tables' AND engine='MergeTree'"))
 	r.Equal(uint64(2), result)
