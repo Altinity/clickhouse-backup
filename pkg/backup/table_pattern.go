@@ -131,6 +131,9 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 			t := result[i]
 			delete(resultPartitionNames, metadata.TableTitle{Database: t.Database, Table: t.Table})
 			result = append(result[:i], result[i+1:]...)
+			if i > 0 {
+				i = i - 1
+			}
 		}
 	}
 	return result, resultPartitionNames, nil
@@ -147,7 +150,7 @@ func (b *Backuper) shouldSkipByTableName(tableFullName string) bool {
 }
 func (b *Backuper) shouldSkipByTableEngine(t metadata.TableMetadata) bool {
 	for _, engine := range b.cfg.ClickHouse.SkipTableEngines {
-		b.log.Debugf("engine=%s query=%s", engine, t.Query)
+		//b.log.Debugf("engine=%s query=%s", engine, t.Query)
 		if strings.ToLower(engine) == "dictionary" && (strings.HasPrefix(t.Query, "ATTACH DICTIONARY") || strings.HasPrefix(t.Query, "CREATE DICTIONARY")) {
 			b.log.Warnf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
 			return true
@@ -156,7 +159,15 @@ func (b *Backuper) shouldSkipByTableEngine(t metadata.TableMetadata) bool {
 			b.log.Warnf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
 			return true
 		}
-		if strings.ToLower(engine) == "view" && strings.HasPrefix(t.Query, "CREATE VIEW") {
+		if strings.ToLower(engine) == "view" && (strings.HasPrefix(t.Query, "ATTACH VIEW") || strings.HasPrefix(t.Query, "CREATE VIEW")) {
+			b.log.Warnf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
+			return true
+		}
+		if strings.ToLower(engine) == "liveview" && (strings.HasPrefix(t.Query, "ATTACH LIVE") || strings.HasPrefix(t.Query, "CREATE LIVE")) {
+			b.log.Warnf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
+			return true
+		}
+		if strings.ToLower(engine) == "windowview" && (strings.HasPrefix(t.Query, "ATTACH WINDOW") || strings.HasPrefix(t.Query, "CREATE WINDOW")) {
 			b.log.Warnf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
 			return true
 		}

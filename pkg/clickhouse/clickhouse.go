@@ -972,10 +972,45 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 		}
 	}
 
+	// WINDOW VIEW unavailable after 24.3
+	allowExperimentalAnalyzer := ""
+	if allowExperimentalAnalyzer, err = ch.TurnAnalyzerOffIfNecessary(version, query, allowExperimentalAnalyzer); err != nil {
+		return err
+	}
+
 	if err := ch.Query(query); err != nil {
 		return err
 	}
+
+	// WINDOW VIEW unavailable after 24.3
+	if err = ch.TurnAnalyzerOnIfNecessary(version, query, allowExperimentalAnalyzer); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (ch *ClickHouse) TurnAnalyzerOnIfNecessary(version int, query string, allowExperimentalAnalyzer string) error {
+	if version > 24003000 && (strings.HasPrefix(query, "CREATE LIVE VIEW") || strings.HasPrefix(query, "ATTACH LIVE VIEW") || strings.HasPrefix(query, "CREATE WINDOW VIEW") || strings.HasPrefix(query, "ATTACH WINDOW VIEW")) && allowExperimentalAnalyzer == "1" {
+		if err := ch.Query("SET allow_experimental_analyzer=1"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (ch *ClickHouse) TurnAnalyzerOffIfNecessary(version int, query string, allowExperimentalAnalyzer string) (string, error) {
+	if version > 24003000 && (strings.HasPrefix(query, "CREATE LIVE VIEW") || strings.HasPrefix(query, "ATTACH LIVE VIEW") || strings.HasPrefix(query, "CREATE WINDOW VIEW") || strings.HasPrefix(query, "ATTACH WINDOW VIEW")) {
+		if err := ch.SelectSingleRowNoCtx(&allowExperimentalAnalyzer, "SELECT value FROM system.settings WHERE name='allow_experimental_analyzer'"); err != nil {
+			return "", err
+		}
+		if allowExperimentalAnalyzer == "1" {
+			if err := ch.Query("SET allow_experimental_analyzer=0"); err != nil {
+				return "", err
+			}
+		}
+		return allowExperimentalAnalyzer, nil
+	}
+	return "", nil
 }
 
 // GetConn - return current connection

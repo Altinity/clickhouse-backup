@@ -444,3 +444,29 @@ cat <<EOT > /etc/clickhouse-server/config.d/replicated_user_directories.xml
 EOT
 
 fi
+
+# @todo LIVE VIEW deprecated, available 21.3+
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9] || "${CLICKHOUSE_VERSION}" =~ ^21\.[3-9] || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] ]]; then
+
+cat <<EOT > /etc/clickhouse-server/users.d/allow_experimental_live_view.xml
+<yandex>
+<profiles><default>
+ <allow_experimental_live_view>1</allow_experimental_live_view>
+</default></profiles>
+</yandex>
+EOT
+
+fi
+
+# WINDOW VIEW available 21.12+
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9] || "${CLICKHOUSE_VERSION}" =~ ^21\.1[1-2] ]]; then
+
+cat <<EOT > /etc/clickhouse-server/users.d/allow_experimental_window_view.xml
+<yandex>
+<profiles><default>
+ <allow_experimental_window_view>1</allow_experimental_window_view>
+</default></profiles>
+</yandex>
+EOT
+
+fi
