@@ -1397,6 +1397,10 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 		expectedTables = 5
 	}
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
+		expectedTables = 7
+	}
+	//*.inner.target.* for WINDOW VIEW created only after 22.6
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.6") >= 0 {
 		expectedTables = 8
 	}
 	r.Equal(expectedTables, result)
