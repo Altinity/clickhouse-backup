@@ -1349,12 +1349,16 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	}
 	r.NoError(dockerExec("clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLES=*.test_memory clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore test_skip_full_backup"))
 	result := uint64(0)
-	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT count() FROM system.tables WHERE database='test_skip_tables' AND (name!='test_memory')"))
+	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&result, "SELECT count() FROM system.tables WHERE database='test_skip_tables' AND name!='test_memory'"))
 	expectedTables := uint64(3)
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 {
 		expectedTables = 4
 	}
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
+		expectedTables = 6
+	}
+	//*.inner.target.* for WINDOW VIEW created only after 22.6
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.6") >= 0 {
 		expectedTables = 7
 	}
 	r.Equal(expectedTables, result)
