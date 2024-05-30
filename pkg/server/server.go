@@ -45,6 +45,7 @@ type APIServer struct {
 	config                  *config.Config
 	server                  *http.Server
 	restart                 chan struct{}
+	stop                    chan struct{}
 	metrics                 *metrics.APIMetrics
 	log                     *apexLog.Entry
 	routes                  []string
@@ -91,6 +92,7 @@ func Run(cliCtx *cli.Context, cliApp *cli.App, configPath string, clickhouseBack
 		clickhouseBackupVersion: clickhouseBackupVersion,
 		metrics:                 metrics.NewAPIMetrics(),
 		log:                     apexLog.WithField("logger", "server"),
+		stop:                    make(chan struct{}),
 	}
 	if cfg.API.CreateIntegrationTables {
 		if err := api.CreateIntegrationTables(); err != nil {
@@ -141,6 +143,9 @@ func Run(cliCtx *cli.Context, cliApp *cli.App, configPath string, clickhouseBack
 			log.Info("Reloaded by SIGHUP")
 		case <-sigterm:
 			log.Info("Stopping API server")
+			return api.Stop()
+		case <-api.stop:
+			log.Info("Stopping API server. Stopped from the inside of the application")
 			return api.Stop()
 		}
 	}
@@ -570,14 +575,16 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 
 func (api *APIServer) handleWatchResponse(watchCommandId int, err error) {
 	status.Current.Stop(watchCommandId, err)
-	api.log.Errorf("Watch error: %v", err)
+	if err != nil {
+		api.log.Errorf("Watch error: %v", err)
+	}
 	if api.config.API.WatchIsMainProcess {
 		// Do not stop server if 'watch' was canceled by the user command
 		if errors.Is(err, context.Canceled) {
 			return
 		}
-		status.Current.CancelAll("canceled because main watch process stopped unexpectedly")
-		_ = api.server.Close()
+		api.log.Info("Stopping server since watch command is stopped")
+		api.stop <- struct{}{}
 	}
 }
 
@@ -991,11 +998,7 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		b := backup.NewBackuper(cfg)
 		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, skipCheckPartsColumns, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
-		defer status.Current.Stop(commandId, err)
-		if err != nil {
-			api.log.Errorf("Watch error: %v", err)
-			return
-		}
+		api.handleWatchResponse(commandId, err)
 	}()
 	api.sendJSONEachRow(w, http.StatusCreated, struct {
 		Status    string `json:"status"`
