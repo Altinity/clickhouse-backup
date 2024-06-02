@@ -31,7 +31,7 @@ s3:
   path: backup/{cluster}/{shard}
   object_disk_path: object_disk/{cluster}/{shard}
   disable_ssl: true
-  compression_format: none
+  compression_format: tar
 api:
   listen: :7171
   create_integration_tables: true

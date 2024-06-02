@@ -334,7 +334,6 @@ func (b *Backuper) prepareTableListToUpload(ctx context.Context, backupName stri
 }
 
 func (b *Backuper) validateUploadParams(ctx context.Context, backupName string, diffFrom string, diffFromRemote string) error {
-	log := b.log.WithField("logger", "validateUploadParams")
 	if b.cfg.General.RemoteStorage == "none" {
 		return fmt.Errorf("general->remote_storage shall not be \"none\" for upload, change you config or use REMOTE_STORAGE environment variable")
 	}
@@ -357,31 +356,7 @@ func (b *Backuper) validateUploadParams(ctx context.Context, backupName string, 
 	if b.cfg.GetCompressionFormat() == "none" && !b.cfg.General.UploadByPart {
 		return fmt.Errorf("%s->`compression_format`=%s incompatible with general->upload_by_part=%v", b.cfg.General.RemoteStorage, b.cfg.GetCompressionFormat(), b.cfg.General.UploadByPart)
 	}
-	if (diffFrom != "" || diffFromRemote != "") && b.cfg.ClickHouse.UseEmbeddedBackupRestore {
-		log.Warnf("--diff-from and --diff-from-remote not compatible with backups created with `use_embedded_backup_restore: true`")
-	}
 
-	if b.cfg.ClickHouse.UseEmbeddedBackupRestore {
-		fatalMsg := fmt.Sprintf("`general->remote_storage: %s` `clickhouse->use_embedded_backup_restore: %v` require %s->compression_format: none, actual %%s", b.cfg.General.RemoteStorage, b.cfg.ClickHouse.UseEmbeddedBackupRestore, b.cfg.General.RemoteStorage)
-		if b.cfg.General.RemoteStorage == "s3" && b.cfg.S3.CompressionFormat != "none" {
-			log.Fatalf(fatalMsg, b.cfg.S3.CompressionFormat)
-		}
-		if b.cfg.General.RemoteStorage == "gcs" && b.cfg.GCS.CompressionFormat != "none" {
-			log.Fatalf(fatalMsg, b.cfg.GCS.CompressionFormat)
-		}
-		if b.cfg.General.RemoteStorage == "azblob" && b.cfg.AzureBlob.CompressionFormat != "none" {
-			log.Fatalf(fatalMsg, b.cfg.AzureBlob.CompressionFormat)
-		}
-		if b.cfg.General.RemoteStorage == "sftp" && b.cfg.SFTP.CompressionFormat != "none" {
-			log.Fatalf(fatalMsg, b.cfg.SFTP.CompressionFormat)
-		}
-		if b.cfg.General.RemoteStorage == "ftp" && b.cfg.FTP.CompressionFormat != "none" {
-			log.Fatalf(fatalMsg, b.cfg.FTP.CompressionFormat)
-		}
-		if b.cfg.General.RemoteStorage == "cos" && b.cfg.COS.CompressionFormat != "none" {
-			log.Fatalf(fatalMsg, b.cfg.COS.CompressionFormat)
-		}
-	}
 	if b.cfg.General.RemoteStorage == "custom" && b.resume {
 		return fmt.Errorf("can't resume for `remote_storage: custom`")
 	}

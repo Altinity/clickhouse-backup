@@ -1,3 +1,8 @@
+# v2.5.12
+BUG FIXES
+- fixed corner case  in `API server` hang when `watch` background command failures, fix [929](https://github.com/Altinity/clickhouse-backup/pull/929) thanks @tadus21
+- remove requirement `compression: none` for `use_embedded_backup_restore: true`
+
 # v2.5.11
 BUG FIXES
 - fixed another corner case for `restore --data=1 --env=CLICKHOUSE_SKIP_TABLE_ENGINES=liveview,WindowView`
