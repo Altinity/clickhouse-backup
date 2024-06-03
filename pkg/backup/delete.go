@@ -179,11 +179,12 @@ func (b *Backuper) cleanEmbeddedAndObjectDiskLocalIfSameRemoteNotPresent(ctx con
 		return err
 	}
 	if !skip && (hasObjectDisks || (b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk == "")) {
+		startTime := time.Now()
 		if deletedKeys, deleteErr := b.cleanBackupObjectDisks(ctx, backupName); deleteErr != nil {
 			log.Warnf("b.cleanBackupObjectDisks return error: %v", deleteErr)
 			return err
 		} else {
-			log.Infof("cleanBackupObjectDisks deleted %d keys", deletedKeys)
+			log.WithField("duration", utils.HumanizeDuration(time.Since(startTime))).Infof("cleanBackupObjectDisks deleted %d keys", deletedKeys)
 		}
 	}
 	if !skip && (b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "") {
@@ -337,10 +338,11 @@ func (b *Backuper) cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent(ctx con
 			return nil
 		}
 		if b.hasObjectDisksRemote(backup) || (b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk == "") {
+			startTime := time.Now()
 			if deletedKeys, deleteErr := b.cleanBackupObjectDisks(ctx, backup.BackupName); deleteErr != nil {
 				log.Warnf("b.cleanBackupObjectDisks return error: %v", deleteErr)
 			} else {
-				log.Infof("cleanBackupObjectDisks deleted %d keys", deletedKeys)
+				log.WithField("duration", utils.HumanizeDuration(time.Since(startTime))).Infof("cleanBackupObjectDisks deleted %d keys", deletedKeys)
 			}
 			return nil
 		}

@@ -270,7 +270,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	if remoteBackup.RequiredBackup != "" {
 		if localBackups, _, err = b.GetLocalBackups(ctx, disks); err == nil {
 			for _, localBackup := range localBackups {
-				if localBackup.BackupName != remoteBackup.BackupName && localBackup.DataSize+localBackup.CompressedSize+localBackup.MetadataSize == 0 {
+				if localBackup.BackupName != remoteBackup.BackupName && localBackup.DataSize+localBackup.CompressedSize+localBackup.MetadataSize+localBackup.RBACSize == 0 {
 					if err = b.RemoveBackupLocal(ctx, localBackup.BackupName, disks); err != nil {
 						return fmt.Errorf("downloadWithDiff -> RemoveBackupLocal cleaning error: %v", err)
 					} else {

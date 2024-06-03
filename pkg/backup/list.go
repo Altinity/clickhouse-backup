@@ -55,10 +55,7 @@ func printBackupsRemote(w io.Writer, backupList []storage.Backup, format string)
 		// 	fmt.Println("no backups found")
 		// }
 		for _, backup := range backupList {
-			size := utils.FormatBytes(backup.DataSize + backup.MetadataSize)
-			if backup.CompressedSize > 0 {
-				size = utils.FormatBytes(backup.CompressedSize + backup.MetadataSize)
-			}
+			size := utils.FormatBytes(backup.GetFullSize())
 			description := backup.DataFormat
 			uploadDate := backup.UploadDate.Format("02/01/2006 15:04:05")
 			if backup.Tags != "" {
@@ -96,18 +93,12 @@ func printBackupsLocal(ctx context.Context, w io.Writer, backupList []LocalBacku
 		}
 		fmt.Println(backupList[len(backupList)-2].BackupName)
 	case "all", "":
-		// if len(backupList) == 0 {
-		// 	fmt.Println("no backups found")
-		// }
 		for _, backup := range backupList {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			default:
-				size := utils.FormatBytes(backup.DataSize + backup.MetadataSize)
-				if backup.CompressedSize > 0 {
-					size = utils.FormatBytes(backup.CompressedSize + backup.MetadataSize)
-				}
+				size := utils.FormatBytes(backup.GetFullSize())
 				description := backup.DataFormat
 				if backup.Tags != "" {
 					if description != "" {

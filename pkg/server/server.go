@@ -775,7 +775,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 			backupsJSON = append(backupsJSON, backupJSON{
 				Name:           item.BackupName,
 				Created:        item.CreationDate.Format(common.TimeFormat),
-				Size:           item.DataSize + item.MetadataSize,
+				Size:           item.GetFullSize(),
 				Location:       "local",
 				RequiredBackup: item.RequiredBackup,
 				Desc:           description,

@@ -1,7 +1,9 @@
 # v2.5.12
+
 BUG FIXES
 - fixed corner case  in `API server` hang when `watch` background command failures, fix [929](https://github.com/Altinity/clickhouse-backup/pull/929) thanks @tadus21
-- remove requirement `compression: none` for `use_embedded_backup_restore: true`
+- removed requirement `compression: none` for `use_embedded_backup_restore: true`
+- refactored to fix corner case for backup size calculation for Object disks and Embedded backup, set consistent algorithm for CLI and API `list` command behavior
 
 # v2.5.11
 BUG FIXES
