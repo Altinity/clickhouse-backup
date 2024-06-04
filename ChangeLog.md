@@ -1,4 +1,6 @@
 # v2.5.12
+IMPROVEMENTS
+- added "object_disk_size" to upload and download command logs
 
 BUG FIXES
 - fixed corner case  in `API server` hang when `watch` background command failures, fix [929](https://github.com/Altinity/clickhouse-backup/pull/929) thanks @tadus21

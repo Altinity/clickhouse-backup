@@ -231,19 +231,21 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 
 	backupMetadata := remoteBackup.BackupMetadata
 	backupMetadata.Tables = tablesForDownload
-	backupMetadata.DataSize = dataSize
-	backupMetadata.MetadataSize = metadataSize
 
 	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" && backupMetadata.Tables != nil && len(backupMetadata.Tables) > 0 {
 		localClickHouseBackupFile := path.Join(b.EmbeddedBackupDataPath, backupName, ".backup")
 		remoteClickHouseBackupFile := path.Join(backupName, ".backup")
-		if err = b.downloadSingleBackupFile(ctx, remoteClickHouseBackupFile, localClickHouseBackupFile, disks); err != nil {
+		localEmbeddedMetadataSize := int64(0)
+		if localEmbeddedMetadataSize, err = b.downloadSingleBackupFile(ctx, remoteClickHouseBackupFile, localClickHouseBackupFile, disks); err != nil {
 			return err
 		}
+		metadataSize += uint64(localEmbeddedMetadataSize)
 	}
 
 	backupMetadata.CompressedSize = 0
 	backupMetadata.DataFormat = ""
+	backupMetadata.DataSize = dataSize
+	backupMetadata.MetadataSize = metadataSize
 	backupMetadata.ConfigSize = configSize
 	backupMetadata.RBACSize = rbacSize
 	backupMetadata.ClickhouseBackupVersion = backupVersion
@@ -285,7 +287,8 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 
 	log.WithFields(apexLog.Fields{
 		"duration": utils.HumanizeDuration(time.Since(startDownload)),
-		"size":     utils.FormatBytes(dataSize + metadataSize + rbacSize + configSize),
+		"download_size":     utils.FormatBytes(dataSize + metadataSize + rbacSize + configSize),
+		"object_disk_size":   utils.FormatBytes(backupMetadata.ObjectDiskSize),
 		"version":  backupVersion,
 	}).Info("done")
 	return nil
@@ -1076,12 +1079,17 @@ func (b *Backuper) makePartHardlinks(exists, new string) error {
 	return nil
 }
 
-func (b *Backuper) downloadSingleBackupFile(ctx context.Context, remoteFile string, localFile string, disks []clickhouse.Disk) error {
-	if b.resume && b.resumableState.IsAlreadyProcessedBool(remoteFile) {
-		return nil
+func (b *Backuper) downloadSingleBackupFile(ctx context.Context, remoteFile string, localFile string, disks []clickhouse.Disk) (int64, error) {
+	var size int64
+	var isProcessed bool
+	if b.resume {
+		if isProcessed, size = b.resumableState.IsAlreadyProcessed(remoteFile); isProcessed {
+			return size, nil
+		}
 	}
 	log := b.log.WithField("logger", "downloadSingleBackupFile")
 	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
+
 	err := retry.RunCtx(ctx, func(ctx context.Context) error {
 		remoteReader, err := b.dst.GetFileReader(ctx, remoteFile)
 		if err != nil {
@@ -1105,7 +1113,7 @@ func (b *Backuper) downloadSingleBackupFile(ctx context.Context, remoteFile stri
 			}
 		}()
 
-		_, err = io.CopyBuffer(localWriter, remoteReader, nil)
+		size, err = io.CopyBuffer(localWriter, remoteReader, nil)
 		if err != nil {
 			return err
 		}
@@ -1116,12 +1124,12 @@ func (b *Backuper) downloadSingleBackupFile(ctx context.Context, remoteFile stri
 		return nil
 	})
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if b.resume {
-		b.resumableState.AppendToState(remoteFile, 0)
+		b.resumableState.AppendToState(remoteFile, size)
 	}
-	return nil
+	return size, nil
 }
 
 // filterDisksByStoragePolicyAndType - https://github.com/Altinity/clickhouse-backup/issues/561

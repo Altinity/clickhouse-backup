@@ -635,7 +635,7 @@ func TestConfigs(t *testing.T) {
 	}
 }
 
-// TestLongListRemote - no parallel, cause need to restart minito
+// TestLongListRemote - no parallel, cause need to restart minio
 func TestLongListRemote(t *testing.T) {
 	ch := &TestClickHouse{}
 	r := require.New(t)
