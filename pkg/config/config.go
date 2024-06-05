@@ -649,7 +649,7 @@ func GetConfigPath(ctx *cli.Context) string {
 
 func OverrideEnvVars(ctx *cli.Context) map[string]string {
 	env := ctx.StringSlice("env")
-	var oldValues map[string]string
+	oldValues := map[string]string{}
 	if len(env) > 0 {
 		for _, v := range env {
 			envVariable := strings.SplitN(v, "=", 2)
