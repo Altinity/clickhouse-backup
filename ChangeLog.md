@@ -1,3 +1,7 @@
+# v2.5.13
+BUG FIXES
+- fixed wrong persistent behavior override for `--env` parameter when use it with API server
+
 # v2.5.12
 IMPROVEMENTS
 - added "object_disk_size" to upload and download command logs
