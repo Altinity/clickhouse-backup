@@ -1206,8 +1206,7 @@ func (ch *ClickHouse) CheckReplicationInProgress(table metadata.TableMetadata) (
 			return false, fmt.Errorf("invalid result for check exists replicas: %+v", existsReplicas)
 		}
 		if existsReplicas[0].InProgress > 0 {
-			ch.Log.Warnf("%s.%s skipped cause system.replicas entry already exists and replication in progress from another replica", table.Database, table.Table)
-			return false, nil
+			return false, fmt.Errorf("%s.%s can't restore cause system.replicas entries already exists and replication in progress from another replica", table.Database, table.Table)
 		} else {
 			ch.Log.Infof("replication_in_progress status = %+v", existsReplicas)
 		}
