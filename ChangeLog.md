@@ -1,6 +1,7 @@
 # v2.5.13
 BUG FIXES
-- fixed wrong persistent behavior override for `--env` parameter when use it with API server
+- fixed wrong persistent behavior override for `--env` parameter when use it with API server, all 2.5.x versions was affected
+- fixed errors during drop exists RBAC objects which contains special character, fix [930](https://github.com/Altinity/clickhouse-backup/issues/930)
 
 # v2.5.12
 IMPROVEMENTS

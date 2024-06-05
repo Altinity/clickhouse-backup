@@ -596,8 +596,8 @@ func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, a
 func (b *Backuper) dropExistsRBAC(ctx context.Context, kind string, name string, accessPath string, rbacType, rbacObjectId string, k *keeper.Keeper) error {
 	//sql
 	if rbacType == "sql" {
-		dropSQL := fmt.Sprintf("DROP %s IF EXISTS %s", kind, name)
-		return b.ch.QueryContext(ctx, dropSQL)
+		dropSQL := fmt.Sprintf("DROP %s IF EXISTS ?", kind)
+		return b.ch.QueryContext(ctx, dropSQL, name)
 	}
 	//local
 	if rbacType == "local" {
