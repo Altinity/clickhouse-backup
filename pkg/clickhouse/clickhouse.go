@@ -1202,7 +1202,7 @@ func (ch *ClickHouse) CheckReplicationInProgress(table metadata.TableMetadata) (
 			AbsoluteDelay uint64 `ch:"absolute_delay"`
 			QueueSize     uint64 `ch:"queue_size"`
 		}, 0)
-		if err := ch.Select(&existsReplicas, "SELECT log_pointer, log_max_index, absolute_delay, queue_size  AS replication_in_progress FROM system.replicas WHERE database=? and table=?", table.Database, table.Table); err != nil {
+		if err := ch.Select(&existsReplicas, "SELECT log_pointer, log_max_index, absolute_delay, queue_size FROM system.replicas WHERE database=? and table=?", table.Database, table.Table); err != nil {
 			return false, err
 		}
 		if len(existsReplicas) != 1 {
