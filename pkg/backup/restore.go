@@ -1252,14 +1252,15 @@ func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName st
 		return fmt.Errorf("can't copy data to storage '%s.%s': %v", table.Database, table.Table, err)
 	}
 	log.Debug("data to 'storage' copied")
-	log.Info("download object_disks start")
 	var size int64
 	var err error
 	start := time.Now()
 	if size, err = b.downloadObjectDiskParts(ctx, backupName, backupMetadata, table, diskMap, diskTypes, disks); err != nil {
 		return fmt.Errorf("can't restore object_disk server-side copy data parts '%s.%s': %v", table.Database, table.Table, err)
 	}
-	log.WithField("duration", utils.HumanizeDuration(time.Since(start))).WithField("size", utils.FormatBytes(uint64(size))).Info("download object_disks finish")
+	if size > 0 {
+		log.WithField("duration", utils.HumanizeDuration(time.Since(start))).WithField("size", utils.FormatBytes(uint64(size))).Info("download object_disks finish")
+	}
 	if err := b.ch.AttachTable(ctx, table, dstTable); err != nil {
 		return fmt.Errorf("can't attach table '%s.%s': %v", table.Database, table.Table, err)
 	}
