@@ -1197,16 +1197,19 @@ func (ch *ClickHouse) ApplyMutation(ctx context.Context, tableMetadata metadata.
 func (ch *ClickHouse) CheckReplicationInProgress(table metadata.TableMetadata) (bool, error) {
 	if ch.Config.CheckReplicasBeforeAttach && strings.Contains(table.Query, "Replicated") {
 		existsReplicas := make([]struct {
-			InProgress uint64 `ch:"replication_in_progress"`
+			LogPointer    uint64 `ch:"log_pointer"`
+			LogMaxIndex   uint64 `ch:"log_max_index"`
+			AbsoluteDelay uint64 `ch:"absolute_delay"`
+			QueueSize     uint64 `ch:"queue_size"`
 		}, 0)
-		if err := ch.Select(&existsReplicas, "SELECT sum(log_pointer + log_max_index + absolute_delay + queue_size)  AS replication_in_progress FROM system.replicas WHERE database=? and table=? SETTINGS empty_result_for_aggregation_by_empty_set=0", table.Database, table.Table); err != nil {
+		if err := ch.Select(&existsReplicas, "SELECT log_pointer, log_max_index, absolute_delay, queue_size  AS replication_in_progress FROM system.replicas WHERE database=? and table=?", table.Database, table.Table); err != nil {
 			return false, err
 		}
 		if len(existsReplicas) != 1 {
 			return false, fmt.Errorf("invalid result for check exists replicas: %+v", existsReplicas)
 		}
-		if existsReplicas[0].InProgress > 0 {
-			return false, fmt.Errorf("%s.%s can't restore cause system.replicas entries already exists and replication in progress from another replica", table.Database, table.Table)
+		if existsReplicas[0].LogPointer > 0 || existsReplicas[0].LogMaxIndex > 0 || existsReplicas[0].AbsoluteDelay > 0 || existsReplicas[0].QueueSize > 0 {
+			return false, fmt.Errorf("%s.%s can't restore cause system.replicas entries already exists and replication in progress from another replica, log_pointer=%d, log_max_index=%d, absolute_delay=%d, queue_size=%d", table.Database, table.Table, existsReplicas[0].LogPointer, existsReplicas[0].LogMaxIndex, existsReplicas[0].AbsoluteDelay, existsReplicas[0].QueueSize)
 		} else {
 			ch.Log.Infof("replication_in_progress status = %+v", existsReplicas)
 		}
