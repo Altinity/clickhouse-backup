@@ -1,3 +1,7 @@
+# v2.5.14
+BUG FIXES
+- remove too aggressive logs for object disk upload and download operations during create and restore commands execution
+
 # v2.5.13
 IMPROVEMENTS
 - return error instead of warning when replication in progress during restore operation 
