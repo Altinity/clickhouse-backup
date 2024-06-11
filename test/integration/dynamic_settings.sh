@@ -342,6 +342,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_azblob.xml
         <account_name>devstoreaccount1</account_name>
         <account_key>Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==</account_key>
         <cache_enabled>false</cache_enabled>
+        <use_native_copy>true</use_native_copy>
       </disk_azblob>
       <backups_azure>
         <type>azure_blob_storage</type>
@@ -351,6 +352,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_azblob.xml
         <account_name>devstoreaccount1</account_name>
         <account_key>Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==</account_key>
         <cache_enabled>false</cache_enabled>
+        <use_native_copy>true</use_native_copy>
       </backups_azure>
     </disks>
     <policies>
