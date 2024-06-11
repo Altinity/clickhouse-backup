@@ -170,7 +170,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 			return err
 		}
 		if err = b.dst.Connect(ctx); err != nil {
-			return fmt.Errorf("restoreBackupEmbedded: can't connect to %s: %v", b.dst.Kind(), err)
+			return fmt.Errorf("BackupDestination for embedded or object disk: can't connect to %s: %v", b.dst.Kind(), err)
 		}
 		defer func() {
 			if err := b.dst.Close(ctx); err != nil {
@@ -1540,7 +1540,7 @@ func (b *Backuper) restoreEmbedded(ctx context.Context, backupName string, schem
 			}
 		}
 	}
-	var settings []string
+	settings := []string{"http_send_timeout=300", "http_receive_timeout=300"}
 	if schemaOnly {
 		settings = append(settings, "structure_only=1")
 	}

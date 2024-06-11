@@ -1,4 +1,7 @@
 # v2.5.14
+IMPROVEMENTS
+- add http_send_timeout=300, http_receive_timeout=300 to embedded backup/restore operations
+
 BUG FIXES
 - remove too aggressive logs for object disk upload and download operations during create and restore commands execution
 

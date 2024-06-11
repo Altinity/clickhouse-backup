@@ -522,7 +522,7 @@ func (b *Backuper) generateEmbeddedBackupSQL(ctx context.Context, backupName str
 		return "", nil, err
 	}
 	backupSQL := fmt.Sprintf("BACKUP %s TO %s", tablesSQL, embeddedBackupLocation)
-	var backupSettings []string
+	backupSettings := []string{"http_send_timeout=300", "http_receive_timeout=300"}
 	if schemaOnly {
 		backupSettings = append(backupSettings, "structure_only=1")
 	}
