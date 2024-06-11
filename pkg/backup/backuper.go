@@ -184,7 +184,11 @@ func (b *Backuper) isDiskTypeEncryptedObject(disk clickhouse.Disk, disks []click
 func (b *Backuper) getEmbeddedBackupDefaultSettings(version int) []string {
 	settings := []string{}
 	if b.cfg.General.RemoteStorage == "s3" || b.cfg.General.RemoteStorage == "gcs" {
-		settings = append(settings, "allow_s3_native_copy=1")
+		if version > 23007001 {
+			settings = append(settings, "allow_s3_native_copy=1")
+		} else {
+			settings = append(settings, "native_copy=1")
+		}
 	}
 	if b.cfg.General.RemoteStorage == "azblob" && version >= 24005001 {
 		settings = append(settings, "allow_azure_native_copy=1")
