@@ -56,9 +56,11 @@ func (ch *ClickHouse) Connect() error {
 			Password: ch.Config.Password,
 		},
 		Settings: clickhouse.Settings{
-			"connect_timeout": int(timeout.Seconds()),
-			"receive_timeout": int(timeout.Seconds()),
-			"send_timeout":    int(timeout.Seconds()),
+			"connect_timeout":      int(timeout.Seconds()),
+			"receive_timeout":      int(timeout.Seconds()),
+			"send_timeout":         int(timeout.Seconds()),
+			"http_send_timeout":    300,
+			"http_receive_timeout": 300,
 		},
 		MaxOpenConns:    ch.Config.MaxConnections,
 		ConnMaxLifetime: 0, // don't change it, it related to SYSTEM SHUTDOWN behavior for properly rebuild RBAC lists on 20.4-22.3

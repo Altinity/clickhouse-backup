@@ -181,6 +181,17 @@ func (b *Backuper) isDiskTypeEncryptedObject(disk clickhouse.Disk, disks []click
 	return underlyingIdx >= 0
 }
 
+func (b *Backuper) getEmbeddedBackupDefaultSettings(version int) []string {
+	settings := []string{}
+	if b.cfg.General.RemoteStorage == "s3" || b.cfg.General.RemoteStorage == "gcs" {
+		settings = append(settings, "allow_s3_native_copy=1")
+	}
+	if b.cfg.General.RemoteStorage == "azblob" && version >= 24005001 {
+		settings = append(settings, "allow_azure_native_copy=1")
+	}
+	return settings
+}
+
 func (b *Backuper) getEmbeddedBackupLocation(ctx context.Context, backupName string) (string, error) {
 	if b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
 		return fmt.Sprintf("Disk('%s','%s')", b.cfg.ClickHouse.EmbeddedBackupDisk, backupName), nil
@@ -214,7 +225,6 @@ func (b *Backuper) getEmbeddedBackupLocation(ctx context.Context, backupName str
 			return fmt.Sprintf("S3('%s/%s','%s','%s')", gcsEndpoint, backupName, os.Getenv("AWS_ACCESS_KEY_ID"), os.Getenv("AWS_SECRET_ACCESS_KEY")), nil
 		}
 		return "", fmt.Errorf("provide gcs->embedded_access_key and gcs->embedded_secret_key in config to allow embedded backup without `clickhouse->embedded_backup_disk`")
-
 	}
 	if b.cfg.General.RemoteStorage == "azblob" {
 		azblobEndpoint, err := b.ch.ApplyMacros(ctx, b.buildEmbeddedLocationAZBLOB())
@@ -242,57 +252,57 @@ func (b *Backuper) applyMacrosToObjectDiskPath(ctx context.Context) error {
 }
 
 func (b *Backuper) buildEmbeddedLocationS3() string {
-	url := url.URL{}
-	url.Scheme = "https"
+	s3backupURL := url.URL{}
+	s3backupURL.Scheme = "https"
 	if strings.HasPrefix(b.cfg.S3.Endpoint, "http") {
-		newUrl, _ := url.Parse(b.cfg.S3.Endpoint)
-		url = *newUrl
-		url.Path = path.Join(b.cfg.S3.Bucket, b.cfg.S3.ObjectDiskPath)
+		newUrl, _ := s3backupURL.Parse(b.cfg.S3.Endpoint)
+		s3backupURL = *newUrl
+		s3backupURL.Path = path.Join(b.cfg.S3.Bucket, b.cfg.S3.ObjectDiskPath)
 	} else {
-		url.Host = b.cfg.S3.Endpoint
-		url.Path = path.Join(b.cfg.S3.Bucket, b.cfg.S3.ObjectDiskPath)
+		s3backupURL.Host = b.cfg.S3.Endpoint
+		s3backupURL.Path = path.Join(b.cfg.S3.Bucket, b.cfg.S3.ObjectDiskPath)
 	}
 	if b.cfg.S3.DisableSSL {
-		url.Scheme = "http"
+		s3backupURL.Scheme = "http"
 	}
-	if url.Host == "" && b.cfg.S3.Region != "" && b.cfg.S3.ForcePathStyle {
-		url.Host = "s3." + b.cfg.S3.Region + ".amazonaws.com"
-		url.Path = path.Join(b.cfg.S3.Bucket, b.cfg.S3.ObjectDiskPath)
+	if s3backupURL.Host == "" && b.cfg.S3.Region != "" && b.cfg.S3.ForcePathStyle {
+		s3backupURL.Host = "s3." + b.cfg.S3.Region + ".amazonaws.com"
+		s3backupURL.Path = path.Join(b.cfg.S3.Bucket, b.cfg.S3.ObjectDiskPath)
 	}
-	if url.Host == "" && b.cfg.S3.Bucket != "" && !b.cfg.S3.ForcePathStyle {
-		url.Host = b.cfg.S3.Bucket + "." + "s3." + b.cfg.S3.Region + ".amazonaws.com"
-		url.Path = b.cfg.S3.ObjectDiskPath
+	if s3backupURL.Host == "" && b.cfg.S3.Bucket != "" && !b.cfg.S3.ForcePathStyle {
+		s3backupURL.Host = b.cfg.S3.Bucket + "." + "s3." + b.cfg.S3.Region + ".amazonaws.com"
+		s3backupURL.Path = b.cfg.S3.ObjectDiskPath
 	}
-	return url.String()
+	return s3backupURL.String()
 }
 
 func (b *Backuper) buildEmbeddedLocationGCS() string {
-	url := url.URL{}
-	url.Scheme = "https"
+	gcsBackupURL := url.URL{}
+	gcsBackupURL.Scheme = "https"
 	if b.cfg.GCS.ForceHttp {
-		url.Scheme = "http"
+		gcsBackupURL.Scheme = "http"
 	}
 	if b.cfg.GCS.Endpoint != "" {
 		if !strings.HasPrefix(b.cfg.GCS.Endpoint, "http") {
-			url.Host = b.cfg.GCS.Endpoint
+			gcsBackupURL.Host = b.cfg.GCS.Endpoint
 		} else {
-			newUrl, _ := url.Parse(b.cfg.GCS.Endpoint)
-			url = *newUrl
+			newUrl, _ := gcsBackupURL.Parse(b.cfg.GCS.Endpoint)
+			gcsBackupURL = *newUrl
 		}
 	}
-	if url.Host == "" {
-		url.Host = "storage.googleapis.com"
+	if gcsBackupURL.Host == "" {
+		gcsBackupURL.Host = "storage.googleapis.com"
 	}
-	url.Path = path.Join(b.cfg.GCS.Bucket, b.cfg.GCS.ObjectDiskPath)
-	return url.String()
+	gcsBackupURL.Path = path.Join(b.cfg.GCS.Bucket, b.cfg.GCS.ObjectDiskPath)
+	return gcsBackupURL.String()
 }
 
 func (b *Backuper) buildEmbeddedLocationAZBLOB() string {
-	url := url.URL{}
-	url.Scheme = b.cfg.AzureBlob.EndpointSchema
-	url.Host = b.cfg.AzureBlob.EndpointSuffix
-	url.Path = b.cfg.AzureBlob.AccountName
-	return fmt.Sprintf("DefaultEndpointsProtocol=%s;AccountName=%s;AccountKey=%s;BlobEndpoint=%s;", b.cfg.AzureBlob.EndpointSchema, b.cfg.AzureBlob.AccountName, b.cfg.AzureBlob.AccountKey, url.String())
+	azblobBackupURL := url.URL{}
+	azblobBackupURL.Scheme = b.cfg.AzureBlob.EndpointSchema
+	azblobBackupURL.Host = b.cfg.AzureBlob.EndpointSuffix
+	azblobBackupURL.Path = b.cfg.AzureBlob.AccountName
+	return fmt.Sprintf("DefaultEndpointsProtocol=%s;AccountName=%s;AccountKey=%s;BlobEndpoint=%s;", b.cfg.AzureBlob.EndpointSchema, b.cfg.AzureBlob.AccountName, b.cfg.AzureBlob.AccountKey, azblobBackupURL.String())
 }
 
 func (b *Backuper) getObjectDiskPath() (string, error) {
