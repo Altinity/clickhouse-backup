@@ -530,10 +530,10 @@ s3:
   compression_format: tar          # S3_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   # look at details in https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingKMSEncryption.html
   sse: ""                          # S3_SSE, empty (default), AES256, or aws:kms
-  sse_kms_key_id: ""               # S3_SSE_KMS_KEY_ID, if S3_SSE is aws:kms then specifies the ID of the Amazon Web Services Key Management Service
   sse_customer_algorithm: ""       # S3_SSE_CUSTOMER_ALGORITHM, encryption algorithm, for example, AES256
-  sse_customer_key: ""             # S3_SSE_CUSTOMER_KEY, customer-provided encryption key
-  sse_customer_key_md5: ""         # S3_SSE_CUSTOMER_KEY_MD5, 128-bit MD5 digest of the encryption key according to RFC 1321
+  sse_customer_key: ""             # S3_SSE_CUSTOMER_KEY, customer-provided encryption key use `openssl rand 32 > aws_sse.key` and `cat aws_sse.key | base64` 
+  sse_customer_key_md5: ""         # S3_SSE_CUSTOMER_KEY_MD5, 128-bit MD5 digest of the encryption key according to RFC 1321 use `cat aws_sse.key |  openssl dgst -md5 -binary | base64`
+  sse_kms_key_id: ""               # S3_SSE_KMS_KEY_ID, if S3_SSE is aws:kms then specifies the ID of the Amazon Web Services Key Management Service
   sse_kms_encryption_context: ""   # S3_SSE_KMS_ENCRYPTION_CONTEXT, base64-encoded UTF-8 string holding a JSON with the encryption context
                                    # Specifies the Amazon Web Services KMS Encryption Context to use for object encryption.
                                    # This is a collection of non-secret key-value pairs that represent additional authenticated data.
