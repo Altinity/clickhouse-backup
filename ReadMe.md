@@ -70,7 +70,10 @@ GO111MODULE=on go install github.com/Altinity/clickhouse-backup/v2/cmd/clickhous
 
 ## Brief description how clickhouse-backup works
 
-Data files are immutable in the `clickhouse-server`. During a backup operation, `clickhouse-backup` creates file system hard links to existing `clickhouse-server` data parts via executing the `ALTER TABLE ... FREEZE` query. During the restore operation, `clickhouse-backup` copies the hard links to the `detached` folder and executes the `ALTER TABLE ... ATTACH PART` query for each data part and each table in the backup. A more detailed description is available here: https://www.youtube.com/watch?v=megsNh9Q-dw
+Data files are immutable in the `clickhouse-server`.
+During a backup operation, `clickhouse-backup` creates file system hard links to existing `clickhouse-server` data parts via executing the `ALTER TABLE ... FREEZE` query.
+During the restore operation, `clickhouse-backup` copies the hard links to the `detached` folder and executes the `ALTER TABLE ... ATTACH PART` query for each data part and each table in the backup.
+A more detailed description is available here: https://www.youtube.com/watch?v=megsNh9Q-dw
 
 ## Default Config
 
