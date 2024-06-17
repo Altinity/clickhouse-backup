@@ -2131,11 +2131,6 @@ func TestIntegrationEmbedded(t *testing.T) {
 	}
 	//t.Parallel()
 	r := require.New(t)
-	if compareVersion(version, "24.3") >= 0 {
-		//CUSTOM backup creates folder in each disk, need to clear
-		r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_local/backup/"))
-		runMainIntegrationScenario(t, "EMBEDDED_LOCAL", "config-s3-embedded-local.yml")
-	}
 	//CUSTOM backup creates folder in each disk, need to clear
 	r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_s3/backup/"))
 	runMainIntegrationScenario(t, "EMBEDDED_S3", "config-s3-embedded.yml")
@@ -2156,6 +2151,11 @@ func TestIntegrationEmbedded(t *testing.T) {
 	//r.NoError(dockerExec("azure", "pkill", "tcpdump"))
 	//r.NoError(dockerCP("azure:/tmp/azurite_http.pcap", "./azurite_http.pcap"))
 
+	if compareVersion(version, "24.3") >= 0 {
+		//CUSTOM backup creates folder in each disk, need to clear
+		r.NoError(dockerExec("clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_local/backup/"))
+		runMainIntegrationScenario(t, "EMBEDDED_LOCAL", "config-s3-embedded-local.yml")
+	}
 	if compareVersion(version, "23.8") >= 0 {
 		//@todo think about named collections to avoid show credentials in logs look to https://github.com/fsouza/fake-gcs-server/issues/1330, https://github.com/fsouza/fake-gcs-server/pull/1164
 		//installDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "gettext-base")
@@ -2746,6 +2746,7 @@ func generateTestData(t *testing.T, r *require.Assertions, ch *TestClickHouse, r
 }
 
 func generateTestDataWithDifferentStoragePolicy(remoteStorageType string, offset, rowsCount int, testData []TestDataStruct) []TestDataStruct {
+	log.Infof("generateTestDataWithDifferentStoragePolicy remoteStorageType=%s", remoteStorageType)
 	for databaseName, databaseEngine := range map[string]string{dbNameOrdinary: "Ordinary", dbNameAtomic: "Atomic"} {
 		testDataWithStoragePolicy := TestDataStruct{
 			Database: databaseName, DatabaseEngine: databaseEngine,
@@ -2773,7 +2774,7 @@ func generateTestDataWithDifferentStoragePolicy(remoteStorageType string, offset
 			}
 		}
 		//s3 disks support after 21.8
-		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 && remoteStorageType == "S3" {
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 && strings.Contains(remoteStorageType,"S3") {
 			testDataWithStoragePolicy.Name = "test_s3"
 			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id PARTITION BY id SETTINGS storage_policy = 's3_only'"
 			addTestDataIfNotExists()
@@ -2785,7 +2786,7 @@ func generateTestDataWithDifferentStoragePolicy(remoteStorageType string, offset
 			addTestDataIfNotExists()
 		}
 		//encrypted s3 disks support after 21.12
-		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 && remoteStorageType == "S3" {
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 && strings.Contains(remoteStorageType,"S3") {
 			testDataWithStoragePolicy.Name = "test_s3_encrypted"
 			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=MergeTree ORDER BY id PARTITION BY id SETTINGS storage_policy = 's3_only_encrypted'"
 			// @todo wait when fix https://github.com/ClickHouse/ClickHouse/issues/58247
@@ -2801,7 +2802,7 @@ func generateTestDataWithDifferentStoragePolicy(remoteStorageType string, offset
 			addTestDataIfNotExists()
 		}
 		//check azure_blob_storage only in 23.3+ (added in 22.1)
-		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.3") >= 0 && remoteStorageType == "AZBLOB" {
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.3") >= 0 && strings.Contains(remoteStorageType,"AZBLOB") {
 			testDataWithStoragePolicy.Name = "test_azure"
 			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id PARTITION BY id SETTINGS storage_policy = 'azure_only'"
 			addTestDataIfNotExists()

@@ -472,3 +472,22 @@ cat <<EOT > /etc/clickhouse-server/users.d/allow_experimental_window_view.xml
 EOT
 
 fi
+
+# blob_storage_log available in 23.11
+if [[ "$CLICKHOUSE_VERSION" == "head" || "${CLICKHOUSE_VERSION}" =~ ^23\.1[1-9] || "${CLICKHOUSE_VERSION}" =~ ^2[4-9\.[1-9] ]]; then
+
+cat <<EOT > /etc/clickhouse-server/config.d/blob_storage_log.xml
+<yandex>
+   <blob_storage_log replace="1">
+        <database>system</database>
+        <table>blob_storage_log</table>
+        <engine>ENGINE = MergeTree PARTITION BY (event_date)
+                ORDER BY (event_time)
+                TTL event_date + INTERVAL 1 DAY DELETE
+        </engine>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+    </blob_storage_log>
+</yandex>
+EOT
+
+fi
