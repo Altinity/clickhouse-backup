@@ -255,7 +255,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 	var backupDataSize, backupObjectDiskSize, backupMetadataSize uint64
 	var metaMutex sync.Mutex
 	createBackupWorkingGroup, createCtx := errgroup.WithContext(ctx)
-	createBackupWorkingGroup.SetLimit(b.cfg.ClickHouse.MaxConnections)
+	createBackupWorkingGroup.SetLimit(max(b.cfg.ClickHouse.MaxConnections,1))
 
 	var tableMetas []metadata.TableTitle
 	for tableIdx, tableItem := range tables {

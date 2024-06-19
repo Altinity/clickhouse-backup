@@ -1,3 +1,7 @@
+# v2.5.15
+BUG FIXES
+- fix hangs `create` and `restore` when CLICKHOUSE_MAX_CONNECTIONS=0, fix [933](https://github.com/Altinity/clickhouse-backup/issues/933)
+
 # v2.5.14
 IMPROVEMENTS
 - add http_send_timeout=300, http_receive_timeout=300 to embedded backup/restore operations

@@ -77,8 +77,12 @@ A more detailed description is available here: https://www.youtube.com/watch?v=m
 
 ## Default Config
 
-By default, the config file is located at `/etc/clickhouse-backup/config.yml`, but it can be redefined via the `CLICKHOUSE_BACKUP_CONFIG` environment variable.
+By default, the config file is located at `/etc/clickhouse-backup/config.yml`, but it can be redefined via the `CLICKHOUSE_BACKUP_CONFIG` environment variable or via `--config` command line parameter.
 All options can be overwritten via environment variables.
+Use `clickhouse-backup default-config` to print default config.
+
+## Explain config parameters
+following values is not default, it just explain which each config parameter actually means
 Use `clickhouse-backup print-config` to print current config.
 
 ```yaml

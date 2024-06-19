@@ -1196,7 +1196,7 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ba
 		return fmt.Errorf("%s is not created. Restore schema first or create missing tables manually", strings.Join(missingTables, ", "))
 	}
 	restoreBackupWorkingGroup, restoreCtx := errgroup.WithContext(ctx)
-	restoreBackupWorkingGroup.SetLimit(b.cfg.ClickHouse.MaxConnections)
+	restoreBackupWorkingGroup.SetLimit(max(b.cfg.ClickHouse.MaxConnections,1))
 
 	for i := range tablesForRestore {
 		tableRestoreStartTime := time.Now()
