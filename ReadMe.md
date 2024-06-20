@@ -180,8 +180,6 @@ clickhouse:
   check_replicas_before_attach: true # CLICKHOUSE_CHECK_REPLICAS_BEFORE_ATTACH, helps avoiding concurrent ATTACH PART execution when restoring ReplicatedMergeTree tables
   use_embedded_backup_restore: false # CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE, use BACKUP / RESTORE SQL statements instead of regular SQL queries to use features of modern ClickHouse server versions
   embedded_backup_disk: ""  # CLICKHOUSE_EMBEDDED_BACKUP_DISK - disk from system.disks which will use when `use_embedded_backup_restore: true` 
-  embedded_backup_threads: 0 # CLICKHOUSE_EMBEDDED_BACKUP_THREADS - how many threads will use for BACKUP sql command when `use_embedded_backup_restore: true`, 0 means - equal available CPU cores  
-  embedded_restore_threads: 0 # CLICKHOUSE_EMBEDDED_RESTORE_THREADS - how many threads will use for RESTORE sql command when `use_embedded_backup_restore: true`, 0 means - equal available CPU cores  
   backup_mutations: true # CLICKHOUSE_BACKUP_MUTATIONS, allow backup mutations from system.mutations WHERE is_done=0 and apply it during restore
   restore_as_attach: false # CLICKHOUSE_RESTORE_AS_ATTACH, allow restore tables which have inconsistent data parts structure and mutations in progress
   check_parts_columns: true # CLICKHOUSE_CHECK_PARTS_COLUMNS, check data types from system.parts_columns during create backup to guarantee mutation is complete

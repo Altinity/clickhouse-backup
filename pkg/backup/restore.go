@@ -1336,7 +1336,7 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 			}
 			start := time.Now()
 			downloadObjectDiskPartsWorkingGroup, downloadCtx := errgroup.WithContext(ctx)
-			downloadObjectDiskPartsWorkingGroup.SetLimit(int(b.cfg.General.ObjectDiskServerSizeCopyConcurrency))
+			downloadObjectDiskPartsWorkingGroup.SetLimit(int(b.cfg.General.ObjectDiskServerSideCopyConcurrency))
 			for _, part := range parts {
 				dstDiskName := diskName
 				if part.RebalancedDisk != "" {
@@ -1546,9 +1546,6 @@ func (b *Backuper) restoreEmbedded(ctx context.Context, backupName string, schem
 	}
 	if dataOnly {
 		settings = append(settings, "allow_non_empty_tables=1")
-	}
-	if b.cfg.ClickHouse.EmbeddedRestoreThreads > 0 {
-		settings = append(settings, fmt.Sprintf("restore_threads=%d", b.cfg.ClickHouse.EmbeddedRestoreThreads))
 	}
 	embeddedBackupLocation, err := b.getEmbeddedBackupLocation(ctx, backupName)
 	if err != nil {

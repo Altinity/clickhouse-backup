@@ -1,6 +1,7 @@
 # v2.5.15
 BUG FIXES
 - fix hangs `create` and `restore` when CLICKHOUSE_MAX_CONNECTIONS=0, fix [933](https://github.com/Altinity/clickhouse-backup/issues/933)
+- remove obsolete `CLICKHOUSE_EMBEDDED_BACKUP_THREADS`, `CLICKHOUSE_EMBEDDED_BACKUP_THREADS` these settings could configure only via server level, not profile and query settings after 23.3
 
 # v2.5.14
 IMPROVEMENTS

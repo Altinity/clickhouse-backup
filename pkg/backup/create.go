@@ -530,9 +530,6 @@ func (b *Backuper) generateEmbeddedBackupSQL(ctx context.Context, backupName str
 	if schemaOnly {
 		backupSettings = append(backupSettings, "structure_only=1")
 	}
-	if b.cfg.ClickHouse.EmbeddedBackupThreads > 0 {
-		backupSettings = append(backupSettings, fmt.Sprintf("backup_threads=%d", b.cfg.ClickHouse.EmbeddedBackupThreads))
-	}
 	// incremental native backup https://github.com/Altinity/clickhouse-backup/issues/735
 	if baseBackup != "" {
 		baseBackup, err = b.getEmbeddedBackupLocation(ctx, baseBackup)
@@ -825,7 +822,7 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	uploadObjectDiskPartsWorkingGroup, ctx := errgroup.WithContext(ctx)
-	uploadObjectDiskPartsWorkingGroup.SetLimit(int(b.cfg.General.ObjectDiskServerSizeCopyConcurrency))
+	uploadObjectDiskPartsWorkingGroup.SetLimit(int(b.cfg.General.ObjectDiskServerSideCopyConcurrency))
 	srcDiskConnection, exists := object_disk.DisksConnections.Load(disk.Name)
 	if !exists {
 		return 0, fmt.Errorf("uploadObjectDiskParts: %s not present in object_disk.DisksConnections", disk.Name)

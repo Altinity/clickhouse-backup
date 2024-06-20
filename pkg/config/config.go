@@ -48,7 +48,7 @@ type GeneralConfig struct {
 	UploadConcurrency                   uint8             `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
 	UploadMaxBytesPerSecond             uint64            `yaml:"upload_max_bytes_per_second" envconfig:"UPLOAD_MAX_BYTES_PER_SECOND"`
 	DownloadMaxBytesPerSecond           uint64            `yaml:"download_max_bytes_per_second" envconfig:"DOWNLOAD_MAX_BYTES_PER_SECOND"`
-	ObjectDiskServerSizeCopyConcurrency uint8             `yaml:"object_disk_server_side_copy_concurrency" envconfig:"OBJECT_DISK_SERVER_SIDE_COPY_CONCURRENCY"`
+	ObjectDiskServerSideCopyConcurrency uint8             `yaml:"object_disk_server_side_copy_concurrency" envconfig:"OBJECT_DISK_SERVER_SIDE_COPY_CONCURRENCY"`
 	UseResumableState                   bool              `yaml:"use_resumable_state" envconfig:"USE_RESUMABLE_STATE"`
 	RestoreSchemaOnCluster              string            `yaml:"restore_schema_on_cluster" envconfig:"RESTORE_SCHEMA_ON_CLUSTER"`
 	UploadByPart                        bool              `yaml:"upload_by_part" envconfig:"UPLOAD_BY_PART"`
@@ -217,8 +217,6 @@ type ClickHouseConfig struct {
 	FreezeByPartWhere                string            `yaml:"freeze_by_part_where" envconfig:"CLICKHOUSE_FREEZE_BY_PART_WHERE"`
 	UseEmbeddedBackupRestore         bool              `yaml:"use_embedded_backup_restore" envconfig:"CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE"`
 	EmbeddedBackupDisk               string            `yaml:"embedded_backup_disk" envconfig:"CLICKHOUSE_EMBEDDED_BACKUP_DISK"`
-	EmbeddedBackupThreads            uint8             `yaml:"embedded_backup_threads" envconfig:"CLICKHOUSE_EMBEDDED_BACKUP_THREADS"`
-	EmbeddedRestoreThreads           uint8             `yaml:"embedded_restore_threads" envconfig:"CLICKHOUSE_EMBEDDED_RESTORE_THREADS"`
 	BackupMutations                  bool              `yaml:"backup_mutations" envconfig:"CLICKHOUSE_BACKUP_MUTATIONS"`
 	RestoreAsAttach                  bool              `yaml:"restore_as_attach" envconfig:"CLICKHOUSE_RESTORE_AS_ATTACH"`
 	CheckPartsColumns                bool              `yaml:"check_parts_columns" envconfig:"CLICKHOUSE_CHECK_PARTS_COLUMNS"`
@@ -517,7 +515,7 @@ func DefaultConfig() *Config {
 			LogLevel:                            "info",
 			UploadConcurrency:                   uploadConcurrency,
 			DownloadConcurrency:                 downloadConcurrency,
-			ObjectDiskServerSizeCopyConcurrency: 32,
+			ObjectDiskServerSideCopyConcurrency: 32,
 			RestoreSchemaOnCluster:              "",
 			UploadByPart:                        true,
 			DownloadByPart:                      true,
