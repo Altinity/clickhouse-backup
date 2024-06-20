@@ -1,4 +1,7 @@
 # v2.5.15
+IMPROVEMENTS
+- increase `s3_request_timeout_ms` (23.7+) and turn off `s3_use_adaptive_timeouts` (23.11+) when `use_embedded_backup_restore: true`
+
 BUG FIXES
 - fix hangs `create` and `restore` when CLICKHOUSE_MAX_CONNECTIONS=0, fix [933](https://github.com/Altinity/clickhouse-backup/issues/933)
 - remove obsolete `CLICKHOUSE_EMBEDDED_BACKUP_THREADS`, `CLICKHOUSE_EMBEDDED_BACKUP_THREADS` these settings could configure only via server level, not profile and query settings after 23.3

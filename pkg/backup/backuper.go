@@ -183,10 +183,19 @@ func (b *Backuper) isDiskTypeEncryptedObject(disk clickhouse.Disk, disks []click
 
 func (b *Backuper) getEmbeddedBackupDefaultSettings(version int) []string {
 	settings := []string{}
-	if (b.cfg.General.RemoteStorage == "s3" || b.cfg.General.RemoteStorage == "gcs") && version > 23007001 {
+	if (b.cfg.General.RemoteStorage == "s3" || b.cfg.General.RemoteStorage == "gcs") && version >= 23007000 {
 		settings = append(settings, "allow_s3_native_copy=1")
+		if err := b.ch.Query("SET s3_request_timeout_ms=600000"); err != nil {
+			b.log.Fatalf("SET s3_request_timeout_ms=600000 error: %v", err)
+		}
+
 	}
-	if b.cfg.General.RemoteStorage == "azblob" && version >= 24005001 {
+	if (b.cfg.General.RemoteStorage == "s3" || b.cfg.General.RemoteStorage == "gcs") && version >= 23011000 {
+		if err := b.ch.Query("SET s3_use_adaptive_timeouts=0"); err != nil {
+			b.log.Fatalf("SET s3_use_adaptive_timeouts=0 error: %v", err)
+		}
+	}
+	if b.cfg.General.RemoteStorage == "azblob" && version >= 24005000 {
 		settings = append(settings, "allow_azure_native_copy=1")
 	}
 	return settings
