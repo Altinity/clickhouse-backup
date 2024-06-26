@@ -33,8 +33,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const dbNameAtomic = "_test.ДБ_atomic_"
-const dbNameOrdinary = "_test.ДБ_ordinary_"
+const dbNameAtomic = "_test#$.ДБ_atomic_"
+const dbNameOrdinary = "_test#$.ДБ_ordinary_"
 const dbNameMySQL = "mysql_db"
 const dbNamePostgreSQL = "pgsql_db"
 const Issue331Atomic = "_issue331._atomic_"
@@ -87,7 +87,7 @@ var defaultTestData = []TestDataStruct{
 		OrderBy: "id",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Name:   "-table-3-",
+		Name:   "-table-$-",
 		Schema: "(TimeStamp DateTime, Item String, Date Date MATERIALIZED toDate(TimeStamp)) ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
 			{"TimeStamp": toTS("2018-10-23 07:37:14"), "Item": "One"},
@@ -144,7 +144,7 @@ var defaultTestData = []TestDataStruct{
 		OrderBy: "order_id",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Name:   "jbod_table",
+		Name:   "jbod#$_table",
 		Schema: "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 'jbod'",
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
@@ -157,7 +157,7 @@ var defaultTestData = []TestDataStruct{
 		OrderBy: "id",
 	}, {
 		Database: dbNameAtomic, DatabaseEngine: "Atomic",
-		Name:   "jbod_table",
+		Name:   "jbod#$_table",
 		Schema: "(t DateTime, id UInt64) Engine=MergeTree PARTITION BY (toYYYYMM(t), id % 4) ORDER BY id SETTINGS storage_policy = 'jbod'",
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
@@ -327,7 +327,7 @@ var defaultIncrementData = []TestDataStruct{
 		OrderBy: "id",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Name:   "-table-3-",
+		Name:   "-table-$-",
 		Schema: "(TimeStamp DateTime, Item String, Date Date MATERIALIZED toDate(TimeStamp)) ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
 			{"TimeStamp": toTS("2019-01-26 07:37:18"), "Item": "Seven"},
@@ -380,7 +380,7 @@ var defaultIncrementData = []TestDataStruct{
 		OrderBy: "order_id",
 	}, {
 		Database: dbNameAtomic, DatabaseEngine: "Atomic",
-		Name:   "jbod_table",
+		Name:   "jbod#$_table",
 		Schema: "(t DateTime, id UInt64) Engine=MergeTree PARTITION BY (toYYYYMM(t), id % 4) ORDER BY id SETTINGS storage_policy = 'jbod'",
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
@@ -3171,7 +3171,7 @@ func isTableSkip(ch *TestClickHouse, data TestDataStruct, dataExists bool) bool 
 		_ = ch.chbackend.Select(&dictEngines, dictSQL)
 		return len(dictEngines) == 0
 	}
-	return os.Getenv("COMPOSE_FILE") == "docker-compose.yml" && (strings.Contains(data.Name, "jbod_table") || data.IsDictionary)
+	return os.Getenv("COMPOSE_FILE") == "docker-compose.yml" && (strings.Contains(data.Name, "jbod#$_table") || data.IsDictionary)
 }
 
 func compareVersion(v1, v2 string) int {
