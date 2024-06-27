@@ -1,3 +1,8 @@
+# v2.5.16
+BUG FIXES
+- allow backup/restore tables and databases which contains additional special characters set, fix [938](https://github.com/Altinity/clickhouse-backup/issues/938)
+- properly restore environment variables to avoid failures in config.ValidateConfig in REST API mode, fix [940](https://github.com/Altinity/clickhouse-backup/issues/940)
+
 # v2.5.15
 IMPROVEMENTS
 - increase `s3_request_timeout_ms` (23.7+) and turn off `s3_use_adaptive_timeouts` (23.11+) when `use_embedded_backup_restore: true`
