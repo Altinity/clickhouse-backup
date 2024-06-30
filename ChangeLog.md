@@ -1,3 +1,7 @@
+# v2.5.17
+BUG FIXES
+- Fix wrong restoration of Materialized views with view name starting with digits for `--restore-table-mapping`, fix [942](https://github.com/Altinity/clickhouse-backup/pull/942), thanks @praveenthuwat
+
 # v2.5.16
 BUG FIXES
 - allow backup/restore tables and databases which contains additional special characters set, fix [938](https://github.com/Altinity/clickhouse-backup/issues/938)
