@@ -6,15 +6,14 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/logcli"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
-
-	"github.com/Altinity/clickhouse-backup/v2/pkg/backup"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/server"
-
 	"github.com/apex/log"
 	"github.com/urfave/cli"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/backup"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/logcli"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/server"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 )
 
 var (
@@ -340,7 +339,7 @@ func main() {
 			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Restore(c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("partitions"), c.Bool("schema"), c.Bool("data"), c.Bool("drop"), c.Bool("ignore-dependencies"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), version, c.Int("command-id"))
+				return b.Restore(c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.Bool("schema"), c.Bool("data"), c.Bool("drop"), c.Bool("ignore-dependencies"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -351,6 +350,11 @@ func main() {
 				cli.StringSliceFlag{
 					Name:   "restore-database-mapping, m",
 					Usage:  "Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.",
+					Hidden: false,
+				},
+				cli.StringSliceFlag{
+					Name:   "restore-table-mapping, tm",
+					Usage:  "Define the rule to restore data. For the table not defined in this struct, the program will not deal with it.",
 					Hidden: false,
 				},
 				cli.StringSliceFlag{
@@ -412,7 +416,7 @@ func main() {
 			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--skip-rbac] [--skip-configs] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.RestoreFromRemote(c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), version, c.Int("command-id"))
+				return b.RestoreFromRemote(c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -422,6 +426,11 @@ func main() {
 				},
 				cli.StringSliceFlag{
 					Name:   "restore-database-mapping, m",
+					Usage:  "Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.",
+					Hidden: false,
+				},
+				cli.StringSliceFlag{
+					Name:   "restore-table-mapping, tm",
 					Usage:  "Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.",
 					Hidden: false,
 				},

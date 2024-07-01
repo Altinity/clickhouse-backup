@@ -15,14 +15,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/antchfx/xmlquery"
 	apexLog "github.com/apex/log"
 	"github.com/ricochet2200/go-disk-usage/du"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 )
 
 // ClickHouse - provide
@@ -751,6 +752,9 @@ func (ch *ClickHouse) AttachDataParts(table metadata.TableMetadata, dstTable Tab
 	if dstTable.Database != "" && dstTable.Database != table.Database {
 		table.Database = dstTable.Database
 	}
+	if dstTable.Name != "" && dstTable.Name != table.Table {
+		table.Table = dstTable.Name
+	}
 	canContinue, err := ch.CheckReplicationInProgress(table)
 	if err != nil {
 		return err
@@ -783,6 +787,9 @@ func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetad
 	}
 	if dstTable.Database != "" && dstTable.Database != table.Database {
 		table.Database = dstTable.Database
+	}
+	if dstTable.Name != "" && dstTable.Name != table.Table {
+		table.Table = dstTable.Name
 	}
 	canContinue, err := ch.CheckReplicationInProgress(table)
 	if err != nil {
