@@ -10,9 +10,8 @@ import (
 	"strings"
 	"time"
 
-	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
-
 	"github.com/apex/log"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/kelseyhightower/envconfig"
 	"github.com/urfave/cli"
 	"gopkg.in/yaml.v3"
@@ -54,6 +53,7 @@ type GeneralConfig struct {
 	UploadByPart                        bool              `yaml:"upload_by_part" envconfig:"UPLOAD_BY_PART"`
 	DownloadByPart                      bool              `yaml:"download_by_part" envconfig:"DOWNLOAD_BY_PART"`
 	RestoreDatabaseMapping              map[string]string `yaml:"restore_database_mapping" envconfig:"RESTORE_DATABASE_MAPPING"`
+	RestoreTableMapping                 map[string]string `yaml:"restore_table_mapping" envconfig:"RESTORE_TABLE_MAPPING"`
 	RetriesOnFailure                    int               `yaml:"retries_on_failure" envconfig:"RETRIES_ON_FAILURE"`
 	RetriesPause                        string            `yaml:"retries_pause" envconfig:"RETRIES_PAUSE"`
 	WatchInterval                       string            `yaml:"watch_interval" envconfig:"WATCH_INTERVAL"`
@@ -529,6 +529,7 @@ func DefaultConfig() *Config {
 			FullDuration:                        24 * time.Hour,
 			WatchBackupNameTemplate:             "shard{shard}-{type}-{time:20060102150405}",
 			RestoreDatabaseMapping:              make(map[string]string, 0),
+			RestoreTableMapping:                 make(map[string]string, 0),
 			IONicePriority:                      "idle",
 			CPUNicePriority:                     15,
 			RBACBackupAlways:                    true,

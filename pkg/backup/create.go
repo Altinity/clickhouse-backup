@@ -5,9 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
-	"golang.org/x/sync/errgroup"
 	"os"
 	"path"
 	"path/filepath"
@@ -17,19 +14,22 @@ import (
 	"sync/atomic"
 	"time"
 
+	apexLog "github.com/apex/log"
+	"github.com/google/uuid"
+	recursiveCopy "github.com/otiai10/copy"
+	"golang.org/x/sync/errgroup"
+
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/filesystemhelper"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/keeper"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/partition"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage/object_disk"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
-
-	apexLog "github.com/apex/log"
-	"github.com/google/uuid"
-	recursiveCopy "github.com/otiai10/copy"
 )
 
 const (
@@ -255,7 +255,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 	var backupDataSize, backupObjectDiskSize, backupMetadataSize uint64
 	var metaMutex sync.Mutex
 	createBackupWorkingGroup, createCtx := errgroup.WithContext(ctx)
-	createBackupWorkingGroup.SetLimit(max(b.cfg.ClickHouse.MaxConnections,1))
+	createBackupWorkingGroup.SetLimit(max(b.cfg.ClickHouse.MaxConnections, 1))
 
 	var tableMetas []metadata.TableTitle
 	for tableIdx, tableItem := range tables {
