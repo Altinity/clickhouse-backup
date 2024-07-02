@@ -1,3 +1,7 @@
+# v2.5.18
+BUG FIXES
+- add `clean` command to `POST /backup/actions` API handler, fix [945](https://github.com/Altinity/clickhouse-backup/issues/945)
+
 # v2.5.17
 BUG FIXES
 - Fix wrong restoration of Materialized views with view name starting with digits for `--restore-table-mapping`, fix [942](https://github.com/Altinity/clickhouse-backup/pull/942), thanks @praveenthuwat

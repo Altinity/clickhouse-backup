@@ -729,6 +729,8 @@ func TestServerAPI(t *testing.T) {
 
 	testAPIBackupDelete(r)
 
+	testAPIBackupClean(r, ch)
+
 	r.NoError(dockerExec("clickhouse-backup", "pkill", "-n", "-f", "clickhouse-backup"))
 	r.NoError(ch.dropDatabase("long_schema"))
 }
@@ -880,7 +882,24 @@ func testAPIBackupDelete(r *require.Assertions) {
 
 }
 
-func testAPIMetrics(r *require.Assertions, ch *TestClickHouse) {
+func testAPIBackupClean(r *require.Assertions, ch *TestClickHouse) {
+	log.Info("Check /backup/clean/ /backup/clean_remote_broken/ and /backup/actions fot these two commands")
+	out, err := dockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/clean'"))
+	log.Infof(out)
+	r.NoError(err)
+	r.NotContains(out, "another operation is currently running")
+	r.NotContains(out, "\"status\":\"error\"")
+
+	out, err = dockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/clean/remote_broken'"))
+	log.Infof(out)
+	r.NoError(err)
+	r.NotContains(out, "another operation is currently running")
+	r.NotContains(out, "\"status\":\"error\"")
+
+	runClickHouseClientInsertSystemBackupActions(r, ch, []string{"clean","clean_remote_broken"}, false)
+}
+
+	func testAPIMetrics(r *require.Assertions, ch *TestClickHouse) {
 	log.Info("Check /metrics clickhouse_backup_last_backup_size_remote")
 	var lastRemoteSize int64
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&lastRemoteSize, "SELECT size FROM system.backup_list WHERE name='z_backup_5' AND location='remote'"))

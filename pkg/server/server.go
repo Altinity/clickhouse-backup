@@ -352,6 +352,12 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 				api.writeError(w, http.StatusInternalServerError, row.Command, err)
 				return
 			}
+		case "clean":
+			actionsResults, err = api.actionsCleanHandler(w, row, command, actionsResults)
+			if err != nil {
+				api.writeError(w, http.StatusInternalServerError, row.Command, err)
+				return
+			}
 		case "clean_remote_broken":
 			actionsResults, err = api.actionsCleanRemoteBrokenHandler(w, row, command, actionsResults)
 			if err != nil {
@@ -446,6 +452,38 @@ func (api *APIServer) actionsKillHandler(row status.ActionRow, args []string, ac
 	if err != nil {
 		return actionsResults, err
 	}
+	actionsResults = append(actionsResults, actionsResultsRow{
+		Status:    "success",
+		Operation: row.Command,
+	})
+	return actionsResults, nil
+}
+
+func (api *APIServer) actionsCleanHandler(w http.ResponseWriter, row status.ActionRow, command string, actionsResults []actionsResultsRow) ([]actionsResultsRow, error) {
+	if !api.config.API.AllowParallel && status.Current.InProgress() {
+		api.log.Warn(ErrAPILocked.Error())
+		return actionsResults, ErrAPILocked
+	}
+	commandId, ctx := status.Current.Start(command)
+	cfg, err := api.ReloadConfig(w, "clean")
+	if err != nil {
+		status.Current.Stop(commandId, err)
+		return actionsResults, err
+	}
+	b := backup.NewBackuper(cfg)
+	err = b.Clean(ctx)
+	if err != nil {
+		api.log.Errorf("actions Clean error: %v", err)
+		status.Current.Stop(commandId, err)
+		return actionsResults, err
+	}
+	api.log.Info("CLEANED")
+	go func() {
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
+			api.log.Errorf("UpdateBackupMetrics return error: %v", metricsErr)
+		}
+	}()
+	status.Current.Stop(commandId, nil)
 	actionsResults = append(actionsResults, actionsResultsRow{
 		Status:    "success",
 		Operation: row.Command,
