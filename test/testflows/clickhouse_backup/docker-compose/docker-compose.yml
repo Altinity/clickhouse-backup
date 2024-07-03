@@ -79,7 +79,7 @@ services:
 
   mysql:
     image: mysql:${MYSQL_VERSION:-latest}
-    command: --mysql-native-password=ON --gtid_mode=on --enforce_gtid_consistency=ON
+    command: --gtid_mode=on --enforce_gtid_consistency=ON
     hostname: mysql
     environment:
       - MYSQL_ALLOW_EMPTY_PASSWORD=True
