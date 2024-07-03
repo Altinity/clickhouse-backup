@@ -1,3 +1,7 @@
+# v2.5.19
+BUG FIXES
+- fix `restore --rbac` behavior when RBAC objects contains `-`, `.` or any special characters new fixes for [930](https://github.com/Altinity/clickhouse-backup/issues/930)
+
 # v2.5.18
 BUG FIXES
 - add `clean` command to `POST /backup/actions` API handler, fix [945](https://github.com/Altinity/clickhouse-backup/issues/945)

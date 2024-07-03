@@ -460,27 +460,27 @@ func TestRBAC(t *testing.T) {
 
 		ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_rbac")
 		ch.queryWithNoError(r, "CREATE TABLE default.test_rbac (v UInt64) ENGINE=MergeTree() ORDER BY tuple()")
-		ch.queryWithNoError(r, "DROP SETTINGS PROFILE IF EXISTS `test.rbac`")
-		ch.queryWithNoError(r, "DROP QUOTA IF EXISTS `test.rbac`")
-		ch.queryWithNoError(r, "DROP ROW POLICY IF EXISTS `test.rbac` ON default.test_rbac")
-		ch.queryWithNoError(r, "DROP ROLE IF EXISTS `test.rbac`")
-		ch.queryWithNoError(r, "DROP USER IF EXISTS `test.rbac`")
+		ch.queryWithNoError(r, "DROP SETTINGS PROFILE IF EXISTS `test.rbac-name`")
+		ch.queryWithNoError(r, "DROP QUOTA IF EXISTS `test.rbac-name`")
+		ch.queryWithNoError(r, "DROP ROW POLICY IF EXISTS `test.rbac-name` ON default.test_rbac")
+		ch.queryWithNoError(r, "DROP ROLE IF EXISTS `test.rbac-name`")
+		ch.queryWithNoError(r, "DROP USER IF EXISTS `test.rbac-name`")
 
 		createRBACObjects := func(drop bool) {
 			if drop {
 				log.Info("drop all RBAC related objects")
-				ch.queryWithNoError(r, "DROP SETTINGS PROFILE `test.rbac`")
-				ch.queryWithNoError(r, "DROP QUOTA `test.rbac`")
-				ch.queryWithNoError(r, "DROP ROW POLICY `test.rbac` ON default.test_rbac")
-				ch.queryWithNoError(r, "DROP ROLE `test.rbac`")
-				ch.queryWithNoError(r, "DROP USER `test.rbac`")
+				ch.queryWithNoError(r, "DROP SETTINGS PROFILE `test.rbac-name`")
+				ch.queryWithNoError(r, "DROP QUOTA `test.rbac-name`")
+				ch.queryWithNoError(r, "DROP ROW POLICY `test.rbac-name` ON default.test_rbac")
+				ch.queryWithNoError(r, "DROP ROLE `test.rbac-name`")
+				ch.queryWithNoError(r, "DROP USER `test.rbac-name`")
 			}
 			log.Info("create RBAC related objects")
-			ch.queryWithNoError(r, "CREATE SETTINGS PROFILE `test.rbac` SETTINGS max_execution_time=60")
-			ch.queryWithNoError(r, "CREATE ROLE `test.rbac` SETTINGS PROFILE `test.rbac`")
-			ch.queryWithNoError(r, "CREATE USER `test.rbac` IDENTIFIED BY 'test_rbac_password' DEFAULT ROLE `test.rbac`")
-			ch.queryWithNoError(r, "CREATE QUOTA `test.rbac` KEYED BY user_name FOR INTERVAL 1 hour NO LIMITS TO `test.rbac`")
-			ch.queryWithNoError(r, "CREATE ROW POLICY `test.rbac` ON default.test_rbac USING 1=1 AS RESTRICTIVE TO `test.rbac`")
+			ch.queryWithNoError(r, "CREATE SETTINGS PROFILE `test.rbac-name` SETTINGS max_execution_time=60")
+			ch.queryWithNoError(r, "CREATE ROLE `test.rbac-name` SETTINGS PROFILE `test.rbac-name`")
+			ch.queryWithNoError(r, "CREATE USER `test.rbac-name` IDENTIFIED BY 'test_rbac_password' DEFAULT ROLE `test.rbac-name`")
+			ch.queryWithNoError(r, "CREATE QUOTA `test.rbac-name` KEYED BY user_name FOR INTERVAL 1 hour NO LIMITS TO `test.rbac-name`")
+			ch.queryWithNoError(r, "CREATE ROW POLICY `test.rbac-name` ON default.test_rbac USING 1=1 AS RESTRICTIVE TO `test.rbac-name`")
 		}
 		createRBACObjects(false)
 
@@ -515,11 +515,11 @@ func TestRBAC(t *testing.T) {
 		r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
 
 		rbacTypes := map[string]string{
-			"PROFILES": "test.rbac",
-			"QUOTAS":   "test.rbac",
-			"POLICIES": "`test.rbac` ON default.test_rbac",
-			"ROLES":    "test.rbac",
-			"USERS":    "test.rbac",
+			"PROFILES": "test.rbac-name",
+			"QUOTAS":   "test.rbac-name",
+			"POLICIES": "`test.rbac-name` ON default.test_rbac",
+			"ROLES":    "test.rbac-name",
+			"USERS":    "test.rbac-name",
 		}
 		for rbacType, expectedValue := range rbacTypes {
 			var rbacRows []struct {
@@ -543,11 +543,11 @@ func TestRBAC(t *testing.T) {
 		r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "local", "test_rbac_backup"))
 		r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "remote", "test_rbac_backup"))
 
-		ch.queryWithNoError(r, "DROP SETTINGS PROFILE `test.rbac`")
-		ch.queryWithNoError(r, "DROP QUOTA `test.rbac`")
-		ch.queryWithNoError(r, "DROP ROW POLICY `test.rbac` ON default.test_rbac")
-		ch.queryWithNoError(r, "DROP ROLE `test.rbac`")
-		ch.queryWithNoError(r, "DROP USER `test.rbac`")
+		ch.queryWithNoError(r, "DROP SETTINGS PROFILE `test.rbac-name`")
+		ch.queryWithNoError(r, "DROP QUOTA `test.rbac-name`")
+		ch.queryWithNoError(r, "DROP ROW POLICY `test.rbac-name` ON default.test_rbac")
+		ch.queryWithNoError(r, "DROP ROLE `test.rbac-name`")
+		ch.queryWithNoError(r, "DROP USER `test.rbac-name`")
 		ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_rbac")
 		ch.chbackend.Close()
 	}
