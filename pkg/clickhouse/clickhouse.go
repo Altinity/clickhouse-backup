@@ -474,7 +474,7 @@ func (ch *ClickHouse) prepareGetTablesSQL(tablePattern string, skipDatabases, sk
 
 	allTablesSQL += "  FROM system.tables WHERE is_temporary = 0"
 	if tablePattern != "" {
-		replacer := strings.NewReplacer(".", "\\.", ",", "$|^", "*", ".*", "?", ".", " ", "", "`", "", `"`, "", "-", "\\-")
+		replacer := strings.NewReplacer(".", "\\.", "$", ".", ",", "$|^", "*", ".*", "?", ".", " ", "", "`", "", `"`, "", "-", "\\-")
 		allTablesSQL += fmt.Sprintf(" AND match(concat(database,'.',name),'^%s$') ", replacer.Replace(tablePattern))
 	}
 	if len(skipDatabases) > 0 {

@@ -6,8 +6,12 @@ import (
 )
 
 func TablePathEncode(str string) string {
-	return strings.NewReplacer(".", "%2E", "-", "%2D").Replace(url.PathEscape(str))
-
+	return strings.NewReplacer(
+		"!", "%21", "@", "%40", "#", "%23", "$", "%24", "^", "%5E", "&", "%26", "*", "%2A",
+		"(", "%28", ")", "%29", "+", "%2B", "-", "%2D", "=", "%3D", "[", "%5B", "]", "%5D",
+		"{", "%7B", "}", "%7D", "|", "%7C", ";", "%3B", "'", "%27", ":", "%3A", "\"", "%22",
+		",", "%2C", ".", "%2E", "/", "%2F", "<", "%3C", ">", "%3E", "?", "%3F", "~", "%7E",
+	).Replace(url.PathEscape(str))
 }
 
 func SumMapValuesInt(m map[string]int) int {

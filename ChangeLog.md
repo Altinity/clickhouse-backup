@@ -1,3 +1,20 @@
+# v2.5.19
+BUG FIXES
+- fix `restore --rbac` behavior when RBAC objects contains `-`, `.` or any special characters new fixes for [930](https://github.com/Altinity/clickhouse-backup/issues/930)
+
+# v2.5.18
+BUG FIXES
+- add `clean` command to `POST /backup/actions` API handler, fix [945](https://github.com/Altinity/clickhouse-backup/issues/945)
+
+# v2.5.17
+BUG FIXES
+- Fix wrong restoration of Materialized views with view name starting with digits for `--restore-table-mapping`, fix [942](https://github.com/Altinity/clickhouse-backup/pull/942), thanks @praveenthuwat
+
+# v2.5.16
+BUG FIXES
+- allow backup/restore tables and databases which contains additional special characters set, fix [938](https://github.com/Altinity/clickhouse-backup/issues/938)
+- properly restore environment variables to avoid failures in config.ValidateConfig in REST API mode, fix [940](https://github.com/Altinity/clickhouse-backup/issues/940)
+
 # v2.5.15
 IMPROVEMENTS
 - increase `s3_request_timeout_ms` (23.7+) and turn off `s3_use_adaptive_timeouts` (23.11+) when `use_embedded_backup_restore: true`

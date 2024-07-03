@@ -104,7 +104,7 @@ services:
 
   mysql:
     image: docker.io/mysql:${MYSQL_VERSION:-latest}
-    command: --mysql-native-password=ON --gtid_mode=on --enforce_gtid_consistency=ON
+    command: --gtid_mode=on --enforce_gtid_consistency=ON
     hostname: mysql
     container_name: mysql
     environment:

@@ -615,10 +615,14 @@ func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, a
 	return false, "", ""
 }
 
+// https://github.com/Altinity/clickhouse-backup/issues/930
+var needQuoteRBACRE = regexp.MustCompile(`[^0-9a-zA-Z_]`)
+
 func (b *Backuper) dropExistsRBAC(ctx context.Context, kind string, name string, accessPath string, rbacType, rbacObjectId string, k *keeper.Keeper) error {
 	//sql
 	if rbacType == "sql" {
-		if strings.Contains(name, ".") && !strings.HasPrefix(name, "`") && !strings.HasPrefix(name, `"`) && !strings.HasPrefix(name, "'") && !strings.Contains(name, " ON ") {
+		// https://github.com/Altinity/clickhouse-backup/issues/930
+		if needQuoteRBACRE.MatchString(name) && !strings.HasPrefix(name, "`") && !strings.HasPrefix(name, `"`) && !strings.HasPrefix(name, "'") && !strings.Contains(name, " ON ") {
 			name = "`" + name + "`"
 		}
 		dropSQL := fmt.Sprintf("DROP %s IF EXISTS %s", kind, name)

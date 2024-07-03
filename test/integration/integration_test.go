@@ -33,8 +33,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const dbNameAtomic = "_test.ДБ_atomic_"
-const dbNameOrdinary = "_test.ДБ_ordinary_"
+const dbNameAtomic = "_test#$.ДБ_atomic_"
+const dbNameOrdinary = "_test#$.ДБ_ordinary_"
 const dbNameMySQL = "mysql_db"
 const dbNamePostgreSQL = "pgsql_db"
 const Issue331Atomic = "_issue331._atomic_"
@@ -87,7 +87,7 @@ var defaultTestData = []TestDataStruct{
 		OrderBy: "id",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Name:   "-table-3-",
+		Name:   "-table-$-",
 		Schema: "(TimeStamp DateTime, Item String, Date Date MATERIALIZED toDate(TimeStamp)) ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
 			{"TimeStamp": toTS("2018-10-23 07:37:14"), "Item": "One"},
@@ -144,7 +144,7 @@ var defaultTestData = []TestDataStruct{
 		OrderBy: "order_id",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Name:   "jbod_table",
+		Name:   "jbod#$_table",
 		Schema: "(id UInt64) Engine=MergeTree ORDER BY id SETTINGS storage_policy = 'jbod'",
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
@@ -157,7 +157,7 @@ var defaultTestData = []TestDataStruct{
 		OrderBy: "id",
 	}, {
 		Database: dbNameAtomic, DatabaseEngine: "Atomic",
-		Name:   "jbod_table",
+		Name:   "jbod#$_table",
 		Schema: "(t DateTime, id UInt64) Engine=MergeTree PARTITION BY (toYYYYMM(t), id % 4) ORDER BY id SETTINGS storage_policy = 'jbod'",
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
@@ -327,7 +327,7 @@ var defaultIncrementData = []TestDataStruct{
 		OrderBy: "id",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		Name:   "-table-3-",
+		Name:   "-table-$-",
 		Schema: "(TimeStamp DateTime, Item String, Date Date MATERIALIZED toDate(TimeStamp)) ENGINE = MergeTree() PARTITION BY Date ORDER BY TimeStamp SETTINGS index_granularity = 8192",
 		Rows: []map[string]interface{}{
 			{"TimeStamp": toTS("2019-01-26 07:37:18"), "Item": "Seven"},
@@ -380,7 +380,7 @@ var defaultIncrementData = []TestDataStruct{
 		OrderBy: "order_id",
 	}, {
 		Database: dbNameAtomic, DatabaseEngine: "Atomic",
-		Name:   "jbod_table",
+		Name:   "jbod#$_table",
 		Schema: "(t DateTime, id UInt64) Engine=MergeTree PARTITION BY (toYYYYMM(t), id % 4) ORDER BY id SETTINGS storage_policy = 'jbod'",
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
@@ -460,27 +460,27 @@ func TestRBAC(t *testing.T) {
 
 		ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_rbac")
 		ch.queryWithNoError(r, "CREATE TABLE default.test_rbac (v UInt64) ENGINE=MergeTree() ORDER BY tuple()")
-		ch.queryWithNoError(r, "DROP SETTINGS PROFILE IF EXISTS `test.rbac`")
-		ch.queryWithNoError(r, "DROP QUOTA IF EXISTS `test.rbac`")
-		ch.queryWithNoError(r, "DROP ROW POLICY IF EXISTS `test.rbac` ON default.test_rbac")
-		ch.queryWithNoError(r, "DROP ROLE IF EXISTS `test.rbac`")
-		ch.queryWithNoError(r, "DROP USER IF EXISTS `test.rbac`")
+		ch.queryWithNoError(r, "DROP SETTINGS PROFILE IF EXISTS `test.rbac-name`")
+		ch.queryWithNoError(r, "DROP QUOTA IF EXISTS `test.rbac-name`")
+		ch.queryWithNoError(r, "DROP ROW POLICY IF EXISTS `test.rbac-name` ON default.test_rbac")
+		ch.queryWithNoError(r, "DROP ROLE IF EXISTS `test.rbac-name`")
+		ch.queryWithNoError(r, "DROP USER IF EXISTS `test.rbac-name`")
 
 		createRBACObjects := func(drop bool) {
 			if drop {
 				log.Info("drop all RBAC related objects")
-				ch.queryWithNoError(r, "DROP SETTINGS PROFILE `test.rbac`")
-				ch.queryWithNoError(r, "DROP QUOTA `test.rbac`")
-				ch.queryWithNoError(r, "DROP ROW POLICY `test.rbac` ON default.test_rbac")
-				ch.queryWithNoError(r, "DROP ROLE `test.rbac`")
-				ch.queryWithNoError(r, "DROP USER `test.rbac`")
+				ch.queryWithNoError(r, "DROP SETTINGS PROFILE `test.rbac-name`")
+				ch.queryWithNoError(r, "DROP QUOTA `test.rbac-name`")
+				ch.queryWithNoError(r, "DROP ROW POLICY `test.rbac-name` ON default.test_rbac")
+				ch.queryWithNoError(r, "DROP ROLE `test.rbac-name`")
+				ch.queryWithNoError(r, "DROP USER `test.rbac-name`")
 			}
 			log.Info("create RBAC related objects")
-			ch.queryWithNoError(r, "CREATE SETTINGS PROFILE `test.rbac` SETTINGS max_execution_time=60")
-			ch.queryWithNoError(r, "CREATE ROLE `test.rbac` SETTINGS PROFILE `test.rbac`")
-			ch.queryWithNoError(r, "CREATE USER `test.rbac` IDENTIFIED BY 'test_rbac_password' DEFAULT ROLE `test.rbac`")
-			ch.queryWithNoError(r, "CREATE QUOTA `test.rbac` KEYED BY user_name FOR INTERVAL 1 hour NO LIMITS TO `test.rbac`")
-			ch.queryWithNoError(r, "CREATE ROW POLICY `test.rbac` ON default.test_rbac USING 1=1 AS RESTRICTIVE TO `test.rbac`")
+			ch.queryWithNoError(r, "CREATE SETTINGS PROFILE `test.rbac-name` SETTINGS max_execution_time=60")
+			ch.queryWithNoError(r, "CREATE ROLE `test.rbac-name` SETTINGS PROFILE `test.rbac-name`")
+			ch.queryWithNoError(r, "CREATE USER `test.rbac-name` IDENTIFIED BY 'test_rbac_password' DEFAULT ROLE `test.rbac-name`")
+			ch.queryWithNoError(r, "CREATE QUOTA `test.rbac-name` KEYED BY user_name FOR INTERVAL 1 hour NO LIMITS TO `test.rbac-name`")
+			ch.queryWithNoError(r, "CREATE ROW POLICY `test.rbac-name` ON default.test_rbac USING 1=1 AS RESTRICTIVE TO `test.rbac-name`")
 		}
 		createRBACObjects(false)
 
@@ -515,11 +515,11 @@ func TestRBAC(t *testing.T) {
 		r.NoError(dockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
 
 		rbacTypes := map[string]string{
-			"PROFILES": "test.rbac",
-			"QUOTAS":   "test.rbac",
-			"POLICIES": "`test.rbac` ON default.test_rbac",
-			"ROLES":    "test.rbac",
-			"USERS":    "test.rbac",
+			"PROFILES": "test.rbac-name",
+			"QUOTAS":   "test.rbac-name",
+			"POLICIES": "`test.rbac-name` ON default.test_rbac",
+			"ROLES":    "test.rbac-name",
+			"USERS":    "test.rbac-name",
 		}
 		for rbacType, expectedValue := range rbacTypes {
 			var rbacRows []struct {
@@ -543,11 +543,11 @@ func TestRBAC(t *testing.T) {
 		r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "local", "test_rbac_backup"))
 		r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "remote", "test_rbac_backup"))
 
-		ch.queryWithNoError(r, "DROP SETTINGS PROFILE `test.rbac`")
-		ch.queryWithNoError(r, "DROP QUOTA `test.rbac`")
-		ch.queryWithNoError(r, "DROP ROW POLICY `test.rbac` ON default.test_rbac")
-		ch.queryWithNoError(r, "DROP ROLE `test.rbac`")
-		ch.queryWithNoError(r, "DROP USER `test.rbac`")
+		ch.queryWithNoError(r, "DROP SETTINGS PROFILE `test.rbac-name`")
+		ch.queryWithNoError(r, "DROP QUOTA `test.rbac-name`")
+		ch.queryWithNoError(r, "DROP ROW POLICY `test.rbac-name` ON default.test_rbac")
+		ch.queryWithNoError(r, "DROP ROLE `test.rbac-name`")
+		ch.queryWithNoError(r, "DROP USER `test.rbac-name`")
 		ch.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_rbac")
 		ch.chbackend.Close()
 	}
@@ -729,6 +729,8 @@ func TestServerAPI(t *testing.T) {
 
 	testAPIBackupDelete(r)
 
+	testAPIBackupClean(r, ch)
+
 	r.NoError(dockerExec("clickhouse-backup", "pkill", "-n", "-f", "clickhouse-backup"))
 	r.NoError(ch.dropDatabase("long_schema"))
 }
@@ -880,7 +882,24 @@ func testAPIBackupDelete(r *require.Assertions) {
 
 }
 
-func testAPIMetrics(r *require.Assertions, ch *TestClickHouse) {
+func testAPIBackupClean(r *require.Assertions, ch *TestClickHouse) {
+	log.Info("Check /backup/clean/ /backup/clean_remote_broken/ and /backup/actions fot these two commands")
+	out, err := dockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/clean'"))
+	log.Infof(out)
+	r.NoError(err)
+	r.NotContains(out, "another operation is currently running")
+	r.NotContains(out, "\"status\":\"error\"")
+
+	out, err = dockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/clean/remote_broken'"))
+	log.Infof(out)
+	r.NoError(err)
+	r.NotContains(out, "another operation is currently running")
+	r.NotContains(out, "\"status\":\"error\"")
+
+	runClickHouseClientInsertSystemBackupActions(r, ch, []string{"clean","clean_remote_broken"}, false)
+}
+
+	func testAPIMetrics(r *require.Assertions, ch *TestClickHouse) {
 	log.Info("Check /metrics clickhouse_backup_last_backup_size_remote")
 	var lastRemoteSize int64
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&lastRemoteSize, "SELECT size FROM system.backup_list WHERE name='z_backup_5' AND location='remote'"))
@@ -3171,7 +3190,7 @@ func isTableSkip(ch *TestClickHouse, data TestDataStruct, dataExists bool) bool 
 		_ = ch.chbackend.Select(&dictEngines, dictSQL)
 		return len(dictEngines) == 0
 	}
-	return os.Getenv("COMPOSE_FILE") == "docker-compose.yml" && (strings.Contains(data.Name, "jbod_table") || data.IsDictionary)
+	return os.Getenv("COMPOSE_FILE") == "docker-compose.yml" && (strings.Contains(data.Name, "jbod#$_table") || data.IsDictionary)
 }
 
 func compareVersion(v1, v2 string) int {

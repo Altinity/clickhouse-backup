@@ -646,9 +646,14 @@ func GetConfigPath(ctx *cli.Context) string {
 	return DefaultConfigPath
 }
 
-func OverrideEnvVars(ctx *cli.Context) map[string]string {
+type oldEnvValues struct {
+	OldValue string
+	WasPresent bool
+}
+
+func OverrideEnvVars(ctx *cli.Context) map[string]oldEnvValues {
 	env := ctx.StringSlice("env")
-	oldValues := map[string]string{}
+	oldValues := map[string]oldEnvValues{}
 	if len(env) > 0 {
 		for _, v := range env {
 			envVariable := strings.SplitN(v, "=", 2)
@@ -656,7 +661,11 @@ func OverrideEnvVars(ctx *cli.Context) map[string]string {
 				envVariable = append(envVariable, "true")
 			}
 			log.Infof("override %s=%s", envVariable[0], envVariable[1])
-			oldValues[envVariable[0]] = os.Getenv(envVariable[0])
+			oldValue, wasPresent := os.LookupEnv(envVariable[0])
+			oldValues[envVariable[0]] = oldEnvValues{
+				OldValue: oldValue,
+				WasPresent: wasPresent,
+			}
 			if err := os.Setenv(envVariable[0], envVariable[1]); err != nil {
 				log.Warnf("can't override %s=%s, error: %v", envVariable[0], envVariable[1], err)
 			}
@@ -665,10 +674,16 @@ func OverrideEnvVars(ctx *cli.Context) map[string]string {
 	return oldValues
 }
 
-func RestoreEnvVars(envVars map[string]string) {
-	for name, value := range envVars {
-		if err := os.Setenv(name, value); err != nil {
-			log.Warnf("can't restore %s=%s, error: %v", name, value, err)
+func RestoreEnvVars(envVars map[string]oldEnvValues) {
+	for name, oldEnv := range envVars {
+		if oldEnv.WasPresent {
+			if err := os.Setenv(name, oldEnv.OldValue); err != nil {
+				log.Warnf("RestoreEnvVars can't restore %s=%s, error: %v", name, oldEnv.OldValue, err)
+			}
+		} else {
+			if err := os.Unsetenv(name); err != nil {
+				log.Warnf("RestoreEnvVars can't delete %s, error: %v", name, err)
+			}
 		}
 	}
 }
