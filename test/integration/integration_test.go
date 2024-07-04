@@ -7,12 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/logcli"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/partition"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
-	"github.com/google/uuid"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -24,13 +18,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
-	"github.com/apex/log"
-	"golang.org/x/mod/semver"
-
 	_ "github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/apex/log"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/mod/semver"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/logcli"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/partition"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 )
 
 const dbNameAtomic = "_test#$.ДБ_atomic_"
@@ -896,10 +896,10 @@ func testAPIBackupClean(r *require.Assertions, ch *TestClickHouse) {
 	r.NotContains(out, "another operation is currently running")
 	r.NotContains(out, "\"status\":\"error\"")
 
-	runClickHouseClientInsertSystemBackupActions(r, ch, []string{"clean","clean_remote_broken"}, false)
+	runClickHouseClientInsertSystemBackupActions(r, ch, []string{"clean", "clean_remote_broken"}, false)
 }
 
-	func testAPIMetrics(r *require.Assertions, ch *TestClickHouse) {
+func testAPIMetrics(r *require.Assertions, ch *TestClickHouse) {
 	log.Info("Check /metrics clickhouse_backup_last_backup_size_remote")
 	var lastRemoteSize int64
 	r.NoError(ch.chbackend.SelectSingleRowNoCtx(&lastRemoteSize, "SELECT size FROM system.backup_list WHERE name='z_backup_5' AND location='remote'"))
@@ -2184,7 +2184,7 @@ func TestIntegrationEmbedded(t *testing.T) {
 	}
 }
 
-func TestRestoreDatabaseMapping(t *testing.T) {
+func TestRestoreMapping(t *testing.T) {
 	//t.Parallel()
 	r := require.New(t)
 	ch := &TestClickHouse{}
@@ -2220,7 +2220,7 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "create", testBackupName))
 
 	log.Info("Restore schema")
-	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--schema", "--rm", "--restore-database-mapping", "database1:database-2", "--tables", "database1.*", testBackupName))
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--schema", "--rm", "--restore-database-mapping", "database1:database-2", "--restore-table-mapping", "t1:t3,t2:t4,d1:d2,mv1:mv2,v1:v2", "--tables", "database1.*", testBackupName))
 
 	log.Info("Check result database1")
 	ch.queryWithNoError(r, "INSERT INTO database1.t1 SELECT '2023-01-01 00:00:00', number FROM numbers(10)")
@@ -2233,13 +2233,13 @@ func TestRestoreDatabaseMapping(t *testing.T) {
 	r.NoError(ch.dropDatabase("database1"))
 
 	log.Info("Restore data")
-	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--data", "--restore-database-mapping", "database1:database-2", "--tables", "database1.*", testBackupName))
+	r.NoError(dockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--data", "--restore-database-mapping", "database1:database-2", "--restore-table-mapping", "t1:t3,t2:t4,d1:d2,mv1:mv2,v1:v2", "--tables", "database1.*", testBackupName))
 
 	log.Info("Check result database-2")
-	checkRecordset(1, 10, "SELECT count() FROM `database-2`.t1")
-	checkRecordset(1, 10, "SELECT count() FROM `database-2`.d1")
-	checkRecordset(1, 10, "SELECT count() FROM `database-2`.mv1")
-	checkRecordset(1, 10, "SELECT count() FROM `database-2`.v1")
+	checkRecordset(1, 10, "SELECT count() FROM `database-2`.t3")
+	checkRecordset(1, 10, "SELECT count() FROM `database-2`.d2")
+	checkRecordset(1, 10, "SELECT count() FROM `database-2`.mv2")
+	checkRecordset(1, 10, "SELECT count() FROM `database-2`.v2")
 
 	log.Info("Check database1 not exists")
 	checkRecordset(1, 0, "SELECT count() FROM system.databases WHERE name='database1'")
@@ -2793,7 +2793,7 @@ func generateTestDataWithDifferentStoragePolicy(remoteStorageType string, offset
 			}
 		}
 		//s3 disks support after 21.8
-		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 && strings.Contains(remoteStorageType,"S3") {
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 && strings.Contains(remoteStorageType, "S3") {
 			testDataWithStoragePolicy.Name = "test_s3"
 			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id PARTITION BY id SETTINGS storage_policy = 's3_only'"
 			addTestDataIfNotExists()
@@ -2805,7 +2805,7 @@ func generateTestDataWithDifferentStoragePolicy(remoteStorageType string, offset
 			addTestDataIfNotExists()
 		}
 		//encrypted s3 disks support after 21.12
-		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 && strings.Contains(remoteStorageType,"S3") {
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 && strings.Contains(remoteStorageType, "S3") {
 			testDataWithStoragePolicy.Name = "test_s3_encrypted"
 			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=MergeTree ORDER BY id PARTITION BY id SETTINGS storage_policy = 's3_only_encrypted'"
 			// @todo wait when fix https://github.com/ClickHouse/ClickHouse/issues/58247
@@ -2821,7 +2821,7 @@ func generateTestDataWithDifferentStoragePolicy(remoteStorageType string, offset
 			addTestDataIfNotExists()
 		}
 		//check azure_blob_storage only in 23.3+ (added in 22.1)
-		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.3") >= 0 && strings.Contains(remoteStorageType,"AZBLOB") {
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.3") >= 0 && strings.Contains(remoteStorageType, "AZBLOB") {
 			testDataWithStoragePolicy.Name = "test_azure"
 			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id PARTITION BY id SETTINGS storage_policy = 'azure_only'"
 			addTestDataIfNotExists()

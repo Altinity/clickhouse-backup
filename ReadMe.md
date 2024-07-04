@@ -119,6 +119,10 @@ general:
   # RESTORE_DATABASE_MAPPING, restore rules from backup databases to target databases, which is useful when changing destination database, all atomic tables will be created with new UUIDs.
   # The format for this env variable is "src_db1:target_db1,src_db2:target_db2". For YAML please continue using map syntax
   restore_database_mapping: {}
+
+  # RESTORE_TABLE_MAPPING, restore rules from backup tables to target tables, which is useful when changing destination tables.
+  # The format for this env variable is "src_table1:target_table1,src_table2:target_table2". For YAML please continue using map syntax
+  restore_table_mapping: {}
   retries_on_failure: 3          # RETRIES_ON_FAILURE, how many times to retry after a failure during upload or download
   retries_pause: 30s             # RETRIES_PAUSE, duration time to pause after each download or upload failure
 
@@ -476,6 +480,7 @@ Create schema and restore data from backup: `curl -s localhost:7171/backup/resto
 - Optional query argument `rbac` works the same as the `--rbac` CLI argument (restore RBAC).
 - Optional query argument `configs` works the same as the `--configs` CLI argument (restore configs).
 - Optional query argument `restore_database_mapping` works the same as the `--restore-database-mapping` CLI argument.
+- Optional query argument `restore_table_mapping` works the same as the `--restore-table-mapping` CLI argument.
 - Optional query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens"}`.
 
 ### POST /backup/delete
@@ -705,13 +710,14 @@ NAME:
    clickhouse-backup restore - Create schema and restore data from backup
 
 USAGE:
-   clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] <backup_name>
+   clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] <backup_name>
 
 OPTIONS:
    --config value, -c value                    Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --environment-override value, --env value   override any environment variable via CLI parameter
    --table value, --tables value, -t value     Restore only database and objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
    --restore-database-mapping value, -m value  Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.
+   --restore-table-mapping value, --tm value   Define the rule to restore data. For the table not defined in this struct, the program will not deal with it.
    --partitions partition_id                   Restore backup only for selected partition names, separated by comma
 If PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
 If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
@@ -735,13 +741,14 @@ NAME:
    clickhouse-backup restore_remote - Download and restore
 
 USAGE:
-   clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--skip-rbac] [--skip-configs] [--resumable] <backup_name>
+   clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--skip-rbac] [--skip-configs] [--resumable] <backup_name>
 
 OPTIONS:
    --config value, -c value                    Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --environment-override value, --env value   override any environment variable via CLI parameter
    --table value, --tables value, -t value     Download and restore objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
    --restore-database-mapping value, -m value  Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.
+   --restore-table-mapping value, --tm value   Define the rule to restore data. For the table not defined in this struct, the program will not deal with it.
    --partitions partition_id                   Download and restore backup only for selected partition names, separated by comma
 If PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
 If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format

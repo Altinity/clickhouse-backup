@@ -5,12 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/keeper"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/storage/object_disk"
-	"golang.org/x/sync/errgroup"
 	"io"
 	"io/fs"
 	"net/url"
@@ -23,23 +17,30 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
-
-	"github.com/mattn/go-shellwords"
-
-	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/filesystemhelper"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	apexLog "github.com/apex/log"
+	"github.com/mattn/go-shellwords"
 	recursiveCopy "github.com/otiai10/copy"
 	"github.com/yargevad/filepathx"
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/filesystemhelper"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/keeper"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/storage/object_disk"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 )
 
 var CreateDatabaseRE = regexp.MustCompile(`(?m)^CREATE DATABASE (\s*)(\S+)(\s*)`)
 
 // Restore - restore tables matched by tablePattern from backupName
-func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, partitions []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly bool, backupVersion string, commandId int) error {
+func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tableMapping, partitions []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly bool, backupVersion string, commandId int) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return err
@@ -48,7 +49,10 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, par
 	defer cancel()
 	startRestore := time.Now()
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
-	if err := b.prepareRestoreDatabaseMapping(databaseMapping); err != nil {
+	if err := b.prepareRestoreMapping(databaseMapping, "database"); err != nil {
+		return err
+	}
+	if err := b.prepareRestoreMapping(tableMapping, "table"); err != nil {
 		return err
 	}
 
@@ -247,13 +251,23 @@ func (b *Backuper) getTablesForRestoreLocal(ctx context.Context, backupName stri
 	if err != nil {
 		return nil, nil, err
 	}
-	// if restore-database-mapping specified, create database in mapping rules instead of in backup files.
+	// if restore-database-mapping is specified, create database in mapping rules instead of in backup files.
 	if len(b.cfg.General.RestoreDatabaseMapping) > 0 {
 		err = changeTableQueryToAdjustDatabaseMapping(&tablesForRestore, b.cfg.General.RestoreDatabaseMapping)
 		if err != nil {
 			return nil, nil, err
 		}
 	}
+
+	// if restore-table-mapping is specified, create table in mapping rules instead of in backup files.
+	// https://github.com/Altinity/clickhouse-backup/issues/937
+	if len(b.cfg.General.RestoreTableMapping) > 0 {
+		err = changeTableQueryToAdjustTableMapping(&tablesForRestore, b.cfg.General.RestoreTableMapping)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
 	if len(tablesForRestore) == 0 {
 		return nil, nil, fmt.Errorf("not found schemas by %s in %s, also check skip_tables and skip_table_engines setting", tablePattern, backupName)
 	}
@@ -356,15 +370,23 @@ func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB, tablePatt
 	return nil
 }
 
-func (b *Backuper) prepareRestoreDatabaseMapping(databaseMapping []string) error {
-	for i := 0; i < len(databaseMapping); i++ {
-		splitByCommas := strings.Split(databaseMapping[i], ",")
+func (b *Backuper) prepareRestoreMapping(objectMapping []string, objectType string) error {
+	if objectType != "database" && objectType != "table" {
+		return fmt.Errorf("objectType must be one of `database` or `table`")
+	}
+	for i := 0; i < len(objectMapping); i++ {
+		splitByCommas := strings.Split(objectMapping[i], ",")
 		for _, m := range splitByCommas {
 			splitByColon := strings.Split(m, ":")
 			if len(splitByColon) != 2 {
-				return fmt.Errorf("restore-database-mapping %s should only have srcDatabase:destinationDatabase format for each map rule", m)
+				objectTypeTitleCase := cases.Title(language.Und).String(objectType)
+				return fmt.Errorf("restore-%s-mapping %s should only have src%s:destination%s format for each map rule", objectType, m, objectTypeTitleCase, objectTypeTitleCase)
 			}
-			b.cfg.General.RestoreDatabaseMapping[splitByColon[0]] = splitByColon[1]
+			if objectType == "database" {
+				b.cfg.General.RestoreDatabaseMapping[splitByColon[0]] = splitByColon[1]
+			} else {
+				b.cfg.General.RestoreTableMapping[splitByColon[0]] = splitByColon[1]
+			}
 		}
 	}
 	return nil
@@ -1183,8 +1205,13 @@ func (b *Backuper) restoreDataEmbedded(ctx context.Context, backupName string, d
 
 func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, tablePattern string, tablesForRestore ListOfTables, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, log *apexLog.Entry) error {
 	if len(b.cfg.General.RestoreDatabaseMapping) > 0 {
-		tablePattern = b.changeTablePatternFromRestoreDatabaseMapping(tablePattern)
+		tablePattern = b.changeTablePatternFromRestoreMapping(tablePattern, "database")
 	}
+	// https://github.com/Altinity/clickhouse-backup/issues/937
+	if len(b.cfg.General.RestoreTableMapping) > 0 {
+		tablePattern = b.changeTablePatternFromRestoreMapping(tablePattern, "table")
+	}
+
 	if err := b.applyMacrosToObjectDiskPath(ctx); err != nil {
 		return err
 	}
@@ -1200,23 +1227,32 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ba
 		return fmt.Errorf("%s is not created. Restore schema first or create missing tables manually", strings.Join(missingTables, ", "))
 	}
 	restoreBackupWorkingGroup, restoreCtx := errgroup.WithContext(ctx)
-	restoreBackupWorkingGroup.SetLimit(max(b.cfg.ClickHouse.MaxConnections,1))
+	restoreBackupWorkingGroup.SetLimit(max(b.cfg.ClickHouse.MaxConnections, 1))
 
 	for i := range tablesForRestore {
 		tableRestoreStartTime := time.Now()
 		table := tablesForRestore[i]
-		// need mapped database path and original table.Database for HardlinkBackupPartsToStorage
+		// need mapped database path and original table.Database for HardlinkBackupPartsToStorage.
 		dstDatabase := table.Database
+		// The same goes for the table
+		dstTableName := table.Table
 		if len(b.cfg.General.RestoreDatabaseMapping) > 0 {
 			if targetDB, isMapped := b.cfg.General.RestoreDatabaseMapping[table.Database]; isMapped {
 				dstDatabase = targetDB
 				tablesForRestore[i].Database = targetDB
 			}
 		}
-		log := log.WithField("table", fmt.Sprintf("%s.%s", dstDatabase, table.Table))
+		// https://github.com/Altinity/clickhouse-backup/issues/937
+		if len(b.cfg.General.RestoreTableMapping) > 0 {
+			if targetTable, isMapped := b.cfg.General.RestoreTableMapping[table.Table]; isMapped {
+				dstTableName = targetTable
+				tablesForRestore[i].Table = targetTable
+			}
+		}
+		log := log.WithField("table", fmt.Sprintf("%s.%s", dstDatabase, dstTableName))
 		dstTable, ok := dstTablesMap[metadata.TableTitle{
 			Database: dstDatabase,
-			Table:    table.Table}]
+			Table:    dstTableName}]
 		if !ok {
 			return fmt.Errorf("can't find '%s.%s' in current system.tables", dstDatabase, table.Table)
 		}
@@ -1458,14 +1494,20 @@ func (b *Backuper) checkMissingTables(tablesForRestore ListOfTables, chTables []
 	var missingTables []string
 	for _, table := range tablesForRestore {
 		dstDatabase := table.Database
+		dstTable := table.Table
 		if len(b.cfg.General.RestoreDatabaseMapping) > 0 {
 			if targetDB, isMapped := b.cfg.General.RestoreDatabaseMapping[table.Database]; isMapped {
 				dstDatabase = targetDB
 			}
 		}
+		if len(b.cfg.General.RestoreTableMapping) > 0 {
+			if targetTable, isMapped := b.cfg.General.RestoreTableMapping[table.Table]; isMapped {
+				dstTable = targetTable
+			}
+		}
 		found := false
 		for _, chTable := range chTables {
-			if (dstDatabase == chTable.Database) && (table.Table == chTable.Name) {
+			if (dstDatabase == chTable.Database) && (dstTable == chTable.Name) {
 				found = true
 				break
 			}
@@ -1488,22 +1530,31 @@ func (b *Backuper) prepareDstTablesMap(chTables []clickhouse.Table) map[metadata
 	return dstTablesMap
 }
 
-func (b *Backuper) changeTablePatternFromRestoreDatabaseMapping(tablePattern string) string {
-	for sourceDb, targetDb := range b.cfg.General.RestoreDatabaseMapping {
+func (b *Backuper) changeTablePatternFromRestoreMapping(tablePattern, objType string) string {
+	var mapping map[string]string
+	switch objType {
+	case "database":
+		mapping = b.cfg.General.RestoreDatabaseMapping
+	case "table":
+		mapping = b.cfg.General.RestoreDatabaseMapping
+	default:
+		return ""
+	}
+	for sourceObj, targetObj := range mapping {
 		if tablePattern != "" {
-			sourceDbRE := regexp.MustCompile(fmt.Sprintf("(^%s.*)|(,%s.*)", sourceDb, sourceDb))
-			if sourceDbRE.MatchString(tablePattern) {
-				matches := sourceDbRE.FindAllStringSubmatch(tablePattern, -1)
-				substitution := targetDb + ".*"
+			sourceObjRE := regexp.MustCompile(fmt.Sprintf("(^%s.*)|(,%s.*)", sourceObj, sourceObj))
+			if sourceObjRE.MatchString(tablePattern) {
+				matches := sourceObjRE.FindAllStringSubmatch(tablePattern, -1)
+				substitution := targetObj + ".*"
 				if strings.HasPrefix(matches[0][1], ",") {
 					substitution = "," + substitution
 				}
-				tablePattern = sourceDbRE.ReplaceAllString(tablePattern, substitution)
+				tablePattern = sourceObjRE.ReplaceAllString(tablePattern, substitution)
 			} else {
-				tablePattern += "," + targetDb + ".*"
+				tablePattern += "," + targetObj + ".*"
 			}
 		} else {
-			tablePattern += targetDb + ".*"
+			tablePattern += targetObj + ".*"
 		}
 	}
 	return tablePattern

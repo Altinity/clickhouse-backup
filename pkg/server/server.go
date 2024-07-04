@@ -22,6 +22,12 @@ import (
 	"syscall"
 	"time"
 
+	apexLog "github.com/apex/log"
+	"github.com/google/shlex"
+	"github.com/gorilla/mux"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/urfave/cli"
+
 	"github.com/Altinity/clickhouse-backup/v2/pkg/backup"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
@@ -30,12 +36,6 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/server/metrics"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
-
-	apexLog "github.com/apex/log"
-	"github.com/google/shlex"
-	"github.com/gorilla/mux"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/urfave/cli"
 )
 
 type APIServer struct {
@@ -1200,6 +1200,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 }
 
 var databaseMappingRE = regexp.MustCompile(`[\w+]:[\w+]`)
+var tableMappingRE = regexp.MustCompile(`[\w+]:[\w+]`)
 
 // httpRestoreHandler - restore a backup from local storage
 func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request) {
@@ -1215,6 +1216,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	vars := mux.Vars(r)
 	tablePattern := ""
 	databaseMappingToRestore := make([]string, 0)
+	tableMappingToRestore := make([]string, 0)
 	partitionsToBackup := make([]string, 0)
 	schemaOnly := false
 	dataOnly := false
@@ -1244,6 +1246,24 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 
 		fullCommand = fmt.Sprintf("%s --restore-database-mapping=\"%s\"", fullCommand, strings.Join(databaseMappingToRestore, ","))
 	}
+
+	// https://github.com/Altinity/clickhouse-backup/issues/937
+	if tableMappingQuery, exist := query["restore_table_mapping"]; exist {
+		for _, tableMapping := range tableMappingQuery {
+			mappingItems := strings.Split(tableMapping, ",")
+			for _, m := range mappingItems {
+				if strings.Count(m, ":") != 1 || !tableMappingRE.MatchString(m) {
+					api.writeError(w, http.StatusInternalServerError, "restore", fmt.Errorf("invalid values in restore_table_mapping %s", m))
+					return
+
+				}
+			}
+			tableMappingToRestore = append(tableMappingToRestore, mappingItems...)
+		}
+
+		fullCommand = fmt.Sprintf("%s --restore-table-mapping=\"%s\"", fullCommand, strings.Join(tableMappingToRestore, ","))
+	}
+
 	if partitions, exist := query["partitions"]; exist {
 		partitionsToBackup = append(partitionsToBackup, partitions...)
 		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, strings.Join(partitions, "\" --partitions=\""))
@@ -1291,7 +1311,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore", 0, func() error {
 			b := backup.NewBackuper(api.config)
-			return b.Restore(name, tablePattern, databaseMappingToRestore, partitionsToBackup, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, false, restoreConfigs, false, api.cliApp.Version, commandId)
+			return b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, false, restoreConfigs, false, api.cliApp.Version, commandId)
 		})
 		status.Current.Stop(commandId, err)
 		if err != nil {
