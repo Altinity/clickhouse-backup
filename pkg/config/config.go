@@ -467,14 +467,17 @@ func ValidateObjectDiskConfig(cfg *Config) error {
 			if cfg.S3.Path != "" && (cfg.S3.ObjectDiskPath == "" || strings.HasPrefix(cfg.S3.Path, cfg.S3.ObjectDiskPath)) {
 				return fmt.Errorf("data in objects disks, invalid s3->object_disk_path config section, shall be not empty and shall not be prefix for s3->path")
 			}
+			cfg.S3.ObjectDiskPath = strings.Trim(cfg.S3.ObjectDiskPath,"/")
 		case "gcs":
 			if cfg.GCS.Path != "" && (cfg.GCS.ObjectDiskPath == "" || strings.HasPrefix(cfg.GCS.Path, cfg.GCS.ObjectDiskPath)) {
 				return fmt.Errorf("data in objects disks, invalid gcs->object_disk_path config section, shall be not empty and shall not be prefix for gcs->path")
 			}
+			cfg.GCS.ObjectDiskPath = strings.Trim(cfg.GCS.ObjectDiskPath,"/")
 		case "azblob":
 			if cfg.AzureBlob.Path != "" && (cfg.AzureBlob.ObjectDiskPath == "" || strings.HasPrefix(cfg.AzureBlob.Path, cfg.AzureBlob.ObjectDiskPath)) {
 				return fmt.Errorf("data in objects disks, invalid azblob->object_disk_path config section, shall be not empty and shall not be prefix for gcs->path")
 			}
+			cfg.AzureBlob.ObjectDiskPath = strings.Trim(cfg.AzureBlob.ObjectDiskPath,"/")
 		}
 	}
 	return nil
