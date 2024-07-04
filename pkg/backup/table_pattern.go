@@ -4,10 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/partition"
-	apexLog "github.com/apex/log"
-	"github.com/google/uuid"
 	"io"
 	"net/url"
 	"os"
@@ -17,10 +13,14 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/filesystemhelper"
+	apexLog "github.com/apex/log"
+	"github.com/google/uuid"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/filesystemhelper"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/partition"
 )
 
 type ListOfTables []metadata.TableMetadata
@@ -295,13 +295,13 @@ func (b *Backuper) enrichTablePatternsByInnerDependencies(metadataPath string, t
 	return tablePatterns, nil
 }
 
-var queryRE = regexp.MustCompile(`(?m)^(CREATE|ATTACH) (TABLE|VIEW|LIVE VIEW|MATERIALIZED VIEW|DICTIONARY|FUNCTION) (\x60?)([^\s\x60.]*)(\x60?)\.\x60?([^\s\x60.]*)\x60?( UUID '[^']+')?(?:( TO )(\x60?)([^\s\x60.]*)(\x60?)(\.))?(?:(.+FROM )(\x60?)([^\s\x60.]*)(\x60?)(\.))?`)
+var queryRE = regexp.MustCompile(`(?m)^(CREATE|ATTACH) (TABLE|VIEW|LIVE VIEW|MATERIALIZED VIEW|DICTIONARY|FUNCTION) (\x60?)([^\s\x60.]*)(\x60?)\.\x60?([^\s\x60.]*)\x60?( UUID '[^']+')?(?:( TO )(\x60?)([^\s\x60.]*)(\x60?)(\.)(\x60?)([^\s\x60.]*)(\x60?))?(?:(.+FROM )(\x60?)([^\s\x60.]*)(\x60?)(\.)(\x60?)([^\s\x60.]*)(\x60?))?`)
 var createOrAttachRE = regexp.MustCompile(`(?m)^(CREATE|ATTACH)`)
 var uuidRE = regexp.MustCompile(`UUID '([a-f\d\-]+)'`)
 
 var usualIdentifier = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 var replicatedRE = regexp.MustCompile(`(Replicated[a-zA-Z]*MergeTree)\('([^']+)'([^)]+)\)`)
-var distributedRE = regexp.MustCompile(`(Distributed)\(([^,]+),([^,]+),([^)]+)\)`)
+var distributedRE = regexp.MustCompile(`(Distributed)\(([^,]+),([^,]+),([^,]+)([^)]+)\)`)
 
 func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRule map[string]string) error {
 	for i := 0; i < len(*originTables); i++ {
@@ -329,9 +329,9 @@ func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRu
 					createTargetDb = "`" + createTargetDb + "`"
 				}
 				toClauseTargetDb := setMatchedDb(matches[0][10])
-				fromClauseTargetDb := setMatchedDb(matches[0][15])
+				fromClauseTargetDb := setMatchedDb(matches[0][18])
 				// matching CREATE|ATTACH ... TO .. SELECT ... FROM ... command
-				substitution = fmt.Sprintf("${1} ${2} ${3}%v${5}.${6}${7}${8}${9}%v${11}${12}${13}${14}%v${16}${17}", createTargetDb, toClauseTargetDb, fromClauseTargetDb)
+				substitution = fmt.Sprintf("${1} ${2} ${3}%v${5}.${6}${7}${8}${9}%v${11}${12}${13}${14}${15}${16}${17}%v${19}${20}${21}${22}${23}", createTargetDb, toClauseTargetDb, fromClauseTargetDb)
 			} else {
 				if originTable.Query == "" {
 					continue
@@ -360,11 +360,79 @@ func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRu
 				underlyingDB := matches[0][3]
 				underlyingDBClean := strings.NewReplacer(" ", "", "'", "").Replace(underlyingDB)
 				if underlyingTargetDB, isUnderlyingMapped := dbMapRule[underlyingDBClean]; isUnderlyingMapped {
-					substitution = fmt.Sprintf("${1}(${2},%s,${4})", strings.Replace(underlyingDB, underlyingDBClean, underlyingTargetDB, 1))
+					substitution = fmt.Sprintf("${1}(${2},%s,${4}${5})", strings.Replace(underlyingDB, underlyingDBClean, underlyingTargetDB, 1))
 					originTable.Query = distributedRE.ReplaceAllString(originTable.Query, substitution)
 				}
 			}
 			originTable.Database = targetDB
+			(*originTables)[i] = originTable
+		}
+	}
+	return nil
+}
+
+func changeTableQueryToAdjustTableMapping(originTables *ListOfTables, tableMapRule map[string]string) error {
+	for i := 0; i < len(*originTables); i++ {
+		originTable := (*originTables)[i]
+		if targetTable, isMapped := tableMapRule[originTable.Table]; isMapped {
+			// substitute table in the table create query
+			var substitution string
+
+			if createOrAttachRE.MatchString(originTable.Query) {
+				matches := queryRE.FindAllStringSubmatch(originTable.Query, -1)
+				if matches[0][6] != originTable.Table {
+					return fmt.Errorf("invalid SQL: %s for restore-table-mapping[%s]=%s", originTable.Query, originTable.Table, targetTable)
+				}
+				setMatchedDb := func(clauseTargetTable string) string {
+					if clauseMappedTable, isClauseMapped := tableMapRule[clauseTargetTable]; isClauseMapped {
+						clauseTargetTable = clauseMappedTable
+						if !usualIdentifier.MatchString(clauseTargetTable) {
+							clauseTargetTable = "`" + clauseTargetTable + "`"
+						}
+					}
+					return clauseTargetTable
+				}
+				createTargetTable := targetTable
+				if !usualIdentifier.MatchString(createTargetTable) {
+					createTargetTable = "`" + createTargetTable + "`"
+				}
+				toClauseTargetTable := setMatchedDb(matches[0][14])
+				fromClauseTargetTable := setMatchedDb(matches[0][22])
+				// matching CREATE|ATTACH ... TO .. SELECT ... FROM ... command
+				substitution = fmt.Sprintf("${1} ${2} ${3}${4}${5}.%v${7}${8}${9}${10}${11}${12}${13}%v${15}${16}${17}${18}${19}${20}${21}%v${23}", createTargetTable, toClauseTargetTable, fromClauseTargetTable)
+			} else {
+				if originTable.Query == "" {
+					continue
+				}
+				return fmt.Errorf("error when try to replace table `%s` to `%s` in query: %s", originTable.Table, targetTable, originTable.Query)
+			}
+			originTable.Query = queryRE.ReplaceAllString(originTable.Query, substitution)
+			if uuidRE.MatchString(originTable.Query) {
+				newUUID, _ := uuid.NewUUID()
+				substitution = fmt.Sprintf("UUID '%s'", newUUID.String())
+				originTable.Query = uuidRE.ReplaceAllString(originTable.Query, substitution)
+			}
+			// https://github.com/Altinity/clickhouse-backup/issues/547
+			if replicatedRE.MatchString(originTable.Query) {
+				matches := replicatedRE.FindAllStringSubmatch(originTable.Query, -1)
+				originPath := matches[0][2]
+				tableReplicatedPattern := "/" + originTable.Table
+				if strings.Contains(originPath, tableReplicatedPattern) {
+					substitution = fmt.Sprintf("${1}('%s'${3})", strings.Replace(originPath, tableReplicatedPattern, "/"+targetTable, 1))
+					originTable.Query = replicatedRE.ReplaceAllString(originTable.Query, substitution)
+				}
+			}
+			// https://github.com/Altinity/clickhouse-backup/issues/547
+			if distributedRE.MatchString(originTable.Query) {
+				matches := distributedRE.FindAllStringSubmatch(originTable.Query, -1)
+				underlyingTable := matches[0][4]
+				underlyingTableClean := strings.NewReplacer(" ", "", "'", "").Replace(underlyingTable)
+				if underlyingTargetTable, isUnderlyingMapped := tableMapRule[underlyingTableClean]; isUnderlyingMapped {
+					substitution = fmt.Sprintf("${1}(${2},${3},%s${5})", strings.Replace(underlyingTable, underlyingTableClean, underlyingTargetTable, 1))
+					originTable.Query = distributedRE.ReplaceAllString(originTable.Query, substitution)
+				}
+			}
+			originTable.Table = targetTable
 			(*originTables)[i] = originTable
 		}
 	}
