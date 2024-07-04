@@ -333,14 +333,19 @@ func LoadConfig(configLocation string) (*Config, error) {
 	if (cfg.General.RemoteStorage == "gcs" || cfg.General.RemoteStorage == "azblob" || cfg.General.RemoteStorage == "cos") && cfgWithoutDefault.General.UploadConcurrency == 0 {
 		cfg.General.UploadConcurrency = uint8(runtime.NumCPU() / 2)
 	}
-	cfg.AzureBlob.Path = strings.TrimPrefix(cfg.AzureBlob.Path, "/")
-	cfg.S3.Path = strings.TrimPrefix(cfg.S3.Path, "/")
-	cfg.GCS.Path = strings.TrimPrefix(cfg.GCS.Path, "/")
+	cfg.AzureBlob.Path = strings.Trim(cfg.AzureBlob.Path, "/ ")
+	cfg.S3.Path = strings.Trim(cfg.S3.Path, "/ ")
+	cfg.GCS.Path = strings.Trim(cfg.GCS.Path, "/ ")
+
+	cfg.S3.ObjectDiskPath = strings.Trim(cfg.S3.ObjectDiskPath,"/ ")
+	cfg.GCS.ObjectDiskPath = strings.Trim(cfg.GCS.ObjectDiskPath,"/ ")
+	cfg.AzureBlob.ObjectDiskPath = strings.Trim(cfg.AzureBlob.ObjectDiskPath,"/ ")
 
 	// https://github.com/Altinity/clickhouse-backup/issues/855
 	if cfg.ClickHouse.FreezeByPart && cfg.ClickHouse.FreezeByPartWhere != "" && !freezeByPartBeginAndRE.MatchString(cfg.ClickHouse.FreezeByPartWhere) {
 		cfg.ClickHouse.FreezeByPartWhere = " AND " + cfg.ClickHouse.FreezeByPartWhere
 	}
+
 
 	log.SetLevelFromString(cfg.General.LogLevel)
 
@@ -467,17 +472,14 @@ func ValidateObjectDiskConfig(cfg *Config) error {
 			if cfg.S3.Path != "" && (cfg.S3.ObjectDiskPath == "" || strings.HasPrefix(cfg.S3.Path, cfg.S3.ObjectDiskPath)) {
 				return fmt.Errorf("data in objects disks, invalid s3->object_disk_path config section, shall be not empty and shall not be prefix for s3->path")
 			}
-			cfg.S3.ObjectDiskPath = strings.Trim(cfg.S3.ObjectDiskPath,"/")
 		case "gcs":
 			if cfg.GCS.Path != "" && (cfg.GCS.ObjectDiskPath == "" || strings.HasPrefix(cfg.GCS.Path, cfg.GCS.ObjectDiskPath)) {
 				return fmt.Errorf("data in objects disks, invalid gcs->object_disk_path config section, shall be not empty and shall not be prefix for gcs->path")
 			}
-			cfg.GCS.ObjectDiskPath = strings.Trim(cfg.GCS.ObjectDiskPath,"/")
 		case "azblob":
 			if cfg.AzureBlob.Path != "" && (cfg.AzureBlob.ObjectDiskPath == "" || strings.HasPrefix(cfg.AzureBlob.Path, cfg.AzureBlob.ObjectDiskPath)) {
 				return fmt.Errorf("data in objects disks, invalid azblob->object_disk_path config section, shall be not empty and shall not be prefix for gcs->path")
 			}
-			cfg.AzureBlob.ObjectDiskPath = strings.Trim(cfg.AzureBlob.ObjectDiskPath,"/")
 		}
 	}
 	return nil
