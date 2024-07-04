@@ -1,3 +1,10 @@
+# v2.5.20
+IMPROVEMENTS
+- add `--restore-table-mapping` CLI and API parameter to `restore` and `restore_remote` command, fix [937](https://github.com/Altinity/clickhouse-backup/issues/937), thanks @nithin-vunet and @raspreet-vunet
+
+BUG FIXES
+- remove trailing `/` from `object_disk_path` to properly `create` and `restore`, fix [946](https://github.com/Altinity/clickhouse-backup/issues/946)
+
 # v2.5.19
 BUG FIXES
 - fix `restore --rbac` behavior when RBAC objects contains `-`, `.` or any special characters new fixes for [930](https://github.com/Altinity/clickhouse-backup/issues/930)
