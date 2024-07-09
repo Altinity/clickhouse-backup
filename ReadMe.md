@@ -132,8 +132,8 @@ general:
 
   sharded_operation_mode: none       # SHARDED_OPERATION_MODE, how different replicas will shard backing up data for tables. Options are: none (no sharding), table (table granularity), database (database granularity), first-replica (on the lexicographically sorted first active replica). If left empty, then the "none" option will be set as default.
   
-  cpu_nice_priority: 15    # CPU niceness priority, to allow throttling СЗГ intensive operation, more details https://manpages.ubuntu.com/manpages/xenial/man1/nice.1.html
-  io_nice_priority: "idle" # IO niceness priority, to allow throttling disk intensive operation, more details https://manpages.ubuntu.com/manpages/xenial/man1/ionice.1.html
+  cpu_nice_priority: 15    # CPU niceness priority, to allow throttling CPU intensive operation, more details https://manpages.ubuntu.com/manpages/xenial/man1/nice.1.html
+  io_nice_priority: "idle" # IO niceness priority, to allow throttling DISK intensive operation, more details https://manpages.ubuntu.com/manpages/xenial/man1/ionice.1.html
   
   rbac_backup_always: true # always, backup RBAC objects
   rbac_resolve_conflicts: "recreate"  # action, when RBAC object with the same name already exists, allow "recreate", "ignore", "fail" values
