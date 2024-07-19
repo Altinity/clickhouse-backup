@@ -123,6 +123,7 @@ general:
   # RESTORE_TABLE_MAPPING, restore rules from backup tables to target tables, which is useful when changing destination tables.
   # The format for this env variable is "src_table1:target_table1,src_table2:target_table2". For YAML please continue using map syntax
   restore_table_mapping: {}
+
   retries_on_failure: 3          # RETRIES_ON_FAILURE, how many times to retry after a failure during upload or download
   retries_pause: 30s             # RETRIES_PAUSE, duration time to pause after each download or upload failure
 
