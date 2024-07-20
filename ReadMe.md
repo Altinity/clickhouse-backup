@@ -1,5 +1,5 @@
 
-# clickhouse-backup
+# Altinity Backup for ClickHouse®
 
 [![Build](https://github.com/Altinity/clickhouse-backup/actions/workflows/build.yaml/badge.svg?branch=master)](https://github.com/Altinity/clickhouse-backup/actions/workflows/build.yaml)
 [![GoDoc](https://godoc.org/github.com/Altinity/clickhouse-backup?status.svg)](http://godoc.org/github.com/Altinity/clickhouse-backup)
@@ -8,9 +8,9 @@
 [![Downloads](https://img.shields.io/github/downloads/Altinity/clickhouse-backup/total.svg)](http://github.com/Altinity/clickhouse-backup/releases)
 [![Coverage Status](https://coveralls.io/repos/github/Altinity/clickhouse-backup/badge.svg)](https://coveralls.io/github/Altinity/clickhouse-backup)
 
-A tool for easy ClickHouse backup and restore with support for many cloud and non-cloud storage types.
+A tool for easy backup and restore utility for ClickHouse databases with support for many cloud and non-cloud storage types.
 
-### Don't run `clickhouse-backup` remotelly
+### Don't run `clickhouse-backup` remotely
 To backup data, `clickhouse-backup` requires access to the same files as `clickhouse-server` in `/var/lib/clickhouse` folders.
 For that reason, it's required to run `clickhouse-backup` on the same host or same Kubernetes Pod or the neighbor container on the same host where `clickhouse-server` ran.
 **WARNING** You can backup only schema when connect to remote `clickhouse-server` hosts.
