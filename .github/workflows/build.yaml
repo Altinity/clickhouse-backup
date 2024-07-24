@@ -7,7 +7,7 @@ on:
 
   push:
     branches:
-      - master
+      - *
 
 jobs:
   build:
@@ -311,12 +311,9 @@ jobs:
             export COMPOSE_FILE=docker-compose.yml
           fi
 
-          command -v docker-compose || (apt-get update && apt-get install -y python3-pip && pip3 install -U docker-compose)
-          
+          export CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
           export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup-race"
-          docker-compose -f test/integration/${COMPOSE_FILE} up -d || ( docker-compose -f test/integration/${COMPOSE_FILE} ps -a && docker-compose -f test/integration/${COMPOSE_FILE} logs clickhouse && exit 1 ) 
-          docker-compose -f test/integration/${COMPOSE_FILE} ps -a
-          go test -timeout 60m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
+          go test -parallel 4 -timeout 60m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
       - name: Format integration coverage
         env:
           GOROOT: ${{ env.GOROOT_1_22_X64 }}

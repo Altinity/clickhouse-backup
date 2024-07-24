@@ -1,18 +1,15 @@
 services:
   sshd:
     image: docker.io/panubo/sshd:latest
-    container_name: sshd
+    hostname: sshd
     environment:
       SSH_ENABLE_ROOT: "true"
       SSH_ENABLE_PASSWORD_AUTH: "true"
     command: sh -c 'echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && echo "LogLevel DEBUG3" >> /etc/ssh/sshd_config && echo "root:JFzMHfVpvTgEd74XXPq6wARA2Qg3AutJ" | chpasswd && /usr/sbin/sshd -D -e -f /etc/ssh/sshd_config'
-    networks:
-      - clickhouse-backup
 
   ftp:
     image: docker.io/fauria/vsftpd:latest
     hostname: ftp
-    container_name: ftp
     environment:
       FTP_USER: test_backup
       FTP_PASS: test_backup
@@ -21,12 +18,10 @@ services:
       PASV_ADDR_RESOLVE: "YES"
       PASV_MIN_PORT: 20000
       PASV_MAX_PORT: 21000
-    networks:
-      - clickhouse-backup
 
   minio:
     image: docker.io/bitnami/minio:${MINIO_VERSION:-latest}
-    container_name: minio
+    hostname: minio
     environment:
       MINIO_ACCESS_KEY: access_key
       MINIO_SECRET_KEY: it_is_my_super_secret_key
@@ -39,35 +34,27 @@ services:
       retries: 30
     volumes:
       - ./minio_nodelete.sh:/bin/minio_nodelete.sh
-    networks:
-      - clickhouse-backup
 
 # todo need to reproduce download after upload
   gcs:
     image: fsouza/fake-gcs-server:latest
     hostname: gcs
-    container_name: gcs
     entrypoint:
       - /bin/sh
     command:
       - -c
       - "mkdir -p /data/altinity-qa-test && mkdir -p /data/${QA_GCS_OVER_S3_BUCKET} && fake-gcs-server -data /data -scheme http -port 8080 -public-host gcs:8080"
-    networks:
-      - clickhouse-backup
     environment:
       QA_GCS_OVER_S3_BUCKET: "${QA_GCS_OVER_S3_BUCKET}"
 
   azure:
     image: mcr.microsoft.com/azure-storage/azurite:latest
-    container_name: azure
     hostname: devstoreaccount1.blob.azure
     healthcheck:
       test: nc 127.0.0.1 10000 -z
       interval: 1s
       retries: 30
     command: ["azurite", "--debug", "/data/debug.log" , "-l", "/data", "--blobHost", "0.0.0.0","--queueHost", "0.0.0.0", "--tableHost", "0.0.0.0"]
-    networks:
-      - clickhouse-backup
 
    #  azure_init:
    #    image: mcr.microsoft.com/azure-cli:latest
@@ -83,8 +70,6 @@ services:
    #    environment:
    #      # https://github.com/Azure/Azurite/blob/main/README.md#usage-with-azure-storage-sdks-or-tools
    #      AZURE_STORAGE_CONNECTION_STRING: DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azure:10000/devstoreaccount1;
-   #    networks:
-   #      - clickhouse-backup
 
   zookeeper:
     # @TODO back :latest default value after resolve https://github.com/ClickHouse/ClickHouse/issues/53749
@@ -92,8 +77,6 @@ services:
     hostname: zookeeper
     environment:
       ZOO_4LW_COMMANDS_WHITELIST: "*"
-    networks:
-      - clickhouse-backup
     healthcheck:
       test: bash -c 'if [[ "$$(echo 'ruok' | nc 127.0.0.1 2181)" == "imok" ]]; then exit 0; else exit 1; fi'
       interval: 3s
@@ -105,7 +88,6 @@ services:
   clickhouse-backup:
     image: docker.io/${CLICKHOUSE_IMAGE:-yandex/clickhouse-server}:${CLICKHOUSE_VERSION:-1.1.54390}
     hostname: clickhouse-backup
-    container_name: clickhouse-backup
     user: root
     entrypoint:
       - /bin/bash
@@ -113,7 +95,7 @@ services:
       - sleep infinity
     healthcheck:
       test: bash -c "exit 0"
-      interval: 30s
+      interval: 3s
       timeout: 1s
       retries: 5
       start_period: 1s
@@ -139,11 +121,9 @@ services:
     volumes_from:
       - clickhouse
     ports:
-      - "7171:7171"
+      - "7171"
 # for delve debugger
-#      - "40001:40001"
-    networks:
-      - clickhouse-backup
+#      - "40001"
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -151,7 +131,6 @@ services:
   clickhouse:
     image: docker.io/${CLICKHOUSE_IMAGE:-yandex/clickhouse-server}:${CLICKHOUSE_VERSION:-1.1.54390}
     hostname: clickhouse
-    container_name: clickhouse
     restart: always
     user: root
     environment:
@@ -222,22 +201,20 @@ services:
 #      - ./clickhouse-server.log:/var/log/clickhouse-server/clickhouse-server.log
 #      - ./clickhouse-server.err.log:/var/log/clickhouse-server/clickhouse-server.err.log
     ports:
-      - "8123:8123"
-      - "9000:9000"
+      - "8123"
+      - "9000"
 # for delve debugger
-      - "40001:40001"
-    networks:
-      - clickhouse-backup
+      - "40001"
     links:
       - zookeeper
       - minio
       - sshd
       - ftp
       - azure
-#      - gcs
+      - gcs
     healthcheck:
       test: clickhouse client -q "SELECT 1"
-      interval: 10s
+      interval: 3s
       timeout: 2s
       retries: 30
       start_period: 5s
@@ -248,6 +225,8 @@ services:
         condition: service_healthy
       azure:
         condition: service_healthy
+      gcs:
+        condition: service_healthy
 #      azure_init:
 #        condition: service_completed_successfully
 
@@ -256,6 +235,3 @@ services:
     depends_on:
       clickhouse-backup:
         condition: service_healthy
-
-networks:
-  clickhouse-backup:
