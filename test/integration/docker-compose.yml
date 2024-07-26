@@ -46,6 +46,10 @@ services:
       - "mkdir -p /data/altinity-qa-test && mkdir -p /data/${QA_GCS_OVER_S3_BUCKET} && fake-gcs-server -data /data -scheme http -port 8080 -public-host gcs:8080"
     environment:
       QA_GCS_OVER_S3_BUCKET: "${QA_GCS_OVER_S3_BUCKET}"
+    healthcheck:
+      test: nc 127.0.0.1 8080 -z
+      interval: 1s
+      retries: 30
 
   azure:
     image: mcr.microsoft.com/azure-storage/azurite:latest
