@@ -450,6 +450,55 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 	return &env, r
 }
 
+// TestLongListRemote - no parallel, cause need to restart minio
+func TestLongListRemote(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	env.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Second)
+	defer env.ch.Close()
+	totalCacheCount := 20
+	testBackupName := "test_list_remote"
+
+	for i := 0; i < totalCacheCount; i++ {
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", fmt.Sprintf("CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml ALLOW_EMPTY_BACKUPS=true clickhouse-backup create_remote %s_%d", testBackupName, i))
+	}
+
+	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "minio")...))
+	time.Sleep(2 * time.Second)
+
+	startFirst := time.Now()
+	env.DockerExecNoError(r, "clickhouse-backup", "rm", "-rfv", "/tmp/.clickhouse-backup-metadata.cache.S3")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
+	noCacheDuration := time.Since(startFirst)
+
+	env.DockerExecNoError(r, "clickhouse-backup", "chmod", "-Rv", "+r", "/tmp/.clickhouse-backup-metadata.cache.S3")
+
+	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "minio")...))
+	time.Sleep(2 * time.Second)
+
+	startCashed := time.Now()
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
+	cachedDuration := time.Since(startCashed)
+
+	r.Greater(noCacheDuration, cachedDuration,"noCacheDuration=%s shall be greater cachedDuration=%s", noCacheDuration, cachedDuration)
+
+	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "minio")...))
+	time.Sleep(2 * time.Second)
+
+	startCacheClear := time.Now()
+	env.DockerExecNoError(r, "clickhouse-backup", "rm", "-Rfv", "/tmp/.clickhouse-backup-metadata.cache.S3")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
+	cacheClearDuration := time.Since(startCacheClear)
+
+	r.Greater(cacheClearDuration, cachedDuration, "cacheClearDuration=%s shall be greater cachedDuration=%s", cacheClearDuration.String(), cachedDuration.String())
+	log.Debugf("noCacheDuration=%s cachedDuration=%s cacheClearDuration=%s", noCacheDuration.String(), cachedDuration.String(), cacheClearDuration.String())
+
+	testListRemoteAllBackups := make([]string, totalCacheCount)
+	for i := 0; i < totalCacheCount; i++ {
+		testListRemoteAllBackups[i] = fmt.Sprintf("%s_%d", testBackupName, i)
+	}
+	fullCleanup(t, r, env, testListRemoteAllBackups, []string{"remote", "local"}, []string{}, true, true, "config-s3.yml")
+}
+
 // TestS3NoDeletePermission - no parallel
 func TestS3NoDeletePermission(t *testing.T) {
 	if isTestShouldSkip("RUN_ADVANCED_TESTS") {
@@ -662,55 +711,6 @@ func TestConfigs(t *testing.T) {
 	if compareVersion(chVersion, "24.2") >= 0 {
 		testConfigsScenario("/etc/clickhouse-backup/config-azblob-embedded-url.yml")
 	}
-}
-
-// TestLongListRemote - no parallel, cause need to restart minio
-func TestLongListRemote(t *testing.T) {
-	env, r := NewTestEnvironment(t)
-	env.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Second)
-	defer env.ch.Close()
-	totalCacheCount := 20
-	testBackupName := "test_list_remote"
-
-	for i := 0; i < totalCacheCount; i++ {
-		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", fmt.Sprintf("CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml ALLOW_EMPTY_BACKUPS=true clickhouse-backup create_remote %s_%d", testBackupName, i))
-	}
-
-	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "minio")...))
-	time.Sleep(2 * time.Second)
-
-	startFirst := time.Now()
-	env.DockerExecNoError(r, "clickhouse-backup", "rm", "-rfv", "/tmp/.clickhouse-backup-metadata.cache.S3")
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
-	noCacheDuration := time.Since(startFirst)
-
-	env.DockerExecNoError(r, "clickhouse-backup", "chmod", "-Rv", "+r", "/tmp/.clickhouse-backup-metadata.cache.S3")
-
-	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "minio")...))
-	time.Sleep(2 * time.Second)
-
-	startCashed := time.Now()
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
-	cachedDuration := time.Since(startCashed)
-
-	r.Greater(noCacheDuration, cachedDuration,"noCacheDuration=%s shall be greater cachedDuration=%s", noCacheDuration, cachedDuration)
-
-	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "minio")...))
-	time.Sleep(2 * time.Second)
-
-	startCacheClear := time.Now()
-	env.DockerExecNoError(r, "clickhouse-backup", "rm", "-Rfv", "/tmp/.clickhouse-backup-metadata.cache.S3")
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
-	cacheClearDuration := time.Since(startCacheClear)
-
-	r.Greater(cacheClearDuration, cachedDuration, "cacheClearDuration=%s shall be greater cachedDuration=%s", cacheClearDuration.String(), cachedDuration.String())
-	log.Debugf("noCacheDuration=%s cachedDuration=%s cacheClearDuration=%s", noCacheDuration.String(), cachedDuration.String(), cacheClearDuration.String())
-
-	testListRemoteAllBackups := make([]string, totalCacheCount)
-	for i := 0; i < totalCacheCount; i++ {
-		testListRemoteAllBackups[i] = fmt.Sprintf("%s_%d", testBackupName, i)
-	}
-	fullCleanup(t, r, env, testListRemoteAllBackups, []string{"remote", "local"}, []string{}, true, true, "config-s3.yml")
 }
 
 const apiBackupNumber = 5
