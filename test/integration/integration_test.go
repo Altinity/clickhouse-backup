@@ -427,12 +427,16 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 		t.Parallel()
 		env.ProjectName = strings.ToLower(t.Name())
 		upCmd := append(env.GetDefaultComposeCommand(), "up", "-d")
+		upStart := time.Now()
 		out, err := utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", upCmd...)
 		r.NoError(err, "%s\n\n%s\n\n[ERROR]\n%v", "docker "+strings.Join(upCmd, " "), out, err)
+		t.Logf("docker compose up time = %s", time.Since(upStart))
 		t.Cleanup(func() {
+			downStart := time.Now()
 			downCmd := append(env.GetDefaultComposeCommand(), "down", "--remove-orphans", "--volumes")
 			out, err = utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", downCmd...)
 			r.NoError(err, "%s\n\n%s\n\n[ERROR]\n%v", "docker "+strings.Join(downCmd, " "), out, err)
+			t.Logf("docker compose down time = %s", time.Since(downStart))
 		})
 	} else {
 		t.Logf("[%s] executing in sequence mode", t.Name())
