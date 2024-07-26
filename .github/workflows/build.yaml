@@ -313,8 +313,7 @@ jobs:
             export COMPOSE_FILE=docker-compose.yml
           fi
 
-          CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
-          export CUR_DIR="${CUR_DIR}/test/integration"
+          export CUR_DIR="$(pwd)/test/integration"
           export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup-race"
           go test -parallel ${RUN_PARALLEL} -timeout 60m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
       - name: Format integration coverage
