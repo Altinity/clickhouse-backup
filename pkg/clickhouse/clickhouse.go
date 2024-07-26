@@ -802,7 +802,7 @@ func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetad
 	if ch.version <= 21003000 {
 		return fmt.Errorf("your clickhouse-server version doesn't support SYSTEM RESTORE REPLICA statement, use `restore_as_attach: false` in config")
 	}
-	query := fmt.Sprintf("DETACH TABLE `%s`.`%s`", table.Database, table.Table)
+	query := fmt.Sprintf("DETACH TABLE `%s`.`%s` SYNC", table.Database, table.Table)
 	if err := ch.Query(query); err != nil {
 		return err
 	}
