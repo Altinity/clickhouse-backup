@@ -665,7 +665,7 @@ func TestLongListRemote(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Second)
 	defer env.ch.Close()
-	totalCacheCount := 20
+	totalCacheCount := 25
 	testBackupName := "test_list_remote"
 
 	for i := 0; i < totalCacheCount; i++ {
@@ -3152,7 +3152,7 @@ func (env *TestEnvironment) GetDefaultComposeCommand() []string {
 
 func (env *TestEnvironment) DockerExecNoError(r *require.Assertions, container string, cmd ...string) {
 	out, err := env.DockerExecOut(container, cmd...)
-	r.NoError(err, "%s\n[ERROR]\n%v", out, err)
+	r.NoError(err, "%s\n\n%s\n[ERROR]\n%v", strings.Join(append(append(env.GetDefaultComposeCommand(), "exec", container), cmd...), " "), out, err)
 }
 
 func (env *TestEnvironment) DockerExec(container string, cmd ...string) error {
