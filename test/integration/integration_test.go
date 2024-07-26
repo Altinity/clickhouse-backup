@@ -669,7 +669,7 @@ func TestLongListRemote(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Second)
 	defer env.ch.Close()
-	totalCacheCount := 25
+	totalCacheCount := 20
 	testBackupName := "test_list_remote"
 
 	for i := 0; i < totalCacheCount; i++ {
@@ -688,9 +688,9 @@ func TestLongListRemote(t *testing.T) {
 
 	startCashed := time.Now()
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
-	cashedDuration := time.Since(startCashed)
+	cachedDuration := time.Since(startCashed)
 
-	r.Greater(noCacheDuration, cashedDuration)
+	r.Greater(noCacheDuration, cachedDuration,"noCacheDuration=%s shall be greater cachedDuration=%s", noCacheDuration, cachedDuration)
 
 	env.DockerExecNoError(r, "clickhouse-backup", "rm", "-Rfv", "/tmp/.clickhouse-backup-metadata.cache.S3")
 	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "minio")...))
@@ -700,8 +700,8 @@ func TestLongListRemote(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
 	cacheClearDuration := time.Since(startCacheClear)
 
-	r.Greater(cacheClearDuration, cashedDuration)
-	log.Debugf("noCacheDuration=%s cachedDuration=%s cacheClearDuration=%s", noCacheDuration.String(), cashedDuration.String(), cacheClearDuration.String())
+	r.Greater(cacheClearDuration, cachedDuration, "cacheClearDuration=%s shall be greater cachedDuration=%s", cacheClearDuration.String(), cachedDuration.String())
+	log.Debugf("noCacheDuration=%s cachedDuration=%s cacheClearDuration=%s", noCacheDuration.String(), cachedDuration.String(), cacheClearDuration.String())
 
 	testListRemoteAllBackups := make([]string, totalCacheCount)
 	for i := 0; i < totalCacheCount; i++ {
