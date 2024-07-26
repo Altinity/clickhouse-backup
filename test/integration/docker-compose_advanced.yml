@@ -98,8 +98,9 @@ services:
       - "3306"
     healthcheck:
       test: mysqladmin -p=root ping -h localhost
-      timeout: 20s
-      retries: 10
+      timeout: 10s
+      interval: 1s
+      retries: 100
 
   pgsql:
     image: docker.io/postgres:${PGSQL_VERSION:-latest}
@@ -114,7 +115,8 @@ services:
     command: [ "postgres", "-c", "wal_level=logical" ]
     healthcheck:
       test: pg_isready
-      timeout: 20s
+      timeout: 10s
+      interval: 1s
       retries: 10
 
   zookeeper:
