@@ -9,7 +9,7 @@ RUN rm -fv /etc/apt/sources.list.d/clickhouse.list && \
     find /etc/apt/ -type f -name *.list -exec sed -i 's/ru.archive.ubuntu.com/archive.ubuntu.com/g' {} + && \
     ( apt-get update || true ) && \
     apt-get install -y --no-install-recommends gnupg ca-certificates wget && update-ca-certificates && \
-    for srv in "keyserver.ubuntu.com" "pool.sks-keyservers.net" "keys.gnupg.net"; do apt-key adv --keyserver $srv --recv-keys 52B59B1571A79DBC054901C0F6BC817356A3D45E; if [ $? -eq 0 ]; then break; fi; done && \
+    for srv in "keyserver.ubuntu.com" "pool.sks-keyservers.net" "keys.gnupg.net"; do host $srv; apt-key adv --keyserver $srv --recv-keys 52B59B1571A79DBC054901C0F6BC817356A3D45E; if [ $? -eq 0 ]; then break; fi; done && \
     DISTRIB_CODENAME=$(cat /etc/lsb-release | grep DISTRIB_CODENAME | cut -d "=" -f 2) && \
     echo ${DISTRIB_CODENAME} && \
     echo "deb https://ppa.launchpadcontent.net/longsleep/golang-backports/ubuntu ${DISTRIB_CODENAME} main" > /etc/apt/sources.list.d/golang.list && \

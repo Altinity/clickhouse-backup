@@ -686,6 +686,9 @@ func TestLongListRemote(t *testing.T) {
 
 	env.DockerExecNoError(r, "clickhouse-backup", "chmod", "-Rv", "+r", "/tmp/.clickhouse-backup-metadata.cache.S3")
 
+	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "minio")...))
+	time.Sleep(2 * time.Second)
+
 	startCashed := time.Now()
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
 	cachedDuration := time.Since(startCashed)
