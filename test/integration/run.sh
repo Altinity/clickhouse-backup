@@ -55,5 +55,6 @@ if [[ "1" == "${RUN_PARALLEL}" ]]; then
   docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name all --progress plain up -d
 fi
 
+docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --progress=plain pull
 go test -parallel ${RUN_PARALLEL} -race -timeout ${TEST_TIMEOUT:-60m} -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v ${CUR_DIR}/integration_test.go
 go tool covdata textfmt -i "${CUR_DIR}/_coverage_/" -o "${CUR_DIR}/_coverage_/coverage.out"

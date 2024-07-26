@@ -315,7 +315,7 @@ jobs:
 
           export CUR_DIR="$(pwd)/test/integration"
           export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup-race"
-          docker compose -f "${CUR_DIR}/${COMPOSE_FILE}" pull
+          docker compose -f "${CUR_DIR}/${COMPOSE_FILE}" --progress=plain pull
           go test -parallel ${RUN_PARALLEL} -timeout 60m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
       - name: Format integration coverage
         env:
