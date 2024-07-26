@@ -16,6 +16,7 @@ else
 fi
 export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup-race"
 export LOG_LEVEL=${LOG_LEVEL:-info}
+export TEST_LOG_LEVEL=${TEST_LOG_LEVEL:-info}
 
 if [[ -f "${CUR_DIR}/credentials.json" ]]; then
   export GCS_TESTS=${GCS_TESTS:-1}
@@ -41,9 +42,18 @@ else
   export COMPOSE_FILE=docker-compose.yml
 fi
 
-docker-compose -f ${CUR_DIR}/${COMPOSE_FILE} down --remove-orphans
+
+for project in $(docker compose -f ${CUR_DIR}/${COMPOSE_FILE} ls --all -q); do
+  docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project} --progress plain down --remove-orphans --volumes
+done
+
 docker volume prune -f
 make clean build-race-docker build-race-fips-docker
 
-go test -parallel ${RUN_PARALLEL:-$(nproc)} -timeout ${TESTS_TIMEOUT:-60m} -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v ${CUR_DIR}/integration_test.go
+export RUN_PARALLEL=${RUN_PARALLEL:-1}
+if [[ "1" == "${RUN_PARALLEL}" ]]; then
+  docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name all --progress plain up -d
+fi
+
+go test -parallel ${RUN_PARALLEL} -race -timeout ${TEST_TIMEOUT:-60m} -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v ${CUR_DIR}/integration_test.go
 go tool covdata textfmt -i "${CUR_DIR}/_coverage_/" -o "${CUR_DIR}/_coverage_/coverage.out"

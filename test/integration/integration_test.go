@@ -41,6 +41,9 @@ func init() {
 	if os.Getenv("LOG_LEVEL") != "" {
 		logLevel = os.Getenv("LOG_LEVEL")
 	}
+	if os.Getenv("TEST_LOG_LEVEL") != "" {
+		logLevel = os.Getenv("TEST_LOG_LEVEL")
+	}
 	log.SetLevelFromString(logLevel)
 }
 
@@ -411,27 +414,35 @@ var defaultIncrementData = []TestDataStruct{
 	},
 }
 
-func NewTestEnvironment(t *testing.T, r *require.Assertions) *TestEnvironment {
+func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 	t.Helper()
+	r := require.New(t)
 	if os.Getenv("COMPOSE_FILE") == "" || os.Getenv("CUR_DIR") == "" {
 		t.Fatal("please setup COMPOSE_FILE and CUR_DIR environment variables")
 	}
 	env := TestEnvironment{
-		ProjectName:          strings.ToLower(t.Name()),
+		ProjectName: "all",
 	}
-	upCmd := append(env.GetDefaultComposeCommand(), "up", "-d")
-	r.NoError(utils.ExecCmd(context.Background(), dockerExecTimeout, "docker", upCmd...))
+	if os.Getenv("RUN_PARALLEL") != "1" {
+		t.Logf("[%s] executing in parallel mode", t.Name())
+		t.Parallel()
+		env.ProjectName = strings.ToLower(t.Name())
+		upCmd := append(env.GetDefaultComposeCommand(), "up", "-d")
+		r.NoError(utils.ExecCmd(context.Background(), dockerExecTimeout, "docker", upCmd...))
+		t.Cleanup(func() {
+			downCmd := append(env.GetDefaultComposeCommand(), "down", "--remove-orphans", "--volumes")
+			r.NoError(utils.ExecCmd(context.Background(), dockerExecTimeout, "docker", downCmd...))
+		})
+	} else {
+		t.Logf("[%s] executing in sequence mode", t.Name())
+	}
 
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "1.1.54394") <= 0 {
 		r := require.New(&testing.T{})
 		env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
-		r.NoError(env.DockerExec("clickhouse-backup", "update-ca-certificates"))
+		env.DockerExecNoError(r, "clickhouse-backup", "update-ca-certificates")
 	}
-	t.Cleanup(func() {
-		downCmd := append(env.GetDefaultComposeCommand(), "down", "--remove-orphans", "--volumes")
-		r.NoError(utils.ExecCmd(context.Background(), dockerExecTimeout, "docker", downCmd...))
-	})
-	return &env
+	return &env, r
 }
 
 // TestS3NoDeletePermission - no parallel
@@ -440,26 +451,24 @@ func TestS3NoDeletePermission(t *testing.T) {
 		t.Skip("Skipping Advanced integration tests...")
 		return
 	}
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
+	env, r := NewTestEnvironment(t)
 	env.connectWithWait(r, 500*time.Millisecond, 1*time.Second, 2*time.Second)
 	defer env.ch.Close()
 
-	r.NoError(env.DockerExec("minio", "/bin/minio_nodelete.sh"))
+	env.DockerExecNoError(r, "minio", "/bin/minio_nodelete.sh")
 	r.NoError(env.DockerCP("config-s3-nodelete.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
 
 	generateTestData(t, r, env, "S3", defaultTestData)
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "create_remote", "no_delete_backup"))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "delete", "local", "no_delete_backup"))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "restore_remote", "no_delete_backup"))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "delete", "local", "no_delete_backup"))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create_remote", "no_delete_backup")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", "no_delete_backup")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "restore_remote", "no_delete_backup")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", "no_delete_backup")
 	r.Error(env.DockerExec("clickhouse-backup", "clickhouse-backup", "delete", "remote", "no_delete_backup"))
 	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Atomic, Issue331Ordinary}
 	dropDatabasesFromTestDataDataSet(t, r, env, databaseList)
 	r.NoError(env.DockerCP("config-s3.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "delete", "remote", "no_delete_backup"))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "list", "remote"))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "remote", "no_delete_backup")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "list", "remote")
 	env.checkObjectStorageIsEmpty(t, r, "S3")
 }
 
@@ -469,9 +478,7 @@ func TestRBAC(t *testing.T) {
 	if compareVersion(chVersion, "20.4") < 0 {
 		t.Skipf("Test skipped, RBAC not available for %s version", os.Getenv("CLICKHOUSE_VERSION"))
 	}
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
+	env, r := NewTestEnvironment(t)
 	testRBACScenario := func(config string) {
 		env.connectWithWait(r, 1*time.Second, 1*time.Second, 1*time.Second)
 
@@ -485,14 +492,14 @@ func TestRBAC(t *testing.T) {
 
 		createRBACObjects := func(drop bool) {
 			if drop {
-				log.Info("drop all RBAC related objects")
+				log.Debug("drop all RBAC related objects")
 				env.queryWithNoError(r, "DROP SETTINGS PROFILE `test.rbac-name`")
 				env.queryWithNoError(r, "DROP QUOTA `test.rbac-name`")
 				env.queryWithNoError(r, "DROP ROW POLICY `test.rbac-name` ON default.test_rbac")
 				env.queryWithNoError(r, "DROP ROLE `test.rbac-name`")
 				env.queryWithNoError(r, "DROP USER `test.rbac-name`")
 			}
-			log.Info("create RBAC related objects")
+			log.Debug("create RBAC related objects")
 			env.queryWithNoError(r, "CREATE SETTINGS PROFILE `test.rbac-name` SETTINGS max_execution_time=60")
 			env.queryWithNoError(r, "CREATE ROLE `test.rbac-name` SETTINGS PROFILE `test.rbac-name`")
 			env.queryWithNoError(r, "CREATE USER `test.rbac-name` IDENTIFIED BY 'test_rbac_password' DEFAULT ROLE `test.rbac-name`")
@@ -501,18 +508,18 @@ func TestRBAC(t *testing.T) {
 		}
 		createRBACObjects(false)
 
-		r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", config, "create", "--rbac", "--rbac-only", "--env", "S3_COMPRESSION_FORMAT=zstd", "test_rbac_backup"))
-		r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 CLICKHOUSE_BACKUP_CONFIG="+config+" clickhouse-backup upload test_rbac_backup"))
-		r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "local", "test_rbac_backup"))
-		r.NoError(env.DockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
+		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", config, "create", "--rbac", "--rbac-only", "--env", "S3_COMPRESSION_FORMAT=zstd", "test_rbac_backup")
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 CLICKHOUSE_BACKUP_CONFIG="+config+" clickhouse-backup upload test_rbac_backup")
+		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "local", "test_rbac_backup")
+		env.DockerExecNoError(r, "clickhouse", "ls", "-lah", "/var/lib/clickhouse/access")
 
-		log.Info("create conflicted RBAC objects")
+		log.Debug("create conflicted RBAC objects")
 		createRBACObjects(true)
 
-		r.NoError(env.DockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
+		env.DockerExecNoError(r, "clickhouse", "ls", "-lah", "/var/lib/clickhouse/access")
 
-		log.Info("download+restore RBAC")
-		r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 CLICKHOUSE_BACKUP_CONFIG="+config+" clickhouse-backup download test_rbac_backup"))
+		log.Debug("download+restore RBAC")
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 CLICKHOUSE_BACKUP_CONFIG="+config+" clickhouse-backup download test_rbac_backup")
 
 		out, err := env.DockerExecOut("clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 clickhouse-backup -c "+config+" restore --rm --rbac test_rbac_backup")
 		log.Debug(out)
@@ -523,13 +530,13 @@ func TestRBAC(t *testing.T) {
 		log.Debug(out)
 		r.Contains(out, "RBAC successfully restored")
 		r.NoError(err)
-		r.NoError(env.DockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
+		env.DockerExecNoError(r, "clickhouse", "ls", "-lah", "/var/lib/clickhouse/access")
 
 		env.ch.Close()
-		// r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker-compose", "-f", os.Getenv("COMPOSE_FILE"), "restart", "clickhouse"))
+		// r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, append(env.GetDefaultComposeCommand(), "restart", "clickhouse")))
 		env.connectWithWait(r, 2*time.Second, 2*time.Second, 8*time.Second)
 
-		r.NoError(env.DockerExec("clickhouse", "ls", "-lah", "/var/lib/clickhouse/access"))
+		env.DockerExecNoError(r, "clickhouse", "ls", "-lah", "/var/lib/clickhouse/access")
 
 		rbacTypes := map[string]string{
 			"PROFILES": "test.rbac-name",
@@ -546,19 +553,19 @@ func TestRBAC(t *testing.T) {
 			r.NoError(err)
 			found := false
 			for _, row := range rbacRows {
-				log.Infof("rbacType=%s expectedValue=%s row.Name=%s", rbacType, expectedValue, row.Name)
+				log.Debugf("rbacType=%s expectedValue=%s row.Name=%s", rbacType, expectedValue, row.Name)
 				if expectedValue == row.Name {
 					found = true
 					break
 				}
 			}
 			if !found {
-				//r.NoError(env.DockerExec("clickhouse", "cat", "/var/log/clickhouse-server/clickhouse-server.log"))
+				//env.DockerExecNoError(r, "clickhouse", "cat", "/var/log/clickhouse-server/clickhouse-server.log")
 				r.Failf("wrong RBAC", "SHOW %s, %#v doesn't contain %#v", rbacType, rbacRows, expectedValue)
 			}
 		}
-		r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "local", "test_rbac_backup"))
-		r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "remote", "test_rbac_backup"))
+		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "local", "test_rbac_backup")
+		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "remote", "test_rbac_backup")
 
 		env.queryWithNoError(r, "DROP SETTINGS PROFILE `test.rbac-name`")
 		env.queryWithNoError(r, "DROP QUOTA `test.rbac-name`")
@@ -582,24 +589,22 @@ func TestRBAC(t *testing.T) {
 // TestConfigs - require direct access to `/etc/clickhouse-backup/`, so executed inside `clickhouse` container
 // need clickhouse-server restart, no parallel
 func TestConfigs(t *testing.T) {
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
+	env, r := NewTestEnvironment(t)
 	testConfigsScenario := func(config string) {
 		env.connectWithWait(r, 0*time.Millisecond, 1*time.Second, 1*time.Second)
 		env.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_configs")
 		env.queryWithNoError(r, "CREATE TABLE default.test_configs (v UInt64) ENGINE=MergeTree() ORDER BY tuple()")
 
-		r.NoError(env.DockerExec("clickhouse", "bash", "-ce", "echo '<yandex><profiles><default><empty_result_for_aggregation_by_empty_set>1</empty_result_for_aggregation_by_empty_set></default></profiles></yandex>' > /etc/clickhouse-server/users.d/test_config.xml"))
+		env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "echo '<yandex><profiles><default><empty_result_for_aggregation_by_empty_set>1</empty_result_for_aggregation_by_empty_set></default></profiles></yandex>' > /etc/clickhouse-server/users.d/test_config.xml")
 
-		r.NoError(env.DockerExec("clickhouse", "clickhouse-backup", "-c", config, "create", "--configs", "--configs-only", "test_configs_backup"))
+		env.DockerExecNoError(r, "clickhouse", "clickhouse-backup", "-c", config, "create", "--configs", "--configs-only", "test_configs_backup")
 		env.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_configs")
 		compression := ""
 		if !strings.Contains(config, "embedded") {
 			compression = "--env AZBLOB_COMPRESSION_FORMAT=zstd --env S3_COMPRESSION_FORMAT=zstd"
 		}
-		r.NoError(env.DockerExec("clickhouse", "bash", "-xec", "clickhouse-backup upload "+compression+" --env CLICKHOUSE_BACKUP_CONFIG="+config+" --env S3_COMPRESSION_FORMAT=none --env ALLOW_EMPTY_BACKUPS=1 test_configs_backup"))
-		r.NoError(env.DockerExec("clickhouse", "clickhouse-backup", "-c", config, "delete", "local", "test_configs_backup"))
+		env.DockerExecNoError(r, "clickhouse", "bash", "-xec", "clickhouse-backup upload "+compression+" --env CLICKHOUSE_BACKUP_CONFIG="+config+" --env S3_COMPRESSION_FORMAT=none --env ALLOW_EMPTY_BACKUPS=1 test_configs_backup")
+		env.DockerExecNoError(r, "clickhouse", "clickhouse-backup", "-c", config, "delete", "local", "test_configs_backup")
 
 		env.queryWithNoError(r, "SYSTEM RELOAD CONFIG")
 		env.ch.Close()
@@ -608,12 +613,12 @@ func TestConfigs(t *testing.T) {
 		var settings string
 		r.NoError(env.ch.SelectSingleRowNoCtx(&settings, selectEmptyResultForAggQuery))
 		if settings != "1" {
-			r.NoError(env.DockerExec("clickhouse", "grep", "empty_result_for_aggregation_by_empty_set", "-r", "/var/lib/clickhouse/preprocessed_configs/"))
+			env.DockerExecNoError(r, "clickhouse", "grep", "empty_result_for_aggregation_by_empty_set", "-r", "/var/lib/clickhouse/preprocessed_configs/")
 		}
 		r.Equal("1", settings, "expect empty_result_for_aggregation_by_empty_set=1")
 
-		r.NoError(env.DockerExec("clickhouse", "rm", "-rfv", "/etc/clickhouse-server/users.d/test_config.xml"))
-		r.NoError(env.DockerExec("clickhouse", "bash", "-xec", "CLICKHOUSE_BACKUP_CONFIG="+config+" ALLOW_EMPTY_BACKUPS=1 clickhouse-backup download test_configs_backup"))
+		env.DockerExecNoError(r, "clickhouse", "rm", "-rfv", "/etc/clickhouse-server/users.d/test_config.xml")
+		env.DockerExecNoError(r, "clickhouse", "bash", "-xec", "CLICKHOUSE_BACKUP_CONFIG="+config+" ALLOW_EMPTY_BACKUPS=1 clickhouse-backup download test_configs_backup")
 
 		r.NoError(env.ch.Query("SYSTEM RELOAD CONFIG"))
 		env.ch.Close()
@@ -623,7 +628,7 @@ func TestConfigs(t *testing.T) {
 		r.NoError(env.ch.SelectSingleRowNoCtx(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
 		r.Equal("0", settings, "expect empty_result_for_aggregation_by_empty_set=0")
 
-		r.NoError(env.DockerExec("clickhouse", "bash", "-xec", "CLICKHOUSE_BACKUP_CONFIG="+config+" CLICKHOUSE_RESTART_COMMAND='sql:SYSTEM RELOAD CONFIG' clickhouse-backup restore --rm --configs --configs-only test_configs_backup"))
+		env.DockerExecNoError(r, "clickhouse", "bash", "-xec", "CLICKHOUSE_BACKUP_CONFIG="+config+" CLICKHOUSE_RESTART_COMMAND='sql:SYSTEM RELOAD CONFIG' clickhouse-backup restore --rm --configs --configs-only test_configs_backup")
 
 		env.ch.Close()
 		env.connectWithWait(r, 1*time.Second, 1*time.Second, 1*time.Second)
@@ -636,9 +641,9 @@ func TestConfigs(t *testing.T) {
 		r.NoError(env.ch.SelectSingleRowNoCtx(&isTestConfigsTablePresent, "SELECT count() FROM system.tables WHERE database='default' AND name='test_configs' SETTINGS empty_result_for_aggregation_by_empty_set=1"))
 		r.Equal(0, isTestConfigsTablePresent, "expect default.test_configs is not present")
 
-		r.NoError(env.DockerExec("clickhouse", "clickhouse-backup", "-c", config, "delete", "local", "test_configs_backup"))
-		r.NoError(env.DockerExec("clickhouse", "clickhouse-backup", "-c", config, "delete", "remote", "test_configs_backup"))
-		r.NoError(env.DockerExec("clickhouse", "rm", "-rfv", "/etc/clickhouse-server/users.d/test_config.xml"))
+		env.DockerExecNoError(r, "clickhouse", "clickhouse-backup", "-c", config, "delete", "local", "test_configs_backup")
+		env.DockerExecNoError(r, "clickhouse", "clickhouse-backup", "-c", config, "delete", "remote", "test_configs_backup")
+		env.DockerExecNoError(r, "clickhouse", "rm", "-rfv", "/etc/clickhouse-server/users.d/test_config.xml")
 
 		env.ch.Close()
 	}
@@ -656,44 +661,42 @@ func TestConfigs(t *testing.T) {
 
 // TestLongListRemote - no parallel, cause need to restart minio
 func TestLongListRemote(t *testing.T) {
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
+	env, r := NewTestEnvironment(t)
 	env.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Second)
 	defer env.ch.Close()
 	totalCacheCount := 20
 	testBackupName := "test_list_remote"
 
 	for i := 0; i < totalCacheCount; i++ {
-		r.NoError(env.DockerExec("clickhouse-backup", "bash", "-ce", fmt.Sprintf("CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml ALLOW_EMPTY_BACKUPS=true clickhouse-backup create_remote %s_%d", testBackupName, i)))
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", fmt.Sprintf("CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml ALLOW_EMPTY_BACKUPS=true clickhouse-backup create_remote %s_%d", testBackupName, i))
 	}
 
-	r.NoError(env.DockerExec("clickhouse-backup", "rm", "-rfv", "/tmp/.clickhouse-backup-metadata.cache.S3"))
-	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker-compose", "-f", os.Getenv("COMPOSE_FILE"), "restart", "minio"))
+	env.DockerExecNoError(r, "clickhouse-backup", "rm", "-rfv", "/tmp/.clickhouse-backup-metadata.cache.S3")
+	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "minio")...))
 	time.Sleep(2 * time.Second)
 
 	startFirst := time.Now()
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote"))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
 	noCacheDuration := time.Since(startFirst)
 
-	r.NoError(env.DockerExec("clickhouse-backup", "chmod", "-Rv", "+r", "/tmp/.clickhouse-backup-metadata.cache.S3"))
+	env.DockerExecNoError(r, "clickhouse-backup", "chmod", "-Rv", "+r", "/tmp/.clickhouse-backup-metadata.cache.S3")
 
 	startCashed := time.Now()
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote"))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
 	cashedDuration := time.Since(startCashed)
 
 	r.Greater(noCacheDuration, cashedDuration)
 
-	r.NoError(env.DockerExec("clickhouse-backup", "rm", "-Rfv", "/tmp/.clickhouse-backup-metadata.cache.S3"))
-	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker-compose", "-f", os.Getenv("COMPOSE_FILE"), "restart", "minio"))
+	env.DockerExecNoError(r, "clickhouse-backup", "rm", "-Rfv", "/tmp/.clickhouse-backup-metadata.cache.S3")
+	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "minio")...))
 	time.Sleep(2 * time.Second)
 
 	startCacheClear := time.Now()
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote"))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
 	cacheClearDuration := time.Since(startCacheClear)
 
 	r.Greater(cacheClearDuration, cashedDuration)
-	log.Infof("noCacheDuration=%s cachedDuration=%s cacheClearDuration=%s", noCacheDuration.String(), cashedDuration.String(), cacheClearDuration.String())
+	log.Debugf("noCacheDuration=%s cachedDuration=%s cacheClearDuration=%s", noCacheDuration.String(), cashedDuration.String(), cacheClearDuration.String())
 
 	testListRemoteAllBackups := make([]string, totalCacheCount)
 	for i := 0; i < totalCacheCount; i++ {
@@ -705,9 +708,7 @@ func TestLongListRemote(t *testing.T) {
 const apiBackupNumber = 5
 
 func TestServerAPI(t *testing.T) {
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
+	env, r := NewTestEnvironment(t)
 	env.connectWithWait(r, 0*time.Second, 1*time.Second, 10*time.Second)
 	defer func() {
 		env.ch.Close()
@@ -720,8 +721,8 @@ func TestServerAPI(t *testing.T) {
 	randFields := 10
 	fillDatabaseForAPIServer(maxTables, minFields, randFields, env, r, fieldTypes)
 
-	log.Info("Run `clickhouse-backup server --watch` in background")
-	r.NoError(env.DockerExec("-d", "clickhouse-backup", "bash", "-ce", "clickhouse-backup server --watch &>>/tmp/clickhouse-backup-server.log"))
+	log.Debug("Run `clickhouse-backup server --watch` in background")
+	env.DockerExecNoError(r, "-d", "clickhouse-backup", "bash", "-ce", "clickhouse-backup server --watch &>>/tmp/clickhouse-backup-server.log")
 	time.Sleep(1 * time.Second)
 
 	testAPIBackupVersion(r, env)
@@ -734,7 +735,7 @@ func TestServerAPI(t *testing.T) {
 
 	testAPIBackupTablesRemote(r, env)
 
-	log.Info("Check /backup/actions")
+	log.Debug("Check /backup/actions")
 	env.queryWithNoError(r, "SELECT count() FROM system.backup_actions")
 
 	testAPIBackupList(t, r, env)
@@ -753,7 +754,7 @@ func TestServerAPI(t *testing.T) {
 
 	testAPIBackupClean(r, env)
 
-	r.NoError(env.DockerExec("clickhouse-backup", "pkill", "-n", "-f", "clickhouse-backup"))
+	env.DockerExecNoError(r, "clickhouse-backup", "pkill", "-n", "-f", "clickhouse-backup")
 	r.NoError(env.dropDatabase("long_schema"))
 }
 
@@ -824,7 +825,7 @@ func testAPIBackupActions(r *require.Assertions, env *TestEnvironment) {
 }
 
 func testAPIWatchAndKill(r *require.Assertions, env *TestEnvironment) {
-	log.Info("Check /backup/watch + /backup/kill")
+	log.Debug("Check /backup/watch + /backup/kill")
 	runKillCommand := func(command string) {
 		out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL 'http://localhost:7171/backup/kill?command=%s'", command))
 		log.Debug(out)
@@ -864,15 +865,15 @@ func testAPIWatchAndKill(r *require.Assertions, env *TestEnvironment) {
 }
 
 func testAPIBackupDelete(r *require.Assertions, env *TestEnvironment) {
-	log.Info("Check /backup/delete/{where}/{name}")
+	log.Debug("Check /backup/delete/{where}/{name}")
 	for i := 1; i <= apiBackupNumber; i++ {
 		out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/delete/local/z_backup_%d'", i))
-		log.Infof(out)
+		log.Debugf(out)
 		r.NoError(err)
 		r.NotContains(out, "another operation is currently running")
 		r.NotContains(out, "\"status\":\"error\"")
 		out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/delete/remote/z_backup_%d'", i))
-		log.Infof(out)
+		log.Debugf(out)
 		r.NoError(err)
 		r.NotContains(out, "another operation is currently running")
 		r.NotContains(out, "\"status\":\"error\"")
@@ -882,7 +883,7 @@ func testAPIBackupDelete(r *require.Assertions, env *TestEnvironment) {
 	r.Contains(out, "clickhouse_backup_last_delete_status 1")
 
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XGET 'http://localhost:7171/backup/list'"))
-	log.Infof(out)
+	log.Debugf(out)
 	r.NoError(err)
 	scanner := bufio.NewScanner(strings.NewReader(out))
 	for scanner.Scan() {
@@ -897,7 +898,7 @@ func testAPIBackupDelete(r *require.Assertions, env *TestEnvironment) {
 		listItem := backupJSON{}
 		r.NoError(json.Unmarshal(scanner.Bytes(), &listItem))
 		out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/delete/%s/%s'", listItem.Location, listItem.Name))
-		log.Infof(out)
+		log.Debugf(out)
 		r.NoError(err)
 	}
 
@@ -906,15 +907,15 @@ func testAPIBackupDelete(r *require.Assertions, env *TestEnvironment) {
 }
 
 func testAPIBackupClean(r *require.Assertions, env *TestEnvironment) {
-	log.Info("Check /backup/clean/ /backup/clean_remote_broken/ and /backup/actions fot these two commands")
+	log.Debug("Check /backup/clean/ /backup/clean_remote_broken/ and /backup/actions fot these two commands")
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/clean'"))
-	log.Infof(out)
+	log.Debugf(out)
 	r.NoError(err)
 	r.NotContains(out, "another operation is currently running")
 	r.NotContains(out, "\"status\":\"error\"")
 
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/clean/remote_broken'"))
-	log.Infof(out)
+	log.Debugf(out)
 	r.NoError(err)
 	r.NotContains(out, "another operation is currently running")
 	r.NotContains(out, "\"status\":\"error\"")
@@ -923,7 +924,7 @@ func testAPIBackupClean(r *require.Assertions, env *TestEnvironment) {
 }
 
 func testAPIMetrics(r *require.Assertions, env *TestEnvironment) {
-	log.Info("Check /metrics clickhouse_backup_last_backup_size_remote")
+	log.Debug("Check /metrics clickhouse_backup_last_backup_size_remote")
 	var lastRemoteSize int64
 	r.NoError(env.ch.SelectSingleRowNoCtx(&lastRemoteSize, "SELECT size FROM system.backup_list WHERE name='z_backup_5' AND location='remote'"))
 
@@ -941,17 +942,17 @@ func testAPIMetrics(r *require.Assertions, env *TestEnvironment) {
 	r.NoError(err)
 	r.Contains(out, fmt.Sprintf("clickhouse_backup_last_backup_size_remote %d", lastRemoteSize))
 
-	log.Info("Check /metrics clickhouse_backup_number_backups_*")
+	log.Debug("Check /metrics clickhouse_backup_number_backups_*")
 	r.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_local %d", apiBackupNumber))
 	// +1 watch backup
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "list", "remote"))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "list", "remote")
 	r.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_remote %d", apiBackupNumber+1))
 	r.Contains(out, "clickhouse_backup_number_backups_local_expected 0")
 	r.Contains(out, "clickhouse_backup_number_backups_remote_expected 0")
 }
 
 func testAPIDeleteLocalDownloadRestore(r *require.Assertions, env *TestEnvironment) {
-	log.Info("Check /backup/delete/local/{name} + /backup/download/{name} + /backup/restore/{name}?rm=1")
+	log.Debug("Check /backup/delete/local/{name} + /backup/download/{name} + /backup/restore/{name}?rm=1")
 	out, err := env.DockerExecOut(
 		"clickhouse-backup",
 		"bash", "-xe", "-c",
@@ -974,7 +975,7 @@ func testAPIDeleteLocalDownloadRestore(r *require.Assertions, env *TestEnvironme
 }
 
 func testAPIBackupList(t *testing.T, r *require.Assertions, env *TestEnvironment) {
-	log.Info("Check /backup/list")
+	log.Debug("Check /backup/list")
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "curl -sfL 'http://localhost:7171/backup/list'")
 	log.Debug(out)
 	r.NoError(err)
@@ -983,7 +984,7 @@ func testAPIBackupList(t *testing.T, r *require.Assertions, env *TestEnvironment
 		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar, regular\"}", i)), out))
 	}
 
-	log.Info("Check /backup/list/local")
+	log.Debug("Check /backup/list/local")
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "curl -sfL 'http://localhost:7171/backup/list/local'")
 	log.Debug(out)
 	r.NoError(err)
@@ -992,7 +993,7 @@ func testAPIBackupList(t *testing.T, r *require.Assertions, env *TestEnvironment
 		r.True(assert.NotRegexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar, regular\"}", i)), out))
 	}
 
-	log.Info("Check /backup/list/remote")
+	log.Debug("Check /backup/list/remote")
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "curl -sfL 'http://localhost:7171/backup/list/remote'")
 	log.Debug(out)
 	r.NoError(err)
@@ -1003,7 +1004,7 @@ func testAPIBackupList(t *testing.T, r *require.Assertions, env *TestEnvironment
 }
 
 func testAPIBackupUpload(r *require.Assertions, env *TestEnvironment) {
-	log.Info("Check /backup/upload")
+	log.Debug("Check /backup/upload")
 	out, err := env.DockerExecOut(
 		"clickhouse-backup",
 		"bash", "-xe", "-c",
@@ -1024,7 +1025,7 @@ func testAPIBackupUpload(r *require.Assertions, env *TestEnvironment) {
 }
 
 func testAPIBackupTables(r *require.Assertions, env *TestEnvironment) {
-	log.Info("Check /backup/tables")
+	log.Debug("Check /backup/tables")
 	out, err := env.DockerExecOut(
 		"clickhouse-backup",
 		"bash", "-xe", "-c", "curl -sfL \"http://localhost:7171/backup/tables\"",
@@ -1039,7 +1040,7 @@ func testAPIBackupTables(r *require.Assertions, env *TestEnvironment) {
 	r.NotContains(out, "INFORMATION_SCHEMA")
 	r.NotContains(out, "information_schema")
 
-	log.Info("Check /backup/tables/all")
+	log.Debug("Check /backup/tables/all")
 	out, err = env.DockerExecOut(
 		"clickhouse-backup",
 		"bash", "-xe", "-c", "curl -sfL \"http://localhost:7171/backup/tables/all\"",
@@ -1059,7 +1060,7 @@ func testAPIBackupTables(r *require.Assertions, env *TestEnvironment) {
 
 func testAPIBackupTablesRemote(r *require.Assertions, env *TestEnvironment) {
 
-	log.Info("Check /backup/tables?remote_backup=z_backup_1")
+	log.Debug("Check /backup/tables?remote_backup=z_backup_1")
 	out, err := env.DockerExecOut(
 		"clickhouse-backup",
 		"bash", "-xe", "-c", "curl -sfL \"http://localhost:7171/backup/tables?remote_backup=z_backup_1\"",
@@ -1077,7 +1078,7 @@ func testAPIBackupTablesRemote(r *require.Assertions, env *TestEnvironment) {
 }
 
 func testAPIBackupVersion(r *require.Assertions, env *TestEnvironment) {
-	log.Info("Check /backup/version")
+	log.Debug("Check /backup/version")
 	cliVersion, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup --version 2>/dev/null --version | grep 'Version' | cut -d ':' -f 2 | xargs")
 	r.NoError(err)
 	apiVersion, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "curl -sL http://localhost:7171/backup/version | jq -r .version")
@@ -1089,7 +1090,7 @@ func testAPIBackupVersion(r *require.Assertions, env *TestEnvironment) {
 }
 
 func testAPIBackupCreate(r *require.Assertions, env *TestEnvironment) {
-	log.Info("Check /backup/create")
+	log.Debug("Check /backup/create")
 	out, err := env.DockerExecOut(
 		"clickhouse-backup",
 		"bash", "-xe", "-c",
@@ -1106,7 +1107,7 @@ func testAPIBackupCreate(r *require.Assertions, env *TestEnvironment) {
 }
 
 func fillDatabaseForAPIServer(maxTables int, minFields int, randFields int, ch *TestEnvironment, r *require.Assertions, fieldTypes []string) {
-	log.Infof("Create %d `long_schema`.`t%%d` tables with with %d..%d fields...", maxTables, minFields, minFields+randFields)
+	log.Debugf("Create %d `long_schema`.`t%%d` tables with with %d..%d fields...", maxTables, minFields, minFields+randFields)
 	ch.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS long_schema")
 	for i := 0; i < maxTables; i++ {
 		sql := fmt.Sprintf("CREATE TABLE long_schema.t%d (id UInt64", i)
@@ -1120,20 +1121,18 @@ func fillDatabaseForAPIServer(maxTables int, minFields int, randFields int, ch *
 		sql = fmt.Sprintf("INSERT INTO long_schema.t%d(id) SELECT number FROM numbers(100)", i)
 		ch.queryWithNoError(r, sql)
 	}
-	log.Info("...DONE")
+	log.Debug("...DONE")
 }
 
 func TestSkipNotExistsTable(t *testing.T) {
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.1") < 0 {
 		t.Skip("TestSkipNotExistsTable too small time between `SELECT DISTINCT partition_id` and `ALTER TABLE ... FREEZE PARTITION`")
 	}
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
+	env, r := NewTestEnvironment(t)
 	env.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Second)
 	defer env.ch.Close()
 
-	log.Info("Check skip not exist errors")
+	log.Debug("Check skip not exist errors")
 	env.queryWithNoError(r, "CREATE DATABASE freeze_not_exists")
 	ifNotExistsCreateSQL := "CREATE TABLE IF NOT EXISTS freeze_not_exists.freeze_not_exists (id UInt64) ENGINE=MergeTree() ORDER BY id"
 	ifNotExistsInsertSQL := "INSERT INTO freeze_not_exists.freeze_not_exists SELECT number FROM numbers(1000)"
@@ -1143,7 +1142,9 @@ func TestSkipNotExistsTable(t *testing.T) {
 	freezeErrorHandled := false
 	pauseChannel := make(chan int64)
 	resumeChannel := make(chan int64)
-	env.ch.Config.LogSQLQueries = true
+	if os.Getenv("TEST_LOG_LEVEL") == "debug" {
+		env.ch.Config.LogSQLQueries = true
+	}
 	wg := sync.WaitGroup{}
 	wg.Add(2)
 	go func() {
@@ -1160,15 +1161,15 @@ func TestSkipNotExistsTable(t *testing.T) {
 			err = env.ch.Query(ifNotExistsInsertSQL)
 			r.NoError(err)
 			if i < 5 {
-				log.Infof("pauseChannel <- %d", 0)
+				log.Debugf("pauseChannel <- %d", 0)
 				pauseChannel <- 0
 			} else {
-				log.Infof("pauseChannel <- %d", pause/i)
+				log.Debugf("pauseChannel <- %d", pause/i)
 				pauseChannel <- pause / i
 			}
 			startTime := time.Now()
 			out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "LOG_LEVEL=debug CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup create --table freeze_not_exists.freeze_not_exists "+testBackupName)
-			log.Info(out)
+			log.Debug(out)
 			if (err != nil && (strings.Contains(out, "can't freeze") || strings.Contains(out, "no tables for backup"))) ||
 				(err == nil && !strings.Contains(out, "can't freeze")) {
 				parseTime := func(line string) time.Time {
@@ -1201,9 +1202,9 @@ func TestSkipNotExistsTable(t *testing.T) {
 
 			if strings.Contains(out, "code: 60") && err == nil {
 				freezeErrorHandled = true
-				log.Info("CODE 60 catched")
+				log.Debug("CODE 60 catched")
 				<-resumeChannel
-				r.NoError(env.DockerExec("clickhouse-backup", "bash", "-ec", "CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup delete local "+testBackupName))
+				env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ec", "CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup delete local "+testBackupName)
 				break
 			}
 			if err == nil {
@@ -1219,11 +1220,11 @@ func TestSkipNotExistsTable(t *testing.T) {
 			wg.Done()
 		}()
 		for pause := range pauseChannel {
-			log.Infof("%d <- pauseChannel", pause)
+			log.Debugf("%d <- pauseChannel", pause)
 			if pause > 0 {
 				pauseStart := time.Now()
 				time.Sleep(time.Duration(pause) * time.Nanosecond)
-				log.Infof("pause=%s pauseStart=%s", time.Duration(pause).String(), pauseStart.String())
+				log.Debugf("pause=%s pauseStart=%s", time.Duration(pause).String(), pauseStart.String())
 				err = env.ch.DropTable(clickhouse.Table{Database: "freeze_not_exists", Name: "freeze_not_exists"}, ifNotExistsCreateSQL, "", false, chVersion, "")
 				r.NoError(err)
 			}
@@ -1246,9 +1247,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 }
 
 func TestSkipTablesAndSkipTableEngines(t *testing.T) {
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
+	env, r := NewTestEnvironment(t)
 	env.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Second)
 	defer env.ch.Close()
 	version, err := env.ch.GetVersion(context.Background())
@@ -1272,23 +1271,23 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 		r.NoError(env.ch.TurnAnalyzerOnIfNecessary(version, query, allowExperimentalAnalyzer))
 	}
 	// create
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLES=*.test_merge_tree clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml create skip_table_pattern"))
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLES=*.test_merge_tree clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml create skip_table_pattern")
 	r.Error(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_table_pattern/metadata/test_skip_tables/test_merge_tree.json"))
-	r.NoError(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_table_pattern/metadata/test_skip_tables/test_memory.json"))
-	r.NoError(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_table_pattern/metadata/test_skip_tables/test_mv.json"))
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-ce", "ls -la /var/lib/clickhouse/backup/skip_table_pattern/metadata/test_skip_tables/*inner*.json"))
+	env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_table_pattern/metadata/test_skip_tables/test_memory.json")
+	env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_table_pattern/metadata/test_skip_tables/test_mv.json")
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "ls -la /var/lib/clickhouse/backup/skip_table_pattern/metadata/test_skip_tables/*inner*.json")
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 {
-		r.NoError(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_table_pattern/metadata/test_skip_tables/test_live_view.json"))
+		env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_table_pattern/metadata/test_skip_tables/test_live_view.json")
 	}
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
-		r.NoError(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_table_pattern/metadata/test_skip_tables/test_window_view.json"))
+		env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_table_pattern/metadata/test_skip_tables/test_window_view.json")
 	}
 
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLE_ENGINES=memory,materializedview,windowview,liveview clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml create skip_engines"))
-	r.NoError(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_engines/metadata/test_skip_tables/test_merge_tree.json"))
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLE_ENGINES=memory,materializedview,windowview,liveview clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml create skip_engines")
+	env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_engines/metadata/test_skip_tables/test_merge_tree.json")
 	r.Error(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_engines/metadata/test_skip_tables/test_memory.json"))
 	r.Error(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_engines/metadata/test_skip_tables/test_mv.json"))
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-ce", "ls -la /var/lib/clickhouse/backup/skip_engines/metadata/test_skip_tables/*inner*.json"))
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "ls -la /var/lib/clickhouse/backup/skip_engines/metadata/test_skip_tables/*inner*.json")
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 {
 		r.Error(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_engines/metadata/test_skip_tables/test_live_view.json"))
 	}
@@ -1296,91 +1295,91 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 		r.Error(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_engines/metadata/test_skip_tables/test_window_view.json"))
 	}
 
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local skip_table_pattern"))
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local skip_engines"))
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local skip_table_pattern")
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local skip_engines")
 
 	//upload
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml create test_skip_full_backup"))
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml create test_skip_full_backup")
 
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "USE_RESUMABLE_STATE=0 CLICKHOUSE_SKIP_TABLES=*.test_memory clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload test_skip_full_backup"))
-	r.NoError(env.DockerExec("minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_merge_tree.json"))
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "USE_RESUMABLE_STATE=0 CLICKHOUSE_SKIP_TABLES=*.test_memory clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload test_skip_full_backup")
+	env.DockerExecNoError(r, "minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_merge_tree.json")
 	r.Error(env.DockerExec("minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_memory.json"))
-	r.NoError(env.DockerExec("minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_mv.json"))
-	r.NoError(env.DockerExec("minio", "bash", "-ce", "ls -la /bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/*inner*.json"))
+	env.DockerExecNoError(r, "minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_mv.json")
+	env.DockerExecNoError(r, "minio", "bash", "-ce", "ls -la /bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/*inner*.json")
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 {
-		r.NoError(env.DockerExec("minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_live_view.json"))
+		env.DockerExecNoError(r, "minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_live_view.json")
 	}
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
-		r.NoError(env.DockerExec("minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_window_view.json"))
+		env.DockerExecNoError(r, "minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_window_view.json")
 	}
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete remote test_skip_full_backup"))
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete remote test_skip_full_backup")
 
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "USE_RESUMABLE_STATE=0 CLICKHOUSE_SKIP_TABLE_ENGINES=memory,materializedview,liveview,windowview clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload test_skip_full_backup"))
-	r.NoError(env.DockerExec("minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_merge_tree.json"))
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "USE_RESUMABLE_STATE=0 CLICKHOUSE_SKIP_TABLE_ENGINES=memory,materializedview,liveview,windowview clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload test_skip_full_backup")
+	env.DockerExecNoError(r, "minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_merge_tree.json")
 	r.Error(env.DockerExec("minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_memory.json"))
 	r.Error(env.DockerExec("minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_mv.json"))
-	r.NoError(env.DockerExec("minio", "bash", "-ce", "ls -la /bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/*inner*.json"))
+	env.DockerExecNoError(r, "minio", "bash", "-ce", "ls -la /bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/*inner*.json")
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 {
 		r.Error(env.DockerExec("minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_live_view.json"))
 	}
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
 		r.Error(env.DockerExec("minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_window_view.json"))
 	}
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete remote test_skip_full_backup"))
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete remote test_skip_full_backup")
 
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "USE_RESUMABLE_STATE=0 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload test_skip_full_backup"))
-	r.NoError(env.DockerExec("minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_merge_tree.json"))
-	r.NoError(env.DockerExec("minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_memory.json"))
-	r.NoError(env.DockerExec("minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_mv.json"))
-	r.NoError(env.DockerExec("minio", "bash", "-ce", "ls -la /bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/*inner*.json"))
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "USE_RESUMABLE_STATE=0 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload test_skip_full_backup")
+	env.DockerExecNoError(r, "minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_merge_tree.json")
+	env.DockerExecNoError(r, "minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_memory.json")
+	env.DockerExecNoError(r, "minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_mv.json")
+	env.DockerExecNoError(r, "minio", "bash", "-ce", "ls -la /bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/*inner*.json")
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 {
-		r.NoError(env.DockerExec("minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_live_view.json"))
+		env.DockerExecNoError(r, "minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_live_view.json")
 	}
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
-		r.NoError(env.DockerExec("minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_window_view.json"))
+		env.DockerExecNoError(r, "minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_window_view.json")
 	}
 
 	//download
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete remote test_skip_full_backup"))
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "USE_RESUMABLE_STATE=0 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload test_skip_full_backup"))
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local test_skip_full_backup"))
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete remote test_skip_full_backup")
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "USE_RESUMABLE_STATE=0 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload test_skip_full_backup")
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local test_skip_full_backup")
 
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "USE_RESUMABLE_STATE=0 CLICKHOUSE_SKIP_TABLES=*.test_merge_tree clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml download test_skip_full_backup"))
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "USE_RESUMABLE_STATE=0 CLICKHOUSE_SKIP_TABLES=*.test_merge_tree clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml download test_skip_full_backup")
 	r.Error(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_merge_tree.json"))
-	r.NoError(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_memory.json"))
-	r.NoError(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_mv.json"))
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-ce", "ls -la /var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/*inner*.json"))
+	env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_memory.json")
+	env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_mv.json")
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "ls -la /var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/*inner*.json")
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 {
-		r.NoError(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_live_view.json"))
+		env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_live_view.json")
 	}
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
-		r.NoError(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_window_view.json"))
+		env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_window_view.json")
 	}
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "USE_RESUMABLE_STATE=0 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local test_skip_full_backup"))
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "USE_RESUMABLE_STATE=0 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local test_skip_full_backup")
 
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "USE_RESUMABLE_STATE=0 CLICKHOUSE_SKIP_TABLE_ENGINES=memory,materializedview,liveview,windowview clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml download test_skip_full_backup"))
-	r.NoError(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_merge_tree.json"))
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "USE_RESUMABLE_STATE=0 CLICKHOUSE_SKIP_TABLE_ENGINES=memory,materializedview,liveview,windowview clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml download test_skip_full_backup")
+	env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_merge_tree.json")
 	r.Error(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_memory.json"))
 	r.Error(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_mv.json"))
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-ce", "ls -la /var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/*inner*.json"))
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "ls -la /var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/*inner*.json")
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 {
 		r.Error(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_live_view.json"))
 	}
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
 		r.Error(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_window_view.json"))
 	}
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local test_skip_full_backup"))
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local test_skip_full_backup")
 
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "USE_RESUMABLE_STATE=0 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml download test_skip_full_backup"))
-	r.NoError(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_merge_tree.json"))
-	r.NoError(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_memory.json"))
-	r.NoError(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_mv.json"))
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-ce", "ls -la /var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/*inner*.json"))
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "USE_RESUMABLE_STATE=0 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml download test_skip_full_backup")
+	env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_merge_tree.json")
+	env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_memory.json")
+	env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_mv.json")
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "ls -la /var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/*inner*.json")
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 {
-		r.NoError(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_live_view.json"))
+		env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_live_view.json")
 	}
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
-		r.NoError(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_window_view.json"))
+		env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_window_view.json")
 	}
 
 	//restore
@@ -1389,7 +1388,7 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	} else {
 		env.queryWithNoError(r, "DROP DATABASE test_skip_tables")
 	}
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLES=*.test_memory clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore test_skip_full_backup"))
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLES=*.test_memory clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore test_skip_full_backup")
 	result := uint64(0)
 	r.NoError(env.ch.SelectSingleRowNoCtx(&result, "SELECT count() FROM system.tables WHERE database='test_skip_tables' AND name!='test_memory'"))
 	expectedTables := uint64(3)
@@ -1413,8 +1412,8 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	} else {
 		env.queryWithNoError(r, "DROP DATABASE test_skip_tables")
 	}
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLE_ENGINES=memory,materializedview,liveview,windowview clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore --schema test_skip_full_backup"))
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLE_ENGINES=memory,materializedview,liveview,windowview clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore --data test_skip_full_backup"))
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLE_ENGINES=memory,materializedview,liveview,windowview clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore --schema test_skip_full_backup")
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLE_ENGINES=memory,materializedview,liveview,windowview clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore --data test_skip_full_backup")
 	result = uint64(0)
 	expectedTables = uint64(2)
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
@@ -1431,7 +1430,7 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	} else {
 		env.queryWithNoError(r, "DROP DATABASE test_skip_tables")
 	}
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore test_skip_full_backup"))
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore test_skip_full_backup")
 	result = uint64(0)
 	r.NoError(env.ch.SelectSingleRowNoCtx(&result, "SELECT count() FROM system.tables WHERE database='test_skip_tables'"))
 	expectedTables = uint64(4)
@@ -1452,14 +1451,12 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	} else {
 		env.queryWithNoError(r, "DROP DATABASE test_skip_tables")
 	}
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local test_skip_full_backup"))
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete remote test_skip_full_backup"))
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local test_skip_full_backup")
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete remote test_skip_full_backup")
 }
 
 func TestTablePatterns(t *testing.T) {
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
+	env, r := NewTestEnvironment(t)
 	env.connectWithWait(r, 500*time.Millisecond, 1*time.Second, 5*time.Second)
 	defer env.ch.Close()
 
@@ -1472,7 +1469,7 @@ func TestTablePatterns(t *testing.T) {
 			fullCleanup(t, r, env, []string{testBackupName}, []string{"remote", "local"}, databaseList, false, false, "config-s3.yml")
 			generateTestData(t, r, env, "S3", defaultTestData)
 			if createPattern {
-				r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", "--tables", " "+dbNameOrdinaryTest+".*", testBackupName))
+				env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", "--tables", " "+dbNameOrdinaryTest+".*", testBackupName)
 				out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "tables", "--tables", " "+dbNameOrdinaryTest+".*", testBackupName)
 				r.NoError(err)
 				r.Contains(out, dbNameOrdinaryTest)
@@ -1482,7 +1479,7 @@ func TestTablePatterns(t *testing.T) {
 				r.Contains(out, dbNameOrdinaryTest)
 				r.NotContains(out, dbNameAtomicTest)
 			} else {
-				r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", testBackupName))
+				env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", testBackupName)
 				out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "tables", testBackupName)
 				r.NoError(err)
 				r.Contains(out, dbNameOrdinaryTest)
@@ -1493,13 +1490,13 @@ func TestTablePatterns(t *testing.T) {
 				r.Contains(out, dbNameAtomicTest)
 			}
 
-			r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", testBackupName))
+			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", testBackupName)
 			dropDatabasesFromTestDataDataSet(t, r, env, databaseList)
 
 			if restorePattern {
-				r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore_remote", "--tables", " "+dbNameOrdinaryTest+".*", testBackupName))
+				env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore_remote", "--tables", " "+dbNameOrdinaryTest+".*", testBackupName)
 			} else {
-				r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore_remote", testBackupName))
+				env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore_remote", testBackupName)
 			}
 
 			restored := uint64(0)
@@ -1534,9 +1531,7 @@ func TestProjections(t *testing.T) {
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") == -1 {
 		t.Skipf("Test skipped, PROJECTION available only 21.8+, current version %s", os.Getenv("CLICKHOUSE_VERSION"))
 	}
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
+	env, r := NewTestEnvironment(t)
 	env.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Second)
 	defer env.ch.Close()
 
@@ -1545,15 +1540,15 @@ func TestProjections(t *testing.T) {
 	r.NoError(err)
 
 	env.queryWithNoError(r, "INSERT INTO default.table_with_projection SELECT today() - INTERVAL number DAY, number FROM numbers(5)")
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "create_remote", "test_backup_projection_full"))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "delete", "local", "test_backup_projection_full"))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "restore_remote", "--rm", "test_backup_projection_full"))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "delete", "local", "test_backup_projection_full"))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create_remote", "test_backup_projection_full")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", "test_backup_projection_full")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "restore_remote", "--rm", "test_backup_projection_full")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", "test_backup_projection_full")
 
 	env.queryWithNoError(r, "INSERT INTO default.table_with_projection SELECT today() - INTERVAL number WEEK, number FROM numbers(5)")
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "create_remote", "--diff-from-remote", "test_backup_projection_full", "test_backup_projection_increment"))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "delete", "local", "test_backup_projection_increment"))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "restore_remote", "--rm", "test_backup_projection_increment"))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create_remote", "--diff-from-remote", "test_backup_projection_full", "test_backup_projection_increment")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", "test_backup_projection_increment")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "restore_remote", "--rm", "test_backup_projection_increment")
 
 	var counts uint64
 	r.NoError(env.ch.SelectSingleRowNoCtx(&counts, "SELECT count() FROM default.table_with_projection"))
@@ -1567,10 +1562,10 @@ func TestProjections(t *testing.T) {
 	err = env.ch.Query("DROP TABLE default.table_with_projection NO DELAY")
 	r.NoError(err)
 
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "delete", "remote", "test_backup_projection_increment"))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "delete", "remote", "test_backup_projection_full"))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "remote", "test_backup_projection_increment")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "remote", "test_backup_projection_full")
 
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "delete", "local", "test_backup_projection_increment"))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", "test_backup_projection_increment")
 }
 
 func TestCheckSystemPartsColumns(t *testing.T) {
@@ -1579,9 +1574,7 @@ func TestCheckSystemPartsColumns(t *testing.T) {
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.3") == -1 {
 		t.Skipf("Test skipped, system.parts_columns have inconsistency only in 23.3+, current version %s", os.Getenv("CLICKHOUSE_VERSION"))
 	}
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
+	env, r := NewTestEnvironment(t)
 	env.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Second)
 	defer env.ch.Close()
 	version, err = env.ch.GetVersion(context.Background())
@@ -1597,8 +1590,8 @@ func TestCheckSystemPartsColumns(t *testing.T) {
 
 	env.queryWithNoError(r, "ALTER TABLE "+t.Name()+".test_system_parts_columns MODIFY COLUMN dt Nullable(DateTime('Europe/Moscow')), MODIFY COLUMN v Nullable(UInt64), MODIFY COLUMN e Enum16('test2'=1, 'test'=2)", t.Name())
 	env.queryWithNoError(r, "INSERT INTO "+t.Name()+".test_system_parts_columns SELECT today() - INTERVAL number DAY, number, 'test2' FROM numbers(10)")
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "create", "test_system_parts_columns"))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "delete", "local", "test_system_parts_columns"))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create", "test_system_parts_columns")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", "test_system_parts_columns")
 
 	r.NoError(env.ch.DropTable(clickhouse.Table{Database: t.Name(), Name: "test_system_parts_columns"}, createSQL, "", false, version, ""))
 
@@ -1611,7 +1604,7 @@ func TestCheckSystemPartsColumns(t *testing.T) {
 	if err != nil {
 		errStr := strings.ToLower(err.Error())
 		r.True(strings.Contains(errStr, "code: 341") || strings.Contains(errStr, "code: 517") || strings.Contains(errStr, "code: 524") || strings.Contains(errStr, "timeout"), "UNKNOWN ERROR: %s", err.Error())
-		t.Logf("%s RETURN EXPECTED ERROR=%#v", mutationSQL, err)
+		log.Debugf("%s RETURN EXPECTED ERROR=%#v", mutationSQL, err)
 	}
 	env.queryWithNoError(r, "INSERT INTO "+t.Name()+".test_system_parts_columns SELECT today() - INTERVAL number DAY, number FROM numbers(10)")
 	r.Error(env.DockerExec("clickhouse-backup", "clickhouse-backup", "create", "test_system_parts_columns"))
@@ -1628,9 +1621,7 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 		t.Skip("Skipping Advanced integration tests...")
 		return
 	}
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
+	env, r := NewTestEnvironment(t)
 	env.connectWithWait(r, 500*time.Millisecond, 1*time.Second, 5*time.Second)
 
 	backupNames := make([]string, 5)
@@ -1643,10 +1634,10 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	generateTestData(t, r, env, "S3", defaultTestData)
 	for backupNumber, backupName := range backupNames {
 		if backupNumber == 0 {
-			r.NoError(env.DockerExec("clickhouse-backup", "bash", "-ce", fmt.Sprintf("BACKUPS_TO_KEEP_REMOTE=3 CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup create_remote %s", backupName)))
+			env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", fmt.Sprintf("BACKUPS_TO_KEEP_REMOTE=3 CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup create_remote %s", backupName))
 		} else {
 			incrementData = generateIncrementTestData(t, r, env, "S3", incrementData, backupNumber)
-			r.NoError(env.DockerExec("clickhouse-backup", "bash", "-ce", fmt.Sprintf("BACKUPS_TO_KEEP_REMOTE=3 CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup create_remote --diff-from-remote=%s %s", backupNames[backupNumber-1], backupName)))
+			env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", fmt.Sprintf("BACKUPS_TO_KEEP_REMOTE=3 CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup create_remote --diff-from-remote=%s %s", backupNames[backupNumber-1], backupName))
 		}
 	}
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml list local")
@@ -1654,10 +1645,10 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	// shall not delete any backup, cause all deleted backups have links as required in other backups
 	for _, backupName := range backupNames {
 		r.Contains(out, backupName)
-		r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupName))
+		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupName)
 	}
 	latestIncrementBackup := fmt.Sprintf("keep_remote_backup_%d", len(backupNames)-1)
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "download", latestIncrementBackup))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "download", latestIncrementBackup)
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml list local")
 	r.NoError(err)
 	prevIncrementBackup := fmt.Sprintf("keep_remote_backup_%d", len(backupNames)-2)
@@ -1670,7 +1661,7 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 			r.NotContains(out, backupName)
 		}
 	}
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--rm", latestIncrementBackup))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--rm", latestIncrementBackup)
 	var res uint64
 	r.NoError(env.ch.SelectSingleRowNoCtx(&res, fmt.Sprintf("SELECT count() FROM `%s_%s`.`%s_%s`", Issue331Atomic, t.Name(), Issue331Atomic, t.Name())))
 	r.Equal(uint64(100+20*4), res)
@@ -1683,9 +1674,7 @@ func TestSyncReplicaTimeout(t *testing.T) {
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.11") == -1 {
 		t.Skipf("Test skipped, SYNC REPLICA ignore receive_timeout for %s version", os.Getenv("CLICKHOUSE_VERSION"))
 	}
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
+	env, r := NewTestEnvironment(t)
 	env.connectWithWait(r, 0*time.Millisecond, 1*time.Second, 2*time.Second)
 	defer env.ch.Close()
 
@@ -1710,10 +1699,10 @@ func TestSyncReplicaTimeout(t *testing.T) {
 
 	env.queryWithNoError(r, "INSERT INTO "+t.Name()+".repl1 SELECT number FROM numbers(100)")
 
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "--tables="+t.Name()+".repl*", "test_not_synced_backup"))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "upload", "test_not_synced_backup"))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_not_synced_backup"))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "remote", "test_not_synced_backup"))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "--tables="+t.Name()+".repl*", "test_not_synced_backup")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "upload", "test_not_synced_backup")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_not_synced_backup")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "remote", "test_not_synced_backup")
 
 	env.queryWithNoError(r, "SYSTEM START REPLICATED SENDS "+t.Name()+".repl1")
 	env.queryWithNoError(r, "SYSTEM START FETCHES "+t.Name()+".repl2")
@@ -1726,11 +1715,9 @@ func TestGetPartitionId(t *testing.T) {
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.17") == -1 {
 		t.Skipf("Test skipped, is_in_partition_key not available for %s version", os.Getenv("CLICKHOUSE_VERSION"))
 	}
-	t.Parallel()
-	r := require.New(t)
-	ch := NewTestEnvironment(t, r)
-	ch.connectWithWait(r, 500*time.Millisecond, 1*time.Second, 1*time.Second)
-	defer ch.ch.Close()
+	env, r := NewTestEnvironment(t)
+	env.connectWithWait(r, 500*time.Millisecond, 1*time.Second, 1*time.Second)
+	defer env.ch.Close()
 
 	type testData struct {
 		CreateTableSQL string
@@ -1782,11 +1769,11 @@ func TestGetPartitionId(t *testing.T) {
 			"",
 		},
 	}
-	if isAtomic, _ := ch.ch.IsAtomic("default"); !isAtomic {
+	if isAtomic, _ := env.ch.IsAtomic("default"); !isAtomic {
 		testCases[0].CreateTableSQL = strings.Replace(testCases[0].CreateTableSQL, "UUID 'b45e751f-6c06-42a3-ab4a-f5bb9ac3716e'", "", 1)
 	}
 	for _, tc := range testCases {
-		partitionId, partitionName, err := partition.GetPartitionIdAndName(context.Background(), ch.ch, tc.Database, tc.Table, tc.CreateTableSQL, tc.Partition)
+		partitionId, partitionName, err := partition.GetPartitionIdAndName(context.Background(), env.ch, tc.Database, tc.Table, tc.CreateTableSQL, tc.Partition)
 		assert.NoError(t, err)
 		assert.Equal(t, tc.ExpectedId, partitionId)
 		assert.Equal(t, tc.ExpectedName, partitionName)
@@ -1794,9 +1781,7 @@ func TestGetPartitionId(t *testing.T) {
 }
 
 func TestRestoreMutationInProgress(t *testing.T) {
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
+	env, r := NewTestEnvironment(t)
 	env.connectWithWait(r, 0*time.Second, 1*time.Second, 5*time.Second)
 	defer env.ch.Close()
 	zkPath := "/clickhouse/tables/{shard}/" + t.Name() + "/test_restore_mutation_in_progress"
@@ -1822,7 +1807,7 @@ func TestRestoreMutationInProgress(t *testing.T) {
 	if err != nil {
 		errStr := strings.ToLower(err.Error())
 		r.True(strings.Contains(errStr, "code: 341") || strings.Contains(errStr, "code: 517") || strings.Contains(errStr, "timeout"), "UNKNOWN ERROR: %s", err.Error())
-		t.Logf("%s RETURN EXPECTED ERROR=%#v", mutationSQL, err)
+		log.Debugf("%s RETURN EXPECTED ERROR=%#v", mutationSQL, err)
 	}
 
 	attrs := make([]struct {
@@ -1840,19 +1825,19 @@ func TestRestoreMutationInProgress(t *testing.T) {
 		r.NotEqual(nil, err)
 		errStr = strings.ToLower(err.Error())
 		r.True(strings.Contains(errStr, "code: 517") || strings.Contains(errStr, "timeout"))
-		t.Logf("%s RETURN EXPECTED ERROR=%#v", mutationSQL, err)
+		log.Debugf("%s RETURN EXPECTED ERROR=%#v", mutationSQL, err)
 	}
-	r.NoError(env.DockerExec("clickhouse", "clickhouse", "client", "-q", "SELECT * FROM system.mutations WHERE is_done=0 FORMAT Vertical"))
+	env.DockerExecNoError(r, "clickhouse", "clickhouse", "client", "-q", "SELECT * FROM system.mutations WHERE is_done=0 FORMAT Vertical")
 
 	// backup with check consistency
 	out, createErr := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "--tables="+t.Name()+".test_restore_mutation_in_progress", "test_restore_mutation_in_progress")
 	r.NotEqual(createErr, nil)
 	r.Contains(out, "have inconsistent data types")
-	t.Log(out)
+	log.Debug(out)
 
 	// backup without check consistency
 	out, createErr = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "create", "-c", "/etc/clickhouse-backup/config-s3.yml", "--skip-check-parts-columns", "--tables="+t.Name()+".test_restore_mutation_in_progress", "test_restore_mutation_in_progress")
-	t.Log(out)
+	log.Debug(out)
 	r.NoError(createErr)
 	r.NotContains(out, "have inconsistent data types")
 
@@ -1902,22 +1887,20 @@ func TestRestoreMutationInProgress(t *testing.T) {
 	if expectedSelectError != "" {
 		r.Error(selectErr)
 		r.Contains(strings.ToLower(selectErr.Error()), expectedSelectError)
-		t.Logf("%s RETURN EXPECTED ERROR=%#v", selectSQL, selectErr)
+		log.Debugf("%s RETURN EXPECTED ERROR=%#v", selectSQL, selectErr)
 	} else {
 		r.NoError(selectErr)
 	}
 
-	r.NoError(env.DockerExec("clickhouse", "clickhouse", "client", "-q", "SELECT * FROM system.mutations FORMAT Vertical"))
+	env.DockerExecNoError(r, "clickhouse", "clickhouse", "client", "-q", "SELECT * FROM system.mutations FORMAT Vertical")
 
 	r.NoError(env.ch.DropTable(clickhouse.Table{Database: t.Name(), Name: "test_restore_mutation_in_progress"}, "", "", false, version, ""))
 	r.NoError(env.dropDatabase(t.Name()))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_restore_mutation_in_progress"))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_restore_mutation_in_progress")
 }
 
 func TestInnerTablesMaterializedView(t *testing.T) {
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
+	env, r := NewTestEnvironment(t)
 	env.connectWithWait(r, 1*time.Second, 1*time.Second, 10*time.Second)
 	defer env.ch.Close()
 
@@ -1928,7 +1911,7 @@ func TestInnerTablesMaterializedView(t *testing.T) {
 	env.queryWithNoError(r, "CREATE MATERIALIZED VIEW test_mv.mv_with_dst TO test_mv.dst_table AS SELECT v FROM test_mv.src_table")
 	env.queryWithNoError(r, "INSERT INTO test_mv.src_table SELECT number FROM numbers(100)")
 
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "test_mv", "--tables=test_mv.mv_with*,test_mv.dst*"))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "test_mv", "--tables=test_mv.mv_with*,test_mv.dst*")
 	dropSQL := "DROP DATABASE test_mv"
 	isAtomic, err := env.ch.IsAtomic("test_mv")
 	r.NoError(err)
@@ -1938,7 +1921,7 @@ func TestInnerTablesMaterializedView(t *testing.T) {
 	env.queryWithNoError(r, dropSQL)
 	var rowCnt uint64
 
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "test_mv", "--tables=test_mv.mv_with*,test_mv.dst*"))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "test_mv", "--tables=test_mv.mv_with*,test_mv.dst*")
 	r.NoError(env.ch.SelectSingleRowNoCtx(&rowCnt, "SELECT count() FROM test_mv.mv_with_inner"))
 	r.Equal(uint64(100), rowCnt)
 	r.NoError(env.ch.SelectSingleRowNoCtx(&rowCnt, "SELECT count() FROM test_mv.mv_with_dst"))
@@ -1946,65 +1929,63 @@ func TestInnerTablesMaterializedView(t *testing.T) {
 
 	r.NoError(env.dropDatabase("test_mv"))
 	// https://github.com/Altinity/clickhouse-backup/issues/777
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "upload", "test_mv", "--delete-source", "--tables=test_mv.mv_with*,test_mv.dst*"))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "download", "test_mv", "--tables=test_mv.mv_with*,test_mv.dst*"))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "upload", "test_mv", "--delete-source", "--tables=test_mv.mv_with*,test_mv.dst*")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "download", "test_mv", "--tables=test_mv.mv_with*,test_mv.dst*")
 
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "test_mv", "--tables=test_mv.mv_with*,test_mv.dst*"))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "test_mv", "--tables=test_mv.mv_with*,test_mv.dst*")
 	r.NoError(env.ch.SelectSingleRowNoCtx(&rowCnt, "SELECT count() FROM test_mv.mv_with_inner"))
 	r.Equal(uint64(100), rowCnt)
 	r.NoError(env.ch.SelectSingleRowNoCtx(&rowCnt, "SELECT count() FROM test_mv.mv_with_dst"))
 	r.Equal(uint64(100), rowCnt)
 
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_mv"))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "remote", "test_mv"))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_mv")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "remote", "test_mv")
 }
 
 func TestFIPS(t *testing.T) {
 	if os.Getenv("QA_AWS_ACCESS_KEY") == "" {
 		t.Skip("QA_AWS_ACCESS_KEY is empty, TestFIPS will skip")
 	}
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
+	env, r := NewTestEnvironment(t)
 	env.connectWithWait(r, 1*time.Second, 1*time.Second, 10*time.Second)
 	defer env.ch.Close()
 	fipsBackupName := fmt.Sprintf("fips_backup_%d", rand.Int())
-	r.NoError(env.DockerExec("clickhouse", "rm", "-fv", "/etc/apt/sources.list.d/clickhouse.list"))
+	env.DockerExecNoError(r, "clickhouse", "rm", "-fv", "/etc/apt/sources.list.d/clickhouse.list")
 	env.InstallDebIfNotExists(r, "clickhouse", "ca-certificates", "curl", "gettext-base", "bsdmainutils", "dnsutils", "git")
-	r.NoError(env.DockerExec("clickhouse", "update-ca-certificates"))
+	env.DockerExecNoError(r, "clickhouse", "update-ca-certificates")
 	r.NoError(env.DockerCP("config-s3-fips.yml", "clickhouse:/etc/clickhouse-backup/config.yml.fips-template"))
-	r.NoError(env.DockerExec("clickhouse", "git", "clone", "--depth", "1", "--branch", "v3.2rc3", "https://github.com/drwetter/testssl.sh.git", "/opt/testssl"))
-	r.NoError(env.DockerExec("clickhouse", "chmod", "+x", "/opt/testssl/testssl.sh"))
+	env.DockerExecNoError(r, "clickhouse", "git", "clone", "--depth", "1", "--branch", "v3.2rc3", "https://github.com/drwetter/testssl.sh.git", "/opt/testssl")
+	env.DockerExecNoError(r, "clickhouse", "chmod", "+x", "/opt/testssl/testssl.sh")
 
 	generateCerts := func(certType, keyLength, curveType string) {
-		r.NoError(env.DockerExec("clickhouse", "bash", "-xce", "openssl rand -out /root/.rnd 2048"))
+		env.DockerExecNoError(r, "clickhouse", "bash", "-xce", "openssl rand -out /root/.rnd 2048")
 		switch certType {
 		case "rsa":
-			r.NoError(env.DockerExec("clickhouse", "bash", "-xce", fmt.Sprintf("openssl genrsa -out /etc/clickhouse-backup/ca-key.pem %s", keyLength)))
-			r.NoError(env.DockerExec("clickhouse", "bash", "-xce", fmt.Sprintf("openssl genrsa -out /etc/clickhouse-backup/server-key.pem %s", keyLength)))
+			env.DockerExecNoError(r, "clickhouse", "bash", "-xce", fmt.Sprintf("openssl genrsa -out /etc/clickhouse-backup/ca-key.pem %s", keyLength))
+			env.DockerExecNoError(r, "clickhouse", "bash", "-xce", fmt.Sprintf("openssl genrsa -out /etc/clickhouse-backup/server-key.pem %s", keyLength))
 		case "ecdsa":
-			r.NoError(env.DockerExec("clickhouse", "bash", "-xce", fmt.Sprintf("openssl ecparam -name %s -genkey -out /etc/clickhouse-backup/ca-key.pem", curveType)))
-			r.NoError(env.DockerExec("clickhouse", "bash", "-xce", fmt.Sprintf("openssl ecparam -name %s -genkey -out /etc/clickhouse-backup/server-key.pem", curveType)))
+			env.DockerExecNoError(r, "clickhouse", "bash", "-xce", fmt.Sprintf("openssl ecparam -name %s -genkey -out /etc/clickhouse-backup/ca-key.pem", curveType))
+			env.DockerExecNoError(r, "clickhouse", "bash", "-xce", fmt.Sprintf("openssl ecparam -name %s -genkey -out /etc/clickhouse-backup/server-key.pem", curveType))
 		}
-		r.NoError(env.DockerExec("clickhouse", "bash", "-xce", "openssl req -subj \"/O=altinity\" -x509 -new -nodes -key /etc/clickhouse-backup/ca-key.pem -sha256 -days 365000 -out /etc/clickhouse-backup/ca-cert.pem"))
-		r.NoError(env.DockerExec("clickhouse", "bash", "-xce", "openssl req -subj \"/CN=localhost\" -addext \"subjectAltName = DNS:localhost,DNS:*.cluster.local\" -new -key /etc/clickhouse-backup/server-key.pem -out /etc/clickhouse-backup/server-req.csr"))
-		r.NoError(env.DockerExec("clickhouse", "bash", "-xce", "openssl x509 -req -days 365000 -extensions SAN -extfile <(printf \"\\n[SAN]\\nsubjectAltName=DNS:localhost,DNS:*.cluster.local\") -in /etc/clickhouse-backup/server-req.csr -out /etc/clickhouse-backup/server-cert.pem -CA /etc/clickhouse-backup/ca-cert.pem -CAkey /etc/clickhouse-backup/ca-key.pem -CAcreateserial"))
+		env.DockerExecNoError(r, "clickhouse", "bash", "-xce", "openssl req -subj \"/O=altinity\" -x509 -new -nodes -key /etc/clickhouse-backup/ca-key.pem -sha256 -days 365000 -out /etc/clickhouse-backup/ca-cert.pem")
+		env.DockerExecNoError(r, "clickhouse", "bash", "-xce", "openssl req -subj \"/CN=localhost\" -addext \"subjectAltName = DNS:localhost,DNS:*.cluster.local\" -new -key /etc/clickhouse-backup/server-key.pem -out /etc/clickhouse-backup/server-req.csr")
+		env.DockerExecNoError(r, "clickhouse", "bash", "-xce", "openssl x509 -req -days 365000 -extensions SAN -extfile <(printf \"\\n[SAN]\\nsubjectAltName=DNS:localhost,DNS:*.cluster.local\") -in /etc/clickhouse-backup/server-req.csr -out /etc/clickhouse-backup/server-cert.pem -CA /etc/clickhouse-backup/ca-cert.pem -CAkey /etc/clickhouse-backup/ca-key.pem -CAcreateserial")
 	}
-	r.NoError(env.DockerExec("clickhouse", "bash", "-xec", "cat /etc/clickhouse-backup/config-s3-fips.yml.template | envsubst > /etc/clickhouse-backup/config-s3-fips.yml"))
+	env.DockerExecNoError(r, "clickhouse", "bash", "-xec", "cat /etc/clickhouse-backup/config-s3-fips.yml.template | envsubst > /etc/clickhouse-backup/config-s3-fips.yml")
 
 	generateCerts("rsa", "4096", "")
 	env.queryWithNoError(r, "CREATE DATABASE "+t.Name())
 	createSQL := "CREATE TABLE " + t.Name() + ".fips_table (v UInt64) ENGINE=MergeTree() ORDER BY tuple()"
 	env.queryWithNoError(r, createSQL)
 	env.queryWithNoError(r, "INSERT INTO "+t.Name()+".fips_table SELECT number FROM numbers(1000)")
-	r.NoError(env.DockerExec("clickhouse", "bash", "-ce", "clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml create_remote --tables="+t.Name()+".fips_table "+fipsBackupName))
-	r.NoError(env.DockerExec("clickhouse", "bash", "-ce", "clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml delete local "+fipsBackupName))
-	r.NoError(env.DockerExec("clickhouse", "bash", "-ce", "clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml restore_remote --tables="+t.Name()+".fips_table "+fipsBackupName))
-	r.NoError(env.DockerExec("clickhouse", "bash", "-ce", "clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml delete local "+fipsBackupName))
-	r.NoError(env.DockerExec("clickhouse", "bash", "-ce", "clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml delete remote "+fipsBackupName))
+	env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml create_remote --tables="+t.Name()+".fips_table "+fipsBackupName)
+	env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml delete local "+fipsBackupName)
+	env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml restore_remote --tables="+t.Name()+".fips_table "+fipsBackupName)
+	env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml delete local "+fipsBackupName)
+	env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml delete remote "+fipsBackupName)
 
-	log.Info("Run `clickhouse-backup-fips server` in background")
-	r.NoError(env.DockerExec("-d", "clickhouse", "bash", "-ce", "AWS_USE_FIPS_ENDPOINT=true clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml server &>>/tmp/clickhouse-backup-server-fips.log"))
+	log.Debug("Run `clickhouse-backup-fips server` in background")
+	env.DockerExecNoError(r, "-d", "clickhouse", "bash", "-ce", "AWS_USE_FIPS_ENDPOINT=true clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml server &>>/tmp/clickhouse-backup-server-fips.log")
 	time.Sleep(1 * time.Second)
 
 	runClickHouseClientInsertSystemBackupActions(r, env, []string{fmt.Sprintf("create_remote --tables="+t.Name()+".fips_table %s", fipsBackupName)}, true)
@@ -2022,16 +2003,16 @@ func TestFIPS(t *testing.T) {
 		fmt.Sprintf("%%%s%%", fipsBackupName), status.InProgressStatus, status.ErrorStatus,
 	))
 	r.Equal(0, len(inProgressActions), "inProgressActions=%+v", inProgressActions)
-	r.NoError(env.DockerExec("clickhouse", "pkill", "-n", "-f", "clickhouse-backup-fips"))
+	env.DockerExecNoError(r, "clickhouse", "pkill", "-n", "-f", "clickhouse-backup-fips")
 
 	testTLSCerts := func(certType, keyLength, curveName string, cipherList ...string) {
 		generateCerts(certType, keyLength, curveName)
-		log.Infof("Run `clickhouse-backup-fips server` in background for %s %s %s", certType, keyLength, curveName)
-		r.NoError(env.DockerExec("-d", "clickhouse", "bash", "-ce", "AWS_USE_FIPS_ENDPOINT=true clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml server &>>/tmp/clickhouse-backup-server-fips.log"))
+		log.Debugf("Run `clickhouse-backup-fips server` in background for %s %s %s", certType, keyLength, curveName)
+		env.DockerExecNoError(r, "-d", "clickhouse", "bash", "-ce", "AWS_USE_FIPS_ENDPOINT=true clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml server &>>/tmp/clickhouse-backup-server-fips.log")
 		time.Sleep(1 * time.Second)
 
-		r.NoError(env.DockerExec("clickhouse", "bash", "-ce", "rm -rf /tmp/testssl* && /opt/testssl/testssl.sh -e -s -oC /tmp/testssl.csv --color 0 --disable-rating --quiet -n min --mode parallel --add-ca /etc/clickhouse-backup/ca-cert.pem localhost:7172"))
-		r.NoError(env.DockerExec("clickhouse", "cat", "/tmp/testssl.csv"))
+		env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "rm -rf /tmp/testssl* && /opt/testssl/testssl.sh -e -s -oC /tmp/testssl.csv --color 0 --disable-rating --quiet -n min --mode parallel --add-ca /etc/clickhouse-backup/ca-cert.pem localhost:7172")
+		env.DockerExecNoError(r, "clickhouse", "cat", "/tmp/testssl.csv")
 		out, err := env.DockerExecOut("clickhouse", "bash", "-ce", fmt.Sprintf("grep -o -E '%s' /tmp/testssl.csv | uniq | wc -l", strings.Join(cipherList, "|")))
 		r.NoError(err)
 		r.Equal(strconv.Itoa(len(cipherList)), strings.Trim(out, " \t\r\n"))
@@ -2045,7 +2026,7 @@ func TestFIPS(t *testing.T) {
 			fmt.Sprintf("%%%s%%", fipsBackupName), status.InProgressStatus, status.ErrorStatus,
 		))
 		r.Equal(0, len(inProgressActions), "inProgressActions=%+v", inProgressActions)
-		r.NoError(env.DockerExec("clickhouse", "pkill", "-n", "-f", "clickhouse-backup-fips"))
+		env.DockerExecNoError(r, "clickhouse", "pkill", "-n", "-f", "clickhouse-backup-fips")
 	}
 	// https://www.perplexity.ai/search/0920f1e8-59ec-4e14-b779-ba7b2e037196
 	testTLSCerts("rsa", "4096", "", "ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-AES256-GCM-SHA384", "AES_128_GCM_SHA256", "AES_256_GCM_SHA384")
@@ -2060,12 +2041,10 @@ func TestIntegrationS3Glacier(t *testing.T) {
 		t.Skip("Skipping GLACIER integration tests...")
 		return
 	}
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
+	env, r := NewTestEnvironment(t)
 	r.NoError(env.DockerCP("config-s3-glacier.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml.s3glacier-template"))
 	env.InstallDebIfNotExists(r, "clickhouse-backup", "curl", "gettext-base", "bsdmainutils", "dnsutils", "git", "ca-certificates")
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config.yml.s3glacier-template | envsubst > /etc/clickhouse-backup/config-s3-glacier.yml"))
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config.yml.s3glacier-template | envsubst > /etc/clickhouse-backup/config-s3-glacier.yml")
 	dockerExecTimeout = 60 * time.Minute
 	env.runMainIntegrationScenario(t, "GLACIER", "config-s3-glacier.yml")
 	dockerExecTimeout = 3 * time.Minute
@@ -2076,16 +2055,12 @@ func TestIntegrationAzure(t *testing.T) {
 		t.Skip("Skipping Azure integration tests...")
 		return
 	}
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
+	env, _ := NewTestEnvironment(t)
 	env.runMainIntegrationScenario(t, "AZBLOB", "config-azblob.yml")
 }
 
 func TestIntegrationS3(t *testing.T) {
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
+	env, r := NewTestEnvironment(t)
 	env.checkObjectStorageIsEmpty(t, r, "S3")
 	env.runMainIntegrationScenario(t, "S3", "config-s3.yml")
 }
@@ -2095,9 +2070,7 @@ func TestIntegrationGCS(t *testing.T) {
 		t.Skip("Skipping GCS integration tests...")
 		return
 	}
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
+	env, _ := NewTestEnvironment(t)
 	env.runMainIntegrationScenario(t, "GCS", "config-gcs.yml")
 }
 
@@ -2106,24 +2079,17 @@ func TestIntegrationGCSWithCustomEndpoint(t *testing.T) {
 		t.Skip("Skipping GCS_EMULATOR integration tests...")
 		return
 	}
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
+	env, _ := NewTestEnvironment(t)
 	env.runMainIntegrationScenario(t, "GCS_EMULATOR", "config-gcs-custom-endpoint.yml")
 }
 
 func TestIntegrationSFTPAuthPassword(t *testing.T) {
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
+	env, _ := NewTestEnvironment(t)
 	env.runMainIntegrationScenario(t, "SFTP", "config-sftp-auth-password.yaml")
 }
 
 func TestIntegrationFTP(t *testing.T) {
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
-
+	env, _ := NewTestEnvironment(t)
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 1 {
 		env.runMainIntegrationScenario(t, "FTP", "config-ftp.yaml")
 	} else {
@@ -2132,55 +2098,47 @@ func TestIntegrationFTP(t *testing.T) {
 }
 
 func TestIntegrationSFTPAuthKey(t *testing.T) {
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
+	env, r := NewTestEnvironment(t)
 	env.uploadSSHKeys(r, "clickhouse-backup")
 	env.runMainIntegrationScenario(t, "SFTP", "config-sftp-auth-key.yaml")
 }
 
 func TestIntegrationCustomKopia(t *testing.T) {
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
+	env, r := NewTestEnvironment(t)
 	env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
-	r.NoError(env.DockerExec("clickhouse-backup", "update-ca-certificates"))
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xce", "command -v yq || curl -sL \"https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)\" -o /usr/bin/yq && chmod +x /usr/bin/yq"))
+	env.DockerExecNoError(r, "clickhouse-backup", "update-ca-certificates")
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xce", "command -v yq || curl -sL \"https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)\" -o /usr/bin/yq && chmod +x /usr/bin/yq")
 	env.InstallDebIfNotExists(r, "clickhouse-backup", "jq", "bzip2", "pgp", "git")
 
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-ce", "curl -sfL https://kopia.io/signing-key | gpg --dearmor -o /usr/share/keyrings/kopia-keyring.gpg"))
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-ce", "echo 'deb [signed-by=/usr/share/keyrings/kopia-keyring.gpg] https://packages.kopia.io/apt/ stable main' > /etc/apt/sources.list.d/kopia.list"))
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "curl -sfL https://kopia.io/signing-key | gpg --dearmor -o /usr/share/keyrings/kopia-keyring.gpg")
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "echo 'deb [signed-by=/usr/share/keyrings/kopia-keyring.gpg] https://packages.kopia.io/apt/ stable main' > /etc/apt/sources.list.d/kopia.list")
 	env.InstallDebIfNotExists(r, "clickhouse-backup", "kopia", "xxd", "bsdmainutils", "parallel")
 
 	env.runIntegrationCustom(t, r, "kopia")
 }
 
 func TestIntegrationCustomRestic(t *testing.T) {
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t,r)
+	env, r := NewTestEnvironment(t)
 	env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
-	r.NoError(env.DockerExec("clickhouse-backup", "update-ca-certificates"))
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xce", "command -v yq || curl -sL \"https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)\" -o /usr/bin/yq && chmod +x /usr/bin/yq"))
+	env.DockerExecNoError(r, "clickhouse-backup", "update-ca-certificates")
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xce", "command -v yq || curl -sL \"https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)\" -o /usr/bin/yq && chmod +x /usr/bin/yq")
 	env.InstallDebIfNotExists(r, "clickhouse-backup", "jq", "bzip2", "pgp", "git")
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "command -v restic || RELEASE_TAG=$(curl -H 'Accept: application/json' -sL https://github.com/restic/restic/releases/latest | jq -c -r -M '.tag_name'); RELEASE=$(echo ${RELEASE_TAG} | sed -e 's/v//'); curl -sfL \"https://github.com/restic/restic/releases/download/${RELEASE_TAG}/restic_${RELEASE}_linux_amd64.bz2\" | bzip2 -d > /bin/restic; chmod +x /bin/restic"))
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "command -v restic || RELEASE_TAG=$(curl -H 'Accept: application/json' -sL https://github.com/restic/restic/releases/latest | jq -c -r -M '.tag_name'); RELEASE=$(echo ${RELEASE_TAG} | sed -e 's/v//'); curl -sfL \"https://github.com/restic/restic/releases/download/${RELEASE_TAG}/restic_${RELEASE}_linux_amd64.bz2\" | bzip2 -d > /bin/restic; chmod +x /bin/restic")
 	env.runIntegrationCustom(t, r, "restic")
 }
 
 func TestIntegrationCustomRsync(t *testing.T) {
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t,r)
+	env, r := NewTestEnvironment(t)
 	env.uploadSSHKeys(r, "clickhouse-backup")
 	env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
-	r.NoError(env.DockerExec("clickhouse-backup", "update-ca-certificates"))
-	r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xce", "command -v yq || curl -sL \"https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)\" -o /usr/bin/yq && chmod +x /usr/bin/yq"))
+	env.DockerExecNoError(r, "clickhouse-backup", "update-ca-certificates")
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xce", "command -v yq || curl -sL \"https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)\" -o /usr/bin/yq && chmod +x /usr/bin/yq")
 	env.InstallDebIfNotExists(r, "clickhouse-backup", "jq", "openssh-client", "rsync")
 	env.runIntegrationCustom(t, r, "rsync")
 }
 
 func (env *TestEnvironment) runIntegrationCustom(t *testing.T, r *require.Assertions, customType string) {
-	r.NoError(env.DockerExec("clickhouse-backup", "mkdir", "-pv", "/custom/"+customType))
+	env.DockerExecNoError(r, "clickhouse-backup", "mkdir", "-pv", "/custom/"+customType)
 	r.NoError(env.DockerCP("./"+customType+"/", "clickhouse-backup:/custom/"))
 	env.runMainIntegrationScenario(t, "CUSTOM", "config-custom-"+customType+".yml")
 }
@@ -2192,48 +2150,44 @@ func TestIntegrationEmbedded(t *testing.T) {
 	if compareVersion(version, "23.3") < 0 {
 		t.Skipf("Test skipped, BACKUP/RESTORE not production ready for %s version", version)
 	}
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
+	env, r := NewTestEnvironment(t)
 
 	//CUSTOM backup creates folder in each disk, need to clear
-	r.NoError(env.DockerExec("clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_s3/backup/"))
+	env.DockerExecNoError(r, "clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_s3/backup/")
 	env.runMainIntegrationScenario(t, "EMBEDDED_S3", "config-s3-embedded.yml")
 
 	//@TODO think about how to implements embedded backup for s3_plain disks
-	//r.NoError(env.DockerExec("clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_s3_plain/backup/"))
+	//env.DockerExecNoError(r, "clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_s3_plain/backup/")
 	//runMainIntegrationScenario(t, "EMBEDDED_S3_PLAIN", "config-s3-plain-embedded.yml")
 
-	//@TODO clickhouse-server don't close connection properly after FIN from azurite during BACKUP/RESTORE https://github.com/ClickHouse/ClickHouse/issues/60447, https://github.com/Azure/Azurite/issues/2053
-	//CUSTOM backup create folder in each disk
-	r.NoError(env.DockerExec("azure", "apk", "add", "tcpdump"))
-	r.NoError(env.DockerExecBackground("azure", "tcpdump", "-i", "any", "-w", "/tmp/azurite_http.pcap", "port", "10000"))
-	r.NoError(env.DockerExec("clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_azure/backup/"))
-	if compareVersion(version, "24.2") >= 0 {
-		env.runMainIntegrationScenario(t, "EMBEDDED_AZURE_URL", "config-azblob-embedded-url.yml")
-	}
-	env.runMainIntegrationScenario(t, "EMBEDDED_AZURE", "config-azblob-embedded.yml")
-	r.NoError(env.DockerExec("azure", "pkill", "tcpdump"))
-	r.NoError(env.DockerCP("azure:/tmp/azurite_http.pcap", "./azurite_http.pcap"))
+	t.Log("@TODO clickhouse-server don't close connection properly after FIN from azurite during BACKUP/RESTORE https://github.com/ClickHouse/ClickHouse/issues/60447, https://github.com/Azure/Azurite/issues/2053")
+	//env.DockerExecNoError(r, "azure", "apk", "add", "tcpdump")
+	//r.NoError(env.DockerExecBackground("azure", "tcpdump", "-i", "any", "-w", "/tmp/azurite_http.pcap", "port", "10000"))
+	////CUSTOM backup create folder in each disk
+	//env.DockerExecNoError(r, "clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_azure/backup/")
+	//if compareVersion(version, "24.2") >= 0 {
+	//	env.runMainIntegrationScenario(t, "EMBEDDED_AZURE_URL", "config-azblob-embedded-url.yml")
+	//}
+	//env.runMainIntegrationScenario(t, "EMBEDDED_AZURE", "config-azblob-embedded.yml")
+	//env.DockerExecNoError(r, "azure", "pkill", "tcpdump")
+	//r.NoError(env.DockerCP("azure:/tmp/azurite_http.pcap", "./azurite_http.pcap"))
 
-	if compareVersion(version, "24.3") >= 0 {
+	if compareVersion(version, "23.8") >= 0 {
 		//CUSTOM backup creates folder in each disk, need to clear
-		r.NoError(env.DockerExec("clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_local/backup/"))
+		env.DockerExecNoError(r, "clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_local/backup/")
 		env.runMainIntegrationScenario(t, "EMBEDDED_LOCAL", "config-s3-embedded-local.yml")
 	}
-	if compareVersion(version, "23.8") >= 0 {
+	if compareVersion(version, "24.3") >= 0 {
 		//@todo think about named collections to avoid show credentials in logs look to https://github.com/fsouza/fake-gcs-server/issues/1330, https://github.com/fsouza/fake-gcs-server/pull/1164
 		env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "gettext-base")
-		r.NoError(env.DockerExec("clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config-gcs-embedded-url.yml.template | envsubst > /etc/clickhouse-backup/config-gcs-embedded-url.yml"))
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config-gcs-embedded-url.yml.template | envsubst > /etc/clickhouse-backup/config-gcs-embedded-url.yml")
 		env.runMainIntegrationScenario(t, "EMBEDDED_GCS_URL", "config-gcs-embedded-url.yml")
 		env.runMainIntegrationScenario(t, "EMBEDDED_S3_URL", "config-s3-embedded-url.yml")
 	}
 }
 
 func TestRestoreMapping(t *testing.T) {
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
+	env, r := NewTestEnvironment(t)
 	env.connectWithWait(r, 500*time.Millisecond, 1*time.Second, 1*time.Second)
 	defer env.ch.Close()
 
@@ -2262,32 +2216,32 @@ func TestRestoreMapping(t *testing.T) {
 	env.queryWithNoError(r, "CREATE VIEW database1.v1 AS SELECT * FROM database1.t1")
 	env.queryWithNoError(r, "INSERT INTO database1.t1 SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
 
-	log.Info("Create backup")
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "create", testBackupName))
+	log.Debug("Create backup")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "create", testBackupName)
 
-	log.Info("Restore schema")
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--schema", "--rm", "--restore-database-mapping", "database1:database-2", "--restore-table-mapping", "t1:t3,t2:t4,d1:d2,mv1:mv2,v1:v2", "--tables", "database1.*", testBackupName))
+	log.Debug("Restore schema")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--schema", "--rm", "--restore-database-mapping", "database1:database-2", "--restore-table-mapping", "t1:t3,t2:t4,d1:d2,mv1:mv2,v1:v2", "--tables", "database1.*", testBackupName)
 
-	log.Info("Check result database1")
+	log.Debug("Check result database1")
 	env.queryWithNoError(r, "INSERT INTO database1.t1 SELECT '2023-01-01 00:00:00', number FROM numbers(10)")
 	checkRecordset(1, 20, "SELECT count() FROM database1.t1")
 	checkRecordset(1, 20, "SELECT count() FROM database1.d1")
 	checkRecordset(1, 20, "SELECT count() FROM database1.mv1")
 	checkRecordset(1, 20, "SELECT count() FROM database1.v1")
 
-	log.Info("Drop database1")
+	log.Debug("Drop database1")
 	r.NoError(env.dropDatabase("database1"))
 
-	log.Info("Restore data")
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--data", "--restore-database-mapping", "database1:database-2", "--restore-table-mapping", "t1:t3,t2:t4,d1:d2,mv1:mv2,v1:v2", "--tables", "database1.*", testBackupName))
+	log.Debug("Restore data")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--data", "--restore-database-mapping", "database1:database-2", "--restore-table-mapping", "t1:t3,t2:t4,d1:d2,mv1:mv2,v1:v2", "--tables", "database1.*", testBackupName)
 
-	log.Info("Check result database-2")
+	log.Debug("Check result database-2")
 	checkRecordset(1, 10, "SELECT count() FROM `database-2`.t3")
 	checkRecordset(1, 10, "SELECT count() FROM `database-2`.d2")
 	checkRecordset(1, 10, "SELECT count() FROM `database-2`.mv2")
 	checkRecordset(1, 10, "SELECT count() FROM `database-2`.v2")
 
-	log.Info("Check database1 not exists")
+	log.Debug("Check database1 not exists")
 	checkRecordset(1, 0, "SELECT count() FROM system.databases WHERE name='database1'")
 
 	fullCleanup(t, r, env, []string{testBackupName}, []string{"local"}, databaseList, true, true, "config-database-mapping.yml")
@@ -2298,10 +2252,8 @@ func TestMySQLMaterialized(t *testing.T) {
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.12") == -1 {
 		t.Skipf("MaterializedMySQL doens't support for clickhouse version %s", os.Getenv("CLICKHOUSE_VERSION"))
 	}
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
-	r.NoError(env.DockerExec("mysql", "mysql", "-u", "root", "--password=root", "-v", "-e", "CREATE DATABASE ch_mysql_repl"))
+	env, r := NewTestEnvironment(t)
+	env.DockerExecNoError(r, "mysql", "mysql", "-u", "root", "--password=root", "-v", "-e", "CREATE DATABASE ch_mysql_repl")
 	env.connectWithWait(r, 500*time.Millisecond, 1*time.Second, 1*time.Second)
 	defer env.ch.Close()
 	engine := "MaterializedMySQL"
@@ -2309,19 +2261,19 @@ func TestMySQLMaterialized(t *testing.T) {
 		engine = "MaterializeMySQL"
 	}
 	env.queryWithNoError(r, fmt.Sprintf("CREATE DATABASE ch_mysql_repl ENGINE=%s('mysql:3306','ch_mysql_repl','root','root')", engine))
-	r.NoError(env.DockerExec("mysql", "mysql", "-u", "root", "--password=root", "-v", "-e", "CREATE TABLE ch_mysql_repl.t1 (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, s VARCHAR(255)); INSERT INTO ch_mysql_repl.t1(s) VALUES('s1'),('s2'),('s3')"))
+	env.DockerExecNoError(r, "mysql", "mysql", "-u", "root", "--password=root", "-v", "-e", "CREATE TABLE ch_mysql_repl.t1 (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, s VARCHAR(255)); INSERT INTO ch_mysql_repl.t1(s) VALUES('s1'),('s2'),('s3')")
 	time.Sleep(1 * time.Second)
 
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "test_mysql_materialized"))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "test_mysql_materialized")
 	env.queryWithNoError(r, "DROP DATABASE ch_mysql_repl")
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "test_mysql_materialized"))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "test_mysql_materialized")
 
 	result := 0
 	r.NoError(env.ch.SelectSingleRowNoCtx(&result, "SELECT count() FROM ch_mysql_repl.t1"))
 	r.Equal(3, result, "expect count=3")
 
 	env.queryWithNoError(r, "DROP DATABASE ch_mysql_repl")
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_mysql_materialized"))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_mysql_materialized")
 }
 
 func TestPostgreSQLMaterialized(t *testing.T) {
@@ -2333,11 +2285,9 @@ func TestPostgreSQLMaterialized(t *testing.T) {
 	}
 	t.Skip("FREEZE don't support for MaterializedPostgreSQL, https://github.com/ClickHouse/ClickHouse/issues/32902")
 
-	t.Parallel()
-	r := require.New(t)
-	env := NewTestEnvironment(t, r)
-	r.NoError(env.DockerExec("pgsql", "bash", "-ce", "echo 'CREATE DATABASE ch_pgsql_repl' | PGPASSWORD=root psql -v ON_ERROR_STOP=1 -U root"))
-	r.NoError(env.DockerExec("pgsql", "bash", "-ce", "echo \"CREATE TABLE t1 (id BIGINT PRIMARY KEY, s VARCHAR(255)); INSERT INTO t1(id, s) VALUES(1,'s1'),(2,'s2'),(3,'s3')\" | PGPASSWORD=root psql -v ON_ERROR_STOP=1 -U root -d ch_pgsql_repl"))
+	env, r := NewTestEnvironment(t)
+	env.DockerExecNoError(r, "pgsql", "bash", "-ce", "echo 'CREATE DATABASE ch_pgsql_repl' | PGPASSWORD=root psql -v ON_ERROR_STOP=1 -U root")
+	env.DockerExecNoError(r, "pgsql", "bash", "-ce", "echo \"CREATE TABLE t1 (id BIGINT PRIMARY KEY, s VARCHAR(255)); INSERT INTO t1(id, s) VALUES(1,'s1'),(2,'s2'),(3,'s3')\" | PGPASSWORD=root psql -v ON_ERROR_STOP=1 -U root -d ch_pgsql_repl")
 	env.connectWithWait(r, 500*time.Millisecond, 1*time.Second, 1*time.Second)
 	defer env.ch.Close()
 	env.queryWithNoError(r,
@@ -2352,30 +2302,30 @@ func TestPostgreSQLMaterialized(t *testing.T) {
 		if count > 0 {
 			break
 		}
-		t.Logf("ch_pgsql_repl contains %d tables, wait 5 seconds", count)
+		log.Debugf("ch_pgsql_repl contains %d tables, wait 5 seconds", count)
 		time.Sleep(5 * time.Second)
 	}
 
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "test_pgsql_materialized"))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "test_pgsql_materialized")
 	env.queryWithNoError(r, "DROP DATABASE ch_pgsql_repl")
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "test_pgsql_materialized"))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "test_pgsql_materialized")
 
 	result := 0
 	r.NoError(env.ch.SelectSingleRowNoCtx(&result, "SELECT count() FROM ch_pgsql_repl.t1"))
 	r.Equal(3, result, "expect count=3")
 
 	env.queryWithNoError(r, "DROP DATABASE ch_pgsql_repl")
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_pgsql_materialized"))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_pgsql_materialized")
 }
 
 func (env *TestEnvironment) uploadSSHKeys(r *require.Assertions, container string) {
 	r.NoError(env.DockerCP("sftp/clickhouse-backup_rsa", container+":/id_rsa"))
-	r.NoError(env.DockerExec(container, "cp", "-vf", "/id_rsa", "/tmp/id_rsa"))
-	r.NoError(env.DockerExec(container, "chmod", "-v", "0600", "/tmp/id_rsa"))
+	env.DockerExecNoError(r, container, "cp", "-vf", "/id_rsa", "/tmp/id_rsa")
+	env.DockerExecNoError(r, container, "chmod", "-v", "0600", "/tmp/id_rsa")
 
 	r.NoError(env.DockerCP("sftp/clickhouse-backup_rsa.pub", "sshd:/root/.ssh/authorized_keys"))
-	r.NoError(env.DockerExec("sshd", "chown", "-v", "root:root", "/root/.ssh/authorized_keys"))
-	r.NoError(env.DockerExec("sshd", "chmod", "-v", "0600", "/root/.ssh/authorized_keys"))
+	env.DockerExecNoError(r, "sshd", "chown", "-v", "root:root", "/root/.ssh/authorized_keys")
+	env.DockerExecNoError(r, "sshd", "chmod", "-v", "0600", "/root/.ssh/authorized_keys")
 }
 
 func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig string) {
@@ -2393,34 +2343,34 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	incrementBackupName2 := fmt.Sprintf("%s_increment2_%d", t.Name(), rand.Int())
 	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Atomic, Issue331Ordinary}
 	tablesPattern := fmt.Sprintf("*_%s.*", t.Name())
-	log.Info("Clean before start")
+	log.Debug("Clean before start")
 	fullCleanup(t, r, env, []string{testBackupName, incrementBackupName}, []string{"remote", "local"}, databaseList, false, false, backupConfig)
 
-	r.NoError(env.DockerExec("minio", "mc", "ls", "local/clickhouse/disk_s3"))
+	env.DockerExecNoError(r, "minio", "mc", "ls", "local/clickhouse/disk_s3")
 	testData := generateTestData(t, r, env, remoteStorageType, defaultTestData)
 
-	r.NoError(env.DockerExec("minio", "mc", "ls", "local/clickhouse/disk_s3"))
+	env.DockerExecNoError(r, "minio", "mc", "ls", "local/clickhouse/disk_s3")
 
-	log.Info("Create backup")
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables", tablesPattern, testBackupName))
+	log.Debug("Create backup")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables", tablesPattern, testBackupName)
 
 	incrementData := generateIncrementTestData(t, r, env, remoteStorageType, defaultIncrementData, 1)
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables", tablesPattern, incrementBackupName))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables", tablesPattern, incrementBackupName)
 
-	log.Info("Upload full")
+	log.Debug("Upload full")
 	uploadCmd := fmt.Sprintf("%s_COMPRESSION_FORMAT=zstd CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/%s clickhouse-backup upload --resume %s", remoteStorageType, backupConfig, testBackupName)
 	env.checkResumeAlreadyProcessed(uploadCmd, testBackupName, "upload", r, remoteStorageType)
 
 	// https://github.com/Altinity/clickhouse-backup/pull/900
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 {
-		log.Info("create --diff-from-remote backup")
-		r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--diff-from-remote", testBackupName, "--tables", tablesPattern, incrementBackupName2))
-		r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "upload", incrementBackupName2))
-		r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", incrementBackupName2))
-		r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", incrementBackupName2))
+		log.Debug("create --diff-from-remote backup")
+		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--diff-from-remote", testBackupName, "--tables", tablesPattern, incrementBackupName2)
+		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "upload", incrementBackupName2)
+		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", incrementBackupName2)
+		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", incrementBackupName2)
 	}
 
-	log.Info("Upload increment")
+	log.Debug("Upload increment")
 	uploadCmd = fmt.Sprintf("clickhouse-backup -c /etc/clickhouse-backup/%s upload %s --diff-from-remote %s --resume", backupConfig, incrementBackupName, testBackupName)
 	env.checkResumeAlreadyProcessed(uploadCmd, incrementBackupName, "upload", r, remoteStorageType)
 
@@ -2431,30 +2381,30 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "ls -lha "+backupDir+" | grep "+t.Name())
 	r.NoError(err)
 	r.Equal(2, len(strings.Split(strings.Trim(out, " \t\r\n"), "\n")), "expect '2' backups exists in backup directory")
-	log.Info("Delete backup")
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", testBackupName))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", incrementBackupName))
+	log.Debug("Delete backup")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", testBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", incrementBackupName)
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "ls -lha "+backupDir+" | grep "+t.Name())
 	r.NotNil(err)
 	r.Equal("", strings.Trim(out, " \t\r\n"), "expect '0' backup exists in backup directory")
 
 	dropDatabasesFromTestDataDataSet(t, r, env, databaseList)
 
-	log.Info("Download")
+	log.Debug("Download")
 	replaceStorageDiskNameForReBalance(r, env, remoteStorageType, false)
 	downloadCmd := fmt.Sprintf("clickhouse-backup -c /etc/clickhouse-backup/%s download --resume %s", backupConfig, testBackupName)
 	env.checkResumeAlreadyProcessed(downloadCmd, testBackupName, "download", r, remoteStorageType)
 
-	log.Info("Restore schema")
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--schema", testBackupName))
+	log.Debug("Restore schema")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--schema", testBackupName)
 
-	log.Info("Restore data")
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--data", testBackupName))
+	log.Debug("Restore data")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--data", testBackupName)
 
-	log.Info("Full restore with rm")
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--rm", testBackupName))
+	log.Debug("Full restore with rm")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--rm", testBackupName)
 
-	log.Info("Check data")
+	log.Debug("Check data")
 	for i := range testData {
 		if testData[i].CheckDatabaseOnly {
 			r.NoError(env.checkDatabaseEngine(t, testData[i]))
@@ -2468,17 +2418,17 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	// test increment
 	dropDatabasesFromTestDataDataSet(t, r, env, databaseList)
 
-	log.Info("Delete backup")
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", testBackupName))
+	log.Debug("Delete backup")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", testBackupName)
 
-	log.Info("Download increment")
+	log.Debug("Download increment")
 	downloadCmd = fmt.Sprintf("clickhouse-backup -c /etc/clickhouse-backup/%s download --resume %s", backupConfig, incrementBackupName)
 	env.checkResumeAlreadyProcessed(downloadCmd, incrementBackupName, "download", r, remoteStorageType)
 
-	log.Info("Restore")
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--schema", "--data", incrementBackupName))
+	log.Debug("Restore")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--schema", "--data", incrementBackupName)
 
-	log.Info("Check increment data")
+	log.Debug("Check increment data")
 	for i := range testData {
 		testDataItem := testData[i]
 		if isTableSkip(env, testDataItem, true) || testDataItem.IsDictionary {
@@ -2497,7 +2447,7 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	}
 
 	// test end
-	log.Info("Clean after finish")
+	log.Debug("Clean after finish")
 	// during download increment, partially downloaded full will clean
 	fullCleanup(t, r, env, []string{incrementBackupName}, []string{"local"}, nil, true, false, backupConfig)
 	fullCleanup(t, r, env, []string{testBackupName, incrementBackupName}, []string{"remote"}, databaseList, true, true, backupConfig)
@@ -2509,15 +2459,15 @@ func (env *TestEnvironment) checkObjectStorageIsEmpty(t *testing.T, r *require.A
 	if remoteStorageType == "AZBLOB" || remoteStorageType == "AZBLOB_EMBEDDED_URL" {
 		t.Log("wait when resolve https://github.com/Azure/Azurite/issues/2362, todo try to use mysql as azurite storage")
 		/*
-			r.NoError(env.DockerExec("azure", "apk", "add", "jq"))
+			env.DockerExecNoError(r, "azure", "apk", "add", "jq")
 			checkBlobCollection := func(containerName string, expected string) {
 				out, err := env.DockerExecOut("azure", "sh", "-c", "jq '.collections[] | select(.name == \"$BLOBS_COLLECTION$\") | .data[] | select(.containerName == \""+containerName+"\") | .name' /data/__azurite_db_blob__.json")
 				r.NoError(err)
 				actual := strings.Trim(out, "\n\r\t ")
 				if expected != actual {
-					r.NoError(env.DockerExec("azure", "sh", "-c", "cat /data/__azurite_db_blob__.json | jq"))
-					r.NoError(env.DockerExec("azure", "sh", "-c", "stat -c '%y' /data/__azurite_db_blob__.json"))
-					r.NoError(env.DockerExec("azure", "sh", "-c", "cat /data/debug.log"))
+					env.DockerExecNoError(r, "azure", "sh", "-c", "cat /data/__azurite_db_blob__.json | jq")
+					env.DockerExecNoError(r, "azure", "sh", "-c", "stat -c '%y' /data/__azurite_db_blob__.json")
+					env.DockerExecNoError(r, "azure", "sh", "-c", "cat /data/debug.log")
 				}
 				r.Equal(expected, actual)
 			}
@@ -2576,20 +2526,20 @@ func replaceStorageDiskNameForReBalance(r *require.Assertions, env *TestEnvironm
 		origFile := "/etc/clickhouse-server/config.d/" + fileName
 		dstFile := "/var/lib/clickhouse/" + fileName
 		sedCmd := fmt.Sprintf("s/<%s>/<%s>/g; s/<\\/%s>/<\\/%s>/g; s/<disk>%s<\\/disk>/<disk>%s<\\/disk>/g", oldDisk, newDisk, oldDisk, newDisk, oldDisk, newDisk)
-		r.NoError(env.DockerExec("clickhouse", "sed", "-i", sedCmd, origFile))
-		r.NoError(env.DockerExec("clickhouse", "cp", "-vf", origFile, dstFile))
+		env.DockerExecNoError(r, "clickhouse", "sed", "-i", sedCmd, origFile)
+		env.DockerExecNoError(r, "clickhouse", "cp", "-vf", origFile, dstFile)
 	}
 	if isRebalanced {
-		r.NoError(env.DockerExec("clickhouse", "bash", "-xc", "cp -aflv -t /var/lib/clickhouse/disks/"+newDisk+"/ /var/lib/clickhouse/disks/"+oldDisk+"/*"))
-		r.NoError(env.DockerExec("clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/"+oldDisk+""))
+		env.DockerExecNoError(r, "clickhouse", "bash", "-xc", "cp -aflv -t /var/lib/clickhouse/disks/"+newDisk+"/ /var/lib/clickhouse/disks/"+oldDisk+"/*")
+		env.DockerExecNoError(r, "clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/"+oldDisk+"")
 	}
 	env.ch.Close()
-	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker-compose", "-f", os.Getenv("COMPOSE_FILE"), "restart", "clickhouse"))
+	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "clickhouse")...))
 	env.connectWithWait(r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
 }
 
 func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *TestEnvironment, remoteStorageType string, backupConfig string) {
-	log.Info("testBackupSpecifiedPartitions started")
+	log.Debug("testBackupSpecifiedPartitions started")
 	var err error
 	var out string
 	var result, expectedCount uint64
@@ -2609,9 +2559,9 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	}
 
 	// check create_remote full > download + partitions > restore --data --partitions > delete local > download > restore --partitions > restore
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create_remote", "--tables="+dbName+".t*", fullBackupName))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "download", "--partitions="+dbName+".t?:(0,'2022-01-02'),(0,'2022-01-03')", fullBackupName))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create_remote", "--tables="+dbName+".t*", fullBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "download", "--partitions="+dbName+".t?:(0,'2022-01-02'),(0,'2022-01-03')", fullBackupName)
 	fullBackupDir := "/var/lib/clickhouse/backup/" + fullBackupName + "/shadow/" + dbName + "/t?/default/"
 	// embedded storage with embedded disks contains object disk files and will download additional data parts
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") {
@@ -2648,14 +2598,14 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	} else {
 		out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" restore --data --partitions=\"(0,'2022-01-02'),(0,'2022-01-03')\" "+fullBackupName)
 	}
-	t.Log(out)
+	log.Debug(out)
 	r.NoError(err)
 	r.Contains(out, "DROP PARTITION")
 	// we just replace data in exists table
 	checkRestoredDataWithPartitions(80)
 
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "download", fullBackupName))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "download", fullBackupName)
 
 	expectedLines = "17"
 	fullBackupDir = "/var/lib/clickhouse/backup/" + fullBackupName + "/shadow/" + dbName + "/t?/default/"
@@ -2677,14 +2627,14 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	r.NotContains(out, "DROP PARTITION")
 	checkRestoredDataWithPartitions(40)
 
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", fullBackupName))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", fullBackupName)
 	checkRestoredDataWithPartitions(80)
 
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", fullBackupName))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", fullBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName)
 
 	// check create + partitions
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables="+dbName+".t1", "--partitions=(0,'2022-01-02'),(0,'2022-01-03')", partitionBackupName))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables="+dbName+".t1", "--partitions=(0,'2022-01-02'),(0,'2022-01-03')", partitionBackupName)
 	expectedLines = "5"
 	partitionBackupDir := "/var/lib/clickhouse/backup/" + partitionBackupName + "/shadow/" + dbName + "/t1/default/"
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && !strings.HasSuffix(remoteStorageType, "_URL") {
@@ -2698,10 +2648,10 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-c", "ls -la "+partitionBackupDir+"| wc -l")
 	r.NoError(err)
 	r.Equal(expectedLines, strings.Trim(out, "\r\n\t "))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", partitionBackupName))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", partitionBackupName)
 
 	// check create > upload + partitions
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables="+dbName+".t1", partitionBackupName))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables="+dbName+".t1", partitionBackupName)
 	partitionBackupDir = "/var/lib/clickhouse/backup/" + partitionBackupName + "/shadow/" + dbName + "/t1/default/"
 	expectedLines = "7"
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && !strings.HasSuffix(remoteStorageType, "_URL") {
@@ -2715,11 +2665,11 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-c", "ls -la "+partitionBackupDir+" | wc -l")
 	r.NoError(err)
 	r.Equal(expectedLines, strings.Trim(out, "\r\n\t "))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "upload", "--tables="+dbName+".t1", "--partitions=0-20220102,0-20220103", partitionBackupName))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", partitionBackupName))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "upload", "--tables="+dbName+".t1", "--partitions=0-20220102,0-20220103", partitionBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", partitionBackupName)
 
 	// restore partial uploaded
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore_remote", partitionBackupName))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore_remote", partitionBackupName)
 
 	// Check partial restored t1
 	result = 0
@@ -2743,13 +2693,13 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	r.Equal(expectedCount, result, "expect count=0")
 
 	// DELETE backup.
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", partitionBackupName))
-	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", partitionBackupName))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", partitionBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", partitionBackupName)
 
 	if err = env.dropDatabase(dbName); err != nil {
 		t.Fatal(err)
 	}
-	log.Info("testBackupSpecifiedPartitions finish")
+	log.Debug("testBackupSpecifiedPartitions finish")
 }
 
 func (env *TestEnvironment) checkResumeAlreadyProcessed(backupCmd, testBackupName, resumeKind string, r *require.Assertions, remoteStorageType string) {
@@ -2760,7 +2710,7 @@ func (env *TestEnvironment) checkResumeAlreadyProcessed(backupCmd, testBackupNam
 		backupCmd = fmt.Sprintf("%s; cat /var/lib/clickhouse/backup/%s/%s.state; %s", backupCmd, testBackupName, resumeKind, backupCmd)
 	}
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-xce", backupCmd)
-	log.Info(out)
+	log.Debug(out)
 	r.NoError(err)
 	if strings.Contains(backupCmd, "--resume") {
 		r.Contains(out, "already processed")
@@ -2772,7 +2722,7 @@ func fullCleanup(t *testing.T, r *require.Assertions, env *TestEnvironment, back
 		for _, backupType := range backupTypes {
 			err := env.DockerExec("clickhouse-backup", "bash", "-xce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" delete "+backupType+" "+backupName)
 			if checkDeleteErr {
-				r.NoError(err)
+				r.NoError(err,"checkDeleteErr delete %s %s error: %v", err, backupType, backupName)
 			}
 		}
 	}
@@ -2792,7 +2742,7 @@ func fullCleanup(t *testing.T, r *require.Assertions, env *TestEnvironment, back
 }
 
 func generateTestData(t *testing.T, r *require.Assertions, env *TestEnvironment, remoteStorageType string, testData []TestDataStruct) []TestDataStruct {
-	log.Infof("Generate test data %s with _%s suffix", remoteStorageType, t.Name())
+	log.Debugf("Generate test data %s with _%s suffix", remoteStorageType, t.Name())
 	testData = generateTestDataWithDifferentStoragePolicy(remoteStorageType, 0, 5, testData)
 	for _, data := range testData {
 		if isTableSkip(env, data, false) {
@@ -2810,7 +2760,7 @@ func generateTestData(t *testing.T, r *require.Assertions, env *TestEnvironment,
 }
 
 func generateTestDataWithDifferentStoragePolicy(remoteStorageType string, offset, rowsCount int, testData []TestDataStruct) []TestDataStruct {
-	log.Infof("generateTestDataWithDifferentStoragePolicy remoteStorageType=%s", remoteStorageType)
+	log.Debugf("generateTestDataWithDifferentStoragePolicy remoteStorageType=%s", remoteStorageType)
 	for databaseName, databaseEngine := range map[string]string{dbNameOrdinary: "Ordinary", dbNameAtomic: "Atomic"} {
 		testDataWithStoragePolicy := TestDataStruct{
 			Database: databaseName, DatabaseEngine: databaseEngine,
@@ -2876,7 +2826,7 @@ func generateTestDataWithDifferentStoragePolicy(remoteStorageType string, offset
 }
 
 func generateIncrementTestData(t *testing.T, r *require.Assertions, ch *TestEnvironment, remoteStorageType string, incrementData []TestDataStruct, incrementNumber int) []TestDataStruct {
-	log.Infof("Generate increment test data for %s", remoteStorageType)
+	log.Debugf("Generate increment test data for %s", remoteStorageType)
 	incrementData = generateTestDataWithDifferentStoragePolicy(remoteStorageType, 5*incrementNumber, 5, incrementData)
 	for _, data := range incrementData {
 		if isTableSkip(ch, data, false) {
@@ -2888,7 +2838,7 @@ func generateIncrementTestData(t *testing.T, r *require.Assertions, ch *TestEnvi
 }
 
 func dropDatabasesFromTestDataDataSet(t *testing.T, r *require.Assertions, ch *TestEnvironment, databaseList []string) {
-	log.Info("Drop all databases")
+	log.Debug("Drop all databases")
 	for _, db := range databaseList {
 		db = db + "_" + t.Name()
 		r.NoError(ch.dropDatabase(db))
@@ -2910,7 +2860,7 @@ func (env *TestEnvironment) connectWithWait(r *require.Assertions, sleepBefore, 
 		if err != nil {
 			r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", "ps", "-a"))
 			if out, dockerErr := env.DockerExecOut("clickhouse", "clickhouse", "client", "--echo", "-q", "SELECT version()"); dockerErr == nil {
-				log.Info(out)
+				log.Debug(out)
 			} else {
 				log.Warn(out)
 			}
@@ -3099,7 +3049,7 @@ func (env *TestEnvironment) checkData(t *testing.T, r *require.Assertions, data 
 	assert.NotNil(t, data.Rows)
 	data.Database += "_" + t.Name()
 	data.Name += "_" + t.Name()
-	log.Infof("Check '%d' rows in '%s.%s'\n", len(data.Rows), data.Database, data.Name)
+	log.Debugf("Check '%d' rows in '%s.%s'\n", len(data.Rows), data.Database, data.Name)
 	selectSQL := fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY `%s`", data.Database, data.Name, strings.Replace(data.OrderBy, "{test}", t.Name(), -1))
 
 	if data.IsFunction && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") == -1 {
@@ -3182,11 +3132,11 @@ func (env *TestEnvironment) queryWithNoError(r *require.Assertions, query string
 	r.NoError(err)
 }
 
-var dockerExecTimeout = 180 * time.Second
+var dockerExecTimeout = 600 * time.Second
 
 func (env *TestEnvironment) DockerExecBackground(container string, cmd ...string) error {
 	out, err := env.DockerExecBackgroundOut(container, cmd...)
-	log.Info(out)
+	log.Debug(out)
 	return err
 }
 
@@ -3200,9 +3150,14 @@ func (env *TestEnvironment) GetDefaultComposeCommand() []string {
 	return []string{"compose", "-f", path.Join(os.Getenv("CUR_DIR"),os.Getenv("COMPOSE_FILE")), "--progress", "plain", "--project-name", env.ProjectName}
 }
 
+func (env *TestEnvironment) DockerExecNoError(r *require.Assertions, container string, cmd ...string) {
+	out, err := env.DockerExecOut(container, cmd...)
+	r.NoError(err,"%s\n[ERROR]\n%v", out, err)
+}
+
 func (env *TestEnvironment) DockerExec(container string, cmd ...string) error {
 	out, err := env.DockerExecOut(container, cmd...)
-	log.Info(out)
+	log.Debug(out)
 	return err
 }
 
@@ -3216,9 +3171,9 @@ func (env *TestEnvironment) DockerCP(src, dst string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	dcmd := append(env.GetDefaultComposeCommand(), "cp", src, dst)
 
-	log.Infof("docker %s", strings.Join(dcmd, " "))
+	log.Debugf("docker %s", strings.Join(dcmd, " "))
 	out, err := exec.CommandContext(ctx, "docker", dcmd...).CombinedOutput()
-	log.Info(string(out))
+	log.Debug(string(out))
 	cancel()
 	return err
 }

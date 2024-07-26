@@ -30,7 +30,7 @@ services:
       MINIO_ROOT_PASSWORD: it_is_my_super_secret_key
     healthcheck:
       test: curl -sL http://localhost:9000/
-      interval: 10s
+      interval: 3s
       retries: 30
     volumes:
       - ./minio_nodelete.sh:/bin/minio_nodelete.sh

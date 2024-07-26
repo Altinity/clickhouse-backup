@@ -141,7 +141,7 @@ services:
       - sleep infinity
     healthcheck:
       test: bash -c "exit 0"
-      interval: 30s
+      interval: 3s
       timeout: 1s
       retries: 5
       start_period: 1s

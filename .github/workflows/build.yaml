@@ -269,8 +269,10 @@ jobs:
 
       - name: Running integration tests
         env:
+          RUN_PARALLEL: 4
           GOROOT: ${{ env.GOROOT_1_22_X64 }}
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
+          # TEST_LOG_LEVEL: "debug"
           # options for advanced debug CI/CD
           # RUN_TESTS: "TestIntegrationS3"
           # LOG_LEVEL: "debug"
@@ -311,9 +313,10 @@ jobs:
             export COMPOSE_FILE=docker-compose.yml
           fi
 
-          export CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+          CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+          export CUR_DIR="${CUR_DIR}/test/integration"
           export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup-race"
-          go test -parallel 4 -timeout 60m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
+          go test -parallel ${RUN_PARALLEL} -timeout 60m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
       - name: Format integration coverage
         env:
           GOROOT: ${{ env.GOROOT_1_22_X64 }}
