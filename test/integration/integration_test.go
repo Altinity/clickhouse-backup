@@ -34,7 +34,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 )
 
-//setup log level
+// setup log level
 func init() {
 	log.SetHandler(logcli.New(os.Stdout))
 	logLevel := "info"
@@ -53,7 +53,6 @@ const dbNameMySQL = "mysql_db"
 const dbNamePostgreSQL = "pgsql_db"
 const Issue331Atomic = "_issue331._atomic_"
 const Issue331Ordinary = "_issue331.ordinary_"
-
 
 type TestDataStruct struct {
 	Database           string
@@ -428,10 +427,12 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 		t.Parallel()
 		env.ProjectName = strings.ToLower(t.Name())
 		upCmd := append(env.GetDefaultComposeCommand(), "up", "-d")
-		r.NoError(utils.ExecCmd(context.Background(), dockerExecTimeout, "docker", upCmd...))
+		out, err := utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", upCmd...)
+		r.NoError(err, "%s\n\n%s\n\n[ERROR]\n%v", "docker "+strings.Join(upCmd, " "), out, err)
 		t.Cleanup(func() {
 			downCmd := append(env.GetDefaultComposeCommand(), "down", "--remove-orphans", "--volumes")
-			r.NoError(utils.ExecCmd(context.Background(), dockerExecTimeout, "docker", downCmd...))
+			out, err = utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", downCmd...)
+			r.NoError(err, "%s\n\n%s\n\n[ERROR]\n%v", "docker "+strings.Join(downCmd, " "), out, err)
 		})
 	} else {
 		t.Logf("[%s] executing in sequence mode", t.Name())
@@ -2722,7 +2723,7 @@ func fullCleanup(t *testing.T, r *require.Assertions, env *TestEnvironment, back
 		for _, backupType := range backupTypes {
 			err := env.DockerExec("clickhouse-backup", "bash", "-xce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" delete "+backupType+" "+backupName)
 			if checkDeleteErr {
-				r.NoError(err,"checkDeleteErr delete %s %s error: %v", err, backupType, backupName)
+				r.NoError(err, "checkDeleteErr delete %s %s error: %v", err, backupType, backupName)
 			}
 		}
 	}
@@ -2845,13 +2846,12 @@ func dropDatabasesFromTestDataDataSet(t *testing.T, r *require.Assertions, ch *T
 	}
 }
 
-
 func (env *TestEnvironment) connectWithWait(r *require.Assertions, sleepBefore, pollInterval, timeOut time.Duration) {
 	time.Sleep(sleepBefore)
 	for i := 1; i < 11; i++ {
 		err := env.connect(timeOut.String())
 		if i == 10 {
-			r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(),"logs", "clickhouse")...))
+			r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "logs", "clickhouse")...))
 			out, dockerErr := env.DockerExecOut("clickhouse", "clickhouse", "client", "--echo", "-q", "'SELECT version()'")
 			r.NoError(dockerErr)
 			env.ch.Log.Debug(out)
@@ -2884,12 +2884,12 @@ func (env *TestEnvironment) connectWithWait(r *require.Assertions, sleepBefore, 
 }
 
 func (env *TestEnvironment) connect(timeOut string) error {
-	portOut, err := utils.ExecCmdOut(context.Background(), 10*time.Second, "docker", append(env.GetDefaultComposeCommand(), "port", "clickhouse","9000")...)
+	portOut, err := utils.ExecCmdOut(context.Background(), 10*time.Second, "docker", append(env.GetDefaultComposeCommand(), "port", "clickhouse", "9000")...)
 	if err != nil {
 		log.Error(portOut)
 		log.Fatalf("can't get port for clickhouse: %v", err)
 	}
-	hostAndPort := strings.Split(strings.Trim(portOut," \r\n\t"),":")
+	hostAndPort := strings.Split(strings.Trim(portOut, " \r\n\t"), ":")
 	if len(hostAndPort) < 1 {
 		log.Error(portOut)
 		log.Fatalf("invalid port for clickhouse: %v", err)
@@ -3147,12 +3147,12 @@ func (env *TestEnvironment) DockerExecBackgroundOut(container string, cmd ...str
 }
 
 func (env *TestEnvironment) GetDefaultComposeCommand() []string {
-	return []string{"compose", "-f", path.Join(os.Getenv("CUR_DIR"),os.Getenv("COMPOSE_FILE")), "--progress", "plain", "--project-name", env.ProjectName}
+	return []string{"compose", "-f", path.Join(os.Getenv("CUR_DIR"), os.Getenv("COMPOSE_FILE")), "--progress", "plain", "--project-name", env.ProjectName}
 }
 
 func (env *TestEnvironment) DockerExecNoError(r *require.Assertions, container string, cmd ...string) {
 	out, err := env.DockerExecOut(container, cmd...)
-	r.NoError(err,"%s\n[ERROR]\n%v", out, err)
+	r.NoError(err, "%s\n[ERROR]\n%v", out, err)
 }
 
 func (env *TestEnvironment) DockerExec(container string, cmd ...string) error {
@@ -3189,7 +3189,6 @@ func (env *TestEnvironment) InstallDebIfNotExists(r *require.Assertions, contain
 	)
 	r.NoError(err)
 }
-
 
 func toDate(s string) time.Time {
 	result, _ := time.Parse("2006-01-02", s)
@@ -3241,4 +3240,3 @@ func isTestShouldSkip(envName string) bool {
 	isSkip, _ := map[string]bool{"": true, "0": true, "false": true, "False": true, "1": false, "True": false, "true": false}[os.Getenv(envName)]
 	return isSkip
 }
-
