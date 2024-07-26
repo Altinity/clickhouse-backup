@@ -273,8 +273,8 @@ jobs:
           GOROOT: ${{ env.GOROOT_1_22_X64 }}
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
           # options for advanced debug CI/CD
-          RUN_TESTS: "TestLongListRemote"
-          LOG_LEVEL: "debug"
+          # RUN_TESTS: "TestLongListRemote"
+          # LOG_LEVEL: "debug"
           # TEST_LOG_LEVEL: "debug"
           # GCS_DEBUG: "true"
           # SFTP_DEBUG: "true"

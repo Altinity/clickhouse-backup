@@ -246,7 +246,7 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 	sort.SliceStable(result, func(i, j int) bool {
 		return result[i].UploadDate.Before(result[j].UploadDate)
 	})
-	if cacheMiss {
+	if cacheMiss || len(result) < len(listCache) {
 		if err = bd.saveMetadataCache(ctx, listCache, result); err != nil {
 			return nil, fmt.Errorf("bd.saveMetadataCache return error: %v", err)
 		}
