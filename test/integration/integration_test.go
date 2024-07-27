@@ -433,6 +433,10 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 		upCmd := append(env.GetDefaultComposeCommand(), "up", "-d")
 		upStart := time.Now()
 		out, err := utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", upCmd...)
+		if err != nil {
+			logs, _ := utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", append(env.GetDefaultComposeCommand(),"logs")...)
+			t.Log(logs)
+		}
 		r.NoError(err, "%s\n\n%s\n\n[ERROR]\n%v", "docker "+strings.Join(upCmd, " "), out, err)
 		t.Logf("%s docker compose up time = %s", t.Name(), time.Since(upStart))
 		t.Cleanup(func() {
