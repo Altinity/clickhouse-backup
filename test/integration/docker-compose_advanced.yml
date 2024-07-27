@@ -38,8 +38,8 @@ services:
       MINIO_ROOT_USER: access_key
       MINIO_ROOT_PASSWORD: it_is_my_super_secret_key
     healthcheck:
-      test: curl -sL http://localhost:9000/
-      interval: 3s
+      test: curl -sL http://localhost:9000/ && ls -la /bitnami/minio/data/clickhouse/
+      interval: 1s
       retries: 30
     volumes:
       - ./minio_nodelete.sh:/bin/minio_nodelete.sh
@@ -93,8 +93,10 @@ services:
       MYSQL_ROOT_PASSWORD: "root"
     ports:
       - "3306"
+    volumes:
+      - mysql:/var/lib/mysql
     healthcheck:
-      test: bash -ce "exit 0"
+      test: mysqladmin -p=root ping -h localhost
       timeout: 10s
       interval: 1s
       retries: 100
@@ -111,10 +113,12 @@ services:
       - "5432"
     command: [ "postgres", "-c", "wal_level=logical" ]
     healthcheck:
-      test: bash -ce "exit 0"
+      test: pg_isready
       timeout: 10s
       interval: 1s
       retries: 10
+    volumes:
+      - pgsql:/var/lib/postgresql
 
   zookeeper:
     image: docker.io/clickhouse/clickhouse-keeper:${CLICKHOUSE_KEEPER_VERSION:-latest-alpine}
@@ -305,3 +309,17 @@ services:
     depends_on:
       clickhouse-backup:
         condition: service_healthy
+
+volumes:
+  mysql:
+    driver: local
+    driver_opts:
+      device: tmpfs
+      type: tmpfs
+      o: size=250m
+  pgsql:
+    driver: local
+    driver_opts:
+      device: tmpfs
+      type: tmpfs
+      o: size=60m
