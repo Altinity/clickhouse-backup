@@ -35,7 +35,6 @@ services:
     volumes:
       - ./minio_nodelete.sh:/bin/minio_nodelete.sh
 
-# todo need to reproduce download after upload
   gcs:
     image: fsouza/fake-gcs-server:latest
     hostname: gcs
@@ -59,6 +58,8 @@ services:
       interval: 1s
       retries: 30
     command: ["azurite", "--debug", "/data/debug.log" , "-l", "/data", "--blobHost", "0.0.0.0","--queueHost", "0.0.0.0", "--tableHost", "0.0.0.0"]
+#    environment:
+#      - AZURITE_DB="mysql://root:root@mysql:3306/azurite_blob"
 
    #  azure_init:
    #    image: mcr.microsoft.com/azure-cli:latest
@@ -83,10 +84,10 @@ services:
       ZOO_4LW_COMMANDS_WHITELIST: "*"
     healthcheck:
       test: bash -c 'if [[ "$$(echo 'ruok' | nc 127.0.0.1 2181)" == "imok" ]]; then exit 0; else exit 1; fi'
-      interval: 3s
+      interval: 1s
       timeout: 2s
-      retries: 5
-      start_period: 2s
+      retries: 10
+      start_period: 1s
 
 
   clickhouse-backup:
@@ -99,7 +100,7 @@ services:
       - sleep infinity
     healthcheck:
       test: bash -c "exit 0"
-      interval: 3s
+      interval: 1s
       timeout: 1s
       retries: 5
       start_period: 1s
@@ -177,6 +178,7 @@ services:
       - ./config-ftp.yaml:/etc/clickhouse-backup/config-ftp.yaml
       - ./config-ftp-old.yaml:/etc/clickhouse-backup/config-ftp-old.yaml
       - ./config-gcs.yml:/etc/clickhouse-backup/config-gcs.yml
+      - ./config-gcs-embedded-url.yml:/etc/clickhouse-backup/config-gcs-embedded-url.yml.template
       - ./config-gcs-custom-endpoint.yml:/etc/clickhouse-backup/config-gcs-custom-endpoint.yml
       - ./config-s3.yml:/etc/clickhouse-backup/config-s3.yml
       - ./config-s3-embedded.yml:/etc/clickhouse-backup/config-s3-embedded.yml
@@ -208,7 +210,7 @@ services:
       - "8123"
       - "9000"
 # for delve debugger
-      - "40001"
+      - "40002"
     links:
       - zookeeper
       - minio
@@ -218,10 +220,10 @@ services:
       - gcs
     healthcheck:
       test: clickhouse client -q "SELECT 1"
-      interval: 3s
+      interval: 1s
       timeout: 2s
-      retries: 30
-      start_period: 5s
+      retries: 60
+      start_period: 1s
     depends_on:
       zookeeper:
         condition: service_healthy

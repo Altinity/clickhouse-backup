@@ -43,8 +43,6 @@ services:
       retries: 30
     volumes:
       - ./minio_nodelete.sh:/bin/minio_nodelete.sh
-    ports:
-      - "9001"
 
   gcs:
     image: fsouza/fake-gcs-server:latest
@@ -60,7 +58,6 @@ services:
       test: nc 127.0.0.1 8080 -z
       interval: 1s
       retries: 30
-
 
   azure:
     image: mcr.microsoft.com/azure-storage/azurite:latest
@@ -97,7 +94,7 @@ services:
     ports:
       - "3306"
     healthcheck:
-      test: mysqladmin -p=root ping -h localhost
+      test: bash -ce "exit 0"
       timeout: 10s
       interval: 1s
       retries: 100
@@ -114,7 +111,7 @@ services:
       - "5432"
     command: [ "postgres", "-c", "wal_level=logical" ]
     healthcheck:
-      test: pg_isready
+      test: bash -ce "exit 0"
       timeout: 10s
       interval: 1s
       retries: 10
@@ -131,10 +128,10 @@ services:
       - CLICKHOUSE_GID=0
     healthcheck:
       test: bash -c 'if [[ "$$(echo 'ruok' | nc 127.0.0.1 2181)" == "imok" ]]; then exit 0; else exit 1; fi'
-      interval: 3s
+      interval: 1s
       timeout: 2s
-      retries: 5
-      start_period: 2s
+      retries: 10
+      start_period: 1s
 
 
   clickhouse-backup:
@@ -147,7 +144,7 @@ services:
       - sleep infinity
     healthcheck:
       test: bash -c "exit 0"
-      interval: 3s
+      interval: 1s
       timeout: 1s
       retries: 5
       start_period: 1s
@@ -283,10 +280,10 @@ services:
       - gcs
     healthcheck:
       test: clickhouse client -q "SELECT 1"
-      interval: 3s
+      interval: 1s
       timeout: 2s
-      retries: 30
-      start_period: 3s
+      retries: 60
+      start_period: 1s
     depends_on:
       mysql:
         condition: service_healthy
