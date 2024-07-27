@@ -434,13 +434,13 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 		upStart := time.Now()
 		out, err := utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", upCmd...)
 		r.NoError(err, "%s\n\n%s\n\n[ERROR]\n%v", "docker "+strings.Join(upCmd, " "), out, err)
-		t.Logf("docker compose up time = %s", time.Since(upStart))
+		t.Logf("%s docker compose up time = %s", t.Name(), time.Since(upStart))
 		t.Cleanup(func() {
 			downStart := time.Now()
 			downCmd := append(env.GetDefaultComposeCommand(), "down", "--remove-orphans", "--volumes","--timeout","1")
 			out, err = utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", downCmd...)
 			r.NoError(err, "%s\n\n%s\n\n[ERROR]\n%v", "docker "+strings.Join(downCmd, " "), out, err)
-			t.Logf("docker compose down time = %s", time.Since(downStart))
+			t.Logf("%s docker compose down time = %s", t.Name(), time.Since(downStart))
 		})
 	} else {
 		t.Logf("[%s] executing in sequence mode", t.Name())
@@ -3029,7 +3029,7 @@ func (env *TestEnvironment) createTestData(t *testing.T, data TestDataStruct) er
 	batch, err := env.ch.GetConn().PrepareBatch(context.Background(), insertSQL)
 
 	if err != nil {
-		return err
+		return fmt.Errorf("createTestData PrepareBatch error: %v", err)
 	}
 
 	for _, row := range data.Rows {
@@ -3039,10 +3039,14 @@ func (env *TestEnvironment) createTestData(t *testing.T, data TestDataStruct) er
 			insertData[idx] = row[field]
 		}
 		if err = batch.Append(insertData...); err != nil {
-			return err
+			return fmt.Errorf("createTestData batch.Append(%#v) error: %v", insertData, err)
 		}
 	}
-	return batch.Send()
+	err = batch.Send()
+	if err != nil {
+		return fmt.Errorf("createTestData batch.Send() error: %v", err)
+	}
+	return err
 }
 
 func (env *TestEnvironment) dropDatabase(database string) (err error) {
