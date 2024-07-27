@@ -423,8 +423,12 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 		ProjectName: "all",
 	}
 	if os.Getenv("RUN_PARALLEL") != "1" {
-		t.Logf("[%s] executing in parallel mode", t.Name())
-		t.Parallel()
+		if t.Name() != "TestLongListRemote" {
+			t.Logf("[%s] executing in parallel mode", t.Name())
+			t.Parallel()
+		} else {
+			t.Logf("[%s] executing in sequence mode", t.Name())
+		}
 		env.ProjectName = strings.ToLower(t.Name())
 		upCmd := append(env.GetDefaultComposeCommand(), "up", "-d")
 		upStart := time.Now()
