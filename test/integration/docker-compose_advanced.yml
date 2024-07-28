@@ -116,7 +116,7 @@ services:
       test: pg_isready
       timeout: 10s
       interval: 1s
-      retries: 10
+      retries: 60
     volumes:
       - pgsql:/var/lib/postgresql
 

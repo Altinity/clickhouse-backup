@@ -44,7 +44,7 @@ fi
 
 
 for project in $(docker compose -f ${CUR_DIR}/${COMPOSE_FILE} ls --all -q); do
-  docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project} --progress plain down --remove-orphans --volumes
+  docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project} --progress plain down --remove-orphans --volumes --timeout=1
 done
 
 docker volume prune -f
