@@ -452,12 +452,14 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 }
 
 func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
-	downStart := time.Now()
-	env.ch.Close()
-	downCmd := append(env.GetDefaultComposeCommand(), "down", "--remove-orphans", "--volumes","--timeout","1")
-	out, err := utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", downCmd...)
-	r.NoError(err, "%s\n\n%s\n\n[ERROR]\n%v", "docker "+strings.Join(downCmd, " "), out, err)
-	t.Logf("%s docker compose down time = %s", t.Name(), time.Since(downStart))
+	if "1" != os.Getenv("RUN_PARALLEL") {
+		downStart := time.Now()
+		env.ch.Close()
+		downCmd := append(env.GetDefaultComposeCommand(), "down", "--remove-orphans", "--volumes", "--timeout", "1")
+		out, err := utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", downCmd...)
+		r.NoError(err, "%s\n\n%s\n\n[ERROR]\n%v", "docker "+strings.Join(downCmd, " "), out, err)
+		t.Logf("%s docker compose down time = %s", t.Name(), time.Since(downStart))
+	}
 }
 
 
