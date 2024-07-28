@@ -8,6 +8,7 @@ clickhouse:
   host: clickhouse
   port: 9000
   restart_command: bash -c 'echo "FAKE RESTART"'
+  timeout: 60s
 gcs:
   bucket: altinity-qa-test
   path: backup/{cluster}/{shard}
