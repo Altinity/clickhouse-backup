@@ -260,7 +260,7 @@ services:
       - ./server.key:/etc/clickhouse-server/server.key
       - ./dhparam.pem:/etc/clickhouse-server/dhparam.pem
       - ./ssl.xml:/etc/clickhouse-server/config.d/ssl.xml
-      - ./cluster.xml:/etc/clickhouse-server/config.d/cluster.xml
+      - ./clickhouse-config.xml:/etc/clickhouse-server/config.d/clickhouse-config.xml
       - /var/lib/clickhouse
       - /hdd1_data
       - /hdd2_data
