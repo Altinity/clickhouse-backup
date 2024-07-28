@@ -3049,7 +3049,7 @@ func (env *TestEnvironment) createTestData(t *testing.T, data TestDataStruct) er
 	batch, err := env.ch.GetConn().PrepareBatch(context.Background(), insertSQL)
 
 	if err != nil {
-		return fmt.Errorf("createTestData PrepareBatch error: %v", err)
+		return fmt.Errorf("createTestData PrepareBatch(%s) error: %v", insertSQL, err)
 	}
 
 	for _, row := range data.Rows {
@@ -3064,7 +3064,7 @@ func (env *TestEnvironment) createTestData(t *testing.T, data TestDataStruct) er
 	}
 	err = batch.Send()
 	if err != nil {
-		return fmt.Errorf("createTestData batch.Send() error: %v", err)
+		return fmt.Errorf("createTestData batch.Send(%s) error: %v", insertSQL, err)
 	}
 	return err
 }
