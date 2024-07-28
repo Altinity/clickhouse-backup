@@ -38,10 +38,10 @@ import (
 func init() {
 	log.SetHandler(logcli.New(os.Stdout))
 	logLevel := "info"
-	if os.Getenv("LOG_LEVEL") != "" {
+	if os.Getenv("LOG_LEVEL") != "" &&  os.Getenv("LOG_LEVEL") != "info" {
 		logLevel = os.Getenv("LOG_LEVEL")
 	}
-	if os.Getenv("TEST_LOG_LEVEL") != "" {
+	if os.Getenv("TEST_LOG_LEVEL") != "" && os.Getenv("TEST_LOG_LEVEL") != "info" {
 		logLevel = os.Getenv("TEST_LOG_LEVEL")
 	}
 	log.SetLevelFromString(logLevel)
