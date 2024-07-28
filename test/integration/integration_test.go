@@ -2364,7 +2364,7 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	var out string
 	var err error
 	r := require.New(t)
-	env.connectWithWait(r, 500*time.Millisecond, 1500*time.Millisecond, 1*time.Minute)
+	env.connectWithWait(r, 500*time.Millisecond, 1500*time.Millisecond, 3*time.Minute)
 	// test for specified partitions backup
 	testBackupSpecifiedPartitions(t, r, env, remoteStorageType, backupConfig)
 
@@ -2566,7 +2566,7 @@ func replaceStorageDiskNameForReBalance(r *require.Assertions, env *TestEnvironm
 	}
 	env.ch.Close()
 	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "clickhouse")...))
-	env.connectWithWait(r, 3*time.Second, 1500*time.Millisecond, 1*time.Minute)
+	env.connectWithWait(r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
 }
 
 func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *TestEnvironment, remoteStorageType string, backupConfig string) {
