@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	pool "github.com/jolestar/go-commons-pool/v2"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -16,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -34,6 +36,9 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 )
 
+var projectId atomic.Uint32
+var dockerPool *pool.ObjectPool
+
 // setup log level
 func init() {
 	log.SetHandler(logcli.New(os.Stdout))
@@ -45,6 +50,27 @@ func init() {
 		logLevel = os.Getenv("TEST_LOG_LEVEL")
 	}
 	log.SetLevelFromString(logLevel)
+
+	runParallel, isExists := os.LookupEnv("RUN_PARALLEL")
+	if !isExists {
+		runParallel = "1"
+	}
+	runParallelInt, err := strconv.Atoi(runParallel)
+	if err != nil {
+		log.Fatalf("invalid RUN_PARALLEL environment variable value %s", runParallel)
+	}
+
+	ctx := context.Background()
+	factory := pool.NewPooledObjectFactorySimple(
+		func(context.Context) (interface{}, error) {
+			projectId.Add(1)
+			env := TestEnvironment{
+				ProjectName: fmt.Sprintf("project%d", projectId.Load() % uint32(runParallelInt)),
+			}
+			return &env, nil
+		})
+	dockerPool = pool.NewObjectPoolWithDefaultConfig(ctx, factory)
+	dockerPool.Config.MaxTotal = runParallelInt
 }
 
 const dbNameAtomic = "_test#$.ДБ_atomic_"
@@ -414,33 +440,25 @@ var defaultIncrementData = []TestDataStruct{
 }
 
 func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
-	t.Helper()
-	r := require.New(t)
 	if os.Getenv("COMPOSE_FILE") == "" || os.Getenv("CUR_DIR") == "" {
 		t.Fatal("please setup COMPOSE_FILE and CUR_DIR environment variables")
 	}
-	env := TestEnvironment{
-		ProjectName: "all",
+	t.Helper()
+	if os.Getenv("RUN_PARALLEL") != "1" /* && t.Name() != "TestLongListRemote" */  {
+		t.Parallel()
 	}
-	if os.Getenv("RUN_PARALLEL") != "1" {
-		if t.Name() != "TestLongListRemote" {
-			t.Logf("[%s] executing in parallel mode", t.Name())
-			t.Parallel()
-		} else {
-			t.Logf("[%s] executing in sequence mode", t.Name())
-		}
-		env.ProjectName = strings.ToLower(t.Name())
-		upCmd := append(env.GetDefaultComposeCommand(), "up", "-d")
-		upStart := time.Now()
-		out, err := utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", upCmd...)
-		if err != nil {
-			logs, _ := utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", append(env.GetDefaultComposeCommand(),"logs")...)
-			t.Log(logs)
-		}
-		r.NoError(err, "%s\n\n%s\n\n[ERROR]\n%v", "docker "+strings.Join(upCmd, " "), out, err)
-		t.Logf("%s docker compose up time = %s", t.Name(), time.Since(upStart))
+
+	r := require.New(t)
+	envObj, err := dockerPool.BorrowObject(context.Background())
+	if err != nil {
+		t.Fatalf("dockerPool.BorrowObject retrun error: %v", err)
+	}
+	env := envObj.(*TestEnvironment)
+
+	if os.Getenv("RUN_PARALLEL") != "1" /* && t.Name() != "TestLongListRemote" */ {
+		t.Logf("%s run in parallel mode project=%s", t.Name(), env.ProjectName)
 	} else {
-		t.Logf("[%s] executing in sequence mode", t.Name())
+		t.Logf("%s run in sequence mode project=%s", t.Name(), env.ProjectName)
 	}
 
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "1.1.54394") <= 0 {
@@ -448,18 +466,18 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 		env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
 		env.DockerExecNoError(r, "clickhouse-backup", "update-ca-certificates")
 	}
-	return &env, r
+	return env, r
 }
 
 func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
-	if "1" != os.Getenv("RUN_PARALLEL") {
-		downStart := time.Now()
-		env.ch.Close()
-		downCmd := append(env.GetDefaultComposeCommand(), "down", "--remove-orphans", "--volumes", "--timeout", "1")
-		out, err := utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", downCmd...)
-		r.NoError(err, "%s\n\n%s\n\n[ERROR]\n%v", "docker "+strings.Join(downCmd, " "), out, err)
-		t.Logf("%s docker compose down time = %s", t.Name(), time.Since(downStart))
+	env.ch.Close()
+	if t.Name() == "TestIntegrationCustomRsync" {
+		env.DockerExecNoError(r, "sshd", "rm", "-rf", "/root/rsync_backups")
 	}
+	if err := dockerPool.ReturnObject(context.Background(), env); err != nil {
+		t.Fatalf("dockerPool.ReturnObject error: %+v", err)
+	}
+
 }
 
 
@@ -2120,7 +2138,7 @@ func TestIntegrationAzure(t *testing.T) {
 		t.Skip("Skipping Azure integration tests...")
 		return
 	}
-	env, r := NewTestEnvironment(t)
+	env, r :=NewTestEnvironment(t)
 	env.runMainIntegrationScenario(t, "AZBLOB", "config-azblob.yml")
 	env.Cleanup(t, r)
 }
@@ -2137,7 +2155,7 @@ func TestIntegrationGCS(t *testing.T) {
 		t.Skip("Skipping GCS integration tests...")
 		return
 	}
-	env, r := NewTestEnvironment(t)
+	env, r :=NewTestEnvironment(t)
 	env.runMainIntegrationScenario(t, "GCS", "config-gcs.yml")
 	env.Cleanup(t, r)
 }
@@ -2147,19 +2165,19 @@ func TestIntegrationGCSWithCustomEndpoint(t *testing.T) {
 		t.Skip("Skipping GCS_EMULATOR integration tests...")
 		return
 	}
-	env, r := NewTestEnvironment(t)
+	env, r :=NewTestEnvironment(t)
 	env.runMainIntegrationScenario(t, "GCS_EMULATOR", "config-gcs-custom-endpoint.yml")
 	env.Cleanup(t, r)
 }
 
 func TestIntegrationSFTPAuthPassword(t *testing.T) {
-	env, r := NewTestEnvironment(t)
+	env, r :=NewTestEnvironment(t)
 	env.runMainIntegrationScenario(t, "SFTP", "config-sftp-auth-password.yaml")
 	env.Cleanup(t, r)
 }
 
 func TestIntegrationFTP(t *testing.T) {
-	env, r := NewTestEnvironment(t)
+	env, r :=NewTestEnvironment(t)
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 1 {
 		env.runMainIntegrationScenario(t, "FTP", "config-ftp.yaml")
 	} else {
@@ -2370,13 +2388,13 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	testBackupSpecifiedPartitions(t, r, env, remoteStorageType, backupConfig)
 
 	// main test scenario
-	testBackupName := fmt.Sprintf("%s_full_%d", t.Name(), rand.Int())
+	fullBackupName := fmt.Sprintf("%s_full_%d", t.Name(), rand.Int())
 	incrementBackupName := fmt.Sprintf("%s_increment_%d", t.Name(), rand.Int())
 	incrementBackupName2 := fmt.Sprintf("%s_increment2_%d", t.Name(), rand.Int())
 	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Atomic, Issue331Ordinary}
 	tablesPattern := fmt.Sprintf("*_%s.*", t.Name())
 	log.Debug("Clean before start")
-	fullCleanup(t, r, env, []string{testBackupName, incrementBackupName}, []string{"remote", "local"}, databaseList, false, false, backupConfig)
+	fullCleanup(t, r, env, []string{fullBackupName, incrementBackupName}, []string{"remote", "local"}, databaseList, false, false, backupConfig)
 
 	env.DockerExecNoError(r, "minio", "mc", "ls", "local/clickhouse/disk_s3")
 	testData := generateTestData(t, r, env, remoteStorageType, defaultTestData)
@@ -2384,26 +2402,26 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	env.DockerExecNoError(r, "minio", "mc", "ls", "local/clickhouse/disk_s3")
 
 	log.Debug("Create backup")
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables", tablesPattern, testBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables", tablesPattern, fullBackupName)
 
 	incrementData := generateIncrementTestData(t, r, env, remoteStorageType, defaultIncrementData, 1)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables", tablesPattern, incrementBackupName)
 
 	log.Debug("Upload full")
-	uploadCmd := fmt.Sprintf("%s_COMPRESSION_FORMAT=zstd CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/%s clickhouse-backup upload --resume %s", remoteStorageType, backupConfig, testBackupName)
-	env.checkResumeAlreadyProcessed(uploadCmd, testBackupName, "upload", r, remoteStorageType)
+	uploadCmd := fmt.Sprintf("%s_COMPRESSION_FORMAT=zstd CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/%s clickhouse-backup upload --resume %s", remoteStorageType, backupConfig, fullBackupName)
+	env.checkResumeAlreadyProcessed(uploadCmd, fullBackupName, "upload", r, remoteStorageType)
 
 	// https://github.com/Altinity/clickhouse-backup/pull/900
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 {
 		log.Debug("create --diff-from-remote backup")
-		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--diff-from-remote", testBackupName, "--tables", tablesPattern, incrementBackupName2)
+		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--diff-from-remote", fullBackupName, "--tables", tablesPattern, incrementBackupName2)
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "upload", incrementBackupName2)
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", incrementBackupName2)
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", incrementBackupName2)
 	}
 
 	log.Debug("Upload increment")
-	uploadCmd = fmt.Sprintf("clickhouse-backup -c /etc/clickhouse-backup/%s upload %s --diff-from-remote %s --resume", backupConfig, incrementBackupName, testBackupName)
+	uploadCmd = fmt.Sprintf("clickhouse-backup -c /etc/clickhouse-backup/%s upload %s --diff-from-remote %s --resume", backupConfig, incrementBackupName, fullBackupName)
 	env.checkResumeAlreadyProcessed(uploadCmd, incrementBackupName, "upload", r, remoteStorageType)
 
 	backupDir := "/var/lib/clickhouse/backup"
@@ -2414,7 +2432,7 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	r.NoError(err)
 	r.Equal(2, len(strings.Split(strings.Trim(out, " \t\r\n"), "\n")), "expect '2' backups exists in backup directory")
 	log.Debug("Delete backup")
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", testBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", incrementBackupName)
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "ls -lha "+backupDir+" | grep "+t.Name())
 	r.NotNil(err)
@@ -2424,17 +2442,17 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 
 	log.Debug("Download")
 	replaceStorageDiskNameForReBalance(r, env, remoteStorageType, false)
-	downloadCmd := fmt.Sprintf("clickhouse-backup -c /etc/clickhouse-backup/%s download --resume %s", backupConfig, testBackupName)
-	env.checkResumeAlreadyProcessed(downloadCmd, testBackupName, "download", r, remoteStorageType)
+	downloadCmd := fmt.Sprintf("clickhouse-backup -c /etc/clickhouse-backup/%s download --resume %s", backupConfig, fullBackupName)
+	env.checkResumeAlreadyProcessed(downloadCmd, fullBackupName, "download", r, remoteStorageType)
 
 	log.Debug("Restore schema")
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--schema", testBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--schema", fullBackupName)
 
 	log.Debug("Restore data")
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--data", testBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--data", fullBackupName)
 
 	log.Debug("Full restore with rm")
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--rm", testBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--rm", fullBackupName)
 
 	log.Debug("Check data")
 	for i := range testData {
@@ -2451,7 +2469,7 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	dropDatabasesFromTestDataDataSet(t, r, env, databaseList)
 
 	log.Debug("Delete backup")
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", testBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName)
 
 	log.Debug("Download increment")
 	downloadCmd = fmt.Sprintf("clickhouse-backup -c /etc/clickhouse-backup/%s download --resume %s", backupConfig, incrementBackupName)
@@ -2480,9 +2498,9 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 
 	// test end
 	log.Debug("Clean after finish")
-	// during download increment, partially downloaded full will clean
+	// during download increment, partially downloaded full will also clean
 	fullCleanup(t, r, env, []string{incrementBackupName}, []string{"local"}, nil, true, false, backupConfig)
-	fullCleanup(t, r, env, []string{testBackupName, incrementBackupName}, []string{"remote"}, databaseList, true, true, backupConfig)
+	fullCleanup(t, r, env, []string{fullBackupName, incrementBackupName}, []string{"remote"}, databaseList, true, true, backupConfig)
 	replaceStorageDiskNameForReBalance(r, env, remoteStorageType, true)
 	env.checkObjectStorageIsEmpty(t, r, remoteStorageType)
 }

@@ -43,18 +43,59 @@ else
 fi
 
 
+pids=()
 for project in $(docker compose -f ${CUR_DIR}/${COMPOSE_FILE} ls --all -q); do
-  docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project} --progress plain down --remove-orphans --volumes --timeout=1
+  docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project} --progress plain down --remove-orphans --volumes --timeout=1 &
+  pids+=($!)
+done
+
+for pid in "${pids[@]}"; do
+  if wait "$pid"; then
+      echo "$pid docker compose down successful"
+  else
+      echo "$pid docker compose down failed. Exiting."
+      exit 1  # Exit with an error code if any command fails
+  fi
 done
 
 docker volume prune -f
 make clean build-race-docker build-race-fips-docker
 
 export RUN_PARALLEL=${RUN_PARALLEL:-1}
-if [[ "1" == "${RUN_PARALLEL}" ]]; then
-  docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name all --progress plain up -d
-fi
 
 docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --progress=quiet pull
+
+pids=()
+for ((i = 0; i < RUN_PARALLEL; i++)); do
+  docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} --progress plain up -d &
+  pids+=($!)
+done
+
+for pid in "${pids[@]}"; do
+  if wait "$pid"; then
+      echo "$pid docker compose up successful"
+  else
+      echo "$pid docker compose up failed. Exiting."
+      exit 1  # Exit with an error code if any command fails
+  fi
+done
+
 go test -parallel ${RUN_PARALLEL} -race -timeout ${TEST_TIMEOUT:-60m} -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v ${CUR_DIR}/integration_test.go
 go tool covdata textfmt -i "${CUR_DIR}/_coverage_/" -o "${CUR_DIR}/_coverage_/coverage.out"
+
+if [[ "1" == "${CLEAN_AFTER:-1}" ]]; then
+  pids=()
+  for project in $(docker compose -f ${CUR_DIR}/${COMPOSE_FILE} ls --all -q); do
+    docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project} --progress plain down --remove-orphans --volumes --timeout=1 &
+    pids+=($!)
+  done
+
+  for pid in "${pids[@]}"; do
+    if wait "$pid"; then
+        echo "$pid docker compose down successful"
+    else
+        echo "$pid docker compose down failed. Exiting."
+        exit 1  # Exit with an error code if any command fails
+    fi
+  done
+fi
