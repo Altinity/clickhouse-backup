@@ -23,7 +23,12 @@ func List(ctx context.Context, cfg *config.Config) ([]storage.Backup, error) {
 	args := ApplyCommandTemplate(cfg.Custom.ListCommand, templateData)
 	out, err := utils.ExecCmdOut(ctx, cfg.Custom.CommandTimeoutDuration, args[0], args[1:]...)
 	if err == nil {
-		outLines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+		outLines := make([]string, 0)
+		outTrim := strings.TrimRight(out, "\n")
+		if outTrim != "" {
+			outLines = strings.Split(outTrim, "\n")
+		}
+
 		backupList := make([]storage.Backup, len(outLines))
 		for i, line := range outLines {
 			if len(line) > 0 {
