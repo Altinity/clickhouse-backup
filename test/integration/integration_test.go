@@ -469,6 +469,9 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 
 func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 	env.ch.Close()
+	if t.Name() == "TestRBAC" || t.Name() == "TestConfigs" {
+		env.DockerExecNoError(r, "minio", "rm", "-rf", "/bitnami/minio/data/clickhouse/backups_s3")
+	}
 	if t.Name() == "TestIntegrationCustomRsync" {
 		env.DockerExecNoError(r, "sshd", "rm", "-rf", "/root/rsync_backups")
 	}
