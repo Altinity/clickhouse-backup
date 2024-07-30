@@ -2050,7 +2050,7 @@ func TestFIPS(t *testing.T) {
 	testTLSCerts := func(certType, keyLength, curveName string, cipherList ...string) {
 		generateCerts(certType, keyLength, curveName)
 		log.Debugf("Run `clickhouse-backup-fips server` in background for %s %s %s", certType, keyLength, curveName)
-		env.DockerExecNoError(r, "-d", "clickhouse", "bash", "-ce", "AWS_USE_FIPS_ENDPOINT=true clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml server &>>/tmp/clickhouse-backup-server-fips.log")
+		env.DockerExecBackgroundNoError(r, "clickhouse", "bash", "-ce", "AWS_USE_FIPS_ENDPOINT=true clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml server &>>/tmp/clickhouse-backup-server-fips.log")
 		time.Sleep(1 * time.Second)
 
 		env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "rm -rf /tmp/testssl* && /opt/testssl/testssl.sh -e -s -oC /tmp/testssl.csv --color 0 --disable-rating --quiet -n min --mode parallel --add-ca /etc/clickhouse-backup/ca-cert.pem localhost:7172")
