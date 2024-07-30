@@ -537,6 +537,168 @@ func TestLongListRemote(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
+func TestIntegrationAzure(t *testing.T) {
+	if isTestShouldSkip("AZURE_TESTS") {
+		t.Skip("Skipping Azure integration tests...")
+		return
+	}
+	env, r := NewTestEnvironment(t)
+	env.runMainIntegrationScenario(t, "AZBLOB", "config-azblob.yml")
+	env.Cleanup(t, r)
+}
+
+func TestIntegrationEmbedded(t *testing.T) {
+	//t.Skipf("Test skipped, wait 23.8, RESTORE Ordinary table and RESTORE MATERIALIZED VIEW and {uuid} not works for %s version, look https://github.com/ClickHouse/ClickHouse/issues/43971 and https://github.com/ClickHouse/ClickHouse/issues/42709", os.Getenv("CLICKHOUSE_VERSION"))
+	//dependencies restore https://github.com/ClickHouse/ClickHouse/issues/39416, fixed in 23.3
+	version := os.Getenv("CLICKHOUSE_VERSION")
+	if compareVersion(version, "23.3") < 0 {
+		t.Skipf("Test skipped, BACKUP/RESTORE not production ready for %s version", version)
+	}
+	env, r := NewTestEnvironment(t)
+
+	//CUSTOM backup creates folder in each disk, need to clear
+	env.DockerExecNoError(r, "clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_s3/backup/")
+	env.runMainIntegrationScenario(t, "EMBEDDED_S3", "config-s3-embedded.yml")
+
+	//@TODO think about how to implements embedded backup for s3_plain disks
+	//env.DockerExecNoError(r, "clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_s3_plain/backup/")
+	//runMainIntegrationScenario(t, "EMBEDDED_S3_PLAIN", "config-s3-plain-embedded.yml")
+
+	t.Log("@TODO clickhouse-server don't close connection properly after FIN from azurite during BACKUP/RESTORE https://github.com/ClickHouse/ClickHouse/issues/60447, https://github.com/Azure/Azurite/issues/2053")
+	//env.DockerExecNoError(r, "azure", "apk", "add", "tcpdump")
+	//r.NoError(env.DockerExecBackground("azure", "tcpdump", "-i", "any", "-w", "/tmp/azurite_http.pcap", "port", "10000"))
+	////CUSTOM backup create folder in each disk
+	//env.DockerExecNoError(r, "clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_azure/backup/")
+	//if compareVersion(version, "24.2") >= 0 {
+	//	env.runMainIntegrationScenario(t, "EMBEDDED_AZURE_URL", "config-azblob-embedded-url.yml")
+	//}
+	//env.runMainIntegrationScenario(t, "EMBEDDED_AZURE", "config-azblob-embedded.yml")
+	//env.DockerExecNoError(r, "azure", "pkill", "tcpdump")
+	//r.NoError(env.DockerCP("azure:/tmp/azurite_http.pcap", "./azurite_http.pcap"))
+
+	if compareVersion(version, "23.8") >= 0 {
+		//CUSTOM backup creates folder in each disk, need to clear
+		env.DockerExecNoError(r, "clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_local/backup/")
+		env.runMainIntegrationScenario(t, "EMBEDDED_LOCAL", "config-s3-embedded-local.yml")
+	}
+	if compareVersion(version, "24.3") >= 0 {
+		//@todo think about named collections to avoid show credentials in logs look to https://github.com/fsouza/fake-gcs-server/issues/1330, https://github.com/fsouza/fake-gcs-server/pull/1164
+		env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "gettext-base")
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config-gcs-embedded-url.yml.template | envsubst > /etc/clickhouse-backup/config-gcs-embedded-url.yml")
+		env.runMainIntegrationScenario(t, "EMBEDDED_GCS_URL", "config-gcs-embedded-url.yml")
+		env.runMainIntegrationScenario(t, "EMBEDDED_S3_URL", "config-s3-embedded-url.yml")
+	}
+	env.Cleanup(t, r)
+}
+
+func TestIntegrationS3Glacier(t *testing.T) {
+	if isTestShouldSkip("GLACIER_TESTS") {
+		t.Skip("Skipping GLACIER integration tests...")
+		return
+	}
+	env, r := NewTestEnvironment(t)
+	r.NoError(env.DockerCP("config-s3-glacier.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml.s3glacier-template"))
+	env.InstallDebIfNotExists(r, "clickhouse-backup", "curl", "gettext-base", "bsdmainutils", "dnsutils", "git", "ca-certificates")
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config.yml.s3glacier-template | envsubst > /etc/clickhouse-backup/config-s3-glacier.yml")
+	dockerExecTimeout = 60 * time.Minute
+	env.runMainIntegrationScenario(t, "GLACIER", "config-s3-glacier.yml")
+	dockerExecTimeout = 3 * time.Minute
+	env.Cleanup(t, r)
+}
+
+func TestIntegrationS3(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	env.checkObjectStorageIsEmpty(t, r, "S3")
+	env.runMainIntegrationScenario(t, "S3", "config-s3.yml")
+	env.Cleanup(t, r)
+}
+
+func TestIntegrationGCS(t *testing.T) {
+	if isTestShouldSkip("GCS_TESTS") {
+		t.Skip("Skipping GCS integration tests...")
+		return
+	}
+	env, r := NewTestEnvironment(t)
+	env.runMainIntegrationScenario(t, "GCS", "config-gcs.yml")
+	env.Cleanup(t, r)
+}
+
+func TestIntegrationGCSWithCustomEndpoint(t *testing.T) {
+	if isTestShouldSkip("GCS_TESTS") {
+		t.Skip("Skipping GCS_EMULATOR integration tests...")
+		return
+	}
+	env, r := NewTestEnvironment(t)
+	env.runMainIntegrationScenario(t, "GCS_EMULATOR", "config-gcs-custom-endpoint.yml")
+	env.Cleanup(t, r)
+}
+
+func TestIntegrationSFTPAuthPassword(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	env.runMainIntegrationScenario(t, "SFTP", "config-sftp-auth-password.yaml")
+	env.Cleanup(t, r)
+}
+
+func TestIntegrationFTP(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 1 {
+		env.runMainIntegrationScenario(t, "FTP", "config-ftp.yaml")
+	} else {
+		env.runMainIntegrationScenario(t, "FTP", "config-ftp-old.yaml")
+	}
+	env.Cleanup(t, r)
+}
+
+func TestIntegrationSFTPAuthKey(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	env.uploadSSHKeys(r, "clickhouse-backup")
+	env.runMainIntegrationScenario(t, "SFTP", "config-sftp-auth-key.yaml")
+	env.Cleanup(t, r)
+}
+
+func TestIntegrationCustomKopia(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
+	env.DockerExecNoError(r, "clickhouse-backup", "update-ca-certificates")
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xce", "command -v yq || curl -sL \"https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)\" -o /usr/bin/yq && chmod +x /usr/bin/yq")
+	env.InstallDebIfNotExists(r, "clickhouse-backup", "jq", "bzip2", "pgp", "git")
+
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "curl -sfL https://kopia.io/signing-key | gpg --dearmor -o /usr/share/keyrings/kopia-keyring.gpg")
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "echo 'deb [signed-by=/usr/share/keyrings/kopia-keyring.gpg] https://packages.kopia.io/apt/ stable main' > /etc/apt/sources.list.d/kopia.list")
+	env.InstallDebIfNotExists(r, "clickhouse-backup", "kopia", "xxd", "bsdmainutils", "parallel")
+
+	env.runIntegrationCustom(t, r, "kopia")
+	env.Cleanup(t, r)
+}
+
+func TestIntegrationCustomRestic(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
+	env.DockerExecNoError(r, "clickhouse-backup", "update-ca-certificates")
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xce", "command -v yq || curl -sL \"https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)\" -o /usr/bin/yq && chmod +x /usr/bin/yq")
+	env.InstallDebIfNotExists(r, "clickhouse-backup", "jq", "bzip2", "pgp", "git")
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "command -v restic || RELEASE_TAG=$(curl -H 'Accept: application/json' -sL https://github.com/restic/restic/releases/latest | jq -c -r -M '.tag_name'); RELEASE=$(echo ${RELEASE_TAG} | sed -e 's/v//'); curl -sfL \"https://github.com/restic/restic/releases/download/${RELEASE_TAG}/restic_${RELEASE}_linux_amd64.bz2\" | bzip2 -d > /bin/restic; chmod +x /bin/restic")
+	env.runIntegrationCustom(t, r, "restic")
+	env.Cleanup(t, r)
+}
+
+func TestIntegrationCustomRsync(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	env.uploadSSHKeys(r, "clickhouse-backup")
+	env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
+	env.DockerExecNoError(r, "clickhouse-backup", "update-ca-certificates")
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xce", "command -v yq || curl -sL \"https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)\" -o /usr/bin/yq && chmod +x /usr/bin/yq")
+	env.InstallDebIfNotExists(r, "clickhouse-backup", "jq", "openssh-client", "rsync")
+	env.runIntegrationCustom(t, r, "rsync")
+	env.Cleanup(t, r)
+}
+
+func (env *TestEnvironment) runIntegrationCustom(t *testing.T, r *require.Assertions, customType string) {
+	env.DockerExecNoError(r, "clickhouse-backup", "mkdir", "-pv", "/custom/"+customType)
+	r.NoError(env.DockerCP("./"+customType+"/", "clickhouse-backup:/custom/"))
+	env.runMainIntegrationScenario(t, "CUSTOM", "config-custom-"+customType+".yml")
+}
+
 // TestS3NoDeletePermission - no parallel
 func TestS3NoDeletePermission(t *testing.T) {
 	if isTestShouldSkip("RUN_ADVANCED_TESTS") {
@@ -2081,167 +2243,6 @@ func TestFIPS(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
-func TestIntegrationEmbedded(t *testing.T) {
-	//t.Skipf("Test skipped, wait 23.8, RESTORE Ordinary table and RESTORE MATERIALIZED VIEW and {uuid} not works for %s version, look https://github.com/ClickHouse/ClickHouse/issues/43971 and https://github.com/ClickHouse/ClickHouse/issues/42709", os.Getenv("CLICKHOUSE_VERSION"))
-	//dependencies restore https://github.com/ClickHouse/ClickHouse/issues/39416, fixed in 23.3
-	version := os.Getenv("CLICKHOUSE_VERSION")
-	if compareVersion(version, "23.3") < 0 {
-		t.Skipf("Test skipped, BACKUP/RESTORE not production ready for %s version", version)
-	}
-	env, r := NewTestEnvironment(t)
-
-	//CUSTOM backup creates folder in each disk, need to clear
-	env.DockerExecNoError(r, "clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_s3/backup/")
-	env.runMainIntegrationScenario(t, "EMBEDDED_S3", "config-s3-embedded.yml")
-
-	//@TODO think about how to implements embedded backup for s3_plain disks
-	//env.DockerExecNoError(r, "clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_s3_plain/backup/")
-	//runMainIntegrationScenario(t, "EMBEDDED_S3_PLAIN", "config-s3-plain-embedded.yml")
-
-	t.Log("@TODO clickhouse-server don't close connection properly after FIN from azurite during BACKUP/RESTORE https://github.com/ClickHouse/ClickHouse/issues/60447, https://github.com/Azure/Azurite/issues/2053")
-	//env.DockerExecNoError(r, "azure", "apk", "add", "tcpdump")
-	//r.NoError(env.DockerExecBackground("azure", "tcpdump", "-i", "any", "-w", "/tmp/azurite_http.pcap", "port", "10000"))
-	////CUSTOM backup create folder in each disk
-	//env.DockerExecNoError(r, "clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_azure/backup/")
-	//if compareVersion(version, "24.2") >= 0 {
-	//	env.runMainIntegrationScenario(t, "EMBEDDED_AZURE_URL", "config-azblob-embedded-url.yml")
-	//}
-	//env.runMainIntegrationScenario(t, "EMBEDDED_AZURE", "config-azblob-embedded.yml")
-	//env.DockerExecNoError(r, "azure", "pkill", "tcpdump")
-	//r.NoError(env.DockerCP("azure:/tmp/azurite_http.pcap", "./azurite_http.pcap"))
-
-	if compareVersion(version, "23.8") >= 0 {
-		//CUSTOM backup creates folder in each disk, need to clear
-		env.DockerExecNoError(r, "clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_local/backup/")
-		env.runMainIntegrationScenario(t, "EMBEDDED_LOCAL", "config-s3-embedded-local.yml")
-	}
-	if compareVersion(version, "24.3") >= 0 {
-		//@todo think about named collections to avoid show credentials in logs look to https://github.com/fsouza/fake-gcs-server/issues/1330, https://github.com/fsouza/fake-gcs-server/pull/1164
-		env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "gettext-base")
-		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config-gcs-embedded-url.yml.template | envsubst > /etc/clickhouse-backup/config-gcs-embedded-url.yml")
-		env.runMainIntegrationScenario(t, "EMBEDDED_GCS_URL", "config-gcs-embedded-url.yml")
-		env.runMainIntegrationScenario(t, "EMBEDDED_S3_URL", "config-s3-embedded-url.yml")
-	}
-	env.Cleanup(t, r)
-}
-
-func TestIntegrationS3Glacier(t *testing.T) {
-	if isTestShouldSkip("GLACIER_TESTS") {
-		t.Skip("Skipping GLACIER integration tests...")
-		return
-	}
-	env, r := NewTestEnvironment(t)
-	r.NoError(env.DockerCP("config-s3-glacier.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml.s3glacier-template"))
-	env.InstallDebIfNotExists(r, "clickhouse-backup", "curl", "gettext-base", "bsdmainutils", "dnsutils", "git", "ca-certificates")
-	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config.yml.s3glacier-template | envsubst > /etc/clickhouse-backup/config-s3-glacier.yml")
-	dockerExecTimeout = 60 * time.Minute
-	env.runMainIntegrationScenario(t, "GLACIER", "config-s3-glacier.yml")
-	dockerExecTimeout = 3 * time.Minute
-	env.Cleanup(t, r)
-}
-
-func TestIntegrationAzure(t *testing.T) {
-	if isTestShouldSkip("AZURE_TESTS") {
-		t.Skip("Skipping Azure integration tests...")
-		return
-	}
-	env, r := NewTestEnvironment(t)
-	env.runMainIntegrationScenario(t, "AZBLOB", "config-azblob.yml")
-	env.Cleanup(t, r)
-}
-
-func TestIntegrationS3(t *testing.T) {
-	env, r := NewTestEnvironment(t)
-	env.checkObjectStorageIsEmpty(t, r, "S3")
-	env.runMainIntegrationScenario(t, "S3", "config-s3.yml")
-	env.Cleanup(t, r)
-}
-
-func TestIntegrationGCS(t *testing.T) {
-	if isTestShouldSkip("GCS_TESTS") {
-		t.Skip("Skipping GCS integration tests...")
-		return
-	}
-	env, r := NewTestEnvironment(t)
-	env.runMainIntegrationScenario(t, "GCS", "config-gcs.yml")
-	env.Cleanup(t, r)
-}
-
-func TestIntegrationGCSWithCustomEndpoint(t *testing.T) {
-	if isTestShouldSkip("GCS_TESTS") {
-		t.Skip("Skipping GCS_EMULATOR integration tests...")
-		return
-	}
-	env, r := NewTestEnvironment(t)
-	env.runMainIntegrationScenario(t, "GCS_EMULATOR", "config-gcs-custom-endpoint.yml")
-	env.Cleanup(t, r)
-}
-
-func TestIntegrationSFTPAuthPassword(t *testing.T) {
-	env, r := NewTestEnvironment(t)
-	env.runMainIntegrationScenario(t, "SFTP", "config-sftp-auth-password.yaml")
-	env.Cleanup(t, r)
-}
-
-func TestIntegrationFTP(t *testing.T) {
-	env, r := NewTestEnvironment(t)
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 1 {
-		env.runMainIntegrationScenario(t, "FTP", "config-ftp.yaml")
-	} else {
-		env.runMainIntegrationScenario(t, "FTP", "config-ftp-old.yaml")
-	}
-	env.Cleanup(t, r)
-}
-
-func TestIntegrationSFTPAuthKey(t *testing.T) {
-	env, r := NewTestEnvironment(t)
-	env.uploadSSHKeys(r, "clickhouse-backup")
-	env.runMainIntegrationScenario(t, "SFTP", "config-sftp-auth-key.yaml")
-	env.Cleanup(t, r)
-}
-
-func TestIntegrationCustomKopia(t *testing.T) {
-	env, r := NewTestEnvironment(t)
-	env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
-	env.DockerExecNoError(r, "clickhouse-backup", "update-ca-certificates")
-	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xce", "command -v yq || curl -sL \"https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)\" -o /usr/bin/yq && chmod +x /usr/bin/yq")
-	env.InstallDebIfNotExists(r, "clickhouse-backup", "jq", "bzip2", "pgp", "git")
-
-	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "curl -sfL https://kopia.io/signing-key | gpg --dearmor -o /usr/share/keyrings/kopia-keyring.gpg")
-	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "echo 'deb [signed-by=/usr/share/keyrings/kopia-keyring.gpg] https://packages.kopia.io/apt/ stable main' > /etc/apt/sources.list.d/kopia.list")
-	env.InstallDebIfNotExists(r, "clickhouse-backup", "kopia", "xxd", "bsdmainutils", "parallel")
-
-	env.runIntegrationCustom(t, r, "kopia")
-	env.Cleanup(t, r)
-}
-
-func TestIntegrationCustomRestic(t *testing.T) {
-	env, r := NewTestEnvironment(t)
-	env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
-	env.DockerExecNoError(r, "clickhouse-backup", "update-ca-certificates")
-	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xce", "command -v yq || curl -sL \"https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)\" -o /usr/bin/yq && chmod +x /usr/bin/yq")
-	env.InstallDebIfNotExists(r, "clickhouse-backup", "jq", "bzip2", "pgp", "git")
-	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "command -v restic || RELEASE_TAG=$(curl -H 'Accept: application/json' -sL https://github.com/restic/restic/releases/latest | jq -c -r -M '.tag_name'); RELEASE=$(echo ${RELEASE_TAG} | sed -e 's/v//'); curl -sfL \"https://github.com/restic/restic/releases/download/${RELEASE_TAG}/restic_${RELEASE}_linux_amd64.bz2\" | bzip2 -d > /bin/restic; chmod +x /bin/restic")
-	env.runIntegrationCustom(t, r, "restic")
-	env.Cleanup(t, r)
-}
-
-func TestIntegrationCustomRsync(t *testing.T) {
-	env, r := NewTestEnvironment(t)
-	env.uploadSSHKeys(r, "clickhouse-backup")
-	env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
-	env.DockerExecNoError(r, "clickhouse-backup", "update-ca-certificates")
-	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xce", "command -v yq || curl -sL \"https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)\" -o /usr/bin/yq && chmod +x /usr/bin/yq")
-	env.InstallDebIfNotExists(r, "clickhouse-backup", "jq", "openssh-client", "rsync")
-	env.runIntegrationCustom(t, r, "rsync")
-	env.Cleanup(t, r)
-}
-
-func (env *TestEnvironment) runIntegrationCustom(t *testing.T, r *require.Assertions, customType string) {
-	env.DockerExecNoError(r, "clickhouse-backup", "mkdir", "-pv", "/custom/"+customType)
-	r.NoError(env.DockerCP("./"+customType+"/", "clickhouse-backup:/custom/"))
-	env.runMainIntegrationScenario(t, "CUSTOM", "config-custom-"+customType+".yml")
-}
 
 func TestRestoreMapping(t *testing.T) {
 	env, r := NewTestEnvironment(t)
