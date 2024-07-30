@@ -469,11 +469,8 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 
 func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 	env.ch.Close()
-	out, err := env.DockerExecOut("minio", "bash", "-ce", "ls -lh /bitnami/minio/data/clickhouse/")
-	t.Log(t.Name(), "DEBUG", out)
-	r.NoError(err)
 
-	if t.Name() == "TestIntegrationS3" {
+	if t.Name() == "TestIntegrationS3" || t.Name() == "TestIntegrationEmbedded" {
 		env.DockerExecNoError(r, "minio", "rm", "-rf", "/bitnami/minio/data/clickhouse/disk_s3")
 	}
 
