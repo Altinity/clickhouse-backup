@@ -442,7 +442,7 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 		t.Fatal("please setup COMPOSE_FILE and CUR_DIR environment variables")
 	}
 	t.Helper()
-	if os.Getenv("RUN_PARALLEL") != "1" /* && t.Name() != "TestLongListRemote" */ {
+	if os.Getenv("RUN_PARALLEL") != "1" && t.Name() != "TestLongListRemote" {
 		t.Parallel()
 	}
 
@@ -453,7 +453,7 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 	}
 	env := envObj.(*TestEnvironment)
 
-	if os.Getenv("RUN_PARALLEL") != "1" /* && t.Name() != "TestLongListRemote" */ {
+	if os.Getenv("RUN_PARALLEL") != "1" && t.Name() != "TestLongListRemote" {
 		t.Logf("%s run in parallel mode project=%s", t.Name(), env.ProjectName)
 	} else {
 		t.Logf("%s run in sequence mode project=%s", t.Name(), env.ProjectName)
