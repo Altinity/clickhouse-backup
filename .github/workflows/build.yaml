@@ -318,7 +318,7 @@ jobs:
           docker compose -f "${CUR_DIR}/${COMPOSE_FILE}" --progress=quiet pull
           
           pids=()
-          for ((i = 1; i <= RUN_PARALLEL; i++)); do
+          for ((i = 0; i < RUN_PARALLEL; i++)); do
             docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} --progress plain up -d &
             pids+=($!)
           done
