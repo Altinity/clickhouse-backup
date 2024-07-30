@@ -469,7 +469,7 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 
 func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 	env.ch.Close()
-	if t.Name() == "TestRBAC" || t.Name() == "TestConfigs" {
+	if t.Name() == "TestRBAC" || t.Name() == "TestConfigs" || t.Name() == "TestIntegrationEmbedded" {
 		env.DockerExecNoError(r, "minio", "rm", "-rf", "/bitnami/minio/data/clickhouse/backups_s3")
 	}
 	if t.Name() == "TestIntegrationCustomRsync" {
@@ -2298,7 +2298,7 @@ func TestRestoreMapping(t *testing.T) {
 	checkRecordset(1, 10, "SELECT count() FROM `database-2`.v2")
 
 	log.Debug("Check database1 not exists")
-	checkRecordset(1, 0, "SELECT count() FROM system.databases WHERE name='database1'")
+	checkRecordset(1, 0, "SELECT count() FROM system.databases WHERE name='database1' SETTINGS empty_result_for_aggregation_by_empty_set=0")
 
 	fullCleanup(t, r, env, []string{testBackupName}, []string{"local"}, databaseList, true, true, "config-database-mapping.yml")
 	env.Cleanup(t, r)
