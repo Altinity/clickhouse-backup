@@ -43,7 +43,7 @@ var dockerPool *pool.ObjectPool
 func init() {
 	log.SetHandler(logcli.New(os.Stdout))
 	logLevel := "info"
-	if os.Getenv("LOG_LEVEL") != "" &&  os.Getenv("LOG_LEVEL") != "info" {
+	if os.Getenv("LOG_LEVEL") != "" && os.Getenv("LOG_LEVEL") != "info" {
 		logLevel = os.Getenv("LOG_LEVEL")
 	}
 	if os.Getenv("TEST_LOG_LEVEL") != "" && os.Getenv("TEST_LOG_LEVEL") != "info" {
@@ -65,7 +65,7 @@ func init() {
 		func(context.Context) (interface{}, error) {
 			projectId.Add(1)
 			env := TestEnvironment{
-				ProjectName: fmt.Sprintf("project%d", projectId.Load() % uint32(runParallelInt)),
+				ProjectName: fmt.Sprintf("project%d", projectId.Load()%uint32(runParallelInt)),
 			}
 			return &env, nil
 		})
@@ -444,7 +444,7 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 		t.Fatal("please setup COMPOSE_FILE and CUR_DIR environment variables")
 	}
 	t.Helper()
-	if os.Getenv("RUN_PARALLEL") != "1" /* && t.Name() != "TestLongListRemote" */  {
+	if os.Getenv("RUN_PARALLEL") != "1" /* && t.Name() != "TestLongListRemote" */ {
 		t.Parallel()
 	}
 
@@ -474,12 +474,18 @@ func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 	if t.Name() == "TestIntegrationCustomRsync" {
 		env.DockerExecNoError(r, "sshd", "rm", "-rf", "/root/rsync_backups")
 	}
+	if t.Name() == "TestIntegrationCustomRestic" {
+		env.DockerExecNoError(r, "minio", "rm", "-rf", "/bitnami/minio/data/clickhouse/restic")
+	}
+	if t.Name() == "TestIntegrationCustomKopia" {
+		env.DockerExecNoError(r, "minio", "rm", "-rf", "/bitnami/minio/data/clickhouse/kopia")
+	}
+
 	if err := dockerPool.ReturnObject(context.Background(), env); err != nil {
 		t.Fatalf("dockerPool.ReturnObject error: %+v", err)
 	}
 
 }
-
 
 // TestLongListRemote - no parallel, cause need to restart minio
 func TestLongListRemote(t *testing.T) {
@@ -509,7 +515,7 @@ func TestLongListRemote(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
 	cachedDuration := time.Since(startCashed)
 
-	r.Greater(noCacheDuration, cachedDuration,"noCacheDuration=%s shall be greater cachedDuration=%s", noCacheDuration, cachedDuration)
+	r.Greater(noCacheDuration, cachedDuration, "noCacheDuration=%s shall be greater cachedDuration=%s", noCacheDuration, cachedDuration)
 
 	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "minio")...))
 	time.Sleep(2 * time.Second)
@@ -2138,7 +2144,7 @@ func TestIntegrationAzure(t *testing.T) {
 		t.Skip("Skipping Azure integration tests...")
 		return
 	}
-	env, r :=NewTestEnvironment(t)
+	env, r := NewTestEnvironment(t)
 	env.runMainIntegrationScenario(t, "AZBLOB", "config-azblob.yml")
 	env.Cleanup(t, r)
 }
@@ -2155,7 +2161,7 @@ func TestIntegrationGCS(t *testing.T) {
 		t.Skip("Skipping GCS integration tests...")
 		return
 	}
-	env, r :=NewTestEnvironment(t)
+	env, r := NewTestEnvironment(t)
 	env.runMainIntegrationScenario(t, "GCS", "config-gcs.yml")
 	env.Cleanup(t, r)
 }
@@ -2165,19 +2171,19 @@ func TestIntegrationGCSWithCustomEndpoint(t *testing.T) {
 		t.Skip("Skipping GCS_EMULATOR integration tests...")
 		return
 	}
-	env, r :=NewTestEnvironment(t)
+	env, r := NewTestEnvironment(t)
 	env.runMainIntegrationScenario(t, "GCS_EMULATOR", "config-gcs-custom-endpoint.yml")
 	env.Cleanup(t, r)
 }
 
 func TestIntegrationSFTPAuthPassword(t *testing.T) {
-	env, r :=NewTestEnvironment(t)
+	env, r := NewTestEnvironment(t)
 	env.runMainIntegrationScenario(t, "SFTP", "config-sftp-auth-password.yaml")
 	env.Cleanup(t, r)
 }
 
 func TestIntegrationFTP(t *testing.T) {
-	env, r :=NewTestEnvironment(t)
+	env, r := NewTestEnvironment(t)
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 1 {
 		env.runMainIntegrationScenario(t, "FTP", "config-ftp.yaml")
 	} else {
@@ -2235,7 +2241,6 @@ func (env *TestEnvironment) runIntegrationCustom(t *testing.T, r *require.Assert
 	r.NoError(env.DockerCP("./"+customType+"/", "clickhouse-backup:/custom/"))
 	env.runMainIntegrationScenario(t, "CUSTOM", "config-custom-"+customType+".yml")
 }
-
 
 func TestRestoreMapping(t *testing.T) {
 	env, r := NewTestEnvironment(t)
@@ -3203,9 +3208,13 @@ func (env *TestEnvironment) GetDefaultComposeCommand() []string {
 	return []string{"compose", "-f", path.Join(os.Getenv("CUR_DIR"), os.Getenv("COMPOSE_FILE")), "--progress", "plain", "--project-name", env.ProjectName}
 }
 
+func (env *TestEnvironment) GetExecDockerCommand(container string) []string {
+	return []string{"exec", fmt.Sprintf("%s-%s-1", env.ProjectName, container)}
+}
+
 func (env *TestEnvironment) DockerExecNoError(r *require.Assertions, container string, cmd ...string) {
 	out, err := env.DockerExecOut(container, cmd...)
-	r.NoError(err, "%s\n\n%s\n[ERROR]\n%v", strings.Join(append(append(env.GetDefaultComposeCommand(), "exec", container), cmd...), " "), out, err)
+	r.NoError(err, "%s\n\n%s\n[ERROR]\n%v", strings.Join(append(env.GetExecDockerCommand(container), cmd...), " "), out, err)
 }
 
 func (env *TestEnvironment) DockerExec(container string, cmd ...string) error {
@@ -3215,8 +3224,7 @@ func (env *TestEnvironment) DockerExec(container string, cmd ...string) error {
 }
 
 func (env *TestEnvironment) DockerExecOut(container string, cmd ...string) (string, error) {
-	dcmd := append(env.GetDefaultComposeCommand(), "exec", container)
-	dcmd = append(dcmd, cmd...)
+	dcmd := append(env.GetExecDockerCommand(container), cmd...)
 	return utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", dcmd...)
 }
 

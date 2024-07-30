@@ -80,10 +80,16 @@ for pid in "${pids[@]}"; do
   fi
 done
 
+set +e
 go test -parallel ${RUN_PARALLEL} -race -timeout ${TEST_TIMEOUT:-60m} -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v ${CUR_DIR}/integration_test.go
-go tool covdata textfmt -i "${CUR_DIR}/_coverage_/" -o "${CUR_DIR}/_coverage_/coverage.out"
+TEST_FAILED=$?
+set -e
 
-if [[ "1" == "${CLEAN_AFTER:-1}" ]]; then
+if [[ "0" == "${TEST_FAILED}" ]]; then
+  go tool covdata textfmt -i "${CUR_DIR}/_coverage_/" -o "${CUR_DIR}/_coverage_/coverage.out"
+fi
+
+if [[ "1" == "${CLEAN_AFTER:-0}" || "0" == "${TEST_FAILED}" ]]; then
   pids=()
   for project in $(docker compose -f ${CUR_DIR}/${COMPOSE_FILE} ls --all -q); do
     docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project} --progress plain down --remove-orphans --volumes --timeout=1 &
