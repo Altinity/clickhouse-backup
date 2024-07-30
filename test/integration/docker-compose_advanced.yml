@@ -66,7 +66,9 @@ services:
       test: nc 127.0.0.1 10000 -z
       interval: 1s
       retries: 30
-    command: ["azurite", "--debug", "/data/debug.log" , "-l", "/data", "--blobHost", "0.0.0.0","--queueHost", "0.0.0.0", "--tableHost", "0.0.0.0", "--inMemoryPersistence"]
+    command: ["azurite", "--debug", "/data/debug.log" , "-l", "/data", "--blobHost", "0.0.0.0","--queueHost", "0.0.0.0", "--tableHost", "0.0.0.0" ]
+    volumes:
+      - azure:/data
 #    environment:
 #      - AZURITE_DB="mysql://root:root@mysql:3306/azurite_blob"
 
@@ -318,6 +320,12 @@ volumes:
       type: tmpfs
       o: size=250m
   pgsql:
+    driver: local
+    driver_opts:
+      device: tmpfs
+      type: tmpfs
+      o: size=60m
+  azure:
     driver: local
     driver_opts:
       device: tmpfs
