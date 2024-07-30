@@ -57,7 +57,7 @@ services:
       test: nc 127.0.0.1 10000 -z
       interval: 1s
       retries: 30
-    command: ["azurite", "--debug", "/data/debug.log" , "-l", "/data", "--blobHost", "0.0.0.0","--queueHost", "0.0.0.0", "--tableHost", "0.0.0.0"]
+    command: [ "azurite", "--debug", "/data/debug.log" , "-l", "/data", "--blobHost", "0.0.0.0","--queueHost", "0.0.0.0", "--tableHost", "0.0.0.0","--inMemoryPersistence" ]
 #    environment:
 #      - AZURITE_DB="mysql://root:root@mysql:3306/azurite_blob"
 

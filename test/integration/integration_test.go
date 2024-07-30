@@ -552,6 +552,71 @@ func TestIntegrationAzure(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
+func TestIntegrationGCSWithCustomEndpoint(t *testing.T) {
+	if isTestShouldSkip("GCS_TESTS") {
+		t.Skip("Skipping GCS_EMULATOR integration tests...")
+		return
+	}
+	env, r := NewTestEnvironment(t)
+	env.runMainIntegrationScenario(t, "GCS_EMULATOR", "config-gcs-custom-endpoint.yml")
+	env.Cleanup(t, r)
+}
+
+func TestIntegrationSFTPAuthKey(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	env.uploadSSHKeys(r, "clickhouse-backup")
+	env.runMainIntegrationScenario(t, "SFTP", "config-sftp-auth-key.yaml")
+	env.Cleanup(t, r)
+}
+
+func TestIntegrationSFTPAuthPassword(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	env.runMainIntegrationScenario(t, "SFTP", "config-sftp-auth-password.yaml")
+	env.Cleanup(t, r)
+}
+
+func TestIntegrationFTP(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 1 {
+		env.runMainIntegrationScenario(t, "FTP", "config-ftp.yaml")
+	} else {
+		env.runMainIntegrationScenario(t, "FTP", "config-ftp-old.yaml")
+	}
+	env.Cleanup(t, r)
+}
+
+func TestIntegrationS3Glacier(t *testing.T) {
+	if isTestShouldSkip("GLACIER_TESTS") {
+		t.Skip("Skipping GLACIER integration tests...")
+		return
+	}
+	env, r := NewTestEnvironment(t)
+	r.NoError(env.DockerCP("config-s3-glacier.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml.s3glacier-template"))
+	env.InstallDebIfNotExists(r, "clickhouse-backup", "curl", "gettext-base", "bsdmainutils", "dnsutils", "git", "ca-certificates")
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config.yml.s3glacier-template | envsubst > /etc/clickhouse-backup/config-s3-glacier.yml")
+	dockerExecTimeout = 60 * time.Minute
+	env.runMainIntegrationScenario(t, "GLACIER", "config-s3-glacier.yml")
+	dockerExecTimeout = 3 * time.Minute
+	env.Cleanup(t, r)
+}
+
+func TestIntegrationS3(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	env.checkObjectStorageIsEmpty(t, r, "S3")
+	env.runMainIntegrationScenario(t, "S3", "config-s3.yml")
+	env.Cleanup(t, r)
+}
+
+func TestIntegrationGCS(t *testing.T) {
+	if isTestShouldSkip("GCS_TESTS") {
+		t.Skip("Skipping GCS integration tests...")
+		return
+	}
+	env, r := NewTestEnvironment(t)
+	env.runMainIntegrationScenario(t, "GCS", "config-gcs.yml")
+	env.Cleanup(t, r)
+}
+
 func TestIntegrationEmbedded(t *testing.T) {
 	//t.Skipf("Test skipped, wait 23.8, RESTORE Ordinary table and RESTORE MATERIALIZED VIEW and {uuid} not works for %s version, look https://github.com/ClickHouse/ClickHouse/issues/43971 and https://github.com/ClickHouse/ClickHouse/issues/42709", os.Getenv("CLICKHOUSE_VERSION"))
 	//dependencies restore https://github.com/ClickHouse/ClickHouse/issues/39416, fixed in 23.3
@@ -596,70 +661,6 @@ func TestIntegrationEmbedded(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
-func TestIntegrationS3Glacier(t *testing.T) {
-	if isTestShouldSkip("GLACIER_TESTS") {
-		t.Skip("Skipping GLACIER integration tests...")
-		return
-	}
-	env, r := NewTestEnvironment(t)
-	r.NoError(env.DockerCP("config-s3-glacier.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml.s3glacier-template"))
-	env.InstallDebIfNotExists(r, "clickhouse-backup", "curl", "gettext-base", "bsdmainutils", "dnsutils", "git", "ca-certificates")
-	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config.yml.s3glacier-template | envsubst > /etc/clickhouse-backup/config-s3-glacier.yml")
-	dockerExecTimeout = 60 * time.Minute
-	env.runMainIntegrationScenario(t, "GLACIER", "config-s3-glacier.yml")
-	dockerExecTimeout = 3 * time.Minute
-	env.Cleanup(t, r)
-}
-
-func TestIntegrationS3(t *testing.T) {
-	env, r := NewTestEnvironment(t)
-	env.checkObjectStorageIsEmpty(t, r, "S3")
-	env.runMainIntegrationScenario(t, "S3", "config-s3.yml")
-	env.Cleanup(t, r)
-}
-
-func TestIntegrationGCS(t *testing.T) {
-	if isTestShouldSkip("GCS_TESTS") {
-		t.Skip("Skipping GCS integration tests...")
-		return
-	}
-	env, r := NewTestEnvironment(t)
-	env.runMainIntegrationScenario(t, "GCS", "config-gcs.yml")
-	env.Cleanup(t, r)
-}
-
-func TestIntegrationGCSWithCustomEndpoint(t *testing.T) {
-	if isTestShouldSkip("GCS_TESTS") {
-		t.Skip("Skipping GCS_EMULATOR integration tests...")
-		return
-	}
-	env, r := NewTestEnvironment(t)
-	env.runMainIntegrationScenario(t, "GCS_EMULATOR", "config-gcs-custom-endpoint.yml")
-	env.Cleanup(t, r)
-}
-
-func TestIntegrationSFTPAuthPassword(t *testing.T) {
-	env, r := NewTestEnvironment(t)
-	env.runMainIntegrationScenario(t, "SFTP", "config-sftp-auth-password.yaml")
-	env.Cleanup(t, r)
-}
-
-func TestIntegrationFTP(t *testing.T) {
-	env, r := NewTestEnvironment(t)
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 1 {
-		env.runMainIntegrationScenario(t, "FTP", "config-ftp.yaml")
-	} else {
-		env.runMainIntegrationScenario(t, "FTP", "config-ftp-old.yaml")
-	}
-	env.Cleanup(t, r)
-}
-
-func TestIntegrationSFTPAuthKey(t *testing.T) {
-	env, r := NewTestEnvironment(t)
-	env.uploadSSHKeys(r, "clickhouse-backup")
-	env.runMainIntegrationScenario(t, "SFTP", "config-sftp-auth-key.yaml")
-	env.Cleanup(t, r)
-}
 
 func TestIntegrationCustomKopia(t *testing.T) {
 	env, r := NewTestEnvironment(t)
