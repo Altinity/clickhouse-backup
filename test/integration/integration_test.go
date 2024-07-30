@@ -59,16 +59,14 @@ func init() {
 	if err != nil {
 		log.Fatalf("invalid RUN_PARALLEL environment variable value %s", runParallel)
 	}
-
 	ctx := context.Background()
-	factory := pool.NewPooledObjectFactorySimple(
-		func(context.Context) (interface{}, error) {
-			projectId.Add(1)
+	factory := pool.NewPooledObjectFactorySimple( func(context.Context) (interface{}, error) {
+			id := projectId.Add(1)
 			env := TestEnvironment{
-				ProjectName: fmt.Sprintf("project%d", projectId.Load()%uint32(runParallelInt)),
+				ProjectName: fmt.Sprintf("project%d", id%uint32(runParallelInt)),
 			}
 			return &env, nil
-		})
+	})
 	dockerPool = pool.NewObjectPoolWithDefaultConfig(ctx, factory)
 	dockerPool.Config.MaxTotal = runParallelInt
 }
@@ -766,7 +764,7 @@ func TestServerAPI(t *testing.T) {
 	fillDatabaseForAPIServer(maxTables, minFields, randFields, env, r, fieldTypes)
 
 	log.Debug("Run `clickhouse-backup server --watch` in background")
-	env.DockerExecNoError(r, "-d", "clickhouse-backup", "bash", "-ce", "clickhouse-backup server --watch &>>/tmp/clickhouse-backup-server.log")
+	env.DockerExecBackgroundNoError(r,"clickhouse-backup", "bash", "-ce", "clickhouse-backup server --watch &>>/tmp/clickhouse-backup-server.log")
 	time.Sleep(1 * time.Second)
 
 	testAPIBackupVersion(r, env)
@@ -2029,7 +2027,7 @@ func TestFIPS(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml delete remote "+fipsBackupName)
 
 	log.Debug("Run `clickhouse-backup-fips server` in background")
-	env.DockerExecNoError(r, "-d", "clickhouse", "bash", "-ce", "AWS_USE_FIPS_ENDPOINT=true clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml server &>>/tmp/clickhouse-backup-server-fips.log")
+	env.DockerExecBackgroundNoError(r, "clickhouse", "bash", "-ce", "AWS_USE_FIPS_ENDPOINT=true clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml server &>>/tmp/clickhouse-backup-server-fips.log")
 	time.Sleep(1 * time.Second)
 
 	runClickHouseClientInsertSystemBackupActions(r, env, []string{fmt.Sprintf("create_remote --tables="+t.Name()+".fips_table %s", fipsBackupName)}, true)
@@ -3191,6 +3189,11 @@ func (env *TestEnvironment) queryWithNoError(r *require.Assertions, query string
 }
 
 var dockerExecTimeout = 600 * time.Second
+
+func (env *TestEnvironment) DockerExecBackgroundNoError(r *require.Assertions, container string, cmd ...string) {
+	out, err := env.DockerExecBackgroundOut(container, cmd...)
+	r.NoError(err, "%s\n\n%s\n[ERROR]\n%v", strings.Join(append(append(env.GetDefaultComposeCommand(), "exec", "-d", container), cmd...), " "), out, err)
+}
 
 func (env *TestEnvironment) DockerExecBackground(container string, cmd ...string) error {
 	out, err := env.DockerExecBackgroundOut(container, cmd...)
