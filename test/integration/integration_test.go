@@ -469,6 +469,14 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 
 func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 	env.ch.Close()
+	out, err := env.DockerExecOut("minio", "bash", "-ce", "ls -lh /bitnami/minio/data/clickhouse/")
+	t.Log(t.Name(), "DEBUG", out)
+	r.NoError(err)
+
+	if t.Name() == "TestIntegrationS3" {
+		env.DockerExecNoError(r, "minio", "rm", "-rf", "/bitnami/minio/data/clickhouse/disk_s3")
+	}
+
 	if t.Name() == "TestRBAC" || t.Name() == "TestConfigs" || t.Name() == "TestIntegrationEmbedded" {
 		env.DockerExecNoError(r, "minio", "rm", "-rf", "/bitnami/minio/data/clickhouse/backups_s3")
 	}
@@ -2403,10 +2411,7 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	log.Debug("Clean before start")
 	fullCleanup(t, r, env, []string{fullBackupName, incrementBackupName}, []string{"remote", "local"}, databaseList, false, false, backupConfig)
 
-	env.DockerExecNoError(r, "minio", "mc", "ls", "local/clickhouse/disk_s3")
 	testData := generateTestData(t, r, env, remoteStorageType, defaultTestData)
-
-	env.DockerExecNoError(r, "minio", "mc", "ls", "local/clickhouse/disk_s3")
 
 	log.Debug("Create backup")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables", tablesPattern, fullBackupName)
