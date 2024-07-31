@@ -438,11 +438,12 @@ var defaultIncrementData = []TestDataStruct{
 }
 
 func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
+	isParallel := os.Getenv("RUN_PARALLEL") != "1" && t.Name() != "TestLongListRemote" && t.Name() != "TestIntegrationAzure"
 	if os.Getenv("COMPOSE_FILE") == "" || os.Getenv("CUR_DIR") == "" {
 		t.Fatal("please setup COMPOSE_FILE and CUR_DIR environment variables")
 	}
 	t.Helper()
-	if os.Getenv("RUN_PARALLEL") != "1" && t.Name() != "TestLongListRemote" {
+	if isParallel {
 		t.Parallel()
 	}
 
@@ -453,7 +454,7 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 	}
 	env := envObj.(*TestEnvironment)
 
-	if os.Getenv("RUN_PARALLEL") != "1" && t.Name() != "TestLongListRemote" {
+	if isParallel {
 		t.Logf("%s run in parallel mode project=%s", t.Name(), env.ProjectName)
 	} else {
 		t.Logf("%s run in sequence mode project=%s", t.Name(), env.ProjectName)
