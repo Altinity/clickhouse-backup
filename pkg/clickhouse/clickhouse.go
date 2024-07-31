@@ -65,7 +65,7 @@ func (ch *ClickHouse) Connect() error {
 		},
 		MaxOpenConns:    ch.Config.MaxConnections,
 		ConnMaxLifetime: 0, // don't change it, it related to SYSTEM SHUTDOWN behavior for properly rebuild RBAC lists on 20.4-22.3
-		MaxIdleConns:    1,
+		MaxIdleConns:    0,
 		DialTimeout:     timeout,
 		ReadTimeout:     timeout,
 	}
@@ -802,7 +802,7 @@ func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetad
 	if ch.version <= 21003000 {
 		return fmt.Errorf("your clickhouse-server version doesn't support SYSTEM RESTORE REPLICA statement, use `restore_as_attach: false` in config")
 	}
-	query := fmt.Sprintf("DETACH TABLE `%s`.`%s`", table.Database, table.Table)
+	query := fmt.Sprintf("DETACH TABLE `%s`.`%s` SYNC", table.Database, table.Table)
 	if err := ch.Query(query); err != nil {
 		return err
 	}
@@ -1157,6 +1157,7 @@ func (ch *ClickHouse) CalculateMaxFileSize(ctx context.Context, cfg *config.Conf
 	if !cfg.General.UploadByPart {
 		maxSizeQuery = "SELECT toInt64(max(data_by_disk) * 1.02) AS max_file_size FROM (SELECT disk_name, max(toInt64(bytes_on_disk)) data_by_disk FROM system.parts GROUP BY disk_name)"
 	}
+	maxSizeQuery += " SETTINGS empty_result_for_aggregation_by_empty_set=0"
 	if err := ch.SelectSingleRow(ctx, &rows, maxSizeQuery); err != nil {
 		return 0, fmt.Errorf("can't calculate max(bytes_on_disk): %v", err)
 	}

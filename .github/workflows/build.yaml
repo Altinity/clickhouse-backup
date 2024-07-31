@@ -7,7 +7,7 @@ on:
 
   push:
     branches:
-      - master
+      - "*"
 
 jobs:
   build:
@@ -269,11 +269,13 @@ jobs:
 
       - name: Running integration tests
         env:
+          RUN_PARALLEL: 2
           GOROOT: ${{ env.GOROOT_1_22_X64 }}
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
           # options for advanced debug CI/CD
-          # RUN_TESTS: "TestIntegrationS3"
+          # RUN_TESTS: "TestLongListRemote"
           # LOG_LEVEL: "debug"
+          # TEST_LOG_LEVEL: "debug"
           # GCS_DEBUG: "true"
           # SFTP_DEBUG: "true"
           # AZBLOB_DEBUG: "true"
@@ -293,7 +295,7 @@ jobs:
           QA_GCS_OVER_S3_SECRET_KEY: ${{ secrets.QA_GCS_OVER_S3_SECRET_KEY }}
           QA_GCS_OVER_S3_BUCKET: ${{ secrets.QA_GCS_OVER_S3_BUCKET }}
         run: |
-          set -x
+          set -xe
           echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"
           echo "GCS_TESTS=${GCS_TESTS}"
 
@@ -311,12 +313,27 @@ jobs:
             export COMPOSE_FILE=docker-compose.yml
           fi
 
-          command -v docker-compose || (apt-get update && apt-get install -y python3-pip && pip3 install -U docker-compose)
-          
+          export CUR_DIR="$(pwd)/test/integration"
           export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup-race"
-          docker-compose -f test/integration/${COMPOSE_FILE} up -d || ( docker-compose -f test/integration/${COMPOSE_FILE} ps -a && docker-compose -f test/integration/${COMPOSE_FILE} logs clickhouse && exit 1 ) 
-          docker-compose -f test/integration/${COMPOSE_FILE} ps -a
-          go test -timeout 60m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
+          docker compose -f "${CUR_DIR}/${COMPOSE_FILE}" --progress=quiet pull
+          
+          pids=()
+          for ((i = 0; i < RUN_PARALLEL; i++)); do
+            docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} --progress plain up -d &
+            pids+=($!)
+          done
+          
+          
+          for pid in "${pids[@]}"; do
+            if wait "$pid"; then
+                echo "$pid docker compose up successful"
+            else
+                echo "$pid the docker compose up failed. Exiting."
+                exit 1  # Exit with an error code if any command fails
+            fi
+          done
+          
+          go test -parallel ${RUN_PARALLEL} -timeout 60m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
       - name: Format integration coverage
         env:
           GOROOT: ${{ env.GOROOT_1_22_X64 }}

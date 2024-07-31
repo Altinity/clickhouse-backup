@@ -270,26 +270,16 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 
 	//clean partially downloaded requiredBackup
 	if remoteBackup.RequiredBackup != "" {
-		if localBackups, _, err = b.GetLocalBackups(ctx, disks); err == nil {
-			for _, localBackup := range localBackups {
-				if localBackup.BackupName != remoteBackup.BackupName && localBackup.DataSize+localBackup.CompressedSize+localBackup.MetadataSize+localBackup.RBACSize == 0 {
-					if err = b.RemoveBackupLocal(ctx, localBackup.BackupName, disks); err != nil {
-						return fmt.Errorf("downloadWithDiff -> RemoveBackupLocal cleaning error: %v", err)
-					} else {
-						b.log.Infof("partial required backup %s deleted", localBackup.BackupName)
-					}
-				}
-			}
-		} else {
-			return fmt.Errorf("downloadWithDiff -> GetLocalBackups cleaning error: %v", err)
+		if err = b.cleanPartialRequiredBackup(ctx, disks, remoteBackup.BackupName); err != nil {
+			return err
 		}
 	}
 
 	log.WithFields(apexLog.Fields{
-		"duration": utils.HumanizeDuration(time.Since(startDownload)),
-		"download_size":     utils.FormatBytes(dataSize + metadataSize + rbacSize + configSize),
-		"object_disk_size":   utils.FormatBytes(backupMetadata.ObjectDiskSize),
-		"version":  backupVersion,
+		"duration":         utils.HumanizeDuration(time.Since(startDownload)),
+		"download_size":    utils.FormatBytes(dataSize + metadataSize + rbacSize + configSize),
+		"object_disk_size": utils.FormatBytes(backupMetadata.ObjectDiskSize),
+		"version":          backupVersion,
 	}).Info("done")
 	return nil
 }

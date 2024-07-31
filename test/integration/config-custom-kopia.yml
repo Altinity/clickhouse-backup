@@ -15,8 +15,8 @@ clickhouse:
   username: backup
   password: meow=& 123?*%# МЯУ
   sync_replicated_tables: true
-  timeout: 5s
   restart_command: "sql:SYSTEM RELOAD USERS; sql:SYSTEM RELOAD CONFIG; sql:SYSTEM SHUTDOWN"
+  timeout: 60s
 custom:
   # all `kopia` uploads are incremental we don't need {{ .diffFromRemote }}
   upload_command: /custom/kopia/upload.sh {{ .backupName }}

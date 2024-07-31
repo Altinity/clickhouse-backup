@@ -223,6 +223,14 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 			}
 		}
 	}
+
+	//clean partially downloaded requiredBackup
+	if backupMetadata.RequiredBackup != "" {
+		if err = b.cleanPartialRequiredBackup(ctx, disks, backupMetadata.BackupName); err != nil {
+			return err
+		}
+	}
+
 	log.WithFields(apexLog.Fields{
 		"duration": utils.HumanizeDuration(time.Since(startRestore)),
 		"version":  backupVersion,

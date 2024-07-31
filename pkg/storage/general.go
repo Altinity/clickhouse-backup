@@ -160,6 +160,7 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 	if err != nil {
 		return nil, err
 	}
+	cacheMiss := false
 	err = bd.Walk(ctx, "/", false, func(ctx context.Context, o RemoteFile) error {
 		backupName := strings.Trim(o.Name(), "/")
 		if !parseMetadata || (parseMetadataOnly != "" && parseMetadataOnly != backupName) {
@@ -231,6 +232,7 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 		}
 		goodBackup := Backup{m, "", mf.LastModified()}
 		listCache[backupName] = goodBackup
+		cacheMiss = true
 		result = append(result, goodBackup)
 		return nil
 	})
@@ -244,8 +246,10 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 	sort.SliceStable(result, func(i, j int) bool {
 		return result[i].UploadDate.Before(result[j].UploadDate)
 	})
-	if err = bd.saveMetadataCache(ctx, listCache, result); err != nil {
-		return nil, fmt.Errorf("bd.saveMetadataCache return error: %v", err)
+	if cacheMiss || len(result) < len(listCache) {
+		if err = bd.saveMetadataCache(ctx, listCache, result); err != nil {
+			return nil, fmt.Errorf("bd.saveMetadataCache return error: %v", err)
+		}
 	}
 	return result, nil
 }

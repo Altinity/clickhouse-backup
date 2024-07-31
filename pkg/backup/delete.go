@@ -441,3 +441,20 @@ func (b *Backuper) CleanRemoteBroken(commandId int) error {
 	}
 	return nil
 }
+
+func (b *Backuper) cleanPartialRequiredBackup(ctx context.Context, disks []clickhouse.Disk, currentBackupName string) error {
+	if localBackups, _, err := b.GetLocalBackups(ctx, disks); err == nil {
+		for _, localBackup := range localBackups {
+			if localBackup.BackupName != currentBackupName && localBackup.DataSize+localBackup.CompressedSize+localBackup.MetadataSize+localBackup.RBACSize == 0 {
+				if err = b.RemoveBackupLocal(ctx, localBackup.BackupName, disks); err != nil {
+					return fmt.Errorf("CleanPartialRequiredBackups %s -> RemoveBackupLocal cleaning error: %v", localBackup.BackupName, err)
+				} else {
+					b.log.Infof("CleanPartialRequiredBackups %s deleted", localBackup.BackupName)
+				}
+			}
+		}
+	} else {
+		return fmt.Errorf("CleanPartialRequiredBackups -> GetLocalBackups cleaning error: %v", err)
+	}
+	return nil
+}

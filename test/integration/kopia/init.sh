@@ -1,7 +1,7 @@
 CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 export KOPIA_PASSWORD_FILE="${CUR_DIR}/password"
 export KOPIA_S3_BUCKET=clickhouse
-export KOPIA_S3_PATH=/clickhouse/kopia/cluster_name/shard_number/
+export KOPIA_S3_PATH=/kopia/cluster_name/shard_number/
 export KOPIA_S3_ENDPOINT=minio:9000
 export AWS_ACCESS_KEY_ID=access_key
 export AWS_SECRET_ACCESS_KEY=it_is_my_super_secret_key
