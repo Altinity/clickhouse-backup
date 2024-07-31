@@ -439,7 +439,7 @@ var defaultIncrementData = []TestDataStruct{
 }
 
 func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
-	isParallel := os.Getenv("RUN_PARALLEL") != "1" && slices.Index([]string{"TestLongListRemote","TestIntegrationAzure"}, t.Name()) == -1
+	isParallel := os.Getenv("RUN_PARALLEL") != "1" && slices.Index([]string{"TestLongListRemote"/*,"TestIntegrationAzure"*/}, t.Name()) == -1
 	if os.Getenv("COMPOSE_FILE") == "" || os.Getenv("CUR_DIR") == "" {
 		t.Fatal("please setup COMPOSE_FILE and CUR_DIR environment variables")
 	}
