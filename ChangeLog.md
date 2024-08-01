@@ -1,3 +1,13 @@
+# v2.5.21
+IMPROVEMENTS
+- switch from `docker-compose` (python) to `docker compose` (golang)
+- add parallel integration test execution fix [888](https://github.com/Altinity/clickhouse-backup/issues/888)
+- 
+BUG FIXES
+- properly handle log_pointer=1 corner case for `check_replica_before_attach: true`, fix [967](https://github.com/Altinity/clickhouse-backup/issues/967)
+- properly handle empty output for `list` command when `remote_storage: custom`, fix [963](https://github.com/Altinity/clickhouse-backup/issues/963), thanks @straysh
+- fix corner cases when connect to S3 provider with self-signed TLS certificates, check `S3_DISABLE_CERT_VALIDATION=true` in tests fix [960](https://github.com/Altinity/clickhouse-backup/issues/960)
+
 # v2.5.20
 IMPROVEMENTS
 - add `--restore-table-mapping` CLI and API parameter to `restore` and `restore_remote` command, fix [937](https://github.com/Altinity/clickhouse-backup/issues/937), thanks @nithin-vunet and @raspreet-vunet

@@ -169,20 +169,14 @@ jobs:
           # don't change it to avoid not working CI/CD
           RUN_TESTS: "*"
         run: |
-          set -x
+          set -xe
           export CLICKHOUSE_TESTS_DIR=$(pwd)/test/testflows/clickhouse_backup
 
           docker compose -f ${CLICKHOUSE_TESTS_DIR}/docker-compose/docker-compose.yml pull
           
           chmod +x $(pwd)/clickhouse-backup/clickhouse-backup*
           source ~/venv/qa/bin/activate
-          set +e
           ~/venv/qa/bin/python3 ./test/testflows/clickhouse_backup/regression.py --debug --only="${RUN_TESTS:-*}" --log ./test/testflows/raw.log 
-          if [[ "0" != "$?" ]]; then
-            docker-compose -f ${CLICKHOUSE_TESTS_DIR}/docker-compose/docker-compose.yml logs zookeeper
-            exit 1
-          fi
-          set -e
           tfs --debug --no-colors transform compact ./test/testflows/raw.log ./test/testflows/compact.log
           tfs --debug --no-colors transform nice ./test/testflows/raw.log ./test/testflows/nice.log.txt
           tfs --debug --no-colors transform short ./test/testflows/raw.log ./test/testflows/short.log.txt
