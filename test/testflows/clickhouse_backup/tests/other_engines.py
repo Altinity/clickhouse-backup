@@ -177,7 +177,7 @@ def kafka_engine(self):
             assert f"{name_prefix}" in r, error()
 
     finally:
-        with Finally("I bring up docker-compose to restore all services"):
+        with Finally("I bring up docker compose to restore all services"):
             command = f'{cluster.docker_compose} up -d --no-recreate 2>&1 | tee'
             cluster.command(None, command)
 

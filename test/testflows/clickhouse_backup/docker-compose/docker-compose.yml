@@ -229,7 +229,7 @@ services:
       start_period: 15s
 
   # dummy service which does nothing, but allows to postpone 
-  # 'docker-compose up -d' till all dependencies will go healthy
+  # 'docker compose up -d' till all dependencies will go healthy
   all_services_ready:
     image: hello-world
     depends_on:
