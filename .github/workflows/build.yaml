@@ -262,7 +262,7 @@ jobs:
 
       - name: Running integration tests
         env:
-          RUN_PARALLEL: 2
+          RUN_PARALLEL: 3
           GOROOT: ${{ env.GOROOT_1_22_X64 }}
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
           # options for advanced debug CI/CD
