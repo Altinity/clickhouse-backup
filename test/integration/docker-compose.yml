@@ -23,14 +23,13 @@ services:
     image: docker.io/bitnami/minio:${MINIO_VERSION:-latest}
     hostname: minio
     environment:
-      MINIO_ACCESS_KEY: access_key
-      MINIO_SECRET_KEY: it_is_my_super_secret_key
       MINIO_DEFAULT_BUCKETS: 'clickhouse'
       MINIO_ROOT_USER: access_key
       MINIO_ROOT_PASSWORD: it_is_my_super_secret_key
       MINIO_SCHEME: https
+      BITNAMI_DEBUG: "true"
     healthcheck:
-      test: curl -skL https://localhost:9000/ && ls -la /bitnami/minio/data/clickhouse/
+      test: ls -la /bitnami/minio/data/clickhouse/ && curl -skL https://localhost:9000/
       interval: 1s
       retries: 60
     volumes:
