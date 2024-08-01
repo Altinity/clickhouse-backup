@@ -443,6 +443,9 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 		if cfg.S3.Concurrency > 0 {
 			s3cfg.Concurrency = cfg.S3.Concurrency
 		}
+		if cfg.S3.DisableCertVerification && !strings.HasSuffix(s3URL.Host, ".amazonaws.com") && !strings.HasSuffix(s3URL.Host, ".googleapis.com") {
+			s3cfg.DisableCertVerification = cfg.S3.DisableCertVerification
+		}
 		s3cfg.Region = "us-east-1"
 		if creds.S3Region != "" {
 			s3cfg.Region = creds.S3Region

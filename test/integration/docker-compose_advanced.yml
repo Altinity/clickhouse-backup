@@ -37,12 +37,18 @@ services:
       MINIO_DEFAULT_BUCKETS: 'clickhouse'
       MINIO_ROOT_USER: access_key
       MINIO_ROOT_PASSWORD: it_is_my_super_secret_key
+      MINIO_SCHEME: https
     healthcheck:
-      test: curl -sL http://localhost:9000/ && ls -la /bitnami/minio/data/clickhouse/
+      test: curl -skL https://localhost:9000/ && ls -la /bitnami/minio/data/clickhouse/
       interval: 1s
-      retries: 30
+      retries: 60
     volumes:
       - ./minio_nodelete.sh:/bin/minio_nodelete.sh
+      # go install github.com/minio/certgen@latest
+      # ~/go/bin/certgen -host "127.0.0.1,localhost,minio"
+      - ./minio.crt:/certs/CAs/public.crt
+      - ./minio.crt:/certs/public.crt
+      - ./minio.key:/certs/private.key
 
   gcs:
     image: fsouza/fake-gcs-server:latest
@@ -60,6 +66,7 @@ services:
       retries: 30
 
   azure:
+    # todo rollback image when merge https://github.com/Azure/Azurite/pull/2443
     # image: mcr.microsoft.com/azure-storage/azurite:latest
     image: docker.io/clickhousepro/azurite:latest
     hostname: devstoreaccount1.blob.azure
