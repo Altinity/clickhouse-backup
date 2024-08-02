@@ -7,7 +7,7 @@ on:
 
   push:
     branches:
-      - *
+      - "*"
 
 jobs:
   build:
