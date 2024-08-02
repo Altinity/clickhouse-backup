@@ -162,7 +162,7 @@ jobs:
           set -x
           export CLICKHOUSE_TESTS_DIR=$(pwd)/test/testflows/clickhouse_backup
 
-          command -v docker-compose || (apt-get update && apt-get install -y python3-pip && pip3 install -U docker-compose)
+          command -v docker-compose || (sudo apt-get update && sudo apt-get install -y python3-pip && pip3 install -U docker-compose)
           docker-compose -f ${CLICKHOUSE_TESTS_DIR}/docker-compose/docker-compose.yml pull
           
           chmod +x $(pwd)/clickhouse-backup/clickhouse-backup*
