@@ -23,7 +23,7 @@ var (
 )
 
 func main() {
-	log.SetHandler(logcli.New(os.Stdout))
+	log.SetHandler(logcli.New(os.Stderr))
 	cliapp := cli.NewApp()
 	cliapp.Name = "clickhouse-backup"
 	cliapp.Usage = "Tool for easy backup of ClickHouse with cloud support"

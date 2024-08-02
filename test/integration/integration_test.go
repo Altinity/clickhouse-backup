@@ -42,7 +42,7 @@ var dockerPool *pool.ObjectPool
 
 // setup log level
 func init() {
-	log.SetHandler(logcli.New(os.Stdout))
+	log.SetHandler(logcli.New(os.Stderr))
 	logLevel := "info"
 	if os.Getenv("LOG_LEVEL") != "" && os.Getenv("LOG_LEVEL") != "info" {
 		logLevel = os.Getenv("LOG_LEVEL")

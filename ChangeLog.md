@@ -1,8 +1,12 @@
+# v2.5.22
+IMPROVEMENTS
+- redirect logs into stderr instead of stdout, fix [969](https://github.com/Altinity/clickhouse-backup/issues/969)
+
 # v2.5.21
 IMPROVEMENTS
 - switch from `docker-compose` (python) to `docker compose` (golang)
 - add parallel integration test execution fix [888](https://github.com/Altinity/clickhouse-backup/issues/888)
-- 
+ 
 BUG FIXES
 - properly handle log_pointer=1 corner case for `check_replica_before_attach: true`, fix [967](https://github.com/Altinity/clickhouse-backup/issues/967)
 - properly handle empty output for `list` command when `remote_storage: custom`, fix [963](https://github.com/Altinity/clickhouse-backup/issues/963), thanks @straysh
