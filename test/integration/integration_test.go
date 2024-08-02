@@ -103,6 +103,7 @@ type TestEnvironment struct {
 var defaultTestData = []TestDataStruct{
 	{
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
+		// 24.8 shall resolve https://github.com/ClickHouse/ClickHouse/issues/67669
 		Name:   ".inner.table1",
 		Schema: "(Date Date, TimeStamp DateTime, Log String) ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)",
 		Rows: []map[string]interface{}{
@@ -350,6 +351,7 @@ var defaultTestData = []TestDataStruct{
 var defaultIncrementData = []TestDataStruct{
 	{
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
+		// 24.8 shall resolve https://github.com/ClickHouse/ClickHouse/issues/67669
 		Name:   ".inner.table1",
 		Schema: "(Date Date, TimeStamp DateTime, Log String) ENGINE = MergeTree(Date, (TimeStamp, Log), 8192)",
 		Rows: []map[string]interface{}{
