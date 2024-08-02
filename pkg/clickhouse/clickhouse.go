@@ -109,11 +109,11 @@ func (ch *ClickHouse) Connect() error {
 		return err
 	}
 
-	logFunc := log.Info()
+	logLevel := zerolog.InfoLevel
 	if !ch.Config.LogSQLQueries {
-		logFunc = log.Debug()
+		logLevel = zerolog.DebugLevel
 	}
-	logFunc.Stack().Msgf("clickhouse connection prepared: %s run ping", fmt.Sprintf("tcp://%v:%v?timeout=%v", ch.Config.Host, ch.Config.Port, ch.Config.Timeout))
+	log.WithLevel(logLevel).Stack().Msgf("clickhouse connection prepared: %s run ping", fmt.Sprintf("tcp://%v:%v?timeout=%v", ch.Config.Host, ch.Config.Port, ch.Config.Timeout))
 	err = ch.conn.Ping(context.Background())
 	if err != nil {
 		log.Error().Msgf("clickhouse connection ping: %s return error: %v", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
@@ -121,7 +121,7 @@ func (ch *ClickHouse) Connect() error {
 	} else {
 		ch.IsOpen = true
 	}
-	logFunc.Stack().Msgf("clickhouse connection open: %s", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
+	log.WithLevel(logLevel).Msgf("clickhouse connection open: %s", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
 	return err
 }
 
