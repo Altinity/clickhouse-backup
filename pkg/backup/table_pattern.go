@@ -13,14 +13,14 @@ import (
 	"sort"
 	"strings"
 
-	apexLog "github.com/apex/log"
-	"github.com/google/uuid"
-
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/filesystemhelper"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/partition"
+
+	"github.com/google/uuid"
+	"github.com/rs/zerolog/log"
 )
 
 type ListOfTables []metadata.TableMetadata
@@ -51,7 +51,6 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 	result := ListOfTables{}
 	resultPartitionNames := map[metadata.TableTitle][]string{}
 	tablePatterns := []string{"*"}
-	log := apexLog.WithField("logger", "getTableListByPatternLocal")
 	if tablePattern != "" {
 		tablePatterns = strings.Split(tablePattern, ",")
 	}
@@ -93,7 +92,7 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 			}
 			if isEmbeddedMetadata {
 				// embedded backup to s3 disk could contain only s3 key names inside .sql file
-				t, err := prepareTableMetadataFromSQL(data, metadataPath, names, log, b.cfg, database, table)
+				t, err := prepareTableMetadataFromSQL(data, metadataPath, names, b.cfg, database, table)
 				if err != nil {
 					return err
 				}
@@ -152,31 +151,31 @@ func (b *Backuper) shouldSkipByTableEngine(t metadata.TableMetadata) bool {
 	for _, engine := range b.cfg.ClickHouse.SkipTableEngines {
 		//b.log.Debugf("engine=%s query=%s", engine, t.Query)
 		if strings.ToLower(engine) == "dictionary" && (strings.HasPrefix(t.Query, "ATTACH DICTIONARY") || strings.HasPrefix(t.Query, "CREATE DICTIONARY")) {
-			b.log.Warnf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
+			log.Warn().Msgf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
 			return true
 		}
 		if strings.ToLower(engine) == "materializedview" && (strings.HasPrefix(t.Query, "ATTACH MATERIALIZED VIEW") || strings.HasPrefix(t.Query, "CREATE MATERIALIZED VIEW")) {
-			b.log.Warnf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
+			log.Warn().Msgf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
 			return true
 		}
 		if strings.ToLower(engine) == "view" && (strings.HasPrefix(t.Query, "ATTACH VIEW") || strings.HasPrefix(t.Query, "CREATE VIEW")) {
-			b.log.Warnf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
+			log.Warn().Msgf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
 			return true
 		}
 		if strings.ToLower(engine) == "liveview" && (strings.HasPrefix(t.Query, "ATTACH LIVE") || strings.HasPrefix(t.Query, "CREATE LIVE")) {
-			b.log.Warnf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
+			log.Warn().Msgf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
 			return true
 		}
 		if strings.ToLower(engine) == "windowview" && (strings.HasPrefix(t.Query, "ATTACH WINDOW") || strings.HasPrefix(t.Query, "CREATE WINDOW")) {
-			b.log.Warnf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
+			log.Warn().Msgf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
 			return true
 		}
 		if engine != "" {
 			if shouldSkip, err := regexp.MatchString(fmt.Sprintf("(?mi)ENGINE\\s*=\\s*%s([\\(\\s]|\\s*)", engine), t.Query); err == nil && shouldSkip {
-				b.log.Warnf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
+				log.Warn().Msgf("shouldSkipByTableEngine engine=%s found in : %s", engine, t.Query)
 				return true
 			} else if err != nil {
-				b.log.Warnf("shouldSkipByTableEngine engine=%s return error: %v", engine, err)
+				log.Warn().Msgf("shouldSkipByTableEngine engine=%s return error: %v", engine, err)
 			}
 		}
 	}
@@ -199,7 +198,7 @@ func (b *Backuper) checkShallSkipped(p string, metadataPath string) ([]string, s
 	return names, database, table, tableFullName, shallSkipped, true
 }
 
-func prepareTableMetadataFromSQL(data []byte, metadataPath string, names []string, log *apexLog.Entry, cfg *config.Config, database string, table string) (metadata.TableMetadata, error) {
+func prepareTableMetadataFromSQL(data []byte, metadataPath string, names []string, cfg *config.Config, database string, table string) (metadata.TableMetadata, error) {
 	query := string(data)
 	if strings.HasPrefix(query, "ATTACH") || strings.HasPrefix(query, "CREATE") {
 		query = strings.Replace(query, "ATTACH", "CREATE", 1)
@@ -213,7 +212,7 @@ func prepareTableMetadataFromSQL(data []byte, metadataPath string, names []strin
 	}
 	dataParts, err := os.ReadDir(dataPartsPath)
 	if err != nil {
-		log.Warn(err.Error())
+		log.Warn().Err(err).Send()
 	}
 	parts := map[string][]metadata.Part{
 		cfg.ClickHouse.EmbeddedBackupDisk: make([]metadata.Part, len(dataParts)),

@@ -18,8 +18,8 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
 	"github.com/antchfx/xmlquery"
-	apexLog "github.com/apex/log"
 	"github.com/puzpuzpuz/xsync"
+	"github.com/rs/zerolog/log"
 )
 
 type MetadataVersion uint32
@@ -207,7 +207,7 @@ func (c *ObjectStorageConnection) GetRemoteStorage() storage.RemoteStorage {
 	case "azure", "azure_blob_storage":
 		return c.AzureBlob
 	}
-	apexLog.Fatalf("invalid ObjectStorageConnection.type %s", c.Type)
+	log.Fatal().Stack().Msgf("invalid ObjectStorageConnection.type %s", c.Type)
 	return nil
 }
 
@@ -218,7 +218,7 @@ func (c *ObjectStorageConnection) GetRemoteBucket() string {
 	case "azure", "azure_blob_storage":
 		return c.AzureBlob.Config.Container
 	}
-	apexLog.Fatalf("invalid ObjectStorageConnection.type %s", c.Type)
+	log.Fatal().Stack().Msgf("invalid ObjectStorageConnection.type %s", c.Type)
 	return ""
 }
 
@@ -229,7 +229,7 @@ func (c *ObjectStorageConnection) GetRemotePath() string {
 	case "azure", "azure_blob_storage":
 		return c.AzureBlob.Config.Path
 	}
-	apexLog.Fatalf("invalid ObjectStorageConnection.type %s", c.Type)
+	log.Fatal().Stack().Msgf("invalid ObjectStorageConnection.type %s", c.Type)
 	return ""
 }
 
@@ -269,7 +269,7 @@ func ReadMetadataFromFile(path string) (*Metadata, error) {
 func ReadMetadataFromReader(metadataFile io.ReadCloser, path string) (*Metadata, error) {
 	defer func() {
 		if err := metadataFile.Close(); err != nil {
-			apexLog.Warnf("can't close reader %s: %v", path, err)
+			log.Warn().Msgf("can't close reader %s: %v", path, err)
 		}
 	}()
 
@@ -288,7 +288,7 @@ func WriteMetadataToFile(metadata *Metadata, path string) error {
 	}
 	defer func() {
 		if err = metadataFile.Close(); err != nil {
-			apexLog.Warnf("can't close %s: %v", path, err)
+			log.Warn().Msgf("can't close %s: %v", path, err)
 		}
 	}()
 	return metadata.writeToFile(metadataFile)
@@ -347,7 +347,7 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) e
 					creds.S3AccessKey = strings.Trim(accessKeyNode.InnerText(), "\r\n \t")
 					creds.S3SecretKey = strings.Trim(secretKeyNode.InnerText(), "\r\n \t")
 				} else {
-					apexLog.Warnf("%s -> /%s/storage_configuration/disks/%s doesn't contains <access_key_id> and <secret_access_key> environment variables will use", configFile, root.Data, diskName)
+					log.Warn().Msgf("%s -> /%s/storage_configuration/disks/%s doesn't contains <access_key_id> and <secret_access_key> environment variables will use", configFile, root.Data, diskName)
 					creds.S3AssumeRole = os.Getenv("AWS_ROLE_ARN")
 					if useEnvironmentCredentials != nil {
 						creds.S3AccessKey = os.Getenv("AWS_ACCESS_KEY_ID")
@@ -398,7 +398,7 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) e
 						if childCreds, childExists := DisksCredentials.Load(childDiskName); childExists {
 							DisksCredentials.Store(diskName, childCreds)
 						} else {
-							apexLog.Warnf("disk %s with type %s, reference to  childDisk %s which not contains DiskCredentials", diskName, diskType, childDiskName)
+							log.Warn().Msgf("disk %s with type %s, reference to  childDisk %s which not contains DiskCredentials", diskName, diskType, childDiskName)
 						}
 					}
 				}
@@ -487,7 +487,7 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 		// need for CopyObject
 		s3cfg.ObjectDiskPath = s3cfg.Path
 		s3cfg.Debug = cfg.S3.Debug
-		connection.S3 = &storage.S3{Config: &s3cfg, Log: apexLog.WithField("logger", "S3")}
+		connection.S3 = &storage.S3{Config: &s3cfg}
 		if err = connection.S3.Connect(ctx); err != nil {
 			return nil, err
 		}
@@ -526,7 +526,7 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 			azureCfg.Container = creds.AzureContainerName
 		}
 		azureCfg.Debug = cfg.AzureBlob.Debug
-		connection.AzureBlob = &storage.AzureBlob{Config: &azureCfg, Log: apexLog.WithField("logger", "AZBLOB")}
+		connection.AzureBlob = &storage.AzureBlob{Config: &azureCfg}
 		if err = connection.AzureBlob.Connect(ctx); err != nil {
 			return nil, err
 		}

@@ -4,8 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
-	apexLog "github.com/apex/log"
 	"io"
 	"os"
 	"path"
@@ -13,14 +11,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/jlaffaye/ftp"
 	"github.com/jolestar/go-commons-pool/v2"
+	"github.com/rs/zerolog/log"
 )
 
 type FTP struct {
 	clients       *pool.ObjectPool
 	Config        *config.FTPConfig
-	Log           *apexLog.Entry
 	dirCache      map[string]bool
 	dirCacheMutex sync.RWMutex
 }
@@ -64,21 +63,21 @@ func (f *FTP) Close(ctx context.Context) error {
 
 // getConnectionFromPool *ftp.ServerConn is not thread-safe, so we need implements connection pool
 func (f *FTP) getConnectionFromPool(ctx context.Context, where string) (*ftp.ServerConn, error) {
-	f.Log.Debugf("getConnectionFromPool(%s) active=%d idle=%d", where, f.clients.GetNumActive(), f.clients.GetNumIdle())
+	log.Debug().Msgf("getConnectionFromPool(%s) active=%d idle=%d", where, f.clients.GetNumActive(), f.clients.GetNumIdle())
 	client, err := f.clients.BorrowObject(ctx)
 	if err != nil {
-		f.Log.Errorf("can't BorrowObject from FTP Connection Pool: %v", err)
+		log.Error().Msgf("can't BorrowObject from FTP Connection Pool: %v", err)
 		return nil, err
 	}
 	return client.(*ftp.ServerConn), nil
 }
 
 func (f *FTP) returnConnectionToPool(ctx context.Context, where string, client *ftp.ServerConn) {
-	f.Log.Debugf("returnConnectionToPool(%s) active=%d idle=%d", where, f.clients.GetNumActive(), f.clients.GetNumIdle())
+	log.Debug().Msgf("returnConnectionToPool(%s) active=%d idle=%d", where, f.clients.GetNumActive(), f.clients.GetNumIdle())
 	if client != nil {
 		err := f.clients.ReturnObject(ctx, client)
 		if err != nil {
-			f.Log.Errorf("can't ReturnObject to FTP Connection Pool: %v", err)
+			log.Error().Msgf("can't ReturnObject to FTP Connection Pool: %v", err)
 		}
 	}
 }
@@ -182,7 +181,7 @@ func (f *FTP) GetFileReader(ctx context.Context, key string) (io.ReadCloser, err
 	return f.GetFileReaderAbsolute(ctx, path.Join(f.Config.Path, key))
 }
 func (f *FTP) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadCloser, error) {
-	f.Log.Debugf("GetFileReaderAbsolute key=%s", key)
+	log.Debug().Msgf("GetFileReaderAbsolute key=%s", key)
 	client, err := f.getConnectionFromPool(ctx, "GetFileReader")
 	if err != nil {
 		return nil, err
@@ -205,7 +204,7 @@ func (f *FTP) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
 }
 
 func (f *FTP) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser) error {
-	f.Log.Debugf("PutFileAbsolute key=%s", key)
+	log.Debug().Msgf("PutFileAbsolute key=%s", key)
 	client, err := f.getConnectionFromPool(ctx, "PutFile")
 	defer f.returnConnectionToPool(ctx, "PutFile", client)
 	if err != nil {
@@ -257,7 +256,7 @@ func (f *FTP) MkdirAll(key string, client *ftp.ServerConn) error {
 			f.dirCacheMutex.RLock()
 			if _, exists := f.dirCache[d]; exists {
 				f.dirCacheMutex.RUnlock()
-				f.Log.Debugf("MkdirAll %s exists in dirCache", d)
+				log.Debug().Msgf("MkdirAll %s exists in dirCache", d)
 				continue
 			}
 			f.dirCacheMutex.RUnlock()
@@ -265,7 +264,7 @@ func (f *FTP) MkdirAll(key string, client *ftp.ServerConn) error {
 			f.dirCacheMutex.Lock()
 			err = client.MakeDir(d)
 			if err != nil {
-				f.Log.Warnf("MkdirAll MakeDir(%s) return error: %v", d, err)
+				log.Warn().Msgf("MkdirAll MakeDir(%s) return error: %v", d, err)
 			} else {
 				f.dirCache[d] = true
 			}

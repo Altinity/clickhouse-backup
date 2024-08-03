@@ -5,7 +5,6 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
-	apexLog "github.com/apex/log"
 	"github.com/stretchr/testify/assert"
 	"regexp"
 	"testing"
@@ -13,7 +12,6 @@ import (
 )
 
 var b = Backuper{
-	log:             &apexLog.Entry{},
 	DefaultDataPath: "/var/lib/clickhouse",
 	DiskToPathMap: map[string]string{
 		"default": "/var/lib/clickhouse",
@@ -67,7 +65,6 @@ var jbodDisks = []clickhouse.Disk{
 		IsBackup:        false,
 	},
 }
-var log = apexLog.WithField("logger", "test")
 
 var remoteBackup = storage.Backup{
 	BackupMetadata: metadata.BackupMetadata{
@@ -136,7 +133,7 @@ func TestReBalanceTablesMetadataIfDiskNotExists_Files_NoErrors(t *testing.T) {
 	for i := range tableMetadataAfterDownload {
 		tableMetadataAfterDownloadRepacked[i] = &tableMetadataAfterDownload[i]
 	}
-	assert.NoError(t, b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, baseDisks, remoteBackup, log))
+	assert.NoError(t, b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, baseDisks, remoteBackup))
 	//rebalanced table
 	meta := tableMetadataAfterDownload[1]
 	assert.Equal(t, 4, len(meta.RebalancedFiles), "expect 4 rebalanced files in %s.%s", meta.Database, meta.Table)
@@ -191,7 +188,7 @@ func TestReBalanceTablesMetadataIfDiskNotExists_Parts_NoErrors(t *testing.T) {
 	for i := range tableMetadataAfterDownload {
 		tableMetadataAfterDownloadRepacked[i] = &tableMetadataAfterDownload[i]
 	}
-	assert.NoError(t, b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, baseDisks, remoteBackup, log))
+	assert.NoError(t, b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, baseDisks, remoteBackup))
 	// no files re-balance
 	for _, meta := range tableMetadataAfterDownload {
 		assert.Equal(t, 0, len(meta.RebalancedFiles))
@@ -237,7 +234,7 @@ func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 	for i := range tableMetadataAfterDownload {
 		tableMetadataAfterDownloadRepacked[i] = &tableMetadataAfterDownload[i]
 	}
-	err := b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, baseDisks, invalidRemoteBackup, log)
+	err := b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, baseDisks, invalidRemoteBackup)
 	assert.Error(t, err)
 	assert.Equal(t,
 		"disk: hdd2 not found in disk_types section map[string]string{\"default\":\"local\", \"s3\":\"s3\", \"s3_disk2\":\"s3\"} in Test/metadata.json",
@@ -250,7 +247,7 @@ func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 	for i := range tableMetadataAfterDownload {
 		tableMetadataAfterDownloadRepacked[i] = &tableMetadataAfterDownload[i]
 	}
-	err = b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, baseDisks, invalidRemoteBackup, log)
+	err = b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, baseDisks, invalidRemoteBackup)
 	assert.Error(t, err)
 	assert.Equal(t, "disk: hdd2, diskType: unknown not found in system.disks", err.Error())
 
@@ -266,7 +263,7 @@ func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 	invalidTable.Table = "test3"
 	invalidTable.Query = "CREATE TABLE default.test3(id UInt64) ENGINE=MergeTree() ORDER BY id SETTINGS storage_policy='invalid'"
 	tableMetadataAfterDownloadRepacked = []*metadata.TableMetadata{&invalidTable}
-	err = b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, baseDisks, invalidRemoteBackup, log)
+	err = b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, baseDisks, invalidRemoteBackup)
 	assert.Error(t, err)
 	matched, matchErr := regexp.MatchString(`storagePolicy: invalid with diskType: \w+ not found in system.disks`, err.Error())
 	assert.NoError(t, matchErr)
@@ -282,7 +279,7 @@ func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 		"hdd2":    {{Name: "part_3_3_0"}, {Name: "part_4_4_0"}},
 	}
 	tableMetadataAfterDownloadRepacked = []*metadata.TableMetadata{&invalidTable}
-	err = b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, invalidDisks, invalidRemoteBackup, log)
+	err = b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, invalidDisks, invalidRemoteBackup)
 	assert.Error(t, err)
 	assert.Equal(t, "250B free space, not found in system.disks with `local` type", err.Error())
 

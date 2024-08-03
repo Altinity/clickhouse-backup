@@ -6,9 +6,9 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
-	apexLog "github.com/apex/log"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
+	"github.com/rs/zerolog/log"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -117,11 +117,11 @@ func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, datab
 	}
 	defer func() {
 		if dropErr := dropPartitionIdTable(ch, database, partitionIdTable); dropErr != nil {
-			apexLog.Warnf("partition.GetPartitionId can't drop `%s`.`%s`: %v", database, partitionIdTable, dropErr)
+			log.Warn().Msgf("partition.GetPartitionId can't drop `%s`.`%s`: %v", database, partitionIdTable, dropErr)
 		}
 	}()
 	if len(columns) == 0 {
-		apexLog.Warnf("is_in_partition_key=1 fields not found in system.columns for table `%s`.`%s`", database, partitionIdTable)
+		log.Warn().Msgf("is_in_partition_key=1 fields not found in system.columns for table `%s`.`%s`", database, partitionIdTable)
 		return "", "", nil
 	}
 	partitionInsert := splitAndParsePartition(partition)
@@ -216,7 +216,7 @@ func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.C
 				for _, t := range tablesFromClickHouse {
 					createIdMapAndNameListIfNotExists(t.Database, t.Name, partitionsIdMap, partitionsNameList)
 					if partitionId, partitionName, err := GetPartitionIdAndName(ctx, ch, t.Database, t.Name, t.CreateTableQuery, partitionTuple); err != nil {
-						apexLog.Fatalf("partition.GetPartitionIdAndName error: %v", err)
+						log.Fatal().Msgf("partition.GetPartitionIdAndName error: %v", err)
 					} else if partitionId != "" {
 						addItemToIdMapAndNameListIfNotExists(partitionId, partitionName, t.Database, t.Name, partitionsIdMap, partitionsNameList, tablePattern)
 					}
@@ -224,7 +224,7 @@ func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.C
 				for _, t := range tablesFromMetadata {
 					createIdMapAndNameListIfNotExists(t.Database, t.Table, partitionsIdMap, partitionsNameList)
 					if partitionId, partitionName, err := GetPartitionIdAndName(ctx, ch, t.Database, t.Table, t.Query, partitionTuple); err != nil {
-						apexLog.Fatalf("partition.GetPartitionIdAndName error: %v", err)
+						log.Fatal().Msgf("partition.GetPartitionIdAndName error: %v", err)
 					} else if partitionId != "" {
 						addItemToIdMapAndNameListIfNotExists(partitionId, partitionName, t.Database, t.Table, partitionsIdMap, partitionsNameList, tablePattern)
 					}
@@ -263,13 +263,13 @@ func addItemToIdMapAndNameListIfNotExists(partitionId, partitionName, database, 
 			}], partitionName)
 		}
 	} else if err != nil {
-		apexLog.Errorf("wrong --partitions table specific pattern matching: %v", err)
+		log.Error().Msgf("wrong --partitions table specific pattern matching: %v", err)
 	}
 }
 
 func createIdMapAndNameListIfNotExists(database, table string, partitionsIdsMap map[metadata.TableTitle]common.EmptyMap, partitionsNameList map[metadata.TableTitle][]string) {
 	if _, exists := partitionsIdsMap[metadata.TableTitle{Database: database, Table: table}]; !exists {
-		partitionsIdsMap[metadata.TableTitle{Database: database, Table: table}] = make(common.EmptyMap, 0)
+		partitionsIdsMap[metadata.TableTitle{Database: database, Table: table}] = make(common.EmptyMap)
 	}
 	if _, exists := partitionsNameList[metadata.TableTitle{Database: database, Table: table}]; !exists {
 		partitionsNameList[metadata.TableTitle{Database: database, Table: table}] = make([]string, 0)

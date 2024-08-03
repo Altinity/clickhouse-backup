@@ -10,9 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/apex/log"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/log_helper"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/kelseyhightower/envconfig"
+	"github.com/rs/zerolog/log"
 	"github.com/urfave/cli"
 	"gopkg.in/yaml.v3"
 )
@@ -347,7 +348,7 @@ func LoadConfig(configLocation string) (*Config, error) {
 	}
 
 
-	log.SetLevelFromString(cfg.General.LogLevel)
+	log_helper.SetLogLevelFromString(cfg.General.LogLevel)
 
 	if err = ValidateConfig(cfg); err != nil {
 		return cfg, err
@@ -533,8 +534,8 @@ func DefaultConfig() *Config {
 			FullInterval:                        "24h",
 			FullDuration:                        24 * time.Hour,
 			WatchBackupNameTemplate:             "shard{shard}-{type}-{time:20060102150405}",
-			RestoreDatabaseMapping:              make(map[string]string, 0),
-			RestoreTableMapping:                 make(map[string]string, 0),
+			RestoreDatabaseMapping:              make(map[string]string),
+			RestoreTableMapping:                 make(map[string]string),
 			IONicePriority:                      "idle",
 			CPUNicePriority:                     15,
 			RBACBackupAlways:                    true,
@@ -632,7 +633,7 @@ func GetConfigFromCli(ctx *cli.Context) *Config {
 	configPath := GetConfigPath(ctx)
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
-		log.Fatal(err.Error())
+		log.Fatal().Stack().Err(err).Send()
 	}
 	RestoreEnvVars(oldEnvValues)
 	return cfg
@@ -665,14 +666,14 @@ func OverrideEnvVars(ctx *cli.Context) map[string]oldEnvValues {
 			if len(envVariable) < 2 {
 				envVariable = append(envVariable, "true")
 			}
-			log.Infof("override %s=%s", envVariable[0], envVariable[1])
+			log.Info().Msgf("override %s=%s", envVariable[0], envVariable[1])
 			oldValue, wasPresent := os.LookupEnv(envVariable[0])
 			oldValues[envVariable[0]] = oldEnvValues{
 				OldValue: oldValue,
 				WasPresent: wasPresent,
 			}
 			if err := os.Setenv(envVariable[0], envVariable[1]); err != nil {
-				log.Warnf("can't override %s=%s, error: %v", envVariable[0], envVariable[1], err)
+				log.Warn().Msgf("can't override %s=%s, error: %v", envVariable[0], envVariable[1], err)
 			}
 		}
 	}
@@ -683,11 +684,11 @@ func RestoreEnvVars(envVars map[string]oldEnvValues) {
 	for name, oldEnv := range envVars {
 		if oldEnv.WasPresent {
 			if err := os.Setenv(name, oldEnv.OldValue); err != nil {
-				log.Warnf("RestoreEnvVars can't restore %s=%s, error: %v", name, oldEnv.OldValue, err)
+				log.Warn().Msgf("RestoreEnvVars can't restore %s=%s, error: %v", name, oldEnv.OldValue, err)
 			}
 		} else {
 			if err := os.Unsetenv(name); err != nil {
-				log.Warnf("RestoreEnvVars can't delete %s, error: %v", name, err)
+				log.Warn().Msgf("RestoreEnvVars can't delete %s, error: %v", name, err)
 			}
 		}
 	}

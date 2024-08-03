@@ -3,15 +3,17 @@ package main
 import (
 	"context"
 	"fmt"
+	stdlog "log"
 	"os"
 	"strings"
 
-	"github.com/apex/log"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+	"github.com/rs/zerolog/pkgerrors"
 	"github.com/urfave/cli"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/backup"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/logcli"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/server"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 )
@@ -23,7 +25,16 @@ var (
 )
 
 func main() {
-	log.SetHandler(logcli.New(os.Stderr))
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixMs
+	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
+	consoleWriter := zerolog.ConsoleWriter{Out: os.Stderr, NoColor: true, TimeFormat: "2006-01-02 15:04:05.000"}
+	//diodeWriter := diode.NewWriter(consoleWriter, 4096, 10*time.Millisecond, func(missed int) {
+	//	fmt.Printf("Logger Dropped %d messages", missed)
+	//})
+	log.Logger = zerolog.New(zerolog.SyncWriter(consoleWriter)).With().Timestamp().Caller().Logger()
+	//zerolog.SetGlobalLevel(zerolog.Disabled)
+	//log.Logger = zerolog.New(os.Stdout).With().Timestamp().Caller().Logger()
+	stdlog.SetOutput(log.Logger)
 	cliapp := cli.NewApp()
 	cliapp.Name = "clickhouse-backup"
 	cliapp.Usage = "Tool for easy backup of ClickHouse with cloud support"
@@ -499,11 +510,11 @@ func main() {
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				if c.Args().Get(1) == "" {
-					log.Errorf("Backup name must be defined")
+					log.Err(fmt.Errorf("backup name must be defined")).Send()
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
 				}
 				if c.Args().Get(0) != "local" && c.Args().Get(0) != "remote" {
-					log.Errorf("Unknown command '%s'\n", c.Args().Get(0))
+					log.Err(fmt.Errorf("Unknown command '%s'\n", c.Args().Get(0))).Send()
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
 				}
 				return b.Delete(c.Args().Get(0), c.Args().Get(1), c.Int("command-id"))
@@ -639,6 +650,6 @@ func main() {
 		},
 	}
 	if err := cliapp.Run(os.Args); err != nil {
-		log.Fatal(err.Error())
+		log.Fatal().Err(err).Send()
 	}
 }

@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	apexLog "github.com/apex/log"
+	"github.com/rs/zerolog"
 	"io"
 	"io/fs"
 	"net/url"
@@ -17,9 +19,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	apexLog "github.com/apex/log"
 	"github.com/mattn/go-shellwords"
 	recursiveCopy "github.com/otiai10/copy"
+	"github.com/rs/zerolog/log"
 	"github.com/yargevad/filepathx"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/text/cases"
@@ -56,10 +58,6 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 		return err
 	}
 
-	log := apexLog.WithFields(apexLog.Fields{
-		"backup":    backupName,
-		"operation": "restore",
-	})
 	doRestoreData := (!schemaOnly && !rbacOnly && !configsOnly) || dataOnly
 
 	if err := b.ch.Connect(); err != nil {
@@ -81,12 +79,12 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	}
 	b.DefaultDataPath, err = b.ch.GetDefaultPath(disks)
 	if err != nil {
-		log.Warnf("%v", err)
+		log.Warn().Msgf("%v", err)
 		return ErrUnknownClickhouseDataPath
 	}
 	if b.cfg.General.RestoreSchemaOnCluster != "" {
 		if b.cfg.General.RestoreSchemaOnCluster, err = b.ch.ApplyMacros(ctx, b.cfg.General.RestoreSchemaOnCluster); err != nil {
-			log.Warnf("%v", err)
+			log.Warn().Msgf("%v", err)
 			return err
 		}
 	}
@@ -130,10 +128,10 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 		if !restoreRBAC && !rbacOnly && !restoreConfigs && !configsOnly {
 			if !b.cfg.General.AllowEmptyBackups {
 				err = fmt.Errorf("'%s' doesn't contains tables for restore, if you need it, you can setup `allow_empty_backups: true` in `general` config section", backupName)
-				log.Errorf("%v", err)
+				log.Error().Msgf("%v", err)
 				return err
 			}
-			log.Warnf("'%s' doesn't contains tables for restore", backupName)
+			log.Warn().Msgf("'%s' doesn't contains tables for restore", backupName)
 			return nil
 		}
 	}
@@ -142,19 +140,19 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 		if err := b.restoreRBAC(ctx, backupName, disks, version, dropExists); err != nil {
 			return err
 		}
-		log.Infof("RBAC successfully restored")
+		log.Info().Msgf("RBAC successfully restored")
 		needRestart = true
 	}
 	if configsOnly || restoreConfigs {
 		if err := b.restoreConfigs(backupName, disks); err != nil {
 			return err
 		}
-		log.Infof("CONFIGS successfully restored")
+		log.Info().Msgf("CONFIGS successfully restored")
 		needRestart = true
 	}
 
 	if needRestart {
-		if err := b.restartClickHouse(ctx, backupName, log); err != nil {
+		if err := b.restartClickHouse(ctx, backupName); err != nil {
 			return err
 		}
 		if rbacOnly || configsOnly {
@@ -178,7 +176,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 		}
 		defer func() {
 			if err := b.dst.Close(ctx); err != nil {
-				b.log.Warnf("can't close BackupDestination error: %v", err)
+				log.Warn().Msgf("can't close BackupDestination error: %v", err)
 			}
 		}()
 	}
@@ -231,10 +229,10 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 		}
 	}
 
-	log.WithFields(apexLog.Fields{
+	log.Info().Fields(map[string]interface{}{
 		"duration": utils.HumanizeDuration(time.Since(startRestore)),
 		"version":  backupVersion,
-	}).Info("done")
+	}).Msg("done")
 	return nil
 }
 
@@ -282,19 +280,19 @@ func (b *Backuper) getTablesForRestoreLocal(ctx context.Context, backupName stri
 	return tablesForRestore, partitionsNames, nil
 }
 
-func (b *Backuper) restartClickHouse(ctx context.Context, backupName string, log *apexLog.Entry) error {
-	log.Warnf("%s contains `access` or `configs` directory, so we need exec %s", backupName, b.ch.Config.RestartCommand)
+func (b *Backuper) restartClickHouse(ctx context.Context, backupName string) error {
+	log.Warn().Msgf("%s contains `access` or `configs` directory, so we need exec %s", backupName, b.ch.Config.RestartCommand)
 	for _, cmd := range strings.Split(b.ch.Config.RestartCommand, ";") {
 		cmd = strings.Trim(cmd, " \t\r\n")
 		if strings.HasPrefix(cmd, "sql:") {
 			cmd = strings.TrimPrefix(cmd, "sql:")
 			if err := b.ch.QueryContext(ctx, cmd); err != nil {
-				log.Warnf("restart sql: %s, error: %v", cmd, err)
+				log.Warn().Msgf("restart sql: %s, error: %v", cmd, err)
 			}
 		}
 		if strings.HasPrefix(cmd, "exec:") {
 			cmd = strings.TrimPrefix(cmd, "exec:")
-			if err := b.executeShellCommandWithTimeout(ctx, cmd, log); err != nil {
+			if err := b.executeShellCommandWithTimeout(ctx, cmd); err != nil {
 				return err
 			}
 		}
@@ -312,30 +310,30 @@ breakByReconnect:
 			if err := b.ch.Connect(); err == nil {
 				break breakByReconnect
 			}
-			log.Infof("wait 3 seconds")
+			log.Info().Msg("wait 3 seconds")
 			time.Sleep(3 * time.Second)
 		}
 	}
 	return nil
 }
 
-func (b *Backuper) executeShellCommandWithTimeout(ctx context.Context, cmd string, log *apexLog.Entry) error {
+func (b *Backuper) executeShellCommandWithTimeout(ctx context.Context, cmd string) error {
 	shellCmd, err := shellwords.Parse(cmd)
 	if err != nil {
 		return err
 	}
 	shellCtx, shellCancel := context.WithTimeout(ctx, 180*time.Second)
 	defer shellCancel()
-	log.Infof("run %s", cmd)
+	log.Info().Msgf("run %s", cmd)
 	var out []byte
 	if len(shellCmd) > 1 {
 		out, err = exec.CommandContext(shellCtx, shellCmd[0], shellCmd[1:]...).CombinedOutput()
 	} else {
 		out, err = exec.CommandContext(shellCtx, shellCmd[0]).CombinedOutput()
 	}
-	log.Debug(string(out))
+	log.Debug().Msgf(string(out))
 	if err != nil {
-		log.Warnf("restart exec: %s, error: %v", cmd, err)
+		log.Warn().Msgf("restart exec: %s, error: %v", cmd, err)
 	}
 	return nil
 }
@@ -402,7 +400,6 @@ func (b *Backuper) prepareRestoreMapping(objectMapping []string, objectType stri
 
 // restoreRBAC - copy backup_name>/rbac folder to access_data_path
 func (b *Backuper) restoreRBAC(ctx context.Context, backupName string, disks []clickhouse.Disk, version int, dropExists bool) error {
-	log := b.log.WithField("logger", "restoreRBAC")
 	accessPath, err := b.ch.GetAccessManagementPath(ctx, nil)
 	if err != nil {
 		return err
@@ -410,7 +407,7 @@ func (b *Backuper) restoreRBAC(ctx context.Context, backupName string, disks []c
 	var k *keeper.Keeper
 	replicatedUserDirectories := make([]clickhouse.UserDirectory, 0)
 	if err = b.ch.SelectContext(ctx, &replicatedUserDirectories, "SELECT name FROM system.user_directories WHERE type='replicated'"); err == nil && len(replicatedUserDirectories) > 0 {
-		k = &keeper.Keeper{Log: b.log.WithField("logger", "keeper")}
+		k = &keeper.Keeper{}
 		if connErr := k.Connect(ctx, b.ch); connErr != nil {
 			return fmt.Errorf("but can't connect to keeper: %v", connErr)
 		}
@@ -424,7 +421,7 @@ func (b *Backuper) restoreRBAC(ctx context.Context, backupName string, disks []c
 
 	if err = b.restoreBackupRelatedDir(backupName, "access", accessPath, disks, []string{"*.jsonl"}); err == nil {
 		markFile := path.Join(accessPath, "need_rebuild_lists.mark")
-		log.Infof("create %s for properly rebuild RBAC after restart clickhouse-server", markFile)
+		log.Info().Msgf("create %s for properly rebuild RBAC after restart clickhouse-server", markFile)
 		file, err := os.Create(markFile)
 		if err != nil {
 			return err
@@ -432,7 +429,7 @@ func (b *Backuper) restoreRBAC(ctx context.Context, backupName string, disks []c
 		_ = file.Close()
 		_ = filesystemhelper.Chown(markFile, b.ch, disks, false)
 		listFilesPattern := path.Join(accessPath, "*.list")
-		log.Infof("remove %s for properly rebuild RBAC after restart clickhouse-server", listFilesPattern)
+		log.Info().Msgf("remove %s for properly rebuild RBAC after restart clickhouse-server", listFilesPattern)
 		if listFiles, err := filepathx.Glob(listFilesPattern); err != nil {
 			return err
 		} else {
@@ -473,7 +470,7 @@ func (b *Backuper) restoreRBACResolveAllConflicts(ctx context.Context, backupNam
 			if resolveErr := b.resolveRBACConflictIfExist(ctx, string(sql), accessPath, version, k, replicatedUserDirectories, dropExists); resolveErr != nil {
 				return resolveErr
 			}
-			b.log.Debugf("%s b.resolveRBACConflictIfExist(%s) no error", fPath, string(sql))
+			log.Debug().Msgf("%s b.resolveRBACConflictIfExist(%s) no error", fPath, string(sql))
 		}
 		if strings.HasSuffix(fPath, ".jsonl") {
 			file, openErr := os.Open(fPath)
@@ -487,14 +484,14 @@ func (b *Backuper) restoreRBACResolveAllConflicts(ctx context.Context, backupNam
 				data := keeper.DumpNode{}
 				jsonErr := json.Unmarshal([]byte(line), &data)
 				if jsonErr != nil {
-					b.log.Errorf("can't %s json.Unmarshal error: %v line: %s", fPath, line, jsonErr)
+					log.Error().Msgf("can't %s json.Unmarshal error: %v line: %s", fPath, line, jsonErr)
 					continue
 				}
 				if strings.HasPrefix(data.Path, "uuid/") {
 					if resolveErr := b.resolveRBACConflictIfExist(ctx, data.Value, accessPath, version, k, replicatedUserDirectories, dropExists); resolveErr != nil {
 						return resolveErr
 					}
-					b.log.Debugf("%s:%s b.resolveRBACConflictIfExist(%s) no error", fPath, data.Path, data.Value)
+					log.Debug().Msgf("%s:%s b.resolveRBACConflictIfExist(%s) no error", fPath, data.Path, data.Value)
 				}
 
 			}
@@ -503,7 +500,7 @@ func (b *Backuper) restoreRBACResolveAllConflicts(ctx context.Context, backupNam
 			}
 
 			if closeErr := file.Close(); closeErr != nil {
-				b.log.Warnf("can't close %s error: %v", fPath, closeErr)
+				log.Warn().Msgf("can't close %s error: %v", fPath, closeErr)
 			}
 
 		}
@@ -521,7 +518,7 @@ func (b *Backuper) resolveRBACConflictIfExist(ctx context.Context, sql string, a
 		return detectErr
 	}
 	if isExists, existsRBACType, existsRBACObjectId := b.isRBACExists(ctx, kind, name, accessPath, version, k, replicatedUserDirectories); isExists {
-		b.log.Warnf("RBAC object kind=%s, name=%s already present, will %s", kind, name, b.cfg.General.RBACConflictResolution)
+		log.Warn().Msgf("RBAC object kind=%s, name=%s already present, will %s", kind, name, b.cfg.General.RBACConflictResolution)
 		if b.cfg.General.RBACConflictResolution == "recreate" || dropExists {
 			if dropErr := b.dropExistsRBAC(ctx, kind, name, accessPath, existsRBACType, existsRBACObjectId, k); dropErr != nil {
 				return dropErr
@@ -547,13 +544,13 @@ func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, a
 		}
 		systemTable, systemTableExists := rbacSystemTableNames[kind]
 		if !systemTableExists {
-			b.log.Errorf("unsupported RBAC object kind: %s", kind)
+			log.Error().Msgf("unsupported RBAC object kind: %s", kind)
 			return false, "", ""
 		}
 		isRBACExistsSQL := fmt.Sprintf("SELECT toString(id) AS id, name FROM `system`.`%s` WHERE name=? LIMIT 1", systemTable)
 		existsRBACRow := make([]clickhouse.RBACObject, 0)
 		if err := b.ch.SelectContext(ctx, &existsRBACRow, isRBACExistsSQL, name); err != nil {
-			b.log.Warnf("RBAC object resolve failed, check SQL GRANTS or <access_management> settings for user which you use to connect to clickhouse-server, kind: %s, name: %s, error: %v", kind, name, err)
+			log.Warn().Msgf("RBAC object resolve failed, check SQL GRANTS or <access_management> settings for user which you use to connect to clickhouse-server, kind: %s, name: %s, error: %v", kind, name, err)
 			return false, "", ""
 		}
 		if len(existsRBACRow) == 0 {
@@ -565,7 +562,7 @@ func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, a
 	checkRBACExists := func(sql string) bool {
 		existsKind, existsName, detectErr := b.detectRBACObject(sql)
 		if detectErr != nil {
-			b.log.Warnf("isRBACExists error: %v", detectErr)
+			log.Warn().Msgf("isRBACExists error: %v", detectErr)
 			return false
 		}
 		if existsKind == kind && existsName == name {
@@ -579,7 +576,7 @@ func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, a
 		for _, f := range sqlFiles {
 			sql, readErr := os.ReadFile(f)
 			if readErr != nil {
-				b.log.Warnf("read %s error: %v", f, readErr)
+				log.Warn().Msgf("read %s error: %v", f, readErr)
 				continue
 			}
 			if checkRBACExists(string(sql)) {
@@ -587,7 +584,7 @@ func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, a
 			}
 		}
 	} else {
-		b.log.Warnf("access/*.sql error: %v", globErr)
+		log.Warn().Msgf("access/*.sql error: %v", globErr)
 	}
 
 	//search in keeper replicated user directory
@@ -595,7 +592,7 @@ func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, a
 		for _, userDirectory := range replicatedUserDirectories {
 			replicatedAccessPath, getAccessErr := k.GetReplicatedAccessPath(userDirectory.Name)
 			if getAccessErr != nil {
-				b.log.Warnf("b.isRBACExists -> k.GetReplicatedAccessPath error: %v", getAccessErr)
+				log.Warn().Msgf("b.isRBACExists -> k.GetReplicatedAccessPath error: %v", getAccessErr)
 				continue
 			}
 			isExists := false
@@ -612,7 +609,7 @@ func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, a
 				return false, nil
 			})
 			if walkErr != nil {
-				b.log.Warnf("b.isRBACExists -> k.Walk error: %v", walkErr)
+				log.Warn().Msgf("b.isRBACExists -> k.Walk error: %v", walkErr)
 				continue
 			}
 			if isExists {
@@ -728,11 +725,10 @@ func (b *Backuper) restoreRBACReplicated(backupName string, backupPrefixDir stri
 	if k == nil || len(replicatedUserDirectories) == 0 {
 		return nil
 	}
-	log := b.log.WithField("logger", "restoreRBACReplicated")
 	srcBackupDir := path.Join(b.DefaultDataPath, "backup", backupName, backupPrefixDir)
 	info, err := os.Stat(srcBackupDir)
 	if err != nil {
-		log.Warnf("stat: %s error: %v", srcBackupDir, err)
+		log.Warn().Msgf("stat: %s error: %v", srcBackupDir, err)
 		return err
 	}
 
@@ -762,7 +758,7 @@ func (b *Backuper) restoreRBACReplicated(backupName string, backupPrefixDir stri
 		if err != nil {
 			return err
 		}
-		log.Infof("keeper.Restore(%s) -> %s", jsonLFile, replicatedAccessPath)
+		log.Info().Msgf("keeper.Restore(%s) -> %s", jsonLFile, replicatedAccessPath)
 		if err := k.Restore(jsonLFile, replicatedAccessPath); err != nil {
 			return err
 		}
@@ -780,22 +776,21 @@ func (b *Backuper) restoreConfigs(backupName string, disks []clickhouse.Disk) er
 }
 
 func (b *Backuper) restoreBackupRelatedDir(backupName, backupPrefixDir, destinationDir string, disks []clickhouse.Disk, skipPatterns []string) error {
-	log := b.log.WithField("logger", "restoreBackupRelatedDir")
 	srcBackupDir := path.Join(b.DefaultDataPath, "backup", backupName, backupPrefixDir)
 	info, err := os.Stat(srcBackupDir)
 	if err != nil {
-		log.Warnf("stat: %s error: %v", srcBackupDir, err)
+		log.Warn().Msgf("stat: %s error: %v", srcBackupDir, err)
 		return err
 	}
 	existsFiles, _ := os.ReadDir(destinationDir)
 	for _, existsF := range existsFiles {
 		existsI, _ := existsF.Info()
-		log.Debugf("%s %v %v", path.Join(destinationDir, existsF.Name()), existsI.Size(), existsI.ModTime())
+		log.Debug().Msgf("%s %v %v", path.Join(destinationDir, existsF.Name()), existsI.Size(), existsI.ModTime())
 	}
 	if !info.IsDir() {
 		return fmt.Errorf("%s is not a dir", srcBackupDir)
 	}
-	log.Debugf("copy %s -> %s", srcBackupDir, destinationDir)
+	log.Debug().Msgf("copy %s -> %s", srcBackupDir, destinationDir)
 	copyOptions := recursiveCopy.Options{
 		OnDirExists: func(src, dst string) recursiveCopy.DirExistsAction {
 			return recursiveCopy.Merge
@@ -848,24 +843,24 @@ func (b *Backuper) dropExistPartitions(ctx context.Context, tablesForRestore Lis
 
 // RestoreSchema - restore schemas matched by tablePattern from backupName
 func (b *Backuper) RestoreSchema(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, disks []clickhouse.Disk, tablesForRestore ListOfTables, ignoreDependencies bool, version int) error {
-	log := apexLog.WithFields(apexLog.Fields{
-		"backup":    backupName,
-		"operation": "restore_schema",
-	})
 	startRestoreSchema := time.Now()
-	if dropErr := b.dropExistsTables(tablesForRestore, ignoreDependencies, version, log); dropErr != nil {
+	if dropErr := b.dropExistsTables(tablesForRestore, ignoreDependencies, version); dropErr != nil {
 		return dropErr
 	}
 	var restoreErr error
 	if b.isEmbedded {
 		restoreErr = b.restoreSchemaEmbedded(ctx, backupName, backupMetadata, disks, tablesForRestore, version)
 	} else {
-		restoreErr = b.restoreSchemaRegular(tablesForRestore, version, log)
+		restoreErr = b.restoreSchemaRegular(tablesForRestore, version)
 	}
 	if restoreErr != nil {
 		return restoreErr
 	}
-	log.WithField("duration", utils.HumanizeDuration(time.Since(startRestoreSchema))).Info("done")
+	log.Info().Fields(map[string]interface{}{
+		"backup":    backupName,
+		"operation": "restore_schema",
+		"duration":  utils.HumanizeDuration(time.Since(startRestoreSchema)),
+	}).Msg("done")
 	return nil
 }
 
@@ -879,7 +874,7 @@ func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string,
 		if !b.cfg.General.AllowEmptyBackups {
 			return fmt.Errorf("no tables for restore")
 		}
-		b.log.Warnf("no tables for restore in embeddded backup %s/metadata.json", backupName)
+		log.Warn().Msgf("no tables for restore in embeddded backup %s/metadata.json", backupName)
 		return nil
 	}
 	if b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
@@ -997,7 +992,7 @@ func (b *Backuper) fixEmbeddedMetadataSQLQuery(ctx context.Context, sqlBytes []b
 		if UUIDWithMergeTreeRE.Match(sqlBytes) && version < 23009000 {
 			sqlQuery = UUIDWithMergeTreeRE.ReplaceAllString(sqlQuery, "$1$2$3'$4'$5$4$7")
 		} else {
-			apexLog.Warnf("%s contains `{uuid}` macro, will replace to `{database}/{table}` see https://github.com/ClickHouse/ClickHouse/issues/42709 for details", filePath)
+			log.Warn().Msgf("%s contains `{uuid}` macro, will replace to `{database}/{table}` see https://github.com/ClickHouse/ClickHouse/issues/42709 for details", filePath)
 			filePathParts := strings.Split(filePath, "/")
 			database, err := url.QueryUnescape(filePathParts[len(filePathParts)-3])
 			if err != nil {
@@ -1023,9 +1018,9 @@ func (b *Backuper) fixEmbeddedMetadataSQLQuery(ctx context.Context, sqlBytes []b
 			return "", false, err
 		}
 		if len(settings) != 2 {
-			apexLog.Fatalf("can't get %#v from preprocessed_configs/config.xml", replicaXMLSettings)
+			log.Fatal().Msgf("can't get %#v from preprocessed_configs/config.xml", replicaXMLSettings)
 		}
-		apexLog.Warnf("%s contains `ReplicatedMergeTree()` without parameters, will replace to '%s` and `%s` see https://github.com/ClickHouse/ClickHouse/issues/42709 for details", filePath, settings["default_replica_path"], settings["default_replica_name"])
+		log.Warn().Msgf("%s contains `ReplicatedMergeTree()` without parameters, will replace to '%s` and `%s` see https://github.com/ClickHouse/ClickHouse/issues/42709 for details", filePath, settings["default_replica_path"], settings["default_replica_name"])
 		matches := emptyReplicatedMergeTreeRE.FindStringSubmatch(sqlQuery)
 		substitution := fmt.Sprintf("$1$2('%s','%s')$4", settings["default_replica_path"], settings["default_replica_name"])
 		if matches[2] != "" {
@@ -1037,7 +1032,7 @@ func (b *Backuper) fixEmbeddedMetadataSQLQuery(ctx context.Context, sqlBytes []b
 	return sqlQuery, sqlMetadataChanged, nil
 }
 
-func (b *Backuper) restoreSchemaRegular(tablesForRestore ListOfTables, version int, log *apexLog.Entry) error {
+func (b *Backuper) restoreSchemaRegular(tablesForRestore ListOfTables, version int) error {
 	totalRetries := len(tablesForRestore)
 	restoreRetries := 0
 	isDatabaseCreated := common.EmptyMap{}
@@ -1066,7 +1061,7 @@ func (b *Backuper) restoreSchemaRegular(tablesForRestore ListOfTables, version i
 			// https://github.com/Altinity/clickhouse-backup/issues/466
 			if b.cfg.General.RestoreSchemaOnCluster == "" && strings.Contains(schema.Query, "{uuid}") && strings.Contains(schema.Query, "Replicated") {
 				if !strings.Contains(schema.Query, "UUID") {
-					log.Warnf("table query doesn't contains UUID, can't guarantee properly restore for ReplicatedMergeTree")
+					log.Warn().Msgf("table query doesn't contains UUID, can't guarantee properly restore for ReplicatedMergeTree")
 				} else {
 					schema.Query = UUIDWithMergeTreeRE.ReplaceAllString(schema.Query, "$1$2$3'$4'$5$4$7")
 				}
@@ -1084,7 +1079,7 @@ func (b *Backuper) restoreSchemaRegular(tablesForRestore ListOfTables, version i
 						schema.Database, schema.Table, restoreErr, restoreRetries,
 					)
 				} else {
-					log.Warnf(
+					log.Warn().Msgf(
 						"can't create table '%s.%s': %v, will try again", schema.Database, schema.Table, restoreErr,
 					)
 				}
@@ -1099,7 +1094,7 @@ func (b *Backuper) restoreSchemaRegular(tablesForRestore ListOfTables, version i
 	return nil
 }
 
-func (b *Backuper) dropExistsTables(tablesForDrop ListOfTables, ignoreDependencies bool, version int, log *apexLog.Entry) error {
+func (b *Backuper) dropExistsTables(tablesForDrop ListOfTables, ignoreDependencies bool, version int) error {
 	var dropErr error
 	dropRetries := 0
 	totalRetries := len(tablesForDrop)
@@ -1141,7 +1136,7 @@ func (b *Backuper) dropExistsTables(tablesForDrop ListOfTables, ignoreDependenci
 						schema.Database, schema.Table, dropErr, dropRetries,
 					)
 				} else {
-					log.Warnf(
+					log.Warn().Msgf(
 						"can't drop table '%s.%s': %v, will try again", schema.Database, schema.Table, dropErr,
 					)
 				}
@@ -1160,11 +1155,6 @@ func (b *Backuper) dropExistsTables(tablesForDrop ListOfTables, ignoreDependenci
 func (b *Backuper) RestoreData(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, dataOnly bool, metadataPath, tablePattern string, partitions []string, disks []clickhouse.Disk, version int) error {
 	var err error
 	startRestoreData := time.Now()
-	log := apexLog.WithFields(apexLog.Fields{
-		"backup":    backupName,
-		"operation": "restore_data",
-	})
-
 	diskMap := make(map[string]string, len(disks))
 	diskTypes := make(map[string]string, len(disks))
 	for _, disk := range disks {
@@ -1182,28 +1172,31 @@ func (b *Backuper) RestoreData(ctx context.Context, backupName string, backupMet
 	if err != nil {
 		// fix https://github.com/Altinity/clickhouse-backup/issues/832
 		if b.cfg.General.AllowEmptyBackups && os.IsNotExist(err) {
-			log.Warnf("b.getTableListByPatternLocal return error: %v", err)
+			log.Warn().Msgf("b.getTableListByPatternLocal return error: %v", err)
 			return nil
 		}
 		return err
 	}
 	if len(tablesForRestore) == 0 {
 		if b.cfg.General.AllowEmptyBackups {
-			log.Warnf("not found schemas by %s in %s", tablePattern, backupName)
+			log.Warn().Msgf("not found schemas by %s in %s", tablePattern, backupName)
 			return nil
 		}
 		return fmt.Errorf("not found schemas schemas by %s in %s", tablePattern, backupName)
 	}
-	log.Debugf("found %d tables with data in backup", len(tablesForRestore))
+	log.Debug().Msgf("found %d tables with data in backup", len(tablesForRestore))
 	if b.isEmbedded {
 		err = b.restoreDataEmbedded(ctx, backupName, dataOnly, version, tablesForRestore, partitionsNameList)
 	} else {
-		err = b.restoreDataRegular(ctx, backupName, backupMetadata, tablePattern, tablesForRestore, diskMap, diskTypes, disks, log)
+		err = b.restoreDataRegular(ctx, backupName, backupMetadata, tablePattern, tablesForRestore, diskMap, diskTypes, disks)
 	}
 	if err != nil {
 		return err
 	}
-	log.WithField("duration", utils.HumanizeDuration(time.Since(startRestoreData))).Info("done")
+	log.Info().Fields(map[string]interface{}{
+		"backup":    backupName,
+		"operation": "restore_data",
+	}).Str("duration", utils.HumanizeDuration(time.Since(startRestoreData))).Msg("done")
 	return nil
 }
 
@@ -1211,7 +1204,7 @@ func (b *Backuper) restoreDataEmbedded(ctx context.Context, backupName string, d
 	return b.restoreEmbedded(ctx, backupName, false, dataOnly, version, tablesForRestore, partitionsNameList)
 }
 
-func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, tablePattern string, tablesForRestore ListOfTables, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, log *apexLog.Entry) error {
+func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, tablePattern string, tablesForRestore ListOfTables, diskMap, diskTypes map[string]string, disks []clickhouse.Disk) error {
 	if len(b.cfg.General.RestoreDatabaseMapping) > 0 {
 		tablePattern = b.changeTablePatternFromRestoreMapping(tablePattern, "database")
 	}
@@ -1257,7 +1250,7 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ba
 				tablesForRestore[i].Table = targetTable
 			}
 		}
-		log := log.WithField("table", fmt.Sprintf("%s.%s", dstDatabase, dstTableName))
+		logger := log.With().Str("table", fmt.Sprintf("%s.%s", dstDatabase, dstTableName)).Logger()
 		dstTable, ok := dstTablesMap[metadata.TableTitle{
 			Database: dstDatabase,
 			Table:    dstTableName}]
@@ -1268,24 +1261,24 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ba
 		restoreBackupWorkingGroup.Go(func() error {
 			// https://github.com/Altinity/clickhouse-backup/issues/529
 			if b.cfg.ClickHouse.RestoreAsAttach {
-				if restoreErr := b.restoreDataRegularByAttach(restoreCtx, backupName, backupMetadata, table, diskMap, diskTypes, disks, dstTable, log); restoreErr != nil {
+				if restoreErr := b.restoreDataRegularByAttach(restoreCtx, backupName, backupMetadata, table, diskMap, diskTypes, disks, dstTable, logger); restoreErr != nil {
 					return restoreErr
 				}
 			} else {
-				if restoreErr := b.restoreDataRegularByParts(restoreCtx, backupName, backupMetadata, table, diskMap, diskTypes, disks, dstTable, log); restoreErr != nil {
+				if restoreErr := b.restoreDataRegularByParts(restoreCtx, backupName, backupMetadata, table, diskMap, diskTypes, disks, dstTable, logger); restoreErr != nil {
 					return restoreErr
 				}
 			}
 			// https://github.com/Altinity/clickhouse-backup/issues/529
 			for _, mutation := range table.Mutations {
 				if err := b.ch.ApplyMutation(restoreCtx, tablesForRestore[idx], mutation); err != nil {
-					log.Warnf("can't apply mutation %s for table `%s`.`%s`	: %v", mutation.Command, tablesForRestore[idx].Database, tablesForRestore[idx].Table, err)
+					log.Warn().Msgf("can't apply mutation %s for table `%s`.`%s`	: %v", mutation.Command, tablesForRestore[idx].Database, tablesForRestore[idx].Table, err)
 				}
 			}
-			log.WithFields(apexLog.Fields{
+			log.Info().Fields(map[string]interface{}{
 				"duration": utils.HumanizeDuration(time.Since(tableRestoreStartTime)),
 				"progress": fmt.Sprintf("%d/%d", idx+1, len(tablesForRestore)),
-			}).Info("done")
+			}).Msg("done")
 			return nil
 		})
 	}
@@ -1295,11 +1288,11 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ba
 	return nil
 }
 
-func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, table metadata.TableMetadata, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, dstTable clickhouse.Table, log *apexLog.Entry) error {
+func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, table metadata.TableMetadata, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, dstTable clickhouse.Table, logger zerolog.Logger) error {
 	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, table, disks, diskMap, dstTable.DataPaths, b.ch, false); err != nil {
 		return fmt.Errorf("can't copy data to storage '%s.%s': %v", table.Database, table.Table, err)
 	}
-	log.Debug("data to 'storage' copied")
+	logger.Debug().Msg("data to 'storage' copied")
 	var size int64
 	var err error
 	start := time.Now()
@@ -1307,7 +1300,7 @@ func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName st
 		return fmt.Errorf("can't restore object_disk server-side copy data parts '%s.%s': %v", table.Database, table.Table, err)
 	}
 	if size > 0 {
-		log.WithField("duration", utils.HumanizeDuration(time.Since(start))).WithField("size", utils.FormatBytes(uint64(size))).Info("download object_disks finish")
+		logger.Info().Str("duration", utils.HumanizeDuration(time.Since(start))).Str("size", utils.FormatBytes(uint64(size))).Msg("download object_disks finish")
 	}
 	if err := b.ch.AttachTable(ctx, table, dstTable); err != nil {
 		return fmt.Errorf("can't attach table '%s.%s': %v", table.Database, table.Table, err)
@@ -1315,19 +1308,19 @@ func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName st
 	return nil
 }
 
-func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, table metadata.TableMetadata, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, dstTable clickhouse.Table, log *apexLog.Entry) error {
+func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, table metadata.TableMetadata, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, dstTable clickhouse.Table, logger zerolog.Logger) error {
 	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, table, disks, diskMap, dstTable.DataPaths, b.ch, true); err != nil {
 		return fmt.Errorf("can't copy data to detached '%s.%s': %v", table.Database, table.Table, err)
 	}
-	log.Debug("data to 'detached' copied")
-	log.Info("download object_disks start")
+	logger.Debug().Msg("data to 'detached' copied")
+	logger.Info().Msg("download object_disks start")
 	var size int64
 	var err error
 	start := time.Now()
 	if size, err = b.downloadObjectDiskParts(ctx, backupName, backupMetadata, table, diskMap, diskTypes, disks); err != nil {
 		return fmt.Errorf("can't restore object_disk server-side copy data parts '%s.%s': %v", table.Database, table.Table, err)
 	}
-	log.WithField("duration", utils.HumanizeDuration(time.Since(start))).WithField("size", utils.FormatBytes(uint64(size))).Info("download object_disks finish")
+	log.Info().Str("duration", utils.HumanizeDuration(time.Since(start))).Str("size", utils.FormatBytes(uint64(size))).Msg("download object_disks finish")
 	if err := b.ch.AttachDataParts(table, dstTable); err != nil {
 		return fmt.Errorf("can't attach data parts for table '%s.%s': %v", table.Database, table.Table, err)
 	}
@@ -1482,7 +1475,7 @@ func (b *Backuper) findObjectDiskPartRecursive(ctx context.Context, backup metad
 		return "", "", err
 	}
 	var requiredTable *metadata.TableMetadata
-	requiredTable, err = b.downloadTableMetadataIfNotExists(ctx, requiredBackup.BackupName, log, metadata.TableTitle{Database: table.Database, Table: table.Table})
+	requiredTable, err = b.downloadTableMetadataIfNotExists(ctx, requiredBackup.BackupName, metadata.TableTitle{Database: table.Database, Table: table.Table})
 	// @todo think about add check what if disk type could changed (should already restricted, cause upload seek part in the same disk name)
 	for requiredDiskName, parts := range requiredTable.Parts {
 		for _, requiredPart := range parts {

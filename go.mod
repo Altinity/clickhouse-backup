@@ -9,7 +9,6 @@ require (
 	// wrong INSERT syntax, wait when resolve https://github.com/ClickHouse/clickhouse-go/issues/1345
 	github.com/ClickHouse/clickhouse-go/v2 v2.23.2
 	github.com/antchfx/xmlquery v1.4.1
-	github.com/apex/log v1.9.0
 	github.com/aws/aws-sdk-go-v2 v1.30.1
 	github.com/aws/aws-sdk-go-v2/config v1.27.23
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.23
@@ -20,7 +19,6 @@ require (
 	github.com/djherbis/buffer v1.2.0
 	github.com/djherbis/nio/v3 v3.0.1
 	github.com/eapache/go-resiliency v1.6.0
-	github.com/go-logfmt/logfmt v0.6.0
 	github.com/go-zookeeper/zk v1.0.3
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/google/uuid v1.6.0
@@ -49,7 +47,11 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
-require golang.org/x/text v0.16.0
+require (
+	github.com/apex/log v1.9.0
+	github.com/rs/zerolog v1.33.0
+	golang.org/x/text v0.16.0
+)
 
 require (
 	cloud.google.com/go v0.115.0 // indirect
@@ -104,7 +106,9 @@ require (
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/klauspost/pgzip v1.2.5 // indirect
 	github.com/kr/fs v0.1.0 // indirect
+	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-ieproxy v0.0.1 // indirect
+	github.com/mattn/go-isatty v0.0.19 // indirect
 	github.com/mitchellh/mapstructure v1.4.3 // indirect
 	github.com/mozillazg/go-httpheader v0.2.1 // indirect
 	github.com/nwaples/rardecode/v2 v2.0.0-beta.2 // indirect

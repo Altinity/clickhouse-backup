@@ -404,6 +404,7 @@ IMPROVEMENTS
 - improve support for `use_embedded_backup_restore: true`, applied ugly workaround in test to avoid https://github.com/ClickHouse/ClickHouse/issues/43971, and applied restore workaround to resolve https://github.com/ClickHouse/ClickHouse/issues/42709
 - migrate to `clickhouse-go/v2`, fix [540](https://github.com/Altinity/clickhouse-backup/issues/540), close [562](https://github.com/Altinity/clickhouse-backup/pull/562)
 - add documentation for `AWS_ARN_ROLE` and `AWS_WEB_IDENTITY_TOKEN_FILE`, fix [563](https://github.com/Altinity/clickhouse-backup/issues/563)
+- migrate from `apex/log` to `rs/zerolog`, fix RaceConditions, fix [624](https://github.com/Altinity/clickhouse-backup/issues/624),see details https://github.com/apex/log/issues/103
 
 BUG FIXES
 - hotfix wrong empty files when disk_mapping contains don't exist during creation, affected 2.2.7 version, look details [676](https://github.com/Altinity/clickhouse-backup/issues/676#issue-1771732489) 
