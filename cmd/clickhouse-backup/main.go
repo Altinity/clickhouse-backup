@@ -7,15 +7,15 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Altinity/clickhouse-backup/pkg/backup"
-	"github.com/Altinity/clickhouse-backup/pkg/config"
-	"github.com/Altinity/clickhouse-backup/pkg/server"
-	"github.com/Altinity/clickhouse-backup/pkg/status"
-
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/rs/zerolog/pkgerrors"
 	"github.com/urfave/cli"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/backup"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/server"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 )
 
 var (
@@ -27,7 +27,7 @@ var (
 func main() {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixMs
 	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
-	consoleWriter := zerolog.ConsoleWriter{Out: os.Stdout, NoColor: true, TimeFormat: "2006-01-02 15:04:05.000"}
+	consoleWriter := zerolog.ConsoleWriter{Out: os.Stderr, NoColor: true, TimeFormat: "2006-01-02 15:04:05.000"}
 	//diodeWriter := diode.NewWriter(consoleWriter, 4096, 10*time.Millisecond, func(missed int) {
 	//	fmt.Printf("Logger Dropped %d messages", missed)
 	//})
@@ -47,10 +47,16 @@ func main() {
 	}
 	cliapp.Flags = []cli.Flag{
 		cli.StringFlag{
-			Name:   "config, c",
-			Value:  config.DefaultConfigPath,
-			Usage:  "Config 'FILE' name.",
-			EnvVar: "CLICKHOUSE_BACKUP_CONFIG",
+			Name:     "config, c",
+			Value:    config.DefaultConfigPath,
+			Usage:    "Config 'FILE' name.",
+			EnvVar:   "CLICKHOUSE_BACKUP_CONFIG",
+			Required: false,
+		},
+		cli.StringSliceFlag{
+			Name:     "environment-override, env",
+			Usage:    "override any environment variable via CLI parameter",
+			Required: false,
 		},
 		cli.IntFlag{
 			Name:     "command-id",
@@ -75,21 +81,26 @@ func main() {
 		{
 			Name:      "tables",
 			Usage:     "List of tables, exclude skip_tables",
-			UsageText: "clickhouse-backup tables [-t, --tables=<db>.<table>]] [--all]",
+			UsageText: "clickhouse-backup tables [--tables=<db>.<table>] [--remote-backup=<backup-name>] [--all]",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.PrintTables(c.Bool("all"), c.String("table"))
+				return b.PrintTables(c.Bool("all"), c.String("table"), c.String("remote-backup"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.BoolFlag{
 					Name:   "all, a",
 					Hidden: false,
-					Usage:  "print table even when match with skip_tables pattern",
+					Usage:  "Print table even when match with skip_tables pattern",
 				},
 				cli.StringFlag{
 					Name:   "table, tables, t",
 					Hidden: false,
-					Usage:  "list tables only match with table name patterns, separated by comma, allow ? and * as wildcard",
+					Usage:  "List tables only match with table name patterns, separated by comma, allow ? and * as wildcard",
+				},
+				cli.StringFlag{
+					Name:   "remote-backup",
+					Hidden: false,
+					Usage:  "List tables from remote backup",
 				},
 			),
 		},
@@ -100,23 +111,29 @@ func main() {
 			Description: "Create new backup",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CreateBackup(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("skip-check-parts-columns"), version, c.Int("command-id"))
+				return b.CreateBackup(c.Args().First(), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("skip-check-parts-columns"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
 					Name:   "table, tables, t",
 					Hidden: false,
-					Usage:  "create backup only matched with table name patterns, separated by comma, allow ? and * as wildcard",
+					Usage:  "Create backup only matched with table name patterns, separated by comma, allow ? and * as wildcard",
+				},
+				cli.StringFlag{
+					Name:   "diff-from-remote",
+					Hidden: false,
+					Usage:  "Create incremental embedded backup or upload incremental object disk data based on other remote backup name",
 				},
 				cli.StringSliceFlag{
 					Name:   "partitions",
 					Hidden: false,
-					Usage: "create backup only for selected partition names, separated by comma\n" +
-						"if PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
-						"if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
-						"if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
-						"values depends on field types in your table, use single quote for String and Date/DateTime related types\n" +
-						"look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
+					Usage: "Create backup only for selected partition names, separated by comma\n" +
+						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
+						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
+						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",
@@ -146,7 +163,7 @@ func main() {
 				cli.BoolFlag{
 					Name:   "skip-check-parts-columns",
 					Hidden: false,
-					Usage:  "skip check system.parts_columns to disallow backup inconsistent column types for data parts",
+					Usage:  "Skip check system.parts_columns to disallow backup inconsistent column types for data parts",
 				},
 			),
 		},
@@ -157,33 +174,34 @@ func main() {
 			Description: "Create and upload",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CreateToRemote(c.Args().First(), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), c.Bool("skip-check-parts-columns"), version, c.Int("command-id"))
+				return b.CreateToRemote(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), c.Bool("skip-check-parts-columns"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
 					Name:   "table, tables, t",
 					Hidden: false,
-					Usage:  "create and upload backup only matched with table name patterns, separated by comma, allow ? and * as wildcard",
+					Usage:  "Create and upload backup only matched with table name patterns, separated by comma, allow ? and * as wildcard",
 				},
 				cli.StringSliceFlag{
 					Name:   "partitions",
 					Hidden: false,
-					Usage: "create and upload backup only for selected partition names, separated by comma\n" +
-						"if PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
-						"if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
-						"if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
-						"values depends on field types in your table, use single quote for String and Date/DateTime related types\n" +
-						"look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
+					Usage: "Create and upload backup only for selected partition names, separated by comma\n" +
+						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
+						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
+						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
 				cli.StringFlag{
 					Name:   "diff-from",
 					Hidden: false,
-					Usage:  "local backup name which used to upload current backup as incremental",
+					Usage:  "Local backup name which used to upload current backup as incremental",
 				},
 				cli.StringFlag{
 					Name:   "diff-from-remote",
 					Hidden: false,
-					Usage:  "remote backup name which used to upload current backup as incremental",
+					Usage:  "Remote backup name which used to upload current backup as incremental",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",
@@ -218,7 +236,12 @@ func main() {
 				cli.BoolFlag{
 					Name:   "skip-check-parts-columns",
 					Hidden: false,
-					Usage:  "skip check system.parts_columns to disallow backup inconsistent column types for data parts",
+					Usage:  "Skip check system.parts_columns to disallow backup inconsistent column types for data parts",
+				},
+				cli.BoolFlag{
+					Name:   "delete, delete-source, delete-local",
+					Hidden: false,
+					Usage:  "explicitly delete local backup during upload",
 				},
 			),
 		},
@@ -228,18 +251,18 @@ func main() {
 			UsageText: "clickhouse-backup upload [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--diff-from=<local_backup_name>] [--diff-from-remote=<remote_backup_name>] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Upload(c.Args().First(), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("resume"), c.Int("command-id"))
+				return b.Upload(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("resume"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
 					Name:   "diff-from",
 					Hidden: false,
-					Usage:  "local backup name which used to upload current backup as incremental",
+					Usage:  "Local backup name which used to upload current backup as incremental",
 				},
 				cli.StringFlag{
 					Name:   "diff-from-remote",
 					Hidden: false,
-					Usage:  "remote backup name which used to upload current backup as incremental",
+					Usage:  "Remote backup name which used to upload current backup as incremental",
 				},
 				cli.StringFlag{
 					Name:   "table, tables, t",
@@ -250,11 +273,12 @@ func main() {
 					Name:   "partitions",
 					Hidden: false,
 					Usage: "Upload backup only for selected partition names, separated by comma\n" +
-						"if PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
-						"if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
-						"if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
-						"values depends on field types in your table, use single quote for String and Date/DateTime related types\n" +
-						"look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
+						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
+						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
+						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",
@@ -265,6 +289,11 @@ func main() {
 					Name:   "resume, resumable",
 					Hidden: false,
 					Usage:  "Save intermediate upload state and resume upload if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'",
+				},
+				cli.BoolFlag{
+					Name:   "delete, delete-source, delete-local",
+					Hidden: false,
+					Usage:  "explicitly delete local backup during upload",
 				},
 			),
 		},
@@ -284,7 +313,7 @@ func main() {
 			UsageText: "clickhouse-backup download [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Download(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("resume"), c.Int("command-id"))
+				return b.Download(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("resume"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -296,11 +325,12 @@ func main() {
 					Name:   "partitions",
 					Hidden: false,
 					Usage: "Download backup data only for selected partition names, separated by comma\n" +
-						"if PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
-						"if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
-						"if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
-						"values depends on field types in your table, use single quote for String and Date/DateTime related types\n" +
-						"look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
+						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
+						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
+						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",
@@ -317,10 +347,10 @@ func main() {
 		{
 			Name:      "restore",
 			Usage:     "Create schema and restore data from backup",
-			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] <backup_name>",
+			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Restore(c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("ignore-dependencies"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Int("command-id"))
+				return b.Restore(c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.Bool("schema"), c.Bool("data"), c.Bool("drop"), c.Bool("ignore-dependencies"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -334,14 +364,20 @@ func main() {
 					Hidden: false,
 				},
 				cli.StringSliceFlag{
+					Name:   "restore-table-mapping, tm",
+					Usage:  "Define the rule to restore data. For the table not defined in this struct, the program will not deal with it.",
+					Hidden: false,
+				},
+				cli.StringSliceFlag{
 					Name:   "partitions",
 					Hidden: false,
 					Usage: "Restore backup only for selected partition names, separated by comma\n" +
-						"if PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
-						"if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
-						"if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
-						"values depends on field types in your table, use single quote for String and Date/DateTime related types\n" +
-						"look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
+						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
+						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
+						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",
@@ -388,10 +424,10 @@ func main() {
 		{
 			Name:      "restore_remote",
 			Usage:     "Download and restore",
-			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--skip-rbac] [--skip-configs] [--resumable] <backup_name>",
+			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--skip-rbac] [--skip-configs] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.RestoreFromRemote(c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), c.Int("command-id"))
+				return b.RestoreFromRemote(c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -405,14 +441,20 @@ func main() {
 					Hidden: false,
 				},
 				cli.StringSliceFlag{
+					Name:   "restore-table-mapping, tm",
+					Usage:  "Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.",
+					Hidden: false,
+				},
+				cli.StringSliceFlag{
 					Name:   "partitions",
 					Hidden: false,
 					Usage: "Download and restore backup only for selected partition names, separated by comma\n" +
-						"if PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
-						"if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
-						"if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
-						"values depends on field types in your table, use single quote for String and Date/DateTime related types\n" +
-						"look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
+						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
+						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
+						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",
@@ -547,12 +589,13 @@ func main() {
 				cli.StringSliceFlag{
 					Name:   "partitions",
 					Hidden: false,
-					Usage: "partition names, separated by comma\n" +
-						"if PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
-						"if PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
-						"if PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
-						"values depends on field types in your table, use single quote for String and Date/DateTime related types\n" +
-						"look to system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
+					Usage: "Partitions names, separated by comma\n" +
+						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
+						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
+						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
 				cli.BoolFlag{
 					Name:   "schema, s",
@@ -572,7 +615,7 @@ func main() {
 				cli.BoolFlag{
 					Name:   "skip-check-parts-columns",
 					Hidden: false,
-					Usage:  "skip check system.parts_columns to disallow backup inconsistent column types for data parts",
+					Usage:  "Skip check system.parts_columns to disallow backup inconsistent column types for data parts",
 				},
 			),
 		},
@@ -585,7 +628,7 @@ func main() {
 			Flags: append(cliapp.Flags,
 				cli.BoolFlag{
 					Name:   "watch",
-					Usage:  "run watch go-routine for 'create_remote' + 'delete local', after API server startup",
+					Usage:  "Run watch go-routine for 'create_remote' + 'delete local', after API server startup",
 					Hidden: false,
 				},
 				cli.StringFlag{

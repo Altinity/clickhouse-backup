@@ -2,10 +2,9 @@ import glob
 import inspect
 import os
 import tempfile
+import testflows.settings as settings
 import threading
 import time
-
-import testflows.settings as settings
 from testflows.asserts import error
 from testflows.connect import Shell as ShellBase
 from testflows.core import *
@@ -35,7 +34,7 @@ class Shell(ShellBase):
         # to terminate any open shell commands.
         # This is needed for example
         # to solve a problem with
-        # 'docker-compose exec {name} bash --noediting'
+        # 'docker compose exec {name} bash --noediting'
         # that does not clean up open bash processes
         # if not exited normally
         for i in range(10):
@@ -408,13 +407,13 @@ class ClickHouseNode(Node):
 
 
 class Cluster(object):
-    """Simple object around docker-compose cluster.
+    """Simple object around docker compose cluster.
     """
 
     def __init__(self, local=False,
                  configs_dir=None,
                  nodes=None,
-                 docker_compose="docker-compose", docker_compose_project_dir=None,
+                 docker_compose="docker compose", docker_compose_project_dir=None,
                  docker_compose_file="docker-compose.yml",
                  environ=None):
 
@@ -448,7 +447,7 @@ class Cluster(object):
         if not os.path.exists(docker_compose_file_path):
             raise TypeError(f"docker compose file '{docker_compose_file_path}' does not exist")
 
-        self.docker_compose += f" --ansi never --project-directory \"{docker_compose_project_dir}\" --file \"{docker_compose_file_path}\""
+        self.docker_compose += f" --ansi never --progress plain --project-directory \"{docker_compose_project_dir}\" --file \"{docker_compose_file_path}\""
         self.lock = threading.Lock()
 
     @property
@@ -508,7 +507,7 @@ class Cluster(object):
         while True:
             try:
                 c = self.control_shell(f"{self.docker_compose} ps {node} | grep {node}", timeout=timeout)
-                if c.exitcode == 0 and 'Up (healthy)' in c.output:
+                if c.exitcode == 0 and '(healthy)' in c.output:
                     return
             except IOError:
                 raise
@@ -612,7 +611,7 @@ class Cluster(object):
             del self.shells[shell_id]
 
     def __enter__(self):
-        with Given("docker-compose cluster"):
+        with Given("docker compose cluster"):
             self.up()
         return self
 
@@ -634,7 +633,7 @@ class Cluster(object):
         return Node(self, node_name)
 
     def down(self, timeout=300):
-        """Bring cluster down by executing docker-compose down."""
+        """Bring cluster down by executing docker compose down."""
 
         # add message to each clickhouse-server.log
         if settings.debug:
@@ -691,7 +690,7 @@ class Cluster(object):
             with And("I list environment variables to show their values"):
                 self.command(None, "env | grep CLICKHOUSE")
 
-        with Given("docker-compose"):
+        with Given("docker compose"):
             max_attempts = 5
             max_up_attempts = 1
 
@@ -700,9 +699,9 @@ class Cluster(object):
                     with By("checking if any containers are already running"):
                         self.command(None, f"{self.docker_compose} ps | tee")
 
-                    with And("executing docker-compose down just in case it is up"):
+                    with And("executing docker compose down just in case it is up"):
                         cmd = self.command(
-                            None, f"{self.docker_compose} down --timeout=10 2>&1 | tee", exitcode=None, timeout=timeout
+                            None, f"{self.docker_compose} down --timeout=1 2>&1 | tee", exitcode=None, timeout=timeout
                         )
                         if cmd.exitcode != 0:
                             continue
@@ -710,7 +709,7 @@ class Cluster(object):
                     with And("checking if any containers are still left running"):
                         self.command(None, f"{self.docker_compose} ps | tee")
 
-                    with And("executing docker-compose up"):
+                    with And("executing docker compose up"):
                         for up_attempt in range(max_up_attempts):
                             with By(f"attempt {up_attempt}/{max_up_attempts}"):
                                 cmd = self.command(
@@ -729,7 +728,7 @@ class Cluster(object):
                         break
 
             if cmd.exitcode != 0 or "is unhealthy" in cmd.output or "Exit" in ps_cmd.output:
-                fail("could not bring up docker-compose cluster")
+                fail("could not bring up docker compose cluster")
 
         with Then("wait all nodes report healthy"):
             for node_name in self.nodes["clickhouse"]:

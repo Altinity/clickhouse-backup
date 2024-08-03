@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Altinity/clickhouse-backup/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/jlaffaye/ftp"
 	"github.com/jolestar/go-commons-pool/v2"
 	"github.com/rs/zerolog/log"
@@ -42,12 +42,12 @@ func (f *FTP) Connect(ctx context.Context) error {
 		options = append(options, ftp.DialWithDebugOutput(os.Stdout))
 	}
 	if f.Config.TLS {
-		tlsConfig := tls.Config{}
+		tlsConfig := tls.Config{InsecureSkipVerify: f.Config.SkipTLSVerify}
 		options = append(options, ftp.DialWithTLS(&tlsConfig))
 	}
 	f.clients = pool.NewObjectPoolWithDefaultConfig(ctx, &ftpPoolFactory{options: options, ftp: f})
 	if f.Config.Concurrency > 1 {
-		f.clients.Config.MaxTotal = int(f.Config.Concurrency) * 3
+		f.clients.Config.MaxTotal = int(f.Config.Concurrency) * 4
 	}
 
 	f.dirCacheMutex.Lock()
@@ -123,11 +123,15 @@ func (f *FTP) DeleteFile(ctx context.Context, key string) error {
 }
 
 func (f *FTP) Walk(ctx context.Context, ftpPath string, recursive bool, process func(context.Context, RemoteFile) error) error {
+	prefix := path.Join(f.Config.Path, ftpPath)
+	return f.WalkAbsolute(ctx, prefix, recursive, process)
+}
+
+func (f *FTP) WalkAbsolute(ctx context.Context, prefix string, recursive bool, process func(context.Context, RemoteFile) error) error {
 	client, err := f.getConnectionFromPool(ctx, "Walk")
 	if err != nil {
 		return err
 	}
-	prefix := path.Join(f.Config.Path, ftpPath)
 	if !recursive {
 		entries, err := client.List(prefix)
 		f.returnConnectionToPool(ctx, "Walk", client)
@@ -174,12 +178,15 @@ func (f *FTP) Walk(ctx context.Context, ftpPath string, recursive bool, process 
 }
 
 func (f *FTP) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {
-	log.Debug().Msgf("GetFileReader key=%s", key)
+	return f.GetFileReaderAbsolute(ctx, path.Join(f.Config.Path, key))
+}
+func (f *FTP) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadCloser, error) {
+	log.Debug().Msgf("GetFileReaderAbsolute key=%s", key)
 	client, err := f.getConnectionFromPool(ctx, "GetFileReader")
 	if err != nil {
 		return nil, err
 	}
-	resp, err := client.Retr(path.Join(f.Config.Path, key))
+	resp, err := client.Retr(key)
 	return &FTPFileReader{
 		Response: resp,
 		pool:     f,
@@ -193,21 +200,24 @@ func (f *FTP) GetFileReaderWithLocalPath(ctx context.Context, key, _ string) (io
 }
 
 func (f *FTP) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
-	log.Debug().Msgf("PutFile key=%s", key)
+	return f.PutFileAbsolute(ctx, path.Join(f.Config.Path, key), r)
+}
+
+func (f *FTP) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser) error {
+	log.Debug().Msgf("PutFileAbsolute key=%s", key)
 	client, err := f.getConnectionFromPool(ctx, "PutFile")
 	defer f.returnConnectionToPool(ctx, "PutFile", client)
 	if err != nil {
 		return err
 	}
-	k := path.Join(f.Config.Path, key)
-	err = f.MkdirAll(path.Dir(k), client)
+	err = f.MkdirAll(path.Dir(key), client)
 	if err != nil {
 		return err
 	}
-	return client.Stor(k, r)
+	return client.Stor(key, r)
 }
 
-func (f *FTP) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (int64, error) {
+func (f *FTP) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
 	return 0, fmt.Errorf("CopyObject not imlemented for %s", f.Kind())
 }
 

@@ -44,7 +44,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration.xml
 </yandex>
 EOT
 
-if [[ "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
 
   if [[ ! -d /hdd3_data ]]; then
     mkdir -pv /hdd3_data
@@ -82,17 +82,19 @@ EOT
 fi
 
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.[8-9]|^21\.[0-9]{2} || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
-
+if [[ -f /var/lib/clickhouse/storage_configuration_s3.xml ]]; then
+  cp -fv /var/lib/clickhouse/storage_configuration_s3.xml /etc/clickhouse-server/config.d/storage_configuration_s3.xml
+else
 cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_s3.xml
 <yandex>
   <storage_configuration>
     <disks>
       <disk_s3>
         <type>s3</type>
-        <endpoint>http://minio:9000/clickhouse/disk_s3/</endpoint>
+        <endpoint>https://minio:9000/clickhouse/disk_s3/{cluster}/{shard}/</endpoint>
         <!-- https://github.com/Altinity/clickhouse-backup/issues/691
-        <access_key_id>access-key</access_key_id>
-        <secret_access_key>it-is-my-super-secret-key</secret_access_key>
+        <access_key_id>access_key</access_key_id>
+        <secret_access_key>it_is_my_super_secret_key</secret_access_key>
         -->
         <use_environment_credentials>1</use_environment_credentials>
         <!-- to avoid slow startup -->
@@ -113,30 +115,34 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_s3.xml
 EOT
 
 fi
+fi
 
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[6-9]+ || "${CLICKHOUSE_VERSION}" =~ ^22\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[1-9]+ ]]; then
 
 if [[ "" != "${QA_GCS_OVER_S3_BUCKET}" ]]; then
+if [[ -f /var/lib/clickhouse/storage_configuration_gcs.xml ]]; then
+  cp -fv /var/lib/clickhouse/storage_configuration_gcs.xml /etc/clickhouse-server/config.d/storage_configuration_gcs.xml
+else
 
 cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_gcs.xml
 <yandex>
   <storage_configuration>
     <disks>
-      <disk_gcs_over_s3>
+      <disk_gcs>
         <type>s3</type>
-        <endpoint>https://storage.googleapis.com/${QA_GCS_OVER_S3_BUCKET}/clickhouse_backup_disk_gcs_over_s3/${HOSTNAME}/</endpoint>
+        <endpoint>https://storage.googleapis.com/${QA_GCS_OVER_S3_BUCKET}/clickhouse_backup_disk_gcs_over_s3/${HOSTNAME}/{cluster}/{shard}/</endpoint>
         <access_key_id>${QA_GCS_OVER_S3_ACCESS_KEY}</access_key_id>
         <secret_access_key>${QA_GCS_OVER_S3_SECRET_KEY}</secret_access_key>
         <!-- to avoid slow startup -->
         <send_metadata>false</send_metadata>
         <support_batch_delete>false</support_batch_delete>
-      </disk_gcs_over_s3>
+      </disk_gcs>
     </disks>
     <policies>
       <gcs_only>
           <volumes>
               <gcs_only>
-                  <disk>disk_gcs_over_s3</disk>
+                  <disk>disk_gcs</disk>
               </gcs_only>
           </volumes>
       </gcs_only>
@@ -146,10 +152,15 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_gcs.xml
 EOT
 
 fi
+fi
 
 fi
 
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.12 || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
+
+if [[ -f /var/lib/clickhouse/storage_configuration_encrypted_s3.xml ]]; then
+  cp -fv /var/lib/clickhouse/storage_configuration_encrypted_s3.xml /etc/clickhouse-server/config.d/storage_configuration_encrypted_s3.xml
+else
 
 cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_encrypted_s3.xml
 <yandex>
@@ -157,10 +168,10 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_encrypted_s3.x
     <disks>
       <disk_s3>
         <type>s3</type>
-        <endpoint>http://minio:9000/clickhouse/disk_s3/</endpoint>
+        <endpoint>https://minio:9000/clickhouse/disk_s3/</endpoint>
         <!-- https://github.com/Altinity/clickhouse-backup/issues/691
-        <access_key_id>access-key</access_key_id>
-        <secret_access_key>it-is-my-super-secret-key</secret_access_key>
+        <access_key_id>access_key</access_key_id>
+        <secret_access_key>it_is_my_super_secret_key</secret_access_key>
         -->
         <use_environment_credentials>1</use_environment_credentials>
         <!-- to avoid slow startup -->
@@ -192,6 +203,33 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_encrypted_s3.x
 EOT
 
 fi
+fi
+
+# embedded local backup configuration
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[6-9] || "${CLICKHOUSE_VERSION}" =~ ^22\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[0-9]+ ]]; then
+
+mkdir -p /var/lib/clickhouse/disks/backups_local/ /var/lib/clickhouse/backups_embedded/
+chown -R clickhouse /var/lib/clickhouse/disks/ /var/lib/clickhouse/backups_embedded/
+
+cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_local.xml
+<?xml version="1.0"?>
+<clickhouse>
+  <storage_configuration>
+    <disks>
+      <backups_local>
+        <type>local</type>
+        <path>/var/lib/clickhouse/disks/backups_local/</path>
+      </backups_local>
+    </disks>
+  </storage_configuration>
+  <backups>
+    <allowed_disk>backups_local</allowed_disk>
+    <allowed_path>/var/lib/clickhouse/backups_embedded/</allowed_path>
+  </backups>
+</clickhouse>
+EOT
+
+fi
 
 # embedded s3 backup configuration
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[6-9] || "${CLICKHOUSE_VERSION}" =~ ^22\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[0-9]+ ]]; then
@@ -206,10 +244,10 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3.xml
     <disks>
       <backups_s3>
         <type>s3</type>
-        <endpoint>http://minio:9000/clickhouse/backups_s3/</endpoint>
+        <endpoint>https://minio:9000/clickhouse/backups_s3/{cluster}/{shard}/</endpoint>
         <!-- https://github.com/Altinity/clickhouse-backup/issues/691
-        <access_key_id>access-key</access_key_id>
-        <secret_access_key>it-is-my-super-secret-key</secret_access_key>
+        <access_key_id>access_key</access_key_id>
+        <secret_access_key>it_is_my_super_secret_key</secret_access_key>
         -->
         <use_environment_credentials>1</use_environment_credentials>
         <cache_enabled>false</cache_enabled>
@@ -219,15 +257,38 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3.xml
     </disks>
   </storage_configuration>
   <backups>
+    <allowed_disk>backups_local</allowed_disk>
     <allowed_disk>backups_s3</allowed_disk>
     <allowed_path>/var/lib/clickhouse/backups_embedded/</allowed_path>
   </backups>
-  <merge_tree>
-    <allow_remote_fs_zero_copy_replication>1</allow_remote_fs_zero_copy_replication>
-  </merge_tree>
 </clickhouse>
 EOT
 
+# zero replication is buggy,  can't freeze table: code: 344, message: FREEZE PARTITION queries are disabled.
+# https://github.com/ClickHouse/ClickHouse/issues/62167#issuecomment-2031774983
+#cat <<EOT > /etc/clickhouse-server/config.d/zero_copy_replication.xml
+#<yandex>
+#  <merge_tree>
+#    <allow_remote_fs_zero_copy_replication>1</allow_remote_fs_zero_copy_replication>
+#    <disable_freeze_partition_for_zero_copy_replication>0</disable_freeze_partition_for_zero_copy_replication>
+#  </merge_tree>
+#</yandex>
+#EOT
+
+cat <<EOT > /etc/clickhouse-server/config.d/zookeeper_log.xml
+<yandex>
+  <zookeeper_log>
+        <database>system</database>
+        <table>zookeeper_log</table>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+        <max_size_rows>1048576</max_size_rows>
+        <reserved_size_rows>8192</reserved_size_rows>
+        <buffer_size_rows_flush_threshold>524288</buffer_size_rows_flush_threshold>
+        <collect_interval_milliseconds>1000</collect_interval_milliseconds>
+        <flush_on_crash>true</flush_on_crash>
+    </zookeeper_log>
+</yandex>
+EOT
 fi
 
 # s3_plain and azure backup configuration
@@ -243,10 +304,10 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3_plai
     <disks>
       <backups_s3_plain>
         <type>s3_plain</type>
-        <endpoint>http://minio:9000/clickhouse/backups_s3_plain/</endpoint>
+        <endpoint>https://minio:9000/clickhouse/backups_s3_plain/{cluster}/{shard}/</endpoint>
         <!-- https://github.com/Altinity/clickhouse-backup/issues/691
-        <access_key_id>access-key</access_key_id>
-        <secret_access_key>it-is-my-super-secret-key</secret_access_key>
+        <access_key_id>access_key</access_key_id>
+        <secret_access_key>it_is_my_super_secret_key</secret_access_key>
         -->
         <use_environment_credentials>1</use_environment_credentials>
         <cache_enabled>false</cache_enabled>
@@ -254,6 +315,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3_plai
     </disks>
   </storage_configuration>
   <backups>
+    <allowed_disk>backups_local</allowed_disk>
     <allowed_disk>backups_s3</allowed_disk>
     <allowed_disk>backups_s3_plain</allowed_disk>
   </backups>
@@ -263,12 +325,16 @@ EOT
 mkdir -p /var/lib/clickhouse/disks/backups_azure/
 chown -R clickhouse /var/lib/clickhouse/disks/
 
-cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_azure.xml
+if [[ -f /var/lib/clickhouse/storage_configuration_azblob.xml ]]; then
+  cp -fv /var/lib/clickhouse/storage_configuration_azblob.xml /etc/clickhouse-server/config.d/backup_storage_configuration_azblob.xml
+else
+
+cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_azblob.xml
 <?xml version="1.0"?>
 <clickhouse>
   <storage_configuration>
     <disks>
-      <azure>
+      <disk_azblob>
         <type>azure_blob_storage</type>
         <storage_account_url>http://azure:10000/devstoreaccount1</storage_account_url>
         <container_name>azure-disk</container_name>
@@ -276,7 +342,8 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_azure.x
         <account_name>devstoreaccount1</account_name>
         <account_key>Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==</account_key>
         <cache_enabled>false</cache_enabled>
-      </azure>
+        <use_native_copy>true</use_native_copy>
+      </disk_azblob>
       <backups_azure>
         <type>azure_blob_storage</type>
         <storage_account_url>http://azure:10000/devstoreaccount1</storage_account_url>
@@ -285,25 +352,28 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_azure.x
         <account_name>devstoreaccount1</account_name>
         <account_key>Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==</account_key>
         <cache_enabled>false</cache_enabled>
+        <use_native_copy>true</use_native_copy>
       </backups_azure>
     </disks>
     <policies>
       <azure_only>
         <volumes>
           <azure_only>
-            <disk>azure</disk>
+            <disk>disk_azblob</disk>
           </azure_only>
         </volumes>
       </azure_only>
     </policies>
   </storage_configuration>
   <backups>
+      <allowed_disk>backups_local</allowed_disk>
       <allowed_disk>backups_s3</allowed_disk>
       <allowed_disk>backups_s3_plain</allowed_disk>
       <allowed_disk>backups_azure</allowed_disk>
   </backups>
 </clickhouse>
 EOT
+fi
 
 fi
 
@@ -359,6 +429,9 @@ fi
 # zookeeper RBAC available from 21.9
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.9 || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9] ]]; then
 
+mkdir -p /var/lib/clickhouse/access
+chown clickhouse:clickhouse /var/lib/clickhouse/access
+
 cat <<EOT > /etc/clickhouse-server/config.d/replicated_user_directories.xml
 <yandex>
   <user_directories replace="replace">
@@ -369,6 +442,51 @@ cat <<EOT > /etc/clickhouse-server/config.d/replicated_user_directories.xml
         <zookeeper_path>/clickhouse/access</zookeeper_path>
     </replicated>
   </user_directories>
+</yandex>
+EOT
+
+fi
+
+# @todo LIVE VIEW deprecated, available 21.3+
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9] || "${CLICKHOUSE_VERSION}" =~ ^21\.[3-9] || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] ]]; then
+
+cat <<EOT > /etc/clickhouse-server/users.d/allow_experimental_live_view.xml
+<yandex>
+<profiles><default>
+ <allow_experimental_live_view>1</allow_experimental_live_view>
+</default></profiles>
+</yandex>
+EOT
+
+fi
+
+# WINDOW VIEW available 21.12+
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9] || "${CLICKHOUSE_VERSION}" =~ ^21\.1[1-2] ]]; then
+
+cat <<EOT > /etc/clickhouse-server/users.d/allow_experimental_window_view.xml
+<yandex>
+<profiles><default>
+ <allow_experimental_window_view>1</allow_experimental_window_view>
+</default></profiles>
+</yandex>
+EOT
+
+fi
+
+# blob_storage_log available in 23.11
+if [[ "$CLICKHOUSE_VERSION" == "head" || "${CLICKHOUSE_VERSION}" =~ ^23\.1[1-9] || "${CLICKHOUSE_VERSION}" =~ ^2[4-9\.[1-9] ]]; then
+
+cat <<EOT > /etc/clickhouse-server/config.d/blob_storage_log.xml
+<yandex>
+   <blob_storage_log replace="1">
+        <database>system</database>
+        <table>blob_storage_log</table>
+        <engine>ENGINE = MergeTree PARTITION BY (event_date)
+                ORDER BY (event_time)
+                TTL event_date + INTERVAL 1 DAY DELETE
+        </engine>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+    </blob_storage_log>
 </yandex>
 EOT
 

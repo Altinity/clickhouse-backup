@@ -28,9 +28,11 @@ func TestParseCallback(t *testing.T) {
 	goodChan2 := make(chan *payload, 5)
 
 	passToChanHandler := func(ch chan *payload) http.HandlerFunc {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		return func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
-				_ = r.Body.Close()
+				if err := r.Body.Close(); err != nil {
+					t.Fatalf("can't close r.Body: %v", err)
+				}
 			}()
 
 			var data payload
@@ -41,7 +43,7 @@ func TestParseCallback(t *testing.T) {
 			if _, err := w.Write(nil); err != nil {
 				t.Fatalf("unexpected error while writing response from test server: %v", err)
 			}
-		})
+		}
 	}
 	returnErrHandler := http.HandlerFunc(
 		func(w http.ResponseWriter, _ *http.Request) {

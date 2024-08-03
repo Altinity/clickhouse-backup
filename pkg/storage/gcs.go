@@ -2,33 +2,42 @@ package storage
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"path"
 	"strings"
 	"time"
 
-	"github.com/Altinity/clickhouse-backup/pkg/config"
+	"google.golang.org/api/iterator"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	pool "github.com/jolestar/go-commons-pool/v2"
 	"google.golang.org/api/option/internaloption"
 
 	"cloud.google.com/go/storage"
 	"github.com/rs/zerolog/log"
-	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 	googleHTTPTransport "google.golang.org/api/transport/http"
 )
 
 // GCS - presents methods for manipulate data on GCS
 type GCS struct {
-	client *storage.Client
-	Config *config.GCSConfig
+	client     *storage.Client
+	Config     *config.GCSConfig
+	clientPool *pool.ObjectPool
 }
 
 type debugGCSTransport struct {
 	base http.RoundTripper
+}
+
+type clientObject struct {
+	Client *storage.Client
 }
 
 func (w debugGCSTransport) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -59,6 +68,19 @@ func (gcs *GCS) Kind() string {
 	return "GCS"
 }
 
+type rewriteTransport struct {
+	base http.RoundTripper
+}
+
+// forces requests to target varnish and use HTTP, required to get uploading
+// via varnish working
+func (r rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Scheme == "https" {
+		req.URL.Scheme = "http"
+	}
+	return r.base.RoundTrip(req)
+}
+
 // Connect - connect to GCS
 func (gcs *GCS) Connect(ctx context.Context) error {
 	var err error
@@ -68,15 +90,58 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 
 	if gcs.Config.Endpoint != "" {
 		endpoint = gcs.Config.Endpoint
-		clientOptions = append([]option.ClientOption{option.WithoutAuthentication()}, clientOptions...)
 		clientOptions = append(clientOptions, option.WithEndpoint(endpoint))
-	} else if gcs.Config.CredentialsJSON != "" {
+	}
+
+	if gcs.Config.CredentialsJSON != "" {
 		clientOptions = append(clientOptions, option.WithCredentialsJSON([]byte(gcs.Config.CredentialsJSON)))
 	} else if gcs.Config.CredentialsJSONEncoded != "" {
 		d, _ := base64.StdEncoding.DecodeString(gcs.Config.CredentialsJSONEncoded)
 		clientOptions = append(clientOptions, option.WithCredentialsJSON(d))
 	} else if gcs.Config.CredentialsFile != "" {
 		clientOptions = append(clientOptions, option.WithCredentialsFile(gcs.Config.CredentialsFile))
+	} else if gcs.Config.SkipCredentials {
+		clientOptions = append(clientOptions, option.WithoutAuthentication())
+	}
+
+	if gcs.Config.ForceHttp {
+		customTransport := &http.Transport{
+			WriteBufferSize: 128 * 1024,
+			Proxy:           http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			MaxIdleConns:          1,
+			MaxIdleConnsPerHost:   1,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		}
+		// must set ForceAttemptHTTP2 to false so that when a custom TLSClientConfig
+		// is provided Golang does not setup HTTP/2 transport
+		customTransport.ForceAttemptHTTP2 = false
+		customTransport.TLSClientConfig = &tls.Config{
+			NextProtos: []string{"http/1.1"},
+		}
+		// These clientOptions are passed in by storage.NewClient. However, to set a custom HTTP client
+		// we must pass all these in manually.
+
+		if gcs.Config.Endpoint == "" {
+			clientOptions = append([]option.ClientOption{option.WithScopes(storage.ScopeFullControl)}, clientOptions...)
+		}
+		clientOptions = append(clientOptions, internaloption.WithDefaultEndpoint(endpoint))
+
+		customRoundTripper := &rewriteTransport{base: customTransport}
+		gcpTransport, _, err := googleHTTPTransport.NewClient(ctx, clientOptions...)
+		transport, err := googleHTTPTransport.NewTransport(ctx, customRoundTripper, clientOptions...)
+		gcpTransport.Transport = transport
+		if err != nil {
+			return fmt.Errorf("failed to create GCP transport: %v", err)
+		}
+
+		clientOptions = append(clientOptions, option.WithHTTPClient(gcpTransport))
+
 	}
 
 	if gcs.Config.Debug {
@@ -96,16 +161,31 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 		clientOptions = append(clientOptions, option.WithHTTPClient(debugClient))
 	}
 
+	factory := pool.NewPooledObjectFactorySimple(
+		func(context.Context) (interface{}, error) {
+			sClient, err := storage.NewClient(ctx, clientOptions...)
+			if err != nil {
+				return nil, err
+			}
+			return &clientObject{Client: sClient}, nil
+		})
+	gcs.clientPool = pool.NewObjectPoolWithDefaultConfig(ctx, factory)
+	gcs.clientPool.Config.MaxTotal = gcs.Config.ClientPoolSize * 3
 	gcs.client, err = storage.NewClient(ctx, clientOptions...)
 	return err
 }
 
 func (gcs *GCS) Close(ctx context.Context) error {
+	gcs.clientPool.Close(ctx)
 	return gcs.client.Close()
 }
 
 func (gcs *GCS) Walk(ctx context.Context, gcsPath string, recursive bool, process func(ctx context.Context, r RemoteFile) error) error {
 	rootPath := path.Join(gcs.Config.Path, gcsPath)
+	return gcs.WalkAbsolute(ctx, rootPath, recursive, process)
+}
+
+func (gcs *GCS) WalkAbsolute(ctx context.Context, rootPath string, recursive bool, process func(ctx context.Context, r RemoteFile) error) error {
 	prefix := rootPath + "/"
 	if rootPath == "/" {
 		prefix = ""
@@ -120,35 +200,52 @@ func (gcs *GCS) Walk(ctx context.Context, gcsPath string, recursive bool, proces
 	})
 	for {
 		object, err := it.Next()
-		if errors.Is(err, iterator.Done) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if object.Prefix != "" {
+		switch {
+		case err == nil:
+			if object.Prefix != "" {
+				if err := process(ctx, &gcsFile{
+					name: strings.TrimPrefix(object.Prefix, rootPath),
+				}); err != nil {
+					return err
+				}
+				continue
+			}
 			if err := process(ctx, &gcsFile{
-				name: strings.TrimPrefix(object.Prefix, rootPath),
+				size:         object.Size,
+				lastModified: object.Updated,
+				name:         strings.TrimPrefix(object.Name, rootPath),
 			}); err != nil {
 				return err
 			}
-			continue
-		}
-		if err := process(ctx, &gcsFile{
-			size:         object.Size,
-			lastModified: object.Updated,
-			name:         strings.TrimPrefix(object.Name, rootPath),
-		}); err != nil {
+		case errors.Is(err, iterator.Done):
+			return nil
+		default:
 			return err
 		}
 	}
 }
 
 func (gcs *GCS) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {
-	obj := gcs.client.Bucket(gcs.Config.Bucket).Object(path.Join(gcs.Config.Path, key))
+	return gcs.GetFileReaderAbsolute(ctx, path.Join(gcs.Config.Path, key))
+}
+
+func (gcs *GCS) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadCloser, error) {
+	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
+	if err != nil {
+		log.Error().Msgf("gcs.GetFileReader: gcs.clientPool.BorrowObject error: %+v", err)
+		return nil, err
+	}
+	pClient := pClientObj.(*clientObject).Client
+	obj := pClient.Bucket(gcs.Config.Bucket).Object(key)
 	reader, err := obj.NewReader(ctx)
 	if err != nil {
+		if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
+			log.Warn().Msgf("gcs.GetFileReader: gcs.clientPool.InvalidateObject error: %v ", pErr)
+		}
 		return nil, err
+	}
+	if pErr := gcs.clientPool.ReturnObject(ctx, pClientObj); pErr != nil {
+		log.Warn().Msgf("gcs.GetFileReader: gcs.clientPool.ReturnObject error: %v ", pErr)
 	}
 	return reader, nil
 }
@@ -158,21 +255,40 @@ func (gcs *GCS) GetFileReaderWithLocalPath(ctx context.Context, key, _ string) (
 }
 
 func (gcs *GCS) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
-	key = path.Join(gcs.Config.Path, key)
-	obj := gcs.client.Bucket(gcs.Config.Bucket).Object(key)
+	return gcs.PutFileAbsolute(ctx, path.Join(gcs.Config.Path, key), r)
+}
+
+func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser) error {
+	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
+	if err != nil {
+		log.Error().Msgf("gcs.PutFile: gcs.clientPool.BorrowObject error: %+v", err)
+		return err
+	}
+	pClient := pClientObj.(*clientObject).Client
+	obj := pClient.Bucket(gcs.Config.Bucket).Object(key)
 	writer := obj.NewWriter(ctx)
+	writer.ChunkSize = gcs.Config.ChunkSize
 	writer.StorageClass = gcs.Config.StorageClass
+	writer.ChunkRetryDeadline = 60 * time.Minute
 	if len(gcs.Config.ObjectLabels) > 0 {
 		writer.Metadata = gcs.Config.ObjectLabels
 	}
 	defer func() {
-		if err := writer.Close(); err != nil {
-			log.Warn().Msgf("can't close writer: %+v", err)
+		if err := gcs.clientPool.ReturnObject(ctx, pClientObj); err != nil {
+			log.Warn().Msgf("gcs.PutFile: gcs.clientPool.ReturnObject error: %+v", err)
 		}
 	}()
-	buffer := make([]byte, 512*1024)
-	_, err := io.CopyBuffer(writer, r, buffer)
-	return err
+	buffer := make([]byte, 128*1024)
+	_, err = io.CopyBuffer(writer, r, buffer)
+	if err != nil {
+		log.Warn().Msgf("gcs.PutFile: can't copy buffer: %+v", err)
+		return err
+	}
+	if err = writer.Close(); err != nil {
+		log.Warn().Msgf("gcs.PutFile: can't close writer: %+v", err)
+		return err
+	}
+	return nil
 }
 
 func (gcs *GCS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
@@ -191,8 +307,24 @@ func (gcs *GCS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 }
 
 func (gcs *GCS) deleteKey(ctx context.Context, key string) error {
-	object := gcs.client.Bucket(gcs.Config.Bucket).Object(key)
-	return object.Delete(ctx)
+	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
+	if err != nil {
+		log.Error().Msgf("gcs.deleteKey: gcs.clientPool.BorrowObject error: %+v", err)
+		return err
+	}
+	pClient := pClientObj.(*clientObject).Client
+	object := pClient.Bucket(gcs.Config.Bucket).Object(key)
+	err = object.Delete(ctx)
+	if err != nil {
+		if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
+			log.Warn().Msgf("gcs.deleteKey: gcs.clientPool.InvalidateObject error: %+v", pErr)
+		}
+		return err
+	}
+	if pErr := gcs.clientPool.ReturnObject(ctx, pClientObj); pErr != nil {
+		log.Warn().Msgf("gcs.deleteKey: gcs.clientPool.ReturnObject error: %+v", pErr)
+	}
+	return nil
 }
 
 func (gcs *GCS) DeleteFile(ctx context.Context, key string) error {
@@ -205,18 +337,33 @@ func (gcs *GCS) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) 
 	return gcs.deleteKey(ctx, key)
 }
 
-func (gcs *GCS) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (int64, error) {
+func (gcs *GCS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
 	dstKey = path.Join(gcs.Config.ObjectDiskPath, dstKey)
-	src := gcs.client.Bucket(srcBucket).Object(srcKey)
-	dst := gcs.client.Bucket(gcs.Config.Bucket).Object(dstKey)
+	log.Debug().Msgf("GCS->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, gcs.Config.Bucket, dstKey)
+	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
+	if err != nil {
+		log.Error().Msgf("gcs.CopyObject: gcs.clientPool.BorrowObject error: %+v", err)
+		return 0, err
+	}
+	pClient := pClientObj.(*clientObject).Client
+	src := pClient.Bucket(srcBucket).Object(srcKey)
+	dst := pClient.Bucket(gcs.Config.Bucket).Object(dstKey)
 	attrs, err := src.Attrs(ctx)
 	if err != nil {
+		if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
+			log.Warn().Msgf("gcs.CopyObject: gcs.clientPool.InvalidateObject error: %+v", pErr)
+		}
 		return 0, err
 	}
 	if _, err = dst.CopierFrom(src).Run(ctx); err != nil {
+		if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
+			log.Warn().Msgf("gcs.CopyObject: gcs.clientPool.InvalidateObject error: %+v", pErr)
+		}
 		return 0, err
 	}
-	log.Debug().Msgf("GCS->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, gcs.Config.Bucket, dstKey)
+	if pErr := gcs.clientPool.ReturnObject(ctx, pClientObj); pErr != nil {
+		log.Warn().Msgf("gcs.CopyObject: gcs.clientPool.ReturnObject error: %+v", pErr)
+	}
 	return attrs.Size, nil
 }
 

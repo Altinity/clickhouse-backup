@@ -14,18 +14,19 @@ clickhouse:
   secure: true
   skip_verify: true
   sync_replicated_tables: true
-  timeout: 1s
   restart_command: bash -c 'echo "FAKE RESTART"'
+  timeout: 60s
 s3:
-  access_key: access-key
-  secret_key: it-is-my-super-secret-key
+  access_key: access_key
+  secret_key: it_is_my_super_secret_key
   bucket: clickhouse
-  endpoint: http://minio:9000
+  endpoint: https://minio:9000
+  disable_ssl: false
+  disable_cert_verification: true
   acl: private
   force_path_style: true
   path: backup/{cluster}/{shard}
   object_disk_path: object_disk/{cluster}/{shard}
-  disable_ssl: true
   compression_format: tar
 api:
   listen: :7171

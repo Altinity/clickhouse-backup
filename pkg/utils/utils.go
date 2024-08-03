@@ -61,13 +61,13 @@ func HumanizeDuration(d time.Duration) string {
 
 func ExecCmd(ctx context.Context, timeout time.Duration, cmd string, args ...string) error {
 	out, err := ExecCmdOut(ctx, timeout, cmd, args...)
-	log.Info().Msg(out)
+	log.Debug().Msg(out)
 	return err
 }
 
 func ExecCmdOut(ctx context.Context, timeout time.Duration, cmd string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
-	log.Info().Msgf("%s %s", cmd, strings.Join(args, " "))
+	log.Debug().Msgf("%s %s", cmd, strings.Join(args, " "))
 	out, err := exec.CommandContext(ctx, cmd, args...).CombinedOutput()
 	cancel()
 	return string(out), err

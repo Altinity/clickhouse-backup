@@ -15,21 +15,24 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Altinity/clickhouse-backup/pkg/common"
-	"github.com/Altinity/clickhouse-backup/pkg/config"
-	"github.com/Altinity/clickhouse-backup/pkg/metadata"
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/antchfx/xmlquery"
+	"github.com/ricochet2200/go-disk-usage/du"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
+
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+
 )
 
 // ClickHouse - provide
 type ClickHouse struct {
 	Config               *config.ClickHouseConfig
 	conn                 driver.Conn
-	disks                []Disk
 	version              int
 	isPartsColumnPresent int8
 	IsOpen               bool
@@ -56,12 +59,14 @@ func (ch *ClickHouse) Connect() error {
 			Password: ch.Config.Password,
 		},
 		Settings: clickhouse.Settings{
-			//	"connect_timeout": int(timeout.Seconds()),
-			//	"receive_timeout": int(timeout.Seconds()),
-			//	"send_timeout":    int(timeout.Seconds()),
+			"connect_timeout":      int(timeout.Seconds()),
+			"receive_timeout":      int(timeout.Seconds()),
+			"send_timeout":         int(timeout.Seconds()),
+			"http_send_timeout":    300,
+			"http_receive_timeout": 300,
 		},
-		MaxOpenConns:    1,
-		ConnMaxLifetime: 0,
+		MaxOpenConns:    ch.Config.MaxConnections,
+		ConnMaxLifetime: 0, // don't change it, it related to SYSTEM SHUTDOWN behavior for properly rebuild RBAC lists on 20.4-22.3
 		MaxIdleConns:    0,
 		DialTimeout:     timeout,
 		ReadTimeout:     timeout,
@@ -104,25 +109,32 @@ func (ch *ClickHouse) Connect() error {
 		opt.Settings["log_queries"] = 0
 	}
 
-	if ch.conn, err = clickhouse.Open(opt); err != nil {
-		log.Error().Msgf("clickhouse connection: %s, clickhouse.Open return error: %v", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
-		return err
-	}
-
 	logLevel := zerolog.InfoLevel
 	if !ch.Config.LogSQLQueries {
 		logLevel = zerolog.DebugLevel
 	}
-	log.WithLevel(logLevel).Stack().Msgf("clickhouse connection prepared: %s run ping", fmt.Sprintf("tcp://%v:%v?timeout=%v", ch.Config.Host, ch.Config.Port, ch.Config.Timeout))
-	err = ch.conn.Ping(context.Background())
-	if err != nil {
-		log.Error().Msgf("clickhouse connection ping: %s return error: %v", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
-		return err
-	} else {
-		ch.IsOpen = true
+	// infinite reconnect until success, fix https://github.com/Altinity/clickhouse-backup/issues/857
+	for {
+		for {
+			ch.conn, err = clickhouse.Open(opt)
+			if err == nil {
+				break
+			}
+			log.Warn().Msgf("clickhouse connection: %s, sql.Open return error: %v, will wait 5 second to reconnect", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
+			time.Sleep(5 * time.Second)
+		}
+		log.WithLevel(logLevel).Msgf("clickhouse connection prepared: %s run ping", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
+		err = ch.conn.Ping(context.Background())
+		if err == nil {
+			log.WithLevel(logLevel).Msgf("clickhouse connection success: %s", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
+			ch.IsOpen = true
+			break
+		}
+		log.Warn().Msgf("clickhouse connection ping: %s return error: %v, will wait 5 second to reconnect", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
+		time.Sleep(5 * time.Second)
 	}
-	log.WithLevel(logLevel).Msgf("clickhouse connection open: %s", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
-	return err
+
+	return nil
 }
 
 // GetDisks - return data from system.disks table
@@ -181,11 +193,8 @@ func (ch *ClickHouse) GetDisks(ctx context.Context, enrich bool) ([]Disk, error)
 }
 
 func (ch *ClickHouse) GetEmbeddedBackupPath(disks []Disk) (string, error) {
-	if !ch.Config.UseEmbeddedBackupRestore {
+	if !ch.Config.UseEmbeddedBackupRestore || ch.Config.EmbeddedBackupDisk == "" {
 		return "", nil
-	}
-	if ch.Config.EmbeddedBackupDisk == "" {
-		return "", fmt.Errorf("please setup `clickhouse->embedded_backup_disk` in config or CLICKHOUSE_EMBEDDED_BACKUP_DISK environment variable")
 	}
 	for _, d := range disks {
 		if d.Name == ch.Config.EmbeddedBackupDisk {
@@ -218,9 +227,11 @@ func (ch *ClickHouse) getDisksFromSystemSettings(ctx context.Context) ([]Disk, e
 		dataPathArray := strings.Split(metadataPath, "/")
 		clickhouseData := path.Join(dataPathArray[:len(dataPathArray)-1]...)
 		return []Disk{{
-			Name: "default",
-			Path: path.Join("/", clickhouseData),
-			Type: "local",
+			Name:            "default",
+			Path:            path.Join("/", clickhouseData),
+			Type:            "local",
+			FreeSpace:       du.NewDiskUsage(path.Join("/", clickhouseData)).Free(),
+			StoragePolicies: []string{"default"},
 		}}, nil
 	}
 }
@@ -251,18 +262,48 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
-		isDiskType := make([]struct {
-			Present uint64 `ch:"is_disk_type_present"`
-		}, 0)
-		if err := ch.SelectContext(ctx, &isDiskType, "SELECT count() is_disk_type_present FROM system.columns WHERE database='system' AND table='disks' AND name='type'"); err != nil {
+		type DiskFields struct {
+			DiskTypePresent          uint64 `ch:"is_disk_type_present"`
+			ObjectStorageTypePresent uint64 `ch:"is_object_storage_type_present"`
+			FreeSpacePresent         uint64 `ch:"is_free_space_present"`
+			StoragePolicyPresent     uint64 `ch:"is_storage_policy_present"`
+		}
+		diskFields := make([]DiskFields, 0)
+		if err := ch.SelectContext(ctx, &diskFields,
+			"SELECT countIf(name='type') AS is_disk_type_present, "+
+				"countIf(name='object_storage_type') AS is_object_storage_type_present, "+
+				"countIf(name='free_space') AS is_free_space_present, "+
+				"countIf(name='disks') AS is_storage_policy_present "+
+				"FROM system.columns WHERE database='system' AND table IN ('disks','storage_policies') ",
+		); err != nil {
 			return nil, err
 		}
 		diskTypeSQL := "'local'"
-		if len(isDiskType) > 0 && isDiskType[0].Present > 0 {
-			diskTypeSQL = "any(type)"
+		if len(diskFields) > 0 && diskFields[0].DiskTypePresent > 0 {
+			diskTypeSQL = "any(d.type)"
+		}
+		if len(diskFields) > 0 && diskFields[0].ObjectStorageTypePresent > 0 {
+			diskTypeSQL = "any(lower(if(d.type='ObjectStorage',d.object_storage_type,d.type)))"
+		}
+
+		diskFreeSpaceSQL := "toUInt64(0)"
+		if len(diskFields) > 0 && diskFields[0].FreeSpacePresent > 0 {
+			diskFreeSpaceSQL = "min(d.free_space)"
+		}
+		storagePoliciesSQL := "['default']"
+		joinStoragePoliciesSQL := ""
+		if len(diskFields) > 0 && diskFields[0].StoragePolicyPresent > 0 {
+			storagePoliciesSQL = "groupUniqArray(s.policy_name)"
+			// LEFT JOIN to allow disks which not have policy, https://github.com/Altinity/clickhouse-backup/issues/845
+			joinStoragePoliciesSQL = " LEFT JOIN "
+			joinStoragePoliciesSQL += "(SELECT policy_name, arrayJoin(disks) AS disk FROM system.storage_policies) AS s ON s.disk = d.name"
 		}
 		var result []Disk
-		query := fmt.Sprintf("SELECT path, any(name) AS name, %s AS type FROM system.disks GROUP BY path", diskTypeSQL)
+		query := fmt.Sprintf(
+			"SELECT d.path, any(d.name) AS name, %s AS type, %s AS free_space, %s AS storage_policies "+
+				"FROM system.disks AS d %s GROUP BY d.path",
+			diskTypeSQL, diskFreeSpaceSQL, storagePoliciesSQL, joinStoragePoliciesSQL,
+		)
 		err := ch.SelectContext(ctx, &result, query)
 		return result, err
 	}
@@ -296,7 +337,7 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 	skipDatabases := make([]struct {
 		Name string `ch:"name"`
 	}, 0)
-	// MaterializedPostgreSQL doesn't support FREEZE look https://github.com/Altinity/clickhouse-backup/issues/550
+	// MaterializedPostgreSQL doesn't support FREEZE look https://github.com/Altinity/clickhouse-backup/issues/550 and https://github.com/ClickHouse/ClickHouse/issues/32902
 	if err = ch.SelectContext(ctx, &skipDatabases, "SELECT name FROM system.databases WHERE engine IN ('MySQL','PostgreSQL','MaterializedPostgreSQL')"); err != nil {
 		return nil, err
 	}
@@ -339,6 +380,12 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 		}
 		if ch.Config.UseEmbeddedBackupRestore && (strings.HasPrefix(t.Name, ".inner_id.") /*|| strings.HasPrefix(t.Name, ".inner.")*/) {
 			t.Skip = true
+		}
+		for _, engine := range ch.Config.SkipTableEngines {
+			if t.Engine == engine {
+				t.Skip = true
+				break
+			}
 		}
 		if t.Skip {
 			tables[i] = t
@@ -429,14 +476,14 @@ func (ch *ClickHouse) prepareGetTablesSQL(tablePattern string, skipDatabases, sk
 
 	allTablesSQL += "  FROM system.tables WHERE is_temporary = 0"
 	if tablePattern != "" {
-		replacer := strings.NewReplacer(".", "\\.", ",", "$|^", "*", ".*", "?", ".", " ", "", "`", "", `"`, "", "-", "\\-")
+		replacer := strings.NewReplacer(".", "\\.", "$", ".", ",", "$|^", "*", ".*", "?", ".", " ", "", "`", "", `"`, "", "-", "\\-")
 		allTablesSQL += fmt.Sprintf(" AND match(concat(database,'.',name),'^%s$') ", replacer.Replace(tablePattern))
 	}
 	if len(skipDatabases) > 0 {
 		allTablesSQL += fmt.Sprintf(" AND database NOT IN ('%s')", strings.Join(skipDatabases, "','"))
 	}
 	if len(skipTableEngines) > 0 {
-		allTablesSQL += fmt.Sprintf(" AND engine NOT IN ('%s')", strings.Join(skipTableEngines, "','"))
+		allTablesSQL += fmt.Sprintf(" AND NOT has(arrayMap(x->lower(x), ['%s']), lower(engine))", strings.Join(skipTableEngines, "','"))
 	}
 	// try to upload big tables first
 	if len(isSystemTablesFieldPresent) > 0 && isSystemTablesFieldPresent[0].IsTotalBytesPresent > 0 {
@@ -620,16 +667,16 @@ func (ch *ClickHouse) GetVersion(ctx context.Context) (int, error) {
 
 func (ch *ClickHouse) GetVersionDescribe(ctx context.Context) string {
 	var result string
-	query := "SELECT value FROM `system`.`build_options` where name='VERSION_DESCRIBE'"
+	query := "SELECT value FROM `system`.`build_options` WHERE name='VERSION_DESCRIBE'"
 	if err := ch.SelectSingleRow(ctx, &result, query); err != nil {
 		return ""
 	}
 	return result
 }
 
-// FreezeTableOldWay - freeze all partitions in table one by one
-// This way using for ClickHouse below v19.1
-func (ch *ClickHouse) FreezeTableOldWay(ctx context.Context, table *Table, name string) error {
+// FreezeTableByParts - freeze all partitions in table one by one
+// also ally `freeze_by_part_where`
+func (ch *ClickHouse) FreezeTableByParts(ctx context.Context, table *Table, name string) error {
 	var partitions []struct {
 		PartitionID string `ch:"partition_id"`
 	}
@@ -685,7 +732,7 @@ func (ch *ClickHouse) FreezeTable(ctx context.Context, table *Table, name string
 		}
 	}
 	if version < 19001005 || ch.Config.FreezeByPart {
-		return ch.FreezeTableOldWay(ctx, table, name)
+		return ch.FreezeTableByParts(ctx, table, name)
 	}
 	withNameQuery := ""
 	if name != "" {
@@ -703,7 +750,13 @@ func (ch *ClickHouse) FreezeTable(ctx context.Context, table *Table, name string
 }
 
 // AttachDataParts - execute ALTER TABLE ... ATTACH PART command for specific table
-func (ch *ClickHouse) AttachDataParts(table metadata.TableMetadata, disks []Disk) error {
+func (ch *ClickHouse) AttachDataParts(table metadata.TableMetadata, dstTable Table) error {
+	if dstTable.Database != "" && dstTable.Database != table.Database {
+		table.Database = dstTable.Database
+	}
+	if dstTable.Name != "" && dstTable.Name != table.Table {
+		table.Table = dstTable.Name
+	}
 	canContinue, err := ch.CheckReplicationInProgress(table)
 	if err != nil {
 		return err
@@ -711,14 +764,14 @@ func (ch *ClickHouse) AttachDataParts(table metadata.TableMetadata, disks []Disk
 	if !canContinue {
 		return nil
 	}
-	for _, disk := range disks {
-		for _, part := range table.Parts[disk.Name] {
+	for disk := range table.Parts {
+		for _, part := range table.Parts[disk] {
 			if !strings.HasSuffix(part.Name, ".proj") {
 				query := fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PART '%s'", table.Database, table.Table, part.Name)
 				if err := ch.Query(query); err != nil {
 					return err
 				}
-				log.Debug().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).Str("disk", disk.Name).Str("part", part.Name).Msg("attached")
+				log.Debug().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).Str("disk", disk).Str("part", part.Name).Msg("attached")
 			}
 		}
 	}
@@ -729,10 +782,16 @@ var replicatedMergeTreeRE = regexp.MustCompile(`Replicated[\w_]*MergeTree\s*\(((
 var uuidRE = regexp.MustCompile(`UUID '([^']+)'`)
 
 // AttachTable - execute ATTACH TABLE  command for specific table
-func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetadata) error {
+func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetadata, dstTable Table) error {
 	if len(table.Parts) == 0 {
 		log.Warn().Msgf("no data parts for restore for `%s`.`%s`", table.Database, table.Table)
 		return nil
+	}
+	if dstTable.Database != "" && dstTable.Database != table.Database {
+		table.Database = dstTable.Database
+	}
+	if dstTable.Name != "" && dstTable.Name != table.Table {
+		table.Table = dstTable.Name
 	}
 	canContinue, err := ch.CheckReplicationInProgress(table)
 	if err != nil {
@@ -742,13 +801,17 @@ func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetad
 		return nil
 	}
 
-	query := fmt.Sprintf("DETACH TABLE `%s`.`%s`", table.Database, table.Table)
+	if ch.version <= 21003000 {
+		return fmt.Errorf("your clickhouse-server version doesn't support SYSTEM RESTORE REPLICA statement, use `restore_as_attach: false` in config")
+	}
+	query := fmt.Sprintf("DETACH TABLE `%s`.`%s` SYNC", table.Database, table.Table)
 	if err := ch.Query(query); err != nil {
 		return err
 	}
-	if matches := replicatedMergeTreeRE.FindStringSubmatch(table.Query); len(matches) > 0 {
-		zkPath := strings.Trim(matches[2], "' \r\n\t")
-		replicaName := strings.Trim(matches[3], "' \r\n\t")
+	replicatedMatches := replicatedMergeTreeRE.FindStringSubmatch(table.Query)
+	if len(replicatedMatches) > 0 {
+		zkPath := strings.Trim(replicatedMatches[2], "' \r\n\t")
+		replicaName := strings.Trim(replicatedMatches[3], "' \r\n\t")
 		if strings.Contains(zkPath, "{uuid}") {
 			if uuidMatches := uuidRE.FindStringSubmatch(table.Query); len(uuidMatches) > 0 {
 				zkPath = strings.Replace(zkPath, "{uuid}", uuidMatches[1], 1)
@@ -773,11 +836,12 @@ func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetad
 		return err
 	}
 
-	query = fmt.Sprintf("SYSTEM RESTORE REPLICA `%s`.`%s`", table.Database, table.Table)
-	if err := ch.Query(query); err != nil {
-		return err
+	if len(replicatedMatches) > 0 {
+		query = fmt.Sprintf("SYSTEM RESTORE REPLICA `%s`.`%s`", table.Database, table.Table)
+		if err := ch.Query(query); err != nil {
+			return err
+		}
 	}
-
 	log.Debug().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).Msg("attached")
 	return nil
 }
@@ -827,7 +891,7 @@ func (ch *ClickHouse) addOnClusterToCreateDatabase(cluster string, query string)
 }
 
 // DropTable - drop ClickHouse table
-func (ch *ClickHouse) DropTable(table Table, query string, onCluster string, ignoreDependencies bool, version int) error {
+func (ch *ClickHouse) DropTable(table Table, query string, onCluster string, ignoreDependencies bool, version int, defaultDataPath string) error {
 	var isAtomic bool
 	var err error
 	if isAtomic, err = ch.IsAtomic(table.Database); err != nil {
@@ -847,6 +911,11 @@ func (ch *ClickHouse) DropTable(table Table, query string, onCluster string, ign
 	if ignoreDependencies {
 		dropQuery += " SETTINGS check_table_dependencies=0"
 	}
+	if defaultDataPath != "" {
+		if _, err = os.Create(path.Join(defaultDataPath, "/flags/force_drop_table")); err != nil {
+			return err
+		}
+	}
 	if err = ch.Query(dropQuery); err != nil {
 		return err
 	}
@@ -862,10 +931,10 @@ var onClusterRe = regexp.MustCompile(`(?im)\s+ON\s+CLUSTER\s+`)
 var distributedRE = regexp.MustCompile(`(Distributed)\(([^,]+),([^)]+)\)`)
 
 // CreateTable - create ClickHouse table
-func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDependencies bool, onCluster string, version int) error {
+func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDependencies bool, onCluster string, version int, defaultDataPath string) error {
 	var err error
 	if dropTable {
-		if err = ch.DropTable(table, query, onCluster, ignoreDependencies, version); err != nil {
+		if err = ch.DropTable(table, query, onCluster, ignoreDependencies, version, defaultDataPath); err != nil {
 			return err
 		}
 	}
@@ -884,7 +953,7 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 		return errors.New(fmt.Sprintf("schema query ```%s``` doesn't contains table name `%s`", query, table.Name))
 	}
 
-	// fix restore schema for legacy backup
+	// fix schema for restore
 	// see https://github.com/Altinity/clickhouse-backup/issues/268
 	// https://github.com/Altinity/clickhouse-backup/issues/297
 	// https://github.com/Altinity/clickhouse-backup/issues/331
@@ -914,40 +983,50 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 		}
 	}
 
+	// WINDOW VIEW unavailable after 24.3
+	allowExperimentalAnalyzer := ""
+	if allowExperimentalAnalyzer, err = ch.TurnAnalyzerOffIfNecessary(version, query, allowExperimentalAnalyzer); err != nil {
+		return err
+	}
+
 	if err := ch.Query(query); err != nil {
+		return err
+	}
+
+	// WINDOW VIEW unavailable after 24.3
+	if err = ch.TurnAnalyzerOnIfNecessary(version, query, allowExperimentalAnalyzer); err != nil {
 		return err
 	}
 	return nil
 }
 
+func (ch *ClickHouse) TurnAnalyzerOnIfNecessary(version int, query string, allowExperimentalAnalyzer string) error {
+	if version > 24003000 && (strings.HasPrefix(query, "CREATE LIVE VIEW") || strings.HasPrefix(query, "ATTACH LIVE VIEW") || strings.HasPrefix(query, "CREATE WINDOW VIEW") || strings.HasPrefix(query, "ATTACH WINDOW VIEW")) && allowExperimentalAnalyzer == "1" {
+		if err := ch.Query("SET allow_experimental_analyzer=1"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (ch *ClickHouse) TurnAnalyzerOffIfNecessary(version int, query string, allowExperimentalAnalyzer string) (string, error) {
+	if version > 24003000 && (strings.HasPrefix(query, "CREATE LIVE VIEW") || strings.HasPrefix(query, "ATTACH LIVE VIEW") || strings.HasPrefix(query, "CREATE WINDOW VIEW") || strings.HasPrefix(query, "ATTACH WINDOW VIEW")) {
+		if err := ch.SelectSingleRowNoCtx(&allowExperimentalAnalyzer, "SELECT value FROM system.settings WHERE name='allow_experimental_analyzer'"); err != nil {
+			return "", err
+		}
+		if allowExperimentalAnalyzer == "1" {
+			if err := ch.Query("SET allow_experimental_analyzer=0"); err != nil {
+				return "", err
+			}
+		}
+		return allowExperimentalAnalyzer, nil
+	}
+	return "", nil
+}
+
 // GetConn - return current connection
 func (ch *ClickHouse) GetConn() driver.Conn {
 	return ch.conn
-}
-
-func (ch *ClickHouse) IsClickhouseShadow(path string) bool {
-	d, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	defer func() {
-		if err := d.Close(); err != nil {
-			log.Warn().Msgf("can't close directory %v", err)
-		}
-	}()
-	names, err := d.Readdirnames(-1)
-	if err != nil {
-		return false
-	}
-	for _, name := range names {
-		if name == "increment.txt" {
-			continue
-		}
-		if _, err := strconv.Atoi(name); err != nil {
-			return false
-		}
-	}
-	return true
 }
 
 func (ch *ClickHouse) StructSelect(dest interface{}, query string, args ...interface{}) error {
@@ -1078,6 +1157,7 @@ func (ch *ClickHouse) CalculateMaxFileSize(ctx context.Context, cfg *config.Conf
 	if !cfg.General.UploadByPart {
 		maxSizeQuery = "SELECT toInt64(max(data_by_disk) * 1.02) AS max_file_size FROM (SELECT disk_name, max(toInt64(bytes_on_disk)) data_by_disk FROM system.parts GROUP BY disk_name)"
 	}
+	maxSizeQuery += " SETTINGS empty_result_for_aggregation_by_empty_set=0"
 	if err := ch.SelectSingleRow(ctx, &rows, maxSizeQuery); err != nil {
 		return 0, fmt.Errorf("can't calculate max(bytes_on_disk): %v", err)
 	}
@@ -1127,17 +1207,22 @@ func (ch *ClickHouse) ApplyMutation(ctx context.Context, tableMetadata metadata.
 func (ch *ClickHouse) CheckReplicationInProgress(table metadata.TableMetadata) (bool, error) {
 	if ch.Config.CheckReplicasBeforeAttach && strings.Contains(table.Query, "Replicated") {
 		existsReplicas := make([]struct {
-			InProgress uint64 `ch:"replication_in_progress"`
+			LogPointer    uint64 `ch:"log_pointer"`
+			LogMaxIndex   uint64 `ch:"log_max_index"`
+			AbsoluteDelay uint64 `ch:"absolute_delay"`
+			QueueSize     uint32 `ch:"queue_size"`
 		}, 0)
-		if err := ch.Select(&existsReplicas, "SELECT sum(log_pointer + log_max_index + absolute_delay + queue_size)  AS replication_in_progress FROM system.replicas WHERE database=? and table=? SETTINGS empty_result_for_aggregation_by_empty_set=0", table.Database, table.Table); err != nil {
+		if err := ch.Select(&existsReplicas, "SELECT log_pointer, log_max_index, absolute_delay, queue_size FROM system.replicas WHERE database=? and table=?", table.Database, table.Table); err != nil {
 			return false, err
 		}
-		if len(existsReplicas) != 1 {
+		if len(existsReplicas) == 0 {
+			return true, nil
+		}
+		if len(existsReplicas) > 1 {
 			return false, fmt.Errorf("invalid result for check exists replicas: %+v", existsReplicas)
 		}
-		if existsReplicas[0].InProgress > 0 {
-			log.Warn().Msgf("%s.%s skipped cause system.replicas entry already exists and replication in progress from another replica", table.Database, table.Table)
-			return false, nil
+		if existsReplicas[0].LogPointer > 1 || existsReplicas[0].LogMaxIndex > 1 || existsReplicas[0].AbsoluteDelay > 0 || existsReplicas[0].QueueSize > 0 {
+			return false, fmt.Errorf("%s.%s can't restore cause system.replicas entries already exists and replication in progress from another replica, log_pointer=%d, log_max_index=%d, absolute_delay=%d, queue_size=%d", table.Database, table.Table, existsReplicas[0].LogPointer, existsReplicas[0].LogMaxIndex, existsReplicas[0].AbsoluteDelay, existsReplicas[0].QueueSize)
 		} else {
 			log.Info().Msgf("replication_in_progress status = %+v", existsReplicas)
 		}
@@ -1147,51 +1232,49 @@ func (ch *ClickHouse) CheckReplicationInProgress(table metadata.TableMetadata) (
 
 // CheckSystemPartsColumns check data parts types consistency https://github.com/Altinity/clickhouse-backup/issues/529#issuecomment-1554460504
 func (ch *ClickHouse) CheckSystemPartsColumns(ctx context.Context, table *Table) error {
-	if ch.isPartsColumnPresent == -1 {
-		return nil
-	}
-	if ch.isPartsColumnPresent == 0 {
-		isPartsColumn := make([]struct {
-			Present uint64 `ch:"is_parts_column_present"`
-		}, 0)
-		if err := ch.SelectContext(ctx, &isPartsColumn, "SELECT count() is_parts_column_present FROM system.tables WHERE database='system' AND name='parts_columns'"); err != nil {
-			return err
-		}
-		if len(isPartsColumn) != 1 || isPartsColumn[0].Present != 1 {
-			ch.isPartsColumnPresent = -1
-			return nil
-		}
-	}
-	ch.isPartsColumnPresent = 1
-	partColumnsDataTypes := make([]struct {
-		Column string   `ch:"column"`
-		Types  []string `ch:"uniq_types"`
-	}, 0)
+	var err error
+	partColumnsDataTypes := make([]ColumnDataTypes, 0)
 	partsColumnsSQL := "SELECT column, groupUniqArray(type) AS uniq_types " +
 		"FROM system.parts_columns " +
-		"WHERE active AND database=? AND table=? AND type NOT LIKE 'Enum%' AND type NOT LIKE 'Tuple(%' " +
+		"WHERE active AND database=? AND table=? AND type NOT LIKE 'Enum%(%' AND type NOT LIKE 'Tuple(%' AND type NOT LIKE 'Array(Tuple(%' " +
 		"GROUP BY column HAVING length(uniq_types) > 1"
-	if err := ch.SelectContext(ctx, &partColumnsDataTypes, partsColumnsSQL, table.Database, table.Name); err != nil {
+	if err = ch.SelectContext(ctx, &partColumnsDataTypes, partsColumnsSQL, table.Database, table.Name); err != nil {
 		return err
 	}
-	isPartColumnsInconsistentDataTypes := false
-	if len(partColumnsDataTypes) > 0 {
-		for i := range partColumnsDataTypes {
-			isNullablePresent := false
-			isNotNullablePresent := false
-			for _, dataType := range partColumnsDataTypes[i].Types {
-				if strings.Contains(dataType, "Nullable") {
-					isNullablePresent = true
-				} else {
-					isNotNullablePresent = true
-				}
-			}
-			if !isNullablePresent && isNotNullablePresent {
-				log.Error().Msgf("`%s`.`%s` have inconsistent data types %#v for \"%s\" column", table.Database, table.Name, partColumnsDataTypes[i].Types, partColumnsDataTypes[i].Column)
-				isPartColumnsInconsistentDataTypes = true
+	return ch.CheckTypesConsistency(table, partColumnsDataTypes)
+}
+
+var dateWithParams = regexp.MustCompile(`^(Date[^(]+)\([^)]+\)`)
+var versioningAggregateRE = regexp.MustCompile(`^[0-9]+,\s*`)
+
+func (ch *ClickHouse) CheckTypesConsistency(table *Table, partColumnsDataTypes []ColumnDataTypes) error {
+	cleanType := func(dataType string) string {
+		for _, compatiblePrefix := range []string{"LowCardinality(", "Nullable("} {
+			if strings.HasPrefix(dataType, compatiblePrefix) {
+				dataType = strings.TrimPrefix(dataType, compatiblePrefix)
+				dataType = strings.TrimSuffix(dataType, ")")
 			}
 		}
-		if isPartColumnsInconsistentDataTypes {
+		dataType = dateWithParams.ReplaceAllString(dataType, "$1")
+		return dataType
+	}
+	for i := range partColumnsDataTypes {
+		isAggregationPresent := false
+		uniqTypes := common.EmptyMap{}
+		for _, dataType := range partColumnsDataTypes[i].Types {
+			isAggregationPresent = strings.Contains(dataType, "AggregateFunction(")
+			if isAggregationPresent {
+				dataType = strings.TrimPrefix(dataType, "SimpleAggregateFunction(")
+				dataType = strings.TrimPrefix(dataType, "AggregateFunction(")
+				dataType = strings.TrimSuffix(dataType, ")")
+				dataType = versioningAggregateRE.ReplaceAllString(dataType, "")
+			} else {
+				dataType = cleanType(dataType)
+			}
+			uniqTypes[dataType] = struct{}{}
+		}
+		if len(uniqTypes) > 1 {
+			log.Error().Msgf("`%s`.`%s` have incompatible data types %#v for \"%s\" column", table.Database, table.Name, partColumnsDataTypes[i].Types, partColumnsDataTypes[i].Column)
 			return fmt.Errorf("`%s`.`%s` have inconsistent data types for active data part in system.parts_columns", table.Database, table.Name)
 		}
 	}
@@ -1278,4 +1361,16 @@ func (ch *ClickHouse) GetPreprocessedXMLSettings(ctx context.Context, settingsXP
 		}
 	}
 	return resultSettings, nil
+}
+
+var storagePolicyRE = regexp.MustCompile(`SETTINGS.+storage_policy[^=]*=[^']*'([^']+)'`)
+
+func (ch *ClickHouse) ExtractStoragePolicy(query string) string {
+	storagePolicy := "default"
+	matches := storagePolicyRE.FindStringSubmatch(query)
+	if len(matches) > 0 {
+		storagePolicy = matches[1]
+	}
+	log.Debug().Msgf("extract storage_policy: %s, query: %s", storagePolicy, query)
+	return storagePolicy
 }

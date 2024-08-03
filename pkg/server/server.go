@@ -22,19 +22,20 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Altinity/clickhouse-backup/pkg/backup"
-	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
-	"github.com/Altinity/clickhouse-backup/pkg/common"
-	"github.com/Altinity/clickhouse-backup/pkg/config"
-	"github.com/Altinity/clickhouse-backup/pkg/resumable"
-	"github.com/Altinity/clickhouse-backup/pkg/server/metrics"
-	"github.com/Altinity/clickhouse-backup/pkg/status"
-	"github.com/Altinity/clickhouse-backup/pkg/utils"
 	"github.com/google/shlex"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog/log"
 	"github.com/urfave/cli"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/backup"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/resumable"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/server/metrics"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 )
 
 type APIServer struct {
@@ -44,6 +45,7 @@ type APIServer struct {
 	config                  *config.Config
 	server                  *http.Server
 	restart                 chan struct{}
+	stop                    chan struct{}
 	metrics                 *metrics.APIMetrics
 	routes                  []string
 	clickhouseBackupVersion string
@@ -63,7 +65,7 @@ func Run(cliCtx *cli.Context, cliApp *cli.App, configPath string, clickhouseBack
 	for {
 		cfg, err = config.LoadConfig(configPath)
 		if err != nil {
-			log.Error().Err(err).Send()
+			log.Error().Stack().Err(err).Send()
 			time.Sleep(5 * time.Second)
 			continue
 		}
@@ -71,7 +73,7 @@ func Run(cliCtx *cli.Context, cliApp *cli.App, configPath string, clickhouseBack
 			Config: &cfg.ClickHouse,
 		}
 		if err := ch.Connect(); err != nil {
-			log.Error().Err(err).Send()
+			log.Error().Stack().Err(err).Send()
 			time.Sleep(5 * time.Second)
 			continue
 		}
@@ -86,6 +88,7 @@ func Run(cliCtx *cli.Context, cliApp *cli.App, configPath string, clickhouseBack
 		restart:                 make(chan struct{}),
 		clickhouseBackupVersion: clickhouseBackupVersion,
 		metrics:                 metrics.NewAPIMetrics(),
+		stop:                    make(chan struct{}),
 	}
 	if cfg.API.CreateIntegrationTables {
 		if err := api.CreateIntegrationTables(); err != nil {
@@ -94,7 +97,7 @@ func Run(cliCtx *cli.Context, cliApp *cli.App, configPath string, clickhouseBack
 	}
 	api.metrics.RegisterMetrics()
 
-	log.Info().Msgf("Starting API server on %s", api.config.API.ListenAddr)
+	log.Info().Msgf("Starting API server %s on %s", api.cliApp.Version, api.config.API.ListenAddr)
 	sigterm := make(chan os.Signal, 1)
 	signal.Notify(sigterm, os.Interrupt, syscall.SIGTERM)
 	sighup := make(chan os.Signal, 1)
@@ -111,8 +114,8 @@ func Run(cliCtx *cli.Context, cliApp *cli.App, configPath string, clickhouseBack
 	}
 
 	go func() {
-		if err := api.UpdateBackupMetrics(context.Background(), false); err != nil {
-			log.Error().Msgf("UpdateBackupMetrics return error: %v", err)
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
+			log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
 		}
 	}()
 
@@ -137,6 +140,9 @@ func Run(cliCtx *cli.Context, cliApp *cli.App, configPath string, clickhouseBack
 		case <-sigterm:
 			log.Info().Msg("Stopping API server")
 			return api.Stop()
+		case <-api.stop:
+			log.Info().Msg("Stopping API server. Stopped from the inside of the application")
+			return api.Stop()
 		}
 	}
 }
@@ -154,7 +160,7 @@ func (api *APIServer) RunWatch(cliCtx *cli.Context) {
 		"*.*", nil, false, false, false, false,
 		api.clickhouseBackupVersion, commandId, api.GetMetrics(), cliCtx,
 	)
-	status.Current.Stop(commandId, err)
+	api.handleWatchResponse(commandId, err)
 }
 
 // Stop cancel all running commands, @todo think about graceful period
@@ -214,6 +220,7 @@ func (api *APIServer) registerHTTPHandlers() *http.Server {
 	r.HandleFunc("/", api.httpRootHandler).Methods("GET", "HEAD")
 	r.HandleFunc("/", api.httpRestartHandler).Methods("POST")
 	r.HandleFunc("/restart", api.httpRestartHandler).Methods("POST", "GET")
+	r.HandleFunc("/backup/version", api.httpVersionHandler).Methods("GET", "HEAD")
 	r.HandleFunc("/backup/kill", api.httpKillHandler).Methods("POST", "GET")
 	r.HandleFunc("/backup/watch", api.httpWatchHandler).Methods("POST", "GET")
 	r.HandleFunc("/backup/tables", api.httpTablesHandler).Methods("GET")
@@ -324,7 +331,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 			api.writeError(w, http.StatusBadRequest, string(line), err)
 			return
 		}
-		log.Info().Msgf("/backup/actions call: %s", row.Command)
+		log.Info().Str("version", api.cliApp.Version).Msgf("/backup/actions call: %s", row.Command)
 		args, err := shlex.Split(row.Command)
 		if err != nil {
 			api.writeError(w, http.StatusBadRequest, "", err)
@@ -335,6 +342,12 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 		// watch command can't be run via cli app.Run, need parsing args
 		case "watch":
 			actionsResults, err = api.actionsWatchHandler(w, row, args, actionsResults)
+			if err != nil {
+				api.writeError(w, http.StatusInternalServerError, row.Command, err)
+				return
+			}
+		case "clean":
+			actionsResults, err = api.actionsCleanHandler(w, row, command, actionsResults)
 			if err != nil {
 				api.writeError(w, http.StatusInternalServerError, row.Command, err)
 				return
@@ -351,7 +364,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 				api.writeError(w, http.StatusInternalServerError, row.Command, err)
 				return
 			}
-		case "create", "restore", "upload", "download", "create_remote", "restore_remote":
+		case "create", "restore", "upload", "download", "create_remote", "restore_remote", "list":
 			actionsResults, err = api.actionsAsyncCommandsHandler(command, args, row, actionsResults)
 			if err != nil {
 				api.writeError(w, http.StatusInternalServerError, row.Command, err)
@@ -382,8 +395,8 @@ func (api *APIServer) actionsDeleteHandler(row status.ActionRow, args []string, 
 		return actionsResults, err
 	}
 	go func() {
-		if err := api.UpdateBackupMetrics(context.Background(), args[1] == "local"); err != nil {
-			log.Error().Msgf("UpdateBackupMetrics return error: %v", err)
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), args[1] == "local"); metricsErr != nil {
+			log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
 		}
 	}()
 	actionsResults = append(actionsResults, actionsResultsRow{
@@ -410,7 +423,7 @@ func (api *APIServer) actionsAsyncCommandsHandler(command string, args []string,
 			return
 		}
 		go func() {
-			if err := api.UpdateBackupMetrics(context.Background(), command == "create" || command == "restore"); err != nil {
+			if err := api.UpdateBackupMetrics(context.Background(), command == "create" || strings.HasPrefix(command, "restore") || command == "download"); err != nil {
 				log.Error().Msgf("UpdateBackupMetrics return error: %v", err)
 			}
 		}()
@@ -423,10 +436,10 @@ func (api *APIServer) actionsAsyncCommandsHandler(command string, args []string,
 }
 
 func (api *APIServer) actionsKillHandler(row status.ActionRow, args []string, actionsResults []actionsResultsRow) ([]actionsResultsRow, error) {
-	if len(args) <= 1 {
-		return actionsResults, errors.New("kill <command> parameter empty")
+	killCommand := ""
+	if len(args) > 1 {
+		killCommand = args[1]
 	}
-	killCommand := args[1]
 	commandId, _ := status.Current.Start(row.Command)
 	err := status.Current.Cancel(killCommand, fmt.Errorf("canceled from API /backup/actions"))
 	defer status.Current.Stop(commandId, err)
@@ -440,12 +453,44 @@ func (api *APIServer) actionsKillHandler(row status.ActionRow, args []string, ac
 	return actionsResults, nil
 }
 
+func (api *APIServer) actionsCleanHandler(w http.ResponseWriter, row status.ActionRow, command string, actionsResults []actionsResultsRow) ([]actionsResultsRow, error) {
+	if !api.config.API.AllowParallel && status.Current.InProgress() {
+		log.Warn().Msgf(ErrAPILocked.Error())
+		return actionsResults, ErrAPILocked
+	}
+	commandId, ctx := status.Current.Start(command)
+	cfg, err := api.ReloadConfig(w, "clean")
+	if err != nil {
+		status.Current.Stop(commandId, err)
+		return actionsResults, err
+	}
+	b := backup.NewBackuper(cfg)
+	err = b.Clean(ctx)
+	if err != nil {
+		log.Error().Msgf("actions Clean error: %v", err)
+		status.Current.Stop(commandId, err)
+		return actionsResults, err
+	}
+	log.Info().Msg("CLEANED")
+	go func() {
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
+			log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
+		}
+	}()
+	status.Current.Stop(commandId, nil)
+	actionsResults = append(actionsResults, actionsResultsRow{
+		Status:    "success",
+		Operation: row.Command,
+	})
+	return actionsResults, nil
+}
+
 func (api *APIServer) actionsCleanRemoteBrokenHandler(w http.ResponseWriter, row status.ActionRow, command string, actionsResults []actionsResultsRow) ([]actionsResultsRow, error) {
 	if !api.config.API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		return actionsResults, ErrAPILocked
 	}
-	commandId, ctx := status.Current.Start(command)
+	commandId, _ := status.Current.Start(command)
 	cfg, err := api.ReloadConfig(w, "clean_remote_broken")
 	if err != nil {
 		status.Current.Stop(commandId, err)
@@ -459,10 +504,11 @@ func (api *APIServer) actionsCleanRemoteBrokenHandler(w http.ResponseWriter, row
 		return actionsResults, err
 	}
 	log.Info().Msg("CLEANED")
-	metricsErr := api.UpdateBackupMetrics(ctx, false)
-	if metricsErr != nil {
-		log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
-	}
+	go func() {
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
+			log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
+		}
+	}()
 	status.Current.Stop(commandId, nil)
 	actionsResults = append(actionsResults, actionsResultsRow{
 		Status:    "success",
@@ -524,7 +570,7 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 			fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
 		}
 		if matchParam, partitions := simpleParseArg(i, args, "--partitions"); matchParam {
-			partitionsToBackup = strings.Split(partitions, ",")
+			partitionsToBackup = append(partitionsToBackup, partitions)
 			fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, partitions)
 		}
 		if matchParam, _ = simpleParseArg(i, args, "--schema"); matchParam {
@@ -549,11 +595,7 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 	go func() {
 		b := backup.NewBackuper(cfg)
 		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, skipCheckPartsColumns, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
-		defer status.Current.Stop(commandId, err)
-		if err != nil {
-			log.Error().Msgf("Watch error: %v", err)
-			return
-		}
+		api.handleWatchResponse(commandId, err)
 	}()
 
 	actionsResults = append(actionsResults, actionsResultsRow{
@@ -561,6 +603,21 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 		Operation: row.Command,
 	})
 	return actionsResults, nil
+}
+
+func (api *APIServer) handleWatchResponse(watchCommandId int, err error) {
+	status.Current.Stop(watchCommandId, err)
+	if err != nil {
+		log.Error().Msgf("Watch error: %v", err)
+	}
+	if api.config.API.WatchIsMainProcess {
+		// Do not stop server if 'watch' was canceled by the user command
+		if errors.Is(err, context.Canceled) {
+			return
+		}
+		log.Info().Msg("Stopping server since watch command is stopped")
+		api.stop <- struct{}{}
+	}
 }
 
 func (api *APIServer) actionsLog(w http.ResponseWriter, r *http.Request) {
@@ -588,7 +645,7 @@ func (api *APIServer) httpRootHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
 
-	_, _ = fmt.Fprintln(w, "Documentation: https://github.com/Altinity/clickhouse-backup#api")
+	_, _ = fmt.Fprintf(w, "Version: %s\nDocumentation: https://github.com/Altinity/clickhouse-backup#api\n", api.cliApp.Version)
 	for _, r := range api.routes {
 		_, _ = fmt.Fprintln(w, r)
 	}
@@ -608,6 +665,15 @@ func (api *APIServer) httpRestartHandler(w http.ResponseWriter, _ *http.Request)
 	}()
 }
 
+// httpVersionHandler
+func (api *APIServer) httpVersionHandler(w http.ResponseWriter, _ *http.Request) {
+	api.sendJSONEachRow(w, http.StatusOK, struct {
+		Version string `json:"version"`
+	}{
+		Version: api.cliApp.Version,
+	})
+}
+
 // httpKillHandler - kill selected command if it InProgress
 func (api *APIServer) httpKillHandler(w http.ResponseWriter, r *http.Request) {
 	var err error
@@ -615,7 +681,7 @@ func (api *APIServer) httpKillHandler(w http.ResponseWriter, r *http.Request) {
 	if exists && len(command) > 0 {
 		err = status.Current.Cancel(command[0], fmt.Errorf("canceled from API /backup/kill"))
 	} else {
-		err = fmt.Errorf("require non empty `command` parameter")
+		err = status.Current.Cancel("", fmt.Errorf("canceled from API /backup/kill"))
 	}
 	if err != nil {
 		api.sendJSONEachRow(w, http.StatusInternalServerError, struct {
@@ -648,16 +714,22 @@ func (api *APIServer) httpTablesHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	b := backup.NewBackuper(cfg)
 	q := r.URL.Query()
-	tables, err := b.GetTables(context.Background(), q.Get("table"))
+	var tables []clickhouse.Table
+	// https://github.com/Altinity/clickhouse-backup/issues/778
+	if q.Get("remote_backup") != "" {
+		tables, err = b.GetTablesRemote(context.Background(), q.Get("remote_backup"), q.Get("table"))
+	} else {
+		tables, err = b.GetTables(context.Background(), q.Get("table"))
+	}
 	if err != nil {
 		api.writeError(w, http.StatusInternalServerError, "tables", err)
 		return
 	}
-	if r.URL.Path != "/backup/tables/all" {
-		tables := api.getTablesWithSkip(tables)
+	if r.URL.Path == "/backup/tables/all" {
 		api.sendJSONEachRow(w, http.StatusOK, tables)
 		return
 	}
+	tables = api.getTablesWithSkip(tables)
 	api.sendJSONEachRow(w, http.StatusOK, tables)
 }
 
@@ -723,9 +795,6 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, item := range localBackups {
 			description := item.DataFormat
-			if item.Legacy {
-				description = "old-format"
-			}
 			if item.Broken != "" {
 				description = item.Broken
 			}
@@ -738,7 +807,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 			backupsJSON = append(backupsJSON, backupJSON{
 				Name:           item.BackupName,
 				Created:        item.CreationDate.Format(common.TimeFormat),
-				Size:           item.DataSize + item.MetadataSize,
+				Size:           item.GetFullSize(),
 				Location:       "local",
 				RequiredBackup: item.RequiredBackup,
 				Desc:           description,
@@ -755,9 +824,6 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		for i, b := range remoteBackups {
 			description := b.DataFormat
-			if b.Legacy {
-				description = "old-format"
-			}
 			if b.Broken != "" {
 				description = b.Broken
 				brokenBackups++
@@ -768,16 +834,17 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 				}
 				description += b.Tags
 			}
+			fullSize := b.GetFullSize()
 			backupsJSON = append(backupsJSON, backupJSON{
 				Name:           b.BackupName,
 				Created:        b.CreationDate.Format(common.TimeFormat),
-				Size:           b.DataSize + b.MetadataSize,
+				Size:           fullSize,
 				Location:       "remote",
 				RequiredBackup: b.RequiredBackup,
 				Desc:           description,
 			})
 			if i == len(remoteBackups)-1 {
-				api.metrics.LastBackupSizeRemote.Set(float64(b.DataSize + b.MetadataSize + b.ConfigSize + b.RBACSize))
+				api.metrics.LastBackupSizeRemote.Set(float64(fullSize))
 			}
 		}
 		api.metrics.NumberBackupsRemoteBroken.Set(float64(brokenBackups))
@@ -798,6 +865,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	tablePattern := ""
+	diffFromRemote := ""
 	partitionsToBackup := make([]string, 0)
 	backupName := backup.NewBackupName()
 	schemaOnly := false
@@ -810,9 +878,12 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		tablePattern = tp[0]
 		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
 	}
+	if baseBackup, exists := query["diff-from-remote"]; exists {
+		diffFromRemote = baseBackup[0]
+	}
 	if partitions, exist := query["partitions"]; exist {
-		partitionsToBackup = strings.Split(partitions[0], ",")
-		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, partitions)
+		partitionsToBackup = append(partitionsToBackup, partitions...)
+		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, strings.Join(partitions, "\" --partitions=\""))
 	}
 	if schema, exist := query["schema"]; exist {
 		schemaOnly, _ = strconv.ParseBool(schema[0])
@@ -850,11 +921,11 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	commandId, ctx := status.Current.Start(fullCommand)
+	commandId, _ := status.Current.Start(fullCommand)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("create", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.CreateBackup(backupName, tablePattern, partitionsToBackup, schemaOnly, createRBAC, false, createConfigs, false, checkPartsColumns, api.clickhouseBackupVersion, commandId)
+			return b.CreateBackup(backupName, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, createRBAC, false, createConfigs, false, checkPartsColumns, api.clickhouseBackupVersion, commandId)
 		})
 		if err != nil {
 			log.Error().Msgf("API /backup/create error: %v", err)
@@ -862,12 +933,12 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 			api.errorCallback(context.Background(), err, callback)
 			return
 		}
-		if err := api.UpdateBackupMetrics(ctx, true); err != nil {
-			log.Error().Msgf("UpdateBackupMetrics return error: %v", err)
-			status.Current.Stop(commandId, err)
-			api.errorCallback(context.Background(), err, callback)
-			return
-		}
+		go func() {
+			if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
+				log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
+			}
+		}()
+
 		status.Current.Stop(commandId, nil)
 		api.successCallback(context.Background(), callback)
 	}()
@@ -921,8 +992,8 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
 	}
 	if partitions, exist := query["partitions"]; exist {
-		partitionsToBackup = strings.Split(partitions[0], ",")
-		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, partitions)
+		partitionsToBackup = append(partitionsToBackup, partitions...)
+		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, strings.Join(partitions, "\" --partitions=\""))
 	}
 	if schema, exist := query["schema"]; exist {
 		schemaOnly, _ = strconv.ParseBool(schema[0])
@@ -959,11 +1030,7 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		b := backup.NewBackuper(cfg)
 		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, skipCheckPartsColumns, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
-		defer status.Current.Stop(commandId, err)
-		if err != nil {
-			log.Error().Msgf("Watch error: %v", err)
-			return
-		}
+		api.handleWatchResponse(commandId, err)
 	}()
 	api.sendJSONEachRow(w, http.StatusCreated, struct {
 		Status    string `json:"status"`
@@ -1004,7 +1071,7 @@ func (api *APIServer) httpCleanRemoteBrokenHandler(w http.ResponseWriter, _ *htt
 	if err != nil {
 		return
 	}
-	commandId, ctx := status.Current.Start("clean_remote_broken")
+	commandId, _ := status.Current.Start("clean_remote_broken")
 	defer status.Current.Stop(commandId, err)
 
 	b := backup.NewBackuper(cfg)
@@ -1014,13 +1081,11 @@ func (api *APIServer) httpCleanRemoteBrokenHandler(w http.ResponseWriter, _ *htt
 		api.writeError(w, http.StatusInternalServerError, "clean_remote_broken", err)
 		return
 	}
-
-	err = api.UpdateBackupMetrics(ctx, false)
-	if err != nil {
-		log.Error().Msgf("Clean remote broken error: %v", err)
-		api.writeError(w, http.StatusInternalServerError, "clean_remote_broken", err)
-		return
-	}
+	go func() {
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
+			log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
+		}
+	}()
 
 	api.sendJSONEachRow(w, http.StatusOK, struct {
 		Status    string `json:"status"`
@@ -1044,6 +1109,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	vars := mux.Vars(r)
 	query := r.URL.Query()
+	deleteSource := false
 	diffFrom := ""
 	diffFromRemote := ""
 	name := utils.CleanBackupNameRE.ReplaceAllString(vars["name"], "")
@@ -1052,6 +1118,11 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	schemaOnly := false
 	resume := false
 	fullCommand := "upload"
+
+	if _, exist := query["delete-source"]; exist {
+		deleteSource = true
+		fullCommand = fmt.Sprintf("%s --deleteSource", fullCommand)
+	}
 
 	if df, exist := query["diff-from"]; exist {
 		diffFrom = df[0]
@@ -1066,8 +1137,8 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
 	}
 	if partitions, exist := query["partitions"]; exist {
-		partitionsToBackup = strings.Split(partitions[0], ",")
-		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, partitions)
+		partitionsToBackup = append(partitionsToBackup, partitions...)
+		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, strings.Join(partitions, "\" --partitions=\""))
 	}
 	if _, exist := query["schema"]; exist {
 		schemaOnly = true
@@ -1087,11 +1158,11 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	commandId, ctx := status.Current.Start(fullCommand)
 	go func() {
+		commandId, _ := status.Current.Start(fullCommand)
 		err, _ := api.metrics.ExecuteWithMetrics("upload", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.Upload(name, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, resume, commandId)
+			return b.Upload(name, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, resume, api.cliApp.Version, commandId)
 		})
 		if err != nil {
 			log.Error().Msgf("Upload error: %v", err)
@@ -1099,12 +1170,11 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 			api.errorCallback(context.Background(), err, callback)
 			return
 		}
-		if err := api.UpdateBackupMetrics(ctx, false); err != nil {
-			log.Error().Msgf("UpdateBackupMetrics return error: %v", err)
-			status.Current.Stop(commandId, err)
-			api.errorCallback(context.Background(), err, callback)
-			return
-		}
+		go func() {
+			if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
+				log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
+			}
+		}()
 		status.Current.Stop(commandId, nil)
 		api.successCallback(context.Background(), callback)
 	}()
@@ -1124,6 +1194,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 }
 
 var databaseMappingRE = regexp.MustCompile(`[\w+]:[\w+]`)
+var tableMappingRE = regexp.MustCompile(`[\w+]:[\w+]`)
 
 // httpRestoreHandler - restore a backup from local storage
 func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request) {
@@ -1139,10 +1210,11 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	vars := mux.Vars(r)
 	tablePattern := ""
 	databaseMappingToRestore := make([]string, 0)
+	tableMappingToRestore := make([]string, 0)
 	partitionsToBackup := make([]string, 0)
 	schemaOnly := false
 	dataOnly := false
-	dropTable := false
+	dropExists := false
 	ignoreDependencies := false
 	restoreRBAC := false
 	restoreConfigs := false
@@ -1168,9 +1240,27 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 
 		fullCommand = fmt.Sprintf("%s --restore-database-mapping=\"%s\"", fullCommand, strings.Join(databaseMappingToRestore, ","))
 	}
+
+	// https://github.com/Altinity/clickhouse-backup/issues/937
+	if tableMappingQuery, exist := query["restore_table_mapping"]; exist {
+		for _, tableMapping := range tableMappingQuery {
+			mappingItems := strings.Split(tableMapping, ",")
+			for _, m := range mappingItems {
+				if strings.Count(m, ":") != 1 || !tableMappingRE.MatchString(m) {
+					api.writeError(w, http.StatusInternalServerError, "restore", fmt.Errorf("invalid values in restore_table_mapping %s", m))
+					return
+
+				}
+			}
+			tableMappingToRestore = append(tableMappingToRestore, mappingItems...)
+		}
+
+		fullCommand = fmt.Sprintf("%s --restore-table-mapping=\"%s\"", fullCommand, strings.Join(tableMappingToRestore, ","))
+	}
+
 	if partitions, exist := query["partitions"]; exist {
-		partitionsToBackup = partitions
-		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, strings.Join(partitions, ","))
+		partitionsToBackup = append(partitionsToBackup, partitions...)
+		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, strings.Join(partitions, "\" --partitions=\""))
 	}
 	if _, exist := query["schema"]; exist {
 		schemaOnly = true
@@ -1181,11 +1271,11 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		fullCommand += " --data"
 	}
 	if _, exist := query["drop"]; exist {
-		dropTable = true
+		dropExists = true
 		fullCommand += " --drop"
 	}
 	if _, exist := query["rm"]; exist {
-		dropTable = true
+		dropExists = true
 		fullCommand += " --rm"
 	}
 	if _, exists := query["ignore_dependencies"]; exists {
@@ -1215,7 +1305,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore", 0, func() error {
 			b := backup.NewBackuper(api.config)
-			return b.Restore(name, tablePattern, databaseMappingToRestore, partitionsToBackup, schemaOnly, dataOnly, dropTable, ignoreDependencies, restoreRBAC, false, restoreConfigs, false, commandId)
+			return b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, false, restoreConfigs, false, api.cliApp.Version, commandId)
 		})
 		status.Current.Stop(commandId, err)
 		if err != nil {
@@ -1262,8 +1352,8 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
 	}
 	if partitions, exist := query["partitions"]; exist {
-		partitionsToBackup = partitions
-		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, strings.Join(partitions, ","))
+		partitionsToBackup = append(partitionsToBackup, partitions...)
+		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, strings.Join(partitions, "\" --partitions=\""))
 	}
 	if _, exist := query["schema"]; exist {
 		schemaOnly = true
@@ -1282,11 +1372,11 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	commandId, ctx := status.Current.Start(fullCommand)
 	go func() {
+		commandId, _ := status.Current.Start(fullCommand)
 		err, _ := api.metrics.ExecuteWithMetrics("download", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.Download(name, tablePattern, partitionsToBackup, schemaOnly, resume, commandId)
+			return b.Download(name, tablePattern, partitionsToBackup, schemaOnly, resume, api.cliApp.Version, commandId)
 		})
 		if err != nil {
 			log.Error().Msgf("API /backup/download error: %v", err)
@@ -1294,12 +1384,11 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 			api.errorCallback(context.Background(), err, callback)
 			return
 		}
-		if err := api.UpdateBackupMetrics(ctx, true); err != nil {
-			log.Error().Msgf("UpdateBackupMetrics return error: %v", err)
-			status.Current.Stop(commandId, err)
-			api.errorCallback(context.Background(), err, callback)
-			return
-		}
+		go func() {
+			if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
+				log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
+			}
+		}()
 		status.Current.Stop(commandId, nil)
 		api.successCallback(context.Background(), callback)
 	}()
@@ -1344,8 +1433,8 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	go func() {
-		if err := api.UpdateBackupMetrics(context.Background(), vars["where"] == "local"); err != nil {
-			log.Error().Msgf("UpdateBackupMetrics return error: %v", err)
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), vars["where"] == "local"); metricsErr != nil {
+			log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
 		}
 	}()
 	api.sendJSONEachRow(w, http.StatusOK, struct {
@@ -1412,7 +1501,7 @@ func (api *APIServer) UpdateBackupMetrics(ctx context.Context, onlyLocal bool) e
 			}
 		}
 		lastBackup := remoteBackups[numberBackupsRemote-1]
-		lastSizeRemote = lastBackup.DataSize + lastBackup.MetadataSize + lastBackup.ConfigSize + lastBackup.RBACSize
+		lastSizeRemote = lastBackup.GetFullSize()
 		lastBackupCreateRemote = &lastBackup.CreationDate
 		lastBackupUpload = &lastBackup.UploadDate
 		api.metrics.LastBackupSizeRemote.Set(float64(lastSizeRemote))
@@ -1486,7 +1575,10 @@ func (api *APIServer) CreateIntegrationTables() error {
 		return fmt.Errorf("can't connect to clickhouse: %w", err)
 	}
 	defer ch.Close()
-	port := strings.Split(api.config.API.ListenAddr, ":")[1]
+	port := "80"
+	if strings.Contains(api.config.API.ListenAddr, ":") {
+		port = api.config.API.ListenAddr[strings.Index(api.config.API.ListenAddr, ":")+1:]
+	}
 	auth := ""
 	if api.config.API.Username != "" || api.config.API.Password != "" {
 		params := url.Values{}
@@ -1510,12 +1602,24 @@ func (api *APIServer) CreateIntegrationTables() error {
 	if version >= 21001000 {
 		settings = "SETTINGS input_format_skip_unknown_fields=1"
 	}
+	disks, err := ch.GetDisks(context.Background(), true)
+	if err != nil {
+		return err
+	}
+	defaultDataPath, err := ch.GetDefaultPath(disks)
+	if err != nil {
+		return err
+	}
 	query := fmt.Sprintf("CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String) ENGINE=URL('%s://%s:%s/backup/actions%s', JSONEachRow) %s", schema, host, port, auth, settings)
-	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_actions"}, query, true, false, "", 0); err != nil {
+	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_actions"}, query, true, false, "", 0, defaultDataPath); err != nil {
 		return err
 	}
 	query = fmt.Sprintf("CREATE TABLE system.backup_list (name String, created DateTime, size Int64, location String, required String, desc String) ENGINE=URL('%s://%s:%s/backup/list%s', JSONEachRow) %s", schema, host, port, auth, settings)
-	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_list"}, query, true, false, "", 0); err != nil {
+	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_list"}, query, true, false, "", 0, defaultDataPath); err != nil {
+		return err
+	}
+	query = fmt.Sprintf("CREATE TABLE system.backup_version (version String) ENGINE=URL('%s://%s:%s/backup/version%s', JSONEachRow) %s", schema, host, port, auth, settings)
+	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_version"}, query, true, false, "", 0, defaultDataPath); err != nil {
 		return err
 	}
 	return nil
@@ -1598,9 +1702,9 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 					if partitions, ok := params["partitions"]; ok && len(partitions.([]interface{})) > 0 {
 						partitionsStr := make([]string, len(partitions.([]interface{})))
 						for j, v := range partitions.([]interface{}) {
-							partitionsStr[j] = v.(string)
+							partitionsStr[j] = fmt.Sprintf("--partitions=\"%s\"", v.(string))
 						}
-						args = append(args, fmt.Sprintf("--partitions=\"%s\"", strings.Join(partitionsStr, ",")))
+						args = append(args, partitionsStr...)
 					}
 					args = append(args, "--resumable=1", backupName)
 					fullCommand := strings.Join(args, " ")
@@ -1613,8 +1717,12 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 					if err != nil {
 						return err
 					}
+
 					if err = os.Remove(stateFile); err != nil {
-						return err
+						if api.config.General.BackupsToKeepLocal >= 0 {
+							return err
+						}
+						log.Warn().Str("operation", "ResumeOperationsAfterRestart").Msgf("remove %s return error: ", err)
 					}
 				default:
 					return fmt.Errorf("unkown command for state file %s", stateFile)

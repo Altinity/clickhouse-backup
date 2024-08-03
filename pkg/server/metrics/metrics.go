@@ -31,6 +31,7 @@ type APIMetrics struct {
 	NumberBackupsLocal          prometheus.Gauge
 	NumberBackupsRemoteExpected prometheus.Gauge
 	NumberBackupsLocalExpected  prometheus.Gauge
+	InProgressCommands          prometheus.Gauge
 
 	SubCommands map[string][]string
 }
@@ -100,6 +101,7 @@ func (m *APIMetrics) RegisterMetrics() {
 		Name:      "last_backup_size_local",
 		Help:      "Last local backup size in bytes",
 	})
+
 	m.LastBackupSizeRemote = prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace: "clickhouse_backup",
 		Name:      "last_backup_size_remote",
@@ -136,6 +138,12 @@ func (m *APIMetrics) RegisterMetrics() {
 		Help:      "How many backups expected on local storage",
 	})
 
+	m.InProgressCommands = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "clickhouse_backup",
+		Name:      "in_progress_commands",
+		Help:      "How many commands running in progress",
+	})
+
 	for _, command := range commandList {
 		prometheus.MustRegister(
 			m.SuccessfulCounter[command],
@@ -154,6 +162,7 @@ func (m *APIMetrics) RegisterMetrics() {
 		m.NumberBackupsLocal,
 		m.NumberBackupsRemoteExpected,
 		m.NumberBackupsLocalExpected,
+		m.InProgressCommands,
 	)
 
 	for _, command := range commandList {
@@ -164,6 +173,7 @@ func (m *APIMetrics) RegisterMetrics() {
 func (m *APIMetrics) Start(command string, startTime time.Time) {
 	if _, exists := m.LastStart[command]; exists {
 		m.LastStart[command].Set(float64(startTime.Unix()))
+		m.InProgressCommands.Inc()
 		if subCommands, subCommandsExists := m.SubCommands[command]; subCommandsExists {
 			for _, subCommand := range subCommands {
 				if _, exists := m.LastStart[subCommand]; exists {
@@ -175,10 +185,12 @@ func (m *APIMetrics) Start(command string, startTime time.Time) {
 		log.Warn().Msgf("%s not found in LastStart metrics", command)
 	}
 }
+
 func (m *APIMetrics) Finish(command string, startTime time.Time) {
 	if _, exists := m.LastFinish[command]; exists {
 		m.LastDuration[command].Set(float64(time.Since(startTime).Nanoseconds()))
 		m.LastFinish[command].Set(float64(time.Now().Unix()))
+		m.InProgressCommands.Dec()
 		if subCommands, subCommandsExists := m.SubCommands[command]; subCommandsExists {
 			for _, subCommand := range subCommands {
 				if _, exists := m.LastFinish[subCommand]; exists {

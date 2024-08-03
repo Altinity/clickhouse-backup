@@ -2,6 +2,7 @@ package filesystemhelper
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -10,10 +11,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
-	"github.com/Altinity/clickhouse-backup/pkg/common"
-	"github.com/Altinity/clickhouse-backup/pkg/metadata"
-	"github.com/Altinity/clickhouse-backup/pkg/utils"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"github.com/rs/zerolog/log"
 )
 
@@ -113,25 +114,46 @@ func MkdirAll(path string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk) e
 	return nil
 }
 
-// HardlinkBackupPartsToStorage - copy parts for specific table to detached folder
-func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableMetadata, disks []clickhouse.Disk, tableDataPaths []string, ch *clickhouse.ClickHouse, toDetached bool) error {
+// HardlinkBackupPartsToStorage - copy partitions for specific table to detached folder
+func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableMetadata, disks []clickhouse.Disk, diskMap map[string]string, tableDataPaths []string, ch *clickhouse.ClickHouse, toDetached bool) error {
 	start := time.Now()
 	dstDataPaths := clickhouse.GetDisksByPaths(disks, tableDataPaths)
 	dbAndTableDir := path.Join(common.TablePathEncode(backupTable.Database), common.TablePathEncode(backupTable.Table))
-	for _, backupDisk := range disks {
-		backupDiskName := backupDisk.Name
-		if len(backupTable.Parts[backupDiskName]) == 0 {
-			log.Debug().Msgf("%s disk have no parts", backupDisk.Name)
-			continue
+	if !toDetached {
+		for backupDiskName := range backupTable.Parts {
+			dstParentDir, dstParentDirExists := dstDataPaths[backupDiskName]
+			if dstParentDirExists {
+				// avoid to restore to non-empty to avoid attach in already dropped partitions, corner case
+				existsFiles, err := os.ReadDir(dstParentDir)
+				if err != nil && !os.IsNotExist(err) {
+					return err
+				}
+				for _, f := range existsFiles {
+					if f.Name() != "detached" && !strings.HasSuffix(f.Name(), ".txt") {
+						return fmt.Errorf("%s contains exists data %v, we can't restore directly via ATTACH TABLE, use `clickhouse->restore_as_attach=false` in your config", dstParentDir, existsFiles)
+					}
+				}
+			}
 		}
-		dstParentDir, dstParentDirExists := dstDataPaths[backupDiskName]
-		if !dstParentDirExists {
-			return fmt.Errorf("dstDataPaths=%#v, not contains %s", dstDataPaths, backupDiskName)
-		}
-		if toDetached {
-			dstParentDir = filepath.Join(dstParentDir, "detached")
-		}
+	}
+	for backupDiskName := range backupTable.Parts {
 		for _, part := range backupTable.Parts[backupDiskName] {
+			dstParentDir, dstParentDirExists := dstDataPaths[backupDiskName]
+			if !dstParentDirExists && part.RebalancedDisk == "" {
+				return fmt.Errorf("dstDataPaths=%#v, not contains %s", dstDataPaths, backupDiskName)
+			}
+			if !dstParentDirExists && part.RebalancedDisk != "" {
+				backupDiskName = part.RebalancedDisk
+				dstParentDir, dstParentDirExists = dstDataPaths[part.RebalancedDisk]
+				if !dstParentDirExists {
+					return fmt.Errorf("dstDataPaths=%#v, not contains %s", dstDataPaths, part.RebalancedDisk)
+				}
+			}
+			backupDiskPath := diskMap[backupDiskName]
+			if toDetached {
+				dstParentDir = filepath.Join(dstParentDir, "detached")
+
+			}
 			dstPartPath := filepath.Join(dstParentDir, part.Name)
 			info, err := os.Stat(dstPartPath)
 			if err != nil {
@@ -146,16 +168,16 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 			} else if !info.IsDir() {
 				return fmt.Errorf("'%s' should be directory or absent", dstPartPath)
 			}
-			partPath := path.Join(backupDisk.Path, "backup", backupName, "shadow", dbAndTableDir, backupDisk.Name, part.Name)
-			// Legacy backup support
-			if _, err := os.Stat(partPath); os.IsNotExist(err) {
-				partPath = path.Join(backupDisk.Path, "backup", backupName, "shadow", dbAndTableDir, part.Name)
-			}
-			if err := filepath.Walk(partPath, func(filePath string, info os.FileInfo, err error) error {
+			srcPartPath := path.Join(backupDiskPath, "backup", backupName, "shadow", dbAndTableDir, backupDiskName, part.Name)
+			if err := filepath.Walk(srcPartPath, func(filePath string, info os.FileInfo, err error) error {
 				if err != nil {
 					return err
 				}
-				filename := strings.Trim(strings.TrimPrefix(filePath, partPath), "/")
+				// fix https://github.com/Altinity/clickhouse-backup/issues/826
+				if strings.Contains(info.Name(), "frozen_metadata") {
+					return nil
+				}
+				filename := strings.Trim(strings.TrimPrefix(filePath, srcPartPath), "/")
 				dstFilePath := filepath.Join(dstPartPath, filename)
 				if info.IsDir() {
 					log.Debug().Msgf("MkDir %s", dstFilePath)
@@ -182,20 +204,58 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 }
 
 func IsPartInPartition(partName string, partitionsBackupMap common.EmptyMap) bool {
-	_, ok := partitionsBackupMap[strings.Split(partName, "_")[0]]
-	return ok
+	partitionId := strings.Split(partName, "_")[0]
+	if _, exists := partitionsBackupMap[partitionId]; exists {
+		return true
+	}
+	for pattern := range partitionsBackupMap {
+		if matched, err := filepath.Match(pattern, partitionId); err == nil && matched {
+			return true
+		} else if err != nil {
+			log.Warn().Msgf("error filepath.Match(%s, %s) error: %v", pattern, partitionId, err)
+			log.Debug().Msgf("%s not found in %s, file will filtered", partitionId, partitionsBackupMap)
+			return false
+		}
+	}
+	return false
 }
 
 func IsFileInPartition(disk, fileName string, partitionsBackupMap common.EmptyMap) bool {
 	fileName = strings.TrimPrefix(fileName, disk+"_")
-	_, ok := partitionsBackupMap[strings.Split(fileName, "_")[0]]
-	return ok
+	fileName = strings.Split(fileName, "_")[0]
+	if strings.Contains(fileName, "%") {
+		decodedFileName, err := url.QueryUnescape(fileName)
+		if err != nil {
+			log.Warn().Msgf("error decoding %s: %v", fileName, err)
+			log.Debug().Msgf("%s not found in %s, file will filtered", fileName, partitionsBackupMap)
+			return false
+		}
+		fileName = decodedFileName
+	}
+	if _, exists := partitionsBackupMap[fileName]; exists {
+		return true
+	}
+	for pattern := range partitionsBackupMap {
+		if matched, err := filepath.Match(pattern, fileName); err == nil && matched {
+			return true
+		} else if err != nil {
+			log.Warn().Msgf("error filepath.Match(%s, %s) error: %v", pattern, fileName, err)
+			log.Debug().Msgf("%s not found in %s, file will filtered", fileName, partitionsBackupMap)
+			return false
+		}
+	}
+	return false
 }
 
-func MoveShadow(shadowPath, backupPartsPath string, partitionsBackupMap common.EmptyMap) ([]metadata.Part, int64, error) {
+func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap common.EmptyMap, tableDiffFromRemote metadata.TableMetadata, disk clickhouse.Disk, version int) ([]metadata.Part, int64, error) {
 	size := int64(0)
 	parts := make([]metadata.Part, 0)
 	err := filepath.Walk(shadowPath, func(filePath string, info os.FileInfo, err error) error {
+		// fix https://github.com/Altinity/clickhouse-backup/issues/826
+		if strings.Contains(info.Name(), "frozen_metadata") {
+			return nil
+		}
+
 		// possible relative path
 		// store / 1f9 / 1f9dc899-0de9-41f8-b95c-26c1f0d67d93 / 20181023_2_2_0 / checksums.txt
 		// store / 1f9 / 1f9dc899-0de9-41f8-b95c-26c1f0d67d93 / 20181023_2_2_0 / x.proj / checksums.txt
@@ -209,9 +269,16 @@ func MoveShadow(shadowPath, backupPartsPath string, partitionsBackupMap common.E
 		if len(partitionsBackupMap) != 0 && !IsPartInPartition(pathParts[3], partitionsBackupMap) {
 			return nil
 		}
+		var isRequiredPartFound, partExists bool
+		if tableDiffFromRemote.Database != "" && tableDiffFromRemote.Table != "" && len(tableDiffFromRemote.Parts) > 0 && len(tableDiffFromRemote.Parts[disk.Name]) > 0 {
+			parts, isRequiredPartFound, partExists = addRequiredPartIfNotExists(parts, pathParts[3], tableDiffFromRemote, disk)
+			if isRequiredPartFound {
+				return nil
+			}
+		}
 		dstFilePath := filepath.Join(backupPartsPath, pathParts[3])
 		if info.IsDir() {
-			if !strings.HasSuffix(pathParts[3], ".proj") {
+			if !strings.HasSuffix(pathParts[3], ".proj") && !isRequiredPartFound && !partExists {
 				parts = append(parts, metadata.Part{
 					Name: pathParts[3],
 				})
@@ -223,9 +290,36 @@ func MoveShadow(shadowPath, backupPartsPath string, partitionsBackupMap common.E
 			return nil
 		}
 		size += info.Size()
-		return os.Rename(filePath, dstFilePath)
+		if version < 21004000 {
+			return os.Rename(filePath, dstFilePath)
+		} else {
+			return os.Link(filePath, dstFilePath)
+		}
 	})
 	return parts, size, err
+}
+
+func addRequiredPartIfNotExists(parts []metadata.Part, relativePath string, tableDiffFromRemote metadata.TableMetadata, disk clickhouse.Disk) ([]metadata.Part, bool, bool) {
+	isRequiredPartFound := false
+	exists := false
+	for _, diffPart := range tableDiffFromRemote.Parts[disk.Name] {
+		if diffPart.Name == relativePath || strings.HasPrefix(relativePath, diffPart.Name+"/") {
+			for _, p := range parts {
+				if p.Name == relativePath || strings.HasPrefix(relativePath, p.Name+"/") {
+					exists = true
+					break
+				}
+			}
+			if !exists {
+				parts = append(parts, metadata.Part{
+					Name:     relativePath,
+					Required: true,
+				})
+			}
+			isRequiredPartFound = true
+		}
+	}
+	return parts, isRequiredPartFound, exists
 }
 
 func IsDuplicatedParts(part1, part2 string) error {

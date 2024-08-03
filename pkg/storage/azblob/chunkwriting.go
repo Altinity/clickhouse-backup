@@ -145,11 +145,11 @@ func (c *copier) sendChunk() error {
 			id:     c.id.next(),
 		}
 		return nil
-	case err != nil && (err == io.EOF || err == io.ErrUnexpectedEOF) && n == 0:
+	case err != nil && (err == io.EOF || errors.Is(err, io.ErrUnexpectedEOF)) && n == 0:
 		return io.EOF
 	}
 
-	if err == io.EOF || err == io.ErrUnexpectedEOF {
+	if err == io.EOF || errors.Is(err, io.ErrUnexpectedEOF) {
 		c.ch <- copierChunk{
 			buffer: buffer[0:n],
 			id:     c.id.next(),

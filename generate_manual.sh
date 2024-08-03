@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# make clean build-race
-CLICKHOUSE_BACKUP_BIN=${CLICKHOUSE_BACKUP_BIN:-./clickhouse-backup/clickhouse-backup-race}
+CLICKHOUSE_BACKUP_BIN=${CLICKHOUSE_BACKUP_BIN:-build/linux/$(dpkg --print-architecture)/clickhouse-backup}
+make clean ${CLICKHOUSE_BACKUP_BIN}
 cmds=(
   tables
   create

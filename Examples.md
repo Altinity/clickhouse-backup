@@ -1,13 +1,13 @@
 # Use cases of clickhouse-backup
 
 ## How to convert MergeTree to ReplicatedMergeTree
-don't work for tables which created in `MergeTree(date_column, (primary keys columns), 8192)` format
+This doesn't work for tables created in `MergeTree(date_column, (primary keys columns), 8192)` format
 1. Create backup
    ```
    clickhouse-backup create --table='my_db.my_table' my_backup
    ```
 2. Edit `/var/lib/clickhouse/backup/my_backup/metadata/my_db/my_table.json`, change `query` field, 
-   replace MergeTree() to ReplicatedMergeTree() with parameters according to https://clickhouse.com/docs/en/engines/table-engines/mergetree-family/replication/#creating-replicated-tables
+   replace MergeTree() with ReplicatedMergeTree() with parameters according to https://clickhouse.com/docs/en/engines/table-engines/mergetree-family/replication/#creating-replicated-tables
 3. Drop table in Clickhouse
    ```
    clickhouse-client -q "DROP TABLE my_db.my.table NO DELAY"
@@ -18,37 +18,34 @@ don't work for tables which created in `MergeTree(date_column, (primary keys col
    ```
 
 ## How to store backups on NFS, backup drive or another server via SFTP
-Use 'rsync'
-'rsync' supports hard links with means that backup on remote server or mounted fs will be stored as efficiently as in the '/var/lib/clickhouse/backup'.
-You can create daily backup by clickhouse-backup and sync backup folder to mounted fs with this command:
-`rsync -a -H --delete --progress --numeric-ids --update /var/lib/clickhouse/backup/ /mnt/data/clickhouse-backup/` or similar for sync over ssh. In this case rsync will copy only difference between backups.
+Use `rsync`. 
+`rsync` supports hard links, which means that a backup on a remote server or mounted fs will be stored as efficiently as in `/var/lib/clickhouse/backup`.
+You can create a daily backup by clickhouse-backup and a sync backup folder to mounted fs with this command:
+`rsync -a -H --delete --progress --numeric-ids --update /var/lib/clickhouse/backup/ /mnt/data/clickhouse-backup/` or similar for sync over ssh. In this case `rsync` will copy only difference between backups.
 
-## How to move data to another clickhouse server
-destination server
+## How to move data to another ClickHouse server
+On the destination server:
 ```bash
 mkdir -p /var/lib/clickhouse/backups/backup_name
 ```
-source server
+On the source server:
 ```bash
 clickhouse-backup create backup_name
 rsync --rsh=ssh /var/lib/clickhouse/backups/backup_name/ user@dst_server:/var/lib/clickhouse/backups/backup_name
 ```
 
-destination server
+On the destination server:
 ```bash
 clickhouse-backup restore --rm backup_name
 ```
 
-## How to reduce number of partitions
-...
-
-## How to monitor that backups created and uploaded correctly
+## How to monitor that backups were created and uploaded correctly
 Use services like https://healthchecks.io or https://deadmanssnitch.com.
-Or use `clickhouse-backup server` and prometheus endpoint :7171/metrics, look alerts examples on https://github.com/Altinity/clickhouse-operator/blob/master/deploy/prometheus/prometheus-alert-rules-backup.yaml
+Or use `clickhouse-backup server` and prometheus endpoint `:7171/metrics`. For an example of setting up Prometheus alerts, see https://github.com/Altinity/clickhouse-operator/blob/master/deploy/prometheus/prometheus-alert-rules-backup.yaml.
 
-## How to make backup / restore sharded cluster
+## How to back up / restore a sharded cluster
 ### BACKUP
-run only on the first replica for each shard
+Run only on the first replica for each shard:
 ```bash
 shard_number=$(clickhouse-client -q "SELECT getMacro('shard')")
 clickhouse-backup create_remote shard${shard_number}-backup
@@ -56,22 +53,22 @@ clickhouse-backup delete local shard${shard_number}-backup
 ```
 
 ### RESTORE
-run on all replicas
+Run on all replicas:
 ```bash
 shard_number=$(clickhouse-client -q "SELECT getMacro('shard')")
 clickhouse-backup restore_remote --rm --schema shard${shard_number}-backup
 clickhouse-backup delete local shard${shard_number}-backup
 ```
-after it, run only on the first replica for each shard
+After that, run only on the first replica for each shard:
 ```bash
 shard_number=$(clickhouse-client -q "SELECT getMacro('shard')")
 clickhouse-backup restore_remote --rm shard${shard_number}-backup
 clickhouse-backup delete local shard${shard_number}-backup
 ```
 
-## How to make backup sharded cluster with Ansible
-On the first day of month full backup will be uploaded and increments on the others days.
-`hosts: clickhouse-cluster` shall be only first replica on each shard
+## How to back up a sharded cluster with Ansible
+On the first day of month a full backup will be uploaded and increments on the other days.
+`hosts: clickhouse-cluster` shall be only the first replica on each shard
 
 ```yaml
 - hosts: clickhouse-cluster
@@ -110,12 +107,12 @@ On the first day of month full backup will be uploaded and increments on the oth
         - uri: url="https://hc-ping.com/{{ healthchecksio_clickhouse_upload_id }}/fail"
 ```
 
-## How to make backup database with several terabytes of data
+## How to back up a database with several terabytes of data
 You can use clickhouse-backup for creating periodical backups and keep it local. It protects you from destructive operations.
-In addition, you may create instance of ClickHouse on another DC and have it fresh by clickhouse-copier it protects you from hardware or DC failures.
+In addition, you may create instance of ClickHouse on another DC and have it fresh by clickhouse-copier to protect you from hardware or DC failures.
 
 ## How to use clickhouse-backup in Kubernetes
-Install [clickhouse kubernetes operator](https://github.com/Altinity/clickhouse-operator/) and use following manifest
+Install the [clickhouse kubernetes operator](https://github.com/Altinity/clickhouse-operator/) and use the following manifest:
 
 ```yaml
 apiVersion: "clickhouse.altinity.com/v1"
@@ -232,7 +229,8 @@ spec:
                         containerPort: 7171
 ```
 
-You need to prepare remote storage, for test only
+You need to prepare remote storage for test only:
+
 ```yaml
 ---
 apiVersion: "apps/v1"
@@ -280,7 +278,8 @@ spec:
       targetPort: minio
 ```
 
-Also, you can apply CronJob to run `clickhouse-backup` actions by schedule
+You can also use CronJob to run `clickhouse-backup` actions on a schedule:
+
 ```yaml
 apiVersion: batch/v1
 kind: CronJob
@@ -315,7 +314,7 @@ spec:
                   value: backup
                 - name: BACKUP_PASSWORD
                   value: "backup_password"
-                # change to 1, if you want make full backup only in $FULL_BACKUP_WEEKDAY (1 - Mon, 7 - Sun)
+                # change to 1, if you want to make full backup only in $FULL_BACKUP_WEEKDAY (1 - Mon, 7 - Sun)
                 - name: MAKE_INCREMENT_BACKUP
                   value: "1"
                 - name: FULL_BACKUP_WEEKDAY
@@ -332,8 +331,8 @@ spec:
                   fi;
                   for SERVER in $CLICKHOUSE_SERVICES; do
                     if [[ "1" == "$MAKE_INCREMENT_BACKUP" ]]; then
-                      LAST_FULL_BACKUP=$(clickhouse-client -q "SELECT name FROM system.backup_list WHERE location='remote' AND name LIKE '%full%' AND desc NOT LIKE 'broken%' ORDER BY created DESC LIMIT 1 FORMAT TabSeparatedRaw" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD);
-                      TODAY_FULL_BACKUP=$(clickhouse-client -q "SELECT name FROM system.backup_list WHERE location='remote' AND name LIKE '%full%' AND desc NOT LIKE 'broken%' AND toDate(created) = today() ORDER BY created DESC LIMIT 1 FORMAT TabSeparatedRaw" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD)
+                      LAST_FULL_BACKUP=$(clickhouse-client -q "SELECT name FROM system.backup_list WHERE location='remote' AND name LIKE '%${SERVER}%' AND name LIKE '%full%' AND desc NOT LIKE 'broken%' ORDER BY created DESC LIMIT 1 FORMAT TabSeparatedRaw" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD);
+                      TODAY_FULL_BACKUP=$(clickhouse-client -q "SELECT name FROM system.backup_list WHERE location='remote' AND name LIKE '%${SERVER}%' AND name LIKE '%full%' AND desc NOT LIKE 'broken%' AND toDate(created) = today() ORDER BY created DESC LIMIT 1 FORMAT TabSeparatedRaw" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD)
                       PREV_BACKUP_NAME=$(clickhouse-client -q "SELECT name FROM system.backup_list WHERE location='remote' AND desc NOT LIKE 'broken%' ORDER BY created DESC LIMIT 1 FORMAT TabSeparatedRaw" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD);
                       DIFF_FROM[$SERVER]="";
                       if [[ ("$FULL_BACKUP_WEEKDAY" == "$(date +%u)" && "" == "$TODAY_FULL_BACKUP") || "" == "$PREV_BACKUP_NAME" || "" == "$LAST_FULL_BACKUP" ]]; then
@@ -381,7 +380,8 @@ spec:
                   echo "BACKUP CREATED"
 ```
 
-For one time restore data you could use `Job`
+For one time restore data, you can use `Job`:
+
 ```yaml
 # example to restore latest backup
 apiVersion: batch/v1
@@ -425,15 +425,14 @@ spec:
           CLICKHOUSE_SCHEMA_RESTORE_SERVICES=$(echo $CLICKHOUSE_SCHEMA_RESTORE_SERVICES | tr "," " ");
           CLICKHOUSE_DATA_RESTORE_SERVICES=$(echo $CLICKHOUSE_DATA_RESTORE_SERVICES | tr "," " ");
           for SERVER in $CLICKHOUSE_SCHEMA_RESTORE_SERVICES; do
-            LATEST_BACKUP_NAME=$(clickhouse-client -q "SELECT name FROM system.backup_list WHERE location='remote' AND desc NOT LIKE 'broken%' ORDER BY created DESC LIMIT 1 FORMAT TabSeparatedRaw" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD);
+            SHARDED_PREFIX=${SERVER%-*}
+            LATEST_BACKUP_NAME=$(clickhouse-client -q "SELECT name FROM system.backup_list WHERE location='remote' AND desc NOT LIKE 'broken%' AND name LIKE '%${SHARDED_PREFIX}%' ORDER BY created DESC LIMIT 1 FORMAT TabSeparatedRaw" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD);
             if [[ "" == "$LATEST_BACKUP_NAME" ]]; then
               echo "Remote backup not found for $SERVER";
               exit 1;
             fi;
             BACKUP_NAMES[$SERVER]="$LATEST_BACKUP_NAME";
             clickhouse-client -mn --echo -q "INSERT INTO system.backup_actions(command) VALUES('restore_remote --schema --rm ${BACKUP_NAMES[$SERVER]}')" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD;
-          done;
-          for SERVER in $CLICKHOUSE_SCHEMA_RESTORE_SERVICES; do
             while [[ "in progress" == $(clickhouse-client -mn -q "SELECT status FROM system.backup_actions WHERE command='restore_remote --schema --rm ${BACKUP_NAMES[$SERVER]}' ORDER BY start DESC LIMIT 1 FORMAT TabSeparatedRaw" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD) ]]; do
               echo "still in progress ${BACKUP_NAMES[$SERVER]} on $SERVER";
               sleep 1;
@@ -472,20 +471,25 @@ spec:
 
 ## How to use AWS IRSA and IAM to allow S3 backup without Explicit credentials
 
-Create Role <ROLE NAME> and IAM Policy, look details in https://docs.aws.amazon.com/emr/latest/EMR-on-EKS-DevelopmentGuide/setting-up-enable-IAM.html
+Create Role <ROLE NAME> and IAM Policy. This field typically looks like this: 
+`arn:aws:iam::1393332413596:role/rolename-clickhouse-backup`, 
+where `1393332413596` is the ID of the role and 
+`rolename-clickhouse-backup` is the name of the role. 
+See [the AWS documentation](https://docs.aws.amazon.com/emr/latest/EMR-on-EKS-DevelopmentGuide/setting-up-enable-IAM.html)
+for all the details.
 
-Create service account with annotations
+Create a service account with annotations:
 ```yaml
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: <SERVICE ACOUNT NAME>
+  name: <SERVICE ACCOUNT NAME>
   namespace: <NAMESPACE>
   annotations:
      eks.amazonaws.com/role-arn: arn:aws:iam::<ACCOUNT_NAME>:role/<ROLE_NAME>
 ```
 
-Link service account to podTemplate it will create `AWS_ROLE_ARN` and `AWS_WEB_IDENTITY_TOKEN_FILE` environment variables. 
+Link the service account to a podTemplate to create `AWS_ROLE_ARN` and `AWS_WEB_IDENTITY_TOKEN_FILE` environment variables:
 ```yaml
 apiVersion: "clickhouse.altinity.com/v1"
 kind: "ClickHouseInstallation"
@@ -507,9 +511,10 @@ spec:
 
 ### How to use clickhouse-backup + clickhouse-operator in FIPS compatible mode in Kubernetes for S3
 
-use `altinity/clickhouse-backup:X.X.X-fips` as image (where X.X.X version number) 
-run following commands to generate self-signed TLS keys for secure clickhouse-backup API endpoint,
-you need periodically renew this certs, use https://github.com/cert-manager/cert-manager for it in kubernetes
+Use the image `altinity/clickhouse-backup:X.X.X-fips` (where X.X.X is the version number).
+Run the following commands to generate self-signed TLS keys for secure clickhouse-backup API endpoint:
+(You need to renew these certs periodically; use https://github.com/cert-manager/cert-manager for it in kubernetes.)
+
 ```bash
    openssl genrsa -out ca-key.pem 4096
    openssl req -subj "/O=altinity" -x509 -new -nodes -key ca-key.pem -sha256 -days 365000 -out ca-cert.pem
@@ -518,7 +523,8 @@ you need periodically renew this certs, use https://github.com/cert-manager/cert
    openssl x509 -req -days 365 -extensions SAN -extfile <(printf "\n[SAN]\nsubjectAltName=DNS:localhost,DNS:*.cluster.local") -in server-req.csr -out server-cert.pem -CA ca-cert.pem -CAkey ca-key.pem -CAcreateserial
 ```
 
-create following `ConfigMap` + `ClickHouseInstallation` kubernetes manifest
+Create the following `ConfigMap` + `ClickHouseInstallation` kubernetes manifest:
+
 ```yaml
 ---
 apiVersion: v1
@@ -624,17 +630,18 @@ spec:
                         containerPort: 7171
 ```
 
-## How do incremental backups work to remote storage
-- Incremental backup calculate increment only during execute `upload` or `create_remote` command or similar REST API request.
-- When `use_embedded_backup_restore: false`, then incremental backup calculate increment only on table parts level, else increment backups also calculates based on `checksums.txt` for 23.3+ clickhouse version, look to ClickHouse documentation to fill the difference between [data parts](https://clickhouse.tech/docs/en/operations/system-tables/parts/) and [table partitions](https://clickhouse.tech/docs/en/operations/system-tables/partitions/).  
-- To calculate increment, backup which listed on `--diff-from` parameter is required to be present as local backup, look to `clickhouse-backup list` command results for ensure.
-- Currently, during execute `clickhouse-backup upload --diff-from=base_backup` don't check `base_backup` exits on remote storage, be careful.
-- During upload operation `base_backup` added to current backup metadata as required. All data parts which exists in `base_backup` also mark in backup metadata table level with `required` flag and skip data uploading. 
-- During download, if backup contains link to `required` backup it will try to fully download first. This action apply recursively. If you have a chain of incremental backups, all incremental backups in the chain and first "full" will download to local storage. 
-- Size of increment depends not only on the intensity your data ingestion and also depends on the intensity background merges for data parts in your tables. Please increase how much rows you will ingest during one INSERT query and don't apply often [table data mutations](https://clickhouse.tech/docs/en/operations/system-tables/mutations/).
-- Look to [ClickHouse documentation](https://clickhouse.tech/docs/en/engines/table-engines/mergetree-family/mergetree/) and try to understand how exactly `*MergeTree` table engine works.
+## How incremental backups work with remote storage
+- Incremental backup calculates the increment only while executing `upload` or `create_remote` commands or similar REST API requests.
+- When `use_embedded_backup_restore: false`, then incremental backup calculates the increment only on the table parts level.  
+- When `use_embedded_backup_restore: true`, then incremental backup calculates by the checksums on file level, this approach more effective.
+- For ClickHouse version 23.3+, see the ClickHouse documentation to find the difference between [data parts](https://clickhouse.com/docs/en/operations/system-tables/parts/) and [table partitions](https://clickhouse.com/docs/en/engines/table-engines/mergetree-family/custom-partitioning-key).
+- To calculate the increment, the backup listed on the `--diff-from` parameter is required to be present as a local backup. Check the `clickhouse-backup list` command results for errors.
+- During upload, `base_backup` is added to current backup metadata as `required_backup` in `backup_name/metadata.json`. All data parts that exist in `base_backup` also mark in the backup metadata table level with `required` flag in `backup_name/metadata/database/table.json` and skip data uploading. 
+- During download, if a backup contains link to a `required_backup`, each table which contains parts marked as `required` will download these parts to local storage after complete downloading for non `required` parts. If you have a chain of incremental backups and required parts exist in this chain, then this action applies recursively. 
+- The size of the increment depends not only on the intensity of your data ingestion but also on the intensity of background merges for data parts in your tables. Please increase how many rows you will ingest during one INSERT query and don't do frequent [table data mutations](https://clickhouse.com/docs/en/operations/system-tables/mutations/).
+- See the [ClickHouse documentation](https://clickhouse.com/docs/en/engines/table-engines/mergetree-family/mergetree/) for information on how the `*MergeTree` table engine works.
 
-## How to work `watch` command
-Current implementation simple and will improve in next releases
-- When `watch` command start, it call create_remote+delete command sequence to make `full` backup
-- Then it wait `watch-interval` time period and call create_remote+delete command sequence again, type of backup will `full` if `full-interval` expired after last full backup created and `incremental`, if not.
+## How to watch backups work
+The current implementation is simple and will improve in next releases. 
+- When the `watch` command starts, it calls the `create_remote+delete command` sequence to make a `full` backup
+- Then it waits `watch-interval` time period and calls the `create_remote+delete` command sequence again. The type of backup will be `full` if `full-interval` expired after last full backup created and `incremental` if not.

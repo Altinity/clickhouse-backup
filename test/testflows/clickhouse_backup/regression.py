@@ -19,10 +19,10 @@ from clickhouse_backup.tests.common import simple_data_types_columns
 
 xfails = {
     "/clickhouse backup/other engines/materializedpostgresql/:": [
-        (Fail, "https://github.com/ClickHouse/ClickHouse/issues/32902, https://github.com/ClickHouse/ClickHouse/issues/44250")
+        (Fail, "FREEZE not supported by MaterializedPostgreSQL, https://github.com/ClickHouse/ClickHouse/issues/32902")
     ],
     "/clickhouse backup/other engines/materializedmysql/:": [
-        (Fail, "DROP TABLE not supported by MaterializedMySQL, just attach will not help")
+        (Fail, "DROP TABLE not supported by MaterializedMySQL, https://github.com/ClickHouse/ClickHouse/issues/57543")
     ],
 }
 

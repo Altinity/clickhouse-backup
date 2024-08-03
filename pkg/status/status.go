@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Altinity/clickhouse-backup/pkg/common"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 )
 
 const (
@@ -70,16 +70,19 @@ func (status *AsyncStatus) CheckCommandInProgress(command string) bool {
 	return false
 }
 
+// InProgress any .Status == InProgressStatus command shall return true, https://github.com/Altinity/clickhouse-backup/issues/827
 func (status *AsyncStatus) InProgress() bool {
 	status.RLock()
 	defer status.RUnlock()
-	n := len(status.commands) - 1
-	if n < 0 {
-		log.Debug().Msgf("api.status.inProgress -> len(status.commands)=%d, inProgress=false", len(status.commands))
-		return false
+	for n := range status.commands {
+		if status.commands[n].Status == InProgressStatus {
+			log.Debug().Msgf("api.status.inProgress -> status.commands[%d].Status == %s, inProgress=%v", n, status.commands[n].Status, status.commands[n].Status == InProgressStatus)
+			return true
+		}
 	}
-	log.Debug().Msgf("api.status.inProgress -> status.commands[n].Status == %s, inProgress=%v", status.commands[n].Status, status.commands[n].Status == InProgressStatus)
-	return status.commands[n].Status == InProgressStatus
+
+	log.Debug().Msgf("api.status.inProgress -> len(status.commands)=%d, inProgress=false", len(status.commands))
+	return false
 }
 
 func (status *AsyncStatus) GetContextWithCancel(commandId int) (context.Context, context.CancelFunc, error) {

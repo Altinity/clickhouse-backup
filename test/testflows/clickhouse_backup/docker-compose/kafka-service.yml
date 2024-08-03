@@ -11,6 +11,7 @@ services:
       - ZOOKEEPER=zookeeper:2181
       - KAFKA_LOG4J_LOGGERS=kafka.controller=INFO,kafka.producer.async.DefaultEventHandler=INFO,state.change.logger=INFO
     healthcheck:
+      test: nc -z localhost 9092 || exit 1
       interval: 3s
       timeout: 2s
       retries: 5

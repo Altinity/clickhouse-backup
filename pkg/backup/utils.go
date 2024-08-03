@@ -4,7 +4,7 @@ import (
 	"sort"
 )
 
-func GetBackupsToDelete(backups []LocalBackup, keep int) []LocalBackup {
+func GetBackupsToDeleteLocal(backups []LocalBackup, keep int) []LocalBackup {
 	if len(backups) > keep {
 		sort.SliceStable(backups, func(i, j int) bool {
 			return backups[i].CreationDate.After(backups[j].CreationDate)

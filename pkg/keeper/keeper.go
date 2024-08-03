@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Altinity/clickhouse-backup/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/go-zookeeper/zk"
 )
 
@@ -37,14 +37,13 @@ func (KeeperLogToApexLogAdapter LogKeeperToApexLogAdapter) Printf(msg string, ar
 	}
 }
 
-type keeperDumpNode struct {
+type DumpNode struct {
 	Path  string `json:"path"`
 	Value string `json:"value"`
 }
 
 type Keeper struct {
 	conn          *zk.Conn
-	Log           zerolog.Logger
 	root          string
 	doc           *xmlquery.Node
 	xmlConfigFile string
@@ -67,7 +66,7 @@ func (k *Keeper) Connect(ctx context.Context, ch *clickhouse.ClickHouse) error {
 		if sessionTimeoutMs, err := strconv.ParseInt(sessionTimeoutMsNode.InnerText(), 10, 64); err == nil {
 			sessionTimeout = time.Duration(sessionTimeoutMs) * time.Millisecond
 		} else {
-			k.Log.Warn().Msgf("can't parse /zookeeper/session_timeout_ms in %s, value: %v, error: %v ", configFile, sessionTimeoutMsNode.InnerText(), err)
+			log.Warn().Msgf("can't parse /zookeeper/session_timeout_ms in %s, value: %v, error: %v ", configFile, sessionTimeoutMsNode.InnerText(), err)
 		}
 	}
 	nodeList := zookeeperNode.SelectElements("node")
@@ -119,7 +118,7 @@ func (k *Keeper) Dump(prefix, dumpFile string) (int, error) {
 	}
 	defer func() {
 		if err = f.Close(); err != nil {
-			k.Log.Warn().Msgf("can't close %s: %v", dumpFile, err)
+			log.Warn().Msgf("can't close %s: %v", dumpFile, err)
 		}
 	}()
 	if !strings.HasPrefix(prefix, "/") && k.root != "" {
@@ -132,20 +131,25 @@ func (k *Keeper) Dump(prefix, dumpFile string) (int, error) {
 	return bytes, nil
 }
 
+func (k *Keeper) ChildCount(prefix, nodePath string) (int, error) {
+	childrenNodes, _, err := k.conn.Children(path.Join(prefix, nodePath))
+	return len(childrenNodes), err
+}
+
 func (k *Keeper) dumpNodeRecursive(prefix, nodePath string, f *os.File) (int, error) {
 	value, _, err := k.conn.Get(path.Join(prefix, nodePath))
 	if err != nil {
 		return 0, err
 	}
-	bytes, err := k.writeJsonString(f, keeperDumpNode{Path: nodePath, Value: string(value)})
+	bytes, err := k.writeJsonString(f, DumpNode{Path: nodePath, Value: string(value)})
 	if err != nil {
 		return 0, err
 	}
-	childs, _, err := k.conn.Children(path.Join(prefix, nodePath))
+	children, _, err := k.conn.Children(path.Join(prefix, nodePath))
 	if err != nil {
 		return 0, err
 	}
-	for _, childPath := range childs {
+	for _, childPath := range children {
 		if childBytes, err := k.dumpNodeRecursive(prefix, path.Join(nodePath, childPath), f); err != nil {
 			return 0, err
 		} else {
@@ -155,7 +159,7 @@ func (k *Keeper) dumpNodeRecursive(prefix, nodePath string, f *os.File) (int, er
 	return bytes, nil
 }
 
-func (k *Keeper) writeJsonString(f *os.File, node keeperDumpNode) (int, error) {
+func (k *Keeper) writeJsonString(f *os.File, node DumpNode) (int, error) {
 	jsonLine, err := json.Marshal(node)
 	if err != nil {
 		return 0, err
@@ -175,7 +179,7 @@ func (k *Keeper) Restore(dumpFile, prefix string) error {
 	}
 	defer func() {
 		if err = f.Close(); err != nil {
-			k.Log.Warn().Msgf("can't close %s: %v", dumpFile, err)
+			log.Warn().Msgf("can't close %s: %v", dumpFile, err)
 		}
 	}()
 	if !strings.HasPrefix(prefix, "/") && k.root != "" {
@@ -183,7 +187,7 @@ func (k *Keeper) Restore(dumpFile, prefix string) error {
 	}
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
-		node := keeperDumpNode{}
+		node := DumpNode{}
 		if err = json.Unmarshal(scanner.Bytes(), &node); err != nil {
 			return err
 		}
@@ -207,6 +211,39 @@ func (k *Keeper) Restore(dumpFile, prefix string) error {
 	return nil
 }
 
+type WalkCallBack = func(node DumpNode) (bool, error)
+
+func (k *Keeper) Walk(prefix, relativePath string, recursive bool, callback WalkCallBack) error {
+	nodePath := path.Join(prefix, relativePath)
+	value, stat, err := k.conn.Get(nodePath)
+	log.Debug().Msgf("Walk->get(%s) = %v, err = %v", nodePath, string(value), err)
+	if err != nil {
+		return err
+	}
+	var isDone bool
+	if isDone, err = callback(DumpNode{Path: nodePath, Value: string(value)}); err != nil {
+		return err
+	}
+	if isDone {
+		return nil
+	}
+	if recursive && stat.NumChildren > 0 {
+		children, _, err := k.conn.Children(path.Join(prefix, relativePath))
+		if err != nil {
+			return err
+		}
+		for _, childPath := range children {
+			if childErr := k.Walk(prefix, path.Join(relativePath, childPath), recursive, callback); childErr != nil {
+				return childErr
+			}
+		}
+	}
+	return nil
+}
+
+func (k *Keeper) Delete(nodePath string) error {
+	return k.conn.Delete(nodePath, -1)
+}
 func (k *Keeper) Close() {
 	k.conn.Close()
 }

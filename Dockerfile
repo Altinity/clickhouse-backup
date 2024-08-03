@@ -8,22 +8,23 @@ USER root
 RUN rm -fv /etc/apt/sources.list.d/clickhouse.list && \
     find /etc/apt/ -type f -name *.list -exec sed -i 's/ru.archive.ubuntu.com/archive.ubuntu.com/g' {} + && \
     ( apt-get update || true ) && \
-    apt-get install -y --no-install-recommends gnupg ca-certificates wget && apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 52B59B1571A79DBC054901C0F6BC817356A3D45E && \
+    apt-get install -y --no-install-recommends gnupg ca-certificates wget && update-ca-certificates && \
+    for srv in "keyserver.ubuntu.com" "pool.sks-keyservers.net" "keys.gnupg.net"; do host $srv; apt-key adv --keyserver $srv --recv-keys 52B59B1571A79DBC054901C0F6BC817356A3D45E; if [ $? -eq 0 ]; then break; fi; done && \
     DISTRIB_CODENAME=$(cat /etc/lsb-release | grep DISTRIB_CODENAME | cut -d "=" -f 2) && \
     echo ${DISTRIB_CODENAME} && \
     echo "deb https://ppa.launchpadcontent.net/longsleep/golang-backports/ubuntu ${DISTRIB_CODENAME} main" > /etc/apt/sources.list.d/golang.list && \
     echo "deb-src https://ppa.launchpadcontent.net/longsleep/golang-backports/ubuntu ${DISTRIB_CODENAME} main" >> /etc/apt/sources.list.d/golang.list && \
     ( apt-get update || true ) && \
-    apt-get install -y --no-install-recommends libc-dev golang-1.21 make git gcc musl-dev musl-tools && \
+    apt-get install -y --no-install-recommends libc-dev golang-1.22 make git gcc musl-dev musl-tools && \
     wget -q -P /root/ https://musl.cc/aarch64-linux-musl-cross.tgz && \
     tar -xvf /root/aarch64-linux-musl-cross.tgz -C /root/ && \
     mkdir -p /root/go/
 
-RUN ln -nsfv /usr/lib/go-1.21/bin/go /usr/bin/go
+RUN ln -nsfv /usr/lib/go-1.22/bin/go /usr/bin/go
 VOLUME /root/.cache/go
 ENV GOCACHE=/root/.cache/go
 ENV GOPATH=/root/go/
-ENV GOROOT=/usr/lib/go-1.21/
+ENV GOROOT=/usr/lib/go-1.22/
 RUN go env
 WORKDIR /src/
 # cache modules when go.mod go.sum changed
@@ -75,9 +76,18 @@ COPY --from=builder-fips /src/build/ /src/build/
 CMD /src/build/${TARGETPLATFORM}/clickhouse-backup-fips --help
 
 
-FROM alpine:3.18 AS image_short
+FROM alpine:3.19 AS image_short
 ARG TARGETPLATFORM
+ARG VERSION=unknown
 MAINTAINER Eugene Klimov <eklimov@altinity.com>
+LABEL "org.opencontainers.image.version"=${VERSION}
+LABEL "org.opencontainers.image.vendor"="Altinity Inc."
+LABEL "org.opencontainers.image.licenses"="MIT"
+LABEL "org.opencontainers.image.title"="Altinity Backup for ClickHouse"
+LABEL "org.opencontainers.image.description"="A tool for easy ClickHouse backup and restore with support for many cloud and non-cloud storage types."
+LABEL "org.opencontainers.image.source"="https://github.com/Altinity/clickhouse-backup"
+LABEL "org.opencontainers.image.documentation"="https://github.com/Altinity/clickhouse-backup/blob/master/Manual.md"
+
 RUN addgroup -S -g 101 clickhouse \
     && adduser -S -h /var/lib/clickhouse -s /bin/bash -G clickhouse -g "ClickHouse server" -u 101 clickhouse
 RUN apk update && apk add --no-cache ca-certificates tzdata bash curl && update-ca-certificates
@@ -85,6 +95,7 @@ COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 COPY build/${TARGETPLATFORM}/clickhouse-backup /bin/clickhouse-backup
 RUN chmod +x /bin/clickhouse-backup
+# RUN apk add --no-cache libcap-setcap libcap-getcap && setcap cap_sys_nice=+ep /bin/clickhouse-backup
 # USER clickhouse
 ENTRYPOINT ["/entrypoint.sh"]
 CMD [ "/bin/clickhouse-backup", "--help" ]
@@ -92,20 +103,38 @@ CMD [ "/bin/clickhouse-backup", "--help" ]
 
 FROM image_short AS image_fips
 ARG TARGETPLATFORM
+ARG VERSION=unknown
+LABEL "org.opencontainers.image.version"=${VERSION}
+LABEL "org.opencontainers.image.vendor"="Altinity Inc."
+LABEL "org.opencontainers.image.licenses"="MIT"
+LABEL "org.opencontainers.image.title"="Altinity Backup for ClickHouse"
+LABEL "org.opencontainers.image.description"="A tool for easy ClickHouse backup and restore with support for many cloud and non-cloud storage types."
+LABEL "org.opencontainers.image.source"="https://github.com/Altinity/clickhouse-backup"
+LABEL "org.opencontainers.image.documentation"="https://github.com/Altinity/clickhouse-backup/blob/master/Manual.md"
+
 MAINTAINER Eugene Klimov <eklimov@altinity.com>
 COPY build/${TARGETPLATFORM}/clickhouse-backup-fips /bin/clickhouse-backup
 RUN chmod +x /bin/clickhouse-backup
+# RUN apk add --no-cache libcap-setcap libcap-getcap && setcap cap_sys_nice=+ep /bin/clickhouse-backup
 
 
 FROM ${CLICKHOUSE_IMAGE}:${CLICKHOUSE_VERSION} AS image_full
 ARG TARGETPLATFORM
+ARG VERSION=unknown
 MAINTAINER Eugene Klimov <eklimov@altinity.com>
+LABEL "org.opencontainers.image.version"=${VERSION}
+LABEL "org.opencontainers.image.vendor"="Altinity Inc."
+LABEL "org.opencontainers.image.licenses"="MIT"
+LABEL "org.opencontainers.image.title"="Altinity Backup for ClickHouse"
+LABEL "org.opencontainers.image.description"="A tool for easy ClickHouse backup and restore with support for many cloud and non-cloud storage types."
+LABEL "org.opencontainers.image.source"="https://github.com/Altinity/clickhouse-backup"
+LABEL "org.opencontainers.image.documentation"="https://github.com/Altinity/clickhouse-backup/blob/master/Manual.md"
 
-RUN apt-get update && apt-get install -y gpg && wget -qO- https://kopia.io/signing-key | gpg --dearmor -o /usr/share/keyrings/kopia-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/kopia-keyring.gpg] http://packages.kopia.io/apt/ stable main" > /etc/apt/sources.list.d/kopia.list && \
+RUN apt-get update && apt-get install -y gpg xxd bsdmainutils parallel && wget -qO- https://kopia.io/signing-key | gpg --dearmor -o /usr/share/keyrings/kopia-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/kopia-keyring.gpg] https://packages.kopia.io/apt/ stable main" > /etc/apt/sources.list.d/kopia.list && \
     wget -c "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)" -O /usr/bin/yq && chmod +x /usr/bin/yq && \
     apt-get update -y && \
-    apt-get install -y ca-certificates tzdata bash curl restic rsync rclone jq gpg kopia && \
+    apt-get install -y ca-certificates tzdata bash curl restic rsync rclone jq gpg kopia libcap2-bin && \
     update-ca-certificates && \
     rm -rf /var/lib/apt/lists/* && rm -rf /var/cache/apt/*
 
@@ -113,8 +142,7 @@ COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 COPY build/${TARGETPLATFORM}/clickhouse-backup /bin/clickhouse-backup
 RUN chmod +x /bin/clickhouse-backup
-
+# RUN apk add --no-cache libcap-setcap libcap-getcap && setcap cap_sys_nice=+ep /bin/clickhouse-backup
 # USER clickhouse
-
 ENTRYPOINT ["/entrypoint.sh"]
 CMD [ "/bin/clickhouse-backup", "--help" ]

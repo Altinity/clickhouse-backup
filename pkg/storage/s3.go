@@ -4,16 +4,16 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	apexLog "github.com/apex/log"
 	"io"
 	"net/http"
 	"os"
 	"path"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/Altinity/clickhouse-backup/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	awsV2Config "github.com/aws/aws-sdk-go-v2/config"
@@ -30,7 +30,6 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/sync/errgroup"
-	"golang.org/x/sync/semaphore"
 )
 
 type S3LogToZeroLogAdapter struct {
@@ -116,22 +115,19 @@ func (s *S3) Connect(ctx context.Context) error {
 	if s.Config.Region != "" {
 		awsConfig.Region = s.Config.Region
 	}
+	// AWS IRSA handling, look https://github.com/Altinity/clickhouse-backup/issues/798
 	awsRoleARN := os.Getenv("AWS_ROLE_ARN")
-	if s.Config.AssumeRoleARN != "" || awsRoleARN != "" {
-		stsClient := sts.NewFromConfig(awsConfig)
-		if awsRoleARN != "" {
-			awsConfig.Credentials = stscreds.NewAssumeRoleProvider(stsClient, awsRoleARN)
-		} else {
-			awsConfig.Credentials = stscreds.NewAssumeRoleProvider(stsClient, s.Config.AssumeRoleARN)
-		}
-	}
-
 	awsWebIdentityTokenFile := os.Getenv("AWS_WEB_IDENTITY_TOKEN_FILE")
+	stsClient := sts.NewFromConfig(awsConfig)
 	if awsRoleARN != "" && awsWebIdentityTokenFile != "" {
-		stsClient := sts.NewFromConfig(awsConfig)
 		awsConfig.Credentials = stscreds.NewWebIdentityRoleProvider(
 			stsClient, awsRoleARN, stscreds.IdentityTokenFile(awsWebIdentityTokenFile),
 		)
+	} else if s.Config.AssumeRoleARN != "" {
+		// backup role S3_ASSUME_ROLE_ARN have high priority than AWS_ROLE_ARN see https://github.com/Altinity/clickhouse-backup/issues/898
+		awsConfig.Credentials = stscreds.NewAssumeRoleProvider(stsClient, s.Config.AssumeRoleARN)
+	} else if awsRoleARN != "" {
+		awsConfig.Credentials = stscreds.NewAssumeRoleProvider(stsClient, awsRoleARN)
 	}
 
 	if s.Config.AccessKey != "" && s.Config.SecretKey != "" {
@@ -171,7 +167,9 @@ func (s *S3) Connect(ctx context.Context) error {
 	// allow GCS over S3, remove Accept-Encoding header from sign https://stackoverflow.com/a/74382598/1204665, https://github.com/aws/aws-sdk-go-v2/issues/1816
 	if strings.Contains(s.Config.Endpoint, "storage.googleapis.com") {
 		// Assign custom client with our own transport
-		awsConfig.HTTPClient = &http.Client{Transport: &RecalculateV4Signature{httpTransport, v4.NewSigner(), awsConfig}}
+		awsConfig.HTTPClient = &http.Client{Transport: &RecalculateV4Signature{httpTransport, v4.NewSigner(func(signer *v4.SignerOptions) {
+			signer.DisableURIPathEscaping = true
+		}), awsConfig}}
 	}
 	s.client = s3.NewFromConfig(awsConfig, func(o *s3.Options) {
 		o.UsePathStyle = s.Config.ForcePathStyle
@@ -198,11 +196,16 @@ func (s *S3) Close(ctx context.Context) error {
 }
 
 func (s *S3) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {
-	getRequest := &s3.GetObjectInput{
+	return s.GetFileReaderAbsolute(ctx, path.Join(s.Config.Path, key))
+}
+
+func (s *S3) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadCloser, error) {
+	params := &s3.GetObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
-		Key:    aws.String(path.Join(s.Config.Path, key)),
+		Key:    aws.String(key),
 	}
-	resp, err := s.client.GetObject(ctx, getRequest)
+	s.enrichGetObjectParams(params)
+	resp, err := s.client.GetObject(ctx, params)
 	if err != nil {
 		var opError *smithy.OperationError
 		if errors.As(err, &opError) {
@@ -216,7 +219,7 @@ func (s *S3) GetFileReader(ctx context.Context, key string) (io.ReadCloser, erro
 							log.Warn().Msgf("restoreObject %s, return error: %v", key, restoreErr)
 							return nil, err
 						}
-						if resp, err = s.client.GetObject(ctx, getRequest); err != nil {
+						if resp, err = s.client.GetObject(ctx, params); err != nil {
 							log.Warn().Msgf("second GetObject %s, return error: %v", key, err)
 							return nil, err
 						}
@@ -229,6 +232,21 @@ func (s *S3) GetFileReader(ctx context.Context, key string) (io.ReadCloser, erro
 		return nil, err
 	}
 	return resp.Body, nil
+}
+
+func (s *S3) enrichGetObjectParams(params *s3.GetObjectInput) {
+	if s.Config.SSECustomerAlgorithm != "" {
+		params.SSECustomerAlgorithm = aws.String(s.Config.SSECustomerAlgorithm)
+	}
+	if s.Config.SSECustomerKey != "" {
+		params.SSECustomerKey = aws.String(s.Config.SSECustomerKey)
+	}
+	if s.Config.SSECustomerKeyMD5 != "" {
+		params.SSECustomerKeyMD5 = aws.String(s.Config.SSECustomerKeyMD5)
+	}
+	if s.Config.RequestPayer != "" {
+		params.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
+	}
 }
 
 func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath string) (io.ReadCloser, error) {
@@ -253,12 +271,23 @@ func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath stri
 }
 
 func (s *S3) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
+	return s.PutFileAbsolute(ctx, path.Join(s.Config.Path, key), r)
+}
+
+func (s *S3) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser) error {
 	params := s3.PutObjectInput{
-		ACL:          s3types.ObjectCannedACL(s.Config.ACL),
 		Bucket:       aws.String(s.Config.Bucket),
-		Key:          aws.String(path.Join(s.Config.Path, key)),
+		Key:          aws.String(key),
 		Body:         r,
 		StorageClass: s3types.StorageClass(strings.ToUpper(s.Config.StorageClass)),
+	}
+	if s.Config.CheckSumAlgorithm != "" {
+		params.ChecksumAlgorithm = s3types.ChecksumAlgorithm(s.Config.CheckSumAlgorithm)
+	}
+
+	// ACL shall be optional, fix https://github.com/Altinity/clickhouse-backup/issues/785
+	if s.Config.ACL != "" {
+		params.ACL = s3types.ObjectCannedACL(s.Config.ACL)
 	}
 	// https://github.com/Altinity/clickhouse-backup/issues/588
 	if len(s.Config.ObjectLabels) > 0 {
@@ -298,15 +327,18 @@ func (s *S3) deleteKey(ctx context.Context, key string) error {
 		Bucket: aws.String(s.Config.Bucket),
 		Key:    aws.String(key),
 	}
+	if s.Config.RequestPayer != "" {
+		params.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
+	}
 	if s.versioning {
 		objVersion, err := s.getObjectVersion(ctx, key)
 		if err != nil {
-			return errors.Wrapf(err, "deleteKey, obtaining object version %+v", params)
+			return errors.Wrapf(err, "deleteKey, obtaining object version bucket: %s key: %s", s.Config.Bucket, key)
 		}
 		params.VersionId = objVersion
 	}
 	if _, err := s.client.DeleteObject(ctx, params); err != nil {
-		return errors.Wrapf(err, "deleteKey, deleting object %+v", params)
+		return errors.Wrapf(err, "deleteKey, deleting object bucket: %s key: %s version: %v", s.Config.Bucket, key, params.VersionId)
 	}
 	return nil
 }
@@ -334,7 +366,10 @@ func (s *S3) isVersioningEnabled(ctx context.Context) bool {
 func (s *S3) getObjectVersion(ctx context.Context, key string) (*string, error) {
 	params := &s3.HeadObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
-		Key:    aws.String(path.Join(s.Config.Path, key)),
+		Key:    aws.String(key),
+	}
+	if s.Config.RequestPayer != "" {
+		params.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
 	}
 	object, err := s.client.HeadObject(ctx, params)
 	if err != nil {
@@ -344,10 +379,12 @@ func (s *S3) getObjectVersion(ctx context.Context, key string) (*string, error) 
 }
 
 func (s *S3) StatFile(ctx context.Context, key string) (RemoteFile, error) {
-	head, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
+	params := &s3.HeadObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
 		Key:    aws.String(path.Join(s.Config.Path, key)),
-	})
+	}
+	s.enrichHeadParams(params)
+	head, err := s.client.HeadObject(ctx, params)
 	if err != nil {
 		var opError *smithy.OperationError
 		if errors.As(err, &opError) {
@@ -360,35 +397,40 @@ func (s *S3) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 		}
 		return nil, err
 	}
-	return &s3File{head.ContentLength, *head.LastModified, string(head.StorageClass), key}, nil
+	return &s3File{*head.ContentLength, *head.LastModified, string(head.StorageClass), key}, nil
 }
 
 func (s *S3) Walk(ctx context.Context, s3Path string, recursive bool, process func(ctx context.Context, r RemoteFile) error) error {
+	prefix := path.Join(s.Config.Path, s3Path)
+	return s.WalkAbsolute(ctx, prefix, recursive, process)
+}
+
+func (s *S3) WalkAbsolute(ctx context.Context, prefix string, recursive bool, process func(ctx context.Context, r RemoteFile) error) error {
 	g, ctx := errgroup.WithContext(ctx)
 	s3Files := make(chan *s3File)
 	g.Go(func() error {
 		defer close(s3Files)
-		return s.remotePager(ctx, path.Join(s.Config.Path, s3Path), recursive, func(page *s3.ListObjectsV2Output) {
+		return s.remotePager(ctx, prefix, recursive, func(page *s3.ListObjectsV2Output) {
 			for _, cp := range page.CommonPrefixes {
 				s3Files <- &s3File{
-					name: strings.TrimPrefix(*cp.Prefix, path.Join(s.Config.Path, s3Path)),
+					name: strings.TrimPrefix(*cp.Prefix, prefix),
 				}
 			}
 			for _, c := range page.Contents {
 				s3Files <- &s3File{
-					c.Size,
+					*c.Size,
 					*c.LastModified,
 					string(c.StorageClass),
-					strings.TrimPrefix(*c.Key, path.Join(s.Config.Path, s3Path)),
+					strings.TrimPrefix(*c.Key, prefix),
 				}
 			}
 		})
 	})
 	g.Go(func() error {
 		var err error
-		for s3File := range s3Files {
+		for s3FileItem := range s3Files {
 			if err == nil {
-				err = process(ctx, s3File)
+				err = process(ctx, s3FileItem)
 			}
 		}
 		return err
@@ -403,7 +445,7 @@ func (s *S3) remotePager(ctx context.Context, s3Path string, recursive bool, pro
 	}
 	params := &s3.ListObjectsV2Input{
 		Bucket:  aws.String(s.Config.Bucket), // Required
-		MaxKeys: 1000,
+		MaxKeys: aws.Int32(1000),
 		Prefix:  aws.String(prefix),
 	}
 	if !recursive {
@@ -422,71 +464,144 @@ func (s *S3) remotePager(ctx context.Context, s3Path string, recursive bool, pro
 	return nil
 }
 
-func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (int64, error) {
+func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
 	dstKey = path.Join(s.Config.ObjectDiskPath, dstKey)
-	if strings.Contains(s.Config.Endpoint, "storage.googleapis.com") {
-		params := s3.CopyObjectInput{
+	log.Debug().Msgf("S3->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, s.Config.Bucket, dstKey)
+	// just copy object without multipart
+	if srcSize < 5*1024*1024*1024 || strings.Contains(s.Config.Endpoint, "storage.googleapis.com") {
+		params := &s3.CopyObjectInput{
 			Bucket:       aws.String(s.Config.Bucket),
 			Key:          aws.String(dstKey),
 			CopySource:   aws.String(path.Join(srcBucket, srcKey)),
 			StorageClass: s3types.StorageClass(strings.ToUpper(s.Config.StorageClass)),
 		}
-		// https://github.com/Altinity/clickhouse-backup/issues/588
-		if len(s.Config.ObjectLabels) > 0 {
-			tags := ""
-			for k, v := range s.Config.ObjectLabels {
-				if tags != "" {
-					tags += "&"
-				}
-				tags += k + "=" + v
-			}
-			params.Tagging = aws.String(tags)
-		}
-		if s.Config.SSE != "" {
-			params.ServerSideEncryption = s3types.ServerSideEncryption(s.Config.SSE)
-		}
-		if s.Config.SSEKMSKeyId != "" {
-			params.SSEKMSKeyId = aws.String(s.Config.SSEKMSKeyId)
-		}
-		if s.Config.SSECustomerAlgorithm != "" {
-			params.SSECustomerAlgorithm = aws.String(s.Config.SSECustomerAlgorithm)
-		}
-		if s.Config.SSECustomerKey != "" {
-			params.SSECustomerKey = aws.String(s.Config.SSECustomerKey)
-		}
-		if s.Config.SSECustomerKeyMD5 != "" {
-			params.SSECustomerKeyMD5 = aws.String(s.Config.SSECustomerKeyMD5)
-		}
-		if s.Config.SSEKMSEncryptionContext != "" {
-			params.SSEKMSEncryptionContext = aws.String(s.Config.SSEKMSEncryptionContext)
-		}
-		_, err := s.client.CopyObject(ctx, &params)
+		s.enrichCopyObjectParams(params)
+		_, err := s.client.CopyObject(ctx, params)
 		if err != nil {
-			return 0, err
+			return 0, fmt.Errorf("S3->CopyObject %s/%s -> %s/%s return error: %v", srcBucket, srcKey, s.Config.Bucket, dstKey, err)
 		}
-		dstObjResp, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
-			Bucket: aws.String(s.Config.Bucket),
-			Key:    aws.String(dstKey),
-		})
-		if err != nil {
-			return 0, err
-		}
-		return dstObjResp.ContentLength, nil
+		return srcSize, nil
 	}
-	// Get the size of the source object
-	sourceObjResp, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(srcBucket),
-		Key:    aws.String(srcKey),
-	})
-	if err != nil {
-		return 0, err
-	}
-	srcSize := sourceObjResp.ContentLength
 	// Initiate a multipart upload
-	params := s3.CreateMultipartUploadInput{
+	createMultipartUploadParams := &s3.CreateMultipartUploadInput{
 		Bucket:       aws.String(s.Config.Bucket),
 		Key:          aws.String(dstKey),
 		StorageClass: s3types.StorageClass(strings.ToUpper(s.Config.StorageClass)),
+	}
+	s.enrichCreateMultipartUploadParams(createMultipartUploadParams)
+	initResp, err := s.client.CreateMultipartUpload(ctx, createMultipartUploadParams)
+	if err != nil {
+		return 0, fmt.Errorf("S3->CopyObject %s/%s -> %s/%s, CreateMultipartUpload return error: %v", srcBucket, srcKey, s.Config.Bucket, dstKey, err)
+	}
+
+	// Get the upload ID
+	uploadID := initResp.UploadId
+
+	// Set the part size (e.g., 5 MB)
+	partSize := srcSize / s.Config.MaxPartsCount
+	if srcSize%s.Config.MaxPartsCount > 0 {
+		partSize++
+	}
+	// 128Mb part size recommendation from https://repost.aws/questions/QUtW2_XaALTK63wv9XLSywiQ/s3-sync-command-is-slow-to-start-on-some-data
+	if partSize < 128*1024*1024 {
+		partSize = 128 * 1024 * 1024
+	}
+
+	if partSize > 5*1024*1024*1024 {
+		partSize = 5 * 1024 * 1024 * 1024
+	}
+
+	// Calculate the number of parts
+	numParts := (srcSize + partSize - 1) / partSize
+
+	copyPartErrGroup, ctx := errgroup.WithContext(ctx)
+	copyPartErrGroup.SetLimit(s.Config.Concurrency * s.Config.Concurrency)
+
+	var mu sync.Mutex
+	var parts []s3types.CompletedPart
+
+	// Copy each part of the object
+	for partNumber := int64(1); partNumber <= numParts; partNumber++ {
+		// Calculate the byte range for the part
+		start := (partNumber - 1) * partSize
+		end := partNumber * partSize
+		if end > srcSize {
+			end = srcSize
+		}
+		currentPartNumber := int32(partNumber)
+
+		copyPartErrGroup.Go(func() error {
+			// Copy the part
+			uploadPartParams := &s3.UploadPartCopyInput{
+				Bucket:          aws.String(s.Config.Bucket),
+				Key:             aws.String(dstKey),
+				CopySource:      aws.String(srcBucket + "/" + srcKey),
+				CopySourceRange: aws.String(fmt.Sprintf("bytes=%d-%d", start, end-1)),
+				UploadId:        uploadID,
+				PartNumber:      aws.Int32(currentPartNumber),
+			}
+			if s.Config.RequestPayer != "" {
+				uploadPartParams.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
+			}
+			partResp, err := s.client.UploadPartCopy(ctx, uploadPartParams)
+			if err != nil {
+				return fmt.Errorf("S3->CopyObject %s/%s -> %s/%s, UploadPartCopy start=%d, end=%d return error: %v", srcBucket, srcKey, s.Config.Bucket, dstKey, start, end-1, err)
+			}
+			mu.Lock()
+			parts = append(parts, s3types.CompletedPart{
+				ETag:           partResp.CopyPartResult.ETag,
+				PartNumber:     aws.Int32(currentPartNumber),
+				ChecksumCRC32:  partResp.CopyPartResult.ChecksumCRC32,
+				ChecksumCRC32C: partResp.CopyPartResult.ChecksumCRC32C,
+				ChecksumSHA1:   partResp.CopyPartResult.ChecksumSHA1,
+				ChecksumSHA256: partResp.CopyPartResult.ChecksumSHA256,
+			})
+			mu.Unlock()
+			return nil
+		})
+	}
+	if wgWaitErr := copyPartErrGroup.Wait(); wgWaitErr != nil {
+		abortParams := &s3.AbortMultipartUploadInput{
+			Bucket:   aws.String(s.Config.Bucket),
+			Key:      aws.String(dstKey),
+			UploadId: uploadID,
+		}
+		if s.Config.RequestPayer != "" {
+			abortParams.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
+		}
+		_, abortErr := s.client.AbortMultipartUpload(context.Background(), abortParams)
+		if abortErr != nil {
+			return 0, fmt.Errorf("aborting CopyObject multipart upload: %v, original error was: %v", abortErr, wgWaitErr)
+		}
+		return 0, fmt.Errorf("one of CopyObject/Multipart go-routine return error: %v", wgWaitErr)
+	}
+	// Parts must be ordered by part number.
+	sort.Slice(parts, func(i int, j int) bool {
+		return *parts[i].PartNumber < *parts[j].PartNumber
+	})
+	// Complete the multipart upload
+	completeMultipartUploadParams := &s3.CompleteMultipartUploadInput{
+		Bucket:          aws.String(s.Config.Bucket),
+		Key:             aws.String(dstKey),
+		UploadId:        uploadID,
+		MultipartUpload: &s3types.CompletedMultipartUpload{Parts: parts},
+	}
+	if s.Config.RequestPayer != "" {
+		completeMultipartUploadParams.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
+	}
+	_, err = s.client.CompleteMultipartUpload(context.Background(), completeMultipartUploadParams)
+	if err != nil {
+		return 0, fmt.Errorf("complete CopyObject multipart upload: %v", err)
+	}
+	return srcSize, nil
+}
+
+func (s *S3) enrichCreateMultipartUploadParams(params *s3.CreateMultipartUploadInput) {
+	if s.Config.CheckSumAlgorithm != "" {
+		params.ChecksumAlgorithm = s3types.ChecksumAlgorithm(s.Config.CheckSumAlgorithm)
+	}
+	if s.Config.RequestPayer != "" {
+		params.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
 	}
 	// https://github.com/Altinity/clickhouse-backup/issues/588
 	if len(s.Config.ObjectLabels) > 0 {
@@ -517,115 +632,72 @@ func (s *S3) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (
 	if s.Config.SSEKMSEncryptionContext != "" {
 		params.SSEKMSEncryptionContext = aws.String(s.Config.SSEKMSEncryptionContext)
 	}
+}
 
-	initResp, err := s.client.CreateMultipartUpload(ctx, &params)
-	if err != nil {
-		return 0, err
+func (s *S3) enrichCopyObjectParams(params *s3.CopyObjectInput) {
+	if s.Config.CheckSumAlgorithm != "" {
+		params.ChecksumAlgorithm = s3types.ChecksumAlgorithm(s.Config.CheckSumAlgorithm)
 	}
-
-	// Get the upload ID
-	uploadID := initResp.UploadId
-
-	// Set the part size (e.g., 5 MB)
-	partSize := srcSize / s.Config.MaxPartsCount
-	if partSize < 5*1024*1024 {
-		partSize = 5 * 1014 * 1024
-	}
-
-	// Calculate the number of parts
-	numParts := (srcSize + partSize - 1) / partSize
-
-	copyPartSemaphore := semaphore.NewWeighted(int64(s.Config.Concurrency))
-	copyPartErrGroup, ctx := errgroup.WithContext(ctx)
-
-	var mu sync.Mutex
-	var parts []s3types.CompletedPart
-
-	// Copy each part of the object
-	for partNumber := int64(1); partNumber <= numParts; partNumber++ {
-		if err := copyPartSemaphore.Acquire(ctx, 1); err != nil {
-			apexLog.Errorf("can't acquire semaphore during CopyObject data parts: %v", err)
-			break
-		}
-		// Calculate the byte range for the part
-		start := (partNumber - 1) * partSize
-		end := partNumber * partSize
-		if end > srcSize {
-			end = srcSize
-		}
-		currentPartNumber := int32(partNumber)
-
-		copyPartErrGroup.Go(func() error {
-			defer copyPartSemaphore.Release(1)
-			// Copy the part
-			partResp, err := s.client.UploadPartCopy(ctx, &s3.UploadPartCopyInput{
-				Bucket:          aws.String(s.Config.Bucket),
-				Key:             aws.String(dstKey),
-				CopySource:      aws.String(srcBucket + "/" + srcKey),
-				CopySourceRange: aws.String(fmt.Sprintf("bytes=%d-%d", start, end-1)),
-				UploadId:        uploadID,
-				PartNumber:      currentPartNumber,
-			})
-			if err != nil {
-				return err
+	// https://github.com/Altinity/clickhouse-backup/issues/588
+	if len(s.Config.ObjectLabels) > 0 {
+		tags := ""
+		for k, v := range s.Config.ObjectLabels {
+			if tags != "" {
+				tags += "&"
 			}
-			mu.Lock()
-			defer mu.Unlock()
-			parts = append(parts, s3types.CompletedPart{
-				ETag:       partResp.CopyPartResult.ETag,
-				PartNumber: currentPartNumber,
-			})
-			return nil
-		})
-	}
-	if err := copyPartErrGroup.Wait(); err != nil {
-		_, abortErr := s.client.AbortMultipartUpload(context.Background(), &s3.AbortMultipartUploadInput{
-			Bucket:   aws.String(s.Config.Bucket),
-			Key:      aws.String(dstKey),
-			UploadId: uploadID,
-		})
-		if abortErr != nil {
-			return 0, fmt.Errorf("aborting CopyObject multipart upload: %v, original error was: %v", abortErr, err)
+			tags += k + "=" + v
 		}
-		return 0, fmt.Errorf("one of CopyObject go-routine return error: %v", err)
+		params.Tagging = aws.String(tags)
 	}
-
-	// Complete the multipart upload
-	_, err = s.client.CompleteMultipartUpload(context.Background(), &s3.CompleteMultipartUploadInput{
-		Bucket:          aws.String(s.Config.Bucket),
-		Key:             aws.String(dstKey),
-		UploadId:        uploadID,
-		MultipartUpload: &s3types.CompletedMultipartUpload{Parts: parts},
-	})
-	if err != nil {
-		return 0, fmt.Errorf("complete CopyObject multipart upload: %v", err)
+	if s.Config.SSE != "" {
+		params.ServerSideEncryption = s3types.ServerSideEncryption(s.Config.SSE)
 	}
-	log.Debug().Msgf("S3->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, s.Config.Bucket, dstKey)
-	return srcSize, nil
+	if s.Config.SSEKMSKeyId != "" {
+		params.SSEKMSKeyId = aws.String(s.Config.SSEKMSKeyId)
+	}
+	if s.Config.SSECustomerAlgorithm != "" {
+		params.SSECustomerAlgorithm = aws.String(s.Config.SSECustomerAlgorithm)
+	}
+	if s.Config.SSECustomerKey != "" {
+		params.SSECustomerKey = aws.String(s.Config.SSECustomerKey)
+	}
+	if s.Config.SSECustomerKeyMD5 != "" {
+		params.SSECustomerKeyMD5 = aws.String(s.Config.SSECustomerKeyMD5)
+	}
+	if s.Config.SSEKMSEncryptionContext != "" {
+		params.SSEKMSEncryptionContext = aws.String(s.Config.SSEKMSEncryptionContext)
+	}
+	if s.Config.RequestPayer != "" {
+		params.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
+	}
 }
 
 func (s *S3) restoreObject(ctx context.Context, key string) error {
-	restoreRequest := s3.RestoreObjectInput{
+	restoreRequest := &s3.RestoreObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
 		Key:    aws.String(path.Join(s.Config.Path, key)),
 		RestoreRequest: &s3types.RestoreRequest{
-			Days: 1,
+			Days: aws.Int32(1),
 			GlacierJobParameters: &s3types.GlacierJobParameters{
 				Tier: s3types.Tier("Expedited"),
 			},
 		},
 	}
-	_, err := s.client.RestoreObject(ctx, &restoreRequest)
+	if s.Config.RequestPayer != "" {
+		restoreRequest.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
+	}
+	_, err := s.client.RestoreObject(ctx, restoreRequest)
 	if err != nil {
 		return err
 	}
 	i := 0
 	for {
-		headObjectRequest := &s3.HeadObjectInput{
+		restoreHeadParams := &s3.HeadObjectInput{
 			Bucket: aws.String(s.Config.Bucket),
 			Key:    aws.String(path.Join(s.Config.Path, key)),
 		}
-		res, err := s.client.HeadObject(ctx, headObjectRequest)
+		s.enrichHeadParams(restoreHeadParams)
+		res, err := s.client.HeadObject(ctx, restoreHeadParams)
 		if err != nil {
 			return fmt.Errorf("restoreObject: failed to head %s object metadata, %v", path.Join(s.Config.Path, key), err)
 		}
@@ -637,6 +709,21 @@ func (s *S3) restoreObject(ctx context.Context, key string) error {
 		} else {
 			return nil
 		}
+	}
+}
+
+func (s *S3) enrichHeadParams(headParams *s3.HeadObjectInput) {
+	if s.Config.RequestPayer != "" {
+		headParams.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
+	}
+	if s.Config.SSECustomerAlgorithm != "" {
+		headParams.SSECustomerAlgorithm = aws.String(s.Config.SSECustomerAlgorithm)
+	}
+	if s.Config.SSECustomerKey != "" {
+		headParams.SSECustomerKey = aws.String(s.Config.SSECustomerKey)
+	}
+	if s.Config.SSECustomerKeyMD5 != "" {
+		headParams.SSECustomerKeyMD5 = aws.String(s.Config.SSECustomerKeyMD5)
 	}
 }
 

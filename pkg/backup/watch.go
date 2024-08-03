@@ -3,15 +3,14 @@ package backup
 import (
 	"context"
 	"fmt"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/server/metrics"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
+	"github.com/rs/zerolog/log"
+	"github.com/urfave/cli"
 	"regexp"
 	"strings"
 	"time"
-
-	"github.com/Altinity/clickhouse-backup/pkg/config"
-	"github.com/Altinity/clickhouse-backup/pkg/server/metrics"
-	"github.com/Altinity/clickhouse-backup/pkg/status"
-	"github.com/rs/zerolog/log"
-	"github.com/urfave/cli"
 )
 
 var watchBackupTemplateTimeRE = regexp.MustCompile(`{time:([^}]+)}`)
@@ -83,6 +82,12 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 	prevBackupType := ""
 	lastBackup := time.Now()
 	lastFullBackup := time.Now()
+
+	prevBackupName, prevBackupType, lastBackup, lastFullBackup, backupType, err = b.calculatePrevBackupNameAndType(ctx, prevBackupName, prevBackupType, lastBackup, lastFullBackup, backupType)
+	if err != nil {
+		return err
+	}
+
 	createRemoteErrCount := 0
 	deleteLocalErrCount := 0
 	var createRemoteErr error
@@ -117,19 +122,39 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 			}
 			if metrics != nil {
 				createRemoteErr, createRemoteErrCount = metrics.ExecuteWithMetrics("create_remote", createRemoteErrCount, func() error {
-					return b.CreateToRemote(backupName, "", diffFromRemote, tablePattern, partitions, schemaOnly, backupRBAC, false, backupConfigs, false, skipCheckPartsColumns, false, version, commandId)
+					return b.CreateToRemote(backupName, false, "", diffFromRemote, tablePattern, partitions, schemaOnly, backupRBAC, false, backupConfigs, false, skipCheckPartsColumns, false, version, commandId)
 				})
 				deleteLocalErr, deleteLocalErrCount = metrics.ExecuteWithMetrics("delete", deleteLocalErrCount, func() error {
 					return b.RemoveBackupLocal(ctx, backupName, nil)
 				})
 
 			} else {
-				createRemoteErr = b.CreateToRemote(backupName, "", diffFromRemote, tablePattern, partitions, schemaOnly, backupRBAC, false, backupConfigs, false, skipCheckPartsColumns, false, version, commandId)
+				createRemoteErr = b.CreateToRemote(backupName, false, "", diffFromRemote, tablePattern, partitions, schemaOnly, backupRBAC, false, backupConfigs, false, skipCheckPartsColumns, false, version, commandId)
 				if createRemoteErr != nil {
-					log.Error().Fields(map[string]interface{}{
-						"backup":    backupName,
-						"operation": "watch",
-					}).Msgf("create_remote %s return error: %v", backupName, createRemoteErr)
+					cmd := "create_remote"
+					if diffFromRemote != "" {
+						cmd += " --diff-from-remote=" + diffFromRemote
+					}
+					if tablePattern != "" {
+						cmd += " --tables=" + tablePattern
+					}
+					if len(partitions) > 0 {
+						cmd += " --partition=" + strings.Join(partitions, ",")
+					}
+					if schemaOnly {
+						cmd += " --schema"
+					}
+					if backupRBAC {
+						cmd += " --rbac"
+					}
+					if backupConfigs {
+						cmd += " --configs"
+					}
+					if skipCheckPartsColumns {
+						cmd += " --skip-check-parts-columns"
+					}
+					cmd += " " + backupName
+					log.Error().Msgf("%s return error: %v", cmd, createRemoteErr)
 					createRemoteErrCount += 1
 				} else {
 					createRemoteErrCount = 0
@@ -179,4 +204,56 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 			b.ch.Close()
 		}
 	}
+}
+
+// calculatePrevBackupNameAndType - https://github.com/Altinity/clickhouse-backup/pull/804
+func (b *Backuper) calculatePrevBackupNameAndType(ctx context.Context, prevBackupName string, prevBackupType string, lastBackup time.Time, lastFullBackup time.Time, backupType string) (string, string, time.Time, time.Time, string, error) {
+	remoteBackups, err := b.GetRemoteBackups(ctx, true)
+	if err != nil {
+		return "", "", time.Time{}, time.Time{}, "", err
+	}
+	backupTemplateName, err := b.ch.ApplyMacros(ctx, b.cfg.General.WatchBackupNameTemplate)
+	if err != nil {
+		return "", "", time.Time{}, time.Time{}, "", err
+	}
+	backupTemplateNamePrepareRE := regexp.MustCompile(`{type}|{time:([^}]+)}`)
+	backupTemplateNameRE := regexp.MustCompile(backupTemplateNamePrepareRE.ReplaceAllString(backupTemplateName, `\S+`))
+
+	for _, remoteBackup := range remoteBackups {
+		if remoteBackup.Broken == "" && backupTemplateNameRE.MatchString(remoteBackup.BackupName) {
+			prevBackupName = remoteBackup.BackupName
+			if strings.Contains(remoteBackup.BackupName, "increment") {
+				prevBackupType = "increment"
+				lastBackup = remoteBackup.CreationDate
+			} else {
+				prevBackupType = "full"
+				lastBackup = remoteBackup.CreationDate
+				lastFullBackup = remoteBackup.CreationDate
+			}
+		}
+	}
+	if prevBackupName != "" {
+		now := time.Now()
+		timeBeforeDoBackup := int(b.cfg.General.WatchDuration.Seconds() - now.Sub(lastBackup).Seconds())
+		timeBeforeDoFullBackup := int(b.cfg.General.FullDuration.Seconds() - now.Sub(lastFullBackup).Seconds())
+		log.Info().Msgf("Time before do backup %v", timeBeforeDoBackup)
+		log.Info().Msgf("Time before do full backup %v", timeBeforeDoFullBackup)
+		if timeBeforeDoBackup > 0 && timeBeforeDoFullBackup > 0 {
+			log.Info().Msgf("Waiting %d seconds until continue doing backups due watch interval", timeBeforeDoBackup)
+			select {
+			case <-ctx.Done():
+				return "", "", time.Time{}, time.Time{}, "", ctx.Err()
+			case <-time.After(b.cfg.General.WatchDuration - now.Sub(lastBackup)):
+			}
+		}
+		now = time.Now()
+		lastBackup = now
+		if b.cfg.General.FullDuration.Seconds()-time.Now().Sub(lastFullBackup).Seconds() <= 0 {
+			backupType = "full"
+			lastFullBackup = now
+		} else {
+			backupType = "increment"
+		}
+	}
+	return prevBackupName, prevBackupType, lastBackup, lastFullBackup, backupType, nil
 }

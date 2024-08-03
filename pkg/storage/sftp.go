@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"io"
 	"os"
 	"path"
@@ -166,11 +166,15 @@ func (sftp *SFTP) DeleteDirectory(ctx context.Context, dirPath string) error {
 }
 
 func (sftp *SFTP) Walk(ctx context.Context, remotePath string, recursive bool, process func(context.Context, RemoteFile) error) error {
-	dir := path.Join(sftp.Config.Path, remotePath)
-	sftp.Debug("[SFTP_DEBUG] Walk %s, recursive=%v", dir, recursive)
+	prefix := path.Join(sftp.Config.Path, remotePath)
+	return sftp.WalkAbsolute(ctx, prefix, recursive, process)
+}
+
+func (sftp *SFTP) WalkAbsolute(ctx context.Context, prefix string, recursive bool, process func(context.Context, RemoteFile) error) error {
+	sftp.Debug("[SFTP_DEBUG] Walk %s, recursive=%v", prefix, recursive)
 
 	if recursive {
-		walker := sftp.sftpClient.Walk(dir)
+		walker := sftp.sftpClient.Walk(prefix)
 		for walker.Step() {
 			if err := walker.Err(); err != nil {
 				return err
@@ -179,7 +183,7 @@ func (sftp *SFTP) Walk(ctx context.Context, remotePath string, recursive bool, p
 			if entry == nil {
 				continue
 			}
-			relName, _ := filepath.Rel(dir, walker.Path())
+			relName, _ := filepath.Rel(prefix, walker.Path())
 			err := process(ctx, &sftpFile{
 				size:         entry.Size(),
 				lastModified: entry.ModTime(),
@@ -190,9 +194,9 @@ func (sftp *SFTP) Walk(ctx context.Context, remotePath string, recursive bool, p
 			}
 		}
 	} else {
-		entries, err := sftp.sftpClient.ReadDir(dir)
+		entries, err := sftp.sftpClient.ReadDir(prefix)
 		if err != nil {
-			sftp.Debug("[SFTP_DEBUG] Walk::NonRecursive::ReadDir %s return error %v", dir, err)
+			sftp.Debug("[SFTP_DEBUG] Walk::NonRecursive::ReadDir %s return error %v", prefix, err)
 			return err
 		}
 		for _, entry := range entries {
@@ -210,8 +214,11 @@ func (sftp *SFTP) Walk(ctx context.Context, remotePath string, recursive bool, p
 }
 
 func (sftp *SFTP) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {
-	filePath := path.Join(sftp.Config.Path, key)
-	return sftp.sftpClient.OpenFile(filePath, syscall.O_RDWR)
+	return sftp.GetFileReaderAbsolute(ctx, path.Join(sftp.Config.Path, key))
+}
+
+func (sftp *SFTP) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadCloser, error) {
+	return sftp.sftpClient.OpenFile(key, syscall.O_RDWR)
 }
 
 func (sftp *SFTP) GetFileReaderWithLocalPath(ctx context.Context, key, _ string) (io.ReadCloser, error) {
@@ -219,17 +226,20 @@ func (sftp *SFTP) GetFileReaderWithLocalPath(ctx context.Context, key, _ string)
 }
 
 func (sftp *SFTP) PutFile(ctx context.Context, key string, localFile io.ReadCloser) error {
-	filePath := path.Join(sftp.Config.Path, key)
-	if err := sftp.sftpClient.MkdirAll(path.Dir(filePath)); err != nil {
-		log.Warn().Msgf("sftp.sftpClient.MkdirAll(%s) err=%v", path.Dir(filePath), err)
+	return sftp.PutFileAbsolute(ctx, path.Join(sftp.Config.Path, key), localFile)
+}
+
+func (sftp *SFTP) PutFileAbsolute(ctx context.Context, key string, localFile io.ReadCloser) error {
+	if err := sftp.sftpClient.MkdirAll(path.Dir(key)); err != nil {
+		log.Warn().Msgf("sftp.sftpClient.MkdirAll(%s) err=%v", path.Dir(key), err)
 	}
-	remoteFile, err := sftp.sftpClient.Create(filePath)
+	remoteFile, err := sftp.sftpClient.Create(key)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if err := remoteFile.Close(); err != nil {
-			log.Warn().Msgf("can't close %s err=%v", filePath, err)
+			log.Warn().Msgf("can't close %s err=%v", key, err)
 		}
 	}()
 	if _, err = remoteFile.ReadFrom(localFile); err != nil {
@@ -238,7 +248,7 @@ func (sftp *SFTP) PutFile(ctx context.Context, key string, localFile io.ReadClos
 	return nil
 }
 
-func (sftp *SFTP) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (int64, error) {
+func (sftp *SFTP) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
 	return 0, fmt.Errorf("CopyObject not imlemented for %s", sftp.Kind())
 }
 

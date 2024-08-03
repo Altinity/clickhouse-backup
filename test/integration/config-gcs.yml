@@ -8,10 +8,10 @@ clickhouse:
   host: clickhouse
   port: 9000
   restart_command: bash -c 'echo "FAKE RESTART"'
+  timeout: 60s
 gcs:
   bucket: altinity-qa-test
-  path: backup
-  object_disk_path: object_disks
+  path: backup/{cluster}/{shard}
+  object_disk_path: object_disks/{cluster}/{shard}
   credentials_file: /etc/clickhouse-backup/credentials.json
   compression_format: tar
-#  endpoint: http://gcs:8080/storage/v1/

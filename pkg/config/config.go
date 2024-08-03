@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
 
-	"github.com/Altinity/clickhouse-backup/pkg/log_helper"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/log_helper"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/kelseyhightower/envconfig"
 	"github.com/rs/zerolog/log"
@@ -37,29 +38,36 @@ type Config struct {
 
 // GeneralConfig - general setting section
 type GeneralConfig struct {
-	RemoteStorage           string            `yaml:"remote_storage" envconfig:"REMOTE_STORAGE"`
-	MaxFileSize             int64             `yaml:"max_file_size" envconfig:"MAX_FILE_SIZE"`
-	DisableProgressBar      bool              `yaml:"disable_progress_bar" envconfig:"DISABLE_PROGRESS_BAR"`
-	BackupsToKeepLocal      int               `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL"`
-	BackupsToKeepRemote     int               `yaml:"backups_to_keep_remote" envconfig:"BACKUPS_TO_KEEP_REMOTE"`
-	LogLevel                string            `yaml:"log_level" envconfig:"LOG_LEVEL"`
-	AllowEmptyBackups       bool              `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
-	DownloadConcurrency     uint8             `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
-	UploadConcurrency       uint8             `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
-	UseResumableState       bool              `yaml:"use_resumable_state" envconfig:"USE_RESUMABLE_STATE"`
-	RestoreSchemaOnCluster  string            `yaml:"restore_schema_on_cluster" envconfig:"RESTORE_SCHEMA_ON_CLUSTER"`
-	UploadByPart            bool              `yaml:"upload_by_part" envconfig:"UPLOAD_BY_PART"`
-	DownloadByPart          bool              `yaml:"download_by_part" envconfig:"DOWNLOAD_BY_PART"`
-	RestoreDatabaseMapping  map[string]string `yaml:"restore_database_mapping" envconfig:"RESTORE_DATABASE_MAPPING"`
-	RetriesOnFailure        int               `yaml:"retries_on_failure" envconfig:"RETRIES_ON_FAILURE"`
-	RetriesPause            string            `yaml:"retries_pause" envconfig:"RETRIES_PAUSE"`
-	WatchInterval           string            `yaml:"watch_interval" envconfig:"WATCH_INTERVAL"`
-	FullInterval            string            `yaml:"full_interval" envconfig:"FULL_INTERVAL"`
-	WatchBackupNameTemplate string            `yaml:"watch_backup_name_template" envconfig:"WATCH_BACKUP_NAME_TEMPLATE"`
-	ShardedOperationMode    string            `yaml:"sharded_operation_mode" envconfig:"SHARDED_OPERATION_MODE"`
-	RetriesDuration         time.Duration
-	WatchDuration           time.Duration
-	FullDuration            time.Duration
+	RemoteStorage                       string            `yaml:"remote_storage" envconfig:"REMOTE_STORAGE"`
+	MaxFileSize                         int64             `yaml:"max_file_size" envconfig:"MAX_FILE_SIZE"`
+	BackupsToKeepLocal                  int               `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL"`
+	BackupsToKeepRemote                 int               `yaml:"backups_to_keep_remote" envconfig:"BACKUPS_TO_KEEP_REMOTE"`
+	LogLevel                            string            `yaml:"log_level" envconfig:"LOG_LEVEL"`
+	AllowEmptyBackups                   bool              `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
+	DownloadConcurrency                 uint8             `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
+	UploadConcurrency                   uint8             `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
+	UploadMaxBytesPerSecond             uint64            `yaml:"upload_max_bytes_per_second" envconfig:"UPLOAD_MAX_BYTES_PER_SECOND"`
+	DownloadMaxBytesPerSecond           uint64            `yaml:"download_max_bytes_per_second" envconfig:"DOWNLOAD_MAX_BYTES_PER_SECOND"`
+	ObjectDiskServerSideCopyConcurrency uint8             `yaml:"object_disk_server_side_copy_concurrency" envconfig:"OBJECT_DISK_SERVER_SIDE_COPY_CONCURRENCY"`
+	UseResumableState                   bool              `yaml:"use_resumable_state" envconfig:"USE_RESUMABLE_STATE"`
+	RestoreSchemaOnCluster              string            `yaml:"restore_schema_on_cluster" envconfig:"RESTORE_SCHEMA_ON_CLUSTER"`
+	UploadByPart                        bool              `yaml:"upload_by_part" envconfig:"UPLOAD_BY_PART"`
+	DownloadByPart                      bool              `yaml:"download_by_part" envconfig:"DOWNLOAD_BY_PART"`
+	RestoreDatabaseMapping              map[string]string `yaml:"restore_database_mapping" envconfig:"RESTORE_DATABASE_MAPPING"`
+	RestoreTableMapping                 map[string]string `yaml:"restore_table_mapping" envconfig:"RESTORE_TABLE_MAPPING"`
+	RetriesOnFailure                    int               `yaml:"retries_on_failure" envconfig:"RETRIES_ON_FAILURE"`
+	RetriesPause                        string            `yaml:"retries_pause" envconfig:"RETRIES_PAUSE"`
+	WatchInterval                       string            `yaml:"watch_interval" envconfig:"WATCH_INTERVAL"`
+	FullInterval                        string            `yaml:"full_interval" envconfig:"FULL_INTERVAL"`
+	WatchBackupNameTemplate             string            `yaml:"watch_backup_name_template" envconfig:"WATCH_BACKUP_NAME_TEMPLATE"`
+	ShardedOperationMode                string            `yaml:"sharded_operation_mode" envconfig:"SHARDED_OPERATION_MODE"`
+	CPUNicePriority                     int               `yaml:"cpu_nice_priority" envconfig:"CPU_NICE_PRIORITY"`
+	IONicePriority                      string            `yaml:"io_nice_priority" envconfig:"IO_NICE_PRIORITY"`
+	RBACBackupAlways                    bool              `yaml:"rbac_backup_always" envconfig:"RBAC_BACKUP_ALWAYS"`
+	RBACConflictResolution              string            `yaml:"rbac_conflict_resolution" envconfig:"RBAC_CONFLICT_RESOLUTION"`
+	RetriesDuration                     time.Duration
+	WatchDuration                       time.Duration
+	FullDuration                        time.Duration
 }
 
 // GCSConfig - GCS settings section
@@ -67,16 +75,24 @@ type GCSConfig struct {
 	CredentialsFile        string            `yaml:"credentials_file" envconfig:"GCS_CREDENTIALS_FILE"`
 	CredentialsJSON        string            `yaml:"credentials_json" envconfig:"GCS_CREDENTIALS_JSON"`
 	CredentialsJSONEncoded string            `yaml:"credentials_json_encoded" envconfig:"GCS_CREDENTIALS_JSON_ENCODED"`
+	EmbeddedAccessKey      string            `yaml:"embedded_access_key" envconfig:"GCS_EMBEDDED_ACCESS_KEY"`
+	EmbeddedSecretKey      string            `yaml:"embedded_secret_key" envconfig:"GCS_EMBEDDED_SECRET_KEY"`
+	SkipCredentials        bool              `yaml:"skip_credentials" envconfig:"GCS_SKIP_CREDENTIALS"`
 	Bucket                 string            `yaml:"bucket" envconfig:"GCS_BUCKET"`
 	Path                   string            `yaml:"path" envconfig:"GCS_PATH"`
 	ObjectDiskPath         string            `yaml:"object_disk_path" envconfig:"GCS_OBJECT_DISK_PATH"`
 	CompressionLevel       int               `yaml:"compression_level" envconfig:"GCS_COMPRESSION_LEVEL"`
 	CompressionFormat      string            `yaml:"compression_format" envconfig:"GCS_COMPRESSION_FORMAT"`
 	Debug                  bool              `yaml:"debug" envconfig:"GCS_DEBUG"`
+	ForceHttp              bool              `yaml:"force_http" envconfig:"GCS_FORCE_HTTP"`
 	Endpoint               string            `yaml:"endpoint" envconfig:"GCS_ENDPOINT"`
 	StorageClass           string            `yaml:"storage_class" envconfig:"GCS_STORAGE_CLASS"`
 	ObjectLabels           map[string]string `yaml:"object_labels" envconfig:"GCS_OBJECT_LABELS"`
 	CustomStorageClassMap  map[string]string `yaml:"custom_storage_class_map" envconfig:"GCS_CUSTOM_STORAGE_CLASS_MAP"`
+	// NOTE: ClientPoolSize should be at least 2 times bigger than
+	// 			UploadConcurrency or DownloadConcurrency in each upload and download case
+	ClientPoolSize int `yaml:"client_pool_size" envconfig:"GCS_CLIENT_POOL_SIZE"`
+	ChunkSize      int `yaml:"chunk_size" envconfig:"GCS_CHUNK_SIZE"`
 }
 
 // AzureBlobConfig - Azure Blob settings section
@@ -97,6 +113,7 @@ type AzureBlobConfig struct {
 	MaxBuffers            int    `yaml:"buffer_count" envconfig:"AZBLOB_MAX_BUFFERS"`
 	MaxPartsCount         int    `yaml:"max_parts_count" envconfig:"AZBLOB_MAX_PARTS_COUNT"`
 	Timeout               string `yaml:"timeout" envconfig:"AZBLOB_TIMEOUT"`
+	Debug                 bool   `yaml:"debug" envconfig:"AZBLOB_DEBUG"`
 }
 
 // S3Config - s3 settings section
@@ -129,6 +146,8 @@ type S3Config struct {
 	MaxPartsCount           int64             `yaml:"max_parts_count" envconfig:"S3_MAX_PARTS_COUNT"`
 	AllowMultipartDownload  bool              `yaml:"allow_multipart_download" envconfig:"S3_ALLOW_MULTIPART_DOWNLOAD"`
 	ObjectLabels            map[string]string `yaml:"object_labels" envconfig:"S3_OBJECT_LABELS"`
+	RequestPayer            string            `yaml:"request_payer" envconfig:"S3_REQUEST_PAYER"`
+	CheckSumAlgorithm       string            `yaml:"check_sum_algorithm" envconfig:"S3_CHECKSUM_ALGORITHM"`
 	Debug                   bool              `yaml:"debug" envconfig:"S3_DEBUG"`
 }
 
@@ -151,6 +170,7 @@ type FTPConfig struct {
 	Username          string `yaml:"username" envconfig:"FTP_USERNAME"`
 	Password          string `yaml:"password" envconfig:"FTP_PASSWORD"`
 	TLS               bool   `yaml:"tls" envconfig:"FTP_TLS"`
+	SkipTLSVerify     bool   `yaml:"skip_tls_verify" envconfig:"FTP_SKIP_TLS_VERIFY"`
 	Path              string `yaml:"path" envconfig:"FTP_PATH"`
 	ObjectDiskPath    string `yaml:"object_disk_path" envconfig:"FTP_OBJECT_DISK_PATH"`
 	CompressionFormat string `yaml:"compression_format" envconfig:"FTP_COMPRESSION_FORMAT"`
@@ -212,6 +232,7 @@ type ClickHouseConfig struct {
 	TLSKey                           string            `yaml:"tls_key" envconfig:"CLICKHOUSE_TLS_KEY"`
 	TLSCert                          string            `yaml:"tls_cert" envconfig:"CLICKHOUSE_TLS_CERT"`
 	TLSCa                            string            `yaml:"tls_ca" envconfig:"CLICKHOUSE_TLS_CA"`
+	MaxConnections                   int               `yaml:"max_connections" envconfig:"CLICKHOUSE_MAX_CONNECTIONS"`
 	Debug                            bool              `yaml:"debug" envconfig:"CLICKHOUSE_DEBUG"`
 }
 
@@ -230,6 +251,7 @@ type APIConfig struct {
 	IntegrationTablesHost         string `yaml:"integration_tables_host" envconfig:"API_INTEGRATION_TABLES_HOST"`
 	AllowParallel                 bool   `yaml:"allow_parallel" envconfig:"API_ALLOW_PARALLEL"`
 	CompleteResumableAfterRestart bool   `yaml:"complete_resumable_after_restart" envconfig:"API_COMPLETE_RESUMABLE_AFTER_RESTART"`
+	WatchIsMainProcess            bool   `yaml:"watch_is_main_process" envconfig:"WATCH_IS_MAIN_PROCESS"`
 }
 
 // ArchiveExtensions - list of available compression formats and associated file extensions
@@ -285,6 +307,8 @@ func (cfg *Config) GetCompressionFormat() string {
 	}
 }
 
+var freezeByPartBeginAndRE = regexp.MustCompile(`(?im)^\s*AND\s+`)
+
 // LoadConfig - load config from file + environment variables
 func LoadConfig(configLocation string) (*Config, error) {
 	cfg := DefaultConfig()
@@ -299,7 +323,7 @@ func LoadConfig(configLocation string) (*Config, error) {
 		return nil, err
 	}
 
-	//adjust upload_concurrency for storage types which not have SDK level concurrency, https://github.com/Altinity/clickhouse-backup/issues/658
+	//auto-tuning upload_concurrency for storage types which not have SDK level concurrency, https://github.com/Altinity/clickhouse-backup/issues/658
 	cfgWithoutDefault := &Config{}
 	if err := yaml.Unmarshal(configYaml, &cfgWithoutDefault); err != nil {
 		return nil, fmt.Errorf("can't parse config file: %v", err)
@@ -310,11 +334,29 @@ func LoadConfig(configLocation string) (*Config, error) {
 	if (cfg.General.RemoteStorage == "gcs" || cfg.General.RemoteStorage == "azblob" || cfg.General.RemoteStorage == "cos") && cfgWithoutDefault.General.UploadConcurrency == 0 {
 		cfg.General.UploadConcurrency = uint8(runtime.NumCPU() / 2)
 	}
-	cfg.AzureBlob.Path = strings.TrimPrefix(cfg.AzureBlob.Path, "/")
-	cfg.S3.Path = strings.TrimPrefix(cfg.S3.Path, "/")
-	cfg.GCS.Path = strings.TrimPrefix(cfg.GCS.Path, "/")
+	cfg.AzureBlob.Path = strings.Trim(cfg.AzureBlob.Path, "/ ")
+	cfg.S3.Path = strings.Trim(cfg.S3.Path, "/ ")
+	cfg.GCS.Path = strings.Trim(cfg.GCS.Path, "/ ")
+
+	cfg.S3.ObjectDiskPath = strings.Trim(cfg.S3.ObjectDiskPath,"/ ")
+	cfg.GCS.ObjectDiskPath = strings.Trim(cfg.GCS.ObjectDiskPath,"/ ")
+	cfg.AzureBlob.ObjectDiskPath = strings.Trim(cfg.AzureBlob.ObjectDiskPath,"/ ")
+
+	// https://github.com/Altinity/clickhouse-backup/issues/855
+	if cfg.ClickHouse.FreezeByPart && cfg.ClickHouse.FreezeByPartWhere != "" && !freezeByPartBeginAndRE.MatchString(cfg.ClickHouse.FreezeByPartWhere) {
+		cfg.ClickHouse.FreezeByPartWhere = " AND " + cfg.ClickHouse.FreezeByPartWhere
+	}
+
+
 	log_helper.SetLogLevelFromString(cfg.General.LogLevel)
-	return cfg, ValidateConfig(cfg)
+
+	if err = ValidateConfig(cfg); err != nil {
+		return cfg, err
+	}
+	if err = cfg.SetPriority(); err != nil {
+		return cfg, err
+	}
+	return cfg, nil
 }
 
 func ValidateConfig(cfg *Config) error {
@@ -472,27 +514,32 @@ func DefaultConfig() *Config {
 	}
 	return &Config{
 		General: GeneralConfig{
-			RemoteStorage:           "none",
-			MaxFileSize:             0,
-			BackupsToKeepLocal:      0,
-			BackupsToKeepRemote:     0,
-			LogLevel:                "info",
-			DisableProgressBar:      true,
-			UploadConcurrency:       uploadConcurrency,
-			DownloadConcurrency:     downloadConcurrency,
-			RestoreSchemaOnCluster:  "",
-			UploadByPart:            true,
-			DownloadByPart:          true,
-			UseResumableState:       true,
-			RetriesOnFailure:        3,
-			RetriesPause:            "30s",
-			RetriesDuration:         100 * time.Millisecond,
-			WatchInterval:           "1h",
-			WatchDuration:           1 * time.Hour,
-			FullInterval:            "24h",
-			FullDuration:            24 * time.Hour,
-			WatchBackupNameTemplate: "shard{shard}-{type}-{time:20060102150405}",
-			RestoreDatabaseMapping:  make(map[string]string, 0),
+			RemoteStorage:                       "none",
+			MaxFileSize:                         0,
+			BackupsToKeepLocal:                  0,
+			BackupsToKeepRemote:                 0,
+			LogLevel:                            "info",
+			UploadConcurrency:                   uploadConcurrency,
+			DownloadConcurrency:                 downloadConcurrency,
+			ObjectDiskServerSideCopyConcurrency: 32,
+			RestoreSchemaOnCluster:              "",
+			UploadByPart:                        true,
+			DownloadByPart:                      true,
+			UseResumableState:                   true,
+			RetriesOnFailure:                    3,
+			RetriesPause:                        "30s",
+			RetriesDuration:                     100 * time.Millisecond,
+			WatchInterval:                       "1h",
+			WatchDuration:                       1 * time.Hour,
+			FullInterval:                        "24h",
+			FullDuration:                        24 * time.Hour,
+			WatchBackupNameTemplate:             "shard{shard}-{type}-{time:20060102150405}",
+			RestoreDatabaseMapping:              make(map[string]string),
+			RestoreTableMapping:                 make(map[string]string),
+			IONicePriority:                      "idle",
+			CPUNicePriority:                     15,
+			RBACBackupAlways:                    true,
+			RBACConflictResolution:              "recreate",
 		},
 		ClickHouse: ClickHouseConfig{
 			Username: "default",
@@ -505,7 +552,7 @@ func DefaultConfig() *Config {
 				"information_schema.*",
 				"_temporary_and_external_tables.*",
 			},
-			Timeout:                          "5m",
+			Timeout:                          "30m",
 			SyncReplicatedTables:             false,
 			LogSQLQueries:                    true,
 			ConfigDir:                        "/etc/clickhouse-server/",
@@ -516,6 +563,7 @@ func DefaultConfig() *Config {
 			BackupMutations:                  true,
 			RestoreAsAttach:                  false,
 			CheckPartsColumns:                true,
+			MaxConnections:                   int(downloadConcurrency),
 		},
 		AzureBlob: AzureBlobConfig{
 			EndpointSchema:    "https",
@@ -524,8 +572,8 @@ func DefaultConfig() *Config {
 			CompressionFormat: "tar",
 			BufferSize:        0,
 			MaxBuffers:        3,
-			MaxPartsCount:     5000,
-			Timeout:           "15m",
+			MaxPartsCount:     256,
+			Timeout:           "4h",
 		},
 		S3: S3Config{
 			Region:                  "us-east-1",
@@ -539,12 +587,13 @@ func DefaultConfig() *Config {
 			StorageClass:            string(s3types.StorageClassStandard),
 			Concurrency:             int(downloadConcurrency + 1),
 			PartSize:                0,
-			MaxPartsCount:           5000,
+			MaxPartsCount:           4000,
 		},
 		GCS: GCSConfig{
 			CompressionLevel:  1,
 			CompressionFormat: "tar",
 			StorageClass:      "STANDARD",
+			ClientPoolSize:    int(max(uploadConcurrency, downloadConcurrency)) * 3,
 		},
 		COS: COSConfig{
 			RowURL:            "",
@@ -562,7 +611,7 @@ func DefaultConfig() *Config {
 		},
 		FTP: FTPConfig{
 			Timeout:           "2m",
-			Concurrency:       downloadConcurrency + 1,
+			Concurrency:       downloadConcurrency * 3,
 			CompressionFormat: "tar",
 			CompressionLevel:  1,
 		},
@@ -570,7 +619,7 @@ func DefaultConfig() *Config {
 			Port:              22,
 			CompressionFormat: "tar",
 			CompressionLevel:  1,
-			Concurrency:       int(downloadConcurrency + 1),
+			Concurrency:       int(downloadConcurrency * 3),
 		},
 		Custom: CustomConfig{
 			CommandTimeout:         "4h",
@@ -580,11 +629,13 @@ func DefaultConfig() *Config {
 }
 
 func GetConfigFromCli(ctx *cli.Context) *Config {
+	oldEnvValues := OverrideEnvVars(ctx)
 	configPath := GetConfigPath(ctx)
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
 		log.Fatal().Stack().Err(err).Send()
 	}
+	RestoreEnvVars(oldEnvValues)
 	return cfg
 }
 
@@ -599,4 +650,46 @@ func GetConfigPath(ctx *cli.Context) string {
 		return os.Getenv("CLICKHOUSE_BACKUP_CONFIG")
 	}
 	return DefaultConfigPath
+}
+
+type oldEnvValues struct {
+	OldValue string
+	WasPresent bool
+}
+
+func OverrideEnvVars(ctx *cli.Context) map[string]oldEnvValues {
+	env := ctx.StringSlice("env")
+	oldValues := map[string]oldEnvValues{}
+	if len(env) > 0 {
+		for _, v := range env {
+			envVariable := strings.SplitN(v, "=", 2)
+			if len(envVariable) < 2 {
+				envVariable = append(envVariable, "true")
+			}
+			log.Info().Msgf("override %s=%s", envVariable[0], envVariable[1])
+			oldValue, wasPresent := os.LookupEnv(envVariable[0])
+			oldValues[envVariable[0]] = oldEnvValues{
+				OldValue: oldValue,
+				WasPresent: wasPresent,
+			}
+			if err := os.Setenv(envVariable[0], envVariable[1]); err != nil {
+				log.Warn().Msgf("can't override %s=%s, error: %v", envVariable[0], envVariable[1], err)
+			}
+		}
+	}
+	return oldValues
+}
+
+func RestoreEnvVars(envVars map[string]oldEnvValues) {
+	for name, oldEnv := range envVars {
+		if oldEnv.WasPresent {
+			if err := os.Setenv(name, oldEnv.OldValue); err != nil {
+				log.Warn().Msgf("RestoreEnvVars can't restore %s=%s, error: %v", name, oldEnv.OldValue, err)
+			}
+		} else {
+			if err := os.Unsetenv(name); err != nil {
+				log.Warn().Msgf("RestoreEnvVars can't delete %s, error: %v", name, err)
+			}
+		}
+	}
 }

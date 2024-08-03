@@ -1,8 +1,7 @@
-version: '2.4'
-
 services:
   zookeeper:
-    image: zookeeper:latest
+    # @TODO back :latest default value after resolve https://github.com/ClickHouse/ClickHouse/issues/53749
+    image: ${ZOOKEEPER_IMAGE:-docker.io/zookeeper}:${ZOOKEEPER_VERSION:-3.8.4}
     expose:
       - "2181"
     environment:
@@ -78,7 +77,7 @@ services:
 
   mysql:
     image: mysql:${MYSQL_VERSION:-latest}
-    command: --default-authentication-plugin=mysql_native_password --gtid_mode=on --enforce_gtid_consistency=ON
+    command: --gtid_mode=on --enforce_gtid_consistency=ON
     hostname: mysql
     environment:
       - MYSQL_ALLOW_EMPTY_PASSWORD=True
@@ -111,6 +110,7 @@ services:
       - "7171:7171"
     environment:
       - DEBIAN_FRONTEND=noninteractive
+      - LOG_LEVEL=${LOG_LEVEL:-info}
       - GCS_CREDENTIALS_JSON=${QA_GCS_CRED_JSON:-}
       - GCS_CREDENTIALS_JSON_ENCODED=${QA_GCS_CRED_JSON_ENCODED:-}
       - CLICKHOUSE_HOST=clickhouse1
@@ -137,6 +137,8 @@ services:
       timeout: 5s
       retries: 40
       start_period: 10s
+    cap_add:
+      - SYS_NICE
     depends_on:
       clickhouse1:
         condition: service_healthy
@@ -164,7 +166,7 @@ services:
       start_period: 10s
 
   sftp_server:
-    image: panubo/sshd:1.5.0
+    image: panubo/sshd:latest
     hostname: sftp_server
     environment:
       SSH_ENABLE_ROOT: "true"
@@ -181,8 +183,8 @@ services:
     image: minio/minio:${MINIO_VERSION:-latest}
     hostname: minio
     environment:
-      MINIO_ACCESS_KEY: access-key
-      MINIO_SECRET_KEY: it-is-my-super-secret-key
+      MINIO_ACCESS_KEY: access_key
+      MINIO_SECRET_KEY: it_is_my_super_secret_key
     entrypoint: sh
     command: -c 'mkdir -p doc_gen_minio/export/clickhouse && minio server doc_gen_minio/export'
     healthcheck:
@@ -225,7 +227,7 @@ services:
       start_period: 15s
 
   # dummy service which does nothing, but allows to postpone 
-  # 'docker-compose up -d' till all dependencies will go healthy
+  # 'docker compose up -d' till all dependencies will go healthy
   all_services_ready:
     image: hello-world
     depends_on:

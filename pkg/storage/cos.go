@@ -2,8 +2,9 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"io"
 	"net/http"
 	"net/url"
@@ -62,7 +63,8 @@ func (c *COS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 	// file max size is 5Gb
 	resp, err := c.client.Object.Get(ctx, path.Join(c.Config.Path, key), nil)
 	if err != nil {
-		cosErr, ok := err.(*cos.ErrorResponse)
+		var cosErr *cos.ErrorResponse
+		ok := errors.As(err, &cosErr)
 		if ok && cosErr.Code == "NoSuchKey" {
 			return nil, ErrNotFound
 		}
@@ -84,6 +86,10 @@ func (c *COS) DeleteFile(ctx context.Context, key string) error {
 func (c *COS) Walk(ctx context.Context, cosPath string, recursive bool, process func(context.Context, RemoteFile) error) error {
 	// COS needs prefix ended with "/".
 	prefix := path.Join(c.Config.Path, cosPath) + "/"
+	return c.WalkAbsolute(ctx, prefix, recursive, process)
+}
+
+func (c *COS) WalkAbsolute(ctx context.Context, prefix string, recursive bool, process func(context.Context, RemoteFile) error) error {
 
 	delimiter := ""
 	if !recursive {
@@ -130,7 +136,11 @@ func (c *COS) Walk(ctx context.Context, cosPath string, recursive bool, process 
 }
 
 func (c *COS) GetFileReader(ctx context.Context, key string) (io.ReadCloser, error) {
-	resp, err := c.client.Object.Get(ctx, path.Join(c.Config.Path, key), nil)
+	return c.GetFileReaderAbsolute(ctx, path.Join(c.Config.Path, key))
+}
+
+func (c *COS) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadCloser, error) {
+	resp, err := c.client.Object.Get(ctx, key, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -142,11 +152,15 @@ func (c *COS) GetFileReaderWithLocalPath(ctx context.Context, key, _ string) (io
 }
 
 func (c *COS) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
-	_, err := c.client.Object.Put(ctx, path.Join(c.Config.Path, key), r, nil)
+	return c.PutFileAbsolute(ctx, path.Join(c.Config.Path, key), r)
+}
+
+func (c *COS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser) error {
+	_, err := c.client.Object.Put(ctx, key, r, nil)
 	return err
 }
 
-func (c *COS) CopyObject(ctx context.Context, srcBucket, srcKey, dstKey string) (int64, error) {
+func (c *COS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
 	return 0, fmt.Errorf("CopyObject not imlemented for %s", c.Kind())
 }
 
