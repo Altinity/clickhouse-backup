@@ -1,3 +1,7 @@
+# v2.5.23
+BUG FIXES
+- fix corner case for LOG_LEVEL + --env, fix [972](https://github.com/Altinity/clickhouse-backup/issues/972)
+
 # v2.5.22
 IMPROVEMENTS
 - redirect logs into stderr instead of stdout, fix [969](https://github.com/Altinity/clickhouse-backup/issues/969)

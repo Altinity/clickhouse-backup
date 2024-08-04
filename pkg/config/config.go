@@ -660,12 +660,29 @@ type oldEnvValues struct {
 func OverrideEnvVars(ctx *cli.Context) map[string]oldEnvValues {
 	env := ctx.StringSlice("env")
 	oldValues := map[string]oldEnvValues{}
+	logLevel := "info"
+	if os.Getenv("LOG_LEVEL") != "" {
+		logLevel = os.Getenv("LOG_LEVEL")
+	}
+	log_helper.SetLogLevelFromString(logLevel)
 	if len(env) > 0 {
-		for _, v := range env {
-			envVariable := strings.SplitN(v, "=", 2)
-			if len(envVariable) < 2 {
-				envVariable = append(envVariable, "true")
+		processEnvFromCli := func(process func(envVariable []string)) {
+			for _, v := range env {
+				envVariable := strings.SplitN(v, "=", 2)
+				if len(envVariable) < 2 {
+					envVariable = append(envVariable, "true")
+				}
+				process(envVariable)
 			}
+		}
+
+		processEnvFromCli(func(envVariable []string) {
+			if envVariable[0] == "LOG_LEVEL" {
+				log_helper.SetLogLevelFromString(envVariable[1])
+			}
+		})
+
+		processEnvFromCli(func(envVariable []string) {
 			log.Info().Msgf("override %s=%s", envVariable[0], envVariable[1])
 			oldValue, wasPresent := os.LookupEnv(envVariable[0])
 			oldValues[envVariable[0]] = oldEnvValues{
@@ -675,7 +692,7 @@ func OverrideEnvVars(ctx *cli.Context) map[string]oldEnvValues {
 			if err := os.Setenv(envVariable[0], envVariable[1]); err != nil {
 				log.Warn().Msgf("can't override %s=%s, error: %v", envVariable[0], envVariable[1], err)
 			}
-		}
+		})
 	}
 	return oldValues
 }
