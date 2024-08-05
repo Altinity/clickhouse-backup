@@ -28,6 +28,7 @@ services:
       - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse1/logs/:/var/log/clickhouse-server/"
       - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse1/config.d/macros.xml:/etc/clickhouse-server/config.d/macros.xml"
       - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse1/config.d/rabbitmq.xml:/etc/clickhouse-server/config.d/rabbitmq.xml"
+      - "${CLICKHOUSE_TESTS_DIR}/../../../test/integration/install_delve.sh:/tmp/install_delve.sh"
       - "/var/lib/clickhouse"
       - "/mnt"
     links:
@@ -107,7 +108,8 @@ services:
     image: ubuntu:latest
     hostname: backup
     ports:
-      - "7171:7171"
+      - "7171"
+      - "40002"
     environment:
       - DEBIAN_FRONTEND=noninteractive
       - LOG_LEVEL=${LOG_LEVEL:-info}

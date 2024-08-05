@@ -471,11 +471,24 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 		// https://aws.amazon.com/compliance/fips/
 		if strings.HasSuffix(s3URL.Host, ".amazonaws.com") && (strings.Contains(s3URL.Host, ".s3.") || strings.Contains(s3URL.Host, ".s3-fisp.")) {
 			hostParts := strings.Split(s3URL.Host, ".")
-			s3cfg.Bucket = hostParts[0]
-			if len(hostParts) >= 3 {
-				s3cfg.Region = hostParts[2]
+			//https://region.s3.amazonaws.com/bucket/
+			if len(hostParts) == 4 && creds.S3Region == "" {
+				pathParts := strings.Split(strings.Trim(s3URL.Path, "/"), "/")
+				s3cfg.Bucket = pathParts[0]
+				s3cfg.Region = hostParts[0]
+				s3cfg.Path = path.Join(pathParts[1:]...)
 			}
-			s3cfg.Path = strings.Trim(s3URL.Path, "/")
+			//https://bucket-name.s3.amazonaws.com/
+			if len(hostParts) == 4 && creds.S3Region != "" {
+				s3cfg.Bucket = hostParts[0]
+				s3cfg.Path = strings.Trim(s3URL.Path, "/")
+			}
+			//https://bucket-name.s3.region-code.amazonaws.com
+			if len(hostParts) == 5 {
+				s3cfg.Bucket = hostParts[0]
+				s3cfg.Region = hostParts[2]
+				s3cfg.Path = strings.Trim(s3URL.Path, "/")
+			}
 			s3cfg.ForcePathStyle = false
 		} else {
 			s3cfg.Endpoint = s3URL.Scheme + "://" + s3URL.Host

@@ -1,3 +1,7 @@
+# v2.5.24
+BUG FIXES
+- fix corner cases object disk parse endpoint for S3, to avoid wrong .amazonaws.amazonaws.com suffix
+ 
 # v2.5.23
 BUG FIXES
 - fix corner case for LOG_LEVEL + --env, fix [972](https://github.com/Altinity/clickhouse-backup/issues/972)
