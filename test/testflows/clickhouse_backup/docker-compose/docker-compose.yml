@@ -108,8 +108,8 @@ services:
     image: ubuntu:latest
     hostname: backup
     ports:
-      - "7171"
-      - "40002"
+      - "7171:7171"
+      - "40002:40002"
     environment:
       - DEBIAN_FRONTEND=noninteractive
       - LOG_LEVEL=${LOG_LEVEL:-info}
