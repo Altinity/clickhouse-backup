@@ -692,7 +692,11 @@ func (b *Backuper) detectRBACObject(sql string) (string, string, error) {
 		if strings.HasPrefix(sql, prefix) {
 			kind = k
 			// Extract the name from the SQL query.
-			name = strings.TrimSpace(strings.TrimPrefix(sql, prefix))
+			if semicolonIdx := strings.Index(sql, ";"); semicolonIdx >= 0 {
+				name = strings.TrimSpace(strings.TrimPrefix(sql[:semicolonIdx], prefix))
+			} else {
+				name = strings.TrimSpace(strings.TrimPrefix(sql, prefix))
+			}
 			break
 		}
 	}

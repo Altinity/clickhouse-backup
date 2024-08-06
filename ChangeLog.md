@@ -1,3 +1,7 @@
+# v2.5.25
+BUG FIXES
+- fix corner cases for wrong parsing RBAC name, during resolve conflict for complex multi line RBAC objects, fix [976](https://github.com/Altinity/clickhouse-backup/issues/976)
+
 # v2.5.24
 BUG FIXES
 - fix corner cases object disk parse endpoint for S3, to avoid wrong `.amazonaws.amazonaws.com` suffix
