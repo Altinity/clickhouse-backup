@@ -526,7 +526,7 @@ func (b *Backuper) resolveRBACConflictIfExist(ctx context.Context, sql string, a
 			return nil
 		}
 		if b.cfg.General.RBACConflictResolution == "fail" {
-			return fmt.Errorf("RBAC object kind=%s, name=%s already present, change ", kind, name)
+			return fmt.Errorf("RBAC object kind=%s, name=%s already present, fix current RBAC objects to resolve conflicts", kind, name)
 		}
 	}
 	return nil
