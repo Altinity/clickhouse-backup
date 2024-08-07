@@ -35,22 +35,18 @@ require (
 	github.com/prometheus/client_golang v1.19.1
 	github.com/puzpuzpuz/xsync v1.5.2
 	github.com/ricochet2200/go-disk-usage/du v0.0.0-20210707232629-ac9918953285
+	github.com/rs/zerolog v1.33.0
 	github.com/stretchr/testify v1.9.0
 	github.com/tencentyun/cos-go-sdk-v5 v0.7.54
 	github.com/urfave/cli v1.22.15
 	github.com/xyproto/gionice v1.3.0
 	github.com/yargevad/filepathx v1.0.0
-	golang.org/x/crypto v0.25.0
+	golang.org/x/crypto v0.26.0
 	golang.org/x/mod v0.18.0
-	golang.org/x/sync v0.7.0
+	golang.org/x/sync v0.8.0
+	golang.org/x/text v0.17.0
 	google.golang.org/api v0.190.0
 	gopkg.in/yaml.v3 v3.0.1
-)
-
-require (
-	github.com/apex/log v1.9.0
-	github.com/rs/zerolog v1.33.0
-	golang.org/x/text v0.16.0
 )
 
 require (
@@ -129,10 +125,10 @@ require (
 	go.opentelemetry.io/otel/metric v1.28.0 // indirect
 	go.opentelemetry.io/otel/trace v1.28.0 // indirect
 	go4.org v0.0.0-20230225012048-214862532bf5 // indirect
-	golang.org/x/net v0.27.0 // indirect
-	golang.org/x/oauth2 v0.21.0 // indirect
-	golang.org/x/sys v0.22.0 // indirect
-	golang.org/x/time v0.5.0 // indirect
+	golang.org/x/net v0.28.0 // indirect
+	golang.org/x/oauth2 v0.22.0 // indirect
+	golang.org/x/sys v0.23.0 // indirect
+	golang.org/x/time v0.6.0 // indirect
 	google.golang.org/genproto v0.0.0-20240730163845-b1a4ccb954bf // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240730163845-b1a4ccb954bf // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240730163845-b1a4ccb954bf // indirect

@@ -1,3 +1,8 @@
+# v2.5.26
+BUG FIXES
+- fix corner cases when /var/lib/clickhouse/access already broken, fix [977](https://github.com/Altinity/clickhouse-backup/issues/977)
+- finish migrate from `apex/log` to `rs/zerolog`, fix [624](https://github.com/Altinity/clickhouse-backup/issues/624), thanks @rdmrcv  
+
 # v2.5.25
 BUG FIXES
 - fix corner cases for wrong parsing RBAC name, during resolve conflict for complex multi line RBAC objects, fix [976](https://github.com/Altinity/clickhouse-backup/issues/976)
