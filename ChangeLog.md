@@ -1,6 +1,15 @@
+# v2.5.26
+BUG FIXES
+- fix corner cases when /var/lib/clickhouse/access already broken, fix [977](https://github.com/Altinity/clickhouse-backup/issues/977)
+- finish migrate from `apex/log` to `rs/zerolog`, fix [624](https://github.com/Altinity/clickhouse-backup/issues/624), thanks @rdmrcv  
+
+# v2.5.25
+BUG FIXES
+- fix corner cases for wrong parsing RBAC name, during resolve conflict for complex multi line RBAC objects, fix [976](https://github.com/Altinity/clickhouse-backup/issues/976)
+
 # v2.5.24
 BUG FIXES
-- fix corner cases object disk parse endpoint for S3, to avoid wrong .amazonaws.amazonaws.com suffix
+- fix corner cases object disk parse endpoint for S3, to avoid wrong `.amazonaws.amazonaws.com` suffix
  
 # v2.5.23
 BUG FIXES

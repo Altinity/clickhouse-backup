@@ -69,12 +69,12 @@ func init() {
 		log.Fatal().Msgf("invalid RUN_PARALLEL environment variable value %s", runParallel)
 	}
 	ctx := context.Background()
-	factory := pool.NewPooledObjectFactorySimple( func(context.Context) (interface{}, error) {
-			id := projectId.Add(1)
-			env := TestEnvironment{
-				ProjectName: fmt.Sprintf("project%d", id%uint32(runParallelInt)),
-			}
-			return &env, nil
+	factory := pool.NewPooledObjectFactorySimple(func(context.Context) (interface{}, error) {
+		id := projectId.Add(1)
+		env := TestEnvironment{
+			ProjectName: fmt.Sprintf("project%d", id%uint32(runParallelInt)),
+		}
+		return &env, nil
 	})
 	dockerPool = pool.NewObjectPoolWithDefaultConfig(ctx, factory)
 	dockerPool.Config.MaxTotal = runParallelInt
@@ -449,7 +449,7 @@ var defaultIncrementData = []TestDataStruct{
 }
 
 func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
-	isParallel := os.Getenv("RUN_PARALLEL") != "1" && slices.Index([]string{"TestLongListRemote"/*,"TestIntegrationAzure"*/}, t.Name()) == -1
+	isParallel := os.Getenv("RUN_PARALLEL") != "1" && slices.Index([]string{"TestLongListRemote" /*,"TestIntegrationAzure"*/}, t.Name()) == -1
 	if os.Getenv("COMPOSE_FILE") == "" || os.Getenv("CUR_DIR") == "" {
 		t.Fatal("please setup COMPOSE_FILE and CUR_DIR environment variables")
 	}
@@ -673,7 +673,6 @@ func TestIntegrationEmbedded(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
-
 func TestIntegrationCustomKopia(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
@@ -796,12 +795,12 @@ func TestRBAC(t *testing.T) {
 		out, err := env.DockerExecOut("clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 clickhouse-backup -c "+config+" restore --rm --rbac test_rbac_backup")
 		log.Debug().Msg(out)
 		r.Contains(out, "RBAC successfully restored")
-		r.NoError(err)
+		r.NoError(err, "%s\nunexpected RBAC error: %v", out, err)
 
 		out, err = env.DockerExecOut("clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 clickhouse-backup -c "+config+" restore --rm --rbac-only test_rbac_backup")
 		log.Debug().Msg(out)
 		r.Contains(out, "RBAC successfully restored")
-		r.NoError(err)
+		r.NoError(err, "%s\nunexpected RBAC error: %v", out, err)
 		env.DockerExecNoError(r, "clickhouse", "ls", "-lah", "/var/lib/clickhouse/access")
 
 		env.ch.Close()
@@ -947,7 +946,7 @@ func TestServerAPI(t *testing.T) {
 	fillDatabaseForAPIServer(maxTables, minFields, randFields, env, r, fieldTypes)
 
 	log.Debug().Msg("Run `clickhouse-backup server --watch` in background")
-	env.DockerExecBackgroundNoError(r,"clickhouse-backup", "bash", "-ce", "clickhouse-backup server --watch &>>/tmp/clickhouse-backup-server.log")
+	env.DockerExecBackgroundNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup server --watch &>>/tmp/clickhouse-backup-server.log")
 	time.Sleep(1 * time.Second)
 
 	testAPIBackupVersion(r, env)
@@ -987,7 +986,7 @@ func TestServerAPI(t *testing.T) {
 func testAPIRestart(r *require.Assertions, env *TestEnvironment) {
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "curl -sfL -XPOST 'http://localhost:7171/restart'")
 	log.Debug().Msg(out)
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected POST /restart error %v", out, err)
 	r.Contains(out, "acknowledged")
 
 	//some actions need time for restart
@@ -1001,8 +1000,7 @@ func testAPIRestart(r *require.Assertions, env *TestEnvironment) {
 func runClickHouseClientInsertSystemBackupActions(r *require.Assertions, env *TestEnvironment, commands []string, needWait bool) {
 	sql := "INSERT INTO system.backup_actions(command) " + "VALUES ('" + strings.Join(commands, "'),('") + "')"
 	out, err := env.DockerExecOut("clickhouse", "bash", "-ce", fmt.Sprintf("clickhouse client --echo -mn -q \"%s\"", sql))
-	log.Debug().Msg(out)
-	r.NoError(err)
+	r.NoError(err, "%s -> %s unexpected error: %v", sql, out, err)
 	if needWait {
 		for _, command := range commands {
 			for {
@@ -1041,7 +1039,7 @@ func testAPIBackupActions(r *require.Assertions, env *TestEnvironment) {
 	r.Equal(uint64(0), actionsBackups)
 
 	out, err := env.DockerExecOut("clickhouse-backup", "curl", "http://localhost:7171/metrics")
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected error: %v", out, err)
 	r.Contains(out, "clickhouse_backup_last_create_remote_status 1")
 	r.Contains(out, "clickhouse_backup_last_create_status 1")
 	r.Contains(out, "clickhouse_backup_last_upload_status 1")
@@ -1054,8 +1052,7 @@ func testAPIWatchAndKill(r *require.Assertions, env *TestEnvironment) {
 	log.Debug().Msg("Check /backup/watch + /backup/kill")
 	runKillCommand := func(command string) {
 		out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL 'http://localhost:7171/backup/kill?command=%s'", command))
-		log.Debug().Msg(out)
-		r.NoError(err)
+		r.NoError(err, "%s\nunexpected GET /kill error: %v", out, err)
 	}
 	checkWatchBackup := func(expectedCount uint64) {
 		var watchBackups uint64
@@ -1081,8 +1078,7 @@ func testAPIWatchAndKill(r *require.Assertions, env *TestEnvironment) {
 	checkCanceledCommand(1)
 
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "curl -sfL 'http://localhost:7171/backup/watch'")
-	log.Debug().Msg(out)
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected GET /backup/watch error: %v", out, err)
 	time.Sleep(7 * time.Second)
 
 	checkWatchBackup(1)
@@ -1094,23 +1090,20 @@ func testAPIBackupDelete(r *require.Assertions, env *TestEnvironment) {
 	log.Debug().Msg("Check /backup/delete/{where}/{name}")
 	for i := 1; i <= apiBackupNumber; i++ {
 		out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/delete/local/z_backup_%d'", i))
-		log.Debug().Msgf(out)
-		r.NoError(err)
+		r.NoError(err, "%s\nunexpected POST /backup/delete/local error: %v", out, err)
 		r.NotContains(out, "another operation is currently running")
 		r.NotContains(out, "\"status\":\"error\"")
 		out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/delete/remote/z_backup_%d'", i))
-		log.Debug().Msgf(out)
-		r.NoError(err)
+		r.NoError(err, "%s\nunexpected POST /backup/delete/remote error: %v", out, err)
 		r.NotContains(out, "another operation is currently running")
 		r.NotContains(out, "\"status\":\"error\"")
 	}
 	out, err := env.DockerExecOut("clickhouse-backup", "curl", "http://localhost:7171/metrics")
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected GET /metrics error: %v", out, err)
 	r.Contains(out, "clickhouse_backup_last_delete_status 1")
 
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XGET 'http://localhost:7171/backup/list'"))
-	log.Debug().Msgf(out)
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected GET /backup/list error: %v", out, err)
 	scanner := bufio.NewScanner(strings.NewReader(out))
 	for scanner.Scan() {
 		type backupJSON struct {
@@ -1124,8 +1117,7 @@ func testAPIBackupDelete(r *require.Assertions, env *TestEnvironment) {
 		listItem := backupJSON{}
 		r.NoError(json.Unmarshal(scanner.Bytes(), &listItem))
 		out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/delete/%s/%s'", listItem.Location, listItem.Name))
-		log.Debug().Msgf(out)
-		r.NoError(err)
+		r.NoError(err, "%s\nunexpected POST /backup/delete/%s/%s error: %v", out, listItem.Location, listItem.Name, err)
 	}
 
 	r.NoError(scanner.Err())
@@ -1135,14 +1127,12 @@ func testAPIBackupDelete(r *require.Assertions, env *TestEnvironment) {
 func testAPIBackupClean(r *require.Assertions, env *TestEnvironment) {
 	log.Debug().Msg("Check /backup/clean/ /backup/clean_remote_broken/ and /backup/actions fot these two commands")
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/clean'"))
-	log.Debug().Msgf(out)
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected POST /backup/clean error: %v", out, err)
 	r.NotContains(out, "another operation is currently running")
 	r.NotContains(out, "\"status\":\"error\"")
 
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/clean/remote_broken'"))
-	log.Debug().Msgf(out)
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected POST /backup/clean/remote_broken error: %v", out, err)
 	r.NotContains(out, "another operation is currently running")
 	r.NotContains(out, "\"status\":\"error\"")
 
@@ -1164,8 +1154,7 @@ func testAPIMetrics(r *require.Assertions, env *TestEnvironment) {
 	r.Greater(uint64(lastRemoteSize), realTotalBytes)
 
 	out, err := env.DockerExecOut("clickhouse-backup", "curl", "-sL", "http://localhost:7171/metrics")
-	log.Debug().Msg(out)
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected GET /metrics error: %v", out, err)
 	r.Contains(out, fmt.Sprintf("clickhouse_backup_last_backup_size_remote %d", lastRemoteSize))
 
 	log.Debug().Msg("Check /metrics clickhouse_backup_number_backups_*")
@@ -1184,17 +1173,16 @@ func testAPIDeleteLocalDownloadRestore(r *require.Assertions, env *TestEnvironme
 		"bash", "-xe", "-c",
 		fmt.Sprintf("for i in {1..%d}; do date; curl -sfL -XPOST \"http://localhost:7171/backup/delete/local/z_backup_$i\"; curl -sfL -XPOST \"http://localhost:7171/backup/download/z_backup_$i\"; sleep 2; curl -sfL -XPOST \"http://localhost:7171/backup/restore/z_backup_$i?rm=1\"; sleep 8; done", apiBackupNumber),
 	)
-	log.Debug().Msg(out)
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected POST /backup/delete/local error: %v", out, err)
 	r.NotContains(out, "another operation is currently running")
 	r.NotContains(out, "error")
 
 	out, err = env.DockerExecOut("clickhouse-backup", "curl", "-sfL", "http://localhost:7171/backup/actions?filter=download")
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected GET /backup/actions?filter=download error: %v", out, err)
 	r.NotContains(out, "\"status\":\"error\"")
 
 	out, err = env.DockerExecOut("clickhouse-backup", "curl", "http://localhost:7171/metrics")
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected GET /metrics error: %v", out, err)
 	r.Contains(out, "clickhouse_backup_last_delete_status 1")
 	r.Contains(out, "clickhouse_backup_last_download_status 1")
 	r.Contains(out, "clickhouse_backup_last_restore_status 1")
@@ -1203,8 +1191,7 @@ func testAPIDeleteLocalDownloadRestore(r *require.Assertions, env *TestEnvironme
 func testAPIBackupList(t *testing.T, r *require.Assertions, env *TestEnvironment) {
 	log.Debug().Msg("Check /backup/list")
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "curl -sfL 'http://localhost:7171/backup/list'")
-	log.Debug().Msg(out)
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected GET /backup/list error: %v", out, err)
 	for i := 1; i <= apiBackupNumber; i++ {
 		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"regular\"}", i)), out))
 		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar, regular\"}", i)), out))
@@ -1212,8 +1199,7 @@ func testAPIBackupList(t *testing.T, r *require.Assertions, env *TestEnvironment
 
 	log.Debug().Msg("Check /backup/list/local")
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "curl -sfL 'http://localhost:7171/backup/list/local'")
-	log.Debug().Msg(out)
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected GET /backup/list/local error: %v", out, err)
 	for i := 1; i <= apiBackupNumber; i++ {
 		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"regular\"}", i)), out))
 		r.True(assert.NotRegexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar, regular\"}", i)), out))
@@ -1221,8 +1207,7 @@ func testAPIBackupList(t *testing.T, r *require.Assertions, env *TestEnvironment
 
 	log.Debug().Msg("Check /backup/list/remote")
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "curl -sfL 'http://localhost:7171/backup/list/remote'")
-	log.Debug().Msg(out)
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected GET /backup/list/remote error: %v", out, err)
 	for i := 1; i <= apiBackupNumber; i++ {
 		r.True(assert.NotRegexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"regular\"}", i)), out))
 		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar, regular\"}", i)), out))
@@ -1236,17 +1221,16 @@ func testAPIBackupUpload(r *require.Assertions, env *TestEnvironment) {
 		"bash", "-xe", "-c",
 		fmt.Sprintf("for i in {1..%d}; do date; curl -sfL -XPOST \"http://localhost:7171/backup/upload/z_backup_$i\"; sleep 2; done", apiBackupNumber),
 	)
-	log.Debug().Msg(out)
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected POST /backup/upload error: %v", out, err)
 	r.NotContains(out, "error")
 	r.NotContains(out, "another operation is currently running")
 
 	out, err = env.DockerExecOut("clickhouse-backup", "curl", "-sfL", "http://localhost:7171/backup/actions?filter=upload")
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected GET /backup/actions?filter=upload error: %v", out, err)
 	r.NotContains(out, "error")
 
 	out, err = env.DockerExecOut("clickhouse-backup", "curl", "http://localhost:7171/metrics")
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected GET /metrics error: %v", out, err)
 	r.Contains(out, "clickhouse_backup_last_upload_status 1")
 }
 
@@ -1256,8 +1240,7 @@ func testAPIBackupTables(r *require.Assertions, env *TestEnvironment) {
 		"clickhouse-backup",
 		"bash", "-xe", "-c", "curl -sfL \"http://localhost:7171/backup/tables\"",
 	)
-	log.Debug().Msg(out)
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected GET /backup/tables error: %v", out, err)
 	r.Contains(out, "long_schema")
 	r.NotContains(out, "Connection refused")
 	r.NotContains(out, "another operation is currently running")
@@ -1271,8 +1254,7 @@ func testAPIBackupTables(r *require.Assertions, env *TestEnvironment) {
 		"clickhouse-backup",
 		"bash", "-xe", "-c", "curl -sfL \"http://localhost:7171/backup/tables/all\"",
 	)
-	log.Debug().Msg(out)
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected GET /backup/tables/all error: %v", out, err)
 	r.Contains(out, "long_schema")
 	r.Contains(out, "system")
 	r.NotContains(out, "Connection refused")
@@ -1291,8 +1273,7 @@ func testAPIBackupTablesRemote(r *require.Assertions, env *TestEnvironment) {
 		"clickhouse-backup",
 		"bash", "-xe", "-c", "curl -sfL \"http://localhost:7171/backup/tables?remote_backup=z_backup_1\"",
 	)
-	log.Debug().Msg(out)
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected GET /backup/tables?remote_backup=z_backup_1 error: %v", out, err)
 	r.Contains(out, "long_schema")
 	r.NotContains(out, "system")
 	r.NotContains(out, "Connection refused")
@@ -1322,13 +1303,12 @@ func testAPIBackupCreate(r *require.Assertions, env *TestEnvironment) {
 		"bash", "-xe", "-c",
 		fmt.Sprintf("sleep 3; for i in {1..%d}; do date; curl -sfL -XPOST \"http://localhost:7171/backup/create?table=long_schema.*&name=z_backup_$i\"; sleep 1.5; done", apiBackupNumber),
 	)
-	log.Debug().Msg(out)
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected POST /backup/create?table=long_schema.*&name=z_backup_$i error: %v", out, err)
 	r.NotContains(out, "Connection refused")
 	r.NotContains(out, "another operation is currently running")
 	r.NotContains(out, "\"status\":\"error\"")
 	out, err = env.DockerExecOut("clickhouse-backup", "curl", "http://localhost:7171/metrics")
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected GET /metrics error: %v", out, err)
 	r.Contains(out, "clickhouse_backup_last_create_status 1")
 }
 
@@ -1696,21 +1676,21 @@ func TestTablePatterns(t *testing.T) {
 			if createPattern {
 				env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", "--tables", " "+dbNameOrdinaryTest+".*", testBackupName)
 				out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "tables", "--tables", " "+dbNameOrdinaryTest+".*", testBackupName)
-				r.NoError(err)
+				r.NoError(err, "%s\nunexpected tables error: %v", out, err)
 				r.Contains(out, dbNameOrdinaryTest)
 				r.NotContains(out, dbNameAtomicTest)
 				out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "tables", "--remote-backup", testBackupName, "--tables", " "+dbNameOrdinaryTest+".*", testBackupName)
-				r.NoError(err)
+				r.NoError(err, "%s\nunexpected tables --remote-backup error: %v", out, err)
 				r.Contains(out, dbNameOrdinaryTest)
 				r.NotContains(out, dbNameAtomicTest)
 			} else {
 				env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", testBackupName)
 				out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "tables", testBackupName)
-				r.NoError(err)
+				r.NoError(err, "%s\nunexpected tables error: %v", out, err)
 				r.Contains(out, dbNameOrdinaryTest)
 				r.Contains(out, dbNameAtomicTest)
 				out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "tables", "--remote-backup", testBackupName, testBackupName)
-				r.NoError(err)
+				r.NoError(err, "%s\nunexpected tables --remote-backup error: %v", out, err)
 				r.Contains(out, dbNameOrdinaryTest)
 				r.Contains(out, dbNameAtomicTest)
 			}
@@ -1866,7 +1846,7 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 		}
 	}
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml list local")
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected list local error: %v", out, err)
 	// shall not delete any backup, cause all deleted backups have links as required in other backups
 	for _, backupName := range backupNames {
 		r.Contains(out, backupName)
@@ -1875,7 +1855,7 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	latestIncrementBackup := fmt.Sprintf("keep_remote_backup_%d", len(backupNames)-1)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "download", latestIncrementBackup)
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml list local")
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected list local error: %v", out, err)
 	prevIncrementBackup := fmt.Sprintf("keep_remote_backup_%d", len(backupNames)-2)
 	for _, backupName := range backupNames {
 		if backupName == latestIncrementBackup {
@@ -2239,7 +2219,7 @@ func TestFIPS(t *testing.T) {
 		env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "rm -rf /tmp/testssl* && /opt/testssl/testssl.sh -e -s -oC /tmp/testssl.csv --color 0 --disable-rating --quiet -n min --mode parallel --add-ca /etc/clickhouse-backup/ca-cert.pem localhost:7172")
 		env.DockerExecNoError(r, "clickhouse", "cat", "/tmp/testssl.csv")
 		out, err := env.DockerExecOut("clickhouse", "bash", "-ce", fmt.Sprintf("grep -o -E '%s' /tmp/testssl.csv | uniq | wc -l", strings.Join(cipherList, "|")))
-		r.NoError(err)
+		r.NoError(err, "%s\nunexpected grep testssl.csv error: %v", out, err)
 		r.Equal(strconv.Itoa(len(cipherList)), strings.Trim(out, " \t\r\n"))
 
 		inProgressActions := make([]struct {
@@ -2260,7 +2240,6 @@ func TestFIPS(t *testing.T) {
 	r.NoError(env.dropDatabase(t.Name()))
 	env.Cleanup(t, r)
 }
-
 
 func TestRestoreMapping(t *testing.T) {
 	env, r := NewTestEnvironment(t)
@@ -2556,7 +2535,7 @@ func (env *TestEnvironment) checkObjectStorageIsEmpty(t *testing.T, r *require.A
 	}
 	checkRemoteDir := func(expected string, container string, cmd ...string) {
 		out, err := env.DockerExecOut(container, cmd...)
-		r.NoError(err)
+		r.NoError(err, "%s\nunexpected checkRemoteDir error: %v", out, err)
 		r.Equal(expected, strings.Trim(out, "\r\n\t "))
 	}
 	if remoteStorageType == "S3" || remoteStorageType == "S3_EMBEDDED_URL" {
@@ -2671,7 +2650,7 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 		out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" restore --data --partitions=\"(0,'2022-01-02'),(0,'2022-01-03')\" "+fullBackupName)
 	}
 	log.Debug().Msg(out)
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected error: %v", out, err)
 	r.Contains(out, "DROP PARTITION")
 	// we just replace data in exists table
 	checkRestoredDataWithPartitions(80)
@@ -2695,7 +2674,7 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	r.Equal(expectedLines, strings.Trim(out, "\r\n\t "))
 
 	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--partitions=(0,'2022-01-02'),(0,'2022-01-03')", fullBackupName)
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected error: %v", out, err)
 	r.NotContains(out, "DROP PARTITION")
 	checkRestoredDataWithPartitions(40)
 
@@ -2782,8 +2761,7 @@ func (env *TestEnvironment) checkResumeAlreadyProcessed(backupCmd, testBackupNam
 		backupCmd = fmt.Sprintf("%s; cat /var/lib/clickhouse/backup/%s/%s.state; %s", backupCmd, testBackupName, resumeKind, backupCmd)
 	}
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-xce", backupCmd)
-	log.Debug().Msg(out)
-	r.NoError(err)
+	r.NoError(err, "%s\nunexpected checkResumeAlreadyProcessed error: %v", out, err)
 	if strings.Contains(backupCmd, "--resume") {
 		r.Contains(out, "already processed")
 	}
@@ -2802,9 +2780,9 @@ func fullCleanup(t *testing.T, r *require.Assertions, env *TestEnvironment, back
 	if err == nil {
 		for _, backupName := range strings.Split(otherBackupList, "\n") {
 			if backupName != "" {
-				err := env.DockerExec("clickhouse-backup", "bash", "-xce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" delete local "+backupName)
+				out, err := env.DockerExecOut("clickhouse-backup", "bash", "-xce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" delete local "+backupName)
 				if checkDropErr {
-					r.NoError(err)
+					r.NoError(err, "%s\nunexpected delete local error: %v", out, err)
 				}
 			}
 		}

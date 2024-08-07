@@ -39,7 +39,9 @@ def configs_backup_restore(self):
                     fail(f"{filename} not found, why you change file structure?")
 
         with When(f"I create backup"):
-            backup.cmd(f"clickhouse-backup create --configs {table_name}")
+            r = backup.cmd(f"clickhouse-backup create --env=LOG_LEVEL=debug --configs {table_name}")
+            with Then("I expect clickhouse-backup to attempt create configs"):
+                assert "done createBackupConfigs" in r.output, error()
 
         with When("I remove existing configuration to restore it later"):
             for local_config_dir in ("configs/clickhouse", "configs/clickhouse1"):
@@ -52,9 +54,9 @@ def configs_backup_restore(self):
                             ch_node.cmd(f"truncate -s 0 /etc/clickhouse-server/{filename}")
 
         with Then("I restore from the backup and restart"):
-            r = backup.cmd(f"clickhouse-backup restore --configs {table_name}", exitcode=None)
+            r = backup.cmd(f"clickhouse-backup restore --env=LOG_LEVEL=debug --configs {table_name}", exitcode=None)
 
-            with Then("I expect ch-backup to attempt restart ch-server"):
+            with Then("I expect clickhouse-backup to attempt restart clickhouse-server"):
                 assert "restart clickhouse-server" in r.output, error()
 
             with And("I restart clickhouse, cause clickhouse-backup doesn't have access to systemd"):

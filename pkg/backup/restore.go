@@ -5,8 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	apexLog "github.com/apex/log"
 	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"io"
 	"io/fs"
 	"net/url"
@@ -21,7 +21,6 @@ import (
 
 	"github.com/mattn/go-shellwords"
 	recursiveCopy "github.com/otiai10/copy"
-	"github.com/rs/zerolog/log"
 	"github.com/yargevad/filepathx"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/text/cases"
@@ -517,22 +516,22 @@ func (b *Backuper) resolveRBACConflictIfExist(ctx context.Context, sql string, a
 	if detectErr != nil {
 		return detectErr
 	}
-	if isExists, existsRBACType, existsRBACObjectId := b.isRBACExists(ctx, kind, name, accessPath, version, k, replicatedUserDirectories); isExists {
+	if isExists, existsRBACType, existsRBACObjectIds := b.isRBACExists(ctx, kind, name, accessPath, version, k, replicatedUserDirectories); isExists {
 		log.Warn().Msgf("RBAC object kind=%s, name=%s already present, will %s", kind, name, b.cfg.General.RBACConflictResolution)
 		if b.cfg.General.RBACConflictResolution == "recreate" || dropExists {
-			if dropErr := b.dropExistsRBAC(ctx, kind, name, accessPath, existsRBACType, existsRBACObjectId, k); dropErr != nil {
+			if dropErr := b.dropExistsRBAC(ctx, kind, name, accessPath, existsRBACType, existsRBACObjectIds, k); dropErr != nil {
 				return dropErr
 			}
 			return nil
 		}
 		if b.cfg.General.RBACConflictResolution == "fail" {
-			return fmt.Errorf("RBAC object kind=%s, name=%s already present, change ", kind, name)
+			return fmt.Errorf("RBAC object kind=%s, name=%s already present, fix current RBAC objects to resolve conflicts", kind, name)
 		}
 	}
 	return nil
 }
 
-func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, accessPath string, version int, k *keeper.Keeper, replicatedUserDirectories []clickhouse.UserDirectory) (bool, string, string) {
+func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, accessPath string, version int, k *keeper.Keeper, replicatedUserDirectories []clickhouse.UserDirectory) (bool, string, []string) {
 	//search in sql system.users, system.quotas, system.row_policies, system.roles, system.settings_profiles
 	if version > 22003000 {
 		var rbacSystemTableNames = map[string]string{
@@ -545,18 +544,17 @@ func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, a
 		systemTable, systemTableExists := rbacSystemTableNames[kind]
 		if !systemTableExists {
 			log.Error().Msgf("unsupported RBAC object kind: %s", kind)
-			return false, "", ""
+			return false, "", nil
 		}
 		isRBACExistsSQL := fmt.Sprintf("SELECT toString(id) AS id, name FROM `system`.`%s` WHERE name=? LIMIT 1", systemTable)
 		existsRBACRow := make([]clickhouse.RBACObject, 0)
 		if err := b.ch.SelectContext(ctx, &existsRBACRow, isRBACExistsSQL, name); err != nil {
 			log.Warn().Msgf("RBAC object resolve failed, check SQL GRANTS or <access_management> settings for user which you use to connect to clickhouse-server, kind: %s, name: %s, error: %v", kind, name, err)
-			return false, "", ""
+			return false, "", nil
 		}
-		if len(existsRBACRow) == 0 {
-			return false, "", ""
+		if len(existsRBACRow) != 0 {
+			return true, "sql", []string{existsRBACRow[0].Id}
 		}
-		return true, "sql", existsRBACRow[0].Id
 	}
 
 	checkRBACExists := func(sql string) bool {
@@ -573,6 +571,7 @@ func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, a
 
 	// search in local user directory
 	if sqlFiles, globErr := filepath.Glob(path.Join(accessPath, "*.sql")); globErr == nil {
+		existsRBACObjectIds := []string{}
 		for _, f := range sqlFiles {
 			sql, readErr := os.ReadFile(f)
 			if readErr != nil {
@@ -580,8 +579,11 @@ func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, a
 				continue
 			}
 			if checkRBACExists(string(sql)) {
-				return true, "local", strings.TrimSuffix(filepath.Base(f), filepath.Ext(f))
+				existsRBACObjectIds = append(existsRBACObjectIds, strings.TrimSuffix(filepath.Base(f), filepath.Ext(f)))
 			}
+		}
+		if len(existsRBACObjectIds) > 0 {
+			return true, "local", existsRBACObjectIds
 		}
 	} else {
 		log.Warn().Msgf("access/*.sql error: %v", globErr)
@@ -589,21 +591,20 @@ func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, a
 
 	//search in keeper replicated user directory
 	if k != nil && len(replicatedUserDirectories) > 0 {
+		var existsObjectIds []string
 		for _, userDirectory := range replicatedUserDirectories {
 			replicatedAccessPath, getAccessErr := k.GetReplicatedAccessPath(userDirectory.Name)
 			if getAccessErr != nil {
 				log.Warn().Msgf("b.isRBACExists -> k.GetReplicatedAccessPath error: %v", getAccessErr)
 				continue
 			}
-			isExists := false
-			existsObjectId := ""
 			walkErr := k.Walk(replicatedAccessPath, "uuid", true, func(node keeper.DumpNode) (bool, error) {
 				if node.Value == "" {
 					return false, nil
 				}
 				if checkRBACExists(node.Value) {
-					isExists = true
-					existsObjectId = strings.TrimPrefix(node.Path, path.Join(replicatedAccessPath, "uuid")+"/")
+					existsObjectId := strings.TrimPrefix(node.Path, path.Join(replicatedAccessPath, "uuid")+"/")
+					existsObjectIds = append(existsObjectIds, existsObjectId)
 					return true, nil
 				}
 				return false, nil
@@ -612,18 +613,18 @@ func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, a
 				log.Warn().Msgf("b.isRBACExists -> k.Walk error: %v", walkErr)
 				continue
 			}
-			if isExists {
-				return true, userDirectory.Name, existsObjectId
+			if len(existsObjectIds) > 0 {
+				return true, userDirectory.Name, existsObjectIds
 			}
 		}
 	}
-	return false, "", ""
+	return false, "", nil
 }
 
 // https://github.com/Altinity/clickhouse-backup/issues/930
 var needQuoteRBACRE = regexp.MustCompile(`[^0-9a-zA-Z_]`)
 
-func (b *Backuper) dropExistsRBAC(ctx context.Context, kind string, name string, accessPath string, rbacType, rbacObjectId string, k *keeper.Keeper) error {
+func (b *Backuper) dropExistsRBAC(ctx context.Context, kind string, name string, accessPath string, rbacType string, rbacObjectIds []string, k *keeper.Keeper) error {
 	//sql
 	if rbacType == "sql" {
 		// https://github.com/Altinity/clickhouse-backup/issues/930
@@ -635,7 +636,12 @@ func (b *Backuper) dropExistsRBAC(ctx context.Context, kind string, name string,
 	}
 	//local
 	if rbacType == "local" {
-		return os.Remove(path.Join(accessPath, rbacObjectId+".sql"))
+		for _, rbacObjectId := range rbacObjectIds {
+			if err := os.Remove(path.Join(accessPath, rbacObjectId+".sql")); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	//keeper
 	var keeperPrefixesRBAC = map[string]string{
@@ -653,12 +659,15 @@ func (b *Backuper) dropExistsRBAC(ctx context.Context, kind string, name string,
 	if err != nil {
 		return fmt.Errorf("b.dropExistsRBAC -> k.GetReplicatedAccessPath error: %v", err)
 	}
-	deletedNodes := []string{
-		path.Join(prefix, "uuid", rbacObjectId),
+	deletedNodes := make([]string, len(rbacObjectIds))
+	for i := range rbacObjectIds {
+		deletedNodes[i] = path.Join(prefix, "uuid", rbacObjectIds[i])
 	}
 	walkErr := k.Walk(prefix, keeperRBACTypePrefix, true, func(node keeper.DumpNode) (bool, error) {
-		if node.Value == rbacObjectId {
-			deletedNodes = append(deletedNodes, node.Path)
+		for _, rbacObjectId := range rbacObjectIds {
+			if node.Value == rbacObjectId {
+				deletedNodes = append(deletedNodes, node.Path)
+			}
 		}
 		return false, nil
 	})
@@ -692,7 +701,11 @@ func (b *Backuper) detectRBACObject(sql string) (string, string, error) {
 		if strings.HasPrefix(sql, prefix) {
 			kind = k
 			// Extract the name from the SQL query.
-			name = strings.TrimSpace(strings.TrimPrefix(sql, prefix))
+			if semicolonIdx := strings.Index(sql, ";"); semicolonIdx >= 0 {
+				name = strings.TrimSpace(strings.TrimPrefix(sql[:semicolonIdx], prefix))
+			} else {
+				name = strings.TrimSpace(strings.TrimPrefix(sql, prefix))
+			}
 			break
 		}
 	}
@@ -1328,10 +1341,10 @@ func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName str
 }
 
 func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, backupTable metadata.TableMetadata, diskMap, diskTypes map[string]string, disks []clickhouse.Disk) (int64, error) {
-	log := apexLog.WithFields(apexLog.Fields{
+	logger := log.With().Fields(map[string]interface{}{
 		"operation": "downloadObjectDiskParts",
 		"table":     fmt.Sprintf("%s.%s", backupTable.Database, backupTable.Table),
-	})
+	}).Logger()
 	size := int64(0)
 	dbAndTableDir := path.Join(common.TablePathEncode(backupTable.Database), common.TablePathEncode(backupTable.Table))
 	ctx, cancel := context.WithCancel(ctx)
@@ -1389,7 +1402,7 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 				// copy from required backup for required data parts, https://github.com/Altinity/clickhouse-backup/issues/865
 				if part.Required && backupMetadata.RequiredBackup != "" {
 					var findRecursiveErr error
-					srcBackupName, srcDiskName, findRecursiveErr = b.findObjectDiskPartRecursive(ctx, backupMetadata, backupTable, part, diskName, log)
+					srcBackupName, srcDiskName, findRecursiveErr = b.findObjectDiskPartRecursive(ctx, backupMetadata, backupTable, part, diskName, logger)
 					if findRecursiveErr != nil {
 						return 0, findRecursiveErr
 					}
@@ -1416,7 +1429,7 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 					if objMeta.RefCount > 0 || objMeta.ReadOnly {
 						objMeta.RefCount = 0
 						objMeta.ReadOnly = false
-						log.Debugf("%s %#v set RefCount=0 and ReadOnly=0", fPath, objMeta.StorageObjects)
+						logger.Debug().Msgf("%s %#v set RefCount=0 and ReadOnly=0", fPath, objMeta.StorageObjects)
 						if writeMetaErr := object_disk.WriteMetadataToFile(objMeta, fPath); writeMetaErr != nil {
 							return fmt.Errorf("%s: object_disk.WriteMetadataToFile return error: %v", fPath, writeMetaErr)
 						}
@@ -1456,14 +1469,14 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 			if wgWaitErr := downloadObjectDiskPartsWorkingGroup.Wait(); wgWaitErr != nil {
 				return 0, fmt.Errorf("one of downloadObjectDiskParts go-routine return error: %v", wgWaitErr)
 			}
-			log.WithField("disk", diskName).WithField("duration", utils.HumanizeDuration(time.Since(start))).WithField("size", utils.FormatBytes(uint64(size))).Info("object_disk data downloaded")
+			logger.Info().Str("disk", diskName).Str("duration", utils.HumanizeDuration(time.Since(start))).Str("size", utils.FormatBytes(uint64(size))).Msg("object_disk data downloaded")
 		}
 	}
 
 	return size, nil
 }
 
-func (b *Backuper) findObjectDiskPartRecursive(ctx context.Context, backup metadata.BackupMetadata, table metadata.TableMetadata, part metadata.Part, diskName string, log *apexLog.Entry) (string, string, error) {
+func (b *Backuper) findObjectDiskPartRecursive(ctx context.Context, backup metadata.BackupMetadata, table metadata.TableMetadata, part metadata.Part, diskName string, logger zerolog.Logger) (string, string, error) {
 	if !part.Required {
 		return backup.BackupName, diskName, nil
 	}
@@ -1481,7 +1494,7 @@ func (b *Backuper) findObjectDiskPartRecursive(ctx context.Context, backup metad
 		for _, requiredPart := range parts {
 			if requiredPart.Name == part.Name {
 				if requiredPart.Required {
-					return b.findObjectDiskPartRecursive(ctx, *requiredBackup, *requiredTable, requiredPart, requiredDiskName, log)
+					return b.findObjectDiskPartRecursive(ctx, *requiredBackup, *requiredTable, requiredPart, requiredDiskName, logger)
 				}
 				return requiredBackup.BackupName, requiredDiskName, nil
 			}
