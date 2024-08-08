@@ -109,7 +109,10 @@ services:
     hostname: backup
     ports:
       - "7171:7171"
-      - "40002:40002"
+      # to avoid
+      # Error response from daemon: driver failed programming external connectivity on endpoint docker-compose-clickhouse_backup-1
+      # Error starting userland proxy: listen tcp4 0.0.0.0:40002: bind: address already in use
+      - "40002"
     environment:
       - DEBIAN_FRONTEND=noninteractive
       - LOG_LEVEL=${LOG_LEVEL:-info}
