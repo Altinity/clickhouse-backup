@@ -1,3 +1,10 @@
+# v2.5.27
+IMPROVEMENTS
+- update Dockerfile and Makefile to speedup cross-plaform building
+
+BUG FIXES
+- update clickhouse-go/v2, try fix [970](https://github.com/Altinity/clickhouse-backup/issues/970)
+
 # v2.5.26
 BUG FIXES
 - fix corner cases when /var/lib/clickhouse/access already broken, fix [977](https://github.com/Altinity/clickhouse-backup/issues/977)

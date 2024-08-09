@@ -156,7 +156,7 @@ build-docker:
 			--tag $(NAME):build-docker --target make-build-docker --progress plain --load . && \
 		mkdir -pv ./build && \
 		DOCKER_ID=$$(docker create $(NAME):build-docker) && \
-		docker cp $${DOCKER_ID}:/src/build/ ./build/ && \
+		docker cp $${DOCKER_ID}:/src/build/. ./build/ && \
 		docker rm -f "$${DOCKER_ID}"'
 
 build-fips-docker:
@@ -164,5 +164,5 @@ build-fips-docker:
 			--tag $(NAME):build-docker-fips --target make-build-fips --progress plain --load . && \
 		mkdir -pv ./build && \
 		DOCKER_ID=$$(docker create $(NAME):build-docker) && \
-		docker cp $${DOCKER_ID}:/src/build/ ./build/ && \
+		docker cp $${DOCKER_ID}:/src/build/. ./build/ && \
 		docker rm -f "$${DOCKER_ID}"'
