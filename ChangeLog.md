@@ -1,6 +1,6 @@
 # v2.5.27
 IMPROVEMENTS
-- update Dockerfile and Makefile to speedup cross-plaform building
+- update Dockerfile and Makefile to speedup cross-platform building
 
 BUG FIXES
 - update clickhouse-go/v2, try fix [970](https://github.com/Altinity/clickhouse-backup/issues/970)
@@ -130,7 +130,7 @@ BUG FIXES
 
 # v2.5.6
 BUG FIXES
-- skip `ValidateObjectDiskConfig` for `--diff-from-remote` when object disk doesn't contains data fix [910](https://github.com/Altinity/clickhouse-backup/issues/910)
+- skip `ValidateObjectDiskConfig` for `--diff-from-remote` when object disk doesn't contain data fix [910](https://github.com/Altinity/clickhouse-backup/issues/910)
 
 # v2.5.5
 IMPROVEMENTS
