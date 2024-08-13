@@ -108,7 +108,7 @@ func (k *Keeper) GetReplicatedAccessPath(userDirectory string) (string, error) {
 	if zookeeperPathNode == nil {
 		return "", fmt.Errorf("can't find %s in %s", xPathQuery, k.xmlConfigFile)
 	}
-	return zookeeperPathNode.InnerText(), nil
+	return strings.TrimSuffix(zookeeperPathNode.InnerText(), "/"), nil
 }
 
 func (k *Keeper) Dump(prefix, dumpFile string) (int, error) {

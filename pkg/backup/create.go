@@ -704,7 +704,7 @@ func (b *Backuper) createBackupRBACReplicated(ctx context.Context, rbacBackup st
 				return 0, err
 			}
 			if rbacUUIDObjectsCount == 0 {
-				log.Warn().Str("logger", "createBackupRBACReplicated").Msgf("%s/%s have no childs, skip Dump", replicatedAccessPath, "uuid")
+				log.Warn().Str("logger", "createBackupRBACReplicated").Msgf("%s/%s have no children, skip Dump", replicatedAccessPath, "uuid")
 				continue
 			}
 			if err = os.MkdirAll(rbacBackup, 0755); err != nil {
