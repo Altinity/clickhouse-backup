@@ -66,15 +66,15 @@ services:
 
   azure:
     # todo need to blobKeepAliveTimeout, and merge https://github.com/Azure/Azurite/pull/2443
-    image: mcr.microsoft.com/azure-storage/azurite:latest
-    # image: docker.io/clickhousepro/azurite:latest
+    # image: mcr.microsoft.com/azure-storage/azurite:latest
+    image: docker.io/clickhousepro/azurite:latest
     hostname: devstoreaccount1.blob.azure
     healthcheck:
       test: nc 127.0.0.1 10000 -z
       interval: 1s
       retries: 30
-    command: [ "azurite", "--debug", "/data/debug.log" , "-l", "/data", "--blobHost", "0.0.0.0" ]
-    # command: [ "azurite", "--debug", "/data/debug.log" , "-l", "/data", "--blobHost", "0.0.0.0","--blobKeepAliveTimeout", "3600" ]
+    # command: [ "azurite", "--debug", "/data/debug.log" , "-l", "/data", "--blobHost", "0.0.0.0" ]
+    command: [ "azurite", "--debug", "/data/debug.log" , "-l", "/data", "--blobHost", "0.0.0.0","--blobKeepAliveTimeout", "60" ]
     volumes:
       - azure:/data
 #    environment:
