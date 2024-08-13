@@ -70,14 +70,13 @@ func (bd *BackupDestination) RemoveBackupRemote(ctx context.Context, backup Back
 func (bd *BackupDestination) loadMetadataCache(ctx context.Context) (map[string]Backup, error) {
 	listCacheFile := path.Join(os.TempDir(), fmt.Sprintf(".clickhouse-backup-metadata.cache.%s", bd.Kind()))
 	listCache := map[string]Backup{}
-	if info, err := os.Stat(listCacheFile); os.IsNotExist(err) || info.IsDir() {
-		log.Debug().Msgf("%s not found, load %d elements", listCacheFile, len(listCache))
-		return listCache, nil
+	if _, err := os.Stat(listCacheFile); os.IsNotExist(err) {
+		return listCache, err
 	}
 	f, err := os.Open(listCacheFile)
 	if err != nil {
 		log.Warn().Msgf("can't open %s return error %v", listCacheFile, err)
-		return listCache, nil
+		return listCache, err
 	}
 	defer func() {
 		if err := f.Close(); err != nil {
@@ -156,8 +155,11 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 	metadataCacheLock.Lock()
 	defer metadataCacheLock.Unlock()
 	listCache, err := bd.loadMetadataCache(ctx)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return nil, err
+	}
+	if err != nil && os.IsNotExist(err) {
+		parseMetadata = true
 	}
 	cacheMiss := false
 	err = bd.Walk(ctx, "/", false, func(ctx context.Context, o RemoteFile) error {

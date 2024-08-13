@@ -1,3 +1,7 @@
+# v2.5.28
+BUG FIXES
+- fix corner cases for wrong *_last* metrics calculation after restart, fix [980](https://github.com/Altinity/clickhouse-backup/issues/980)
+
 # v2.5.27
 IMPROVEMENTS
 - update Dockerfile and Makefile to speedup cross-platform building
