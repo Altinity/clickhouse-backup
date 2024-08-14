@@ -1,3 +1,7 @@
+# v2.6.0 (not released yet)
+IMPROVEMENTS
+- add `rbac-only` and `configs-only` parameters to `POST /backup/create` and `POST /backup/restore` API calls
+
 # v2.5.29
 BUG FIXES
 - fix corner case for backup/restore RBAC object with trailing slash, warn /clickhouse/access//uuid have no children, skip Dump

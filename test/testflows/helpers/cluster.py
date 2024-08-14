@@ -652,7 +652,7 @@ class Cluster(object):
         finally:
             if not self.local:
                 self.command(
-                    None, f"{self.docker_compose} down -v --remove-orphans --timeout 60", bash=bash, timeout=timeout
+                    None, f"{self.docker_compose} down --remove-orphans --timeout 1", bash=bash, timeout=timeout
                 )
             with self.lock:
                 if self._control_shell:

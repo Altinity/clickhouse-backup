@@ -371,7 +371,7 @@ List all current applicable HTTP routes
 
 Restart HTTP server, close all current connections, close listen socket, open listen socket again, all background go-routines breaks with contexts
 
-### GET /backup/kill
+### POST /backup/kill
 
 Kill selected command from `GET /backup/actions` command list, kill process should be near immediate, but some go-routines (upload one data part) could continue to run.
 
@@ -382,26 +382,28 @@ Kill selected command from `GET /backup/actions` command list, kill process shou
 Print list of tables: `curl -s localhost:7171/backup/tables | jq .`, exclude pattern matched tables from `skip_tables` configuration parameters
 
 - Optional query argument `table` works the same as the `--table=pattern` CLI argument.
-- Optional query argument `remote_backup`works the same as `--remote-backup=name` CLI argument.
+- Optional query argument `remote_backup` works the same as `--remote-backup=name` CLI argument.
 
 ### GET /backup/tables/all
 
 Print list of tables: `curl -s localhost:7171/backup/tables/all | jq .`, ignore `skip_tables` configuration parameters.
 
-- Optional query argument `table` works the same as the `--table value` CLI argument.
+- Optional query argument `table` works the same as the `--table=pattern` CLI argument.
 - Optional query argument `remote_backup`works the same as `--remote-backup=name` CLI argument.
 
 ### POST /backup/create
 
 Create new backup: `curl -s localhost:7171/backup/create -X POST | jq .`
 
-- Optional query argument `table` works the same as the `--table value` CLI argument.
-- Optional query argument `partitions` works the same as the `--partitions value` CLI argument.
-- Optional query argument `name` works the same as specifying a backup name with the CLI.
-- Optional query argument `schema` works the same as the `--schema` CLI argument (backup schema only).
-- Optional query argument `rbac` works the same as the `--rbac` CLI argument (backup RBAC).
-- Optional query argument `configs` works the same as the `--configs` CLI argument (backup configs).
-- Optional query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens"}`.
+- Optional string query argument `table` works the same as the `--table=pattern` CLI argument.
+- Optional string query argument `partitions` works the same as the `--partitions=value` CLI argument.
+- Optional string query argument `name` works the same as specifying a backup name with the CLI.
+- Optional boolean query argument `schema` works the same as the `--schema` CLI argument (backup schema only).
+- Optional boolean query argument `rbac` works the same as the `--rbac` CLI argument (backup RBAC).
+- Optional boolean query argument `rbac-only` works the same as the `--rbac-only` CLI argument (backup only RBAC).
+- Optional boolean query argument `configs` works the same as the `--configs` CLI argument (backup configs).
+- Optional boolean query argument `configs-only` works the same as the `--configs-only` CLI argument (backup only configs).
+- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens"}`.
 - Additional example: `curl -s 'localhost:7171/backup/create?table=default.billing&name=billing_test' -X POST`
 
 Note: this operation is asynchronous, so the API will return once the operation has started.
@@ -411,14 +413,14 @@ Note: this operation is asynchronous, so the API will return once the operation 
 Run background watch process and create full+incremental backups sequence: `curl -s localhost:7171/backup/watch -X POST | jq .`
 You can't run watch twice with the same parameters even when `allow_parallel: true`
 
-- Optional query argument `watch_interval` works the same as the `--watch-interval value` CLI argument.
-- Optional query argument `full_interval` works the same as the `--full-interval value` CLI argument.
-- Optional query argument `watch_backup_name_template` works the same as the `--watch-backup-name-template value` CLI argument.
-- Optional query argument `table` works the same as the `--table value` CLI argument (backup only selected tables).
-- Optional query argument `partitions` works the same as the `--partitions value` CLI argument (backup only selected partitions).
-- Optional query argument `schema` works the same as the `--schema` CLI argument (backup schema only).
-- Optional query argument `rbac` works the same as the `--rbac` CLI argument (backup RBAC).
-- Optional query argument `configs` works the same as the `--configs` CLI argument (backup configs).
+- Optional string query argument `watch_interval` works the same as the `--watch-interval value` CLI argument.
+- Optional string query argument `full_interval` works the same as the `--full-interval value` CLI argument.
+- Optional string query argument `watch_backup_name_template` works the same as the `--watch-backup-name-template value` CLI argument.
+- Optional string query argument `table` works the same as the `--table value` CLI argument (backup only selected tables).
+- Optional string query argument `partitions` works the same as the `--partitions value` CLI argument (backup only selected partitions).
+- Optional boolean query argument `schema` works the same as the `--schema` CLI argument (backup schema only).
+- Optional boolean query argument `rbac` works the same as the `--rbac` CLI argument (backup RBAC).
+- Optional boolean query argument `configs` works the same as the `--configs` CLI argument (backup configs).
 - Additional example: `curl -s 'localhost:7171/backup/watch?table=default.billing&watch_interval=1h&full_interval=24h' -X POST`
 
 Note: this operation is asynchronous and can only be stopped with `kill -s SIGHUP $(pgrep -f clickhouse-backup)` or call `/restart`, `/backup/kill`. The API will return immediately once the operation has started.
@@ -436,14 +438,14 @@ Note: this operation is sync, and could take a lot of time, increase http timeou
 
 Upload backup to remote storage: `curl -s localhost:7171/backup/upload/<BACKUP_NAME> -X POST | jq .`
 
-- Optional query argument `delete-source` works the same as the `--delete-source` CLI argument.
-- Optional query argument `diff-from` works the same as the `--diff-from` CLI argument.
-- Optional query argument `diff-from-remote` works the same as the `--diff-from-remote` CLI argument.
-- Optional query argument `table` works the same as the `--table value` CLI argument.
-- Optional query argument `partitions` works the same as the `--partitions value` CLI argument.
-- Optional query argument `schema` works the same as the `--schema` CLI argument (upload schema only).
-- Optional query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate upload state and resume upload if data already exists on remote storage).
-- Optional query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens"}`.
+- Optional boolean query argument `delete-source` works the same as the `--delete-source` CLI argument.
+- Optional string query argument `diff-from` works the same as the `--diff-from` CLI argument.
+- Optional string query argument `diff-from-remote` works the same as the `--diff-from-remote` CLI argument.
+- Optional string query argument `table` works the same as the `--table value` CLI argument.
+- Optional string query argument `partitions` works the same as the `--partitions value` CLI argument.
+- Optional boolean query argument `schema` works the same as the `--schema` CLI argument (upload schema only).
+- Optional boolean query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate upload state and resume upload if data already exists on remote storage).
+- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens"}`.
 
 Note: this operation is asynchronous, so the API will return once the operation has started.
 
@@ -460,11 +462,11 @@ Note: The `Size` field will not be set for the remote backups with upload status
 
 Download backup from remote storage: `curl -s localhost:7171/backup/download/<BACKUP_NAME> -X POST | jq .`
 
-- Optional query argument `table` works the same as the `--table value` CLI argument.
-- Optional query argument `partitions` works the same as the `--partitions value` CLI argument.
-- Optional query argument `schema` works the same as the `--schema` CLI argument (download schema only).
-- Optional query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate download state and resume download if it already exists on local storage).
-- Optional query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens"}`.
+- Optional string query argument `table` works the same as the `--table value` CLI argument.
+- Optional string query argument `partitions` works the same as the `--partitions value` CLI argument.
+- Optional boolean query argument `schema` works the same as the `--schema` CLI argument (download schema only).
+- Optional boolean query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate download state and resume download if it already exists on local storage).
+- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens"}`.
 
 Note: this operation is asynchronous, so the API will return once the operation has started.
 
@@ -472,17 +474,19 @@ Note: this operation is asynchronous, so the API will return once the operation 
 
 Create schema and restore data from backup: `curl -s localhost:7171/backup/restore/<BACKUP_NAME> -X POST | jq .`
 
-- Optional query argument `table` works the same as the `--table value` CLI argument.
-- Optional query argument `partitions` works the same as the `--partitions value` CLI argument.
-- Optional query argument `schema` works the same as the `--schema` CLI argument (restore schema only).
-- Optional query argument `data` works the same as the `--data` CLI argument (restore data only).
-- Optional query argument `rm` works the same as the `--rm` CLI argument (drop tables before restore).
-- Optional query argument `ignore_dependencies` works the as same the `--ignore-dependencies` CLI argument.
-- Optional query argument `rbac` works the same as the `--rbac` CLI argument (restore RBAC).
-- Optional query argument `configs` works the same as the `--configs` CLI argument (restore configs).
-- Optional query argument `restore_database_mapping` works the same as the `--restore-database-mapping` CLI argument.
-- Optional query argument `restore_table_mapping` works the same as the `--restore-table-mapping` CLI argument.
-- Optional query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens"}`.
+- Optional string query argument `table` works the same as the `--table value` CLI argument.
+- Optional string query argument `partitions` works the same as the `--partitions value` CLI argument.
+- Optional boolean query argument `schema` works the same as the `--schema` CLI argument (restore schema only).
+- Optional boolean query argument `data` works the same as the `--data` CLI argument (restore data only).
+- Optional boolean query argument `rm` works the same as the `--rm` CLI argument (drop tables before restore).
+- Optional boolean query argument `ignore_dependencies` works the as same the `--ignore-dependencies` CLI argument.
+- Optional boolean query argument `rbac` works the same as the `--rbac` CLI argument (restore RBAC).
+- Optional boolean query argument `rbac-only` works the same as the `--rbac` CLI argument (restore only RBAC).
+- Optional boolean query argument `configs` works the same as the `--configs` CLI argument (restore configs).
+- Optional boolean query argument `configs-only` works the same as the `--configs-only` CLI argument (restore configs).
+- Optional string query argument `restore_database_mapping` works the same as the `--restore-database-mapping=old_db:new_db` CLI argument.
+- Optional string query argument `restore_table_mapping` works the same as the `--restore-table-mapping=old_table:new_table` CLI argument.
+- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens"}`.
 
 ### POST /backup/delete
 
@@ -497,13 +501,15 @@ Display list of currently running asynchronous operations: `curl -s localhost:71
 ### POST /backup/actions
 
 Execute multiple backup actions: `curl -X POST -d '{"command":"create test_backup"}' -s localhost:7171/backup/actions`
+You could pass multi line json each row in POST body
+Will return result for each command as separate json string in each line.
 
 ### GET /backup/actions
 
 Display a list of all operations from start of API server: `curl -s localhost:7171/backup/actions | jq .`
 
-- Optional query argument `filter` to filter actions on server side.
-- Optional query argument `last` to show only the last `N` actions.
+- Optional string query argument `filter` to filter actions on server side.
+- Optional string query argument `last` to show only the last `N` actions.
 
 ## Storage types
 
