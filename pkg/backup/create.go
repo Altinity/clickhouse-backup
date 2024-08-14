@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/eapache/go-resiliency/retrier"
 	"os"
 	"path"
 	"path/filepath"
@@ -30,7 +31,6 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage/object_disk"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"github.com/rs/zerolog/log"
-
 )
 
 const (
@@ -704,7 +704,7 @@ func (b *Backuper) createBackupRBACReplicated(ctx context.Context, rbacBackup st
 				return 0, err
 			}
 			if rbacUUIDObjectsCount == 0 {
-				log.Warn().Str("logger", "createBackupRBACReplicated").Msgf("%s/%s have no childs, skip Dump", replicatedAccessPath, "uuid")
+				log.Warn().Str("logger", "createBackupRBACReplicated").Msgf("%s/%s have no children, skip Dump", replicatedAccessPath, "uuid")
 				continue
 			}
 			if err = os.MkdirAll(rbacBackup, 0755); err != nil {
@@ -849,20 +849,22 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 				return readMetadataErr
 			}
 			for _, storageObject := range objPartFileMeta.StorageObjects {
-				//b.log.WithField("object_file", fPath).WithField("size", storageObject.ObjectSize).WithField("object_key", storageObject.ObjectRelativePath).Debug("prepare CopyObject")
 				if storageObject.ObjectSize == 0 {
 					continue
 				}
-				//b.log.WithField("object_file", fPath).Debug("start copy")
-				if objSize, err = b.dst.CopyObject(
-					ctx,
-					storageObject.ObjectSize,
-					srcBucket,
-					path.Join(srcDiskConnection.GetRemotePath(), storageObject.ObjectRelativePath),
-					path.Join(backupName, disk.Name, storageObject.ObjectRelativePath),
-				); err != nil {
-					return err
-				}
+				retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
+				err = retry.RunCtx(ctx, func(ctx context.Context) error {
+					if objSize, err = b.dst.CopyObject(
+						ctx,
+						storageObject.ObjectSize,
+						srcBucket,
+						path.Join(srcDiskConnection.GetRemotePath(), storageObject.ObjectRelativePath),
+						path.Join(backupName, disk.Name, storageObject.ObjectRelativePath),
+					); err != nil {
+						return err
+					}
+					return nil
+				})
 				realSize += objSize
 			}
 			if realSize > objPartFileMeta.TotalSize {

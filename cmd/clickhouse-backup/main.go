@@ -5,6 +5,7 @@ import (
 	"fmt"
 	stdlog "log"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/rs/zerolog"
@@ -27,6 +28,10 @@ var (
 func main() {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixMs
 	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
+	// Customize the caller format to remove the prefix
+	zerolog.CallerMarshalFunc = func(pc uintptr, file string, line int) string {
+		return strings.TrimPrefix(file, "github.com/Altinity/clickhouse-backup/v2/") + ":" + strconv.Itoa(line)
+	}
 	consoleWriter := zerolog.ConsoleWriter{Out: os.Stderr, NoColor: true, TimeFormat: "2006-01-02 15:04:05.000"}
 	//diodeWriter := diode.NewWriter(consoleWriter, 4096, 10*time.Millisecond, func(missed int) {
 	//	fmt.Printf("Logger Dropped %d messages", missed)

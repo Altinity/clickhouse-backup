@@ -74,7 +74,7 @@ services:
       interval: 1s
       retries: 30
     command: [ "azurite", "--debug", "/data/debug.log" , "-l", "/data", "--blobHost", "0.0.0.0" ]
-    # command: [ "azurite", "--debug", "/data/debug.log" , "-l", "/data", "--blobHost", "0.0.0.0","--blobKeepAliveTimeout", "3600" ]
+    # command: [ "azurite", "--debug", "/data/debug.log" , "-l", "/data", "--blobHost", "0.0.0.0","--blobKeepAliveTimeout", "60" ]
     volumes:
       - azure:/data
 #    environment:

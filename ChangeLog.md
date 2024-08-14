@@ -1,3 +1,18 @@
+# v2.5.29
+BUG FIXES
+- fix corner case for backup/restore RBAC object with trailing slash, warn /clickhouse/access//uuid have no children, skip Dump
+
+# v2.5.28
+BUG FIXES
+- fix corner cases for wrong *_last* metrics calculation after restart, fix [980](https://github.com/Altinity/clickhouse-backup/issues/980)
+
+# v2.5.27
+IMPROVEMENTS
+- update Dockerfile and Makefile to speedup cross-platform building
+
+BUG FIXES
+- update clickhouse-go/v2, try fix [970](https://github.com/Altinity/clickhouse-backup/issues/970)
+
 # v2.5.26
 BUG FIXES
 - fix corner cases when /var/lib/clickhouse/access already broken, fix [977](https://github.com/Altinity/clickhouse-backup/issues/977)
@@ -123,7 +138,7 @@ BUG FIXES
 
 # v2.5.6
 BUG FIXES
-- skip `ValidateObjectDiskConfig` for `--diff-from-remote` when object disk doesn't contains data fix [910](https://github.com/Altinity/clickhouse-backup/issues/910)
+- skip `ValidateObjectDiskConfig` for `--diff-from-remote` when object disk doesn't contain data fix [910](https://github.com/Altinity/clickhouse-backup/issues/910)
 
 # v2.5.5
 IMPROVEMENTS
