@@ -1,5 +1,4 @@
 general:
-  disable_progress_bar: true
   remote_storage: ftp
   upload_concurrency: 4
   download_concurrency: 4

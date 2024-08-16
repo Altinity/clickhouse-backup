@@ -1,8 +1,8 @@
 general:
-  disable_progress_bar: true
   remote_storage: sftp
   upload_concurrency: 4
   download_concurrency: 4
+  allow_object_disk_streaming:
 clickhouse:
   host: clickhouse
   port: 9440
