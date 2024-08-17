@@ -253,7 +253,19 @@ func (sftp *SFTP) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcK
 }
 
 func (sftp *SFTP) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) error {
-	return fmt.Errorf("DeleteFileFromObjectDiskBackup not imlemented for %s", sftp.Kind())
+	sftp.Debug("[SFTP_DEBUG] DeleteFileFromObjectDiskBackup %s", key)
+	filePath := path.Join(sftp.Config.ObjectDiskPath, key)
+
+	fileStat, err := sftp.sftpClient.Stat(filePath)
+	if err != nil {
+		sftp.Debug("[SFTP_DEBUG] DeleteFileFromObjectDiskBackup::STAT %s return error %v", filePath, err)
+		return err
+	}
+	if fileStat.IsDir() {
+		return sftp.DeleteDirectory(ctx, filePath)
+	} else {
+		return sftp.sftpClient.Remove(filePath)
+	}
 }
 
 // Implement RemoteFile

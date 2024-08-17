@@ -1,6 +1,7 @@
 # v2.6.0 (not released yet)
 IMPROVEMENTS
 - add `rbac-only` and `configs-only` parameters to `POST /backup/create` and `POST /backup/restore` API calls
+- add `allow_allow_object_disk_streaming` config option which will make object disk backup when CopyObject failed or when Object Storage have incompatible types, fix [979](https://github.com/Altinity/clickhouse-backup/issues/979)
 
 # v2.5.29
 BUG FIXES

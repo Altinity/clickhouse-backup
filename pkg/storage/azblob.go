@@ -126,19 +126,6 @@ func (a *AzureBlob) Connect(ctx context.Context) error {
 		if err != nil && !isContainerAlreadyExists(err) {
 			return err
 		}
-		//testName := make([]byte, 16)
-		//if _, err := rand.Read(testName); err != nil {
-		//	return errors.Wrapf(err, "azblob: failed to generate test blob name")
-		//}
-		//testNameStr := base64.URLEncoding.EncodeToString(testName)
-		//a.logf("AZBLOB->try to GetProbperties test blob: %s", testNameStr)
-		//testBlob := a.Container.NewBlockBlobURL(testNameStr)
-		//if _, err = testBlob.GetProperties(ctx, azblob.BlobAccessConditions{}, azblob.ClientProvidedKeyOptions{}); err != nil {
-		//	var se azblob.StorageError
-		//	if !errors.As(err, &se) || se.ServiceCode() != azblob.ServiceCodeBlobNotFound {
-		//		return errors.Wrapf(err, "azblob: failed to access container %s", a.Config.Container)
-		//	}
-		//}
 		if a.Config.SSEKey != "" {
 			key, err := base64.StdEncoding.DecodeString(a.Config.SSEKey)
 			if err != nil {

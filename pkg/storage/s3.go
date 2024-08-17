@@ -102,7 +102,7 @@ func (s *S3) Kind() string {
 	return "S3"
 }
 
-func (s *S3) ResolveEndpoint (ctx context.Context, params s3.EndpointParameters) (endpoint smithyendpoints.Endpoint, err error){
+func (s *S3) ResolveEndpoint(ctx context.Context, params s3.EndpointParameters) (endpoint smithyendpoints.Endpoint, err error) {
 	baseResolver := s3.NewDefaultEndpointResolverV2()
 	if s.Config.Endpoint != "" {
 		params.Endpoint = &s.Config.Endpoint
@@ -506,14 +506,7 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 	if srcSize%s.Config.MaxPartsCount > 0 {
 		partSize++
 	}
-	// 128Mb part size recommendation from https://repost.aws/questions/QUtW2_XaALTK63wv9XLSywiQ/s3-sync-command-is-slow-to-start-on-some-data
-	if partSize < 128*1024*1024 {
-		partSize = 128 * 1024 * 1024
-	}
-
-	if partSize > 5*1024*1024*1024 {
-		partSize = 5 * 1024 * 1024 * 1024
-	}
+	partSize = AdjustS3PartSize(partSize, 128*1024*1024)
 
 	// Calculate the number of parts
 	numParts := (srcSize + partSize - 1) / partSize

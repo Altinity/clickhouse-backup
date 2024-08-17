@@ -2,10 +2,12 @@ general:
   remote_storage: custom
   upload_concurrency: 4
   download_concurrency: 4
+  # check trim patterns
   skip_tables:
     - " system.*"
-    - "INFORMATION_SCHEMA.*"
-    - "information_schema.*"
+    - "INFORMATION_SCHEMA.* "
+    - " information_schema.*"
+    - "_temporary_and_external_tables.* "
   restore_schema_on_cluster: "{cluster}"
   use_resumable_state: false
 clickhouse:

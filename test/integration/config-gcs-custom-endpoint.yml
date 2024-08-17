@@ -2,12 +2,11 @@ general:
   remote_storage: gcs
   upload_concurrency: 4
   download_concurrency: 4
-  skip_tables:
-    - " system.*"
-    - "INFORMATION_SCHEMA.*"
-    - "information_schema.*"
-    - "_temporary_and_external_tables.*"
   restore_schema_on_cluster: "{cluster}"
+  allow_object_disk_streaming: true
+s3:
+  disable_ssl: false
+  disable_cert_verification: true
 clickhouse:
   host: clickhouse
   port: 9440

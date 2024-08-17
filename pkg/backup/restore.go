@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/eapache/go-resiliency/retrier"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"io"
@@ -229,8 +230,9 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	}
 
 	log.Info().Fields(map[string]interface{}{
-		"duration": utils.HumanizeDuration(time.Since(startRestore)),
-		"version":  backupVersion,
+		"operation": "restore",
+		"duration":  utils.HumanizeDuration(time.Since(startRestore)),
+		"version":   backupVersion,
 	}).Msg("done")
 	return nil
 }
@@ -1289,8 +1291,11 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ba
 				}
 			}
 			log.Info().Fields(map[string]interface{}{
-				"duration": utils.HumanizeDuration(time.Since(tableRestoreStartTime)),
-				"progress": fmt.Sprintf("%d/%d", idx+1, len(tablesForRestore)),
+				"duration":  utils.HumanizeDuration(time.Since(tableRestoreStartTime)),
+				"operation": "restoreDataRegular",
+				"database":  dstTable.Database,
+				"table":     dstTable.Name,
+				"progress":  fmt.Sprintf("%d/%d", idx+1, len(tablesForRestore)),
 			}).Msg("done")
 			return nil
 		})
@@ -1407,6 +1412,7 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 						return 0, findRecursiveErr
 					}
 				}
+				var isCopyFailed atomic.Bool
 				walkErr := filepath.Walk(partPath, func(fPath string, fInfo fs.FileInfo, err error) error {
 					if err != nil {
 						return err
@@ -1440,23 +1446,55 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 							if storageObject.ObjectSize == 0 {
 								continue
 							}
-							if b.cfg.General.RemoteStorage == "s3" && (diskType == "s3" || diskType == "encrypted") {
+							objectDiskPath, objectDiskPathErr := b.getObjectDiskPath()
+							if objectDiskPathErr != nil {
+								return objectDiskPathErr
+							}
+							srcKey = path.Join(objectDiskPath, srcBackupName, srcDiskName, storageObject.ObjectRelativePath)
+							srcBucket = ""
+							if b.cfg.General.RemoteStorage == "s3" {
 								srcBucket = b.cfg.S3.Bucket
-								srcKey = path.Join(b.cfg.S3.ObjectDiskPath, srcBackupName, srcDiskName, storageObject.ObjectRelativePath)
-							} else if b.cfg.General.RemoteStorage == "gcs" && (diskType == "s3" || diskType == "encrypted") {
+							} else if b.cfg.General.RemoteStorage == "gcs" {
 								srcBucket = b.cfg.GCS.Bucket
-								srcKey = path.Join(b.cfg.GCS.ObjectDiskPath, srcBackupName, srcDiskName, storageObject.ObjectRelativePath)
-							} else if b.cfg.General.RemoteStorage == "azblob" && (diskType == "azure_blob_storage" || diskType == "azure" || diskType == "encrypted") {
+							} else if b.cfg.General.RemoteStorage == "azblob" {
 								srcBucket = b.cfg.AzureBlob.Container
-								srcKey = path.Join(b.cfg.AzureBlob.ObjectDiskPath, srcBackupName, srcDiskName, storageObject.ObjectRelativePath)
-							} else {
-								return fmt.Errorf("incompatible object_disk[%s].Type=%s amd remote_storage: %s", diskName, diskType, b.cfg.General.RemoteStorage)
 							}
-							if copiedSize, copyObjectErr := object_disk.CopyObject(downloadCtx, dstDiskName, storageObject.ObjectSize, srcBucket, srcKey, storageObject.ObjectRelativePath); copyObjectErr != nil {
-								return fmt.Errorf("object_disk.CopyObject error: %v", copyObjectErr)
+							copiedSize := int64(0)
+							var copyObjectErr error
+							if !b.cfg.General.AllowObjectDiskStreaming {
+								retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
+								copyObjectErr = retry.RunCtx(downloadCtx, func(ctx context.Context) error {
+									var retryErr error
+									copiedSize, retryErr = object_disk.CopyObject(downloadCtx, dstDiskName, storageObject.ObjectSize, srcBucket, srcKey, storageObject.ObjectRelativePath)
+									return retryErr
+								})
+								if copyObjectErr != nil {
+									return fmt.Errorf("object_disk.CopyObject `%s`.`%s` error: %v", backupTable.Database, backupTable.Table, copyObjectErr)
+								}
 							} else {
-								atomic.AddInt64(&size, copiedSize)
+								copyObjectErr = nil
+								if srcBucket != "" {
+									copiedSize, copyObjectErr = object_disk.CopyObject(downloadCtx, dstDiskName, storageObject.ObjectSize, srcBucket, srcKey, storageObject.ObjectRelativePath)
+									if copyObjectErr != nil {
+										isCopyFailed.Store(true)
+										log.Warn().Msgf("object_disk.CopyObject `%s`.`%s` error: %v, will try streaming via local memory (possible high network traffic)", backupTable.Database, backupTable.Table, copyObjectErr)
+									}
+								}
+								if srcBucket == "" || isCopyFailed.Load() {
+									srcStorage := b.dst
+									dstConnection, connectionExists := object_disk.DisksConnections.Load(dstDiskName)
+									if !connectionExists {
+										return fmt.Errorf("unknown object_disk.DisksConnections %s", dstDiskName)
+									}
+									dstStorage := dstConnection.GetRemoteStorage()
+									dstKey := path.Join(dstConnection.GetRemoteObjectDiskPath(), storageObject.ObjectRelativePath)
+									if copyObjectErr = object_disk.CopyObjectStreaming(downloadCtx, srcStorage, dstStorage, srcKey, dstKey); copyObjectErr != nil {
+										return fmt.Errorf("object_disk.CopyObjectStreaming error: %v", copyObjectErr)
+									}
+									copiedSize = storageObject.ObjectSize
+								}
 							}
+							atomic.AddInt64(&size, copiedSize)
 						}
 						return nil
 					})

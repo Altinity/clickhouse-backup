@@ -5,6 +5,10 @@ general:
   download_max_bytes_per_second:  10240
   download_concurrency: 4
   restore_schema_on_cluster: "{cluster}"
+  allow_object_disk_streaming: true
+s3:
+  disable_ssl: false
+  disable_cert_verification: true
 clickhouse:
   restore_as_attach: true
   host: clickhouse

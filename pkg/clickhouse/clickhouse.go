@@ -26,7 +26,6 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-
 )
 
 // ClickHouse - provide
@@ -1193,6 +1192,20 @@ func (ch *ClickHouse) ApplyMacros(ctx context.Context, s string) (string, error)
 	}
 	s = strings.NewReplacer(replaces...).Replace(s)
 	return s, nil
+}
+
+// ApplyMacrosToObjectLabels https://github.com/Altinity/clickhouse-backup/issues/588
+func (ch *ClickHouse) ApplyMacrosToObjectLabels(ctx context.Context, objectLabels map[string]string, backupName string) (map[string]string, error) {
+	var err error
+	for k, v := range objectLabels {
+		v, err = ch.ApplyMacros(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		r := strings.NewReplacer("{backup}", backupName, "{backupName}", backupName, "{backup_name}", backupName, "{BACKUP_NAME}", backupName)
+		objectLabels[k] = r.Replace(v)
+	}
+	return objectLabels, nil
 }
 
 func (ch *ClickHouse) ApplyMutation(ctx context.Context, tableMetadata metadata.TableMetadata, mutation metadata.MutationMetadata) error {

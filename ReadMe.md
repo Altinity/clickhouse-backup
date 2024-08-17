@@ -106,7 +106,9 @@ general:
   upload_max_bytes_per_second: 0    # UPLOAD_MAX_BYTES_PER_SECOND, 0 means no throttling
   
   # when table data contains in system.disks with type=ObjectStorage, then we need execute remote copy object in object storage service provider, this parameter can restrict how many files will copied in parallel  for each table 
-  object_disk_server_side_copy_concurrency: 32 
+  object_disk_server_side_copy_concurrency: 32
+  # when CopyObject failure or object disk storage and backup destination have incompatible, will warning about possible high network traffic 
+  allow_object_disk_streaming: false
   
   # RESTORE_SCHEMA_ON_CLUSTER, execute all schema related SQL queries with `ON CLUSTER` clause as Distributed DDL.
   # Check `system.clusters` table for the correct cluster name, also `system.macros` can be used.
@@ -197,7 +199,7 @@ azblob:
   use_managed_identity: false  # AZBLOB_USE_MANAGED_IDENTITY
   container: ""                # AZBLOB_CONTAINER
   path: ""                     # AZBLOB_PATH, `system.macros` values can be applied as {macro_name}
-  object_disk_path: ""         # AZBLOB_OBJECT_DISK_PATH, path for backup of part from `azure_blob_storage` object disk, if disk present, then shall not be zero and shall not be prefixed by `path`
+  object_disk_path: ""         # AZBLOB_OBJECT_DISK_PATH, path for backup of part from clickhouse object disks, if object disks present in clickhouse, then shall not be zero and shall not be prefixed by `path`
   compression_level: 1         # AZBLOB_COMPRESSION_LEVEL
   compression_format: tar      # AZBLOB_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   sse_key: ""                  # AZBLOB_SSE_KEY
@@ -218,7 +220,7 @@ s3:
   assume_role_arn: ""              # S3_ASSUME_ROLE_ARN
   force_path_style: false          # S3_FORCE_PATH_STYLE
   path: ""                         # S3_PATH, `system.macros` values can be applied as {macro_name}
-  object_disk_path: ""             # S3_OBJECT_DISK_PATH, path for backup of part from `s3` object disk, if disk present, then shall not be zero and shall not be prefixed by `path`
+  object_disk_path: ""             # S3_OBJECT_DISK_PATH, path for backup of part from clickhouse object disks, if object disks present in clickhouse, then shall not be zero and shall not be prefixed by `path`
   disable_ssl: false               # S3_DISABLE_SSL
   compression_level: 1             # S3_COMPRESSION_LEVEL
   compression_format: tar          # S3_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
@@ -261,7 +263,7 @@ gcs:
   endpoint: ""                 # GCS_ENDPOINT, use it for custom GCS endpoint/compatible storage. For example, when using custom endpoint via private service connect
   bucket: ""                   # GCS_BUCKET
   path: ""                     # GCS_PATH, `system.macros` values can be applied as {macro_name}
-  object_disk_path: ""         # GCS_OBJECT_DISK_PATH, path for backup of part from `s3` object disk (clickhouse support only gcs over s3 protocol), if disk present, then shall not be zero and shall not be prefixed by `path`
+  object_disk_path: ""         # GCS_OBJECT_DISK_PATH, path for backup of part from clickhouse object disks, if object disks present in clickhouse, then shall not be zero and shall not be prefixed by `path`
   compression_level: 1         # GCS_COMPRESSION_LEVEL
   compression_format: tar      # GCS_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   storage_class: STANDARD      # GCS_STORAGE_CLASS
@@ -280,6 +282,7 @@ cos:
   secret_id: ""                # COS_SECRET_ID
   secret_key: ""               # COS_SECRET_KEY
   path: ""                     # COS_PATH, `system.macros` values can be applied as {macro_name}
+  object_disk_path: ""         # GOS_OBJECT_DISK_PATH, path for backup of part from clickhouse object disks, if object disks present in clickhouse, then shall not be zero and shall not be prefixed by `path`
   compression_format: tar      # COS_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   compression_level: 1         # COS_COMPRESSION_LEVEL
 ftp:
@@ -290,6 +293,7 @@ ftp:
   tls: false                   # FTP_TLS
   tls_skip_verify: false       # FTP_TLS_SKIP_VERIFY
   path: ""                     # FTP_PATH, `system.macros` values can be applied as {macro_name}
+  object_disk_path: ""         # FTP_OBJECT_DISK_PATH, path for backup of part from clickhouse object disks, if object disks present in clickhouse, then shall not be zero and shall not be prefixed by `path`
   compression_format: tar      # FTP_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   compression_level: 1         # FTP_COMPRESSION_LEVEL
   debug: false                 # FTP_DEBUG
@@ -300,6 +304,7 @@ sftp:
   port: 22                     # SFTP_PORT
   key: ""                      # SFTP_KEY
   path: ""                     # SFTP_PATH, `system.macros` values can be applied as {macro_name}
+  object_disk_path: ""         # SFTP_OBJECT_DISK_PATH, path for backup of part from clickhouse object disks, if object disks present in clickhouse, then shall not be zero and shall not be prefixed by `path`
   concurrency: 1               # SFTP_CONCURRENCY
   compression_format: tar      # SFTP_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   compression_level: 1         # SFTP_COMPRESSION_LEVEL

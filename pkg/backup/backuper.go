@@ -252,6 +252,12 @@ func (b *Backuper) applyMacrosToObjectDiskPath(ctx context.Context) error {
 		b.cfg.GCS.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.GCS.ObjectDiskPath)
 	} else if b.cfg.General.RemoteStorage == "azblob" {
 		b.cfg.AzureBlob.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.AzureBlob.ObjectDiskPath)
+	} else if b.cfg.General.RemoteStorage == "ftp" {
+		b.cfg.FTP.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.FTP.ObjectDiskPath)
+	} else if b.cfg.General.RemoteStorage == "sftp" {
+		b.cfg.SFTP.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.SFTP.ObjectDiskPath)
+	} else if b.cfg.General.RemoteStorage == "cos" {
+		b.cfg.COS.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.COS.ObjectDiskPath)
 	}
 	return err
 }
@@ -317,6 +323,12 @@ func (b *Backuper) getObjectDiskPath() (string, error) {
 		return b.cfg.AzureBlob.ObjectDiskPath, nil
 	} else if b.cfg.General.RemoteStorage == "gcs" {
 		return b.cfg.GCS.ObjectDiskPath, nil
+	} else if b.cfg.General.RemoteStorage == "cos" {
+		return b.cfg.COS.ObjectDiskPath, nil
+	} else if b.cfg.General.RemoteStorage == "ftp" {
+		return b.cfg.FTP.ObjectDiskPath, nil
+	} else if b.cfg.General.RemoteStorage == "sftp" {
+		return b.cfg.SFTP.ObjectDiskPath, nil
 	} else {
 		return "", fmt.Errorf("cleanBackupObjectDisks: requesst object disks path but have unsupported remote_storage: %s", b.cfg.General.RemoteStorage)
 	}

@@ -226,7 +226,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 	}
 
 	if isObjectDiskContainsTables || (diffFromRemote != "" && b.cfg.General.RemoteStorage != "custom") {
-		b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, false, backupName)
+		b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, true, backupName)
 		if err != nil {
 			return err
 		}
@@ -329,7 +329,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 	if err := b.createBackupMetadata(ctx, backupMetaFile, backupName, diffFromRemote, backupVersion, "regular", diskMap, diskTypes, disks, backupDataSize, backupObjectDiskSize, backupMetadataSize, backupRBACSize, backupConfigSize, tableMetas, allDatabases, allFunctions); err != nil {
 		return fmt.Errorf("createBackupMetadata return error: %v", err)
 	}
-	log.Info().Str("version", backupVersion).Str("duration", utils.HumanizeDuration(time.Since(startBackup))).Msg("done")
+	log.Info().Str("version", backupVersion).Str("operation", "createBackupLocal").Str("duration", utils.HumanizeDuration(time.Since(startBackup))).Msg("done")
 	return nil
 }
 
@@ -541,15 +541,9 @@ func (b *Backuper) generateEmbeddedBackupSQL(ctx context.Context, backupName str
 
 func (b *Backuper) getPartsFromRemoteEmbeddedBackup(ctx context.Context, backupName string, table clickhouse.Table, partitionsIdsMap common.EmptyMap) (map[string][]metadata.Part, error) {
 	dirListStr := make([]string, 0)
-	remoteEmbeddedBackupPath := ""
-	if b.cfg.General.RemoteStorage == "s3" {
-		remoteEmbeddedBackupPath = b.cfg.S3.ObjectDiskPath
-	} else if b.cfg.General.RemoteStorage == "gcs" {
-		remoteEmbeddedBackupPath = b.cfg.GCS.ObjectDiskPath
-	} else if b.cfg.General.RemoteStorage == "azblob" {
-		remoteEmbeddedBackupPath = b.cfg.AzureBlob.ObjectDiskPath
-	} else {
-		return nil, fmt.Errorf("getPartsFromRemoteEmbeddedBackup: unsupported remote_storage: %s", b.cfg.General.RemoteStorage)
+	remoteEmbeddedBackupPath, err := b.getObjectDiskPath()
+	if err != nil {
+		return nil, err
 	}
 	remoteEmbeddedBackupPath = path.Join(remoteEmbeddedBackupPath, backupName, "data", common.TablePathEncode(table.Database), common.TablePathEncode(table.Name))
 	if walkErr := b.dst.WalkAbsolute(ctx, remoteEmbeddedBackupPath, false, func(ctx context.Context, fInfo storage.RemoteFile) error {
@@ -802,7 +796,10 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 			}
 		}
 	}
-	log.Debug().Msg("done")
+	log.Debug().Fields(map[string]interface{}{
+		"disksToPartsMap": disksToPartsMap, "realSize": realSize, "objectDiskSize": objectDiskSize,
+		"operation": "AddTableToLocalBackup",
+	}).Msg("done")
 	return disksToPartsMap, realSize, objectDiskSize, nil
 }
 
@@ -814,13 +811,19 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	uploadObjectDiskPartsWorkingGroup, ctx := errgroup.WithContext(ctx)
+	uploadObjectDiskPartsWorkingGroup, uploadCtx := errgroup.WithContext(ctx)
 	uploadObjectDiskPartsWorkingGroup.SetLimit(int(b.cfg.General.ObjectDiskServerSideCopyConcurrency))
 	srcDiskConnection, exists := object_disk.DisksConnections.Load(disk.Name)
 	if !exists {
 		return 0, fmt.Errorf("uploadObjectDiskParts: %s not present in object_disk.DisksConnections", disk.Name)
 	}
 	srcBucket := srcDiskConnection.GetRemoteBucket()
+	var objectDiskPath string
+	if objectDiskPath, err = b.getObjectDiskPath(); err != nil {
+		return 0, err
+	}
+	var isCopyFailed atomic.Bool
+	isCopyFailed.Store(false)
 	walkErr := filepath.Walk(backupShadowPath, func(fPath string, fInfo os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -852,19 +855,35 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 				if storageObject.ObjectSize == 0 {
 					continue
 				}
-				retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
-				err = retry.RunCtx(ctx, func(ctx context.Context) error {
-					if objSize, err = b.dst.CopyObject(
-						ctx,
-						storageObject.ObjectSize,
-						srcBucket,
-						path.Join(srcDiskConnection.GetRemotePath(), storageObject.ObjectRelativePath),
-						path.Join(backupName, disk.Name, storageObject.ObjectRelativePath),
-					); err != nil {
-						return err
+				var copyObjectErr error
+				srcKey := path.Join(srcDiskConnection.GetRemotePath(), storageObject.ObjectRelativePath)
+				dstKey := path.Join(backupName, disk.Name, storageObject.ObjectRelativePath)
+				if !b.cfg.General.AllowObjectDiskStreaming {
+					retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
+					copyObjectErr = retry.RunCtx(uploadCtx, func(ctx context.Context) error {
+						if objSize, err = b.dst.CopyObject(ctx, storageObject.ObjectSize, srcBucket, srcKey, dstKey); err != nil {
+							return err
+						}
+						return nil
+					})
+					if copyObjectErr != nil {
+						return fmt.Errorf("b.dst.CopyObject in %s error: %v", backupShadowPath, copyObjectErr)
 					}
-					return nil
-				})
+				} else {
+					if !isCopyFailed.Load() {
+						objSize, copyObjectErr = b.dst.CopyObject(ctx, storageObject.ObjectSize, srcBucket, srcKey, dstKey)
+						if copyObjectErr != nil {
+							log.Warn().Msgf("b.dst.CopyObject in %s error: %v, will try upload via streaming (possible high network traffic)", backupShadowPath, copyObjectErr)
+							isCopyFailed.Store(true)
+						}
+					}
+					if isCopyFailed.Load() {
+						if copyObjectErr = object_disk.CopyObjectStreaming(uploadCtx, srcDiskConnection.GetRemoteStorage(), b.dst, srcKey, path.Join(objectDiskPath, dstKey)); copyObjectErr != nil {
+							return fmt.Errorf("object_disk.CopyObjectStreaming in %s error: %v", backupShadowPath, copyObjectErr)
+						}
+					}
+					objSize = storageObject.ObjectSize
+				}
 				realSize += objSize
 			}
 			if realSize > objPartFileMeta.TotalSize {

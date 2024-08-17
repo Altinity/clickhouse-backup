@@ -162,11 +162,12 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 			}
 			atomic.AddInt64(&metadataSize, tableMetadataSize)
 			log.Info().Fields(map[string]interface{}{
-				"table":    fmt.Sprintf("%s.%s", tablesForUpload[idx].Database, tablesForUpload[idx].Table),
-				"progress": fmt.Sprintf("%d/%d", idx+1, len(tablesForUpload)),
-				"duration": utils.HumanizeDuration(time.Since(start)),
-				"size":     utils.FormatBytes(uint64(uploadedBytes + tableMetadataSize)),
-				"version":  backupVersion,
+				"operation": "upload_data",
+				"table":     fmt.Sprintf("%s.%s", tablesForUpload[idx].Database, tablesForUpload[idx].Table),
+				"progress":  fmt.Sprintf("%d/%d", idx+1, len(tablesForUpload)),
+				"duration":  utils.HumanizeDuration(time.Since(start)),
+				"size":      utils.FormatBytes(uint64(uploadedBytes + tableMetadataSize)),
+				"version":   backupVersion,
 			}).Msg("done")
 			return nil
 		})
@@ -230,8 +231,8 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 		b.resumableState.Close()
 	}
 	log.Info().Fields(map[string]interface{}{
-		"backup":    backupName,
-		"operation": "upload",
+		"backup":           backupName,
+		"operation":        "upload",
 		"duration":         utils.HumanizeDuration(time.Since(startUpload)),
 		"upload_size":      utils.FormatBytes(uint64(compressedDataSize) + uint64(metadataSize) + uint64(len(newBackupMetadataBody)) + backupMetadata.RBACSize + backupMetadata.ConfigSize),
 		"object_disk_size": utils.FormatBytes(backupMetadata.ObjectDiskSize),

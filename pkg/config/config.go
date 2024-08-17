@@ -49,6 +49,7 @@ type GeneralConfig struct {
 	UploadMaxBytesPerSecond             uint64            `yaml:"upload_max_bytes_per_second" envconfig:"UPLOAD_MAX_BYTES_PER_SECOND"`
 	DownloadMaxBytesPerSecond           uint64            `yaml:"download_max_bytes_per_second" envconfig:"DOWNLOAD_MAX_BYTES_PER_SECOND"`
 	ObjectDiskServerSideCopyConcurrency uint8             `yaml:"object_disk_server_side_copy_concurrency" envconfig:"OBJECT_DISK_SERVER_SIDE_COPY_CONCURRENCY"`
+	AllowObjectDiskStreaming            bool              `yaml:"allow_object_disk_streaming" envconfig:"ALLOW_OBJECT_DISK_STREAMING"`
 	UseResumableState                   bool              `yaml:"use_resumable_state" envconfig:"USE_RESUMABLE_STATE"`
 	RestoreSchemaOnCluster              string            `yaml:"restore_schema_on_cluster" envconfig:"RESTORE_SCHEMA_ON_CLUSTER"`
 	UploadByPart                        bool              `yaml:"upload_by_part" envconfig:"UPLOAD_BY_PART"`
@@ -158,6 +159,7 @@ type COSConfig struct {
 	SecretID          string `yaml:"secret_id" envconfig:"COS_SECRET_ID"`
 	SecretKey         string `yaml:"secret_key" envconfig:"COS_SECRET_KEY"`
 	Path              string `yaml:"path" envconfig:"COS_PATH"`
+	ObjectDiskPath    string `yaml:"object_disk_path" envconfig:"COS_OBJECT_DISK_PATH"`
 	CompressionFormat string `yaml:"compression_format" envconfig:"COS_COMPRESSION_FORMAT"`
 	CompressionLevel  int    `yaml:"compression_level" envconfig:"COS_COMPRESSION_LEVEL"`
 	Debug             bool   `yaml:"debug" envconfig:"COS_DEBUG"`
@@ -334,19 +336,24 @@ func LoadConfig(configLocation string) (*Config, error) {
 	if (cfg.General.RemoteStorage == "gcs" || cfg.General.RemoteStorage == "azblob" || cfg.General.RemoteStorage == "cos") && cfgWithoutDefault.General.UploadConcurrency == 0 {
 		cfg.General.UploadConcurrency = uint8(runtime.NumCPU() / 2)
 	}
-	cfg.AzureBlob.Path = strings.Trim(cfg.AzureBlob.Path, "/ ")
-	cfg.S3.Path = strings.Trim(cfg.S3.Path, "/ ")
-	cfg.GCS.Path = strings.Trim(cfg.GCS.Path, "/ ")
+	cfg.AzureBlob.Path = strings.Trim(cfg.AzureBlob.Path, "/ \t\r\n")
+	cfg.S3.Path = strings.Trim(cfg.S3.Path, "/ \t\r\n")
+	cfg.GCS.Path = strings.Trim(cfg.GCS.Path, "/ \t\r\n")
+	cfg.COS.Path = strings.Trim(cfg.COS.Path, "/ \t\r\n")
+	cfg.FTP.Path = strings.TrimRight(strings.Trim(cfg.FTP.Path, " \t\r\n"), "/")
+	cfg.SFTP.Path = strings.TrimRight(strings.Trim(cfg.SFTP.Path, " \t\r\n"), "/")
 
-	cfg.S3.ObjectDiskPath = strings.Trim(cfg.S3.ObjectDiskPath,"/ ")
-	cfg.GCS.ObjectDiskPath = strings.Trim(cfg.GCS.ObjectDiskPath,"/ ")
-	cfg.AzureBlob.ObjectDiskPath = strings.Trim(cfg.AzureBlob.ObjectDiskPath,"/ ")
+	cfg.AzureBlob.ObjectDiskPath = strings.Trim(cfg.AzureBlob.ObjectDiskPath, "/ \t\n")
+	cfg.S3.ObjectDiskPath = strings.Trim(cfg.S3.ObjectDiskPath, "/ \t\r\n")
+	cfg.GCS.ObjectDiskPath = strings.Trim(cfg.GCS.ObjectDiskPath, "/ \t\r\n")
+	cfg.COS.ObjectDiskPath = strings.Trim(cfg.COS.ObjectDiskPath, "/ \t\r\n")
+	cfg.FTP.ObjectDiskPath = strings.TrimRight(strings.Trim(cfg.FTP.ObjectDiskPath, " \t\r\n"), "/")
+	cfg.SFTP.ObjectDiskPath = strings.TrimRight(strings.Trim(cfg.SFTP.ObjectDiskPath, " \t\r\n"), "/")
 
 	// https://github.com/Altinity/clickhouse-backup/issues/855
 	if cfg.ClickHouse.FreezeByPart && cfg.ClickHouse.FreezeByPartWhere != "" && !freezeByPartBeginAndRE.MatchString(cfg.ClickHouse.FreezeByPartWhere) {
 		cfg.ClickHouse.FreezeByPartWhere = " AND " + cfg.ClickHouse.FreezeByPartWhere
 	}
-
 
 	log_helper.SetLogLevelFromString(cfg.General.LogLevel)
 
@@ -468,19 +475,18 @@ func ValidateConfig(cfg *Config) error {
 
 func ValidateObjectDiskConfig(cfg *Config) error {
 	if !cfg.ClickHouse.UseEmbeddedBackupRestore {
-		switch cfg.General.RemoteStorage {
-		case "s3":
-			if cfg.S3.Path != "" && (cfg.S3.ObjectDiskPath == "" || strings.HasPrefix(cfg.S3.Path, cfg.S3.ObjectDiskPath)) {
-				return fmt.Errorf("data in objects disks, invalid s3->object_disk_path config section, shall be not empty and shall not be prefix for s3->path")
-			}
-		case "gcs":
-			if cfg.GCS.Path != "" && (cfg.GCS.ObjectDiskPath == "" || strings.HasPrefix(cfg.GCS.Path, cfg.GCS.ObjectDiskPath)) {
-				return fmt.Errorf("data in objects disks, invalid gcs->object_disk_path config section, shall be not empty and shall not be prefix for gcs->path")
-			}
-		case "azblob":
-			if cfg.AzureBlob.Path != "" && (cfg.AzureBlob.ObjectDiskPath == "" || strings.HasPrefix(cfg.AzureBlob.Path, cfg.AzureBlob.ObjectDiskPath)) {
-				return fmt.Errorf("data in objects disks, invalid azblob->object_disk_path config section, shall be not empty and shall not be prefix for gcs->path")
-			}
+		if cfg.General.RemoteStorage == "s3" && ((cfg.S3.ObjectDiskPath == "" && cfg.S3.Path == "") || (cfg.S3.Path != "" && strings.HasPrefix(cfg.S3.Path, cfg.S3.ObjectDiskPath))) {
+			return fmt.Errorf("data in objects disks, invalid s3->object_disk_path config section, shall be not empty and shall not be prefix for s3->path")
+		} else if cfg.General.RemoteStorage == "gcs" && ((cfg.GCS.ObjectDiskPath == "" && cfg.GCS.Path == "") || (cfg.GCS.Path != "" && strings.HasPrefix(cfg.GCS.Path, cfg.GCS.ObjectDiskPath))) {
+			return fmt.Errorf("data in objects disks, invalid gcs->object_disk_path config section, shall be not empty and shall not be prefix for gcs->path")
+		} else if cfg.General.RemoteStorage == "azblob" && ((cfg.AzureBlob.ObjectDiskPath == "" && cfg.AzureBlob.Path == "") || (cfg.AzureBlob.Path != "" && strings.HasPrefix(cfg.AzureBlob.Path, cfg.AzureBlob.ObjectDiskPath))) {
+			return fmt.Errorf("data in objects disks, invalid azblob->object_disk_path config section, shall be not empty and shall not be prefix for azblob->path")
+		} else if cfg.General.RemoteStorage == "cos" && ((cfg.COS.ObjectDiskPath == "" && cfg.COS.Path == "") || (cfg.COS.Path != "" && strings.HasPrefix(cfg.COS.Path, cfg.COS.ObjectDiskPath))) {
+			return fmt.Errorf("data in objects disks, invalid cos->object_disk_path config section, shall be not empty and shall not be prefix for cos->path")
+		} else if cfg.General.RemoteStorage == "ftp" && ((cfg.FTP.ObjectDiskPath == "" && cfg.FTP.Path == "") || (cfg.FTP.Path != "" && strings.HasPrefix(cfg.FTP.Path, cfg.FTP.ObjectDiskPath))) {
+			return fmt.Errorf("data in objects disks, invalid ftp->object_disk_path config section, shall be not empty and shall not be prefix for ftp->path")
+		} else if cfg.General.RemoteStorage == "sftp" && ((cfg.SFTP.ObjectDiskPath == "" && cfg.SFTP.Path == "") || (cfg.SFTP.Path != "" && strings.HasPrefix(cfg.SFTP.Path, cfg.SFTP.ObjectDiskPath))) {
+			return fmt.Errorf("data in objects disks, invalid sftp->object_disk_path config section, shall be not empty and shall not be prefix for sftp->path")
 		}
 	}
 	return nil
@@ -653,7 +659,7 @@ func GetConfigPath(ctx *cli.Context) string {
 }
 
 type oldEnvValues struct {
-	OldValue string
+	OldValue   string
 	WasPresent bool
 }
 
@@ -686,7 +692,7 @@ func OverrideEnvVars(ctx *cli.Context) map[string]oldEnvValues {
 			log.Info().Msgf("override %s=%s", envVariable[0], envVariable[1])
 			oldValue, wasPresent := os.LookupEnv(envVariable[0])
 			oldValues[envVariable[0]] = oldEnvValues{
-				OldValue: oldValue,
+				OldValue:   oldValue,
 				WasPresent: wasPresent,
 			}
 			if err := os.Setenv(envVariable[0], envVariable[1]); err != nil {

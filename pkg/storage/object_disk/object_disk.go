@@ -233,6 +233,17 @@ func (c *ObjectStorageConnection) GetRemotePath() string {
 	return ""
 }
 
+func (c *ObjectStorageConnection) GetRemoteObjectDiskPath() string {
+	switch c.Type {
+	case "s3":
+		return c.S3.Config.ObjectDiskPath
+	case "azure", "azure_blob_storage":
+		return c.AzureBlob.Config.ObjectDiskPath
+	}
+	log.Fatal().Stack().Msgf("invalid ObjectStorageConnection.type %s", c.Type)
+	return ""
+}
+
 var DisksConnections = xsync.NewMapOf[*ObjectStorageConnection]()
 
 var SystemDisks = xsync.NewMapOf[clickhouse.Disk]()
@@ -435,10 +446,17 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 	switch creds.Type {
 	case "s3", "gcs":
 		connection.Type = "s3"
-		s3cfg := config.S3Config{Debug: cfg.S3.Debug, MaxPartsCount: cfg.S3.MaxPartsCount, Concurrency: 1}
+		s3cfg := config.S3Config{
+			Debug: cfg.S3.Debug, MaxPartsCount: cfg.S3.MaxPartsCount, Concurrency: 1,
+			PartSize: cfg.S3.PartSize,
+		}
+		s3cfg.PartSize = storage.AdjustS3PartSize(s3cfg.PartSize, 5*1024*1024)
 		s3URL, err := url.Parse(creds.EndPoint)
 		if err != nil {
 			return nil, err
+		}
+		if s3URL.Scheme == "http" {
+			s3cfg.DisableSSL = true
 		}
 		if cfg.S3.Concurrency > 0 {
 			s3cfg.Concurrency = cfg.S3.Concurrency
@@ -499,7 +517,6 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 		}
 		// need for CopyObject
 		s3cfg.ObjectDiskPath = s3cfg.Path
-		s3cfg.Debug = cfg.S3.Debug
 		connection.S3 = &storage.S3{Config: &s3cfg}
 		if err = connection.S3.Connect(ctx); err != nil {
 			return nil, err
@@ -512,6 +529,7 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 			MaxBuffers:    cfg.AzureBlob.MaxBuffers,
 			MaxPartsCount: cfg.AzureBlob.MaxPartsCount,
 		}
+		azureCfg.BufferSize = storage.AdjustAzblobBufferSize(azureCfg.BufferSize)
 		azureURL, err := url.Parse(creds.EndPoint)
 		if err != nil {
 			return nil, err
@@ -659,4 +677,15 @@ func CopyObject(ctx context.Context, diskName string, srcSize int64, srcBucket, 
 	connection, _ := DisksConnections.Load(diskName)
 	remoteStorage := connection.GetRemoteStorage()
 	return remoteStorage.CopyObject(ctx, srcSize, srcBucket, srcKey, dstPath)
+}
+
+func CopyObjectStreaming(ctx context.Context, srcStorage storage.RemoteStorage, dstStorage storage.RemoteStorage, srcKey, dstKey string) error {
+	srcReader, srcErr := srcStorage.GetFileReaderAbsolute(ctx, srcKey)
+	if srcErr != nil {
+		return fmt.Errorf("srcStorage.GetFileReaderAbsolute(%s) error: %v", srcKey, srcErr)
+	}
+	if putErr := dstStorage.PutFileAbsolute(ctx, dstKey, srcReader); putErr != nil {
+		return fmt.Errorf("dstStorage.PutFileAbsolute(%s) error: %v", dstKey, putErr)
+	}
+	return nil
 }

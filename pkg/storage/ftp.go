@@ -222,7 +222,12 @@ func (f *FTP) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, 
 }
 
 func (f *FTP) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) error {
-	return fmt.Errorf("DeleteFileFromObjectDiskBackup not imlemented for %s", f.Kind())
+	client, err := f.getConnectionFromPool(ctx, "DeleteFileFromObjectDiskBackup")
+	defer f.returnConnectionToPool(ctx, "DeleteFileFromObjectDiskBackup", client)
+	if err != nil {
+		return err
+	}
+	return client.RemoveDirRecur(path.Join(f.Config.ObjectDiskPath, key))
 }
 
 type ftpFile struct {

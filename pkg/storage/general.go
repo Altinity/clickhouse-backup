@@ -554,12 +554,7 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			if int(cfg.General.MaxFileSize)%cfg.AzureBlob.MaxPartsCount > 0 {
 				bufferSize += int(cfg.General.MaxFileSize) % cfg.AzureBlob.MaxPartsCount
 			}
-			if bufferSize < 2*1024*1024 {
-				bufferSize = 2 * 1024 * 1024
-			}
-			if bufferSize > 10*1024*1024 {
-				bufferSize = 10 * 1024 * 1024
-			}
+			bufferSize = AdjustAzblobBufferSize(bufferSize)
 		}
 		azblobStorage.Config.BufferSize = bufferSize
 		return &BackupDestination{
@@ -574,17 +569,12 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			if cfg.General.MaxFileSize%cfg.S3.MaxPartsCount > 0 {
 				partSize++
 			}
-			if partSize < 5*1024*1024 {
-				partSize = 5 * 1024 * 1024
-			}
-			if partSize > 5*1024*1024*1024 {
-				partSize = 5 * 1024 * 1024 * 1024
-			}
+			partSize = AdjustS3PartSize(partSize, 5*1024*1024)
 		}
 		s3Storage := &S3{
 			Config:      &cfg.S3,
 			Concurrency: cfg.S3.Concurrency,
-			BufferSize:  128 * 1024,
+			BufferSize:  64 * 1024,
 			PartSize:    partSize,
 		}
 		s3Storage.Config.Path, err = ch.ApplyMacros(ctx, s3Storage.Config.Path)
@@ -598,7 +588,7 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 		// https://github.com/Altinity/clickhouse-backup/issues/588
 		if len(s3Storage.Config.ObjectLabels) > 0 && backupName != "" {
 			objectLabels := s3Storage.Config.ObjectLabels
-			objectLabels, err = ApplyMacrosToObjectLabels(ctx, objectLabels, ch, backupName)
+			objectLabels, err = ch.ApplyMacrosToObjectLabels(ctx, objectLabels, backupName)
 			if err != nil {
 				return nil, err
 			}
@@ -622,7 +612,7 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 		// https://github.com/Altinity/clickhouse-backup/issues/588
 		if len(googleCloudStorage.Config.ObjectLabels) > 0 && backupName != "" {
 			objectLabels := googleCloudStorage.Config.ObjectLabels
-			objectLabels, err = ApplyMacrosToObjectLabels(ctx, objectLabels, ch, backupName)
+			objectLabels, err = ch.ApplyMacrosToObjectLabels(ctx, objectLabels, backupName)
 			if err != nil {
 				return nil, err
 			}
@@ -636,6 +626,7 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 	case "cos":
 		tencentStorage := &COS{Config: &cfg.COS}
 		tencentStorage.Config.Path, err = ch.ApplyMacros(ctx, tencentStorage.Config.Path)
+		tencentStorage.Config.ObjectDiskPath, err = ch.ApplyMacros(ctx, tencentStorage.Config.ObjectDiskPath)
 		if err != nil {
 			return nil, err
 		}
@@ -649,6 +640,7 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			Config: &cfg.FTP,
 		}
 		ftpStorage.Config.Path, err = ch.ApplyMacros(ctx, ftpStorage.Config.Path)
+		ftpStorage.Config.ObjectDiskPath, err = ch.ApplyMacros(ctx, ftpStorage.Config.ObjectDiskPath)
 		if err != nil {
 			return nil, err
 		}
@@ -662,6 +654,7 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			Config: &cfg.SFTP,
 		}
 		sftpStorage.Config.Path, err = ch.ApplyMacros(ctx, sftpStorage.Config.Path)
+		sftpStorage.Config.ObjectDiskPath, err = ch.ApplyMacros(ctx, sftpStorage.Config.ObjectDiskPath)
 		if err != nil {
 			return nil, err
 		}
@@ -675,16 +668,23 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 	}
 }
 
-// ApplyMacrosToObjectLabels https://github.com/Altinity/clickhouse-backup/issues/588
-func ApplyMacrosToObjectLabels(ctx context.Context, objectLabels map[string]string, ch *clickhouse.ClickHouse, backupName string) (map[string]string, error) {
-	var err error
-	for k, v := range objectLabels {
-		v, err = ch.ApplyMacros(ctx, v)
-		if err != nil {
-			return nil, err
-		}
-		r := strings.NewReplacer("{backup}", backupName, "{backupName}", backupName, "{backup_name}", backupName, "{BACKUP_NAME}", backupName)
-		objectLabels[k] = r.Replace(v)
+func AdjustS3PartSize(partSize, minSize int64) int64 {
+	if partSize < minSize {
+		partSize = minSize
 	}
-	return objectLabels, nil
+
+	if partSize > 5*1024*1024*1024 {
+		partSize = 5 * 1024 * 1024 * 1024
+	}
+	return partSize
+}
+
+func AdjustAzblobBufferSize(bufferSize int) int {
+	if bufferSize < 2*1024*1024 {
+		bufferSize = 2 * 1024 * 1024
+	}
+	if bufferSize > 10*1024*1024 {
+		bufferSize = 10 * 1024 * 1024
+	}
+	return bufferSize
 }
