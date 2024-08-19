@@ -23,6 +23,7 @@ ftp:
   password: "test_backup"
   tls: false
   path: "/backup"
+  object_disk_path: "/object_disk"
   compression_format: none
   compression_level: 1
   concurrency: 4
