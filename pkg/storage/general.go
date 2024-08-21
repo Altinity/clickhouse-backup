@@ -518,32 +518,17 @@ func (bd *BackupDestination) throttleSpeed(startTime time.Time, size int64, maxS
 	}
 }
 
-func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhouse.ClickHouse, calcMaxSize bool, backupName string) (*BackupDestination, error) {
+func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhouse.ClickHouse, backupName string) (*BackupDestination, error) {
 	var err error
-	// https://github.com/Altinity/clickhouse-backup/issues/404
-	if calcMaxSize {
-		maxFileSize, err := ch.CalculateMaxFileSize(ctx, cfg)
-		if err != nil {
-			return nil, err
-		}
-		if cfg.General.MaxFileSize > 0 && cfg.General.MaxFileSize < maxFileSize {
-			log.Warn().Msgf("MAX_FILE_SIZE=%d is less than actual %d, please remove general->max_file_size section from your config", cfg.General.MaxFileSize, maxFileSize)
-		}
-		if cfg.General.MaxFileSize <= 0 || cfg.General.MaxFileSize < maxFileSize {
-			cfg.General.MaxFileSize = maxFileSize
-		}
-	}
 	switch cfg.General.RemoteStorage {
 	case "azblob":
 		azblobStorage := &AzureBlob{
 			Config: &cfg.AzureBlob,
 		}
-		azblobStorage.Config.Path, err = ch.ApplyMacros(ctx, azblobStorage.Config.Path)
-		if err != nil {
+		if azblobStorage.Config.Path, err = ch.ApplyMacros(ctx, azblobStorage.Config.Path); err != nil {
 			return nil, err
 		}
-		azblobStorage.Config.ObjectDiskPath, err = ch.ApplyMacros(ctx, azblobStorage.Config.ObjectDiskPath)
-		if err != nil {
+		if azblobStorage.Config.ObjectDiskPath, err = ch.ApplyMacros(ctx, azblobStorage.Config.ObjectDiskPath); err != nil {
 			return nil, err
 		}
 
@@ -577,12 +562,10 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			BufferSize:  64 * 1024,
 			PartSize:    partSize,
 		}
-		s3Storage.Config.Path, err = ch.ApplyMacros(ctx, s3Storage.Config.Path)
-		if err != nil {
+		if s3Storage.Config.Path, err = ch.ApplyMacros(ctx, s3Storage.Config.Path); err != nil {
 			return nil, err
 		}
-		s3Storage.Config.ObjectDiskPath, err = ch.ApplyMacros(ctx, s3Storage.Config.ObjectDiskPath)
-		if err != nil {
+		if s3Storage.Config.ObjectDiskPath, err = ch.ApplyMacros(ctx, s3Storage.Config.ObjectDiskPath); err != nil {
 			return nil, err
 		}
 		// https://github.com/Altinity/clickhouse-backup/issues/588
@@ -601,12 +584,10 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 		}, nil
 	case "gcs":
 		googleCloudStorage := &GCS{Config: &cfg.GCS}
-		googleCloudStorage.Config.Path, err = ch.ApplyMacros(ctx, googleCloudStorage.Config.Path)
-		if err != nil {
+		if googleCloudStorage.Config.Path, err = ch.ApplyMacros(ctx, googleCloudStorage.Config.Path); err != nil {
 			return nil, err
 		}
-		googleCloudStorage.Config.ObjectDiskPath, err = ch.ApplyMacros(ctx, googleCloudStorage.Config.ObjectDiskPath)
-		if err != nil {
+		if googleCloudStorage.Config.ObjectDiskPath, err = ch.ApplyMacros(ctx, googleCloudStorage.Config.ObjectDiskPath); err != nil {
 			return nil, err
 		}
 		// https://github.com/Altinity/clickhouse-backup/issues/588
@@ -625,9 +606,10 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 		}, nil
 	case "cos":
 		tencentStorage := &COS{Config: &cfg.COS}
-		tencentStorage.Config.Path, err = ch.ApplyMacros(ctx, tencentStorage.Config.Path)
-		tencentStorage.Config.ObjectDiskPath, err = ch.ApplyMacros(ctx, tencentStorage.Config.ObjectDiskPath)
-		if err != nil {
+		if tencentStorage.Config.Path, err = ch.ApplyMacros(ctx, tencentStorage.Config.Path); err != nil {
+			return nil, err
+		}
+		if tencentStorage.Config.ObjectDiskPath, err = ch.ApplyMacros(ctx, tencentStorage.Config.ObjectDiskPath); err != nil {
 			return nil, err
 		}
 		return &BackupDestination{
@@ -636,12 +618,16 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			cfg.COS.CompressionLevel,
 		}, nil
 	case "ftp":
+		if cfg.FTP.Concurrency < cfg.General.ObjectDiskServerSideCopyConcurrency/4 {
+			cfg.FTP.Concurrency = cfg.General.ObjectDiskServerSideCopyConcurrency
+		}
 		ftpStorage := &FTP{
 			Config: &cfg.FTP,
 		}
-		ftpStorage.Config.Path, err = ch.ApplyMacros(ctx, ftpStorage.Config.Path)
-		ftpStorage.Config.ObjectDiskPath, err = ch.ApplyMacros(ctx, ftpStorage.Config.ObjectDiskPath)
-		if err != nil {
+		if ftpStorage.Config.Path, err = ch.ApplyMacros(ctx, ftpStorage.Config.Path); err != nil {
+			return nil, err
+		}
+		if ftpStorage.Config.ObjectDiskPath, err = ch.ApplyMacros(ctx, ftpStorage.Config.ObjectDiskPath); err != nil {
 			return nil, err
 		}
 		return &BackupDestination{
@@ -653,11 +639,13 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 		sftpStorage := &SFTP{
 			Config: &cfg.SFTP,
 		}
-		sftpStorage.Config.Path, err = ch.ApplyMacros(ctx, sftpStorage.Config.Path)
-		sftpStorage.Config.ObjectDiskPath, err = ch.ApplyMacros(ctx, sftpStorage.Config.ObjectDiskPath)
-		if err != nil {
+		if sftpStorage.Config.Path, err = ch.ApplyMacros(ctx, sftpStorage.Config.Path); err != nil {
 			return nil, err
 		}
+		if sftpStorage.Config.ObjectDiskPath, err = ch.ApplyMacros(ctx, sftpStorage.Config.ObjectDiskPath); err != nil {
+			return nil, err
+		}
+
 		return &BackupDestination{
 			sftpStorage,
 			cfg.SFTP.CompressionFormat,

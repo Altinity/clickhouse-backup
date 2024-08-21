@@ -27,6 +27,7 @@ services:
       FTP_USER_PASS: "test_backup"
       FTP_MASQUERADEADDRESS: "yes"
       FTP_PASSIVE_PORTS: "21100 31100"
+      FTP_MAX_CONNECTIONS: 255
 
   minio:
     image: docker.io/bitnami/minio:${MINIO_VERSION:-latest}

@@ -226,7 +226,10 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 	}
 
 	if isObjectDiskContainsTables || (diffFromRemote != "" && b.cfg.General.RemoteStorage != "custom") {
-		b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, true, backupName)
+		if err = b.CalculateMaxSize(ctx); err != nil {
+			return err
+		}
+		b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, backupName)
 		if err != nil {
 			return err
 		}
@@ -409,7 +412,7 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 
 		if doBackupData && b.cfg.ClickHouse.EmbeddedBackupDisk == "" {
 			var err error
-			if b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, false, backupName); err != nil {
+			if b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, backupName); err != nil {
 				return err
 			}
 			if err = b.dst.Connect(ctx); err != nil {

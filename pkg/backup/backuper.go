@@ -94,13 +94,31 @@ func (b *Backuper) initDisksPathsAndBackupDestination(ctx context.Context, disks
 	}
 	b.DiskToPathMap = diskMap
 	if b.cfg.General.RemoteStorage != "none" && b.cfg.General.RemoteStorage != "custom" {
-		b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, true, backupName)
+		if err = b.CalculateMaxSize(ctx); err != nil {
+			return err
+		}
+		b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, backupName)
 		if err != nil {
 			return err
 		}
 		if err := b.dst.Connect(ctx); err != nil {
 			return fmt.Errorf("can't connect to %s: %v", b.dst.Kind(), err)
 		}
+	}
+	return nil
+}
+
+// CalculateMaxSize https://github.com/Altinity/clickhouse-backup/issues/404
+func (b *Backuper) CalculateMaxSize(ctx context.Context) error {
+	maxFileSize, err := b.ch.CalculateMaxFileSize(ctx, b.cfg)
+	if err != nil {
+		return err
+	}
+	if b.cfg.General.MaxFileSize > 0 && b.cfg.General.MaxFileSize < maxFileSize {
+		log.Warn().Msgf("MAX_FILE_SIZE=%d is less than actual %d, please remove general->max_file_size section from your config", b.cfg.General.MaxFileSize, maxFileSize)
+	}
+	if b.cfg.General.MaxFileSize <= 0 || b.cfg.General.MaxFileSize < maxFileSize {
+		b.cfg.General.MaxFileSize = maxFileSize
 	}
 	return nil
 }
