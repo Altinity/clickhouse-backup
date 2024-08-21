@@ -1413,6 +1413,7 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 					}
 				}
 				var isCopyFailed atomic.Bool
+				isCopyFailed.Store(false)
 				walkErr := filepath.Walk(partPath, func(fPath string, fInfo fs.FileInfo, err error) error {
 					if err != nil {
 						return err
@@ -1473,13 +1474,14 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 								}
 							} else {
 								copyObjectErr = nil
-								if srcBucket != "" {
+								if srcBucket != "" && !isCopyFailed.Load() {
 									copiedSize, copyObjectErr = object_disk.CopyObject(downloadCtx, dstDiskName, storageObject.ObjectSize, srcBucket, srcKey, storageObject.ObjectRelativePath)
 									if copyObjectErr != nil {
 										isCopyFailed.Store(true)
 										log.Warn().Msgf("object_disk.CopyObject `%s`.`%s` error: %v, will try streaming via local memory (possible high network traffic)", backupTable.Database, backupTable.Table, copyObjectErr)
 									}
 								}
+								//srcBucket empty when use non CopyObject compatible `remote_storage` type
 								if srcBucket == "" || isCopyFailed.Load() {
 									srcStorage := b.dst
 									dstConnection, connectionExists := object_disk.DisksConnections.Load(dstDiskName)
@@ -1488,7 +1490,11 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 									}
 									dstStorage := dstConnection.GetRemoteStorage()
 									dstKey := path.Join(dstConnection.GetRemoteObjectDiskPath(), storageObject.ObjectRelativePath)
-									if copyObjectErr = object_disk.CopyObjectStreaming(downloadCtx, srcStorage, dstStorage, srcKey, dstKey); copyObjectErr != nil {
+									retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
+									copyObjectErr = retry.RunCtx(downloadCtx, func(ctx context.Context) error {
+										return object_disk.CopyObjectStreaming(downloadCtx, srcStorage, dstStorage, srcKey, dstKey)
+									})
+									if copyObjectErr != nil {
 										return fmt.Errorf("object_disk.CopyObjectStreaming error: %v", copyObjectErr)
 									}
 									copiedSize = storageObject.ObjectSize
