@@ -794,7 +794,7 @@ func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetad
 	}
 	canContinue, err := ch.CheckReplicationInProgress(table)
 	if err != nil {
-		return err
+		return fmt.Errorf("ch.CheckReplicationInProgress error: %v", err)
 	}
 	if !canContinue {
 		return nil
@@ -805,7 +805,7 @@ func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetad
 	}
 	query := fmt.Sprintf("DETACH TABLE `%s`.`%s` SYNC", table.Database, table.Table)
 	if err := ch.Query(query); err != nil {
-		return err
+		return fmt.Errorf("%s error: %v", query, err)
 	}
 	replicatedMatches := replicatedMergeTreeRE.FindStringSubmatch(table.Query)
 	if len(replicatedMatches) > 0 {
@@ -819,26 +819,26 @@ func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetad
 		zkPath = strings.NewReplacer("{database}", table.Database, "{table}", table.Table).Replace(zkPath)
 		zkPath, err = ch.ApplyMacros(ctx, zkPath)
 		if err != nil {
-			return err
+			return fmt.Errorf("ch.ApplyMacros(ctx, zkPath) error: %v", err)
 		}
 		replicaName, err = ch.ApplyMacros(ctx, replicaName)
 		if err != nil {
-			return err
+			return fmt.Errorf("ch.ApplyMacros(ctx, replicaName) error: %v", err)
 		}
 		query = fmt.Sprintf("SYSTEM DROP REPLICA '%s' FROM ZKPATH '%s'", replicaName, zkPath)
 		if err := ch.Query(query); err != nil {
-			return err
+			return fmt.Errorf("%s error: %v", query, err)
 		}
 	}
 	query = fmt.Sprintf("ATTACH TABLE `%s`.`%s`", table.Database, table.Table)
 	if err := ch.Query(query); err != nil {
-		return err
+		return fmt.Errorf("%s error: %v", query, err)
 	}
 
 	if len(replicatedMatches) > 0 {
 		query = fmt.Sprintf("SYSTEM RESTORE REPLICA `%s`.`%s`", table.Database, table.Table)
 		if err := ch.Query(query); err != nil {
-			return err
+			return fmt.Errorf("%s error: %v", query, err)
 		}
 	}
 	log.Debug().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).Msg("attached")
