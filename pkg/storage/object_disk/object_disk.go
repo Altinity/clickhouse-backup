@@ -687,5 +687,8 @@ func CopyObjectStreaming(ctx context.Context, srcStorage storage.RemoteStorage, 
 	if putErr := dstStorage.PutFileAbsolute(ctx, dstKey, srcReader); putErr != nil {
 		return fmt.Errorf("dstStorage.PutFileAbsolute(%s) error: %v", dstKey, putErr)
 	}
+	if closeErr := srcReader.Close(); closeErr != nil {
+		return fmt.Errorf("srcReader.Close(%s) error: %v", srcKey, closeErr)
+	}
 	return nil
 }
