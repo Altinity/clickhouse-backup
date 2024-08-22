@@ -1328,16 +1328,21 @@ func (ch *ClickHouse) GetPreprocessedConfigPath(ctx context.Context) (string, er
 func (ch *ClickHouse) ParseXML(ctx context.Context, configName string) (configFile string, doc *xmlquery.Node, err error) {
 	preprocessedConfigPath, err := ch.GetPreprocessedConfigPath(ctx)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("ch.GetPreprocessedConfigPath error: %v", err)
 	}
 	configFile = path.Join(preprocessedConfigPath, configName)
 	f, err := os.Open(configFile)
 	if err != nil {
 		return "", nil, err
 	}
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			log.Error().Msgf("can't close %s error: %v", configFile, closeErr)
+		}
+	}()
 	doc, err = xmlquery.Parse(f)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("xmlquery.Parse(%s) error: %v", configFile, err)
 	}
 	return configFile, doc, nil
 }

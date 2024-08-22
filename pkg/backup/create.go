@@ -637,11 +637,11 @@ func (b *Backuper) createBackupRBAC(ctx context.Context, backupPath string, disk
 		rbacBackup := path.Join(backupPath, "access")
 		replicatedRBACDataSize, err := b.createBackupRBACReplicated(ctx, rbacBackup)
 		if err != nil {
-			return 0, err
+			return 0, fmt.Errorf("b.createBackupRBACReplicated error: %v", err)
 		}
 		accessPath, err := b.ch.GetAccessManagementPath(ctx, disks)
 		if err != nil {
-			return 0, err
+			return 0, fmt.Errorf("b.ch.GetAccessManagementPath error: %v", err)
 		}
 		accessPathInfo, err := os.Stat(accessPath)
 		if err != nil && !os.IsNotExist(err) {
@@ -694,7 +694,7 @@ func (b *Backuper) createBackupRBACReplicated(ctx context.Context, rbacBackup st
 		for _, userDirectory := range replicatedRBAC {
 			replicatedAccessPath, err := k.GetReplicatedAccessPath(userDirectory.Name)
 			if err != nil {
-				return 0, err
+				return 0, fmt.Errorf("k.GetReplicatedAccessPath(%s) error: %v", userDirectory.Name, err)
 			}
 			rbacUUIDObjectsCount, err := k.ChildCount(replicatedAccessPath, "uuid")
 			if err != nil {
