@@ -6,7 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/antchfx/xmlquery"
-	"github.com/apex/log"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"os"
 	"path"
 	"strconv"
@@ -18,21 +19,21 @@ import (
 )
 
 type LogKeeperToApexLogAdapter struct {
-	apexLog *log.Logger
+	log zerolog.Logger
 }
 
-func newKeeperLogger(log *log.Entry) LogKeeperToApexLogAdapter {
+func newKeeperLogger() LogKeeperToApexLogAdapter {
 	return LogKeeperToApexLogAdapter{
-		apexLog: log.Logger,
+		log: log.Logger,
 	}
 }
 
 func (KeeperLogToApexLogAdapter LogKeeperToApexLogAdapter) Printf(msg string, args ...interface{}) {
 	msg = fmt.Sprintf("[keeper] %s", msg)
 	if len(args) > 0 {
-		KeeperLogToApexLogAdapter.apexLog.Debugf(msg, args...)
+		KeeperLogToApexLogAdapter.log.Debug().Msgf(msg, args...)
 	} else {
-		KeeperLogToApexLogAdapter.apexLog.Debug(msg)
+		KeeperLogToApexLogAdapter.log.Debug().Msg(msg)
 	}
 }
 
@@ -43,7 +44,6 @@ type DumpNode struct {
 
 type Keeper struct {
 	conn          *zk.Conn
-	Log           *log.Entry
 	root          string
 	doc           *xmlquery.Node
 	xmlConfigFile string
@@ -66,7 +66,7 @@ func (k *Keeper) Connect(ctx context.Context, ch *clickhouse.ClickHouse) error {
 		if sessionTimeoutMs, err := strconv.ParseInt(sessionTimeoutMsNode.InnerText(), 10, 64); err == nil {
 			sessionTimeout = time.Duration(sessionTimeoutMs) * time.Millisecond
 		} else {
-			k.Log.Warnf("can't parse /zookeeper/session_timeout_ms in %s, value: %v, error: %v ", configFile, sessionTimeoutMsNode.InnerText(), err)
+			log.Warn().Msgf("can't parse /zookeeper/session_timeout_ms in %s, value: %v, error: %v ", configFile, sessionTimeoutMsNode.InnerText(), err)
 		}
 	}
 	nodeList := zookeeperNode.SelectElements("node")
@@ -86,7 +86,7 @@ func (k *Keeper) Connect(ctx context.Context, ch *clickhouse.ClickHouse) error {
 		}
 		keeperHosts[i] = fmt.Sprintf("%s:%s", hostNode.InnerText(), port)
 	}
-	conn, _, err := zk.Connect(keeperHosts, sessionTimeout, zk.WithLogger(newKeeperLogger(k.Log)))
+	conn, _, err := zk.Connect(keeperHosts, sessionTimeout, zk.WithLogger(newKeeperLogger()))
 	if err != nil {
 		return err
 	}
@@ -108,7 +108,11 @@ func (k *Keeper) GetReplicatedAccessPath(userDirectory string) (string, error) {
 	if zookeeperPathNode == nil {
 		return "", fmt.Errorf("can't find %s in %s", xPathQuery, k.xmlConfigFile)
 	}
-	return zookeeperPathNode.InnerText(), nil
+	zookeeperPath := zookeeperPathNode.InnerText()
+	if zookeeperPath != "/" {
+		zookeeperPath = strings.TrimSuffix(zookeeperPathNode.InnerText(), "/")
+	}
+	return zookeeperPath, nil
 }
 
 func (k *Keeper) Dump(prefix, dumpFile string) (int, error) {
@@ -118,7 +122,7 @@ func (k *Keeper) Dump(prefix, dumpFile string) (int, error) {
 	}
 	defer func() {
 		if err = f.Close(); err != nil {
-			k.Log.Warnf("can't close %s: %v", dumpFile, err)
+			log.Warn().Msgf("can't close %s: %v", dumpFile, err)
 		}
 	}()
 	if !strings.HasPrefix(prefix, "/") && k.root != "" {
@@ -179,7 +183,7 @@ func (k *Keeper) Restore(dumpFile, prefix string) error {
 	}
 	defer func() {
 		if err = f.Close(); err != nil {
-			k.Log.Warnf("can't close %s: %v", dumpFile, err)
+			log.Warn().Msgf("can't close %s: %v", dumpFile, err)
 		}
 	}()
 	if !strings.HasPrefix(prefix, "/") && k.root != "" {
@@ -216,7 +220,7 @@ type WalkCallBack = func(node DumpNode) (bool, error)
 func (k *Keeper) Walk(prefix, relativePath string, recursive bool, callback WalkCallBack) error {
 	nodePath := path.Join(prefix, relativePath)
 	value, stat, err := k.conn.Get(nodePath)
-	k.Log.Debugf("Walk->get(%s) = %v, err = %v", nodePath, string(value), err)
+	log.Debug().Msgf("Walk->get(%s) = %v, err = %v", nodePath, string(value), err)
 	if err != nil {
 		return err
 	}

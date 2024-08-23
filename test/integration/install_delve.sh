@@ -18,6 +18,7 @@ ln -nsfv /usr/lib/go-1.22/bin/go /usr/bin/go
 CGO_ENABLED=0 GO111MODULE=on go install -ldflags "-s -w -extldflags '-static'" github.com/go-delve/delve/cmd/dlv@latest
 
 # GO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags osusergo,netgo -gcflags "all=-N -l" -ldflags "-extldflags '-static' -X 'main.version=debug'" -o build/linux/amd64/clickhouse-backup ./cmd/clickhouse-backup
+# /root/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /bin/clickhouse-backup -- -c /etc/clickhouse-backup/config-azblob.yml download --partitions=test_partitions_TestIntegrationAzure.t?:(0,'2022-01-02'),(0,'2022-01-03') full_backup_3691696362844433277
 # /root/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /bin/clickhouse-backup -- -c /etc/clickhouse-backup/config-azblob.yml restore --schema TestIntegrationAzure_full_6516689450475708573
 # /root/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /bin/clickhouse-backup -- -c /etc/clickhouse-server/config.d/ch-backup.yaml upload debug_upload --table
 # USE_RESUMABLE_STATE=0 CLICKHOUSE_SKIP_TABLES=*.test_memory /root/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /bin/clickhouse-backup -- -c /etc/clickhouse-backup/config-s3.yml download test_skip_full_backup
@@ -33,7 +34,9 @@ CGO_ENABLED=0 GO111MODULE=on go install -ldflags "-s -w -extldflags '-static'" g
 # run integration_test.go under debug, run from host OS not inside docker
 # go test -timeout 30m -failfast -tags=integration -run "TestIntegrationEmbedded" -v ./test/integration/integration_test.go -c -o ./test/integration/integration_test
 # sudo -H bash -c 'export CLICKHOUSE_IMAGE=clickhouse/clickhouse-server; export COMPOSE_FILE=docker-compose_advanced.yml; export CLICKHOUSE_VERSION=head; cd ./test/integration/; /root/go/bin/dlv --listen=127.0.0.1:40002 --headless=true --api-version=2 --accept-multiclient exec ./integration_test -- -test.timeout 30m -test.failfast -test.run "TestIntegrationEmbedded"'
-/root/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /bin/clickhouse-backup -- -c /etc/clickhouse-backup/config-s3.yml download --partitions="test_partitions_TestIntegrationS3.t?:(0,'2022-01-02'),(0,'2022-01-03')" full_backup_5643339940028285692
+# /root/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /bin/clickhouse-backup -- -c /etc/clickhouse-backup/config-s3.yml download --partitions="test_partitions_TestIntegrationS3.t?:(0,'2022-01-02'),(0,'2022-01-03')" full_backup_5643339940028285692
+# EMBEDDED_S3_COMPRESSION_FORMAT=zstd CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3-embedded.yml /root/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /bin/clickhouse-backup -- upload TestIntegrationEmbedded_full_5990789107828261693
+
 
 
 

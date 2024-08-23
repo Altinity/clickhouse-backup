@@ -91,7 +91,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_s3.xml
     <disks>
       <disk_s3>
         <type>s3</type>
-        <endpoint>http://minio:9000/clickhouse/disk_s3/{cluster}/{shard}/</endpoint>
+        <endpoint>https://minio:9000/clickhouse/disk_s3/{cluster}/{shard}/</endpoint>
         <!-- https://github.com/Altinity/clickhouse-backup/issues/691
         <access_key_id>access_key</access_key_id>
         <secret_access_key>it_is_my_super_secret_key</secret_access_key>
@@ -168,7 +168,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_encrypted_s3.x
     <disks>
       <disk_s3>
         <type>s3</type>
-        <endpoint>http://minio:9000/clickhouse/disk_s3/</endpoint>
+        <endpoint>https://minio:9000/clickhouse/disk_s3/</endpoint>
         <!-- https://github.com/Altinity/clickhouse-backup/issues/691
         <access_key_id>access_key</access_key_id>
         <secret_access_key>it_is_my_super_secret_key</secret_access_key>
@@ -244,7 +244,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3.xml
     <disks>
       <backups_s3>
         <type>s3</type>
-        <endpoint>http://minio:9000/clickhouse/backups_s3/{cluster}/{shard}/</endpoint>
+        <endpoint>https://minio:9000/clickhouse/backups_s3/{cluster}/{shard}/</endpoint>
         <!-- https://github.com/Altinity/clickhouse-backup/issues/691
         <access_key_id>access_key</access_key_id>
         <secret_access_key>it_is_my_super_secret_key</secret_access_key>
@@ -304,7 +304,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/backup_storage_configuration_s3_plai
     <disks>
       <backups_s3_plain>
         <type>s3_plain</type>
-        <endpoint>http://minio:9000/clickhouse/backups_s3_plain/{cluster}/{shard}/</endpoint>
+        <endpoint>https://minio:9000/clickhouse/backups_s3_plain/{cluster}/{shard}/</endpoint>
         <!-- https://github.com/Altinity/clickhouse-backup/issues/691
         <access_key_id>access_key</access_key_id>
         <secret_access_key>it_is_my_super_secret_key</secret_access_key>
@@ -468,6 +468,25 @@ cat <<EOT > /etc/clickhouse-server/users.d/allow_experimental_window_view.xml
 <profiles><default>
  <allow_experimental_window_view>1</allow_experimental_window_view>
 </default></profiles>
+</yandex>
+EOT
+
+fi
+
+# blob_storage_log available in 23.11
+if [[ "$CLICKHOUSE_VERSION" == "head" || "${CLICKHOUSE_VERSION}" =~ ^23\.1[1-9] || "${CLICKHOUSE_VERSION}" =~ ^2[4-9\.[1-9] ]]; then
+
+cat <<EOT > /etc/clickhouse-server/config.d/blob_storage_log.xml
+<yandex>
+   <blob_storage_log replace="1">
+        <database>system</database>
+        <table>blob_storage_log</table>
+        <engine>ENGINE = MergeTree PARTITION BY (event_date)
+                ORDER BY (event_time)
+                TTL event_date + INTERVAL 1 DAY DELETE
+        </engine>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+    </blob_storage_log>
 </yandex>
 EOT
 

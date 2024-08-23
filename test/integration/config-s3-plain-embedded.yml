@@ -25,12 +25,13 @@ s3:
   access_key: access_key
   secret_key: it_is_my_super_secret_key
   bucket: clickhouse
-  endpoint: http://minio:9000
+  endpoint: https://minio:9000
+  disable_ssl: false
+  disable_cert_verification: true
   acl: private
   force_path_style: true
   path: backup/{cluster}/{shard}
   object_disk_path: object_disk/{cluster}/{shard}
-  disable_ssl: true
   compression_format: none
 api:
   listen: :7171

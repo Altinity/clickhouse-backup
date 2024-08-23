@@ -2,9 +2,9 @@ package storage
 
 import (
 	"fmt"
-	"github.com/apex/log"
 	"github.com/klauspost/compress/zstd"
 	"github.com/mholt/archiver/v4"
+	"github.com/rs/zerolog/log"
 	"sort"
 	"strings"
 	"time"
@@ -23,12 +23,12 @@ func GetBackupsToDeleteRemote(backups []Backup, keep int) []Backup {
 		deletedBackups := make([]Backup, len(backups)-keep)
 		copied := copy(deletedBackups, backups[keep:])
 		if copied != len(backups)-keep {
-			log.Warnf("copied wrong items from backup list expected=%d, actual=%d", len(backups)-keep, copied)
+			log.Warn().Msgf("copied wrong items from backup list expected=%d, actual=%d", len(backups)-keep, copied)
 		}
 		keepBackups := make([]Backup, keep)
 		copied = copy(keepBackups, backups[:keep])
 		if copied != keep {
-			log.Warnf("copied wrong items from backup list expected=%d, actual=%d", keep, copied)
+			log.Warn().Msgf("copied wrong items from backup list expected=%d, actual=%d", keep, copied)
 		}
 		var findRequiredBackup func(b Backup)
 		findRequiredBackup = func(b Backup) {

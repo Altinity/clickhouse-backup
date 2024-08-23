@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
-	"github.com/apex/log"
+	"github.com/rs/zerolog/log"
 	"time"
 )
 
@@ -25,17 +25,17 @@ func DeleteRemote(ctx context.Context, cfg *config.Config, backupName string) er
 	args := ApplyCommandTemplate(cfg.Custom.DeleteCommand, templateData)
 	err := utils.ExecCmd(ctx, cfg.Custom.CommandTimeoutDuration, args[0], args[1:]...)
 	if err == nil {
-		log.WithFields(log.Fields{
+		log.Info().Fields(map[string]interface{}{
 			"backup":    backupName,
 			"operation": "delete_custom",
 			"duration":  utils.HumanizeDuration(time.Since(startCustomDelete)),
-		}).Info("done")
+		}).Msg("done")
 		return nil
 	} else {
-		log.WithFields(log.Fields{
+		log.Error().Fields(map[string]interface{}{
 			"backup":    backupName,
 			"operation": "delete_custom",
-		}).Error(err.Error())
+		}).Msg(err.Error())
 		return err
 	}
 

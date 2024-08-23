@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
-	apexLog "github.com/apex/log"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	awsV2Config "github.com/aws/aws-sdk-go-v2/config"
@@ -28,25 +27,27 @@ import (
 	awsV2Logging "github.com/aws/smithy-go/logging"
 	awsV2http "github.com/aws/smithy-go/transport/http"
 	"github.com/pkg/errors"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/sync/errgroup"
 )
 
-type S3LogToApexLogAdapter struct {
-	apexLog *apexLog.Logger
+type S3LogToZeroLogAdapter struct {
+	logger zerolog.Logger
 }
 
-func newS3Logger(log *apexLog.Entry) S3LogToApexLogAdapter {
-	return S3LogToApexLogAdapter{
-		apexLog: log.Logger,
+func newS3Logger(logger zerolog.Logger) S3LogToZeroLogAdapter {
+	return S3LogToZeroLogAdapter{
+		logger: logger,
 	}
 }
 
-func (S3LogToApexLogAdapter S3LogToApexLogAdapter) Logf(severity awsV2Logging.Classification, msg string, args ...interface{}) {
+func (S3LogToApexLogAdapter S3LogToZeroLogAdapter) Logf(severity awsV2Logging.Classification, msg string, args ...interface{}) {
 	msg = fmt.Sprintf("[s3:%s] %s", severity, msg)
 	if len(args) > 0 {
-		S3LogToApexLogAdapter.apexLog.Infof(msg, args...)
+		S3LogToApexLogAdapter.logger.Info().Msgf(msg, args...)
 	} else {
-		S3LogToApexLogAdapter.apexLog.Info(msg)
+		S3LogToApexLogAdapter.logger.Info().Msg(msg)
 	}
 }
 
@@ -89,7 +90,6 @@ type S3 struct {
 	uploader    *s3manager.Uploader
 	downloader  *s3manager.Downloader
 	Config      *config.S3Config
-	Log         *apexLog.Entry
 	PartSize    int64
 	Concurrency int
 	BufferSize  int
@@ -140,7 +140,7 @@ func (s *S3) Connect(ctx context.Context) error {
 	}
 
 	if s.Config.Debug {
-		awsConfig.Logger = newS3Logger(s.Log)
+		awsConfig.Logger = newS3Logger(log.Logger)
 		awsConfig.ClientLogMode = aws.LogRetries | aws.LogRequest | aws.LogResponse
 	}
 
@@ -214,13 +214,13 @@ func (s *S3) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadClos
 				var stateErr *s3types.InvalidObjectState
 				if errors.As(httpErr, &stateErr) {
 					if strings.Contains(string(stateErr.StorageClass), "GLACIER") {
-						s.Log.Warnf("GetFileReader %s, storageClass %s receive error: %s", key, stateErr.StorageClass, stateErr.Error())
+						log.Warn().Msgf("GetFileReader %s, storageClass %s receive error: %s", key, stateErr.StorageClass, stateErr.Error())
 						if restoreErr := s.restoreObject(ctx, key); restoreErr != nil {
-							s.Log.Warnf("restoreObject %s, return error: %v", key, restoreErr)
+							log.Warn().Msgf("restoreObject %s, return error: %v", key, restoreErr)
 							return nil, err
 						}
 						if resp, err = s.client.GetObject(ctx, params); err != nil {
-							s.Log.Warnf("second GetObject %s, return error: %v", key, err)
+							log.Warn().Msgf("second GetObject %s, return error: %v", key, err)
 							return nil, err
 						}
 						return resp.Body, nil
@@ -466,7 +466,7 @@ func (s *S3) remotePager(ctx context.Context, s3Path string, recursive bool, pro
 
 func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
 	dstKey = path.Join(s.Config.ObjectDiskPath, dstKey)
-	s.Log.Debugf("S3->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, s.Config.Bucket, dstKey)
+	log.Debug().Msgf("S3->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, s.Config.Bucket, dstKey)
 	// just copy object without multipart
 	if srcSize < 5*1024*1024*1024 || strings.Contains(s.Config.Endpoint, "storage.googleapis.com") {
 		params := &s3.CopyObjectInput{
@@ -478,7 +478,7 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 		s.enrichCopyObjectParams(params)
 		_, err := s.client.CopyObject(ctx, params)
 		if err != nil {
-			return 0, err
+			return 0, fmt.Errorf("S3->CopyObject %s/%s -> %s/%s return error: %v", srcBucket, srcKey, s.Config.Bucket, dstKey, err)
 		}
 		return srcSize, nil
 	}
@@ -491,7 +491,7 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 	s.enrichCreateMultipartUploadParams(createMultipartUploadParams)
 	initResp, err := s.client.CreateMultipartUpload(ctx, createMultipartUploadParams)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("S3->CopyObject %s/%s -> %s/%s, CreateMultipartUpload return error: %v", srcBucket, srcKey, s.Config.Bucket, dstKey, err)
 	}
 
 	// Get the upload ID
@@ -545,7 +545,7 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 			}
 			partResp, err := s.client.UploadPartCopy(ctx, uploadPartParams)
 			if err != nil {
-				return err
+				return fmt.Errorf("S3->CopyObject %s/%s -> %s/%s, UploadPartCopy start=%d, end=%d return error: %v", srcBucket, srcKey, s.Config.Bucket, dstKey, start, end-1, err)
 			}
 			mu.Lock()
 			parts = append(parts, s3types.CompletedPart{
@@ -573,7 +573,7 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 		if abortErr != nil {
 			return 0, fmt.Errorf("aborting CopyObject multipart upload: %v, original error was: %v", abortErr, wgWaitErr)
 		}
-		return 0, fmt.Errorf("one of CopyObject go-routine return error: %v", wgWaitErr)
+		return 0, fmt.Errorf("one of CopyObject/Multipart go-routine return error: %v", wgWaitErr)
 	}
 	// Parts must be ordered by part number.
 	sort.Slice(parts, func(i int, j int) bool {
@@ -704,7 +704,7 @@ func (s *S3) restoreObject(ctx context.Context, key string) error {
 
 		if res.Restore != nil && *res.Restore == "ongoing-request=\"true\"" {
 			i += 1
-			s.Log.Warnf("%s still not restored, will wait %d seconds", key, i*5)
+			log.Warn().Msgf("%s still not restored, will wait %d seconds", key, i*5)
 			time.Sleep(time.Duration(i*5) * time.Second)
 		} else {
 			return nil

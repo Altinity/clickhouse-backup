@@ -30,5 +30,5 @@ EOF
 )
 
 mc admin policy attach local nodelete --user nodelete
-mc alias set nodelete http://localhost:9000 nodelete nodelete_password
+mc alias set nodelete https://localhost:9000 nodelete nodelete_password
 mc alias list

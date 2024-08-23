@@ -1,3 +1,82 @@
+# v2.5.29
+BUG FIXES
+- fix corner case for backup/restore RBAC object with trailing slash, warn /clickhouse/access//uuid have no children, skip Dump
+
+# v2.5.28
+BUG FIXES
+- fix corner cases for wrong *_last* metrics calculation after restart, fix [980](https://github.com/Altinity/clickhouse-backup/issues/980)
+
+# v2.5.27
+IMPROVEMENTS
+- update Dockerfile and Makefile to speedup cross-platform building
+
+BUG FIXES
+- update clickhouse-go/v2, try fix [970](https://github.com/Altinity/clickhouse-backup/issues/970)
+
+# v2.5.26
+BUG FIXES
+- fix corner cases when /var/lib/clickhouse/access already broken, fix [977](https://github.com/Altinity/clickhouse-backup/issues/977)
+- finish migrate from `apex/log` to `rs/zerolog`, fix [624](https://github.com/Altinity/clickhouse-backup/issues/624), thanks @rdmrcv  
+
+# v2.5.25
+BUG FIXES
+- fix corner cases for wrong parsing RBAC name, during resolve conflict for complex multi line RBAC objects, fix [976](https://github.com/Altinity/clickhouse-backup/issues/976)
+
+# v2.5.24
+BUG FIXES
+- fix corner cases object disk parse endpoint for S3, to avoid wrong `.amazonaws.amazonaws.com` suffix
+ 
+# v2.5.23
+BUG FIXES
+- fix corner case for LOG_LEVEL + --env, fix [972](https://github.com/Altinity/clickhouse-backup/issues/972)
+
+# v2.5.22
+IMPROVEMENTS
+- redirect logs into stderr instead of stdout, fix [969](https://github.com/Altinity/clickhouse-backup/issues/969)
+- migrate from `apex/log` to `rs/zerolog`, fix RaceConditions, fix [624](https://github.com/Altinity/clickhouse-backup/issues/624),see details https://github.com/apex/log/issues/103
+
+# v2.5.21
+IMPROVEMENTS
+- switch from `docker-compose` (python) to `docker compose` (golang)
+- add parallel integration test execution fix [888](https://github.com/Altinity/clickhouse-backup/issues/888)
+ 
+BUG FIXES
+- properly handle log_pointer=1 corner case for `check_replica_before_attach: true`, fix [967](https://github.com/Altinity/clickhouse-backup/issues/967)
+- properly handle empty output for `list` command when `remote_storage: custom`, fix [963](https://github.com/Altinity/clickhouse-backup/issues/963), thanks @straysh
+- fix corner cases when connect to S3 provider with self-signed TLS certificates, check `S3_DISABLE_CERT_VALIDATION=true` in tests fix [960](https://github.com/Altinity/clickhouse-backup/issues/960)
+
+# v2.5.20
+IMPROVEMENTS
+- add `--restore-table-mapping` CLI and API parameter to `restore` and `restore_remote` command, fix [937](https://github.com/Altinity/clickhouse-backup/issues/937), thanks @nithin-vunet and @raspreet-vunet
+
+BUG FIXES
+- remove trailing `/` from `object_disk_path` to properly `create` and `restore`, fix [946](https://github.com/Altinity/clickhouse-backup/issues/946)
+
+# v2.5.19
+BUG FIXES
+- fix `restore --rbac` behavior when RBAC objects contains `-`, `.` or any special characters new fixes for [930](https://github.com/Altinity/clickhouse-backup/issues/930)
+
+# v2.5.18
+BUG FIXES
+- add `clean` command to `POST /backup/actions` API handler, fix [945](https://github.com/Altinity/clickhouse-backup/issues/945)
+
+# v2.5.17
+BUG FIXES
+- Fix wrong restoration of Materialized views with view name starting with digits for `--restore-table-mapping`, fix [942](https://github.com/Altinity/clickhouse-backup/pull/942), thanks @praveenthuwat
+
+# v2.5.16
+BUG FIXES
+- allow backup/restore tables and databases which contains additional special characters set, fix [938](https://github.com/Altinity/clickhouse-backup/issues/938)
+- properly restore environment variables to avoid failures in config.ValidateConfig in REST API mode, fix [940](https://github.com/Altinity/clickhouse-backup/issues/940)
+
+# v2.5.15
+IMPROVEMENTS
+- increase `s3_request_timeout_ms` (23.7+) and turn off `s3_use_adaptive_timeouts` (23.11+) when `use_embedded_backup_restore: true`
+
+BUG FIXES
+- fix hangs `create` and `restore` when CLICKHOUSE_MAX_CONNECTIONS=0, fix [933](https://github.com/Altinity/clickhouse-backup/issues/933)
+- remove obsolete `CLICKHOUSE_EMBEDDED_BACKUP_THREADS`, `CLICKHOUSE_EMBEDDED_BACKUP_THREADS` these settings could configure only via server level, not profile and query settings after 23.3
+
 # v2.5.14
 IMPROVEMENTS
 - add http_send_timeout=300, http_receive_timeout=300 to embedded backup/restore operations
@@ -59,7 +138,7 @@ BUG FIXES
 
 # v2.5.6
 BUG FIXES
-- skip `ValidateObjectDiskConfig` for `--diff-from-remote` when object disk doesn't contains data fix [910](https://github.com/Altinity/clickhouse-backup/issues/910)
+- skip `ValidateObjectDiskConfig` for `--diff-from-remote` when object disk doesn't contain data fix [910](https://github.com/Altinity/clickhouse-backup/issues/910)
 
 # v2.5.5
 IMPROVEMENTS

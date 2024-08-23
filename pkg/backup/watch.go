@@ -6,7 +6,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/server/metrics"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
-	apexLog "github.com/apex/log"
+	"github.com/rs/zerolog/log"
 	"github.com/urfave/cli"
 	"regexp"
 	"strings"
@@ -106,17 +106,13 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 				if cfg, err := config.LoadConfig(config.GetConfigPath(cliCtx)); err == nil {
 					b.cfg = cfg
 				} else {
-					b.log.Warnf("watch config.LoadConfig error: %v", err)
+					log.Warn().Msgf("watch config.LoadConfig error: %v", err)
 				}
 				if err := b.ValidateWatchParams(watchInterval, fullInterval, watchBackupNameTemplate); err != nil {
 					return err
 				}
 			}
 			backupName, err := b.NewBackupWatchName(ctx, backupType)
-			log := b.log.WithFields(apexLog.Fields{
-				"backup":    backupName,
-				"operation": "watch",
-			})
 			if err != nil {
 				return err
 			}
@@ -158,14 +154,17 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 						cmd += " --skip-check-parts-columns"
 					}
 					cmd += " " + backupName
-					log.Errorf("%s return error: %v", cmd, createRemoteErr)
+					log.Error().Msgf("%s return error: %v", cmd, createRemoteErr)
 					createRemoteErrCount += 1
 				} else {
 					createRemoteErrCount = 0
 				}
 				deleteLocalErr = b.RemoveBackupLocal(ctx, backupName, nil)
 				if deleteLocalErr != nil {
-					log.Errorf("delete local %s return error: %v", backupName, deleteLocalErr)
+					log.Error().Fields(map[string]interface{}{
+						"backup":    backupName,
+						"operation": "watch",
+					}).Msgf("delete local %s return error: %v", backupName, deleteLocalErr)
 					deleteLocalErrCount += 1
 				} else {
 					deleteLocalErrCount = 0
@@ -237,10 +236,10 @@ func (b *Backuper) calculatePrevBackupNameAndType(ctx context.Context, prevBacku
 		now := time.Now()
 		timeBeforeDoBackup := int(b.cfg.General.WatchDuration.Seconds() - now.Sub(lastBackup).Seconds())
 		timeBeforeDoFullBackup := int(b.cfg.General.FullDuration.Seconds() - now.Sub(lastFullBackup).Seconds())
-		b.log.Infof("Time before do backup %v", timeBeforeDoBackup)
-		b.log.Infof("Time before do full backup %v", timeBeforeDoFullBackup)
+		log.Info().Msgf("Time before do backup %v", timeBeforeDoBackup)
+		log.Info().Msgf("Time before do full backup %v", timeBeforeDoFullBackup)
 		if timeBeforeDoBackup > 0 && timeBeforeDoFullBackup > 0 {
-			b.log.Infof("Waiting %d seconds until continue doing backups due watch interval", timeBeforeDoBackup)
+			log.Info().Msgf("Waiting %d seconds until continue doing backups due watch interval", timeBeforeDoBackup)
 			select {
 			case <-ctx.Done():
 				return "", "", time.Time{}, time.Time{}, "", ctx.Err()

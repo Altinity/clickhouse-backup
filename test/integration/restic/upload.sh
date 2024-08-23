@@ -10,5 +10,5 @@ if [[ "" != "${DIFF_FROM_REMOTE}" ]]; then
   DIFF_FROM_REMOTE=$(${CUR_DIR}/list.sh | grep "${DIFF_FROM_REMOTE}" | jq -r -c '.snapshot_id')
   DIFF_FROM_REMOTE_CMD="--parent ${DIFF_FROM_REMOTE}"
 fi
-restic backup $DIFF_FROM_REMOTE_CMD --tag "${BACKUP_NAME}"  $LOCAL_PATHS
-restic forget --keep-last ${RESTIC_KEEP_LAST} --prune
+restic backup --insecure-tls $DIFF_FROM_REMOTE_CMD --tag "${BACKUP_NAME}"  $LOCAL_PATHS
+restic forget --insecure-tls --keep-last ${RESTIC_KEEP_LAST} --prune

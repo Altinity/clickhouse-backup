@@ -2,7 +2,6 @@ package filesystemhelper
 
 import (
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"net/url"
 	"os"
 	"path"
@@ -15,7 +14,8 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
-	apexLog "github.com/apex/log"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
+	"github.com/rs/zerolog/log"
 )
 
 var (
@@ -116,7 +116,6 @@ func MkdirAll(path string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk) e
 
 // HardlinkBackupPartsToStorage - copy partitions for specific table to detached folder
 func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableMetadata, disks []clickhouse.Disk, diskMap map[string]string, tableDataPaths []string, ch *clickhouse.ClickHouse, toDetached bool) error {
-	log := apexLog.WithFields(apexLog.Fields{"operation": "HardlinkBackupPartsToStorage"})
 	start := time.Now()
 	dstDataPaths := clickhouse.GetDisksByPaths(disks, tableDataPaths)
 	dbAndTableDir := path.Join(common.TablePathEncode(backupTable.Database), common.TablePathEncode(backupTable.Table))
@@ -159,9 +158,9 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 			info, err := os.Stat(dstPartPath)
 			if err != nil {
 				if os.IsNotExist(err) {
-					log.Debugf("MkDirAll %s", dstPartPath)
+					log.Debug().Msgf("MkDirAll %s", dstPartPath)
 					if mkdirErr := MkdirAll(dstPartPath, ch, disks); mkdirErr != nil {
-						log.Warnf("error during Mkdir %+v", mkdirErr)
+						log.Warn().Msgf("error during Mkdir %+v", mkdirErr)
 					}
 				} else {
 					return err
@@ -181,14 +180,14 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 				filename := strings.Trim(strings.TrimPrefix(filePath, srcPartPath), "/")
 				dstFilePath := filepath.Join(dstPartPath, filename)
 				if info.IsDir() {
-					log.Debugf("MkDir %s", dstFilePath)
+					log.Debug().Msgf("MkDir %s", dstFilePath)
 					return Mkdir(dstFilePath, ch, disks)
 				}
 				if !info.Mode().IsRegular() {
-					log.Debugf("'%s' is not a regular file, skipping.", filePath)
+					log.Debug().Msgf("'%s' is not a regular file, skipping.", filePath)
 					return nil
 				}
-				log.Debugf("Link %s -> %s", filePath, dstFilePath)
+				log.Debug().Msgf("Link %s -> %s", filePath, dstFilePath)
 				if err := os.Link(filePath, dstFilePath); err != nil {
 					if !os.IsExist(err) {
 						return fmt.Errorf("failed to create hard link '%s' -> '%s': %w", filePath, dstFilePath, err)
@@ -200,7 +199,7 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 			}
 		}
 	}
-	log.WithField("duration", utils.HumanizeDuration(time.Since(start))).Debugf("done")
+	log.Debug().Str("duration", utils.HumanizeDuration(time.Since(start))).Msg("done")
 	return nil
 }
 
@@ -213,8 +212,8 @@ func IsPartInPartition(partName string, partitionsBackupMap common.EmptyMap) boo
 		if matched, err := filepath.Match(pattern, partitionId); err == nil && matched {
 			return true
 		} else if err != nil {
-			apexLog.Warnf("error filepath.Match(%s, %s) error: %v", pattern, partitionId, err)
-			apexLog.Debugf("%s not found in %s, file will filtered", partitionId, partitionsBackupMap)
+			log.Warn().Msgf("error filepath.Match(%s, %s) error: %v", pattern, partitionId, err)
+			log.Debug().Msgf("%s not found in %s, file will filtered", partitionId, partitionsBackupMap)
 			return false
 		}
 	}
@@ -227,8 +226,8 @@ func IsFileInPartition(disk, fileName string, partitionsBackupMap common.EmptyMa
 	if strings.Contains(fileName, "%") {
 		decodedFileName, err := url.QueryUnescape(fileName)
 		if err != nil {
-			apexLog.Warnf("error decoding %s: %v", fileName, err)
-			apexLog.Debugf("%s not found in %s, file will filtered", fileName, partitionsBackupMap)
+			log.Warn().Msgf("error decoding %s: %v", fileName, err)
+			log.Debug().Msgf("%s not found in %s, file will filtered", fileName, partitionsBackupMap)
 			return false
 		}
 		fileName = decodedFileName
@@ -240,8 +239,8 @@ func IsFileInPartition(disk, fileName string, partitionsBackupMap common.EmptyMa
 		if matched, err := filepath.Match(pattern, fileName); err == nil && matched {
 			return true
 		} else if err != nil {
-			apexLog.Warnf("error filepath.Match(%s, %s) error: %v", pattern, fileName, err)
-			apexLog.Debugf("%s not found in %s, file will filtered", fileName, partitionsBackupMap)
+			log.Warn().Msgf("error filepath.Match(%s, %s) error: %v", pattern, fileName, err)
+			log.Debug().Msgf("%s not found in %s, file will filtered", fileName, partitionsBackupMap)
 			return false
 		}
 	}
@@ -249,7 +248,6 @@ func IsFileInPartition(disk, fileName string, partitionsBackupMap common.EmptyMa
 }
 
 func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap common.EmptyMap, tableDiffFromRemote metadata.TableMetadata, disk clickhouse.Disk, version int) ([]metadata.Part, int64, error) {
-	log := apexLog.WithField("logger", "MoveShadowToBackup")
 	size := int64(0)
 	parts := make([]metadata.Part, 0)
 	err := filepath.Walk(shadowPath, func(filePath string, info os.FileInfo, err error) error {
@@ -288,7 +286,7 @@ func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap 
 			return os.MkdirAll(dstFilePath, 0750)
 		}
 		if !info.Mode().IsRegular() {
-			log.Debugf("'%s' is not a regular file, skipping", filePath)
+			log.Debug().Msgf("'%s' is not a regular file, skipping", filePath)
 			return nil
 		}
 		size += info.Size()
@@ -325,14 +323,13 @@ func addRequiredPartIfNotExists(parts []metadata.Part, relativePath string, tabl
 }
 
 func IsDuplicatedParts(part1, part2 string) error {
-	log := apexLog.WithField("logger", "IsDuplicatedParts")
 	p1, err := os.Open(part1)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if err = p1.Close(); err != nil {
-			log.Warnf("Can't close %s", part1)
+			log.Warn().Msgf("Can't close %s", part1)
 		}
 	}()
 	p2, err := os.Open(part2)
@@ -341,7 +338,7 @@ func IsDuplicatedParts(part1, part2 string) error {
 	}
 	defer func() {
 		if err = p2.Close(); err != nil {
-			log.Warnf("Can't close %s", part2)
+			log.Warn().Msgf("Can't close %s", part2)
 		}
 	}()
 	pf1, err := p1.Readdirnames(-1)

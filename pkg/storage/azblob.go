@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
-	apexLog "github.com/apex/log"
 	"io"
 	"net/url"
 	"path"
@@ -20,6 +19,7 @@ import (
 	"github.com/Azure/go-autorest/autorest/adal"
 	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/pkg/errors"
+	"github.com/rs/zerolog/log"
 )
 
 // AzureBlob - presents methods for manipulate data on Azure
@@ -28,14 +28,13 @@ type AzureBlob struct {
 	Pipeline  pipeline.Pipeline
 	CPK       azblob.ClientProvidedKeyOptions
 	Config    *config.AzureBlobConfig
-	Log       *apexLog.Entry
 }
 
 func (a *AzureBlob) logf(msg string, args ...interface{}) {
 	if a.Config.Debug {
-		a.Log.Infof(msg, args...)
+		log.Info().Msgf(msg, args...)
 	} else {
-		a.Log.Debugf(msg, args...)
+		log.Debug().Msgf(msg, args...)
 	}
 }
 func (a *AzureBlob) Kind() string {

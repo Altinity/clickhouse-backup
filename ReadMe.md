@@ -1,5 +1,5 @@
 
-# clickhouse-backup
+# Altinity Backup for ClickHouse®
 
 [![Build](https://github.com/Altinity/clickhouse-backup/actions/workflows/build.yaml/badge.svg?branch=master)](https://github.com/Altinity/clickhouse-backup/actions/workflows/build.yaml)
 [![GoDoc](https://godoc.org/github.com/Altinity/clickhouse-backup?status.svg)](http://godoc.org/github.com/Altinity/clickhouse-backup)
@@ -8,9 +8,9 @@
 [![Downloads](https://img.shields.io/github/downloads/Altinity/clickhouse-backup/total.svg)](http://github.com/Altinity/clickhouse-backup/releases)
 [![Coverage Status](https://coveralls.io/repos/github/Altinity/clickhouse-backup/badge.svg)](https://coveralls.io/github/Altinity/clickhouse-backup)
 
-A tool for easy ClickHouse backup and restore with support for many cloud and non-cloud storage types.
+A tool for easy backup and restore utility for ClickHouse databases with support for many cloud and non-cloud storage types.
 
-### Don't run `clickhouse-backup` remotelly
+### Don't run `clickhouse-backup` remotely
 To backup data, `clickhouse-backup` requires access to the same files as `clickhouse-server` in `/var/lib/clickhouse` folders.
 For that reason, it's required to run `clickhouse-backup` on the same host or same Kubernetes Pod or the neighbor container on the same host where `clickhouse-server` ran.
 **WARNING** You can backup only schema when connect to remote `clickhouse-server` hosts.
@@ -70,15 +70,19 @@ GO111MODULE=on go install github.com/Altinity/clickhouse-backup/v2/cmd/clickhous
 
 ## Brief description how clickhouse-backup works
 
-Data files is immutable in `clickhouse-server`.
-During backup operation `clickhouse-backup` create file system hard-links to exists `clickhouse-server` data parts via executing `ALTER TABLE ... FREZZE` query. 
-During restore operation `clickhouse-backup` copy hard-links to `detached` folder and execute `ALTER TABLE ... ATTACH PART` query for each data part and each table in backup.
-More detailed description available here https://www.youtube.com/watch?v=megsNh9Q-dw
+Data files are immutable in the `clickhouse-server`.
+During a backup operation, `clickhouse-backup` creates file system hard links to existing `clickhouse-server` data parts via executing the `ALTER TABLE ... FREEZE` query.
+During the restore operation, `clickhouse-backup` copies the hard links to the `detached` folder and executes the `ALTER TABLE ... ATTACH PART` query for each data part and each table in the backup.
+A more detailed description is available here: https://www.youtube.com/watch?v=megsNh9Q-dw
 
 ## Default Config
 
-By default, the config file is located at `/etc/clickhouse-backup/config.yml`, but it can be redefined via the `CLICKHOUSE_BACKUP_CONFIG` environment variable.
+By default, the config file is located at `/etc/clickhouse-backup/config.yml`, but it can be redefined via the `CLICKHOUSE_BACKUP_CONFIG` environment variable or via `--config` command line parameter.
 All options can be overwritten via environment variables.
+Use `clickhouse-backup default-config` to print default config.
+
+## Explain config parameters
+following values is not default, it just explain which each config parameter actually means
 Use `clickhouse-backup print-config` to print current config.
 
 ```yaml
@@ -115,6 +119,11 @@ general:
   # RESTORE_DATABASE_MAPPING, restore rules from backup databases to target databases, which is useful when changing destination database, all atomic tables will be created with new UUIDs.
   # The format for this env variable is "src_db1:target_db1,src_db2:target_db2". For YAML please continue using map syntax
   restore_database_mapping: {}
+
+  # RESTORE_TABLE_MAPPING, restore rules from backup tables to target tables, which is useful when changing destination tables.
+  # The format for this env variable is "src_table1:target_table1,src_table2:target_table2". For YAML please continue using map syntax
+  restore_table_mapping: {}
+
   retries_on_failure: 3          # RETRIES_ON_FAILURE, how many times to retry after a failure during upload or download
   retries_pause: 30s             # RETRIES_PAUSE, duration time to pause after each download or upload failure
 
@@ -124,8 +133,8 @@ general:
 
   sharded_operation_mode: none       # SHARDED_OPERATION_MODE, how different replicas will shard backing up data for tables. Options are: none (no sharding), table (table granularity), database (database granularity), first-replica (on the lexicographically sorted first active replica). If left empty, then the "none" option will be set as default.
   
-  cpu_nice_priority: 15    # CPU niceness priority, to allow throttling СЗГ intensive operation, more details https://manpages.ubuntu.com/manpages/xenial/man1/nice.1.html
-  io_nice_priority: "idle" # IO niceness priority, to allow throttling disk intensive operation, more details https://manpages.ubuntu.com/manpages/xenial/man1/ionice.1.html
+  cpu_nice_priority: 15    # CPU niceness priority, to allow throttling CPU intensive operation, more details https://manpages.ubuntu.com/manpages/xenial/man1/nice.1.html
+  io_nice_priority: "idle" # IO niceness priority, to allow throttling DISK intensive operation, more details https://manpages.ubuntu.com/manpages/xenial/man1/ionice.1.html
   
   rbac_backup_always: true # always, backup RBAC objects
   rbac_resolve_conflicts: "recreate"  # action, when RBAC object with the same name already exists, allow "recreate", "ignore", "fail" values
@@ -176,8 +185,6 @@ clickhouse:
   check_replicas_before_attach: true # CLICKHOUSE_CHECK_REPLICAS_BEFORE_ATTACH, helps avoiding concurrent ATTACH PART execution when restoring ReplicatedMergeTree tables
   use_embedded_backup_restore: false # CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE, use BACKUP / RESTORE SQL statements instead of regular SQL queries to use features of modern ClickHouse server versions
   embedded_backup_disk: ""  # CLICKHOUSE_EMBEDDED_BACKUP_DISK - disk from system.disks which will use when `use_embedded_backup_restore: true` 
-  embedded_backup_threads: 0 # CLICKHOUSE_EMBEDDED_BACKUP_THREADS - how many threads will use for BACKUP sql command when `use_embedded_backup_restore: true`, 0 means - equal available CPU cores  
-  embedded_restore_threads: 0 # CLICKHOUSE_EMBEDDED_RESTORE_THREADS - how many threads will use for RESTORE sql command when `use_embedded_backup_restore: true`, 0 means - equal available CPU cores  
   backup_mutations: true # CLICKHOUSE_BACKUP_MUTATIONS, allow backup mutations from system.mutations WHERE is_done=0 and apply it during restore
   restore_as_attach: false # CLICKHOUSE_RESTORE_AS_ATTACH, allow restore tables which have inconsistent data parts structure and mutations in progress
   check_parts_columns: true # CLICKHOUSE_CHECK_PARTS_COLUMNS, check data types from system.parts_columns during create backup to guarantee mutation is complete
@@ -474,6 +481,7 @@ Create schema and restore data from backup: `curl -s localhost:7171/backup/resto
 - Optional query argument `rbac` works the same as the `--rbac` CLI argument (restore RBAC).
 - Optional query argument `configs` works the same as the `--configs` CLI argument (restore configs).
 - Optional query argument `restore_database_mapping` works the same as the `--restore-database-mapping` CLI argument.
+- Optional query argument `restore_table_mapping` works the same as the `--restore-table-mapping` CLI argument.
 - Optional query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens"}`.
 
 ### POST /backup/delete
@@ -703,13 +711,14 @@ NAME:
    clickhouse-backup restore - Create schema and restore data from backup
 
 USAGE:
-   clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] <backup_name>
+   clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] <backup_name>
 
 OPTIONS:
    --config value, -c value                    Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --environment-override value, --env value   override any environment variable via CLI parameter
    --table value, --tables value, -t value     Restore only database and objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
    --restore-database-mapping value, -m value  Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.
+   --restore-table-mapping value, --tm value   Define the rule to restore data. For the table not defined in this struct, the program will not deal with it.
    --partitions partition_id                   Restore backup only for selected partition names, separated by comma
 If PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
 If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
@@ -733,13 +742,14 @@ NAME:
    clickhouse-backup restore_remote - Download and restore
 
 USAGE:
-   clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--skip-rbac] [--skip-configs] [--resumable] <backup_name>
+   clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--skip-rbac] [--skip-configs] [--resumable] <backup_name>
 
 OPTIONS:
    --config value, -c value                    Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --environment-override value, --env value   override any environment variable via CLI parameter
    --table value, --tables value, -t value     Download and restore objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
    --restore-database-mapping value, -m value  Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.
+   --restore-table-mapping value, --tm value   Define the rule to restore data. For the table not defined in this struct, the program will not deal with it.
    --partitions partition_id                   Download and restore backup only for selected partition names, separated by comma
 If PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
 If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format

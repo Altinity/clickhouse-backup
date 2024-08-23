@@ -13,9 +13,9 @@ define DESC =
  Most efficient AWS S3/GCS uploading and downloading with streaming compression
  Support of incremental backups on remote storages'
 endef
-GO_BUILD = go build -buildvcs=false -ldflags "-X 'main.version=$(VERSION)' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)'"
-GO_BUILD_STATIC = go build -buildvcs=false -ldflags "-X 'main.version=$(VERSION)' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)' -linkmode=external -extldflags '-static'"
-GO_BUILD_STATIC_FIPS = go build -buildvcs=false -ldflags "-X 'main.version=$(VERSION)-fips' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)' -linkmode=external -extldflags '-static'"
+GO_BUILD = go build -trimpath -buildvcs=false -ldflags "-X 'main.version=$(VERSION)' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)'"
+GO_BUILD_STATIC = go build -trimpath -buildvcs=false -ldflags "-X 'main.version=$(VERSION)' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)' -linkmode=external -extldflags '-static'"
+GO_BUILD_STATIC_FIPS = go build -trimpath -buildvcs=false -ldflags "-X 'main.version=$(VERSION)-fips' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)' -linkmode=external -extldflags '-static'"
 PKG_FILES = build/$(NAME)_$(VERSION).amd64.deb build/$(NAME)_$(VERSION).arm64.deb build/$(NAME)-$(VERSION)-1.amd64.rpm build/$(NAME)-$(VERSION)-1.arm64.rpm
 HOST_OS = $(shell bash -c 'source <(go env) && echo $$GOHOSTOS')
 HOST_ARCH = $(shell bash -c 'source <(go env) && echo $$GOHOSTARCH')
@@ -156,7 +156,7 @@ build-docker:
 			--tag $(NAME):build-docker --target make-build-docker --progress plain --load . && \
 		mkdir -pv ./build && \
 		DOCKER_ID=$$(docker create $(NAME):build-docker) && \
-		docker cp $${DOCKER_ID}:/src/build/ ./build/ && \
+		docker cp $${DOCKER_ID}:/src/build/. ./build/ && \
 		docker rm -f "$${DOCKER_ID}"'
 
 build-fips-docker:
@@ -164,5 +164,5 @@ build-fips-docker:
 			--tag $(NAME):build-docker-fips --target make-build-fips --progress plain --load . && \
 		mkdir -pv ./build && \
 		DOCKER_ID=$$(docker create $(NAME):build-docker) && \
-		docker cp $${DOCKER_ID}:/src/build/ ./build/ && \
+		docker cp $${DOCKER_ID}:/src/build/. ./build/ && \
 		docker rm -f "$${DOCKER_ID}"'

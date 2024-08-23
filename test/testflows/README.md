@@ -9,7 +9,7 @@ To execute tests, you will need:
 * Python 3.8 or higher (`python3`)
 * The latest version of Go (`https://go.dev/doc/install`)
 * TestFlows Python library (`https://testflows.com/`)
-* `docker` and `docker-compose`
+* `docker` and `docker compose`
 
 To install all necessary Python packages, execute:
 ```bash

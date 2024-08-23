@@ -2,14 +2,14 @@
 ARG CLICKHOUSE_VERSION=latest
 ARG CLICKHOUSE_IMAGE=clickhouse/clickhouse-server
 
-FROM ${CLICKHOUSE_IMAGE}:${CLICKHOUSE_VERSION} AS builder-base
+FROM --platform=$BUILDPLATFORM ${CLICKHOUSE_IMAGE}:${CLICKHOUSE_VERSION} AS builder-base
 USER root
 # TODO remove ugly workaround for musl, https://www.perplexity.ai/search/2ead4c04-060a-4d78-a75f-f26835238438
 RUN rm -fv /etc/apt/sources.list.d/clickhouse.list && \
     find /etc/apt/ -type f -name *.list -exec sed -i 's/ru.archive.ubuntu.com/archive.ubuntu.com/g' {} + && \
     ( apt-get update || true ) && \
     apt-get install -y --no-install-recommends gnupg ca-certificates wget && update-ca-certificates && \
-    for srv in "keyserver.ubuntu.com" "pool.sks-keyservers.net" "keys.gnupg.net"; do apt-key adv --keyserver $srv --recv-keys 52B59B1571A79DBC054901C0F6BC817356A3D45E; if [ $? -eq 0 ]; then break; fi; done && \
+    for srv in "keyserver.ubuntu.com" "pool.sks-keyservers.net" "keys.gnupg.net"; do host $srv; apt-key adv --keyserver $srv --recv-keys 52B59B1571A79DBC054901C0F6BC817356A3D45E; if [ $? -eq 0 ]; then break; fi; done && \
     DISTRIB_CODENAME=$(cat /etc/lsb-release | grep DISTRIB_CODENAME | cut -d "=" -f 2) && \
     echo ${DISTRIB_CODENAME} && \
     echo "deb https://ppa.launchpadcontent.net/longsleep/golang-backports/ubuntu ${DISTRIB_CODENAME} main" > /etc/apt/sources.list.d/golang.list && \
@@ -35,9 +35,9 @@ FROM builder-base AS builder-race
 ARG TARGETPLATFORM
 COPY ./ /src/
 RUN mkdir -p ./clickhouse-backup/
-RUN --mount=type=cache,id=clickhouse-backup-gobuild,target=/root/ GOOS=$( echo ${TARGETPLATFORM} | cut -d "/" -f 1) GOARCH=$( echo ${TARGETPLATFORM} | cut -d "/" -f 2) CC=musl-gcc CGO_ENABLED=1 go build -cover -buildvcs=false -ldflags "-X 'main.version=race' -linkmode=external -extldflags '-static'" -race -o ./clickhouse-backup/clickhouse-backup-race ./cmd/clickhouse-backup
+RUN --mount=type=cache,id=clickhouse-backup-gobuild,target=/root/ GOOS=$( echo ${TARGETPLATFORM} | cut -d "/" -f 1) GOARCH=$( echo ${TARGETPLATFORM} | cut -d "/" -f 2) CC=musl-gcc CGO_ENABLED=1 go build -trimpath -cover -buildvcs=false -ldflags "-X 'main.version=race' -linkmode=external -extldflags '-static'" -race -o ./clickhouse-backup/clickhouse-backup-race ./cmd/clickhouse-backup
 RUN cp -l ./clickhouse-backup/clickhouse-backup-race /bin/clickhouse-backup && echo "$(ldd ./clickhouse-backup/clickhouse-backup-race 2>&1 || true)" | grep -c "not a dynamic executable"
-RUN --mount=type=cache,id=clickhouse-backup-gobuild,target=/root/ GOOS=$( echo ${TARGETPLATFORM} | cut -d "/" -f 1) GOARCH=$( echo ${TARGETPLATFORM} | cut -d "/" -f 2) GOEXPERIMENT=boringcrypto CC=musl-gcc CGO_ENABLED=1 go build -cover -buildvcs=false -ldflags "-X 'main.version=race-fips' -linkmode=external -extldflags '-static'" -race -o ./clickhouse-backup/clickhouse-backup-race-fips ./cmd/clickhouse-backup
+RUN --mount=type=cache,id=clickhouse-backup-gobuild,target=/root/ GOOS=$( echo ${TARGETPLATFORM} | cut -d "/" -f 1) GOARCH=$( echo ${TARGETPLATFORM} | cut -d "/" -f 2) GOEXPERIMENT=boringcrypto CC=musl-gcc CGO_ENABLED=1 go build -trimpath -cover -buildvcs=false -ldflags "-X 'main.version=race-fips' -linkmode=external -extldflags '-static'" -race -o ./clickhouse-backup/clickhouse-backup-race-fips ./cmd/clickhouse-backup
 RUN cp -l ./clickhouse-backup/clickhouse-backup-race-fips /bin/clickhouse-backup-fips && echo "$(ldd ./clickhouse-backup/clickhouse-backup-race-fips 2>&1 || true)" | grep -c "not a dynamic executable"
 COPY entrypoint.sh /entrypoint.sh
 

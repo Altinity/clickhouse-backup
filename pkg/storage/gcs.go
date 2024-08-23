@@ -20,7 +20,7 @@ import (
 	"google.golang.org/api/option/internaloption"
 
 	"cloud.google.com/go/storage"
-	apexLog "github.com/apex/log"
+	"github.com/rs/zerolog/log"
 	"google.golang.org/api/option"
 	googleHTTPTransport "google.golang.org/api/transport/http"
 )
@@ -47,11 +47,11 @@ func (w debugGCSTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 			logMsg += fmt.Sprintf("%v: %v\n", h, v)
 		}
 	}
-	apexLog.Info(logMsg)
+	log.Info().Msg(logMsg)
 
 	resp, err := w.base.RoundTrip(r)
 	if err != nil {
-		apexLog.Errorf("GCS_ERROR: %v", err)
+		log.Error().Msgf("GCS_ERROR: %v", err)
 		return resp, err
 	}
 	logMsg = fmt.Sprintf("<<< [GCS_RESPONSE] <<< %v %v\n", r.Method, r.URL.String())
@@ -60,7 +60,7 @@ func (w debugGCSTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 			logMsg += fmt.Sprintf("%v: %v\n", h, v)
 		}
 	}
-	apexLog.Info(logMsg)
+	log.Info().Msg(logMsg)
 	return resp, err
 }
 
@@ -232,7 +232,7 @@ func (gcs *GCS) GetFileReader(ctx context.Context, key string) (io.ReadCloser, e
 func (gcs *GCS) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadCloser, error) {
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
 	if err != nil {
-		apexLog.Errorf("gcs.GetFileReader: gcs.clientPool.BorrowObject error: %+v", err)
+		log.Error().Msgf("gcs.GetFileReader: gcs.clientPool.BorrowObject error: %+v", err)
 		return nil, err
 	}
 	pClient := pClientObj.(*clientObject).Client
@@ -240,12 +240,12 @@ func (gcs *GCS) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadC
 	reader, err := obj.NewReader(ctx)
 	if err != nil {
 		if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
-			apexLog.Warnf("gcs.GetFileReader: gcs.clientPool.InvalidateObject error: %v ", pErr)
+			log.Warn().Msgf("gcs.GetFileReader: gcs.clientPool.InvalidateObject error: %v ", pErr)
 		}
 		return nil, err
 	}
 	if pErr := gcs.clientPool.ReturnObject(ctx, pClientObj); pErr != nil {
-		apexLog.Warnf("gcs.GetFileReader: gcs.clientPool.ReturnObject error: %v ", pErr)
+		log.Warn().Msgf("gcs.GetFileReader: gcs.clientPool.ReturnObject error: %v ", pErr)
 	}
 	return reader, nil
 }
@@ -261,7 +261,7 @@ func (gcs *GCS) PutFile(ctx context.Context, key string, r io.ReadCloser) error 
 func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser) error {
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
 	if err != nil {
-		apexLog.Errorf("gcs.PutFile: gcs.clientPool.BorrowObject error: %+v", err)
+		log.Error().Msgf("gcs.PutFile: gcs.clientPool.BorrowObject error: %+v", err)
 		return err
 	}
 	pClient := pClientObj.(*clientObject).Client
@@ -275,17 +275,17 @@ func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser
 	}
 	defer func() {
 		if err := gcs.clientPool.ReturnObject(ctx, pClientObj); err != nil {
-			apexLog.Warnf("gcs.PutFile: gcs.clientPool.ReturnObject error: %+v", err)
+			log.Warn().Msgf("gcs.PutFile: gcs.clientPool.ReturnObject error: %+v", err)
 		}
 	}()
 	buffer := make([]byte, 128*1024)
 	_, err = io.CopyBuffer(writer, r, buffer)
 	if err != nil {
-		apexLog.Warnf("gcs.PutFile: can't copy buffer: %+v", err)
+		log.Warn().Msgf("gcs.PutFile: can't copy buffer: %+v", err)
 		return err
 	}
 	if err = writer.Close(); err != nil {
-		apexLog.Warnf("gcs.PutFile: can't close writer: %+v", err)
+		log.Warn().Msgf("gcs.PutFile: can't close writer: %+v", err)
 		return err
 	}
 	return nil
@@ -309,7 +309,7 @@ func (gcs *GCS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 func (gcs *GCS) deleteKey(ctx context.Context, key string) error {
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
 	if err != nil {
-		apexLog.Errorf("gcs.deleteKey: gcs.clientPool.BorrowObject error: %+v", err)
+		log.Error().Msgf("gcs.deleteKey: gcs.clientPool.BorrowObject error: %+v", err)
 		return err
 	}
 	pClient := pClientObj.(*clientObject).Client
@@ -317,12 +317,12 @@ func (gcs *GCS) deleteKey(ctx context.Context, key string) error {
 	err = object.Delete(ctx)
 	if err != nil {
 		if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
-			apexLog.Warnf("gcs.deleteKey: gcs.clientPool.InvalidateObject error: %+v", pErr)
+			log.Warn().Msgf("gcs.deleteKey: gcs.clientPool.InvalidateObject error: %+v", pErr)
 		}
 		return err
 	}
 	if pErr := gcs.clientPool.ReturnObject(ctx, pClientObj); pErr != nil {
-		apexLog.Warnf("gcs.deleteKey: gcs.clientPool.ReturnObject error: %+v", pErr)
+		log.Warn().Msgf("gcs.deleteKey: gcs.clientPool.ReturnObject error: %+v", pErr)
 	}
 	return nil
 }
@@ -339,10 +339,10 @@ func (gcs *GCS) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) 
 
 func (gcs *GCS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
 	dstKey = path.Join(gcs.Config.ObjectDiskPath, dstKey)
-	apexLog.Debugf("GCS->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, gcs.Config.Bucket, dstKey)
+	log.Debug().Msgf("GCS->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, gcs.Config.Bucket, dstKey)
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
 	if err != nil {
-		apexLog.Errorf("gcs.CopyObject: gcs.clientPool.BorrowObject error: %+v", err)
+		log.Error().Msgf("gcs.CopyObject: gcs.clientPool.BorrowObject error: %+v", err)
 		return 0, err
 	}
 	pClient := pClientObj.(*clientObject).Client
@@ -351,18 +351,18 @@ func (gcs *GCS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey
 	attrs, err := src.Attrs(ctx)
 	if err != nil {
 		if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
-			apexLog.Warnf("gcs.CopyObject: gcs.clientPool.InvalidateObject error: %+v", pErr)
+			log.Warn().Msgf("gcs.CopyObject: gcs.clientPool.InvalidateObject error: %+v", pErr)
 		}
 		return 0, err
 	}
 	if _, err = dst.CopierFrom(src).Run(ctx); err != nil {
 		if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
-			apexLog.Warnf("gcs.CopyObject: gcs.clientPool.InvalidateObject error: %+v", pErr)
+			log.Warn().Msgf("gcs.CopyObject: gcs.clientPool.InvalidateObject error: %+v", pErr)
 		}
 		return 0, err
 	}
 	if pErr := gcs.clientPool.ReturnObject(ctx, pClientObj); pErr != nil {
-		apexLog.Warnf("gcs.CopyObject: gcs.clientPool.ReturnObject error: %+v", pErr)
+		log.Warn().Msgf("gcs.CopyObject: gcs.clientPool.ReturnObject error: %+v", pErr)
 	}
 	return attrs.Size, nil
 }

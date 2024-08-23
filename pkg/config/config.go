@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/log_helper"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
-
-	"github.com/apex/log"
 	"github.com/kelseyhightower/envconfig"
+	"github.com/rs/zerolog/log"
 	"github.com/urfave/cli"
 	"gopkg.in/yaml.v3"
 )
@@ -48,12 +48,13 @@ type GeneralConfig struct {
 	UploadConcurrency                   uint8             `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
 	UploadMaxBytesPerSecond             uint64            `yaml:"upload_max_bytes_per_second" envconfig:"UPLOAD_MAX_BYTES_PER_SECOND"`
 	DownloadMaxBytesPerSecond           uint64            `yaml:"download_max_bytes_per_second" envconfig:"DOWNLOAD_MAX_BYTES_PER_SECOND"`
-	ObjectDiskServerSizeCopyConcurrency uint8             `yaml:"object_disk_server_side_copy_concurrency" envconfig:"OBJECT_DISK_SERVER_SIDE_COPY_CONCURRENCY"`
+	ObjectDiskServerSideCopyConcurrency uint8             `yaml:"object_disk_server_side_copy_concurrency" envconfig:"OBJECT_DISK_SERVER_SIDE_COPY_CONCURRENCY"`
 	UseResumableState                   bool              `yaml:"use_resumable_state" envconfig:"USE_RESUMABLE_STATE"`
 	RestoreSchemaOnCluster              string            `yaml:"restore_schema_on_cluster" envconfig:"RESTORE_SCHEMA_ON_CLUSTER"`
 	UploadByPart                        bool              `yaml:"upload_by_part" envconfig:"UPLOAD_BY_PART"`
 	DownloadByPart                      bool              `yaml:"download_by_part" envconfig:"DOWNLOAD_BY_PART"`
 	RestoreDatabaseMapping              map[string]string `yaml:"restore_database_mapping" envconfig:"RESTORE_DATABASE_MAPPING"`
+	RestoreTableMapping                 map[string]string `yaml:"restore_table_mapping" envconfig:"RESTORE_TABLE_MAPPING"`
 	RetriesOnFailure                    int               `yaml:"retries_on_failure" envconfig:"RETRIES_ON_FAILURE"`
 	RetriesPause                        string            `yaml:"retries_pause" envconfig:"RETRIES_PAUSE"`
 	WatchInterval                       string            `yaml:"watch_interval" envconfig:"WATCH_INTERVAL"`
@@ -217,8 +218,6 @@ type ClickHouseConfig struct {
 	FreezeByPartWhere                string            `yaml:"freeze_by_part_where" envconfig:"CLICKHOUSE_FREEZE_BY_PART_WHERE"`
 	UseEmbeddedBackupRestore         bool              `yaml:"use_embedded_backup_restore" envconfig:"CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE"`
 	EmbeddedBackupDisk               string            `yaml:"embedded_backup_disk" envconfig:"CLICKHOUSE_EMBEDDED_BACKUP_DISK"`
-	EmbeddedBackupThreads            uint8             `yaml:"embedded_backup_threads" envconfig:"CLICKHOUSE_EMBEDDED_BACKUP_THREADS"`
-	EmbeddedRestoreThreads           uint8             `yaml:"embedded_restore_threads" envconfig:"CLICKHOUSE_EMBEDDED_RESTORE_THREADS"`
 	BackupMutations                  bool              `yaml:"backup_mutations" envconfig:"CLICKHOUSE_BACKUP_MUTATIONS"`
 	RestoreAsAttach                  bool              `yaml:"restore_as_attach" envconfig:"CLICKHOUSE_RESTORE_AS_ATTACH"`
 	CheckPartsColumns                bool              `yaml:"check_parts_columns" envconfig:"CLICKHOUSE_CHECK_PARTS_COLUMNS"`
@@ -335,16 +334,21 @@ func LoadConfig(configLocation string) (*Config, error) {
 	if (cfg.General.RemoteStorage == "gcs" || cfg.General.RemoteStorage == "azblob" || cfg.General.RemoteStorage == "cos") && cfgWithoutDefault.General.UploadConcurrency == 0 {
 		cfg.General.UploadConcurrency = uint8(runtime.NumCPU() / 2)
 	}
-	cfg.AzureBlob.Path = strings.TrimPrefix(cfg.AzureBlob.Path, "/")
-	cfg.S3.Path = strings.TrimPrefix(cfg.S3.Path, "/")
-	cfg.GCS.Path = strings.TrimPrefix(cfg.GCS.Path, "/")
+	cfg.AzureBlob.Path = strings.Trim(cfg.AzureBlob.Path, "/ ")
+	cfg.S3.Path = strings.Trim(cfg.S3.Path, "/ ")
+	cfg.GCS.Path = strings.Trim(cfg.GCS.Path, "/ ")
+
+	cfg.S3.ObjectDiskPath = strings.Trim(cfg.S3.ObjectDiskPath,"/ ")
+	cfg.GCS.ObjectDiskPath = strings.Trim(cfg.GCS.ObjectDiskPath,"/ ")
+	cfg.AzureBlob.ObjectDiskPath = strings.Trim(cfg.AzureBlob.ObjectDiskPath,"/ ")
 
 	// https://github.com/Altinity/clickhouse-backup/issues/855
 	if cfg.ClickHouse.FreezeByPart && cfg.ClickHouse.FreezeByPartWhere != "" && !freezeByPartBeginAndRE.MatchString(cfg.ClickHouse.FreezeByPartWhere) {
 		cfg.ClickHouse.FreezeByPartWhere = " AND " + cfg.ClickHouse.FreezeByPartWhere
 	}
 
-	log.SetLevelFromString(cfg.General.LogLevel)
+
+	log_helper.SetLogLevelFromString(cfg.General.LogLevel)
 
 	if err = ValidateConfig(cfg); err != nil {
 		return cfg, err
@@ -517,7 +521,7 @@ func DefaultConfig() *Config {
 			LogLevel:                            "info",
 			UploadConcurrency:                   uploadConcurrency,
 			DownloadConcurrency:                 downloadConcurrency,
-			ObjectDiskServerSizeCopyConcurrency: 32,
+			ObjectDiskServerSideCopyConcurrency: 32,
 			RestoreSchemaOnCluster:              "",
 			UploadByPart:                        true,
 			DownloadByPart:                      true,
@@ -530,7 +534,8 @@ func DefaultConfig() *Config {
 			FullInterval:                        "24h",
 			FullDuration:                        24 * time.Hour,
 			WatchBackupNameTemplate:             "shard{shard}-{type}-{time:20060102150405}",
-			RestoreDatabaseMapping:              make(map[string]string, 0),
+			RestoreDatabaseMapping:              make(map[string]string),
+			RestoreTableMapping:                 make(map[string]string),
 			IONicePriority:                      "idle",
 			CPUNicePriority:                     15,
 			RBACBackupAlways:                    true,
@@ -628,7 +633,7 @@ func GetConfigFromCli(ctx *cli.Context) *Config {
 	configPath := GetConfigPath(ctx)
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
-		log.Fatal(err.Error())
+		log.Fatal().Stack().Err(err).Send()
 	}
 	RestoreEnvVars(oldEnvValues)
 	return cfg
@@ -647,29 +652,61 @@ func GetConfigPath(ctx *cli.Context) string {
 	return DefaultConfigPath
 }
 
-func OverrideEnvVars(ctx *cli.Context) map[string]string {
+type oldEnvValues struct {
+	OldValue string
+	WasPresent bool
+}
+
+func OverrideEnvVars(ctx *cli.Context) map[string]oldEnvValues {
 	env := ctx.StringSlice("env")
-	oldValues := map[string]string{}
+	oldValues := map[string]oldEnvValues{}
+	logLevel := "info"
+	if os.Getenv("LOG_LEVEL") != "" {
+		logLevel = os.Getenv("LOG_LEVEL")
+	}
+	log_helper.SetLogLevelFromString(logLevel)
 	if len(env) > 0 {
-		for _, v := range env {
-			envVariable := strings.SplitN(v, "=", 2)
-			if len(envVariable) < 2 {
-				envVariable = append(envVariable, "true")
-			}
-			log.Infof("override %s=%s", envVariable[0], envVariable[1])
-			oldValues[envVariable[0]] = os.Getenv(envVariable[0])
-			if err := os.Setenv(envVariable[0], envVariable[1]); err != nil {
-				log.Warnf("can't override %s=%s, error: %v", envVariable[0], envVariable[1], err)
+		processEnvFromCli := func(process func(envVariable []string)) {
+			for _, v := range env {
+				envVariable := strings.SplitN(v, "=", 2)
+				if len(envVariable) < 2 {
+					envVariable = append(envVariable, "true")
+				}
+				process(envVariable)
 			}
 		}
+
+		processEnvFromCli(func(envVariable []string) {
+			if envVariable[0] == "LOG_LEVEL" {
+				log_helper.SetLogLevelFromString(envVariable[1])
+			}
+		})
+
+		processEnvFromCli(func(envVariable []string) {
+			log.Info().Msgf("override %s=%s", envVariable[0], envVariable[1])
+			oldValue, wasPresent := os.LookupEnv(envVariable[0])
+			oldValues[envVariable[0]] = oldEnvValues{
+				OldValue: oldValue,
+				WasPresent: wasPresent,
+			}
+			if err := os.Setenv(envVariable[0], envVariable[1]); err != nil {
+				log.Warn().Msgf("can't override %s=%s, error: %v", envVariable[0], envVariable[1], err)
+			}
+		})
 	}
 	return oldValues
 }
 
-func RestoreEnvVars(envVars map[string]string) {
-	for name, value := range envVars {
-		if err := os.Setenv(name, value); err != nil {
-			log.Warnf("can't restore %s=%s, error: %v", name, value, err)
+func RestoreEnvVars(envVars map[string]oldEnvValues) {
+	for name, oldEnv := range envVars {
+		if oldEnv.WasPresent {
+			if err := os.Setenv(name, oldEnv.OldValue); err != nil {
+				log.Warn().Msgf("RestoreEnvVars can't restore %s=%s, error: %v", name, oldEnv.OldValue, err)
+			}
+		} else {
+			if err := os.Unsetenv(name); err != nil {
+				log.Warn().Msgf("RestoreEnvVars can't delete %s, error: %v", name, err)
+			}
 		}
 	}
 }

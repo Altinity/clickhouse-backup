@@ -11,6 +11,7 @@ clickhouse:
   secure: true
   skip_verify: true
   restart_command: bash -c 'echo "FAKE RESTART"'
+  timeout: 60s
 sftp:
   address: "sshd"
   username: "root"

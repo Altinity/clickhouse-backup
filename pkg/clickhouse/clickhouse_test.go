@@ -2,16 +2,13 @@ package clickhouse
 
 import (
 	"fmt"
-	apexLog "github.com/apex/log"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
 func TestCheckTypesConsistency(t *testing.T) {
-	ch := ClickHouse{
-		Log: apexLog.WithField("logger", "test"),
-	}
+	ch := ClickHouse{}
 	table := &Table{
 		Database: "mydb",
 		Name:     "mytable",
@@ -110,9 +107,7 @@ func TestCheckTypesConsistency(t *testing.T) {
 }
 
 func TestExtractStoragePolicy(t *testing.T) {
-	ch := ClickHouse{
-		Log: apexLog.WithField("logger", "test"),
-	}
+	ch := ClickHouse{}
 
 	testCases := map[string]string{
 		"CREATE TABLE `_test.ДБ_atomic__TestIntegrationS3`.test_s3_TestIntegrationS3 UUID '8135780b-0c9a-46a7-94fd-2aebb701eff6' (`id` UInt64) ENGINE = ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/_test.ДБ_atomic__TestIntegrationS3/test_s3_TestIntegrationS3', '{replica}') ORDER BY id SETTINGS storage_policy = 's3_only', index_granularity = 8192": "s3_only",

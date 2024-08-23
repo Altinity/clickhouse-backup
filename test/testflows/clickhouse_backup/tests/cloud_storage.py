@@ -191,12 +191,14 @@ def s3_aws(self):
     endpoint = os.environ.get('QA_AWS_ENDPOINT')
     region = os.environ.get('QA_AWS_REGION')
     bucket = os.environ.get('QA_AWS_BUCKET')
+    force_path_style = os.environ.get('QA_AWS_FORCE_PATH_STYLE')
 
     test_storage_outline(
         storage_type="aws",
         fields_to_modify={
             "general": {"remote_storage": "s3"},
             "s3": {
+                "force_path_style": bool(force_path_style),
                 "access_key": access_key, "secret_key": secret_key,
                 "endpoint": endpoint, "disable_ssl": False,
                 "region": region, "bucket": bucket

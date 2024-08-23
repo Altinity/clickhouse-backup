@@ -17,13 +17,12 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage/object_disk"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 
-	apexLog "github.com/apex/log"
 	"github.com/pkg/errors"
+	"github.com/rs/zerolog/log"
 )
 
 // Clean - removed all data in shadow folder
 func (b *Backuper) Clean(ctx context.Context) error {
-	log := b.log.WithField("logger", "Clean")
 	if err := b.ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
@@ -41,7 +40,7 @@ func (b *Backuper) Clean(ctx context.Context) error {
 		if err := b.cleanDir(shadowDir); err != nil {
 			return fmt.Errorf("can't clean '%s': %v", shadowDir, err)
 		}
-		log.Info(shadowDir)
+		log.Info().Msg(shadowDir)
 	}
 	return nil
 }
@@ -108,7 +107,6 @@ func (b *Backuper) RemoveOldBackupsLocal(ctx context.Context, keepLastBackup boo
 }
 
 func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, disks []clickhouse.Disk) error {
-	log := b.log.WithField("logger", "RemoveBackupLocal")
 	var err error
 	start := time.Now()
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
@@ -142,12 +140,12 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 				}
 				defer func() {
 					if err := bd.Close(ctx); err != nil {
-						b.log.Warnf("can't close BackupDestination error: %v", err)
+						log.Warn().Msgf("can't close BackupDestination error: %v", err)
 					}
 				}()
 				b.dst = bd
 			}
-			err = b.cleanEmbeddedAndObjectDiskLocalIfSameRemoteNotPresent(ctx, backupName, disks, backup, hasObjectDisks, log)
+			err = b.cleanEmbeddedAndObjectDiskLocalIfSameRemoteNotPresent(ctx, backupName, disks, backup, hasObjectDisks)
 			if err != nil {
 				return err
 			}
@@ -156,40 +154,40 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 				if disk.IsBackup {
 					backupPath = path.Join(disk.Path, backupName)
 				}
-				log.Infof("remove '%s'", backupPath)
+				log.Info().Msgf("remove '%s'", backupPath)
 				if err = os.RemoveAll(backupPath); err != nil {
 					return err
 				}
 			}
-			log.WithField("operation", "delete").
-				WithField("location", "local").
-				WithField("backup", backupName).
-				WithField("duration", utils.HumanizeDuration(time.Since(start))).
-				Info("done")
+			log.Info().Str("operation", "delete").
+				Str("location", "local").
+				Str("backup", backupName).
+				Str("duration", utils.HumanizeDuration(time.Since(start))).
+				Msg("done")
 			return nil
 		}
 	}
 	return fmt.Errorf("'%s' is not found on local storage", backupName)
 }
 
-func (b *Backuper) cleanEmbeddedAndObjectDiskLocalIfSameRemoteNotPresent(ctx context.Context, backupName string, disks []clickhouse.Disk, backup LocalBackup, hasObjectDisks bool, log *apexLog.Entry) error {
+func (b *Backuper) cleanEmbeddedAndObjectDiskLocalIfSameRemoteNotPresent(ctx context.Context, backupName string, disks []clickhouse.Disk, backup LocalBackup, hasObjectDisks bool) error {
 	skip, err := b.skipIfTheSameRemoteBackupPresent(ctx, backup.BackupName, backup.Tags)
-	log.Debugf("b.skipIfTheSameRemoteBackupPresent return skip=%v", skip)
+	log.Debug().Msgf("b.skipIfTheSameRemoteBackupPresent return skip=%v", skip)
 	if err != nil {
 		return err
 	}
 	if !skip && (hasObjectDisks || (b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk == "")) {
 		startTime := time.Now()
 		if deletedKeys, deleteErr := b.cleanBackupObjectDisks(ctx, backupName); deleteErr != nil {
-			log.Warnf("b.cleanBackupObjectDisks return error: %v", deleteErr)
+			log.Warn().Msgf("b.cleanBackupObjectDisks return error: %v", deleteErr)
 			return err
 		} else {
-			log.WithField("backup", backupName).WithField("duration", utils.HumanizeDuration(time.Since(startTime))).Infof("cleanBackupObjectDisks deleted %d keys", deletedKeys)
+			log.Info().Str("backup", backupName).Str("duration", utils.HumanizeDuration(time.Since(startTime))).Msgf("cleanBackupObjectDisks deleted %d keys", deletedKeys)
 		}
 	}
 	if !skip && (b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "") {
 		if err = b.cleanLocalEmbedded(ctx, backup, disks); err != nil {
-			log.Warnf("b.cleanLocalEmbedded return error: %v", err)
+			log.Warn().Msgf("b.cleanLocalEmbedded return error: %v", err)
 			return err
 		}
 	}
@@ -203,7 +201,7 @@ func (b *Backuper) hasObjectDisksLocal(backupList []LocalBackup, backupName stri
 				if !disk.IsBackup && (b.isDiskTypeObject(disk.Type) || b.isDiskTypeEncryptedObject(disk, disks)) {
 					backupExists, err := os.ReadDir(path.Join(disk.Path, "backup", backup.BackupName))
 					if err == nil && len(backupExists) > 0 {
-						apexLog.Debugf("hasObjectDisksLocal: found object disk %s", disk.Name)
+						log.Debug().Msgf("hasObjectDisksLocal: found object disk %s", disk.Name)
 						return true
 					}
 				}
@@ -225,7 +223,7 @@ func (b *Backuper) cleanLocalEmbedded(ctx context.Context, backup LocalBackup, d
 					return err
 				}
 				if !info.IsDir() && !strings.HasSuffix(filePath, ".json") && !strings.HasPrefix(filePath, path.Join(backupPath, "access")) {
-					apexLog.Debugf("object_disk.ReadMetadataFromFile(%s)", filePath)
+					log.Debug().Msgf("object_disk.ReadMetadataFromFile(%s)", filePath)
 					meta, err := object_disk.ReadMetadataFromFile(filePath)
 					if err != nil {
 						return err
@@ -264,12 +262,11 @@ func (b *Backuper) skipIfTheSameRemoteBackupPresent(ctx context.Context, backupN
 }
 
 func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) error {
-	log := b.log.WithField("logger", "RemoveBackupRemote")
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 	start := time.Now()
 	if b.cfg.General.RemoteStorage == "none" {
 		err := errors.New("aborted: RemoteStorage set to \"none\"")
-		log.Error(err.Error())
+		log.Error().Msg(err.Error())
 		return err
 	}
 	if b.cfg.General.RemoteStorage == "custom" {
@@ -290,7 +287,7 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 	}
 	defer func() {
 		if err := bd.Close(ctx); err != nil {
-			b.log.Warnf("can't close BackupDestination error: %v", err)
+			log.Warn().Msgf("can't close BackupDestination error: %v", err)
 		}
 	}()
 
@@ -302,28 +299,28 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 	}
 	for _, backup := range backupList {
 		if backup.BackupName == backupName {
-			err = b.cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent(ctx, backup, log)
+			err = b.cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent(ctx, backup)
 			if err != nil {
 				return err
 			}
 
 			if err = bd.RemoveBackupRemote(ctx, backup); err != nil {
-				log.Warnf("bd.RemoveBackup return error: %v", err)
+				log.Warn().Msgf("bd.RemoveBackup return error: %v", err)
 				return err
 			}
-			log.WithFields(apexLog.Fields{
+			log.Info().Fields(map[string]interface{}{
 				"backup":    backupName,
 				"location":  "remote",
 				"operation": "delete",
 				"duration":  utils.HumanizeDuration(time.Since(start)),
-			}).Info("done")
+			}).Msg("done")
 			return nil
 		}
 	}
 	return fmt.Errorf("'%s' is not found on remote storage", backupName)
 }
 
-func (b *Backuper) cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent(ctx context.Context, backup storage.Backup, log *apexLog.Entry) error {
+func (b *Backuper) cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent(ctx context.Context, backup storage.Backup) error {
 	var skip bool
 	var err error
 	if skip, err = b.skipIfSameLocalBackupPresent(ctx, backup.BackupName, backup.Tags); err != nil {
@@ -332,7 +329,7 @@ func (b *Backuper) cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent(ctx con
 	if !skip {
 		if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
 			if err = b.cleanRemoteEmbedded(ctx, backup); err != nil {
-				log.Warnf("b.cleanRemoteEmbedded return error: %v", err)
+				log.Warn().Msgf("b.cleanRemoteEmbedded return error: %v", err)
 				return err
 			}
 			return nil
@@ -340,9 +337,9 @@ func (b *Backuper) cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent(ctx con
 		if b.hasObjectDisksRemote(backup) || (b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk == "") {
 			startTime := time.Now()
 			if deletedKeys, deleteErr := b.cleanBackupObjectDisks(ctx, backup.BackupName); deleteErr != nil {
-				log.Warnf("b.cleanBackupObjectDisks return error: %v", deleteErr)
+				log.Warn().Msgf("b.cleanBackupObjectDisks return error: %v", deleteErr)
 			} else {
-				log.WithField("backup", backup.BackupName).WithField("duration", utils.HumanizeDuration(time.Since(startTime))).Infof("cleanBackupObjectDisks deleted %d keys", deletedKeys)
+				log.Info().Str("backup", backup.BackupName).Str("duration", utils.HumanizeDuration(time.Since(startTime))).Msgf("cleanBackupObjectDisks deleted %d keys", deletedKeys)
 			}
 			return nil
 		}
@@ -369,7 +366,7 @@ func (b *Backuper) cleanRemoteEmbedded(ctx context.Context, backup storage.Backu
 			if err != nil {
 				return err
 			}
-			apexLog.Debugf("object_disk.ReadMetadataFromReader(%s)", f.Name())
+			log.Debug().Msgf("object_disk.ReadMetadataFromReader(%s)", f.Name())
 			meta, err := object_disk.ReadMetadataFromReader(r, f.Name())
 			if err != nil {
 				return err
@@ -438,6 +435,23 @@ func (b *Backuper) CleanRemoteBroken(commandId int) error {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+func (b *Backuper) cleanPartialRequiredBackup(ctx context.Context, disks []clickhouse.Disk, currentBackupName string) error {
+	if localBackups, _, err := b.GetLocalBackups(ctx, disks); err == nil {
+		for _, localBackup := range localBackups {
+			if localBackup.BackupName != currentBackupName && localBackup.DataSize+localBackup.CompressedSize+localBackup.MetadataSize+localBackup.RBACSize == 0 {
+				if err = b.RemoveBackupLocal(ctx, localBackup.BackupName, disks); err != nil {
+					return fmt.Errorf("CleanPartialRequiredBackups %s -> RemoveBackupLocal cleaning error: %v", localBackup.BackupName, err)
+				} else {
+					log.Info().Msgf("CleanPartialRequiredBackups %s deleted", localBackup.BackupName)
+				}
+			}
+		}
+	} else {
+		return fmt.Errorf("CleanPartialRequiredBackups -> GetLocalBackups cleaning error: %v", err)
 	}
 	return nil
 }

@@ -1,18 +1,15 @@
 services:
   sshd:
     image: docker.io/panubo/sshd:latest
-    container_name: sshd
+    hostname: sshd
     environment:
       SSH_ENABLE_ROOT: "true"
       SSH_ENABLE_PASSWORD_AUTH: "true"
     command: sh -c 'echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && echo "LogLevel DEBUG3" >> /etc/ssh/sshd_config && echo "root:JFzMHfVpvTgEd74XXPq6wARA2Qg3AutJ" | chpasswd && /usr/sbin/sshd -D -e -f /etc/ssh/sshd_config'
-    networks:
-      - clickhouse-backup
 
 #  ftp:
 #    image: docker.io/fauria/vsftpd:latest
 #    hostname: ftp
-#    container_name: ftp
 #    environment:
 #      FTP_USER: test_backup
 #      FTP_PASS: test_backup
@@ -21,69 +18,67 @@ services:
 #      PASV_ADDR_RESOLVE: "YES"
 #      PASV_MIN_PORT: 21100
 #      PASV_MAX_PORT: 21110
-#    networks:
-#      - clickhouse-backup
 
   ftp:
     image: docker.io/iradu/proftpd:latest
     hostname: ftp
-    container_name: ftp
     environment:
       FTP_USER_NAME: "test_backup"
       FTP_USER_PASS: "test_backup"
       FTP_MASQUERADEADDRESS: "yes"
       FTP_PASSIVE_PORTS: "21100 31100"
-    networks:
-      - clickhouse-backup
 
   minio:
     image: docker.io/bitnami/minio:${MINIO_VERSION:-latest}
-    container_name: minio
+    hostname: minio
     environment:
-      MINIO_ACCESS_KEY: access_key
-      MINIO_SECRET_KEY: it_is_my_super_secret_key
       MINIO_DEFAULT_BUCKETS: 'clickhouse'
       MINIO_ROOT_USER: access_key
       MINIO_ROOT_PASSWORD: it_is_my_super_secret_key
+      MINIO_SCHEME: https
+      BITNAMI_DEBUG: "true"
     healthcheck:
-      test: curl -sL http://localhost:9000/
-      interval: 10s
-      retries: 30
+      test: ls -la /bitnami/minio/data/clickhouse/ && curl -skL https://localhost:9000/
+      interval: 1s
+      retries: 60
     volumes:
       - ./minio_nodelete.sh:/bin/minio_nodelete.sh
-    ports:
-      - "9001:9001"
-    networks:
-      - clickhouse-backup
+      # go install github.com/minio/certgen@latest
+      # ~/go/bin/certgen -host "127.0.0.1,localhost,minio"
+      - ./minio.crt:/certs/CAs/public.crt
+      - ./minio.crt:/certs/public.crt
+      - ./minio.key:/certs/private.key
 
-# todo need to reproduce download after upload
   gcs:
     image: fsouza/fake-gcs-server:latest
     hostname: gcs
-    container_name: gcs
     entrypoint:
       - /bin/sh
     command:
       - -c
       - "mkdir -p /data/altinity-qa-test && mkdir -p /data/${QA_GCS_OVER_S3_BUCKET} && fake-gcs-server -data /data -scheme http -port 8080 -public-host gcs:8080"
-    networks:
-      - clickhouse-backup
     environment:
       QA_GCS_OVER_S3_BUCKET: "${QA_GCS_OVER_S3_BUCKET}"
+    healthcheck:
+      test: nc 127.0.0.1 8080 -z
+      interval: 1s
+      retries: 30
 
   azure:
+    # todo need to blobKeepAliveTimeout, and merge https://github.com/Azure/Azurite/pull/2443
     image: mcr.microsoft.com/azure-storage/azurite:latest
-    container_name: azure
+    # image: docker.io/clickhousepro/azurite:latest
     hostname: devstoreaccount1.blob.azure
     healthcheck:
       test: nc 127.0.0.1 10000 -z
       interval: 1s
       retries: 30
-    command: ["azurite", "--debug", "/data/debug.log" , "-l", "/data", "--blobHost", "0.0.0.0","--queueHost", "0.0.0.0", "--tableHost", "0.0.0.0"]
+    command: [ "azurite", "--debug", "/data/debug.log" , "-l", "/data", "--blobHost", "0.0.0.0" ]
+    # command: [ "azurite", "--debug", "/data/debug.log" , "-l", "/data", "--blobHost", "0.0.0.0","--blobKeepAliveTimeout", "60" ]
+    volumes:
+      - azure:/data
 #    environment:
 #      - AZURITE_DB="mysql://root:root@mysql:3306/azurite_blob"
-    networks:
-      - clickhouse-backup
 
    #  azure_init:
    #    image: mcr.microsoft.com/azure-cli:latest
@@ -99,43 +94,41 @@ services:
    #    environment:
    #      # https://github.com/Azure/Azurite/blob/main/README.md#usage-with-azure-storage-sdks-or-tools
    #      AZURE_STORAGE_CONNECTION_STRING: DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azure:10000/devstoreaccount1;
-   #    networks:
-   #      - clickhouse-backup
 
   mysql:
     image: docker.io/mysql:${MYSQL_VERSION:-latest}
-    command: --mysql-native-password=ON --gtid_mode=on --enforce_gtid_consistency=ON
+    command: --gtid_mode=on --enforce_gtid_consistency=ON
     hostname: mysql
-    container_name: mysql
     environment:
       MYSQL_ROOT_PASSWORD: "root"
     ports:
-      - "3306:3306"
-    networks:
-      - clickhouse-backup
+      - "3306"
+    volumes:
+      - mysql:/var/lib/mysql
     healthcheck:
       test: mysqladmin -p=root ping -h localhost
-      timeout: 20s
-      retries: 10
+      timeout: 10s
+      interval: 1s
+      retries: 100
 
   pgsql:
     image: docker.io/postgres:${PGSQL_VERSION:-latest}
     hostname: pgsql
-    container_name: pgsql
     environment:
       POSTGRES_USER: "root"
       POSTGRES_PASSWORD: "root"
       # to allow connection from clickhouse 21.3
       POSTGRES_HOST_AUTH_METHOD: "md5"
     ports:
-      - "5432:5432"
-    networks:
-      - clickhouse-backup
+      - "5432"
     command: [ "postgres", "-c", "wal_level=logical" ]
     healthcheck:
       test: pg_isready
-      timeout: 20s
-      retries: 10
+      timeout: 10s
+      interval: 1s
+      retries: 60
+    volumes:
+      - pgsql:/var/lib/postgresql
 
   zookeeper:
     image: docker.io/clickhouse/clickhouse-keeper:${CLICKHOUSE_KEEPER_VERSION:-latest-alpine}
@@ -147,20 +140,17 @@ services:
     environment:
       - CLICKHOUSE_UID=0
       - CLICKHOUSE_GID=0
-    networks:
-      - clickhouse-backup
     healthcheck:
       test: bash -c 'if [[ "$$(echo 'ruok' | nc 127.0.0.1 2181)" == "imok" ]]; then exit 0; else exit 1; fi'
-      interval: 3s
+      interval: 1s
       timeout: 2s
-      retries: 5
-      start_period: 2s
+      retries: 10
+      start_period: 1s
 
 
   clickhouse-backup:
     image: docker.io/${CLICKHOUSE_IMAGE:-yandex/clickhouse-server}:${CLICKHOUSE_VERSION:-19.17}
     hostname: clickhouse-backup
-    container_name: clickhouse-backup
     user: root
     entrypoint:
       - /bin/bash
@@ -168,7 +158,7 @@ services:
       - sleep infinity
     healthcheck:
       test: bash -c "exit 0"
-      interval: 30s
+      interval: 1s
       timeout: 1s
       retries: 5
       start_period: 1s
@@ -198,11 +188,9 @@ services:
     volumes_from:
       - clickhouse
     ports:
-      - "7171:7171"
+      - "7171"
 # for delve debugger
-      - "40001:40001"
-    networks:
-      - clickhouse-backup
+      - "40001"
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -210,7 +198,6 @@ services:
   clickhouse:
     image: docker.io/${CLICKHOUSE_IMAGE:-yandex/clickhouse-server}:${CLICKHOUSE_VERSION:-19.17}
     hostname: clickhouse
-    container_name: clickhouse
     restart: always
     user: root
     environment:
@@ -283,7 +270,7 @@ services:
       - ./server.key:/etc/clickhouse-server/server.key
       - ./dhparam.pem:/etc/clickhouse-server/dhparam.pem
       - ./ssl.xml:/etc/clickhouse-server/config.d/ssl.xml
-      - ./cluster.xml:/etc/clickhouse-server/config.d/cluster.xml
+      - ./clickhouse-config.xml:/etc/clickhouse-server/config.d/clickhouse-config.xml
       - /var/lib/clickhouse
       - /hdd1_data
       - /hdd2_data
@@ -292,12 +279,10 @@ services:
 #      - ./clickhouse-server.log:/var/log/clickhouse-server/clickhouse-server.log
 #      - ./clickhouse-server.err.log:/var/log/clickhouse-server/clickhouse-server.err.log
     ports:
-      - "8123:8123"
-      - "9000:9000"
+      - "8123"
+      - "9000"
 # for delve debugger
-      - "40002:40002"
-    networks:
-      - clickhouse-backup
+      - "40002"
     links:
       - zookeeper
       - minio
@@ -306,13 +291,13 @@ services:
       - pgsql
       - ftp
       - azure
-#      - gcs
+      - gcs
     healthcheck:
       test: clickhouse client -q "SELECT 1"
-      interval: 10s
+      interval: 1s
       timeout: 2s
-      retries: 30
-      start_period: 5s
+      retries: 60
+      start_period: 1s
     depends_on:
       mysql:
         condition: service_healthy
@@ -324,6 +309,8 @@ services:
         condition: service_healthy
       azure:
         condition: service_healthy
+      gcs:
+        condition: service_healthy
 #      azure_init:
 #        condition: service_completed_successfully
 
@@ -333,5 +320,22 @@ services:
       clickhouse-backup:
         condition: service_healthy
 
-networks:
-  clickhouse-backup:
+volumes:
+  mysql:
+    driver: local
+    driver_opts:
+      device: tmpfs
+      type: tmpfs
+      o: size=250m
+  pgsql:
+    driver: local
+    driver_opts:
+      device: tmpfs
+      type: tmpfs
+      o: size=60m
+  azure:
+    driver: local
+    driver_opts:
+      device: tmpfs
+      type: tmpfs
+      o: size=60m

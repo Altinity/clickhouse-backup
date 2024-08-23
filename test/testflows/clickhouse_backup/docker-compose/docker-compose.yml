@@ -1,5 +1,3 @@
-version: '2.4'
-
 services:
   zookeeper:
     # @TODO back :latest default value after resolve https://github.com/ClickHouse/ClickHouse/issues/53749
@@ -30,6 +28,7 @@ services:
       - "${CLICKHOUSE_TESTS_DIR}/_instances/clickhouse1/logs/:/var/log/clickhouse-server/"
       - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse1/config.d/macros.xml:/etc/clickhouse-server/config.d/macros.xml"
       - "${CLICKHOUSE_TESTS_DIR}/configs/clickhouse1/config.d/rabbitmq.xml:/etc/clickhouse-server/config.d/rabbitmq.xml"
+      - "${CLICKHOUSE_TESTS_DIR}/../../../test/integration/install_delve.sh:/tmp/install_delve.sh"
       - "/var/lib/clickhouse"
       - "/mnt"
     links:
@@ -79,7 +78,7 @@ services:
 
   mysql:
     image: mysql:${MYSQL_VERSION:-latest}
-    command: --mysql-native-password=ON --gtid_mode=on --enforce_gtid_consistency=ON
+    command: --gtid_mode=on --enforce_gtid_consistency=ON
     hostname: mysql
     environment:
       - MYSQL_ALLOW_EMPTY_PASSWORD=True
@@ -110,6 +109,10 @@ services:
     hostname: backup
     ports:
       - "7171:7171"
+      # to avoid
+      # Error response from daemon: driver failed programming external connectivity on endpoint docker-compose-clickhouse_backup-1
+      # Error starting userland proxy: listen tcp4 0.0.0.0:40002: bind: address already in use
+      - "40002"
     environment:
       - DEBIAN_FRONTEND=noninteractive
       - LOG_LEVEL=${LOG_LEVEL:-info}
@@ -168,7 +171,7 @@ services:
       start_period: 10s
 
   sftp_server:
-    image: panubo/sshd:1.5.0
+    image: panubo/sshd:latest
     hostname: sftp_server
     environment:
       SSH_ENABLE_ROOT: "true"
@@ -229,7 +232,7 @@ services:
       start_period: 15s
 
   # dummy service which does nothing, but allows to postpone 
-  # 'docker-compose up -d' till all dependencies will go healthy
+  # 'docker compose up -d' till all dependencies will go healthy
   all_services_ready:
     image: hello-world
     depends_on:

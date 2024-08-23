@@ -20,20 +20,21 @@ clickhouse:
   secure: true
   skip_verify: true
   sync_replicated_tables: true
-  timeout: 5s
   restart_command: "sql:SYSTEM RELOAD USERS; sql:SYSTEM RELOAD CONFIG; exec:ls -la /var/lib/clickhouse/access; sql:SYSTEM SHUTDOWN"
   # restart_command: bash -c 'echo "FAKE RESTART"'
   backup_mutations: true
+  timeout: 60s
 s3:
   access_key: access_key
   secret_key: it_is_my_super_secret_key
   bucket: clickhouse
-  endpoint: http://minio:9000
+  endpoint: https://minio:9000
+  disable_ssl: false
+  disable_cert_verification: true
   acl: private
   force_path_style: true
   path: backup/{cluster}/{shard}
   object_disk_path: object_disk/{cluster}/{shard}
-  disable_ssl: true
   compression_format: tar
   allow_multipart_download: true
   concurrency: 3
