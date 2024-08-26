@@ -328,7 +328,15 @@ jobs:
             fi
           done
           
+          set +e
           go test -parallel ${RUN_PARALLEL} -timeout 60m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
+          # temporary
+          if [[ "$?" != "0" ]]; then
+            for ((i = 0; i < RUN_PARALLEL; i++)); do
+              docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} exec azure cat /data/debug.log
+            done
+            exit 1
+          fi
       - name: Format integration coverage
         env:
           GOROOT: ${{ env.GOROOT_1_22_X64 }}
