@@ -136,6 +136,7 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 		err = b.createBackupLocal(ctx, backupName, diffFromRemote, doBackupData, schemaOnly, rbacOnly, configsOnly, backupVersion, partitionsIdMap, tables, tablePattern, disks, diskMap, diskTypes, allDatabases, allFunctions, backupRBACSize, backupConfigSize, startBackup, version)
 	}
 	if err != nil {
+		log.Error().Msgf("backup failed error: %v", err)
 		// delete local backup if can't create
 		if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks); removeBackupErr != nil {
 			log.Error().Msgf("creating failed -> b.RemoveBackupLocal error: %v", removeBackupErr)
@@ -480,6 +481,12 @@ func (b *Backuper) generateEmbeddedBackupSQL(ctx context.Context, backupName str
 	i := 0
 	for _, table := range tables {
 		if table.Skip {
+			continue
+		}
+
+		if version > 24004000 && (strings.HasPrefix(table.Name, ".inner.") || strings.HasPrefix(table.Name, ".inner_id.")) {
+			log.Warn().Msgf("`%s`.`%s` skipped, 24.4+ version contain bug for EMBEDDED BACKUP/RESTORE for `.inner.` and `.inner_id.` look details in https://github.com/ClickHouse/ClickHouse/issues/67669", table.Database, table.Name)
+			tablesListLen -= 1
 			continue
 		}
 		tablesTitle[i] = metadata.TableTitle{

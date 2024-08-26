@@ -111,8 +111,8 @@ type TestEnvironment struct {
 var defaultTestData = []TestDataStruct{
 	{
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		// 24.8 shall resolve https://github.com/ClickHouse/ClickHouse/issues/67669
-		Name:   ".inner.table1",
+		// .inner. shall resolve in https://github.com/ClickHouse/ClickHouse/issues/67669
+		Name:   ".inner_table1",
 		Schema: "(Date Date, TimeStamp DateTime, Logger String) ENGINE = MergeTree(Date, (TimeStamp, Logger), 8192)",
 		Rows: []map[string]interface{}{
 			{"Date": toDate("2018-10-23"), "TimeStamp": toTS("2018-10-23 07:37:14"), "Logger": "One"},
@@ -359,8 +359,8 @@ var defaultTestData = []TestDataStruct{
 var defaultIncrementData = []TestDataStruct{
 	{
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
-		// 24.8 shall resolve https://github.com/ClickHouse/ClickHouse/issues/67669
-		Name:   ".inner.table1",
+		// .inner. shall resolve in https://github.com/ClickHouse/ClickHouse/issues/67669
+		Name:   ".inner_table1",
 		Schema: "(Date Date, TimeStamp DateTime, Logger String) ENGINE = MergeTree(Date, (TimeStamp, Logger), 8192)",
 		Rows: []map[string]interface{}{
 			{"Date": toDate("2019-10-26"), "TimeStamp": toTS("2019-01-26 07:37:19"), "Logger": "Seven"},
