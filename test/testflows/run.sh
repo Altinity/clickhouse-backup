@@ -2,7 +2,7 @@ CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 mkdir -p "${CUR_DIR}/_coverage_/"
 rm -rf "${CUR_DIR}/_coverage_/*"
 source "${CUR_DIR}/.env"
-export CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION:-24.3}
+export CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION:-24.8}
 if [[ "${CLICKHOUSE_VERSION}" =~ ^2[1-9]+ || "${CLICKHOUSE_VERSION}" == "head" ]]; then
   export CLICKHOUSE_IMAGE=${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server}
 else
