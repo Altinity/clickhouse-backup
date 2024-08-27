@@ -339,6 +339,7 @@ jobs:
               docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} exec azure sync
               docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} logs azure 
               echo "=== AZURE debug.log =============== project${i}"
+              docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} exec azure ls -la /data/debug.log
               docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} exec azure cat /data/debug.log
             done
             exit 1
