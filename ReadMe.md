@@ -401,7 +401,7 @@ Create new backup: `curl -s localhost:7171/backup/create -X POST | jq .`
 - Optional query argument `schema` works the same as the `--schema` CLI argument (backup schema only).
 - Optional query argument `rbac` works the same as the `--rbac` CLI argument (backup RBAC).
 - Optional query argument `configs` works the same as the `--configs` CLI argument (backup configs).
-- Optional query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens"}`.
+- Optional query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
 - Additional example: `curl -s 'localhost:7171/backup/create?table=default.billing&name=billing_test' -X POST`
 
 Note: this operation is asynchronous, so the API will return once the operation has started.
@@ -443,7 +443,7 @@ Upload backup to remote storage: `curl -s localhost:7171/backup/upload/<BACKUP_N
 - Optional query argument `partitions` works the same as the `--partitions value` CLI argument.
 - Optional query argument `schema` works the same as the `--schema` CLI argument (upload schema only).
 - Optional query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate upload state and resume upload if data already exists on remote storage).
-- Optional query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens"}`.
+- Optional query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
 
 Note: this operation is asynchronous, so the API will return once the operation has started.
 
@@ -464,7 +464,7 @@ Download backup from remote storage: `curl -s localhost:7171/backup/download/<BA
 - Optional query argument `partitions` works the same as the `--partitions value` CLI argument.
 - Optional query argument `schema` works the same as the `--schema` CLI argument (download schema only).
 - Optional query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate download state and resume download if it already exists on local storage).
-- Optional query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens"}`.
+- Optional query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
 
 Note: this operation is asynchronous, so the API will return once the operation has started.
 
@@ -482,7 +482,7 @@ Create schema and restore data from backup: `curl -s localhost:7171/backup/resto
 - Optional query argument `configs` works the same as the `--configs` CLI argument (restore configs).
 - Optional query argument `restore_database_mapping` works the same as the `--restore-database-mapping` CLI argument.
 - Optional query argument `restore_table_mapping` works the same as the `--restore-table-mapping` CLI argument.
-- Optional query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens"}`.
+- Optional query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
 
 ### POST /backup/delete
 
