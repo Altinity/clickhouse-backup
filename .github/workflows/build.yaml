@@ -333,7 +333,9 @@ jobs:
           # temporary
           if [[ "$?" != "0" ]]; then
             for ((i = 0; i < RUN_PARALLEL; i++)); do
+              echo "=== CLICKHOUSE ========== project${i}"
               docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} exec clickhouse cat /var/log/clickhouse/clickhouse-server.log
+              echo "=== AZURE =============== project${i}"
               docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} exec azure cat /data/debug.log
             done
             exit 1
