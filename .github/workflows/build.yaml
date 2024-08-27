@@ -264,7 +264,7 @@ jobs:
 
       - name: Running integration tests
         env:
-          RUN_PARALLEL: 3
+          RUN_PARALLEL: 1
           GOROOT: ${{ env.GOROOT_1_22_X64 }}
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
           # options for advanced debug CI/CD
@@ -329,10 +329,11 @@ jobs:
           done
           
           set +e
-          go test -parallel ${RUN_PARALLEL} -timeout 60m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
+          go test -parallel ${RUN_PARALLEL} -timeout 120m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
           # temporary
           if [[ "$?" != "0" ]]; then
             for ((i = 0; i < RUN_PARALLEL; i++)); do
+              docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} exec clickhouse cat /var/log/clickhouse/clickhouse-server.log
               docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} exec azure cat /data/debug.log
             done
             exit 1
