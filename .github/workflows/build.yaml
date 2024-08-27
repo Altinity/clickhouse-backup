@@ -336,6 +336,7 @@ jobs:
               echo "=== CLICKHOUSE ========== project${i}"
               docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} exec clickhouse cat /var/log/clickhouse-server/clickhouse-server.log
               echo "=== AZURE =============== project${i}"
+              docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} exec azure sync
               docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} exec azure cat /data/debug.log
             done
             exit 1
