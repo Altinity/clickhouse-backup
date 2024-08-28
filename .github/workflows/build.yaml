@@ -264,7 +264,7 @@ jobs:
 
       - name: Running integration tests
         env:
-          RUN_PARALLEL: 4
+          RUN_PARALLEL: 1
           GOROOT: ${{ env.GOROOT_1_22_X64 }}
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
           # options for advanced debug CI/CD
@@ -328,7 +328,7 @@ jobs:
             fi
           done
           
-          go test -parallel ${RUN_PARALLEL} -timeout 120m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
+          go test -parallel ${RUN_PARALLEL} -timeout 240m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
       - name: Format integration coverage
         env:
           GOROOT: ${{ env.GOROOT_1_22_X64 }}
