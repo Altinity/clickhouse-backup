@@ -37,6 +37,28 @@ func (a *AzureBlob) logf(msg string, args ...interface{}) {
 		log.Debug().Msgf(msg, args...)
 	}
 }
+
+func (a *AzureBlob) log(level pipeline.LogLevel, msg string) {
+	if a.Config.Debug {
+		switch level {
+		case pipeline.LogNone:
+			log.Debug().Msg(msg)
+		case pipeline.LogFatal:
+			log.Fatal().Msg(msg)
+		case pipeline.LogPanic:
+			log.Fatal().Msg(msg)
+		case pipeline.LogError:
+			log.Error().Msg(msg)
+		case pipeline.LogWarning:
+			log.Warn().Msg(msg)
+		case pipeline.LogInfo:
+			log.Info().Msg(msg)
+		case pipeline.LogDebug:
+			log.Debug().Msg(msg)
+		}
+	}
+}
+
 func (a *AzureBlob) Kind() string {
 	return "azblob"
 }
@@ -116,11 +138,20 @@ func (a *AzureBlob) Connect(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
-		a.Pipeline = azblob.NewPipeline(credential, azblob.PipelineOptions{
+		options := azblob.PipelineOptions{
 			Retry: azblob.RetryOptions{
 				TryTimeout: timeout,
 			},
-		})
+		}
+		if a.Config.Debug {
+			options.Log = pipeline.LogOptions{
+				Log: a.log,
+				ShouldLog: func(level pipeline.LogLevel) bool {
+					return true
+				},
+			}
+		}
+		a.Pipeline = azblob.NewPipeline(credential, options)
 		a.Container = azblob.NewServiceURL(*u, a.Pipeline).NewContainerURL(a.Config.Container)
 		_, err = a.Container.Create(ctx, azblob.Metadata{}, azblob.PublicAccessNone)
 		if err != nil && !isContainerAlreadyExists(err) {
