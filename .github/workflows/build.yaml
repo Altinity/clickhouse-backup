@@ -336,12 +336,7 @@ jobs:
               echo "=== CLICKHOUSE ========== project${i}"
               docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} exec clickhouse cat /var/log/clickhouse-server/clickhouse-server.log
               echo "=== AZURE container log =============== project${i}"
-              docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} ps -a
               docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} logs azure
-              echo "=== AZURE debug.log =============== project${i}"
-              docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} exec azure sync -f
-              docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} exec azure ls -la /data/debug.log
-              docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} exec azure tail -n 10000 /data/debug.log
             done
             exit 1
           fi

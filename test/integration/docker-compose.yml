@@ -64,8 +64,8 @@ services:
       test: nc 127.0.0.1 10000 -z
       interval: 1s
       retries: 30
-    # command: [ "azurite", "--debug", "/data/debug.log" , "-l", "/data", "--blobHost", "0.0.0.0" ]
-    command: [ "azurite", "--debug", "/data/debug.log" , "-l", "/data", "--blobHost", "0.0.0.0","--blobKeepAliveTimeout", "600000" ]
+    # command: [ "azurite", "--debug", "/dev/stderr" , "-l", "/data", "--blobHost", "0.0.0.0" ]
+    command: [ "azurite", "--debug", "/dev/stderr" , "-l", "/data", "--blobHost", "0.0.0.0","--blobKeepAliveTimeout", "600000" ]
     volumes:
       - azure:/data
 #    environment:
