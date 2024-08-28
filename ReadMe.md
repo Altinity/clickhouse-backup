@@ -127,7 +127,7 @@ general:
   restore_table_mapping: {}
 
   retries_on_failure: 3          # RETRIES_ON_FAILURE, how many times to retry after a failure during upload or download
-  retries_pause: 30s             # RETRIES_PAUSE, duration time to pause after each download or upload failure
+  retries_pause: 5s              # RETRIES_PAUSE, duration time to pause after each download or upload failure
 
   watch_interval: 1h       # WATCH_INTERVAL, use only for `watch` command, backup will create every 1h
   full_interval: 24h       # FULL_INTERVAL, use only for `watch` command, full backup will create every 24h
