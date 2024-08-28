@@ -191,9 +191,11 @@ jobs:
           ls -la test/testflows/_coverage_
           go env
           go tool covdata textfmt -i test/testflows/_coverage_/ -o test/testflows/_coverage_/coverage.out
+          sed -i -e 's/^github.com\/Altinity\/clickhouse-backup\///g' test/testflows/_coverage_/coverage.out
       - name: Report testflows coverage
         uses: coverallsapp/github-action@v2
         with:
+          base-path: ./
           file: test/testflows/_coverage_/coverage.out
           parallel: true
           format: golang
@@ -336,9 +338,11 @@ jobs:
           sudo chmod -Rv a+rw test/integration/_coverage_/
           ls -la test/integration/_coverage_ 
           go tool covdata textfmt -i test/integration/_coverage_/ -o test/integration/_coverage_/coverage.out
+          sed -i -e 's/^github.com\/Altinity\/clickhouse-backup\///g' test/integration/_coverage_/coverage.out
       - name: Report integration coverage
         uses: coverallsapp/github-action@v2
         with:
+          base-path: ./
           file: test/integration/_coverage_/coverage.out
           parallel: true
           format: golang
@@ -353,6 +357,7 @@ jobs:
         - name: Coveralls Finished
           uses: coverallsapp/github-action@v2
           with:
+            base-path: ./
             parallel-finished: true
   docker:
     needs:
