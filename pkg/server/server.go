@@ -1328,7 +1328,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		Status      string `json:"status"`
 		Operation   string `json:"operation"`
 		BackupName  string `json:"backup_name"`
-		OperationId string `json:"operation_id`
+		OperationId string `json:"operation_id"`
 	}{
 		Status:      "acknowledged",
 		Operation:   "restore",
