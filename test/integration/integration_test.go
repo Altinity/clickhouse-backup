@@ -631,33 +631,23 @@ func TestIntegrationGCS(t *testing.T) {
 }
 
 func TestIntegrationEmbedded(t *testing.T) {
-	//t.Skipf("Test skipped, wait 23.8, RESTORE Ordinary table and RESTORE MATERIALIZED VIEW and {uuid} not works for %s version, look https://github.com/ClickHouse/ClickHouse/issues/43971 and https://github.com/ClickHouse/ClickHouse/issues/42709", os.Getenv("CLICKHOUSE_VERSION"))
-	//dependencies restore https://github.com/ClickHouse/ClickHouse/issues/39416, fixed in 23.3
 	version := os.Getenv("CLICKHOUSE_VERSION")
 	if compareVersion(version, "23.3") < 0 {
-		t.Skipf("Test skipped, BACKUP/RESTORE not production ready for %s version", version)
+		t.Skipf("Test skipped, BACKUP/RESTORE not production ready for %s version, look https://github.com/ClickHouse/ClickHouse/issues/39416 for details", version)
 	}
+	t.Logf("@TODO RESTORE Ordinary with old syntax still not works for %s version, look https://github.com/ClickHouse/ClickHouse/issues/43971", os.Getenv("CLICKHOUSE_VERSION"))
 	env, r := NewTestEnvironment(t)
 
 	//CUSTOM backup creates folder in each disk, need to clear
 	env.DockerExecNoError(r, "clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_s3/backup/")
 	env.runMainIntegrationScenario(t, "EMBEDDED_S3", "config-s3-embedded.yml")
 
-	//@TODO think about how to implements embedded backup for s3_plain disks
-	//env.DockerExecNoError(r, "clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_s3_plain/backup/")
-	//runMainIntegrationScenario(t, "EMBEDDED_S3_PLAIN", "config-s3-plain-embedded.yml")
-
-	t.Log("@TODO clickhouse-server don't close connection properly after FIN from azurite during BACKUP/RESTORE https://github.com/ClickHouse/ClickHouse/issues/60447, https://github.com/Azure/Azurite/issues/2053")
-	//env.DockerExecNoError(r, "azure", "apk", "add", "tcpdump")
-	//r.NoError(env.DockerExecBackground("azure", "tcpdump", "-i", "any", "-w", "/tmp/azurite_http.pcap", "port", "10000"))
-	////CUSTOM backup create folder in each disk
-	//env.DockerExecNoError(r, "clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_azure/backup/")
-	//if compareVersion(version, "24.2") >= 0 {
-	//	env.runMainIntegrationScenario(t, "EMBEDDED_AZURE_URL", "config-azblob-embedded-url.yml")
-	//}
-	//env.runMainIntegrationScenario(t, "EMBEDDED_AZURE", "config-azblob-embedded.yml")
-	//env.DockerExecNoError(r, "azure", "pkill", "tcpdump")
-	//r.NoError(env.DockerCP("azure:/tmp/azurite_http.pcap", "./azurite_http.pcap"))
+	// CUSTOM backup create folder in each disk
+	env.DockerExecNoError(r, "clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_azure/backup/")
+	env.runMainIntegrationScenario(t, "EMBEDDED_AZURE", "config-azblob-embedded.yml")
+	if compareVersion(version, "24.3") >= 0 {
+		env.runMainIntegrationScenario(t, "EMBEDDED_AZURE_URL", "config-azblob-embedded-url.yml")
+	}
 
 	if compareVersion(version, "23.8") >= 0 {
 		//CUSTOM backup creates folder in each disk, need to clear
@@ -665,14 +655,17 @@ func TestIntegrationEmbedded(t *testing.T) {
 		env.runMainIntegrationScenario(t, "EMBEDDED_LOCAL", "config-s3-embedded-local.yml")
 	}
 	if compareVersion(version, "24.3") >= 0 {
-		//@todo think about named collections to avoid show credentials in logs look to https://github.com/fsouza/fake-gcs-server/issues/1330, https://github.com/fsouza/fake-gcs-server/pull/1164
-		env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "gettext-base")
 		if os.Getenv("QA_GCS_OVER_S3_BUCKET") != "" {
+			//@todo think about named collections to avoid show credentials in logs look to https://github.com/fsouza/fake-gcs-server/issues/1330, https://github.com/fsouza/fake-gcs-server/pull/1164
+			env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "gettext-base")
 			env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config-gcs-embedded-url.yml.template | envsubst > /etc/clickhouse-backup/config-gcs-embedded-url.yml")
 			env.runMainIntegrationScenario(t, "EMBEDDED_GCS_URL", "config-gcs-embedded-url.yml")
 		}
 		env.runMainIntegrationScenario(t, "EMBEDDED_S3_URL", "config-s3-embedded-url.yml")
 	}
+	//@TODO think about how to implements embedded backup for s3_plain disks
+	//env.DockerExecNoError(r, "clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_s3_plain/backup/")
+	//runMainIntegrationScenario(t, "EMBEDDED_S3_PLAIN", "config-s3-plain-embedded.yml")
 	env.Cleanup(t, r)
 }
 
@@ -2770,7 +2763,7 @@ func (env *TestEnvironment) checkResumeAlreadyProcessed(backupCmd, testBackupNam
 	}
 }
 
-func fullCleanup(t *testing.T, r *require.Assertions, env *TestEnvironment, backupNames, backupTypes, databaseList []string, checkDeleteErr, checkDropErr bool, backupConfig string) {
+func fullCleanup(t *testing.T, r *require.Assertions, env *TestEnvironment, backupNames, backupTypes, databaseList []string, checkDeleteErr, checkDeleteOtherErr bool, backupConfig string) {
 	for _, backupName := range backupNames {
 		for _, backupType := range backupTypes {
 			out, err := env.DockerExecOut("clickhouse-backup", "bash", "-xce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" delete "+backupType+" "+backupName)
@@ -2784,7 +2777,7 @@ func fullCleanup(t *testing.T, r *require.Assertions, env *TestEnvironment, back
 		for _, backupName := range strings.Split(otherBackupList, "\n") {
 			if backupName != "" {
 				out, err := env.DockerExecOut("clickhouse-backup", "bash", "-xce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" delete local "+backupName)
-				if checkDeleteErr {
+				if checkDeleteOtherErr {
 					r.NoError(err, "%s\nunexpected delete local %s output: \n%s\nerror: %v, ", backupName, out, err)
 				}
 			}
