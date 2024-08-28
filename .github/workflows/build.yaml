@@ -315,17 +315,22 @@ jobs:
           docker compose -f "${CUR_DIR}/${COMPOSE_FILE}" --progress=quiet pull
           
           pids=()
+          project_ids=()
           for ((i = 0; i < RUN_PARALLEL; i++)); do
             docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} --progress plain up -d &
             pids+=($!)
+            project_ids+=("project${i}")
           done
           
           
-          for pid in "${pids[@]}"; do
+          for index in "${!pids[@]}"; do
+            pid=${pids[index]}
+            project_id=${project_ids[index]}
             if wait "$pid"; then
                 echo "$pid docker compose up successful"
             else
-                echo "$pid the docker compose up failed. Exiting."
+                docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} --progress plain logs
+                echo "$pid the docker compose up failed."
                 exit 1  # Exit with an error code if any command fails
             fi
           done
