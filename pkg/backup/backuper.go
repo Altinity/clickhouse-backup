@@ -94,13 +94,31 @@ func (b *Backuper) initDisksPathsAndBackupDestination(ctx context.Context, disks
 	}
 	b.DiskToPathMap = diskMap
 	if b.cfg.General.RemoteStorage != "none" && b.cfg.General.RemoteStorage != "custom" {
-		b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, true, backupName)
+		if err = b.CalculateMaxSize(ctx); err != nil {
+			return err
+		}
+		b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, backupName)
 		if err != nil {
 			return err
 		}
 		if err := b.dst.Connect(ctx); err != nil {
 			return fmt.Errorf("can't connect to %s: %v", b.dst.Kind(), err)
 		}
+	}
+	return nil
+}
+
+// CalculateMaxSize https://github.com/Altinity/clickhouse-backup/issues/404
+func (b *Backuper) CalculateMaxSize(ctx context.Context) error {
+	maxFileSize, err := b.ch.CalculateMaxFileSize(ctx, b.cfg)
+	if err != nil {
+		return err
+	}
+	if b.cfg.General.MaxFileSize > 0 && b.cfg.General.MaxFileSize < maxFileSize {
+		log.Warn().Msgf("MAX_FILE_SIZE=%d is less than actual %d, please remove general->max_file_size section from your config", b.cfg.General.MaxFileSize, maxFileSize)
+	}
+	if b.cfg.General.MaxFileSize <= 0 || b.cfg.General.MaxFileSize < maxFileSize {
+		b.cfg.General.MaxFileSize = maxFileSize
 	}
 	return nil
 }
@@ -177,7 +195,8 @@ func (b *Backuper) isDiskTypeEncryptedObject(disk clickhouse.Disk, disks []click
 	return underlyingIdx >= 0
 }
 
-func (b *Backuper) getEmbeddedBackupDefaultSettings(version int) []string {
+// getEmbeddedRestoreSettings - different with getEmbeddedBackupSettings, cause https://github.com/ClickHouse/ClickHouse/issues/69053
+func (b *Backuper) getEmbeddedRestoreSettings(version int) []string {
 	settings := []string{}
 	if (b.cfg.General.RemoteStorage == "s3" || b.cfg.General.RemoteStorage == "gcs") && version >= 23007000 {
 		settings = append(settings, "allow_s3_native_copy=1")
@@ -191,7 +210,24 @@ func (b *Backuper) getEmbeddedBackupDefaultSettings(version int) []string {
 			log.Fatal().Msgf("SET s3_use_adaptive_timeouts=0 error: %v", err)
 		}
 	}
-	if b.cfg.General.RemoteStorage == "azblob" && version >= 24005000 {
+	return settings
+}
+
+func (b *Backuper) getEmbeddedBackupSettings(version int) []string {
+	settings := []string{}
+	if (b.cfg.General.RemoteStorage == "s3" || b.cfg.General.RemoteStorage == "gcs") && version >= 23007000 {
+		settings = append(settings, "allow_s3_native_copy=1")
+		if err := b.ch.Query("SET s3_request_timeout_ms=600000"); err != nil {
+			log.Fatal().Msgf("SET s3_request_timeout_ms=600000 error: %v", err)
+		}
+
+	}
+	if (b.cfg.General.RemoteStorage == "s3" || b.cfg.General.RemoteStorage == "gcs") && version >= 23011000 {
+		if err := b.ch.Query("SET s3_use_adaptive_timeouts=0"); err != nil {
+			log.Fatal().Msgf("SET s3_use_adaptive_timeouts=0 error: %v", err)
+		}
+	}
+	if b.cfg.General.RemoteStorage == "azblob" && version >= 24005000 && b.cfg.ClickHouse.EmbeddedBackupDisk == "" {
 		settings = append(settings, "allow_azure_native_copy=1")
 	}
 	return settings
@@ -211,10 +247,10 @@ func (b *Backuper) getEmbeddedBackupLocation(ctx context.Context, backupName str
 			return "", err
 		}
 		if b.cfg.S3.AccessKey != "" {
-			return fmt.Sprintf("S3('%s/%s','%s','%s')", s3Endpoint, backupName, b.cfg.S3.AccessKey, b.cfg.S3.SecretKey), nil
+			return fmt.Sprintf("S3('%s/%s/','%s','%s')", s3Endpoint, backupName, b.cfg.S3.AccessKey, b.cfg.S3.SecretKey), nil
 		}
 		if os.Getenv("AWS_ACCESS_KEY_ID") != "" {
-			return fmt.Sprintf("S3('%s/%s','%s','%s')", s3Endpoint, backupName, os.Getenv("AWS_ACCESS_KEY_ID"), os.Getenv("AWS_SECRET_ACCESS_KEY")), nil
+			return fmt.Sprintf("S3('%s/%s/','%s','%s')", s3Endpoint, backupName, os.Getenv("AWS_ACCESS_KEY_ID"), os.Getenv("AWS_SECRET_ACCESS_KEY")), nil
 		}
 		return "", fmt.Errorf("provide s3->access_key and s3->secret_key in config to allow embedded backup without `clickhouse->embedded_backup_disk`")
 	}
@@ -224,10 +260,10 @@ func (b *Backuper) getEmbeddedBackupLocation(ctx context.Context, backupName str
 			return "", err
 		}
 		if b.cfg.GCS.EmbeddedAccessKey != "" {
-			return fmt.Sprintf("S3('%s/%s','%s','%s')", gcsEndpoint, backupName, b.cfg.GCS.EmbeddedAccessKey, b.cfg.GCS.EmbeddedSecretKey), nil
+			return fmt.Sprintf("S3('%s/%s/','%s','%s')", gcsEndpoint, backupName, b.cfg.GCS.EmbeddedAccessKey, b.cfg.GCS.EmbeddedSecretKey), nil
 		}
 		if os.Getenv("AWS_ACCESS_KEY_ID") != "" {
-			return fmt.Sprintf("S3('%s/%s','%s','%s')", gcsEndpoint, backupName, os.Getenv("AWS_ACCESS_KEY_ID"), os.Getenv("AWS_SECRET_ACCESS_KEY")), nil
+			return fmt.Sprintf("S3('%s/%s/','%s','%s')", gcsEndpoint, backupName, os.Getenv("AWS_ACCESS_KEY_ID"), os.Getenv("AWS_SECRET_ACCESS_KEY")), nil
 		}
 		return "", fmt.Errorf("provide gcs->embedded_access_key and gcs->embedded_secret_key in config to allow embedded backup without `clickhouse->embedded_backup_disk`")
 	}
@@ -237,7 +273,7 @@ func (b *Backuper) getEmbeddedBackupLocation(ctx context.Context, backupName str
 			return "", err
 		}
 		if b.cfg.AzureBlob.Container != "" {
-			return fmt.Sprintf("AzureBlobStorage('%s','%s','%s/%s')", azblobEndpoint, b.cfg.AzureBlob.Container, b.cfg.AzureBlob.ObjectDiskPath, backupName), nil
+			return fmt.Sprintf("AzureBlobStorage('%s','%s','%s/%s/')", azblobEndpoint, b.cfg.AzureBlob.Container, b.cfg.AzureBlob.ObjectDiskPath, backupName), nil
 		}
 		return "", fmt.Errorf("provide azblob->container and azblob->account_name, azblob->account_key in config to allow embedded backup without `clickhouse->embedded_backup_disk`")
 	}
@@ -252,6 +288,12 @@ func (b *Backuper) applyMacrosToObjectDiskPath(ctx context.Context) error {
 		b.cfg.GCS.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.GCS.ObjectDiskPath)
 	} else if b.cfg.General.RemoteStorage == "azblob" {
 		b.cfg.AzureBlob.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.AzureBlob.ObjectDiskPath)
+	} else if b.cfg.General.RemoteStorage == "ftp" {
+		b.cfg.FTP.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.FTP.ObjectDiskPath)
+	} else if b.cfg.General.RemoteStorage == "sftp" {
+		b.cfg.SFTP.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.SFTP.ObjectDiskPath)
+	} else if b.cfg.General.RemoteStorage == "cos" {
+		b.cfg.COS.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.COS.ObjectDiskPath)
 	}
 	return err
 }
@@ -317,6 +359,12 @@ func (b *Backuper) getObjectDiskPath() (string, error) {
 		return b.cfg.AzureBlob.ObjectDiskPath, nil
 	} else if b.cfg.General.RemoteStorage == "gcs" {
 		return b.cfg.GCS.ObjectDiskPath, nil
+	} else if b.cfg.General.RemoteStorage == "cos" {
+		return b.cfg.COS.ObjectDiskPath, nil
+	} else if b.cfg.General.RemoteStorage == "ftp" {
+		return b.cfg.FTP.ObjectDiskPath, nil
+	} else if b.cfg.General.RemoteStorage == "sftp" {
+		return b.cfg.SFTP.ObjectDiskPath, nil
 	} else {
 		return "", fmt.Errorf("cleanBackupObjectDisks: requesst object disks path but have unsupported remote_storage: %s", b.cfg.General.RemoteStorage)
 	}

@@ -1,8 +1,11 @@
 general:
-  disable_progress_bar: true
   remote_storage: sftp
   upload_concurrency: 4
   download_concurrency: 4
+  allow_object_disk_streaming: true
+s3:
+  disable_ssl: false
+  disable_cert_verification: true
 clickhouse:
   host: clickhouse
   port: 9440
@@ -18,6 +21,7 @@ sftp:
   password: ""
   key: "/tmp/id_rsa"
   path: "/root"
+  object_disk_path: "/object_disk"
   concurrency: 2
   compression_format: tar
   compression_level: 1

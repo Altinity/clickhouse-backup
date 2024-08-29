@@ -26,7 +26,6 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-
 )
 
 // ClickHouse - provide
@@ -795,7 +794,7 @@ func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetad
 	}
 	canContinue, err := ch.CheckReplicationInProgress(table)
 	if err != nil {
-		return err
+		return fmt.Errorf("ch.CheckReplicationInProgress error: %v", err)
 	}
 	if !canContinue {
 		return nil
@@ -806,7 +805,7 @@ func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetad
 	}
 	query := fmt.Sprintf("DETACH TABLE `%s`.`%s` SYNC", table.Database, table.Table)
 	if err := ch.Query(query); err != nil {
-		return err
+		return fmt.Errorf("%s error: %v", query, err)
 	}
 	replicatedMatches := replicatedMergeTreeRE.FindStringSubmatch(table.Query)
 	if len(replicatedMatches) > 0 {
@@ -820,26 +819,26 @@ func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetad
 		zkPath = strings.NewReplacer("{database}", table.Database, "{table}", table.Table).Replace(zkPath)
 		zkPath, err = ch.ApplyMacros(ctx, zkPath)
 		if err != nil {
-			return err
+			return fmt.Errorf("ch.ApplyMacros(ctx, zkPath) error: %v", err)
 		}
 		replicaName, err = ch.ApplyMacros(ctx, replicaName)
 		if err != nil {
-			return err
+			return fmt.Errorf("ch.ApplyMacros(ctx, replicaName) error: %v", err)
 		}
 		query = fmt.Sprintf("SYSTEM DROP REPLICA '%s' FROM ZKPATH '%s'", replicaName, zkPath)
 		if err := ch.Query(query); err != nil {
-			return err
+			return fmt.Errorf("%s error: %v", query, err)
 		}
 	}
 	query = fmt.Sprintf("ATTACH TABLE `%s`.`%s`", table.Database, table.Table)
 	if err := ch.Query(query); err != nil {
-		return err
+		return fmt.Errorf("%s error: %v", query, err)
 	}
 
 	if len(replicatedMatches) > 0 {
 		query = fmt.Sprintf("SYSTEM RESTORE REPLICA `%s`.`%s`", table.Database, table.Table)
 		if err := ch.Query(query); err != nil {
-			return err
+			return fmt.Errorf("%s error: %v", query, err)
 		}
 	}
 	log.Debug().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).Msg("attached")
@@ -1195,6 +1194,20 @@ func (ch *ClickHouse) ApplyMacros(ctx context.Context, s string) (string, error)
 	return s, nil
 }
 
+// ApplyMacrosToObjectLabels https://github.com/Altinity/clickhouse-backup/issues/588
+func (ch *ClickHouse) ApplyMacrosToObjectLabels(ctx context.Context, objectLabels map[string]string, backupName string) (map[string]string, error) {
+	var err error
+	for k, v := range objectLabels {
+		v, err = ch.ApplyMacros(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		r := strings.NewReplacer("{backup}", backupName, "{backupName}", backupName, "{backup_name}", backupName, "{BACKUP_NAME}", backupName)
+		objectLabels[k] = r.Replace(v)
+	}
+	return objectLabels, nil
+}
+
 func (ch *ClickHouse) ApplyMutation(ctx context.Context, tableMetadata metadata.TableMetadata, mutation metadata.MutationMetadata) error {
 	applyMutatoinSQL := fmt.Sprintf("ALTER TABLE `%s`.`%s` %s", tableMetadata.Database, tableMetadata.Table, mutation.Command)
 	if err := ch.QueryContext(ctx, applyMutatoinSQL); err != nil {
@@ -1315,16 +1328,21 @@ func (ch *ClickHouse) GetPreprocessedConfigPath(ctx context.Context) (string, er
 func (ch *ClickHouse) ParseXML(ctx context.Context, configName string) (configFile string, doc *xmlquery.Node, err error) {
 	preprocessedConfigPath, err := ch.GetPreprocessedConfigPath(ctx)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("ch.GetPreprocessedConfigPath error: %v", err)
 	}
 	configFile = path.Join(preprocessedConfigPath, configName)
 	f, err := os.Open(configFile)
 	if err != nil {
 		return "", nil, err
 	}
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			log.Error().Msgf("can't close %s error: %v", configFile, closeErr)
+		}
+	}()
 	doc, err = xmlquery.Parse(f)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("xmlquery.Parse(%s) error: %v", configFile, err)
 	}
 	return configFile, doc, nil
 }

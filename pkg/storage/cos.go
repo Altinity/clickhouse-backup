@@ -165,7 +165,8 @@ func (c *COS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, 
 }
 
 func (c *COS) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) error {
-	return fmt.Errorf("DeleteFileFromObjectDiskBackup not imlemented for %s", c.Kind())
+	_, err := c.client.Object.Delete(ctx, path.Join(c.Config.ObjectDiskPath, key))
+	return err
 }
 
 type cosFile struct {

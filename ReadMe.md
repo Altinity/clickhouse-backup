@@ -106,7 +106,9 @@ general:
   upload_max_bytes_per_second: 0    # UPLOAD_MAX_BYTES_PER_SECOND, 0 means no throttling
   
   # when table data contains in system.disks with type=ObjectStorage, then we need execute remote copy object in object storage service provider, this parameter can restrict how many files will copied in parallel  for each table 
-  object_disk_server_side_copy_concurrency: 32 
+  object_disk_server_side_copy_concurrency: 32
+  # when CopyObject failure or object disk storage and backup destination have incompatible, will warning about possible high network traffic 
+  allow_object_disk_streaming: false
   
   # RESTORE_SCHEMA_ON_CLUSTER, execute all schema related SQL queries with `ON CLUSTER` clause as Distributed DDL.
   # Check `system.clusters` table for the correct cluster name, also `system.macros` can be used.
@@ -125,7 +127,7 @@ general:
   restore_table_mapping: {}
 
   retries_on_failure: 3          # RETRIES_ON_FAILURE, how many times to retry after a failure during upload or download
-  retries_pause: 30s             # RETRIES_PAUSE, duration time to pause after each download or upload failure
+  retries_pause: 5s              # RETRIES_PAUSE, duration time to pause after each download or upload failure
 
   watch_interval: 1h       # WATCH_INTERVAL, use only for `watch` command, backup will create every 1h
   full_interval: 24h       # FULL_INTERVAL, use only for `watch` command, full backup will create every 24h
@@ -197,7 +199,7 @@ azblob:
   use_managed_identity: false  # AZBLOB_USE_MANAGED_IDENTITY
   container: ""                # AZBLOB_CONTAINER
   path: ""                     # AZBLOB_PATH, `system.macros` values can be applied as {macro_name}
-  object_disk_path: ""         # AZBLOB_OBJECT_DISK_PATH, path for backup of part from `azure_blob_storage` object disk, if disk present, then shall not be zero and shall not be prefixed by `path`
+  object_disk_path: ""         # AZBLOB_OBJECT_DISK_PATH, path for backup of part from clickhouse object disks, if object disks present in clickhouse, then shall not be zero and shall not be prefixed by `path`
   compression_level: 1         # AZBLOB_COMPRESSION_LEVEL
   compression_format: tar      # AZBLOB_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   sse_key: ""                  # AZBLOB_SSE_KEY
@@ -218,7 +220,7 @@ s3:
   assume_role_arn: ""              # S3_ASSUME_ROLE_ARN
   force_path_style: false          # S3_FORCE_PATH_STYLE
   path: ""                         # S3_PATH, `system.macros` values can be applied as {macro_name}
-  object_disk_path: ""             # S3_OBJECT_DISK_PATH, path for backup of part from `s3` object disk, if disk present, then shall not be zero and shall not be prefixed by `path`
+  object_disk_path: ""             # S3_OBJECT_DISK_PATH, path for backup of part from clickhouse object disks, if object disks present in clickhouse, then shall not be zero and shall not be prefixed by `path`
   disable_ssl: false               # S3_DISABLE_SSL
   compression_level: 1             # S3_COMPRESSION_LEVEL
   compression_format: tar          # S3_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
@@ -261,7 +263,7 @@ gcs:
   endpoint: ""                 # GCS_ENDPOINT, use it for custom GCS endpoint/compatible storage. For example, when using custom endpoint via private service connect
   bucket: ""                   # GCS_BUCKET
   path: ""                     # GCS_PATH, `system.macros` values can be applied as {macro_name}
-  object_disk_path: ""         # GCS_OBJECT_DISK_PATH, path for backup of part from `s3` object disk (clickhouse support only gcs over s3 protocol), if disk present, then shall not be zero and shall not be prefixed by `path`
+  object_disk_path: ""         # GCS_OBJECT_DISK_PATH, path for backup of part from clickhouse object disks, if object disks present in clickhouse, then shall not be zero and shall not be prefixed by `path`
   compression_level: 1         # GCS_COMPRESSION_LEVEL
   compression_format: tar      # GCS_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   storage_class: STANDARD      # GCS_STORAGE_CLASS
@@ -280,6 +282,7 @@ cos:
   secret_id: ""                # COS_SECRET_ID
   secret_key: ""               # COS_SECRET_KEY
   path: ""                     # COS_PATH, `system.macros` values can be applied as {macro_name}
+  object_disk_path: ""         # GOS_OBJECT_DISK_PATH, path for backup of part from clickhouse object disks, if object disks present in clickhouse, then shall not be zero and shall not be prefixed by `path`
   compression_format: tar      # COS_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   compression_level: 1         # COS_COMPRESSION_LEVEL
 ftp:
@@ -290,6 +293,7 @@ ftp:
   tls: false                   # FTP_TLS
   tls_skip_verify: false       # FTP_TLS_SKIP_VERIFY
   path: ""                     # FTP_PATH, `system.macros` values can be applied as {macro_name}
+  object_disk_path: ""         # FTP_OBJECT_DISK_PATH, path for backup of part from clickhouse object disks, if object disks present in clickhouse, then shall not be zero and shall not be prefixed by `path`
   compression_format: tar      # FTP_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   compression_level: 1         # FTP_COMPRESSION_LEVEL
   debug: false                 # FTP_DEBUG
@@ -300,6 +304,7 @@ sftp:
   port: 22                     # SFTP_PORT
   key: ""                      # SFTP_KEY
   path: ""                     # SFTP_PATH, `system.macros` values can be applied as {macro_name}
+  object_disk_path: ""         # SFTP_OBJECT_DISK_PATH, path for backup of part from clickhouse object disks, if object disks present in clickhouse, then shall not be zero and shall not be prefixed by `path`
   concurrency: 1               # SFTP_CONCURRENCY
   compression_format: tar      # SFTP_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   compression_level: 1         # SFTP_COMPRESSION_LEVEL
@@ -371,7 +376,7 @@ List all current applicable HTTP routes
 
 Restart HTTP server, close all current connections, close listen socket, open listen socket again, all background go-routines breaks with contexts
 
-### GET /backup/kill
+### POST /backup/kill
 
 Kill selected command from `GET /backup/actions` command list, kill process should be near immediate, but some go-routines (upload one data part) could continue to run.
 
@@ -382,27 +387,30 @@ Kill selected command from `GET /backup/actions` command list, kill process shou
 Print list of tables: `curl -s localhost:7171/backup/tables | jq .`, exclude pattern matched tables from `skip_tables` configuration parameters
 
 - Optional query argument `table` works the same as the `--table=pattern` CLI argument.
-- Optional query argument `remote_backup`works the same as `--remote-backup=name` CLI argument.
+- Optional query argument `remote_backup` works the same as `--remote-backup=name` CLI argument.
 
 ### GET /backup/tables/all
 
 Print list of tables: `curl -s localhost:7171/backup/tables/all | jq .`, ignore `skip_tables` configuration parameters.
 
-- Optional query argument `table` works the same as the `--table value` CLI argument.
+- Optional query argument `table` works the same as the `--table=pattern` CLI argument.
 - Optional query argument `remote_backup`works the same as `--remote-backup=name` CLI argument.
 
 ### POST /backup/create
 
 Create new backup: `curl -s localhost:7171/backup/create -X POST | jq .`
 
-- Optional query argument `table` works the same as the `--table value` CLI argument.
-- Optional query argument `partitions` works the same as the `--partitions value` CLI argument.
-- Optional query argument `name` works the same as specifying a backup name with the CLI.
-- Optional query argument `schema` works the same as the `--schema` CLI argument (backup schema only).
-- Optional query argument `rbac` works the same as the `--rbac` CLI argument (backup RBAC).
-- Optional query argument `configs` works the same as the `--configs` CLI argument (backup configs).
-- Optional query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
-- Additional example: `curl -s 'localhost:7171/backup/create?table=default.billing&name=billing_test' -X POST`
+- Optional string query argument `table` works the same as the `--table=pattern` CLI argument.
+- Optional string query argument `partitions` works the same as the `--partitions=value` CLI argument.
+- Optional string query argument `name` works the same as specifying a backup name with the CLI.
+- Optional boolean query argument `schema` works the same as the `--schema` CLI argument (backup schema only).
+- Optional boolean query argument `rbac` works the same as the `--rbac` CLI argument (backup RBAC).
+- Optional boolean query argument `rbac-only` works the same as the `--rbac-only` CLI argument (backup only RBAC).
+- Optional boolean query argument `configs` works the same as the `--configs` CLI argument (backup configs).
+- Optional boolean query argument `configs-only` works the same as the `--configs-only` CLI argument (backup only configs).
+- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
+
+Additional example: `curl -s 'localhost:7171/backup/create?table=default.billing&name=billing_test' -X POST`
 
 Note: this operation is asynchronous, so the API will return once the operation has started.
 
@@ -411,14 +419,14 @@ Note: this operation is asynchronous, so the API will return once the operation 
 Run background watch process and create full+incremental backups sequence: `curl -s localhost:7171/backup/watch -X POST | jq .`
 You can't run watch twice with the same parameters even when `allow_parallel: true`
 
-- Optional query argument `watch_interval` works the same as the `--watch-interval value` CLI argument.
-- Optional query argument `full_interval` works the same as the `--full-interval value` CLI argument.
-- Optional query argument `watch_backup_name_template` works the same as the `--watch-backup-name-template value` CLI argument.
-- Optional query argument `table` works the same as the `--table value` CLI argument (backup only selected tables).
-- Optional query argument `partitions` works the same as the `--partitions value` CLI argument (backup only selected partitions).
-- Optional query argument `schema` works the same as the `--schema` CLI argument (backup schema only).
-- Optional query argument `rbac` works the same as the `--rbac` CLI argument (backup RBAC).
-- Optional query argument `configs` works the same as the `--configs` CLI argument (backup configs).
+- Optional string query argument `watch_interval` works the same as the `--watch-interval value` CLI argument.
+- Optional string query argument `full_interval` works the same as the `--full-interval value` CLI argument.
+- Optional string query argument `watch_backup_name_template` works the same as the `--watch-backup-name-template value` CLI argument.
+- Optional string query argument `table` works the same as the `--table value` CLI argument (backup only selected tables).
+- Optional string query argument `partitions` works the same as the `--partitions value` CLI argument (backup only selected partitions).
+- Optional boolean query argument `schema` works the same as the `--schema` CLI argument (backup schema only).
+- Optional boolean query argument `rbac` works the same as the `--rbac` CLI argument (backup RBAC).
+- Optional boolean query argument `configs` works the same as the `--configs` CLI argument (backup configs).
 - Additional example: `curl -s 'localhost:7171/backup/watch?table=default.billing&watch_interval=1h&full_interval=24h' -X POST`
 
 Note: this operation is asynchronous and can only be stopped with `kill -s SIGHUP $(pgrep -f clickhouse-backup)` or call `/restart`, `/backup/kill`. The API will return immediately once the operation has started.
@@ -436,14 +444,14 @@ Note: this operation is sync, and could take a lot of time, increase http timeou
 
 Upload backup to remote storage: `curl -s localhost:7171/backup/upload/<BACKUP_NAME> -X POST | jq .`
 
-- Optional query argument `delete-source` works the same as the `--delete-source` CLI argument.
-- Optional query argument `diff-from` works the same as the `--diff-from` CLI argument.
-- Optional query argument `diff-from-remote` works the same as the `--diff-from-remote` CLI argument.
-- Optional query argument `table` works the same as the `--table value` CLI argument.
-- Optional query argument `partitions` works the same as the `--partitions value` CLI argument.
-- Optional query argument `schema` works the same as the `--schema` CLI argument (upload schema only).
-- Optional query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate upload state and resume upload if data already exists on remote storage).
-- Optional query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
+- Optional boolean query argument `delete-source` works the same as the `--delete-source` CLI argument.
+- Optional string query argument `diff-from` works the same as the `--diff-from` CLI argument.
+- Optional string query argument `diff-from-remote` works the same as the `--diff-from-remote` CLI argument.
+- Optional string query argument `table` works the same as the `--table value` CLI argument.
+- Optional string query argument `partitions` works the same as the `--partitions value` CLI argument.
+- Optional boolean query argument `schema` works the same as the `--schema` CLI argument (upload schema only).
+- Optional boolean query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate upload state and resume upload if data already exists on remote storage).
+- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
 
 Note: this operation is asynchronous, so the API will return once the operation has started.
 
@@ -460,11 +468,11 @@ Note: The `Size` field will not be set for the remote backups with upload status
 
 Download backup from remote storage: `curl -s localhost:7171/backup/download/<BACKUP_NAME> -X POST | jq .`
 
-- Optional query argument `table` works the same as the `--table value` CLI argument.
-- Optional query argument `partitions` works the same as the `--partitions value` CLI argument.
-- Optional query argument `schema` works the same as the `--schema` CLI argument (download schema only).
-- Optional query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate download state and resume download if it already exists on local storage).
-- Optional query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
+- Optional string query argument `table` works the same as the `--table value` CLI argument.
+- Optional string query argument `partitions` works the same as the `--partitions value` CLI argument.
+- Optional boolean query argument `schema` works the same as the `--schema` CLI argument (download schema only).
+- Optional boolean query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate download state and resume download if it already exists on local storage).
+- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
 
 Note: this operation is asynchronous, so the API will return once the operation has started.
 
@@ -472,17 +480,19 @@ Note: this operation is asynchronous, so the API will return once the operation 
 
 Create schema and restore data from backup: `curl -s localhost:7171/backup/restore/<BACKUP_NAME> -X POST | jq .`
 
-- Optional query argument `table` works the same as the `--table value` CLI argument.
-- Optional query argument `partitions` works the same as the `--partitions value` CLI argument.
-- Optional query argument `schema` works the same as the `--schema` CLI argument (restore schema only).
-- Optional query argument `data` works the same as the `--data` CLI argument (restore data only).
-- Optional query argument `rm` works the same as the `--rm` CLI argument (drop tables before restore).
-- Optional query argument `ignore_dependencies` works the as same the `--ignore-dependencies` CLI argument.
-- Optional query argument `rbac` works the same as the `--rbac` CLI argument (restore RBAC).
-- Optional query argument `configs` works the same as the `--configs` CLI argument (restore configs).
-- Optional query argument `restore_database_mapping` works the same as the `--restore-database-mapping` CLI argument.
-- Optional query argument `restore_table_mapping` works the same as the `--restore-table-mapping` CLI argument.
-- Optional query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
+- Optional string query argument `table` works the same as the `--table value` CLI argument.
+- Optional string query argument `partitions` works the same as the `--partitions value` CLI argument.
+- Optional boolean query argument `schema` works the same as the `--schema` CLI argument (restore schema only).
+- Optional boolean query argument `data` works the same as the `--data` CLI argument (restore data only).
+- Optional boolean query argument `rm` works the same as the `--rm` CLI argument (drop tables before restore).
+- Optional boolean query argument `ignore_dependencies` works the as same the `--ignore-dependencies` CLI argument.
+- Optional boolean query argument `rbac` works the same as the `--rbac` CLI argument (restore RBAC).
+- Optional boolean query argument `rbac-only` works the same as the `--rbac` CLI argument (restore only RBAC).
+- Optional boolean query argument `configs` works the same as the `--configs` CLI argument (restore configs).
+- Optional boolean query argument `configs-only` works the same as the `--configs-only` CLI argument (restore configs).
+- Optional string query argument `restore_database_mapping` works the same as the `--restore-database-mapping=old_db:new_db` CLI argument.
+- Optional string query argument `restore_table_mapping` works the same as the `--restore-table-mapping=old_table:new_table` CLI argument.
+- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
 
 ### POST /backup/delete
 
@@ -497,13 +507,15 @@ Display list of currently running asynchronous operations: `curl -s localhost:71
 ### POST /backup/actions
 
 Execute multiple backup actions: `curl -X POST -d '{"command":"create test_backup"}' -s localhost:7171/backup/actions`
+You could pass multi line json each row in POST body
+Will return result for each command as separate json string in each line.
 
 ### GET /backup/actions
 
 Display a list of all operations from start of API server: `curl -s localhost:7171/backup/actions | jq .`
 
-- Optional query argument `filter` to filter actions on server side.
-- Optional query argument `last` to show only the last `N` actions.
+- Optional string query argument `filter` to filter actions on server side.
+- Optional string query argument `last` to show only the last `N` actions.
 
 ## Storage types
 

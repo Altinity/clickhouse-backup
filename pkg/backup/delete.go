@@ -130,7 +130,7 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 		if backup.BackupName == backupName {
 			b.isEmbedded = strings.Contains(backup.Tags, "embedded")
 			if hasObjectDisks || (b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk == "") {
-				bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, false, backupName)
+				bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, backupName)
 				if err != nil {
 					return err
 				}
@@ -277,7 +277,7 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 	}
 	defer b.ch.Close()
 
-	bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, false, "")
+	bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, "")
 	if err != nil {
 		return err
 	}
@@ -304,7 +304,7 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 				return err
 			}
 
-			if err = bd.RemoveBackupRemote(ctx, backup); err != nil {
+			if err = bd.RemoveBackupRemote(ctx, backup, b.cfg); err != nil {
 				log.Warn().Msgf("bd.RemoveBackup return error: %v", err)
 				return err
 			}

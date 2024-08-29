@@ -554,6 +554,49 @@ func TestLongListRemote(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
+func TestIntegrationEmbedded(t *testing.T) {
+	version := os.Getenv("CLICKHOUSE_VERSION")
+	if compareVersion(version, "23.3") < 0 {
+		t.Skipf("Test skipped, BACKUP/RESTORE not production ready for %s version, look https://github.com/ClickHouse/ClickHouse/issues/39416 for details", version)
+	}
+	t.Logf("@TODO RESTORE Ordinary with old syntax still not works for %s version, look https://github.com/ClickHouse/ClickHouse/issues/43971", os.Getenv("CLICKHOUSE_VERSION"))
+	env, r := NewTestEnvironment(t)
+
+	// === AZURE ===
+	// CUSTOM backup create folder in each disk
+	env.DockerExecNoError(r, "clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_azure/backup/")
+	if compareVersion(version, "24.8") >= 0 {
+		env.runMainIntegrationScenario(t, "EMBEDDED_AZURE_URL", "config-azblob-embedded-url.yml")
+	}
+	env.runMainIntegrationScenario(t, "EMBEDDED_AZURE", "config-azblob-embedded.yml")
+
+	// === GCS over S3 ===
+	if compareVersion(version, "24.3") >= 0 && os.Getenv("QA_GCS_OVER_S3_BUCKET") != "" {
+		//@todo think about named collections to avoid show credentials in logs look to https://github.com/fsouza/fake-gcs-server/issues/1330, https://github.com/fsouza/fake-gcs-server/pull/1164
+		env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "gettext-base")
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config-gcs-embedded-url.yml.template | envsubst > /etc/clickhouse-backup/config-gcs-embedded-url.yml")
+		env.runMainIntegrationScenario(t, "EMBEDDED_GCS_URL", "config-gcs-embedded-url.yml")
+	}
+
+	// === S3 ===
+	// CUSTOM backup creates folder in each disk, need to clear
+	env.DockerExecNoError(r, "clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_s3/backup/")
+	env.runMainIntegrationScenario(t, "EMBEDDED_S3", "config-s3-embedded.yml")
+
+	if compareVersion(version, "23.8") >= 0 {
+		//CUSTOM backup creates folder in each disk, need to clear
+		env.DockerExecNoError(r, "clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_local/backup/")
+		env.runMainIntegrationScenario(t, "EMBEDDED_LOCAL", "config-s3-embedded-local.yml")
+	}
+	if compareVersion(version, "24.3") >= 0 {
+		env.runMainIntegrationScenario(t, "EMBEDDED_S3_URL", "config-s3-embedded-url.yml")
+	}
+	//@TODO think about how to implements embedded backup for s3_plain disks
+	//env.DockerExecNoError(r, "clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_s3_plain/backup/")
+	//runMainIntegrationScenario(t, "EMBEDDED_S3_PLAIN", "config-s3-plain-embedded.yml")
+	env.Cleanup(t, r)
+}
+
 func TestIntegrationAzure(t *testing.T) {
 	if isTestShouldSkip("AZURE_TESTS") {
 		t.Skip("Skipping Azure integration tests...")
@@ -574,6 +617,23 @@ func TestIntegrationGCSWithCustomEndpoint(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
+func TestIntegrationS3(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	env.checkObjectStorageIsEmpty(t, r, "S3")
+	env.runMainIntegrationScenario(t, "S3", "config-s3.yml")
+	env.Cleanup(t, r)
+}
+
+func TestIntegrationGCS(t *testing.T) {
+	if isTestShouldSkip("GCS_TESTS") {
+		t.Skip("Skipping GCS integration tests...")
+		return
+	}
+	env, r := NewTestEnvironment(t)
+	env.runMainIntegrationScenario(t, "GCS", "config-gcs.yml")
+	env.Cleanup(t, r)
+}
+
 func TestIntegrationSFTPAuthKey(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	env.uploadSSHKeys(r, "clickhouse-backup")
@@ -589,7 +649,8 @@ func TestIntegrationSFTPAuthPassword(t *testing.T) {
 
 func TestIntegrationFTP(t *testing.T) {
 	env, r := NewTestEnvironment(t)
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 1 {
+	// 21.8 can't execute SYSTEM RESTORE REPLICA
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") > 1 {
 		env.runMainIntegrationScenario(t, "FTP", "config-ftp.yaml")
 	} else {
 		env.runMainIntegrationScenario(t, "FTP", "config-ftp-old.yaml")
@@ -612,68 +673,6 @@ func TestIntegrationS3Glacier(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
-func TestIntegrationS3(t *testing.T) {
-	env, r := NewTestEnvironment(t)
-	env.checkObjectStorageIsEmpty(t, r, "S3")
-	env.runMainIntegrationScenario(t, "S3", "config-s3.yml")
-	env.Cleanup(t, r)
-}
-
-func TestIntegrationGCS(t *testing.T) {
-	if isTestShouldSkip("GCS_TESTS") {
-		t.Skip("Skipping GCS integration tests...")
-		return
-	}
-	env, r := NewTestEnvironment(t)
-	env.runMainIntegrationScenario(t, "GCS", "config-gcs.yml")
-	env.Cleanup(t, r)
-}
-
-func TestIntegrationEmbedded(t *testing.T) {
-	//t.Skipf("Test skipped, wait 23.8, RESTORE Ordinary table and RESTORE MATERIALIZED VIEW and {uuid} not works for %s version, look https://github.com/ClickHouse/ClickHouse/issues/43971 and https://github.com/ClickHouse/ClickHouse/issues/42709", os.Getenv("CLICKHOUSE_VERSION"))
-	//dependencies restore https://github.com/ClickHouse/ClickHouse/issues/39416, fixed in 23.3
-	version := os.Getenv("CLICKHOUSE_VERSION")
-	if compareVersion(version, "23.3") < 0 {
-		t.Skipf("Test skipped, BACKUP/RESTORE not production ready for %s version", version)
-	}
-	env, r := NewTestEnvironment(t)
-
-	//CUSTOM backup creates folder in each disk, need to clear
-	env.DockerExecNoError(r, "clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_s3/backup/")
-	env.runMainIntegrationScenario(t, "EMBEDDED_S3", "config-s3-embedded.yml")
-
-	//@TODO think about how to implements embedded backup for s3_plain disks
-	//env.DockerExecNoError(r, "clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_s3_plain/backup/")
-	//runMainIntegrationScenario(t, "EMBEDDED_S3_PLAIN", "config-s3-plain-embedded.yml")
-
-	t.Log("@TODO clickhouse-server don't close connection properly after FIN from azurite during BACKUP/RESTORE https://github.com/ClickHouse/ClickHouse/issues/60447, https://github.com/Azure/Azurite/issues/2053")
-	//env.DockerExecNoError(r, "azure", "apk", "add", "tcpdump")
-	//r.NoError(env.DockerExecBackground("azure", "tcpdump", "-i", "any", "-w", "/tmp/azurite_http.pcap", "port", "10000"))
-	////CUSTOM backup create folder in each disk
-	//env.DockerExecNoError(r, "clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_azure/backup/")
-	//if compareVersion(version, "24.2") >= 0 {
-	//	env.runMainIntegrationScenario(t, "EMBEDDED_AZURE_URL", "config-azblob-embedded-url.yml")
-	//}
-	//env.runMainIntegrationScenario(t, "EMBEDDED_AZURE", "config-azblob-embedded.yml")
-	//env.DockerExecNoError(r, "azure", "pkill", "tcpdump")
-	//r.NoError(env.DockerCP("azure:/tmp/azurite_http.pcap", "./azurite_http.pcap"))
-
-	if compareVersion(version, "23.8") >= 0 {
-		//CUSTOM backup creates folder in each disk, need to clear
-		env.DockerExecNoError(r, "clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_local/backup/")
-		env.runMainIntegrationScenario(t, "EMBEDDED_LOCAL", "config-s3-embedded-local.yml")
-	}
-	if compareVersion(version, "24.3") >= 0 {
-		//@todo think about named collections to avoid show credentials in logs look to https://github.com/fsouza/fake-gcs-server/issues/1330, https://github.com/fsouza/fake-gcs-server/pull/1164
-		env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "gettext-base")
-		if os.Getenv("QA_GCS_OVER_S3_BUCKET") != "" {
-			env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config-gcs-embedded-url.yml.template | envsubst > /etc/clickhouse-backup/config-gcs-embedded-url.yml")
-			env.runMainIntegrationScenario(t, "EMBEDDED_GCS_URL", "config-gcs-embedded-url.yml")
-		}
-		env.runMainIntegrationScenario(t, "EMBEDDED_S3_URL", "config-s3-embedded-url.yml")
-	}
-	env.Cleanup(t, r)
-}
 
 func TestIntegrationCustomKopia(t *testing.T) {
 	env, r := NewTestEnvironment(t)
@@ -730,7 +729,7 @@ func TestS3NoDeletePermission(t *testing.T) {
 	env.DockerExecNoError(r, "minio", "/bin/minio_nodelete.sh")
 	r.NoError(env.DockerCP("config-s3-nodelete.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
 
-	generateTestData(t, r, env, "S3", defaultTestData)
+	generateTestData(t, r, env, "S3", false, defaultTestData)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create_remote", "no_delete_backup")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", "no_delete_backup")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "restore_remote", "no_delete_backup")
@@ -1674,7 +1673,7 @@ func TestTablePatterns(t *testing.T) {
 	for _, createPattern := range []bool{true, false} {
 		for _, restorePattern := range []bool{true, false} {
 			fullCleanup(t, r, env, []string{testBackupName}, []string{"remote", "local"}, databaseList, false, false, "config-s3.yml")
-			generateTestData(t, r, env, "S3", defaultTestData)
+			generateTestData(t, r, env, "S3", false, defaultTestData)
 			if createPattern {
 				env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", "--tables", " "+dbNameOrdinaryTest+".*", testBackupName)
 				out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "tables", "--tables", " "+dbNameOrdinaryTest+".*", testBackupName)
@@ -1838,12 +1837,12 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Atomic, Issue331Ordinary}
 	fullCleanup(t, r, env, backupNames, []string{"remote", "local"}, databaseList, false, false, "config-s3.yml")
 	incrementData := defaultIncrementData
-	generateTestData(t, r, env, "S3", defaultTestData)
+	generateTestData(t, r, env, "S3", false, defaultTestData)
 	for backupNumber, backupName := range backupNames {
 		if backupNumber == 0 {
 			env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", fmt.Sprintf("BACKUPS_TO_KEEP_REMOTE=3 CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup create_remote %s", backupName))
 		} else {
-			incrementData = generateIncrementTestData(t, r, env, "S3", incrementData, backupNumber)
+			incrementData = generateIncrementTestData(t, r, env, "S3", false, incrementData, backupNumber)
 			env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", fmt.Sprintf("BACKUPS_TO_KEEP_REMOTE=3 CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup create_remote --diff-from-remote=%s %s", backupNames[backupNumber-1], backupName))
 		}
 	}
@@ -2401,13 +2400,13 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	tablesPattern := fmt.Sprintf("*_%s.*", t.Name())
 	log.Debug().Msg("Clean before start")
 	fullCleanup(t, r, env, []string{fullBackupName, incrementBackupName}, []string{"remote", "local"}, databaseList, false, false, backupConfig)
-
-	testData := generateTestData(t, r, env, remoteStorageType, defaultTestData)
+	createAllTypesOfObjectTables := !strings.Contains(remoteStorageType, "CUSTOM")
+	testData := generateTestData(t, r, env, remoteStorageType, createAllTypesOfObjectTables, defaultTestData)
 
 	log.Debug().Msg("Create backup")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables", tablesPattern, fullBackupName)
 
-	incrementData := generateIncrementTestData(t, r, env, remoteStorageType, defaultIncrementData, 1)
+	incrementData := generateIncrementTestData(t, r, env, remoteStorageType, createAllTypesOfObjectTables, defaultIncrementData, 1)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables", tablesPattern, incrementBackupName)
 
 	log.Debug().Msg("Upload full")
@@ -2769,22 +2768,22 @@ func (env *TestEnvironment) checkResumeAlreadyProcessed(backupCmd, testBackupNam
 	}
 }
 
-func fullCleanup(t *testing.T, r *require.Assertions, env *TestEnvironment, backupNames, backupTypes, databaseList []string, checkDeleteErr, checkDropErr bool, backupConfig string) {
+func fullCleanup(t *testing.T, r *require.Assertions, env *TestEnvironment, backupNames, backupTypes, databaseList []string, checkDeleteErr, checkDeleteOtherErr bool, backupConfig string) {
 	for _, backupName := range backupNames {
 		for _, backupType := range backupTypes {
-			err := env.DockerExec("clickhouse-backup", "bash", "-xce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" delete "+backupType+" "+backupName)
+			out, err := env.DockerExecOut("clickhouse-backup", "bash", "-xce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" delete "+backupType+" "+backupName)
 			if checkDeleteErr {
-				r.NoError(err, "checkDeleteErr delete %s %s error: %v", err, backupType, backupName)
+				r.NoError(err, "checkDeleteErr delete %s %s output: \n%s\nerror: %v", backupType, backupName, out, err)
 			}
 		}
 	}
-	otherBackupList, err := env.DockerExecOut("clickhouse", "ls", "-1", "/var/lib/clickhouse/backup/*"+t.Name()+"*")
-	if err == nil {
+	otherBackupList, lsErr := env.DockerExecOut("clickhouse", "ls", "-1", "/var/lib/clickhouse/backup/*"+t.Name()+"*")
+	if lsErr == nil {
 		for _, backupName := range strings.Split(otherBackupList, "\n") {
 			if backupName != "" {
 				out, err := env.DockerExecOut("clickhouse-backup", "bash", "-xce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" delete local "+backupName)
-				if checkDropErr {
-					r.NoError(err, "%s\nunexpected delete local error: %v", out, err)
+				if checkDeleteOtherErr {
+					r.NoError(err, "%s\nunexpected delete local %s output: \n%s\nerror: %v, ", backupName, out, err)
 				}
 			}
 		}
@@ -2793,9 +2792,9 @@ func fullCleanup(t *testing.T, r *require.Assertions, env *TestEnvironment, back
 	dropDatabasesFromTestDataDataSet(t, r, env, databaseList)
 }
 
-func generateTestData(t *testing.T, r *require.Assertions, env *TestEnvironment, remoteStorageType string, testData []TestDataStruct) []TestDataStruct {
+func generateTestData(t *testing.T, r *require.Assertions, env *TestEnvironment, remoteStorageType string, createAllTypesOfObjectTables bool, testData []TestDataStruct) []TestDataStruct {
 	log.Debug().Msgf("Generate test data %s with _%s suffix", remoteStorageType, t.Name())
-	testData = generateTestDataWithDifferentStoragePolicy(remoteStorageType, 0, 5, testData)
+	testData = generateTestDataWithDifferentStoragePolicy(remoteStorageType, createAllTypesOfObjectTables, 0, 5, testData)
 	for _, data := range testData {
 		if isTableSkip(env, data, false) {
 			continue
@@ -2811,7 +2810,7 @@ func generateTestData(t *testing.T, r *require.Assertions, env *TestEnvironment,
 	return testData
 }
 
-func generateTestDataWithDifferentStoragePolicy(remoteStorageType string, offset, rowsCount int, testData []TestDataStruct) []TestDataStruct {
+func generateTestDataWithDifferentStoragePolicy(remoteStorageType string, createAllTypesOfObjectTables bool, offset, rowsCount int, testData []TestDataStruct) []TestDataStruct {
 	log.Debug().Msgf("generateTestDataWithDifferentStoragePolicy remoteStorageType=%s", remoteStorageType)
 	for databaseName, databaseEngine := range map[string]string{dbNameOrdinary: "Ordinary", dbNameAtomic: "Atomic"} {
 		testDataWithStoragePolicy := TestDataStruct{
@@ -2839,20 +2838,20 @@ func generateTestDataWithDifferentStoragePolicy(remoteStorageType string, offset
 				testData = append(testData, testDataWithStoragePolicy)
 			}
 		}
-		//s3 disks support after 21.8
-		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 && strings.Contains(remoteStorageType, "S3") {
-			testDataWithStoragePolicy.Name = "test_s3"
-			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id PARTITION BY id SETTINGS storage_policy = 's3_only'"
-			addTestDataIfNotExists()
-		}
 		//encrypted disks support after 21.10
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.10") >= 0 {
 			testDataWithStoragePolicy.Name = "test_hdd3_encrypted"
 			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id PARTITION BY id  SETTINGS storage_policy = 'hdd3_only_encrypted'"
 			addTestDataIfNotExists()
 		}
+		//s3 disks support after 21.8
+		if (createAllTypesOfObjectTables || strings.Contains(remoteStorageType, "S3")) && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 {
+			testDataWithStoragePolicy.Name = "test_s3"
+			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id PARTITION BY id SETTINGS storage_policy = 's3_only'"
+			addTestDataIfNotExists()
+		}
 		//encrypted s3 disks support after 21.12
-		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 && strings.Contains(remoteStorageType, "S3") {
+		if (createAllTypesOfObjectTables || strings.Contains(remoteStorageType, "S3")) && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
 			testDataWithStoragePolicy.Name = "test_s3_encrypted"
 			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=MergeTree ORDER BY id PARTITION BY id SETTINGS storage_policy = 's3_only_encrypted'"
 			// @todo wait when fix https://github.com/ClickHouse/ClickHouse/issues/58247
@@ -2862,13 +2861,13 @@ func generateTestDataWithDifferentStoragePolicy(remoteStorageType string, offset
 			addTestDataIfNotExists()
 		}
 		//gcs over s3 support added in 22.6
-		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.6") >= 0 && remoteStorageType == "GCS" && os.Getenv("QA_GCS_OVER_S3_BUCKET") != "" {
+		if (createAllTypesOfObjectTables || strings.Contains(remoteStorageType, "GCS")) && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.6") >= 0 && os.Getenv("QA_GCS_OVER_S3_BUCKET") != "" {
 			testDataWithStoragePolicy.Name = "test_gcs"
 			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id PARTITION BY id SETTINGS storage_policy = 'gcs_only'"
 			addTestDataIfNotExists()
 		}
 		//check azure_blob_storage only in 23.3+ (added in 22.1)
-		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.3") >= 0 && strings.Contains(remoteStorageType, "AZBLOB") {
+		if (createAllTypesOfObjectTables || strings.Contains(remoteStorageType, "AZBLOB")) && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.3") >= 0 {
 			testDataWithStoragePolicy.Name = "test_azure"
 			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id PARTITION BY id SETTINGS storage_policy = 'azure_only'"
 			addTestDataIfNotExists()
@@ -2877,9 +2876,9 @@ func generateTestDataWithDifferentStoragePolicy(remoteStorageType string, offset
 	return testData
 }
 
-func generateIncrementTestData(t *testing.T, r *require.Assertions, ch *TestEnvironment, remoteStorageType string, incrementData []TestDataStruct, incrementNumber int) []TestDataStruct {
+func generateIncrementTestData(t *testing.T, r *require.Assertions, ch *TestEnvironment, remoteStorageType string, createObjectTables bool, incrementData []TestDataStruct, incrementNumber int) []TestDataStruct {
 	log.Debug().Msgf("Generate increment test data for %s", remoteStorageType)
-	incrementData = generateTestDataWithDifferentStoragePolicy(remoteStorageType, 5*incrementNumber, 5, incrementData)
+	incrementData = generateTestDataWithDifferentStoragePolicy(remoteStorageType, createObjectTables, 5*incrementNumber, 5, incrementData)
 	for _, data := range incrementData {
 		if isTableSkip(ch, data, false) {
 			continue
@@ -2935,15 +2934,27 @@ func (env *TestEnvironment) connectWithWait(r *require.Assertions, sleepBefore, 
 }
 
 func (env *TestEnvironment) connect(timeOut string) error {
-	portOut, err := utils.ExecCmdOut(context.Background(), 10*time.Second, "docker", append(env.GetDefaultComposeCommand(), "port", "clickhouse", "9000")...)
-	if err != nil {
+	for i := 0; i < 10; i++ {
+		statusOut, statusErr := utils.ExecCmdOut(context.Background(), 10*time.Second, "docker", append(env.GetDefaultComposeCommand(), "ps", "--status", "running", "clickhouse")...)
+		if statusErr == nil {
+			break
+		}
+		log.Warn().Msg(statusOut)
+		level := zerolog.WarnLevel
+		if i == 9 {
+			level = zerolog.FatalLevel
+		}
+		log.WithLevel(level).Msgf("can't ps --status running clickhouse: %v", statusErr)
+		time.Sleep(1 * time.Second)
+	}
+	portOut, portErr := utils.ExecCmdOut(context.Background(), 10*time.Second, "docker", append(env.GetDefaultComposeCommand(), "port", "clickhouse", "9000")...)
+	if portErr != nil {
 		log.Error().Msg(portOut)
-		log.Fatal().Msgf("can't get port for clickhouse: %v", err)
+		log.Fatal().Msgf("can't get port for clickhouse: %v", portErr)
 	}
 	hostAndPort := strings.Split(strings.Trim(portOut, " \r\n\t"), ":")
 	if len(hostAndPort) < 1 {
-		log.Error().Msg(portOut)
-		log.Fatal().Msgf("invalid port for clickhouse: %v", err)
+		log.Fatal().Msgf("invalid port for clickhouse: %v", portOut)
 	}
 	port, err := strconv.Atoi(hostAndPort[1])
 	if err != nil {

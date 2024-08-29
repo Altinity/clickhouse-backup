@@ -1048,7 +1048,6 @@ RQ_SRS_013_ClickHouse_BackupUtility_Configuration = Requirement(
         'general:\n'
         '  remote_storage: none           # REMOTE_STORAGE\n'
         '  max_file_size: 107374182400    # MAX_FILE_SIZE\n'
-        '  disable_progress_bar: false    # DISABLE_PROGRESS_BAR\n'
         '  backups_to_keep_local: 0       # BACKUPS_TO_KEEP_LOCAL\n'
         '  backups_to_keep_remote: 0      # BACKUPS_TO_KEEP_REMOTE\n'
         '  log_level: info                # LOG_LEVEL\n'
@@ -2432,7 +2431,6 @@ All options SHALL be overridable via environment variables.
 general:
   remote_storage: none           # REMOTE_STORAGE
   max_file_size: 107374182400    # MAX_FILE_SIZE
-  disable_progress_bar: false    # DISABLE_PROGRESS_BAR
   backups_to_keep_local: 0       # BACKUPS_TO_KEEP_LOCAL
   backups_to_keep_remote: 0      # BACKUPS_TO_KEEP_REMOTE
   log_level: info                # LOG_LEVEL

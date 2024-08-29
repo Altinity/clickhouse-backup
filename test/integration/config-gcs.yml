@@ -1,9 +1,12 @@
 general:
-  disable_progress_bar: true
   remote_storage: gcs
   upload_concurrency: 4
   download_concurrency: 4
   restore_schema_on_cluster: "{cluster}"
+  allow_object_disk_streaming: true
+s3:
+  disable_ssl: false
+  disable_cert_verification: true
 clickhouse:
   host: clickhouse
   port: 9000

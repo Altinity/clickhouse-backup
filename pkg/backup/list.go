@@ -354,7 +354,7 @@ func (b *Backuper) GetRemoteBackups(ctx context.Context, parseMetadata bool) ([]
 	if b.cfg.General.RemoteStorage == "custom" {
 		return custom.List(ctx, b.cfg)
 	}
-	bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, false, "")
+	bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, "")
 	if err != nil {
 		return []storage.Backup{}, err
 	}
@@ -468,7 +468,7 @@ func (b *Backuper) GetTablesRemote(ctx context.Context, backupName string, table
 		return nil, fmt.Errorf("GetTablesRemote does not support `none` and `custom` remote storage")
 	}
 	if b.dst == nil {
-		bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, false, "")
+		bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, "")
 		if err != nil {
 			return nil, err
 		}

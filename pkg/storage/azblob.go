@@ -37,6 +37,28 @@ func (a *AzureBlob) logf(msg string, args ...interface{}) {
 		log.Debug().Msgf(msg, args...)
 	}
 }
+
+func (a *AzureBlob) log(level pipeline.LogLevel, msg string) {
+	if a.Config.Debug {
+		switch level {
+		case pipeline.LogNone:
+			log.Debug().Msg(msg)
+		case pipeline.LogFatal:
+			log.Fatal().Msg(msg)
+		case pipeline.LogPanic:
+			log.Fatal().Msg(msg)
+		case pipeline.LogError:
+			log.Error().Msg(msg)
+		case pipeline.LogWarning:
+			log.Warn().Msg(msg)
+		case pipeline.LogInfo:
+			log.Info().Msg(msg)
+		case pipeline.LogDebug:
+			log.Debug().Msg(msg)
+		}
+	}
+}
+
 func (a *AzureBlob) Kind() string {
 	return "azblob"
 }
@@ -116,29 +138,25 @@ func (a *AzureBlob) Connect(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
-		a.Pipeline = azblob.NewPipeline(credential, azblob.PipelineOptions{
+		options := azblob.PipelineOptions{
 			Retry: azblob.RetryOptions{
 				TryTimeout: timeout,
 			},
-		})
+		}
+		if a.Config.Debug {
+			options.Log = pipeline.LogOptions{
+				Log: a.log,
+				ShouldLog: func(level pipeline.LogLevel) bool {
+					return true
+				},
+			}
+		}
+		a.Pipeline = azblob.NewPipeline(credential, options)
 		a.Container = azblob.NewServiceURL(*u, a.Pipeline).NewContainerURL(a.Config.Container)
 		_, err = a.Container.Create(ctx, azblob.Metadata{}, azblob.PublicAccessNone)
 		if err != nil && !isContainerAlreadyExists(err) {
 			return err
 		}
-		//testName := make([]byte, 16)
-		//if _, err := rand.Read(testName); err != nil {
-		//	return errors.Wrapf(err, "azblob: failed to generate test blob name")
-		//}
-		//testNameStr := base64.URLEncoding.EncodeToString(testName)
-		//a.logf("AZBLOB->try to GetProbperties test blob: %s", testNameStr)
-		//testBlob := a.Container.NewBlockBlobURL(testNameStr)
-		//if _, err = testBlob.GetProperties(ctx, azblob.BlobAccessConditions{}, azblob.ClientProvidedKeyOptions{}); err != nil {
-		//	var se azblob.StorageError
-		//	if !errors.As(err, &se) || se.ServiceCode() != azblob.ServiceCodeBlobNotFound {
-		//		return errors.Wrapf(err, "azblob: failed to access container %s", a.Config.Container)
-		//	}
-		//}
 		if a.Config.SSEKey != "" {
 			key, err := base64.StdEncoding.DecodeString(a.Config.SSEKey)
 			if err != nil {
