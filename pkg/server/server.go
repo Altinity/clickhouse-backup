@@ -36,6 +36,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/server/metrics"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
+	"github.com/google/uuid"
 )
 
 type APIServer struct {
@@ -874,6 +875,8 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	checkPartsColumns := true
 	fullCommand := "create"
 	query := r.URL.Query()
+	operationId, _ := uuid.NewUUID()
+
 	if tp, exist := query["table"]; exist {
 		tablePattern = tp[0]
 		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
@@ -930,7 +933,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			log.Error().Msgf("API /backup/create error: %v", err)
 			status.Current.Stop(commandId, err)
-			api.errorCallback(context.Background(), err, callback)
+			api.errorCallback(context.Background(), err, operationId.String(), callback)
 			return
 		}
 		go func() {
@@ -940,16 +943,18 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		}()
 
 		status.Current.Stop(commandId, nil)
-		api.successCallback(context.Background(), callback)
+		api.successCallback(context.Background(), operationId.String(), callback)
 	}()
 	api.sendJSONEachRow(w, http.StatusCreated, struct {
-		Status     string `json:"status"`
-		Operation  string `json:"operation"`
-		BackupName string `json:"backup_name"`
+		Status      string `json:"status"`
+		Operation   string `json:"operation"`
+		BackupName  string `json:"backup_name"`
+		OperationId string `json:"operation_id"`
 	}{
-		Status:     "acknowledged",
-		Operation:  "create",
-		BackupName: backupName,
+		Status:      "acknowledged",
+		Operation:   "create",
+		BackupName:  backupName,
+		OperationId: operationId.String(),
 	})
 }
 
@@ -1118,6 +1123,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	schemaOnly := false
 	resume := false
 	fullCommand := "upload"
+	operationId, _ := uuid.NewUUID()
 
 	if _, exist := query["delete-source"]; exist {
 		deleteSource = true
@@ -1167,7 +1173,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			log.Error().Msgf("Upload error: %v", err)
 			status.Current.Stop(commandId, err)
-			api.errorCallback(context.Background(), err, callback)
+			api.errorCallback(context.Background(), err, operationId.String(), callback)
 			return
 		}
 		go func() {
@@ -1176,20 +1182,22 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 			}
 		}()
 		status.Current.Stop(commandId, nil)
-		api.successCallback(context.Background(), callback)
+		api.successCallback(context.Background(), operationId.String(), callback)
 	}()
 	api.sendJSONEachRow(w, http.StatusOK, struct {
-		Status     string `json:"status"`
-		Operation  string `json:"operation"`
-		BackupName string `json:"backup_name"`
-		BackupFrom string `json:"backup_from,omitempty"`
-		Diff       bool   `json:"diff"`
+		Status      string `json:"status"`
+		Operation   string `json:"operation"`
+		BackupName  string `json:"backup_name"`
+		BackupFrom  string `json:"backup_from,omitempty"`
+		Diff        bool   `json:"diff"`
+		OperationId string `json:"operation_id"`
 	}{
-		Status:     "acknowledged",
-		Operation:  "upload",
-		BackupName: name,
-		BackupFrom: diffFrom,
-		Diff:       diffFrom != "",
+		Status:      "acknowledged",
+		Operation:   "upload",
+		BackupName:  name,
+		BackupFrom:  diffFrom,
+		Diff:        diffFrom != "",
+		OperationId: operationId.String(),
 	})
 }
 
@@ -1219,6 +1227,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	restoreRBAC := false
 	restoreConfigs := false
 	fullCommand := "restore"
+	operationId, _ := uuid.NewUUID()
 
 	query := r.URL.Query()
 	if tp, exist := query["table"]; exist {
@@ -1310,19 +1319,21 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		status.Current.Stop(commandId, err)
 		if err != nil {
 			log.Error().Msgf("API /backup/restore error: %v", err)
-			api.errorCallback(context.Background(), err, callback)
+			api.errorCallback(context.Background(), err, operationId.String(), callback)
 			return
 		}
-		api.successCallback(context.Background(), callback)
+		api.successCallback(context.Background(), operationId.String(), callback)
 	}()
 	api.sendJSONEachRow(w, http.StatusOK, struct {
-		Status     string `json:"status"`
-		Operation  string `json:"operation"`
-		BackupName string `json:"backup_name"`
+		Status      string `json:"status"`
+		Operation   string `json:"operation"`
+		BackupName  string `json:"backup_name"`
+		OperationId string `json:"operation_id"`
 	}{
-		Status:     "acknowledged",
-		Operation:  "restore",
-		BackupName: name,
+		Status:      "acknowledged",
+		Operation:   "restore",
+		BackupName:  name,
+		OperationId: operationId.String(),
 	})
 }
 
@@ -1346,6 +1357,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	schemaOnly := false
 	resume := false
 	fullCommand := "download"
+	operationId, _ := uuid.NewUUID()
 
 	if tp, exist := query["table"]; exist {
 		tablePattern = tp[0]
@@ -1381,7 +1393,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		if err != nil {
 			log.Error().Msgf("API /backup/download error: %v", err)
 			status.Current.Stop(commandId, err)
-			api.errorCallback(context.Background(), err, callback)
+			api.errorCallback(context.Background(), err, operationId.String(), callback)
 			return
 		}
 		go func() {
@@ -1390,16 +1402,18 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 			}
 		}()
 		status.Current.Stop(commandId, nil)
-		api.successCallback(context.Background(), callback)
+		api.successCallback(context.Background(), operationId.String(), callback)
 	}()
 	api.sendJSONEachRow(w, http.StatusOK, struct {
-		Status     string `json:"status"`
-		Operation  string `json:"operation"`
-		BackupName string `json:"backup_name"`
+		Status      string `json:"status"`
+		Operation   string `json:"operation"`
+		BackupName  string `json:"backup_name"`
+		OperationId string `json:"operation_id"`
 	}{
-		Status:     "acknowledged",
-		Operation:  "download",
-		BackupName: name,
+		Status:      "acknowledged",
+		Operation:   "download",
+		BackupName:  name,
+		OperationId: operationId.String(),
 	})
 }
 
