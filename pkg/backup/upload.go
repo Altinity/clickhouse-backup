@@ -279,7 +279,7 @@ func (b *Backuper) RemoveOldBackupsRemote(ctx context.Context) error {
 			return err
 		}
 
-		if err := b.dst.RemoveBackupRemote(ctx, backupToDelete); err != nil {
+		if err := b.dst.RemoveBackupRemote(ctx, backupToDelete, b.cfg); err != nil {
 			log.Warn().Msgf("can't deleteKey %s return error : %v", backupToDelete.BackupName, err)
 		}
 		log.Info().Fields(map[string]interface{}{

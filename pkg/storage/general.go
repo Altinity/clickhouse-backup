@@ -51,19 +51,26 @@ type BackupDestination struct {
 
 var metadataCacheLock sync.RWMutex
 
-func (bd *BackupDestination) RemoveBackupRemote(ctx context.Context, backup Backup) error {
+func (bd *BackupDestination) RemoveBackupRemote(ctx context.Context, backup Backup, cfg *config.Config) error {
+	retry := retrier.New(retrier.ConstantBackoff(cfg.General.RetriesOnFailure, cfg.General.RetriesDuration), nil)
 	if bd.Kind() == "SFTP" || bd.Kind() == "FTP" {
-		return bd.DeleteFile(ctx, backup.BackupName)
+		return retry.RunCtx(ctx, func(ctx context.Context) error {
+			return bd.DeleteFile(ctx, backup.BackupName)
+		})
 	}
 	return bd.Walk(ctx, backup.BackupName+"/", true, func(ctx context.Context, f RemoteFile) error {
 		if bd.Kind() == "azblob" {
 			if f.Size() > 0 || !f.LastModified().IsZero() {
-				return bd.DeleteFile(ctx, path.Join(backup.BackupName, f.Name()))
+				return retry.RunCtx(ctx, func(ctx context.Context) error {
+					return bd.DeleteFile(ctx, path.Join(backup.BackupName, f.Name()))
+				})
 			} else {
 				return nil
 			}
 		}
-		return bd.DeleteFile(ctx, path.Join(backup.BackupName, f.Name()))
+		return retry.RunCtx(ctx, func(ctx context.Context) error {
+			return bd.DeleteFile(ctx, path.Join(backup.BackupName, f.Name()))
+		})
 	})
 }
 
