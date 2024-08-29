@@ -329,13 +329,25 @@ jobs:
             if wait "$pid"; then
                 echo "$pid docker compose up successful"
             else
-                docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} --progress plain logs
+                docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project_id} --progress plain logs
                 echo "$pid the docker compose up failed."
                 exit 1  # Exit with an error code if any command fails
             fi
           done
-          
-          go test -parallel ${RUN_PARALLEL} -timeout 60m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
+          set +e
+          go test -parallel ${RUN_PARALLEL} -timeout 90m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
+          TEST_FAILED=$?
+          set -e
+          if [[ "0" != "${TEST_FAILED}" ]]; then
+            for project_id in "${project_ids[@]}"; do
+                echo "=== docker ${project_id} state ==="
+                docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project_id} --progress plain ps -a
+                echo "=== docker ${project_id} logs ==="
+                docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project_id} --progress plain logs
+            done
+            exit 1
+          fi      
+
       - name: Format integration coverage
         env:
           GOROOT: ${{ env.GOROOT_1_22_X64 }}

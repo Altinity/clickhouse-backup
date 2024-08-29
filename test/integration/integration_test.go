@@ -2933,15 +2933,27 @@ func (env *TestEnvironment) connectWithWait(r *require.Assertions, sleepBefore, 
 }
 
 func (env *TestEnvironment) connect(timeOut string) error {
-	portOut, err := utils.ExecCmdOut(context.Background(), 10*time.Second, "docker", append(env.GetDefaultComposeCommand(), "port", "clickhouse", "9000")...)
-	if err != nil {
+	for i := 0; i < 10; i++ {
+		statusOut, statusErr := utils.ExecCmdOut(context.Background(), 10*time.Second, "docker", append(env.GetDefaultComposeCommand(), "ps", "--status", "running", "clickhouse")...)
+		if statusErr == nil {
+			break
+		}
+		log.Warn().Msg(statusOut)
+		level := zerolog.WarnLevel
+		if i == 9 {
+			level = zerolog.FatalLevel
+		}
+		log.WithLevel(level).Msgf("can't ps --status running clickhouse: %v", statusErr)
+		time.Sleep(1 * time.Second)
+	}
+	portOut, portErr := utils.ExecCmdOut(context.Background(), 10*time.Second, "docker", append(env.GetDefaultComposeCommand(), "port", "clickhouse", "9000")...)
+	if portErr != nil {
 		log.Error().Msg(portOut)
-		log.Fatal().Msgf("can't get port for clickhouse: %v", err)
+		log.Fatal().Msgf("can't get port for clickhouse: %v", portErr)
 	}
 	hostAndPort := strings.Split(strings.Trim(portOut, " \r\n\t"), ":")
 	if len(hostAndPort) < 1 {
-		log.Error().Msg(portOut)
-		log.Fatal().Msgf("invalid port for clickhouse: %v", err)
+		log.Fatal().Msgf("invalid port for clickhouse: %v", portOut)
 	}
 	port, err := strconv.Atoi(hostAndPort[1])
 	if err != nil {
