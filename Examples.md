@@ -184,10 +184,7 @@ spec:
                  - name: clickhouse-backup
                    image: altinity/clickhouse-backup:master
                    imagePullPolicy: Always
-                   command:
-                      - bash
-                      - -xc
-                      - "/bin/clickhouse-backup server"
+                   args: ["server"]
                    env:
                       - name: LOG_LEVEL
                         value: "debug"
