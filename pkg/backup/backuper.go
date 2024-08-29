@@ -195,7 +195,8 @@ func (b *Backuper) isDiskTypeEncryptedObject(disk clickhouse.Disk, disks []click
 	return underlyingIdx >= 0
 }
 
-func (b *Backuper) getEmbeddedBackupDefaultSettings(version int) []string {
+// getEmbeddedRestoreSettings - different with getEmbeddedBackupSettings, cause https://github.com/ClickHouse/ClickHouse/issues/69053
+func (b *Backuper) getEmbeddedRestoreSettings(version int) []string {
 	settings := []string{}
 	if (b.cfg.General.RemoteStorage == "s3" || b.cfg.General.RemoteStorage == "gcs") && version >= 23007000 {
 		settings = append(settings, "allow_s3_native_copy=1")
@@ -209,7 +210,24 @@ func (b *Backuper) getEmbeddedBackupDefaultSettings(version int) []string {
 			log.Fatal().Msgf("SET s3_use_adaptive_timeouts=0 error: %v", err)
 		}
 	}
-	if b.cfg.General.RemoteStorage == "azblob" && version >= 24005000 {
+	return settings
+}
+
+func (b *Backuper) getEmbeddedBackupSettings(version int) []string {
+	settings := []string{}
+	if (b.cfg.General.RemoteStorage == "s3" || b.cfg.General.RemoteStorage == "gcs") && version >= 23007000 {
+		settings = append(settings, "allow_s3_native_copy=1")
+		if err := b.ch.Query("SET s3_request_timeout_ms=600000"); err != nil {
+			log.Fatal().Msgf("SET s3_request_timeout_ms=600000 error: %v", err)
+		}
+
+	}
+	if (b.cfg.General.RemoteStorage == "s3" || b.cfg.General.RemoteStorage == "gcs") && version >= 23011000 {
+		if err := b.ch.Query("SET s3_use_adaptive_timeouts=0"); err != nil {
+			log.Fatal().Msgf("SET s3_use_adaptive_timeouts=0 error: %v", err)
+		}
+	}
+	if b.cfg.General.RemoteStorage == "azblob" && version >= 24005000 && b.cfg.ClickHouse.EmbeddedBackupDisk == "" {
 		settings = append(settings, "allow_azure_native_copy=1")
 	}
 	return settings
@@ -229,10 +247,10 @@ func (b *Backuper) getEmbeddedBackupLocation(ctx context.Context, backupName str
 			return "", err
 		}
 		if b.cfg.S3.AccessKey != "" {
-			return fmt.Sprintf("S3('%s/%s','%s','%s')", s3Endpoint, backupName, b.cfg.S3.AccessKey, b.cfg.S3.SecretKey), nil
+			return fmt.Sprintf("S3('%s/%s/','%s','%s')", s3Endpoint, backupName, b.cfg.S3.AccessKey, b.cfg.S3.SecretKey), nil
 		}
 		if os.Getenv("AWS_ACCESS_KEY_ID") != "" {
-			return fmt.Sprintf("S3('%s/%s','%s','%s')", s3Endpoint, backupName, os.Getenv("AWS_ACCESS_KEY_ID"), os.Getenv("AWS_SECRET_ACCESS_KEY")), nil
+			return fmt.Sprintf("S3('%s/%s/','%s','%s')", s3Endpoint, backupName, os.Getenv("AWS_ACCESS_KEY_ID"), os.Getenv("AWS_SECRET_ACCESS_KEY")), nil
 		}
 		return "", fmt.Errorf("provide s3->access_key and s3->secret_key in config to allow embedded backup without `clickhouse->embedded_backup_disk`")
 	}
@@ -242,10 +260,10 @@ func (b *Backuper) getEmbeddedBackupLocation(ctx context.Context, backupName str
 			return "", err
 		}
 		if b.cfg.GCS.EmbeddedAccessKey != "" {
-			return fmt.Sprintf("S3('%s/%s','%s','%s')", gcsEndpoint, backupName, b.cfg.GCS.EmbeddedAccessKey, b.cfg.GCS.EmbeddedSecretKey), nil
+			return fmt.Sprintf("S3('%s/%s/','%s','%s')", gcsEndpoint, backupName, b.cfg.GCS.EmbeddedAccessKey, b.cfg.GCS.EmbeddedSecretKey), nil
 		}
 		if os.Getenv("AWS_ACCESS_KEY_ID") != "" {
-			return fmt.Sprintf("S3('%s/%s','%s','%s')", gcsEndpoint, backupName, os.Getenv("AWS_ACCESS_KEY_ID"), os.Getenv("AWS_SECRET_ACCESS_KEY")), nil
+			return fmt.Sprintf("S3('%s/%s/','%s','%s')", gcsEndpoint, backupName, os.Getenv("AWS_ACCESS_KEY_ID"), os.Getenv("AWS_SECRET_ACCESS_KEY")), nil
 		}
 		return "", fmt.Errorf("provide gcs->embedded_access_key and gcs->embedded_secret_key in config to allow embedded backup without `clickhouse->embedded_backup_disk`")
 	}
@@ -255,7 +273,7 @@ func (b *Backuper) getEmbeddedBackupLocation(ctx context.Context, backupName str
 			return "", err
 		}
 		if b.cfg.AzureBlob.Container != "" {
-			return fmt.Sprintf("AzureBlobStorage('%s','%s','%s/%s')", azblobEndpoint, b.cfg.AzureBlob.Container, b.cfg.AzureBlob.ObjectDiskPath, backupName), nil
+			return fmt.Sprintf("AzureBlobStorage('%s','%s','%s/%s/')", azblobEndpoint, b.cfg.AzureBlob.Container, b.cfg.AzureBlob.ObjectDiskPath, backupName), nil
 		}
 		return "", fmt.Errorf("provide azblob->container and azblob->account_name, azblob->account_key in config to allow embedded backup without `clickhouse->embedded_backup_disk`")
 	}

@@ -917,6 +917,7 @@ func (b *Backuper) fixEmbeddedMetadataRemote(ctx context.Context, backupName str
 		}
 		var fReader io.ReadCloser
 		remoteFilePath := path.Join(objectDiskPath, backupName, "metadata", fInfo.Name())
+		log.Debug().Msgf("read %s", remoteFilePath)
 		fReader, err = b.dst.GetFileReaderAbsolute(ctx, path.Join(objectDiskPath, backupName, "metadata", fInfo.Name()))
 		if err != nil {
 			return err
@@ -928,8 +929,9 @@ func (b *Backuper) fixEmbeddedMetadataRemote(ctx context.Context, backupName str
 		}
 		sqlQuery, sqlMetadataChanged, fixSqlErr := b.fixEmbeddedMetadataSQLQuery(ctx, sqlBytes, remoteFilePath, chVersion)
 		if fixSqlErr != nil {
-			return fixSqlErr
+			return fmt.Errorf("b.fixEmbeddedMetadataSQLQuery return error: %v", fixSqlErr)
 		}
+		log.Debug().Msgf("b.fixEmbeddedMetadataSQLQuery %s changed=%v", remoteFilePath, sqlMetadataChanged)
 		if sqlMetadataChanged {
 			err = b.dst.PutFileAbsolute(ctx, remoteFilePath, io.NopCloser(strings.NewReader(sqlQuery)))
 			if err != nil {
@@ -1653,7 +1655,7 @@ func (b *Backuper) restoreEmbedded(ctx context.Context, backupName string, schem
 			}
 		}
 	}
-	settings := b.getEmbeddedBackupDefaultSettings(version)
+	settings := b.getEmbeddedRestoreSettings(version)
 	if schemaOnly {
 		settings = append(settings, "structure_only=1")
 	}

@@ -638,16 +638,26 @@ func TestIntegrationEmbedded(t *testing.T) {
 	t.Logf("@TODO RESTORE Ordinary with old syntax still not works for %s version, look https://github.com/ClickHouse/ClickHouse/issues/43971", os.Getenv("CLICKHOUSE_VERSION"))
 	env, r := NewTestEnvironment(t)
 
-	//CUSTOM backup creates folder in each disk, need to clear
-	env.DockerExecNoError(r, "clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_s3/backup/")
-	env.runMainIntegrationScenario(t, "EMBEDDED_S3", "config-s3-embedded.yml")
-
+	// === AZURE ===
 	// CUSTOM backup create folder in each disk
 	env.DockerExecNoError(r, "clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_azure/backup/")
-	env.runMainIntegrationScenario(t, "EMBEDDED_AZURE", "config-azblob-embedded.yml")
-	if compareVersion(version, "24.3") >= 0 {
+	if compareVersion(version, "24.8") >= 0 {
 		env.runMainIntegrationScenario(t, "EMBEDDED_AZURE_URL", "config-azblob-embedded-url.yml")
 	}
+	env.runMainIntegrationScenario(t, "EMBEDDED_AZURE", "config-azblob-embedded.yml")
+
+	// === GCS over S3 ===
+	if compareVersion(version, "24.3") >= 0 && os.Getenv("QA_GCS_OVER_S3_BUCKET") != "" {
+		//@todo think about named collections to avoid show credentials in logs look to https://github.com/fsouza/fake-gcs-server/issues/1330, https://github.com/fsouza/fake-gcs-server/pull/1164
+		env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "gettext-base")
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config-gcs-embedded-url.yml.template | envsubst > /etc/clickhouse-backup/config-gcs-embedded-url.yml")
+		env.runMainIntegrationScenario(t, "EMBEDDED_GCS_URL", "config-gcs-embedded-url.yml")
+	}
+
+	// === S3 ===
+	// CUSTOM backup creates folder in each disk, need to clear
+	env.DockerExecNoError(r, "clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_s3/backup/")
+	env.runMainIntegrationScenario(t, "EMBEDDED_S3", "config-s3-embedded.yml")
 
 	if compareVersion(version, "23.8") >= 0 {
 		//CUSTOM backup creates folder in each disk, need to clear
@@ -655,12 +665,6 @@ func TestIntegrationEmbedded(t *testing.T) {
 		env.runMainIntegrationScenario(t, "EMBEDDED_LOCAL", "config-s3-embedded-local.yml")
 	}
 	if compareVersion(version, "24.3") >= 0 {
-		if os.Getenv("QA_GCS_OVER_S3_BUCKET") != "" {
-			//@todo think about named collections to avoid show credentials in logs look to https://github.com/fsouza/fake-gcs-server/issues/1330, https://github.com/fsouza/fake-gcs-server/pull/1164
-			env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "gettext-base")
-			env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config-gcs-embedded-url.yml.template | envsubst > /etc/clickhouse-backup/config-gcs-embedded-url.yml")
-			env.runMainIntegrationScenario(t, "EMBEDDED_GCS_URL", "config-gcs-embedded-url.yml")
-		}
 		env.runMainIntegrationScenario(t, "EMBEDDED_S3_URL", "config-s3-embedded-url.yml")
 	}
 	//@TODO think about how to implements embedded backup for s3_plain disks

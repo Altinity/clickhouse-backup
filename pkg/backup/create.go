@@ -526,7 +526,7 @@ func (b *Backuper) generateEmbeddedBackupSQL(ctx context.Context, backupName str
 			tablesSQL += ", "
 		}
 	}
-	backupSettings := b.getEmbeddedBackupDefaultSettings(version)
+	backupSettings := b.getEmbeddedBackupSettings(version)
 	embeddedBackupLocation, err := b.getEmbeddedBackupLocation(ctx, backupName)
 	if err != nil {
 		return "", nil, err

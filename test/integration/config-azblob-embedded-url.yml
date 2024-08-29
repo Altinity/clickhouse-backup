@@ -28,7 +28,7 @@ azblob:
   endpoint_schema: http
   container: container1
   object_disk_path: object_disk/{cluster}/{shard}
-  path: backup
+  path: backup/{cluster}/{shard}
   compression_format: none
 api:
   listen: :7171
