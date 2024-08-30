@@ -1,3 +1,7 @@
+# v2.6.1 (not released yet)
+BUG FIXES
+- fix unnecessary warnings in `allow_object_disk_streaming: true` behavior during restore
+
 # v2.6.0
 IMPROVEMENTS
 - add `rbac-only` and `configs-only` parameters to `POST /backup/create` and `POST /backup/restore` API calls

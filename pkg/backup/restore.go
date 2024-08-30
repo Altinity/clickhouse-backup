@@ -1398,6 +1398,8 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 			start := time.Now()
 			downloadObjectDiskPartsWorkingGroup, downloadCtx := errgroup.WithContext(ctx)
 			downloadObjectDiskPartsWorkingGroup.SetLimit(int(b.cfg.General.ObjectDiskServerSideCopyConcurrency))
+			var isCopyFailed atomic.Bool
+			isCopyFailed.Store(false)
 			for _, part := range parts {
 				dstDiskName := diskName
 				if part.RebalancedDisk != "" {
@@ -1414,8 +1416,6 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 						return 0, findRecursiveErr
 					}
 				}
-				var isCopyFailed atomic.Bool
-				isCopyFailed.Store(false)
 				walkErr := filepath.Walk(partPath, func(fPath string, fInfo fs.FileInfo, err error) error {
 					if err != nil {
 						return err
