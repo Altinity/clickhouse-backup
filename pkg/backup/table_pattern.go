@@ -211,7 +211,7 @@ func prepareTableMetadataFromSQL(data []byte, metadataPath string, names []strin
 		return metadata.TableMetadata{}, err
 	}
 	dataParts, err := os.ReadDir(dataPartsPath)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		log.Warn().Err(err).Send()
 	}
 	parts := map[string][]metadata.Part{

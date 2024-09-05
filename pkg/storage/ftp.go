@@ -39,7 +39,7 @@ func (f *FTP) Connect(ctx context.Context) error {
 		options = append(options, ftp.DialWithTimeout(timeout))
 	}
 	if f.Config.Debug {
-		options = append(options, ftp.DialWithDebugOutput(os.Stdout))
+		options = append(options, ftp.DialWithDebugOutput(os.Stderr))
 	}
 	if f.Config.TLS {
 		tlsConfig := tls.Config{InsecureSkipVerify: f.Config.SkipTLSVerify}
@@ -66,7 +66,7 @@ func (f *FTP) getConnectionFromPool(ctx context.Context, where string) (*ftp.Ser
 	log.Debug().Msgf("getConnectionFromPool(%s) active=%d idle=%d", where, f.clients.GetNumActive(), f.clients.GetNumIdle())
 	client, err := f.clients.BorrowObject(ctx)
 	if err != nil {
-		log.Error().Msgf("can't BorrowObject from FTP Connection Pool: %v", err)
+		log.Error().Msgf("can't BorrowObject(%s) from FTP Connection Pool: %v", where, err)
 		return nil, err
 	}
 	return client.(*ftp.ServerConn), nil
@@ -77,7 +77,7 @@ func (f *FTP) returnConnectionToPool(ctx context.Context, where string, client *
 	if client != nil {
 		err := f.clients.ReturnObject(ctx, client)
 		if err != nil {
-			log.Error().Msgf("can't ReturnObject to FTP Connection Pool: %v", err)
+			log.Error().Msgf("can't ReturnObject(%s) to FTP Connection Pool: %v", where, err)
 		}
 	}
 }
@@ -114,8 +114,9 @@ func (f *FTP) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 }
 
 func (f *FTP) DeleteFile(ctx context.Context, key string) error {
-	client, err := f.getConnectionFromPool(ctx, "DeleteFile")
-	defer f.returnConnectionToPool(ctx, "DeleteFile", client)
+	where := fmt.Sprintf("DeleteFile->%s", key)
+	client, err := f.getConnectionFromPool(ctx, where)
+	defer f.returnConnectionToPool(ctx, where, client)
 	if err != nil {
 		return err
 	}
@@ -181,8 +182,8 @@ func (f *FTP) GetFileReader(ctx context.Context, key string) (io.ReadCloser, err
 	return f.GetFileReaderAbsolute(ctx, path.Join(f.Config.Path, key))
 }
 func (f *FTP) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadCloser, error) {
-	log.Debug().Msgf("GetFileReaderAbsolute key=%s", key)
-	client, err := f.getConnectionFromPool(ctx, "GetFileReader")
+	where := fmt.Sprintf("GetFileReaderAbsolute->%s", key)
+	client, err := f.getConnectionFromPool(ctx, where)
 	if err != nil {
 		return nil, err
 	}
@@ -204,9 +205,9 @@ func (f *FTP) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
 }
 
 func (f *FTP) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser) error {
-	log.Debug().Msgf("PutFileAbsolute key=%s", key)
-	client, err := f.getConnectionFromPool(ctx, "PutFile")
-	defer f.returnConnectionToPool(ctx, "PutFile", client)
+	where := fmt.Sprintf("PutFileReaderAbsolute->%s", key)
+	client, err := f.getConnectionFromPool(ctx, where)
+	defer f.returnConnectionToPool(ctx, where, client)
 	if err != nil {
 		return err
 	}
@@ -222,7 +223,13 @@ func (f *FTP) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, 
 }
 
 func (f *FTP) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) error {
-	return fmt.Errorf("DeleteFileFromObjectDiskBackup not imlemented for %s", f.Kind())
+	where := fmt.Sprintf("DeleteFileFromObjectDiskBackup->%s", key)
+	client, err := f.getConnectionFromPool(ctx, where)
+	defer f.returnConnectionToPool(ctx, where, client)
+	if err != nil {
+		return err
+	}
+	return client.RemoveDirRecur(path.Join(f.Config.ObjectDiskPath, key))
 }
 
 type ftpFile struct {
@@ -294,16 +301,20 @@ type ftpPoolFactory struct {
 func (f *ftpPoolFactory) MakeObject(ctx context.Context) (*pool.PooledObject, error) {
 	c, err := ftp.Dial(f.ftp.Config.Address, f.options...)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("ftpPoolFactory->MakeObject Dial error: %v", err)
 	}
-	if err := c.Login(f.ftp.Config.Username, f.ftp.Config.Password); err != nil {
-		return nil, err
+	if err = c.Login(f.ftp.Config.Username, f.ftp.Config.Password); err != nil {
+		return nil, fmt.Errorf("ftpPoolFactory->MakeObject Login error: %v", err)
 	}
 	return pool.NewPooledObject(c), nil
 }
 
 func (f *ftpPoolFactory) DestroyObject(ctx context.Context, object *pool.PooledObject) error {
-	return object.Object.(*ftp.ServerConn).Quit()
+	if err := object.Object.(*ftp.ServerConn).Quit(); err != nil {
+		log.Warn().Msgf("ftpPoolFactory->Destroy Quit error: %v", err)
+		return err
+	}
+	return nil
 }
 
 func (f *ftpPoolFactory) ValidateObject(ctx context.Context, object *pool.PooledObject) bool {

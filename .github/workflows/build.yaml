@@ -12,7 +12,7 @@ on:
 jobs:
   build:
     name: Build
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         golang-version:
@@ -53,7 +53,7 @@ jobs:
         run: |
           make build/linux/amd64/clickhouse-backup build/linux/arm64/clickhouse-backup
           make build/linux/amd64/clickhouse-backup-fips build/linux/arm64/clickhouse-backup-fips 
-          make build-race build-race-fips config test
+          make build-race-docker build-race-fips-docker config test
 
       - name: Report unittest coverage
         uses: coverallsapp/github-action@v2
@@ -111,7 +111,7 @@ jobs:
   testflows:
     needs: build
     name: Testflows
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         golang-version:
@@ -122,6 +122,7 @@ jobs:
           - '23.3'
           - '23.8'
           - '24.3'
+          - '24.8'
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
@@ -193,6 +194,7 @@ jobs:
       - name: Report testflows coverage
         uses: coverallsapp/github-action@v2
         with:
+          base-path: ./
           file: test/testflows/_coverage_/coverage.out
           parallel: true
           format: golang
@@ -229,6 +231,7 @@ jobs:
           - '23.3'
           - '23.8'
           - '24.3'
+          - '24.8'
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
@@ -311,22 +314,42 @@ jobs:
           docker compose -f "${CUR_DIR}/${COMPOSE_FILE}" --progress=quiet pull
           
           pids=()
+          project_ids=()
           for ((i = 0; i < RUN_PARALLEL; i++)); do
             docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} --progress plain up -d &
             pids+=($!)
+            project_ids+=("project${i}")
           done
           
           
-          for pid in "${pids[@]}"; do
+          for index in "${!pids[@]}"; do
+            pid=${pids[index]}
+            project_id=${project_ids[index]}
             if wait "$pid"; then
                 echo "$pid docker compose up successful"
             else
-                echo "$pid the docker compose up failed. Exiting."
+                echo "=== docker ${project_id} state ==="
+                docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project_id} --progress plain ps -a
+                echo "=== docker ${project_id} logs ==="
+                docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project_id} --progress plain logs
+                echo "$pid the docker compose up failed."
                 exit 1  # Exit with an error code if any command fails
             fi
           done
-          
-          go test -parallel ${RUN_PARALLEL} -timeout 60m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
+          set +e
+          go test -parallel ${RUN_PARALLEL} -timeout 90m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v test/integration/integration_test.go
+          TEST_FAILED=$?
+          set -e
+          if [[ "0" != "${TEST_FAILED}" ]]; then
+            for project_id in "${project_ids[@]}"; do
+                echo "=== docker ${project_id} state ==="
+                docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project_id} --progress plain ps -a
+                echo "=== docker ${project_id} logs ==="
+                docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project_id} --progress plain logs
+            done
+            exit 1
+          fi      
+
       - name: Format integration coverage
         env:
           GOROOT: ${{ env.GOROOT_1_22_X64 }}
@@ -337,6 +360,7 @@ jobs:
       - name: Report integration coverage
         uses: coverallsapp/github-action@v2
         with:
+          base-path: ./
           file: test/integration/_coverage_/coverage.out
           parallel: true
           format: golang
@@ -351,13 +375,14 @@ jobs:
         - name: Coveralls Finished
           uses: coverallsapp/github-action@v2
           with:
+            base-path: ./
             parallel-finished: true
   docker:
     needs:
       - test
       - testflows
     name: Docker
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
@@ -403,7 +428,7 @@ jobs:
     needs:
       - docker
       - coverage
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     if: always()
     steps:
       - name: delete build-artifacts

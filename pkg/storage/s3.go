@@ -24,6 +24,7 @@ import (
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go"
+	smithyendpoints "github.com/aws/smithy-go/endpoints"
 	awsV2Logging "github.com/aws/smithy-go/logging"
 	awsV2http "github.com/aws/smithy-go/transport/http"
 	"github.com/pkg/errors"
@@ -101,6 +102,20 @@ func (s *S3) Kind() string {
 	return "S3"
 }
 
+func (s *S3) ResolveEndpoint(ctx context.Context, params s3.EndpointParameters) (endpoint smithyendpoints.Endpoint, err error) {
+	baseResolver := s3.NewDefaultEndpointResolverV2()
+	if s.Config.Endpoint != "" {
+		params.Endpoint = &s.Config.Endpoint
+	}
+	params.ForcePathStyle = &s.Config.ForcePathStyle
+
+	resolvedEndpoint, err := baseResolver.ResolveEndpoint(ctx, params)
+	if err != nil {
+		return resolvedEndpoint, err
+	}
+	return resolvedEndpoint, nil
+}
+
 // Connect - connect to s3
 func (s *S3) Connect(ctx context.Context) error {
 	var err error
@@ -152,18 +167,6 @@ func (s *S3) Connect(ctx context.Context) error {
 		awsConfig.HTTPClient = &http.Client{Transport: httpTransport}
 	}
 
-	if s.Config.Endpoint != "" {
-		awsConfig.EndpointResolverWithOptions = aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-			return aws.Endpoint{
-				PartitionID:       "aws",
-				URL:               s.Config.Endpoint,
-				SigningRegion:     s.Config.Region,
-				HostnameImmutable: true,
-				Source:            aws.EndpointSourceCustom,
-			}, nil
-		})
-
-	}
 	// allow GCS over S3, remove Accept-Encoding header from sign https://stackoverflow.com/a/74382598/1204665, https://github.com/aws/aws-sdk-go-v2/issues/1816
 	if strings.Contains(s.Config.Endpoint, "storage.googleapis.com") {
 		// Assign custom client with our own transport
@@ -174,6 +177,7 @@ func (s *S3) Connect(ctx context.Context) error {
 	s.client = s3.NewFromConfig(awsConfig, func(o *s3.Options) {
 		o.UsePathStyle = s.Config.ForcePathStyle
 		o.EndpointOptions.DisableHTTPS = s.Config.DisableSSL
+		o.EndpointResolverV2 = s
 	})
 
 	s.uploader = s3manager.NewUploader(s.client)
@@ -502,14 +506,7 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 	if srcSize%s.Config.MaxPartsCount > 0 {
 		partSize++
 	}
-	// 128Mb part size recommendation from https://repost.aws/questions/QUtW2_XaALTK63wv9XLSywiQ/s3-sync-command-is-slow-to-start-on-some-data
-	if partSize < 128*1024*1024 {
-		partSize = 128 * 1024 * 1024
-	}
-
-	if partSize > 5*1024*1024*1024 {
-		partSize = 5 * 1024 * 1024 * 1024
-	}
+	partSize = AdjustS3PartSize(partSize, 128*1024*1024)
 
 	// Calculate the number of parts
 	numParts := (srcSize + partSize - 1) / partSize

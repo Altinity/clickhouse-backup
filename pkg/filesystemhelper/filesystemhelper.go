@@ -199,7 +199,7 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 			}
 		}
 	}
-	log.Debug().Str("duration", utils.HumanizeDuration(time.Since(start))).Msg("done")
+	log.Debug().Str("operation", "HardlinkBackupPartsToStorage").Str("duration", utils.HumanizeDuration(time.Since(start))).Msg("done")
 	return nil
 }
 

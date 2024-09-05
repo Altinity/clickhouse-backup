@@ -1,3 +1,13 @@
+# v2.6.1 (not released yet)
+BUG FIXES
+- fix unnecessary warnings in `allow_object_disk_streaming: true` behavior during restore
+
+# v2.6.0
+IMPROVEMENTS
+- add `rbac-only` and `configs-only` parameters to `POST /backup/create` and `POST /backup/restore` API calls
+- add `allow_object_disk_streaming` config option which will make object disk backup when CopyObject failed or when Object Storage have incompatible types, fix [979](https://github.com/Altinity/clickhouse-backup/issues/979)
+- add `operation_id` to callback, fix [995](https://github.com/Altinity/clickhouse-backup/issues/995) thanks @manasmulay 
+
 # v2.5.29
 BUG FIXES
 - fix corner case for backup/restore RBAC object with trailing slash, warn /clickhouse/access//uuid have no children, skip Dump
