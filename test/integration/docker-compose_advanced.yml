@@ -295,9 +295,9 @@ services:
     healthcheck:
       test: clickhouse client -q "SELECT 1"
       interval: 1s
-      timeout: 2s
-      retries: 60
-      start_period: 1s
+      timeout: 5s
+      retries: 90
+      start_period: 2s
     depends_on:
       mysql:
         condition: service_healthy
