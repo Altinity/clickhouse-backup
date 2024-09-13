@@ -1,6 +1,7 @@
-# v2.6.1 (not released yet)
+# v2.6.1 
 BUG FIXES
 - fix unnecessary warnings in `allow_object_disk_streaming: true` behavior during restore
+- fix stuck with `gcs.clientPool.BorrowObject error: Timeout waiting for idle object` cause `OBJECT_DISK_SERVER_SIDE_COPY_CONCURRENCY` has default value 32, but it much more than calculated default pool
 
 # v2.6.0
 IMPROVEMENTS

@@ -518,6 +518,7 @@ func DefaultConfig() *Config {
 	if downloadConcurrency < 1 {
 		downloadConcurrency = 1
 	}
+	objectDiskServerSideCopyConcurrency := uint8(32)
 	return &Config{
 		General: GeneralConfig{
 			RemoteStorage:                       "none",
@@ -527,7 +528,7 @@ func DefaultConfig() *Config {
 			LogLevel:                            "info",
 			UploadConcurrency:                   uploadConcurrency,
 			DownloadConcurrency:                 downloadConcurrency,
-			ObjectDiskServerSideCopyConcurrency: 32,
+			ObjectDiskServerSideCopyConcurrency: objectDiskServerSideCopyConcurrency,
 			RestoreSchemaOnCluster:              "",
 			UploadByPart:                        true,
 			DownloadByPart:                      true,
@@ -599,7 +600,7 @@ func DefaultConfig() *Config {
 			CompressionLevel:  1,
 			CompressionFormat: "tar",
 			StorageClass:      "STANDARD",
-			ClientPoolSize:    int(max(uploadConcurrency, downloadConcurrency)) * 3,
+			ClientPoolSize:    int(max(uploadConcurrency*3, downloadConcurrency*3, objectDiskServerSideCopyConcurrency)),
 		},
 		COS: COSConfig{
 			RowURL:            "",
