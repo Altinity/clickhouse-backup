@@ -299,7 +299,7 @@ func (ch *ClickHouse) getDisksFromSystemDisks(ctx context.Context) ([]Disk, erro
 		}
 		var result []Disk
 		query := fmt.Sprintf(
-			"SELECT d.path, any(d.name) AS name, %s AS type, %s AS free_space, %s AS storage_policies "+
+			"SELECT d.path AS path, any(d.name) AS name, %s AS type, %s AS free_space, %s AS storage_policies "+
 				"FROM system.disks AS d %s GROUP BY d.path",
 			diskTypeSQL, diskFreeSpaceSQL, storagePoliciesSQL, joinStoragePoliciesSQL,
 		)

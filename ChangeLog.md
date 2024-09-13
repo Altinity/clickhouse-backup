@@ -1,3 +1,7 @@
+# v2.6.2
+BUG FIXES
+- fix rare corner case, for system.disks query behavior fix[1007](https://github.com/Altinity/clickhouse-backup/issues/1007)
+
 # v2.6.1 
 BUG FIXES
 - fix unnecessary warnings in `allow_object_disk_streaming: true` behavior during restore
