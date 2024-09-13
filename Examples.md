@@ -182,12 +182,9 @@ spec:
                       - clickhouse-server
                       - --config-file=/etc/clickhouse-server/config.xml
                  - name: clickhouse-backup
-                   image: altinity/clickhouse-backup:master
+                   image: altinity/clickhouse-backup:latest
                    imagePullPolicy: Always
-                   command:
-                      - bash
-                      - -xc
-                      - "/bin/clickhouse-backup server"
+                   args: ["server"]
                    env:
                       - name: LOG_LEVEL
                         value: "debug"
