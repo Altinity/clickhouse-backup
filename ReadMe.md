@@ -94,7 +94,7 @@ general:
                                  # You can run `clickhouse-backup delete local <backup_name>` command to remove temporary backup files from the local disk
   backups_to_keep_remote: 0      # BACKUPS_TO_KEEP_REMOTE, how many latest backup should be kept on remote storage, 0 means all uploaded backups will be stored on remote storage.
                                  # If old backups are required for newer incremental backup then it won't be deleted. Be careful with long incremental backup sequences.
-  log_level: info                # LOG_LEVEL, a choice from `debug`, `info`, `warn`, `error`
+  log_level: info                # LOG_LEVEL, a choice from `debug`, `info`, `warning`, `error`
   allow_empty_backups: false     # ALLOW_EMPTY_BACKUPS
   # Concurrency means parallel tables and parallel parts inside tables
   # For example, 4 means max 4 parallel tables and 4 parallel parts inside one table, so equals 16 concurrent streams
