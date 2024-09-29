@@ -197,6 +197,7 @@ type ObjectStorageConnection struct {
 	Type         string
 	S3           *storage.S3
 	AzureBlob    *storage.AzureBlob
+	GCS          *storage.GCS
 	MetadataPath string
 }
 
@@ -204,6 +205,8 @@ func (c *ObjectStorageConnection) GetRemoteStorage() storage.RemoteStorage {
 	switch c.Type {
 	case "s3":
 		return c.S3
+	case "gcs":
+		return c.GCS
 	case "azure", "azure_blob_storage":
 		return c.AzureBlob
 	}
@@ -215,6 +218,8 @@ func (c *ObjectStorageConnection) GetRemoteBucket() string {
 	switch c.Type {
 	case "s3":
 		return c.S3.Config.Bucket
+	case "gcs":
+		return c.GCS.Config.Bucket
 	case "azure", "azure_blob_storage":
 		return c.AzureBlob.Config.Container
 	}
@@ -226,6 +231,8 @@ func (c *ObjectStorageConnection) GetRemotePath() string {
 	switch c.Type {
 	case "s3":
 		return c.S3.Config.Path
+	case "gcs":
+		return c.GCS.Config.Path
 	case "azure", "azure_blob_storage":
 		return c.AzureBlob.Config.Path
 	}
@@ -237,6 +244,8 @@ func (c *ObjectStorageConnection) GetRemoteObjectDiskPath() string {
 	switch c.Type {
 	case "s3":
 		return c.S3.Config.ObjectDiskPath
+	case "gcs":
+		return c.GCS.Config.ObjectDiskPath
 	case "azure", "azure_blob_storage":
 		return c.AzureBlob.Config.ObjectDiskPath
 	}
@@ -444,7 +453,7 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 	connection.MetadataPath = disk.Path
 
 	switch creds.Type {
-	case "s3", "gcs":
+	case "s3":
 		connection.Type = "s3"
 		s3cfg := config.S3Config{
 			Debug: cfg.S3.Debug, MaxPartsCount: cfg.S3.MaxPartsCount, Concurrency: 1,
@@ -519,6 +528,43 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 		s3cfg.ObjectDiskPath = s3cfg.Path
 		connection.S3 = &storage.S3{Config: &s3cfg}
 		if err = connection.S3.Connect(ctx); err != nil {
+			return nil, err
+		}
+	case "gcs":
+		connection.Type = "gcs"
+		gcsCfg := config.GCSConfig{
+			CredentialsFile:        cfg.GCS.CredentialsFile,
+			CredentialsJSON:        cfg.GCS.CredentialsJSON,
+			CredentialsJSONEncoded: cfg.GCS.CredentialsJSONEncoded,
+			EmbeddedAccessKey:      cfg.GCS.EmbeddedAccessKey,
+			EmbeddedSecretKey:      cfg.GCS.EmbeddedSecretKey,
+			SkipCredentials:        cfg.GCS.SkipCredentials,
+			Bucket:                 cfg.GCS.Bucket,
+			Path:                   cfg.GCS.Path,
+			ObjectDiskPath:         cfg.GCS.ObjectDiskPath,
+			CompressionLevel:       cfg.GCS.CompressionLevel,
+			CompressionFormat:      cfg.GCS.CompressionFormat,
+			Debug:                  cfg.GCS.Debug,
+			ForceHttp:              cfg.GCS.ForceHttp,
+			Endpoint:               cfg.GCS.Endpoint,
+			StorageClass:           cfg.GCS.StorageClass,
+			ObjectLabels:           cfg.GCS.ObjectLabels,
+			CustomStorageClassMap:  cfg.GCS.CustomStorageClassMap,
+			ClientPoolSize:         cfg.GCS.ClientPoolSize,
+			ChunkSize:              cfg.GCS.ChunkSize,
+		}
+
+		gcsURL, err := url.Parse(creds.EndPoint)
+		if err != nil {
+			return nil, err
+		}
+		pathItems := strings.Split(strings.Trim(gcsURL.Path, "/"), "/")
+		gcsCfg.Bucket = pathItems[0]
+		gcsCfg.Path = path.Join(pathItems[1:]...)
+		gcsCfg.ObjectDiskPath = gcsCfg.Path
+
+		connection.GCS = &storage.GCS{Config: &gcsCfg}
+		if err := connection.GCS.Connect(ctx); err != nil {
 			return nil, err
 		}
 	case "azblob":

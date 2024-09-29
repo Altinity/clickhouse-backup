@@ -1535,6 +1535,10 @@ func (b *Backuper) findObjectDiskPartRecursive(ctx context.Context, backup metad
 	}
 	var requiredTable *metadata.TableMetadata
 	requiredTable, err = b.downloadTableMetadataIfNotExists(ctx, requiredBackup.BackupName, metadata.TableTitle{Database: table.Database, Table: table.Table})
+	if err != nil {
+		return "", "", err
+	}
+
 	// @todo think about add check what if disk type could changed (should already restricted, cause upload seek part in the same disk name)
 	for requiredDiskName, parts := range requiredTable.Parts {
 		for _, requiredPart := range parts {
