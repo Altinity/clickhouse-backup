@@ -673,7 +673,6 @@ func TestIntegrationS3Glacier(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
-
 func TestIntegrationCustomKopia(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
@@ -2260,7 +2259,7 @@ func TestRestoreMapping(t *testing.T) {
 	fullCleanup(t, r, env, []string{testBackupName}, []string{"local"}, databaseList, false, false, "config-database-mapping.yml")
 
 	env.queryWithNoError(r, "CREATE DATABASE database1")
-	env.queryWithNoError(r, "CREATE TABLE database1.t1 (dt DateTime, v UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/database1/t1','{replica}') PARTITION BY toYYYYMM(dt) ORDER BY dt")
+	env.queryWithNoError(r, "CREATE TABLE database1.t1 (dt DateTime, v UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/database1/t1','{replica}') PARTITION BY v % 10 ORDER BY dt")
 	env.queryWithNoError(r, "CREATE TABLE database1.d1 AS database1.t1 ENGINE=Distributed('{cluster}', 'database1', 't1')")
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.3") < 0 {
 		env.queryWithNoError(r, "CREATE TABLE database1.t2 AS database1.t1 ENGINE=ReplicatedMergeTree('/clickhouse/tables/database1/t2','{replica}') PARTITION BY toYYYYMM(dt) ORDER BY dt")
@@ -2280,6 +2279,7 @@ func TestRestoreMapping(t *testing.T) {
 	log.Debug().Msg("Check result database1")
 	env.queryWithNoError(r, "INSERT INTO database1.t1 SELECT '2023-01-01 00:00:00', number FROM numbers(10)")
 	checkRecordset(1, 20, "SELECT count() FROM database1.t1")
+	checkRecordset(1, 20, "SELECT count() FROM database1.t2")
 	checkRecordset(1, 20, "SELECT count() FROM database1.d1")
 	checkRecordset(1, 20, "SELECT count() FROM database1.mv1")
 	checkRecordset(1, 20, "SELECT count() FROM database1.v1")
@@ -2292,12 +2292,28 @@ func TestRestoreMapping(t *testing.T) {
 
 	log.Debug().Msg("Check result database-2")
 	checkRecordset(1, 10, "SELECT count() FROM `database-2`.t3")
+	checkRecordset(1, 10, "SELECT count() FROM `database-2`.t4")
 	checkRecordset(1, 10, "SELECT count() FROM `database-2`.d2")
 	checkRecordset(1, 10, "SELECT count() FROM `database-2`.mv2")
 	checkRecordset(1, 10, "SELECT count() FROM `database-2`.v2")
 
 	log.Debug().Msg("Check database1 not exists")
 	checkRecordset(1, 0, "SELECT count() FROM system.databases WHERE name='database1' SETTINGS empty_result_for_aggregation_by_empty_set=0")
+
+	log.Debug().Msg("Drop database2")
+	r.NoError(env.dropDatabase("database2"))
+
+	log.Debug().Msg("Restore data with partitions")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--restore-database-mapping", "database1:database-2", "--restore-table-mapping", "t1:t3,t2:t4,d1:d2,mv1:mv2,v1:v2", "--partitions", "3", "--partitions", "database1.t2:202201", "--tables", "database1.*", testBackupName)
+
+	log.Debug().Msg("Check result database-2 after restore with partitions")
+	// t1->t3 restored only 1 partition with name 3 partition with 1 rows
+	// t1->t3 restored only 1 partition with name 3 partition with 10 rows
+	checkRecordset(1, 1, "SELECT count() FROM `database-2`.t3")
+	checkRecordset(1, 10, "SELECT count() FROM `database-2`.t4")
+	checkRecordset(1, 1, "SELECT count() FROM `database-2`.d2")
+	checkRecordset(1, 10, "SELECT count() FROM `database-2`.mv2")
+	checkRecordset(1, 1, "SELECT count() FROM `database-2`.v2")
 
 	fullCleanup(t, r, env, []string{testBackupName}, []string{"local"}, databaseList, true, true, "config-database-mapping.yml")
 	env.Cleanup(t, r)

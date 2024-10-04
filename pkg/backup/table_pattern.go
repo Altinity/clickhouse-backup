@@ -438,6 +438,28 @@ func changeTableQueryToAdjustTableMapping(originTables *ListOfTables, tableMapRu
 	return nil
 }
 
+func changePartitionsToAdjustDatabaseMapping(partitionsNames map[metadata.TableTitle][]string, databaseMapping map[string]string) (map[metadata.TableTitle][]string, error) {
+	adjustedPartitionsNames := map[metadata.TableTitle][]string{}
+	for tableTitle, partitions := range partitionsNames {
+		if targetDb, isMapped := databaseMapping[tableTitle.Database]; isMapped {
+			tableTitle.Database = targetDb
+		}
+		adjustedPartitionsNames[tableTitle] = partitions
+	}
+	return adjustedPartitionsNames, nil
+}
+
+func changePartitionsToAdjustTableMapping(partitionsNames map[metadata.TableTitle][]string, tableMapping map[string]string) (map[metadata.TableTitle][]string, error) {
+	adjustedPartitionsNames := map[metadata.TableTitle][]string{}
+	for tableTitle, partitions := range partitionsNames {
+		if targetTable, isMapped := tableMapping[tableTitle.Table]; isMapped {
+			tableTitle.Table = targetTable
+		}
+		adjustedPartitionsNames[tableTitle] = partitions
+	}
+	return adjustedPartitionsNames, nil
+}
+
 func filterPartsAndFilesByPartitionsFilter(tableMetadata metadata.TableMetadata, partitionsFilter common.EmptyMap) {
 	if len(partitionsFilter) > 0 {
 		for disk, parts := range tableMetadata.Parts {

@@ -264,12 +264,20 @@ func (b *Backuper) getTablesForRestoreLocal(ctx context.Context, backupName stri
 		if err != nil {
 			return nil, nil, err
 		}
+		partitionsNames, err = changePartitionsToAdjustDatabaseMapping(partitionsNames, b.cfg.General.RestoreDatabaseMapping)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	// if restore-table-mapping is specified, create table in mapping rules instead of in backup files.
 	// https://github.com/Altinity/clickhouse-backup/issues/937
 	if len(b.cfg.General.RestoreTableMapping) > 0 {
 		err = changeTableQueryToAdjustTableMapping(&tablesForRestore, b.cfg.General.RestoreTableMapping)
+		if err != nil {
+			return nil, nil, err
+		}
+		partitionsNames, err = changePartitionsToAdjustTableMapping(partitionsNames, b.cfg.General.RestoreTableMapping)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -839,6 +847,9 @@ func (b *Backuper) restoreBackupRelatedDir(backupName, backupPrefixDir, destinat
 // execute ALTER TABLE db.table DROP PARTITION for corner case when we try to restore backup with the same structure, https://github.com/Altinity/clickhouse-backup/issues/756
 func (b *Backuper) dropExistPartitions(ctx context.Context, tablesForRestore ListOfTables, partitionsIdMap map[metadata.TableTitle][]string, partitions []string, version int) error {
 	for _, table := range tablesForRestore {
+		if !strings.Contains(table.Query, "MergeTree") {
+			continue
+		}
 		partitionsIds, isExists := partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Table}]
 		if !isExists {
 			return fmt.Errorf("`%s`.`%s` doesn't contains %#v partitions", table.Database, table.Table, partitions)

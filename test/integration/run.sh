@@ -2,7 +2,8 @@
 set -x
 set -e
 
-export CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+export CUR_DIR
 mkdir -p "${CUR_DIR}/_coverage_/"
 rm -rf "${CUR_DIR}/_coverage_/*"
 
@@ -14,7 +15,8 @@ if [[ "${CLICKHOUSE_VERSION}" =~ ^2[1-9]+ || "${CLICKHOUSE_VERSION}" == "head" ]
 else
   export CLICKHOUSE_IMAGE=${CLICKHOUSE_IMAGE:-yandex/clickhouse-server}
 fi
-export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup-race"
+CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup-race"
+export CLICKHOUSE_BACKUP_BIN
 export LOG_LEVEL=${LOG_LEVEL:-info}
 export TEST_LOG_LEVEL=${TEST_LOG_LEVEL:-info}
 
@@ -42,18 +44,27 @@ else
   export COMPOSE_FILE=docker-compose.yml
 fi
 
-
-pids=()
-for project in $(docker compose -f ${CUR_DIR}/${COMPOSE_FILE} ls --all -q); do
-  docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project} --progress plain down --remove-orphans --volumes --timeout=1 &
-  pids+=($!)
+for id in $(docker ps -q); do
+  docker stop "${id}" --time 1
+  docker rm -f "${id}"
 done
 
-for pid in "${pids[@]}"; do
+pids=()
+project_ids=()
+for project in $(docker compose -f "${CUR_DIR}/${COMPOSE_FILE}" ls --all -q); do
+  docker compose -f "${CUR_DIR}/${COMPOSE_FILE}" --project-name "${project}" --progress plain down --remove-orphans --volumes --timeout=1 &
+  pids+=($!)
+  project_ids+=("${project}")
+done
+
+for index in "${!pids[@]}"; do
+  pid=${pids[index]}
+  project_id=${project_ids[index]}
   if wait "$pid"; then
       echo "$pid docker compose down successful"
   else
       echo "$pid docker compose down failed. Exiting."
+      docker network inspect "${project_id}_default"
       exit 1  # Exit with an error code if any command fails
   fi
 done
@@ -63,12 +74,12 @@ make clean build-race-docker build-race-fips-docker
 
 export RUN_PARALLEL=${RUN_PARALLEL:-1}
 
-docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --progress=quiet pull
+docker compose -f "${CUR_DIR}/${COMPOSE_FILE}" --progress=quiet pull
 
 pids=()
 project_ids=()
 for ((i = 0; i < RUN_PARALLEL; i++)); do
-  docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} --progress plain up -d &
+  docker compose -f "${CUR_DIR}/${COMPOSE_FILE}" --project-name project${i} --progress plain up -d &
   pids+=($!)
   project_ids+=("project${i}")
 done
@@ -79,14 +90,14 @@ for index in "${!pids[@]}"; do
   if wait "$pid"; then
       echo "$pid docker compose up successful"
   else
-      docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} --progress plain logs
+      docker compose -f "${CUR_DIR}/${COMPOSE_FILE}" --project-name "${project_id}" --progress plain logs
       echo "$pid the docker compose up failed."
       exit 1  # Exit with an error code if any command fails
   fi
 done
 
 set +e
-go test -parallel ${RUN_PARALLEL} -race -timeout ${TEST_TIMEOUT:-60m} -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v ${CUR_DIR}/integration_test.go
+go test -parallel "${RUN_PARALLEL}" -race -timeout "${TEST_TIMEOUT:-60m}" -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v "${CUR_DIR}/integration_test.go"
 TEST_FAILED=$?
 set -e
 
@@ -96,8 +107,8 @@ fi
 
 if [[ "1" == "${CLEAN_AFTER:-0}" || "0" == "${TEST_FAILED}" ]]; then
   pids=()
-  for project in $(docker compose -f ${CUR_DIR}/${COMPOSE_FILE} ls --all -q); do
-    docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project} --progress plain down --remove-orphans --volumes --timeout=1 &
+  for project in $(docker compose -f "${CUR_DIR}/${COMPOSE_FILE}" ls --all -q); do
+    docker compose -f "${CUR_DIR}/${COMPOSE_FILE}" --project-name "${project}" --progress plain down --remove-orphans --volumes --timeout=1 &
     pids+=($!)
   done
 

@@ -1,6 +1,7 @@
 # v2.6.2
 BUG FIXES
 - fix rare corner case, for system.disks query behavior fix[1007](https://github.com/Altinity/clickhouse-backup/issues/1007)
+- fix --partitions and --restore-database-mapping, --restore-table-mapping works together, fix [1018](https://github.com/Altinity/clickhouse-backup/issues/1018)
 
 # v2.6.1 
 BUG FIXES
