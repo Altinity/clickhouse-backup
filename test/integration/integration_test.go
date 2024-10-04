@@ -2615,18 +2615,21 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	partitionBackupName := fmt.Sprintf("partition_backup_%d", rand.Int())
 	fullBackupName := fmt.Sprintf("full_backup_%d", rand.Int())
 	dbName := "test_partitions_" + t.Name()
-	// Create and fill tables
-	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+dbName)
-	env.queryWithNoError(r, "DROP TABLE IF EXISTS "+dbName+".t1")
-	env.queryWithNoError(r, "DROP TABLE IF EXISTS "+dbName+".t2")
-	env.queryWithNoError(r, "CREATE TABLE "+dbName+".t1 (dt Date, category Int64, v UInt64) ENGINE=MergeTree() PARTITION BY (category, toYYYYMMDD(dt)) ORDER BY dt")
-	env.queryWithNoError(r, "CREATE TABLE "+dbName+".t2 (dt String, category Int64, v UInt64) ENGINE=MergeTree() PARTITION BY (category, dt) ORDER BY dt")
-	for _, dt := range []string{"2022-01-01", "2022-01-02", "2022-01-03", "2022-01-04"} {
-		env.queryWithNoError(r, fmt.Sprintf("INSERT INTO "+dbName+".t1(dt, v) SELECT '%s', number FROM numbers(10)", dt))
-		env.queryWithNoError(r, fmt.Sprintf("INSERT INTO "+dbName+".t2(dt, v) SELECT '%s', number FROM numbers(10)", dt))
+	createAndFillTables := func() {
+		log.Debug().Msg("Create and fill tables")
+		env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+dbName)
+		env.queryWithNoError(r, "DROP TABLE IF EXISTS "+dbName+".t1")
+		env.queryWithNoError(r, "DROP TABLE IF EXISTS "+dbName+".t2")
+		env.queryWithNoError(r, "CREATE TABLE "+dbName+".t1 (dt Date, category Int64, v UInt64) ENGINE=MergeTree() PARTITION BY (category, toYYYYMMDD(dt)) ORDER BY dt")
+		env.queryWithNoError(r, "CREATE TABLE "+dbName+".t2 (dt String, category Int64, v UInt64) ENGINE=MergeTree() PARTITION BY (category, dt) ORDER BY dt")
+		for _, dt := range []string{"2022-01-01", "2022-01-02", "2022-01-03", "2022-01-04"} {
+			env.queryWithNoError(r, fmt.Sprintf("INSERT INTO "+dbName+".t1(dt, v) SELECT '%s', number FROM numbers(10)", dt))
+			env.queryWithNoError(r, fmt.Sprintf("INSERT INTO "+dbName+".t2(dt, v) SELECT '%s', number FROM numbers(10)", dt))
+		}
 	}
+	createAndFillTables()
 
-	// check create_remote full > download + partitions > restore --data --partitions > delete local > download > restore --partitions > restore
+	log.Debug().Msg("check create_remote full > delete local > download --partitions > restore --data --partitions")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create_remote", "--tables="+dbName+".t*", fullBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "download", "--partitions="+dbName+".t?:(0,'2022-01-02'),(0,'2022-01-03')", fullBackupName)
@@ -2672,6 +2675,7 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	// we just replace data in exists table
 	checkRestoredDataWithPartitions(80)
 
+	log.Debug().Msg("delete local > download > restore --partitions > restore")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "download", fullBackupName)
 
@@ -2698,10 +2702,12 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", fullBackupName)
 	checkRestoredDataWithPartitions(80)
 
+	log.Debug().Msg("check delete remote > delete local")
+
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", fullBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName)
 
-	// check create + partitions
+	log.Debug().Msg("check create --partitions > upload > delete local > restore_remote")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables="+dbName+".t1", "--partitions=(0,'2022-01-02'),(0,'2022-01-03')", partitionBackupName)
 	expectedLines = "5"
 	partitionBackupDir := "/var/lib/clickhouse/backup/" + partitionBackupName + "/shadow/" + dbName + "/t1/default/"
@@ -2716,9 +2722,37 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-c", "ls -la "+partitionBackupDir+"| wc -l")
 	r.NoError(err)
 	r.Equal(expectedLines, strings.Trim(out, "\r\n\t "))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "upload", partitionBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", partitionBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore_remote", partitionBackupName)
+	checkPartialRestoredT1 := func() {
+		log.Debug().Msg("Check partial restored t1")
+		result = 0
+		r.NoError(env.ch.SelectSingleRowNoCtx(&result, "SELECT count() FROM "+dbName+".t1"))
 
-	// check create > upload + partitions
+		expectedCount = 20
+		// custom and embedded doesn't support --partitions in upload and download
+		if remoteStorageType == "CUSTOM" || strings.HasPrefix(remoteStorageType, "EMBEDDED") {
+			expectedCount = 40
+		}
+		r.Equal(expectedCount, result, fmt.Sprintf("expect count=%d", expectedCount))
+
+		log.Debug().Msg("Check only selected partitions restored")
+		result = 0
+		r.NoError(env.ch.SelectSingleRowNoCtx(&result, "SELECT count() FROM "+dbName+".t1 WHERE dt NOT IN ('2022-01-02','2022-01-03')"))
+		expectedCount = 0
+		// custom and embedded doesn't support --partitions in upload and download
+		if remoteStorageType == "CUSTOM" || strings.HasPrefix(remoteStorageType, "EMBEDDED") {
+			expectedCount = 20
+		}
+		r.Equal(expectedCount, result, "expect count=%s", expectedCount)
+	}
+	checkPartialRestoredT1()
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", partitionBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", partitionBackupName)
+
+	log.Debug().Msg("check create > upload --partitions > delete local > restore_remote")
+	createAndFillTables()
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables="+dbName+".t1", partitionBackupName)
 	partitionBackupDir = "/var/lib/clickhouse/backup/" + partitionBackupName + "/shadow/" + dbName + "/t1/default/"
 	expectedLines = "7"
@@ -2738,29 +2772,9 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 
 	// restore partial uploaded
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore_remote", partitionBackupName)
+	checkPartialRestoredT1()
 
-	// Check partial restored t1
-	result = 0
-	r.NoError(env.ch.SelectSingleRowNoCtx(&result, "SELECT count() FROM "+dbName+".t1"))
-
-	expectedCount = 20
-	// custom and embedded doesn't support --partitions in upload and download
-	if remoteStorageType == "CUSTOM" || strings.HasPrefix(remoteStorageType, "EMBEDDED") {
-		expectedCount = 40
-	}
-	r.Equal(expectedCount, result, fmt.Sprintf("expect count=%d", expectedCount))
-
-	// Check only selected partitions restored
-	result = 0
-	r.NoError(env.ch.SelectSingleRowNoCtx(&result, "SELECT count() FROM "+dbName+".t1 WHERE dt NOT IN ('2022-01-02','2022-01-03')"))
-	expectedCount = 0
-	// custom and embedded doesn't support --partitions in upload and download
-	if remoteStorageType == "CUSTOM" || strings.HasPrefix(remoteStorageType, "EMBEDDED") {
-		expectedCount = 20
-	}
-	r.Equal(expectedCount, result, "expect count=0")
-
-	// DELETE backup.
+	log.Debug().Msg("DELETE partition backup")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", partitionBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", partitionBackupName)
 
