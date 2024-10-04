@@ -71,7 +71,7 @@ type shardFunc func(md *tableReplicaMetadata) (bool, error)
 func shardFuncByName(name string) (shardFunc, error) {
 	chosen, ok := shardFuncRegistry[name]
 	if !ok {
-		validOptions := make([]string, len(shardFuncRegistry))
+		validOptions := make([]string, 0, len(shardFuncRegistry))
 		for k := range shardFuncRegistry {
 			if k == "" {
 				continue
