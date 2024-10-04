@@ -2,6 +2,7 @@
 BUG FIXES
 - fix rare corner case, for system.disks query behavior fix[1007](https://github.com/Altinity/clickhouse-backup/issues/1007)
 - fix --partitions and --restore-database-mapping, --restore-table-mapping works together, fix [1018](https://github.com/Altinity/clickhouse-backup/issues/1018)
+- fix wrong slices initialization for `shardFuncByName` (rare used function for backup different tables from different shards), fix [1019](https://github.com/Altinity/clickhouse-backup/pull/1019), thanks @cuishuang
 
 # v2.6.1 
 BUG FIXES
