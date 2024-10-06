@@ -2725,14 +2725,14 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "upload", partitionBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", partitionBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore_remote", partitionBackupName)
-	checkPartialRestoredT1 := func() {
+	checkPartialRestoredT1 := func(createPartial bool) {
 		log.Debug().Msg("Check partial restored t1")
 		result = 0
 		r.NoError(env.ch.SelectSingleRowNoCtx(&result, "SELECT count() FROM "+dbName+".t1"))
 
 		expectedCount = 20
 		// custom and embedded doesn't support --partitions in upload and download
-		if remoteStorageType == "CUSTOM" || strings.HasPrefix(remoteStorageType, "EMBEDDED") {
+		if !createPartial && (remoteStorageType == "CUSTOM" || strings.HasPrefix(remoteStorageType, "EMBEDDED")) {
 			expectedCount = 40
 		}
 		r.Equal(expectedCount, result, fmt.Sprintf("expect count=%d", expectedCount))
@@ -2742,12 +2742,12 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 		r.NoError(env.ch.SelectSingleRowNoCtx(&result, "SELECT count() FROM "+dbName+".t1 WHERE dt NOT IN ('2022-01-02','2022-01-03')"))
 		expectedCount = 0
 		// custom and embedded doesn't support --partitions in upload and download
-		if remoteStorageType == "CUSTOM" || strings.HasPrefix(remoteStorageType, "EMBEDDED") {
+		if !createPartial && (remoteStorageType == "CUSTOM" || strings.HasPrefix(remoteStorageType, "EMBEDDED")) {
 			expectedCount = 20
 		}
 		r.Equal(expectedCount, result, "expect count=%s", expectedCount)
 	}
-	checkPartialRestoredT1()
+	checkPartialRestoredT1(true)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", partitionBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", partitionBackupName)
 
@@ -2772,7 +2772,7 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 
 	// restore partial uploaded
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore_remote", partitionBackupName)
-	checkPartialRestoredT1()
+	checkPartialRestoredT1(false)
 
 	log.Debug().Msg("DELETE partition backup")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", partitionBackupName)
