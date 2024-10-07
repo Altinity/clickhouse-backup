@@ -315,10 +315,12 @@ func (b *Backuper) PrintRemoteBackups(ctx context.Context, format string) error 
 			log.Error().Msgf("can't flush tabular writer error: %v", err)
 		}
 	}()
+	getRemoteBackupsStart := time.Now()
 	backupList, err := b.GetRemoteBackups(ctx, true)
 	if err != nil {
 		return err
 	}
+	log.Debug().TimeDiff("b.GetRemoteBackups", time.Now(), getRemoteBackupsStart)
 	err = printBackupsRemote(w, backupList, format)
 	return err
 }
