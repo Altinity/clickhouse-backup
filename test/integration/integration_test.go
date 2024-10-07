@@ -505,6 +505,8 @@ func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 
 }
 
+var listTimeMsRE = regexp.MustCompile(`listTimeMs=(\d+)`)
+
 // TestLongListRemote - no parallel, cause need to restart minio
 func TestLongListRemote(t *testing.T) {
 	env, r := NewTestEnvironment(t)
@@ -519,32 +521,40 @@ func TestLongListRemote(t *testing.T) {
 	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "minio")...))
 	time.Sleep(2 * time.Second)
 
-	startFirst := time.Now()
+	var err error
+	var out string
+	extractListTimeMs := func(out string) float64 {
+		r.Contains(out, "listTimeMs")
+		matches := listTimeMsRE.FindStringSubmatch(out)
+		r.True(len(matches) > 0)
+		result, parseErr := strconv.ParseFloat(matches[1], 64)
+		r.NoError(parseErr)
+		log.Debug().Msg(out)
+		return result
+	}
 	env.DockerExecNoError(r, "clickhouse-backup", "rm", "-rfv", "/tmp/.clickhouse-backup-metadata.cache.S3")
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
-	noCacheDuration := time.Since(startFirst)
+	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
+	r.NoError(err)
+	noCacheDuration := extractListTimeMs(out)
 
 	env.DockerExecNoError(r, "clickhouse-backup", "chmod", "-Rv", "+r", "/tmp/.clickhouse-backup-metadata.cache.S3")
 
-	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "minio")...))
-	time.Sleep(2 * time.Second)
+	//r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "minio")...))
 
-	startCashed := time.Now()
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
-	cachedDuration := time.Since(startCashed)
+	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
+	r.NoError(err)
+	cachedDuration := extractListTimeMs(out)
 
-	r.Greater(noCacheDuration, cachedDuration, "noCacheDuration=%s shall be greater cachedDuration=%s", noCacheDuration, cachedDuration)
+	r.Greater(noCacheDuration, cachedDuration, "noCacheDuration=%f shall be greater cachedDuration=%f", noCacheDuration, cachedDuration)
 
-	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "minio")...))
-	time.Sleep(2 * time.Second)
+	//r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "minio")...))
 
-	startCacheClear := time.Now()
 	env.DockerExecNoError(r, "clickhouse-backup", "rm", "-Rfv", "/tmp/.clickhouse-backup-metadata.cache.S3")
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
-	cacheClearDuration := time.Since(startCacheClear)
+	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
+	cacheClearDuration := extractListTimeMs(out)
 
-	r.Greater(cacheClearDuration, cachedDuration, "cacheClearDuration=%s shall be greater cachedDuration=%s", cacheClearDuration.String(), cachedDuration.String())
-	log.Debug().Msgf("noCacheDuration=%s cachedDuration=%s cacheClearDuration=%s", noCacheDuration.String(), cachedDuration.String(), cacheClearDuration.String())
+	r.Greater(cacheClearDuration, cachedDuration, "cacheClearDuration=%s ms shall be greater cachedDuration=%s ms", cacheClearDuration, cachedDuration)
+	log.Debug().Msgf("noCacheDuration=%f cachedDuration=%f cacheClearDuration=%f", noCacheDuration, cachedDuration, cacheClearDuration)
 
 	testListRemoteAllBackups := make([]string, totalCacheCount)
 	for i := 0; i < totalCacheCount; i++ {
