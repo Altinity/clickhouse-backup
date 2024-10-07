@@ -16,7 +16,7 @@ jobs:
     strategy:
       matrix:
         golang-version:
-          - "1.22"
+          - "1.23"
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
@@ -49,7 +49,7 @@ jobs:
       - name: Build clickhouse-backup binary
         id: make-race
         env:
-          GOROOT: ${{ env.GOROOT_1_22_X64 }}
+          GOROOT: ${{ env.GOROOT_1_23_X64 }}
         run: |
           make build/linux/amd64/clickhouse-backup build/linux/arm64/clickhouse-backup
           make build/linux/amd64/clickhouse-backup-fips build/linux/arm64/clickhouse-backup-fips 
@@ -115,7 +115,7 @@ jobs:
     strategy:
       matrix:
         golang-version:
-          - "1.22"
+          - "1.23"
         clickhouse:
           - '22.3'
           - '22.8'
@@ -185,7 +185,7 @@ jobs:
           sudo chmod -Rv +rx test/testflows/clickhouse_backup/_instances
       - name: Format testflows coverage
         env:
-          GOROOT: ${{ env.GOROOT_1_22_X64 }}
+          GOROOT: ${{ env.GOROOT_1_23_X64 }}
         run: |
           sudo chmod -Rv a+rw test/testflows/_coverage_/
           ls -la test/testflows/_coverage_
@@ -218,7 +218,7 @@ jobs:
     strategy:
       matrix:
         golang-version:
-          - "1.22"
+          - "1.23"
         clickhouse:
           - '1.1.54394'
           - '19.17'
@@ -266,7 +266,7 @@ jobs:
       - name: Running integration tests
         env:
           RUN_PARALLEL: 3
-          GOROOT: ${{ env.GOROOT_1_22_X64 }}
+          GOROOT: ${{ env.GOROOT_1_23_X64 }}
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
           # options for advanced debug CI/CD
           # RUN_TESTS: "TestLongListRemote"
@@ -352,7 +352,7 @@ jobs:
 
       - name: Format integration coverage
         env:
-          GOROOT: ${{ env.GOROOT_1_22_X64 }}
+          GOROOT: ${{ env.GOROOT_1_23_X64 }}
         run: |
           sudo chmod -Rv a+rw test/integration/_coverage_/
           ls -la test/integration/_coverage_ 

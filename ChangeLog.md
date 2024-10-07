@@ -1,3 +1,9 @@
+# v2.6.3
+IMPROVEMENTS
+- switch to golang 1.23
+BUG FIXES
+- fix `TestLongListRemote` for properly time measurement
+
 # v2.6.2
 BUG FIXES
 - fix rare corner case, for system.disks query behavior fix[1007](https://github.com/Altinity/clickhouse-backup/issues/1007)
