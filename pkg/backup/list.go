@@ -320,7 +320,7 @@ func (b *Backuper) PrintRemoteBackups(ctx context.Context, format string) error 
 	if err != nil {
 		return err
 	}
-	log.Debug().TimeDiff("b.GetRemoteBackups", time.Now(), getRemoteBackupsStart)
+	log.Debug().Dur("b.GetRemoteBackups", time.Since(getRemoteBackupsStart)).Send()
 	err = printBackupsRemote(w, backupList, format)
 	return err
 }
@@ -364,7 +364,7 @@ func (b *Backuper) GetRemoteBackups(ctx context.Context, parseMetadata bool) ([]
 	if err := bd.Connect(ctx); err != nil {
 		return []storage.Backup{}, err
 	}
-	log.Debug().TimeDiff("bd.Connect", time.Now(), bdConnectStart)
+	log.Debug().Dur("bd.Connect", time.Since(bdConnectStart)).Send()
 	defer func() {
 		if err := bd.Close(ctx); err != nil {
 			log.Warn().Msgf("can't close BackupDestination error: %v", err)
