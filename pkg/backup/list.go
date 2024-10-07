@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/custom"
@@ -305,9 +306,11 @@ func (b *Backuper) PrintAllBackups(ctx context.Context, format string) error {
 // PrintRemoteBackups - print all backups stored on remote storage
 func (b *Backuper) PrintRemoteBackups(ctx context.Context, format string) error {
 	if !b.ch.IsOpen {
+		chConnectStart := time.Now()
 		if err := b.ch.Connect(); err != nil {
 			return fmt.Errorf("can't connect to clickhouse: %v", err)
 		}
+		log.Debug().TimeDiff("chConnectStart", time.Now(), chConnectStart).Send()
 		defer b.ch.Close()
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', tabwriter.DiscardEmptyColumns)
@@ -316,11 +319,16 @@ func (b *Backuper) PrintRemoteBackups(ctx context.Context, format string) error 
 			log.Error().Msgf("can't flush tabular writer error: %v", err)
 		}
 	}()
+	getRemoteBackupsStart := time.Now()
 	backupList, err := b.GetRemoteBackups(ctx, true)
 	if err != nil {
 		return err
 	}
-	return printBackupsRemote(w, backupList, format)
+	log.Debug().TimeDiff("b.GetRemoteBackups", time.Now(), getRemoteBackupsStart).Send()
+	printBackupsRemoteStart := time.Now()
+	err = printBackupsRemote(w, backupList, format)
+	log.Debug().TimeDiff("printBackupsRemote", time.Now(), printBackupsRemoteStart).Send()
+	return err
 }
 
 func (b *Backuper) getLocalBackup(ctx context.Context, backupName string, disks []clickhouse.Disk) (*LocalBackup, []clickhouse.Disk, error) {
@@ -358,9 +366,11 @@ func (b *Backuper) GetRemoteBackups(ctx context.Context, parseMetadata bool) ([]
 	if err != nil {
 		return []storage.Backup{}, err
 	}
+	bdConnectStart := time.Now()
 	if err := bd.Connect(ctx); err != nil {
 		return []storage.Backup{}, err
 	}
+	log.Debug().TimeDiff("bd.Connect", time.Now(), bdConnectStart).Send()
 	defer func() {
 		if err := bd.Close(ctx); err != nil {
 			log.Warn().Msgf("can't close BackupDestination error: %v", err)

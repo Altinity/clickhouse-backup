@@ -75,6 +75,11 @@ func (bd *BackupDestination) RemoveBackupRemote(ctx context.Context, backup Back
 }
 
 func (bd *BackupDestination) loadMetadataCache(ctx context.Context) (map[string]Backup, error) {
+	loadMetadataCacheStart := time.Now()
+	defer func() {
+		log.Debug().TimeDiff("bd.loadMetadataCache", time.Now(), loadMetadataCacheStart).Send()
+	}()
+
 	listCacheFile := path.Join(os.TempDir(), fmt.Sprintf(".clickhouse-backup-metadata.cache.%s", bd.Kind()))
 	listCache := map[string]Backup{}
 	if _, err := os.Stat(listCacheFile); os.IsNotExist(err) {
@@ -158,6 +163,10 @@ func (bd *BackupDestination) saveMetadataCache(ctx context.Context, listCache ma
 }
 
 func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool, parseMetadataOnly string) ([]Backup, error) {
+	backupListStart := time.Now()
+	defer func() {
+		log.Debug().TimeDiff("bd.BackupList", time.Now(), backupListStart).Send()
+	}()
 	result := make([]Backup, 0)
 	metadataCacheLock.Lock()
 	defer metadataCacheLock.Unlock()
@@ -169,12 +178,15 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 		parseMetadata = true
 	}
 	cacheMiss := false
+	cacheMissCount := 0
+	walkStart := time.Now()
 	err = bd.Walk(ctx, "/", false, func(ctx context.Context, o RemoteFile) error {
 		backupName := strings.Trim(o.Name(), "/")
 		if !parseMetadata || (parseMetadataOnly != "" && parseMetadataOnly != backupName) {
 			if cachedMetadata, isCached := listCache[backupName]; isCached {
 				result = append(result, cachedMetadata)
 			} else {
+				cacheMissCount++
 				result = append(result, Backup{
 					BackupMetadata: metadata.BackupMetadata{
 						BackupName: backupName,
@@ -187,6 +199,7 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 			result = append(result, cachedMetadata)
 			return nil
 		}
+		cacheMissCount++
 		mf, err := bd.StatFile(ctx, path.Join(o.Name(), "metadata.json"))
 		if err != nil {
 			brokenBackup := Backup{
@@ -247,6 +260,8 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 	if err != nil {
 		log.Warn().Msgf("BackupList bd.Walk return error: %v", err)
 	}
+	log.Debug().TimeDiff("bd.Walk", time.Now(), walkStart).Int("cacheMissCount", cacheMissCount).Send()
+	sortStart := time.Now()
 	// sort by name for the same not parsed metadata.json
 	sort.SliceStable(result, func(i, j int) bool {
 		return result[i].BackupName < result[j].BackupName
@@ -254,6 +269,7 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 	sort.SliceStable(result, func(i, j int) bool {
 		return result[i].UploadDate.Before(result[j].UploadDate)
 	})
+	log.Debug().TimeDiff("sort.SliceStable", time.Now(), sortStart).Send()
 	if cacheMiss || len(result) < len(listCache) {
 		if err = bd.saveMetadataCache(ctx, listCache, result); err != nil {
 			return nil, fmt.Errorf("bd.saveMetadataCache return error: %v", err)
