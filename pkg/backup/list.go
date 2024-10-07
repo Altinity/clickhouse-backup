@@ -19,7 +19,6 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
-	"time"
 )
 
 // List - list backups to stdout from command line
@@ -315,12 +314,10 @@ func (b *Backuper) PrintRemoteBackups(ctx context.Context, format string) error 
 			log.Error().Msgf("can't flush tabular writer error: %v", err)
 		}
 	}()
-	getRemoteBackupsStart := time.Now()
 	backupList, err := b.GetRemoteBackups(ctx, true)
 	if err != nil {
 		return err
 	}
-	log.Debug().Dur("b.GetRemoteBackups", time.Since(getRemoteBackupsStart)).Send()
 	err = printBackupsRemote(w, backupList, format)
 	return err
 }
@@ -360,11 +357,9 @@ func (b *Backuper) GetRemoteBackups(ctx context.Context, parseMetadata bool) ([]
 	if err != nil {
 		return []storage.Backup{}, err
 	}
-	bdConnectStart := time.Now()
 	if err := bd.Connect(ctx); err != nil {
 		return []storage.Backup{}, err
 	}
-	log.Debug().Dur("bd.Connect", time.Since(bdConnectStart)).Send()
 	defer func() {
 		if err := bd.Close(ctx); err != nil {
 			log.Warn().Msgf("can't close BackupDestination error: %v", err)

@@ -505,7 +505,7 @@ func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 
 }
 
-var listTimeMsRE = regexp.MustCompile(`listTimeMs=(\d+)`)
+var listTimeMsRE = regexp.MustCompile(`list_duration=(\d+.\d+)`)
 
 // TestLongListRemote - no parallel, cause need to restart minio
 func TestLongListRemote(t *testing.T) {
@@ -524,7 +524,7 @@ func TestLongListRemote(t *testing.T) {
 	var err error
 	var cachedOut, nonCachedOut, clearCacheOut string
 	extractListTimeMs := func(out string) float64 {
-		r.Contains(out, "listTimeMs=")
+		r.Contains(out, "list_duration=")
 		matches := listTimeMsRE.FindStringSubmatch(out)
 		r.True(len(matches) == 2)
 		log.Debug().Msgf("extractListTimeMs=%s", matches[1])

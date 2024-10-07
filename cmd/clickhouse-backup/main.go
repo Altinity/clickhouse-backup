@@ -3,16 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
-	stdlog "log"
-	"os"
-	"strconv"
-	"strings"
-	"time"
-
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/rs/zerolog/pkgerrors"
 	"github.com/urfave/cli"
+	stdlog "log"
+	"os"
+	"strconv"
+	"strings"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/backup"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
@@ -309,9 +307,7 @@ func main() {
 			UsageText: "clickhouse-backup list [all|local|remote] [latest|previous]",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				listStart := time.Now()
 				err := b.List(c.Args().Get(0), c.Args().Get(1))
-				log.Info().TimeDiff("listTimeMs", time.Now(), listStart).Send()
 				return err
 			},
 			Flags: cliapp.Flags,

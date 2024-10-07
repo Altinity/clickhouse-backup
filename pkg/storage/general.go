@@ -160,7 +160,7 @@ func (bd *BackupDestination) saveMetadataCache(ctx context.Context, listCache ma
 func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool, parseMetadataOnly string) ([]Backup, error) {
 	backupListStart := time.Now()
 	defer func() {
-		log.Debug().Dur("bd.BackupList", time.Since(backupListStart)).Send()
+		log.Info().Dur("list_duration", time.Since(backupListStart)).Send()
 	}()
 	result := make([]Backup, 0)
 	metadataCacheLock.Lock()
@@ -530,10 +530,6 @@ func (bd *BackupDestination) throttleSpeed(startTime time.Time, size int64, maxS
 }
 
 func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhouse.ClickHouse, backupName string) (*BackupDestination, error) {
-	newBackupDestinationStart := time.Now()
-	defer func() {
-		log.Debug().Dur("NewBackupDestination", time.Since(newBackupDestinationStart)).Send()
-	}()
 	var err error
 	switch cfg.General.RemoteStorage {
 	case "azblob":
