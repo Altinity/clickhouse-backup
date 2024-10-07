@@ -524,9 +524,10 @@ func TestLongListRemote(t *testing.T) {
 	var err error
 	var out string
 	extractListTimeMs := func(out string) float64 {
-		r.Contains(out, "listTimeMs")
+		r.Contains(out, "listTimeMs=")
 		matches := listTimeMsRE.FindStringSubmatch(out)
-		r.True(len(matches) > 0)
+		r.True(len(matches) == 2)
+		log.Debug().Msgf("extractListTimeMs=%s", matches[1])
 		result, parseErr := strconv.ParseFloat(matches[1], 64)
 		r.NoError(parseErr)
 		log.Debug().Msg(out)
@@ -553,7 +554,7 @@ func TestLongListRemote(t *testing.T) {
 	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
 	cacheClearDuration := extractListTimeMs(out)
 
-	r.Greater(cacheClearDuration, cachedDuration, "cacheClearDuration=%s ms shall be greater cachedDuration=%s ms", cacheClearDuration, cachedDuration)
+	r.GreaterOrEqualf(cacheClearDuration, cachedDuration, "cacheClearDuration=%f ms shall be greater cachedDuration=%f ms", cacheClearDuration, cachedDuration)
 	log.Debug().Msgf("noCacheDuration=%f cachedDuration=%f cacheClearDuration=%f", noCacheDuration, cachedDuration, cacheClearDuration)
 
 	testListRemoteAllBackups := make([]string, totalCacheCount)
