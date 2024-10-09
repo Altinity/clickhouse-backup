@@ -424,3 +424,9 @@ func (b *Backuper) getTablesDiffFromRemote(ctx context.Context, diffFromRemote s
 	}
 	return tablesForUploadFromDiff, nil
 }
+
+func (b *Backuper) GetLocalDataSize(ctx context.Context) (float64, error) {
+	localDataSize := float64(0)
+	err := b.ch.SelectSingleRow(ctx, &localDataSize, "SELECT value FROM system.asynchronous_metrics WHERE metric='TotalBytesOfMergeTreeTables'")
+	return localDataSize, err
+}

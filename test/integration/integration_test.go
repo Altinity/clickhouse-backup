@@ -1065,6 +1065,7 @@ func testAPIBackupActions(r *require.Assertions, env *TestEnvironment) {
 	r.Contains(out, "clickhouse_backup_last_delete_status 1")
 	r.Contains(out, "clickhouse_backup_last_download_status 1")
 	r.Contains(out, "clickhouse_backup_last_restore_status 1")
+	r.Regexp(regexp.MustCompile(`clickhouse_backup_local_data_size\s+\d+`), out)
 }
 
 func testAPIWatchAndKill(r *require.Assertions, env *TestEnvironment) {
@@ -1163,14 +1164,17 @@ func testAPIMetrics(r *require.Assertions, env *TestEnvironment) {
 	var lastRemoteSize int64
 	r.NoError(env.ch.SelectSingleRowNoCtx(&lastRemoteSize, "SELECT size FROM system.backup_list WHERE name='z_backup_5' AND location='remote'"))
 
-	var realTotalBytes uint64
+	var longSchemaTotalBytes uint64
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 {
-		r.NoError(env.ch.SelectSingleRowNoCtx(&realTotalBytes, "SELECT sum(total_bytes) FROM system.tables WHERE database='long_schema'"))
+		r.NoError(env.ch.SelectSingleRowNoCtx(&longSchemaTotalBytes, "SELECT sum(total_bytes) FROM system.tables WHERE database='long_schema'"))
 	} else {
-		r.NoError(env.ch.SelectSingleRowNoCtx(&realTotalBytes, "SELECT sum(bytes_on_disk) FROM system.parts WHERE database='long_schema'"))
+		r.NoError(env.ch.SelectSingleRowNoCtx(&longSchemaTotalBytes, "SELECT sum(bytes_on_disk) FROM system.parts WHERE database='long_schema'"))
 	}
-	r.Greater(realTotalBytes, uint64(0))
-	r.Greater(uint64(lastRemoteSize), realTotalBytes)
+	var metricsTotalBytes float64
+	r.NoError(env.ch.SelectSingleRowNoCtx(&metricsTotalBytes, "SELECT value FROM system.asynchronous_metrics WHERE metric='TotalBytesOfMergeTreeTables'"))
+
+	r.Greater(longSchemaTotalBytes, uint64(0))
+	r.Greater(uint64(lastRemoteSize), longSchemaTotalBytes)
 
 	out, err := env.DockerExecOut("clickhouse-backup", "curl", "-sL", "http://localhost:7171/metrics")
 	r.NoError(err, "%s\nunexpected GET /metrics error: %v", out, err)
@@ -1183,6 +1187,7 @@ func testAPIMetrics(r *require.Assertions, env *TestEnvironment) {
 	r.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_remote %d", apiBackupNumber+1))
 	r.Contains(out, "clickhouse_backup_number_backups_local_expected 0")
 	r.Contains(out, "clickhouse_backup_number_backups_remote_expected 0")
+	r.Regexp(`clickhouse_backup_local_data_size \d+`, out)
 }
 
 func testAPIDeleteLocalDownloadRestore(r *require.Assertions, env *TestEnvironment) {

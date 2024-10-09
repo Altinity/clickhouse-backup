@@ -69,7 +69,6 @@ for index in "${!pids[@]}"; do
   fi
 done
 
-docker volume prune -f
 make clean build-race-docker build-race-fips-docker
 
 export RUN_PARALLEL=${RUN_PARALLEL:-1}

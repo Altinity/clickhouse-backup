@@ -1330,6 +1330,11 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 			b := backup.NewBackuper(api.config)
 			return b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, api.cliApp.Version, commandId)
 		})
+		go func() {
+			if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
+				log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
+			}
+		}()
 		status.Current.Stop(commandId, err)
 		if err != nil {
 			log.Error().Msgf("API /backup/restore error: %v", err)
@@ -1485,14 +1490,10 @@ func (api *APIServer) httpBackupStatusHandler(w http.ResponseWriter, _ *http.Req
 func (api *APIServer) UpdateBackupMetrics(ctx context.Context, onlyLocal bool) error {
 	// calc lastXXX metrics, fix https://github.com/Altinity/clickhouse-backup/issues/515
 	var lastBackupCreateLocal *time.Time
-	var lastBackupCreateRemote *time.Time
-	var lastBackupUpload *time.Time
 	startTime := time.Now()
 	lastSizeLocal := uint64(0)
-	lastSizeRemote := uint64(0)
 	numberBackupsLocal := 0
-	numberBackupsRemote := 0
-	numberBackupsRemoteBroken := 0
+	localDataSize := float64(0)
 
 	log.Info().Msgf("Update backup metrics start (onlyLocal=%v)", onlyLocal)
 	if !api.config.API.EnableMetrics {
@@ -1514,9 +1515,29 @@ func (api *APIServer) UpdateBackupMetrics(ctx context.Context, onlyLocal bool) e
 		api.metrics.LastBackupSizeLocal.Set(0)
 		api.metrics.NumberBackupsLocal.Set(0)
 	}
+	if localDataSize, err = b.GetLocalDataSize(ctx); err != nil {
+		return err
+	}
+	if localDataSize > 0 {
+		api.metrics.LocalDataSize.Set(localDataSize)
+	}
 	if api.config.General.RemoteStorage == "none" || onlyLocal {
+		log.Info().Fields(map[string]interface{}{
+			"duration":              utils.HumanizeDuration(time.Since(startTime)),
+			"LastBackupCreateLocal": lastBackupCreateLocal,
+			"LastBackupSizeLocal":   lastSizeLocal,
+			"NumberBackupsLocal":    numberBackupsLocal,
+			"LocalDataSize":         utils.FormatBytes(uint64(localDataSize)),
+		}).Msg("Update backup metrics finish")
 		return nil
 	}
+	//onlyLocal false
+	var lastBackupCreateRemote *time.Time
+	var lastBackupUpload *time.Time
+	lastSizeRemote := uint64(0)
+	numberBackupsRemote := 0
+	numberBackupsRemoteBroken := 0
+
 	remoteBackups, err := b.GetRemoteBackups(ctx, false)
 	if err != nil {
 		return err
@@ -1556,6 +1577,7 @@ func (api *APIServer) UpdateBackupMetrics(ctx context.Context, onlyLocal bool) e
 			api.metrics.LastFinish["create_remote"].Set(float64(lastBackupUpload.Unix()))
 		}
 	}
+
 	log.Info().Fields(map[string]interface{}{
 		"duration":               utils.HumanizeDuration(time.Since(startTime)),
 		"LastBackupCreateLocal":  lastBackupCreateLocal,
@@ -1565,6 +1587,7 @@ func (api *APIServer) UpdateBackupMetrics(ctx context.Context, onlyLocal bool) e
 		"LastBackupSizeLocal":    lastSizeLocal,
 		"NumberBackupsLocal":     numberBackupsLocal,
 		"NumberBackupsRemote":    numberBackupsRemote,
+		"LocalDataSize":          utils.FormatBytes(uint64(localDataSize)),
 	}).Msg("Update backup metrics finish")
 
 	return nil

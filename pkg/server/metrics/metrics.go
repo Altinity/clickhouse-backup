@@ -32,6 +32,7 @@ type APIMetrics struct {
 	NumberBackupsRemoteExpected prometheus.Gauge
 	NumberBackupsLocalExpected  prometheus.Gauge
 	InProgressCommands          prometheus.Gauge
+	LocalDataSize               prometheus.Gauge
 
 	SubCommands map[string][]string
 }
@@ -144,6 +145,12 @@ func (m *APIMetrics) RegisterMetrics() {
 		Help:      "How many commands running in progress",
 	})
 
+	m.LocalDataSize = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "clickhouse_backup",
+		Name:      "local_data_size",
+		Help:      "How many bytes in MergeTree tables",
+	})
+
 	for _, command := range commandList {
 		prometheus.MustRegister(
 			m.SuccessfulCounter[command],
@@ -163,6 +170,7 @@ func (m *APIMetrics) RegisterMetrics() {
 		m.NumberBackupsRemoteExpected,
 		m.NumberBackupsLocalExpected,
 		m.InProgressCommands,
+		m.LocalDataSize,
 	)
 
 	for _, command := range commandList {
