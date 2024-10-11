@@ -25,7 +25,7 @@ func NewState(defaultDiskPath, backupName, command string, params map[string]int
 	}
 	db, err := bolt.Open(s.stateFile, 0600, nil)
 	if err != nil {
-		log.Warn().Msgf("can't open %s error: %v", s.stateFile, err)
+		log.Warn().Msgf("resumable state: can't open %s error: %v", s.stateFile, err)
 		return nil
 	}
 	s.db = db
@@ -42,7 +42,7 @@ func (s *State) GetParams() map[string]interface{} {
 func (s *State) getBucket(tx *bolt.Tx) *bolt.Bucket {
 	bucket := tx.Bucket(bucketName)
 	if bucket == nil {
-		log.Fatal().Msgf("can't open bucket %s in %s", bucketName, s.stateFile)
+		log.Fatal().Msgf("resumable state: can't open bucket %s in %s", bucketName, s.stateFile)
 	}
 	return bucket
 }
@@ -60,7 +60,7 @@ func (s *State) LoadParams() {
 		}
 		return nil
 	}); err != nil {
-		log.Warn().Msgf("can't load params from %s, error: %v", s.stateFile, err)
+		log.Warn().Msgf("resumable state: can't load params from %s, error: %v", s.stateFile, err)
 	}
 }
 
@@ -74,7 +74,7 @@ func (s *State) LoadState() {
 		if bucket == nil {
 			bucket, err = tx.CreateBucket(bucketName)
 			if err != nil {
-				return fmt.Errorf("can't create bucket: %s", err)
+				return fmt.Errorf("resumable state: can't create bucket: %s", err)
 			}
 		}
 		return nil
@@ -90,7 +90,6 @@ func (s *State) CleanupStateIfParamsChange(params map[string]interface{}) {
 		needCleanup = true
 	}
 	if s.params != nil && params != nil && !common.CompareMaps(s.params, params) {
-		log.Debug().Msgf("SUKA s.params != nil %v && params != nil %v", s.params != nil, params != nil)
 		needCleanup = true
 	}
 
@@ -107,7 +106,7 @@ func (s *State) CleanupStateIfParamsChange(params map[string]interface{}) {
 			return nil
 		})
 		if err != nil {
-			log.Warn().Msgf("can't cleanupBucket %s in %s", bucketName, s.stateFile)
+			log.Warn().Msgf("resumable state: can't cleanupBucket %s in %s", bucketName, s.stateFile)
 		}
 	}
 	_ = s.db.Batch(func(tx *bolt.Tx) error {
@@ -127,11 +126,11 @@ func (s *State) saveParams(b *bolt.Bucket, params map[string]interface{}) {
 	}
 	paramsBytes, err := json.Marshal(s.params)
 	if err != nil {
-		log.Warn().Msgf("can't json.Marshal(s.params=%#v): %v", s.params, err)
+		log.Warn().Msgf("resumable state: can't json.Marshal(s.params=%#v): %v", s.params, err)
 		return
 	}
 	if err = b.Put([]byte("params"), paramsBytes); err != nil {
-		log.Warn().Msgf("can't bolt.Put(s.params): %v", err)
+		log.Warn().Msgf("resumable state: can't bolt.Put(s.params): %v", err)
 	}
 }
 
@@ -146,7 +145,7 @@ func (s *State) AppendToState(path string, size int64) {
 		return b.Put([]byte(path), buf[:n])
 	})
 	if err != nil {
-		log.Fatal().Msgf("can't write key %s to %s error: %v", path, s.stateFile, err)
+		log.Fatal().Msgf("resumable state: can't write key %s to %s error: %v", path, s.stateFile, err)
 	}
 }
 
@@ -172,7 +171,7 @@ func (s *State) IsAlreadyProcessed(path string) (bool, int64) {
 		return nil
 	})
 	if err != nil {
-		log.Fatal().Msgf("can't read key %s to %s error: %v", path, s.stateFile, err)
+		log.Fatal().Msgf("resumable state: can't read key %s to %s error: %v", path, s.stateFile, err)
 		return false, 0
 	}
 	return found, size
@@ -180,6 +179,6 @@ func (s *State) IsAlreadyProcessed(path string) (bool, int64) {
 
 func (s *State) Close() {
 	if err := s.db.Close(); err != nil {
-		log.Warn().Err(err).Msgf("can't close %s", s.stateFile)
+		log.Warn().Err(err).Msgf("resumable state: can't close %s", s.stateFile)
 	}
 }

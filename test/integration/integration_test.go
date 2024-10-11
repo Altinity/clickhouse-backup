@@ -2816,14 +2816,16 @@ func (env *TestEnvironment) checkResumeAlreadyProcessed(backupCmd, testBackupNam
 	}
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-xce", backupCmd)
 	r.NoError(err, "%s\nunexpected checkResumeAlreadyProcessed error: %v", out, err)
+	const alreadyProcesses = "already processed"
+	const resumableWarning = "resumable state: can't"
+	const resumableCleanup = "state2 cleanup begin"
 	if strings.Contains(backupCmd, "--resume") {
-		if !strings.Contains(out, "already processed") {
-			log.Debug().Msg("!!!!!SUKA!!!!!")
+		if !strings.Contains(out, alreadyProcesses) || strings.Contains(out, resumableWarning) || strings.Contains(out, resumableCleanup) {
 			log.Debug().Msg(out)
 		}
-		r.NotContains(out, "can't")
-		r.NotContains(out, "state2 cleanup begin")
-		r.Contains(out, "already processed")
+		r.NotContains(out, resumableWarning)
+		r.NotContains(out, resumableCleanup)
+		r.Contains(out, alreadyProcesses)
 	}
 }
 

@@ -90,13 +90,11 @@ func (sftp *SFTP) Connect(ctx context.Context) error {
 }
 
 func (sftp *SFTP) Close(ctx context.Context) error {
-	sftp.Debug("[SFTP_DEBUG] sftpClient.Close()")
 	if err := sftp.sftpClient.Close(); err != nil {
-		return err
+		return fmt.Errorf("sftpClient.Close() error: , %v", err)
 	}
-	sftp.Debug("[SFTP_DEBUG] sshClient.Close()")
 	if err := sftp.sshClient.Close(); err != nil {
-		return err
+		return fmt.Errorf("sshClient.Close() error: , %v", err)
 	}
 	return nil
 }
