@@ -1,5 +1,7 @@
 # v2.6.3
 IMPROVEMENTS
+- implement new format for *.state files boltdb
+- clean resumable state if backup parameters changed, fix [840](https://github.com/Altinity/clickhouse-backup/issues/840)
 - switch to golang 1.23
 - add `clickhouse_backup_local_data_size` metric as alias for `TotalBytesOfMergeTreeTablesm` from `system.asychnrous_metrics`, fix [573](https://github.com/Altinity/clickhouse-backup/issues/573)
 

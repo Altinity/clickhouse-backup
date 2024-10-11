@@ -83,7 +83,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			if !b.resume {
 				return ErrBackupIsAlreadyExists
 			} else {
-				_, isResumeExists := os.Stat(path.Join(b.DefaultDataPath, "backup", backupName, "download.state"))
+				_, isResumeExists := os.Stat(path.Join(b.DefaultDataPath, "backup", backupName, "download.state2"))
 				if errors.Is(isResumeExists, os.ErrNotExist) {
 					return ErrBackupIsAlreadyExists
 				}
@@ -202,12 +202,12 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 				}
 				log.Info().Fields(map[string]interface{}{
 					"backup_name": backupName,
-					"operation": "download_data",
-					"table":     fmt.Sprintf("%s.%s", tableMetadataAfterDownload[idx].Database, tableMetadataAfterDownload[idx].Table),
-					"progress":  fmt.Sprintf("%d/%d", idx+1, len(tableMetadataAfterDownload)),
-					"duration":  utils.HumanizeDuration(time.Since(start)),
-					"size":      utils.FormatBytes(tableMetadataAfterDownload[idx].TotalBytes),
-					"version":   backupVersion,
+					"operation":   "download_data",
+					"table":       fmt.Sprintf("%s.%s", tableMetadataAfterDownload[idx].Database, tableMetadataAfterDownload[idx].Table),
+					"progress":    fmt.Sprintf("%d/%d", idx+1, len(tableMetadataAfterDownload)),
+					"duration":    utils.HumanizeDuration(time.Since(start)),
+					"size":        utils.FormatBytes(tableMetadataAfterDownload[idx].TotalBytes),
+					"version":     backupVersion,
 				}).Msg("done")
 				return nil
 			})
@@ -274,8 +274,8 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	}
 
 	log.Info().Fields(map[string]interface{}{
-		"backup":    backupName,
-		"operation": "download",
+		"backup":           backupName,
+		"operation":        "download",
 		"duration":         utils.HumanizeDuration(time.Since(startDownload)),
 		"download_size":    utils.FormatBytes(dataSize + metadataSize + rbacSize + configSize),
 		"object_disk_size": utils.FormatBytes(backupMetadata.ObjectDiskSize),

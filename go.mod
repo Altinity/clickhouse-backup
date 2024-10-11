@@ -40,6 +40,7 @@ require (
 	github.com/urfave/cli v1.22.15
 	github.com/xyproto/gionice v1.3.0
 	github.com/yargevad/filepathx v1.0.0
+	go.etcd.io/bbolt v1.3.11
 	golang.org/x/crypto v0.27.0
 	golang.org/x/mod v0.18.0
 	golang.org/x/sync v0.8.0

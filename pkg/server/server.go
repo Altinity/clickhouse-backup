@@ -1718,12 +1718,12 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 	for _, backupItem := range backupList {
 		if backupItem.IsDir() {
 			backupName := backupItem.Name()
-			stateFiles, err := filepath.Glob(path.Join(defaultDiskPath, "backup", backupName, "*.state"))
+			stateFiles, err := filepath.Glob(path.Join(defaultDiskPath, "backup", backupName, "*.state2"))
 			if err != nil {
 				return err
 			}
 			for _, stateFile := range stateFiles {
-				command := strings.TrimSuffix(strings.TrimPrefix(stateFile, path.Join(defaultDiskPath, "backup", backupName)+"/"), ".state")
+				command := strings.TrimSuffix(strings.TrimPrefix(stateFile, path.Join(defaultDiskPath, "backup", backupName)+"/"), ".state2")
 				state := resumable.NewState(defaultDiskPath, backupName, command, nil)
 				params := state.GetParams()
 				state.Close()

@@ -2809,15 +2809,20 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 }
 
 func (env *TestEnvironment) checkResumeAlreadyProcessed(backupCmd, testBackupName, resumeKind string, r *require.Assertions, remoteStorageType string) {
-	// backupCmd = fmt.Sprintf("%s & PID=$!; sleep 0.7; kill -9 $PID; cat /var/lib/clickhouse/backup/%s/upload.state; sleep 0.3; %s", backupCmd, testBackupName, backupCmd)
 	if remoteStorageType == "CUSTOM" || strings.HasPrefix(remoteStorageType, "EMBEDDED") {
 		backupCmd = strings.Replace(backupCmd, "--resume", "", 1)
 	} else {
-		backupCmd = fmt.Sprintf("%s; cat /var/lib/clickhouse/backup/%s/%s.state; %s", backupCmd, testBackupName, resumeKind, backupCmd)
+		backupCmd = fmt.Sprintf("%s; ls -la /var/lib/clickhouse/backup/%s/%s.state2; %s", backupCmd, testBackupName, resumeKind, backupCmd)
 	}
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-xce", backupCmd)
 	r.NoError(err, "%s\nunexpected checkResumeAlreadyProcessed error: %v", out, err)
 	if strings.Contains(backupCmd, "--resume") {
+		if !strings.Contains(out, "already processed") {
+			log.Debug().Msg("!!!!!SUKA!!!!!")
+			log.Debug().Msg(out)
+		}
+		r.NotContains(out, "can't")
+		r.NotContains(out, "state2 cleanup begin")
 		r.Contains(out, "already processed")
 	}
 }
