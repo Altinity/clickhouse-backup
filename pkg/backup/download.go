@@ -146,7 +146,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		return err
 	}
 	if b.resume {
-		b.resumableState = resumable.NewState(b.DefaultDataPath, backupName, "download", map[string]interface{}{
+		b.resumableState = resumable.NewState(b.GetStateBackupDir(), backupName, "download", map[string]interface{}{
 			"tablePattern": tablePattern,
 			"partitions":   partitions,
 			"schemaOnly":   schemaOnly,

@@ -115,7 +115,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 		backupMetadata.RequiredBackup = diffFromRemote
 	}
 	if b.resume {
-		b.resumableState = resumable.NewState(b.DefaultDataPath, backupName, "upload", map[string]interface{}{
+		b.resumableState = resumable.NewState(b.GetStateBackupDir(), backupName, "upload", map[string]interface{}{
 			"diffFrom":       diffFrom,
 			"diffFromRemote": diffFromRemote,
 			"tablePattern":   tablePattern,

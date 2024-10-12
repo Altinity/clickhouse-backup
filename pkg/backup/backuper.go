@@ -430,3 +430,10 @@ func (b *Backuper) GetLocalDataSize(ctx context.Context) (float64, error) {
 	err := b.ch.SelectSingleRow(ctx, &localDataSize, "SELECT value FROM system.asynchronous_metrics WHERE metric='TotalBytesOfMergeTreeTables'")
 	return localDataSize, err
 }
+
+func (b *Backuper) GetStateBackupDir() string {
+	if b.isEmbedded {
+		return b.EmbeddedBackupDataPath
+	}
+	return b.DefaultDataPath
+}

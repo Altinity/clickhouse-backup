@@ -1711,6 +1711,10 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 	if err != nil {
 		return err
 	}
+	embeddedBackupDiskPath, err := ch.GetEmbeddedBackupPath(disks)
+	if err != nil {
+		return err
+	}
 	backupList, err := os.ReadDir(path.Join(defaultDiskPath, "backup"))
 	if err != nil {
 		return err
@@ -1722,9 +1726,14 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 			if err != nil {
 				return err
 			}
+			embeddedStateFiles, err := filepath.Glob(path.Join(embeddedBackupDiskPath, "backup", backupName, "*.state2"))
+			if err != nil {
+				return err
+			}
+			stateFiles = append(stateFiles, embeddedStateFiles...)
 			for _, stateFile := range stateFiles {
-				command := strings.TrimSuffix(strings.TrimPrefix(stateFile, path.Join(defaultDiskPath, "backup", backupName)+"/"), ".state2")
-				state := resumable.NewState(defaultDiskPath, backupName, command, nil)
+				command := strings.TrimSuffix(filepath.Base(stateFile), ".state2")
+				state := resumable.NewState(filepath.Dir(stateFile), backupName, command, nil)
 				params := state.GetParams()
 				state.Close()
 				if !api.config.API.AllowParallel && status.Current.InProgress() {

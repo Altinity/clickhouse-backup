@@ -19,16 +19,17 @@ type State struct {
 	params    map[string]interface{}
 }
 
-func NewState(defaultDiskPath, backupName, command string, params map[string]interface{}) *State {
+func NewState(stateBackupDir, backupName, command string, params map[string]interface{}) *State {
 	s := State{
-		stateFile: path.Join(defaultDiskPath, "backup", backupName, fmt.Sprintf("%s.state2", command)),
+		stateFile: path.Join(stateBackupDir, "backup", backupName, fmt.Sprintf("%s.state2", command)),
+		db:        nil,
 	}
-	db, err := bolt.Open(s.stateFile, 0600, nil)
-	if err != nil {
+	if db, err := bolt.Open(s.stateFile, 0600, nil); err == nil {
+		s.db = db
+	} else {
 		log.Warn().Msgf("resumable state: can't open %s error: %v", s.stateFile, err)
-		return nil
+		return &s
 	}
-	s.db = db
 	s.LoadState()
 	s.LoadParams()
 	s.CleanupStateIfParamsChange(params)
@@ -85,6 +86,9 @@ func (s *State) LoadState() {
 }
 
 func (s *State) CleanupStateIfParamsChange(params map[string]interface{}) {
+	if s.db == nil {
+		return
+	}
 	needCleanup := false
 	if s.params != nil && params == nil {
 		needCleanup = true
@@ -155,6 +159,7 @@ func (s *State) IsAlreadyProcessedBool(path string) bool {
 }
 
 func (s *State) IsAlreadyProcessed(path string) (bool, int64) {
+	log.Info().Msgf("SUKA2 s.db=%v path=%s", s.db, path)
 	if s.db == nil {
 		return false, 0
 	}
@@ -178,6 +183,9 @@ func (s *State) IsAlreadyProcessed(path string) (bool, int64) {
 }
 
 func (s *State) Close() {
+	if s.db == nil {
+		return
+	}
 	if err := s.db.Close(); err != nil {
 		log.Warn().Err(err).Msgf("resumable state: can't close %s", s.stateFile)
 	}
