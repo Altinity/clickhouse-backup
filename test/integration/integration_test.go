@@ -2815,7 +2815,7 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 }
 
 func (env *TestEnvironment) checkResumeAlreadyProcessed(backupCmd, testBackupName, resumeKind string, r *require.Assertions, remoteStorageType string) {
-	if remoteStorageType == "CUSTOM" || strings.HasPrefix(remoteStorageType, "EMBEDDED") {
+	if remoteStorageType == "CUSTOM" || strings.HasPrefix(remoteStorageType, "EMBEDDED") || (compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") < 0 && (strings.Contains(backupCmd, "create") || strings.Contains(backupCmd, "restore"))) {
 		backupCmd = strings.Replace(backupCmd, "--resume", "", 1)
 	} else {
 		backupCmd = fmt.Sprintf("%s; ls -la /var/lib/clickhouse/backup/%s/%s.state2; %s", backupCmd, testBackupName, resumeKind, backupCmd)
