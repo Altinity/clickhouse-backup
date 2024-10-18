@@ -159,7 +159,6 @@ func (s *State) IsAlreadyProcessedBool(path string) bool {
 }
 
 func (s *State) IsAlreadyProcessed(path string) (bool, int64) {
-	log.Info().Msgf("SUKA2 s.db=%v path=%s", s.db, path)
 	if s.db == nil {
 		return false, 0
 	}

@@ -111,11 +111,11 @@ func main() {
 		{
 			Name:        "create",
 			Usage:       "Create new backup",
-			UsageText:   "clickhouse-backup create [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--rbac] [--configs] [--skip-check-parts-columns] <backup_name>",
+			UsageText:   "clickhouse-backup create [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--diff-from-remote=<backup-name>] [-s, --schema] [--rbac] [--configs] [--skip-check-parts-columns] [--resume] <backup_name>",
 			Description: "Create new backup",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CreateBackup(c.Args().First(), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("skip-check-parts-columns"), version, c.Int("command-id"))
+				return b.CreateBackup(c.Args().First(), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("skip-check-parts-columns"), c.Bool("resume"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -167,7 +167,12 @@ func main() {
 				cli.BoolFlag{
 					Name:   "skip-check-parts-columns",
 					Hidden: false,
-					Usage:  "Skip check system.parts_columns to disallow backup inconsistent column types for data parts",
+					Usage:  "Skip check system.parts_columns to allow backup inconsistent column types for data parts",
+				},
+				cli.BoolFlag{
+					Name:   "resume, resumable",
+					Hidden: false,
+					Usage:  "Will resume upload for object disk data, hard links on local disk still continue to recreate, not work when `use_embedded_backup_restore: true`",
 				},
 			),
 		},
@@ -240,7 +245,7 @@ func main() {
 				cli.BoolFlag{
 					Name:   "skip-check-parts-columns",
 					Hidden: false,
-					Usage:  "Skip check system.parts_columns to disallow backup inconsistent column types for data parts",
+					Usage:  "Skip check system.parts_columns to allow backup inconsistent column types for data parts",
 				},
 				cli.BoolFlag{
 					Name:   "delete, delete-source, delete-local",
@@ -352,10 +357,10 @@ func main() {
 		{
 			Name:      "restore",
 			Usage:     "Create schema and restore data from backup",
-			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] <backup_name>",
+			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--resume] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Restore(c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.Bool("schema"), c.Bool("data"), c.Bool("drop"), c.Bool("ignore-dependencies"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), version, c.Int("command-id"))
+				return b.Restore(c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.Bool("schema"), c.Bool("data"), c.Bool("drop"), c.Bool("ignore-dependencies"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -423,6 +428,11 @@ func main() {
 					Name:   "configs-only",
 					Hidden: false,
 					Usage:  "Restore 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added",
+				},
+				cli.BoolFlag{
+					Name:   "resume, resumable",
+					Hidden: false,
+					Usage:  "Will resume download for object disk data",
 				},
 			),
 		},
@@ -504,7 +514,7 @@ func main() {
 				cli.BoolFlag{
 					Name:   "resume, resumable",
 					Hidden: false,
-					Usage:  "Save intermediate upload state and resume upload if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'",
+					Usage:  "Save intermediate download state and resume download if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'",
 				},
 			),
 		},
@@ -620,7 +630,7 @@ func main() {
 				cli.BoolFlag{
 					Name:   "skip-check-parts-columns",
 					Hidden: false,
-					Usage:  "Skip check system.parts_columns to disallow backup inconsistent column types for data parts",
+					Usage:  "Skip check system.parts_columns to allow backup inconsistent column types for data parts",
 				},
 			),
 		},

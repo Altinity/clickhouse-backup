@@ -2,6 +2,7 @@ package filesystemhelper
 
 import (
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path"
@@ -26,7 +27,7 @@ var (
 
 // Chown - set permission on path to clickhouse user
 // This is necessary that the ClickHouse will be able to read parts files on restore
-func Chown(path string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk, recursive bool) error {
+func Chown(fPath string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk, recursive bool) error {
 	var (
 		dataPath string
 		err      error
@@ -51,13 +52,13 @@ func Chown(path string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk, recu
 	}
 	chownLock.Unlock()
 	if !recursive {
-		return os.Chown(path, *uid, *gid)
+		return os.Chown(fPath, *uid, *gid)
 	}
-	return filepath.Walk(path, func(fName string, f os.FileInfo, err error) error {
+	return filepath.WalkDir(fPath, func(fPath string, f fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		return os.Chown(fName, *uid, *gid)
+		return os.Chown(fPath, *uid, *gid)
 	})
 }
 

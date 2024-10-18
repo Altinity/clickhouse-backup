@@ -20,7 +20,7 @@ NAME:
    clickhouse-backup create - Create new backup
 
 USAGE:
-   clickhouse-backup create [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--rbac] [--configs] [--skip-check-parts-columns] <backup_name>
+   clickhouse-backup create [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--diff-from-remote=<backup-name>] [-s, --schema] [--rbac] [--configs] [--skip-check-parts-columns] [--resume] <backup_name>
 
 DESCRIPTION:
    Create new backup
@@ -37,12 +37,13 @@ If PARTITION BY clause returns tuple with multiple fields, then use --partitions
 If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*
 Values depends on field types in your table, use single quotes for String and Date/DateTime related types
 Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
-   --schema, -s                                      Backup schemas only, will skip data
-   --rbac, --backup-rbac, --do-backup-rbac           Backup RBAC related objects
-   --configs, --backup-configs, --do-backup-configs  Backup 'clickhouse-server' configuration files
-   --rbac-only                                       Backup RBAC related objects only, will skip backup data, will backup schema only if --schema added
-   --configs-only                                    Backup 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
-   --skip-check-parts-columns                        Skip check system.parts_columns to disallow backup inconsistent column types for data parts
+   --schema, -s                                                                               Backup schemas only, will skip data
+   --rbac, --backup-rbac, --do-backup-rbac                                                    Backup RBAC related objects
+   --configs, --backup-configs, --do-backup-configs                                           Backup 'clickhouse-server' configuration files
+   --rbac-only                                                                                Backup RBAC related objects only, will skip backup data, will backup schema only if --schema added
+   --configs-only                                                                             Backup 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
+   --skip-check-parts-columns                                                                 Skip check system.parts_columns to allow backup inconsistent column types for data parts
+   --resume use_embedded_backup_restore: true, --resumable use_embedded_backup_restore: true  Will resume upload for object disk data, hard links on local disk still continue to recreate, not work when use_embedded_backup_restore: true
    
 ```
 ### CLI command - create_remote
@@ -75,7 +76,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --rbac-only                                       Backup RBAC related objects only, will skip backup data, will backup schema only if --schema added
    --configs-only                                    Backup 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
    --resume, --resumable                             Save intermediate upload state and resume upload if backup exists on remote storage, ignore when 'remote_storage: custom' or 'use_embedded_backup_restore: true'
-   --skip-check-parts-columns                        Skip check system.parts_columns to disallow backup inconsistent column types for data parts
+   --skip-check-parts-columns                        Skip check system.parts_columns to allow backup inconsistent column types for data parts
    --delete, --delete-source, --delete-local         explicitly delete local backup during upload
    
 ```
@@ -147,7 +148,7 @@ NAME:
    clickhouse-backup restore - Create schema and restore data from backup
 
 USAGE:
-   clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] <backup_name>
+   clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--resume] <backup_name>
 
 OPTIONS:
    --config value, -c value                    Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
@@ -170,6 +171,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --configs, --restore-configs, --do-restore-configs  Restore 'clickhouse-server' CONFIG related files
    --rbac-only                                         Restore RBAC related objects only, will skip backup data, will backup schema only if --schema added
    --configs-only                                      Restore 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
+   --resume, --resumable                               Will resume download for object disk data
    
 ```
 ### CLI command - restore_remote
@@ -185,7 +187,7 @@ OPTIONS:
    --environment-override value, --env value   override any environment variable via CLI parameter
    --table value, --tables value, -t value     Download and restore objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
    --restore-database-mapping value, -m value  Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.
-   --restore-table-mapping value, --tm value    Define the rule to restore data. For the table not defined in this struct, the program will not deal with it.
+   --restore-table-mapping value, --tm value   Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.
    --partitions partition_id                   Download and restore backup only for selected partition names, separated by comma
 If PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
 If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
@@ -201,7 +203,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --configs, --restore-configs, --do-restore-configs  Download and Restore 'clickhouse-server' CONFIG related files
    --rbac-only                                         Restore RBAC related objects only, will skip backup data, will backup schema only if --schema added
    --configs-only                                      Restore 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
-   --resume, --resumable                               Save intermediate upload state and resume upload if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
+   --resume, --resumable                               Save intermediate download state and resume download if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
    
 ```
 ### CLI command - delete
@@ -297,7 +299,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --schema, -s                                      Schemas only
    --rbac, --backup-rbac, --do-backup-rbac           Backup RBAC related objects only
    --configs, --backup-configs, --do-backup-configs  Backup `clickhouse-server' configuration files only
-   --skip-check-parts-columns                        Skip check system.parts_columns to disallow backup inconsistent column types for data parts
+   --skip-check-parts-columns                        Skip check system.parts_columns to allow backup inconsistent column types for data parts
    
 ```
 ### CLI command - server

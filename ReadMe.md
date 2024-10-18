@@ -390,14 +390,14 @@ Kill selected command from `GET /backup/actions` command list, kill process shou
 Print list of tables: `curl -s localhost:7171/backup/tables | jq .`, exclude pattern matched tables from `skip_tables` configuration parameters
 
 - Optional query argument `table` works the same as the `--table=pattern` CLI argument.
-- Optional query argument `remote_backup` works the same as `--remote-backup=name` CLI argument.
+- Optional query argument `remote_backup` or `remote-backup` works the same as `--remote-backup=name` CLI argument.
 
 ### GET /backup/tables/all
 
 Print list of tables: `curl -s localhost:7171/backup/tables/all | jq .`, ignore `skip_tables` configuration parameters.
 
 - Optional query argument `table` works the same as the `--table=pattern` CLI argument.
-- Optional query argument `remote_backup`works the same as `--remote-backup=name` CLI argument.
+- Optional query argument `remote_backup`or `remote-backup` works the same as `--remote-backup=name` CLI argument.
 
 ### POST /backup/create
 
@@ -405,12 +405,15 @@ Create new backup: `curl -s localhost:7171/backup/create -X POST | jq .`
 
 - Optional string query argument `table` works the same as the `--table=pattern` CLI argument.
 - Optional string query argument `partitions` works the same as the `--partitions=value` CLI argument.
+- Optional string query argument `diff-from-remote` or `diff_from_remote` works the same as the `--diff-from-remote=backup_name` CLI argument (will calculate increment for object disks).
 - Optional string query argument `name` works the same as specifying a backup name with the CLI.
 - Optional boolean query argument `schema` works the same as the `--schema` CLI argument (backup schema only).
 - Optional boolean query argument `rbac` works the same as the `--rbac` CLI argument (backup RBAC).
-- Optional boolean query argument `rbac-only` works the same as the `--rbac-only` CLI argument (backup only RBAC).
+- Optional boolean query argument `rbac-only` or `rbac_only` works the same as the `--rbac-only` CLI argument (backup only RBAC).
 - Optional boolean query argument `configs` works the same as the `--configs` CLI argument (backup configs).
-- Optional boolean query argument `configs-only` works the same as the `--configs-only` CLI argument (backup only configs).
+- Optional boolean query argument `configs-only` or `configs_only` works the same as the `--configs-only` CLI argument (backup only configs).
+- Optional boolean query argument `skip-check-parts-columns` or `skip_check_parts_columns` works the same as the `--skip-check-parts-columns` CLI argument (allow backup inconsistent column types for data parts).
+- Optional boolean query argument `resume` works the same as the `--resume` CLI argument (resume upload for object disk data).
 - Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
 
 Additional example: `curl -s 'localhost:7171/backup/create?table=default.billing&name=billing_test' -X POST`
@@ -422,14 +425,15 @@ Note: this operation is asynchronous, so the API will return once the operation 
 Run background watch process and create full+incremental backups sequence: `curl -s localhost:7171/backup/watch -X POST | jq .`
 You can't run watch twice with the same parameters even when `allow_parallel: true`
 
-- Optional string query argument `watch_interval` works the same as the `--watch-interval value` CLI argument.
-- Optional string query argument `full_interval` works the same as the `--full-interval value` CLI argument.
-- Optional string query argument `watch_backup_name_template` works the same as the `--watch-backup-name-template value` CLI argument.
+- Optional string query argument `watch_interval` or `watch-interval` works the same as the `--watch-interval value` CLI argument.
+- Optional string query argument `full_interval` or `full-interval` works the same as the `--full-interval value` CLI argument.
+- Optional string query argument `watch_backup_name_template` or `watch-backup-name-template` works the same as the `--watch-backup-name-template value` CLI argument.
 - Optional string query argument `table` works the same as the `--table value` CLI argument (backup only selected tables).
 - Optional string query argument `partitions` works the same as the `--partitions value` CLI argument (backup only selected partitions).
 - Optional boolean query argument `schema` works the same as the `--schema` CLI argument (backup schema only).
 - Optional boolean query argument `rbac` works the same as the `--rbac` CLI argument (backup RBAC).
 - Optional boolean query argument `configs` works the same as the `--configs` CLI argument (backup configs).
+- Optional boolean query argument `skip-check-parts-columns` or `skip_check_parts_columns` works the same as the `--skip-check-parts-columns` CLI argument (allow backup inconsistent column types for data parts).
 - Additional example: `curl -s 'localhost:7171/backup/watch?table=default.billing&watch_interval=1h&full_interval=24h' -X POST`
 
 Note: this operation is asynchronous and can only be stopped with `kill -s SIGHUP $(pgrep -f clickhouse-backup)` or call `/restart`, `/backup/kill`. The API will return immediately once the operation has started.
@@ -447,9 +451,9 @@ Note: this operation is sync, and could take a lot of time, increase http timeou
 
 Upload backup to remote storage: `curl -s localhost:7171/backup/upload/<BACKUP_NAME> -X POST | jq .`
 
-- Optional boolean query argument `delete-source` works the same as the `--delete-source` CLI argument.
-- Optional string query argument `diff-from` works the same as the `--diff-from` CLI argument.
-- Optional string query argument `diff-from-remote` works the same as the `--diff-from-remote` CLI argument.
+- Optional boolean query argument `delete-source` or `delete_source` works the same as the `--delete-source` CLI argument.
+- Optional string query argument `diff-from` or `diff_from` works the same as the `--diff-from` CLI argument.
+- Optional string query argument `diff-from-remote` or `diff_from_remote` works the same as the `--diff-from-remote` CLI argument.
 - Optional string query argument `table` works the same as the `--table value` CLI argument.
 - Optional string query argument `partitions` works the same as the `--partitions value` CLI argument.
 - Optional boolean query argument `schema` works the same as the `--schema` CLI argument (upload schema only).
@@ -488,13 +492,14 @@ Create schema and restore data from backup: `curl -s localhost:7171/backup/resto
 - Optional boolean query argument `schema` works the same as the `--schema` CLI argument (restore schema only).
 - Optional boolean query argument `data` works the same as the `--data` CLI argument (restore data only).
 - Optional boolean query argument `rm` works the same as the `--rm` CLI argument (drop tables before restore).
-- Optional boolean query argument `ignore_dependencies` works the as same the `--ignore-dependencies` CLI argument.
+- Optional boolean query argument `ignore_dependencies` or `ignore-dependencies` works the as same the `--ignore-dependencies` CLI argument.
 - Optional boolean query argument `rbac` works the same as the `--rbac` CLI argument (restore RBAC).
 - Optional boolean query argument `rbac-only` works the same as the `--rbac` CLI argument (restore only RBAC).
 - Optional boolean query argument `configs` works the same as the `--configs` CLI argument (restore configs).
 - Optional boolean query argument `configs-only` works the same as the `--configs-only` CLI argument (restore configs).
-- Optional string query argument `restore_database_mapping` works the same as the `--restore-database-mapping=old_db:new_db` CLI argument.
-- Optional string query argument `restore_table_mapping` works the same as the `--restore-table-mapping=old_table:new_table` CLI argument.
+- Optional string query argument `restore_database_mapping` or `restore-database-mapping` works the same as the `--restore-database-mapping=old_db:new_db` CLI argument.
+- Optional string query argument `restore_table_mapping` or `restore-table-mapping` works the same as the `--restore-table-mapping=old_table:new_table` CLI argument.
+- Optional boolean query argument `resume` works the same as the `--resume` CLI argument (resume download for object disk data).
 - Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
 
 ### POST /backup/delete
@@ -599,7 +604,7 @@ NAME:
    clickhouse-backup create - Create new backup
 
 USAGE:
-   clickhouse-backup create [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--rbac] [--configs] [--skip-check-parts-columns] <backup_name>
+   clickhouse-backup create [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [--diff-from-remote=<backup-name>] [-s, --schema] [--rbac] [--configs] [--skip-check-parts-columns] [--resume] <backup_name>
 
 DESCRIPTION:
    Create new backup
@@ -616,12 +621,13 @@ If PARTITION BY clause returns tuple with multiple fields, then use --partitions
 If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*
 Values depends on field types in your table, use single quotes for String and Date/DateTime related types
 Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
-   --schema, -s                                      Backup schemas only, will skip data
-   --rbac, --backup-rbac, --do-backup-rbac           Backup RBAC related objects
-   --configs, --backup-configs, --do-backup-configs  Backup 'clickhouse-server' configuration files
-   --rbac-only                                       Backup RBAC related objects only, will skip backup data, will backup schema only if --schema added
-   --configs-only                                    Backup 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
-   --skip-check-parts-columns                        Skip check system.parts_columns to disallow backup inconsistent column types for data parts
+   --schema, -s                                                                               Backup schemas only, will skip data
+   --rbac, --backup-rbac, --do-backup-rbac                                                    Backup RBAC related objects
+   --configs, --backup-configs, --do-backup-configs                                           Backup 'clickhouse-server' configuration files
+   --rbac-only                                                                                Backup RBAC related objects only, will skip backup data, will backup schema only if --schema added
+   --configs-only                                                                             Backup 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
+   --skip-check-parts-columns                                                                 Skip check system.parts_columns to allow backup inconsistent column types for data parts
+   --resume use_embedded_backup_restore: true, --resumable use_embedded_backup_restore: true  Will resume upload for object disk data, hard links on local disk still continue to recreate, not work when use_embedded_backup_restore: true
    
 ```
 ### CLI command - create_remote
@@ -654,7 +660,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --rbac-only                                       Backup RBAC related objects only, will skip backup data, will backup schema only if --schema added
    --configs-only                                    Backup 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
    --resume, --resumable                             Save intermediate upload state and resume upload if backup exists on remote storage, ignore when 'remote_storage: custom' or 'use_embedded_backup_restore: true'
-   --skip-check-parts-columns                        Skip check system.parts_columns to disallow backup inconsistent column types for data parts
+   --skip-check-parts-columns                        Skip check system.parts_columns to allow backup inconsistent column types for data parts
    --delete, --delete-source, --delete-local         explicitly delete local backup during upload
    
 ```
@@ -726,7 +732,7 @@ NAME:
    clickhouse-backup restore - Create schema and restore data from backup
 
 USAGE:
-   clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] <backup_name>
+   clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--resume] <backup_name>
 
 OPTIONS:
    --config value, -c value                    Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
@@ -749,6 +755,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --configs, --restore-configs, --do-restore-configs  Restore 'clickhouse-server' CONFIG related files
    --rbac-only                                         Restore RBAC related objects only, will skip backup data, will backup schema only if --schema added
    --configs-only                                      Restore 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
+   --resume, --resumable                               Will resume download for object disk data
    
 ```
 ### CLI command - restore_remote
@@ -764,7 +771,7 @@ OPTIONS:
    --environment-override value, --env value   override any environment variable via CLI parameter
    --table value, --tables value, -t value     Download and restore objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
    --restore-database-mapping value, -m value  Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.
-   --restore-table-mapping value, --tm value   Define the rule to restore data. For the table not defined in this struct, the program will not deal with it.
+   --restore-table-mapping value, --tm value   Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.
    --partitions partition_id                   Download and restore backup only for selected partition names, separated by comma
 If PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
 If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
@@ -780,7 +787,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --configs, --restore-configs, --do-restore-configs  Download and Restore 'clickhouse-server' CONFIG related files
    --rbac-only                                         Restore RBAC related objects only, will skip backup data, will backup schema only if --schema added
    --configs-only                                      Restore 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
-   --resume, --resumable                               Save intermediate upload state and resume upload if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
+   --resume, --resumable                               Save intermediate download state and resume download if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
    
 ```
 ### CLI command - delete
@@ -876,7 +883,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --schema, -s                                      Schemas only
    --rbac, --backup-rbac, --do-backup-rbac           Backup RBAC related objects only
    --configs, --backup-configs, --do-backup-configs  Backup `clickhouse-server' configuration files only
-   --skip-check-parts-columns                        Skip check system.parts_columns to disallow backup inconsistent column types for data parts
+   --skip-check-parts-columns                        Skip check system.parts_columns to allow backup inconsistent column types for data parts
    
 ```
 ### CLI command - server

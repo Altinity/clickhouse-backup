@@ -43,10 +43,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	startUpload := time.Now()
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 	var disks []clickhouse.Disk
-	if !resume && b.cfg.General.UseResumableState {
-		resume = true
-	}
-	b.resume = resume
+	b.adjustResumeFlag(resume)
 	if err = b.ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
@@ -115,7 +112,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 		backupMetadata.RequiredBackup = diffFromRemote
 	}
 	if b.resume {
-		b.resumableState = resumable.NewState(b.GetStateBackupDir(), backupName, "upload", map[string]interface{}{
+		b.resumableState = resumable.NewState(b.GetStateDir(), backupName, "upload", map[string]interface{}{
 			"diffFrom":       diffFrom,
 			"diffFromRemote": diffFromRemote,
 			"tablePattern":   tablePattern,

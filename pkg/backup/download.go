@@ -58,10 +58,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	if b.cfg.General.DownloadConcurrency == 0 {
 		return fmt.Errorf("`download_concurrency` shall be more than zero")
 	}
-	if !resume && b.cfg.General.UseResumableState {
-		resume = true
-	}
-	b.resume = resume
+	b.adjustResumeFlag(resume)
 	if backupName == "" {
 		_ = b.PrintRemoteBackups(ctx, "all")
 		return fmt.Errorf("select backup for download")
@@ -146,7 +143,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		return err
 	}
 	if b.resume {
-		b.resumableState = resumable.NewState(b.GetStateBackupDir(), backupName, "download", map[string]interface{}{
+		b.resumableState = resumable.NewState(b.GetStateDir(), backupName, "download", map[string]interface{}{
 			"tablePattern": tablePattern,
 			"partitions":   partitions,
 			"schemaOnly":   schemaOnly,

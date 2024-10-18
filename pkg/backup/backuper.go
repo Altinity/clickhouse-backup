@@ -431,9 +431,16 @@ func (b *Backuper) GetLocalDataSize(ctx context.Context) (float64, error) {
 	return localDataSize, err
 }
 
-func (b *Backuper) GetStateBackupDir() string {
-	if b.isEmbedded {
+func (b *Backuper) GetStateDir() string {
+	if b.isEmbedded && b.EmbeddedBackupDataPath != "" {
 		return b.EmbeddedBackupDataPath
 	}
 	return b.DefaultDataPath
+}
+
+func (b *Backuper) adjustResumeFlag(resume bool) {
+	if !resume && b.cfg.General.UseResumableState {
+		resume = true
+	}
+	b.resume = resume
 }

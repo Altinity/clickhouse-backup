@@ -9,5 +9,5 @@ func (b *Backuper) RestoreFromRemote(backupName, tablePattern string, databaseMa
 			return err
 		}
 	}
-	return b.Restore(backupName, tablePattern, databaseMapping, tableMapping, partitions, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, version, commandId)
+	return b.Restore(backupName, tablePattern, databaseMapping, tableMapping, partitions, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume, version, commandId)
 }

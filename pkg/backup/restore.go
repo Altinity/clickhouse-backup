@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/resumable"
 	"github.com/eapache/go-resiliency/retrier"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"io"
 	"io/fs"
+	"math/rand"
 	"net/url"
 	"os"
 	"os/exec"
@@ -42,7 +44,7 @@ import (
 var CreateDatabaseRE = regexp.MustCompile(`(?m)^CREATE DATABASE (\s*)(\S+)(\s*)`)
 
 // Restore - restore tables matched by tablePattern from backupName
-func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tableMapping, partitions []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly bool, backupVersion string, commandId int) error {
+func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tableMapping, partitions []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume bool, backupVersion string, commandId int) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return err
@@ -88,6 +90,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 			return err
 		}
 	}
+	b.adjustResumeFlag(resume)
 	backupMetafileLocalPaths := []string{path.Join(b.DefaultDataPath, "backup", backupName, "metadata.json")}
 	var backupMetadataBody []byte
 	b.EmbeddedBackupDataPath, err = b.ch.GetEmbeddedBackupPath(disks)
@@ -179,6 +182,21 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 				log.Warn().Msgf("can't close BackupDestination error: %v", err)
 			}
 		}()
+		if b.resume {
+			needClean := "false"
+			if dropExists || !dataOnly {
+				needClean = fmt.Sprintf("true.%d", rand.Uint64())
+			}
+			b.resumableState = resumable.NewState(b.GetStateDir(), backupName, "restore", map[string]interface{}{
+				"tablePattern": tablePattern,
+				"partitions":   partitions,
+				"schemaOnly":   schemaOnly,
+				"dataOnly":     dataOnly,
+				"dropExists":   dropExists,
+				"needClean":    needClean,
+			})
+			defer b.resumableState.Close()
+		}
 	}
 	var tablesForRestore ListOfTables
 	var partitionsNames map[metadata.TableTitle][]string
@@ -1438,6 +1456,12 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 					if strings.Contains(fInfo.Name(), "frozen_metadata") {
 						return nil
 					}
+					if b.resume {
+						if isAlreadyProcessed, copiedSize := b.resumableState.IsAlreadyProcessed(path.Join(fPath, fInfo.Name())); isAlreadyProcessed {
+							atomic.AddInt64(&size, copiedSize)
+							return nil
+						}
+					}
 					objMeta, err := object_disk.ReadMetadataFromFile(fPath)
 					if err != nil {
 						return err
@@ -1514,6 +1538,9 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 								}
 							}
 							atomic.AddInt64(&size, copiedSize)
+						}
+						if b.resume {
+							b.resumableState.AppendToState(path.Join(fPath, fInfo.Name()), objMeta.TotalSize)
 						}
 						return nil
 					})

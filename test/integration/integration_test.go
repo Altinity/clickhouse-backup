@@ -2444,7 +2444,8 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	testData := generateTestData(t, r, env, remoteStorageType, createAllTypesOfObjectTables, defaultTestData)
 
 	log.Debug().Msg("Create backup")
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables", tablesPattern, fullBackupName)
+	createCmd := "clickhouse-backup -c /etc/clickhouse-backup/" + backupConfig + " create --resume --tables=" + tablesPattern + " " + fullBackupName
+	env.checkResumeAlreadyProcessed(createCmd, fullBackupName, "create", r, remoteStorageType)
 
 	incrementData := generateIncrementTestData(t, r, env, remoteStorageType, createAllTypesOfObjectTables, defaultIncrementData, 1)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables", tablesPattern, incrementBackupName)
@@ -2493,8 +2494,13 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	log.Debug().Msg("Restore data")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--data", fullBackupName)
 
+	log.Debug().Msg("Full restore")
+	restoreCmd := "clickhouse-backup -c /etc/clickhouse-backup/" + backupConfig + " restore --resume " + fullBackupName
+	env.checkResumeAlreadyProcessed(restoreCmd, fullBackupName, "restore", r, remoteStorageType)
+
 	log.Debug().Msg("Full restore with rm")
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--rm", fullBackupName)
+	restoreRmCmd := "clickhouse-backup -c /etc/clickhouse-backup/" + backupConfig + " restore --resume --rm " + fullBackupName
+	env.checkResumeAlreadyProcessed(restoreRmCmd, fullBackupName, "restore", r, remoteStorageType)
 
 	log.Debug().Msg("Check data")
 	for i := range testData {
@@ -2820,6 +2826,12 @@ func (env *TestEnvironment) checkResumeAlreadyProcessed(backupCmd, testBackupNam
 	const resumableWarning = "resumable state: can't"
 	const resumableCleanup = "state2 cleanup begin"
 	if strings.Contains(backupCmd, "--resume") {
+		if strings.Contains(backupCmd, "restore") && !strings.Contains(backupCmd, "--data") {
+			r.NotContains(out, resumableWarning)
+			r.NotContains(out, alreadyProcesses)
+			r.Contains(out, resumableCleanup)
+			return
+		}
 		if !strings.Contains(out, alreadyProcesses) || strings.Contains(out, resumableWarning) || strings.Contains(out, resumableCleanup) {
 			log.Debug().Msg(out)
 		}

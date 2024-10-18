@@ -717,8 +717,8 @@ func (api *APIServer) httpTablesHandler(w http.ResponseWriter, r *http.Request) 
 	q := r.URL.Query()
 	var tables []clickhouse.Table
 	// https://github.com/Altinity/clickhouse-backup/issues/778
-	if q.Get("remote_backup") != "" {
-		tables, err = b.GetTablesRemote(context.Background(), q.Get("remote_backup"), q.Get("table"))
+	if remoteBackup, exists := api.getQueryParameter(q, "remote_backup"); exists {
+		tables, err = b.GetTablesRemote(context.Background(), remoteBackup, q.Get("table"))
 	} else {
 		tables, err = b.GetTables(context.Background(), q.Get("table"))
 	}
@@ -875,6 +875,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	createConfigs := false
 	configsOnly := false
 	checkPartsColumns := true
+	resume := false
 	fullCommand := "create"
 	query := r.URL.Query()
 	operationId, _ := uuid.NewUUID()
@@ -883,8 +884,8 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		tablePattern = tp[0]
 		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
 	}
-	if baseBackup, exists := query["diff-from-remote"]; exists {
-		diffFromRemote = baseBackup[0]
+	if baseBackup, exists := api.getQueryParameter(query, "diff-from-remote"); exists {
+		diffFromRemote = baseBackup
 	}
 	if partitions, exist := query["partitions"]; exist {
 		partitionsToBackup = append(partitionsToBackup, partitions...)
@@ -898,7 +899,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		createRBAC = true
 		fullCommand += " --rbac"
 	}
-	if _, exist := query["rbac-only"]; exist {
+	if _, exist := api.getQueryParameter(query, "rbac-only"); exist {
 		rbacOnly = true
 		fullCommand += " --rbac-only"
 	}
@@ -906,14 +907,19 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		createConfigs = true
 		fullCommand += " --configs"
 	}
-	if _, exist := query["configs-only"]; exist {
+	if _, exist := api.getQueryParameter(query, "configs-only"); exist {
 		configsOnly = true
 		fullCommand += " --configs-only"
 	}
 
-	if partsColumns, exist := query["check_parts_columns"]; exist {
-		checkPartsColumns, _ = strconv.ParseBool(partsColumns[0])
-		fullCommand = fmt.Sprintf("%s --check-parts-columns=%v", fullCommand, checkPartsColumns)
+	if _, exist := api.getQueryParameter(query, "skip-check-parts-columns"); exist {
+		checkPartsColumns = true
+		fullCommand += " --skip-check-parts-columns"
+	}
+
+	if _, exist := query["resume"]; exist {
+		resume = true
+		fullCommand += " --resume"
 	}
 
 	if name, exist := query["name"]; exist {
@@ -932,7 +938,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("create", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.CreateBackup(backupName, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, checkPartsColumns, api.clickhouseBackupVersion, commandId)
+			return b.CreateBackup(backupName, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, checkPartsColumns, resume, api.clickhouseBackupVersion, commandId)
 		})
 		if err != nil {
 			log.Error().Msgf("API /backup/create error: %v", err)
@@ -984,16 +990,16 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 	watchBackupNameTemplate := ""
 	fullCommand := "watch"
 	query := r.URL.Query()
-	if interval, exist := query["watch_interval"]; exist {
-		watchInterval = interval[0]
+	if interval, exist := api.getQueryParameter(query, "watch_interval"); exist {
+		watchInterval = interval
 		fullCommand = fmt.Sprintf("%s --watch-interval=\"%s\"", fullCommand, watchInterval)
 	}
-	if interval, exist := query["full_interval"]; exist {
-		fullInterval = interval[0]
+	if interval, exist := api.getQueryParameter(query, "full_interval"); exist {
+		fullInterval = interval
 		fullCommand = fmt.Sprintf("%s --full-interval=\"%s\"", fullCommand, fullInterval)
 	}
-	if template, exist := query["watch_backup_name_template"]; exist {
-		watchBackupNameTemplate = template[0]
+	if template, exist := api.getQueryParameter(query, "watch_backup_name_template"); exist {
+		watchBackupNameTemplate = template
 		fullCommand = fmt.Sprintf("%s --watch-backup-name-template=\"%s\"", fullCommand, watchBackupNameTemplate)
 	}
 	if tp, exist := query["table"]; exist {
@@ -1022,11 +1028,9 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 			fullCommand = fmt.Sprintf("%s --configs", fullCommand)
 		}
 	}
-	if partsColumns, exist := query["skip_check_parts_columns"]; exist {
-		skipCheckPartsColumns, _ = strconv.ParseBool(partsColumns[0])
-		if configsOnly {
-			fullCommand = fmt.Sprintf("%s --skip-check-parts-columns", fullCommand)
-		}
+	if _, exist := api.getQueryParameter(query, "skip_check_parts_columns"); exist {
+		skipCheckPartsColumns = true
+		fullCommand = fmt.Sprintf("%s --skip-check-parts-columns", fullCommand)
 	}
 
 	if status.Current.CheckCommandInProgress(fullCommand) {
@@ -1129,17 +1133,17 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	fullCommand := "upload"
 	operationId, _ := uuid.NewUUID()
 
-	if _, exist := query["delete-source"]; exist {
+	if _, exist := api.getQueryParameter(query, "delete-source"); exist {
 		deleteSource = true
 		fullCommand = fmt.Sprintf("%s --deleteSource", fullCommand)
 	}
 
-	if df, exist := query["diff-from"]; exist {
-		diffFrom = df[0]
+	if df, exist := api.getQueryParameter(query, "diff-from"); exist {
+		diffFrom = df
 		fullCommand = fmt.Sprintf("%s --diff-from=\"%s\"", fullCommand, diffFrom)
 	}
-	if df, exist := query["diff-from-remote"]; exist {
-		diffFromRemote = df[0]
+	if df, exist := api.getQueryParameter(query, "diff-from-remote"); exist {
+		diffFromRemote = df
 		fullCommand = fmt.Sprintf("%s --diff-from-remote=\"%s\"", fullCommand, diffFromRemote)
 	}
 	if tp, exist := query["table"]; exist {
@@ -1157,6 +1161,10 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	if _, exist := query["resumable"]; exist {
 		resume = true
 		fullCommand += " --resumable"
+	}
+	if _, exist := query["resume"]; exist {
+		resume = true
+		fullCommand += " --resume"
 	}
 
 	fullCommand = fmt.Sprint(fullCommand, " ", name)
@@ -1232,6 +1240,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	rbacOnly := false
 	restoreConfigs := false
 	configsOnly := false
+	resume := false
 	fullCommand := "restore"
 	operationId, _ := uuid.NewUUID()
 
@@ -1240,37 +1249,50 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		tablePattern = tp[0]
 		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
 	}
-	if databaseMappingQuery, exist := query["restore_database_mapping"]; exist {
-		for _, databaseMapping := range databaseMappingQuery {
-			mappingItems := strings.Split(databaseMapping, ",")
-			for _, m := range mappingItems {
-				if strings.Count(m, ":") != 1 || !databaseMappingRE.MatchString(m) {
-					api.writeError(w, http.StatusInternalServerError, "restore", fmt.Errorf("invalid values in restore_database_mapping %s", m))
-					return
+	databaseMappingQueryParamName := "restore_database_mapping"
+	databaseMappingQueryParamNames := []string{
+		strings.Replace(databaseMappingQueryParamName, "_", "-", -1),
+		strings.Replace(databaseMappingQueryParamName, "-", "_", -1),
+	}
+	for _, queryParamName := range databaseMappingQueryParamNames {
+		if databaseMappingQuery, exist := query[queryParamName]; exist {
+			for _, databaseMapping := range databaseMappingQuery {
+				mappingItems := strings.Split(databaseMapping, ",")
+				for _, m := range mappingItems {
+					if strings.Count(m, ":") != 1 || !databaseMappingRE.MatchString(m) {
+						api.writeError(w, http.StatusInternalServerError, "restore", fmt.Errorf("invalid values in restore_database_mapping %s", m))
+						return
 
+					}
 				}
+				databaseMappingToRestore = append(databaseMappingToRestore, mappingItems...)
 			}
-			databaseMappingToRestore = append(databaseMappingToRestore, mappingItems...)
-		}
 
-		fullCommand = fmt.Sprintf("%s --restore-database-mapping=\"%s\"", fullCommand, strings.Join(databaseMappingToRestore, ","))
+			fullCommand = fmt.Sprintf("%s --restore-database-mapping=\"%s\"", fullCommand, strings.Join(databaseMappingToRestore, ","))
+		}
 	}
 
 	// https://github.com/Altinity/clickhouse-backup/issues/937
-	if tableMappingQuery, exist := query["restore_table_mapping"]; exist {
-		for _, tableMapping := range tableMappingQuery {
-			mappingItems := strings.Split(tableMapping, ",")
-			for _, m := range mappingItems {
-				if strings.Count(m, ":") != 1 || !tableMappingRE.MatchString(m) {
-					api.writeError(w, http.StatusInternalServerError, "restore", fmt.Errorf("invalid values in restore_table_mapping %s", m))
-					return
-
+	tableMappingQueryParamName := "restore_table_mapping"
+	tableMappingQueryParamNames := []string{
+		strings.Replace(tableMappingQueryParamName, "_", "-", -1),
+		strings.Replace(tableMappingQueryParamName, "-", "_", -1),
+	}
+	for _, queryParamName := range tableMappingQueryParamNames {
+		if tableMappingQuery, exist := query[queryParamName]; exist {
+			for _, tableMapping := range tableMappingQuery {
+				mappingItems := strings.Split(tableMapping, ",")
+				for _, m := range mappingItems {
+					if strings.Count(m, ":") != 1 || !tableMappingRE.MatchString(m) {
+						api.writeError(w, http.StatusInternalServerError, "restore", fmt.Errorf("invalid values in restore_table_mapping %s", m))
+						return
+					}
 				}
+				tableMappingToRestore = append(tableMappingToRestore, mappingItems...)
 			}
-			tableMappingToRestore = append(tableMappingToRestore, mappingItems...)
-		}
 
-		fullCommand = fmt.Sprintf("%s --restore-table-mapping=\"%s\"", fullCommand, strings.Join(tableMappingToRestore, ","))
+			fullCommand = fmt.Sprintf("%s --restore-table-mapping=\"%s\"", fullCommand, strings.Join(tableMappingToRestore, ","))
+		}
 	}
 
 	if partitions, exist := query["partitions"]; exist {
@@ -1293,7 +1315,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		dropExists = true
 		fullCommand += " --rm"
 	}
-	if _, exists := query["ignore_dependencies"]; exists {
+	if _, exists := api.getQueryParameter(query, "ignore_dependencies"); exists {
 		ignoreDependencies = true
 		fullCommand += " --ignore-dependencies"
 	}
@@ -1301,7 +1323,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		restoreRBAC = true
 		fullCommand += " --rbac"
 	}
-	if _, exist := query["rbac-only"]; exist {
+	if _, exist := api.getQueryParameter(query, "rbac-only"); exist {
 		rbacOnly = true
 		fullCommand += " --rbac-only"
 	}
@@ -1309,9 +1331,17 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		restoreConfigs = true
 		fullCommand += " --configs"
 	}
-	if _, exist := query["configs"]; exist {
+	if _, exist := api.getQueryParameter(query, "configs-only"); exist {
 		configsOnly = true
 		fullCommand += " --configs-only"
+	}
+	if _, exist := query["resumable"]; exist {
+		resume = true
+		fullCommand += " --resumable"
+	}
+	if _, exist := query["resume"]; exist {
+		resume = true
+		fullCommand += " --resume"
 	}
 
 	name := utils.CleanBackupNameRE.ReplaceAllString(vars["name"], "")
@@ -1328,7 +1358,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore", 0, func() error {
 			b := backup.NewBackuper(api.config)
-			return b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, api.cliApp.Version, commandId)
+			return b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume, api.cliApp.Version, commandId)
 		})
 		go func() {
 			if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
@@ -1394,6 +1424,11 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		resume = true
 		fullCommand += " --resumable"
 	}
+	if _, exist := query["resume"]; exist {
+		resume = true
+		fullCommand += " --resume"
+	}
+
 	fullCommand += fmt.Sprintf(" %s", name)
 
 	callback, err := parseCallback(query)
@@ -1792,4 +1827,14 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 	}
 
 	return nil
+}
+
+func (api *APIServer) getQueryParameter(q url.Values, paramName string) (string, bool) {
+	paramNames := []string{strings.Replace(paramName, "-", "_", -1), strings.Replace(paramName, "_", "-", -1)}
+	for _, name := range paramNames {
+		if v, exists := q[name]; exists {
+			return v[0], exists
+		}
+	}
+	return "", false
 }

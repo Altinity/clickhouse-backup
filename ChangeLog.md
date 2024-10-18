@@ -4,6 +4,8 @@ IMPROVEMENTS
 - clean resumable state if backup parameters changed, fix [840](https://github.com/Altinity/clickhouse-backup/issues/840)
 - switch to golang 1.23
 - add `clickhouse_backup_local_data_size` metric as alias for `TotalBytesOfMergeTreeTablesm` from `system.asychnrous_metrics`, fix [573](https://github.com/Altinity/clickhouse-backup/issues/573)
+- API refactoring, query options with snake case, also allow with dash case.
+- add `--resume` parameter to `create` and `restore` command to avoid unnecessary copy object disk data fix [828](https://github.com/Altinity/clickhouse-backup/issues/828) 
 
 BUG FIXES
 - fix `TestLongListRemote` for properly time measurement

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/resumable"
 	"github.com/eapache/go-resiliency/retrier"
 	"os"
 	"path"
@@ -56,7 +57,7 @@ func NewBackupName() string {
 
 // CreateBackup - create new backup of all tables matched by tablePattern
 // If backupName is empty string will use default backup name
-func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string, partitions []string, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, skipCheckPartsColumns bool, backupVersion string, commandId int) error {
+func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string, partitions []string, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, skipCheckPartsColumns, resume bool, backupVersion string, commandId int) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return err
@@ -80,6 +81,7 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	if b.cfg.General.RBACBackupAlways {
 		createRBAC = true
 	}
+	b.adjustResumeFlag(resume)
 
 	allDatabases, err := b.ch.GetDatabases(ctx, b.cfg, tablePattern)
 	if err != nil {
@@ -89,14 +91,8 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	if err != nil {
 		return fmt.Errorf("can't get tables from clickhouse: %v", err)
 	}
-	i := 0
-	for _, table := range tables {
-		if table.Skip {
-			continue
-		}
-		i++
-	}
-	if i == 0 && !b.cfg.General.AllowEmptyBackups {
+
+	if b.CalculateNonSkipTables(tables) == 0 && !b.cfg.General.AllowEmptyBackups {
 		return fmt.Errorf("no tables for backup")
 	}
 
@@ -133,7 +129,7 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	if b.cfg.ClickHouse.UseEmbeddedBackupRestore {
 		err = b.createBackupEmbedded(ctx, backupName, diffFromRemote, doBackupData, schemaOnly, backupVersion, tablePattern, partitionsNameList, partitionsIdMap, tables, allDatabases, allFunctions, disks, diskMap, diskTypes, backupRBACSize, backupConfigSize, startBackup, version)
 	} else {
-		err = b.createBackupLocal(ctx, backupName, diffFromRemote, doBackupData, schemaOnly, rbacOnly, configsOnly, backupVersion, partitionsIdMap, tables, tablePattern, disks, diskMap, diskTypes, allDatabases, allFunctions, backupRBACSize, backupConfigSize, startBackup, version)
+		err = b.createBackupLocal(ctx, backupName, diffFromRemote, doBackupData, schemaOnly, rbacOnly, configsOnly, backupVersion, partitions, partitionsIdMap, tables, tablePattern, disks, diskMap, diskTypes, allDatabases, allFunctions, backupRBACSize, backupConfigSize, startBackup, version)
 	}
 	if err != nil {
 		log.Error().Msgf("backup failed error: %v", err)
@@ -153,6 +149,17 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 		return err
 	}
 	return nil
+}
+
+func (b *Backuper) CalculateNonSkipTables(tables []clickhouse.Table) int {
+	i := 0
+	for _, table := range tables {
+		if table.Skip {
+			continue
+		}
+		i++
+	}
+	return i
 }
 
 func (b *Backuper) createRBACAndConfigsIfNecessary(ctx context.Context, backupName string, createRBAC bool, rbacOnly bool, createConfigs bool, configsOnly bool, disks []clickhouse.Disk, diskMap map[string]string) (uint64, uint64, error) {
@@ -186,7 +193,7 @@ func (b *Backuper) createRBACAndConfigsIfNecessary(ctx context.Context, backupNa
 	return backupRBACSize, backupConfigSize, nil
 }
 
-func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRemote string, doBackupData, schemaOnly, rbacOnly, configsOnly bool, backupVersion string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, tables []clickhouse.Table, tablePattern string, disks []clickhouse.Disk, diskMap, diskTypes map[string]string, allDatabases []clickhouse.Database, allFunctions []clickhouse.Function, backupRBACSize, backupConfigSize uint64, startBackup time.Time, version int) error {
+func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRemote string, doBackupData, schemaOnly, rbacOnly, configsOnly bool, backupVersion string, partitions []string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, tables []clickhouse.Table, tablePattern string, disks []clickhouse.Disk, diskMap, diskTypes map[string]string, allDatabases []clickhouse.Database, allFunctions []clickhouse.Function, backupRBACSize, backupConfigSize uint64, startBackup time.Time, version int) error {
 	// Create backup dir on all clickhouse disks
 	for _, disk := range disks {
 		if err := filesystemhelper.Mkdir(path.Join(disk.Path, "backup"), b.ch, disks); err != nil {
@@ -195,7 +202,10 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 	}
 	backupPath := path.Join(b.DefaultDataPath, "backup", backupName)
 	if _, err := os.Stat(path.Join(backupPath, "metadata.json")); err == nil || !os.IsNotExist(err) {
-		return fmt.Errorf("'%s' medatata.json already exists", backupName)
+		if !b.resume {
+			return fmt.Errorf("'%s' medatata.json already exists", backupName)
+		}
+		log.Warn().Msgf("'%s' medatata.json already exists, will overwrite and resume object disk data upload", backupName)
 	}
 	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
 		if err = filesystemhelper.Mkdir(backupPath, b.ch, disks); err != nil {
@@ -242,6 +252,16 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 				log.Warn().Msgf("can't close connection to %s: %v", b.dst.Kind(), closeErr)
 			}
 		}()
+		if b.resume {
+			b.resumableState = resumable.NewState(b.GetStateDir(), backupName, "create", map[string]interface{}{
+				"diffFromRemote": diffFromRemote,
+				"tablePattern":   tablePattern,
+				"partitions":     partitions,
+				"schemaOnly":     schemaOnly,
+			})
+			defer b.resumableState.Close()
+		}
+
 	}
 	var tablesDiffFromRemote map[metadata.TableTitle]metadata.TableMetadata
 	if diffFromRemote != "" && b.cfg.General.RemoteStorage != "custom" {
@@ -356,12 +376,7 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 	var tablesTitle []metadata.TableTitle
 
 	if schemaOnly || doBackupData {
-		l := 0
-		for _, table := range tables {
-			if !table.Skip {
-				l += 1
-			}
-		}
+		l := b.CalculateNonSkipTables(tables)
 		if l == 0 {
 			return fmt.Errorf("`use_embedded_backup_restore: true` not found tables for backup, check your parameter --tables=%v", tablePattern)
 		}
@@ -751,7 +766,7 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 	if err := b.ch.FreezeTable(ctx, table, shadowBackupUUID); err != nil {
 		return nil, nil, nil, err
 	}
-	log.Debug().Msg("frozen")
+	log.Debug().Str("database", table.Database).Str("table", table.Name).Msg("frozen")
 	realSize := map[string]int64{}
 	objectDiskSize := map[string]int64{}
 	disksToPartsMap := map[string][]metadata.Part{}
@@ -768,6 +783,14 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 			backupPath := path.Join(disk.Path, "backup", backupName)
 			encodedTablePath := path.Join(common.TablePathEncode(table.Database), common.TablePathEncode(table.Name))
 			backupShadowPath := path.Join(backupPath, "shadow", encodedTablePath, disk.Name)
+			if b.resume {
+				if dir, err := os.Lstat(backupShadowPath); err == nil && dir.IsDir() {
+					log.Warn().Msgf("%s will clean to properly handle resume parameter", backupShadowPath)
+					if err = os.RemoveAll(backupShadowPath); err != nil {
+						return nil, nil, nil, err
+					}
+				}
+			}
 			if err := filesystemhelper.MkdirAll(backupShadowPath, b.ch, diskList); err != nil && !os.IsExist(err) {
 				return nil, nil, nil, err
 			}
@@ -867,6 +890,13 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 				}
 				var copyObjectErr error
 				srcKey := path.Join(srcDiskConnection.GetRemotePath(), storageObject.ObjectRelativePath)
+				if b.resume {
+					isAlreadyProcesses := false
+					isAlreadyProcesses, objSize = b.resumableState.IsAlreadyProcessed(path.Join(srcBucket, srcKey))
+					if isAlreadyProcesses {
+						continue
+					}
+				}
 				dstKey := path.Join(backupName, disk.Name, storageObject.ObjectRelativePath)
 				if !b.cfg.General.AllowObjectDiskStreaming {
 					retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
@@ -897,6 +927,9 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 						}
 					}
 					objSize = storageObject.ObjectSize
+					if b.resume {
+						b.resumableState.AppendToState(path.Join(srcBucket, srcKey), objSize)
+					}
 				}
 				realSize += objSize
 			}
