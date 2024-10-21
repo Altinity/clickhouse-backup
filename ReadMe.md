@@ -525,60 +525,25 @@ Display a list of all operations from start of API server: `curl -s localhost:71
 - Optional string query argument `filter` to filter actions on server side.
 - Optional string query argument `last` to show only the last `N` actions.
 
-## Storage types
-
-### S3
-
-In order to make backups to S3, the following permissions should be set:
-
-```json
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Sid": "clickhouse-backup-s3-access-to-files",
-            "Effect": "Allow",
-            "Action": [
-                "s3:PutObject",
-                "s3:GetObject",
-                "s3:DeleteObject"
-            ],
-            "Resource": "arn:aws:s3:::BUCKET_NAME/*"
-        },
-        {
-            "Sid": "clickhouse-backup-s3-access-to-bucket",
-            "Effect": "Allow",
-            "Action": [
-                "s3:ListBucket",
-                "s3:GetBucketVersioning"
-            ],
-            "Resource": "arn:aws:s3:::BUCKET_NAME"
-        }
-    ]
-}
-```
-
 ## Examples
 
-### Simple cron script for daily backups and remote upload
+- [Simple cron script for daily backups and remote upload](Examples.md#simple-cron-script-for-daily-backups-and-remote-upload)
+- [How to convert MergeTree to ReplicatedMergeTree](Examples.md#how-to-convert-mergetree-to-replicatedmergetree)
+- [How to store backups on NFS or another server](Examples.md#how-to-store-backups-on-nfs-backup-drive-or-another-server-via-sftp)
+- [How to move data to another clickhouse server](Examples.md#how-to-move-data-to-another-clickhouse-server)
+- [How to monitor that backups created and uploaded correctly](Examples.md#how-to-monitor-that-backups-were-created-and-uploaded-correctly)
+- [How to back up / restore a sharded cluster](Examples.md#how-to-back-up--restore-a-sharded-cluster)
+- [How to back up a sharded cluster with Ansible](Examples.md#how-to-back-up-a-sharded-cluster-with-ansible)
+- [How to back up a database with several terabytes of data](Examples.md#how-to-back-up-a-database-with-several-terabytes-of-data)
+- [How to use clickhouse-backup in Kubernetes](Examples.md#how-to-use-clickhouse-backup-in-kubernetes)
+- [How to back up object disks to s3 with s3:CopyObject](Examples.md#how-to-back-up-object-disks-to-s3-with-s3copyobject)
+- [How to restore object disks to s3 with s3:CopyObject](Examples.md#how-to-restore-object-disks-to-s3-with-s3copyobject)
+- [How to use AWS IRSA and IAM to allow S3 backup without Explicit credentials](Examples.md#how-to-use-aws-irsa-and-iam-to-allow-s3-backup-without-explicit-credentials)
+- [How to do incremental backups work to remote storage](Examples.md#how-incremental-backups-work-with-remote-storage)
+- [How to watch backups work](Examples.md#how-to-watch-backups-work)
 
-```bash
-#!/bin/bash
-BACKUP_NAME=my_backup_$(date -u +%Y-%m-%dT%H-%M-%S)
-clickhouse-backup create $BACKUP_NAME >> /var/log/clickhouse-backup.log 2>&1
-exit_code=$?
-if [[ $exit_code != 0 ]]; then
-  echo "clickhouse-backup create $BACKUP_NAME FAILED and return $exit_code exit code"
-  exit $exit_code
-fi
-
-clickhouse-backup upload $BACKUP_NAME >> /var/log/clickhouse-backup.log 2>&1
-exit_code=$?
-if [[ $exit_code != 0 ]]; then
-  echo "clickhouse-backup upload $BACKUP_NAME FAILED and return $exit_code exit code"
-  exit $exit_code
-fi
-```
+## Original Author
+Altinity wants to thank [@AlexAkulov](https://github.com/AlexAkulov) for creating this tool and for his valuable contributions.
 
 ## Common CLI Usage
 
@@ -903,19 +868,3 @@ OPTIONS:
    --watch-backup-name-template value         Template for new backup name, could contain names from system.macros, {type} - full or incremental and {time:LAYOUT}, look to https://go.dev/src/time/format.go for layout examples
    
 ```
-
-### More use cases of clickhouse-backup
-
-- [How to convert MergeTree to ReplicatedMergeTree](Examples.md#how-to-convert-mergetree-to-replicatedmergetree)
-- [How to store backups on NFS or another server](Examples.md#how-to-store-backups-on-nfs-backup-drive-or-another-server-via-sftp)
-- [How to move data to another clickhouse server](Examples.md#how-to-move-data-to-another-clickhouse-server)
-- [How to monitor that backups created and uploaded correctly](Examples.md#how-to-monitor-that-backups-were-created-and-uploaded-correctly)
-- [How to back up / restore a sharded cluster](Examples.md#how-to-back-up--restore-a-sharded-cluster)
-- [How to back up a sharded cluster with Ansible](Examples.md#how-to-back-up-a-sharded-cluster-with-ansible)
-- [How to back up a database with several terabytes of data](Examples.md#how-to-back-up-a-database-with-several-terabytes-of-data)
-- [How to use clickhouse-backup in Kubernetes](Examples.md#how-to-use-clickhouse-backup-in-kubernetes)
-- [How to do incremental backups work to remote storage](Examples.md#how-incremental-backups-work-with-remote-storage)
-- [How to watch backups work](Examples.md#how-to-watch-backups-work)
-
-## Original Author
-Altinity wants to thank @[AlexAkulov](https://github.com/AlexAkulov) for creating this tool and for his valuable contributions.

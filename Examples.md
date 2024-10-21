@@ -1,5 +1,25 @@
 # Use cases of clickhouse-backup
 
+## Simple cron script for daily backups and remote upload
+
+```bash
+#!/bin/bash
+BACKUP_NAME=my_backup_$(date -u +%Y-%m-%dT%H-%M-%S)
+clickhouse-backup create $BACKUP_NAME >> /var/log/clickhouse-backup.log 2>&1
+exit_code=$?
+if [[ $exit_code != 0 ]]; then
+  echo "clickhouse-backup create $BACKUP_NAME FAILED and return $exit_code exit code"
+  exit $exit_code
+fi
+
+clickhouse-backup upload $BACKUP_NAME >> /var/log/clickhouse-backup.log 2>&1
+exit_code=$?
+if [[ $exit_code != 0 ]]; then
+  echo "clickhouse-backup upload $BACKUP_NAME FAILED and return $exit_code exit code"
+  exit $exit_code
+fi
+```
+
 ## How to convert MergeTree to ReplicatedMergeTree
 This doesn't work for tables created in `MergeTree(date_column, (primary keys columns), 8192)` format
 1. Create backup
@@ -464,6 +484,113 @@ spec:
               clickhouse-client -q "INSERT INTO system.backup_actions(command) VALUES('delete local ${BACKUP_NAMES[$SERVER]}')" --host="$SERVER" --port="$CLICKHOUSE_PORT" --user="$BACKUP_USER" $BACKUP_PASSWORD;
             fi;
           done
+```
+
+## How to back up object disks to s3 with s3:CopyObject
+
+To properly make backup your object s3 disks to s3 backup bucket you need to have minimal access rights via IAM
+
+```json
+{
+  "Id": "altinity-clickhouse-backup-for-s3-iam-your-uniq-name",
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "altinity-clickhouse-backup-for-s3-iam-your-uniq-name",
+      "Action": [
+        "s3:GetBucketVersioning",
+        "s3:ListBucket"
+      ],
+      "Effect": "Allow",
+      "Resource": "arn:aws:s3:::<your-object-disks-bucket>",
+      "Principal": {
+        "AWS": [
+          "arn:aws:iam::<your-aws-acount-id-for-backup>:user/<your-backup-user>"
+        ]
+      }
+    },
+    {
+      "Sid": "altinity-clickhouse-backup-for-s3-iam-your-uniq-name",
+      "Action": [
+        "s3:DeleteObject",
+        "s3:GetObject",
+        "s3:PutObject"
+      ],
+      "Effect": "Allow",
+      "Resource": "arn:aws:s3:::<your-object-disks-bucket>/*",
+      "Principal": {
+        "AWS": [
+          "arn:aws:iam::<your-aws-acount-id-for-backup>:user/<your-backup-user>"
+        ]
+      }
+    }
+  ]
+}
+```
+Store this content into `backup.json`
+
+Use following command to detect `Principal` field value
+```
+AWS_ACCESS_KEY_ID=<backup-cretentials-access-key-id> AWS_SECRET_ACCESS_KEY=<backup-cretentials-access-secret-key> aws sts get-caller-identity
+```
+
+Use following command to put IAM policy to s3 object disks bucket
+```
+aws s3api put-bucket-policy --bucket <your-object-disk-bucket> --policy="$(cat backup.json)"  
+```
+
+## How to restore object disks to s3 with s3:CopyObject
+
+To properly restore your object s3 disks from s3 backup bucket you need to have minimal access rights via IAM
+
+
+```json
+{
+  "Id": "altinity-clickhouse-restore-for-s3-iam-your-uniq-name",
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "altinity-clickhouse-restore-for-s3-iam-your-uniq-name",
+      "Action": [
+        "s3:GetBucketVersioning",
+        "s3:ListBucket"
+      ],
+      "Effect": "Allow",
+      "Resource": "arn:aws:s3:::<your-backup-bucket>",
+      "Principal": {
+        "AWS": [
+          "arn:aws:iam::<your-aws-acount-id-for-object-disks-user>:user/<your-object-disks-user>"
+        ]
+      }
+    },
+    {
+      "Sid": "altinity-clickhouse-restore-for-s3-iam-your-uniq-name",
+      "Action": [
+        "s3:DeleteObject",
+        "s3:GetObject",
+        "s3:PutObject"
+      ],
+      "Effect": "Allow",
+      "Resource": "arn:aws:s3:::<your-backup-bucket>/*",
+      "Principal": {
+        "AWS": [
+          "arn:aws:iam::<your-aws-acount-id-for-object-disks-user>:user/<your-object-disks-user>"
+        ]
+      }
+    }
+  ]
+}
+```
+Store this content into `backup.json`
+
+Use following command to detect `Principal` field value
+```
+AWS_ACCESS_KEY_ID=<object-disks-cretentials-access-key-id> AWS_SECRET_ACCESS_KEY=<object-disks-cretentials-secret-access-key> aws sts get-caller-identity
+```
+
+Use following command to attach IAM policy to s3 object disks bucket
+```
+aws s3api put-bucket-policy --bucket <your-object-disk-bucket> --policy="$(cat backup.json)"  
 ```
 
 ## How to use AWS IRSA and IAM to allow S3 backup without Explicit credentials
