@@ -9,6 +9,7 @@ IMPROVEMENTS
 
 BUG FIXES
 - fix `TestLongListRemote` for properly time measurement
+- fix log_pointer handle from system.replicas during restore, fix [967](https://github.com/Altinity/clickhouse-backup/issues/967)
 
 # v2.6.2
 BUG FIXES

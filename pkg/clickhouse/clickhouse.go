@@ -1234,7 +1234,8 @@ func (ch *ClickHouse) CheckReplicationInProgress(table metadata.TableMetadata) (
 		if len(existsReplicas) > 1 {
 			return false, fmt.Errorf("invalid result for check exists replicas: %+v", existsReplicas)
 		}
-		if existsReplicas[0].LogPointer > 1 || existsReplicas[0].LogMaxIndex > 1 || existsReplicas[0].AbsoluteDelay > 0 || existsReplicas[0].QueueSize > 0 {
+		// https://github.com/Altinity/clickhouse-backup/issues/967
+		if existsReplicas[0].LogPointer > 2 || existsReplicas[0].LogMaxIndex > 1 || existsReplicas[0].AbsoluteDelay > 0 || existsReplicas[0].QueueSize > 0 {
 			return false, fmt.Errorf("%s.%s can't restore cause system.replicas entries already exists and replication in progress from another replica, log_pointer=%d, log_max_index=%d, absolute_delay=%d, queue_size=%d", table.Database, table.Table, existsReplicas[0].LogPointer, existsReplicas[0].LogMaxIndex, existsReplicas[0].AbsoluteDelay, existsReplicas[0].QueueSize)
 		} else {
 			log.Info().Msgf("replication_in_progress status = %+v", existsReplicas)
