@@ -349,7 +349,7 @@ func (b *Backuper) buildEmbeddedLocationAZBLOB() string {
 	azblobBackupURL.Scheme = b.cfg.AzureBlob.EndpointSchema
 	// https://github.com/Altinity/clickhouse-backup/issues/1031
 	if b.cfg.AzureBlob.EndpointSuffix == "core.windows.net" {
-		azblobBackupURL.Host = b.cfg.AzureBlob.AccountName + "." + b.cfg.AzureBlob.EndpointSuffix
+		azblobBackupURL.Host = b.cfg.AzureBlob.AccountName + ".blob." + b.cfg.AzureBlob.EndpointSuffix
 	} else {
 		azblobBackupURL.Host = b.cfg.AzureBlob.EndpointSuffix
 		azblobBackupURL.Path = b.cfg.AzureBlob.AccountName
