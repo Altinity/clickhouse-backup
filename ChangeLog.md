@@ -11,6 +11,7 @@ BUG FIXES
 - fix `TestLongListRemote` for properly time measurement
 - fix log_pointer handle from system.replicas during restore, fix [967](https://github.com/Altinity/clickhouse-backup/issues/967)
 - fix `use_embedded_backup_restore: true` behavior for azblob, fix [1031](https://github.com/Altinity/clickhouse-backup/issues/1031)
+- fix `Nullable(Enum())` types corner case for `check_parts_columns: true`, fix [1033](https://github.com/Altinity/clickhouse-backup/issues/1033)
 
 # v2.6.2
 BUG FIXES
