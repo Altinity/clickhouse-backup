@@ -513,7 +513,7 @@ func TestLongListRemote(t *testing.T) {
 	testBackupName := "test_list_remote"
 
 	for i := 0; i < totalCacheCount; i++ {
-		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", fmt.Sprintf("CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml ALLOW_EMPTY_BACKUPS=true clickhouse-backup create_remote %s_%d", testBackupName, i))
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", fmt.Sprintf("CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml ALLOW_EMPTY_BACKUPS=true RBAC_BACKUP_ALWAYS=false clickhouse-backup create_remote %s_%d", testBackupName, i))
 	}
 
 	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "minio")...))
