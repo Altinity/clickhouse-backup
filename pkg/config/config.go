@@ -231,6 +231,8 @@ type ClickHouseConfig struct {
 	RestartCommand                   string            `yaml:"restart_command" envconfig:"CLICKHOUSE_RESTART_COMMAND"`
 	IgnoreNotExistsErrorDuringFreeze bool              `yaml:"ignore_not_exists_error_during_freeze" envconfig:"CLICKHOUSE_IGNORE_NOT_EXISTS_ERROR_DURING_FREEZE"`
 	CheckReplicasBeforeAttach        bool              `yaml:"check_replicas_before_attach" envconfig:"CLICKHOUSE_CHECK_REPLICAS_BEFORE_ATTACH"`
+	DefaultReplicaPath               string            `yaml:"default_replica_path" envconfig:"CLICKHOUSE_DEFAULT_REPLICA_PATH"`
+	DefaultReplicaName               string            `yaml:"default_replica_name" envconfig:"CLICKHOUSE_DEFAULT_REPLICA_NAME"`
 	TLSKey                           string            `yaml:"tls_key" envconfig:"CLICKHOUSE_TLS_KEY"`
 	TLSCert                          string            `yaml:"tls_cert" envconfig:"CLICKHOUSE_TLS_CERT"`
 	TLSCa                            string            `yaml:"tls_ca" envconfig:"CLICKHOUSE_TLS_CA"`
@@ -570,6 +572,8 @@ func DefaultConfig() *Config {
 			BackupMutations:                  true,
 			RestoreAsAttach:                  false,
 			CheckPartsColumns:                true,
+			DefaultReplicaPath:               "/clickhouse/tables/{cluster}/{shard}/{database}/{table}",
+			DefaultReplicaName:               "{replica}",
 			MaxConnections:                   int(downloadConcurrency),
 		},
 		AzureBlob: AzureBlobConfig{

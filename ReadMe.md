@@ -188,6 +188,8 @@ clickhouse:
   restart_command: "exec:systemctl restart clickhouse-server" 
   ignore_not_exists_error_during_freeze: true # CLICKHOUSE_IGNORE_NOT_EXISTS_ERROR_DURING_FREEZE, helps to avoid backup failures when running frequent CREATE / DROP tables and databases during backup, `clickhouse-backup` will ignore `code: 60` and `code: 81` errors during execution of `ALTER TABLE ... FREEZE`
   check_replicas_before_attach: true # CLICKHOUSE_CHECK_REPLICAS_BEFORE_ATTACH, helps avoiding concurrent ATTACH PART execution when restoring ReplicatedMergeTree tables
+  default_replica_path: "/clickhouse/tables/{cluster}/{shard}/{database}/{table}" # CLICKHOUSE_DEFAULT_REPLICA_PATH, will use during restore Replicated tables without macros in replication_path if replica already exists, to avoid restoring conflicts
+  default_replica_name: "{replica}" # CLICKHOUSE_DEFAULT_REPLICA_NAME, will use during restore Replicated tables without macros in replica_name if replica already exists, to avoid restoring conflicts
   use_embedded_backup_restore: false # CLICKHOUSE_USE_EMBEDDED_BACKUP_RESTORE, use BACKUP / RESTORE SQL statements instead of regular SQL queries to use features of modern ClickHouse server versions
   embedded_backup_disk: ""  # CLICKHOUSE_EMBEDDED_BACKUP_DISK - disk from system.disks which will use when `use_embedded_backup_restore: true` 
   backup_mutations: true # CLICKHOUSE_BACKUP_MUTATIONS, allow backup mutations from system.mutations WHERE is_done=0 and apply it during restore

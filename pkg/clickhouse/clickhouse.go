@@ -988,6 +988,7 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 		return err
 	}
 
+	// CREATE
 	if err := ch.Query(query); err != nil {
 		return err
 	}
@@ -1293,6 +1294,24 @@ func (ch *ClickHouse) CheckTypesConsistency(table *Table, partColumnsDataTypes [
 		}
 	}
 	return nil
+}
+
+func (ch *ClickHouse) GetSettingsValues(ctx context.Context, settings []interface{}) (map[string]string, error) {
+	settingsValues := make([]struct {
+		Name  string `ch:"name"`
+		Value string `ch:"value"`
+	}, 0)
+	queryStr := "SELECT name, value FROM system.settings WHERE name IN (" + strings.Repeat("?, ", len(settings))
+	queryStr = queryStr[:len(queryStr)-2]
+	queryStr += ")"
+	if err := ch.SelectContext(ctx, &settingsValues, queryStr, settings...); err != nil {
+		return nil, err
+	}
+	settingsValuesMap := map[string]string{}
+	for _, v := range settingsValues {
+		settingsValuesMap[v.Name] = v.Value
+	}
+	return settingsValuesMap, nil
 }
 
 func (ch *ClickHouse) CheckSettingsExists(ctx context.Context, settings map[string]bool) (map[string]bool, error) {

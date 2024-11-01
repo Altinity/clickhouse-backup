@@ -1,13 +1,15 @@
 # v2.6.3
 IMPROVEMENTS
-- implement new format for *.state files boltdb
+- implement new format for *.state2 files boltdb key value (please, check memory RSS usage)
 - clean resumable state if backup parameters changed, fix [840](https://github.com/Altinity/clickhouse-backup/issues/840)
 - switch to golang 1.23
 - add `clickhouse_backup_local_data_size` metric as alias for `TotalBytesOfMergeTreeTablesm` from `system.asychnrous_metrics`, fix [573](https://github.com/Altinity/clickhouse-backup/issues/573)
 - API refactoring, query options with snake case, also allow with dash case.
 - add `--resume` parameter to `create` and `restore` command to avoid unnecessary copy object disk data fix [828](https://github.com/Altinity/clickhouse-backup/issues/828) 
 
+
 BUG FIXES
+- after drop table, before create table, will check if replica path already exists, and will try to, helpfull for restoring Replicated tables which not contains macros in replication parameters fix [849](https://github.com/Altinity/clickhouse-backup/issues/849)
 - fix `TestLongListRemote` for properly time measurement
 - fix log_pointer handle from system.replicas during restore, fix [967](https://github.com/Altinity/clickhouse-backup/issues/967)
 - fix `use_embedded_backup_restore: true` behavior for azblob, fix [1031](https://github.com/Altinity/clickhouse-backup/issues/1031)

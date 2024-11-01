@@ -895,7 +895,7 @@ func (b *Backuper) RestoreSchema(ctx context.Context, backupName string, backupM
 	if b.isEmbedded {
 		restoreErr = b.restoreSchemaEmbedded(ctx, backupName, backupMetadata, disks, tablesForRestore, version)
 	} else {
-		restoreErr = b.restoreSchemaRegular(tablesForRestore, version)
+		restoreErr = b.restoreSchemaRegular(ctx, tablesForRestore, version)
 	}
 	if restoreErr != nil {
 		return restoreErr
@@ -1078,7 +1078,7 @@ func (b *Backuper) fixEmbeddedMetadataSQLQuery(ctx context.Context, sqlBytes []b
 	return sqlQuery, sqlMetadataChanged, nil
 }
 
-func (b *Backuper) restoreSchemaRegular(tablesForRestore ListOfTables, version int) error {
+func (b *Backuper) restoreSchemaRegular(ctx context.Context, tablesForRestore ListOfTables, version int) error {
 	totalRetries := len(tablesForRestore)
 	restoreRetries := 0
 	isDatabaseCreated := common.EmptyMap{}
@@ -1095,23 +1095,14 @@ func (b *Backuper) restoreSchemaRegular(tablesForRestore ListOfTables, version i
 				}
 			}
 			//materialized and window views should restore via ATTACH
-			schema.Query = strings.Replace(
-				schema.Query, "CREATE MATERIALIZED VIEW", "ATTACH MATERIALIZED VIEW", 1,
-			)
-			schema.Query = strings.Replace(
-				schema.Query, "CREATE WINDOW VIEW", "ATTACH WINDOW VIEW", 1,
-			)
-			schema.Query = strings.Replace(
-				schema.Query, "CREATE LIVE VIEW", "ATTACH LIVE VIEW", 1,
-			)
+			b.replaceCreateToAttachForView(&schema)
+			// https://github.com/Altinity/clickhouse-backup/issues/849
+			log.Info().Msgf("SUKA BEFORE!!! schema.Query=%s", schema.Query)
+			b.checkReplicaAlreadyExistsAndChangeReplicationPath(ctx, &schema)
+			log.Info().Msgf("SUKA AFTER!!! schema.Query=%s", schema.Query)
+
 			// https://github.com/Altinity/clickhouse-backup/issues/466
-			if b.cfg.General.RestoreSchemaOnCluster == "" && strings.Contains(schema.Query, "{uuid}") && strings.Contains(schema.Query, "Replicated") {
-				if !strings.Contains(schema.Query, "UUID") {
-					log.Warn().Msgf("table query doesn't contains UUID, can't guarantee properly restore for ReplicatedMergeTree")
-				} else {
-					schema.Query = UUIDWithMergeTreeRE.ReplaceAllString(schema.Query, "$1$2$3'$4'$5$4$7")
-				}
-			}
+			b.replaceUUIDMacroValue(&schema)
 			restoreErr = b.ch.CreateTable(clickhouse.Table{
 				Database: schema.Database,
 				Name:     schema.Table,
@@ -1138,6 +1129,86 @@ func (b *Backuper) restoreSchemaRegular(tablesForRestore ListOfTables, version i
 		}
 	}
 	return nil
+}
+
+var replicatedParamsRE = regexp.MustCompile(`(Replicated[a-zA-Z]*MergeTree)\('([^']+)'(\s*,\s*)'([^']+)'\)|(Replicated[a-zA-Z]*MergeTree)\(\)`)
+var replicatedUuidRE = regexp.MustCompile(` UUID '([^']+)'`)
+
+func (b *Backuper) checkReplicaAlreadyExistsAndChangeReplicationPath(ctx context.Context, schema *metadata.TableMetadata) {
+	if matches := replicatedParamsRE.FindAllStringSubmatch(schema.Query, -1); len(matches) > 0 {
+		var err error
+		if len(matches[0]) < 1 {
+			log.Warn().Msgf("can't find Replicated paramaters in %s", schema.Query)
+			return
+		}
+		shortSyntax := true
+		var engine, replicaPath, replicaName, delimiter string
+		if len(matches[0]) == 6 && matches[0][5] == "" {
+			shortSyntax = false
+			engine = matches[0][1]
+			replicaPath = matches[0][2]
+			delimiter = matches[0][3]
+			replicaName = matches[0][4]
+		} else {
+			engine = matches[0][4]
+			var settingsValues map[string]string
+			settingsValues, err = b.ch.GetSettingsValues(ctx, []interface{}{"default_replica_path", "default_replica_name"})
+			if err != nil {
+				log.Fatal().Msgf("can't get from `system.settings` -> `default_replica_path`, `default_replica_name` error: %v", err)
+			}
+			replicaPath = settingsValues["default_replica_path"]
+			replicaName = settingsValues["default_replica_name"]
+		}
+		var resolvedReplicaPath, resolvedReplicaName string
+		if resolvedReplicaPath, err = b.ch.ApplyMacros(ctx, replicaPath); err != nil {
+			log.Fatal().Msgf("can't ApplyMacros to %s error: %v", replicaPath, err)
+		}
+		if resolvedReplicaName, err = b.ch.ApplyMacros(ctx, replicaName); err != nil {
+			log.Fatal().Msgf("can't ApplyMacros to %s error: %v", replicaPath, err)
+		}
+		if matches = replicatedUuidRE.FindAllStringSubmatch(schema.Query, 1); len(matches) > 0 {
+			resolvedReplicaPath = strings.Replace(resolvedReplicaPath, "{uuid}", matches[0][1], -1)
+		}
+
+		isReplicaPresent := uint64(0)
+		fullReplicaPath := path.Join(resolvedReplicaPath, "replicas", resolvedReplicaName)
+		if err = b.ch.SelectSingleRow(ctx, &isReplicaPresent, "SELECT count() FROM system.zookeeper WHERE path=?", fullReplicaPath); err != nil {
+			log.Fatal().Msgf("can't check replica %s in system.zookeeper error: %v", fullReplicaPath, err)
+		}
+		if isReplicaPresent == 0 {
+			return
+		}
+		newReplicaPath := b.cfg.ClickHouse.DefaultReplicaPath
+		newReplicaName := b.cfg.ClickHouse.DefaultReplicaName
+		log.Warn().Msgf("replica %s already exists in system.zookeeper will replace to %s", fullReplicaPath, path.Join(newReplicaPath, "replicas", newReplicaName))
+		if shortSyntax {
+			schema.Query = strings.Replace(schema.Query, engine+"()", engine+"('"+newReplicaPath+"','"+newReplicaName+"')", 1)
+		} else {
+			schema.Query = strings.Replace(schema.Query, engine+"('"+replicaPath+"'"+delimiter+"'"+replicaName+"')", engine+"('"+newReplicaPath+"', '"+newReplicaName+"')", 1)
+		}
+	}
+}
+
+func (b *Backuper) replaceUUIDMacroValue(schema *metadata.TableMetadata) {
+	if b.cfg.General.RestoreSchemaOnCluster == "" && strings.Contains(schema.Query, "{uuid}") && strings.Contains(schema.Query, "Replicated") {
+		if !strings.Contains(schema.Query, "UUID") {
+			log.Warn().Msgf("table query doesn't contains UUID, can't guarantee properly restore for ReplicatedMergeTree")
+		} else {
+			schema.Query = UUIDWithMergeTreeRE.ReplaceAllString(schema.Query, "$1$2$3'$4'$5$4$7")
+		}
+	}
+}
+
+func (b *Backuper) replaceCreateToAttachForView(schema *metadata.TableMetadata) {
+	schema.Query = strings.Replace(
+		schema.Query, "CREATE MATERIALIZED VIEW", "ATTACH MATERIALIZED VIEW", 1,
+	)
+	schema.Query = strings.Replace(
+		schema.Query, "CREATE WINDOW VIEW", "ATTACH WINDOW VIEW", 1,
+	)
+	schema.Query = strings.Replace(
+		schema.Query, "CREATE LIVE VIEW", "ATTACH LIVE VIEW", 1,
+	)
 }
 
 func (b *Backuper) dropExistsTables(tablesForDrop ListOfTables, ignoreDependencies bool, version int) error {
