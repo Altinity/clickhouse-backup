@@ -621,14 +621,18 @@ func TestChangeReplicationPathIfReplicaExists(t *testing.T) {
 		r.Equal(expectedRows, rows)
 
 		engineFull := ""
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.17") < 0 {
+			expectedEngine = strings.NewReplacer("{database}", "default", "{table}", table).Replace(expectedEngine)
+		}
 		r.NoError(env.ch.SelectSingleRowNoCtx(&engineFull, "SELECT engine_full FROM system.tables WHERE database=? AND name=?", "default", table))
 		r.Contains(engineFull, expectedEngine)
 
 	}
-	checkRestoredTable("test_replica_wrong_path", 10, "/clickhouse/tables/{cluster}/{shard}/default/test_replica_wrong_path")
+	expectedEngine := "/clickhouse/tables/{cluster}/{shard}/{database}/{table}"
+	checkRestoredTable("test_replica_wrong_path", 10, expectedEngine)
 
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.7") >= 0 {
-		checkRestoredTable("test_replica_wrong_path_uuid", 10, "/clickhouse/tables/{cluster}/{shard}/default/test_replica_wrong_path_uuid")
+		checkRestoredTable("test_replica_wrong_path_uuid", 10, expectedEngine)
 	}
 
 	r.NoError(env.ch.DropTable(clickhouse.Table{Database: "default", Name: "test_replica_wrong_path"}, createSQL, "", false, version, ""))
