@@ -1098,7 +1098,7 @@ func (b *Backuper) restoreSchemaRegular(ctx context.Context, tablesForRestore Li
 			b.replaceCreateToAttachForView(&schema)
 			// https://github.com/Altinity/clickhouse-backup/issues/849
 			log.Info().Msgf("SUKA BEFORE!!! schema.Query=%s", schema.Query)
-			b.checkReplicaAlreadyExistsAndChangeReplicationPath(ctx, &schema)
+			b.checkReplicaAlreadyExistsAndChangeReplicationPath(ctx, &schema, version)
 			log.Info().Msgf("SUKA AFTER!!! schema.Query=%s", schema.Query)
 
 			// https://github.com/Altinity/clickhouse-backup/issues/466
@@ -1134,7 +1134,7 @@ func (b *Backuper) restoreSchemaRegular(ctx context.Context, tablesForRestore Li
 var replicatedParamsRE = regexp.MustCompile(`(Replicated[a-zA-Z]*MergeTree)\('([^']+)'(\s*,\s*)'([^']+)'\)|(Replicated[a-zA-Z]*MergeTree)\(\)`)
 var replicatedUuidRE = regexp.MustCompile(` UUID '([^']+)'`)
 
-func (b *Backuper) checkReplicaAlreadyExistsAndChangeReplicationPath(ctx context.Context, schema *metadata.TableMetadata) {
+func (b *Backuper) checkReplicaAlreadyExistsAndChangeReplicationPath(ctx context.Context, schema *metadata.TableMetadata, version int) {
 	if matches := replicatedParamsRE.FindAllStringSubmatch(schema.Query, -1); len(matches) > 0 {
 		var err error
 		if len(matches[0]) < 1 {
@@ -1169,6 +1169,9 @@ func (b *Backuper) checkReplicaAlreadyExistsAndChangeReplicationPath(ctx context
 		if matches = replicatedUuidRE.FindAllStringSubmatch(schema.Query, 1); len(matches) > 0 {
 			resolvedReplicaPath = strings.Replace(resolvedReplicaPath, "{uuid}", matches[0][1], -1)
 		}
+		if version < 19017000 {
+			resolvedReplicaPath = strings.NewReplacer("{database}", schema.Database, "{table}", schema.Table).Replace(resolvedReplicaPath)
+		}
 
 		isReplicaPresent := uint64(0)
 		fullReplicaPath := path.Join(resolvedReplicaPath, "replicas", resolvedReplicaName)
@@ -1185,6 +1188,9 @@ func (b *Backuper) checkReplicaAlreadyExistsAndChangeReplicationPath(ctx context
 			schema.Query = strings.Replace(schema.Query, engine+"()", engine+"('"+newReplicaPath+"','"+newReplicaName+"')", 1)
 		} else {
 			schema.Query = strings.Replace(schema.Query, engine+"('"+replicaPath+"'"+delimiter+"'"+replicaName+"')", engine+"('"+newReplicaPath+"', '"+newReplicaName+"')", 1)
+		}
+		if version < 19017000 {
+			schema.Query = strings.NewReplacer("{database}", schema.Database, "{table}", schema.Table).Replace(schema.Query)
 		}
 	}
 }
