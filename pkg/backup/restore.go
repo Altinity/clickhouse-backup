@@ -1173,7 +1173,7 @@ func (b *Backuper) checkReplicaAlreadyExistsAndChangeReplicationPath(ctx context
 		isReplicaPresent := uint64(0)
 		fullReplicaPath := path.Join(resolvedReplicaPath, "replicas", resolvedReplicaName)
 		if err = b.ch.SelectSingleRow(ctx, &isReplicaPresent, "SELECT count() FROM system.zookeeper WHERE path=?", fullReplicaPath); err != nil {
-			log.Fatal().Msgf("can't check replica %s in system.zookeeper error: %v", fullReplicaPath, err)
+			log.Warn().Msgf("can't check replica %s in system.zookeeper error: %v", fullReplicaPath, err)
 		}
 		if isReplicaPresent == 0 {
 			return
