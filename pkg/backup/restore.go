@@ -1097,9 +1097,7 @@ func (b *Backuper) restoreSchemaRegular(ctx context.Context, tablesForRestore Li
 			//materialized and window views should restore via ATTACH
 			b.replaceCreateToAttachForView(&schema)
 			// https://github.com/Altinity/clickhouse-backup/issues/849
-			log.Info().Msgf("SUKA BEFORE!!! schema.Query=%s", schema.Query)
 			b.checkReplicaAlreadyExistsAndChangeReplicationPath(ctx, &schema, version)
-			log.Info().Msgf("SUKA AFTER!!! schema.Query=%s", schema.Query)
 
 			// https://github.com/Altinity/clickhouse-backup/issues/466
 			b.replaceUUIDMacroValue(&schema)

@@ -585,20 +585,21 @@ func TestChangeReplicationPathIfReplicaExists(t *testing.T) {
 	createUUID := uuid.New()
 	createWithUUIDSQL := ""
 	createSQL := createReplicatedTable("test_replica_wrong_path", "", "'/clickhouse/tables/wrong_path','{replica}'")
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.7") >= 0 {
+	minimalChVersionWithNonBugUUID := "21.3"
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), minimalChVersionWithNonBugUUID) >= 0 {
 		createWithUUIDSQL = createReplicatedTable("test_replica_wrong_path_uuid", fmt.Sprintf(" UUID '%s' ", createUUID.String()), "")
 	}
 
 	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "--tables", "default.test_replica_wrong_path*", "test_wrong_path"))
 
 	r.NoError(env.ch.DropTable(clickhouse.Table{Database: "default", Name: "test_replica_wrong_path"}, createSQL, "", false, version, ""))
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.7") >= 0 {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), minimalChVersionWithNonBugUUID) >= 0 {
 		r.NoError(env.ch.DropTable(clickhouse.Table{Database: "default", Name: "test_replica_wrong_path_uuid"}, createWithUUIDSQL, "", false, version, ""))
 	}
 	// hack for drop tables without drop data from keeper
 	_ = createReplicatedTable("test_replica_wrong_path2", "", "'/clickhouse/tables/wrong_path','{replica}'")
 	r.NoError(env.DockerExec("clickhouse", "rm", "-fv", "/var/lib/clickhouse/metadata/default/test_replica_wrong_path2.sql"))
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.7") >= 0 {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), minimalChVersionWithNonBugUUID) >= 0 {
 		_ = createReplicatedTable("test_replica_wrong_path_uuid2", fmt.Sprintf(" UUID '%s' ", createUUID.String()), "")
 		r.NoError(env.DockerExec("clickhouse", "rm", "-fv", "/var/lib/clickhouse/metadata/default/test_replica_wrong_path_uuid2.sql"))
 		r.NoError(env.DockerExec("clickhouse", "rm", "-rfv", fmt.Sprintf("/var/lib/clickhouse/store/%s/%s", createUUID.String()[:3], createUUID.String())))
@@ -612,7 +613,7 @@ func TestChangeReplicationPathIfReplicaExists(t *testing.T) {
 	log.Debug().Msg(restoreOut)
 	r.NoError(err)
 	r.Contains(restoreOut, "replica /clickhouse/tables/wrong_path/replicas/clickhouse already exists in system.zookeeper will replace to /clickhouse/tables/{cluster}/{shard}/{database}/{table}/replicas/{replica}")
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.7") >= 0 {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), minimalChVersionWithNonBugUUID) >= 0 {
 		r.Contains(restoreOut, fmt.Sprintf("replica /clickhouse/tables/%s/0/replicas/clickhouse already exists in system.zookeeper will replace to /clickhouse/tables/{cluster}/{shard}/{database}/{table}/replicas/{replica}", createUUID.String()))
 	}
 	checkRestoredTable := func(table string, expectedRows uint64, expectedEngine string) {
@@ -621,7 +622,8 @@ func TestChangeReplicationPathIfReplicaExists(t *testing.T) {
 		r.Equal(expectedRows, rows)
 
 		engineFull := ""
-		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.17") < 0 {
+		//engine_full behavior for different clickhouse version
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.17") < 0 || compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.7") > 0 {
 			expectedEngine = strings.NewReplacer("{database}", "default", "{table}", table).Replace(expectedEngine)
 		}
 		r.NoError(env.ch.SelectSingleRowNoCtx(&engineFull, "SELECT engine_full FROM system.tables WHERE database=? AND name=?", "default", table))
@@ -631,12 +633,12 @@ func TestChangeReplicationPathIfReplicaExists(t *testing.T) {
 	expectedEngine := "/clickhouse/tables/{cluster}/{shard}/{database}/{table}"
 	checkRestoredTable("test_replica_wrong_path", 10, expectedEngine)
 
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.7") >= 0 {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), minimalChVersionWithNonBugUUID) >= 0 {
 		checkRestoredTable("test_replica_wrong_path_uuid", 10, expectedEngine)
 	}
 
 	r.NoError(env.ch.DropTable(clickhouse.Table{Database: "default", Name: "test_replica_wrong_path"}, createSQL, "", false, version, ""))
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.7") >= 0 {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), minimalChVersionWithNonBugUUID) >= 0 {
 		r.NoError(env.ch.DropTable(clickhouse.Table{Database: "default", Name: "test_replica_wrong_path_uuid"}, createWithUUIDSQL, "", false, version, ""))
 	}
 	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_wrong_path"))
