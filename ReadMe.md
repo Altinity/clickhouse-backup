@@ -177,7 +177,7 @@ clickhouse:
   tls_key: ""                  # CLICKHOUSE_TLS_KEY, filename with TLS key file
   tls_cert: ""                 # CLICKHOUSE_TLS_CERT, filename with TLS certificate file
   tls_ca: ""                   # CLICKHOUSE_TLS_CA, filename with TLS custom authority file
-  log_sql_queries: true        # CLICKHOUSE_LOG_SQL_QUERIES, enable logging `clickhouse-backup` SQL queries on `system.query_log` table inside clickhouse-server
+  log_sql_queries: true        # CLICKHOUSE_LOG_SQL_QUERIES, logging `clickhouse-backup` SQL queries on `info` level, when true, `debug` level when false
   debug: false                 # CLICKHOUSE_DEBUG
   config_dir:      "/etc/clickhouse-server"              # CLICKHOUSE_CONFIG_DIR
   # CLICKHOUSE_RESTART_COMMAND, use this command when restoring with --rbac, --rbac-only or --configs, --configs-only options
