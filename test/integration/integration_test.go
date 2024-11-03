@@ -33,7 +33,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/log_helper"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/partition"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
@@ -3091,27 +3090,24 @@ func (env *TestEnvironment) connect(timeOut string) error {
 		log.WithLevel(level).Msgf("can't ps --status running clickhouse: %v", statusErr)
 		time.Sleep(1 * time.Second)
 	}
-	portOut, portErr := utils.ExecCmdOut(context.Background(), 10*time.Second, "docker", append(env.GetDefaultComposeCommand(), "port", "clickhouse", "9000")...)
-	if portErr != nil {
-		log.Error().Msg(portOut)
-		log.Fatal().Msgf("can't get port for clickhouse: %v", portErr)
-	}
-	hostAndPort := strings.Split(strings.Trim(portOut, " \r\n\t"), ":")
-	if len(hostAndPort) < 1 {
-		log.Fatal().Msgf("invalid port for clickhouse: %v", portOut)
-	}
-	port, err := strconv.Atoi(hostAndPort[1])
-	if err != nil {
-		return err
-	}
-	env.ch = &clickhouse.ClickHouse{
-		Config: &config.ClickHouseConfig{
-			Host:    hostAndPort[0],
-			Port:    uint(port),
-			Timeout: timeOut,
-		},
-	}
+	env.ch = &clickhouse.ClickHouse{}
 	for i := 0; i < 3; i++ {
+		portOut, portErr := utils.ExecCmdOut(context.Background(), 10*time.Second, "docker", append(env.GetDefaultComposeCommand(), "port", "clickhouse", "9000")...)
+		if portErr != nil {
+			log.Error().Msg(portOut)
+			log.Fatal().Msgf("%s can't get port for clickhouse: %v", env.ProjectName, portErr)
+		}
+		hostAndPort := strings.Split(strings.Trim(portOut, " \r\n\t"), ":")
+		if len(hostAndPort) < 1 {
+			log.Fatal().Msgf("%s invalid port for clickhouse: %v", env.ProjectName, portOut)
+		}
+		port, err := strconv.Atoi(hostAndPort[1])
+		if err != nil {
+			return err
+		}
+		env.ch.Config.Host = hostAndPort[0]
+		env.ch.Config.Port = uint(port)
+		env.ch.Config.Timeout = timeOut
 		err = env.ch.Connect()
 		if err == nil {
 			return nil
