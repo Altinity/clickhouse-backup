@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	pool "github.com/jolestar/go-commons-pool/v2"
 	"math/rand"
 	"os"
@@ -3090,7 +3091,7 @@ func (env *TestEnvironment) connect(timeOut string) error {
 		log.WithLevel(level).Msgf("can't ps --status running clickhouse: %v", statusErr)
 		time.Sleep(1 * time.Second)
 	}
-	env.ch = &clickhouse.ClickHouse{}
+	env.ch = &clickhouse.ClickHouse{Config: &config.ClickHouseConfig{}}
 	for i := 0; i < 3; i++ {
 		portOut, portErr := utils.ExecCmdOut(context.Background(), 10*time.Second, "docker", append(env.GetDefaultComposeCommand(), "port", "clickhouse", "9000")...)
 		if portErr != nil {
