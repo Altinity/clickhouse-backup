@@ -3058,7 +3058,7 @@ func (env *TestEnvironment) connectWithWait(r *require.Assertions, sleepBefore, 
 			} else {
 				log.Info().Msg(out)
 			}
-			log.Warn().Msgf("clickhouse not ready %v, wait %v seconds", err, (pollInterval).Seconds())
+			log.Warn().Msgf("%s clickhouse not ready %v, wait %v seconds", env.ProjectName, err, (pollInterval).Seconds())
 			time.Sleep(pollInterval)
 		} else {
 			if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") > 0 {
@@ -3067,7 +3067,7 @@ func (env *TestEnvironment) connectWithWait(r *require.Assertions, sleepBefore, 
 				if err == nil {
 					break
 				} else {
-					log.Warn().Msgf("mysql not ready %v, wait %d seconds", err, i)
+					log.Warn().Msgf("%s mysql not ready %v, wait %d seconds", env.ProjectName, err, i)
 					time.Sleep(time.Second * time.Duration(i))
 				}
 			} else {
