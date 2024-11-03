@@ -3111,11 +3111,14 @@ func (env *TestEnvironment) connect(timeOut string) error {
 		err = env.ch.Connect()
 		if err == nil {
 			return nil
-		} else {
-			time.Sleep(500 * time.Millisecond)
 		}
+
+		if i == 2 {
+			return err
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
-	return err
+	return nil
 }
 
 var mergeTreeOldSyntax = regexp.MustCompile(`(?m)MergeTree\(([^,]+),([\w\s,)(]+),(\s*\d+\s*)\)`)
