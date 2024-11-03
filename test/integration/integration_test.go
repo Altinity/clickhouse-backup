@@ -3109,6 +3109,7 @@ func (env *TestEnvironment) connect(timeOut string) error {
 		env.ch.Config.Host = hostAndPort[0]
 		env.ch.Config.Port = uint(port)
 		env.ch.Config.Timeout = timeOut
+		env.ch.BreakConnectOnError = true
 		err = env.ch.Connect()
 		if err == nil {
 			return nil

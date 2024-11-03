@@ -30,11 +30,11 @@ import (
 
 // ClickHouse - provide
 type ClickHouse struct {
-	Config               *config.ClickHouseConfig
-	conn                 driver.Conn
-	version              int
-	isPartsColumnPresent int8
-	IsOpen               bool
+	Config              *config.ClickHouseConfig
+	conn                driver.Conn
+	version             int
+	IsOpen              bool
+	BreakConnectOnError bool
 }
 
 // Connect - establish connection to ClickHouse
@@ -119,6 +119,9 @@ func (ch *ClickHouse) Connect() error {
 			if err == nil {
 				break
 			}
+			if ch.BreakConnectOnError {
+				return err
+			}
 			log.Warn().Msgf("clickhouse connection: %s, sql.Open return error: %v, will wait 5 second to reconnect", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
 			time.Sleep(5 * time.Second)
 		}
@@ -128,6 +131,9 @@ func (ch *ClickHouse) Connect() error {
 			log.WithLevel(logLevel).Msgf("clickhouse connection success: %s", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
 			ch.IsOpen = true
 			break
+		}
+		if ch.BreakConnectOnError {
+			return err
 		}
 		log.Warn().Msgf("clickhouse connection ping: %s return error: %v, will wait 5 second to reconnect", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
 		time.Sleep(5 * time.Second)
