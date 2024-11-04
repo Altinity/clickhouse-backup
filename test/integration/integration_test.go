@@ -606,7 +606,7 @@ func TestChangeReplicationPathIfReplicaExists(t *testing.T) {
 	}
 	env.ch.Close()
 	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "clickhouse")...))
-	env.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Minute)
+	env.connectWithWait(r, 1*time.Second, 1*time.Second, 1*time.Minute)
 
 	var restoreOut string
 	restoreOut, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--tables", "default.test_replica_wrong_path*", "test_wrong_path")
@@ -636,16 +636,22 @@ func TestChangeReplicationPathIfReplicaExists(t *testing.T) {
 	}
 	expectedEngine := "/clickhouse/tables/{cluster}/{shard}/{database}/{table}"
 	checkRestoredTable("test_replica_wrong_path", 10, expectedEngine)
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.17") >= 0 {
+		env.queryWithNoError(r, "SYSTEM DROP REPLICA '{replica}' FROM ZKPATH '/clickhouse/tables/wrong_path'")
+	}
 
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), minimalChVersionWithNonBugUUID) >= 0 {
 		checkRestoredTable("test_replica_wrong_path_uuid", 10, expectedEngine)
+		env.queryWithNoError(r, fmt.Sprintf("SYSTEM DROP REPLICA '{replica}' FROM ZKPATH '/clickhouse/tables/%s/0'", createUUID.String()))
 	}
 
 	r.NoError(env.ch.DropTable(clickhouse.Table{Database: "default", Name: "test_replica_wrong_path"}, createSQL, "", false, version, ""))
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), minimalChVersionWithNonBugUUID) >= 0 {
 		r.NoError(env.ch.DropTable(clickhouse.Table{Database: "default", Name: "test_replica_wrong_path_uuid"}, createWithUUIDSQL, "", false, version, ""))
 	}
+
 	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_wrong_path"))
+	env.Cleanup(t, r)
 }
 
 func TestIntegrationEmbedded(t *testing.T) {
