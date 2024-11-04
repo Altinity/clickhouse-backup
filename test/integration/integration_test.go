@@ -606,7 +606,7 @@ func TestChangeReplicationPathIfReplicaExists(t *testing.T) {
 	}
 	env.ch.Close()
 	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "clickhouse")...))
-	env.connectWithWait(r, 1*time.Second, 1*time.Second, 1*time.Minute)
+	env.connectWithWait(r, 10*time.Second, 1*time.Second, 1*time.Minute)
 
 	var restoreOut string
 	restoreOut, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--tables", "default.test_replica_wrong_path*", "test_wrong_path")
