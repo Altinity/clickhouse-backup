@@ -3102,11 +3102,16 @@ func (env *TestEnvironment) connect(timeOut string) error {
 		time.Sleep(1 * time.Second)
 	}
 	env.ch = &clickhouse.ClickHouse{Config: &config.ClickHouseConfig{}}
-	for i := 0; i < 3; i++ {
+	portMaxTry := 3
+	for i := 1; i <= portMaxTry; i++ {
 		portOut, portErr := utils.ExecCmdOut(context.Background(), 10*time.Second, "docker", append(env.GetDefaultComposeCommand(), "port", "clickhouse", "9000")...)
 		if portErr != nil {
 			log.Error().Msg(portOut)
-			log.Fatal().Msgf("%s can't get port for clickhouse: %v", env.ProjectName, portErr)
+			if i == portMaxTry {
+				log.Fatal().Msgf("%s can't get port for clickhouse: %v", env.ProjectName, portErr)
+			}
+			time.Sleep(500 * time.Millisecond)
+			continue
 		}
 		hostAndPort := strings.Split(strings.Trim(portOut, " \r\n\t"), ":")
 		if len(hostAndPort) < 1 {
@@ -3125,7 +3130,7 @@ func (env *TestEnvironment) connect(timeOut string) error {
 			return nil
 		}
 
-		if i == 2 {
+		if i == portMaxTry {
 			return err
 		}
 		time.Sleep(500 * time.Millisecond)
