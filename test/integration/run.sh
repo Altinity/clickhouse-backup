@@ -99,7 +99,7 @@ set +e
 go test -parallel "${RUN_PARALLEL}" -race -timeout "${TEST_TIMEOUT:-60m}" -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v "${CUR_DIR}/integration_test.go"
 TEST_FAILED=$?
 set -e
-docker buildx prune -f --filter=until=1h
+docker buildx prune -f --filter=until=1h  --keep-storage=1G
 
 if [[ "0" == "${TEST_FAILED}" ]]; then
   go tool covdata textfmt -i "${CUR_DIR}/_coverage_/" -o "${CUR_DIR}/_coverage_/coverage.out"

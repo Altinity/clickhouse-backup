@@ -636,7 +636,7 @@ func TestChangeReplicationPathIfReplicaExists(t *testing.T) {
 	}
 	expectedEngine := "/clickhouse/tables/{cluster}/{shard}/{database}/{table}"
 	checkRestoredTable("test_replica_wrong_path", 10, expectedEngine)
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.17") >= 0 {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 {
 		env.queryWithNoError(r, "SYSTEM DROP REPLICA '{replica}' FROM ZKPATH '/clickhouse/tables/wrong_path'")
 	}
 

@@ -11,4 +11,4 @@ fi
 make clean build-race-docker
 python3 "${CUR_DIR}/clickhouse_backup/regression.py" --debug --only="${RUN_TESTS:-*}"
 go tool covdata textfmt -i "${CUR_DIR}/_coverage_/" -o "${CUR_DIR}/_coverage_/coverage.out"
-docker buildx prune -f --filter=until=1h
+docker buildx prune -f --filter=until=1h  --keep-storage=1G
