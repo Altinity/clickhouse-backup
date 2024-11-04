@@ -610,7 +610,11 @@ func TestChangeReplicationPathIfReplicaExists(t *testing.T) {
 
 	var restoreOut string
 	restoreOut, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--tables", "default.test_replica_wrong_path*", "test_wrong_path")
-	log.Debug().Msg(restoreOut)
+	level := zerolog.DebugLevel
+	if err != nil {
+		level = zerolog.InfoLevel
+	}
+	log.WithLevel(level).Msg(restoreOut)
 	r.NoError(err)
 	r.Contains(restoreOut, "replica /clickhouse/tables/wrong_path/replicas/clickhouse already exists in system.zookeeper will replace to /clickhouse/tables/{cluster}/{shard}/{database}/{table}/replicas/{replica}")
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), minimalChVersionWithNonBugUUID) >= 0 {
