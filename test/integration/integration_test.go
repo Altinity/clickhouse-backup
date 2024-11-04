@@ -3052,9 +3052,10 @@ func dropDatabasesFromTestDataDataSet(t *testing.T, r *require.Assertions, ch *T
 
 func (env *TestEnvironment) connectWithWait(r *require.Assertions, sleepBefore, pollInterval, timeOut time.Duration) {
 	time.Sleep(sleepBefore)
-	for i := 1; i < 16; i++ {
+	maxTry := 100
+	for i := 1; i <= maxTry; i++ {
 		err := env.connect(timeOut.String())
-		if i == 15 {
+		if i == maxTry {
 			r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "ps", "clickhouse")...))
 			out, dockerErr := env.DockerExecOut("clickhouse", "clickhouse", "client", "--echo", "-q", "'SELECT version()'")
 			log.Info().Msg(out)
@@ -3062,7 +3063,6 @@ func (env *TestEnvironment) connectWithWait(r *require.Assertions, sleepBefore, 
 			r.NoError(err)
 		}
 		if err != nil {
-			r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", "ps", "-a"))
 			if out, dockerErr := env.DockerExecOut("clickhouse", "clickhouse", "client", "--echo", "-q", "SELECT version()"); dockerErr == nil {
 				log.Debug().Msg(out)
 			} else {
