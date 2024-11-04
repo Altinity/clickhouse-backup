@@ -214,7 +214,7 @@ jobs:
   test:
     needs: build
     name: Test
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         golang-version:
