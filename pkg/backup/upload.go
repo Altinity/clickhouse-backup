@@ -359,7 +359,7 @@ func (b *Backuper) validateUploadParams(ctx context.Context, backupName string, 
 	}
 
 	if b.cfg.General.RemoteStorage == "custom" && b.resume {
-		return fmt.Errorf("can't resume for `remote_storage: custom`")
+		return fmt.Errorf("Resumable state not allowed for `remote_storage: custom`. Disable it by setting use_resumable_state=false in `general` config section")
 	}
 	if b.cfg.General.RemoteStorage == "s3" && len(b.cfg.S3.CustomStorageClassMap) > 0 {
 		for pattern, storageClass := range b.cfg.S3.CustomStorageClassMap {
