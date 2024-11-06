@@ -319,7 +319,8 @@ custom:
   download_command: ""         # CUSTOM_DOWNLOAD_COMMAND
   delete_command: ""           # CUSTOM_DELETE_COMMAND
   list_command: ""             # CUSTOM_LIST_COMMAND
-  command_timeout: "4h"          # CUSTOM_COMMAND_TIMEOUT
+  command_timeout: "4h"        # CUSTOM_COMMAND_TIMEOUT
+                               # Resumable state is not supported for custom method. Disable it by setting param use_resumable_state=false.
 api:
   listen: "localhost:7171"     # API_LISTEN
   enable_metrics: true         # API_ENABLE_METRICS
