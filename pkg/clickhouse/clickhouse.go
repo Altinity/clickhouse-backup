@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/filesystemhelper"
 	"os"
 	"path"
 	"path/filepath"
@@ -770,6 +771,8 @@ func (ch *ClickHouse) AttachDataParts(table metadata.TableMetadata, dstTable Tab
 		return nil
 	}
 	for disk := range table.Parts {
+		// https://github.com/ClickHouse/ClickHouse/issues/71009
+		filesystemhelper.SortPartsByMinBlock(table.Parts[disk])
 		for _, part := range table.Parts[disk] {
 			if !strings.HasSuffix(part.Name, ".proj") {
 				query := fmt.Sprintf("ALTER TABLE `%s`.`%s` ATTACH PART '%s'", table.Database, table.Table, part.Name)

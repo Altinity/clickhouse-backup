@@ -1,3 +1,10 @@
+# v2.6.4
+
+BUG FIXES
+
+- fix possible wrong merging after ATTACH PART for Collapsing and Replacing engines without version,
+  look https://github.com/ClickHouse/ClickHouse/issues/71009 for details
+
 # v2.6.3
 IMPROVEMENTS
 - implement new format for *.state2 files boltdb key value (please, check memory RSS usage)
