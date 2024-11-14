@@ -119,7 +119,7 @@ general:
   restore_schema_on_cluster: ""
   upload_by_part: true           # UPLOAD_BY_PART
   download_by_part: true         # DOWNLOAD_BY_PART
-  use_resumable_state: true      # USE_RESUMABLE_STATE, allow resume upload and download according to the <backup_name>.resumable file
+  use_resumable_state: true      # USE_RESUMABLE_STATE, allow resume upload and download according to the <backup_name>.resumable file. Resumable state is not supported for custom method in remote storage.
 
   # RESTORE_DATABASE_MAPPING, restore rules from backup databases to target databases, which is useful when changing destination database, all atomic tables will be created with new UUIDs.
   # The format for this env variable is "src_db1:target_db1,src_db2:target_db2". For YAML please continue using map syntax
@@ -319,7 +319,7 @@ custom:
   download_command: ""         # CUSTOM_DOWNLOAD_COMMAND
   delete_command: ""           # CUSTOM_DELETE_COMMAND
   list_command: ""             # CUSTOM_LIST_COMMAND
-  command_timeout: "4h"          # CUSTOM_COMMAND_TIMEOUT
+  command_timeout: "4h"        # CUSTOM_COMMAND_TIMEOUT
 api:
   listen: "localhost:7171"     # API_LISTEN
   enable_metrics: true         # API_ENABLE_METRICS
