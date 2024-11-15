@@ -106,6 +106,8 @@ func (ch *ClickHouse) Connect() error {
 	}
 	if !ch.Config.LogSQLQueries {
 		opt.Settings["log_queries"] = 0
+	} else {
+		opt.Settings["log_queries"] = 1
 	}
 
 	logLevel := zerolog.InfoLevel

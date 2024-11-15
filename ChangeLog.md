@@ -4,6 +4,7 @@ BUG FIXES
 
 - fix possible wrong merging after ATTACH PART for Collapsing and Replacing engines without version,
   look https://github.com/ClickHouse/ClickHouse/issues/71009 for details
+- add `log_queries` properly during connection initialization
 
 # v2.6.3
 IMPROVEMENTS
