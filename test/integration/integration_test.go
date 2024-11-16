@@ -2725,7 +2725,14 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 
 	partitionBackupName := fmt.Sprintf("partition_backup_%d", rand.Int())
 	fullBackupName := fmt.Sprintf("full_backup_%d", rand.Int())
+	incrementBackupName := fmt.Sprintf("increment_backup_%d", rand.Int())
 	dbName := "test_partitions_" + t.Name()
+	fillTables := func(partitions []string) {
+		for _, dt := range partitions {
+			env.queryWithNoError(r, fmt.Sprintf("INSERT INTO "+dbName+".t1(dt, v) SELECT '%s', number FROM numbers(10)", dt))
+			env.queryWithNoError(r, fmt.Sprintf("INSERT INTO "+dbName+".t2(dt, v) SELECT '%s', number FROM numbers(10)", dt))
+		}
+	}
 	createAndFillTables := func() {
 		log.Debug().Msg("Create and fill tables")
 		env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+dbName)
@@ -2733,15 +2740,17 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 		env.queryWithNoError(r, "DROP TABLE IF EXISTS "+dbName+".t2")
 		env.queryWithNoError(r, "CREATE TABLE "+dbName+".t1 (dt Date, category Int64, v UInt64) ENGINE=MergeTree() PARTITION BY (category, toYYYYMMDD(dt)) ORDER BY dt")
 		env.queryWithNoError(r, "CREATE TABLE "+dbName+".t2 (dt String, category Int64, v UInt64) ENGINE=MergeTree() PARTITION BY (category, dt) ORDER BY dt")
-		for _, dt := range []string{"2022-01-01", "2022-01-02", "2022-01-03", "2022-01-04"} {
-			env.queryWithNoError(r, fmt.Sprintf("INSERT INTO "+dbName+".t1(dt, v) SELECT '%s', number FROM numbers(10)", dt))
-			env.queryWithNoError(r, fmt.Sprintf("INSERT INTO "+dbName+".t2(dt, v) SELECT '%s', number FROM numbers(10)", dt))
-		}
+		fillTables([]string{"2022-01-01", "2022-01-02", "2022-01-03", "2022-01-04"})
 	}
 	createAndFillTables()
 
-	log.Debug().Msg("check create_remote full > delete local > download --partitions > restore --data --partitions")
+	log.Debug().Msg("check create_remote full > create_remote increment > delete local > download full --partitions > restore --data --partitions full > restore_remote increment --partitions")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create_remote", "--tables="+dbName+".t*", fullBackupName)
+
+	//increment backup
+	fillTables([]string{"2022-01-05"})
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create_remote", "--delete-source", "--diff-from-remote="+fullBackupName, "--tables="+dbName+".t*", incrementBackupName)
+
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "download", "--partitions="+dbName+".t?:(0,'2022-01-02'),(0,'2022-01-03')", fullBackupName)
 	fullBackupDir := "/var/lib/clickhouse/backup/" + fullBackupName + "/shadow/" + dbName + "/t?/default/"
@@ -2783,8 +2792,15 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	log.Debug().Msg(out)
 	r.NoError(err, "%s\nunexpected error: %v", out, err)
 	r.Contains(out, "DROP PARTITION")
-	// we just replace data in exists table
-	checkRestoredDataWithPartitions(80)
+	// we just replace partition in exists table, and have incremented data in 2 tables
+	checkRestoredDataWithPartitions(100)
+
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" restore_remote --partitions=\"0-20220101\" "+incrementBackupName)
+	log.Debug().Msg(out)
+	r.NoError(err)
+	r.NotContains(out, "DROP PARTITION")
+	// we recreate tables, and have ONLY one partition in one table
+	checkRestoredDataWithPartitions(10)
 
 	log.Debug().Msg("delete local > download > restore --partitions > restore")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName)
@@ -2888,6 +2904,8 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	log.Debug().Msg("DELETE partition backup")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", partitionBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", partitionBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", incrementBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", incrementBackupName)
 
 	if err = env.dropDatabase(dbName); err != nil {
 		t.Fatal(err)

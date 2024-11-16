@@ -207,7 +207,7 @@ func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.C
 		// when PARTITION BY is table specific, https://github.com/Altinity/clickhouse-backup/issues/916
 		if tablePatternDelimiterIndex := strings.Index(partitionArg, ":"); tablePatternDelimiterIndex != -1 {
 			tablePattern = partitionArg[:tablePatternDelimiterIndex]
-			partitionArg = strings.TrimPrefix(partitionArg, tablePattern+":")
+			partitionArg = partitionArg[tablePatternDelimiterIndex+1:]
 		}
 		// when PARTITION BY clause return partition_id field as hash, https://github.com/Altinity/clickhouse-backup/issues/602
 		if strings.HasPrefix(partitionArg, "(") {

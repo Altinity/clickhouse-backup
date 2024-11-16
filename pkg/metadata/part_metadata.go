@@ -6,6 +6,12 @@ import (
 	"strings"
 )
 
+type Part struct {
+	Name           string `json:"name"`
+	Required       bool   `json:"required,omitempty"`
+	RebalancedDisk string `json:"rebalanced_disk,omitempty"`
+}
+
 // SortPartsByMinBlock need to avoid wrong restore for Replacing, Collapsing, https://github.com/ClickHouse/ClickHouse/issues/71009
 func SortPartsByMinBlock(parts []Part) {
 	sort.Slice(parts, func(i, j int) bool {

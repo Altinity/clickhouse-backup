@@ -21,12 +21,6 @@ type MutationMetadata struct {
 	Command    string `json:"command" ch:"command"`
 }
 
-type Part struct {
-	Name           string `json:"name"`
-	Required       bool   `json:"required,omitempty"`
-	RebalancedDisk string `json:"rebalanced_disk,omitempty"`
-}
-
 type SplitPartFiles struct {
 	Prefix string
 	Files  []string
