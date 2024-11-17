@@ -439,7 +439,12 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 			}
 			return nil
 		})
-		if err != nil {
+		// sql file could be not present in incremental backup
+		if err != nil && strings.HasSuffix(localMetadataFile, ".sql") {
+			log.Warn().Str("localMetadataFile", localMetadataFile).Err(err).Send()
+			continue
+		}
+		if err != nil && strings.HasSuffix(localMetadataFile, ".sql") {
 			return nil, 0, err
 		}
 

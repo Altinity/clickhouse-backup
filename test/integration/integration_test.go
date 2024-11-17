@@ -2795,12 +2795,12 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	// we just replace partition in exists table, and have incremented data in 2 tables
 	checkRestoredDataWithPartitions(100)
 
-	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" restore_remote --partitions=\"0-20220101\" "+incrementBackupName)
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" restore_remote --partitions=\"(0,'2022-01-01')\" "+incrementBackupName)
 	log.Debug().Msg(out)
 	r.NoError(err)
 	r.NotContains(out, "DROP PARTITION")
-	// we recreate tables, and have ONLY one partition in one table
-	checkRestoredDataWithPartitions(10)
+	// we recreate tables, and have ONLY one partition in two tables
+	checkRestoredDataWithPartitions(20)
 
 	log.Debug().Msg("delete local > download > restore --partitions > restore")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName)

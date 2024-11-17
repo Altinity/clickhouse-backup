@@ -9,6 +9,8 @@ general:
     - " information_schema.*"
     - "_temporary_and_external_tables.* "
   restore_schema_on_cluster: "{cluster}"
+  retries_on_failure: 1
+  retries_pause: 1s
 clickhouse:
   host: clickhouse
   port: 9440
