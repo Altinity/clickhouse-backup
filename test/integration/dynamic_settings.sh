@@ -492,7 +492,7 @@ EOT
 
 fi
 
-if [[ "$CLICKHOUSE_VERSION" == "head" || "${CLICKHOUSE_VERSION}" =~ ^19\.1[1-9] || "${CLICKHOUSE_VERSION}" =~ ^2[1-9]\.[1-9] ]]; then
+if [[ "$CLICKHOUSE_VERSION" == "head" || "${CLICKHOUSE_VERSION}" =~ ^19\. || "${CLICKHOUSE_VERSION}" =~ ^2[0-9]\.[1-9] ]]; then
 
 cat <<EOT > /etc/clickhouse-server/config.d/merge_tree_low_memory.xml
 <yandex>
@@ -515,6 +515,54 @@ cat <<EOT > /etc/clickhouse-server/config.d/merge_tree_low_memory_23.8.xml
     <merge_tree>
         <number_of_free_entries_in_pool_to_execute_optimize_entire_partition>1</number_of_free_entries_in_pool_to_execute_optimize_entire_partition>
     </merge_tree>
+</yandex>
+EOT
+
+fi
+
+
+
+if [[ "${CLICKHOUSE_VERSION}" =~ ^20\.[8-9] ]]; then
+
+cat <<EOT > /etc/clickhouse-server/users.d/low_memory_in_usersd.xml
+<yandex>
+  <profiles>
+  <default>
+    <background_pool_size>2</background_pool_size>
+    <background_buffer_flush_schedule_pool_size>1</background_buffer_flush_schedule_pool_size>
+  </default>
+  </profiles>
+</yandex>
+EOT
+
+cat <<EOT > /etc/clickhouse-server/config.d/low_memory_in_configd.xml
+<yandex>
+    <tables_loader_foreground_pool_size>0</tables_loader_foreground_pool_size>
+    <tables_loader_background_pool_size>0</tables_loader_background_pool_size>
+    <background_message_broker_schedule_pool_size>1</background_message_broker_schedule_pool_size>
+    <background_common_pool_size>2</background_common_pool_size>
+    <background_fetches_pool_size>1</background_fetches_pool_size>
+    <background_merges_mutations_scheduling_policy>round_robin</background_merges_mutations_scheduling_policy>
+    <background_merges_mutations_concurrency_ratio>2</background_merges_mutations_concurrency_ratio>
+</yandex>
+EOT
+
+else
+
+cat <<EOT > /etc/clickhouse-server/config.d/low_memory_in_configd.xml
+<yandex>
+    <background_pool_size>2</background_pool_size>
+    <background_buffer_flush_schedule_pool_size>1</background_buffer_flush_schedule_pool_size>
+    <background_merges_mutations_concurrency_ratio>2</background_merges_mutations_concurrency_ratio>
+    <background_merges_mutations_scheduling_policy>round_robin</background_merges_mutations_scheduling_policy>
+    <background_move_pool_size>1</background_move_pool_size>
+    <background_fetches_pool_size>1</background_fetches_pool_size>
+    <background_common_pool_size>2</background_common_pool_size>
+    <background_schedule_pool_size>8</background_schedule_pool_size>
+    <background_message_broker_schedule_pool_size>1</background_message_broker_schedule_pool_size>
+    <background_distributed_schedule_pool_size>1</background_distributed_schedule_pool_size>
+    <tables_loader_foreground_pool_size>0</tables_loader_foreground_pool_size>
+    <tables_loader_background_pool_size>0</tables_loader_background_pool_size>
 </yandex>
 EOT
 
