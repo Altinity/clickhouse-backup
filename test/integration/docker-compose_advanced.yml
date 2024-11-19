@@ -132,33 +132,21 @@ services:
       - pgsql:/var/lib/postgresql
 
   # @todo return keeper back when resolve https://github.com/ClickHouse/ClickHouse/issues/72057
-  #  zookeeper:
-  #    image: docker.io/clickhouse/clickhouse-keeper:${CLICKHOUSE_KEEPER_VERSION:-latest-alpine}
-  #    hostname: zookeeper
-  #    volumes:
-  #      - ./clickhouse-keeper.xml:/etc/clickhouse-keeper/conf.d/clickhouse-keeper.xml
-  #      - /var/lib/clickhouse
-  #      - /var/lib/clickhouse-keeper
-  #    environment:
-  #      - CLICKHOUSE_RUN_AS_ROOT=1
-  #    healthcheck:
-  #      test: bash -c 'if [[ "$$(echo 'ruok' | nc 127.0.0.1 2181)" == "imok" ]]; then exit 0; else exit 1; fi'
-  #      interval: 1s
-  #      timeout: 2s
-  #      retries: 10
-  #      start_period: 1s
   zookeeper:
-    image: ${ZOOKEEPER_IMAGE:-docker.io/zookeeper}:${ZOOKEEPER_VERSION:-latest}
+    image: docker.io/clickhouse/clickhouse-keeper:${CLICKHOUSE_KEEPER_VERSION:-latest-alpine}
     hostname: zookeeper
+    volumes:
+      - ./clickhouse-keeper.xml:/etc/clickhouse-keeper/conf.d/clickhouse-keeper.xml
+      - /var/lib/clickhouse
+      - /var/lib/clickhouse-keeper
     environment:
-      ZOO_4LW_COMMANDS_WHITELIST: "*"
+      - CLICKHOUSE_RUN_AS_ROOT=1
     healthcheck:
       test: bash -c 'if [[ "$$(echo 'ruok' | nc 127.0.0.1 2181)" == "imok" ]]; then exit 0; else exit 1; fi'
       interval: 1s
       timeout: 2s
       retries: 10
       start_period: 1s
-
 
   clickhouse-backup:
     image: docker.io/${CLICKHOUSE_IMAGE:-yandex/clickhouse-server}:${CLICKHOUSE_VERSION:-19.17}
