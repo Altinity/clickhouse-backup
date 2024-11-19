@@ -491,3 +491,21 @@ cat <<EOT > /etc/clickhouse-server/config.d/blob_storage_log.xml
 EOT
 
 fi
+
+if [[ "$CLICKHOUSE_VERSION" == "head" || "${CLICKHOUSE_VERSION}" =~ ^19\.1[1-9] || "${CLICKHOUSE_VERSION}" =~ ^2[4-9\.[1-9] ]]; then
+
+cat <<EOT > /etc/clickhouse-server/confid.d/merge_tree_low_memory.xml
+<yandex>
+    <merge_tree>
+        <merge_max_block_size>1024</merge_max_block_size>
+        <max_bytes_to_merge_at_max_space_in_pool>1073741824</max_bytes_to_merge_at_max_space_in_pool>
+        <number_of_free_entries_in_pool_to_lower_max_size_of_merge>0
+        </number_of_free_entries_in_pool_to_lower_max_size_of_merge>
+        <number_of_free_entries_in_pool_to_execute_mutation>1</number_of_free_entries_in_pool_to_execute_mutation>
+        <number_of_free_entries_in_pool_to_execute_optimize_entire_partition>1
+        </number_of_free_entries_in_pool_to_execute_optimize_entire_partition>
+    </merge_tree>
+</yandex>
+EOT
+
+fi

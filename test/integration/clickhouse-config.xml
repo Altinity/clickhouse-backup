@@ -26,4 +26,36 @@
         <level>trace</level>
         <console>1</console>
     </logger>
+
+    <!-- low memory tuning -->
+    <mysql_port remove="1"/>
+    <postgresql_port remove="1"/>
+    <trace_log remove="1"/>
+    <query_thread_log remove="1"/>
+    <opentelemetry_span_log remove="1"/>
+    <processors_profile_log remove="1"/>
+
+    <max_thread_pool_size>2000</max_thread_pool_size>
+    <max_connections>64</max_connections>
+    <max_concurrent_queries>64</max_concurrent_queries>
+    <max_server_memory_usage_to_ram_ratio>0.99</max_server_memory_usage_to_ram_ratio>
+
+    <mark_cache_size>268435456</mark_cache_size>
+    <index_mark_cache_size>67108864</index_mark_cache_size>
+    <uncompressed_cache_size>16777216</uncompressed_cache_size>
+    <mlock_executable>false</mlock_executable>
+
+    <background_buffer_flush_schedule_pool_size>1</background_buffer_flush_schedule_pool_size>
+    <background_pool_size>2</background_pool_size>
+    <background_merges_mutations_concurrency_ratio>2</background_merges_mutations_concurrency_ratio>
+    <background_merges_mutations_scheduling_policy>round_robin</background_merges_mutations_scheduling_policy>
+    <background_move_pool_size>1</background_move_pool_size>
+    <background_fetches_pool_size>1</background_fetches_pool_size>
+    <background_common_pool_size>2</background_common_pool_size>
+    <background_schedule_pool_size>8</background_schedule_pool_size>
+    <background_message_broker_schedule_pool_size>1</background_message_broker_schedule_pool_size>
+    <background_distributed_schedule_pool_size>1</background_distributed_schedule_pool_size>
+    <tables_loader_foreground_pool_size>0</tables_loader_foreground_pool_size>
+    <tables_loader_background_pool_size>0</tables_loader_background_pool_size>
+
 </yandex>
