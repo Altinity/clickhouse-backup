@@ -1,5 +1,8 @@
 module github.com/Altinity/clickhouse-backup/v2
-
+// freeze version https://github.com/mholt/archiver/issues/428
+replace (
+	github.com/mholt/archiver/v4 => github.com/mholt/archiver/v4 v4.0.0-alpha.8
+)
 require (
 	cloud.google.com/go/storage v1.47.0
 	github.com/Azure/azure-pipeline-go v0.2.3
@@ -27,7 +30,6 @@ require (
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/klauspost/compress v1.17.11
 	github.com/mattn/go-shellwords v1.0.12
-	github.com/mholt/archiver/v4 v4.0.0-alpha.9
 	github.com/otiai10/copy v1.14.0
 	github.com/pkg/errors v0.9.1
 	github.com/pkg/sftp v1.13.7
