@@ -426,6 +426,21 @@ EOT
 
 fi
 
+# https://github.com/Altinity/clickhouse-backup/issues/1058, clickhouse-keeper-client available from 23.9
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^23\.9 || "${CLICKHOUSE_VERSION}" =~ ^23\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[4-9]\.[1-9] ]]; then
+
+clickhouse-keeper-client -p 2181 -h zookeeper -q "touch '/custom_zookeeper_root'"
+
+cat <<EOT > /etc/clickhouse-server/config.d/custom_zookeeper_root.xml
+<yandex>
+  <zookeeper>
+    <root>/custom_zookeeper_root</root>
+  </zookeeper>
+</yandex>
+EOT
+
+fi
+
 # zookeeper RBAC available from 21.9
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.9 || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9] ]]; then
 

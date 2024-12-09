@@ -112,6 +112,7 @@ func (k *Keeper) GetReplicatedAccessPath(userDirectory string) (string, error) {
 	if zookeeperPath != "/" {
 		zookeeperPath = strings.TrimSuffix(zookeeperPathNode.InnerText(), "/")
 	}
+	log.Debug().Str("userDirectory", userDirectory).Str("zookeeper_path", zookeeperPath).Msg("k->GetReplicatedAccessPath")
 	return zookeeperPath, nil
 }
 
@@ -125,7 +126,7 @@ func (k *Keeper) Dump(prefix, dumpFile string) (int, error) {
 			log.Warn().Msgf("can't close %s: %v", dumpFile, err)
 		}
 	}()
-	if !strings.HasPrefix(prefix, "/") && k.root != "" {
+	if k.root != "" && !strings.HasPrefix(prefix, k.root) {
 		prefix = path.Join(k.root, prefix)
 	}
 	bytes, err := k.dumpNodeRecursive(prefix, "", f)
@@ -136,6 +137,10 @@ func (k *Keeper) Dump(prefix, dumpFile string) (int, error) {
 }
 
 func (k *Keeper) ChildCount(prefix, nodePath string) (int, error) {
+	if k.root != "" && !strings.HasPrefix(prefix, k.root) {
+		prefix = path.Join(k.root, prefix)
+	}
+	log.Debug().Str("prefix", prefix).Str("nodePath", nodePath).Msg("k->ChildCount")
 	childrenNodes, _, err := k.conn.Children(path.Join(prefix, nodePath))
 	return len(childrenNodes), err
 }
@@ -145,7 +150,7 @@ func (k *Keeper) dumpNodeRecursive(prefix, nodePath string, f *os.File) (int, er
 	if err != nil {
 		return 0, err
 	}
-	bytes, err := k.writeJsonString(f, DumpNode{Path: nodePath, Value: string(value)})
+	bytes, err := k.writeJsonString(f, DumpNode{Path: strings.TrimPrefix(nodePath, k.root), Value: string(value)})
 	if err != nil {
 		return 0, err
 	}
@@ -186,7 +191,7 @@ func (k *Keeper) Restore(dumpFile, prefix string) error {
 			log.Warn().Msgf("can't close %s: %v", dumpFile, err)
 		}
 	}()
-	if !strings.HasPrefix(prefix, "/") && k.root != "" {
+	if k.root != "" && !strings.HasPrefix(prefix, k.root) {
 		prefix = path.Join(k.root, prefix)
 	}
 	scanner := bufio.NewScanner(f)

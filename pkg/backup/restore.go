@@ -683,6 +683,7 @@ func (b *Backuper) dropExistsRBAC(ctx context.Context, kind string, name string,
 	if !isKeeperRBACTypePrefixExists {
 		return fmt.Errorf("unsupported RBAC kind: %s", kind)
 	}
+	// rbacType contains name of keeper user directory
 	prefix, err := k.GetReplicatedAccessPath(rbacType)
 	if err != nil {
 		return fmt.Errorf("b.dropExistsRBAC -> k.GetReplicatedAccessPath error: %v", err)
