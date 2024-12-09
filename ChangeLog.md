@@ -5,6 +5,8 @@ BUG FIXES
 - fix possible wrong merging after ATTACH PART for Collapsing and Replacing engines without version,
   look https://github.com/ClickHouse/ClickHouse/issues/71009 for details
 - add `log_queries` properly during connection initialization
+- fix backup / restore keeper stored RBAC objects for non-empty `/zookeeper/root` in `clickhouse-server` configuration
+  fix [1058](https://github.com/Altinity/clickhouse-backup/issues/1058)
 
 # v2.6.3
 IMPROVEMENTS
