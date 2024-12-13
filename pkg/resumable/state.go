@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"github.com/rs/zerolog/log"
 	bolt "go.etcd.io/bbolt"
-	"math/big"
 	"path"
 )
 
@@ -169,8 +169,14 @@ func (s *State) IsAlreadyProcessed(path string) (bool, int64) {
 		buf := b.Get([]byte(path))
 		if buf != nil {
 			found = true
-			size = new(big.Int).SetBytes(buf).Int64()
-			log.Info().Msgf("%s already processed", path)
+			n := 0
+			size, n = binary.Varint(buf)
+			if n == 0 {
+				return fmt.Errorf("buffer too small")
+			} else if n < 0 {
+				return fmt.Errorf("value larger than 64 bits (overflow)")
+			}
+			log.Info().Msgf("%s already processed, size %s", path, utils.FormatBytes(uint64(size)))
 		}
 		return nil
 	})
