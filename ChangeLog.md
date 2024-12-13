@@ -1,3 +1,9 @@
+# v2.6.5
+
+BUG FIXES
+
+- properly decode varint in *.state2 files during check already processed files to avoid too large numbers in logs
+
 # v2.6.4
 
 BUG FIXES
