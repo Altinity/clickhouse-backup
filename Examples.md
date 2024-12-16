@@ -765,6 +765,11 @@ spec:
 - The size of the increment depends not only on the intensity of your data ingestion but also on the intensity of background merges for data parts in your tables. Please increase how many rows you will ingest during one INSERT query and don't do frequent [table data mutations](https://clickhouse.com/docs/en/operations/system-tables/mutations/).
 - See the [ClickHouse documentation](https://clickhouse.com/docs/en/engines/table-engines/mergetree-family/mergetree/) for information on how the `*MergeTree` table engine works.
 
+## How backups_to_keep_remote works
+- get list remote backup
+- select oldest backups to stay only last backups equal `backups_to_keep_remote`
+- before deleting old backup check backup dependencies, we can't delete `dead` remote backup if any `live` backup have direct or recursive reference to `dead` backup
+
 ## How to watch backups work
 The current implementation is simple and will improve in next releases. 
 - When the `watch` command starts, it calls the `create_remote+delete command` sequence to make a `full` backup
