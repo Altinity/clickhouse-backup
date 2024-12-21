@@ -508,6 +508,11 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 				s3cfg.Path = strings.Trim(s3URL.Path, "/")
 			}
 			s3cfg.ForcePathStyle = false
+		} else if s3URL.Scheme == "s3" {
+			// https://github.com/Altinity/clickhouse-backup/issues/1035
+			s3cfg.Bucket = s3URL.Host
+			s3cfg.Path = s3URL.Path
+			s3cfg.ForcePathStyle = false
 		} else {
 			s3cfg.Endpoint = s3URL.Scheme + "://" + s3URL.Host
 			pathItems := strings.Split(strings.Trim(s3URL.Path, "/"), "/")

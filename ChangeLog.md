@@ -3,6 +3,7 @@
 BUG FIXES
 
 - properly decode varint in *.state2 files during check already processed files to avoid too large numbers in logs
+- add support `s3://` in parsing endpoint in fix [1035](https://github.com/Altinity/clickhouse-backup/issues/1035)
 
 # v2.6.4
 
