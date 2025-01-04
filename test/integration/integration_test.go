@@ -703,6 +703,21 @@ func TestIntegrationAzure(t *testing.T) {
 		return
 	}
 	env, r := NewTestEnvironment(t)
+	sasCmd := []string{
+		"compose", "--project-name", env.ProjectName,
+		"-f", path.Join(os.Getenv("CUR_DIR"), os.Getenv("COMPOSE_FILE")),
+		"--profile", "azure-cli", "--progress", "none",
+		"run", "--rm", "azure-cli",
+		"az", "storage", "account", "generate-sas",
+		"--account-name=devcontainer1", "--resource-types=sco", "--services=b", "--permissions=cdlruwap",
+		"--expiry", time.Now().Add(30 * time.Hour).Format("2006-01-02T15:04:05Z"), "--output=tsv",
+	}
+	sasToken, err := utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", sasCmd...)
+	sasToken = strings.Trim(sasToken, " \t\r\n")
+	r.NoError(err, "unexpected error sasToken=%s", sasToken)
+	env.InstallDebIfNotExists(r, "clickhouse-backup", "gettext-base")
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "export SAS_TOKEN='"+sasToken+"'; cat /etc/clickhouse-backup/config-azblob-sas.yml.template | envsubst > /etc/clickhouse-backup/config-azblob-sas.yml")
+	env.runMainIntegrationScenario(t, "AZBLOB", "config-azblob-sas.yml")
 	env.runMainIntegrationScenario(t, "AZBLOB", "config-azblob.yml")
 	env.Cleanup(t, r)
 }

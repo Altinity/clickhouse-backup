@@ -1,3 +1,10 @@
+# v2.6.6
+
+BUG FIXES
+
+- add e2e tests for `AZBLOB_SAS`, fix [1060](https://github.com/Altinity/clickhouse-backup/issues/1060),
+  fix [313](https://github.com/Altinity/clickhouse-backup/issues/313)
+
 # v2.6.5
 
 BUG FIXES

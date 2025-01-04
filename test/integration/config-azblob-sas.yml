@@ -1,0 +1,30 @@
+general:
+  remote_storage: azblob
+  upload_concurrency: 4
+  download_concurrency: 4
+  restore_schema_on_cluster: "{cluster}"
+  # check trim patterns
+  skip_tables:
+    - " system.*"
+    - "INFORMATION_SCHEMA.* "
+    - " information_schema.*"
+    - "_temporary_and_external_tables.* "
+  allow_object_disk_streaming: true
+s3:
+  disable_ssl: false
+  disable_cert_verification: true
+clickhouse:
+  host: clickhouse
+  port: 9000
+  restart_command: bash -c 'echo "FAKE RESTART"'
+  timeout: 60s
+azblob:
+  account_name: devstoreaccount1
+  # docker compose --profile azure-cli --progress none run --rm azure-cli az storage account generate-sas --account-name devcontainer1 --resource-types sco --services=b --permissions cdlruwap --expiry "2099-01-01T00:00:00Z" --output=tsv
+  sas: "${SAS_TOKEN}"
+  endpoint_suffix: azure:10000
+  endpoint_schema: http
+  container: container1
+  path: backup
+  object_disk_path: object_disks
+  compression_format: tar
