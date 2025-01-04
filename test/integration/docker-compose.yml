@@ -65,29 +65,40 @@ services:
       interval: 1s
       retries: 30
     # command: [ "azurite", "--debug", "/dev/stderr" , "-l", "/data", "--blobHost", "0.0.0.0" ]
-    command: [ "azurite", "--debug", "/dev/stderr" , "-l", "/data", "--blobHost", "0.0.0.0","--blobKeepAliveTimeout", "600000" ]
+    command: [ "azurite", "--debug", "/dev/stderr" , "-l", "/data", "--blobHost", "0.0.0.0","--blobKeepAliveTimeout", "600" ]
     volumes:
       - azure:/data
 #    environment:
 #      - AZURITE_DB="mysql://root:root@mysql:3306/azurite_blob"
 
-   #  azure_init:
-   #    image: mcr.microsoft.com/azure-cli:latest
-   #    command:
-   #      - /bin/sh
-   #      - -xc
-   #      - |
-   #        az storage container create --debug --name azure-backup-disk &&
-   #        az storage container create --debug --name azure-disk
-   #    depends_on:
-   #      azure:
-   #        condition: service_healthy
-   #    environment:
-   #      # https://github.com/Azure/Azurite/blob/main/README.md#usage-with-azure-storage-sdks-or-tools
-   #      AZURE_STORAGE_CONNECTION_STRING: DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azure:10000/devstoreaccount1;
+  azure-cli:
+    profiles:
+      - azure-cli
+    image: mcr.microsoft.com/azure-cli:latest
+    depends_on:
+      azure:
+        condition: service_healthy
+    environment:
+      # https://github.com/Azure/Azurite/blob/main/README.md#usage-with-azure-storage-sdks-or-tools
+      AZURE_STORAGE_CONNECTION_STRING: DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azure:10000/devstoreaccount1;
+
+  mysql:
+    image: docker.io/mysql:${MYSQL_VERSION:-latest}
+    command: --gtid_mode=on --enforce_gtid_consistency=ON
+    hostname: mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: "root"
+    ports:
+      - "3306"
+    volumes:
+      - mysql:/var/lib/mysql
+    healthcheck:
+      test: mysqladmin -p=root ping -h localhost
+      timeout: 10s
+      interval: 1s
+      retries: 100
 
   zookeeper:
-    # @TODO back :latest default value after resolve https://github.com/ClickHouse/ClickHouse/issues/53749
     image: ${ZOOKEEPER_IMAGE:-docker.io/zookeeper}:${ZOOKEEPER_VERSION:-3.8.4}
     hostname: zookeeper
     environment:
@@ -98,7 +109,6 @@ services:
       timeout: 2s
       retries: 10
       start_period: 1s
-
 
   clickhouse-backup:
     image: docker.io/${CLICKHOUSE_IMAGE:-yandex/clickhouse-server}:${CLICKHOUSE_VERSION:-1.1.54390}
@@ -183,6 +193,7 @@ services:
       - ${CLICKHOUSE_BACKUP_BIN_FIPS:-../../clickhouse-backup/clickhouse-backup-race-fips}:/usr/bin/clickhouse-backup-fips
       - ./credentials.json:/etc/clickhouse-backup/credentials.json
       - ./config-azblob.yml:/etc/clickhouse-backup/config-azblob.yml
+      - ./config-azblob-sas.yml:/etc/clickhouse-backup/config-azblob-sas.yml.template
       - ./config-azblob-embedded.yml:/etc/clickhouse-backup/config-azblob-embedded.yml
       - ./config-azblob-embedded-url.yml:/etc/clickhouse-backup/config-azblob-embedded-url.yml
       - ./config-custom-kopia.yml:/etc/clickhouse-backup/config-custom-kopia.yml
