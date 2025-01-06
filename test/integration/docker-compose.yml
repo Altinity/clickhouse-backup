@@ -82,22 +82,6 @@ services:
       # https://github.com/Azure/Azurite/blob/main/README.md#usage-with-azure-storage-sdks-or-tools
       AZURE_STORAGE_CONNECTION_STRING: DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azure:10000/devstoreaccount1;
 
-  mysql:
-    image: docker.io/mysql:${MYSQL_VERSION:-latest}
-    command: --gtid_mode=on --enforce_gtid_consistency=ON
-    hostname: mysql
-    environment:
-      MYSQL_ROOT_PASSWORD: "root"
-    ports:
-      - "3306"
-    volumes:
-      - mysql:/var/lib/mysql
-    healthcheck:
-      test: mysqladmin -p=root ping -h localhost
-      timeout: 10s
-      interval: 1s
-      retries: 100
-
   zookeeper:
     image: ${ZOOKEEPER_IMAGE:-docker.io/zookeeper}:${ZOOKEEPER_VERSION:-3.8.4}
     hostname: zookeeper
