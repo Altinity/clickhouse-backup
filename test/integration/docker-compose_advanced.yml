@@ -177,6 +177,9 @@ services:
       QA_GCS_OVER_S3_ACCESS_KEY: "${QA_GCS_OVER_S3_ACCESS_KEY}"
       QA_GCS_OVER_S3_SECRET_KEY: "${QA_GCS_OVER_S3_SECRET_KEY}"
       QA_GCS_OVER_S3_BUCKET: "${QA_GCS_OVER_S3_BUCKET}"
+      # AlibabaCloud over S3
+      QA_ALIBABA_ACCESS_KEY: "${QA_ALIBABA_ACCESS_KEY:-}"
+      QA_ALIBABA_SECRET_KEY: "${QA_ALIBABA_SECRET_KEY:-}"
 # https://github.com/Altinity/clickhouse-backup/issues/691:
       AWS_ACCESS_KEY_ID: access_key
       AWS_SECRET_ACCESS_KEY: it_is_my_super_secret_key
@@ -220,6 +223,9 @@ services:
       QA_GCS_OVER_S3_SECRET_KEY: "${QA_GCS_OVER_S3_SECRET_KEY}"
       QA_GCS_OVER_S3_BUCKET: "${QA_GCS_OVER_S3_BUCKET}"
       AWS_EC2_METADATA_DISABLED: "true"
+      #     AlibabaCloud over S3
+      QA_ALIBABA_ACCESS_KEY: "${QA_ALIBABA_ACCESS_KEY:-}"
+      QA_ALIBABA_SECRET_KEY: "${QA_ALIBABA_SECRET_KEY:-}"
 
     # to avoid backward incompatibility ;(
     # https://t.me/clickhouse_ru/359960
@@ -250,6 +256,7 @@ services:
       - ./config-s3-embedded-url.yml:/etc/clickhouse-backup/config-s3-embedded-url.yml
       - ./config-s3-embedded-local.yml:/etc/clickhouse-backup/config-s3-embedded-local.yml
       - ./config-s3-fips.yml:/etc/clickhouse-backup/config-s3-fips.yml.template
+      - ./config-s3-alibabacloud.yml:/etc/clickhouse-backup/config-s3-alibabacloud.yml.template
       - ./config-s3-nodelete.yml:/etc/clickhouse-backup/config-s3-nodelete.yml
       - ./config-s3-plain-embedded.yml:/etc/clickhouse-backup/config-s3-plain-embedded.yml
       - ./config-sftp-auth-key.yaml:/etc/clickhouse-backup/config-sftp-auth-key.yaml
