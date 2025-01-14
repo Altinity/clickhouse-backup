@@ -111,7 +111,7 @@ jobs:
   testflows:
     needs: build
     name: Testflows
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         golang-version:
