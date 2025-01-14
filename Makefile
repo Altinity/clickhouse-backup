@@ -163,6 +163,6 @@ build-fips-docker:
 	bash -xce 'docker buildx build --build-arg CLICKHOUSE_VERSION=$${CLICKHOUSE_VERSION:-latest} --build-arg CLICKHOUSE_IMAGE=$${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server} --build-arg VERSION=$(VERSION) \
 			--tag $(NAME):build-docker-fips --target make-build-fips --progress plain --load . && \
 		mkdir -pv ./build && \
-		DOCKER_ID=$$(docker create $(NAME):build-docker) && \
+		DOCKER_ID=$$(docker create $(NAME):build-docker-fips) && \
 		docker cp $${DOCKER_ID}:/src/build/. ./build/ && \
 		docker rm -f "$${DOCKER_ID}"'
