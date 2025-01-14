@@ -131,6 +131,9 @@ services:
       # AlibabaCloud over S3
       QA_ALIBABA_ACCESS_KEY: "${QA_ALIBABA_ACCESS_KEY:-}"
       QA_ALIBABA_SECRET_KEY: "${QA_ALIBABA_SECRET_KEY:-}"
+      # Tencent Cloud Object Storage
+      QA_TENCENT_SECRET_ID: "${QA_TENCENT_SECRET_ID:-}"
+      QA_TENCENT_SECRET_KEY: "${QA_TENCENT_SECRET_KEY:-}"
 # https://github.com/Altinity/clickhouse-backup/issues/691:
       AWS_ACCESS_KEY_ID: access_key
       AWS_SECRET_ACCESS_KEY: it_is_my_super_secret_key
@@ -176,6 +179,9 @@ services:
       #     AlibabaCloud over S3
       QA_ALIBABA_ACCESS_KEY: "${QA_ALIBABA_ACCESS_KEY:-}"
       QA_ALIBABA_SECRET_KEY: "${QA_ALIBABA_SECRET_KEY:-}"
+      #     Tencent Cloud Object Storage
+      QA_TENCENT_SECRET_ID: "${QA_TENCENT_SECRET_ID:-}"
+      QA_TENCENT_SECRET_KEY: "${QA_TENCENT_SECRET_KEY:-}"
 
       AWS_EC2_METADATA_DISABLED: "true"
     volumes:
@@ -191,6 +197,7 @@ services:
       - ./config-custom-restic.yml:/etc/clickhouse-backup/config-custom-restic.yml
       - ./config-custom-rsync.yml:/etc/clickhouse-backup/config-custom-rsync.yml
       - ./config-database-mapping.yml:/etc/clickhouse-backup/config-database-mapping.yml
+      - ./config-cos.yml:/etc/clickhouse-backup/config-cos.yml.template
       - ./config-ftp.yaml:/etc/clickhouse-backup/config-ftp.yaml
       - ./config-ftp-old.yaml:/etc/clickhouse-backup/config-ftp-old.yaml
       - ./config-gcs.yml:/etc/clickhouse-backup/config-gcs.yml

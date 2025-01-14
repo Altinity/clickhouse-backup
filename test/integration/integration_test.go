@@ -751,6 +751,18 @@ func TestIntegrationAlibabaOverS3(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
+func TestIntegrationCOS(t *testing.T) {
+	if os.Getenv("QA_TENCENT_SECRET_KEY") == "" {
+		t.Skip("Skipping Tencent Cloud Object Storage integration tests... QA_TENCENT_SECRET_KEY missing")
+		return
+	}
+	env, r := NewTestEnvironment(t)
+	env.InstallDebIfNotExists(r, "clickhouse-backup", "gettext-base")
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config-cos.yml.template | envsubst > /etc/clickhouse-backup/config-cos.yml")
+	env.runMainIntegrationScenario(t, "COS", "config-cos.yml")
+	env.Cleanup(t, r)
+}
+
 func TestIntegrationGCS(t *testing.T) {
 	if isTestShouldSkip("GCS_TESTS") {
 		t.Skip("Skipping GCS integration tests...")

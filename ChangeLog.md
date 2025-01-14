@@ -7,6 +7,7 @@ BUG FIXES
 - add alibaba/oss/aliyuncs worked config,
   fix [877](https://github.com/Altinity/clickhouse-backup/issues/877#issuecomment-2589164718),
   fix [505](https://github.com/Altinity/clickhouse-backup/issues/505#issuecomment-2589163706)
+- add test for COS, fix [1053](https://github.com/Altinity/clickhouse-backup/issues/1053)
 
 # v2.6.5
 
