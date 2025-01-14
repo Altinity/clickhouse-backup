@@ -1,0 +1,33 @@
+general:
+  remote_storage: cos
+  upload_concurrency: 4
+  download_concurrency: 4
+  restore_schema_on_cluster: "{cluster}"
+  allow_object_disk_streaming: true
+  object_disk_server_side_copy_concurrency: 2
+clickhouse:
+  host: clickhouse
+  port: 9440
+  username: backup
+  password: meow=& 123?*%# МЯУ
+  secure: true
+  skip_verify: true
+  sync_replicated_tables: true
+  restart_command: "sql:SYSTEM RELOAD USERS; sql:SYSTEM RELOAD CONFIG; exec:ls -la /var/lib/clickhouse/access; sql:SYSTEM SHUTDOWN"
+  # restart_command: bash -c 'echo "FAKE RESTART"'
+  backup_mutations: true
+  timeout: 60s
+s3:
+  disable_ssl: false
+  disable_cert_verification: true
+cos:
+  url: "https://clickhouse-backup-1336113806.cos.na-ashburn.myqcloud.com"
+  secret_id: "${QA_TENCENT_SECRET_ID}"
+  secret_key: "${QA_TENCENT_SECRET_KEY}"
+  path: backup/{cluster}/{shard}
+  object_disk_path: object_disk/{cluster}/{shard}
+api:
+  listen: :7171
+  create_integration_tables: true
+  integration_tables_host: "clickhouse-backup"
+  allow_parallel: true
