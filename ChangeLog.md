@@ -4,6 +4,9 @@ BUG FIXES
 
 - add e2e tests for `AZBLOB_SAS`, fix [1060](https://github.com/Altinity/clickhouse-backup/issues/1060),
   fix [313](https://github.com/Altinity/clickhouse-backup/issues/313)
+- add alibaba/oss/aliyuncs worked config,
+  fix [877](https://github.com/Altinity/clickhouse-backup/issues/877#issuecomment-2589164718),
+  fix [505](https://github.com/Altinity/clickhouse-backup/issues/505#issuecomment-2589163706)
 
 # v2.6.5
 
