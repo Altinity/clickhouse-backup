@@ -34,6 +34,13 @@ For that reason, it's required to run `clickhouse-backup` on the same host or sa
 - ClickHouse above 1.1.54394 is supported
 - Only MergeTree family tables engines (more table types for `clickhouse-server` 22.7+ and `USE_EMBEDDED_BACKUP_RESTORE=true`)
 
+## Community
+
+Altinity Backup for ClickHouse is a community effort sponsored by Altinity. The best way to reach us or ask questions is:
+
+* Join the [Altinity Slack](https://altinity.com/slack) - Chat with the developers and other users
+* Log an [issue on GitHub](https://github.com/Altinity/clickhouse-backup/issues) - Ask questions, log bugs and feature requests
+
 ## Support 
 
 Altinity is the primary maintainer of clickhouse-backup. We offer a range of software and 
