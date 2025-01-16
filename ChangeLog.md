@@ -1,5 +1,10 @@
 # v2.6.6
 
+IMPROVEMENTS
+
+- remove `S3_PART_SIZE` and `AZBLOB_BUFFER_SIZE` parameter from configuration and significant decrease memory usage
+  during upload and download, fix [854](https://github.com/Altinity/clickhouse-backup/issues/854)
+
 BUG FIXES
 
 - add e2e tests for `AZBLOB_SAS`, fix [1060](https://github.com/Altinity/clickhouse-backup/issues/1060),

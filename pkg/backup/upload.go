@@ -218,7 +218,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	if !b.resume || (b.resume && !b.resumableState.IsAlreadyProcessedBool(remoteBackupMetaFile)) {
 		retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
 		err = retry.RunCtx(ctx, func(ctx context.Context) error {
-			return b.dst.PutFile(ctx, remoteBackupMetaFile, io.NopCloser(bytes.NewReader(newBackupMetadataBody)))
+			return b.dst.PutFile(ctx, remoteBackupMetaFile, io.NopCloser(bytes.NewReader(newBackupMetadataBody)), 0)
 		})
 		if err != nil {
 			return fmt.Errorf("can't upload %s: %v", remoteBackupMetaFile, err)
@@ -307,7 +307,7 @@ func (b *Backuper) uploadSingleBackupFile(ctx context.Context, localFile, remote
 	}()
 	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
 	err = retry.RunCtx(ctx, func(ctx context.Context) error {
-		return b.dst.PutFile(ctx, remoteFile, f)
+		return b.dst.PutFile(ctx, remoteFile, f, 0)
 	})
 	if err != nil {
 		return 0, fmt.Errorf("can't upload %s: %v", remoteFile, err)
@@ -621,7 +621,7 @@ func (b *Backuper) uploadTableMetadataRegular(ctx context.Context, backupName st
 	}
 	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
 	err = retry.RunCtx(ctx, func(ctx context.Context) error {
-		return b.dst.PutFile(ctx, remoteTableMetaFile, io.NopCloser(bytes.NewReader(content)))
+		return b.dst.PutFile(ctx, remoteTableMetaFile, io.NopCloser(bytes.NewReader(content)), 0)
 	})
 	if err != nil {
 		return 0, fmt.Errorf("can't upload: %v", err)
@@ -666,7 +666,7 @@ func (b *Backuper) uploadTableMetadataEmbedded(ctx context.Context, backupName s
 	}()
 	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
 	err = retry.RunCtx(ctx, func(ctx context.Context) error {
-		return b.dst.PutFile(ctx, remoteTableMetaFile, localReader)
+		return b.dst.PutFile(ctx, remoteTableMetaFile, localReader, 0)
 	})
 	if err != nil {
 		return 0, fmt.Errorf("can't embeeded upload metadata: %v", err)

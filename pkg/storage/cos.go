@@ -147,15 +147,15 @@ func (c *COS) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadClo
 	return resp.Body, nil
 }
 
-func (c *COS) GetFileReaderWithLocalPath(ctx context.Context, key, _ string) (io.ReadCloser, error) {
+func (c *COS) GetFileReaderWithLocalPath(ctx context.Context, key, localPath string, remoteSize int64) (io.ReadCloser, error) {
 	return c.GetFileReader(ctx, key)
 }
 
-func (c *COS) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
-	return c.PutFileAbsolute(ctx, path.Join(c.Config.Path, key), r)
+func (c *COS) PutFile(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
+	return c.PutFileAbsolute(ctx, path.Join(c.Config.Path, key), r, localSize)
 }
 
-func (c *COS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser) error {
+func (c *COS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
 	_, err := c.client.Object.Put(ctx, key, r, nil)
 	return err
 }

@@ -31,8 +31,8 @@ type RemoteStorage interface {
 	WalkAbsolute(ctx context.Context, absolutePrefix string, recursive bool, fn func(context.Context, RemoteFile) error) error
 	GetFileReader(ctx context.Context, key string) (io.ReadCloser, error)
 	GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadCloser, error)
-	GetFileReaderWithLocalPath(ctx context.Context, key, localPath string) (io.ReadCloser, error)
-	PutFile(ctx context.Context, key string, r io.ReadCloser) error
-	PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser) error
+	GetFileReaderWithLocalPath(ctx context.Context, key, localPath string, remoteSize int64) (io.ReadCloser, error)
+	PutFile(ctx context.Context, key string, r io.ReadCloser, localSize int64) error
+	PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, localSize int64) error
 	CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error)
 }

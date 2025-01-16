@@ -192,20 +192,25 @@ func (a *AzureBlob) GetFileReaderAbsolute(ctx context.Context, key string) (io.R
 	return r.Body(azblob.RetryReaderOptions{}), nil
 }
 
-func (a *AzureBlob) GetFileReaderWithLocalPath(ctx context.Context, key, _ string) (io.ReadCloser, error) {
+func (a *AzureBlob) GetFileReaderWithLocalPath(ctx context.Context, key, localPath string, remoteSize int64) (io.ReadCloser, error) {
 	return a.GetFileReader(ctx, key)
 }
 
-func (a *AzureBlob) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
-	return a.PutFileAbsolute(ctx, path.Join(a.Config.Path, key), r)
+func (a *AzureBlob) PutFile(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
+	return a.PutFileAbsolute(ctx, path.Join(a.Config.Path, key), r, localSize)
 }
 
-func (a *AzureBlob) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser) error {
+func (a *AzureBlob) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
 	a.logf("AZBLOB->PutFileAbsolute %s", key)
 	blob := a.Container.NewBlockBlobURL(key)
-	bufferSize := a.Config.BufferSize // Configure the size of the rotating buffers that are used when uploading
-	maxBuffers := a.Config.MaxBuffers // Configure the number of rotating buffers that are used when uploading
-	_, err := x.UploadStreamToBlockBlob(ctx, r, blob, azblob.UploadStreamToBlockBlobOptions{BufferSize: bufferSize, MaxBuffers: maxBuffers}, a.CPK)
+	// https://github.com/Altinity/clickhouse-backup/issues/317
+	bufferSize := localSize / a.Config.MaxPartsCount
+	if localSize%a.Config.MaxPartsCount > 0 {
+		bufferSize += max(1, (localSize%a.Config.MaxPartsCount)/a.Config.MaxPartsCount)
+	}
+	bufferSize = AdjustAzblobBufferSize(bufferSize)
+
+	_, err := x.UploadStreamToBlockBlob(ctx, r, blob, azblob.UploadStreamToBlockBlobOptions{BufferSize: int(bufferSize), MaxBuffers: a.Config.MaxBuffers}, a.CPK)
 	return err
 }
 
