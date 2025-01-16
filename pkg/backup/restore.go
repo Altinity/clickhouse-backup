@@ -963,7 +963,7 @@ func (b *Backuper) fixEmbeddedMetadataRemote(ctx context.Context, backupName str
 		}
 		log.Debug().Msgf("b.fixEmbeddedMetadataSQLQuery %s changed=%v", remoteFilePath, sqlMetadataChanged)
 		if sqlMetadataChanged {
-			err = b.dst.PutFileAbsolute(ctx, remoteFilePath, io.NopCloser(strings.NewReader(sqlQuery)))
+			err = b.dst.PutFileAbsolute(ctx, remoteFilePath, io.NopCloser(strings.NewReader(sqlQuery)), 0)
 			if err != nil {
 				return err
 			}

@@ -208,9 +208,8 @@ azblob:
   compression_level: 1         # AZBLOB_COMPRESSION_LEVEL
   compression_format: tar      # AZBLOB_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   sse_key: ""                  # AZBLOB_SSE_KEY
-  buffer_size: 0               # AZBLOB_BUFFER_SIZE, if less or eq 0 then it is calculated as max_file_size / max_parts_count, between 2Mb and 4Mb
-  max_parts_count: 10000       # AZBLOB_MAX_PARTS_COUNT, number of parts for AZBLOB uploads, for properly calculate buffer size
-  max_buffers: 3               # AZBLOB_MAX_BUFFERS
+  max_parts_count: 256         # AZBLOB_MAX_PARTS_COUNT, number of parts for AZBLOB uploads, for properly calculate buffer size
+  max_buffers: 3               # AZBLOB_MAX_BUFFERS, similar with S3_CONCURRENCY
   debug: false                 # AZBLOB_DEBUG
 s3:
   access_key: ""                   # S3_ACCESS_KEY
@@ -244,9 +243,8 @@ s3:
   use_custom_storage_class: false  # S3_USE_CUSTOM_STORAGE_CLASS
   storage_class: STANDARD          # S3_STORAGE_CLASS, by default allow only from list https://github.com/aws/aws-sdk-go-v2/blob/main/service/s3/types/enums.go#L787-L799
   concurrency: 1                   # S3_CONCURRENCY
-  part_size: 0                     # S3_PART_SIZE, if less or eq 0 then it is calculated as max_file_size / max_parts_count, between 5MB and 5Gb
-  max_parts_count: 10000           # S3_MAX_PARTS_COUNT, number of parts for S3 multipart uploads
-  allow_multipart_download: false  # S3_ALLOW_MULTIPART_DOWNLOAD, allow faster download and upload speeds, but will require additional disk space, download_concurrency * part size in worst case
+  max_parts_count: 4000            # S3_MAX_PARTS_COUNT, number of parts for S3 multipart uploads
+  allow_multipart_download: false  # S3_ALLOW_MULTIPART_DOWNLOAD, allow faster multipart download speed, but will require additional disk space, download_concurrency * part size in worst case
   checksum_algorithm: ""           # S3_CHECKSUM_ALGORITHM, use it when you use object lock which allow to avoid delete keys from bucket until some timeout after creation, use CRC32 as fastest
 
   # S3_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
@@ -348,7 +346,7 @@ api:
 In 1.3.0+ it means how many parallel data parts will be uploaded, assuming `upload_by_part` and `download_by_part` are `true` (which is the default value).
 
 `concurrency` in the `s3` section means how many concurrent `upload` streams will run during multipart upload in each upload go-routine.
-A high value for `S3_CONCURRENCY` and a high value for `S3_PART_SIZE` will allocate a lot of memory for buffers inside the AWS golang SDK.
+A high value for `S3_CONCURRENCY` will allocate more memory for buffers inside the AWS golang SDK.
 
 `concurrency` in the `sftp` section means how many concurrent request will be used for `upload` and `download` for each file.
 

@@ -250,15 +250,15 @@ func (gcs *GCS) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadC
 	return reader, nil
 }
 
-func (gcs *GCS) GetFileReaderWithLocalPath(ctx context.Context, key, _ string) (io.ReadCloser, error) {
+func (gcs *GCS) GetFileReaderWithLocalPath(ctx context.Context, key, localPath string, remoteSize int64) (io.ReadCloser, error) {
 	return gcs.GetFileReader(ctx, key)
 }
 
-func (gcs *GCS) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
-	return gcs.PutFileAbsolute(ctx, path.Join(gcs.Config.Path, key), r)
+func (gcs *GCS) PutFile(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
+	return gcs.PutFileAbsolute(ctx, path.Join(gcs.Config.Path, key), r, localSize)
 }
 
-func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser) error {
+func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
 	if err != nil {
 		log.Error().Msgf("gcs.PutFile: gcs.clientPool.BorrowObject error: %+v", err)

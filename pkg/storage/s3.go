@@ -88,10 +88,7 @@ func (lt *RecalculateV4Signature) RoundTrip(req *http.Request) (*http.Response, 
 // S3 - presents methods for manipulate data on s3
 type S3 struct {
 	client      *s3.Client
-	uploader    *s3manager.Uploader
-	downloader  *s3manager.Downloader
 	Config      *config.S3Config
-	PartSize    int64
 	Concurrency int
 	BufferSize  int
 	versioning  bool
@@ -180,16 +177,6 @@ func (s *S3) Connect(ctx context.Context) error {
 		o.EndpointResolverV2 = s
 	})
 
-	s.uploader = s3manager.NewUploader(s.client)
-	s.uploader.Concurrency = s.Concurrency
-	s.uploader.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(s.BufferSize)
-	s.uploader.PartSize = s.PartSize
-
-	s.downloader = s3manager.NewDownloader(s.client)
-	s.downloader.Concurrency = s.Concurrency
-	s.downloader.BufferProvider = s3manager.NewPooledBufferedWriterReadFromProvider(s.BufferSize)
-	s.downloader.PartSize = s.PartSize
-
 	s.versioning = s.isVersioningEnabled(ctx)
 
 	return nil
@@ -253,7 +240,7 @@ func (s *S3) enrichGetObjectParams(params *s3.GetObjectInput) {
 	}
 }
 
-func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath string) (io.ReadCloser, error) {
+func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath string, remoteSize int64) (io.ReadCloser, error) {
 	/* unfortunately, multipart download require allocate additional disk space
 	and don't allow us to decompress data directly from stream */
 	if s.Config.AllowMultipartDownload {
@@ -261,7 +248,17 @@ func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath stri
 		if err != nil {
 			return nil, err
 		}
-		_, err = s.downloader.Download(ctx, writer, &s3.GetObjectInput{
+
+		downloader := s3manager.NewDownloader(s.client)
+		downloader.Concurrency = s.Concurrency
+		downloader.BufferProvider = s3manager.NewPooledBufferedWriterReadFromProvider(s.BufferSize)
+		partSize := remoteSize / s.Config.MaxPartsCount
+		if remoteSize%s.Config.MaxPartsCount > 0 {
+			partSize += max(1, (remoteSize%s.Config.MaxPartsCount)/s.Config.MaxPartsCount)
+		}
+		downloader.PartSize = AdjustS3PartSize(partSize, 5*1024*1024, 5*1024*1024*1024)
+
+		_, err = downloader.Download(ctx, writer, &s3.GetObjectInput{
 			Bucket: aws.String(s.Config.Bucket),
 			Key:    aws.String(path.Join(s.Config.Path, key)),
 		})
@@ -274,11 +271,11 @@ func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath stri
 	}
 }
 
-func (s *S3) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
-	return s.PutFileAbsolute(ctx, path.Join(s.Config.Path, key), r)
+func (s *S3) PutFile(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
+	return s.PutFileAbsolute(ctx, path.Join(s.Config.Path, key), r, localSize)
 }
 
-func (s *S3) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser) error {
+func (s *S3) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
 	params := s3.PutObjectInput{
 		Bucket:       aws.String(s.Config.Bucket),
 		Key:          aws.String(key),
@@ -322,7 +319,15 @@ func (s *S3) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser) e
 	if s.Config.SSEKMSEncryptionContext != "" {
 		params.SSEKMSEncryptionContext = aws.String(s.Config.SSEKMSEncryptionContext)
 	}
-	_, err := s.uploader.Upload(ctx, &params)
+	uploader := s3manager.NewUploader(s.client)
+	uploader.Concurrency = s.Concurrency
+	uploader.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(s.BufferSize)
+	partSize := localSize / s.Config.MaxPartsCount
+	if localSize%s.Config.MaxPartsCount > 0 {
+		partSize += max(1, (localSize%s.Config.MaxPartsCount)/s.Config.MaxPartsCount)
+	}
+	uploader.PartSize = AdjustS3PartSize(partSize, 5*1024*1024, 5*1024*1024*1024)
+	_, err := uploader.Upload(ctx, &params)
 	return err
 }
 
@@ -518,12 +523,12 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 	// Get the upload ID
 	uploadID := initResp.UploadId
 
-	// Set the part size (e.g., 5 MB)
+	// Set the part size (128 MB minimum)
 	partSize := srcSize / s.Config.MaxPartsCount
 	if srcSize%s.Config.MaxPartsCount > 0 {
-		partSize++
+		partSize += max(1, (srcSize%s.Config.MaxPartsCount)/s.Config.MaxPartsCount)
 	}
-	partSize = AdjustS3PartSize(partSize, 128*1024*1024)
+	partSize = AdjustS3PartSize(partSize, 128*1024*1024, 5*1024*1024*1024)
 
 	// Calculate the number of parts
 	numParts := (srcSize + partSize - 1) / partSize

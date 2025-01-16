@@ -27,8 +27,8 @@ import (
 )
 
 const (
-	// BufferSize - size of ring buffer between stream handlers
-	BufferSize = 128 * 1024
+	// PipeBufferSize - size of ring buffer between stream handlers
+	PipeBufferSize = 128 * 1024
 )
 
 type readerWrapperForContext func(p []byte) (n int, err error)
@@ -276,7 +276,7 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 		return err
 	}
 	startTime := time.Now()
-	reader, err := bd.GetFileReaderWithLocalPath(ctx, remotePath, localPath)
+	reader, err := bd.GetFileReaderWithLocalPath(ctx, remotePath, localPath, remoteFileInfo.Size())
 	if err != nil {
 		return err
 	}
@@ -293,7 +293,7 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 		}
 	}()
 
-	buf := buffer.New(BufferSize)
+	buf := buffer.New(PipeBufferSize)
 	bufReader := nio.NewReader(reader, buf)
 	compressionFormat := bd.compressionFormat
 	if !checkArchiveExtension(path.Ext(remotePath), compressionFormat) {
@@ -358,7 +358,7 @@ func (bd *BackupDestination) UploadCompressedStream(ctx context.Context, baseLoc
 			totalBytes += fInfo.Size()
 		}
 	}
-	pipeBuffer := buffer.New(BufferSize)
+	pipeBuffer := buffer.New(PipeBufferSize)
 	body, w := nio.Pipe(pipeBuffer)
 	g, ctx := errgroup.WithContext(ctx)
 	startTime := time.Now()
@@ -417,7 +417,7 @@ func (bd *BackupDestination) UploadCompressedStream(ctx context.Context, baseLoc
 				}
 			}
 		}()
-		readerErr = bd.PutFile(ctx, remotePath, body)
+		readerErr = bd.PutFile(ctx, remotePath, body, totalBytes)
 		return readerErr
 	})
 	if waitErr := g.Wait(); waitErr != nil {
@@ -501,7 +501,7 @@ func (bd *BackupDestination) UploadPath(ctx context.Context, baseLocalPath strin
 		}
 		retry := retrier.New(retrier.ConstantBackoff(RetriesOnFailure, RetriesDuration), nil)
 		err = retry.RunCtx(ctx, func(ctx context.Context) error {
-			return bd.PutFile(ctx, path.Join(remotePath, filename), f)
+			return bd.PutFile(ctx, path.Join(remotePath, filename), f, 0)
 		})
 		if err != nil {
 			closeFile()
@@ -543,35 +543,16 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			return nil, err
 		}
 
-		bufferSize := azblobStorage.Config.BufferSize
-		// https://github.com/Altinity/clickhouse-backup/issues/317
-		if bufferSize <= 0 {
-			bufferSize = int(cfg.General.MaxFileSize) / cfg.AzureBlob.MaxPartsCount
-			if int(cfg.General.MaxFileSize)%cfg.AzureBlob.MaxPartsCount > 0 {
-				bufferSize += int(cfg.General.MaxFileSize) % cfg.AzureBlob.MaxPartsCount
-			}
-			bufferSize = AdjustAzblobBufferSize(bufferSize)
-		}
-		azblobStorage.Config.BufferSize = bufferSize
 		return &BackupDestination{
 			azblobStorage,
 			cfg.AzureBlob.CompressionFormat,
 			cfg.AzureBlob.CompressionLevel,
 		}, nil
 	case "s3":
-		partSize := cfg.S3.PartSize
-		if cfg.S3.PartSize <= 0 {
-			partSize = cfg.General.MaxFileSize / cfg.S3.MaxPartsCount
-			if cfg.General.MaxFileSize%cfg.S3.MaxPartsCount > 0 {
-				partSize++
-			}
-			partSize = AdjustS3PartSize(partSize, 5*1024*1024)
-		}
 		s3Storage := &S3{
 			Config:      &cfg.S3,
 			Concurrency: cfg.S3.Concurrency,
 			BufferSize:  64 * 1024,
-			PartSize:    partSize,
 		}
 		if s3Storage.Config.Path, err = ch.ApplyMacros(ctx, s3Storage.Config.Path); err != nil {
 			return nil, err
@@ -667,18 +648,18 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 	}
 }
 
-func AdjustS3PartSize(partSize, minSize int64) int64 {
+func AdjustS3PartSize(partSize, minSize, maxSize int64) int64 {
 	if partSize < minSize {
 		partSize = minSize
 	}
 
-	if partSize > 5*1024*1024*1024 {
-		partSize = 5 * 1024 * 1024 * 1024
+	if partSize > maxSize {
+		partSize = maxSize
 	}
 	return partSize
 }
 
-func AdjustAzblobBufferSize(bufferSize int) int {
+func AdjustAzblobBufferSize(bufferSize int64) int64 {
 	if bufferSize < 2*1024*1024 {
 		bufferSize = 2 * 1024 * 1024
 	}

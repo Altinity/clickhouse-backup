@@ -110,9 +110,8 @@ type AzureBlobConfig struct {
 	CompressionLevel      int    `yaml:"compression_level" envconfig:"AZBLOB_COMPRESSION_LEVEL"`
 	CompressionFormat     string `yaml:"compression_format" envconfig:"AZBLOB_COMPRESSION_FORMAT"`
 	SSEKey                string `yaml:"sse_key" envconfig:"AZBLOB_SSE_KEY"`
-	BufferSize            int    `yaml:"buffer_size" envconfig:"AZBLOB_BUFFER_SIZE"`
 	MaxBuffers            int    `yaml:"buffer_count" envconfig:"AZBLOB_MAX_BUFFERS"`
-	MaxPartsCount         int    `yaml:"max_parts_count" envconfig:"AZBLOB_MAX_PARTS_COUNT"`
+	MaxPartsCount         int64  `yaml:"max_parts_count" envconfig:"AZBLOB_MAX_PARTS_COUNT"`
 	Timeout               string `yaml:"timeout" envconfig:"AZBLOB_TIMEOUT"`
 	Debug                 bool   `yaml:"debug" envconfig:"AZBLOB_DEBUG"`
 }
@@ -143,7 +142,6 @@ type S3Config struct {
 	StorageClass            string            `yaml:"storage_class" envconfig:"S3_STORAGE_CLASS"`
 	CustomStorageClassMap   map[string]string `yaml:"custom_storage_class_map" envconfig:"S3_CUSTOM_STORAGE_CLASS_MAP"`
 	Concurrency             int               `yaml:"concurrency" envconfig:"S3_CONCURRENCY"`
-	PartSize                int64             `yaml:"part_size" envconfig:"S3_PART_SIZE"`
 	MaxPartsCount           int64             `yaml:"max_parts_count" envconfig:"S3_MAX_PARTS_COUNT"`
 	AllowMultipartDownload  bool              `yaml:"allow_multipart_download" envconfig:"S3_ALLOW_MULTIPART_DOWNLOAD"`
 	ObjectLabels            map[string]string `yaml:"object_labels" envconfig:"S3_OBJECT_LABELS"`
@@ -581,7 +579,6 @@ func DefaultConfig() *Config {
 			EndpointSuffix:    "core.windows.net",
 			CompressionLevel:  1,
 			CompressionFormat: "tar",
-			BufferSize:        0,
 			MaxBuffers:        3,
 			MaxPartsCount:     256,
 			Timeout:           "4h",
@@ -597,7 +594,6 @@ func DefaultConfig() *Config {
 			UseCustomStorageClass:   false,
 			StorageClass:            string(s3types.StorageClassStandard),
 			Concurrency:             int(downloadConcurrency + 1),
-			PartSize:                0,
 			MaxPartsCount:           4000,
 		},
 		GCS: GCSConfig{

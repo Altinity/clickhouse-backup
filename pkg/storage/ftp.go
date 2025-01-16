@@ -196,15 +196,15 @@ func (f *FTP) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadClo
 	}, err
 }
 
-func (f *FTP) GetFileReaderWithLocalPath(ctx context.Context, key, _ string) (io.ReadCloser, error) {
+func (f *FTP) GetFileReaderWithLocalPath(ctx context.Context, key, localPath string, remoteSize int64) (io.ReadCloser, error) {
 	return f.GetFileReader(ctx, key)
 }
 
-func (f *FTP) PutFile(ctx context.Context, key string, r io.ReadCloser) error {
-	return f.PutFileAbsolute(ctx, path.Join(f.Config.Path, key), r)
+func (f *FTP) PutFile(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
+	return f.PutFileAbsolute(ctx, path.Join(f.Config.Path, key), r, localSize)
 }
 
-func (f *FTP) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser) error {
+func (f *FTP) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
 	where := fmt.Sprintf("PutFileReaderAbsolute->%s", key)
 	client, err := f.getConnectionFromPool(ctx, where)
 	defer f.returnConnectionToPool(ctx, where, client)

@@ -219,15 +219,15 @@ func (sftp *SFTP) GetFileReaderAbsolute(ctx context.Context, key string) (io.Rea
 	return sftp.sftpClient.OpenFile(key, syscall.O_RDWR)
 }
 
-func (sftp *SFTP) GetFileReaderWithLocalPath(ctx context.Context, key, _ string) (io.ReadCloser, error) {
+func (sftp *SFTP) GetFileReaderWithLocalPath(ctx context.Context, key, localPath string, remoteSize int64) (io.ReadCloser, error) {
 	return sftp.GetFileReader(ctx, key)
 }
 
-func (sftp *SFTP) PutFile(ctx context.Context, key string, localFile io.ReadCloser) error {
-	return sftp.PutFileAbsolute(ctx, path.Join(sftp.Config.Path, key), localFile)
+func (sftp *SFTP) PutFile(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
+	return sftp.PutFileAbsolute(ctx, path.Join(sftp.Config.Path, key), r, localSize)
 }
 
-func (sftp *SFTP) PutFileAbsolute(ctx context.Context, key string, localFile io.ReadCloser) error {
+func (sftp *SFTP) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
 	if err := sftp.sftpClient.MkdirAll(path.Dir(key)); err != nil {
 		log.Warn().Msgf("sftp.sftpClient.MkdirAll(%s) err=%v", path.Dir(key), err)
 	}
@@ -240,7 +240,7 @@ func (sftp *SFTP) PutFileAbsolute(ctx context.Context, key string, localFile io.
 			log.Warn().Msgf("can't close %s err=%v", key, err)
 		}
 	}()
-	if _, err = remoteFile.ReadFrom(localFile); err != nil {
+	if _, err = remoteFile.ReadFrom(r); err != nil {
 		return err
 	}
 	return nil

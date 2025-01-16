@@ -448,9 +448,7 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 		connection.Type = "s3"
 		s3cfg := config.S3Config{
 			Debug: cfg.S3.Debug, MaxPartsCount: cfg.S3.MaxPartsCount, Concurrency: 1,
-			PartSize: cfg.S3.PartSize,
 		}
-		s3cfg.PartSize = storage.AdjustS3PartSize(s3cfg.PartSize, 5*1024*1024)
 		s3URL, err := url.Parse(creds.EndPoint)
 		if err != nil {
 			return nil, err
@@ -530,11 +528,9 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 		connection.Type = "azure_blob_storage"
 		azureCfg := config.AzureBlobConfig{
 			Timeout:       cfg.AzureBlob.Timeout,
-			BufferSize:    cfg.AzureBlob.BufferSize,
 			MaxBuffers:    cfg.AzureBlob.MaxBuffers,
 			MaxPartsCount: cfg.AzureBlob.MaxPartsCount,
 		}
-		azureCfg.BufferSize = storage.AdjustAzblobBufferSize(azureCfg.BufferSize)
 		azureURL, err := url.Parse(creds.EndPoint)
 		if err != nil {
 			return nil, err
@@ -624,7 +620,7 @@ func PutFile(ctx context.Context, diskName, remotePath string, content []byte) e
 	f := bytes.NewReader(content)
 	fCloser := io.NopCloser(f)
 	remoteStorage := connection.GetRemoteStorage()
-	return remoteStorage.PutFile(ctx, remotePath, fCloser)
+	return remoteStorage.PutFile(ctx, remotePath, fCloser, 0)
 }
 
 func WriteFileContent(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Config, diskName, localPath string, content []byte) error {
@@ -694,7 +690,7 @@ func CopyObjectStreaming(ctx context.Context, srcStorage storage.RemoteStorage, 
 			log.Error().Msgf("srcReader.Close(%s) error: %v", srcKey, closeErr)
 		}
 	}()
-	if putErr := dstStorage.PutFileAbsolute(ctx, dstKey, srcReader); putErr != nil {
+	if putErr := dstStorage.PutFileAbsolute(ctx, dstKey, srcReader, 0); putErr != nil {
 		return fmt.Errorf("dstStorage.PutFileAbsolute(%s) error: %v", dstKey, putErr)
 	}
 	return nil
