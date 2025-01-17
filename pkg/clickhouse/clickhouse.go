@@ -932,9 +932,11 @@ func (ch *ClickHouse) DropTable(table Table, query string, onCluster string, ign
 }
 
 var createViewToClauseRe = regexp.MustCompile(`(?im)^(CREATE[\s\w]+VIEW[^(]+)(\s+TO\s+.+)`)
-var createViewSelectRe = regexp.MustCompile(`(?im)^(CREATE[\s\w]+VIEW[^(]+)(\s+AS\s+SELECT.+)`)
+var createViewAsWithRe = regexp.MustCompile(`(?im)^(CREATE[\s\w]+VIEW[^(]+)(\s+AS\s+WITH\s+.+)`)
+var createViewRe = regexp.MustCompile(`(?im)^(CREATE[\s\w]+VIEW[^(]+)(\s+AS\s+.+)`)
 var attachViewToClauseRe = regexp.MustCompile(`(?im)^(ATTACH[\s\w]+VIEW[^(]+)(\s+TO\s+.+)`)
-var attachViewSelectRe = regexp.MustCompile(`(?im)^(ATTACH[\s\w]+VIEW[^(]+)(\s+AS\s+SELECT.+)`)
+var attachViewAsWithRe = regexp.MustCompile(`(?im)^(ATTACH[\s\w]+VIEW[^(]+)(\s+AS\s+WITH\s+.+)`)
+var attachViewRe = regexp.MustCompile(`(?im)^(ATTACH[\s\w]+VIEW[^(]+)(\s+AS\s+.+)`)
 var createObjRe = regexp.MustCompile(`(?is)^(CREATE [^(]+)(\(.+)`)
 var onClusterRe = regexp.MustCompile(`(?im)\s+ON\s+CLUSTER\s+`)
 var distributedRE = regexp.MustCompile(`(Distributed)\(([^,]+),([^)]+)\)`)
@@ -948,15 +950,7 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 		}
 	}
 
-	if version > 19000000 && onCluster != "" && !onClusterRe.MatchString(query) {
-		tryMatchReList := []*regexp.Regexp{attachViewToClauseRe, attachViewSelectRe, createViewToClauseRe, createViewSelectRe, createObjRe}
-		for _, tryMatchRe := range tryMatchReList {
-			if tryMatchRe.MatchString(query) {
-				query = tryMatchRe.ReplaceAllString(query, "$1 ON CLUSTER '"+onCluster+"' $2")
-				break
-			}
-		}
-	}
+	query = ch.enrichQueryWithOnCluster(query, onCluster, version)
 
 	if !strings.Contains(query, table.Name) {
 		return errors.New(fmt.Sprintf("schema query ```%s``` doesn't contains table name `%s`", query, table.Name))
@@ -1008,6 +1002,19 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 		return err
 	}
 	return nil
+}
+
+func (ch *ClickHouse) enrichQueryWithOnCluster(query string, onCluster string, version int) string {
+	if version > 19000000 && onCluster != "" && !onClusterRe.MatchString(query) {
+		tryMatchReList := []*regexp.Regexp{attachViewToClauseRe, attachViewAsWithRe, attachViewRe, createViewToClauseRe, createViewAsWithRe, createViewRe, createObjRe}
+		for _, tryMatchRe := range tryMatchReList {
+			if tryMatchRe.MatchString(query) {
+				query = tryMatchRe.ReplaceAllString(query, "$1 ON CLUSTER '"+onCluster+"' $2")
+				break
+			}
+		}
+	}
+	return query
 }
 
 func (ch *ClickHouse) TurnAnalyzerOnIfNecessary(version int, query string, allowExperimentalAnalyzer string) error {
