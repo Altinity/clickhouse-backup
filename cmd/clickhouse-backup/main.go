@@ -320,10 +320,10 @@ func main() {
 		{
 			Name:      "download",
 			Usage:     "Download backup from remote storage",
-			UsageText: "clickhouse-backup download [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--resumable] <backup_name>",
+			UsageText: "clickhouse-backup download [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--rbac] [--configs] [--rbac-only] [--configs-only] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Download(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("resume"), version, c.Int("command-id"))
+				return b.Download(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -348,6 +348,25 @@ func main() {
 					Usage:  "Download schema only",
 				},
 				cli.BoolFlag{
+					Name:   "rbac",
+					Hidden: false,
+					Usage:  "Download RBAC related objects",
+				},
+				cli.BoolFlag{
+					Name:   "configs",
+					Hidden: false,
+					Usage:  "Download 'clickhouse-server' configuration files",
+				},
+				cli.BoolFlag{
+					Name:   "rbac-only",
+					Hidden: false,
+					Usage:  "Download RBAC related objects only, will skip download data and schema",
+				},
+				cli.BoolFlag{
+					Name:   "configs-only",
+					Hidden: false,
+					Usage:  "Download 'clickhouse-server' configuration files only, will skip download data and schema",
+				},
 					Name:   "resume, resumable",
 					Hidden: false,
 					Usage:  "Save intermediate download state and resume download if backup exists on local storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'",
@@ -549,24 +568,63 @@ func main() {
 			Usage: "Print current config merged with environment variables",
 			Action: func(c *cli.Context) error {
 				return config.PrintConfig(c)
-			},
+			UsageText: "clickhouse-backup upload [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--diff-from=<local_backup_name>] [--diff-from-remote=<remote_backup_name>] [--rbac] [--configs] [--rbac-only] [--configs-only] [--resumable] <backup_name>",
 			Flags: cliapp.Flags,
 		},
-		{
+				return b.Upload(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), version, c.Int("command-id"))
 			Name:  "clean",
 			Usage: "Remove data in 'shadow' folder from all 'path' folders available from 'system.disks'",
-			Action: func(c *cli.Context) error {
+				cli.StringFlag{
+					Name:   "diff-from",
+					Hidden: false,
+					Usage:  "Local backup name which used to upload current backup as incremental",
+				},
+				cli.StringFlag{
+					Name:   "diff-from-remote",
+					Hidden: false,
+					Usage:  "Remote backup name which used to upload current backup as incremental",
+				},
+				cli.StringFlag{
+					Name:   "table, tables, t",
+					Usage:  "Upload data only for matched table name patterns, separated by comma, allow ? and * as wildcard",
+					Hidden: false,
+				},
+				cli.StringSliceFlag{
+					Name:   "partitions",
+					Hidden: false,
+					Usage: "Upload backup only for selected partition names, separated by comma\n" +
+						"If PARTITION BY clause returns numeric not hashed values for `partition_id` field in system.parts table, then use --partitions=partition_id1,partition_id2 format\n" +
+						"If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format\n" +
+						"If PARTITION BY clause returns tuple with multiple fields, then use --partitions=(numeric_value1,'string_value1','date_or_datetime_value'),(...) format\n" +
+						"If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*\n" +
+						"Values depends on field types in your table, use single quotes for String and Date/DateTime related types\n" +
+						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
+				},
+				cli.BoolFlag{
+					Name:   "schema, s",
+					Hidden: false,
+					Usage:  "Upload schemas only",
+				},
+				cli.BoolFlag{
+					Name:   "resume, resumable",
+					Hidden: false,
+					Usage:  "Save intermediate upload state and resume upload if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'",
+				},
+				cli.BoolFlag{
+					Name:   "delete, delete-source, delete-local",
+					Hidden: false,
+					Usage:  "explicitly delete local backup during upload",
+				},
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
 				return b.Clean(context.Background())
 			},
-			Flags: cliapp.Flags,
+					Usage:  "Upload RBAC related objects only, will skip upload data and schema",
 		},
 		{
 			Name:  "clean_remote_broken",
 			Usage: "Remove all broken remote backups",
-			Action: func(c *cli.Context) error {
+					Usage:  "Upload 'clickhouse-server' configuration files only, will skip upload data and schema",
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CleanRemoteBroken(status.NotFromAPI)
 			},
 			Flags: cliapp.Flags,
 		},
