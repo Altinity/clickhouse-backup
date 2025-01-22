@@ -130,8 +130,6 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	uploadGroup.SetLimit(int(b.cfg.General.UploadConcurrency))
 
 	doUploadData := !schemaOnly && !rbacOnly && !configsOnly
-	//skip upload data for embedded backup with empty embedded_backup_disk
-	doUploadData = doUploadData && (!b.isEmbedded || b.cfg.ClickHouse.EmbeddedBackupDisk != "")
 
 	for i, table := range tablesForUpload {
 		start := time.Now()
@@ -148,7 +146,8 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 		uploadGroup.Go(func() error {
 			var uploadedBytes int64
 			var uploadTableErr error
-			if doUploadData {
+			//skip upload data for embedded backup with empty embedded_backup_disk
+			if doUploadData && (!b.isEmbedded || b.cfg.ClickHouse.EmbeddedBackupDisk != "") {
 				var files map[string][]string
 				files, uploadedBytes, uploadTableErr = b.uploadTableData(uploadCtx, backupName, deleteSource, tablesForUpload[idx])
 				if uploadTableErr != nil {
