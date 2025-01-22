@@ -434,15 +434,15 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 		err := retry.RunCtx(ctx, func(ctx context.Context) error {
 			tmReader, err := b.dst.GetFileReader(ctx, remoteMetadataFile)
 			if err != nil {
-				return err
+				return fmt.Errorf("can't GetFileReader(%s) error: %v", remoteMetadataFile, err)
 			}
 			tmBody, err = io.ReadAll(tmReader)
 			if err != nil {
-				return err
+				return fmt.Errorf("can't io.ReadAll(%s) error: %v", remoteMetadataFile, err)
 			}
 			err = tmReader.Close()
 			if err != nil {
-				return err
+				return fmt.Errorf("can't Close(%s) error: %v", remoteMetadataFile, err)
 			}
 			return nil
 		})
@@ -470,7 +470,7 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 			size += uint64(len(tmBody))
 		} else {
 			if err = json.Unmarshal(tmBody, &tableMetadata); err != nil {
-				return nil, 0, err
+				return nil, 0, fmt.Errorf("can't json.Unmarshal(%s) error: %v", remoteMetadataFile, err)
 			}
 			if b.shouldSkipByTableEngine(tableMetadata) || b.shouldSkipByTableName(fmt.Sprintf("%s.%s", tableMetadata.Database, tableMetadata.Table)) {
 				return nil, 0, nil
