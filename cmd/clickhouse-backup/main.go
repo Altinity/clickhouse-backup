@@ -260,7 +260,7 @@ func main() {
 			UsageText: "clickhouse-backup upload [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--diff-from=<local_backup_name>] [--diff-from-remote=<remote_backup_name>] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Upload(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("resume"), version, c.Int("command-id"))
+				return b.Upload(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("schema"), c.Bool("rbac-only"), c.Bool("configs-only"), c.Bool("resume"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -295,6 +295,16 @@ func main() {
 					Usage:  "Upload schemas only",
 				},
 				cli.BoolFlag{
+					Name:   "rbac-only, rbac",
+					Hidden: false,
+					Usage:  "Upload RBAC related objects only, will skip upload data, will backup schema only if --schema added",
+				},
+				cli.BoolFlag{
+					Name:   "configs-only, configs",
+					Hidden: false,
+					Usage:  "Upload 'clickhouse-server' configuration files only, will skip upload data, will backup schema only if --schema added",
+				},
+				cli.BoolFlag{
 					Name:   "resume, resumable",
 					Hidden: false,
 					Usage:  "Save intermediate upload state and resume upload if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'",
@@ -323,7 +333,7 @@ func main() {
 			UsageText: "clickhouse-backup download [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Download(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("resume"), version, c.Int("command-id"))
+				return b.Download(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("schema"), c.Bool("rbac-only"), c.Bool("configs-only"), c.Bool("resume"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -343,9 +353,19 @@ func main() {
 						"Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/",
 				},
 				cli.BoolFlag{
-					Name:   "schema, s",
+					Name:   "schema, schema-only, s",
 					Hidden: false,
 					Usage:  "Download schema only",
+				},
+				cli.BoolFlag{
+					Name:   "rbac-only, rbac",
+					Hidden: false,
+					Usage:  "Download RBAC related objects only, will skip download data, will backup schema only if --schema added",
+				},
+				cli.BoolFlag{
+					Name:   "configs-only, configs",
+					Hidden: false,
+					Usage:  "Download 'clickhouse-server' configuration files only, will skip download data, will backup schema only if --schema added",
 				},
 				cli.BoolFlag{
 					Name:   "resume, resumable",

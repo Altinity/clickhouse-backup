@@ -32,7 +32,7 @@ import (
 	"github.com/yargevad/filepathx"
 )
 
-func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFromRemote, tablePattern string, partitions []string, schemaOnly, resume bool, backupVersion string, commandId int) error {
+func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFromRemote, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, resume bool, backupVersion string, commandId int) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return err
@@ -89,6 +89,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	if b.isEmbedded {
 		partitions = make([]string, 0)
 	}
+
 	if len(backupMetadata.Tables) != 0 {
 		tablesForUpload, err = b.prepareTableListToUpload(ctx, backupName, tablePattern, partitions)
 		if err != nil {
@@ -128,9 +129,13 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	uploadGroup, uploadCtx := errgroup.WithContext(ctx)
 	uploadGroup.SetLimit(int(b.cfg.General.UploadConcurrency))
 
+	doUploadData := !schemaOnly && !rbacOnly && !configsOnly
+	//skip upload data for embedded backup with empty embedded_backup_disk
+	doUploadData = doUploadData && (!b.isEmbedded || b.cfg.ClickHouse.EmbeddedBackupDisk != "")
+
 	for i, table := range tablesForUpload {
 		start := time.Now()
-		if !schemaOnly {
+		if doUploadData {
 			if diffTable, diffExists := tablesForUploadFromDiff[metadata.TableTitle{
 				Database: table.Database,
 				Table:    table.Table,
@@ -142,29 +147,32 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 		idx := i
 		uploadGroup.Go(func() error {
 			var uploadedBytes int64
-			//skip upload data for embedded backup with empty embedded_backup_disk
-			if !schemaOnly && (!b.isEmbedded || b.cfg.ClickHouse.EmbeddedBackupDisk != "") {
+			var uploadTableErr error
+			if doUploadData {
 				var files map[string][]string
-				var err error
-				files, uploadedBytes, err = b.uploadTableData(uploadCtx, backupName, deleteSource, tablesForUpload[idx])
-				if err != nil {
-					return err
+				files, uploadedBytes, uploadTableErr = b.uploadTableData(uploadCtx, backupName, deleteSource, tablesForUpload[idx])
+				if uploadTableErr != nil {
+					return uploadTableErr
 				}
 				atomic.AddInt64(&compressedDataSize, uploadedBytes)
 				tablesForUpload[idx].Files = files
 			}
-			tableMetadataSize, err := b.uploadTableMetadata(uploadCtx, backupName, backupMetadata.RequiredBackup, tablesForUpload[idx])
-			if err != nil {
-				return err
+			tableMetadataSize := int64(0)
+			if doUploadData || schemaOnly {
+				tableMetadataSize, uploadTableErr = b.uploadTableMetadata(uploadCtx, backupName, backupMetadata.RequiredBackup, tablesForUpload[idx])
+				if uploadTableErr != nil {
+					return uploadTableErr
+				}
+				atomic.AddInt64(&metadataSize, tableMetadataSize)
 			}
-			atomic.AddInt64(&metadataSize, tableMetadataSize)
 			log.Info().Fields(map[string]interface{}{
-				"operation": "upload_data",
-				"table":     fmt.Sprintf("%s.%s", tablesForUpload[idx].Database, tablesForUpload[idx].Table),
-				"progress":  fmt.Sprintf("%d/%d", idx+1, len(tablesForUpload)),
-				"duration":  utils.HumanizeDuration(time.Since(start)),
-				"size":      utils.FormatBytes(uint64(uploadedBytes + tableMetadataSize)),
-				"version":   backupVersion,
+				"operation":     "upload_table",
+				"table":         fmt.Sprintf("%s.%s", tablesForUpload[idx].Database, tablesForUpload[idx].Table),
+				"progress":      fmt.Sprintf("%d/%d", idx+1, len(tablesForUpload)),
+				"duration":      utils.HumanizeDuration(time.Since(start)),
+				"data_size":     utils.FormatBytes(uint64(uploadedBytes)),
+				"metadata_size": utils.FormatBytes(uint64(tableMetadataSize)),
+				"version":       backupVersion,
 			}).Msg("done")
 			return nil
 		})
@@ -173,17 +181,20 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 		return fmt.Errorf("one of upload table go-routine return error: %v", err)
 	}
 
-	// upload rbac for backup
-	if backupMetadata.RBACSize, err = b.uploadRBACData(ctx, backupName); err != nil {
-		return fmt.Errorf("b.uploadRBACData return error: %v", err)
+	// upload rbac for backup, if not configsOnly
+	if rbacOnly || configsOnly == rbacOnly {
+		if backupMetadata.RBACSize, err = b.uploadRBACData(ctx, backupName); err != nil {
+			return fmt.Errorf("b.uploadRBACData return error: %v", err)
+		}
 	}
-
-	// upload configs for backup
-	if backupMetadata.ConfigSize, err = b.uploadConfigData(ctx, backupName); err != nil {
-		return fmt.Errorf("b.uploadConfigData return error: %v", err)
+	// upload configs for backup, if not rbacOnly
+	if configsOnly || configsOnly == rbacOnly {
+		if backupMetadata.ConfigSize, err = b.uploadConfigData(ctx, backupName); err != nil {
+			return fmt.Errorf("b.uploadConfigData return error: %v", err)
+		}
 	}
 	//upload embedded .backup file
-	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" && backupMetadata.Tables != nil && len(backupMetadata.Tables) > 0 {
+	if doUploadData && b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" && backupMetadata.Tables != nil && len(backupMetadata.Tables) > 0 {
 		localClickHouseBackupFile := path.Join(b.EmbeddedBackupDataPath, backupName, ".backup")
 		remoteClickHouseBackupFile := path.Join(backupName, ".backup")
 		localEmbeddedMetadataSize := int64(0)

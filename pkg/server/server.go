@@ -1129,6 +1129,8 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	tablePattern := ""
 	partitionsToBackup := make([]string, 0)
 	schemaOnly := false
+	rbacOnly := false
+	configsOnly := false
 	resume := false
 	fullCommand := "upload"
 	operationId, _ := uuid.NewUUID()
@@ -1158,6 +1160,14 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		schemaOnly = true
 		fullCommand += " --schema"
 	}
+	if _, exist := query["rbac-only"]; exist {
+		rbacOnly = true
+		fullCommand += " --rbac-only"
+	}
+	if _, exist := query["configs-only"]; exist {
+		configsOnly = true
+		fullCommand += " --configs-only"
+	}
 	if _, exist := query["resumable"]; exist {
 		resume = true
 		fullCommand += " --resumable"
@@ -1180,7 +1190,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		commandId, _ := status.Current.Start(fullCommand)
 		err, _ := api.metrics.ExecuteWithMetrics("upload", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.Upload(name, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, resume, api.cliApp.Version, commandId)
+			return b.Upload(name, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, resume, api.cliApp.Version, commandId)
 		})
 		if err != nil {
 			log.Error().Msgf("Upload error: %v", err)
@@ -1404,6 +1414,8 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	tablePattern := ""
 	partitionsToBackup := make([]string, 0)
 	schemaOnly := false
+	rbacOnly := false
+	configsOnly := false
 	resume := false
 	fullCommand := "download"
 	operationId, _ := uuid.NewUUID()
@@ -1419,6 +1431,14 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	if _, exist := query["schema"]; exist {
 		schemaOnly = true
 		fullCommand += " --schema"
+	}
+	if _, exist := query["rbac-only"]; exist {
+		rbacOnly = true
+		fullCommand += " --rbac-only"
+	}
+	if _, exist := query["configs-only"]; exist {
+		configsOnly = true
+		fullCommand += " --configs-only"
 	}
 	if _, exist := query["resumable"]; exist {
 		resume = true
@@ -1442,7 +1462,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		commandId, _ := status.Current.Start(fullCommand)
 		err, _ := api.metrics.ExecuteWithMetrics("download", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.Download(name, tablePattern, partitionsToBackup, schemaOnly, resume, api.cliApp.Version, commandId)
+			return b.Download(name, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, resume, api.cliApp.Version, commandId)
 		})
 		if err != nil {
 			log.Error().Msgf("API /backup/download error: %v", err)

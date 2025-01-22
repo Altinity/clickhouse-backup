@@ -4,6 +4,8 @@ IMPROVEMENTS
 
 - remove `S3_PART_SIZE` and `AZBLOB_BUFFER_SIZE` parameter from configuration and significant decrease memory usage
   during upload and download, fix [854](https://github.com/Altinity/clickhouse-backup/issues/854)
+- add `--configs-only` and `--rbac-only` options to `upload` and `download` command,
+  fix [1042](https://github.com/Altinity/clickhouse-backup/issues/1042)
 
 BUG FIXES
 

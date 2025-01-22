@@ -40,7 +40,7 @@ var (
 	ErrBackupIsAlreadyExists = errors.New("backup is already exists")
 )
 
-func (b *Backuper) Download(backupName string, tablePattern string, partitions []string, schemaOnly, resume bool, backupVersion string, commandId int) error {
+func (b *Backuper) Download(backupName string, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, resume bool, backupVersion string, commandId int) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return err
@@ -123,7 +123,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	tablesForDownload := parseTablePatternForDownload(remoteBackup.Tables, tablePattern)
 
 	if !schemaOnly && !b.cfg.General.DownloadByPart && remoteBackup.RequiredBackup != "" {
-		err := b.Download(remoteBackup.RequiredBackup, tablePattern, partitions, schemaOnly, b.resume, backupVersion, commandId)
+		err := b.Download(remoteBackup.RequiredBackup, tablePattern, partitions, schemaOnly, rbacOnly, configsOnly, b.resume, backupVersion, commandId)
 		if err != nil && !errors.Is(err, ErrBackupIsAlreadyExists) {
 			return err
 		}
@@ -152,24 +152,27 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 
 	log.Debug().Str("backup", backupName).Msgf("prepare table METADATA concurrent semaphore with concurrency=%d len(tablesForDownload)=%d", b.cfg.General.DownloadConcurrency, len(tablesForDownload))
 	tableMetadataAfterDownload := make([]*metadata.TableMetadata, len(tablesForDownload))
-	metadataGroup, metadataCtx := errgroup.WithContext(ctx)
-	metadataGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
-	for i, t := range tablesForDownload {
-		metadataLogger := log.With().Str("table_metadata", fmt.Sprintf("%s.%s", t.Database, t.Table)).Logger()
-		idx := i
-		tableTitle := t
-		metadataGroup.Go(func() error {
-			downloadedMetadata, size, err := b.downloadTableMetadata(metadataCtx, backupName, disks, tableTitle, schemaOnly, partitions, b.resume, metadataLogger)
-			if err != nil {
-				return err
-			}
-			tableMetadataAfterDownload[idx] = downloadedMetadata
-			atomic.AddUint64(&metadataSize, size)
-			return nil
-		})
-	}
-	if err := metadataGroup.Wait(); err != nil {
-		return fmt.Errorf("one of Download Metadata go-routine return error: %v", err)
+	doDownloadData := !schemaOnly && !rbacOnly && !configsOnly
+	if doDownloadData || schemaOnly {
+		metadataGroup, metadataCtx := errgroup.WithContext(ctx)
+		metadataGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
+		for i, t := range tablesForDownload {
+			metadataLogger := log.With().Str("table_metadata", fmt.Sprintf("%s.%s", t.Database, t.Table)).Logger()
+			idx := i
+			tableTitle := t
+			metadataGroup.Go(func() error {
+				downloadedMetadata, size, downloadMetadataErr := b.downloadTableMetadata(metadataCtx, backupName, disks, tableTitle, schemaOnly, partitions, b.resume, metadataLogger)
+				if downloadMetadataErr != nil {
+					return downloadMetadataErr
+				}
+				tableMetadataAfterDownload[idx] = downloadedMetadata
+				atomic.AddUint64(&metadataSize, size)
+				return nil
+			})
+		}
+		if err := metadataGroup.Wait(); err != nil {
+			return fmt.Errorf("one of Download Metadata go-routine return error: %v", err)
+		}
 	}
 	// download, missed .inner. tables, https://github.com/Altinity/clickhouse-backup/issues/765
 	var missedInnerTableErr error
@@ -178,7 +181,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		return fmt.Errorf("b.downloadMissedInnerTablesMetadata error: %v", missedInnerTableErr)
 	}
 
-	if !schemaOnly {
+	if doDownloadData {
 		if reBalanceErr := b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownload, disks, remoteBackup); reBalanceErr != nil {
 			return reBalanceErr
 		}
@@ -194,8 +197,8 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			idx := i
 			dataGroup.Go(func() error {
 				start := time.Now()
-				if err := b.downloadTableData(dataCtx, remoteBackup.BackupMetadata, *tableMetadataAfterDownload[idx]); err != nil {
-					return err
+				if downloadDataErr := b.downloadTableData(dataCtx, remoteBackup.BackupMetadata, *tableMetadataAfterDownload[idx]); downloadDataErr != nil {
+					return downloadDataErr
 				}
 				log.Info().Fields(map[string]interface{}{
 					"backup_name": backupName,
@@ -214,20 +217,24 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		}
 	}
 	var rbacSize, configSize uint64
-	rbacSize, err = b.downloadRBACData(ctx, remoteBackup)
-	if err != nil {
-		return fmt.Errorf("download RBAC error: %v", err)
+	if rbacOnly || rbacOnly == configsOnly {
+		rbacSize, err = b.downloadRBACData(ctx, remoteBackup)
+		if err != nil {
+			return fmt.Errorf("download RBAC error: %v", err)
+		}
 	}
 
-	configSize, err = b.downloadConfigData(ctx, remoteBackup)
-	if err != nil {
-		return fmt.Errorf("download CONFIGS error: %v", err)
+	if configsOnly || rbacOnly == configsOnly {
+		configSize, err = b.downloadConfigData(ctx, remoteBackup)
+		if err != nil {
+			return fmt.Errorf("download CONFIGS error: %v", err)
+		}
 	}
 
 	backupMetadata := remoteBackup.BackupMetadata
 	backupMetadata.Tables = tablesForDownload
 
-	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" && backupMetadata.Tables != nil && len(backupMetadata.Tables) > 0 {
+	if doDownloadData && b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" && backupMetadata.Tables != nil && len(backupMetadata.Tables) > 0 {
 		localClickHouseBackupFile := path.Join(b.EmbeddedBackupDataPath, backupName, ".backup")
 		remoteClickHouseBackupFile := path.Join(backupName, ".backup")
 		localEmbeddedMetadataSize := int64(0)
