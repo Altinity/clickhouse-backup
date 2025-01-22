@@ -102,6 +102,8 @@ If you need different partitions for different tables, then use --partitions=db.
 Values depends on field types in your table, use single quotes for String and Date/DateTime related types
 Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
    --schema, -s                               Upload schemas only
+   --rbac-only, --rbac                        Upload RBAC related objects only, will skip upload data, will backup schema only if --schema added
+   --configs-only, --configs                  Upload 'clickhouse-server' configuration files only, will skip upload data, will backup schema only if --schema added
    --resume, --resumable                      Save intermediate upload state and resume upload if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
    --delete, --delete-source, --delete-local  explicitly delete local backup during upload
    
@@ -138,8 +140,10 @@ If PARTITION BY clause returns tuple with multiple fields, then use --partitions
 If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*
 Values depends on field types in your table, use single quotes for String and Date/DateTime related types
 Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
-   --schema, -s           Download schema only
-   --resume, --resumable  Save intermediate download state and resume download if backup exists on local storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
+   --schema, --schema-only, -s  Download schema only
+   --rbac-only, --rbac          Download RBAC related objects only, will skip download data, will backup schema only if --schema added
+   --configs-only, --configs    Download 'clickhouse-server' configuration files only, will skip download data, will backup schema only if --schema added
+   --resume, --resumable        Save intermediate download state and resume download if backup exists on local storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
    
 ```
 ### CLI command - restore

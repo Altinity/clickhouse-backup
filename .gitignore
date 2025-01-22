@@ -14,3 +14,4 @@ _coverage_/
 __pycache__/
 *.py[cod]
 vendor/
+.aider*

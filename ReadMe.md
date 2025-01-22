@@ -464,6 +464,9 @@ Upload backup to remote storage: `curl -s localhost:7171/backup/upload/<BACKUP_N
 - Optional string query argument `table` works the same as the `--table value` CLI argument.
 - Optional string query argument `partitions` works the same as the `--partitions value` CLI argument.
 - Optional boolean query argument `schema` works the same as the `--schema` CLI argument (upload schema only).
+- Optional boolean query argument `rbac-only` works the same as the `--rbac-only` CLI argument (upload rbac only).
+- Optional boolean query argument `configs-only` works the same as the `--configs-only` CLI argument (upload configs
+  only).
 - Optional boolean query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate upload state and resume upload if data already exists on remote storage).
 - Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
 
@@ -485,6 +488,9 @@ Download backup from remote storage: `curl -s localhost:7171/backup/download/<BA
 - Optional string query argument `table` works the same as the `--table value` CLI argument.
 - Optional string query argument `partitions` works the same as the `--partitions value` CLI argument.
 - Optional boolean query argument `schema` works the same as the `--schema` CLI argument (download schema only).
+- Optional boolean query argument `rbac-only` works the same as the `--rbac-only` CLI argument (download rbac only).
+- Optional boolean query argument `configs-only` works the same as the `--configs-only` CLI argument (download configs
+  only).
 - Optional boolean query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate download state and resume download if it already exists on local storage).
 - Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
 
@@ -658,6 +664,8 @@ If you need different partitions for different tables, then use --partitions=db.
 Values depends on field types in your table, use single quotes for String and Date/DateTime related types
 Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
    --schema, -s                               Upload schemas only
+   --rbac-only, --rbac                        Upload RBAC related objects only, will skip upload data, will backup schema only if --schema added
+   --configs-only, --configs                  Upload 'clickhouse-server' configuration files only, will skip upload data, will backup schema only if --schema added
    --resume, --resumable                      Save intermediate upload state and resume upload if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
    --delete, --delete-source, --delete-local  explicitly delete local backup during upload
    
@@ -694,8 +702,10 @@ If PARTITION BY clause returns tuple with multiple fields, then use --partitions
 If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*
 Values depends on field types in your table, use single quotes for String and Date/DateTime related types
 Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
-   --schema, -s           Download schema only
-   --resume, --resumable  Save intermediate download state and resume download if backup exists on local storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
+   --schema, --schema-only, -s  Download schema only
+   --rbac-only, --rbac          Download RBAC related objects only, will skip download data, will backup schema only if --schema added
+   --configs-only, --configs    Download 'clickhouse-server' configuration files only, will skip download data, will backup schema only if --schema added
+   --resume, --resumable        Save intermediate download state and resume download if backup exists on local storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
    
 ```
 ### CLI command - restore
