@@ -15,8 +15,8 @@ type Part struct {
 // SortPartsByMinBlock need to avoid wrong restore for Replacing, Collapsing, https://github.com/ClickHouse/ClickHouse/issues/71009
 func SortPartsByMinBlock(parts []Part) {
 	sort.Slice(parts, func(i, j int) bool {
-		namePartsI := strings.Split(parts[i].Name, "_")
-		namePartsJ := strings.Split(parts[j].Name, "_")
+		namePartsI := strings.SplitN(parts[i].Name, "_", 3)
+		namePartsJ := strings.SplitN(parts[j].Name, "_", 3)
 		// partitions different
 		if namePartsI[0] != namePartsJ[0] {
 			return namePartsI[0] < namePartsJ[0]

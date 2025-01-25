@@ -67,6 +67,14 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	}
 	defer b.ch.Close()
 
+	clickHouseVersion, versionErr := b.ch.GetVersion(ctx)
+	if versionErr != nil {
+		return versionErr
+	}
+	if clickHouseVersion < 24003000 && skipProjections != nil && len(skipProjections) > 0 {
+		return fmt.Errorf("backup with skip-projections can restore only in 24.3+")
+	}
+
 	if backupName == "" {
 		_ = b.PrintLocalBackups(ctx, "all")
 		return fmt.Errorf("select backup for restore")
