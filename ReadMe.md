@@ -605,7 +605,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --rbac-only                                                                                Backup RBAC related objects only, will skip backup data, will backup schema only if --schema added
    --configs-only                                                                             Backup 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
    --skip-check-parts-columns                                                                 Skip check system.parts_columns to allow backup inconsistent column types for data parts
-   --skip-projections                                                                         Skip make hardlinks to *.proj/* files during backup creation
+   --skip-projections db_pattern.table_pattern:projections_pattern                            Skip make hardlinks to *.proj/* files during backup creation, format db_pattern.table_pattern:projections_pattern, use https://pkg.go.dev/path/filepath#Match syntax
    --resume use_embedded_backup_restore: true, --resumable use_embedded_backup_restore: true  Will resume upload for object disk data, hard links on local disk still continue to recreate, not work when use_embedded_backup_restore: true
    
 ```
@@ -631,17 +631,17 @@ If PARTITION BY clause returns tuple with multiple fields, then use --partitions
 If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*
 Values depends on field types in your table, use single quotes for String and Date/DateTime related types
 Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
-   --diff-from value                                 Local backup name which used to upload current backup as incremental
-   --diff-from-remote value                          Remote backup name which used to upload current backup as incremental
-   --schema, -s                                      Backup and upload metadata schema only, will skip data backup
-   --rbac, --backup-rbac, --do-backup-rbac           Backup and upload RBAC related objects
-   --configs, --backup-configs, --do-backup-configs  Backup and upload 'clickhouse-server' configuration files
-   --rbac-only                                       Backup RBAC related objects only, will skip backup data, will backup schema only if --schema added
-   --configs-only                                    Backup 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
-   --resume, --resumable                             Save intermediate upload state and resume upload if backup exists on remote storage, ignore when 'remote_storage: custom' or 'use_embedded_backup_restore: true'
-   --skip-check-parts-columns                        Skip check system.parts_columns to allow backup inconsistent column types for data parts
-   --skip-projections                                Skip make and upload hardlinks to *.proj/* files during backup creation
-   --delete, --delete-source, --delete-local         explicitly delete local backup during upload
+   --diff-from value                                                Local backup name which used to upload current backup as incremental
+   --diff-from-remote value                                         Remote backup name which used to upload current backup as incremental
+   --schema, -s                                                     Backup and upload metadata schema only, will skip data backup
+   --rbac, --backup-rbac, --do-backup-rbac                          Backup and upload RBAC related objects
+   --configs, --backup-configs, --do-backup-configs                 Backup and upload 'clickhouse-server' configuration files
+   --rbac-only                                                      Backup RBAC related objects only, will skip backup data, will backup schema only if --schema added
+   --configs-only                                                   Backup 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
+   --resume, --resumable                                            Save intermediate upload state and resume upload if backup exists on remote storage, ignore when 'remote_storage: custom' or 'use_embedded_backup_restore: true'
+   --skip-check-parts-columns                                       Skip check system.parts_columns to allow backup inconsistent column types for data parts
+   --skip-projections db_pattern.table_pattern:projections_pattern  Skip make and upload hardlinks to *.proj/* files during backup creation, format db_pattern.table_pattern:projections_pattern, use https://pkg.go.dev/path/filepath#Match syntax
+   --delete, --delete-source, --delete-local                        explicitly delete local backup during upload
    
 ```
 ### CLI command - upload
@@ -665,12 +665,12 @@ If PARTITION BY clause returns tuple with multiple fields, then use --partitions
 If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*
 Values depends on field types in your table, use single quotes for String and Date/DateTime related types
 Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
-   --schema, -s                               Upload schemas only
-   --rbac-only, --rbac                        Upload RBAC related objects only, will skip upload data, will backup schema only if --schema added
-   --configs-only, --configs                  Upload 'clickhouse-server' configuration files only, will skip upload data, will backup schema only if --schema added
-   --skip-projections                         Skip make and upload hardlinks to *.proj/* files during backup creation
-   --resume, --resumable                      Save intermediate upload state and resume upload if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
-   --delete, --delete-source, --delete-local  explicitly delete local backup during upload
+   --schema, -s                                                     Upload schemas only
+   --rbac-only, --rbac                                              Upload RBAC related objects only, will skip upload data, will backup schema only if --schema added
+   --configs-only, --configs                                        Upload 'clickhouse-server' configuration files only, will skip upload data, will backup schema only if --schema added
+   --skip-projections db_pattern.table_pattern:projections_pattern  Skip make and upload hardlinks to *.proj/* files during backup creation, format db_pattern.table_pattern:projections_pattern, use https://pkg.go.dev/path/filepath#Match syntax
+   --resume, --resumable                                            Save intermediate upload state and resume upload if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
+   --delete, --delete-source, --delete-local                        explicitly delete local backup during upload
    
 ```
 ### CLI command - list
@@ -732,16 +732,16 @@ If PARTITION BY clause returns tuple with multiple fields, then use --partitions
 If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*
 Values depends on field types in your table, use single quotes for String and Date/DateTime related types
 Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
-   --schema, -s                                        Restore schema only
-   --data, -d                                          Restore data only
-   --rm, --drop                                        Drop exists schema objects before restore
-   -i, --ignore-dependencies                           Ignore dependencies when drop exists schema objects
-   --rbac, --restore-rbac, --do-restore-rbac           Restore RBAC related objects
-   --configs, --restore-configs, --do-restore-configs  Restore 'clickhouse-server' CONFIG related files
-   --rbac-only                                         Restore RBAC related objects only, will skip backup data, will backup schema only if --schema added
-   --configs-only                                      Restore 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
-   --skip-projections                                  Skip make hardlinks to *.proj/* files during backup restoring
-   --resume, --resumable                               Will resume download for object disk data
+   --schema, -s                                                     Restore schema only
+   --data, -d                                                       Restore data only
+   --rm, --drop                                                     Drop exists schema objects before restore
+   -i, --ignore-dependencies                                        Ignore dependencies when drop exists schema objects
+   --rbac, --restore-rbac, --do-restore-rbac                        Restore RBAC related objects
+   --configs, --restore-configs, --do-restore-configs               Restore 'clickhouse-server' CONFIG related files
+   --rbac-only                                                      Restore RBAC related objects only, will skip backup data, will backup schema only if --schema added
+   --configs-only                                                   Restore 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
+   --skip-projections db_pattern.table_pattern:projections_pattern  Skip make hardlinks to *.proj/* files during backup restoring, format db_pattern.table_pattern:projections_pattern, use https://pkg.go.dev/path/filepath#Match syntax
+   --resume, --resumable                                            Will resume download for object disk data
    
 ```
 ### CLI command - restore_remote
@@ -765,16 +765,16 @@ If PARTITION BY clause returns tuple with multiple fields, then use --partitions
 If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*
 Values depends on field types in your table, use single quotes for String and Date/DateTime related types
 Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
-   --schema, -s                                        Download and Restore schema only
-   --data, -d                                          Download and Restore data only
-   --rm, --drop                                        Drop schema objects before restore
-   -i, --ignore-dependencies                           Ignore dependencies when drop exists schema objects
-   --rbac, --restore-rbac, --do-restore-rbac           Download and Restore RBAC related objects
-   --configs, --restore-configs, --do-restore-configs  Download and Restore 'clickhouse-server' CONFIG related files
-   --rbac-only                                         Restore RBAC related objects only, will skip backup data, will backup schema only if --schema added
-   --configs-only                                      Restore 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
-   --skip-projections                                  Skip make hardlinks to *.proj/* files during backup restoring
-   --resume, --resumable                               Save intermediate download state and resume download if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
+   --schema, -s                                                     Download and Restore schema only
+   --data, -d                                                       Download and Restore data only
+   --rm, --drop                                                     Drop schema objects before restore
+   -i, --ignore-dependencies                                        Ignore dependencies when drop exists schema objects
+   --rbac, --restore-rbac, --do-restore-rbac                        Download and Restore RBAC related objects
+   --configs, --restore-configs, --do-restore-configs               Download and Restore 'clickhouse-server' CONFIG related files
+   --rbac-only                                                      Restore RBAC related objects only, will skip backup data, will backup schema only if --schema added
+   --configs-only                                                   Restore 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
+   --skip-projections db_pattern.table_pattern:projections_pattern  Skip make hardlinks to *.proj/* files during backup restoring, format db_pattern.table_pattern:projections_pattern, use https://pkg.go.dev/path/filepath#Match syntax
+   --resume, --resumable                                            Save intermediate download state and resume download if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
    
 ```
 ### CLI command - delete
@@ -867,11 +867,11 @@ If PARTITION BY clause returns tuple with multiple fields, then use --partitions
 If you need different partitions for different tables, then use --partitions=db.table1:part1,part2 --partitions=db.table?:*
 Values depends on field types in your table, use single quotes for String and Date/DateTime related types
 Look at the system.parts partition and partition_id fields for details https://clickhouse.com/docs/en/operations/system-tables/parts/
-   --schema, -s                                      Schemas only
-   --rbac, --backup-rbac, --do-backup-rbac           Backup RBAC related objects only
-   --configs, --backup-configs, --do-backup-configs  Backup `clickhouse-server' configuration files only
-   --skip-check-parts-columns                        Skip check system.parts_columns to allow backup inconsistent column types for data parts
-   --skip-projections                                Skip make and upload hardlinks to *.proj/* files during backup creation
+   --schema, -s                                                     Schemas only
+   --rbac, --backup-rbac, --do-backup-rbac                          Backup RBAC related objects only
+   --configs, --backup-configs, --do-backup-configs                 Backup `clickhouse-server' configuration files only
+   --skip-check-parts-columns                                       Skip check system.parts_columns to allow backup inconsistent column types for data parts
+   --skip-projections db_pattern.table_pattern:projections_pattern  Skip make and upload hardlinks to *.proj/* files during backup creation, format db_pattern.table_pattern:projections_pattern, use https://pkg.go.dev/path/filepath#Match syntax
    
 ```
 ### CLI command - server

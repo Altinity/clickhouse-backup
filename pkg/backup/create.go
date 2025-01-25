@@ -75,6 +75,14 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	}
 	defer b.ch.Close()
 
+	clickHouseVersion, versionErr := b.ch.GetVersion(ctx)
+	if versionErr != nil {
+		return versionErr
+	}
+	if clickHouseVersion < 24003000 && skipProjections != nil && len(skipProjections) > 0 {
+		log.Warn().Msg("backup with skip-projections can restore only in 24.3+")
+	}
+
 	if skipCheckPartsColumns && b.cfg.ClickHouse.CheckPartsColumns {
 		b.cfg.ClickHouse.CheckPartsColumns = false
 	}
@@ -105,10 +113,6 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	if err != nil {
 		return err
 	}
-	version, err := b.ch.GetVersion(ctx)
-	if err != nil {
-		return err
-	}
 	b.DefaultDataPath, err = b.ch.GetDefaultPath(disks)
 	if err != nil {
 		return err
@@ -127,9 +131,9 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 		return rbacAndConfigsErr
 	}
 	if b.cfg.ClickHouse.UseEmbeddedBackupRestore {
-		err = b.createBackupEmbedded(ctx, backupName, diffFromRemote, doBackupData, schemaOnly, backupVersion, tablePattern, partitionsNameList, partitionsIdMap, tables, allDatabases, allFunctions, disks, diskMap, diskTypes, backupRBACSize, backupConfigSize, startBackup, version)
+		err = b.createBackupEmbedded(ctx, backupName, diffFromRemote, doBackupData, schemaOnly, backupVersion, tablePattern, partitionsNameList, partitionsIdMap, tables, allDatabases, allFunctions, disks, diskMap, diskTypes, backupRBACSize, backupConfigSize, startBackup, clickHouseVersion)
 	} else {
-		err = b.createBackupLocal(ctx, backupName, diffFromRemote, doBackupData, schemaOnly, rbacOnly, configsOnly, backupVersion, partitions, partitionsIdMap, tables, tablePattern, skipProjections, disks, diskMap, diskTypes, allDatabases, allFunctions, backupRBACSize, backupConfigSize, startBackup, version)
+		err = b.createBackupLocal(ctx, backupName, diffFromRemote, doBackupData, schemaOnly, rbacOnly, configsOnly, backupVersion, partitions, partitionsIdMap, tables, tablePattern, skipProjections, disks, diskMap, diskTypes, allDatabases, allFunctions, backupRBACSize, backupConfigSize, startBackup, clickHouseVersion)
 	}
 	if err != nil {
 		log.Error().Msgf("backup failed error: %v", err)

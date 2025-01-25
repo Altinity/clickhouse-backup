@@ -43,11 +43,18 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	startUpload := time.Now()
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 	var disks []clickhouse.Disk
-	b.adjustResumeFlag(resume)
 	if err = b.ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
 	defer b.ch.Close()
+	b.adjustResumeFlag(resume)
+	clickHouseVersion, versionErr := b.ch.GetVersion(ctx)
+	if versionErr != nil {
+		return versionErr
+	}
+	if clickHouseVersion < 24003000 && skipProjections != nil && len(skipProjections) > 0 {
+		log.Warn().Msg("backup with skip-projections can restore only in 24.3+")
+	}
 	if err = b.validateUploadParams(ctx, backupName, diffFrom, diffFromRemote); err != nil {
 		return err
 	}
