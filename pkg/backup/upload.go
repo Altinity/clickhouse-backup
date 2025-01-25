@@ -32,7 +32,7 @@ import (
 	"github.com/yargevad/filepathx"
 )
 
-func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFromRemote, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, resume bool, backupVersion string, commandId int) error {
+func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFromRemote, tablePattern string, partitions, skipProjections []string, schemaOnly, rbacOnly, configsOnly, resume bool, backupVersion string, commandId int) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return err
@@ -149,7 +149,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 			//skip upload data for embedded backup with empty embedded_backup_disk
 			if doUploadData && (!b.isEmbedded || b.cfg.ClickHouse.EmbeddedBackupDisk != "") {
 				var files map[string][]string
-				files, uploadedBytes, uploadTableErr = b.uploadTableData(uploadCtx, backupName, deleteSource, tablesForUpload[idx])
+				files, uploadedBytes, uploadTableErr = b.uploadTableData(uploadCtx, backupName, deleteSource, tablesForUpload[idx], skipProjections)
 				if uploadTableErr != nil {
 					return uploadTableErr
 				}
@@ -369,7 +369,7 @@ func (b *Backuper) validateUploadParams(ctx context.Context, backupName string, 
 	}
 
 	if b.cfg.General.RemoteStorage == "custom" && b.resume {
-		return fmt.Errorf("Resumable state not allowed for `remote_storage: custom`. Disable it by setting use_resumable_state=false in `general` config section")
+		return fmt.Errorf("resumable state not allowed for `remote_storage: custom`. Disable it by setting use_resumable_state=false in `general` config section")
 	}
 	if b.cfg.General.RemoteStorage == "s3" && len(b.cfg.S3.CustomStorageClassMap) > 0 {
 		for pattern, storageClass := range b.cfg.S3.CustomStorageClassMap {
@@ -482,7 +482,7 @@ func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelate
 	return uint64(remoteUploaded.Size()), nil
 }
 
-func (b *Backuper) uploadTableData(ctx context.Context, backupName string, deleteSource bool, table metadata.TableMetadata) (map[string][]string, int64, error) {
+func (b *Backuper) uploadTableData(ctx context.Context, backupName string, deleteSource bool, table metadata.TableMetadata, skipProjections []string) (map[string][]string, int64, error) {
 	dbAndTablePath := path.Join(common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
 	uploadedFiles := map[string][]string{}
 	capacity := 0
@@ -501,7 +501,7 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 	splitPartsCapacity := 0
 	for disk := range table.Parts {
 		backupPath := b.getLocalBackupDataPathForTable(backupName, disk, dbAndTablePath)
-		splitPartsList, err := b.splitPartFiles(backupPath, table.Parts[disk])
+		splitPartsList, err := b.splitPartFiles(backupPath, table.Parts[disk], table.Database, table.Table, skipProjections)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -758,16 +758,17 @@ bodyRead:
 	}
 }
 
-func (b *Backuper) splitPartFiles(basePath string, parts []metadata.Part) ([]metadata.SplitPartFiles, error) {
+func (b *Backuper) splitPartFiles(basePath string, parts []metadata.Part, database, table string, skipProjections []string) ([]metadata.SplitPartFiles, error) {
 	if b.cfg.General.UploadByPart {
-		return b.splitFilesByName(basePath, parts)
+		return b.splitFilesByName(basePath, parts, database, table, skipProjections)
 	} else {
-		return b.splitFilesBySize(basePath, parts)
+		return b.splitFilesBySize(basePath, parts, database, table, skipProjections)
 	}
 }
 
-func (b *Backuper) splitFilesByName(basePath string, parts []metadata.Part) ([]metadata.SplitPartFiles, error) {
+func (b *Backuper) splitFilesByName(basePath string, parts []metadata.Part, database, table string, skipProjections []string) ([]metadata.SplitPartFiles, error) {
 	result := make([]metadata.SplitPartFiles, 0)
+
 	for i := range parts {
 		if parts[i].Required {
 			continue
@@ -782,6 +783,10 @@ func (b *Backuper) splitFilesByName(basePath string, parts []metadata.Part) ([]m
 				return nil
 			}
 			relativePath := strings.TrimPrefix(filePath, basePath)
+			// https://github.com/Altinity/clickhouse-backup/issues/861
+			if filesystemhelper.IsSkipProjections(skipProjections, path.Join(database, table, relativePath)) {
+				return nil
+			}
 			files = append(files, relativePath)
 			return nil
 		})
@@ -796,7 +801,7 @@ func (b *Backuper) splitFilesByName(basePath string, parts []metadata.Part) ([]m
 	return result, nil
 }
 
-func (b *Backuper) splitFilesBySize(basePath string, parts []metadata.Part) ([]metadata.SplitPartFiles, error) {
+func (b *Backuper) splitFilesBySize(basePath string, parts []metadata.Part, database, table string, skipProjections []string) ([]metadata.SplitPartFiles, error) {
 	var size int64
 	var files []string
 	maxSize := b.cfg.General.MaxFileSize
@@ -814,6 +819,11 @@ func (b *Backuper) splitFilesBySize(basePath string, parts []metadata.Part) ([]m
 			if !info.Mode().IsRegular() {
 				return nil
 			}
+			relativePath := strings.TrimPrefix(filePath, basePath)
+			// https://github.com/Altinity/clickhouse-backup/issues/861
+			if filesystemhelper.IsSkipProjections(skipProjections, path.Join(database, table, relativePath)) {
+				return nil
+			}
 			if (size+info.Size()) > maxSize && len(files) > 0 {
 				result = append(result, metadata.SplitPartFiles{
 					Prefix: strconv.Itoa(partSuffix),
@@ -823,7 +833,6 @@ func (b *Backuper) splitFilesBySize(basePath string, parts []metadata.Part) ([]m
 				size = 0
 				partSuffix += 1
 			}
-			relativePath := strings.TrimPrefix(filePath, basePath)
 			files = append(files, relativePath)
 			size += info.Size()
 			return nil

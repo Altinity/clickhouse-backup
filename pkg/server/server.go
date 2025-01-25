@@ -156,11 +156,7 @@ func (api *APIServer) RunWatch(cliCtx *cli.Context) {
 	log.Info().Msg("Starting API Server in watch mode")
 	b := backup.NewBackuper(api.config)
 	commandId, _ := status.Current.Start("watch")
-	err := b.Watch(
-		cliCtx.String("watch-interval"), cliCtx.String("full-interval"), cliCtx.String("watch-backup-name-template"),
-		"*.*", nil, false, false, false, false,
-		api.clickhouseBackupVersion, commandId, api.GetMetrics(), cliCtx,
-	)
+	err := b.Watch(cliCtx.String("watch-interval"), cliCtx.String("full-interval"), cliCtx.String("watch-backup-name-template"), "*.*", nil, nil, false, false, false, false, api.clickhouseBackupVersion, commandId, api.GetMetrics(), cliCtx)
 	api.handleWatchResponse(commandId, err)
 }
 
@@ -529,6 +525,7 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 	}
 	tablePattern := ""
 	partitionsToBackup := make([]string, 0)
+	skipProjections := make([]string, 0)
 	schemaOnly := false
 	rbacOnly := false
 	configsOnly := false
@@ -590,12 +587,16 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 			skipCheckPartsColumns = true
 			fullCommand = fmt.Sprintf("%s --skip-check-parts-columns", fullCommand)
 		}
+		if matchParam, skipProjectionsFromArgs := simpleParseArg(i, args, "--skip-projections"); matchParam {
+			skipProjections = append(skipProjections, skipProjectionsFromArgs)
+			fullCommand = fmt.Sprintf("%s --skip-projections=%s", fullCommand, skipProjectionsFromArgs)
+		}
 	}
 
 	commandId, _ := status.Current.Start(fullCommand)
 	go func() {
 		b := backup.NewBackuper(cfg)
-		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, skipCheckPartsColumns, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
+		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, skipProjections, schemaOnly, rbacOnly, configsOnly, skipCheckPartsColumns, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
 		api.handleWatchResponse(commandId, err)
 	}()
 
@@ -772,6 +773,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 	backupsJSON := make([]backupJSON, 0)
 	cfg, err := api.ReloadConfig(w, "list")
 	if err != nil {
+		api.writeError(w, http.StatusInternalServerError, "list", err)
 		return
 	}
 	vars := mux.Vars(r)
@@ -782,10 +784,6 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	commandId, ctx := status.Current.Start(fullCommand)
 	defer status.Current.Stop(commandId, err)
-	if err != nil {
-		api.writeError(w, http.StatusInternalServerError, "list", err)
-		return
-	}
 	b := backup.NewBackuper(cfg)
 	if where == "local" || !wherePresent {
 		var localBackups []backup.LocalBackup
@@ -875,6 +873,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	createConfigs := false
 	configsOnly := false
 	checkPartsColumns := true
+	skipProjections := make([]string, 0)
 	resume := false
 	fullCommand := "create"
 	query := r.URL.Query()
@@ -917,6 +916,11 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		fullCommand += " --skip-check-parts-columns"
 	}
 
+	if skipProjectionsFromQuery, exist := api.getQueryParameter(query, "skip-projections"); exist {
+		skipProjections = append(skipProjections, skipProjectionsFromQuery)
+		fullCommand += " --skip-projections=" + strings.Join(skipProjections, ",")
+	}
+
 	if _, exist := query["resume"]; exist {
 		resume = true
 		fullCommand += " --resume"
@@ -938,7 +942,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("create", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.CreateBackup(backupName, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, checkPartsColumns, resume, api.clickhouseBackupVersion, commandId)
+			return b.CreateBackup(backupName, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, checkPartsColumns, skipProjections, resume, api.clickhouseBackupVersion, commandId)
 		})
 		if err != nil {
 			log.Error().Msgf("API /backup/create error: %v", err)
@@ -981,6 +985,7 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	tablePattern := ""
 	partitionsToBackup := make([]string, 0)
+	skipProjections := make([]string, 0)
 	schemaOnly := false
 	rbacOnly := false
 	configsOnly := false
@@ -1032,6 +1037,10 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 		skipCheckPartsColumns = true
 		fullCommand = fmt.Sprintf("%s --skip-check-parts-columns", fullCommand)
 	}
+	if skipProjectionsFromQuery, exist := api.getQueryParameter(query, "skip_projections"); exist {
+		skipProjections = append(skipProjections, skipProjectionsFromQuery)
+		fullCommand = fmt.Sprintf("%s --skip-projections=%s", fullCommand, skipProjectionsFromQuery)
+	}
 
 	if status.Current.CheckCommandInProgress(fullCommand) {
 		log.Warn().Msgf("%s error: %v", fullCommand, ErrAPILocked)
@@ -1042,7 +1051,7 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 	commandId, _ := status.Current.Start(fullCommand)
 	go func() {
 		b := backup.NewBackuper(cfg)
-		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, skipCheckPartsColumns, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
+		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, skipProjections, schemaOnly, rbacOnly, configsOnly, skipCheckPartsColumns, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
 		api.handleWatchResponse(commandId, err)
 	}()
 	api.sendJSONEachRow(w, http.StatusCreated, struct {
@@ -1128,6 +1137,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	name := utils.CleanBackupNameRE.ReplaceAllString(vars["name"], "")
 	tablePattern := ""
 	partitionsToBackup := make([]string, 0)
+	skipProjections := make([]string, 0)
 	schemaOnly := false
 	rbacOnly := false
 	configsOnly := false
@@ -1168,6 +1178,10 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		configsOnly = true
 		fullCommand += " --configs-only"
 	}
+	if skipProjectionsFromQuery, exist := query["skip-projections"]; exist {
+		skipProjections = skipProjectionsFromQuery
+		fullCommand += " --skip-projections=" + strings.Join(skipProjectionsFromQuery, ",")
+	}
 	if _, exist := query["resumable"]; exist {
 		resume = true
 		fullCommand += " --resumable"
@@ -1190,7 +1204,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		commandId, _ := status.Current.Start(fullCommand)
 		err, _ := api.metrics.ExecuteWithMetrics("upload", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.Upload(name, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, resume, api.cliApp.Version, commandId)
+			return b.Upload(name, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, skipProjections, schemaOnly, rbacOnly, configsOnly, resume, api.cliApp.Version, commandId)
 		})
 		if err != nil {
 			log.Error().Msgf("Upload error: %v", err)
@@ -1250,6 +1264,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	rbacOnly := false
 	restoreConfigs := false
 	configsOnly := false
+	skipProjections := make([]string, 0)
 	resume := false
 	fullCommand := "restore"
 	operationId, _ := uuid.NewUUID()
@@ -1345,6 +1360,10 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		configsOnly = true
 		fullCommand += " --configs-only"
 	}
+	if skipProjectionsFromQuery, exist := api.getQueryParameter(query, "skip-projections"); exist {
+		skipProjections = append(skipProjections, skipProjectionsFromQuery)
+		fullCommand += " --skip-projections=" + strings.Join(skipProjections, ",")
+	}
 	if _, exist := query["resumable"]; exist {
 		resume = true
 		fullCommand += " --resumable"
@@ -1368,7 +1387,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore", 0, func() error {
 			b := backup.NewBackuper(api.config)
-			return b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume, api.cliApp.Version, commandId)
+			return b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume, api.cliApp.Version, commandId)
 		})
 		go func() {
 			if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
@@ -1627,9 +1646,10 @@ func (api *APIServer) UpdateBackupMetrics(ctx context.Context, onlyLocal bool) e
 		}
 	}
 	if lastBackupUpload != nil {
-		api.metrics.LastFinish["upload"].Set(float64(lastBackupCreateRemote.Unix()))
 		if lastBackupCreateRemote == nil || lastBackupUpload.Unix() > lastBackupCreateRemote.Unix() {
 			api.metrics.LastFinish["create_remote"].Set(float64(lastBackupUpload.Unix()))
+		} else {
+			api.metrics.LastFinish["upload"].Set(float64(lastBackupCreateRemote.Unix()))
 		}
 	}
 
