@@ -115,7 +115,7 @@ func main() {
 			Description: "Create new backup",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CreateBackup(c.Args().First(), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("skip-check-parts-columns"), c.Bool("resume"), version, c.Int("command-id"))
+				return b.CreateBackup(c.Args().First(), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("skip-check-parts-columns"), c.StringSlice("skip-projections"), c.Bool("resume"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -169,6 +169,11 @@ func main() {
 					Hidden: false,
 					Usage:  "Skip check system.parts_columns to allow backup inconsistent column types for data parts",
 				},
+				cli.StringSliceFlag{
+					Name:   "skip-projections",
+					Hidden: false,
+					Usage:  "Skip make hardlinks to *.proj/* files during backup creation, format `db_pattern.table_pattern:projections_pattern`, use https://pkg.go.dev/path/filepath#Match syntax",
+				},
 				cli.BoolFlag{
 					Name:   "resume, resumable",
 					Hidden: false,
@@ -183,7 +188,7 @@ func main() {
 			Description: "Create and upload",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CreateToRemote(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), c.Bool("skip-check-parts-columns"), version, c.Int("command-id"))
+				return b.CreateToRemote(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("tables"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("skip-check-parts-columns"), c.Bool("schema"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -247,6 +252,11 @@ func main() {
 					Hidden: false,
 					Usage:  "Skip check system.parts_columns to allow backup inconsistent column types for data parts",
 				},
+				cli.StringSliceFlag{
+					Name:   "skip-projections",
+					Hidden: false,
+					Usage:  "Skip make and upload hardlinks to *.proj/* files during backup creation, format `db_pattern.table_pattern:projections_pattern`, use https://pkg.go.dev/path/filepath#Match syntax",
+				},
 				cli.BoolFlag{
 					Name:   "delete, delete-source, delete-local",
 					Hidden: false,
@@ -260,7 +270,7 @@ func main() {
 			UsageText: "clickhouse-backup upload [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--diff-from=<local_backup_name>] [--diff-from-remote=<remote_backup_name>] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Upload(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("schema"), c.Bool("rbac-only"), c.Bool("configs-only"), c.Bool("resume"), version, c.Int("command-id"))
+				return b.Upload(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac-only"), c.Bool("configs-only"), c.Bool("resume"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -303,6 +313,11 @@ func main() {
 					Name:   "configs-only, configs",
 					Hidden: false,
 					Usage:  "Upload 'clickhouse-server' configuration files only, will skip upload data, will backup schema only if --schema added",
+				},
+				cli.StringSliceFlag{
+					Name:   "skip-projections",
+					Hidden: false,
+					Usage:  "Skip make and upload hardlinks to *.proj/* files during backup creation, format `db_pattern.table_pattern:projections_pattern`, use https://pkg.go.dev/path/filepath#Match syntax",
 				},
 				cli.BoolFlag{
 					Name:   "resume, resumable",
@@ -380,7 +395,7 @@ func main() {
 			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--resume] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Restore(c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.Bool("schema"), c.Bool("data"), c.Bool("drop"), c.Bool("ignore-dependencies"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), version, c.Int("command-id"))
+				return b.Restore(c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("data"), c.Bool("drop"), c.Bool("ignore-dependencies"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -449,6 +464,11 @@ func main() {
 					Hidden: false,
 					Usage:  "Restore 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added",
 				},
+				cli.StringSliceFlag{
+					Name:   "skip-projections",
+					Hidden: false,
+					Usage:  "Skip make hardlinks to *.proj/* files during backup restoring, format `db_pattern.table_pattern:projections_pattern`, use https://pkg.go.dev/path/filepath#Match syntax",
+				},
 				cli.BoolFlag{
 					Name:   "resume, resumable",
 					Hidden: false,
@@ -462,7 +482,7 @@ func main() {
 			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--skip-rbac] [--skip-configs] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.RestoreFromRemote(c.Args().First(), c.String("t"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), version, c.Int("command-id"))
+				return b.RestoreFromRemote(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -531,6 +551,11 @@ func main() {
 					Hidden: false,
 					Usage:  "Restore 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added",
 				},
+				cli.StringSliceFlag{
+					Name:   "skip-projections",
+					Hidden: false,
+					Usage:  "Skip make hardlinks to *.proj/* files during backup restoring, format `db_pattern.table_pattern:projections_pattern`, use https://pkg.go.dev/path/filepath#Match syntax",
+				},
 				cli.BoolFlag{
 					Name:   "resume, resumable",
 					Hidden: false,
@@ -598,7 +623,7 @@ func main() {
 			Description: "Execute create_remote + delete local, create full backup every `--full-interval`, create and upload incremental backup every `--watch-interval` use previous backup as base with `--diff-from-remote` option, use `backups_to_keep_remote` config option for properly deletion remote backups, will delete old backups which not have references from other backups",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Watch(c.String("watch-interval"), c.String("full-interval"), c.String("watch-backup-name-template"), c.String("tables"), c.StringSlice("partitions"), c.Bool("schema"), c.Bool("rbac"), c.Bool("configs"), c.Bool("skip-check-parts-columns"), version, c.Int("command-id"), nil, c)
+				return b.Watch(c.String("watch-interval"), c.String("full-interval"), c.String("watch-backup-name-template"), c.String("tables"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac"), c.Bool("configs"), c.Bool("skip-check-parts-columns"), version, c.Int("command-id"), nil, c)
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -651,6 +676,11 @@ func main() {
 					Name:   "skip-check-parts-columns",
 					Hidden: false,
 					Usage:  "Skip check system.parts_columns to allow backup inconsistent column types for data parts",
+				},
+				cli.StringSliceFlag{
+					Name:   "skip-projections",
+					Hidden: false,
+					Usage:  "Skip make and upload hardlinks to *.proj/* files during backup creation, format `db_pattern.table_pattern:projections_pattern`, use https://pkg.go.dev/path/filepath#Match syntax",
 				},
 			),
 		},

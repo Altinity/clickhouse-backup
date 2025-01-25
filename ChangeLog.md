@@ -2,6 +2,8 @@
 
 IMPROVEMENTS
 
+- Add option `--skip-projections` to `create`, `upload`, `restore` commands, with table pattern to allow make backup
+  without projection fix [861](https://github.com/Altinity/clickhouse-backup/issues/861)
 - remove `S3_PART_SIZE` and `AZBLOB_BUFFER_SIZE` parameter from configuration and significant decrease memory usage
   during upload and download, fix [854](https://github.com/Altinity/clickhouse-backup/issues/854)
 - add `--configs-only` and `--rbac-only` options to `upload` and `download` command,

@@ -43,6 +43,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --rbac-only                                                                                Backup RBAC related objects only, will skip backup data, will backup schema only if --schema added
    --configs-only                                                                             Backup 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
    --skip-check-parts-columns                                                                 Skip check system.parts_columns to allow backup inconsistent column types for data parts
+   --skip-projections                                                                         Skip make hardlinks to *.proj/* files during backup creation
    --resume use_embedded_backup_restore: true, --resumable use_embedded_backup_restore: true  Will resume upload for object disk data, hard links on local disk still continue to recreate, not work when use_embedded_backup_restore: true
    
 ```
@@ -77,6 +78,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --configs-only                                    Backup 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
    --resume, --resumable                             Save intermediate upload state and resume upload if backup exists on remote storage, ignore when 'remote_storage: custom' or 'use_embedded_backup_restore: true'
    --skip-check-parts-columns                        Skip check system.parts_columns to allow backup inconsistent column types for data parts
+   --skip-projections                                Skip make and upload hardlinks to *.proj/* files during backup creation
    --delete, --delete-source, --delete-local         explicitly delete local backup during upload
    
 ```
@@ -104,6 +106,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --schema, -s                               Upload schemas only
    --rbac-only, --rbac                        Upload RBAC related objects only, will skip upload data, will backup schema only if --schema added
    --configs-only, --configs                  Upload 'clickhouse-server' configuration files only, will skip upload data, will backup schema only if --schema added
+   --skip-projections                         Skip make and upload hardlinks to *.proj/* files during backup creation
    --resume, --resumable                      Save intermediate upload state and resume upload if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
    --delete, --delete-source, --delete-local  explicitly delete local backup during upload
    
@@ -175,6 +178,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --configs, --restore-configs, --do-restore-configs  Restore 'clickhouse-server' CONFIG related files
    --rbac-only                                         Restore RBAC related objects only, will skip backup data, will backup schema only if --schema added
    --configs-only                                      Restore 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
+   --skip-projections                                  Skip make hardlinks to *.proj/* files during backup restoring
    --resume, --resumable                               Will resume download for object disk data
    
 ```
@@ -207,6 +211,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --configs, --restore-configs, --do-restore-configs  Download and Restore 'clickhouse-server' CONFIG related files
    --rbac-only                                         Restore RBAC related objects only, will skip backup data, will backup schema only if --schema added
    --configs-only                                      Restore 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
+   --skip-projections                                  Skip make hardlinks to *.proj/* files during backup restoring
    --resume, --resumable                               Save intermediate download state and resume download if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
    
 ```
@@ -304,6 +309,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --rbac, --backup-rbac, --do-backup-rbac           Backup RBAC related objects only
    --configs, --backup-configs, --do-backup-configs  Backup `clickhouse-server' configuration files only
    --skip-check-parts-columns                        Skip check system.parts_columns to allow backup inconsistent column types for data parts
+   --skip-projections                                Skip make and upload hardlinks to *.proj/* files during backup creation
    
 ```
 ### CLI command - server

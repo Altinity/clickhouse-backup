@@ -116,7 +116,7 @@ func MkdirAll(path string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk) e
 }
 
 // HardlinkBackupPartsToStorage - copy partitions for specific table to detached folder
-func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableMetadata, disks []clickhouse.Disk, diskMap map[string]string, tableDataPaths []string, ch *clickhouse.ClickHouse, toDetached bool) error {
+func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableMetadata, disks []clickhouse.Disk, diskMap map[string]string, tableDataPaths, skipProjections []string, ch *clickhouse.ClickHouse, toDetached bool) error {
 	start := time.Now()
 	dstDataPaths := clickhouse.GetDisksByPaths(disks, tableDataPaths)
 	dbAndTableDir := path.Join(common.TablePathEncode(backupTable.Database), common.TablePathEncode(backupTable.Table))
@@ -147,7 +147,7 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 				backupDiskName = part.RebalancedDisk
 				dstParentDir, dstParentDirExists = dstDataPaths[part.RebalancedDisk]
 				if !dstParentDirExists {
-					return fmt.Errorf("dstDataPaths=%#v, not contains %s", dstDataPaths, part.RebalancedDisk)
+					return fmt.Errorf("dstDataPaths=%#v, not contains rebalanced %s", dstDataPaths, part.RebalancedDisk)
 				}
 			}
 			backupDiskPath := diskMap[backupDiskName]
@@ -175,12 +175,20 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 					return err
 				}
 				// fix https://github.com/Altinity/clickhouse-backup/issues/826
-				if strings.Contains(info.Name(), "frozen_metadata") {
+				if strings.Contains(info.Name(), "frozen_metadata.txt") {
 					return nil
 				}
 				filename := strings.Trim(strings.TrimPrefix(filePath, srcPartPath), "/")
+				// https://github.com/Altinity/clickhouse-backup/issues/861
+				if IsSkipProjections(skipProjections, path.Join(backupTable.Database, backupTable.Table, part.Name, filename)) {
+					return nil
+				}
 				dstFilePath := filepath.Join(dstPartPath, filename)
 				if info.IsDir() {
+					// https://github.com/Altinity/clickhouse-backup/issues/861
+					if IsSkipProjections(skipProjections, path.Join(backupTable.Database, backupTable.Table, part.Name, filename)+"/") {
+						return nil
+					}
 					log.Debug().Msgf("MkDir %s", dstFilePath)
 					return Mkdir(dstFilePath, ch, disks)
 				}
@@ -248,12 +256,12 @@ func IsFileInPartition(disk, fileName string, partitionsBackupMap common.EmptyMa
 	return false
 }
 
-func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap common.EmptyMap, tableDiffFromRemote metadata.TableMetadata, disk clickhouse.Disk, version int) ([]metadata.Part, int64, error) {
+func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap common.EmptyMap, table *clickhouse.Table, tableDiffFromRemote metadata.TableMetadata, disk clickhouse.Disk, skipProjections []string, version int) ([]metadata.Part, int64, error) {
 	size := int64(0)
 	parts := make([]metadata.Part, 0)
 	err := filepath.Walk(shadowPath, func(filePath string, info os.FileInfo, err error) error {
 		// fix https://github.com/Altinity/clickhouse-backup/issues/826
-		if strings.Contains(info.Name(), "frozen_metadata") {
+		if strings.Contains(info.Name(), "frozen_metadata.txt") {
 			return nil
 		}
 
@@ -267,6 +275,12 @@ func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap 
 		if len(pathParts) != 4 {
 			return nil
 		}
+
+		// https://github.com/Altinity/clickhouse-backup/issues/861
+		if IsSkipProjections(skipProjections, path.Join(table.Database, table.Name, path.Join(pathParts[3:]...))) {
+			return nil
+		}
+
 		if len(partitionsBackupMap) != 0 && !IsPartInPartition(pathParts[3], partitionsBackupMap) {
 			return nil
 		}
@@ -300,6 +314,64 @@ func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap 
 	// https://github.com/ClickHouse/ClickHouse/issues/71009
 	metadata.SortPartsByMinBlock(parts)
 	return parts, size, err
+}
+
+func IsSkipProjections(skipProjections []string, relativePath string) bool {
+	log.Debug().Msgf("try IsSkipProjections, skipProjections=%v, relativePath=%s", skipProjections, relativePath)
+	if skipProjections == nil || len(skipProjections) == 0 {
+		return false
+	}
+
+	matchPattenFinal := func(dbPattern string, tablePattern string, projectionPattern string, relativePath string) bool {
+		finalPattern := path.Join(dbPattern, tablePattern, "*", projectionPattern+".proj", "*")
+		if strings.HasSuffix(relativePath, ".proj") {
+			finalPattern = path.Join(dbPattern, tablePattern, "*", projectionPattern+".proj")
+		}
+		if isMatched, err := filepath.Match(finalPattern, relativePath); isMatched {
+			return isMatched
+		} else if err != nil {
+			log.Warn().Msgf("filepath.Match(%s, %s) return error: %v", finalPattern, relativePath, err)
+		} else {
+			log.Debug().Msgf("IsSkipProjections not matched %s->%s", finalPattern, relativePath)
+		}
+		return false
+	}
+	if strings.Contains(relativePath, ".proj/") || strings.HasSuffix(relativePath, ".proj") {
+		dbPattern := "*"
+		tablePattern := "*"
+		projectionPattern := "*"
+		isWildCardPattern := true
+		for _, skipPatterns := range skipProjections {
+			for _, tableAndProjectionPatterns := range strings.Split(skipPatterns, ",") {
+				dbPattern = "*"
+				tablePattern = "*"
+				projectionPattern = "*"
+				tableAndProjectionPattern := strings.SplitN(tableAndProjectionPatterns, ":", 2)
+				if len(tableAndProjectionPattern) == 2 {
+					projectionPattern = tableAndProjectionPattern[1]
+					isWildCardPattern = false
+				}
+				dbAndTablePattern := strings.SplitN(tableAndProjectionPattern[0], ".", 2)
+				if len(dbAndTablePattern) == 2 {
+					dbPattern = dbAndTablePattern[0]
+					tablePattern = dbAndTablePattern[1]
+					isWildCardPattern = false
+				} else {
+					tablePattern = dbAndTablePattern[0]
+					isWildCardPattern = false
+				}
+				if isMatched := matchPattenFinal(dbPattern, tablePattern, projectionPattern, relativePath); isMatched {
+					return true
+				}
+			}
+		}
+		if isWildCardPattern {
+			if isMatched := matchPattenFinal(dbPattern, tablePattern, projectionPattern, relativePath); isMatched {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func addRequiredPartIfNotExists(parts []metadata.Part, relativePath string, tableDiffFromRemote metadata.TableMetadata, disk clickhouse.Disk) ([]metadata.Part, bool, bool) {
