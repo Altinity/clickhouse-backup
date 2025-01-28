@@ -46,12 +46,12 @@ You can create a daily backup by clickhouse-backup and a sync backup folder to m
 ## How to move data to another ClickHouse server
 On the destination server:
 ```bash
-mkdir -p /var/lib/clickhouse/backups/backup_name
+mkdir -p /var/lib/clickhouse/backup/backup_name
 ```
 On the source server:
 ```bash
 clickhouse-backup create backup_name
-rsync --rsh=ssh /var/lib/clickhouse/backups/backup_name/ user@dst_server:/var/lib/clickhouse/backups/backup_name
+rsync --rsh=ssh /var/lib/clickhouse/backup/backup_name/ user@dst_server:/var/lib/clickhouse/backup/backup_name
 ```
 
 On the destination server:
