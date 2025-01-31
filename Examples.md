@@ -132,7 +132,9 @@ You can use clickhouse-backup for creating periodical backups and keep it local.
 In addition, you may create instance of ClickHouse on another DC and have it fresh by clickhouse-copier to protect you from hardware or DC failures.
 
 ## How to use clickhouse-backup in Kubernetes
-Install the [clickhouse kubernetes operator](https://github.com/Altinity/clickhouse-operator/) and use the following manifest:
+Install the [clickhouse kubernetes operator](https://github.com/Altinity/clickhouse-operator/) and use the following manifest.
+
+This particular example creates a `ClickHouseInstallation` which creates a 2-replica 2-shard cluster with two containers - the `clickhouse-server` container and a `clickhouse-backup` container, running in server mode for creating backups both with access to `data-volume` volume. The `clickhouse-backup` container runs `clickhouse-backup` in server mode which provides the backup API (`system.backup_list` and `system.backup_actions`, URL engine tables to the backup API). The S3-compatible object storage credentials and endpoint values are provided via environment variables to the `clickhouse-backup` container, this object storage being where the backup will be uploaded to:
 
 ```yaml
 apiVersion: "clickhouse.altinity.com/v1"
@@ -246,7 +248,7 @@ spec:
                         containerPort: 7171
 ```
 
-You need to prepare remote storage for test only:
+If you want to test with a minio setup, as the example above provides environment variables for, you will need to prepare remote storage using Minio for test only as this also works perfectly with AWS S3 for production:
 
 ```yaml
 ---
@@ -295,7 +297,9 @@ spec:
       targetPort: minio
 ```
 
-You can also use CronJob to run `clickhouse-backup` actions on a schedule:
+To run scheduled backups, you can also use CronJob to run `clickhouse-backup` actions. 
+
+Note: This cron job uses the `clickhouse-server` container which also contains `clickhouse-client` via a script that loops through each server/node in the cluster, querying `system.backup_list` and inserting into `system.backup_actions` resulting in creating backups per `schedule` specified. Previously, it used the `clickhouse-client` image which isn't supported on Kubernetes clusters on arm64 architecture.
 
 ```yaml
 apiVersion: batch/v1
@@ -319,7 +323,7 @@ spec:
           restartPolicy: Never
           containers:
             - name: run-backup-cron
-              image: clickhouse/clickhouse-client:latest
+              image: clickhouse/clickhouse-server:latest
               imagePullPolicy: IfNotPresent
               env:
                 # use first replica in each shard, use `kubectl get svc | grep test-backups`
