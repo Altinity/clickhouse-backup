@@ -323,6 +323,7 @@ spec:
           restartPolicy: Never
           containers:
             - name: run-backup-cron
+               # https://hub.docker.com/r/clickhouse/clickhouse-client/tags, doesn't support arm64 platform, `clickhouse-server` this is the same symlink with `clickhouse-client` to `clickhouse` binary 
               image: clickhouse/clickhouse-server:latest
               imagePullPolicy: IfNotPresent
               env:
