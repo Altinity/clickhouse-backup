@@ -10,7 +10,7 @@ require (
 	github.com/Azure/go-autorest/autorest v0.11.29
 	github.com/Azure/go-autorest/autorest/adal v0.9.24
 	github.com/ClickHouse/clickhouse-go/v2 v2.30.1
-	github.com/antchfx/xmlquery v1.4.3
+	github.com/antchfx/xmlquery v1.4.4
 	github.com/aws/aws-sdk-go-v2 v1.33.0
 	github.com/aws/aws-sdk-go-v2/config v1.28.10
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.51
