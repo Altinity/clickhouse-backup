@@ -5,19 +5,20 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"io"
 	"net/url"
 	"path"
 	"strings"
 	"time"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+
 	x "github.com/Altinity/clickhouse-backup/v2/pkg/storage/azblob"
 
 	"github.com/Azure/azure-pipeline-go/pipeline"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-storage-blob-go/azblob"
-	"github.com/Azure/go-autorest/autorest/adal"
-	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 )
@@ -96,29 +97,26 @@ func (a *AzureBlob) Connect(ctx context.Context) error {
 		credential = azblob.NewAnonymousCredential()
 		urlString = fmt.Sprintf("%s://%s.blob.%s?%s", a.Config.EndpointSchema, a.Config.AccountName, a.Config.EndpointSuffix, a.Config.SharedAccessSignature)
 	} else if a.Config.UseManagedIdentity {
-		azureEnv, err := azure.EnvironmentFromName("AZUREPUBLICCLOUD")
-		if err != nil {
-			return err
-		}
-		var spToken *adal.ServicePrincipalToken
-		msiEndpoint, _ := adal.GetMSIVMEndpoint()
-		spToken, err = adal.NewServicePrincipalTokenFromMSI(msiEndpoint, azureEnv.ResourceIdentifiers.Storage)
-		if err != nil {
-			return err
-		}
 		tokenRefresher := func(tokenCred azblob.TokenCredential) time.Duration {
-			// Refreshing Azure auth token
-			err := spToken.Refresh()
+			cred, err := azidentity.NewDefaultAzureCredential(nil)
+			if err != nil {
+				// Error creating Azure credential, retry after 1 min.
+				return 1 * time.Minute
+			}
+			tokenRequestOptions := policy.TokenRequestOptions{
+				Scopes: []string{"https://storage.azure.com/.default"},
+			}
+			// Get Azure auth token
+			token, err := cred.GetToken(ctx, tokenRequestOptions)
 			if err != nil {
 				// Error refreshing Azure auth token, retry after 1 min.
 				return 1 * time.Minute
 			}
-			token := spToken.Token()
-			tokenCred.SetToken(token.AccessToken)
+			tokenCred.SetToken(token.Token)
 			// Return the expiry time of <response> minus 30 min. so we can retry
 			// OAuth token is valid for 1hr.
 			// ManagedIdentity one for 24 hrs.
-			exp := token.Expires().Sub(time.Now().Add(30 * time.Minute))
+			exp := token.ExpiresOn.Sub(time.Now()) - 30*time.Minute
 			// Received a new Azure auth token, valid for exp
 			return exp
 		}
