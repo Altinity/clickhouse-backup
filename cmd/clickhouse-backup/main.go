@@ -569,12 +569,12 @@ func main() {
 			UsageText: "clickhouse-backup delete <local|remote> <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				if c.Args().Get(1) == "" {
-					log.Err(fmt.Errorf("backup name must be defined")).Send()
+				if c.Args().Get(0) != "local" && c.Args().Get(0) != "remote" {
+					log.Err(fmt.Errorf("Unknown sub-command '%s', use 'local' or 'remote'\n", c.Args().Get(0))).Send()
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
 				}
-				if c.Args().Get(0) != "local" && c.Args().Get(0) != "remote" {
-					log.Err(fmt.Errorf("Unknown command '%s'\n", c.Args().Get(0))).Send()
+				if c.Args().Get(1) == "" {
+					log.Err(fmt.Errorf("backup name must be defined")).Send()
 					cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
 				}
 				return b.Delete(c.Args().Get(0), c.Args().Get(1), c.Int("command-id"))
