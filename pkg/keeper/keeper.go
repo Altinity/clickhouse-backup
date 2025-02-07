@@ -225,23 +225,23 @@ type WalkCallBack = func(node DumpNode) (bool, error)
 func (k *Keeper) Walk(prefix, relativePath string, recursive bool, callback WalkCallBack) error {
 	nodePath := path.Join(prefix, relativePath)
 	value, stat, err := k.conn.Get(nodePath)
-	log.Debug().Msgf("Walk->get(%s) = %v, err = %v", nodePath, string(value), err)
+	log.Debug().Msgf("k.Walk->get(%s) = %v, err = %v", nodePath, string(value), err)
 	if err != nil {
-		return fmt.Errorf("Walk->get(%s) = %v, err = %v", nodePath, string(value), err)
+		return fmt.Errorf("k.Walk->get(%s) = %v, err = %v", nodePath, string(value), err)
 	}
 	var isDone bool
 	callbackNode := DumpNode{Path: nodePath, Value: string(value)}
 	if isDone, err = callback(callbackNode); err != nil {
-		return fmt.Errorf("Walk->callback(%v) error: %v", callbackNode, err)
+		return fmt.Errorf("k.Walk->callback(%v) error: %v", callbackNode, err)
 	}
 	if isDone {
 		return nil
 	}
 	if recursive && stat.NumChildren > 0 {
 		children, _, err := k.conn.Children(path.Join(prefix, relativePath))
-		log.Debug().Msgf("Walk->Children(%s) = %v, err = %v", path.Join(prefix, relativePath), children, err)
+		log.Debug().Msgf("k.Walk->Children(%s) = %v, err = %v", path.Join(prefix, relativePath), children, err)
 		if err != nil {
-			return fmt.Errorf("Walk->Children(%s) = %v, err = %v", path.Join(prefix, relativePath), children, err)
+			return fmt.Errorf("k.Walk->Children(%s) = %v, err = %v", path.Join(prefix, relativePath), children, err)
 		}
 		for _, childPath := range children {
 			if childErr := k.Walk(prefix, path.Join(relativePath, childPath), recursive, callback); childErr != nil {
