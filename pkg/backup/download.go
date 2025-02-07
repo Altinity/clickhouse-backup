@@ -718,6 +718,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 
 func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.BackupMetadata, table metadata.TableMetadata, dbAndTableDir string) error {
 	log.Debug().
+		Str("backup", remoteBackup.BackupName).
 		Str("operation", "downloadDiffParts").
 		Str("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).
 		Msg("start")
@@ -756,7 +757,7 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 				return fmt.Errorf("%s stat return error: %v", existsPath, err)
 			}
 			if err != nil && os.IsNotExist(err) {
-				//if existPath already processed then expect non empty newPath
+				//if existPath already processed then expect non-empty newPath
 				if b.resume && b.resumableState.IsAlreadyProcessedBool(existsPath) {
 					if newPathDirList, newPathDirErr := os.ReadDir(newPath); newPathDirErr != nil {
 						newPathDirErr = fmt.Errorf("os.ReadDir(%s) error: %v", newPath, newPathDirErr)
@@ -821,6 +822,7 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 		return fmt.Errorf("one of downloadDiffParts go-routine return error: %v", err)
 	}
 	log.Info().
+		Str("backup", remoteBackup.BackupName).
 		Str("operation", "downloadDiffParts").
 		Str("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).
 		Str("duration", utils.HumanizeDuration(time.Since(start))).
