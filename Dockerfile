@@ -130,9 +130,9 @@ LABEL "org.opencontainers.image.description"="A tool for easy ClickHouse backup 
 LABEL "org.opencontainers.image.source"="https://github.com/Altinity/clickhouse-backup"
 LABEL "org.opencontainers.image.documentation"="https://github.com/Altinity/clickhouse-backup/blob/master/Manual.md"
 
-RUN bash -xec "apt-get update && apt-get install --no-install-recommends -y xxd bsdmainutils parallel curl wget && apt-get install -y gpg && curl -sL https://kopia.io/signing-key | gpg --dearmor --verbose -o /usr/share/keyrings/kopia-keyring.gpg && \
+RUN bash -xec "apt-get update && apt-get install --no-install-recommends -y xxd bsdmainutils parallel wget && apt-get install -y gpg curl && wget -qO- https://kopia.io/signing-key | gpg --dearmor --verbose -o /usr/share/keyrings/kopia-keyring.gpg && \
     echo 'deb [signed-by=/usr/share/keyrings/kopia-keyring.gpg] https://packages.kopia.io/apt/ stable main' > /etc/apt/sources.list.d/kopia.list && \
-    curl -sL 'https://packages.clickhouse.com/rpm/lts/repodata/repomd.xml.key' | gpg --dearmor --verbose -o /usr/share/keyrings/clickhouse-keyring.gpg && \
+    wget -qO- 'https://packages.clickhouse.com/rpm/lts/repodata/repomd.xml.key' | gpg --dearmor --verbose -o /usr/share/keyrings/clickhouse-keyring.gpg && \
     echo 'deb [signed-by=/usr/share/keyrings/clickhouse-keyring.gpg arch=$(dpkg --print-architecture)] https://packages.clickhouse.com/deb stable main' > /etc/apt/sources.list.d/clickhouse.list && \
     apt-get update -y && \
     apt-get install --no-install-recommends -y ca-certificates tzdata bash curl restic rsync rclone jq gpg kopia libcap2-bin clickhouse-client && \
