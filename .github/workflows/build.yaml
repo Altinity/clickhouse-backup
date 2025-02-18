@@ -111,7 +111,7 @@ jobs:
   testflows:
     needs: build
     name: Testflows
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         golang-version:
@@ -214,7 +214,7 @@ jobs:
   test:
     needs: build
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         golang-version:
@@ -370,7 +370,7 @@ jobs:
       - test
       - testflows
     name: coverage
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
         - name: Coveralls Finished
           uses: coverallsapp/github-action@v2
@@ -428,7 +428,7 @@ jobs:
     needs:
       - docker
       - coverage
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     if: always()
     steps:
       - name: delete build-artifacts
