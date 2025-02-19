@@ -137,7 +137,7 @@ RUN bash -xec "apt-get update && apt-get install --no-install-recommends -y xxd 
     apt-get update -y && \
     apt-get install --no-install-recommends -y ca-certificates tzdata bash curl restic rsync rclone jq gpg kopia libcap2-bin clickhouse-client && \
     update-ca-certificates && \
-    curl -sL 'https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)' -o /usr/bin/yq && chmod +x /usr/bin/yq && \
+    wget -q 'https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)' -c -O /usr/bin/yq && chmod +x /usr/bin/yq && \
     rm -rf /var/lib/apt/lists/* && rm -rf /var/cache/apt/*"
 
 COPY entrypoint.sh /entrypoint.sh
