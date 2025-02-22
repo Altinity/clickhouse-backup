@@ -153,9 +153,11 @@ func (a *AzureBlob) Connect(ctx context.Context) error {
 		}
 		a.Pipeline = azblob.NewPipeline(credential, options)
 		a.Container = azblob.NewServiceURL(*u, a.Pipeline).NewContainerURL(a.Config.Container)
-		_, err = a.Container.Create(ctx, azblob.Metadata{}, azblob.PublicAccessNone)
-		if err != nil && !isContainerAlreadyExists(err) {
-			return err
+		if !a.Config.AssumeContainerExists {
+			_, err = a.Container.Create(ctx, azblob.Metadata{}, azblob.PublicAccessNone)
+			if err != nil && !isContainerAlreadyExists(err) {
+				return err
+			}
 		}
 		if a.Config.SSEKey != "" {
 			key, err := base64.StdEncoding.DecodeString(a.Config.SSEKey)

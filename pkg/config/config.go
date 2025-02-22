@@ -105,6 +105,7 @@ type AzureBlobConfig struct {
 	SharedAccessSignature string `yaml:"sas" envconfig:"AZBLOB_SAS"`
 	UseManagedIdentity    bool   `yaml:"use_managed_identity" envconfig:"AZBLOB_USE_MANAGED_IDENTITY"`
 	Container             string `yaml:"container" envconfig:"AZBLOB_CONTAINER"`
+	AssumeContainerExists bool   `yaml:"assume_container_exists" envconfig:"AZBLOB_ASSUME_CONTAINER_EXISTS"`
 	Path                  string `yaml:"path" envconfig:"AZBLOB_PATH"`
 	ObjectDiskPath        string `yaml:"object_disk_path" envconfig:"AZBLOB_OBJECT_DISK_PATH"`
 	CompressionLevel      int    `yaml:"compression_level" envconfig:"AZBLOB_COMPRESSION_LEVEL"`
