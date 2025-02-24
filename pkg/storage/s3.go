@@ -119,7 +119,7 @@ func (s *S3) Connect(ctx context.Context) error {
 	var awsConfig aws.Config
 	awsConfig, err = awsV2Config.LoadDefaultConfig(
 		ctx,
-		awsV2Config.WithRetryMode(aws.RetryModeAdaptive),
+		awsV2Config.WithRetryMode(aws.RetryModeStandard),
 	)
 	if err != nil {
 		return err

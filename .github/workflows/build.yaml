@@ -111,7 +111,7 @@ jobs:
   testflows:
     needs: build
     name: Testflows
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         golang-version:
@@ -214,7 +214,7 @@ jobs:
   test:
     needs: build
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         golang-version:
@@ -370,7 +370,7 @@ jobs:
       - test
       - testflows
     name: coverage
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
         - name: Coveralls Finished
           uses: coverallsapp/github-action@v2
@@ -382,7 +382,7 @@ jobs:
       - test
       - testflows
     name: Docker
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
@@ -418,9 +418,9 @@ jobs:
             echo ${DOCKER_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin ${DOCKER_REGISTRY}
             export VERSION=$(git describe --always --tags --abbrev=0 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/c\1/;s/-/./g')
 
+            docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}-full:${DOCKER_TAG} --build-arg VERSION=$VERSION --target=image_full --pull --push .
             docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG} --build-arg VERSION=$VERSION --target=image_short --pull --push .
             docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}-fips --build-arg VERSION=$VERSION --target=image_fips --pull --push .
-            docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}-full:${DOCKER_TAG} --build-arg VERSION=$VERSION --target=image_full --pull --push .
           fi
 
   cleanup:
@@ -428,7 +428,7 @@ jobs:
     needs:
       - docker
       - coverage
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     if: always()
     steps:
       - name: delete build-artifacts

@@ -77,7 +77,7 @@ services:
         condition: service_healthy
 
   mysql:
-    image: mysql:${MYSQL_VERSION:-latest}
+    image: mysql:${MYSQL_VERSION:-8.0}
     command: --gtid_mode=on --enforce_gtid_consistency=ON
     hostname: mysql
     environment:

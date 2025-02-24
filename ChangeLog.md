@@ -9,6 +9,8 @@ IMPROVEMENTS
   during upload and download, fix [854](https://github.com/Altinity/clickhouse-backup/issues/854)
 - add `--configs-only` and `--rbac-only` options to `upload` and `download` command,
   fix [1042](https://github.com/Altinity/clickhouse-backup/issues/1042)
+- add support `\` and `/` special characters in table name and database name,
+  fix [1091](https://github.com/Altinity/clickhouse-backup/issues/1091)
 
 BUG FIXES
 

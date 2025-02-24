@@ -79,12 +79,12 @@ func init() {
 	dockerPool.Config.MaxTotal = runParallelInt
 }
 
-const dbNameAtomic = "_test#$.ДБ_atomic_"
-const dbNameOrdinary = "_test#$.ДБ_ordinary_"
+const dbNameAtomic = "_test#$.ДБ_atomic_/issue\\_1091"
+const dbNameOrdinary = "_test#$.ДБ_ordinary_/issue\\_1091"
 const dbNameMySQL = "mysql_db"
 const dbNamePostgreSQL = "pgsql_db"
-const Issue331Atomic = "_issue331._atomic_"
-const Issue331Ordinary = "_issue331.ordinary_"
+const Issue331Issue1091Atomic = "_issue331._atomic_/issue\\_1091"
+const Issue331Issue1091Ordinary = "_issue331.ordinary_/issue\\_1091"
 
 type TestDataStruct struct {
 	Database           string
@@ -152,28 +152,28 @@ var defaultTestData = []TestDataStruct{
 		Fields:  []string{"TimeStamp", "Item"},
 		OrderBy: "TimeStamp",
 	}, {
-		Database: Issue331Atomic, DatabaseEngine: "Atomic",
-		Name:   Issue331Atomic, // need cover fix https://github.com/Altinity/clickhouse-backup/issues/331
-		Schema: fmt.Sprintf("(`%s` UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY `%s` ORDER BY (`%s`, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192", Issue331Atomic, Issue331Atomic, Issue331Atomic),
+		Database: Issue331Issue1091Atomic, DatabaseEngine: "Atomic",
+		Name:   Issue331Issue1091Atomic, // need cover fix https://github.com/Altinity/clickhouse-backup/issues/331
+		Schema: fmt.Sprintf("(`%s` UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY `%s` ORDER BY (`%s`, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192", Issue331Issue1091Atomic, Issue331Issue1091Atomic, Issue331Issue1091Atomic),
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
 			for i := 0; i < 100; i++ {
-				result = append(result, map[string]interface{}{Issue331Atomic: uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
+				result = append(result, map[string]interface{}{Issue331Issue1091Atomic: uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
 			}
 			return result
 		}(),
-		Fields:  []string{Issue331Atomic, "Col1", "Col2", "Col3", "Col4", "Col5"},
-		OrderBy: Issue331Atomic + "_{test}",
+		Fields:  []string{Issue331Issue1091Atomic, "Col1", "Col2", "Col3", "Col4", "Col5"},
+		OrderBy: Issue331Issue1091Atomic + "_{test}",
 	}, {
-		Database: Issue331Ordinary, DatabaseEngine: "Ordinary",
-		Name:   Issue331Ordinary, // need cover fix https://github.com/Altinity/clickhouse-backup/issues/331
-		Schema: fmt.Sprintf("(`%s` String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMM(order_time) ORDER BY (order_time, `%s`)", Issue331Ordinary, Issue331Ordinary),
+		Database: Issue331Issue1091Ordinary, DatabaseEngine: "Ordinary",
+		Name:   Issue331Issue1091Ordinary, // need cover fix https://github.com/Altinity/clickhouse-backup/issues/331
+		Schema: fmt.Sprintf("(`%s` String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMM(order_time) ORDER BY (order_time, `%s`)", Issue331Issue1091Ordinary, Issue331Issue1091Ordinary),
 		Rows: []map[string]interface{}{
-			{Issue331Ordinary: "1", "order_time": toTS("2010-01-01 00:00:00"), "amount": 1.0},
-			{Issue331Ordinary: "2", "order_time": toTS("2010-02-01 00:00:00"), "amount": 2.0},
+			{Issue331Issue1091Ordinary: "1", "order_time": toTS("2010-01-01 00:00:00"), "amount": 1.0},
+			{Issue331Issue1091Ordinary: "2", "order_time": toTS("2010-02-01 00:00:00"), "amount": 2.0},
 		},
-		Fields:  []string{Issue331Ordinary, "order_time", "amount"},
-		OrderBy: Issue331Ordinary + "_{test}",
+		Fields:  []string{Issue331Issue1091Ordinary, "order_time", "amount"},
+		OrderBy: Issue331Issue1091Ordinary + "_{test}",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
 		Name:   "yuzhichang_table3",
@@ -320,17 +320,17 @@ var defaultTestData = []TestDataStruct{
 			" (`%s` UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) PRIMARY KEY `%s` "+
 				" SOURCE(CLICKHOUSE(host 'localhost' port 9000 db '%s' table '%s' user 'default' password ''))"+
 				" LAYOUT(HASHED()) LIFETIME(60)",
-			Issue331Atomic, Issue331Atomic, Issue331Atomic, Issue331Atomic), // same table and name need cover fix https://github.com/Altinity/clickhouse-backup/issues/331
+			Issue331Issue1091Atomic, Issue331Issue1091Atomic, Issue331Issue1091Atomic, Issue331Issue1091Atomic), // same table and name need cover fix https://github.com/Altinity/clickhouse-backup/issues/331
 		SkipInsert: true,
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
 			for i := 0; i < 100; i++ {
-				result = append(result, map[string]interface{}{Issue331Atomic: uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
+				result = append(result, map[string]interface{}{Issue331Issue1091Atomic: uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
 			}
 			return result
 		}(),
 		Fields:  []string{},
-		OrderBy: Issue331Atomic + "_{test}",
+		OrderBy: Issue331Issue1091Atomic + "_{test}",
 	},
 	{
 		Database: dbNameMySQL, DatabaseEngine: "MySQL('mysql:3306','mysql','root','root')",
@@ -389,28 +389,28 @@ var defaultIncrementData = []TestDataStruct{
 		Fields:  []string{"TimeStamp", "Item"},
 		OrderBy: "TimeStamp",
 	}, {
-		Database: Issue331Atomic, DatabaseEngine: "Atomic",
-		Name:   Issue331Atomic, // need cover fix https://github.com/Altinity/clickhouse-backup/issues/331
-		Schema: fmt.Sprintf("(`%s` UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY `%s` ORDER BY (`%s`, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192", Issue331Atomic, Issue331Atomic, Issue331Atomic),
+		Database: Issue331Issue1091Atomic, DatabaseEngine: "Atomic",
+		Name:   Issue331Issue1091Atomic, // need cover fix https://github.com/Altinity/clickhouse-backup/issues/331
+		Schema: fmt.Sprintf("(`%s` UInt64, Col1 String, Col2 String, Col3 String, Col4 String, Col5 String) ENGINE = MergeTree PARTITION BY `%s` ORDER BY (`%s`, Col1, Col2, Col3, Col4, Col5) SETTINGS index_granularity = 8192", Issue331Issue1091Atomic, Issue331Issue1091Atomic, Issue331Issue1091Atomic),
 		Rows: func() []map[string]interface{} {
 			var result []map[string]interface{}
 			for i := 200; i < 220; i++ {
-				result = append(result, map[string]interface{}{Issue331Atomic: uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
+				result = append(result, map[string]interface{}{Issue331Issue1091Atomic: uint64(i), "Col1": "Text1", "Col2": "Text2", "Col3": "Text3", "Col4": "Text4", "Col5": "Text5"})
 			}
 			return result
 		}(),
-		Fields:  []string{Issue331Atomic, "Col1", "Col2", "Col3", "Col4", "Col5"},
-		OrderBy: Issue331Atomic + "_{test}",
+		Fields:  []string{Issue331Issue1091Atomic, "Col1", "Col2", "Col3", "Col4", "Col5"},
+		OrderBy: Issue331Issue1091Atomic + "_{test}",
 	}, {
-		Database: Issue331Ordinary, DatabaseEngine: "Ordinary",
-		Name:   Issue331Ordinary, // need cover fix https://github.com/Altinity/clickhouse-backup/issues/331
-		Schema: fmt.Sprintf("(`%s` String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMM(order_time) ORDER BY (order_time, `%s`)", Issue331Ordinary, Issue331Ordinary),
+		Database: Issue331Issue1091Ordinary, DatabaseEngine: "Ordinary",
+		Name:   Issue331Issue1091Ordinary, // need cover fix https://github.com/Altinity/clickhouse-backup/issues/331
+		Schema: fmt.Sprintf("(`%s` String, order_time DateTime, amount Float64) ENGINE = MergeTree() PARTITION BY toYYYYMM(order_time) ORDER BY (order_time, `%s`)", Issue331Issue1091Ordinary, Issue331Issue1091Ordinary),
 		Rows: []map[string]interface{}{
-			{Issue331Ordinary: "3", "order_time": toTS("2010-03-01 00:00:00"), "amount": 3.0},
-			{Issue331Ordinary: "4", "order_time": toTS("2010-04-01 00:00:00"), "amount": 4.0},
+			{Issue331Issue1091Ordinary: "3", "order_time": toTS("2010-03-01 00:00:00"), "amount": 3.0},
+			{Issue331Issue1091Ordinary: "4", "order_time": toTS("2010-04-01 00:00:00"), "amount": 4.0},
 		},
-		Fields:  []string{Issue331Ordinary, "order_time", "amount"},
-		OrderBy: Issue331Ordinary + "_{test}",
+		Fields:  []string{Issue331Issue1091Ordinary, "order_time", "amount"},
+		OrderBy: Issue331Issue1091Ordinary + "_{test}",
 	}, {
 		Database: dbNameOrdinary, DatabaseEngine: "Ordinary",
 		Name:   "yuzhichang_table3",
@@ -873,7 +873,7 @@ func TestS3NoDeletePermission(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "restore_remote", "no_delete_backup")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", "no_delete_backup")
 	r.Error(env.DockerExec("clickhouse-backup", "clickhouse-backup", "delete", "remote", "no_delete_backup"))
-	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Atomic, Issue331Ordinary}
+	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Issue1091Atomic, Issue331Issue1091Ordinary}
 	dropDatabasesFromTestDataDataSet(t, r, env, databaseList)
 	r.NoError(env.DockerCP("config-s3.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "remote", "no_delete_backup")
@@ -2038,7 +2038,7 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		backupNames[i] = fmt.Sprintf("keep_remote_backup_%d", i)
 	}
-	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Atomic, Issue331Ordinary}
+	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Issue1091Atomic, Issue331Issue1091Ordinary}
 	fullCleanup(t, r, env, backupNames, []string{"remote", "local"}, databaseList, false, false, "config-s3.yml")
 	incrementData := defaultIncrementData
 	generateTestData(t, r, env, "S3", false, defaultTestData)
@@ -2073,7 +2073,7 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	}
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--rm", latestIncrementBackup)
 	var res uint64
-	r.NoError(env.ch.SelectSingleRowNoCtx(&res, fmt.Sprintf("SELECT count() FROM `%s_%s`.`%s_%s`", Issue331Atomic, t.Name(), Issue331Atomic, t.Name())))
+	r.NoError(env.ch.SelectSingleRowNoCtx(&res, fmt.Sprintf("SELECT count() FROM `%s_%s`.`%s_%s`", Issue331Issue1091Atomic, t.Name(), Issue331Issue1091Atomic, t.Name())))
 	r.Equal(uint64(100+20*4), res)
 	fullCleanup(t, r, env, []string{latestIncrementBackup}, []string{"local"}, nil, true, true, "config-s3.yml")
 	fullCleanup(t, r, env, backupNames, []string{"remote"}, databaseList, true, true, "config-s3.yml")
@@ -2617,7 +2617,7 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	fullBackupName := fmt.Sprintf("%s_full_%d", t.Name(), rand.Int())
 	incrementBackupName := fmt.Sprintf("%s_increment_%d", t.Name(), rand.Int())
 	incrementBackupName2 := fmt.Sprintf("%s_increment2_%d", t.Name(), rand.Int())
-	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Atomic, Issue331Ordinary}
+	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Issue1091Atomic, Issue331Issue1091Ordinary}
 	tablesPattern := fmt.Sprintf("*_%s.*", t.Name())
 	log.Debug().Msg("Clean before start")
 	fullCleanup(t, r, env, []string{fullBackupName, incrementBackupName}, []string{"remote", "local"}, databaseList, false, false, backupConfig)

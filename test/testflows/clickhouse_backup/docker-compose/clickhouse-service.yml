@@ -28,6 +28,7 @@ services:
     environment:
       CLICKHOUSE_VERSION: ${CLICKHOUSE_VERSION:-23.3}
       CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS: "true"
+      CLICKHOUSE_SKIP_USER_SETUP: "1"
     cap_add:
       - SYS_PTRACE
       - SYS_NICE

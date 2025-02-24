@@ -35,6 +35,7 @@ func (api *APIServer) writeError(w http.ResponseWriter, statusCode int, operatio
 }
 
 func (api *APIServer) sendJSONEachRow(w http.ResponseWriter, statusCode int, v interface{}) {
+	w.Header().Set("Transfer-Encoding", "chunked")
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
@@ -57,6 +58,12 @@ func (api *APIServer) sendJSONEachRow(w http.ResponseWriter, statusCode int, v i
 			api.flushOutput(w, err.Error())
 			log.Warn().Msgf("sendJSONEachRow json.Marshal error: %v", err)
 		}
+	}
+	// https://github.com/Altinity/clickhouse-backup/issues/1089
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	} else {
+		log.Warn().Msgf("%#v doesn't support Flusher interface", w)
 	}
 }
 

@@ -155,6 +155,7 @@ services:
     environment:
       CLICKHOUSE_VERSION: ${CLICKHOUSE_VERSION:-1.1.54394}
       CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS: "true"
+      CLICKHOUSE_SKIP_USER_SETUP: "1"
       TZ: UTC
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       S3_DEBUG: "${S3_DEBUG:-false}"
