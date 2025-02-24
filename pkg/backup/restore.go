@@ -209,7 +209,8 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	var tablesForRestore ListOfTables
 	var partitionsNames map[metadata.TableTitle][]string
 	if tablePattern == "" {
-		tablePattern = "*"
+		// https://github.com/Altinity/clickhouse-backup/issues/1091
+		tablePattern = "*,*/*"
 	}
 	metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
 	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {

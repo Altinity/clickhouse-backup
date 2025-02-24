@@ -374,6 +374,9 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 	if err = ch.SelectContext(ctx, &tables, allTablesSQL); err != nil {
 		return nil, err
 	}
+	for i := range tables {
+		tables[i].CreateTableQuery = strings.ReplaceAll(tables[i].CreateTableQuery, `\\`, `\`)
+	}
 	metadataPath, err := ch.getMetadataPath(ctx)
 	if err != nil {
 		return nil, err

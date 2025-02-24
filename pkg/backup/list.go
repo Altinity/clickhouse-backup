@@ -502,8 +502,13 @@ func (b *Backuper) GetTablesRemote(ctx context.Context, backupName string, table
 				tableName := fmt.Sprintf("%s.%s", t.Database, t.Table)
 				shallSkipped := b.shouldSkipByTableName(tableName)
 				matched := false
-				for _, p := range tablePatterns {
-					if matched, _ = filepath.Match(strings.Trim(p, " \t\r\n"), tableName); matched {
+				for _, pattern := range tablePatterns {
+					// https://github.com/Altinity/clickhouse-backup/issues/1091
+					if pattern == "*" {
+						matched = true
+						break
+					}
+					if matched, _ = filepath.Match(strings.Trim(pattern, " \t\r\n"), tableName); matched {
 						break
 					}
 				}

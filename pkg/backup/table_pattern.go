@@ -79,11 +79,12 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 			p = strings.TrimSuffix(p, ".json")
 		}
 		names, database, table, tableName, shallSkipped, continueProcessing := b.checkShallSkipped(p, metadataPath)
-		if !continueProcessing {
+		if !continueProcessing || shallSkipped {
 			return nil
 		}
-		for _, p := range tablePatterns {
-			if matched, _ := filepath.Match(strings.Trim(p, " \t\r\n"), tableName); !matched || shallSkipped {
+		for _, pattern := range tablePatterns {
+			// https://github.com/Altinity/clickhouse-backup/issues/1091
+			if matched, _ := filepath.Match(strings.Trim(pattern, " \t\r\n"), strings.Replace(tableName, "/", "_", -1)); !matched {
 				continue
 			}
 			data, err := os.ReadFile(filePath)
@@ -240,11 +241,12 @@ func (b *Backuper) enrichTablePatternsByInnerDependencies(metadataPath string, t
 			return nil
 		}
 		names, database, table, tableName, shallSkipped, continueProcessing := b.checkShallSkipped(strings.TrimSuffix(filepath.ToSlash(filePath), ".json"), metadataPath)
-		if !continueProcessing {
+		if !continueProcessing || shallSkipped {
 			return nil
 		}
-		for _, p := range tablePatterns {
-			if matched, _ := filepath.Match(strings.Trim(p, " \t\r\n"), tableName); !matched || shallSkipped {
+		for _, pattern := range tablePatterns {
+			// https://github.com/Altinity/clickhouse-backup/issues/1091
+			if matched, _ := filepath.Match(strings.Trim(pattern, " \t\r\n"), strings.Replace(tableName, "/", "_", -1)); !matched {
 				continue
 			}
 			data, err := os.ReadFile(filePath)
@@ -500,12 +502,13 @@ func getTableListByPatternRemote(ctx context.Context, b *Backuper, remoteBackupM
 			continue
 		}
 	tablePatterns:
-		for _, p := range tablePatterns {
+		for _, pattern := range tablePatterns {
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			default:
-				if matched, _ := filepath.Match(strings.Trim(p, " \t\r\n"), tableName); !matched {
+				// https://github.com/Altinity/clickhouse-backup/issues/1091
+				if matched, _ := filepath.Match(strings.Trim(pattern, " \t\r\n"), strings.Replace(tableName, "/", "_", -1)); !matched {
 					continue
 				}
 				tmReader, err := b.dst.GetFileReader(ctx, path.Join(metadataPath, common.TablePathEncode(t.Database), fmt.Sprintf("%s.json", common.TablePathEncode(t.Table))))
@@ -580,7 +583,8 @@ func parseTablePatternForDownload(tables []metadata.TableTitle, tablePattern str
 	for _, t := range tables {
 		for _, pattern := range tablePatterns {
 			tableName := fmt.Sprintf("%s.%s", t.Database, t.Table)
-			if matched, _ := filepath.Match(strings.Trim(pattern, " \t\r\n"), tableName); matched {
+			// https://github.com/Altinity/clickhouse-backup/issues/1091
+			if matched, _ := filepath.Match(strings.Trim(pattern, " \t\r\n"), strings.Replace(tableName, "/", "_", -1)); matched {
 				result = append(result, t)
 				break
 			}

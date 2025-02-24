@@ -317,10 +317,10 @@ func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap 
 }
 
 func IsSkipProjections(skipProjections []string, relativePath string) bool {
-	log.Debug().Msgf("try IsSkipProjections, skipProjections=%v, relativePath=%s", skipProjections, relativePath)
 	if skipProjections == nil || len(skipProjections) == 0 {
 		return false
 	}
+	log.Debug().Msgf("try IsSkipProjections, skipProjections=%v, relativePath=%s", skipProjections, relativePath)
 
 	matchPattenFinal := func(dbPattern string, tablePattern string, projectionPattern string, relativePath string) bool {
 		finalPattern := path.Join(dbPattern, tablePattern, "*", projectionPattern+".proj", "*")
