@@ -375,6 +375,7 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 		return nil, err
 	}
 	for i := range tables {
+		// https://github.com/Altinity/clickhouse-backup/issues/1091
 		tables[i].CreateTableQuery = strings.ReplaceAll(tables[i].CreateTableQuery, `\\`, `\`)
 	}
 	metadataPath, err := ch.getMetadataPath(ctx)
@@ -486,7 +487,8 @@ func (ch *ClickHouse) prepareGetTablesSQL(tablePattern string, skipDatabases, sk
 
 	allTablesSQL += "  FROM system.tables WHERE is_temporary = 0"
 	if tablePattern != "" {
-		replacer := strings.NewReplacer(".", "\\.", "$", ".", ",", "$|^", "*", ".*", "?", ".", " ", "", "`", "", `"`, "", "-", "\\-")
+		// https://github.com/Altinity/clickhouse-backup/issues/1091
+		replacer := strings.NewReplacer(`\`, `\\\`, ".", "\\.", "$", ".", ",", "$|^", "*", ".*", "?", ".", " ", "", "`", "", `"`, "", "-", "\\-")
 		allTablesSQL += fmt.Sprintf(" AND match(concat(database,'.',name),'^%s$') ", replacer.Replace(tablePattern))
 	}
 	if len(skipDatabases) > 0 {

@@ -250,7 +250,8 @@ func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.C
 
 func addItemToIdMapAndNameListIfNotExists(partitionId, partitionName, database, table string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, partitionsNameList map[metadata.TableTitle][]string, tablePattern string) {
 	// https://github.com/Altinity/clickhouse-backup/issues/1091
-	if matched, err := filepath.Match(tablePattern, database+"."+table); err == nil && matched || tablePattern == "*" {
+	replacer := strings.NewReplacer(`\`, "_", `/`, "_")
+	if matched, err := filepath.Match(replacer.Replace(tablePattern), replacer.Replace(database+"."+table)); err == nil && matched || tablePattern == "*" {
 		if partitionId != "" {
 			partitionsIdMap[metadata.TableTitle{
 				Database: database, Table: table,

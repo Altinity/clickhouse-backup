@@ -61,6 +61,9 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 			return nil, nil, err
 		}
 	}
+	// https://github.com/Altinity/clickhouse-backup/issues/1091
+	replacer := strings.NewReplacer(`/`, "_", `\`, "_")
+
 	if err := filepath.Walk(metadataPath, func(filePath string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -84,7 +87,7 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 		}
 		for _, pattern := range tablePatterns {
 			// https://github.com/Altinity/clickhouse-backup/issues/1091
-			if matched, _ := filepath.Match(strings.Trim(pattern, " \t\r\n"), strings.Replace(tableName, "/", "_", -1)); !matched {
+			if matched, _ := filepath.Match(replacer.Replace(strings.Trim(pattern, " \t\r\n")), replacer.Replace(tableName)); !matched {
 				continue
 			}
 			data, err := os.ReadFile(filePath)
@@ -233,6 +236,9 @@ func prepareTableMetadataFromSQL(data []byte, metadataPath string, names []strin
 
 func (b *Backuper) enrichTablePatternsByInnerDependencies(metadataPath string, tablePatterns []string) ([]string, error) {
 	innerTablePatterns := make([]string, 0)
+	// https://github.com/Altinity/clickhouse-backup/issues/1091
+	replacer := strings.NewReplacer("/", "_", `\`, "_")
+
 	if err := filepath.Walk(metadataPath, func(filePath string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -246,7 +252,7 @@ func (b *Backuper) enrichTablePatternsByInnerDependencies(metadataPath string, t
 		}
 		for _, pattern := range tablePatterns {
 			// https://github.com/Altinity/clickhouse-backup/issues/1091
-			if matched, _ := filepath.Match(strings.Trim(pattern, " \t\r\n"), strings.Replace(tableName, "/", "_", -1)); !matched {
+			if matched, _ := filepath.Match(replacer.Replace(strings.Trim(pattern, " \t\r\n")), replacer.Replace(tableName)); !matched {
 				continue
 			}
 			data, err := os.ReadFile(filePath)
@@ -493,6 +499,8 @@ func getTableListByPatternRemote(ctx context.Context, b *Backuper, remoteBackupM
 		tablePatterns = strings.Split(tablePattern, ",")
 	}
 	metadataPath := path.Join(remoteBackupMetadata.BackupName, "metadata")
+	// https://github.com/Altinity/clickhouse-backup/issues/1091
+	replacer := strings.NewReplacer(`/`, "_", `\`, "_")
 	for _, t := range remoteBackupMetadata.Tables {
 		if IsInformationSchema(t.Database) {
 			continue
@@ -508,7 +516,7 @@ func getTableListByPatternRemote(ctx context.Context, b *Backuper, remoteBackupM
 				return nil, ctx.Err()
 			default:
 				// https://github.com/Altinity/clickhouse-backup/issues/1091
-				if matched, _ := filepath.Match(strings.Trim(pattern, " \t\r\n"), strings.Replace(tableName, "/", "_", -1)); !matched {
+				if matched, _ := filepath.Match(replacer.Replace(strings.Trim(pattern, " \t\r\n")), replacer.Replace(tableName)); !matched {
 					continue
 				}
 				tmReader, err := b.dst.GetFileReader(ctx, path.Join(metadataPath, common.TablePathEncode(t.Database), fmt.Sprintf("%s.json", common.TablePathEncode(t.Table))))
@@ -580,11 +588,14 @@ func parseTablePatternForDownload(tables []metadata.TableTitle, tablePattern str
 		tablePatterns = strings.Split(tablePattern, ",")
 	}
 	var result []metadata.TableTitle
+	// https://github.com/Altinity/clickhouse-backup/issues/1091
+	replacer := strings.NewReplacer("/", "_", `\`, "_")
+
 	for _, t := range tables {
 		for _, pattern := range tablePatterns {
 			tableName := fmt.Sprintf("%s.%s", t.Database, t.Table)
 			// https://github.com/Altinity/clickhouse-backup/issues/1091
-			if matched, _ := filepath.Match(strings.Trim(pattern, " \t\r\n"), strings.Replace(tableName, "/", "_", -1)); matched {
+			if matched, _ := filepath.Match(replacer.Replace(strings.Trim(pattern, " \t\r\n")), replacer.Replace(tableName)); matched {
 				result = append(result, t)
 				break
 			}
