@@ -497,13 +497,22 @@ func (b *Backuper) GetTablesRemote(ctx context.Context, backupName string, table
 
 	for _, remoteBackup := range backupList {
 		if remoteBackup.BackupName == backupName {
+			// https://github.com/Altinity/clickhouse-backup/issues/1091
+			replacer := strings.NewReplacer("/", "_", `\`, "_")
+
 			for _, t := range remoteBackup.Tables {
 				isInformationSchema := IsInformationSchema(t.Database)
 				tableName := fmt.Sprintf("%s.%s", t.Database, t.Table)
 				shallSkipped := b.shouldSkipByTableName(tableName)
 				matched := false
-				for _, p := range tablePatterns {
-					if matched, _ = filepath.Match(strings.Trim(p, " \t\r\n"), tableName); matched {
+				for _, pattern := range tablePatterns {
+					// https://github.com/Altinity/clickhouse-backup/issues/1091
+					if pattern == "*" {
+						matched = true
+						break
+					}
+					// https://github.com/Altinity/clickhouse-backup/issues/1091
+					if matched, _ = filepath.Match(replacer.Replace(strings.Trim(pattern, " \t\r\n")), replacer.Replace(tableName)); matched {
 						break
 					}
 				}
