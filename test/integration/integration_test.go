@@ -43,8 +43,24 @@ import (
 var projectId atomic.Uint32
 var dockerPool *pool.ObjectPool
 
+var dbNameAtomic = "_test#$.ДБ_atomic_/issue\\_1091"
+var dbNameOrdinary = "_test#$.ДБ_ordinary_/issue\\_1091"
+var dbNameMySQL = "mysql_db"
+var dbNamePostgreSQL = "pgsql_db"
+var Issue331Issue1091Atomic = "_issue331._atomic_/issue\\_1091"
+var Issue331Issue1091Ordinary = "_issue331.ordinary_/issue\\_1091"
+
 // setup log level
 func init() {
+	// old version replace \ to nothing,  https://github.com/Altinity/clickhouse-backup/issue/1091
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.5") < 0 {
+		dbNameAtomic = "_test#$.ДБ_atomic_/issue_1091"
+		dbNameOrdinary = "_test#$.ДБ_ordinary_/issue_1091"
+		dbNameMySQL = "mysql_db"
+		dbNamePostgreSQL = "pgsql_db"
+		Issue331Issue1091Atomic = "_issue331._atomic_/issue_1091"
+		Issue331Issue1091Ordinary = "_issue331.ordinary_/issue_1091"
+	}
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixMs
 	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
 	consoleWriter := zerolog.ConsoleWriter{Out: os.Stderr, NoColor: true, TimeFormat: "2006-01-02 15:04:05.000"}
@@ -78,13 +94,6 @@ func init() {
 	dockerPool = pool.NewObjectPoolWithDefaultConfig(ctx, factory)
 	dockerPool.Config.MaxTotal = runParallelInt
 }
-
-const dbNameAtomic = "_test#$.ДБ_atomic_/issue\\_1091"
-const dbNameOrdinary = "_test#$.ДБ_ordinary_/issue\\_1091"
-const dbNameMySQL = "mysql_db"
-const dbNamePostgreSQL = "pgsql_db"
-const Issue331Issue1091Atomic = "_issue331._atomic_/issue\\_1091"
-const Issue331Issue1091Ordinary = "_issue331.ordinary_/issue\\_1091"
 
 type TestDataStruct struct {
 	Database           string
