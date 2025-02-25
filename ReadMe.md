@@ -205,19 +205,20 @@ clickhouse:
   max_connections: 0 # CLICKHOUSE_MAX_CONNECTIONS, how many parallel connections could be opened during operations
 azblob:
   endpoint_suffix: "core.windows.net" # AZBLOB_ENDPOINT_SUFFIX
-  account_name: ""             # AZBLOB_ACCOUNT_NAME
-  account_key: ""              # AZBLOB_ACCOUNT_KEY
-  sas: ""                      # AZBLOB_SAS
-  use_managed_identity: false  # AZBLOB_USE_MANAGED_IDENTITY
-  container: ""                # AZBLOB_CONTAINER
-  path: ""                     # AZBLOB_PATH, `system.macros` values can be applied as {macro_name}
-  object_disk_path: ""         # AZBLOB_OBJECT_DISK_PATH, path for backup of part from clickhouse object disks, if object disks present in clickhouse, then shall not be zero and shall not be prefixed by `path`
-  compression_level: 1         # AZBLOB_COMPRESSION_LEVEL
-  compression_format: tar      # AZBLOB_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
-  sse_key: ""                  # AZBLOB_SSE_KEY
-  max_parts_count: 256         # AZBLOB_MAX_PARTS_COUNT, number of parts for AZBLOB uploads, for properly calculate buffer size
-  max_buffers: 3               # AZBLOB_MAX_BUFFERS, similar with S3_CONCURRENCY
-  debug: false                 # AZBLOB_DEBUG
+  account_name: ""               # AZBLOB_ACCOUNT_NAME
+  account_key: ""                # AZBLOB_ACCOUNT_KEY
+  sas: ""                        # AZBLOB_SAS
+  use_managed_identity: false    # AZBLOB_USE_MANAGED_IDENTITY
+  container: ""                  # AZBLOB_CONTAINER
+  assume_container_exists: false # AZBLOB_ASSUME_CONTAINER_EXISTS, enables assignment of rights granting clickhouse-backup access only to blobs in the container
+  path: ""                       # AZBLOB_PATH, `system.macros` values can be applied as {macro_name}
+  object_disk_path: ""           # AZBLOB_OBJECT_DISK_PATH, path for backup of part from clickhouse object disks, if object disks present in clickhouse, then shall not be zero and shall not be prefixed by `path`
+  compression_level: 1           # AZBLOB_COMPRESSION_LEVEL
+  compression_format: tar        # AZBLOB_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
+  sse_key: ""                    # AZBLOB_SSE_KEY
+  max_parts_count: 256           # AZBLOB_MAX_PARTS_COUNT, number of parts for AZBLOB uploads, for properly calculate buffer size
+  max_buffers: 3                 # AZBLOB_MAX_BUFFERS, similar with S3_CONCURRENCY
+  debug: false                   # AZBLOB_DEBUG
 s3:
   access_key: ""                   # S3_ACCESS_KEY
   secret_key: ""                   # S3_SECRET_KEY
