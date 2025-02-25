@@ -2,8 +2,11 @@
 
 IMPROVEMENTS
 
-- Improve Azure authentication mechanism, fix [1047](https://github.com/Altinity/clickhouse-backup/issues/1047), thanks
-  @dnovvak
+- Add `AZBLOB_ASSUME_CONTAINER_EXISTS` config option,
+  fix [1094](https://github.com/Altinity/clickhouse-backup/pull/1094),
+  thanks @atykhyy
+- Improve Azure authentication mechanism, fix [1047](https://github.com/Altinity/clickhouse-backup/issues/1047),
+  thanks @dnovvak
 - Add option `--skip-projections` to `create`, `upload`, `restore` commands, with table pattern to allow make backup
   without projection, restore supported only in `clickhouse-server` 24.3+,
   fix [861](https://github.com/Altinity/clickhouse-backup/issues/861)
