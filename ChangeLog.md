@@ -19,6 +19,9 @@ IMPROVEMENTS
 
 BUG FIXES
 
+- add workaround for `metdata_path` field change behavior in 25.1+, look details
+  in https://github.com/ClickHouse/ClickHouse/issues/76546,
+  fix [1093](https://github.com/Altinity/clickhouse-backup/issues/1093)
 - add e2e tests for `AZBLOB_SAS`, fix [1060](https://github.com/Altinity/clickhouse-backup/issues/1060),
   fix [313](https://github.com/Altinity/clickhouse-backup/issues/313)
 - add alibaba/oss/aliyuncs worked config,

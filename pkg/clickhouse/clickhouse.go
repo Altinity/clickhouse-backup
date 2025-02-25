@@ -247,15 +247,23 @@ func (ch *ClickHouse) getMetadataPath(ctx context.Context) (string, error) {
 	var result []struct {
 		MetadataPath string `ch:"metadata_path"`
 	}
-	query := "SELECT metadata_path FROM system.tables WHERE database = 'system' AND metadata_path!='' LIMIT 1;"
+	query := "SELECT metadata_path FROM system.tables WHERE database = 'system' AND metadata_path!='' LIMIT 1"
+	// https://github.com/ClickHouse/ClickHouse/issues/76546
+	if ch.version >= 25000000 {
+		query = "SELECT data_path AS metadata_path FROM system.databases WHERE name = 'system' LIMIT 1"
+	}
 	if err := ch.SelectContext(ctx, &result, query); err != nil {
 		return "", err
 	}
 	if len(result) == 0 {
-		return "", fmt.Errorf("can't get metadata_path from system.tables")
+		return "", fmt.Errorf("can't get metadata_path from system.tables or system.databases")
 	}
 	metadataPath := strings.Split(result[0].MetadataPath, "/")
-	if strings.Contains(result[0].MetadataPath, "/store/") {
+	// https://github.com/ClickHouse/ClickHouse/issues/76546
+	if ch.version >= 25000000 && strings.HasSuffix(result[0].MetadataPath, "/store/") {
+		result[0].MetadataPath = path.Join(metadataPath[:len(metadataPath)-2]...)
+		result[0].MetadataPath = path.Join(result[0].MetadataPath, "metadata")
+	} else if strings.Contains(result[0].MetadataPath, "/store/") {
 		result[0].MetadataPath = path.Join(metadataPath[:len(metadataPath)-4]...)
 		result[0].MetadataPath = path.Join(result[0].MetadataPath, "metadata")
 	} else {
