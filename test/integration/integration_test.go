@@ -2469,40 +2469,40 @@ func TestRestoreMapping(t *testing.T) {
 	}
 
 	testBackupName := "test_restore_database_mapping"
-	databaseList := []string{"database1", "database-2"}
+	databaseList := []string{"database-1", "database-2"}
 	fullCleanup(t, r, env, []string{testBackupName}, []string{"local"}, databaseList, false, false, "config-database-mapping.yml")
 
-	env.queryWithNoError(r, "CREATE DATABASE database1")
-	env.queryWithNoError(r, "CREATE TABLE database1.t1 (dt DateTime, v UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/database1/t1','{replica}') PARTITION BY v % 10 ORDER BY dt")
-	env.queryWithNoError(r, "CREATE TABLE database1.d1 AS database1.t1 ENGINE=Distributed('{cluster}', 'database1', 't1')")
+	env.queryWithNoError(r, "CREATE DATABASE `database-1`")
+	env.queryWithNoError(r, "CREATE TABLE `database-1`.t1 (dt DateTime, v UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/database-1/t1','{replica}') PARTITION BY v % 10 ORDER BY dt")
+	env.queryWithNoError(r, "CREATE TABLE `database-1`.d1 AS `database-1`.t1 ENGINE=Distributed('{cluster}', 'database-1', 't1')")
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.3") < 0 {
-		env.queryWithNoError(r, "CREATE TABLE database1.t2 AS database1.t1 ENGINE=ReplicatedMergeTree('/clickhouse/tables/database1/t2','{replica}') PARTITION BY toYYYYMM(dt) ORDER BY dt")
+		env.queryWithNoError(r, "CREATE TABLE `database-1`.t2 AS `database-1`.t1 ENGINE=ReplicatedMergeTree('/clickhouse/tables/database-1/t2','{replica}') PARTITION BY toYYYYMM(dt) ORDER BY dt")
 	} else {
-		env.queryWithNoError(r, "CREATE TABLE database1.t2 AS database1.t1 ENGINE=ReplicatedMergeTree('/clickhouse/tables/{database}/{table}','{replica}') PARTITION BY toYYYYMM(dt) ORDER BY dt")
+		env.queryWithNoError(r, "CREATE TABLE `database-1`.t2 AS `database-1`.t1 ENGINE=ReplicatedMergeTree('/clickhouse/tables/{database}/{table}','{replica}') PARTITION BY toYYYYMM(dt) ORDER BY dt")
 	}
-	env.queryWithNoError(r, "CREATE MATERIALIZED VIEW database1.mv1 TO database1.t2 AS SELECT * FROM database1.t1")
-	env.queryWithNoError(r, "CREATE VIEW database1.v1 AS SELECT * FROM database1.t1")
-	env.queryWithNoError(r, "INSERT INTO database1.t1 SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
+	env.queryWithNoError(r, "CREATE MATERIALIZED VIEW `database-1`.mv1 TO `database-1`.t2 AS SELECT * FROM `database-1`.t1")
+	env.queryWithNoError(r, "CREATE VIEW `database-1`.v1 AS SELECT * FROM `database-1`.t1")
+	env.queryWithNoError(r, "INSERT INTO `database-1`.t1 SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
 
 	log.Debug().Msg("Create backup")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "create", testBackupName)
 
 	log.Debug().Msg("Restore schema")
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--schema", "--rm", "--restore-database-mapping", "database1:database-2", "--restore-table-mapping", "t1:t3,t2:t4,d1:d2,mv1:mv2,v1:v2", "--tables", "database1.*", testBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--schema", "--rm", "--restore-database-mapping", "database-1:database-2", "--restore-table-mapping", "t1:t3,t2:t4,d1:d2,mv1:mv2,v1:v2", "--tables", "database-1.*", testBackupName)
 
-	log.Debug().Msg("Check result database1")
-	env.queryWithNoError(r, "INSERT INTO database1.t1 SELECT '2023-01-01 00:00:00', number FROM numbers(10)")
-	checkRecordset(1, 20, "SELECT count() FROM database1.t1")
-	checkRecordset(1, 20, "SELECT count() FROM database1.t2")
-	checkRecordset(1, 20, "SELECT count() FROM database1.d1")
-	checkRecordset(1, 20, "SELECT count() FROM database1.mv1")
-	checkRecordset(1, 20, "SELECT count() FROM database1.v1")
+	log.Debug().Msg("Check result database-1")
+	env.queryWithNoError(r, "INSERT INTO `database-1`.t1 SELECT '2023-01-01 00:00:00', number FROM numbers(10)")
+	checkRecordset(1, 20, "SELECT count() FROM `database-1`.t1")
+	checkRecordset(1, 20, "SELECT count() FROM `database-1`.t2")
+	checkRecordset(1, 20, "SELECT count() FROM `database-1`.d1")
+	checkRecordset(1, 20, "SELECT count() FROM `database-1`.mv1")
+	checkRecordset(1, 20, "SELECT count() FROM `database-1`.v1")
 
-	log.Debug().Msg("Drop database1")
-	r.NoError(env.dropDatabase("database1"))
+	log.Debug().Msg("Drop database-1")
+	r.NoError(env.dropDatabase("database-1"))
 
 	log.Debug().Msg("Restore data")
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--data", "--restore-database-mapping", "database1:database-2", "--restore-table-mapping", "t1:t3,t2:t4,d1:d2,mv1:mv2,v1:v2", "--tables", "database1.*", testBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--data", "--restore-database-mapping", "database-1:database-2", "--restore-table-mapping", "t1:t3,t2:t4,d1:d2,mv1:mv2,v1:v2", "--tables", "database-1.*", testBackupName)
 
 	log.Debug().Msg("Check result database-2")
 	checkRecordset(1, 10, "SELECT count() FROM `database-2`.t3")
@@ -2511,14 +2511,14 @@ func TestRestoreMapping(t *testing.T) {
 	checkRecordset(1, 10, "SELECT count() FROM `database-2`.mv2")
 	checkRecordset(1, 10, "SELECT count() FROM `database-2`.v2")
 
-	log.Debug().Msg("Check database1 not exists")
-	checkRecordset(1, 0, "SELECT count() FROM system.databases WHERE name='database1' SETTINGS empty_result_for_aggregation_by_empty_set=0")
+	log.Debug().Msg("Check database-1 not exists")
+	checkRecordset(1, 0, "SELECT count() FROM system.databases WHERE name='database-1' SETTINGS empty_result_for_aggregation_by_empty_set=0")
 
 	log.Debug().Msg("Drop database2")
 	r.NoError(env.dropDatabase("database2"))
 
 	log.Debug().Msg("Restore data with partitions")
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--restore-database-mapping", "database1:database-2", "--restore-table-mapping", "t1:t3,t2:t4,d1:d2,mv1:mv2,v1:v2", "--partitions", "3", "--partitions", "database1.t2:202201", "--tables", "database1.*", testBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--restore-database-mapping", "database-1:database-2", "--restore-table-mapping", "t1:t3,t2:t4,d1:d2,mv1:mv2,v1:v2", "--partitions", "3", "--partitions", "database-1.t2:202201", "--tables", "database-1.*", testBackupName)
 
 	log.Debug().Msg("Check result database-2 after restore with partitions")
 	// t1->t3 restored only 1 partition with name 3 partition with 1 rows

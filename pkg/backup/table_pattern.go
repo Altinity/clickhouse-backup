@@ -322,21 +322,23 @@ func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRu
 				if matches[0][4] != originTable.Database {
 					return fmt.Errorf("invalid SQL: %s for restore-database-mapping[%s]=%s", originTable.Query, originTable.Database, targetDB)
 				}
-				setMatchedDb := func(clauseTargetDb string) string {
+				setMatchedDb := func(clauseTargetDb, beforeQuote string) string {
 					if clauseMappedDb, isClauseMapped := dbMapRule[clauseTargetDb]; isClauseMapped {
 						clauseTargetDb = clauseMappedDb
-						if !usualIdentifier.MatchString(clauseTargetDb) {
+						// https://github.com/Altinity/clickhouse-backup/issues/820
+						if !usualIdentifier.MatchString(clauseTargetDb) && !strings.Contains(beforeQuote, "`") {
 							clauseTargetDb = "`" + clauseTargetDb + "`"
 						}
 					}
 					return clauseTargetDb
 				}
 				createTargetDb := targetDB
-				if !usualIdentifier.MatchString(createTargetDb) {
+				// https://github.com/Altinity/clickhouse-backup/issues/820
+				if !usualIdentifier.MatchString(createTargetDb) && !strings.Contains(matches[0][3], "`") {
 					createTargetDb = "`" + createTargetDb + "`"
 				}
-				toClauseTargetDb := setMatchedDb(matches[0][10])
-				fromClauseTargetDb := setMatchedDb(matches[0][18])
+				toClauseTargetDb := setMatchedDb(matches[0][10], matches[0][9])
+				fromClauseTargetDb := setMatchedDb(matches[0][18], matches[0][17])
 				// matching CREATE|ATTACH ... TO .. SELECT ... FROM ... command
 				substitution = fmt.Sprintf("${1} ${2} ${3}%v${5}.${6}${7}${8}${9}%v${11}${12}${13}${14}${15}${16}${17}%v${19}${20}${21}${22}${23}", createTargetDb, toClauseTargetDb, fromClauseTargetDb)
 			} else {
@@ -387,8 +389,8 @@ func changeTableQueryToAdjustTableMapping(originTables *ListOfTables, tableMapRu
 
 			if createOrAttachRE.MatchString(originTable.Query) {
 				matches := queryRE.FindAllStringSubmatch(originTable.Query, -1)
-				if matches[0][6] != originTable.Table {
-					return fmt.Errorf("invalid SQL: %s for restore-table-mapping[%s]=%s", originTable.Query, originTable.Table, targetTable)
+				if len(matches) == 0 || len(matches[0]) < 7 || matches[0][6] != originTable.Table {
+					return fmt.Errorf("invalid SQL: %s\nRE: `%s`\nmatches=%#v for restore-table-mapping[%s]=%s", originTable.Query, queryRE.String(), matches, originTable.Table, targetTable)
 				}
 				setMatchedDb := func(clauseTargetTable string) string {
 					if clauseMappedTable, isClauseMapped := tableMapRule[clauseTargetTable]; isClauseMapped {
