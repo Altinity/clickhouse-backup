@@ -179,16 +179,19 @@ func (m *Metadata) writeToFile(file *os.File) error {
 }
 
 type ObjectStorageCredentials struct {
-	Type               string // aws, gcs, azblob
-	EndPoint           string
-	S3AccessKey        string
-	S3SecretKey        string
-	S3AssumeRole       string
-	S3Region           string
-	S3StorageClass     string
-	AzureAccountName   string
-	AzureAccountKey    string
-	AzureContainerName string
+	Type                      string // aws, gcs, azblob
+	EndPoint                  string
+	S3AccessKey               string
+	S3SecretKey               string
+	S3AssumeRole              string
+	S3Region                  string
+	S3StorageClass            string
+	S3SSECustomerKey          string // <server_side_encryption_customer_key_base64>
+	S3SSEKMSKeyId             string // <server_side_encryption_kms_key_id>
+	S3SSEKMSEncryptionContext string // <server_side_encryption_kms_encryption_context>
+	AzureAccountName          string
+	AzureAccountKey           string
+	AzureContainerName        string
 }
 
 var DisksCredentials = xsync.NewMapOf[ObjectStorageCredentials]()
@@ -365,6 +368,15 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) e
 						creds.S3SecretKey = os.Getenv("AWS_SECRET_ACCESS_KEY")
 					}
 				}
+				if S3SSECustomerKey := d.SelectElement("server_side_encryption_customer_key_base64"); S3SSECustomerKey != nil {
+					creds.S3SSECustomerKey = strings.Trim(S3SSECustomerKey.InnerText(), "\r\n \t")
+				}
+				if S3SSEKMSKeyId := d.SelectElement("server_side_encryption_kms_key_id"); S3SSEKMSKeyId != nil {
+					creds.S3SSEKMSKeyId = strings.Trim(S3SSEKMSKeyId.InnerText(), "\r\n \t")
+				}
+				if S3SSEKMSEncryptionContext := d.SelectElement("server_side_encryption_kms_encryption_context"); S3SSEKMSEncryptionContext != nil {
+					creds.S3SSEKMSEncryptionContext = strings.Trim(S3SSEKMSEncryptionContext.InnerText(), "\r\n \t")
+				}
 				DisksCredentials.Store(diskName, creds)
 				break
 			case "azure", "azure_blob_storage":
@@ -481,6 +493,15 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 		}
 		if creds.S3SecretKey != "" {
 			s3cfg.SecretKey = creds.S3SecretKey
+		}
+		if creds.S3SSECustomerKey != "" {
+			s3cfg.SSECustomerKey = creds.S3SSECustomerKey
+		}
+		if creds.S3SSEKMSKeyId != "" {
+			s3cfg.SSEKMSKeyId = creds.S3SSEKMSKeyId
+		}
+		if creds.S3SSEKMSEncryptionContext != "" {
+			s3cfg.SSEKMSEncryptionContext = creds.S3SSEKMSEncryptionContext
 		}
 		// https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html
 		// https://kb.altinity.com/altinity-kb-integrations/altinity-kb-google-s3-gcs/
