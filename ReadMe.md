@@ -92,8 +92,9 @@ All options can be overwritten via environment variables.
 Use `clickhouse-backup default-config` to print default config.
 
 ## Explain config parameters
-following values is not default, it just explain which each config parameter actually means
+Following values is not default, it just explains which each config parameter actually means
 Use `clickhouse-backup print-config` to print current config.
+Each config parameter can be overrides via environment variables, environment variable name provides after comment character `#`.
 
 ```yaml
 general:
