@@ -78,23 +78,24 @@ Build from the sources (required go 1.21+):
 GO111MODULE=on go install github.com/Altinity/clickhouse-backup/v2/cmd/clickhouse-backup@latest
 ```
 
-## Brief description how clickhouse-backup works
+## Brief description of how clickhouse-backup works
 
 Data files are immutable in the `clickhouse-server`.
 During a backup operation, `clickhouse-backup` creates file system hard links to existing `clickhouse-server` data parts via executing the `ALTER TABLE ... FREEZE` query.
 During the restore operation, `clickhouse-backup` copies the hard links to the `detached` folder and executes the `ALTER TABLE ... ATTACH PART` query for each data part and each table in the backup.
 A more detailed description is available here: https://www.youtube.com/watch?v=megsNh9Q-dw
 
-## Default Config
+## Default Config File
 
 By default, the config file is located at `/etc/clickhouse-backup/config.yml`, but it can be redefined via the `CLICKHOUSE_BACKUP_CONFIG` environment variable or via `--config` command line parameter.
 All options can be overwritten via environment variables.
-Use `clickhouse-backup default-config` to print default config.
+Use `clickhouse-backup default-config` to print the default config.
 
-## Explain config parameters
-Following values is not default, it just explains which each config parameter actually means
-Use `clickhouse-backup print-config` to print current config.
-Each config parameter can be overrides via environment variables, environment variable name provides after comment character `#`.
+## Configurable Parameters
+
+Use `clickhouse-backup print-config` to print the current config.
+Environment variables can override each config parameter defined in the config file. Their names should be UPPERCASE, and exact names are provided after the comment character `#.`
+The following values are not defaults; they explain what each config parameter with an example.
 
 ```yaml
 general:
