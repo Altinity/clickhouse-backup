@@ -48,11 +48,8 @@ func printBackupsRemote(w io.Writer, backupList []storage.Backup, format string)
 		}
 		fmt.Println(backupList[len(backupList)-2].BackupName)
 	case "all", "":
-		// if len(backupList) == 0 {
-		// 	fmt.Println("no backups found")
-		// }
 		for _, backup := range backupList {
-			size := utils.FormatBytes(backup.GetFullSize())
+			size := fmt.Sprintf("all:%s,data:%s,arch:%s,obj:%s,meta:%s,rbac:%s,conf:%s", utils.FormatBytes(backup.GetFullSize()), utils.FormatBytes(backup.DataSize), utils.FormatBytes(backup.CompressedSize), utils.FormatBytes(backup.MetadataSize), utils.FormatBytes(backup.ObjectDiskSize), utils.FormatBytes(backup.RBACSize), utils.FormatBytes(backup.ConfigSize))
 			description := backup.DataFormat
 			uploadDate := backup.UploadDate.Format("02/01/2006 15:04:05")
 			if backup.Tags != "" {
@@ -66,7 +63,7 @@ func printBackupsRemote(w io.Writer, backupList []storage.Backup, format string)
 				description = backup.Broken
 				size = "???"
 			}
-			if bytes, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", backup.BackupName, size, uploadDate, "remote", required, description); err != nil {
+			if bytes, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", backup.BackupName, uploadDate, "remote", required, size, description); err != nil {
 				log.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
 			}
 		}
@@ -94,7 +91,7 @@ func printBackupsLocal(ctx context.Context, w io.Writer, backupList []LocalBacku
 			case <-ctx.Done():
 				return ctx.Err()
 			default:
-				size := utils.FormatBytes(backup.GetFullSize())
+				size := fmt.Sprintf("all:%s,data:%s,arch:%s,obj:%s,meta:%s,rbac:%s,conf:%s", utils.FormatBytes(backup.GetFullSize()), utils.FormatBytes(backup.DataSize), utils.FormatBytes(backup.CompressedSize), utils.FormatBytes(backup.MetadataSize), utils.FormatBytes(backup.ObjectDiskSize), utils.FormatBytes(backup.RBACSize), utils.FormatBytes(backup.ConfigSize))
 				description := backup.DataFormat
 				if backup.Tags != "" {
 					if description != "" {
@@ -111,7 +108,7 @@ func printBackupsLocal(ctx context.Context, w io.Writer, backupList []LocalBacku
 					description = backup.Broken
 					size = "???"
 				}
-				if bytes, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", backup.BackupName, size, creationDate, "local", required, description); err != nil {
+				if bytes, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", backup.BackupName, creationDate, "local", required, size, description); err != nil {
 					log.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
 				}
 			}

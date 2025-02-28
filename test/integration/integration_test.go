@@ -2619,12 +2619,11 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	var err error
 	r := require.New(t)
 	env.connectWithWait(r, 500*time.Millisecond, 1500*time.Millisecond, 3*time.Minute)
-	// test for specified partitions backup
-	testBackupSpecifiedPartitions(t, r, env, remoteStorageType, backupConfig)
 
 	// main test scenario
 	fullBackupName := fmt.Sprintf("%s_full_%d", t.Name(), rand.Int())
 	incrementBackupName := fmt.Sprintf("%s_increment_%d", t.Name(), rand.Int())
+	incrementBackupNameEmpty := fmt.Sprintf("%s_incrementEmpty_%d", t.Name(), rand.Int())
 	incrementBackupName2 := fmt.Sprintf("%s_increment2_%d", t.Name(), rand.Int())
 	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Issue1091Atomic, Issue331Issue1091Ordinary}
 	tablesPattern := fmt.Sprintf("*_%s.*", t.Name())
@@ -2633,16 +2632,38 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	createAllTypesOfObjectTables := !strings.Contains(remoteStorageType, "CUSTOM")
 	testData := generateTestData(t, r, env, remoteStorageType, createAllTypesOfObjectTables, defaultTestData)
 
-	log.Debug().Msg("Create backup")
+	log.Debug().Msg("Create full backup")
 	createCmd := "clickhouse-backup -c /etc/clickhouse-backup/" + backupConfig + " create --resume --tables=" + tablesPattern + " " + fullBackupName
 	env.checkResumeAlreadyProcessed(createCmd, fullBackupName, "create", r, remoteStorageType)
 
-	incrementData := generateIncrementTestData(t, r, env, remoteStorageType, createAllTypesOfObjectTables, defaultIncrementData, 1)
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables", tablesPattern, incrementBackupName)
-
-	log.Debug().Msg("Upload full")
+	log.Debug().Msg("Upload full backup")
 	uploadCmd := fmt.Sprintf("%s_COMPRESSION_FORMAT=zstd CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/%s clickhouse-backup upload --resume %s", remoteStorageType, backupConfig, fullBackupName)
 	env.checkResumeAlreadyProcessed(uploadCmd, fullBackupName, "upload", r, remoteStorageType)
+
+	// https://github.com/Altinity/clickhouse-backup/issues/871
+	log.Debug().Msg("Create+upload incrementEmpty without data")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables", tablesPattern, "--diff-from-remote", fullBackupName, incrementBackupNameEmpty)
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ec", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" list local | grep "+incrementBackupNameEmpty)
+	r.NoError(err)
+	r.Contains(out, "+"+fullBackupName)
+	r.Contains(out, incrementBackupNameEmpty)
+	r.Contains(out, "data:0B")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "upload", "--env", "BACKUPS_TO_KEEP_REMOTE=1", "--env", "BACKUPS_TO_KEEP_REMOTE=2", "--env", "ALLOW_EMPTY_BACKUPS=1", "--diff-from-remote", fullBackupName, incrementBackupNameEmpty)
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ec", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" list remote | grep '^"+fullBackupName+"'")
+	r.NoError(err)
+	r.Contains(out, fullBackupName)
+	r.NotContains(out, "data:0B")
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ec", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" list remote | grep "+incrementBackupNameEmpty)
+	r.NoError(err)
+	r.Contains(out, "+"+fullBackupName)
+	r.Contains(out, incrementBackupNameEmpty)
+	r.Contains(out, "data:0B")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", incrementBackupNameEmpty)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", incrementBackupNameEmpty)
+
+	log.Debug().Msg("Create increment1 with data")
+	incrementData := generateIncrementTestData(t, r, env, remoteStorageType, createAllTypesOfObjectTables, defaultIncrementData, 1)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables", tablesPattern, incrementBackupName)
 
 	// https://github.com/Altinity/clickhouse-backup/pull/900
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 {
@@ -2667,9 +2688,9 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	log.Debug().Msg("Delete backup")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", incrementBackupName)
-	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "ls -lha "+backupDir+" | grep "+t.Name())
-	r.NotNil(err)
-	r.Equal("", strings.Trim(out, " \t\r\n"), "expect '0' backup exists in backup directory")
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "ls -lha "+backupDir)
+	r.NoError(err)
+	r.NotContains(strings.Trim(out, " \t\r\n"), t.Name(), "expect no backup exists in backup directory")
 
 	dropDatabasesFromTestDataDataSet(t, r, env, databaseList)
 
@@ -2740,6 +2761,10 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	fullCleanup(t, r, env, []string{incrementBackupName}, []string{"local"}, nil, true, false, backupConfig)
 	fullCleanup(t, r, env, []string{fullBackupName, incrementBackupName}, []string{"remote"}, databaseList, true, true, backupConfig)
 	replaceStorageDiskNameForReBalance(r, env, remoteStorageType, true)
+
+	// test for specified partitions backup
+	testBackupSpecifiedPartitions(t, r, env, remoteStorageType, backupConfig)
+
 	env.checkObjectStorageIsEmpty(t, r, remoteStorageType)
 }
 

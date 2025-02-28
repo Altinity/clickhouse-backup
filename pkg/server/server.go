@@ -766,6 +766,12 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 		Name           string `json:"name"`
 		Created        string `json:"created"`
 		Size           uint64 `json:"size,omitempty"`
+		DataSize       uint64 `json:"data_size,omitempty"`
+		ObjectDiskSize uint64 `json:"object_disk_size,omitempty"`
+		MetadataSize   uint64 `json:"metadata_size"`
+		RBACSize       uint64 `json:"rbac_size,omitempty"`
+		ConfigSize     uint64 `json:"config_size,omitempty"`
+		CompressedSize uint64 `json:"compressed_size,omitempty"`
 		Location       string `json:"location"`
 		RequiredBackup string `json:"required"`
 		Desc           string `json:"desc"`
@@ -807,6 +813,12 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 				Name:           item.BackupName,
 				Created:        item.CreationDate.Format(common.TimeFormat),
 				Size:           item.GetFullSize(),
+				DataSize:       item.DataSize,
+				ObjectDiskSize: item.ObjectDiskSize,
+				MetadataSize:   item.MetadataSize,
+				RBACSize:       item.RBACSize,
+				ConfigSize:     item.ConfigSize,
+				CompressedSize: item.CompressedSize,
 				Location:       "local",
 				RequiredBackup: item.RequiredBackup,
 				Desc:           description,
@@ -821,25 +833,31 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 			api.writeError(w, http.StatusInternalServerError, "list", err)
 			return
 		}
-		for i, b := range remoteBackups {
-			description := b.DataFormat
-			if b.Broken != "" {
-				description = b.Broken
+		for i, item := range remoteBackups {
+			description := item.DataFormat
+			if item.Broken != "" {
+				description = item.Broken
 				brokenBackups++
 			}
-			if b.Tags != "" {
+			if item.Tags != "" {
 				if description != "" {
 					description += ", "
 				}
-				description += b.Tags
+				description += item.Tags
 			}
-			fullSize := b.GetFullSize()
+			fullSize := item.GetFullSize()
 			backupsJSON = append(backupsJSON, backupJSON{
-				Name:           b.BackupName,
-				Created:        b.CreationDate.Format(common.TimeFormat),
+				Name:           item.BackupName,
+				Created:        item.CreationDate.Format(common.TimeFormat),
 				Size:           fullSize,
+				DataSize:       item.DataSize,
+				ObjectDiskSize: item.ObjectDiskSize,
+				MetadataSize:   item.MetadataSize,
+				RBACSize:       item.RBACSize,
+				ConfigSize:     item.ConfigSize,
+				CompressedSize: item.CompressedSize,
 				Location:       "remote",
-				RequiredBackup: b.RequiredBackup,
+				RequiredBackup: item.RequiredBackup,
 				Desc:           description,
 			})
 			if i == len(remoteBackups)-1 {
@@ -1740,7 +1758,7 @@ func (api *APIServer) CreateIntegrationTables() error {
 	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_actions"}, query, true, false, "", 0, defaultDataPath); err != nil {
 		return err
 	}
-	query = fmt.Sprintf("CREATE TABLE system.backup_list (name String, created DateTime, size Int64, location String, required String, desc String) ENGINE=URL('%s://%s:%s/backup/list%s', JSONEachRow) %s", schema, host, port, auth, settings)
+	query = fmt.Sprintf("CREATE TABLE system.backup_list (name String, created DateTime, size UInt64, data_size UInt64, object_disk_size UInt64,metadata_size UInt64,rbac_size UInt64,config_size UInt64, compressed_size UInt64, location String, required String, desc String) ENGINE=URL('%s://%s:%s/backup/list%s', JSONEachRow) %s", schema, host, port, auth, settings)
 	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_list"}, query, true, false, "", 0, defaultDataPath); err != nil {
 		return err
 	}
