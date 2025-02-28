@@ -14,6 +14,7 @@ IMPROVEMENTS
 
 BUG FIXES
 
+- `backblaze` s3 provider support only STANDARD storage class, fix [1086](https://github.com/Altinity/clickhouse-backup/issues/1086)
 - fix `--restore-database-mapping` with special characters in source table, fix
   reopened [820](https://github.com/Altinity/clickhouse-backup/issues/820#issuecomment-2675628282),
   thanks @IvaskevychYuriy

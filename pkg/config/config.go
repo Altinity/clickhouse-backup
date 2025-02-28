@@ -358,6 +358,11 @@ func LoadConfig(configLocation string) (*Config, error) {
 
 	log_helper.SetLogLevelFromString(cfg.General.LogLevel)
 
+	// https://github.com/Altinity/clickhouse-backup/issues/1086
+	if cfg.General.RemoteStorage == "s3" && strings.Contains(cfg.S3.Endpoint, "backblaze") && cfg.S3.StorageClass != string(s3types.StorageClassStandard) {
+		log.Warn().Str("endpoint", cfg.S3.Endpoint).Str("storageClass", cfg.S3.StorageClass).Msgf("unsopported STORAGE_CLASS, will use %s", string(s3types.StorageClassStandard))
+		cfg.S3.StorageClass = string(s3types.StorageClassStandard)
+	}
 	if err = ValidateConfig(cfg); err != nil {
 		return cfg, err
 	}
