@@ -153,6 +153,7 @@ def list_local_remote(self):
     """
     backup = self.context.backup
     name_prefix = "cli_list"
+    location_index = 3
 
     try:
         with Given("create a local backup"):
@@ -175,7 +176,7 @@ def list_local_remote(self):
                 for line in data:
                     debug(line)
                     total_backups += 1
-                    assert line[4] in ("local", "remote"), error()
+                    assert line[location_index] in ("local", "remote"), error()
 
             with By("check local backups"):
                 local_backups = 0
@@ -187,7 +188,7 @@ def list_local_remote(self):
                 for line in data:
                     debug(line)
                     local_backups += 1
-                    assert line[4] == "local", error()
+                    assert line[location_index] == "local", error()
 
             with By("check remote backups"):
                 remote_backups = 0
@@ -199,7 +200,7 @@ def list_local_remote(self):
                 for line in data:
                     debug(line)
                     remote_backups += 1
-                    assert line[4] == "remote", error()
+                    assert line[location_index] == "remote", error()
 
             with By("I expect total number to match"):
                 assert total_backups == local_backups + remote_backups, error()

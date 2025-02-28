@@ -3,6 +3,7 @@ package config
 import (
 	"crypto/tls"
 	"fmt"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"math"
 	"os"
 	"regexp"
@@ -148,6 +149,7 @@ type S3Config struct {
 	ObjectLabels            map[string]string `yaml:"object_labels" envconfig:"S3_OBJECT_LABELS"`
 	RequestPayer            string            `yaml:"request_payer" envconfig:"S3_REQUEST_PAYER"`
 	CheckSumAlgorithm       string            `yaml:"check_sum_algorithm" envconfig:"S3_CHECKSUM_ALGORITHM"`
+	RetryMode               string            `yaml:"retry_mode" envconfig:"S3_RETRY_MODE"`
 	Debug                   bool              `yaml:"debug" envconfig:"S3_DEBUG"`
 }
 
@@ -373,6 +375,11 @@ func LoadConfig(configLocation string) (*Config, error) {
 }
 
 func ValidateConfig(cfg *Config) error {
+	if cfg.General.RemoteStorage == "s3" {
+		if _, err := aws.ParseRetryMode(cfg.S3.RetryMode); err != nil {
+			return err
+		}
+	}
 	if cfg.GetCompressionFormat() == "unknown" {
 		return fmt.Errorf("'%s' is unknown remote storage", cfg.General.RemoteStorage)
 	}
@@ -601,6 +608,7 @@ func DefaultConfig() *Config {
 			StorageClass:            string(s3types.StorageClassStandard),
 			Concurrency:             int(downloadConcurrency + 1),
 			MaxPartsCount:           4000,
+			RetryMode:               string(aws.RetryModeStandard),
 		},
 		GCS: GCSConfig{
 			CompressionLevel:  1,

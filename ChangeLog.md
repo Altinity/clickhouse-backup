@@ -2,15 +2,16 @@
 
 IMPROVEMENTS
 
+- Add `S3_RETRY_MODE` with `standard` and `adaptive`, fix [1097](https://github.com/Altinity/clickhouse-backup/issues/1097)
 - Add `server_side_encryption_kms_bucket_key_enabled` support for backup/restore s3 object disks, fix [1092](https://github.com/Altinity/clickhouse-backup/issues/1092)
 - Add `AZBLOB_ASSUME_CONTAINER_EXISTS` config option, fix [1094](https://github.com/Altinity/clickhouse-backup/pull/1094), thanks @atykhyy
 - Improve Azure authentication mechanism, fix [1047](https://github.com/Altinity/clickhouse-backup/issues/1047), thanks @dnovvak
 - Add option `--skip-projections` to `create`, `upload`, `restore` commands, with table pattern to allow make backup
   without projection, restore supported only in `clickhouse-server` 24.3+, fix [861](https://github.com/Altinity/clickhouse-backup/issues/861)
-- remove `S3_PART_SIZE` and `AZBLOB_BUFFER_SIZE` parameter from configuration and significant decrease memory usage
+- Remove `S3_PART_SIZE` and `AZBLOB_BUFFER_SIZE` parameter from configuration and significant decrease memory usage
   during upload and download, fix [854](https://github.com/Altinity/clickhouse-backup/issues/854)
-- add `--configs-only` and `--rbac-only` options to `upload` and `download` command, fix [1042](https://github.com/Altinity/clickhouse-backup/issues/1042)
-- add support `\` and `/` special characters in table name and database name, fix [1091](https://github.com/Altinity/clickhouse-backup/issues/1091)
+- Add `--configs-only` and `--rbac-only` options to `upload` and `download` command, fix [1042](https://github.com/Altinity/clickhouse-backup/issues/1042)
+- Add support `\` and `/` special characters in table name and database name, fix [1091](https://github.com/Altinity/clickhouse-backup/issues/1091)
 
 BUG FIXES
 
