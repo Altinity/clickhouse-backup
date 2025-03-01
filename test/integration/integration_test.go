@@ -674,10 +674,10 @@ func TestIntegrationEmbedded(t *testing.T) {
 	// === AZURE ===
 	// CUSTOM backup create folder in each disk
 	env.DockerExecNoError(r, "clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_azure/backup/")
+	env.runMainIntegrationScenario(t, "EMBEDDED_AZURE", "config-azblob-embedded.yml")
 	if compareVersion(version, "24.8") >= 0 {
 		env.runMainIntegrationScenario(t, "EMBEDDED_AZURE_URL", "config-azblob-embedded-url.yml")
 	}
-	env.runMainIntegrationScenario(t, "EMBEDDED_AZURE", "config-azblob-embedded.yml")
 
 	// === GCS over S3 ===
 	if compareVersion(version, "24.3") >= 0 && os.Getenv("QA_GCS_OVER_S3_BUCKET") != "" {
@@ -1290,7 +1290,7 @@ func testAPIBackupClean(r *require.Assertions, env *TestEnvironment) {
 
 func testAPIMetrics(r *require.Assertions, env *TestEnvironment) {
 	log.Debug().Msg("Check /metrics clickhouse_backup_last_backup_size_remote")
-	var lastRemoteSize int64
+	var lastRemoteSize uint64
 	r.NoError(env.ch.SelectSingleRowNoCtx(&lastRemoteSize, "SELECT size FROM system.backup_list WHERE name='z_backup_5' AND location='remote'"))
 
 	var longSchemaTotalBytes uint64
@@ -1303,7 +1303,7 @@ func testAPIMetrics(r *require.Assertions, env *TestEnvironment) {
 	r.NoError(env.ch.SelectSingleRowNoCtx(&metricsTotalBytes, "SELECT value FROM system.asynchronous_metrics WHERE metric='TotalBytesOfMergeTreeTables'"))
 
 	r.Greater(longSchemaTotalBytes, uint64(0))
-	r.Greater(uint64(lastRemoteSize), longSchemaTotalBytes)
+	r.Greater(lastRemoteSize, longSchemaTotalBytes)
 
 	out, err := env.DockerExecOut("clickhouse-backup", "curl", "-sL", "http://localhost:7171/metrics")
 	r.NoError(err, "%s\nunexpected GET /metrics error: %v", out, err)
@@ -1345,25 +1345,27 @@ func testAPIBackupList(t *testing.T, r *require.Assertions, env *TestEnvironment
 	log.Debug().Msg("Check /backup/list")
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "curl -sfL 'http://localhost:7171/backup/list'")
 	r.NoError(err, "%s\nunexpected GET /backup/list error: %v", out, err)
+	localListFormat := "{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"data_size\":\\d+,\"metadata_size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"regular\"}"
+	remoteListFormat := "{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"data_size\":\\d+,\"metadata_size\":\\d+,\"compressed_size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar, regular\"}"
 	for i := 1; i <= apiBackupNumber; i++ {
-		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"regular\"}", i)), out))
-		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar, regular\"}", i)), out))
+		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf(localListFormat, i)), out))
+		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf(remoteListFormat, i)), out))
 	}
 
 	log.Debug().Msg("Check /backup/list/local")
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "curl -sfL 'http://localhost:7171/backup/list/local'")
 	r.NoError(err, "%s\nunexpected GET /backup/list/local error: %v", out, err)
 	for i := 1; i <= apiBackupNumber; i++ {
-		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"regular\"}", i)), out))
-		r.True(assert.NotRegexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar, regular\"}", i)), out))
+		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf(localListFormat, i)), out))
+		r.True(assert.NotRegexp(t, regexp.MustCompile(fmt.Sprintf(remoteListFormat, i)), out))
 	}
 
 	log.Debug().Msg("Check /backup/list/remote")
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "curl -sfL 'http://localhost:7171/backup/list/remote'")
 	r.NoError(err, "%s\nunexpected GET /backup/list/remote error: %v", out, err)
 	for i := 1; i <= apiBackupNumber; i++ {
-		r.True(assert.NotRegexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"local\",\"required\":\"\",\"desc\":\"regular\"}", i)), out))
-		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf("{\"name\":\"z_backup_%d\",\"created\":\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\",\"size\":\\d+,\"location\":\"remote\",\"required\":\"\",\"desc\":\"tar, regular\"}", i)), out))
+		r.True(assert.NotRegexp(t, regexp.MustCompile(fmt.Sprintf(localListFormat, i)), out))
+		r.True(assert.Regexp(t, regexp.MustCompile(fmt.Sprintf(remoteListFormat, i)), out))
 	}
 }
 
@@ -2648,7 +2650,11 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 		r.NoError(err)
 		r.Contains(out, "+"+fullBackupName)
 		r.Contains(out, incrementBackupNameEmpty)
-		r.Contains(out, "data:0B")
+		if !strings.Contains(remoteStorageType, "EMBEDDED") {
+			r.Contains(out, "data:0B")
+		} else {
+			r.Contains(out, "arch:0B")
+		}
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "upload", "--env", "BACKUPS_TO_KEEP_REMOTE=1", "--env", "BACKUPS_TO_KEEP_REMOTE=2", "--env", "ALLOW_EMPTY_BACKUPS=1", "--diff-from-remote", fullBackupName, incrementBackupNameEmpty)
 		out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ec", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" list remote | grep '^"+fullBackupName+"'")
 		r.NoError(err)
@@ -2658,7 +2664,11 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 		r.NoError(err)
 		r.Contains(out, "+"+fullBackupName)
 		r.Contains(out, incrementBackupNameEmpty)
-		r.Contains(out, "data:0B")
+		if !strings.Contains(remoteStorageType, "EMBEDDED") {
+			r.Contains(out, "data:0B")
+		} else {
+			r.Contains(out, "arch:0B")
+		}
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", incrementBackupNameEmpty)
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", incrementBackupNameEmpty)
 	}

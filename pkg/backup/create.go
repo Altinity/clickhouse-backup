@@ -410,7 +410,17 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 		if schemaOnly {
 			backupDataSize = append(backupDataSize, clickhouse.BackupDataSize{Size: 0})
 		} else {
-			if backupResult[0].CompressedSize == 0 {
+			if backupResult[0].CompressedSize == 0 && backupResult[0].Id != "" {
+				systemBackupResult := make([]clickhouse.SystemBackups, 0)
+				backupSizeSQL := fmt.Sprintf("SELECT * FROM system.backups WHERE id='%s'", backupResult[0].Id)
+				if sizeErr := b.ch.SelectContext(ctx, &systemBackupResult, backupSizeSQL); sizeErr != nil {
+					return sizeErr
+				}
+				if len(systemBackupResult) == 0 && len(systemBackupResult) > 1 {
+					return fmt.Errorf("wrong system.backup results: %v", systemBackupResult)
+				}
+				backupDataSize = append(backupDataSize, clickhouse.BackupDataSize{Size: systemBackupResult[0].CompressedSize})
+			} else if backupResult[0].CompressedSize == 0 {
 				backupSizeSQL := "SELECT sum(bytes_on_disk) AS backup_data_size FROM system.parts WHERE active AND ("
 				for _, t := range tables {
 					if oneTableSizeSQL, exists := tablesSizeSQL[metadata.TableTitle{Database: t.Database, Table: t.Name}]; exists {
@@ -422,8 +432,8 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 					}
 				}
 				backupSizeSQL = backupSizeSQL[:len(backupSizeSQL)-4] + ")"
-				if err := b.ch.SelectContext(ctx, &backupDataSize, backupSizeSQL); err != nil {
-					return err
+				if sizeErr := b.ch.SelectContext(ctx, &backupDataSize, backupSizeSQL); sizeErr != nil {
+					return sizeErr
 				}
 			} else {
 				backupDataSize = append(backupDataSize, clickhouse.BackupDataSize{Size: backupResult[0].CompressedSize})
@@ -620,7 +630,7 @@ func (b *Backuper) fillEmbeddedPartsFromDirList(partitionsIdsMap common.EmptyMap
 				found = true
 				break
 			}
-			if strings.Contains(prefix, "*") {
+			if strings.Contains(prefix, "*") || strings.Contains(prefix, "?") {
 				if matched, err := filepath.Match(dirName, prefix); err == nil && matched {
 					found = true
 					break

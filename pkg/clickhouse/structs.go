@@ -65,21 +65,28 @@ type Macro struct {
 	Substitution string `ch:"substitution"`
 }
 
-// SystemBackups - info from system.backups
+// SystemBackups - info from system.backups, universal for all versions
 type SystemBackups struct {
-	Id                string    `ch:"id"`
-	UUID              string    `ch:"uuid"`
-	BackupName        string    `ch:"backup_name"`
-	Name              string    `ch:"name"`
-	Status            string    `ch:"status"`
-	StatusChangedTime time.Time `ch:"status_changed_time"`
-	Error             string    `ch:"error"`
-	Internal          bool      `ch:"internal"`
-	StartTime         time.Time `ch:"start_time"`
-	EndTime           time.Time `ch:"end_time"`
-	CompressedSize    uint64    `ch:"compressed_size"`
-	UncompressedSize  uint64    `ch:"uncompressed_size"`
-	NumFiles          uint64    `ch:"num_files"`
+	Id                string            `ch:"id"`
+	UUID              string            `ch:"uuid"`
+	QueryId           string            `ch:"query_id"`
+	BackupName        string            `ch:"backup_name"`
+	BaseBackupName    string            `ch:"base_backup_name"`
+	Name              string            `ch:"name"`
+	Status            string            `ch:"status"`
+	StatusChangedTime time.Time         `ch:"status_changed_time"`
+	Error             string            `ch:"error"`
+	Internal          bool              `ch:"internal"`
+	StartTime         time.Time         `ch:"start_time"`
+	EndTime           time.Time         `ch:"end_time"`
+	CompressedSize    uint64            `ch:"compressed_size"`
+	UncompressedSize  uint64            `ch:"uncompressed_size"`
+	NumFiles          uint64            `ch:"num_files"`
+	TotalSize         uint64            `ch:"total_size"`
+	NumEntries        uint64            `ch:"num_entries"`
+	FilesRead         uint64            `ch:"files_read"`
+	BytesRead         uint64            `ch:"bytes_read"`
+	ProfileEvents     map[string]uint64 `ch:"ProfileEvents"`
 }
 
 // ColumnDataTypes - info from system.parts_columns
