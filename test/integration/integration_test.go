@@ -2611,9 +2611,10 @@ func (env *TestEnvironment) uploadSSHKeys(r *require.Assertions, container strin
 	env.DockerExecNoError(r, container, "cp", "-vf", "/id_rsa", "/tmp/id_rsa")
 	env.DockerExecNoError(r, container, "chmod", "-v", "0600", "/tmp/id_rsa")
 
-	r.NoError(env.DockerCP("sftp/clickhouse-backup_rsa.pub", "sshd:/root/.ssh/authorized_keys"))
-	env.DockerExecNoError(r, "sshd", "chown", "-v", "root:root", "/root/.ssh/authorized_keys")
-	env.DockerExecNoError(r, "sshd", "chmod", "-v", "0600", "/root/.ssh/authorized_keys")
+	r.NoError(env.DockerCP("sftp/clickhouse-backup_rsa.pub", "sshd:/authorized_keys"))
+	env.DockerExecNoError(r, "sshd", "cp", "-vf", "/authorized_keys", "/etc/authorized_keys/root")
+	env.DockerExecNoError(r, "sshd", "chown", "-v", "root:root", "/etc/authorized_keys/root")
+	env.DockerExecNoError(r, "sshd", "chmod", "-v", "0600", "/etc/authorized_keys/root")
 }
 
 func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStorageType, backupConfig string) {
