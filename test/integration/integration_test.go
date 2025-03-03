@@ -3085,6 +3085,7 @@ func (env *TestEnvironment) checkResumeAlreadyProcessed(backupCmd, testBackupNam
 		r.NotContains(out, resumableCleanup)
 		r.Contains(out, alreadyProcesses)
 	}
+	log.Debug().Msg(out)
 }
 
 func fullCleanup(t *testing.T, r *require.Assertions, env *TestEnvironment, backupNames, backupTypes, databaseList []string, checkDeleteErr, checkDeleteOtherErr bool, backupConfig string) {
