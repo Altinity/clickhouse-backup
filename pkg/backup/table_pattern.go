@@ -521,21 +521,22 @@ func getTableListByPatternRemote(ctx context.Context, b *Backuper, remoteBackupM
 				if matched, _ := filepath.Match(replacer.Replace(strings.Trim(pattern, " \t\r\n")), replacer.Replace(tableName)); !matched {
 					continue
 				}
-				tmReader, err := b.dst.GetFileReader(ctx, path.Join(metadataPath, common.TablePathEncode(t.Database), fmt.Sprintf("%s.json", common.TablePathEncode(t.Table))))
+				tableMetadataPath := path.Join(metadataPath, common.TablePathEncode(t.Database), fmt.Sprintf("%s.json", common.TablePathEncode(t.Table)))
+				tmReader, err := b.dst.GetFileReader(ctx, tableMetadataPath)
 				if err != nil {
-					return nil, err
+					return nil, fmt.Errorf("b.dst.GetFileReader(%s) error: %v", tableMetadataPath, err)
 				}
 				data, err := io.ReadAll(tmReader)
 				if err != nil {
-					return nil, err
+					return nil, fmt.Errorf("io.ReadAll(%s) error: %v", tableMetadataPath, err)
 				}
 				err = tmReader.Close()
 				if err != nil {
-					return nil, err
+					return nil, fmt.Errorf("can't close %s error: %v", tableMetadataPath, err)
 				}
 				var t metadata.TableMetadata
 				if err = json.Unmarshal(data, &t); err != nil {
-					return nil, err
+					return nil, fmt.Errorf("json.Unmarshal(%s) error: %v", data, err)
 				}
 				result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, t)
 				break tablePatterns

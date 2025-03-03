@@ -402,7 +402,7 @@ func (b *Backuper) getTablesDiffFromRemote(ctx context.Context, diffFromRemote s
 	tablesForUploadFromDiff = make(map[metadata.TableTitle]metadata.TableMetadata)
 	backupList, err := b.dst.BackupList(ctx, true, diffFromRemote)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("b.dst.BackupList return error: %v", err)
 	}
 	var diffRemoteMetadata *metadata.BackupMetadata
 	for _, backup := range backupList {
@@ -416,9 +416,9 @@ func (b *Backuper) getTablesDiffFromRemote(ctx context.Context, diffFromRemote s
 	}
 
 	if len(diffRemoteMetadata.Tables) != 0 {
-		diffTablesList, err := getTableListByPatternRemote(ctx, b, diffRemoteMetadata, tablePattern, false)
-		if err != nil {
-			return nil, err
+		diffTablesList, tableListErr := getTableListByPatternRemote(ctx, b, diffRemoteMetadata, tablePattern, false)
+		if tableListErr != nil {
+			return nil, fmt.Errorf("getTableListByPatternRemote return erro: %v", tableListErr)
 		}
 		for _, t := range diffTablesList {
 			tablesForUploadFromDiff[metadata.TableTitle{

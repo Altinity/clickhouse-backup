@@ -2656,7 +2656,7 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 		} else {
 			r.Contains(out, "arch:0B")
 		}
-		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "upload", "--env", "BACKUPS_TO_KEEP_REMOTE=1", "--env", "BACKUPS_TO_KEEP_REMOTE=2", "--env", "ALLOW_EMPTY_BACKUPS=1", "--diff-from-remote", fullBackupName, incrementBackupNameEmpty)
+		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "upload", "--env", "BACKUPS_TO_KEEP_REMOTE=2", "--env", "ALLOW_EMPTY_BACKUPS=1", "--diff-from-remote", fullBackupName, incrementBackupNameEmpty)
 		out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ec", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" list remote | grep '^"+fullBackupName+"'")
 		r.NoError(err, out)
 		r.Contains(out, fullBackupName)
