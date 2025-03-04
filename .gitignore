@@ -4,6 +4,7 @@ debug
 /clickhouse-backup
 credentials.json
 .idea
+*.iml
 build/
 .env
 *.log

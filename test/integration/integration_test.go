@@ -2037,6 +2037,7 @@ func TestCheckSystemPartsColumns(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
+// // https://github.com/Altinity/clickhouse-backup/issues/871
 func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	if isTestShouldSkip("RUN_ADVANCED_TESTS") {
 		t.Skip("Skipping Advanced integration tests...")
@@ -2056,6 +2057,8 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	for backupNumber, backupName := range backupNames {
 		if backupNumber == 0 {
 			env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", fmt.Sprintf("BACKUPS_TO_KEEP_REMOTE=3 CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup create_remote %s", backupName))
+		} else if backupNumber == 3 {
+			env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", fmt.Sprintf("BACKUPS_TO_KEEP_REMOTE=3 CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup create_remote --diff-from-remote=%s %s", backupNames[backupNumber-1], backupName))
 		} else {
 			incrementData = generateIncrementTestData(t, r, env, "S3", false, incrementData, backupNumber)
 			env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", fmt.Sprintf("BACKUPS_TO_KEEP_REMOTE=3 CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup create_remote --diff-from-remote=%s %s", backupNames[backupNumber-1], backupName))
@@ -2063,11 +2066,17 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	}
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml list local")
 	r.NoError(err, "%s\nunexpected list local error: %v", out, err)
-	// shall not delete any backup, cause all deleted backups have links as required in other backups
 	for _, backupName := range backupNames {
 		r.Contains(out, backupName)
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupName)
 	}
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml list remote")
+	r.NoError(err, "%s\nunexpected list remote error: %v", out, err)
+	// shall not delete any backup on remote, cause all deleted backups have links as required in other backups
+	for _, backupName := range backupNames {
+		r.Regexp("(?m)^"+backupName, out)
+	}
+
 	latestIncrementBackup := fmt.Sprintf("keep_remote_backup_%d", len(backupNames)-1)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "download", latestIncrementBackup)
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml list local")
@@ -2075,8 +2084,10 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	prevIncrementBackup := fmt.Sprintf("keep_remote_backup_%d", len(backupNames)-2)
 	for _, backupName := range backupNames {
 		if backupName == latestIncrementBackup {
-			r.Contains(out, backupName)
+			r.Regexp("(?m)^"+backupName, out)
+			r.NotContains(out, "+"+backupName)
 		} else if backupName == prevIncrementBackup {
+			r.NotRegexp("(?m)^"+backupName, out)
 			r.Contains(out, "+"+backupName)
 		} else {
 			r.NotContains(out, backupName)
@@ -2085,7 +2096,8 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--rm", latestIncrementBackup)
 	var res uint64
 	r.NoError(env.ch.SelectSingleRowNoCtx(&res, fmt.Sprintf("SELECT count() FROM `%s_%s`.`%s_%s`", Issue331Issue1091Atomic, t.Name(), Issue331Issue1091Atomic, t.Name())))
-	r.Equal(uint64(100+20*4), res)
+	numBackupsWithData := 3
+	r.Equal(uint64(100+20*numBackupsWithData), res)
 	fullCleanup(t, r, env, []string{latestIncrementBackup}, []string{"local"}, nil, true, true, "config-s3.yml")
 	fullCleanup(t, r, env, backupNames, []string{"remote"}, databaseList, true, true, "config-s3.yml")
 	env.checkObjectStorageIsEmpty(t, r, "S3")
@@ -2626,7 +2638,6 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	// main test scenario
 	fullBackupName := fmt.Sprintf("%s_full_%d", t.Name(), rand.Int())
 	incrementBackupName := fmt.Sprintf("%s_increment_%d", t.Name(), rand.Int())
-	incrementBackupNameEmpty := fmt.Sprintf("%s_incrementEmpty_%d", t.Name(), rand.Int())
 	incrementBackupName2 := fmt.Sprintf("%s_increment2_%d", t.Name(), rand.Int())
 	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Issue1091Atomic, Issue331Issue1091Ordinary}
 	tablesPattern := fmt.Sprintf("*_%s.*", t.Name())
@@ -2642,37 +2653,6 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	log.Debug().Msg("Upload full backup")
 	uploadCmd := fmt.Sprintf("%s_COMPRESSION_FORMAT=zstd CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/%s clickhouse-backup upload --resume %s", remoteStorageType, backupConfig, fullBackupName)
 	env.checkResumeAlreadyProcessed(uploadCmd, fullBackupName, "upload", r, remoteStorageType)
-
-	// https://github.com/Altinity/clickhouse-backup/issues/871
-	if !strings.Contains(remoteStorageType, "CUSTOM") {
-		log.Debug().Msg("Create+upload incrementEmpty without data")
-		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables", tablesPattern, "--diff-from-remote", fullBackupName, incrementBackupNameEmpty)
-		out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ec", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" list local | grep "+incrementBackupNameEmpty)
-		r.NoError(err, out)
-		r.Contains(out, "+"+fullBackupName)
-		r.Contains(out, incrementBackupNameEmpty)
-		if !strings.Contains(remoteStorageType, "EMBEDDED") {
-			r.Contains(out, "data:0B")
-		} else {
-			r.Contains(out, "arch:0B")
-		}
-		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "upload", "--env", "BACKUPS_TO_KEEP_REMOTE=2", "--env", "ALLOW_EMPTY_BACKUPS=1", "--diff-from-remote", fullBackupName, incrementBackupNameEmpty)
-		out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ec", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" list remote | grep '^"+fullBackupName+"'")
-		r.NoError(err, out)
-		r.Contains(out, fullBackupName)
-		r.NotContains(out, "data:0B")
-		out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ec", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" list remote | grep "+incrementBackupNameEmpty)
-		r.NoError(err, out)
-		r.Contains(out, "+"+fullBackupName)
-		r.Contains(out, incrementBackupNameEmpty)
-		if !strings.Contains(remoteStorageType, "EMBEDDED") {
-			r.Contains(out, "data:0B")
-		} else {
-			r.Contains(out, "arch:0B")
-		}
-		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", incrementBackupNameEmpty)
-		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", incrementBackupNameEmpty)
-	}
 
 	log.Debug().Msg("Create increment1 with data")
 	incrementData := generateIncrementTestData(t, r, env, remoteStorageType, createAllTypesOfObjectTables, defaultIncrementData, 1)
@@ -3084,8 +3064,9 @@ func (env *TestEnvironment) checkResumeAlreadyProcessed(backupCmd, testBackupNam
 		r.NotContains(out, resumableWarning)
 		r.NotContains(out, resumableCleanup)
 		r.Contains(out, alreadyProcesses)
+	} else {
+		log.Debug().Msg(out)
 	}
-	log.Debug().Msg(out)
 }
 
 func fullCleanup(t *testing.T, r *require.Assertions, env *TestEnvironment, backupNames, backupTypes, databaseList []string, checkDeleteErr, checkDeleteOtherErr bool, backupConfig string) {
