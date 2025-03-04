@@ -34,17 +34,17 @@ require (
 	github.com/otiai10/copy v1.14.1
 	github.com/pkg/errors v0.9.1
 	github.com/pkg/sftp v1.13.7
-	github.com/prometheus/client_golang v1.21.0
+	github.com/prometheus/client_golang v1.21.1
 	github.com/puzpuzpuz/xsync v1.5.2
 	github.com/ricochet2200/go-disk-usage/du v0.0.0-20210707232629-ac9918953285
 	github.com/rs/zerolog v1.33.0
 	github.com/stretchr/testify v1.10.0
-	github.com/tencentyun/cos-go-sdk-v5 v0.7.61
+	github.com/tencentyun/cos-go-sdk-v5 v0.7.62
 	github.com/urfave/cli v1.22.16
 	github.com/xyproto/gionice v1.3.0
 	github.com/yargevad/filepathx v1.0.0
 	go.etcd.io/bbolt v1.4.0
-	golang.org/x/crypto v0.34.0
+	golang.org/x/crypto v0.35.0
 	golang.org/x/mod v0.23.0
 	golang.org/x/sync v0.11.0
 	golang.org/x/text v0.22.0
