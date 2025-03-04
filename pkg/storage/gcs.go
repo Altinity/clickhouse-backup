@@ -54,7 +54,7 @@ func (w debugGCSTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 		log.Error().Msgf("GCS_ERROR: %v", err)
 		return resp, err
 	}
-	logMsg = fmt.Sprintf("<<< [GCS_RESPONSE] <<< %v %v\n", r.Method, r.URL.String())
+	logMsg = fmt.Sprintf("<<< [GCS_RESPONSE: %s] <<< %v %v\n", resp.Status, r.Method, r.URL.String())
 	for h, values := range resp.Header {
 		for _, v := range values {
 			logMsg += fmt.Sprintf("%v: %v\n", h, v)

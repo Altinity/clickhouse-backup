@@ -3523,7 +3523,7 @@ func (env *TestEnvironment) queryWithNoError(r *require.Assertions, query string
 	r.NoError(err)
 }
 
-var dockerExecTimeout = 600 * time.Second
+var dockerExecTimeout = 900 * time.Second
 
 func (env *TestEnvironment) DockerExecBackgroundNoError(r *require.Assertions, container string, cmd ...string) {
 	out, err := env.DockerExecBackgroundOut(container, cmd...)
