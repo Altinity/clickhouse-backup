@@ -269,7 +269,7 @@ jobs:
           GOROOT: ${{ env.GOROOT_1_23_X64 }}
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
           # options for advanced debug CI/CD
-          # RUN_TESTS: "^TestSkipTablesAndSkipTableEngines$"
+          RUN_TESTS: "^TestSkipTablesAndSkipTableEngines$"
           LOG_LEVEL: "debug"
           # TEST_LOG_LEVEL: "debug"
           # GCS_DEBUG: "true"
