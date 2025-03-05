@@ -44,7 +44,7 @@ import (
 var CreateDatabaseRE = regexp.MustCompile(`(?m)^CREATE DATABASE (\s*)(\S+)(\s*)`)
 
 // Restore - restore tables matched by tablePattern from backupName
-func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tableMapping, partitions, skipProjections []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume bool, backupVersion string, commandId int) error {
+func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tableMapping, partitions, skipProjections []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume, schemaAsAttach bool, backupVersion string, commandId int) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return err
@@ -73,6 +73,10 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	}
 	if clickHouseVersion < 24003000 && skipProjections != nil && len(skipProjections) > 0 {
 		return fmt.Errorf("backup with skip-projections can restore only in 24.3+")
+	}
+	// https://github.com/Altinity/clickhouse-backup/issues/868
+	if schemaAsAttach && b.cfg.General.RestoreSchemaOnCluster != "" {
+		return fmt.Errorf("can't apply `--restore-schema-as-attach` and config `retore_schema_on_cluster` together")
 	}
 
 	if backupName == "" {
@@ -223,7 +227,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 		}
 	}
 	if schemaOnly || dropExists || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
-		if err = b.RestoreSchema(ctx, backupName, backupMetadata, disks, tablesForRestore, ignoreDependencies, version); err != nil {
+		if err = b.RestoreSchema(ctx, backupName, backupMetadata, disks, tablesForRestore, ignoreDependencies, version, schemaAsAttach); err != nil {
 			return err
 		}
 	}
@@ -895,16 +899,16 @@ func (b *Backuper) dropExistPartitions(ctx context.Context, tablesForRestore Lis
 }
 
 // RestoreSchema - restore schemas matched by tablePattern from backupName
-func (b *Backuper) RestoreSchema(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, disks []clickhouse.Disk, tablesForRestore ListOfTables, ignoreDependencies bool, version int) error {
+func (b *Backuper) RestoreSchema(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, disks []clickhouse.Disk, tablesForRestore ListOfTables, ignoreDependencies bool, version int, schemaAsAttach bool) error {
 	startRestoreSchema := time.Now()
-	if dropErr := b.dropExistsTables(tablesForRestore, ignoreDependencies, version); dropErr != nil {
+	if dropErr := b.dropExistsTables(tablesForRestore, ignoreDependencies, version, schemaAsAttach); dropErr != nil {
 		return dropErr
 	}
 	var restoreErr error
 	if b.isEmbedded {
 		restoreErr = b.restoreSchemaEmbedded(ctx, backupName, backupMetadata, disks, tablesForRestore, version)
 	} else {
-		restoreErr = b.restoreSchemaRegular(ctx, tablesForRestore, version)
+		restoreErr = b.restoreSchemaRegular(ctx, tablesForRestore, version, schemaAsAttach)
 	}
 	if restoreErr != nil {
 		return restoreErr
@@ -1087,7 +1091,7 @@ func (b *Backuper) fixEmbeddedMetadataSQLQuery(ctx context.Context, sqlBytes []b
 	return sqlQuery, sqlMetadataChanged, nil
 }
 
-func (b *Backuper) restoreSchemaRegular(ctx context.Context, tablesForRestore ListOfTables, version int) error {
+func (b *Backuper) restoreSchemaRegular(ctx context.Context, tablesForRestore ListOfTables, version int, schemaAsAttach bool) error {
 	totalRetries := len(tablesForRestore)
 	restoreRetries := 0
 	isDatabaseCreated := common.EmptyMap{}
@@ -1113,7 +1117,7 @@ func (b *Backuper) restoreSchemaRegular(ctx context.Context, tablesForRestore Li
 			restoreErr = b.ch.CreateTable(clickhouse.Table{
 				Database: schema.Database,
 				Name:     schema.Table,
-			}, schema.Query, false, false, b.cfg.General.RestoreSchemaOnCluster, version, b.DefaultDataPath)
+			}, schema.Query, false, false, b.cfg.General.RestoreSchemaOnCluster, version, b.DefaultDataPath, schemaAsAttach)
 
 			if restoreErr != nil {
 				restoreRetries++
@@ -1224,7 +1228,7 @@ func (b *Backuper) replaceCreateToAttachForView(schema *metadata.TableMetadata) 
 	)
 }
 
-func (b *Backuper) dropExistsTables(tablesForDrop ListOfTables, ignoreDependencies bool, version int) error {
+func (b *Backuper) dropExistsTables(tablesForDrop ListOfTables, ignoreDependencies bool, version int, schemaAsAttach bool) error {
 	var dropErr error
 	dropRetries := 0
 	totalRetries := len(tablesForDrop)
@@ -1242,20 +1246,20 @@ func (b *Backuper) dropExistsTables(tablesForDrop ListOfTables, ignoreDependenci
 					}, possibleQueries...)
 				}
 				for _, query := range possibleQueries {
-					dropErr = b.ch.DropTable(clickhouse.Table{
+					dropErr = b.ch.DropOrDetachTable(clickhouse.Table{
 						Database: schema.Database,
 						Name:     schema.Table,
-					}, query, b.cfg.General.RestoreSchemaOnCluster, ignoreDependencies, version, b.DefaultDataPath)
+					}, query, b.cfg.General.RestoreSchemaOnCluster, ignoreDependencies, version, b.DefaultDataPath, schemaAsAttach)
 					if dropErr == nil {
 						tablesForDrop[i].Query = query
 						break
 					}
 				}
 			} else {
-				dropErr = b.ch.DropTable(clickhouse.Table{
+				dropErr = b.ch.DropOrDetachTable(clickhouse.Table{
 					Database: schema.Database,
 					Name:     schema.Table,
-				}, schema.Query, b.cfg.General.RestoreSchemaOnCluster, ignoreDependencies, version, b.DefaultDataPath)
+				}, schema.Query, b.cfg.General.RestoreSchemaOnCluster, ignoreDependencies, version, b.DefaultDataPath, schemaAsAttach)
 			}
 
 			if dropErr != nil {

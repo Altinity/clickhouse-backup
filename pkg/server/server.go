@@ -1284,6 +1284,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	configsOnly := false
 	skipProjections := make([]string, 0)
 	resume := false
+	restoreSchemaAsAttach := false
 	fullCommand := "restore"
 	operationId, _ := uuid.NewUUID()
 
@@ -1390,6 +1391,10 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		resume = true
 		fullCommand += " --resume"
 	}
+	if _, exist := api.getQueryParameter(query, "restore-schema-as-attach"); exist {
+		restoreSchemaAsAttach = true
+		fullCommand += " --restore-schema-as-attach"
+	}
 
 	name := utils.CleanBackupNameRE.ReplaceAllString(vars["name"], "")
 	fullCommand += fmt.Sprintf(" %s", name)
@@ -1405,7 +1410,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore", 0, func() error {
 			b := backup.NewBackuper(api.config)
-			return b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume, api.cliApp.Version, commandId)
+			return b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume, restoreSchemaAsAttach, api.cliApp.Version, commandId)
 		})
 		go func() {
 			if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
@@ -1755,15 +1760,15 @@ func (api *APIServer) CreateIntegrationTables() error {
 		return err
 	}
 	query := fmt.Sprintf("CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String) ENGINE=URL('%s://%s:%s/backup/actions%s', JSONEachRow) %s", schema, host, port, auth, settings)
-	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_actions"}, query, true, false, "", 0, defaultDataPath); err != nil {
+	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_actions"}, query, true, false, "", 0, defaultDataPath, false); err != nil {
 		return err
 	}
 	query = fmt.Sprintf("CREATE TABLE system.backup_list (name String, created DateTime, size UInt64, data_size UInt64, object_disk_size UInt64,metadata_size UInt64,rbac_size UInt64,config_size UInt64, compressed_size UInt64, location String, required String, desc String) ENGINE=URL('%s://%s:%s/backup/list%s', JSONEachRow) %s", schema, host, port, auth, settings)
-	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_list"}, query, true, false, "", 0, defaultDataPath); err != nil {
+	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_list"}, query, true, false, "", 0, defaultDataPath, false); err != nil {
 		return err
 	}
 	query = fmt.Sprintf("CREATE TABLE system.backup_version (version String) ENGINE=URL('%s://%s:%s/backup/version%s', JSONEachRow) %s", schema, host, port, auth, settings)
-	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_version"}, query, true, false, "", 0, defaultDataPath); err != nil {
+	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_version"}, query, true, false, "", 0, defaultDataPath, false); err != nil {
 		return err
 	}
 	return nil
