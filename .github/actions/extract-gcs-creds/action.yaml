@@ -1,4 +1,8 @@
 name: Extract GCS credentials
+inputs:
+  VAULT_PASSWORD:
+    description: "Vault password for decrypting credentials"
+    required: true
 runs:
   using: "composite"
   steps:
@@ -8,10 +12,10 @@ runs:
       shell: "bash"
       id: secrets
       env:
-        VAULT_PASSWORD: ${{ secrets.VAULT_PASSWORD }}
+        VAULT_PASSWORD: ${{ inputs.VAULT_PASSWORD }}
       run: |
         if [[ "" != "${VAULT_PASSWORD}" ]]; then
           openssl version
           openssl enc -base64 -aes-256-cbc -d -in test/integration/credentials.json.enc -out test/integration/credentials.json -md md5 -k ${VAULT_PASSWORD}
         fi
-        echo "GCS_TESTS=$(if [ -z "${{ secrets.VAULT_PASSWORD }}" ]; then echo "false"; else echo "true"; fi)" >> $GITHUB_OUTPUT
+        echo "GCS_TESTS=$(if [ -z "${{ inputs.VAULT_PASSWORD }}" ]; then echo "false"; else echo "true"; fi)" >> $GITHUB_OUTPUT

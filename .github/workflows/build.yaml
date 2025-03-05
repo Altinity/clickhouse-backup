@@ -63,8 +63,11 @@ jobs:
           format: golang
           flag-name: unittest-${{ matrix.clickhouse }}
 
-      - id: secrets
+      - name: Extract GCS credentials
+        id: secrets
         uses: ./.github/actions/extract-gcs-creds
+        with:
+          VAULT_PASSWORD: ${{ secrets.VAULT_PASSWORD }}
 
       - uses: actions/upload-artifact@v4
         with:
@@ -236,8 +239,11 @@ jobs:
           name: build-test-artifacts
           path: ./clickhouse-backup/
 
-      - id: secrets
+      - name: Extract GCS credentials
+        id: secrets
         uses: ./.github/actions/extract-gcs-creds
+        with:
+          VAULT_PASSWORD: ${{ secrets.VAULT_PASSWORD }}
 
       - name: Running integration tests
         env:
