@@ -601,9 +601,9 @@ func TestChangeReplicationPathIfReplicaExists(t *testing.T) {
 
 	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "--tables", "default.test_replica_wrong_path*", "test_wrong_path"))
 
-	r.NoError(env.ch.DropTable(clickhouse.Table{Database: "default", Name: "test_replica_wrong_path"}, createSQL, "", false, version, ""))
+	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: "default", Name: "test_replica_wrong_path"}, createSQL, "", false, version, "", false))
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), minimalChVersionWithNonBugUUID) >= 0 {
-		r.NoError(env.ch.DropTable(clickhouse.Table{Database: "default", Name: "test_replica_wrong_path_uuid"}, createWithUUIDSQL, "", false, version, ""))
+		r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: "default", Name: "test_replica_wrong_path_uuid"}, createWithUUIDSQL, "", false, version, "", false))
 	}
 	// hack for drop tables without drop data from keeper
 	_ = createReplicatedTable("test_replica_wrong_path2", "", "'/clickhouse/tables/wrong_path','{replica}'")
@@ -654,9 +654,9 @@ func TestChangeReplicationPathIfReplicaExists(t *testing.T) {
 		env.queryWithNoError(r, fmt.Sprintf("SYSTEM DROP REPLICA '{replica}' FROM ZKPATH '/clickhouse/tables/%s/0'", createUUID.String()))
 	}
 
-	r.NoError(env.ch.DropTable(clickhouse.Table{Database: "default", Name: "test_replica_wrong_path"}, createSQL, "", false, version, ""))
+	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: "default", Name: "test_replica_wrong_path"}, createSQL, "", false, version, "", false))
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), minimalChVersionWithNonBugUUID) >= 0 {
-		r.NoError(env.ch.DropTable(clickhouse.Table{Database: "default", Name: "test_replica_wrong_path_uuid"}, createWithUUIDSQL, "", false, version, ""))
+		r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: "default", Name: "test_replica_wrong_path_uuid"}, createWithUUIDSQL, "", false, version, "", false))
 	}
 
 	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_wrong_path"))
@@ -1585,7 +1585,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 				pauseStart := time.Now()
 				time.Sleep(time.Duration(pause) * time.Nanosecond)
 				log.Debug().Msgf("pause=%s pauseStart=%s", time.Duration(pause).String(), pauseStart.String())
-				err = env.ch.DropTable(clickhouse.Table{Database: "freeze_not_exists", Name: "freeze_not_exists"}, ifNotExistsCreateSQL, "", false, chVersion, "")
+				err = env.ch.DropOrDetachTable(clickhouse.Table{Database: "freeze_not_exists", Name: "freeze_not_exists"}, ifNotExistsCreateSQL, "", false, chVersion, "", false)
 				r.NoError(err)
 			}
 			resumeChannel <- 1
@@ -2014,7 +2014,7 @@ func TestCheckSystemPartsColumns(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create", "test_system_parts_columns")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", "test_system_parts_columns")
 
-	r.NoError(env.ch.DropTable(clickhouse.Table{Database: t.Name(), Name: "test_system_parts_columns"}, createSQL, "", false, version, ""))
+	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: t.Name(), Name: "test_system_parts_columns"}, createSQL, "", false, version, "", false))
 
 	// test incompatible data types
 	env.queryWithNoError(r, "CREATE TABLE "+t.Name()+".test_system_parts_columns(dt Date, v String) ENGINE=MergeTree() PARTITION BY dt ORDER BY tuple()")
@@ -2032,7 +2032,7 @@ func TestCheckSystemPartsColumns(t *testing.T) {
 	r.Error(env.DockerExec("clickhouse-backup", "ls", "-lah", "/var/lib/clickhouse/backup/test_system_parts_columns"))
 	r.Error(env.DockerExec("clickhouse-backup", "clickhouse-backup", "delete", "local", "test_system_parts_columns"))
 
-	r.NoError(env.ch.DropTable(clickhouse.Table{Database: t.Name(), Name: "test_system_parts_columns"}, createSQL, "", false, version, ""))
+	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: t.Name(), Name: "test_system_parts_columns"}, createSQL, "", false, version, "", false))
 	r.NoError(env.dropDatabase(t.Name()))
 	env.Cleanup(t, r)
 }
@@ -2274,7 +2274,7 @@ func TestRestoreMutationInProgress(t *testing.T) {
 	r.NoError(createErr)
 	r.NotContains(out, "have inconsistent data types")
 
-	r.NoError(env.ch.DropTable(clickhouse.Table{Database: t.Name(), Name: "test_restore_mutation_in_progress"}, "", "", false, version, ""))
+	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: t.Name(), Name: "test_restore_mutation_in_progress"}, "", "", false, version, "", false))
 	var restoreErr error
 	restoreErr = env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--rm", "--tables="+t.Name()+".test_restore_mutation_in_progress", "test_restore_mutation_in_progress")
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.8") < 0 {
@@ -2327,7 +2327,7 @@ func TestRestoreMutationInProgress(t *testing.T) {
 
 	env.DockerExecNoError(r, "clickhouse", "clickhouse", "client", "-q", "SELECT * FROM system.mutations FORMAT Vertical")
 
-	r.NoError(env.ch.DropTable(clickhouse.Table{Database: t.Name(), Name: "test_restore_mutation_in_progress"}, "", "", false, version, ""))
+	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: t.Name(), Name: "test_restore_mutation_in_progress"}, "", "", false, version, "", false))
 	r.NoError(env.dropDatabase(t.Name()))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_restore_mutation_in_progress")
 	env.Cleanup(t, r)
@@ -2464,7 +2464,7 @@ func TestFIPS(t *testing.T) {
 	// https://www.perplexity.ai/search/0920f1e8-59ec-4e14-b779-ba7b2e037196
 	testTLSCerts("rsa", "4096", "", "ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-AES256-GCM-SHA384", "AES_128_GCM_SHA256", "AES_256_GCM_SHA384")
 	testTLSCerts("ecdsa", "", "prime256v1", "ECDHE-ECDSA-AES128-GCM-SHA256", "ECDHE-ECDSA-AES256-GCM-SHA384")
-	r.NoError(env.ch.DropTable(clickhouse.Table{Database: t.Name(), Name: "fips_table"}, createSQL, "", false, 0, ""))
+	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: t.Name(), Name: "fips_table"}, createSQL, "", false, 0, "", false))
 	r.NoError(env.dropDatabase(t.Name()))
 	env.Cleanup(t, r)
 }
@@ -3370,7 +3370,7 @@ func (env *TestEnvironment) createTestSchema(t *testing.T, data TestDataStruct, 
 			Name:     data.Name,
 		},
 		createSQL,
-		false, false, "", 0, "/var/lib/clickhouse",
+		false, false, "", 0, "/var/lib/clickhouse", false,
 	)
 	return err
 }
