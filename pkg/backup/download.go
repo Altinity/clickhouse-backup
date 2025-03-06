@@ -71,7 +71,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	if err != nil {
 		return err
 	}
-
+	isResumeExists := false
 	for i := range localBackups {
 		if backupName == localBackups[i].BackupName {
 			if strings.Contains(localBackups[i].Tags, "embedded") || b.cfg.General.RemoteStorage == "custom" {
@@ -80,10 +80,11 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			if !b.resume {
 				return ErrBackupIsAlreadyExists
 			} else {
-				_, isResumeExists := os.Stat(path.Join(b.DefaultDataPath, "backup", backupName, "download.state2"))
-				if errors.Is(isResumeExists, os.ErrNotExist) {
+				_, checkDownloadErr := os.Stat(path.Join(b.DefaultDataPath, "backup", backupName, "download.state2"))
+				if errors.Is(checkDownloadErr, os.ErrNotExist) {
 					return ErrBackupIsAlreadyExists
 				}
+				isResumeExists = true
 				log.Warn().Msgf("%s already exists will try to resume download", backupName)
 			}
 		}
@@ -119,6 +120,10 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	}
 	if len(remoteBackup.Tables) == 0 && !b.cfg.General.AllowEmptyBackups {
 		return fmt.Errorf("'%s' is empty backup", backupName)
+	}
+	// https://github.com/Altinity/clickhouse-backup/issues/878
+	if freeSizeErr := b.CheckDisksUsage(remoteBackup, disks, isResumeExists); freeSizeErr != nil {
+		return freeSizeErr
 	}
 	tablesForDownload := parseTablePatternForDownload(remoteBackup.Tables, tablePattern)
 
