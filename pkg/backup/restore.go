@@ -370,7 +370,7 @@ func (b *Backuper) executeShellCommandWithTimeout(ctx context.Context, cmd strin
 	} else {
 		out, err = exec.CommandContext(shellCtx, shellCmd[0]).CombinedOutput()
 	}
-	log.Debug().Msgf(string(out))
+	log.Debug().Msg(string(out))
 	if err != nil {
 		log.Warn().Msgf("restart exec: %s, error: %v", cmd, err)
 	}

@@ -452,7 +452,7 @@ func (api *APIServer) actionsKillHandler(row status.ActionRow, args []string, ac
 
 func (api *APIServer) actionsCleanHandler(w http.ResponseWriter, row status.ActionRow, command string, actionsResults []actionsResultsRow) ([]actionsResultsRow, error) {
 	if !api.config.API.AllowParallel && status.Current.InProgress() {
-		log.Warn().Msgf(ErrAPILocked.Error())
+		log.Warn().Msg(ErrAPILocked.Error())
 		return actionsResults, ErrAPILocked
 	}
 	commandId, ctx := status.Current.Start(command)

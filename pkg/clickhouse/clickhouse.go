@@ -1113,7 +1113,7 @@ func (ch *ClickHouse) LogQuery(query string, args ...interface{}) string {
 		level = zerolog.DebugLevel
 	}
 	if len(args) > 0 {
-		log.WithLevel(level).Msgf(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(fmt.Sprintf("%s with args %v", query, args)))
+		log.WithLevel(level).Msg(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(fmt.Sprintf("%s with args %#v", query, args)))
 	} else {
 		log.WithLevel(level).Msg(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(query))
 	}

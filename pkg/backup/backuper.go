@@ -460,7 +460,7 @@ func (b *Backuper) CheckDisksUsage(backup storage.Backup, disks []clickhouse.Dis
 	if freeSize <= backup.CompressedSize || freeSize <= backup.DataSize {
 		errMsg := fmt.Sprintf("%s requires %s free space, but total free space is %s", backup.BackupName, utils.FormatBytes(max(backup.CompressedSize, backup.DataSize)), utils.FormatBytes(freeSize))
 		if !isResumeExists {
-			return fmt.Errorf(errMsg)
+			return errors.New(errMsg)
 		}
 		log.Warn().Msg(errMsg)
 	}
