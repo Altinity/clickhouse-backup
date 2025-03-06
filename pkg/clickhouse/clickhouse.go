@@ -259,11 +259,7 @@ func (ch *ClickHouse) getMetadataPath(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("can't get metadata_path from system.tables or system.databases")
 	}
 	metadataPath := strings.Split(result[0].MetadataPath, "/")
-	// https://github.com/ClickHouse/ClickHouse/issues/76546
-	if ch.version >= 25000000 && strings.HasSuffix(result[0].MetadataPath, "/store/") {
-		result[0].MetadataPath = path.Join(metadataPath[:len(metadataPath)-2]...)
-		result[0].MetadataPath = path.Join(result[0].MetadataPath, "metadata")
-	} else if strings.Contains(result[0].MetadataPath, "/store/") {
+	if strings.Contains(result[0].MetadataPath, "/store/") {
 		result[0].MetadataPath = path.Join(metadataPath[:len(metadataPath)-4]...)
 		result[0].MetadataPath = path.Join(result[0].MetadataPath, "metadata")
 	} else {
@@ -375,9 +371,6 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 	}
 
 	allTablesSQL := ch.prepareGetTablesSQL(tablePattern, skipDatabaseNames, ch.Config.SkipTableEngines, settings, isSystemTablesFieldPresent)
-	if err != nil {
-		return nil, err
-	}
 	tables := make([]Table, 0)
 	if err = ch.SelectContext(ctx, &tables, allTablesSQL); err != nil {
 		return nil, err
@@ -912,8 +905,8 @@ func (ch *ClickHouse) addOnClusterToCreateDatabase(cluster string, query string)
 	return query
 }
 
-// DropTable - drop ClickHouse table
-func (ch *ClickHouse) DropTable(table Table, query string, onCluster string, ignoreDependencies bool, version int, defaultDataPath string) error {
+// DropOrDetachTable - drop ClickHouse table
+func (ch *ClickHouse) DropOrDetachTable(table Table, query string, onCluster string, ignoreDependencies bool, version int, defaultDataPath string, useDetach bool) error {
 	var isAtomic bool
 	var err error
 	if isAtomic, err = ch.IsAtomic(table.Database); err != nil {
@@ -923,7 +916,13 @@ func (ch *ClickHouse) DropTable(table Table, query string, onCluster string, ign
 	if strings.HasPrefix(query, "CREATE DICTIONARY") {
 		kind = "DICTIONARY"
 	}
-	dropQuery := fmt.Sprintf("DROP %s IF EXISTS `%s`.`%s`", kind, table.Database, table.Name)
+
+	action := "DROP"
+	if useDetach {
+		action = "DETACH"
+	}
+
+	dropQuery := fmt.Sprintf("%s %s IF EXISTS `%s`.`%s`", action, kind, table.Database, table.Name)
 	if version > 19000000 && onCluster != "" {
 		dropQuery += " ON CLUSTER '" + onCluster + "' "
 	}
@@ -933,7 +932,7 @@ func (ch *ClickHouse) DropTable(table Table, query string, onCluster string, ign
 	if ignoreDependencies {
 		dropQuery += " SETTINGS check_table_dependencies=0"
 	}
-	if defaultDataPath != "" {
+	if defaultDataPath != "" && !useDetach {
 		if _, err = os.Create(path.Join(defaultDataPath, "/flags/force_drop_table")); err != nil {
 			return err
 		}
@@ -955,12 +954,21 @@ var onClusterRe = regexp.MustCompile(`(?im)\s+ON\s+CLUSTER\s+`)
 var distributedRE = regexp.MustCompile(`(Distributed)\(([^,]+),([^)]+)\)`)
 
 // CreateTable - create ClickHouse table
-func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDependencies bool, onCluster string, version int, defaultDataPath string) error {
+func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDependencies bool, onCluster string, version int, defaultDataPath string, asAttach bool) error {
 	var err error
+	// https://github.com/Altinity/clickhouse-backup/issues/868
+	if asAttach && onCluster != "" {
+		return fmt.Errorf("can't apply `--restore-schema-as-attach` and config `restore_schema_on_cluster` together")
+	}
 	if dropTable {
-		if err = ch.DropTable(table, query, onCluster, ignoreDependencies, version, defaultDataPath); err != nil {
+		if err = ch.DropOrDetachTable(table, query, onCluster, ignoreDependencies, version, defaultDataPath, asAttach); err != nil {
 			return err
 		}
+	}
+	// https://github.com/Altinity/clickhouse-backup/issues/868
+	// For asAttach mode, use ATTACH query directly and write metadata SQL file
+	if asAttach {
+		return ch.CreateTableAsAttach(query)
 	}
 
 	query = ch.enrichQueryWithOnCluster(query, onCluster, version)
@@ -1013,6 +1021,14 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 	// WINDOW VIEW unavailable after 24.3
 	if err = ch.TurnAnalyzerOnIfNecessary(version, query, allowExperimentalAnalyzer); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (ch *ClickHouse) CreateTableAsAttach(query string) error {
+	attachQuery := strings.Replace(query, "CREATE", "ATTACH", 1)
+	if attachErr := ch.Query(attachQuery); attachErr != nil {
+		return fmt.Errorf("createTable attach query error: %v", attachErr)
 	}
 	return nil
 }

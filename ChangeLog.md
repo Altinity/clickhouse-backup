@@ -1,7 +1,7 @@
 # v2.6.6
 
 IMPROVEMENTS
-
+- Add `--restore-schema-as-attach` CLI parameter and `POST /backup/restore/{name}`, fix [868](https://github.com/Altinity/clickhouse-backup/issues/868)
 - Add `S3_RETRY_MODE` with `standard` and `adaptive`, fix [1097](https://github.com/Altinity/clickhouse-backup/issues/1097)
 - Add `server_side_encryption_kms_bucket_key_enabled` support for backup/restore s3 object disks, fix [1092](https://github.com/Altinity/clickhouse-backup/issues/1092)
 - Add `AZBLOB_ASSUME_CONTAINER_EXISTS` config option, fix [1094](https://github.com/Altinity/clickhouse-backup/pull/1094), thanks @atykhyy
