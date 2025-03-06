@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/user"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -969,7 +968,7 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 	// https://github.com/Altinity/clickhouse-backup/issues/868
 	// For asAttach mode, use ATTACH query directly and write metadata SQL file
 	if asAttach {
-		return ch.CreateTableAsAttach(table, query)
+		return ch.CreateTableAsAttach(query)
 	}
 
 	query = ch.enrichQueryWithOnCluster(query, onCluster, version)
@@ -1026,48 +1025,8 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 	return nil
 }
 
-func (ch *ClickHouse) CreateTableAsAttach(table Table, query string) error {
-	metadataPath, metadataPathErr := ch.getMetadataPath(context.Background())
-	if metadataPathErr != nil {
-		return fmt.Errorf("createTableAsAttach getMetadataPath error: %v", metadataPathErr)
-	}
-	sqlFileName := path.Join(metadataPath, common.TablePathEncode(table.Database), common.TablePathEncode(table.Name))
-	attachMetadata := strings.Replace(strings.Replace(query, "CREATE", "ATTACH", 1), fmt.Sprintf("`%s`.`%s`", table.Database, table.Name), "_", 1)
-	if writeErr := os.WriteFile(sqlFileName, []byte(attachMetadata), 0660); writeErr != nil {
-		return fmt.Errorf("createTableAsAttach os.WriteFile(%s) error: %v", sqlFileName, writeErr)
-	}
-	var clickhouseUser *user.User
-	var userErr error
-	if clickhouseUser, userErr = user.Lookup("clickhouse"); userErr != nil {
-		log.Warn().Msgf("createTableAsAttach user.Lookup(clickhouse) error: %v", userErr)
-	} else {
-		var uid, gid int
-		var convErr error
-		if uid, convErr = strconv.Atoi(clickhouseUser.Uid); convErr != nil {
-			log.Warn().Msgf("createTableAsAttach user.Lookup(clickhouse) return wrong uid : %v, %v", uid, convErr)
-		}
-		if gid, convErr = strconv.Atoi(clickhouseUser.Gid); convErr != nil {
-			log.Warn().Msgf("createTableAsAttach user.Lookup(clickhouse) return wrong uid : %v, %v", uid, convErr)
-		}
-		if chownErr := os.Chown(sqlFileName, uid, gid); chownErr != nil {
-			log.Warn().Msgf("createTableAsAttach user.Chown(%s,%d,%d) error: %v", sqlFileName, uid, gid, chownErr)
-		}
-	}
-
-	// Create ATTACH query
-	kind := "TABLE"
-	if strings.HasPrefix(query, "CREATE DICTIONARY") || strings.HasPrefix(query, "ATTACH DICTIONARY") {
-		kind = "DICTIONARY"
-	}
-	if strings.HasPrefix(query, "CREATE MATERIALIZED VIEW") || strings.HasPrefix(query, "ATTACH MATERIALIZED VIEW") {
-		kind = "MATERIALIZED VIEW"
-	}
-	if strings.HasPrefix(query, "CREATE VIEW") || strings.HasPrefix(query, "ATTACH VIEW") {
-		kind = "VIEW"
-	}
-	attachQuery := fmt.Sprintf("ATTACH %s `%s`.`%s`", kind, table.Database, table.Name)
-
-	// Execute ATTACH query
+func (ch *ClickHouse) CreateTableAsAttach(query string) error {
+	attachQuery := strings.Replace(query, "CREATE", "ATTACH", 1)
 	if attachErr := ch.Query(attachQuery); attachErr != nil {
 		return fmt.Errorf("createTable attach query error: %v", attachErr)
 	}

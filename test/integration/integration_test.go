@@ -2244,7 +2244,7 @@ func TestRestoreAsAttach(t *testing.T) {
 	// Restore using --restore-schema-as-attach + restore_schema_on_cluster
 	r.Error(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--restore-schema-as-attach", backupName))
 	// success Restore using --restore-schema-as-attach
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--env", "RESTORE_SCHEMA_ON_CLUSTER=''", "--restore-schema-as-attach", backupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--env", "RESTORE_SCHEMA_ON_CLUSTER=", "--restore-schema-as-attach", backupName)
 
 	// Verify data was restored correctly
 	r.NoError(env.ch.SelectSingleRowNoCtx(&rowCount, "SELECT count() FROM "+dbName+"."+tableName))
