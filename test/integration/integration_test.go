@@ -3600,7 +3600,7 @@ func (env *TestEnvironment) DockerCP(src, dst string) error {
 
 	log.Debug().Msgf("docker %s", strings.Join(dcmd, " "))
 	out, err := exec.CommandContext(ctx, "docker", dcmd...).CombinedOutput()
-	log.Debug().Msgf(string(out))
+	log.Debug().Msg(string(out))
 	cancel()
 	return err
 }
