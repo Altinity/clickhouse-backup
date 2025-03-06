@@ -1391,9 +1391,18 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		resume = true
 		fullCommand += " --resume"
 	}
-	if _, exist := api.getQueryParameter(query, "restore-schema-as-attach"); exist {
-		restoreSchemaAsAttach = true
-		fullCommand += " --restore-schema-as-attach"
+
+	// https://github.com/Altinity/clickhouse-backup/issues/868
+	restoreSchemAsAttachParamName := "restore_schema_as_attach"
+	restoreSchemAsAttachParamNames := []string{
+		strings.Replace(restoreSchemAsAttachParamName, "_", "-", -1),
+		strings.Replace(restoreSchemAsAttachParamName, "-", "_", -1),
+	}
+	for _, paramName := range restoreSchemAsAttachParamNames {
+		if _, exist := api.getQueryParameter(query, paramName); exist {
+			restoreSchemaAsAttach = true
+			fullCommand += " --restore-schema-as-attach"
+		}
 	}
 
 	name := utils.CleanBackupNameRE.ReplaceAllString(vars["name"], "")

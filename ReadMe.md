@@ -515,6 +515,7 @@ Create schema and restore data from backup: `curl -s localhost:7171/backup/resto
 - Optional boolean query argument `configs-only` works the same as the `--configs-only` CLI argument (restore configs).
 - Optional string query argument `restore_database_mapping` or `restore-database-mapping` works the same as the `--restore-database-mapping=old_db:new_db` CLI argument.
 - Optional string query argument `restore_table_mapping` or `restore-table-mapping` works the same as the `--restore-table-mapping=old_table:new_table` CLI argument.
+- Optional string query argument `restore_schema_as_attach` or `restore-schema-as-attach` works the same as the `--restore-schema-as-attach` CLI argument.
 - Optional boolean query argument `resume` works the same as the `--resume` CLI argument (resume download for object disk data).
 - Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
 
