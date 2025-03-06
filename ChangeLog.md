@@ -1,6 +1,7 @@
 # v2.6.6
 
 IMPROVEMENTS
+- Add simple check free size before disk download, to avoid 100% disk space usage, fix [878](https://github.com/Altinity/clickhouse-backup/issues/878)
 - Add `--restore-schema-as-attach` CLI parameter and `POST /backup/restore/{name}`, fix [868](https://github.com/Altinity/clickhouse-backup/issues/868)
 - Add `S3_RETRY_MODE` with `standard` and `adaptive`, fix [1097](https://github.com/Altinity/clickhouse-backup/issues/1097)
 - Add `server_side_encryption_kms_bucket_key_enabled` support for backup/restore s3 object disks, fix [1092](https://github.com/Altinity/clickhouse-backup/issues/1092)

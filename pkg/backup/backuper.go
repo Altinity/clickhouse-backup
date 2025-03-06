@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"net/url"
 	"os"
 	"path"
@@ -448,4 +449,20 @@ func (b *Backuper) adjustResumeFlag(resume bool) {
 		resume = true
 	}
 	b.resume = resume
+}
+
+// CheckDisksUsage - https://github.com/Altinity/clickhouse-backup/issues/878
+func (b *Backuper) CheckDisksUsage(backup storage.Backup, disks []clickhouse.Disk, isResumeExists bool) error {
+	freeSize := uint64(0)
+	for _, d := range disks {
+		freeSize += d.FreeSpace
+	}
+	if freeSize <= backup.CompressedSize || freeSize <= backup.DataSize {
+		errMsg := fmt.Sprintf("%s requires %s free space, but total free space is %s", backup.BackupName, utils.FormatBytes(max(backup.CompressedSize, backup.DataSize)), utils.FormatBytes(freeSize))
+		if !isResumeExists {
+			return fmt.Errorf(errMsg)
+		}
+		log.Warn().Msg(errMsg)
+	}
+	return nil
 }
