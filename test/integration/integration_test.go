@@ -1173,6 +1173,7 @@ func testAPIBackupStatus(r *require.Assertions, env *TestEnvironment) {
 	r.Contains(out, `"status"`)
 	r.Contains(out, `"start"`)
 	r.Contains(out, `"finish"`)
+	r.NotContains(out, `"error"`)
 }
 
 func testAPIBackupActions(r *require.Assertions, env *TestEnvironment) {
