@@ -156,7 +156,7 @@ func (api *APIServer) RunWatch(cliCtx *cli.Context) {
 	log.Info().Msg("Starting API Server in watch mode")
 	b := backup.NewBackuper(api.config)
 	commandId, _ := status.Current.Start("watch")
-	err := b.Watch(cliCtx.String("watch-interval"), cliCtx.String("full-interval"), cliCtx.String("watch-backup-name-template"), "*.*", nil, nil, false, false, false, false, api.clickhouseBackupVersion, commandId, api.GetMetrics(), cliCtx)
+	err := b.Watch(cliCtx.String("watch-interval"), cliCtx.String("full-interval"), cliCtx.String("watch-backup-name-template"), "*.*", nil, nil, false, false, false, false, cliCtx.Bool("watch-delete-source"), api.clickhouseBackupVersion, commandId, api.GetMetrics(), cliCtx)
 	api.handleWatchResponse(commandId, err)
 }
 
@@ -530,6 +530,7 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 	rbacOnly := false
 	configsOnly := false
 	skipCheckPartsColumns := false
+	deleteSource := false
 	watchInterval := ""
 	fullInterval := ""
 	watchBackupNameTemplate := ""
@@ -587,6 +588,10 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 			skipCheckPartsColumns = true
 			fullCommand = fmt.Sprintf("%s --skip-check-parts-columns", fullCommand)
 		}
+		if matchParam, _ = simpleParseArg(i, args, "--delete-source"); matchParam {
+			deleteSource = true
+			fullCommand = fmt.Sprintf("%s --delete-source", fullCommand)
+		}
 		if matchParam, skipProjectionsFromArgs := simpleParseArg(i, args, "--skip-projections"); matchParam {
 			skipProjections = append(skipProjections, skipProjectionsFromArgs)
 			fullCommand = fmt.Sprintf("%s --skip-projections=%s", fullCommand, skipProjectionsFromArgs)
@@ -596,7 +601,7 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 	commandId, _ := status.Current.Start(fullCommand)
 	go func() {
 		b := backup.NewBackuper(cfg)
-		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, skipProjections, schemaOnly, rbacOnly, configsOnly, skipCheckPartsColumns, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
+		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, skipProjections, schemaOnly, rbacOnly, configsOnly, skipCheckPartsColumns, deleteSource, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
 		api.handleWatchResponse(commandId, err)
 	}()
 
@@ -1008,6 +1013,7 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 	rbacOnly := false
 	configsOnly := false
 	skipCheckPartsColumns := false
+	deleteSource := false
 	watchInterval := ""
 	fullInterval := ""
 	watchBackupNameTemplate := ""
@@ -1055,6 +1061,10 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 		skipCheckPartsColumns = true
 		fullCommand = fmt.Sprintf("%s --skip-check-parts-columns", fullCommand)
 	}
+	if _, exist := api.getQueryParameter(query, "delete_source"); exist {
+		deleteSource = true
+		fullCommand = fmt.Sprintf("%s --delete-source", fullCommand)
+	}
 	if skipProjectionsFromQuery, exist := api.getQueryParameter(query, "skip_projections"); exist {
 		skipProjections = append(skipProjections, skipProjectionsFromQuery)
 		fullCommand = fmt.Sprintf("%s --skip-projections=%s", fullCommand, skipProjectionsFromQuery)
@@ -1069,7 +1079,7 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 	commandId, _ := status.Current.Start(fullCommand)
 	go func() {
 		b := backup.NewBackuper(cfg)
-		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, skipProjections, schemaOnly, rbacOnly, configsOnly, skipCheckPartsColumns, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
+		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, skipProjections, schemaOnly, rbacOnly, configsOnly, skipCheckPartsColumns, deleteSource, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
 		api.handleWatchResponse(commandId, err)
 	}()
 	api.sendJSONEachRow(w, http.StatusCreated, struct {
