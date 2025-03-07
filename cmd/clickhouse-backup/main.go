@@ -633,7 +633,7 @@ func main() {
 			Description: "Execute create_remote + delete local, create full backup every `--full-interval`, create and upload incremental backup every `--watch-interval` use previous backup as base with `--diff-from-remote` option, use `backups_to_keep_remote` config option for properly deletion remote backups, will delete old backups which not have references from other backups",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Watch(c.String("watch-interval"), c.String("full-interval"), c.String("watch-backup-name-template"), c.String("tables"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac"), c.Bool("configs"), c.Bool("skip-check-parts-columns"), version, c.Int("command-id"), nil, c)
+				return b.Watch(c.String("watch-interval"), c.String("full-interval"), c.String("watch-backup-name-template"), c.String("tables"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac"), c.Bool("configs"), c.Bool("skip-check-parts-columns"), c.Bool("delete-source"), version, c.Int("command-id"), nil, c)
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -692,6 +692,11 @@ func main() {
 					Hidden: false,
 					Usage:  "Skip make and upload hardlinks to *.proj/* files during backup creation, format `db_pattern.table_pattern:projections_pattern`, use https://pkg.go.dev/path/filepath#Match syntax",
 				},
+				cli.BoolFlag{
+					Name:   "delete, delete-source, delete-local",
+					Hidden: false,
+					Usage:  "explicitly delete local backup during upload",
+				},
 			),
 		},
 		{
@@ -721,7 +726,11 @@ func main() {
 					Usage:  "Template for new backup name, could contain names from system.macros, {type} - full or incremental and {time:LAYOUT}, look to https://go.dev/src/time/format.go for layout examples",
 					Hidden: false,
 				},
-			),
+				cli.BoolFlag{
+					Name:   "watch-delete-source, watch-delete-local",
+					Hidden: false,
+					Usage:  "explicitly delete local backup during upload in watch",
+				}),
 		},
 	}
 	if err := cliapp.Run(os.Args); err != nil {

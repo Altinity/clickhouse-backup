@@ -444,6 +444,7 @@ You can't run watch twice with the same parameters even when `allow_parallel: tr
 - Optional boolean query argument `rbac` works the same as the `--rbac` CLI argument (backup RBAC).
 - Optional boolean query argument `configs` works the same as the `--configs` CLI argument (backup configs).
 - Optional boolean query argument `skip-check-parts-columns` or `skip_check_parts_columns` works the same as the `--skip-check-parts-columns` CLI argument (allow backup inconsistent column types for data parts).
+- Optional boolean query argument `delete-source` or `delete_source` works the same as the `--delete-source` CLI argument (delete source files during upload backup).
 - Additional example: `curl -s 'localhost:7171/backup/watch?table=default.billing&watch_interval=1h&full_interval=24h' -X POST`
 
 Note: this operation is asynchronous and can only be stopped with `kill -s SIGHUP $(pgrep -f clickhouse-backup)` or call `/restart`, `/backup/kill`. The API will return immediately once the operation has started.
