@@ -528,6 +528,7 @@ Delete specific local backup: `curl -s localhost:7171/backup/delete/local/<BACKU
 ### GET /backup/status
 
 Display list of currently running asynchronous operations: `curl -s localhost:7171/backup/status | jq .`
+Or latest command result if no backup operations executed.
 
 ### POST /backup/actions
 

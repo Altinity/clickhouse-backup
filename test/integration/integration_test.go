@@ -1107,8 +1107,7 @@ func TestServerAPI(t *testing.T) {
 
 	testAPIBackupTablesRemote(r, env)
 
-	log.Debug().Msg("Check /backup/actions")
-	env.queryWithNoError(r, "SELECT count() FROM system.backup_actions")
+	testAPIBackupStatus(r, env)
 
 	testAPIBackupList(t, r, env)
 
@@ -1161,6 +1160,19 @@ func runClickHouseClientInsertSystemBackupActions(r *require.Assertions, env *Te
 			}
 		}
 	}
+}
+
+func testAPIBackupStatus(r *require.Assertions, env *TestEnvironment) {
+	log.Debug().Msg("Check system.backup_actions with /backup/actions call")
+	env.queryWithNoError(r, "SELECT count() FROM system.backup_actions")
+
+	out, err := env.DockerExecOut("clickhouse-backup", "curl", "-sL", "http://localhost:7171/backup/status")
+	r.NoError(err, "/backup/status unexpected error: %v", err)
+	r.True(strings.Trim(out, " \r\n\t") != "", "unexpected empty output for /backup/status")
+	r.Contains(out, `"command"`)
+	r.Contains(out, `"status"`)
+	r.Contains(out, `"start"`)
+	r.Contains(out, `"finish"`)
 }
 
 func testAPIBackupActions(r *require.Assertions, env *TestEnvironment) {

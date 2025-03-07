@@ -231,7 +231,7 @@ func (api *APIServer) registerHTTPHandlers() *http.Server {
 	r.HandleFunc("/backup/download/{name}", api.httpDownloadHandler).Methods("POST")
 	r.HandleFunc("/backup/restore/{name}", api.httpRestoreHandler).Methods("POST")
 	r.HandleFunc("/backup/delete/{where}/{name}", api.httpDeleteHandler).Methods("POST")
-	r.HandleFunc("/backup/status", api.httpBackupStatusHandler).Methods("GET")
+	r.HandleFunc("/backup/status", api.httpStatusHandler).Methods("GET")
 
 	r.HandleFunc("/backup/actions", api.actionsLog).Methods("GET", "HEAD")
 	r.HandleFunc("/backup/actions", api.actions).Methods("POST")
@@ -1589,7 +1589,7 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-func (api *APIServer) httpBackupStatusHandler(w http.ResponseWriter, _ *http.Request) {
+func (api *APIServer) httpStatusHandler(w http.ResponseWriter, _ *http.Request) {
 	api.sendJSONEachRow(w, http.StatusOK, status.Current.GetStatus(true, "", 0))
 }
 
