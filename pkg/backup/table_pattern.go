@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"io"
 	"net/url"
 	"os"
@@ -23,7 +24,7 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-type ListOfTables []metadata.TableMetadata
+type ListOfTables []*metadata.TableMetadata
 
 // Sort - sorting ListOfTables slice orderly by engine priority
 func (lt ListOfTables) Sort(dropTable bool) {
@@ -44,7 +45,7 @@ func addTableToListIfNotExistsOrEnrichQueryAndParts(tables ListOfTables, table m
 			return tables
 		}
 	}
-	return append(tables, table)
+	return append(tables, &table)
 }
 
 func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath string, tablePattern string, dropTable bool, partitions []string) (ListOfTables, map[metadata.TableTitle][]string, error) {
@@ -90,18 +91,18 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 			if matched, _ := filepath.Match(replacer.Replace(strings.Trim(pattern, " \t\r\n")), replacer.Replace(tableName)); !matched {
 				continue
 			}
-			data, err := os.ReadFile(filePath)
-			if err != nil {
-				return err
+			data, readErr := os.ReadFile(filePath)
+			if readErr != nil {
+				return readErr
 			}
 			if isEmbeddedMetadata {
 				// embedded backup to s3 disk could contain only s3 key names inside .sql file
-				t, err := prepareTableMetadataFromSQL(data, metadataPath, names, b.cfg, database, table)
-				if err != nil {
-					return err
+				t, prepareErr := prepareTableMetadataFromSQL(data, metadataPath, names, b.cfg, database, table)
+				if prepareErr != nil {
+					return prepareErr
 				}
 				// .sql file will enrich Query
-				partitionsIdMap, _ := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, []metadata.TableMetadata{t}, partitions)
+				partitionsIdMap, _ := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{&t}, partitions)
 				filterPartsAndFilesByPartitionsFilter(t, partitionsIdMap[metadata.TableTitle{Database: t.Database, Table: t.Table}])
 				result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, t)
 				return nil
@@ -110,7 +111,7 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 			if err := json.Unmarshal(data, &t); err != nil {
 				return err
 			}
-			partitionsIdMap, partitionsNameList := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, []metadata.TableMetadata{t}, partitions)
+			partitionsIdMap, partitionsNameList := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, nil, ListOfTables{&t}, partitions)
 			filterPartsAndFilesByPartitionsFilter(t, partitionsIdMap[metadata.TableTitle{Database: t.Database, Table: t.Table}])
 			result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, t)
 			for tt := range partitionsNameList {
@@ -130,7 +131,7 @@ func (b *Backuper) getTableListByPatternLocal(ctx context.Context, metadataPath 
 	}
 	result.Sort(dropTable)
 	for i := 0; i < len(result); i++ {
-		if b.shouldSkipByTableEngine(result[i]) {
+		if b.shouldSkipByTableEngine(*result[i]) {
 			t := result[i]
 			delete(resultPartitionNames, metadata.TableTitle{Database: t.Database, Table: t.Table})
 			result = append(result[:i], result[i+1:]...)
@@ -181,6 +182,29 @@ func (b *Backuper) shouldSkipByTableEngine(t metadata.TableMetadata) bool {
 			} else if err != nil {
 				log.Warn().Msgf("shouldSkipByTableEngine engine=%s return error: %v", engine, err)
 			}
+		}
+	}
+	return false
+}
+
+func (b *Backuper) shouldDiskNameSkipByNameOrType(diskName string, disks []clickhouse.Disk) bool {
+	for _, disk := range disks {
+		if disk.Name == diskName {
+			return b.shouldSkipByDiskNameOrType(disk)
+		}
+	}
+	return false
+}
+
+func (b *Backuper) shouldSkipByDiskNameOrType(disk clickhouse.Disk) bool {
+	for _, diskName := range b.cfg.ClickHouse.SkipDisks {
+		if diskName == disk.Name {
+			return true
+		}
+	}
+	for _, diskType := range b.cfg.ClickHouse.SkipDiskTypes {
+		if strings.ToLower(diskType) == strings.ToLower(disk.Type) {
+			return true
 		}
 	}
 	return false

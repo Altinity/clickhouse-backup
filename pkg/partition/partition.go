@@ -187,7 +187,7 @@ func dropPartitionIdTable(ch *clickhouse.ClickHouse, database string, partitionI
 var partitionTupleRE = regexp.MustCompile(`\)\s*,\s*\(`)
 
 // ConvertPartitionsToIdsMapAndNamesList - get partitions from CLI/API params and convert it for NameList and IdMap for each table
-func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.ClickHouse, tablesFromClickHouse []clickhouse.Table, tablesFromMetadata []metadata.TableMetadata, partitions []string) (map[metadata.TableTitle]common.EmptyMap, map[metadata.TableTitle][]string) {
+func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.ClickHouse, tablesFromClickHouse []clickhouse.Table, tablesFromMetadata []*metadata.TableMetadata, partitions []string) (map[metadata.TableTitle]common.EmptyMap, map[metadata.TableTitle][]string) {
 	partitionsIdMap := map[metadata.TableTitle]common.EmptyMap{}
 	partitionsNameList := map[metadata.TableTitle][]string{}
 	if len(partitions) == 0 {

@@ -177,6 +177,12 @@ clickhouse:
   # CLICKHOUSE_SKIP_TABLE_ENGINES, the list of tables engines which are ignored during backup, upload, download, restore process
   # The format for this env variable is "Engine1,Engine2,engine3". For YAML please continue using list syntax
   skip_table_engines: []
+  # CLICKHOUSE_SKIP_DISKS, list of disk names which are ignored during create, upload, download and restore command
+  # The format for this env variable is "Engine1,Engine2,engine3". For YAML please continue using list syntax
+  skip_disks: []
+  # CLICKHOUSE_SKIP_DISK_TYPES, list of disk types which are ignored during create, upload, download and restore command
+  # The format for this env variable is "Engine1,Engine2,engine3". For YAML please continue using list syntax
+  skip_disk_types: []
   timeout: 5m                  # CLICKHOUSE_TIMEOUT
   freeze_by_part: false        # CLICKHOUSE_FREEZE_BY_PART, allow freezing by part instead of freezing the whole table
   freeze_by_part_where: ""     # CLICKHOUSE_FREEZE_BY_PART_WHERE, allow parts filtering during freezing when freeze_by_part: true

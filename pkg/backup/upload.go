@@ -64,8 +64,8 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	if _, disks, err = b.getLocalBackup(ctx, backupName, nil); err != nil {
 		return fmt.Errorf("can't find local backup: %v", err)
 	}
-	if err := b.initDisksPathsAndBackupDestination(ctx, disks, backupName); err != nil {
-		return err
+	if initErr := b.initDisksPathsAndBackupDestination(ctx, disks, backupName); initErr != nil {
+		return initErr
 	}
 	defer func() {
 		if err := b.dst.Close(ctx); err != nil {
@@ -146,7 +146,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 				Table:    table.Table,
 			}]; diffExists {
 				checkLocalPart := diffFrom != "" && diffFromRemote == ""
-				b.markDuplicatedParts(backupMetadata, &diffTable, &table, checkLocalPart)
+				b.markDuplicatedParts(backupMetadata, &diffTable, table, checkLocalPart)
 			}
 		}
 		idx := i
@@ -156,12 +156,14 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 			//skip upload data for embedded backup with empty embedded_backup_disk
 			if doUploadData && (!b.isEmbedded || b.cfg.ClickHouse.EmbeddedBackupDisk != "") {
 				var files map[string][]string
-				files, uploadedBytes, uploadTableErr = b.uploadTableData(uploadCtx, backupName, deleteSource, tablesForUpload[idx], skipProjections)
+				var parts map[string][]metadata.Part
+				files, parts, uploadedBytes, uploadTableErr = b.uploadTableData(uploadCtx, backupName, deleteSource, tablesForUpload[idx], skipProjections, disks)
 				if uploadTableErr != nil {
 					return uploadTableErr
 				}
 				atomic.AddInt64(&compressedDataSize, uploadedBytes)
 				tablesForUpload[idx].Files = files
+				tablesForUpload[idx].Parts = parts
 			}
 			tableMetadataSize := int64(0)
 			if doUploadData || schemaOnly {
@@ -489,12 +491,16 @@ func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelate
 	return uint64(remoteUploaded.Size()), nil
 }
 
-func (b *Backuper) uploadTableData(ctx context.Context, backupName string, deleteSource bool, table metadata.TableMetadata, skipProjections []string) (map[string][]string, int64, error) {
+func (b *Backuper) uploadTableData(ctx context.Context, backupName string, deleteSource bool, table *metadata.TableMetadata, skipProjections []string, disks []clickhouse.Disk) (map[string][]string, map[string][]metadata.Part, int64, error) {
 	dbAndTablePath := path.Join(common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
 	uploadedFiles := map[string][]string{}
 	capacity := 0
-	for disk := range table.Parts {
-		capacity += len(table.Parts[disk])
+	for diskName := range table.Parts {
+		if b.shouldDiskNameSkipByNameOrType(diskName, disks) {
+			log.Warn().Str("database", table.Database).Str("table", table.Table).Str("diskName", diskName).Msg("skipped")
+			continue
+		}
+		capacity += len(table.Parts[diskName])
 	}
 	log.Debug().Msgf("start %s.%s with concurrency=%d len(table.Parts[...])=%d", table.Database, table.Table, b.cfg.General.UploadConcurrency, capacity)
 	ctx, cancel := context.WithCancel(ctx)
@@ -506,29 +512,38 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 	splitParts := make(map[string][]metadata.SplitPartFiles)
 	splitPartsOffset := make(map[string]int)
 	splitPartsCapacity := 0
-	for disk := range table.Parts {
-		backupPath := b.getLocalBackupDataPathForTable(backupName, disk, dbAndTablePath)
-		splitPartsList, err := b.splitPartFiles(backupPath, table.Parts[disk], table.Database, table.Table, skipProjections)
-		if err != nil {
-			return nil, 0, err
+	uploadedParts := map[string][]metadata.Part{}
+
+	for diskName, tableParts := range table.Parts {
+		if b.shouldDiskNameSkipByNameOrType(diskName, disks) {
+			continue
 		}
-		splitParts[disk] = splitPartsList
-		splitPartsOffset[disk] = 0
+		uploadedParts[diskName] = tableParts
+		backupPath := b.getLocalBackupDataPathForTable(backupName, diskName, dbAndTablePath)
+		splitPartsList, err := b.splitPartFiles(backupPath, table.Parts[diskName], table.Database, table.Table, skipProjections)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		splitParts[diskName] = splitPartsList
+		splitPartsOffset[diskName] = 0
 		splitPartsCapacity += len(splitPartsList)
 	}
 	for common.SumMapValuesInt(splitPartsOffset) < splitPartsCapacity {
-		for disk := range table.Parts {
-			if splitPartsOffset[disk] >= len(splitParts[disk]) {
+		for diskName := range table.Parts {
+			if b.shouldDiskNameSkipByNameOrType(diskName, disks) {
 				continue
 			}
-			backupPath := b.getLocalBackupDataPathForTable(backupName, disk, dbAndTablePath)
-			splitPart := splitParts[disk][splitPartsOffset[disk]]
+			if splitPartsOffset[diskName] >= len(splitParts[diskName]) {
+				continue
+			}
+			backupPath := b.getLocalBackupDataPathForTable(backupName, diskName, dbAndTablePath)
+			splitPart := splitParts[diskName][splitPartsOffset[diskName]]
 			partSuffix := splitPart.Prefix
 			partFiles := splitPart.Files
-			splitPartsOffset[disk] += 1
+			splitPartsOffset[diskName] += 1
 			baseRemoteDataPath := path.Join(backupName, "shadow", common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
 			if b.cfg.GetCompressionFormat() == "none" {
-				remotePath := path.Join(baseRemoteDataPath, disk)
+				remotePath := path.Join(baseRemoteDataPath, diskName)
 				remotePathFull := path.Join(remotePath, partSuffix)
 				dataGroup.Go(func() error {
 					if b.resume {
@@ -558,8 +573,8 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 					return nil
 				})
 			} else {
-				fileName := fmt.Sprintf("%s_%s.%s", disk, common.TablePathEncode(partSuffix), b.cfg.GetArchiveExtension())
-				uploadedFiles[disk] = append(uploadedFiles[disk], fileName)
+				fileName := fmt.Sprintf("%s_%s.%s", diskName, common.TablePathEncode(partSuffix), b.cfg.GetArchiveExtension())
+				uploadedFiles[diskName] = append(uploadedFiles[diskName], fileName)
 				remoteDataFile := path.Join(baseRemoteDataPath, fileName)
 				localFiles := partFiles
 				dataGroup.Go(func() error {
@@ -607,22 +622,22 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 		}
 	}
 	if err := dataGroup.Wait(); err != nil {
-		return nil, 0, fmt.Errorf("one of uploadTableData go-routine return error: %v", err)
+		return nil, nil, 0, fmt.Errorf("one of uploadTableData go-routine return error: %v", err)
 	}
 	log.Debug().Msgf("finish %s.%s with concurrency=%d len(table.Parts[...])=%d uploadedFiles=%v, uploadedBytes=%v", table.Database, table.Table, b.cfg.General.UploadConcurrency, capacity, uploadedFiles, uploadedBytes)
-	return uploadedFiles, uploadedBytes, nil
+	return uploadedFiles, uploadedParts, uploadedBytes, nil
 }
 
-func (b *Backuper) uploadTableMetadata(ctx context.Context, backupName string, requiredBackupName string, tableMetadata metadata.TableMetadata) (int64, error) {
+func (b *Backuper) uploadTableMetadata(ctx context.Context, backupName string, requiredBackupName string, tableMetadata *metadata.TableMetadata) (int64, error) {
 	if b.isEmbedded {
-		if sqlSize, err := b.uploadTableMetadataEmbedded(ctx, backupName, requiredBackupName, tableMetadata); err != nil {
+		if sqlSize, err := b.uploadTableMetadataEmbedded(ctx, backupName, requiredBackupName, *tableMetadata); err != nil {
 			return sqlSize, err
 		} else {
-			jsonSize, err := b.uploadTableMetadataRegular(ctx, backupName, tableMetadata)
+			jsonSize, err := b.uploadTableMetadataRegular(ctx, backupName, *tableMetadata)
 			return sqlSize + jsonSize, err
 		}
 	}
-	return b.uploadTableMetadataRegular(ctx, backupName, tableMetadata)
+	return b.uploadTableMetadataRegular(ctx, backupName, *tableMetadata)
 }
 
 func (b *Backuper) uploadTableMetadataRegular(ctx context.Context, backupName string, tableMetadata metadata.TableMetadata) (int64, error) {

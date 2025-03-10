@@ -266,19 +266,19 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 	return result, nil
 }
 
-func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remotePath string, localPath string, maxSpeed uint64) error {
+func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remotePath string, localPath string, maxSpeed uint64) (int64, error) {
 	if err := os.MkdirAll(localPath, 0750); err != nil {
-		return err
+		return 0, err
 	}
 	// get this first as GetFileReader blocks the ftp control channel
-	remoteFileInfo, err := bd.StatFile(ctx, remotePath)
-	if err != nil {
-		return err
+	remoteFileInfo, statErr := bd.StatFile(ctx, remotePath)
+	if statErr != nil {
+		return 0, statErr
 	}
 	startTime := time.Now()
-	reader, err := bd.GetFileReaderWithLocalPath(ctx, remotePath, localPath, remoteFileInfo.Size())
-	if err != nil {
-		return err
+	reader, getReaderErr := bd.GetFileReaderWithLocalPath(ctx, remotePath, localPath, remoteFileInfo.Size())
+	if getReaderErr != nil {
+		return 0, getReaderErr
 	}
 	defer func() {
 		if err := reader.Close(); err != nil {
@@ -300,13 +300,14 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 		log.Warn().Msgf("remote file backup extension %s not equal with %s", remotePath, compressionFormat)
 		compressionFormat = strings.Replace(path.Ext(remotePath), ".", "", -1)
 	}
-	z, err := getArchiveReader(compressionFormat)
-	if err != nil {
-		return err
+	downloadedBytes := int64(0)
+	z, getArchieveReaderErr := getArchiveReader(compressionFormat)
+	if getArchieveReaderErr != nil {
+		return 0, getArchieveReaderErr
 	}
-	if err := z.Extract(ctx, bufReader, nil, func(ctx context.Context, file archiver.File) error {
-		f, err := file.Open()
-		if err != nil {
+	if extractErr := z.Extract(ctx, bufReader, nil, func(ctx context.Context, file archiver.File) error {
+		src, openErr := file.Open()
+		if openErr != nil {
 			return fmt.Errorf("can't open %s", file.NameInArchive)
 		}
 		header, ok := file.Header.(*tar.Header)
@@ -318,33 +319,35 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 		if _, err := os.Stat(extractDir); os.IsNotExist(err) {
 			_ = os.MkdirAll(extractDir, 0750)
 		}
-		dst, err := os.Create(extractFile)
-		if err != nil {
-			return err
+		dst, createErr := os.Create(extractFile)
+		if createErr != nil {
+			return createErr
 		}
-		if _, err := io.Copy(dst, readerWrapperForContext(func(p []byte) (int, error) {
+		if copyBytes, copyErr := io.Copy(dst, readerWrapperForContext(func(p []byte) (int, error) {
 			select {
 			case <-ctx.Done():
 				return 0, ctx.Err()
 			default:
-				return f.Read(p)
+				return src.Read(p)
 			}
-		})); err != nil {
-			return err
+		})); copyErr != nil {
+			return copyErr
+		} else {
+			downloadedBytes += copyBytes
 		}
-		if err := dst.Close(); err != nil {
-			return err
+		if dstCloseErr := dst.Close(); dstCloseErr != nil {
+			return dstCloseErr
 		}
-		if err := f.Close(); err != nil {
-			return err
+		if srcCloseErr := src.Close(); srcCloseErr != nil {
+			return srcCloseErr
 		}
 		//log.Debug().Msgf("extract %s", extractFile)
 		return nil
-	}); err != nil {
-		return err
+	}); extractErr != nil {
+		return 0, extractErr
 	}
 	bd.throttleSpeed(startTime, remoteFileInfo.Size(), maxSpeed)
-	return nil
+	return downloadedBytes, nil
 }
 
 func (bd *BackupDestination) UploadCompressedStream(ctx context.Context, baseLocalPath string, files []string, remotePath string, maxSpeed uint64) error {
@@ -427,8 +430,9 @@ func (bd *BackupDestination) UploadCompressedStream(ctx context.Context, baseLoc
 	return nil
 }
 
-func (bd *BackupDestination) DownloadPath(ctx context.Context, remotePath string, localPath string, RetriesOnFailure int, RetriesDuration time.Duration, maxSpeed uint64) error {
-	return bd.Walk(ctx, remotePath, true, func(ctx context.Context, f RemoteFile) error {
+func (bd *BackupDestination) DownloadPath(ctx context.Context, remotePath string, localPath string, RetriesOnFailure int, RetriesDuration time.Duration, maxSpeed uint64) (int64, error) {
+	downloadedBytes := int64(0)
+	walkErr := bd.Walk(ctx, remotePath, true, func(ctx context.Context, f RemoteFile) error {
 		if bd.Kind() == "SFTP" && (f.Name() == "." || f.Name() == "..") {
 			return nil
 		}
@@ -451,23 +455,25 @@ func (bd *BackupDestination) DownloadPath(ctx context.Context, remotePath string
 				log.Error().Err(err).Send()
 				return err
 			}
-			if _, err := io.Copy(dst, r); err != nil {
-				log.Error().Err(err).Send()
+			if copyBytes, copyErr := io.Copy(dst, r); copyErr != nil {
+				log.Error().Err(copyErr).Send()
 				return err
+			} else {
+				downloadedBytes += copyBytes
 			}
-			if err := dst.Close(); err != nil {
-				log.Error().Err(err).Send()
-				return err
+			if dstCloseErr := dst.Close(); dstCloseErr != nil {
+				log.Error().Err(dstCloseErr).Send()
+				return dstCloseErr
 			}
-			if err := r.Close(); err != nil {
-				log.Error().Err(err).Send()
-				return err
+			if srcCloseErr := r.Close(); srcCloseErr != nil {
+				log.Error().Err(srcCloseErr).Send()
+				return srcCloseErr
 			}
 
-			if dstFileInfo, err := os.Stat(dstFilePath); err == nil {
+			if dstFileInfo, statErr := os.Stat(dstFilePath); statErr == nil {
 				bd.throttleSpeed(startTime, dstFileInfo.Size(), maxSpeed)
 			} else {
-				return err
+				return statErr
 			}
 
 			return nil
@@ -477,6 +483,7 @@ func (bd *BackupDestination) DownloadPath(ctx context.Context, remotePath string
 		}
 		return nil
 	})
+	return downloadedBytes, walkErr
 }
 
 func (bd *BackupDestination) UploadPath(ctx context.Context, baseLocalPath string, files []string, remotePath string, RetriesOnFailure int, RetriesDuration time.Duration, maxSpeed uint64) (int64, error) {

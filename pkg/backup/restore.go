@@ -1108,12 +1108,12 @@ func (b *Backuper) restoreSchemaRegular(ctx context.Context, tablesForRestore Li
 				}
 			}
 			//materialized and window views should restore via ATTACH
-			b.replaceCreateToAttachForView(&schema)
+			b.replaceCreateToAttachForView(schema)
 			// https://github.com/Altinity/clickhouse-backup/issues/849
-			b.checkReplicaAlreadyExistsAndChangeReplicationPath(ctx, &schema, version)
+			b.checkReplicaAlreadyExistsAndChangeReplicationPath(ctx, schema, version)
 
 			// https://github.com/Altinity/clickhouse-backup/issues/466
-			b.replaceUUIDMacroValue(&schema)
+			b.replaceUUIDMacroValue(schema)
 			restoreErr = b.ch.CreateTable(clickhouse.Table{
 				Database: schema.Database,
 				Name:     schema.Table,
@@ -1361,6 +1361,9 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ba
 	if len(missingTables) > 0 {
 		return fmt.Errorf("%s is not created. Restore schema first or create missing tables manually", strings.Join(missingTables, ", "))
 	}
+
+	b.filterPartsAndFilesByDisk(tablesForRestore, disks)
+
 	restoreBackupWorkingGroup, restoreCtx := errgroup.WithContext(ctx)
 	restoreBackupWorkingGroup.SetLimit(max(b.cfg.ClickHouse.MaxConnections, 1))
 
@@ -1395,17 +1398,17 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ba
 		restoreBackupWorkingGroup.Go(func() error {
 			// https://github.com/Altinity/clickhouse-backup/issues/529
 			if b.cfg.ClickHouse.RestoreAsAttach {
-				if restoreErr := b.restoreDataRegularByAttach(restoreCtx, backupName, backupMetadata, table, diskMap, diskTypes, disks, dstTable, skipProjections, logger); restoreErr != nil {
+				if restoreErr := b.restoreDataRegularByAttach(restoreCtx, backupName, backupMetadata, *table, diskMap, diskTypes, disks, dstTable, skipProjections, logger); restoreErr != nil {
 					return restoreErr
 				}
 			} else {
-				if restoreErr := b.restoreDataRegularByParts(restoreCtx, backupName, backupMetadata, table, diskMap, diskTypes, disks, dstTable, skipProjections, logger); restoreErr != nil {
+				if restoreErr := b.restoreDataRegularByParts(restoreCtx, backupName, backupMetadata, *table, diskMap, diskTypes, disks, dstTable, skipProjections, logger); restoreErr != nil {
 					return restoreErr
 				}
 			}
 			// https://github.com/Altinity/clickhouse-backup/issues/529
 			for _, mutation := range table.Mutations {
-				if err := b.ch.ApplyMutation(restoreCtx, tablesForRestore[idx], mutation); err != nil {
+				if err := b.ch.ApplyMutation(restoreCtx, *tablesForRestore[idx], mutation); err != nil {
 					log.Warn().Msgf("can't apply mutation %s for table `%s`.`%s`	: %v", mutation.Command, tablesForRestore[idx].Database, tablesForRestore[idx].Table, err)
 				}
 			}
@@ -1447,7 +1450,7 @@ func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName st
 
 func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, table metadata.TableMetadata, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, dstTable clickhouse.Table, skipProjections []string, logger zerolog.Logger) error {
 	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, table, disks, diskMap, dstTable.DataPaths, skipProjections, b.ch, true); err != nil {
-		return fmt.Errorf("can't copy data to detached '%s.%s': %v", table.Database, table.Table, err)
+		return fmt.Errorf("can't copy data to detached `%s`.`%s`: %v", table.Database, table.Table, err)
 	}
 	logger.Debug().Msg("data to 'detached' copied")
 	logger.Info().Msg("download object_disks start")
@@ -1458,7 +1461,7 @@ func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName str
 		return fmt.Errorf("can't restore object_disk server-side copy data parts '%s.%s': %v", table.Database, table.Table, err)
 	}
 	log.Info().Str("duration", utils.HumanizeDuration(time.Since(start))).Str("size", utils.FormatBytes(uint64(size))).Msg("download object_disks finish")
-	if err := b.ch.AttachDataParts(table, dstTable); err != nil {
+	if err := b.ch.AttachDataParts(table, dstTable, disks); err != nil {
 		return fmt.Errorf("can't attach data parts for table '%s.%s': %v", table.Database, table.Table, err)
 	}
 	return nil
@@ -1476,6 +1479,10 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 
 	var err error
 	for diskName, parts := range backupTable.Parts {
+		if b.shouldDiskNameSkipByNameOrType(diskName, disks) {
+			log.Warn().Str("database", backupTable.Database).Str("table", backupTable.Table).Str("disk.Name", diskName).Msg("skipped")
+			continue
+		}
 		diskType, exists := diskTypes[diskName]
 		if !exists {
 			return 0, fmt.Errorf("%s disk doesn't present in diskTypes: %v", diskName, diskTypes)

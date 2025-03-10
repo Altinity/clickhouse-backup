@@ -763,7 +763,7 @@ func (ch *ClickHouse) FreezeTable(ctx context.Context, table *Table, name string
 }
 
 // AttachDataParts - execute ALTER TABLE ... ATTACH PART command for specific table
-func (ch *ClickHouse) AttachDataParts(table metadata.TableMetadata, dstTable Table) error {
+func (ch *ClickHouse) AttachDataParts(table metadata.TableMetadata, dstTable Table, disks []Disk) error {
 	if dstTable.Database != "" && dstTable.Database != table.Database {
 		table.Database = dstTable.Database
 	}
