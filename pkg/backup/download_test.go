@@ -128,10 +128,10 @@ func TestReBalanceTablesMetadataIfDiskNotExists_Files_NoErrors(t *testing.T) {
 		"s3_disk2": {{Name: "part_7_7_0"}, {Name: "part_8_8_0"}},
 	}
 
-	tableMetadataAfterDownload = append(tableMetadataAfterDownload, baseTable)
+	tableMetadataAfterDownload = append(tableMetadataAfterDownload, &baseTable)
 	tableMetadataAfterDownloadRepacked := make(ListOfTables, len(tableMetadataAfterDownload))
 	for i := range tableMetadataAfterDownload {
-		tableMetadataAfterDownloadRepacked[i] = &tableMetadataAfterDownload[i]
+		tableMetadataAfterDownloadRepacked[i] = tableMetadataAfterDownload[i]
 	}
 	assert.NoError(t, b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, baseDisks, remoteBackup))
 	//rebalanced table
@@ -186,7 +186,7 @@ func TestReBalanceTablesMetadataIfDiskNotExists_Parts_NoErrors(t *testing.T) {
 
 	tableMetadataAfterDownloadRepacked := make(ListOfTables, len(tableMetadataAfterDownload))
 	for i := range tableMetadataAfterDownload {
-		tableMetadataAfterDownloadRepacked[i] = &tableMetadataAfterDownload[i]
+		tableMetadataAfterDownloadRepacked[i] = tableMetadataAfterDownload[i]
 	}
 	assert.NoError(t, b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, baseDisks, remoteBackup))
 	// no files re-balance
@@ -245,7 +245,7 @@ func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 	invalidRemoteBackup.DiskTypes["hdd2"] = "unknown"
 	tableMetadataAfterDownloadRepacked = make(ListOfTables, len(tableMetadataAfterDownload))
 	for i := range tableMetadataAfterDownload {
-		tableMetadataAfterDownloadRepacked[i] = &tableMetadataAfterDownload[i]
+		tableMetadataAfterDownloadRepacked[i] = tableMetadataAfterDownload[i]
 	}
 	err = b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, baseDisks, invalidRemoteBackup)
 	assert.Error(t, err)
