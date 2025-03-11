@@ -1369,7 +1369,7 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ba
 
 	for i := range tablesForRestore {
 		tableRestoreStartTime := time.Now()
-		table := tablesForRestore[i]
+		table := *tablesForRestore[i]
 		// need mapped database path and original table.Database for HardlinkBackupPartsToStorage.
 		dstDatabase := table.Database
 		// The same goes for the table
@@ -1392,17 +1392,17 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ba
 			Database: dstDatabase,
 			Table:    dstTableName}]
 		if !ok {
-			return fmt.Errorf("can't find '%s.%s' in current system.tables", dstDatabase, table.Table)
+			return fmt.Errorf("can't find '%s.%s' in current system.tables", dstDatabase, dstTableName)
 		}
 		idx := i
 		restoreBackupWorkingGroup.Go(func() error {
 			// https://github.com/Altinity/clickhouse-backup/issues/529
 			if b.cfg.ClickHouse.RestoreAsAttach {
-				if restoreErr := b.restoreDataRegularByAttach(restoreCtx, backupName, backupMetadata, *table, diskMap, diskTypes, disks, dstTable, skipProjections, logger); restoreErr != nil {
+				if restoreErr := b.restoreDataRegularByAttach(restoreCtx, backupName, backupMetadata, table, diskMap, diskTypes, disks, dstTable, skipProjections, logger); restoreErr != nil {
 					return restoreErr
 				}
 			} else {
-				if restoreErr := b.restoreDataRegularByParts(restoreCtx, backupName, backupMetadata, *table, diskMap, diskTypes, disks, dstTable, skipProjections, logger); restoreErr != nil {
+				if restoreErr := b.restoreDataRegularByParts(restoreCtx, backupName, backupMetadata, table, diskMap, diskTypes, disks, dstTable, skipProjections, logger); restoreErr != nil {
 					return restoreErr
 				}
 			}
