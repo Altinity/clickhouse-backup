@@ -470,6 +470,10 @@ func (b *Backuper) CheckDisksUsage(backup storage.Backup, disks []clickhouse.Dis
 // filterPartsAndFilesByDisk - https://github.com/Altinity/clickhouse-backup/issues/908
 func (b *Backuper) filterPartsAndFilesByDisk(tables ListOfTables, disks []clickhouse.Disk) {
 	for i, table := range tables {
+		//skipped table
+		if table == nil {
+			continue
+		}
 		filteredParts := make(map[string][]metadata.Part, 0)
 		for diskName := range tables[i].Parts {
 			if b.shouldDiskNameSkipByNameOrType(diskName, disks) {

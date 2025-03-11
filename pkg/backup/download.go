@@ -460,9 +460,6 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 			log.Warn().Str("localMetadataFile", localMetadataFile).Err(err).Send()
 			continue
 		}
-		if err != nil && strings.HasSuffix(localMetadataFile, ".sql") {
-			return nil, 0, err
-		}
 
 		if err = os.MkdirAll(path.Dir(localMetadataFile), 0755); err != nil {
 			return nil, 0, err
