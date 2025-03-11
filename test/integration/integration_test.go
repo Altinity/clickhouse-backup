@@ -1654,7 +1654,7 @@ func TestSkipDisk(t *testing.T) {
 	testRestoreSkipDisk(r, env)
 
 	// Clean up
-	env.queryWithNoError(r, "DROP DATABASE test_skip_disks")
+	env.queryWithNoError(r, "DROP DATABASE test_skip_disks SYNC")
 	env.Cleanup(t, r)
 }
 
@@ -1683,13 +1683,21 @@ func testSkipDiskByNameCreate(r *require.Assertions, env *TestEnvironment) {
 	log.Debug().Msg("Testing skip disk by name during create")
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_DISKS=hdd1 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml create skip_disk_by_name")
 
-	// Check that tables on hdd1 disk are not backed up
-	env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_disk_by_name/shadow/test_skip_disks/table_default/")
-	r.Error(env.DockerExec("clickhouse-backup", "ls", "-la", "/hdd1_data/skip_disk_by_name/shadow/test_skip_disks/table_hdd1/"))
-
+	// Metadata exists for all tables
+	env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_disk_by_name/metadata/test_skip_disks/table_default.json")
+	env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_disk_by_name/metadata/test_skip_disks/table_hdd1.json")
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 {
-		env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_disk_by_name/shadow/test_skip_disks/table_s3/")
+		env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_disk_by_name/metadata/test_skip_disks/table_s3.json")
 	}
+
+	//data exists for default and s3 disk
+	env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_disk_by_name/shadow/test_skip_disks/table_default/")
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 {
+		env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/disks/disk_s3/backup/skip_disk_by_name/shadow/test_skip_disks/table_s3/")
+	}
+
+	// Check that tables on hdd1 disk are not backed up
+	r.Error(env.DockerExec("clickhouse-backup", "ls", "-la", "/hdd1_data/backup/skip_disk_by_name/shadow/test_skip_disks/table_hdd1/"))
 
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local skip_disk_by_name")
 }
@@ -1700,10 +1708,11 @@ func testSkipDiskByTypeCreate(r *require.Assertions, env *TestEnvironment) {
 		log.Debug().Msg("Testing skip disk by type during create")
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_DISK_TYPES=s3 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml create skip_disk_by_type")
 
-		// Check that tables on s3 disk are not backed up
+		// Check data tables on s3 disk are not backed up
 		env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_disk_by_type/metadata/test_skip_disks/table_default.json")
 		env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_disk_by_type/metadata/test_skip_disks/table_hdd1.json")
-		r.Error(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_disk_by_type/metadata/test_skip_disks/table_s3.json"))
+		env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_disk_by_type/metadata/test_skip_disks/table_s3.json")
+		r.Error(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/disks/disk_s3/backup/skip_disk_by_type/shadow/test_skip_disks/table_s3/"))
 
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local skip_disk_by_type")
 	}
@@ -1769,10 +1778,10 @@ func testSkipDiskDownload(r *require.Assertions, env *TestEnvironment) {
 
 	// Check that tables on hdd1 disk are not downloaded
 	env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_download_test/shadow/test_skip_disks/table_default/")
-	r.Error(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_download_test/shadow/test_skip_disks/table_hdd1/"))
+	r.Error(env.DockerExec("clickhouse-backup", "ls", "-la", "/hdd1_data/backup/skip_download_test/shadow/test_skip_disks/table_hdd1/"))
 
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 {
-		env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_download_test/shadow/test_skip_disks/table_s3/")
+		env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/disks/disk_s3/backup/skip_download_test/shadow/test_skip_disks/table_s3/")
 
 		// Test skipping disk by type during download
 		log.Debug().Msg("Testing skip disk by type during download")
@@ -1781,8 +1790,8 @@ func testSkipDiskDownload(r *require.Assertions, env *TestEnvironment) {
 
 		// Check that tables on s3 disk are not downloaded
 		env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_download_test/shadow/test_skip_disks/table_default/")
-		env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_download_test/shadow/test_skip_disks/table_hdd1/")
-		r.Error(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_download_test/shadow/test_skip_disks/table_s3/"))
+		env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/hdd1_data/backup/skip_download_test/shadow/test_skip_disks/table_hdd1/")
+		r.Error(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/disks/disk_s3/backup/skip_download_test/shadow/test_skip_disks/table_s3/"))
 	}
 
 	// Test full download without skipping
@@ -1792,10 +1801,10 @@ func testSkipDiskDownload(r *require.Assertions, env *TestEnvironment) {
 
 	// Check that all tables are downloaded
 	env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_download_test/shadow/test_skip_disks/table_default/")
-	env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_download_test/shadow/test_skip_disks/table_hdd1/")
+	env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/hdd1_data/backup/skip_download_test/shadow/test_skip_disks/table_hdd1/")
 
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 {
-		env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_download_test/shadow/test_skip_disks/table_s3/")
+		env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/disks/disk_s3/backup/skip_download_test/shadow/test_skip_disks/table_s3/")
 	}
 
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local skip_download_test")
@@ -1813,7 +1822,7 @@ func testRestoreSkipDisk(r *require.Assertions, env *TestEnvironment) {
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml download skip_restore_test")
 
 	// Drop the test database to prepare for restore
-	env.queryWithNoError(r, "DROP DATABASE test_skip_disks")
+	env.queryWithNoError(r, "DROP DATABASE test_skip_disks SYNC")
 
 	// Test skipping disk by name during restore
 	log.Debug().Msg("Testing skip disk by name during restore")
@@ -1824,10 +1833,12 @@ func testRestoreSkipDisk(r *require.Assertions, env *TestEnvironment) {
 	r.NoError(env.ch.SelectSingleRowNoCtx(&tableDefaultCount, "SELECT count() FROM test_skip_disks.table_default"))
 	r.Equal(uint64(10), tableDefaultCount, "table_default should have 10 rows")
 
-	// Check that tables on hdd1 disk are not restored (should not exist in system.tables)
+	// Check that tables on hdd1 disk restored, but  have no data (should not exist in system.parts)
 	var tableHdd1Exists uint64
 	r.NoError(env.ch.SelectSingleRowNoCtx(&tableHdd1Exists, "SELECT count() FROM system.tables WHERE database='test_skip_disks' AND name='table_hdd1'"))
-	r.Equal(uint64(0), tableHdd1Exists, "table_hdd1 should not exist")
+	r.Equal(uint64(1), tableHdd1Exists, "table_hdd1 shall exist in system.tables")
+	r.NoError(env.ch.SelectSingleRowNoCtx(&tableHdd1Exists, "SELECT count() FROM system.parts WHERE active AND database='test_skip_disks' AND table='table_hdd1' AND disk_name='hdd1'"))
+	r.Equal(uint64(0), tableHdd1Exists, "unexpected table_hdd1 in system.parts")
 
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 {
 		// Check that tables on s3 disk are restored
@@ -1836,7 +1847,7 @@ func testRestoreSkipDisk(r *require.Assertions, env *TestEnvironment) {
 		r.Equal(uint64(10), tableS3Count, "table_s3 should have 10 rows")
 
 		// Drop the test database to prepare for next test
-		env.queryWithNoError(r, "DROP DATABASE test_skip_disks")
+		env.queryWithNoError(r, "DROP DATABASE test_skip_disks SYNC")
 
 		// Test skipping disk by type during restore
 		log.Debug().Msg("Testing skip disk by type during restore")
@@ -1851,14 +1862,14 @@ func testRestoreSkipDisk(r *require.Assertions, env *TestEnvironment) {
 		r.NoError(env.ch.SelectSingleRowNoCtx(&tableHdd1Count, "SELECT count() FROM test_skip_disks.table_hdd1"))
 		r.Equal(uint64(10), tableHdd1Count, "table_hdd1 should have 10 rows")
 
-		// Check that tables on s3 disk are not restored (should not exist in system.tables)
+		// Check that tables on s3 disk restored but not contains data (should not exist in system.parts)
 		var tableS3Exists uint64
 		r.NoError(env.ch.SelectSingleRowNoCtx(&tableS3Exists, "SELECT count() FROM system.tables WHERE database='test_skip_disks' AND name='table_s3'"))
-		r.Equal(uint64(0), tableS3Exists, "table_s3 should not exist")
+		r.Equal(uint64(1), tableS3Exists, "table_s3 shall exists in system.tables")
+		r.NoError(env.ch.SelectSingleRowNoCtx(&tableS3Exists, "SELECT count() FROM system.parts WHERE active AND disk_name='disk_s3' AND database='test_skip_disks' AND name='table_s3'"))
+		r.Equal(uint64(0), tableS3Exists, "table_s3 shall not exists in system.parts")
 	}
 
-	// Clean up
-	env.queryWithNoError(r, "DROP DATABASE test_skip_disks")
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local skip_restore_test")
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete remote skip_restore_test")
 }
