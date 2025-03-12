@@ -1615,11 +1615,6 @@ func TestSkipDisk(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Minute)
 
-	// Skip test if running in simple environment without storage policies
-	if os.Getenv("COMPOSE_FILE") == "docker-compose.yml" {
-		t.Skip("Skipping test in simple environment without storage policies")
-	}
-
 	// Setup test environment
 	setupTestSkipDisks(r, env)
 
