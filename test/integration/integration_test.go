@@ -308,7 +308,7 @@ var defaultTestData = []TestDataStruct{
 		Database:           dbNameAtomic,
 		DatabaseEngine:     "Atomic",
 		IsMaterializedView: true,
-		Name:               "mv_min_with_nested_depencency",
+		Name:               "mv_min_with_nested_dependency",
 		Schema:             fmt.Sprintf(" TO `%s`.`mv_dst_table_{test}` AS SELECT min(id) * 2 AS id FROM `%s`.mv_src_table_{test}", dbNameAtomic, dbNameAtomic),
 		SkipInsert:         true,
 		Rows: func() []map[string]interface{} {
@@ -1126,7 +1126,7 @@ func TestServerAPI(t *testing.T) {
 	testAPIBackupClean(r, env)
 
 	env.DockerExecNoError(r, "clickhouse-backup", "pkill", "-n", "-f", "clickhouse-backup")
-	r.NoError(env.dropDatabase("long_schema"))
+	r.NoError(env.dropDatabase("long_schema", false))
 	env.Cleanup(t, r)
 }
 
@@ -1575,7 +1575,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 
 			if strings.Contains(out, "code: 60") && err == nil {
 				freezeErrorHandled = true
-				log.Debug().Msg("CODE 60 catched")
+				log.Debug().Msg("CODE 60 caught")
 				<-resumeChannel
 				env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ec", "CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup delete local "+testBackupName)
 				break
@@ -1606,16 +1606,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 	}()
 	wg.Wait()
 	r.True(freezeErrorHandled, "freezeErrorHandled false")
-	dropDbSQL := "DROP DATABASE IF EXISTS freeze_not_exists"
-	if isAtomic, err := env.ch.IsAtomic("freeze_not_exists"); err == nil && isAtomic {
-		dropDbSQL += " SYNC"
-	}
-	env.queryWithNoError(r, dropDbSQL)
-	err = env.ch.Query(dropDbSQL)
-	if err != nil {
-		log.Error().Msgf("%s error: %v", dropDbSQL, err)
-	}
-	r.NoError(err)
+	r.NoError(env.dropDatabase("test_skip_tables", true))
 	t.Log("TestSkipNotExistsTable DONE, ALL OK")
 	env.Cleanup(t, r)
 }
@@ -1654,7 +1645,7 @@ func TestSkipDisk(t *testing.T) {
 	testRestoreSkipDisk(r, env)
 
 	// Clean up
-	env.queryWithNoError(r, "DROP DATABASE test_skip_disks SYNC")
+	r.NoError(env.dropDatabase("test_skip_disks", false))
 	env.Cleanup(t, r)
 }
 
@@ -1822,7 +1813,7 @@ func testRestoreSkipDisk(r *require.Assertions, env *TestEnvironment) {
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml download skip_restore_test")
 
 	// Drop the test database to prepare for restore
-	env.queryWithNoError(r, "DROP DATABASE test_skip_disks SYNC")
+	r.NoError(env.dropDatabase("test_skip_disks", false))
 
 	// Test skipping disk by name during restore
 	log.Debug().Msg("Testing skip disk by name during restore")
@@ -1847,7 +1838,7 @@ func testRestoreSkipDisk(r *require.Assertions, env *TestEnvironment) {
 		r.Equal(uint64(10), tableS3Count, "table_s3 should have 10 rows")
 
 		// Drop the test database to prepare for next test
-		env.queryWithNoError(r, "DROP DATABASE test_skip_disks SYNC")
+		r.NoError(env.dropDatabase("test_skip_disks", false))
 
 		// Test skipping disk by type during restore
 		log.Debug().Msg("Testing skip disk by type during restore")
@@ -2010,11 +2001,8 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	}
 
 	//restore
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.1") >= 0 {
-		env.queryWithNoError(r, "DROP DATABASE test_skip_tables NO DELAY")
-	} else {
-		env.queryWithNoError(r, "DROP DATABASE test_skip_tables")
-	}
+	r.NoError(env.dropDatabase("test_skip_tables", false))
+
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLES=*.test_memory clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore test_skip_full_backup")
 	result := uint64(0)
 	r.NoError(env.ch.SelectSingleRowNoCtx(&result, "SELECT count() FROM system.tables WHERE database='test_skip_tables' AND name!='test_memory'"))
@@ -2034,11 +2022,7 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	r.NoError(env.ch.SelectSingleRowNoCtx(&result, "SELECT count() FROM system.tables WHERE database='test_skip_tables' AND name='test_memory'"))
 	r.Equal(uint64(0), result)
 
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.1") >= 0 {
-		env.queryWithNoError(r, "DROP DATABASE test_skip_tables NO DELAY")
-	} else {
-		env.queryWithNoError(r, "DROP DATABASE test_skip_tables")
-	}
+	r.NoError(env.dropDatabase("test_skip_tables", false))
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLE_ENGINES=memory,materializedview,liveview,windowview clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore --schema test_skip_full_backup")
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLE_ENGINES=memory,materializedview,liveview,windowview clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore --data test_skip_full_backup")
 	result = uint64(0)
@@ -2052,11 +2036,7 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	r.NoError(env.ch.SelectSingleRowNoCtx(&result, "SELECT count() FROM system.tables WHERE database='test_skip_tables' AND engine IN ('Memory','MaterializedView','LiveView','WindowView')"))
 	r.Equal(uint64(0), result)
 
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.1") >= 0 {
-		env.queryWithNoError(r, "DROP DATABASE test_skip_tables NO DELAY")
-	} else {
-		env.queryWithNoError(r, "DROP DATABASE test_skip_tables")
-	}
+	r.NoError(env.dropDatabase("test_skip_tables", false))
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore test_skip_full_backup")
 	result = uint64(0)
 	r.NoError(env.ch.SelectSingleRowNoCtx(&result, "SELECT count() FROM system.tables WHERE database='test_skip_tables'"))
@@ -2073,11 +2053,7 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	}
 	r.Equal(expectedTables, result)
 
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.1") >= 0 {
-		env.queryWithNoError(r, "DROP DATABASE test_skip_tables NO DELAY")
-	} else {
-		env.queryWithNoError(r, "DROP DATABASE test_skip_tables")
-	}
+	r.NoError(env.dropDatabase("test_skip_tables", false))
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local test_skip_full_backup")
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete remote test_skip_full_backup")
 	env.Cleanup(t, r)
@@ -2300,7 +2276,7 @@ func TestCheckSystemPartsColumns(t *testing.T) {
 	r.Error(env.DockerExec("clickhouse-backup", "clickhouse-backup", "delete", "local", "test_system_parts_columns"))
 
 	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: t.Name(), Name: "test_system_parts_columns"}, createSQL, "", false, version, "", false))
-	r.NoError(env.dropDatabase(t.Name()))
+	r.NoError(env.dropDatabase(t.Name(), true))
 	env.Cleanup(t, r)
 }
 
@@ -2408,7 +2384,7 @@ func TestSyncReplicaTimeout(t *testing.T) {
 	env.queryWithNoError(r, "SYSTEM START FETCHES "+t.Name()+".repl2")
 
 	dropReplTables()
-	r.NoError(env.dropDatabase(t.Name()))
+	r.NoError(env.dropDatabase(t.Name(), false))
 	env.Cleanup(t, r)
 }
 
@@ -2506,7 +2482,7 @@ func TestRestoreAsAttach(t *testing.T) {
 
 	// Drop table and database
 	env.queryWithNoError(r, "DROP TABLE "+dbName+"."+tableName+" SYNC")
-	r.NoError(env.dropDatabase(dbName))
+	r.NoError(env.dropDatabase(dbName, false))
 
 	// Restore using --restore-schema-as-attach + restore_schema_on_cluster
 	r.Error(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--restore-schema-as-attach", backupName))
@@ -2518,8 +2494,7 @@ func TestRestoreAsAttach(t *testing.T) {
 	r.Equal(uint64(100), rowCount)
 
 	// Clean up
-	env.queryWithNoError(r, "DROP DATABASE "+dbName+" SYNC")
-	r.NoError(env.dropDatabase(dbName))
+	r.NoError(env.dropDatabase(dbName, false))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupName)
 
 	env.Cleanup(t, r)
@@ -2639,7 +2614,7 @@ func TestRestoreMutationInProgress(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse", "clickhouse", "client", "-q", "SELECT * FROM system.mutations FORMAT Vertical")
 
 	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: t.Name(), Name: "test_restore_mutation_in_progress"}, "", "", false, version, "", false))
-	r.NoError(env.dropDatabase(t.Name()))
+	r.NoError(env.dropDatabase(t.Name(), false))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_restore_mutation_in_progress")
 	env.Cleanup(t, r)
 }
@@ -2656,13 +2631,7 @@ func TestInnerTablesMaterializedView(t *testing.T) {
 	env.queryWithNoError(r, "INSERT INTO test_mv.src_table SELECT number FROM numbers(100)")
 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "test_mv", "--tables=test_mv.mv_with*,test_mv.dst*")
-	dropSQL := "DROP DATABASE test_mv"
-	isAtomic, err := env.ch.IsAtomic("test_mv")
-	r.NoError(err)
-	if isAtomic {
-		dropSQL += " NO DELAY"
-	}
-	env.queryWithNoError(r, dropSQL)
+	r.NoError(env.dropDatabase("test_mv", false))
 	var rowCnt uint64
 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "test_mv", "--tables=test_mv.mv_with*,test_mv.dst*")
@@ -2671,7 +2640,7 @@ func TestInnerTablesMaterializedView(t *testing.T) {
 	r.NoError(env.ch.SelectSingleRowNoCtx(&rowCnt, "SELECT count() FROM test_mv.mv_with_dst"))
 	r.Equal(uint64(100), rowCnt)
 
-	r.NoError(env.dropDatabase("test_mv"))
+	r.NoError(env.dropDatabase("test_mv", true))
 	// https://github.com/Altinity/clickhouse-backup/issues/777
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "upload", "test_mv", "--delete-source", "--tables=test_mv.mv_with*,test_mv.dst*")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "download", "test_mv", "--tables=test_mv.mv_with*,test_mv.dst*")
@@ -2776,7 +2745,7 @@ func TestFIPS(t *testing.T) {
 	testTLSCerts("rsa", "4096", "", "ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-AES256-GCM-SHA384", "AES_128_GCM_SHA256", "AES_256_GCM_SHA384")
 	testTLSCerts("ecdsa", "", "prime256v1", "ECDHE-ECDSA-AES128-GCM-SHA256", "ECDHE-ECDSA-AES256-GCM-SHA384")
 	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: t.Name(), Name: "fips_table"}, createSQL, "", false, 0, "", false))
-	r.NoError(env.dropDatabase(t.Name()))
+	r.NoError(env.dropDatabase(t.Name(), true))
 	env.Cleanup(t, r)
 }
 
@@ -2824,7 +2793,7 @@ func TestRestoreMapping(t *testing.T) {
 	checkRecordset(1, 20, "SELECT count() FROM `database-1`.v1")
 
 	log.Debug().Msg("Drop database-1")
-	r.NoError(env.dropDatabase("database-1"))
+	r.NoError(env.dropDatabase("database-1", false))
 
 	log.Debug().Msg("Restore data")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--data", "--restore-database-mapping", "database-1:database-2", "--restore-table-mapping", "t1:t3,t2:t4,d1:d2,mv1:mv2,v1:v2", "--tables", "database-1.*", testBackupName)
@@ -2840,7 +2809,7 @@ func TestRestoreMapping(t *testing.T) {
 	checkRecordset(1, 0, "SELECT count() FROM system.databases WHERE name='database-1' SETTINGS empty_result_for_aggregation_by_empty_set=0")
 
 	log.Debug().Msg("Drop database2")
-	r.NoError(env.dropDatabase("database2"))
+	r.NoError(env.dropDatabase("database2", false))
 
 	log.Debug().Msg("Restore data with partitions")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--restore-database-mapping", "database-1:database-2", "--restore-table-mapping", "t1:t3,t2:t4,d1:d2,mv1:mv2,v1:v2", "--partitions", "3", "--partitions", "database-1.t2:202201", "--tables", "database-1.*", testBackupName)
@@ -2875,14 +2844,14 @@ func TestMySQLMaterialized(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "test_mysql_materialized")
-	env.queryWithNoError(r, "DROP DATABASE ch_mysql_repl")
+	r.NoError(env.dropDatabase("ch_mysql_repl", false))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "test_mysql_materialized")
 
 	result := 0
 	r.NoError(env.ch.SelectSingleRowNoCtx(&result, "SELECT count() FROM ch_mysql_repl.t1"))
 	r.Equal(3, result, "expect count=3")
 
-	env.queryWithNoError(r, "DROP DATABASE ch_mysql_repl")
+	r.NoError(env.dropDatabase("ch_mysql_repl", false))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_mysql_materialized")
 	env.Cleanup(t, r)
 }
@@ -2917,14 +2886,14 @@ func TestPostgreSQLMaterialized(t *testing.T) {
 	}
 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "test_pgsql_materialized")
-	env.queryWithNoError(r, "DROP DATABASE ch_pgsql_repl")
+	r.NoError(env.dropDatabase("ch_pgsql_repl", false))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "test_pgsql_materialized")
 
 	result := 0
 	r.NoError(env.ch.SelectSingleRowNoCtx(&result, "SELECT count() FROM ch_pgsql_repl.t1"))
 	r.Equal(3, result, "expect count=3")
 
-	env.queryWithNoError(r, "DROP DATABASE ch_pgsql_repl")
+	r.NoError(env.dropDatabase("ch_pgsql_repl", false))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_pgsql_materialized")
 	env.Cleanup(t, r)
 }
@@ -3345,7 +3314,7 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", incrementBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", incrementBackupName)
 
-	if err = env.dropDatabase(dbName); err != nil {
+	if err = env.dropDatabase(dbName, true); err != nil {
 		t.Fatal(err)
 	}
 	log.Debug().Msg("testBackupSpecifiedPartitions finish")
@@ -3504,7 +3473,7 @@ func dropDatabasesFromTestDataDataSet(t *testing.T, r *require.Assertions, ch *T
 	log.Debug().Msg("Drop all databases")
 	for _, db := range databaseList {
 		db = db + "_" + t.Name()
-		r.NoError(ch.dropDatabase(db))
+		r.NoError(ch.dropDatabase(db, true))
 	}
 }
 
@@ -3717,9 +3686,13 @@ func (env *TestEnvironment) createTestData(t *testing.T, data TestDataStruct) er
 	return err
 }
 
-func (env *TestEnvironment) dropDatabase(database string) (err error) {
+func (env *TestEnvironment) dropDatabase(database string, ifExists bool) (err error) {
 	var isAtomic bool
-	dropDatabaseSQL := fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", database)
+	dropDatabaseSQL := "DROP DATABASE "
+	if ifExists {
+		dropDatabaseSQL += "IF EXISTS "
+	}
+	dropDatabaseSQL += fmt.Sprintf("`%s`", database)
 	if isAtomic, err = env.ch.IsAtomic(database); isAtomic {
 		dropDatabaseSQL += " SYNC"
 	} else if err != nil {
