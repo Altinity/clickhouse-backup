@@ -1716,7 +1716,8 @@ func testSkipDiskByNameUpload(r *require.Assertions, env *TestEnvironment) {
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_DISKS=hdd1 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload skip_disk_upload_test")
 
 	// Check that tables on hdd1 disk are not uploaded to minio
-	r.Error(env.DockerExec("minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/skip_disk_upload_test/shadow/test_skip_disks/table_hdd1/"))
+	out, err := env.DockerExecOut("minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/skip_disk_upload_test/shadow/test_skip_disks/table_hdd1/")
+	r.Error(err, out)
 	env.DockerExecNoError(r, "minio", "ls", "-la", "/bitnami/minio/data/clickhouse/backup/cluster/0/skip_disk_upload_test/shadow/test_skip_disks/table_default/")
 
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 {
