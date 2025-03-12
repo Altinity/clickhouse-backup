@@ -49,7 +49,7 @@ jobs:
       - name: Build clickhouse-backup binary
         id: make-race
         env:
-          GOROOT: ${{ env.GOROOT_1_23_X64 }}
+          GOROOT: ${{ env.GOROOT_1_24_X64 }}
         run: |
           make build/linux/amd64/clickhouse-backup build/linux/arm64/clickhouse-backup
           make build/linux/amd64/clickhouse-backup-fips build/linux/arm64/clickhouse-backup-fips 
@@ -168,7 +168,7 @@ jobs:
           sudo chmod -Rv +rx test/testflows/clickhouse_backup/_instances
       - name: Format testflows coverage
         env:
-          GOROOT: ${{ env.GOROOT_1_23_X64 }}
+          GOROOT: ${{ env.GOROOT_1_24_X64 }}
         run: |
           sudo chmod -Rv a+rw test/testflows/_coverage_/
           ls -la test/testflows/_coverage_
@@ -197,7 +197,7 @@ jobs:
   test:
     needs: build
     name: Test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         golang-version:
@@ -247,11 +247,11 @@ jobs:
 
       - name: Running integration tests
         env:
-          RUN_PARALLEL: 3
-          GOROOT: ${{ env.GOROOT_1_23_X64 }}
+          RUN_PARALLEL: 4
+          GOROOT: ${{ env.GOROOT_1_24_X64 }}
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
           # options for advanced debug CI/CD
-          # RUN_TESTS: "^TestSkipTablesAndSkipTableEngines$"
+          # RUN_TESTS: "^TestSkipDisk$"
           # LOG_LEVEL: "debug"
           # TEST_LOG_LEVEL: "debug"
           # GCS_DEBUG: "true"
@@ -334,7 +334,7 @@ jobs:
 
       - name: Format integration coverage
         env:
-          GOROOT: ${{ env.GOROOT_1_23_X64 }}
+          GOROOT: ${{ env.GOROOT_1_24_X64 }}
         run: |
           sudo chmod -Rv a+rw test/integration/_coverage_/
           ls -la test/integration/_coverage_ 
@@ -352,7 +352,7 @@ jobs:
       - test
       - testflows
     name: coverage
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
         - name: Coveralls Finished
           uses: coverallsapp/github-action@v2
@@ -364,7 +364,7 @@ jobs:
       - test
       - testflows
     name: Docker
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
@@ -404,17 +404,3 @@ jobs:
             docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG} --build-arg VERSION=$VERSION --target=image_short --pull --push .
             docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}-fips --build-arg VERSION=$VERSION --target=image_fips --pull --push .
           fi
-
-  cleanup:
-    name: Cleanup
-    needs:
-      - docker
-      - coverage
-    runs-on: ubuntu-22.04
-    if: always()
-    steps:
-      - name: delete build-artifacts
-        uses: geekyeggo/delete-artifact@v5
-        with:
-          name: build-artifacts
-          failOnError: false

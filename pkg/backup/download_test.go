@@ -111,8 +111,9 @@ func TestReBalanceTablesMetadataIfDiskNotExists_Files_NoErrors(t *testing.T) {
 		MetadataOnly:    false,
 		LocalFile:       "/dev/null",
 	}
-	var tableMetadataAfterDownload []metadata.TableMetadata
-	tableMetadataAfterDownload = append(tableMetadataAfterDownload, baseTable)
+	var tableMetadataAfterDownload ListOfTables
+	addTable := baseTable
+	tableMetadataAfterDownload = append(tableMetadataAfterDownload, &addTable)
 	baseTable.Table = "test2"
 	baseTable.Query = "CREATE TABLE default.test(id UInt64) ENGINE=MergeTree() ORDER BY id SETTINGS storage_policy='jbod'"
 	baseTable.Files = map[string][]string{
@@ -128,12 +129,9 @@ func TestReBalanceTablesMetadataIfDiskNotExists_Files_NoErrors(t *testing.T) {
 		"s3_disk2": {{Name: "part_7_7_0"}, {Name: "part_8_8_0"}},
 	}
 
-	tableMetadataAfterDownload = append(tableMetadataAfterDownload, baseTable)
-	tableMetadataAfterDownloadRepacked := make([]*metadata.TableMetadata, len(tableMetadataAfterDownload))
-	for i := range tableMetadataAfterDownload {
-		tableMetadataAfterDownloadRepacked[i] = &tableMetadataAfterDownload[i]
-	}
-	assert.NoError(t, b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, baseDisks, remoteBackup))
+	addTable2 := baseTable
+	tableMetadataAfterDownload = append(tableMetadataAfterDownload, &addTable2)
+	assert.NoError(t, b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownload, baseDisks, remoteBackup))
 	//rebalanced table
 	meta := tableMetadataAfterDownload[1]
 	assert.Equal(t, 4, len(meta.RebalancedFiles), "expect 4 rebalanced files in %s.%s", meta.Database, meta.Table)
@@ -171,8 +169,8 @@ func TestReBalanceTablesMetadataIfDiskNotExists_Parts_NoErrors(t *testing.T) {
 		MetadataOnly:    false,
 		LocalFile:       "/dev/null",
 	}
-	var tableMetadataAfterDownload []metadata.TableMetadata
-	tableMetadataAfterDownload = append(tableMetadataAfterDownload, baseTable)
+	var tableMetadataAfterDownload ListOfTables
+	tableMetadataAfterDownload = append(tableMetadataAfterDownload, &baseTable)
 	baseTable.Table = "test2"
 	baseTable.Query = "CREATE TABLE default.test(id UInt64) ENGINE=MergeTree() ORDER BY id SETTINGS storage_policy='jbod'"
 	baseTable.Parts = map[string][]metadata.Part{
@@ -182,11 +180,11 @@ func TestReBalanceTablesMetadataIfDiskNotExists_Parts_NoErrors(t *testing.T) {
 		"s3_disk2": {{Name: "part_7_7_0"}, {Name: "part_8_8_0"}},
 	}
 
-	tableMetadataAfterDownload = append(tableMetadataAfterDownload, baseTable)
+	tableMetadataAfterDownload = append(tableMetadataAfterDownload, &baseTable)
 
-	tableMetadataAfterDownloadRepacked := make([]*metadata.TableMetadata, len(tableMetadataAfterDownload))
+	tableMetadataAfterDownloadRepacked := make(ListOfTables, len(tableMetadataAfterDownload))
 	for i := range tableMetadataAfterDownload {
-		tableMetadataAfterDownloadRepacked[i] = &tableMetadataAfterDownload[i]
+		tableMetadataAfterDownloadRepacked[i] = tableMetadataAfterDownload[i]
 	}
 	assert.NoError(t, b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, baseDisks, remoteBackup))
 	// no files re-balance
@@ -227,12 +225,12 @@ func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 		MetadataOnly:    false,
 		LocalFile:       "/dev/null",
 	}
-	tableMetadataAfterDownload := []metadata.TableMetadata{invalidTable}
+	tableMetadataAfterDownload := ListOfTables{&invalidTable}
 	// hdd2 not exists diskType
 	delete(invalidRemoteBackup.DiskTypes, "hdd2")
-	tableMetadataAfterDownloadRepacked := make([]*metadata.TableMetadata, len(tableMetadataAfterDownload))
+	tableMetadataAfterDownloadRepacked := make(ListOfTables, len(tableMetadataAfterDownload))
 	for i := range tableMetadataAfterDownload {
-		tableMetadataAfterDownloadRepacked[i] = &tableMetadataAfterDownload[i]
+		tableMetadataAfterDownloadRepacked[i] = tableMetadataAfterDownload[i]
 	}
 	err := b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, baseDisks, invalidRemoteBackup)
 	assert.Error(t, err)
@@ -243,9 +241,9 @@ func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 
 	// invalid disk_type
 	invalidRemoteBackup.DiskTypes["hdd2"] = "unknown"
-	tableMetadataAfterDownloadRepacked = make([]*metadata.TableMetadata, len(tableMetadataAfterDownload))
+	tableMetadataAfterDownloadRepacked = make(ListOfTables, len(tableMetadataAfterDownload))
 	for i := range tableMetadataAfterDownload {
-		tableMetadataAfterDownloadRepacked[i] = &tableMetadataAfterDownload[i]
+		tableMetadataAfterDownloadRepacked[i] = tableMetadataAfterDownload[i]
 	}
 	err = b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, baseDisks, invalidRemoteBackup)
 	assert.Error(t, err)
@@ -262,7 +260,7 @@ func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 
 	invalidTable.Table = "test3"
 	invalidTable.Query = "CREATE TABLE default.test3(id UInt64) ENGINE=MergeTree() ORDER BY id SETTINGS storage_policy='invalid'"
-	tableMetadataAfterDownloadRepacked = []*metadata.TableMetadata{&invalidTable}
+	tableMetadataAfterDownloadRepacked = ListOfTables{&invalidTable}
 	err = b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, baseDisks, invalidRemoteBackup)
 	assert.Error(t, err)
 	matched, matchErr := regexp.MatchString(`storagePolicy: invalid with diskType: \w+ not found in system.disks`, err.Error())
@@ -278,7 +276,7 @@ func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 		"default": {{Name: "part_1_1_0"}, {Name: "part_2_2_0"}},
 		"hdd2":    {{Name: "part_3_3_0"}, {Name: "part_4_4_0"}},
 	}
-	tableMetadataAfterDownloadRepacked = []*metadata.TableMetadata{&invalidTable}
+	tableMetadataAfterDownloadRepacked = ListOfTables{&invalidTable}
 	err = b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, invalidDisks, invalidRemoteBackup)
 	assert.Error(t, err)
 	assert.Equal(t, "250B free space, not found in system.disks with `local` type", err.Error())

@@ -45,7 +45,7 @@ else
 fi
 
 for id in $(docker ps -q); do
-  docker stop "${id}" --time 1
+  docker stop "${id}" --timeout 1
   docker rm -f "${id}"
 done
 

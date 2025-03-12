@@ -8,7 +8,7 @@ on:
 jobs:
   release:
     name: Release
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         golang-version:
@@ -55,7 +55,7 @@ jobs:
       - name: Prepare binaries
         id: make
         env:
-          GOROOT: ${{ env.GOROOT_1_22_X64 }}
+          GOROOT: ${{ env.GOROOT_1_24_X64 }}
         run: |
           make build build-fips config test
           #make build-fips-darwin

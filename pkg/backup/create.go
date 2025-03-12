@@ -137,7 +137,7 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	}
 	if err != nil {
 		log.Error().Msgf("backup failed error: %v", err)
-		// delete local backup if can't create
+		// delete local backup when creation failure
 		if removeBackupErr := b.RemoveBackupLocal(ctx, backupName, disks); removeBackupErr != nil {
 			log.Error().Msgf("creating failed -> b.RemoveBackupLocal error: %v", removeBackupErr)
 		}
@@ -219,6 +219,9 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 	}
 	isObjectDiskContainsTables := false
 	for _, disk := range disks {
+		if b.shouldSkipByDiskNameOrType(disk) {
+			continue
+		}
 		if b.isDiskTypeObject(disk.Type) || b.isDiskTypeEncryptedObject(disk, disks) {
 			for _, table := range tables {
 				sort.Slice(table.DataPaths, func(i, j int) bool { return len(table.DataPaths[i]) > len(table.DataPaths[j]) })
@@ -786,6 +789,10 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 	disksToPartsMap := map[string][]metadata.Part{}
 
 	for _, disk := range diskList {
+		if b.shouldSkipByDiskNameOrType(disk) {
+			log.Warn().Str("database", table.Database).Str("table", table.Name).Str("disk.Name", disk.Name).Msg("skipped")
+			continue
+		}
 		select {
 		case <-ctx.Done():
 			return nil, nil, nil, ctx.Err()

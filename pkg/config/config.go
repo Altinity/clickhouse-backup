@@ -216,6 +216,8 @@ type ClickHouseConfig struct {
 	DiskMapping                      map[string]string `yaml:"disk_mapping" envconfig:"CLICKHOUSE_DISK_MAPPING"`
 	SkipTables                       []string          `yaml:"skip_tables" envconfig:"CLICKHOUSE_SKIP_TABLES"`
 	SkipTableEngines                 []string          `yaml:"skip_table_engines" envconfig:"CLICKHOUSE_SKIP_TABLE_ENGINES"`
+	SkipDisks                        []string          `yaml:"skip_disks" envconfig:"CLICKHOUSE_SKIP_DISKS"`
+	SkipDiskTypes                    []string          `yaml:"skip_disk_types" envconfig:"CLICKHOUSE_SKIP_DISK_TYPES"`
 	Timeout                          string            `yaml:"timeout" envconfig:"CLICKHOUSE_TIMEOUT"`
 	FreezeByPart                     bool              `yaml:"freeze_by_part" envconfig:"CLICKHOUSE_FREEZE_BY_PART"`
 	FreezeByPartWhere                string            `yaml:"freeze_by_part_where" envconfig:"CLICKHOUSE_FREEZE_BY_PART_WHERE"`

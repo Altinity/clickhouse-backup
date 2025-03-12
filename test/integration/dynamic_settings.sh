@@ -20,6 +20,13 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration.xml
       </hdd2>
     </disks>
     <policies>
+      <hdd1_only>
+        <volumes>
+          <hdd1_only_volume>
+            <disk>hdd1</disk>
+          </hdd1_only_volume>
+        </volumes>
+      </hdd1_only>
       <jbod>
         <volumes>
           <jbod_hdd_volume>

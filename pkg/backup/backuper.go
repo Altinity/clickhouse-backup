@@ -198,7 +198,7 @@ func (b *Backuper) isDiskTypeEncryptedObject(disk clickhouse.Disk, disks []click
 
 // getEmbeddedRestoreSettings - different with getEmbeddedBackupSettings, cause https://github.com/ClickHouse/ClickHouse/issues/69053
 func (b *Backuper) getEmbeddedRestoreSettings(version int) []string {
-	settings := []string{}
+	settings := make([]string, 0)
 	if (b.cfg.General.RemoteStorage == "s3" || b.cfg.General.RemoteStorage == "gcs") && version >= 23007000 {
 		settings = append(settings, "allow_s3_native_copy=1")
 		if err := b.ch.Query("SET s3_request_timeout_ms=600000"); err != nil {
@@ -215,7 +215,7 @@ func (b *Backuper) getEmbeddedRestoreSettings(version int) []string {
 }
 
 func (b *Backuper) getEmbeddedBackupSettings(version int) []string {
-	settings := []string{}
+	settings := make([]string, 0)
 	if (b.cfg.General.RemoteStorage == "s3" || b.cfg.General.RemoteStorage == "gcs") && version >= 23007000 {
 		settings = append(settings, "allow_s3_native_copy=1")
 		if err := b.ch.Query("SET s3_request_timeout_ms=600000"); err != nil {
@@ -393,7 +393,7 @@ func (b *Backuper) getTablesDiffFromLocal(ctx context.Context, diffFrom string, 
 			tablesForUploadFromDiff[metadata.TableTitle{
 				Database: t.Database,
 				Table:    t.Table,
-			}] = t
+			}] = *t
 		}
 	}
 	return tablesForUploadFromDiff, nil
@@ -425,7 +425,7 @@ func (b *Backuper) getTablesDiffFromRemote(ctx context.Context, diffFromRemote s
 			tablesForUploadFromDiff[metadata.TableTitle{
 				Database: t.Database,
 				Table:    t.Table,
-			}] = t
+			}] = *t
 		}
 	}
 	return tablesForUploadFromDiff, nil
@@ -465,4 +465,33 @@ func (b *Backuper) CheckDisksUsage(backup storage.Backup, disks []clickhouse.Dis
 		log.Warn().Msg(errMsg)
 	}
 	return nil
+}
+
+// filterPartsAndFilesByDisk - https://github.com/Altinity/clickhouse-backup/issues/908
+func (b *Backuper) filterPartsAndFilesByDisk(tables ListOfTables, disks []clickhouse.Disk) {
+	for i, table := range tables {
+		//skipped table
+		if table == nil {
+			continue
+		}
+		filteredParts := make(map[string][]metadata.Part, 0)
+		for diskName := range tables[i].Parts {
+			if b.shouldDiskNameSkipByNameOrType(diskName, disks) {
+				log.Warn().Str("database", table.Database).Str("table", table.Table).Str("disk.Name", diskName).Msg("skipped")
+				continue
+			}
+			filteredParts[diskName] = tables[i].Parts[diskName]
+		}
+		tables[i].Parts = filteredParts
+
+		filteredFiles := make(map[string][]string, 0)
+		for diskName := range tables[i].Files {
+			if b.shouldDiskNameSkipByNameOrType(diskName, disks) {
+				log.Warn().Str("database", table.Database).Str("table", table.Table).Str("disk.Name", diskName).Msg("skipped")
+				continue
+			}
+			filteredFiles[diskName] = tables[i].Files[diskName]
+		}
+		tables[i].Files = filteredFiles
+	}
 }
