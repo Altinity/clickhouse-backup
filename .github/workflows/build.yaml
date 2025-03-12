@@ -404,17 +404,3 @@ jobs:
             docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG} --build-arg VERSION=$VERSION --target=image_short --pull --push .
             docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}-fips --build-arg VERSION=$VERSION --target=image_fips --pull --push .
           fi
-
-  cleanup:
-    name: Cleanup
-    needs:
-      - docker
-      - coverage
-    runs-on: ubuntu-24.04
-    if: always()
-    steps:
-      - name: delete build-artifacts
-        uses: geekyeggo/delete-artifact@v5
-        with:
-          name: build-artifacts
-          failOnError: false
