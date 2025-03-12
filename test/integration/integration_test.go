@@ -1655,7 +1655,7 @@ func setupTestSkipDisks(r *require.Assertions, env *TestEnvironment) {
 	// Create test database and tables on different disks
 	env.queryWithNoError(r, "CREATE DATABASE test_skip_disks")
 	env.queryWithNoError(r, "CREATE TABLE IF NOT EXISTS test_skip_disks.table_default (id UInt64) ENGINE=MergeTree() ORDER BY id")
-	env.queryWithNoError(r, "CREATE TABLE IF NOT EXISTS test_skip_disks.table_hdd1 (id UInt64) ENGINE=MergeTree() ORDER BY id SETTINGS storage_policy = 'jbod'")
+	env.queryWithNoError(r, "CREATE TABLE IF NOT EXISTS test_skip_disks.table_hdd1 (id UInt64) ENGINE=MergeTree() ORDER BY id SETTINGS storage_policy = 'hdd1_only'")
 
 	// Create tables on S3 disk if available in this version
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 {
