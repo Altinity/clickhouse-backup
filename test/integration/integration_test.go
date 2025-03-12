@@ -2809,7 +2809,7 @@ func TestRestoreMapping(t *testing.T) {
 	checkRecordset(1, 0, "SELECT count() FROM system.databases WHERE name='database-1' SETTINGS empty_result_for_aggregation_by_empty_set=0")
 
 	log.Debug().Msg("Drop database2")
-	r.NoError(env.dropDatabase("database2", false))
+	r.NoError(env.dropDatabase("database-2", false))
 
 	log.Debug().Msg("Restore data with partitions")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--restore-database-mapping", "database-1:database-2", "--restore-table-mapping", "t1:t3,t2:t4,d1:d2,mv1:mv2,v1:v2", "--partitions", "3", "--partitions", "database-1.t2:202201", "--tables", "database-1.*", testBackupName)
