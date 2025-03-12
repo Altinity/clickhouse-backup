@@ -1615,7 +1615,7 @@ func TestSkipDisk(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Minute)
 
-	env.DockerExecNoError(r, "clickouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
 	// Skip test if running in simple environment without storage policies
 	if os.Getenv("COMPOSE_FILE") == "docker-compose.yml" {
 		t.Skip("Skipping test in simple environment without storage policies")
