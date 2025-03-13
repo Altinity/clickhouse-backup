@@ -23,17 +23,11 @@ BUG FIXES
 - fix `--restore-database-mapping` with special characters in source table, fix
   reopened [820](https://github.com/Altinity/clickhouse-backup/issues/820#issuecomment-2675628282),
   thanks @IvaskevychYuriy
-- add workaround for `metdata_path` field change behavior in 25.1+, look details
-  in https://github.com/ClickHouse/ClickHouse/issues/76546,
-  fix [1093](https://github.com/Altinity/clickhouse-backup/issues/1093)
-- add e2e tests for `AZBLOB_SAS`, fix [1060](https://github.com/Altinity/clickhouse-backup/issues/1060),
-  fix [313](https://github.com/Altinity/clickhouse-backup/issues/313)
-- add alibaba/oss/aliyuncs worked config,
-  fix [877](https://github.com/Altinity/clickhouse-backup/issues/877#issuecomment-2589164718),
-  fix [505](https://github.com/Altinity/clickhouse-backup/issues/505#issuecomment-2589163706)
+- add workaround for `metdata_path` field change behavior in 25.1+, look details in https://github.com/ClickHouse/ClickHouse/issues/76546, fix [1093](https://github.com/Altinity/clickhouse-backup/issues/1093)
+- add e2e tests for `AZBLOB_SAS`, fix [1060](https://github.com/Altinity/clickhouse-backup/issues/1060),  fix [313](https://github.com/Altinity/clickhouse-backup/issues/313)
+- add alibaba/oss/aliyuncs worked config, fix [877](https://github.com/Altinity/clickhouse-backup/issues/877#issuecomment-2589164718),  fix [505](https://github.com/Altinity/clickhouse-backup/issues/505#issuecomment-2589163706)
 - add test for COS, fix [1053](https://github.com/Altinity/clickhouse-backup/issues/1053)
-- fix `AS WITH x AS` corner case for `restore_schema_on_cluster` option,
-  fix [1075](https://github.com/Altinity/clickhouse-backup/issues/1075)
+- fix `AS WITH x AS` corner case for `restore_schema_on_cluster` option, fix [1075](https://github.com/Altinity/clickhouse-backup/issues/1075)
 
 # v2.6.5
 
