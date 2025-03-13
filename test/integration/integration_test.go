@@ -2513,9 +2513,6 @@ func TestReplicatedCopyToDetached(t *testing.T) {
 
 	// Create a replicated table
 	zkPath := "/clickhouse/tables/{shard}/{database}/{table}"
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.3") >= 0 {
-		zkPath = "/clickhouse/tables/{shard}/{database}/{table}/{uuid}"
-	}
 	createSQL := fmt.Sprintf("CREATE TABLE %s.%s (id UInt64, value String) ENGINE=ReplicatedMergeTree('%s','{replica}') ORDER BY id", dbName, tableName, zkPath)
 	env.queryWithNoError(r, createSQL)
 
