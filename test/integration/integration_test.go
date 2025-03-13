@@ -467,7 +467,7 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 	}
 
 	r := require.New(t)
-	envObj, err := dockerPool.BorrowObject(context.Background())
+	envObj, err := dockerPool.BorrowObject(t.Context())
 	if err != nil {
 		t.Fatalf("dockerPool.BorrowObject retrun error: %v", err)
 	}
@@ -507,7 +507,7 @@ func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 		env.DockerExecNoError(r, "minio", "rm", "-rf", "/bitnami/minio/data/clickhouse/kopia")
 	}
 
-	if err := dockerPool.ReturnObject(context.Background(), env); err != nil {
+	if err := dockerPool.ReturnObject(t.Context(), env); err != nil {
 		t.Fatalf("dockerPool.ReturnObject error: %+v", err)
 	}
 
@@ -517,7 +517,7 @@ var listTimeMsRE = regexp.MustCompile(`list_duration=(\d+.\d+)`)
 
 func TestLongListRemote(t *testing.T) {
 	env, r := NewTestEnvironment(t)
-	env.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Minute)
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	totalCacheCount := 20
 	testBackupName := "test_list_remote"
 
@@ -525,7 +525,7 @@ func TestLongListRemote(t *testing.T) {
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", fmt.Sprintf("CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml ALLOW_EMPTY_BACKUPS=true RBAC_BACKUP_ALWAYS=false clickhouse-backup create_remote %s_%d", testBackupName, i))
 	}
 
-	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "minio")...))
+	r.NoError(utils.ExecCmd(t.Context(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "minio")...))
 	time.Sleep(2 * time.Second)
 
 	var err error
@@ -582,8 +582,8 @@ func TestLongListRemote(t *testing.T) {
 
 func TestChangeReplicationPathIfReplicaExists(t *testing.T) {
 	env, r := NewTestEnvironment(t)
-	env.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Minute)
-	version, err := env.ch.GetVersion(context.Background())
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
+	version, err := env.ch.GetVersion(t.Context())
 	r.NoError(err)
 	createReplicatedTable := func(table, uuid, engine string) string {
 		createSQL := fmt.Sprintf("CREATE TABLE default.%s %s ON CLUSTER '{cluster}' (id UInt64) ENGINE=ReplicatedMergeTree(%s) ORDER BY id", table, uuid, engine)
@@ -614,8 +614,8 @@ func TestChangeReplicationPathIfReplicaExists(t *testing.T) {
 		r.NoError(env.DockerExec("clickhouse", "rm", "-rfv", fmt.Sprintf("/var/lib/clickhouse/store/%s/%s", createUUID.String()[:3], createUUID.String())))
 	}
 	env.ch.Close()
-	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "clickhouse")...))
-	env.connectWithWait(r, 10*time.Second, 1*time.Second, 1*time.Minute)
+	r.NoError(utils.ExecCmd(t.Context(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "clickhouse")...))
+	env.connectWithWait(t, r, 10*time.Second, 1*time.Second, 1*time.Minute)
 
 	var restoreOut string
 	restoreOut, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--tables", "default.test_replica_wrong_path*", "test_wrong_path")
@@ -721,7 +721,7 @@ func TestIntegrationAzure(t *testing.T) {
 		"--account-name=devcontainer1", "--resource-types=sco", "--services=b", "--permissions=cdlruwap",
 		"--expiry", time.Now().Add(30 * time.Hour).Format("2006-01-02T15:04:05Z"), "--output=tsv",
 	}
-	sasToken, err := utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", sasCmd...)
+	sasToken, err := utils.ExecCmdOut(t.Context(), dockerExecTimeout, "docker", sasCmd...)
 	sasToken = strings.Trim(sasToken, " \t\r\n")
 	r.NoError(err, "unexpected error sasToken=%s", sasToken)
 	env.InstallDebIfNotExists(r, "clickhouse-backup", "gettext-base")
@@ -871,7 +871,7 @@ func TestS3NoDeletePermission(t *testing.T) {
 		return
 	}
 	env, r := NewTestEnvironment(t)
-	env.connectWithWait(r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
+	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 
 	env.DockerExecNoError(r, "minio", "/bin/minio_nodelete.sh")
 	r.NoError(env.DockerCP("config-s3-nodelete.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
@@ -899,7 +899,7 @@ func TestRBAC(t *testing.T) {
 	}
 	env, r := NewTestEnvironment(t)
 	testRBACScenario := func(config string) {
-		env.connectWithWait(r, 1*time.Second, 1*time.Second, 1*time.Minute)
+		env.connectWithWait(t, r, 1*time.Second, 1*time.Second, 1*time.Minute)
 
 		env.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_rbac")
 		env.queryWithNoError(r, "CREATE TABLE default.test_rbac (v UInt64) ENGINE=MergeTree() ORDER BY tuple()")
@@ -952,8 +952,8 @@ func TestRBAC(t *testing.T) {
 		env.DockerExecNoError(r, "clickhouse", "ls", "-lah", "/var/lib/clickhouse/access")
 
 		env.ch.Close()
-		// r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, append(env.GetDefaultComposeCommand(), "restart", "clickhouse")))
-		env.connectWithWait(r, 2*time.Second, 2*time.Second, 1*time.Minute)
+		// r.NoError(utils.ExecCmd(t.Context(), 180*time.Second, append(env.GetDefaultComposeCommand(), "restart", "clickhouse")))
+		env.connectWithWait(t, r, 2*time.Second, 2*time.Second, 1*time.Minute)
 
 		env.DockerExecNoError(r, "clickhouse", "ls", "-lah", "/var/lib/clickhouse/access")
 
@@ -1011,7 +1011,7 @@ func TestRBAC(t *testing.T) {
 func TestConfigs(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	testConfigsScenario := func(config string) {
-		env.connectWithWait(r, 0*time.Millisecond, 1*time.Second, 1*time.Minute)
+		env.connectWithWait(t, r, 0*time.Millisecond, 1*time.Second, 1*time.Minute)
 		env.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_configs")
 		env.queryWithNoError(r, "CREATE TABLE default.test_configs (v UInt64) ENGINE=MergeTree() ORDER BY tuple()")
 
@@ -1028,7 +1028,7 @@ func TestConfigs(t *testing.T) {
 
 		env.queryWithNoError(r, "SYSTEM RELOAD CONFIG")
 		env.ch.Close()
-		env.connectWithWait(r, 1*time.Second, 1*time.Second, 1*time.Minute)
+		env.connectWithWait(t, r, 1*time.Second, 1*time.Second, 1*time.Minute)
 		selectEmptyResultForAggQuery := "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"
 		var settings string
 		r.NoError(env.ch.SelectSingleRowNoCtx(&settings, selectEmptyResultForAggQuery))
@@ -1042,7 +1042,7 @@ func TestConfigs(t *testing.T) {
 
 		r.NoError(env.ch.Query("SYSTEM RELOAD CONFIG"))
 		env.ch.Close()
-		env.connectWithWait(r, 1*time.Second, 1*time.Second, 1*time.Minute)
+		env.connectWithWait(t, r, 1*time.Second, 1*time.Second, 1*time.Minute)
 
 		settings = ""
 		r.NoError(env.ch.SelectSingleRowNoCtx(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
@@ -1051,7 +1051,7 @@ func TestConfigs(t *testing.T) {
 		env.DockerExecNoError(r, "clickhouse", "bash", "-xec", "CLICKHOUSE_BACKUP_CONFIG="+config+" CLICKHOUSE_RESTART_COMMAND='sql:SYSTEM RELOAD CONFIG' clickhouse-backup restore --rm --configs --configs-only test_configs_backup")
 
 		env.ch.Close()
-		env.connectWithWait(r, 1*time.Second, 1*time.Second, 1*time.Second)
+		env.connectWithWait(t, r, 1*time.Second, 1*time.Second, 1*time.Second)
 
 		settings = ""
 		r.NoError(env.ch.SelectSingleRowNoCtx(&settings, "SELECT value FROM system.settings WHERE name='empty_result_for_aggregation_by_empty_set'"))
@@ -1084,7 +1084,7 @@ const apiBackupNumber = 5
 
 func TestServerAPI(t *testing.T) {
 	env, r := NewTestEnvironment(t)
-	env.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Minute)
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	r.NoError(env.DockerCP("config-s3.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
 	fieldTypes := []string{"UInt64", "String", "Int"}
 	env.InstallDebIfNotExists(r, "clickhouse-backup", "curl", "jq")
@@ -1503,13 +1503,13 @@ func TestSkipNotExistsTable(t *testing.T) {
 		t.Skip("TestSkipNotExistsTable too small time between `SELECT DISTINCT partition_id` and `ALTER TABLE ... FREEZE PARTITION`")
 	}
 	env, r := NewTestEnvironment(t)
-	env.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Minute)
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 
 	log.Debug().Msg("Check skip not exist errors")
 	env.queryWithNoError(r, "CREATE DATABASE freeze_not_exists")
 	ifNotExistsCreateSQL := "CREATE TABLE IF NOT EXISTS freeze_not_exists.freeze_not_exists (id UInt64) ENGINE=MergeTree() ORDER BY id"
 	ifNotExistsInsertSQL := "INSERT INTO freeze_not_exists.freeze_not_exists SELECT number FROM numbers(1000)"
-	chVersion, err := env.ch.GetVersion(context.Background())
+	chVersion, err := env.ch.GetVersion(t.Context())
 	r.NoError(err)
 
 	freezeErrorHandled := false
@@ -1613,7 +1613,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 
 func TestSkipDisk(t *testing.T) {
 	env, r := NewTestEnvironment(t)
-	env.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Minute)
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
 	// Skip test if running in simple environment without storage policies
@@ -1869,8 +1869,8 @@ func testRestoreSkipDisk(r *require.Assertions, env *TestEnvironment) {
 
 func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	env, r := NewTestEnvironment(t)
-	env.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Minute)
-	version, err := env.ch.GetVersion(context.Background())
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
+	version, err := env.ch.GetVersion(t.Context())
 	r.NoError(err)
 	env.queryWithNoError(r, "CREATE DATABASE test_skip_tables")
 	env.queryWithNoError(r, "CREATE TABLE IF NOT EXISTS test_skip_tables.test_merge_tree (id UInt64, s String) ENGINE=MergeTree() ORDER BY id")
@@ -2063,7 +2063,7 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 
 func TestTablePatterns(t *testing.T) {
 	env, r := NewTestEnvironment(t)
-	env.connectWithWait(r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
+	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 
 	testBackupName := "test_backup_patterns"
 	databaseList := []string{dbNameOrdinary, dbNameAtomic}
@@ -2139,7 +2139,7 @@ func TestProjections(t *testing.T) {
 	var err error
 	var counts uint64
 	env, r := NewTestEnvironment(t)
-	env.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Minute)
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	r.NoError(env.DockerCP("config-s3.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
 
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "24.3") >= 0 {
@@ -2242,8 +2242,8 @@ func TestCheckSystemPartsColumns(t *testing.T) {
 		t.Skipf("Test skipped, system.parts_columns have inconsistency only in 23.3+, current version %s", os.Getenv("CLICKHOUSE_VERSION"))
 	}
 	env, r := NewTestEnvironment(t)
-	env.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Minute)
-	version, err = env.ch.GetVersion(context.Background())
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
+	version, err = env.ch.GetVersion(t.Context())
 	r.NoError(err)
 
 	r.NoError(env.DockerCP("config-s3.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
@@ -2266,7 +2266,7 @@ func TestCheckSystemPartsColumns(t *testing.T) {
 	env.queryWithNoError(r, "INSERT INTO "+t.Name()+".test_system_parts_columns SELECT today() - INTERVAL number DAY, if(number>0,'a',toString(number)) FROM numbers(2)")
 
 	mutationSQL := "ALTER TABLE " + t.Name() + ".test_system_parts_columns MODIFY COLUMN v UInt64"
-	err = env.ch.QueryContext(context.Background(), mutationSQL)
+	err = env.ch.QueryContext(t.Context(), mutationSQL)
 	if err != nil {
 		errStr := strings.ToLower(err.Error())
 		r.True(strings.Contains(errStr, "code: 341") || strings.Contains(errStr, "code: 517") || strings.Contains(errStr, "code: 524") || strings.Contains(errStr, "timeout"), "UNKNOWN ERROR: %s", err.Error())
@@ -2289,7 +2289,7 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 		return
 	}
 	env, r := NewTestEnvironment(t)
-	env.connectWithWait(r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
+	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 
 	backupNames := make([]string, 5)
 	for i := 0; i < 5; i++ {
@@ -2354,7 +2354,7 @@ func TestSyncReplicaTimeout(t *testing.T) {
 		t.Skipf("Test skipped, SYNC REPLICA ignore receive_timeout for %s version", os.Getenv("CLICKHOUSE_VERSION"))
 	}
 	env, r := NewTestEnvironment(t)
-	env.connectWithWait(r, 0*time.Millisecond, 1*time.Second, 1*time.Minute)
+	env.connectWithWait(t, r, 0*time.Millisecond, 1*time.Second, 1*time.Minute)
 
 	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+t.Name())
 	dropReplTables := func() {
@@ -2395,7 +2395,7 @@ func TestGetPartitionId(t *testing.T) {
 		t.Skipf("Test skipped, is_in_partition_key not available for %s version", os.Getenv("CLICKHOUSE_VERSION"))
 	}
 	env, r := NewTestEnvironment(t)
-	env.connectWithWait(r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
+	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 
 	type testData struct {
 		CreateTableSQL string
@@ -2451,7 +2451,7 @@ func TestGetPartitionId(t *testing.T) {
 		testCases[0].CreateTableSQL = strings.Replace(testCases[0].CreateTableSQL, "UUID 'b45e751f-6c06-42a3-ab4a-f5bb9ac3716e'", "", 1)
 	}
 	for _, tc := range testCases {
-		partitionId, partitionName, err := partition.GetPartitionIdAndName(context.Background(), env.ch, tc.Database, tc.Table, tc.CreateTableSQL, tc.Partition)
+		partitionId, partitionName, err := partition.GetPartitionIdAndName(t.Context(), env.ch, tc.Database, tc.Table, tc.CreateTableSQL, tc.Partition)
 		assert.NoError(t, err)
 		assert.Equal(t, tc.ExpectedId, partitionId)
 		assert.Equal(t, tc.ExpectedName, partitionName)
@@ -2464,7 +2464,7 @@ func TestRestoreAsAttach(t *testing.T) {
 		t.Skipf("--restore-schema-as-attach not works in version %s", os.Getenv("CLICKHOUSE_VERSION"))
 	}
 	env, r := NewTestEnvironment(t)
-	env.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Minute)
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 
 	// Create test database and table
 	dbName := "test_restore_as_attach"
@@ -2504,8 +2504,9 @@ func TestRestoreAsAttach(t *testing.T) {
 
 func TestReplicatedCopyToDetached(t *testing.T) {
 	env, r := NewTestEnvironment(t)
-	env.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Minute)
-
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
+	version, versionErr := env.ch.GetVersion(t.Context())
+	r.NoError(versionErr)
 	// Create test database and table
 	dbName := "test_replicated_copy_to_detached"
 	tableName := "test_table"
@@ -2514,7 +2515,10 @@ func TestReplicatedCopyToDetached(t *testing.T) {
 	// Create a replicated table
 	zkPath := "/clickhouse/tables/{shard}/{database}/{table}"
 	createSQL := fmt.Sprintf("CREATE TABLE %s.%s (id UInt64, value String) ENGINE=ReplicatedMergeTree('%s','{replica}') ORDER BY id", dbName, tableName, zkPath)
-	env.queryWithNoError(r, createSQL)
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.17") < 0 {
+		createSQL = strings.NewReplacer("{database}", dbName, "{table}", tableName).Replace(createSQL)
+	}
+	r.NoError(env.ch.CreateTable(clickhouse.Table{Database: dbName, Name: tableName}, createSQL, false, false, "", version, "/var/lib/clickhouse", false))
 
 	// Insert test data
 	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO %s.%s SELECT number, toString(number) FROM numbers(100)", dbName, tableName))
@@ -2554,7 +2558,7 @@ func TestReplicatedCopyToDetached(t *testing.T) {
 
 func TestRestoreMutationInProgress(t *testing.T) {
 	env, r := NewTestEnvironment(t)
-	env.connectWithWait(r, 0*time.Second, 1*time.Second, 1*time.Minute)
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	zkPath := "/clickhouse/tables/{shard}/" + t.Name() + "/test_restore_mutation_in_progress"
 	onCluster := ""
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 {
@@ -2566,7 +2570,7 @@ func TestRestoreMutationInProgress(t *testing.T) {
 	}
 	createDbSQL := "CREATE DATABASE IF NOT EXISTS " + t.Name()
 	env.queryWithNoError(r, createDbSQL)
-	version, err := env.ch.GetVersion(context.Background())
+	version, err := env.ch.GetVersion(t.Context())
 	r.NoError(err)
 
 	createSQL := fmt.Sprintf("CREATE TABLE %s.test_restore_mutation_in_progress %s (id UInt64, attr String) ENGINE=ReplicatedMergeTree('%s','{replica}') PARTITION BY id ORDER BY id", t.Name(), onCluster, zkPath)
@@ -2574,7 +2578,7 @@ func TestRestoreMutationInProgress(t *testing.T) {
 	env.queryWithNoError(r, "INSERT INTO "+t.Name()+".test_restore_mutation_in_progress SELECT number, if(number>0,'a',toString(number)) FROM numbers(2)")
 
 	mutationSQL := "ALTER TABLE " + t.Name() + ".test_restore_mutation_in_progress MODIFY COLUMN attr UInt64"
-	err = env.ch.QueryContext(context.Background(), mutationSQL)
+	err = env.ch.QueryContext(t.Context(), mutationSQL)
 	if err != nil {
 		errStr := strings.ToLower(err.Error())
 		r.True(strings.Contains(errStr, "code: 341") || strings.Contains(errStr, "code: 517") || strings.Contains(errStr, "timeout"), "UNKNOWN ERROR: %s", err.Error())
@@ -2592,7 +2596,7 @@ func TestRestoreMutationInProgress(t *testing.T) {
 
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 {
 		mutationSQL = "ALTER TABLE " + t.Name() + ".test_restore_mutation_in_progress RENAME COLUMN attr TO attr_1"
-		err = env.ch.QueryContext(context.Background(), mutationSQL)
+		err = env.ch.QueryContext(t.Context(), mutationSQL)
 		r.NotEqual(nil, err)
 		errStr = strings.ToLower(err.Error())
 		r.True(strings.Contains(errStr, "code: 517") || strings.Contains(errStr, "timeout"))
@@ -2673,7 +2677,7 @@ func TestRestoreMutationInProgress(t *testing.T) {
 
 func TestInnerTablesMaterializedView(t *testing.T) {
 	env, r := NewTestEnvironment(t)
-	env.connectWithWait(r, 1*time.Second, 1*time.Second, 1*time.Minute)
+	env.connectWithWait(t, r, 1*time.Second, 1*time.Second, 1*time.Minute)
 
 	env.queryWithNoError(r, "CREATE DATABASE test_mv")
 	env.queryWithNoError(r, "CREATE TABLE test_mv.src_table (v UInt64) ENGINE=MergeTree() ORDER BY v")
@@ -2713,7 +2717,7 @@ func TestFIPS(t *testing.T) {
 		t.Skip("QA_AWS_ACCESS_KEY is empty, TestFIPS will skip")
 	}
 	env, r := NewTestEnvironment(t)
-	env.connectWithWait(r, 1*time.Second, 1*time.Second, 1*time.Minute)
+	env.connectWithWait(t, r, 1*time.Second, 1*time.Second, 1*time.Minute)
 	fipsBackupName := fmt.Sprintf("fips_backup_%d", rand.Int())
 	env.DockerExecNoError(r, "clickhouse", "rm", "-fv", "/etc/apt/sources.list.d/clickhouse.list")
 	env.InstallDebIfNotExists(r, "clickhouse", "ca-certificates", "curl", "gettext-base", "bsdmainutils", "dnsutils", "git")
@@ -2803,7 +2807,7 @@ func TestFIPS(t *testing.T) {
 
 func TestRestoreMapping(t *testing.T) {
 	env, r := NewTestEnvironment(t)
-	env.connectWithWait(r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
+	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 
 	checkRecordset := func(expectedRows int, expectedCount uint64, query string) {
 		result := make([]struct {
@@ -2886,7 +2890,7 @@ func TestMySQLMaterialized(t *testing.T) {
 	}
 	env, r := NewTestEnvironment(t)
 	env.DockerExecNoError(r, "mysql", "mysql", "-u", "root", "--password=root", "-v", "-e", "CREATE DATABASE ch_mysql_repl")
-	env.connectWithWait(r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
+	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 	engine := "MaterializedMySQL"
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.9") == -1 {
 		engine = "MaterializeMySQL"
@@ -2920,7 +2924,7 @@ func TestPostgreSQLMaterialized(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	env.DockerExecNoError(r, "pgsql", "bash", "-ce", "echo 'CREATE DATABASE ch_pgsql_repl' | PGPASSWORD=root psql -v ON_ERROR_STOP=1 -U root")
 	env.DockerExecNoError(r, "pgsql", "bash", "-ce", "echo \"CREATE TABLE t1 (id BIGINT PRIMARY KEY, s VARCHAR(255)); INSERT INTO t1(id, s) VALUES(1,'s1'),(2,'s2'),(3,'s3')\" | PGPASSWORD=root psql -v ON_ERROR_STOP=1 -U root -d ch_pgsql_repl")
-	env.connectWithWait(r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
+	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 	env.queryWithNoError(r,
 		"CREATE DATABASE ch_pgsql_repl ENGINE=MaterializedPostgreSQL('pgsql:5432','ch_pgsql_repl','root','root') "+
 			"SETTINGS materialized_postgresql_schema = 'public'",
@@ -2965,7 +2969,7 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	var out string
 	var err error
 	r := require.New(t)
-	env.connectWithWait(r, 500*time.Millisecond, 1500*time.Millisecond, 3*time.Minute)
+	env.connectWithWait(t, r, 500*time.Millisecond, 1500*time.Millisecond, 3*time.Minute)
 
 	// main test scenario
 	fullBackupName := fmt.Sprintf("%s_full_%d", t.Name(), rand.Int())
@@ -3020,7 +3024,7 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	dropDatabasesFromTestDataDataSet(t, r, env, databaseList)
 
 	log.Debug().Msg("Download")
-	replaceStorageDiskNameForReBalance(r, env, remoteStorageType, false)
+	replaceStorageDiskNameForReBalance(t, r, env, remoteStorageType, false)
 	downloadCmd := fmt.Sprintf("clickhouse-backup -c /etc/clickhouse-backup/%s download --resume %s", backupConfig, fullBackupName)
 	env.checkResumeAlreadyProcessed(downloadCmd, fullBackupName, "download", r, remoteStorageType)
 
@@ -3085,7 +3089,7 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	// during download increment, partially downloaded full will also clean
 	fullCleanup(t, r, env, []string{incrementBackupName}, []string{"local"}, nil, true, false, backupConfig)
 	fullCleanup(t, r, env, []string{fullBackupName, incrementBackupName}, []string{"remote"}, databaseList, true, true, backupConfig)
-	replaceStorageDiskNameForReBalance(r, env, remoteStorageType, true)
+	replaceStorageDiskNameForReBalance(t, r, env, remoteStorageType, true)
 
 	// test for specified partitions backup
 	testBackupSpecifiedPartitions(t, r, env, remoteStorageType, backupConfig)
@@ -3143,7 +3147,7 @@ func (env *TestEnvironment) checkObjectStorageIsEmpty(t *testing.T, r *require.A
 	}
 }
 
-func replaceStorageDiskNameForReBalance(r *require.Assertions, env *TestEnvironment, remoteStorageType string, isRebalanced bool) {
+func replaceStorageDiskNameForReBalance(t *testing.T, r *require.Assertions, env *TestEnvironment, remoteStorageType string, isRebalanced bool) {
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.3") < 0 {
 		return
 	}
@@ -3172,8 +3176,8 @@ func replaceStorageDiskNameForReBalance(r *require.Assertions, env *TestEnvironm
 		env.DockerExecNoError(r, "clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/"+oldDisk+"")
 	}
 	env.ch.Close()
-	r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "clickhouse")...))
-	env.connectWithWait(r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
+	r.NoError(utils.ExecCmd(t.Context(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "clickhouse")...))
+	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
 }
 
 func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *TestEnvironment, remoteStorageType string, backupConfig string) {
@@ -3529,13 +3533,13 @@ func dropDatabasesFromTestDataDataSet(t *testing.T, r *require.Assertions, ch *T
 	}
 }
 
-func (env *TestEnvironment) connectWithWait(r *require.Assertions, sleepBefore, pollInterval, timeOut time.Duration) {
+func (env *TestEnvironment) connectWithWait(t *testing.T, r *require.Assertions, sleepBefore, pollInterval, timeOut time.Duration) {
 	time.Sleep(sleepBefore)
 	maxTry := 100
 	for i := 1; i <= maxTry; i++ {
-		err := env.connect(timeOut.String())
+		err := env.connect(t, timeOut.String())
 		if i == maxTry {
-			r.NoError(utils.ExecCmd(context.Background(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "ps", "clickhouse")...))
+			r.NoError(utils.ExecCmd(t.Context(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "ps", "clickhouse")...))
 			out, dockerErr := env.DockerExecOut("clickhouse", "clickhouse", "client", "--echo", "-q", "'SELECT version()'")
 			log.Info().Msg(out)
 			r.NoError(dockerErr)
@@ -3566,9 +3570,9 @@ func (env *TestEnvironment) connectWithWait(r *require.Assertions, sleepBefore, 
 	}
 }
 
-func (env *TestEnvironment) connect(timeOut string) error {
+func (env *TestEnvironment) connect(t *testing.T, timeOut string) error {
 	for i := 0; i < 10; i++ {
-		statusOut, statusErr := utils.ExecCmdOut(context.Background(), 10*time.Second, "docker", append(env.GetDefaultComposeCommand(), "ps", "--status", "running", "clickhouse")...)
+		statusOut, statusErr := utils.ExecCmdOut(t.Context(), 10*time.Second, "docker", append(env.GetDefaultComposeCommand(), "ps", "--status", "running", "clickhouse")...)
 		if statusErr == nil {
 			break
 		}
@@ -3583,7 +3587,7 @@ func (env *TestEnvironment) connect(timeOut string) error {
 	env.ch = &clickhouse.ClickHouse{Config: &config.ClickHouseConfig{}}
 	portMaxTry := 3
 	for i := 1; i <= portMaxTry; i++ {
-		portOut, portErr := utils.ExecCmdOut(context.Background(), 10*time.Second, "docker", append(env.GetDefaultComposeCommand(), "port", "clickhouse", "9000")...)
+		portOut, portErr := utils.ExecCmdOut(t.Context(), 10*time.Second, "docker", append(env.GetDefaultComposeCommand(), "port", "clickhouse", "9000")...)
 		if portErr != nil {
 			log.Error().Msg(portOut)
 			if i == portMaxTry {
@@ -3715,7 +3719,7 @@ func (env *TestEnvironment) createTestData(t *testing.T, data TestDataStruct) er
 	}
 	insertSQL := fmt.Sprintf("INSERT INTO `%s`.`%s`", data.Database, data.Name)
 	log.Debug().Msg(insertSQL)
-	batch, err := env.ch.GetConn().PrepareBatch(context.Background(), insertSQL)
+	batch, err := env.ch.GetConn().PrepareBatch(t.Context(), insertSQL)
 
 	if err != nil {
 		return fmt.Errorf("createTestData PrepareBatch(%s) error: %v", insertSQL, err)
@@ -3767,7 +3771,7 @@ func (env *TestEnvironment) checkData(t *testing.T, r *require.Assertions, data 
 		selectSQL = fmt.Sprintf("SELECT %s(number, number+1) AS test_result FROM numbers(%d)", data.Name, len(data.Rows))
 	}
 	log.Debug().Msg(selectSQL)
-	rows, err := env.ch.GetConn().Query(context.Background(), selectSQL)
+	rows, err := env.ch.GetConn().Query(t.Context(), selectSQL)
 	if err != nil {
 		return err
 	}
