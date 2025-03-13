@@ -754,6 +754,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --configs-only                                                   Restore 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
    --skip-projections db_pattern.table_pattern:projections_pattern  Skip make hardlinks to *.proj/* files during backup restoring, format db_pattern.table_pattern:projections_pattern, use https://pkg.go.dev/path/filepath#Match syntax
    --resume, --resumable                                            Will resume download for object disk data
+   --replicated-copy-to-detached                                    Copy data to detached folder for Replicated*MergeTree tables but skip ATTACH PART step
    
 ```
 ### CLI command - restore_remote
@@ -787,6 +788,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --configs-only                                                   Restore 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
    --skip-projections db_pattern.table_pattern:projections_pattern  Skip make hardlinks to *.proj/* files during backup restoring, format db_pattern.table_pattern:projections_pattern, use https://pkg.go.dev/path/filepath#Match syntax
    --resume, --resumable                                            Save intermediate download state and resume download if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
+   --replicated-copy-to-detached                                    Copy data to detached folder for Replicated*MergeTree tables but skip ATTACH PART step
    
 ```
 ### CLI command - delete

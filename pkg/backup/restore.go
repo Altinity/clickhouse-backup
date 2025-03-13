@@ -44,7 +44,7 @@ import (
 var CreateDatabaseRE = regexp.MustCompile(`(?m)^CREATE DATABASE (\s*)(\S+)(\s*)`)
 
 // Restore - restore tables matched by tablePattern from backupName
-func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tableMapping, partitions, skipProjections []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume, schemaAsAttach bool, backupVersion string, commandId int) error {
+func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tableMapping, partitions, skipProjections []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume, schemaAsAttach, replicatedCopyToDetached bool, backupVersion string, commandId int) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return err
@@ -239,7 +239,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 
 	}
 	if dataOnly || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
-		if err := b.RestoreData(ctx, backupName, backupMetadata, dataOnly, metadataPath, tablePattern, partitions, skipProjections, disks, version); err != nil {
+		if err := b.RestoreData(ctx, backupName, backupMetadata, dataOnly, metadataPath, tablePattern, partitions, skipProjections, disks, version, replicatedCopyToDetached); err != nil {
 			return err
 		}
 	}
@@ -1286,7 +1286,7 @@ func (b *Backuper) dropExistsTables(tablesForDrop ListOfTables, ignoreDependenci
 }
 
 // RestoreData - restore data for tables matched by tablePattern from backupName
-func (b *Backuper) RestoreData(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, dataOnly bool, metadataPath, tablePattern string, partitions, skipProjections []string, disks []clickhouse.Disk, version int) error {
+func (b *Backuper) RestoreData(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, dataOnly bool, metadataPath, tablePattern string, partitions, skipProjections []string, disks []clickhouse.Disk, version int, replicatedCopyToDetached bool) error {
 	var err error
 	startRestoreData := time.Now()
 	diskMap := make(map[string]string, len(disks))
@@ -1322,7 +1322,7 @@ func (b *Backuper) RestoreData(ctx context.Context, backupName string, backupMet
 	if b.isEmbedded {
 		err = b.restoreDataEmbedded(ctx, backupName, dataOnly, version, tablesForRestore, partitionsNameList)
 	} else {
-		err = b.restoreDataRegular(ctx, backupName, backupMetadata, tablePattern, tablesForRestore, diskMap, diskTypes, disks, skipProjections)
+		err = b.restoreDataRegular(ctx, backupName, backupMetadata, tablePattern, tablesForRestore, diskMap, diskTypes, disks, skipProjections, replicatedCopyToDetached)
 	}
 	if err != nil {
 		return err
@@ -1338,7 +1338,7 @@ func (b *Backuper) restoreDataEmbedded(ctx context.Context, backupName string, d
 	return b.restoreEmbedded(ctx, backupName, false, dataOnly, version, tablesForRestore, partitionsNameList)
 }
 
-func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, tablePattern string, tablesForRestore ListOfTables, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, skipProjections []string) error {
+func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, tablePattern string, tablesForRestore ListOfTables, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, skipProjections []string, replicatedCopyToDetached bool) error {
 	if len(b.cfg.General.RestoreDatabaseMapping) > 0 {
 		tablePattern = b.changeTablePatternFromRestoreMapping(tablePattern, "database")
 	}
@@ -1398,11 +1398,11 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ba
 		restoreBackupWorkingGroup.Go(func() error {
 			// https://github.com/Altinity/clickhouse-backup/issues/529
 			if b.cfg.ClickHouse.RestoreAsAttach {
-				if restoreErr := b.restoreDataRegularByAttach(restoreCtx, backupName, backupMetadata, table, diskMap, diskTypes, disks, dstTable, skipProjections, logger); restoreErr != nil {
+				if restoreErr := b.restoreDataRegularByAttach(restoreCtx, backupName, backupMetadata, table, diskMap, diskTypes, disks, dstTable, skipProjections, logger, replicatedCopyToDetached); restoreErr != nil {
 					return restoreErr
 				}
 			} else {
-				if restoreErr := b.restoreDataRegularByParts(restoreCtx, backupName, backupMetadata, table, diskMap, diskTypes, disks, dstTable, skipProjections, logger); restoreErr != nil {
+				if restoreErr := b.restoreDataRegularByParts(restoreCtx, backupName, backupMetadata, table, diskMap, diskTypes, disks, dstTable, skipProjections, logger, replicatedCopyToDetached); restoreErr != nil {
 					return restoreErr
 				}
 			}
@@ -1428,7 +1428,7 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ba
 	return nil
 }
 
-func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, table metadata.TableMetadata, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, dstTable clickhouse.Table, skipProjections []string, logger zerolog.Logger) error {
+func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, table metadata.TableMetadata, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, dstTable clickhouse.Table, skipProjections []string, logger zerolog.Logger, replicatedCopyToDetached bool) error {
 	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, table, disks, diskMap, dstTable.DataPaths, skipProjections, b.ch, false); err != nil {
 		return fmt.Errorf("can't copy data to storage '%s.%s': %v", table.Database, table.Table, err)
 	}
@@ -1442,13 +1442,18 @@ func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName st
 	if size > 0 {
 		logger.Info().Str("duration", utils.HumanizeDuration(time.Since(start))).Str("size", utils.FormatBytes(uint64(size))).Msg("download object_disks finish")
 	}
-	if err := b.ch.AttachTable(ctx, table, dstTable); err != nil {
-		return fmt.Errorf("can't attach table '%s.%s': %v", table.Database, table.Table, err)
+	// Skip ATTACH TABLE for Replicated*MergeTree tables if replicatedCopyToDetached is true
+	if !replicatedCopyToDetached || !strings.Contains(dstTable.Engine, "Replicated") {
+		if err := b.ch.AttachTable(ctx, table, dstTable); err != nil {
+			return fmt.Errorf("can't attach table '%s.%s': %v", table.Database, table.Table, err)
+		}
+	} else {
+		logger.Info().Msg("skipping ATTACH TABLE for Replicated*MergeTree table due to --replicated-copy-to-detached flag")
 	}
 	return nil
 }
 
-func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, table metadata.TableMetadata, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, dstTable clickhouse.Table, skipProjections []string, logger zerolog.Logger) error {
+func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, table metadata.TableMetadata, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, dstTable clickhouse.Table, skipProjections []string, logger zerolog.Logger, replicatedCopyToDetached bool) error {
 	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, table, disks, diskMap, dstTable.DataPaths, skipProjections, b.ch, true); err != nil {
 		return fmt.Errorf("can't copy data to detached `%s`.`%s`: %v", table.Database, table.Table, err)
 	}
@@ -1461,8 +1466,13 @@ func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName str
 		return fmt.Errorf("can't restore object_disk server-side copy data parts '%s.%s': %v", table.Database, table.Table, err)
 	}
 	log.Info().Str("duration", utils.HumanizeDuration(time.Since(start))).Str("size", utils.FormatBytes(uint64(size))).Msg("download object_disks finish")
-	if err := b.ch.AttachDataParts(table, dstTable, disks); err != nil {
-		return fmt.Errorf("can't attach data parts for table '%s.%s': %v", table.Database, table.Table, err)
+	// Skip ATTACH PART for Replicated*MergeTree tables if replicatedCopyToDetached is true
+	if !replicatedCopyToDetached || !strings.Contains(dstTable.Engine, "Replicated") {
+		if err := b.ch.AttachDataParts(table, dstTable, disks); err != nil {
+			return fmt.Errorf("can't attach data parts for table '%s.%s': %v", table.Database, table.Table, err)
+		}
+	} else {
+		logger.Info().Msg("skipping ATTACH PART for Replicated*MergeTree table due to --replicated-copy-to-detached flag")
 	}
 	return nil
 }

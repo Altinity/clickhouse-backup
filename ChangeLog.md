@@ -1,6 +1,7 @@
 # v2.6.6
 
 IMPROVEMENTS
+- Add `--replicated-copy-to-detached` option to restore command, it allows faster restore on multiple replicas, second and follow replicas will handle ATTACH_PART restore events, fix [1104](https://github.com/Altinity/clickhouse-backup/issues/1104)
 - Add `CLICKHOUSE_SKIP_DISKS` config option, to allow skip backup some disk like object disks, fix [908](https://github.com/Altinity/clickhouse-backup/issues/908)
 - Add simple check free size before disk download, to avoid 100% disk space usage, fix [878](https://github.com/Altinity/clickhouse-backup/issues/878)
 - Add `--restore-schema-as-attach` CLI parameter and `POST /backup/restore/{name}`, fix [868](https://github.com/Altinity/clickhouse-backup/issues/868)
