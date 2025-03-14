@@ -259,7 +259,11 @@ func (ch *ClickHouse) getMetadataPath(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("can't get metadata_path from system.tables or system.databases")
 	}
 	metadataPath := strings.Split(result[0].MetadataPath, "/")
-	if strings.Contains(result[0].MetadataPath, "/store/") {
+	// https://github.com/ClickHouse/ClickHouse/issues/76546
+	if ch.version >= 25000000 && strings.HasSuffix(result[0].MetadataPath, "/store/") {
+		result[0].MetadataPath = path.Join(metadataPath[:len(metadataPath)-2]...)
+		result[0].MetadataPath = path.Join(result[0].MetadataPath, "metadata")
+	} else if strings.Contains(result[0].MetadataPath, "/store/") {
 		result[0].MetadataPath = path.Join(metadataPath[:len(metadataPath)-4]...)
 		result[0].MetadataPath = path.Join(result[0].MetadataPath, "metadata")
 	} else {
@@ -763,7 +767,7 @@ func (ch *ClickHouse) FreezeTable(ctx context.Context, table *Table, name string
 }
 
 // AttachDataParts - execute ALTER TABLE ... ATTACH PART command for specific table
-func (ch *ClickHouse) AttachDataParts(table metadata.TableMetadata, dstTable Table, disks []Disk) error {
+func (ch *ClickHouse) AttachDataParts(table metadata.TableMetadata, dstTable Table) error {
 	if dstTable.Database != "" && dstTable.Database != table.Database {
 		table.Database = dstTable.Database
 	}

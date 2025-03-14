@@ -1468,7 +1468,7 @@ func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName str
 	log.Info().Str("duration", utils.HumanizeDuration(time.Since(start))).Str("size", utils.FormatBytes(uint64(size))).Msg("download object_disks finish")
 	// Skip ATTACH PART for Replicated*MergeTree tables if replicatedCopyToDetached is true
 	if !replicatedCopyToDetached || !strings.Contains(dstTable.Engine, "Replicated") {
-		if err := b.ch.AttachDataParts(table, dstTable, disks); err != nil {
+		if err := b.ch.AttachDataParts(table, dstTable); err != nil {
 			return fmt.Errorf("can't attach data parts for table '%s.%s': %v", table.Database, table.Table, err)
 		}
 	} else {

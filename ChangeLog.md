@@ -1,3 +1,6 @@
+# v2.6.7
+- improve workaround for `metdata_path` field change behavior in 25.1+, look details in https://github.com/ClickHouse/ClickHouse/issues/76546, fix [1093](https://github.com/Altinity/clickhouse-backup/issues/1093)
+
 # v2.6.6
 
 IMPROVEMENTS
