@@ -15,7 +15,10 @@ def all_engines(self):
     name_prefix = "bp_oe"
     table_names = ["generate_random", "distributed", "merge", "join", "buffer", "dict", "file", "null", "set",
                    "url", "memory", "stripelog", "tinylog", "log", "jdbc", "odbc", "mongo", "hdfs", "s3", "embrdb",
-                   "mysql", "postgres", "ext_dist", "sqlite", "rabbitmq"]
+                   "mysql", "postgres",
+                   # removed in 24.11, look https://github.com/ClickHouse/ClickHouse/issues/70600
+                   # "ext_dist",
+                   "sqlite", "rabbitmq"]
     table_schemas = {}
 
     create_table_queries = [
@@ -58,8 +61,9 @@ def all_engines(self):
         "CREATE TABLE postgres (id Int32, name String) "
         "ENGINE = PostgreSQL('postgres', 'test', 'test', 'postgres', 'qwerty')",
 
-        "CREATE TABLE ext_dist (id Int32, name String) "
-        "ENGINE = ExternalDistributed('PostgreSQL', 'postgres', 'mydb', 'my_table', 'test', 'qwerty')",
+        # removed in 24.11, look https://github.com/ClickHouse/ClickHouse/issues/70600
+        # "CREATE TABLE ext_dist (id Int32, name String) "
+        # "ENGINE = ExternalDistributed('PostgreSQL', 'postgres', 'mydb', 'my_table', 'test', 'qwerty')",
 
         "CREATE DATABASE sqlite_db ENGINE = SQLite('sqlite.db')",
         "CREATE TABLE sqlite AS sqlite_db.sample Engine=MergeTree() ORDER BY id",
