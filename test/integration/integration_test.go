@@ -1541,10 +1541,10 @@ func TestSkipNotExistsTable(t *testing.T) {
 				pauseChannel <- pause / i
 			}
 			startTime := time.Now()
-			out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "LOG_LEVEL=debug CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup create --table freeze_not_exists.freeze_not_exists "+testBackupName)
+			out, execErr := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "LOG_LEVEL=debug CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup create --table freeze_not_exists.freeze_not_exists "+testBackupName)
 			log.Debug().Msg(out)
-			if (err != nil && (strings.Contains(out, "can't freeze") || strings.Contains(out, "no tables for backup"))) ||
-				(err == nil && !strings.Contains(out, "can't freeze")) {
+			if (execErr != nil && (strings.Contains(out, "can't freeze") || strings.Contains(out, "no tables for backup"))) ||
+				(execErr == nil && !strings.Contains(out, "can't freeze")) {
 				parseTime := func(line string) time.Time {
 					parsedTime, err := time.Parse("2006-01-02 15:04:05.999", line[:23])
 					if err != nil {
@@ -1567,22 +1567,22 @@ func TestSkipNotExistsTable(t *testing.T) {
 				}
 				pause += (firstTime.Sub(startTime) + freezeTime.Sub(firstTime)).Nanoseconds()
 			}
-			if err != nil {
+			if execErr != nil {
 				if !strings.Contains(out, "no tables for backup") && !strings.Contains(out, "code: 473, message: Possible deadlock avoided") {
-					assert.NoError(t, err)
+					assert.NoError(t, execErr, "%s", out)
 				}
 			}
 
-			if strings.Contains(out, "code: 60") && err == nil {
+			if strings.Contains(out, "code: 60") && execErr == nil {
 				freezeErrorHandled = true
 				log.Debug().Msg("CODE 60 caught")
 				<-resumeChannel
 				env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ec", "CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup delete local "+testBackupName)
 				break
 			}
-			if err == nil {
-				err = env.DockerExec("clickhouse-backup", "bash", "-ec", "CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup delete local "+testBackupName)
-				assert.NoError(t, err)
+			if execErr == nil {
+				execErr = env.DockerExec("clickhouse-backup", "bash", "-ec", "CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml clickhouse-backup delete local "+testBackupName)
+				assert.NoError(t, execErr)
 			}
 			<-resumeChannel
 		}
