@@ -2074,7 +2074,7 @@ func TestTablePatterns(t *testing.T) {
 			fullCleanup(t, r, env, []string{testBackupName}, []string{"remote", "local"}, databaseList, false, false, "config-s3.yml")
 			generateTestData(t, r, env, "S3", false, defaultTestData)
 			if createPattern {
-				env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", "--tables", " "+dbNameOrdinaryTest+".*", testBackupName)
+				env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", "--rbac", "--tables", " "+dbNameOrdinaryTest+".*", testBackupName)
 				out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "tables", "--tables", " "+dbNameOrdinaryTest+".*", testBackupName)
 				r.NoError(err, "%s\nunexpected tables error: %v", out, err)
 				r.Contains(out, dbNameOrdinaryTest)
@@ -2084,7 +2084,7 @@ func TestTablePatterns(t *testing.T) {
 				r.Contains(out, dbNameOrdinaryTest)
 				r.NotContains(out, dbNameAtomicTest)
 			} else {
-				env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", testBackupName)
+				env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", "--rbac", testBackupName)
 				out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "tables", testBackupName)
 				r.NoError(err, "%s\nunexpected tables error: %v", out, err)
 				r.Contains(out, dbNameOrdinaryTest)

@@ -38,5 +38,9 @@ CGO_ENABLED=0 GO111MODULE=on go install -ldflags "-s -w -extldflags '-static'" g
 # EMBEDDED_S3_COMPRESSION_FORMAT=zstd CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3-embedded.yml /root/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /bin/clickhouse-backup -- upload TestIntegrationEmbedded_full_5990789107828261693
 # S3_COMPRESSION_FORMAT=zstd CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml /root/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /bin/clickhouse-backup -- upload --resume TestIntegrationS3_full_8761350380051000966
 # /root/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /bin/clickhouse-backup -- -c /etc/clickhouse-backup/config-s3.yml restore --tables default.test_replica_wrong_path test_wrong_path
-
+# rootless
+# cd /tmp/; wget https://go.dev/dl/go1.24.1.linux-arm64.tar.gz; tar -xzf go1.24.1.linux-arm64.tar.gz
+# export PATH="/tmp/go/bin:$PATH"
+# CGO_ENABLED=0 GO111MODULE=on go install -ldflags "-s -w -extldflags '-static'" github.com/go-delve/delve/cmd/dlv@latest
+# ~/go/bin/dlv attach 1 --listen=:40001 --headless=true --api-version=2 --accept-multiclient
 
