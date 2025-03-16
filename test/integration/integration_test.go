@@ -490,20 +490,20 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 	env.ch.Close()
 
-	if t.Name() == "TestIntegrationS3" || t.Name() == "TestIntegrationEmbedded" {
+	if t.Name() == "TestS3" || t.Name() == "TestEmbedded" {
 		env.DockerExecNoError(r, "minio", "rm", "-rf", "/bitnami/minio/data/clickhouse/disk_s3")
 	}
 
-	if t.Name() == "TestRBAC" || t.Name() == "TestConfigs" || t.Name() == "TestIntegrationEmbedded" {
+	if t.Name() == "TestRBAC" || t.Name() == "TestConfigs" || t.Name() == "TestEmbedded" {
 		env.DockerExecNoError(r, "minio", "rm", "-rf", "/bitnami/minio/data/clickhouse/backups_s3")
 	}
-	if t.Name() == "TestIntegrationCustomRsync" {
+	if t.Name() == "TestCustomRsync" {
 		env.DockerExecNoError(r, "sshd", "rm", "-rf", "/root/rsync_backups")
 	}
-	if t.Name() == "TestIntegrationCustomRestic" {
+	if t.Name() == "TestCustomRestic" {
 		env.DockerExecNoError(r, "minio", "rm", "-rf", "/bitnami/minio/data/clickhouse/restic")
 	}
-	if t.Name() == "TestIntegrationCustomKopia" {
+	if t.Name() == "TestCustomKopia" {
 		env.DockerExecNoError(r, "minio", "rm", "-rf", "/bitnami/minio/data/clickhouse/kopia")
 	}
 
@@ -663,7 +663,7 @@ func TestChangeReplicationPathIfReplicaExists(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
-func TestIntegrationEmbedded(t *testing.T) {
+func TestEmbedded(t *testing.T) {
 	version := os.Getenv("CLICKHOUSE_VERSION")
 	if compareVersion(version, "23.3") < 0 {
 		t.Skipf("Test skipped, BACKUP/RESTORE not production ready for %s version, look https://github.com/ClickHouse/ClickHouse/issues/39416 for details", version)
@@ -706,7 +706,7 @@ func TestIntegrationEmbedded(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
-func TestIntegrationAzure(t *testing.T) {
+func TestAzure(t *testing.T) {
 	if isTestShouldSkip("AZURE_TESTS") {
 		t.Skip("Skipping Azure integration tests...")
 		return
@@ -731,7 +731,7 @@ func TestIntegrationAzure(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
-func TestIntegrationGCSWithCustomEndpoint(t *testing.T) {
+func TestGCSWithCustomEndpoint(t *testing.T) {
 	if isTestShouldSkip("GCS_TESTS") {
 		t.Skip("Skipping GCS_EMULATOR integration tests...")
 		return
@@ -741,14 +741,14 @@ func TestIntegrationGCSWithCustomEndpoint(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
-func TestIntegrationS3(t *testing.T) {
+func TestS3(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	env.checkObjectStorageIsEmpty(t, r, "S3")
 	env.runMainIntegrationScenario(t, "S3", "config-s3.yml")
 	env.Cleanup(t, r)
 }
 
-func TestIntegrationAlibabaOverS3(t *testing.T) {
+func TestAlibabaOverS3(t *testing.T) {
 	if os.Getenv("QA_ALIBABA_SECRET_KEY") == "" {
 		t.Skip("Skipping Alibabacloud integration tests... QA_ALIBABA_SECRET_KEY missing")
 		return
@@ -760,7 +760,7 @@ func TestIntegrationAlibabaOverS3(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
-func TestIntegrationCOS(t *testing.T) {
+func TestCOS(t *testing.T) {
 	if os.Getenv("QA_TENCENT_SECRET_KEY") == "" {
 		t.Skip("Skipping Tencent Cloud Object Storage integration tests... QA_TENCENT_SECRET_KEY missing")
 		return
@@ -772,7 +772,7 @@ func TestIntegrationCOS(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
-func TestIntegrationGCS(t *testing.T) {
+func TestGCS(t *testing.T) {
 	if isTestShouldSkip("GCS_TESTS") {
 		t.Skip("Skipping GCS integration tests...")
 		return
@@ -782,20 +782,20 @@ func TestIntegrationGCS(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
-func TestIntegrationSFTPAuthKey(t *testing.T) {
+func TestSFTPAuthKey(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	env.uploadSSHKeys(r, "clickhouse-backup")
 	env.runMainIntegrationScenario(t, "SFTP", "config-sftp-auth-key.yaml")
 	env.Cleanup(t, r)
 }
 
-func TestIntegrationSFTPAuthPassword(t *testing.T) {
+func TestSFTPAuthPassword(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	env.runMainIntegrationScenario(t, "SFTP", "config-sftp-auth-password.yaml")
 	env.Cleanup(t, r)
 }
 
-func TestIntegrationFTP(t *testing.T) {
+func TestFTP(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	// 21.8 can't execute SYSTEM RESTORE REPLICA
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") > 1 {
@@ -806,7 +806,7 @@ func TestIntegrationFTP(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
-func TestIntegrationS3Glacier(t *testing.T) {
+func TestS3Glacier(t *testing.T) {
 	if isTestShouldSkip("GLACIER_TESTS") {
 		t.Skip("Skipping GLACIER integration tests...")
 		return
@@ -821,7 +821,7 @@ func TestIntegrationS3Glacier(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
-func TestIntegrationCustomKopia(t *testing.T) {
+func TestCustomKopia(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
 	env.DockerExecNoError(r, "clickhouse-backup", "update-ca-certificates")
@@ -836,7 +836,7 @@ func TestIntegrationCustomKopia(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
-func TestIntegrationCustomRestic(t *testing.T) {
+func TestCustomRestic(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
 	env.DockerExecNoError(r, "clickhouse-backup", "update-ca-certificates")
@@ -847,7 +847,7 @@ func TestIntegrationCustomRestic(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
-func TestIntegrationCustomRsync(t *testing.T) {
+func TestCustomRsync(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	env.uploadSSHKeys(r, "clickhouse-backup")
 	env.InstallDebIfNotExists(r, "clickhouse-backup", "ca-certificates", "curl")
