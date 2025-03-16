@@ -1,7 +1,7 @@
 # v2.6.8
 
 BUG FIXES
-- [1111](https://github.com/Altinity/clickhouse-backup/issues/1111)
+- fix create --rbac works as create --rbac-only - fix [1111](https://github.com/Altinity/clickhouse-backup/issues/1111)
 
 # v2.6.7
 
