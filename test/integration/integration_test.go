@@ -927,7 +927,7 @@ func TestRBAC(t *testing.T) {
 			env.queryWithNoError(r, "CREATE ROLE `test.rbac-name` SETTINGS PROFILE `test.rbac-name`")
 			env.queryWithNoError(r, "CREATE USER `test.rbac-name` IDENTIFIED BY 'test_rbac_password' DEFAULT ROLE `test.rbac-name`")
 			env.queryWithNoError(r, "CREATE QUOTA `test.rbac-name` KEYED BY user_name FOR INTERVAL 1 hour NO LIMITS TO `test.rbac-name`")
-			env.queryWithNoError(r, "CREATE ROW POLICY `test.rbac-name` ON test_rbac.test_rbac USING 1=1 AS RESTRICTIVE TO `test.rbac-name`")
+			env.queryWithNoError(r, "CREATE ROW POLICY `test.rbac-name` ON test_rbac.test_rbac USING v>=0 AS RESTRICTIVE TO `test.rbac-name`")
 		}
 		createRBACObjects(false)
 		//--rbac + data
@@ -937,6 +937,7 @@ func TestRBAC(t *testing.T) {
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_BACKUP_CONFIG="+config+" clickhouse-backup delete remote test_rbac_backup_with_data")
 		env.ch.Close()
 		env.connectWithWait(t, r, 2*time.Second, 2*time.Second, 1*time.Minute)
+		env.queryWithNoError(r, "CREATE ROW POLICY `test_rbac_for_default` ON test_rbac.test_rbac USING v>=0 TO `default`")
 		env.checkCount(r, 1, 10, "SELECT count() FROM test_rbac.test_rbac")
 
 		//--rbac-only
@@ -1000,7 +1001,7 @@ func TestRBAC(t *testing.T) {
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "local", "test_rbac_backup")
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "remote", "test_rbac_backup")
 
-		env.checkCount(r, 1, 0, "SELECT count() FROM system.tables WHERE database='default' AND table='test_rbac' SETTINGS empty_result_for_aggregation_by_empty_set=0")
+		env.checkCount(r, 1, 0, "SELECT count() FROM system.tables WHERE database='default' AND name='test_rbac' SETTINGS empty_result_for_aggregation_by_empty_set=0")
 
 		env.queryWithNoError(r, "DROP SETTINGS PROFILE `test.rbac-name`")
 		env.queryWithNoError(r, "DROP QUOTA `test.rbac-name`")
