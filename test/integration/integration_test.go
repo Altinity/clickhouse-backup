@@ -898,14 +898,18 @@ func TestRBAC(t *testing.T) {
 		t.Skipf("Test skipped, RBAC not available for %s version", os.Getenv("CLICKHOUSE_VERSION"))
 	}
 	env, r := NewTestEnvironment(t)
+
 	testRBACScenario := func(config string) {
 		env.connectWithWait(t, r, 1*time.Second, 1*time.Second, 1*time.Minute)
 
-		env.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_rbac")
-		env.queryWithNoError(r, "CREATE TABLE default.test_rbac (v UInt64) ENGINE=MergeTree() ORDER BY tuple()")
+		r.NoError(env.dropDatabase("test_rbac", true))
+		env.queryWithNoError(r, "CREATE DATABASE test_rbac")
+		createTableSQL := "CREATE TABLE test_rbac.test_rbac (v UInt64) ENGINE=MergeTree() ORDER BY tuple()"
+		env.queryWithNoError(r, createTableSQL)
+		env.queryWithNoError(r, "INSERT INTO test_rbac.test_rbac SELECT number FROM numbers(10)")
 		env.queryWithNoError(r, "DROP SETTINGS PROFILE IF EXISTS `test.rbac-name`")
 		env.queryWithNoError(r, "DROP QUOTA IF EXISTS `test.rbac-name`")
-		env.queryWithNoError(r, "DROP ROW POLICY IF EXISTS `test.rbac-name` ON default.test_rbac")
+		env.queryWithNoError(r, "DROP ROW POLICY IF EXISTS `test.rbac-name` ON test_rbac.test_rbac")
 		env.queryWithNoError(r, "DROP ROLE IF EXISTS `test.rbac-name`")
 		env.queryWithNoError(r, "DROP USER IF EXISTS `test.rbac-name`")
 
@@ -914,7 +918,7 @@ func TestRBAC(t *testing.T) {
 				log.Debug().Msg("drop all RBAC related objects")
 				env.queryWithNoError(r, "DROP SETTINGS PROFILE `test.rbac-name`")
 				env.queryWithNoError(r, "DROP QUOTA `test.rbac-name`")
-				env.queryWithNoError(r, "DROP ROW POLICY `test.rbac-name` ON default.test_rbac")
+				env.queryWithNoError(r, "DROP ROW POLICY `test.rbac-name` ON test_rbac.test_rbac")
 				env.queryWithNoError(r, "DROP ROLE `test.rbac-name`")
 				env.queryWithNoError(r, "DROP USER `test.rbac-name`")
 			}
@@ -923,11 +927,21 @@ func TestRBAC(t *testing.T) {
 			env.queryWithNoError(r, "CREATE ROLE `test.rbac-name` SETTINGS PROFILE `test.rbac-name`")
 			env.queryWithNoError(r, "CREATE USER `test.rbac-name` IDENTIFIED BY 'test_rbac_password' DEFAULT ROLE `test.rbac-name`")
 			env.queryWithNoError(r, "CREATE QUOTA `test.rbac-name` KEYED BY user_name FOR INTERVAL 1 hour NO LIMITS TO `test.rbac-name`")
-			env.queryWithNoError(r, "CREATE ROW POLICY `test.rbac-name` ON default.test_rbac USING 1=1 AS RESTRICTIVE TO `test.rbac-name`")
+			env.queryWithNoError(r, "CREATE ROW POLICY `test.rbac-name` ON test_rbac.test_rbac USING 1=1 AS RESTRICTIVE TO `test.rbac-name`")
 		}
 		createRBACObjects(false)
+		//--rbac + data
+		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", config, "create_remote", "--rbac", "test_rbac_backup_with_data")
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_BACKUP_CONFIG="+config+" clickhouse-backup delete local test_rbac_backup_with_data")
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_BACKUP_CONFIG="+config+" clickhouse-backup restore_remote --rm --rbac test_rbac_backup_with_data")
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_BACKUP_CONFIG="+config+" clickhouse-backup delete remote test_rbac_backup_with_data")
+		env.ch.Close()
+		env.connectWithWait(t, r, 2*time.Second, 2*time.Second, 1*time.Minute)
+		env.checkCount(r, 1, 10, "SELECT count() FROM test_rbac.test_rbac")
 
+		//--rbac-only
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", config, "create", "--rbac", "--rbac-only", "--env", "S3_COMPRESSION_FORMAT=zstd", "test_rbac_backup")
+		r.NoError(env.dropDatabase("test_rbac", false))
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "ALLOW_EMPTY_BACKUPS=1 CLICKHOUSE_BACKUP_CONFIG="+config+" clickhouse-backup upload test_rbac_backup")
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "local", "test_rbac_backup")
 		env.DockerExecNoError(r, "clickhouse", "ls", "-lah", "/var/lib/clickhouse/access")
@@ -960,7 +974,7 @@ func TestRBAC(t *testing.T) {
 		rbacTypes := map[string]string{
 			"PROFILES": "test.rbac-name",
 			"QUOTAS":   "test.rbac-name",
-			"POLICIES": "`test.rbac-name` ON default.test_rbac",
+			"POLICIES": "`test.rbac-name` ON test_rbac.test_rbac",
 			"ROLES":    "test.rbac-name",
 			"USERS":    "test.rbac-name",
 		}
@@ -986,15 +1000,16 @@ func TestRBAC(t *testing.T) {
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "local", "test_rbac_backup")
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", config, "delete", "remote", "test_rbac_backup")
 
+		env.checkCount(r, 1, 0, "SELECT count() FROM system.tables WHERE database='default' AND table='test_rbac' SETTINGS empty_result_for_aggregation_by_empty_set=0")
+
 		env.queryWithNoError(r, "DROP SETTINGS PROFILE `test.rbac-name`")
 		env.queryWithNoError(r, "DROP QUOTA `test.rbac-name`")
-		env.queryWithNoError(r, "DROP ROW POLICY `test.rbac-name` ON default.test_rbac")
+		env.queryWithNoError(r, "DROP ROW POLICY `test.rbac-name` ON test_rbac.test_rbac")
 		env.queryWithNoError(r, "DROP ROLE `test.rbac-name`")
 		env.queryWithNoError(r, "DROP USER `test.rbac-name`")
-		env.queryWithNoError(r, "DROP TABLE IF EXISTS default.test_rbac")
+		env.queryWithNoError(r, "DROP TABLE IF EXISTS test_rbac.test_rbac")
 		env.ch.Close()
 	}
-	testRBACScenario("/etc/clickhouse-backup/config-s3.yml")
 	if compareVersion(chVersion, "24.1") >= 0 {
 		testRBACScenario("/etc/clickhouse-backup/config-s3-embedded.yml")
 		testRBACScenario("/etc/clickhouse-backup/config-s3-embedded-url.yml")
@@ -1003,6 +1018,7 @@ func TestRBAC(t *testing.T) {
 	if compareVersion(chVersion, "24.2") >= 0 {
 		testRBACScenario("/etc/clickhouse-backup/config-azblob-embedded-url.yml")
 	}
+	testRBACScenario("/etc/clickhouse-backup/config-s3.yml")
 	env.Cleanup(t, r)
 }
 
@@ -2809,15 +2825,6 @@ func TestRestoreMapping(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 
-	checkRecordset := func(expectedRows int, expectedCount uint64, query string) {
-		result := make([]struct {
-			Count uint64 `ch:"count()"`
-		}, 0)
-		r.NoError(env.ch.Select(&result, query))
-		r.Equal(expectedRows, len(result), "expect %d row", expectedRows)
-		r.Equal(expectedCount, result[0].Count, "expect count=%d", expectedCount)
-	}
-
 	testBackupName := "test_restore_database_mapping"
 	databaseList := []string{"database-1", "database-2"}
 	fullCleanup(t, r, env, []string{testBackupName}, []string{"local"}, databaseList, false, false, "config-database-mapping.yml")
@@ -2842,11 +2849,11 @@ func TestRestoreMapping(t *testing.T) {
 
 	log.Debug().Msg("Check result database-1")
 	env.queryWithNoError(r, "INSERT INTO `database-1`.t1 SELECT '2023-01-01 00:00:00', number FROM numbers(10)")
-	checkRecordset(1, 20, "SELECT count() FROM `database-1`.t1")
-	checkRecordset(1, 20, "SELECT count() FROM `database-1`.t2")
-	checkRecordset(1, 20, "SELECT count() FROM `database-1`.d1")
-	checkRecordset(1, 20, "SELECT count() FROM `database-1`.mv1")
-	checkRecordset(1, 20, "SELECT count() FROM `database-1`.v1")
+	env.checkCount(r, 1, 20, "SELECT count() FROM `database-1`.t1")
+	env.checkCount(r, 1, 20, "SELECT count() FROM `database-1`.t2")
+	env.checkCount(r, 1, 20, "SELECT count() FROM `database-1`.d1")
+	env.checkCount(r, 1, 20, "SELECT count() FROM `database-1`.mv1")
+	env.checkCount(r, 1, 20, "SELECT count() FROM `database-1`.v1")
 
 	log.Debug().Msg("Drop database-1")
 	r.NoError(env.dropDatabase("database-1", false))
@@ -2855,14 +2862,14 @@ func TestRestoreMapping(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--data", "--restore-database-mapping", "database-1:database-2", "--restore-table-mapping", "t1:t3,t2:t4,d1:d2,mv1:mv2,v1:v2", "--tables", "database-1.*", testBackupName)
 
 	log.Debug().Msg("Check result database-2")
-	checkRecordset(1, 10, "SELECT count() FROM `database-2`.t3")
-	checkRecordset(1, 10, "SELECT count() FROM `database-2`.t4")
-	checkRecordset(1, 10, "SELECT count() FROM `database-2`.d2")
-	checkRecordset(1, 10, "SELECT count() FROM `database-2`.mv2")
-	checkRecordset(1, 10, "SELECT count() FROM `database-2`.v2")
+	env.checkCount(r, 1, 10, "SELECT count() FROM `database-2`.t3")
+	env.checkCount(r, 1, 10, "SELECT count() FROM `database-2`.t4")
+	env.checkCount(r, 1, 10, "SELECT count() FROM `database-2`.d2")
+	env.checkCount(r, 1, 10, "SELECT count() FROM `database-2`.mv2")
+	env.checkCount(r, 1, 10, "SELECT count() FROM `database-2`.v2")
 
 	log.Debug().Msg("Check database-1 not exists")
-	checkRecordset(1, 0, "SELECT count() FROM system.databases WHERE name='database-1' SETTINGS empty_result_for_aggregation_by_empty_set=0")
+	env.checkCount(r, 1, 0, "SELECT count() FROM system.databases WHERE name='database-1' SETTINGS empty_result_for_aggregation_by_empty_set=0")
 
 	log.Debug().Msg("Drop database2")
 	r.NoError(env.dropDatabase("database-2", false))
@@ -2873,11 +2880,11 @@ func TestRestoreMapping(t *testing.T) {
 	log.Debug().Msg("Check result database-2 after restore with partitions")
 	// t1->t3 restored only 1 partition with name 3 partition with 1 rows
 	// t1->t3 restored only 1 partition with name 3 partition with 10 rows
-	checkRecordset(1, 1, "SELECT count() FROM `database-2`.t3")
-	checkRecordset(1, 10, "SELECT count() FROM `database-2`.t4")
-	checkRecordset(1, 1, "SELECT count() FROM `database-2`.d2")
-	checkRecordset(1, 10, "SELECT count() FROM `database-2`.mv2")
-	checkRecordset(1, 1, "SELECT count() FROM `database-2`.v2")
+	env.checkCount(r, 1, 1, "SELECT count() FROM `database-2`.t3")
+	env.checkCount(r, 1, 10, "SELECT count() FROM `database-2`.t4")
+	env.checkCount(r, 1, 1, "SELECT count() FROM `database-2`.d2")
+	env.checkCount(r, 1, 10, "SELECT count() FROM `database-2`.mv2")
+	env.checkCount(r, 1, 1, "SELECT count() FROM `database-2`.v2")
 
 	fullCleanup(t, r, env, []string{testBackupName}, []string{"local"}, databaseList, true, true, "config-database-mapping.yml")
 	env.Cleanup(t, r)
@@ -3755,6 +3762,15 @@ func (env *TestEnvironment) dropDatabase(database string, ifExists bool) (err er
 		return err
 	}
 	return env.ch.Query(dropDatabaseSQL)
+}
+
+func (env *TestEnvironment) checkCount(r *require.Assertions, expectedRows int, expectedCount uint64, query string) {
+	result := make([]struct {
+		Count uint64 `ch:"count()"`
+	}, 0)
+	r.NoError(env.ch.Select(&result, query))
+	r.Equal(expectedRows, len(result), "expect %d row", expectedRows)
+	r.Equal(expectedCount, result[0].Count, "expect count=%d", expectedCount)
 }
 
 func (env *TestEnvironment) checkData(t *testing.T, r *require.Assertions, data TestDataStruct) error {
