@@ -258,6 +258,8 @@ spec:
                   value: "private"
                 - name: S3_ENDPOINT
                   value: http://s3-backup-minio:9000
+                - name: S3_REGION
+                  value: us-east-1
                 - name: S3_BUCKET
                   value: clickhouse
                 # {shard} macro defined by clickhouse-operator
@@ -772,6 +774,8 @@ spec:
                   value: "true"
                 # use properly value  
                 - name: AWS_REGION
+                  value: us-east-2
+                - name: S3_REGION
                   value: us-east-2
                 - name: API_SECURE
                   value: "true"
