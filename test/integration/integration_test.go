@@ -1836,9 +1836,7 @@ func testRestoreSkipDisk(r *require.Assertions, env *TestEnvironment) {
 
 	// Test skipping disk by name during restore
 	log.Debug().Msg("Testing skip disk by name during restore")
-	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-xec", "LOG_LEVEL=debug CLICKHOUSE_SKIP_DISKS=hdd1 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore skip_restore_test")
-	log.Info().Msg(out)
-	r.NoError(err)
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_DISKS=hdd1 clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore skip_restore_test")
 	// Check that tables on default disk are restored
 	var tableDefaultCount uint64
 	r.NoError(env.ch.SelectSingleRowNoCtx(&tableDefaultCount, "SELECT count() FROM test_skip_disks.table_default"))
