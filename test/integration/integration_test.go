@@ -902,7 +902,6 @@ func TestRBAC(t *testing.T) {
 	testRBACScenario := func(config string) {
 		env.connectWithWait(t, r, 1*time.Second, 1*time.Second, 1*time.Minute)
 
-		r.NoError(env.dropDatabase("test_rbac", true))
 		env.queryWithNoError(r, "CREATE DATABASE test_rbac")
 		createTableSQL := "CREATE TABLE test_rbac.test_rbac (v UInt64) ENGINE=MergeTree() ORDER BY tuple()"
 		env.queryWithNoError(r, createTableSQL)
@@ -1010,6 +1009,8 @@ func TestRBAC(t *testing.T) {
 		env.queryWithNoError(r, "DROP USER `test.rbac-name`")
 		env.queryWithNoError(r, "DROP TABLE IF EXISTS test_rbac.test_rbac")
 		env.queryWithNoError(r, "DROP ROW POLICY `test_rbac_for_default` ON test_rbac.test_rbac")
+
+		r.NoError(env.dropDatabase("test_rbac", true))
 		env.ch.Close()
 	}
 	if compareVersion(chVersion, "24.1") >= 0 {
