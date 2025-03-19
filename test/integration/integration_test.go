@@ -1342,14 +1342,19 @@ func testAPIMetrics(r *require.Assertions, env *TestEnvironment) {
 	r.Contains(out, fmt.Sprintf("clickhouse_backup_last_backup_size_remote %d", lastRemoteSize))
 
 	log.Debug().Msg("Check /metrics clickhouse_backup_number_backups_*")
-	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "list", "local")
-	r.NoError(err)
-	log.Info().Msg(out)
+	if !strings.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_local %d", apiBackupNumber)) {
+		listOut, listErr := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "list", "local")
+		r.NoError(listErr)
+		log.Error().Msg(listOut)
+	}
 	r.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_local %d", apiBackupNumber))
+
 	// +1 watch backup
-	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "list", "remote")
-	r.NoError(err)
-	log.Info().Msg(out)
+	if !strings.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_remote %d", apiBackupNumber+1)) {
+		listOut, listErr := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "list", "local")
+		r.NoError(listErr)
+		log.Error().Msg(listOut)
+	}
 	r.Contains(out, fmt.Sprintf("clickhouse_backup_number_backups_remote %d", apiBackupNumber+1))
 	r.Contains(out, "clickhouse_backup_number_backups_local_expected 0")
 	r.Contains(out, "clickhouse_backup_number_backups_remote_expected 0")
