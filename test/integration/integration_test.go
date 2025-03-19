@@ -933,11 +933,13 @@ func TestRBAC(t *testing.T) {
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", config, "create_remote", "--rbac", "test_rbac_backup_with_data")
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_BACKUP_CONFIG="+config+" clickhouse-backup delete local test_rbac_backup_with_data")
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_BACKUP_CONFIG="+config+" clickhouse-backup restore_remote --rm --rbac test_rbac_backup_with_data")
-		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_BACKUP_CONFIG="+config+" clickhouse-backup delete remote test_rbac_backup_with_data")
 		env.ch.Close()
 		env.connectWithWait(t, r, 2*time.Second, 2*time.Second, 1*time.Minute)
 		env.queryWithNoError(r, "CREATE ROW POLICY `test_rbac_for_default` ON test_rbac.test_rbac USING v>=0 TO `default`")
 		env.checkCount(r, 1, 10, "SELECT count() FROM test_rbac.test_rbac")
+
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_BACKUP_CONFIG="+config+" clickhouse-backup delete remote test_rbac_backup_with_data")
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_BACKUP_CONFIG="+config+" clickhouse-backup delete local test_rbac_backup_with_data")
 
 		//--rbac-only
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", config, "create", "--rbac", "--rbac-only", "--env", "S3_COMPRESSION_FORMAT=zstd", "test_rbac_backup")
