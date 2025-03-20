@@ -923,7 +923,9 @@ func (b *Backuper) RestoreSchema(ctx context.Context, backupName string, backupM
 
 var UUIDWithMergeTreeRE = regexp.MustCompile(`^(.+)(UUID)(\s+)'([^']+)'(.+)({uuid})(.*)`)
 
-var emptyReplicatedMergeTreeRE = regexp.MustCompile(`(?m)Replicated(MergeTree|ReplacingMergeTree|SummingMergeTree|AggregatingMergeTree|CollapsingMergeTree|VersionedCollapsingMergeTree|GraphiteMergeTree)\s*\(([^']*)\)(.*)`)
+//var emptyReplicatedMergeTreeRE = regexp.MustCompile(`(?m)Replicated(MergeTree|ReplacingMergeTree|SummingMergeTree|AggregatingMergeTree|CollapsingMergeTree|VersionedCollapsingMergeTree|GraphiteMergeTree)\s*\(([^']*)\)(.*)`)
+
+var emptyReplicatedMergeTreeRE = regexp.MustCompile(`(?m)Replicated(MergeTree|ReplacingMergeTree|SummingMergeTree|AggregatingMergeTree|CollapsingMergeTree|VersionedCollapsingMergeTree|GraphiteMergeTree)\s*(\(([^']*)\)|(\w+))(.*)`)
 
 func (b *Backuper) restoreSchemaEmbedded(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, disks []clickhouse.Disk, tablesForRestore ListOfTables, version int) error {
 	var err error
@@ -1047,12 +1049,12 @@ func (b *Backuper) fixEmbeddedMetadataLocal(ctx context.Context, backupName stri
 func (b *Backuper) fixEmbeddedMetadataSQLQuery(ctx context.Context, sqlBytes []byte, filePath string, version int) (string, bool, error) {
 	sqlQuery := string(sqlBytes)
 	sqlMetadataChanged := false
+	filePathParts := strings.Split(filePath, "/")
 	if strings.Contains(sqlQuery, "{uuid}") {
 		if UUIDWithMergeTreeRE.Match(sqlBytes) && version < 23009000 {
 			sqlQuery = UUIDWithMergeTreeRE.ReplaceAllString(sqlQuery, "$1$2$3'$4'$5$4$7")
 		} else {
 			log.Warn().Msgf("%s contains `{uuid}` macro, will replace to `{database}/{table}` see https://github.com/ClickHouse/ClickHouse/issues/42709 for details", filePath)
-			filePathParts := strings.Split(filePath, "/")
 			database, err := url.QueryUnescape(filePathParts[len(filePathParts)-3])
 			if err != nil {
 				return "", false, err
@@ -1076,16 +1078,28 @@ func (b *Backuper) fixEmbeddedMetadataSQLQuery(ctx context.Context, sqlBytes []b
 		if err != nil {
 			return "", false, err
 		}
-		if len(settings) != 2 {
-			log.Fatal().Msgf("can't get %#v from preprocessed_configs/config.xml", replicaXMLSettings)
+		database, err := url.QueryUnescape(filePathParts[len(filePathParts)-3])
+		if err != nil {
+			return "", false, err
 		}
+		table, err := url.QueryUnescape(filePathParts[len(filePathParts)-2])
+		if err != nil {
+			return "", false, err
+		}
+		if len(settings) != 2 {
+			settings["default_replica_path"] = "/clickhouse/tables/{database}/{table}/{shard}"
+			settings["default_replica_name"] = "{replica}"
+			log.Warn().Msgf("can't get %#v from preprocessed_configs/config.xml, will use %#v", replicaXMLSettings, settings)
+		}
+		settings["default_replica_path"] = strings.Replace(settings["default_replica_path"], "{uuid}", "{database}/{table}", -1)
 		log.Warn().Msgf("%s contains `ReplicatedMergeTree()` without parameters, will replace to '%s` and `%s` see https://github.com/ClickHouse/ClickHouse/issues/42709 for details", filePath, settings["default_replica_path"], settings["default_replica_name"])
 		matches := emptyReplicatedMergeTreeRE.FindStringSubmatch(sqlQuery)
-		substitution := fmt.Sprintf("$1$2('%s','%s')$4", settings["default_replica_path"], settings["default_replica_name"])
-		if matches[2] != "" {
-			substitution = fmt.Sprintf("$1$2('%s','%s',$3)$4", settings["default_replica_path"], settings["default_replica_name"])
+		substitution := fmt.Sprintf("Replicated$1('%s','%s')$4$5", settings["default_replica_path"], settings["default_replica_name"])
+		if matches[3] != "" && matches[4] == "" {
+			substitution = fmt.Sprintf("Replicated$1('%s','%s',$3) $5", settings["default_replica_path"], settings["default_replica_name"])
 		}
 		sqlQuery = emptyReplicatedMergeTreeRE.ReplaceAllString(sqlQuery, substitution)
+		sqlQuery = strings.NewReplacer("{database}", database, "{table}", table).Replace(sqlQuery)
 		sqlMetadataChanged = true
 	}
 	return sqlQuery, sqlMetadataChanged, nil

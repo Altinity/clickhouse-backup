@@ -1445,6 +1445,7 @@ func (ch *ClickHouse) GetPreprocessedXMLSettings(ctx context.Context, settingsXP
 			}
 			for _, node := range xmlquery.Find(doc, xpathExpr) {
 				resultSettings[settingName] = node.InnerText()
+				preprocessedXMLSettings[fileName][settingName] = resultSettings[settingName]
 			}
 		}
 	}
