@@ -274,6 +274,20 @@ var defaultTestData = []TestDataStruct{
 		OrderBy: "id",
 	},
 	{
+		Database: dbNameAtomic, DatabaseEngine: "Atomic",
+		Name:   "replicated_empty_engine",
+		Schema: "(id UInt64) Engine=ReplicatedMergeTree() ORDER BY id",
+		Rows: func() []map[string]interface{} {
+			var result []map[string]interface{}
+			for i := 0; i < 100; i++ {
+				result = append(result, map[string]interface{}{"id": uint64(i)})
+			}
+			return result
+		}(),
+		Fields:  []string{"id"},
+		OrderBy: "id",
+	},
+	{
 		Database:       dbNameAtomic,
 		DatabaseEngine: "Atomic",
 		IsView:         true,

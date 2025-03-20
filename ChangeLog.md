@@ -1,3 +1,7 @@
+# v2.6.9
+BUG FIXES
+- fix corner cases during restore for embedded backup and empty ReplicatedMergeTree() engine definition, fix [1115](https://github.com/Altinity/clickhouse-backup/issues/1115#issuecomment-2735531504)
+
 # v2.6.8
 
 BUG FIXES

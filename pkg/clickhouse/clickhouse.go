@@ -1417,7 +1417,7 @@ func (ch *ClickHouse) ParseXML(ctx context.Context, configName string) (configFi
 	return configFile, doc, nil
 }
 
-var preprocessedXMLSettings map[string]map[string]string
+var preprocessedXMLSettings = make(map[string]map[string]string)
 
 // GetPreprocessedXMLSettings - @todo think about from_end and from_zookeeper corner cases
 func (ch *ClickHouse) GetPreprocessedXMLSettings(ctx context.Context, settingsXPath map[string]string, fileName string) (map[string]string, error) {
