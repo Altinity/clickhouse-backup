@@ -3620,20 +3620,20 @@ func (env *TestEnvironment) connect(t *testing.T, timeOut string) error {
 		time.Sleep(1 * time.Second)
 	}
 	env.ch = &clickhouse.ClickHouse{Config: &config.ClickHouseConfig{}}
-	portMaxTry := 3
+	portMaxTry := 10
 	for i := 1; i <= portMaxTry; i++ {
 		portOut, portErr := utils.ExecCmdOut(t.Context(), 10*time.Second, "docker", append(env.GetDefaultComposeCommand(), "port", "clickhouse", "9000")...)
 		if portErr != nil {
 			log.Error().Msg(portOut)
 			if i == portMaxTry {
-				log.Fatal().Msgf("%s can't get port for clickhouse: %v", env.ProjectName, portErr)
+				log.Fatal().Msgf("%s: %s can't get port for clickhouse: %v", t.Name(), env.ProjectName, portErr)
 			}
 			time.Sleep(500 * time.Millisecond)
 			continue
 		}
 		hostAndPort := strings.Split(strings.Trim(portOut, " \r\n\t"), ":")
 		if len(hostAndPort) < 1 {
-			log.Fatal().Msgf("%s invalid port for clickhouse: %v", env.ProjectName, portOut)
+			log.Fatal().Msgf("%s: %s invalid port for clickhouse: %v", t.Name(), env.ProjectName, portOut)
 		}
 		port, err := strconv.Atoi(hostAndPort[1])
 		if err != nil {
