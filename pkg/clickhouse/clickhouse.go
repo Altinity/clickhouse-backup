@@ -1412,7 +1412,11 @@ func (ch *ClickHouse) ParseXML(ctx context.Context, configName string) (configFi
 	}()
 	doc, err = xmlquery.Parse(f)
 	if err != nil {
-		return "", nil, fmt.Errorf("xmlquery.Parse(%s) error: %v", configFile, err)
+		xmlContent, readErr := os.ReadFile(configFile)
+		parseErr := fmt.Errorf("xmlquery.Parse(%s) error: %v", configFile, err)
+		log.Error().Msg(parseErr.Error())
+		log.Error().Err(readErr).Msg(string(xmlContent))
+		return "", nil, parseErr
 	}
 	return configFile, doc, nil
 }
