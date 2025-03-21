@@ -92,12 +92,17 @@ if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.[8-9]
 if [[ -f /var/lib/clickhouse/storage_configuration_s3.xml ]]; then
   cp -fv /var/lib/clickhouse/storage_configuration_s3.xml /etc/clickhouse-server/config.d/storage_configuration_s3.xml
 else
+  S3_DISK_TYPE="<type>s3</type>"
+  if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[5-9]\.[0-9]+ ]]; then
+    S3_DISK_TYPE="<type>object_storage</type><object_storage_type>s3</object_storage_type><metadata_type>local</metadata_type>"
+  fi
+
 cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_s3.xml
 <yandex>
   <storage_configuration>
     <disks>
       <disk_s3>
-        <type>s3</type>
+        ${S3_DISK_TYPE}
         <endpoint>https://minio:9000/clickhouse/disk_s3/{cluster}/{shard}/</endpoint>
         <!-- https://github.com/Altinity/clickhouse-backup/issues/691
         <access_key_id>access_key</access_key_id>

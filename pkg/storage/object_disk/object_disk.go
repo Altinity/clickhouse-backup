@@ -326,6 +326,20 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) e
 		diskName := d.Data
 		if diskTypeNode := d.SelectElement("type"); diskTypeNode != nil {
 			diskType := strings.Trim(diskTypeNode.InnerText(), "\r\n \t")
+			// https://github.com/Altinity/clickhouse-backup/issues/1112
+			if diskType == "object_storage" {
+				diskTypeNode = d.SelectElement("object_storage_type")
+				if diskTypeNode == nil {
+					return fmt.Errorf(fmt.Sprintf("/%s/storage_configuration/disks/%s, contains <type>object_storage</type>, but doesn't contains <object_storage_type> tag", root.Data, diskName))
+				}
+				diskType = strings.Trim(diskTypeNode.InnerText(), "\r\n \t")
+				if metadataTypeNode := d.SelectElement("metadata_type"); metadataTypeNode != nil {
+					metadataType := strings.Trim(metadataTypeNode.InnerText(), "\r\n \t")
+					if metadataType != "local" {
+						return fmt.Errorf(fmt.Sprintf("/%s/storage_configuration/disks/%s, unsupported <metadata_type>%s</metadata_type>", root.Data, diskName, metadataType))
+					}
+				}
+			}
 			switch diskType {
 			case "s3", "s3_plain":
 				creds := ObjectStorageCredentials{

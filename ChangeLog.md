@@ -1,4 +1,7 @@
 # v2.6.9
+IMPROVEMENTS
+- add support for <object_storage_type> in <storage_configuration>, fix [1112](https://github.com/Altinity/clickhouse-backup/issues/1112)
+
 BUG FIXES
 - fix corner cases during restore for embedded backup and empty ReplicatedMergeTree() engine definition, fix [1115](https://github.com/Altinity/clickhouse-backup/issues/1115#issuecomment-2735531504)
 
