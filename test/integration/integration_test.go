@@ -3983,7 +3983,7 @@ func isTableSkip(ch *TestEnvironment, data TestDataStruct, dataExists bool) bool
 		_ = ch.ch.Select(&dictEngines, dictSQL)
 		return len(dictEngines) == 0
 	}
-	return os.Getenv("COMPOSE_FILE") == "docker-compose.yml" && (strings.Contains(data.Name, "jbod#$_table") || data.IsDictionary)
+	return (os.Getenv("COMPOSE_FILE") == "docker-compose.yml" && (strings.Contains(data.Name, "jbod#$_table") || data.IsDictionary)) || (compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.7") < 0 && strings.Contains(data.Schema, "ReplicatedMergeTree()"))
 }
 
 func compareVersion(v1, v2 string) int {
