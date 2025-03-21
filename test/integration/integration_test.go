@@ -3603,6 +3603,9 @@ func (env *TestEnvironment) connectWithWait(t *testing.T, r *require.Assertions,
 			}
 		}
 	}
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.4") >= 0 {
+		r.NoError(env.ch.QueryContext(t.Context(), "SET show_table_uuid_in_table_create_query_if_not_nil=1"))
+	}
 }
 
 func (env *TestEnvironment) connect(t *testing.T, timeOut string) error {
@@ -3702,6 +3705,10 @@ func (env *TestEnvironment) createTestSchema(t *testing.T, data TestDataStruct, 
 		createSQL += " ON CLUSTER 'cluster' "
 	}
 	createSQL += data.Schema
+	// 20.8 can't create Ordinary with empty ReplicatedMergeTree() and can't create Atomic, cause doesn't respect `DROP ... NO DELAY`
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") <= 0 && strings.Contains(createSQL, "ReplicatedMergeTree()") {
+		createSQL = strings.Replace(createSQL, "ReplicatedMergeTree()", "ReplicatedMergeTree('/clickhouse/tables/{database}/{table}/{shard}','{replica}')", -1)
+	}
 	// old 1.x clickhouse versions doesn't contains {table} and {database} macros
 	if strings.Contains(createSQL, "{table}") || strings.Contains(createSQL, "{database}") {
 		var isMacrosExists uint64
