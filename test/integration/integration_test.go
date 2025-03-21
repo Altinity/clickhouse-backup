@@ -1688,7 +1688,7 @@ func TestSkipDisk(t *testing.T) {
 	testSkipDiskDownload(r, env)
 
 	// Test skipping disks during restore
-	testRestoreSkipDisk(r, env)
+	testRestoreSkipDisk(t, r, env)
 
 	// Clean up
 	r.NoError(env.dropDatabase("test_skip_disks", false))
@@ -1850,7 +1850,7 @@ func testSkipDiskDownload(r *require.Assertions, env *TestEnvironment) {
 }
 
 // testRestoreSkipDisk tests skipping disks during restore operations
-func testRestoreSkipDisk(r *require.Assertions, env *TestEnvironment) {
+func testRestoreSkipDisk(t *testing.T, r *require.Assertions, env *TestEnvironment) {
 	log.Debug().Msg("Testing skip disk during restore")
 
 	// Create a backup with all tables
@@ -1875,6 +1875,15 @@ func testRestoreSkipDisk(r *require.Assertions, env *TestEnvironment) {
 	r.NoError(env.ch.SelectSingleRowNoCtx(&tableHdd1Exists, "SELECT count() FROM system.tables WHERE database='test_skip_disks' AND name='table_hdd1'"))
 	r.Equal(uint64(1), tableHdd1Exists, "table_hdd1 shall exist in system.tables")
 	r.NoError(env.ch.SelectSingleRowNoCtx(&tableHdd1Exists, "SELECT count() FROM system.parts WHERE active AND database='test_skip_disks' AND table='table_hdd1' AND disk_name='hdd1'"))
+	if tableHdd1Exists != 0 {
+		type hdd1Parts = struct {
+			Name     string `ch:"name"`
+			DiskName string `ch:"disk_name"`
+		}
+		parts := make([]hdd1Parts, 0)
+		r.NoError(env.ch.SelectContext(t.Context(), &parts, "SELECT name, disk_name FROM system.parts WHERE active AND database='test_skip_disks' AND table='table_hdd1'"))
+		t.Errorf("unexpected table_hdd1 in system.parts=%#v", parts)
+	}
 	r.Equal(uint64(0), tableHdd1Exists, "unexpected table_hdd1 in system.parts")
 
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 {
@@ -3990,7 +3999,9 @@ func isTableSkip(ch *TestEnvironment, data TestDataStruct, dataExists bool) bool
 		_ = ch.ch.Select(&dictEngines, dictSQL)
 		return len(dictEngines) == 0
 	}
-	return (os.Getenv("COMPOSE_FILE") == "docker-compose.yml" && (strings.Contains(data.Name, "jbod#$_table") || data.IsDictionary)) || (compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.7") < 0 && strings.Contains(data.Schema, "ReplicatedMergeTree()"))
+	isSkipDictionaryOrJBOD := os.Getenv("COMPOSE_FILE") == "docker-compose.yml" && (strings.Contains(data.Name, "jbod#$_table") || data.IsDictionary)
+	isSkipEmptyReplicatedMergeTree := compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.9") < 0 && strings.Contains(data.Schema, "ReplicatedMergeTree()")
+	return isSkipDictionaryOrJBOD || isSkipEmptyReplicatedMergeTree
 }
 
 func compareVersion(v1, v2 string) int {
