@@ -1414,8 +1414,8 @@ func (ch *ClickHouse) ParseXML(ctx context.Context, configName string) (configFi
 	if err != nil {
 		xmlContent, readErr := os.ReadFile(configFile)
 		parseErr := fmt.Errorf("xmlquery.Parse(%s) error: %v", configFile, err)
+		log.Error().Err(readErr).Str("xmlContent", string(xmlContent)).Send()
 		log.Error().Msg(parseErr.Error())
-		log.Error().Err(readErr).Msg(string(xmlContent))
 		return "", nil, parseErr
 	}
 	return configFile, doc, nil
@@ -1439,12 +1439,18 @@ func (ch *ClickHouse) GetPreprocessedXMLSettings(ctx context.Context, settingsXP
 			resultSettings[settingName] = value
 		} else {
 			if doc == nil {
-				f, err := os.Open(path.Join(preprocessedPath, fileName))
-				if err != nil {
-					return nil, err
+				configFile := path.Join(preprocessedPath, fileName)
+				f, openErr := os.Open(configFile)
+				if openErr != nil {
+					return nil, openErr
 				}
-				if doc, err = xmlquery.Parse(f); err != nil {
-					return nil, err
+				var parseErr error
+				if doc, parseErr = xmlquery.Parse(f); parseErr != nil {
+					xmlContent, readErr := os.ReadFile(configFile)
+					parseErr = fmt.Errorf("xmlquery.Parse(%s) error: %v", configFile, err)
+					log.Error().Err(readErr).Str("xmlContent", string(xmlContent)).Send()
+					log.Error().Msg(parseErr.Error())
+					return nil, parseErr
 				}
 			}
 			for _, node := range xmlquery.Find(doc, xpathExpr) {
