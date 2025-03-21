@@ -1130,7 +1130,7 @@ func TestServerAPI(t *testing.T) {
 
 	log.Debug().Msg("Run `clickhouse-backup server --watch` in background")
 	env.DockerExecBackgroundNoError(r, "clickhouse-backup", "bash", "-ce", "clickhouse-backup server --watch &>>/tmp/clickhouse-backup-server.log")
-	time.Sleep(1 * time.Second)
+	time.Sleep(3 * time.Second)
 
 	testAPIBackupVersion(r, env)
 
@@ -1503,9 +1503,19 @@ func testAPIBackupVersion(r *require.Assertions, env *TestEnvironment) {
 	r.NoError(err)
 	apiVersion, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "curl -sL http://localhost:7171/backup/version | jq -r .version")
 	r.NoError(err)
+	if cliVersion != apiVersion {
+		debugLog, debugErr := env.DockerExecOut("clickhouse-backup", "cat", "/tmp/clickhouse-backup-server.log")
+		r.NoError(debugErr)
+		log.Error().Msg(debugLog)
+	}
 	r.Equal(cliVersion, apiVersion)
 	tablesVersion, err := env.DockerExecOut("clickhouse", "bash", "-ce", "clickhouse client -q 'SELECT * FROM system.backup_version FORMAT TSVRaw'")
 	r.NoError(err)
+	if cliVersion != tablesVersion {
+		debugLog, debugErr := env.DockerExecOut("clickhouse-backup", "cat", "/tmp/clickhouse-backup-server.log")
+		r.NoError(debugErr)
+		log.Error().Msg(debugLog)
+	}
 	r.Equal(cliVersion, tablesVersion)
 }
 
