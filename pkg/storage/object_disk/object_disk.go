@@ -330,13 +330,13 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) e
 			if diskType == "object_storage" {
 				diskTypeNode = d.SelectElement("object_storage_type")
 				if diskTypeNode == nil {
-					return fmt.Errorf(fmt.Sprintf("/%s/storage_configuration/disks/%s, contains <type>object_storage</type>, but doesn't contains <object_storage_type> tag", root.Data, diskName))
+					return fmt.Errorf("/%s/storage_configuration/disks/%s, contains <type>object_storage</type>, but doesn't contains <object_storage_type> tag", root.Data, diskName)
 				}
 				diskType = strings.Trim(diskTypeNode.InnerText(), "\r\n \t")
 				if metadataTypeNode := d.SelectElement("metadata_type"); metadataTypeNode != nil {
 					metadataType := strings.Trim(metadataTypeNode.InnerText(), "\r\n \t")
 					if metadataType != "local" {
-						return fmt.Errorf(fmt.Sprintf("/%s/storage_configuration/disks/%s, unsupported <metadata_type>%s</metadata_type>", root.Data, diskName, metadataType))
+						return fmt.Errorf("/%s/storage_configuration/disks/%s, unsupported <metadata_type>%s</metadata_type>", root.Data, diskName, metadataType)
 					}
 				}
 			}
@@ -408,12 +408,12 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) e
 				}
 				creds.AzureContainerName = strings.Trim(containerNameNode.InnerText(), "\r\n \t")
 				accountNameNode := d.SelectElement("account_name")
-				if containerNameNode == nil {
+				if accountNameNode == nil {
 					return fmt.Errorf("%s -> /%s/storage_configuration/disks/%s doesn't contains <account_name>", configFile, root.Data, diskName)
 				}
 				creds.AzureAccountName = strings.Trim(accountNameNode.InnerText(), "\r\n \t")
 				accountKeyNode := d.SelectElement("account_key")
-				if containerNameNode == nil {
+				if accountKeyNode == nil {
 					return fmt.Errorf("%s -> /%s/storage_configuration/disks/%s doesn't contains <account_key>", configFile, root.Data, diskName)
 				}
 				creds.AzureAccountKey = strings.Trim(accountKeyNode.InnerText(), "\r\n \t")
