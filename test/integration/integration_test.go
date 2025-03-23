@@ -15,7 +15,6 @@ import (
 	"path"
 	"reflect"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -2070,7 +2069,10 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	r.NoError(env.dropDatabase("test_skip_tables", false))
 
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLES=*.test_memory clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore test_skip_full_backup")
-	result := make([]string, 0)
+
+	result := make([]struct {
+		Name string `ch:"name"`
+	}, 0)
 	r.NoError(env.ch.SelectContext(t.Context(), &result, "SELECT name FROM system.tables WHERE database='test_skip_tables'"))
 	expectedTables := 3
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 {
@@ -2083,28 +2085,41 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.6") >= 0 {
 		expectedTables = 7
 	}
-	r.False(slices.Contains(result, "test_memory"), "invalid tables in test_skip_tables, test_memory shall not present %#v", result)
+	found := false
+	for _, item := range result {
+		if item.Name == "test_memory" {
+			found = true
+			break
+		}
+	}
+	r.False(found, "invalid tables in test_skip_tables, test_memory shall not present %#v", result)
 	r.Equal(expectedTables, len(result), "invalid tables length in test_skip_tables %#v", result)
 
 	r.NoError(env.dropDatabase("test_skip_tables", false))
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLE_ENGINES=memory,materializedview,liveview,windowview clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore --schema test_skip_full_backup")
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_SKIP_TABLE_ENGINES=memory,materializedview,liveview,windowview clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore --data test_skip_full_backup")
 
-	result = make([]string, 0)
+	result = make([]struct {
+		Name string `ch:"name"`
+	}, 0)
 	expectedTables = 2
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
 		expectedTables = 3
 	}
-	r.NoError(env.ch.SelectContext(t.Context(), &result, "SELECT name FROM system.tables WHERE database='test_skip_tables' AND engine='MergeTree'"))
+	r.NoError(env.ch.Select(&result, "SELECT name FROM system.tables WHERE database='test_skip_tables' AND engine='MergeTree'"))
 	r.Equal(expectedTables, len(result), "invalid tables engines length in test_skip_tables %#v", result)
 
-	result = make([]string, 0)
-	r.NoError(env.ch.SelectContext(t.Context(), &result, "SELECT name FROM system.tables WHERE database='test_skip_tables' AND engine IN ('Memory','MaterializedView','LiveView','WindowView')"))
+	result = make([]struct {
+		Name string `ch:"name"`
+	}, 0)
+	r.NoError(env.ch.Select(&result, "SELECT name FROM system.tables WHERE database='test_skip_tables' AND engine IN ('Memory','MaterializedView','LiveView','WindowView')"))
 	r.Equal(0, len(result), "unexpected tables engines in test_skip_tables %#v", result)
 
 	r.NoError(env.dropDatabase("test_skip_tables", false))
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore test_skip_full_backup")
-	result = make([]string, 0)
+	result = make([]struct {
+		Name string `ch:"name"`
+	}, 0)
 	r.NoError(env.ch.SelectContext(t.Context(), &result, "SELECT name FROM system.tables WHERE database='test_skip_tables'"))
 	expectedTables = 4
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 {
