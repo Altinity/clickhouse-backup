@@ -1884,6 +1884,7 @@ func testRestoreSkipDisk(t *testing.T, r *require.Assertions, env *TestEnvironme
 	var tableHdd1Exists uint64
 	r.NoError(env.ch.SelectSingleRowNoCtx(&tableHdd1Exists, "SELECT count() FROM system.tables WHERE database='test_skip_disks' AND name='table_hdd1'"))
 	r.Equal(uint64(1), tableHdd1Exists, "table_hdd1 shall exist in system.tables")
+	tableHdd1Exists = 0
 	r.NoError(env.ch.SelectSingleRowNoCtx(&tableHdd1Exists, "SELECT count() FROM system.parts WHERE active AND database='test_skip_disks' AND table='table_hdd1' AND disk_name='hdd1'"))
 	if tableHdd1Exists != 0 {
 		type hdd1Parts = struct {
