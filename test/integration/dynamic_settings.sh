@@ -665,3 +665,12 @@ cat <<EOT > /etc/clickhouse-server/config.d/low_memory_in_configd.xml
 EOT
 
 fi
+
+
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[5-9]\.[0-9]+ ]]; then
+cat <<EOT > /etc/clickhouse-server/config.d/user_defined_zookeeper_path.xml
+<yandex>
+  <user_defined_zookeeper_path>/clickhouse/user_defined</user_defined_zookeeper_path>
+</yandex>
+EOT
+fi

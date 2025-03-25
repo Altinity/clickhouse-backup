@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/resumable"
 	"github.com/eapache/go-resiliency/retrier"
+	"github.com/pkg/errors"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"io"
@@ -245,10 +246,8 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	}
 	// do not create UDF when use --data, --rbac-only, --configs-only flags, https://github.com/Altinity/clickhouse-backup/issues/697
 	if schemaOnly || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
-		for _, function := range backupMetadata.Functions {
-			if err = b.ch.CreateUserDefinedFunction(function.Name, function.CreateQuery, b.cfg.General.RestoreSchemaOnCluster); err != nil {
-				return err
-			}
+		if funcErr := b.restoreFunctions(ctx, backupMetadata); funcErr != nil {
+			return funcErr
 		}
 	}
 
@@ -264,6 +263,32 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 		"duration":  utils.HumanizeDuration(time.Since(startRestore)),
 		"version":   backupVersion,
 	}).Msg("done")
+	return nil
+}
+
+func (b *Backuper) restoreFunctions(ctx context.Context, backupMetadata metadata.BackupMetadata) error {
+	// https://github.com/Altinity/clickhouse-backup/issues/1123
+	onCluster := b.cfg.General.RestoreSchemaOnCluster
+	if onCluster != "" {
+		configFile, doc, configErr := b.ch.ParseXML(ctx, "config.xml")
+		if configErr != nil {
+			return errors.Wrapf(configErr, "can't parse %s", configFile)
+		}
+		userDefinedKeeperPathNode := doc.SelectElement("//user_defined_zookeeper_path")
+		if userDefinedKeeperPathNode != nil {
+			userDefinedKeeperPath := strings.Trim(userDefinedKeeperPathNode.InnerText(), " \t\r\n")
+			if userDefinedKeeperPath != "" {
+				log.Warn().Msgf("%s contains <user_defined_zookeeper_path>%s</user_defined_zookeeper_path> ON CLUSTER '%s' will ignored during functions restore", configFile, userDefinedKeeperPath, onCluster)
+				onCluster = ""
+			}
+		}
+	}
+
+	for _, function := range backupMetadata.Functions {
+		if funcErr := b.ch.CreateUserDefinedFunction(function.Name, function.CreateQuery, onCluster); funcErr != nil {
+			return funcErr
+		}
+	}
 	return nil
 }
 
