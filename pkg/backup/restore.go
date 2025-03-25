@@ -269,7 +269,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 func (b *Backuper) restoreFunctions(ctx context.Context, backupMetadata metadata.BackupMetadata) error {
 	// https://github.com/Altinity/clickhouse-backup/issues/1123
 	onCluster := b.cfg.General.RestoreSchemaOnCluster
-	if onCluster != "" {
+	if onCluster != "" && len(backupMetadata.Functions) > 0 {
 		configFile, doc, configErr := b.ch.ParseXML(ctx, "config.xml")
 		if configErr != nil {
 			return errors.Wrapf(configErr, "can't parse %s", configFile)
