@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/eapache/go-resiliency/retrier"
 	"os"
 	"path"
 	"path/filepath"
@@ -1395,35 +1396,40 @@ func (ch *ClickHouse) GetPreprocessedConfigPath(ctx context.Context) (string, er
 	return path.Join("/", path.Join(paths[:len(paths)-1]...), "preprocessed_configs"), nil
 }
 
-func (ch *ClickHouse) ParseXML(ctx context.Context, configName string) (configFile string, doc *xmlquery.Node, err error) {
+func (ch *ClickHouse) ParseXML(ctx context.Context, configName string) (configFile string, doc *xmlquery.Node, parseErr error) {
 	preprocessedConfigPath, err := ch.GetPreprocessedConfigPath(ctx)
 	if err != nil {
 		return "", nil, fmt.Errorf("ch.GetPreprocessedConfigPath error: %v", err)
 	}
 	configFile = path.Join(preprocessedConfigPath, configName)
-	f, err := os.Open(configFile)
-	if err != nil {
-		return "", nil, err
-	}
-	defer func() {
-		if closeErr := f.Close(); closeErr != nil {
-			log.Error().Msgf("can't close %s error: %v", configFile, closeErr)
+	//to avoid race-condition, cause preprocessed_configs rewrites every second
+	retry := retrier.New(retrier.ConstantBackoff(5, time.Millisecond*100), nil)
+	retryErr := retry.RunCtx(ctx, func(ctx context.Context) error {
+		f, openErr := os.Open(configFile)
+		if openErr != nil {
+			return openErr
 		}
-	}()
-	doc, err = xmlquery.Parse(f)
-	if err != nil {
+		defer func() {
+			if closeErr := f.Close(); closeErr != nil {
+				log.Error().Msgf("can't close %s error: %v", configFile, closeErr)
+			}
+		}()
+		doc, parseErr = xmlquery.Parse(f)
+		return parseErr
+	})
+	if retryErr != nil {
 		xmlContent, readErr := os.ReadFile(configFile)
-		parseErr := fmt.Errorf("xmlquery.Parse(%s) error: %v", configFile, err)
+		parseErr = fmt.Errorf("xmlquery.Parse(%s) error: %v", configFile, parseErr)
 		log.Error().Err(readErr).Str("xmlContent", string(xmlContent)).Send()
 		log.Error().Msg(parseErr.Error())
-		return "", nil, parseErr
+		return configFile, nil, parseErr
 	}
 	return configFile, doc, nil
 }
 
 var preprocessedXMLSettings = make(map[string]map[string]string)
 
-// GetPreprocessedXMLSettings - @todo think about from_end and from_zookeeper corner cases
+// GetPreprocessedXMLSettings - @todo think about from_env and from_zookeeper corner cases
 func (ch *ClickHouse) GetPreprocessedXMLSettings(ctx context.Context, settingsXPath map[string]string, fileName string) (map[string]string, error) {
 	preprocessedPath, err := ch.GetPreprocessedConfigPath(ctx)
 	if err != nil {
@@ -1440,21 +1446,32 @@ func (ch *ClickHouse) GetPreprocessedXMLSettings(ctx context.Context, settingsXP
 		} else {
 			if doc == nil {
 				configFile := path.Join(preprocessedPath, fileName)
-				f, openErr := os.Open(configFile)
-				if openErr != nil {
-					return nil, openErr
-				}
-				var parseErr error
-				if doc, parseErr = xmlquery.Parse(f); parseErr != nil {
+				//to avoid race-condition, cause preprocessed_configs rewrites every second
+				retry := retrier.New(retrier.ConstantBackoff(5, time.Millisecond*100), nil)
+				retryErr := retry.RunCtx(ctx, func(ctx context.Context) error {
+					f, openErr := os.Open(configFile)
+					if openErr != nil {
+						return openErr
+					}
+					defer func() {
+						if closeErr := f.Close(); closeErr != nil {
+							log.Error().Err(closeErr).Msgf("can't close %s", configFile)
+						}
+					}()
+					var parseErr error
+					doc, parseErr = xmlquery.Parse(f)
+					return parseErr
+				})
+				if retryErr != nil {
 					xmlContent, readErr := os.ReadFile(configFile)
-					parseErr = fmt.Errorf("xmlquery.Parse(%s) error: %v", configFile, err)
+					retryErr = fmt.Errorf("xmlquery.Parse(%s) error: %v", configFile, retryErr)
 					log.Error().Err(readErr).Str("xmlContent", string(xmlContent)).Send()
-					log.Error().Msg(parseErr.Error())
-					return nil, parseErr
+					log.Error().Msg(retryErr.Error())
+					return nil, retryErr
 				}
 			}
 			for _, node := range xmlquery.Find(doc, xpathExpr) {
-				resultSettings[settingName] = node.InnerText()
+				resultSettings[settingName] = strings.Trim(node.InnerText(), " \t\r\n")
 				preprocessedXMLSettings[fileName][settingName] = resultSettings[settingName]
 			}
 		}
