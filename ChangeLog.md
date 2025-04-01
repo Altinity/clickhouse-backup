@@ -1,6 +1,7 @@
-# v2.7.0
+# v2.6.10
 BUG FIXES
 - fix corner cases for `restore_schema_on_cluster: true` and `<user_defined_zookeeper_path>`, fix [1123](https://github.com/Altinity/clickhouse-backup/issues/1123)
+- fix corner cases for check free space size before download, fix [878](https://github.com/Altinity/clickhouse-backup/issues/878)
 
 # v2.6.9
 IMPROVEMENTS
