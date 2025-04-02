@@ -453,7 +453,7 @@ func (b *Backuper) adjustResumeFlag(resume bool) {
 
 // CheckDisksUsage - https://github.com/Altinity/clickhouse-backup/issues/878
 func (b *Backuper) CheckDisksUsage(backup storage.Backup, disks []clickhouse.Disk, isResumeExists bool, tablePattern string) error {
-	if tablePattern == "" || tablePattern == "*.*" || tablePattern == "*" {
+	if tablePattern != "" && tablePattern != "*.*" && tablePattern != "*" {
 		return nil
 	}
 	freeSize := uint64(0)
