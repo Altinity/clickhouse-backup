@@ -1415,7 +1415,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 			fullCommand += " --restore-schema-as-attach"
 		}
 	}
-	
+
 	// Handle replicated-copy-to-detached parameter
 	replicatedCopyToDetachedParamName := "replicated_copy_to_detached"
 	replicatedCopyToDetachedParamNames := []string{
@@ -1864,7 +1864,7 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 			stateFiles = append(stateFiles, embeddedStateFiles...)
 			for _, stateFile := range stateFiles {
 				command := strings.TrimSuffix(filepath.Base(stateFile), ".state2")
-				state := resumable.NewState(filepath.Dir(stateFile), backupName, command, nil)
+				state := resumable.NewState(strings.TrimSuffix(filepath.Dir(stateFile), filepath.Join("backup", backupName)), backupName, command, nil)
 				params := state.GetParams()
 				state.Close()
 				if !api.config.API.AllowParallel && status.Current.InProgress() {

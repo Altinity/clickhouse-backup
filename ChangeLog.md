@@ -1,3 +1,7 @@
+# v2.6.12
+BUG FIXES
+- fix corner case for wrong path for state file during `ResumeOperationsAfterRestart` fix [1126](https://github.com/Altinity/clickhouse-backup/issues/1126)
+
 # v2.6.11
 BUG FIXES
 - fix another corner cases for check free space size before download, fix [878](https://github.com/Altinity/clickhouse-backup/issues/878)
