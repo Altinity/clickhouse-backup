@@ -1,3 +1,7 @@
+# v2.6.13
+BUG FIXES
+- fix corner case for `--restore-database-mapping`, fix [820](https://github.com/Altinity/clickhouse-backup/issues/820#issuecomment-2773501803)
+
 # v2.6.12
 BUG FIXES
 - fix corner case for wrong path for state file during `ResumeOperationsAfterRestart` fix [1126](https://github.com/Altinity/clickhouse-backup/issues/1126)

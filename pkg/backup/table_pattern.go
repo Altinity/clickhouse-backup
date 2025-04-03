@@ -326,7 +326,7 @@ func (b *Backuper) enrichTablePatternsByInnerDependencies(metadataPath string, t
 	return tablePatterns, nil
 }
 
-var queryRE = regexp.MustCompile(`(?m)^(CREATE|ATTACH) (TABLE|VIEW|LIVE VIEW|MATERIALIZED VIEW|DICTIONARY|FUNCTION) (\x60?)([^\s\x60.]*)(\x60?)\.\x60?([^\s\x60.]*)\x60?( UUID '[^']+')?(?:( TO )(\x60?)([^\s\x60.]*)(\x60?)(\.)(\x60?)([^\s\x60.]*)(\x60?))?(?:(.+FROM )(\x60?)([^\s\x60.]*)(\x60?)(\.)(\x60?)([^\s\x60.]*)(\x60?))?`)
+var queryRE = regexp.MustCompile(`(?m)^(CREATE|ATTACH) (TABLE|VIEW|LIVE VIEW|MATERIALIZED VIEW|DICTIONARY|FUNCTION) (\x60?)([^\s\x60.]*)(\x60?)\.(\x60?)([^\s\x60.]*)(\x60?)( UUID '[^']+')?(?:( TO )(\x60?)([^\s\x60.]*)(\x60?)(\.)(\x60?)([^\s\x60.]*)(\x60?))?(?:(.+FROM )(\x60?)([^\s\x60.]*)(\x60?)(\.)(\x60?)([^\s\x60.]*)(\x60?))?`)
 var createOrAttachRE = regexp.MustCompile(`(?m)^(CREATE|ATTACH)`)
 var uuidRE = regexp.MustCompile(`UUID '([a-f\d\-]+)'`)
 
@@ -361,10 +361,10 @@ func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRu
 				if !usualIdentifier.MatchString(createTargetDb) && !strings.Contains(matches[0][3], "`") {
 					createTargetDb = "`" + createTargetDb + "`"
 				}
-				toClauseTargetDb := setMatchedDb(matches[0][10], matches[0][9])
-				fromClauseTargetDb := setMatchedDb(matches[0][18], matches[0][17])
+				toClauseTargetDb := setMatchedDb(matches[0][12], matches[0][11])
+				fromClauseTargetDb := setMatchedDb(matches[0][20], matches[0][19])
 				// matching CREATE|ATTACH ... TO .. SELECT ... FROM ... command
-				substitution = fmt.Sprintf("${1} ${2} ${3}%v${5}.${6}${7}${8}${9}%v${11}${12}${13}${14}${15}${16}${17}%v${19}${20}${21}${22}${23}", createTargetDb, toClauseTargetDb, fromClauseTargetDb)
+				substitution = fmt.Sprintf("${1} ${2} ${3}%v${5}.${6}${7}${8}${9}${10}${11}%v${13}${14}${15}${16}${17}${18}${19}%v${21}${22}${23}${24}${25}", createTargetDb, toClauseTargetDb, fromClauseTargetDb)
 			} else {
 				if originTable.Query == "" {
 					continue
@@ -413,26 +413,28 @@ func changeTableQueryToAdjustTableMapping(originTables *ListOfTables, tableMapRu
 
 			if createOrAttachRE.MatchString(originTable.Query) {
 				matches := queryRE.FindAllStringSubmatch(originTable.Query, -1)
-				if len(matches) == 0 || len(matches[0]) < 7 || matches[0][6] != originTable.Table {
+				if len(matches) == 0 || len(matches[0]) < 8 || matches[0][7] != originTable.Table {
 					return fmt.Errorf("invalid SQL: %s\nRE: `%s`\nmatches=%#v for restore-table-mapping[%s]=%s", originTable.Query, queryRE.String(), matches, originTable.Table, targetTable)
 				}
-				setMatchedDb := func(clauseTargetTable string) string {
+				setMatchedTable := func(clauseTargetTable, beforeQuote string) string {
 					if clauseMappedTable, isClauseMapped := tableMapRule[clauseTargetTable]; isClauseMapped {
 						clauseTargetTable = clauseMappedTable
-						if !usualIdentifier.MatchString(clauseTargetTable) {
+						// https://github.com/Altinity/clickhouse-backup/issues/820#issuecomment-2773501803
+						if !usualIdentifier.MatchString(clauseTargetTable) && !strings.Contains(beforeQuote, "`") {
 							clauseTargetTable = "`" + clauseTargetTable + "`"
 						}
 					}
 					return clauseTargetTable
 				}
 				createTargetTable := targetTable
-				if !usualIdentifier.MatchString(createTargetTable) {
+				// https://github.com/Altinity/clickhouse-backup/issues/820#issuecomment-2773501803
+				if !usualIdentifier.MatchString(createTargetTable) && !strings.Contains(matches[0][6], "`") {
 					createTargetTable = "`" + createTargetTable + "`"
 				}
-				toClauseTargetTable := setMatchedDb(matches[0][14])
-				fromClauseTargetTable := setMatchedDb(matches[0][22])
+				toClauseTargetTable := setMatchedTable(matches[0][16], matches[0][15])
+				fromClauseTargetTable := setMatchedTable(matches[0][24], matches[0][23])
 				// matching CREATE|ATTACH ... TO .. SELECT ... FROM ... command
-				substitution = fmt.Sprintf("${1} ${2} ${3}${4}${5}.%v${7}${8}${9}${10}${11}${12}${13}%v${15}${16}${17}${18}${19}${20}${21}%v${23}", createTargetTable, toClauseTargetTable, fromClauseTargetTable)
+				substitution = fmt.Sprintf("${1} ${2} ${3}${4}${5}.${6}%v${8}${9}${10}${11}${12}${13}${14}${15}%v${17}${18}${19}${20}${21}${22}${23}%v${25}", createTargetTable, toClauseTargetTable, fromClauseTargetTable)
 			} else {
 				if originTable.Query == "" {
 					continue

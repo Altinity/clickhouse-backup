@@ -68,11 +68,11 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	}
 	defer b.ch.Close()
 
-	clickHouseVersion, versionErr := b.ch.GetVersion(ctx)
+	version, versionErr := b.ch.GetVersion(ctx)
 	if versionErr != nil {
 		return versionErr
 	}
-	if clickHouseVersion < 24003000 && skipProjections != nil && len(skipProjections) > 0 {
+	if version < 24003000 && skipProjections != nil && len(skipProjections) > 0 {
 		return fmt.Errorf("backup with skip-projections can restore only in 24.3+")
 	}
 	// https://github.com/Altinity/clickhouse-backup/issues/868
@@ -85,10 +85,6 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 		return fmt.Errorf("select backup for restore")
 	}
 	disks, err := b.ch.GetDisks(ctx, true)
-	if err != nil {
-		return err
-	}
-	version, err := b.ch.GetVersion(ctx)
 	if err != nil {
 		return err
 	}
