@@ -1139,7 +1139,7 @@ func (ch *ClickHouse) GetAccessManagementPath(ctx context.Context, disks []Disk)
 	rows := make([]struct {
 		AccessPath string `ch:"access_path"`
 	}, 0)
-	if err := ch.SelectContext(ctx, &rows, "SELECT JSONExtractString(params,'path') AS access_path FROM system.user_directories WHERE type='local directory'"); err != nil || len(rows) == 0 {
+	if err := ch.SelectContext(ctx, &rows, "SELECT JSONExtractString(params,'path') AS access_path FROM system.user_directories WHERE type='local_directory'"); err != nil || len(rows) == 0 {
 		configFile, doc, err := ch.ParseXML(ctx, "config.xml")
 		if err != nil {
 			log.Warn().Msgf("can't parse config.xml from %s, error: %v", configFile, err)
