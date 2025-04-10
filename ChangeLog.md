@@ -1,3 +1,7 @@
+# v2.6.14
+BUG FIXES
+- fix restore RBAC, fix [1130](https://github.com/Altinity/clickhouse-backup/pull/1130), thanks @yudhiesh
+
 # v2.6.13
 BUG FIXES
 - fix corner case for `--restore-database-mapping`, fix [820](https://github.com/Altinity/clickhouse-backup/issues/820#issuecomment-2773501803)
