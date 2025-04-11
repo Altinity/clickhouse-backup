@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -445,6 +446,9 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) e
 	return nil
 }
 
+// S3VirtualHostBucketRE https://docs.aws.amazon.com/AmazonS3/latest/dev/VirtualHosting.html#virtual-hosted-style-access
+var S3VirtualHostBucketRE = regexp.MustCompile(`((.+)\.(s3express[\-a-z0-9]+|s3|cos|obs|oss-data-acc|oss|eos)([.\-][a-z0-9\-.:]+))`)
+
 func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Config, diskName string) (*ObjectStorageConnection, error) {
 	creds, exists := DisksCredentials.Load(diskName)
 	if !exists {
@@ -545,6 +549,12 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 			// https://github.com/Altinity/clickhouse-backup/issues/1035
 			s3cfg.Bucket = s3URL.Host
 			s3cfg.Path = s3URL.Path
+			s3cfg.ForcePathStyle = false
+		} else if S3VirtualHostBucketRE.MatchString(s3URL.Host) {
+			hostParts := strings.Split(s3URL.Host, ".")
+			s3cfg.Bucket = hostParts[0]
+			s3cfg.Endpoint = s3URL.Scheme + "://" + strings.Join(hostParts[1:], ".")
+			s3cfg.Path = strings.Trim(s3URL.Path, "/")
 			s3cfg.ForcePathStyle = false
 		} else {
 			s3cfg.Endpoint = s3URL.Scheme + "://" + s3URL.Host

@@ -1,6 +1,7 @@
 # v2.6.15
 BUG FIXES
 - fix wrong cleanup *.state2 file in ResumeOperationsAfterRestart, after 2.6.12 [1126](https://github.com/Altinity/clickhouse-backup/issues/1126), fix [1133](https://github.com/Altinity/clickhouse-backup/issues/1133)
+- fix virtual host bucket URL style in s3 access disk
 
 # v2.6.14
 BUG FIXES
