@@ -90,9 +90,6 @@ func (s *State) CleanupStateIfParamsChange(params map[string]interface{}) {
 		return
 	}
 	needCleanup := false
-	if s.params != nil && params == nil {
-		needCleanup = true
-	}
 	if s.params != nil && params != nil && !common.CompareMaps(s.params, params) {
 		needCleanup = true
 	}

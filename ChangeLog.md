@@ -1,3 +1,7 @@
+# v2.6.15
+BUG FIXES
+- fix wrong cleanup *.state2 file in ResumeOperationsAfterRestart, after 2.6.12 [1126](https://github.com/Altinity/clickhouse-backup/issues/1126), fix [1133](https://github.com/Altinity/clickhouse-backup/issues/1133)
+
 # v2.6.14
 BUG FIXES
 - fix restore RBAC, fix [1130](https://github.com/Altinity/clickhouse-backup/pull/1130), thanks @yudhiesh
