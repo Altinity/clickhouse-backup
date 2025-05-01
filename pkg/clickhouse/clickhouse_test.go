@@ -189,7 +189,7 @@ func TestEnrichQueryWithOnCluster(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.Name, func(t *testing.T) {
-			result := ch.enrichQueryWithOnCluster(tc.Query, tc.OnCluster, tc.Version)
+			result := ch.enrichQueryWithOnCluster(tc.Query, tc.OnCluster, tc.Version, "Atomic")
 			assert.Equal(t, tc.ExpectedQuery, result)
 		})
 	}
