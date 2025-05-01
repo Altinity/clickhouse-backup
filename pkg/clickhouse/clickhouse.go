@@ -911,12 +911,15 @@ func (ch *ClickHouse) addOnClusterToCreateDatabase(cluster string, query string)
 }
 
 // DropOrDetachTable - drop ClickHouse table
-func (ch *ClickHouse) DropOrDetachTable(table Table, query string, onCluster string, ignoreDependencies bool, version int, defaultDataPath string, useDetach bool) error {
-	var isAtomic bool
+func (ch *ClickHouse) DropOrDetachTable(table Table, query, onCluster string, ignoreDependencies bool, version int, defaultDataPath string, useDetach bool, databaseEngine string) error {
+	var isAtomicOrReplicated bool
 	var err error
-	if isAtomic, err = ch.IsAtomic(table.Database); err != nil {
-		return err
+	if databaseEngine == "" {
+		if databaseEngine, err = ch.GetDatabaseEngine(table.Database); err != nil {
+			return err
+		}
 	}
+	isAtomicOrReplicated = databaseEngine == "Atomic" || databaseEngine == "Replicated"
 	kind := "TABLE"
 	if strings.HasPrefix(query, "CREATE DICTIONARY") {
 		kind = "DICTIONARY"
@@ -929,9 +932,14 @@ func (ch *ClickHouse) DropOrDetachTable(table Table, query string, onCluster str
 
 	dropQuery := fmt.Sprintf("%s %s IF EXISTS `%s`.`%s`", action, kind, table.Database, table.Name)
 	if version > 19000000 && onCluster != "" {
-		dropQuery += " ON CLUSTER '" + onCluster + "' "
+		// https://github.com/Altinity/clickhouse-backup/issues/1127
+		if !strings.HasPrefix(databaseEngine, "Replicated") {
+			dropQuery += " ON CLUSTER '" + onCluster + "' "
+		} else {
+			log.Warn().Msgf("can't drop or detach table `%s`.`%s` on cluster for database engine=Replicated, will drop only in current host", table.Database, table.Name)
+		}
 	}
-	if isAtomic {
+	if isAtomicOrReplicated {
 		dropQuery += " NO DELAY"
 	}
 	if ignoreDependencies {
@@ -959,14 +967,14 @@ var onClusterRe = regexp.MustCompile(`(?im)\s+ON\s+CLUSTER\s+`)
 var distributedRE = regexp.MustCompile(`(Distributed)\(([^,]+),([^)]+)\)`)
 
 // CreateTable - create ClickHouse table
-func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDependencies bool, onCluster string, version int, defaultDataPath string, asAttach bool) error {
+func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDependencies bool, onCluster string, version int, defaultDataPath string, asAttach bool, databaseEngine string) error {
 	var err error
 	// https://github.com/Altinity/clickhouse-backup/issues/868
 	if asAttach && onCluster != "" {
 		return fmt.Errorf("can't apply `--restore-schema-as-attach` and config `restore_schema_on_cluster` together")
 	}
 	if dropTable {
-		if err = ch.DropOrDetachTable(table, query, onCluster, ignoreDependencies, version, defaultDataPath, asAttach); err != nil {
+		if err = ch.DropOrDetachTable(table, query, onCluster, ignoreDependencies, version, defaultDataPath, asAttach, databaseEngine); err != nil {
 			return err
 		}
 	}
@@ -976,7 +984,7 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 		return ch.CreateTableAsAttach(query)
 	}
 
-	query = ch.enrichQueryWithOnCluster(query, onCluster, version)
+	query = ch.enrichQueryWithOnCluster(query, onCluster, version, databaseEngine)
 
 	if !strings.Contains(query, table.Name) {
 		return errors.New(fmt.Sprintf("schema query ```%s``` doesn't contains table name `%s`", query, table.Name))
@@ -1006,10 +1014,18 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 	// https://github.com/Altinity/clickhouse-backup/issues/574, replace ENGINE=Distributed to new cluster name
 	if onCluster != "" && distributedRE.MatchString(query) {
 		matches := distributedRE.FindAllStringSubmatch(query, -1)
-		if onCluster != strings.Trim(matches[0][2], "'\" ") {
-			log.Warn().Msgf("Will replace cluster ENGINE=Distributed %s -> %s", matches[0][2], onCluster)
-			query = distributedRE.ReplaceAllString(query, fmt.Sprintf("${1}(%s,${3})", onCluster))
+		newCluster := onCluster
+		oldCluster := strings.Trim(matches[0][2], "'\" ")
+		if newCluster != oldCluster && !strings.Contains(oldCluster, "{cluster}") {
+			log.Warn().Msgf("will replace cluster ENGINE=Distributed %s -> %s", matches[0][2], newCluster)
+			query = distributedRE.ReplaceAllString(query, fmt.Sprintf("${1}(%s,${3})", newCluster))
 		}
+	}
+
+	// https://github.com/Altinity/clickhouse-backup/issues/1127
+	query, err = ch.cleanUUIDForReplicatedDatabase(table, query, databaseEngine)
+	if err != nil {
+		return fmt.Errorf("ch.cleanUUIDForReplicatedDatabase return error: %v", err)
 	}
 
 	// WINDOW VIEW unavailable after 24.3
@@ -1030,6 +1046,27 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 	return nil
 }
 
+func (ch *ClickHouse) cleanUUIDForReplicatedDatabase(table Table, query string, databaseEngine string) (string, error) {
+	if strings.HasPrefix(databaseEngine, "Replicated") && uuidRE.MatchString(query) {
+		uuidAllowExplicit := ""
+		if settingsErr := ch.SelectSingleRowNoCtx(&uuidAllowExplicit, "SELECT value FROM system.settings WHERE name='database_replicated_allow_explicit_uuid'"); settingsErr != nil {
+			return "", settingsErr
+		}
+		if uuidAllowExplicit == "0" || uuidAllowExplicit == "" {
+			uuidReplaced := false
+			query = uuidRE.ReplaceAllStringFunc(query, func(match string) string {
+				if !uuidReplaced {
+					uuidReplaced = true
+					log.Warn().Msgf("database `%s` engine=%s doesn't allow use UUID explicitly, check `database_replicated_allow_explicit_uuid` in system.settings", table.Database, databaseEngine)
+					return ""
+				}
+				return match
+			})
+		}
+	}
+	return query, nil
+}
+
 func (ch *ClickHouse) CreateTableAsAttach(query string) error {
 	attachQuery := strings.Replace(query, "CREATE", "ATTACH", 1)
 	if attachErr := ch.Query(attachQuery); attachErr != nil {
@@ -1038,8 +1075,8 @@ func (ch *ClickHouse) CreateTableAsAttach(query string) error {
 	return nil
 }
 
-func (ch *ClickHouse) enrichQueryWithOnCluster(query string, onCluster string, version int) string {
-	if version > 19000000 && onCluster != "" && !onClusterRe.MatchString(query) {
+func (ch *ClickHouse) enrichQueryWithOnCluster(query string, onCluster string, version int, databaseEngine string) string {
+	if version > 19000000 && !strings.HasPrefix(databaseEngine, "Replicated") && onCluster != "" && !onClusterRe.MatchString(query) {
 		tryMatchReList := []*regexp.Regexp{attachViewToClauseRe, attachViewAsWithRe, attachViewRe, createViewToClauseRe, createViewAsWithRe, createViewRe, createObjRe}
 		for _, tryMatchRe := range tryMatchReList {
 			if tryMatchRe.MatchString(query) {
@@ -1125,12 +1162,20 @@ func (ch *ClickHouse) LogQuery(query string, args ...interface{}) string {
 	return query
 }
 
-func (ch *ClickHouse) IsAtomic(database string) (bool, error) {
-	var isDatabaseAtomic string
-	if err := ch.SelectSingleRowNoCtx(&isDatabaseAtomic, fmt.Sprintf("SELECT engine FROM system.databases WHERE name = '%s'", database)); err != nil {
+func (ch *ClickHouse) IsDbAtomicOrReplicated(database string) (bool, error) {
+	dbEngine, err := ch.GetDatabaseEngine(database)
+	if err != nil {
 		return false, err
 	}
-	return isDatabaseAtomic == "Atomic", nil
+	return dbEngine == "Atomic" || dbEngine == "Replicated", nil
+}
+
+func (ch *ClickHouse) GetDatabaseEngine(database string) (string, error) {
+	var dbEngine string
+	if err := ch.SelectSingleRowNoCtx(&dbEngine, fmt.Sprintf("SELECT engine FROM system.databases WHERE name = '%s'", database)); err != nil {
+		return "", err
+	}
+	return dbEngine, nil
 }
 
 // GetAccessManagementPath extract path from following sources system.user_directories, access_control_path from /var/lib/clickhouse/preprocessed_configs/config.xml, system.disks

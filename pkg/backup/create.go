@@ -297,7 +297,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 			var realSize, objectDiskSize map[string]int64
 			var disksToPartsMap map[string][]metadata.Part
 			if doBackupData && table.BackupType == clickhouse.ShardBackupFull {
-				logger.Debug().Msg("create data")
+				logger.Debug().Msg("begin data backup")
 				shadowBackupUUID := strings.ReplaceAll(uuid.New().String(), "-", "")
 				var addTableToBackupErr error
 				disksToPartsMap, realSize, objectDiskSize, addTableToBackupErr = b.AddTableToLocalBackup(createCtx, backupName, tablesDiffFromRemote, shadowBackupUUID, disks, &table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}], skipProjections, version)
@@ -853,6 +853,8 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 	log.Debug().Fields(map[string]interface{}{
 		"disksToPartsMap": disksToPartsMap, "realSize": realSize, "objectDiskSize": objectDiskSize,
 		"operation": "AddTableToLocalBackup",
+		"table":     table.Name,
+		"database":  table.Database,
 	}).Msg("done")
 	return disksToPartsMap, realSize, objectDiskSize, nil
 }

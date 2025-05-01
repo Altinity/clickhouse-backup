@@ -674,3 +674,12 @@ cat <<EOT > /etc/clickhouse-server/config.d/user_defined_zookeeper_path.xml
 </yandex>
 EOT
 fi
+
+
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[1-9]+ ]]; then
+cat <<EOT > /etc/clickhouse-server/users.d/database_replicated_allow_replicated_engine_arguments.xml
+<yandex>
+  <profiles><default><database_replicated_allow_replicated_engine_arguments>1</database_replicated_allow_replicated_engine_arguments></default></profiles>
+</yandex>
+EOT
+fi

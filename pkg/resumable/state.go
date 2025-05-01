@@ -30,9 +30,9 @@ func NewState(stateBackupDir, backupName, command string, params map[string]inte
 		log.Warn().Msgf("resumable state: can't open %s error: %v", s.stateFile, err)
 		return &s
 	}
-	s.LoadState()
-	s.LoadParams()
-	s.CleanupStateIfParamsChange(params)
+	s.loadState()
+	s.loadParams()
+	s.cleanupStateIfParamsChange(params)
 	return &s
 }
 
@@ -48,7 +48,7 @@ func (s *State) getBucket(tx *bolt.Tx) *bolt.Bucket {
 	return bucket
 }
 
-func (s *State) LoadParams() {
+func (s *State) loadParams() {
 	if s.db == nil {
 		return
 	}
@@ -65,7 +65,7 @@ func (s *State) LoadParams() {
 	}
 }
 
-func (s *State) LoadState() {
+func (s *State) loadState() {
 	if s.db == nil {
 		return
 	}
@@ -81,17 +81,20 @@ func (s *State) LoadState() {
 		return nil
 	})
 	if err != nil {
-		log.Warn().Msgf("LoadState error: %v", err)
+		log.Warn().Msgf("loadState error: %v", err)
 	}
 }
 
-func (s *State) CleanupStateIfParamsChange(params map[string]interface{}) {
+func (s *State) cleanupStateIfParamsChange(params map[string]interface{}) {
 	if s.db == nil {
 		return
 	}
 	needCleanup := false
 	if s.params != nil && params != nil && !common.CompareMaps(s.params, params) {
 		needCleanup = true
+	}
+	if s.params != nil && params == nil {
+		params = s.params
 	}
 
 	if needCleanup {

@@ -419,7 +419,7 @@ func (b *Backuper) getTablesDiffFromRemote(ctx context.Context, diffFromRemote s
 	if len(diffRemoteMetadata.Tables) != 0 {
 		diffTablesList, tableListErr := getTableListByPatternRemote(ctx, b, diffRemoteMetadata, tablePattern, false)
 		if tableListErr != nil {
-			return nil, fmt.Errorf("getTableListByPatternRemote return erro: %v", tableListErr)
+			return nil, fmt.Errorf("getTableListByPatternRemote return error: %v", tableListErr)
 		}
 		for _, t := range diffTablesList {
 			tablesForUploadFromDiff[metadata.TableTitle{
@@ -497,4 +497,21 @@ func (b *Backuper) filterPartsAndFilesByDisk(tables ListOfTables, disks []clickh
 		}
 		tables[i].Files = filteredFiles
 	}
+}
+
+// https://github.com/Altinity/clickhouse-backup/issues/1127
+func (b *Backuper) prepareDatabaseEnginesMap(tables ListOfTables, databases []metadata.DatabasesMeta) map[string]string {
+	databaseEngines := make(map[string]string)
+	for _, schema := range tables {
+		if databaseEngine, isEngineFound := databaseEngines[schema.Database]; !isEngineFound {
+			for _, database := range databases {
+				if database.Name == schema.Database {
+					databaseEngine = database.Engine
+					databaseEngines[schema.Database] = databaseEngine
+					break
+				}
+			}
+		}
+	}
+	return databaseEngines
 }

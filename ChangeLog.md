@@ -1,3 +1,10 @@
+# v2.6.16
+BUG FIXES
+- fix database errors related to database with `engine=Replicated` fix [1127](https://github.com/Altinity/clickhouse-backup/issues/1127)
+- avoid to replace {cluster} in engine=Distributed fix [574](https://github.com/Altinity/clickhouse-backup/issues/574)
+- make some resumable state methods private and properly restore parameter from `*.state2` files after restart API server
+- some logging cleanup
+
 # v2.6.15
 BUG FIXES
 - fix wrong cleanup *.state2 file in ResumeOperationsAfterRestart, after 2.6.12 [1126](https://github.com/Altinity/clickhouse-backup/issues/1126), fix [1133](https://github.com/Altinity/clickhouse-backup/issues/1133)

@@ -45,6 +45,7 @@ var dockerPool *pool.ObjectPool
 
 var dbNameAtomic = "_test#$.ДБ_atomic_/issue\\_1091"
 var dbNameOrdinary = "_test#$.ДБ_ordinary_/issue\\_1091"
+var dbNameReplicated = "_test#$.ДБ_Replicated_/issue\\_1091"
 var dbNameMySQL = "mysql_db"
 var dbNamePostgreSQL = "pgsql_db"
 var Issue331Issue1091Atomic = "_issue331._atomic_/issue\\_1091"
@@ -615,9 +616,9 @@ func TestChangeReplicationPathIfReplicaExists(t *testing.T) {
 
 	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "--tables", "default.test_replica_wrong_path*", "test_wrong_path"))
 
-	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: "default", Name: "test_replica_wrong_path"}, createSQL, "", false, version, "", false))
+	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: "default", Name: "test_replica_wrong_path"}, createSQL, "", false, version, "", false, ""))
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), minimalChVersionWithNonBugUUID) >= 0 {
-		r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: "default", Name: "test_replica_wrong_path_uuid"}, createWithUUIDSQL, "", false, version, "", false))
+		r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: "default", Name: "test_replica_wrong_path_uuid"}, createWithUUIDSQL, "", false, version, "", false, ""))
 	}
 	// hack for drop tables without drop data from keeper
 	_ = createReplicatedTable("test_replica_wrong_path2", "", "'/clickhouse/tables/wrong_path','{replica}'")
@@ -668,9 +669,9 @@ func TestChangeReplicationPathIfReplicaExists(t *testing.T) {
 		env.queryWithNoError(r, fmt.Sprintf("SYSTEM DROP REPLICA '{replica}' FROM ZKPATH '/clickhouse/tables/%s/0'", createUUID.String()))
 	}
 
-	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: "default", Name: "test_replica_wrong_path"}, createSQL, "", false, version, "", false))
+	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: "default", Name: "test_replica_wrong_path"}, createSQL, "", false, version, "", false, ""))
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), minimalChVersionWithNonBugUUID) >= 0 {
-		r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: "default", Name: "test_replica_wrong_path_uuid"}, createWithUUIDSQL, "", false, version, "", false))
+		r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: "default", Name: "test_replica_wrong_path_uuid"}, createWithUUIDSQL, "", false, version, "", false, ""))
 	}
 
 	r.NoError(env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_wrong_path"))
@@ -896,7 +897,7 @@ func TestS3NoDeletePermission(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "restore_remote", "no_delete_backup")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", "no_delete_backup")
 	r.Error(env.DockerExec("clickhouse-backup", "clickhouse-backup", "delete", "remote", "no_delete_backup"))
-	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Issue1091Atomic, Issue331Issue1091Ordinary}
+	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameReplicated, dbNameMySQL, dbNamePostgreSQL, Issue331Issue1091Atomic, Issue331Issue1091Ordinary}
 	dropDatabasesFromTestDataDataSet(t, r, env, databaseList)
 	r.NoError(env.DockerCP("config-s3.yml", "clickhouse-backup:/etc/clickhouse-backup/config.yml"))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "remote", "no_delete_backup")
@@ -1653,7 +1654,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 				pauseStart := time.Now()
 				time.Sleep(time.Duration(pause) * time.Nanosecond)
 				log.Debug().Msgf("pause=%s pauseStart=%s", time.Duration(pause).String(), pauseStart.String())
-				err = env.ch.DropOrDetachTable(clickhouse.Table{Database: "freeze_not_exists", Name: "freeze_not_exists"}, ifNotExistsCreateSQL, "", false, chVersion, "", false)
+				err = env.ch.DropOrDetachTable(clickhouse.Table{Database: "freeze_not_exists", Name: "freeze_not_exists"}, ifNotExistsCreateSQL, "", false, chVersion, "", false, "")
 				r.NoError(err)
 			}
 			resumeChannel <- 1
@@ -2339,7 +2340,7 @@ func TestCheckSystemPartsColumns(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create", "test_system_parts_columns")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", "test_system_parts_columns")
 
-	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: t.Name(), Name: "test_system_parts_columns"}, createSQL, "", false, version, "", false))
+	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: t.Name(), Name: "test_system_parts_columns"}, createSQL, "", false, version, "", false, ""))
 
 	// test incompatible data types
 	env.queryWithNoError(r, "CREATE TABLE "+t.Name()+".test_system_parts_columns(dt Date, v String) ENGINE=MergeTree() PARTITION BY dt ORDER BY tuple()")
@@ -2357,7 +2358,7 @@ func TestCheckSystemPartsColumns(t *testing.T) {
 	r.Error(env.DockerExec("clickhouse-backup", "ls", "-lah", "/var/lib/clickhouse/backup/test_system_parts_columns"))
 	r.Error(env.DockerExec("clickhouse-backup", "clickhouse-backup", "delete", "local", "test_system_parts_columns"))
 
-	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: t.Name(), Name: "test_system_parts_columns"}, createSQL, "", false, version, "", false))
+	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: t.Name(), Name: "test_system_parts_columns"}, createSQL, "", false, version, "", false, ""))
 	r.NoError(env.dropDatabase(t.Name(), true))
 	env.Cleanup(t, r)
 }
@@ -2375,7 +2376,7 @@ func TestKeepBackupRemoteAndDiffFromRemote(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		backupNames[i] = fmt.Sprintf("keep_remote_backup_%d", i)
 	}
-	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Issue1091Atomic, Issue331Issue1091Ordinary}
+	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameReplicated, dbNameMySQL, dbNamePostgreSQL, Issue331Issue1091Atomic, Issue331Issue1091Ordinary}
 	fullCleanup(t, r, env, backupNames, []string{"remote", "local"}, databaseList, false, false, "config-s3.yml")
 	incrementData := defaultIncrementData
 	generateTestData(t, r, env, "S3", false, defaultTestData)
@@ -2527,7 +2528,7 @@ func TestGetPartitionId(t *testing.T) {
 			"",
 		},
 	}
-	if isAtomic, _ := env.ch.IsAtomic("default"); !isAtomic {
+	if isAtomicOrReplicated, _ := env.ch.IsDbAtomicOrReplicated("default"); !isAtomicOrReplicated {
 		testCases[0].CreateTableSQL = strings.Replace(testCases[0].CreateTableSQL, "UUID 'b45e751f-6c06-42a3-ab4a-f5bb9ac3716e'", "", 1)
 	}
 	for _, tc := range testCases {
@@ -2598,7 +2599,7 @@ func TestReplicatedCopyToDetached(t *testing.T) {
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.17") < 0 {
 		createSQL = strings.NewReplacer("{database}", dbName, "{table}", tableName).Replace(createSQL)
 	}
-	r.NoError(env.ch.CreateTable(clickhouse.Table{Database: dbName, Name: tableName}, createSQL, false, false, "", version, "/var/lib/clickhouse", false))
+	r.NoError(env.ch.CreateTable(clickhouse.Table{Database: dbName, Name: tableName}, createSQL, false, false, "", version, "/var/lib/clickhouse", false, ""))
 
 	// Insert test data
 	env.queryWithNoError(r, fmt.Sprintf("INSERT INTO %s.%s SELECT number, toString(number) FROM numbers(100)", dbName, tableName))
@@ -2696,7 +2697,7 @@ func TestRestoreMutationInProgress(t *testing.T) {
 	r.NoError(createErr)
 	r.NotContains(out, "have inconsistent data types")
 
-	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: t.Name(), Name: "test_restore_mutation_in_progress"}, "", "", false, version, "", false))
+	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: t.Name(), Name: "test_restore_mutation_in_progress"}, "", "", false, version, "", false, ""))
 	var restoreErr error
 	restoreErr = env.DockerExec("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--rm", "--tables="+t.Name()+".test_restore_mutation_in_progress", "test_restore_mutation_in_progress")
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") >= 0 && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.8") < 0 {
@@ -2749,7 +2750,7 @@ func TestRestoreMutationInProgress(t *testing.T) {
 
 	env.DockerExecNoError(r, "clickhouse", "clickhouse", "client", "-q", "SELECT * FROM system.mutations FORMAT Vertical")
 
-	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: t.Name(), Name: "test_restore_mutation_in_progress"}, "", "", false, version, "", false))
+	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: t.Name(), Name: "test_restore_mutation_in_progress"}, "", "", false, version, "", false, ""))
 	r.NoError(env.dropDatabase(t.Name(), false))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_restore_mutation_in_progress")
 	env.Cleanup(t, r)
@@ -2880,7 +2881,7 @@ func TestFIPS(t *testing.T) {
 	// https://www.perplexity.ai/search/0920f1e8-59ec-4e14-b779-ba7b2e037196
 	testTLSCerts("rsa", "4096", "", "ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-AES256-GCM-SHA384", "AES_128_GCM_SHA256", "AES_256_GCM_SHA384")
 	testTLSCerts("ecdsa", "", "prime256v1", "ECDHE-ECDSA-AES128-GCM-SHA256", "ECDHE-ECDSA-AES256-GCM-SHA384")
-	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: t.Name(), Name: "fips_table"}, createSQL, "", false, 0, "", false))
+	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: t.Name(), Name: "fips_table"}, createSQL, "", false, 0, "", false, ""))
 	r.NoError(env.dropDatabase(t.Name(), true))
 	env.Cleanup(t, r)
 }
@@ -3056,7 +3057,7 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	fullBackupName := fmt.Sprintf("%s_full_%d", t.Name(), rand.Int())
 	incrementBackupName := fmt.Sprintf("%s_increment_%d", t.Name(), rand.Int())
 	incrementBackupName2 := fmt.Sprintf("%s_increment2_%d", t.Name(), rand.Int())
-	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameMySQL, dbNamePostgreSQL, Issue331Issue1091Atomic, Issue331Issue1091Ordinary}
+	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameReplicated, dbNameMySQL, dbNamePostgreSQL, Issue331Issue1091Atomic, Issue331Issue1091Ordinary}
 	tablesPattern := fmt.Sprintf("*_%s.*", t.Name())
 	log.Debug().Msg("Clean before start")
 	fullCleanup(t, r, env, []string{fullBackupName, incrementBackupName}, []string{"remote", "local"}, databaseList, false, false, backupConfig)
@@ -3512,7 +3513,7 @@ func fullCleanup(t *testing.T, r *require.Assertions, env *TestEnvironment, back
 
 func generateTestData(t *testing.T, r *require.Assertions, env *TestEnvironment, remoteStorageType string, createAllTypesOfObjectTables bool, testData []TestDataStruct) []TestDataStruct {
 	log.Debug().Msgf("Generate test data %s with _%s suffix", remoteStorageType, t.Name())
-	testData = generateTestDataWithDifferentStoragePolicy(remoteStorageType, createAllTypesOfObjectTables, 0, 5, testData)
+	testData = generateTestDataForDifferentServerVersion(remoteStorageType, createAllTypesOfObjectTables, 0, 5, testData)
 	for _, data := range testData {
 		if isTableSkip(env, data, false) {
 			continue
@@ -3528,9 +3529,14 @@ func generateTestData(t *testing.T, r *require.Assertions, env *TestEnvironment,
 	return testData
 }
 
-func generateTestDataWithDifferentStoragePolicy(remoteStorageType string, createAllTypesOfObjectTables bool, offset, rowsCount int, testData []TestDataStruct) []TestDataStruct {
-	log.Debug().Msgf("generateTestDataWithDifferentStoragePolicy remoteStorageType=%s", remoteStorageType)
-	for databaseName, databaseEngine := range map[string]string{dbNameOrdinary: "Ordinary", dbNameAtomic: "Atomic"} {
+func generateTestDataForDifferentServerVersion(remoteStorageType string, createAllTypesOfObjectTables bool, offset, rowsCount int, testData []TestDataStruct) []TestDataStruct {
+	log.Debug().Msgf("generateTestDataForDifferentServerVersion remoteStorageType=%s", remoteStorageType)
+	dbNameEngineMapping := map[string]string{dbNameOrdinary: "Ordinary", dbNameAtomic: "Atomic"}
+	// https://github.com/Altinity/clickhouse-backup/issues/1127
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 {
+		dbNameEngineMapping[dbNameReplicated] = "Replicated('/clickhouse/{cluster}/{database}','{shard}','{replica}')"
+	}
+	for databaseName, databaseEngine := range dbNameEngineMapping {
 		testDataWithStoragePolicy := TestDataStruct{
 			Database: databaseName, DatabaseEngine: databaseEngine,
 			Rows: func() []map[string]interface{} {
@@ -3596,7 +3602,7 @@ func generateTestDataWithDifferentStoragePolicy(remoteStorageType string, create
 
 func generateIncrementTestData(t *testing.T, r *require.Assertions, ch *TestEnvironment, remoteStorageType string, createObjectTables bool, incrementData []TestDataStruct, incrementNumber int) []TestDataStruct {
 	log.Debug().Msgf("Generate increment test data for %s", remoteStorageType)
-	incrementData = generateTestDataWithDifferentStoragePolicy(remoteStorageType, createObjectTables, 5*incrementNumber, 5, incrementData)
+	incrementData = generateTestDataForDifferentServerVersion(remoteStorageType, createObjectTables, 5*incrementNumber, 5, incrementData)
 	for _, data := range incrementData {
 		if isTableSkip(ch, data, false) {
 			continue
@@ -3747,7 +3753,7 @@ func (env *TestEnvironment) createTestSchema(t *testing.T, data TestDataStruct, 
 		createSQL += fmt.Sprintf(" IF NOT EXISTS `%s`.`%s` ", data.Database, data.Name)
 	}
 
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.0") == 1 && !data.IsFunction {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.0") > 0 && !data.IsFunction && !strings.HasPrefix(data.DatabaseEngine, "Replicated") {
 		createSQL += " ON CLUSTER 'cluster' "
 	}
 	createSQL += data.Schema
@@ -3795,7 +3801,7 @@ func (env *TestEnvironment) createTestSchema(t *testing.T, data TestDataStruct, 
 			Name:     data.Name,
 		},
 		createSQL,
-		false, false, "", 0, "/var/lib/clickhouse", false,
+		false, false, "", 0, "/var/lib/clickhouse", false, data.DatabaseEngine,
 	)
 	return err
 }
@@ -3832,13 +3838,13 @@ func (env *TestEnvironment) createTestData(t *testing.T, data TestDataStruct) er
 }
 
 func (env *TestEnvironment) dropDatabase(database string, ifExists bool) (err error) {
-	var isAtomic bool
+	var isAtomicOrReplicated bool
 	dropDatabaseSQL := "DROP DATABASE "
 	if ifExists {
 		dropDatabaseSQL += "IF EXISTS "
 	}
 	dropDatabaseSQL += fmt.Sprintf("`%s`", database)
-	if isAtomic, err = env.ch.IsAtomic(database); isAtomic {
+	if isAtomicOrReplicated, err = env.ch.IsDbAtomicOrReplicated(database); isAtomicOrReplicated {
 		dropDatabaseSQL += " SYNC"
 	} else if err != nil {
 		return err

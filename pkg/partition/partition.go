@@ -173,7 +173,7 @@ func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, datab
 
 func dropPartitionIdTable(ch *clickhouse.ClickHouse, database string, partitionIdTable string) error {
 	sql := fmt.Sprintf("DROP TABLE IF EXISTS `%s`.`%s`", database, partitionIdTable)
-	if isAtomic, err := ch.IsAtomic(database); isAtomic {
+	if isAtomicOrReplicated, err := ch.IsDbAtomicOrReplicated(database); isAtomicOrReplicated {
 		sql += " SYNC"
 	} else if err != nil {
 		return err

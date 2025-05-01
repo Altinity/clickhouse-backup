@@ -922,14 +922,15 @@ func (b *Backuper) dropExistPartitions(ctx context.Context, tablesForRestore Lis
 // RestoreSchema - restore schemas matched by tablePattern from backupName
 func (b *Backuper) RestoreSchema(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, disks []clickhouse.Disk, tablesForRestore ListOfTables, ignoreDependencies bool, version int, schemaAsAttach bool) error {
 	startRestoreSchema := time.Now()
-	if dropErr := b.dropExistsTables(tablesForRestore, ignoreDependencies, version, schemaAsAttach); dropErr != nil {
+	databaseEnginesForRestore := b.prepareDatabaseEnginesMap(tablesForRestore, backupMetadata.Databases)
+	if dropErr := b.dropExistsTables(tablesForRestore, databaseEnginesForRestore, ignoreDependencies, version, schemaAsAttach); dropErr != nil {
 		return dropErr
 	}
 	var restoreErr error
 	if b.isEmbedded {
 		restoreErr = b.restoreSchemaEmbedded(ctx, backupName, backupMetadata, disks, tablesForRestore, version)
 	} else {
-		restoreErr = b.restoreSchemaRegular(ctx, tablesForRestore, version, schemaAsAttach)
+		restoreErr = b.restoreSchemaRegular(ctx, tablesForRestore, databaseEnginesForRestore, version, schemaAsAttach)
 	}
 	if restoreErr != nil {
 		return restoreErr
@@ -1126,7 +1127,7 @@ func (b *Backuper) fixEmbeddedMetadataSQLQuery(ctx context.Context, sqlBytes []b
 	return sqlQuery, sqlMetadataChanged, nil
 }
 
-func (b *Backuper) restoreSchemaRegular(ctx context.Context, tablesForRestore ListOfTables, version int, schemaAsAttach bool) error {
+func (b *Backuper) restoreSchemaRegular(ctx context.Context, tablesForRestore ListOfTables, databaseEnginesForRestore map[string]string, version int, schemaAsAttach bool) error {
 	totalRetries := len(tablesForRestore)
 	restoreRetries := 0
 	isDatabaseCreated := common.EmptyMap{}
@@ -1152,7 +1153,7 @@ func (b *Backuper) restoreSchemaRegular(ctx context.Context, tablesForRestore Li
 			restoreErr = b.ch.CreateTable(clickhouse.Table{
 				Database: schema.Database,
 				Name:     schema.Table,
-			}, schema.Query, false, false, b.cfg.General.RestoreSchemaOnCluster, version, b.DefaultDataPath, schemaAsAttach)
+			}, schema.Query, false, false, b.cfg.General.RestoreSchemaOnCluster, version, b.DefaultDataPath, schemaAsAttach, databaseEnginesForRestore[schema.Database])
 
 			if restoreErr != nil {
 				restoreRetries++
@@ -1163,7 +1164,7 @@ func (b *Backuper) restoreSchemaRegular(ctx context.Context, tablesForRestore Li
 					)
 				} else {
 					log.Warn().Msgf(
-						"can't create table '%s.%s': %v, will try again", schema.Database, schema.Table, restoreErr,
+						"can't create table `%s`.`%s`: %v, will try again", schema.Database, schema.Table, restoreErr,
 					)
 				}
 				notRestoredTables = append(notRestoredTables, schema)
@@ -1263,7 +1264,7 @@ func (b *Backuper) replaceCreateToAttachForView(schema *metadata.TableMetadata) 
 	)
 }
 
-func (b *Backuper) dropExistsTables(tablesForDrop ListOfTables, ignoreDependencies bool, version int, schemaAsAttach bool) error {
+func (b *Backuper) dropExistsTables(tablesForDrop ListOfTables, databaseEngines map[string]string, ignoreDependencies bool, version int, schemaAsAttach bool) error {
 	var dropErr error
 	dropRetries := 0
 	totalRetries := len(tablesForDrop)
@@ -1284,7 +1285,7 @@ func (b *Backuper) dropExistsTables(tablesForDrop ListOfTables, ignoreDependenci
 					dropErr = b.ch.DropOrDetachTable(clickhouse.Table{
 						Database: schema.Database,
 						Name:     schema.Table,
-					}, query, b.cfg.General.RestoreSchemaOnCluster, ignoreDependencies, version, b.DefaultDataPath, schemaAsAttach)
+					}, query, b.cfg.General.RestoreSchemaOnCluster, ignoreDependencies, version, b.DefaultDataPath, schemaAsAttach, databaseEngines[schema.Database])
 					if dropErr == nil {
 						tablesForDrop[i].Query = query
 						break
@@ -1294,7 +1295,7 @@ func (b *Backuper) dropExistsTables(tablesForDrop ListOfTables, ignoreDependenci
 				dropErr = b.ch.DropOrDetachTable(clickhouse.Table{
 					Database: schema.Database,
 					Name:     schema.Table,
-				}, schema.Query, b.cfg.General.RestoreSchemaOnCluster, ignoreDependencies, version, b.DefaultDataPath, schemaAsAttach)
+				}, schema.Query, b.cfg.General.RestoreSchemaOnCluster, ignoreDependencies, version, b.DefaultDataPath, schemaAsAttach, databaseEngines[schema.Database])
 			}
 
 			if dropErr != nil {
