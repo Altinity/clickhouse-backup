@@ -3513,7 +3513,8 @@ func fullCleanup(t *testing.T, r *require.Assertions, env *TestEnvironment, back
 
 func generateTestData(t *testing.T, r *require.Assertions, env *TestEnvironment, remoteStorageType string, createAllTypesOfObjectTables bool, testData []TestDataStruct) []TestDataStruct {
 	log.Debug().Msgf("Generate test data %s with _%s suffix", remoteStorageType, t.Name())
-	testData = generateTestDataForDifferentServerVersion(remoteStorageType, createAllTypesOfObjectTables, 0, 5, testData)
+	testData = generateTestDataForDifferentServerVersion(remoteStorageType, 0, 5, testData)
+	testData = generateTestDataForDifferentStoragePolicy(remoteStorageType, createAllTypesOfObjectTables, 0, 5, testData)
 	for _, data := range testData {
 		if isTableSkip(env, data, false) {
 			continue
@@ -3529,13 +3530,47 @@ func generateTestData(t *testing.T, r *require.Assertions, env *TestEnvironment,
 	return testData
 }
 
-func generateTestDataForDifferentServerVersion(remoteStorageType string, createAllTypesOfObjectTables bool, offset, rowsCount int, testData []TestDataStruct) []TestDataStruct {
+func addTestDataIfNotExistsAndReplaceRowsIfExists(testData []TestDataStruct, newTestData TestDataStruct) []TestDataStruct {
+	found := false
+	for i, data := range testData {
+		if data.Name == newTestData.Name && data.Database == newTestData.Database {
+			found = true
+			testData[i].Rows = newTestData.Rows
+			break
+		}
+	}
+	if !found {
+		testData = append(testData, newTestData)
+	}
+	return testData
+}
+
+func generateTestDataForDifferentServerVersion(remoteStorageType string, offset, rowsCount int, testData []TestDataStruct) []TestDataStruct {
 	log.Debug().Msgf("generateTestDataForDifferentServerVersion remoteStorageType=%s", remoteStorageType)
-	dbNameEngineMapping := map[string]string{dbNameOrdinary: "Ordinary", dbNameAtomic: "Atomic"}
 	// https://github.com/Altinity/clickhouse-backup/issues/1127
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 {
-		dbNameEngineMapping[dbNameReplicated] = "Replicated('/clickhouse/{cluster}/{database}','{shard}','{replica}')"
+		databaseEngine := "Replicated('/clickhouse/{cluster}/{database}','{shard}','{replica}')"
+		testData = addTestDataIfNotExistsAndReplaceRowsIfExists(testData, TestDataStruct{
+			Name:     "table_in_replicated_db",
+			Schema:   "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id PARTITION BY id",
+			Database: dbNameReplicated, DatabaseEngine: databaseEngine,
+			Rows: func() []map[string]interface{} {
+				result := make([]map[string]interface{}, rowsCount)
+				for i := 0; i < rowsCount; i++ {
+					result[i] = map[string]interface{}{"id": uint64(i + offset)}
+				}
+				return result
+			}(),
+			Fields:  []string{"id"},
+			OrderBy: "id",
+		})
 	}
+	return testData
+}
+
+func generateTestDataForDifferentStoragePolicy(remoteStorageType string, createAllTypesOfObjectTables bool, offset, rowsCount int, testData []TestDataStruct) []TestDataStruct {
+	log.Debug().Msgf("generateTestDataForDifferentServerVersion remoteStorageType=%s", remoteStorageType)
+	dbNameEngineMapping := map[string]string{dbNameOrdinary: "Ordinary", dbNameAtomic: "Atomic"}
 	for databaseName, databaseEngine := range dbNameEngineMapping {
 		testDataWithStoragePolicy := TestDataStruct{
 			Database: databaseName, DatabaseEngine: databaseEngine,
@@ -3549,30 +3584,17 @@ func generateTestDataForDifferentServerVersion(remoteStorageType string, createA
 			Fields:  []string{"id"},
 			OrderBy: "id",
 		}
-		addTestDataIfNotExists := func() {
-			found := false
-			for i, data := range testData {
-				if data.Name == testDataWithStoragePolicy.Name && data.Database == testDataWithStoragePolicy.Database {
-					found = true
-					testData[i].Rows = testDataWithStoragePolicy.Rows
-					break
-				}
-			}
-			if !found {
-				testData = append(testData, testDataWithStoragePolicy)
-			}
-		}
 		//encrypted disks support after 21.10
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.10") >= 0 {
 			testDataWithStoragePolicy.Name = "test_hdd3_encrypted"
 			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id PARTITION BY id  SETTINGS storage_policy = 'hdd3_only_encrypted'"
-			addTestDataIfNotExists()
+			testData = addTestDataIfNotExistsAndReplaceRowsIfExists(testData, testDataWithStoragePolicy)
 		}
 		//s3 disks support after 21.8
 		if (createAllTypesOfObjectTables || strings.Contains(remoteStorageType, "S3")) && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 {
 			testDataWithStoragePolicy.Name = "test_s3"
 			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id PARTITION BY id SETTINGS storage_policy = 's3_only'"
-			addTestDataIfNotExists()
+			testData = addTestDataIfNotExistsAndReplaceRowsIfExists(testData, testDataWithStoragePolicy)
 		}
 		//encrypted s3 disks support after 21.12
 		if (createAllTypesOfObjectTables || strings.Contains(remoteStorageType, "S3")) && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
@@ -3582,19 +3604,19 @@ func generateTestDataForDifferentServerVersion(remoteStorageType string, createA
 			//if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.12") >= 0 {
 			//	testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id PARTITION BY id SETTINGS storage_policy = 's3_only_encrypted'"
 			//}
-			addTestDataIfNotExists()
+			testData = addTestDataIfNotExistsAndReplaceRowsIfExists(testData, testDataWithStoragePolicy)
 		}
 		//gcs over s3 support added in 22.6
 		if (createAllTypesOfObjectTables || strings.Contains(remoteStorageType, "GCS")) && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.6") >= 0 && os.Getenv("QA_GCS_OVER_S3_BUCKET") != "" {
 			testDataWithStoragePolicy.Name = "test_gcs"
 			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id PARTITION BY id SETTINGS storage_policy = 'gcs_only'"
-			addTestDataIfNotExists()
+			testData = addTestDataIfNotExistsAndReplaceRowsIfExists(testData, testDataWithStoragePolicy)
 		}
 		//check azure_blob_storage only in 23.3+ (added in 22.1)
 		if (createAllTypesOfObjectTables || strings.Contains(remoteStorageType, "AZBLOB")) && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.3") >= 0 {
 			testDataWithStoragePolicy.Name = "test_azure"
 			testDataWithStoragePolicy.Schema = "(id UInt64) Engine=ReplicatedMergeTree('/clickhouse/tables/{cluster}/{shard}/{database}/{table}','{replica}') ORDER BY id PARTITION BY id SETTINGS storage_policy = 'azure_only'"
-			addTestDataIfNotExists()
+			testData = addTestDataIfNotExistsAndReplaceRowsIfExists(testData, testDataWithStoragePolicy)
 		}
 	}
 	return testData
@@ -3602,7 +3624,8 @@ func generateTestDataForDifferentServerVersion(remoteStorageType string, createA
 
 func generateIncrementTestData(t *testing.T, r *require.Assertions, ch *TestEnvironment, remoteStorageType string, createObjectTables bool, incrementData []TestDataStruct, incrementNumber int) []TestDataStruct {
 	log.Debug().Msgf("Generate increment test data for %s", remoteStorageType)
-	incrementData = generateTestDataForDifferentServerVersion(remoteStorageType, createObjectTables, 5*incrementNumber, 5, incrementData)
+	incrementData = generateTestDataForDifferentServerVersion(remoteStorageType, 5*incrementNumber, 5, incrementData)
+	incrementData = generateTestDataForDifferentStoragePolicy(remoteStorageType, createObjectTables, 5*incrementNumber, 5, incrementData)
 	for _, data := range incrementData {
 		if isTableSkip(ch, data, false) {
 			continue
@@ -3722,7 +3745,7 @@ func (env *TestEnvironment) createTestSchema(t *testing.T, data TestDataStruct, 
 		data.Name = data.Name + "_" + t.Name()
 		// 20.8 doesn't respect DROP TABLE ... NO DELAY, so Atomic works but --rm is not applicable
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.8") > 0 {
-			if err := env.ch.CreateDatabaseWithEngine(data.Database, data.DatabaseEngine, "cluster"); err != nil {
+			if err := env.ch.CreateDatabaseWithEngine(data.Database, data.DatabaseEngine, "cluster", convertVersionToInt(os.Getenv("CLICKHOUSE_VERSION"))); err != nil {
 				return err
 			}
 		} else {
@@ -4045,6 +4068,16 @@ func isTableSkip(ch *TestEnvironment, data TestDataStruct, dataExists bool) bool
 	isSkipDictionaryOrJBOD := os.Getenv("COMPOSE_FILE") == "docker-compose.yml" && (strings.Contains(data.Name, "jbod#$_table") || data.IsDictionary)
 	isSkipEmptyReplicatedMergeTree := compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.9") < 0 && strings.Contains(data.Schema, "ReplicatedMergeTree()")
 	return isSkipDictionaryOrJBOD || isSkipEmptyReplicatedMergeTree
+}
+
+func convertVersionToInt(v string) int {
+	vParts := strings.Split(v, ".")
+	vIntStr := vParts[0]
+	for _, vPart := range vParts[1:] {
+		vIntStr += fmt.Sprintf("%06s", vPart)
+	}
+	vInt, _ := strconv.Atoi(vIntStr)
+	return vInt
 }
 
 func compareVersion(v1, v2 string) int {

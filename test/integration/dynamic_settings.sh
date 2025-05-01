@@ -676,6 +676,14 @@ EOT
 fi
 
 
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.[3-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9]+ ]]; then
+cat <<EOT > /etc/clickhouse-server/users.d/allow_experimental_database_replicated.xml
+<yandex>
+  <profiles><default><allow_experimental_database_replicated>1</allow_experimental_database_replicated></default></profiles>
+</yandex>
+EOT
+fi
+
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[1-9]+ ]]; then
 cat <<EOT > /etc/clickhouse-server/users.d/database_replicated_allow_replicated_engine_arguments.xml
 <yandex>

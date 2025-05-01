@@ -1135,13 +1135,17 @@ func (b *Backuper) restoreSchemaRegular(ctx context.Context, tablesForRestore Li
 	for restoreRetries < totalRetries {
 		var notRestoredTables ListOfTables
 		for _, schema := range tablesForRestore {
-			// if metadata.json doesn't contain "databases", we will re-create tables with default engine
 			if _, isCreated := isDatabaseCreated[schema.Database]; !isCreated {
-				if err := b.ch.CreateDatabase(schema.Database, b.cfg.General.RestoreSchemaOnCluster); err != nil {
-					return fmt.Errorf("can't create database '%s': %v", schema.Database, err)
+				var createDbErr error
+				if version > 20008000 && databaseEnginesForRestore[schema.Database] != "" {
+					createDbErr = b.ch.CreateDatabaseWithEngine(schema.Database, databaseEnginesForRestore[schema.Database], b.cfg.General.RestoreSchemaOnCluster, version)
 				} else {
-					isDatabaseCreated[schema.Database] = struct{}{}
+					createDbErr = b.ch.CreateDatabase(schema.Database, b.cfg.General.RestoreSchemaOnCluster)
 				}
+				if createDbErr != nil {
+					return fmt.Errorf("can't create database '%s': %v", schema.Database, createDbErr)
+				}
+				isDatabaseCreated[schema.Database] = struct{}{}
 			}
 			//materialized and window views should restore via ATTACH
 			b.replaceCreateToAttachForView(schema)

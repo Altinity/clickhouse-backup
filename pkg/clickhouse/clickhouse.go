@@ -885,7 +885,10 @@ func (ch *ClickHouse) CreateDatabase(database string, cluster string) error {
 	return ch.Query(query)
 }
 
-func (ch *ClickHouse) CreateDatabaseWithEngine(database, engine, cluster string) error {
+func (ch *ClickHouse) CreateDatabaseWithEngine(database, engine, cluster string, version int) error {
+	if version <= 24004000 {
+		engine = strings.Replace(engine, "{database}", database, -1)
+	}
 	query := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s` ENGINE=%s", database, engine)
 	query = ch.addOnClusterToCreateDatabase(cluster, query)
 	return ch.Query(query)
