@@ -3548,7 +3548,8 @@ func addTestDataIfNotExistsAndReplaceRowsIfExists(testData []TestDataStruct, new
 func generateTestDataForDifferentServerVersion(remoteStorageType string, offset, rowsCount int, testData []TestDataStruct) []TestDataStruct {
 	log.Debug().Msgf("generateTestDataForDifferentServerVersion remoteStorageType=%s", remoteStorageType)
 	// https://github.com/Altinity/clickhouse-backup/issues/1127
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 {
+	// CREATE TABLE engine=Replicated available from 21.3, but ATTACH PART, available only from 21.11
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.11") >= 0 {
 		databaseEngine := "Replicated('/clickhouse/{cluster}/{database}','{shard}','{replica}')"
 		testData = addTestDataIfNotExistsAndReplaceRowsIfExists(testData, TestDataStruct{
 			Name:     "table_in_replicated_db",

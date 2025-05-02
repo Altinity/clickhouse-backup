@@ -488,7 +488,7 @@ EOT
 fi
 
 # WINDOW VIEW available 21.12+
-if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9] || "${CLICKHOUSE_VERSION}" =~ ^21\.1[1-2] ]]; then
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9] || "${CLICKHOUSE_VERSION}" =~ ^21\.12 ]]; then
 
 cat <<EOT > /etc/clickhouse-server/users.d/allow_experimental_window_view.xml
 <yandex>
@@ -548,7 +548,7 @@ EOT
 fi
 
 
-if [[ "${CLICKHOUSE_VERSION}" =~ ^2[0]\.[1-3] ]]; then
+if [[ "${CLICKHOUSE_VERSION}" =~ ^20\.[1-3] ]]; then
 
 cat <<EOT > /etc/clickhouse-server/users.d/low_memory_in_usersd.xml
 <yandex>
@@ -572,7 +572,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/low_memory_in_configd.xml
 </yandex>
 EOT
 
-elif [[ "${CLICKHOUSE_VERSION}" =~ ^2[0]\.[4-9] ]]; then
+elif [[ "${CLICKHOUSE_VERSION}" =~ ^20\.[4-9] ]]; then
 
 cat <<EOT > /etc/clickhouse-server/users.d/low_memory_in_usersd.xml
 <yandex>
@@ -597,7 +597,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/low_memory_in_configd.xml
 </yandex>
 EOT
 
-elif [[ "${CLICKHOUSE_VERSION}" =~ ^21\. ]]; then
+elif [[ "${CLICKHOUSE_VERSION}" =~ ^21\.[1-9]$ || "${CLICKHOUSE_VERSION}" =~ ^21\.10 ]]; then
 
 cat <<EOT > /etc/clickhouse-server/users.d/low_memory_in_usersd.xml
 <yandex>
@@ -618,6 +618,30 @@ cat <<EOT > /etc/clickhouse-server/config.d/low_memory_in_configd.xml
     <tables_loader_background_pool_size>0</tables_loader_background_pool_size>
     <background_merges_mutations_scheduling_policy>round_robin</background_merges_mutations_scheduling_policy>
     <background_merges_mutations_concurrency_ratio>2</background_merges_mutations_concurrency_ratio>
+</yandex>
+EOT
+
+elif [[ "${CLICKHOUSE_VERSION}" =~ ^21\.1[1-9] ]]; then
+
+cat <<EOT > /etc/clickhouse-server/users.d/low_memory_in_usersd.xml
+<yandex>
+  <profiles>
+  <default>
+    <background_pool_size>2</background_pool_size>
+    <background_buffer_flush_schedule_pool_size>1</background_buffer_flush_schedule_pool_size>
+    <background_message_broker_schedule_pool_size>1</background_message_broker_schedule_pool_size>
+    <background_fetches_pool_size>1</background_fetches_pool_size>
+    <background_merges_mutations_concurrency_ratio>2</background_merges_mutations_concurrency_ratio>
+  </default>
+  </profiles>
+</yandex>
+EOT
+
+cat <<EOT > /etc/clickhouse-server/config.d/low_memory_in_configd.xml
+<yandex>
+    <tables_loader_foreground_pool_size>0</tables_loader_foreground_pool_size>
+    <tables_loader_background_pool_size>0</tables_loader_background_pool_size>
+    <background_merges_mutations_scheduling_policy>round_robin</background_merges_mutations_scheduling_policy>
 </yandex>
 EOT
 
@@ -676,7 +700,7 @@ EOT
 fi
 
 
-if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.[3-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9]+ ]]; then
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.[3-9]+ || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9]+ ]]; then
 cat <<EOT > /etc/clickhouse-server/users.d/allow_experimental_database_replicated.xml
 <yandex>
   <profiles><default><allow_experimental_database_replicated>1</allow_experimental_database_replicated></default></profiles>
