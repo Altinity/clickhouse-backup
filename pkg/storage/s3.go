@@ -43,12 +43,12 @@ func newS3Logger(logger zerolog.Logger) S3LogToZeroLogAdapter {
 	}
 }
 
-func (S3LogToApexLogAdapter S3LogToZeroLogAdapter) Logf(severity awsV2Logging.Classification, msg string, args ...interface{}) {
+func (adapter S3LogToZeroLogAdapter) Logf(severity awsV2Logging.Classification, msg string, args ...interface{}) {
 	msg = fmt.Sprintf("[s3:%s] %s", severity, msg)
 	if len(args) > 0 {
-		S3LogToApexLogAdapter.logger.Info().Msgf(msg, args...)
+		adapter.logger.Info().Msgf(msg, args...)
 	} else {
-		S3LogToApexLogAdapter.logger.Info().Msg(msg)
+		adapter.logger.Info().Msg(msg)
 	}
 }
 
