@@ -49,7 +49,7 @@ func printBackupsRemote(w io.Writer, backupList []storage.Backup, format string)
 		fmt.Println(backupList[len(backupList)-2].BackupName)
 	case "all", "":
 		for _, backup := range backupList {
-			size := fmt.Sprintf("all:%s,data:%s,arch:%s,obj:%s,meta:%s,rbac:%s,conf:%s", utils.FormatBytes(backup.GetFullSize()), utils.FormatBytes(backup.DataSize), utils.FormatBytes(backup.CompressedSize), utils.FormatBytes(backup.MetadataSize), utils.FormatBytes(backup.ObjectDiskSize), utils.FormatBytes(backup.RBACSize), utils.FormatBytes(backup.ConfigSize))
+			size := fmt.Sprintf("all:%s,data:%s,arch:%s,obj:%s,meta:%s,rbac:%s,conf:%s", utils.FormatBytes(backup.GetFullSize()), utils.FormatBytes(backup.DataSize), utils.FormatBytes(backup.CompressedSize), utils.FormatBytes(backup.ObjectDiskSize), utils.FormatBytes(backup.MetadataSize), utils.FormatBytes(backup.RBACSize), utils.FormatBytes(backup.ConfigSize))
 			description := backup.DataFormat
 			uploadDate := backup.UploadDate.Format("02/01/2006 15:04:05")
 			if backup.Tags != "" {
