@@ -847,3 +847,103 @@ The current implementation is simple and will improve in next releases.
 - When the `watch` command starts, it calls the `create_remote+delete command` sequence to make a `full` backup
 - Then it waits `watch-interval` time period and calls the `create_remote+delete` command sequence again. The type of
   backup will be `full` if `full-interval` expired after last full backup created and `incremental` if not.
+
+## How to restore a database or table to a different name
+
+This example will restore a remote backup of database, and restore it to another differently named database. As well, the example will also demonstrate restoring a backed up table restored to a different table name. NOTE: this process will also work for local backups
+
+Assumptions are that s3 credentials are already set up in a file called `s3.xml`:
+
+```
+<clickhouse>
+  <s3>
+    <endpoint-name>
+      <endpoint>https://backup-bucket.s3.amazonaws.com</endpoint>
+      <access_key_id>AKREDACTED</access_key_id>
+      <secret_access_key>12345abcdefg</secret_access_key>
+    </endpoint-name>
+  </s3>
+</clickhouse>
+```
+
+### Backup and restore a database to a different database name
+
+A remote database backup of the database `test` is created, first for an entire database with the backup name of `test`:
+
+`clickhouse-backup create test`
+
+Confirmation of the backup once completed:
+
+```
+clickhouse-backup list
+
+test                                                             21/04/2025 18:24:42   remote      all:60.86MiB,data:60.70MiB,arch:60.85MiB,obj:2.50KiB,meta:0B,rbac:0B,conf:0B      tar, regular
+```
+
+The user wants to restore this table as `testnew`, using the remote backup named `test`:
+
+```
+$ clickhouse-backup restore_remote --restore-database-mapping test:testnew test
+```
+
+Confirmation on Clickhouse:
+
+```
+:) show databases;
+
+SHOW DATABASES
+
+Query id: 5d42ae97-a521-4b60-8dc2-706b94416d78
+
+   ┌─name───────────────┐
+1. │ INFORMATION_SCHEMA │
+2. │ default            │
+3. │ information_schema │
+4. │ system             │
+5. │ test               │
+6. │ testnew            │
+   └────────────────────┘
+
+```
+
+
+### Backup and restore a table to a different table name
+
+In this example, a backup is made only of a table because in order to do this, only a table backup will work. In this example, the table name is `trips`, and is being restored using the name `trips2` to the same database the table-level backup was made, `test`,  
+
+First, the backup is made:
+
+```$ clickhouse-backup create_remote test.trips```
+
+Then confirmed:
+
+```
+$ clickhouse-backup list
+
+iB,meta:0B,rbac:0B,conf:0B      tar, regular
+test                                                             21/04/2025 18:24:42   remote      all:60.86MiB,data:60.70MiB,arch:60.85MiB,obj:2.50KiB,meta:0B,rbac:0B,conf:0B      tar, regular
+test.trips                                                       21/04/2025 18:47:39   remote      all:121.71MiB,data:121.41MiB,arch:121.71MiB,obj:5.81KiB,meta:0B,rbac:0B,conf:0B   tar, regular
+```
+
+Then restored using the table backup named `test.trips`:
+
+```
+$ clickhouse-backup restore_remote --restore-table-mapping test:trips2 test.trips
+```
+
+Then confirmed:
+
+```
+:) show tables from test
+
+SHOW TABLES FROM test
+
+Query id: 9e8ed231-dc4b-499d-b02b-57a555a3d309
+
+   ┌─name────────┐
+1. │ trips       │
+2. │ trips2      │
+   └─────────────┘
+
+```
+
