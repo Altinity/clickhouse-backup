@@ -678,7 +678,7 @@ func TestChangeReplicationPathIfReplicaExists(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
-func TestEmbedded(t *testing.T) {
+func TestEmbeddedAzure(t *testing.T) {
 	version := os.Getenv("CLICKHOUSE_VERSION")
 	if compareVersion(version, "23.3") < 0 {
 		t.Skipf("Test skipped, BACKUP/RESTORE not production ready for %s version, look https://github.com/ClickHouse/ClickHouse/issues/39416 for details", version)
@@ -694,6 +694,17 @@ func TestEmbedded(t *testing.T) {
 		env.runMainIntegrationScenario(t, "EMBEDDED_AZURE_URL", "config-azblob-embedded-url.yml")
 	}
 
+	env.Cleanup(t, r)
+}
+
+func TestEmbeddedGCSOverS3(t *testing.T) {
+	version := os.Getenv("CLICKHOUSE_VERSION")
+	if compareVersion(version, "23.3") < 0 {
+		t.Skipf("Test skipped, BACKUP/RESTORE not production ready for %s version, look https://github.com/ClickHouse/ClickHouse/issues/39416 for details", version)
+	}
+	t.Logf("@TODO RESTORE Ordinary with old syntax still not works for %s version, look https://github.com/ClickHouse/ClickHouse/issues/43971", os.Getenv("CLICKHOUSE_VERSION"))
+	env, r := NewTestEnvironment(t)
+
 	// === GCS over S3 ===
 	if compareVersion(version, "24.3") >= 0 && os.Getenv("QA_GCS_OVER_S3_BUCKET") != "" {
 		//@todo think about named collections to avoid show credentials in logs look to https://github.com/fsouza/fake-gcs-server/issues/1330, https://github.com/fsouza/fake-gcs-server/pull/1164
@@ -701,6 +712,17 @@ func TestEmbedded(t *testing.T) {
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "cat /etc/clickhouse-backup/config-gcs-embedded-url.yml.template | envsubst > /etc/clickhouse-backup/config-gcs-embedded-url.yml")
 		env.runMainIntegrationScenario(t, "EMBEDDED_GCS_URL", "config-gcs-embedded-url.yml")
 	}
+
+	env.Cleanup(t, r)
+}
+
+func TestEmbeddedS3(t *testing.T) {
+	version := os.Getenv("CLICKHOUSE_VERSION")
+	if compareVersion(version, "23.3") < 0 {
+		t.Skipf("Test skipped, BACKUP/RESTORE not production ready for %s version, look https://github.com/ClickHouse/ClickHouse/issues/39416 for details", version)
+	}
+	t.Logf("@TODO RESTORE Ordinary with old syntax still not works for %s version, look https://github.com/ClickHouse/ClickHouse/issues/43971", os.Getenv("CLICKHOUSE_VERSION"))
+	env, r := NewTestEnvironment(t)
 
 	// === S3 ===
 	// CUSTOM backup creates folder in each disk, need to clear
