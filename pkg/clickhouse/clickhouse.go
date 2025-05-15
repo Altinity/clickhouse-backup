@@ -1050,6 +1050,9 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 }
 
 func (ch *ClickHouse) cleanUUIDForReplicatedDatabase(table Table, query string, databaseEngine string) (string, error) {
+	if strings.HasPrefix(query, "ATTACH MATERIALIZED VIEW") {
+		return query, nil
+	}
 	if strings.HasPrefix(databaseEngine, "Replicated") && uuidRE.MatchString(query) {
 		uuidAllowExplicit := ""
 		if settingsErr := ch.SelectSingleRowNoCtx(&uuidAllowExplicit, "SELECT value FROM system.settings WHERE name='database_replicated_allow_explicit_uuid'"); settingsErr != nil {

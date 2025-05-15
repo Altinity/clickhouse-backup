@@ -399,15 +399,17 @@ func (b *Backuper) executeShellCommandWithTimeout(ctx context.Context, cmd strin
 }
 
 func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB, tablePattern string, database metadata.DatabasesMeta, dropTable, schemaOnly, ignoreDependencies bool, version int) error {
-	isMapped := false
-	if targetDB, isMapped = b.cfg.General.RestoreDatabaseMapping[database.Name]; !isMapped {
-		targetDB = database.Name
-	}
 	// https://github.com/Altinity/clickhouse-backup/issues/583
 	// https://github.com/Altinity/clickhouse-backup/issues/663
 	if ShallSkipDatabase(b.cfg, targetDB, tablePattern) {
 		return nil
 	}
+
+	isMapped := false
+	if targetDB, isMapped = b.cfg.General.RestoreDatabaseMapping[database.Name]; !isMapped {
+		targetDB = database.Name
+	}
+
 	// https://github.com/Altinity/clickhouse-backup/issues/514
 	if schemaOnly && dropTable {
 		onCluster := ""
@@ -922,7 +924,7 @@ func (b *Backuper) dropExistPartitions(ctx context.Context, tablesForRestore Lis
 // RestoreSchema - restore schemas matched by tablePattern from backupName
 func (b *Backuper) RestoreSchema(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, disks []clickhouse.Disk, tablesForRestore ListOfTables, ignoreDependencies bool, version int, schemaAsAttach bool) error {
 	startRestoreSchema := time.Now()
-	databaseEnginesForRestore := b.prepareDatabaseEnginesMap(tablesForRestore, backupMetadata.Databases)
+	databaseEnginesForRestore := b.prepareDatabaseEnginesMap(backupMetadata.Databases)
 	if dropErr := b.dropExistsTables(tablesForRestore, databaseEnginesForRestore, ignoreDependencies, version, schemaAsAttach); dropErr != nil {
 		return dropErr
 	}

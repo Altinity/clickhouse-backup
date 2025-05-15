@@ -2894,14 +2894,22 @@ func TestRestoreMapping(t *testing.T) {
 	databaseList := []string{"database-1", "database-2"}
 	fullCleanup(t, r, env, []string{testBackupName}, []string{"local"}, databaseList, false, false, "config-database-mapping.yml")
 
-	env.queryWithNoError(r, "CREATE DATABASE `database-1`")
-	env.queryWithNoError(r, "CREATE TABLE `database-1`.t1 (dt DateTime, v UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/database-1/t1','{replica}') PARTITION BY v % 10 ORDER BY dt")
-	env.queryWithNoError(r, "CREATE TABLE `database-1`.`t-d1` AS `database-1`.t1 ENGINE=Distributed('{cluster}', 'database-1', 't1')")
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.3") < 0 {
-		env.queryWithNoError(r, "CREATE TABLE `database-1`.t2 AS `database-1`.t1 ENGINE=ReplicatedMergeTree('/clickhouse/tables/database-1/t2','{replica}') PARTITION BY toYYYYMM(dt) ORDER BY dt")
-	} else {
-		env.queryWithNoError(r, "CREATE TABLE `database-1`.t2 AS `database-1`.t1 ENGINE=ReplicatedMergeTree('/clickhouse/tables/{database}/{table}','{replica}') PARTITION BY toYYYYMM(dt) ORDER BY dt")
+	createSQL := "CREATE DATABASE `database-1`"
+	// https://github.com/Altinity/clickhouse-backup/issues/1146
+	expectedDbEngine := ""
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.11") >= 0 {
+		createSQL += " ENGINE=Replicated('/clickhouse/{cluster}/{database}','{shard}','{replica}')"
+		expectedDbEngine = "Replicated"
 	}
+
+	env.queryWithNoError(r, createSQL)
+	env.queryWithNoError(r, "CREATE TABLE `database-1`.t1 (dt DateTime, v UInt64) ENGINE=ReplicatedMergeTree('/clickhouse/tables/{shard}/database-1/t1','{replica}') PARTITION BY v % 10 ORDER BY dt")
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.3") < 0 {
+		env.queryWithNoError(r, "CREATE TABLE `database-1`.t2 AS `database-1`.t1 ENGINE=ReplicatedMergeTree('/clickhouse/tables/{shard}/database-1/t2','{replica}') PARTITION BY toYYYYMM(dt) ORDER BY dt")
+	} else {
+		env.queryWithNoError(r, "CREATE TABLE `database-1`.t2 AS `database-1`.t1 ENGINE=ReplicatedMergeTree('/clickhouse/tables/{shard}/{database}/{table}','{replica}') PARTITION BY toYYYYMM(dt) ORDER BY dt")
+	}
+	env.queryWithNoError(r, "CREATE TABLE `database-1`.`t-d1` AS `database-1`.t1 ENGINE=Distributed('{cluster}', 'database-1', 't1')")
 	env.queryWithNoError(r, "CREATE MATERIALIZED VIEW `database-1`.mv1 TO `database-1`.t2 AS SELECT * FROM `database-1`.t1")
 	env.queryWithNoError(r, "CREATE VIEW `database-1`.v1 AS SELECT * FROM `database-1`.t1")
 	env.queryWithNoError(r, "INSERT INTO `database-1`.t1 SELECT '2022-01-01 00:00:00', number FROM numbers(10)")
@@ -2909,8 +2917,11 @@ func TestRestoreMapping(t *testing.T) {
 	log.Debug().Msg("Create backup")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "create", testBackupName)
 
-	log.Debug().Msg("Restore schema")
+	log.Debug().Msg("Restore schema with --restore-database-mapping + --restore-table-mapping")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--schema", "--rm", "--restore-database-mapping", "database-1:database-2", "--restore-table-mapping", "t1:t3,t2:t4,t-d1:t-d2,mv1:mv2,v1:v2", "--tables", "database-1.*", testBackupName)
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.11") >= 0 {
+		env.checkCount(r, 1, 1, "SELECT count() FROM system.databases WHERE name='database-2' AND engine='"+expectedDbEngine+"'")
+	}
 
 	log.Debug().Msg("Check result database-1")
 	env.queryWithNoError(r, "INSERT INTO `database-1`.t1 SELECT '2023-01-01 00:00:00', number FROM numbers(10)")
@@ -2927,16 +2938,22 @@ func TestRestoreMapping(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--rm", "--restore-database-mapping", "database-1:database-2", testBackupName)
 
 	log.Debug().Msg("Check result database-2 without table mapping")
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.11") >= 0 {
+		env.checkCount(r, 1, 1, "SELECT count() FROM system.databases WHERE name='database-2' AND engine='"+expectedDbEngine+"'")
+	}
 	env.checkCount(r, 1, 10, "SELECT count() FROM `database-2`.t1")
 	env.checkCount(r, 1, 10, "SELECT count() FROM `database-2`.t2")
 	env.checkCount(r, 1, 10, "SELECT count() FROM `database-2`.`t-d1`")
 	env.checkCount(r, 1, 10, "SELECT count() FROM `database-2`.mv1")
 	env.checkCount(r, 1, 10, "SELECT count() FROM `database-2`.v1")
 
-	log.Debug().Msg("Restore data only --restore-table-mappings+--restore-database-mappings")
+	log.Debug().Msg("Restore data --restore-table-mappings both with --restore-database-mappings")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--data", "--restore-database-mapping", "database-1:database-2", "--restore-table-mapping", "t1:t3,t2:t4,t-d1:t-d2,mv1:mv2,v1:v2", "--tables", "database-1.*", testBackupName)
 
 	log.Debug().Msg("Check result database-2")
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.11") >= 0 {
+		env.checkCount(r, 1, 1, "SELECT count() FROM system.databases WHERE name='database-2' AND engine='"+expectedDbEngine+"'")
+	}
 	env.checkCount(r, 1, 10, "SELECT count() FROM `database-2`.t3")
 	env.checkCount(r, 1, 10, "SELECT count() FROM `database-2`.t4")
 	env.checkCount(r, 1, 10, "SELECT count() FROM `database-2`.`t-d2`")
@@ -2953,6 +2970,9 @@ func TestRestoreMapping(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--restore-database-mapping", "database-1:database-2", "--restore-table-mapping", "t1:t3,t2:t4,t-d1:t-d2,mv1:mv2,v1:v2", "--partitions", "3", "--partitions", "database-1.t2:202201", "--tables", "database-1.*", testBackupName)
 
 	log.Debug().Msg("Check result database-2 after restore with partitions")
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.11") >= 0 {
+		env.checkCount(r, 1, 1, "SELECT count() FROM system.databases WHERE name='database-2' AND engine='"+expectedDbEngine+"'")
+	}
 	// t1->t3 restored only 1 partition with name 3 partition with 1 rows
 	env.checkCount(r, 1, 1, "SELECT count() FROM `database-2`.t3")
 	// t2->t4 restored only 1 partition with name 3 partition with 10 rows

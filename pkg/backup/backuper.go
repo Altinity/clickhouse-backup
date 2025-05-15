@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"regexp"
 	"strings"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
@@ -500,18 +501,22 @@ func (b *Backuper) filterPartsAndFilesByDisk(tables ListOfTables, disks []clickh
 }
 
 // https://github.com/Altinity/clickhouse-backup/issues/1127
-func (b *Backuper) prepareDatabaseEnginesMap(tables ListOfTables, databases []metadata.DatabasesMeta) map[string]string {
+var dbEngineRE = regexp.MustCompile(`(?m)ENGINE\s*=\s*(\w+\([^)]*\))`)
+
+func (b *Backuper) prepareDatabaseEnginesMap(databases []metadata.DatabasesMeta) map[string]string {
 	databaseEngines := make(map[string]string)
-	for _, schema := range tables {
-		if databaseEngine, isEngineFound := databaseEngines[schema.Database]; !isEngineFound {
-			for _, database := range databases {
-				if database.Name == schema.Database {
-					databaseEngine = database.Engine
-					databaseEngines[schema.Database] = databaseEngine
-					break
-				}
-			}
+	for _, database := range databases {
+		engine := database.Engine
+		// old clickhouse versions doesn't contain engine_full
+		if matches := dbEngineRE.FindAllStringSubmatch(database.Query, 1); matches != nil && len(matches) > 0 {
+			engine = matches[0][1]
 		}
+		// https://github.com/Altinity/clickhouse-backup/issues/1146
+		if targetDB, isMapped := b.cfg.General.RestoreDatabaseMapping[database.Name]; isMapped {
+			databaseEngines[targetDB] = engine
+		}
+		databaseEngines[database.Name] = engine
 	}
+	log.Info().Msgf("SUKA!!! databaseEngines=%v", databaseEngines)
 	return databaseEngines
 }

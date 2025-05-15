@@ -1,3 +1,7 @@
+# v2.6.17
+BUG FIXES
+- respect original database engine during `restore --restore-database-mapping`, fix [1146](https://github.com/Altinity/clickhouse-backup/issues/1146)
+
 # v2.6.16
 BUG FIXES
 - fix database errors related to database with `engine=Replicated` fix [1127](https://github.com/Altinity/clickhouse-backup/issues/1127)
