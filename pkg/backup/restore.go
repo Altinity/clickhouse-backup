@@ -436,7 +436,7 @@ func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB, tablePatt
 
 	}
 	substitution := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS ${1}`%s`${3}", targetDB)
-	if err := b.ch.CreateDatabaseFromQuery(ctx, CreateDatabaseRE.ReplaceAllString(database.Query, substitution), b.cfg.General.RestoreSchemaOnCluster); err != nil {
+	if err := b.ch.CreateDatabaseFromQuery(ctx, strings.Replace(CreateDatabaseRE.ReplaceAllString(database.Query, substitution), database.Name, targetDB, -1), b.cfg.General.RestoreSchemaOnCluster); err != nil {
 		return err
 	}
 	return nil

@@ -2898,7 +2898,11 @@ func TestRestoreMapping(t *testing.T) {
 	// https://github.com/Altinity/clickhouse-backup/issues/1146
 	expectedDbEngine := ""
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.11") >= 0 {
-		createSQL += " ENGINE=Replicated('/clickhouse/{cluster}/{database}','{shard}','{replica}')"
+		engineSQL := " ENGINE=Replicated('/clickhouse/{cluster}/{database}','{shard}','{replica}')"
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "24.3") <= 0 {
+			engineSQL = " ENGINE=Replicated('/clickhouse/{cluster}/database-1','{shard}','{replica}')"
+		}
+		createSQL += engineSQL
 		expectedDbEngine = "Replicated"
 	}
 
