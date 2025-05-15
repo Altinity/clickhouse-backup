@@ -3888,10 +3888,10 @@ func (env *TestEnvironment) dropDatabase(database string, ifExists bool) (err er
 		dropDatabaseSQL += "IF EXISTS "
 	}
 	dropDatabaseSQL += fmt.Sprintf("`%s`", database)
-	if isAtomicOrReplicated, err = env.ch.IsDbAtomicOrReplicated(database); isAtomicOrReplicated {
-		dropDatabaseSQL += " SYNC"
-	} else if err != nil {
+	if isAtomicOrReplicated, err = env.ch.IsDbAtomicOrReplicated(database); err != nil {
 		return err
+	} else if isAtomicOrReplicated {
+		dropDatabaseSQL += " SYNC"
 	}
 	return env.ch.Query(dropDatabaseSQL)
 }
