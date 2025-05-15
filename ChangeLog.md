@@ -1,6 +1,7 @@
 # v2.6.17
 BUG FIXES
 - respect original database engine during `restore --restore-database-mapping`, fix [1146](https://github.com/Altinity/clickhouse-backup/issues/1146)
+- fix wrong metadata size and object disk size fields values in CLI list command output
 
 # v2.6.16
 BUG FIXES

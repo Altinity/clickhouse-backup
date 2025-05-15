@@ -922,7 +922,7 @@ func (ch *ClickHouse) DropOrDetachTable(table Table, query, onCluster string, ig
 			return err
 		}
 	}
-	isAtomicOrReplicated = databaseEngine == "Atomic" || databaseEngine == "Replicated"
+	isAtomicOrReplicated = strings.HasPrefix(databaseEngine, "Atomic") || strings.HasPrefix(databaseEngine, "Replicated")
 	kind := "TABLE"
 	if strings.HasPrefix(query, "CREATE DICTIONARY") {
 		kind = "DICTIONARY"
