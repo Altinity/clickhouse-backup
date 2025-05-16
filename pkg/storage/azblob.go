@@ -208,7 +208,7 @@ func (a *AzureBlob) PutFileAbsolute(ctx context.Context, key string, r io.ReadCl
 	if localSize%a.Config.MaxPartsCount > 0 {
 		bufferSize += max(1, (localSize%a.Config.MaxPartsCount)/a.Config.MaxPartsCount)
 	}
-	bufferSize = AdjustAzblobBufferSize(bufferSize)
+	bufferSize = AdjustValueByRange(bufferSize, 2*1024*1024, 10*1024*1024)
 
 	_, err := x.UploadStreamToBlockBlob(ctx, r, blob, azblob.UploadStreamToBlockBlobOptions{BufferSize: int(bufferSize), MaxBuffers: a.Config.MaxBuffers}, a.CPK)
 	return err

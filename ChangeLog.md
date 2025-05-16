@@ -1,3 +1,7 @@
+# v2.6.18
+IMPROVEMENTS
+- add support multipart upload and multipart download for COS storage, add COS_ALLOW_MULTIPART_DOWNLOAD and COS_CONCURRENCY to config, fix [1074](https://github.com/Altinity/clickhouse-backup/issues/1074) 
+
 # v2.6.17
 BUG FIXES
 - respect original database engine during `restore --restore-database-mapping`, fix [1146](https://github.com/Altinity/clickhouse-backup/issues/1146)

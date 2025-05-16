@@ -517,6 +517,5 @@ func (b *Backuper) prepareDatabaseEnginesMap(databases []metadata.DatabasesMeta)
 		}
 		databaseEngines[database.Name] = engine
 	}
-	log.Info().Msgf("SUKA!!! databaseEngines=%v", databaseEngines)
 	return databaseEngines
 }

@@ -256,7 +256,7 @@ func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath stri
 		if remoteSize%s.Config.MaxPartsCount > 0 {
 			partSize += max(1, (remoteSize%s.Config.MaxPartsCount)/s.Config.MaxPartsCount)
 		}
-		downloader.PartSize = AdjustS3PartSize(partSize, 5*1024*1024, 5*1024*1024*1024)
+		downloader.PartSize = AdjustValueByRange(partSize, 5*1024*1024, 5*1024*1024*1024)
 
 		_, err = downloader.Download(ctx, writer, &s3.GetObjectInput{
 			Bucket: aws.String(s.Config.Bucket),
@@ -326,7 +326,7 @@ func (s *S3) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, l
 	if localSize%s.Config.MaxPartsCount > 0 {
 		partSize += max(1, (localSize%s.Config.MaxPartsCount)/s.Config.MaxPartsCount)
 	}
-	uploader.PartSize = AdjustS3PartSize(partSize, 5*1024*1024, 5*1024*1024*1024)
+	uploader.PartSize = AdjustValueByRange(partSize, 5*1024*1024, 5*1024*1024*1024)
 	_, err := uploader.Upload(ctx, &params)
 	return err
 }
@@ -528,13 +528,13 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 	if srcSize%s.Config.MaxPartsCount > 0 {
 		partSize += max(1, (srcSize%s.Config.MaxPartsCount)/s.Config.MaxPartsCount)
 	}
-	partSize = AdjustS3PartSize(partSize, 128*1024*1024, 5*1024*1024*1024)
+	partSize = AdjustValueByRange(partSize, 128*1024*1024, 5*1024*1024*1024)
 
 	// Calculate the number of parts
 	numParts := (srcSize + partSize - 1) / partSize
 
 	copyPartErrGroup, ctx := errgroup.WithContext(ctx)
-	copyPartErrGroup.SetLimit(s.Config.Concurrency * s.Config.Concurrency)
+	copyPartErrGroup.SetLimit(s.Config.Concurrency)
 
 	var mu sync.Mutex
 	var parts []s3types.CompletedPart

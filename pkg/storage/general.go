@@ -605,9 +605,8 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 		}, nil
 	case "cos":
 		tencentStorage := &COS{
-			Config:      &cfg.COS,
-			Concurrency: cfg.COS.Concurrency,
-			BufferSize:  64 * 1024,
+			Config:     &cfg.COS,
+			BufferSize: 64 * 1024,
 		}
 		if tencentStorage.Config.Path, err = ch.ApplyMacros(ctx, tencentStorage.Config.Path); err != nil {
 			return nil, err
@@ -659,23 +658,13 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 	}
 }
 
-func AdjustS3PartSize(partSize, minSize, maxSize int64) int64 {
-	if partSize < minSize {
-		partSize = minSize
+func AdjustValueByRange(value, minValue, maxSize int64) int64 {
+	if value < minValue {
+		value = minValue
 	}
 
-	if partSize > maxSize {
-		partSize = maxSize
+	if value > maxSize {
+		value = maxSize
 	}
-	return partSize
-}
-
-func AdjustAzblobBufferSize(bufferSize int64) int64 {
-	if bufferSize < 2*1024*1024 {
-		bufferSize = 2 * 1024 * 1024
-	}
-	if bufferSize > 10*1024*1024 {
-		bufferSize = 10 * 1024 * 1024
-	}
-	return bufferSize
+	return value
 }
