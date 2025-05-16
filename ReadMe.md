@@ -259,7 +259,7 @@ s3:
   use_custom_storage_class: false  # S3_USE_CUSTOM_STORAGE_CLASS
   storage_class: STANDARD          # S3_STORAGE_CLASS, by default allow only from list https://github.com/aws/aws-sdk-go-v2/blob/main/service/s3/types/enums.go#L787-L799
   concurrency: 1                   # S3_CONCURRENCY
-  max_parts_count: 4000            # S3_MAX_PARTS_COUNT, number of parts for S3 multipart uploads
+  max_parts_count: 4000            # S3_MAX_PARTS_COUNT, number of parts for S3 multipart uploads and downloads
   allow_multipart_download: false  # S3_ALLOW_MULTIPART_DOWNLOAD, allow faster multipart download speed, but will require additional disk space, download_concurrency * part size in worst case
   checksum_algorithm: ""           # S3_CHECKSUM_ALGORITHM, use it when you use object lock which allow to avoid delete keys from bucket until some timeout after creation, use CRC32 as fastest
 
@@ -304,6 +304,9 @@ cos:
   object_disk_path: ""         # GOS_OBJECT_DISK_PATH, path for backup of part from clickhouse object disks, if object disks present in clickhouse, then shall not be zero and shall not be prefixed by `path`
   compression_format: tar      # COS_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   compression_level: 1         # COS_COMPRESSION_LEVEL
+  max_parts_count: 1000        # COS_MAX_PARTS_COUNT, number of parts for COS multipart uploads and downloads
+  concurrency: 1               # COS_CONCURRENCY, concurrency for multipart upload and download
+  allow_multipart_download: false  # COS_ALLOW_MULTIPART_DOWNLOAD, allow faster multipart download speed, but will require additional disk space, download_concurrency * part size in worst case
 ftp:
   address: ""                  # FTP_ADDRESS in format `host:port`
   timeout: 2m                  # FTP_TIMEOUT
