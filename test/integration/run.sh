@@ -36,6 +36,7 @@ export GCS_DEBUG=${GCS_DEBUG:-false}
 export FTP_DEBUG=${FTP_DEBUG:-false}
 export SFTP_DEBUG=${SFTP_DEBUG:-false}
 export AZBLOB_DEBUG=${AZBLOB_DEBUG:-false}
+export COS_DEBUG=${COS_DEBUG:-false}
 export CLICKHOUSE_DEBUG=${CLICKHOUSE_DEBUG:-false}
 
 if [[ "${CLICKHOUSE_VERSION}" == 2* || "${CLICKHOUSE_VERSION}" == "head" ]]; then
