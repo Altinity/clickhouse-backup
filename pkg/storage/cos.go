@@ -181,7 +181,7 @@ func (c *COS) GetFileReaderWithLocalPath(ctx context.Context, key, localPath str
 		// Prepare download options
 		opt := &cos.MultiDownloadOptions{
 			ThreadPoolSize: c.Concurrency,
-			PartSize:       int64(partSize),
+			PartSize:       partSize,
 		}
 
 		// Download the object
@@ -332,14 +332,14 @@ func (c *COS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, 
 			sourceRange := fmt.Sprintf("bytes=%d-%d", start, end-1)
 
 			// Copy the part
-			resp, err := c.client.Object.CopyPart(
+			resp, _, err := c.client.Object.CopyPart(
 				ctx,
 				dstKey,
 				sourceURL,
 				uploadID,
 				currentPartNumber,
 				&cos.ObjectCopyPartOptions{
-					XCosSourceRange: sourceRange,
+					Range: sourceRange,
 				},
 			)
 			if err != nil {
