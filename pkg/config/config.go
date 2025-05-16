@@ -155,15 +155,18 @@ type S3Config struct {
 
 // COSConfig - cos settings section
 type COSConfig struct {
-	RowURL            string `yaml:"url" envconfig:"COS_URL"`
-	Timeout           string `yaml:"timeout" envconfig:"COS_TIMEOUT"`
-	SecretID          string `yaml:"secret_id" envconfig:"COS_SECRET_ID"`
-	SecretKey         string `yaml:"secret_key" envconfig:"COS_SECRET_KEY"`
-	Path              string `yaml:"path" envconfig:"COS_PATH"`
-	ObjectDiskPath    string `yaml:"object_disk_path" envconfig:"COS_OBJECT_DISK_PATH"`
-	CompressionFormat string `yaml:"compression_format" envconfig:"COS_COMPRESSION_FORMAT"`
-	CompressionLevel  int    `yaml:"compression_level" envconfig:"COS_COMPRESSION_LEVEL"`
-	Debug             bool   `yaml:"debug" envconfig:"COS_DEBUG"`
+	RowURL                 string `yaml:"url" envconfig:"COS_URL"`
+	Timeout                string `yaml:"timeout" envconfig:"COS_TIMEOUT"`
+	SecretID               string `yaml:"secret_id" envconfig:"COS_SECRET_ID"`
+	SecretKey              string `yaml:"secret_key" envconfig:"COS_SECRET_KEY"`
+	Path                   string `yaml:"path" envconfig:"COS_PATH"`
+	ObjectDiskPath         string `yaml:"object_disk_path" envconfig:"COS_OBJECT_DISK_PATH"`
+	CompressionFormat      string `yaml:"compression_format" envconfig:"COS_COMPRESSION_FORMAT"`
+	CompressionLevel       int    `yaml:"compression_level" envconfig:"COS_COMPRESSION_LEVEL"`
+	Concurrency            int    `yaml:"concurrency" envconfig:"COS_CONCURRENCY"`
+	AllowMultipartDownload bool   `yaml:"allow_multipart_download" envconfig:"COS_ALLOW_MULTIPART_DOWNLOAD"`
+	MaxPartsCount          int64  `yaml:"max_parts_count" envconfig:"COS_MAX_PARTS_COUNT"`
+	Debug                  bool   `yaml:"debug" envconfig:"COS_DEBUG"`
 }
 
 // FTPConfig - ftp settings section
@@ -619,13 +622,16 @@ func DefaultConfig() *Config {
 			ClientPoolSize:    int(max(uploadConcurrency*3, downloadConcurrency*3, objectDiskServerSideCopyConcurrency)),
 		},
 		COS: COSConfig{
-			RowURL:            "",
-			Timeout:           "2m",
-			SecretID:          "",
-			SecretKey:         "",
-			Path:              "",
-			CompressionFormat: "tar",
-			CompressionLevel:  1,
+			RowURL:                 "",
+			Timeout:                "2m",
+			SecretID:               "",
+			SecretKey:              "",
+			Path:                   "",
+			CompressionFormat:      "tar",
+			CompressionLevel:       1,
+			Concurrency:            int(downloadConcurrency + 1),
+			AllowMultipartDownload: false,
+			MaxPartsCount:          1000,
 		},
 		API: APIConfig{
 			ListenAddr:                    "localhost:7171",

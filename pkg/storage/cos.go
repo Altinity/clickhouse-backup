@@ -8,17 +8,24 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/rs/zerolog/log"
 	"github.com/tencentyun/cos-go-sdk-v5"
 	"github.com/tencentyun/cos-go-sdk-v5/debug"
+	"golang.org/x/sync/errgroup"
 )
 
 type COS struct {
-	client *cos.Client
-	Config *config.COSConfig
+	client      *cos.Client
+	Config      *config.COSConfig
+	Concurrency int
+	BufferSize  int
 }
 
 func (c *COS) Kind() string {
@@ -148,7 +155,51 @@ func (c *COS) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadClo
 }
 
 func (c *COS) GetFileReaderWithLocalPath(ctx context.Context, key, localPath string, remoteSize int64) (io.ReadCloser, error) {
-	return c.GetFileReader(ctx, key)
+	/* unfortunately, multipart download requires allocating additional disk space
+	and doesn't allow us to decompress data directly from stream */
+	if c.Config.AllowMultipartDownload {
+		writer, err := os.CreateTemp(localPath, strings.ReplaceAll(key, "/", "_"))
+		if err != nil {
+			return nil, err
+		}
+
+		// Calculate part size based on remote size and max parts count
+		partSize := remoteSize / c.Config.MaxPartsCount
+		if remoteSize%c.Config.MaxPartsCount > 0 {
+			partSize += max(1, (remoteSize%c.Config.MaxPartsCount)/c.Config.MaxPartsCount)
+		}
+		partSize = AdjustS3PartSize(partSize, 5*1024*1024, 5*1024*1024*1024)
+
+		// Create a context with timeout
+		timeout, err := time.ParseDuration(c.Config.Timeout)
+		if err != nil {
+			return nil, err
+		}
+		downloadCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+
+		// Prepare download options
+		opt := &cos.MultiDownloadOptions{
+			ThreadPoolSize: c.Concurrency,
+			PartSize:       int64(partSize),
+		}
+
+		// Download the object
+		_, err = c.client.Object.Download(
+			downloadCtx,
+			path.Join(c.Config.Path, key),
+			writer.Name(),
+			opt,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		// Reopen the file for reading
+		return writer, nil
+	} else {
+		return c.GetFileReader(ctx, key)
+	}
 }
 
 func (c *COS) PutFile(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
@@ -156,12 +207,183 @@ func (c *COS) PutFile(ctx context.Context, key string, r io.ReadCloser, localSiz
 }
 
 func (c *COS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
-	_, err := c.client.Object.Put(ctx, key, r, nil)
+	// For small files or when size is unknown, use simple Put
+	if localSize <= 0 || localSize < 5*1024*1024 {
+		_, err := c.client.Object.Put(ctx, key, r, nil)
+		return err
+	}
+
+	// For larger files, use multipart upload
+	// Calculate part size based on file size and max parts count
+	partSize := localSize / c.Config.MaxPartsCount
+	if localSize%c.Config.MaxPartsCount > 0 {
+		partSize += max(1, (localSize%c.Config.MaxPartsCount)/c.Config.MaxPartsCount)
+	}
+	partSize = AdjustS3PartSize(partSize, 5*1024*1024, 5*1024*1024*1024)
+
+	// Create a context with timeout
+	timeout, err := time.ParseDuration(c.Config.Timeout)
+	if err != nil {
+		return err
+	}
+	uploadCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// Prepare upload options
+	opt := &cos.MultiUploadOptions{
+		ThreadPoolSize: c.Concurrency,
+		PartSize:       int(partSize),
+	}
+
+	// Create a temporary file to buffer the input
+	tmpFile, err := os.CreateTemp("", "cos-upload-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	// Copy the input to the temporary file
+	if _, err = io.Copy(tmpFile, r); err != nil {
+		return err
+	}
+	if err = tmpFile.Sync(); err != nil {
+		return err
+	}
+	if _, err = tmpFile.Seek(0, 0); err != nil {
+		return err
+	}
+
+	// Upload the file
+	_, _, err = c.client.Object.MultiUpload(
+		uploadCtx,
+		key,
+		tmpFile.Name(),
+		opt,
+	)
 	return err
 }
 
 func (c *COS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
-	return 0, fmt.Errorf("CopyObject not imlemented for %s", c.Kind())
+	dstKey = path.Join(c.Config.ObjectDiskPath, dstKey)
+	log.Debug().Msgf("COS->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, c.Config.RowURL, dstKey)
+
+	// Create a context with timeout
+	timeout, err := time.ParseDuration(c.Config.Timeout)
+	if err != nil {
+		return 0, err
+	}
+	copyCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// For small files, use simple Copy
+	if srcSize < 5*1024*1024*1024 {
+		// Prepare copy source
+		sourceURL := fmt.Sprintf("%s/%s", srcBucket, srcKey)
+		_, _, err := c.client.Object.Copy(
+			copyCtx,
+			dstKey,
+			sourceURL,
+			nil,
+		)
+		if err != nil {
+			return 0, fmt.Errorf("COS->CopyObject %s/%s -> %s/%s return error: %v", srcBucket, srcKey, c.Config.RowURL, dstKey, err)
+		}
+		return srcSize, nil
+	}
+
+	// For larger files, use multipart copy
+	// Initialize multipart upload
+	v, _, err := c.client.Object.InitiateMultipartUpload(copyCtx, dstKey, nil)
+	if err != nil {
+		return 0, fmt.Errorf("COS->CopyObject %s/%s -> %s/%s, InitiateMultipartUpload return error: %v", srcBucket, srcKey, c.Config.RowURL, dstKey, err)
+	}
+	uploadID := v.UploadID
+
+	// Calculate part size based on source size and max parts count
+	partSize := srcSize / c.Config.MaxPartsCount
+	if srcSize%c.Config.MaxPartsCount > 0 {
+		partSize += max(1, (srcSize%c.Config.MaxPartsCount)/c.Config.MaxPartsCount)
+	}
+	partSize = AdjustS3PartSize(partSize, 5*1024*1024, 5*1024*1024*1024)
+
+	// Calculate the number of parts
+	numParts := (srcSize + partSize - 1) / partSize
+
+	copyPartErrGroup, ctx := errgroup.WithContext(ctx)
+	copyPartErrGroup.SetLimit(c.Config.Concurrency * c.Config.Concurrency)
+
+	var mu sync.Mutex
+	var parts []cos.Object
+
+	// Copy each part of the object
+	for partNumber := int64(1); partNumber <= numParts; partNumber++ {
+		// Calculate the byte range for the part
+		start := (partNumber - 1) * partSize
+		end := partNumber * partSize
+		if end > srcSize {
+			end = srcSize
+		}
+		currentPartNumber := int(partNumber)
+
+		copyPartErrGroup.Go(func() error {
+			// Prepare copy source with range
+			sourceURL := fmt.Sprintf("%s/%s", srcBucket, srcKey)
+			sourceRange := fmt.Sprintf("bytes=%d-%d", start, end-1)
+
+			// Copy the part
+			resp, err := c.client.Object.CopyPart(
+				ctx,
+				dstKey,
+				sourceURL,
+				uploadID,
+				currentPartNumber,
+				&cos.ObjectCopyPartOptions{
+					XCosSourceRange: sourceRange,
+				},
+			)
+			if err != nil {
+				return fmt.Errorf("COS->CopyObject %s/%s -> %s/%s, CopyPart start=%d, end=%d return error: %v", srcBucket, srcKey, c.Config.RowURL, dstKey, start, end-1, err)
+			}
+
+			mu.Lock()
+			parts = append(parts, cos.Object{
+				PartNumber: currentPartNumber,
+				ETag:       resp.ETag,
+			})
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	if wgWaitErr := copyPartErrGroup.Wait(); wgWaitErr != nil {
+		// Abort the multipart upload if there was an error
+		_, abortErr := c.client.Object.AbortMultipartUpload(context.Background(), dstKey, uploadID)
+		if abortErr != nil {
+			return 0, fmt.Errorf("aborting CopyObject multipart upload: %v, original error was: %v", abortErr, wgWaitErr)
+		}
+		return 0, fmt.Errorf("one of CopyObject/Multipart go-routine return error: %v", wgWaitErr)
+	}
+
+	// Sort parts by part number
+	sort.Slice(parts, func(i, j int) bool {
+		return parts[i].PartNumber < parts[j].PartNumber
+	})
+
+	// Complete the multipart upload
+	_, _, err = c.client.Object.CompleteMultipartUpload(
+		context.Background(),
+		dstKey,
+		uploadID,
+		&cos.CompleteMultipartUploadOptions{
+			Parts: parts,
+		},
+	)
+	if err != nil {
+		return 0, fmt.Errorf("complete CopyObject multipart upload: %v", err)
+	}
+
+	return srcSize, nil
 }
 
 func (c *COS) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) error {

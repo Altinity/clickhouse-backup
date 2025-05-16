@@ -604,7 +604,11 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			cfg.GCS.CompressionLevel,
 		}, nil
 	case "cos":
-		tencentStorage := &COS{Config: &cfg.COS}
+		tencentStorage := &COS{
+			Config:      &cfg.COS,
+			Concurrency: cfg.COS.Concurrency,
+			BufferSize:  64 * 1024,
+		}
 		if tencentStorage.Config.Path, err = ch.ApplyMacros(ctx, tencentStorage.Config.Path); err != nil {
 			return nil, err
 		}
