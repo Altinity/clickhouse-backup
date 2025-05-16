@@ -332,15 +332,14 @@ func (c *COS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, 
 			sourceRange := fmt.Sprintf("bytes=%d-%d", start, end-1)
 
 			// Copy the part
-			resp, _, err := c.client.Object.CopyPart(
+			resp, err := c.client.Object.CopyPart(
 				ctx,
 				dstKey,
-				sourceURL,
 				uploadID,
 				currentPartNumber,
-				&cos.ObjectCopyPartOptions{
-					Range: sourceRange,
-				},
+				sourceURL,
+				sourceRange,
+				nil,
 			)
 			if err != nil {
 				return fmt.Errorf("COS->CopyObject %s/%s -> %s/%s, CopyPart start=%d, end=%d return error: %v", srcBucket, srcKey, c.Config.RowURL, dstKey, start, end-1, err)
