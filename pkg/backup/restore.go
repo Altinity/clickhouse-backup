@@ -42,8 +42,6 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 )
 
-var CreateDatabaseRE = regexp.MustCompile(`(?m)^CREATE DATABASE (\s*)(\S+)(\s*)`)
-
 // Restore - restore tables matched by tablePattern from backupName
 func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tableMapping, partitions, skipProjections []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume, schemaAsAttach, replicatedCopyToDetached bool, backupVersion string, commandId int) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
@@ -398,6 +396,8 @@ func (b *Backuper) executeShellCommandWithTimeout(ctx context.Context, cmd strin
 	return nil
 }
 
+var CreateDatabaseRE = regexp.MustCompile(`(?m)^CREATE DATABASE (\s*)(\S+)(\s*)(.*)`)
+
 func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB, tablePattern string, database metadata.DatabasesMeta, dropTable, schemaOnly, ignoreDependencies bool, version int) error {
 	// https://github.com/Altinity/clickhouse-backup/issues/583
 	// https://github.com/Altinity/clickhouse-backup/issues/663
@@ -435,11 +435,13 @@ func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB, tablePatt
 		}
 
 	}
-	substitution := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS ${1}`%s`${3}", targetDB)
-	createSQL := CreateDatabaseRE.ReplaceAllString(database.Query, substitution)
-	if !strings.HasPrefix(targetDB, database.Name) {
-		createSQL = strings.Replace(createSQL, database.Name, targetDB, -1)
+	matches := CreateDatabaseRE.FindAllStringSubmatch(database.Query, -1)
+	databaseEngine := ""
+	if len(matches) == 1 && len(matches[0]) == 5 {
+		databaseEngine = strings.Replace(matches[0][4], database.Name, targetDB, -1)
 	}
+	substitution := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS ${1}`%s`${3}%s", targetDB, databaseEngine)
+	createSQL := CreateDatabaseRE.ReplaceAllString(database.Query, substitution)
 	if err := b.ch.CreateDatabaseFromQuery(ctx, createSQL, b.cfg.General.RestoreSchemaOnCluster); err != nil {
 		return err
 	}
