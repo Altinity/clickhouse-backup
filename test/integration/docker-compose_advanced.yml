@@ -162,6 +162,7 @@ services:
       GCS_DEBUG: "${GCS_DEBUG:-false}"
       FTP_DEBUG: "${FTP_DEBUG:-false}"
       SFTP_DEBUG: "${SFTP_DEBUG:-false}"
+      COS_DEBUG: "${COS_DEBUG:-false}"
       AZBLOB_DEBUG: "${AZBLOB_DEBUG:-false}"
       CLICKHOUSE_DEBUG: "${CLICKHOUSE_DEBUG:-false}"
       GOCOVERDIR: "/tmp/_coverage_/"
@@ -210,6 +211,7 @@ services:
       FTP_DEBUG: "${FTP_DEBUG:-false}"
       SFTP_DEBUG: "${SFTP_DEBUG:-false}"
       AZBLOB_DEBUG: "${AZBLOB_DEBUG:-false}"
+      COS_DEBUG: "${COS_DEBUG:-false}"
       CLICKHOUSE_DEBUG: "${CLICKHOUSE_DEBUG:-false}"
       GOCOVERDIR: "/tmp/_coverage_/"
 # FIPS

@@ -1,4 +1,6 @@
 .github
 .idea
+.vscode
+.aider*
 test
 
