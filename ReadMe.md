@@ -25,9 +25,10 @@ For that reason, it's required to run `clickhouse-backup` on the same host or sa
 - Uploading and downloading with streaming compression
 - Works with AWS, GCS, Azure, Tencent COS, FTP, SFTP
 - **Support for Atomic Database Engine**
+- **Support for Replicated Database Engine**
 - **Support for multi disks installations**
 - **Support for custom remote storage types via `rclone`, `kopia`, `restic`, `rsync` etc**
-- Support for incremental backups on remote storage
+- **Support for incremental backups on remote storage**
 
 ## Limitations
 
