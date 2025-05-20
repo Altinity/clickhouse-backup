@@ -8,14 +8,6 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-type APIMetricsInterface interface {
-	Start(command string, startTime time.Time)
-	Finish(command string, startTime time.Time)
-	Success(command string)
-	Failure(command string)
-	ExecuteWithMetrics(command string, errCounter int, f func() error) (error, int)
-}
-
 type APIMetrics struct {
 	SuccessfulCounter map[string]prometheus.Counter
 	FailedCounter     map[string]prometheus.Counter

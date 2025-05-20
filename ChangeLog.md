@@ -1,3 +1,7 @@
+# v2.6.19
+BUG FIXES
+- fix `clickhouse_backup_number_backups_remote` and `last_backup_size_remote` metrics behavior in `watch` command, fix [1152](https://github.com/Altinity/clickhouse-backup/issues/1152)
+
 # v2.6.18
 IMPROVEMENTS
 - add support multipart upload and multipart download for COS storage, add COS_ALLOW_MULTIPART_DOWNLOAD and COS_CONCURRENCY to config, fix [1074](https://github.com/Altinity/clickhouse-backup/issues/1074) 

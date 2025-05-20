@@ -66,7 +66,7 @@ func (b *Backuper) ValidateWatchParams(watchInterval, fullInterval, watchBackupN
 //
 // - each watch-interval, run create_remote increment --diff-from=prev-name + delete local increment, even when upload failed
 //   - save previous backup type incremental, next try will also incremental, until reach full interval
-func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern string, partitions, skipProjections []string, schemaOnly, backupRBAC, backupConfigs, skipCheckPartsColumns, deleteSource bool, version string, commandId int, metrics metrics.APIMetricsInterface, cliCtx *cli.Context) error {
+func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern string, partitions, skipProjections []string, schemaOnly, backupRBAC, backupConfigs, skipCheckPartsColumns, deleteSource bool, version string, commandId int, metrics *metrics.APIMetrics, cliCtx *cli.Context) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return err
@@ -205,6 +205,20 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 					lastFullBackup = now
 				}
 			}
+			// https://github.com/Altinity/clickhouse-backup/issues/1152
+			go func() {
+				remoteBackups, listRemoteErr := b.GetRemoteBackups(ctx, false)
+				if listRemoteErr == nil && len(remoteBackups) > 0 {
+					numberBackupsRemote := len(remoteBackups)
+					lastBackupInstance := remoteBackups[numberBackupsRemote-1]
+					lastSizeRemote := lastBackupInstance.GetFullSize()
+					metrics.LastBackupSizeRemote.Set(float64(lastSizeRemote))
+					metrics.NumberBackupsRemote.Set(float64(numberBackupsRemote))
+				} else {
+					metrics.LastBackupSizeRemote.Set(0)
+					metrics.NumberBackupsRemote.Set(0)
+				}
+			}()
 		}
 		if b.ch.IsOpen {
 			b.ch.Close()
