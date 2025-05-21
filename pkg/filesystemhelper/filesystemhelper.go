@@ -153,7 +153,6 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 			backupDiskPath := diskMap[backupDiskName]
 			if toDetached {
 				dstParentDir = filepath.Join(dstParentDir, "detached")
-
 			}
 			dstPartPath := filepath.Join(dstParentDir, part.Name)
 			info, err := os.Stat(dstPartPath)

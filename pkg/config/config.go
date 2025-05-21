@@ -493,18 +493,23 @@ func ValidateConfig(cfg *Config) error {
 
 func ValidateObjectDiskConfig(cfg *Config) error {
 	if !cfg.ClickHouse.UseEmbeddedBackupRestore {
-		if cfg.General.RemoteStorage == "s3" && ((cfg.S3.ObjectDiskPath == "" && cfg.S3.Path == "") || (cfg.S3.Path != "" && strings.HasPrefix(cfg.S3.Path, cfg.S3.ObjectDiskPath))) {
-			return fmt.Errorf("data in objects disks, invalid s3->object_disk_path config section, shall be not empty and shall not be prefix for s3->path")
-		} else if cfg.General.RemoteStorage == "gcs" && ((cfg.GCS.ObjectDiskPath == "" && cfg.GCS.Path == "") || (cfg.GCS.Path != "" && strings.HasPrefix(cfg.GCS.Path, cfg.GCS.ObjectDiskPath))) {
-			return fmt.Errorf("data in objects disks, invalid gcs->object_disk_path config section, shall be not empty and shall not be prefix for gcs->path")
-		} else if cfg.General.RemoteStorage == "azblob" && ((cfg.AzureBlob.ObjectDiskPath == "" && cfg.AzureBlob.Path == "") || (cfg.AzureBlob.Path != "" && strings.HasPrefix(cfg.AzureBlob.Path, cfg.AzureBlob.ObjectDiskPath))) {
-			return fmt.Errorf("data in objects disks, invalid azblob->object_disk_path config section, shall be not empty and shall not be prefix for azblob->path")
-		} else if cfg.General.RemoteStorage == "cos" && ((cfg.COS.ObjectDiskPath == "" && cfg.COS.Path == "") || (cfg.COS.Path != "" && strings.HasPrefix(cfg.COS.Path, cfg.COS.ObjectDiskPath))) {
-			return fmt.Errorf("data in objects disks, invalid cos->object_disk_path config section, shall be not empty and shall not be prefix for cos->path")
-		} else if cfg.General.RemoteStorage == "ftp" && ((cfg.FTP.ObjectDiskPath == "" && cfg.FTP.Path == "") || (cfg.FTP.Path != "" && strings.HasPrefix(cfg.FTP.Path, cfg.FTP.ObjectDiskPath))) {
-			return fmt.Errorf("data in objects disks, invalid ftp->object_disk_path config section, shall be not empty and shall not be prefix for ftp->path")
-		} else if cfg.General.RemoteStorage == "sftp" && ((cfg.SFTP.ObjectDiskPath == "" && cfg.SFTP.Path == "") || (cfg.SFTP.Path != "" && strings.HasPrefix(cfg.SFTP.Path, cfg.SFTP.ObjectDiskPath))) {
-			return fmt.Errorf("data in objects disks, invalid sftp->object_disk_path config section, shall be not empty and shall not be prefix for sftp->path")
+		if cfg.General.RemoteStorage == "s3" && ((cfg.S3.ObjectDiskPath == "" && cfg.S3.Path == "") || (cfg.S3.ObjectDiskPath != "" && cfg.S3.Path == "") || (cfg.S3.Path != "" && strings.HasPrefix(cfg.S3.Path, cfg.S3.ObjectDiskPath))) {
+			return fmt.Errorf("data in objects disks, invalid s3->object_disk_path config section, shall be not empty and shall not be prefix for s3->path, shall not inside s3->path if s3->path empty")
+		}
+		if cfg.General.RemoteStorage == "gcs" && ((cfg.GCS.ObjectDiskPath == "" && cfg.GCS.Path == "") || (cfg.GCS.ObjectDiskPath != "" && cfg.GCS.Path == "") || (cfg.GCS.Path != "" && strings.HasPrefix(cfg.GCS.Path, cfg.GCS.ObjectDiskPath))) {
+			return fmt.Errorf("data in objects disks, invalid gcs->object_disk_path config section, shall be not empty and shall not be prefix for gcs->path, shall not inside gcs->path if gcs->path empty")
+		}
+		if cfg.General.RemoteStorage == "azblob" && ((cfg.AzureBlob.ObjectDiskPath == "" && cfg.AzureBlob.Path == "") || (cfg.AzureBlob.ObjectDiskPath != "" && cfg.AzureBlob.Path == "") || (cfg.AzureBlob.Path != "" && strings.HasPrefix(cfg.AzureBlob.Path, cfg.AzureBlob.ObjectDiskPath))) {
+			return fmt.Errorf("data in objects disks, invalid azblob->object_disk_path config section, shall be not empty and shall not be prefix for azblob->path, shall not inside azblob->path if azblob->path empty")
+		}
+		if cfg.General.RemoteStorage == "cos" && ((cfg.COS.ObjectDiskPath == "" && cfg.COS.Path == "") || (cfg.COS.ObjectDiskPath != "" && cfg.COS.Path == "") || (cfg.COS.Path != "" && strings.HasPrefix(cfg.COS.Path, cfg.COS.ObjectDiskPath))) {
+			return fmt.Errorf("data in objects disks, invalid cos->object_disk_path config section, shall be not empty and shall not be prefix for cos->path, shall not inside cos->path if cos->path empty")
+		}
+		if cfg.General.RemoteStorage == "ftp" && ((cfg.FTP.ObjectDiskPath == "" && cfg.FTP.Path == "") || (cfg.FTP.ObjectDiskPath != "" && cfg.FTP.Path == "") || (cfg.FTP.Path != "" && strings.HasPrefix(cfg.FTP.Path, cfg.FTP.ObjectDiskPath))) {
+			return fmt.Errorf("data in objects disks, invalid ftp->object_disk_path config section, shall be not empty and shall not be prefix for ftp->path, shall not inside ftp->path if ftp->path empty")
+		}
+		if cfg.General.RemoteStorage == "sftp" && ((cfg.SFTP.ObjectDiskPath == "" && cfg.SFTP.Path == "") || (cfg.SFTP.ObjectDiskPath != "" && cfg.SFTP.Path == "") || (cfg.SFTP.Path != "" && strings.HasPrefix(cfg.SFTP.Path, cfg.SFTP.ObjectDiskPath))) {
+			return fmt.Errorf("data in objects disks, invalid sftp->object_disk_path config section, shall be not empty and shall not be prefix for sftp->path, shall not inside sftp->path if sftp->path empty")
 		}
 	}
 	return nil

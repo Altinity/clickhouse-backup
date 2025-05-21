@@ -111,6 +111,8 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_s3.xml
         <use_environment_credentials>1</use_environment_credentials>
         <!-- to avoid slow startup -->
         <send_metadata>false</send_metadata>
+        <!-- https://github.com/Altinity/clickhouse-backup/issues/859#issuecomment-2896880448, https://github.com/ClickHouse/ClickHouse/issues/80647 -->
+        <!-- <metadata_path>/var/lib/clickhouse/disks/disk_s3</metadata_path> -->
       </disk_s3>
     </disks>
     <policies>

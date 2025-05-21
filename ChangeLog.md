@@ -1,6 +1,8 @@
 # v2.6.19
 BUG FIXES
 - fix `clickhouse_backup_number_backups_remote` and `last_backup_size_remote` metrics behavior in `watch` command, fix [1152](https://github.com/Altinity/clickhouse-backup/issues/1152)
+- fix empty `path` and non-empty `object_disk_path` config parameters, allows unexpected deletion backup object disk data, fix [859](https://github.com/Altinity/clickhouse-backup/issues/859) 
+- reproduce behavior `<metadata_path>` parameter in clickhouse `<storage_configuration>` don't contain trailing slash, restore make hardlinks to wrong directory, look details in https://github.com/Altinity/clickhouse-backup/issues/859#issuecomment-2896880448, https://github.com/ClickHouse/ClickHouse/issues/80647 
 
 # v2.6.18
 IMPROVEMENTS
