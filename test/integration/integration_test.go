@@ -505,11 +505,11 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 	env.ch.Close()
 
-	if t.Name() == "TestS3" || t.Name() == "TestEmbedded" {
+	if t.Name() == "TestS3" || t.Name() == "TestEmbeddedS3" {
 		env.DockerExecNoError(r, "minio", "rm", "-rf", "/bitnami/minio/data/clickhouse/disk_s3")
 	}
 
-	if t.Name() == "TestRBAC" || t.Name() == "TestConfigs" || t.Name() == "TestEmbedded" {
+	if t.Name() == "TestRBAC" || t.Name() == "TestConfigs" || strings.HasPrefix(t.Name(), "TestEmbedded") {
 		env.DockerExecNoError(r, "minio", "rm", "-rf", "/bitnami/minio/data/clickhouse/backups_s3")
 	}
 	if t.Name() == "TestCustomRsync" {
