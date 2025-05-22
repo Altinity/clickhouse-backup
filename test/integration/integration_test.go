@@ -2388,6 +2388,9 @@ func TestCheckSystemPartsColumns(t *testing.T) {
 
 // https://github.com/Altinity/clickhouse-backup/issues/1151
 func TestSlashesInDatabaseAndTableNamesAndTableQuery(t *testing.T) {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.3") < 0 {
+		t.Skipf("version %s is too old for this test", os.Getenv("CLICKHOUSE_VERSION"))
+	}
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 	version, err := env.ch.GetVersion(t.Context())
