@@ -4120,7 +4120,7 @@ func (env *TestEnvironment) DockerCP(src, dst string) error {
 }
 
 func (env *TestEnvironment) InstallDebIfNotExists(r *require.Assertions, container string, pkgs ...string) {
-	err := env.DockerExec(
+	out, err := env.DockerExecOut(
 		container,
 		"bash", "-xec",
 		fmt.Sprintf(
@@ -4128,7 +4128,7 @@ func (env *TestEnvironment) InstallDebIfNotExists(r *require.Assertions, contain
 			len(pkgs), "^ii\\s+"+strings.Join(pkgs, "|^ii\\s+"), strings.Join(pkgs, " "),
 		),
 	)
-	r.NoError(err)
+	r.NoError(err, out)
 }
 
 func toDate(s string) time.Time {
