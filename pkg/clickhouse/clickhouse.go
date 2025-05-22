@@ -381,8 +381,12 @@ func (ch *ClickHouse) GetTables(ctx context.Context, tablePattern string) ([]Tab
 		return nil, err
 	}
 	for i := range tables {
-		// https://github.com/Altinity/clickhouse-backup/issues/1091
-		tables[i].CreateTableQuery = strings.ReplaceAll(tables[i].CreateTableQuery, `\\`, `\`)
+		// https://github.com/Altinity/clickhouse-backup/issues/1091, https://github.com/Altinity/clickhouse-backup/issues/1151
+		escapeReplacer := strings.NewReplacer(`\`, `\\`)
+		escapeDb := escapeReplacer.Replace(tables[i].Database)
+		escapeTable := escapeReplacer.Replace(tables[i].Name)
+		tables[i].CreateTableQuery = strings.Replace(tables[i].CreateTableQuery, escapeDb, tables[i].Database, 1)
+		tables[i].CreateTableQuery = strings.Replace(tables[i].CreateTableQuery, escapeTable, tables[i].Name, 1)
 	}
 	metadataPath, err := ch.getMetadataPath(ctx)
 	if err != nil {
