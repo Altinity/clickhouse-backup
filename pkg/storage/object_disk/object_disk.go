@@ -587,7 +587,7 @@ func makeObjectDiskConnection(ctx context.Context, ch *clickhouse.ClickHouse, cf
 		azureCfg.EndpointSuffix = azureURL.Host
 		if creds.AzureAccountName != "" {
 			azureCfg.AccountName = creds.AzureAccountName
-			azureCfg.EndpointSuffix = strings.TrimPrefix(azureCfg.EndpointSuffix, azureCfg.AccountName+".")
+			azureCfg.EndpointSuffix = strings.TrimPrefix(azureCfg.EndpointSuffix, azureCfg.AccountName+".blob.")
 		}
 		if azureURL.Path != "" {
 			azureCfg.Path = azureURL.Path

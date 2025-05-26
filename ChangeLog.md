@@ -1,3 +1,6 @@
+# v2.6.20
+- fix backup for azblob disk behavior when `storage_account_url` contains container as first part in hostname
+
 # v2.6.19
 BUG FIXES
 - fix `clickhouse_backup_number_backups_remote` and `last_backup_size_remote` metrics behavior in `watch` command, fix [1152](https://github.com/Altinity/clickhouse-backup/issues/1152)
