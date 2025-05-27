@@ -324,7 +324,12 @@ func (a *AzureBlob) WalkAbsolute(ctx context.Context, prefix string, recursive b
 func (a *AzureBlob) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {
 	dstKey = path.Join(a.Config.ObjectDiskPath, dstKey)
 	a.logf("AZBLOB->CopyObject %s/%s -> %s/%s", srcBucket, srcKey, a.Config.Container, dstKey)
-	srcURLString := fmt.Sprintf("%s://%s.%s/%s/%s", a.Config.EndpointSchema, a.Config.AccountName, a.Config.EndpointSuffix, srcBucket, srcKey)
+	//ugly hack ;(
+	endpoint := a.Config.EndpointSuffix
+	if strings.HasSuffix(endpoint, "core.windows.net") || !strings.HasPrefix(endpoint, "blob.") {
+		endpoint = "blob." + endpoint
+	}
+	srcURLString := fmt.Sprintf("%s://%s.%s/%s/%s", a.Config.EndpointSchema, a.Config.AccountName, endpoint, strings.Trim(srcBucket, "/"), strings.Trim(srcKey, "/"))
 	srcURL, err := url.Parse(srcURLString)
 	if err != nil {
 		return 0, err
