@@ -19,6 +19,7 @@ GO_BUILD_STATIC_FIPS = go build -trimpath -buildvcs=false -ldflags "-X 'main.ver
 PKG_FILES = build/$(NAME)_$(VERSION).amd64.deb build/$(NAME)_$(VERSION).arm64.deb build/$(NAME)-$(VERSION)-1.amd64.rpm build/$(NAME)-$(VERSION)-1.arm64.rpm
 HOST_OS = $(shell bash -c 'source <(go env) && echo $$GOHOSTOS')
 HOST_ARCH = $(shell bash -c 'source <(go env) && echo $$GOHOSTARCH')
+UBUNTU_VERSION=$(shell lsb_release -r -s)
 
 .PHONY: clean all version test
 
@@ -61,9 +62,12 @@ build/linux/amd64/$(NAME)-fips build/darwin/amd64/$(NAME)-fips:
 	grep '_Cfunc__goboringcrypto_' /tmp/$(NAME)-fips-tags.txt 1> /dev/null && \
 	rm -fv /tmp/$(NAME)-fips-tags.txt
 
-# TODO remove ugly workaround, https://www.perplexity.ai/search/2ead4c04-060a-4d78-a75f-f26835238438
+# @TODO remove ugly workaround, https://www.perplexity.ai/search/2ead4c04-060a-4d78-a75f-f26835238438
+# @todo ugly fix for ugly fix, musl.cc is not available from github runner
+#	bash -xce 'if [[ ! -f ~/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc ]]; then wget -nv -P ~ https://musl.cc/aarch64-linux-musl-cross.tgz; tar -xvf ~/aarch64-linux-musl-cross.tgz -C ~; fi' && \
+
 build/linux/arm64/$(NAME)-fips build/darwin/arm64/$(NAME)-fips:
-	bash -xce 'if [[ ! -f ~/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc ]]; then wget -nv -P ~ https://musl.cc/aarch64-linux-musl-cross.tgz; tar -xvf ~/aarch64-linux-musl-cross.tgz -C ~; fi' && \
+	bash -xce 'if [[ ! -f ~/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc ]]; then rm -rf ~/aarch64-linux-musl-cross; curl -sL -o /tmp/megacmd.deb https://mega.nz/linux/repo/xUbuntu_$(UBUNTU_VERSION)/amd64/megacmd-xUbuntu_$(UBUNTU_VERSION)_amd64.deb; sudo apt install -y /tmp/megacmd.deb; mega-get https://mega.nz/file/zQwVHSYb#8WqqMUCTbbEVKDW55NPrRnM2-4SC-numNCLDKoTWtwQ ~/; tar -xvf ~/aarch64-linux-musl-cross.tgz -C ~; fi' && \
 	CC=~/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc GOEXPERIMENT=boringcrypto CGO_ENABLED=1 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO_BUILD_STATIC_FIPS) -o $@ ./cmd/$(NAME) && \
 	go tool nm $@ > /tmp/$(NAME)-fips-tags.txt && \
 	grep '_Cfunc__goboringcrypto_' /tmp/$(NAME)-fips-tags.txt 1> /dev/null && \
