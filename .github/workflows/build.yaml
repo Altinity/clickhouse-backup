@@ -34,7 +34,7 @@ jobs:
 
       # @todo ugly fix for ugly fix, musl.cc is not available from github runner
       - name: Download musl cross-compiler
-        uses: Difegue/action-megacmd@v1
+        uses: Difegue/action-megacmd@1.2.0
         with:
           args: get -m https://mega.nz/file/zQwVHSYb#8WqqMUCTbbEVKDW55NPrRnM2-4SC-numNCLDKoTWtwQ ~/
 
