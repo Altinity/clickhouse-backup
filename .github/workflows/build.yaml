@@ -32,16 +32,6 @@ jobs:
         run: |
           sudo apt-get install -y musl-tools musl-dev
 
-      # @todo ugly fix for ugly fix, musl.cc is not available from github runner
-      - name: Download musl cross-compiler
-        uses: Difegue/action-megacmd@1.2.0
-        with:
-          args: get -m https://mega.nz/file/zQwVHSYb#8WqqMUCTbbEVKDW55NPrRnM2-4SC-numNCLDKoTWtwQ ~/
-
-      - name: Unpack musl cross-compiler
-        run: |
-          tar -xvf ~/aarch64-linux-musl-cross.tgz -C ~/
-
 #      - name: Cache golang
 #        id: cache-golang
 #        uses: actions/cache@v4
