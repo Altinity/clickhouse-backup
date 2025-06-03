@@ -135,7 +135,7 @@ IMPROVEMENTS
 
 
 BUG FIXES
-- after drop table, before create table, will check if replica path already exists, and will try to, helpfull for restoring Replicated tables which not contains macros in replication parameters fix [849](https://github.com/Altinity/clickhouse-backup/issues/849)
+- after drop table, before create table, will check if replica path already exists, and will try to change `replication_patch`, it helpful for restoring Replicated tables which not contains macros in replication parameters fix [849](https://github.com/Altinity/clickhouse-backup/issues/849)
 - fix `TestLongListRemote` for properly time measurement
 - fix log_pointer handle from system.replicas during restore, fix [967](https://github.com/Altinity/clickhouse-backup/issues/967)
 - fix `use_embedded_backup_restore: true` behavior for azblob, fix [1031](https://github.com/Altinity/clickhouse-backup/issues/1031)
