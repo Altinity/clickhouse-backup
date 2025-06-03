@@ -63,7 +63,7 @@ build/linux/amd64/$(NAME)-fips build/darwin/amd64/$(NAME)-fips:
 
 # TODO remove ugly workaround, https://www.perplexity.ai/search/2ead4c04-060a-4d78-a75f-f26835238438
 build/linux/arm64/$(NAME)-fips build/darwin/arm64/$(NAME)-fips:
-	bash -xce 'if [[ ! -f ~/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc ]]; then wget -q -P ~ https://musl.cc/aarch64-linux-musl-cross.tgz; tar -xvf ~/aarch64-linux-musl-cross.tgz -C ~; fi' && \
+	bash -xce 'if [[ ! -f ~/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc ]]; then wget -nv -P ~ https://musl.cc/aarch64-linux-musl-cross.tgz; tar -xvf ~/aarch64-linux-musl-cross.tgz -C ~; fi' && \
 	CC=~/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc GOEXPERIMENT=boringcrypto CGO_ENABLED=1 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO_BUILD_STATIC_FIPS) -o $@ ./cmd/$(NAME) && \
 	go tool nm $@ > /tmp/$(NAME)-fips-tags.txt && \
 	grep '_Cfunc__goboringcrypto_' /tmp/$(NAME)-fips-tags.txt 1> /dev/null && \

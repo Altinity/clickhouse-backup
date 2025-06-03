@@ -16,7 +16,7 @@ RUN rm -fv /etc/apt/sources.list.d/clickhouse.list && \
     echo "deb-src https://ppa.launchpadcontent.net/longsleep/golang-backports/ubuntu ${DISTRIB_CODENAME} main" >> /etc/apt/sources.list.d/golang.list && \
     ( apt-get update || true ) && \
     apt-get install -y --no-install-recommends libc-dev golang-1.24 make git gcc musl-dev musl-tools && \
-    wget -q -P /root/ https://musl.cc/aarch64-linux-musl-cross.tgz && \
+    wget -nv -P /root/ https://musl.cc/aarch64-linux-musl-cross.tgz && \
     tar -xvf /root/aarch64-linux-musl-cross.tgz -C /root/ && \
     mkdir -p /root/go/
 
