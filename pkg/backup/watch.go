@@ -124,7 +124,8 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 				createRemoteErr, createRemoteErrCount = metrics.ExecuteWithMetrics("create_remote", createRemoteErrCount, func() error {
 					return b.CreateToRemote(backupName, deleteSource, "", diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, false, backupConfigs, false, skipCheckPartsColumns, false, version, commandId)
 				})
-				if !deleteSource {
+				// If backups_to_keep_local=-1 then the local backup is deleted in the upload step when RemoveOldBackupsLocal is called
+				if !deleteSource && b.cfg.General.BackupsToKeepLocal >= 0 {
 					deleteLocalErr, deleteLocalErrCount = metrics.ExecuteWithMetrics("delete", deleteLocalErrCount, func() error {
 						return b.RemoveBackupLocal(ctx, backupName, nil)
 					})
