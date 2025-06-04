@@ -1,3 +1,7 @@
+# v2.6.22
+BUG FIXES
+- fix corner cases when `server --watch` aborts watch process when `backups_to_keep_local: -1` and `--watch-delete-source=false`, fix [1157](https://github.com/Altinity/clickhouse-backup/issues/1157), fix [1156](https://github.com/Altinity/clickhouse-backup/issues/1156), thanks @elliott-logrocket 
+
 # v2.6.21
 BUG FIXES
 - final changes to fix backup for azblob disk behavior when `storage_account_url` contains container as first part in hostname, fix [1153](https://github.com/Altinity/clickhouse-backup/issues/1153)
