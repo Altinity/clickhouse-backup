@@ -755,9 +755,11 @@ func TestAzure(t *testing.T) {
 		"-f", path.Join(os.Getenv("CUR_DIR"), os.Getenv("COMPOSE_FILE")),
 		"--profile", "azure-cli", "--progress", "none",
 		"run", "--rm", "azure-cli",
-		"az", "storage", "account", "generate-sas",
-		"--account-name=devcontainer1", "--resource-types=sco", "--services=b", "--permissions=cdlruwap",
-		"--expiry", time.Now().Add(30 * time.Hour).Format("2006-01-02T15:04:05Z"), "--output=tsv",
+		"sh", "-c",
+		"az storage account generate-sas --account-name=devcontainer1 " +
+			"--resource-types=sco --services=b --permissions=cdlruwap --output=tsv " +
+			"--expiry " + time.Now().Add(30*time.Hour).Format("2006-01-02T15:04:05Z") +
+			" 2>/dev/null",
 	}
 	sasToken, err := utils.ExecCmdOut(t.Context(), dockerExecTimeout, "docker", sasCmd...)
 	sasToken = strings.Trim(sasToken, " \t\r\n")
