@@ -179,7 +179,7 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 
 			}
 
-			if createRemoteErrCount > b.cfg.General.BackupsToKeepRemote || deleteLocalErrCount > b.cfg.General.BackupsToKeepLocal {
+			if createRemoteErrCount > b.cfg.General.BackupsToKeepRemote || deleteLocalErrCount > b.cfg.General.BackupsToKeepLocal && b.cfg.General.BackupsToKeepLocal >= 0 {
 				return fmt.Errorf("too many errors create_remote: %d, delete local: %d, during watch full_interval: %s, abort watching", createRemoteErrCount, deleteLocalErrCount, b.cfg.General.FullInterval)
 			}
 			if (createRemoteErr != nil || deleteLocalErr != nil) && time.Now().Sub(lastFullBackup) > b.cfg.General.FullDuration {
