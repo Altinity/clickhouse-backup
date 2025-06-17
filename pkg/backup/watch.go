@@ -207,7 +207,11 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 				}
 			}
 			// https://github.com/Altinity/clickhouse-backup/issues/1152
+			// https://github.com/Altinity/clickhouse-backup/issues/1166
 			go func() {
+				if metrics == nil {
+					return
+				}
 				remoteBackups, listRemoteErr := b.GetRemoteBackups(ctx, false)
 				if listRemoteErr == nil && len(remoteBackups) > 0 {
 					numberBackupsRemote := len(remoteBackups)

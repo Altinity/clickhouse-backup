@@ -1,3 +1,7 @@
+# v2.6.23
+BUG FIXES
+- `watch` command stop works with panic, fix [1166](https://github.com/Altinity/clickhouse-backup/issues/1166), affected versions 2.6.19-2.6.22 after [1152](https://github.com/Altinity/clickhouse-backup/issues/1152)
+
 # v2.6.22
 BUG FIXES
 - fix corner cases when `server --watch` aborts watch process when `backups_to_keep_local: -1` and `--watch-delete-source=false`, fix [1157](https://github.com/Altinity/clickhouse-backup/issues/1157), fix [1156](https://github.com/Altinity/clickhouse-backup/issues/1156), thanks @elliott-logrocket 
