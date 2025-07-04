@@ -304,7 +304,7 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 				return err
 			}
 
-			if err = bd.RemoveBackupRemote(ctx, backup, b.cfg); err != nil {
+			if err = bd.RemoveBackupRemote(ctx, backup, b.cfg, b); err != nil {
 				log.Warn().Msgf("bd.RemoveBackup return error: %v", err)
 				return err
 			}

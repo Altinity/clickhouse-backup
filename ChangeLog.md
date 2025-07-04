@@ -1,3 +1,7 @@
+# v2.6.24
+IMPROVEMENTS
+- add logs for retries, to allow figure out with blackbaze2 s3 compatible provider, rate limit errors
+
 # v2.6.23
 BUG FIXES
 - `watch` command stop works with panic, fix [1166](https://github.com/Altinity/clickhouse-backup/issues/1166), affected versions 2.6.19-2.6.22 after [1152](https://github.com/Altinity/clickhouse-backup/issues/1152)

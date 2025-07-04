@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func Upload(ctx context.Context, cfg *config.Config, backupName, diffFrom, diffFromRemote, tablePattern string, partitions []string, schemaOnly bool) error {
+func Upload(ctx context.Context, retrierClassifier retrier.Classifier, cfg *config.Config, backupName, diffFrom, diffFromRemote, tablePattern string, partitions []string, schemaOnly bool) error {
 	startCustomUpload := time.Now()
 	if cfg.Custom.UploadCommand == "" {
 		return fmt.Errorf("CUSTOM_UPLOAD_COMMAND is not defined")
@@ -40,7 +40,7 @@ func Upload(ctx context.Context, cfg *config.Config, backupName, diffFrom, diffF
 		"schema":           schemaOnly,
 	}
 	args := ApplyCommandTemplate(cfg.Custom.UploadCommand, templateData)
-	retry := retrier.New(retrier.ConstantBackoff(cfg.General.RetriesOnFailure, cfg.General.RetriesDuration), nil)
+	retry := retrier.New(retrier.ConstantBackoff(cfg.General.RetriesOnFailure, cfg.General.RetriesDuration), retrierClassifier)
 	err := retry.RunCtx(ctx, func(ctx context.Context) error {
 		return utils.ExecCmd(ctx, cfg.Custom.CommandTimeoutDuration, args[0], args[1:]...)
 	})

@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func Download(ctx context.Context, cfg *config.Config, backupName string, tablePattern string, partitions []string, schemaOnly bool) error {
+func Download(ctx context.Context, retrierClassifier retrier.Classifier, cfg *config.Config, backupName string, tablePattern string, partitions []string, schemaOnly bool) error {
 	startCustomDownload := time.Now()
 	if cfg.Custom.DownloadCommand == "" {
 		return fmt.Errorf("CUSTOM_DOWNLOAD_COMMAND is not defined")
@@ -34,7 +34,7 @@ func Download(ctx context.Context, cfg *config.Config, backupName string, tableP
 		"schema":        schemaOnly,
 	}
 	args := ApplyCommandTemplate(cfg.Custom.DownloadCommand, templateData)
-	retry := retrier.New(retrier.ConstantBackoff(cfg.General.RetriesOnFailure, cfg.General.RetriesDuration), nil)
+	retry := retrier.New(retrier.ConstantBackoff(cfg.General.RetriesOnFailure, cfg.General.RetriesDuration), retrierClassifier)
 	err := retry.RunCtx(ctx, func(ctx context.Context) error {
 		return utils.ExecCmd(ctx, cfg.Custom.CommandTimeoutDuration, args[0], args[1:]...)
 	})

@@ -59,7 +59,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 		return err
 	}
 	if b.cfg.General.RemoteStorage == "custom" {
-		return custom.Upload(ctx, b.cfg, backupName, diffFrom, diffFromRemote, tablePattern, partitions, schemaOnly)
+		return custom.Upload(ctx, b, b.cfg, backupName, diffFrom, diffFromRemote, tablePattern, partitions, schemaOnly)
 	}
 	if _, disks, err = b.getLocalBackup(ctx, backupName, nil); err != nil {
 		return fmt.Errorf("can't find local backup: %v", err)
@@ -235,7 +235,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	}
 	remoteBackupMetaFile := path.Join(backupName, "metadata.json")
 	if !b.resume || (b.resume && !b.resumableState.IsAlreadyProcessedBool(remoteBackupMetaFile)) {
-		retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
+		retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), b)
 		err = retry.RunCtx(ctx, func(ctx context.Context) error {
 			return b.dst.PutFile(ctx, remoteBackupMetaFile, io.NopCloser(bytes.NewReader(newBackupMetadataBody)), 0)
 		})
@@ -295,7 +295,7 @@ func (b *Backuper) RemoveOldBackupsRemote(ctx context.Context) error {
 			return err
 		}
 
-		if err := b.dst.RemoveBackupRemote(ctx, backupToDelete, b.cfg); err != nil {
+		if err := b.dst.RemoveBackupRemote(ctx, backupToDelete, b.cfg, b); err != nil {
 			log.Warn().Msgf("can't deleteKey %s return error : %v", backupToDelete.BackupName, err)
 		}
 		log.Info().Fields(map[string]interface{}{
@@ -324,7 +324,7 @@ func (b *Backuper) uploadSingleBackupFile(ctx context.Context, localFile, remote
 			log.Warn().Msgf("can't close %v: %v", f, err)
 		}
 	}()
-	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
+	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), b)
 	err = retry.RunCtx(ctx, func(ctx context.Context) error {
 		return b.dst.PutFile(ctx, remoteFile, f, 0)
 	})
@@ -460,7 +460,7 @@ func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelate
 	}
 	if b.cfg.GetCompressionFormat() == "none" {
 		remoteUploadedBytes := int64(0)
-		if remoteUploadedBytes, err = b.dst.UploadPath(ctx, localBackupRelatedDir, localFiles, destinationRemote, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b.cfg.General.UploadMaxBytesPerSecond); err != nil {
+		if remoteUploadedBytes, err = b.dst.UploadPath(ctx, localBackupRelatedDir, localFiles, destinationRemote, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b, b.cfg.General.UploadMaxBytesPerSecond); err != nil {
 			return 0, fmt.Errorf("can't RBAC or config upload %s: %v", destinationRemote, err)
 		}
 		if b.resume {
@@ -468,7 +468,7 @@ func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelate
 		}
 		return uint64(remoteUploadedBytes), nil
 	}
-	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
+	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), b)
 	err = retry.RunCtx(ctx, func(ctx context.Context) error {
 		return b.dst.UploadCompressedStream(ctx, localBackupRelatedDir, localFiles, destinationRemote, b.cfg.General.UploadMaxBytesPerSecond)
 	})
@@ -477,7 +477,7 @@ func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelate
 	}
 
 	var remoteUploaded storage.RemoteFile
-	retry = retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
+	retry = retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), b)
 	err = retry.RunCtx(ctx, func(ctx context.Context) error {
 		remoteUploaded, err = b.dst.StatFile(ctx, destinationRemote)
 		return err
@@ -553,7 +553,7 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 						}
 					}
 					log.Debug().Msgf("start upload %d files to %s", len(partFiles), remotePath)
-					if uploadPathBytes, err := b.dst.UploadPath(ctx, backupPath, partFiles, remotePath, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b.cfg.General.UploadMaxBytesPerSecond); err != nil {
+					if uploadPathBytes, err := b.dst.UploadPath(ctx, backupPath, partFiles, remotePath, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b, b.cfg.General.UploadMaxBytesPerSecond); err != nil {
 						log.Error().Msgf("UploadPath return error: %v", err)
 						return fmt.Errorf("can't upload: %v", err)
 					} else {
@@ -585,7 +585,7 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 						}
 					}
 					log.Debug().Msgf("start upload %d files to %s", len(localFiles), remoteDataFile)
-					retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
+					retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), b)
 					err := retry.RunCtx(ctx, func(ctx context.Context) error {
 						return b.dst.UploadCompressedStream(ctx, backupPath, localFiles, remoteDataFile, b.cfg.General.UploadMaxBytesPerSecond)
 					})
@@ -595,7 +595,7 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 					}
 
 					var remoteFile storage.RemoteFile
-					retry = retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
+					retry = retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), b)
 					err = retry.RunCtx(ctx, func(ctx context.Context) error {
 						remoteFile, err = b.dst.StatFile(ctx, remoteDataFile)
 						return err
@@ -651,7 +651,7 @@ func (b *Backuper) uploadTableMetadataRegular(ctx context.Context, backupName st
 			return processedSize, nil
 		}
 	}
-	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
+	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), b)
 	err = retry.RunCtx(ctx, func(ctx context.Context) error {
 		return b.dst.PutFile(ctx, remoteTableMetaFile, io.NopCloser(bytes.NewReader(content)), 0)
 	})
@@ -696,7 +696,7 @@ func (b *Backuper) uploadTableMetadataEmbedded(ctx context.Context, backupName s
 			log.Warn().Msgf("can't close %v: %v", localReader, err)
 		}
 	}()
-	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), nil)
+	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), b)
 	err = retry.RunCtx(ctx, func(ctx context.Context) error {
 		return b.dst.PutFile(ctx, remoteTableMetaFile, localReader, 0)
 	})

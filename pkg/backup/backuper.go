@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
+	"github.com/eapache/go-resiliency/retrier"
 	"net/url"
 	"os"
 	"path"
@@ -58,6 +59,15 @@ func NewBackuper(cfg *config.Config, opts ...BackuperOpt) *Backuper {
 		opt(b)
 	}
 	return b
+}
+
+// Classify need to log retries
+func (b *Backuper) Classify(err error) retrier.Action {
+	if err == nil {
+		return retrier.Succeed
+	}
+	log.Warn().Err(err).Msgf("Will wait %s and retry", b.cfg.General.RetriesPause)
+	return retrier.Retry
 }
 
 func WithVersioner(v versioner) BackuperOpt {
@@ -478,7 +488,7 @@ func (b *Backuper) filterPartsAndFilesByDisk(tables ListOfTables, disks []clickh
 		if table == nil {
 			continue
 		}
-		filteredParts := make(map[string][]metadata.Part, 0)
+		filteredParts := make(map[string][]metadata.Part)
 		for diskName := range tables[i].Parts {
 			if b.shouldDiskNameSkipByNameOrType(diskName, disks) {
 				log.Warn().Str("database", table.Database).Str("table", table.Table).Str("disk.Name", diskName).Msg("skipped")
@@ -488,7 +498,7 @@ func (b *Backuper) filterPartsAndFilesByDisk(tables ListOfTables, disks []clickh
 		}
 		tables[i].Parts = filteredParts
 
-		filteredFiles := make(map[string][]string, 0)
+		filteredFiles := make(map[string][]string)
 		for diskName := range tables[i].Files {
 			if b.shouldDiskNameSkipByNameOrType(diskName, disks) {
 				log.Warn().Str("database", table.Database).Str("table", table.Table).Str("disk.Name", diskName).Msg("skipped")
