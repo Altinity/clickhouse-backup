@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"io"
 	"os"
 	"path"
@@ -52,7 +53,7 @@ type BackupDestination struct {
 var metadataCacheLock sync.RWMutex
 
 func (bd *BackupDestination) RemoveBackupRemote(ctx context.Context, backup Backup, cfg *config.Config, retrierClassifier retrier.Classifier) error {
-	retry := retrier.New(retrier.ConstantBackoff(cfg.General.RetriesOnFailure, cfg.General.RetriesDuration), retrierClassifier)
+	retry := retrier.New(retrier.ExponentialBackoff(cfg.General.RetriesOnFailure, common.AddRandomJitter(cfg.General.RetriesDuration, cfg.General.RetriesJitter)), retrierClassifier)
 	if bd.Kind() == "SFTP" || bd.Kind() == "FTP" {
 		return retry.RunCtx(ctx, func(ctx context.Context) error {
 			return bd.DeleteFile(ctx, backup.BackupName)
@@ -430,13 +431,13 @@ func (bd *BackupDestination) UploadCompressedStream(ctx context.Context, baseLoc
 	return nil
 }
 
-func (bd *BackupDestination) DownloadPath(ctx context.Context, remotePath string, localPath string, RetriesOnFailure int, RetriesDuration time.Duration, RetrierClassifier retrier.Classifier, maxSpeed uint64) (int64, error) {
+func (bd *BackupDestination) DownloadPath(ctx context.Context, remotePath string, localPath string, RetriesOnFailure int, RetriesDuration time.Duration, RetriesJitter int8, RetrierClassifier retrier.Classifier, maxSpeed uint64) (int64, error) {
 	downloadedBytes := int64(0)
 	walkErr := bd.Walk(ctx, remotePath, true, func(ctx context.Context, f RemoteFile) error {
 		if bd.Kind() == "SFTP" && (f.Name() == "." || f.Name() == "..") {
 			return nil
 		}
-		retry := retrier.New(retrier.ConstantBackoff(RetriesOnFailure, RetriesDuration), RetrierClassifier)
+		retry := retrier.New(retrier.ExponentialBackoff(RetriesOnFailure, common.AddRandomJitter(RetriesDuration, RetriesJitter)), RetrierClassifier)
 		err := retry.RunCtx(ctx, func(ctx context.Context) error {
 			startTime := time.Now()
 			r, err := bd.GetFileReader(ctx, path.Join(remotePath, f.Name()))
@@ -486,7 +487,7 @@ func (bd *BackupDestination) DownloadPath(ctx context.Context, remotePath string
 	return downloadedBytes, walkErr
 }
 
-func (bd *BackupDestination) UploadPath(ctx context.Context, baseLocalPath string, files []string, remotePath string, RetriesOnFailure int, RetriesDuration time.Duration, RertierClassifier retrier.Classifier, maxSpeed uint64) (int64, error) {
+func (bd *BackupDestination) UploadPath(ctx context.Context, baseLocalPath string, files []string, remotePath string, RetriesOnFailure int, RetriesDuration time.Duration, RetriesJitter int8, RertierClassifier retrier.Classifier, maxSpeed uint64) (int64, error) {
 	totalBytes := int64(0)
 	for _, filename := range files {
 		startTime := time.Now()
@@ -506,7 +507,7 @@ func (bd *BackupDestination) UploadPath(ctx context.Context, baseLocalPath strin
 				log.Warn().Msgf("can't close UploadPath file descriptor %v: %v", f, err)
 			}
 		}
-		retry := retrier.New(retrier.ConstantBackoff(RetriesOnFailure, RetriesDuration), RertierClassifier)
+		retry := retrier.New(retrier.ExponentialBackoff(RetriesOnFailure, common.AddRandomJitter(RetriesDuration, RetriesJitter)), RertierClassifier)
 		err = retry.RunCtx(ctx, func(ctx context.Context) error {
 			return bd.PutFile(ctx, path.Join(remotePath, filename), f, 0)
 		})

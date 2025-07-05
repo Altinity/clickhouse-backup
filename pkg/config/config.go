@@ -59,6 +59,7 @@ type GeneralConfig struct {
 	RestoreTableMapping                 map[string]string `yaml:"restore_table_mapping" envconfig:"RESTORE_TABLE_MAPPING"`
 	RetriesOnFailure                    int               `yaml:"retries_on_failure" envconfig:"RETRIES_ON_FAILURE"`
 	RetriesPause                        string            `yaml:"retries_pause" envconfig:"RETRIES_PAUSE"`
+	RetriesJitter                       int8              `yaml:"retries_jitter" envconfig:"RETRIES_JITTER"`
 	WatchInterval                       string            `yaml:"watch_interval" envconfig:"WATCH_INTERVAL"`
 	FullInterval                        string            `yaml:"full_interval" envconfig:"FULL_INTERVAL"`
 	WatchBackupNameTemplate             string            `yaml:"watch_backup_name_template" envconfig:"WATCH_BACKUP_NAME_TEMPLATE"`

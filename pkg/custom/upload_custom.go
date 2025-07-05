@@ -3,6 +3,7 @@ package custom
 import (
 	"context"
 	"fmt"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"github.com/eapache/go-resiliency/retrier"
@@ -40,7 +41,7 @@ func Upload(ctx context.Context, retrierClassifier retrier.Classifier, cfg *conf
 		"schema":           schemaOnly,
 	}
 	args := ApplyCommandTemplate(cfg.Custom.UploadCommand, templateData)
-	retry := retrier.New(retrier.ConstantBackoff(cfg.General.RetriesOnFailure, cfg.General.RetriesDuration), retrierClassifier)
+	retry := retrier.New(retrier.ExponentialBackoff(cfg.General.RetriesOnFailure, common.AddRandomJitter(cfg.General.RetriesDuration, cfg.General.RetriesJitter)), retrierClassifier)
 	err := retry.RunCtx(ctx, func(ctx context.Context) error {
 		return utils.ExecCmd(ctx, cfg.Custom.CommandTimeoutDuration, args[0], args[1:]...)
 	})

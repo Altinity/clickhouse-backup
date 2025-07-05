@@ -1,9 +1,11 @@
 package common
 
 import (
+	"math/rand"
 	"net/url"
 	"reflect"
 	"strings"
+	"time"
 )
 
 func TablePathEncode(str string) string {
@@ -107,4 +109,13 @@ func deepEqual(a, b interface{}) bool {
 
 	// В остальных случаях используем reflect.DeepEqual
 	return reflect.DeepEqual(a, b)
+}
+
+func AddRandomJitter(duration time.Duration, jitterPercent int8) time.Duration {
+	if jitterPercent <= 0 {
+		return duration
+	}
+	maxJitter := duration * time.Duration(jitterPercent) / 100
+	jitter := time.Duration(rand.Int63n(int64(maxJitter + 1)))
+	return duration + jitter
 }

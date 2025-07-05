@@ -1,3 +1,7 @@
+# v2.6.25
+IMPROVEMENTS
+- change retries from constant to exponential backoff and add RETRIES_JITTER configuration option, to avoid same time retries from parallel operation
+
 # v2.6.24
 IMPROVEMENTS
 - add logs for retries, to allow figure out with blackbaze2 s3 compatible provider, rate limit errors

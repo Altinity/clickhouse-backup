@@ -922,7 +922,7 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 				}
 				dstKey := path.Join(backupName, disk.Name, storageObject.ObjectRelativePath)
 				if !b.cfg.General.AllowObjectDiskStreaming {
-					retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), b)
+					retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 					copyObjectErr = retry.RunCtx(uploadCtx, func(ctx context.Context) error {
 						if objSize, err = b.dst.CopyObject(ctx, storageObject.ObjectSize, srcBucket, srcKey, dstKey); err != nil {
 							return err
@@ -941,7 +941,7 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 						}
 					}
 					if isCopyFailed.Load() {
-						retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), b)
+						retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 						copyObjectErr = retry.RunCtx(uploadCtx, func(ctx context.Context) error {
 							return object_disk.CopyObjectStreaming(uploadCtx, srcDiskConnection.GetRemoteStorage(), b.dst, srcKey, path.Join(objectDiskPath, dstKey))
 						})

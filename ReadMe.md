@@ -141,6 +141,7 @@ general:
 
   retries_on_failure: 3          # RETRIES_ON_FAILURE, how many times to retry after a failure during upload or download
   retries_pause: 5s              # RETRIES_PAUSE, duration time to pause after each download or upload failure
+  retries_jitter: 30             # RETRIES_JITTER, percent of RETRIES_PAUSE for jitter to avoid same time retries from parallel operations 
 
   watch_interval: 1h       # WATCH_INTERVAL, use only for `watch` command, backup will create every 1h
   full_interval: 24h       # FULL_INTERVAL, use only for `watch` command, full backup will create every 24h

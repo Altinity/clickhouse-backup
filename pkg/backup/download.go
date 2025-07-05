@@ -439,7 +439,7 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 			}
 		}
 		var tmBody []byte
-		retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), b)
+		retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 		err := retry.RunCtx(ctx, func(ctx context.Context) error {
 			tmReader, err := b.dst.GetFileReader(ctx, remoteMetadataFile)
 			if err != nil {
@@ -573,7 +573,7 @@ func (b *Backuper) downloadBackupRelatedDir(ctx context.Context, remoteBackup st
 	var downloadErr error
 	downloadedBytes := int64(0)
 	if remoteBackup.DataFormat == DirectoryFormat {
-		if downloadedBytes, downloadErr = b.dst.DownloadPath(ctx, remoteSource, localDir, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b, b.cfg.General.DownloadMaxBytesPerSecond); downloadErr != nil {
+		if downloadedBytes, downloadErr = b.dst.DownloadPath(ctx, remoteSource, localDir, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter, b, b.cfg.General.DownloadMaxBytesPerSecond); downloadErr != nil {
 			//SFTP can't walk on non exists paths and return error
 			if !strings.Contains(downloadErr.Error(), "not exist") {
 				return 0, downloadErr
@@ -592,7 +592,7 @@ func (b *Backuper) downloadBackupRelatedDir(ctx context.Context, remoteBackup st
 		log.Debug().Msgf("%s not exists on remote storage, skip download", remoteSource)
 		return 0, nil
 	}
-	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), b)
+	retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 	err = retry.RunCtx(ctx, func(ctx context.Context) error {
 		downloadedBytes, downloadErr = b.dst.DownloadCompressedStream(ctx, remoteSource, localDir, b.cfg.General.DownloadMaxBytesPerSecond)
 		return downloadErr
@@ -643,7 +643,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 						}
 
 					}
-					retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), b)
+					retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 					var downloadedBytes int64
 					var downloadErr error
 					err := retry.RunCtx(dataCtx, func(dataCtx context.Context) error {
@@ -701,7 +701,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 						}
 					}
 
-					pathSize, downloadErr := b.dst.DownloadPath(dataCtx, partRemotePath, partLocalPath, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b, b.cfg.General.DownloadMaxBytesPerSecond)
+					pathSize, downloadErr := b.dst.DownloadPath(dataCtx, partRemotePath, partLocalPath, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter, b, b.cfg.General.DownloadMaxBytesPerSecond)
 					if downloadErr != nil {
 						return downloadErr
 					}
@@ -879,7 +879,7 @@ func (b *Backuper) downloadDiffRemoteFile(ctx context.Context, diffRemoteFilesLo
 		namedLock.Lock()
 		diffRemoteFilesLock.Unlock()
 		if path.Ext(tableRemoteFile) != "" {
-			retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), b)
+			retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 			err := retry.RunCtx(ctx, func(ctx context.Context) error {
 				var downloadErr error
 				downloadedBytes, downloadErr = b.dst.DownloadCompressedStream(ctx, tableRemoteFile, tableLocalDir, b.cfg.General.DownloadMaxBytesPerSecond)
@@ -891,7 +891,7 @@ func (b *Backuper) downloadDiffRemoteFile(ctx context.Context, diffRemoteFilesLo
 			}
 		} else {
 			// remoteFile could be a directory
-			if pathSize, err := b.dst.DownloadPath(ctx, tableRemoteFile, tableLocalDir, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b, b.cfg.General.DownloadMaxBytesPerSecond); err != nil {
+			if pathSize, err := b.dst.DownloadPath(ctx, tableRemoteFile, tableLocalDir, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter, b, b.cfg.General.DownloadMaxBytesPerSecond); err != nil {
 				log.Warn().Msgf("DownloadPath %s -> %s return error: %v", tableRemoteFile, tableLocalDir, err)
 				return 0, err
 			} else {
@@ -1122,8 +1122,7 @@ func (b *Backuper) downloadSingleBackupFile(ctx context.Context, remoteFile stri
 			return size, nil
 		}
 	}
-	retry := retrier.New(retrier.ConstantBackoff(b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration), b)
-
+	retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 	err := retry.RunCtx(ctx, func(ctx context.Context) error {
 		remoteReader, err := b.dst.GetFileReader(ctx, remoteFile)
 		if err != nil {

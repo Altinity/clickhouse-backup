@@ -2428,6 +2428,7 @@ func TestSlashesInDatabaseAndTableNamesAndTableQuery(t *testing.T) {
 	r.Contains(restoredSQL, createSchemaSQL)
 
 	r.NoError(env.dropDatabase(dbName, false))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", "--env", "CLICKHOUSE_HOST=clickhouse", t.Name())
 	env.Cleanup(t, r)
 }
 
