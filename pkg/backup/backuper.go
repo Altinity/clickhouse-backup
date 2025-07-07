@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"github.com/eapache/go-resiliency/retrier"
@@ -66,7 +67,7 @@ func (b *Backuper) Classify(err error) retrier.Action {
 	if err == nil {
 		return retrier.Succeed
 	}
-	log.Warn().Err(err).Msgf("Will wait %s and retry", b.cfg.General.RetriesPause)
+	log.Warn().Err(err).Msgf("Will wait near %s and retry", common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter))
 	return retrier.Retry
 }
 
