@@ -83,8 +83,12 @@ func (f *FTP) returnConnectionToPool(ctx context.Context, where string, client *
 }
 
 func (f *FTP) StatFile(ctx context.Context, key string) (RemoteFile, error) {
-	// cant list files, so check the dir
-	dir := path.Dir(path.Join(f.Config.Path, key))
+	return f.StatFileAbsolute(ctx, path.Join(f.Config.Path, key))
+}
+
+func (f *FTP) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, error) {
+	// can't list files, so check the dir
+	dir := path.Dir(key)
 	client, err := f.getConnectionFromPool(ctx, fmt.Sprintf("StatFile, key=%s", key))
 	if err != nil {
 		return nil, err
@@ -98,7 +102,7 @@ func (f *FTP) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 		}
 		return nil, err
 	}
-	file := path.Base(path.Join(f.Config.Path, key))
+	file := path.Base(key)
 	for i := range entries {
 		if file == entries[i].Name {
 			// file found, return it

@@ -727,6 +727,11 @@ func CopyObject(ctx context.Context, diskName string, srcSize int64, srcBucket, 
 }
 
 func CopyObjectStreaming(ctx context.Context, srcStorage storage.RemoteStorage, dstStorage storage.RemoteStorage, srcKey, dstKey string) error {
+	srcInfo, statErr := srcStorage.StatFileAbsolute(ctx, srcKey)
+	if statErr != nil {
+		return fmt.Errorf("srcStorage.StatFileReaderAbsolute(%s) error: %v", srcKey, statErr)
+	}
+
 	srcReader, srcErr := srcStorage.GetFileReaderAbsolute(ctx, srcKey)
 	if srcErr != nil {
 		return fmt.Errorf("srcStorage.GetFileReaderAbsolute(%s) error: %v", srcKey, srcErr)
@@ -736,7 +741,7 @@ func CopyObjectStreaming(ctx context.Context, srcStorage storage.RemoteStorage, 
 			log.Error().Msgf("srcReader.Close(%s) error: %v", srcKey, closeErr)
 		}
 	}()
-	if putErr := dstStorage.PutFileAbsolute(ctx, dstKey, srcReader, 0); putErr != nil {
+	if putErr := dstStorage.PutFileAbsolute(ctx, dstKey, srcReader, srcInfo.Size()); putErr != nil {
 		return fmt.Errorf("dstStorage.PutFileAbsolute(%s) error: %v", dstKey, putErr)
 	}
 	return nil

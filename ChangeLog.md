@@ -1,3 +1,7 @@
+# v2.6.26
+BUG FIXES
+- `object_disk.CopyObjectStreaming` can't copy files with size more 5Gb to S3, cause pass localSize 0 into PutFileAbsolute, fix [1176](https://github.com/Altinity/clickhouse-backup/issues/1176)
+
 # v2.6.25
 IMPROVEMENTS
 - change retries from constant to exponential backoff and add RETRIES_JITTER configuration option, to avoid same time retries from parallel operation

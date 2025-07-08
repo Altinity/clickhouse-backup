@@ -25,6 +25,7 @@ type RemoteStorage interface {
 	Connect(ctx context.Context) error
 	Close(ctx context.Context) error
 	StatFile(ctx context.Context, key string) (RemoteFile, error)
+	StatFileAbsolute(ctx context.Context, key string) (RemoteFile, error)
 	DeleteFile(ctx context.Context, key string) error
 	DeleteFileFromObjectDiskBackup(ctx context.Context, key string) error
 	Walk(ctx context.Context, prefix string, recursive bool, fn func(context.Context, RemoteFile) error) error

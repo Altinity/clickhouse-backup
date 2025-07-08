@@ -67,8 +67,12 @@ func (c *COS) Close(ctx context.Context) error {
 }
 
 func (c *COS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
-	// file max size is 5Gb
-	resp, err := c.client.Object.Get(ctx, path.Join(c.Config.Path, key), nil)
+	return c.StatFileAbsolute(ctx, path.Join(c.Config.Path, key))
+}
+
+func (c *COS) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, error) {
+	// @todo - COS Stat file max size is 5Gb
+	resp, err := c.client.Object.Get(ctx, key, nil)
 	if err != nil {
 		var cosErr *cos.ErrorResponse
 		ok := errors.As(err, &cosErr)

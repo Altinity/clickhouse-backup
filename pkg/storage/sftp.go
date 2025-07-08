@@ -100,11 +100,13 @@ func (sftp *SFTP) Close(ctx context.Context) error {
 }
 
 func (sftp *SFTP) StatFile(ctx context.Context, key string) (RemoteFile, error) {
-	filePath := path.Join(sftp.Config.Path, key)
+	return sftp.StatFileAbsolute(ctx, path.Join(sftp.Config.Path, key))
+}
 
-	stat, err := sftp.sftpClient.Stat(filePath)
+func (sftp *SFTP) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, error) {
+	stat, err := sftp.sftpClient.Stat(key)
 	if err != nil {
-		sftp.Debug("[SFTP_DEBUG] StatFile::STAT %s return error %v", filePath, err)
+		sftp.Debug("[SFTP_DEBUG] StatFile::STAT %s return error %v", key, err)
 		if strings.Contains(err.Error(), "not exist") {
 			return nil, ErrNotFound
 		}

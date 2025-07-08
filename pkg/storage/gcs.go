@@ -292,7 +292,11 @@ func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser
 }
 
 func (gcs *GCS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
-	objAttr, err := gcs.client.Bucket(gcs.Config.Bucket).Object(path.Join(gcs.Config.Path, key)).Attrs(ctx)
+	return gcs.StatFileAbsolute(ctx, path.Join(gcs.Config.Path, key))
+}
+
+func (gcs *GCS) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, error) {
+	objAttr, err := gcs.client.Bucket(gcs.Config.Bucket).Object(key).Attrs(ctx)
 	if err != nil {
 		if errors.Is(err, storage.ErrObjectNotExist) {
 			return nil, ErrNotFound

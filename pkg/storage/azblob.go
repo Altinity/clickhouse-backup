@@ -229,8 +229,12 @@ func (a *AzureBlob) DeleteFileFromObjectDiskBackup(ctx context.Context, key stri
 }
 
 func (a *AzureBlob) StatFile(ctx context.Context, key string) (RemoteFile, error) {
-	a.logf("AZBLOB->StatFile %s", key)
-	blob := a.Container.NewBlockBlobURL(path.Join(a.Config.Path, key))
+	return a.StatFileAbsolute(ctx, path.Join(a.Config.Path, key))
+}
+
+func (a *AzureBlob) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, error) {
+	a.logf("AZBLOB->StatFileAbsolute %s", key)
+	blob := a.Container.NewBlockBlobURL(key)
 	r, err := blob.GetProperties(ctx, azblob.BlobAccessConditions{}, a.CPK)
 	if err != nil {
 		var se azblob.StorageError

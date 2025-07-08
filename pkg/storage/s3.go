@@ -405,9 +405,13 @@ func (s *S3) getObjectAllVersions(ctx context.Context, key string) ([]string, er
 }
 
 func (s *S3) StatFile(ctx context.Context, key string) (RemoteFile, error) {
+	return s.StatFileAbsolute(ctx, path.Join(s.Config.Path, key))
+}
+
+func (s *S3) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, error) {
 	params := &s3.HeadObjectInput{
 		Bucket: aws.String(s.Config.Bucket),
-		Key:    aws.String(path.Join(s.Config.Path, key)),
+		Key:    aws.String(key),
 	}
 	s.enrichHeadParams(params)
 	head, err := s.client.HeadObject(ctx, params)
