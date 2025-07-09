@@ -164,7 +164,7 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 				} else {
 					createRemoteErrCount = 0
 				}
-				if !deleteSource {
+				if !deleteSource && b.cfg.General.BackupsToKeepLocal >= 0 {
 					deleteLocalErr = b.RemoveBackupLocal(ctx, backupName, nil)
 					if deleteLocalErr != nil {
 						log.Error().Fields(map[string]interface{}{
@@ -179,11 +179,27 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 
 			}
 
-			if createRemoteErrCount > b.cfg.General.BackupsToKeepRemote || deleteLocalErrCount > b.cfg.General.BackupsToKeepLocal && b.cfg.General.BackupsToKeepLocal >= 0 {
+			if (createRemoteErrCount > b.cfg.General.BackupsToKeepRemote && b.cfg.General.BackupsToKeepRemote >= 0) || (deleteLocalErrCount > b.cfg.General.BackupsToKeepLocal && b.cfg.General.BackupsToKeepLocal >= 0) {
 				return fmt.Errorf("too many errors create_remote: %d, delete local: %d, during watch full_interval: %s, abort watching", createRemoteErrCount, deleteLocalErrCount, b.cfg.General.FullInterval)
 			}
 			if (createRemoteErr != nil || deleteLocalErr != nil) && time.Now().Sub(lastFullBackup) > b.cfg.General.FullDuration {
 				return fmt.Errorf("too many errors during watch full_interval: %s, abort watching", b.cfg.General.FullInterval)
+			}
+			// https://github.com/Altinity/clickhouse-backup/issues/1152
+			// https://github.com/Altinity/clickhouse-backup/issues/1166
+			// https://github.com/Altinity/clickhouse-backup/issues/1177
+			if metrics != nil {
+				remoteBackups, listRemoteErr := b.GetRemoteBackups(ctx, false)
+				if listRemoteErr == nil && len(remoteBackups) > 0 {
+					numberBackupsRemote := len(remoteBackups)
+					lastBackupInstance := remoteBackups[numberBackupsRemote-1]
+					lastSizeRemote := lastBackupInstance.GetFullSize()
+					metrics.LastBackupSizeRemote.Set(float64(lastSizeRemote))
+					metrics.NumberBackupsRemote.Set(float64(numberBackupsRemote))
+				} else {
+					metrics.LastBackupSizeRemote.Set(0)
+					metrics.NumberBackupsRemote.Set(0)
+				}
 			}
 			if createRemoteErr == nil {
 				prevBackupName = backupName
@@ -206,24 +222,6 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 					lastFullBackup = now
 				}
 			}
-			// https://github.com/Altinity/clickhouse-backup/issues/1152
-			// https://github.com/Altinity/clickhouse-backup/issues/1166
-			go func() {
-				if metrics == nil {
-					return
-				}
-				remoteBackups, listRemoteErr := b.GetRemoteBackups(ctx, false)
-				if listRemoteErr == nil && len(remoteBackups) > 0 {
-					numberBackupsRemote := len(remoteBackups)
-					lastBackupInstance := remoteBackups[numberBackupsRemote-1]
-					lastSizeRemote := lastBackupInstance.GetFullSize()
-					metrics.LastBackupSizeRemote.Set(float64(lastSizeRemote))
-					metrics.NumberBackupsRemote.Set(float64(numberBackupsRemote))
-				} else {
-					metrics.LastBackupSizeRemote.Set(0)
-					metrics.NumberBackupsRemote.Set(0)
-				}
-			}()
 		}
 		if b.ch.IsOpen {
 			b.ch.Close()
