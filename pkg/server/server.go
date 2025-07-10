@@ -352,6 +352,10 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 			}
 		case "clean_local_broken":
 			actionsResults, err = api.actionsCleanLocalBrokenHandler(w, row, command, actionsResults)
+			if err != nil {
+				api.writeError(w, http.StatusInternalServerError, row.Command, err)
+				return
+			}
 		case "clean_remote_broken":
 			actionsResults, err = api.actionsCleanRemoteBrokenHandler(w, row, command, actionsResults)
 			if err != nil {

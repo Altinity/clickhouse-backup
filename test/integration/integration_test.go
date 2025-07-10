@@ -1348,7 +1348,8 @@ func testAPIBackupDelete(r *require.Assertions, env *TestEnvironment) {
 }
 
 func testAPIBackupClean(r *require.Assertions, env *TestEnvironment) {
-	log.Debug().Msg("Check /backup/clean/ /backup/clean_remote_broken/ and /backup/actions fot these two commands")
+	log.Debug().Msg("Check /backup/clean/, /backup/clean_remote_broken/, backup/clean_local_broken/  and /backup/actions fot these two commands")
+
 	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/clean'"))
 	r.NoError(err, "%s\nunexpected POST /backup/clean error: %v", out, err)
 	r.NotContains(out, "another operation is currently running")
@@ -1359,7 +1360,12 @@ func testAPIBackupClean(r *require.Assertions, env *TestEnvironment) {
 	r.NotContains(out, "another operation is currently running")
 	r.NotContains(out, "\"status\":\"error\"")
 
-	runClickHouseClientInsertSystemBackupActions(r, env, []string{"clean", "clean_remote_broken"}, false)
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/clean/local_broken'"))
+	r.NoError(err, "%s\nunexpected POST /backup/clean/local_broken error: %v", out, err)
+	r.NotContains(out, "another operation is currently running")
+	r.NotContains(out, "\"status\":\"error\"")
+
+	runClickHouseClientInsertSystemBackupActions(r, env, []string{"clean", "clean_remote_broken", "clean_local_broken"}, false)
 }
 
 func testAPIMetrics(r *require.Assertions, env *TestEnvironment) {
