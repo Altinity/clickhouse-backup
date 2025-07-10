@@ -89,6 +89,9 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	if b.cfg.General.RBACBackupAlways {
 		createRBAC = true
 	}
+	if b.cfg.General.ConfigBackupAlways {
+		createConfigs = true
+	}
 	b.adjustResumeFlag(resume)
 
 	allDatabases, err := b.ch.GetDatabases(ctx, b.cfg, tablePattern)

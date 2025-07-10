@@ -152,8 +152,11 @@ general:
   cpu_nice_priority: 15    # CPU niceness priority, to allow throttling CPU intensive operation, more details https://manpages.ubuntu.com/manpages/xenial/man1/nice.1.html
   io_nice_priority: "idle" # IO niceness priority, to allow throttling DISK intensive operation, more details https://manpages.ubuntu.com/manpages/xenial/man1/ionice.1.html
   
-  rbac_backup_always: true # always, backup RBAC objects
+  rbac_backup_always: true # always backup RBAC objects
   rbac_resolve_conflicts: "recreate"  # action, when RBAC object with the same name already exists, allow "recreate", "ignore", "fail" values
+
+  config_backup_always: false # always backup CONFIGS, disabled by default cause configuration shall be manage via Infrastructure as Code approach 
+  
 clickhouse:
   username: default                # CLICKHOUSE_USERNAME
   password: ""                     # CLICKHOUSE_PASSWORD

@@ -443,7 +443,7 @@ func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelate
 	var localFiles []string
 	var err error
 	if localFiles, err = filepathx.Glob(localFilesGlobPattern); err != nil || localFiles == nil || len(localFiles) == 0 {
-		if !b.cfg.General.RBACBackupAlways {
+		if !b.cfg.General.RBACBackupAlways && !b.cfg.General.ConfigBackupAlways {
 			return 0, fmt.Errorf("list %s return list=%v with err=%v", localFilesGlobPattern, localFiles, err)
 		}
 		log.Warn().Msgf("list %s return list=%v with err=%v", localFilesGlobPattern, localFiles, err)

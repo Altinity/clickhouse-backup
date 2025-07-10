@@ -1,4 +1,7 @@
 # v2.6.27
+IMPROVEMENTS
+- add config option `configuration_backup_always` (default false), fix [1180](https://github.com/Altinity/clickhouse-backup/issues/1180)
+
 BUG FIXES
 - fix race condition for `server --watch` command, fix [1177](https://github.com/Altinity/clickhouse-backup/issues/1177)
 

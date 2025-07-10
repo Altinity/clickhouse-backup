@@ -68,6 +68,7 @@ type GeneralConfig struct {
 	IONicePriority                      string            `yaml:"io_nice_priority" envconfig:"IO_NICE_PRIORITY"`
 	RBACBackupAlways                    bool              `yaml:"rbac_backup_always" envconfig:"RBAC_BACKUP_ALWAYS"`
 	RBACConflictResolution              string            `yaml:"rbac_conflict_resolution" envconfig:"RBAC_CONFLICT_RESOLUTION"`
+	ConfigBackupAlways                  bool              `yaml:"config_backup_always" envconfig:"CONFIG_BACKUP_ALWAYS"`
 	RetriesDuration                     time.Duration
 	WatchDuration                       time.Duration
 	FullDuration                        time.Duration
