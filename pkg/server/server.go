@@ -350,6 +350,8 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 				api.writeError(w, http.StatusInternalServerError, row.Command, err)
 				return
 			}
+		case "clean_local_broken":
+			actionsResults, err = api.actionsCleanLocalBrokenHandler(w, row, command, actionsResults)
 		case "clean_remote_broken":
 			actionsResults, err = api.actionsCleanRemoteBrokenHandler(w, row, command, actionsResults)
 			if err != nil {
@@ -466,6 +468,38 @@ func (api *APIServer) actionsCleanHandler(w http.ResponseWriter, row status.Acti
 	err = b.Clean(ctx)
 	if err != nil {
 		log.Error().Msgf("actions Clean error: %v", err)
+		status.Current.Stop(commandId, err)
+		return actionsResults, err
+	}
+	log.Info().Msg("CLEANED")
+	go func() {
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
+			log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
+		}
+	}()
+	status.Current.Stop(commandId, nil)
+	actionsResults = append(actionsResults, actionsResultsRow{
+		Status:    "success",
+		Operation: row.Command,
+	})
+	return actionsResults, nil
+}
+
+func (api *APIServer) actionsCleanLocalBrokenHandler(w http.ResponseWriter, row status.ActionRow, command string, actionsResults []actionsResultsRow) ([]actionsResultsRow, error) {
+	if !api.config.API.AllowParallel && status.Current.InProgress() {
+		log.Warn().Err(ErrAPILocked).Send()
+		return actionsResults, ErrAPILocked
+	}
+	commandId, _ := status.Current.Start(command)
+	cfg, err := api.ReloadConfig(w, "clean_local_broken")
+	if err != nil {
+		status.Current.Stop(commandId, err)
+		return actionsResults, err
+	}
+	b := backup.NewBackuper(cfg)
+	err = b.CleanLocalBroken(commandId)
+	if err != nil {
+		log.Error().Msgf("Clean local broken error: %v", err)
 		status.Current.Stop(commandId, err)
 		return actionsResults, err
 	}
