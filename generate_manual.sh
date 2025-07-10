@@ -15,6 +15,7 @@ cmds=(
   print-config
   clean
   clean_remote_broken
+  clean_local_broken
   watch
   server
 )

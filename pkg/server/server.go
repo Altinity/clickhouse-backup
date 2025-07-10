@@ -227,6 +227,7 @@ func (api *APIServer) registerHTTPHandlers() *http.Server {
 	r.HandleFunc("/backup/create", api.httpCreateHandler).Methods("POST")
 	r.HandleFunc("/backup/clean", api.httpCleanHandler).Methods("POST")
 	r.HandleFunc("/backup/clean/remote_broken", api.httpCleanRemoteBrokenHandler).Methods("POST")
+	r.HandleFunc("/backup/clean/local_broken", api.httpCleanLocalBrokenHandler).Methods("POST")
 	r.HandleFunc("/backup/upload/{name}", api.httpUploadHandler).Methods("POST")
 	r.HandleFunc("/backup/download/{name}", api.httpDownloadHandler).Methods("POST")
 	r.HandleFunc("/backup/restore/{name}", api.httpRestoreHandler).Methods("POST")
@@ -1116,6 +1117,36 @@ func (api *APIServer) httpCleanHandler(w http.ResponseWriter, _ *http.Request) {
 }
 
 // httpCleanRemoteBrokenHandler - delete all remote backups with `broken` in description
+func (api *APIServer) httpCleanLocalBrokenHandler(w http.ResponseWriter, _ *http.Request) {
+	cfg, err := api.ReloadConfig(w, "clean_local_broken")
+	if err != nil {
+		return
+	}
+	commandId, _ := status.Current.Start("clean_local_broken")
+	defer status.Current.Stop(commandId, err)
+
+	b := backup.NewBackuper(cfg)
+	err = b.CleanLocalBroken(commandId)
+	if err != nil {
+		log.Error().Msgf("Clean local broken error: %v", err)
+		api.writeError(w, http.StatusInternalServerError, "clean_local_broken", err)
+		return
+	}
+	go func() {
+		if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
+			log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
+		}
+	}()
+
+	api.sendJSONEachRow(w, http.StatusOK, struct {
+		Status    string `json:"status"`
+		Operation string `json:"operation"`
+	}{
+		Status:    "success",
+		Operation: "clean_local_broken",
+	})
+}
+
 func (api *APIServer) httpCleanRemoteBrokenHandler(w http.ResponseWriter, _ *http.Request) {
 	cfg, err := api.ReloadConfig(w, "clean_remote_broken")
 	if err != nil {

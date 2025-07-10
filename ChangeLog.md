@@ -1,6 +1,7 @@
 # v2.6.27
 IMPROVEMENTS
 - add config option `configuration_backup_always` (default false), fix [1180](https://github.com/Altinity/clickhouse-backup/issues/1180)
+- add `clean_local_broken` CLI command and `POST /backup/clean/local_broken` REST API, fix [1178](https://github.com/Altinity/clickhouse-backup/issues/1178)
 
 BUG FIXES
 - fix race condition for `server --watch` command, fix [1177](https://github.com/Altinity/clickhouse-backup/issues/1177)

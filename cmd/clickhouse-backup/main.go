@@ -630,6 +630,15 @@ func main() {
 			},
 			Flags: cliapp.Flags,
 		},
+		{
+			Name:  "clean_local_broken",
+			Usage: "Remove all broken local backups",
+			Action: func(c *cli.Context) error {
+				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				return b.CleanLocalBroken(status.NotFromAPI)
+			},
+			Flags: cliapp.Flags,
+		},
 
 		{
 			Name:        "watch",

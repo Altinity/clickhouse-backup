@@ -469,7 +469,12 @@ Clean the `shadow` folders using all available paths from `system.disks`
 
 ### POST /backup/clean/remote_broken
 
-Remove
+Remove all remote backups which marked as broken. 
+Note: this operation is sync, and could take a lot of time, increase http timeouts during call
+
+### POST /backup/clean/local_broken
+
+Remove all local backups which marked as broken.
 Note: this operation is sync, and could take a lot of time, increase http timeouts during call
 
 ### POST /backup/upload
@@ -744,7 +749,7 @@ OPTIONS:
    --environment-override value, --env value   override any environment variable via CLI parameter
    --table value, --tables value, -t value     Restore only database and objects which matched with table name patterns, separated by comma, allow ? and * as wildcard
    --restore-database-mapping value, -m value  Define the rule to restore data. For the database not defined in this struct, the program will not deal with it.
-   --restore-table-mapping value, --tm value   Define the rule to restore data. For the table not defined in this struct, the program will not deal with it. Note: only a table backup will work with this
+   --restore-table-mapping value, --tm value   Define the rule to restore data. For the table not defined in this struct, the program will not deal with it.
    --partitions partition_id                   Restore backup only for selected partition names, separated by comma
 If PARTITION BY clause returns numeric not hashed values for partition_id field in system.parts table, then use --partitions=partition_id1,partition_id2 format
 If PARTITION BY clause returns hashed string values, then use --partitions=('non_numeric_field_value_for_part1'),('non_numeric_field_value_for_part2') format
@@ -762,6 +767,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --configs-only                                                   Restore 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
    --skip-projections db_pattern.table_pattern:projections_pattern  Skip make hardlinks to *.proj/* files during backup restoring, format db_pattern.table_pattern:projections_pattern, use https://pkg.go.dev/path/filepath#Match syntax
    --resume, --resumable                                            Will resume download for object disk data
+   --restore-schema-as-attach                                       Use DETACH/ATTACH instead of DROP/CREATE for schema restoration
    --replicated-copy-to-detached                                    Copy data to detached folder for Replicated*MergeTree tables but skip ATTACH PART step
    
 ```
@@ -796,7 +802,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --configs-only                                                   Restore 'clickhouse-server' configuration files only, will skip backup data, will backup schema only if --schema added
    --skip-projections db_pattern.table_pattern:projections_pattern  Skip make hardlinks to *.proj/* files during backup restoring, format db_pattern.table_pattern:projections_pattern, use https://pkg.go.dev/path/filepath#Match syntax
    --resume, --resumable                                            Save intermediate download state and resume download if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
-   --replicated-copy-to-detached                                    Copy data to detached folder for Replicated*MergeTree tables but skip ATTACH PART step
+   --restore-schema-as-attach                                       Use DETACH/ATTACH instead of DROP/CREATE for schema restoration
    
 ```
 ### CLI command - delete
@@ -864,6 +870,19 @@ OPTIONS:
    --environment-override value, --env value  override any environment variable via CLI parameter
    
 ```
+### CLI command - clean_local_broken
+```
+NAME:
+   clickhouse-backup clean_local_broken - Remove all broken local backups
+
+USAGE:
+   clickhouse-backup clean_local_broken [command options] [arguments...]
+
+OPTIONS:
+   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value  override any environment variable via CLI parameter
+   
+```
 ### CLI command - watch
 ```
 NAME:
@@ -894,6 +913,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --configs, --backup-configs, --do-backup-configs                 Backup `clickhouse-server' configuration files only
    --skip-check-parts-columns                                       Skip check system.parts_columns to allow backup inconsistent column types for data parts
    --skip-projections db_pattern.table_pattern:projections_pattern  Skip make and upload hardlinks to *.proj/* files during backup creation, format db_pattern.table_pattern:projections_pattern, use https://pkg.go.dev/path/filepath#Match syntax
+   --delete, --delete-source, --delete-local                        explicitly delete local backup during upload
    
 ```
 ### CLI command - server
@@ -905,11 +925,12 @@ USAGE:
    clickhouse-backup server [command options] [arguments...]
 
 OPTIONS:
-   --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
-   --environment-override value, --env value  override any environment variable via CLI parameter
-   --watch                                    Run watch go-routine for 'create_remote' + 'delete local', after API server startup
-   --watch-interval value                     Interval for run 'create_remote' + 'delete local' for incremental backup, look format https://pkg.go.dev/time#ParseDuration
-   --full-interval value                      Interval for run 'create_remote'+'delete local' when stop create incremental backup sequence and create full backup, look format https://pkg.go.dev/time#ParseDuration
-   --watch-backup-name-template value         Template for new backup name, could contain names from system.macros, {type} - full or incremental and {time:LAYOUT}, look to https://go.dev/src/time/format.go for layout examples
+   --config value, -c value                     Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
+   --environment-override value, --env value    override any environment variable via CLI parameter
+   --watch                                      Run watch go-routine for 'create_remote' + 'delete local', after API server startup
+   --watch-interval value                       Interval for run 'create_remote' + 'delete local' for incremental backup, look format https://pkg.go.dev/time#ParseDuration
+   --full-interval value                        Interval for run 'create_remote'+'delete local' when stop create incremental backup sequence and create full backup, look format https://pkg.go.dev/time#ParseDuration
+   --watch-backup-name-template value           Template for new backup name, could contain names from system.macros, {type} - full or incremental and {time:LAYOUT}, look to https://go.dev/src/time/format.go for layout examples
+   --watch-delete-source, --watch-delete-local  explicitly delete local backup during upload in watch
    
 ```

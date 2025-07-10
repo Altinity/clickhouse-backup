@@ -417,6 +417,28 @@ func (b *Backuper) skipIfSameLocalBackupPresent(ctx context.Context, backupName,
 	return false, nil
 }
 
+func (b *Backuper) CleanLocalBroken(commandId int) error {
+	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
+	if err != nil {
+		return err
+	}
+	ctx, cancel = context.WithCancel(ctx)
+	defer cancel()
+
+	localBackups, _, err := b.GetLocalBackups(ctx, nil)
+	if err != nil {
+		return err
+	}
+	for _, backup := range localBackups {
+		if backup.Broken != "" {
+			if err = b.RemoveBackupLocal(ctx, backup.BackupName, nil); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (b *Backuper) CleanRemoteBroken(commandId int) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
