@@ -69,7 +69,7 @@ func (b *Backuper) checkPidFile(backupName, command string) error {
 	}
 
 	// Check if process is still running
-	if err := process.Signal(syscall.Signal(); err == nil {
+	if err := process.Signal(syscall.Signal(0)); err == nil {
 		exeCommand := command
 		if len(parts) > 1 {
 			exeCommand = parts[1]
