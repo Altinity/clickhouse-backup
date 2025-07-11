@@ -53,7 +53,7 @@ func TestPidLockFlow(t *testing.T) {
 		require.NoError(t, err)
 
 		pidPath := path.Join(backupPath, "clickhouse-backup.pid")
-		err := os.WriteFile(pidPath, []byte(pidContent), 0644)
+		err = os.WriteFile(pidPath, []byte(pidContent), 0644)
 		require.NoError(t, err)
 
 		err = backuper.checkAndCreatePidFile(backupName, "create")
