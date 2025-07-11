@@ -70,15 +70,14 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 		backupName = NewBackupName()
 	}
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
-	
-	// Acquire PID lock
-	if err := b.checkPidFile(backupName, "create"); err != nil {
+
+	if err := b.checkPidFile(backupName); err != nil {
 		return err
 	}
 	if err := b.createPidFile(backupName, "create"); err != nil {
 		return err
 	}
-	defer b.removePidFile(backupName, "create")
+	defer b.removePidFile(backupName)
 
 	if err := b.ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)

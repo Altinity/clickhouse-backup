@@ -2,14 +2,14 @@ package backup
 
 import (
 	"fmt"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/stretchr/testify/require"
 	"os"
 	"path"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/stretchr/testify/require"
 )
 
 func TestPidLockFlow(t *testing.T) {
@@ -31,11 +31,11 @@ func TestPidLockFlow(t *testing.T) {
 	t.Run("CreatePidFileSuccess", func(t *testing.T) {
 		err := backuper.createPidFile(backupName, "create")
 		require.NoError(t, err)
-		
+
 		pidPath := path.Join(tmpDir, "backup", backupName, "clickhouse-backup.pid")
 		data, err := os.ReadFile(pidPath)
 		require.NoError(t, err)
-		
+
 		parts := strings.Split(string(data), "|")
 		require.Len(t, parts, 3)
 		_, err = strconv.Atoi(parts[0])
@@ -51,12 +51,12 @@ func TestPidLockFlow(t *testing.T) {
 		backupPath := path.Join(tmpDir, "backup", backupName)
 		err := os.MkdirAll(backupPath, 0750)
 		require.NoError(t, err)
-		
+
 		pidPath := path.Join(backupPath, "clickhouse-backup.pid")
 		err = os.WriteFile(pidPath, []byte(pidContent), 0644)
 		require.NoError(t, err)
-		
-		err = backuper.checkPidFile(backupName, "create")
+
+		err = backuper.checkPidFile(backupName)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "already running")
 	})
@@ -66,8 +66,8 @@ func TestPidLockFlow(t *testing.T) {
 		err := backuper.createPidFile("", "create")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "backupName is empty")
-		
-		err = backuper.checkPidFile("", "create")
+
+		err = backuper.checkPidFile("")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "backupName is empty")
 	})
@@ -76,12 +76,12 @@ func TestPidLockFlow(t *testing.T) {
 	t.Run("InvalidPidFile", func(t *testing.T) {
 		backupPath := path.Join(tmpDir, "backup", backupName)
 		pidPath := path.Join(backupPath, "clickhouse-backup.pid")
-		
+
 		// Write invalid content
 		err := os.WriteFile(pidPath, []byte("invalid-pid-content"), 0644)
 		require.NoError(t, err)
-		
-		err = backuper.checkPidFile(backupName, "create")
+
+		err = backuper.checkPidFile(backupName)
 		require.NoError(t, err) // Invalid format should be ignored
 	})
 
@@ -93,20 +93,20 @@ func TestPidLockFlow(t *testing.T) {
 		_, err := os.Stat(pidPath)
 		require.True(t, os.IsNotExist(err))
 	})
-	
+
 	// Test with embedded backup disk configuration
 	t.Run("EmbeddedBackupPath", func(t *testing.T) {
 		backuper.cfg.ClickHouse.UseEmbeddedBackupRestore = true
 		backuper.cfg.ClickHouse.EmbeddedBackupDisk = "custom_disk"
 		backuper.DiskToPathMap = map[string]string{"custom_disk": path.Join(tmpDir, "custom_disk")}
-		
+
 		err := backuper.createPidFile(backupName, "create")
 		require.NoError(t, err)
-		
+
 		expectedPath := path.Join(tmpDir, "custom_disk", "clickhouse-backup.pid")
 		_, err = os.Stat(expectedPath)
 		require.NoError(t, err)
-		
+
 		// Cleanup
 		backuper.cfg.ClickHouse.UseEmbeddedBackupRestore = false
 		backuper.removePidFile(backupName)
@@ -120,8 +120,8 @@ func TestPidLockFlow(t *testing.T) {
 		pidPath := path.Join(backupPath, "clickhouse-backup.pid")
 		err := os.WriteFile(pidPath, []byte(pidContent), 0644)
 		require.NoError(t, err)
-		
-		err = backuper.checkPidFile(backupName, "create")
+
+		err = backuper.checkPidFile(backupName)
 		require.NoError(t, err) // Should pass since process doesn't exist
 	})
 
@@ -129,7 +129,7 @@ func TestPidLockFlow(t *testing.T) {
 	t.Run("DirectoryCreation", func(t *testing.T) {
 		nonExistingDir := path.Join(tmpDir, "new_backup_dir")
 		backuper.DefaultDataPath = nonExistingDir
-		
+
 		err := backuper.createPidFile(backupName, "create")
 		require.NoError(t, err)
 		_, err = os.Stat(path.Join(nonExistingDir, "backup", backupName))

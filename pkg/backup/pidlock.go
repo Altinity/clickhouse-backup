@@ -5,7 +5,9 @@ import (
 	"os"
 	"path"
 	"strconv"
+	"strings"
 	"syscall"
+	"time"
 )
 
 func (b *Backuper) createPidFile(backupName, command string) error {
@@ -27,10 +29,10 @@ func (b *Backuper) createPidFile(backupName, command string) error {
 
 	// Write our PID, command and timestamp to file
 	pid := fmt.Sprintf("%d|%s|%s", os.Getpid(), command, time.Now().UTC().Format(time.RFC3339))
-	return os.WriteFile(pidPath, []byte(strconv.Itoa(pid)), 0644)
+	return os.WriteFile(pidPath, []byte(pid), 0644)
 }
 
-func (b *Backuper) checkPidFile(backupName, command string) error {
+func (b *Backuper) checkPidFile(backupName string) error {
 	if backupName == "" {
 		return fmt.Errorf("backupName is empty")
 	}
@@ -62,25 +64,19 @@ func (b *Backuper) checkPidFile(backupName, command string) error {
 		return nil // Invalid PID - we'll overwrite it
 	}
 
-	// Check if process exists
 	process, err := os.FindProcess(pid)
 	if err != nil {
-		return nil // Process doesn't exist
+		return nil
 	}
 
-	// Check if process is still running
 	if err := process.Signal(syscall.Signal(0)); err == nil {
-		exeCommand := command
-		if len(parts) > 1 {
-			exeCommand = parts[1]
-		}
-		return fmt.Errorf("another clickhouse-backup %s command is already running (PID %d)", exeCommand, pid)
+		return fmt.Errorf("another clickhouse-backup %s command is already running %s (PID %d)", parts[1], parts[2], pid)
 	}
 
 	return nil
 }
 
-func (b *Backuper) removePidFile(backupName, command string) {
+func (b *Backuper) removePidFile(backupName string) {
 	if backupName == "" {
 		return
 	}

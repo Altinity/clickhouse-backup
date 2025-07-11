@@ -52,15 +52,14 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	defer cancel()
 	startRestore := time.Now()
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
-	
-	// Acquire PID lock
-	if err := b.checkPidFile(backupName, "restore"); err != nil {
+
+	if err := b.checkPidFile(backupName); err != nil {
 		return err
 	}
 	if err := b.createPidFile(backupName, "restore"); err != nil {
 		return err
 	}
-	defer b.removePidFile(backupName, "restore")
+	defer b.removePidFile(backupName)
 
 	if err := b.prepareRestoreMapping(databaseMapping, "database"); err != nil {
 		return err

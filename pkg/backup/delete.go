@@ -70,14 +70,13 @@ func (b *Backuper) Delete(backupType, backupName string, commandId int) error {
 	ctx, cancel = context.WithCancel(ctx)
 	defer cancel()
 
-	// Acquire PID lock
-	if err := b.checkPidFile(backupName, "delete"); err != nil {
+	if err := b.checkPidFile(backupName); err != nil {
 		return err
 	}
 	if err := b.createPidFile(backupName, "delete"); err != nil {
 		return err
 	}
-	defer b.removePidFile(backupName, "delete")
+	defer b.removePidFile(backupName)
 
 	switch backupType {
 	case "local":

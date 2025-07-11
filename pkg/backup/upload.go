@@ -42,15 +42,14 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 
 	startUpload := time.Now()
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
-	
-	// Acquire PID lock
-	if err := b.checkPidFile(backupName, "upload"); err != nil {
+
+	if err := b.checkPidFile(backupName); err != nil {
 		return err
 	}
 	if err := b.createPidFile(backupName, "upload"); err != nil {
 		return err
 	}
-	defer b.removePidFile(backupName, "upload")
+	defer b.removePidFile(backupName)
 
 	var disks []clickhouse.Disk
 	if err = b.ch.Connect(); err != nil {
