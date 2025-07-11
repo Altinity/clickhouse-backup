@@ -29,7 +29,7 @@ func TestPidLockFlow(t *testing.T) {
 
 	// Test basic pid file creation
 	t.Run("CreatePidFileSuccess", func(t *testing.T) {
-		err := backuper.createPidFile(backupName, "create")
+		err := backuper.checkAndCreatePidFile(backupName, "create")
 		require.NoError(t, err)
 
 		pidPath := path.Join(tmpDir, "backup", backupName, "clickhouse-backup.pid")
@@ -63,13 +63,9 @@ func TestPidLockFlow(t *testing.T) {
 
 	// Test pid creation with empty backup name
 	t.Run("EmptyBackupName", func(t *testing.T) {
-		err := backuper.createPidFile("", "create")
+		err = backuper.checkAndCreatePidFile("", "create")
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "backupName is empty")
-
-		err = backuper.checkPidFile("")
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "backupName is empty")
+		require.Contains(t, err.Error(), "backupName is required")
 	})
 
 	// Test invalid pid file format
@@ -81,7 +77,7 @@ func TestPidLockFlow(t *testing.T) {
 		err := os.WriteFile(pidPath, []byte("invalid-pid-content"), 0644)
 		require.NoError(t, err)
 
-		err = backuper.checkPidFile(backupName)
+		err = backuper.checkAndCreatePidFile(backupName, "create")
 		require.NoError(t, err) // Invalid format should be ignored
 	})
 
@@ -100,7 +96,7 @@ func TestPidLockFlow(t *testing.T) {
 		backuper.cfg.ClickHouse.EmbeddedBackupDisk = "custom_disk"
 		backuper.DiskToPathMap = map[string]string{"custom_disk": path.Join(tmpDir, "custom_disk")}
 
-		err := backuper.createPidFile(backupName, "create")
+		err := backuper.checkAndCreatePidFile(backupName, "create")
 		require.NoError(t, err)
 
 		expectedPath := path.Join(tmpDir, "custom_disk", "clickhouse-backup.pid")
@@ -121,7 +117,7 @@ func TestPidLockFlow(t *testing.T) {
 		err := os.WriteFile(pidPath, []byte(pidContent), 0644)
 		require.NoError(t, err)
 
-		err = backuper.checkPidFile(backupName)
+		err = backuper.checkAndCreatePidFile(backupName, "create")
 		require.NoError(t, err) // Should pass since process doesn't exist
 	})
 
@@ -130,7 +126,7 @@ func TestPidLockFlow(t *testing.T) {
 		nonExistingDir := path.Join(tmpDir, "new_backup_dir")
 		backuper.DefaultDataPath = nonExistingDir
 
-		err := backuper.createPidFile(backupName, "create")
+		err := backuper.checkAndCreatePidFile(backupName, "create")
 		require.NoError(t, err)
 		_, err = os.Stat(path.Join(nonExistingDir, "backup", backupName))
 		require.NoError(t, err)

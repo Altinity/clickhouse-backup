@@ -43,10 +43,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	startUpload := time.Now()
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 
-	if err := b.checkPidFile(backupName); err != nil {
-		return err
-	}
-	if err := b.createPidFile(backupName, "upload"); err != nil {
+	if err := b.checkAndCreatePidFile(backupName, "upload"); err != nil {
 		return err
 	}
 	defer b.removePidFile(backupName)

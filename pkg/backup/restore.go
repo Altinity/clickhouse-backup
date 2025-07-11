@@ -53,10 +53,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	startRestore := time.Now()
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 
-	if err := b.checkPidFile(backupName); err != nil {
-		return err
-	}
-	if err := b.createPidFile(backupName, "restore"); err != nil {
+	if err := b.checkAndCreatePidFile(backupName, "restore"); err != nil {
 		return err
 	}
 	defer b.removePidFile(backupName)

@@ -70,10 +70,7 @@ func (b *Backuper) Delete(backupType, backupName string, commandId int) error {
 	ctx, cancel = context.WithCancel(ctx)
 	defer cancel()
 
-	if err := b.checkPidFile(backupName); err != nil {
-		return err
-	}
-	if err := b.createPidFile(backupName, "delete"); err != nil {
+	if err := b.checkAndCreatePidFile(backupName, "delete"); err != nil {
 		return err
 	}
 	defer b.removePidFile(backupName)

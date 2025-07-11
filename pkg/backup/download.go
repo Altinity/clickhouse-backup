@@ -47,10 +47,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	defer cancel()
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 
-	if err := b.checkPidFile(backupName); err != nil {
-		return err
-	}
-	if err := b.createPidFile(backupName, "download"); err != nil {
+	if err := b.checkAndCreatePidFile(backupName, "download"); err != nil {
 		return err
 	}
 	defer b.removePidFile(backupName)
