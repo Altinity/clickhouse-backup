@@ -8,8 +8,6 @@ import (
 	"syscall"
 )
 
-const pidFileSuffix = ".pid"
-
 func (b *Backuper) createPidFile(backupName, command string) error {
 	if backupName == "" {
 		return fmt.Errorf("backupName is empty")
@@ -20,15 +18,15 @@ func (b *Backuper) createPidFile(backupName, command string) error {
 			backupPath = diskPath
 		}
 	}
-	pidPath := path.Join(backupPath, command+pidFileSuffix)
+	pidPath := path.Join(backupPath, "clickhouse-backup.pid")
 
 	// Create backup directory if not exists
 	if err := os.MkdirAll(backupPath, 0750); err != nil {
 		return fmt.Errorf("can't create backup directory %s: %v", backupPath, err)
 	}
 
-	// Write our PID to file
-	pid := os.Getpid()
+	// Write our PID, command and timestamp to file
+	pid := fmt.Sprintf("%d|%s|%s", os.Getpid(), command, time.Now().UTC().Format(time.RFC3339))
 	return os.WriteFile(pidPath, []byte(strconv.Itoa(pid)), 0644)
 }
 
@@ -82,6 +80,6 @@ func (b *Backuper) removePidFile(backupName, command string) {
 			backupPath = diskPath
 		}
 	}
-	pidPath := path.Join(backupPath, command+pidFileSuffix)
+	pidPath := path.Join(backupPath, "clickhouse-backup.pid")
 	_ = os.Remove(pidPath)
 }
