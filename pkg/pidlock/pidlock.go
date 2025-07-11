@@ -12,6 +12,9 @@ import (
 )
 
 func CheckAndCreatePidFile(backupName string, command string) error {
+	if backupName == "" {
+		return fmt.Errorf("backupName is required")
+	}
 	pidPath := path.Join(os.TempDir(), fmt.Sprintf("clickhouse-backup.%s.pid", backupName))
 	// Check existing PID file
 	existingPidData, err := os.ReadFile(pidPath)
