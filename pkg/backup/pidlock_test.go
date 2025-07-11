@@ -56,7 +56,7 @@ func TestPidLockFlow(t *testing.T) {
 		err = os.WriteFile(pidPath, []byte(pidContent), 0644)
 		require.NoError(t, err)
 
-		err = backuper.checkPidFile(backupName)
+		err = backuper.checkAndCreatePidFile(backupName, "create")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "already running")
 	})

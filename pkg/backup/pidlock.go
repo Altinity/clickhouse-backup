@@ -32,7 +32,7 @@ func (b *Backuper) createPidFile(backupName, command string) error {
 	return os.WriteFile(pidPath, []byte(pid), 0644)
 }
 
-func (b *Backuper) checkPidFile(backupName string) error {
+func (b *Backuper) checkAndCreatePidFile(backupName string, command string) error {
 	if backupName == "" {
 		return fmt.Errorf("backupName is empty")
 	}

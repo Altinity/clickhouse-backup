@@ -71,10 +71,7 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	}
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 
-	if err := b.checkPidFile(backupName); err != nil {
-		return err
-	}
-	if err := b.createPidFile(backupName, "create"); err != nil {
+	if err := b.checkAndCreatePidFile(backupName, "create"); err != nil {
 		return err
 	}
 	defer b.removePidFile(backupName)
