@@ -46,6 +46,16 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	}
 	defer cancel()
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
+	
+	// Acquire PID lock
+	if err := b.checkPidFile(backupName, "download"); err != nil {
+		return err
+	}
+	if err := b.createPidFile(backupName, "download"); err != nil {
+		return err
+	}
+	defer b.removePidFile(backupName, "download")
+
 	if err := b.ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
 	}
