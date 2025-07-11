@@ -63,7 +63,7 @@ func TestPidLockFlow(t *testing.T) {
 
 	// Test pid creation with empty backup name
 	t.Run("EmptyBackupName", func(t *testing.T) {
-		err = backuper.checkAndCreatePidFile("", "create")
+		err := backuper.checkAndCreatePidFile("", "create")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "backupName is required")
 	})
