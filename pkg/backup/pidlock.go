@@ -2,6 +2,7 @@ package backup
 
 import (
 	"fmt"
+	"github.com/rs/zerolog/log"
 	"os"
 	"path"
 	"strconv"
@@ -36,7 +37,7 @@ func (b *Backuper) checkAndCreatePidFile(backupName string, command string) erro
 	if backupName == "" {
 		return fmt.Errorf("backupName is required")
 	}
-	
+
 	backupPath := path.Join(b.DefaultDataPath, "backup", backupName)
 	if b.cfg.ClickHouse.UseEmbeddedBackupRestore && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
 		if diskPath := b.DiskToPathMap[b.cfg.ClickHouse.EmbeddedBackupDisk]; diskPath != "" {
@@ -60,7 +61,7 @@ func (b *Backuper) checkAndCreatePidFile(backupName string, command string) erro
 		} else if pid, err := strconv.Atoi(parts[0]); err == nil {
 			if process, err := os.FindProcess(pid); err == nil {
 				if err := process.Signal(syscall.Signal(0)); err == nil {
-					return fmt.Errorf("another clickhouse-backup %s command is already running %s (PID %d)", 
+					return fmt.Errorf("another clickhouse-backup %s command is already running %s (PID %d)",
 						parts[1], parts[2], pid)
 				}
 			}
