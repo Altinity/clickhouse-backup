@@ -40,7 +40,7 @@ func (b *Backuper) checkPidFile(backupName, command string) error {
 			backupPath = diskPath
 		}
 	}
-	pidPath := path.Join(backupPath, command+pidFileSuffix)
+	pidPath := path.Join(backupPath, "clickhouse-backup.pid")
 
 	// Read existing PID file if exists
 	pidData, err := os.ReadFile(pidPath)
@@ -51,9 +51,15 @@ func (b *Backuper) checkPidFile(backupName, command string) error {
 		return err
 	}
 
-	pid, err := strconv.Atoi(string(pidData))
-	if err != nil {
+	// Parse PID, command and timestamp from file
+	parts := strings.SplitN(strings.TrimSpace(string(pidData)), "|", 3)
+	if len(parts) < 3 {
 		return nil // Invalid PID file - we'll overwrite it
+	}
+
+	pid, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return nil // Invalid PID - we'll overwrite it
 	}
 
 	// Check if process exists
@@ -63,8 +69,12 @@ func (b *Backuper) checkPidFile(backupName, command string) error {
 	}
 
 	// Check if process is still running
-	if err := process.Signal(syscall.Signal(0)); err == nil {
-		return fmt.Errorf("another clickhouse-backup instance (PID %d) is already working with backup %s", pid, backupName)
+	if err := process.Signal(syscall.Signal(); err == nil {
+		exeCommand := command
+		if len(parts) > 1 {
+			exeCommand = parts[1]
+		}
+		return fmt.Errorf("another clickhouse-backup %s command is already running (PID %d)", exeCommand, pid)
 	}
 
 	return nil
