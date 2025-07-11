@@ -10,6 +10,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/custom"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/filesystemhelper"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/partition"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/resumable"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 	"github.com/eapache/go-resiliency/retrier"
@@ -40,17 +41,17 @@ var (
 )
 
 func (b *Backuper) Download(backupName string, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, resume bool, backupVersion string, commandId int) error {
+	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "download"); pidCheckErr != nil {
+		return pidCheckErr
+	}
+	defer pidlock.RemovePidFile(backupName)
+
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return err
 	}
 	defer cancel()
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
-
-	if err := b.checkAndCreatePidFile(backupName, "download"); err != nil {
-		return err
-	}
-	defer b.removePidFile(backupName)
 
 	if err := b.ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)

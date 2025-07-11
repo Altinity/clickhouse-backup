@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/resumable"
 	"github.com/eapache/go-resiliency/retrier"
 	"github.com/pkg/errors"
@@ -44,6 +45,10 @@ import (
 
 // Restore - restore tables matched by tablePattern from backupName
 func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tableMapping, partitions, skipProjections []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume, schemaAsAttach, replicatedCopyToDetached bool, backupVersion string, commandId int) error {
+	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "restore"); pidCheckErr != nil {
+		return pidCheckErr
+	}
+	defer pidlock.RemovePidFile(backupName)
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return err
@@ -52,11 +57,6 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	defer cancel()
 	startRestore := time.Now()
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
-
-	if err := b.checkAndCreatePidFile(backupName, "restore"); err != nil {
-		return err
-	}
-	defer b.removePidFile(backupName)
 
 	if err := b.prepareRestoreMapping(databaseMapping, "database"); err != nil {
 		return err

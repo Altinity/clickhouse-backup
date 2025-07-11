@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/resumable"
 	"github.com/eapache/go-resiliency/retrier"
 	"os"
@@ -58,6 +59,10 @@ func NewBackupName() string {
 // CreateBackup - create new backup of all tables matched by tablePattern
 // If backupName is empty string will use default backup name
 func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string, partitions []string, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, skipCheckPartsColumns bool, skipProjections []string, resume bool, backupVersion string, commandId int) error {
+	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "create"); pidCheckErr != nil {
+		return pidCheckErr
+	}
+	defer pidlock.RemovePidFile(backupName)
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return err
@@ -70,11 +75,6 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 		backupName = NewBackupName()
 	}
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
-
-	if err := b.checkAndCreatePidFile(backupName, "create"); err != nil {
-		return err
-	}
-	defer b.removePidFile(backupName)
 
 	if err := b.ch.Connect(); err != nil {
 		return fmt.Errorf("can't connect to clickhouse: %v", err)
@@ -122,6 +122,7 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	if err != nil {
 		return err
 	}
+
 	b.DefaultDataPath, err = b.ch.GetDefaultPath(disks)
 	if err != nil {
 		return err

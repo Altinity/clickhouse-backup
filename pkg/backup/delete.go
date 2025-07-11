@@ -3,6 +3,7 @@ package backup
 import (
 	"context"
 	"fmt"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 	"io/fs"
 	"os"
 	"path"
@@ -63,17 +64,17 @@ func (b *Backuper) cleanDir(dirName string) error {
 
 // Delete - remove local or remote backup
 func (b *Backuper) Delete(backupType, backupName string, commandId int) error {
+	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "delete"); pidCheckErr != nil {
+		return pidCheckErr
+	}
+	defer pidlock.RemovePidFile(backupName)
+
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return err
 	}
 	ctx, cancel = context.WithCancel(ctx)
 	defer cancel()
-
-	if err := b.checkAndCreatePidFile(backupName, "delete"); err != nil {
-		return err
-	}
-	defer b.removePidFile(backupName)
 
 	switch backupType {
 	case "local":

@@ -6,7 +6,6 @@ import (
 	"path"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 

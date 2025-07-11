@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 	"io"
 	"os"
 	"path"
@@ -33,6 +34,10 @@ import (
 )
 
 func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFromRemote, tablePattern string, partitions, skipProjections []string, schemaOnly, rbacOnly, configsOnly, resume bool, backupVersion string, commandId int) error {
+	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "upload"); pidCheckErr != nil {
+		return pidCheckErr
+	}
+	defer pidlock.RemovePidFile(backupName)
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
 		return err
@@ -42,11 +47,6 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 
 	startUpload := time.Now()
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
-
-	if err := b.checkAndCreatePidFile(backupName, "upload"); err != nil {
-		return err
-	}
-	defer b.removePidFile(backupName)
 
 	var disks []clickhouse.Disk
 	if err = b.ch.Connect(); err != nil {
