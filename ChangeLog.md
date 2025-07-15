@@ -1,3 +1,7 @@
+# v2.6.28
+BUG FIXES
+- time layout for watch backup name shall respect TZ environment variable, fix [1184](https://github.com/Altinity/clickhouse-backup/issues/1184)
+
 # v2.6.27
 IMPROVEMENTS
 - add config option `configuration_backup_always` (default false), fix [1180](https://github.com/Altinity/clickhouse-backup/issues/1180)

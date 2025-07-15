@@ -25,7 +25,7 @@ func (b *Backuper) NewBackupWatchName(ctx context.Context, backupType string) (s
 		for _, group := range watchBackupTemplateTimeRE.FindAllStringSubmatch(backupName, -1) {
 			templateItem := group[0]
 			layout := group[1]
-			backupName = strings.ReplaceAll(backupName, templateItem, time.Now().UTC().Format(layout))
+			backupName = strings.ReplaceAll(backupName, templateItem, time.Now().Format(layout))
 		}
 	} else {
 		return "", fmt.Errorf("watch_backup_name_template doesn't contain {time:layout}, backup name will non unique")
