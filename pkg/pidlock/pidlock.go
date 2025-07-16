@@ -34,7 +34,7 @@ func CheckAndCreatePidFile(backupName string, command string) error {
 	}
 
 	// Write new PID file
-	pid := fmt.Sprintf("%d|%s|%s", os.Getpid(), command, time.Now().UTC().Format(time.RFC3339))
+	pid := fmt.Sprintf("%d|%s|%s", os.Getpid(), command, time.Now().Format(time.RFC3339))
 	return os.WriteFile(pidPath, []byte(pid), 0644)
 }
 

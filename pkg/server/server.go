@@ -855,7 +855,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			backupsJSON = append(backupsJSON, backupJSON{
 				Name:           item.BackupName,
-				Created:        item.CreationDate.Format(common.TimeFormat),
+				Created:        item.CreationDate.In(time.Local).Format(common.TimeFormat),
 				Size:           item.GetFullSize(),
 				DataSize:       item.DataSize,
 				ObjectDiskSize: item.ObjectDiskSize,
@@ -892,7 +892,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 			fullSize := item.GetFullSize()
 			backupsJSON = append(backupsJSON, backupJSON{
 				Name:           item.BackupName,
-				Created:        item.CreationDate.Format(common.TimeFormat),
+				Created:        item.CreationDate.In(time.Local).Format(common.TimeFormat),
 				Size:           fullSize,
 				DataSize:       item.DataSize,
 				ObjectDiskSize: item.ObjectDiskSize,

@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
+	"time"
 )
 
 // List - list backups to stdout from command line
@@ -51,7 +52,7 @@ func printBackupsRemote(w io.Writer, backupList []storage.Backup, format string)
 		for _, backup := range backupList {
 			size := fmt.Sprintf("all:%s,data:%s,arch:%s,obj:%s,meta:%s,rbac:%s,conf:%s", utils.FormatBytes(backup.GetFullSize()), utils.FormatBytes(backup.DataSize), utils.FormatBytes(backup.CompressedSize), utils.FormatBytes(backup.ObjectDiskSize), utils.FormatBytes(backup.MetadataSize), utils.FormatBytes(backup.RBACSize), utils.FormatBytes(backup.ConfigSize))
 			description := backup.DataFormat
-			uploadDate := backup.UploadDate.Format("02/01/2006 15:04:05")
+			uploadDate := backup.UploadDate.In(time.Local).Format("2006-02-01 15:04:05")
 			if backup.Tags != "" {
 				description += ", " + backup.Tags
 			}
@@ -99,7 +100,7 @@ func printBackupsLocal(ctx context.Context, w io.Writer, backupList []LocalBacku
 					}
 					description += backup.Tags
 				}
-				creationDate := backup.CreationDate.Format("02/01/2006 15:04:05")
+				creationDate := backup.CreationDate.In(time.Local).Format("2006-02-01 15:04:05")
 				required := ""
 				if backup.RequiredBackup != "" {
 					required = "+" + backup.RequiredBackup

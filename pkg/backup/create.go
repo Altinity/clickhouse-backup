@@ -53,7 +53,7 @@ type LocalBackup struct {
 
 // NewBackupName - return default backup name
 func NewBackupName() string {
-	return time.Now().UTC().Format(TimeFormatForBackup)
+	return time.Now().Format(TimeFormatForBackup)
 }
 
 // CreateBackup - create new backup of all tables matched by tablePattern
@@ -996,7 +996,7 @@ func (b *Backuper) createBackupMetadata(ctx context.Context, backupMetaFile, bac
 			Disks:                   diskMap,
 			DiskTypes:               diskTypes,
 			ClickhouseBackupVersion: version,
-			CreationDate:            time.Now().UTC(),
+			CreationDate:            time.Now(),
 			Tags:                    tags,
 			ClickHouseVersion:       b.ch.GetVersionDescribe(ctx),
 			DataSize:                backupDataSize,
