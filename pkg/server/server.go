@@ -1686,9 +1686,10 @@ func (api *APIServer) httpStatusHandler(w http.ResponseWriter, r *http.Request) 
 	query := r.URL.Query()
 	if operationId := query.Get("operationid"); operationId != "" {
 		api.sendJSONEachRow(w, http.StatusOK, status.Current.GetStatusByOperationId(operationId))
-	} else {
-		api.sendJSONEachRow(w, http.StatusOK, status.Current.GetStatus(true, "", 0))
+		return
 	}
+	
+	api.sendJSONEachRow(w, http.StatusOK, status.Current.GetStatus(true, "", 0))
 }
 
 func (api *APIServer) UpdateBackupMetrics(ctx context.Context, onlyLocal bool) error {
