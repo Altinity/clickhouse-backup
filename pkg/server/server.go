@@ -305,7 +305,7 @@ type actionsResultsRow struct {
 	Operation string `json:"operation"`
 }
 
-// CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String) ENGINE=URL('http://127.0.0.1:7171/backup/actions?user=user&pass=pass', JSONEachRow)
+// CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String, operation_id String) ENGINE=URL('http://127.0.0.1:7171/backup/actions?user=user&pass=pass', JSONEachRow)
 // INSERT INTO system.backup_actions (command) VALUES ('create backup_name')
 // INSERT INTO system.backup_actions (command) VALUES ('upload backup_name')
 func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
@@ -1867,7 +1867,7 @@ func (api *APIServer) CreateIntegrationTables() error {
 	if err != nil {
 		return err
 	}
-	query := fmt.Sprintf("CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String) ENGINE=URL('%s://%s:%s/backup/actions%s', JSONEachRow) %s", schema, host, port, auth, settings)
+	query := fmt.Sprintf("CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String, operation_id String) ENGINE=URL('%s://%s:%s/backup/actions%s', JSONEachRow) %s", schema, host, port, auth, settings)
 	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_actions"}, query, true, false, "", 0, defaultDataPath, false, ""); err != nil {
 		return err
 	}
