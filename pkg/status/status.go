@@ -28,11 +28,12 @@ type AsyncStatus struct {
 }
 
 type ActionRowStatus struct {
-	Command string `json:"command"`
-	Status  string `json:"status"`
-	Start   string `json:"start,omitempty"`
-	Finish  string `json:"finish,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Command     string `json:"command"`
+	Status      string `json:"status"`
+	Start       string `json:"start,omitempty"`
+	Finish      string `json:"finish,omitempty"`
+	Error       string `json:"error,omitempty"`
+	OperationId string `json:"operation_id,omitempty"`
 }
 
 type ActionRow struct {
@@ -42,14 +43,19 @@ type ActionRow struct {
 }
 
 func (status *AsyncStatus) Start(command string) (int, context.Context) {
+	return status.StartWithOperationId(command, "")
+}
+
+func (status *AsyncStatus) StartWithOperationId(command string, operationId string) (int, context.Context) {
 	status.Lock()
 	defer status.Unlock()
 	ctx, cancel := context.WithCancel(context.Background())
 	status.commands = append(status.commands, ActionRow{
 		ActionRowStatus: ActionRowStatus{
-			Command: command,
-			Start:   time.Now().Format(common.TimeFormat),
-			Status:  InProgressStatus,
+			Command:     command,
+			Start:       time.Now().Format(common.TimeFormat),
+			Status:      InProgressStatus,
+			OperationId: operationId,
 		},
 		Ctx:    ctx,
 		Cancel: cancel,
@@ -196,11 +202,12 @@ func (status *AsyncStatus) GetStatus(current bool, filter string, last int) []Ac
 		if filter == "" || (strings.Contains(command.Command, filter) || strings.Contains(command.Status, filter) || strings.Contains(command.Error, filter)) {
 			// copy without context and cancel
 			filteredCommands = append(filteredCommands, ActionRowStatus{
-				Command: command.Command,
-				Status:  command.Status,
-				Start:   command.Start,
-				Finish:  command.Finish,
-				Error:   command.Error,
+				Command:     command.Command,
+				Status:      command.Status,
+				Start:       command.Start,
+				Finish:      command.Finish,
+				Error:       command.Error,
+				OperationId: command.OperationId,
 			})
 		}
 	}
@@ -218,4 +225,23 @@ func (status *AsyncStatus) GetStatus(current bool, filter string, last int) []Ac
 		end = l
 	}
 	return filteredCommands[begin:end]
+}
+
+func (status *AsyncStatus) GetStatusByOperationId(operationId string) []ActionRowStatus {
+	status.RLock()
+	defer status.RUnlock()
+	
+	for _, command := range status.commands {
+		if command.OperationId == operationId {
+			return []ActionRowStatus{{
+				Command:     command.Command,
+				Status:      command.Status,
+				Start:       command.Start,
+				Finish:      command.Finish,
+				Error:       command.Error,
+				OperationId: command.OperationId,
+			}}
+		}
+	}
+	return make([]ActionRowStatus, 0)
 }

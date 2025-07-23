@@ -1000,7 +1000,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	commandId, _ := status.Current.Start(fullCommand)
+	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("create", 0, func() error {
 			b := backup.NewBackuper(cfg)
@@ -1298,7 +1298,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	go func() {
-		commandId, _ := status.Current.Start(fullCommand)
+		commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
 		err, _ := api.metrics.ExecuteWithMetrics("upload", 0, func() error {
 			b := backup.NewBackuper(cfg)
 			return b.Upload(name, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, skipProjections, schemaOnly, rbacOnly, configsOnly, resume, api.cliApp.Version, commandId)
@@ -1508,7 +1508,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	commandId, _ := status.Current.Start(fullCommand)
+	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore", 0, func() error {
 			b := backup.NewBackuper(api.config)
@@ -1603,7 +1603,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	go func() {
-		commandId, _ := status.Current.Start(fullCommand)
+		commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
 		err, _ := api.metrics.ExecuteWithMetrics("download", 0, func() error {
 			b := backup.NewBackuper(cfg)
 			return b.Download(name, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, resume, api.cliApp.Version, commandId)
@@ -1682,8 +1682,13 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-func (api *APIServer) httpStatusHandler(w http.ResponseWriter, _ *http.Request) {
-	api.sendJSONEachRow(w, http.StatusOK, status.Current.GetStatus(true, "", 0))
+func (api *APIServer) httpStatusHandler(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	if operationId := query.Get("operationid"); operationId != "" {
+		api.sendJSONEachRow(w, http.StatusOK, status.Current.GetStatusByOperationId(operationId))
+	} else {
+		api.sendJSONEachRow(w, http.StatusOK, status.Current.GetStatus(true, "", 0))
+	}
 }
 
 func (api *APIServer) UpdateBackupMetrics(ctx context.Context, onlyLocal bool) error {
