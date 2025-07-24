@@ -442,7 +442,7 @@ Create new backup: `curl -s localhost:7171/backup/create -X POST | jq .`
 
 Additional example: `curl -s 'localhost:7171/backup/create?table=default.billing&name=billing_test' -X POST`
 
-Note: this operation is asynchronous, so the API will return once the operation has started.
+Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
 
 ### POST /backup/watch
 
@@ -493,7 +493,7 @@ Upload backup to remote storage: `curl -s localhost:7171/backup/upload/<BACKUP_N
 - Optional boolean query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate upload state and resume upload if data already exists on remote storage).
 - Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
 
-Note: this operation is asynchronous, so the API will return once the operation has started.
+Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
 
 ### GET /backup/list/{where}
 
@@ -517,7 +517,7 @@ Download backup from remote storage: `curl -s localhost:7171/backup/download/<BA
 - Optional boolean query argument `resumable` works the same as the `--resumable` CLI argument (save intermediate download state and resume download if it already exists on local storage).
 - Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
 
-Note: this operation is asynchronous, so the API will return once the operation has started.
+Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
 
 ### POST /backup/restore
 
@@ -539,6 +539,8 @@ Create schema and restore data from backup: `curl -s localhost:7171/backup/resto
 - Optional boolean query argument `resume` works the same as the `--resume` CLI argument (resume download for object disk data).
 - Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
 
+Note: this operation is asynchronous, so the API will return once the operation has started. The response includes an `operation_id` field that can be used to track the operation status via `/backup/status?operationid=<operation_id>`.
+
 ### POST /backup/delete
 
 Delete specific remote backup: `curl -s localhost:7171/backup/delete/remote/<BACKUP_NAME> -X POST | jq .`
@@ -549,6 +551,11 @@ Delete specific local backup: `curl -s localhost:7171/backup/delete/local/<BACKU
 
 Display list of currently running asynchronous operations: `curl -s localhost:7171/backup/status | jq .`
 Or latest command result if no backup operations executed.
+
+- Optional string query argument `operationid` allows retrieving the status of a specific operation by its ID: `curl -s 'localhost:7171/backup/status?operationid=<operation_id>' | jq .`
+
+When `operationid` is provided, returns only the status of the specified operation. If the operation ID doesn't exist, returns an empty array `[]`.
+When `operationid` is omitted, returns the status of all operations (existing behavior).
 
 ### POST /backup/actions
 
@@ -579,6 +586,7 @@ Display a list of all operations from start of API server: `curl -s localhost:71
 - [How to use AWS IRSA and IAM to allow S3 backup without Explicit credentials](Examples.md#how-to-use-aws-irsa-and-iam-to-allow-s3-backup-without-explicit-credentials)
 - [How to do incremental backups work to remote storage](Examples.md#how-incremental-backups-work-with-remote-storage)
 - [How to watch backups work](Examples.md#how-to-watch-backups-work)
+- [How to track operation status with operation_id](Examples.md#How-to-track-operation-status-with-operation_id)
 
 ## Original Author
 Altinity wants to thank [@AlexAkulov](https://github.com/AlexAkulov) for creating this tool and for his valuable contributions.
