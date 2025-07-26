@@ -860,6 +860,9 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 				}
 				partForDownload := part
 				diskForDownload := disk
+				capturedExistsPath := existsPath
+				capturedNewPath := newPath
+				capturedDisk := disk
 				if !diskExists {
 					diskForDownload = part.RebalancedDisk
 				}
@@ -875,14 +878,14 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 							return downloadErr
 						}
 						downloadedPartPath := path.Join(tableLocalDir, partForDownload.Name)
-						if downloadedPartPath != existsPath {
+						if downloadedPartPath != capturedExistsPath {
 							info, err := os.Stat(downloadedPartPath)
 							if err == nil {
 								if !info.IsDir() {
 									return fmt.Errorf("after downloadDiffRemoteFile %s exists but is not directory", downloadedPartPath)
 								}
-								if err = b.makePartHardlinks(downloadedPartPath, existsPath); err != nil {
-									return fmt.Errorf("can't to add link to rebalanced part %s -> %s error: %v", downloadedPartPath, existsPath, err)
+								if err = b.makePartHardlinks(downloadedPartPath, capturedExistsPath); err != nil {
+									return fmt.Errorf("can't to add link to rebalanced part %s -> %s error: %v", downloadedPartPath, capturedExistsPath, err)
 								}
 							}
 							if err != nil && !os.IsNotExist(err) {
@@ -893,11 +896,36 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 						atomic.AddInt64(&downloadedDiffBytes, fileDiffBytes)
 						atomic.AddUint32(&downloadedDiffParts, 1)
 					}
-					if err := b.makePartHardlinks(existsPath, newPath); err != nil {
-						return fmt.Errorf("can't to add link to exists part %s -> %s error: %v", newPath, existsPath, err)
+					if _, checksumExists := table.Checksums[partForDownload.Name]; checksumExists {
+						var diskObj clickhouse.Disk
+						var foundDisk bool
+						for _, d := range disks {
+							if d.Name == capturedDisk {
+								diskObj = d
+								foundDisk = true
+								break
+							}
+						}
+						if !foundDisk {
+							return fmt.Errorf("disk '%s' not found for checksum calculation", capturedDisk)
+						}
+						partRelativePath := strings.TrimPrefix(capturedExistsPath, diskObj.Path)
+						if strings.HasPrefix(partRelativePath, "/") {
+							partRelativePath = partRelativePath[1:]
+						}
+						checksum, err := b.calculateChecksum(&diskObj, partRelativePath)
+						if err != nil {
+							return fmt.Errorf("calculating checksum for %s failed: %v", capturedExistsPath, err)
+						}
+						if checksum != table.Checksums[partForDownload.Name] {
+							return fmt.Errorf("checksum mismatch for part %s. Expected %d, got %d", partForDownload.Name, table.Checksums[partForDownload.Name], checksum)
+						}
+					}
+					if err := b.makePartHardlinks(capturedExistsPath, capturedNewPath); err != nil {
+						return fmt.Errorf("can't to add link to exists part %s -> %s error: %v", capturedNewPath, capturedExistsPath, err)
 					}
 					if b.resume {
-						b.resumableState.AppendToState(existsPath, pathDiffBytes)
+						b.resumableState.AppendToState(capturedExistsPath, pathDiffBytes)
 					}
 					return nil
 				})
