@@ -58,7 +58,7 @@ func NewBackupName() string {
 
 // CreateBackup - create new backup of all tables matched by tablePattern
 // If backupName is empty string will use default backup name
-func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string, partitions []string, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, skipCheckPartsColumns bool, skipProjections []string, resume, hardlinkExistsFiles bool, backupVersion string, commandId int) error {
+func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string, partitions []string, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, skipCheckPartsColumns bool, skipProjections []string, resume bool, backupVersion string, commandId int) error {
 	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "create"); pidCheckErr != nil {
 		return pidCheckErr
 	}

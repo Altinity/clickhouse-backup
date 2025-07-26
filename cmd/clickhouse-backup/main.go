@@ -115,7 +115,7 @@ func main() {
 			Description: "Create new backup",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CreateBackup(c.Args().First(), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("skip-check-parts-columns"), c.StringSlice("skip-projections"), c.Bool("resume"), c.Bool("hardlink-exists-files"), version, c.Int("command-id"))
+				return b.CreateBackup(c.Args().First(), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("skip-check-parts-columns"), c.StringSlice("skip-projections"), c.Bool("resume"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -179,11 +179,6 @@ func main() {
 					Hidden: false,
 					Usage:  "Will resume upload for object disk data, hard links on local disk still continue to recreate, not work when `use_embedded_backup_restore: true`",
 				},
-				cli.BoolFlag{
-					Name:   "hardlink-exists-files",
-					Hidden: true,
-					Usage:  "Create hardlinks for existing files instead of copying them",
-				},
 			),
 		},
 		{
@@ -193,7 +188,7 @@ func main() {
 			Description: "Create and upload",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CreateToRemote(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("tables"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("skip-check-parts-columns"), c.Bool("resume"), c.Bool("hardlink-exists-files"), version, c.Int("command-id"))
+				return b.CreateToRemote(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("tables"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("skip-check-parts-columns"), c.Bool("resume"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -266,11 +261,6 @@ func main() {
 					Name:   "delete, delete-source, delete-local",
 					Hidden: false,
 					Usage:  "explicitly delete local backup during upload",
-				},
-				cli.BoolFlag{
-					Name:   "hardlink-exists-files",
-					Hidden: true,
-					Usage:  "Create hardlinks for existing files instead of copying them",
 				},
 			),
 		},
@@ -498,11 +488,6 @@ func main() {
 					Name:   "replicated-copy-to-detached",
 					Hidden: false,
 					Usage:  "Copy data to detached folder for Replicated*MergeTree tables but skip ATTACH PART step",
-				},
-				cli.BoolFlag{
-					Name:   "hardlink-exists-files",
-					Hidden: false,
-					Usage:  "Create hardlinks for existing files instead of downloading",
 				},
 			),
 		},

@@ -937,7 +937,6 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	checkPartsColumns := true
 	skipProjections := make([]string, 0)
 	resume := false
-	hardlinkExistsFiles := false
 	fullCommand := "create"
 	query := r.URL.Query()
 	operationId, _ := uuid.NewUUID()
@@ -979,10 +978,6 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		fullCommand += " --skip-check-parts-columns"
 	}
 
-	if _, exist := api.getQueryParameter(query, "hardlink_exists_files"); exist {
-		hardlinkExistsFiles = true
-		fullCommand += " --hardlink-exists-files"
-	}
 
 	if skipProjectionsFromQuery, exist := api.getQueryParameter(query, "skip-projections"); exist {
 		skipProjections = append(skipProjections, skipProjectionsFromQuery)
@@ -1010,7 +1005,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("create", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.CreateBackup(backupName, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, checkPartsColumns, skipProjections, resume, hardlinkExistsFiles, api.clickhouseBackupVersion, commandId)
+			return b.CreateBackup(backupName, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, checkPartsColumns, skipProjections, resume, api.clickhouseBackupVersion, commandId)
 		})
 		if err != nil {
 			log.Error().Msgf("API /backup/create error: %v", err)
