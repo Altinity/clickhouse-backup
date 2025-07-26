@@ -937,6 +937,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	checkPartsColumns := true
 	skipProjections := make([]string, 0)
 	resume := false
+	hardlinkExistsFiles := false
 	fullCommand := "create"
 	query := r.URL.Query()
 	operationId, _ := uuid.NewUUID()
@@ -978,6 +979,11 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		fullCommand += " --skip-check-parts-columns"
 	}
 
+	if _, exist := api.getQueryParameter(query, "hardlink_exists_files"); exist {
+		hardlinkExistsFiles = true
+		fullCommand += " --hardlink-exists-files"
+	}
+
 	if skipProjectionsFromQuery, exist := api.getQueryParameter(query, "skip-projections"); exist {
 		skipProjections = append(skipProjections, skipProjectionsFromQuery)
 		fullCommand += " --skip-projections=" + strings.Join(skipProjections, ",")
@@ -986,6 +992,10 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	if _, exist := query["resume"]; exist {
 		resume = true
 		fullCommand += " --resume"
+	}
+	if _, exist := api.getQueryParameter(query, "hardlink_exists_files"); exist {
+		hardlinkExistsFiles = true
+		fullCommand += " --hardlink-exists-files"
 	}
 
 	if name, exist := query["name"]; exist {
@@ -1004,7 +1014,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("create", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.CreateBackup(backupName, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, checkPartsColumns, skipProjections, resume, api.clickhouseBackupVersion, commandId)
+			return b.CreateBackup(backupName, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, checkPartsColumns, skipProjections, resume, hardlinkExistsFiles, api.clickhouseBackupVersion, commandId)
 		})
 		if err != nil {
 			log.Error().Msgf("API /backup/create error: %v", err)
@@ -1561,6 +1571,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	rbacOnly := false
 	configsOnly := false
 	resume := false
+	hardlinkExistsFiles := false
 	fullCommand := "download"
 	operationId, _ := uuid.NewUUID()
 
@@ -1606,7 +1617,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		commandId, _ := status.Current.Start(fullCommand)
 		err, _ := api.metrics.ExecuteWithMetrics("download", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.Download(name, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, resume, api.cliApp.Version, commandId)
+			return b.Download(name, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, resume, hardlinkExistsFiles, api.cliApp.Version, commandId)
 		})
 		if err != nil {
 			log.Error().Msgf("API /backup/download error: %v", err)

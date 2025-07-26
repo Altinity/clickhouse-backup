@@ -40,7 +40,7 @@ var (
 	ErrBackupIsAlreadyExists = errors.New("backup is already exists")
 )
 
-func (b *Backuper) Download(backupName string, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, resume bool, backupVersion string, commandId int) error {
+func (b *Backuper) Download(backupName string, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, resume bool, hardlinkExistsFiles bool, backupVersion string, commandId int) error {
 	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "download"); pidCheckErr != nil {
 		return pidCheckErr
 	}

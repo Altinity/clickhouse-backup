@@ -115,7 +115,7 @@ func main() {
 			Description: "Create new backup",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CreateBackup(c.Args().First(), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("skip-check-parts-columns"), c.StringSlice("skip-projections"), c.Bool("resume"), version, c.Int("command-id"))
+				return b.CreateBackup(c.Args().First(), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("skip-check-parts-columns"), c.StringSlice("skip-projections"), c.Bool("resume"), c.Bool("hardlink-exists-files"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -178,6 +178,11 @@ func main() {
 					Name:   "resume, resumable",
 					Hidden: false,
 					Usage:  "Will resume upload for object disk data, hard links on local disk still continue to recreate, not work when `use_embedded_backup_restore: true`",
+				},
+				cli.BoolFlag{
+					Name:   "hardlink-exists-files",
+					Hidden: true,
+					Usage:  "Create hardlinks for existing files instead of copying them",
 				},
 			),
 		},
@@ -348,7 +353,7 @@ func main() {
 			UsageText: "clickhouse-backup download [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Download(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("schema"), c.Bool("rbac-only"), c.Bool("configs-only"), c.Bool("resume"), version, c.Int("command-id"))
+				return b.Download(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("schema"), c.Bool("rbac-only"), c.Bool("configs-only"), c.Bool("resume"), c.Bool("hardlink-exists-files"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -502,7 +507,7 @@ func main() {
 			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--skip-rbac] [--skip-configs] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.RestoreFromRemote(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), version, c.Int("command-id"))
+				return b.RestoreFromRemote(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("hardlink-exists-files"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -585,6 +590,11 @@ func main() {
 					Name:   "restore-schema-as-attach",
 					Hidden: false,
 					Usage:  "Use DETACH/ATTACH instead of DROP/CREATE for schema restoration",
+				},
+				cli.BoolFlag{
+					Name:   "hardlink-exists-files",
+					Hidden: false,
+					Usage:  "Create hardlinks for existing files instead of downloading",
 				},
 			),
 		},
