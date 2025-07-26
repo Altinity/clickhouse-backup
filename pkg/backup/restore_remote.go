@@ -15,5 +15,5 @@ func (b *Backuper) RestoreFromRemote(backupName, tablePattern string, databaseMa
 		}
 	}
 	pidlock.RemovePidFile(backupName)
-	return b.Restore(backupName, tablePattern, databaseMapping, tableMapping, partitions, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume, schemaAsAttach, replicatedCopyToDetached, version, commandId)
+	return b.Restore(backupName, tablePattern, databaseMapping, tableMapping, partitions, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume, schemaAsAttach, replicatedCopyToDetached, hardlinkExistsFiles, version, commandId)
 }
