@@ -993,10 +993,6 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		resume = true
 		fullCommand += " --resume"
 	}
-	if _, exist := api.getQueryParameter(query, "hardlink_exists_files"); exist {
-		hardlinkExistsFiles = true
-		fullCommand += " --hardlink-exists-files"
-	}
 
 	if name, exist := query["name"]; exist {
 		backupName = utils.CleanBackupNameRE.ReplaceAllString(name[0], "")
@@ -1289,13 +1285,19 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		skipProjections = skipProjectionsFromQuery
 		fullCommand += " --skip-projections=" + strings.Join(skipProjectionsFromQuery, ",")
 	}
-	if _, exist := query["resumable"]; exist {
-		resume = true
-		fullCommand += " --resumable"
-	}
 	if _, exist := query["resume"]; exist {
 		resume = true
+	}
+	if _, exist := query["resumable"]; exist {
+		resume = true
+	}
+	if resume {
 		fullCommand += " --resume"
+	}
+
+	if _, exist := api.getQueryParameter(query, "hardlink_exists_files"); exist {
+		hardlinkExistsFiles = true
+		fullCommand += " --hardlink-exists-files"
 	}
 
 	fullCommand = fmt.Sprint(fullCommand, " ", name)
