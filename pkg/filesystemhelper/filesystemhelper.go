@@ -258,6 +258,7 @@ func IsFileInPartition(disk, fileName string, partitionsBackupMap common.EmptyMa
 func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap common.EmptyMap, table *clickhouse.Table, tableDiffFromRemote metadata.TableMetadata, disk clickhouse.Disk, skipProjections []string, version int) ([]metadata.Part, int64, map[string]uint64, error) {
 	size := int64(0)
 	parts := make([]metadata.Part, 0)
+	checksums := make(map[string]uint64)
 	walkErr := filepath.Walk(shadowPath, func(filePath string, info os.FileInfo, err error) error {
 		// fix https://github.com/Altinity/clickhouse-backup/issues/826
 		if strings.Contains(info.Name(), "frozen_metadata.txt") {
@@ -296,6 +297,11 @@ func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap 
 				parts = append(parts, metadata.Part{
 					Name: pathParts[3],
 				})
+				c, checksumErr := common.CalculateChecksum("", filePath)
+				if checksumErr != nil {
+					return fmt.Errorf("common.CalculateChecksum return error %v", checksumErr)
+				}
+				checksums[pathParts[3]] = c
 			}
 			return os.MkdirAll(dstFilePath, 0750)
 		}
@@ -315,16 +321,6 @@ func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap 
 	}
 	// https://github.com/ClickHouse/ClickHouse/issues/71009
 	metadata.SortPartsByMinBlock(parts)
-	encodedTablePath := path.Join(common.TablePathEncode(table.Database), common.TablePathEncode(table.Name))
-	checksums := make(map[string]uint64)
-	for _, p := range parts {
-		originalPartPath := path.Join(shadowPath, encodedTablePath, p.Name)
-		c, checksumErr := common.CalculateChecksum("", originalPartPath)
-		if checksumErr != nil {
-			return nil, 0, nil, fmt.Errorf("common.CalculateChecksum return error %v", checksumErr)
-		}
-		checksums[p.Name] = c
-	}
 	return parts, size, checksums, nil
 }
 
