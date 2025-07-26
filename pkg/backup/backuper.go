@@ -537,7 +537,7 @@ func (b *Backuper) calculateChecksum(disk *clickhouse.Disk, partName string) (ui
 	checksumsFilePath := path.Join(disk.Path, partName, "checksums.txt")
 	content, err := os.ReadFile(checksumsFilePath)
 	if err != nil {
-		return 0, fmt.Errorf("could not read checksums file at %s: %w", checksumsFilePath, err)
+		return 0, fmt.Errorf("could not read %s: %w", checksumsFilePath, err)
 	}
 
 	hash := sha256.Sum256(content)
