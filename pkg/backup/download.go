@@ -737,7 +737,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 									log.Warn().Msgf("calculating checksum for %s failed: %v", existingPartPath, err)
 									continue // try next disk or download
 								}
-								if checksum == table.Checksums[part.Name] {
+								if _, exists := table.Checksums[part.Name]; exists && checksum == table.Checksums[part.Name] {
 									log.Info().Msgf("Found existing part %s with matching checksum, creating hardlinks to %s", existingPartPath, partLocalPath)
 									if err := b.makePartHardlinks(existingPartPath, partLocalPath); err != nil {
 										return fmt.Errorf("failed to create hardlinks for %s: %v", existingPartPath, err)
