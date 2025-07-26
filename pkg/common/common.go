@@ -1,8 +1,13 @@
 package common
 
 import (
+	"github.com/rs/zerolog/log"
+	"hash/crc64"
+	"io"
 	"math/rand"
 	"net/url"
+	"os"
+	"path"
 	"reflect"
 	"strings"
 	"time"
@@ -121,18 +126,23 @@ func AddRandomJitter(duration time.Duration, jitterPercent int8) time.Duration {
 }
 
 // CalculateChecksum calculates checksum for a file on a given disk
-func CalculateChecksum(disk interface{ GetPath() string }, relativePath string) (uint64, error) {
-	fullPath := path.Join(disk.GetPath(), relativePath)
+func CalculateChecksum(diskPath string, relativePath string) (uint64, error) {
+	fullPath := path.Join(diskPath, relativePath)
 	file, err := os.Open(fullPath)
 	if err != nil {
 		return 0, err
 	}
-	defer file.Close()
-	
+	defer func() {
+		closeErr := file.Close()
+		if closeErr != nil {
+			log.Warn().Str("fullPath", fullPath).Msg("can't close file")
+		}
+	}()
+
 	hash := crc64.New(crc64.MakeTable(crc64.ECMA))
 	if _, err := io.Copy(hash, file); err != nil {
 		return 0, err
 	}
-	
+
 	return hash.Sum64(), nil
 }
