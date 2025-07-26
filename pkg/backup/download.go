@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/custom"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/filesystemhelper"
@@ -15,6 +16,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 	"github.com/eapache/go-resiliency/retrier"
 	"github.com/rs/zerolog"
+	"hash/crc64"
 	"io"
 	"math/rand"
 	"os"
@@ -732,7 +734,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 								if strings.HasPrefix(partRelativePath, "/") {
 									partRelativePath = partRelativePath[1:]
 								}
-								checksum, err := b.calculateChecksum(&localDisk, partRelativePath)
+								checksum, err := common.CalculateChecksum(&localDisk, partRelativePath)
 								if err != nil {
 									log.Warn().Msgf("calculating checksum for %s failed: %v", existingPartPath, err)
 									continue // try next disk or download
@@ -913,7 +915,7 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 						if strings.HasPrefix(partRelativePath, "/") {
 							partRelativePath = partRelativePath[1:]
 						}
-						checksum, err := b.calculateChecksum(&diskObj, partRelativePath)
+						checksum, err := common.CalculateChecksum(&diskObj, partRelativePath)
 						if err != nil {
 							return fmt.Errorf("calculating checksum for %s failed: %v", capturedExistsPath, err)
 						}

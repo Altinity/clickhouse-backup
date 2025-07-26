@@ -119,3 +119,20 @@ func AddRandomJitter(duration time.Duration, jitterPercent int8) time.Duration {
 	jitter := time.Duration(rand.Int63n(int64(maxJitter + 1)))
 	return duration + jitter
 }
+
+// CalculateChecksum calculates checksum for a file on a given disk
+func CalculateChecksum(disk interface{ GetPath() string }, relativePath string) (uint64, error) {
+	fullPath := path.Join(disk.GetPath(), relativePath)
+	file, err := os.Open(fullPath)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+	
+	hash := crc64.New(crc64.MakeTable(crc64.ECMA))
+	if _, err := io.Copy(hash, file); err != nil {
+		return 0, err
+	}
+	
+	return hash.Sum64(), nil
+}

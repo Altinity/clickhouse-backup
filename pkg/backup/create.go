@@ -8,6 +8,8 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/resumable"
 	"github.com/eapache/go-resiliency/retrier"
+	"hash/crc64"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -840,7 +842,7 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 			disksToPartsMap[disk.Name] = parts
 			for _, p := range parts {
 				originalPartPath := path.Join(shadowPath, encodedTablePath, p.Name)
-				c, err := b.calculateChecksum(&disk, originalPartPath)
+				c, err := common.CalculateChecksum(&disk, originalPartPath)
 				if err != nil {
 					return nil, nil, nil, nil, err
 				}
