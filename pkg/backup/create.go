@@ -831,21 +831,17 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 				return nil, nil, nil, nil, err
 			}
 			// If partitionsIdsMap is not empty, only parts in this partition will back up.
-			parts, size, err := filesystemhelper.MoveShadowToBackup(shadowPath, backupShadowPath, partitionsIdsMap, table, tablesDiffFromRemote[metadata.TableTitle{Database: table.Database, Table: table.Name}], disk, skipProjections, version)
+			parts, size, newChecksums, err := filesystemhelper.MoveShadowToBackup(shadowPath, backupShadowPath, partitionsIdsMap, table, tablesDiffFromRemote[metadata.TableTitle{Database: table.Database, Table: table.Name}], disk, skipProjections, version)
 			if err != nil {
 				return nil, nil, nil, nil, err
 			}
 			realSize[disk.Name] = size
 
 			disksToPartsMap[disk.Name] = parts
-			for _, p := range parts {
-				originalPartPath := path.Join(shadowPath, encodedTablePath, p.Name)
-				c, checksumErr := common.CalculateChecksum("", originalPartPath)
-				if checksumErr != nil {
-					return nil, nil, nil, nil, fmt.Errorf("common.CalculateChecksum return error %v", checksumErr)
-				}
-				checksums[p.Name] = c
+			for pName, c := range newChecksums {
+				checksums[pName] = c
 			}
+
 			logger.Debug().Str("disk", disk.Name).Msg("shadow moved")
 			if len(parts) > 0 && (b.isDiskTypeObject(disk.Type) || b.isDiskTypeEncryptedObject(disk, diskList)) {
 				start := time.Now()
