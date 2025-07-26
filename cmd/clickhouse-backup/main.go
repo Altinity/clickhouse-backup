@@ -387,6 +387,11 @@ func main() {
 					Hidden: false,
 					Usage:  "Save intermediate download state and resume download if backup exists on local storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'",
 				},
+				cli.BoolFlag{
+					Name:   "hardlink-exists-files",
+					Hidden: false,
+					Usage:  "Create hardlinks for existing files instead of downloading",
+				},
 			),
 		},
 		{
@@ -483,6 +488,11 @@ func main() {
 					Name:   "replicated-copy-to-detached",
 					Hidden: false,
 					Usage:  "Copy data to detached folder for Replicated*MergeTree tables but skip ATTACH PART step",
+				},
+				cli.BoolFlag{
+					Name:   "hardlink-exists-files",
+					Hidden: false,
+					Usage:  "Create hardlinks for existing files instead of downloading",
 				},
 			),
 		},
