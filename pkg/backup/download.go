@@ -134,7 +134,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	tablesForDownload := parseTablePatternForDownload(remoteBackup.Tables, tablePattern)
 
 	if !schemaOnly && !b.cfg.General.DownloadByPart && remoteBackup.RequiredBackup != "" {
-		err := b.Download(remoteBackup.RequiredBackup, tablePattern, partitions, schemaOnly, rbacOnly, configsOnly, b.resume, backupVersion, commandId)
+		err := b.Download(remoteBackup.RequiredBackup, tablePattern, partitions, schemaOnly, rbacOnly, configsOnly, b.resume, hardlinkExistsFiles, backupVersion, commandId)
 		if err != nil && !errors.Is(err, ErrBackupIsAlreadyExists) {
 			return err
 		}

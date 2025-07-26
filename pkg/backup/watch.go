@@ -122,7 +122,7 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 			}
 			if metrics != nil {
 				createRemoteErr, createRemoteErrCount = metrics.ExecuteWithMetrics("create_remote", createRemoteErrCount, func() error {
-					return b.CreateToRemote(backupName, deleteSource, "", diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, false, backupConfigs, false, skipCheckPartsColumns, false, version, commandId)
+					return b.CreateToRemote(backupName, deleteSource, "", diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, false, backupConfigs, false, skipCheckPartsColumns, false, false, version, commandId)
 				})
 				// If backups_to_keep_local=-1 then the local backup is deleted in the upload step when RemoveOldBackupsLocal is called
 				if !deleteSource && b.cfg.General.BackupsToKeepLocal >= 0 {
@@ -131,7 +131,7 @@ func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, t
 					})
 				}
 			} else {
-				createRemoteErr = b.CreateToRemote(backupName, deleteSource, "", diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, false, backupConfigs, false, skipCheckPartsColumns, false, version, commandId)
+				createRemoteErr = b.CreateToRemote(backupName, deleteSource, "", diffFromRemote, tablePattern, partitions, skipProjections, schemaOnly, backupRBAC, false, backupConfigs, false, skipCheckPartsColumns, false, false, version, commandId)
 				if createRemoteErr != nil {
 					cmd := "create_remote"
 					if diffFromRemote != "" {

@@ -306,11 +306,11 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 			logger := log.With().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Logger()
 			var realSize, objectDiskSize map[string]int64
 			var disksToPartsMap map[string][]metadata.Part
+			var checksums map[string]uint64
 			if doBackupData && table.BackupType == clickhouse.ShardBackupFull {
 				logger.Debug().Msg("begin data backup")
 				shadowBackupUUID := strings.ReplaceAll(uuid.New().String(), "-", "")
 				var addTableToBackupErr error
-				var checksums map[string]uint64
 				disksToPartsMap, realSize, objectDiskSize, checksums, addTableToBackupErr = b.AddTableToLocalBackup(createCtx, backupName, tablesDiffFromRemote, shadowBackupUUID, disks, &table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}], skipProjections, version)
 				if addTableToBackupErr != nil {
 					logger.Error().Msgf("b.AddTableToLocalBackup error: %v", addTableToBackupErr)
