@@ -1295,11 +1295,6 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		fullCommand += " --resume"
 	}
 
-	if _, exist := api.getQueryParameter(query, "hardlink_exists_files"); exist {
-		hardlinkExistsFiles = true
-		fullCommand += " --hardlink-exists-files"
-	}
-
 	fullCommand = fmt.Sprint(fullCommand, " ", name)
 
 	callback, err := parseCallback(query)
@@ -1377,7 +1372,6 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	resume := false
 	restoreSchemaAsAttach := false
 	replicatedCopyToDetached := false
-	hardlinkExistsFiles := false
 	fullCommand := "restore"
 	operationId, _ := uuid.NewUUID()
 
@@ -1511,11 +1505,6 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	if _, exist := api.getQueryParameter(query, "hardlink_exists_files"); exist {
-		hardlinkExistsFiles = true
-		fullCommand += " --hardlink-exists-files"
-	}
-
 	name := utils.CleanBackupNameRE.ReplaceAllString(vars["name"], "")
 	fullCommand += fmt.Sprintf(" %s", name)
 
@@ -1530,7 +1519,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore", 0, func() error {
 			b := backup.NewBackuper(api.config)
-			return b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, hardlinkExistsFiles, api.cliApp.Version, commandId)
+			return b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, api.cliApp.Version, commandId)
 		})
 		go func() {
 			if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
