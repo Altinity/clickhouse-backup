@@ -2,6 +2,8 @@ package backup
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
@@ -529,4 +531,15 @@ func (b *Backuper) prepareDatabaseEnginesMap(databases []metadata.DatabasesMeta)
 		databaseEngines[database.Name] = engine
 	}
 	return databaseEngines
+}
+
+func (b *Backuper) calculateChecksum(disk *clickhouse.Disk, partName string) (uint64, error) {
+	checksumsFilePath := path.Join(disk.Path, partName, "checksums.txt")
+	content, err := os.ReadFile(checksumsFilePath)
+	if err != nil {
+		return 0, fmt.Errorf("could not read checksums file at %s: %w", checksumsFilePath, err)
+	}
+
+	hash := sha256.Sum256(content)
+	return binary.LittleEndian.Uint64(hash[:8]), nil
 }
