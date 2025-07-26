@@ -18,7 +18,7 @@ func (b *Backuper) CreateToRemote(backupName string, deleteSource bool, diffFrom
 	if backupName == "" {
 		backupName = NewBackupName()
 	}
-	if err := b.CreateBackup(backupName, diffFromRemote, tablePattern, partitions, schemaOnly, backupRBAC, rbacOnly, backupConfigs, configsOnly, skipCheckPartsColumns, skipProjections, resume, false, version, commandId); err != nil {
+	if err := b.CreateBackup(backupName, diffFromRemote, tablePattern, partitions, schemaOnly, backupRBAC, rbacOnly, backupConfigs, configsOnly, skipCheckPartsColumns, skipProjections, resume, hardlinkExistsFiles, version, commandId); err != nil {
 		return err
 	}
 	pidlock.RemovePidFile(backupName)
