@@ -225,6 +225,7 @@ func (api *APIServer) registerHTTPHandlers() *http.Server {
 	r.HandleFunc("/backup/list", api.httpListHandler).Methods("GET", "HEAD")
 	r.HandleFunc("/backup/list/{where}", api.httpListHandler).Methods("GET")
 	r.HandleFunc("/backup/create", api.httpCreateHandler).Methods("POST")
+	r.HandleFunc("/backup/create_remote", api.httpCreateRemoteHandler).Methods("POST")
 	r.HandleFunc("/backup/clean", api.httpCleanHandler).Methods("POST")
 	r.HandleFunc("/backup/clean/remote_broken", api.httpCleanRemoteBrokenHandler).Methods("POST")
 	r.HandleFunc("/backup/clean/local_broken", api.httpCleanLocalBrokenHandler).Methods("POST")
@@ -1031,6 +1032,135 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	}{
 		Status:      "acknowledged",
 		Operation:   "create",
+		BackupName:  backupName,
+		OperationId: operationId.String(),
+	})
+}
+
+// httpCreateRemoteHandler - create and upload a backup
+func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Request) {
+	if !api.config.API.AllowParallel && status.Current.InProgress() {
+		log.Warn().Err(ErrAPILocked).Send()
+		api.writeError(w, http.StatusLocked, "create_remote", ErrAPILocked)
+		return
+	}
+	cfg, err := api.ReloadConfig(w, "create_remote")
+	if err != nil {
+		return
+	}
+	tablePattern := ""
+	diffFrom := ""
+	diffFromRemote := ""
+	partitionsToBackup := make([]string, 0)
+	backupName := backup.NewBackupName()
+	schemaOnly := false
+	backupRBAC := false
+	rbacOnly := false
+	backupConfigs := false
+	configsOnly := false
+	skipCheckPartsColumns := false
+	skipProjections := make([]string, 0)
+	deleteSource := false
+	resume := false
+	fullCommand := "create_remote"
+	query := r.URL.Query()
+	operationId, _ := uuid.NewUUID()
+
+	if tp, exist := query["table"]; exist {
+		tablePattern = tp[0]
+		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
+	}
+	if df, exist := api.getQueryParameter(query, "diff-from"); exist {
+		diffFrom = df
+		fullCommand = fmt.Sprintf("%s --diff-from=\"%s\"", fullCommand, diffFrom)
+	}
+	if baseBackup, exists := api.getQueryParameter(query, "diff-from-remote"); exists {
+		diffFromRemote = baseBackup
+		fullCommand = fmt.Sprintf("%s --diff-from-remote=\"%s\"", fullCommand, diffFromRemote)
+	}
+	if partitions, exist := query["partitions"]; exist {
+		partitionsToBackup = append(partitionsToBackup, partitions...)
+		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, strings.Join(partitions, "\" --partitions=\""))
+	}
+	if _, exist := query["schema"]; exist {
+		schemaOnly = true
+		fullCommand += " --schema"
+	}
+	if _, exist := query["rbac"]; exist {
+		backupRBAC = true
+		fullCommand += " --rbac"
+	}
+	if _, exist := api.getQueryParameter(query, "rbac-only"); exist {
+		rbacOnly = true
+		fullCommand += " --rbac-only"
+	}
+	if _, exist := query["configs"]; exist {
+		backupConfigs = true
+		fullCommand += " --configs"
+	}
+	if _, exist := api.getQueryParameter(query, "configs-only"); exist {
+		configsOnly = true
+		fullCommand += " --configs-only"
+	}
+
+	if _, exist := api.getQueryParameter(query, "skip-check-parts-columns"); exist {
+		skipCheckPartsColumns = true
+		fullCommand += " --skip-check-parts-columns"
+	}
+
+	if skipProjectionsFromQuery, exist := api.getQueryParameter(query, "skip-projections"); exist {
+		skipProjections = append(skipProjections, skipProjectionsFromQuery)
+		fullCommand += " --skip-projections=" + strings.Join(skipProjections, ",")
+	}
+	if _, exist := api.getQueryParameter(query, "delete-source"); exist {
+		deleteSource = true
+		fullCommand += " --delete-source"
+	}
+	if _, exist := query["resume"]; exist {
+		resume = true
+		fullCommand += " --resume"
+	}
+	if name, exist := query["name"]; exist {
+		backupName = utils.CleanBackupNameRE.ReplaceAllString(name[0], "")
+		fullCommand = fmt.Sprintf("%s %s", fullCommand, backupName)
+	}
+
+	callback, err := parseCallback(query)
+	if err != nil {
+		log.Error().Err(err).Send()
+		api.writeError(w, http.StatusBadRequest, "create_remote", err)
+		return
+	}
+
+	commandId, _ := status.Current.Start(fullCommand)
+	go func() {
+		err, _ := api.metrics.ExecuteWithMetrics("create_remote", 0, func() error {
+			b := backup.NewBackuper(cfg)
+			return b.CreateToRemote(backupName, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, rbacOnly, backupConfigs, configsOnly, skipCheckPartsColumns, resume, api.clickhouseBackupVersion, commandId)
+		})
+		if err != nil {
+			log.Error().Msgf("API /backup/create_remote error: %v", err)
+			status.Current.Stop(commandId, err)
+			api.errorCallback(context.Background(), err, operationId.String(), callback)
+			return
+		}
+		go func() {
+			if metricsErr := api.UpdateBackupMetrics(context.Background(), false); metricsErr != nil {
+				log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
+			}
+		}()
+
+		status.Current.Stop(commandId, nil)
+		api.successCallback(context.Background(), operationId.String(), callback)
+	}()
+	api.sendJSONEachRow(w, http.StatusCreated, struct {
+		Status      string `json:"status"`
+		Operation   string `json:"operation"`
+		BackupName  string `json:"backup_name"`
+		OperationId string `json:"operation_id"`
+	}{
+		Status:      "acknowledged",
+		Operation:   "create_remote",
 		BackupName:  backupName,
 		OperationId: operationId.String(),
 	})

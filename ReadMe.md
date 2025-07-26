@@ -444,6 +444,28 @@ Additional example: `curl -s 'localhost:7171/backup/create?table=default.billing
 
 Note: this operation is asynchronous, so the API will return once the operation has started.
 
+### POST /backup/create_remote
+
+Create new backup and upload to remote storage: `curl -s localhost:7171/backup/create_remote -X POST | jq .`
+
+- Optional string query argument `table` works the same as the `--table=pattern` CLI argument.
+- Optional string query argument `partitions` works the same as the `--partitions=value` CLI argument.
+- Optional string query argument `diff-from` or `diff_from` works the same as the `--diff-from=backup_name` CLI argument.
+- Optional string query argument `diff-from-remote` or `diff_from_remote` works the same as the `--diff-from-remote=backup_name` CLI argument (will calculate increment for object disks).
+- Optional string query argument `name` works the same as specifying a backup name with the CLI.
+- Optional boolean query argument `schema` works the same as the `--schema` CLI argument (backup schema only).
+- Optional boolean query argument `rbac` works the same as the `--rbac` CLI argument (backup RBAC).
+- Optional boolean query argument `rbac-only` or `rbac_only` works the same as the `--rbac-only` CLI argument (backup only RBAC).
+- Optional boolean query argument `configs` works the same as the `--configs` CLI argument (backup configs).
+- Optional boolean query argument `configs-only` or `configs_only` works the same as the `--configs-only` CLI argument (backup only configs).
+- Optional boolean query argument `skip-check-parts-columns` or `skip_check_parts_columns` works the same as the `--skip-check-parts-columns` CLI argument (allow backup inconsistent column types for data parts).
+- Optional string query argument `skip-projections` or `skip_projections` works the same as the `--skip-projections` CLI argument.
+- Optional boolean query argument `delete-source` or `delete_source` works the same as `--delete-source` CLI argument.
+- Optional boolean query argument `resume` works the same as the `--resume` CLI argument (resume upload for object disk data).
+- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
+
+Note: this operation is asynchronous, so the API will return once the operation has started.
+
 ### POST /backup/watch
 
 Run background watch process and create full+incremental backups sequence: `curl -s localhost:7171/backup/watch -X POST | jq .`
