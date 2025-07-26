@@ -210,7 +210,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 				start := time.Now()
 				var downloadDataErr error
 				var downloadDataSize uint64
-				downloadDataSize, downloadDataErr = b.downloadTableData(dataCtx, remoteBackup.BackupMetadata, *tableMetadataAfterDownload[idx], disks)
+				downloadDataSize, downloadDataErr = b.downloadTableData(dataCtx, remoteBackup.BackupMetadata, *tableMetadataAfterDownload[idx], disks, hardlinkExistsFiles)
 				if downloadDataErr != nil {
 					return downloadDataErr
 				}
@@ -613,7 +613,7 @@ func (b *Backuper) downloadBackupRelatedDir(ctx context.Context, remoteBackup st
 	return uint64(remoteFileInfo.Size()), nil
 }
 
-func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.BackupMetadata, table metadata.TableMetadata, disks []clickhouse.Disk) (uint64, error) {
+func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.BackupMetadata, table metadata.TableMetadata, disks []clickhouse.Disk, hardlinkExistsFiles bool) (uint64, error) {
 	dbAndTableDir := path.Join(common.TablePathEncode(table.Database), common.TablePathEncode(table.Table))
 	dataGroup, dataCtx := errgroup.WithContext(ctx)
 	dataGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
@@ -705,6 +705,66 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 						atomic.AddUint64(&downloadedSize, uint64(pathSize))
 						if isProcesses {
 							return nil
+						}
+					}
+
+					if hardlinkExistsFiles {
+						for _, localDisk := range disks {
+							if remoteBackup.DiskTypes[disk] != "" && localDisk.Type != remoteBackup.DiskTypes[disk] {
+								continue
+							}
+
+							var existingPartPath string
+							p1 := path.Join(localDisk.Path, "data", dbAndTableDir, part.Name)
+							if _, err := os.Stat(p1); err == nil {
+								existingPartPath = p1
+							}
+
+							if existingPartPath == "" && table.UUID != "" {
+								p2 := path.Join(localDisk.Path, "store", table.UUID[:3], table.UUID, part.Name)
+								if _, err := os.Stat(p2); err == nil {
+									existingPartPath = p2
+								}
+							}
+
+							if existingPartPath != "" {
+								partRelativePath := strings.TrimPrefix(existingPartPath, localDisk.Path)
+								if strings.HasPrefix(partRelativePath, "/") {
+									partRelativePath = partRelativePath[1:]
+								}
+								checksum, err := b.calculateChecksum(&localDisk, partRelativePath)
+								if err != nil {
+									log.Warn().Msgf("calculating checksum for %s failed: %v", existingPartPath, err)
+									continue // try next disk or download
+								}
+								if checksum == table.Checksums[part.Name] {
+									log.Info().Msgf("Found existing part %s with matching checksum, creating hardlinks to %s", existingPartPath, partLocalPath)
+									if err := b.makePartHardlinks(existingPartPath, partLocalPath); err != nil {
+										return fmt.Errorf("failed to create hardlinks for %s: %v", existingPartPath, err)
+									}
+
+									var partSize int64
+									walkErr := filepath.Walk(existingPartPath, func(path string, info os.FileInfo, err error) error {
+										if err != nil {
+											return err
+										}
+										if !info.IsDir() {
+											partSize += info.Size()
+										}
+										return nil
+									})
+									if walkErr != nil {
+										return fmt.Errorf("failed to calculate size of %s: %v", existingPartPath, walkErr)
+									}
+									atomic.AddUint64(&downloadedSize, uint64(partSize))
+									if b.resume {
+										b.resumableState.AppendToState(partRemotePath, partSize)
+									}
+									return nil
+								} else {
+									log.Warn().Msgf("Found existing part %s but checksums do not match. Expected %d, got %d. Will download.", existingPartPath, table.Checksums[part.Name], checksum)
+								}
+							}
 						}
 					}
 

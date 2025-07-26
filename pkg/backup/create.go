@@ -340,6 +340,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 				metadataSize, createTableMetadataErr := b.createTableMetadata(path.Join(backupPath, "metadata"), metadata.TableMetadata{
 					Table:        table.Name,
 					Database:     table.Database,
+					UUID:         table.UUID,
 					Query:        table.CreateTableQuery,
 					TotalBytes:   table.TotalBytes,
 					Size:         realSize,
@@ -495,6 +496,7 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 					metadataSize, err := b.createTableMetadata(path.Join(backupPath, "metadata"), metadata.TableMetadata{
 						Table:        table.Name,
 						Database:     table.Database,
+						UUID:         table.UUID,
 						Query:        table.CreateTableQuery,
 						TotalBytes:   table.TotalBytes,
 						Size:         map[string]int64{b.cfg.ClickHouse.EmbeddedBackupDisk: 0},

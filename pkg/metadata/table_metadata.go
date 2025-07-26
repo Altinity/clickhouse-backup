@@ -12,6 +12,7 @@ type TableMetadata struct {
 	RebalancedFiles      map[string]string   `json:"rebalanced_files,omitempty"`
 	Table                string              `json:"table"`
 	Database             string              `json:"database"`
+	UUID                 string              `json:"uuid,omitempty"`
 	Parts                map[string][]Part   `json:"parts"`
 	Checksums            map[string]uint64   `json:"checksums,omitempty"`
 	Query                string              `json:"query"`
@@ -28,6 +29,7 @@ func (tm *TableMetadata) Save(location string, metadataOnly bool) (uint64, error
 	newTM := TableMetadata{
 		Table:                tm.Table,
 		Database:             tm.Database,
+		UUID:                 tm.UUID,
 		Query:                tm.Query,
 		DependenciesTable:    tm.DependenciesTable,
 		DependenciesDatabase: tm.DependenciesDatabase,
