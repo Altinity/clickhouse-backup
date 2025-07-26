@@ -13,6 +13,7 @@ type TableMetadata struct {
 	Table                string              `json:"table"`
 	Database             string              `json:"database"`
 	Parts                map[string][]Part   `json:"parts"`
+	Checksums            map[string]uint64   `json:"checksums,omitempty"`
 	Query                string              `json:"query"`
 	Size                 map[string]int64    `json:"size"`                  // how much size on each disk
 	TotalBytes           uint64              `json:"total_bytes,omitempty"` // total table size
@@ -36,6 +37,7 @@ func (tm *TableMetadata) Save(location string, metadataOnly bool) (uint64, error
 	if !metadataOnly {
 		newTM.Files = tm.Files
 		newTM.Parts = tm.Parts
+		newTM.Checksums = tm.Checksums
 		newTM.Size = tm.Size
 		newTM.TotalBytes = tm.TotalBytes
 		newTM.MetadataOnly = false
