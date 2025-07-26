@@ -231,6 +231,7 @@ func (api *APIServer) registerHTTPHandlers() *http.Server {
 	r.HandleFunc("/backup/upload/{name}", api.httpUploadHandler).Methods("POST")
 	r.HandleFunc("/backup/download/{name}", api.httpDownloadHandler).Methods("POST")
 	r.HandleFunc("/backup/restore/{name}", api.httpRestoreHandler).Methods("POST")
+	r.HandleFunc("/backup/restore_remote/{name}", api.httpRestoreRemoteHandler).Methods("POST")
 	r.HandleFunc("/backup/delete/{where}/{name}", api.httpDeleteHandler).Methods("POST")
 	r.HandleFunc("/backup/status", api.httpStatusHandler).Methods("GET")
 
@@ -1542,6 +1543,215 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// httpRestoreRemoteHandler - download and restore a backup from remote storage
+func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Request) {
+	if !api.config.API.AllowParallel && status.Current.InProgress() {
+		log.Warn().Err(ErrAPILocked).Send()
+		api.writeError(w, http.StatusLocked, "restore_remote", ErrAPILocked)
+		return
+	}
+	cfg, err := api.ReloadConfig(w, "restore_remote")
+	if err != nil {
+		return
+	}
+	vars := mux.Vars(r)
+	tablePattern := ""
+	databaseMappingToRestore := make([]string, 0)
+	tableMappingToRestore := make([]string, 0)
+	partitionsToBackup := make([]string, 0)
+	schemaOnly := false
+	dataOnly := false
+	dropExists := false
+	ignoreDependencies := false
+	restoreRBAC := false
+	rbacOnly := false
+	restoreConfigs := false
+	configsOnly := false
+	skipProjections := make([]string, 0)
+	resume := false
+	restoreSchemaAsAttach := false
+	replicatedCopyToDetached := false
+	hardlinkExistsFiles := false
+	fullCommand := "restore_remote"
+	operationId, _ := uuid.NewUUID()
+
+	query := r.URL.Query()
+	if tp, exist := query["table"]; exist {
+		tablePattern = tp[0]
+		fullCommand = fmt.Sprintf("%s --tables=\"%s\"", fullCommand, tablePattern)
+	}
+	databaseMappingQueryParamName := "restore_database_mapping"
+	databaseMappingQueryParamNames := []string{
+		strings.Replace(databaseMappingQueryParamName, "_", "-", -1),
+		strings.Replace(databaseMappingQueryParamName, "-", "_", -1),
+	}
+	for _, queryParamName := range databaseMappingQueryParamNames {
+		if databaseMappingQuery, exist := query[queryParamName]; exist {
+			for _, databaseMapping := range databaseMappingQuery {
+				mappingItems := strings.Split(databaseMapping, ",")
+				for _, m := range mappingItems {
+					if strings.Count(m, ":") != 1 || !databaseMappingRE.MatchString(m) {
+						api.writeError(w, http.StatusInternalServerError, "restore_remote", fmt.Errorf("invalid values in restore_database_mapping %s", m))
+						return
+
+					}
+				}
+				databaseMappingToRestore = append(databaseMappingToRestore, mappingItems...)
+			}
+
+			fullCommand = fmt.Sprintf("%s --restore-database-mapping=\"%s\"", fullCommand, strings.Join(databaseMappingToRestore, ","))
+		}
+	}
+
+	// https://github.com/Altinity/clickhouse-backup/issues/937
+	tableMappingQueryParamName := "restore_table_mapping"
+	tableMappingQueryParamNames := []string{
+		strings.Replace(tableMappingQueryParamName, "_", "-", -1),
+		strings.Replace(tableMappingQueryParamName, "-", "_", -1),
+	}
+	for _, queryParamName := range tableMappingQueryParamNames {
+		if tableMappingQuery, exist := query[queryParamName]; exist {
+			for _, tableMapping := range tableMappingQuery {
+				mappingItems := strings.Split(tableMapping, ",")
+				for _, m := range mappingItems {
+					if strings.Count(m, ":") != 1 || !tableMappingRE.MatchString(m) {
+						api.writeError(w, http.StatusInternalServerError, "restore_remote", fmt.Errorf("invalid values in restore_table_mapping %s", m))
+						return
+					}
+				}
+				tableMappingToRestore = append(tableMappingToRestore, mappingItems...)
+			}
+
+			fullCommand = fmt.Sprintf("%s --restore-table-mapping=\"%s\"", fullCommand, strings.Join(tableMappingToRestore, ","))
+		}
+	}
+
+	if partitions, exist := query["partitions"]; exist {
+		partitionsToBackup = append(partitionsToBackup, partitions...)
+		fullCommand = fmt.Sprintf("%s --partitions=\"%s\"", fullCommand, strings.Join(partitions, "\" --partitions=\""))
+	}
+	if _, exist := query["schema"]; exist {
+		schemaOnly = true
+		fullCommand += " --schema"
+	}
+	if _, exist := query["data"]; exist {
+		dataOnly = true
+		fullCommand += " --data"
+	}
+	if _, exist := query["drop"]; exist {
+		dropExists = true
+		fullCommand += " --drop"
+	}
+	if _, exist := query["rm"]; exist {
+		dropExists = true
+		fullCommand += " --rm"
+	}
+	if _, exists := api.getQueryParameter(query, "ignore_dependencies"); exists {
+		ignoreDependencies = true
+		fullCommand += " --ignore-dependencies"
+	}
+	if _, exist := query["rbac"]; exist {
+		restoreRBAC = true
+		fullCommand += " --rbac"
+	}
+	if _, exist := api.getQueryParameter(query, "rbac-only"); exist {
+		rbacOnly = true
+		fullCommand += " --rbac-only"
+	}
+	if _, exist := query["configs"]; exist {
+		restoreConfigs = true
+		fullCommand += " --configs"
+	}
+	if _, exist := api.getQueryParameter(query, "configs-only"); exist {
+		configsOnly = true
+		fullCommand += " --configs-only"
+	}
+	if skipProjectionsFromQuery, exist := api.getQueryParameter(query, "skip-projections"); exist {
+		skipProjections = append(skipProjections, skipProjectionsFromQuery)
+		fullCommand += " --skip-projections=" + strings.Join(skipProjections, ",")
+	}
+	if _, exist := query["resumable"]; exist {
+		resume = true
+		fullCommand += " --resumable"
+	}
+	if _, exist := query["resume"]; exist {
+		resume = true
+		fullCommand += " --resume"
+	}
+
+	// https://github.com/Altinity/clickhouse-backup/issues/868
+	restoreSchemAsAttachParamName := "restore_schema_as_attach"
+	restoreSchemAsAttachParamNames := []string{
+		strings.Replace(restoreSchemAsAttachParamName, "_", "-", -1),
+		strings.Replace(restoreSchemAsAttachParamName, "-", "_", -1),
+	}
+	for _, paramName := range restoreSchemAsAttachParamNames {
+		if _, exist := api.getQueryParameter(query, paramName); exist {
+			restoreSchemaAsAttach = true
+			fullCommand += " --restore-schema-as-attach"
+		}
+	}
+
+	// Handle replicated-copy-to-detached parameter
+	replicatedCopyToDetachedParamName := "replicated_copy_to_detached"
+	replicatedCopyToDetachedParamNames := []string{
+		strings.Replace(replicatedCopyToDetachedParamName, "_", "-", -1),
+		strings.Replace(replicatedCopyToDetachedParamName, "-", "_", -1),
+	}
+	for _, paramName := range replicatedCopyToDetachedParamNames {
+		if _, exist := api.getQueryParameter(query, paramName); exist {
+			replicatedCopyToDetached = true
+			fullCommand += " --replicated-copy-to-detached"
+		}
+	}
+
+	if _, exist := api.getQueryParameter(query, "hardlink_exists_files"); exist {
+		hardlinkExistsFiles = true
+		fullCommand += " --hardlink-exists-files"
+	}
+
+	name := utils.CleanBackupNameRE.ReplaceAllString(vars["name"], "")
+	fullCommand += fmt.Sprintf(" %s", name)
+
+	callback, err := parseCallback(query)
+	if err != nil {
+		log.Error().Err(err).Send()
+		api.writeError(w, http.StatusBadRequest, "restore_remote", err)
+		return
+	}
+
+	commandId, _ := status.Current.Start(fullCommand)
+	go func() {
+		err, _ := api.metrics.ExecuteWithMetrics("restore_remote", 0, func() error {
+			b := backup.NewBackuper(cfg)
+			return b.RestoreFromRemote(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, hardlinkExistsFiles, api.cliApp.Version, commandId)
+		})
+		go func() {
+			if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
+				log.Error().Msgf("UpdateBackupMetrics return error: %v", metricsErr)
+			}
+		}()
+		status.Current.Stop(commandId, err)
+		if err != nil {
+			log.Error().Msgf("API /backup/restore_remote error: %v", err)
+			api.errorCallback(context.Background(), err, operationId.String(), callback)
+			return
+		}
+		api.successCallback(context.Background(), operationId.String(), callback)
+	}()
+	api.sendJSONEachRow(w, http.StatusOK, struct {
+		Status      string `json:"status"`
+		Operation   string `json:"operation"`
+		BackupName  string `json:"backup_name"`
+		OperationId string `json:"operation_id"`
+	}{
+		Status:      "acknowledged",
+		Operation:   "restore_remote",
+		BackupName:  name,
+		OperationId: operationId.String(),
+	})
+}
+
 // httpDownloadHandler - download a backup from remote to local storage
 func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request) {
 	if !api.config.API.AllowParallel && status.Current.InProgress() {
@@ -1594,6 +1804,11 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	if _, exist := query["resume"]; exist {
 		resume = true
 		fullCommand += " --resume"
+	}
+
+	if _, exist := api.getQueryParameter(query, "hardlink_exists_files"); exist {
+		hardlinkExistsFiles = true
+		fullCommand += " --hardlink-exists-files"
 	}
 
 	fullCommand += fmt.Sprintf(" %s", name)
