@@ -839,8 +839,8 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 
 			disksToPartsMap[disk.Name] = parts
 			for _, p := range parts {
-				partBackupPath := path.Join("backup", backupName, "shadow", encodedTablePath, disk.Name, p.Name)
-				c, err := b.calculateChecksum(&disk, partBackupPath)
+				originalPartPath := path.Join(shadowPath, encodedTablePath, p.Name)
+				c, err := b.calculateChecksum(&disk, originalPartPath)
 				if err != nil {
 					return nil, nil, nil, nil, err
 				}

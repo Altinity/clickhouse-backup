@@ -1,3 +1,10 @@
+# v2.6.30
+IMPROVEMENTS
+- add in REST API `operation_id` to result for all asynchronous commands (`create`,`upload`,`download`,`restore`) which allow poll /backup/status more precise, fix [1189](https://github.com/Altinity/clickhouse-backup/pull/1189), thanks @lepetitops
+- add `POST /backup/create_remote` and `POST /backup/restore_remote` to API
+- add `--hardlink-exists-files` to `download` and `restore_remote`, works only with backups created with 2.6.30 plus clickhouse-backup version, fix [1164](https://github.com/Altinity/clickhouse-backup/issues/1164)
+- add `hardlink_exists_files` to API for `POST /backup/download` and `POST /backup/restore_remote`, works only with backups created with 2.6.30 plus clickhouse-backup version, fix [1164](https://github.com/Altinity/clickhouse-backup/issues/1164)
+
 # v2.6.29
 BUG FIXES
 - respect local timezone when show backup time in list, fix [1185](https://github.com/Altinity/clickhouse-backup/issues/1185)

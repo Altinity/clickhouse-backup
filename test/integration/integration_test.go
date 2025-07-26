@@ -1418,7 +1418,7 @@ func testAPIDeleteLocalDownloadRestore(r *require.Assertions, env *TestEnvironme
 	out, err := env.DockerExecOut(
 		"clickhouse-backup",
 		"bash", "-xe", "-c",
-		fmt.Sprintf("for i in {1..%d}; do date; curl -sfL -XPOST \"http://localhost:7171/backup/delete/local/z_backup_$i\"; curl -sfL -XPOST \"http://localhost:7171/backup/download/z_backup_$i?hardlinks_exists_files=true\"; sleep 2; curl -sfL -XPOST \"http://localhost:7171/backup/restore/z_backup_$i?rm=1&drop=true\"; sleep 8; done", apiBackupNumber),
+		fmt.Sprintf("for i in {1..%d}; do date; curl -sfL -XPOST \"http://localhost:7171/backup/delete/local/z_backup_$i\"; curl -sfL -XPOST \"http://localhost:7171/backup/download/z_backup_$i?hardlink_exists_files=true\"; sleep 2; curl -sfL -XPOST \"http://localhost:7171/backup/restore/z_backup_$i?rm=1&drop=true\"; sleep 8; done", apiBackupNumber),
 	)
 	r.NoError(err, "%s\nunexpected POST /backup/delete/local error: %v", out, err)
 	r.NotContains(out, "another operation is currently running")
@@ -1610,7 +1610,7 @@ func testAPIBackupRestoreRemote(r *require.Assertions, env *TestEnvironment) {
 	out, err := env.DockerExecOut(
 		"clickhouse-backup",
 		"bash", "-xe", "-c",
-		"curl -sfL -XPOST \"http://localhost:7171/backup/restore_remote/z_backup_remote_api?hardlinks_exists_files=true&drop=true&rm=true\"",
+		"curl -sfL -XPOST \"http://localhost:7171/backup/restore_remote/z_backup_remote_api?hardlink_exists_files=true&drop=true&rm=true\"",
 	)
 	r.NoError(err, "%s\nunexpected POST /backup/restore_remote error: %v", out, err)
 	r.NotContains(out, "error")
@@ -3254,7 +3254,7 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 
 	log.Debug().Msg("Download")
 	replaceStorageDiskNameForReBalance(t, r, env, remoteStorageType, false)
-	downloadCmd := fmt.Sprintf("clickhouse-backup -c /etc/clickhouse-backup/%s download --resume --hardlinks-exists-files %s", backupConfig, fullBackupName)
+	downloadCmd := fmt.Sprintf("clickhouse-backup -c /etc/clickhouse-backup/%s download --resume --hardlink-exists-files %s", backupConfig, fullBackupName)
 	env.checkResumeAlreadyProcessed(downloadCmd, fullBackupName, "download", r, remoteStorageType)
 
 	log.Debug().Msg("Restore schema")
@@ -3284,8 +3284,8 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	}
 
 	dropDatabasesFromTestDataDataSet(t, r, env, databaseList)
-	log.Debug().Msg("Restore remote with --hardlinks-exists-files")
-	restoreRemoteCmd := fmt.Sprintf("clickhouse-backup -c /etc/clickhouse-backup/%s restore_remote --hardlinks-exists-files %s", backupConfig, fullBackupName)
+	log.Debug().Msg("Restore remote with --hardlink-exists-files")
+	restoreRemoteCmd := fmt.Sprintf("clickhouse-backup -c /etc/clickhouse-backup/%s restore_remote --hardlink-exists-files %s", backupConfig, fullBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xce", restoreRemoteCmd)
 	log.Debug().Msg("Check data after restore_remote")
 	for i := range testData {
