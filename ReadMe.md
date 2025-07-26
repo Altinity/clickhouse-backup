@@ -539,6 +539,29 @@ Create schema and restore data from backup: `curl -s localhost:7171/backup/resto
 - Optional boolean query argument `resume` works the same as the `--resume` CLI argument (resume download for object disk data).
 - Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
 
+### POST /backup/restore_remote
+
+Download and restore data from remote backup: `curl -s localhost:7171/backup/restore_remote/<BACKUP_NAME> -X POST | jq .`
+
+- Optional string query argument `table` works the same as the `--table value` CLI argument.
+- Optional string query argument `partitions` works the same as the `--partitions value` CLI argument.
+- Optional boolean query argument `schema` works the same as the `--schema` CLI argument (restore schema only).
+- Optional boolean query argument `data` works the same as the `--data` CLI argument (restore data only).
+- Optional boolean query argument `rm` works the same as the `--rm` CLI argument (drop tables before restore).
+- Optional boolean query argument `ignore_dependencies` or `ignore-dependencies` works the as same the `--ignore-dependencies` CLI argument.
+- Optional boolean query argument `rbac` works the same as the `--rbac` CLI argument (restore RBAC).
+- Optional boolean query argument `rbac-only` works the same as the `--rbac-only` CLI argument (restore only RBAC).
+- Optional boolean query argument `configs` works the same as the `--configs` CLI argument (restore configs).
+- Optional boolean query argument `configs-only` works the same as the `--configs-only` CLI argument (restore only configs).
+- Optional string query argument `restore_database_mapping` or `restore-database-mapping` works the same as the `--restore-database-mapping=old_db:new_db` CLI argument.
+- Optional string query argument `restore_table_mapping` or `restore-table-mapping` works the same as the `--restore-table-mapping=old_table:new_table` CLI argument.
+- Optional string query argument `skip-projections` or `skip_projections` works the same as the `--skip-projections` CLI argument.
+- Optional boolean query argument `restore_schema_as_attach` or `restore-schema-as-attach` works the same as the `--restore-schema-as-attach` CLI argument.
+- Optional boolean query argument `replicated_copy_to_detached` or `replicated-copy-to-detached` works the same as the `--replicated-copy-to-detached` CLI argument.
+- Optional boolean query argument `resume` works the same as the `--resume` CLI argument (resume download for object disk data).
+- Optional boolean query argument `hardlink_exists_files` or `hardlink-exists-files` works the same as the `--hardlink-exists-files` CLI argument (Create hardlinks for existing files instead of downloading).
+- Optional string query argument `callback` allow pass callback URL which will call with POST with `application/json` with payload `{"status":"error|success","error":"not empty when error happens", "operation_id" : "<random_uuid>"}`.
+
 ### POST /backup/delete
 
 Delete specific remote backup: `curl -s localhost:7171/backup/delete/remote/<BACKUP_NAME> -X POST | jq .`
