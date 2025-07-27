@@ -3052,7 +3052,6 @@ func TestHardlinksExistsFiles(t *testing.T) {
 	r.Contains(downloadOut, "creating hardlinks")
 
 	// Restore to check data integrity
-	env.queryWithNoError(r, "DROP TABLE "+dbName+"."+tableName+" SYNC")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--tables="+dbName+"."+tableName, backupName)
 	env.checkCount(r, 1, 100, "SELECT count() FROM "+dbName+"."+tableName)
 
