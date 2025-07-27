@@ -1595,7 +1595,7 @@ func testAPIBackupCreateRemote(r *require.Assertions, env *TestEnvironment) {
 	backupName := "z_backup_remote_api"
 	out, err := env.DockerExecOut(
 		"clickhouse-backup",
-		"bash", "-xe", "-c",
+		"bash", "-ec",
 		fmt.Sprintf("curl -sfL -XPOST \"http://localhost:7171/backup/create_remote?table=long_schema.*&name=%s\"", backupName),
 	)
 	r.NoError(err, "%s\nunexpected POST /backup/create_remote error: %v", out, err)
@@ -1651,7 +1651,7 @@ func testAPIBackupRestoreRemote(r *require.Assertions, env *TestEnvironment) {
 	backupName := "z_backup_remote_api"
 	out, err := env.DockerExecOut(
 		"clickhouse-backup",
-		"bash", "-xe", "-c",
+		"bash", "-ce",
 		fmt.Sprintf("curl -sfL -XPOST \"http://localhost:7171/backup/restore_remote/%s?hardlink_exists_files=true&drop=true&rm=true\"", backupName),
 	)
 	r.NoError(err, "%s\nunexpected POST /backup/restore_remote error: %v", out, err)
