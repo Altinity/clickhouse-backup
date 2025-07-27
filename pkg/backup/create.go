@@ -874,7 +874,7 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 		}
 	}
 	log.Debug().Fields(map[string]interface{}{
-		"disksToPartsMap": disksToPartsMap, "realSize": realSize, "objectDiskSize": objectDiskSize,
+		"disksToPartsMap": disksToPartsMap, "realSize": realSize, "objectDiskSize": objectDiskSize, "checksums": checksums,
 		"operation": "AddTableToLocalBackup",
 		"table":     table.Name,
 		"database":  table.Database,

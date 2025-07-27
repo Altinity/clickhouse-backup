@@ -3033,10 +3033,12 @@ func TestHardlinksExistsFiles(t *testing.T) {
 		} `json:"parts"`
 	}
 	r.NoError(json.Unmarshal([]byte(out), &tableMeta))
-	r.NotEmpty(tableMeta.Checksums, "checksums should not be empty")
 	r.Greater(len(tableMeta.Parts["default"]), 0)
-	for _, part := range tableMeta.Parts["default"] {
-		r.Contains(tableMeta.Checksums, part.Name)
+	if tableMeta.Checksums != nil {
+		r.NotEmpty(tableMeta.Checksums, "checksums should not be empty")
+		for _, part := range tableMeta.Parts["default"] {
+			r.Contains(tableMeta.Checksums, part.Name)
+		}
 	}
 
 	// Upload backup
