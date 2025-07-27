@@ -3003,6 +3003,64 @@ func TestInnerTablesMaterializedView(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
+func TestHardlinksExistsFiles(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
+
+	backupName := "test_hardlinks_backup"
+	dbName := "test_hardlinks_db"
+	tableName := "test_hardlinks_table"
+
+	// Cleanup before test
+	fullCleanup(t, r, env, []string{backupName}, []string{"remote", "local"}, []string{dbName}, false, false, "config-s3.yml")
+
+	// Create table and data
+	env.queryWithNoError(r, "CREATE DATABASE "+dbName)
+	env.queryWithNoError(r, "CREATE TABLE "+dbName+"."+tableName+" (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(r, "INSERT INTO "+dbName+"."+tableName+" SELECT number FROM numbers(100)")
+
+	// Create local backup
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "--tables="+dbName+"."+tableName, backupName)
+
+	// Check checksums in metadata
+	metadataFile := path.Join("/var/lib/clickhouse/backup", backupName, "metadata", common.TablePathEncode(dbName), common.TablePathEncode(tableName)+".json")
+	out, err := env.DockerExecOut("clickhouse-backup", "cat", metadataFile)
+	r.NoError(err)
+	var tableMeta struct {
+		Checksums map[string]uint64 `json:"checksums"`
+		Parts     map[string][]struct {
+			Name string `json:"name"`
+		} `json:"parts"`
+	}
+	r.NoError(json.Unmarshal([]byte(out), &tableMeta))
+	r.NotEmpty(tableMeta.Checksums, "checksums should not be empty")
+	r.Greater(len(tableMeta.Parts["default"]), 0)
+	for _, part := range tableMeta.Parts["default"] {
+		r.Contains(tableMeta.Checksums, part.Name)
+	}
+
+	// Upload backup
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "upload", backupName)
+
+	// Delete local backup
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupName)
+
+	// Download with --hardlink-exists-files
+	downloadOut, err := env.DockerExecOut("clickhouse-backup", "LOG_LEVEL=debug", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "download", "--hardlink-exists-files", backupName)
+	r.NoError(err, downloadOut)
+	r.Contains(downloadOut, "Found existing part")
+	r.Contains(downloadOut, "creating hardlinks")
+
+	// Restore to check data integrity
+	env.queryWithNoError(r, "DROP TABLE "+dbName+"."+tableName+" SYNC")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--tables="+dbName+"."+tableName, backupName)
+	env.checkCount(r, 1, 100, "SELECT count() FROM "+dbName+"."+tableName)
+
+	// Cleanup after test
+	fullCleanup(t, r, env, []string{backupName}, []string{"remote", "local"}, []string{dbName}, true, true, "config-s3.yml")
+	env.Cleanup(t, r)
+}
+
 func TestFIPS(t *testing.T) {
 	if os.Getenv("QA_AWS_ACCESS_KEY") == "" {
 		t.Skip("QA_AWS_ACCESS_KEY is empty, TestFIPS will skip")
