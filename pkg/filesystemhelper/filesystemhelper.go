@@ -287,6 +287,13 @@ func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap 
 		var isRequiredPartFound, partExists bool
 		if tableDiffFromRemote.Database != "" && tableDiffFromRemote.Table != "" && len(tableDiffFromRemote.Parts) > 0 && len(tableDiffFromRemote.Parts[disk.Name]) > 0 {
 			parts, isRequiredPartFound, partExists = addRequiredPartIfNotExists(parts, pathParts[3], tableDiffFromRemote, disk)
+			if !partExists {
+				c, checksumErr := common.CalculateChecksum(filePath, "checksums.txt")
+				if checksumErr != nil {
+					return fmt.Errorf("common.CalculateChecksum return error %v", checksumErr)
+				}
+				checksums[pathParts[3]] = c
+			}
 			if isRequiredPartFound {
 				return nil
 			}
@@ -297,13 +304,11 @@ func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap 
 				parts = append(parts, metadata.Part{
 					Name: pathParts[3],
 				})
-				if strings.HasSuffix(filePath, "checksums.txt") {
-					c, checksumErr := common.CalculateChecksum("", filePath)
-					if checksumErr != nil {
-						return fmt.Errorf("common.CalculateChecksum return error %v", checksumErr)
-					}
-					checksums[pathParts[3]] = c
+				c, checksumErr := common.CalculateChecksum(filePath, "checksums.txt")
+				if checksumErr != nil {
+					return fmt.Errorf("common.CalculateChecksum return error %v", checksumErr)
 				}
+				checksums[pathParts[3]] = c
 			}
 			return os.MkdirAll(dstFilePath, 0750)
 		}

@@ -3033,12 +3033,10 @@ func TestHardlinksExistsFiles(t *testing.T) {
 		} `json:"parts"`
 	}
 	r.NoError(json.Unmarshal([]byte(out), &tableMeta))
+	r.NotEmpty(tableMeta.Checksums, "checksums should not be empty")
 	r.Greater(len(tableMeta.Parts["default"]), 0)
-	if tableMeta.Checksums != nil {
-		r.NotEmpty(tableMeta.Checksums, "checksums should not be empty")
-		for _, part := range tableMeta.Parts["default"] {
-			r.Contains(tableMeta.Checksums, part.Name)
-		}
+	for _, part := range tableMeta.Parts["default"] {
+		r.Contains(tableMeta.Checksums, part.Name)
 	}
 
 	// Upload backup
@@ -3048,7 +3046,8 @@ func TestHardlinksExistsFiles(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupName)
 
 	// Download with --hardlink-exists-files
-	downloadOut, err := env.DockerExecOut("clickhouse-backup", "LOG_LEVEL=debug", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "download", "--hardlink-exists-files", backupName)
+	downloadOut, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "download", "--hardlink-exists-files", backupName)
+	log.Debug().Msg(downloadOut)
 	r.NoError(err, downloadOut)
 	r.Contains(downloadOut, "Found existing part")
 	r.Contains(downloadOut, "creating hardlinks")

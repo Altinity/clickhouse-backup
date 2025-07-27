@@ -709,7 +709,6 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 							return nil
 						}
 					}
-
 					if hardlinkExistsFiles {
 						found, size, err := b.checkLocalPartExistsAndCheckSumEqual(table, capturedPart, disks, capturedDisk, dbAndTableDir, partLocalPath)
 						if err != nil {
@@ -754,6 +753,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 }
 
 func (b *Backuper) checkLocalPartExistsAndCheckSumEqual(table metadata.TableMetadata, part metadata.Part, disks []clickhouse.Disk, diskName, dbAndTableDir, partLocalPath string) (bool, int64, error) {
+	log.Debug().Msgf("SUKA1 checkLocalPartExistsAndCheckSumEqual part.Name=%s", part.Name)
 	diskType := ""
 	for _, d := range disks {
 		if d.Name == diskName {
@@ -762,6 +762,7 @@ func (b *Backuper) checkLocalPartExistsAndCheckSumEqual(table metadata.TableMeta
 		}
 	}
 	if _, exists := table.Checksums[part.Name]; !exists {
+		log.Debug().Msgf("SUKA2 checkLocalPartExistsAndCheckSumEqual table.Checksums=%v not contains part.Name=%s", table.Checksums, part.Name)
 		return false, 0, nil
 	}
 	for _, localDisk := range disks {
@@ -771,28 +772,29 @@ func (b *Backuper) checkLocalPartExistsAndCheckSumEqual(table metadata.TableMeta
 		if localDisk.IsBackup {
 			continue
 		}
+		log.Debug().Msgf("SUKA3 checkLocalPartExistsAndCheckSumEqual part.Name=%s localDisk.Path=%s", part.Name, localDisk.Path)
 		var existingPartPath string
 		p1 := path.Join(localDisk.Path, "data", dbAndTableDir, part.Name)
 		if _, err := os.Stat(p1); err == nil {
 			existingPartPath = p1
+			log.Debug().Msgf("SUKA4 checkLocalPartExistsAndCheckSumEqual part.Name=%s localDisk.Path=%s p1=%s", part.Name, localDisk.Path, p1)
 		}
 		if existingPartPath == "" && table.UUID != "" {
 			p2 := path.Join(localDisk.Path, "store", table.UUID[:3], table.UUID, part.Name)
 			if _, err := os.Stat(p2); err == nil {
 				existingPartPath = p2
+				log.Debug().Msgf("SUKA5 checkLocalPartExistsAndCheckSumEqual part.Name=%s localDisk.Path=%s p2=%s", part.Name, localDisk.Path, p2)
 			}
 		}
 
+		log.Debug().Msgf("SUKA6 checkLocalPartExistsAndCheckSumEqual part.Name=%s localDisk.Path=%s existingPartPath=%s", part.Name, localDisk.Path, existingPartPath)
 		if existingPartPath != "" {
-			partRelativePath := strings.TrimPrefix(existingPartPath, localDisk.Path)
-			if strings.HasPrefix(partRelativePath, "/") {
-				partRelativePath = partRelativePath[1:]
-			}
-			checksum, err := common.CalculateChecksum(localDisk.Path, partRelativePath)
+			checksum, err := common.CalculateChecksum(existingPartPath, "checksums.txt")
 			if err != nil {
 				log.Warn().Msgf("calculating checksum for %s failed: %v", existingPartPath, err)
 				continue // try next disk or download
 			}
+			log.Debug().Msgf("SUKA7 checkLocalPartExistsAndCheckSumEqual checksum=%v table.Checksums[%s]=%v", checksum, part.Name, table.Checksums[part.Name])
 			if checksum == table.Checksums[part.Name] {
 				log.Info().Msgf("Found existing part %s with matching checksum, creating hardlinks to %s", existingPartPath, partLocalPath)
 				if err := b.makePartHardlinks(existingPartPath, partLocalPath); err != nil {
