@@ -297,11 +297,13 @@ func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap 
 				parts = append(parts, metadata.Part{
 					Name: pathParts[3],
 				})
-				c, checksumErr := common.CalculateChecksum("", filePath)
-				if checksumErr != nil {
-					return fmt.Errorf("common.CalculateChecksum return error %v", checksumErr)
+				if strings.HasSuffix(filePath, "checksums.txt") {
+					c, checksumErr := common.CalculateChecksum("", filePath)
+					if checksumErr != nil {
+						return fmt.Errorf("common.CalculateChecksum return error %v", checksumErr)
+					}
+					checksums[pathParts[3]] = c
 				}
-				checksums[pathParts[3]] = c
 			}
 			return os.MkdirAll(dstFilePath, 0750)
 		}
