@@ -833,6 +833,9 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 			var diffTableMetadata metadata.TableMetadata
 			if tablesDiffFromRemote != nil {
 				diffTableMetadata = tablesDiffFromRemote[metadata.TableTitle{Database: table.Database, Table: table.Name}]
+			} else {
+				// empty map indicates that all parts will be new
+				diffTableMetadata.Parts = map[string][]metadata.Part{}
 			}
 			// If partitionsIdsMap is not empty, only parts in this partition will back up.
 			parts, size, newChecksums, err := filesystemhelper.MoveShadowToBackup(shadowPath, backupShadowPath, partitionsIdsMap, table, diffTableMetadata, disk, skipProjections, version)
