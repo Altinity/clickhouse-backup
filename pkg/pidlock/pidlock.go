@@ -3,6 +3,7 @@ package pidlock
 import (
 	"fmt"
 	"github.com/rs/zerolog/log"
+	"github.com/shirou/gopsutil/v3/process"
 	"os"
 	"path"
 	"strconv"
@@ -24,10 +25,20 @@ func CheckAndCreatePidFile(backupName string, command string) error {
 		if len(parts) < 3 {
 			log.Warn().Msgf("Invalid PID file format in %s - will be overwritten", pidPath)
 		} else if pid, err := strconv.Atoi(parts[0]); err == nil {
-			if process, err := os.FindProcess(pid); err == nil {
-				if err := process.Signal(syscall.Signal(0)); err == nil {
-					return fmt.Errorf("another clickhouse-backup %s command is already running %s (PID %d)",
-						parts[1], parts[2], pid)
+			if proc, err := os.FindProcess(pid); err == nil {
+				if err := proc.Signal(syscall.Signal(0)); err == nil {
+					if procInfo, infoErr := process.NewProcess(int32(pid)); infoErr == nil {
+						if cmdLine, cmdLineErr := procInfo.Cmdline(); cmdLineErr == nil {
+							return fmt.Errorf(
+								"another clickhouse-backup `%s` command is already running %s (pid=%d, pidPath=%s, cmdLine=%s)",
+								parts[1], parts[2], pid, pidPath, cmdLine,
+							)
+						} else {
+							log.Warn().Err(cmdLineErr).Str("pidPath", pidPath).Int("pid", pid).Msg("can't get cmdLine")
+						}
+					} else {
+						log.Warn().Err(infoErr).Str("pidPath", pidPath).Int("pid", pid).Msg("can't get process info")
+					}
 				}
 			}
 		}
