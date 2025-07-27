@@ -977,31 +977,6 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 						atomic.AddInt64(&downloadedDiffBytes, fileDiffBytes)
 						atomic.AddUint32(&downloadedDiffParts, 1)
 					}
-					if _, checksumExists := table.Checksums[partForDownload.Name]; checksumExists {
-						var diskObj clickhouse.Disk
-						var foundDisk bool
-						for _, d := range disks {
-							if d.Name == capturedDisk {
-								diskObj = d
-								foundDisk = true
-								break
-							}
-						}
-						if !foundDisk {
-							log.Warn().Msgf("disk '%s' not found for checksum calculation", capturedDisk)
-						} else {
-							partRelativePath := strings.TrimPrefix(capturedExistsPath, diskObj.Path)
-							if strings.HasPrefix(partRelativePath, "/") {
-								partRelativePath = partRelativePath[1:]
-							}
-							checksum, err := common.CalculateChecksum(diskObj.Path, partRelativePath)
-							if err != nil {
-								log.Warn().Msgf("calculating checksum for %s failed: %v", capturedExistsPath, err)
-							} else if checksum != table.Checksums[partForDownload.Name] {
-								log.Warn().Msgf("checksum mismatch for part %s. Expected %d, got %d", partForDownload.Name, table.Checksums[partForDownload.Name], checksum)
-							}
-						}
-					}
 					if err := b.makePartHardlinks(capturedExistsPath, capturedNewPath); err != nil {
 						return fmt.Errorf("can't to add link to exists part %s -> %s error: %v", capturedNewPath, capturedExistsPath, err)
 					}
