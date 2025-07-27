@@ -947,3 +947,25 @@ Query id: 9e8ed231-dc4b-499d-b02b-57a555a3d309
 
 ```
 
+## How to track operation status with operation_id
+
+All asynchronous API operations now return an `operation_id` that can be used to track the specific operation status:
+
+```bash
+# 1. Create backup and capture operation_id
+response=$(curl -s -X POST 'localhost:7171/backup/create?name=my-backup')
+operation_id=$(echo $response | jq -r '.operation_id')
+
+# 2. Check status of specific operation
+curl -s "localhost:7171/backup/status?operationid=$operation_id" | jq .
+
+# 3. Monitor until completion
+while true; do
+  status=$(curl -s "localhost:7171/backup/status?operationid=$operation_id" | jq -r '.[0].status // "not_found"')
+  if [ "$status" != "in_progress" ]; then
+    echo "Operation completed with status: $status"
+    break
+  fi
+  sleep 5
+done
+```
