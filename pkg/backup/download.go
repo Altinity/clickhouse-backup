@@ -787,7 +787,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 	}
 
 	if !b.isEmbedded && remoteBackup.RequiredBackup != "" {
-		diffBytes, err := b.downloadDiffParts(ctx, remoteBackup, table, dbAndTableDir, disks)
+		diffBytes, err := b.downloadDiffParts(ctx, remoteBackup, table, dbAndTableDir, disks, hardlinkExistsFiles)
 		if err != nil {
 			return 0, err
 		}
@@ -797,7 +797,74 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 	return downloadedSize, nil
 }
 
-func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.BackupMetadata, table metadata.TableMetadata, dbAndTableDir string, disks []clickhouse.Disk) (int64, error) {
+func (b *Backuper) checkLocalPartExistsAndCheckSumEqual(table metadata.TableMetadata, part metadata.Part, disks []clickhouse.Disk, diskName, dbAndTableDir, partLocalPath string) (bool, int64, error) {
+	diskType := ""
+	for _, d := range disks {
+		if d.Name == diskName {
+			diskType = d.Type
+			break
+		}
+	}
+	if _, exists := table.Checksums[part.Name]; !exists {
+		return false, 0, nil
+	}
+	for _, localDisk := range disks {
+		if diskType != "" && localDisk.Type != diskType {
+			continue
+		}
+		if localDisk.IsBackup {
+			continue
+		}
+		var existingPartPath string
+		p1 := path.Join(localDisk.Path, "data", dbAndTableDir, part.Name)
+		if _, err := os.Stat(p1); err == nil {
+			existingPartPath = p1
+		}
+		if existingPartPath == "" && table.UUID != "" {
+			p2 := path.Join(localDisk.Path, "store", table.UUID[:3], table.UUID, part.Name)
+			if _, err := os.Stat(p2); err == nil {
+				existingPartPath = p2
+			}
+		}
+
+		if existingPartPath != "" {
+			partRelativePath := strings.TrimPrefix(existingPartPath, localDisk.Path)
+			if strings.HasPrefix(partRelativePath, "/") {
+				partRelativePath = partRelativePath[1:]
+			}
+			checksum, err := common.CalculateChecksum(localDisk.Path, partRelativePath)
+			if err != nil {
+				log.Warn().Msgf("calculating checksum for %s failed: %v", existingPartPath, err)
+				continue // try next disk or download
+			}
+			if checksum == table.Checksums[part.Name] {
+				log.Info().Msgf("Found existing part %s with matching checksum, creating hardlinks to %s", existingPartPath, partLocalPath)
+				if err := b.makePartHardlinks(existingPartPath, partLocalPath); err != nil {
+					return false, 0, fmt.Errorf("failed to create hardlinks for %s: %v", existingPartPath, err)
+				}
+				var partSize int64
+				walkErr := filepath.Walk(existingPartPath, func(path string, info os.FileInfo, err error) error {
+					if err != nil {
+						return err
+					}
+					if !info.IsDir() {
+						partSize += info.Size()
+					}
+					return nil
+				})
+				if walkErr != nil {
+					return false, 0, fmt.Errorf("failed to calculate size of %s: %v", existingPartPath, walkErr)
+				}
+				return true, partSize, nil
+			} else {
+				log.Warn().Msgf("Found existing part %s but checksums do not match. Expected %d, got %d. Will download.", existingPartPath, table.Checksums[part.Name], checksum)
+			}
+		}
+	}
+	return false, 0, nil
+}
+
+func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.BackupMetadata, table metadata.TableMetadata, dbAndTableDir string, disks []clickhouse.Disk, hardlinkExistsFiles bool) (int64, error) {
 	log.Debug().
 		Str("backup", remoteBackup.BackupName).
 		Str("operation", "downloadDiffParts").
@@ -864,6 +931,23 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 				capturedNewPath := newPath
 				capturedDisk := disk
 				downloadDiffGroup.Go(func() error {
+					if hardlinkExistsFiles {
+						found, size, err := b.checkLocalPartExistsAndCheckSumEqual(table, partForDownload, disks, capturedDisk, dbAndTableDir, capturedExistsPath)
+						if err != nil {
+							return err
+						}
+						if found {
+							atomic.AddInt64(&downloadedDiffBytes, size)
+							atomic.AddUint32(&downloadedDiffParts, 1)
+							if err := b.makePartHardlinks(capturedExistsPath, capturedNewPath); err != nil {
+								return fmt.Errorf("can't to add link to exists part %s -> %s error: %v", capturedNewPath, capturedExistsPath, err)
+							}
+							if b.resume {
+								b.resumableState.AppendToState(capturedExistsPath, size)
+							}
+							return nil
+						}
+					}
 					tableRemoteFiles, findErr := b.findDiffBackupFilesRemote(downloadDiffCtx, remoteBackup, table, diskForDownload, partForDownload)
 					if findErr != nil {
 						return findErr
@@ -904,18 +988,18 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 							}
 						}
 						if !foundDisk {
-							return fmt.Errorf("disk '%s' not found for checksum calculation", capturedDisk)
-						}
-						partRelativePath := strings.TrimPrefix(capturedExistsPath, diskObj.Path)
-						if strings.HasPrefix(partRelativePath, "/") {
-							partRelativePath = partRelativePath[1:]
-						}
-						checksum, err := common.CalculateChecksum(diskObj.Path, partRelativePath)
-						if err != nil {
-							return fmt.Errorf("calculating checksum for %s failed: %v", capturedExistsPath, err)
-						}
-						if checksum != table.Checksums[partForDownload.Name] {
-							log.Warn().Msgf("checksum mismatch for part %s. Expected %d, got %d, will continue to download", partForDownload.Name, table.Checksums[partForDownload.Name], checksum)
+							log.Warn().Msgf("disk '%s' not found for checksum calculation", capturedDisk)
+						} else {
+							partRelativePath := strings.TrimPrefix(capturedExistsPath, diskObj.Path)
+							if strings.HasPrefix(partRelativePath, "/") {
+								partRelativePath = partRelativePath[1:]
+							}
+							checksum, err := common.CalculateChecksum(diskObj.Path, partRelativePath)
+							if err != nil {
+								log.Warn().Msgf("calculating checksum for %s failed: %v", capturedExistsPath, err)
+							} else if checksum != table.Checksums[partForDownload.Name] {
+								log.Warn().Msgf("checksum mismatch for part %s. Expected %d, got %d", partForDownload.Name, table.Checksums[partForDownload.Name], checksum)
+							}
 						}
 					}
 					if err := b.makePartHardlinks(capturedExistsPath, capturedNewPath); err != nil {
