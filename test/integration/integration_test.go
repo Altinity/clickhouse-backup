@@ -1473,6 +1473,7 @@ func testAPIBackupUpload(r *require.Assertions, env *TestEnvironment) {
 	r.NoError(err, "%s\nunexpected POST /backup/upload error: %v", out, err)
 	r.NotContains(out, "error")
 	r.NotContains(out, "another operation is currently running")
+	r.NotContains(out, "command is already running")
 
 	out, err = env.DockerExecOut("clickhouse-backup", "curl", "-sfL", "http://localhost:7171/backup/actions?filter=upload")
 	r.NoError(err, "%s\nunexpected GET /backup/actions?filter=upload error: %v", out, err)
@@ -1530,7 +1531,7 @@ func testAPIBackupTablesRemote(r *require.Assertions, env *TestEnvironment) {
 	r.NotContains(out, "\"status\":\"error\"")
 	r.NotContains(out, "INFORMATION_SCHEMA")
 	r.NotContains(out, "information_schema")
-
+	r.NotContains(out, "command is already running")
 }
 
 func testAPIBackupVersion(r *require.Assertions, env *TestEnvironment) {
