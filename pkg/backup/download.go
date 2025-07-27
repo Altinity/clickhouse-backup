@@ -863,9 +863,6 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 				capturedExistsPath := existsPath
 				capturedNewPath := newPath
 				capturedDisk := disk
-				if !diskExists {
-					diskForDownload = part.RebalancedDisk
-				}
 				downloadDiffGroup.Go(func() error {
 					tableRemoteFiles, findErr := b.findDiffBackupFilesRemote(downloadDiffCtx, remoteBackup, table, diskForDownload, partForDownload)
 					if findErr != nil {
@@ -918,7 +915,7 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 							return fmt.Errorf("calculating checksum for %s failed: %v", capturedExistsPath, err)
 						}
 						if checksum != table.Checksums[partForDownload.Name] {
-							return fmt.Errorf("checksum mismatch for part %s. Expected %d, got %d", partForDownload.Name, table.Checksums[partForDownload.Name], checksum)
+							log.Warn().Msgf("checksum mismatch for part %s. Expected %d, got %d, will continue to download", partForDownload.Name, table.Checksums[partForDownload.Name], checksum)
 						}
 					}
 					if err := b.makePartHardlinks(capturedExistsPath, capturedNewPath); err != nil {
