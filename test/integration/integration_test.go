@@ -1592,15 +1592,55 @@ func fillDatabaseForAPIServer(maxTables int, minFields int, randFields int, ch *
 
 func testAPIBackupCreateRemote(r *require.Assertions, env *TestEnvironment) {
 	log.Debug().Msg("Check /backup/create_remote")
+	backupName := "z_backup_remote_api"
 	out, err := env.DockerExecOut(
 		"clickhouse-backup",
 		"bash", "-xe", "-c",
-		"curl -sfL -XPOST \"http://localhost:7171/backup/create_remote?table=long_schema.*&name=z_backup_remote_api\"",
+		fmt.Sprintf("curl -sfL -XPOST \"http://localhost:7171/backup/create_remote?table=long_schema.*&name=%s\"", backupName),
 	)
 	r.NoError(err, "%s\nunexpected POST /backup/create_remote error: %v", out, err)
 	r.NotContains(out, "Connection refused")
 	r.NotContains(out, "another operation is currently running")
 	r.NotContains(out, "\"status\":\"error\"")
+
+	var resp struct {
+		OperationId string `json:"operation_id"`
+	}
+	r.NoError(json.Unmarshal([]byte(out), &resp))
+	_, err = uuid.Parse(strings.TrimSpace(resp.OperationId))
+	r.NoError(err, "operation_id is not a valid UUID: %s", resp.OperationId)
+
+	// poll status
+	startTime := time.Now()
+	for {
+		if time.Since(startTime) > 60*time.Second {
+			r.Fail("timeout waiting for create_remote")
+		}
+		statusOut, err := env.DockerExecOut("clickhouse-backup", "curl", "-sL", "http://localhost:7171/backup/status")
+		r.NoError(err)
+
+		var lastFoundAction *status.ActionRowStatus
+		scanner := bufio.NewScanner(strings.NewReader(statusOut))
+		for scanner.Scan() {
+			line := scanner.Bytes()
+			if len(line) == 0 {
+				continue
+			}
+			var action status.ActionRowStatus
+			err := json.Unmarshal(line, &action)
+			r.NoError(err)
+			if strings.Contains(action.Command, backupName) && strings.Contains(action.Command, "create_remote") {
+				currentAction := action
+				lastFoundAction = &currentAction
+			}
+		}
+		if lastFoundAction != nil && lastFoundAction.Status != status.InProgressStatus {
+			r.Equal(status.SuccessStatus, lastFoundAction.Status, "command '%s' failed with error: %s", lastFoundAction.Command, lastFoundAction.Error)
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+
 	out, err = env.DockerExecOut("clickhouse-backup", "curl", "http://localhost:7171/metrics")
 	r.NoError(err, "%s\nunexpected GET /metrics error: %v", out, err)
 	r.Contains(out, "clickhouse_backup_last_create_remote_status 1")
@@ -1608,14 +1648,54 @@ func testAPIBackupCreateRemote(r *require.Assertions, env *TestEnvironment) {
 
 func testAPIBackupRestoreRemote(r *require.Assertions, env *TestEnvironment) {
 	log.Debug().Msg("Check /backup/restore_remote/{name}")
+	backupName := "z_backup_remote_api"
 	out, err := env.DockerExecOut(
 		"clickhouse-backup",
 		"bash", "-xe", "-c",
-		"curl -sfL -XPOST \"http://localhost:7171/backup/restore_remote/z_backup_remote_api?hardlink_exists_files=true&drop=true&rm=true\"",
+		fmt.Sprintf("curl -sfL -XPOST \"http://localhost:7171/backup/restore_remote/%s?hardlink_exists_files=true&drop=true&rm=true\"", backupName),
 	)
 	r.NoError(err, "%s\nunexpected POST /backup/restore_remote error: %v", out, err)
 	r.NotContains(out, "error")
 	r.NotContains(out, "another operation is currently running")
+
+	var resp struct {
+		OperationId string `json:"operation_id"`
+	}
+	r.NoError(json.Unmarshal([]byte(out), &resp))
+	_, err = uuid.Parse(strings.TrimSpace(resp.OperationId))
+	r.NoError(err, "operation_id is not a valid UUID: %s", resp.OperationId)
+
+	// poll status
+	startTime := time.Now()
+	for {
+		if time.Since(startTime) > 60*time.Second {
+			r.Fail("timeout waiting for restore_remote")
+		}
+		statusOut, err := env.DockerExecOut("clickhouse-backup", "curl", "-sL", "http://localhost:7171/backup/status")
+		r.NoError(err)
+
+		var lastFoundAction *status.ActionRowStatus
+		scanner := bufio.NewScanner(strings.NewReader(statusOut))
+		for scanner.Scan() {
+			line := scanner.Bytes()
+			if len(line) == 0 {
+				continue
+			}
+			var action status.ActionRowStatus
+			err := json.Unmarshal(line, &action)
+			r.NoError(err)
+			if strings.Contains(action.Command, backupName) && strings.Contains(action.Command, "restore_remote") {
+				currentAction := action
+				lastFoundAction = &currentAction
+			}
+		}
+
+		if lastFoundAction != nil && lastFoundAction.Status != status.InProgressStatus {
+			r.Equal(status.SuccessStatus, lastFoundAction.Status, "command '%s' failed with error: %s", lastFoundAction.Command, lastFoundAction.Error)
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
 
 	out, err = env.DockerExecOut("clickhouse-backup", "curl", "-sfL", "http://localhost:7171/backup/actions?filter=restore_remote")
 	r.NoError(err, "%s\nunexpected GET /backup/actions?filter=restore_remote error: %v", out, err)
