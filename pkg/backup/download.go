@@ -698,6 +698,8 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 				}
 				partRemotePath := path.Join(tableRemotePath, part.Name)
 				partLocalPath := path.Join(tableLocalPath, part.Name)
+				capturedPart := part
+				capturedDisk := disk
 				dataGroup.Go(func() error {
 					log.Debug().Msgf("start %s -> %s", partRemotePath, partLocalPath)
 					if b.resume {
@@ -709,62 +711,16 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 					}
 
 					if hardlinkExistsFiles {
-						for _, localDisk := range disks {
-							if remoteBackup.DiskTypes[disk] != "" && localDisk.Type != remoteBackup.DiskTypes[disk] {
-								continue
+						found, size, err := b.checkLocalPartExistsAndCheckSumEqual(table, capturedPart, disks, capturedDisk, dbAndTableDir, partLocalPath)
+						if err != nil {
+							return err
+						}
+						if found {
+							atomic.AddUint64(&downloadedSize, uint64(size))
+							if b.resume {
+								b.resumableState.AppendToState(partRemotePath, size)
 							}
-
-							var existingPartPath string
-							p1 := path.Join(localDisk.Path, "data", dbAndTableDir, part.Name)
-							if _, err := os.Stat(p1); err == nil {
-								existingPartPath = p1
-							}
-
-							if existingPartPath == "" && table.UUID != "" {
-								p2 := path.Join(localDisk.Path, "store", table.UUID[:3], table.UUID, part.Name)
-								if _, err := os.Stat(p2); err == nil {
-									existingPartPath = p2
-								}
-							}
-
-							if existingPartPath != "" {
-								partRelativePath := strings.TrimPrefix(existingPartPath, localDisk.Path)
-								if strings.HasPrefix(partRelativePath, "/") {
-									partRelativePath = partRelativePath[1:]
-								}
-								checksum, err := common.CalculateChecksum(localDisk.Path, partRelativePath)
-								if err != nil {
-									log.Warn().Msgf("calculating checksum for %s failed: %v", existingPartPath, err)
-									continue // try next disk or download
-								}
-								if _, exists := table.Checksums[part.Name]; exists && checksum == table.Checksums[part.Name] {
-									log.Info().Msgf("Found existing part %s with matching checksum, creating hardlinks to %s", existingPartPath, partLocalPath)
-									if err := b.makePartHardlinks(existingPartPath, partLocalPath); err != nil {
-										return fmt.Errorf("failed to create hardlinks for %s: %v", existingPartPath, err)
-									}
-
-									var partSize int64
-									walkErr := filepath.Walk(existingPartPath, func(path string, info os.FileInfo, err error) error {
-										if err != nil {
-											return err
-										}
-										if !info.IsDir() {
-											partSize += info.Size()
-										}
-										return nil
-									})
-									if walkErr != nil {
-										return fmt.Errorf("failed to calculate size of %s: %v", existingPartPath, walkErr)
-									}
-									atomic.AddUint64(&downloadedSize, uint64(partSize))
-									if b.resume {
-										b.resumableState.AppendToState(partRemotePath, partSize)
-									}
-									return nil
-								} else {
-									log.Warn().Msgf("Found existing part %s but checksums do not match. Expected %d, got %d. Will download.", existingPartPath, table.Checksums[part.Name], checksum)
-								}
-							}
+							return nil
 						}
 					}
 
