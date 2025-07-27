@@ -640,7 +640,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 				}
 				tableLocalDir := b.getLocalBackupDataPathForTable(remoteBackup.BackupName, diskName, dbAndTableDir)
 				downloadOffset[disk] += 1
-				tableRemoteFile := path.Join(remoteBackup.BackupName, "shadow", common.TablePathEncode(table.Database), common.TablePathEncode(table.Table), archiveFile)
+				tableRemoteFile := path.Join(remoteBackup.BackupName, "shadow", common.TablePathEncode(table.Database), common.TablePathEncode(table.Table), disk, archiveFile)
 				dataGroup.Go(func() error {
 					log.Debug().Msgf("start download %s", tableRemoteFile)
 					if b.resume {
@@ -648,7 +648,36 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 							atomic.AddUint64(&downloadedSize, uint64(downloadedFileSize))
 							return nil
 						}
-
+					}
+					if hardlinkExistsFiles {
+						ext := "." + config.ArchiveExtensions[remoteBackup.DataFormat]
+						partName := strings.TrimSuffix(archiveFile, ext)
+						var part metadata.Part
+						foundPart := false
+						for _, p := range table.Parts[disk] {
+							if p.Name == partName {
+								part = p
+								foundPart = true
+								break
+							}
+						}
+						if !foundPart {
+							// continue here can be dangerous, we just not download this part
+							log.Warn().Msgf("part %s not found in metadata for archive %s on disk %s, this part will be downloaded", partName, archiveFile, disk)
+						} else {
+							partLocalPath := path.Join(tableLocalDir, part.Name)
+							found, size, err := b.checkLocalPartExistsAndCheckSumEqual(table, part, disks, diskName, dbAndTableDir, partLocalPath)
+							if err != nil {
+								return err
+							}
+							if found {
+								atomic.AddUint64(&downloadedSize, uint64(size))
+								if b.resume {
+									b.resumableState.AppendToState(tableRemoteFile, size)
+								}
+								return nil
+							}
+						}
 					}
 					retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 					var downloadedBytes int64
