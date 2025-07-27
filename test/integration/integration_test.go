@@ -1700,6 +1700,8 @@ func testAPIBackupRestoreRemote(r *require.Assertions, env *TestEnvironment) {
 	out, err = env.DockerExecOut("clickhouse-backup", "curl", "-sfL", "http://localhost:7171/backup/actions?filter=restore_remote")
 	r.NoError(err, "%s\nunexpected GET /backup/actions?filter=restore_remote error: %v", out, err)
 	r.NotContains(out, "error")
+	r.Contains(out, "success")
+	r.Contains(out, backupName)
 
 	out, err = env.DockerExecOut("clickhouse-backup", "curl", "http://localhost:7171/metrics")
 	r.NoError(err, "%s\nunexpected GET /metrics error: %v", out, err)
@@ -1707,9 +1709,13 @@ func testAPIBackupRestoreRemote(r *require.Assertions, env *TestEnvironment) {
 
 	// cleanup
 	_, err = env.DockerExecOut(
-		"clickhouse-backup",
-		"bash", "-xe", "-c",
+		"clickhouse-backup", "bash", "-xe", "-c",
 		"curl -sfL -XPOST \"http://localhost:7171/backup/delete/remote/z_backup_remote_api\"",
+	)
+	r.NoError(err)
+	_, err = env.DockerExecOut(
+		"clickhouse-backup", "bash", "-xe", "-c",
+		"curl -sfL -XPOST \"http://localhost:7171/backup/delete/local/z_backup_remote_api\"",
 	)
 	r.NoError(err)
 }

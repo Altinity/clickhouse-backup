@@ -2,6 +2,7 @@ package status
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/rs/zerolog/log"
 	"strings"
@@ -97,6 +98,10 @@ func (status *AsyncStatus) GetContextWithCancel(commandId int) (context.Context,
 	}
 	if status.commands[commandId].Ctx == nil {
 		return nil, nil, fmt.Errorf("commands[%d]=%s have nil context ", commandId, status.commands[commandId].Command)
+	}
+	// for create_remote and restore_remote API call
+	if errors.Is(status.commands[commandId].Ctx.Err(), context.Canceled) && strings.Contains(status.commands[commandId].Command, "_remote") {
+		status.commands[commandId].Ctx, status.commands[commandId].Cancel = context.WithCancel(context.Background())
 	}
 	return status.commands[commandId].Ctx, status.commands[commandId].Cancel, nil
 }
