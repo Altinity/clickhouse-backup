@@ -3008,22 +3008,20 @@ func TestHardlinksExistsFiles(t *testing.T) {
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	for _, compression := range []string{"tar", "none"} {
 		backupName := "test_hardlinks_backup_" + compression
-		dbName := "test_hardlinks_db"
+		dbNameShort := "test_hardlinks_db"
+		dbNameFull := dbNameShort + "_" + t.Name()
 		tableName := "test_hardlinks_table"
 
-		// Cleanup before test
-		fullCleanup(t, r, env, []string{backupName}, []string{"remote", "local"}, []string{dbName}, false, false, "config-s3.yml")
-
 		// Create table and data
-		env.queryWithNoError(r, "CREATE DATABASE "+dbName)
-		env.queryWithNoError(r, "CREATE TABLE "+dbName+"."+tableName+" (id UInt64) ENGINE=MergeTree() ORDER BY id")
-		env.queryWithNoError(r, "INSERT INTO "+dbName+"."+tableName+" SELECT number FROM numbers(100)")
+		env.queryWithNoError(r, "CREATE DATABASE "+dbNameFull)
+		env.queryWithNoError(r, "CREATE TABLE "+dbNameFull+"."+tableName+" (id UInt64) ENGINE=MergeTree() ORDER BY id SETTINGS storage_policy='hot_and_cold'")
+		env.queryWithNoError(r, "INSERT INTO "+dbNameFull+"."+tableName+" SELECT number FROM numbers(100)")
 
 		// Create local backup
-		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "--tables="+dbName+"."+tableName, backupName)
+		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "--tables="+dbNameFull+".*", backupName)
 
 		// Check checksums in metadata
-		metadataFile := path.Join("/var/lib/clickhouse/backup", backupName, "metadata", common.TablePathEncode(dbName), common.TablePathEncode(tableName)+".json")
+		metadataFile := path.Join("/var/lib/clickhouse/backup", backupName, "metadata", common.TablePathEncode(dbNameFull), common.TablePathEncode(tableName)+".json")
 		out, err := env.DockerExecOut("clickhouse-backup", "cat", metadataFile)
 		r.NoError(err)
 		var tableMeta struct {
@@ -3042,10 +3040,13 @@ func TestHardlinksExistsFiles(t *testing.T) {
 		// Upload backup
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "S3_COMPRESSION_FORMAT="+compression+" clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload "+backupName)
 
+		// move part to another disk
+		env.queryWithNoError(r, "ALTER TABLE "+dbNameFull+"."+tableName+" MOVE PART 'all_1_1_0' TO DISK 'hdd2'")
+
 		// Delete local backup
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupName)
 
-		// Download with --hardlink-exists-files
+		// Download with --hardlink-exists-files and disk rebalance
 		downloadOut, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "download", "--hardlink-exists-files", backupName)
 		log.Debug().Msg(downloadOut)
 		r.NoError(err, downloadOut)
@@ -3053,11 +3054,11 @@ func TestHardlinksExistsFiles(t *testing.T) {
 		r.Contains(downloadOut, "creating hardlinks")
 
 		// Restore to check data integrity
-		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--tables="+dbName+"."+tableName, backupName)
-		env.checkCount(r, 1, 100, "SELECT count() FROM "+dbName+"."+tableName)
+		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--tables="+dbNameFull+"."+tableName, backupName)
+		env.checkCount(r, 1, 100, "SELECT count() FROM "+dbNameFull+"."+tableName)
 
 		// Cleanup after test
-		fullCleanup(t, r, env, []string{backupName}, []string{"remote", "local"}, []string{dbName}, true, true, "config-s3.yml")
+		fullCleanup(t, r, env, []string{backupName}, []string{"remote", "local"}, []string{dbNameShort}, true, true, "config-s3.yml")
 	}
 	env.Cleanup(t, r)
 }

@@ -35,7 +35,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration.xml
           </jbod_hdd_volume>
         </volumes>
       </jbod>
-      <!-- <hot_and_cold>
+      <hot_and_cold>
         <volumes>
           <hot_volume>
             <disk>default</disk>
@@ -45,7 +45,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration.xml
               <disk>hdd2</disk>
           </cold_volume>
         </volumes>
-      </hot_and_cold> -->
+      </hot_and_cold>
     </policies>
   </storage_configuration>
 </yandex>

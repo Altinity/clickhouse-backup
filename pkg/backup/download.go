@@ -618,6 +618,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 	dataGroup, dataCtx := errgroup.WithContext(ctx)
 	dataGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
 	downloadedSize := uint64(0)
+	isRebalancedAfterHardLinks := false
 
 	if remoteBackup.DataFormat != DirectoryFormat {
 		capacity := 0
@@ -633,12 +634,12 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 					continue
 				}
 				archiveFile := table.Files[disk][downloadOffset[disk]]
-				diskName := disk
+				capturedDisk := disk
 				isRebalanced := false
-				if diskName, isRebalanced = table.RebalancedFiles[archiveFile]; !isRebalanced {
-					diskName = disk
+				if capturedDisk, isRebalanced = table.RebalancedFiles[archiveFile]; !isRebalanced {
+					capturedDisk = disk
 				}
-				tableLocalDir := b.getLocalBackupDataPathForTable(remoteBackup.BackupName, diskName, dbAndTableDir)
+				tableLocalDir := b.getLocalBackupDataPathForTable(remoteBackup.BackupName, capturedDisk, dbAndTableDir)
 				downloadOffset[disk] += 1
 				tableRemoteFile := path.Join(remoteBackup.BackupName, "shadow", common.TablePathEncode(table.Database), common.TablePathEncode(table.Table), disk, archiveFile)
 				dataGroup.Go(func() error {
@@ -651,32 +652,32 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 					}
 					if hardlinkExistsFiles {
 						ext := "." + config.ArchiveExtensions[remoteBackup.DataFormat]
-						partName := strings.TrimSuffix(archiveFile, ext)
-						var part metadata.Part
+						partName := strings.TrimPrefix(strings.TrimSuffix(archiveFile, ext), capturedDisk+"_")
 						foundPart := false
-						for _, p := range table.Parts[disk] {
-							if p.Name == partName {
-								part = p
+						for idx, part := range table.Parts[capturedDisk] {
+							if part.Name == partName {
 								foundPart = true
+								found, size, err := b.hardlinkIfLocalPartExistsAndChecksumEqual(remoteBackup.BackupName, table, &part, disks, capturedDisk, dbAndTableDir)
+								if err != nil {
+									return err
+								}
+								if found {
+									if part.RebalancedDisk != "" && part.RebalancedDisk != capturedDisk {
+										table.Parts[capturedDisk][idx] = part
+										isRebalancedAfterHardLinks = true
+									}
+									atomic.AddUint64(&downloadedSize, uint64(size))
+									if b.resume {
+										b.resumableState.AppendToState(tableRemoteFile, size)
+									}
+									return nil
+								}
 								break
 							}
 						}
 						if !foundPart {
 							// continue here can be dangerous, we just not download this part
 							log.Warn().Msgf("part %s not found in metadata for archive %s on disk %s, this part will be downloaded", partName, archiveFile, disk)
-						} else {
-							partLocalPath := path.Join(tableLocalDir, part.Name)
-							found, size, err := b.checkLocalPartExistsAndCheckSumEqual(table, part, disks, diskName, dbAndTableDir, partLocalPath)
-							if err != nil {
-								return err
-							}
-							if found {
-								atomic.AddUint64(&downloadedSize, uint64(size))
-								if b.resume {
-									b.resumableState.AppendToState(tableRemoteFile, size)
-								}
-								return nil
-							}
 						}
 					}
 					retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
@@ -715,7 +716,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 			if b.isEmbedded {
 				tableLocalPath = path.Join(diskPath, remoteBackup.BackupName, "data", dbAndTableDir)
 			}
-			for _, part := range parts {
+			for i, part := range parts {
 				if part.Required {
 					continue
 				}
@@ -729,6 +730,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 				partLocalPath := path.Join(tableLocalPath, part.Name)
 				capturedPart := part
 				capturedDisk := disk
+				idx := i
 				dataGroup.Go(func() error {
 					log.Debug().Msgf("start %s -> %s", partRemotePath, partLocalPath)
 					if b.resume {
@@ -739,11 +741,15 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 						}
 					}
 					if hardlinkExistsFiles {
-						found, size, err := b.checkLocalPartExistsAndCheckSumEqual(table, capturedPart, disks, capturedDisk, dbAndTableDir, partLocalPath)
+						found, size, err := b.hardlinkIfLocalPartExistsAndChecksumEqual(remoteBackup.BackupName, table, &capturedPart, disks, capturedDisk, dbAndTableDir)
 						if err != nil {
 							return err
 						}
 						if found {
+							if capturedPart.RebalancedDisk != "" && capturedPart.RebalancedDisk != capturedDisk {
+								table.Parts[capturedDisk][idx] = capturedPart
+								isRebalancedAfterHardLinks = true
+							}
 							atomic.AddUint64(&downloadedSize, uint64(size))
 							if b.resume {
 								b.resumableState.AppendToState(partRemotePath, size)
@@ -769,7 +775,11 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 	if err := dataGroup.Wait(); err != nil {
 		return 0, fmt.Errorf("one of downloadTableData go-routine return error: %v", err)
 	}
-
+	if isRebalancedAfterHardLinks {
+		if _, saveErr := table.Save(table.LocalFile, false); saveErr != nil {
+			return 0, saveErr
+		}
+	}
 	if !b.isEmbedded && remoteBackup.RequiredBackup != "" {
 		diffBytes, err := b.downloadDiffParts(ctx, remoteBackup, table, dbAndTableDir, disks, hardlinkExistsFiles)
 		if err != nil {
@@ -781,53 +791,54 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 	return downloadedSize, nil
 }
 
-func (b *Backuper) checkLocalPartExistsAndCheckSumEqual(table metadata.TableMetadata, part metadata.Part, disks []clickhouse.Disk, diskName, dbAndTableDir, partLocalPath string) (bool, int64, error) {
-	log.Debug().Msgf("SUKA1 checkLocalPartExistsAndCheckSumEqual part.Name=%s", part.Name)
+func (b *Backuper) hardlinkIfLocalPartExistsAndChecksumEqual(backupName string, table metadata.TableMetadata, part *metadata.Part, disks []clickhouse.Disk, diskName, dbAndTableDir string) (bool, int64, error) {
 	diskType := ""
 	for _, d := range disks {
 		if d.Name == diskName {
 			diskType = d.Type
+
 			break
 		}
 	}
+	if diskType == "" {
+		return false, 0, fmt.Errorf("can't find %s in disks=%v", diskName, disks)
+	}
 	if _, exists := table.Checksums[part.Name]; !exists {
-		log.Debug().Msgf("SUKA2 checkLocalPartExistsAndCheckSumEqual table.Checksums=%v not contains part.Name=%s", table.Checksums, part.Name)
 		return false, 0, nil
 	}
 	for _, localDisk := range disks {
-		if diskType != "" && localDisk.Type != diskType {
+		if localDisk.Type != diskType {
 			continue
 		}
 		if localDisk.IsBackup {
 			continue
 		}
-		log.Debug().Msgf("SUKA3 checkLocalPartExistsAndCheckSumEqual part.Name=%s localDisk.Path=%s", part.Name, localDisk.Path)
 		var existingPartPath string
 		p1 := path.Join(localDisk.Path, "data", dbAndTableDir, part.Name)
 		if _, err := os.Stat(p1); err == nil {
 			existingPartPath = p1
-			log.Debug().Msgf("SUKA4 checkLocalPartExistsAndCheckSumEqual part.Name=%s localDisk.Path=%s p1=%s", part.Name, localDisk.Path, p1)
 		}
 		if existingPartPath == "" && table.UUID != "" {
 			p2 := path.Join(localDisk.Path, "store", table.UUID[:3], table.UUID, part.Name)
 			if _, err := os.Stat(p2); err == nil {
 				existingPartPath = p2
-				log.Debug().Msgf("SUKA5 checkLocalPartExistsAndCheckSumEqual part.Name=%s localDisk.Path=%s p2=%s", part.Name, localDisk.Path, p2)
 			}
 		}
 
-		log.Debug().Msgf("SUKA6 checkLocalPartExistsAndCheckSumEqual part.Name=%s localDisk.Path=%s existingPartPath=%s", part.Name, localDisk.Path, existingPartPath)
 		if existingPartPath != "" {
 			checksum, err := common.CalculateChecksum(existingPartPath, "checksums.txt")
 			if err != nil {
 				log.Warn().Msgf("calculating checksum for %s failed: %v", existingPartPath, err)
-				continue // try next disk or download
+				return false, 0, nil
 			}
-			log.Debug().Msgf("SUKA7 checkLocalPartExistsAndCheckSumEqual checksum=%v table.Checksums[%s]=%v", checksum, part.Name, table.Checksums[part.Name])
 			if checksum == table.Checksums[part.Name] {
+				partLocalPath := path.Join(b.getLocalBackupDataPathForTable(backupName, localDisk.Name, dbAndTableDir), part.Name)
 				log.Info().Msgf("Found existing part %s with matching checksum, creating hardlinks to %s", existingPartPath, partLocalPath)
 				if err := b.makePartHardlinks(existingPartPath, partLocalPath); err != nil {
 					return false, 0, fmt.Errorf("failed to create hardlinks for %s: %v", existingPartPath, err)
+				}
+				if diskName != localDisk.Name {
+					part.RebalancedDisk = localDisk.Name
 				}
 				var partSize int64
 				walkErr := filepath.Walk(existingPartPath, func(path string, info os.FileInfo, err error) error {
@@ -866,10 +877,11 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 	downloadDiffGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
 	diffRemoteFilesCache := map[string]*sync.Mutex{}
 	diffRemoteFilesLock := &sync.Mutex{}
+	isRebalancedAfterHardLinks := false
 
 	for disk, parts := range table.Parts {
 		diskPath, diskExists := b.DiskToPathMap[disk]
-		for _, part := range parts {
+		for i, part := range parts {
 			if !diskExists && part.RebalancedDisk == "" {
 				return 0, fmt.Errorf("downloadDiffParts: table: `%s`.`%s`, disk: %s, part.Name: %s, part.RebalancedDisk: `%s` not rebalanced", table.Table, table.Database, disk, part.Name, part.RebalancedDisk)
 			}
@@ -917,18 +929,20 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 				capturedExistsPath := existsPath
 				capturedNewPath := newPath
 				capturedDisk := disk
+				idx := i
 				downloadDiffGroup.Go(func() error {
 					if hardlinkExistsFiles {
-						found, size, err := b.checkLocalPartExistsAndCheckSumEqual(table, partForDownload, disks, capturedDisk, dbAndTableDir, capturedExistsPath)
+						found, size, err := b.hardlinkIfLocalPartExistsAndChecksumEqual(remoteBackup.BackupName, table, &partForDownload, disks, capturedDisk, dbAndTableDir)
 						if err != nil {
 							return err
 						}
 						if found {
+							if partForDownload.RebalancedDisk != "" && partForDownload.RebalancedDisk != capturedDisk {
+								table.Parts[capturedDisk][idx] = partForDownload
+								isRebalancedAfterHardLinks = true
+							}
 							atomic.AddInt64(&downloadedDiffBytes, size)
 							atomic.AddUint32(&downloadedDiffParts, 1)
-							if err := b.makePartHardlinks(capturedExistsPath, capturedNewPath); err != nil {
-								return fmt.Errorf("can't to add link to exists part %s -> %s error: %v", capturedNewPath, capturedExistsPath, err)
-							}
 							if b.resume {
 								b.resumableState.AppendToState(capturedExistsPath, size)
 							}
@@ -984,6 +998,12 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 	if err := downloadDiffGroup.Wait(); err != nil {
 		return 0, fmt.Errorf("one of downloadDiffParts go-routine return error: %v", err)
 	}
+	if isRebalancedAfterHardLinks {
+		if _, saveErr := table.Save(table.LocalFile, false); saveErr != nil {
+			return 0, saveErr
+		}
+	}
+
 	log.Info().
 		Str("backup", remoteBackup.BackupName).
 		Str("operation", "downloadDiffParts").

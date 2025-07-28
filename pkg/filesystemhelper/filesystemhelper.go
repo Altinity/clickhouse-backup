@@ -143,7 +143,7 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 			if !dstParentDirExists && part.RebalancedDisk == "" {
 				return fmt.Errorf("dstDataPaths=%#v, not contains %s", dstDataPaths, backupDiskName)
 			}
-			if !dstParentDirExists && part.RebalancedDisk != "" {
+			if part.RebalancedDisk != "" {
 				backupDiskName = part.RebalancedDisk
 				dstParentDir, dstParentDirExists = dstDataPaths[part.RebalancedDisk]
 				if !dstParentDirExists {
