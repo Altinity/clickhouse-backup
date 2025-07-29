@@ -3045,13 +3045,14 @@ func TestHardlinksExistsFiles(t *testing.T) {
 		env.queryWithNoError(r, "INSERT INTO "+dbNameFull+"."+tableName+" SELECT number+100 FROM numbers(100)")
 
 		// Create increment backup
-		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "--tables="+dbNameFull+".*", "--diff-from="+baseBackupName, incrementBackupName)
+		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "--tables="+dbNameFull+".*", "--diff-from-remote="+baseBackupName, incrementBackupName)
 
 		// Upload increment backup
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "S3_COMPRESSION_FORMAT="+compression+" clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload "+incrementBackupName)
 
-		// move part to another disk
+		// move parts to another disk
 		env.queryWithNoError(r, "ALTER TABLE "+dbNameFull+"."+tableName+" MOVE PART 'all_1_1_0' TO DISK 'hdd2'")
+		env.queryWithNoError(r, "ALTER TABLE "+dbNameFull+"."+tableName+" MOVE PART 'all_2_2_0' TO DISK 'hdd1'")
 
 		// Delete local backups
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", baseBackupName)
@@ -3068,6 +3069,18 @@ func TestHardlinksExistsFiles(t *testing.T) {
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--tables="+dbNameFull+"."+tableName, incrementBackupName)
 		// Should have 200 rows (100 from base + 100 from increment)
 		env.checkCount(r, 1, 200, "SELECT count() FROM "+dbNameFull+"."+tableName)
+
+		// Download base with --hardlink-exists-files and disk rebalance
+		downloadOut, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "download", "--hardlink-exists-files", baseBackupName)
+		log.Debug().Msg(downloadOut)
+		r.NoError(err, downloadOut)
+		r.Contains(downloadOut, "Found existing part")
+		r.Contains(downloadOut, "creating hardlinks")
+
+		// Restore increment to check data integrity
+		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--tables="+dbNameFull+"."+tableName, baseBackupName)
+		// Should have 200 rows (100 from base + 100 from increment)
+		env.checkCount(r, 1, 100, "SELECT count() FROM "+dbNameFull+"."+tableName)
 
 		// Cleanup after test
 		fullCleanup(t, r, env, []string{baseBackupName, incrementBackupName}, []string{"remote", "local"}, []string{dbNameShort}, true, true, "config-s3.yml")

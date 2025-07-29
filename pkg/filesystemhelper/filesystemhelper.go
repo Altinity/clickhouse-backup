@@ -287,10 +287,10 @@ func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap 
 		var isRequiredPartFound, partExists bool
 		if tableDiffFromRemote.Database != "" && tableDiffFromRemote.Table != "" && len(tableDiffFromRemote.Parts) > 0 && len(tableDiffFromRemote.Parts[disk.Name]) > 0 {
 			parts, isRequiredPartFound, partExists = addRequiredPartIfNotExists(parts, pathParts[3], tableDiffFromRemote, disk)
-			if !partExists {
+			if isRequiredPartFound && !partExists {
 				c, checksumErr := common.CalculateChecksum(filePath, "checksums.txt")
 				if checksumErr != nil {
-					return fmt.Errorf("common.CalculateChecksum return error %v", checksumErr)
+					return fmt.Errorf("common.CalculateChecksum(isRequiredPartFound=true) return error %v", checksumErr)
 				}
 				checksums[pathParts[3]] = c
 			}
@@ -392,22 +392,23 @@ func IsSkipProjections(skipProjections []string, relativePath string) bool {
 func addRequiredPartIfNotExists(parts []metadata.Part, relativePath string, tableDiffFromRemote metadata.TableMetadata, disk clickhouse.Disk) ([]metadata.Part, bool, bool) {
 	isRequiredPartFound := false
 	exists := false
-	for _, diffPart := range tableDiffFromRemote.Parts[disk.Name] {
-		if diffPart.Name == relativePath || strings.HasPrefix(relativePath, diffPart.Name+"/") {
-			for _, p := range parts {
-				if p.Name == relativePath || strings.HasPrefix(relativePath, p.Name+"/") {
-					exists = true
-					break
-				}
-			}
-			if !exists {
-				parts = append(parts, metadata.Part{
-					Name:     relativePath,
-					Required: true,
-				})
-			}
-			isRequiredPartFound = true
+	for _, p := range parts {
+		if p.Name == relativePath || strings.HasPrefix(relativePath, p.Name+"/") {
+			exists = true
+			break
 		}
+		for _, diffPart := range tableDiffFromRemote.Parts[disk.Name] {
+			if diffPart.Name == relativePath || strings.HasPrefix(relativePath, diffPart.Name+"/") {
+				isRequiredPartFound = true
+			}
+		}
+	}
+	// we use relativePath here cause during Walk, directory will walked first
+	if !exists && isRequiredPartFound {
+		parts = append(parts, metadata.Part{
+			Name:     relativePath,
+			Required: true,
+		})
 	}
 	return parts, isRequiredPartFound, exists
 }
