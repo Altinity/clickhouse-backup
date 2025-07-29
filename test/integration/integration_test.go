@@ -3014,8 +3014,13 @@ func TestHardlinksExistsFiles(t *testing.T) {
 		tableName := "test_hardlinks_table"
 
 		// Create table and data
+		settings := ""
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.1") >= 0 {
+			settings = "SETTINGS storage_policy='hot_and_cold'"
+		}
+
 		env.queryWithNoError(r, "CREATE DATABASE "+dbNameFull)
-		env.queryWithNoError(r, "CREATE TABLE "+dbNameFull+"."+tableName+" (id UInt64) ENGINE=MergeTree() ORDER BY id SETTINGS storage_policy='hot_and_cold'")
+		env.queryWithNoError(r, "CREATE TABLE "+dbNameFull+"."+tableName+" (id UInt64) ENGINE=MergeTree() ORDER BY id"+settings)
 		env.queryWithNoError(r, "INSERT INTO "+dbNameFull+"."+tableName+" SELECT number FROM numbers(100)")
 
 		// Create base backup
@@ -3051,8 +3056,10 @@ func TestHardlinksExistsFiles(t *testing.T) {
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "S3_COMPRESSION_FORMAT="+compression+" clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload --diff-from="+baseBackupName+" "+incrementBackupName)
 
 		// move parts to another disk
-		env.queryWithNoError(r, "ALTER TABLE "+dbNameFull+"."+tableName+" MOVE PART 'all_1_1_0' TO DISK 'hdd2'")
-		env.queryWithNoError(r, "ALTER TABLE "+dbNameFull+"."+tableName+" MOVE PART 'all_2_2_0' TO DISK 'hdd1'")
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.1") >= 0 {
+			env.queryWithNoError(r, "ALTER TABLE "+dbNameFull+"."+tableName+" MOVE PART 'all_1_1_0' TO DISK 'hdd2'")
+			env.queryWithNoError(r, "ALTER TABLE "+dbNameFull+"."+tableName+" MOVE PART 'all_2_2_0' TO DISK 'hdd1'")
+		}
 
 		// Delete local backups
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", baseBackupName)
