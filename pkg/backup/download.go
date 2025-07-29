@@ -642,7 +642,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 				capturedParts := table.Parts[capturedDisk]
 				tableLocalDir := b.getLocalBackupDataPathForTable(remoteBackup.BackupName, capturedDisk, dbAndTableDir)
 				downloadOffset[disk] += 1
-				tableRemoteFile := path.Join(remoteBackup.BackupName, "shadow", common.TablePathEncode(table.Database), common.TablePathEncode(table.Table), disk, archiveFile)
+				tableRemoteFile := path.Join(remoteBackup.BackupName, "shadow", common.TablePathEncode(table.Database), common.TablePathEncode(table.Table), archiveFile)
 				dataGroup.Go(func() error {
 					log.Debug().Msgf("start download %s", tableRemoteFile)
 					if b.resume {
