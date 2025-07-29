@@ -3048,7 +3048,7 @@ func TestHardlinksExistsFiles(t *testing.T) {
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "--tables="+dbNameFull+".*", "--diff-from-remote="+baseBackupName, incrementBackupName)
 
 		// Upload increment backup
-		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "S3_COMPRESSION_FORMAT="+compression+" clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload "+incrementBackupName)
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "S3_COMPRESSION_FORMAT="+compression+" clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload --diff-from="+baseBackupName+" "+incrementBackupName)
 
 		// move parts to another disk
 		env.queryWithNoError(r, "ALTER TABLE "+dbNameFull+"."+tableName+" MOVE PART 'all_1_1_0' TO DISK 'hdd2'")
