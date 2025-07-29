@@ -3016,7 +3016,7 @@ func TestHardlinksExistsFiles(t *testing.T) {
 		// Create table and data
 		settings := ""
 		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.1") >= 0 {
-			settings = "SETTINGS storage_policy='hot_and_cold'"
+			settings = " SETTINGS storage_policy='hot_and_cold'"
 		}
 
 		env.queryWithNoError(r, "CREATE DATABASE "+dbNameFull)
