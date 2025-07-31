@@ -2,6 +2,7 @@
 IMPROVEMENTS
 - implements IRSA inherit when we provide different serviceAccount and `assume_role_arn` in `s3` config section, fix [1191](https://github.com/Altinity/clickhouse-backup/issues/1191)
 - add object labels configs to e2e integration tests
+- add publish docker images into `ghcr.io/altinity/clickhouse-backup`, fix [389](https://github.com/Altinity/clickhouse-backup/issues/389)
 
 # v2.6.30
 IMPROVEMENTS
