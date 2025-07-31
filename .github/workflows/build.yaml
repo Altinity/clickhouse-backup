@@ -396,6 +396,7 @@ jobs:
           DOCKER_USER: ${{ secrets.DOCKER_USER }}
           DOCKER_REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
           DOCKER_TAG: ${{ steps.docker_tag.outputs.docker_tag }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [[ "${DOCKER_TOKEN}" != "" ]]; then
             export DOCKER_REGISTRY=${DOCKER_REGISTRY:-docker.io}
@@ -406,3 +407,9 @@ jobs:
             docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG} --build-arg VERSION=$VERSION --target=image_short --pull --push .
             docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=${DOCKER_REGISTRY}/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}-fips --build-arg VERSION=$VERSION --target=image_fips --pull --push .
           fi
+          
+          # Publish to GitHub Container Registry
+          echo ${GITHUB_TOKEN} | docker login -u $GITHUB_ACTOR --password-stdin ghcr.io
+          docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=ghcr.io/${GITHUB_REPOSITORY}/${DOCKER_IMAGE}:${DOCKER_TAG} --build-arg VERSION=$VERSION --target=image_short --pull --push .
+          docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=ghcr.io/${GITHUB_REPOSITORY}/${DOCKER_IMAGE}-full:${DOCKER_TAG} --build-arg VERSION=$VERSION --target=image_full --pull --push .
+          docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=ghcr.io/${GITHUB_REPOSITORY}/${DOCKER_IMAGE}:${DOCKER_TAG}-fips --build-arg VERSION=$VERSION --target=image_fips --pull --push .
