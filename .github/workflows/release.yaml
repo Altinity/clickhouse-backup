@@ -144,6 +144,6 @@ jobs:
           
           # Publish to GitHub Container Registry
           echo ${GITHUB_TOKEN} | docker login -u $GITHUB_ACTOR --password-stdin ghcr.io
-          docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=ghcr.io/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG} --tag ghcr.io/${GITHUB_REPOSITORY}/${DOCKER_IMAGE}:latest --build-arg VERSION=$VERSION --target=image_short --pull --push .
-          docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=ghcr.io/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}-fips --tag ghcr.io/${GITHUB_REPOSITORY}/${DOCKER_IMAGE}:latest-fips --build-arg VERSION=$VERSION --target=image_fips --pull --push .
-          docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=ghcr.io/${DOCKER_REPO}/${DOCKER_IMAGE}-full:${DOCKER_TAG} --tag ghcr.io/${GITHUB_REPOSITORY}/${DOCKER_IMAGE}-full:latest --build-arg VERSION=$VERSION --target=image_full --pull --push .
+          docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=ghcr.io/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG} --tag ghcr.io/${DOCKER_IMAGE}/${DOCKER_IMAGE}:latest --build-arg VERSION=$VERSION --target=image_short --pull --push .
+          docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=ghcr.io/${DOCKER_REPO}/${DOCKER_IMAGE}:${DOCKER_TAG}-fips --tag ghcr.io/${DOCKER_IMAGE}/${DOCKER_IMAGE}:latest-fips --build-arg VERSION=$VERSION --target=image_fips --pull --push .
+          docker buildx build --progress=plain --platform=linux/amd64,linux/arm64 --tag=ghcr.io/${DOCKER_REPO}/${DOCKER_IMAGE}-full:${DOCKER_TAG} --tag ghcr.io/${DOCKER_IMAGE}/${DOCKER_IMAGE}-full:latest --build-arg VERSION=$VERSION --target=image_full --pull --push .
