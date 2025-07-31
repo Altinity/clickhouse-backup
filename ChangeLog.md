@@ -1,3 +1,8 @@
+# v2.6.31
+IMPROVEMENTS
+- implements IRSA inherit when we provide different serviceAccount and `assume_role_arn` in `s3` config section, fix [1191](https://github.com/Altinity/clickhouse-backup/issues/1191)
+- add object labels configs to e2e integration tests
+
 # v2.6.30
 IMPROVEMENTS
 - add in REST API `operation_id` to result for all asynchronous commands (`create`,`upload`,`download`,`restore`) which allow poll /backup/status more precise, fix [1189](https://github.com/Altinity/clickhouse-backup/pull/1189), thanks @lepetitops

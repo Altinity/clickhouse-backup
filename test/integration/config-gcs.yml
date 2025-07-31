@@ -18,3 +18,5 @@ gcs:
   object_disk_path: object_disks/{cluster}/{shard}
   credentials_file: /etc/clickhouse-backup/credentials.json
   compression_format: tar
+  object_labels:
+    label: label_value

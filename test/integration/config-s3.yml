@@ -40,6 +40,8 @@ s3:
   allow_multipart_download: true
   concurrency: 3
   request_payer: requester
+  object_labels:
+    label: label_value
 api:
   listen: :7171
   create_integration_tables: true

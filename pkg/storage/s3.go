@@ -135,6 +135,11 @@ func (s *S3) Connect(ctx context.Context) error {
 		awsConfig.Credentials = stscreds.NewWebIdentityRoleProvider(
 			stsClient, awsRoleARN, stscreds.IdentityTokenFile(awsWebIdentityTokenFile),
 		)
+		// inherit IRSA and try assume role https://github.com/Altinity/clickhouse-backup/issues/1191
+		if s.Config.AssumeRoleARN != "" && s.Config.AssumeRoleARN != awsRoleARN {
+			stsClient = sts.NewFromConfig(awsConfig)
+			awsConfig.Credentials = stscreds.NewAssumeRoleProvider(stsClient, s.Config.AssumeRoleARN)
+		}
 	} else if s.Config.AssumeRoleARN != "" {
 		// backup role S3_ASSUME_ROLE_ARN have high priority than AWS_ROLE_ARN see https://github.com/Altinity/clickhouse-backup/issues/898
 		awsConfig.Credentials = stscreds.NewAssumeRoleProvider(stsClient, s.Config.AssumeRoleARN)

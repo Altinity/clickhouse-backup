@@ -26,3 +26,5 @@ gcs:
   compression_format: tar
   endpoint: http://gcs:8080/storage/v1/
   skip_credentials: true
+  object_labels:
+    label: label_value
