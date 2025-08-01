@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 	"io"
 	"os"
 	"path"
@@ -15,6 +14,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/custom"
@@ -364,7 +365,8 @@ func (b *Backuper) validateUploadParams(ctx context.Context, backupName string, 
 		return fmt.Errorf("general->remote_storage shall not be \"none\" for upload, change you config or use REMOTE_STORAGE environment variable")
 	}
 	if backupName == "" {
-		_ = b.PrintLocalBackups(ctx, "all")
+		localBackups := b.CollectLocalBackups(ctx, "all")
+		_ = b.PrintBackup(localBackups, "all", "text")
 		return fmt.Errorf("select backup for upload")
 	}
 	if b.cfg.General.UploadConcurrency == 0 {

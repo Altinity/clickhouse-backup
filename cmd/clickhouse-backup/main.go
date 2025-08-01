@@ -3,14 +3,15 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
-	"github.com/rs/zerolog/pkgerrors"
-	"github.com/urfave/cli"
 	stdlog "log"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+	"github.com/rs/zerolog/pkgerrors"
+	"github.com/urfave/cli"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/backup"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
@@ -337,10 +338,16 @@ func main() {
 			UsageText: "clickhouse-backup list [all|local|remote] [latest|previous]",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				err := b.List(c.Args().Get(0), c.Args().Get(1))
+				err := b.List(c.Args().Get(0), c.Args().Get(1), c.String("format"))
 				return err
 			},
-			Flags: cliapp.Flags,
+			Flags: append(cliapp.Flags,
+				cli.StringFlag{
+					Name:   "format, f",
+					Usage:  "Output format (text|json|yaml|csv|tsv)",
+					Hidden: false,
+				},
+			),
 		},
 		{
 			Name:      "download",
