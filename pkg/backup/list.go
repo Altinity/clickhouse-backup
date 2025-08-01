@@ -2,8 +2,10 @@ package backup
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -18,6 +20,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
+	"github.com/gocarina/gocsv"
 	"github.com/ricochet2200/go-disk-usage/du"
 	"github.com/rs/zerolog/log"
 	"gopkg.in/yaml.v3"
@@ -70,6 +73,33 @@ func (b *Backuper) PrintBackup(backupInfos []BackupInfo, ptype, format string) e
 		}
 		if _, err := fmt.Fprintln(w, string(bytes)); err != nil {
 			log.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", bytes, err)
+			return err
+		}
+		return nil
+	case "csv":
+		csvString, err := gocsv.MarshalString(backupInfos)
+		if err != nil {
+			log.Error().Msgf("gocsv.MarshalString return error: %v", err)
+			return err
+		}
+		if _, err := fmt.Fprintln(w, csvString); err != nil {
+			log.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", len(csvString), err)
+			return err
+		}
+		return nil
+	case "tsv":
+		gocsv.SetCSVWriter(func(out io.Writer) *gocsv.SafeCSVWriter {
+			writer := gocsv.NewSafeCSVWriter(csv.NewWriter(out))
+			writer.Comma = '\t' // Change delimiter to tab
+			return writer
+		})
+		csvString, err := gocsv.MarshalString(backupInfos)
+		if err != nil {
+			log.Error().Msgf("gocsv.MarshalString return error: %v", err)
+			return err
+		}
+		if _, err := fmt.Fprintln(w, csvString); err != nil {
+			log.Error().Msgf("fmt.Fprintf write %d bytes return error: %v", len(csvString), err)
 			return err
 		}
 		return nil

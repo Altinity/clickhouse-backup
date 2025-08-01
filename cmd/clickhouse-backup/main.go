@@ -344,7 +344,7 @@ func main() {
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
 					Name:   "format, f",
-					Usage:  "Output format (text|json|yaml)",
+					Usage:  "Output format (text|json|yaml|csv|tsv)",
 					Hidden: false,
 				},
 			),
