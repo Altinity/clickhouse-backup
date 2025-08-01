@@ -45,7 +45,9 @@ services:
     volumes:
       - ./minio_nodelete.sh:/bin/minio_nodelete.sh
       # go install github.com/minio/certgen@latest
-      # ~/go/bin/certgen -host "127.0.0.1,localhost,minio"
+      # ~/go/bin/certgen -host "127.0.0.1,localhost,minio" -duration 876000h
+      # mv private.key ./test/integration/minio.key
+      # mv public.crt ./test/integration/minio.crt
       - ./minio.crt:/certs/CAs/public.crt
       - ./minio.crt:/certs/public.crt
       - ./minio.key:/certs/private.key
