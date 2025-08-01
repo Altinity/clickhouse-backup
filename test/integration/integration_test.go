@@ -2308,6 +2308,45 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
+func TestListFormat(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
+	
+	// Create a test backup to have something to list
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "test_list_format_backup")
+	
+	// Test text format (default)
+	out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list")
+	r.NoError(err)
+	r.Contains(out, "test_list_format_backup")
+	
+	// Test JSON format
+	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "--format", "json")
+	r.NoError(err)
+	r.Contains(out, "\"name\":")
+	r.Contains(out, "test_list_format_backup")
+	
+	// Test YAML format
+	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "--format", "yaml")
+	r.NoError(err)
+	r.Contains(out, "name:")
+	r.Contains(out, "test_list_format_backup")
+	
+	// Test CSV format
+	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "--format", "csv")
+	r.NoError(err)
+	r.Contains(out, "test_list_format_backup")
+	
+	// Test TSV format
+	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "--format", "tsv")
+	r.NoError(err)
+	r.Contains(out, "test_list_format_backup")
+	
+	// Clean up
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_list_format_backup")
+	env.Cleanup(t, r)
+}
+
 func TestTablePatterns(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
