@@ -764,6 +764,7 @@ USAGE:
 OPTIONS:
    --config value, -c value                   Config 'FILE' name. (default: "/etc/clickhouse-backup/config.yml") [$CLICKHOUSE_BACKUP_CONFIG]
    --environment-override value, --env value  override any environment variable via CLI parameter
+   --format value, -f value                   Output format (text|json|yaml|csv|tsv)
    
 ```
 ### CLI command - download
@@ -789,6 +790,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --rbac-only, --rbac          Download RBAC related objects only, will skip download data, will backup schema only if --schema added
    --configs-only, --configs    Download 'clickhouse-server' configuration files only, will skip download data, will backup schema only if --schema added
    --resume, --resumable        Save intermediate download state and resume download if backup exists on local storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
+   --hardlink-exists-files      Create hardlinks for existing files instead of downloading
    
 ```
 ### CLI command - restore
@@ -858,6 +860,7 @@ Look at the system.parts partition and partition_id fields for details https://c
    --skip-projections db_pattern.table_pattern:projections_pattern  Skip make hardlinks to *.proj/* files during backup restoring, format db_pattern.table_pattern:projections_pattern, use https://pkg.go.dev/path/filepath#Match syntax
    --resume, --resumable                                            Save intermediate download state and resume download if backup exists on remote storage, ignored with 'remote_storage: custom' or 'use_embedded_backup_restore: true'
    --restore-schema-as-attach                                       Use DETACH/ATTACH instead of DROP/CREATE for schema restoration
+   --hardlink-exists-files                                          Create hardlinks for existing files instead of downloading
    
 ```
 ### CLI command - delete

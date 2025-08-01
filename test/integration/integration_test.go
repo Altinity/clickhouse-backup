@@ -2314,9 +2314,12 @@ func TestListFormat(t *testing.T) {
 
 	// Create a test backup to have something to list
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "ALLOW_EMPTY_BACKUPS=true clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml create test_list_format_backup")
+	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", "cat /var/lib/clickhouse/backup/test_list_format_backup/metadata.json")
+	r.NoError(err)
+	r.Contains(out, "\"tables\": null")
 
 	// Test text format (default)
-	out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list")
+	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list")
 	r.NoError(err)
 	r.Contains(out, "test_list_format_backup")
 	r.Contains(out, "all:0B,data:0B,arch:0B,obj:0B,meta:0B,rbac:0B,conf:0B")
