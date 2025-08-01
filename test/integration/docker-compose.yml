@@ -20,7 +20,7 @@ services:
       PASV_MAX_PORT: 21000
 
   minio:
-    image: docker.io/bitnami/minio:${MINIO_VERSION:-2025.4.22}
+    image: docker.io/bitnami/minio:${MINIO_VERSION:-latest}
     hostname: minio
     environment:
       MINIO_DEFAULT_BUCKETS: 'clickhouse'

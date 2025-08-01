@@ -185,7 +185,7 @@ services:
       start_period: 10s
 
   minio:
-    image: minio/minio:${MINIO_VERSION:-2025.4.22}
+    image: minio/minio:${MINIO_VERSION:-latest}
     hostname: minio
     environment:
       MINIO_ACCESS_KEY: access_key
