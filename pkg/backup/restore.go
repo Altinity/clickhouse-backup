@@ -5,12 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/resumable"
-	"github.com/eapache/go-resiliency/retrier"
-	"github.com/pkg/errors"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 	"io"
 	"io/fs"
 	"math/rand"
@@ -23,6 +17,13 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/resumable"
+	"github.com/eapache/go-resiliency/retrier"
+	"github.com/pkg/errors"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 
 	"github.com/mattn/go-shellwords"
 	recursiveCopy "github.com/otiai10/copy"
@@ -85,7 +86,8 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	}
 
 	if backupName == "" {
-		_ = b.PrintLocalBackups(ctx, "all")
+		localBackups := b.CollectLocalBackups(ctx, "all")
+		_ = b.PrintBackup(localBackups, "all", "text")
 		return fmt.Errorf("select backup for restore")
 	}
 	disks, err := b.ch.GetDisks(ctx, true)

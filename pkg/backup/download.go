@@ -66,7 +66,8 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	}
 	b.adjustResumeFlag(resume)
 	if backupName == "" {
-		_ = b.PrintRemoteBackups(ctx, "all")
+		remoteBackups := b.CollectRemoteBackups(ctx, "all")
+		_ = b.PrintBackup(remoteBackups, "all", "text")
 		return fmt.Errorf("select backup for download")
 	}
 	localBackups, disks, err := b.GetLocalBackups(ctx, nil)
