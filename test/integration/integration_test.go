@@ -2313,7 +2313,7 @@ func TestListFormat(t *testing.T) {
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	
 	// Create a test backup to have something to list
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "test_list_format_backup")
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "ALLOW_EMPTY_BACKUPS=true clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml create test_list_format_backup")
 	
 	// Test text format (default)
 	out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list")
