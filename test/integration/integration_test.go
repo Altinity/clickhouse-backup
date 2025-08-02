@@ -2426,7 +2426,6 @@ func TestTablePatterns(t *testing.T) {
 	}
 	env.checkObjectStorageIsEmpty(t, r, "S3")
 	env.Cleanup(t, r)
-	t.Fatal("SUKA!!!")
 }
 
 func TestProjections(t *testing.T) {
