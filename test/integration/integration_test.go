@@ -1829,6 +1829,7 @@ func TestSkipNotExistsTable(t *testing.T) {
 	wg.Wait()
 	r.True(freezeErrorHandled, "freezeErrorHandled false")
 	r.NoError(env.dropDatabase("test_skip_tables", true))
+	r.NoError(env.dropDatabase("freeze_not_exists", true))
 	t.Log("TestSkipNotExistsTable DONE, ALL OK")
 	env.Cleanup(t, r)
 }
@@ -3047,6 +3048,7 @@ func TestInnerTablesMaterializedView(t *testing.T) {
 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_mv")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "remote", "test_mv")
+	r.NoError(env.dropDatabase("test_mv", true))
 	env.Cleanup(t, r)
 }
 
