@@ -2362,7 +2362,7 @@ func TestTablePatterns(t *testing.T) {
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 
 	testBackupName := "test_backup_patterns"
-	databaseList := []string{dbNameOrdinary, dbNameAtomic}
+	databaseList := []string{dbNameOrdinary, dbNameAtomic, dbNameReplicated, dbNameMySQL, dbNamePostgreSQL, Issue331Issue1091Atomic, Issue331Issue1091Ordinary}
 	var dbNameOrdinaryTest = dbNameOrdinary + "_" + t.Name()
 	var dbNameAtomicTest = dbNameAtomic + "_" + t.Name()
 	for _, createPattern := range []bool{true, false} {
@@ -2426,6 +2426,7 @@ func TestTablePatterns(t *testing.T) {
 	}
 	env.checkObjectStorageIsEmpty(t, r, "S3")
 	env.Cleanup(t, r)
+	t.Fatal("SUKA!!!")
 }
 
 func TestProjections(t *testing.T) {
