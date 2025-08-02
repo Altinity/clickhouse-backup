@@ -614,7 +614,7 @@ func (b *Backuper) resolveRBACConflictIfExist(ctx context.Context, sql string, a
 
 func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, accessPath string, version int, k *keeper.Keeper, replicatedUserDirectories []clickhouse.UserDirectory) (bool, string, []string) {
 	//search in sql system.users, system.quotas, system.row_policies, system.roles, system.settings_profiles
-	if version > 22003000 {
+	if version > 22004000 {
 		var rbacSystemTableNames = map[string]string{
 			"ROLE":             "roles",
 			"ROW POLICY":       "row_policies",

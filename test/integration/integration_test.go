@@ -969,6 +969,7 @@ func TestRBAC(t *testing.T) {
 			env.queryWithNoError(r, "CREATE ROW POLICY `test.rbac-name` ON test_rbac.test_rbac USING v>=0 AS RESTRICTIVE TO `test.rbac-name`")
 		}
 		createRBACObjects(false)
+		env.DockerExecNoError(r, "clickhouse", "clickhouse-client", "-mn", "-q", "SELECT * FROM system.user_directories FORMAT Vertical; SELECT * FROM system.users FORMAT Vertical; SELECT * FROM system.roles FORMAT Vertical; SELECT * FROM system.settings_profiles FORMAT Vertical; SELECT * FROM system.quotas FORMAT Vertical")
 		//--rbac + data
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", config, "create_remote", "--rbac", "test_rbac_backup_with_data")
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "CLICKHOUSE_BACKUP_CONFIG="+config+" clickhouse-backup delete local test_rbac_backup_with_data")
