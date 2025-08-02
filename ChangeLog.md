@@ -1,3 +1,7 @@
+# v2.6.32
+IMPROVEMENTS
+- add `--format` for `list` command which support json, yaml, csv, tsv, fix [1192](https://github.com/Altinity/clickhouse-backup/issues/1192), thanks @minguyen9988
+
 # v2.6.31
 IMPROVEMENTS
 - implements IRSA inherit when we provide different serviceAccount and `assume_role_arn` in `s3` config section, fix [1191](https://github.com/Altinity/clickhouse-backup/issues/1191)
