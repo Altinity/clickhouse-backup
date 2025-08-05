@@ -1,3 +1,7 @@
+# v2.6.33
+BUG FIXES
+- add creation integration tables for `POST /restart` and `kill -SIGHUP` reaction, fix [1195](https://github.com/Altinity/clickhouse-backup/issues/1195)
+
 # v2.6.32
 IMPROVEMENTS
 - add `--format` for `list` command which support json, yaml, csv, tsv, fix [1192](https://github.com/Altinity/clickhouse-backup/issues/1192), thanks @minguyen9988

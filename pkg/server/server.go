@@ -91,11 +91,6 @@ func Run(cliCtx *cli.Context, cliApp *cli.App, configPath string, clickhouseBack
 		metrics:                 metrics.NewAPIMetrics(),
 		stop:                    make(chan struct{}),
 	}
-	if cfg.API.CreateIntegrationTables {
-		if err := api.CreateIntegrationTables(); err != nil {
-			log.Error().Err(err).Send()
-		}
-	}
 	api.metrics.RegisterMetrics()
 
 	log.Info().Msgf("Starting API server %s on %s", api.cliApp.Version, api.config.API.ListenAddr)
@@ -127,14 +122,14 @@ func Run(cliCtx *cli.Context, cliApp *cli.App, configPath string, clickhouseBack
 	for {
 		select {
 		case <-api.restart:
-			if err := api.Restart(); err != nil {
-				log.Error().Msgf("Failed to restarting API server: %v", err)
+			if restartErr := api.Restart(); restartErr != nil {
+				log.Error().Msgf("Failed to restarting API server: %v", restartErr)
 				continue
 			}
 			log.Info().Msgf("Reloaded by HTTP")
 		case <-sighup:
-			if err := api.Restart(); err != nil {
-				log.Error().Msgf("Failed to restarting API server: %v", err)
+			if restartErr := api.Restart(); restartErr != nil {
+				log.Error().Msgf("Failed to restarting API server: %v", restartErr)
 				continue
 			}
 			log.Info().Msg("Reloaded by SIGHUP")
@@ -170,6 +165,11 @@ func (api *APIServer) Restart() error {
 	_, err := api.ReloadConfig(nil, "restart")
 	if err != nil {
 		return err
+	}
+	if api.config.API.CreateIntegrationTables {
+		if createErr := api.CreateIntegrationTables(); createErr != nil {
+			log.Error().Err(createErr).Send()
+		}
 	}
 	status.Current.CancelAll("canceled via API /restart")
 	if api.server != nil {
