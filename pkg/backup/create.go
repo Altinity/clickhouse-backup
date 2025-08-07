@@ -5,9 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/resumable"
-	"github.com/eapache/go-resiliency/retrier"
 	"os"
 	"path"
 	"path/filepath"
@@ -16,6 +13,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/resumable"
+	"github.com/eapache/go-resiliency/retrier"
 
 	"github.com/google/uuid"
 	recursiveCopy "github.com/otiai10/copy"
@@ -854,7 +855,10 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 				}
 				objectDiskSize[disk.Name] = size
 				if size > 0 {
-					log.Info().Str("disk", disk.Name).Str("duration", utils.HumanizeDuration(time.Since(start))).Str("size", utils.FormatBytes(uint64(size))).Msg("upload object_disk finish")
+					log.Info().Str("duration", utils.HumanizeDuration(time.Since(start))).
+						Str("database", table.Database).Str("table", table.Name).
+						Str("disk", disk.Name).Str("size", utils.FormatBytes(uint64(size))).
+						Msg("upload object_disk finish")
 				}
 			}
 			// Clean all the files under the shadowPath, cause UNFREEZE unavailable
