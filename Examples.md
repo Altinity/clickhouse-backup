@@ -880,7 +880,7 @@ clickhouse-backup list
 test                                                             21/04/2025 18:24:42   remote      all:60.86MiB,data:60.70MiB,arch:60.85MiB,obj:2.50KiB,meta:0B,rbac:0B,conf:0B      tar, regular
 ```
 
-The user wants to restore this table as `testnew`, using the remote backup named `test`:
+The user wants to restore this database as `testnew`, using the remote backup named `test`:
 
 ```
 $ clickhouse-backup restore_remote --restore-database-mapping test:testnew test
@@ -909,7 +909,7 @@ Query id: 5d42ae97-a521-4b60-8dc2-706b94416d78
 
 ### Backup and restore a table to a different table name
 
-In this example, a backup is made only of a table because in order to do this, only a table backup will work. In this example, the table name is `trips`, and is being restored using the name `trips2` to the same database the table-level backup was made, `test`,  
+In this example, a backup is made only of a table because in order to do this, only a table backup will work. In this example, the table name is `trips`, and is being restored using the name `trips2` to the same database the database-level backup was made, `test`,  
 
 First, the backup is made:
 
