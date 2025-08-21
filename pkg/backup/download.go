@@ -128,9 +128,12 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	if len(remoteBackup.Tables) == 0 && !b.cfg.General.AllowEmptyBackups {
 		return fmt.Errorf("'%s' is empty backup", backupName)
 	}
-	// https://github.com/Altinity/clickhouse-backup/issues/878
-	if freeSizeErr := b.CheckDisksUsage(remoteBackup, disks, isResumeExists, tablePattern); freeSizeErr != nil {
-		return freeSizeErr
+	// if using hardlink then disable this check, if not use then check disk size
+	if !hardlinkExistsFiles {
+		// https://github.com/Altinity/clickhouse-backup/issues/878
+		if freeSizeErr := b.CheckDisksUsage(remoteBackup, disks, isResumeExists, tablePattern); freeSizeErr != nil {
+			return freeSizeErr
+		}
 	}
 	tablesForDownload := parseTablePatternForDownload(remoteBackup.Tables, tablePattern)
 
