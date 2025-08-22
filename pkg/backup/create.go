@@ -755,13 +755,23 @@ func (b *Backuper) createBackupNamedCollections(ctx context.Context, backupPath 
 
 		// Parse named_collections_storage from config.xml
 		settingsXPath := map[string]string{
-			"type": "//named_collections_storage/type",
-			"path": "//named_collections_storage/path",
+			"type":      "//named_collections_storage/type",
+			"path":      "//named_collections_storage/path",
+			"key_hex":   "//named_collections_storage/key_hex",
+			"algorithm": "//named_collections_storage/algorithm",
 		}
 		settings, err := b.ch.GetPreprocessedXMLSettings(ctx, settingsXPath, "config.xml")
 		if err != nil {
 			log.Warn().Msgf("can't get named_collections_storage settings from config.xml: %v", err)
 			return 0, nil
+		}
+		settingsFile := path.Join(namedCollectionsBackup, "settings.json")
+		settingsJSON, marshalErr := json.Marshal(settings)
+		if marshalErr != nil {
+			return 0, marshalErr
+		}
+		if writeErr := os.WriteFile(settingsFile, settingsJSON, 0644); writeErr != nil {
+			return 0, writeErr
 		}
 
 		// Check if type contains "keeper"

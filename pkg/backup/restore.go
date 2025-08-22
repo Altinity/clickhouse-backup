@@ -169,7 +169,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 		needRestart = true
 	}
 	if namedCollectionsOnly || restoreNamedCollections {
-		if err := b.restoreNamedCollections(backupName, disks); err != nil {
+		if err := b.restoreNamedCollections(backupName); err != nil {
 			return err
 		}
 		log.Info().Msgf("NAMED COLLECTIONS successfully restored")
@@ -877,13 +877,15 @@ func (b *Backuper) restoreConfigs(backupName string, disks []clickhouse.Disk) er
 }
 
 // restoreNamedCollections - restore named collections from backup
-func (b *Backuper) restoreNamedCollections(backupName string, disks []clickhouse.Disk) error {
+func (b *Backuper) restoreNamedCollections(backupName string) error {
 	ctx := context.Background()
 
 	// Parse named_collections_storage configuration
 	namedCollectionsSettings := map[string]string{
-		"type": "//named_collections_storage/type",
-		"path": "//named_collections_storage/path",
+		"type":      "//named_collections_storage/type",
+		"path":      "//named_collections_storage/path",
+		"key_hex":   "//named_collections_storage/key_hex",
+		"algorithm": "//named_collections_storage/algorithm",
 	}
 	settings, err := b.ch.GetPreprocessedXMLSettings(ctx, namedCollectionsSettings, "config.xml")
 	if err != nil {
@@ -895,14 +897,8 @@ func (b *Backuper) restoreNamedCollections(backupName string, disks []clickhouse
 		storageType = typeSetting
 	}
 
-	// Check compatibility - only 'local' and 'keeper' are supported
-	if storageType != "" && storageType != "local" && !strings.Contains(storageType, "keeper") {
-		return fmt.Errorf("incompatible named_collections_storage type: %s, only 'local' and 'keeper' are supported", storageType)
-	}
-
-	// Restore based on storage type
-	namedCollectionsPath := path.Join(b.DefaultDataPath, "backup", backupName, "named_collections")
-	info, err := os.Stat(namedCollectionsPath)
+	namedCollectionsBackup := path.Join(b.DefaultDataPath, "backup", backupName, "named_collections")
+	info, err := os.Stat(namedCollectionsBackup)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -910,66 +906,65 @@ func (b *Backuper) restoreNamedCollections(backupName string, disks []clickhouse
 		return fmt.Errorf("failed to stat named_collections path: %v", err)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("named_collections path is not a directory: %s", namedCollectionsPath)
+		return fmt.Errorf("named_collections path is not a directory: %s", namedCollectionsBackup)
 	}
 
-	jsonlFiles, err := filepath.Glob(path.Join(namedCollectionsPath, "*.jsonl"))
+	settingsFile := path.Join(namedCollectionsBackup, "settings.json")
+	backupSettings, openErr := os.ReadFile(settingsFile)
+	if openErr != nil {
+		return openErr
+	}
+	backupSetttingsJson, unmarshalErr := json.Marshal(backupSettings)
+	if unmarshalErr != nil {
+		return unmarshalErr
+	}
+
+	// Check compatibility - only 'local' and 'keeper' are supported
+	if !strings.Contains(storageType, "local") && !strings.Contains(storageType, "keeper") {
+		return fmt.Errorf("incompatible named_collections_storage type: %s, shall contains 'local' or 'keeper'", storageType)
+	}
+
+	// Restore based on storage type
+	jsonlFiles, err := filepath.Glob(path.Join(namedCollectionsBackup, "*.jsonl"))
 	if err != nil {
 		return fmt.Errorf("failed to glob jsonl files: %v", err)
 	}
 
-	sqlFiles, err := filepath.Glob(path.Join(namedCollectionsPath, "*.sql"))
+	sqlFiles, err := filepath.Glob(path.Join(namedCollectionsBackup, "*.sql"))
 	if err != nil {
 		return fmt.Errorf("failed to glob sql files: %v", err)
-	}
-
-	if strings.Contains(storageType, "keeper") && len(sqlFiles) > 0 {
-		return fmt.Errorf("can't restore %v into named_collections_storage/type=%s", sqlFiles, storageType)
 	}
 
 	if !strings.Contains(storageType, "keeper") && len(jsonlFiles) > 0 {
 		return fmt.Errorf("can't restore %v into named_collections_storage/type=%s", jsonlFiles, storageType)
 	}
-
+	needRestart := false
 	// Handle JSONL files for keeper storage
 	if len(jsonlFiles) > 0 {
-		if strings.Contains(storageType, "keeper") {
-			// Connect to keeper for restoring JSONL files
-			k := &keeper.Keeper{}
-			if connErr := k.Connect(ctx, b.ch); connErr != nil {
-				return fmt.Errorf("can't connect to keeper: %v", connErr)
-			}
-			defer k.Close()
+		// Connect to keeper for restoring JSONL files
+		k := &keeper.Keeper{}
+		if connErr := k.Connect(ctx, b.ch); connErr != nil {
+			return fmt.Errorf("can't connect to keeper: %v", connErr)
+		}
+		defer k.Close()
 
-			// Get the keeper path from settings, fallback to default if not present
-			keeperPath := "/clickhouse/named_collections"
-			if pathSetting, exists := settings["path"]; exists && pathSetting != "" {
-				keeperPath = pathSetting
-			}
+		// Get the keeper path from settings, fallback to default if not present
+		keeperPath := "/clickhouse/named_collections"
+		if pathSetting, exists := settings["path"]; exists && pathSetting != "" {
+			keeperPath = pathSetting
+		}
 
-			// Restore each JSONL file using keeper.Restore
-			for _, jsonlFile := range jsonlFiles {
-				log.Info().Msgf("keeper.Restore(%s) -> %s", jsonlFile, keeperPath)
-				if restoreErr := k.Restore(jsonlFile, keeperPath); restoreErr != nil {
-					return fmt.Errorf("failed to restore %s: %v", jsonlFile, restoreErr)
-				}
-			}
-		} else {
-			// For local storage, use restoreBackupRelatedDir
-			accessPath, err := b.ch.GetAccessManagementPath(ctx, nil)
-			if err != nil {
-				return fmt.Errorf("failed to get access management path: %v", err)
-			}
-
-			namedCollectionsDestPath := path.Join(accessPath, "named_collections")
-			if err := b.restoreBackupRelatedDir(backupName, "named_collections", namedCollectionsDestPath, disks, nil); err != nil {
-				return fmt.Errorf("failed to restore named_collections directory: %v", err)
+		// Restore each JSONL file using keeper.Restore
+		for _, jsonlFile := range jsonlFiles {
+			log.Info().Msgf("keeper.Restore(%s) -> %s", jsonlFile, keeperPath)
+			if restoreErr := k.Restore(jsonlFile, keeperPath); restoreErr != nil {
+				return fmt.Errorf("failed to keeper.Restore %s: %v", jsonlFile, restoreErr)
 			}
 		}
 	}
 
-	// Handle SQL files - execute DROP/CREATE commands
 	for _, sqlFile := range sqlFiles {
+		// Handle SQL files - execute DROP/CREATE commands
 		sqlContent, err := os.ReadFile(sqlFile)
 		if err != nil {
 			return fmt.Errorf("failed to read SQL file %s: %v", sqlFile, err)
@@ -977,6 +972,7 @@ func (b *Backuper) restoreNamedCollections(backupName string, disks []clickhouse
 
 		sqlQuery := strings.TrimSpace(string(sqlContent))
 		if sqlQuery == "" {
+			log.Warn().Msgf("Empty SQL content in: %s", sqlFile)
 			continue
 		}
 
@@ -985,7 +981,9 @@ func (b *Backuper) restoreNamedCollections(backupName string, disks []clickhouse
 		re := regexp.MustCompile(`(?i)CREATE\s+NAMED\s+COLLECTION\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s\(]+)`)
 		matches := re.FindStringSubmatch(sqlQuery)
 		if len(matches) < 2 {
-			log.Warn().Msgf("Could not extract collection name from SQL: %s", sqlQuery)
+			dstSqlFile := path.Join(b.DefaultDataPath, "named_collections", path.Base(sqlFile))
+			log.Warn().Msgf("Could not extract collection name from: %s, will copy to %s", sqlFile, dstSqlFile)
+			needRestart = true
 			continue
 		}
 		collectionName := matches[1]
@@ -1001,7 +999,7 @@ func (b *Backuper) restoreNamedCollections(backupName string, disks []clickhouse
 			return fmt.Errorf("failed to create named collection %s: %v", collectionName, err)
 		}
 
-		log.Info().Msgf("Restored named collection: %s", collectionName)
+		log.Info().Msgf("Restored SQL named collection: %s", collectionName)
 	}
 
 	return nil
