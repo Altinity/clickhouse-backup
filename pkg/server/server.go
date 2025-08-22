@@ -1207,6 +1207,7 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 	schemaOnly := false
 	backupRBAC := false
 	backupConfigs := false
+	backupNamedCollections := false
 	skipCheckPartsColumns := false
 	deleteSource := false
 	watchInterval := ""
@@ -1252,6 +1253,12 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 			fullCommand = fmt.Sprintf("%s --configs", fullCommand)
 		}
 	}
+	if namedCollections, exist := api.getQueryParameter(query, "named-collections"); exist {
+		backupNamedCollections, _ = strconv.ParseBool(namedCollections)
+		if backupNamedCollections {
+			fullCommand = fmt.Sprintf("%s --named-collections", fullCommand)
+		}
+	}
 	if _, exist := api.getQueryParameter(query, "skip_check_parts_columns"); exist {
 		skipCheckPartsColumns = true
 		fullCommand = fmt.Sprintf("%s --skip-check-parts-columns", fullCommand)
@@ -1274,7 +1281,7 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 	commandId, _ := status.Current.Start(fullCommand)
 	go func() {
 		b := backup.NewBackuper(cfg)
-		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, backupConfigs, skipCheckPartsColumns, deleteSource, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
+		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
 		api.handleWatchResponse(commandId, err)
 	}()
 	api.sendJSONEachRow(w, http.StatusCreated, struct {
