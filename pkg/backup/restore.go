@@ -876,6 +876,107 @@ func (b *Backuper) restoreConfigs(backupName string, disks []clickhouse.Disk) er
 	}
 }
 
+// restoreNamedCollections - restore named collections from backup
+func (b *Backuper) restoreNamedCollections(backupName string, disks []clickhouse.Disk) error {
+	ctx := context.Background()
+	
+	// Parse named_collections_storage configuration
+	namedCollectionsSettings := map[string]string{
+		"type": "//named_collections_storage/type",
+	}
+	settings, err := b.ch.GetPreprocessedXMLSettings(ctx, namedCollectionsSettings, "config.xml")
+	if err != nil {
+		return fmt.Errorf("failed to get named_collections_storage settings: %v", err)
+	}
+	
+	storageType := ""
+	if typeSetting, exists := settings["type"]; exists {
+		storageType = strings.TrimSpace(typeSetting)
+	}
+	
+	// Check compatibility - only 'local' and 'keeper' are supported
+	if storageType != "" && storageType != "local" && storageType != "keeper" {
+		return fmt.Errorf("incompatible named_collections_storage type: %s, only 'local' and 'keeper' are supported", storageType)
+	}
+	
+	// Restore based on storage type
+	namedCollectionsPath := path.Join(b.DefaultDataPath, "backup", backupName, "named_collections")
+	info, err := os.Stat(namedCollectionsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to stat named_collections path: %v", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("named_collections path is not a directory: %s", namedCollectionsPath)
+	}
+	
+	// Handle keeper type - restore JSONL files as-is
+	if storageType == "keeper" {
+		jsonlFiles, err := filepath.Glob(path.Join(namedCollectionsPath, "*.jsonl"))
+		if err != nil {
+			return fmt.Errorf("failed to glob jsonl files: %v", err)
+		}
+		
+		// For keeper type, we just need to copy the files as-is
+		if len(jsonlFiles) > 0 {
+			accessPath, err := b.ch.GetAccessManagementPath(ctx, nil)
+			if err != nil {
+				return fmt.Errorf("failed to get access management path: %v", err)
+			}
+			
+			namedCollectionsDestPath := path.Join(accessPath, "named_collections")
+			if err := b.restoreBackupRelatedDir(backupName, "named_collections", namedCollectionsDestPath, disks, nil); err != nil {
+				return fmt.Errorf("failed to restore named_collections directory: %v", err)
+			}
+		}
+	}
+	
+	// Handle SQL files - execute DROP/CREATE commands
+	sqlFiles, err := filepath.Glob(path.Join(namedCollectionsPath, "*.sql"))
+	if err != nil {
+		return fmt.Errorf("failed to glob sql files: %v", err)
+	}
+	
+	for _, sqlFile := range sqlFiles {
+		sqlContent, err := os.ReadFile(sqlFile)
+		if err != nil {
+			return fmt.Errorf("failed to read SQL file %s: %v", sqlFile, err)
+		}
+		
+		sqlQuery := strings.TrimSpace(string(sqlContent))
+		if sqlQuery == "" {
+			continue
+		}
+		
+		// Extract collection name from CREATE NAMED COLLECTION statement
+		// Expected format: CREATE NAMED COLLECTION [IF NOT EXISTS] name [ON CLUSTER cluster_name] AS ...
+		re := regexp.MustCompile(`(?i)CREATE\s+NAMED\s+COLLECTION\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s\(]+)`)
+		matches := re.FindStringSubmatch(sqlQuery)
+		if len(matches) < 2 {
+			log.Warn().Msgf("Could not extract collection name from SQL: %s", sqlQuery)
+			continue
+		}
+		collectionName := matches[1]
+		
+		// Drop existing collection first
+		dropQuery := fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s", collectionName)
+		if err := b.ch.QueryContext(ctx, dropQuery); err != nil {
+			return fmt.Errorf("failed to drop named collection %s: %v", collectionName, err)
+		}
+		
+		// Create new collection
+		if err := b.ch.QueryContext(ctx, sqlQuery); err != nil {
+			return fmt.Errorf("failed to create named collection %s: %v", collectionName, err)
+		}
+		
+		log.Info().Msgf("Restored named collection: %s", collectionName)
+	}
+	
+	return nil
+}
+
 func (b *Backuper) restoreBackupRelatedDir(backupName, backupPrefixDir, destinationDir string, disks []clickhouse.Disk, skipPatterns []string) error {
 	srcBackupDir := path.Join(b.DefaultDataPath, "backup", backupName, backupPrefixDir)
 	info, err := os.Stat(srcBackupDir)
