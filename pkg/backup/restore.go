@@ -1500,7 +1500,7 @@ func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName st
 		return fmt.Errorf("can't restore object_disk server-side copy data parts '%s.%s': %v", table.Database, table.Table, err)
 	}
 	if size > 0 {
-		logger.Info().Str("duration", utils.HumanizeDuration(time.Since(start))).Str("size", utils.FormatBytes(uint64(size))).Msg("download object_disks finish")
+		logger.Info().Str("duration", utils.HumanizeDuration(time.Since(start))).Str("size", utils.FormatBytes(uint64(size))).Str("database", table.Database).Str("table", table.Table).Msg("download object_disks finish")
 	}
 	// Skip ATTACH TABLE for Replicated*MergeTree tables if replicatedCopyToDetached is true
 	if !replicatedCopyToDetached || !strings.Contains(dstTable.Engine, "Replicated") {
@@ -1525,7 +1525,7 @@ func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName str
 	if size, err = b.downloadObjectDiskParts(ctx, backupName, backupMetadata, table, diskMap, diskTypes, disks); err != nil {
 		return fmt.Errorf("can't restore object_disk server-side copy data parts '%s.%s': %v", table.Database, table.Table, err)
 	}
-	log.Info().Str("duration", utils.HumanizeDuration(time.Since(start))).Str("size", utils.FormatBytes(uint64(size))).Msg("download object_disks finish")
+	log.Info().Str("duration", utils.HumanizeDuration(time.Since(start))).Str("size", utils.FormatBytes(uint64(size))).Str("database", table.Database).Str("table", table.Table).Msg("download object_disks finish")
 	// Skip ATTACH PART for Replicated*MergeTree tables if replicatedCopyToDetached is true
 	if !replicatedCopyToDetached || !strings.Contains(dstTable.Engine, "Replicated") {
 		if err := b.ch.AttachDataParts(table, dstTable); err != nil {
