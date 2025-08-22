@@ -570,6 +570,7 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 	schemaOnly := false
 	rbacOnly := false
 	configsOnly := false
+	namedCollectionsOnly := false
 	skipCheckPartsColumns := false
 	deleteSource := false
 	watchInterval := ""
@@ -625,6 +626,10 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 			configsOnly = true
 			fullCommand = fmt.Sprintf("%s --configs", fullCommand)
 		}
+		if matchParam, _ = simpleParseArg(i, args, "--named-collections"); matchParam {
+			namedCollectionsOnly = true
+			fullCommand = fmt.Sprintf("%s --named-collections", fullCommand)
+		}
 		if matchParam, _ = simpleParseArg(i, args, "--skip-check-parts-columns"); matchParam {
 			skipCheckPartsColumns = true
 			fullCommand = fmt.Sprintf("%s --skip-check-parts-columns", fullCommand)
@@ -642,7 +647,7 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 	commandId, _ := status.Current.Start(fullCommand)
 	go func() {
 		b := backup.NewBackuper(cfg)
-		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, skipProjections, schemaOnly, rbacOnly, configsOnly, skipCheckPartsColumns, deleteSource, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
+		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, skipProjections, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, skipCheckPartsColumns, deleteSource, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
 		api.handleWatchResponse(commandId, err)
 	}()
 
