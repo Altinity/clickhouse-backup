@@ -205,7 +205,7 @@ func (b *Backuper) createConfigsNamedCollectionsAndRBACIfNecessary(ctx context.C
 	}
 	if createNamedCollections || namedCollectionsOnly {
 		var createNamedCollectionsErr error
-		if backupNamedCollectionsSize, createNamedCollectionsErr = b.createBackupNamedCollections(ctx, backupPath, disks); createNamedCollectionsErr != nil {
+		if backupNamedCollectionsSize, createNamedCollectionsErr = b.createBackupNamedCollections(ctx, backupPath); createNamedCollectionsErr != nil {
 			log.Fatal().Msgf("error during do NamedCollections backup: %v", createNamedCollectionsErr)
 		} else {
 			log.Info().Str("size", utils.FormatBytes(backupNamedCollectionsSize)).Msg("done createBackupNamedCollections")
@@ -745,50 +745,40 @@ func (b *Backuper) createBackupRBAC(ctx context.Context, backupPath string, disk
 	}
 }
 
-func (b *Backuper) createBackupNamedCollections(ctx context.Context, backupPath string, disks []clickhouse.Disk) (uint64, error) {
+func (b *Backuper) createBackupNamedCollections(ctx context.Context, backupPath string) (uint64, error) {
 	select {
 	case <-ctx.Done():
 		return 0, ctx.Err()
 	default:
 		namedCollectionsDataSize := uint64(0)
 		namedCollectionsBackup := path.Join(backupPath, "named_collections")
-		
+
 		// Parse named_collections_storage from config.xml
 		settingsXPath := map[string]string{
-			"type": "clickhouse/named_collections_storage/type",
-			"path": "clickhouse/named_collections_storage/path",
+			"type": "//named_collections_storage/type",
+			"path": "//named_collections_storage/path",
 		}
 		settings, err := b.ch.GetPreprocessedXMLSettings(ctx, settingsXPath, "config.xml")
 		if err != nil {
 			log.Warn().Msgf("can't get named_collections_storage settings from config.xml: %v", err)
 			return 0, nil
 		}
-		
+
 		// Check if type contains "keeper"
 		if strings.Contains(strings.ToLower(settings["type"]), "keeper") {
 			// Use keeper.Dump from the path
 			keeperPath := settings["path"]
 			if keeperPath == "" {
-				log.Warn().Msg("named_collections_storage path is empty")
+				log.Warn().Str("//named_collections_storage/type", settings["type"]).Msg("named_collections_storage path is empty")
 				return 0, nil
 			}
-			
+
 			k := keeper.Keeper{}
 			if err = k.Connect(ctx, b.ch); err != nil {
 				return 0, err
 			}
 			defer k.Close()
-			
-			// Check if path has children
-			namedCollectionsCount, err := k.ChildCount(keeperPath, "")
-			if err != nil {
-				return 0, err
-			}
-			if namedCollectionsCount == 0 {
-				log.Warn().Str("logger", "createBackupNamedCollections").Msgf("%s have no children, skip Dump", keeperPath)
-				return 0, nil
-			}
-			
+
 			if err = os.MkdirAll(namedCollectionsBackup, 0755); err != nil {
 				return 0, err
 			}
@@ -804,18 +794,18 @@ func (b *Backuper) createBackupNamedCollections(ctx context.Context, backupPath 
 			namedCollectionsPath := path.Join(b.DefaultDataPath, "named_collections")
 			namedCollectionsPathInfo, err := os.Stat(namedCollectionsPath)
 			if err != nil && !os.IsNotExist(err) {
-				return namedCollectionsDataSize, err
+				return 0, err
 			}
 			if err == nil && !namedCollectionsPathInfo.IsDir() {
-				return namedCollectionsDataSize, fmt.Errorf("%s is not directory", namedCollectionsPath)
+				return 0, fmt.Errorf("%s is not directory", namedCollectionsPath)
 			}
 			if os.IsNotExist(err) {
-				return namedCollectionsDataSize, nil
+				return 0, nil
 			}
-			
+
 			namedCollectionsSQLFiles, err := filepath.Glob(path.Join(namedCollectionsPath, "*.sql"))
 			if err != nil {
-				return namedCollectionsDataSize, err
+				return 0, err
 			}
 			if len(namedCollectionsSQLFiles) != 0 {
 				log.Debug().Msgf("copy %s -> %s", namedCollectionsPath, namedCollectionsBackup)
