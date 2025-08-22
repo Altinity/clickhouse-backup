@@ -3359,6 +3359,119 @@ func TestRestoreMapping(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
+func TestNamedCollections(t *testing.T) {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.3") < 0 {
+		t.Skipf("Named collections not supported in version %s", os.Getenv("CLICKHOUSE_VERSION"))
+	}
+	env, r := NewTestEnvironment(t)
+	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
+
+	// Create named collection
+	env.queryWithNoError(r, "CREATE NAMED COLLECTION test_named_collection AS a = 1, b = 'test'")
+
+	backupName := "test_named_collections_backup"
+
+	testCases := []struct {
+		name                   string
+		createArgs             []string
+		namedCollectionsEnvVar string
+	}{
+		// Test --named-collections flag
+		{
+			name:       "create_with_named_collections_flag",
+			createArgs: []string{"--named-collections", backupName + "_1"},
+		},
+		// Test --named-collections-only flag
+		{
+			name:       "create_with_named_collections_only_flag",
+			createArgs: []string{"--named-collections-only", backupName + "_2"},
+		},
+		// Test NAMED_COLLECTIONS_BACKUP_ALWAYS environment variable
+		{
+			name:                   "create_with_env_var_true",
+			createArgs:             []string{backupName + "_3"},
+			namedCollectionsEnvVar: "true",
+		},
+		// Test NAMED_COLLECTIONS_BACKUP_ALWAYS environment variable with false value
+		{
+			name:                   "create_with_env_var_false",
+			createArgs:             []string{backupName + "_4"},
+			namedCollectionsEnvVar: "false",
+		},
+		// Test default behavior (no flags, no env var)
+		{
+			name:       "create_default",
+			createArgs: []string{backupName + "_5"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			env, r := NewTestEnvironment(t)
+			env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
+			
+			// Set environment variable if specified
+			envVar := ""
+			if tc.namedCollectionsEnvVar != "" {
+				envVar = "NAMED_COLLECTIONS_BACKUP_ALWAYS=" + tc.namedCollectionsEnvVar + " "
+			}
+
+			// Test create command
+			cmd := fmt.Sprintf("%sclickhouse-backup -c /etc/clickhouse-backup/config-s3.yml create %s", envVar, strings.Join(tc.createArgs, " "))
+			env.DockerExecNoError(r, "clickhouse-backup", "bash", "-c", cmd)
+
+			// Test upload command
+			backupArg := tc.createArgs[len(tc.createArgs)-1] // Last argument is the backup name
+			cmd = fmt.Sprintf("%sclickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload %s", envVar, backupArg)
+			env.DockerExecNoError(r, "clickhouse-backup", "bash", "-c", cmd)
+
+			// Test delete local
+			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupArg)
+
+			// Test download command
+			cmd = fmt.Sprintf("%sclickhouse-backup -c /etc/clickhouse-backup/config-s3.yml download %s", envVar, backupArg)
+			env.DockerExecNoError(r, "clickhouse-backup", "bash", "-c", cmd)
+
+			// Test restore command
+			restoreArgs := []string{"-c", "/etc/clickhouse-backup/config-s3.yml", "restore"}
+			if strings.Contains(tc.name, "only") {
+				restoreArgs = append(restoreArgs, "--named-collections-only")
+			}
+			restoreArgs = append(restoreArgs, backupArg)
+			env.DockerExecNoError(r, "clickhouse-backup", append([]string{"clickhouse-backup"}, restoreArgs...)...)
+
+			// Test delete local
+			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupArg)
+
+			// Test delete remote
+			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "remote", backupArg)
+			
+			env.Cleanup(t, r)
+		})
+	}
+
+	// Test create_remote and restore_remote commands
+	t.Run("create_remote_and_restore_remote", func(t *testing.T) {
+		env, r := NewTestEnvironment(t)
+		env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
+
+		// Test create_remote with --named-collections
+		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", "--named-collections", backupName+"_remote_1")
+
+		// Test restore_remote
+		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore_remote", "--named-collections", backupName+"_remote_1")
+
+		// Cleanup
+		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "remote", backupName+"_remote_1")
+		
+		env.Cleanup(t, r)
+	})
+
+	// Clean up named collection
+	env.queryWithNoError(r, "DROP NAMED COLLECTION IF EXISTS test_named_collection")
+	env.Cleanup(t, r)
+}
+
 func TestMySQLMaterialized(t *testing.T) {
 	t.Skipf("Wait when fix DROP TABLE not supported by MaterializedMySQL, just attach will not help, https://github.com/ClickHouse/ClickHouse/issues/57543")
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.12") == -1 {
