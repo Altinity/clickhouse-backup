@@ -69,6 +69,7 @@ type GeneralConfig struct {
 	RBACBackupAlways                    bool              `yaml:"rbac_backup_always" envconfig:"RBAC_BACKUP_ALWAYS"`
 	RBACConflictResolution              string            `yaml:"rbac_conflict_resolution" envconfig:"RBAC_CONFLICT_RESOLUTION"`
 	ConfigBackupAlways                  bool              `yaml:"config_backup_always" envconfig:"CONFIG_BACKUP_ALWAYS"`
+	NamedCollectionsBackupAlways        bool              `yaml:"named_collections_backup_always" envconfig:"NAMED_COLLECTIONS_BACKUP_ALWAYS"`
 	RetriesDuration                     time.Duration
 	WatchDuration                       time.Duration
 	FullDuration                        time.Duration
@@ -572,6 +573,7 @@ func DefaultConfig() *Config {
 			CPUNicePriority:                     15,
 			RBACBackupAlways:                    true,
 			RBACConflictResolution:              "recreate",
+			NamedCollectionsBackupAlways:        false,
 		},
 		ClickHouse: ClickHouseConfig{
 			Username: "default",
