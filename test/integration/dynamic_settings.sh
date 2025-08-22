@@ -702,6 +702,43 @@ EOT
 fi
 
 
+# named_collections_storage configuration based on ClickHouse version
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^25\.[7-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[6-9]\.[0-9]+ ]]; then
+cat <<EOT > /etc/clickhouse-server/config.d/named_collections_storage.xml
+<yandex>
+  <named_collections_storage>
+    <type>keeper_encrypted</type>
+    <algorithm>aes_256_ctr</algorithm>
+  </named_collections_storage>
+</yandex>
+EOT
+elif [[ "${CLICKHOUSE_VERSION}" =~ ^25\.[3-6]+ ]]; then
+cat <<EOT > /etc/clickhouse-server/config.d/named_collections_storage.xml
+<yandex>
+  <named_collections_storage>
+    <type>local_encrypted</type>
+    <algorithm>aes_128_ctr</algorithm>
+  </named_collections_storage>
+</yandex>
+EOT
+elif [[ "${CLICKHOUSE_VERSION}" =~ ^24\.[8-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[5-9]\.[0-9]+ ]]; then
+cat <<EOT > /etc/clickhouse-server/config.d/named_collections_storage.xml
+<yandex>
+  <named_collections_storage>
+    <type>keeper</type>
+  </named_collections_storage>
+</yandex>
+EOT
+elif [[ "${CLICKHOUSE_VERSION}" =~ ^24\.[3-7]+ || "${CLICKHOUSE_VERSION}" =~ ^2[5-9]\.[0-9]+ ]]; then
+cat <<EOT > /etc/clickhouse-server/config.d/named_collections_storage.xml
+<yandex>
+  <named_collections_storage>
+    <type>local</type>
+  </named_collections_storage>
+</yandex>
+EOT
+fi
+
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.[3-9]+ || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9]+ ]]; then
 cat <<EOT > /etc/clickhouse-server/users.d/allow_experimental_database_replicated.xml
 <yandex>
