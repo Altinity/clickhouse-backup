@@ -156,6 +156,11 @@ func main() {
 					Usage:  "Backup 'clickhouse-server' configuration files",
 				},
 				cli.BoolFlag{
+					Name:   "named-collections, backup-named-collections, do-backup-named-collections",
+					Hidden: false,
+					Usage:  "Backup named collections",
+				},
+				cli.BoolFlag{
 					Name:   "rbac-only",
 					Hidden: false,
 					Usage:  "Backup RBAC related objects only, will skip backup data, will backup schema only if --schema added",
@@ -232,6 +237,11 @@ func main() {
 					Name:   "configs, backup-configs, do-backup-configs",
 					Hidden: false,
 					Usage:  "Backup and upload 'clickhouse-server' configuration files",
+				},
+				cli.BoolFlag{
+					Name:   "named-collections, backup-named-collections, do-backup-named-collections",
+					Hidden: false,
+					Usage:  "Backup and upload named collections",
 				},
 				cli.BoolFlag{
 					Name:   "rbac-only",
@@ -315,6 +325,11 @@ func main() {
 					Hidden: false,
 					Usage:  "Upload 'clickhouse-server' configuration files only, will skip upload data, will backup schema only if --schema added",
 				},
+				cli.BoolFlag{
+					Name:   "named-collections-only, named-collections",
+					Hidden: false,
+					Usage:  "Upload named collections only, will skip upload data, will backup schema only if --schema added",
+				},
 				cli.StringSliceFlag{
 					Name:   "skip-projections",
 					Hidden: false,
@@ -388,6 +403,11 @@ func main() {
 					Name:   "configs-only, configs",
 					Hidden: false,
 					Usage:  "Download 'clickhouse-server' configuration files only, will skip download data, will backup schema only if --schema added",
+				},
+				cli.BoolFlag{
+					Name:   "named-collections-only, named-collections",
+					Hidden: false,
+					Usage:  "Download named collections only, will skip download data, will backup schema only if --schema added",
 				},
 				cli.BoolFlag{
 					Name:   "resume, resumable",
@@ -465,6 +485,11 @@ func main() {
 					Name:   "configs, restore-configs, do-restore-configs",
 					Hidden: false,
 					Usage:  "Restore 'clickhouse-server' CONFIG related files",
+				},
+				cli.BoolFlag{
+					Name:   "named-collections, restore-named-collections, do-restore-named-collections",
+					Hidden: false,
+					Usage:  "Restore named collections",
 				},
 				cli.BoolFlag{
 					Name:   "rbac-only",
@@ -562,6 +587,11 @@ func main() {
 					Name:   "configs, restore-configs, do-restore-configs",
 					Hidden: false,
 					Usage:  "Download and Restore 'clickhouse-server' CONFIG related files",
+				},
+				cli.BoolFlag{
+					Name:   "named-collections, restore-named-collections, do-restore-named-collections",
+					Hidden: false,
+					Usage:  "Download and Restore named collections",
 				},
 				cli.BoolFlag{
 					Name:   "rbac-only",
@@ -712,6 +742,11 @@ func main() {
 					Name:   "configs, backup-configs, do-backup-configs",
 					Hidden: false,
 					Usage:  "Backup `clickhouse-server' configuration files only",
+				},
+				cli.BoolFlag{
+					Name:   "named-collections, backup-named-collections, do-backup-named-collections",
+					Hidden: false,
+					Usage:  "Backup named collections only",
 				},
 				cli.BoolFlag{
 					Name:   "skip-check-parts-columns",
