@@ -704,7 +704,7 @@ func main() {
 			Description: "Execute create_remote + delete local, create full backup every `--full-interval`, create and upload incremental backup every `--watch-interval` use previous backup as base with `--diff-from-remote` option, use `backups_to_keep_remote` config option for properly deletion remote backups, will delete old backups which not have references from other backups",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Watch(c.String("watch-interval"), c.String("full-interval"), c.String("watch-backup-name-template"), c.String("tables"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac"), c.Bool("configs"), c.Bool("skip-check-parts-columns"), c.Bool("delete-source"), version, c.Int("command-id"), nil, c)
+				return b.Watch(c.String("watch-interval"), c.String("full-interval"), c.String("watch-backup-name-template"), c.String("tables"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac"), c.Bool("configs"), c.Bool("named-collections"), c.Bool("skip-check-parts-columns"), c.Bool("delete-source"), version, c.Int("command-id"), nil, c)
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -746,17 +746,17 @@ func main() {
 				cli.BoolFlag{
 					Name:   "rbac, backup-rbac, do-backup-rbac",
 					Hidden: false,
-					Usage:  "Backup RBAC related objects only",
+					Usage:  "Backup RBAC related objects",
 				},
 				cli.BoolFlag{
 					Name:   "configs, backup-configs, do-backup-configs",
 					Hidden: false,
-					Usage:  "Backup `clickhouse-server' configuration files only",
+					Usage:  "Backup `clickhouse-server' configuration files",
 				},
 				cli.BoolFlag{
 					Name:   "named-collections, backup-named-collections, do-backup-named-collections",
 					Hidden: false,
-					Usage:  "Backup named collections and settings only",
+					Usage:  "Backup named collections and settings",
 				},
 				cli.BoolFlag{
 					Name:   "skip-check-parts-columns",

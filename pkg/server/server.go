@@ -151,7 +151,7 @@ func (api *APIServer) RunWatch(cliCtx *cli.Context) {
 	log.Info().Msg("Starting API Server in watch mode")
 	b := backup.NewBackuper(api.config)
 	commandId, _ := status.Current.Start("watch")
-	err := b.Watch(cliCtx.String("watch-interval"), cliCtx.String("full-interval"), cliCtx.String("watch-backup-name-template"), "*.*", nil, nil, false, false, false, false, cliCtx.Bool("watch-delete-source"), api.clickhouseBackupVersion, commandId, api.GetMetrics(), cliCtx)
+	err := b.Watch(cliCtx.String("watch-interval"), cliCtx.String("full-interval"), cliCtx.String("watch-backup-name-template"), "*.*", nil, nil, false, false, false, false, false, cliCtx.Bool("watch-delete-source"), api.clickhouseBackupVersion, commandId, api.GetMetrics(), cliCtx)
 	api.handleWatchResponse(commandId, err)
 }
 
@@ -568,9 +568,9 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 	partitionsToBackup := make([]string, 0)
 	skipProjections := make([]string, 0)
 	schemaOnly := false
-	rbacOnly := false
-	configsOnly := false
-	namedCollectionsOnly := false
+	backupRBAC := false
+	backupConfigs := false
+	backupNamedCollections := false
 	skipCheckPartsColumns := false
 	deleteSource := false
 	watchInterval := ""
@@ -619,15 +619,15 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 			fullCommand = fmt.Sprintf("%s --schema", fullCommand)
 		}
 		if matchParam, _ = simpleParseArg(i, args, "--rbac"); matchParam {
-			rbacOnly = true
+			backupRBAC = true
 			fullCommand = fmt.Sprintf("%s --rbac", fullCommand)
 		}
 		if matchParam, _ = simpleParseArg(i, args, "--configs"); matchParam {
-			configsOnly = true
+			backupConfigs = true
 			fullCommand = fmt.Sprintf("%s --configs", fullCommand)
 		}
 		if matchParam, _ = simpleParseArg(i, args, "--named-collections"); matchParam {
-			namedCollectionsOnly = true
+			backupNamedCollections = true
 			fullCommand = fmt.Sprintf("%s --named-collections", fullCommand)
 		}
 		if matchParam, _ = simpleParseArg(i, args, "--skip-check-parts-columns"); matchParam {
@@ -647,7 +647,7 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 	commandId, _ := status.Current.Start(fullCommand)
 	go func() {
 		b := backup.NewBackuper(cfg)
-		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, skipProjections, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, skipCheckPartsColumns, deleteSource, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
+		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
 		api.handleWatchResponse(commandId, err)
 	}()
 
@@ -1205,8 +1205,8 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 	partitionsToBackup := make([]string, 0)
 	skipProjections := make([]string, 0)
 	schemaOnly := false
-	rbacOnly := false
-	configsOnly := false
+	backupRBAC := false
+	backupConfigs := false
 	skipCheckPartsColumns := false
 	deleteSource := false
 	watchInterval := ""
@@ -1241,14 +1241,14 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if rbac, exist := query["rbac"]; exist {
-		rbacOnly, _ = strconv.ParseBool(rbac[0])
-		if rbacOnly {
+		backupRBAC, _ = strconv.ParseBool(rbac[0])
+		if backupRBAC {
 			fullCommand = fmt.Sprintf("%s --rbac", fullCommand)
 		}
 	}
 	if configs, exist := query["configs"]; exist {
-		configsOnly, _ = strconv.ParseBool(configs[0])
-		if configsOnly {
+		backupConfigs, _ = strconv.ParseBool(configs[0])
+		if backupConfigs {
 			fullCommand = fmt.Sprintf("%s --configs", fullCommand)
 		}
 	}
@@ -1274,7 +1274,7 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 	commandId, _ := status.Current.Start(fullCommand)
 	go func() {
 		b := backup.NewBackuper(cfg)
-		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, skipProjections, schemaOnly, rbacOnly, configsOnly, skipCheckPartsColumns, deleteSource, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
+		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, backupConfigs, skipCheckPartsColumns, deleteSource, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
 		api.handleWatchResponse(commandId, err)
 	}()
 	api.sendJSONEachRow(w, http.StatusCreated, struct {
