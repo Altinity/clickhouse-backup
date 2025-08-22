@@ -49,7 +49,7 @@ require (
 	golang.org/x/crypto v0.40.0
 	golang.org/x/mod v0.26.0
 	golang.org/x/sync v0.16.0
-	golang.org/x/text v0.27.0
+	golang.org/x/text v0.28.0
 	google.golang.org/api v0.244.0
 	gopkg.in/yaml.v3 v3.0.1
 )
