@@ -930,16 +930,41 @@ func (b *Backuper) restoreNamedCollections(backupName string, disks []clickhouse
 	if !strings.Contains(storageType, "keeper") && len(jsonlFiles) > 0 {
 		return fmt.Errorf("can't restore %v into named_collections_storage/type=%s", jsonlFiles, storageType)
 	}
-	// For keeper type, we just need to keeper.Restore the files as-is
-	if len(jsonlFiles) > 0 {
-		accessPath, err := b.ch.GetAccessManagementPath(ctx, nil)
-		if err != nil {
-			return fmt.Errorf("failed to get access management path: %v", err)
-		}
 
-		namedCollectionsDestPath := path.Join(accessPath, "named_collections")
-		if err := b.restoreBackupRelatedDir(backupName, "named_collections", namedCollectionsDestPath, disks, nil); err != nil {
-			return fmt.Errorf("failed to restore named_collections directory: %v", err)
+	// Handle JSONL files for keeper storage
+	if len(jsonlFiles) > 0 {
+		if strings.Contains(storageType, "keeper") {
+			// Connect to keeper for restoring JSONL files
+			k := &keeper.Keeper{}
+			if connErr := k.Connect(ctx, b.ch); connErr != nil {
+				return fmt.Errorf("can't connect to keeper: %v", connErr)
+			}
+			defer k.Close()
+
+			// Get the keeper path from settings, fallback to default if not present
+			keeperPath := "/clickhouse/named_collections"
+			if pathSetting, exists := settings["path"]; exists && pathSetting != "" {
+				keeperPath = pathSetting
+			}
+
+			// Restore each JSONL file using keeper.Restore
+			for _, jsonlFile := range jsonlFiles {
+				log.Info().Msgf("keeper.Restore(%s) -> %s", jsonlFile, keeperPath)
+				if restoreErr := k.Restore(jsonlFile, keeperPath); restoreErr != nil {
+					return fmt.Errorf("failed to restore %s: %v", jsonlFile, restoreErr)
+				}
+			}
+		} else {
+			// For local storage, use restoreBackupRelatedDir
+			accessPath, err := b.ch.GetAccessManagementPath(ctx, nil)
+			if err != nil {
+				return fmt.Errorf("failed to get access management path: %v", err)
+			}
+
+			namedCollectionsDestPath := path.Join(accessPath, "named_collections")
+			if err := b.restoreBackupRelatedDir(backupName, "named_collections", namedCollectionsDestPath, disks, nil); err != nil {
+				return fmt.Errorf("failed to restore named_collections directory: %v", err)
+			}
 		}
 	}
 
