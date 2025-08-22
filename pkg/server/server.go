@@ -976,17 +976,9 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		configsOnly = true
 		fullCommand += " --configs-only"
 	}
-	if _, exist := query["named_collections"]; exist {
-		createNamedCollections = true
-		fullCommand += " --named-collections"
-	}
 	if _, exist := api.getQueryParameter(query, "named-collections"); exist {
 		createNamedCollections = true
 		fullCommand += " --named-collections"
-	}
-	if _, exist := api.getQueryParameter(query, "named_collections_only"); exist {
-		namedCollectionsOnly = true
-		fullCommand += " --named-collections-only"
 	}
 	if _, exist := api.getQueryParameter(query, "named-collections-only"); exist {
 		namedCollectionsOnly = true
@@ -1121,17 +1113,9 @@ func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Req
 		configsOnly = true
 		fullCommand += " --configs-only"
 	}
-	if _, exist := query["named_collections"]; exist {
-		backupNamedCollections = true
-		fullCommand += " --named-collections"
-	}
 	if _, exist := api.getQueryParameter(query, "named-collections"); exist {
 		backupNamedCollections = true
 		fullCommand += " --named-collections"
-	}
-	if _, exist := api.getQueryParameter(query, "named_collections_only"); exist {
-		namedCollectionsOnly = true
-		fullCommand += " --named-collections-only"
 	}
 	if _, exist := api.getQueryParameter(query, "named-collections-only"); exist {
 		namedCollectionsOnly = true
@@ -1405,6 +1389,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	schemaOnly := false
 	rbacOnly := false
 	configsOnly := false
+	namedCollectionsOnly := false
 	resume := false
 	fullCommand := "upload"
 	operationId, _ := uuid.NewUUID()
@@ -1441,10 +1426,6 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	if _, exist := query["configs-only"]; exist {
 		configsOnly = true
 		fullCommand += " --configs-only"
-	}
-	if _, exist := query["named_collections_only"]; exist {
-		namedCollectionsOnly = true
-		fullCommand += " --named-collections-only"
 	}
 	if _, exist := api.getQueryParameter(query, "named-collections-only"); exist {
 		namedCollectionsOnly = true
@@ -1637,17 +1618,9 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		configsOnly = true
 		fullCommand += " --configs-only"
 	}
-	if _, exist := query["named_collections"]; exist {
-		restoreNamedCollections = true
-		fullCommand += " --named-collections"
-	}
 	if _, exist := api.getQueryParameter(query, "named-collections"); exist {
 		restoreNamedCollections = true
 		fullCommand += " --named-collections"
-	}
-	if _, exist := api.getQueryParameter(query, "named_collections_only"); exist {
-		namedCollectionsOnly = true
-		fullCommand += " --named-collections-only"
 	}
 	if _, exist := api.getQueryParameter(query, "named-collections-only"); exist {
 		namedCollectionsOnly = true
@@ -1859,17 +1832,9 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 		configsOnly = true
 		fullCommand += " --configs-only"
 	}
-	if _, exist := query["named_collections"]; exist {
-		restoreNamedCollections = true
-		fullCommand += " --named-collections"
-	}
 	if _, exist := api.getQueryParameter(query, "named-collections"); exist {
 		restoreNamedCollections = true
 		fullCommand += " --named-collections"
-	}
-	if _, exist := api.getQueryParameter(query, "named_collections_only"); exist {
-		namedCollectionsOnly = true
-		fullCommand += " --named-collections-only"
 	}
 	if _, exist := api.getQueryParameter(query, "named-collections-only"); exist {
 		namedCollectionsOnly = true
@@ -2006,10 +1971,6 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	if _, exist := query["configs-only"]; exist {
 		configsOnly = true
 		fullCommand += " --configs-only"
-	}
-	if _, exist := query["named_collections_only"]; exist {
-		namedCollectionsOnly = true
-		fullCommand += " --named-collections-only"
 	}
 	if _, exist := api.getQueryParameter(query, "named-collections-only"); exist {
 		namedCollectionsOnly = true
