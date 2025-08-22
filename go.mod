@@ -6,7 +6,7 @@ replace github.com/mholt/archiver/v4 => github.com/mholt/archiver/v4 v4.0.0-alph
 require (
 	cloud.google.com/go/storage v1.56.0
 	github.com/Azure/azure-pipeline-go v0.2.3
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.18.2
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.19.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.10.1
 	github.com/Azure/azure-storage-blob-go v0.15.0
 	github.com/ClickHouse/clickhouse-go/v2 v2.40.1
