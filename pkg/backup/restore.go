@@ -910,12 +910,12 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 	}
 
 	settingsFile := path.Join(namedCollectionsBackup, "settings.json")
-	backupSettings, openErr := os.ReadFile(settingsFile)
+	backupSettingsJSON, openErr := os.ReadFile(settingsFile)
 	if openErr != nil {
 		return openErr
 	}
-	backupSetttingsJson, unmarshalErr := json.Marshal(backupSettings)
-	if unmarshalErr != nil {
+	var backupSettings map[string]string
+	if unmarshalErr := json.Unmarshal(backupSettingsJSON, &backupSettings); unmarshalErr != nil {
 		return unmarshalErr
 	}
 
@@ -938,7 +938,6 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 	if !strings.Contains(storageType, "keeper") && len(jsonlFiles) > 0 {
 		return fmt.Errorf("can't restore %v into named_collections_storage/type=%s", jsonlFiles, storageType)
 	}
-	needRestart := false
 	// Handle JSONL files for keeper storage
 	if len(jsonlFiles) > 0 {
 		// Connect to keeper for restoring JSONL files
@@ -978,12 +977,11 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 
 		// Extract collection name from CREATE NAMED COLLECTION statement
 		// Expected format: CREATE NAMED COLLECTION [IF NOT EXISTS] name [ON CLUSTER cluster_name] AS ...
-		re := regexp.MustCompile(`(?i)CREATE\s+NAMED\s+COLLECTION\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s\(]+)`)
+		re := regexp.MustCompile(`(?i)CREATE\s+NAMED\s+COLLECTION\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)`)
 		matches := re.FindStringSubmatch(sqlQuery)
 		if len(matches) < 2 {
 			dstSqlFile := path.Join(b.DefaultDataPath, "named_collections", path.Base(sqlFile))
 			log.Warn().Msgf("Could not extract collection name from: %s, will copy to %s", sqlFile, dstSqlFile)
-			needRestart = true
 			continue
 		}
 		collectionName := matches[1]

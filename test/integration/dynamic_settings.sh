@@ -51,7 +51,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration.xml
 </yandex>
 EOT
 
-if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
 
   if [[ ! -d /hdd3_data ]]; then
     mkdir -pv /hdd3_data
@@ -88,12 +88,12 @@ EOT
 
 fi
 
-if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.[8-9]|^21\.[0-9]{2} || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.[8-9]|^21\.[0-9]{2} || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
 if [[ -f /var/lib/clickhouse/storage_configuration_s3.xml ]]; then
   cp -fv /var/lib/clickhouse/storage_configuration_s3.xml /etc/clickhouse-server/config.d/storage_configuration_s3.xml
 else
   S3_DISK_TYPE="<type>s3</type>"
-  if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[5-9]\.[0-9]+ ]]; then
+  if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[5-9]\.[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
     S3_DISK_TYPE="<type>object_storage</type><object_storage_type>s3</object_storage_type><metadata_type>local</metadata_type>"
   fi
 
@@ -131,7 +131,7 @@ EOT
 fi
 fi
 
-if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[6-9]+ || "${CLICKHOUSE_VERSION}" =~ ^22\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[1-9]+ ]]; then
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[6-9]+ || "${CLICKHOUSE_VERSION}" =~ ^22\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
 
 if [[ "" != "${QA_GCS_OVER_S3_BUCKET}" ]]; then
 if [[ -f /var/lib/clickhouse/storage_configuration_gcs.xml ]]; then
@@ -170,7 +170,7 @@ fi
 
 fi
 
-if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.12 || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ ]]; then
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.12 || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
 
 if [[ -f /var/lib/clickhouse/storage_configuration_encrypted_s3.xml ]]; then
   cp -fv /var/lib/clickhouse/storage_configuration_encrypted_s3.xml /etc/clickhouse-server/config.d/storage_configuration_encrypted_s3.xml
@@ -220,7 +220,7 @@ fi
 fi
 
 # embedded local backup configuration
-if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[6-9] || "${CLICKHOUSE_VERSION}" =~ ^22\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[0-9]+ ]]; then
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^22\.[6-9] || "${CLICKHOUSE_VERSION}" =~ ^22\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
 
 mkdir -p /var/lib/clickhouse/disks/backups_local/ /var/lib/clickhouse/backups_embedded/
 chown -R clickhouse /var/lib/clickhouse/disks/ /var/lib/clickhouse/backups_embedded/
@@ -306,7 +306,7 @@ EOT
 fi
 
 # s3_plain and azure backup configuration
-if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^23\.3 || "${CLICKHOUSE_VERSION}" =~ ^23\.[4-9] || "${CLICKHOUSE_VERSION}" =~ ^23\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[4-9]\.[1-9]+ ]]; then
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^23\.3 || "${CLICKHOUSE_VERSION}" =~ ^23\.[4-9] || "${CLICKHOUSE_VERSION}" =~ ^23\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[4-9]\.[0-9]+ ]]; then
 
 mkdir -p /var/lib/clickhouse/disks/backups_s3_plain/
 chown -R clickhouse /var/lib/clickhouse/disks/
@@ -417,7 +417,7 @@ EOT
 
 fi
 
-if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.9 || "${CLICKHOUSE_VERSION}" =~ ^21\.1[012] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9] ]]; then
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.9 || "${CLICKHOUSE_VERSION}" =~ ^21\.1[012] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9] || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
 cat <<EOT > /etc/clickhouse-server/users.d/allow_experimental_database_materialized_mysql.xml
 <yandex>
 <profiles><default>
@@ -428,7 +428,7 @@ EOT
 
 fi
 
-if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9] || "${CLICKHOUSE_VERSION}" =~ ^21\.[8-9] || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] ]]; then
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.[8-9] || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9] || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
 
 cat <<EOT > /etc/clickhouse-server/users.d/allow_experimental_database_materialized_postgresql.xml
 <yandex>
@@ -456,7 +456,7 @@ EOT
 fi
 
 # zookeeper RBAC available from 21.9
-if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.9 || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9] ]]; then
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.9 || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9] || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
 
 mkdir -p /var/lib/clickhouse/access
 chown clickhouse:clickhouse /var/lib/clickhouse/access
@@ -477,7 +477,7 @@ EOT
 fi
 
 # @todo LIVE VIEW deprecated, available 21.3+
-if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9] || "${CLICKHOUSE_VERSION}" =~ ^21\.[3-9] || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] ]]; then
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.[3-9] || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9] || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
 
 cat <<EOT > /etc/clickhouse-server/users.d/allow_experimental_live_view.xml
 <yandex>
@@ -490,7 +490,7 @@ EOT
 fi
 
 # WINDOW VIEW available 21.12+
-if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9] || "${CLICKHOUSE_VERSION}" =~ ^21\.12 ]]; then
+if [[ "${CLICKHOUSE_VERSION}" == "head"  || "${CLICKHOUSE_VERSION}" =~ ^21\.12 || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9] || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
 
 cat <<EOT > /etc/clickhouse-server/users.d/allow_experimental_window_view.xml
 <yandex>
@@ -703,7 +703,7 @@ fi
 
 
 # named_collections_storage configuration based on ClickHouse version
-if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^25\.[7-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[6-9]\.[0-9]+ ]]; then
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^25\.[7-9] || "${CLICKHOUSE_VERSION}" =~ ^25\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[6-9]\.[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
 cat <<EOT > /etc/clickhouse-server/config.d/named_collections_storage.xml
 <yandex>
   <named_collections_storage>
@@ -721,7 +721,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/named_collections_storage.xml
   </named_collections_storage>
 </yandex>
 EOT
-elif [[ "${CLICKHOUSE_VERSION}" =~ ^24\.[8-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[5-9]\.[0-9]+ ]]; then
+elif [[ "${CLICKHOUSE_VERSION}" =~ ^24\.[8-9] || "${CLICKHOUSE_VERSION}" =~ ^24\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^25\.[1-2] ]]; then
 cat <<EOT > /etc/clickhouse-server/config.d/named_collections_storage.xml
 <yandex>
   <named_collections_storage>
@@ -729,7 +729,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/named_collections_storage.xml
   </named_collections_storage>
 </yandex>
 EOT
-elif [[ "${CLICKHOUSE_VERSION}" =~ ^24\.[3-7]+ || "${CLICKHOUSE_VERSION}" =~ ^2[5-9]\.[0-9]+ ]]; then
+elif [[ "${CLICKHOUSE_VERSION}" =~ ^24\.[3-7] ]]; then
 cat <<EOT > /etc/clickhouse-server/config.d/named_collections_storage.xml
 <yandex>
   <named_collections_storage>
@@ -739,7 +739,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/named_collections_storage.xml
 EOT
 fi
 
-if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.[3-9]+ || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9]+ ]]; then
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.[3-9]+ || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
 cat <<EOT > /etc/clickhouse-server/users.d/allow_experimental_database_replicated.xml
 <yandex>
   <profiles><default><allow_experimental_database_replicated>1</allow_experimental_database_replicated></default></profiles>
@@ -747,7 +747,7 @@ cat <<EOT > /etc/clickhouse-server/users.d/allow_experimental_database_replicate
 EOT
 fi
 
-if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[1-9]+ ]]; then
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[0-9]+ ]]; then
 cat <<EOT > /etc/clickhouse-server/users.d/database_replicated_allow_replicated_engine_arguments.xml
 <yandex>
   <profiles><default><database_replicated_allow_replicated_engine_arguments>1</database_replicated_allow_replicated_engine_arguments></default></profiles>
