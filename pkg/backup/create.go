@@ -59,7 +59,7 @@ func NewBackupName() string {
 
 // CreateBackup - create new backup of all tables matched by tablePattern
 // If backupName is empty string will use default backup name
-func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string, partitions []string, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, skipCheckPartsColumns bool, skipProjections []string, resume bool, backupVersion string, commandId int) error {
+func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string, partitions []string, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, skipCheckPartsColumns bool, skipProjections []string, resume bool, backupVersion string, commandId int, namedCollections bool) error {
 	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "create"); pidCheckErr != nil {
 		return pidCheckErr
 	}
@@ -99,6 +99,9 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	if b.cfg.General.ConfigBackupAlways {
 		createConfigs = true
 	}
+	if b.cfg.General.NamedCollectionsBackupAlways {
+		namedCollections = true
+	}
 	b.adjustResumeFlag(resume)
 
 	allDatabases, err := b.ch.GetDatabases(ctx, b.cfg, tablePattern)
@@ -137,10 +140,11 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	}
 	partitionsIdMap, partitionsNameList := partition.ConvertPartitionsToIdsMapAndNamesList(ctx, b.ch, tables, nil, partitions)
 	doBackupData := !schemaOnly && !rbacOnly && !configsOnly
-	backupRBACSize, backupConfigSize, rbacAndConfigsErr := b.createRBACAndConfigsIfNecessary(ctx, backupName, createRBAC, rbacOnly, createConfigs, configsOnly, disks, diskMap)
+	backupRBACSize, backupConfigSize, namedCollectionsSize, rbacAndConfigsErr := b.createRBACAndConfigsIfNecessary(ctx, backupName, createRBAC, rbacOnly, createConfigs, configsOnly, namedCollections, disks, diskMap)
 	if rbacAndConfigsErr != nil {
 		return rbacAndConfigsErr
 	}
+	_ = namedCollectionsSize // TODO: Use this value in backup metadata
 	if b.cfg.ClickHouse.UseEmbeddedBackupRestore {
 		err = b.createBackupEmbedded(ctx, backupName, diffFromRemote, doBackupData, schemaOnly, backupVersion, tablePattern, partitionsNameList, partitionsIdMap, tables, allDatabases, allFunctions, disks, diskMap, diskTypes, backupRBACSize, backupConfigSize, startBackup, clickHouseVersion)
 	} else {
@@ -177,8 +181,8 @@ func (b *Backuper) CalculateNonSkipTables(tables []clickhouse.Table) int {
 	return i
 }
 
-func (b *Backuper) createRBACAndConfigsIfNecessary(ctx context.Context, backupName string, createRBAC bool, rbacOnly bool, createConfigs bool, configsOnly bool, disks []clickhouse.Disk, diskMap map[string]string) (uint64, uint64, error) {
-	backupRBACSize, backupConfigSize := uint64(0), uint64(0)
+func (b *Backuper) createRBACAndConfigsIfNecessary(ctx context.Context, backupName string, createRBAC bool, rbacOnly bool, createConfigs bool, configsOnly bool, namedCollections bool, disks []clickhouse.Disk, diskMap map[string]string) (uint64, uint64, uint64, error) {
+	backupRBACSize, backupConfigSize, namedCollectionsSize := uint64(0), uint64(0), uint64(0)
 	backupPath := path.Join(b.DefaultDataPath, "backup")
 	if b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
 		backupPath = diskMap[b.cfg.ClickHouse.EmbeddedBackupDisk]
@@ -200,12 +204,17 @@ func (b *Backuper) createRBACAndConfigsIfNecessary(ctx context.Context, backupNa
 			log.Info().Str("size", utils.FormatBytes(backupConfigSize)).Msg("done createBackupConfigs")
 		}
 	}
-	if backupRBACSize > 0 || backupConfigSize > 0 {
+	// TODO: Implement named collections backup
+	if namedCollections {
+		// namedCollectionsSize = b.createBackupNamedCollections(ctx, backupPath, disks)
+		log.Info().Msg("named collections backup requested but not implemented yet")
+	}
+	if backupRBACSize > 0 || backupConfigSize > 0 || namedCollectionsSize > 0 {
 		if chownErr := filesystemhelper.Chown(backupPath, b.ch, disks, true); chownErr != nil {
-			return backupRBACSize, backupConfigSize, chownErr
+			return backupRBACSize, backupConfigSize, namedCollectionsSize, chownErr
 		}
 	}
-	return backupRBACSize, backupConfigSize, nil
+	return backupRBACSize, backupConfigSize, namedCollectionsSize, nil
 }
 
 func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRemote string, doBackupData, schemaOnly, rbacOnly, configsOnly bool, backupVersion string, partitions []string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, tables []clickhouse.Table, tablePattern string, skipProjections []string, disks []clickhouse.Disk, diskMap, diskTypes map[string]string, allDatabases []clickhouse.Database, allFunctions []clickhouse.Function, backupRBACSize, backupConfigSize uint64, startBackup time.Time, version int) error {

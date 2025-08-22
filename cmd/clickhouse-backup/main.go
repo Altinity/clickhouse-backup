@@ -116,7 +116,7 @@ func main() {
 			Description: "Create new backup",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CreateBackup(c.Args().First(), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("skip-check-parts-columns"), c.StringSlice("skip-projections"), c.Bool("resume"), version, c.Int("command-id"))
+				return b.CreateBackup(c.Args().First(), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.Bool("s"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("skip-check-parts-columns"), c.StringSlice("skip-projections"), c.Bool("resume"), version, c.Int("command-id"), c.Bool("named-collections"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -158,7 +158,7 @@ func main() {
 				cli.BoolFlag{
 					Name:   "named-collections, backup-named-collections, do-backup-named-collections",
 					Hidden: false,
-					Usage:  "Backup named collections",
+					Usage:  "Backup named collections and settings",
 				},
 				cli.BoolFlag{
 					Name:   "rbac-only",
@@ -194,7 +194,7 @@ func main() {
 			Description: "Create and upload",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.CreateToRemote(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("tables"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("skip-check-parts-columns"), c.Bool("resume"), version, c.Int("command-id"))
+				return b.CreateToRemote(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("tables"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("skip-check-parts-columns"), c.Bool("resume"), version, c.Int("command-id"), c.Bool("named-collections"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -241,7 +241,7 @@ func main() {
 				cli.BoolFlag{
 					Name:   "named-collections, backup-named-collections, do-backup-named-collections",
 					Hidden: false,
-					Usage:  "Backup and upload named collections",
+					Usage:  "Backup and upload named collections and settings",
 				},
 				cli.BoolFlag{
 					Name:   "rbac-only",
@@ -281,7 +281,7 @@ func main() {
 			UsageText: "clickhouse-backup upload [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--diff-from=<local_backup_name>] [--diff-from-remote=<remote_backup_name>] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Upload(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac-only"), c.Bool("configs-only"), c.Bool("resume"), version, c.Int("command-id"))
+				return b.Upload(c.Args().First(), c.Bool("delete-source"), c.String("diff-from"), c.String("diff-from-remote"), c.String("t"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("rbac-only"), c.Bool("configs-only"), c.Bool("resume"), version, c.Int("command-id"), c.Bool("named-collections"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -328,7 +328,7 @@ func main() {
 				cli.BoolFlag{
 					Name:   "named-collections-only, named-collections",
 					Hidden: false,
-					Usage:  "Upload named collections only, will skip upload data, will backup schema only if --schema added",
+					Usage:  "Upload named collections and settings only, will skip upload data, will backup schema only if --schema added",
 				},
 				cli.StringSliceFlag{
 					Name:   "skip-projections",
@@ -370,7 +370,7 @@ func main() {
 			UsageText: "clickhouse-backup download [-t, --tables=<db>.<table>] [--partitions=<partition_names>] [-s, --schema] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Download(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("schema"), c.Bool("rbac-only"), c.Bool("configs-only"), c.Bool("resume"), c.Bool("hardlink-exists-files"), version, c.Int("command-id"))
+				return b.Download(c.Args().First(), c.String("t"), c.StringSlice("partitions"), c.Bool("schema"), c.Bool("rbac-only"), c.Bool("configs-only"), c.Bool("resume"), c.Bool("hardlink-exists-files"), version, c.Int("command-id"), c.Bool("named-collections"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -407,7 +407,7 @@ func main() {
 				cli.BoolFlag{
 					Name:   "named-collections-only, named-collections",
 					Hidden: false,
-					Usage:  "Download named collections only, will skip download data, will backup schema only if --schema added",
+					Usage:  "Download named collections and settings only, will skip download data, will backup schema only if --schema added",
 				},
 				cli.BoolFlag{
 					Name:   "resume, resumable",
@@ -427,7 +427,7 @@ func main() {
 			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--resume] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.Restore(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("data"), c.Bool("drop"), c.Bool("ignore-dependencies"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), version, c.Int("command-id"))
+				return b.Restore(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("data"), c.Bool("drop"), c.Bool("ignore-dependencies"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), version, c.Int("command-id"), c.Bool("named-collections"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -489,7 +489,7 @@ func main() {
 				cli.BoolFlag{
 					Name:   "named-collections, restore-named-collections, do-restore-named-collections",
 					Hidden: false,
-					Usage:  "Restore named collections",
+					Usage:  "Restore named collections and settings",
 				},
 				cli.BoolFlag{
 					Name:   "rbac-only",
@@ -529,7 +529,7 @@ func main() {
 			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--skip-rbac] [--skip-configs] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
-				return b.RestoreFromRemote(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("hardlink-exists-files"), version, c.Int("command-id"))
+				return b.RestoreFromRemote(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("hardlink-exists-files"), version, c.Int("command-id"), c.Bool("named-collections"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -591,7 +591,7 @@ func main() {
 				cli.BoolFlag{
 					Name:   "named-collections, restore-named-collections, do-restore-named-collections",
 					Hidden: false,
-					Usage:  "Download and Restore named collections",
+					Usage:  "Download and Restore named collections and settings",
 				},
 				cli.BoolFlag{
 					Name:   "rbac-only",
@@ -746,7 +746,7 @@ func main() {
 				cli.BoolFlag{
 					Name:   "named-collections, backup-named-collections, do-backup-named-collections",
 					Hidden: false,
-					Usage:  "Backup named collections only",
+					Usage:  "Backup named collections and settings only",
 				},
 				cli.BoolFlag{
 					Name:   "skip-check-parts-columns",

@@ -40,7 +40,7 @@ var (
 	ErrBackupIsAlreadyExists = errors.New("backup is already exists")
 )
 
-func (b *Backuper) Download(backupName string, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, resume bool, hardlinkExistsFiles bool, backupVersion string, commandId int) error {
+func (b *Backuper) Download(backupName string, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, resume bool, hardlinkExistsFiles bool, backupVersion string, commandId int, namedCollections bool) error {
 	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "download"); pidCheckErr != nil {
 		return pidCheckErr
 	}
@@ -65,6 +65,12 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		return fmt.Errorf("`download_concurrency` shall be more than zero")
 	}
 	b.adjustResumeFlag(resume)
+	
+	// Handle named collections
+	if namedCollections {
+		// TODO: Implement named collections download logic
+		log.Info().Msg("named collections download requested but not implemented yet")
+	}
 	if backupName == "" {
 		remoteBackups := b.CollectRemoteBackups(ctx, "all")
 		_ = b.PrintBackup(remoteBackups, "all", "text")

@@ -34,7 +34,7 @@ import (
 	"github.com/yargevad/filepathx"
 )
 
-func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFromRemote, tablePattern string, partitions, skipProjections []string, schemaOnly, rbacOnly, configsOnly, resume bool, backupVersion string, commandId int) error {
+func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFromRemote, tablePattern string, partitions, skipProjections []string, schemaOnly, rbacOnly, configsOnly, resume bool, backupVersion string, commandId int, namedCollections bool) error {
 	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "upload"); pidCheckErr != nil {
 		return pidCheckErr
 	}
@@ -207,6 +207,11 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 		if backupMetadata.ConfigSize, err = b.uploadConfigData(ctx, backupName); err != nil {
 			return fmt.Errorf("b.uploadConfigData return error: %v", err)
 		}
+	}
+	// Handle named collections
+	if namedCollections {
+		// TODO: Implement named collections upload logic
+		log.Info().Msg("named collections upload requested but not implemented yet")
 	}
 	//upload embedded .backup file
 	if doUploadData && b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" && backupMetadata.Tables != nil && len(backupMetadata.Tables) > 0 {

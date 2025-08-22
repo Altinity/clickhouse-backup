@@ -45,7 +45,7 @@ import (
 )
 
 // Restore - restore tables matched by tablePattern from backupName
-func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tableMapping, partitions, skipProjections []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume, schemaAsAttach, replicatedCopyToDetached bool, backupVersion string, commandId int) error {
+func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tableMapping, partitions, skipProjections []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume, schemaAsAttach, replicatedCopyToDetached bool, backupVersion string, commandId int, namedCollections bool) error {
 	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "restore"); pidCheckErr != nil {
 		return pidCheckErr
 	}
@@ -166,6 +166,12 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 			return err
 		}
 		log.Info().Msgf("CONFIGS successfully restored")
+		needRestart = true
+	}
+	// Handle named collections
+	if namedCollections {
+		// TODO: Implement named collections restore logic
+		log.Info().Msg("named collections restore requested but not implemented yet")
 		needRestart = true
 	}
 
