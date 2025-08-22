@@ -3,7 +3,6 @@ package config
 import (
 	"crypto/tls"
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"math"
 	"os"
 	"regexp"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/log_helper"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/kelseyhightower/envconfig"
 	"github.com/rs/zerolog/log"

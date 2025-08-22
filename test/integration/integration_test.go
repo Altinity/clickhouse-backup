@@ -7,9 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
-	pool "github.com/jolestar/go-commons-pool/v2"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -23,11 +20,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	pool "github.com/jolestar/go-commons-pool/v2"
+
+	stdlog "log"
+
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/rs/zerolog/pkgerrors"
 	"golang.org/x/mod/semver"
-	stdlog "log"
 
 	_ "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/google/uuid"
@@ -299,6 +301,22 @@ var defaultTestData = []TestDataStruct{
 		Rows: func() []map[string]interface{} {
 			return []map[string]interface{}{
 				{"cnt": uint64(100)},
+			}
+		}(),
+		Fields:  []string{"cnt"},
+		OrderBy: "cnt",
+	},
+	// https://github.com/Altinity/clickhouse-backup/issues/1199
+	{
+		Database:       dbNameAtomic,
+		DatabaseEngine: "Atomic",
+		IsView:         true,
+		Name:           "test_view_from_view",
+		Schema:         fmt.Sprintf(" AS SELECT count() AS cnt FROM `%s`.`test_view_{test}`", dbNameAtomic),
+		SkipInsert:     true,
+		Rows: func() []map[string]interface{} {
+			return []map[string]interface{}{
+				{"cnt": uint64(1)},
 			}
 		}(),
 		Fields:  []string{"cnt"},
