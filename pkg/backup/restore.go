@@ -45,7 +45,7 @@ import (
 )
 
 // Restore - restore tables matched by tablePattern from backupName
-func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tableMapping, partitions, skipProjections []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume, schemaAsAttach, replicatedCopyToDetached bool, backupVersion string, commandId int, namedCollections bool) error {
+func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tableMapping, partitions, skipProjections []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, schemaAsAttach, replicatedCopyToDetached bool, backupVersion string, commandId int) error {
 	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "restore"); pidCheckErr != nil {
 		return pidCheckErr
 	}
@@ -143,7 +143,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	}
 	if len(backupMetadata.Tables) == 0 {
 		// corner cases for https://github.com/Altinity/clickhouse-backup/issues/832
-		if !restoreRBAC && !rbacOnly && !restoreConfigs && !configsOnly {
+		if !restoreRBAC && !rbacOnly && !restoreConfigs && !configsOnly && !restoreNamedCollections && !namedCollectionsOnly {
 			if !b.cfg.General.AllowEmptyBackups {
 				err = fmt.Errorf("'%s' doesn't contains tables for restore, if you need it, you can setup `allow_empty_backups: true` in `general` config section", backupName)
 				log.Error().Msgf("%v", err)
@@ -168,11 +168,11 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 		log.Info().Msgf("CONFIGS successfully restored")
 		needRestart = true
 	}
-	// Handle named collections
-	if namedCollections {
-		// TODO: Implement named collections restore logic
-		log.Info().Msg("named collections restore requested but not implemented yet")
-		needRestart = true
+	if namedCollectionsOnly || restoreNamedCollections {
+		if err := b.restoreNamedCollections(backupName, disks); err != nil {
+			return err
+		}
+		log.Info().Msgf("NAMED COLLECTIONS successfully restored")
 	}
 
 	if needRestart {
