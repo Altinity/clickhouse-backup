@@ -744,5 +744,124 @@ func RestoreEnvVars(envVars map[string]oldEnvValues) {
 				log.Warn().Msgf("RestoreEnvVars can't delete %s, error: %v", name, err)
 			}
 		}
+		
+		// GetOptimalDownloadConcurrency calculates the optimal download concurrency based on storage type and system resources
+		func (cfg *Config) GetOptimalDownloadConcurrency() int {
+			// If explicitly set and > 0, use the configured value
+			if cfg.General.DownloadConcurrency > 0 {
+				return int(cfg.General.DownloadConcurrency)
+			}
+			
+			// Base concurrency on CPU count and network capacity
+			baseConcurrency := runtime.NumCPU()
+			
+			// Adjust based on storage type and their concurrency characteristics
+			switch cfg.General.RemoteStorage {
+			case "gcs":
+				// GCS handles high concurrency well with good connection pooling
+				return int(math.Min(float64(baseConcurrency*2), 50))
+			case "s3":
+				// S3 is very concurrent and scales well
+				return int(math.Min(float64(baseConcurrency*3), 100))
+			case "azblob":
+				// Azure Blob has moderate concurrency performance
+				return int(math.Min(float64(baseConcurrency*2), 25))
+			case "cos":
+				// Tencent COS similar to S3 but more conservative
+				return int(math.Min(float64(baseConcurrency*2), 50))
+			case "ftp", "sftp":
+				// FTP/SFTP are connection-limited, keep conservative
+				return int(math.Min(float64(baseConcurrency), 10))
+			default:
+				return baseConcurrency
+			}
+		}
+		
+		// GetOptimalUploadConcurrency calculates the optimal upload concurrency
+		func (cfg *Config) GetOptimalUploadConcurrency() int {
+			// If explicitly set and > 0, use the configured value
+			if cfg.General.UploadConcurrency > 0 {
+				return int(cfg.General.UploadConcurrency)
+			}
+			
+			// Similar logic to download but slightly more conservative for uploads
+			baseConcurrency := runtime.NumCPU()
+			
+			switch cfg.General.RemoteStorage {
+			case "gcs":
+				return int(math.Min(float64(baseConcurrency*2), 40))
+			case "s3":
+				return int(math.Min(float64(baseConcurrency*2), 80))
+			case "azblob":
+				return int(math.Min(float64(baseConcurrency*2), 20))
+			case "cos":
+				return int(math.Min(float64(baseConcurrency*2), 40))
+			case "ftp", "sftp":
+				return int(math.Min(float64(baseConcurrency), 8))
+			default:
+				return baseConcurrency
+			}
+		}
+		
+		// GetOptimalObjectDiskConcurrency returns optimal concurrency for object disk operations
+		func (cfg *Config) GetOptimalObjectDiskConcurrency() int {
+			// Unify with download concurrency to eliminate bottlenecks
+			if cfg.General.ObjectDiskServerSideCopyConcurrency > 0 {
+				return int(cfg.General.ObjectDiskServerSideCopyConcurrency)
+			}
+			
+			// Use download concurrency as base but slightly more conservative for object disk operations
+			downloadConcurrency := cfg.GetOptimalDownloadConcurrency()
+			return int(math.Max(float64(downloadConcurrency)*0.8, 1))
+		}
+		
+		// CalculateOptimalBufferSize calculates buffer size based on file size and concurrency
+		func CalculateOptimalBufferSize(fileSize int64, concurrency int) int {
+			// Start with larger base buffer for better network utilization
+			baseBuffer := 512 * 1024 // 512KB base
+			
+			// Adjust based on file size
+			if fileSize > 100*1024*1024 { // Files > 100MB
+				baseBuffer = 1024 * 1024 // 1MB
+			}
+			if fileSize > 1*1024*1024*1024 { // Files > 1GB
+				baseBuffer = 2 * 1024 * 1024 // 2MB
+			}
+			if fileSize > 10*1024*1024*1024 { // Files > 10GB
+				baseBuffer = 4 * 1024 * 1024 // 4MB
+			}
+			
+			// Reduce buffer size with higher concurrency to manage memory usage
+			concurrencyFactor := int(math.Max(1, float64(concurrency)/4))
+			optimalBuffer := baseBuffer / concurrencyFactor
+			
+			// Ensure minimum buffer size for performance
+			minBuffer := 256 * 1024 // 256KB minimum
+			return int(math.Max(float64(optimalBuffer), float64(minBuffer)))
+		}
+		
+		// GetOptimalClientPoolSize calculates optimal client pool size for storage backends
+		func (cfg *Config) GetOptimalClientPoolSize() int {
+			downloadConcurrency := cfg.GetOptimalDownloadConcurrency()
+			uploadConcurrency := cfg.GetOptimalUploadConcurrency()
+			
+			// Pool should handle both upload and download concurrency with some buffer
+			maxConcurrency := int(math.Max(float64(downloadConcurrency), float64(uploadConcurrency)))
+			
+			// Add 50% buffer for pool efficiency and burst capacity
+			poolSize := int(math.Ceil(float64(maxConcurrency) * 1.5))
+			
+			// Cap at reasonable limits to prevent resource exhaustion
+			switch cfg.General.RemoteStorage {
+			case "gcs":
+				return int(math.Min(float64(poolSize), 200))
+			case "s3":
+				return int(math.Min(float64(poolSize), 300))
+			case "azblob":
+				return int(math.Min(float64(poolSize), 150))
+			default:
+				return int(math.Min(float64(poolSize), 100))
+			}
+		}
 	}
 }

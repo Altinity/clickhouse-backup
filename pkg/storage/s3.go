@@ -256,7 +256,11 @@ func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath stri
 
 		downloader := s3manager.NewDownloader(s.client)
 		downloader.Concurrency = s.Concurrency
-		downloader.BufferProvider = s3manager.NewPooledBufferedWriterReadFromProvider(s.BufferSize)
+
+		// Use adaptive buffer size based on file size and concurrency
+		bufferSize := config.CalculateOptimalBufferSize(remoteSize, s.Concurrency)
+		downloader.BufferProvider = s3manager.NewPooledBufferedWriterReadFromProvider(bufferSize)
+
 		partSize := remoteSize / s.Config.MaxPartsCount
 		if remoteSize%s.Config.MaxPartsCount > 0 {
 			partSize += max(1, (remoteSize%s.Config.MaxPartsCount)/s.Config.MaxPartsCount)
@@ -326,7 +330,11 @@ func (s *S3) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, l
 	}
 	uploader := s3manager.NewUploader(s.client)
 	uploader.Concurrency = s.Concurrency
-	uploader.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(s.BufferSize)
+
+	// Use adaptive buffer size based on file size and concurrency
+	bufferSize := config.CalculateOptimalBufferSize(localSize, s.Concurrency)
+	uploader.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(bufferSize)
+
 	partSize := localSize / s.Config.MaxPartsCount
 	if localSize%s.Config.MaxPartsCount > 0 {
 		partSize += max(1, (localSize%s.Config.MaxPartsCount)/s.Config.MaxPartsCount)

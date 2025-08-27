@@ -30,6 +30,7 @@ type GCS struct {
 	client     *storage.Client
 	Config     *config.GCSConfig
 	clientPool *pool.ObjectPool
+	cfg        *config.Config
 }
 
 type debugGCSTransport struct {
@@ -170,7 +171,12 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 			return &clientObject{Client: sClient}, nil
 		})
 	gcs.clientPool = pool.NewObjectPoolWithDefaultConfig(ctx, factory)
+	// Use adaptive client pool sizing if available
+	if gcs.cfg != nil && gcs.Config.ClientPoolSize <= 0 {
+		gcs.Config.ClientPoolSize = gcs.cfg.GetOptimalClientPoolSize()
+	}
 	gcs.clientPool.Config.MaxTotal = gcs.Config.ClientPoolSize * 3
+	gcs.clientPool.Config.MaxIdle = gcs.Config.ClientPoolSize
 	gcs.client, err = storage.NewClient(ctx, clientOptions...)
 	return err
 }
@@ -267,6 +273,21 @@ func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser
 	pClient := pClientObj.(*clientObject).Client
 	obj := pClient.Bucket(gcs.Config.Bucket).Object(key)
 	writer := obj.NewWriter(ctx)
+
+	// Use adaptive chunk sizing if config is available
+	if gcs.cfg != nil && gcs.Config.ChunkSize <= 0 {
+		optimalConcurrency := gcs.cfg.GetOptimalUploadConcurrency()
+		chunkSize := config.CalculateOptimalBufferSize(localSize, optimalConcurrency)
+		// Ensure chunk size is within GCS limits (256KB to 100MB)
+		if chunkSize < 256*1024 {
+			chunkSize = 256 * 1024
+		}
+		if chunkSize > 100*1024*1024 {
+			chunkSize = 100 * 1024 * 1024
+		}
+		gcs.Config.ChunkSize = chunkSize
+	}
+
 	writer.ChunkSize = gcs.Config.ChunkSize
 	writer.StorageClass = gcs.Config.StorageClass
 	writer.ChunkRetryDeadline = 60 * time.Minute
@@ -278,7 +299,14 @@ func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser
 			log.Warn().Msgf("gcs.PutFile: gcs.clientPool.ReturnObject error: %+v", err)
 		}
 	}()
-	buffer := make([]byte, 128*1024)
+
+	// Use adaptive buffer sizing
+	bufferSize := 128 * 1024 // Default fallback
+	if gcs.cfg != nil {
+		optimalConcurrency := gcs.cfg.GetOptimalUploadConcurrency()
+		bufferSize = config.CalculateOptimalBufferSize(localSize, optimalConcurrency)
+	}
+	buffer := make([]byte, bufferSize)
 	_, err = io.CopyBuffer(writer, r, buffer)
 	if err != nil {
 		log.Warn().Msgf("gcs.PutFile: can't copy buffer: %+v", err)
