@@ -40,7 +40,7 @@ require (
 	github.com/ricochet2200/go-disk-usage/du v0.0.0-20210707232629-ac9918953285
 	github.com/rs/zerolog v1.34.0
 	github.com/shirou/gopsutil/v3 v3.24.5
-	github.com/stretchr/testify v1.10.0
+	github.com/stretchr/testify v1.11.0
 	github.com/tencentyun/cos-go-sdk-v5 v0.7.69
 	github.com/urfave/cli v1.22.17
 	github.com/xyproto/gionice v1.3.0
