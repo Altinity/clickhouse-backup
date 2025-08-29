@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"io"
 	"os"
 	"path"
@@ -14,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
@@ -557,10 +558,19 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			cfg.AzureBlob.CompressionLevel,
 		}, nil
 	case "s3":
+		// Use adaptive concurrency if not explicitly set
+		concurrency := cfg.S3.Concurrency
+		if concurrency <= 0 {
+			concurrency = cfg.GetOptimalUploadConcurrency()
+		}
+
+		// Use adaptive buffer size
+		bufferSize := config.CalculateOptimalBufferSize(0, concurrency) // Use 0 for unknown file size initially
+
 		s3Storage := &S3{
 			Config:      &cfg.S3,
-			Concurrency: cfg.S3.Concurrency,
-			BufferSize:  64 * 1024,
+			Concurrency: concurrency,
+			BufferSize:  bufferSize,
 		}
 		if s3Storage.Config.Path, err = ch.ApplyMacros(ctx, s3Storage.Config.Path); err != nil {
 			return nil, err
@@ -583,7 +593,7 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			cfg.S3.CompressionLevel,
 		}, nil
 	case "gcs":
-		googleCloudStorage := &GCS{Config: &cfg.GCS}
+		googleCloudStorage := &GCS{Config: &cfg.GCS, cfg: cfg}
 		if googleCloudStorage.Config.Path, err = ch.ApplyMacros(ctx, googleCloudStorage.Config.Path); err != nil {
 			return nil, err
 		}

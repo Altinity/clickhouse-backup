@@ -895,7 +895,9 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	uploadObjectDiskPartsWorkingGroup, uploadCtx := errgroup.WithContext(ctx)
-	uploadObjectDiskPartsWorkingGroup.SetLimit(int(b.cfg.General.ObjectDiskServerSideCopyConcurrency))
+	// Unify with main upload concurrency to eliminate bottlenecks
+	objectDiskConcurrency := b.cfg.GetOptimalObjectDiskConcurrency()
+	uploadObjectDiskPartsWorkingGroup.SetLimit(objectDiskConcurrency)
 	srcDiskConnection, exists := object_disk.DisksConnections.Load(disk.Name)
 	if !exists {
 		return 0, fmt.Errorf("uploadObjectDiskParts: %s not present in object_disk.DisksConnections", disk.Name)

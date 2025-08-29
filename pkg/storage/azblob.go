@@ -204,13 +204,20 @@ func (a *AzureBlob) PutFileAbsolute(ctx context.Context, key string, r io.ReadCl
 	a.logf("AZBLOB->PutFileAbsolute %s", key)
 	blob := a.Container.NewBlockBlobURL(key)
 	// https://github.com/Altinity/clickhouse-backup/issues/317
-	bufferSize := localSize / a.Config.MaxPartsCount
-	if localSize%a.Config.MaxPartsCount > 0 {
-		bufferSize += max(1, (localSize%a.Config.MaxPartsCount)/a.Config.MaxPartsCount)
-	}
-	bufferSize = AdjustValueByRange(bufferSize, 2*1024*1024, 10*1024*1024)
 
-	_, err := x.UploadStreamToBlockBlob(ctx, r, blob, azblob.UploadStreamToBlockBlobOptions{BufferSize: int(bufferSize), MaxBuffers: a.Config.MaxBuffers}, a.CPK)
+	// Use adaptive buffer sizing based on file size and configured max buffers
+	bufferSize := config.CalculateOptimalBufferSize(localSize, a.Config.MaxBuffers)
+
+	// Fallback to part-based calculation if needed
+	if bufferSize < 2*1024*1024 {
+		bufferSize = int(localSize / a.Config.MaxPartsCount)
+		if localSize%a.Config.MaxPartsCount > 0 {
+			bufferSize += max(1, int((localSize%a.Config.MaxPartsCount)/a.Config.MaxPartsCount))
+		}
+	}
+	bufferSize = int(AdjustValueByRange(int64(bufferSize), 2*1024*1024, 10*1024*1024))
+
+	_, err := x.UploadStreamToBlockBlob(ctx, r, blob, azblob.UploadStreamToBlockBlobOptions{BufferSize: bufferSize, MaxBuffers: a.Config.MaxBuffers}, a.CPK)
 	return err
 }
 

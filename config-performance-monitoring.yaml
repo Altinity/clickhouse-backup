@@ -1,0 +1,19 @@
+# Enhanced logging configuration for performance monitoring
+
+general:
+  # Enable debug logging for performance details
+  log_level: "debug"
+  
+  # Optional: Set concurrency to 0 for auto-detection
+  download_concurrency: 0
+  upload_concurrency: 0
+  object_disk_server_side_copy_concurrency: 0
+
+# Log format configuration  
+log:
+  # Use JSON format for easier parsing
+  format: "json"
+  # Enable timestamps
+  timestamp: true
+  # Include caller information
+  caller: true
