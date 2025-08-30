@@ -147,7 +147,7 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	if b.cfg.ClickHouse.UseEmbeddedBackupRestore {
 		err = b.createBackupEmbedded(ctx, backupName, diffFromRemote, doBackupData, schemaOnly, backupVersion, tablePattern, partitionsNameList, partitionsIdMap, tables, allDatabases, allFunctions, disks, diskMap, diskTypes, backupRBACSize, backupConfigSize, backupNamedCollectionsSize, startBackup, clickHouseVersion)
 	} else {
-		err = b.createBackupLocal(ctx, backupName, diffFromRemote, doBackupData, schemaOnly, rbacOnly, configsOnly, backupVersion, partitions, partitionsIdMap, tables, tablePattern, skipProjections, disks, diskMap, diskTypes, allDatabases, allFunctions, backupRBACSize, backupConfigSize, backupNamedCollectionsSize, startBackup, clickHouseVersion)
+		err = b.createBackupLocal(ctx, backupName, diffFromRemote, doBackupData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, backupVersion, partitions, partitionsIdMap, tables, tablePattern, skipProjections, disks, diskMap, diskTypes, allDatabases, allFunctions, backupRBACSize, backupConfigSize, backupNamedCollectionsSize, startBackup, clickHouseVersion)
 	}
 	if err != nil {
 		log.Error().Msgf("backup failed error: %v", err)
@@ -219,7 +219,7 @@ func (b *Backuper) createConfigsNamedCollectionsAndRBACIfNecessary(ctx context.C
 	return backupRBACSize, backupConfigSize, backupNamedCollectionsSize, nil
 }
 
-func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRemote string, doBackupData, schemaOnly, rbacOnly, configsOnly bool, backupVersion string, partitions []string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, tables []clickhouse.Table, tablePattern string, skipProjections []string, disks []clickhouse.Disk, diskMap, diskTypes map[string]string, allDatabases []clickhouse.Database, allFunctions []clickhouse.Function, backupRBACSize, backupConfigSize, backupNamedCollectionsSize uint64, startBackup time.Time, version int) error {
+func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRemote string, doBackupData, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly bool, backupVersion string, partitions []string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, tables []clickhouse.Table, tablePattern string, skipProjections []string, disks []clickhouse.Disk, diskMap, diskTypes map[string]string, allDatabases []clickhouse.Database, allFunctions []clickhouse.Function, backupRBACSize, backupConfigSize, backupNamedCollectionsSize uint64, startBackup time.Time, version int) error {
 	// Create backup dir on all clickhouse disks
 	for _, disk := range disks {
 		if err := filesystemhelper.Mkdir(path.Join(disk.Path, "backup"), b.ch, disks); err != nil {
@@ -339,7 +339,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 			// https://github.com/Altinity/clickhouse-backup/issues/529
 			logger.Debug().Msg("get in progress mutations list")
 			inProgressMutations := make([]metadata.MutationMetadata, 0)
-			if b.cfg.ClickHouse.BackupMutations && !schemaOnly && !rbacOnly && !configsOnly {
+			if b.cfg.ClickHouse.BackupMutations && !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly {
 				var inProgressMutationsErr error
 				inProgressMutations, inProgressMutationsErr = b.ch.GetInProgressMutations(createCtx, table.Database, table.Name)
 				if inProgressMutationsErr != nil {
@@ -693,6 +693,25 @@ func (b *Backuper) createBackupConfigs(ctx context.Context, backupPath string) (
 	}
 }
 
+func (b *Backuper) backupSQLFiles(fromPath, toPath string) (uint64, error) {
+	log.Debug().Msgf("copy %s -> %s", fromPath, toPath)
+	copySize := uint64(0)
+	copyErr := recursiveCopy.Copy(fromPath, toPath, recursiveCopy.Options{
+		OnDirExists: func(src, dst string) recursiveCopy.DirExistsAction {
+			return recursiveCopy.Replace
+		},
+		Skip: func(srcinfo os.FileInfo, src, dst string) (bool, error) {
+			if strings.HasSuffix(src, ".sql") {
+				copySize += uint64(srcinfo.Size())
+				return false, nil
+			} else {
+				return true, nil
+			}
+		},
+	})
+	return copySize, copyErr
+}
+
 func (b *Backuper) createBackupRBAC(ctx context.Context, backupPath string, disks []clickhouse.Disk) (uint64, error) {
 	select {
 	case <-ctx.Done():
@@ -723,22 +742,10 @@ func (b *Backuper) createBackupRBAC(ctx context.Context, backupPath string, disk
 			return rbacDataSize + replicatedRBACDataSize, err
 		}
 		if len(rbacSQLFiles) != 0 {
-			log.Debug().Msgf("copy %s -> %s", accessPath, rbacBackup)
-			copyErr := recursiveCopy.Copy(accessPath, rbacBackup, recursiveCopy.Options{
-				OnDirExists: func(src, dst string) recursiveCopy.DirExistsAction {
-					return recursiveCopy.Replace
-				},
-				Skip: func(srcinfo os.FileInfo, src, dst string) (bool, error) {
-					if strings.HasSuffix(src, ".sql") {
-						rbacDataSize += uint64(srcinfo.Size())
-						return false, nil
-					} else {
-						return true, nil
-					}
-				},
-			})
-			if copyErr != nil {
+			if copySize, copyErr := b.backupSQLFiles(accessPath, rbacBackup); copyErr != nil {
 				return 0, copyErr
+			} else {
+				rbacDataSize += copySize
 			}
 		}
 		return rbacDataSize + replicatedRBACDataSize, nil
@@ -770,6 +777,9 @@ func (b *Backuper) createBackupNamedCollections(ctx context.Context, backupPath 
 		if marshalErr != nil {
 			return 0, marshalErr
 		}
+		if mkDirErr := os.MkdirAll(namedCollectionsBackup, 0755); mkDirErr != nil {
+			return 0, mkDirErr
+		}
 		if writeErr := os.WriteFile(settingsFile, settingsJSON, 0644); writeErr != nil {
 			return 0, writeErr
 		}
@@ -789,9 +799,6 @@ func (b *Backuper) createBackupNamedCollections(ctx context.Context, backupPath 
 			}
 			defer k.Close()
 
-			if err = os.MkdirAll(namedCollectionsBackup, 0755); err != nil {
-				return 0, err
-			}
 			dumpFile := path.Join(namedCollectionsBackup, "named_collections.jsonl")
 			log.Info().Str("logger", "createBackupNamedCollections").Msgf("keeper.Dump %s -> %s", keeperPath, dumpFile)
 			dumpSize, dumpErr := k.Dump(keeperPath, dumpFile)
@@ -817,23 +824,12 @@ func (b *Backuper) createBackupNamedCollections(ctx context.Context, backupPath 
 			if err != nil {
 				return 0, err
 			}
+
 			if len(namedCollectionsSQLFiles) != 0 {
-				log.Debug().Msgf("copy %s -> %s", namedCollectionsPath, namedCollectionsBackup)
-				copyErr := recursiveCopy.Copy(namedCollectionsPath, namedCollectionsBackup, recursiveCopy.Options{
-					OnDirExists: func(src, dst string) recursiveCopy.DirExistsAction {
-						return recursiveCopy.Replace
-					},
-					Skip: func(srcinfo os.FileInfo, src, dst string) (bool, error) {
-						if strings.HasSuffix(src, ".sql") {
-							namedCollectionsDataSize += uint64(srcinfo.Size())
-							return false, nil
-						} else {
-							return true, nil
-						}
-					},
-				})
-				if copyErr != nil {
+				if copySize, copyErr := b.backupSQLFiles(namedCollectionsPath, namedCollectionsBackup); copyErr != nil {
 					return 0, copyErr
+				} else {
+					namedCollectionsDataSize += copySize
 				}
 			}
 		}

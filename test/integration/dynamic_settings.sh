@@ -709,6 +709,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/named_collections_storage.xml
   <named_collections_storage>
     <type>keeper_encrypted</type>
     <algorithm>aes_256_ctr</algorithm>
+    <key_hex>bebec0cabebec0cabebec0cabebec0ca</key_hex>
   </named_collections_storage>
 </yandex>
 EOT
@@ -718,6 +719,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/named_collections_storage.xml
   <named_collections_storage>
     <type>local_encrypted</type>
     <algorithm>aes_128_ctr</algorithm>
+    <key_hex>bebec0cabebec0cabebec0cabebec0ca</key_hex>
   </named_collections_storage>
 </yandex>
 EOT

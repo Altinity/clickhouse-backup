@@ -179,9 +179,9 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 		if err := b.restartClickHouse(ctx, backupName); err != nil {
 			return err
 		}
-		if rbacOnly || configsOnly {
-			return nil
-		}
+	}
+	if rbacOnly || configsOnly || namedCollectionsOnly {
+		return nil
 	}
 	isObjectDiskPresents := false
 	if b.cfg.General.RemoteStorage != "custom" {
