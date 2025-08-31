@@ -1049,7 +1049,7 @@ func (b *Backuper) decryptNamedCollectionFile(filePath, keyHex, algorithm string
 	case "aes_128_ctr", "aes-128-ctr":
 		return b.decryptAESCTR(encryptedData, key, 128)
 	case "aes_192_ctr", "aes-192-ctr":
-		return b.decryptAESCTR(enc ryptedData, key, 192)
+		return b.decryptAESCTR(encryptedData, key, 192)
 	case "aes_256_ctr", "aes-256-ctr":
 		return b.decryptAESCTR(encryptedData, key, 256)
 	default:
