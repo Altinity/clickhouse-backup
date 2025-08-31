@@ -982,6 +982,9 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 		if len(matches) < 2 {
 			dstSqlFile := path.Join(b.DefaultDataPath, "named_collections", path.Base(sqlFile))
 			log.Warn().Msgf("Could not extract collection name from: %s, will copy to %s", sqlFile, dstSqlFile)
+			if linkErr := os.Link(sqlFile, dstSqlFile); linkErr != nil {
+				return fmt.Errorf("can't copy %s, to %s: %v", sqlFile, dstSqlFile, linkErr)
+			}
 			continue
 		}
 		collectionName := matches[1]
