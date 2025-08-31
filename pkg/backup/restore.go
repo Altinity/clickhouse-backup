@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math/bits"
 	"math/rand"
 	"net/url"
 	"os"
@@ -982,12 +983,10 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 		if isEncrypted {
 			// For encrypted storage, decrypt the SQL file content
 			sqlContent, err = b.decryptNamedCollectionFile(sqlFile, keyHex)
-			log.Info().Msg("SUKA1")
 			if err != nil {
 				return fmt.Errorf("failed to decrypt SQL file %s: %v", sqlFile, err)
 			}
 		} else {
-			log.Info().Msg("SUKA2")
 			// For non-encrypted storage, read directly
 			sqlContent, err = os.ReadFile(sqlFile)
 			if err != nil {
@@ -1068,7 +1067,6 @@ func (b *Backuper) decryptNamedCollectionFile(filePath, keyHex string) ([]byte, 
 	default:
 		return nil, fmt.Errorf("%s unknown algorithm ID: %d", algID)
 	}
-	fmt.Printf("Algorithm ID %d (expected key length %d bytes)\n", algID, keyLen)
 
 	// 5. Extract IV from header
 	iv := data[23:39] // 16 bytes
@@ -1085,7 +1083,6 @@ func (b *Backuper) decryptNamedCollectionFile(filePath, keyHex string) ([]byte, 
 	// 7. (Optional) Verify key fingerprint
 	headerFingerprint := data[7:23] // 16-byte fingerprint from header
 	// Compute SipHash-128 of the key (using same seeds as ClickHouse) to verify.
-	// (SipHash implementation not shown here for brevity; assume computeFingerprint(key) does it.)
 	calcFingerprint := computeFingerprint(key)
 	if !matches(calcFingerprint, headerFingerprint) {
 		log.Println("Warning: key fingerprint does not match header. Wrong key?")
@@ -1102,6 +1099,152 @@ func (b *Backuper) decryptNamedCollectionFile(filePath, keyHex string) ([]byte, 
 	plaintext := make([]byte, len(ciphertext))
 	stream.XORKeyStream(plaintext, ciphertext)
 	return plaintext, nil
+}
+
+// computeFingerprint computes the SipHash-128 fingerprint of a key.
+func computeFingerprint(key []byte) []byte {
+	var siphashKey [16]byte // initialized to zeros
+	fingerprint := sum128(key, &siphashKey)
+	return fingerprint[:]
+}
+
+// matches compares two byte slices for equality.
+func matches(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// SipHash-2-4 implementation for 128-bit output.
+// Based on https://github.com/aead/siphash
+
+type digest128 struct {
+	v0, v1, v2, v3 uint64
+	// total amount of data processed, mod 256
+	n uint64
+	// 8 byte buffer for leftover data
+	buf [8]byte
+}
+
+func (h *digest128) init(k *[16]byte) {
+	k0 := binary.LittleEndian.Uint64(k[0:8])
+	k1 := binary.LittleEndian.Uint64(k[8:16])
+	h.v0 = k0 ^ 0x736f6d6570736575
+	h.v1 = k1 ^ 0x646f72616e646f6d
+	h.v2 = k0 ^ 0x6c7967656e657261
+	h.v3 = k1 ^ 0x7465646279746573
+	h.n = 0
+}
+
+func (h *digest128) write(p []byte) {
+	var m uint64
+	if h.n&7 != 0 {
+		// handle leftover data
+		rem := 8 - (h.n & 7)
+		if len(p) < int(rem) {
+			rem = uint64(len(p))
+		}
+		copy(h.buf[h.n&7:], p[:rem])
+		h.n += rem
+		p = p[rem:]
+		if h.n&7 == 0 {
+			m = binary.LittleEndian.Uint64(h.buf[:])
+			h.v3 ^= m
+			for i := 0; i < 2; i++ {
+				round(h)
+			}
+			h.v0 ^= m
+		}
+	}
+
+	h.n += uint64(len(p))
+	for len(p) >= 8 {
+		m = binary.LittleEndian.Uint64(p)
+		p = p[8:]
+		h.v3 ^= m
+		for i := 0; i < 2; i++ {
+			round(h)
+		}
+		h.v0 ^= m
+	}
+	copy(h.buf[:], p)
+}
+
+func (h *digest128) sum() [16]byte {
+	var final digest128 = *h
+	b := final.n & 0xff
+	final.v3 ^= (b << 56)
+
+	// handle leftover data
+	rem := final.n & 7
+	var m uint64
+	switch rem {
+	case 7:
+		m |= uint64(final.buf[6]) << 48
+		fallthrough
+	case 6:
+		m |= uint64(final.buf[5]) << 40
+		fallthrough
+	case 5:
+		m |= uint64(final.buf[4]) << 32
+		fallthrough
+	case 4:
+		m |= uint64(final.buf[3]) << 24
+		fallthrough
+	case 3:
+		m |= uint64(final.buf[2]) << 16
+		fallthrough
+	case 2:
+		m |= uint64(final.buf[1]) << 8
+		fallthrough
+	case 1:
+		m |= uint64(final.buf[0])
+	}
+	final.v3 ^= m
+	for i := 0; i < 2; i++ {
+		round(&final)
+	}
+	final.v0 ^= m
+
+	final.v2 ^= 0xff
+	for i := 0; i < 4; i++ {
+		round(&final)
+	}
+	var res [16]byte
+	binary.LittleEndian.PutUint64(res[0:8], final.v0^final.v1^final.v2^final.v3)
+	binary.LittleEndian.PutUint64(res[8:16], final.v1^final.v3)
+	return res
+}
+
+func round(h *digest128) {
+	h.v0 += h.v1
+	h.v1 = bits.RotateLeft64(h.v1, 13)
+	h.v1 ^= h.v0
+	h.v0 = bits.RotateLeft64(h.v0, 32)
+	h.v2 += h.v3
+	h.v3 = bits.RotateLeft64(h.v3, 16)
+	h.v3 ^= h.v2
+	h.v0 += h.v3
+	h.v3 = bits.RotateLeft64(h.v3, 21)
+	h.v3 ^= h.v0
+	h.v2 += h.v1
+	h.v1 = bits.RotateLeft64(h.v1, 17)
+	h.v1 ^= h.v2
+	h.v2 = bits.RotateLeft64(h.v2, 32)
+}
+
+// sum128 returns the 128-bit SipHash-2-4 checksum of the data.
+func sum128(msg []byte, k *[16]byte) [16]byte {
+	var h digest128
+	h.init(k)
+	h.write(msg)
+	return h.sum()
 }
 
 func (b *Backuper) restoreBackupRelatedDir(backupName, backupPrefixDir, destinationDir string, disks []clickhouse.Disk, skipPatterns []string) error {
