@@ -962,11 +962,38 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 		}
 	}
 
+	// Check if storage is encrypted
+	isEncrypted := false
+	if keyHex, exists := settings["key_hex"]; exists && keyHex != "" {
+		isEncrypted = true
+	}
+	if algorithm, exists := settings["algorithm"]; exists && algorithm != "" {
+		isEncrypted = true
+	}
+
 	for _, sqlFile := range sqlFiles {
 		// Handle SQL files - execute DROP/CREATE commands
-		sqlContent, err := os.ReadFile(sqlFile)
-		if err != nil {
-			return fmt.Errorf("failed to read SQL file %s: %v", sqlFile, err)
+		var sqlContent []byte
+		var err error
+		
+		if isEncrypted {
+			// For encrypted storage, decrypt the SQL file content
+			sqlMetadata, metaErr := object_disk.ReadMetadataFromFile(sqlFile)
+			if metaErr != nil {
+				return fmt.Errorf("failed to read metadata from encrypted SQL file %s: %v", sqlFile, metaErr)
+			}
+			
+			// Read decrypted content from object disk
+			sqlContent, err = object_disk.ReadFileContent(ctx, b.ch, b.cfg, "named_collections", sqlFile)
+			if err != nil {
+				return fmt.Errorf("failed to decrypt SQL file %s: %v", sqlFile, err)
+			}
+		} else {
+			// For non-encrypted storage, read directly
+			sqlContent, err = os.ReadFile(sqlFile)
+			if err != nil {
+				return fmt.Errorf("failed to read SQL file %s: %v", sqlFile, err)
+			}
 		}
 
 		sqlQuery := strings.TrimSpace(string(sqlContent))
@@ -980,12 +1007,18 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 		re := regexp.MustCompile(`(?i)CREATE\s+NAMED\s+COLLECTION\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)`)
 		matches := re.FindStringSubmatch(sqlQuery)
 		if len(matches) < 2 {
-			dstSqlFile := path.Join(b.DefaultDataPath, "named_collections", path.Base(sqlFile))
-			log.Warn().Msgf("Could not extract collection name from: %s, will copy to %s", sqlFile, dstSqlFile)
-			if linkErr := os.Link(sqlFile, dstSqlFile); linkErr != nil {
-				return fmt.Errorf("can't copy %s, to %s: %v", sqlFile, dstSqlFile, linkErr)
+			// If we can't extract the collection name, handle differently based on encryption
+			if isEncrypted {
+				log.Warn().Msgf("Could not extract collection name from encrypted file: %s, skipping", sqlFile)
+				continue
+			} else {
+				dstSqlFile := path.Join(b.DefaultDataPath, "named_collections", path.Base(sqlFile))
+				log.Warn().Msgf("Could not extract collection name from: %s, will copy to %s", sqlFile, dstSqlFile)
+				if linkErr := os.Link(sqlFile, dstSqlFile); linkErr != nil {
+					return fmt.Errorf("can't copy %s, to %s: %v", sqlFile, dstSqlFile, linkErr)
+				}
+				continue
 			}
-			continue
 		}
 		collectionName := matches[1]
 
