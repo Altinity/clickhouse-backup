@@ -3,6 +3,9 @@ package backup
 import (
 	"bufio"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -964,11 +967,15 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 
 	// Check if storage is encrypted
 	isEncrypted := false
-	if keyHex, exists := settings["key_hex"]; exists && keyHex != "" {
+	keyHex := ""
+	algorithm := ""
+	if key, exists := settings["key_hex"]; exists && key != "" {
 		isEncrypted = true
+		keyHex = key
 	}
-	if algorithm, exists := settings["algorithm"]; exists && algorithm != "" {
+	if algo, exists := settings["algorithm"]; exists && algo != "" {
 		isEncrypted = true
+		algorithm = algo
 	}
 
 	for _, sqlFile := range sqlFiles {
@@ -978,13 +985,7 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 		
 		if isEncrypted {
 			// For encrypted storage, decrypt the SQL file content
-			sqlMetadata, metaErr := object_disk.ReadMetadataFromFile(sqlFile)
-			if metaErr != nil {
-				return fmt.Errorf("failed to read metadata from encrypted SQL file %s: %v", sqlFile, metaErr)
-			}
-			
-			// Read decrypted content from object disk
-			sqlContent, err = object_disk.ReadFileContent(ctx, b.ch, b.cfg, "named_collections", sqlFile)
+			sqlContent, err = b.decryptNamedCollectionFile(sqlFile, keyHex, algorithm)
 			if err != nil {
 				return fmt.Errorf("failed to decrypt SQL file %s: %v", sqlFile, err)
 			}
@@ -1007,18 +1008,8 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 		re := regexp.MustCompile(`(?i)CREATE\s+NAMED\s+COLLECTION\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)`)
 		matches := re.FindStringSubmatch(sqlQuery)
 		if len(matches) < 2 {
-			// If we can't extract the collection name, handle differently based on encryption
-			if isEncrypted {
-				log.Warn().Msgf("Could not extract collection name from encrypted file: %s, skipping", sqlFile)
-				continue
-			} else {
-				dstSqlFile := path.Join(b.DefaultDataPath, "named_collections", path.Base(sqlFile))
-				log.Warn().Msgf("Could not extract collection name from: %s, will copy to %s", sqlFile, dstSqlFile)
-				if linkErr := os.Link(sqlFile, dstSqlFile); linkErr != nil {
-					return fmt.Errorf("can't copy %s, to %s: %v", sqlFile, dstSqlFile, linkErr)
-				}
-				continue
-			}
+			log.Warn().Msgf("Could not extract collection name from: %s, skipping", sqlFile)
+			continue
 		}
 		collectionName := matches[1]
 
@@ -1037,6 +1028,66 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 	}
 
 	return nil
+}
+
+// decryptNamedCollectionFile decrypts an encrypted named collection SQL file
+func (b *Backuper) decryptNamedCollectionFile(filePath, keyHex, algorithm string) ([]byte, error) {
+	// Read the encrypted file
+	encryptedData, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read encrypted file: %v", err)
+	}
+
+	// Convert hex key to bytes
+	key, err := hex.DecodeString(keyHex)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode key_hex: %v", err)
+	}
+
+	// Decrypt based on algorithm
+	switch strings.ToLower(algorithm) {
+	case "aes_128_ctr", "aes-128-ctr":
+		return b.decryptAESCTR(encryptedData, key, 128)
+	case "aes_192_ctr", "aes-192-ctr":
+		return b.decryptAESCTR(enc ryptedData, key, 192)
+	case "aes_256_ctr", "aes-256-ctr":
+		return b.decryptAESCTR(encryptedData, key, 256)
+	default:
+		return nil, fmt.Errorf("unsupported encryption algorithm: %s", algorithm)
+	}
+}
+
+// decryptAESCTR decrypts data using AES in CTR mode
+func (b *Backuper) decryptAESCTR(encryptedData, key []byte, keySize int) ([]byte, error) {
+	// Validate key size
+	expectedKeyLen := keySize / 8
+	if len(key) != expectedKeyLen {
+		return nil, fmt.Errorf("invalid key size: expected %d bytes, got %d", expectedKeyLen, len(key))
+	}
+
+	// AES CTR mode typically stores IV at the beginning of the file
+	if len(encryptedData) < aes.BlockSize {
+		return nil, fmt.Errorf("encrypted data too short")
+	}
+
+	// Extract IV (first 16 bytes) and ciphertext
+	iv := encryptedData[:aes.BlockSize]
+	ciphertext := encryptedData[aes.BlockSize:]
+
+	// Create AES cipher
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AES cipher: %v", err)
+	}
+
+	// Create CTR stream
+	stream := cipher.NewCTR(block, iv)
+
+	// Decrypt
+	plaintext := make([]byte, len(ciphertext))
+	stream.XORKeyStream(plaintext, ciphertext)
+
+	return plaintext, nil
 }
 
 func (b *Backuper) restoreBackupRelatedDir(backupName, backupPrefixDir, destinationDir string, disks []clickhouse.Disk, skipPatterns []string) error {
