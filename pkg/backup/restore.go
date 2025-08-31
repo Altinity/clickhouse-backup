@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -968,28 +969,25 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 	// Check if storage is encrypted
 	isEncrypted := false
 	keyHex := ""
-	algorithm := ""
 	if key, exists := settings["key_hex"]; exists && key != "" {
 		isEncrypted = true
 		keyHex = key
-	}
-	if algo, exists := settings["algorithm"]; exists && algo != "" {
-		isEncrypted = true
-		algorithm = algo
 	}
 
 	for _, sqlFile := range sqlFiles {
 		// Handle SQL files - execute DROP/CREATE commands
 		var sqlContent []byte
 		var err error
-		
+
 		if isEncrypted {
 			// For encrypted storage, decrypt the SQL file content
-			sqlContent, err = b.decryptNamedCollectionFile(sqlFile, keyHex, algorithm)
+			sqlContent, err = b.decryptNamedCollectionFile(sqlFile, keyHex)
+			log.Info().Msg("SUKA1")
 			if err != nil {
 				return fmt.Errorf("failed to decrypt SQL file %s: %v", sqlFile, err)
 			}
 		} else {
+			log.Info().Msg("SUKA2")
 			// For non-encrypted storage, read directly
 			sqlContent, err = os.ReadFile(sqlFile)
 			if err != nil {
@@ -1008,8 +1006,7 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 		re := regexp.MustCompile(`(?i)CREATE\s+NAMED\s+COLLECTION\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)`)
 		matches := re.FindStringSubmatch(sqlQuery)
 		if len(matches) < 2 {
-			log.Warn().Msgf("Could not extract collection name from: %s, skipping", sqlFile)
-			continue
+			return fmt.Errorf("could not extract collection name from: %s, %s skipping", sqlFile, sqlQuery)
 		}
 		collectionName := matches[1]
 
@@ -1031,62 +1028,79 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 }
 
 // decryptNamedCollectionFile decrypts an encrypted named collection SQL file
-func (b *Backuper) decryptNamedCollectionFile(filePath, keyHex, algorithm string) ([]byte, error) {
-	// Read the encrypted file
-	encryptedData, err := os.ReadFile(filePath)
+func (b *Backuper) decryptNamedCollectionFile(filePath, keyHex string) ([]byte, error) {
+	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read encrypted file: %v", err)
 	}
 
-	// Convert hex key to bytes
+	// 2. Check header signature
+	if len(data) < 3 || string(data[:3]) != "ENC" {
+		return nil, fmt.Errorf("%s does not have ENC encrypted header", filePath)
+	}
+	// Data is encrypted; proceed to parse header.
+	// Header format (version 2):
+	// [0..2]: "ENC"
+	// [3..4]: version (2 bytes, little-endian)
+	// [5..6]: algorithm ID (UInt16, little-endian: 0=AES-128-CTR, 1=AES-192-CTR, 2=AES-256-CTR)
+	// [7..22]: key fingerprint (16 bytes)
+	// [23..38]: IV (16 bytes)
+	// [39..63]: reserved padding (zeros)
+
+	if len(data) < 64 {
+		return nil, fmt.Errorf("%s encrypted data is too short, missing header", filePath)
+	}
+	// 3. Read version
+	version := binary.LittleEndian.Uint16(data[3:5])
+	if version != 2 {
+		return nil, fmt.Errorf("%s ynsupported header version: %d", filePath, version)
+	}
+	// 4. Read algorithm and determine key length
+	algID := binary.LittleEndian.Uint16(data[5:7])
+	var keyLen int
+	switch algID {
+	case 0:
+		keyLen = 16 // AES-128
+	case 1:
+		keyLen = 24 // AES-192
+	case 2:
+		keyLen = 32 // AES-256
+	default:
+		return nil, fmt.Errorf("%s unknown algorithm ID: %d", algID)
+	}
+	fmt.Printf("Algorithm ID %d (expected key length %d bytes)\n", algID, keyLen)
+
+	// 5. Extract IV from header
+	iv := data[23:39] // 16 bytes
+
+	// 6. Get the key from config (hex string)
 	key, err := hex.DecodeString(keyHex)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode key_hex: %v", err)
+		return nil, fmt.Errorf("invalid key hex: %v", err)
+	}
+	if len(key) != keyLen {
+		return nil, fmt.Errorf("provided key does not match expected length for algorithm")
 	}
 
-	// Decrypt based on algorithm
-	switch strings.ToLower(algorithm) {
-	case "aes_128_ctr", "aes-128-ctr":
-		return b.decryptAESCTR(encryptedData, key, 128)
-	case "aes_192_ctr", "aes-192-ctr":
-		return b.decryptAESCTR(encryptedData, key, 192)
-	case "aes_256_ctr", "aes-256-ctr":
-		return b.decryptAESCTR(encryptedData, key, 256)
-	default:
-		return nil, fmt.Errorf("unsupported encryption algorithm: %s", algorithm)
-	}
-}
-
-// decryptAESCTR decrypts data using AES in CTR mode
-func (b *Backuper) decryptAESCTR(encryptedData, key []byte, keySize int) ([]byte, error) {
-	// Validate key size
-	expectedKeyLen := keySize / 8
-	if len(key) != expectedKeyLen {
-		return nil, fmt.Errorf("invalid key size: expected %d bytes, got %d", expectedKeyLen, len(key))
+	// 7. (Optional) Verify key fingerprint
+	headerFingerprint := data[7:23] // 16-byte fingerprint from header
+	// Compute SipHash-128 of the key (using same seeds as ClickHouse) to verify.
+	// (SipHash implementation not shown here for brevity; assume computeFingerprint(key) does it.)
+	calcFingerprint := computeFingerprint(key)
+	if !matches(calcFingerprint, headerFingerprint) {
+		log.Println("Warning: key fingerprint does not match header. Wrong key?")
 	}
 
-	// AES CTR mode typically stores IV at the beginning of the file
-	if len(encryptedData) < aes.BlockSize {
-		return nil, fmt.Errorf("encrypted data too short")
-	}
-
-	// Extract IV (first 16 bytes) and ciphertext
-	iv := encryptedData[:aes.BlockSize]
-	ciphertext := encryptedData[aes.BlockSize:]
-
-	// Create AES cipher
+	// 8. Decrypt the ciphertext
+	ciphertext := data[64:] // everything after the 64-byte header
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create AES cipher: %v", err)
+		return nil, fmt.Errorf("%s failed to create AES cipher: %v", filePath, err)
 	}
-
-	// Create CTR stream
+	// Use AES in CTR mode with the extracted IV:
 	stream := cipher.NewCTR(block, iv)
-
-	// Decrypt
 	plaintext := make([]byte, len(ciphertext))
 	stream.XORKeyStream(plaintext, ciphertext)
-
 	return plaintext, nil
 }
 
