@@ -122,4 +122,4 @@ if [[ "1" == "${CLEAN_AFTER:-0}" || "0" == "${TEST_FAILED}" ]]; then
   done
 fi
 
-docker buildx prune -f --filter=until=1h  --keep-storage=1G
+docker buildx prune -f --keep-storage=5G
