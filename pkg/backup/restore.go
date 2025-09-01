@@ -170,6 +170,205 @@ func (b *Backuper) RestoreInPlace(backupName, tablePattern string, commandId int
 	return nil
 }
 
+// RestoreInPlaceFromRemote - restore tables in-place from remote backup by comparing parts and downloading only what's needed
+func (b *Backuper) RestoreInPlaceFromRemote(backupName, tablePattern string, commandId int) error {
+	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "restore-in-place-remote"); pidCheckErr != nil {
+		return pidCheckErr
+	}
+	defer pidlock.RemovePidFile(backupName)
+
+	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
+	if err != nil {
+		return err
+	}
+	ctx, cancel = context.WithCancel(ctx)
+	defer cancel()
+
+	startRestore := time.Now()
+	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
+
+	if err := b.ch.Connect(); err != nil {
+		return fmt.Errorf("can't connect to clickhouse: %v", err)
+	}
+	defer b.ch.Close()
+
+	if backupName == "" {
+		return fmt.Errorf("backup name is required")
+	}
+
+	// Initialize remote storage connection
+	if err = b.CalculateMaxSize(ctx); err != nil {
+		return err
+	}
+	b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, backupName)
+	if err != nil {
+		return err
+	}
+	if err = b.dst.Connect(ctx); err != nil {
+		return fmt.Errorf("can't connect to %s: %v", b.dst.Kind(), err)
+	}
+	defer func() {
+		if err := b.dst.Close(ctx); err != nil {
+			log.Warn().Msgf("can't close BackupDestination error: %v", err)
+		}
+	}()
+
+	// Read backup metadata from remote storage
+	backupList, err := b.dst.BackupList(ctx, true, backupName)
+	if err != nil {
+		return fmt.Errorf("failed to get backup list: %v", err)
+	}
+
+	var backupMetadata *metadata.BackupMetadata
+	for _, backup := range backupList {
+		if backup.BackupName == backupName {
+			backupMetadata = &backup.BackupMetadata
+			break
+		}
+	}
+	if backupMetadata == nil {
+		return fmt.Errorf("backup %s not found in remote storage", backupName)
+	}
+
+	if tablePattern == "" {
+		tablePattern = "*"
+	}
+
+	// Get tables from remote backup metadata
+	tablesForRestore, err := getTableListByPatternRemote(ctx, b, backupMetadata, tablePattern, false)
+	if err != nil {
+		return err
+	}
+
+	if len(tablesForRestore) == 0 {
+		if !b.cfg.General.AllowEmptyBackups {
+			return fmt.Errorf("no tables found for restore by pattern %s in %s", tablePattern, backupName)
+		}
+		log.Warn().Msgf("no tables found for restore by pattern %s in %s", tablePattern, backupName)
+		return nil
+	}
+
+	// Get current tables in database
+	currentTables, err := b.ch.GetTables(ctx, tablePattern)
+	if err != nil {
+		return err
+	}
+
+	// Process each table in parallel
+	restoreWorkingGroup, restoreCtx := errgroup.WithContext(ctx)
+	restoreWorkingGroup.SetLimit(max(b.cfg.ClickHouse.MaxConnections, 1))
+
+	for i := range tablesForRestore {
+		table := *tablesForRestore[i]
+		idx := i
+		restoreWorkingGroup.Go(func() error {
+			return b.processTableInPlaceFromRemote(restoreCtx, table, currentTables, *backupMetadata, idx+1, len(tablesForRestore))
+		})
+	}
+
+	if err := restoreWorkingGroup.Wait(); err != nil {
+		return fmt.Errorf("in-place restore from remote failed: %v", err)
+	}
+
+	log.Info().Fields(map[string]interface{}{
+		"operation": "restore_in_place_remote",
+		"duration":  utils.HumanizeDuration(time.Since(startRestore)),
+	}).Msg("done")
+	return nil
+}
+
+// processTableInPlaceFromRemote processes a single table for remote metadata-driven in-place restore
+func (b *Backuper) processTableInPlaceFromRemote(ctx context.Context, backupTable metadata.TableMetadata, currentTables []clickhouse.Table, backupMetadata metadata.BackupMetadata, idx, total int) error {
+	logger := log.With().Str("table", fmt.Sprintf("%s.%s", backupTable.Database, backupTable.Table)).Logger()
+	logger.Info().Msgf("processing table %d/%d for remote metadata-driven in-place restore", idx, total)
+
+	// Check if table exists in current database
+	currentTable := b.findCurrentTable(currentTables, backupTable.Database, backupTable.Table)
+
+	if currentTable == nil {
+		// Table doesn't exist in DB but exists in backup -> CREATE TABLE first, then download data
+		logger.Info().Msg("table not found in database, creating table schema from remote backup")
+		if err := b.createTableFromBackup(ctx, backupTable); err != nil {
+			return err
+		}
+		// After creating table, we need to download all parts (no comparison needed)
+		// Convert all backup parts to PartsToDownload format
+		var partsToDownload []PartInfo
+		for diskName, parts := range backupTable.Parts {
+			for _, part := range parts {
+				partsToDownload = append(partsToDownload, PartInfo{
+					Name: part.Name,
+					Disk: diskName,
+				})
+			}
+		}
+		if len(partsToDownload) > 0 {
+			logger.Info().Msgf("downloading all %d parts for newly created table", len(partsToDownload))
+			// Download table metadata first
+			tableMetadata, err := b.downloadTableMetadataIfNotExists(ctx, backupMetadata.BackupName, metadata.TableTitle{Database: backupTable.Database, Table: backupTable.Table})
+			if err != nil {
+				return fmt.Errorf("failed to download table metadata: %v", err)
+			}
+			// Get current table info after creation
+			updatedTables, err := b.ch.GetTables(ctx, fmt.Sprintf("%s.%s", backupTable.Database, backupTable.Table))
+			if err != nil {
+				return fmt.Errorf("failed to get updated table info: %v", err)
+			}
+			if len(updatedTables) == 0 {
+				return fmt.Errorf("table not found after creation")
+			}
+			return b.downloadAndAttachPartsToDatabase(ctx, backupMetadata.BackupName, backupTable.Database, backupTable.Table, partsToDownload, *tableMetadata, backupMetadata, updatedTables[0])
+		}
+		return nil
+	}
+
+	// Use metadata-driven approach: Compare backup parts vs actual current parts
+	actualCurrentParts, err := b.getCurrentPartsFromDatabase(ctx, backupTable.Database, backupTable.Table)
+	if err != nil {
+		return fmt.Errorf("failed to get actual current parts for table %s.%s: %v", backupTable.Database, backupTable.Table, err)
+	}
+
+	// Perform metadata-driven comparison using stored current parts from backup creation
+	comparison := b.comparePartsMetadataDriven(backupTable.Parts, backupTable.Parts, actualCurrentParts)
+
+	logger.Info().Fields(map[string]interface{}{
+		"parts_to_remove":   len(comparison.PartsToRemove),
+		"parts_to_download": len(comparison.PartsToDownload),
+		"parts_to_keep":     len(comparison.PartsToKeep),
+	}).Msg("remote metadata-driven part comparison completed")
+
+	// CRITICAL: Remove parts first to avoid disk space issues
+	if len(comparison.PartsToRemove) > 0 {
+		logger.Info().Msgf("removing %d unwanted parts first to free disk space", len(comparison.PartsToRemove))
+		if err := b.removePartsFromDatabase(ctx, backupTable.Database, backupTable.Table, comparison.PartsToRemove); err != nil {
+			return fmt.Errorf("failed to remove unwanted parts: %v", err)
+		}
+		logger.Info().Msgf("successfully removed %d unwanted parts", len(comparison.PartsToRemove))
+	}
+
+	// Then download and attach missing parts from remote
+	if len(comparison.PartsToDownload) > 0 {
+		logger.Info().Msgf("downloading and attaching %d missing parts from remote backup", len(comparison.PartsToDownload))
+		// Download table metadata if needed
+		tableMetadata, err := b.downloadTableMetadataIfNotExists(ctx, backupMetadata.BackupName, metadata.TableTitle{Database: backupTable.Database, Table: backupTable.Table})
+		if err != nil {
+			return fmt.Errorf("failed to download table metadata: %v", err)
+		}
+		if err := b.downloadAndAttachPartsToDatabase(ctx, backupMetadata.BackupName, backupTable.Database, backupTable.Table, comparison.PartsToDownload, *tableMetadata, backupMetadata, *currentTable); err != nil {
+			return fmt.Errorf("failed to download and attach missing parts: %v", err)
+		}
+		logger.Info().Msgf("successfully downloaded and attached %d missing parts", len(comparison.PartsToDownload))
+	}
+
+	// Parts to keep require no action
+	if len(comparison.PartsToKeep) > 0 {
+		logger.Info().Msgf("keeping %d common parts unchanged", len(comparison.PartsToKeep))
+	}
+
+	logger.Info().Msg("remote metadata-driven in-place restore completed for table")
+	return nil
+}
+
 // processTableInPlace processes a single table for metadata-driven in-place restore
 func (b *Backuper) processTableInPlace(ctx context.Context, backupTable metadata.TableMetadata, currentTables []clickhouse.Table, backupMetadata metadata.BackupMetadata, idx, total int) error {
 	logger := log.With().Str("table", fmt.Sprintf("%s.%s", backupTable.Database, backupTable.Table)).Logger()
@@ -474,12 +673,20 @@ func (b *Backuper) comparePartsMetadataDriven(backupParts, storedCurrentParts, a
 // removePartsFromDatabase removes specific parts from the database
 func (b *Backuper) removePartsFromDatabase(ctx context.Context, database, table string, partsToRemove []PartInfo) error {
 	for _, part := range partsToRemove {
+		// Only log detailed part information during restore_remote operations (when b.dst is established)
+		if b.dst != nil {
+			log.Info().Str("database", database).Str("table", table).Str("part", part.Name).Str("disk", part.Disk).Msg("removing part from database")
+		}
 		query := fmt.Sprintf("ALTER TABLE `%s`.`%s` DROP PART '%s'", database, table, part.Name)
 		if err := b.ch.QueryContext(ctx, query); err != nil {
 			log.Warn().Msgf("failed to drop part %s from table %s.%s: %v", part.Name, database, table, err)
 			// Continue with other parts even if one fails
 		} else {
-			log.Debug().Msgf("dropped part %s from table %s.%s", part.Name, database, table)
+			if b.dst != nil {
+				log.Info().Str("database", database).Str("table", table).Str("part", part.Name).Str("disk", part.Disk).Msg("successfully removed part from database")
+			} else {
+				log.Debug().Msgf("dropped part %s from table %s.%s", part.Name, database, table)
+			}
 		}
 	}
 	return nil
@@ -489,6 +696,13 @@ func (b *Backuper) removePartsFromDatabase(ctx context.Context, database, table 
 func (b *Backuper) downloadAndAttachPartsToDatabase(ctx context.Context, backupName, database, table string, partsToDownload []PartInfo, backupTable metadata.TableMetadata, backupMetadata metadata.BackupMetadata, currentTable clickhouse.Table) error {
 	if len(partsToDownload) == 0 {
 		return nil
+	}
+
+	// Only log detailed part information during restore_remote operations (when b.dst is established)
+	if b.dst != nil {
+		for _, part := range partsToDownload {
+			log.Info().Str("database", database).Str("table", table).Str("part", part.Name).Str("disk", part.Disk).Msg("part to download and attach")
+		}
 	}
 
 	// Filter the backup table to only include parts we need to download

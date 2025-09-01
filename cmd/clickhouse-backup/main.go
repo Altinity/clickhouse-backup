@@ -513,6 +513,10 @@ func main() {
 			UsageText: "clickhouse-backup restore_remote [--schema] [--data] [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--skip-rbac] [--skip-configs] [--resumable] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				// Override config with CLI flag if provided
+				if c.Bool("restore-in-place") {
+					b.SetRestoreInPlace(true)
+				}
 				return b.RestoreFromRemote(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("hardlink-exists-files"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
@@ -601,6 +605,11 @@ func main() {
 					Name:   "hardlink-exists-files",
 					Hidden: false,
 					Usage:  "Create hardlinks for existing files instead of downloading",
+				},
+				cli.BoolFlag{
+					Name:   "restore-in-place",
+					Hidden: false,
+					Usage:  "Perform in-place restore by comparing backup parts with current database parts. Only downloads differential parts instead of full restore. Requires --data flag.",
 				},
 			),
 		},
