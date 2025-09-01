@@ -3432,7 +3432,7 @@ func TestNamedCollections(t *testing.T) {
 			env.queryWithNoError(r, "CREATE NAMED COLLECTION test_named_collection AS access_key_id = 'access_key', secret_access_key = 'it_is_my_super_secret_key', format = 'CSV', url = 'https://minio:9000/clickhouse/test_named_collection.csv'")
 			env.queryWithNoError(r, "CREATE DATABASE test_named_collection")
 			env.queryWithNoError(r, "CREATE TABLE test_named_collection.test_named_collection (id UInt64) ENGINE=S3(test_named_collection)")
-			env.queryWithNoError(r, "INSERT INTO test_named_collection.test_named_collection SELECT number FROM numbers(10)")
+			env.queryWithNoError(r, "INSERT INTO test_named_collection.test_named_collection SELECT number FROM numbers(10) SETTINGS s3_truncate_on_insert=1")
 
 			envVar := ""
 			if tc.namedCollectionsEnvVar != "" {

@@ -703,10 +703,21 @@ fi
 
 
 # named_collections_control configuration based on ClickHouse version
-if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^24\.[3-9] || "${CLICKHOUSE_VERSION}" =~ ^24\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^25\.[7-9] || "${CLICKHOUSE_VERSION}" =~ ^25\.1[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^2[6-9]\.[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
-cat <<EOT > /etc/clickhouse-server/users.d/named_collections_control.xml
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^24\.[3-9] || "${CLICKHOUSE_VERSION}" =~ ^24\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[5-9]\. || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
+cat <<EOT > /etc/clickhouse-server/users.d/named_collection_control.xml
 <yandex>
-  <profiles><default><named_collections_control>1</named_collections_control></default></profiles>
+  <users>
+  <default>
+    <named_collection_control>1</named_collection_control>
+    <show_named_collections>1</show_named_collections>
+    <show_named_collections_secrets>1</show_named_collections_secrets>
+  </default>
+  <backup>
+    <named_collection_control>1</named_collection_control>
+    <show_named_collections>1</show_named_collections>
+    <show_named_collections_secrets>1</show_named_collections_secrets>
+  </backup>
+  </users>
 </yandex>
 EOT
 fi

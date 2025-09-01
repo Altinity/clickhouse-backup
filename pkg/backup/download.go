@@ -577,7 +577,6 @@ func (b *Backuper) downloadConfigData(ctx context.Context, remoteBackup storage.
 }
 
 func (b *Backuper) downloadNamedCollectionsData(ctx context.Context, remoteBackup storage.Backup) (uint64, error) {
-	log.Info().Msg("SUKA!!!")
 	return b.downloadBackupRelatedDir(ctx, remoteBackup, "named_collections")
 }
 
@@ -609,6 +608,7 @@ func (b *Backuper) downloadBackupRelatedDir(ctx context.Context, remoteBackup st
 		if b.resume {
 			b.resumableState.AppendToState(remoteSource, downloadedBytes)
 		}
+		log.Debug().Str("remoteSource", remoteSource).Str("operation", "downloadBackupRelatedDir").Msg("done")
 		return uint64(downloadedBytes), nil
 	}
 	remoteFileInfo, err := b.dst.StatFile(ctx, remoteSource)
@@ -627,6 +627,7 @@ func (b *Backuper) downloadBackupRelatedDir(ctx context.Context, remoteBackup st
 	if b.resume {
 		b.resumableState.AppendToState(remoteSource, remoteFileInfo.Size())
 	}
+	log.Debug().Str("remoteSource", remoteSource).Str("operation", "downloadBackupRelatedDir").Msg("done")
 	return uint64(remoteFileInfo.Size()), nil
 }
 

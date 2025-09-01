@@ -491,33 +491,33 @@ func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelate
 	if b.cfg.GetCompressionFormat() == "none" {
 		remoteUploadedBytes := int64(0)
 		if remoteUploadedBytes, err = b.dst.UploadPath(ctx, localBackupRelatedDir, localFiles, destinationRemote, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter, b, b.cfg.General.UploadMaxBytesPerSecond); err != nil {
-			return 0, fmt.Errorf("can't RBAC or config upload %s: %v", destinationRemote, err)
+			return 0, fmt.Errorf("can't uploadBackupRelatedDir upload %s: %v", destinationRemote, err)
 		}
 		if b.resume {
 			b.resumableState.AppendToState(destinationRemote, remoteUploadedBytes)
 		}
+		log.Debug().Str("destinationRemote", destinationRemote).Str("operation", "uploadBackupRelatedDir").Msg("done")
 		return uint64(remoteUploadedBytes), nil
 	}
 	retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
-	err = retry.RunCtx(ctx, func(ctx context.Context) error {
-		return b.dst.UploadCompressedStream(ctx, localBackupRelatedDir, localFiles, destinationRemote, b.cfg.General.UploadMaxBytesPerSecond)
-	})
-	if err != nil {
-		return 0, fmt.Errorf("can't RBAC or config upload compressed %s: %v", destinationRemote, err)
-	}
-
 	var remoteUploaded storage.RemoteFile
-	retry = retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 	err = retry.RunCtx(ctx, func(ctx context.Context) error {
-		remoteUploaded, err = b.dst.StatFile(ctx, destinationRemote)
-		return err
+		var uploadErr error
+		if uploadErr = b.dst.UploadCompressedStream(ctx, localBackupRelatedDir, localFiles, destinationRemote, b.cfg.General.UploadMaxBytesPerSecond); uploadErr != nil {
+			return fmt.Errorf("can't uploadBackupRelatedDir compressed %s: %v", destinationRemote, uploadErr)
+		}
+		if remoteUploaded, uploadErr = b.dst.StatFile(ctx, destinationRemote); uploadErr != nil {
+			return fmt.Errorf("can't check uploadBackupRelatedDir destinationRemote: %s, error: %v", destinationRemote, uploadErr)
+		}
+		return nil
 	})
 	if err != nil {
-		return 0, fmt.Errorf("can't check uploaded destinationRemote: %s, error: %v", destinationRemote, err)
+		return 0, err
 	}
 	if b.resume {
 		b.resumableState.AppendToState(destinationRemote, remoteUploaded.Size())
 	}
+	log.Debug().Str("destinationRemote", destinationRemote).Str("operation", "uploadBackupRelatedDir").Msg("done")
 	return uint64(remoteUploaded.Size()), nil
 }
 
