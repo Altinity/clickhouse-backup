@@ -2,9 +2,10 @@ package metadata
 
 import (
 	"encoding/json"
-	"github.com/rs/zerolog/log"
 	"os"
 	"path"
+
+	"github.com/rs/zerolog/log"
 )
 
 type TableMetadata struct {
@@ -13,7 +14,8 @@ type TableMetadata struct {
 	Table                string              `json:"table"`
 	Database             string              `json:"database"`
 	UUID                 string              `json:"uuid,omitempty"`
-	Parts                map[string][]Part   `json:"parts"`
+	Parts                map[string][]Part   `json:"parts"`                   // Parts in the backup
+	CurrentParts         map[string][]Part   `json:"current_parts,omitempty"` // Parts that were in the live DB when backup was created
 	Query                string              `json:"query"`
 	Size                 map[string]int64    `json:"size"`                  // how much size on each disk
 	TotalBytes           uint64              `json:"total_bytes,omitempty"` // total table size
@@ -39,6 +41,7 @@ func (tm *TableMetadata) Save(location string, metadataOnly bool) (uint64, error
 	if !metadataOnly {
 		newTM.Files = tm.Files
 		newTM.Parts = tm.Parts
+		newTM.CurrentParts = tm.CurrentParts
 		newTM.Checksums = tm.Checksums
 		newTM.Size = tm.Size
 		newTM.TotalBytes = tm.TotalBytes
