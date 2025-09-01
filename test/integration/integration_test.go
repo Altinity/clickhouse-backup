@@ -3487,7 +3487,12 @@ func TestNamedCollections(t *testing.T) {
 				r.Error(err)
 				r.Contains(out, "NAMED_COLLECTION_DOESNT_EXIST")
 			} else {
-				env.DockerExecNoError(r, "clickhouse-backup", append([]string{"clickhouse-backup"}, restoreArgs...)...)
+				if tc.remote {
+					cmd := fmt.Sprintf("%sclickhouse-backup %s", backupEnvVar, strings.Join(restoreArgs, " "))
+					env.DockerExecNoError(r, "clickhouse-backup", "bash", "-c", cmd)
+				} else {
+					env.DockerExecNoError(r, "clickhouse-backup", append([]string{"clickhouse-backup"}, restoreArgs...)...)
+				}
 				// check results
 				if tc.expectCollectionExists {
 					var expected uint64
