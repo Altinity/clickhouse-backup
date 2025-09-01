@@ -1,3 +1,22 @@
+# v2.6.34
+IMPROVEMENTS
+- Add full support for backup and restore of `named collections`, which can be stored in `keeper` or on the `local` filesystem.
+- Add `--named-collections` flag to CLI commands for named collections backup/restore.
+- Add `--named-collections-only` flag to `create_remote` and `restore_remote` commands.
+- Add `named_collections_backup_always` option to the general config.
+- Add named collection size to the backup list output and API.
+- Add path to keeper for named collections settings.
+- Add support for named collections parameters in API handlers.
+- Add named collections parameter support to watch handlers.
+- Switch to Go 1.25.
+- Update default ClickHouse version to 25.8 and add it to the test matrix.
+
+BUG FIXES
+- Fix restore for `--diff-from-remote`, which was broken after v2.5.0, fix [#1199](https://github.com/Altinity/clickhouse-backup/issues/1199).
+- Validate restore error for missing named collections.
+- Correctly apply backup environment variables for remote restore in `TestNamedCollections`.
+- Fix `TestFlows` and `TestListFormat`.
+
 # v2.6.33
 BUG FIXES
 - add creation integration tables for `POST /restart` and `kill -SIGHUP` reaction, fix [1195](https://github.com/Altinity/clickhouse-backup/issues/1195)
