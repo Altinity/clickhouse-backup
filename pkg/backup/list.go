@@ -139,7 +139,7 @@ func (b *Backuper) CollectRemoteBackups(ctx context.Context, ptype string) []Bac
 			backupInfos = append(backupInfos, BackupInfo{
 				BackupName:   backupList[len(backupList)-1].BackupName,
 				CreationDate: backupList[len(backupList)-1].UploadDate,
-				Size:         fmt.Sprintf("all:%s,data:%s,arch:%s,obj:%s,meta:%s,rbac:%s,conf:%s", utils.FormatBytes(backupList[len(backupList)-1].GetFullSize()), utils.FormatBytes(backupList[len(backupList)-1].DataSize), utils.FormatBytes(backupList[len(backupList)-1].CompressedSize), utils.FormatBytes(backupList[len(backupList)-1].ObjectDiskSize), utils.FormatBytes(backupList[len(backupList)-1].MetadataSize), utils.FormatBytes(backupList[len(backupList)-1].RBACSize), utils.FormatBytes(backupList[len(backupList)-1].ConfigSize)),
+				Size:         fmt.Sprintf("all:%s,data:%s,arch:%s,obj:%s,meta:%s,rbac:%s,conf:%s,nc:%s", utils.FormatBytes(backupList[len(backupList)-1].GetFullSize()), utils.FormatBytes(backupList[len(backupList)-1].DataSize), utils.FormatBytes(backupList[len(backupList)-1].CompressedSize), utils.FormatBytes(backupList[len(backupList)-1].ObjectDiskSize), utils.FormatBytes(backupList[len(backupList)-1].MetadataSize), utils.FormatBytes(backupList[len(backupList)-1].RBACSize), utils.FormatBytes(backupList[len(backupList)-1].ConfigSize), utils.FormatBytes(backupList[len(backupList)-1].NamedCollectionSize)),
 				Description:  backupList[len(backupList)-1].DataFormat,
 				Type:         "remote",
 				RequiredBackup: func() string {
@@ -158,7 +158,7 @@ func (b *Backuper) CollectRemoteBackups(ctx context.Context, ptype string) []Bac
 			backupInfos = append(backupInfos, BackupInfo{
 				BackupName:   backupList[len(backupList)-2].BackupName,
 				CreationDate: backupList[len(backupList)-2].UploadDate,
-				Size:         fmt.Sprintf("all:%s,data:%s,arch:%s,obj:%s,meta:%s,rbac:%s,conf:%s", utils.FormatBytes(backupList[len(backupList)-2].GetFullSize()), utils.FormatBytes(backupList[len(backupList)-2].DataSize), utils.FormatBytes(backupList[len(backupList)-2].CompressedSize), utils.FormatBytes(backupList[len(backupList)-2].ObjectDiskSize), utils.FormatBytes(backupList[len(backupList)-2].MetadataSize), utils.FormatBytes(backupList[len(backupList)-2].RBACSize), utils.FormatBytes(backupList[len(backupList)-2].ConfigSize)),
+				Size:         fmt.Sprintf("all:%s,data:%s,arch:%s,obj:%s,meta:%s,rbac:%s,conf:%s,nc:%s", utils.FormatBytes(backupList[len(backupList)-2].GetFullSize()), utils.FormatBytes(backupList[len(backupList)-2].DataSize), utils.FormatBytes(backupList[len(backupList)-2].CompressedSize), utils.FormatBytes(backupList[len(backupList)-2].ObjectDiskSize), utils.FormatBytes(backupList[len(backupList)-2].MetadataSize), utils.FormatBytes(backupList[len(backupList)-2].RBACSize), utils.FormatBytes(backupList[len(backupList)-2].ConfigSize), utils.FormatBytes(backupList[len(backupList)-2].NamedCollectionSize)),
 				Description:  backupList[len(backupList)-2].DataFormat,
 				Type:         "remote",
 				RequiredBackup: func() string {
@@ -171,7 +171,7 @@ func (b *Backuper) CollectRemoteBackups(ctx context.Context, ptype string) []Bac
 			return backupInfos
 		case "all", "":
 			for _, backup := range backupList {
-				size := fmt.Sprintf("all:%s,data:%s,arch:%s,obj:%s,meta:%s,rbac:%s,conf:%s", utils.FormatBytes(backup.GetFullSize()), utils.FormatBytes(backup.DataSize), utils.FormatBytes(backup.CompressedSize), utils.FormatBytes(backup.ObjectDiskSize), utils.FormatBytes(backup.MetadataSize), utils.FormatBytes(backup.RBACSize), utils.FormatBytes(backup.ConfigSize))
+				size := fmt.Sprintf("all:%s,data:%s,arch:%s,obj:%s,meta:%s,rbac:%s,conf:%s,nc:%s", utils.FormatBytes(backup.GetFullSize()), utils.FormatBytes(backup.DataSize), utils.FormatBytes(backup.CompressedSize), utils.FormatBytes(backup.ObjectDiskSize), utils.FormatBytes(backup.MetadataSize), utils.FormatBytes(backup.RBACSize), utils.FormatBytes(backup.ConfigSize), utils.FormatBytes(backup.NamedCollectionSize))
 				description := backup.DataFormat
 				if backup.Tags != "" {
 					description += ", " + backup.Tags
@@ -228,7 +228,7 @@ func (b *Backuper) CollectLocalBackups(ctx context.Context, ptype string) []Back
 		backupInfos = append(backupInfos, BackupInfo{
 			BackupName:   backupList[len(backupList)-1].BackupName,
 			CreationDate: backupList[len(backupList)-1].CreationDate,
-			Size:         fmt.Sprintf("all:%s,data:%s,arch:%s,obj:%s,meta:%s,rbac:%s,conf:%s", utils.FormatBytes(backupList[len(backupList)-1].GetFullSize()), utils.FormatBytes(backupList[len(backupList)-1].DataSize), utils.FormatBytes(backupList[len(backupList)-1].CompressedSize), utils.FormatBytes(backupList[len(backupList)-1].ObjectDiskSize), utils.FormatBytes(backupList[len(backupList)-1].MetadataSize), utils.FormatBytes(backupList[len(backupList)-1].RBACSize), utils.FormatBytes(backupList[len(backupList)-1].ConfigSize)),
+			Size:         fmt.Sprintf("all:%s,data:%s,arch:%s,obj:%s,meta:%s,rbac:%s,conf:%s,nc:%s", utils.FormatBytes(backupList[len(backupList)-1].GetFullSize()), utils.FormatBytes(backupList[len(backupList)-1].DataSize), utils.FormatBytes(backupList[len(backupList)-1].CompressedSize), utils.FormatBytes(backupList[len(backupList)-1].ObjectDiskSize), utils.FormatBytes(backupList[len(backupList)-1].MetadataSize), utils.FormatBytes(backupList[len(backupList)-1].RBACSize), utils.FormatBytes(backupList[len(backupList)-1].ConfigSize), utils.FormatBytes(backupList[len(backupList)-1].NamedCollectionSize)),
 			Description:  backupList[len(backupList)-1].DataFormat,
 			RequiredBackup: func() string {
 				if backupList[len(backupList)-1].RequiredBackup != "" {
@@ -247,7 +247,7 @@ func (b *Backuper) CollectLocalBackups(ctx context.Context, ptype string) []Back
 		backupInfos = append(backupInfos, BackupInfo{
 			BackupName:   backupList[len(backupList)-2].BackupName,
 			CreationDate: backupList[len(backupList)-2].CreationDate,
-			Size:         fmt.Sprintf("all:%s,data:%s,arch:%s,obj:%s,meta:%s,rbac:%s,conf:%s", utils.FormatBytes(backupList[len(backupList)-2].GetFullSize()), utils.FormatBytes(backupList[len(backupList)-2].DataSize), utils.FormatBytes(backupList[len(backupList)-2].CompressedSize), utils.FormatBytes(backupList[len(backupList)-2].ObjectDiskSize), utils.FormatBytes(backupList[len(backupList)-2].MetadataSize), utils.FormatBytes(backupList[len(backupList)-2].RBACSize), utils.FormatBytes(backupList[len(backupList)-2].ConfigSize)),
+			Size:         fmt.Sprintf("all:%s,data:%s,arch:%s,obj:%s,meta:%s,rbac:%s,conf:%s,nc:%s", utils.FormatBytes(backupList[len(backupList)-2].GetFullSize()), utils.FormatBytes(backupList[len(backupList)-2].DataSize), utils.FormatBytes(backupList[len(backupList)-2].CompressedSize), utils.FormatBytes(backupList[len(backupList)-2].ObjectDiskSize), utils.FormatBytes(backupList[len(backupList)-2].MetadataSize), utils.FormatBytes(backupList[len(backupList)-2].RBACSize), utils.FormatBytes(backupList[len(backupList)-2].ConfigSize), utils.FormatBytes(backupList[len(backupList)-2].NamedCollectionSize)),
 			Description:  backupList[len(backupList)-2].DataFormat,
 			RequiredBackup: func() string {
 				if backupList[len(backupList)-2].RequiredBackup != "" {
@@ -264,7 +264,7 @@ func (b *Backuper) CollectLocalBackups(ctx context.Context, ptype string) []Back
 			case <-ctx.Done():
 				return backupInfos
 			default:
-				size := fmt.Sprintf("all:%s,data:%s,arch:%s,obj:%s,meta:%s,rbac:%s,conf:%s", utils.FormatBytes(backup.GetFullSize()), utils.FormatBytes(backup.DataSize), utils.FormatBytes(backup.CompressedSize), utils.FormatBytes(backup.MetadataSize), utils.FormatBytes(backup.ObjectDiskSize), utils.FormatBytes(backup.RBACSize), utils.FormatBytes(backup.ConfigSize))
+				size := fmt.Sprintf("all:%s,data:%s,arch:%s,obj:%s,meta:%s,rbac:%s,conf:%s,nc:%s", utils.FormatBytes(backup.GetFullSize()), utils.FormatBytes(backup.DataSize), utils.FormatBytes(backup.CompressedSize), utils.FormatBytes(backup.ObjectDiskSize), utils.FormatBytes(backup.MetadataSize), utils.FormatBytes(backup.RBACSize), utils.FormatBytes(backup.ConfigSize), utils.FormatBytes(backup.NamedCollectionSize))
 				description := backup.DataFormat
 				if backup.Tags != "" {
 					if description != "" {
