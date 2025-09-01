@@ -517,7 +517,7 @@ func main() {
 				if c.Bool("restore-in-place") {
 					b.SetRestoreInPlace(true)
 				}
-				return b.RestoreFromRemote(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("hardlink-exists-files"), version, c.Int("command-id"))
+				return b.RestoreFromRemote(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("hardlink-exists-files"), c.Bool("drop-if-schema-changed"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
@@ -610,6 +610,11 @@ func main() {
 					Name:   "restore-in-place",
 					Hidden: false,
 					Usage:  "Perform in-place restore by comparing backup parts with current database parts. Only downloads differential parts instead of full restore. Requires --data flag.",
+				},
+				cli.BoolFlag{
+					Name:   "drop-if-schema-changed",
+					Hidden: false,
+					Usage:  "Drop and recreate tables when schema changes are detected during in-place restore. Only available with --restore-in-place flag.",
 				},
 			),
 		},

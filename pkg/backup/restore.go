@@ -171,7 +171,7 @@ func (b *Backuper) RestoreInPlace(backupName, tablePattern string, commandId int
 }
 
 // RestoreInPlaceFromRemote - restore tables in-place from remote backup by comparing parts and downloading only what's needed
-func (b *Backuper) RestoreInPlaceFromRemote(backupName, tablePattern string, commandId int) error {
+func (b *Backuper) RestoreInPlaceFromRemote(backupName, tablePattern string, commandId int, dropIfSchemaChanged bool) error {
 	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "restore-in-place-remote"); pidCheckErr != nil {
 		return pidCheckErr
 	}
@@ -262,7 +262,7 @@ func (b *Backuper) RestoreInPlaceFromRemote(backupName, tablePattern string, com
 		table := *tablesForRestore[i]
 		idx := i
 		restoreWorkingGroup.Go(func() error {
-			return b.processTableInPlaceFromRemote(restoreCtx, table, currentTables, *backupMetadata, idx+1, len(tablesForRestore))
+			return b.processTableInPlaceFromRemote(restoreCtx, table, currentTables, *backupMetadata, idx+1, len(tablesForRestore), dropIfSchemaChanged)
 		})
 	}
 
@@ -278,12 +278,67 @@ func (b *Backuper) RestoreInPlaceFromRemote(backupName, tablePattern string, com
 }
 
 // processTableInPlaceFromRemote processes a single table for remote metadata-driven in-place restore
-func (b *Backuper) processTableInPlaceFromRemote(ctx context.Context, backupTable metadata.TableMetadata, currentTables []clickhouse.Table, backupMetadata metadata.BackupMetadata, idx, total int) error {
+func (b *Backuper) processTableInPlaceFromRemote(ctx context.Context, backupTable metadata.TableMetadata, currentTables []clickhouse.Table, backupMetadata metadata.BackupMetadata, idx, total int, dropIfSchemaChanged bool) error {
 	logger := log.With().Str("table", fmt.Sprintf("%s.%s", backupTable.Database, backupTable.Table)).Logger()
 	logger.Info().Msgf("processing table %d/%d for remote metadata-driven in-place restore", idx, total)
 
 	// Check if table exists in current database
 	currentTable := b.findCurrentTable(currentTables, backupTable.Database, backupTable.Table)
+
+	// Schema comparison logic when --drop-if-schema-changed flag is provided and table exists
+	if currentTable != nil && dropIfSchemaChanged {
+		schemaChanged, err := b.checkSchemaChanges(ctx, backupTable, *currentTable)
+		if err != nil {
+			return fmt.Errorf("failed to check schema changes for %s.%s: %w", backupTable.Database, backupTable.Table, err)
+		}
+
+		if schemaChanged {
+			logger.Info().Msg("schema changed for table, dropping and recreating from backup")
+			// Drop the existing table
+			if err := b.ch.DropOrDetachTable(clickhouse.Table{
+				Database: currentTable.Database,
+				Name:     currentTable.Name,
+			}, currentTable.CreateTableQuery, b.cfg.General.RestoreSchemaOnCluster, false, 0, b.DefaultDataPath, false, ""); err != nil {
+				return fmt.Errorf("failed to drop table %s.%s: %w", backupTable.Database, backupTable.Table, err)
+			}
+			logger.Info().Msg("table dropped successfully")
+
+			// Recreate table from backup
+			if err := b.createTableFromBackup(ctx, backupTable); err != nil {
+				return fmt.Errorf("failed to recreate table %s.%s from backup: %w", backupTable.Database, backupTable.Table, err)
+			}
+			logger.Info().Msg("table recreated from backup")
+
+			// Download all parts for the recreated table
+			var partsToDownload []PartInfo
+			for diskName, parts := range backupTable.Parts {
+				for _, part := range parts {
+					partsToDownload = append(partsToDownload, PartInfo{
+						Name: part.Name,
+						Disk: diskName,
+					})
+				}
+			}
+			if len(partsToDownload) > 0 {
+				logger.Info().Msgf("downloading all %d parts for recreated table", len(partsToDownload))
+				// Download table metadata first
+				tableMetadata, err := b.downloadTableMetadataIfNotExists(ctx, backupMetadata.BackupName, metadata.TableTitle{Database: backupTable.Database, Table: backupTable.Table})
+				if err != nil {
+					return fmt.Errorf("failed to download table metadata: %v", err)
+				}
+				// Get current table info after recreation
+				updatedTables, err := b.ch.GetTables(ctx, fmt.Sprintf("%s.%s", backupTable.Database, backupTable.Table))
+				if err != nil {
+					return fmt.Errorf("failed to get updated table info: %v", err)
+				}
+				if len(updatedTables) == 0 {
+					return fmt.Errorf("table not found after recreation")
+				}
+				return b.downloadAndAttachPartsToDatabase(ctx, backupMetadata.BackupName, backupTable.Database, backupTable.Table, partsToDownload, *tableMetadata, backupMetadata, updatedTables[0])
+			}
+			return nil
+		}
+	}
 
 	if currentTable == nil {
 		// Table doesn't exist in DB but exists in backup -> CREATE TABLE first, then download data
@@ -668,6 +723,45 @@ func (b *Backuper) comparePartsMetadataDriven(backupParts, storedCurrentParts, a
 	}
 
 	return comparison
+}
+
+// checkSchemaChanges compares the schema of a table in backup with current database table
+func (b *Backuper) checkSchemaChanges(ctx context.Context, backupTable metadata.TableMetadata, currentTable clickhouse.Table) (bool, error) {
+	// Get current table's CREATE statement from database
+	var currentCreateQuery struct {
+		Statement string `ch:"statement"`
+	}
+
+	query := "SHOW CREATE TABLE `" + currentTable.Database + "`.`" + currentTable.Name + "`"
+	if err := b.ch.SelectContext(ctx, &currentCreateQuery, query); err != nil {
+		return false, fmt.Errorf("failed to get current table schema: %v", err)
+	}
+
+	// Normalize both queries for comparison (remove extra whitespace, etc.)
+	backupSchema := b.normalizeCreateTableQuery(backupTable.Query)
+	currentSchema := b.normalizeCreateTableQuery(currentCreateQuery.Statement)
+
+	// Compare normalized schemas
+	return backupSchema != currentSchema, nil
+}
+
+// normalizeCreateTableQuery normalizes a CREATE TABLE query for schema comparison
+func (b *Backuper) normalizeCreateTableQuery(query string) string {
+	// Remove leading/trailing whitespace and normalize internal whitespace
+	normalized := strings.TrimSpace(query)
+
+	// Replace multiple whitespace with single space
+	re := regexp.MustCompile(`\s+`)
+	normalized = re.ReplaceAllString(normalized, " ")
+
+	// Convert to uppercase for case-insensitive comparison
+	normalized = strings.ToUpper(normalized)
+
+	// Remove potential UUID differences for comparison (since UUIDs will be different)
+	uuidRE := regexp.MustCompile(`UUID\s+'[^']+'`)
+	normalized = uuidRE.ReplaceAllString(normalized, "UUID 'PLACEHOLDER'")
+
+	return normalized
 }
 
 // removePartsFromDatabase removes specific parts from the database

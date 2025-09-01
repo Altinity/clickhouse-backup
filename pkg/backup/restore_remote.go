@@ -6,13 +6,13 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 )
 
-func (b *Backuper) RestoreFromRemote(backupName, tablePattern string, databaseMapping, tableMapping, partitions, skipProjections []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume, schemaAsAttach, replicatedCopyToDetached, hardlinkExistsFiles bool, version string, commandId int) error {
+func (b *Backuper) RestoreFromRemote(backupName, tablePattern string, databaseMapping, tableMapping, partitions, skipProjections []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume, schemaAsAttach, replicatedCopyToDetached, hardlinkExistsFiles, dropIfSchemaChanged bool, version string, commandId int) error {
 	// don't need to create pid separately because we combine Download+Restore
 	defer pidlock.RemovePidFile(backupName)
 
 	// Check if in-place restore is enabled for remote restore and we're doing data-only restore
 	if b.cfg.General.RestoreInPlace && dataOnly && !schemaOnly && !rbacOnly && !configsOnly && !dropExists {
-		return b.RestoreInPlaceFromRemote(backupName, tablePattern, commandId)
+		return b.RestoreInPlaceFromRemote(backupName, tablePattern, commandId, dropIfSchemaChanged)
 	}
 
 	if err := b.Download(backupName, tablePattern, partitions, schemaOnly, rbacOnly, configsOnly, resume, hardlinkExistsFiles, version, commandId); err != nil {
