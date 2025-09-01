@@ -407,6 +407,10 @@ func main() {
 			UsageText: "clickhouse-backup restore  [-t, --tables=<db>.<table>] [-m, --restore-database-mapping=<originDB>:<targetDB>[,<...>]] [--tm, --restore-table-mapping=<originTable>:<targetTable>[,<...>]] [--partitions=<partitions_names>] [-s, --schema] [-d, --data] [--rm, --drop] [-i, --ignore-dependencies] [--rbac] [--configs] [--resume] <backup_name>",
 			Action: func(c *cli.Context) error {
 				b := backup.NewBackuper(config.GetConfigFromCli(c))
+				// Override config with CLI flag if provided
+				if c.Bool("restore-in-place") {
+					b.SetRestoreInPlace(true)
+				}
 				return b.Restore(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("data"), c.Bool("drop"), c.Bool("ignore-dependencies"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
@@ -495,6 +499,11 @@ func main() {
 					Name:   "replicated-copy-to-detached",
 					Hidden: false,
 					Usage:  "Copy data to detached folder for Replicated*MergeTree tables but skip ATTACH PART step",
+				},
+				cli.BoolFlag{
+					Name:   "restore-in-place",
+					Hidden: false,
+					Usage:  "Perform in-place restore by comparing backup parts with current database parts. Only downloads differential parts instead of full restore. Requires --data flag.",
 				},
 			),
 		},

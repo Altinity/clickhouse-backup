@@ -44,8 +44,355 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 )
 
+// PartInfo holds information about a data part for comparison
+type PartInfo struct {
+	Name string
+	Disk string
+}
+
+// PartComparison holds the result of comparing backup parts vs current database parts
+type PartComparison struct {
+	PartsToRemove   []PartInfo
+	PartsToDownload []PartInfo
+	PartsToKeep     []PartInfo
+}
+
+// RestoreInPlace - restore tables in-place by comparing backup parts with current database parts
+func (b *Backuper) RestoreInPlace(backupName, tablePattern string, commandId int) error {
+	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "restore-in-place"); pidCheckErr != nil {
+		return pidCheckErr
+	}
+	defer pidlock.RemovePidFile(backupName)
+
+	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
+	if err != nil {
+		return err
+	}
+	ctx, cancel = context.WithCancel(ctx)
+	defer cancel()
+
+	startRestore := time.Now()
+	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
+
+	if err := b.ch.Connect(); err != nil {
+		return fmt.Errorf("can't connect to clickhouse: %v", err)
+	}
+	defer b.ch.Close()
+
+	if backupName == "" {
+		localBackups := b.CollectLocalBackups(ctx, "all")
+		_ = b.PrintBackup(localBackups, "all", "text")
+		return fmt.Errorf("select backup for restore")
+	}
+
+	disks, err := b.ch.GetDisks(ctx, true)
+	if err != nil {
+		return err
+	}
+	b.DefaultDataPath, err = b.ch.GetDefaultPath(disks)
+	if err != nil {
+		log.Warn().Msgf("%v", err)
+		return ErrUnknownClickhouseDataPath
+	}
+
+	// Load backup metadata
+	backupMetafileLocalPaths := []string{path.Join(b.DefaultDataPath, "backup", backupName, "metadata.json")}
+	var backupMetadataBody []byte
+	b.EmbeddedBackupDataPath, err = b.ch.GetEmbeddedBackupPath(disks)
+	if err == nil && b.EmbeddedBackupDataPath != "" {
+		backupMetafileLocalPaths = append(backupMetafileLocalPaths, path.Join(b.EmbeddedBackupDataPath, backupName, "metadata.json"))
+	}
+
+	for _, metadataPath := range backupMetafileLocalPaths {
+		backupMetadataBody, err = os.ReadFile(metadataPath)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		return err
+	}
+
+	backupMetadata := metadata.BackupMetadata{}
+	if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
+		return err
+	}
+
+	if tablePattern == "" {
+		tablePattern = "*"
+	}
+
+	metadataPath := path.Join(b.DefaultDataPath, "backup", backupName, "metadata")
+	b.isEmbedded = strings.Contains(backupMetadata.Tags, "embedded")
+	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
+		metadataPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
+	}
+
+	tablesForRestore, _, err := b.getTablesForRestoreLocal(ctx, backupName, metadataPath, tablePattern, false, nil)
+	if err != nil {
+		return err
+	}
+
+	if len(tablesForRestore) == 0 {
+		if !b.cfg.General.AllowEmptyBackups {
+			return fmt.Errorf("no tables found for restore by pattern %s in %s", tablePattern, backupName)
+		}
+		log.Warn().Msgf("no tables found for restore by pattern %s in %s", tablePattern, backupName)
+		return nil
+	}
+
+	// Get current tables in database
+	currentTables, err := b.ch.GetTables(ctx, tablePattern)
+	if err != nil {
+		return err
+	}
+
+	// Process each table in parallel
+	restoreWorkingGroup, restoreCtx := errgroup.WithContext(ctx)
+	restoreWorkingGroup.SetLimit(max(b.cfg.ClickHouse.MaxConnections, 1))
+
+	for i := range tablesForRestore {
+		table := *tablesForRestore[i]
+		idx := i
+		restoreWorkingGroup.Go(func() error {
+			return b.processTableInPlace(restoreCtx, table, currentTables, backupMetadata, idx+1, len(tablesForRestore))
+		})
+	}
+
+	if err := restoreWorkingGroup.Wait(); err != nil {
+		return fmt.Errorf("in-place restore failed: %v", err)
+	}
+
+	log.Info().Fields(map[string]interface{}{
+		"operation": "restore_in_place",
+		"duration":  utils.HumanizeDuration(time.Since(startRestore)),
+	}).Msg("done")
+	return nil
+}
+
+// processTableInPlace processes a single table for in-place restore
+func (b *Backuper) processTableInPlace(ctx context.Context, backupTable metadata.TableMetadata, currentTables []clickhouse.Table, backupMetadata metadata.BackupMetadata, idx, total int) error {
+	logger := log.With().Str("table", fmt.Sprintf("%s.%s", backupTable.Database, backupTable.Table)).Logger()
+	logger.Info().Msgf("processing table %d/%d", idx, total)
+
+	// Check if table exists in current database
+	currentTable := b.findCurrentTable(currentTables, backupTable.Database, backupTable.Table)
+
+	if currentTable == nil {
+		// Table doesn't exist in DB but exists in backup -> CREATE TABLE
+		logger.Info().Msg("table not found in database, creating table schema")
+		return b.createTableFromBackup(ctx, backupTable)
+	}
+
+	// Get current parts from database for this table
+	currentParts, err := b.getCurrentParts(ctx, backupTable.Database, backupTable.Table)
+	if err != nil {
+		return fmt.Errorf("failed to get current parts for table %s.%s: %v", backupTable.Database, backupTable.Table, err)
+	}
+
+	// Compare parts: backup vs current
+	comparison := b.compareParts(backupTable.Parts, currentParts)
+
+	logger.Info().Fields(map[string]interface{}{
+		"parts_to_remove":   len(comparison.PartsToRemove),
+		"parts_to_download": len(comparison.PartsToDownload),
+		"parts_to_keep":     len(comparison.PartsToKeep),
+	}).Msg("part comparison completed")
+
+	// Remove parts that exist in DB but not in backup
+	if len(comparison.PartsToRemove) > 0 {
+		if err := b.removeUnwantedParts(ctx, backupTable, comparison.PartsToRemove); err != nil {
+			return fmt.Errorf("failed to remove unwanted parts: %v", err)
+		}
+		logger.Info().Msgf("removed %d unwanted parts", len(comparison.PartsToRemove))
+	}
+
+	// Download and attach parts that exist in backup but not in DB
+	if len(comparison.PartsToDownload) > 0 {
+		if err := b.downloadAndAttachMissingParts(ctx, backupTable, backupMetadata, comparison.PartsToDownload, *currentTable); err != nil {
+			return fmt.Errorf("failed to download and attach missing parts: %v", err)
+		}
+		logger.Info().Msgf("downloaded and attached %d missing parts", len(comparison.PartsToDownload))
+	}
+
+	// Parts to keep require no action
+	if len(comparison.PartsToKeep) > 0 {
+		logger.Info().Msgf("keeping %d common parts", len(comparison.PartsToKeep))
+	}
+
+	return nil
+}
+
+// findCurrentTable finds a table in the current database tables list
+func (b *Backuper) findCurrentTable(currentTables []clickhouse.Table, database, table string) *clickhouse.Table {
+	for i := range currentTables {
+		if currentTables[i].Database == database && currentTables[i].Name == table {
+			return &currentTables[i]
+		}
+	}
+	return nil
+}
+
+// getCurrentParts gets current parts from the database for a specific table
+func (b *Backuper) getCurrentParts(ctx context.Context, database, table string) (map[string][]string, error) {
+	query := "SELECT disk_name, name FROM system.parts WHERE active AND database=? AND table=?"
+	rows := make([]struct {
+		DiskName string `ch:"disk_name"`
+		Name     string `ch:"name"`
+	}, 0)
+
+	if err := b.ch.SelectContext(ctx, &rows, query, database, table); err != nil {
+		return nil, err
+	}
+
+	parts := make(map[string][]string)
+	for _, row := range rows {
+		if _, exists := parts[row.DiskName]; !exists {
+			parts[row.DiskName] = make([]string, 0)
+		}
+		parts[row.DiskName] = append(parts[row.DiskName], row.Name)
+	}
+
+	return parts, nil
+}
+
+// compareParts compares backup parts vs current database parts
+func (b *Backuper) compareParts(backupParts map[string][]metadata.Part, currentParts map[string][]string) PartComparison {
+	var comparison PartComparison
+
+	// Create maps for fast lookup
+	backupPartMap := make(map[string]string)  // partName -> diskName
+	currentPartMap := make(map[string]string) // partName -> diskName
+
+	for diskName, parts := range backupParts {
+		for _, part := range parts {
+			backupPartMap[part.Name] = diskName
+		}
+	}
+
+	for diskName, parts := range currentParts {
+		for _, partName := range parts {
+			currentPartMap[partName] = diskName
+		}
+	}
+
+	// Find parts to remove (in current but not in backup)
+	for partName, diskName := range currentPartMap {
+		if _, exists := backupPartMap[partName]; !exists {
+			comparison.PartsToRemove = append(comparison.PartsToRemove, PartInfo{
+				Name: partName,
+				Disk: diskName,
+			})
+		}
+	}
+
+	// Find parts to download (in backup but not in current)
+	for partName, diskName := range backupPartMap {
+		if _, exists := currentPartMap[partName]; !exists {
+			comparison.PartsToDownload = append(comparison.PartsToDownload, PartInfo{
+				Name: partName,
+				Disk: diskName,
+			})
+		} else {
+			// Part exists in both, keep it
+			comparison.PartsToKeep = append(comparison.PartsToKeep, PartInfo{
+				Name: partName,
+				Disk: diskName,
+			})
+		}
+	}
+
+	return comparison
+}
+
+// createTableFromBackup creates a table from backup metadata
+func (b *Backuper) createTableFromBackup(ctx context.Context, table metadata.TableMetadata) error {
+	// Create database if not exists
+	if err := b.ch.CreateDatabase(table.Database, ""); err != nil {
+		return fmt.Errorf("failed to create database %s: %v", table.Database, err)
+	}
+
+	// Create the table
+	if err := b.ch.CreateTable(clickhouse.Table{
+		Database: table.Database,
+		Name:     table.Table,
+	}, table.Query, false, false, "", 0, b.DefaultDataPath, false, ""); err != nil {
+		return fmt.Errorf("failed to create table %s.%s: %v", table.Database, table.Table, err)
+	}
+
+	return nil
+}
+
+// removeUnwantedParts removes parts that exist in the database but not in backup
+func (b *Backuper) removeUnwantedParts(ctx context.Context, table metadata.TableMetadata, partsToRemove []PartInfo) error {
+	for _, part := range partsToRemove {
+		query := fmt.Sprintf("ALTER TABLE `%s`.`%s` DROP PART '%s'", table.Database, table.Table, part.Name)
+		if err := b.ch.QueryContext(ctx, query); err != nil {
+			log.Warn().Msgf("failed to drop part %s from table %s.%s: %v", part.Name, table.Database, table.Table, err)
+			// Continue with other parts even if one fails
+		} else {
+			log.Debug().Msgf("dropped part %s from table %s.%s", part.Name, table.Database, table.Table)
+		}
+	}
+	return nil
+}
+
+// downloadAndAttachMissingParts downloads and attaches parts that exist in backup but not in database
+func (b *Backuper) downloadAndAttachMissingParts(ctx context.Context, backupTable metadata.TableMetadata, backupMetadata metadata.BackupMetadata, partsToDownload []PartInfo, currentTable clickhouse.Table) error {
+	// Filter the backup table to only include parts we need to download
+	filteredTable := backupTable
+	filteredTable.Parts = make(map[string][]metadata.Part)
+
+	// Create a map of parts to download for fast lookup
+	partsToDownloadMap := make(map[string]bool)
+	for _, part := range partsToDownload {
+		partsToDownloadMap[part.Name] = true
+	}
+
+	// Filter backup parts to only include the ones we need
+	for diskName, parts := range backupTable.Parts {
+		filteredParts := make([]metadata.Part, 0)
+		for _, part := range parts {
+			if partsToDownloadMap[part.Name] {
+				filteredParts = append(filteredParts, part)
+			}
+		}
+		if len(filteredParts) > 0 {
+			filteredTable.Parts[diskName] = filteredParts
+		}
+	}
+
+	if len(filteredTable.Parts) == 0 {
+		return nil // No parts to download
+	}
+
+	// Use existing restore logic to download and attach the filtered parts
+	disks, err := b.ch.GetDisks(ctx, true)
+	if err != nil {
+		return err
+	}
+
+	diskMap := make(map[string]string, len(disks))
+	diskTypes := make(map[string]string, len(disks))
+	for _, disk := range disks {
+		diskMap[disk.Name] = disk.Path
+		diskTypes[disk.Name] = disk.Type
+	}
+
+	logger := log.With().Str("table", fmt.Sprintf("%s.%s", backupTable.Database, backupTable.Table)).Logger()
+
+	// Use the regular restore logic but only for the filtered parts
+	return b.restoreDataRegularByParts(ctx, backupMetadata.BackupName, backupMetadata, filteredTable, diskMap, diskTypes, disks, currentTable, nil, logger, false)
+}
+
 // Restore - restore tables matched by tablePattern from backupName
 func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tableMapping, partitions, skipProjections []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume, schemaAsAttach, replicatedCopyToDetached bool, backupVersion string, commandId int) error {
+	// Check if in-place restore is enabled and we're doing data-only restore
+	if b.cfg.General.RestoreInPlace && dataOnly && !schemaOnly && !rbacOnly && !configsOnly && !dropExists {
+		log.Info().Msg("using in-place restore mode")
+		return b.RestoreInPlace(backupName, tablePattern, commandId)
+	}
+
 	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "restore"); pidCheckErr != nil {
 		return pidCheckErr
 	}

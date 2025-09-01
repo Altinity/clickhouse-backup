@@ -6,15 +6,16 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
-	"github.com/eapache/go-resiliency/retrier"
 	"net/url"
 	"os"
 	"path"
 	"regexp"
 	"strings"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
+	"github.com/eapache/go-resiliency/retrier"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
@@ -62,6 +63,11 @@ func NewBackuper(cfg *config.Config, opts ...BackuperOpt) *Backuper {
 		opt(b)
 	}
 	return b
+}
+
+// SetRestoreInPlace sets the RestoreInPlace flag in the configuration
+func (b *Backuper) SetRestoreInPlace(value bool) {
+	b.cfg.General.RestoreInPlace = value
 }
 
 // Classify need to log retries
