@@ -293,24 +293,8 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 	var backupDataSize, backupObjectDiskSize, backupMetadataSize uint64
 	var metaMutex sync.Mutex
 
-	// Capture current database parts for all tables before parallel processing
-	// to avoid resource contention on system.parts table
-	log.Debug().Msg("capturing current database parts for all tables")
-	currentPartsForAllTables := make(map[metadata.TableTitle]map[string][]metadata.Part)
-	for _, table := range tables {
-		if table.Skip {
-			continue
-		}
-		logger := log.With().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Name)).Logger()
-		logger.Debug().Msg("capture current database parts")
-		currentPartsMap, err := b.getCurrentDatabaseParts(ctx, &table, disks)
-		if err != nil {
-			logger.Error().Msgf("b.getCurrentDatabaseParts error: %v", err)
-			return fmt.Errorf("failed to capture current parts for %s.%s: %v", table.Database, table.Name, err)
-		}
-		currentPartsForAllTables[metadata.TableTitle{Database: table.Database, Table: table.Name}] = currentPartsMap
-	}
-	log.Debug().Msgf("captured current database parts for %d tables", len(currentPartsForAllTables))
+	// Note: The Parts field in metadata will contain the parts that were backed up,
+	// which represents the database state at backup time for in-place restore planning
 
 	createBackupWorkingGroup, createCtx := errgroup.WithContext(ctx)
 	createBackupWorkingGroup.SetLimit(max(b.cfg.ClickHouse.MaxConnections, 1))
@@ -329,9 +313,6 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 			var disksToPartsMap map[string][]metadata.Part
 			var checksums map[string]uint64
 			var addTableToBackupErr error
-
-			// Get pre-captured current parts for this table
-			currentPartsMap := currentPartsForAllTables[metadata.TableTitle{Database: table.Database, Table: table.Name}]
 
 			if doBackupData && table.BackupType == clickhouse.ShardBackupFull {
 				logger.Debug().Msg("begin data backup")
@@ -370,7 +351,6 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 					TotalBytes:   table.TotalBytes,
 					Size:         realSize,
 					Parts:        disksToPartsMap,
-					CurrentParts: currentPartsMap,
 					Checksums:    checksums,
 					Mutations:    inProgressMutations,
 					MetadataOnly: schemaOnly || table.BackupType == clickhouse.ShardBackupSchema,
@@ -1069,48 +1049,6 @@ func (b *Backuper) createBackupMetadata(ctx context.Context, backupMetaFile, bac
 		log.Debug().Msgf("%s created", backupMetaFile)
 		return nil
 	}
-}
-
-func (b *Backuper) getCurrentDatabaseParts(ctx context.Context, table *clickhouse.Table, disks []clickhouse.Disk) (map[string][]metadata.Part, error) {
-	currentPartsMap := make(map[string][]metadata.Part)
-
-	// Get current parts from system.parts for this table
-	query := fmt.Sprintf(`
-		SELECT
-			disk_name,
-			name
-		FROM system.parts
-		WHERE database = '%s' AND table = '%s' AND active = 1
-		ORDER BY disk_name, name
-	`, table.Database, table.Name)
-
-	type SystemPart struct {
-		DiskName string `db:"disk_name" ch:"disk_name"`
-		Name     string `db:"name" ch:"name"`
-	}
-
-	var systemParts []SystemPart
-	if err := b.ch.SelectContext(ctx, &systemParts, query); err != nil {
-		// Table might not exist yet, return empty parts map
-		if strings.Contains(err.Error(), "doesn't exist") || strings.Contains(err.Error(), "UNKNOWN_TABLE") {
-			log.Debug().Msgf("Table %s.%s doesn't exist, no current parts", table.Database, table.Name)
-			return currentPartsMap, nil
-		}
-		return nil, fmt.Errorf("failed to query current parts for %s.%s: %v", table.Database, table.Name, err)
-	}
-
-	// Group parts by disk
-	for _, part := range systemParts {
-		if currentPartsMap[part.DiskName] == nil {
-			currentPartsMap[part.DiskName] = make([]metadata.Part, 0)
-		}
-		currentPartsMap[part.DiskName] = append(currentPartsMap[part.DiskName], metadata.Part{
-			Name: part.Name,
-		})
-	}
-
-	log.Debug().Msgf("Captured %d current parts for table %s.%s", len(systemParts), table.Database, table.Name)
-	return currentPartsMap, nil
 }
 
 func (b *Backuper) createTableMetadata(metadataPath string, table metadata.TableMetadata, disks []clickhouse.Disk) (uint64, error) {

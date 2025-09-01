@@ -192,7 +192,7 @@ func (b *Backuper) processTableInPlace(ctx context.Context, backupTable metadata
 	}
 
 	// Perform metadata-driven comparison using stored current parts from backup creation
-	comparison := b.comparePartsMetadataDriven(backupTable.Parts, backupTable.CurrentParts, actualCurrentParts)
+	comparison := b.comparePartsMetadataDriven(backupTable.Parts, backupTable.Parts, actualCurrentParts)
 
 	logger.Info().Fields(map[string]interface{}{
 		"parts_to_remove":   len(comparison.PartsToRemove),
