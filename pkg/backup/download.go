@@ -168,7 +168,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 
 	log.Debug().Str("backup", backupName).Msgf("prepare table METADATA concurrent semaphore with concurrency=%d len(tablesForDownload)=%d", b.cfg.General.DownloadConcurrency, len(tablesForDownload))
 	tableMetadataAfterDownload := make(ListOfTables, len(tablesForDownload))
-	doDownloadData := !schemaOnly && !rbacOnly && !configsOnly
+	doDownloadData := !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly
 	if doDownloadData || schemaOnly {
 		metadataGroup, metadataCtx := errgroup.WithContext(ctx)
 		metadataGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
