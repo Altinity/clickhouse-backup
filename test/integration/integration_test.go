@@ -2957,7 +2957,7 @@ func TestRestoreMutationInProgress(t *testing.T) {
 		err = env.ch.QueryContext(t.Context(), mutationSQL)
 		r.NotEqual(nil, err)
 		errStr = strings.ToLower(err.Error())
-		r.True(strings.Contains(errStr, "code: 517") || strings.Contains(errStr, "timeout"))
+		r.True(strings.Contains(errStr, "code: 36,") || strings.Contains(errStr, "code: 517") || strings.Contains(errStr, "timeout"), "%s return UNEXPECTED ERROR=%s", mutationSQL, errStr)
 		log.Debug().Msgf("%s RETURN EXPECTED ERROR=%#v", mutationSQL, err)
 	}
 	env.DockerExecNoError(r, "clickhouse", "clickhouse", "client", "-q", "SELECT * FROM system.mutations WHERE is_done=0 FORMAT Vertical")
@@ -3012,6 +3012,12 @@ func TestRestoreMutationInProgress(t *testing.T) {
 	}
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.8") >= 0 {
 		expectedSelectError = "code: 6"
+		expectedSelectResults = make([]struct {
+			Attr uint64 `ch:"attr"`
+		}, 0)
+	}
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "25.8") >= 0 {
+		expectedSelectError = "code: 47"
 		expectedSelectResults = make([]struct {
 			Attr uint64 `ch:"attr"`
 		}, 0)
