@@ -3372,97 +3372,143 @@ func TestNamedCollections(t *testing.T) {
 		name                   string
 		createArgs             []string
 		namedCollectionsEnvVar string
+		expectCollectionExists bool
+		remote                 bool
 	}{
-		// Test --named-collections flag
+		// create + upload
 		{
-			name:       "create_with_named_collections_flag",
-			createArgs: []string{"--named-collections", backupName + "_1"},
+			name:                   "create_with_named_collections_flag",
+			createArgs:             []string{"--named-collections"},
+			expectCollectionExists: true,
 		},
-		// Test --named-collections-only flag
 		{
-			name:       "create_with_named_collections_only_flag",
-			createArgs: []string{"--named-collections-only", backupName + "_2"},
+			name:                   "create_with_named_collections_only_flag",
+			createArgs:             []string{"--named-collections-only"},
+			expectCollectionExists: true,
 		},
-		// Test NAMED_COLLECTIONS_BACKUP_ALWAYS environment variable
 		{
 			name:                   "create_with_env_var_true",
-			createArgs:             []string{backupName + "_3"},
+			createArgs:             []string{},
 			namedCollectionsEnvVar: "true",
+			expectCollectionExists: true,
 		},
-		// Test NAMED_COLLECTIONS_BACKUP_ALWAYS environment variable with false value
 		{
 			name:                   "create_with_env_var_false",
-			createArgs:             []string{backupName + "_4"},
+			createArgs:             []string{},
 			namedCollectionsEnvVar: "false",
+			expectCollectionExists: false,
 		},
-		// Test default behavior (no flags, no env var), named collection actually will not backup
 		{
-			name:       "create_default",
-			createArgs: []string{backupName + "_5"},
+			name:                   "create_default",
+			createArgs:             []string{},
+			expectCollectionExists: false,
+		},
+		// create_remote
+		{
+			name:                   "create_remote_with_named_collections_flag",
+			createArgs:             []string{"--named-collections"},
+			expectCollectionExists: true,
+			remote:                 true,
+		},
+		{
+			name:                   "create_remote_with_named_collections_only_flag",
+			createArgs:             []string{"--named-collections-only"},
+			expectCollectionExists: true,
+			remote:                 true,
+		},
+		{
+			name:                   "create_remote_with_env_var_true",
+			createArgs:             []string{},
+			namedCollectionsEnvVar: "true",
+			expectCollectionExists: true,
+			remote:                 true,
 		},
 	}
 
 	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			backupArg := backupName + "_" + tc.name
+			// setup
+			env.queryWithNoError(r, "CREATE NAMED COLLECTION test_named_collection AS access_key_id = 'access_key', secret_access_key = 'it_is_my_super_secret_key', format = 'CSV', url = 'https://minio:9000/clickhouse/test_named_collection.csv'")
+			env.queryWithNoError(r, "CREATE DATABASE test_named_collection")
+			env.queryWithNoError(r, "CREATE TABLE test_named_collection.test_named_collection (id UInt64) ENGINE=S3(test_named_collection)")
+			env.queryWithNoError(r, "INSERT INTO test_named_collection.test_named_collection SELECT number FROM numbers(10)")
 
-		env.queryWithNoError(r, "CREATE NAMED COLLECTION test_named_collection AS access_key_id = 'access_key', secret_access_key = 'it_is_my_super_secret_key', format = 'CSV', url = 'https://minio:9000/clickhouse/test_named_collection.csv'")
-		env.queryWithNoError(r, "CREATE DATABASE test_named_collection")
-		env.queryWithNoError(r, "CREATE TABLE test_named_collection.test_named_collection (id UInt64) ENGINE=S3(test_named_collection)")
-		env.queryWithNoError(r, "INSERT INTO test_named_collection.test_named_collection SELECT number FROM numbers(10)")
+			envVar := ""
+			if tc.namedCollectionsEnvVar != "" {
+				envVar = "NAMED_COLLECTIONS_BACKUP_ALWAYS=" + tc.namedCollectionsEnvVar + " "
+			}
+			backupEnvVar := envVar
+			if strings.Contains(tc.name, "only") {
+				backupEnvVar += " ALLOW_EMPTY_BACKUPS=1 "
+			}
 
-		envVar := ""
-		if tc.namedCollectionsEnvVar != "" {
-			envVar = "NAMED_COLLECTIONS_BACKUP_ALWAYS=" + tc.namedCollectionsEnvVar + " "
-		}
-		uploadAndDownloadEnvVar := envVar
-		if strings.Contains(tc.name, "only") {
-			uploadAndDownloadEnvVar += " ALLOW_EMPTY_BACKUPS=1 "
-		}
+			// create backup
+			createCmdArgs := make([]string, len(tc.createArgs))
+			copy(createCmdArgs, tc.createArgs)
+			createCmdArgs = append(createCmdArgs, backupArg)
 
-		cmd := fmt.Sprintf("%sclickhouse-backup -c /etc/clickhouse-backup/config-s3.yml create %s", envVar, strings.Join(tc.createArgs, " "))
-		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-c", cmd)
+			if tc.remote {
+				cmd := fmt.Sprintf("%sclickhouse-backup -c /etc/clickhouse-backup/config-s3.yml create_remote %s", backupEnvVar, strings.Join(createCmdArgs, " "))
+				env.DockerExecNoError(r, "clickhouse-backup", "bash", "-c", cmd)
+			} else {
+				cmd := fmt.Sprintf("%sclickhouse-backup -c /etc/clickhouse-backup/config-s3.yml create %s", backupEnvVar, strings.Join(createCmdArgs, " "))
+				env.DockerExecNoError(r, "clickhouse-backup", "bash", "-c", cmd)
 
-		backupArg := tc.createArgs[len(tc.createArgs)-1] // Last argument is the backup name
-		cmd = fmt.Sprintf("%sclickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload %s", uploadAndDownloadEnvVar, backupArg)
-		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-c", cmd)
+				cmd = fmt.Sprintf("%sclickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload %s", backupEnvVar, backupArg)
+				env.DockerExecNoError(r, "clickhouse-backup", "bash", "-c", cmd)
+			}
 
-		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupArg)
+			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupArg)
 
-		env.queryWithNoError(r, "DROP NAMED COLLECTION test_named_collection")
+			// cleanup before restore
+			env.queryWithNoError(r, "DROP NAMED COLLECTION IF EXISTS test_named_collection")
+			r.NoError(env.dropDatabase("test_named_collection", false))
 
-		cmd = fmt.Sprintf("%sclickhouse-backup -c /etc/clickhouse-backup/config-s3.yml download %s", uploadAndDownloadEnvVar, backupArg)
-		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-c", cmd)
+			// restore backup
+			restoreArgs := []string{"-c", "/etc/clickhouse-backup/config-s3.yml"}
+			if tc.remote {
+				restoreArgs = append(restoreArgs, "restore_remote")
+			} else {
+				cmd := fmt.Sprintf("%sclickhouse-backup -c /etc/clickhouse-backup/config-s3.yml download %s", backupEnvVar, backupArg)
+				env.DockerExecNoError(r, "clickhouse-backup", "bash", "-c", cmd)
+				restoreArgs = append(restoreArgs, "restore")
+			}
 
-		// Test restore command
-		restoreArgs := []string{"-c", "/etc/clickhouse-backup/config-s3.yml", "restore"}
-		if strings.Contains(tc.name, "only") {
-			restoreArgs = append(restoreArgs, "--named-collections-only")
-		}
-		restoreArgs = append(restoreArgs, backupArg)
-		env.DockerExecNoError(r, "clickhouse-backup", append([]string{"clickhouse-backup"}, restoreArgs...)...)
+			if strings.Contains(tc.name, "only") {
+				restoreArgs = append(restoreArgs, "--named-collections-only")
+			} else if tc.expectCollectionExists {
+				restoreArgs = append(restoreArgs, "--named-collections")
+			}
 
-		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupArg)
-		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "remote", backupArg)
+			restoreArgs = append(restoreArgs, backupArg)
+			env.DockerExecNoError(r, "clickhouse-backup", append([]string{"clickhouse-backup"}, restoreArgs...)...)
 
-		expected := uint64(0)
-		r.NoError(env.ch.SelectSingleRowNoCtx(&expected, "SELECT count() FROM test_named_collection.test_named_collection"))
-		r.Equal(uint64(10), expected, "expect count=10")
-		r.NoError(env.dropDatabase("test_named_collection", false))
+			// check results
+			if tc.expectCollectionExists {
+				var expected uint64
+				if !strings.Contains(tc.name, "only") {
+					r.NoError(env.ch.SelectSingleRowNoCtx(&expected, "SELECT count() FROM test_named_collection.test_named_collection"))
+					r.Equal(uint64(10), expected, "expect count=10")
+				}
+				env.queryWithNoError(r, "DROP NAMED COLLECTION test_named_collection")
+			} else if !strings.Contains(tc.name, "only") {
+				var tableExists uint64
+				r.NoError(env.ch.SelectSingleRowNoCtx(&tableExists, "SELECT count() FROM system.tables WHERE database='test_named_collection' AND name='test_named_collection'"))
+				r.Equal(uint64(1), tableExists)
+
+				var expected uint64
+				err := env.ch.SelectSingleRowNoCtx(&expected, "SELECT count() FROM test_named_collection.test_named_collection")
+				r.Error(err)
+				r.Contains(err.Error(), "UNKNOWN_NAMED_COLLECTION")
+			}
+
+			// cleanup
+			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupArg)
+			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "remote", backupArg)
+			r.NoError(env.dropDatabase("test_named_collection", true))
+		})
 	}
-	// Test create_remote and restore_remote commands
-	env.queryWithNoError(r, "CREATE NAMED COLLECTION test_named_collection AS a = 1, b = 'test'")
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create_remote", "--named-collections", backupName+"_remote_1")
-	env.queryWithNoError(r, "DROP NAMED COLLECTION test_named_collection")
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore_remote", "--named-collections", backupName+"_remote_1")
-	env.queryWithNoError(r, "DROP NAMED COLLECTION test_named_collection")
-
-	// Cleanup
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "remote", backupName+"_remote_1")
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupName+"_remote_1")
-
-	expected := uint64(0)
-	r.NoError(env.ch.SelectSingleRowNoCtx(&expected, "SELECT count() FROM test_named_collection.test_named_collection"))
-	r.Equal(uint64(10), expected, "expect count=10")
-	r.NoError(env.dropDatabase("test_named_collection", false))
 	env.Cleanup(t, r)
 }
 
