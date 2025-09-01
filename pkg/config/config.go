@@ -53,7 +53,7 @@ type GeneralConfig struct {
 	AllowObjectDiskStreaming            bool              `yaml:"allow_object_disk_streaming" envconfig:"ALLOW_OBJECT_DISK_STREAMING"`
 	UseResumableState                   bool              `yaml:"use_resumable_state" envconfig:"USE_RESUMABLE_STATE"`
 	RestoreSchemaOnCluster              string            `yaml:"restore_schema_on_cluster" envconfig:"RESTORE_SCHEMA_ON_CLUSTER"`
-	RestoreInPlace                      bool              `yaml:"restore_in_place" envconfig:"RESTORE_IN_PLACE"`
+	RestoreInPlace                      bool              `yaml:"-" envconfig:"RESTORE_IN_PLACE"`
 	UploadByPart                        bool              `yaml:"upload_by_part" envconfig:"UPLOAD_BY_PART"`
 	DownloadByPart                      bool              `yaml:"download_by_part" envconfig:"DOWNLOAD_BY_PART"`
 	RestoreDatabaseMapping              map[string]string `yaml:"restore_database_mapping" envconfig:"RESTORE_DATABASE_MAPPING"`
