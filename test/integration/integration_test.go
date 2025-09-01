@@ -3482,25 +3482,21 @@ func TestNamedCollections(t *testing.T) {
 			}
 
 			restoreArgs = append(restoreArgs, backupArg)
-			env.DockerExecNoError(r, "clickhouse-backup", append([]string{"clickhouse-backup"}, restoreArgs...)...)
-
-			// check results
-			if tc.expectCollectionExists {
-				var expected uint64
-				if !strings.Contains(tc.name, "only") {
-					r.NoError(env.ch.SelectSingleRowNoCtx(&expected, "SELECT count() FROM test_named_collection.test_named_collection"))
-					r.Equal(uint64(10), expected, "expect count=10")
-				}
-				env.queryWithNoError(r, "DROP NAMED COLLECTION test_named_collection")
-			} else if !strings.Contains(tc.name, "only") {
-				var tableExists uint64
-				r.NoError(env.ch.SelectSingleRowNoCtx(&tableExists, "SELECT count() FROM system.tables WHERE database='test_named_collection' AND name='test_named_collection'"))
-				r.Equal(uint64(1), tableExists)
-
-				var expected uint64
-				err := env.ch.SelectSingleRowNoCtx(&expected, "SELECT count() FROM test_named_collection.test_named_collection")
+			if !tc.expectCollectionExists && !strings.Contains(tc.name, "only") {
+				out, err := env.DockerExecOut("clickhouse-backup", append([]string{"clickhouse-backup"}, restoreArgs...)...)
 				r.Error(err)
-				r.Contains(err.Error(), "UNKNOWN_NAMED_COLLECTION")
+				r.Contains(out, "NAMED_COLLECTION_DOESNT_EXIST")
+			} else {
+				env.DockerExecNoError(r, "clickhouse-backup", append([]string{"clickhouse-backup"}, restoreArgs...)...)
+				// check results
+				if tc.expectCollectionExists {
+					var expected uint64
+					if !strings.Contains(tc.name, "only") {
+						r.NoError(env.ch.SelectSingleRowNoCtx(&expected, "SELECT count() FROM test_named_collection.test_named_collection"))
+						r.Equal(uint64(10), expected, "expect count=10")
+					}
+					env.queryWithNoError(r, "DROP NAMED COLLECTION test_named_collection")
+				}
 			}
 
 			// cleanup
