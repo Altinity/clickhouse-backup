@@ -2,17 +2,16 @@ package backup
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/subtle"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
-	"math/bits"
 	"math/rand"
 	"net/url"
 	"os"
@@ -236,31 +235,29 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 		metadataPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
 	}
 
-	if !rbacOnly && !configsOnly {
-		tablesForRestore, partitionsNames, err = b.getTablesForRestoreLocal(ctx, backupName, metadataPath, tablePattern, dropExists, partitions)
-		if err != nil {
-			return err
-		}
+	tablesForRestore, partitionsNames, err = b.getTablesForRestoreLocal(ctx, backupName, metadataPath, tablePattern, dropExists, partitions)
+	if err != nil {
+		return err
 	}
-	if schemaOnly || dropExists || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
+	if schemaOnly || dropExists || (schemaOnly == dataOnly) {
 		if err = b.RestoreSchema(ctx, backupName, backupMetadata, disks, tablesForRestore, ignoreDependencies, version, schemaAsAttach); err != nil {
 			return err
 		}
 	}
 	// https://github.com/Altinity/clickhouse-backup/issues/756
-	if dataOnly && !schemaOnly && !rbacOnly && !configsOnly && len(partitions) > 0 {
+	if dataOnly && !schemaOnly && len(partitions) > 0 {
 		if err = b.dropExistPartitions(ctx, tablesForRestore, partitionsNames, partitions, version); err != nil {
 			return err
 		}
 
 	}
-	if dataOnly || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
+	if dataOnly || (schemaOnly == dataOnly) {
 		if err := b.RestoreData(ctx, backupName, backupMetadata, dataOnly, metadataPath, tablePattern, partitions, skipProjections, disks, version, replicatedCopyToDetached); err != nil {
 			return err
 		}
 	}
 	// do not create UDF when use --data, --rbac-only, --configs-only flags, https://github.com/Altinity/clickhouse-backup/issues/697
-	if schemaOnly || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
+	if schemaOnly || (schemaOnly == dataOnly) {
 		if funcErr := b.restoreFunctions(ctx, backupMetadata); funcErr != nil {
 			return funcErr
 		}
@@ -1054,7 +1051,7 @@ func (b *Backuper) decryptNamedCollectionFile(filePath, keyHex string) ([]byte, 
 	// 3. Read version
 	version := binary.LittleEndian.Uint16(data[3:5])
 	if version != 2 {
-		return nil, fmt.Errorf("%s ynsupported header version: %d", filePath, version)
+		return nil, fmt.Errorf("%s unsupported header version: %d", filePath, version)
 	}
 	// 4. Read algorithm and determine key length
 	algID := binary.LittleEndian.Uint16(data[5:7])
@@ -1067,7 +1064,7 @@ func (b *Backuper) decryptNamedCollectionFile(filePath, keyHex string) ([]byte, 
 	case 2:
 		keyLen = 32 // AES-256
 	default:
-		return nil, fmt.Errorf("%s unknown algorithm ID: %d", algID)
+		return nil, fmt.Errorf("%s unknown algorithm ID: %d, expected 0,1,2", filePath, algID)
 	}
 
 	// 5. Extract IV from header
@@ -1079,15 +1076,15 @@ func (b *Backuper) decryptNamedCollectionFile(filePath, keyHex string) ([]byte, 
 		return nil, fmt.Errorf("invalid key hex: %v", err)
 	}
 	if len(key) != keyLen {
-		return nil, fmt.Errorf("provided key does not match expected length for algorithm")
+		return nil, fmt.Errorf("%s, provided key does not match expected length for algorithm", filePath)
 	}
 
 	// 7. (Optional) Verify key fingerprint
 	headerFingerprint := data[7:23] // 16-byte fingerprint from header
 	// Compute SipHash-128 of the key (using same seeds as ClickHouse) to verify.
 	calcFingerprint := computeFingerprint(key)
-	if !bytes.Equal(calcFingerprint, headerFingerprint) {
-		log.Println("Warning: key fingerprint does not match header. Wrong key?")
+	if subtle.ConstantTimeCompare(calcFingerprint, headerFingerprint) == 1 {
+		return nil, fmt.Errorf("%s key fingerprint does not match header. wrong key", filePath)
 	}
 
 	// 8. Decrypt the ciphertext
@@ -1105,8 +1102,7 @@ func (b *Backuper) decryptNamedCollectionFile(filePath, keyHex string) ([]byte, 
 
 // computeFingerprint computes the SipHash-128 fingerprint of a key.
 func computeFingerprint(key []byte) []byte {
-	var siphashKey [16]byte // initialized to zeros
-	fingerprint := siphash128.Sum(&siphashKey, key)
+	fingerprint := siphash128.SipHash128(key)
 	return fingerprint[:]
 }
 

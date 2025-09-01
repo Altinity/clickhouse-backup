@@ -577,7 +577,8 @@ func (b *Backuper) downloadConfigData(ctx context.Context, remoteBackup storage.
 }
 
 func (b *Backuper) downloadNamedCollectionsData(ctx context.Context, remoteBackup storage.Backup) (uint64, error) {
-	return b.downloadBackupRelatedDir(ctx, remoteBackup, "access")
+	log.Info().Msg("SUKA!!!")
+	return b.downloadBackupRelatedDir(ctx, remoteBackup, "named_collections")
 }
 
 func (b *Backuper) downloadBackupRelatedDir(ctx context.Context, remoteBackup storage.Backup, prefix string) (uint64, error) {

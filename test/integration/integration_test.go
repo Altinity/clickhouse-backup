@@ -3395,19 +3395,19 @@ func TestNamedCollections(t *testing.T) {
 			createArgs:             []string{backupName + "_4"},
 			namedCollectionsEnvVar: "false",
 		},
-		// Test default behavior (no flags, no env var)
+		// Test default behavior (no flags, no env var), named collection actually will not backup
 		{
 			name:       "create_default",
 			createArgs: []string{backupName + "_5"},
 		},
 	}
 
-	env.queryWithNoError(r, "CREATE DATABASE test_named_collection")
-	env.queryWithNoError(r, "CREATE TABLE test_named_collection.test_named_collection (id UInt64) ENGINE=MergeTree ORDER BY id")
-	env.queryWithNoError(r, "INSERT INTO test_named_collection.test_named_collection SELECT number FROM numbers(10)")
-
 	for _, tc := range testCases {
-		env.queryWithNoError(r, "CREATE NAMED COLLECTION test_named_collection AS a = 1, b = 'test'")
+
+		env.queryWithNoError(r, "CREATE NAMED COLLECTION test_named_collection AS access_key_id = 'access_key', secret_access_key = 'it_is_my_super_secret_key', format = 'CSV', url = 'https://minio:9000/clickhouse/test_named_collection.csv'")
+		env.queryWithNoError(r, "CREATE DATABASE test_named_collection")
+		env.queryWithNoError(r, "CREATE TABLE test_named_collection.test_named_collection (id UInt64) ENGINE=S3(test_named_collection)")
+		env.queryWithNoError(r, "INSERT INTO test_named_collection.test_named_collection SELECT number FROM numbers(10)")
 
 		envVar := ""
 		if tc.namedCollectionsEnvVar != "" {
@@ -3446,6 +3446,7 @@ func TestNamedCollections(t *testing.T) {
 		expected := uint64(0)
 		r.NoError(env.ch.SelectSingleRowNoCtx(&expected, "SELECT count() FROM test_named_collection.test_named_collection"))
 		r.Equal(uint64(10), expected, "expect count=10")
+		r.NoError(env.dropDatabase("test_named_collection", false))
 	}
 	// Test create_remote and restore_remote commands
 	env.queryWithNoError(r, "CREATE NAMED COLLECTION test_named_collection AS a = 1, b = 'test'")

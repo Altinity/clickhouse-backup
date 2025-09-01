@@ -21,6 +21,7 @@ require (
 	github.com/djherbis/buffer v1.2.0
 	github.com/djherbis/nio/v3 v3.0.1
 	github.com/eapache/go-resiliency v1.7.0
+	github.com/frifox/siphash128 v0.0.0-20240801215021-eb27e006a340
 	github.com/go-zookeeper/zk v1.0.4
 	github.com/gocarina/gocsv v0.0.0-20240520201108-78e41c74b4b1
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
