@@ -3201,6 +3201,9 @@ func TestHardlinksExistsFiles(t *testing.T) {
 }
 
 func TestFIPS(t *testing.T) {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.17") <= 0 {
+		t.Skip("go 1.25 with boringcrypto stop works for 19.17, works only for 20.1+")
+	}
 	if os.Getenv("QA_AWS_ACCESS_KEY") == "" {
 		t.Skip("QA_AWS_ACCESS_KEY is empty, TestFIPS will skip")
 	}
