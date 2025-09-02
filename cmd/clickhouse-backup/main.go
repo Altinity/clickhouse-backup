@@ -5,6 +5,7 @@ import (
 	"fmt"
 	stdlog "log"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -557,7 +558,17 @@ func main() {
 				if c.Bool("restore-in-place") {
 					b.SetRestoreInPlace(true)
 				}
-				return b.RestoreFromRemote(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("hardlink-exists-files"), false, version, c.Int("command-id"))
+				// CI/CD Diagnostic: Log function signature validation for Go 1.25 + ClickHouse 23.8 compatibility
+				log.Debug().Fields(map[string]interface{}{
+					"operation":               "restore_remote_cli_validation",
+					"go_version":             runtime.Version(),
+					"hardlink_exists_files":  c.Bool("hardlink-exists-files"),
+					"drop_if_schema_changed": c.Bool("drop-if-schema-changed"),
+					"function_signature":     "RestoreFromRemote",
+					"parameter_count":        "expected_22_parameters",
+					"issue_diagnosis":        "hardcoded_false_should_be_cli_flag",
+				}).Msg("diagnosing CI Build/Test (1.25, 23.8) function signature mismatch")
+				return b.RestoreFromRemote(c.Args().First(), c.String("tables"), c.StringSlice("restore-database-mapping"), c.StringSlice("restore-table-mapping"), c.StringSlice("partitions"), c.StringSlice("skip-projections"), c.Bool("schema"), c.Bool("d"), c.Bool("rm"), c.Bool("i"), c.Bool("rbac"), c.Bool("rbac-only"), c.Bool("configs"), c.Bool("configs-only"), c.Bool("named-collections"), c.Bool("named-collections-only"), c.Bool("resume"), c.Bool("restore-schema-as-attach"), c.Bool("replicated-copy-to-detached"), c.Bool("hardlink-exists-files"), c.Bool("drop-if-schema-changed"), version, c.Int("command-id"))
 			},
 			Flags: append(cliapp.Flags,
 				cli.StringFlag{
