@@ -703,7 +703,7 @@ fi
 
 
 # named_collections_control configuration based on ClickHouse version
-if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^24\.[3-9] || "${CLICKHOUSE_VERSION}" =~ ^24\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[5-9]\. || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^23\. || "${CLICKHOUSE_VERSION}" =~ ^24\. || "${CLICKHOUSE_VERSION}" =~ ^2[5-9]\. || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
 cat <<EOT > /etc/clickhouse-server/users.d/named_collection_control.xml
 <yandex>
   <users>
