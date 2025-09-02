@@ -4,16 +4,16 @@ apt-get update && apt-get install -y software-properties-common
 apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 52B59B1571A79DBC054901C0F6BC817356A3D45E
 add-apt-repository -y ppa:longsleep/golang-backports
 apt-get update
-apt-get install -y golang-1.24
+apt-get install -y golang-1.25
 
 mkdir -p ~/go/
 export GOPATH=~/go/
 grep -q -F 'export GOPATH=$GOPATH' ~/.bashrc  || echo "export GOPATH=$GOPATH" >> ~/.bashrc
 grep -q -F 'export GOPATH=$GOPATH' /root/.bashrc         || echo "export GOPATH=$GOPATH" >> /root/.bashrc
-export GOROOT=/usr/lib/go-1.24/
+export GOROOT=/usr/lib/go-1.25/
 grep -q -F 'export GOROOT=$GOROOT' ~/.bashrc  || echo "export GOROOT=$GOROOT" >> ~/.bashrc
 grep -q -F 'export GOROOT=$GOROOT' /root/.bashrc || echo "export GOROOT=$GOROOT" >> /root/.bashrc
-ln -nsfv /usr/lib/go-1.24/bin/go /usr/bin/go
+ln -nsfv /usr/lib/go-1.25/bin/go /usr/bin/go
 
 CGO_ENABLED=0 GO111MODULE=on go install -ldflags "-s -w -extldflags '-static'" github.com/go-delve/delve/cmd/dlv@latest
 
@@ -40,7 +40,7 @@ CGO_ENABLED=0 GO111MODULE=on go install -ldflags "-s -w -extldflags '-static'" g
 # /root/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /bin/clickhouse-backup -- -c /etc/clickhouse-backup/config-s3.yml restore --tables default.test_replica_wrong_path test_wrong_path
 # LOG_LEVEL=debug /root/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /usr/bin/clickhouse-backup -- server --watch
 # rootless
-# cd /tmp/; wget https://go.dev/dl/go1.24.1.linux-arm64.tar.gz; tar -xzf go1.24.1.linux-arm64.tar.gz
+# cd /tmp/; wget https://go.dev/dl/go1.25.0.linux-arm64.tar.gz; tar -xzf go1.25.0.linux-arm64.tar.gz
 # export PATH="/tmp/go/bin:$PATH"
 # CGO_ENABLED=0 GO111MODULE=on go install -ldflags "-s -w -extldflags '-static'" github.com/go-delve/delve/cmd/dlv@latest
 # ~/go/bin/dlv attach 1 --listen=:40001 --headless=true --api-version=2 --accept-multiclient

@@ -16,10 +16,10 @@ jobs:
     strategy:
       matrix:
         golang-version:
-          - "1.24"
+          - "1.25"
     steps:
       - name: Checkout project
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup golang
         id: setup-go
@@ -98,7 +98,7 @@ jobs:
     strategy:
       matrix:
         golang-version:
-          - "1.24"
+          - "1.25"
         clickhouse:
           - '22.3'
           - '22.8'
@@ -107,6 +107,7 @@ jobs:
           - '24.3'
           - '24.8'
           - '25.3'
+          - '25.8'
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
@@ -202,7 +203,7 @@ jobs:
     strategy:
       matrix:
         golang-version:
-          - "1.24"
+          - "1.25"
         clickhouse:
           - '1.1.54394'
           - '19.17'
@@ -217,6 +218,7 @@ jobs:
           - '24.3'
           - '24.8'
           - '25.3'
+          - '25.8'
     steps:
       - name: Checkout project
         uses: actions/checkout@v4

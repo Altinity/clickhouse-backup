@@ -151,7 +151,7 @@ func (api *APIServer) RunWatch(cliCtx *cli.Context) {
 	log.Info().Msg("Starting API Server in watch mode")
 	b := backup.NewBackuper(api.config)
 	commandId, _ := status.Current.Start("watch")
-	err := b.Watch(cliCtx.String("watch-interval"), cliCtx.String("full-interval"), cliCtx.String("watch-backup-name-template"), "*.*", nil, nil, false, false, false, false, cliCtx.Bool("watch-delete-source"), api.clickhouseBackupVersion, commandId, api.GetMetrics(), cliCtx)
+	err := b.Watch(cliCtx.String("watch-interval"), cliCtx.String("full-interval"), cliCtx.String("watch-backup-name-template"), "*.*", nil, nil, false, false, false, false, false, cliCtx.Bool("watch-delete-source"), api.clickhouseBackupVersion, commandId, api.GetMetrics(), cliCtx)
 	api.handleWatchResponse(commandId, err)
 }
 
@@ -568,8 +568,9 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 	partitionsToBackup := make([]string, 0)
 	skipProjections := make([]string, 0)
 	schemaOnly := false
-	rbacOnly := false
-	configsOnly := false
+	backupRBAC := false
+	backupConfigs := false
+	backupNamedCollections := false
 	skipCheckPartsColumns := false
 	deleteSource := false
 	watchInterval := ""
@@ -618,12 +619,16 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 			fullCommand = fmt.Sprintf("%s --schema", fullCommand)
 		}
 		if matchParam, _ = simpleParseArg(i, args, "--rbac"); matchParam {
-			rbacOnly = true
+			backupRBAC = true
 			fullCommand = fmt.Sprintf("%s --rbac", fullCommand)
 		}
 		if matchParam, _ = simpleParseArg(i, args, "--configs"); matchParam {
-			configsOnly = true
+			backupConfigs = true
 			fullCommand = fmt.Sprintf("%s --configs", fullCommand)
+		}
+		if matchParam, _ = simpleParseArg(i, args, "--named-collections"); matchParam {
+			backupNamedCollections = true
+			fullCommand = fmt.Sprintf("%s --named-collections", fullCommand)
 		}
 		if matchParam, _ = simpleParseArg(i, args, "--skip-check-parts-columns"); matchParam {
 			skipCheckPartsColumns = true
@@ -642,7 +647,7 @@ func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.Acti
 	commandId, _ := status.Current.Start(fullCommand)
 	go func() {
 		b := backup.NewBackuper(cfg)
-		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, skipProjections, schemaOnly, rbacOnly, configsOnly, skipCheckPartsColumns, deleteSource, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
+		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
 		api.handleWatchResponse(commandId, err)
 	}()
 
@@ -809,18 +814,19 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type backupJSON struct {
-		Name           string `json:"name"`
-		Created        string `json:"created"`
-		Size           uint64 `json:"size,omitempty"`
-		DataSize       uint64 `json:"data_size,omitempty"`
-		ObjectDiskSize uint64 `json:"object_disk_size,omitempty"`
-		MetadataSize   uint64 `json:"metadata_size"`
-		RBACSize       uint64 `json:"rbac_size,omitempty"`
-		ConfigSize     uint64 `json:"config_size,omitempty"`
-		CompressedSize uint64 `json:"compressed_size,omitempty"`
-		Location       string `json:"location"`
-		RequiredBackup string `json:"required"`
-		Desc           string `json:"desc"`
+		Name                string `json:"name"`
+		Created             string `json:"created"`
+		Size                uint64 `json:"size,omitempty"`
+		DataSize            uint64 `json:"data_size,omitempty"`
+		ObjectDiskSize      uint64 `json:"object_disk_size,omitempty"`
+		MetadataSize        uint64 `json:"metadata_size"`
+		RBACSize            uint64 `json:"rbac_size,omitempty"`
+		ConfigSize          uint64 `json:"config_size,omitempty"`
+		NamedCollectionSize uint64 `json:"named_collection_size,omitempty"`
+		CompressedSize      uint64 `json:"compressed_size,omitempty"`
+		Location            string `json:"location"`
+		RequiredBackup      string `json:"required"`
+		Desc                string `json:"desc"`
 	}
 	backupsJSON := make([]backupJSON, 0)
 	cfg, err := api.ReloadConfig(w, "list")
@@ -856,18 +862,19 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 				description += item.Tags
 			}
 			backupsJSON = append(backupsJSON, backupJSON{
-				Name:           item.BackupName,
-				Created:        item.CreationDate.In(time.Local).Format(common.TimeFormat),
-				Size:           item.GetFullSize(),
-				DataSize:       item.DataSize,
-				ObjectDiskSize: item.ObjectDiskSize,
-				MetadataSize:   item.MetadataSize,
-				RBACSize:       item.RBACSize,
-				ConfigSize:     item.ConfigSize,
-				CompressedSize: item.CompressedSize,
-				Location:       "local",
-				RequiredBackup: item.RequiredBackup,
-				Desc:           description,
+				Name:                item.BackupName,
+				Created:             item.CreationDate.In(time.Local).Format(common.TimeFormat),
+				Size:                item.GetFullSize(),
+				DataSize:            item.DataSize,
+				ObjectDiskSize:      item.ObjectDiskSize,
+				MetadataSize:        item.MetadataSize,
+				RBACSize:            item.RBACSize,
+				ConfigSize:          item.ConfigSize,
+				NamedCollectionSize: item.NamedCollectionsSize,
+				CompressedSize:      item.CompressedSize,
+				Location:            "local",
+				RequiredBackup:      item.RequiredBackup,
+				Desc:                description,
 			})
 		}
 		api.metrics.NumberBackupsLocal.Set(float64(len(localBackups)))
@@ -893,18 +900,19 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			fullSize := item.GetFullSize()
 			backupsJSON = append(backupsJSON, backupJSON{
-				Name:           item.BackupName,
-				Created:        item.CreationDate.In(time.Local).Format(common.TimeFormat),
-				Size:           fullSize,
-				DataSize:       item.DataSize,
-				ObjectDiskSize: item.ObjectDiskSize,
-				MetadataSize:   item.MetadataSize,
-				RBACSize:       item.RBACSize,
-				ConfigSize:     item.ConfigSize,
-				CompressedSize: item.CompressedSize,
-				Location:       "remote",
-				RequiredBackup: item.RequiredBackup,
-				Desc:           description,
+				Name:                item.BackupName,
+				Created:             item.CreationDate.In(time.Local).Format(common.TimeFormat),
+				Size:                fullSize,
+				DataSize:            item.DataSize,
+				ObjectDiskSize:      item.ObjectDiskSize,
+				MetadataSize:        item.MetadataSize,
+				RBACSize:            item.RBACSize,
+				ConfigSize:          item.ConfigSize,
+				NamedCollectionSize: item.NamedCollectionsSize,
+				CompressedSize:      item.CompressedSize,
+				Location:            "remote",
+				RequiredBackup:      item.RequiredBackup,
+				Desc:                description,
 			})
 			if i == len(remoteBackups)-1 {
 				api.metrics.LastBackupSizeRemote.Set(float64(fullSize))
@@ -936,6 +944,8 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	rbacOnly := false
 	createConfigs := false
 	configsOnly := false
+	createNamedCollections := false
+	namedCollectionsOnly := false
 	checkPartsColumns := true
 	skipProjections := make([]string, 0)
 	resume := false
@@ -974,6 +984,14 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 		configsOnly = true
 		fullCommand += " --configs-only"
 	}
+	if _, exist := api.getQueryParameter(query, "named-collections"); exist {
+		createNamedCollections = true
+		fullCommand += " --named-collections"
+	}
+	if _, exist := api.getQueryParameter(query, "named-collections-only"); exist {
+		namedCollectionsOnly = true
+		fullCommand += " --named-collections-only"
+	}
 
 	if _, exist := api.getQueryParameter(query, "skip-check-parts-columns"); exist {
 		checkPartsColumns = true
@@ -1006,7 +1024,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("create", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.CreateBackup(backupName, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, checkPartsColumns, skipProjections, resume, api.clickhouseBackupVersion, commandId)
+			return b.CreateBackup(backupName, diffFromRemote, tablePattern, partitionsToBackup, schemaOnly, createRBAC, rbacOnly, createConfigs, configsOnly, createNamedCollections, namedCollectionsOnly, checkPartsColumns, skipProjections, resume, api.clickhouseBackupVersion, commandId)
 		})
 		if err != nil {
 			log.Error().Msgf("API /backup/create error: %v", err)
@@ -1057,6 +1075,8 @@ func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Req
 	rbacOnly := false
 	backupConfigs := false
 	configsOnly := false
+	backupNamedCollections := false
+	namedCollectionsOnly := false
 	skipCheckPartsColumns := false
 	skipProjections := make([]string, 0)
 	deleteSource := false
@@ -1101,6 +1121,14 @@ func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Req
 		configsOnly = true
 		fullCommand += " --configs-only"
 	}
+	if _, exist := api.getQueryParameter(query, "named-collections"); exist {
+		backupNamedCollections = true
+		fullCommand += " --named-collections"
+	}
+	if _, exist := api.getQueryParameter(query, "named-collections-only"); exist {
+		namedCollectionsOnly = true
+		fullCommand += " --named-collections-only"
+	}
 
 	if _, exist := api.getQueryParameter(query, "skip-check-parts-columns"); exist {
 		skipCheckPartsColumns = true
@@ -1135,7 +1163,7 @@ func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Req
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("create_remote", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.CreateToRemote(backupName, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, rbacOnly, backupConfigs, configsOnly, skipCheckPartsColumns, resume, api.clickhouseBackupVersion, commandId)
+			return b.CreateToRemote(backupName, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, rbacOnly, backupConfigs, configsOnly, backupNamedCollections, namedCollectionsOnly, skipCheckPartsColumns, resume, api.clickhouseBackupVersion, commandId)
 		})
 		if err != nil {
 			log.Error().Msgf("API /backup/create_remote error: %v", err)
@@ -1180,8 +1208,9 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 	partitionsToBackup := make([]string, 0)
 	skipProjections := make([]string, 0)
 	schemaOnly := false
-	rbacOnly := false
-	configsOnly := false
+	backupRBAC := false
+	backupConfigs := false
+	backupNamedCollections := false
 	skipCheckPartsColumns := false
 	deleteSource := false
 	watchInterval := ""
@@ -1216,15 +1245,21 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if rbac, exist := query["rbac"]; exist {
-		rbacOnly, _ = strconv.ParseBool(rbac[0])
-		if rbacOnly {
+		backupRBAC, _ = strconv.ParseBool(rbac[0])
+		if backupRBAC {
 			fullCommand = fmt.Sprintf("%s --rbac", fullCommand)
 		}
 	}
 	if configs, exist := query["configs"]; exist {
-		configsOnly, _ = strconv.ParseBool(configs[0])
-		if configsOnly {
+		backupConfigs, _ = strconv.ParseBool(configs[0])
+		if backupConfigs {
 			fullCommand = fmt.Sprintf("%s --configs", fullCommand)
+		}
+	}
+	if namedCollections, exist := api.getQueryParameter(query, "named-collections"); exist {
+		backupNamedCollections, _ = strconv.ParseBool(namedCollections)
+		if backupNamedCollections {
+			fullCommand = fmt.Sprintf("%s --named-collections", fullCommand)
 		}
 	}
 	if _, exist := api.getQueryParameter(query, "skip_check_parts_columns"); exist {
@@ -1249,7 +1284,7 @@ func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
 	commandId, _ := status.Current.Start(fullCommand)
 	go func() {
 		b := backup.NewBackuper(cfg)
-		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, skipProjections, schemaOnly, rbacOnly, configsOnly, skipCheckPartsColumns, deleteSource, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
+		err := b.Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern, partitionsToBackup, skipProjections, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource, api.clickhouseBackupVersion, commandId, api.GetMetrics(), api.cliCtx)
 		api.handleWatchResponse(commandId, err)
 	}()
 	api.sendJSONEachRow(w, http.StatusCreated, struct {
@@ -1369,6 +1404,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 	schemaOnly := false
 	rbacOnly := false
 	configsOnly := false
+	namedCollectionsOnly := false
 	resume := false
 	fullCommand := "upload"
 	operationId, _ := uuid.NewUUID()
@@ -1406,6 +1442,10 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		configsOnly = true
 		fullCommand += " --configs-only"
 	}
+	if _, exist := api.getQueryParameter(query, "named-collections-only"); exist {
+		namedCollectionsOnly = true
+		fullCommand += " --named-collections-only"
+	}
 	if skipProjectionsFromQuery, exist := query["skip-projections"]; exist {
 		skipProjections = skipProjectionsFromQuery
 		fullCommand += " --skip-projections=" + strings.Join(skipProjectionsFromQuery, ",")
@@ -1433,7 +1473,7 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
 		err, _ := api.metrics.ExecuteWithMetrics("upload", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.Upload(name, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, skipProjections, schemaOnly, rbacOnly, configsOnly, resume, api.cliApp.Version, commandId)
+			return b.Upload(name, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, skipProjections, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, api.cliApp.Version, commandId)
 		})
 		if err != nil {
 			log.Error().Msgf("Upload error: %v", err)
@@ -1493,6 +1533,8 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	rbacOnly := false
 	restoreConfigs := false
 	configsOnly := false
+	restoreNamedCollections := false
+	namedCollectionsOnly := false
 	skipProjections := make([]string, 0)
 	resume := false
 	restoreSchemaAsAttach := false
@@ -1591,6 +1633,14 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		configsOnly = true
 		fullCommand += " --configs-only"
 	}
+	if _, exist := api.getQueryParameter(query, "named-collections"); exist {
+		restoreNamedCollections = true
+		fullCommand += " --named-collections"
+	}
+	if _, exist := api.getQueryParameter(query, "named-collections-only"); exist {
+		namedCollectionsOnly = true
+		fullCommand += " --named-collections-only"
+	}
 	if skipProjectionsFromQuery, exist := api.getQueryParameter(query, "skip-projections"); exist {
 		skipProjections = append(skipProjections, skipProjectionsFromQuery)
 		fullCommand += " --skip-projections=" + strings.Join(skipProjections, ",")
@@ -1644,7 +1694,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore", 0, func() error {
 			b := backup.NewBackuper(api.config)
-			return b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, api.cliApp.Version, commandId)
+			return b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, api.cliApp.Version, commandId)
 		})
 		go func() {
 			if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
@@ -1696,6 +1746,8 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 	rbacOnly := false
 	restoreConfigs := false
 	configsOnly := false
+	restoreNamedCollections := false
+	namedCollectionsOnly := false
 	skipProjections := make([]string, 0)
 	resume := false
 	restoreSchemaAsAttach := false
@@ -1795,6 +1847,14 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 		configsOnly = true
 		fullCommand += " --configs-only"
 	}
+	if _, exist := api.getQueryParameter(query, "named-collections"); exist {
+		restoreNamedCollections = true
+		fullCommand += " --named-collections"
+	}
+	if _, exist := api.getQueryParameter(query, "named-collections-only"); exist {
+		namedCollectionsOnly = true
+		fullCommand += " --named-collections-only"
+	}
 	if skipProjectionsFromQuery, exist := api.getQueryParameter(query, "skip-projections"); exist {
 		skipProjections = append(skipProjections, skipProjectionsFromQuery)
 		fullCommand += " --skip-projections=" + strings.Join(skipProjections, ",")
@@ -1853,7 +1913,7 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore_remote", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.RestoreFromRemote(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, hardlinkExistsFiles, api.cliApp.Version, commandId)
+			return b.RestoreFromRemote(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, hardlinkExistsFiles, api.cliApp.Version, commandId)
 		})
 		go func() {
 			if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
@@ -1901,6 +1961,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	schemaOnly := false
 	rbacOnly := false
 	configsOnly := false
+	namedCollectionsOnly := false
 	resume := false
 	hardlinkExistsFiles := false
 	fullCommand := "download"
@@ -1925,6 +1986,10 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 	if _, exist := query["configs-only"]; exist {
 		configsOnly = true
 		fullCommand += " --configs-only"
+	}
+	if _, exist := api.getQueryParameter(query, "named-collections-only"); exist {
+		namedCollectionsOnly = true
+		fullCommand += " --named-collections-only"
 	}
 	if _, exist := query["resumable"]; exist {
 		resume = true
@@ -1953,7 +2018,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
 		err, _ := api.metrics.ExecuteWithMetrics("download", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.Download(name, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, resume, hardlinkExistsFiles, api.cliApp.Version, commandId)
+			return b.Download(name, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, hardlinkExistsFiles, api.cliApp.Version, commandId)
 		})
 		if err != nil {
 			log.Error().Msgf("API /backup/download error: %v", err)
@@ -2218,7 +2283,7 @@ func (api *APIServer) CreateIntegrationTables() error {
 	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_actions"}, query, true, false, "", 0, defaultDataPath, false, ""); err != nil {
 		return err
 	}
-	query = fmt.Sprintf("CREATE TABLE system.backup_list (name String, created DateTime, size UInt64, data_size UInt64, object_disk_size UInt64,metadata_size UInt64,rbac_size UInt64,config_size UInt64, compressed_size UInt64, location String, required String, desc String) ENGINE=URL('%s://%s:%s/backup/list%s', JSONEachRow) %s", schema, host, port, auth, settings)
+	query = fmt.Sprintf("CREATE TABLE system.backup_list (name String, created DateTime, size UInt64, data_size UInt64, object_disk_size UInt64,metadata_size UInt64,rbac_size UInt64,config_size UInt64, named_collection_size UInt64, compressed_size UInt64, location String, required String, desc String) ENGINE=URL('%s://%s:%s/backup/list%s', JSONEachRow) %s", schema, host, port, auth, settings)
 	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_list"}, query, true, false, "", 0, defaultDataPath, false, ""); err != nil {
 		return err
 	}

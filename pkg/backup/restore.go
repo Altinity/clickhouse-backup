@@ -3,6 +3,11 @@ package backup
 import (
 	"bufio"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/subtle"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,6 +26,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/resumable"
 	"github.com/eapache/go-resiliency/retrier"
+	"github.com/frifox/siphash128"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -45,7 +51,7 @@ import (
 )
 
 // Restore - restore tables matched by tablePattern from backupName
-func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tableMapping, partitions, skipProjections []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, resume, schemaAsAttach, replicatedCopyToDetached bool, backupVersion string, commandId int) error {
+func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tableMapping, partitions, skipProjections []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, schemaAsAttach, replicatedCopyToDetached bool, backupVersion string, commandId int) error {
 	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "restore"); pidCheckErr != nil {
 		return pidCheckErr
 	}
@@ -143,7 +149,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	}
 	if len(backupMetadata.Tables) == 0 {
 		// corner cases for https://github.com/Altinity/clickhouse-backup/issues/832
-		if !restoreRBAC && !rbacOnly && !restoreConfigs && !configsOnly {
+		if !restoreRBAC && !rbacOnly && !restoreConfigs && !configsOnly && !restoreNamedCollections && !namedCollectionsOnly {
 			if !b.cfg.General.AllowEmptyBackups {
 				err = fmt.Errorf("'%s' doesn't contains tables for restore, if you need it, you can setup `allow_empty_backups: true` in `general` config section", backupName)
 				log.Error().Msgf("%v", err)
@@ -168,14 +174,20 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 		log.Info().Msgf("CONFIGS successfully restored")
 		needRestart = true
 	}
+	if namedCollectionsOnly || restoreNamedCollections {
+		if err := b.restoreNamedCollections(backupName); err != nil {
+			return err
+		}
+		log.Info().Msgf("NAMED COLLECTIONS successfully restored")
+	}
 
 	if needRestart {
 		if err := b.restartClickHouse(ctx, backupName); err != nil {
 			return err
 		}
-		if rbacOnly || configsOnly {
-			return nil
-		}
+	}
+	if rbacOnly || configsOnly || namedCollectionsOnly {
+		return nil
 	}
 	isObjectDiskPresents := false
 	if b.cfg.General.RemoteStorage != "custom" {
@@ -223,31 +235,29 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 		metadataPath = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
 	}
 
-	if !rbacOnly && !configsOnly {
-		tablesForRestore, partitionsNames, err = b.getTablesForRestoreLocal(ctx, backupName, metadataPath, tablePattern, dropExists, partitions)
-		if err != nil {
-			return err
-		}
+	tablesForRestore, partitionsNames, err = b.getTablesForRestoreLocal(ctx, backupName, metadataPath, tablePattern, dropExists, partitions)
+	if err != nil {
+		return err
 	}
-	if schemaOnly || dropExists || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
+	if schemaOnly || dropExists || (schemaOnly == dataOnly) {
 		if err = b.RestoreSchema(ctx, backupName, backupMetadata, disks, tablesForRestore, ignoreDependencies, version, schemaAsAttach); err != nil {
 			return err
 		}
 	}
 	// https://github.com/Altinity/clickhouse-backup/issues/756
-	if dataOnly && !schemaOnly && !rbacOnly && !configsOnly && len(partitions) > 0 {
+	if dataOnly && !schemaOnly && len(partitions) > 0 {
 		if err = b.dropExistPartitions(ctx, tablesForRestore, partitionsNames, partitions, version); err != nil {
 			return err
 		}
 
 	}
-	if dataOnly || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
+	if dataOnly || (schemaOnly == dataOnly) {
 		if err := b.RestoreData(ctx, backupName, backupMetadata, dataOnly, metadataPath, tablePattern, partitions, skipProjections, disks, version, replicatedCopyToDetached); err != nil {
 			return err
 		}
 	}
 	// do not create UDF when use --data, --rbac-only, --configs-only flags, https://github.com/Altinity/clickhouse-backup/issues/697
-	if schemaOnly || (schemaOnly == dataOnly && !rbacOnly && !configsOnly) {
+	if schemaOnly || (schemaOnly == dataOnly) {
 		if funcErr := b.restoreFunctions(ctx, backupMetadata); funcErr != nil {
 			return funcErr
 		}
@@ -868,6 +878,232 @@ func (b *Backuper) restoreConfigs(backupName string, disks []clickhouse.Disk) er
 	} else {
 		return err
 	}
+}
+
+// restoreNamedCollections - restore named collections from backup
+func (b *Backuper) restoreNamedCollections(backupName string) error {
+	ctx := context.Background()
+
+	// Parse named_collections_storage configuration
+	namedCollectionsSettings := map[string]string{
+		"type":      "//named_collections_storage/type",
+		"path":      "//named_collections_storage/path",
+		"key_hex":   "//named_collections_storage/key_hex",
+		"algorithm": "//named_collections_storage/algorithm",
+	}
+	settings, err := b.ch.GetPreprocessedXMLSettings(ctx, namedCollectionsSettings, "config.xml")
+	if err != nil {
+		return fmt.Errorf("failed to get named_collections_storage settings: %v", err)
+	}
+
+	storageType := "local"
+	if typeSetting, exists := settings["type"]; exists {
+		storageType = typeSetting
+	}
+
+	namedCollectionsBackup := path.Join(b.DefaultDataPath, "backup", backupName, "named_collections")
+	info, err := os.Stat(namedCollectionsBackup)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to stat named_collections path: %v", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("named_collections path is not a directory: %s", namedCollectionsBackup)
+	}
+
+	settingsFile := path.Join(namedCollectionsBackup, "settings.json")
+	backupSettingsJSON, openErr := os.ReadFile(settingsFile)
+	if openErr != nil {
+		return openErr
+	}
+	var backupSettings map[string]string
+	if unmarshalErr := json.Unmarshal(backupSettingsJSON, &backupSettings); unmarshalErr != nil {
+		return unmarshalErr
+	}
+
+	// Check compatibility - only 'local' and 'keeper' are supported
+	if !strings.Contains(storageType, "local") && !strings.Contains(storageType, "keeper") {
+		return fmt.Errorf("incompatible named_collections_storage type: %s, shall contains 'local' or 'keeper'", storageType)
+	}
+
+	// Restore based on storage type
+	jsonlFiles, err := filepath.Glob(path.Join(namedCollectionsBackup, "*.jsonl"))
+	if err != nil {
+		return fmt.Errorf("failed to glob jsonl files: %v", err)
+	}
+
+	sqlFiles, err := filepath.Glob(path.Join(namedCollectionsBackup, "*.sql"))
+	if err != nil {
+		return fmt.Errorf("failed to glob sql files: %v", err)
+	}
+
+	if !strings.Contains(storageType, "keeper") && len(jsonlFiles) > 0 {
+		return fmt.Errorf("can't restore %v into named_collections_storage/type=%s", jsonlFiles, storageType)
+	}
+	// Handle JSONL files for keeper storage
+	if len(jsonlFiles) > 0 {
+		// Connect to keeper for restoring JSONL files
+		k := &keeper.Keeper{}
+		if connErr := k.Connect(ctx, b.ch); connErr != nil {
+			return fmt.Errorf("can't connect to keeper: %v", connErr)
+		}
+		defer k.Close()
+
+		// Get the keeper path from settings, fallback to default if not present
+		keeperPath := "/clickhouse/named_collections"
+		if pathSetting, exists := settings["path"]; exists && pathSetting != "" {
+			keeperPath = pathSetting
+		}
+
+		// Restore each JSONL file using keeper.Restore
+		for _, jsonlFile := range jsonlFiles {
+			log.Info().Msgf("keeper.Restore(%s) -> %s", jsonlFile, keeperPath)
+			if restoreErr := k.Restore(jsonlFile, keeperPath); restoreErr != nil {
+				return fmt.Errorf("failed to keeper.Restore %s: %v", jsonlFile, restoreErr)
+			}
+		}
+	}
+
+	// Check if storage is encrypted
+	isEncrypted := false
+	keyHex := ""
+	if key, exists := settings["key_hex"]; exists && key != "" {
+		isEncrypted = true
+		keyHex = key
+	}
+
+	for _, sqlFile := range sqlFiles {
+		// Handle SQL files - execute DROP/CREATE commands
+		var sqlContent []byte
+		var err error
+
+		if isEncrypted {
+			// For encrypted storage, decrypt the SQL file content
+			sqlContent, err = b.decryptNamedCollectionFile(sqlFile, keyHex)
+			if err != nil {
+				return fmt.Errorf("failed to decrypt SQL file %s: %v", sqlFile, err)
+			}
+		} else {
+			// For non-encrypted storage, read directly
+			sqlContent, err = os.ReadFile(sqlFile)
+			if err != nil {
+				return fmt.Errorf("failed to read SQL file %s: %v", sqlFile, err)
+			}
+		}
+
+		sqlQuery := strings.TrimSpace(string(sqlContent))
+		if sqlQuery == "" {
+			log.Warn().Msgf("Empty SQL content in: %s", sqlFile)
+			continue
+		}
+
+		// Extract collection name from CREATE NAMED COLLECTION statement
+		// Expected format: CREATE NAMED COLLECTION [IF NOT EXISTS] name [ON CLUSTER cluster_name] AS ...
+		re := regexp.MustCompile(`(?i)CREATE\s+NAMED\s+COLLECTION\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)`)
+		matches := re.FindStringSubmatch(sqlQuery)
+		if len(matches) < 2 {
+			return fmt.Errorf("could not extract collection name from: %s, %s skipping", sqlFile, sqlQuery)
+		}
+		collectionName := matches[1]
+
+		// Drop existing collection first
+		dropQuery := fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s", collectionName)
+		if err := b.ch.QueryContext(ctx, dropQuery); err != nil {
+			return fmt.Errorf("failed to drop named collection %s: %v", collectionName, err)
+		}
+
+		// Create new collection
+		if err := b.ch.QueryContext(ctx, sqlQuery); err != nil {
+			return fmt.Errorf("failed to create named collection %s: %v", collectionName, err)
+		}
+
+		log.Info().Msgf("Restored SQL named collection: %s", collectionName)
+	}
+
+	return nil
+}
+
+// decryptNamedCollectionFile decrypts an encrypted named collection SQL file
+func (b *Backuper) decryptNamedCollectionFile(filePath, keyHex string) ([]byte, error) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read encrypted file: %v", err)
+	}
+
+	// 2. Check header signature
+	if len(data) < 3 || string(data[:3]) != "ENC" {
+		return nil, fmt.Errorf("%s does not have ENC encrypted header", filePath)
+	}
+	// Data is encrypted; proceed to parse header.
+	// Header format (version 2):
+	// [0..2]: "ENC"
+	// [3..4]: version (2 bytes, little-endian)
+	// [5..6]: algorithm ID (UInt16, little-endian: 0=AES-128-CTR, 1=AES-192-CTR, 2=AES-256-CTR)
+	// [7..22]: key fingerprint (16 bytes)
+	// [23..38]: IV (16 bytes)
+	// [39..63]: reserved padding (zeros)
+
+	if len(data) < 64 {
+		return nil, fmt.Errorf("%s encrypted data is too short, missing header", filePath)
+	}
+	// 3. Read version
+	version := binary.LittleEndian.Uint16(data[3:5])
+	if version != 2 {
+		return nil, fmt.Errorf("%s unsupported header version: %d", filePath, version)
+	}
+	// 4. Read algorithm and determine key length
+	algID := binary.LittleEndian.Uint16(data[5:7])
+	var keyLen int
+	switch algID {
+	case 0:
+		keyLen = 16 // AES-128
+	case 1:
+		keyLen = 24 // AES-192
+	case 2:
+		keyLen = 32 // AES-256
+	default:
+		return nil, fmt.Errorf("%s unknown algorithm ID: %d, expected 0,1,2", filePath, algID)
+	}
+
+	// 5. Extract IV from header
+	iv := data[23:39] // 16 bytes
+
+	// 6. Get the key from config (hex string)
+	key, err := hex.DecodeString(keyHex)
+	if err != nil {
+		return nil, fmt.Errorf("invalid key hex: %v", err)
+	}
+	if len(key) != keyLen {
+		return nil, fmt.Errorf("%s, provided key does not match expected length for algorithm", filePath)
+	}
+
+	// 7. (Optional) Verify key fingerprint
+	headerFingerprint := data[7:23] // 16-byte fingerprint from header
+	// Compute SipHash-128 of the key (using same seeds as ClickHouse) to verify.
+	calcFingerprint := computeFingerprint(key)
+	if subtle.ConstantTimeCompare(calcFingerprint, headerFingerprint) == 1 {
+		return nil, fmt.Errorf("%s key fingerprint does not match header. wrong key", filePath)
+	}
+
+	// 8. Decrypt the ciphertext
+	ciphertext := data[64:] // everything after the 64-byte header
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("%s failed to create AES cipher: %v", filePath, err)
+	}
+	// Use AES in CTR mode with the extracted IV:
+	stream := cipher.NewCTR(block, iv)
+	plaintext := make([]byte, len(ciphertext))
+	stream.XORKeyStream(plaintext, ciphertext)
+	return plaintext, nil
+}
+
+// computeFingerprint computes the SipHash-128 fingerprint of a key.
+func computeFingerprint(key []byte) []byte {
+	fingerprint := siphash128.SipHash128(key)
+	return fingerprint[:]
 }
 
 func (b *Backuper) restoreBackupRelatedDir(backupName, backupPrefixDir, destinationDir string, disks []clickhouse.Disk, skipPatterns []string) error {

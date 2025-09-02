@@ -40,7 +40,7 @@ var (
 	ErrBackupIsAlreadyExists = errors.New("backup is already exists")
 )
 
-func (b *Backuper) Download(backupName string, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, resume bool, hardlinkExistsFiles bool, backupVersion string, commandId int) error {
+func (b *Backuper) Download(backupName string, tablePattern string, partitions []string, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume bool, hardlinkExistsFiles bool, backupVersion string, commandId int) error {
 	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "download"); pidCheckErr != nil {
 		return pidCheckErr
 	}
@@ -65,6 +65,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		return fmt.Errorf("`download_concurrency` shall be more than zero")
 	}
 	b.adjustResumeFlag(resume)
+
 	if backupName == "" {
 		remoteBackups := b.CollectRemoteBackups(ctx, "all")
 		_ = b.PrintBackup(remoteBackups, "all", "text")
@@ -138,7 +139,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	tablesForDownload := parseTablePatternForDownload(remoteBackup.Tables, tablePattern)
 
 	if !schemaOnly && !b.cfg.General.DownloadByPart && remoteBackup.RequiredBackup != "" {
-		err := b.Download(remoteBackup.RequiredBackup, tablePattern, partitions, schemaOnly, rbacOnly, configsOnly, b.resume, hardlinkExistsFiles, backupVersion, commandId)
+		err := b.Download(remoteBackup.RequiredBackup, tablePattern, partitions, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, b.resume, hardlinkExistsFiles, backupVersion, commandId)
 		if err != nil && !errors.Is(err, ErrBackupIsAlreadyExists) {
 			return err
 		}
@@ -167,7 +168,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 
 	log.Debug().Str("backup", backupName).Msgf("prepare table METADATA concurrent semaphore with concurrency=%d len(tablesForDownload)=%d", b.cfg.General.DownloadConcurrency, len(tablesForDownload))
 	tableMetadataAfterDownload := make(ListOfTables, len(tablesForDownload))
-	doDownloadData := !schemaOnly && !rbacOnly && !configsOnly
+	doDownloadData := !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly
 	if doDownloadData || schemaOnly {
 		metadataGroup, metadataCtx := errgroup.WithContext(ctx)
 		metadataGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))
@@ -236,18 +237,25 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			return fmt.Errorf("one of Download go-routine return error: %v", err)
 		}
 	}
-	var rbacSize, configSize uint64
-	if rbacOnly || rbacOnly == configsOnly {
+	var rbacSize, configSize, namedCollectionsSize uint64
+	if rbacOnly || rbacOnly == configsOnly == namedCollectionsOnly == false {
 		rbacSize, err = b.downloadRBACData(ctx, remoteBackup)
 		if err != nil {
 			return fmt.Errorf("download RBAC error: %v", err)
 		}
 	}
 
-	if configsOnly || rbacOnly == configsOnly {
+	if configsOnly || rbacOnly == configsOnly == namedCollectionsOnly == false {
 		configSize, err = b.downloadConfigData(ctx, remoteBackup)
 		if err != nil {
 			return fmt.Errorf("download CONFIGS error: %v", err)
+		}
+	}
+
+	if namedCollectionsOnly || rbacOnly == configsOnly == namedCollectionsOnly == false {
+		namedCollectionsSize, err = b.downloadNamedCollectionsData(ctx, remoteBackup)
+		if err != nil {
+			return fmt.Errorf("download NAMED COLLECTIONS error: %v", err)
 		}
 	}
 
@@ -301,7 +309,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		"backup":           backupName,
 		"operation":        "download",
 		"duration":         utils.HumanizeDuration(time.Since(startDownload)),
-		"download_size":    utils.FormatBytes(dataSize + metadataSize + rbacSize + configSize),
+		"download_size":    utils.FormatBytes(dataSize + metadataSize + rbacSize + configSize + namedCollectionsSize),
 		"object_disk_size": utils.FormatBytes(backupMetadata.ObjectDiskSize),
 		"version":          backupVersion,
 	}).Msg("done")
@@ -568,6 +576,10 @@ func (b *Backuper) downloadConfigData(ctx context.Context, remoteBackup storage.
 	return b.downloadBackupRelatedDir(ctx, remoteBackup, "configs")
 }
 
+func (b *Backuper) downloadNamedCollectionsData(ctx context.Context, remoteBackup storage.Backup) (uint64, error) {
+	return b.downloadBackupRelatedDir(ctx, remoteBackup, "named_collections")
+}
+
 func (b *Backuper) downloadBackupRelatedDir(ctx context.Context, remoteBackup storage.Backup, prefix string) (uint64, error) {
 	localDir := path.Join(b.DefaultDataPath, "backup", remoteBackup.BackupName, prefix)
 
@@ -596,6 +608,7 @@ func (b *Backuper) downloadBackupRelatedDir(ctx context.Context, remoteBackup st
 		if b.resume {
 			b.resumableState.AppendToState(remoteSource, downloadedBytes)
 		}
+		log.Debug().Str("remoteSource", remoteSource).Str("operation", "downloadBackupRelatedDir").Msg("done")
 		return uint64(downloadedBytes), nil
 	}
 	remoteFileInfo, err := b.dst.StatFile(ctx, remoteSource)
@@ -614,6 +627,7 @@ func (b *Backuper) downloadBackupRelatedDir(ctx context.Context, remoteBackup st
 	if b.resume {
 		b.resumableState.AppendToState(remoteSource, remoteFileInfo.Size())
 	}
+	log.Debug().Str("remoteSource", remoteSource).Str("operation", "downloadBackupRelatedDir").Msg("done")
 	return uint64(remoteFileInfo.Size()), nil
 }
 

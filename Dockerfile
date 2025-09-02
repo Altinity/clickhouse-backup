@@ -15,7 +15,7 @@ RUN rm -fv /etc/apt/sources.list.d/clickhouse.list && \
     echo "deb https://ppa.launchpadcontent.net/longsleep/golang-backports/ubuntu ${DISTRIB_CODENAME} main" > /etc/apt/sources.list.d/golang.list && \
     echo "deb-src https://ppa.launchpadcontent.net/longsleep/golang-backports/ubuntu ${DISTRIB_CODENAME} main" >> /etc/apt/sources.list.d/golang.list && \
     ( apt-get update || true ) && \
-    apt-get install -y --no-install-recommends libc-dev golang-1.24 make git gcc musl-dev musl-tools && \
+    apt-get install -y --no-install-recommends libc-dev golang-1.25 make git gcc musl-dev musl-tools && \
 # todo ugly fix for ugly fix, musl.cc is not available from github runner \
     DISTRIB_RELEASE=$(cat /etc/lsb-release | grep DISTRIB_RELEASE | cut -d "=" -f 2) && \
     echo ${DISTRIB_RELEASE} && \
@@ -26,11 +26,11 @@ RUN rm -fv /etc/apt/sources.list.d/clickhouse.list && \
     tar -xvf /root/aarch64-linux-musl-cross.tgz -C /root/ && \
     mkdir -p /root/go/
 
-RUN ln -nsfv /usr/lib/go-1.24/bin/go /usr/bin/go
+RUN ln -nsfv /usr/lib/go-1.25/bin/go /usr/bin/go
 VOLUME /root/.cache/go
 ENV GOCACHE=/root/.cache/go
 ENV GOPATH=/root/go/
-ENV GOROOT=/usr/lib/go-1.24/
+ENV GOROOT=/usr/lib/go-1.25/
 RUN go env
 WORKDIR /src/
 # cache modules when go.mod go.sum changed
