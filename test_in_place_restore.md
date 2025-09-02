@@ -30,7 +30,7 @@ This document outlines how to test the newly implemented in-place restore functi
 ### Basic Compilation Test
 ```bash
 # Test that the code compiles
-cd /home/minguyen/workspace/clickhouse-backup
+cd ~/workspace/clickhouse-backup
 go build ./cmd/clickhouse-backup
 ```
 
