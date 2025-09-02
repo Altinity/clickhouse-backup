@@ -21,6 +21,7 @@ type BackupMetadata struct {
 	MetadataSize            uint64            `json:"metadata_size"`
 	RBACSize                uint64            `json:"rbac_size,omitempty"`
 	ConfigSize              uint64            `json:"config_size,omitempty"`
+	NamedCollectionsSize    uint64            `json:"named_collections_size,omitempty"`
 	CompressedSize          uint64            `json:"compressed_size,omitempty"`
 	Databases               []DatabasesMeta   `json:"databases,omitempty"`
 	Tables                  []TableTitle      `json:"tables"`

@@ -1,3 +1,17 @@
+# v2.6.34
+IMPROVEMENTS
+- add full support for backup and restore of `named collections`, which can be stored in `keeper` or on the `local` filesystem. fix [961](https://github.com/Altinity/clickhouse-backup/issues/961) 
+- add `--named-collections`, `--named-collections-only` flag to `create_remote` and `restore_remote` commands.
+- add `named_collections_backup_always` option to the `general` config section.
+- add named collection size to the backup list output and API.
+- add support for named collections parameters in API handlers.
+- switch to Go 1.25.
+- update default ClickHouse version to 25.8 and add it to the test matrix.
+
+BUG FIXES
+- fix restore schema on cluster for VIEW, fix [1199](https://github.com/Altinity/clickhouse-backup/issues/1199).
+- disable free space check when using `--hardlink-exists-files`, fix [1198](https://github.com/Altinity/clickhouse-backup/issues/1198)
+
 # v2.6.33
 BUG FIXES
 - add creation integration tables for `POST /restart` and `kill -SIGHUP` reaction, fix [1195](https://github.com/Altinity/clickhouse-backup/issues/1195)

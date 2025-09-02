@@ -9,7 +9,7 @@ rm -rf "${CUR_DIR}/_coverage_/*"
 
 source "${CUR_DIR}/.env"
 
-export CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION:-25.3}
+export CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION:-25.8}
 if [[ "${CLICKHOUSE_VERSION}" =~ ^2[1-9]+ || "${CLICKHOUSE_VERSION}" == "head" ]]; then
   export CLICKHOUSE_IMAGE=${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server}
 else
@@ -122,4 +122,4 @@ if [[ "1" == "${CLEAN_AFTER:-0}" || "0" == "${TEST_FAILED}" ]]; then
   done
 fi
 
-docker buildx prune -f --filter=until=1h  --keep-storage=1G
+docker buildx prune -f --filter=until=1h --max-used-space=5G

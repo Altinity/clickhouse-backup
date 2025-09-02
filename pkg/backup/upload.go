@@ -34,7 +34,7 @@ import (
 	"github.com/yargevad/filepathx"
 )
 
-func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFromRemote, tablePattern string, partitions, skipProjections []string, schemaOnly, rbacOnly, configsOnly, resume bool, backupVersion string, commandId int) error {
+func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFromRemote, tablePattern string, partitions, skipProjections []string, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume bool, backupVersion string, commandId int) error {
 	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "upload"); pidCheckErr != nil {
 		return pidCheckErr
 	}
@@ -143,7 +143,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	uploadGroup, uploadCtx := errgroup.WithContext(ctx)
 	uploadGroup.SetLimit(int(b.cfg.General.UploadConcurrency))
 
-	doUploadData := !schemaOnly && !rbacOnly && !configsOnly
+	doUploadData := !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly
 
 	for i, table := range tablesForUpload {
 		start := time.Now()
@@ -197,15 +197,21 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	}
 
 	// upload rbac for backup, if not configsOnly
-	if rbacOnly || configsOnly == rbacOnly {
+	if rbacOnly || configsOnly == rbacOnly == namedCollectionsOnly == false {
 		if backupMetadata.RBACSize, err = b.uploadRBACData(ctx, backupName); err != nil {
 			return fmt.Errorf("b.uploadRBACData return error: %v", err)
 		}
 	}
 	// upload configs for backup, if not rbacOnly
-	if configsOnly || configsOnly == rbacOnly {
+	if configsOnly || configsOnly == rbacOnly == namedCollectionsOnly == false {
 		if backupMetadata.ConfigSize, err = b.uploadConfigData(ctx, backupName); err != nil {
 			return fmt.Errorf("b.uploadConfigData return error: %v", err)
+		}
+	}
+	// Handle named collections
+	if namedCollectionsOnly || configsOnly == rbacOnly == namedCollectionsOnly == false {
+		if backupMetadata.ConfigSize, err = b.uploadNamedCollections(ctx, backupName); err != nil {
+			return fmt.Errorf("b.uploadNamedCollections return error: %v", err)
 		}
 	}
 	//upload embedded .backup file
@@ -439,6 +445,22 @@ func (b *Backuper) uploadRBACData(ctx context.Context, backupName string) (uint6
 	return b.uploadBackupRelatedDir(ctx, rbacBackupPath, accessFilesGlobPattern, remoteRBACArchive)
 }
 
+func (b *Backuper) uploadNamedCollections(ctx context.Context, backupName string) (uint64, error) {
+	backupPath := b.DefaultDataPath
+	namedCollectionsBackupPath := path.Join(backupPath, "backup", backupName, "named_collections")
+	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
+		backupPath = b.EmbeddedBackupDataPath
+		namedCollectionsBackupPath = path.Join(backupPath, backupName, "named_collections")
+	}
+	namedCollectionsGlobPattern := path.Join(namedCollectionsBackupPath, "*.*")
+	if b.cfg.GetCompressionFormat() == "none" {
+		remoteNamedCollectionsDir := path.Join(backupName, "named_collections")
+		return b.uploadBackupRelatedDir(ctx, namedCollectionsBackupPath, namedCollectionsGlobPattern, remoteNamedCollectionsDir)
+	}
+	remoteNamedCollectionsArchive := path.Join(backupName, fmt.Sprintf("named_collections.%s", b.cfg.GetArchiveExtension()))
+	return b.uploadBackupRelatedDir(ctx, namedCollectionsBackupPath, namedCollectionsGlobPattern, remoteNamedCollectionsArchive)
+}
+
 func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelatedDir, localFilesGlobPattern, destinationRemote string) (uint64, error) {
 	if _, err := os.Stat(localBackupRelatedDir); os.IsNotExist(err) {
 		return 0, nil
@@ -451,7 +473,7 @@ func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelate
 	var localFiles []string
 	var err error
 	if localFiles, err = filepathx.Glob(localFilesGlobPattern); err != nil || localFiles == nil || len(localFiles) == 0 {
-		if !b.cfg.General.RBACBackupAlways && !b.cfg.General.ConfigBackupAlways {
+		if !b.cfg.General.RBACBackupAlways && !b.cfg.General.ConfigBackupAlways && !b.cfg.General.NamedCollectionsBackupAlways {
 			return 0, fmt.Errorf("list %s return list=%v with err=%v", localFilesGlobPattern, localFiles, err)
 		}
 		log.Warn().Msgf("list %s return list=%v with err=%v", localFilesGlobPattern, localFiles, err)
@@ -469,33 +491,33 @@ func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelate
 	if b.cfg.GetCompressionFormat() == "none" {
 		remoteUploadedBytes := int64(0)
 		if remoteUploadedBytes, err = b.dst.UploadPath(ctx, localBackupRelatedDir, localFiles, destinationRemote, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter, b, b.cfg.General.UploadMaxBytesPerSecond); err != nil {
-			return 0, fmt.Errorf("can't RBAC or config upload %s: %v", destinationRemote, err)
+			return 0, fmt.Errorf("can't uploadBackupRelatedDir upload %s: %v", destinationRemote, err)
 		}
 		if b.resume {
 			b.resumableState.AppendToState(destinationRemote, remoteUploadedBytes)
 		}
+		log.Debug().Str("destinationRemote", destinationRemote).Str("operation", "uploadBackupRelatedDir").Msg("done")
 		return uint64(remoteUploadedBytes), nil
 	}
 	retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
-	err = retry.RunCtx(ctx, func(ctx context.Context) error {
-		return b.dst.UploadCompressedStream(ctx, localBackupRelatedDir, localFiles, destinationRemote, b.cfg.General.UploadMaxBytesPerSecond)
-	})
-	if err != nil {
-		return 0, fmt.Errorf("can't RBAC or config upload compressed %s: %v", destinationRemote, err)
-	}
-
 	var remoteUploaded storage.RemoteFile
-	retry = retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 	err = retry.RunCtx(ctx, func(ctx context.Context) error {
-		remoteUploaded, err = b.dst.StatFile(ctx, destinationRemote)
-		return err
+		var uploadErr error
+		if uploadErr = b.dst.UploadCompressedStream(ctx, localBackupRelatedDir, localFiles, destinationRemote, b.cfg.General.UploadMaxBytesPerSecond); uploadErr != nil {
+			return fmt.Errorf("can't uploadBackupRelatedDir compressed %s: %v", destinationRemote, uploadErr)
+		}
+		if remoteUploaded, uploadErr = b.dst.StatFile(ctx, destinationRemote); uploadErr != nil {
+			return fmt.Errorf("can't check uploadBackupRelatedDir destinationRemote: %s, error: %v", destinationRemote, uploadErr)
+		}
+		return nil
 	})
 	if err != nil {
-		return 0, fmt.Errorf("can't check uploaded destinationRemote: %s, error: %v", destinationRemote, err)
+		return 0, err
 	}
 	if b.resume {
 		b.resumableState.AppendToState(destinationRemote, remoteUploaded.Size())
 	}
+	log.Debug().Str("destinationRemote", destinationRemote).Str("operation", "uploadBackupRelatedDir").Msg("done")
 	return uint64(remoteUploaded.Size()), nil
 }
 
