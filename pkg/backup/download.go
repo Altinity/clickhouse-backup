@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -202,6 +203,31 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			return reBalanceErr
 		}
 		b.filterPartsAndFilesByDisk(tableMetadataAfterDownload, disks)
+		actualConcurrency := b.cfg.GetOptimalDownloadConcurrency()
+		
+		// Add compression format CPU impact analysis
+		compressionFormat := b.cfg.GetCompressionFormat()
+		cpuIntensiveCompression := compressionFormat == "zstd" || compressionFormat == "brotli" || compressionFormat == "xz"
+		
+		log.Info().Fields(map[string]interface{}{
+			"backup_name": backupName,
+			"operation": "download_performance_analysis",
+			"configured_concurrency": b.cfg.General.DownloadConcurrency,
+			"actual_concurrency": actualConcurrency,
+			"storage_type": b.cfg.General.RemoteStorage,
+			"cpu_count": runtime.NumCPU(),
+			"tables_count": len(tableMetadataAfterDownload),
+			"compression_format": compressionFormat,
+			"cpu_intensive_compression": cpuIntensiveCompression,
+			"performance_ratio": float64(b.cfg.General.DownloadConcurrency) / float64(runtime.NumCPU()),
+			"compression_impact": func() string {
+				if cpuIntensiveCompression {
+					return fmt.Sprintf("High CPU compression detected (%s). Consider reducing concurrency to ~%d for CPU-bound workloads", compressionFormat, runtime.NumCPU())
+				}
+				return "Compression format has minimal CPU impact"
+			}(),
+		}).Msg("download concurrency diagnostics")
+		
 		log.Debug().Str("backupName", backupName).Msgf("prepare table DATA concurrent semaphore with concurrency=%d len(tableMetadataAfterDownload)=%d", b.cfg.General.DownloadConcurrency, len(tableMetadataAfterDownload))
 		dataGroup, dataCtx := errgroup.WithContext(ctx)
 		dataGroup.SetLimit(int(b.cfg.General.DownloadConcurrency))

@@ -266,6 +266,16 @@ func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath stri
 			partSize += max(1, (remoteSize%s.Config.MaxPartsCount)/s.Config.MaxPartsCount)
 		}
 		downloader.PartSize = AdjustValueByRange(partSize, 5*1024*1024, 5*1024*1024*1024)
+		
+		log.Info().Fields(map[string]interface{}{
+			"operation": "s3_multipart_download_setup",
+			"key": key,
+			"file_size_mb": remoteSize / (1024 * 1024),
+			"s3_concurrency": s.Concurrency,
+			"buffer_size_kb": bufferSize / 1024,
+			"part_size_mb": downloader.PartSize / (1024 * 1024),
+			"estimated_parts": (remoteSize + downloader.PartSize - 1) / downloader.PartSize,
+		}).Msg("S3 download performance diagnostics")
 
 		_, err = downloader.Download(ctx, writer, &s3.GetObjectInput{
 			Bucket: aws.String(s.Config.Bucket),
