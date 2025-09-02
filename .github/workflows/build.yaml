@@ -49,8 +49,16 @@ jobs:
       - name: Build clickhouse-backup binary
         id: make-race
         env:
-          GOROOT: ${{ env.GOROOT_1_24_X64 }}
+          GOROOT: ${{ env.GOROOT_1_25_X64 }}
         run: |
+          echo "=== Go Environment Diagnostics ==="
+          echo "Expected Go version: ${{ matrix.golang-version }}"
+          echo "GOROOT environment: ${{ env.GOROOT_1_25_X64 }}"
+          echo "Actual go version:"
+          go version
+          echo "Actual GOROOT:"
+          go env GOROOT
+          echo "================================"
           make build/linux/amd64/clickhouse-backup build/linux/arm64/clickhouse-backup
           make build/linux/amd64/clickhouse-backup-fips build/linux/arm64/clickhouse-backup-fips 
           make build-race build-race-fips config test
@@ -170,8 +178,16 @@ jobs:
           sudo chmod -Rv +rx test/testflows/clickhouse_backup/_instances
       - name: Format testflows coverage
         env:
-          GOROOT: ${{ env.GOROOT_1_24_X64 }}
+          GOROOT: ${{ env.GOROOT_1_25_X64 }}
         run: |
+          echo "=== TestFlows Coverage Go Environment ==="
+          echo "Expected Go version: ${{ matrix.golang-version }}"
+          echo "GOROOT environment: ${{ env.GOROOT_1_25_X64 }}"
+          echo "Actual go version:"
+          go version
+          echo "Actual GOROOT:"
+          go env GOROOT
+          echo "========================================"
           sudo chmod -Rv a+rw test/testflows/_coverage_/
           ls -la test/testflows/_coverage_
           go env
@@ -252,7 +268,7 @@ jobs:
       - name: Running integration tests
         env:
           RUN_PARALLEL: 4
-          GOROOT: ${{ env.GOROOT_1_24_X64 }}
+          GOROOT: ${{ env.GOROOT_1_25_X64 }}
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
           # options for advanced debug CI/CD
           # RUN_TESTS: "^TestSkipDisk$"
@@ -278,8 +294,18 @@ jobs:
           QA_GCS_OVER_S3_BUCKET: ${{ secrets.QA_GCS_OVER_S3_BUCKET }}
         run: |
           set -xe
+          echo "=== Integration Test Environment Diagnostics ==="
+          echo "Expected Go version: ${{ matrix.golang-version }}"
+          echo "GOROOT environment: ${{ env.GOROOT_1_25_X64 }}"
+          echo "Actual go version:"
+          go version
+          echo "Actual GOROOT:"
+          go env GOROOT
+          echo "Go environment variables:"
+          go env | grep -E "GOROOT|GOCACHE|GOPATH|GOMODCACHE"
           echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"
           echo "GCS_TESTS=${GCS_TESTS}"
+          echo "================================================="
 
           chmod +x $(pwd)/clickhouse-backup/clickhouse-backup*
 
@@ -338,8 +364,16 @@ jobs:
 
       - name: Format integration coverage
         env:
-          GOROOT: ${{ env.GOROOT_1_24_X64 }}
+          GOROOT: ${{ env.GOROOT_1_25_X64 }}
         run: |
+          echo "=== Coverage Format Go Environment ==="
+          echo "Expected Go version: ${{ matrix.golang-version }}"
+          echo "GOROOT environment: ${{ env.GOROOT_1_25_X64 }}"
+          echo "Actual go version:"
+          go version
+          echo "Actual GOROOT:"
+          go env GOROOT
+          echo "====================================="
           sudo chmod -Rv a+rw test/integration/_coverage_/
           ls -la test/integration/_coverage_ 
           go tool covdata textfmt -i test/integration/_coverage_/ -o test/integration/_coverage_/coverage.out

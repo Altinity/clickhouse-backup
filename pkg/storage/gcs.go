@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"path"
+	"runtime"
 	"strings"
 	"time"
 
@@ -284,7 +285,11 @@ func (gcs *GCS) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadC
 		"pool_max_idle": gcs.clientPool.Config.MaxIdle,
 		"pool_active": gcs.clientPool.GetNumActive(),
 		"pool_idle": gcs.clientPool.GetNumIdle(),
+		"go_version": runtime.Version(),
 	}
+	
+	// Go 1.25 Runtime Diagnostics for CI debugging
+	log.Debug().Fields(poolStats).Msg("GCS download starting with Go 1.25 runtime diagnostics")
 	
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
 	borrowTime := time.Since(startTime)
