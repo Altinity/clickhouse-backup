@@ -1907,6 +1907,15 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 	if !strings.Contains(storageType, "keeper") && len(jsonlFiles) > 0 {
 		return fmt.Errorf("can't restore %v into named_collections_storage/type=%s", jsonlFiles, storageType)
 	}
+
+	// Check if storage is encrypted
+	isEncrypted := false
+	keyHex := ""
+	if key, exists := settings["key_hex"]; exists && key != "" {
+		isEncrypted = true
+		keyHex = key
+	}
+
 	// Handle JSONL files for keeper storage
 	if len(jsonlFiles) > 0 {
 		// Connect to keeper for restoring JSONL files
@@ -1924,19 +1933,39 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 
 		// Restore each JSONL file using keeper.Restore
 		for _, jsonlFile := range jsonlFiles {
-			log.Info().Msgf("keeper.Restore(%s) -> %s", jsonlFile, keeperPath)
-			if restoreErr := k.Restore(jsonlFile, keeperPath); restoreErr != nil {
-				return fmt.Errorf("failed to keeper.Restore %s: %v", jsonlFile, restoreErr)
+			if isEncrypted {
+				file, openErr := os.Open(jsonlFile)
+				if openErr != nil {
+					return openErr
+				}
+				scanner := bufio.NewScanner(file)
+				for scanner.Scan() {
+					line := scanner.Bytes()
+					var node keeper.DumpNode
+					if err := json.Unmarshal(line, &node); err != nil {
+						return fmt.Errorf("failed to unmarshal from %s: %v", jsonlFile, err)
+					}
+					decryptedNode, err := b.decryptNamedCollectionKeeperJSON(node, keyHex)
+					if err != nil {
+						return err
+					}
+					if err = k.Put(path.Join(keeperPath, decryptedNode.Path), []byte(decryptedNode.Value)); err != nil {
+						return fmt.Errorf("keeper.Put failed for %s: %v", decryptedNode.Path, err)
+					}
+				}
+				if err := scanner.Err(); err != nil {
+					return fmt.Errorf("scanner error on %s: %v", jsonlFile, err)
+				}
+				if err := file.Close(); err != nil {
+					log.Warn().Msgf("can't close %s error: %v", jsonlFile, err)
+				}
+			} else {
+				log.Info().Msgf("keeper.Restore(%s) -> %s", jsonlFile, keeperPath)
+				if restoreErr := k.Restore(jsonlFile, keeperPath); restoreErr != nil {
+					return fmt.Errorf("failed to keeper.Restore %s: %v", jsonlFile, restoreErr)
+				}
 			}
 		}
-	}
-
-	// Check if storage is encrypted
-	isEncrypted := false
-	keyHex := ""
-	if key, exists := settings["key_hex"]; exists && key != "" {
-		isEncrypted = true
-		keyHex = key
 	}
 
 	for _, sqlFile := range sqlFiles {
@@ -1996,10 +2025,31 @@ func (b *Backuper) decryptNamedCollectionFile(filePath, keyHex string) ([]byte, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to read encrypted file: %v", err)
 	}
+	decryptedData, err := b.decryptNamedCollectionData(data, keyHex)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %v", filePath, err)
+	}
+	return decryptedData, nil
+}
 
+// decryptNamedCollectionKeeperJSON decrypts an encrypted named collection keeper value
+func (b *Backuper) decryptNamedCollectionKeeperJSON(node keeper.DumpNode, keyHex string) (keeper.DumpNode, error) {
+	if node.Value == "" || len(node.Value) < 3 || !strings.HasPrefix(node.Value, "ENC") {
+		return node, nil
+	}
+	decryptedValue, err := b.decryptNamedCollectionData([]byte(node.Value), keyHex)
+	if err != nil {
+		return node, fmt.Errorf("path %s: %v", node.Path, err)
+	}
+	node.Value = string(decryptedValue)
+	return node, nil
+}
+
+// decryptNamedCollectionData decrypts an encrypted named collection data
+func (b *Backuper) decryptNamedCollectionData(data []byte, keyHex string) ([]byte, error) {
 	// 2. Check header signature
 	if len(data) < 3 || string(data[:3]) != "ENC" {
-		return nil, fmt.Errorf("%s does not have ENC encrypted header", filePath)
+		return nil, fmt.Errorf("does not have ENC encrypted header")
 	}
 	// Data is encrypted; proceed to parse header.
 	// Header format (version 2):
@@ -2011,12 +2061,12 @@ func (b *Backuper) decryptNamedCollectionFile(filePath, keyHex string) ([]byte, 
 	// [39..63]: reserved padding (zeros)
 
 	if len(data) < 64 {
-		return nil, fmt.Errorf("%s encrypted data is too short, missing header", filePath)
+		return nil, fmt.Errorf("encrypted data is too short, missing header")
 	}
 	// 3. Read version
 	version := binary.LittleEndian.Uint16(data[3:5])
 	if version != 2 {
-		return nil, fmt.Errorf("%s unsupported header version: %d", filePath, version)
+		return nil, fmt.Errorf("unsupported header version: %d", version)
 	}
 	// 4. Read algorithm and determine key length
 	algID := binary.LittleEndian.Uint16(data[5:7])
@@ -2029,7 +2079,7 @@ func (b *Backuper) decryptNamedCollectionFile(filePath, keyHex string) ([]byte, 
 	case 2:
 		keyLen = 32 // AES-256
 	default:
-		return nil, fmt.Errorf("%s unknown algorithm ID: %d, expected 0,1,2", filePath, algID)
+		return nil, fmt.Errorf("unknown algorithm ID: %d, expected 0,1,2", algID)
 	}
 
 	// 5. Extract IV from header
@@ -2041,7 +2091,7 @@ func (b *Backuper) decryptNamedCollectionFile(filePath, keyHex string) ([]byte, 
 		return nil, fmt.Errorf("invalid key hex: %v", err)
 	}
 	if len(key) != keyLen {
-		return nil, fmt.Errorf("%s, provided key does not match expected length for algorithm", filePath)
+		return nil, fmt.Errorf("provided key does not match expected length for algorithm")
 	}
 
 	// 7. (Optional) Verify key fingerprint
@@ -2049,14 +2099,14 @@ func (b *Backuper) decryptNamedCollectionFile(filePath, keyHex string) ([]byte, 
 	// Compute SipHash-128 of the key (using same seeds as ClickHouse) to verify.
 	calcFingerprint := computeFingerprint(key)
 	if subtle.ConstantTimeCompare(calcFingerprint, headerFingerprint) == 1 {
-		return nil, fmt.Errorf("%s key fingerprint does not match header. wrong key", filePath)
+		return nil, fmt.Errorf("key fingerprint does not match header. wrong key")
 	}
 
 	// 8. Decrypt the ciphertext
 	ciphertext := data[64:] // everything after the 64-byte header
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, fmt.Errorf("%s failed to create AES cipher: %v", filePath, err)
+		return nil, fmt.Errorf("failed to create AES cipher: %v", err)
 	}
 	// Use AES in CTR mode with the extracted IV:
 	stream := cipher.NewCTR(block, iv)
