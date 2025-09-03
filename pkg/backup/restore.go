@@ -1904,10 +1904,6 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 		return fmt.Errorf("failed to glob sql files: %v", err)
 	}
 
-	if !strings.Contains(storageType, "keeper") && len(jsonlFiles) > 0 {
-		return fmt.Errorf("can't restore %v into named_collections_storage/type=%s", jsonlFiles, storageType)
-	}
-
 	// Check if storage is encrypted
 	isEncrypted := false
 	keyHex := ""
@@ -1916,55 +1912,63 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 		keyHex = key
 	}
 
-	// Handle JSONL files for keeper storage
-	if len(jsonlFiles) > 0 {
-		// Connect to keeper for restoring JSONL files
-		k := &keeper.Keeper{}
-		if connErr := k.Connect(ctx, b.ch); connErr != nil {
-			return fmt.Errorf("can't connect to keeper: %v", connErr)
+	// Handle JSONL files
+	for _, jsonlFile := range jsonlFiles {
+		file, openErr := os.Open(jsonlFile)
+		if openErr != nil {
+			return openErr
 		}
-		defer k.Close()
-
-		// Get the keeper path from settings, fallback to default if not present
-		keeperPath := "/clickhouse/named_collections"
-		if pathSetting, exists := settings["path"]; exists && pathSetting != "" {
-			keeperPath = pathSetting
-		}
-
-		// Restore each JSONL file using keeper.Restore
-		for _, jsonlFile := range jsonlFiles {
-			if isEncrypted {
-				file, openErr := os.Open(jsonlFile)
-				if openErr != nil {
-					return openErr
-				}
-				scanner := bufio.NewScanner(file)
-				for scanner.Scan() {
-					line := scanner.Bytes()
-					var node keeper.DumpNode
-					if err := json.Unmarshal(line, &node); err != nil {
-						return fmt.Errorf("failed to unmarshal from %s: %v", jsonlFile, err)
-					}
-					decryptedNode, err := b.decryptNamedCollectionKeeperJSON(node, keyHex)
-					if err != nil {
-						return err
-					}
-					if err = k.Put(path.Join(keeperPath, decryptedNode.Path), []byte(decryptedNode.Value)); err != nil {
-						return fmt.Errorf("keeper.Put failed for %s: %v", decryptedNode.Path, err)
-					}
-				}
-				if err := scanner.Err(); err != nil {
-					return fmt.Errorf("scanner error on %s: %v", jsonlFile, err)
-				}
-				if err := file.Close(); err != nil {
-					log.Warn().Msgf("can't close %s error: %v", jsonlFile, err)
-				}
-			} else {
-				log.Info().Msgf("keeper.Restore(%s) -> %s", jsonlFile, keeperPath)
-				if restoreErr := k.Restore(jsonlFile, keeperPath); restoreErr != nil {
-					return fmt.Errorf("failed to keeper.Restore %s: %v", jsonlFile, restoreErr)
-				}
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			line := scanner.Bytes()
+			var node keeper.DumpNode
+			if err := json.Unmarshal(line, &node); err != nil {
+				return fmt.Errorf("failed to unmarshal from %s: %v", jsonlFile, err)
 			}
+			var sqlQuery string
+			if node.Value == "" {
+				continue
+			}
+			if isEncrypted {
+				decryptedNode, err := b.decryptNamedCollectionKeeperJSON(node, keyHex)
+				if err != nil {
+					return err
+				}
+				sqlQuery = decryptedNode.Value
+			} else {
+				sqlQuery = node.Value
+			}
+			sqlQuery = strings.TrimSpace(sqlQuery)
+			if sqlQuery == "" {
+				log.Warn().Msgf("Empty SQL content in line from: %s", jsonlFile)
+				continue
+			}
+
+			re := regexp.MustCompile(`(?i)CREATE\s+NAMED\s+COLLECTION\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)`)
+			matches := re.FindStringSubmatch(sqlQuery)
+			if len(matches) < 2 {
+				return fmt.Errorf("could not extract collection name from: %s, %s skipping", jsonlFile, sqlQuery)
+			}
+			collectionName := matches[1]
+
+			// Drop existing collection first
+			dropQuery := fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s", collectionName)
+			if err := b.ch.QueryContext(ctx, dropQuery); err != nil {
+				return fmt.Errorf("failed to drop named collection %s: %v", collectionName, err)
+			}
+
+			// Create new collection
+			if err := b.ch.QueryContext(ctx, sqlQuery); err != nil {
+				return fmt.Errorf("failed to create named collection %s: %v", collectionName, err)
+			}
+
+			log.Info().Msgf("Restored SQL named collection from jsonl: %s", collectionName)
+		}
+		if err := scanner.Err(); err != nil {
+			return fmt.Errorf("scanner error on %s: %v", jsonlFile, err)
+		}
+		if err := file.Close(); err != nil {
+			log.Warn().Msgf("can't close %s error: %v", jsonlFile, err)
 		}
 	}
 
