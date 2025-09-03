@@ -39,7 +39,7 @@ func (KeeperLogToApexLogAdapter LogKeeperToApexLogAdapter) Printf(msg string, ar
 
 type DumpNode struct {
 	Path  string `json:"path"`
-	Value string `json:"value"`
+	Value []byte `json:"value"` // json encodes/decodes as base64 automatically
 }
 
 type Keeper struct {
@@ -150,7 +150,7 @@ func (k *Keeper) dumpNodeRecursive(prefix, nodePath string, f *os.File) (int, er
 	if err != nil {
 		return 0, err
 	}
-	bytes, err := k.writeJsonString(f, DumpNode{Path: strings.TrimPrefix(nodePath, k.root), Value: string(value)})
+	bytes, err := k.writeJsonString(f, DumpNode{Path: strings.TrimPrefix(nodePath, k.root), Value: value})
 	if err != nil {
 		return 0, err
 	}
@@ -204,13 +204,13 @@ func (k *Keeper) Restore(dumpFile, prefix string) error {
 		version := int32(0)
 		_, stat, err := k.conn.Get(node.Path)
 		if err != nil {
-			_, err = k.conn.Create(node.Path, []byte(node.Value), 0, zk.WorldACL(zk.PermAll))
+			_, err = k.conn.Create(node.Path, node.Value, 0, zk.WorldACL(zk.PermAll))
 			if err != nil {
 				return fmt.Errorf("can't create znode %s, error: %v", node.Path, err)
 			}
 		} else {
 			version = stat.Version
-			_, err = k.conn.Set(node.Path, []byte(node.Value), version)
+			_, err = k.conn.Set(node.Path, node.Value, version)
 		}
 	}
 
@@ -230,7 +230,7 @@ func (k *Keeper) Walk(prefix, relativePath string, recursive bool, callback Walk
 		return fmt.Errorf("k.Walk->get(%s) = %v, err = %v", nodePath, string(value), err)
 	}
 	var isDone bool
-	callbackNode := DumpNode{Path: nodePath, Value: string(value)}
+	callbackNode := DumpNode{Path: nodePath, Value: value}
 	if isDone, err = callback(callbackNode); err != nil {
 		return fmt.Errorf("k.Walk->callback(%v) error: %v", callbackNode, err)
 	}

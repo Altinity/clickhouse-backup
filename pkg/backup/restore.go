@@ -1543,10 +1543,10 @@ func (b *Backuper) restoreRBACResolveAllConflicts(ctx context.Context, backupNam
 					continue
 				}
 				if strings.HasPrefix(data.Path, "uuid/") {
-					if resolveErr := b.resolveRBACConflictIfExist(ctx, data.Value, accessPath, version, k, replicatedUserDirectories, dropExists); resolveErr != nil {
+					if resolveErr := b.resolveRBACConflictIfExist(ctx, string(data.Value), accessPath, version, k, replicatedUserDirectories, dropExists); resolveErr != nil {
 						return resolveErr
 					}
-					log.Debug().Msgf("%s:%s b.resolveRBACConflictIfExist(%s) no error", fPath, data.Path, data.Value)
+					log.Debug().Msgf("%s:%s b.resolveRBACConflictIfExist(%s) no error", fPath, data.Path, string(data.Value))
 				}
 
 			}
@@ -1655,10 +1655,10 @@ func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, a
 				continue
 			}
 			walkErr := k.Walk(replicatedAccessPath, "uuid", true, func(node keeper.DumpNode) (bool, error) {
-				if node.Value == "" {
+				if len(node.Value) == 0 {
 					return false, nil
 				}
-				if checkRBACExists(node.Value) {
+				if checkRBACExists(string(node.Value)) {
 					existsObjectId := strings.TrimPrefix(node.Path, path.Join(replicatedAccessPath, "uuid")+"/")
 					existsObjectIds = append(existsObjectIds, existsObjectId)
 					return true, nil
@@ -1926,7 +1926,7 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 				return fmt.Errorf("failed to unmarshal from %s: %v", jsonlFile, unmarshalErr)
 			}
 			var sqlQuery string
-			if node.Value == "" {
+			if len(node.Value) == 0 {
 				continue
 			}
 			if isEncrypted {
@@ -1934,9 +1934,9 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 				if decryptErr != nil {
 					return decryptErr
 				}
-				sqlQuery = decryptedNode.Value
+				sqlQuery = string(decryptedNode.Value)
 			} else {
-				sqlQuery = node.Value
+				sqlQuery = string(node.Value)
 			}
 			sqlQuery = strings.TrimSpace(sqlQuery)
 			if sqlQuery == "" {
@@ -2050,16 +2050,16 @@ func (b *Backuper) decryptNamedCollectionFile(filePath, keyHex string) ([]byte, 
 
 // decryptNamedCollectionKeeperJSON decrypts an encrypted named collection keeper value
 func (b *Backuper) decryptNamedCollectionKeeperJSON(node keeper.DumpNode, keyHex string) (keeper.DumpNode, error) {
-	log.Info().Str("value", node.Value).Msg("SUKA1")
-	if node.Value == "" || len(node.Value) < 3 || !strings.HasPrefix(node.Value, "ENC") {
+	log.Info().Str("value", string(node.Value)).Msg("SUKA1")
+	if len(node.Value) == 0 || len(node.Value) < 3 || !strings.HasPrefix(string(node.Value), "ENC") {
 		return node, fmt.Errorf("does not have ENC encrypted header")
 	}
-	decryptedValue, err := b.decryptNamedCollectionData([]byte(node.Value), keyHex)
+	decryptedValue, err := b.decryptNamedCollectionData(node.Value, keyHex)
 	if err != nil {
 		return node, fmt.Errorf("path %s: %v", node.Path, err)
 	}
-	node.Value = string(decryptedValue)
-	log.Info().Str("value", node.Value).Msg("SUKA2")
+	node.Value = decryptedValue
+	log.Info().Str("value", string(node.Value)).Msg("SUKA2")
 	return node, nil
 }
 
