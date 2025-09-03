@@ -3467,7 +3467,6 @@ func TestNamedCollections(t *testing.T) {
 				cmd = fmt.Sprintf("%sclickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload %s", backupEnvVar, backupArg)
 				env.DockerExecNoError(r, "clickhouse-backup", "bash", "-c", cmd)
 			}
-
 			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupArg)
 
 			// cleanup before restore

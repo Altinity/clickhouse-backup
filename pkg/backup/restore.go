@@ -757,7 +757,7 @@ func (b *Backuper) dropExistsRBAC(ctx context.Context, kind string, name string,
 	}
 	walkErr := k.Walk(prefix, keeperRBACTypePrefix, true, func(node keeper.DumpNode) (bool, error) {
 		for _, rbacObjectId := range rbacObjectIds {
-			if node.Value == rbacObjectId {
+			if string(node.Value) == rbacObjectId {
 				deletedNodes = append(deletedNodes, node.Path)
 			}
 		}
@@ -1152,8 +1152,8 @@ func (b *Backuper) decryptNamedCollectionData(data []byte, keyHex string) ([]byt
 	// Compute SipHash-128 of the key (using same seeds as ClickHouse) to verify.
 	calcFingerprint := computeFingerprint(key)
 	if subtle.ConstantTimeCompare(calcFingerprint, headerFingerprint) != 1 {
-		// return nil, fmt.Errorf("key fingerprint does not match header. expected fingreprint=%#v actual=%#v", calcFingerprint, headerFingerprint)
-		log.Warn().Msgf("key fingerprint does not match header. expected fingreprint=%#v actual=%#v", calcFingerprint, headerFingerprint)
+		// log.Warn().Msgf("key fingerprint does not match header. expected fingreprint=%#v actual=%#v", calcFingerprint, headerFingerprint)
+		return nil, fmt.Errorf("key fingerprint does not match header. expected fingreprint=%#v actual=%#v", calcFingerprint, headerFingerprint)
 	}
 
 	// 8. Decrypt the ciphertext
