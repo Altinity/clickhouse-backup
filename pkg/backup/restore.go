@@ -1922,17 +1922,17 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 		for scanner.Scan() {
 			line := scanner.Bytes()
 			var node keeper.DumpNode
-			if err := json.Unmarshal(line, &node); err != nil {
-				return fmt.Errorf("failed to unmarshal from %s: %v", jsonlFile, err)
+			if unmarshalErr := json.Unmarshal(line, &node); unmarshalErr != nil {
+				return fmt.Errorf("failed to unmarshal from %s: %v", jsonlFile, unmarshalErr)
 			}
 			var sqlQuery string
 			if node.Value == "" {
 				continue
 			}
 			if isEncrypted {
-				decryptedNode, err := b.decryptNamedCollectionKeeperJSON(node, keyHex)
-				if err != nil {
-					return err
+				decryptedNode, decryptErr := b.decryptNamedCollectionKeeperJSON(node, keyHex)
+				if decryptErr != nil {
+					return decryptErr
 				}
 				sqlQuery = decryptedNode.Value
 			} else {
@@ -1954,7 +1954,7 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 			// Drop existing collection first
 			dropQuery := fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s", collectionName)
 			if b.cfg.General.RestoreSchemaOnCluster != "" {
-				dropQuery = fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s ON CLUSTER '%s'", collectionName, b.cfg.General.RestoreSchemaOnCluster)
+				dropQuery += fmt.Sprintf(" ON CLUSTER '%s'", b.cfg.General.RestoreSchemaOnCluster)
 			}
 			if err := b.ch.QueryContext(ctx, dropQuery); err != nil {
 				return fmt.Errorf("failed to drop named collection %s: %v", collectionName, err)
@@ -2008,14 +2008,14 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 		re := regexp.MustCompile(`(?i)CREATE\s+NAMED\s+COLLECTION\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)`)
 		matches := re.FindStringSubmatch(sqlQuery)
 		if len(matches) < 2 {
-			return fmt.Errorf("could not extract collection name from: %s, %s skipping", sqlFile, sqlQuery)
+			return fmt.Errorf("could not extract collection name from: %s, %s", sqlFile, sqlQuery)
 		}
 		collectionName := matches[1]
 
 		// Drop existing collection first
 		dropQuery := fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s", collectionName)
 		if b.cfg.General.RestoreSchemaOnCluster != "" {
-			dropQuery = fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s ON CLUSTER '%s'", collectionName, b.cfg.General.RestoreSchemaOnCluster)
+			dropQuery += fmt.Sprintf(" ON CLUSTER '%s'", b.cfg.General.RestoreSchemaOnCluster)
 		}
 		if err := b.ch.QueryContext(ctx, dropQuery); err != nil {
 			return fmt.Errorf("failed to drop named collection %s: %v", collectionName, err)
@@ -2050,14 +2050,16 @@ func (b *Backuper) decryptNamedCollectionFile(filePath, keyHex string) ([]byte, 
 
 // decryptNamedCollectionKeeperJSON decrypts an encrypted named collection keeper value
 func (b *Backuper) decryptNamedCollectionKeeperJSON(node keeper.DumpNode, keyHex string) (keeper.DumpNode, error) {
+	log.Info().Str("value", node.Value).Msg("SUKA1")
 	if node.Value == "" || len(node.Value) < 3 || !strings.HasPrefix(node.Value, "ENC") {
-		return node, nil
+		return node, fmt.Errorf("does not have ENC encrypted header")
 	}
 	decryptedValue, err := b.decryptNamedCollectionData([]byte(node.Value), keyHex)
 	if err != nil {
 		return node, fmt.Errorf("path %s: %v", node.Path, err)
 	}
 	node.Value = string(decryptedValue)
+	log.Info().Str("value", node.Value).Msg("SUKA2")
 	return node, nil
 }
 
@@ -2114,8 +2116,9 @@ func (b *Backuper) decryptNamedCollectionData(data []byte, keyHex string) ([]byt
 	headerFingerprint := data[7:23] // 16-byte fingerprint from header
 	// Compute SipHash-128 of the key (using same seeds as ClickHouse) to verify.
 	calcFingerprint := computeFingerprint(key)
-	if subtle.ConstantTimeCompare(calcFingerprint, headerFingerprint) == 1 {
-		return nil, fmt.Errorf("key fingerprint does not match header. wrong key")
+	if subtle.ConstantTimeCompare(calcFingerprint, headerFingerprint) != 1 {
+		// return nil, fmt.Errorf("key fingerprint does not match header. expected fingreprint=%#v actual=%#v", calcFingerprint, headerFingerprint)
+		log.Warn().Msgf("key fingerprint does not match header. expected fingreprint=%#v actual=%#v", calcFingerprint, headerFingerprint)
 	}
 
 	// 8. Decrypt the ciphertext
