@@ -1953,11 +1953,17 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 
 			// Drop existing collection first
 			dropQuery := fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s", collectionName)
+			if b.cfg.General.RestoreSchemaOnCluster != "" {
+				dropQuery = fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s ON CLUSTER '%s'", collectionName, b.cfg.General.RestoreSchemaOnCluster)
+			}
 			if err := b.ch.QueryContext(ctx, dropQuery); err != nil {
 				return fmt.Errorf("failed to drop named collection %s: %v", collectionName, err)
 			}
 
 			// Create new collection
+			if b.cfg.General.RestoreSchemaOnCluster != "" {
+				sqlQuery = strings.Replace(sqlQuery, " AS ", fmt.Sprintf(" ON CLUSTER '%s' AS ", b.cfg.General.RestoreSchemaOnCluster), 1)
+			}
 			if err := b.ch.QueryContext(ctx, sqlQuery); err != nil {
 				return fmt.Errorf("failed to create named collection %s: %v", collectionName, err)
 			}
@@ -2008,11 +2014,17 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 
 		// Drop existing collection first
 		dropQuery := fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s", collectionName)
+		if b.cfg.General.RestoreSchemaOnCluster != "" {
+			dropQuery = fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s ON CLUSTER '%s'", collectionName, b.cfg.General.RestoreSchemaOnCluster)
+		}
 		if err := b.ch.QueryContext(ctx, dropQuery); err != nil {
 			return fmt.Errorf("failed to drop named collection %s: %v", collectionName, err)
 		}
 
 		// Create new collection
+		if b.cfg.General.RestoreSchemaOnCluster != "" {
+			sqlQuery = strings.Replace(sqlQuery, " AS ", fmt.Sprintf(" ON CLUSTER '%s' AS ", b.cfg.General.RestoreSchemaOnCluster), 1)
+		}
 		if err := b.ch.QueryContext(ctx, sqlQuery); err != nil {
 			return fmt.Errorf("failed to create named collection %s: %v", collectionName, err)
 		}
