@@ -11,6 +11,7 @@ IMPROVEMENTS
 BUG FIXES
 - fix restore schema on cluster for VIEW, fix [1199](https://github.com/Altinity/clickhouse-backup/issues/1199).
 - disable free space check when using `--hardlink-exists-files`, fix [1198](https://github.com/Altinity/clickhouse-backup/issues/1198)
+- add chmod 0640 for `--hardlink-exists-files` during `download` and `restore_remote`, fix [1164](https://github.com/Altinity/clickhouse-backup/issues/1164)
 
 # v2.6.33
 BUG FIXES
