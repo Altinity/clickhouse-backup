@@ -3,7 +3,6 @@ package backup
 import (
 	"context"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 	"io/fs"
 	"os"
 	"path"
@@ -11,10 +10,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
+
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/custom"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/storage/enhanced"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage/object_disk"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 
@@ -299,7 +301,86 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 
 	b.dst = bd
 
-	backupList, err := bd.BackupList(ctx, true, backupName)
+	// Check if we should use enhanced delete operations
+	if b.shouldUseEnhancedDelete(backupName) {
+		return b.removeBackupRemoteEnhanced(ctx, backupName, *bd, start)
+	}
+
+	// Fall back to original implementation
+	return b.removeBackupRemoteOriginal(ctx, backupName, *bd, start)
+}
+
+// removeBackupRemoteEnhanced uses enhanced storage for optimized deletion
+func (b *Backuper) removeBackupRemoteEnhanced(ctx context.Context, backupName string, bd storage.BackupDestination, start time.Time) error {
+	// Validate configuration
+	if err := b.validateDeleteOptimizationConfig(); err != nil {
+		log.Warn().Err(err).Msg("invalid delete optimization config, falling back to original implementation")
+		return b.removeBackupRemoteOriginal(ctx, backupName, bd, start)
+	}
+
+	// Create enhanced storage wrapper
+	wrapperOpts := &enhanced.WrapperOptions{
+		EnableCache:     b.cfg.DeleteOptimizations.CacheEnabled,
+		CacheTTL:        b.cfg.DeleteOptimizations.CacheTTL.String(),
+		EnableMetrics:   true,
+		FallbackOnError: true,
+	}
+
+	enhancedStorage, err := enhanced.NewEnhancedStorageWrapper(&bd, b.cfg, wrapperOpts)
+	if err != nil {
+		log.Warn().Err(err).Msg("failed to create enhanced storage, falling back to original implementation")
+		return b.removeBackupRemoteOriginal(ctx, backupName, bd, start)
+	}
+	defer func() {
+		if err := enhancedStorage.Close(ctx); err != nil {
+			log.Warn().Err(err).Msg("error closing enhanced storage")
+		}
+	}()
+
+	// Get backup list
+	backupList, err := (&bd).BackupList(ctx, true, backupName)
+	if err != nil {
+		return err
+	}
+
+	for _, backup := range backupList {
+		if backup.BackupName == backupName {
+			// Clean embedded and object disks first
+			err = b.cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent(ctx, backup)
+			if err != nil {
+				return err
+			}
+
+			// Use enhanced deletion
+			err = enhancedStorage.EnhancedDeleteBackup(ctx, backupName)
+			if err != nil {
+				log.Warn().Err(err).Msg("enhanced delete failed, falling back to original implementation")
+				return b.removeBackupRemoteOriginal(ctx, backupName, bd, start)
+			}
+
+			// Log enhanced metrics
+			metrics := enhancedStorage.GetDeleteMetrics()
+			b.logEnhancedDeleteMetrics(metrics, backupName)
+
+			log.Info().Fields(map[string]interface{}{
+				"backup":          backupName,
+				"location":        "remote",
+				"operation":       "delete",
+				"duration":        utils.HumanizeDuration(time.Since(start)),
+				"enhanced":        true,
+				"files_processed": metrics.FilesProcessed,
+				"files_deleted":   metrics.FilesDeleted,
+				"throughput_mbps": metrics.ThroughputMBps,
+			}).Msg("done")
+			return nil
+		}
+	}
+	return fmt.Errorf("'%s' is not found on remote storage", backupName)
+}
+
+// removeBackupRemoteOriginal uses the original deletion implementation
+func (b *Backuper) removeBackupRemoteOriginal(ctx context.Context, backupName string, bd storage.BackupDestination, start time.Time) error {
+	backupList, err := (&bd).BackupList(ctx, true, backupName)
 	if err != nil {
 		return err
 	}
@@ -310,7 +391,7 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 				return err
 			}
 
-			if err = bd.RemoveBackupRemote(ctx, backup, b.cfg, b); err != nil {
+			if err = (&bd).RemoveBackupRemote(ctx, backup, b.cfg, b); err != nil {
 				log.Warn().Msgf("bd.RemoveBackup return error: %v", err)
 				return err
 			}
@@ -319,6 +400,7 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 				"location":  "remote",
 				"operation": "delete",
 				"duration":  utils.HumanizeDuration(time.Since(start)),
+				"enhanced":  false,
 			}).Msg("done")
 			return nil
 		}
@@ -393,6 +475,103 @@ func (b *Backuper) cleanBackupObjectDisks(ctx context.Context, backupName string
 	if err != nil {
 		return 0, err
 	}
+
+	// Check if we should use enhanced delete for object disks
+	if b.shouldUseEnhancedDelete(backupName) {
+		return b.cleanBackupObjectDisksEnhanced(ctx, backupName, objectDiskPath)
+	}
+
+	// Fall back to original implementation
+	return b.cleanBackupObjectDisksOriginal(ctx, backupName, objectDiskPath)
+}
+
+// cleanBackupObjectDisksEnhanced uses enhanced batch operations for object disk cleanup
+func (b *Backuper) cleanBackupObjectDisksEnhanced(ctx context.Context, backupName, objectDiskPath string) (uint, error) {
+	// Create enhanced storage wrapper
+	wrapperOpts := &enhanced.WrapperOptions{
+		EnableCache:     b.cfg.DeleteOptimizations.CacheEnabled,
+		EnableMetrics:   true,
+		FallbackOnError: true,
+	}
+
+	enhancedStorage, err := enhanced.NewEnhancedStorageWrapper(b.dst, b.cfg, wrapperOpts)
+	if err != nil {
+		log.Debug().Err(err).Msg("failed to create enhanced storage for object disk cleanup, using original method")
+		return b.cleanBackupObjectDisksOriginal(ctx, backupName, objectDiskPath)
+	}
+	defer func() {
+		if err := enhancedStorage.Close(ctx); err != nil {
+			log.Debug().Err(err).Msg("error closing enhanced storage for object disk cleanup")
+		}
+	}()
+
+	// Collect all file keys to delete
+	var filesToDelete []string
+	walkErr := b.dst.WalkAbsolute(ctx, path.Join(objectDiskPath, backupName), true, func(ctx context.Context, f storage.RemoteFile) error {
+		if b.dst.Kind() == "azblob" {
+			if f.Size() > 0 || !f.LastModified().IsZero() {
+				filesToDelete = append(filesToDelete, path.Join(backupName, f.Name()))
+			}
+		} else {
+			filesToDelete = append(filesToDelete, path.Join(backupName, f.Name()))
+		}
+		return nil
+	})
+
+	if walkErr != nil {
+		return 0, walkErr
+	}
+
+	if len(filesToDelete) == 0 {
+		return 0, nil
+	}
+
+	log.Info().
+		Str("backup", backupName).
+		Int("files_to_delete", len(filesToDelete)).
+		Msg("starting enhanced object disk cleanup")
+
+	// Use batch delete if supported
+	if enhancedStorage.SupportsBatchDelete() {
+		batchSize := enhancedStorage.GetOptimalBatchSize()
+		deletedCount := uint(0)
+
+		for i := 0; i < len(filesToDelete); i += batchSize {
+			end := i + batchSize
+			if end > len(filesToDelete) {
+				end = len(filesToDelete)
+			}
+
+			batch := filesToDelete[i:end]
+			result, err := enhancedStorage.DeleteBatch(ctx, batch)
+			if err != nil {
+				log.Warn().Err(err).Msg("batch delete failed, falling back to original method")
+				return b.cleanBackupObjectDisksOriginal(ctx, backupName, objectDiskPath)
+			}
+
+			deletedCount += uint(result.SuccessCount)
+
+			if len(result.FailedKeys) > 0 {
+				log.Warn().
+					Int("failed_count", len(result.FailedKeys)).
+					Msg("some files failed to delete in batch")
+			}
+		}
+
+		log.Info().
+			Str("backup", backupName).
+			Uint("deleted_count", deletedCount).
+			Msg("enhanced object disk cleanup completed")
+
+		return deletedCount, nil
+	}
+
+	// If batch delete not supported, fall back to original method
+	return b.cleanBackupObjectDisksOriginal(ctx, backupName, objectDiskPath)
+}
+
+// cleanBackupObjectDisksOriginal uses the original deletion implementation
+func (b *Backuper) cleanBackupObjectDisksOriginal(ctx context.Context, backupName, objectDiskPath string) (uint, error) {
 	//walk absolute path, delete relative
 	deletedKeys := uint(0)
 	walkErr := b.dst.WalkAbsolute(ctx, path.Join(objectDiskPath, backupName), true, func(ctx context.Context, f storage.RemoteFile) error {
@@ -465,6 +644,175 @@ func (b *Backuper) CleanRemoteBroken(commandId int) error {
 		}
 	}
 	return nil
+}
+
+// isDeleteOptimizationEnabled checks if delete optimizations are enabled
+func (b *Backuper) isDeleteOptimizationEnabled() bool {
+	return b.cfg.DeleteOptimizations.Enabled
+}
+
+// shouldUseEnhancedDelete determines if enhanced delete should be used for the given backup
+func (b *Backuper) shouldUseEnhancedDelete(backupName string) bool {
+	if !b.isDeleteOptimizationEnabled() {
+		log.Debug().Str("backup", backupName).Msg("delete optimizations disabled")
+		return false
+	}
+
+	// Check if remote storage supports batch operations
+	if !b.supportsEnhancedDelete() {
+		log.Debug().Str("backup", backupName).Str("storage", b.cfg.General.RemoteStorage).
+			Msg("remote storage does not support enhanced delete operations")
+		return false
+	}
+
+	log.Debug().Str("backup", backupName).Msg("using enhanced delete operations")
+	return true
+}
+
+// supportsEnhancedDelete checks if the current remote storage supports enhanced delete operations
+func (b *Backuper) supportsEnhancedDelete() bool {
+	switch b.cfg.General.RemoteStorage {
+	case "s3":
+		return b.cfg.DeleteOptimizations.S3Optimizations.UseBatchAPI
+	case "gcs":
+		return b.cfg.DeleteOptimizations.GCSOptimizations.UseClientPool
+	case "azblob":
+		return b.cfg.DeleteOptimizations.AzureOptimizations.UseBatchAPI
+	case "none", "custom":
+		return false
+	default:
+		// For other storage types (ftp, sftp, cos), enhanced delete may still provide benefits
+		// through parallel workers and caching, even without native batch APIs
+		return true
+	}
+}
+
+// getOptimalWorkerCount determines the optimal number of workers for delete operations
+func (b *Backuper) getOptimalWorkerCount() int {
+	if !b.isDeleteOptimizationEnabled() {
+		return 1
+	}
+
+	workers := b.cfg.DeleteOptimizations.Workers
+	if workers <= 0 {
+		// Auto-detect based on storage type and system resources
+		switch b.cfg.General.RemoteStorage {
+		case "s3":
+			return b.cfg.DeleteOptimizations.S3Optimizations.VersionConcurrency
+		case "gcs":
+			return b.cfg.DeleteOptimizations.GCSOptimizations.MaxWorkers
+		case "azblob":
+			return b.cfg.DeleteOptimizations.AzureOptimizations.MaxWorkers
+		default:
+			// Default to number of CPU cores for other storage types
+			return maxInt(1, int(b.cfg.General.DownloadConcurrency))
+		}
+	}
+
+	return maxInt(1, workers)
+}
+
+// getOptimalBatchSize determines the optimal batch size for delete operations
+func (b *Backuper) getOptimalBatchSize() int {
+	if !b.isDeleteOptimizationEnabled() {
+		return 1
+	}
+
+	batchSize := b.cfg.DeleteOptimizations.BatchSize
+	if batchSize <= 0 {
+		return 1000 // Default batch size
+	}
+
+	return batchSize
+}
+
+// createEnhancedDeleteMetrics creates metrics tracking for enhanced delete operations
+func (b *Backuper) createEnhancedDeleteMetrics() *enhanced.DeleteMetrics {
+	return &enhanced.DeleteMetrics{
+		FilesProcessed: 0,
+		FilesDeleted:   0,
+		FilesFailed:    0,
+		BytesDeleted:   0,
+		APICallsCount:  0,
+		TotalDuration:  0,
+		ThroughputMBps: 0.0,
+	}
+}
+
+// logEnhancedDeleteMetrics logs the metrics from enhanced delete operations
+func (b *Backuper) logEnhancedDeleteMetrics(metrics *enhanced.DeleteMetrics, backupName string) {
+	if metrics == nil {
+		return
+	}
+
+	log.Info().
+		Str("backup", backupName).
+		Int64("files_processed", metrics.FilesProcessed).
+		Int64("files_deleted", metrics.FilesDeleted).
+		Int64("files_failed", metrics.FilesFailed).
+		Int64("bytes_deleted", metrics.BytesDeleted).
+		Int64("api_calls", metrics.APICallsCount).
+		Str("duration", metrics.TotalDuration.String()).
+		Float64("throughput_mbps", metrics.ThroughputMBps).
+		Msg("enhanced delete operation completed")
+}
+
+// validateDeleteOptimizationConfig validates the delete optimization configuration
+func (b *Backuper) validateDeleteOptimizationConfig() error {
+	if !b.cfg.DeleteOptimizations.Enabled {
+		return nil
+	}
+
+	// Validate batch size
+	if b.cfg.DeleteOptimizations.BatchSize < 1 {
+		return &enhanced.OptimizationConfigError{
+			Field:   "batch_size",
+			Value:   b.cfg.DeleteOptimizations.BatchSize,
+			Message: "batch size must be greater than 0",
+		}
+	}
+
+	// Validate retry attempts
+	if b.cfg.DeleteOptimizations.RetryAttempts < 0 {
+		return &enhanced.OptimizationConfigError{
+			Field:   "retry_attempts",
+			Value:   b.cfg.DeleteOptimizations.RetryAttempts,
+			Message: "retry attempts cannot be negative",
+		}
+	}
+
+	// Validate failure threshold
+	if b.cfg.DeleteOptimizations.FailureThreshold < 0 || b.cfg.DeleteOptimizations.FailureThreshold > 1 {
+		return &enhanced.OptimizationConfigError{
+			Field:   "failure_threshold",
+			Value:   b.cfg.DeleteOptimizations.FailureThreshold,
+			Message: "failure threshold must be between 0 and 1",
+		}
+	}
+
+	// Validate error strategy
+	validStrategies := map[string]bool{
+		"fail_fast":   true,
+		"continue":    true,
+		"retry_batch": true,
+	}
+	if !validStrategies[b.cfg.DeleteOptimizations.ErrorStrategy] {
+		return &enhanced.OptimizationConfigError{
+			Field:   "error_strategy",
+			Value:   b.cfg.DeleteOptimizations.ErrorStrategy,
+			Message: "error strategy must be one of: fail_fast, continue, retry_batch",
+		}
+	}
+
+	return nil
+}
+
+// maxInt returns the maximum of two integers
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (b *Backuper) cleanPartialRequiredBackup(ctx context.Context, disks []clickhouse.Disk, currentBackupName string) error {

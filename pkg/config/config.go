@@ -25,16 +25,17 @@ const (
 
 // Config - config file format
 type Config struct {
-	General    GeneralConfig    `yaml:"general" envconfig:"_"`
-	ClickHouse ClickHouseConfig `yaml:"clickhouse" envconfig:"_"`
-	S3         S3Config         `yaml:"s3" envconfig:"_"`
-	GCS        GCSConfig        `yaml:"gcs" envconfig:"_"`
-	COS        COSConfig        `yaml:"cos" envconfig:"_"`
-	API        APIConfig        `yaml:"api" envconfig:"_"`
-	FTP        FTPConfig        `yaml:"ftp" envconfig:"_"`
-	SFTP       SFTPConfig       `yaml:"sftp" envconfig:"_"`
-	AzureBlob  AzureBlobConfig  `yaml:"azblob" envconfig:"_"`
-	Custom     CustomConfig     `yaml:"custom" envconfig:"_"`
+	General             GeneralConfig       `yaml:"general" envconfig:"_"`
+	ClickHouse          ClickHouseConfig    `yaml:"clickhouse" envconfig:"_"`
+	S3                  S3Config            `yaml:"s3" envconfig:"_"`
+	GCS                 GCSConfig           `yaml:"gcs" envconfig:"_"`
+	COS                 COSConfig           `yaml:"cos" envconfig:"_"`
+	API                 APIConfig           `yaml:"api" envconfig:"_"`
+	FTP                 FTPConfig           `yaml:"ftp" envconfig:"_"`
+	SFTP                SFTPConfig          `yaml:"sftp" envconfig:"_"`
+	AzureBlob           AzureBlobConfig     `yaml:"azblob" envconfig:"_"`
+	Custom              CustomConfig        `yaml:"custom" envconfig:"_"`
+	DeleteOptimizations DeleteOptimizations `yaml:"delete_optimizations" envconfig:"_"`
 }
 
 // GeneralConfig - general setting section
@@ -265,6 +266,34 @@ type APIConfig struct {
 	AllowParallel                 bool   `yaml:"allow_parallel" envconfig:"API_ALLOW_PARALLEL"`
 	CompleteResumableAfterRestart bool   `yaml:"complete_resumable_after_restart" envconfig:"API_COMPLETE_RESUMABLE_AFTER_RESTART"`
 	WatchIsMainProcess            bool   `yaml:"watch_is_main_process" envconfig:"WATCH_IS_MAIN_PROCESS"`
+}
+
+// DeleteOptimizations - delete optimization settings section
+type DeleteOptimizations struct {
+	Enabled          bool          `yaml:"enabled" envconfig:"DELETE_ENABLED" default:"true"`
+	Workers          int           `yaml:"workers" envconfig:"DELETE_WORKERS" default:"0"` // 0 = auto-detect
+	BatchSize        int           `yaml:"batch_size" envconfig:"DELETE_BATCH_SIZE" default:"1000"`
+	RetryAttempts    int           `yaml:"retry_attempts" envconfig:"DELETE_RETRY_ATTEMPTS" default:"3"`
+	ErrorStrategy    string        `yaml:"error_strategy" envconfig:"DELETE_ERROR_STRATEGY" default:"continue"` // fail_fast, continue, retry_batch
+	FailureThreshold float64       `yaml:"failure_threshold" envconfig:"DELETE_FAILURE_THRESHOLD" default:"0.1"`
+	CacheEnabled     bool          `yaml:"cache_enabled" envconfig:"DELETE_CACHE_ENABLED" default:"true"`
+	CacheTTL         time.Duration `yaml:"cache_ttl" envconfig:"DELETE_CACHE_TTL" default:"30m"`
+
+	S3Optimizations struct {
+		UseBatchAPI        bool `yaml:"use_batch_api" envconfig:"DELETE_S3_USE_BATCH_API" default:"true"`
+		VersionConcurrency int  `yaml:"version_concurrency" envconfig:"DELETE_S3_VERSION_CONCURRENCY" default:"10"`
+		PreloadVersions    bool `yaml:"preload_versions" envconfig:"DELETE_S3_PRELOAD_VERSIONS" default:"true"`
+	} `yaml:"s3_optimizations"`
+
+	GCSOptimizations struct {
+		MaxWorkers    int  `yaml:"max_workers" envconfig:"DELETE_GCS_MAX_WORKERS" default:"50"`
+		UseClientPool bool `yaml:"use_client_pool" envconfig:"DELETE_GCS_USE_CLIENT_POOL" default:"true"`
+	} `yaml:"gcs_optimizations"`
+
+	AzureOptimizations struct {
+		UseBatchAPI bool `yaml:"use_batch_api" envconfig:"DELETE_AZURE_USE_BATCH_API" default:"true"`
+		MaxWorkers  int  `yaml:"max_workers" envconfig:"DELETE_AZURE_MAX_WORKERS" default:"20"`
+	} `yaml:"azure_optimizations"`
 }
 
 // ArchiveExtensions - list of available compression formats and associated file extensions
@@ -662,6 +691,39 @@ func DefaultConfig() *Config {
 		Custom: CustomConfig{
 			CommandTimeout:         "4h",
 			CommandTimeoutDuration: 4 * time.Hour,
+		},
+		DeleteOptimizations: DeleteOptimizations{
+			Enabled:          true,
+			Workers:          0, // auto-detect
+			BatchSize:        1000,
+			RetryAttempts:    3,
+			ErrorStrategy:    "continue",
+			FailureThreshold: 0.1,
+			CacheEnabled:     true,
+			CacheTTL:         30 * time.Minute,
+			S3Optimizations: struct {
+				UseBatchAPI        bool `yaml:"use_batch_api" envconfig:"DELETE_S3_USE_BATCH_API" default:"true"`
+				VersionConcurrency int  `yaml:"version_concurrency" envconfig:"DELETE_S3_VERSION_CONCURRENCY" default:"10"`
+				PreloadVersions    bool `yaml:"preload_versions" envconfig:"DELETE_S3_PRELOAD_VERSIONS" default:"true"`
+			}{
+				UseBatchAPI:        true,
+				VersionConcurrency: 10,
+				PreloadVersions:    true,
+			},
+			GCSOptimizations: struct {
+				MaxWorkers    int  `yaml:"max_workers" envconfig:"DELETE_GCS_MAX_WORKERS" default:"50"`
+				UseClientPool bool `yaml:"use_client_pool" envconfig:"DELETE_GCS_USE_CLIENT_POOL" default:"true"`
+			}{
+				MaxWorkers:    50,
+				UseClientPool: true,
+			},
+			AzureOptimizations: struct {
+				UseBatchAPI bool `yaml:"use_batch_api" envconfig:"DELETE_AZURE_USE_BATCH_API" default:"true"`
+				MaxWorkers  int  `yaml:"max_workers" envconfig:"DELETE_AZURE_MAX_WORKERS" default:"20"`
+			}{
+				UseBatchAPI: true,
+				MaxWorkers:  20,
+			},
 		},
 	}
 }
