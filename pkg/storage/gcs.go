@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"path"
+	"runtime"
 	"strings"
 	"time"
 
@@ -30,6 +31,7 @@ type GCS struct {
 	client     *storage.Client
 	Config     *config.GCSConfig
 	clientPool *pool.ObjectPool
+	cfg        *config.Config
 }
 
 type debugGCSTransport struct {
@@ -112,8 +114,10 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 				Timeout:   30 * time.Second,
 				KeepAlive: 30 * time.Second,
 			}).DialContext,
-			MaxIdleConns:          1,
-			MaxIdleConnsPerHost:   1,
+			// Optimize for high concurrency GCS operations
+			MaxIdleConns:          200, // Increased for high concurrency
+			MaxIdleConnsPerHost:   100, // Increased for connection reuse
+			MaxConnsPerHost:       200, // Limit concurrent connections per host
 			IdleConnTimeout:       90 * time.Second,
 			TLSHandshakeTimeout:   10 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
@@ -131,6 +135,17 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 			clientOptions = append([]option.ClientOption{option.WithScopes(storage.ScopeFullControl)}, clientOptions...)
 		}
 		clientOptions = append(clientOptions, internaloption.WithDefaultEndpoint(endpoint))
+
+		// Add diagnostics for HTTP transport configuration
+		log.Info().Fields(map[string]interface{}{
+			"operation": "gcs_transport_config",
+			"max_idle_conns": customTransport.MaxIdleConns,
+			"max_idle_conns_per_host": customTransport.MaxIdleConnsPerHost,
+			"max_conns_per_host": customTransport.MaxConnsPerHost,
+			"idle_conn_timeout_sec": customTransport.IdleConnTimeout.Seconds(),
+			"tls_handshake_timeout_sec": customTransport.TLSHandshakeTimeout.Seconds(),
+			"keep_alive_sec": 30,
+		}).Msg("GCS HTTP transport configuration for high concurrency")
 
 		customRoundTripper := &rewriteTransport{base: customTransport}
 		gcpTransport, _, err := googleHTTPTransport.NewClient(ctx, clientOptions...)
@@ -170,7 +185,37 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 			return &clientObject{Client: sClient}, nil
 		})
 	gcs.clientPool = pool.NewObjectPoolWithDefaultConfig(ctx, factory)
-	gcs.clientPool.Config.MaxTotal = gcs.Config.ClientPoolSize * 3
+	// Use adaptive client pool sizing if available
+	if gcs.cfg != nil && gcs.Config.ClientPoolSize <= 0 {
+		gcs.Config.ClientPoolSize = gcs.cfg.GetOptimalClientPoolSize()
+	}
+	
+	// Optimize pool sizing for high concurrency GCS operations
+	downloadConcurrency := gcs.cfg.General.DownloadConcurrency
+	
+	// For high concurrency (>50), increase pool ratios to reduce borrowing contention
+	poolMultiplier := 3
+	if downloadConcurrency > 50 {
+		poolMultiplier = 5  // More aggressive pooling for high concurrency
+	}
+	
+	gcs.clientPool.Config.MaxTotal = gcs.Config.ClientPoolSize * poolMultiplier
+	gcs.clientPool.Config.MaxIdle = gcs.Config.ClientPoolSize
+	
+	// Optimize pool settings for high throughput (only set supported fields)
+	gcs.clientPool.Config.BlockWhenExhausted = true
+	gcs.clientPool.Config.TestOnBorrow = false   // Skip validation for performance
+	gcs.clientPool.Config.TestOnReturn = false   // Skip validation for performance
+	
+	log.Info().Fields(map[string]interface{}{
+		"operation": "gcs_client_pool_config",
+		"client_pool_size": gcs.Config.ClientPoolSize,
+		"max_total": gcs.clientPool.Config.MaxTotal,
+		"max_idle": gcs.clientPool.Config.MaxIdle,
+		"pool_multiplier": poolMultiplier,
+		"download_concurrency": downloadConcurrency,
+		"block_when_exhausted": gcs.clientPool.Config.BlockWhenExhausted,
+	}).Msg("GCS client pool optimized for high concurrency")
 	gcs.client, err = storage.NewClient(ctx, clientOptions...)
 	return err
 }
@@ -230,23 +275,65 @@ func (gcs *GCS) GetFileReader(ctx context.Context, key string) (io.ReadCloser, e
 }
 
 func (gcs *GCS) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadCloser, error) {
+	startTime := time.Now()
+	
+	// Track client pool metrics before borrowing
+	poolStats := map[string]interface{}{
+		"operation": "gcs_download_start",
+		"key": key,
+		"pool_max_total": gcs.clientPool.Config.MaxTotal,
+		"pool_max_idle": gcs.clientPool.Config.MaxIdle,
+		"pool_active": gcs.clientPool.GetNumActive(),
+		"pool_idle": gcs.clientPool.GetNumIdle(),
+		"go_version": runtime.Version(),
+	}
+	
+	// Go 1.25 Runtime Diagnostics for CI debugging
+	log.Debug().Fields(poolStats).Msg("GCS download starting with Go 1.25 runtime diagnostics")
+	
 	pClientObj, err := gcs.clientPool.BorrowObject(ctx)
+	borrowTime := time.Since(startTime)
+	
 	if err != nil {
-		log.Error().Msgf("gcs.GetFileReader: gcs.clientPool.BorrowObject error: %+v", err)
+		log.Error().Fields(poolStats).Msgf("gcs.GetFileReader: gcs.clientPool.BorrowObject error after %v: %+v", borrowTime, err)
 		return nil, err
 	}
+	
 	pClient := pClientObj.(*clientObject).Client
 	obj := pClient.Bucket(gcs.Config.Bucket).Object(key)
 	reader, err := obj.NewReader(ctx)
+	readerTime := time.Since(startTime) - borrowTime
+	
 	if err != nil {
+		log.Error().Fields(map[string]interface{}{
+			"operation": "gcs_download_error",
+			"key": key,
+			"borrow_time_ms": borrowTime.Milliseconds(),
+			"reader_time_ms": readerTime.Milliseconds(),
+			"pool_active_after": gcs.clientPool.GetNumActive(),
+		}).Msgf("gcs.GetFileReader: obj.NewReader error: %+v", err)
+		
 		if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
 			log.Warn().Msgf("gcs.GetFileReader: gcs.clientPool.InvalidateObject error: %v ", pErr)
 		}
 		return nil, err
 	}
+	
 	if pErr := gcs.clientPool.ReturnObject(ctx, pClientObj); pErr != nil {
 		log.Warn().Msgf("gcs.GetFileReader: gcs.clientPool.ReturnObject error: %v ", pErr)
 	}
+	
+	totalTime := time.Since(startTime)
+	log.Info().Fields(map[string]interface{}{
+		"operation": "gcs_download_success",
+		"key": key,
+		"borrow_time_ms": borrowTime.Milliseconds(),
+		"reader_time_ms": readerTime.Milliseconds(),
+		"total_time_ms": totalTime.Milliseconds(),
+		"pool_active_after": gcs.clientPool.GetNumActive(),
+		"pool_idle_after": gcs.clientPool.GetNumIdle(),
+	}).Msg("GCS download reader created successfully")
+	
 	return reader, nil
 }
 
@@ -267,7 +354,32 @@ func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser
 	pClient := pClientObj.(*clientObject).Client
 	obj := pClient.Bucket(gcs.Config.Bucket).Object(key)
 	writer := obj.NewWriter(ctx)
+
+	// Use adaptive chunk sizing if config is available
+	if gcs.cfg != nil && gcs.Config.ChunkSize <= 0 {
+		optimalConcurrency := gcs.cfg.GetOptimalUploadConcurrency()
+		chunkSize := config.CalculateOptimalBufferSize(localSize, optimalConcurrency)
+		// Ensure chunk size is within GCS limits (256KB to 100MB)
+		if chunkSize < 256*1024 {
+			chunkSize = 256 * 1024
+		}
+		if chunkSize > 100*1024*1024 {
+			chunkSize = 100 * 1024 * 1024
+		}
+		gcs.Config.ChunkSize = chunkSize
+	}
+
 	writer.ChunkSize = gcs.Config.ChunkSize
+	
+	log.Info().Fields(map[string]interface{}{
+		"operation": "gcs_upload_setup",
+		"key": key,
+		"file_size_mb": localSize / (1024 * 1024),
+		"chunk_size_mb": writer.ChunkSize / (1024 * 1024),
+		"configured_concurrency": gcs.cfg.General.UploadConcurrency,
+		"client_pool_max": gcs.clientPool.Config.MaxTotal,
+		"client_pool_idle": gcs.clientPool.Config.MaxIdle,
+	}).Msg("GCS upload performance diagnostics")
 	writer.StorageClass = gcs.Config.StorageClass
 	writer.ChunkRetryDeadline = 60 * time.Minute
 	if len(gcs.Config.ObjectLabels) > 0 {
@@ -278,7 +390,14 @@ func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser
 			log.Warn().Msgf("gcs.PutFile: gcs.clientPool.ReturnObject error: %+v", err)
 		}
 	}()
-	buffer := make([]byte, 128*1024)
+
+	// Use adaptive buffer sizing
+	bufferSize := 128 * 1024 // Default fallback
+	if gcs.cfg != nil {
+		optimalConcurrency := gcs.cfg.GetOptimalUploadConcurrency()
+		bufferSize = config.CalculateOptimalBufferSize(localSize, optimalConcurrency)
+	}
+	buffer := make([]byte, bufferSize)
 	_, err = io.CopyBuffer(writer, r, buffer)
 	if err != nil {
 		log.Warn().Msgf("gcs.PutFile: can't copy buffer: %+v", err)

@@ -256,12 +256,26 @@ func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath stri
 
 		downloader := s3manager.NewDownloader(s.client)
 		downloader.Concurrency = s.Concurrency
-		downloader.BufferProvider = s3manager.NewPooledBufferedWriterReadFromProvider(s.BufferSize)
+
+		// Use adaptive buffer size based on file size and concurrency
+		bufferSize := config.CalculateOptimalBufferSize(remoteSize, s.Concurrency)
+		downloader.BufferProvider = s3manager.NewPooledBufferedWriterReadFromProvider(bufferSize)
+
 		partSize := remoteSize / s.Config.MaxPartsCount
 		if remoteSize%s.Config.MaxPartsCount > 0 {
 			partSize += max(1, (remoteSize%s.Config.MaxPartsCount)/s.Config.MaxPartsCount)
 		}
 		downloader.PartSize = AdjustValueByRange(partSize, 5*1024*1024, 5*1024*1024*1024)
+		
+		log.Info().Fields(map[string]interface{}{
+			"operation": "s3_multipart_download_setup",
+			"key": key,
+			"file_size_mb": remoteSize / (1024 * 1024),
+			"s3_concurrency": s.Concurrency,
+			"buffer_size_kb": bufferSize / 1024,
+			"part_size_mb": downloader.PartSize / (1024 * 1024),
+			"estimated_parts": (remoteSize + downloader.PartSize - 1) / downloader.PartSize,
+		}).Msg("S3 download performance diagnostics")
 
 		_, err = downloader.Download(ctx, writer, &s3.GetObjectInput{
 			Bucket: aws.String(s.Config.Bucket),
@@ -326,7 +340,11 @@ func (s *S3) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, l
 	}
 	uploader := s3manager.NewUploader(s.client)
 	uploader.Concurrency = s.Concurrency
-	uploader.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(s.BufferSize)
+
+	// Use adaptive buffer size based on file size and concurrency
+	bufferSize := config.CalculateOptimalBufferSize(localSize, s.Concurrency)
+	uploader.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(bufferSize)
+
 	partSize := localSize / s.Config.MaxPartsCount
 	if localSize%s.Config.MaxPartsCount > 0 {
 		partSize += max(1, (localSize%s.Config.MaxPartsCount)/s.Config.MaxPartsCount)

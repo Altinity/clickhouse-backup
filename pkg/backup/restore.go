@@ -1859,7 +1859,9 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ba
 	b.filterPartsAndFilesByDisk(tablesForRestore, disks)
 
 	restoreBackupWorkingGroup, restoreCtx := errgroup.WithContext(ctx)
-	restoreBackupWorkingGroup.SetLimit(max(b.cfg.ClickHouse.MaxConnections, 1))
+	// Use unified download concurrency for restore operations
+	optimalConcurrency := b.cfg.GetOptimalDownloadConcurrency()
+	restoreBackupWorkingGroup.SetLimit(max(optimalConcurrency, 1))
 
 	for i := range tablesForRestore {
 		tableRestoreStartTime := time.Now()
@@ -1981,6 +1983,40 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// Initialize performance monitor for object disk downloads
+	initialConcurrency := b.cfg.GetOptimalObjectDiskConcurrency()
+	maxConcurrency := int(b.cfg.GetOptimalDownloadConcurrency())
+	if maxConcurrency < initialConcurrency {
+		maxConcurrency = initialConcurrency * 2
+	}
+	performanceMonitor := NewPerformanceMonitor(initialConcurrency, maxConcurrency)
+
+	// Add performance callback to log significant changes
+	performanceMonitor.AddCallback(func(monitor *PerformanceMonitor, event PerformanceEvent) {
+		metrics := monitor.GetMetrics()
+		switch event {
+		case EventPerformanceDegradation:
+			log.Warn().
+				Float64("current_speed_mbps", metrics.CurrentSpeed/(1024*1024)).
+				Float64("average_speed_mbps", metrics.AverageSpeed/(1024*1024)).
+				Float64("peak_speed_mbps", metrics.PeakSpeed/(1024*1024)).
+				Int32("concurrency", metrics.CurrentConcurrency).
+				Str("table", fmt.Sprintf("%s.%s", backupTable.Database, backupTable.Table)).
+				Msg("performance degradation detected")
+		case EventConcurrencyAdjusted:
+			log.Info().
+				Int32("concurrency", metrics.CurrentConcurrency).
+				Float64("speed_mbps", metrics.CurrentSpeed/(1024*1024)).
+				Str("table", fmt.Sprintf("%s.%s", backupTable.Database, backupTable.Table)).
+				Msg("concurrency adjusted for better performance")
+		}
+	})
+
+	// Start performance monitoring
+	monitorCtx, monitorCancel := context.WithCancel(ctx)
+	defer monitorCancel()
+	go performanceMonitor.StartMonitoring(monitorCtx)
+
 	var err error
 	for diskName, parts := range backupTable.Parts {
 		if b.shouldDiskNameSkipByNameOrType(diskName, disks) {
@@ -2025,9 +2061,41 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 			}
 			start := time.Now()
 			downloadObjectDiskPartsWorkingGroup, downloadCtx := errgroup.WithContext(ctx)
-			downloadObjectDiskPartsWorkingGroup.SetLimit(int(b.cfg.General.ObjectDiskServerSideCopyConcurrency))
+			// Start with optimal concurrency and make it adaptive
+			objectDiskConcurrency := performanceMonitor.GetCurrentConcurrency()
+			downloadObjectDiskPartsWorkingGroup.SetLimit(int(objectDiskConcurrency))
 			var isCopyFailed atomic.Bool
 			isCopyFailed.Store(false)
+
+			// Adaptive concurrency adjustment during download
+			adjustmentTicker := time.NewTicker(30 * time.Second)
+			adjustmentDone := make(chan struct{})
+			go func() {
+				defer close(adjustmentDone)
+				defer adjustmentTicker.Stop()
+				for {
+					select {
+					case <-downloadCtx.Done():
+						return
+					case <-adjustmentDone:
+						return
+					case <-adjustmentTicker.C:
+						newConcurrency := performanceMonitor.AdjustConcurrency()
+						if newConcurrency != objectDiskConcurrency {
+							objectDiskConcurrency = newConcurrency
+							// Note: errgroup doesn't support runtime limit changes,
+							// but this will affect future batches
+							log.Debug().
+								Int32("new_concurrency", newConcurrency).
+								Str("table", fmt.Sprintf("%s.%s", backupTable.Database, backupTable.Table)).
+								Msg("adjusted download concurrency")
+						}
+					}
+				}
+			}()
+			defer func() {
+				adjustmentDone <- struct{}{}
+			}()
 			for _, part := range parts {
 				dstDiskName := diskName
 				if part.RebalancedDisk != "" {
@@ -2137,6 +2205,11 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 								}
 							}
 							atomic.AddInt64(&size, copiedSize)
+							// Track performance for adaptive concurrency
+							if copiedSize > 0 {
+								performanceMonitor.AddBytes(copiedSize)
+								performanceMonitor.UpdateSpeed()
+							}
 						}
 						if b.resume {
 							b.resumableState.AppendToState(path.Join(fPath, fInfo.Name()), objMeta.TotalSize)
@@ -2152,7 +2225,17 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 			if wgWaitErr := downloadObjectDiskPartsWorkingGroup.Wait(); wgWaitErr != nil {
 				return 0, fmt.Errorf("one of downloadObjectDiskParts go-routine return error: %v", wgWaitErr)
 			}
-			logger.Info().Str("disk", diskName).Str("duration", utils.HumanizeDuration(time.Since(start))).Str("size", utils.FormatBytes(uint64(size))).Msg("object_disk data downloaded")
+			// Log final performance metrics
+			finalMetrics := performanceMonitor.GetMetrics()
+			logger.Info().
+				Str("disk", diskName).
+				Str("duration", utils.HumanizeDuration(time.Since(start))).
+				Str("size", utils.FormatBytes(uint64(size))).
+				Float64("avg_speed_mbps", finalMetrics.AverageSpeed/(1024*1024)).
+				Float64("peak_speed_mbps", finalMetrics.PeakSpeed/(1024*1024)).
+				Int32("final_concurrency", finalMetrics.CurrentConcurrency).
+				Bool("degradation_detected", finalMetrics.DegradationDetected).
+				Msg("object_disk data downloaded with performance metrics")
 		}
 	}
 
