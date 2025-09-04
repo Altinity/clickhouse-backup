@@ -2142,7 +2142,7 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	env.queryWithNoError(r, "CREATE DATABASE test_skip_tables")
 	env.queryWithNoError(r, "CREATE TABLE IF NOT EXISTS test_skip_tables.test_merge_tree (id UInt64, s String) ENGINE=MergeTree() ORDER BY id")
 	env.queryWithNoError(r, "CREATE TABLE IF NOT EXISTS test_skip_tables.test_memory (id UInt64) ENGINE=Memory")
-	env.queryWithNoError(r, "CREATE MATERIALIZED VIEW IF NOT EXISTS test_skip_tables.test_mv (id UInt64) ENGINE=MergeTree() ORDER BY id AS SELECT * FROM test_skip_tables.test_merge_tree")
+	env.queryWithNoError(r, "CREATE MATERIALIZED VIEW IF NOT EXISTS test_skip_tables.test_mv (id UInt64) ENGINE=MergeTree() ORDER BY id AS SELECT id FROM test_skip_tables.test_merge_tree")
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 {
 		query := "CREATE LIVE VIEW IF NOT EXISTS test_skip_tables.test_live_view AS SELECT count() FROM test_skip_tables.test_merge_tree"
 		allowExperimentalAnalyzer, err := env.ch.TurnAnalyzerOffIfNecessary(version, query, "")
@@ -3552,7 +3552,8 @@ func TestNamedCollections(t *testing.T) {
 			r.NoError(env.dropDatabase("test_named_collection", true))
 		})
 	}
-	env.DockerExecNoError(r, "minio", "rm", "-rf", "/bitnami/minio/data/clickhouse/test_named_collection.csv*")
+	env.DockerExecNoError(r, "minio", "rm", "-rf", "/bitnami/minio/data/clickhouse/test_named_collection.csv")
+	env.checkObjectStorageIsEmpty(t, r, "S3")
 	env.Cleanup(t, r)
 }
 
