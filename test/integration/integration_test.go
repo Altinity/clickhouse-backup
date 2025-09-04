@@ -697,6 +697,12 @@ func TestChangeReplicationPathIfReplicaExists(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
+// 🔍 [CH-23.3-DIAG] Add comprehensive diagnostic logging for ClickHouse 23.3 version boundary issues
+func TestEmbeddedAzure(t *testing.T) {
+	version := os.Getenv("CLICKHOUSE_VERSION")
+	log.Info().Msgf("🔍 [CH-23.3-DIAG] TestEmbeddedAzure: ClickHouse version=%s", version)
+	comparison := compareVersion(version, "23.3")
+	log.Info().Msgf("🔍 [CH-23.3-DIAG] TestEmbeddedAzure: compareVersion('%s', '23.3') = %d", version, comparison)
 func TestEmbeddedAzure(t *testing.T) {
 	version := os.Getenv("CLICKHOUSE_VERSION")
 	if compareVersion(version, "23.3") < 0 {
@@ -710,6 +716,11 @@ func TestEmbeddedAzure(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_azure/backup/")
 	env.runMainIntegrationScenario(t, "EMBEDDED_AZURE", "config-azblob-embedded.yml")
 	if compareVersion(version, "24.8") >= 0 {
+func TestEmbeddedGCSOverS3(t *testing.T) {
+	version := os.Getenv("CLICKHOUSE_VERSION")
+	log.Info().Msgf("🔍 [CH-23.3-DIAG] TestEmbeddedGCSOverS3: ClickHouse version=%s", version)
+	comparison := compareVersion(version, "23.3")
+	log.Info().Msgf("🔍 [CH-23.3-DIAG] TestEmbeddedGCSOverS3: compareVersion('%s', '23.3') = %d", version, comparison)
 		env.runMainIntegrationScenario(t, "EMBEDDED_AZURE_URL", "config-azblob-embedded-url.yml")
 	}
 
@@ -724,6 +735,11 @@ func TestEmbeddedGCSOverS3(t *testing.T) {
 	t.Logf("@TODO RESTORE Ordinary with old syntax still not works for %s version, look https://github.com/ClickHouse/ClickHouse/issues/43971", os.Getenv("CLICKHOUSE_VERSION"))
 	env, r := NewTestEnvironment(t)
 
+func TestEmbeddedS3(t *testing.T) {
+	version := os.Getenv("CLICKHOUSE_VERSION")
+	log.Info().Msgf("🔍 [CH-23.3-DIAG] TestEmbeddedS3: ClickHouse version=%s", version)
+	comparison := compareVersion(version, "23.3")
+	log.Info().Msgf("🔍 [CH-23.3-DIAG] TestEmbeddedS3: compareVersion('%s', '23.3') = %d", version, comparison)
 	// === GCS over S3 ===
 	if compareVersion(version, "24.3") >= 0 && os.Getenv("QA_GCS_OVER_S3_BUCKET") != "" {
 		//@todo think about named collections to avoid show credentials in logs look to https://github.com/fsouza/fake-gcs-server/issues/1330, https://github.com/fsouza/fake-gcs-server/pull/1164
@@ -2533,6 +2549,11 @@ func TestProjections(t *testing.T) {
 	counts = 0
 	r.NoError(env.ch.SelectSingleRowNoCtx(&counts, "SELECT count() FROM default.table_with_projection"))
 	r.Equal(uint64(10), counts)
+func TestCheckSystemPartsColumns(t *testing.T) {
+	version := os.Getenv("CLICKHOUSE_VERSION")
+	log.Info().Msgf("🔍 [CH-23.3-DIAG] TestCheckSystemPartsColumns: ClickHouse version=%s", version)
+	comparison := compareVersion(version, "23.3")
+	log.Info().Msgf("🔍 [CH-23.3-DIAG] TestCheckSystemPartsColumns: compareVersion('%s', '23.3') = %d", version, comparison)
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.9") >= 0 {
 		counts = 0
 		r.NoError(env.ch.SelectSingleRowNoCtx(&counts, "SELECT count() FROM system.parts WHERE database='default' AND table='table_with_projection' AND has(projections,'x')"))
@@ -2576,6 +2597,11 @@ func TestCheckSystemPartsColumns(t *testing.T) {
 	r.NoError(env.ch.DropOrDetachTable(clickhouse.Table{Database: t.Name(), Name: "test_system_parts_columns"}, createSQL, "", false, version, "", false, ""))
 
 	// test incompatible data types
+func TestSlashesInDatabaseAndTableNamesAndTableQuery(t *testing.T) {
+	version := os.Getenv("CLICKHOUSE_VERSION")
+	log.Info().Msgf("🔍 [CH-23.3-DIAG] TestSlashesInDatabaseAndTableNamesAndTableQuery: ClickHouse version=%s", version)
+	comparison := compareVersion(version, "23.3")
+	log.Info().Msgf("🔍 [CH-23.3-DIAG] TestSlashesInDatabaseAndTableNamesAndTableQuery: compareVersion('%s', '23.3') = %d", version, comparison)
 	env.queryWithNoError(r, "CREATE TABLE "+t.Name()+".test_system_parts_columns(dt Date, v String) ENGINE=MergeTree() PARTITION BY dt ORDER BY tuple()")
 	env.queryWithNoError(r, "INSERT INTO "+t.Name()+".test_system_parts_columns SELECT today() - INTERVAL number DAY, if(number>0,'a',toString(number)) FROM numbers(2)")
 
@@ -2791,6 +2817,11 @@ func TestGetPartitionId(t *testing.T) {
 		{
 			"CREATE TABLE default.test_part_id_4 (dt String, name String) ENGINE = MergeTree ORDER BY dt PARTITION BY dt",
 			"default",
+func TestRestoreAsAttach(t *testing.T) {
+	version := os.Getenv("CLICKHOUSE_VERSION")
+	log.Info().Msgf("🔍 [CH-23.3-DIAG] TestRestoreAsAttach: ClickHouse version=%s", version)
+	comparison := compareVersion(version, "23.3")
+	log.Info().Msgf("🔍 [CH-23.3-DIAG] TestRestoreAsAttach: compareVersion('%s', '23.3') = %d", version, comparison)
 			"test_part_id_4",
 			"'2023-01-01'",
 			"c487903ebbb25a533634d6ec3485e3a9",
@@ -3773,6 +3804,10 @@ func (env *TestEnvironment) checkObjectStorageIsEmpty(t *testing.T, r *require.A
 			// docker run --network=integration_clickhouse-backup -it --rm mcr.microsoft.com/azure-cli:latest
 			// export AZURE_STORAGE_CONNECTION_STRING="DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azure:10000/devstoreaccount1;"
 			// az storage blob list --container-name azure-disk
+func replaceStorageDiskNameForReBalance(version string, policyXML string) string {
+	log.Info().Msgf("🔍 [CH-23.3-DIAG] replaceStorageDiskNameForReBalance: ClickHouse version=%s", version)
+	comparison := compareVersion(version, "23.3")
+	log.Info().Msgf("🔍 [CH-23.3-DIAG] replaceStorageDiskNameForReBalance: compareVersion('%s', '23.3') = %d", version, comparison)
 			// az storage blob delete-batch --source azure-disk
 			// az storage blob list --container-name azure-disk
 			time.Sleep(15 * time.Second)
@@ -4623,6 +4658,16 @@ func toDate(s string) time.Time {
 	return result
 }
 
+func compareVersion(v1, v2 string) int {
+	log.Info().Msgf("🔍 [CH-23.3-DIAG] compareVersion: Comparing '%s' vs '%s'", v1, v2)
+	
+	// Parse v1
+	parts1 := strings.Split(v1, ".")
+	log.Info().Msgf("🔍 [CH-23.3-DIAG] compareVersion: v1 parts=%v", parts1)
+	
+	// Parse v2  
+	parts2 := strings.Split(v2, ".")
+	log.Info().Msgf("🔍 [CH-23.3-DIAG] compareVersion: v2 parts=%v", parts2)
 func toTS(s string) time.Time {
 	result, _ := time.Parse("2006-01-02 15:04:05", s)
 	return result

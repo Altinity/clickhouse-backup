@@ -65,6 +65,11 @@ func NewBackuper(cfg *config.Config, opts ...BackuperOpt) *Backuper {
 	return b
 }
 
+// SetRestoreInPlace sets the RestoreInPlace flag in the configuration
+func (b *Backuper) SetRestoreInPlace(value bool) {
+	b.cfg.General.RestoreInPlace = value
+}
+
 // Classify need to log retries
 func (b *Backuper) Classify(err error) retrier.Action {
 	if err == nil {
