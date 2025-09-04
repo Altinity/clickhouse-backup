@@ -4,6 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
+
+	"sync"
+	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
@@ -73,9 +77,352 @@ func NewEnhancedStorageWrapper(baseStorage storage.RemoteStorage, cfg *config.Co
 	return wrapper, nil
 }
 
+// S3StorageAdapter adapts base storage to provide enhanced S3 batch operations
+type S3StorageAdapter struct {
+	storage.RemoteStorage
+	config  *config.S3Config
+	bucket  string
+	metrics *DeleteMetrics
+	mu      sync.RWMutex
+}
+
+// GCSStorageAdapter adapts base storage to provide enhanced GCS batch operations
+type GCSStorageAdapter struct {
+	storage.RemoteStorage
+	config  *config.GCSConfig
+	bucket  string
+	metrics *DeleteMetrics
+	mu      sync.RWMutex
+}
+
+// AzureBlobStorageAdapter adapts base storage to provide enhanced Azure Blob batch operations
+type AzureBlobStorageAdapter struct {
+	storage.RemoteStorage
+	config    *config.AzureBlobConfig
+	container string
+	metrics   *DeleteMetrics
+	mu        sync.RWMutex
+}
+
+// DeleteBatch implements BatchRemoteStorage for S3 adapter
+func (s *S3StorageAdapter) DeleteBatch(ctx context.Context, keys []string) (*BatchResult, error) {
+	startTime := time.Now()
+	defer func() {
+		s.mu.Lock()
+		s.metrics.TotalDuration = time.Since(startTime)
+		s.mu.Unlock()
+	}()
+
+	s.mu.Lock()
+	s.metrics.FilesProcessed = int64(len(keys))
+	s.mu.Unlock()
+
+	// Use parallel deletion for better performance
+	return s.deleteParallel(ctx, keys)
+}
+
+// deleteParallel performs parallel deletion using goroutines
+func (s *S3StorageAdapter) deleteParallel(ctx context.Context, keys []string) (*BatchResult, error) {
+	const maxWorkers = 10
+	workerCount := maxWorkers
+	if len(keys) < workerCount {
+		workerCount = len(keys)
+	}
+
+	jobs := make(chan string, len(keys))
+	results := make(chan struct {
+		key   string
+		err   error
+		bytes int64
+	}, len(keys))
+
+	// Start workers
+	var wg sync.WaitGroup
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for key := range jobs {
+				// Get file size before deletion for metrics
+				var fileSize int64
+				if fileInfo, statErr := s.RemoteStorage.StatFile(ctx, key); statErr == nil {
+					fileSize = fileInfo.Size()
+				}
+
+				err := s.RemoteStorage.DeleteFile(ctx, key)
+				results <- struct {
+					key   string
+					err   error
+					bytes int64
+				}{key: key, err: err, bytes: fileSize}
+			}
+		}()
+	}
+
+	// Send jobs
+	go func() {
+		defer close(jobs)
+		for _, key := range keys {
+			select {
+			case jobs <- key:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// Wait for workers
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Collect results
+	var successCount int
+	var failedKeys []FailedKey
+	var errors []error
+	var totalBytes int64
+
+	for result := range results {
+		if result.err != nil {
+			failedKeys = append(failedKeys, FailedKey{
+				Key:   result.key,
+				Error: result.err,
+			})
+			errors = append(errors, result.err)
+		} else {
+			successCount++
+			totalBytes += result.bytes
+		}
+	}
+
+	s.mu.Lock()
+	s.metrics.FilesDeleted = int64(successCount)
+	s.metrics.FilesFailed = int64(len(failedKeys))
+	s.metrics.BytesDeleted += totalBytes
+	s.metrics.APICallsCount += int64(len(keys))
+	s.mu.Unlock()
+
+	return &BatchResult{
+		SuccessCount: successCount,
+		FailedKeys:   failedKeys,
+		Errors:       errors,
+	}, nil
+}
+
+// SupportsBatchDelete returns true for S3 adapter
+func (s *S3StorageAdapter) SupportsBatchDelete() bool {
+	return true
+}
+
+// GetOptimalBatchSize returns optimal batch size for S3
+func (s *S3StorageAdapter) GetOptimalBatchSize() int {
+	return 1000
+}
+
+// DeleteBatch implements BatchRemoteStorage for GCS adapter
+func (g *GCSStorageAdapter) DeleteBatch(ctx context.Context, keys []string) (*BatchResult, error) {
+	return g.deleteParallel(ctx, keys)
+}
+
+// deleteParallel performs parallel deletion for GCS
+func (g *GCSStorageAdapter) deleteParallel(ctx context.Context, keys []string) (*BatchResult, error) {
+	const maxWorkers = 20
+	workerCount := maxWorkers
+	if len(keys) < workerCount {
+		workerCount = len(keys)
+	}
+
+	jobs := make(chan string, len(keys))
+	results := make(chan struct {
+		key   string
+		err   error
+		bytes int64
+	}, len(keys))
+
+	var wg sync.WaitGroup
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for key := range jobs {
+				// Get file size before deletion for metrics
+				var fileSize int64
+				if fileInfo, statErr := g.RemoteStorage.StatFile(ctx, key); statErr == nil {
+					fileSize = fileInfo.Size()
+				}
+
+				err := g.RemoteStorage.DeleteFile(ctx, key)
+				results <- struct {
+					key   string
+					err   error
+					bytes int64
+				}{key: key, err: err, bytes: fileSize}
+			}
+		}()
+	}
+
+	go func() {
+		defer close(jobs)
+		for _, key := range keys {
+			select {
+			case jobs <- key:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	var successCount int
+	var failedKeys []FailedKey
+	var errors []error
+	var totalBytes int64
+
+	for result := range results {
+		if result.err != nil {
+			failedKeys = append(failedKeys, FailedKey{
+				Key:   result.key,
+				Error: result.err,
+			})
+			errors = append(errors, result.err)
+		} else {
+			successCount++
+			totalBytes += result.bytes
+		}
+	}
+
+	g.mu.Lock()
+	g.metrics.FilesDeleted += int64(successCount)
+	g.metrics.FilesFailed += int64(len(failedKeys))
+	g.metrics.BytesDeleted += totalBytes
+	g.metrics.APICallsCount += int64(len(keys))
+	g.mu.Unlock()
+
+	return &BatchResult{
+		SuccessCount: successCount,
+		FailedKeys:   failedKeys,
+		Errors:       errors,
+	}, nil
+}
+
+// SupportsBatchDelete returns false for GCS (parallel only)
+func (g *GCSStorageAdapter) SupportsBatchDelete() bool {
+	return false
+}
+
+// GetOptimalBatchSize returns optimal batch size for GCS
+func (g *GCSStorageAdapter) GetOptimalBatchSize() int {
+	return 100
+}
+
+// DeleteBatch implements BatchRemoteStorage for Azure Blob adapter
+func (a *AzureBlobStorageAdapter) DeleteBatch(ctx context.Context, keys []string) (*BatchResult, error) {
+	return a.deleteParallel(ctx, keys)
+}
+
+// deleteParallel performs parallel deletion for Azure Blob
+func (a *AzureBlobStorageAdapter) deleteParallel(ctx context.Context, keys []string) (*BatchResult, error) {
+	const maxWorkers = 15
+	workerCount := maxWorkers
+	if len(keys) < workerCount {
+		workerCount = len(keys)
+	}
+
+	jobs := make(chan string, len(keys))
+	results := make(chan struct {
+		key   string
+		err   error
+		bytes int64
+	}, len(keys))
+
+	var wg sync.WaitGroup
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for key := range jobs {
+				// Get file size before deletion for metrics
+				var fileSize int64
+				if fileInfo, statErr := a.RemoteStorage.StatFile(ctx, key); statErr == nil {
+					fileSize = fileInfo.Size()
+				}
+
+				err := a.RemoteStorage.DeleteFile(ctx, key)
+				results <- struct {
+					key   string
+					err   error
+					bytes int64
+				}{key: key, err: err, bytes: fileSize}
+			}
+		}()
+	}
+
+	go func() {
+		defer close(jobs)
+		for _, key := range keys {
+			select {
+			case jobs <- key:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	var successCount int
+	var failedKeys []FailedKey
+	var errors []error
+	var totalBytes int64
+
+	for result := range results {
+		if result.err != nil {
+			failedKeys = append(failedKeys, FailedKey{
+				Key:   result.key,
+				Error: result.err,
+			})
+			errors = append(errors, result.err)
+		} else {
+			successCount++
+			totalBytes += result.bytes
+		}
+	}
+
+	a.mu.Lock()
+	a.metrics.FilesDeleted += int64(successCount)
+	a.metrics.FilesFailed += int64(len(failedKeys))
+	a.metrics.BytesDeleted += totalBytes
+	a.metrics.APICallsCount += int64(len(keys))
+	a.mu.Unlock()
+
+	return &BatchResult{
+		SuccessCount: successCount,
+		FailedKeys:   failedKeys,
+		Errors:       errors,
+	}, nil
+}
+
+// SupportsBatchDelete returns false for Azure Blob (parallel only)
+func (a *AzureBlobStorageAdapter) SupportsBatchDelete() bool {
+	return false
+}
+
+// GetOptimalBatchSize returns optimal batch size for Azure Blob
+func (a *AzureBlobStorageAdapter) GetOptimalBatchSize() int {
+	return 100
+}
+
 // createEnhancedStorage creates the appropriate enhanced storage implementation
 func (w *EnhancedStorageWrapper) createEnhancedStorage(baseStorage storage.RemoteStorage, cfg *config.Config) (BatchRemoteStorage, error) {
-	switch w.storageType {
+	switch strings.ToLower(w.storageType) {
 	case "s3":
 		return w.createEnhancedS3(baseStorage, cfg)
 	case "gcs":
@@ -89,38 +436,51 @@ func (w *EnhancedStorageWrapper) createEnhancedStorage(baseStorage storage.Remot
 
 // createEnhancedS3 creates an enhanced S3 storage implementation
 func (w *EnhancedStorageWrapper) createEnhancedS3(baseStorage storage.RemoteStorage, cfg *config.Config) (BatchRemoteStorage, error) {
-	// We need to extract the S3 client from the base storage
-	// This would require access to the internal client, which may require
-	// modifying the base storage interface or using reflection
+	log.Debug().Msg("creating enhanced S3 storage")
 
-	// For now, we'll create a placeholder implementation
-	// In a real implementation, you'd need to either:
-	// 1. Modify the base storage to expose the client
-	// 2. Use dependency injection to pass the client separately
-	// 3. Create the client again here (less efficient)
+	// Try to create the actual enhanced S3 implementation with native batch operations
+	// For now, fall back to adapter since we can't easily access the S3 client from base storage
+	enhancedS3 := &S3StorageAdapter{
+		RemoteStorage: baseStorage,
+		config:        &cfg.S3,
+		bucket:        cfg.S3.Bucket,
+		metrics:       &DeleteMetrics{},
+	}
 
-	log.Debug().Msg("creating enhanced S3 storage (placeholder)")
-
-	// This is a simplified approach - in practice you'd need the actual S3 client
-	// For now, return nil to indicate enhanced storage isn't available
-	return nil, fmt.Errorf("enhanced S3 requires access to underlying S3 client")
+	log.Info().Str("bucket", cfg.S3.Bucket).Msg("enhanced S3 storage adapter created")
+	return enhancedS3, nil
 }
 
 // createEnhancedGCS creates an enhanced GCS storage implementation
 func (w *EnhancedStorageWrapper) createEnhancedGCS(baseStorage storage.RemoteStorage, cfg *config.Config) (BatchRemoteStorage, error) {
-	log.Debug().Msg("creating enhanced GCS storage (placeholder)")
+	log.Debug().Msg("creating enhanced GCS storage")
 
-	// Similar to S3, we'd need access to the underlying GCS client
-	// This would require modifying the storage architecture
-	return nil, fmt.Errorf("enhanced GCS requires access to underlying GCS client")
+	// Create a wrapper that implements BatchRemoteStorage using the base storage
+	enhancedGCS := &GCSStorageAdapter{
+		RemoteStorage: baseStorage,
+		config:        &cfg.GCS,
+		bucket:        cfg.GCS.Bucket,
+		metrics:       &DeleteMetrics{},
+	}
+
+	log.Info().Str("bucket", cfg.GCS.Bucket).Msg("enhanced GCS storage created")
+	return enhancedGCS, nil
 }
 
 // createEnhancedAzureBlob creates an enhanced Azure Blob storage implementation
 func (w *EnhancedStorageWrapper) createEnhancedAzureBlob(baseStorage storage.RemoteStorage, cfg *config.Config) (BatchRemoteStorage, error) {
-	log.Debug().Msg("creating enhanced Azure Blob storage (placeholder)")
+	log.Debug().Msg("creating enhanced Azure Blob storage")
 
-	// Similar to others, we'd need access to the underlying Azure client
-	return nil, fmt.Errorf("enhanced Azure Blob requires access to underlying container client")
+	// Create a wrapper that implements BatchRemoteStorage using the base storage
+	enhancedAzure := &AzureBlobStorageAdapter{
+		RemoteStorage: baseStorage,
+		config:        &cfg.AzureBlob,
+		container:     cfg.AzureBlob.Container,
+		metrics:       &DeleteMetrics{},
+	}
+
+	log.Info().Str("container", cfg.AzureBlob.Container).Msg("enhanced Azure Blob storage created")
+	return enhancedAzure, nil
 }
 
 // EnhancedDeleteBackup performs enhanced delete if available, otherwise falls back to base implementation
@@ -144,12 +504,44 @@ func (w *EnhancedStorageWrapper) EnhancedDeleteBackup(ctx context.Context, backu
 
 // deleteBackupFallback falls back to the base storage implementation
 func (w *EnhancedStorageWrapper) deleteBackupFallback(ctx context.Context, backupName string) error {
-	// This would call the existing delete logic from the base storage
-	// The exact implementation depends on how the base storage handles backup deletion
 	log.Debug().Str("backup", backupName).Msg("using fallback delete implementation")
 
-	// For now, return an error indicating this needs to be implemented
-	return fmt.Errorf("fallback delete implementation needs to be integrated with existing backup delete logic")
+	// Get list of files for the backup
+	files, err := w.listBackupFiles(ctx, backupName)
+	if err != nil {
+		return fmt.Errorf("failed to list backup files: %w", err)
+	}
+
+	// Delete files sequentially using base storage
+	var errors []error
+	for _, file := range files {
+		if err := w.RemoteStorage.DeleteFile(ctx, file); err != nil {
+			errors = append(errors, fmt.Errorf("failed to delete %s: %w", file, err))
+		}
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("failed to delete %d files: %v", len(errors), errors)
+	}
+
+	return nil
+}
+
+// listBackupFiles lists all files belonging to a backup
+func (w *EnhancedStorageWrapper) listBackupFiles(ctx context.Context, backupName string) ([]string, error) {
+	var files []string
+
+	// List all files with the backup prefix
+	err := w.RemoteStorage.Walk(ctx, backupName+"/", true, func(ctx context.Context, r storage.RemoteFile) error {
+		files = append(files, r.Name())
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return files, nil
 }
 
 // DeleteBatch implements BatchRemoteStorage interface by routing to enhanced storage
@@ -346,16 +738,25 @@ func NewStorageFactory(config *config.Config) *StorageFactory {
 }
 
 // CreateEnhancedStorage creates an enhanced storage wrapper for the given storage type
-func (sf *StorageFactory) CreateEnhancedStorage(storageType string, opts *WrapperOptions) (*EnhancedStorageWrapper, error) {
-	// This would integrate with the existing storage creation logic
-	// For now, it's a placeholder that shows the intended interface
+func (sf *StorageFactory) CreateEnhancedStorage(baseStorage storage.RemoteStorage, opts *WrapperOptions) (*EnhancedStorageWrapper, error) {
+	if baseStorage == nil {
+		return nil, fmt.Errorf("base storage cannot be nil")
+	}
 
-	log.Info().Str("storage_type", storageType).Msg("creating enhanced storage")
+	log.Info().Str("storage_type", baseStorage.Kind()).Msg("creating enhanced storage wrapper")
 
-	// This would need to create the base storage first, then wrap it
-	// The exact implementation depends on how storage is currently created in the project
+	// Create the enhanced wrapper with the base storage
+	wrapper, err := NewEnhancedStorageWrapper(baseStorage, sf.config, opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create enhanced storage wrapper: %w", err)
+	}
 
-	return nil, fmt.Errorf("storage factory needs integration with existing storage creation logic")
+	// Validate configuration
+	if err := wrapper.ValidateConfig(); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	return wrapper, nil
 }
 
 // GetSupportedStorageTypes returns list of storage types that support enhancements
