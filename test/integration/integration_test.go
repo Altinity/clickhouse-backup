@@ -3521,6 +3521,7 @@ func TestNamedCollections(t *testing.T) {
 			r.NoError(env.dropDatabase("test_named_collection", true))
 		})
 	}
+	env.DockerExecNoError(r, "minio", "rm", "-rf", "/bitnami/minio/data/clickhouse/test_named_collection.csv*")
 	env.Cleanup(t, r)
 }
 
