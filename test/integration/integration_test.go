@@ -3372,6 +3372,9 @@ func TestNamedCollections(t *testing.T) {
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.12") < 0 {
 		t.Skipf("Named collections not supported in version %s", os.Getenv("CLICKHOUSE_VERSION"))
 	}
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.7") < 0 {
+		t.Skipf("DROP/CREATE NAMED COLLECTIONS .. ON CLUSTER doesn't work for version less 23.7, look https://github.com/ClickHouse/ClickHouse/issues/51609")
+	}
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 1*time.Minute)
 
@@ -3467,7 +3470,6 @@ func TestNamedCollections(t *testing.T) {
 				cmd = fmt.Sprintf("%sclickhouse-backup -c /etc/clickhouse-backup/config-s3.yml upload %s", backupEnvVar, backupArg)
 				env.DockerExecNoError(r, "clickhouse-backup", "bash", "-c", cmd)
 			}
-
 			env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupArg)
 
 			// cleanup before restore

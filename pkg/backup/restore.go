@@ -26,7 +26,6 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/resumable"
 	"github.com/eapache/go-resiliency/retrier"
-	"github.com/frifox/siphash128"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -578,10 +577,10 @@ func (b *Backuper) restoreRBACResolveAllConflicts(ctx context.Context, backupNam
 					continue
 				}
 				if strings.HasPrefix(data.Path, "uuid/") {
-					if resolveErr := b.resolveRBACConflictIfExist(ctx, data.Value, accessPath, version, k, replicatedUserDirectories, dropExists); resolveErr != nil {
+					if resolveErr := b.resolveRBACConflictIfExist(ctx, string(data.Value), accessPath, version, k, replicatedUserDirectories, dropExists); resolveErr != nil {
 						return resolveErr
 					}
-					log.Debug().Msgf("%s:%s b.resolveRBACConflictIfExist(%s) no error", fPath, data.Path, data.Value)
+					log.Debug().Msgf("%s:%s b.resolveRBACConflictIfExist(%s) no error", fPath, data.Path, string(data.Value))
 				}
 
 			}
@@ -690,10 +689,10 @@ func (b *Backuper) isRBACExists(ctx context.Context, kind string, name string, a
 				continue
 			}
 			walkErr := k.Walk(replicatedAccessPath, "uuid", true, func(node keeper.DumpNode) (bool, error) {
-				if node.Value == "" {
+				if len(node.Value) == 0 {
 					return false, nil
 				}
-				if checkRBACExists(node.Value) {
+				if checkRBACExists(string(node.Value)) {
 					existsObjectId := strings.TrimPrefix(node.Path, path.Join(replicatedAccessPath, "uuid")+"/")
 					existsObjectIds = append(existsObjectIds, existsObjectId)
 					return true, nil
@@ -757,7 +756,7 @@ func (b *Backuper) dropExistsRBAC(ctx context.Context, kind string, name string,
 	}
 	walkErr := k.Walk(prefix, keeperRBACTypePrefix, true, func(node keeper.DumpNode) (bool, error) {
 		for _, rbacObjectId := range rbacObjectIds {
-			if node.Value == rbacObjectId {
+			if string(node.Value) == rbacObjectId {
 				deletedNodes = append(deletedNodes, node.Path)
 			}
 		}
@@ -939,39 +938,78 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 		return fmt.Errorf("failed to glob sql files: %v", err)
 	}
 
-	if !strings.Contains(storageType, "keeper") && len(jsonlFiles) > 0 {
-		return fmt.Errorf("can't restore %v into named_collections_storage/type=%s", jsonlFiles, storageType)
-	}
-	// Handle JSONL files for keeper storage
-	if len(jsonlFiles) > 0 {
-		// Connect to keeper for restoring JSONL files
-		k := &keeper.Keeper{}
-		if connErr := k.Connect(ctx, b.ch); connErr != nil {
-			return fmt.Errorf("can't connect to keeper: %v", connErr)
-		}
-		defer k.Close()
-
-		// Get the keeper path from settings, fallback to default if not present
-		keeperPath := "/clickhouse/named_collections"
-		if pathSetting, exists := settings["path"]; exists && pathSetting != "" {
-			keeperPath = pathSetting
-		}
-
-		// Restore each JSONL file using keeper.Restore
-		for _, jsonlFile := range jsonlFiles {
-			log.Info().Msgf("keeper.Restore(%s) -> %s", jsonlFile, keeperPath)
-			if restoreErr := k.Restore(jsonlFile, keeperPath); restoreErr != nil {
-				return fmt.Errorf("failed to keeper.Restore %s: %v", jsonlFile, restoreErr)
-			}
-		}
-	}
-
 	// Check if storage is encrypted
 	isEncrypted := false
 	keyHex := ""
 	if key, exists := settings["key_hex"]; exists && key != "" {
 		isEncrypted = true
 		keyHex = key
+	}
+
+	// Handle JSONL files
+	for _, jsonlFile := range jsonlFiles {
+		file, openErr := os.Open(jsonlFile)
+		if openErr != nil {
+			return openErr
+		}
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			line := scanner.Bytes()
+			var node keeper.DumpNode
+			if unmarshalErr := json.Unmarshal(line, &node); unmarshalErr != nil {
+				return fmt.Errorf("failed to unmarshal from %s: %v", jsonlFile, unmarshalErr)
+			}
+			var sqlQuery string
+			if len(node.Value) == 0 {
+				continue
+			}
+			if isEncrypted {
+				decryptedNode, decryptErr := b.decryptNamedCollectionKeeperJSON(node, keyHex)
+				if decryptErr != nil {
+					return decryptErr
+				}
+				sqlQuery = string(decryptedNode.Value)
+			} else {
+				sqlQuery = string(node.Value)
+			}
+			sqlQuery = strings.TrimSpace(sqlQuery)
+			if sqlQuery == "" {
+				log.Warn().Msgf("Empty SQL content in line from: %s", jsonlFile)
+				continue
+			}
+
+			re := regexp.MustCompile(`(?i)CREATE\s+NAMED\s+COLLECTION\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)`)
+			matches := re.FindStringSubmatch(sqlQuery)
+			if len(matches) < 2 {
+				return fmt.Errorf("could not extract collection name from: %s, %s skipping", jsonlFile, sqlQuery)
+			}
+			collectionName := matches[1]
+
+			// Drop existing collection first
+			dropQuery := fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s", collectionName)
+			if b.cfg.General.RestoreSchemaOnCluster != "" {
+				dropQuery += fmt.Sprintf(" ON CLUSTER '%s'", b.cfg.General.RestoreSchemaOnCluster)
+			}
+			if err := b.ch.QueryContext(ctx, dropQuery); err != nil {
+				return fmt.Errorf("failed to drop named collection %s: %v", collectionName, err)
+			}
+
+			// Create new collection
+			if b.cfg.General.RestoreSchemaOnCluster != "" {
+				sqlQuery = strings.Replace(sqlQuery, " AS ", fmt.Sprintf(" ON CLUSTER '%s' AS ", b.cfg.General.RestoreSchemaOnCluster), 1)
+			}
+			if err := b.ch.QueryContext(ctx, sqlQuery); err != nil {
+				return fmt.Errorf("failed to create named collection %s: %v", collectionName, err)
+			}
+
+			log.Info().Msgf("Restored SQL named collection from jsonl: %s", collectionName)
+		}
+		if err := scanner.Err(); err != nil {
+			return fmt.Errorf("scanner error on %s: %v", jsonlFile, err)
+		}
+		if err := file.Close(); err != nil {
+			log.Warn().Msgf("can't close %s error: %v", jsonlFile, err)
+		}
 	}
 
 	for _, sqlFile := range sqlFiles {
@@ -1004,17 +1042,23 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 		re := regexp.MustCompile(`(?i)CREATE\s+NAMED\s+COLLECTION\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)`)
 		matches := re.FindStringSubmatch(sqlQuery)
 		if len(matches) < 2 {
-			return fmt.Errorf("could not extract collection name from: %s, %s skipping", sqlFile, sqlQuery)
+			return fmt.Errorf("could not extract collection name from: %s, %s", sqlFile, sqlQuery)
 		}
 		collectionName := matches[1]
 
 		// Drop existing collection first
 		dropQuery := fmt.Sprintf("DROP NAMED COLLECTION IF EXISTS %s", collectionName)
+		if b.cfg.General.RestoreSchemaOnCluster != "" {
+			dropQuery += fmt.Sprintf(" ON CLUSTER '%s'", b.cfg.General.RestoreSchemaOnCluster)
+		}
 		if err := b.ch.QueryContext(ctx, dropQuery); err != nil {
 			return fmt.Errorf("failed to drop named collection %s: %v", collectionName, err)
 		}
 
 		// Create new collection
+		if b.cfg.General.RestoreSchemaOnCluster != "" {
+			sqlQuery = strings.Replace(sqlQuery, " AS ", fmt.Sprintf(" ON CLUSTER '%s' AS ", b.cfg.General.RestoreSchemaOnCluster), 1)
+		}
 		if err := b.ch.QueryContext(ctx, sqlQuery); err != nil {
 			return fmt.Errorf("failed to create named collection %s: %v", collectionName, err)
 		}
@@ -1031,10 +1075,31 @@ func (b *Backuper) decryptNamedCollectionFile(filePath, keyHex string) ([]byte, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to read encrypted file: %v", err)
 	}
+	decryptedData, err := b.decryptNamedCollectionData(data, keyHex)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %v", filePath, err)
+	}
+	return decryptedData, nil
+}
 
+// decryptNamedCollectionKeeperJSON decrypts an encrypted named collection keeper value
+func (b *Backuper) decryptNamedCollectionKeeperJSON(node keeper.DumpNode, keyHex string) (keeper.DumpNode, error) {
+	if len(node.Value) == 0 || len(node.Value) < 3 || !strings.HasPrefix(string(node.Value), "ENC") {
+		return node, fmt.Errorf("does not have ENC encrypted header")
+	}
+	decryptedValue, err := b.decryptNamedCollectionData(node.Value, keyHex)
+	if err != nil {
+		return node, fmt.Errorf("path %s: %v", node.Path, err)
+	}
+	node.Value = decryptedValue
+	return node, nil
+}
+
+// decryptNamedCollectionData decrypts an encrypted named collection data
+func (b *Backuper) decryptNamedCollectionData(data []byte, keyHex string) ([]byte, error) {
 	// 2. Check header signature
 	if len(data) < 3 || string(data[:3]) != "ENC" {
-		return nil, fmt.Errorf("%s does not have ENC encrypted header", filePath)
+		return nil, fmt.Errorf("does not have ENC encrypted header")
 	}
 	// Data is encrypted; proceed to parse header.
 	// Header format (version 2):
@@ -1046,13 +1111,10 @@ func (b *Backuper) decryptNamedCollectionFile(filePath, keyHex string) ([]byte, 
 	// [39..63]: reserved padding (zeros)
 
 	if len(data) < 64 {
-		return nil, fmt.Errorf("%s encrypted data is too short, missing header", filePath)
+		return nil, fmt.Errorf("encrypted data is too short, missing header")
 	}
 	// 3. Read version
 	version := binary.LittleEndian.Uint16(data[3:5])
-	if version != 2 {
-		return nil, fmt.Errorf("%s unsupported header version: %d", filePath, version)
-	}
 	// 4. Read algorithm and determine key length
 	algID := binary.LittleEndian.Uint16(data[5:7])
 	var keyLen int
@@ -1064,7 +1126,7 @@ func (b *Backuper) decryptNamedCollectionFile(filePath, keyHex string) ([]byte, 
 	case 2:
 		keyLen = 32 // AES-256
 	default:
-		return nil, fmt.Errorf("%s unknown algorithm ID: %d, expected 0,1,2", filePath, algID)
+		return nil, fmt.Errorf("unknown algorithm ID: %d, expected 0,1,2", algID)
 	}
 
 	// 5. Extract IV from header
@@ -1076,22 +1138,43 @@ func (b *Backuper) decryptNamedCollectionFile(filePath, keyHex string) ([]byte, 
 		return nil, fmt.Errorf("invalid key hex: %v", err)
 	}
 	if len(key) != keyLen {
-		return nil, fmt.Errorf("%s, provided key does not match expected length for algorithm", filePath)
+		return nil, fmt.Errorf("provided key does not match expected length for algorithm")
 	}
 
-	// 7. (Optional) Verify key fingerprint
-	headerFingerprint := data[7:23] // 16-byte fingerprint from header
-	// Compute SipHash-128 of the key (using same seeds as ClickHouse) to verify.
-	calcFingerprint := computeFingerprint(key)
-	if subtle.ConstantTimeCompare(calcFingerprint, headerFingerprint) == 1 {
-		return nil, fmt.Errorf("%s key fingerprint does not match header. wrong key", filePath)
+	// 7. Verify key fingerprint according to header version
+	headerFingerprint := data[7:23] // 16 bytes
+	switch version {
+	case 2:
+		// v2: fingerprint = sipHash128Keyed(seed0, seed1, UNHEX(key_hex))
+		// seeds are literal: "ChEncryp" and "tedDiskF" in little-endian UInt64
+		const seed0 uint64 = 0x4368456E63727970 // 'ChEncryp'
+		const seed1 uint64 = 0x7465644469736B46 // 'tedDiskF'
+		lo, hi := sipHash128Keyed(seed0, seed1, key)
+		var expected [16]byte
+		binary.LittleEndian.PutUint64(expected[0:8], lo)
+		binary.LittleEndian.PutUint64(expected[8:16], hi)
+		if subtle.ConstantTimeCompare(expected[:], headerFingerprint) != 1 {
+			return nil, fmt.Errorf("key fingerprint (v2) mismatch: expected=%X actual=%X", expected, headerFingerprint)
+		}
+	case 1:
+		// v1: header stores { key_id (low 64), very_small_hash(key) (high 64, low nibble) }
+		// very_small_hash(key) = sipHash64(UNHEX(key_hex)) & 0x0F
+		low := binary.LittleEndian.Uint64(headerFingerprint[0:8])   // key_id (not used for verification)
+		high := binary.LittleEndian.Uint64(headerFingerprint[8:16]) // small hash in low nibble
+		_ = low
+		computedSmall := sipHash64(0, 0, key) & 0x0F
+		if byte(high&0x0F) != byte(computedSmall) {
+			return nil, fmt.Errorf("key fingerprint (v1) mismatch: expected small_hash=%X actual_high64=%016X", computedSmall, high)
+		}
+	default:
+		return nil, fmt.Errorf("unsupported header version: %d", version)
 	}
 
 	// 8. Decrypt the ciphertext
 	ciphertext := data[64:] // everything after the 64-byte header
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, fmt.Errorf("%s failed to create AES cipher: %v", filePath, err)
+		return nil, fmt.Errorf("failed to create AES cipher: %v", err)
 	}
 	// Use AES in CTR mode with the extracted IV:
 	stream := cipher.NewCTR(block, iv)
@@ -1100,10 +1183,125 @@ func (b *Backuper) decryptNamedCollectionFile(filePath, keyHex string) ([]byte, 
 	return plaintext, nil
 }
 
-// computeFingerprint computes the SipHash-128 fingerprint of a key.
-func computeFingerprint(key []byte) []byte {
-	fingerprint := siphash128.SipHash128(key)
-	return fingerprint[:]
+// ---- SipHash implementations compatible with ClickHouse (2-4 rounds) ----
+
+// sipHash128Keyed computes 128-bit SipHash (2-4) for the given data and 128-bit key (k0,k1).
+// It returns (lo, hi) where ClickHouse serializes them as little-endian UInt64 (lo first, hi second).
+func sipHash128Keyed(k0, k1 uint64, data []byte) (uint64, uint64) {
+	// Initialization as in SipHash spec
+	v0 := uint64(0x736f6d6570736575) ^ k0
+	v1 := uint64(0x646f72616e646f6d) ^ k1
+	v2 := uint64(0x6c7967656e657261) ^ k0
+	v3 := uint64(0x7465646279746573) ^ k1
+
+	rotl := func(x uint64, b uint) uint64 { return (x << b) | (x >> (64 - b)) }
+	sipRound := func() {
+		v0 += v1
+		v1 = rotl(v1, 13)
+		v1 ^= v0
+		v0 = rotl(v0, 32)
+
+		v2 += v3
+		v3 = rotl(v3, 16)
+		v3 ^= v2
+
+		v0 += v3
+		v3 = rotl(v3, 21)
+		v3 ^= v0
+
+		v2 += v1
+		v1 = rotl(v1, 17)
+		v1 ^= v2
+		v2 = rotl(v2, 32)
+	}
+
+	n := len(data)
+	i := 0
+	// process 8-byte blocks (little-endian)
+	for ; i+8 <= n; i += 8 {
+		m := binary.LittleEndian.Uint64(data[i : i+8])
+		v3 ^= m
+		sipRound()
+		sipRound()
+		v0 ^= m
+	}
+
+	// final block with remaining bytes and length in the top byte (per SipHash)
+	var tail [8]byte
+	copy(tail[:], data[i:])
+	tail[7] = byte(n)
+	m := binary.LittleEndian.Uint64(tail[:])
+	v3 ^= m
+	sipRound()
+	sipRound()
+	v0 ^= m
+
+	v2 ^= 0xff
+	// finalization: 4 rounds
+	sipRound()
+	sipRound()
+	sipRound()
+	sipRound()
+
+	lo := v0 ^ v1
+	hi := v2 ^ v3
+	return lo, hi
+}
+
+// sipHash64 computes 64-bit SipHash(2-4) with the given 128-bit key (k0,k1).
+// ClickHouse's sipHash64() uses k0=k1=0 by default.
+func sipHash64(k0, k1 uint64, data []byte) uint64 {
+	v0 := uint64(0x736f6d6570736575) ^ k0
+	v1 := uint64(0x646f72616e646f6d) ^ k1
+	v2 := uint64(0x6c7967656e657261) ^ k0
+	v3 := uint64(0x7465646279746573) ^ k1
+
+	rotl := func(x uint64, b uint) uint64 { return (x << b) | (x >> (64 - b)) }
+	sipRound := func() {
+		v0 += v1
+		v1 = rotl(v1, 13)
+		v1 ^= v0
+		v0 = rotl(v0, 32)
+
+		v2 += v3
+		v3 = rotl(v3, 16)
+		v3 ^= v2
+
+		v0 += v3
+		v3 = rotl(v3, 21)
+		v3 ^= v0
+
+		v2 += v1
+		v1 = rotl(v1, 17)
+		v1 ^= v2
+		v2 = rotl(v2, 32)
+	}
+
+	n := len(data)
+	i := 0
+	for ; i+8 <= n; i += 8 {
+		m := binary.LittleEndian.Uint64(data[i : i+8])
+		v3 ^= m
+		sipRound()
+		sipRound()
+		v0 ^= m
+	}
+
+	var tail [8]byte
+	copy(tail[:], data[i:])
+	tail[7] = byte(n)
+	m := binary.LittleEndian.Uint64(tail[:])
+	v3 ^= m
+	sipRound()
+	sipRound()
+	v0 ^= m
+
+	v2 ^= 0xff
+	sipRound()
+	sipRound()
+	sipRound()
+	sipRound()
+	return v0 ^ v1 ^ v2 ^ v3
 }
 
 func (b *Backuper) restoreBackupRelatedDir(backupName, backupPrefixDir, destinationDir string, disks []clickhouse.Disk, skipPatterns []string) error {
