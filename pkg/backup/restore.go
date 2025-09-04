@@ -26,7 +26,6 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/resumable"
 	"github.com/eapache/go-resiliency/retrier"
-	"github.com/frifox/siphash128"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -1118,9 +1117,6 @@ func (b *Backuper) decryptNamedCollectionData(data []byte, keyHex string) ([]byt
 	}
 	// 3. Read version
 	version := binary.LittleEndian.Uint16(data[3:5])
-	if version != 2 {
-		return nil, fmt.Errorf("unsupported header version: %d", version)
-	}
 	// 4. Read algorithm and determine key length
 	algID := binary.LittleEndian.Uint16(data[5:7])
 	var keyLen int
@@ -1147,13 +1143,33 @@ func (b *Backuper) decryptNamedCollectionData(data []byte, keyHex string) ([]byt
 		return nil, fmt.Errorf("provided key does not match expected length for algorithm")
 	}
 
-	// 7. (Optional) Verify key fingerprint
-	headerFingerprint := data[7:23] // 16-byte fingerprint from header
-	// Compute SipHash-128 of the key (using same seeds as ClickHouse) to verify.
-	calcFingerprint := computeFingerprint(key)
-	if subtle.ConstantTimeCompare(calcFingerprint, headerFingerprint) != 1 {
-		// log.Warn().Msgf("key fingerprint does not match header. expected fingreprint=%#v actual=%#v", calcFingerprint, headerFingerprint)
-		return nil, fmt.Errorf("key fingerprint does not match header. expected fingreprint=%#v actual=%#v", calcFingerprint, headerFingerprint)
+	// 7. Verify key fingerprint according to header version
+	headerFingerprint := data[7:23] // 16 bytes
+	switch version {
+	case 2:
+		// v2: fingerprint = sipHash128Keyed(seed0, seed1, UNHEX(key_hex))
+		// seeds are literal: "ChEncryp" and "tedDiskF" in little-endian UInt64
+		const seed0 uint64 = 0x4368456E63727970 // 'ChEncryp'
+		const seed1 uint64 = 0x7465644469736B46 // 'tedDiskF'
+		lo, hi := sipHash128Keyed(seed0, seed1, key)
+		var expected [16]byte
+		binary.LittleEndian.PutUint64(expected[0:8], lo)
+		binary.LittleEndian.PutUint64(expected[8:16], hi)
+		if subtle.ConstantTimeCompare(expected[:], headerFingerprint) != 1 {
+			return nil, fmt.Errorf("key fingerprint (v2) mismatch: expected=%X actual=%X", expected, headerFingerprint)
+		}
+	case 1:
+		// v1: header stores { key_id (low 64), very_small_hash(key) (high 64, low nibble) }
+		// very_small_hash(key) = sipHash64(UNHEX(key_hex)) & 0x0F
+		low := binary.LittleEndian.Uint64(headerFingerprint[0:8])   // key_id (not used for verification)
+		high := binary.LittleEndian.Uint64(headerFingerprint[8:16]) // small hash in low nibble
+		_ = low
+		computedSmall := sipHash64(0, 0, key) & 0x0F
+		if byte(high&0x0F) != byte(computedSmall) {
+			return nil, fmt.Errorf("key fingerprint (v1) mismatch: expected small_hash=%X actual_high64=%016X", computedSmall, high)
+		}
+	default:
+		return nil, fmt.Errorf("unsupported header version: %d", version)
 	}
 
 	// 8. Decrypt the ciphertext
@@ -1169,10 +1185,125 @@ func (b *Backuper) decryptNamedCollectionData(data []byte, keyHex string) ([]byt
 	return plaintext, nil
 }
 
-// computeFingerprint computes the SipHash-128 fingerprint of a key.
-func computeFingerprint(key []byte) []byte {
-	fingerprint := siphash128.SipHash128(key)
-	return fingerprint[:]
+// ---- SipHash implementations compatible with ClickHouse (2-4 rounds) ----
+
+// sipHash128Keyed computes 128-bit SipHash (2-4) for the given data and 128-bit key (k0,k1).
+// It returns (lo, hi) where ClickHouse serializes them as little-endian UInt64 (lo first, hi second).
+func sipHash128Keyed(k0, k1 uint64, data []byte) (uint64, uint64) {
+	// Initialization as in SipHash spec
+	v0 := uint64(0x736f6d6570736575) ^ k0
+	v1 := uint64(0x646f72616e646f6d) ^ k1
+	v2 := uint64(0x6c7967656e657261) ^ k0
+	v3 := uint64(0x7465646279746573) ^ k1
+
+	rotl := func(x uint64, b uint) uint64 { return (x << b) | (x >> (64 - b)) }
+	sipRound := func() {
+		v0 += v1
+		v1 = rotl(v1, 13)
+		v1 ^= v0
+		v0 = rotl(v0, 32)
+
+		v2 += v3
+		v3 = rotl(v3, 16)
+		v3 ^= v2
+
+		v0 += v3
+		v3 = rotl(v3, 21)
+		v3 ^= v0
+
+		v2 += v1
+		v1 = rotl(v1, 17)
+		v1 ^= v2
+		v2 = rotl(v2, 32)
+	}
+
+	n := len(data)
+	i := 0
+	// process 8-byte blocks (little-endian)
+	for ; i+8 <= n; i += 8 {
+		m := binary.LittleEndian.Uint64(data[i : i+8])
+		v3 ^= m
+		sipRound()
+		sipRound()
+		v0 ^= m
+	}
+
+	// final block with remaining bytes and length in the top byte (per SipHash)
+	var tail [8]byte
+	copy(tail[:], data[i:])
+	tail[7] = byte(n)
+	m := binary.LittleEndian.Uint64(tail[:])
+	v3 ^= m
+	sipRound()
+	sipRound()
+	v0 ^= m
+
+	v2 ^= 0xff
+	// finalization: 4 rounds
+	sipRound()
+	sipRound()
+	sipRound()
+	sipRound()
+
+	lo := v0 ^ v1
+	hi := v2 ^ v3
+	return lo, hi
+}
+
+// sipHash64 computes 64-bit SipHash(2-4) with the given 128-bit key (k0,k1).
+// ClickHouse's sipHash64() uses k0=k1=0 by default.
+func sipHash64(k0, k1 uint64, data []byte) uint64 {
+	v0 := uint64(0x736f6d6570736575) ^ k0
+	v1 := uint64(0x646f72616e646f6d) ^ k1
+	v2 := uint64(0x6c7967656e657261) ^ k0
+	v3 := uint64(0x7465646279746573) ^ k1
+
+	rotl := func(x uint64, b uint) uint64 { return (x << b) | (x >> (64 - b)) }
+	sipRound := func() {
+		v0 += v1
+		v1 = rotl(v1, 13)
+		v1 ^= v0
+		v0 = rotl(v0, 32)
+
+		v2 += v3
+		v3 = rotl(v3, 16)
+		v3 ^= v2
+
+		v0 += v3
+		v3 = rotl(v3, 21)
+		v3 ^= v0
+
+		v2 += v1
+		v1 = rotl(v1, 17)
+		v1 ^= v2
+		v2 = rotl(v2, 32)
+	}
+
+	n := len(data)
+	i := 0
+	for ; i+8 <= n; i += 8 {
+		m := binary.LittleEndian.Uint64(data[i : i+8])
+		v3 ^= m
+		sipRound()
+		sipRound()
+		v0 ^= m
+	}
+
+	var tail [8]byte
+	copy(tail[:], data[i:])
+	tail[7] = byte(n)
+	m := binary.LittleEndian.Uint64(tail[:])
+	v3 ^= m
+	sipRound()
+	sipRound()
+	v0 ^= m
+
+	v2 ^= 0xff
+	sipRound()
+	sipRound()
+	sipRound()
+	sipRound()
+	return v0 ^ v1 ^ v2 ^ v3
 }
 
 func (b *Backuper) restoreBackupRelatedDir(backupName, backupPrefixDir, destinationDir string, disks []clickhouse.Disk, skipPatterns []string) error {
