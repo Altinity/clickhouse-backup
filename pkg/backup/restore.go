@@ -1084,7 +1084,6 @@ func (b *Backuper) decryptNamedCollectionFile(filePath, keyHex string) ([]byte, 
 
 // decryptNamedCollectionKeeperJSON decrypts an encrypted named collection keeper value
 func (b *Backuper) decryptNamedCollectionKeeperJSON(node keeper.DumpNode, keyHex string) (keeper.DumpNode, error) {
-	log.Info().Str("value", string(node.Value)).Msg("SUKA1")
 	if len(node.Value) == 0 || len(node.Value) < 3 || !strings.HasPrefix(string(node.Value), "ENC") {
 		return node, fmt.Errorf("does not have ENC encrypted header")
 	}
@@ -1093,7 +1092,6 @@ func (b *Backuper) decryptNamedCollectionKeeperJSON(node keeper.DumpNode, keyHex
 		return node, fmt.Errorf("path %s: %v", node.Path, err)
 	}
 	node.Value = decryptedValue
-	log.Info().Str("value", string(node.Value)).Msg("SUKA2")
 	return node, nil
 }
 
