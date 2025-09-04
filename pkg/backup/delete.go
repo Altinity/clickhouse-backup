@@ -321,12 +321,11 @@ func (b *Backuper) removeBackupRemoteEnhanced(ctx context.Context, backupName st
 	// Create enhanced storage wrapper
 	wrapperOpts := &enhanced.WrapperOptions{
 		EnableCache:     b.cfg.DeleteOptimizations.CacheEnabled,
-		CacheTTL:        b.cfg.DeleteOptimizations.CacheTTL.String(),
 		EnableMetrics:   true,
 		FallbackOnError: true,
 	}
 
-	enhancedStorage, err := enhanced.NewEnhancedStorageWrapper(&bd, b.cfg, wrapperOpts)
+	enhancedStorage, err := enhanced.NewEnhancedStorageWrapper(b.dst, b.cfg, wrapperOpts)
 	if err != nil {
 		log.Warn().Err(err).Msg("failed to create enhanced storage, falling back to original implementation")
 		return b.removeBackupRemoteOriginal(ctx, backupName, bd, start)
@@ -338,7 +337,7 @@ func (b *Backuper) removeBackupRemoteEnhanced(ctx context.Context, backupName st
 	}()
 
 	// Get backup list
-	backupList, err := (&bd).BackupList(ctx, true, backupName)
+	backupList, err := b.dst.BackupList(ctx, true, backupName)
 	if err != nil {
 		return err
 	}
@@ -380,7 +379,7 @@ func (b *Backuper) removeBackupRemoteEnhanced(ctx context.Context, backupName st
 
 // removeBackupRemoteOriginal uses the original deletion implementation
 func (b *Backuper) removeBackupRemoteOriginal(ctx context.Context, backupName string, bd storage.BackupDestination, start time.Time) error {
-	backupList, err := (&bd).BackupList(ctx, true, backupName)
+	backupList, err := b.dst.BackupList(ctx, true, backupName)
 	if err != nil {
 		return err
 	}
@@ -391,7 +390,7 @@ func (b *Backuper) removeBackupRemoteOriginal(ctx context.Context, backupName st
 				return err
 			}
 
-			if err = (&bd).RemoveBackupRemote(ctx, backup, b.cfg, b); err != nil {
+			if err = b.dst.RemoveBackupRemote(ctx, backup, b.cfg, b); err != nil {
 				log.Warn().Msgf("bd.RemoveBackup return error: %v", err)
 				return err
 			}

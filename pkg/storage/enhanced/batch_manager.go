@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"path"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
 	"github.com/rs/zerolog/log"
 )
 
@@ -126,12 +128,29 @@ func (bm *BatchManager) DeleteBackupBatch(ctx context.Context, backupName string
 }
 
 // getBackupFileList retrieves the list of files for a backup
-// This is a placeholder - in practice, this would query the storage or metadata
 func (bm *BatchManager) getBackupFileList(ctx context.Context, backupName string) ([]string, error) {
-	// This would typically walk the storage path for the backup
-	// For now, we'll return an empty list as this is just the orchestration layer
 	log.Debug().Str("backup", backupName).Msg("retrieving backup file list")
-	return []string{}, nil
+
+	var fileList []string
+
+	// Walk the backup directory to collect all files
+	err := bm.storage.Walk(ctx, backupName+"/", true, func(ctx context.Context, f storage.RemoteFile) error {
+		// Construct full path like the original implementation does
+		fullPath := path.Join(backupName, f.Name())
+		fileList = append(fileList, fullPath)
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to walk backup directory %s: %w", backupName, err)
+	}
+
+	log.Debug().
+		Str("backup", backupName).
+		Int("file_count", len(fileList)).
+		Msg("collected backup file list")
+
+	return fileList, nil
 }
 
 // applyCacheOptimizations uses cache to skip files that don't need to be deleted
