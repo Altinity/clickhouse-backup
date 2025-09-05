@@ -11,16 +11,20 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
 	"github.com/rs/zerolog/log"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 )
 
-// EnhancedGCS implements BatchRemoteStorage for Google Cloud Storage with parallel delete
+// EnhancedGCS implements BatchRemoteStorage for Google Cloud Storage with both parallel and batch delete
 type EnhancedGCS struct {
 	storage.RemoteStorage
-	client     *gcs.Client
-	config     *config.GCSConfig
-	bucket     string
-	clientPool *GCSClientPool
-	metrics    *DeleteMetrics
+	client              *gcs.Client
+	config              *config.GCSConfig
+	bucket              string
+	clientPool          *GCSClientPool
+	batchDeleter        *GCSBatchDeleter
+	deleteOptimizations *config.DeleteOptimizations
+	metrics             *DeleteMetrics
 }
 
 // GCSClientPool manages a pool of GCS clients for concurrent operations
@@ -67,17 +71,35 @@ func NewEnhancedGCS(baseStorage storage.RemoteStorage, client *gcs.Client, cfg *
 		return nil, fmt.Errorf("failed to create GCS client pool: %w", err)
 	}
 
-	return &EnhancedGCS{
+	// Create batch deleter if JSON API batching is enabled
+	var batchDeleter *GCSBatchDeleter
+	if cfg.DeleteOptimizations.GCSOptimizations.UseBatchAPI {
+		// Get token source from the client for batch operations
+		tokenSource, err := getTokenSourceFromClient(client)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get token source for batch operations: %w", err)
+		}
+
+		batchDeleter = NewGCSBatchDeleter(gcsConfig.Bucket, tokenSource, gcsConfig)
+	}
+
+	enhancedGCS := &EnhancedGCS{
 		RemoteStorage: baseStorage,
 		client:        client,
 		config:        gcsConfig,
 		bucket:        gcsConfig.Bucket,
 		clientPool:    clientPool,
+		batchDeleter:  batchDeleter,
 		metrics:       &DeleteMetrics{},
-	}, nil
+	}
+
+	// Store delete optimization config for later access
+	enhancedGCS.deleteOptimizations = &cfg.DeleteOptimizations
+
+	return enhancedGCS, nil
 }
 
-// DeleteBatch implements BatchRemoteStorage interface for GCS parallel delete
+// DeleteBatch implements BatchRemoteStorage interface for GCS delete operations
 func (g *EnhancedGCS) DeleteBatch(ctx context.Context, keys []string) (*BatchResult, error) {
 	startTime := time.Now()
 	defer func() {
@@ -89,9 +111,40 @@ func (g *EnhancedGCS) DeleteBatch(ctx context.Context, keys []string) (*BatchRes
 		return &BatchResult{SuccessCount: 0}, nil
 	}
 
-	log.Debug().Int("key_count", len(keys)).Msg("starting GCS parallel delete")
 	g.metrics.FilesProcessed = int64(len(keys))
 
+	// Choose between JSON API batching and high-concurrency parallel delete
+	if g.deleteOptimizations != nil && g.deleteOptimizations.GCSOptimizations.UseBatchAPI && g.batchDeleter != nil {
+		log.Debug().
+			Int("key_count", len(keys)).
+			Msg("starting GCS JSON API batch delete")
+
+		result, err := g.batchDeleter.DeleteBatch(ctx, keys)
+		if err != nil {
+			// Fallback to parallel delete if batch fails
+			log.Warn().
+				Err(err).
+				Msg("GCS batch delete failed, falling back to parallel delete")
+			return g.deleteParallel(ctx, keys)
+		}
+
+		g.metrics.FilesDeleted = int64(result.SuccessCount)
+		g.metrics.FilesFailed = int64(len(result.FailedKeys))
+		g.metrics.APICallsCount++ // Batch counts as single API call
+
+		return result, nil
+	}
+
+	// Use high-concurrency parallel delete
+	log.Debug().
+		Int("key_count", len(keys)).
+		Msg("starting GCS high-concurrency parallel delete")
+
+	return g.deleteParallel(ctx, keys)
+}
+
+// deleteParallel performs high-concurrency parallel delete operations
+func (g *EnhancedGCS) deleteParallel(ctx context.Context, keys []string) (*BatchResult, error) {
 	// Determine optimal worker count
 	workerCount := g.getOptimalWorkerCount(len(keys))
 
@@ -152,7 +205,6 @@ func (g *EnhancedGCS) DeleteBatch(ctx context.Context, keys []string) (*BatchRes
 		Int("success_count", successCount).
 		Int("failed_count", len(failedKeys)).
 		Int("workers_used", workerCount).
-		Str("duration", time.Since(startTime).String()).
 		Msg("GCS parallel delete completed")
 
 	return batchResult, nil
@@ -262,16 +314,19 @@ func (g *EnhancedGCS) updateThroughputMetrics() {
 	}
 }
 
-// SupportsBatchDelete returns false as GCS doesn't have native batch delete, but supports parallel operations
+// SupportsBatchDelete returns true if JSON API batching is enabled, otherwise false
 func (g *EnhancedGCS) SupportsBatchDelete() bool {
-	return false // No native batch API, but we provide parallel deletion
+	return g.deleteOptimizations != nil && g.deleteOptimizations.GCSOptimizations.UseBatchAPI && g.batchDeleter != nil
 }
 
-// GetOptimalBatchSize returns the optimal batch size for parallel processing
+// GetOptimalBatchSize returns the optimal batch size based on the delete method
 func (g *EnhancedGCS) GetOptimalBatchSize() int {
-	// For GCS, we process in parallel rather than true batches
-	// Return a reasonable chunk size for parallel processing
-	return 100
+	if g.deleteOptimizations != nil && g.deleteOptimizations.GCSOptimizations.UseBatchAPI && g.batchDeleter != nil {
+		// GCS JSON API supports up to 100 requests per batch
+		return 100
+	}
+	// For parallel processing, return a reasonable chunk size
+	return 50
 }
 
 // GetDeleteMetrics returns current delete operation metrics
@@ -400,6 +455,25 @@ func (g *EnhancedGCS) validateGCSConnection(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// getTokenSourceFromClient extracts the token source from a GCS client
+func getTokenSourceFromClient(client *gcs.Client) (oauth2.TokenSource, error) {
+	// Unfortunately, the GCS client doesn't expose its token source directly
+	// We need to create a new token source using the same authentication method
+	// This is a limitation of the current GCS client library
+
+	// For now, we'll create a default token source
+	// In a production environment, you might want to pass the token source explicitly
+	// or use the same credentials that were used to create the client
+
+	// Use default credentials (same as what the GCS client would use)
+	tokenSource, err := google.DefaultTokenSource(context.Background(), gcs.ScopeFullControl)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create default token source: %w", err)
+	}
+
+	return tokenSource, nil
 }
 
 // maxInt returns the maximum of two integers

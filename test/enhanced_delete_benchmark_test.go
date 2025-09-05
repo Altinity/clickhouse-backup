@@ -209,9 +209,11 @@ func createTestConfig(storageType string, useEnhanced bool) *config.Config {
 		cfg.DeleteOptimizations.GCSOptimizations = struct {
 			MaxWorkers    int  `yaml:"max_workers" envconfig:"DELETE_GCS_MAX_WORKERS" default:"50"`
 			UseClientPool bool `yaml:"use_client_pool" envconfig:"DELETE_GCS_USE_CLIENT_POOL" default:"true"`
+			UseBatchAPI   bool `yaml:"use_batch_api" envconfig:"DELETE_GCS_USE_BATCH_API" default:"false"`
 		}{
 			MaxWorkers:    50,
 			UseClientPool: true,
+			UseBatchAPI:   false,
 		}
 	case "azblob":
 		cfg.DeleteOptimizations.AzureOptimizations = struct {

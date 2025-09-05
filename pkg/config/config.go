@@ -288,6 +288,7 @@ type DeleteOptimizations struct {
 	GCSOptimizations struct {
 		MaxWorkers    int  `yaml:"max_workers" envconfig:"DELETE_GCS_MAX_WORKERS" default:"50"`
 		UseClientPool bool `yaml:"use_client_pool" envconfig:"DELETE_GCS_USE_CLIENT_POOL" default:"true"`
+		UseBatchAPI   bool `yaml:"use_batch_api" envconfig:"DELETE_GCS_USE_BATCH_API" default:"false"`
 	} `yaml:"gcs_optimizations"`
 
 	AzureOptimizations struct {
@@ -713,9 +714,11 @@ func DefaultConfig() *Config {
 			GCSOptimizations: struct {
 				MaxWorkers    int  `yaml:"max_workers" envconfig:"DELETE_GCS_MAX_WORKERS" default:"50"`
 				UseClientPool bool `yaml:"use_client_pool" envconfig:"DELETE_GCS_USE_CLIENT_POOL" default:"true"`
+				UseBatchAPI   bool `yaml:"use_batch_api" envconfig:"DELETE_GCS_USE_BATCH_API" default:"false"`
 			}{
 				MaxWorkers:    50,
 				UseClientPool: true,
+				UseBatchAPI:   false, // Default to false for backward compatibility
 			},
 			AzureOptimizations: struct {
 				UseBatchAPI bool `yaml:"use_batch_api" envconfig:"DELETE_AZURE_USE_BATCH_API" default:"true"`
