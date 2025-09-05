@@ -104,11 +104,18 @@ func testGCSParallelDeleteScenario(t *testing.T, objectCount, maxWorkers, client
 		GCS: config.GCSConfig{
 			Bucket:         "test-gcs-bucket",
 			ClientPoolSize: clientPoolSize,
+			BatchDeletion: config.GCSBatchConfig{
+				MaxWorkers:    maxWorkers,
+				UseClientPool: true,
+				UseBatchAPI:   false, // Testing parallel processing
+			},
 		},
-		DeleteOptimizations: config.DeleteOptimizations{
-			Enabled:   true,
-			BatchSize: 100, // Not used for GCS parallel processing
-			Workers:   maxWorkers,
+		General: config.GeneralConfig{
+			BatchDeletion: config.BatchDeletionConfig{
+				Enabled:   true,
+				BatchSize: 100, // Not used for GCS parallel processing
+				Workers:   maxWorkers,
+			},
 		},
 	}
 
@@ -461,17 +468,19 @@ func testGCSErrorScenario(t *testing.T, errorType string, isRetriable, expectSuc
 			Bucket:         "error-test-bucket",
 			ClientPoolSize: 5,
 		},
-		DeleteOptimizations: config.DeleteOptimizations{
-			Enabled:       true,
-			Workers:       5,
-			RetryAttempts: 3,
+		General: config.GeneralConfig{
+			BatchDeletion: config.BatchDeletionConfig{
+				Enabled:       true,
+				Workers:       5,
+				RetryAttempts: 3,
+			},
 		},
 	}
 
 	gcsStorage := &MockEnhancedGCS{
 		bucket:     cfg.GCS.Bucket,
 		clientPool: mockClientPool,
-		maxWorkers: cfg.DeleteOptimizations.Workers,
+		maxWorkers: cfg.General.BatchDeletion.Workers,
 		supported:  false,
 		metrics:    &enhanced.DeleteMetrics{},
 	}
@@ -742,8 +751,10 @@ func TestGCSConfigurationValidation(t *testing.T) {
 					Bucket:         "valid-gcs-bucket",
 					ClientPoolSize: 10,
 				},
-				DeleteOptimizations: config.DeleteOptimizations{
-					Enabled: true,
+				General: config.GeneralConfig{
+					BatchDeletion: config.BatchDeletionConfig{
+						Enabled: true,
+					},
 				},
 			},
 			shouldError: false,
@@ -755,8 +766,10 @@ func TestGCSConfigurationValidation(t *testing.T) {
 					Bucket:         "",
 					ClientPoolSize: 10,
 				},
-				DeleteOptimizations: config.DeleteOptimizations{
-					Enabled: true,
+				General: config.GeneralConfig{
+					BatchDeletion: config.BatchDeletionConfig{
+						Enabled: true,
+					},
 				},
 			},
 			shouldError: true,
@@ -769,8 +782,10 @@ func TestGCSConfigurationValidation(t *testing.T) {
 					Bucket:         "test-bucket",
 					ClientPoolSize: 0, // Invalid
 				},
-				DeleteOptimizations: config.DeleteOptimizations{
-					Enabled: true,
+				General: config.GeneralConfig{
+					BatchDeletion: config.BatchDeletionConfig{
+						Enabled: true,
+					},
 				},
 			},
 			shouldError: false, // Should use default
@@ -782,8 +797,10 @@ func TestGCSConfigurationValidation(t *testing.T) {
 					Bucket:         "minimal-bucket",
 					ClientPoolSize: 1,
 				},
-				DeleteOptimizations: config.DeleteOptimizations{
-					Enabled: true,
+				General: config.GeneralConfig{
+					BatchDeletion: config.BatchDeletionConfig{
+						Enabled: true,
+					},
 				},
 			},
 			shouldError: false,

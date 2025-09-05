@@ -25,55 +25,72 @@ const (
 
 // Config - config file format
 type Config struct {
-	General             GeneralConfig       `yaml:"general" envconfig:"_"`
-	ClickHouse          ClickHouseConfig    `yaml:"clickhouse" envconfig:"_"`
-	S3                  S3Config            `yaml:"s3" envconfig:"_"`
-	GCS                 GCSConfig           `yaml:"gcs" envconfig:"_"`
-	COS                 COSConfig           `yaml:"cos" envconfig:"_"`
-	API                 APIConfig           `yaml:"api" envconfig:"_"`
-	FTP                 FTPConfig           `yaml:"ftp" envconfig:"_"`
-	SFTP                SFTPConfig          `yaml:"sftp" envconfig:"_"`
-	AzureBlob           AzureBlobConfig     `yaml:"azblob" envconfig:"_"`
-	Custom              CustomConfig        `yaml:"custom" envconfig:"_"`
-	DeleteOptimizations DeleteOptimizations `yaml:"delete_optimizations" envconfig:"_"`
+	General    GeneralConfig    `yaml:"general" envconfig:"_"`
+	ClickHouse ClickHouseConfig `yaml:"clickhouse" envconfig:"_"`
+	S3         S3Config         `yaml:"s3" envconfig:"_"`
+	GCS        GCSConfig        `yaml:"gcs" envconfig:"_"`
+	COS        COSConfig        `yaml:"cos" envconfig:"_"`
+	API        APIConfig        `yaml:"api" envconfig:"_"`
+	FTP        FTPConfig        `yaml:"ftp" envconfig:"_"`
+	SFTP       SFTPConfig       `yaml:"sftp" envconfig:"_"`
+	AzureBlob  AzureBlobConfig  `yaml:"azblob" envconfig:"_"`
+	Custom     CustomConfig     `yaml:"custom" envconfig:"_"`
+}
+
+// BatchDeletionConfig - batch deletion optimization settings
+type BatchDeletionConfig struct {
+	Enabled          bool    `yaml:"enabled" envconfig:"BATCH_DELETE_ENABLED" default:"true"`
+	Workers          int     `yaml:"workers" envconfig:"BATCH_DELETE_WORKERS" default:"0"` // 0 = auto-detect
+	BatchSize        int     `yaml:"batch_size" envconfig:"BATCH_DELETE_BATCH_SIZE" default:"1000"`
+	RetryAttempts    int     `yaml:"retry_attempts" envconfig:"BATCH_DELETE_RETRY_ATTEMPTS" default:"3"`
+	ErrorStrategy    string  `yaml:"error_strategy" envconfig:"BATCH_DELETE_ERROR_STRATEGY" default:"continue"` // fail_fast, continue, retry_batch
+	FailureThreshold float64 `yaml:"failure_threshold" envconfig:"BATCH_DELETE_FAILURE_THRESHOLD" default:"0.1"`
 }
 
 // GeneralConfig - general setting section
 type GeneralConfig struct {
-	RemoteStorage                       string            `yaml:"remote_storage" envconfig:"REMOTE_STORAGE"`
-	MaxFileSize                         int64             `yaml:"max_file_size" envconfig:"MAX_FILE_SIZE"`
-	BackupsToKeepLocal                  int               `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL"`
-	BackupsToKeepRemote                 int               `yaml:"backups_to_keep_remote" envconfig:"BACKUPS_TO_KEEP_REMOTE"`
-	LogLevel                            string            `yaml:"log_level" envconfig:"LOG_LEVEL"`
-	AllowEmptyBackups                   bool              `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
-	DownloadConcurrency                 uint8             `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
-	UploadConcurrency                   uint8             `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
-	UploadMaxBytesPerSecond             uint64            `yaml:"upload_max_bytes_per_second" envconfig:"UPLOAD_MAX_BYTES_PER_SECOND"`
-	DownloadMaxBytesPerSecond           uint64            `yaml:"download_max_bytes_per_second" envconfig:"DOWNLOAD_MAX_BYTES_PER_SECOND"`
-	ObjectDiskServerSideCopyConcurrency uint8             `yaml:"object_disk_server_side_copy_concurrency" envconfig:"OBJECT_DISK_SERVER_SIDE_COPY_CONCURRENCY"`
-	AllowObjectDiskStreaming            bool              `yaml:"allow_object_disk_streaming" envconfig:"ALLOW_OBJECT_DISK_STREAMING"`
-	UseResumableState                   bool              `yaml:"use_resumable_state" envconfig:"USE_RESUMABLE_STATE"`
-	RestoreSchemaOnCluster              string            `yaml:"restore_schema_on_cluster" envconfig:"RESTORE_SCHEMA_ON_CLUSTER"`
-	UploadByPart                        bool              `yaml:"upload_by_part" envconfig:"UPLOAD_BY_PART"`
-	DownloadByPart                      bool              `yaml:"download_by_part" envconfig:"DOWNLOAD_BY_PART"`
-	RestoreDatabaseMapping              map[string]string `yaml:"restore_database_mapping" envconfig:"RESTORE_DATABASE_MAPPING"`
-	RestoreTableMapping                 map[string]string `yaml:"restore_table_mapping" envconfig:"RESTORE_TABLE_MAPPING"`
-	RetriesOnFailure                    int               `yaml:"retries_on_failure" envconfig:"RETRIES_ON_FAILURE"`
-	RetriesPause                        string            `yaml:"retries_pause" envconfig:"RETRIES_PAUSE"`
-	RetriesJitter                       int8              `yaml:"retries_jitter" envconfig:"RETRIES_JITTER"`
-	WatchInterval                       string            `yaml:"watch_interval" envconfig:"WATCH_INTERVAL"`
-	FullInterval                        string            `yaml:"full_interval" envconfig:"FULL_INTERVAL"`
-	WatchBackupNameTemplate             string            `yaml:"watch_backup_name_template" envconfig:"WATCH_BACKUP_NAME_TEMPLATE"`
-	ShardedOperationMode                string            `yaml:"sharded_operation_mode" envconfig:"SHARDED_OPERATION_MODE"`
-	CPUNicePriority                     int               `yaml:"cpu_nice_priority" envconfig:"CPU_NICE_PRIORITY"`
-	IONicePriority                      string            `yaml:"io_nice_priority" envconfig:"IO_NICE_PRIORITY"`
-	RBACBackupAlways                    bool              `yaml:"rbac_backup_always" envconfig:"RBAC_BACKUP_ALWAYS"`
-	RBACConflictResolution              string            `yaml:"rbac_conflict_resolution" envconfig:"RBAC_CONFLICT_RESOLUTION"`
-	ConfigBackupAlways                  bool              `yaml:"config_backup_always" envconfig:"CONFIG_BACKUP_ALWAYS"`
-	NamedCollectionsBackupAlways        bool              `yaml:"named_collections_backup_always" envconfig:"NAMED_COLLECTIONS_BACKUP_ALWAYS"`
+	RemoteStorage                       string              `yaml:"remote_storage" envconfig:"REMOTE_STORAGE"`
+	MaxFileSize                         int64               `yaml:"max_file_size" envconfig:"MAX_FILE_SIZE"`
+	BackupsToKeepLocal                  int                 `yaml:"backups_to_keep_local" envconfig:"BACKUPS_TO_KEEP_LOCAL"`
+	BackupsToKeepRemote                 int                 `yaml:"backups_to_keep_remote" envconfig:"BACKUPS_TO_KEEP_REMOTE"`
+	LogLevel                            string              `yaml:"log_level" envconfig:"LOG_LEVEL"`
+	AllowEmptyBackups                   bool                `yaml:"allow_empty_backups" envconfig:"ALLOW_EMPTY_BACKUPS"`
+	DownloadConcurrency                 uint8               `yaml:"download_concurrency" envconfig:"DOWNLOAD_CONCURRENCY"`
+	UploadConcurrency                   uint8               `yaml:"upload_concurrency" envconfig:"UPLOAD_CONCURRENCY"`
+	UploadMaxBytesPerSecond             uint64              `yaml:"upload_max_bytes_per_second" envconfig:"UPLOAD_MAX_BYTES_PER_SECOND"`
+	DownloadMaxBytesPerSecond           uint64              `yaml:"download_max_bytes_per_second" envconfig:"DOWNLOAD_MAX_BYTES_PER_SECOND"`
+	ObjectDiskServerSideCopyConcurrency uint8               `yaml:"object_disk_server_side_copy_concurrency" envconfig:"OBJECT_DISK_SERVER_SIDE_COPY_CONCURRENCY"`
+	AllowObjectDiskStreaming            bool                `yaml:"allow_object_disk_streaming" envconfig:"ALLOW_OBJECT_DISK_STREAMING"`
+	UseResumableState                   bool                `yaml:"use_resumable_state" envconfig:"USE_RESUMABLE_STATE"`
+	RestoreSchemaOnCluster              string              `yaml:"restore_schema_on_cluster" envconfig:"RESTORE_SCHEMA_ON_CLUSTER"`
+	UploadByPart                        bool                `yaml:"upload_by_part" envconfig:"UPLOAD_BY_PART"`
+	DownloadByPart                      bool                `yaml:"download_by_part" envconfig:"DOWNLOAD_BY_PART"`
+	RestoreDatabaseMapping              map[string]string   `yaml:"restore_database_mapping" envconfig:"RESTORE_DATABASE_MAPPING"`
+	RestoreTableMapping                 map[string]string   `yaml:"restore_table_mapping" envconfig:"RESTORE_TABLE_MAPPING"`
+	RetriesOnFailure                    int                 `yaml:"retries_on_failure" envconfig:"RETRIES_ON_FAILURE"`
+	RetriesPause                        string              `yaml:"retries_pause" envconfig:"RETRIES_PAUSE"`
+	RetriesJitter                       int8                `yaml:"retries_jitter" envconfig:"RETRIES_JITTER"`
+	WatchInterval                       string              `yaml:"watch_interval" envconfig:"WATCH_INTERVAL"`
+	FullInterval                        string              `yaml:"full_interval" envconfig:"FULL_INTERVAL"`
+	WatchBackupNameTemplate             string              `yaml:"watch_backup_name_template" envconfig:"WATCH_BACKUP_NAME_TEMPLATE"`
+	ShardedOperationMode                string              `yaml:"sharded_operation_mode" envconfig:"SHARDED_OPERATION_MODE"`
+	CPUNicePriority                     int                 `yaml:"cpu_nice_priority" envconfig:"CPU_NICE_PRIORITY"`
+	IONicePriority                      string              `yaml:"io_nice_priority" envconfig:"IO_NICE_PRIORITY"`
+	RBACBackupAlways                    bool                `yaml:"rbac_backup_always" envconfig:"RBAC_BACKUP_ALWAYS"`
+	RBACConflictResolution              string              `yaml:"rbac_conflict_resolution" envconfig:"RBAC_CONFLICT_RESOLUTION"`
+	ConfigBackupAlways                  bool                `yaml:"config_backup_always" envconfig:"CONFIG_BACKUP_ALWAYS"`
+	NamedCollectionsBackupAlways        bool                `yaml:"named_collections_backup_always" envconfig:"NAMED_COLLECTIONS_BACKUP_ALWAYS"`
+	BatchDeletion                       BatchDeletionConfig `yaml:"batch_deletion" envconfig:"_"`
 	RetriesDuration                     time.Duration
 	WatchDuration                       time.Duration
 	FullDuration                        time.Duration
+}
+
+// GCSBatchConfig - GCS batch deletion specific settings
+type GCSBatchConfig struct {
+	MaxWorkers    int  `yaml:"max_workers" envconfig:"GCS_MAX_WORKERS" default:"50"`
+	UseClientPool bool `yaml:"use_client_pool" envconfig:"GCS_USE_CLIENT_POOL" default:"true"`
+	UseBatchAPI   bool `yaml:"use_batch_api" envconfig:"GCS_USE_BATCH_API" default:"true"`
 }
 
 // GCSConfig - GCS settings section
@@ -97,29 +114,44 @@ type GCSConfig struct {
 	CustomStorageClassMap  map[string]string `yaml:"custom_storage_class_map" envconfig:"GCS_CUSTOM_STORAGE_CLASS_MAP"`
 	// NOTE: ClientPoolSize should be at least 2 times bigger than
 	// 			UploadConcurrency or DownloadConcurrency in each upload and download case
-	ClientPoolSize int `yaml:"client_pool_size" envconfig:"GCS_CLIENT_POOL_SIZE"`
-	ChunkSize      int `yaml:"chunk_size" envconfig:"GCS_CHUNK_SIZE"`
+	ClientPoolSize int            `yaml:"client_pool_size" envconfig:"GCS_CLIENT_POOL_SIZE"`
+	ChunkSize      int            `yaml:"chunk_size" envconfig:"GCS_CHUNK_SIZE"`
+	BatchDeletion  GCSBatchConfig `yaml:"batch_deletion" envconfig:"_"`
+}
+
+// AzureBatchConfig - Azure Blob batch deletion specific settings
+type AzureBatchConfig struct {
+	UseBatchAPI bool `yaml:"use_batch_api" envconfig:"AZURE_USE_BATCH_API" default:"true"`
+	MaxWorkers  int  `yaml:"max_workers" envconfig:"AZURE_MAX_WORKERS" default:"20"`
 }
 
 // AzureBlobConfig - Azure Blob settings section
 type AzureBlobConfig struct {
-	EndpointSchema        string `yaml:"endpoint_schema" envconfig:"AZBLOB_ENDPOINT_SCHEMA"`
-	EndpointSuffix        string `yaml:"endpoint_suffix" envconfig:"AZBLOB_ENDPOINT_SUFFIX"`
-	AccountName           string `yaml:"account_name" envconfig:"AZBLOB_ACCOUNT_NAME"`
-	AccountKey            string `yaml:"account_key" envconfig:"AZBLOB_ACCOUNT_KEY"`
-	SharedAccessSignature string `yaml:"sas" envconfig:"AZBLOB_SAS"`
-	UseManagedIdentity    bool   `yaml:"use_managed_identity" envconfig:"AZBLOB_USE_MANAGED_IDENTITY"`
-	Container             string `yaml:"container" envconfig:"AZBLOB_CONTAINER"`
-	AssumeContainerExists bool   `yaml:"assume_container_exists" envconfig:"AZBLOB_ASSUME_CONTAINER_EXISTS"`
-	Path                  string `yaml:"path" envconfig:"AZBLOB_PATH"`
-	ObjectDiskPath        string `yaml:"object_disk_path" envconfig:"AZBLOB_OBJECT_DISK_PATH"`
-	CompressionLevel      int    `yaml:"compression_level" envconfig:"AZBLOB_COMPRESSION_LEVEL"`
-	CompressionFormat     string `yaml:"compression_format" envconfig:"AZBLOB_COMPRESSION_FORMAT"`
-	SSEKey                string `yaml:"sse_key" envconfig:"AZBLOB_SSE_KEY"`
-	MaxBuffers            int    `yaml:"buffer_count" envconfig:"AZBLOB_MAX_BUFFERS"`
-	MaxPartsCount         int64  `yaml:"max_parts_count" envconfig:"AZBLOB_MAX_PARTS_COUNT"`
-	Timeout               string `yaml:"timeout" envconfig:"AZBLOB_TIMEOUT"`
-	Debug                 bool   `yaml:"debug" envconfig:"AZBLOB_DEBUG"`
+	EndpointSchema        string           `yaml:"endpoint_schema" envconfig:"AZBLOB_ENDPOINT_SCHEMA"`
+	EndpointSuffix        string           `yaml:"endpoint_suffix" envconfig:"AZBLOB_ENDPOINT_SUFFIX"`
+	AccountName           string           `yaml:"account_name" envconfig:"AZBLOB_ACCOUNT_NAME"`
+	AccountKey            string           `yaml:"account_key" envconfig:"AZBLOB_ACCOUNT_KEY"`
+	SharedAccessSignature string           `yaml:"sas" envconfig:"AZBLOB_SAS"`
+	UseManagedIdentity    bool             `yaml:"use_managed_identity" envconfig:"AZBLOB_USE_MANAGED_IDENTITY"`
+	Container             string           `yaml:"container" envconfig:"AZBLOB_CONTAINER"`
+	AssumeContainerExists bool             `yaml:"assume_container_exists" envconfig:"AZBLOB_ASSUME_CONTAINER_EXISTS"`
+	Path                  string           `yaml:"path" envconfig:"AZBLOB_PATH"`
+	ObjectDiskPath        string           `yaml:"object_disk_path" envconfig:"AZBLOB_OBJECT_DISK_PATH"`
+	CompressionLevel      int              `yaml:"compression_level" envconfig:"AZBLOB_COMPRESSION_LEVEL"`
+	CompressionFormat     string           `yaml:"compression_format" envconfig:"AZBLOB_COMPRESSION_FORMAT"`
+	SSEKey                string           `yaml:"sse_key" envconfig:"AZBLOB_SSE_KEY"`
+	MaxBuffers            int              `yaml:"buffer_count" envconfig:"AZBLOB_MAX_BUFFERS"`
+	MaxPartsCount         int64            `yaml:"max_parts_count" envconfig:"AZBLOB_MAX_PARTS_COUNT"`
+	Timeout               string           `yaml:"timeout" envconfig:"AZBLOB_TIMEOUT"`
+	Debug                 bool             `yaml:"debug" envconfig:"AZBLOB_DEBUG"`
+	BatchDeletion         AzureBatchConfig `yaml:"batch_deletion" envconfig:"_"`
+}
+
+// S3BatchConfig - S3 batch deletion specific settings
+type S3BatchConfig struct {
+	UseBatchAPI        bool `yaml:"use_batch_api" envconfig:"S3_USE_BATCH_API" default:"true"`
+	VersionConcurrency int  `yaml:"version_concurrency" envconfig:"S3_VERSION_CONCURRENCY" default:"10"`
+	PreloadVersions    bool `yaml:"preload_versions" envconfig:"S3_PRELOAD_VERSIONS" default:"true"`
 }
 
 // S3Config - s3 settings section
@@ -155,6 +187,7 @@ type S3Config struct {
 	CheckSumAlgorithm       string            `yaml:"check_sum_algorithm" envconfig:"S3_CHECKSUM_ALGORITHM"`
 	RetryMode               string            `yaml:"retry_mode" envconfig:"S3_RETRY_MODE"`
 	Debug                   bool              `yaml:"debug" envconfig:"S3_DEBUG"`
+	BatchDeletion           S3BatchConfig     `yaml:"batch_deletion" envconfig:"_"`
 }
 
 // COSConfig - cos settings section
@@ -266,35 +299,6 @@ type APIConfig struct {
 	AllowParallel                 bool   `yaml:"allow_parallel" envconfig:"API_ALLOW_PARALLEL"`
 	CompleteResumableAfterRestart bool   `yaml:"complete_resumable_after_restart" envconfig:"API_COMPLETE_RESUMABLE_AFTER_RESTART"`
 	WatchIsMainProcess            bool   `yaml:"watch_is_main_process" envconfig:"WATCH_IS_MAIN_PROCESS"`
-}
-
-// DeleteOptimizations - delete optimization settings section
-type DeleteOptimizations struct {
-	Enabled          bool          `yaml:"enabled" envconfig:"DELETE_ENABLED" default:"true"`
-	Workers          int           `yaml:"workers" envconfig:"DELETE_WORKERS" default:"0"` // 0 = auto-detect
-	BatchSize        int           `yaml:"batch_size" envconfig:"DELETE_BATCH_SIZE" default:"1000"`
-	RetryAttempts    int           `yaml:"retry_attempts" envconfig:"DELETE_RETRY_ATTEMPTS" default:"3"`
-	ErrorStrategy    string        `yaml:"error_strategy" envconfig:"DELETE_ERROR_STRATEGY" default:"continue"` // fail_fast, continue, retry_batch
-	FailureThreshold float64       `yaml:"failure_threshold" envconfig:"DELETE_FAILURE_THRESHOLD" default:"0.1"`
-	CacheEnabled     bool          `yaml:"cache_enabled" envconfig:"DELETE_CACHE_ENABLED" default:"true"`
-	CacheTTL         time.Duration `yaml:"cache_ttl" envconfig:"DELETE_CACHE_TTL" default:"30m"`
-
-	S3Optimizations struct {
-		UseBatchAPI        bool `yaml:"use_batch_api" envconfig:"DELETE_S3_USE_BATCH_API" default:"true"`
-		VersionConcurrency int  `yaml:"version_concurrency" envconfig:"DELETE_S3_VERSION_CONCURRENCY" default:"10"`
-		PreloadVersions    bool `yaml:"preload_versions" envconfig:"DELETE_S3_PRELOAD_VERSIONS" default:"true"`
-	} `yaml:"s3_optimizations"`
-
-	GCSOptimizations struct {
-		MaxWorkers    int  `yaml:"max_workers" envconfig:"DELETE_GCS_MAX_WORKERS" default:"50"`
-		UseClientPool bool `yaml:"use_client_pool" envconfig:"DELETE_GCS_USE_CLIENT_POOL" default:"true"`
-		UseBatchAPI   bool `yaml:"use_batch_api" envconfig:"DELETE_GCS_USE_BATCH_API" default:"false"`
-	} `yaml:"gcs_optimizations"`
-
-	AzureOptimizations struct {
-		UseBatchAPI bool `yaml:"use_batch_api" envconfig:"DELETE_AZURE_USE_BATCH_API" default:"true"`
-		MaxWorkers  int  `yaml:"max_workers" envconfig:"DELETE_AZURE_MAX_WORKERS" default:"20"`
-	} `yaml:"azure_optimizations"`
 }
 
 // ArchiveExtensions - list of available compression formats and associated file extensions
@@ -604,6 +608,14 @@ func DefaultConfig() *Config {
 			RBACBackupAlways:                    true,
 			RBACConflictResolution:              "recreate",
 			NamedCollectionsBackupAlways:        false,
+			BatchDeletion: BatchDeletionConfig{
+				Enabled:          true,
+				Workers:          0, // auto-detect
+				BatchSize:        1000,
+				RetryAttempts:    3,
+				ErrorStrategy:    "continue",
+				FailureThreshold: 0.1,
+			},
 		},
 		ClickHouse: ClickHouseConfig{
 			Username: "default",
@@ -639,6 +651,10 @@ func DefaultConfig() *Config {
 			MaxBuffers:        3,
 			MaxPartsCount:     256,
 			Timeout:           "4h",
+			BatchDeletion: AzureBatchConfig{
+				UseBatchAPI: true,
+				MaxWorkers:  20,
+			},
 		},
 		S3: S3Config{
 			Region:                  "us-east-1",
@@ -653,12 +669,22 @@ func DefaultConfig() *Config {
 			Concurrency:             int(downloadConcurrency + 1),
 			MaxPartsCount:           4000,
 			RetryMode:               string(aws.RetryModeStandard),
+			BatchDeletion: S3BatchConfig{
+				UseBatchAPI:        true,
+				VersionConcurrency: 10,
+				PreloadVersions:    true,
+			},
 		},
 		GCS: GCSConfig{
 			CompressionLevel:  1,
 			CompressionFormat: "tar",
 			StorageClass:      "STANDARD",
 			ClientPoolSize:    int(max(uploadConcurrency*3, downloadConcurrency*3, objectDiskServerSideCopyConcurrency)),
+			BatchDeletion: GCSBatchConfig{
+				MaxWorkers:    50,
+				UseClientPool: true,
+				UseBatchAPI:   true,
+			},
 		},
 		COS: COSConfig{
 			RowURL:                 "",
@@ -692,41 +718,6 @@ func DefaultConfig() *Config {
 		Custom: CustomConfig{
 			CommandTimeout:         "4h",
 			CommandTimeoutDuration: 4 * time.Hour,
-		},
-		DeleteOptimizations: DeleteOptimizations{
-			Enabled:          true,
-			Workers:          0, // auto-detect
-			BatchSize:        1000,
-			RetryAttempts:    3,
-			ErrorStrategy:    "continue",
-			FailureThreshold: 0.1,
-			CacheEnabled:     true,
-			CacheTTL:         30 * time.Minute,
-			S3Optimizations: struct {
-				UseBatchAPI        bool `yaml:"use_batch_api" envconfig:"DELETE_S3_USE_BATCH_API" default:"true"`
-				VersionConcurrency int  `yaml:"version_concurrency" envconfig:"DELETE_S3_VERSION_CONCURRENCY" default:"10"`
-				PreloadVersions    bool `yaml:"preload_versions" envconfig:"DELETE_S3_PRELOAD_VERSIONS" default:"true"`
-			}{
-				UseBatchAPI:        true,
-				VersionConcurrency: 10,
-				PreloadVersions:    true,
-			},
-			GCSOptimizations: struct {
-				MaxWorkers    int  `yaml:"max_workers" envconfig:"DELETE_GCS_MAX_WORKERS" default:"50"`
-				UseClientPool bool `yaml:"use_client_pool" envconfig:"DELETE_GCS_USE_CLIENT_POOL" default:"true"`
-				UseBatchAPI   bool `yaml:"use_batch_api" envconfig:"DELETE_GCS_USE_BATCH_API" default:"false"`
-			}{
-				MaxWorkers:    50,
-				UseClientPool: true,
-				UseBatchAPI:   false, // Default to false for backward compatibility
-			},
-			AzureOptimizations: struct {
-				UseBatchAPI bool `yaml:"use_batch_api" envconfig:"DELETE_AZURE_USE_BATCH_API" default:"true"`
-				MaxWorkers  int  `yaml:"max_workers" envconfig:"DELETE_AZURE_MAX_WORKERS" default:"20"`
-			}{
-				UseBatchAPI: true,
-				MaxWorkers:  20,
-			},
 		},
 	}
 }

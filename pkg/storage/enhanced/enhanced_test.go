@@ -287,16 +287,16 @@ func TestProgressTracker(t *testing.T) {
 	}
 }
 
-func TestValidateOptimizationConfig(t *testing.T) {
+func TestValidateBatchDeletionConfig(t *testing.T) {
 	testCases := []struct {
 		name        string
-		config      *config.DeleteOptimizations
+		config      *config.BatchDeletionConfig
 		expectError bool
 		errorField  string
 	}{
 		{
 			name: "valid config",
-			config: &config.DeleteOptimizations{
+			config: &config.BatchDeletionConfig{
 				Enabled:          true,
 				BatchSize:        100,
 				Workers:          4,
@@ -307,15 +307,15 @@ func TestValidateOptimizationConfig(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name: "disabled optimizations",
-			config: &config.DeleteOptimizations{
+			name: "disabled batch deletion",
+			config: &config.BatchDeletionConfig{
 				Enabled: false,
 			},
 			expectError: false,
 		},
 		{
 			name: "invalid batch size",
-			config: &config.DeleteOptimizations{
+			config: &config.BatchDeletionConfig{
 				Enabled:   true,
 				BatchSize: 0,
 			},
@@ -324,7 +324,7 @@ func TestValidateOptimizationConfig(t *testing.T) {
 		},
 		{
 			name: "negative workers",
-			config: &config.DeleteOptimizations{
+			config: &config.BatchDeletionConfig{
 				Enabled:   true,
 				BatchSize: 100,
 				Workers:   -1,
@@ -334,7 +334,7 @@ func TestValidateOptimizationConfig(t *testing.T) {
 		},
 		{
 			name: "invalid failure threshold",
-			config: &config.DeleteOptimizations{
+			config: &config.BatchDeletionConfig{
 				Enabled:          true,
 				BatchSize:        100,
 				Workers:          4,
@@ -345,7 +345,7 @@ func TestValidateOptimizationConfig(t *testing.T) {
 		},
 		{
 			name: "invalid error strategy",
-			config: &config.DeleteOptimizations{
+			config: &config.BatchDeletionConfig{
 				Enabled:          true,
 				BatchSize:        100,
 				Workers:          4,
@@ -362,7 +362,9 @@ func TestValidateOptimizationConfig(t *testing.T) {
 			// Create a mock wrapper for validation
 			wrapper := &EnhancedStorageWrapper{
 				config: &config.Config{
-					DeleteOptimizations: *tc.config,
+					General: config.GeneralConfig{
+						BatchDeletion: *tc.config,
+					},
 				},
 			}
 

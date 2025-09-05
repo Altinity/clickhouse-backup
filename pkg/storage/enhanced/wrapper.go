@@ -3,7 +3,6 @@ package enhanced
 import (
 	"context"
 	"fmt"
-	"io"
 	"strings"
 
 	"sync"
@@ -47,13 +46,8 @@ func NewEnhancedStorageWrapper(baseStorage storage.RemoteStorage, cfg *config.Co
 		storageType:   storageKind,
 	}
 
-	// Initialize cache if enabled
-	if opts != nil && opts.EnableCache && cfg.DeleteOptimizations.CacheEnabled {
-		wrapper.cache = NewBackupExistenceCache(cfg.DeleteOptimizations.CacheTTL)
-	}
-
 	// Create enhanced storage implementation if optimizations are enabled
-	if !cfg.DeleteOptimizations.Enabled || (opts != nil && opts.DisableEnhanced) {
+	if !cfg.General.BatchDeletion.Enabled || (opts != nil && opts.DisableEnhanced) {
 		log.Debug().Str("storage", storageKind).Msg("enhanced delete optimizations disabled")
 		return wrapper, nil
 	}
@@ -71,7 +65,7 @@ func NewEnhancedStorageWrapper(baseStorage storage.RemoteStorage, cfg *config.Co
 	wrapper.enhanced = enhanced
 
 	// Create batch manager
-	wrapper.batchMgr = NewBatchManager(&cfg.DeleteOptimizations, enhanced, wrapper.cache)
+	wrapper.batchMgr = NewBatchManager(&cfg.General.BatchDeletion, enhanced, nil)
 
 	log.Info().Str("storage", storageKind).Msg("enhanced storage wrapper created successfully")
 	return wrapper, nil
@@ -588,7 +582,7 @@ func (w *EnhancedStorageWrapper) SupportsBatchDelete() bool {
 // GetOptimalBatchSize returns optimal batch size for the storage type
 func (w *EnhancedStorageWrapper) GetOptimalBatchSize() int {
 	if w.enhanced == nil {
-		return w.config.DeleteOptimizations.BatchSize
+		return w.config.General.BatchDeletion.BatchSize
 	}
 	return w.enhanced.GetOptimalBatchSize()
 }
@@ -613,17 +607,17 @@ func (w *EnhancedStorageWrapper) GetProgress() (processed, total int64, eta stri
 
 // IsOptimizationEnabled returns true if delete optimizations are enabled
 func (w *EnhancedStorageWrapper) IsOptimizationEnabled() bool {
-	return w.config.DeleteOptimizations.Enabled && w.enhanced != nil
+	return w.config.General.BatchDeletion.Enabled && w.enhanced != nil
 }
 
 // GetBatchSize returns the configured batch size
 func (w *EnhancedStorageWrapper) GetBatchSize() int {
-	return w.config.DeleteOptimizations.BatchSize
+	return w.config.General.BatchDeletion.BatchSize
 }
 
 // GetWorkerCount returns the configured worker count
 func (w *EnhancedStorageWrapper) GetWorkerCount() int {
-	return w.config.DeleteOptimizations.Workers
+	return w.config.General.BatchDeletion.Workers
 }
 
 // GetBackupFromCache retrieves backup metadata from cache
@@ -658,9 +652,9 @@ func (w *EnhancedStorageWrapper) Close(ctx context.Context) error {
 		// but we could add cleanup here if needed
 	}
 
-	// Close enhanced storage if it exists and has a close method
-	if closer, ok := w.enhanced.(io.Closer); ok {
-		if err := closer.Close(); err != nil {
+	// Close enhanced storage if it exists
+	if w.enhanced != nil {
+		if err := w.enhanced.Close(ctx); err != nil {
 			errs = append(errs, fmt.Errorf("failed to close enhanced storage: %w", err))
 		}
 	}
@@ -679,33 +673,33 @@ func (w *EnhancedStorageWrapper) Close(ctx context.Context) error {
 
 // ValidateConfig validates the enhanced storage configuration
 func (w *EnhancedStorageWrapper) ValidateConfig() error {
-	if !w.config.DeleteOptimizations.Enabled {
+	if !w.config.General.BatchDeletion.Enabled {
 		return nil // No validation needed if optimizations are disabled
 	}
 
 	// Validate batch size
-	if w.config.DeleteOptimizations.BatchSize <= 0 {
+	if w.config.General.BatchDeletion.BatchSize <= 0 {
 		return &OptimizationConfigError{
 			Field:   "batch_size",
-			Value:   w.config.DeleteOptimizations.BatchSize,
+			Value:   w.config.General.BatchDeletion.BatchSize,
 			Message: "batch size must be greater than 0",
 		}
 	}
 
 	// Validate worker count
-	if w.config.DeleteOptimizations.Workers < 0 {
+	if w.config.General.BatchDeletion.Workers < 0 {
 		return &OptimizationConfigError{
 			Field:   "workers",
-			Value:   w.config.DeleteOptimizations.Workers,
+			Value:   w.config.General.BatchDeletion.Workers,
 			Message: "worker count cannot be negative",
 		}
 	}
 
 	// Validate failure threshold
-	if w.config.DeleteOptimizations.FailureThreshold < 0 || w.config.DeleteOptimizations.FailureThreshold > 1 {
+	if w.config.General.BatchDeletion.FailureThreshold < 0 || w.config.General.BatchDeletion.FailureThreshold > 1 {
 		return &OptimizationConfigError{
 			Field:   "failure_threshold",
-			Value:   w.config.DeleteOptimizations.FailureThreshold,
+			Value:   w.config.General.BatchDeletion.FailureThreshold,
 			Message: "failure threshold must be between 0 and 1",
 		}
 	}
@@ -716,10 +710,10 @@ func (w *EnhancedStorageWrapper) ValidateConfig() error {
 		"continue":    true,
 		"retry_batch": true,
 	}
-	if !validStrategies[w.config.DeleteOptimizations.ErrorStrategy] {
+	if !validStrategies[w.config.General.BatchDeletion.ErrorStrategy] {
 		return &OptimizationConfigError{
 			Field:   "error_strategy",
-			Value:   w.config.DeleteOptimizations.ErrorStrategy,
+			Value:   w.config.General.BatchDeletion.ErrorStrategy,
 			Message: "error strategy must be one of: fail_fast, continue, retry_batch",
 		}
 	}

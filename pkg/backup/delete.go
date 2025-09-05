@@ -320,7 +320,7 @@ func (b *Backuper) removeBackupRemoteEnhanced(ctx context.Context, backupName st
 
 	// Create enhanced storage wrapper
 	wrapperOpts := &enhanced.WrapperOptions{
-		EnableCache:     b.cfg.DeleteOptimizations.CacheEnabled,
+		EnableCache:     false, // Cache functionality removed in simplified design
 		EnableMetrics:   true,
 		FallbackOnError: true,
 	}
@@ -488,7 +488,7 @@ func (b *Backuper) cleanBackupObjectDisks(ctx context.Context, backupName string
 func (b *Backuper) cleanBackupObjectDisksEnhanced(ctx context.Context, backupName, objectDiskPath string) (uint, error) {
 	// Create enhanced storage wrapper
 	wrapperOpts := &enhanced.WrapperOptions{
-		EnableCache:     b.cfg.DeleteOptimizations.CacheEnabled,
+		EnableCache:     false, // Cache functionality removed in simplified design
 		EnableMetrics:   true,
 		FallbackOnError: true,
 	}
@@ -647,7 +647,7 @@ func (b *Backuper) CleanRemoteBroken(commandId int) error {
 
 // isDeleteOptimizationEnabled checks if delete optimizations are enabled
 func (b *Backuper) isDeleteOptimizationEnabled() bool {
-	return b.cfg.DeleteOptimizations.Enabled
+	return b.cfg.General.BatchDeletion.Enabled
 }
 
 // shouldUseEnhancedDelete determines if enhanced delete should be used for the given backup
@@ -672,11 +672,11 @@ func (b *Backuper) shouldUseEnhancedDelete(backupName string) bool {
 func (b *Backuper) supportsEnhancedDelete() bool {
 	switch b.cfg.General.RemoteStorage {
 	case "s3":
-		return b.cfg.DeleteOptimizations.S3Optimizations.UseBatchAPI
+		return b.cfg.S3.BatchDeletion.UseBatchAPI
 	case "gcs":
-		return b.cfg.DeleteOptimizations.GCSOptimizations.UseClientPool
+		return b.cfg.GCS.BatchDeletion.UseClientPool
 	case "azblob":
-		return b.cfg.DeleteOptimizations.AzureOptimizations.UseBatchAPI
+		return b.cfg.AzureBlob.BatchDeletion.UseBatchAPI
 	case "none", "custom":
 		return false
 	default:
@@ -692,16 +692,16 @@ func (b *Backuper) getOptimalWorkerCount() int {
 		return 1
 	}
 
-	workers := b.cfg.DeleteOptimizations.Workers
+	workers := b.cfg.General.BatchDeletion.Workers
 	if workers <= 0 {
 		// Auto-detect based on storage type and system resources
 		switch b.cfg.General.RemoteStorage {
 		case "s3":
-			return b.cfg.DeleteOptimizations.S3Optimizations.VersionConcurrency
+			return b.cfg.S3.BatchDeletion.VersionConcurrency
 		case "gcs":
-			return b.cfg.DeleteOptimizations.GCSOptimizations.MaxWorkers
+			return b.cfg.GCS.BatchDeletion.MaxWorkers
 		case "azblob":
-			return b.cfg.DeleteOptimizations.AzureOptimizations.MaxWorkers
+			return b.cfg.AzureBlob.BatchDeletion.MaxWorkers
 		default:
 			// Default to number of CPU cores for other storage types
 			return maxInt(1, int(b.cfg.General.DownloadConcurrency))
@@ -717,7 +717,7 @@ func (b *Backuper) getOptimalBatchSize() int {
 		return 1
 	}
 
-	batchSize := b.cfg.DeleteOptimizations.BatchSize
+	batchSize := b.cfg.General.BatchDeletion.BatchSize
 	if batchSize <= 0 {
 		return 1000 // Default batch size
 	}
@@ -758,33 +758,33 @@ func (b *Backuper) logEnhancedDeleteMetrics(metrics *enhanced.DeleteMetrics, bac
 
 // validateDeleteOptimizationConfig validates the delete optimization configuration
 func (b *Backuper) validateDeleteOptimizationConfig() error {
-	if !b.cfg.DeleteOptimizations.Enabled {
+	if !b.cfg.General.BatchDeletion.Enabled {
 		return nil
 	}
 
 	// Validate batch size
-	if b.cfg.DeleteOptimizations.BatchSize < 1 {
+	if b.cfg.General.BatchDeletion.BatchSize < 1 {
 		return &enhanced.OptimizationConfigError{
 			Field:   "batch_size",
-			Value:   b.cfg.DeleteOptimizations.BatchSize,
+			Value:   b.cfg.General.BatchDeletion.BatchSize,
 			Message: "batch size must be greater than 0",
 		}
 	}
 
 	// Validate retry attempts
-	if b.cfg.DeleteOptimizations.RetryAttempts < 0 {
+	if b.cfg.General.BatchDeletion.RetryAttempts < 0 {
 		return &enhanced.OptimizationConfigError{
 			Field:   "retry_attempts",
-			Value:   b.cfg.DeleteOptimizations.RetryAttempts,
+			Value:   b.cfg.General.BatchDeletion.RetryAttempts,
 			Message: "retry attempts cannot be negative",
 		}
 	}
 
 	// Validate failure threshold
-	if b.cfg.DeleteOptimizations.FailureThreshold < 0 || b.cfg.DeleteOptimizations.FailureThreshold > 1 {
+	if b.cfg.General.BatchDeletion.FailureThreshold < 0 || b.cfg.General.BatchDeletion.FailureThreshold > 1 {
 		return &enhanced.OptimizationConfigError{
 			Field:   "failure_threshold",
-			Value:   b.cfg.DeleteOptimizations.FailureThreshold,
+			Value:   b.cfg.General.BatchDeletion.FailureThreshold,
 			Message: "failure threshold must be between 0 and 1",
 		}
 	}
@@ -795,10 +795,10 @@ func (b *Backuper) validateDeleteOptimizationConfig() error {
 		"continue":    true,
 		"retry_batch": true,
 	}
-	if !validStrategies[b.cfg.DeleteOptimizations.ErrorStrategy] {
+	if !validStrategies[b.cfg.General.BatchDeletion.ErrorStrategy] {
 		return &enhanced.OptimizationConfigError{
 			Field:   "error_strategy",
-			Value:   b.cfg.DeleteOptimizations.ErrorStrategy,
+			Value:   b.cfg.General.BatchDeletion.ErrorStrategy,
 			Message: "error strategy must be one of: fail_fast, continue, retry_batch",
 		}
 	}

@@ -180,46 +180,33 @@ func createTestConfig(storageType string, useEnhanced bool) *config.Config {
 	cfg := &config.Config{
 		General: config.GeneralConfig{
 			RemoteStorage: storageType,
-		},
-		DeleteOptimizations: config.DeleteOptimizations{
-			Enabled:          useEnhanced,
-			BatchSize:        1000,
-			Workers:          10,
-			RetryAttempts:    3,
-			FailureThreshold: 0.1,
-			ErrorStrategy:    "retry_batch",
-			CacheEnabled:     true,
-			CacheTTL:         time.Hour,
+			BatchDeletion: config.BatchDeletionConfig{
+				Enabled:          useEnhanced,
+				BatchSize:        1000,
+				Workers:          10,
+				RetryAttempts:    3,
+				FailureThreshold: 0.1,
+				ErrorStrategy:    "retry_batch",
+			},
 		},
 	}
 
 	// Configure storage-specific optimizations
 	switch storageType {
 	case "s3":
-		cfg.DeleteOptimizations.S3Optimizations = struct {
-			UseBatchAPI        bool `yaml:"use_batch_api" envconfig:"DELETE_S3_USE_BATCH_API" default:"true"`
-			VersionConcurrency int  `yaml:"version_concurrency" envconfig:"DELETE_S3_VERSION_CONCURRENCY" default:"10"`
-			PreloadVersions    bool `yaml:"preload_versions" envconfig:"DELETE_S3_PRELOAD_VERSIONS" default:"true"`
-		}{
+		cfg.S3.BatchDeletion = config.S3BatchConfig{
 			UseBatchAPI:        true,
 			VersionConcurrency: 10,
 			PreloadVersions:    true,
 		}
 	case "gcs":
-		cfg.DeleteOptimizations.GCSOptimizations = struct {
-			MaxWorkers    int  `yaml:"max_workers" envconfig:"DELETE_GCS_MAX_WORKERS" default:"50"`
-			UseClientPool bool `yaml:"use_client_pool" envconfig:"DELETE_GCS_USE_CLIENT_POOL" default:"true"`
-			UseBatchAPI   bool `yaml:"use_batch_api" envconfig:"DELETE_GCS_USE_BATCH_API" default:"false"`
-		}{
+		cfg.GCS.BatchDeletion = config.GCSBatchConfig{
 			MaxWorkers:    50,
 			UseClientPool: true,
-			UseBatchAPI:   false,
+			UseBatchAPI:   true,
 		}
 	case "azblob":
-		cfg.DeleteOptimizations.AzureOptimizations = struct {
-			UseBatchAPI bool `yaml:"use_batch_api" envconfig:"DELETE_AZURE_USE_BATCH_API" default:"true"`
-			MaxWorkers  int  `yaml:"max_workers" envconfig:"DELETE_AZURE_MAX_WORKERS" default:"20"`
-		}{
+		cfg.AzureBlob.BatchDeletion = config.AzureBatchConfig{
 			UseBatchAPI: true,
 			MaxWorkers:  20,
 		}
@@ -431,7 +418,7 @@ func benchmarkSingleOperation(b *testing.B, storageType string, fileCount int, u
 		if useEnhanced {
 			batchStorage := mockStorage.(*MockBatchRemoteStorage)
 			keys := generateTestKeys(fileCount)
-			batchSize := cfg.DeleteOptimizations.BatchSize
+			batchSize := cfg.General.BatchDeletion.BatchSize
 
 			for j := 0; j < len(keys); j += batchSize {
 				end := j + batchSize

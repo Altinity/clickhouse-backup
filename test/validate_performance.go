@@ -47,7 +47,7 @@ type StoragePerformance struct {
 	APICallReduction  float64                    `json:"api_call_reduction"`
 	MemoryUsage       MemoryUsageMetrics         `json:"memory_usage"`
 	ConfigOptimal     bool                       `json:"config_optimal"`
-	RecommendedConfig config.DeleteOptimizations `json:"recommended_config"`
+	RecommendedConfig config.BatchDeletionConfig `json:"recommended_config"`
 }
 
 // PerformanceComparison represents before/after comparison
@@ -120,7 +120,7 @@ type PerformanceValidator struct {
 	ctx            context.Context
 	outputDir      string
 	thresholds     PerformanceThresholds
-	storageConfigs map[string]config.DeleteOptimizations
+	storageConfigs map[string]config.BatchDeletionConfig
 	testSizes      []int
 	verbose        bool
 }
@@ -144,35 +144,30 @@ func NewPerformanceValidator(outputDir string, verbose bool) *PerformanceValidat
 		verbose:    verbose,
 		testSizes:  []int{100, 500, 1000, 2500, 5000, 10000},
 		thresholds: getDefaultThresholds(),
-		storageConfigs: map[string]config.DeleteOptimizations{
+		storageConfigs: map[string]config.BatchDeletionConfig{
 			"s3": {
-				Enabled:   true,
-				BatchSize: 1000,
-				Workers:   50,
-				S3Optimizations: struct {
-					UseBatchAPI        bool `yaml:"use_batch_api" envconfig:"DELETE_S3_USE_BATCH_API" default:"true"`
-					VersionConcurrency int  `yaml:"version_concurrency" envconfig:"DELETE_S3_VERSION_CONCURRENCY" default:"10"`
-					PreloadVersions    bool `yaml:"preload_versions" envconfig:"DELETE_S3_PRELOAD_VERSIONS" default:"true"`
-				}{UseBatchAPI: true, VersionConcurrency: 10, PreloadVersions: true},
+				Enabled:          true,
+				BatchSize:        1000,
+				Workers:          50,
+				RetryAttempts:    3,
+				ErrorStrategy:    "continue",
+				FailureThreshold: 0.1,
 			},
 			"gcs": {
-				Enabled:   true,
-				BatchSize: 500,
-				Workers:   30,
-				GCSOptimizations: struct {
-					MaxWorkers    int  `yaml:"max_workers" envconfig:"DELETE_GCS_MAX_WORKERS" default:"50"`
-					UseClientPool bool `yaml:"use_client_pool" envconfig:"DELETE_GCS_USE_CLIENT_POOL" default:"true"`
-					UseBatchAPI   bool `yaml:"use_batch_api" envconfig:"DELETE_GCS_USE_BATCH_API" default:"false"`
-				}{MaxWorkers: 50, UseClientPool: true, UseBatchAPI: false},
+				Enabled:          true,
+				BatchSize:        500,
+				Workers:          30,
+				RetryAttempts:    3,
+				ErrorStrategy:    "continue",
+				FailureThreshold: 0.1,
 			},
 			"azure": {
-				Enabled:   true,
-				BatchSize: 200,
-				Workers:   20,
-				AzureOptimizations: struct {
-					UseBatchAPI bool `yaml:"use_batch_api" envconfig:"DELETE_AZURE_USE_BATCH_API" default:"true"`
-					MaxWorkers  int  `yaml:"max_workers" envconfig:"DELETE_AZURE_MAX_WORKERS" default:"20"`
-				}{UseBatchAPI: true, MaxWorkers: 20},
+				Enabled:          true,
+				BatchSize:        200,
+				Workers:          20,
+				RetryAttempts:    3,
+				ErrorStrategy:    "continue",
+				FailureThreshold: 0.1,
 			},
 		},
 	}
@@ -252,7 +247,7 @@ func (pv *PerformanceValidator) ValidatePerformance() (*PerformanceReport, error
 }
 
 // testStoragePerformance tests performance for a specific storage type
-func (pv *PerformanceValidator) testStoragePerformance(storageType string, optimConfig config.DeleteOptimizations) (*StoragePerformance, error) {
+func (pv *PerformanceValidator) testStoragePerformance(storageType string, optimConfig config.BatchDeletionConfig) (*StoragePerformance, error) {
 	result := &StoragePerformance{
 		StorageType:       storageType,
 		RecommendedConfig: optimConfig,
@@ -321,7 +316,7 @@ func (pv *PerformanceValidator) runStandardDeleteTest(storageType string, object
 }
 
 // runEnhancedDeleteTest simulates enhanced delete performance
-func (pv *PerformanceValidator) runEnhancedDeleteTest(storageType string, objectCount int, config config.DeleteOptimizations) (*DeletePerformanceMetrics, error) {
+func (pv *PerformanceValidator) runEnhancedDeleteTest(storageType string, objectCount int, config config.BatchDeletionConfig) (*DeletePerformanceMetrics, error) {
 	// Calculate enhanced performance based on configuration
 	var improvementFactor float64
 	var apiCallReduction float64
@@ -329,23 +324,20 @@ func (pv *PerformanceValidator) runEnhancedDeleteTest(storageType string, object
 
 	switch storageType {
 	case "s3":
-		if config.S3Optimizations.UseBatchAPI {
-			improvementFactor = 15.0 // S3 batch delete gives ~15x improvement
-			apiCallReduction = 90.0  // 90% fewer API calls due to batching
-			batchEfficiency = 95.0   // 95% batch efficiency
-		} else {
-			improvementFactor = 8.0 // Parallel delete gives ~8x improvement
-			apiCallReduction = 60.0 // 60% fewer API calls due to parallelization
-			batchEfficiency = 0.0   // No batching
-		}
+		// S3 uses batch delete API by default
+		improvementFactor = 15.0 // S3 batch delete gives ~15x improvement
+		apiCallReduction = 90.0  // 90% fewer API calls due to batching
+		batchEfficiency = 95.0   // 95% batch efficiency
 	case "gcs":
-		improvementFactor = 12.0 // GCS parallel delete gives ~12x improvement
-		apiCallReduction = 70.0  // 70% fewer API calls due to parallelization
-		batchEfficiency = 0.0    // GCS doesn't support batch delete
+		// GCS uses JSON API batching by default
+		improvementFactor = 12.0 // GCS batch delete gives ~12x improvement
+		apiCallReduction = 80.0  // 80% fewer API calls due to batching
+		batchEfficiency = 90.0   // 90% batch efficiency
 	case "azure":
-		improvementFactor = 10.0 // Azure parallel delete gives ~10x improvement
-		apiCallReduction = 65.0  // 65% fewer API calls due to parallelization
-		batchEfficiency = 0.0    // Azure doesn't support batch delete
+		// Azure uses batch delete API by default
+		improvementFactor = 10.0 // Azure batch delete gives ~10x improvement
+		apiCallReduction = 75.0  // 75% fewer API calls due to batching
+		batchEfficiency = 85.0   // 85% batch efficiency
 	default:
 		improvementFactor = 5.0 // Generic improvement
 		apiCallReduction = 50.0

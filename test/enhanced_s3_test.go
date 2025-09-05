@@ -73,10 +73,12 @@ func testS3BatchDeleteScenario(t *testing.T, objectCount, expectedBatches int, s
 		S3: config.S3Config{
 			Bucket: "test-bucket",
 		},
-		DeleteOptimizations: config.DeleteOptimizations{
-			Enabled:   true,
-			BatchSize: 1000,
-			Workers:   10,
+		General: config.GeneralConfig{
+			BatchDeletion: config.BatchDeletionConfig{
+				Enabled:   true,
+				BatchSize: 1000,
+				Workers:   10,
+			},
 		},
 	}
 
@@ -84,7 +86,7 @@ func testS3BatchDeleteScenario(t *testing.T, objectCount, expectedBatches int, s
 	s3Storage := &MockEnhancedS3{
 		client:    mockClient,
 		bucket:    cfg.S3.Bucket,
-		batchSize: cfg.DeleteOptimizations.BatchSize,
+		batchSize: cfg.General.BatchDeletion.BatchSize,
 		supported: true,
 		metrics:   &enhanced.DeleteMetrics{},
 	}
@@ -303,19 +305,17 @@ func testS3VersionedDeleteScenario(t *testing.T, versioningEnabled bool, version
 	cfg := &config.Config{
 		S3: config.S3Config{
 			Bucket: "versioned-bucket",
-		},
-		DeleteOptimizations: config.DeleteOptimizations{
-			Enabled:   true,
-			BatchSize: 1000,
-			Workers:   10,
-			S3Optimizations: struct {
-				UseBatchAPI        bool `yaml:"use_batch_api" envconfig:"DELETE_S3_USE_BATCH_API" default:"true"`
-				VersionConcurrency int  `yaml:"version_concurrency" envconfig:"DELETE_S3_VERSION_CONCURRENCY" default:"10"`
-				PreloadVersions    bool `yaml:"preload_versions" envconfig:"DELETE_S3_PRELOAD_VERSIONS" default:"true"`
-			}{
+			BatchDeletion: config.S3BatchConfig{
 				UseBatchAPI:        true,
 				VersionConcurrency: 5,
 				PreloadVersions:    preloadVersions,
+			},
+		},
+		General: config.GeneralConfig{
+			BatchDeletion: config.BatchDeletionConfig{
+				Enabled:   true,
+				BatchSize: 1000,
+				Workers:   10,
 			},
 		},
 	}
@@ -323,7 +323,7 @@ func testS3VersionedDeleteScenario(t *testing.T, versioningEnabled bool, version
 	s3Storage := &MockEnhancedS3{
 		client:            mockClient,
 		bucket:            cfg.S3.Bucket,
-		batchSize:         cfg.DeleteOptimizations.BatchSize,
+		batchSize:         cfg.General.BatchDeletion.BatchSize,
 		versioningEnabled: versioningEnabled,
 		versionsPerObject: versionsPerObject,
 		preloadVersions:   preloadVersions,
@@ -420,10 +420,12 @@ func testS3ErrorScenario(t *testing.T, errorType string, isRetriable, expectSucc
 		S3: config.S3Config{
 			Bucket: "error-bucket",
 		},
-		DeleteOptimizations: config.DeleteOptimizations{
-			Enabled:       true,
-			BatchSize:     100,
-			RetryAttempts: 3,
+		General: config.GeneralConfig{
+			BatchDeletion: config.BatchDeletionConfig{
+				Enabled:       true,
+				BatchSize:     100,
+				RetryAttempts: 3,
+			},
 		},
 	}
 
@@ -480,16 +482,18 @@ func testS3BatchSizeOptimization(t *testing.T) {
 		S3: config.S3Config{
 			Bucket: "perf-bucket",
 		},
-		DeleteOptimizations: config.DeleteOptimizations{
-			Enabled:   true,
-			BatchSize: 2000, // Higher than S3 limit
+		General: config.GeneralConfig{
+			BatchDeletion: config.BatchDeletionConfig{
+				Enabled:   true,
+				BatchSize: 2000, // Higher than S3 limit
+			},
 		},
 	}
 
 	s3Storage := &MockEnhancedS3{
 		client:    mockClient,
 		bucket:    cfg.S3.Bucket,
-		batchSize: cfg.DeleteOptimizations.BatchSize,
+		batchSize: cfg.General.BatchDeletion.BatchSize,
 		supported: true,
 		metrics:   &enhanced.DeleteMetrics{},
 	}
@@ -531,18 +535,16 @@ func testS3WorkerPoolEfficiency(t *testing.T) {
 	cfg := &config.Config{
 		S3: config.S3Config{
 			Bucket: "worker-bucket",
-		},
-		DeleteOptimizations: config.DeleteOptimizations{
-			Enabled:   true,
-			BatchSize: 500,
-			S3Optimizations: struct {
-				UseBatchAPI        bool `yaml:"use_batch_api" envconfig:"DELETE_S3_USE_BATCH_API" default:"true"`
-				VersionConcurrency int  `yaml:"version_concurrency" envconfig:"DELETE_S3_VERSION_CONCURRENCY" default:"10"`
-				PreloadVersions    bool `yaml:"preload_versions" envconfig:"DELETE_S3_PRELOAD_VERSIONS" default:"true"`
-			}{
+			BatchDeletion: config.S3BatchConfig{
 				UseBatchAPI:        true,
 				VersionConcurrency: 10,
 				PreloadVersions:    true,
+			},
+		},
+		General: config.GeneralConfig{
+			BatchDeletion: config.BatchDeletionConfig{
+				Enabled:   true,
+				BatchSize: 500,
 			},
 		},
 	}
@@ -550,7 +552,7 @@ func testS3WorkerPoolEfficiency(t *testing.T) {
 	s3Storage := &MockEnhancedS3{
 		client:            mockClient,
 		bucket:            cfg.S3.Bucket,
-		batchSize:         cfg.DeleteOptimizations.BatchSize,
+		batchSize:         cfg.General.BatchDeletion.BatchSize,
 		versioningEnabled: true,
 		versionsPerObject: mockClient.versionsPerObject,
 		preloadVersions:   true,
@@ -587,15 +589,17 @@ func testS3ThroughputCalculation(t *testing.T) {
 		S3: config.S3Config{
 			Bucket: "throughput-bucket",
 		},
-		DeleteOptimizations: config.DeleteOptimizations{
-			Enabled:   true,
-			BatchSize: 100,
+		General: config.GeneralConfig{
+			BatchDeletion: config.BatchDeletionConfig{
+				Enabled:   true,
+				BatchSize: 100,
+			},
 		},
 	}
 
 	s3Storage := &MockEnhancedS3{
 		bucket:        cfg.S3.Bucket,
-		batchSize:     cfg.DeleteOptimizations.BatchSize,
+		batchSize:     cfg.General.BatchDeletion.BatchSize,
 		simulateDelay: 100 * time.Millisecond,
 		supported:     true,
 		metrics:       &enhanced.DeleteMetrics{},
@@ -636,8 +640,10 @@ func TestS3ConfigurationValidation(t *testing.T) {
 				S3: config.S3Config{
 					Bucket: "valid-bucket-name",
 				},
-				DeleteOptimizations: config.DeleteOptimizations{
-					Enabled: true,
+				General: config.GeneralConfig{
+					BatchDeletion: config.BatchDeletionConfig{
+						Enabled: true,
+					},
 				},
 			},
 			shouldError: false,
@@ -648,8 +654,10 @@ func TestS3ConfigurationValidation(t *testing.T) {
 				S3: config.S3Config{
 					Bucket: "",
 				},
-				DeleteOptimizations: config.DeleteOptimizations{
-					Enabled: true,
+				General: config.GeneralConfig{
+					BatchDeletion: config.BatchDeletionConfig{
+						Enabled: true,
+					},
 				},
 			},
 			shouldError: true,
@@ -660,17 +668,15 @@ func TestS3ConfigurationValidation(t *testing.T) {
 			config: &config.Config{
 				S3: config.S3Config{
 					Bucket: "test-bucket",
-				},
-				DeleteOptimizations: config.DeleteOptimizations{
-					Enabled: true,
-					S3Optimizations: struct {
-						UseBatchAPI        bool `yaml:"use_batch_api" envconfig:"DELETE_S3_USE_BATCH_API" default:"true"`
-						VersionConcurrency int  `yaml:"version_concurrency" envconfig:"DELETE_S3_VERSION_CONCURRENCY" default:"10"`
-						PreloadVersions    bool `yaml:"preload_versions" envconfig:"DELETE_S3_PRELOAD_VERSIONS" default:"true"`
-					}{
+					BatchDeletion: config.S3BatchConfig{
 						UseBatchAPI:        false, // Disabling batch API should still work
 						VersionConcurrency: 5,
 						PreloadVersions:    true,
+					},
+				},
+				General: config.GeneralConfig{
+					BatchDeletion: config.BatchDeletionConfig{
+						Enabled: true,
 					},
 				},
 			},
@@ -715,15 +721,17 @@ func TestS3ContextCancellation(t *testing.T) {
 		S3: config.S3Config{
 			Bucket: "cancel-bucket",
 		},
-		DeleteOptimizations: config.DeleteOptimizations{
-			Enabled:   true,
-			BatchSize: 100,
+		General: config.GeneralConfig{
+			BatchDeletion: config.BatchDeletionConfig{
+				Enabled:   true,
+				BatchSize: 100,
+			},
 		},
 	}
 
 	s3Storage := &MockEnhancedS3{
 		bucket:        cfg.S3.Bucket,
-		batchSize:     cfg.DeleteOptimizations.BatchSize,
+		batchSize:     cfg.General.BatchDeletion.BatchSize,
 		simulateDelay: 500 * time.Millisecond, // Long delay to test cancellation
 		supported:     true,
 		metrics:       &enhanced.DeleteMetrics{},

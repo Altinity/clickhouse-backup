@@ -58,22 +58,22 @@ func (f *EnhancedStorageFactory) CreateEnhancedWrapper(ctx context.Context, base
 // getDefaultWrapperOptions returns default wrapper options based on configuration
 func (f *EnhancedStorageFactory) getDefaultWrapperOptions() *WrapperOptions {
 	return &WrapperOptions{
-		EnableCache:     f.config.DeleteOptimizations.CacheEnabled,
-		CacheTTL:        f.config.DeleteOptimizations.CacheTTL.String(),
+		EnableCache:     false, // Cache removed in simplified implementation
+		CacheTTL:        "",
 		EnableMetrics:   true,
 		FallbackOnError: true,
-		DisableEnhanced: !f.config.DeleteOptimizations.Enabled,
+		DisableEnhanced: !f.config.General.BatchDeletion.Enabled,
 	}
 }
 
 // CreateForBackupDeletion creates an enhanced storage wrapper specifically for backup deletion
 func (f *EnhancedStorageFactory) CreateForBackupDeletion(ctx context.Context, baseStorage storage.RemoteStorage) (*EnhancedStorageWrapper, error) {
 	opts := &WrapperOptions{
-		EnableCache:     f.config.DeleteOptimizations.CacheEnabled,
-		CacheTTL:        f.config.DeleteOptimizations.CacheTTL.String(),
+		EnableCache:     false, // Cache removed in simplified implementation
+		CacheTTL:        "",
 		EnableMetrics:   true,
 		FallbackOnError: true,
-		DisableEnhanced: !f.config.DeleteOptimizations.Enabled,
+		DisableEnhanced: !f.config.General.BatchDeletion.Enabled,
 	}
 
 	return f.CreateEnhancedWrapper(ctx, baseStorage, opts)
@@ -82,10 +82,10 @@ func (f *EnhancedStorageFactory) CreateForBackupDeletion(ctx context.Context, ba
 // CreateForObjectDiskCleanup creates an enhanced storage wrapper for object disk cleanup
 func (f *EnhancedStorageFactory) CreateForObjectDiskCleanup(ctx context.Context, baseStorage storage.RemoteStorage) (*EnhancedStorageWrapper, error) {
 	opts := &WrapperOptions{
-		EnableCache:     false, // Cache may not be as useful for cleanup operations
+		EnableCache:     false, // Cache not used in simplified implementation
 		EnableMetrics:   true,
 		FallbackOnError: true,
-		DisableEnhanced: !f.config.DeleteOptimizations.Enabled,
+		DisableEnhanced: !f.config.General.BatchDeletion.Enabled,
 	}
 
 	return f.CreateEnhancedWrapper(ctx, baseStorage, opts)
@@ -93,7 +93,7 @@ func (f *EnhancedStorageFactory) CreateForObjectDiskCleanup(ctx context.Context,
 
 // IsEnhancedDeleteSupported checks if enhanced delete is supported for the given storage type
 func (f *EnhancedStorageFactory) IsEnhancedDeleteSupported(storageType string) bool {
-	if !f.config.DeleteOptimizations.Enabled {
+	if !f.config.General.BatchDeletion.Enabled {
 		return false
 	}
 
@@ -106,20 +106,20 @@ func (f *EnhancedStorageFactory) IsEnhancedDeleteSupported(storageType string) b
 		return true
 	default:
 		// Enhanced delete can still provide benefits for other storage types
-		// through parallel operations and caching
+		// through parallel operations
 		return true
 	}
 }
 
 // GetOptimalBatchSize returns the optimal batch size for the given storage type
 func (f *EnhancedStorageFactory) GetOptimalBatchSize(storageType string) int {
-	if !f.config.DeleteOptimizations.Enabled {
+	if !f.config.General.BatchDeletion.Enabled {
 		return 1
 	}
 
 	// Check if custom batch size is configured
-	if f.config.DeleteOptimizations.BatchSize > 0 {
-		return f.config.DeleteOptimizations.BatchSize
+	if f.config.General.BatchDeletion.BatchSize > 0 {
+		return f.config.General.BatchDeletion.BatchSize
 	}
 
 	// Return storage-specific optimal batch sizes
@@ -137,30 +137,30 @@ func (f *EnhancedStorageFactory) GetOptimalBatchSize(storageType string) int {
 
 // GetOptimalWorkerCount returns the optimal worker count for the given storage type
 func (f *EnhancedStorageFactory) GetOptimalWorkerCount(storageType string) int {
-	if !f.config.DeleteOptimizations.Enabled {
+	if !f.config.General.BatchDeletion.Enabled {
 		return 1
 	}
 
 	// Check if custom worker count is configured
-	if f.config.DeleteOptimizations.Workers > 0 {
-		return f.config.DeleteOptimizations.Workers
+	if f.config.General.BatchDeletion.Workers > 0 {
+		return f.config.General.BatchDeletion.Workers
 	}
 
-	// Return storage-specific optimal worker counts
+	// Return storage-specific optimal worker counts based on storage config
 	switch storageType {
 	case "s3":
-		if f.config.DeleteOptimizations.S3Optimizations.VersionConcurrency > 0 {
-			return f.config.DeleteOptimizations.S3Optimizations.VersionConcurrency
+		if f.config.S3.BatchDeletion.VersionConcurrency > 0 {
+			return f.config.S3.BatchDeletion.VersionConcurrency
 		}
 		return 10
 	case "gcs":
-		if f.config.DeleteOptimizations.GCSOptimizations.MaxWorkers > 0 {
-			return f.config.DeleteOptimizations.GCSOptimizations.MaxWorkers
+		if f.config.GCS.BatchDeletion.MaxWorkers > 0 {
+			return f.config.GCS.BatchDeletion.MaxWorkers
 		}
 		return 50
 	case "azblob":
-		if f.config.DeleteOptimizations.AzureOptimizations.MaxWorkers > 0 {
-			return f.config.DeleteOptimizations.AzureOptimizations.MaxWorkers
+		if f.config.AzureBlob.BatchDeletion.MaxWorkers > 0 {
+			return f.config.AzureBlob.BatchDeletion.MaxWorkers
 		}
 		return 20
 	default:
@@ -170,23 +170,23 @@ func (f *EnhancedStorageFactory) GetOptimalWorkerCount(storageType string) int {
 
 // ValidateStorageOptimizations validates optimization settings for the given storage type
 func (f *EnhancedStorageFactory) ValidateStorageOptimizations(storageType string) error {
-	if !f.config.DeleteOptimizations.Enabled {
+	if !f.config.General.BatchDeletion.Enabled {
 		return nil
 	}
 
 	// Validate general settings
-	if f.config.DeleteOptimizations.BatchSize < 0 {
+	if f.config.General.BatchDeletion.BatchSize < 0 {
 		return &OptimizationConfigError{
 			Field:   "batch_size",
-			Value:   f.config.DeleteOptimizations.BatchSize,
+			Value:   f.config.General.BatchDeletion.BatchSize,
 			Message: "batch size cannot be negative",
 		}
 	}
 
-	if f.config.DeleteOptimizations.Workers < 0 {
+	if f.config.General.BatchDeletion.Workers < 0 {
 		return &OptimizationConfigError{
 			Field:   "workers",
-			Value:   f.config.DeleteOptimizations.Workers,
+			Value:   f.config.General.BatchDeletion.Workers,
 			Message: "worker count cannot be negative",
 		}
 	}
@@ -206,11 +206,11 @@ func (f *EnhancedStorageFactory) ValidateStorageOptimizations(storageType string
 
 // validateS3Optimizations validates S3-specific optimization settings
 func (f *EnhancedStorageFactory) validateS3Optimizations() error {
-	s3Opts := f.config.DeleteOptimizations.S3Optimizations
+	s3Opts := f.config.S3.BatchDeletion
 
 	if s3Opts.VersionConcurrency < 0 {
 		return &OptimizationConfigError{
-			Field:   "s3_optimizations.version_concurrency",
+			Field:   "s3.batch_deletion.version_concurrency",
 			Value:   s3Opts.VersionConcurrency,
 			Message: "version concurrency cannot be negative",
 		}
@@ -218,7 +218,7 @@ func (f *EnhancedStorageFactory) validateS3Optimizations() error {
 
 	if s3Opts.VersionConcurrency > 100 {
 		return &OptimizationConfigError{
-			Field:   "s3_optimizations.version_concurrency",
+			Field:   "s3.batch_deletion.version_concurrency",
 			Value:   s3Opts.VersionConcurrency,
 			Message: "version concurrency should not exceed 100 to avoid overwhelming S3",
 		}
@@ -229,11 +229,11 @@ func (f *EnhancedStorageFactory) validateS3Optimizations() error {
 
 // validateGCSOptimizations validates GCS-specific optimization settings
 func (f *EnhancedStorageFactory) validateGCSOptimizations() error {
-	gcsOpts := f.config.DeleteOptimizations.GCSOptimizations
+	gcsOpts := f.config.GCS.BatchDeletion
 
 	if gcsOpts.MaxWorkers < 0 {
 		return &OptimizationConfigError{
-			Field:   "gcs_optimizations.max_workers",
+			Field:   "gcs.batch_deletion.max_workers",
 			Value:   gcsOpts.MaxWorkers,
 			Message: "max workers cannot be negative",
 		}
@@ -241,7 +241,7 @@ func (f *EnhancedStorageFactory) validateGCSOptimizations() error {
 
 	if gcsOpts.MaxWorkers > 100 {
 		return &OptimizationConfigError{
-			Field:   "gcs_optimizations.max_workers",
+			Field:   "gcs.batch_deletion.max_workers",
 			Value:   gcsOpts.MaxWorkers,
 			Message: "max workers should not exceed 100 to avoid rate limiting",
 		}
@@ -252,11 +252,11 @@ func (f *EnhancedStorageFactory) validateGCSOptimizations() error {
 
 // validateAzureOptimizations validates Azure-specific optimization settings
 func (f *EnhancedStorageFactory) validateAzureOptimizations() error {
-	azureOpts := f.config.DeleteOptimizations.AzureOptimizations
+	azureOpts := f.config.AzureBlob.BatchDeletion
 
 	if azureOpts.MaxWorkers < 0 {
 		return &OptimizationConfigError{
-			Field:   "azure_optimizations.max_workers",
+			Field:   "azblob.batch_deletion.max_workers",
 			Value:   azureOpts.MaxWorkers,
 			Message: "max workers cannot be negative",
 		}
@@ -264,7 +264,7 @@ func (f *EnhancedStorageFactory) validateAzureOptimizations() error {
 
 	if azureOpts.MaxWorkers > 50 {
 		return &OptimizationConfigError{
-			Field:   "azure_optimizations.max_workers",
+			Field:   "azblob.batch_deletion.max_workers",
 			Value:   azureOpts.MaxWorkers,
 			Message: "max workers should not exceed 50 for Azure Blob to avoid throttling",
 		}

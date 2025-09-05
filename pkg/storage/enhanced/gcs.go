@@ -23,7 +23,7 @@ type EnhancedGCS struct {
 	bucket              string
 	clientPool          *GCSClientPool
 	batchDeleter        *GCSBatchDeleter
-	deleteOptimizations *config.DeleteOptimizations
+	batchDeletionConfig *config.BatchDeletionConfig
 	metrics             *DeleteMetrics
 }
 
@@ -73,7 +73,7 @@ func NewEnhancedGCS(baseStorage storage.RemoteStorage, client *gcs.Client, cfg *
 
 	// Create batch deleter if JSON API batching is enabled
 	var batchDeleter *GCSBatchDeleter
-	if cfg.DeleteOptimizations.GCSOptimizations.UseBatchAPI {
+	if cfg.GCS.BatchDeletion.UseBatchAPI {
 		// Get token source from the client for batch operations
 		tokenSource, err := getTokenSourceFromClient(client)
 		if err != nil {
@@ -84,17 +84,15 @@ func NewEnhancedGCS(baseStorage storage.RemoteStorage, client *gcs.Client, cfg *
 	}
 
 	enhancedGCS := &EnhancedGCS{
-		RemoteStorage: baseStorage,
-		client:        client,
-		config:        gcsConfig,
-		bucket:        gcsConfig.Bucket,
-		clientPool:    clientPool,
-		batchDeleter:  batchDeleter,
-		metrics:       &DeleteMetrics{},
+		RemoteStorage:       baseStorage,
+		client:              client,
+		config:              gcsConfig,
+		bucket:              gcsConfig.Bucket,
+		clientPool:          clientPool,
+		batchDeleter:        batchDeleter,
+		batchDeletionConfig: &cfg.General.BatchDeletion,
+		metrics:             &DeleteMetrics{},
 	}
-
-	// Store delete optimization config for later access
-	enhancedGCS.deleteOptimizations = &cfg.DeleteOptimizations
 
 	return enhancedGCS, nil
 }
@@ -114,7 +112,7 @@ func (g *EnhancedGCS) DeleteBatch(ctx context.Context, keys []string) (*BatchRes
 	g.metrics.FilesProcessed = int64(len(keys))
 
 	// Choose between JSON API batching and high-concurrency parallel delete
-	if g.deleteOptimizations != nil && g.deleteOptimizations.GCSOptimizations.UseBatchAPI && g.batchDeleter != nil {
+	if g.config.BatchDeletion.UseBatchAPI && g.batchDeleter != nil {
 		log.Debug().
 			Int("key_count", len(keys)).
 			Msg("starting GCS JSON API batch delete")
@@ -285,8 +283,11 @@ func (g *EnhancedGCS) deleteObject(ctx context.Context, client *gcs.Client, key 
 
 // getOptimalWorkerCount determines the optimal number of workers based on job count and config
 func (g *EnhancedGCS) getOptimalWorkerCount(jobCount int) int {
-	// Start with configured or default max workers
-	maxWorkers := 50 // Default from config
+	// Start with configured max workers
+	maxWorkers := g.config.BatchDeletion.MaxWorkers
+	if maxWorkers <= 0 {
+		maxWorkers = 50 // Default
+	}
 
 	// Don't create more workers than jobs
 	if jobCount < maxWorkers {
@@ -316,12 +317,12 @@ func (g *EnhancedGCS) updateThroughputMetrics() {
 
 // SupportsBatchDelete returns true if JSON API batching is enabled, otherwise false
 func (g *EnhancedGCS) SupportsBatchDelete() bool {
-	return g.deleteOptimizations != nil && g.deleteOptimizations.GCSOptimizations.UseBatchAPI && g.batchDeleter != nil
+	return g.config.BatchDeletion.UseBatchAPI && g.batchDeleter != nil
 }
 
 // GetOptimalBatchSize returns the optimal batch size based on the delete method
 func (g *EnhancedGCS) GetOptimalBatchSize() int {
-	if g.deleteOptimizations != nil && g.deleteOptimizations.GCSOptimizations.UseBatchAPI && g.batchDeleter != nil {
+	if g.config.BatchDeletion.UseBatchAPI && g.batchDeleter != nil {
 		// GCS JSON API supports up to 100 requests per batch
 		return 100
 	}

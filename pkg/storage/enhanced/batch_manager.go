@@ -16,7 +16,7 @@ import (
 
 // BatchManager orchestrates parallel deletion workflows and manages worker pools
 type BatchManager struct {
-	config   *config.DeleteOptimizations
+	config   *config.BatchDeletionConfig
 	storage  BatchRemoteStorage
 	metrics  *DeleteMetrics
 	cache    *BackupExistenceCache
@@ -72,7 +72,7 @@ type Worker struct {
 }
 
 // NewBatchManager creates a new batch manager with the given configuration
-func NewBatchManager(cfg *config.DeleteOptimizations, storage BatchRemoteStorage, cache *BackupExistenceCache) *BatchManager {
+func NewBatchManager(cfg *config.BatchDeletionConfig, storage BatchRemoteStorage, cache *BackupExistenceCache) *BatchManager {
 	return &BatchManager{
 		config:  cfg,
 		storage: storage,
@@ -155,7 +155,7 @@ func (bm *BatchManager) getBackupFileList(ctx context.Context, backupName string
 
 // applyCacheOptimizations uses cache to skip files that don't need to be deleted
 func (bm *BatchManager) applyCacheOptimizations(fileList []string) []string {
-	if !bm.config.CacheEnabled || bm.cache == nil {
+	if bm.cache == nil {
 		return fileList
 	}
 
@@ -537,7 +537,7 @@ func (bm *BatchManager) filterRetriableFilesWithErrors(failedFiles []FailedFileW
 }
 
 // shouldRetryBatch determines if a batch should be retried
-func shouldRetryBatch(result *BatchJobResult, config *config.DeleteOptimizations) bool {
+func shouldRetryBatch(result *BatchJobResult, config *config.BatchDeletionConfig) bool {
 	if result.Job.Retry >= result.Job.MaxRetry {
 		return false
 	}

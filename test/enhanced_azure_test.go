@@ -98,11 +98,14 @@ func testAzureParallelDeleteScenario(t *testing.T, objectCount, maxWorkers, expe
 	cfg := &config.Config{
 		AzureBlob: config.AzureBlobConfig{
 			Container: "test-azure-container",
+			BatchDeletion: config.AzureBatchConfig{
+				MaxWorkers: maxWorkers,
+			},
 		},
-		DeleteOptimizations: config.DeleteOptimizations{
-			Enabled:   true,
-			BatchSize: 100, // Not used for Azure parallel processing
-			Workers:   maxWorkers,
+		General: config.GeneralConfig{
+			BatchDeletion: config.BatchDeletionConfig{
+				Enabled: true,
+			},
 		},
 	}
 
@@ -667,8 +670,10 @@ func TestAzureConfigurationValidation(t *testing.T) {
 				AzureBlob: config.AzureBlobConfig{
 					Container: "valid-azure-container",
 				},
-				DeleteOptimizations: config.DeleteOptimizations{
-					Enabled: true,
+				General: config.GeneralConfig{
+					BatchDeletion: config.BatchDeletionConfig{
+						Enabled: true,
+					},
 				},
 			},
 			shouldError: false,
@@ -679,8 +684,10 @@ func TestAzureConfigurationValidation(t *testing.T) {
 				AzureBlob: config.AzureBlobConfig{
 					Container: "",
 				},
-				DeleteOptimizations: config.DeleteOptimizations{
-					Enabled: true,
+				General: config.GeneralConfig{
+					BatchDeletion: config.BatchDeletionConfig{
+						Enabled: true,
+					},
 				},
 			},
 			shouldError: true,
@@ -692,8 +699,10 @@ func TestAzureConfigurationValidation(t *testing.T) {
 				AzureBlob: config.AzureBlobConfig{
 					Container: "minimal-container",
 				},
-				DeleteOptimizations: config.DeleteOptimizations{
-					Enabled: true,
+				General: config.GeneralConfig{
+					BatchDeletion: config.BatchDeletionConfig{
+						Enabled: true,
+					},
 				},
 			},
 			shouldError: false,

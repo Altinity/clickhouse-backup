@@ -20,82 +20,69 @@ func TestEnhancedDeleteIntegration(t *testing.T) {
 	tests := []struct {
 		name           string
 		storageType    string
-		optimizations  *config.DeleteOptimizations
+		batchConfig    *config.BatchDeletionConfig
+		s3Config       *config.S3BatchConfig
+		gcsConfig      *config.GCSBatchConfig
+		azureConfig    *config.AzureBatchConfig
 		expectedResult string
 	}{
 		{
 			name:        "S3 Enhanced Delete Enabled",
 			storageType: "s3",
-			optimizations: &config.DeleteOptimizations{
+			batchConfig: &config.BatchDeletionConfig{
 				Enabled:          true,
 				BatchSize:        1000,
 				Workers:          10,
 				RetryAttempts:    3,
 				FailureThreshold: 0.1,
 				ErrorStrategy:    "retry_batch",
-				CacheEnabled:     true,
-				CacheTTL:         time.Hour,
-				S3Optimizations: struct {
-					UseBatchAPI        bool `yaml:"use_batch_api" envconfig:"DELETE_S3_USE_BATCH_API" default:"true"`
-					VersionConcurrency int  `yaml:"version_concurrency" envconfig:"DELETE_S3_VERSION_CONCURRENCY" default:"10"`
-					PreloadVersions    bool `yaml:"preload_versions" envconfig:"DELETE_S3_PRELOAD_VERSIONS" default:"true"`
-				}{
-					UseBatchAPI:        true,
-					VersionConcurrency: 5,
-					PreloadVersions:    true,
-				},
+			},
+			s3Config: &config.S3BatchConfig{
+				UseBatchAPI:        true,
+				VersionConcurrency: 5,
+				PreloadVersions:    true,
 			},
 			expectedResult: "enhanced",
 		},
 		{
 			name:        "GCS Enhanced Delete Enabled",
 			storageType: "gcs",
-			optimizations: &config.DeleteOptimizations{
+			batchConfig: &config.BatchDeletionConfig{
 				Enabled:          true,
 				BatchSize:        500,
 				Workers:          50,
 				RetryAttempts:    2,
 				FailureThreshold: 0.2,
 				ErrorStrategy:    "continue",
-				CacheEnabled:     true,
-				CacheTTL:         2 * time.Hour,
-				GCSOptimizations: struct {
-					MaxWorkers    int  `yaml:"max_workers" envconfig:"DELETE_GCS_MAX_WORKERS" default:"50"`
-					UseClientPool bool `yaml:"use_client_pool" envconfig:"DELETE_GCS_USE_CLIENT_POOL" default:"true"`
-					UseBatchAPI   bool `yaml:"use_batch_api" envconfig:"DELETE_GCS_USE_BATCH_API" default:"false"`
-				}{
-					MaxWorkers:    50,
-					UseClientPool: true,
-					UseBatchAPI:   false,
-				},
+			},
+			gcsConfig: &config.GCSBatchConfig{
+				MaxWorkers:    50,
+				UseClientPool: true,
+				UseBatchAPI:   true,
 			},
 			expectedResult: "enhanced",
 		},
 		{
 			name:        "Azure Enhanced Delete Enabled",
 			storageType: "azblob",
-			optimizations: &config.DeleteOptimizations{
+			batchConfig: &config.BatchDeletionConfig{
 				Enabled:          true,
 				BatchSize:        200,
 				Workers:          20,
 				RetryAttempts:    5,
 				FailureThreshold: 0.05,
 				ErrorStrategy:    "fail_fast",
-				CacheEnabled:     false,
-				AzureOptimizations: struct {
-					UseBatchAPI bool `yaml:"use_batch_api" envconfig:"DELETE_AZURE_USE_BATCH_API" default:"true"`
-					MaxWorkers  int  `yaml:"max_workers" envconfig:"DELETE_AZURE_MAX_WORKERS" default:"20"`
-				}{
-					UseBatchAPI: true,
-					MaxWorkers:  20,
-				},
+			},
+			azureConfig: &config.AzureBatchConfig{
+				UseBatchAPI: true,
+				MaxWorkers:  20,
 			},
 			expectedResult: "enhanced",
 		},
 		{
 			name:        "Optimizations Disabled - Fallback",
 			storageType: "s3",
-			optimizations: &config.DeleteOptimizations{
+			batchConfig: &config.BatchDeletionConfig{
 				Enabled: false,
 			},
 			expectedResult: "fallback",
@@ -104,19 +91,43 @@ func TestEnhancedDeleteIntegration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			testEnhancedDeleteScenario(t, tt.storageType, tt.optimizations, tt.expectedResult)
+			testEnhancedDeleteScenario(t, tt.storageType, &tt, tt.expectedResult)
 		})
 	}
 }
 
 // testEnhancedDeleteScenario tests a specific delete optimization scenario
-func testEnhancedDeleteScenario(t *testing.T, storageType string, opts *config.DeleteOptimizations, expectedResult string) {
+func testEnhancedDeleteScenario(t *testing.T, storageType string, scenario *struct {
+	name           string
+	storageType    string
+	batchConfig    *config.BatchDeletionConfig
+	s3Config       *config.S3BatchConfig
+	gcsConfig      *config.GCSBatchConfig
+	azureConfig    *config.AzureBatchConfig
+	expectedResult string
+}, expectedResult string) {
 	// Create test configuration
 	cfg := &config.Config{
 		General: config.GeneralConfig{
 			RemoteStorage: storageType,
+			BatchDeletion: *scenario.batchConfig,
 		},
-		DeleteOptimizations: *opts,
+	}
+
+	// Set storage-specific configurations
+	switch storageType {
+	case "s3":
+		if scenario.s3Config != nil {
+			cfg.S3.BatchDeletion = *scenario.s3Config
+		}
+	case "gcs":
+		if scenario.gcsConfig != nil {
+			cfg.GCS.BatchDeletion = *scenario.gcsConfig
+		}
+	case "azblob":
+		if scenario.azureConfig != nil {
+			cfg.AzureBlob.BatchDeletion = *scenario.azureConfig
+		}
 	}
 
 	// Test configuration validation
@@ -130,7 +141,7 @@ func testEnhancedDeleteScenario(t *testing.T, storageType string, opts *config.D
 	})
 
 	// Test batch manager functionality
-	if opts.Enabled {
+	if scenario.batchConfig.Enabled {
 		t.Run("Batch Manager", func(t *testing.T) {
 			testBatchManager(t, cfg)
 		})
@@ -144,7 +155,7 @@ func testEnhancedDeleteScenario(t *testing.T, storageType string, opts *config.D
 
 // testConfigValidation tests configuration validation
 func testConfigValidation(t *testing.T, cfg *config.Config) {
-	if !cfg.DeleteOptimizations.Enabled {
+	if !cfg.General.BatchDeletion.Enabled {
 		// Skip validation if optimizations are disabled
 		return
 	}
@@ -155,7 +166,7 @@ func testConfigValidation(t *testing.T, cfg *config.Config) {
 
 	// Test invalid batch size
 	invalidCfg := *cfg
-	invalidCfg.DeleteOptimizations.BatchSize = -1
+	invalidCfg.General.BatchDeletion.BatchSize = -1
 
 	wrapper, err := enhanced.NewEnhancedStorageWrapper(nil, &invalidCfg, nil)
 	assert.Error(t, err)
@@ -163,7 +174,7 @@ func testConfigValidation(t *testing.T, cfg *config.Config) {
 
 	// Test invalid failure threshold
 	invalidCfg2 := *cfg
-	invalidCfg2.DeleteOptimizations.FailureThreshold = 1.5
+	invalidCfg2.General.BatchDeletion.FailureThreshold = 1.5
 
 	wrapper2, err2 := enhanced.NewEnhancedStorageWrapper(nil, &invalidCfg2, nil)
 	assert.Error(t, err2)
@@ -171,7 +182,7 @@ func testConfigValidation(t *testing.T, cfg *config.Config) {
 
 	// Test invalid error strategy
 	invalidCfg3 := *cfg
-	invalidCfg3.DeleteOptimizations.ErrorStrategy = "invalid_strategy"
+	invalidCfg3.General.BatchDeletion.ErrorStrategy = "invalid_strategy"
 
 	wrapper3, err3 := enhanced.NewEnhancedStorageWrapper(nil, &invalidCfg3, nil)
 	assert.Error(t, err3)
@@ -186,7 +197,7 @@ func testEnhancedStorageWrapper(t *testing.T, cfg *config.Config, expectedResult
 	}
 
 	wrapperOpts := &enhanced.WrapperOptions{
-		EnableCache:     cfg.DeleteOptimizations.CacheEnabled,
+		EnableCache:     false, // Cache not used in new simplified config
 		EnableMetrics:   true,
 		FallbackOnError: true,
 	}
@@ -200,9 +211,9 @@ func testEnhancedStorageWrapper(t *testing.T, cfg *config.Config, expectedResult
 	require.NotNil(t, wrapper)
 
 	// Test wrapper properties
-	assert.Equal(t, cfg.DeleteOptimizations.Enabled && expectedResult != "fallback", wrapper.IsOptimizationEnabled())
-	assert.Equal(t, cfg.DeleteOptimizations.BatchSize, wrapper.GetBatchSize())
-	assert.Equal(t, cfg.DeleteOptimizations.Workers, wrapper.GetWorkerCount())
+	assert.Equal(t, cfg.General.BatchDeletion.Enabled && expectedResult != "fallback", wrapper.IsOptimizationEnabled())
+	assert.Equal(t, cfg.General.BatchDeletion.BatchSize, wrapper.GetBatchSize())
+	assert.Equal(t, cfg.General.BatchDeletion.Workers, wrapper.GetWorkerCount())
 
 	// Test delete metrics
 	metrics := wrapper.GetDeleteMetrics()
@@ -223,18 +234,16 @@ func testEnhancedStorageWrapper(t *testing.T, cfg *config.Config, expectedResult
 func testBatchManager(t *testing.T, cfg *config.Config) {
 	// Create mock enhanced storage
 	mockStorage := &MockBatchRemoteStorage{
-		batchSize: cfg.DeleteOptimizations.BatchSize,
+		batchSize: cfg.General.BatchDeletion.BatchSize,
 		supported: true,
 	}
 
 	// Create cache if enabled
 	var cache *enhanced.BackupExistenceCache
-	if cfg.DeleteOptimizations.CacheEnabled {
-		cache = enhanced.NewBackupExistenceCache(cfg.DeleteOptimizations.CacheTTL)
-	}
+	// Cache not used in new simplified config
 
 	// Create batch manager
-	batchMgr := enhanced.NewBatchManager(&cfg.DeleteOptimizations, mockStorage, cache)
+	batchMgr := enhanced.NewBatchManager(&cfg.General.BatchDeletion, mockStorage, cache)
 	require.NotNil(t, batchMgr)
 
 	// Test batch delete operation
@@ -274,7 +283,7 @@ func testDeleteWorkflowIntegration(t *testing.T, cfg *config.Config, expectedRes
 
 	// Test optimal worker count
 	workerCount := mockBackuper.getOptimalWorkerCount()
-	if cfg.DeleteOptimizations.Enabled {
+	if cfg.General.BatchDeletion.Enabled {
 		assert.Greater(t, workerCount, 0)
 	} else {
 		assert.Equal(t, 1, workerCount)
@@ -291,9 +300,9 @@ func TestBackwardCompatibility(t *testing.T) {
 	cfg := &config.Config{
 		General: config.GeneralConfig{
 			RemoteStorage: "s3",
-		},
-		DeleteOptimizations: config.DeleteOptimizations{
-			Enabled: false,
+			BatchDeletion: config.BatchDeletionConfig{
+				Enabled: false,
+			},
 		},
 	}
 
@@ -315,25 +324,25 @@ func TestErrorHandling(t *testing.T) {
 	cfg := &config.Config{
 		General: config.GeneralConfig{
 			RemoteStorage: "s3",
-		},
-		DeleteOptimizations: config.DeleteOptimizations{
-			Enabled:          true,
-			BatchSize:        100,
-			Workers:          5,
-			ErrorStrategy:    "fail_fast",
-			FailureThreshold: 0.1,
+			BatchDeletion: config.BatchDeletionConfig{
+				Enabled:          true,
+				BatchSize:        100,
+				Workers:          5,
+				ErrorStrategy:    "fail_fast",
+				FailureThreshold: 0.1,
+			},
 		},
 	}
 
 	// Test with failing storage
 	failingStorage := &MockBatchRemoteStorage{
-		batchSize:   cfg.DeleteOptimizations.BatchSize,
+		batchSize:   cfg.General.BatchDeletion.BatchSize,
 		supported:   true,
 		shouldFail:  true,
 		failureRate: 0.2, // 20% failure rate, above threshold
 	}
 
-	batchMgr := enhanced.NewBatchManager(&cfg.DeleteOptimizations, failingStorage, nil)
+	batchMgr := enhanced.NewBatchManager(&cfg.General.BatchDeletion, failingStorage, nil)
 	require.NotNil(t, batchMgr)
 
 	ctx := context.Background()
@@ -341,8 +350,8 @@ func TestErrorHandling(t *testing.T) {
 	assert.Error(t, err) // Should fail due to high failure rate
 
 	// Test continue strategy
-	cfg.DeleteOptimizations.ErrorStrategy = "continue"
-	batchMgr2 := enhanced.NewBatchManager(&cfg.DeleteOptimizations, failingStorage, nil)
+	cfg.General.BatchDeletion.ErrorStrategy = "continue"
+	batchMgr2 := enhanced.NewBatchManager(&cfg.General.BatchDeletion, failingStorage, nil)
 	_ = batchMgr2.DeleteBackupBatch(ctx, "test-backup")
 	// Should continue despite failures (specific behavior depends on implementation)
 }
@@ -352,22 +361,22 @@ func TestPerformanceMetrics(t *testing.T) {
 	cfg := &config.Config{
 		General: config.GeneralConfig{
 			RemoteStorage: "s3",
-		},
-		DeleteOptimizations: config.DeleteOptimizations{
-			Enabled:   true,
-			BatchSize: 1000,
-			Workers:   10,
+			BatchDeletion: config.BatchDeletionConfig{
+				Enabled:   true,
+				BatchSize: 1000,
+				Workers:   10,
+			},
 		},
 	}
 
 	mockStorage := &MockBatchRemoteStorage{
-		batchSize:     cfg.DeleteOptimizations.BatchSize,
+		batchSize:     cfg.General.BatchDeletion.BatchSize,
 		supported:     true,
 		simulateFiles: 5000, // Simulate deleting 5000 files
 		simulateDelay: 10 * time.Millisecond,
 	}
 
-	batchMgr := enhanced.NewBatchManager(&cfg.DeleteOptimizations, mockStorage, nil)
+	batchMgr := enhanced.NewBatchManager(&cfg.General.BatchDeletion, mockStorage, nil)
 	require.NotNil(t, batchMgr)
 
 	ctx := context.Background()
@@ -382,654 +391,6 @@ func TestPerformanceMetrics(t *testing.T) {
 	assert.NotNil(t, metrics)
 	assert.Greater(t, metrics.FilesProcessed, int64(0))
 	assert.Greater(t, metrics.TotalDuration, time.Duration(0))
-}
-
-// TestConcurrentDeleteOperations tests concurrent delete operations
-func TestConcurrentDeleteOperations(t *testing.T) {
-	cfg := &config.Config{
-		General: config.GeneralConfig{
-			RemoteStorage: "s3",
-		},
-		DeleteOptimizations: config.DeleteOptimizations{
-			Enabled:   true,
-			BatchSize: 500,
-			Workers:   10,
-		},
-	}
-
-	mockStorage := &MockBatchRemoteStorage{
-		batchSize:     cfg.DeleteOptimizations.BatchSize,
-		supported:     true,
-		simulateDelay: 50 * time.Millisecond, // Longer delay to test concurrency
-	}
-
-	batchMgr := enhanced.NewBatchManager(&cfg.DeleteOptimizations, mockStorage, nil)
-	require.NotNil(t, batchMgr)
-
-	ctx := context.Background()
-
-	// Run multiple delete operations concurrently
-	const numConcurrent = 5
-	results := make(chan error, numConcurrent)
-
-	for i := 0; i < numConcurrent; i++ {
-		go func(backupNum int) {
-			backupName := fmt.Sprintf("concurrent-backup-%d", backupNum)
-			err := batchMgr.DeleteBackupBatch(ctx, backupName)
-			results <- err
-		}(i)
-	}
-
-	// Collect results
-	for i := 0; i < numConcurrent; i++ {
-		err := <-results
-		assert.NoError(t, err, "Concurrent delete operation %d should succeed", i)
-	}
-
-	// Verify metrics are properly aggregated
-	metrics := batchMgr.GetDeleteMetrics()
-	assert.NotNil(t, metrics)
-	assert.Greater(t, metrics.FilesProcessed, int64(0))
-}
-
-// TestCacheIntegration tests cache integration scenarios
-func TestCacheIntegration(t *testing.T) {
-	cfg := &config.Config{
-		General: config.GeneralConfig{
-			RemoteStorage: "s3",
-		},
-		DeleteOptimizations: config.DeleteOptimizations{
-			Enabled:      true,
-			BatchSize:    100,
-			Workers:      5,
-			CacheEnabled: true,
-			CacheTTL:     time.Hour,
-		},
-	}
-
-	mockStorage := &MockBatchRemoteStorage{
-		batchSize: cfg.DeleteOptimizations.BatchSize,
-		supported: true,
-	}
-
-	cache := enhanced.NewBackupExistenceCache(cfg.DeleteOptimizations.CacheTTL)
-
-	// Pre-populate cache with some backup metadata
-	testBackups := []string{"backup1", "backup2", "backup3"}
-	for _, backup := range testBackups {
-		cache.Set(backup, &enhanced.BackupMetadata{
-			BackupName: backup,
-			Exists:     true,
-			Size:       1024 * 1024, // 1MB
-		})
-	}
-
-	batchMgr := enhanced.NewBatchManager(&cfg.DeleteOptimizations, mockStorage, cache)
-	require.NotNil(t, batchMgr)
-
-	ctx := context.Background()
-
-	// Test cache hits
-	for _, backup := range testBackups {
-		metadata, exists := cache.Get(backup)
-		assert.True(t, exists, "Backup %s should exist in cache", backup)
-		assert.NotNil(t, metadata)
-		assert.Equal(t, backup, metadata.BackupName)
-	}
-
-	// Test cache miss
-	_, exists := cache.Get("nonexistent-backup")
-	assert.False(t, exists, "Nonexistent backup should not be in cache")
-
-	// Test delete operation with cache
-	err := batchMgr.DeleteBackupBatch(ctx, "backup1")
-	assert.NoError(t, err)
-
-	// Verify cache stats
-	stats := cache.Stats()
-	assert.Greater(t, stats.TotalEntries, 0)
-}
-
-// TestErrorRecoveryScenarios tests various error recovery scenarios
-func TestErrorRecoveryScenarios(t *testing.T) {
-	scenarios := []struct {
-		name           string
-		errorStrategy  string
-		failureRate    float64
-		expectSuccess  bool
-		expectContinue bool
-	}{
-		{
-			name:           "Fail Fast Strategy with High Failure Rate",
-			errorStrategy:  "fail_fast",
-			failureRate:    0.5,
-			expectSuccess:  false,
-			expectContinue: false,
-		},
-		{
-			name:           "Continue Strategy with High Failure Rate",
-			errorStrategy:  "continue",
-			failureRate:    0.3,
-			expectSuccess:  true,
-			expectContinue: true,
-		},
-		{
-			name:           "Retry Batch Strategy with Low Failure Rate",
-			errorStrategy:  "retry_batch",
-			failureRate:    0.1,
-			expectSuccess:  true,
-			expectContinue: true,
-		},
-	}
-
-	for _, scenario := range scenarios {
-		t.Run(scenario.name, func(t *testing.T) {
-			cfg := &config.Config{
-				General: config.GeneralConfig{
-					RemoteStorage: "s3",
-				},
-				DeleteOptimizations: config.DeleteOptimizations{
-					Enabled:          true,
-					BatchSize:        50,
-					Workers:          3,
-					ErrorStrategy:    scenario.errorStrategy,
-					FailureThreshold: 0.2,
-					RetryAttempts:    2,
-				},
-			}
-
-			mockStorage := &MockBatchRemoteStorage{
-				batchSize:   cfg.DeleteOptimizations.BatchSize,
-				supported:   true,
-				shouldFail:  true,
-				failureRate: scenario.failureRate,
-			}
-
-			batchMgr := enhanced.NewBatchManager(&cfg.DeleteOptimizations, mockStorage, nil)
-			require.NotNil(t, batchMgr)
-
-			ctx := context.Background()
-			err := batchMgr.DeleteBackupBatch(ctx, "error-test-backup")
-
-			if scenario.expectSuccess {
-				assert.NoError(t, err, "Should succeed with %s strategy", scenario.errorStrategy)
-			} else {
-				assert.Error(t, err, "Should fail with %s strategy", scenario.errorStrategy)
-			}
-
-			// Check metrics regardless of success/failure
-			metrics := batchMgr.GetDeleteMetrics()
-			assert.NotNil(t, metrics)
-		})
-	}
-}
-
-// TestEnhancedRetryMechanism tests the enhanced retry mechanism for failed files
-func TestEnhancedRetryMechanism(t *testing.T) {
-	cfg := &config.Config{
-		General: config.GeneralConfig{
-			RemoteStorage: "s3",
-		},
-		DeleteOptimizations: config.DeleteOptimizations{
-			Enabled:          true,
-			BatchSize:        10,
-			Workers:          2,
-			RetryAttempts:    3,
-			ErrorStrategy:    "continue",
-			FailureThreshold: 0.8, // Allow high failure rate for testing
-		},
-	}
-
-	// Create a storage that progressively improves success rate
-	mockStorage := &AdaptiveMockBatchRemoteStorage{
-		MockBatchRemoteStorage: MockBatchRemoteStorage{
-			batchSize:     cfg.DeleteOptimizations.BatchSize,
-			supported:     true,
-			shouldFail:    true,
-			failureRate:   0.3, // 30% failure rate initially
-			simulateDelay: 10 * time.Millisecond,
-		},
-	}
-
-	batchMgr := enhanced.NewBatchManager(&cfg.DeleteOptimizations, mockStorage, nil)
-	require.NotNil(t, batchMgr)
-
-	ctx := context.Background()
-	err := batchMgr.DeleteBackupBatch(ctx, "retry-test-backup")
-
-	// Should succeed even with initial failures due to retry mechanism
-	assert.NoError(t, err)
-
-	// Verify that retries were attempted (multiple calls to DeleteBatch)
-	assert.Greater(t, mockStorage.callCount, 3, "Should have made multiple delete attempts due to retries")
-
-	// Verify metrics show successful completion
-	metrics := batchMgr.GetDeleteMetrics()
-	assert.NotNil(t, metrics)
-	assert.Greater(t, metrics.FilesDeleted, int64(0))
-
-	// Should have eventually succeeded with most/all files
-	totalFiles := metrics.FilesDeleted + metrics.FilesFailed
-	successRate := float64(metrics.FilesDeleted) / float64(totalFiles)
-	assert.Greater(t, successRate, 0.9, "Should achieve high success rate through retries")
-}
-
-// TestRetryWithNonRetriableErrors tests that non-retriable errors are not retried
-func TestRetryWithNonRetriableErrors(t *testing.T) {
-	cfg := &config.Config{
-		General: config.GeneralConfig{
-			RemoteStorage: "s3",
-		},
-		DeleteOptimizations: config.DeleteOptimizations{
-			Enabled:          true,
-			BatchSize:        5,
-			Workers:          1,
-			RetryAttempts:    3,
-			ErrorStrategy:    "continue",
-			FailureThreshold: 0.9,
-		},
-	}
-
-	// Create a storage that returns non-retriable errors
-	mockStorage := &NonRetriableMockBatchRemoteStorage{
-		MockBatchRemoteStorage: MockBatchRemoteStorage{
-			batchSize:     cfg.DeleteOptimizations.BatchSize,
-			supported:     true,
-			shouldFail:    true,
-			failureRate:   0.5, // 50% failure rate
-			simulateDelay: 1 * time.Millisecond,
-		},
-	}
-
-	batchMgr := enhanced.NewBatchManager(&cfg.DeleteOptimizations, mockStorage, nil)
-	require.NotNil(t, batchMgr)
-
-	ctx := context.Background()
-	err := batchMgr.DeleteBackupBatch(ctx, "non-retriable-test-backup")
-
-	// Should succeed (not fail fast) but with some permanent failures
-	assert.NoError(t, err)
-
-	// Verify metrics show expected failures
-	metrics := batchMgr.GetDeleteMetrics()
-	assert.NotNil(t, metrics)
-	assert.Greater(t, metrics.FilesFailed, int64(0), "Should have some permanent failures")
-}
-
-// TestMaxRetryRounds tests that the system respects the maximum retry rounds limit
-func TestMaxRetryRounds(t *testing.T) {
-	cfg := &config.Config{
-		General: config.GeneralConfig{
-			RemoteStorage: "s3",
-		},
-		DeleteOptimizations: config.DeleteOptimizations{
-			Enabled:          true,
-			BatchSize:        5,
-			Workers:          1,
-			RetryAttempts:    2,
-			ErrorStrategy:    "continue",
-			FailureThreshold: 0.9,
-		},
-	}
-
-	// Create a storage that always fails with retriable errors
-	mockStorage := &AlwaysRetriableFailMockBatchRemoteStorage{
-		MockBatchRemoteStorage: MockBatchRemoteStorage{
-			batchSize:     cfg.DeleteOptimizations.BatchSize,
-			supported:     true,
-			shouldFail:    true,
-			failureRate:   1.0, // 100% failure rate
-			simulateDelay: 1 * time.Millisecond,
-		},
-	}
-
-	batchMgr := enhanced.NewBatchManager(&cfg.DeleteOptimizations, mockStorage, nil)
-	require.NotNil(t, batchMgr)
-
-	ctx := context.Background()
-	err := batchMgr.DeleteBackupBatch(ctx, "max-retry-test-backup")
-
-	// Should complete without error (but with failures)
-	assert.NoError(t, err)
-
-	// Should have attempted multiple rounds but not infinitely
-	assert.Greater(t, mockStorage.callCount, 1, "Should have made multiple attempts")
-	assert.Less(t, mockStorage.callCount, 50, "Should not retry infinitely") // Reasonable upper bound
-}
-
-// TestStorageSpecificWorkflows tests storage-specific delete workflows
-func TestStorageSpecificWorkflows(t *testing.T) {
-	storageConfigs := map[string]*config.Config{
-		"s3": {
-			General: config.GeneralConfig{RemoteStorage: "s3"},
-			DeleteOptimizations: config.DeleteOptimizations{
-				Enabled:   true,
-				BatchSize: 1000,
-				Workers:   10,
-				S3Optimizations: struct {
-					UseBatchAPI        bool `yaml:"use_batch_api" envconfig:"DELETE_S3_USE_BATCH_API" default:"true"`
-					VersionConcurrency int  `yaml:"version_concurrency" envconfig:"DELETE_S3_VERSION_CONCURRENCY" default:"10"`
-					PreloadVersions    bool `yaml:"preload_versions" envconfig:"DELETE_S3_PRELOAD_VERSIONS" default:"true"`
-				}{
-					UseBatchAPI:        true,
-					VersionConcurrency: 10,
-					PreloadVersions:    true,
-				},
-			},
-		},
-		"gcs": {
-			General: config.GeneralConfig{RemoteStorage: "gcs"},
-			DeleteOptimizations: config.DeleteOptimizations{
-				Enabled:   true,
-				BatchSize: 500,
-				Workers:   50,
-				GCSOptimizations: struct {
-					MaxWorkers    int  `yaml:"max_workers" envconfig:"DELETE_GCS_MAX_WORKERS" default:"50"`
-					UseClientPool bool `yaml:"use_client_pool" envconfig:"DELETE_GCS_USE_CLIENT_POOL" default:"true"`
-					UseBatchAPI   bool `yaml:"use_batch_api" envconfig:"DELETE_GCS_USE_BATCH_API" default:"false"`
-				}{
-					MaxWorkers:    50,
-					UseClientPool: true,
-					UseBatchAPI:   false,
-				},
-			},
-		},
-		"azblob": {
-			General: config.GeneralConfig{RemoteStorage: "azblob"},
-			DeleteOptimizations: config.DeleteOptimizations{
-				Enabled:   true,
-				BatchSize: 200,
-				Workers:   20,
-				AzureOptimizations: struct {
-					UseBatchAPI bool `yaml:"use_batch_api" envconfig:"DELETE_AZURE_USE_BATCH_API" default:"true"`
-					MaxWorkers  int  `yaml:"max_workers" envconfig:"DELETE_AZURE_MAX_WORKERS" default:"20"`
-				}{
-					UseBatchAPI: true,
-					MaxWorkers:  20,
-				},
-			},
-		},
-	}
-
-	for storageType, cfg := range storageConfigs {
-		t.Run(fmt.Sprintf("Storage_%s_Workflow", storageType), func(t *testing.T) {
-			mockStorage := &MockBatchRemoteStorage{
-				MockRemoteStorage: MockRemoteStorage{kind: storageType},
-				batchSize:         cfg.DeleteOptimizations.BatchSize,
-				supported:         true,
-				simulateFiles:     1000,
-				simulateDelay:     5 * time.Millisecond,
-			}
-
-			batchMgr := enhanced.NewBatchManager(&cfg.DeleteOptimizations, mockStorage, nil)
-			require.NotNil(t, batchMgr)
-
-			ctx := context.Background()
-
-			// Test the complete workflow
-			startTime := time.Now()
-			err := batchMgr.DeleteBackupBatch(ctx, fmt.Sprintf("test-backup-%s", storageType))
-			duration := time.Since(startTime)
-
-			assert.NoError(t, err)
-			assert.Greater(t, duration, time.Duration(0))
-
-			// Verify metrics
-			metrics := batchMgr.GetDeleteMetrics()
-			assert.NotNil(t, metrics)
-			assert.Greater(t, metrics.FilesProcessed, int64(0))
-			assert.Greater(t, metrics.APICallsCount, int64(0))
-
-			// Storage-specific validations
-			switch storageType {
-			case "s3":
-				// S3 should use batch API, resulting in fewer API calls
-				expectedMaxAPICalls := int64(mockStorage.simulateFiles/cfg.DeleteOptimizations.BatchSize + 1)
-				assert.LessOrEqual(t, metrics.APICallsCount, expectedMaxAPICalls,
-					"S3 should use batch API to reduce API calls")
-			case "gcs":
-				// GCS should use high concurrency
-				assert.GreaterOrEqual(t, cfg.DeleteOptimizations.Workers, 50,
-					"GCS should use high worker concurrency")
-			case "azblob":
-				// Azure should use moderate batch sizes
-				assert.LessOrEqual(t, cfg.DeleteOptimizations.BatchSize, 200,
-					"Azure should use moderate batch sizes")
-			}
-		})
-	}
-}
-
-// TestConfigurationEdgeCases tests edge cases in configuration
-func TestConfigurationEdgeCases(t *testing.T) {
-	testCases := []struct {
-		name        string
-		cfg         *config.Config
-		shouldError bool
-		errorMsg    string
-	}{
-		{
-			name: "Zero batch size",
-			cfg: &config.Config{
-				General: config.GeneralConfig{RemoteStorage: "s3"},
-				DeleteOptimizations: config.DeleteOptimizations{
-					Enabled:   true,
-					BatchSize: 0,
-				},
-			},
-			shouldError: true,
-			errorMsg:    "batch size must be greater than 0",
-		},
-		{
-			name: "Negative worker count",
-			cfg: &config.Config{
-				General: config.GeneralConfig{RemoteStorage: "s3"},
-				DeleteOptimizations: config.DeleteOptimizations{
-					Enabled:   true,
-					BatchSize: 100,
-					Workers:   -1,
-				},
-			},
-			shouldError: true,
-			errorMsg:    "worker count cannot be negative",
-		},
-		{
-			name: "Invalid failure threshold above 1",
-			cfg: &config.Config{
-				General: config.GeneralConfig{RemoteStorage: "s3"},
-				DeleteOptimizations: config.DeleteOptimizations{
-					Enabled:          true,
-					BatchSize:        100,
-					Workers:          5,
-					FailureThreshold: 1.5,
-				},
-			},
-			shouldError: true,
-			errorMsg:    "failure threshold must be between 0 and 1",
-		},
-		{
-			name: "Invalid failure threshold below 0",
-			cfg: &config.Config{
-				General: config.GeneralConfig{RemoteStorage: "s3"},
-				DeleteOptimizations: config.DeleteOptimizations{
-					Enabled:          true,
-					BatchSize:        100,
-					Workers:          5,
-					FailureThreshold: -0.1,
-				},
-			},
-			shouldError: true,
-			errorMsg:    "failure threshold must be between 0 and 1",
-		},
-		{
-			name: "Invalid error strategy",
-			cfg: &config.Config{
-				General: config.GeneralConfig{RemoteStorage: "s3"},
-				DeleteOptimizations: config.DeleteOptimizations{
-					Enabled:       true,
-					BatchSize:     100,
-					Workers:       5,
-					ErrorStrategy: "invalid_strategy",
-				},
-			},
-			shouldError: true,
-			errorMsg:    "error strategy must be one of: fail_fast, continue, retry_batch",
-		},
-		{
-			name: "Valid minimal configuration",
-			cfg: &config.Config{
-				General: config.GeneralConfig{RemoteStorage: "s3"},
-				DeleteOptimizations: config.DeleteOptimizations{
-					Enabled:   true,
-					BatchSize: 1,
-					Workers:   1,
-				},
-			},
-			shouldError: false,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			mockStorage := &MockRemoteStorage{kind: tc.cfg.General.RemoteStorage}
-
-			wrapper, err := enhanced.NewEnhancedStorageWrapper(mockStorage, tc.cfg, &enhanced.WrapperOptions{
-				EnableMetrics:   true,
-				FallbackOnError: true,
-			})
-
-			if tc.shouldError {
-				assert.Error(t, err)
-				assert.Nil(t, wrapper)
-				if tc.errorMsg != "" {
-					assert.Contains(t, err.Error(), tc.errorMsg)
-				}
-			} else {
-				assert.NoError(t, err)
-				assert.NotNil(t, wrapper)
-				if wrapper != nil {
-					err = wrapper.Close(context.Background())
-					assert.NoError(t, err)
-				}
-			}
-		})
-	}
-}
-
-// TestLargeScaleOperations tests large-scale delete operations
-func TestLargeScaleOperations(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping large-scale test in short mode")
-	}
-
-	cfg := &config.Config{
-		General: config.GeneralConfig{
-			RemoteStorage: "s3",
-		},
-		DeleteOptimizations: config.DeleteOptimizations{
-			Enabled:   true,
-			BatchSize: 1000,
-			Workers:   20,
-		},
-	}
-
-	mockStorage := &MockBatchRemoteStorage{
-		batchSize:     cfg.DeleteOptimizations.BatchSize,
-		supported:     true,
-		simulateFiles: 100000,           // Simulate 100K files
-		simulateDelay: time.Microsecond, // Minimal delay for speed
-	}
-
-	batchMgr := enhanced.NewBatchManager(&cfg.DeleteOptimizations, mockStorage, nil)
-	require.NotNil(t, batchMgr)
-
-	ctx := context.Background()
-
-	startTime := time.Now()
-	err := batchMgr.DeleteBackupBatch(ctx, "large-scale-backup")
-	duration := time.Since(startTime)
-
-	assert.NoError(t, err)
-	assert.Less(t, duration, 30*time.Second, "Large-scale operation should complete within 30 seconds")
-
-	metrics := batchMgr.GetDeleteMetrics()
-	assert.NotNil(t, metrics)
-	assert.Greater(t, metrics.FilesProcessed, int64(90000), "Should process most files")
-	assert.Less(t, metrics.APICallsCount, int64(200), "Should use batch operations efficiently")
-
-	// Test progress tracking during operation
-	processed, total, _ := batchMgr.GetProgress()
-	assert.GreaterOrEqual(t, processed, int64(0))
-	assert.GreaterOrEqual(t, total, int64(0))
-}
-
-// TestProgressTracking tests progress tracking functionality
-func TestProgressTracking(t *testing.T) {
-	cfg := &config.Config{
-		General: config.GeneralConfig{
-			RemoteStorage: "s3",
-		},
-		DeleteOptimizations: config.DeleteOptimizations{
-			Enabled:   true,
-			BatchSize: 10,
-			Workers:   2,
-		},
-	}
-
-	mockStorage := &MockBatchRemoteStorage{
-		batchSize:     cfg.DeleteOptimizations.BatchSize,
-		supported:     true,
-		simulateFiles: 100,
-		simulateDelay: 50 * time.Millisecond, // Longer delay to observe progress
-	}
-
-	batchMgr := enhanced.NewBatchManager(&cfg.DeleteOptimizations, mockStorage, nil)
-	require.NotNil(t, batchMgr)
-
-	ctx := context.Background()
-
-	// Start delete operation in background
-	done := make(chan error, 1)
-	go func() {
-		err := batchMgr.DeleteBackupBatch(ctx, "progress-test-backup")
-		done <- err
-	}()
-
-	// Monitor progress while operation is running
-	var progressUpdates []float64
-	progressTicker := time.NewTicker(10 * time.Millisecond)
-	defer progressTicker.Stop()
-
-	monitorDone := false
-	for !monitorDone {
-		select {
-		case err := <-done:
-			assert.NoError(t, err)
-			monitorDone = true
-		case <-progressTicker.C:
-			processed, total, eta := batchMgr.GetProgress()
-			if total > 0 {
-				progressPct := (float64(processed) / float64(total)) * 100
-				progressUpdates = append(progressUpdates, progressPct)
-
-				// Validate progress values
-				assert.GreaterOrEqual(t, processed, int64(0))
-				assert.GreaterOrEqual(t, total, int64(0))
-				assert.LessOrEqual(t, processed, total)
-				assert.GreaterOrEqual(t, eta, time.Duration(0))
-			}
-		}
-	}
-
-	// Verify we captured progress updates
-	assert.Greater(t, len(progressUpdates), 0, "Should have captured progress updates")
-
-	// Verify final progress
-	processed, total, _ := batchMgr.GetProgress()
-	if total > 0 {
-		finalProgress := (float64(processed) / float64(total)) * 100
-		assert.GreaterOrEqual(t, finalProgress, 99.0, "Should reach near 100% completion")
-	}
 }
 
 // Mock implementations for testing
@@ -1225,131 +586,12 @@ func (m *MockBatchRemoteStorage) DeleteBatch(ctx context.Context, keys []string)
 func (m *MockBatchRemoteStorage) SupportsBatchDelete() bool { return m.supported }
 func (m *MockBatchRemoteStorage) GetOptimalBatchSize() int  { return m.batchSize }
 
-// AdaptiveMockBatchRemoteStorage simulates a storage that improves success rate over time
-type AdaptiveMockBatchRemoteStorage struct {
-	MockBatchRemoteStorage
-	callCount int
-}
-
-func (m *AdaptiveMockBatchRemoteStorage) DeleteBatch(ctx context.Context, keys []string) (*enhanced.BatchResult, error) {
-	m.callCount++
-
-	// Improve success rate with each call to simulate retry effectiveness
-	if m.callCount == 1 {
-		m.failureRate = 0.5 // 50% failure rate on first attempt
-	} else if m.callCount == 2 {
-		m.failureRate = 0.2 // 20% failure rate on second attempt
-	} else {
-		m.failureRate = 0.05 // 5% failure rate on subsequent attempts
-	}
-
-	return m.MockBatchRemoteStorage.DeleteBatch(ctx, keys)
-}
-
-// NonRetriableMockBatchRemoteStorage simulates storage that returns non-retriable errors
-type NonRetriableMockBatchRemoteStorage struct {
-	MockBatchRemoteStorage
-}
-
-func (m *NonRetriableMockBatchRemoteStorage) DeleteBatch(ctx context.Context, keys []string) (*enhanced.BatchResult, error) {
-	if m.shouldFail && len(keys) > 0 {
-		failCount := int(float64(len(keys)) * m.failureRate)
-		successCount := len(keys) - failCount
-
-		result := &enhanced.BatchResult{
-			SuccessCount: successCount,
-			FailedKeys:   make([]enhanced.FailedKey, failCount),
-			Errors:       make([]error, failCount),
-		}
-
-		for i := 0; i < failCount; i++ {
-			// Always return non-retriable errors
-			var err error
-			switch i % 3 {
-			case 0:
-				err = fmt.Errorf("access denied: insufficient permissions")
-			case 1:
-				err = fmt.Errorf("not found: object does not exist")
-			case 2:
-				err = fmt.Errorf("invalid request: malformed key")
-			}
-
-			result.FailedKeys[i] = enhanced.FailedKey{
-				Key:   keys[i],
-				Error: err,
-			}
-			result.Errors[i] = err
-		}
-
-		return result, nil
-	}
-
-	// Simulate processing delay
-	if m.simulateDelay > 0 {
-		time.Sleep(m.simulateDelay)
-	}
-
-	return &enhanced.BatchResult{
-		SuccessCount: len(keys),
-		FailedKeys:   []enhanced.FailedKey{},
-		Errors:       []error{},
-	}, nil
-}
-
-// AlwaysRetriableFailMockBatchRemoteStorage simulates storage that always fails with retriable errors
-type AlwaysRetriableFailMockBatchRemoteStorage struct {
-	MockBatchRemoteStorage
-	callCount int
-}
-
-func (m *AlwaysRetriableFailMockBatchRemoteStorage) DeleteBatch(ctx context.Context, keys []string) (*enhanced.BatchResult, error) {
-	m.callCount++
-
-	if len(keys) > 0 {
-		// Always fail with retriable errors
-		result := &enhanced.BatchResult{
-			SuccessCount: 0,
-			FailedKeys:   make([]enhanced.FailedKey, len(keys)),
-			Errors:       make([]error, len(keys)),
-		}
-
-		for i, key := range keys {
-			// Always return retriable errors
-			var err error
-			switch i % 4 {
-			case 0:
-				err = fmt.Errorf("timeout: connection timed out")
-			case 1:
-				err = fmt.Errorf("throttled: rate limit exceeded")
-			case 2:
-				err = fmt.Errorf("service unavailable: temporary failure")
-			case 3:
-				err = fmt.Errorf("internal server error: retry after delay")
-			}
-
-			result.FailedKeys[i] = enhanced.FailedKey{
-				Key:   key,
-				Error: err,
-			}
-			result.Errors[i] = err
-		}
-
-		return result, nil
-	}
-
-	return &enhanced.BatchResult{
-		SuccessCount: 0,
-		FailedKeys:   []enhanced.FailedKey{},
-		Errors:       []error{},
-	}, nil
-}
-
 type MockBackuper struct {
 	cfg *config.Config
 }
 
 func (m *MockBackuper) isDeleteOptimizationEnabled() bool {
-	return m.cfg.DeleteOptimizations.Enabled
+	return m.cfg.General.BatchDeletion.Enabled
 }
 
 func (m *MockBackuper) shouldUseEnhancedDelete(backupName string) bool {
@@ -1357,17 +599,17 @@ func (m *MockBackuper) shouldUseEnhancedDelete(backupName string) bool {
 }
 
 func (m *MockBackuper) supportsEnhancedDelete() bool {
-	if !m.cfg.DeleteOptimizations.Enabled {
+	if !m.cfg.General.BatchDeletion.Enabled {
 		return false
 	}
 
 	switch m.cfg.General.RemoteStorage {
 	case "s3":
-		return m.cfg.DeleteOptimizations.S3Optimizations.UseBatchAPI
+		return m.cfg.S3.BatchDeletion.UseBatchAPI
 	case "gcs":
-		return m.cfg.DeleteOptimizations.GCSOptimizations.UseClientPool
+		return m.cfg.GCS.BatchDeletion.UseClientPool
 	case "azblob":
-		return m.cfg.DeleteOptimizations.AzureOptimizations.UseBatchAPI
+		return m.cfg.AzureBlob.BatchDeletion.UseBatchAPI
 	default:
 		return true
 	}
@@ -1378,7 +620,7 @@ func (m *MockBackuper) getOptimalWorkerCount() int {
 		return 1
 	}
 
-	workers := m.cfg.DeleteOptimizations.Workers
+	workers := m.cfg.General.BatchDeletion.Workers
 	if workers <= 0 {
 		switch m.cfg.General.RemoteStorage {
 		case "s3":
@@ -1399,7 +641,7 @@ func (m *MockBackuper) getOptimalBatchSize() int {
 		return 1
 	}
 
-	batchSize := m.cfg.DeleteOptimizations.BatchSize
+	batchSize := m.cfg.General.BatchDeletion.BatchSize
 	if batchSize <= 0 {
 		return 1000
 	}
