@@ -326,7 +326,7 @@ func (b *Backuper) removeBackupRemoteEnhanced(ctx context.Context, backupName st
 	}
 
 	enhancedStorage, err := enhanced.NewEnhancedStorageWrapper(b.dst, b.cfg, wrapperOpts)
-	if err != nil {
+	if err != nil || enhancedStorage == nil {
 		log.Warn().Err(err).Msg("failed to create enhanced storage, falling back to original implementation")
 		return b.removeBackupRemoteOriginal(ctx, backupName, bd, start)
 	}
@@ -494,7 +494,7 @@ func (b *Backuper) cleanBackupObjectDisksEnhanced(ctx context.Context, backupNam
 	}
 
 	enhancedStorage, err := enhanced.NewEnhancedStorageWrapper(b.dst, b.cfg, wrapperOpts)
-	if err != nil {
+	if err != nil || enhancedStorage == nil {
 		log.Debug().Err(err).Msg("failed to create enhanced storage for object disk cleanup, using original method")
 		return b.cleanBackupObjectDisksOriginal(ctx, backupName, objectDiskPath)
 	}
@@ -677,11 +677,12 @@ func (b *Backuper) supportsEnhancedDelete() bool {
 		return b.cfg.GCS.BatchDeletion.UseClientPool
 	case "azblob":
 		return b.cfg.AzureBlob.BatchDeletion.UseBatchAPI
-	case "none", "custom":
+	case "none", "custom", "sftp", "ftp":
+		// These storage types don't support enhanced delete operations
 		return false
 	default:
-		// For other storage types (ftp, sftp, cos), enhanced delete may still provide benefits
-		// through parallel workers and caching, even without native batch APIs
+		// For other storage types (cos), enhanced delete may still provide benefits
+		// through parallel workers, even without native batch APIs
 		return true
 	}
 }

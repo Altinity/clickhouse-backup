@@ -56,6 +56,11 @@ func NewEnhancedStorageWrapper(baseStorage storage.RemoteStorage, cfg *config.Co
 			log.Warn().Err(err).Str("storage", storageKind).Msg("failed to create enhanced storage, falling back to base implementation")
 			return wrapper, nil
 		}
+		// For unsupported storage types, return nil wrapper to indicate no enhancement available
+		if strings.Contains(err.Error(), "not supported for type") {
+			log.Debug().Str("storage", storageKind).Msg("enhanced storage not supported for this storage type")
+			return nil, err
+		}
 		return nil, fmt.Errorf("failed to create enhanced storage for %s: %w", storageKind, err)
 	}
 
