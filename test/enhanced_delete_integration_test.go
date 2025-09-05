@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -896,6 +897,33 @@ func TestProgressTracking(t *testing.T) {
 
 // Mock implementations for testing
 
+// MockRemoteFile implements storage.RemoteFile for testing
+type MockRemoteFile struct {
+	key  string
+	size int64
+}
+
+func (m *MockRemoteFile) Key() string {
+	return m.key
+}
+
+func (m *MockRemoteFile) Name() string {
+	// Extract the filename from the key
+	parts := strings.Split(m.key, "/")
+	if len(parts) > 0 {
+		return parts[len(parts)-1]
+	}
+	return m.key
+}
+
+func (m *MockRemoteFile) Size() int64 {
+	return m.size
+}
+
+func (m *MockRemoteFile) LastModified() time.Time {
+	return time.Now()
+}
+
 type MockRemoteStorage struct {
 	kind string
 }
@@ -914,7 +942,65 @@ func (m *MockRemoteStorage) DeleteFileFromObjectDiskBackup(ctx context.Context, 
 	return nil
 }
 func (m *MockRemoteStorage) Walk(ctx context.Context, prefix string, recursive bool, fn func(context.Context, storage.RemoteFile) error) error {
+	// Generate realistic backup files dynamically based on the prefix
+	// This simulates finding files for any backup name
+	var simulatedFiles []string
+
+	if prefix == "" {
+		// If no prefix, return files for multiple backups
+		baseNames := []string{"backup-2024-01-01", "backup-2024-01-02", "test-backup"}
+		for _, baseName := range baseNames {
+			simulatedFiles = append(simulatedFiles, generateBackupFiles(baseName)...)
+		}
+	} else {
+		// Extract backup name from prefix (remove trailing slashes)
+		backupName := strings.TrimSuffix(prefix, "/")
+		simulatedFiles = generateBackupFiles(backupName)
+	}
+
+	// Call the callback function for each simulated file
+	for _, filepath := range simulatedFiles {
+		if prefix == "" || strings.HasPrefix(filepath, prefix) {
+			// Create a mock remote file
+			mockFile := &MockRemoteFile{
+				key:  filepath,
+				size: 1024*1024 + int64(len(filepath)*1024), // Variable sizes 1MB+ per file
+			}
+
+			// Call the callback function with the mock file
+			if err := fn(ctx, mockFile); err != nil {
+				return err
+			}
+		}
+	}
+
 	return nil
+}
+
+// generateBackupFiles creates a realistic set of backup files for a given backup name
+func generateBackupFiles(backupName string) []string {
+	return []string{
+		backupName + "/metadata.json",
+		backupName + "/metadata/backup_metadata.json",
+		backupName + "/metadata/schema.json",
+		backupName + "/data/default/table1.tar.gz",
+		backupName + "/data/default/table2.tar.gz",
+		backupName + "/data/default/table3.tar.gz",
+		backupName + "/data/system/query_log.tar.gz",
+		backupName + "/data/system/query_thread_log.tar.gz",
+		backupName + "/shadow/table1/increment.txt",
+		backupName + "/shadow/table1/data.bin",
+		backupName + "/shadow/table2/increment.txt",
+		backupName + "/shadow/table2/data.bin",
+		backupName + "/shadow/table3/increment.txt",
+		backupName + "/shadow/table3/data.bin",
+		backupName + "/rbac/users.json",
+		backupName + "/rbac/roles.json",
+		backupName + "/configs/config.xml",
+		backupName + "/configs/users.xml",
+		backupName + "/access/access_entities.list",
+		backupName + "/functions/user_defined_functions.sql",
+	}
 }
 func (m *MockRemoteStorage) WalkAbsolute(ctx context.Context, absolutePrefix string, recursive bool, fn func(context.Context, storage.RemoteFile) error) error {
 	return nil
