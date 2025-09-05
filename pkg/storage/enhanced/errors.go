@@ -167,14 +167,49 @@ func IsRetriableError(err error) bool {
 	// Check for specific error types that are typically retriable
 	errStr := strings.ToLower(err.Error())
 	retriablePatterns := []string{
+		// Network timeouts and connection issues
 		"timeout",
 		"connection reset",
 		"connection refused",
+		"connection aborted",
+		"network error",
+		"i/o timeout",
+		"deadline exceeded",
+		"context deadline exceeded",
+		"socket",
+		"broken pipe",
+
+		// Temporary service issues
 		"temporary failure",
 		"service unavailable",
+		"service temporarily unavailable",
+		"internal server error",
+		"bad gateway",
+		"gateway timeout",
+		"request timeout",
+		"temporary",
+		"transient",
+
+		// Rate limiting and throttling
 		"throttled",
 		"rate limit",
 		"too many requests",
+		"slow down",
+		"try again",
+
+		// S3 specific retriable errors
+		"slowdown",
+		"requesttimeout",
+		"serviceunavailable",
+		"internalerror",
+
+		// GCS specific retriable errors
+		"backend error",
+		"quota exceeded",
+
+		// Azure specific retriable errors
+		"server busy",
+		"operation timed out",
 	}
 
 	for _, pattern := range retriablePatterns {
@@ -183,5 +218,44 @@ func IsRetriableError(err error) bool {
 		}
 	}
 
+	// Check for specific non-retriable patterns that should override retriable patterns
+	nonRetriablePatterns := []string{
+		"access denied",
+		"forbidden",
+		"unauthorized",
+		"not found",
+		"no such",
+		"invalid",
+		"malformed",
+		"bad request",
+		"conflict",
+		"precondition failed",
+		"authentication",
+		"permission",
+	}
+
+	for _, pattern := range nonRetriablePatterns {
+		if strings.Contains(errStr, pattern) {
+			return false
+		}
+	}
+
 	return false
+}
+
+// IsRetriableFileError determines if a specific file error should trigger a retry
+func IsRetriableFileError(filePath string, err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Use base retry logic
+	if !IsRetriableError(err) {
+		return false
+	}
+
+	// Additional file-specific logic could be added here
+	// For example, certain file patterns might have different retry rules
+
+	return true
 }

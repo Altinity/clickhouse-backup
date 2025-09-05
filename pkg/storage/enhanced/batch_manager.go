@@ -274,10 +274,116 @@ func (bm *BatchManager) createWorkerPool(ctx context.Context, workerCount int) *
 	return pool
 }
 
-// executeBatches executes all batches using the worker pool
+// executeBatches executes all batches using the worker pool and retries failed files
 func (bm *BatchManager) executeBatches(ctx context.Context, pool *WorkerPool, batches []*BatchJob, backupName string) error {
 	if len(batches) == 0 {
 		return nil
+	}
+
+	// Execute initial batches and collect failed files with error info
+	failedFilesWithErrors, err := bm.executeBatchRound(ctx, pool, batches, backupName, 1)
+	if err != nil && bm.config.ErrorStrategy == "fail_fast" {
+		return err
+	}
+
+	// Retry failed files until none remain or max retries reached
+	retryRound := 1
+	maxRetryRounds := 10 // Prevent infinite loops
+
+	for len(failedFilesWithErrors) > 0 && retryRound < maxRetryRounds {
+		retryRound++
+
+		log.Info().
+			Str("backup", backupName).
+			Int("retry_round", retryRound).
+			Int("failed_files", len(failedFilesWithErrors)).
+			Msg("retrying failed files")
+
+		// Filter to only retriable files
+		retriableFiles := bm.filterRetriableFilesWithErrors(failedFilesWithErrors)
+		if len(retriableFiles) == 0 {
+			log.Info().Str("backup", backupName).Msg("no retriable failed files remaining")
+			break
+		}
+
+		// Create new batches from failed files
+		retryBatches := bm.createOptimalBatches(retriableFiles)
+
+		// Create new worker pool for retry
+		retryPool := bm.createWorkerPool(ctx, bm.getOptimalWorkerCount())
+
+		// Execute retry round
+		newFailedFilesWithErrors, retryErr := bm.executeBatchRound(ctx, retryPool, retryBatches, backupName, retryRound)
+		retryPool.shutdown()
+
+		if retryErr != nil && bm.config.ErrorStrategy == "fail_fast" {
+			return retryErr
+		}
+
+		// Check if we made progress
+		if len(newFailedFilesWithErrors) >= len(retriableFiles) {
+			// No progress made, apply backoff
+			backoffDuration := time.Duration(retryRound*retryRound) * time.Second
+			if backoffDuration > 30*time.Second {
+				backoffDuration = 30 * time.Second
+			}
+
+			log.Warn().
+				Str("backup", backupName).
+				Int("retry_round", retryRound).
+				Str("backoff_duration", backoffDuration.String()).
+				Msg("no progress made, applying backoff")
+
+			select {
+			case <-time.After(backoffDuration):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
+		failedFilesWithErrors = newFailedFilesWithErrors
+	}
+
+	// Final status
+	if len(failedFilesWithErrors) > 0 {
+		if retryRound >= maxRetryRounds {
+			log.Error().
+				Str("backup", backupName).
+				Int("remaining_failed_files", len(failedFilesWithErrors)).
+				Int("max_retry_rounds", maxRetryRounds).
+				Msg("maximum retry rounds reached, some files could not be deleted")
+		} else {
+			log.Warn().
+				Str("backup", backupName).
+				Int("remaining_failed_files", len(failedFilesWithErrors)).
+				Msg("some files could not be deleted (non-retriable errors)")
+		}
+	}
+
+	// Get final metrics
+	metrics := bm.GetDeleteMetrics()
+	log.Info().
+		Str("backup", backupName).
+		Int64("success_count", metrics.FilesDeleted).
+		Int64("failed_count", metrics.FilesFailed).
+		Int("total_retry_rounds", retryRound).
+		Str("duration", bm.progress.getTotalDuration().String()).
+		Float64("throughput_mbps", bm.progress.getThroughputMBps()).
+		Msg("batch delete operation completed")
+
+	return nil
+}
+
+// FailedFileWithError represents a failed file with its associated error
+type FailedFileWithError struct {
+	FilePath string
+	Error    error
+}
+
+// executeBatchRound executes a single round of batches and returns failed files with errors
+func (bm *BatchManager) executeBatchRound(ctx context.Context, pool *WorkerPool, batches []*BatchJob, backupName string, round int) ([]FailedFileWithError, error) {
+	if len(batches) == 0 {
+		return nil, nil
 	}
 
 	// Start result collector
@@ -287,6 +393,8 @@ func (bm *BatchManager) executeBatches(ctx context.Context, pool *WorkerPool, ba
 	var finalError error
 	var totalSuccess int64
 	var totalFailed int64
+	var allFailedFiles []FailedFileWithError
+	var failedFilesMutex sync.Mutex
 
 	go func() {
 		defer collectorWg.Done()
@@ -299,18 +407,20 @@ func (bm *BatchManager) executeBatches(ctx context.Context, pool *WorkerPool, ba
 
 			if result.Error != nil {
 				failedBatches++
-				log.Warn().
+				log.Debug().
 					Err(result.Error).
 					Str("batch_id", result.Job.ID).
+					Int("round", round).
 					Int("retry", result.Job.Retry).
 					Msg("batch failed")
 
 				// Handle error according to strategy
 				if shouldRetryBatch(result, bm.config) {
-					log.Info().
+					log.Debug().
 						Str("batch_id", result.Job.ID).
+						Int("round", round).
 						Int("retry", result.Job.Retry+1).
-						Msg("retrying failed batch")
+						Msg("retrying failed batch within round")
 
 					result.Job.Retry++
 					pool.jobQueue <- result.Job
@@ -318,15 +428,37 @@ func (bm *BatchManager) executeBatches(ctx context.Context, pool *WorkerPool, ba
 					continue
 				}
 
+				// Batch failed permanently, add all its files to failed list with the batch error
+				failedFilesMutex.Lock()
+				for _, filePath := range result.Job.Keys {
+					allFailedFiles = append(allFailedFiles, FailedFileWithError{
+						FilePath: filePath,
+						Error:    result.Error,
+					})
+				}
+				failedFilesMutex.Unlock()
+
 				if bm.config.ErrorStrategy == "fail_fast" {
 					finalError = result.Error
 					pool.cancel() // Stop all workers
 					break
 				}
 			} else {
-				// Success
+				// Batch succeeded, but check for individual file failures
 				atomic.AddInt64(&totalSuccess, int64(result.Result.SuccessCount))
 				atomic.AddInt64(&totalFailed, int64(len(result.Result.FailedKeys)))
+
+				// Collect individual failed files with their specific errors
+				if len(result.Result.FailedKeys) > 0 {
+					failedFilesMutex.Lock()
+					for _, failedKey := range result.Result.FailedKeys {
+						allFailedFiles = append(allFailedFiles, FailedFileWithError{
+							FilePath: failedKey.Key,
+							Error:    failedKey.Error,
+						})
+					}
+					failedFilesMutex.Unlock()
+				}
 
 				// Update progress
 				bm.progress.updateProgress(int64(len(result.Job.Keys)))
@@ -367,16 +499,41 @@ func (bm *BatchManager) executeBatches(ctx context.Context, pool *WorkerPool, ba
 	collectorWg.Wait()
 	close(pool.resultQueue)
 
-	// Log final results
-	log.Info().
+	log.Debug().
 		Str("backup", backupName).
+		Int("round", round).
 		Int64("success_count", totalSuccess).
 		Int64("failed_count", totalFailed).
-		Str("duration", bm.progress.getTotalDuration().String()).
-		Float64("throughput_mbps", bm.progress.getThroughputMBps()).
-		Msg("batch delete operation completed")
+		Int("collected_failed_files", len(allFailedFiles)).
+		Msg("batch round completed")
 
-	return finalError
+	return allFailedFiles, finalError
+}
+
+// filterRetriableFilesWithErrors filters failed files to only include those that should be retried
+func (bm *BatchManager) filterRetriableFilesWithErrors(failedFiles []FailedFileWithError) []string {
+	var retriableFiles []string
+	var nonRetriableCount int
+
+	for _, failedFile := range failedFiles {
+		if IsRetriableFileError(failedFile.FilePath, failedFile.Error) {
+			retriableFiles = append(retriableFiles, failedFile.FilePath)
+		} else {
+			nonRetriableCount++
+			log.Debug().
+				Str("file", failedFile.FilePath).
+				Err(failedFile.Error).
+				Msg("file marked as non-retriable")
+		}
+	}
+
+	log.Debug().
+		Int("total_failed", len(failedFiles)).
+		Int("retriable", len(retriableFiles)).
+		Int("non_retriable", nonRetriableCount).
+		Msg("filtered failed files for retry")
+
+	return retriableFiles
 }
 
 // shouldRetryBatch determines if a batch should be retried

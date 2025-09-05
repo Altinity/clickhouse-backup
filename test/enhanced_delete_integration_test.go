@@ -562,6 +562,139 @@ func TestErrorRecoveryScenarios(t *testing.T) {
 	}
 }
 
+// TestEnhancedRetryMechanism tests the enhanced retry mechanism for failed files
+func TestEnhancedRetryMechanism(t *testing.T) {
+	cfg := &config.Config{
+		General: config.GeneralConfig{
+			RemoteStorage: "s3",
+		},
+		DeleteOptimizations: config.DeleteOptimizations{
+			Enabled:          true,
+			BatchSize:        10,
+			Workers:          2,
+			RetryAttempts:    3,
+			ErrorStrategy:    "continue",
+			FailureThreshold: 0.8, // Allow high failure rate for testing
+		},
+	}
+
+	// Create a storage that progressively improves success rate
+	mockStorage := &AdaptiveMockBatchRemoteStorage{
+		MockBatchRemoteStorage: MockBatchRemoteStorage{
+			batchSize:     cfg.DeleteOptimizations.BatchSize,
+			supported:     true,
+			shouldFail:    true,
+			failureRate:   0.3, // 30% failure rate initially
+			simulateDelay: 10 * time.Millisecond,
+		},
+	}
+
+	batchMgr := enhanced.NewBatchManager(&cfg.DeleteOptimizations, mockStorage, nil)
+	require.NotNil(t, batchMgr)
+
+	ctx := context.Background()
+	err := batchMgr.DeleteBackupBatch(ctx, "retry-test-backup")
+
+	// Should succeed even with initial failures due to retry mechanism
+	assert.NoError(t, err)
+
+	// Verify that retries were attempted (multiple calls to DeleteBatch)
+	assert.Greater(t, mockStorage.callCount, 3, "Should have made multiple delete attempts due to retries")
+
+	// Verify metrics show successful completion
+	metrics := batchMgr.GetDeleteMetrics()
+	assert.NotNil(t, metrics)
+	assert.Greater(t, metrics.FilesDeleted, int64(0))
+
+	// Should have eventually succeeded with most/all files
+	totalFiles := metrics.FilesDeleted + metrics.FilesFailed
+	successRate := float64(metrics.FilesDeleted) / float64(totalFiles)
+	assert.Greater(t, successRate, 0.9, "Should achieve high success rate through retries")
+}
+
+// TestRetryWithNonRetriableErrors tests that non-retriable errors are not retried
+func TestRetryWithNonRetriableErrors(t *testing.T) {
+	cfg := &config.Config{
+		General: config.GeneralConfig{
+			RemoteStorage: "s3",
+		},
+		DeleteOptimizations: config.DeleteOptimizations{
+			Enabled:          true,
+			BatchSize:        5,
+			Workers:          1,
+			RetryAttempts:    3,
+			ErrorStrategy:    "continue",
+			FailureThreshold: 0.9,
+		},
+	}
+
+	// Create a storage that returns non-retriable errors
+	mockStorage := &NonRetriableMockBatchRemoteStorage{
+		MockBatchRemoteStorage: MockBatchRemoteStorage{
+			batchSize:     cfg.DeleteOptimizations.BatchSize,
+			supported:     true,
+			shouldFail:    true,
+			failureRate:   0.5, // 50% failure rate
+			simulateDelay: 1 * time.Millisecond,
+		},
+	}
+
+	batchMgr := enhanced.NewBatchManager(&cfg.DeleteOptimizations, mockStorage, nil)
+	require.NotNil(t, batchMgr)
+
+	ctx := context.Background()
+	err := batchMgr.DeleteBackupBatch(ctx, "non-retriable-test-backup")
+
+	// Should succeed (not fail fast) but with some permanent failures
+	assert.NoError(t, err)
+
+	// Verify metrics show expected failures
+	metrics := batchMgr.GetDeleteMetrics()
+	assert.NotNil(t, metrics)
+	assert.Greater(t, metrics.FilesFailed, int64(0), "Should have some permanent failures")
+}
+
+// TestMaxRetryRounds tests that the system respects the maximum retry rounds limit
+func TestMaxRetryRounds(t *testing.T) {
+	cfg := &config.Config{
+		General: config.GeneralConfig{
+			RemoteStorage: "s3",
+		},
+		DeleteOptimizations: config.DeleteOptimizations{
+			Enabled:          true,
+			BatchSize:        5,
+			Workers:          1,
+			RetryAttempts:    2,
+			ErrorStrategy:    "continue",
+			FailureThreshold: 0.9,
+		},
+	}
+
+	// Create a storage that always fails with retriable errors
+	mockStorage := &AlwaysRetriableFailMockBatchRemoteStorage{
+		MockBatchRemoteStorage: MockBatchRemoteStorage{
+			batchSize:     cfg.DeleteOptimizations.BatchSize,
+			supported:     true,
+			shouldFail:    true,
+			failureRate:   1.0, // 100% failure rate
+			simulateDelay: 1 * time.Millisecond,
+		},
+	}
+
+	batchMgr := enhanced.NewBatchManager(&cfg.DeleteOptimizations, mockStorage, nil)
+	require.NotNil(t, batchMgr)
+
+	ctx := context.Background()
+	err := batchMgr.DeleteBackupBatch(ctx, "max-retry-test-backup")
+
+	// Should complete without error (but with failures)
+	assert.NoError(t, err)
+
+	// Should have attempted multiple rounds but not infinitely
+	assert.Greater(t, mockStorage.callCount, 1, "Should have made multiple attempts")
+	assert.Less(t, mockStorage.callCount, 50, "Should not retry infinitely") // Reasonable upper bound
+}
+
 // TestStorageSpecificWorkflows tests storage-specific delete workflows
 func TestStorageSpecificWorkflows(t *testing.T) {
 	storageConfigs := map[string]*config.Config{
@@ -1050,11 +1183,24 @@ func (m *MockBatchRemoteStorage) DeleteBatch(ctx context.Context, keys []string)
 		}
 
 		for i := 0; i < failCount; i++ {
+			// Create different types of errors to test retry logic
+			var err error
+			switch i % 4 {
+			case 0:
+				err = fmt.Errorf("timeout: connection timed out") // Retriable
+			case 1:
+				err = fmt.Errorf("temporary failure") // Retriable
+			case 2:
+				err = fmt.Errorf("access denied") // Non-retriable
+			case 3:
+				err = fmt.Errorf("service unavailable") // Retriable
+			}
+
 			result.FailedKeys[i] = enhanced.FailedKey{
 				Key:   keys[i],
-				Error: fmt.Errorf("simulated failure"),
+				Error: err,
 			}
-			result.Errors[i] = fmt.Errorf("simulated failure")
+			result.Errors[i] = err
 		}
 
 		return result, nil
@@ -1074,6 +1220,125 @@ func (m *MockBatchRemoteStorage) DeleteBatch(ctx context.Context, keys []string)
 
 func (m *MockBatchRemoteStorage) SupportsBatchDelete() bool { return m.supported }
 func (m *MockBatchRemoteStorage) GetOptimalBatchSize() int  { return m.batchSize }
+
+// AdaptiveMockBatchRemoteStorage simulates a storage that improves success rate over time
+type AdaptiveMockBatchRemoteStorage struct {
+	MockBatchRemoteStorage
+	callCount int
+}
+
+func (m *AdaptiveMockBatchRemoteStorage) DeleteBatch(ctx context.Context, keys []string) (*enhanced.BatchResult, error) {
+	m.callCount++
+
+	// Improve success rate with each call to simulate retry effectiveness
+	if m.callCount == 1 {
+		m.failureRate = 0.5 // 50% failure rate on first attempt
+	} else if m.callCount == 2 {
+		m.failureRate = 0.2 // 20% failure rate on second attempt
+	} else {
+		m.failureRate = 0.05 // 5% failure rate on subsequent attempts
+	}
+
+	return m.MockBatchRemoteStorage.DeleteBatch(ctx, keys)
+}
+
+// NonRetriableMockBatchRemoteStorage simulates storage that returns non-retriable errors
+type NonRetriableMockBatchRemoteStorage struct {
+	MockBatchRemoteStorage
+}
+
+func (m *NonRetriableMockBatchRemoteStorage) DeleteBatch(ctx context.Context, keys []string) (*enhanced.BatchResult, error) {
+	if m.shouldFail && len(keys) > 0 {
+		failCount := int(float64(len(keys)) * m.failureRate)
+		successCount := len(keys) - failCount
+
+		result := &enhanced.BatchResult{
+			SuccessCount: successCount,
+			FailedKeys:   make([]enhanced.FailedKey, failCount),
+			Errors:       make([]error, failCount),
+		}
+
+		for i := 0; i < failCount; i++ {
+			// Always return non-retriable errors
+			var err error
+			switch i % 3 {
+			case 0:
+				err = fmt.Errorf("access denied: insufficient permissions")
+			case 1:
+				err = fmt.Errorf("not found: object does not exist")
+			case 2:
+				err = fmt.Errorf("invalid request: malformed key")
+			}
+
+			result.FailedKeys[i] = enhanced.FailedKey{
+				Key:   keys[i],
+				Error: err,
+			}
+			result.Errors[i] = err
+		}
+
+		return result, nil
+	}
+
+	// Simulate processing delay
+	if m.simulateDelay > 0 {
+		time.Sleep(m.simulateDelay)
+	}
+
+	return &enhanced.BatchResult{
+		SuccessCount: len(keys),
+		FailedKeys:   []enhanced.FailedKey{},
+		Errors:       []error{},
+	}, nil
+}
+
+// AlwaysRetriableFailMockBatchRemoteStorage simulates storage that always fails with retriable errors
+type AlwaysRetriableFailMockBatchRemoteStorage struct {
+	MockBatchRemoteStorage
+	callCount int
+}
+
+func (m *AlwaysRetriableFailMockBatchRemoteStorage) DeleteBatch(ctx context.Context, keys []string) (*enhanced.BatchResult, error) {
+	m.callCount++
+
+	if len(keys) > 0 {
+		// Always fail with retriable errors
+		result := &enhanced.BatchResult{
+			SuccessCount: 0,
+			FailedKeys:   make([]enhanced.FailedKey, len(keys)),
+			Errors:       make([]error, len(keys)),
+		}
+
+		for i, key := range keys {
+			// Always return retriable errors
+			var err error
+			switch i % 4 {
+			case 0:
+				err = fmt.Errorf("timeout: connection timed out")
+			case 1:
+				err = fmt.Errorf("throttled: rate limit exceeded")
+			case 2:
+				err = fmt.Errorf("service unavailable: temporary failure")
+			case 3:
+				err = fmt.Errorf("internal server error: retry after delay")
+			}
+
+			result.FailedKeys[i] = enhanced.FailedKey{
+				Key:   key,
+				Error: err,
+			}
+			result.Errors[i] = err
+		}
+
+		return result, nil
+	}
+
+	return &enhanced.BatchResult{
+		SuccessCount: 0,
+		FailedKeys:   []enhanced.FailedKey{},
+		Errors:       []error{},
+	}, nil
+}
 
 type MockBackuper struct {
 	cfg *config.Config
