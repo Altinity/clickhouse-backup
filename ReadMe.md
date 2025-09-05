@@ -1,5 +1,5 @@
 
-# Altinity Backup for ClickHouse®
+# Altinity Backup for ClickHouse® 
 
 [![Build](https://github.com/Altinity/clickhouse-backup/actions/workflows/build.yaml/badge.svg?branch=master)](https://github.com/Altinity/clickhouse-backup/actions/workflows/build.yaml)
 [![GoDoc](https://godoc.org/github.com/Altinity/clickhouse-backup?status.svg)](http://godoc.org/github.com/Altinity/clickhouse-backup)
