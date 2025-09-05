@@ -744,13 +744,18 @@ func (b *Backuper) logEnhancedDeleteMetrics(metrics *enhanced.DeleteMetrics, bac
 		return
 	}
 
-	log.Info().
+	logEvent := log.Info().
 		Str("backup", backupName).
 		Int64("files_processed", metrics.FilesProcessed).
 		Int64("files_deleted", metrics.FilesDeleted).
-		Int64("files_failed", metrics.FilesFailed).
-		Int64("bytes_deleted", metrics.BytesDeleted).
-		Int64("api_calls", metrics.APICallsCount).
+		Int64("files_failed", metrics.FilesFailed)
+
+	// Only log bytes_deleted if meaningful (> 0)
+	if metrics.BytesDeleted > 0 {
+		logEvent = logEvent.Int64("bytes_deleted", metrics.BytesDeleted)
+	}
+
+	logEvent.Int64("api_calls", metrics.APICallsCount).
 		Str("duration", metrics.TotalDuration.String()).
 		Float64("throughput_mbps", metrics.ThroughputMBps).
 		Msg("enhanced delete operation completed")

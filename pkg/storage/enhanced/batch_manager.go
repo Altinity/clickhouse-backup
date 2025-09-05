@@ -19,7 +19,6 @@ type BatchManager struct {
 	config   *config.BatchDeletionConfig
 	storage  BatchRemoteStorage
 	metrics  *DeleteMetrics
-	cache    *BackupExistenceCache
 	progress *ProgressTracker
 	mu       sync.RWMutex
 }
@@ -72,12 +71,11 @@ type Worker struct {
 }
 
 // NewBatchManager creates a new batch manager with the given configuration
-func NewBatchManager(cfg *config.BatchDeletionConfig, storage BatchRemoteStorage, cache *BackupExistenceCache) *BatchManager {
+func NewBatchManager(cfg *config.BatchDeletionConfig, storage BatchRemoteStorage) *BatchManager {
 	return &BatchManager{
 		config:  cfg,
 		storage: storage,
 		metrics: &DeleteMetrics{},
-		cache:   cache,
 		progress: &ProgressTracker{
 			startTime:  time.Now(),
 			lastUpdate: time.Now(),
@@ -106,17 +104,13 @@ func (bm *BatchManager) DeleteBackupBatch(ctx context.Context, backupName string
 
 	bm.progress.setTotal(int64(len(fileList)))
 
-	// Apply cache optimizations to skip unnecessary checks
-	filteredList := bm.applyCacheOptimizations(fileList)
-
 	log.Info().
 		Str("backup", backupName).
 		Int("total_files", len(fileList)).
-		Int("filtered_files", len(filteredList)).
 		Msg("prepared file list for deletion")
 
 	// Divide into optimal batches based on storage type
-	batches := bm.createOptimalBatches(filteredList)
+	batches := bm.createOptimalBatches(fileList)
 
 	// Create and configure worker pool
 	workerCount := bm.getOptimalWorkerCount()
@@ -151,39 +145,6 @@ func (bm *BatchManager) getBackupFileList(ctx context.Context, backupName string
 		Msg("collected backup file list")
 
 	return fileList, nil
-}
-
-// applyCacheOptimizations uses cache to skip files that don't need to be deleted
-func (bm *BatchManager) applyCacheOptimizations(fileList []string) []string {
-	if bm.cache == nil {
-		return fileList
-	}
-
-	var filteredList []string
-	cacheHits := 0
-
-	for _, file := range fileList {
-		// Check if file existence is cached
-		if metadata, exists := bm.cache.Get(file); exists {
-			if metadata != nil {
-				// File exists, include in deletion list
-				filteredList = append(filteredList, file)
-			}
-			// File doesn't exist, skip it
-			cacheHits++
-		} else {
-			// Not in cache, include in deletion list
-			filteredList = append(filteredList, file)
-		}
-	}
-
-	log.Debug().
-		Int("cache_hits", cacheHits).
-		Int("original_count", len(fileList)).
-		Int("filtered_count", len(filteredList)).
-		Msg("applied cache optimizations")
-
-	return filteredList
 }
 
 // createOptimalBatches divides files into optimal batches based on storage characteristics

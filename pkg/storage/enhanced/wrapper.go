@@ -19,7 +19,6 @@ type EnhancedStorageWrapper struct {
 	enhanced    BatchRemoteStorage
 	config      *config.Config
 	batchMgr    *BatchManager
-	cache       *BackupExistenceCache
 	storageType string
 }
 
@@ -63,7 +62,7 @@ func NewEnhancedStorageWrapper(baseStorage storage.RemoteStorage, cfg *config.Co
 	wrapper.enhanced = enhanced
 
 	// Create batch manager
-	wrapper.batchMgr = NewBatchManager(&cfg.General.BatchDeletion, enhanced, nil)
+	wrapper.batchMgr = NewBatchManager(&cfg.General.BatchDeletion, enhanced)
 
 	log.Info().Str("storage", storageKind).Msg("enhanced storage wrapper created successfully")
 	return wrapper, nil
@@ -618,37 +617,9 @@ func (w *EnhancedStorageWrapper) GetWorkerCount() int {
 	return w.config.General.BatchDeletion.Workers
 }
 
-// GetBackupFromCache retrieves backup metadata from cache
-func (w *EnhancedStorageWrapper) GetBackupFromCache(backupName string) (*BackupMetadata, bool) {
-	if w.cache == nil {
-		return nil, false
-	}
-	return w.cache.Get(backupName)
-}
-
-// SetBackupInCache stores backup metadata in cache
-func (w *EnhancedStorageWrapper) SetBackupInCache(backupName string, metadata *BackupMetadata) {
-	if w.cache != nil {
-		w.cache.Set(backupName, metadata)
-	}
-}
-
-// InvalidateBackupCache removes backup from cache
-func (w *EnhancedStorageWrapper) InvalidateBackupCache(backupName string) {
-	if w.cache != nil {
-		w.cache.Invalidate(backupName)
-	}
-}
-
 // Close closes the enhanced storage wrapper and cleans up resources
 func (w *EnhancedStorageWrapper) Close(ctx context.Context) error {
 	var errs []error
-
-	// Close cache if exists
-	if w.cache != nil {
-		// Cache doesn't have a close method in our implementation
-		// but we could add cleanup here if needed
-	}
 
 	// Close enhanced storage if it exists
 	if w.enhanced != nil {
