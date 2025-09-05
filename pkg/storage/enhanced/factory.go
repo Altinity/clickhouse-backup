@@ -31,7 +31,6 @@ func (f *EnhancedStorageFactory) CreateEnhancedWrapper(ctx context.Context, base
 
 	log.Debug().
 		Str("storage_type", baseStorage.Kind()).
-		Bool("cache_enabled", opts.EnableCache).
 		Bool("metrics_enabled", opts.EnableMetrics).
 		Msg("creating enhanced storage wrapper")
 
@@ -58,8 +57,7 @@ func (f *EnhancedStorageFactory) CreateEnhancedWrapper(ctx context.Context, base
 // getDefaultWrapperOptions returns default wrapper options based on configuration
 func (f *EnhancedStorageFactory) getDefaultWrapperOptions() *WrapperOptions {
 	return &WrapperOptions{
-		EnableCache:     false, // Cache removed in simplified implementation
-		CacheTTL:        "",
+
 		EnableMetrics:   true,
 		FallbackOnError: true,
 		DisableEnhanced: !f.config.General.BatchDeletion.Enabled,
@@ -69,8 +67,7 @@ func (f *EnhancedStorageFactory) getDefaultWrapperOptions() *WrapperOptions {
 // CreateForBackupDeletion creates an enhanced storage wrapper specifically for backup deletion
 func (f *EnhancedStorageFactory) CreateForBackupDeletion(ctx context.Context, baseStorage storage.RemoteStorage) (*EnhancedStorageWrapper, error) {
 	opts := &WrapperOptions{
-		EnableCache:     false, // Cache removed in simplified implementation
-		CacheTTL:        "",
+
 		EnableMetrics:   true,
 		FallbackOnError: true,
 		DisableEnhanced: !f.config.General.BatchDeletion.Enabled,
@@ -82,7 +79,7 @@ func (f *EnhancedStorageFactory) CreateForBackupDeletion(ctx context.Context, ba
 // CreateForObjectDiskCleanup creates an enhanced storage wrapper for object disk cleanup
 func (f *EnhancedStorageFactory) CreateForObjectDiskCleanup(ctx context.Context, baseStorage storage.RemoteStorage) (*EnhancedStorageWrapper, error) {
 	opts := &WrapperOptions{
-		EnableCache:     false, // Cache not used in simplified implementation
+
 		EnableMetrics:   true,
 		FallbackOnError: true,
 		DisableEnhanced: !f.config.General.BatchDeletion.Enabled,

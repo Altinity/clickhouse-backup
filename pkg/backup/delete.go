@@ -320,7 +320,7 @@ func (b *Backuper) removeBackupRemoteEnhanced(ctx context.Context, backupName st
 
 	// Create enhanced storage wrapper
 	wrapperOpts := &enhanced.WrapperOptions{
-		EnableCache:     false, // Cache functionality removed in simplified design
+
 		EnableMetrics:   true,
 		FallbackOnError: true,
 	}
@@ -488,7 +488,7 @@ func (b *Backuper) cleanBackupObjectDisks(ctx context.Context, backupName string
 func (b *Backuper) cleanBackupObjectDisksEnhanced(ctx context.Context, backupName, objectDiskPath string) (uint, error) {
 	// Create enhanced storage wrapper
 	wrapperOpts := &enhanced.WrapperOptions{
-		EnableCache:     false, // Cache functionality removed in simplified design
+
 		EnableMetrics:   true,
 		FallbackOnError: true,
 	}

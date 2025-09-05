@@ -25,8 +25,6 @@ type EnhancedStorageWrapper struct {
 
 // WrapperOptions contains options for creating enhanced storage wrappers
 type WrapperOptions struct {
-	EnableCache     bool
-	CacheTTL        string
 	EnableMetrics   bool
 	FallbackOnError bool
 	DisableEnhanced bool
