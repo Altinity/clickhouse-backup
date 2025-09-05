@@ -1288,6 +1288,9 @@ func (b *Backuper) makePartHardlinks(exists, new string) error {
 				return err
 			}
 		}
+		if err = os.Chmod(newF, 0640); err != nil {
+			return err
+		}
 		return nil
 	}); walkErr != nil {
 		log.Warn().Msgf("Link recursively %s -> %s return error: %v", new, exists, walkErr)
