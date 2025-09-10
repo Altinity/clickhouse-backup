@@ -6,15 +6,16 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
-	"github.com/eapache/go-resiliency/retrier"
 	"net/url"
 	"os"
 	"path"
 	"regexp"
 	"strings"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
+	"github.com/eapache/go-resiliency/retrier"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
@@ -475,7 +476,11 @@ func (b *Backuper) CheckDisksUsage(backup storage.Backup, disks []clickhouse.Dis
 		freeSize += d.FreeSpace
 	}
 	if freeSize <= backup.CompressedSize || freeSize <= backup.DataSize {
-		errMsg := fmt.Sprintf("%s requires %s free space, but total free space is %s", backup.BackupName, utils.FormatBytes(max(backup.CompressedSize, backup.DataSize)), utils.FormatBytes(freeSize))
+		requiredSize := backup.CompressedSize
+		if backup.DataSize > backup.CompressedSize {
+			requiredSize = backup.DataSize
+		}
+		errMsg := fmt.Sprintf("%s requires %s free space, but total free space is %s", backup.BackupName, utils.FormatBytes(requiredSize), utils.FormatBytes(freeSize))
 		if !isResumeExists {
 			return errors.New(errMsg)
 		}
