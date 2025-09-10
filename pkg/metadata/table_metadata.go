@@ -2,9 +2,10 @@ package metadata
 
 import (
 	"encoding/json"
-	"github.com/rs/zerolog/log"
 	"os"
 	"path"
+
+	"github.com/rs/zerolog/log"
 )
 
 type TableMetadata struct {
@@ -13,7 +14,7 @@ type TableMetadata struct {
 	Table                string              `json:"table"`
 	Database             string              `json:"database"`
 	UUID                 string              `json:"uuid,omitempty"`
-	Parts                map[string][]Part   `json:"parts"`
+	Parts                map[string][]Part   `json:"parts"` // Parts in the backup (represents DB state at backup time)
 	Query                string              `json:"query"`
 	Size                 map[string]int64    `json:"size"`                  // how much size on each disk
 	TotalBytes           uint64              `json:"total_bytes,omitempty"` // total table size

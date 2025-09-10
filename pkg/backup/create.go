@@ -303,6 +303,10 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 
 	var backupDataSize, backupObjectDiskSize, backupMetadataSize uint64
 	var metaMutex sync.Mutex
+
+	// Note: The Parts field in metadata will contain the parts that were backed up,
+	// which represents the database state at backup time for in-place restore planning
+
 	createBackupWorkingGroup, createCtx := errgroup.WithContext(ctx)
 	createBackupWorkingGroup.SetLimit(max(b.cfg.ClickHouse.MaxConnections, 1))
 
@@ -320,6 +324,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 			var disksToPartsMap map[string][]metadata.Part
 			var checksums map[string]uint64
 			var addTableToBackupErr error
+
 			if doBackupData && table.BackupType == clickhouse.ShardBackupFull {
 				logger.Debug().Msg("begin data backup")
 				shadowBackupUUID := strings.ReplaceAll(uuid.New().String(), "-", "")

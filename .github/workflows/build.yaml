@@ -42,14 +42,14 @@ jobs:
 #          key: clickhouse-backup-golang-${{ matrix.golang-version }}-${{ hashFiles('go.mod', '.github/workflows/*.yaml') }}
 
       - name: Install golang dependencies
-        run: go mod download -x
+        run: go mod download
 #        if: |
 #          steps.cache-golang.outputs.cache-hit != 'true'
 
       - name: Build clickhouse-backup binary
         id: make-race
         env:
-          GOROOT: ${{ env.GOROOT_1_24_X64 }}
+          GOROOT: ${{ env.GOROOT_1_25_X64 }}
         run: |
           make build/linux/amd64/clickhouse-backup build/linux/arm64/clickhouse-backup
           make build/linux/amd64/clickhouse-backup-fips build/linux/arm64/clickhouse-backup-fips 
@@ -125,8 +125,7 @@ jobs:
 
       - name: Install python venv
         run: |
-          set -x
-          (dpkg -l | grep venv) || (apt-get update && apt-get install -y python3-venv)
+          (dpkg -l | grep venv) > /dev/null || (apt-get update && apt-get install -y python3-venv)
           python3 -m venv ~/venv/qa
 
       - name: Cache python
@@ -138,7 +137,6 @@ jobs:
 
       - name: Install python dependencies
         run: |
-          set -x
           ~/venv/qa/bin/pip3 install -U -r ./test/testflows/requirements.txt
         if: |
           steps.cache-python.outputs.cache-hit != 'true'
@@ -155,10 +153,10 @@ jobs:
           # don't change it to avoid not working CI/CD
           RUN_TESTS: "*"
         run: |
-          set -xe
+          set -e
           export CLICKHOUSE_TESTS_DIR=$(pwd)/test/testflows/clickhouse_backup
 
-          docker compose -f ${CLICKHOUSE_TESTS_DIR}/docker-compose/docker-compose.yml pull
+          docker compose -f ${CLICKHOUSE_TESTS_DIR}/docker-compose/docker-compose.yml pull --quiet
           
           chmod +x $(pwd)/clickhouse-backup/clickhouse-backup*
           source ~/venv/qa/bin/activate
@@ -170,7 +168,7 @@ jobs:
           sudo chmod -Rv +rx test/testflows/clickhouse_backup/_instances
       - name: Format testflows coverage
         env:
-          GOROOT: ${{ env.GOROOT_1_24_X64 }}
+          GOROOT: ${{ env.GOROOT_1_25_X64 }}
         run: |
           sudo chmod -Rv a+rw test/testflows/_coverage_/
           ls -la test/testflows/_coverage_
@@ -252,7 +250,7 @@ jobs:
       - name: Running integration tests
         env:
           RUN_PARALLEL: 4
-          GOROOT: ${{ env.GOROOT_1_24_X64 }}
+          GOROOT: ${{ env.GOROOT_1_25_X64 }}
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
           # options for advanced debug CI/CD
           # RUN_TESTS: "^TestSkipDisk$"
@@ -277,9 +275,11 @@ jobs:
           QA_GCS_OVER_S3_SECRET_KEY: ${{ secrets.QA_GCS_OVER_S3_SECRET_KEY }}
           QA_GCS_OVER_S3_BUCKET: ${{ secrets.QA_GCS_OVER_S3_BUCKET }}
         run: |
-          set -xe
+          set -e
           echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"
           echo "GCS_TESTS=${GCS_TESTS}"
+          echo "Go version: $(go version)"
+          echo "Testing ClickHouse ${CLICKHOUSE_VERSION}"
 
           chmod +x $(pwd)/clickhouse-backup/clickhouse-backup*
 
@@ -302,7 +302,7 @@ jobs:
           pids=()
           project_ids=()
           for ((i = 0; i < RUN_PARALLEL; i++)); do
-            docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} --progress plain up -d &
+            docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} --progress=quiet up -d &
             pids+=($!)
             project_ids+=("project${i}")
           done
@@ -315,9 +315,9 @@ jobs:
                 echo "$pid docker compose up successful"
             else
                 echo "=== docker ${project_id} state ==="
-                docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project_id} --progress plain ps -a
+                docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project_id} --progress=quiet ps -a
                 echo "=== docker ${project_id} logs ==="
-                docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project_id} --progress plain logs
+                docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project_id} --progress=quiet logs
                 echo "$pid the docker compose up failed."
                 exit 1  # Exit with an error code if any command fails
             fi
@@ -329,16 +329,16 @@ jobs:
           if [[ "0" != "${TEST_FAILED}" ]]; then
             for project_id in "${project_ids[@]}"; do
                 echo "=== docker ${project_id} state ==="
-                docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project_id} --progress plain ps -a
+                docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project_id} --progress=quiet ps -a
                 echo "=== docker ${project_id} logs ==="
-                docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project_id} --progress plain logs
+                docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project_id} --progress=quiet logs
             done
             exit 1
           fi      
 
       - name: Format integration coverage
         env:
-          GOROOT: ${{ env.GOROOT_1_24_X64 }}
+          GOROOT: ${{ env.GOROOT_1_25_X64 }}
         run: |
           sudo chmod -Rv a+rw test/integration/_coverage_/
           ls -la test/integration/_coverage_ 
