@@ -771,10 +771,19 @@ cat <<EOT > /etc/clickhouse-server/users.d/allow_experimental_database_replicate
 EOT
 fi
 
-if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[0-9]+ ]]; then
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[3-9]\.[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
 cat <<EOT > /etc/clickhouse-server/users.d/database_replicated_allow_replicated_engine_arguments.xml
 <yandex>
   <profiles><default><database_replicated_allow_replicated_engine_arguments>1</database_replicated_allow_replicated_engine_arguments></default></profiles>
+</yandex>
+EOT
+fi
+
+# for properly restore REFRESHABLE MATERIALIZED VIEW, 23.12+
+if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^23\.12 || "${CLICKHOUSE_VERSION}" =~ ^2[4-9]\.[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
+cat <<EOT > /etc/clickhouse-server/users.d/database_atomic_wait_for_drop_and_detach_synchronously.xml
+<yandex>
+  <profiles><default><database_atomic_wait_for_drop_and_detach_synchronously>1</database_atomic_wait_for_drop_and_detach_synchronously></default></profiles>
 </yandex>
 EOT
 fi

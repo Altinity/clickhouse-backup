@@ -1,3 +1,7 @@
+# v2.6.35
+BUG FIXES
+- fix corner case for restoring REFRESHABLE MATERIALIZED VIEWs, fix [1232](https://github.com/Altinity/clickhouse-backup/issues/1232)
+
 # v2.6.34
 IMPROVEMENTS
 - add full support for backup and restore of `named collections`, which can be stored in `keeper` or on the `local` filesystem. fix [961](https://github.com/Altinity/clickhouse-backup/issues/961) 

@@ -4143,6 +4143,43 @@ func generateTestDataForDifferentServerVersion(remoteStorageType string, offset,
 			OrderBy: "id",
 		})
 	}
+	// refreshable materialized view allowable 23.12+, https://github.com/ClickHouse/ClickHouse/issues/86922
+	// add data only once only for offset == 0
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.12") >= 0 && offset == 0 {
+		testData = addTestDataIfNotExistsAndReplaceRowsIfExists(testData, TestDataStruct{
+			Database:       dbNameAtomic,
+			DatabaseEngine: "Atomic",
+			Name:           "mv_refreshable_dst_table",
+			Schema:         "(id UInt64) Engine=MergeTree ORDER BY id",
+			SkipInsert:     true,
+			//during second restore ATTACH PART can happen for non-empty refreshed table
+			Rows: func() []map[string]interface{} {
+				return []map[string]interface{}{
+					{"id": uint64(0)},
+					{"id": uint64(0)},
+				}
+			}(),
+			Fields:  []string{"id"},
+			OrderBy: "id",
+		})
+		testData = addTestDataIfNotExistsAndReplaceRowsIfExists(testData, TestDataStruct{
+			Database:           dbNameAtomic,
+			DatabaseEngine:     "Atomic",
+			IsMaterializedView: true,
+			Name:               "mv_refreshable",
+			Schema:             fmt.Sprintf("REFRESH EVERY 1 HOUR TO `%s`.`mv_refreshable_dst_table_{test}` AS SELECT max(id) AS id FROM `%s`.`mv_src_table_{test}`", dbNameAtomic, dbNameAtomic),
+			SkipInsert:         true,
+			//during second restore ATTACH PART can happens for non-empty refreshed table
+			Rows: func() []map[string]interface{} {
+				return []map[string]interface{}{
+					{"id": uint64(0)},
+					{"id": uint64(0)},
+				}
+			}(),
+			Fields:  []string{"id"},
+			OrderBy: "id",
+		})
+	}
 	return testData
 }
 
@@ -4517,11 +4554,11 @@ func (env *TestEnvironment) checkData(t *testing.T, r *require.Assertions, data 
 		for _, v := range data.Rows[rowsNumber] {
 			expectedVars = append(expectedVars, v)
 		}
-		r.ElementsMatch(vars, expectedVars)
+		r.ElementsMatch(vars, expectedVars, "different data in `%s`.`%s`", data.Database, data.Name)
 		rowsNumber += 1
 	}
 
-	r.Equal(len(data.Rows), rowsNumber)
+	r.Equal(len(data.Rows), rowsNumber, "Unexpected rows length in `%s`.`%s`", data.Database, data.Name)
 
 	return nil
 }
