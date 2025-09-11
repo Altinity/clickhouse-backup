@@ -1578,6 +1578,11 @@ func (b *Backuper) fixEmbeddedMetadataSQLQuery(ctx context.Context, sqlBytes []b
 		sqlQuery = strings.NewReplacer("{database}", database, "{table}", table).Replace(sqlQuery)
 		sqlMetadataChanged = true
 	}
+	// https://github.com/Altinity/clickhouse-backup/issues/1237
+	if strings.HasPrefix(sqlQuery, "CREATE MATERIALIZED VIEW") && !strings.Contains(sqlQuery, " EMPTY ") {
+		sqlQuery = strings.Replace(sqlQuery, "DEFINER", "EMPTY DEFINER", 1)
+		sqlMetadataChanged = true
+	}
 	return sqlQuery, sqlMetadataChanged, nil
 }
 

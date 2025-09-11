@@ -1040,7 +1040,11 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 	if allowExperimentalAnalyzer, err = ch.TurnAnalyzerOffIfNecessary(version, query, allowExperimentalAnalyzer); err != nil {
 		return err
 	}
-
+	// MATERIALIZED VIEW ... REFRESH shall be restored as EMPTY to avoid data inconsistency
+	// https://github.com/Altinity/clickhouse-backup/issues/1237
+	if strings.HasPrefix(query, "CREATE MATERIALIZED VIEW") && !strings.Contains(query, " EMPTY ") {
+		query = strings.Replace(query, "DEFINER", "EMPTY DEFINER", 1)
+	}
 	// CREATE
 	if err := ch.Query(query); err != nil {
 		return err
