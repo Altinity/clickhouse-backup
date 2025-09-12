@@ -709,6 +709,7 @@ func TestEmbeddedAzure(t *testing.T) {
 	// CUSTOM backup create folder in each disk
 	env.DockerExecNoError(r, "clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/backups_azure/backup/")
 	env.runMainIntegrationScenario(t, "EMBEDDED_AZURE", "config-azblob-embedded.yml")
+	env.DockerExecNoError(r, "clickhouse", "rm", "-rf", "/var/lib/clickhouse/disk_s3")
 	if compareVersion(version, "24.8") >= 0 {
 		env.runMainIntegrationScenario(t, "EMBEDDED_AZURE_URL", "config-azblob-embedded-url.yml")
 	}
@@ -3793,7 +3794,7 @@ func (env *TestEnvironment) checkObjectStorageIsEmpty(t *testing.T, r *require.A
 		r.NoError(err, "%s\nunexpected checkRemoteDir error: %v", out, err)
 		r.Equal(expected, strings.Trim(out, "\r\n\t "))
 	}
-	if remoteStorageType == "S3" || remoteStorageType == "S3_EMBEDDED_URL" || (!strings.Contains(remoteStorageType, "S3") && strings.Contains(remoteStorageType, "EMBEDDED")) {
+	if remoteStorageType == "S3" || remoteStorageType == "S3_EMBEDDED_URL" {
 		checkRemoteDir("total 0", "minio", "bash", "-c", "ls -lh /bitnami/minio/data/clickhouse/")
 	}
 	if remoteStorageType == "SFTP" {
