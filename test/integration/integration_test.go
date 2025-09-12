@@ -749,6 +749,9 @@ func TestEmbeddedS3(t *testing.T) {
 	// CUSTOM backup creates folder in each disk, need to clear
 	env.DockerExecNoError(r, "clickhouse", "rm", "-rfv", "/var/lib/clickhouse/disks/backups_s3/backup/")
 	env.runMainIntegrationScenario(t, "EMBEDDED_S3", "config-s3-embedded.yml")
+	// cleanup
+	env.DockerExecNoError(r, "minio", "rm", "-rf", "/bitnami/minio/data/clickhouse/disk_s3")
+	env.DockerExecNoError(r, "minio", "rm", "-rf", "/bitnami/minio/data/clickhouse/backups_s3")
 
 	if compareVersion(version, "23.8") >= 0 {
 		//CUSTOM backup creates folder in each disk, need to clear
@@ -3790,7 +3793,7 @@ func (env *TestEnvironment) checkObjectStorageIsEmpty(t *testing.T, r *require.A
 		r.NoError(err, "%s\nunexpected checkRemoteDir error: %v", out, err)
 		r.Equal(expected, strings.Trim(out, "\r\n\t "))
 	}
-	if remoteStorageType == "S3" || remoteStorageType == "S3_EMBEDDED_URL" || strings.Contains(remoteStorageType, "EMBEDDED") {
+	if remoteStorageType == "S3" || remoteStorageType == "S3_EMBEDDED_URL" || (!strings.Contains(remoteStorageType, "S3") && strings.Contains(remoteStorageType, "EMBEDDED")) {
 		checkRemoteDir("total 0", "minio", "bash", "-c", "ls -lh /bitnami/minio/data/clickhouse/")
 	}
 	if remoteStorageType == "SFTP" {
