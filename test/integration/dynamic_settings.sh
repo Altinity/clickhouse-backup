@@ -783,7 +783,11 @@ fi
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^23\.12 || "${CLICKHOUSE_VERSION}" =~ ^2[4-9]\.[0-9]+ || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
 cat <<EOT > /etc/clickhouse-server/users.d/database_atomic_wait_for_drop_and_detach_synchronously.xml
 <yandex>
-  <profiles><default><database_atomic_wait_for_drop_and_detach_synchronously>1</database_atomic_wait_for_drop_and_detach_synchronously></default></profiles>
+  <profiles>
+    <default>
+      <allow_experimental_refreshable_materialized_view>1</allow_experimental_refreshable_materialized_view>
+      <database_atomic_wait_for_drop_and_detach_synchronously>1</database_atomic_wait_for_drop_and_detach_synchronously>
+    </default></profiles>
 </yandex>
 EOT
 fi

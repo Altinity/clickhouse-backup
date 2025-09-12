@@ -4150,9 +4150,10 @@ func generateTestDataForDifferentServerVersion(remoteStorageType string, offset,
 		})
 	}
 	// refreshable materialized view allowable 23.12+, https://github.com/ClickHouse/ClickHouse/issues/86922
+	// 24.3 + 24.8 got segmentation fault during CREATE MATERIALIZED VIEW ... REFRESH .. ON CLUSTER
 	// EMPTY hack doesn't work for EMBEDDED https://github.com/ClickHouse/ClickHouse/issues/87013
 	// add data only once only for offset == 0
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.12") >= 0 && offset == 0 && !strings.Contains(remoteStorageType, "EMBEDDED") {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "24.8") > 0 && offset == 0 && !strings.Contains(remoteStorageType, "EMBEDDED") {
 		testData = addTestDataIfNotExistsAndReplaceRowsIfExists(testData, TestDataStruct{
 			Database:       dbNameAtomic,
 			DatabaseEngine: "Atomic",
