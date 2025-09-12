@@ -1581,6 +1581,7 @@ func (b *Backuper) fixEmbeddedMetadataSQLQuery(ctx context.Context, sqlBytes []b
 	// https://github.com/Altinity/clickhouse-backup/issues/1237
 	if strings.HasPrefix(sqlQuery, "CREATE MATERIALIZED VIEW") && !strings.Contains(sqlQuery, " EMPTY ") {
 		sqlQuery = strings.Replace(sqlQuery, "DEFINER", "EMPTY DEFINER", 1)
+		log.Warn().Str("sqlQuery", sqlQuery).Msgf("Query changed, but will not work during restore, look details in https://github.com/Altinity/clickhouse-backup/issues/1237")
 		sqlMetadataChanged = true
 	}
 	return sqlQuery, sqlMetadataChanged, nil
