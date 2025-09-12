@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/api/impersonate"
 	"google.golang.org/api/iterator"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
@@ -100,6 +101,18 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 		clientOptions = append(clientOptions, option.WithCredentialsJSON(d))
 	} else if gcs.Config.CredentialsFile != "" {
 		clientOptions = append(clientOptions, option.WithCredentialsFile(gcs.Config.CredentialsFile))
+	} else if gcs.Config.SAEmail != "" {
+		ts, err := impersonate.CredentialsTokenSource(ctx, impersonate.CredentialsConfig{
+			TargetPrincipal: gcs.Config.SAEmail,
+			Scopes: []string{
+				"https://www.googleapis.com/auth/cloud-platform",
+				"https://www.googleapis.com/auth/devstorage.read_write",
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create impersonation token source: %v", err)
+		}
+		clientOptions = append(clientOptions, option.WithTokenSource(ts))
 	} else if gcs.Config.SkipCredentials {
 		clientOptions = append(clientOptions, option.WithoutAuthentication())
 	}
