@@ -4164,7 +4164,6 @@ func generateTestDataForDifferentServerVersion(remoteStorageType string, offset,
 			Rows: func() []map[string]interface{} {
 				return []map[string]interface{}{
 					{"id": uint64(0)},
-					{"id": uint64(0)},
 				}
 			}(),
 			Fields:  []string{"id"},
@@ -4175,12 +4174,10 @@ func generateTestDataForDifferentServerVersion(remoteStorageType string, offset,
 			DatabaseEngine:     "Atomic",
 			IsMaterializedView: true,
 			Name:               "mv_refreshable",
-			Schema:             fmt.Sprintf("REFRESH EVERY 1 HOUR TO `%s`.`mv_refreshable_dst_table_{test}` AS SELECT max(id) AS id FROM `%s`.`mv_src_table_{test}`", dbNameAtomic, dbNameAtomic),
+			Schema:             fmt.Sprintf("REFRESH EVERY 24 HOUR TO `%s`.`mv_refreshable_dst_table_{test}` EMPTY AS SELECT max(id) AS id FROM `%s`.`mv_src_table_{test}`", dbNameAtomic, dbNameAtomic),
 			SkipInsert:         true,
-			//during second restore ATTACH PART can happens for non-empty refreshed table
 			Rows: func() []map[string]interface{} {
 				return []map[string]interface{}{
-					{"id": uint64(0)},
 					{"id": uint64(0)},
 				}
 			}(),
