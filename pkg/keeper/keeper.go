@@ -5,14 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/antchfx/xmlquery"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 	"os"
 	"path"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/antchfx/xmlquery"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/go-zookeeper/zk"
@@ -40,6 +41,12 @@ func (KeeperLogToApexLogAdapter LogKeeperToApexLogAdapter) Printf(msg string, ar
 type DumpNode struct {
 	Path  string `json:"path"`
 	Value []byte `json:"value"` // json encodes/decodes as base64 automatically
+}
+
+// old format used during restore
+type DumpNodeString struct {
+	Path  string `json:"path"`
+	Value string `json:"value"`
 }
 
 type Keeper struct {
@@ -197,8 +204,13 @@ func (k *Keeper) Restore(dumpFile, prefix string) error {
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		node := DumpNode{}
-		if err = json.Unmarshal(scanner.Bytes(), &node); err != nil {
-			return err
+		binaryData := scanner.Bytes()
+		if err = json.Unmarshal(binaryData, &node); err != nil {
+			//convert from old format
+			nodeString := DumpNodeString{}
+			if stringUnmarshalErr := json.Unmarshal(binaryData, &nodeString); stringUnmarshalErr != nil {
+				return fmt.Errorf("k.Restore can't read data binaryErr=%v, stringErr=%v", err, stringUnmarshalErr)
+			}
 		}
 		node.Path = path.Join(prefix, node.Path)
 		version := int32(0)

@@ -573,8 +573,14 @@ func (b *Backuper) restoreRBACResolveAllConflicts(ctx context.Context, backupNam
 				data := keeper.DumpNode{}
 				jsonErr := json.Unmarshal([]byte(line), &data)
 				if jsonErr != nil {
-					log.Error().Msgf("can't %s json.Unmarshal error: %v line: %s", fPath, line, jsonErr)
-					continue
+					//convert from old format
+					dataString := keeper.DumpNodeString{}
+					if jsonErr = json.Unmarshal([]byte(line), &dataString); jsonErr != nil {
+						log.Error().Msgf("can't %s json.Unmarshal error: %v line: %s", fPath, line, jsonErr)
+						continue
+					}
+					data.Path = dataString.Path
+					data.Value = []byte(dataString.Value)
 				}
 				if strings.HasPrefix(data.Path, "uuid/") {
 					if resolveErr := b.resolveRBACConflictIfExist(ctx, string(data.Value), accessPath, version, k, replicatedUserDirectories, dropExists); resolveErr != nil {
