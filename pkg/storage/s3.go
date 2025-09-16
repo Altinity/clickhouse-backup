@@ -257,11 +257,18 @@ func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath stri
 		downloader := s3manager.NewDownloader(s.client)
 		downloader.Concurrency = s.Concurrency
 		downloader.BufferProvider = s3manager.NewPooledBufferedWriterReadFromProvider(s.BufferSize)
-		partSize := remoteSize / s.Config.MaxPartsCount
-		if remoteSize%s.Config.MaxPartsCount > 0 {
-			partSize += max(1, (remoteSize%s.Config.MaxPartsCount)/s.Config.MaxPartsCount)
+		var partSize int64
+		if s.Config.ChunkSize > 0 {
+			// Use configured chunk size
+			partSize = s.Config.ChunkSize
+		} else {
+			partSize := remoteSize / s.Config.MaxPartsCount
+			if remoteSize%s.Config.MaxPartsCount > 0 {
+				partSize += max(1, (remoteSize%s.Config.MaxPartsCount)/s.Config.MaxPartsCount)
+			}
 		}
 		downloader.PartSize = AdjustValueByRange(partSize, 5*1024*1024, 5*1024*1024*1024)
+		log.Debug().Msgf("S3 Download PartSize: %d bytes (%.2f MB)", downloader.PartSize, float64(downloader.PartSize)/(1024*1024))
 
 		_, err = downloader.Download(ctx, writer, &s3.GetObjectInput{
 			Bucket: aws.String(s.Config.Bucket),
@@ -327,11 +334,19 @@ func (s *S3) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, l
 	uploader := s3manager.NewUploader(s.client)
 	uploader.Concurrency = s.Concurrency
 	uploader.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(s.BufferSize)
-	partSize := localSize / s.Config.MaxPartsCount
-	if localSize%s.Config.MaxPartsCount > 0 {
-		partSize += max(1, (localSize%s.Config.MaxPartsCount)/s.Config.MaxPartsCount)
+	var partSize int64
+	if s.Config.ChunkSize > 0 {
+		// Use configured chunk size
+		partSize = s.Config.ChunkSize
+	} else {
+		partSize := localSize / s.Config.MaxPartsCount
+		if localSize%s.Config.MaxPartsCount > 0 {
+			partSize += max(1, (localSize%s.Config.MaxPartsCount)/s.Config.MaxPartsCount)
+		}
 	}
 	uploader.PartSize = AdjustValueByRange(partSize, 5*1024*1024, 5*1024*1024*1024)
+	log.Debug().Msgf("S3 Upload PartSize: %d bytes (%.2f MB)", uploader.PartSize, float64(uploader.PartSize)/(1024*1024))
+
 	_, err := uploader.Upload(ctx, &params)
 	return err
 }
@@ -532,12 +547,18 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 	// Get the upload ID
 	uploadID := initResp.UploadId
 
-	// Set the part size (128 MB minimum)
-	partSize := srcSize / s.Config.MaxPartsCount
-	if srcSize%s.Config.MaxPartsCount > 0 {
-		partSize += max(1, (srcSize%s.Config.MaxPartsCount)/s.Config.MaxPartsCount)
+	// Set the part size (128 MB minimum for CopyObject, or use configured chunk size)
+	var partSize int64
+	if s.Config.ChunkSize > 0 {
+		partSize = s.Config.ChunkSize
+	} else {
+		partSize := srcSize / s.Config.MaxPartsCount
+		if srcSize%s.Config.MaxPartsCount > 0 {
+			partSize += max(1, (srcSize%s.Config.MaxPartsCount)/s.Config.MaxPartsCount)
+		}
 	}
 	partSize = AdjustValueByRange(partSize, 128*1024*1024, 5*1024*1024*1024)
+	log.Debug().Msgf("S3 CopyObject PartSize: %d bytes (%.2f MB)", partSize, float64(partSize)/(1024*1024))
 
 	// Calculate the number of parts
 	numParts := (srcSize + partSize - 1) / partSize

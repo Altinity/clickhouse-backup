@@ -153,6 +153,7 @@ type S3Config struct {
 	RequestPayer            string            `yaml:"request_payer" envconfig:"S3_REQUEST_PAYER"`
 	CheckSumAlgorithm       string            `yaml:"check_sum_algorithm" envconfig:"S3_CHECKSUM_ALGORITHM"`
 	RetryMode               string            `yaml:"retry_mode" envconfig:"S3_RETRY_MODE"`
+	ChunkSize               int64             `yaml:"chunk_size" envconfig:"S3_CHUNK_SIZE"`
 	Debug                   bool              `yaml:"debug" envconfig:"S3_DEBUG"`
 }
 
@@ -623,6 +624,7 @@ func DefaultConfig() *Config {
 			Concurrency:             int(downloadConcurrency + 1),
 			MaxPartsCount:           4000,
 			RetryMode:               string(aws.RetryModeStandard),
+			ChunkSize:               5 * 1024 * 1024,
 		},
 		GCS: GCSConfig{
 			CompressionLevel:  1,
