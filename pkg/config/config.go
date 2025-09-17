@@ -96,8 +96,9 @@ type GCSConfig struct {
 	CustomStorageClassMap  map[string]string `yaml:"custom_storage_class_map" envconfig:"GCS_CUSTOM_STORAGE_CLASS_MAP"`
 	// NOTE: ClientPoolSize should be at least 2 times bigger than
 	// 			UploadConcurrency or DownloadConcurrency in each upload and download case
-	ClientPoolSize int `yaml:"client_pool_size" envconfig:"GCS_CLIENT_POOL_SIZE"`
-	ChunkSize      int `yaml:"chunk_size" envconfig:"GCS_CHUNK_SIZE"`
+	ClientPoolSize int    `yaml:"client_pool_size" envconfig:"GCS_CLIENT_POOL_SIZE"`
+	ChunkSize      int    `yaml:"chunk_size" envconfig:"GCS_CHUNK_SIZE"`
+	SAEmail        string `yaml:"sa_email" envconfig:"GCS_SA_EMAIL"`
 }
 
 // AzureBlobConfig - Azure Blob settings section
@@ -336,7 +337,7 @@ func LoadConfig(configLocation string) (*Config, error) {
 		return nil, err
 	}
 
-	//auto-tuning upload_concurrency for storage types which not have SDK level concurrency, https://github.com/Altinity/clickhouse-backup/issues/658
+	// auto-tuning upload_concurrency for storage types which not have SDK level concurrency, https://github.com/Altinity/clickhouse-backup/issues/658
 	cfgWithoutDefault := &Config{}
 	if err := yaml.Unmarshal(configYaml, &cfgWithoutDefault); err != nil {
 		return nil, fmt.Errorf("can't parse config file: %v", err)
