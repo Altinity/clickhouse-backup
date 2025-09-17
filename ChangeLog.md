@@ -1,6 +1,7 @@
 # v2.6.36
 IMPROVEMENTS
 - add `GCS_SA_EMAIL` option to support service account authorization, fix [1246](https://github.com/Altinity/clickhouse-backup/pull/1246) thanks @kamushadenes
+- improve `--hardlink-exists-files` behavior, will look to exists local backups for the same part to avoid download unnecessary, fix [1244](https://github.com/Altinity/clickhouse-backup/issues/1244)
 
 # v2.6.35
 BUG FIXES

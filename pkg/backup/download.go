@@ -837,49 +837,62 @@ func (b *Backuper) hardlinkIfLocalPartExistsAndChecksumEqual(backupName string, 
 		if localDisk.IsBackup {
 			continue
 		}
-		var existingPartPath string
+		var existingPartPaths []string
 		p1 := path.Join(localDisk.Path, "data", dbAndTableDir, part.Name)
 		if _, err := os.Stat(p1); err == nil {
-			existingPartPath = p1
+			existingPartPaths = append(existingPartPaths, p1)
 		}
-		if existingPartPath == "" && table.UUID != "" {
+		if (existingPartPaths == nil || len(existingPartPaths) == 0) && table.UUID != "" {
 			p2 := path.Join(localDisk.Path, "store", table.UUID[:3], table.UUID, part.Name)
 			if _, err := os.Stat(p2); err == nil {
-				existingPartPath = p2
+				existingPartPaths = append(existingPartPaths, p2)
 			}
 		}
-
-		if existingPartPath != "" {
-			checksum, err := common.CalculateChecksum(existingPartPath, "checksums.txt")
-			if err != nil {
-				log.Warn().Msgf("calculating checksum for %s failed: %v", existingPartPath, err)
-				return false, 0, nil
+		// https://github.com/Altinity/clickhouse-backup/issues/1244
+		if existingPartPaths == nil || len(existingPartPaths) == 0 {
+			globDir, globErr := filepath.Glob(path.Join(localDisk.Path, "backup", "*", "shadow", dbAndTableDir, localDisk.Name, part.Name))
+			if globErr != nil {
+				return false, 0, globErr
 			}
-			if checksum == table.Checksums[part.Name] {
-				partLocalPath := path.Join(b.getLocalBackupDataPathForTable(backupName, localDisk.Name, dbAndTableDir), part.Name)
-				log.Info().Msgf("Found existing part %s with matching checksum, creating hardlinks to %s", existingPartPath, partLocalPath)
-				if err := b.makePartHardlinks(existingPartPath, partLocalPath); err != nil {
-					return false, 0, fmt.Errorf("failed to create hardlinks for %s: %v", existingPartPath, err)
-				}
-				if diskName != localDisk.Name {
-					part.RebalancedDisk = localDisk.Name
-				}
-				var partSize int64
-				walkErr := filepath.Walk(existingPartPath, func(path string, info os.FileInfo, err error) error {
-					if err != nil {
-						return err
+			existingPartPaths = append(existingPartPaths, globDir...)
+		}
+
+		if existingPartPaths != nil && len(existingPartPaths) > 0 {
+			for i, existingPartPath := range existingPartPaths {
+				checksum, err := common.CalculateChecksum(existingPartPath, "checksums.txt")
+				if err != nil {
+					log.Warn().Msgf("calculating checksum for %s failed: %v", existingPartPath, err)
+					if i < len(existingPartPaths)-1 {
+						continue
 					}
-					if !info.IsDir() {
-						partSize += info.Size()
-					}
-					return nil
-				})
-				if walkErr != nil {
-					return false, 0, fmt.Errorf("failed to calculate size of %s: %v", existingPartPath, walkErr)
+					return false, 0, nil
 				}
-				return true, partSize, nil
-			} else {
-				log.Warn().Msgf("Found existing part %s but checksums do not match. Expected %d, got %d. Will download.", existingPartPath, table.Checksums[part.Name], checksum)
+				if checksum == table.Checksums[part.Name] {
+					partLocalPath := path.Join(b.getLocalBackupDataPathForTable(backupName, localDisk.Name, dbAndTableDir), part.Name)
+					log.Info().Msgf("Found existing part %s with matching checksum, creating hardlinks to %s", existingPartPath, partLocalPath)
+					if err := b.makePartHardlinks(existingPartPath, partLocalPath); err != nil {
+						return false, 0, fmt.Errorf("failed to create hardlinks for %s: %v", existingPartPath, err)
+					}
+					if diskName != localDisk.Name {
+						part.RebalancedDisk = localDisk.Name
+					}
+					var partSize int64
+					walkErr := filepath.Walk(existingPartPath, func(path string, info os.FileInfo, err error) error {
+						if err != nil {
+							return err
+						}
+						if !info.IsDir() {
+							partSize += info.Size()
+						}
+						return nil
+					})
+					if walkErr != nil {
+						return false, 0, fmt.Errorf("failed to calculate size of %s: %v", existingPartPath, walkErr)
+					}
+					return true, partSize, nil
+				} else {
+					log.Warn().Msgf("Found existing part %s but checksums do not match. Expected %d, got %d. Will download.", existingPartPath, table.Checksums[part.Name], checksum)
+				}
 			}
 		}
 	}
