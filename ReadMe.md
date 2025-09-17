@@ -280,7 +280,8 @@ s3:
 gcs:
   credentials_file: ""         # GCS_CREDENTIALS_FILE
   credentials_json: ""         # GCS_CREDENTIALS_JSON
-  credentials_json_encoded: "" # GCS_CREDENTIALS_JSON_ENCODED
+  credentials_json_encoded: "" # GCS_CREDENTIALS_JSON_ENCODED, base64 encoded json with credentials
+  sa_email: ""                 # GCS_SA_EMAIL, service account email for authorization without credentials
   # look https://cloud.google.com/storage/docs/authentication/managing-hmackeys#create how to get HMAC keys for access to bucket
   embedded_access_key: ""      # GCS_EMBEDDED_ACCESS_KEY, use it when `use_embedded_backup_restore: true`, `embedded_backup_disk: ""`, `remote_storage: gcs`
   embedded_secret_key: ""      # GCS_EMBEDDED_SECRET_KEY, use it when `use_embedded_backup_restore: true`, `embedded_backup_disk: ""`, `remote_storage: gcs`

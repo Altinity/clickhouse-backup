@@ -80,6 +80,7 @@ type GCSConfig struct {
 	CredentialsFile        string            `yaml:"credentials_file" envconfig:"GCS_CREDENTIALS_FILE"`
 	CredentialsJSON        string            `yaml:"credentials_json" envconfig:"GCS_CREDENTIALS_JSON"`
 	CredentialsJSONEncoded string            `yaml:"credentials_json_encoded" envconfig:"GCS_CREDENTIALS_JSON_ENCODED"`
+	SAEmail                string            `yaml:"sa_email" envconfig:"GCS_SA_EMAIL"`
 	EmbeddedAccessKey      string            `yaml:"embedded_access_key" envconfig:"GCS_EMBEDDED_ACCESS_KEY"`
 	EmbeddedSecretKey      string            `yaml:"embedded_secret_key" envconfig:"GCS_EMBEDDED_SECRET_KEY"`
 	SkipCredentials        bool              `yaml:"skip_credentials" envconfig:"GCS_SKIP_CREDENTIALS"`
@@ -96,9 +97,8 @@ type GCSConfig struct {
 	CustomStorageClassMap  map[string]string `yaml:"custom_storage_class_map" envconfig:"GCS_CUSTOM_STORAGE_CLASS_MAP"`
 	// NOTE: ClientPoolSize should be at least 2 times bigger than
 	// 			UploadConcurrency or DownloadConcurrency in each upload and download case
-	ClientPoolSize int    `yaml:"client_pool_size" envconfig:"GCS_CLIENT_POOL_SIZE"`
-	ChunkSize      int    `yaml:"chunk_size" envconfig:"GCS_CHUNK_SIZE"`
-	SAEmail        string `yaml:"sa_email" envconfig:"GCS_SA_EMAIL"`
+	ClientPoolSize int `yaml:"client_pool_size" envconfig:"GCS_CLIENT_POOL_SIZE"`
+	ChunkSize      int `yaml:"chunk_size" envconfig:"GCS_CHUNK_SIZE"`
 }
 
 // AzureBlobConfig - Azure Blob settings section

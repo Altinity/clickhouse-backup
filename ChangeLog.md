@@ -1,3 +1,7 @@
+# v2.6.36
+IMPROVEMENTS
+- add `GCS_SA_EMAIL` option to support service account authorization, fix [1246](https://github.com/Altinity/clickhouse-backup/pull/1246) thanks @kamushadenes
+
 # v2.6.35
 BUG FIXES
 - fix corner case for restoring REFRESHABLE MATERIALIZED VIEWs, fix [1232](https://github.com/Altinity/clickhouse-backup/issues/1232)
