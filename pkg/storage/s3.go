@@ -262,13 +262,12 @@ func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath stri
 			// Use configured chunk size
 			partSize = s.Config.ChunkSize
 		} else {
-			partSize := remoteSize / s.Config.MaxPartsCount
+			partSize = remoteSize / s.Config.MaxPartsCount
 			if remoteSize%s.Config.MaxPartsCount > 0 {
 				partSize += max(1, (remoteSize%s.Config.MaxPartsCount)/s.Config.MaxPartsCount)
 			}
 		}
 		downloader.PartSize = AdjustValueByRange(partSize, 5*1024*1024, 5*1024*1024*1024)
-		log.Debug().Msgf("S3 Download PartSize: %d bytes (%.2f MB)", downloader.PartSize, float64(downloader.PartSize)/(1024*1024))
 
 		_, err = downloader.Download(ctx, writer, &s3.GetObjectInput{
 			Bucket: aws.String(s.Config.Bucket),
@@ -338,13 +337,12 @@ func (s *S3) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, l
 	if s.Config.ChunkSize > 0 && (localSize+s.Config.ChunkSize-1)/s.Config.ChunkSize < 10000 {
 		partSize = s.Config.ChunkSize
 	} else {
-		partSize := localSize / s.Config.MaxPartsCount
+		partSize = localSize / s.Config.MaxPartsCount
 		if localSize%s.Config.MaxPartsCount > 0 {
 			partSize += max(1, (localSize%s.Config.MaxPartsCount)/s.Config.MaxPartsCount)
 		}
 	}
 	uploader.PartSize = AdjustValueByRange(partSize, 5*1024*1024, 5*1024*1024*1024)
-	log.Debug().Msgf("S3 Upload PartSize: %d bytes (%.2f MB)", uploader.PartSize, float64(uploader.PartSize)/(1024*1024))
 
 	_, err := uploader.Upload(ctx, &params)
 	return err
@@ -551,13 +549,12 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 	if s.Config.ChunkSize > 0 && (srcSize+s.Config.ChunkSize-1)/s.Config.ChunkSize < 10000 {
 		partSize = s.Config.ChunkSize
 	} else {
-		partSize := srcSize / s.Config.MaxPartsCount
+		partSize = srcSize / s.Config.MaxPartsCount
 		if srcSize%s.Config.MaxPartsCount > 0 {
 			partSize += max(1, (srcSize%s.Config.MaxPartsCount)/s.Config.MaxPartsCount)
 		}
 	}
 	partSize = AdjustValueByRange(partSize, 128*1024*1024, 5*1024*1024*1024)
-	log.Debug().Msgf("S3 CopyObject PartSize: %d bytes (%.2f MB)", partSize, float64(partSize)/(1024*1024))
 
 	// Calculate the number of parts
 	numParts := (srcSize + partSize - 1) / partSize
