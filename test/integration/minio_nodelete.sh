@@ -1,6 +1,7 @@
 #!/bin/bash
 set -x
 set -e
+mc alias set local https://localhost:9000 access_key it_is_my_super_secret_key
 mc admin user add local nodelete nodelete_password
 mc admin policy create local nodelete <( cat << EOF
 {

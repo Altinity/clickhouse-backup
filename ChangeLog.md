@@ -1,6 +1,12 @@
+# v2.6.36
+IMPROVEMENTS
+- add `GCS_SA_EMAIL` option to support service account authorization, fix [1246](https://github.com/Altinity/clickhouse-backup/pull/1246) thanks @kamushadenes
+- improve `--hardlink-exists-files` behavior, will look to exists local backups for the same part to avoid download unnecessary, fix [1244](https://github.com/Altinity/clickhouse-backup/issues/1244)
+
 # v2.6.35
 BUG FIXES
 - fix corner case for restoring REFRESHABLE MATERIALIZED VIEWs, fix [1232](https://github.com/Altinity/clickhouse-backup/issues/1232)
+- fix errors during restore RBAC objects stored in old format, affected 2.6.34 fix [1238](https://github.com/Altinity/clickhouse-backup/issues/1238)
 
 # v2.6.34
 IMPROVEMENTS

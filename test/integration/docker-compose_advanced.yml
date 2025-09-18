@@ -30,16 +30,18 @@ services:
       FTP_MAX_CONNECTIONS: 255
 
   minio:
-    image: docker.io/bitnami/minio:${MINIO_VERSION:-latest}
+    image: docker.io/minio/minio:${MINIO_VERSION:-latest}
     hostname: minio
     environment:
-      MINIO_DEFAULT_BUCKETS: 'clickhouse'
       MINIO_ROOT_USER: access_key
       MINIO_ROOT_PASSWORD: it_is_my_super_secret_key
-      MINIO_SCHEME: https
-      BITNAMI_DEBUG: "true"
+      MC_CONFIG_DIR: /root/.mc
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - mkdir -p /minio/data/clickhouse && minio server /minio/data
     healthcheck:
-      test: ls -la /bitnami/minio/data/clickhouse/ && curl -skL https://localhost:9000/
+      test: ls -lah /minio/data/clickhouse/ && curl -skL https://localhost:9000/
       interval: 1s
       retries: 60
     volumes:
@@ -48,9 +50,10 @@ services:
       # ~/go/bin/certgen -host "127.0.0.1,localhost,minio" -duration 876000h
       # mv private.key ./test/integration/minio.key
       # mv public.crt ./test/integration/minio.crt
-      - ./minio.crt:/certs/CAs/public.crt
-      - ./minio.crt:/certs/public.crt
-      - ./minio.key:/certs/private.key
+      - ./minio.crt:/root/.minio/certs/CAs/public.crt
+      - ./minio.crt:/root/.mc/certs/CAs/public.crt
+      - ./minio.crt:/root/.minio/certs/public.crt
+      - ./minio.key:/root/.minio/certs/private.key
 
   gcs:
     image: fsouza/fake-gcs-server:latest
