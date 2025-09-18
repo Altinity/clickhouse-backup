@@ -258,7 +258,7 @@ func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath stri
 		downloader.Concurrency = s.Concurrency
 		downloader.BufferProvider = s3manager.NewPooledBufferedWriterReadFromProvider(s.BufferSize)
 		var partSize int64
-		if s.Config.ChunkSize > 0 {
+		if s.Config.ChunkSize > 0 && (remoteSize+s.Config.ChunkSize-1)/s.Config.ChunkSize < 10000 {
 			// Use configured chunk size
 			partSize = s.Config.ChunkSize
 		} else {
@@ -335,8 +335,7 @@ func (s *S3) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, l
 	uploader.Concurrency = s.Concurrency
 	uploader.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(s.BufferSize)
 	var partSize int64
-	if s.Config.ChunkSize > 0 {
-		// Use configured chunk size
+	if s.Config.ChunkSize > 0 && (remoteSize+s.Config.ChunkSize-1)/s.Config.ChunkSize < 10000 {
 		partSize = s.Config.ChunkSize
 	} else {
 		partSize := localSize / s.Config.MaxPartsCount
@@ -549,7 +548,7 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 
 	// Set the part size (128 MB minimum for CopyObject, or use configured chunk size)
 	var partSize int64
-	if s.Config.ChunkSize > 0 {
+	if s.Config.ChunkSize > 0 && (remoteSize+s.Config.ChunkSize-1)/s.Config.ChunkSize < 10000 {
 		partSize = s.Config.ChunkSize
 	} else {
 		partSize := srcSize / s.Config.MaxPartsCount
