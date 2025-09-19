@@ -1,3 +1,7 @@
+# v2.6.37
+BUG FIXES
+- fix slowdown and corner cases, for incremental backup creation, affected 2.6.30+, fix https://github.com/Altinity/clickhouse-backup/issues/1249
+
 # v2.6.36
 IMPROVEMENTS
 - add `GCS_SA_EMAIL` option to support service account authorization, fix [1246](https://github.com/Altinity/clickhouse-backup/pull/1246) thanks @kamushadenes

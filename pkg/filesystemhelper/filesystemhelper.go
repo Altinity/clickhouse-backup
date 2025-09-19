@@ -392,24 +392,27 @@ func IsSkipProjections(skipProjections []string, relativePath string) bool {
 func addRequiredPartIfNotExists(parts []metadata.Part, relativePath string, tableDiffFromRemote metadata.TableMetadata, disk clickhouse.Disk) ([]metadata.Part, bool, bool) {
 	isRequiredPartFound := false
 	exists := false
-	for _, p := range parts {
-		if p.Name == relativePath || strings.HasPrefix(relativePath, p.Name+"/") {
-			exists = true
+	for _, diffPart := range tableDiffFromRemote.Parts[disk.Name] {
+		if diffPart.Name == relativePath || strings.HasPrefix(relativePath, diffPart.Name+"/") {
+			isRequiredPartFound = true
 			break
 		}
-		for _, diffPart := range tableDiffFromRemote.Parts[disk.Name] {
-			if diffPart.Name == relativePath || strings.HasPrefix(relativePath, diffPart.Name+"/") {
-				isRequiredPartFound = true
+	}
+	if isRequiredPartFound {
+		for _, p := range parts {
+			if p.Name == relativePath || strings.HasPrefix(relativePath, p.Name+"/") {
+				exists = true
+				break
 			}
 		}
+		if !exists {
+			parts = append(parts, metadata.Part{
+				Name:     relativePath,
+				Required: true,
+			})
+		}
 	}
-	// we use relativePath here cause during Walk, directory will walked first
-	if !exists && isRequiredPartFound {
-		parts = append(parts, metadata.Part{
-			Name:     relativePath,
-			Required: true,
-		})
-	}
+
 	return parts, isRequiredPartFound, exists
 }
 
