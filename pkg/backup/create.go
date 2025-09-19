@@ -939,6 +939,7 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 				diffTableMetadata = tablesDiffFromRemote[metadata.TableTitle{Database: table.Database, Table: table.Name}]
 			}
 			// If partitionsIdsMap is not empty, only parts in this partition will back up.
+			start := time.Now()
 			parts, size, newChecksums, err := filesystemhelper.MoveShadowToBackup(shadowPath, backupShadowPath, partitionsIdsMap, table, diffTableMetadata, disk, skipProjections, version)
 			if err != nil {
 				return nil, nil, nil, nil, err
@@ -950,9 +951,9 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 				checksums[pName] = c
 			}
 
-			logger.Debug().Str("disk", disk.Name).Msg("shadow moved")
+			logger.Debug().Str("disk", disk.Name).Str("duration", utils.HumanizeDuration(time.Since(start))).Msg("shadow moved")
 			if len(parts) > 0 && (b.isDiskTypeObject(disk.Type) || b.isDiskTypeEncryptedObject(disk, diskList)) {
-				start := time.Now()
+				start = time.Now()
 				if size, err = b.uploadObjectDiskParts(ctx, backupName, diffTableMetadata, backupShadowPath, disk); err != nil {
 					return nil, nil, nil, nil, err
 				}
