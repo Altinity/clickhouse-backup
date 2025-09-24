@@ -2921,6 +2921,7 @@ func TestRestoreDistributedCluster(t *testing.T) {
 
 	// remove cluster and wait configuration reload
 	env.DockerExecNoError(r, "clickhouse", "bash", "-c", "rm -rfv /etc/clickhouse-server/config.d/new-cluster.xml")
+	env.queryWithNoError(r, "SYSTEM RELOAD CONFIG")
 	newClusterExists := uint64(1)
 	for i := 0; i < 60 && newClusterExists == 1; i++ {
 		r.NoError(env.ch.SelectSingleRowNoCtx(&newClusterExists, "SELECT count() FROM system.clusters WHERE cluster='new_cluster'"))
