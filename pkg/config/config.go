@@ -233,6 +233,7 @@ type ClickHouseConfig struct {
 	EmbeddedBackupDisk               string            `yaml:"embedded_backup_disk" envconfig:"CLICKHOUSE_EMBEDDED_BACKUP_DISK"`
 	BackupMutations                  bool              `yaml:"backup_mutations" envconfig:"CLICKHOUSE_BACKUP_MUTATIONS"`
 	RestoreAsAttach                  bool              `yaml:"restore_as_attach" envconfig:"CLICKHOUSE_RESTORE_AS_ATTACH"`
+	RestoreDistributedCluster        string            `yaml:"restore_distributed_cluster" envconfig:"CLICKHOUSE_RESTORE_DISTRIBUTED_CLUSTER"`
 	CheckPartsColumns                bool              `yaml:"check_parts_columns" envconfig:"CLICKHOUSE_CHECK_PARTS_COLUMNS"`
 	Secure                           bool              `yaml:"secure" envconfig:"CLICKHOUSE_SECURE"`
 	SkipVerify                       bool              `yaml:"skip_verify" envconfig:"CLICKHOUSE_SKIP_VERIFY"`

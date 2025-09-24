@@ -2866,6 +2866,86 @@ func TestRestoreAsAttach(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
+func TestRestoreDistributedCluster(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
+	xml := `
+<yandex>
+    <remote_servers>
+        <new_cluster>
+            <shard>
+                <internal_replication>true</internal_replication>
+                <replica>
+                    <host>127.0.0.1</host>
+                    <port>9000</port>
+                </replica>
+            </shard>
+        </new_cluster>
+    </remote_servers>
+</yandex>
+`
+
+	env.DockerExecNoError(r, "clickhouse", "bash", "-c", fmt.Sprintf("echo -n '%s' > /etc/clickhouse-server/config.d/new-cluster.xml", xml))
+	var clusterExists string
+	for i := 0; i < 10 && clusterExists == ""; i++ {
+		r.NoError(env.ch.SelectSingleRowNoCtx(&clusterExists, "SELECT cluster FROM system.clusters WHERE cluster='new_cluster'"))
+		if clusterExists == "new_cluster" {
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+	r.Equal("new_cluster", clusterExists)
+
+	// Create test database and table
+	dbName := "test_restore_distributed_cluster"
+	tableName := "test_table"
+	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS "+dbName)
+	env.queryWithNoError(r, "CREATE TABLE "+dbName+"."+tableName+" (id UInt64, value String) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(r, "CREATE TABLE "+dbName+"."+tableName+"_dist (id UInt64, value String) ENGINE=Distributed('new_cluster',"+dbName+","+tableName+")")
+	env.queryWithNoError(r, "INSERT INTO "+dbName+"."+tableName+"_dist SELECT number, toString(number) FROM numbers(100)")
+
+	// Create backup
+	backupName := "test_restore_distributed_cluster"
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create", "-c", "/etc/clickhouse-backup/config-s3.yml", "--tables="+dbName+".*", backupName)
+
+	// Get row count before dropping
+	var rowCount uint64
+	r.NoError(env.ch.SelectSingleRowNoCtx(&rowCount, "SELECT count() FROM "+dbName+"."+tableName+"_dist"))
+	r.Equal(uint64(100), rowCount)
+
+	// Drop table and database
+	r.NoError(env.dropDatabase(dbName, false))
+
+	// remove cluster and wait configuration reload
+	env.DockerExecNoError(r, "clickhouse", "bash", "-c", "rm -rfv /etc/clickhouse-server/config.d/new-cluster.xml")
+	newClusterExists := uint64(1)
+	for i := 0; i < 10 && newClusterExists == 1; i++ {
+		r.NoError(env.ch.SelectSingleRowNoCtx(&newClusterExists, "SELECT count() FROM system.clusters WHERE cluster='new_cluster'"))
+		if newClusterExists == 0 {
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+	r.Equal(uint64(0), newClusterExists)
+
+	// Restore using CLICKHOUSE_RESTORE_DISTRIBUTED_CLUSTER
+	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-c", "RESTORE_SCHEMA_ON_CLUSTER='' CLICKHOUSE_RESTORE_DISTRIBUTED_CLUSTER={cluster} clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore "+backupName)
+
+	// Verify data was restored correctly
+	r.NoError(env.ch.SelectSingleRowNoCtx(&rowCount, "SELECT count() FROM "+dbName+"."+tableName+"_dist"))
+	r.Equal(uint64(100), rowCount)
+	var tableDDL string
+	r.NoError(env.ch.SelectSingleRowNoCtx(&tableDDL, "SHOW CREATE TABLE "+dbName+"."+tableName+"_dist"))
+	r.NotContains(tableDDL, "new_cluster")
+	r.Contains(tableDDL, "Distributed('{cluster}'")
+
+	// Clean up
+	r.NoError(env.dropDatabase(dbName, false))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupName)
+
+	env.Cleanup(t, r)
+}
+
 func TestReplicatedCopyToDetached(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)

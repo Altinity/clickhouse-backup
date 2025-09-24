@@ -972,6 +972,7 @@ var attachViewRe = regexp.MustCompile(`(?im)^(ATTACH[\s\w]+VIEW[^(]+)(\s+AS\s+.+
 var createObjRe = regexp.MustCompile(`(?is)^(CREATE [^(]+)(\(.+)`)
 var onClusterRe = regexp.MustCompile(`(?im)\s+ON\s+CLUSTER\s+`)
 var distributedRE = regexp.MustCompile(`(Distributed)\(([^,]+),([^)]+)\)`)
+var macroRE = regexp.MustCompile(`(?i){[a-z0-9-_]+}`)
 
 // CreateTable - create ClickHouse table
 func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDependencies bool, onCluster string, version int, defaultDataPath string, asAttach bool, databaseEngine string) error {
@@ -1019,11 +1020,22 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 	}
 
 	// https://github.com/Altinity/clickhouse-backup/issues/574, replace ENGINE=Distributed to new cluster name
-	if onCluster != "" && distributedRE.MatchString(query) {
+	// https://github.com/Altinity/clickhouse-backup/issues/1252, check exists
+	if distributedRE.MatchString(query) {
 		matches := distributedRE.FindAllStringSubmatch(query, -1)
-		newCluster := onCluster
 		oldCluster := strings.Trim(matches[0][2], "'\" ")
-		if newCluster != oldCluster && !strings.Contains(oldCluster, "{cluster}") {
+		newCluster := onCluster
+		var existCluster string
+		if newCluster == "" && !macroRE.MatchString(oldCluster) {
+			if err = ch.SelectSingleRowNoCtx(&existCluster, "SELECT cluster FROM system.clusters WHERE cluster=?", oldCluster); err != nil {
+				return fmt.Errorf("check system.clusters for %s return error: %v", oldCluster, err)
+			}
+			if existCluster == "" {
+				newCluster = strings.Trim(ch.Config.RestoreDistributedCluster, "'\" ")
+			}
+		}
+		if newCluster != "" && existCluster == "" && newCluster != oldCluster && !macroRE.MatchString(oldCluster) {
+			newCluster = "'" + strings.Trim(ch.Config.RestoreDistributedCluster, "'\" ") + "'"
 			log.Warn().Msgf("will replace cluster ENGINE=Distributed %s -> %s", matches[0][2], newCluster)
 			query = distributedRE.ReplaceAllString(query, fmt.Sprintf("${1}(%s,${3})", newCluster))
 		}

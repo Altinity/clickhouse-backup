@@ -215,6 +215,7 @@ clickhouse:
   embedded_backup_disk: ""  # CLICKHOUSE_EMBEDDED_BACKUP_DISK - disk from system.disks which will use when `use_embedded_backup_restore: true` 
   backup_mutations: true # CLICKHOUSE_BACKUP_MUTATIONS, allow backup mutations from system.mutations WHERE is_done=0 and apply it during restore
   restore_as_attach: false # CLICKHOUSE_RESTORE_AS_ATTACH, allow restore tables which have inconsistent data parts structure and mutations in progress
+  restore_distributed_cluster: "" # CLICKHOUSE_RESTORE_DISTRIBUTED_CLUSTER, cluster name (can use macros) which will use during restore `engine=Distributed` tables, when cluster defined in backup table definition not exists in `system.clusters`
   check_parts_columns: true # CLICKHOUSE_CHECK_PARTS_COLUMNS, check data types from system.parts_columns during create backup to guarantee mutation is complete
   max_connections: 0 # CLICKHOUSE_MAX_CONNECTIONS, how many parallel connections could be opened during operations
 azblob:

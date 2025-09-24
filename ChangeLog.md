@@ -1,10 +1,14 @@
+# v2.6.38
+BUG FIXES
+- check `system.clusters` during restore `engine=Distributed` and is not exists and if not macros use `CLICKHOUSE_RESTORE_DISTRIBUTED_CLUSTER` config parameter as cluster value, fix [1252](https://github.com/Altinity/clickhouse-backup/issues/1252)
+
 # v2.6.37
 BUG FIXES
 - fix slowdown and corner cases, for incremental backup creation, affected 2.6.30+, fix https://github.com/Altinity/clickhouse-backup/issues/1249
 
 # v2.6.36
 IMPROVEMENTS
-- add `GCS_SA_EMAIL` option to support service account authorization, fix [1246](https://github.com/Altinity/clickhouse-backup/pull/1246) thanks @kamushadenes
+- add `GCS_SA_EMAIL` option to support service account authorization, fix [1173](https://github.com/Altinity/clickhouse-backup/issues/1173) thanks @kamushadenes
 - improve `--hardlink-exists-files` behavior, will look to exists local backups for the same part to avoid download unnecessary, fix [1244](https://github.com/Altinity/clickhouse-backup/issues/1244)
 - add `S3_CHUNK_SIZE` option to allow more flexible workload for S3-compatible remote storage, fix [1248](https://github.com/Altinity/clickhouse-backup/pull/1248) thanks @KimDoKy
 
