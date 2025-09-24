@@ -62,7 +62,6 @@ jobs:
           parallel: true
           format: golang
           flag-name: unittest-${{ matrix.clickhouse }}
-          coverage-reporter-version: v0.6.15
 
       - name: Extract GCS credentials
         id: secrets
@@ -185,7 +184,6 @@ jobs:
           parallel: true
           format: golang
           flag-name: testflows-${{ matrix.clickhouse }}
-          coverage-reporter-version: v0.6.15
       # todo possible failures  https://github.com/actions/upload-artifact/issues/270
       - name: Upload testflows logs
         uses: actions/upload-artifact@v4
@@ -353,7 +351,6 @@ jobs:
           parallel: true
           format: golang
           flag-name: integration-${{ matrix.clickhouse }}
-          coverage-reporter-version: v0.6.15
   coverage:
     needs:
       - test
@@ -366,7 +363,6 @@ jobs:
           with:
             base-path: ./
             parallel-finished: true
-            coverage-reporter-version: v0.6.15
   docker:
     needs:
       - test
