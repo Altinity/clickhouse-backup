@@ -2867,6 +2867,9 @@ func TestRestoreAsAttach(t *testing.T) {
 }
 
 func TestRestoreDistributedCluster(t *testing.T) {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.17") < 0 {
+		t.Skipf("system.clusters not cleanup properly in version %s", os.Getenv("CLICKHOUSE_VERSION"))
+	}
 	env, r := NewTestEnvironment(t)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
 	xml := `
@@ -2919,7 +2922,7 @@ func TestRestoreDistributedCluster(t *testing.T) {
 	// remove cluster and wait configuration reload
 	env.DockerExecNoError(r, "clickhouse", "bash", "-c", "rm -rfv /etc/clickhouse-server/config.d/new-cluster.xml")
 	newClusterExists := uint64(1)
-	for i := 0; i < 10 && newClusterExists == 1; i++ {
+	for i := 0; i < 60 && newClusterExists == 1; i++ {
 		r.NoError(env.ch.SelectSingleRowNoCtx(&newClusterExists, "SELECT count() FROM system.clusters WHERE cluster='new_cluster'"))
 		if newClusterExists == 0 {
 			break
