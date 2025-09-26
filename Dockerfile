@@ -19,10 +19,10 @@ RUN rm -fv /etc/apt/sources.list.d/clickhouse.list && \
 # todo ugly fix for ugly fix, musl.cc is not available from github runner \
     DISTRIB_RELEASE=$(cat /etc/lsb-release | grep DISTRIB_RELEASE | cut -d "=" -f 2) && \
     echo ${DISTRIB_RELEASE} && \
-    wget -nv -O /tmp/megacmd.deb https://mega.nz/linux/repo/xUbuntu_${DISTRIB_RELEASE}/amd64/megacmd-xUbuntu_${DISTRIB_RELEASE}_amd64.deb && \
-    apt install -y "/tmp/megacmd.deb" && \
-    mega-get https://mega.nz/file/zQwVHSYb#8WqqMUCTbbEVKDW55NPrRnM2-4SC-numNCLDKoTWtwQ /root/ && \
-#    wget -nv -P /root/ https://musl.cc/aarch64-linux-musl-cross.tgz && \
+#    wget -nv -O /tmp/megacmd.deb https://mega.nz/linux/repo/xUbuntu_${DISTRIB_RELEASE}/amd64/megacmd-xUbuntu_${DISTRIB_RELEASE}_amd64.deb && \
+#    apt install -y "/tmp/megacmd.deb" && \
+#    mega-get https://mega.nz/file/zQwVHSYb#8WqqMUCTbbEVKDW55NPrRnM2-4SC-numNCLDKoTWtwQ /root/ && \
+    wget -nv -P /root/ https://musl.cc/aarch64-linux-musl-cross.tgz && \
     tar -xvf /root/aarch64-linux-musl-cross.tgz -C /root/ && \
     mkdir -p /root/go/
 
