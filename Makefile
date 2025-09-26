@@ -64,9 +64,10 @@ build/linux/amd64/$(NAME)-fips build/darwin/amd64/$(NAME)-fips:
 # @TODO remove ugly workaround, https://www.perplexity.ai/search/2ead4c04-060a-4d78-a75f-f26835238438
 # @todo ugly fix for ugly fix, musl.cc is not available from github runner
 #	bash -xce 'if [[ ! -f ~/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc ]]; then wget -nv -P ~ https://musl.cc/aarch64-linux-musl-cross.tgz; tar -xvf ~/aarch64-linux-musl-cross.tgz -C ~; fi' && \
+#   bash -xce 'if [[ ! -f ~/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc ]]; then rm -rf ~/aarch64-linux-musl-cross; wget -nv -O /tmp/megacmd.deb https://mega.nz/linux/repo/xUbuntu_$(shell bash -c 'cat /etc/lsb-release | grep DISTRIB_RELEASE | cut -d "=" -f 2')/amd64/megacmd-xUbuntu_$(shell bash -c 'cat /etc/lsb-release | grep DISTRIB_RELEASE | cut -d "=" -f 2')_amd64.deb; if command -v sudo >/dev/null 2>&1; then sudo apt install -y /tmp/megacmd.deb; else apt install -y /tmp/megacmd.deb; fi; mega-get https://mega.nz/file/zQwVHSYb#8WqqMUCTbbEVKDW55NPrRnM2-4SC-numNCLDKoTWtwQ ~/; tar -xvf ~/aarch64-linux-musl-cross.tgz -C ~; fi' && \
 
 build/linux/arm64/$(NAME)-fips build/darwin/arm64/$(NAME)-fips:
-	bash -xce 'if [[ ! -f ~/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc ]]; then rm -rf ~/aarch64-linux-musl-cross; wget -nv -O /tmp/megacmd.deb https://mega.nz/linux/repo/xUbuntu_$(shell bash -c 'cat /etc/lsb-release | grep DISTRIB_RELEASE | cut -d "=" -f 2')/amd64/megacmd-xUbuntu_$(shell bash -c 'cat /etc/lsb-release | grep DISTRIB_RELEASE | cut -d "=" -f 2')_amd64.deb; if command -v sudo >/dev/null 2>&1; then sudo apt install -y /tmp/megacmd.deb; else apt install -y /tmp/megacmd.deb; fi; mega-get https://mega.nz/file/zQwVHSYb#8WqqMUCTbbEVKDW55NPrRnM2-4SC-numNCLDKoTWtwQ ~/; tar -xvf ~/aarch64-linux-musl-cross.tgz -C ~; fi' && \
+	bash -xce 'if [[ ! -f ~/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc ]]; then wget -nv -P ~ https://musl.cc/aarch64-linux-musl-cross.tgz; tar -xvf ~/aarch64-linux-musl-cross.tgz -C ~; fi' && \
 	CC=~/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc GOEXPERIMENT=boringcrypto CGO_ENABLED=1 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO_BUILD_STATIC_FIPS) -o $@ ./cmd/$(NAME) && \
 	go tool nm $@ > /tmp/$(NAME)-fips-tags.txt && \
 	grep '_Cfunc__goboringcrypto_' /tmp/$(NAME)-fips-tags.txt 1> /dev/null && \
