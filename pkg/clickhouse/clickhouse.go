@@ -1020,7 +1020,7 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 	}
 
 	// https://github.com/Altinity/clickhouse-backup/issues/574, replace ENGINE=Distributed to new cluster name
-	// https://github.com/Altinity/clickhouse-backup/issues/1252, check exists
+	// https://github.com/Altinity/clickhouse-backup/issues/1252, if cluster don't exist, replace it to RESTORE_SCHEMA_ON_CLUSTER or CLICKHOUSE_RESTORE_DISTRIBUTED_CLUSTER
 	if distributedRE.MatchString(query) {
 		matches := distributedRE.FindAllStringSubmatch(query, -1)
 		oldCluster := strings.Trim(matches[0][2], "'\" ")
@@ -1035,7 +1035,7 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 			}
 		}
 		if newCluster != "" && existCluster == "" && newCluster != oldCluster && !macroRE.MatchString(oldCluster) {
-			newCluster = "'" + strings.Trim(ch.Config.RestoreDistributedCluster, "'\" ") + "'"
+			newCluster = "'" + strings.Trim(newCluster, "'\" ") + "'"
 			log.Warn().Msgf("will replace cluster ENGINE=Distributed %s -> %s", matches[0][2], newCluster)
 			query = distributedRE.ReplaceAllString(query, fmt.Sprintf("${1}(%s,${3})", newCluster))
 		}

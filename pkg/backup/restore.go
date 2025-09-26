@@ -104,12 +104,12 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 		log.Warn().Msgf("%v", err)
 		return ErrUnknownClickhouseDataPath
 	}
-	if b.cfg.General.RestoreSchemaOnCluster != "" {
-		if b.cfg.General.RestoreSchemaOnCluster, err = b.ch.ApplyMacros(ctx, b.cfg.General.RestoreSchemaOnCluster); err != nil {
-			log.Warn().Msgf("%v", err)
-			return err
-		}
-	}
+	//if b.cfg.General.RestoreSchemaOnCluster != "" && version < 22000000 {
+	//	if b.cfg.General.RestoreSchemaOnCluster, err = b.ch.ApplyMacros(ctx, b.cfg.General.RestoreSchemaOnCluster); err != nil {
+	//		log.Warn().Msgf("%v", err)
+	//		return err
+	//	}
+	//}
 	b.adjustResumeFlag(resume)
 	backupMetafileLocalPaths := []string{path.Join(b.DefaultDataPath, "backup", backupName, "metadata.json")}
 	var backupMetadataBody []byte
