@@ -1,3 +1,7 @@
+# v2.6.39
+BUG FIXES
+- final improvements for check `system.clusters` during restore `engine=Distributed` and is not exists and if not macros use `RESTORE_SCHEMA_ON_CLUSTER` or `CLICKHOUSE_RESTORE_DISTRIBUTED_CLUSTER` config parameter as cluster value, fix [1252](https://github.com/Altinity/clickhouse-backup/issues/1252)
+
 # v2.6.38
 BUG FIXES
 - check `system.clusters` during restore `engine=Distributed` and is not exists and if not macros use `CLICKHOUSE_RESTORE_DISTRIBUTED_CLUSTER` config parameter as cluster value, fix [1252](https://github.com/Altinity/clickhouse-backup/issues/1252)

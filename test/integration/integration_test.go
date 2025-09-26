@@ -2911,37 +2911,46 @@ func TestRestoreDistributedCluster(t *testing.T) {
 	backupName := "test_restore_distributed_cluster"
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "create", "-c", "/etc/clickhouse-backup/config-s3.yml", "--tables="+dbName+".*", backupName)
 
-	// Get row count before dropping
-	var rowCount uint64
-	r.NoError(env.ch.SelectSingleRowNoCtx(&rowCount, "SELECT count() FROM "+dbName+"."+tableName+"_dist"))
-	r.Equal(uint64(100), rowCount)
-
-	// Drop table and database
-	r.NoError(env.dropDatabase(dbName, false))
-
-	// remove cluster and wait configuration reload
-	env.DockerExecNoError(r, "clickhouse", "bash", "-c", "rm -rfv /etc/clickhouse-server/config.d/new-cluster.xml")
-	env.queryWithNoError(r, "SYSTEM RELOAD CONFIG")
-	newClusterExists := uint64(1)
-	for i := 0; i < 60 && newClusterExists == 1; i++ {
-		r.NoError(env.ch.SelectSingleRowNoCtx(&newClusterExists, "SELECT count() FROM system.clusters WHERE cluster='new_cluster'"))
-		if newClusterExists == 0 {
-			break
-		}
-		time.Sleep(1 * time.Second)
+	testCases := []struct {
+		RestoreDistributedCluster string
+		RestoreSchemaOnCluster    string
+	}{
+		{"{cluster}", ""},
+		{"", "{cluster}"},
 	}
-	r.Equal(uint64(0), newClusterExists)
+	for _, tc := range testCases {
+		// Get row count before dropping
+		var rowCount uint64
+		r.NoError(env.ch.SelectSingleRowNoCtx(&rowCount, "SELECT count() FROM "+dbName+"."+tableName+"_dist"))
+		r.Equal(uint64(100), rowCount)
 
-	// Restore using CLICKHOUSE_RESTORE_DISTRIBUTED_CLUSTER
-	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-c", "RESTORE_SCHEMA_ON_CLUSTER='' CLICKHOUSE_RESTORE_DISTRIBUTED_CLUSTER={cluster} clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore "+backupName)
+		// Drop table and database
+		r.NoError(env.dropDatabase(dbName, false))
 
-	// Verify data was restored correctly
-	r.NoError(env.ch.SelectSingleRowNoCtx(&rowCount, "SELECT count() FROM "+dbName+"."+tableName+"_dist"))
-	r.Equal(uint64(100), rowCount)
-	var tableDDL string
-	r.NoError(env.ch.SelectSingleRowNoCtx(&tableDDL, "SHOW CREATE TABLE "+dbName+"."+tableName+"_dist"))
-	r.NotContains(tableDDL, "new_cluster")
-	r.Contains(tableDDL, "Distributed('{cluster}'")
+		// remove cluster and wait configuration reload
+		env.DockerExecNoError(r, "clickhouse", "bash", "-c", "rm -rfv /etc/clickhouse-server/config.d/new-cluster.xml")
+		env.queryWithNoError(r, "SYSTEM RELOAD CONFIG")
+		newClusterExists := uint64(1)
+		for i := 0; i < 60 && newClusterExists == 1; i++ {
+			r.NoError(env.ch.SelectSingleRowNoCtx(&newClusterExists, "SELECT count() FROM system.clusters WHERE cluster='new_cluster'"))
+			if newClusterExists == 0 {
+				break
+			}
+			time.Sleep(1 * time.Second)
+		}
+		r.Equal(uint64(0), newClusterExists)
+
+		// Restore using `CLICKHOUSE_RESTORE_DISTRIBUTED_CLUSTER` and `RESTORE_SCHEMA_ON_CLUSTER`
+		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-c", fmt.Sprintf("RESTORE_SCHEMA_ON_CLUSTER='%s' CLICKHOUSE_RESTORE_DISTRIBUTED_CLUSTER='%s' clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore %s", tc.RestoreSchemaOnCluster, tc.RestoreDistributedCluster, backupName))
+
+		// Verify data was restored correctly
+		r.NoError(env.ch.SelectSingleRowNoCtx(&rowCount, "SELECT count() FROM "+dbName+"."+tableName+"_dist"))
+		r.Equal(uint64(100), rowCount)
+		var tableDDL string
+		r.NoError(env.ch.SelectSingleRowNoCtx(&tableDDL, "SHOW CREATE TABLE "+dbName+"."+tableName+"_dist"))
+		r.NotContains(tableDDL, "new_cluster")
+		r.Contains(tableDDL, "Distributed('{cluster}'")
+	}
 
 	// Clean up
 	r.NoError(env.dropDatabase(dbName, false))
