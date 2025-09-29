@@ -41,7 +41,7 @@ require (
 	github.com/rs/zerolog v1.34.0
 	github.com/shirou/gopsutil/v3 v3.24.5
 	github.com/stretchr/testify v1.11.1
-	github.com/tencentyun/cos-go-sdk-v5 v0.7.69
+	github.com/tencentyun/cos-go-sdk-v5 v0.7.70
 	github.com/urfave/cli v1.22.17
 	github.com/xyproto/gionice v1.3.0
 	github.com/yargevad/filepathx v1.0.0
