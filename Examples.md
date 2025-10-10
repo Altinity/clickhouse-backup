@@ -241,7 +241,7 @@ spec:
               args: [ "server" ]
               env:
                 - name: LOG_LEVEL
-                  value: "debug"
+                  value: "info"
                 - name: ALLOW_EMPTY_BACKUPS
                   value: "true"
                 - name: API_LISTEN
@@ -273,8 +273,6 @@ spec:
                   value: "true"
                 # remove it for production S3
                 - name: S3_DISABLE_SSL
-                  value: "true"
-                - name: S3_DEBUG
                   value: "true"
                 # require to avoid double scraping clickhouse and clickhouse-backup containers
               ports:
