@@ -274,6 +274,8 @@ spec:
                 # remove it for production S3
                 - name: S3_DISABLE_SSL
                   value: "true"
+                - name: S3_DEBUG
+                  value: "false"
                 # require to avoid double scraping clickhouse and clickhouse-backup containers
               ports:
                 - name: backup-rest
