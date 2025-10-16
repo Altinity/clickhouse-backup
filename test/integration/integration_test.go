@@ -4253,11 +4253,9 @@ func generateTestDataForDifferentServerVersion(remoteStorageType string, offset,
 			Name:           "mv_refreshable_dst_table",
 			Schema:         "(id UInt64) Engine=MergeTree ORDER BY id",
 			SkipInsert:     true,
-			//during second restore ATTACH PART can happen for non-empty refreshed table
+			//table shall be empty cause restore mv_refreshable with EMPTY option
 			Rows: func() []map[string]interface{} {
-				return []map[string]interface{}{
-					{"id": uint64(0)},
-				}
+				return []map[string]interface{}{}
 			}(),
 			Fields:  []string{"id"},
 			OrderBy: "id",
@@ -4269,10 +4267,9 @@ func generateTestDataForDifferentServerVersion(remoteStorageType string, offset,
 			Name:               "mv_refreshable",
 			Schema:             fmt.Sprintf("REFRESH EVERY 24 HOUR TO `%s`.`mv_refreshable_dst_table_{test}` EMPTY AS SELECT max(id) AS id FROM `%s`.`mv_src_table_{test}`", dbNameAtomic, dbNameAtomic),
 			SkipInsert:         true,
+			//table shall be empty cause restore mv_refreshable with EMPTY option
 			Rows: func() []map[string]interface{} {
-				return []map[string]interface{}{
-					{"id": uint64(0)},
-				}
+				return []map[string]interface{}{}
 			}(),
 			Fields:  []string{"id"},
 			OrderBy: "id",
