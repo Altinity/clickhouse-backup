@@ -1054,7 +1054,8 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 	}
 	// MATERIALIZED VIEW ... REFRESH shall be restored as EMPTY to avoid data inconsistency
 	// https://github.com/Altinity/clickhouse-backup/issues/1237
-	if strings.HasPrefix(query, "CREATE MATERIALIZED VIEW") && !strings.Contains(query, " EMPTY ") {
+	// https://github.com/Altinity/clickhouse-backup/issues/1271
+	if (strings.HasPrefix(query, "CREATE MATERIALIZED VIEW") || strings.HasPrefix(query, "ATTACH MATERIALIZED VIEW")) && strings.Contains(query, " REFRESH ") && !strings.Contains(query, " EMPTY ") {
 		query = strings.Replace(query, "DEFINER", "EMPTY DEFINER", 1)
 	}
 	// CREATE
