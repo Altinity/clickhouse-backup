@@ -2077,14 +2077,38 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 					if err != nil {
 						return err
 					}
-					if objMeta.StorageObjectCount < 1 && objMeta.Version < object_disk.VersionRelativePath {
+					if objMeta.StorageObjectCount < 1 && (objMeta.Version < object_disk.VersionRelativePath || objMeta.Version != object_disk.VersionFullObjectKey) {
 						return fmt.Errorf("%s: invalid object_disk.Metadata: %#v", fPath, objMeta)
 					}
+					needObjMetaRewrite := false
 					//to allow deleting Object Disk Data during DROP TABLE/DATABASE ...SYNC
 					if objMeta.RefCount > 0 || objMeta.ReadOnly {
 						objMeta.RefCount = 0
 						objMeta.ReadOnly = false
 						logger.Debug().Msgf("%s %#v set RefCount=0 and ReadOnly=0", fPath, objMeta.StorageObjects)
+						needObjMetaRewrite = true
+					}
+					// 25.10+ contains full path with old disk, need rewrite it with destination disk path, https://github.com/Altinity/clickhouse-backup/issues/1290
+					for storageObjIdx, storageObject := range objMeta.StorageObjects {
+						if storageObject.ObjectSize == 0 || !storageObject.IsAbsolute {
+							continue
+						}
+						dstConnection, ok := object_disk.DisksConnections.Load(dstDiskName)
+						if !ok {
+							return errors.WithStack(fmt.Errorf("can't find %s in object_disk.DiskConnections", diskName))
+						}
+						if strings.HasPrefix(storageObject.ObjectPath, dstConnection.GetRemotePath()) {
+							continue
+						}
+						objPathParts := strings.Split(storageObject.ObjectPath, "/")
+						// 25.10, full path for azblob we will write to container, so path will not contain /, https://github.com/Altinity/clickhouse-backup/issues/1290
+						if len(objPathParts) >= 2 {
+							objMeta.StorageObjects[storageObjIdx].ObjectPath = dstConnection.GetRemotePath() + "/" + strings.Join(objPathParts[len(objPathParts)-2:], "/")
+							needObjMetaRewrite = true
+						}
+					}
+
+					if needObjMetaRewrite {
 						if writeMetaErr := object_disk.WriteMetadataToFile(objMeta, fPath); writeMetaErr != nil {
 							return fmt.Errorf("%s: object_disk.WriteMetadataToFile return error: %v", fPath, writeMetaErr)
 						}
@@ -2099,7 +2123,15 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 							if objectDiskPathErr != nil {
 								return objectDiskPathErr
 							}
-							srcKey = path.Join(objectDiskPath, srcBackupName, srcDiskName, storageObject.ObjectRelativePath)
+							// 25.10+ contains full path, need make it relative again, for properly copy, https://github.com/Altinity/clickhouse-backup/issues/1290
+							if storageObject.IsAbsolute {
+								objPathParts := strings.Split(storageObject.ObjectPath, "/")
+								if len(objPathParts) >= 2 {
+									storageObject.ObjectPath = strings.Join(objPathParts[len(objPathParts)-2:], "/")
+								}
+							}
+
+							srcKey = path.Join(objectDiskPath, srcBackupName, srcDiskName, storageObject.ObjectPath)
 							srcBucket = ""
 							if b.cfg.General.RemoteStorage == "s3" {
 								srcBucket = b.cfg.S3.Bucket
@@ -2114,7 +2146,7 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 								retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 								copyObjectErr = retry.RunCtx(downloadCtx, func(ctx context.Context) error {
 									var retryErr error
-									copiedSize, retryErr = object_disk.CopyObject(downloadCtx, dstDiskName, storageObject.ObjectSize, srcBucket, srcKey, storageObject.ObjectRelativePath)
+									copiedSize, retryErr = object_disk.CopyObject(downloadCtx, dstDiskName, storageObject.ObjectSize, srcBucket, srcKey, storageObject.ObjectPath)
 									return retryErr
 								})
 								if copyObjectErr != nil {
@@ -2123,7 +2155,7 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 							} else {
 								copyObjectErr = nil
 								if srcBucket != "" && !isCopyFailed.Load() {
-									copiedSize, copyObjectErr = object_disk.CopyObject(downloadCtx, dstDiskName, storageObject.ObjectSize, srcBucket, srcKey, storageObject.ObjectRelativePath)
+									copiedSize, copyObjectErr = object_disk.CopyObject(downloadCtx, dstDiskName, storageObject.ObjectSize, srcBucket, srcKey, storageObject.ObjectPath)
 									if copyObjectErr != nil {
 										isCopyFailed.Store(true)
 										log.Warn().Msgf("object_disk.CopyObject `%s`.`%s` error: %v, will try streaming via local memory (possible high network traffic)", backupTable.Database, backupTable.Table, copyObjectErr)
@@ -2137,7 +2169,7 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 										return fmt.Errorf("unknown object_disk.DisksConnections %s", dstDiskName)
 									}
 									dstStorage := dstConnection.GetRemoteStorage()
-									dstKey := path.Join(dstConnection.GetRemoteObjectDiskPath(), storageObject.ObjectRelativePath)
+									dstKey := path.Join(dstConnection.GetRemoteObjectDiskPath(), storageObject.ObjectPath)
 									retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 									copyObjectErr = retry.RunCtx(downloadCtx, func(ctx context.Context) error {
 										return object_disk.CopyObjectStreaming(downloadCtx, srcStorage, dstStorage, srcKey, dstKey)

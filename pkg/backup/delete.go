@@ -235,7 +235,7 @@ func (b *Backuper) cleanLocalEmbedded(ctx context.Context, backup LocalBackup, d
 						return err
 					}
 					for _, o := range meta.StorageObjects {
-						err = object_disk.DeleteFile(ctx, b.cfg.ClickHouse.EmbeddedBackupDisk, o.ObjectRelativePath)
+						err = object_disk.DeleteFile(ctx, b.cfg.ClickHouse.EmbeddedBackupDisk, o.ObjectPath)
 						if err != nil {
 							return err
 						}
@@ -378,7 +378,7 @@ func (b *Backuper) cleanRemoteEmbedded(ctx context.Context, backup storage.Backu
 				return err
 			}
 			for _, o := range meta.StorageObjects {
-				if err = object_disk.DeleteFile(ctx, b.cfg.ClickHouse.EmbeddedBackupDisk, o.ObjectRelativePath); err != nil {
+				if err = object_disk.DeleteFile(ctx, b.cfg.ClickHouse.EmbeddedBackupDisk, o.ObjectPath); err != nil {
 					return err
 				}
 			}

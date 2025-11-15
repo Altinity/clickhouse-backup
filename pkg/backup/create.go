@@ -1034,16 +1034,23 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 			}
 		}
 		uploadObjectDiskPartsWorkingGroup.Go(func() error {
-			objPartFileMeta, readMetadataErr := object_disk.ReadMetadataFromFile(fPath)
+			objMeta, readMetadataErr := object_disk.ReadMetadataFromFile(fPath)
 			if readMetadataErr != nil {
 				return readMetadataErr
 			}
-			for _, storageObject := range objPartFileMeta.StorageObjects {
+			for _, storageObject := range objMeta.StorageObjects {
 				if storageObject.ObjectSize == 0 {
 					continue
 				}
 				var copyObjectErr error
-				srcKey := path.Join(srcDiskConnection.GetRemotePath(), storageObject.ObjectRelativePath)
+
+				// 25.10+ contains full path need make it relative, https://github.com/Altinity/clickhouse-backup/issues/1290
+				if storageObject.IsAbsolute && srcDiskConnection.GetRemotePath() != "" && srcDiskConnection.GetRemotePath() != "/" && strings.Contains(storageObject.ObjectPath, srcDiskConnection.GetRemotePath()) {
+					storageObject.ObjectPath = strings.TrimPrefix(storageObject.ObjectPath, srcDiskConnection.GetRemotePath())
+				}
+
+				srcKey := path.Join(srcDiskConnection.GetRemotePath(), storageObject.ObjectPath)
+
 				if b.resume {
 					isAlreadyProcesses := false
 					isAlreadyProcesses, objSize = b.resumableState.IsAlreadyProcessed(path.Join(srcBucket, srcKey))
@@ -1051,7 +1058,7 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 						continue
 					}
 				}
-				dstKey := path.Join(backupName, disk.Name, storageObject.ObjectRelativePath)
+				dstKey := path.Join(backupName, disk.Name, storageObject.ObjectPath)
 				if !b.cfg.General.AllowObjectDiskStreaming {
 					retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 					copyObjectErr = retry.RunCtx(uploadCtx, func(ctx context.Context) error {
@@ -1087,10 +1094,10 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 				}
 				realSize += objSize
 			}
-			if realSize > objPartFileMeta.TotalSize {
+			if realSize > objMeta.TotalSize {
 				atomic.AddInt64(&size, realSize)
 			} else {
-				atomic.AddInt64(&size, objPartFileMeta.TotalSize)
+				atomic.AddInt64(&size, objMeta.TotalSize)
 			}
 			return nil
 		})
