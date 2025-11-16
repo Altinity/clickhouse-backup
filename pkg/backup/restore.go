@@ -2123,7 +2123,7 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 							if objectDiskPathErr != nil {
 								return objectDiskPathErr
 							}
-							// 25.10+ contains full path, need make it relative again, for properly copy, https://github.com/Altinity/clickhouse-backup/issues/1290
+							// 25.10+ contains full path, need make it relative again after rewrite, for properly copy, https://github.com/Altinity/clickhouse-backup/issues/1290
 							if storageObject.IsAbsolute {
 								objPathParts := strings.Split(storageObject.ObjectPath, "/")
 								if len(objPathParts) >= 2 {

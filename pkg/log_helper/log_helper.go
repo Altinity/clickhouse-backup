@@ -176,5 +176,5 @@ func SetupLogger(out io.Writer) zerolog.Logger {
 	}
 	// Use custom writer
 	writer := NewCustomWriter(out)
-	return zerolog.New(writer).With().Timestamp().Caller().Logger()
+	return zerolog.New(zerolog.SyncWriter(writer)).With().Timestamp().Caller().Logger()
 }

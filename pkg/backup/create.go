@@ -1044,11 +1044,6 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 				}
 				var copyObjectErr error
 
-				// 25.10+ contains full path need make it relative, https://github.com/Altinity/clickhouse-backup/issues/1290
-				if storageObject.IsAbsolute && srcDiskConnection.GetRemotePath() != "" && srcDiskConnection.GetRemotePath() != "/" && strings.Contains(storageObject.ObjectPath, srcDiskConnection.GetRemotePath()) {
-					storageObject.ObjectPath = strings.TrimPrefix(storageObject.ObjectPath, srcDiskConnection.GetRemotePath())
-				}
-
 				srcKey := path.Join(srcDiskConnection.GetRemotePath(), storageObject.ObjectPath)
 
 				if b.resume {

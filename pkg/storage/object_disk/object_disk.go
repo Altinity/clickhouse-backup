@@ -130,6 +130,14 @@ func (m *Metadata) readFromFile(file io.Reader) error {
 
 		scanner.Scan()
 		storageObject.ObjectPath = scanner.Text()
+		// 25.10+ contains full path, need make it relative again, for properly backup/restore/delete, https://github.com/Altinity/clickhouse-backup/issues/1290
+		if storageObject.IsAbsolute {
+			objPathParts := strings.Split(storageObject.ObjectPath, "/")
+			if len(objPathParts) >= 2 {
+				storageObject.ObjectPath = strings.Join(objPathParts[len(objPathParts)-2:], "/")
+			}
+		}
+
 		m.StorageObjects = append(m.StorageObjects, storageObject)
 	}
 
