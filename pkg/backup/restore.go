@@ -1501,24 +1501,24 @@ func (b *Backuper) fixEmbeddedMetadataLocal(ctx context.Context, backupName stri
 		}
 		sqlMetadata, err := object_disk.ReadMetadataFromFile(filePath)
 		if err != nil {
-			return err
+			return errors.WithStack(err)
 		}
 		sqlBytes, err := object_disk.ReadFileContent(ctx, b.ch, b.cfg, b.cfg.ClickHouse.EmbeddedBackupDisk, filePath)
 		if err != nil {
-			return err
+			return errors.WithStack(err)
 		}
 		sqlQuery, sqlMetadataChanged, fixSqlErr := b.fixEmbeddedMetadataSQLQuery(ctx, sqlBytes, filePath, chVersion)
 		if fixSqlErr != nil {
-			return fixSqlErr
+			return errors.WithStack(fixSqlErr)
 		}
 		if sqlMetadataChanged {
 			if err = object_disk.WriteFileContent(ctx, b.ch, b.cfg, b.cfg.ClickHouse.EmbeddedBackupDisk, filePath, []byte(sqlQuery)); err != nil {
-				return err
+				return errors.WithStack(err)
 			}
 			sqlMetadata.TotalSize = int64(len(sqlQuery))
 			sqlMetadata.StorageObjects[0].ObjectSize = sqlMetadata.TotalSize
 			if err = object_disk.WriteMetadataToFile(sqlMetadata, filePath); err != nil {
-				return err
+				return errors.WithStack(err)
 			}
 		}
 		return nil
