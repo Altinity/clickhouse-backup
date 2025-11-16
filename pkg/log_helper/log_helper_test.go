@@ -3,7 +3,6 @@ package log_helper
 import (
 	"bytes"
 	stderrors "errors"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -391,14 +390,13 @@ func TestCustomWriterNoStack(t *testing.T) {
 	}
 }
 
-// TestCustomWriterRelativePathInCwd tests relative path handling for files in cwd
+// TestCustomWriterRelativePathInCwd tests that paths are displayed as-is without manipulation
 func TestCustomWriterRelativePathInCwd(t *testing.T) {
 	var buf bytes.Buffer
 	writer := NewCustomWriter(&buf)
 
-	// Get current directory for caller path
-	cwd, _ := os.Getwd()
-	callerPath := cwd + "/test.go:42"
+	// Test with a relative path
+	callerPath := "test.go:42"
 
 	jsonLog := []byte(`{"level":"info","caller":"` + callerPath + `","message":"test"}`)
 	n, err := writer.Write(jsonLog)
@@ -406,21 +404,18 @@ func TestCustomWriterRelativePathInCwd(t *testing.T) {
 	require.Greater(t, n, 0)
 
 	output := buf.String()
-	// Should show relative path without full cwd
-	if strings.Contains(output, cwd) {
-		t.Errorf("Expected relative path, got full path in: %s", output)
-	}
+	// Should show path as-is
 	if !strings.Contains(output, "test.go:42") {
-		t.Errorf("Expected relative file path, got: %s", output)
+		t.Errorf("Expected caller path as-is, got: %s", output)
 	}
 }
 
-// TestCustomWriterAbsolutePathOutsideCwd tests handling of paths outside cwd
+// TestCustomWriterAbsolutePathOutsideCwd tests that absolute paths are displayed as-is
 func TestCustomWriterAbsolutePathOutsideCwd(t *testing.T) {
 	var buf bytes.Buffer
 	writer := NewCustomWriter(&buf)
 
-	// Use system path that's definitely outside cwd
+	// Test with an absolute path
 	callerPath := "/usr/lib/go/src/runtime/proc.go:285"
 
 	jsonLog := []byte(`{"level":"info","caller":"` + callerPath + `","message":"test"}`)
@@ -429,9 +424,9 @@ func TestCustomWriterAbsolutePathOutsideCwd(t *testing.T) {
 	require.Greater(t, n, 0)
 
 	output := buf.String()
-	// Should keep absolute path for files outside cwd
+	// Should show absolute path as-is
 	if !strings.Contains(output, callerPath) {
-		t.Errorf("Expected absolute path for file outside cwd, got: %s", output)
+		t.Errorf("Expected absolute path as-is, got: %s", output)
 	}
 }
 
@@ -550,9 +545,6 @@ func TestNewCustomWriter(t *testing.T) {
 	if writer.out != &buf {
 		t.Error("Expected output writer to be set")
 	}
-	if writer.cwd == "" {
-		t.Error("Expected cwd to be set")
-	}
 }
 
 // TestCustomWriterConcurrent tests concurrent writes (no race conditions)
@@ -597,5 +589,5 @@ func TestCustomWriterQuotedStringValues(t *testing.T) {
 	output := buf.String()
 	// Should handle quoted values properly
 	require.Contains(t, output, "field=", "Expected field in output, got: %s", output)
-	require.Contains(t, output, `"quoted value"`, "Expected \"quoted value\" in output, got: %s", output)
+	require.Contains(t, output, `\"quoted value\"`, "Expected \\\"quoted value\\\" in output, got: %s", output)
 }

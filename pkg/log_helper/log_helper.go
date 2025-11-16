@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -33,7 +31,6 @@ func CustomStackMarshaler(err error) interface{} {
 	}
 
 	var lines []string
-	cwd, _ := os.Getwd()
 
 	for _, frame := range st {
 		// Format: package.function() on one line, file.go:line on next with tab
@@ -50,23 +47,8 @@ func CustomStackMarshaler(err error) interface{} {
 			funcName := parts[0]
 			fileLine := parts[1]
 
-			// Extract file path from file:line
-			colonIdx := strings.LastIndex(fileLine, ":")
-			if colonIdx != -1 {
-				filePath := fileLine[:colonIdx]
-				lineNum := fileLine[colonIdx:]
-
-				// Make path relative to cwd if it's a local file
-				if strings.HasPrefix(filePath, cwd) {
-					relPath, err := filepath.Rel(cwd, filePath)
-					if err == nil {
-						filePath = "./" + relPath
-					}
-				}
-
-				lines = append(lines, funcName+"()")
-				lines = append(lines, "\t"+filePath+lineNum)
-			}
+			lines = append(lines, funcName+"()")
+			lines = append(lines, "\t"+fileLine)
 		}
 	}
 
@@ -76,16 +58,13 @@ func CustomStackMarshaler(err error) interface{} {
 // CustomWriter is a custom writer for zerolog that formats output
 type CustomWriter struct {
 	out io.Writer
-	cwd string
 	buf bytes.Buffer // Reusable buffer to reduce allocations
 }
 
 // NewCustomWriter creates a new custom writer
 func NewCustomWriter(out io.Writer) *CustomWriter {
-	cwd, _ := os.Getwd()
 	return &CustomWriter{
 		out: out,
-		cwd: cwd,
 	}
 }
 
@@ -123,12 +102,6 @@ func (w *CustomWriter) Write(p []byte) (n int, err error) {
 
 	// Caller
 	if caller, err := jsonparser.GetString(p, "caller"); err == nil {
-		// Make path relative if it's in cwd
-		if strings.HasPrefix(caller, w.cwd) {
-			if relPath, err := filepath.Rel(w.cwd, caller); err == nil {
-				caller = relPath
-			}
-		}
 		w.buf.WriteString(caller)
 		w.buf.WriteString(" > ")
 	}
