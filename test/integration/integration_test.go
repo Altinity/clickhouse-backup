@@ -3767,7 +3767,7 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 
 	log.Debug().Msg("Download")
 	replaceStorageDiskNameForReBalance(t, r, env, remoteStorageType, false)
-	downloadCmd := fmt.Sprintf("clickhouse-backup -c /etc/clickhouse-backup/%s download --resume --hardlink-exists-files %s", backupConfig, fullBackupName)
+	downloadCmd := fmt.Sprintf("clickhouse-backup -c /etc/clickhouse-backup/%s download --resume %s", backupConfig, fullBackupName)
 	env.checkResumeAlreadyProcessed(downloadCmd, fullBackupName, "download", r, remoteStorageType)
 
 	log.Debug().Msg("Restore schema")
@@ -3849,6 +3849,10 @@ func (env *TestEnvironment) runMainIntegrationScenario(t *testing.T, remoteStora
 	fullCleanup(t, r, env, []string{fullBackupName, incrementBackupName}, []string{"remote"}, databaseList, true, true, true, backupConfig)
 	replaceStorageDiskNameForReBalance(t, r, env, remoteStorageType, true)
 
+	// 23.3 drop database doesn't cleanup object disk after DROP DATABASE
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "23.3") == 0 {
+		env.DockerExecNoError(r, "minio", "bash", "-c", "rm -rf /minio/data/clickhouse/disk_s3")
+	}
 	// test for specified partitions backup
 	testBackupSpecifiedPartitions(t, r, env, remoteStorageType, backupConfig)
 
