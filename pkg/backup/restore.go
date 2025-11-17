@@ -74,7 +74,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	doRestoreData := (!schemaOnly && !rbacOnly && !configsOnly) || dataOnly
 
 	if err := b.ch.Connect(); err != nil {
-		return fmt.Errorf("can't connect to clickhouse: %v", err)
+		return errors.Wrap(err, "can't connect to clickhouse")
 	}
 	defer b.ch.Close()
 
@@ -201,7 +201,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 			return err
 		}
 		if err = b.dst.Connect(ctx); err != nil {
-			return fmt.Errorf("BackupDestination for embedded or object disk: can't connect to %s: %v", b.dst.Kind(), err)
+			return errors.Wrapf(err, "BackupDestination for embedded or object disk: can't connect to %s", b.dst.Kind())
 		}
 		defer func() {
 			if err := b.dst.Close(ctx); err != nil {
@@ -498,7 +498,7 @@ func (b *Backuper) restoreRBAC(ctx context.Context, backupName string, disks []c
 	if err = b.ch.SelectContext(ctx, &replicatedUserDirectories, "SELECT name FROM system.user_directories WHERE type='replicated'"); err == nil && len(replicatedUserDirectories) > 0 {
 		k = &keeper.Keeper{}
 		if connErr := k.Connect(ctx, b.ch); connErr != nil {
-			return fmt.Errorf("but can't connect to keeper: %v", connErr)
+			return errors.Wrap(connErr, "but can't connect to keeper")
 		}
 		defer k.Close()
 	}
@@ -754,7 +754,7 @@ func (b *Backuper) dropExistsRBAC(ctx context.Context, kind string, name string,
 	// rbacType contains name of keeper user directory
 	prefix, err := k.GetReplicatedAccessPath(rbacType)
 	if err != nil {
-		return fmt.Errorf("b.dropExistsRBAC -> k.GetReplicatedAccessPath error: %v", err)
+		return errors.Wrap(err, "b.dropExistsRBAC -> k.GetReplicatedAccessPath error")
 	}
 	deletedNodes := make([]string, len(rbacObjectIds))
 	for i := range rbacObjectIds {
@@ -769,12 +769,12 @@ func (b *Backuper) dropExistsRBAC(ctx context.Context, kind string, name string,
 		return false, nil
 	})
 	if walkErr != nil {
-		return fmt.Errorf("b.dropExistsRBAC -> k.Walk(%s/%s) error: %v", prefix, keeperRBACTypePrefix, walkErr)
+		return errors.Wrapf(walkErr, "b.dropExistsRBAC -> k.Walk(%s/%s) error", prefix, keeperRBACTypePrefix)
 	}
 
 	for _, nodePath := range deletedNodes {
 		if deleteErr := k.Delete(nodePath); deleteErr != nil {
-			return fmt.Errorf("b.dropExistsRBAC -> k.Delete(%s) error: %v", nodePath, deleteErr)
+			return errors.Wrapf(deleteErr, "b.dropExistsRBAC -> k.Delete(%s) error", nodePath)
 		}
 	}
 	return nil
@@ -898,7 +898,7 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 	}
 	settings, err := b.ch.GetPreprocessedXMLSettings(ctx, namedCollectionsSettings, "config.xml")
 	if err != nil {
-		return fmt.Errorf("failed to get named_collections_storage settings: %v", err)
+		return errors.Wrap(err, "failed to get named_collections_storage settings")
 	}
 
 	storageType := "local"
@@ -912,7 +912,7 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return fmt.Errorf("failed to stat named_collections path: %v", err)
+		return errors.Wrap(err, "failed to stat named_collections path")
 	}
 	if !info.IsDir() {
 		return fmt.Errorf("named_collections path is not a directory: %s", namedCollectionsBackup)
@@ -936,12 +936,12 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 	// Restore based on storage type
 	jsonlFiles, err := filepath.Glob(path.Join(namedCollectionsBackup, "*.jsonl"))
 	if err != nil {
-		return fmt.Errorf("failed to glob jsonl files: %v", err)
+		return errors.Wrap(err, "failed to glob jsonl files")
 	}
 
 	sqlFiles, err := filepath.Glob(path.Join(namedCollectionsBackup, "*.sql"))
 	if err != nil {
-		return fmt.Errorf("failed to glob sql files: %v", err)
+		return errors.Wrap(err, "failed to glob sql files")
 	}
 
 	// Check if storage is encrypted
@@ -963,7 +963,7 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 			line := scanner.Bytes()
 			var node keeper.DumpNode
 			if unmarshalErr := json.Unmarshal(line, &node); unmarshalErr != nil {
-				return fmt.Errorf("failed to unmarshal from %s: %v", jsonlFile, unmarshalErr)
+				return errors.Wrapf(unmarshalErr, "failed to unmarshal from %s", jsonlFile)
 			}
 			var sqlQuery string
 			if len(node.Value) == 0 {
@@ -997,7 +997,7 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 				dropQuery += fmt.Sprintf(" ON CLUSTER '%s'", b.cfg.General.RestoreSchemaOnCluster)
 			}
 			if err := b.ch.QueryContext(ctx, dropQuery); err != nil {
-				return fmt.Errorf("failed to drop named collection %s: %v", collectionName, err)
+				return errors.Wrapf(err, "failed to drop named collection %s", collectionName)
 			}
 
 			// Create new collection
@@ -1005,13 +1005,13 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 				sqlQuery = strings.Replace(sqlQuery, " AS ", fmt.Sprintf(" ON CLUSTER '%s' AS ", b.cfg.General.RestoreSchemaOnCluster), 1)
 			}
 			if err := b.ch.QueryContext(ctx, sqlQuery); err != nil {
-				return fmt.Errorf("failed to create named collection %s: %v", collectionName, err)
+				return errors.Wrapf(err, "failed to create named collection %s", collectionName)
 			}
 
 			log.Info().Msgf("Restored SQL named collection from jsonl: %s", collectionName)
 		}
 		if err := scanner.Err(); err != nil {
-			return fmt.Errorf("scanner error on %s: %v", jsonlFile, err)
+			return errors.Wrapf(err, "scanner error on %s", jsonlFile)
 		}
 		if err := file.Close(); err != nil {
 			log.Warn().Msgf("can't close %s error: %v", jsonlFile, err)
@@ -1027,13 +1027,13 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 			// For encrypted storage, decrypt the SQL file content
 			sqlContent, err = b.decryptNamedCollectionFile(sqlFile, keyHex)
 			if err != nil {
-				return fmt.Errorf("failed to decrypt SQL file %s: %v", sqlFile, err)
+				return errors.Wrapf(err, "failed to decrypt SQL file %s", sqlFile)
 			}
 		} else {
 			// For non-encrypted storage, read directly
 			sqlContent, err = os.ReadFile(sqlFile)
 			if err != nil {
-				return fmt.Errorf("failed to read SQL file %s: %v", sqlFile, err)
+				return errors.Wrapf(err, "failed to read SQL file %s", sqlFile)
 			}
 		}
 
@@ -1058,7 +1058,7 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 			dropQuery += fmt.Sprintf(" ON CLUSTER '%s'", b.cfg.General.RestoreSchemaOnCluster)
 		}
 		if err := b.ch.QueryContext(ctx, dropQuery); err != nil {
-			return fmt.Errorf("failed to drop named collection %s: %v", collectionName, err)
+			return errors.Wrapf(err, "failed to drop named collection %s", collectionName)
 		}
 
 		// Create new collection
@@ -1066,7 +1066,7 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 			sqlQuery = strings.Replace(sqlQuery, " AS ", fmt.Sprintf(" ON CLUSTER '%s' AS ", b.cfg.General.RestoreSchemaOnCluster), 1)
 		}
 		if err := b.ch.QueryContext(ctx, sqlQuery); err != nil {
-			return fmt.Errorf("failed to create named collection %s: %v", collectionName, err)
+			return errors.Wrapf(err, "failed to create named collection %s", collectionName)
 		}
 
 		log.Info().Msgf("Restored SQL named collection: %s", collectionName)
@@ -1079,11 +1079,11 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 func (b *Backuper) decryptNamedCollectionFile(filePath, keyHex string) ([]byte, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read encrypted file: %v", err)
+		return nil, errors.Wrap(err, "failed to read encrypted file")
 	}
 	decryptedData, err := b.decryptNamedCollectionData(data, keyHex)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %v", filePath, err)
+		return nil, errors.Wrapf(err, "%s", filePath)
 	}
 	return decryptedData, nil
 }
@@ -1095,7 +1095,7 @@ func (b *Backuper) decryptNamedCollectionKeeperJSON(node keeper.DumpNode, keyHex
 	}
 	decryptedValue, err := b.decryptNamedCollectionData(node.Value, keyHex)
 	if err != nil {
-		return node, fmt.Errorf("path %s: %v", node.Path, err)
+		return node, errors.Wrapf(err, "path %s", node.Path)
 	}
 	node.Value = decryptedValue
 	return node, nil
@@ -1141,7 +1141,7 @@ func (b *Backuper) decryptNamedCollectionData(data []byte, keyHex string) ([]byt
 	// 6. Get the key from config (hex string)
 	key, err := hex.DecodeString(keyHex)
 	if err != nil {
-		return nil, fmt.Errorf("invalid key hex: %v", err)
+		return nil, errors.Wrap(err, "invalid key hex")
 	}
 	if len(key) != keyLen {
 		return nil, fmt.Errorf("provided key does not match expected length for algorithm")
@@ -1180,7 +1180,7 @@ func (b *Backuper) decryptNamedCollectionData(data []byte, keyHex string) ([]byt
 	ciphertext := data[64:] // everything after the 64-byte header
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create AES cipher: %v", err)
+		return nil, errors.Wrap(err, "failed to create AES cipher")
 	}
 	// Use AES in CTR mode with the extracted IV:
 	stream := cipher.NewCTR(block, iv)
@@ -1455,7 +1455,7 @@ func (b *Backuper) fixEmbeddedMetadataRemote(ctx context.Context, backupName str
 		}
 		sqlQuery, sqlMetadataChanged, fixSqlErr := b.fixEmbeddedMetadataSQLQuery(ctx, sqlBytes, remoteFilePath, chVersion)
 		if fixSqlErr != nil {
-			return fmt.Errorf("b.fixEmbeddedMetadataSQLQuery return error: %v", fixSqlErr)
+			return errors.Wrap(fixSqlErr, "b.fixEmbeddedMetadataSQLQuery return error")
 		}
 		log.Debug().Msgf("b.fixEmbeddedMetadataSQLQuery %s changed=%v", remoteFilePath, sqlMetadataChanged)
 		if sqlMetadataChanged {
@@ -1609,7 +1609,7 @@ func (b *Backuper) restoreSchemaRegular(ctx context.Context, tablesForRestore Li
 					createDbErr = b.ch.CreateDatabase(schema.Database, b.cfg.General.RestoreSchemaOnCluster)
 				}
 				if createDbErr != nil {
-					return fmt.Errorf("can't create database '%s': %v", schema.Database, createDbErr)
+					return errors.Wrapf(createDbErr, "can't create database '%s'", schema.Database)
 				}
 				isDatabaseCreated[schema.Database] = struct{}{}
 			}
@@ -1929,21 +1929,21 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ba
 		})
 	}
 	if wgWaitErr := restoreBackupWorkingGroup.Wait(); wgWaitErr != nil {
-		return fmt.Errorf("one of restoreDataRegular go-routine return error: %v", wgWaitErr)
+		return errors.Wrap(wgWaitErr, "one of restoreDataRegular go-routine return error")
 	}
 	return nil
 }
 
 func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, table metadata.TableMetadata, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, dstTable clickhouse.Table, skipProjections []string, logger zerolog.Logger, replicatedCopyToDetached bool) error {
 	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, table, disks, diskMap, dstTable.DataPaths, skipProjections, b.ch, false); err != nil {
-		return fmt.Errorf("can't copy data to storage '%s.%s': %v", table.Database, table.Table, err)
+		return errors.Wrapf(err, "can't copy data to storage '%s.%s'", table.Database, table.Table)
 	}
 	logger.Debug().Msg("data to 'storage' copied")
 	var size int64
 	var err error
 	start := time.Now()
 	if size, err = b.downloadObjectDiskParts(ctx, backupName, backupMetadata, table, diskMap, diskTypes, disks); err != nil {
-		return fmt.Errorf("can't restore object_disk server-side copy data parts '%s.%s': %v", table.Database, table.Table, err)
+		return errors.Wrapf(err, "can't restore object_disk server-side copy data parts '%s.%s'", table.Database, table.Table)
 	}
 	if size > 0 {
 		logger.Info().Str("duration", utils.HumanizeDuration(time.Since(start))).Str("size", utils.FormatBytes(uint64(size))).Str("database", table.Database).Str("table", table.Table).Msg("download object_disks finish")
@@ -1951,7 +1951,7 @@ func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName st
 	// Skip ATTACH TABLE for Replicated*MergeTree tables if replicatedCopyToDetached is true
 	if !replicatedCopyToDetached || !strings.Contains(dstTable.Engine, "Replicated") {
 		if err := b.ch.AttachTable(ctx, table, dstTable); err != nil {
-			return fmt.Errorf("can't attach table '%s.%s': %v", table.Database, table.Table, err)
+			return errors.Wrapf(err, "can't attach table '%s.%s'", table.Database, table.Table)
 		}
 	} else {
 		logger.Info().Msg("skipping ATTACH TABLE for Replicated*MergeTree table due to --replicated-copy-to-detached flag")
@@ -1961,7 +1961,7 @@ func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName st
 
 func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, table metadata.TableMetadata, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, dstTable clickhouse.Table, skipProjections []string, logger zerolog.Logger, replicatedCopyToDetached bool) error {
 	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, table, disks, diskMap, dstTable.DataPaths, skipProjections, b.ch, true); err != nil {
-		return fmt.Errorf("can't copy data to detached `%s`.`%s`: %v", table.Database, table.Table, err)
+		return errors.Wrapf(err, "can't copy data to detached `%s`.`%s`", table.Database, table.Table)
 	}
 	logger.Debug().Msg("data to 'detached' copied")
 	logger.Info().Msg("download object_disks start")
@@ -1969,13 +1969,13 @@ func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName str
 	var err error
 	start := time.Now()
 	if size, err = b.downloadObjectDiskParts(ctx, backupName, backupMetadata, table, diskMap, diskTypes, disks); err != nil {
-		return fmt.Errorf("can't restore object_disk server-side copy data parts '%s.%s': %v", table.Database, table.Table, err)
+		return errors.Wrapf(err, "can't restore object_disk server-side copy data parts '%s.%s'", table.Database, table.Table)
 	}
 	log.Info().Str("duration", utils.HumanizeDuration(time.Since(start))).Str("size", utils.FormatBytes(uint64(size))).Str("database", table.Database).Str("table", table.Table).Msg("download object_disks finish")
 	// Skip ATTACH PART for Replicated*MergeTree tables if replicatedCopyToDetached is true
 	if !replicatedCopyToDetached || !strings.Contains(dstTable.Engine, "Replicated") {
 		if err := b.ch.AttachDataParts(table, dstTable); err != nil {
-			return fmt.Errorf("can't attach data parts for table '%s.%s': %v", table.Database, table.Table, err)
+			return errors.Wrapf(err, "can't attach data parts for table '%s.%s'", table.Database, table.Table)
 		}
 	} else {
 		logger.Info().Msg("skipping ATTACH PART for Replicated*MergeTree table due to --replicated-copy-to-detached flag")
@@ -2110,7 +2110,7 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 
 					if needObjMetaRewrite {
 						if writeMetaErr := object_disk.WriteMetadataToFile(objMeta, fPath); writeMetaErr != nil {
-							return fmt.Errorf("%s: object_disk.WriteMetadataToFile return error: %v", fPath, writeMetaErr)
+							return errors.Wrapf(writeMetaErr, "%s: object_disk.WriteMetadataToFile return error", fPath)
 						}
 					}
 					downloadObjectDiskPartsWorkingGroup.Go(func() error {
@@ -2150,7 +2150,7 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 									return retryErr
 								})
 								if copyObjectErr != nil {
-									return fmt.Errorf("object_disk.CopyObject `%s`.`%s` error: %v", backupTable.Database, backupTable.Table, copyObjectErr)
+									return errors.Wrapf(copyObjectErr, "object_disk.CopyObject `%s`.`%s` error", backupTable.Database, backupTable.Table)
 								}
 							} else {
 								copyObjectErr = nil
@@ -2175,7 +2175,7 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 										return object_disk.CopyObjectStreaming(downloadCtx, srcStorage, dstStorage, srcKey, dstKey)
 									})
 									if copyObjectErr != nil {
-										return fmt.Errorf("object_disk.CopyObjectStreaming error: %v", copyObjectErr)
+										return errors.Wrap(copyObjectErr, "object_disk.CopyObjectStreaming error")
 									}
 									copiedSize = storageObject.ObjectSize
 								}
@@ -2194,7 +2194,7 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 				}
 			}
 			if wgWaitErr := downloadObjectDiskPartsWorkingGroup.Wait(); wgWaitErr != nil {
-				return 0, fmt.Errorf("one of downloadObjectDiskParts go-routine return error: %v", wgWaitErr)
+				return 0, errors.Wrap(wgWaitErr, "one of downloadObjectDiskParts go-routine return error")
 			}
 			logger.Info().Str("disk", diskName).Str("duration", utils.HumanizeDuration(time.Since(start))).Str("size", utils.FormatBytes(uint64(size))).Msg("object_disk data downloaded")
 		}
@@ -2357,7 +2357,7 @@ func (b *Backuper) restoreEmbedded(ctx context.Context, backupName string, schem
 	restoreSQL := fmt.Sprintf("RESTORE %s FROM %s %s", tablesSQL, embeddedBackupLocation, settingsStr)
 	restoreResults := make([]clickhouse.SystemBackups, 0)
 	if err := b.ch.SelectContext(ctx, &restoreResults, restoreSQL); err != nil {
-		return fmt.Errorf("restore error: %v", err)
+		return errors.Wrap(err, "restore error")
 	}
 	if len(restoreResults) == 0 || restoreResults[0].Status != "RESTORED" {
 		return fmt.Errorf("restore wrong result: %v", restoreResults)

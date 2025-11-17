@@ -2,10 +2,11 @@ package metadata
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/pkg/errors"
 )
 
 type BackupMetadata struct {
@@ -47,10 +48,10 @@ func (b *BackupMetadata) GetFullSize() uint64 {
 func (b *BackupMetadata) Save(location string) error {
 	tbBody, err := json.MarshalIndent(b, "", "\t")
 	if err != nil {
-		return fmt.Errorf("can't marshall backup metadata: %v", err)
+		return errors.Wrap(err, "can't marshall backup metadata")
 	}
 	if err := os.WriteFile(location, tbBody, 0640); err != nil {
-		return fmt.Errorf("can't save backup metadata: %v", err)
+		return errors.Wrap(err, "can't save backup metadata")
 	}
 	return nil
 }

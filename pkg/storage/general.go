@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
+	"github.com/pkg/errors"
 	"io"
 	"os"
 	"path"
@@ -261,7 +262,7 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 	})
 	if cacheMiss || len(result) < len(listCache) {
 		if err = bd.saveMetadataCache(ctx, listCache, result); err != nil {
-			return nil, fmt.Errorf("bd.saveMetadataCache return error: %v", err)
+			return nil, errors.Wrap(err, "bd.saveMetadataCache return error")
 		}
 	}
 	return result, nil

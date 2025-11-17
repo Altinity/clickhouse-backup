@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+
+	"github.com/pkg/errors"
 )
 
 // callbackFn is a function which will post a callback when invoked
@@ -27,7 +29,7 @@ func parseCallback(query url.Values) (callbackFn, error) {
 	for i, v := range encodedURLs {
 		d, err := url.QueryUnescape(v)
 		if err != nil {
-			return nil, fmt.Errorf("could not decode url %q: %w", v, err)
+			return nil, errors.Wrapf(err, "could not decode url %q", v)
 		}
 		decodedURLs[i] = d
 	}
@@ -36,33 +38,33 @@ func parseCallback(query url.Values) (callbackFn, error) {
 	return func(ctx context.Context, v interface{}) []error {
 		payload, err := json.Marshal(v)
 		if err != nil {
-			return []error{fmt.Errorf("error encoding %v: %w", v, err)}
+			return []error{errors.Wrapf(err, "error encoding %v", v)}
 		}
 
-		var errors []error
+		var errs []error
 		for _, callBackURL := range decodedURLs {
 			reader := bytes.NewReader(payload)
 			req, err := http.NewRequestWithContext(ctx, http.MethodPost, callBackURL, reader)
 			if err != nil {
-				errors = append(errors, fmt.Errorf("error creating request to %q: %w", callBackURL, err))
+				errs = append(errs, errors.Wrapf(err, "error creating request to %q", callBackURL))
 				continue
 			}
 			req.Header.Set("Content-Type", "application/json")
 			resp, err := client.Do(req)
 			if err != nil {
-				errors = append(
-					errors,
-					fmt.Errorf("error while posting callback to %q: %w", callBackURL, err),
+				errs = append(
+					errs,
+					errors.Wrapf(err, "error while posting callback to %q", callBackURL),
 				)
 				continue
 			}
 			if resp.StatusCode != http.StatusOK {
-				errors = append(
-					errors,
+				errs = append(
+					errs,
 					fmt.Errorf("error while posting callback to %q: status code %d", callBackURL, resp.StatusCode),
 				)
 			}
 		}
-		return errors
+		return errs
 	}, nil
 }

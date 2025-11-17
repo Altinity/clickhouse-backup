@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/kelseyhightower/envconfig"
+	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/urfave/cli"
 	"gopkg.in/yaml.v3"
@@ -330,10 +331,10 @@ func LoadConfig(configLocation string) (*Config, error) {
 	cfg := DefaultConfig()
 	configYaml, err := os.ReadFile(configLocation)
 	if err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("can't open config file: %v", err)
+		return nil, errors.Wrap(err, "can't open config file")
 	}
 	if err := yaml.Unmarshal(configYaml, &cfg); err != nil {
-		return nil, fmt.Errorf("can't parse config file: %v", err)
+		return nil, errors.Wrap(err, "can't parse config file")
 	}
 	if err := envconfig.Process("", cfg); err != nil {
 		return nil, err
@@ -342,7 +343,7 @@ func LoadConfig(configLocation string) (*Config, error) {
 	// auto-tuning upload_concurrency for storage types which not have SDK level concurrency, https://github.com/Altinity/clickhouse-backup/issues/658
 	cfgWithoutDefault := &Config{}
 	if err := yaml.Unmarshal(configYaml, &cfgWithoutDefault); err != nil {
-		return nil, fmt.Errorf("can't parse config file: %v", err)
+		return nil, errors.Wrap(err, "can't parse config file")
 	}
 	if err := envconfig.Process("", cfgWithoutDefault); err != nil {
 		return nil, err
@@ -407,7 +408,7 @@ func ValidateConfig(cfg *Config) error {
 		return fmt.Errorf("'%s' is unsupported compression format", cfg.GetCompressionFormat())
 	}
 	if timeout, err := time.ParseDuration(cfg.ClickHouse.Timeout); err != nil {
-		return fmt.Errorf("invalid clickhouse timeout: %v", err)
+		return errors.Wrap(err, "invalid clickhouse timeout")
 	} else {
 		if cfg.ClickHouse.UseEmbeddedBackupRestore && timeout < 240*time.Minute {
 			return fmt.Errorf("clickhouse `timeout: %v`, not enough for `use_embedded_backup_restore: true`", cfg.ClickHouse.Timeout)
@@ -417,16 +418,16 @@ func ValidateConfig(cfg *Config) error {
 		return fmt.Errorf("`freeze_by_part: %v` is not compatible with `use_embedded_backup_restore: %v`", cfg.ClickHouse.FreezeByPart, cfg.ClickHouse.UseEmbeddedBackupRestore)
 	}
 	if _, err := time.ParseDuration(cfg.COS.Timeout); err != nil {
-		return fmt.Errorf("invalid cos timeout: %v", err)
+		return errors.Wrap(err, "invalid cos timeout")
 	}
 	if _, err := time.ParseDuration(cfg.FTP.Timeout); err != nil {
-		return fmt.Errorf("invalid ftp timeout: %v", err)
+		return errors.Wrap(err, "invalid ftp timeout")
 	}
 	if _, err := time.ParseDuration(cfg.AzureBlob.Timeout); err != nil {
-		return fmt.Errorf("invalid azblob timeout: %v", err)
+		return errors.Wrap(err, "invalid azblob timeout")
 	}
 	if _, err := time.ParseDuration(cfg.AzureBlob.Timeout); err != nil {
-		return fmt.Errorf("invalid azblob timeout: %v", err)
+		return errors.Wrap(err, "invalid azblob timeout")
 	}
 	storageClassOk := false
 	var allStorageClasses s3types.StorageClass
@@ -464,7 +465,7 @@ func ValidateConfig(cfg *Config) error {
 	}
 	if cfg.Custom.CommandTimeout != "" {
 		if duration, err := time.ParseDuration(cfg.Custom.CommandTimeout); err != nil {
-			return fmt.Errorf("invalid custom command timeout: %v", err)
+			return errors.Wrap(err, "invalid custom command timeout")
 		} else {
 			cfg.Custom.CommandTimeoutDuration = duration
 		}
@@ -473,7 +474,7 @@ func ValidateConfig(cfg *Config) error {
 	}
 	if cfg.General.RetriesPause != "" {
 		if duration, err := time.ParseDuration(cfg.General.RetriesPause); err != nil {
-			return fmt.Errorf("invalid retries pause: %v", err)
+			return errors.Wrap(err, "invalid retries pause")
 		} else {
 			cfg.General.RetriesDuration = duration
 		}
@@ -482,14 +483,14 @@ func ValidateConfig(cfg *Config) error {
 	}
 	if cfg.General.WatchInterval != "" {
 		if duration, err := time.ParseDuration(cfg.General.WatchInterval); err != nil {
-			return fmt.Errorf("invalid watch interval: %v", err)
+			return errors.Wrap(err, "invalid watch interval")
 		} else {
 			cfg.General.WatchDuration = duration
 		}
 	}
 	if cfg.General.FullInterval != "" {
 		if duration, err := time.ParseDuration(cfg.General.FullInterval); err != nil {
-			return fmt.Errorf("invalid full interval for watch: %v", err)
+			return errors.Wrap(err, "invalid full interval for watch")
 		} else {
 			cfg.General.FullDuration = duration
 		}

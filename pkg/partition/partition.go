@@ -104,7 +104,7 @@ func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, datab
 			if dropErr := dropPartitionIdTable(ch, database, partitionIdTable); dropErr != nil {
 				return "", "", dropErr
 			}
-			return "", "", fmt.Errorf("can't get is_in_partition_key column names from for table `%s`.`%s`: %v", database, partitionIdTable, err)
+			return "", "", errors.Wrapf(err, "can't get is_in_partition_key column names from for table `%s`.`%s`", database, partitionIdTable)
 		}
 		columns = extractPartitionByFieldNames(partitionByMatches[1])
 		oldVersion = true
@@ -162,7 +162,7 @@ func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, datab
 	}, 0)
 	sql = "SELECT partition_id, partition FROM system.parts WHERE active AND database=? AND table=?"
 	if err = ch.SelectContext(ctx, &partitions, sql, database, partitionIdTable); err != nil {
-		return "", "", fmt.Errorf("can't SELECT partition_id for PARTITION BY fields(%#v) FROM `%s`.`%s`: %v", partitionInsert, database, partitionIdTable, err)
+		return "", "", errors.Wrapf(err, "can't SELECT partition_id for PARTITION BY fields(%#v) FROM `%s`.`%s`", partitionInsert, database, partitionIdTable)
 	}
 	if len(partitions) != 1 {
 		return "", "", fmt.Errorf("wrong partitionsIds=%#v found system.parts for table `%s`.`%s`", partitions, database, partitionIdTable)
