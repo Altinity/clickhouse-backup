@@ -1517,6 +1517,20 @@ func (b *Backuper) fixEmbeddedMetadataLocal(ctx context.Context, backupName stri
 			}
 			sqlMetadata.TotalSize = int64(len(sqlQuery))
 			sqlMetadata.StorageObjects[0].ObjectSize = sqlMetadata.TotalSize
+			//after object_disk.ReadMetadataFile, path is relative, need make it absolute again https://github.com/Altinity/clickhouse-backup/issues/1290
+			if sqlMetadata.StorageObjects[0].IsAbsolute {
+				dstConnection, ok := object_disk.DisksConnections.Load(b.cfg.ClickHouse.EmbeddedBackupDisk)
+				if !ok {
+					return errors.WithStack(fmt.Errorf("can't find %s in object_disk.DiskConnections", b.cfg.ClickHouse.EmbeddedBackupDisk))
+				}
+				if !strings.HasPrefix(sqlMetadata.StorageObjects[0].ObjectPath, dstConnection.GetRemotePath()) {
+					objPathParts := strings.Split(sqlMetadata.StorageObjects[0].ObjectPath, "/")
+					// 25.10, full path for azblob we will write to container, so path will not contain /, https://github.com/Altinity/clickhouse-backup/issues/1290
+					if len(objPathParts) >= 2 {
+						sqlMetadata.StorageObjects[0].ObjectPath = dstConnection.GetRemotePath() + "/" + strings.Join(objPathParts[len(objPathParts)-2:], "/")
+					}
+				}
+			}
 			if err = object_disk.WriteMetadataToFile(sqlMetadata, filePath); err != nil {
 				return errors.WithStack(err)
 			}
@@ -2077,7 +2091,7 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 					if err != nil {
 						return err
 					}
-					if objMeta.StorageObjectCount < 1 && (objMeta.Version < object_disk.VersionRelativePath || objMeta.Version != object_disk.VersionFullObjectKey) {
+					if objMeta.StorageObjectCount < 1 && objMeta.Version != object_disk.VersionInlineData {
 						return fmt.Errorf("%s: invalid object_disk.Metadata: %#v", fPath, objMeta)
 					}
 					needObjMetaRewrite := false
