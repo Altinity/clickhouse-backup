@@ -634,6 +634,8 @@ func DefaultConfig() *Config {
 			CompressionFormat: "tar",
 			StorageClass:      "STANDARD",
 			ClientPoolSize:    int(max(uploadConcurrency*3, downloadConcurrency*3, objectDiskServerSideCopyConcurrency)),
+			// 16Mb default chunk size, fix https://github.com/Altinity/clickhouse-backup/issues/1292
+			ChunkSize: 16 * 1024 * 1024,
 		},
 		COS: COSConfig{
 			RowURL:                 "",
