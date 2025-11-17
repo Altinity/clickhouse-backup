@@ -525,7 +525,7 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 		s.enrichCopyObjectParams(params)
 		_, err := s.client.CopyObject(ctx, params)
 		if err != nil {
-			return 0, fmt.Errorf("S3->CopyObject %s/%s -> %s/%s return error: %v", srcBucket, srcKey, s.Config.Bucket, dstKey, err)
+			return 0, errors.Wrapf(err, "S3->CopyObject %s/%s -> %s/%s return error", srcBucket, srcKey, s.Config.Bucket, dstKey)
 		}
 		return srcSize, nil
 	}
@@ -538,7 +538,7 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 	s.enrichCreateMultipartUploadParams(createMultipartUploadParams)
 	initResp, err := s.client.CreateMultipartUpload(ctx, createMultipartUploadParams)
 	if err != nil {
-		return 0, fmt.Errorf("S3->CopyObject %s/%s -> %s/%s, CreateMultipartUpload return error: %v", srcBucket, srcKey, s.Config.Bucket, dstKey, err)
+		return 0, errors.Wrapf(err, "S3->CopyObject %s/%s -> %s/%s, CreateMultipartUpload return error", srcBucket, srcKey, s.Config.Bucket, dstKey)
 	}
 
 	// Get the upload ID
@@ -590,7 +590,7 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 			}
 			partResp, err := s.client.UploadPartCopy(ctx, uploadPartParams)
 			if err != nil {
-				return fmt.Errorf("S3->CopyObject %s/%s -> %s/%s, UploadPartCopy start=%d, end=%d return error: %v", srcBucket, srcKey, s.Config.Bucket, dstKey, start, end-1, err)
+				return errors.Wrapf(err, "S3->CopyObject %s/%s -> %s/%s, UploadPartCopy start=%d, end=%d return error", srcBucket, srcKey, s.Config.Bucket, dstKey, start, end-1)
 			}
 			mu.Lock()
 			parts = append(parts, s3types.CompletedPart{
@@ -616,9 +616,9 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 		}
 		_, abortErr := s.client.AbortMultipartUpload(context.Background(), abortParams)
 		if abortErr != nil {
-			return 0, fmt.Errorf("aborting CopyObject multipart upload: %v, original error was: %v", abortErr, wgWaitErr)
+			return 0, errors.Wrapf(wgWaitErr, "aborting CopyObject multipart upload: %v, original error was", abortErr)
 		}
-		return 0, fmt.Errorf("one of CopyObject/Multipart go-routine return error: %v", wgWaitErr)
+		return 0, errors.Wrap(wgWaitErr, "one of CopyObject/Multipart go-routine return error")
 	}
 	// Parts must be ordered by part number.
 	sort.Slice(parts, func(i int, j int) bool {
@@ -636,7 +636,7 @@ func (s *S3) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, d
 	}
 	_, err = s.client.CompleteMultipartUpload(context.Background(), completeMultipartUploadParams)
 	if err != nil {
-		return 0, fmt.Errorf("complete CopyObject multipart upload: %v", err)
+		return 0, errors.Wrap(err, "complete CopyObject multipart upload")
 	}
 	return srcSize, nil
 }
