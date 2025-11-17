@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
-	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -22,6 +21,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/antchfx/xmlquery"
 	"github.com/eapache/go-resiliency/retrier"
+	"github.com/pkg/errors"
 	"github.com/ricochet2200/go-disk-usage/du"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -702,7 +702,7 @@ func (ch *ClickHouse) FreezeTableByParts(ctx context.Context, table *Table, name
 	}
 	q := fmt.Sprintf("SELECT DISTINCT partition_id FROM `system`.`parts` WHERE database='%s' AND table='%s' %s", table.Database, table.Name, ch.Config.FreezeByPartWhere)
 	if err := ch.SelectContext(ctx, &partitions, q); err != nil {
-		return fmt.Errorf("can't get partitions for '%s.%s': %w", table.Database, table.Name, err)
+		return errors.Wrapf(err, "can't get partitions for '%s.%s'", table.Database, table.Name)
 	}
 	withNameQuery := ""
 	if name != "" {
@@ -729,7 +729,7 @@ func (ch *ClickHouse) FreezeTableByParts(ctx context.Context, table *Table, name
 			if (strings.Contains(err.Error(), "code: 60") || strings.Contains(err.Error(), "code: 81")) && ch.Config.IgnoreNotExistsErrorDuringFreeze {
 				log.Warn().Msgf("can't freeze partition: %v", err)
 			} else {
-				return fmt.Errorf("can't freeze partition '%s': %w", item.PartitionID, err)
+				return errors.Wrapf(err, "can't freeze partition '%s'", item.PartitionID)
 			}
 		}
 	}
@@ -764,7 +764,7 @@ func (ch *ClickHouse) FreezeTable(ctx context.Context, table *Table, name string
 			log.Warn().Msgf("can't freeze table: %v", err)
 			return nil
 		}
-		return fmt.Errorf("can't freeze table: %v", err)
+		return errors.Wrap(err, "can't freeze table")
 	}
 	return nil
 }
@@ -817,7 +817,7 @@ func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetad
 	}
 	canContinue, err := ch.CheckReplicationInProgress(table)
 	if err != nil {
-		return fmt.Errorf("ch.CheckReplicationInProgress error: %v", err)
+		return errors.Wrap(err, "ch.CheckReplicationInProgress error")
 	}
 	if !canContinue {
 		return nil
@@ -828,7 +828,7 @@ func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetad
 	}
 	query := fmt.Sprintf("DETACH TABLE `%s`.`%s` SYNC", table.Database, table.Table)
 	if err := ch.Query(query); err != nil {
-		return fmt.Errorf("%s error: %v", query, err)
+		return errors.Wrapf(err, "%s error", query)
 	}
 	replicatedMatches := replicatedMergeTreeRE.FindStringSubmatch(table.Query)
 	if len(replicatedMatches) > 0 {
@@ -842,26 +842,26 @@ func (ch *ClickHouse) AttachTable(ctx context.Context, table metadata.TableMetad
 		zkPath = strings.NewReplacer("{database}", table.Database, "{table}", table.Table).Replace(zkPath)
 		zkPath, err = ch.ApplyMacros(ctx, zkPath)
 		if err != nil {
-			return fmt.Errorf("ch.ApplyMacros(ctx, zkPath) error: %v", err)
+			return errors.Wrap(err, "ch.ApplyMacros(ctx, zkPath) error")
 		}
 		replicaName, err = ch.ApplyMacros(ctx, replicaName)
 		if err != nil {
-			return fmt.Errorf("ch.ApplyMacros(ctx, replicaName) error: %v", err)
+			return errors.Wrap(err, "ch.ApplyMacros(ctx, replicaName) error")
 		}
 		query = fmt.Sprintf("SYSTEM DROP REPLICA '%s' FROM ZKPATH '%s'", replicaName, zkPath)
 		if err := ch.Query(query); err != nil {
-			return fmt.Errorf("%s error: %v", query, err)
+			return errors.Wrapf(err, "%s error", query)
 		}
 	}
 	query = fmt.Sprintf("ATTACH TABLE `%s`.`%s`", table.Database, table.Table)
 	if err := ch.Query(query); err != nil {
-		return fmt.Errorf("%s error: %v", query, err)
+		return errors.Wrapf(err, "%s error", query)
 	}
 
 	if len(replicatedMatches) > 0 {
 		query = fmt.Sprintf("SYSTEM RESTORE REPLICA `%s`.`%s`", table.Database, table.Table)
 		if err := ch.Query(query); err != nil {
-			return fmt.Errorf("%s error: %v", query, err)
+			return errors.Wrapf(err, "%s error", query)
 		}
 	}
 	log.Debug().Str("table", fmt.Sprintf("%s.%s", table.Database, table.Table)).Msg("attached")
@@ -1028,7 +1028,7 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 		var existCluster string
 		if newCluster == "" && !macroRE.MatchString(oldCluster) {
 			if err = ch.SelectSingleRowNoCtx(&existCluster, "SELECT cluster FROM system.clusters WHERE cluster=?", oldCluster); err != nil {
-				return fmt.Errorf("check system.clusters for %s return error: %v", oldCluster, err)
+				return errors.Wrapf(err, "check system.clusters for %s return error", oldCluster)
 			}
 			if existCluster == "" {
 				newCluster = strings.Trim(ch.Config.RestoreDistributedCluster, "'\" ")
@@ -1044,7 +1044,7 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 	// https://github.com/Altinity/clickhouse-backup/issues/1127
 	query, err = ch.cleanUUIDForReplicatedDatabase(table, query, databaseEngine)
 	if err != nil {
-		return fmt.Errorf("ch.cleanUUIDForReplicatedDatabase return error: %v", err)
+		return errors.Wrap(err, "ch.cleanUUIDForReplicatedDatabase return error")
 	}
 
 	// WINDOW VIEW unavailable after 24.3
@@ -1097,7 +1097,7 @@ func (ch *ClickHouse) cleanUUIDForReplicatedDatabase(table Table, query string, 
 func (ch *ClickHouse) CreateTableAsAttach(query string) error {
 	attachQuery := strings.Replace(query, "CREATE", "ATTACH", 1)
 	if attachErr := ch.Query(attachQuery); attachErr != nil {
-		return fmt.Errorf("createTable attach query error: %v", attachErr)
+		return errors.Wrap(attachErr, "createTable attach query error")
 	}
 	return nil
 }
@@ -1149,31 +1149,39 @@ func (ch *ClickHouse) StructSelect(dest interface{}, query string, args ...inter
 }
 
 func (ch *ClickHouse) QueryContext(ctx context.Context, query string, args ...interface{}) error {
-	return ch.conn.Exec(ctx, ch.LogQuery(query, args...), args...)
+	return errors.WithStack(ch.conn.Exec(ctx, ch.LogQuery(query, args...), args...))
 }
 
 func (ch *ClickHouse) Query(query string, args ...interface{}) error {
-	return ch.conn.Exec(context.Background(), ch.LogQuery(query, args...), args...)
+	return errors.WithStack(ch.conn.Exec(context.Background(), ch.LogQuery(query, args...), args...))
 }
 
 func (ch *ClickHouse) SelectContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
-	return ch.conn.Select(ctx, dest, ch.LogQuery(query, args...), args...)
+	return errors.WithStack(ch.conn.Select(ctx, dest, ch.LogQuery(query, args...), args...))
 }
 
 func (ch *ClickHouse) Select(dest interface{}, query string, args ...interface{}) error {
-	return ch.conn.Select(context.Background(), dest, ch.LogQuery(query, args...), args...)
+	return errors.WithStack(ch.conn.Select(context.Background(), dest, ch.LogQuery(query, args...), args...))
 }
 
 func (ch *ClickHouse) SelectSingleRow(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
-	return ch.conn.QueryRow(ctx, ch.LogQuery(query, args...), args...).Scan(dest)
+	row := ch.conn.QueryRow(ctx, ch.LogQuery(query, args...), args...)
+	if row.Err() != nil {
+		return errors.WithStack(row.Err())
+	}
+	return errors.WithStack(row.Scan(dest))
 }
 
 func (ch *ClickHouse) SelectSingleRowNoCtx(dest interface{}, query string, args ...interface{}) error {
-	err := ch.conn.QueryRow(context.Background(), ch.LogQuery(query, args...), args...).Scan(dest)
+	row := ch.conn.QueryRow(context.Background(), ch.LogQuery(query, args...), args...)
+	if row.Err() != nil {
+		return errors.WithStack(row.Err())
+	}
+	err := row.Scan(dest)
 	if err != nil && errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
-	return err
+	return errors.WithStack(err)
 }
 
 func (ch *ClickHouse) LogQuery(query string, args ...interface{}) string {
@@ -1282,7 +1290,7 @@ func (ch *ClickHouse) CalculateMaxFileSize(ctx context.Context, cfg *config.Conf
 	}
 	maxSizeQuery += " SETTINGS empty_result_for_aggregation_by_empty_set=0"
 	if err := ch.SelectSingleRow(ctx, &rows, maxSizeQuery); err != nil {
-		return 0, fmt.Errorf("can't calculate max(bytes_on_disk): %v", err)
+		return 0, errors.Wrap(err, "can't calculate max(bytes_on_disk)")
 	}
 	return rows, nil
 }
@@ -1291,7 +1299,7 @@ func (ch *ClickHouse) GetInProgressMutations(ctx context.Context, database strin
 	inProgressMutations := make([]metadata.MutationMetadata, 0)
 	getInProgressMutationsQuery := "SELECT mutation_id, command FROM system.mutations WHERE is_done=0 AND database=? AND table=?"
 	if err := ch.SelectContext(ctx, &inProgressMutations, getInProgressMutationsQuery, database, table); err != nil {
-		return nil, fmt.Errorf("can't get in progress mutations: %v", err)
+		return nil, errors.Wrap(err, "can't get in progress mutations")
 	}
 	return inProgressMutations, nil
 }
@@ -1471,7 +1479,7 @@ func (ch *ClickHouse) GetPreprocessedConfigPath(ctx context.Context) (string, er
 func (ch *ClickHouse) ParseXML(ctx context.Context, configName string) (configFile string, doc *xmlquery.Node, parseErr error) {
 	preprocessedConfigPath, err := ch.GetPreprocessedConfigPath(ctx)
 	if err != nil {
-		return "", nil, fmt.Errorf("ch.GetPreprocessedConfigPath error: %v", err)
+		return "", nil, errors.Wrap(err, "ch.GetPreprocessedConfigPath error")
 	}
 	configFile = path.Join(preprocessedConfigPath, configName)
 	//to avoid race-condition, cause preprocessed_configs rewrites every second
@@ -1491,7 +1499,7 @@ func (ch *ClickHouse) ParseXML(ctx context.Context, configName string) (configFi
 	})
 	if retryErr != nil {
 		xmlContent, readErr := os.ReadFile(configFile)
-		parseErr = fmt.Errorf("xmlquery.Parse(%s) error: %v", configFile, parseErr)
+		parseErr = errors.Wrapf(parseErr, "xmlquery.Parse(%s) error", configFile)
 		log.Error().Err(readErr).Str("xmlContent", string(xmlContent)).Send()
 		log.Error().Msg(parseErr.Error())
 		return configFile, nil, parseErr
@@ -1536,7 +1544,7 @@ func (ch *ClickHouse) GetPreprocessedXMLSettings(ctx context.Context, settingsXP
 				})
 				if retryErr != nil {
 					xmlContent, readErr := os.ReadFile(configFile)
-					retryErr = fmt.Errorf("xmlquery.Parse(%s) error: %v", configFile, retryErr)
+					retryErr = errors.Wrapf(retryErr, "xmlquery.Parse(%s) error", configFile)
 					log.Error().Err(readErr).Str("xmlContent", string(xmlContent)).Send()
 					log.Error().Msg(retryErr.Error())
 					return nil, retryErr
