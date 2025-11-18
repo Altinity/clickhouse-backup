@@ -1476,12 +1476,13 @@ func (ch *ClickHouse) GetPreprocessedConfigPath(ctx context.Context) (string, er
 	return path.Join("/", path.Join(paths[:len(paths)-1]...), "preprocessed_configs"), nil
 }
 
-func (ch *ClickHouse) ParseXML(ctx context.Context, configName string) (configFile string, doc *xmlquery.Node, parseErr error) {
+func (ch *ClickHouse) ParseXML(ctx context.Context, configName string) (string, *xmlquery.Node, error) {
 	preprocessedConfigPath, err := ch.GetPreprocessedConfigPath(ctx)
 	if err != nil {
 		return "", nil, errors.Wrap(err, "ch.GetPreprocessedConfigPath error")
 	}
-	configFile = path.Join(preprocessedConfigPath, configName)
+	var doc *xmlquery.Node
+	configFile := path.Join(preprocessedConfigPath, configName)
 	//to avoid race-condition, cause preprocessed_configs rewrites every second
 	retry := retrier.New(retrier.ConstantBackoff(5, time.Millisecond*100), nil)
 	retryErr := retry.RunCtx(ctx, func(ctx context.Context) error {
@@ -1494,15 +1495,18 @@ func (ch *ClickHouse) ParseXML(ctx context.Context, configName string) (configFi
 				log.Error().Msgf("can't close %s error: %v", configFile, closeErr)
 			}
 		}()
+		var parseErr error
 		doc, parseErr = xmlquery.Parse(f)
 		return parseErr
 	})
 	if retryErr != nil {
 		xmlContent, readErr := os.ReadFile(configFile)
-		parseErr = errors.Wrapf(parseErr, "xmlquery.Parse(%s) error", configFile)
-		log.Error().Err(readErr).Str("xmlContent", string(xmlContent)).Send()
-		log.Error().Msg(parseErr.Error())
-		return configFile, nil, parseErr
+		if readErr != nil {
+			log.Error().Err(readErr).Str("xmlContent", string(xmlContent)).Send()
+			return configFile, nil, readErr
+		}
+		retryErr = errors.Wrapf(retryErr, "xmlquery.Parse(%s) error", configFile)
+		return configFile, nil, retryErr
 	}
 	return configFile, doc, nil
 }
