@@ -1483,7 +1483,7 @@ func (b *Backuper) fixEmbeddedMetadataLocal(ctx context.Context, backupName stri
 		if backupMetadata.DiskTypes[b.cfg.ClickHouse.EmbeddedBackupDisk] == "local" {
 			sqlBytes, err := os.ReadFile(filePath)
 			if err != nil {
-				return err
+				return errors.WithStack(err)
 			}
 			sqlQuery, sqlMetadataChanged, fixSqlErr := b.fixEmbeddedMetadataSQLQuery(ctx, sqlBytes, filePath, chVersion)
 			if fixSqlErr != nil {
