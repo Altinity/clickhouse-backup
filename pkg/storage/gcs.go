@@ -278,6 +278,8 @@ func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser
 	}
 	pClient := pClientObj.(*clientObject).Client
 	obj := pClient.Bucket(gcs.Config.Bucket).Object(key)
+	// always retry transient errors to mitigate retry logic bugs.
+	obj = obj.Retryer(storage.WithPolicy(storage.RetryAlways))
 	writer := obj.NewWriter(ctx)
 	writer.ChunkSize = gcs.Config.ChunkSize
 	writer.StorageClass = gcs.Config.StorageClass
@@ -364,6 +366,8 @@ func (gcs *GCS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey
 	pClient := pClientObj.(*clientObject).Client
 	src := pClient.Bucket(srcBucket).Object(srcKey)
 	dst := pClient.Bucket(gcs.Config.Bucket).Object(dstKey)
+	// always retry transient errors to mitigate retry logic bugs.
+	dst = dst.Retryer(storage.WithPolicy(storage.RetryAlways))
 	attrs, err := src.Attrs(ctx)
 	if err != nil {
 		if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
