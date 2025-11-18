@@ -16,6 +16,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
+	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 )
 
@@ -198,12 +199,12 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 				log.Debug().Msgf("Link %s -> %s", filePath, dstFilePath)
 				if err := os.Link(filePath, dstFilePath); err != nil {
 					if !os.IsExist(err) {
-						return fmt.Errorf("failed to create hard link '%s' -> '%s': %w", filePath, dstFilePath, err)
+						return errors.Wrapf(err, "failed to create hard link '%s' -> '%s'", filePath, dstFilePath)
 					}
 				}
 				return Chown(dstFilePath, ch, disks, false)
 			}); err != nil {
-				return fmt.Errorf("error during filepath.Walk for part '%s': %w", part.Name, err)
+				return errors.Wrapf(err, "error during filepath.Walk for part '%s'", part.Name)
 			}
 		}
 	}

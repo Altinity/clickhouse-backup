@@ -3,7 +3,6 @@ package backup
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -31,6 +30,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"github.com/eapache/go-resiliency/retrier"
+	"github.com/pkg/errors"
 	"github.com/rs/zerolog"
 
 	"github.com/rs/zerolog/log"
@@ -54,7 +54,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 
 	if err := b.ch.Connect(); err != nil {
-		return fmt.Errorf("can't connect to clickhouse: %v", err)
+		return errors.Wrap(err, "can't connect to clickhouse")
 	}
 	defer b.ch.Close()
 
@@ -187,14 +187,14 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			})
 		}
 		if err := metadataGroup.Wait(); err != nil {
-			return fmt.Errorf("one of Download Metadata go-routine return error: %v", err)
+			return errors.Wrap(err, "one of Download Metadata go-routine return error")
 		}
 	}
 	// download, missed .inner. tables, https://github.com/Altinity/clickhouse-backup/issues/765
 	var missedInnerTableErr error
 	tableMetadataAfterDownload, tablesForDownload, metadataSize, missedInnerTableErr = b.downloadMissedInnerTablesMetadata(ctx, backupName, metadataSize, tablesForDownload, tableMetadataAfterDownload, disks, schemaOnly, partitions)
 	if missedInnerTableErr != nil {
-		return fmt.Errorf("b.downloadMissedInnerTablesMetadata error: %v", missedInnerTableErr)
+		return errors.Wrap(missedInnerTableErr, "b.downloadMissedInnerTablesMetadata error")
 	}
 
 	if doDownloadData {
@@ -234,28 +234,28 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			})
 		}
 		if err := dataGroup.Wait(); err != nil {
-			return fmt.Errorf("one of Download go-routine return error: %v", err)
+			return errors.Wrap(err, "one of Download go-routine return error")
 		}
 	}
 	var rbacSize, configSize, namedCollectionsSize uint64
 	if rbacOnly || rbacOnly == configsOnly == namedCollectionsOnly == false {
 		rbacSize, err = b.downloadRBACData(ctx, remoteBackup)
 		if err != nil {
-			return fmt.Errorf("download RBAC error: %v", err)
+			return errors.Wrap(err, "download RBAC error")
 		}
 	}
 
 	if configsOnly || rbacOnly == configsOnly == namedCollectionsOnly == false {
 		configSize, err = b.downloadConfigData(ctx, remoteBackup)
 		if err != nil {
-			return fmt.Errorf("download CONFIGS error: %v", err)
+			return errors.Wrap(err, "download CONFIGS error")
 		}
 	}
 
 	if namedCollectionsOnly || rbacOnly == configsOnly == namedCollectionsOnly == false {
 		namedCollectionsSize, err = b.downloadNamedCollectionsData(ctx, remoteBackup)
 		if err != nil {
-			return fmt.Errorf("download NAMED COLLECTIONS error: %v", err)
+			return errors.Wrap(err, "download NAMED COLLECTIONS error")
 		}
 	}
 
@@ -462,15 +462,15 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 		err := retry.RunCtx(ctx, func(ctx context.Context) error {
 			tmReader, err := b.dst.GetFileReader(ctx, remoteMetadataFile)
 			if err != nil {
-				return fmt.Errorf("can't GetFileReader(%s) error: %v", remoteMetadataFile, err)
+				return errors.Wrapf(err, "can't GetFileReader(%s) error", remoteMetadataFile)
 			}
 			tmBody, err = io.ReadAll(tmReader)
 			if err != nil {
-				return fmt.Errorf("can't io.ReadAll(%s) error: %v", remoteMetadataFile, err)
+				return errors.Wrapf(err, "can't io.ReadAll(%s) error", remoteMetadataFile)
 			}
 			err = tmReader.Close()
 			if err != nil {
-				return fmt.Errorf("can't Close(%s) error: %v", remoteMetadataFile, err)
+				return errors.Wrapf(err, "can't Close(%s) error", remoteMetadataFile)
 			}
 			return nil
 		})
@@ -495,7 +495,7 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 			size += uint64(len(tmBody))
 		} else {
 			if err = json.Unmarshal(tmBody, &tableMetadata); err != nil {
-				return nil, 0, fmt.Errorf("can't json.Unmarshal(%s) error: %v", remoteMetadataFile, err)
+				return nil, 0, errors.Wrapf(err, "can't json.Unmarshal(%s) error", remoteMetadataFile)
 			}
 			if b.shouldSkipByTableEngine(tableMetadata) || b.shouldSkipByTableName(fmt.Sprintf("%s.%s", tableMetadata.Database, tableMetadata.Table)) {
 				return nil, 0, nil
@@ -797,7 +797,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 		}
 	}
 	if err := dataGroup.Wait(); err != nil {
-		return 0, fmt.Errorf("one of downloadTableData go-routine return error: %v", err)
+		return 0, errors.Wrap(err, "one of downloadTableData go-routine return error")
 	}
 	if isRebalancedAfterHardLinks.Load() {
 		if _, saveErr := table.Save(table.LocalFile, false); saveErr != nil {
@@ -871,7 +871,7 @@ func (b *Backuper) hardlinkIfLocalPartExistsAndChecksumEqual(backupName string, 
 					partLocalPath := path.Join(b.getLocalBackupDataPathForTable(backupName, localDisk.Name, dbAndTableDir), part.Name)
 					log.Info().Msgf("Found existing part %s with matching checksum, creating hardlinks to %s", existingPartPath, partLocalPath)
 					if err := b.makePartHardlinks(existingPartPath, partLocalPath); err != nil {
-						return false, 0, fmt.Errorf("failed to create hardlinks for %s: %v", existingPartPath, err)
+						return false, 0, errors.Wrapf(err, "failed to create hardlinks for %s", existingPartPath)
 					}
 					if diskName != localDisk.Name {
 						part.RebalancedDisk = localDisk.Name
@@ -887,7 +887,7 @@ func (b *Backuper) hardlinkIfLocalPartExistsAndChecksumEqual(backupName string, 
 						return nil
 					})
 					if walkErr != nil {
-						return false, 0, fmt.Errorf("failed to calculate size of %s: %v", existingPartPath, walkErr)
+						return false, 0, errors.Wrapf(walkErr, "failed to calculate size of %s", existingPartPath)
 					}
 					return true, partSize, nil
 				} else {
@@ -943,7 +943,7 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 			existsPath := path.Join(b.DiskToPathMap[disk], "backup", remoteBackup.RequiredBackup, "shadow", dbAndTableDir, disk, part.Name)
 			_, statErr := os.Stat(existsPath)
 			if statErr != nil && !os.IsNotExist(statErr) {
-				return 0, fmt.Errorf("%s stat return error: %v", existsPath, statErr)
+				return 0, errors.Wrapf(statErr, "%s stat return error", existsPath)
 			}
 			if statErr != nil && os.IsNotExist(statErr) {
 				//if existPath already processed then expect non-empty newPath
@@ -951,7 +951,7 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 					isProcessed, pathDiffBytes := b.resumableState.IsAlreadyProcessed(existsPath)
 					if isProcessed {
 						if newPathDirList, newPathDirErr := os.ReadDir(newPath); newPathDirErr != nil {
-							newPathDirErr = fmt.Errorf("os.ReadDir(%s) error: %v", newPath, newPathDirErr)
+							newPathDirErr = errors.Wrapf(newPathDirErr, "os.ReadDir(%s) error", newPath)
 							log.Error().Msg(newPathDirErr.Error())
 							return 0, newPathDirErr
 						} else if len(newPathDirList) == 0 {
@@ -1004,11 +1004,11 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 									return fmt.Errorf("after downloadDiffRemoteFile %s exists but is not directory", downloadedPartPath)
 								}
 								if err = b.makePartHardlinks(downloadedPartPath, capturedExistsPath); err != nil {
-									return fmt.Errorf("can't to add link to rebalanced part %s -> %s error: %v", downloadedPartPath, capturedExistsPath, err)
+									return errors.Wrapf(err, "can't to add link to rebalanced part %s -> %s error", downloadedPartPath, capturedExistsPath)
 								}
 							}
 							if err != nil && !os.IsNotExist(err) {
-								return fmt.Errorf("after downloadDiffRemoteFile os.Stat(%s) return error: %v", downloadedPartPath, err)
+								return errors.Wrapf(err, "after downloadDiffRemoteFile os.Stat(%s) return error", downloadedPartPath)
 							}
 						}
 						pathDiffBytes += fileDiffBytes
@@ -1016,7 +1016,7 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 						atomic.AddUint32(&downloadedDiffParts, 1)
 					}
 					if err := b.makePartHardlinks(capturedExistsPath, capturedNewPath); err != nil {
-						return fmt.Errorf("can't to add link to exists part %s -> %s error: %v", capturedNewPath, capturedExistsPath, err)
+						return errors.Wrapf(err, "can't to add link to exists part %s -> %s error", capturedNewPath, capturedExistsPath)
 					}
 					if b.resume {
 						b.resumableState.AppendToState(capturedExistsPath, pathDiffBytes)
@@ -1026,14 +1026,14 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 			} else {
 				if !b.resume || (b.resume && !b.resumableState.IsAlreadyProcessedBool(existsPath)) {
 					if statErr = b.makePartHardlinks(existsPath, newPath); statErr != nil {
-						return 0, fmt.Errorf("can't to add exists part: %v", statErr)
+						return 0, errors.Wrap(statErr, "can't to add exists part")
 					}
 				}
 			}
 		}
 	}
 	if err := downloadDiffGroup.Wait(); err != nil {
-		return 0, fmt.Errorf("one of downloadDiffParts go-routine return error: %v", err)
+		return 0, errors.Wrap(err, "one of downloadDiffParts go-routine return error")
 	}
 	if isRebalancedAfterHardLinks {
 		if _, saveErr := table.Save(table.LocalFile, false); saveErr != nil {
@@ -1105,7 +1105,7 @@ func (b *Backuper) downloadDiffRemoteFile(ctx context.Context, diffRemoteFilesLo
 func (b *Backuper) checkNewPath(newPath string, part metadata.Part) error {
 	info, err := os.Stat(newPath)
 	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("%s stat return error: %v", newPath, err)
+		return errors.Wrapf(err, "%s stat return error", newPath)
 	}
 	if os.IsNotExist(err) && !part.Required {
 		return fmt.Errorf("%s not found after download backup", newPath)

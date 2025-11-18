@@ -2,10 +2,11 @@ package backup
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"github.com/rs/zerolog/log"
 	"hash/fnv"
+
+	"github.com/pkg/errors"
+	"github.com/rs/zerolog/log"
 )
 
 var (
@@ -170,7 +171,7 @@ func (rd *replicaDeterminer) getReplicaState(ctx context.Context) ([]tableReplic
 	// TODO: Change query to pull replica_is_active after upgrading to clickhouse-go v2
 	query := "SELECT t.database, t.name AS table, r.replica_name, arraySort(mapKeys(mapFilter((replica, active) -> (active == 1), r.replica_is_active))) AS active_replicas FROM system.tables t LEFT JOIN system.replicas r ON t.database = r.database AND t.name = r.table"
 	if err := rd.q.SelectContext(ctx, &md, query); err != nil {
-		return nil, fmt.Errorf("could not determine replication state: %w", err)
+		return nil, errors.Wrap(err, "could not determine replication state")
 	}
 
 	// Handle views and memory tables by putting in stand-in replication metadata

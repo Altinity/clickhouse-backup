@@ -6,7 +6,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,6 +23,7 @@ import (
 
 	"github.com/google/shlex"
 	"github.com/gorilla/mux"
+	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog/log"
 	"github.com/urfave/cli"
@@ -2241,7 +2241,7 @@ func (api *APIServer) CreateIntegrationTables() error {
 		Config: &api.config.ClickHouse,
 	}
 	if err := ch.Connect(); err != nil {
-		return fmt.Errorf("can't connect to clickhouse: %w", err)
+		return errors.Wrap(err, "can't connect to clickhouse")
 	}
 	defer ch.Close()
 	port := "80"

@@ -376,7 +376,7 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) e
 					// macros works only after 23.3+ https://github.com/Altinity/clickhouse-backup/issues/750
 					if version > 23003000 {
 						if creds.EndPoint, err = ch.ApplyMacros(ctx, creds.EndPoint); err != nil {
-							return fmt.Errorf("%s -> /%s/storage_configuration/disks/%s apply macros to <endpoint> error: %v", configFile, root.Data, diskName, err)
+							return errors.Wrapf(err, "%s -> /%s/storage_configuration/disks/%s apply macros to <endpoint> error", configFile, root.Data, diskName)
 						}
 					}
 				} else {
@@ -752,12 +752,12 @@ func CopyObject(ctx context.Context, diskName string, srcSize int64, srcBucket, 
 func CopyObjectStreaming(ctx context.Context, srcStorage storage.RemoteStorage, dstStorage storage.RemoteStorage, srcKey, dstKey string) error {
 	srcInfo, statErr := srcStorage.StatFileAbsolute(ctx, srcKey)
 	if statErr != nil {
-		return fmt.Errorf("srcStorage.StatFileReaderAbsolute(%s) error: %v", srcKey, statErr)
+		return errors.Wrapf(statErr, "srcStorage.StatFileReaderAbsolute(%s) error", srcKey)
 	}
 
 	srcReader, srcErr := srcStorage.GetFileReaderAbsolute(ctx, srcKey)
 	if srcErr != nil {
-		return fmt.Errorf("srcStorage.GetFileReaderAbsolute(%s) error: %v", srcKey, srcErr)
+		return errors.Wrapf(srcErr, "srcStorage.GetFileReaderAbsolute(%s) error", srcKey)
 	}
 	defer func() {
 		if closeErr := srcReader.Close(); closeErr != nil {
@@ -765,7 +765,7 @@ func CopyObjectStreaming(ctx context.Context, srcStorage storage.RemoteStorage, 
 		}
 	}()
 	if putErr := dstStorage.PutFileAbsolute(ctx, dstKey, srcReader, srcInfo.Size()); putErr != nil {
-		return fmt.Errorf("dstStorage.PutFileAbsolute(%s) error: %v", dstKey, putErr)
+		return errors.Wrapf(putErr, "dstStorage.PutFileAbsolute(%s) error", dstKey)
 	}
 	return nil
 }

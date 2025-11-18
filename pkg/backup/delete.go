@@ -3,13 +3,14 @@ package backup
 import (
 	"context"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/custom"
@@ -25,7 +26,7 @@ import (
 // Clean - removed all data in shadow folder
 func (b *Backuper) Clean(ctx context.Context) error {
 	if err := b.ch.Connect(); err != nil {
-		return fmt.Errorf("can't connect to clickhouse: %v", err)
+		return errors.Wrap(err, "can't connect to clickhouse")
 	}
 	defer b.ch.Close()
 
@@ -39,7 +40,7 @@ func (b *Backuper) Clean(ctx context.Context) error {
 		}
 		shadowDir := path.Join(disk.Path, "shadow")
 		if err := b.cleanDir(shadowDir); err != nil {
-			return fmt.Errorf("can't clean '%s': %v", shadowDir, err)
+			return errors.Wrapf(err, "can't clean '%s'", shadowDir)
 		}
 		log.Info().Msg(shadowDir)
 	}
@@ -117,7 +118,7 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 	start := time.Now()
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 	if err = b.ch.Connect(); err != nil {
-		return fmt.Errorf("can't connect to clickhouse: %v", err)
+		return errors.Wrap(err, "can't connect to clickhouse")
 	}
 	defer b.ch.Close()
 	if disks == nil {
@@ -142,7 +143,7 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 				}
 				err = bd.Connect(ctx)
 				if err != nil {
-					return fmt.Errorf("can't connect to remote storage: %v", err)
+					return errors.Wrap(err, "can't connect to remote storage")
 				}
 				defer func() {
 					if err := bd.Close(ctx); err != nil {
@@ -279,7 +280,7 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 		return custom.DeleteRemote(ctx, b.cfg, backupName)
 	}
 	if err := b.ch.Connect(); err != nil {
-		return fmt.Errorf("can't connect to clickhouse: %v", err)
+		return errors.Wrap(err, "can't connect to clickhouse")
 	}
 	defer b.ch.Close()
 
@@ -289,7 +290,7 @@ func (b *Backuper) RemoveBackupRemote(ctx context.Context, backupName string) er
 	}
 	err = bd.Connect(ctx)
 	if err != nil {
-		return fmt.Errorf("can't connect to remote storage: %v", err)
+		return errors.Wrap(err, "can't connect to remote storage")
 	}
 	defer func() {
 		if err := bd.Close(ctx); err != nil {
@@ -472,14 +473,14 @@ func (b *Backuper) cleanPartialRequiredBackup(ctx context.Context, disks []click
 		for _, localBackup := range localBackups {
 			if localBackup.BackupName != currentBackupName && localBackup.DataSize+localBackup.CompressedSize+localBackup.MetadataSize+localBackup.RBACSize == 0 {
 				if err = b.RemoveBackupLocal(ctx, localBackup.BackupName, disks); err != nil {
-					return fmt.Errorf("CleanPartialRequiredBackups %s -> RemoveBackupLocal cleaning error: %v", localBackup.BackupName, err)
+					return errors.Wrapf(err, "CleanPartialRequiredBackups %s -> RemoveBackupLocal cleaning error", localBackup.BackupName)
 				} else {
 					log.Info().Msgf("CleanPartialRequiredBackups %s deleted", localBackup.BackupName)
 				}
 			}
 		}
 	} else {
-		return fmt.Errorf("CleanPartialRequiredBackups -> GetLocalBackups cleaning error: %v", err)
+		return errors.Wrap(err, "CleanPartialRequiredBackups -> GetLocalBackups cleaning error")
 	}
 	return nil
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/jlaffaye/ftp"
 	"github.com/jolestar/go-commons-pool/v2"
+	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 )
 
@@ -305,10 +306,10 @@ type ftpPoolFactory struct {
 func (f *ftpPoolFactory) MakeObject(ctx context.Context) (*pool.PooledObject, error) {
 	c, err := ftp.Dial(f.ftp.Config.Address, f.options...)
 	if err != nil {
-		return nil, fmt.Errorf("ftpPoolFactory->MakeObject Dial error: %v", err)
+		return nil, errors.Wrap(err, "ftpPoolFactory->MakeObject Dial error")
 	}
 	if err = c.Login(f.ftp.Config.Username, f.ftp.Config.Password); err != nil {
-		return nil, fmt.Errorf("ftpPoolFactory->MakeObject Login error: %v", err)
+		return nil, errors.Wrap(err, "ftpPoolFactory->MakeObject Login error")
 	}
 	return pool.NewPooledObject(c), nil
 }

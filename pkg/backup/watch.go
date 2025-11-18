@@ -10,6 +10,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/server/metrics"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
+	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/urfave/cli"
 )
@@ -39,13 +40,13 @@ func (b *Backuper) ValidateWatchParams(watchInterval, fullInterval, watchBackupN
 	if watchInterval != "" {
 		b.cfg.General.WatchInterval = watchInterval
 		if b.cfg.General.WatchDuration, err = time.ParseDuration(watchInterval); err != nil {
-			return fmt.Errorf("watchInterval `%s` parsing error: %v", watchInterval, err)
+			return errors.Wrapf(err, "watchInterval `%s` parsing error", watchInterval)
 		}
 	}
 	if fullInterval != "" {
 		b.cfg.General.FullInterval = fullInterval
 		if b.cfg.General.FullDuration, err = time.ParseDuration(fullInterval); err != nil {
-			return fmt.Errorf("fullInterval `%s` parsing error: %v", fullInterval, err)
+			return errors.Wrapf(err, "fullInterval `%s` parsing error", fullInterval)
 		}
 	}
 	if b.cfg.General.FullDuration <= b.cfg.General.WatchDuration {

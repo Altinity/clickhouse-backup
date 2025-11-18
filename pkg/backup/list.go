@@ -21,6 +21,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"github.com/gocarina/gocsv"
+	"github.com/pkg/errors"
 	"github.com/ricochet2200/go-disk-usage/du"
 	"github.com/rs/zerolog/log"
 	"gopkg.in/yaml.v3"
@@ -509,14 +510,14 @@ func (b *Backuper) GetRemoteBackups(ctx context.Context, parseMetadata bool) ([]
 func (b *Backuper) GetTables(ctx context.Context, tablePattern string) ([]clickhouse.Table, error) {
 	if !b.ch.IsOpen {
 		if err := b.ch.Connect(); err != nil {
-			return []clickhouse.Table{}, fmt.Errorf("can't connect to clickhouse: %v", err)
+			return []clickhouse.Table{}, errors.Wrap(err, "can't connect to clickhouse")
 		}
 		defer b.ch.Close()
 	}
 
 	allTables, err := b.ch.GetTables(ctx, tablePattern)
 	if err != nil {
-		return []clickhouse.Table{}, fmt.Errorf("can't get tables: %v", err)
+		return []clickhouse.Table{}, errors.Wrap(err, "can't get tables")
 	}
 	if err := b.populateBackupShardField(ctx, allTables); err != nil {
 		return nil, err
@@ -530,7 +531,7 @@ func (b *Backuper) PrintTables(printAll bool, tablePattern, remoteBackup string)
 	ctx, cancel, _ := status.Current.GetContextWithCancel(status.NotFromAPI)
 	defer cancel()
 	if err = b.ch.Connect(); err != nil {
-		return fmt.Errorf("can't connect to clickhouse: %v", err)
+		return errors.Wrap(err, "can't connect to clickhouse")
 	}
 	defer b.ch.Close()
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', tabwriter.DiscardEmptyColumns)
@@ -584,7 +585,7 @@ func (b *Backuper) printTablesLocal(ctx context.Context, tablePattern string, pr
 func (b *Backuper) GetTablesRemote(ctx context.Context, backupName string, tablePattern string) ([]clickhouse.Table, error) {
 	if !b.ch.IsOpen {
 		if err := b.ch.Connect(); err != nil {
-			return []clickhouse.Table{}, fmt.Errorf("can't connect to clickhouse: %v", err)
+			return []clickhouse.Table{}, errors.Wrap(err, "can't connect to clickhouse")
 		}
 		defer b.ch.Close()
 	}
@@ -598,7 +599,7 @@ func (b *Backuper) GetTablesRemote(ctx context.Context, backupName string, table
 		}
 		err = bd.Connect(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("can't connect to remote storage: %v", err)
+			return nil, errors.Wrap(err, "can't connect to remote storage")
 		}
 		defer func() {
 			if err := bd.Close(ctx); err != nil {
