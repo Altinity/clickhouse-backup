@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/antchfx/xmlquery"
+	"github.com/pkg/errors"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
@@ -60,7 +61,7 @@ type Keeper struct {
 func (k *Keeper) Connect(ctx context.Context, ch *clickhouse.ClickHouse) error {
 	configFile, doc, err := ch.ParseXML(ctx, "config.xml")
 	if err != nil {
-		return fmt.Errorf("can't parse config.xml from %s, error: %v", configFile, err)
+		return errors.Wrapf(err, "can't parse config.xml from %s, error", configFile)
 	}
 	k.xmlConfigFile = configFile
 	k.doc = doc
@@ -99,7 +100,7 @@ func (k *Keeper) Connect(ctx context.Context, ch *clickhouse.ClickHouse) error {
 	}
 	if digestNode := zookeeperNode.SelectElement("digest"); digestNode != nil {
 		if err = conn.AddAuth("digest", []byte(digestNode.InnerText())); err != nil {
-			return fmt.Errorf("keeper digest authorization error: %v", err)
+			return errors.Wrap(err, "keeper digest authorization error")
 		}
 	}
 	k.conn = conn
@@ -126,7 +127,7 @@ func (k *Keeper) GetReplicatedAccessPath(userDirectory string) (string, error) {
 func (k *Keeper) Dump(prefix, dumpFile string) (int, error) {
 	f, err := os.Create(dumpFile)
 	if err != nil {
-		return 0, fmt.Errorf("can't create %s: %v", dumpFile, err)
+		return 0, errors.Wrapf(err, "can't create %s", dumpFile)
 	}
 	defer func() {
 		if err = f.Close(); err != nil {
@@ -138,7 +139,7 @@ func (k *Keeper) Dump(prefix, dumpFile string) (int, error) {
 	}
 	bytes, err := k.dumpNodeRecursive(prefix, "", f)
 	if err != nil {
-		return 0, fmt.Errorf("dumpNodeRecursive(%s) return error: %v", prefix, err)
+		return 0, errors.Wrapf(err, "dumpNodeRecursive(%s) return error", prefix)
 	}
 	return bytes, nil
 }
@@ -191,7 +192,7 @@ func (k *Keeper) writeJsonString(f *os.File, node DumpNode) (int, error) {
 func (k *Keeper) Restore(dumpFile, prefix string) error {
 	f, err := os.Open(dumpFile)
 	if err != nil {
-		return fmt.Errorf("can't open %s: %v", dumpFile, err)
+		return errors.Wrapf(err, "can't open %s", dumpFile)
 	}
 	defer func() {
 		if err = f.Close(); err != nil {
@@ -218,7 +219,7 @@ func (k *Keeper) Restore(dumpFile, prefix string) error {
 		if err != nil {
 			_, err = k.conn.Create(node.Path, node.Value, 0, zk.WorldACL(zk.PermAll))
 			if err != nil {
-				return fmt.Errorf("can't create znode %s, error: %v", node.Path, err)
+				return errors.Wrapf(err, "can't create znode %s, error", node.Path)
 			}
 		} else {
 			version = stat.Version
@@ -244,7 +245,7 @@ func (k *Keeper) Walk(prefix, relativePath string, recursive bool, callback Walk
 	var isDone bool
 	callbackNode := DumpNode{Path: nodePath, Value: value}
 	if isDone, err = callback(callbackNode); err != nil {
-		return fmt.Errorf("k.Walk->callback(%v) error: %v", callbackNode, err)
+		return errors.Wrapf(err, "k.Walk->callback(%v) error", callbackNode)
 	}
 	if isDone {
 		return nil

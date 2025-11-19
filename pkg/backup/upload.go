@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
+	"github.com/pkg/errors"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/custom"
@@ -51,7 +52,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 
 	var disks []clickhouse.Disk
 	if err = b.ch.Connect(); err != nil {
-		return fmt.Errorf("can't connect to clickhouse: %v", err)
+		return errors.Wrap(err, "can't connect to clickhouse")
 	}
 	defer b.ch.Close()
 	b.adjustResumeFlag(resume)
@@ -69,7 +70,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 		return custom.Upload(ctx, b, b.cfg, backupName, diffFrom, diffFromRemote, tablePattern, partitions, schemaOnly)
 	}
 	if _, disks, err = b.getLocalBackup(ctx, backupName, nil); err != nil {
-		return fmt.Errorf("can't find local backup: %v", err)
+		return errors.Wrap(err, "can't find local backup")
 	}
 	if initErr := b.initDisksPathsAndBackupDestination(ctx, disks, backupName); initErr != nil {
 		return initErr
@@ -82,7 +83,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 
 	remoteBackups, err := b.dst.BackupList(ctx, false, "")
 	if err != nil {
-		return fmt.Errorf("b.dst.BackupList return error: %v", err)
+		return errors.Wrap(err, "b.dst.BackupList return error")
 	}
 	for i := range remoteBackups {
 		if backupName == remoteBackups[i].BackupName {
@@ -95,7 +96,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	}
 	backupMetadata, err := b.ReadBackupMetadataLocal(ctx, backupName)
 	if err != nil {
-		return fmt.Errorf("b.ReadBackupMetadataLocal return error: %v", err)
+		return errors.Wrap(err, "b.ReadBackupMetadataLocal return error")
 	}
 	var tablesForUpload ListOfTables
 	b.isEmbedded = strings.Contains(backupMetadata.Tags, "embedded")
@@ -107,7 +108,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	if len(backupMetadata.Tables) != 0 {
 		tablesForUpload, err = b.prepareTableListToUpload(ctx, backupName, tablePattern, partitions)
 		if err != nil {
-			return fmt.Errorf("b.prepareTableListToUpload return error: %v", err)
+			return errors.Wrap(err, "b.prepareTableListToUpload return error")
 		}
 	}
 	tablesForUploadFromDiff := map[metadata.TableTitle]metadata.TableMetadata{}
@@ -115,14 +116,14 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	if diffFrom != "" && !b.isEmbedded {
 		tablesForUploadFromDiff, err = b.getTablesDiffFromLocal(ctx, diffFrom, tablePattern)
 		if err != nil {
-			return fmt.Errorf("b.getTablesDiffFromLocal return error: %v", err)
+			return errors.Wrap(err, "b.getTablesDiffFromLocal return error")
 		}
 		backupMetadata.RequiredBackup = diffFrom
 	}
 	if diffFromRemote != "" && !b.isEmbedded {
 		tablesForUploadFromDiff, err = b.getTablesDiffFromRemote(ctx, diffFromRemote, tablePattern)
 		if err != nil {
-			return fmt.Errorf("b.getTablesDiffFromRemote return error: %v", err)
+			return errors.Wrap(err, "b.getTablesDiffFromRemote return error")
 		}
 		backupMetadata.RequiredBackup = diffFromRemote
 	}
@@ -193,25 +194,25 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 		})
 	}
 	if err := uploadGroup.Wait(); err != nil {
-		return fmt.Errorf("one of upload table go-routine return error: %v", err)
+		return errors.Wrap(err, "one of upload table go-routine return error")
 	}
 
 	// upload rbac for backup, if not configsOnly
 	if rbacOnly || configsOnly == rbacOnly == namedCollectionsOnly == false {
 		if backupMetadata.RBACSize, err = b.uploadRBACData(ctx, backupName); err != nil {
-			return fmt.Errorf("b.uploadRBACData return error: %v", err)
+			return errors.Wrap(err, "b.uploadRBACData return error")
 		}
 	}
 	// upload configs for backup, if not rbacOnly
 	if configsOnly || configsOnly == rbacOnly == namedCollectionsOnly == false {
 		if backupMetadata.ConfigSize, err = b.uploadConfigData(ctx, backupName); err != nil {
-			return fmt.Errorf("b.uploadConfigData return error: %v", err)
+			return errors.Wrap(err, "b.uploadConfigData return error")
 		}
 	}
 	// Handle named collections
 	if namedCollectionsOnly || configsOnly == rbacOnly == namedCollectionsOnly == false {
 		if backupMetadata.ConfigSize, err = b.uploadNamedCollections(ctx, backupName); err != nil {
-			return fmt.Errorf("b.uploadNamedCollections return error: %v", err)
+			return errors.Wrap(err, "b.uploadNamedCollections return error")
 		}
 	}
 	//upload embedded .backup file
@@ -220,7 +221,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 		remoteClickHouseBackupFile := path.Join(backupName, ".backup")
 		localEmbeddedMetadataSize := int64(0)
 		if localEmbeddedMetadataSize, err = b.uploadSingleBackupFile(ctx, localClickHouseBackupFile, remoteClickHouseBackupFile); err != nil {
-			return fmt.Errorf("b.uploadSingleBackupFile return error: %v", err)
+			return errors.Wrap(err, "b.uploadSingleBackupFile return error")
 		}
 		metadataSize += localEmbeddedMetadataSize
 	}
@@ -253,7 +254,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 			return b.dst.PutFile(ctx, remoteBackupMetaFile, io.NopCloser(bytes.NewReader(newBackupMetadataBody)), 0)
 		})
 		if err != nil {
-			return fmt.Errorf("can't upload %s: %v", remoteBackupMetaFile, err)
+			return errors.Wrapf(err, "can't upload %s", remoteBackupMetaFile)
 		}
 	}
 	if b.resume {
@@ -270,17 +271,17 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 
 	// Remote old backup retention
 	if err = b.RemoveOldBackupsRemote(ctx); err != nil {
-		return fmt.Errorf("can't remove old backups on remote storage: %v", err)
+		return errors.Wrap(err, "can't remove old backups on remote storage")
 	}
 	// Local old backup retention, fix https://github.com/Altinity/clickhouse-backup/issues/834
 	if err = b.RemoveOldBackupsLocal(ctx, false, nil); err != nil {
-		return fmt.Errorf("can't remove old local backups: %v", err)
+		return errors.Wrap(err, "can't remove old local backups")
 	}
 
 	// explicitly delete local backup after successful upload, fix https://github.com/Altinity/clickhouse-backup/issues/777
 	if b.cfg.General.BackupsToKeepLocal >= 0 && deleteSource {
 		if err = b.RemoveBackupLocal(ctx, backupName, disks); err != nil {
-			return fmt.Errorf("can't explicitly delete local source backup: %v", err)
+			return errors.Wrap(err, "can't explicitly delete local source backup")
 		}
 	}
 	return nil
@@ -330,7 +331,7 @@ func (b *Backuper) uploadSingleBackupFile(ctx context.Context, localFile, remote
 	}
 	f, err := os.Open(localFile)
 	if err != nil {
-		return 0, fmt.Errorf("can't open %s: %v", localFile, err)
+		return 0, errors.Wrapf(err, "can't open %s", localFile)
 	}
 	defer func() {
 		if err := f.Close(); err != nil {
@@ -342,7 +343,7 @@ func (b *Backuper) uploadSingleBackupFile(ctx context.Context, localFile, remote
 		return b.dst.PutFile(ctx, remoteFile, f, 0)
 	})
 	if err != nil {
-		return 0, fmt.Errorf("can't upload %s: %v", remoteFile, err)
+		return 0, errors.Wrapf(err, "can't upload %s", remoteFile)
 	}
 	info, err := os.Stat(localFile)
 	if err != nil {
@@ -491,7 +492,7 @@ func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelate
 	if b.cfg.GetCompressionFormat() == "none" {
 		remoteUploadedBytes := int64(0)
 		if remoteUploadedBytes, err = b.dst.UploadPath(ctx, localBackupRelatedDir, localFiles, destinationRemote, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter, b, b.cfg.General.UploadMaxBytesPerSecond); err != nil {
-			return 0, fmt.Errorf("can't uploadBackupRelatedDir upload %s: %v", destinationRemote, err)
+			return 0, errors.Wrapf(err, "can't uploadBackupRelatedDir upload %s", destinationRemote)
 		}
 		if b.resume {
 			b.resumableState.AppendToState(destinationRemote, remoteUploadedBytes)
@@ -504,10 +505,10 @@ func (b *Backuper) uploadBackupRelatedDir(ctx context.Context, localBackupRelate
 	err = retry.RunCtx(ctx, func(ctx context.Context) error {
 		var uploadErr error
 		if uploadErr = b.dst.UploadCompressedStream(ctx, localBackupRelatedDir, localFiles, destinationRemote, b.cfg.General.UploadMaxBytesPerSecond); uploadErr != nil {
-			return fmt.Errorf("can't uploadBackupRelatedDir compressed %s: %v", destinationRemote, uploadErr)
+			return errors.Wrapf(uploadErr, "can't uploadBackupRelatedDir compressed %s", destinationRemote)
 		}
 		if remoteUploaded, uploadErr = b.dst.StatFile(ctx, destinationRemote); uploadErr != nil {
-			return fmt.Errorf("can't check uploadBackupRelatedDir destinationRemote: %s, error: %v", destinationRemote, uploadErr)
+			return errors.Wrapf(uploadErr, "can't check uploadBackupRelatedDir destinationRemote: %s, error", destinationRemote)
 		}
 		return nil
 	})
@@ -585,7 +586,7 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 					log.Debug().Msgf("start upload %d files to %s", len(partFiles), remotePath)
 					if uploadPathBytes, err := b.dst.UploadPath(ctx, backupPath, partFiles, remotePath, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter, b, b.cfg.General.UploadMaxBytesPerSecond); err != nil {
 						log.Error().Msgf("UploadPath return error: %v", err)
-						return fmt.Errorf("can't upload: %v", err)
+						return errors.Wrap(err, "can't upload")
 					} else {
 						atomic.AddInt64(&uploadedBytes, uploadPathBytes)
 						if b.resume {
@@ -621,7 +622,7 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 					})
 					if err != nil {
 						log.Error().Msgf("UploadCompressedStream return error: %v", err)
-						return fmt.Errorf("can't upload: %v", err)
+						return errors.Wrap(err, "can't upload")
 					}
 
 					var remoteFile storage.RemoteFile
@@ -631,7 +632,7 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 						return err
 					})
 					if err != nil {
-						return fmt.Errorf("can't check uploaded remoteDataFile: %s, error: %v", remoteDataFile, err)
+						return errors.Wrapf(err, "can't check uploaded remoteDataFile: %s, error", remoteDataFile)
 					}
 					atomic.AddInt64(&uploadedBytes, remoteFile.Size())
 					if b.resume {
@@ -652,7 +653,7 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 		}
 	}
 	if err := dataGroup.Wait(); err != nil {
-		return nil, nil, 0, fmt.Errorf("one of uploadTableData go-routine return error: %v", err)
+		return nil, nil, 0, errors.Wrap(err, "one of uploadTableData go-routine return error")
 	}
 	log.Debug().Msgf("finish %s.%s with concurrency=%d len(table.Parts[...])=%d uploadedFiles=%v, uploadedBytes=%v", table.Database, table.Table, b.cfg.General.UploadConcurrency, capacity, uploadedFiles, uploadedBytes)
 	return uploadedFiles, uploadedParts, uploadedBytes, nil
@@ -673,7 +674,7 @@ func (b *Backuper) uploadTableMetadata(ctx context.Context, backupName string, r
 func (b *Backuper) uploadTableMetadataRegular(ctx context.Context, backupName string, tableMetadata metadata.TableMetadata) (int64, error) {
 	content, err := json.MarshalIndent(&tableMetadata, "", "\t")
 	if err != nil {
-		return 0, fmt.Errorf("can't marshal json: %v", err)
+		return 0, errors.Wrap(err, "can't marshal json")
 	}
 	remoteTableMetaFile := path.Join(backupName, "metadata", common.TablePathEncode(tableMetadata.Database), fmt.Sprintf("%s.json", common.TablePathEncode(tableMetadata.Table)))
 	if b.resume {
@@ -686,7 +687,7 @@ func (b *Backuper) uploadTableMetadataRegular(ctx context.Context, backupName st
 		return b.dst.PutFile(ctx, remoteTableMetaFile, io.NopCloser(bytes.NewReader(content)), 0)
 	})
 	if err != nil {
-		return 0, fmt.Errorf("can't upload: %v", err)
+		return 0, errors.Wrap(err, "can't upload")
 	}
 	if b.resume {
 		b.resumableState.AppendToState(remoteTableMetaFile, int64(len(content)))
@@ -710,7 +711,7 @@ func (b *Backuper) uploadTableMetadataEmbedded(ctx context.Context, backupName s
 	var err error
 	localReader, err = os.Open(localTableMetaFile)
 	if err != nil {
-		err = fmt.Errorf("can't open %s: %v", localTableMetaFile, err)
+		err = errors.Wrapf(err, "can't open %s", localTableMetaFile)
 		if requiredBackupName != "" {
 			log.Warn().Err(err).Send()
 			return 0, nil
@@ -731,7 +732,7 @@ func (b *Backuper) uploadTableMetadataEmbedded(ctx context.Context, backupName s
 		return b.dst.PutFile(ctx, remoteTableMetaFile, localReader, 0)
 	})
 	if err != nil {
-		return 0, fmt.Errorf("can't embeeded upload metadata: %v", err)
+		return 0, errors.Wrap(err, "can't embeeded upload metadata")
 	}
 	if b.resume {
 		b.resumableState.AppendToState(remoteTableMetaFile, info.Size())

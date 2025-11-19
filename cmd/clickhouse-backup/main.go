@@ -5,16 +5,14 @@ import (
 	"fmt"
 	stdlog "log"
 	"os"
-	"strconv"
 	"strings"
 
-	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"github.com/rs/zerolog/pkgerrors"
 	"github.com/urfave/cli"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/backup"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/log_helper"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/server"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/status"
 )
@@ -26,18 +24,7 @@ var (
 )
 
 func main() {
-	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixMs
-	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
-	// Customize the caller format to remove the prefix
-	zerolog.CallerMarshalFunc = func(pc uintptr, file string, line int) string {
-		return strings.TrimPrefix(file, "github.com/Altinity/clickhouse-backup/v2/") + ":" + strconv.Itoa(line)
-	}
-	consoleWriter := zerolog.ConsoleWriter{Out: os.Stderr, NoColor: true, TimeFormat: "2006-01-02 15:04:05.000"}
-	//diodeWriter := diode.NewWriter(consoleWriter, 4096, 10*time.Millisecond, func(missed int) {
-	//	fmt.Printf("Logger Dropped %d messages", missed)
-	//})
-	log.Logger = zerolog.New(zerolog.SyncWriter(consoleWriter)).With().Timestamp().Caller().Logger()
-	//zerolog.SetGlobalLevel(zerolog.Disabled)
+	log.Logger = log_helper.SetupLogger(os.Stderr)
 	//log.Logger = zerolog.New(os.Stdout).With().Timestamp().Caller().Logger()
 	stdlog.SetOutput(log.Logger)
 	cliapp := cli.NewApp()
@@ -820,6 +807,6 @@ func main() {
 		},
 	}
 	if err := cliapp.Run(os.Args); err != nil {
-		log.Fatal().Err(err).Send()
+		log.Fatal().Stack().Err(err).Send()
 	}
 }

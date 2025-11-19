@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"io"
 	"net/url"
 	"os"
@@ -13,6 +12,9 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
+	"github.com/pkg/errors"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
@@ -550,19 +552,19 @@ func getTableListByPatternRemote(ctx context.Context, b *Backuper, remoteBackupM
 				tableMetadataPath := path.Join(metadataPath, common.TablePathEncode(t.Database), fmt.Sprintf("%s.json", common.TablePathEncode(t.Table)))
 				tmReader, err := b.dst.GetFileReader(ctx, tableMetadataPath)
 				if err != nil {
-					return nil, fmt.Errorf("b.dst.GetFileReader(%s) error: %v", tableMetadataPath, err)
+					return nil, errors.Wrapf(err, "b.dst.GetFileReader(%s) error", tableMetadataPath)
 				}
 				data, err := io.ReadAll(tmReader)
 				if err != nil {
-					return nil, fmt.Errorf("io.ReadAll(%s) error: %v", tableMetadataPath, err)
+					return nil, errors.Wrapf(err, "io.ReadAll(%s) error", tableMetadataPath)
 				}
 				err = tmReader.Close()
 				if err != nil {
-					return nil, fmt.Errorf("can't close %s error: %v", tableMetadataPath, err)
+					return nil, errors.Wrapf(err, "can't close %s error", tableMetadataPath)
 				}
 				var t metadata.TableMetadata
 				if err = json.Unmarshal(data, &t); err != nil {
-					return nil, fmt.Errorf("json.Unmarshal(%s) error: %v", data, err)
+					return nil, errors.Wrapf(err, "json.Unmarshal(%s) error", data)
 				}
 				result = addTableToListIfNotExistsOrEnrichQueryAndParts(result, t)
 				break tablePatterns

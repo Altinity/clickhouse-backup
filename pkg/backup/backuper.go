@@ -4,17 +4,18 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
-	"errors"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
-	"github.com/eapache/go-resiliency/retrier"
 	"net/url"
 	"os"
 	"path"
 	"regexp"
 	"strings"
+
+	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
+	"github.com/eapache/go-resiliency/retrier"
+	"github.com/pkg/errors"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
@@ -117,7 +118,7 @@ func (b *Backuper) initDisksPathsAndBackupDestination(ctx context.Context, disks
 			return err
 		}
 		if err := b.dst.Connect(ctx); err != nil {
-			return fmt.Errorf("can't connect to %s: %v", b.dst.Kind(), err)
+			return errors.Wrapf(err, "can't connect to %s", b.dst.Kind())
 		}
 	}
 	return nil
@@ -166,7 +167,7 @@ func (b *Backuper) populateBackupShardField(ctx context.Context, tables []clickh
 		// Parse shard config here to avoid error return in NewBackuper
 		shardFunc, err := shardFuncByName(b.cfg.General.ShardedOperationMode)
 		if err != nil {
-			return fmt.Errorf("could not determine shards for tables: %w", err)
+			return errors.Wrap(err, "could not determine shards for tables")
 		}
 		b.bs = newReplicaDeterminer(b.ch, shardFunc)
 	}
@@ -417,7 +418,7 @@ func (b *Backuper) getTablesDiffFromRemote(ctx context.Context, diffFromRemote s
 	tablesForUploadFromDiff = make(map[metadata.TableTitle]metadata.TableMetadata)
 	backupList, err := b.dst.BackupList(ctx, true, diffFromRemote)
 	if err != nil {
-		return nil, fmt.Errorf("b.dst.BackupList return error: %v", err)
+		return nil, errors.Wrap(err, "b.dst.BackupList return error")
 	}
 	var diffRemoteMetadata *metadata.BackupMetadata
 	for _, backup := range backupList {
@@ -433,7 +434,7 @@ func (b *Backuper) getTablesDiffFromRemote(ctx context.Context, diffFromRemote s
 	if len(diffRemoteMetadata.Tables) != 0 {
 		diffTablesList, tableListErr := getTableListByPatternRemote(ctx, b, diffRemoteMetadata, tablePattern, false)
 		if tableListErr != nil {
-			return nil, fmt.Errorf("getTableListByPatternRemote return error: %v", tableListErr)
+			return nil, errors.Wrap(tableListErr, "getTableListByPatternRemote return error")
 		}
 		for _, t := range diffTablesList {
 			tablesForUploadFromDiff[metadata.TableTitle{
@@ -537,7 +538,7 @@ func (b *Backuper) calculateChecksum(disk *clickhouse.Disk, partName string) (ui
 	checksumsFilePath := path.Join(disk.Path, partName, "checksums.txt")
 	content, err := os.ReadFile(checksumsFilePath)
 	if err != nil {
-		return 0, fmt.Errorf("could not read %s: %w", checksumsFilePath, err)
+		return 0, errors.Wrapf(err, "could not read %s", checksumsFilePath)
 	}
 
 	hash := sha256.Sum256(content)

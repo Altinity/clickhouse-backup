@@ -19,6 +19,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
 	"github.com/antchfx/xmlquery"
+	"github.com/pkg/errors"
 	"github.com/puzpuzpuz/xsync"
 	"github.com/rs/zerolog/log"
 )
@@ -31,11 +32,13 @@ const (
 	VersionRelativePath  MetadataVersion = 2
 	VersionReadOnlyFlag  MetadataVersion = 3
 	VersionInlineData    MetadataVersion = 4
+	VersionFullObjectKey MetadataVersion = 5
 )
 
 type StorageObject struct {
-	ObjectSize         int64
-	ObjectRelativePath string
+	IsAbsolute bool
+	ObjectSize int64
+	ObjectPath string
 }
 
 type Metadata struct {
@@ -92,7 +95,6 @@ func ReadBoolText(scanner *bufio.Scanner) (bool, error) {
 
 func (m *Metadata) readFromFile(file io.Reader) error {
 
-	objectStorageRootPath := ""
 	scanner := bufio.NewScanner(file)
 	// todo think about, resize scanner's capacity for lines over 64K
 	scanner.Split(bufio.ScanWords)
@@ -103,37 +105,52 @@ func (m *Metadata) readFromFile(file io.Reader) error {
 		return err
 	}
 
-	if version < int(VersionAbsolutePaths) || version > int(VersionInlineData) {
-		return fmt.Errorf("invalid metadata.Version=%v", m.Version)
+	if version < int(VersionAbsolutePaths) || version > int(VersionFullObjectKey) {
+		return fmt.Errorf("invalid metadata.Version=%v", version)
 	}
 
 	m.Version = MetadataVersion(version)
 
 	m.StorageObjectCount, err = ReadIntText(scanner)
+	if err != nil {
+		return errors.WithStack(errors.Wrap(err, "can't read StorageObjectCount"))
+	}
 
 	m.TotalSize, err = ReadInt64Text(scanner)
+	if err != nil {
+		return errors.WithStack(errors.Wrap(err, "can't read TotalSize"))
+	}
 
 	for i := 0; i < m.StorageObjectCount; i++ {
-
-		objectSize, _ := ReadInt64Text(scanner)
-		scanner.Scan()
-		objectRelativePath := scanner.Text()
-
-		if version == int(VersionAbsolutePaths) {
-			if !strings.HasPrefix(objectRelativePath, objectStorageRootPath) {
-				return fmt.Errorf("%s doesn't contains %s", objectRelativePath, objectStorageRootPath)
-			}
-			objectRelativePath = objectRelativePath[len(objectStorageRootPath):]
+		storageObject := StorageObject{IsAbsolute: m.Version == VersionAbsolutePaths || m.Version == VersionFullObjectKey}
+		storageObject.ObjectSize, err = ReadInt64Text(scanner)
+		if err != nil {
+			return errors.WithStack(errors.Wrap(err, "can't read ObjectSize"))
 		}
 
-		m.StorageObjects = append(m.StorageObjects, StorageObject{ObjectSize: objectSize, ObjectRelativePath: objectRelativePath})
+		scanner.Scan()
+		storageObject.ObjectPath = scanner.Text()
+		// 25.10+ contains full path, need make it relative again, for properly backup/restore/delete, https://github.com/Altinity/clickhouse-backup/issues/1290
+		if storageObject.IsAbsolute {
+			objPathParts := strings.Split(storageObject.ObjectPath, "/")
+			if len(objPathParts) >= 2 {
+				storageObject.ObjectPath = strings.Join(objPathParts[len(objPathParts)-2:], "/")
+			}
+		}
 
+		m.StorageObjects = append(m.StorageObjects, storageObject)
 	}
 
 	m.RefCount, err = ReadIntText(scanner)
+	if err != nil {
+		return errors.WithStack(errors.Wrap(err, "can't read TotalSize"))
+	}
 
 	if version >= int(VersionReadOnlyFlag) {
 		m.ReadOnly, err = ReadBoolText(scanner)
+		if err != nil {
+			return errors.WithStack(errors.Wrap(err, "can't read ReadOnly"))
+		}
 	}
 
 	if version >= int(VersionInlineData) {
@@ -156,7 +173,7 @@ func (m *Metadata) writeToFile(file *os.File) error {
 	}
 
 	for i := 0; i < m.StorageObjectCount; i++ {
-		if _, err = file.WriteString(strconv.FormatInt(m.StorageObjects[i].ObjectSize, 10) + "\t" + m.StorageObjects[i].ObjectRelativePath + "\n"); err != nil {
+		if _, err = file.WriteString(strconv.FormatInt(m.StorageObjects[i].ObjectSize, 10) + "\t" + m.StorageObjects[i].ObjectPath + "\n"); err != nil {
 			return err
 		}
 	}
@@ -322,6 +339,9 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) e
 		return err
 	}
 	root := xmlquery.FindOne(doc, "/")
+	if root == nil {
+		return fmt.Errorf("object_disk->getObjectDisksCredentials")
+	}
 	disks := xmlquery.Find(doc, fmt.Sprintf("/%s/storage_configuration/disks/*", root.Data))
 	for _, d := range disks {
 		diskName := d.Data
@@ -356,7 +376,7 @@ func getObjectDisksCredentials(ctx context.Context, ch *clickhouse.ClickHouse) e
 					// macros works only after 23.3+ https://github.com/Altinity/clickhouse-backup/issues/750
 					if version > 23003000 {
 						if creds.EndPoint, err = ch.ApplyMacros(ctx, creds.EndPoint); err != nil {
-							return fmt.Errorf("%s -> /%s/storage_configuration/disks/%s apply macros to <endpoint> error: %v", configFile, root.Data, diskName, err)
+							return errors.Wrapf(err, "%s -> /%s/storage_configuration/disks/%s apply macros to <endpoint> error", configFile, root.Data, diskName)
 						}
 					}
 				} else {
@@ -624,7 +644,7 @@ func ConvertLocalPathToRemote(diskName, localPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return meta.StorageObjects[0].ObjectRelativePath, nil
+	return meta.StorageObjects[0].ObjectPath, nil
 }
 
 func GetFileReader(ctx context.Context, diskName, remotePath string) (io.ReadCloser, error) {
@@ -721,7 +741,10 @@ func GetFileSize(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Con
 */
 
 func CopyObject(ctx context.Context, diskName string, srcSize int64, srcBucket, srcKey, dstPath string) (int64, error) {
-	connection, _ := DisksConnections.Load(diskName)
+	connection, ok := DisksConnections.Load(diskName)
+	if !ok {
+		return 0, errors.WithStack(fmt.Errorf("can't find %s in object_disk.DiskConnections", diskName))
+	}
 	remoteStorage := connection.GetRemoteStorage()
 	return remoteStorage.CopyObject(ctx, srcSize, srcBucket, srcKey, dstPath)
 }
@@ -729,12 +752,12 @@ func CopyObject(ctx context.Context, diskName string, srcSize int64, srcBucket, 
 func CopyObjectStreaming(ctx context.Context, srcStorage storage.RemoteStorage, dstStorage storage.RemoteStorage, srcKey, dstKey string) error {
 	srcInfo, statErr := srcStorage.StatFileAbsolute(ctx, srcKey)
 	if statErr != nil {
-		return fmt.Errorf("srcStorage.StatFileReaderAbsolute(%s) error: %v", srcKey, statErr)
+		return errors.Wrapf(statErr, "srcStorage.StatFileReaderAbsolute(%s) error", srcKey)
 	}
 
 	srcReader, srcErr := srcStorage.GetFileReaderAbsolute(ctx, srcKey)
 	if srcErr != nil {
-		return fmt.Errorf("srcStorage.GetFileReaderAbsolute(%s) error: %v", srcKey, srcErr)
+		return errors.Wrapf(srcErr, "srcStorage.GetFileReaderAbsolute(%s) error", srcKey)
 	}
 	defer func() {
 		if closeErr := srcReader.Close(); closeErr != nil {
@@ -742,7 +765,7 @@ func CopyObjectStreaming(ctx context.Context, srcStorage storage.RemoteStorage, 
 		}
 	}()
 	if putErr := dstStorage.PutFileAbsolute(ctx, dstKey, srcReader, srcInfo.Size()); putErr != nil {
-		return fmt.Errorf("dstStorage.PutFileAbsolute(%s) error: %v", dstKey, putErr)
+		return errors.Wrapf(putErr, "dstStorage.PutFileAbsolute(%s) error", dstKey)
 	}
 	return nil
 }

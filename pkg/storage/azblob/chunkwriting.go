@@ -6,10 +6,10 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
-	"errors"
-	"fmt"
 	"io"
 	"sync"
+
+	"github.com/pkg/errors"
 
 	guuid "github.com/google/uuid"
 
@@ -190,7 +190,7 @@ func (c *copier) write(chunk copierChunk) error {
 
 	_, err := c.to.StageBlock(c.ctx, chunk.id, bytes.NewReader(chunk.buffer), azb.LeaseAccessConditions{}, nil, c.cpk)
 	if err != nil {
-		return fmt.Errorf("write error: %w", err)
+		return errors.Wrap(err, "write error")
 	}
 	return nil
 }

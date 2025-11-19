@@ -3,9 +3,7 @@ package storage
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"io"
 	"net/http"
 	"net/url"
@@ -16,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 	"github.com/tencentyun/cos-go-sdk-v5"
 	"github.com/tencentyun/cos-go-sdk-v5/debug"
@@ -232,7 +232,7 @@ func (c *COS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, 
 		ACLHeaderOptions: &cos.ACLHeaderOptions{XCosACL: "private"},
 	})
 	if initErr != nil {
-		return fmt.Errorf("COS->InitiateMultipartUpload return error: %w", initErr)
+		return errors.Wrap(initErr, "COS->InitiateMultipartUpload return error")
 	}
 
 	uploadID := resInit.UploadID
@@ -308,9 +308,9 @@ func (c *COS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, 
 	})
 	if wgWaitErr := uploadPartErrGroup.Wait(); wgWaitErr != nil {
 		if _, abortErr := c.client.Object.AbortMultipartUpload(ctx, key, uploadID); abortErr != nil {
-			return fmt.Errorf("COS Multipart upload %s abort error: %v, original error was: %v", key, abortErr, wgWaitErr)
+			return errors.Wrapf(wgWaitErr, "COS Multipart upload %s abort error: %v, original error was", key, abortErr)
 		}
-		return fmt.Errorf("COS Multipart upload %s error: %v", key, wgWaitErr)
+		return errors.Wrapf(wgWaitErr, "COS Multipart upload %s error", key)
 	}
 
 	close(uploadedCh)
@@ -319,7 +319,7 @@ func (c *COS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, 
 	// Step 3: Complete Multipart Upload
 	_, _, completeErr := c.client.Object.CompleteMultipartUpload(ctx, key, uploadID, &cos.CompleteMultipartUploadOptions{Parts: parts})
 	if completeErr != nil {
-		return fmt.Errorf("COS Multipart upload complete %s error: %v", key, completeErr)
+		return errors.Wrapf(completeErr, "COS Multipart upload complete %s error", key)
 	}
 
 	return nil

@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -13,16 +12,16 @@ import (
 	"strings"
 	"time"
 
-	"google.golang.org/api/impersonate"
-	"google.golang.org/api/iterator"
-
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	pool "github.com/jolestar/go-commons-pool/v2"
-	"google.golang.org/api/option/internaloption"
+	"github.com/pkg/errors"
 
 	"cloud.google.com/go/storage"
 	"github.com/rs/zerolog/log"
+	"google.golang.org/api/impersonate"
+	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
+	"google.golang.org/api/option/internaloption"
 	googleHTTPTransport "google.golang.org/api/transport/http"
 )
 
@@ -110,7 +109,7 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 			},
 		})
 		if err != nil {
-			return fmt.Errorf("failed to create impersonation token source: %v", err)
+			return errors.Wrap(err, "failed to create impersonation token source")
 		}
 		clientOptions = append(clientOptions, option.WithTokenSource(ts))
 	} else if gcs.Config.SkipCredentials {
@@ -150,7 +149,7 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 		transport, err := googleHTTPTransport.NewTransport(ctx, customRoundTripper, clientOptions...)
 		gcpTransport.Transport = transport
 		if err != nil {
-			return fmt.Errorf("failed to create GCP transport: %v", err)
+			return errors.Wrap(err, "failed to create GCP transport")
 		}
 
 		clientOptions = append(clientOptions, option.WithHTTPClient(gcpTransport))
@@ -168,7 +167,7 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 
 		debugClient, _, err := googleHTTPTransport.NewClient(ctx, clientOptions...)
 		if err != nil {
-			return fmt.Errorf("googleHTTPTransport.NewClient error: %v", err)
+			return errors.Wrap(err, "googleHTTPTransport.NewClient error")
 		}
 		debugClient.Transport = debugGCSTransport{base: debugClient.Transport}
 		clientOptions = append(clientOptions, option.WithHTTPClient(debugClient))
@@ -279,6 +278,8 @@ func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser
 	}
 	pClient := pClientObj.(*clientObject).Client
 	obj := pClient.Bucket(gcs.Config.Bucket).Object(key)
+	// always retry transient errors to mitigate retry logic bugs.
+	obj = obj.Retryer(storage.WithPolicy(storage.RetryAlways))
 	writer := obj.NewWriter(ctx)
 	writer.ChunkSize = gcs.Config.ChunkSize
 	writer.StorageClass = gcs.Config.StorageClass
@@ -365,6 +366,8 @@ func (gcs *GCS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey
 	pClient := pClientObj.(*clientObject).Client
 	src := pClient.Bucket(srcBucket).Object(srcKey)
 	dst := pClient.Bucket(gcs.Config.Bucket).Object(dstKey)
+	// always retry transient errors to mitigate retry logic bugs.
+	dst = dst.Retryer(storage.WithPolicy(storage.RetryAlways))
 	attrs, err := src.Attrs(ctx)
 	if err != nil {
 		if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {

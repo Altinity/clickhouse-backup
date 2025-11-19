@@ -44,4 +44,4 @@ CGO_ENABLED=0 GO111MODULE=on go install -ldflags "-s -w -extldflags '-static'" g
 # export PATH="/tmp/go/bin:$PATH"
 # CGO_ENABLED=0 GO111MODULE=on go install -ldflags "-s -w -extldflags '-static'" github.com/go-delve/delve/cmd/dlv@latest
 # ~/go/bin/dlv attach 1 --listen=:40001 --headless=true --api-version=2 --accept-multiclient
-
+# CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3-embedded.yml /root/go/bin/dlv --listen=:40001 --headless=true --api-version=2 --accept-multiclient exec /usr/bin/clickhouse-backup -- restore_remote --rm --rbac test_rbac_backup_with_data

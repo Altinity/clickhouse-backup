@@ -3,7 +3,6 @@ package backup
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -17,6 +16,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/pidlock"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/resumable"
 	"github.com/eapache/go-resiliency/retrier"
+	"github.com/pkg/errors"
 
 	"github.com/google/uuid"
 	recursiveCopy "github.com/otiai10/copy"
@@ -78,7 +78,7 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	backupName = utils.CleanBackupNameRE.ReplaceAllString(backupName, "")
 
 	if err := b.ch.Connect(); err != nil {
-		return fmt.Errorf("can't connect to clickhouse: %v", err)
+		return errors.Wrap(err, "can't connect to clickhouse")
 	}
 	defer b.ch.Close()
 
@@ -106,11 +106,11 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 
 	allDatabases, err := b.ch.GetDatabases(ctx, b.cfg, tablePattern)
 	if err != nil {
-		return fmt.Errorf("can't get database engines from clickhouse: %v", err)
+		return errors.Wrap(err, "can't get database engines from clickhouse")
 	}
 	tables, err := b.GetTables(ctx, tablePattern)
 	if err != nil {
-		return fmt.Errorf("can't get tables from clickhouse: %v", err)
+		return errors.Wrap(err, "can't get tables from clickhouse")
 	}
 
 	if b.CalculateNonSkipTables(tables) == 0 && !b.cfg.General.AllowEmptyBackups {
@@ -119,7 +119,7 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 
 	allFunctions, err := b.ch.GetUserDefinedFunctions(ctx)
 	if err != nil {
-		return fmt.Errorf("GetUserDefinedFunctions return error: %v", err)
+		return errors.Wrap(err, "GetUserDefinedFunctions return error")
 	}
 
 	disks, err := b.ch.GetDisks(ctx, false)
@@ -274,7 +274,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 			return err
 		}
 		if err = b.dst.Connect(ctx); err != nil {
-			return fmt.Errorf("can't connect to %s: %v", b.dst.Kind(), err)
+			return errors.Wrapf(err, "can't connect to %s", b.dst.Kind())
 		}
 		defer func() {
 			if closeErr := b.dst.Close(ctx); closeErr != nil {
@@ -297,7 +297,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 		var diffFromRemoteErr error
 		tablesDiffFromRemote, diffFromRemoteErr = b.getTablesDiffFromRemote(ctx, diffFromRemote, tablePattern)
 		if diffFromRemoteErr != nil {
-			return fmt.Errorf("b.getTablesDiffFromRemote return error: %v", diffFromRemoteErr)
+			return errors.Wrap(diffFromRemoteErr, "b.getTablesDiffFromRemote return error")
 		}
 	}
 
@@ -378,12 +378,12 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 		})
 	}
 	if wgWaitErr := createBackupWorkingGroup.Wait(); wgWaitErr != nil {
-		return fmt.Errorf("one of createBackupLocal go-routine return error: %v", wgWaitErr)
+		return errors.Wrap(wgWaitErr, "one of createBackupLocal go-routine return error")
 	}
 
 	backupMetaFile := path.Join(b.DefaultDataPath, "backup", backupName, "metadata.json")
 	if err := b.createBackupMetadata(ctx, backupMetaFile, backupName, diffFromRemote, backupVersion, "regular", diskMap, diskTypes, disks, backupDataSize, backupObjectDiskSize, backupMetadataSize, backupRBACSize, backupConfigSize, backupNamedCollectionsSize, tableMetas, allDatabases, allFunctions); err != nil {
-		return fmt.Errorf("createBackupMetadata return error: %v", err)
+		return errors.Wrap(err, "createBackupMetadata return error")
 	}
 	log.Info().Str("version", backupVersion).Str("operation", "createBackupLocal").Str("duration", utils.HumanizeDuration(time.Since(startBackup))).Msg("done")
 	return nil
@@ -429,7 +429,7 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 		}
 		backupResult := make([]clickhouse.SystemBackups, 0)
 		if err := b.ch.SelectContext(ctx, &backupResult, backupSQL); err != nil {
-			return fmt.Errorf("backup error: %v", err)
+			return errors.Wrap(err, "backup error")
 		}
 		if len(backupResult) != 1 || (backupResult[0].Status != "BACKUP_COMPLETE" && backupResult[0].Status != "BACKUP_CREATED") {
 			return fmt.Errorf("backup return wrong results: %+v", backupResult)
@@ -474,7 +474,7 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 				return err
 			}
 			if err = b.dst.Connect(ctx); err != nil {
-				return fmt.Errorf("createBackupEmbedded: can't connect to %s: %v", b.dst.Kind(), err)
+				return errors.Wrapf(err, "createBackupEmbedded: can't connect to %s", b.dst.Kind())
 			}
 			defer func() {
 				if closeErr := b.dst.Close(ctx); closeErr != nil {
@@ -721,11 +721,11 @@ func (b *Backuper) createBackupRBAC(ctx context.Context, backupPath string, disk
 		rbacBackup := path.Join(backupPath, "access")
 		replicatedRBACDataSize, err := b.createBackupRBACReplicated(ctx, rbacBackup)
 		if err != nil {
-			return 0, fmt.Errorf("b.createBackupRBACReplicated error: %v", err)
+			return 0, errors.Wrap(err, "b.createBackupRBACReplicated error")
 		}
 		accessPath, err := b.ch.GetAccessManagementPath(ctx, disks)
 		if err != nil {
-			return 0, fmt.Errorf("b.ch.GetAccessManagementPath error: %v", err)
+			return 0, errors.Wrap(err, "b.ch.GetAccessManagementPath error")
 		}
 		accessPathInfo, err := os.Stat(accessPath)
 		if err != nil && !os.IsNotExist(err) {
@@ -851,7 +851,7 @@ func (b *Backuper) createBackupRBACReplicated(ctx context.Context, rbacBackup st
 		for _, userDirectory := range replicatedRBAC {
 			replicatedAccessPath, err := k.GetReplicatedAccessPath(userDirectory.Name)
 			if err != nil {
-				return 0, fmt.Errorf("k.GetReplicatedAccessPath(%s) error: %v", userDirectory.Name, err)
+				return 0, errors.Wrapf(err, "k.GetReplicatedAccessPath(%s) error", userDirectory.Name)
 			}
 			rbacUUIDObjectsCount, err := k.ChildCount(replicatedAccessPath, "uuid")
 			if err != nil {
@@ -1034,16 +1034,18 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 			}
 		}
 		uploadObjectDiskPartsWorkingGroup.Go(func() error {
-			objPartFileMeta, readMetadataErr := object_disk.ReadMetadataFromFile(fPath)
+			objMeta, readMetadataErr := object_disk.ReadMetadataFromFile(fPath)
 			if readMetadataErr != nil {
 				return readMetadataErr
 			}
-			for _, storageObject := range objPartFileMeta.StorageObjects {
+			for _, storageObject := range objMeta.StorageObjects {
 				if storageObject.ObjectSize == 0 {
 					continue
 				}
 				var copyObjectErr error
-				srcKey := path.Join(srcDiskConnection.GetRemotePath(), storageObject.ObjectRelativePath)
+
+				srcKey := path.Join(srcDiskConnection.GetRemotePath(), storageObject.ObjectPath)
+
 				if b.resume {
 					isAlreadyProcesses := false
 					isAlreadyProcesses, objSize = b.resumableState.IsAlreadyProcessed(path.Join(srcBucket, srcKey))
@@ -1051,7 +1053,7 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 						continue
 					}
 				}
-				dstKey := path.Join(backupName, disk.Name, storageObject.ObjectRelativePath)
+				dstKey := path.Join(backupName, disk.Name, storageObject.ObjectPath)
 				if !b.cfg.General.AllowObjectDiskStreaming {
 					retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 					copyObjectErr = retry.RunCtx(uploadCtx, func(ctx context.Context) error {
@@ -1061,7 +1063,7 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 						return nil
 					})
 					if copyObjectErr != nil {
-						return fmt.Errorf("b.dst.CopyObject in %s error: %v", backupShadowPath, copyObjectErr)
+						return errors.Wrapf(copyObjectErr, "b.dst.CopyObject in %s error", backupShadowPath)
 					}
 				} else {
 					if !isCopyFailed.Load() {
@@ -1077,7 +1079,7 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 							return object_disk.CopyObjectStreaming(uploadCtx, srcDiskConnection.GetRemoteStorage(), b.dst, srcKey, path.Join(objectDiskPath, dstKey))
 						})
 						if copyObjectErr != nil {
-							return fmt.Errorf("object_disk.CopyObjectStreaming in %s error: %v", backupShadowPath, copyObjectErr)
+							return errors.Wrapf(copyObjectErr, "object_disk.CopyObjectStreaming in %s error", backupShadowPath)
 						}
 					}
 					objSize = storageObject.ObjectSize
@@ -1087,10 +1089,10 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 				}
 				realSize += objSize
 			}
-			if realSize > objPartFileMeta.TotalSize {
+			if realSize > objMeta.TotalSize {
 				atomic.AddInt64(&size, realSize)
 			} else {
-				atomic.AddInt64(&size, objPartFileMeta.TotalSize)
+				atomic.AddInt64(&size, objMeta.TotalSize)
 			}
 			return nil
 		})
@@ -1101,7 +1103,7 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 	}
 
 	if wgWaitErr := uploadObjectDiskPartsWorkingGroup.Wait(); wgWaitErr != nil {
-		return 0, fmt.Errorf("one of uploadObjectDiskParts go-routine return error: %v", wgWaitErr)
+		return 0, errors.Wrap(wgWaitErr, "one of uploadObjectDiskParts go-routine return error")
 	}
 	return size, nil
 }
@@ -1138,7 +1140,7 @@ func (b *Backuper) createBackupMetadata(ctx context.Context, backupMetaFile, bac
 		}
 		content, err := json.MarshalIndent(&backupMetadata, "", "\t")
 		if err != nil {
-			return fmt.Errorf("can't marshal backup metafile json: %v", err)
+			return errors.Wrap(err, "can't marshal backup metafile json")
 		}
 		if err := os.WriteFile(backupMetaFile, content, 0640); err != nil {
 			return err
@@ -1162,10 +1164,10 @@ func (b *Backuper) createTableMetadata(metadataPath string, table metadata.Table
 	metadataFile := path.Join(metadataDatabasePath, fmt.Sprintf("%s.json", common.TablePathEncode(table.Table)))
 	metadataBody, err := json.MarshalIndent(&table, "", " ")
 	if err != nil {
-		return 0, fmt.Errorf("can't marshal %s: %v", MetaFileName, err)
+		return 0, errors.Wrapf(err, "can't marshal %s", MetaFileName)
 	}
 	if err := os.WriteFile(metadataFile, metadataBody, 0644); err != nil {
-		return 0, fmt.Errorf("can't create %s: %v", MetaFileName, err)
+		return 0, errors.Wrapf(err, "can't create %s", MetaFileName)
 	}
 	if err := filesystemhelper.Chown(metadataFile, b.ch, disks, false); err != nil {
 		return 0, err

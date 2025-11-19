@@ -344,7 +344,7 @@ func (a *AzureBlob) CopyObject(ctx context.Context, srcSize int64, srcBucket, sr
 
 	startCopy, err := destinationBlobURL.StartCopyFromURL(ctx, sourceBlobURL.URL(), nil, azblob.ModifiedAccessConditions{}, azblob.BlobAccessConditions{}, azblob.AccessTierNone, nil)
 	if err != nil {
-		return 0, fmt.Errorf("azblob->CopyObject failed to start copy operation: %v", err)
+		return 0, errors.Wrap(err, "azblob->CopyObject failed to start copy operation")
 	}
 	copyStatus := startCopy.CopyStatus()
 	copyStatusDesc := ""
@@ -356,7 +356,7 @@ func (a *AzureBlob) CopyObject(ctx context.Context, srcSize int64, srcBucket, sr
 		time.Sleep(sleepDuration * time.Duration(pollCount*2))
 		dstMeta, err := destinationBlobURL.GetProperties(ctx, azblob.BlobAccessConditions{}, azblob.ClientProvidedKeyOptions{})
 		if err != nil {
-			return 0, fmt.Errorf("azblob->CopyObject failed to destinationBlobURL.GetProperties operation: %v", err)
+			return 0, errors.Wrap(err, "azblob->CopyObject failed to destinationBlobURL.GetProperties operation")
 		}
 		copyStatus = dstMeta.CopyStatus()
 		copyStatusDesc = dstMeta.CopyStatusDescription()
