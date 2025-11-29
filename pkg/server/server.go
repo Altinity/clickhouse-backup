@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -44,12 +45,27 @@ type APIServer struct {
 	cliCtx                  *cli.Context
 	configPath              string
 	config                  *config.Config
+	configMutex             sync.RWMutex
 	server                  *http.Server
 	restart                 chan struct{}
 	stop                    chan struct{}
 	metrics                 *metrics.APIMetrics
 	routes                  []string
 	clickhouseBackupVersion string
+}
+
+// GetConfig returns the current config with read lock protection
+func (api *APIServer) GetConfig() *config.Config {
+	api.configMutex.RLock()
+	defer api.configMutex.RUnlock()
+	return api.config
+}
+
+// setConfig sets the config with write lock protection
+func (api *APIServer) setConfig(cfg *config.Config) {
+	api.configMutex.Lock()
+	defer api.configMutex.Unlock()
+	api.config = cfg
 }
 
 var (
@@ -93,7 +109,7 @@ func Run(cliCtx *cli.Context, cliApp *cli.App, configPath string, clickhouseBack
 	}
 	api.metrics.RegisterMetrics()
 
-	log.Info().Msgf("Starting API server %s on %s", api.cliApp.Version, api.config.API.ListenAddr)
+	log.Info().Msgf("Starting API server %s on %s", api.cliApp.Version, api.GetConfig().API.ListenAddr)
 	sigterm := make(chan os.Signal, 1)
 	signal.Notify(sigterm, os.Interrupt, syscall.SIGTERM)
 	sighup := make(chan os.Signal, 1)
@@ -101,7 +117,7 @@ func Run(cliCtx *cli.Context, cliApp *cli.App, configPath string, clickhouseBack
 	if err := api.Restart(); err != nil {
 		return err
 	}
-	if api.config.API.CompleteResumableAfterRestart {
+	if api.GetConfig().API.CompleteResumableAfterRestart {
 		go func() {
 			if err := api.ResumeOperationsAfterRestart(); err != nil {
 				log.Error().Msgf("ResumeOperationsAfterRestart return error: %v", err)
@@ -166,7 +182,7 @@ func (api *APIServer) Restart() error {
 	if err != nil {
 		return err
 	}
-	if api.config.API.CreateIntegrationTables {
+	if api.GetConfig().API.CreateIntegrationTables {
 		if createErr := api.CreateIntegrationTables(); createErr != nil {
 			log.Error().Err(createErr).Send()
 		}
@@ -177,9 +193,9 @@ func (api *APIServer) Restart() error {
 	}
 	server := api.registerHTTPHandlers()
 	api.server = server
-	if api.config.API.Secure {
+	if api.GetConfig().API.Secure {
 		go func() {
-			err = api.server.ListenAndServeTLS(api.config.API.CertificateFile, api.config.API.PrivateKeyFile)
+			err = api.server.ListenAndServeTLS(api.GetConfig().API.CertificateFile, api.GetConfig().API.PrivateKeyFile)
 			if err != nil {
 				if errors.Is(err, http.ErrServerClosed) {
 					log.Warn().Msgf("ListenAndServeTLS get signal: %s", err.Error())
@@ -253,15 +269,15 @@ func (api *APIServer) registerHTTPHandlers() *http.Server {
 	}
 
 	api.routes = routes
-	api.registerMetricsHandlers(r, api.config.API.EnableMetrics, api.config.API.EnablePprof)
+	api.registerMetricsHandlers(r, api.GetConfig().API.EnableMetrics, api.GetConfig().API.EnablePprof)
 	srv := &http.Server{
-		Addr:    api.config.API.ListenAddr,
+		Addr:    api.GetConfig().API.ListenAddr,
 		Handler: r,
 	}
-	if api.config.API.CACertFile != "" {
-		caCert, err := os.ReadFile(api.config.API.CACertFile)
+	if api.GetConfig().API.CACertFile != "" {
+		caCert, err := os.ReadFile(api.GetConfig().API.CACertFile)
 		if err != nil {
-			log.Fatal().Stack().Msgf("api initialization error %s: %v", api.config.API.CAKeyFile, err)
+			log.Fatal().Stack().Msgf("api initialization error %s: %v", api.GetConfig().API.CAKeyFile, err)
 		}
 		caCertPool := x509.NewCertPool()
 		caCertPool.AppendCertsFromPEM(caCert)
@@ -289,7 +305,7 @@ func (api *APIServer) basicAuthMiddleware(next http.Handler) http.Handler {
 		if p, exist := query["pass"]; exist {
 			pass = p[0]
 		}
-		if (user != api.config.API.Username) || (pass != api.config.API.Password) {
+		if (user != api.GetConfig().API.Username) || (pass != api.GetConfig().API.Password) {
 			log.Warn().Msgf("%s %s Authorization failed %s:%s", r.Method, r.URL, user, pass)
 			w.Header().Set("WWW-Authenticate", "Basic realm=\"Provide username and password\"")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -391,7 +407,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *APIServer) actionsDeleteHandler(row status.ActionRow, args []string, actionsResults []actionsResultsRow) ([]actionsResultsRow, error) {
-	if !api.config.API.AllowParallel && status.Current.InProgress() {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		return actionsResults, ErrAPILocked
 	}
 	commandId, _ := status.Current.Start(row.Command)
@@ -414,7 +430,7 @@ func (api *APIServer) actionsDeleteHandler(row status.ActionRow, args []string, 
 }
 
 func (api *APIServer) actionsAsyncCommandsHandler(command string, args []string, row status.ActionRow, actionsResults []actionsResultsRow) ([]actionsResultsRow, error) {
-	if !api.config.API.AllowParallel && status.Current.InProgress() {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		return actionsResults, ErrAPILocked
 	}
 	// to avoid race condition between GET /backup/actions and POST /backup/actions
@@ -460,7 +476,7 @@ func (api *APIServer) actionsKillHandler(row status.ActionRow, args []string, ac
 }
 
 func (api *APIServer) actionsCleanHandler(w http.ResponseWriter, row status.ActionRow, command string, actionsResults []actionsResultsRow) ([]actionsResultsRow, error) {
-	if !api.config.API.AllowParallel && status.Current.InProgress() {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Msg(ErrAPILocked.Error())
 		return actionsResults, ErrAPILocked
 	}
@@ -492,7 +508,7 @@ func (api *APIServer) actionsCleanHandler(w http.ResponseWriter, row status.Acti
 }
 
 func (api *APIServer) actionsCleanLocalBrokenHandler(w http.ResponseWriter, row status.ActionRow, command string, actionsResults []actionsResultsRow) ([]actionsResultsRow, error) {
-	if !api.config.API.AllowParallel && status.Current.InProgress() {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		return actionsResults, ErrAPILocked
 	}
@@ -524,7 +540,7 @@ func (api *APIServer) actionsCleanLocalBrokenHandler(w http.ResponseWriter, row 
 }
 
 func (api *APIServer) actionsCleanRemoteBrokenHandler(w http.ResponseWriter, row status.ActionRow, command string, actionsResults []actionsResultsRow) ([]actionsResultsRow, error) {
-	if !api.config.API.AllowParallel && status.Current.InProgress() {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		return actionsResults, ErrAPILocked
 	}
@@ -556,7 +572,7 @@ func (api *APIServer) actionsCleanRemoteBrokenHandler(w http.ResponseWriter, row
 }
 
 func (api *APIServer) actionsWatchHandler(w http.ResponseWriter, row status.ActionRow, args []string, actionsResults []actionsResultsRow) ([]actionsResultsRow, error) {
-	if (!api.config.API.AllowParallel && status.Current.InProgress()) || status.Current.CheckCommandInProgress(row.Command) {
+	if (!api.GetConfig().API.AllowParallel && status.Current.InProgress()) || status.Current.CheckCommandInProgress(row.Command) {
 		log.Warn().Err(ErrAPILocked).Send()
 		return actionsResults, ErrAPILocked
 	}
@@ -663,7 +679,7 @@ func (api *APIServer) handleWatchResponse(watchCommandId int, err error) {
 	if err != nil {
 		log.Error().Msgf("Watch error: %v", err)
 	}
-	if api.config.API.WatchIsMainProcess {
+	if api.GetConfig().API.WatchIsMainProcess {
 		// Do not stop server if 'watch' was canceled by the user command
 		if errors.Is(err, context.Canceled) {
 			return
@@ -926,7 +942,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 
 // httpCreateHandler - create a backup
 func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) {
-	if !api.config.API.AllowParallel && status.Current.InProgress() {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		api.writeError(w, http.StatusLocked, "create", ErrAPILocked)
 		return
@@ -1056,7 +1072,7 @@ func (api *APIServer) httpCreateHandler(w http.ResponseWriter, r *http.Request) 
 
 // httpCreateRemoteHandler - create and upload a backup
 func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Request) {
-	if !api.config.API.AllowParallel && status.Current.InProgress() {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		api.writeError(w, http.StatusLocked, "create_remote", ErrAPILocked)
 		return
@@ -1195,7 +1211,7 @@ func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Req
 
 // httpWatchHandler - run watch command go routine, can't run the same watch command twice
 func (api *APIServer) httpWatchHandler(w http.ResponseWriter, r *http.Request) {
-	if !api.config.API.AllowParallel && status.Current.InProgress() {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		api.writeError(w, http.StatusLocked, "watch", ErrAPILocked)
 		return
@@ -1383,7 +1399,7 @@ func (api *APIServer) httpCleanRemoteBrokenHandler(w http.ResponseWriter, _ *htt
 
 // httpUploadHandler - upload a backup to remote storage
 func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) {
-	if !api.config.API.AllowParallel && status.Current.InProgress() {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		api.writeError(w, http.StatusLocked, "upload", ErrAPILocked)
 		return
@@ -1511,7 +1527,7 @@ var tableMappingRE = regexp.MustCompile(`[\w+]:[\w+]`)
 
 // httpRestoreHandler - restore a backup from local storage
 func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request) {
-	if !api.config.API.AllowParallel && status.Current.InProgress() {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		api.writeError(w, http.StatusLocked, "restore", ErrAPILocked)
 		return
@@ -1724,7 +1740,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 
 // httpRestoreRemoteHandler - download and restore a backup from remote storage
 func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Request) {
-	if !api.config.API.AllowParallel && status.Current.InProgress() {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		api.writeError(w, http.StatusLocked, "restore_remote", ErrAPILocked)
 		return
@@ -1943,7 +1959,7 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 
 // httpDownloadHandler - download a backup from remote to local storage
 func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request) {
-	if !api.config.API.AllowParallel && status.Current.InProgress() {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		api.writeError(w, http.StatusLocked, "download", ErrAPILocked)
 		return
@@ -2049,7 +2065,7 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 
 // httpDeleteHandler - delete a backup from local or remote storage
 func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) {
-	if !api.config.API.AllowParallel && status.Current.InProgress() {
+	if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 		log.Warn().Err(ErrAPILocked).Send()
 		api.writeError(w, http.StatusLocked, "delete", ErrAPILocked)
 		return
@@ -2113,7 +2129,7 @@ func (api *APIServer) UpdateBackupMetrics(ctx context.Context, onlyLocal bool) e
 	localDataSize := float64(0)
 
 	log.Info().Msgf("Update backup metrics start (onlyLocal=%v)", onlyLocal)
-	if !api.config.API.EnableMetrics {
+	if !api.GetConfig().API.EnableMetrics {
 		return nil
 	}
 	b := backup.NewBackuper(api.config)
@@ -2138,7 +2154,7 @@ func (api *APIServer) UpdateBackupMetrics(ctx context.Context, onlyLocal bool) e
 	if localDataSize > 0 {
 		api.metrics.LocalDataSize.Set(localDataSize)
 	}
-	if api.config.General.RemoteStorage == "none" || onlyLocal {
+	if api.GetConfig().General.RemoteStorage == "none" || onlyLocal {
 		log.Info().Fields(map[string]interface{}{
 			"duration":              utils.HumanizeDuration(time.Since(startTime)),
 			"LastBackupCreateLocal": lastBackupCreateLocal,
@@ -2238,30 +2254,30 @@ func (api *APIServer) registerMetricsHandlers(r *mux.Router, enableMetrics bool,
 func (api *APIServer) CreateIntegrationTables() error {
 	log.Info().Msgf("Create integration tables")
 	ch := &clickhouse.ClickHouse{
-		Config: &api.config.ClickHouse,
+		Config: &api.GetConfig().ClickHouse,
 	}
 	if err := ch.Connect(); err != nil {
 		return errors.Wrap(err, "can't connect to clickhouse")
 	}
 	defer ch.Close()
 	port := "80"
-	if strings.Contains(api.config.API.ListenAddr, ":") {
-		port = api.config.API.ListenAddr[strings.Index(api.config.API.ListenAddr, ":")+1:]
+	if strings.Contains(api.GetConfig().API.ListenAddr, ":") {
+		port = api.GetConfig().API.ListenAddr[strings.Index(api.GetConfig().API.ListenAddr, ":")+1:]
 	}
 	auth := ""
-	if api.config.API.Username != "" || api.config.API.Password != "" {
+	if api.GetConfig().API.Username != "" || api.GetConfig().API.Password != "" {
 		params := url.Values{}
-		params.Add("user", api.config.API.Username)
-		params.Add("pass", api.config.API.Password)
+		params.Add("user", api.GetConfig().API.Username)
+		params.Add("pass", api.GetConfig().API.Password)
 		auth = fmt.Sprintf("?%s", params.Encode())
 	}
 	schema := "http"
-	if api.config.API.Secure {
+	if api.GetConfig().API.Secure {
 		schema = "https"
 	}
 	host := "127.0.0.1"
-	if api.config.API.IntegrationTablesHost != "" {
-		host = api.config.API.IntegrationTablesHost
+	if api.GetConfig().API.IntegrationTablesHost != "" {
+		host = api.GetConfig().API.IntegrationTablesHost
 	}
 	settings := ""
 	version, err := ch.GetVersion(context.Background())
@@ -2303,7 +2319,7 @@ func (api *APIServer) ReloadConfig(w http.ResponseWriter, command string) (*conf
 		}
 		return nil, err
 	}
-	api.config = cfg
+	api.setConfig(cfg)
 	api.metrics.NumberBackupsRemoteExpected.Set(float64(cfg.General.BackupsToKeepRemote))
 	api.metrics.NumberBackupsLocalExpected.Set(float64(cfg.General.BackupsToKeepLocal))
 	return cfg, nil
@@ -2311,7 +2327,7 @@ func (api *APIServer) ReloadConfig(w http.ResponseWriter, command string) (*conf
 
 func (api *APIServer) ResumeOperationsAfterRestart() error {
 	ch := clickhouse.ClickHouse{
-		Config: &api.config.ClickHouse,
+		Config: &api.GetConfig().ClickHouse,
 	}
 	if err := ch.Connect(); err != nil {
 		return err
@@ -2354,7 +2370,7 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 				state := resumable.NewState(strings.TrimSuffix(filepath.Dir(stateFile), filepath.Join("backup", backupName)), backupName, command, nil)
 				params := state.GetParams()
 				state.Close()
-				if !api.config.API.AllowParallel && status.Current.InProgress() {
+				if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
 					return fmt.Errorf("another commands in progress")
 				}
 				switch command {
@@ -2397,7 +2413,7 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 					}
 
 					if err = os.Remove(stateFile); err != nil {
-						if api.config.General.BackupsToKeepLocal >= 0 {
+						if api.GetConfig().General.BackupsToKeepLocal >= 0 {
 							return err
 						}
 						log.Warn().Str("operation", "ResumeOperationsAfterRestart").Msgf("remove %s return error: ", err)
