@@ -406,10 +406,36 @@ func changeTableQueryToAdjustDatabaseMapping(originTables *ListOfTables, dbMapRu
 	return nil
 }
 
+// lookupTableMapping checks mapping first by full qualified name (db.table), then by table name only.
+// Returns target value, target database (if specified), target table, and whether mapping was found.
+func lookupTableMapping(tableMapRule map[string]string, database, table string) (targetValue string, targetDatabase string, targetTable string, isMapped bool) {
+	// First try full qualified name
+	fullName := database + "." + table
+	if targetValue, isMapped = tableMapRule[fullName]; isMapped {
+		// Check if target also contains database
+		if strings.Contains(targetValue, ".") {
+			parts := strings.SplitN(targetValue, ".", 2)
+			return targetValue, parts[0], parts[1], true
+		}
+		return targetValue, "", targetValue, true
+	}
+	// Fall back to table name only
+	if targetValue, isMapped = tableMapRule[table]; isMapped {
+		// Check if target contains database
+		if strings.Contains(targetValue, ".") {
+			parts := strings.SplitN(targetValue, ".", 2)
+			return targetValue, parts[0], parts[1], true
+		}
+		return targetValue, "", targetValue, true
+	}
+	return "", "", "", false
+}
+
 func changeTableQueryToAdjustTableMapping(originTables *ListOfTables, tableMapRule map[string]string) error {
 	for i := 0; i < len(*originTables); i++ {
 		originTable := (*originTables)[i]
-		if targetTable, isMapped := tableMapRule[originTable.Table]; isMapped {
+		_, targetDatabase, targetTable, isMapped := lookupTableMapping(tableMapRule, originTable.Database, originTable.Table)
+		if isMapped {
 			// substitute table in the table create query
 			var substitution string
 
@@ -428,15 +454,23 @@ func changeTableQueryToAdjustTableMapping(originTables *ListOfTables, tableMapRu
 					}
 					return clauseTargetTable
 				}
-				createTargetTable := targetTable
+				createTargetTableName := targetTable
 				// https://github.com/Altinity/clickhouse-backup/issues/820#issuecomment-2773501803
-				if !usualIdentifier.MatchString(createTargetTable) && !strings.Contains(matches[0][6], "`") {
-					createTargetTable = "`" + createTargetTable + "`"
+				if !usualIdentifier.MatchString(createTargetTableName) && !strings.Contains(matches[0][6], "`") {
+					createTargetTableName = "`" + createTargetTableName + "`"
+				}
+				// Handle database in target mapping (e.g., source_db.table:target_db.new_table)
+				createTargetDatabase := "${4}"
+				if targetDatabase != "" {
+					createTargetDatabase = targetDatabase
+					if !usualIdentifier.MatchString(createTargetDatabase) && !strings.Contains(matches[0][3], "`") {
+						createTargetDatabase = "`" + createTargetDatabase + "`"
+					}
 				}
 				toClauseTargetTable := setMatchedTable(matches[0][16], matches[0][15])
 				fromClauseTargetTable := setMatchedTable(matches[0][24], matches[0][23])
 				// matching CREATE|ATTACH ... TO .. SELECT ... FROM ... command
-				substitution = fmt.Sprintf("${1} ${2} ${3}${4}${5}.${6}%v${8}${9}${10}${11}${12}${13}${14}${15}%v${17}${18}${19}${20}${21}${22}${23}%v${25}", createTargetTable, toClauseTargetTable, fromClauseTargetTable)
+				substitution = fmt.Sprintf("${1} ${2} ${3}%v${5}.${6}%v${8}${9}${10}${11}${12}${13}${14}${15}%v${17}${18}${19}${20}${21}${22}${23}%v${25}", createTargetDatabase, createTargetTableName, toClauseTargetTable, fromClauseTargetTable)
 			} else {
 				if originTable.Query == "" {
 					continue
@@ -470,6 +504,10 @@ func changeTableQueryToAdjustTableMapping(originTables *ListOfTables, tableMapRu
 				}
 			}
 			originTable.Table = targetTable
+			// Update database if target mapping includes database
+			if targetDatabase != "" {
+				originTable.Database = targetDatabase
+			}
 			(*originTables)[i] = originTable
 		}
 	}
