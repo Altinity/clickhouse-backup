@@ -3464,6 +3464,143 @@ func TestRestoreMapping(t *testing.T) {
 	env.checkCount(r, 1, 1, "SELECT count() FROM `database-2`.v2")
 
 	fullCleanup(t, r, env, []string{testBackupName}, []string{"local"}, databaseList, false, true, true, "config-database-mapping.yml")
+
+	// Corner case 1: Table-only mapping without database mapping
+	log.Debug().Msg("Corner case 1: Table-only mapping without database mapping")
+	testBackupName2 := "test_table_only_mapping"
+	databaseList2 := []string{"database-3"}
+	fullCleanup(t, r, env, []string{testBackupName2}, []string{"local"}, databaseList2, false, false, false, "config-database-mapping.yml")
+
+	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS `database-3`")
+	env.queryWithNoError(r, "CREATE TABLE `database-3`.src_table (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY dt")
+	env.queryWithNoError(r, "INSERT INTO `database-3`.src_table SELECT '2022-01-01 00:00:00', number FROM numbers(5)")
+
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "create", testBackupName2)
+
+	log.Debug().Msg("Restore with table-only mapping (src_table -> dst_table)")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--schema", "--rm", "--restore-table-mapping", "src_table:dst_table", "--tables", "database-3.src_table", testBackupName2)
+
+	env.checkCount(r, 1, 1, "SELECT count() FROM system.tables WHERE database='database-3' AND name='dst_table'")
+
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--data", "--restore-table-mapping", "src_table:dst_table", "--tables", "database-3.src_table", testBackupName2)
+	env.checkCount(r, 1, 5, "SELECT count() FROM `database-3`.dst_table")
+
+	fullCleanup(t, r, env, []string{testBackupName2}, []string{"local"}, databaseList2, false, true, true, "config-database-mapping.yml")
+
+	// Corner case 2: Multiple databases with comma-separated patterns
+	log.Debug().Msg("Corner case 2: Multiple databases with comma-separated table patterns")
+	testBackupName3 := "test_multi_db_mapping"
+	databaseList3 := []string{"db_a", "db_b", "db_c", "db_d"}
+	fullCleanup(t, r, env, []string{testBackupName3}, []string{"local"}, databaseList3, false, false, false, "config-database-mapping.yml")
+
+	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS `db_a`")
+	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS `db_b`")
+	env.queryWithNoError(r, "CREATE TABLE `db_a`.t1 (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(r, "CREATE TABLE `db_b`.t1 (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(r, "INSERT INTO `db_a`.t1 SELECT number FROM numbers(3)")
+	env.queryWithNoError(r, "INSERT INTO `db_b`.t1 SELECT number FROM numbers(7)")
+
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "create", testBackupName3)
+
+	log.Debug().Msg("Drop source databases before restore to simulate migration")
+	r.NoError(env.dropDatabase("db_a", false))
+	r.NoError(env.dropDatabase("db_b", false))
+
+	log.Debug().Msg("Restore with multiple database mappings (db_a->db_c, db_b->db_d)")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--rm", "--restore-database-mapping", "db_a:db_c,db_b:db_d", "--tables", "db_a.*,db_b.*", testBackupName3)
+
+	env.checkCount(r, 1, 3, "SELECT count() FROM `db_c`.t1")
+	env.checkCount(r, 1, 7, "SELECT count() FROM `db_d`.t1")
+	env.checkCount(r, 1, 0, "SELECT count() FROM system.databases WHERE name IN ('db_a','db_b') SETTINGS empty_result_for_aggregation_by_empty_set=0")
+
+	fullCleanup(t, r, env, []string{testBackupName3}, []string{"local"}, databaseList3, false, true, true, "config-database-mapping.yml")
+
+	// Corner case 3: Combined database and table mapping with comma-separated patterns
+	log.Debug().Msg("Corner case 3: Combined database and table mapping with comma-separated patterns")
+	testBackupName4 := "test_combined_mapping"
+	databaseList4 := []string{"src_db1", "src_db2", "dst_db1", "dst_db2"}
+	fullCleanup(t, r, env, []string{testBackupName4}, []string{"local"}, databaseList4, false, false, false, "config-database-mapping.yml")
+
+	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS `src_db1`")
+	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS `src_db2`")
+	env.queryWithNoError(r, "CREATE TABLE `src_db1`.old_name (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(r, "CREATE TABLE `src_db2`.old_name (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(r, "INSERT INTO `src_db1`.old_name SELECT number FROM numbers(4)")
+	env.queryWithNoError(r, "INSERT INTO `src_db2`.old_name SELECT number + 100 FROM numbers(6)")
+
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "create", testBackupName4)
+
+	log.Debug().Msg("Restore with database mapping and table mapping on comma-separated patterns")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--rm", "--restore-database-mapping", "src_db1:dst_db1,src_db2:dst_db2", "--restore-table-mapping", "old_name:new_name", "--tables", "src_db1.old_name,src_db2.old_name", testBackupName4)
+
+	env.checkCount(r, 1, 4, "SELECT count() FROM `dst_db1`.new_name")
+	env.checkCount(r, 1, 6, "SELECT count() FROM `dst_db2`.new_name")
+	// Verify data integrity - dst_db2 should have values starting from 100
+	env.checkCount(r, 1, 6, "SELECT count() FROM `dst_db2`.new_name WHERE id >= 100")
+
+	fullCleanup(t, r, env, []string{testBackupName4}, []string{"local"}, databaseList4, false, true, true, "config-database-mapping.yml")
+
+	// Corner case 4: Table mapping with same table name in different databases
+	log.Debug().Msg("Corner case 4: Table mapping for same table name across databases")
+	testBackupName5 := "test_same_table_diff_db"
+	databaseList5 := []string{"alpha", "beta"}
+	fullCleanup(t, r, env, []string{testBackupName5}, []string{"local"}, databaseList5, false, false, false, "config-database-mapping.yml")
+
+	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS `alpha`")
+	env.queryWithNoError(r, "CREATE TABLE `alpha`.common (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(r, "CREATE TABLE `alpha`.unique_a (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(r, "INSERT INTO `alpha`.common SELECT number FROM numbers(2)")
+	env.queryWithNoError(r, "INSERT INTO `alpha`.unique_a SELECT number FROM numbers(3)")
+
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "create", testBackupName5)
+
+	log.Debug().Msg("Drop source database before restore to simulate migration")
+	r.NoError(env.dropDatabase("alpha", false))
+
+	log.Debug().Msg("Restore to different database with selective table mapping")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--rm", "--restore-database-mapping", "alpha:beta", "--restore-table-mapping", "common:shared,unique_a:unique_b", "--tables", "alpha.*", testBackupName5)
+
+	env.checkCount(r, 1, 2, "SELECT count() FROM `beta`.shared")
+	env.checkCount(r, 1, 3, "SELECT count() FROM `beta`.unique_b")
+	env.checkCount(r, 1, 0, "SELECT count() FROM system.databases WHERE name='alpha' SETTINGS empty_result_for_aggregation_by_empty_set=0")
+
+	fullCleanup(t, r, env, []string{testBackupName5}, []string{"local"}, databaseList5, false, true, true, "config-database-mapping.yml")
+
+	// Corner case 5: Full qualified table mapping (db.table:db2.table_v2) - verify DROP uses target name
+	// https://github.com/Altinity/clickhouse-backup/issues/XXX
+	log.Debug().Msg("Corner case 5: Full qualified table mapping with --schema restore")
+	testBackupName6 := "test_fq_table_mapping"
+	databaseList6 := []string{"source_db", "target_db"}
+	fullCleanup(t, r, env, []string{testBackupName6}, []string{"local"}, databaseList6, false, false, false, "config-database-mapping.yml")
+
+	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS `source_db`")
+	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS `target_db`")
+	env.queryWithNoError(r, "CREATE TABLE `source_db`.original_table (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY dt")
+	env.queryWithNoError(r, "INSERT INTO `source_db`.original_table SELECT '2022-01-01 00:00:00', number FROM numbers(5)")
+	// Create target table to verify DROP operates on correct table
+	env.queryWithNoError(r, "CREATE TABLE `target_db`.renamed_table_v2 (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY dt")
+	env.queryWithNoError(r, "INSERT INTO `target_db`.renamed_table_v2 SELECT '2023-01-01 00:00:00', number FROM numbers(3)")
+
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "create", testBackupName6)
+
+	log.Debug().Msg("Restore with full qualified table mapping (source_db.original_table -> target_db.renamed_table_v2)")
+	out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--schema", "--rm", "--restore-table-mapping", "source_db.original_table:target_db.renamed_table_v2", "--tables", "source_db.original_table", testBackupName6)
+	log.Debug().Msg(out)
+	r.NoError(err)
+
+	// Verify DROP used target table name, not source table name
+	r.Contains(out, "DROP TABLE IF EXISTS `target_db`.`renamed_table_v2`", "DROP should use target table name from mapping")
+	r.NotContains(out, "DROP TABLE IF EXISTS `source_db`.`original_table`", "DROP should NOT use source table name")
+
+	// Verify table was created in target location
+	env.checkCount(r, 1, 1, "SELECT count() FROM system.tables WHERE database='target_db' AND name='renamed_table_v2'")
+
+	// Restore data and verify
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--data", "--restore-table-mapping", "source_db.original_table:target_db.renamed_table_v2", "--tables", "source_db.original_table", testBackupName6)
+	env.checkCount(r, 1, 5, "SELECT count() FROM `target_db`.renamed_table_v2")
+
+	fullCleanup(t, r, env, []string{testBackupName6}, []string{"local"}, databaseList6, false, true, true, "config-database-mapping.yml")
+
 	env.Cleanup(t, r)
 }
 
