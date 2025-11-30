@@ -1305,6 +1305,9 @@ func (ch *ClickHouse) GetInProgressMutations(ctx context.Context, database strin
 }
 
 func (ch *ClickHouse) ApplyMacros(ctx context.Context, s string) (string, error) {
+	if !strings.Contains(s, "{") {
+		return s, nil
+	}
 	var macrosExists uint64
 	err := ch.SelectSingleRow(ctx, &macrosExists, "SELECT count() AS is_macros_exists FROM system.tables WHERE database='system' AND name='macros'  SETTINGS empty_result_for_aggregation_by_empty_set=0")
 	if err != nil || macrosExists == 0 {
