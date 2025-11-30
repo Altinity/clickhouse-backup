@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/log_helper"
@@ -36,6 +37,18 @@ type Config struct {
 	SFTP       SFTPConfig       `yaml:"sftp" envconfig:"_"`
 	AzureBlob  AzureBlobConfig  `yaml:"azblob" envconfig:"_"`
 	Custom     CustomConfig     `yaml:"custom" envconfig:"_"`
+	// Mutex to protect concurrent access when applying macros
+	mu sync.Mutex `yaml:"-"`
+}
+
+// Lock acquires the config mutex
+func (cfg *Config) Lock() {
+	cfg.mu.Lock()
+}
+
+// Unlock releases the config mutex
+func (cfg *Config) Unlock() {
+	cfg.mu.Unlock()
 }
 
 // GeneralConfig - general setting section

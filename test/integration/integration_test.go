@@ -4311,6 +4311,7 @@ func fullCleanup(t *testing.T, r *require.Assertions, env *TestEnvironment, back
 			if checkDeleteErr {
 				r.NoError(err, "checkDeleteErr delete %s %s output: \n%s\nerror: %v", backupType, backupName, out, err)
 			}
+			log.Debug().Msg(out)
 		}
 	}
 	otherBackupList, lsErr := env.DockerExecOut("clickhouse", "ls", "-1", "/var/lib/clickhouse/backup/*"+t.Name()+"*")
@@ -4321,6 +4322,7 @@ func fullCleanup(t *testing.T, r *require.Assertions, env *TestEnvironment, back
 				if checkDeleteOtherErr {
 					r.NoError(err, "%s\nunexpected delete local %s output: \n%s\nerror: %v, ", backupName, out, err)
 				}
+				log.Debug().Msg(out)
 			}
 		}
 	}
