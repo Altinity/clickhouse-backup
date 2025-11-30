@@ -268,7 +268,7 @@ func (b *Backuper) getEmbeddedBackupLocation(ctx context.Context, backupName str
 		if os.Getenv("AWS_ACCESS_KEY_ID") != "" {
 			return fmt.Sprintf("S3('%s/%s/','%s','%s')", s3Endpoint, backupName, os.Getenv("AWS_ACCESS_KEY_ID"), os.Getenv("AWS_SECRET_ACCESS_KEY")), nil
 		}
-		return "", fmt.Errorf("provide s3->access_key and s3->secret_key in config to allow embedded backup without `clickhouse->embedded_backup_disk`")
+		return "", errors.WithStack(errors.New("provide s3->access_key and s3->secret_key in config to allow embedded backup without `clickhouse->embedded_backup_disk`"))
 	}
 	if b.cfg.General.RemoteStorage == "gcs" {
 		gcsEndpoint, err := b.ch.ApplyMacros(ctx, b.buildEmbeddedLocationGCS())

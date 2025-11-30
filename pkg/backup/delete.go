@@ -179,7 +179,7 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 
 func (b *Backuper) cleanEmbeddedAndObjectDiskLocalIfSameRemoteNotPresent(ctx context.Context, backupName string, disks []clickhouse.Disk, backup LocalBackup, hasObjectDisks bool) error {
 	skip, err := b.skipIfTheSameRemoteBackupPresent(ctx, backup.BackupName, backup.Tags)
-	log.Debug().Msgf("b.skipIfTheSameRemoteBackupPresent return skip=%v", skip)
+	log.Debug().Str("backupName", backup.BackupName).Str("tags", backup.Tags).Msgf("b.skipIfTheSameRemoteBackupPresent return skip=%v", skip)
 	if err != nil {
 		return err
 	}
@@ -333,6 +333,7 @@ func (b *Backuper) cleanEmbeddedAndObjectDiskRemoteIfSameLocalNotPresent(ctx con
 	if skip, err = b.skipIfSameLocalBackupPresent(ctx, backup.BackupName, backup.Tags); err != nil {
 		return err
 	}
+	log.Debug().Str("backupName", backup.BackupName).Str("tags", backup.Tags).Msgf("b.skipIfSameLocalBackupPresent return skip=%v", skip)
 	if !skip {
 		if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
 			if err = b.cleanRemoteEmbedded(ctx, backup); err != nil {
