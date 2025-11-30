@@ -1867,10 +1867,6 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ba
 		tablePattern = b.changeTablePatternFromRestoreMapping(tablePattern, "table")
 	}
 
-	if err := b.applyMacrosToObjectDiskPath(ctx); err != nil {
-		return err
-	}
-
 	chTables, err := b.ch.GetTables(ctx, tablePattern)
 	if err != nil {
 		return err

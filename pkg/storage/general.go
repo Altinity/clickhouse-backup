@@ -541,47 +541,44 @@ func (bd *BackupDestination) throttleSpeed(startTime time.Time, size int64, maxS
 
 func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhouse.ClickHouse, backupName string) (*BackupDestination, error) {
 	var err error
+	// Lock config to safely apply macros and modify config values
+	cfg.Lock()
+	defer cfg.Unlock()
+
 	switch cfg.General.RemoteStorage {
 	case "azblob":
-		// Copy config to avoid data race when multiple goroutines call NewBackupDestination
-		azblobConfig := cfg.AzureBlob
+		if cfg.AzureBlob.Path, err = ch.ApplyMacros(ctx, cfg.AzureBlob.Path); err != nil {
+			return nil, err
+		}
+		if cfg.AzureBlob.ObjectDiskPath, err = ch.ApplyMacros(ctx, cfg.AzureBlob.ObjectDiskPath); err != nil {
+			return nil, err
+		}
 		azblobStorage := &AzureBlob{
-			Config: &azblobConfig,
+			Config: &cfg.AzureBlob,
 		}
-		if azblobStorage.Config.Path, err = ch.ApplyMacros(ctx, azblobStorage.Config.Path); err != nil {
-			return nil, err
-		}
-		if azblobStorage.Config.ObjectDiskPath, err = ch.ApplyMacros(ctx, azblobStorage.Config.ObjectDiskPath); err != nil {
-			return nil, err
-		}
-
 		return &BackupDestination{
 			azblobStorage,
 			cfg.AzureBlob.CompressionFormat,
 			cfg.AzureBlob.CompressionLevel,
 		}, nil
 	case "s3":
-		// Copy config to avoid data race when multiple goroutines call NewBackupDestination
-		s3Config := cfg.S3
-		s3Storage := &S3{
-			Config:      &s3Config,
-			Concurrency: cfg.S3.Concurrency,
-			BufferSize:  64 * 1024,
-		}
-		if s3Storage.Config.Path, err = ch.ApplyMacros(ctx, s3Storage.Config.Path); err != nil {
+		if cfg.S3.Path, err = ch.ApplyMacros(ctx, cfg.S3.Path); err != nil {
 			return nil, err
 		}
-		if s3Storage.Config.ObjectDiskPath, err = ch.ApplyMacros(ctx, s3Storage.Config.ObjectDiskPath); err != nil {
+		if cfg.S3.ObjectDiskPath, err = ch.ApplyMacros(ctx, cfg.S3.ObjectDiskPath); err != nil {
 			return nil, err
 		}
 		// https://github.com/Altinity/clickhouse-backup/issues/588
-		if len(s3Storage.Config.ObjectLabels) > 0 && backupName != "" {
-			objectLabels := s3Storage.Config.ObjectLabels
-			objectLabels, err = ch.ApplyMacrosToObjectLabels(ctx, objectLabels, backupName)
+		if len(cfg.S3.ObjectLabels) > 0 && backupName != "" {
+			cfg.S3.ObjectLabels, err = ch.ApplyMacrosToObjectLabels(ctx, cfg.S3.ObjectLabels, backupName)
 			if err != nil {
 				return nil, err
 			}
-			s3Storage.Config.ObjectLabels = objectLabels
+		}
+		s3Storage := &S3{
+			Config:      &cfg.S3,
+			Concurrency: cfg.S3.Concurrency,
+			BufferSize:  64 * 1024,
 		}
 		return &BackupDestination{
 			s3Storage,
@@ -589,41 +586,35 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			cfg.S3.CompressionLevel,
 		}, nil
 	case "gcs":
-		// Copy config to avoid data race when multiple goroutines call NewBackupDestination
-		gcsConfig := cfg.GCS
-		googleCloudStorage := &GCS{Config: &gcsConfig}
-		if googleCloudStorage.Config.Path, err = ch.ApplyMacros(ctx, googleCloudStorage.Config.Path); err != nil {
+		if cfg.GCS.Path, err = ch.ApplyMacros(ctx, cfg.GCS.Path); err != nil {
 			return nil, err
 		}
-		if googleCloudStorage.Config.ObjectDiskPath, err = ch.ApplyMacros(ctx, googleCloudStorage.Config.ObjectDiskPath); err != nil {
+		if cfg.GCS.ObjectDiskPath, err = ch.ApplyMacros(ctx, cfg.GCS.ObjectDiskPath); err != nil {
 			return nil, err
 		}
 		// https://github.com/Altinity/clickhouse-backup/issues/588
-		if len(googleCloudStorage.Config.ObjectLabels) > 0 && backupName != "" {
-			objectLabels := googleCloudStorage.Config.ObjectLabels
-			objectLabels, err = ch.ApplyMacrosToObjectLabels(ctx, objectLabels, backupName)
+		if len(cfg.GCS.ObjectLabels) > 0 && backupName != "" {
+			cfg.GCS.ObjectLabels, err = ch.ApplyMacrosToObjectLabels(ctx, cfg.GCS.ObjectLabels, backupName)
 			if err != nil {
 				return nil, err
 			}
-			googleCloudStorage.Config.ObjectLabels = objectLabels
 		}
+		googleCloudStorage := &GCS{Config: &cfg.GCS}
 		return &BackupDestination{
 			googleCloudStorage,
 			cfg.GCS.CompressionFormat,
 			cfg.GCS.CompressionLevel,
 		}, nil
 	case "cos":
-		// Copy config to avoid data race when multiple goroutines call NewBackupDestination
-		cosConfig := cfg.COS
+		if cfg.COS.Path, err = ch.ApplyMacros(ctx, cfg.COS.Path); err != nil {
+			return nil, err
+		}
+		if cfg.COS.ObjectDiskPath, err = ch.ApplyMacros(ctx, cfg.COS.ObjectDiskPath); err != nil {
+			return nil, err
+		}
 		tencentStorage := &COS{
-			Config:     &cosConfig,
+			Config:     &cfg.COS,
 			BufferSize: 64 * 1024,
-		}
-		if tencentStorage.Config.Path, err = ch.ApplyMacros(ctx, tencentStorage.Config.Path); err != nil {
-			return nil, err
-		}
-		if tencentStorage.Config.ObjectDiskPath, err = ch.ApplyMacros(ctx, tencentStorage.Config.ObjectDiskPath); err != nil {
-			return nil, err
 		}
 		return &BackupDestination{
 			tencentStorage,
@@ -631,19 +622,17 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			cfg.COS.CompressionLevel,
 		}, nil
 	case "ftp":
-		// Copy config to avoid data race when multiple goroutines call NewBackupDestination
-		ftpConfig := cfg.FTP
-		if ftpConfig.Concurrency < cfg.General.ObjectDiskServerSideCopyConcurrency/4 {
-			ftpConfig.Concurrency = cfg.General.ObjectDiskServerSideCopyConcurrency
+		if cfg.FTP.Concurrency < cfg.General.ObjectDiskServerSideCopyConcurrency/4 {
+			cfg.FTP.Concurrency = cfg.General.ObjectDiskServerSideCopyConcurrency
+		}
+		if cfg.FTP.Path, err = ch.ApplyMacros(ctx, cfg.FTP.Path); err != nil {
+			return nil, err
+		}
+		if cfg.FTP.ObjectDiskPath, err = ch.ApplyMacros(ctx, cfg.FTP.ObjectDiskPath); err != nil {
+			return nil, err
 		}
 		ftpStorage := &FTP{
-			Config: &ftpConfig,
-		}
-		if ftpStorage.Config.Path, err = ch.ApplyMacros(ctx, ftpStorage.Config.Path); err != nil {
-			return nil, err
-		}
-		if ftpStorage.Config.ObjectDiskPath, err = ch.ApplyMacros(ctx, ftpStorage.Config.ObjectDiskPath); err != nil {
-			return nil, err
+			Config: &cfg.FTP,
 		}
 		return &BackupDestination{
 			ftpStorage,
@@ -651,18 +640,15 @@ func NewBackupDestination(ctx context.Context, cfg *config.Config, ch *clickhous
 			cfg.FTP.CompressionLevel,
 		}, nil
 	case "sftp":
-		// Copy config to avoid data race when multiple goroutines call NewBackupDestination
-		sftpConfig := cfg.SFTP
+		if cfg.SFTP.Path, err = ch.ApplyMacros(ctx, cfg.SFTP.Path); err != nil {
+			return nil, err
+		}
+		if cfg.SFTP.ObjectDiskPath, err = ch.ApplyMacros(ctx, cfg.SFTP.ObjectDiskPath); err != nil {
+			return nil, err
+		}
 		sftpStorage := &SFTP{
-			Config: &sftpConfig,
+			Config: &cfg.SFTP,
 		}
-		if sftpStorage.Config.Path, err = ch.ApplyMacros(ctx, sftpStorage.Config.Path); err != nil {
-			return nil, err
-		}
-		if sftpStorage.Config.ObjectDiskPath, err = ch.ApplyMacros(ctx, sftpStorage.Config.ObjectDiskPath); err != nil {
-			return nil, err
-		}
-
 		return &BackupDestination{
 			sftpStorage,
 			cfg.SFTP.CompressionFormat,

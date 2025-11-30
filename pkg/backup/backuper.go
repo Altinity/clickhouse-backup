@@ -253,10 +253,6 @@ func (b *Backuper) getEmbeddedBackupLocation(ctx context.Context, backupName str
 	if b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
 		return fmt.Sprintf("Disk('%s','%s')", b.cfg.ClickHouse.EmbeddedBackupDisk, backupName), nil
 	}
-
-	if err := b.applyMacrosToObjectDiskPath(ctx); err != nil {
-		return "", err
-	}
 	if b.cfg.General.RemoteStorage == "s3" {
 		s3Endpoint, err := b.ch.ApplyMacros(ctx, b.buildEmbeddedLocationS3())
 		if err != nil {
@@ -296,23 +292,6 @@ func (b *Backuper) getEmbeddedBackupLocation(ctx context.Context, backupName str
 	return "", fmt.Errorf("empty clickhouse->embedded_backup_disk and invalid general->remote_storage: %s", b.cfg.General.RemoteStorage)
 }
 
-func (b *Backuper) applyMacrosToObjectDiskPath(ctx context.Context) error {
-	var err error
-	if b.cfg.General.RemoteStorage == "s3" {
-		b.cfg.S3.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.S3.ObjectDiskPath)
-	} else if b.cfg.General.RemoteStorage == "gcs" {
-		b.cfg.GCS.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.GCS.ObjectDiskPath)
-	} else if b.cfg.General.RemoteStorage == "azblob" {
-		b.cfg.AzureBlob.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.AzureBlob.ObjectDiskPath)
-	} else if b.cfg.General.RemoteStorage == "ftp" {
-		b.cfg.FTP.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.FTP.ObjectDiskPath)
-	} else if b.cfg.General.RemoteStorage == "sftp" {
-		b.cfg.SFTP.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.SFTP.ObjectDiskPath)
-	} else if b.cfg.General.RemoteStorage == "cos" {
-		b.cfg.COS.ObjectDiskPath, err = b.ch.ApplyMacros(ctx, b.cfg.COS.ObjectDiskPath)
-	}
-	return err
-}
 
 func (b *Backuper) buildEmbeddedLocationS3() string {
 	s3backupURL := url.URL{}
