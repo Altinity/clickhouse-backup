@@ -135,6 +135,7 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 			"partitions":     partitions,
 			"schemaOnly":     schemaOnly,
 		})
+		defer b.resumableState.Close()
 	}
 
 	compressedDataSize := int64(0)
@@ -256,9 +257,6 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 		if err != nil {
 			return errors.Wrapf(err, "can't upload %s", remoteBackupMetaFile)
 		}
-	}
-	if b.resume {
-		b.resumableState.Close()
 	}
 	log.Info().Fields(map[string]interface{}{
 		"backup":           backupName,

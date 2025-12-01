@@ -1175,7 +1175,7 @@ func (api *APIServer) httpCreateRemoteHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	commandId, _ := status.Current.Start(fullCommand)
+	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("create_remote", 0, func() error {
 			b := backup.NewBackuper(cfg)
@@ -1485,8 +1485,8 @@ func (api *APIServer) httpUploadHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
 	go func() {
-		commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
 		err, _ := api.metrics.ExecuteWithMetrics("upload", 0, func() error {
 			b := backup.NewBackuper(cfg)
 			return b.Upload(name, deleteSource, diffFrom, diffFromRemote, tablePattern, partitionsToBackup, skipProjections, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, api.cliApp.Version, commandId)
@@ -1925,7 +1925,7 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	commandId, _ := status.Current.Start(fullCommand)
+	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore_remote", 0, func() error {
 			b := backup.NewBackuper(cfg)
@@ -2030,8 +2030,8 @@ func (api *APIServer) httpDownloadHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
 	go func() {
-		commandId, _ := status.Current.StartWithOperationId(fullCommand, operationId.String())
 		err, _ := api.metrics.ExecuteWithMetrics("download", 0, func() error {
 			b := backup.NewBackuper(cfg)
 			return b.Download(name, tablePattern, partitionsToBackup, schemaOnly, rbacOnly, configsOnly, namedCollectionsOnly, resume, hardlinkExistsFiles, api.cliApp.Version, commandId)

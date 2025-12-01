@@ -164,6 +164,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			"partitions":   partitions,
 			"schemaOnly":   schemaOnly,
 		})
+		defer b.resumableState.Close()
 	}
 
 	log.Debug().Str("backup", backupName).Msgf("prepare table METADATA concurrent semaphore with concurrency=%d len(tablesForDownload)=%d", b.cfg.General.DownloadConcurrency, len(tablesForDownload))
@@ -292,10 +293,6 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 				return err
 			}
 		}
-	}
-
-	if b.resume {
-		b.resumableState.Close()
 	}
 
 	//clean partially downloaded requiredBackup
