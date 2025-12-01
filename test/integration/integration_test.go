@@ -3569,38 +3569,56 @@ func TestRestoreMapping(t *testing.T) {
 
 	fullCleanup(t, r, env, []string{testBackupName5}, []string{"local"}, databaseList5, false, true, true, "config-database-mapping.yml")
 
-	// Corner case 5: Full qualified table mapping (db.table:db2.table_v2) - verify DROP uses target name
-	// https://github.com/Altinity/clickhouse-backup/issues/XXX
+	// Corner case 5: Full qualified table mapping (db.table:db.table_v2, src_db.table:dst_db.table_v2) - verify DROP uses target table name
+	// https://github.com/Altinity/clickhouse-backup/issues/1302
 	log.Debug().Msg("Corner case 5: Full qualified table mapping with --schema restore")
 	testBackupName6 := "test_fq_table_mapping"
-	databaseList6 := []string{"source_db", "target_db"}
+	databaseList6 := []string{"db-5", "src-db", "dst-db"}
 	fullCleanup(t, r, env, []string{testBackupName6}, []string{"local"}, databaseList6, false, false, false, "config-database-mapping.yml")
 
 	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS `source_db`")
 	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS `target_db`")
 	env.queryWithNoError(r, "CREATE TABLE `source_db`.original_table (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY dt")
 	env.queryWithNoError(r, "INSERT INTO `source_db`.original_table SELECT '2022-01-01 00:00:00', number FROM numbers(5)")
+	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS `db-5`")
+	env.queryWithNoError(r, "CREATE TABLE `db-5`.table (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY dt")
+	env.queryWithNoError(r, "INSERT INTO `db-5`.table SELECT '2022-01-01 00:00:00', number FROM numbers(5)")
 	// Create target table to verify DROP operates on correct table
 	env.queryWithNoError(r, "CREATE TABLE `target_db`.renamed_table_v2 (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY dt")
 	env.queryWithNoError(r, "INSERT INTO `target_db`.renamed_table_v2 SELECT '2023-01-01 00:00:00', number FROM numbers(3)")
+	env.queryWithNoError(r, "CREATE TABLE `db-5`.table_v2 (dt DateTime, v UInt64) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY dt")
+	env.queryWithNoError(r, "INSERT INTO `db-5`.table_v2 SELECT '2023-01-01 00:00:00', number FROM numbers(3)")
 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "create", testBackupName6)
 
-	log.Debug().Msg("Restore with full qualified table mapping (source_db.original_table -> target_db.renamed_table_v2)")
-	out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--schema", "--rm", "--restore-table-mapping", "source_db.original_table:target_db.renamed_table_v2", "--tables", "source_db.original_table", testBackupName6)
-	log.Debug().Msg(out)
-	r.NoError(err)
+	restoreFqMappingCases := []struct {
+		srcDb    string
+		srcTable string
+		dstDb    string
+		dstTable string
+	}{
+		{srcDb: "db-5", srcTable: "table", dstDb: "db-5", dstTable: "table_v2"},
+		{srcDb: "source_db", srcTable: "original_table", dstDb: "target_db", dstTable: "renamed_table_v2"},
+	}
 
-	// Verify DROP used target table name, not source table name
-	r.Contains(out, "DROP TABLE IF EXISTS `target_db`.`renamed_table_v2`", "DROP should use target table name from mapping")
-	r.NotContains(out, "DROP TABLE IF EXISTS `source_db`.`original_table`", "DROP should NOT use source table name")
+	for _, tc := range restoreFqMappingCases {
+		tableMapping := fmt.Sprintf("%s.%s:%s.%s", tc.srcDb, tc.srcTable, tc.dstDb, tc.dstTable)
+		log.Debug().Msgf("Restore with full qualified table mapping %s", tableMapping)
+		out, err := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--schema", "--rm", "--restore-table-mapping", tableMapping, "--tables", tc.srcDb+"."+tc.srcTable, testBackupName6)
+		log.Debug().Msg(out)
+		r.NoError(err)
 
-	// Verify table was created in target location
-	env.checkCount(r, 1, 1, "SELECT count() FROM system.tables WHERE database='target_db' AND name='renamed_table_v2'")
+		// Verify DROP used target table name, not source table name
+		r.Contains(out, fmt.Sprintf("DROP TABLE IF EXISTS `%s`.`%s`", tc.dstDb, tc.dstTable), "DROP should use target table name from mapping")
+		r.NotContains(out, fmt.Sprintf("DROP TABLE IF EXISTS `%s`.`%s`", tc.srcDb, tc.srcTable), "DROP should NOT use source table name")
 
-	// Restore data and verify
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--data", "--restore-table-mapping", "source_db.original_table:target_db.renamed_table_v2", "--tables", "source_db.original_table", testBackupName6)
-	env.checkCount(r, 1, 5, "SELECT count() FROM `target_db`.renamed_table_v2")
+		// Verify table was created in target location
+		env.checkCount(r, 1, 1, fmt.Sprintf("SELECT count() FROM system.tables WHERE database='%s' AND name='%s'", tc.dstDb, tc.dstTable))
+
+		// Restore data and verify
+		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-database-mapping.yml", "restore", "--data", "--restore-table-mapping", tableMapping, "--tables", tc.srcDb+"."+tc.srcTable, testBackupName6)
+		env.checkCount(r, 1, 5, fmt.Sprintf("SELECT count() FROM `%s`.`%s`", tc.dstDb, tc.dstTable))
+	}
 
 	fullCleanup(t, r, env, []string{testBackupName6}, []string{"local"}, databaseList6, false, true, true, "config-database-mapping.yml")
 
