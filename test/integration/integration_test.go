@@ -2133,7 +2133,7 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	env.queryWithNoError(r, "CREATE TABLE IF NOT EXISTS test_skip_tables.test_merge_tree (id UInt64, s String) ENGINE=MergeTree() ORDER BY id")
 	env.queryWithNoError(r, "CREATE TABLE IF NOT EXISTS test_skip_tables.test_memory (id UInt64) ENGINE=Memory")
 	env.queryWithNoError(r, "CREATE MATERIALIZED VIEW IF NOT EXISTS test_skip_tables.test_mv (id UInt64) ENGINE=MergeTree() ORDER BY id AS SELECT id FROM test_skip_tables.test_merge_tree")
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "25.11") < 0 {
 		query := "CREATE LIVE VIEW IF NOT EXISTS test_skip_tables.test_live_view AS SELECT count() FROM test_skip_tables.test_merge_tree"
 		allowExperimentalAnalyzer, err := env.ch.TurnAnalyzerOffIfNecessary(version, query, "")
 		r.NoError(err)
@@ -2153,7 +2153,7 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_table_pattern/metadata/test_skip_tables/test_memory.json")
 	env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_table_pattern/metadata/test_skip_tables/test_mv.json")
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "ls -la /var/lib/clickhouse/backup/skip_table_pattern/metadata/test_skip_tables/*inner*.json")
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "25.11") < 0 {
 		env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_table_pattern/metadata/test_skip_tables/test_live_view.json")
 	}
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
@@ -2165,7 +2165,7 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	r.Error(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_engines/metadata/test_skip_tables/test_memory.json"))
 	r.Error(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_engines/metadata/test_skip_tables/test_mv.json"))
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "ls -la /var/lib/clickhouse/backup/skip_engines/metadata/test_skip_tables/*inner*.json")
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "25.11") < 0 {
 		r.Error(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/skip_engines/metadata/test_skip_tables/test_live_view.json"))
 	}
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
@@ -2183,7 +2183,7 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	r.Error(env.DockerExec("minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_memory.json"))
 	env.DockerExecNoError(r, "minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_mv.json")
 	env.DockerExecNoError(r, "minio", "bash", "-ce", "ls -la /minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/*inner*.json")
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "25.11") < 0 {
 		env.DockerExecNoError(r, "minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_live_view.json")
 	}
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
@@ -2196,7 +2196,7 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	r.Error(env.DockerExec("minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_memory.json"))
 	r.Error(env.DockerExec("minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_mv.json"))
 	env.DockerExecNoError(r, "minio", "bash", "-ce", "ls -la /minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/*inner*.json")
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "25.11") < 0 {
 		r.Error(env.DockerExec("minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_live_view.json"))
 	}
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
@@ -2209,7 +2209,7 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	env.DockerExecNoError(r, "minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_memory.json")
 	env.DockerExecNoError(r, "minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_mv.json")
 	env.DockerExecNoError(r, "minio", "bash", "-ce", "ls -la /minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/*inner*.json")
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "25.11") < 0 {
 		env.DockerExecNoError(r, "minio", "ls", "-la", "/minio/data/clickhouse/backup/cluster/0/test_skip_full_backup/metadata/test_skip_tables/test_live_view.json")
 	}
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
@@ -2226,7 +2226,7 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_memory.json")
 	env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_mv.json")
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "ls -la /var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/*inner*.json")
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "25.11") < 0 {
 		env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_live_view.json")
 	}
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
@@ -2239,7 +2239,7 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	r.Error(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_memory.json"))
 	r.Error(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_mv.json"))
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "ls -la /var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/*inner*.json")
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "25.11") < 0 {
 		r.Error(env.DockerExec("clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_live_view.json"))
 	}
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
@@ -2252,7 +2252,7 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_memory.json")
 	env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_mv.json")
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", "ls -la /var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/*inner*.json")
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 {
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") >= 0 && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "25.11") < 0 {
 		env.DockerExecNoError(r, "clickhouse-backup", "ls", "-la", "/var/lib/clickhouse/backup/test_skip_full_backup/metadata/test_skip_tables/test_live_view.json")
 	}
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.12") >= 0 {
@@ -2276,9 +2276,11 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 		expectedTables = 6
 	}
 	//*.inner.target.* for WINDOW VIEW created only after 22.6
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.6") >= 0 {
+	//LIVE VIEW removed in 25.11+
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.6") >= 0 && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "25.11") < 0 {
 		expectedTables = 7
 	}
+
 	found := false
 	for _, item := range result {
 		if item.Name == "test_memory" {
@@ -2323,7 +2325,8 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 		expectedTables = 7
 	}
 	//*.inner.target.* for WINDOW VIEW created only after 22.6
-	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.6") >= 0 {
+	//LIVE VIEW removed in 25.11+
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "22.6") >= 0 && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "25.11") < 0 {
 		expectedTables = 8
 	}
 	r.Equal(expectedTables, len(result), "unexpected tables after full restore in test_skip_tables %#v", result)
