@@ -1,4 +1,5 @@
 import os
+
 from clickhouse_backup.requirements.requirements import *
 from clickhouse_backup.tests.common import *
 from clickhouse_backup.tests.steps import *
@@ -83,11 +84,11 @@ def live_view(self):
     """Test that live view is handled properly by clickhouse-backup.
     """
     base_table_name = self.context.views_base_name
-
+    if os.environ.get('CLICKHOUSE_VERSION', '25.8') >= '25.8':
+        skip("25.9+ LIVE VIEW was removed")
     views_outline(view_name="lview", view_contents_query=f"SELECT * FROM {base_table_name}_lview",
                   view_create_query=f"CREATE LIVE VIEW {base_table_name}_lview AS "
                                     f"SELECT Version, Path, Time FROM default.{base_table_name}")
-
 
 @TestScenario
 @Requirements(
