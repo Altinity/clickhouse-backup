@@ -1898,9 +1898,32 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ba
 		}
 		// https://github.com/Altinity/clickhouse-backup/issues/937
 		if len(b.cfg.General.RestoreTableMapping) > 0 {
-			if targetTable, isMapped := b.cfg.General.RestoreTableMapping[table.Table]; isMapped {
-				dstTableName = targetTable
-				tablesForRestore[i].Table = targetTable
+			// Check full qualified name first (db.table), then table name only
+			fullName := table.Database + "." + table.Table
+			if targetValue, isMapped := b.cfg.General.RestoreTableMapping[fullName]; isMapped {
+				// Target may contain database (e.g., target_db.new_table)
+				if strings.Contains(targetValue, ".") {
+					parts := strings.SplitN(targetValue, ".", 2)
+					dstDatabase = parts[0]
+					dstTableName = parts[1]
+					tablesForRestore[i].Database = parts[0]
+					tablesForRestore[i].Table = parts[1]
+				} else {
+					dstTableName = targetValue
+					tablesForRestore[i].Table = targetValue
+				}
+			} else if targetTable, isMapped := b.cfg.General.RestoreTableMapping[table.Table]; isMapped {
+				// Handle target with database prefix
+				if strings.Contains(targetTable, ".") {
+					parts := strings.SplitN(targetTable, ".", 2)
+					dstDatabase = parts[0]
+					dstTableName = parts[1]
+					tablesForRestore[i].Database = parts[0]
+					tablesForRestore[i].Table = parts[1]
+				} else {
+					dstTableName = targetTable
+					tablesForRestore[i].Table = targetTable
+				}
 			}
 		}
 		logger := log.With().Str("table", fmt.Sprintf("%s.%s", dstDatabase, dstTableName)).Logger()
@@ -2255,8 +2278,24 @@ func (b *Backuper) checkMissingTables(tablesForRestore ListOfTables, chTables []
 			}
 		}
 		if len(b.cfg.General.RestoreTableMapping) > 0 {
-			if targetTable, isMapped := b.cfg.General.RestoreTableMapping[table.Table]; isMapped {
-				dstTable = targetTable
+			// Check full qualified name first (db.table), then table name only
+			fullName := table.Database + "." + table.Table
+			if targetValue, isMapped := b.cfg.General.RestoreTableMapping[fullName]; isMapped {
+				if strings.Contains(targetValue, ".") {
+					parts := strings.SplitN(targetValue, ".", 2)
+					dstDatabase = parts[0]
+					dstTable = parts[1]
+				} else {
+					dstTable = targetValue
+				}
+			} else if targetTable, isMapped := b.cfg.General.RestoreTableMapping[table.Table]; isMapped {
+				if strings.Contains(targetTable, ".") {
+					parts := strings.SplitN(targetTable, ".", 2)
+					dstDatabase = parts[0]
+					dstTable = parts[1]
+				} else {
+					dstTable = targetTable
+				}
 			}
 		}
 		found := false
@@ -2267,7 +2306,7 @@ func (b *Backuper) checkMissingTables(tablesForRestore ListOfTables, chTables []
 			}
 		}
 		if !found {
-			missingTables = append(missingTables, fmt.Sprintf("'%s.%s'", dstDatabase, table.Table))
+			missingTables = append(missingTables, fmt.Sprintf("'%s.%s'", dstDatabase, dstTable))
 		}
 	}
 	return missingTables
@@ -2290,25 +2329,80 @@ func (b *Backuper) changeTablePatternFromRestoreMapping(tablePattern, objType st
 	case "database":
 		mapping = b.cfg.General.RestoreDatabaseMapping
 	case "table":
-		mapping = b.cfg.General.RestoreDatabaseMapping
+		mapping = b.cfg.General.RestoreTableMapping
 	default:
-		return ""
+		return tablePattern
 	}
+	isDatabase := objType == "database"
 	for sourceObj, targetObj := range mapping {
 		if tablePattern != "" {
-			sourceObjRE := regexp.MustCompile(fmt.Sprintf("(^%s.*)|(,%s.*)", sourceObj, sourceObj))
+			var sourceObjRE *regexp.Regexp
+			if isDatabase {
+				sourceObjRE = regexp.MustCompile(fmt.Sprintf("(^%s\\.[^,]*)|(,%s\\.[^,]*)", sourceObj, sourceObj))
+			} else {
+				// Check if sourceObj is a full qualified name (db.table)
+				if strings.Contains(sourceObj, ".") {
+					// Full qualified mapping: source_db.table -> target_db.new_table
+					escapedSource := regexp.QuoteMeta(sourceObj)
+					sourceObjRE = regexp.MustCompile(fmt.Sprintf("(^%s)|(,%s)", escapedSource, escapedSource))
+				} else {
+					sourceObjRE = regexp.MustCompile(fmt.Sprintf("(^([^\\.]+)\\.%s)|(,([^\\.]+)\\.%s)", sourceObj, sourceObj))
+				}
+			}
+
 			if sourceObjRE.MatchString(tablePattern) {
 				matches := sourceObjRE.FindAllStringSubmatch(tablePattern, -1)
-				substitution := targetObj + ".*"
-				if strings.HasPrefix(matches[0][1], ",") {
+				var substitution string
+				if isDatabase {
+					substitution = targetObj + ".*"
+				} else {
+					// Check if sourceObj is full qualified
+					if strings.Contains(sourceObj, ".") {
+						// Use targetObj as-is (may contain database)
+						substitution = targetObj
+					} else {
+						// matches[0][2] has database name when first alternative matches (^...)
+						// matches[0][4] has database name when second alternative matches (,...)
+						dbName := matches[0][2]
+						if dbName == "" && len(matches[0]) > 4 {
+							dbName = matches[0][4]
+						}
+						// Check if targetObj contains database
+						if strings.Contains(targetObj, ".") {
+							substitution = targetObj
+						} else {
+							substitution = dbName + "." + targetObj
+						}
+					}
+				}
+				if strings.HasPrefix(matches[0][0], ",") {
 					substitution = "," + substitution
 				}
+
 				tablePattern = sourceObjRE.ReplaceAllString(tablePattern, substitution)
 			} else {
-				tablePattern += "," + targetObj + ".*"
+				if isDatabase {
+					tablePattern += "," + targetObj + ".*"
+				} else {
+					// Check if targetObj contains database
+					if strings.Contains(targetObj, ".") {
+						tablePattern += "," + targetObj
+					} else {
+						tablePattern += ",*." + targetObj
+					}
+				}
 			}
 		} else {
-			tablePattern += targetObj + ".*"
+			if isDatabase {
+				tablePattern += targetObj + ".*"
+			} else {
+				// Check if targetObj contains database
+				if strings.Contains(targetObj, ".") {
+					tablePattern += targetObj
+				} else {
+					tablePattern += "*." + targetObj
+				}
+			}
 		}
 	}
 	return tablePattern
