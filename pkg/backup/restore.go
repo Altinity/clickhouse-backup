@@ -567,9 +567,19 @@ func (b *Backuper) restoreRBACResolveAllConflicts(ctx context.Context, backupNam
 				return openErr
 			}
 
-			scanner := bufio.NewScanner(file)
-			for scanner.Scan() {
-				line := scanner.Text()
+			reader := bufio.NewReader(file)
+			for {
+				line, readErr := reader.ReadString('\n')
+				if readErr != nil && readErr != io.EOF {
+					return readErr
+				}
+				line = strings.TrimSuffix(line, "\n")
+				if line == "" {
+					if readErr == io.EOF {
+						break
+					}
+					continue
+				}
 				data := keeper.DumpNode{}
 				jsonErr := json.Unmarshal([]byte(line), &data)
 				if jsonErr != nil {
@@ -577,6 +587,9 @@ func (b *Backuper) restoreRBACResolveAllConflicts(ctx context.Context, backupNam
 					dataString := keeper.DumpNodeString{}
 					if jsonErr = json.Unmarshal([]byte(line), &dataString); jsonErr != nil {
 						log.Error().Msgf("can't %s json.Unmarshal error: %v line: %s", fPath, line, jsonErr)
+						if readErr == io.EOF {
+							break
+						}
 						continue
 					}
 					data.Path = dataString.Path
@@ -588,10 +601,9 @@ func (b *Backuper) restoreRBACResolveAllConflicts(ctx context.Context, backupNam
 					}
 					log.Debug().Msgf("%s:%s b.resolveRBACConflictIfExist(%s) no error", fPath, data.Path, string(data.Value))
 				}
-
-			}
-			if scanErr := scanner.Err(); scanErr != nil {
-				return scanErr
+				if readErr == io.EOF {
+					break
+				}
 			}
 
 			if closeErr := file.Close(); closeErr != nil {
@@ -958,15 +970,28 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 		if openErr != nil {
 			return openErr
 		}
-		scanner := bufio.NewScanner(file)
-		for scanner.Scan() {
-			line := scanner.Bytes()
+		reader := bufio.NewReader(file)
+		for {
+			line, readErr := reader.ReadString('\n')
+			if readErr != nil && readErr != io.EOF {
+				return errors.Wrapf(readErr, "read error on %s", jsonlFile)
+			}
+			line = strings.TrimSuffix(line, "\n")
+			if line == "" {
+				if readErr == io.EOF {
+					break
+				}
+				continue
+			}
 			var node keeper.DumpNode
-			if unmarshalErr := json.Unmarshal(line, &node); unmarshalErr != nil {
+			if unmarshalErr := json.Unmarshal([]byte(line), &node); unmarshalErr != nil {
 				return errors.Wrapf(unmarshalErr, "failed to unmarshal from %s", jsonlFile)
 			}
 			var sqlQuery string
 			if len(node.Value) == 0 {
+				if readErr == io.EOF {
+					break
+				}
 				continue
 			}
 			if isEncrypted {
@@ -981,6 +1006,9 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 			sqlQuery = strings.TrimSpace(sqlQuery)
 			if sqlQuery == "" {
 				log.Warn().Msgf("Empty SQL content in line from: %s", jsonlFile)
+				if readErr == io.EOF {
+					break
+				}
 				continue
 			}
 
@@ -1009,9 +1037,9 @@ func (b *Backuper) restoreNamedCollections(backupName string) error {
 			}
 
 			log.Info().Msgf("Restored SQL named collection from jsonl: %s", collectionName)
-		}
-		if err := scanner.Err(); err != nil {
-			return errors.Wrapf(err, "scanner error on %s", jsonlFile)
+			if readErr == io.EOF {
+				break
+			}
 		}
 		if err := file.Close(); err != nil {
 			log.Warn().Msgf("can't close %s error: %v", jsonlFile, err)
