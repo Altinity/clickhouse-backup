@@ -3573,7 +3573,7 @@ func TestRestoreMapping(t *testing.T) {
 	// https://github.com/Altinity/clickhouse-backup/issues/1302
 	log.Debug().Msg("Corner case 5: Full qualified table mapping with --schema restore")
 	testBackupName6 := "test_fq_table_mapping"
-	databaseList6 := []string{"db-5", "src-db", "dst-db"}
+	databaseList6 := []string{"db-5", "source_db", "target_db"}
 	fullCleanup(t, r, env, []string{testBackupName6}, []string{"local"}, databaseList6, false, false, false, "config-database-mapping.yml")
 
 	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS `source_db`")
