@@ -1,3 +1,18 @@
+# v2.6.40
+IMPROVEMENTS
+- add ClickHouse 25.10 and 25.11 support to CI/CD test matrix
+
+BUG FIXES
+- properly handle `operationId` in `create_remote` and `restore_remote` HTTP handlers, fix [1272](https://github.com/Altinity/clickhouse-backup/issues/1272)
+- improve `--tables` parameter to automatically adjust according to `--restore-table-mapping` logic, fix [1278](https://github.com/Altinity/clickhouse-backup/issues/1278), fix [1302](https://github.com/Altinity/clickhouse-backup/issues/1302)
+- fix Download and Upload command proper close resumable state to avoid infinite bolt lock in server mode when upload or download command failed, fix [1304](https://github.com/Altinity/clickhouse-backup/issues/1304)
+- fix ApplyMacros behavior for Embedded backup/restore
+- fix config race conditions in server mode
+- fix GCS transient errors causing corruption, fix [1292](https://github.com/Altinity/clickhouse-backup/issues/1292)
+- change GCS default chunk size to 16Mb, fix [1292](https://github.com/Altinity/clickhouse-backup/issues/1292)
+- fix support for `object_disk.VersionFullObjectKey=5` in ClickHouse 25.10+, fix [1290](https://github.com/Altinity/clickhouse-backup/issues/1290)
+- fix restore refreshable materialized view, fix [1271](https://github.com/Altinity/clickhouse-backup/issues/1271)
+
 # v2.6.39
 BUG FIXES
 - final improvements for check `system.clusters` during restore `engine=Distributed` and is not exists and if not macros use `RESTORE_SCHEMA_ON_CLUSTER` or `CLICKHOUSE_RESTORE_DISTRIBUTED_CLUSTER` config parameter as cluster value, fix [1252](https://github.com/Altinity/clickhouse-backup/issues/1252)
