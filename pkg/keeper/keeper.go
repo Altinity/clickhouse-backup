@@ -67,7 +67,7 @@ func (k *Keeper) Connect(ctx context.Context, ch *clickhouse.ClickHouse) error {
 	k.doc = doc
 	zookeeperNode := xmlquery.FindOne(doc, "//zookeeper")
 	if zookeeperNode == nil {
-		return fmt.Errorf("no /zookeeper in %s", configFile)
+		return errors.WithStack(fmt.Errorf("no /zookeeper in %s", configFile))
 	}
 	sessionTimeout := 15 * time.Second
 	if sessionTimeoutMsNode := zookeeperNode.SelectElement("session_timeout_ms"); sessionTimeoutMsNode != nil {
@@ -79,13 +79,13 @@ func (k *Keeper) Connect(ctx context.Context, ch *clickhouse.ClickHouse) error {
 	}
 	nodeList := zookeeperNode.SelectElements("node")
 	if len(nodeList) == 0 {
-		return fmt.Errorf("/zookeeper/node not exists in %s", configFile)
+		return errors.WithStack(fmt.Errorf("/zookeeper/node not exists in %s", configFile))
 	}
 	keeperHosts := make([]string, len(nodeList))
 	for i, node := range nodeList {
 		hostNode := node.SelectElement("host")
 		if hostNode == nil {
-			return fmt.Errorf("/zookeeper/node[%d]/host not exists in %s", i, configFile)
+			return errors.WithStack(fmt.Errorf("/zookeeper/node[%d]/host not exists in %s", i, configFile))
 		}
 		port := "2181"
 		portNode := node.SelectElement("port")
@@ -114,7 +114,7 @@ func (k *Keeper) GetReplicatedAccessPath(userDirectory string) (string, error) {
 	xPathQuery := fmt.Sprintf("//user_directories/%s/zookeeper_path", userDirectory)
 	zookeeperPathNode := xmlquery.FindOne(k.doc, xPathQuery)
 	if zookeeperPathNode == nil {
-		return "", fmt.Errorf("can't find %s in %s", xPathQuery, k.xmlConfigFile)
+		return "", errors.WithStack(fmt.Errorf("can't find %s in %s", xPathQuery, k.xmlConfigFile))
 	}
 	zookeeperPath := zookeeperPathNode.InnerText()
 	if zookeeperPath != "/" {
@@ -210,7 +210,7 @@ func (k *Keeper) Restore(dumpFile, prefix string) error {
 			//convert from old format
 			nodeString := DumpNodeString{}
 			if stringUnmarshalErr := json.Unmarshal(binaryData, &nodeString); stringUnmarshalErr != nil {
-				return fmt.Errorf("k.Restore can't read data binaryErr=%v, stringErr=%v", err, stringUnmarshalErr)
+				return errors.WithStack(fmt.Errorf("k.Restore can't read data binaryErr=%v, stringErr=%v", err, stringUnmarshalErr))
 			}
 		}
 		node.Path = path.Join(prefix, node.Path)
@@ -228,7 +228,7 @@ func (k *Keeper) Restore(dumpFile, prefix string) error {
 	}
 
 	if err = scanner.Err(); err != nil {
-		return fmt.Errorf("can't scan %s, error: %s", dumpFile, err)
+		return errors.WithStack(fmt.Errorf("can't scan %s, error: %s", dumpFile, err))
 	}
 	return nil
 }
@@ -240,7 +240,7 @@ func (k *Keeper) Walk(prefix, relativePath string, recursive bool, callback Walk
 	value, stat, err := k.conn.Get(nodePath)
 	log.Debug().Msgf("k.Walk->get(%s) = %v, err = %v", nodePath, string(value), err)
 	if err != nil {
-		return fmt.Errorf("k.Walk->get(%s) = %v, err = %v", nodePath, string(value), err)
+		return errors.WithStack(fmt.Errorf("k.Walk->get(%s) = %v, err = %v", nodePath, string(value), err))
 	}
 	var isDone bool
 	callbackNode := DumpNode{Path: nodePath, Value: value}
@@ -254,11 +254,11 @@ func (k *Keeper) Walk(prefix, relativePath string, recursive bool, callback Walk
 		children, _, err := k.conn.Children(path.Join(prefix, relativePath))
 		log.Debug().Msgf("k.Walk->Children(%s) = %v, err = %v", path.Join(prefix, relativePath), children, err)
 		if err != nil {
-			return fmt.Errorf("k.Walk->Children(%s) = %v, err = %v", path.Join(prefix, relativePath), children, err)
+			return errors.WithStack(fmt.Errorf("k.Walk->Children(%s) = %v, err = %v", path.Join(prefix, relativePath), children, err))
 		}
 		for _, childPath := range children {
 			if childErr := k.Walk(prefix, path.Join(relativePath, childPath), recursive, callback); childErr != nil {
-				return childErr
+				return errors.WithStack(childErr)
 			}
 		}
 	}
@@ -266,7 +266,7 @@ func (k *Keeper) Walk(prefix, relativePath string, recursive bool, callback Walk
 }
 
 func (k *Keeper) Delete(nodePath string) error {
-	return k.conn.Delete(nodePath, -1)
+	return errors.WithStack(k.conn.Delete(nodePath, -1))
 }
 func (k *Keeper) Close() {
 	k.conn.Close()
