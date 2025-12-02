@@ -1,3 +1,7 @@
+# v2.6.41
+BUG FIXES
+- improve restore long RBAC which have length more 64k, fix [1305](https://github.com/Altinity/clickhouse-backup/issues/1305) 
+
 # v2.6.40
 IMPROVEMENTS
 - add ClickHouse 25.10 and 25.11 support to CI/CD test matrix
