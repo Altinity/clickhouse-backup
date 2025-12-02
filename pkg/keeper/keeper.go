@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"strconv"
@@ -202,33 +203,46 @@ func (k *Keeper) Restore(dumpFile, prefix string) error {
 	if k.root != "" && !strings.HasPrefix(prefix, k.root) {
 		prefix = path.Join(k.root, prefix)
 	}
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
+	reader := bufio.NewReader(f)
+	for {
+		line, readErr := reader.ReadString('\n')
+		if readErr != nil && readErr != io.EOF {
+			return errors.Wrapf(readErr, "can't read %s", dumpFile)
+		}
+		line = strings.TrimSuffix(line, "\n")
+		if line == "" {
+			if readErr == io.EOF {
+				break
+			}
+			continue
+		}
 		node := DumpNode{}
-		binaryData := scanner.Bytes()
-		if err = json.Unmarshal(binaryData, &node); err != nil {
+		binaryData := []byte(line)
+		if binaryUnmarshalErr := json.Unmarshal(binaryData, &node); binaryUnmarshalErr != nil {
 			//convert from old format
 			nodeString := DumpNodeString{}
 			if stringUnmarshalErr := json.Unmarshal(binaryData, &nodeString); stringUnmarshalErr != nil {
-				return errors.WithStack(fmt.Errorf("k.Restore can't read data binaryErr=%v, stringErr=%v", err, stringUnmarshalErr))
+				return errors.WithStack(fmt.Errorf("k.Restore can't read data binaryErr=%v, stringErr=%v", binaryUnmarshalErr, stringUnmarshalErr))
 			}
 		}
 		node.Path = path.Join(prefix, node.Path)
 		version := int32(0)
-		_, stat, err := k.conn.Get(node.Path)
-		if err != nil {
-			_, err = k.conn.Create(node.Path, node.Value, 0, zk.WorldACL(zk.PermAll))
-			if err != nil {
-				return errors.Wrapf(err, "can't create znode %s, error", node.Path)
+		_, stat, keeperErr := k.conn.Get(node.Path)
+		if keeperErr != nil {
+			_, keeperErr = k.conn.Create(node.Path, node.Value, 0, zk.WorldACL(zk.PermAll))
+			if keeperErr != nil {
+				return errors.Wrapf(keeperErr, "can't create znode %s, error", node.Path)
 			}
 		} else {
 			version = stat.Version
-			_, err = k.conn.Set(node.Path, node.Value, version)
+			_, keeperErr = k.conn.Set(node.Path, node.Value, version)
+			if keeperErr != nil {
+				return errors.Wrapf(keeperErr, "can't set znode %s, error", node.Path)
+			}
 		}
-	}
-
-	if err = scanner.Err(); err != nil {
-		return errors.WithStack(fmt.Errorf("can't scan %s, error: %s", dumpFile, err))
+		if readErr == io.EOF {
+			break
+		}
 	}
 	return nil
 }
