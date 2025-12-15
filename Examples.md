@@ -969,3 +969,26 @@ while true; do
   sleep 5
 done
 ```
+
+## Minimal grants for backup user
+
+Better use maximum grants, but minimal grants is here (could fail with restore RBAC objects)
+
+```sql
+CREATE ROLE IF NOT EXISTS backup_role;
+
+GRANT SELECT ON system.* TO backup_role;
+GRANT INSERT ON system.backup_actions TO backup_role;
+
+GRANT ALTER FREEZE PARTITION ON *.* TO backup_role;
+GRANT ALTER FETCH PARTITION ON *.* TO backup_role;
+
+GRANT CREATE TABLE ON *.* TO backup_role;
+GRANT DROP TABLE   ON *.* TO backup_role;
+
+GRANT DROP DATABASE ON *.* TO backup_role;
+GRANT CREATE DATABASE ON *.* TO backup_role;
+
+CREATE USER IF NOT EXISTS backup_user IDENTIFIED WITH sha256_password BY 'YourStrongP@ssw0rd!';             
+CREATE GRANT backup_role TO backup_user;
+```
