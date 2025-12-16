@@ -245,7 +245,7 @@ s3:
   # use `acl: ""` if you see "api error AccessControlListNotSupported: The bucket does not allow ACLs"
   acl: private                     # S3_ACL 
   assume_role_arn: ""              # S3_ASSUME_ROLE_ARN
-  force_path_style: false          # S3_FORCE_PATH_STYLE
+  force_path_style: false          # S3_FORCE_PATH_STYLE, set to `true` for S3-compatible storage (MinIO, Ceph, etc.) or when using custom endpoints that require path-style URLs (https://endpoint/bucket/key) instead of virtual-hosted style (https://bucket.endpoint/key)
   path: ""                         # S3_PATH, `system.macros` values can be applied as {macro_name}
   object_disk_path: ""             # S3_OBJECT_DISK_PATH, path for backup of part from clickhouse object disks, if object disks present in clickhouse, then shall not be zero and shall not be prefixed by `path`
   disable_ssl: false               # S3_DISABLE_SSL
