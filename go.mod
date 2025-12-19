@@ -4,12 +4,12 @@ module github.com/Altinity/clickhouse-backup/v2
 replace github.com/mholt/archiver/v4 => github.com/mholt/archiver/v4 v4.0.0-alpha.8
 
 require (
-	cloud.google.com/go/storage v1.57.2
+	cloud.google.com/go/storage v1.58.0
 	github.com/Azure/azure-pipeline-go v0.2.3
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.20.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.13.1
 	github.com/Azure/azure-storage-blob-go v0.15.0
-	github.com/ClickHouse/clickhouse-go/v2 v2.40.3
+	github.com/ClickHouse/clickhouse-go/v2 v2.42.0
 	github.com/antchfx/xmlquery v1.5.0
 	github.com/aws/aws-sdk-go-v2 v1.39.0
 	github.com/aws/aws-sdk-go-v2/config v1.31.8
@@ -30,7 +30,7 @@ require (
 	github.com/jlaffaye/ftp v0.2.0
 	github.com/jolestar/go-commons-pool/v2 v2.1.2
 	github.com/kelseyhightower/envconfig v1.4.0
-	github.com/klauspost/compress v1.18.1
+	github.com/klauspost/compress v1.18.2
 	github.com/mattn/go-shellwords v1.0.12
 	github.com/mholt/archiver/v4 v4.0.0-alpha.9
 	github.com/otiai10/copy v1.14.1
@@ -47,11 +47,11 @@ require (
 	github.com/xyproto/gionice v1.3.0
 	github.com/yargevad/filepathx v1.0.0
 	go.etcd.io/bbolt v1.4.3
-	golang.org/x/crypto v0.45.0
-	golang.org/x/mod v0.30.0
-	golang.org/x/sync v0.18.0
-	golang.org/x/text v0.31.0
-	google.golang.org/api v0.256.0
+	golang.org/x/crypto v0.46.0
+	golang.org/x/mod v0.31.0
+	golang.org/x/sync v0.19.0
+	golang.org/x/text v0.32.0
+	google.golang.org/api v0.258.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -151,23 +151,23 @@ require (
 	go.opentelemetry.io/contrib/detectors/gcp v1.38.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.63.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.63.0 // indirect
-	go.opentelemetry.io/otel v1.38.0 // indirect
-	go.opentelemetry.io/otel/metric v1.38.0 // indirect
+	go.opentelemetry.io/otel v1.39.0 // indirect
+	go.opentelemetry.io/otel/metric v1.39.0 // indirect
 	go.opentelemetry.io/otel/sdk v1.38.0 // indirect
 	go.opentelemetry.io/otel/sdk/metric v1.38.0 // indirect
-	go.opentelemetry.io/otel/trace v1.38.0 // indirect
+	go.opentelemetry.io/otel/trace v1.39.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	go4.org v0.0.0-20230225012048-214862532bf5 // indirect
-	golang.org/x/net v0.47.0 // indirect
-	golang.org/x/oauth2 v0.33.0 // indirect
-	golang.org/x/sys v0.38.0 // indirect
+	golang.org/x/net v0.48.0 // indirect
+	golang.org/x/oauth2 v0.34.0 // indirect
+	golang.org/x/sys v0.39.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	google.golang.org/genproto v0.0.0-20251111163417-95abcf5c77ba // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20251111163417-95abcf5c77ba // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20251111163417-95abcf5c77ba // indirect
-	google.golang.org/grpc v1.76.0 // indirect
-	google.golang.org/protobuf v1.36.10 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20251213004720-97cd9d5aeac2 // indirect
+	google.golang.org/grpc v1.77.0 // indirect
+	google.golang.org/protobuf v1.36.11 // indirect
 )
 
 go 1.25.5
