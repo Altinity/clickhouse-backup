@@ -1,3 +1,7 @@
+# v2.6.42
+BUG FIXES
+- fix S3 multipart operations (upload, download, copy) to respect `S3_MAX_PARTS_COUNT` instead of hardcoded 10000 value, allows S3-compatible backends with stricter limits
+
 # v2.6.41
 BUG FIXES
 - improve restore long RBAC which have length more 64k, fix [1305](https://github.com/Altinity/clickhouse-backup/issues/1305) 
