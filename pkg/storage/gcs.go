@@ -116,6 +116,11 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 		clientOptions = append(clientOptions, option.WithoutAuthentication())
 	}
 
+	// storageClientOptions will be used for storage.NewClient
+	// we need to separate them to avoid "multiple credential options provided" error
+	storageClientOptions := make([]option.ClientOption, len(clientOptions))
+	copy(storageClientOptions, clientOptions)
+
 	if gcs.Config.ForceHttp {
 		customTransport := &http.Transport{
 			WriteBufferSize: 128 * 1024,
@@ -152,8 +157,13 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 			return errors.Wrap(err, "failed to create GCP transport")
 		}
 
-		clientOptions = append(clientOptions, option.WithHTTPClient(gcpTransport))
-
+		storageClientOptions = []option.ClientOption{
+			option.WithTelemetryDisabled(),
+			option.WithHTTPClient(gcpTransport),
+		}
+		if gcs.Config.Endpoint != "" {
+			storageClientOptions = append(storageClientOptions, option.WithEndpoint(endpoint))
+		}
 	}
 
 	if gcs.Config.Debug {
@@ -170,12 +180,18 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 			return errors.Wrap(err, "googleHTTPTransport.NewClient error")
 		}
 		debugClient.Transport = debugGCSTransport{base: debugClient.Transport}
-		clientOptions = append(clientOptions, option.WithHTTPClient(debugClient))
+		storageClientOptions = []option.ClientOption{
+			option.WithTelemetryDisabled(),
+			option.WithHTTPClient(debugClient),
+		}
+		if gcs.Config.Endpoint != "" {
+			storageClientOptions = append(storageClientOptions, option.WithEndpoint(endpoint))
+		}
 	}
 
 	factory := pool.NewPooledObjectFactorySimple(
 		func(context.Context) (interface{}, error) {
-			sClient, err := storage.NewClient(ctx, clientOptions...)
+			sClient, err := storage.NewClient(ctx, storageClientOptions...)
 			if err != nil {
 				return nil, err
 			}
@@ -183,7 +199,7 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 		})
 	gcs.clientPool = pool.NewObjectPoolWithDefaultConfig(ctx, factory)
 	gcs.clientPool.Config.MaxTotal = gcs.Config.ClientPoolSize * 3
-	gcs.client, err = storage.NewClient(ctx, clientOptions...)
+	gcs.client, err = storage.NewClient(ctx, storageClientOptions...)
 	return err
 }
 
