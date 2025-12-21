@@ -21,7 +21,6 @@ import (
 	"google.golang.org/api/impersonate"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
-	"google.golang.org/api/option/internaloption"
 	googleHTTPTransport "google.golang.org/api/transport/http"
 )
 
@@ -116,73 +115,55 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 		clientOptions = append(clientOptions, option.WithoutAuthentication())
 	}
 
-	// storageClientOptions will be used for storage.NewClient
-	// we need to separate them to avoid "multiple credential options provided" error
-	storageClientOptions := make([]option.ClientOption, len(clientOptions))
-	copy(storageClientOptions, clientOptions)
+	storageClientOptions := clientOptions
 
-	if gcs.Config.ForceHttp {
-		customTransport := &http.Transport{
-			WriteBufferSize: 128 * 1024,
-			Proxy:           http.ProxyFromEnvironment,
-			DialContext: (&net.Dialer{
-				Timeout:   30 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-			MaxIdleConns:          1,
-			MaxIdleConnsPerHost:   1,
-			IdleConnTimeout:       90 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-		}
-		// must set ForceAttemptHTTP2 to false so that when a custom TLSClientConfig
-		// is provided Golang does not setup HTTP/2 transport
-		customTransport.ForceAttemptHTTP2 = false
-		customTransport.TLSClientConfig = &tls.Config{
-			NextProtos: []string{"http/1.1"},
-		}
-		// These clientOptions are passed in by storage.NewClient. However, to set a custom HTTP client
-		// we must pass all these in manually.
-
-		if gcs.Config.Endpoint == "" {
-			clientOptions = append([]option.ClientOption{option.WithScopes(storage.ScopeFullControl)}, clientOptions...)
-		}
-		clientOptions = append(clientOptions, internaloption.WithDefaultEndpoint(endpoint))
-
-		customRoundTripper := &rewriteTransport{base: customTransport}
-		gcpTransport, _, err := googleHTTPTransport.NewClient(ctx, clientOptions...)
-		transport, err := googleHTTPTransport.NewTransport(ctx, customRoundTripper, clientOptions...)
-		gcpTransport.Transport = transport
-		if err != nil {
-			return errors.Wrap(err, "failed to create GCP transport")
+	if gcs.Config.ForceHttp || gcs.Config.Debug {
+		dialOptions := make([]option.ClientOption, len(clientOptions))
+		copy(dialOptions, clientOptions)
+		if gcs.Config.Endpoint == "" && !gcs.Config.SkipCredentials {
+			dialOptions = append(dialOptions, option.WithScopes(storage.ScopeFullControl))
 		}
 
+		var httpClient *http.Client
+		if gcs.Config.ForceHttp {
+			customTransport := &http.Transport{
+				WriteBufferSize: 128 * 1024,
+				Proxy:           http.ProxyFromEnvironment,
+				DialContext: (&net.Dialer{
+					Timeout:   30 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+				MaxIdleConns:          1,
+				MaxIdleConnsPerHost:   1,
+				IdleConnTimeout:       90 * time.Second,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ExpectContinueTimeout: 1 * time.Second,
+			}
+			// must set ForceAttemptHTTP2 to false so that when a custom TLSClientConfig
+			// is provided Golang does not setup HTTP/2 transport
+			customTransport.ForceAttemptHTTP2 = false
+			customTransport.TLSClientConfig = &tls.Config{
+				NextProtos: []string{"http/1.1"},
+			}
+			customRoundTripper := &rewriteTransport{base: customTransport}
+			transport, err := googleHTTPTransport.NewTransport(ctx, customRoundTripper, dialOptions...)
+			if err != nil {
+				return errors.Wrap(err, "failed to create GCP transport")
+			}
+			httpClient = &http.Client{Transport: transport}
+		} else {
+			httpClient, _, err = googleHTTPTransport.NewClient(ctx, dialOptions...)
+			if err != nil {
+				return errors.Wrap(err, "googleHTTPTransport.NewClient error")
+			}
+		}
+
+		if gcs.Config.Debug {
+			httpClient.Transport = debugGCSTransport{base: httpClient.Transport}
+		}
 		storageClientOptions = []option.ClientOption{
 			option.WithTelemetryDisabled(),
-			option.WithHTTPClient(gcpTransport),
-		}
-		if gcs.Config.Endpoint != "" {
-			storageClientOptions = append(storageClientOptions, option.WithEndpoint(endpoint))
-		}
-	}
-
-	if gcs.Config.Debug {
-		if gcs.Config.Endpoint == "" {
-			clientOptions = append([]option.ClientOption{option.WithScopes(storage.ScopeFullControl)}, clientOptions...)
-		}
-		clientOptions = append(clientOptions, internaloption.WithDefaultEndpoint(endpoint))
-		if strings.HasPrefix(endpoint, "https://") {
-			clientOptions = append(clientOptions, internaloption.WithDefaultMTLSEndpoint(endpoint))
-		}
-
-		debugClient, _, err := googleHTTPTransport.NewClient(ctx, clientOptions...)
-		if err != nil {
-			return errors.Wrap(err, "googleHTTPTransport.NewClient error")
-		}
-		debugClient.Transport = debugGCSTransport{base: debugClient.Transport}
-		storageClientOptions = []option.ClientOption{
-			option.WithTelemetryDisabled(),
-			option.WithHTTPClient(debugClient),
+			option.WithHTTPClient(httpClient),
 		}
 		if gcs.Config.Endpoint != "" {
 			storageClientOptions = append(storageClientOptions, option.WithEndpoint(endpoint))
