@@ -92,7 +92,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 
 	if backupName == "" {
 		localBackups := b.CollectLocalBackups(ctx, "all")
-		_ = b.PrintBackup(localBackups, "all", "text")
+		_ = b.PrintBackup(localBackups, "text")
 		return fmt.Errorf("select backup for restore")
 	}
 	disks, err := b.ch.GetDisks(ctx, true)
@@ -444,9 +444,12 @@ func (b *Backuper) restoreEmptyDatabase(ctx context.Context, targetDB, tablePatt
 		if version > 20011000 {
 			sync = "SYNC"
 		}
-		if _, err := os.Create(path.Join(b.DefaultDataPath, "/flags/force_drop_table")); err != nil {
-			return err
+		var f *os.File
+		var createErr error
+		if f, createErr = os.Create(path.Join(b.DefaultDataPath, "/flags/force_drop_table")); createErr != nil {
+			return createErr
 		}
+		_ = f.Close()
 		if err := b.ch.QueryContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s` %s %s %s", targetDB, onCluster, sync, settings)); err != nil {
 			return err
 		}
@@ -1713,17 +1716,17 @@ func (b *Backuper) checkReplicaAlreadyExistsAndChangeReplicationPath(ctx context
 			var settingsValues map[string]string
 			settingsValues, err = b.ch.GetSettingsValues(ctx, []interface{}{"default_replica_path", "default_replica_name"})
 			if err != nil {
-				log.Fatal().Msgf("can't get from `system.settings` -> `default_replica_path`, `default_replica_name` error: %v", err)
+				log.Fatal().Stack().Msgf("can't get from `system.settings` -> `default_replica_path`, `default_replica_name` error: %v", err)
 			}
 			replicaPath = settingsValues["default_replica_path"]
 			replicaName = settingsValues["default_replica_name"]
 		}
 		var resolvedReplicaPath, resolvedReplicaName string
 		if resolvedReplicaPath, err = b.ch.ApplyMacros(ctx, replicaPath); err != nil {
-			log.Fatal().Msgf("can't ApplyMacros to %s error: %v", replicaPath, err)
+			log.Fatal().Stack().Msgf("can't ApplyMacros to %s error: %v", replicaPath, err)
 		}
 		if resolvedReplicaName, err = b.ch.ApplyMacros(ctx, replicaName); err != nil {
-			log.Fatal().Msgf("can't ApplyMacros to %s error: %v", replicaPath, err)
+			log.Fatal().Stack().Msgf("can't ApplyMacros to %s error: %v", replicaPath, err)
 		}
 		if matches = replicatedUuidRE.FindAllStringSubmatch(schema.Query, 1); len(matches) > 0 {
 			resolvedReplicaPath = strings.Replace(resolvedReplicaPath, "{uuid}", matches[0][1], -1)

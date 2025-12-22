@@ -76,10 +76,10 @@ func (b *Backuper) List(what, ptype, format string) error {
 	case "all", "":
 		backupInfos = append(backupInfos, b.CollectAllBackups(ctx, ptype)...)
 	}
-	return b.PrintBackup(backupInfos, ptype, format)
+	return b.PrintBackup(backupInfos, format)
 }
 
-func (b *Backuper) PrintBackup(backupInfos []BackupInfo, ptype, format string) error {
+func (b *Backuper) PrintBackup(backupInfos []BackupInfo, format string) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', tabwriter.DiscardEmptyColumns)
 	switch format {
 	case "json":
@@ -329,14 +329,14 @@ func (b *Backuper) GetLocalBackups(ctx context.Context, disks []clickhouse.Disk)
 	var err error
 	if !b.ch.IsOpen {
 		if err = b.ch.Connect(); err != nil {
-			return nil, nil, err
+			return nil, nil, errors.WithStack(err)
 		}
 		defer b.ch.Close()
 	}
 	if disks == nil {
 		disks, err = b.ch.GetDisks(ctx, true)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, errors.WithStack(err)
 		}
 	}
 	if disks == nil {
@@ -393,11 +393,11 @@ func (b *Backuper) GetLocalBackups(ctx context.Context, disks []clickhouse.Disk)
 				if os.IsNotExist(openErr) {
 					return result, disks, nil
 				}
-				return nil, nil, openErr
+				return nil, nil, errors.WithStack(openErr)
 			}
 			names, err := d.Readdirnames(-1)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, errors.WithStack(err)
 			}
 			for _, name := range names {
 				info, err := os.Stat(path.Join(backupPath, name))

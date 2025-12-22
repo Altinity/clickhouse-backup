@@ -190,7 +190,7 @@ func (b *Backuper) createConfigsNamedCollectionsAndRBACIfNecessary(ctx context.C
 	if createRBAC || rbacOnly {
 		var createRBACErr error
 		if backupRBACSize, createRBACErr = b.createBackupRBAC(ctx, backupPath, disks); createRBACErr != nil {
-			log.Fatal().Msgf("error during do RBAC backup: %v", createRBACErr)
+			log.Fatal().Stack().Msgf("error during do RBAC backup: %v", createRBACErr)
 		} else {
 			log.Info().Str("size", utils.FormatBytes(backupRBACSize)).Msg("done createBackupRBAC")
 		}
@@ -198,7 +198,7 @@ func (b *Backuper) createConfigsNamedCollectionsAndRBACIfNecessary(ctx context.C
 	if createConfigs || configsOnly {
 		var createConfigsErr error
 		if backupConfigSize, createConfigsErr = b.createBackupConfigs(ctx, backupPath); createConfigsErr != nil {
-			log.Fatal().Msgf("error during do CONFIG backup: %v", createConfigsErr)
+			log.Fatal().Stack().Msgf("error during do CONFIG backup: %v", createConfigsErr)
 		} else {
 			log.Info().Str("size", utils.FormatBytes(backupConfigSize)).Msg("done createBackupConfigs")
 		}
@@ -206,7 +206,7 @@ func (b *Backuper) createConfigsNamedCollectionsAndRBACIfNecessary(ctx context.C
 	if createNamedCollections || namedCollectionsOnly {
 		var createNamedCollectionsErr error
 		if backupNamedCollectionsSize, createNamedCollectionsErr = b.createBackupNamedCollections(ctx, backupPath); createNamedCollectionsErr != nil {
-			log.Fatal().Msgf("error during do NamedCollections backup: %v", createNamedCollectionsErr)
+			log.Fatal().Stack().Msgf("error during do NamedCollections backup: %v", createNamedCollectionsErr)
 		} else {
 			log.Info().Str("size", utils.FormatBytes(backupNamedCollectionsSize)).Msg("done createBackupNamedCollections")
 		}

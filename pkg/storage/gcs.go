@@ -21,7 +21,6 @@ import (
 	"google.golang.org/api/impersonate"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
-	"google.golang.org/api/option/internaloption"
 	googleHTTPTransport "google.golang.org/api/transport/http"
 )
 
@@ -84,22 +83,20 @@ func (r rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 // Connect - connect to GCS
 func (gcs *GCS) Connect(ctx context.Context) error {
 	var err error
-	clientOptions := make([]option.ClientOption, 0)
-	clientOptions = append(clientOptions, option.WithTelemetryDisabled())
 	endpoint := "https://storage.googleapis.com/storage/v1/"
-
 	if gcs.Config.Endpoint != "" {
 		endpoint = gcs.Config.Endpoint
-		clientOptions = append(clientOptions, option.WithEndpoint(endpoint))
 	}
 
+	// 1. Build the credential option
+	var credOption option.ClientOption
 	if gcs.Config.CredentialsJSON != "" {
-		clientOptions = append(clientOptions, option.WithCredentialsJSON([]byte(gcs.Config.CredentialsJSON)))
+		credOption = option.WithCredentialsJSON([]byte(gcs.Config.CredentialsJSON))
 	} else if gcs.Config.CredentialsJSONEncoded != "" {
 		d, _ := base64.StdEncoding.DecodeString(gcs.Config.CredentialsJSONEncoded)
-		clientOptions = append(clientOptions, option.WithCredentialsJSON(d))
+		credOption = option.WithCredentialsJSON(d)
 	} else if gcs.Config.CredentialsFile != "" {
-		clientOptions = append(clientOptions, option.WithCredentialsFile(gcs.Config.CredentialsFile))
+		credOption = option.WithCredentialsFile(gcs.Config.CredentialsFile)
 	} else if gcs.Config.SAEmail != "" {
 		ts, err := impersonate.CredentialsTokenSource(ctx, impersonate.CredentialsConfig{
 			TargetPrincipal: gcs.Config.SAEmail,
@@ -111,11 +108,26 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 		if err != nil {
 			return errors.Wrap(err, "failed to create impersonation token source")
 		}
-		clientOptions = append(clientOptions, option.WithTokenSource(ts))
+		credOption = option.WithTokenSource(ts)
 	} else if gcs.Config.SkipCredentials {
-		clientOptions = append(clientOptions, option.WithoutAuthentication())
+		credOption = option.WithoutAuthentication()
 	}
 
+	// 2. Build dial options for the HTTP client
+	dialOptions := []option.ClientOption{option.WithTelemetryDisabled()}
+	if gcs.Config.Endpoint != "" {
+		dialOptions = append(dialOptions, option.WithEndpoint(endpoint))
+	}
+	if credOption != nil {
+		dialOptions = append(dialOptions, credOption)
+	}
+	// Scopes are required when dialing manually, but conflict with NoAuth in newer library versions
+	if !gcs.Config.SkipCredentials {
+		dialOptions = append(dialOptions, option.WithScopes(storage.ScopeFullControl))
+	}
+
+	// 3. Create the HTTP client
+	var httpClient *http.Client
 	if gcs.Config.ForceHttp {
 		customTransport := &http.Transport{
 			WriteBufferSize: 128 * 1024,
@@ -136,46 +148,38 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 		customTransport.TLSClientConfig = &tls.Config{
 			NextProtos: []string{"http/1.1"},
 		}
-		// These clientOptions are passed in by storage.NewClient. However, to set a custom HTTP client
-		// we must pass all these in manually.
-
-		if gcs.Config.Endpoint == "" {
-			clientOptions = append([]option.ClientOption{option.WithScopes(storage.ScopeFullControl)}, clientOptions...)
-		}
-		clientOptions = append(clientOptions, internaloption.WithDefaultEndpoint(endpoint))
-
 		customRoundTripper := &rewriteTransport{base: customTransport}
-		gcpTransport, _, err := googleHTTPTransport.NewClient(ctx, clientOptions...)
-		transport, err := googleHTTPTransport.NewTransport(ctx, customRoundTripper, clientOptions...)
-		gcpTransport.Transport = transport
+		// Use NewTransport to get an authenticated transport using dialOptions
+		transport, err := googleHTTPTransport.NewTransport(ctx, customRoundTripper, dialOptions...)
 		if err != nil {
 			return errors.Wrap(err, "failed to create GCP transport")
 		}
-
-		clientOptions = append(clientOptions, option.WithHTTPClient(gcpTransport))
-
-	}
-
-	if gcs.Config.Debug {
-		if gcs.Config.Endpoint == "" {
-			clientOptions = append([]option.ClientOption{option.WithScopes(storage.ScopeFullControl)}, clientOptions...)
-		}
-		clientOptions = append(clientOptions, internaloption.WithDefaultEndpoint(endpoint))
-		if strings.HasPrefix(endpoint, "https://") {
-			clientOptions = append(clientOptions, internaloption.WithDefaultMTLSEndpoint(endpoint))
-		}
-
-		debugClient, _, err := googleHTTPTransport.NewClient(ctx, clientOptions...)
+		httpClient = &http.Client{Transport: transport}
+	} else {
+		// Use NewClient to get an authenticated client using dialOptions
+		httpClient, _, err = googleHTTPTransport.NewClient(ctx, dialOptions...)
 		if err != nil {
 			return errors.Wrap(err, "googleHTTPTransport.NewClient error")
 		}
-		debugClient.Transport = debugGCSTransport{base: debugClient.Transport}
-		clientOptions = append(clientOptions, option.WithHTTPClient(debugClient))
+	}
+
+	if gcs.Config.Debug {
+		httpClient.Transport = debugGCSTransport{base: httpClient.Transport}
+	}
+
+	// 4. Build storage client options using our custom httpClient
+	// Credentials and scopes are already handled by the httpClient.
+	storageClientOptions := []option.ClientOption{
+		option.WithHTTPClient(httpClient),
+		option.WithTelemetryDisabled(),
+	}
+	if gcs.Config.Endpoint != "" {
+		storageClientOptions = append(storageClientOptions, option.WithEndpoint(endpoint))
 	}
 
 	factory := pool.NewPooledObjectFactorySimple(
 		func(context.Context) (interface{}, error) {
-			sClient, err := storage.NewClient(ctx, clientOptions...)
+			sClient, err := storage.NewClient(ctx, storageClientOptions...)
 			if err != nil {
 				return nil, err
 			}
@@ -183,7 +187,7 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 		})
 	gcs.clientPool = pool.NewObjectPoolWithDefaultConfig(ctx, factory)
 	gcs.clientPool.Config.MaxTotal = gcs.Config.ClientPoolSize * 3
-	gcs.client, err = storage.NewClient(ctx, clientOptions...)
+	gcs.client, err = storage.NewClient(ctx, storageClientOptions...)
 	return err
 }
 

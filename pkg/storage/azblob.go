@@ -45,9 +45,9 @@ func (a *AzureBlob) log(level pipeline.LogLevel, msg string) {
 		case pipeline.LogNone:
 			log.Debug().Msg(msg)
 		case pipeline.LogFatal:
-			log.Fatal().Msg(msg)
+			log.Fatal().Stack().Msg(msg)
 		case pipeline.LogPanic:
-			log.Fatal().Msg(msg)
+			log.Fatal().Stack().Msg(msg)
 		case pipeline.LogError:
 			log.Error().Msg(msg)
 		case pipeline.LogWarning:

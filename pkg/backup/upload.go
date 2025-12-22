@@ -371,7 +371,7 @@ func (b *Backuper) validateUploadParams(ctx context.Context, backupName string, 
 	}
 	if backupName == "" {
 		localBackups := b.CollectLocalBackups(ctx, "all")
-		_ = b.PrintBackup(localBackups, "all", "text")
+		_ = b.PrintBackup(localBackups, "text")
 		return fmt.Errorf("select backup for upload")
 	}
 	if b.cfg.General.UploadConcurrency == 0 {
@@ -717,14 +717,14 @@ func (b *Backuper) uploadTableMetadataEmbedded(ctx context.Context, backupName s
 			return 0, err
 		}
 	}
+	defer func() {
+		if closeErr := localReader.Close(); closeErr != nil {
+			log.Warn().Msgf("can't close %v: %v", localReader, closeErr)
+		}
+	}()
 	if info, err = os.Stat(localTableMetaFile); err != nil {
 		return 0, err
 	}
-	defer func() {
-		if err := localReader.Close(); err != nil {
-			log.Warn().Msgf("can't close %v: %v", localReader, err)
-		}
-	}()
 	retry := retrier.New(retrier.ExponentialBackoff(b.cfg.General.RetriesOnFailure, common.AddRandomJitter(b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter)), b)
 	err = retry.RunCtx(ctx, func(ctx context.Context) error {
 		return b.dst.PutFile(ctx, remoteTableMetaFile, localReader, 0)

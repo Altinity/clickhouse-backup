@@ -50,9 +50,7 @@ type Backuper struct {
 }
 
 func NewBackuper(cfg *config.Config, opts ...BackuperOpt) *Backuper {
-	ch := &clickhouse.ClickHouse{
-		Config: &cfg.ClickHouse,
-	}
+	ch := clickhouse.NewClickHouse(&cfg.ClickHouse)
 	b := &Backuper{
 		cfg:  cfg,
 		ch:   ch,
@@ -217,13 +215,13 @@ func (b *Backuper) getEmbeddedRestoreSettings(version int) []string {
 	if (b.cfg.General.RemoteStorage == "s3" || b.cfg.General.RemoteStorage == "gcs") && version >= 23007000 {
 		settings = append(settings, "allow_s3_native_copy=1")
 		if err := b.ch.Query("SET s3_request_timeout_ms=600000"); err != nil {
-			log.Fatal().Msgf("SET s3_request_timeout_ms=600000 error: %v", err)
+			log.Fatal().Stack().Msgf("SET s3_request_timeout_ms=600000 error: %v", err)
 		}
 
 	}
 	if (b.cfg.General.RemoteStorage == "s3" || b.cfg.General.RemoteStorage == "gcs") && version >= 23011000 {
 		if err := b.ch.Query("SET s3_use_adaptive_timeouts=0"); err != nil {
-			log.Fatal().Msgf("SET s3_use_adaptive_timeouts=0 error: %v", err)
+			log.Fatal().Stack().Msgf("SET s3_use_adaptive_timeouts=0 error: %v", err)
 		}
 	}
 	return settings
@@ -234,13 +232,13 @@ func (b *Backuper) getEmbeddedBackupSettings(version int) []string {
 	if (b.cfg.General.RemoteStorage == "s3" || b.cfg.General.RemoteStorage == "gcs") && version >= 23007000 {
 		settings = append(settings, "allow_s3_native_copy=1")
 		if err := b.ch.Query("SET s3_request_timeout_ms=600000"); err != nil {
-			log.Fatal().Msgf("SET s3_request_timeout_ms=600000 error: %v", err)
+			log.Fatal().Stack().Msgf("SET s3_request_timeout_ms=600000 error: %v", err)
 		}
 
 	}
 	if (b.cfg.General.RemoteStorage == "s3" || b.cfg.General.RemoteStorage == "gcs") && version >= 23011000 {
 		if err := b.ch.Query("SET s3_use_adaptive_timeouts=0"); err != nil {
-			log.Fatal().Msgf("SET s3_use_adaptive_timeouts=0 error: %v", err)
+			log.Fatal().Stack().Msgf("SET s3_use_adaptive_timeouts=0 error: %v", err)
 		}
 	}
 	if b.cfg.General.RemoteStorage == "azblob" && version >= 24005000 && b.cfg.ClickHouse.EmbeddedBackupDisk == "" {
@@ -436,6 +434,12 @@ func (b *Backuper) getTablesDiffFromRemote(ctx context.Context, diffFromRemote s
 
 func (b *Backuper) GetLocalDataSize(ctx context.Context) (float64, error) {
 	localDataSize := float64(0)
+	if !b.ch.IsOpen {
+		if connectErr := b.ch.Connect(); connectErr != nil {
+			return 0, errors.WithStack(connectErr)
+		}
+		defer b.ch.Close()
+	}
 	err := b.ch.SelectSingleRow(ctx, &localDataSize, "SELECT value FROM system.asynchronous_metrics WHERE metric='TotalBytesOfMergeTreeTables'")
 	return localDataSize, err
 }
