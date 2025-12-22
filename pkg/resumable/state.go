@@ -4,11 +4,12 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"path"
+
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"github.com/rs/zerolog/log"
 	bolt "go.etcd.io/bbolt"
-	"path"
 )
 
 var bucketName = []byte("clickhouse-backup")
@@ -43,7 +44,7 @@ func (s *State) GetParams() map[string]interface{} {
 func (s *State) getBucket(tx *bolt.Tx) *bolt.Bucket {
 	bucket := tx.Bucket(bucketName)
 	if bucket == nil {
-		log.Fatal().Msgf("resumable state: can't open bucket %s in %s", bucketName, s.stateFile)
+		log.Fatal().Stack().Msgf("resumable state: can't open bucket %s in %s", bucketName, s.stateFile)
 	}
 	return bucket
 }
@@ -149,7 +150,7 @@ func (s *State) AppendToState(path string, size int64) {
 		return b.Put([]byte(path), buf[:n])
 	})
 	if err != nil {
-		log.Fatal().Msgf("resumable state: can't write key %s to %s error: %v", path, s.stateFile, err)
+		log.Fatal().Stack().Msgf("resumable state: can't write key %s to %s error: %v", path, s.stateFile, err)
 	}
 }
 
@@ -181,7 +182,7 @@ func (s *State) IsAlreadyProcessed(path string) (bool, int64) {
 		return nil
 	})
 	if err != nil {
-		log.Fatal().Msgf("resumable state: can't read key %s to %s error: %v", path, s.stateFile, err)
+		log.Fatal().Stack().Msgf("resumable state: can't read key %s to %s error: %v", path, s.stateFile, err)
 		return false, 0
 	}
 	return found, size

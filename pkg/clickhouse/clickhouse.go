@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
@@ -31,13 +32,24 @@ import (
 type ClickHouse struct {
 	Config              *config.ClickHouseConfig
 	conn                driver.Conn
+	ConnMutex           *sync.Mutex
 	version             int
 	IsOpen              bool
 	BreakConnectOnError bool
 }
 
+func NewClickHouse(cfg *config.ClickHouseConfig) *ClickHouse {
+	return &ClickHouse{
+		Config:    cfg,
+		ConnMutex: &sync.Mutex{},
+	}
+}
+
 // Connect - establish connection to ClickHouse
 func (ch *ClickHouse) Connect() error {
+	ch.ConnMutex.Lock()
+	defer ch.ConnMutex.Unlock()
+
 	if ch.IsOpen {
 		if err := ch.conn.Close(); err != nil {
 			log.Error().Msgf("close previous connection error: %v", err)
@@ -121,12 +133,11 @@ func (ch *ClickHouse) Connect() error {
 				break
 			}
 			if ch.BreakConnectOnError {
-				return err
+				return errors.WithStack(err)
 			}
 			log.Warn().Msgf("clickhouse connection: %s, sql.Open return error: %v, will wait 5 second to reconnect", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
 			time.Sleep(5 * time.Second)
 		}
-		log.WithLevel(logLevel).Msgf("clickhouse connection prepared: %s run ping", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
 		err = ch.conn.Ping(context.Background())
 		if err == nil {
 			log.WithLevel(logLevel).Msgf("clickhouse connection success: %s", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port))
@@ -134,7 +145,7 @@ func (ch *ClickHouse) Connect() error {
 			break
 		}
 		if ch.BreakConnectOnError {
-			return err
+			return errors.WithStack(err)
 		}
 		log.Warn().Msgf("clickhouse connection ping: %s return error: %v, will wait 5 second to reconnect", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
 		time.Sleep(5 * time.Second)
@@ -551,22 +562,19 @@ func (ch *ClickHouse) GetDatabases(ctx context.Context, cfg *config.Config, tabl
 	if tablePattern != "" {
 		bypassTablesPatterns = append(bypassTablesPatterns, strings.Split(tablePattern, ",")...)
 	}
-	for _, pattern := range skipTablesPatterns {
-		pattern = strings.Trim(pattern, " \r\t\n")
-		if strings.HasSuffix(pattern, ".*") {
-			skipDatabases = common.AddStringToSliceIfNotExists(skipDatabases, strings.Trim(strings.TrimSuffix(pattern, ".*"), "\"` "))
-		} else {
-			skipDatabases = common.AddStringToSliceIfNotExists(skipDatabases, strings.Trim(tableNameSuffixRE.ReplaceAllString(pattern, ""), "\"` "))
+	processDbPatterns := func(databases []string, patterns []string) []string {
+		for _, pattern := range patterns {
+			pattern = strings.Trim(pattern, " \r\t\n")
+			if strings.HasSuffix(pattern, ".*") {
+				databases = common.AddStringToSliceIfNotExists(databases, strings.Trim(strings.TrimSuffix(pattern, ".*"), "\"` "))
+			} else {
+				databases = common.AddStringToSliceIfNotExists(databases, strings.Trim(tableNameSuffixRE.ReplaceAllString(pattern, ""), "\"` "))
+			}
 		}
+		return databases
 	}
-	for _, pattern := range bypassTablesPatterns {
-		pattern = strings.Trim(pattern, " \r\t\n")
-		if strings.HasSuffix(pattern, ".*") {
-			bypassDatabases = common.AddStringToSliceIfNotExists(bypassDatabases, strings.Trim(strings.TrimSuffix(pattern, ".*"), "\"` "))
-		} else {
-			bypassDatabases = common.AddStringToSliceIfNotExists(bypassDatabases, strings.Trim(tableNameSuffixRE.ReplaceAllString(pattern, ""), "\"` "))
-		}
-	}
+	skipDatabases = processDbPatterns(skipDatabases, skipTablesPatterns)
+	bypassDatabases = processDbPatterns(bypassDatabases, bypassTablesPatterns)
 	metadataPath, err := ch.getMetadataPath(ctx)
 	if err != nil {
 		return nil, err
@@ -608,12 +616,14 @@ func (ch *ClickHouse) GetDatabases(ctx context.Context, cfg *config.Config, tabl
 			} else {
 				// 23.3+ masked secrets https://github.com/Altinity/clickhouse-backup/issues/640
 				if strings.Contains(result, "'[HIDDEN]'") {
-					if attachSQL, err := os.ReadFile(path.Join(metadataPath, common.TablePathEncode(db.Name)+".sql")); err != nil {
-						return nil, err
-					} else {
-						result = strings.Replace(string(attachSQL), "ATTACH", "CREATE", 1)
-						result = strings.Replace(result, " _ ", " `"+db.Name+"` ", 1)
+					var attachSQL []byte
+					var readErr error
+					if attachSQL, readErr = os.ReadFile(path.Join(metadataPath, common.TablePathEncode(db.Name)+".sql")); readErr != nil {
+						return nil, errors.WithStack(readErr)
 					}
+
+					result = strings.Replace(string(attachSQL), "ATTACH", "CREATE", 1)
+					result = strings.Replace(result, " _ ", " `"+db.Name+"` ", 1)
 				}
 				allDatabases[i].Query = result
 			}
@@ -951,9 +961,12 @@ func (ch *ClickHouse) DropOrDetachTable(table Table, query, onCluster string, ig
 		dropQuery += " SETTINGS check_table_dependencies=0"
 	}
 	if defaultDataPath != "" && !useDetach {
-		if _, err = os.Create(path.Join(defaultDataPath, "/flags/force_drop_table")); err != nil {
-			return err
+		var f *os.File
+		var createErr error
+		if f, createErr = os.Create(path.Join(defaultDataPath, "/flags/force_drop_table")); createErr != nil {
+			return errors.WithStack(createErr)
 		}
+		_ = f.Close()
 	}
 	if err = ch.Query(dropQuery); err != nil {
 		return err
@@ -1371,10 +1384,9 @@ func (ch *ClickHouse) CheckReplicationInProgress(table metadata.TableMetadata) (
 		}
 		// https://github.com/Altinity/clickhouse-backup/issues/967
 		if existsReplicas[0].LogPointer > 2 || existsReplicas[0].LogMaxIndex > 1 || existsReplicas[0].AbsoluteDelay > 0 || existsReplicas[0].QueueSize > 0 {
-			return false, fmt.Errorf("%s.%s can't restore cause system.replicas entries already exists and replication in progress from another replica, log_pointer=%d, log_max_index=%d, absolute_delay=%d, queue_size=%d", table.Database, table.Table, existsReplicas[0].LogPointer, existsReplicas[0].LogMaxIndex, existsReplicas[0].AbsoluteDelay, existsReplicas[0].QueueSize)
-		} else {
-			log.Info().Msgf("replication_in_progress status = %+v", existsReplicas)
+			return false, errors.WithStack(fmt.Errorf("%s.%s can't restore cause system.replicas entries already exists and replication in progress from another replica, log_pointer=%d, log_max_index=%d, absolute_delay=%d, queue_size=%d", table.Database, table.Table, existsReplicas[0].LogPointer, existsReplicas[0].LogMaxIndex, existsReplicas[0].AbsoluteDelay, existsReplicas[0].QueueSize))
 		}
+		log.Info().Msgf("replication_in_progress status = %+v", existsReplicas)
 	}
 	return true, nil
 }

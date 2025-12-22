@@ -85,7 +85,7 @@ func init() {
 	}
 	runParallelInt, err := strconv.Atoi(runParallel)
 	if err != nil {
-		log.Fatal().Msgf("invalid RUN_PARALLEL environment variable value %s", runParallel)
+		log.Fatal().Stack().Msgf("invalid RUN_PARALLEL environment variable value %s", runParallel)
 	}
 	ctx := context.Background()
 	factory := pool.NewPooledObjectFactorySimple(func(context.Context) (interface{}, error) {
@@ -4573,7 +4573,7 @@ func (env *TestEnvironment) connect(t *testing.T, timeOut string) error {
 		log.WithLevel(level).Msgf("can't ps --status running clickhouse: %v", statusErr)
 		time.Sleep(1 * time.Second)
 	}
-	env.ch = &clickhouse.ClickHouse{Config: &config.ClickHouseConfig{}}
+	env.ch = clickhouse.NewClickHouse(&config.ClickHouseConfig{})
 	portMaxTry := 10
 	for i := 1; i <= portMaxTry; i++ {
 		portOut, portErr := utils.ExecCmdOut(t.Context(), 10*time.Second, "docker", append(env.GetDefaultComposeCommand(), "port", "clickhouse", "9000")...)

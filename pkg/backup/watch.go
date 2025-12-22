@@ -71,10 +71,17 @@ func (b *Backuper) ValidateWatchParams(watchInterval, fullInterval, watchBackupN
 func (b *Backuper) Watch(watchInterval, fullInterval, watchBackupNameTemplate, tablePattern string, partitions, skipProjections []string, schemaOnly, backupRBAC, backupConfigs, backupNamedCollections, skipCheckPartsColumns, deleteSource bool, version string, commandId int, metrics *metrics.APIMetrics, cliCtx *cli.Context) error {
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	ctx, cancel = context.WithCancel(ctx)
 	defer cancel()
+
+	if !b.ch.IsOpen {
+		if err = b.ch.Connect(); err != nil {
+			return errors.WithStack(err)
+		}
+		defer b.ch.Close()
+	}
 
 	if err := b.ValidateWatchParams(watchInterval, fullInterval, watchBackupNameTemplate); err != nil {
 		return err

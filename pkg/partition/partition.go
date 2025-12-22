@@ -3,17 +3,18 @@ package partition
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
-	"path/filepath"
-	"regexp"
-	"sort"
-	"strconv"
-	"strings"
 )
 
 // https://regex101.com/r/k4Zxs9/1
@@ -216,7 +217,7 @@ func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.C
 				for _, t := range tablesFromClickHouse {
 					createIdMapAndNameListIfNotExists(t.Database, t.Name, partitionsIdMap, partitionsNameList)
 					if partitionId, partitionName, err := GetPartitionIdAndName(ctx, ch, t.Database, t.Name, t.CreateTableQuery, partitionTuple); err != nil {
-						log.Fatal().Msgf("partition.GetPartitionIdAndName error: %v", err)
+						log.Fatal().Stack().Msgf("partition.GetPartitionIdAndName error: %v", err)
 					} else if partitionId != "" {
 						addItemToIdMapAndNameListIfNotExists(partitionId, partitionName, t.Database, t.Name, partitionsIdMap, partitionsNameList, tablePattern)
 					}
@@ -224,7 +225,7 @@ func ConvertPartitionsToIdsMapAndNamesList(ctx context.Context, ch *clickhouse.C
 				for _, t := range tablesFromMetadata {
 					createIdMapAndNameListIfNotExists(t.Database, t.Table, partitionsIdMap, partitionsNameList)
 					if partitionId, partitionName, err := GetPartitionIdAndName(ctx, ch, t.Database, t.Table, t.Query, partitionTuple); err != nil {
-						log.Fatal().Msgf("partition.GetPartitionIdAndName error: %v", err)
+						log.Fatal().Stack().Msgf("partition.GetPartitionIdAndName error: %v", err)
 					} else if partitionId != "" {
 						addItemToIdMapAndNameListIfNotExists(partitionId, partitionName, t.Database, t.Table, partitionsIdMap, partitionsNameList, tablePattern)
 					}

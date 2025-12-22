@@ -1,18 +1,18 @@
 package storage
 
 import (
-	"log"
 	"testing"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
+	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/assert"
 )
 
 func timeParse(s string) time.Time {
 	t, err := time.Parse("2006-01-02T15-04-05", s)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal().Stack().Err(err).Send()
 	}
 	return t
 }
