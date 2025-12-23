@@ -372,9 +372,9 @@ func (b *Backuper) getObjectDiskPath() (string, error) {
 		return b.cfg.FTP.ObjectDiskPath, nil
 	} else if b.cfg.General.RemoteStorage == "sftp" {
 		return b.cfg.SFTP.ObjectDiskPath, nil
-	} else {
-		return "", fmt.Errorf("cleanBackupObjectDisks: requesst object disks path but have unsupported remote_storage: %s", b.cfg.General.RemoteStorage)
 	}
+
+	return "", errors.WithStack(fmt.Errorf("cleanBackupObjectDisks: requesst object disks path but have unsupported remote_storage: %s", b.cfg.General.RemoteStorage))
 }
 
 func (b *Backuper) getTablesDiffFromLocal(ctx context.Context, diffFrom string, tablePattern string) (tablesForUploadFromDiff map[metadata.TableTitle]metadata.TableMetadata, err error) {
