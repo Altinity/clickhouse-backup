@@ -301,9 +301,6 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 		}
 	}
 
-	// Check all tables for consistent column types BEFORE any freeze operations
-	// This avoids having unfrozen data parts if only one table contains inconsistent column data types
-	// https://github.com/Altinity/clickhouse-backup/issues/529
 	if b.cfg.ClickHouse.CheckPartsColumns && doBackupData {
 		tablesToCheck := make([]clickhouse.Table, 0, len(tables))
 		for _, table := range tables {
@@ -908,9 +905,6 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 		}
 		return nil, nil, nil, nil, nil
 	}
-	// Note: CheckPartsColumns is now done for all tables at once in createBackupLocal
-	// before any AddTableToLocalBackup calls to avoid unfrozen data parts on failure
-	// backup data
 	if err := b.ch.FreezeTable(ctx, table, shadowBackupUUID); err != nil {
 		return nil, nil, nil, nil, err
 	}

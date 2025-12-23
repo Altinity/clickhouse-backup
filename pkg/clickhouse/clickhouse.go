@@ -1391,7 +1391,6 @@ func (ch *ClickHouse) CheckReplicationInProgress(table metadata.TableMetadata) (
 	return true, nil
 }
 
-// ColumnDataTypesWithTable extends ColumnDataTypes with database and table information for batch queries
 type ColumnDataTypesWithTable struct {
 	Database string   `ch:"database"`
 	Table    string   `ch:"table"`
@@ -1399,14 +1398,11 @@ type ColumnDataTypesWithTable struct {
 	Types    []string `ch:"uniq_types"`
 }
 
-// CheckSystemPartsColumns check data parts types consistency https://github.com/Altinity/clickhouse-backup/issues/529#issuecomment-1554460504
 func (ch *ClickHouse) CheckSystemPartsColumns(ctx context.Context, table *Table) error {
 	tables := []Table{*table}
 	return ch.CheckSystemPartsColumnsForTables(ctx, tables)
 }
 
-// CheckSystemPartsColumnsForTables checks data parts types consistency for multiple tables using a single SQL query
-// This avoids having unfrozen data parts if only one table contains inconsistent column data types
 func (ch *ClickHouse) CheckSystemPartsColumnsForTables(ctx context.Context, tables []Table) error {
 	if len(tables) == 0 {
 		return nil
