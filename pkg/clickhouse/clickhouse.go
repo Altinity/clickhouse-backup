@@ -1391,18 +1391,80 @@ func (ch *ClickHouse) CheckReplicationInProgress(table metadata.TableMetadata) (
 	return true, nil
 }
 
+// ColumnDataTypesWithTable extends ColumnDataTypes with database and table information for batch queries
+type ColumnDataTypesWithTable struct {
+	Database string   `ch:"database"`
+	Table    string   `ch:"table"`
+	Column   string   `ch:"column"`
+	Types    []string `ch:"uniq_types"`
+}
+
 // CheckSystemPartsColumns check data parts types consistency https://github.com/Altinity/clickhouse-backup/issues/529#issuecomment-1554460504
 func (ch *ClickHouse) CheckSystemPartsColumns(ctx context.Context, table *Table) error {
-	var err error
-	partColumnsDataTypes := make([]ColumnDataTypes, 0)
-	partsColumnsSQL := "SELECT column, groupUniqArray(type) AS uniq_types " +
+	tables := []Table{*table}
+	return ch.CheckSystemPartsColumnsForTables(ctx, tables)
+}
+
+// CheckSystemPartsColumnsForTables checks data parts types consistency for multiple tables using a single SQL query
+// This avoids having unfrozen data parts if only one table contains inconsistent column data types
+func (ch *ClickHouse) CheckSystemPartsColumnsForTables(ctx context.Context, tables []Table) error {
+	if len(tables) == 0 {
+		return nil
+	}
+
+	// Build the WHERE clause for all tables
+	var conditions []string
+	for _, table := range tables {
+		if table.Skip {
+			continue
+		}
+		// Only check MergeTree family tables that have data
+		if !strings.HasSuffix(table.Engine, "MergeTree") && table.Engine != "MaterializedMySQL" && table.Engine != "MaterializedPostgreSQL" {
+			continue
+		}
+		conditions = append(conditions, fmt.Sprintf("(database='%s' AND table='%s')", table.Database, table.Name))
+	}
+
+	if len(conditions) == 0 {
+		return nil
+	}
+
+	partColumnsDataTypes := make([]ColumnDataTypesWithTable, 0)
+	partsColumnsSQL := "SELECT database, table, column, groupUniqArray(type) AS uniq_types " +
 		"FROM system.parts_columns " +
-		"WHERE active AND database=? AND table=? AND type NOT LIKE 'Enum%(%' AND type NOT LIKE 'Tuple(%' AND type NOT LIKE 'Nullable(Enum%(%' AND type NOT LIKE 'Nullable(Tuple(%' AND type NOT LIKE 'Array(Tuple(%' AND type NOT LIKE 'Nullable(Array(Tuple(%' " +
-		"GROUP BY column HAVING length(uniq_types) > 1"
-	if err = ch.SelectContext(ctx, &partColumnsDataTypes, partsColumnsSQL, table.Database, table.Name); err != nil {
+		"WHERE active AND (" + strings.Join(conditions, " OR ") + ") " +
+		"AND type NOT LIKE 'Enum%(%' AND type NOT LIKE 'Tuple(%' AND type NOT LIKE 'Nullable(Enum%(%' " +
+		"AND type NOT LIKE 'Nullable(Tuple(%' AND type NOT LIKE 'Array(Tuple(%' AND type NOT LIKE 'Nullable(Array(Tuple(%' " +
+		"GROUP BY database, table, column HAVING length(uniq_types) > 1"
+
+	if err := ch.SelectContext(ctx, &partColumnsDataTypes, partsColumnsSQL); err != nil {
 		return err
 	}
-	return ch.CheckTypesConsistency(table, partColumnsDataTypes)
+
+	// Group results by table and check consistency
+	tableDataTypes := make(map[string][]ColumnDataTypes)
+	for _, colData := range partColumnsDataTypes {
+		key := fmt.Sprintf("%s.%s", colData.Database, colData.Table)
+		tableDataTypes[key] = append(tableDataTypes[key], ColumnDataTypes{
+			Column: colData.Column,
+			Types:  colData.Types,
+		})
+	}
+
+	// Check each table that has inconsistent types
+	for _, table := range tables {
+		if table.Skip {
+			continue
+		}
+		key := fmt.Sprintf("%s.%s", table.Database, table.Name)
+		if colTypes, exists := tableDataTypes[key]; exists {
+			if err := ch.CheckTypesConsistency(&table, colTypes); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 var dateWithParams = regexp.MustCompile(`^(Date[^(]+)\([^)]+\)`)
