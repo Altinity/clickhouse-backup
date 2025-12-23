@@ -89,9 +89,9 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 		if backupName == remoteBackups[i].BackupName {
 			if !b.resume {
 				return fmt.Errorf("'%s' already exists on remote storage", backupName)
-			} else {
-				log.Warn().Msgf("'%s' already exists on remote, will try to resume upload", backupName)
 			}
+
+			log.Warn().Msgf("'%s' already exists on remote, will try to resume upload", backupName)
 		}
 	}
 	backupMetadata, err := b.ReadBackupMetadataLocal(ctx, backupName)
@@ -582,14 +582,16 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 						}
 					}
 					log.Debug().Msgf("start upload %d files to %s", len(partFiles), remotePath)
-					if uploadPathBytes, err := b.dst.UploadPath(ctx, backupPath, partFiles, remotePath, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter, b, b.cfg.General.UploadMaxBytesPerSecond); err != nil {
+					var uploadPathBytes int64
+					var err error
+					if uploadPathBytes, err = b.dst.UploadPath(ctx, backupPath, partFiles, remotePath, b.cfg.General.RetriesOnFailure, b.cfg.General.RetriesDuration, b.cfg.General.RetriesJitter, b, b.cfg.General.UploadMaxBytesPerSecond); err != nil {
 						log.Error().Msgf("UploadPath return error: %v", err)
 						return errors.Wrap(err, "can't upload")
-					} else {
-						atomic.AddInt64(&uploadedBytes, uploadPathBytes)
-						if b.resume {
-							b.resumableState.AppendToState(remotePathFull, uploadPathBytes)
-						}
+					}
+
+					atomic.AddInt64(&uploadedBytes, uploadPathBytes)
+					if b.resume {
+						b.resumableState.AppendToState(remotePathFull, uploadPathBytes)
 					}
 					// https://github.com/Altinity/clickhouse-backup/issues/777
 					if deleteSource {
@@ -659,12 +661,16 @@ func (b *Backuper) uploadTableData(ctx context.Context, backupName string, delet
 
 func (b *Backuper) uploadTableMetadata(ctx context.Context, backupName string, requiredBackupName string, tableMetadata *metadata.TableMetadata) (int64, error) {
 	if b.isEmbedded {
-		if sqlSize, err := b.uploadTableMetadataEmbedded(ctx, backupName, requiredBackupName, *tableMetadata); err != nil {
-			return sqlSize, err
-		} else {
-			jsonSize, err := b.uploadTableMetadataRegular(ctx, backupName, *tableMetadata)
-			return sqlSize + jsonSize, err
+		var sqlSize, jsonSize int64
+		var err error
+		if sqlSize, err = b.uploadTableMetadataEmbedded(ctx, backupName, requiredBackupName, *tableMetadata); err != nil {
+			return sqlSize, errors.WithStack(err)
 		}
+		jsonSize, err = b.uploadTableMetadataRegular(ctx, backupName, *tableMetadata)
+		if err != nil {
+			err = errors.WithStack(err)
+		}
+		return sqlSize + jsonSize, err
 	}
 	return b.uploadTableMetadataRegular(ctx, backupName, *tableMetadata)
 }
@@ -711,11 +717,11 @@ func (b *Backuper) uploadTableMetadataEmbedded(ctx context.Context, backupName s
 	if err != nil {
 		err = errors.Wrapf(err, "can't open %s", localTableMetaFile)
 		if requiredBackupName != "" {
-			log.Warn().Err(err).Send()
+			log.Warn().Stack().Err(err).Send()
 			return 0, nil
-		} else {
-			return 0, err
 		}
+
+		return 0, err
 	}
 	defer func() {
 		if closeErr := localReader.Close(); closeErr != nil {
@@ -812,9 +818,8 @@ bodyRead:
 func (b *Backuper) splitPartFiles(basePath string, parts []metadata.Part, database, table string, skipProjections []string) ([]metadata.SplitPartFiles, error) {
 	if b.cfg.General.UploadByPart {
 		return b.splitFilesByName(basePath, parts, database, table, skipProjections)
-	} else {
-		return b.splitFilesBySize(basePath, parts, database, table, skipProjections)
 	}
+	return b.splitFilesBySize(basePath, parts, database, table, skipProjections)
 }
 
 func (b *Backuper) splitFilesByName(basePath string, parts []metadata.Part, database, table string, skipProjections []string) ([]metadata.SplitPartFiles, error) {
