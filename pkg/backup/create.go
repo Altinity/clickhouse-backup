@@ -794,7 +794,7 @@ func (b *Backuper) createBackupNamedCollections(ctx context.Context, backupPath 
 			}
 
 			k := keeper.Keeper{}
-			if err = k.Connect(ctx, b.ch); err != nil {
+			if err = k.Connect(ctx, b.ch, b.cfg); err != nil {
 				return 0, err
 			}
 			defer k.Close()
@@ -844,7 +844,7 @@ func (b *Backuper) createBackupRBACReplicated(ctx context.Context, rbacBackup st
 	rbacDataSize := uint64(0)
 	if err = b.ch.SelectContext(ctx, &replicatedRBAC, "SELECT name FROM system.user_directories WHERE type='replicated'"); err == nil && len(replicatedRBAC) > 0 {
 		k := keeper.Keeper{}
-		if err = k.Connect(ctx, b.ch); err != nil {
+		if err = k.Connect(ctx, b.ch, b.cfg); err != nil {
 			return 0, err
 		}
 		defer k.Close()
