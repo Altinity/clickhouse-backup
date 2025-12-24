@@ -2,12 +2,16 @@ package utils
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
-	"github.com/rs/zerolog/log"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
 const (
@@ -71,4 +75,29 @@ func ExecCmdOut(ctx context.Context, timeout time.Duration, cmd string, args ...
 	out, err := exec.CommandContext(ctx, cmd, args...).CombinedOutput()
 	cancel()
 	return string(out), err
+}
+
+func NewTLSConfig(caPath, certPath, keyPath string, skipVerify bool) (*tls.Config, error) {
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: skipVerify,
+	}
+	if certPath != "" || keyPath != "" {
+		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		if err != nil {
+			return nil, fmt.Errorf("tls.LoadX509KeyPair error: %v", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+	if caPath != "" {
+		caCert, err := os.ReadFile(caPath)
+		if err != nil {
+			return nil, fmt.Errorf("read ca file %s return error: %v", caPath, err)
+		}
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("AppendCertsFromPEM %s return false", caPath)
+		}
+		tlsConfig.RootCAs = caCertPool
+	}
+	return tlsConfig, nil
 }

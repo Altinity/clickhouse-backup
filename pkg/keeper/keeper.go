@@ -3,9 +3,11 @@ package keeper
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path"
 	"strconv"
@@ -18,6 +20,8 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"github.com/go-zookeeper/zk"
 )
 
@@ -59,7 +63,7 @@ type Keeper struct {
 }
 
 // Connect - connect to any zookeeper server from /var/lib/clickhouse/preprocessed_configs/config.xml
-func (k *Keeper) Connect(ctx context.Context, ch *clickhouse.ClickHouse) error {
+func (k *Keeper) Connect(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Config) error {
 	configFile, doc, err := ch.ParseXML(ctx, "config.xml")
 	if err != nil {
 		return errors.Wrapf(err, "can't parse config.xml from %s, error", configFile)
@@ -83,6 +87,7 @@ func (k *Keeper) Connect(ctx context.Context, ch *clickhouse.ClickHouse) error {
 		return errors.WithStack(fmt.Errorf("/zookeeper/node not exists in %s", configFile))
 	}
 	keeperHosts := make([]string, len(nodeList))
+	isSecure := false
 	for i, node := range nodeList {
 		hostNode := node.SelectElement("host")
 		if hostNode == nil {
@@ -93,11 +98,37 @@ func (k *Keeper) Connect(ctx context.Context, ch *clickhouse.ClickHouse) error {
 		if portNode != nil {
 			port = portNode.InnerText()
 		}
+		secureNode := node.SelectElement("secure")
+		if secureNode != nil && (secureNode.InnerText() == "1" || secureNode.InnerText() == "true") {
+			isSecure = true
+		}
 		keeperHosts[i] = fmt.Sprintf("%s:%s", hostNode.InnerText(), port)
 	}
-	conn, _, err := zk.Connect(keeperHosts, sessionTimeout, zk.WithLogger(newKeeperLogger()))
-	if err != nil {
-		return err
+	var conn *zk.Conn
+	if isSecure {
+		log.Info().Msgf("isSecure=%v, keeperHosts=%v, caPath=%v, certPath=%v, keyPath=%v, skipVerify=%v, use TLS for keeper connection", isSecure, keeperHosts, cfg.ClickHouse.TLSCa, cfg.ClickHouse.TLSCert, cfg.ClickHouse.TLSKey, cfg.ClickHouse.SkipVerify)
+		tlsConfig, err := utils.NewTLSConfig(cfg.ClickHouse.TLSCa, cfg.ClickHouse.TLSCert, cfg.ClickHouse.TLSKey, cfg.ClickHouse.SkipVerify)
+		if err != nil {
+			return errors.Wrap(err, "can't create TLS config")
+		}
+		conn, _, err = zk.Connect(keeperHosts, sessionTimeout, zk.WithLogger(newKeeperLogger()), zk.WithDialer(func(network, address string, timeout time.Duration) (net.Conn, error) {
+			tlsConn, dialErr := tls.DialWithDialer(&net.Dialer{Timeout: timeout}, network, address, tlsConfig)
+			if dialErr != nil {
+				log.Error().Msgf("TLS dial to %s failed: %v", address, dialErr)
+				return nil, dialErr
+			}
+			return tlsConn, nil
+		}))
+		if err != nil {
+			log.Error().Msgf("zk.Connect with TLS failed: %v", err)
+			return err
+		}
+	} else {
+		log.Info().Msgf("isSecure=%v, keeperHosts=%v", isSecure, keeperHosts)
+		conn, _, err = zk.Connect(keeperHosts, sessionTimeout, zk.WithLogger(newKeeperLogger()))
+		if err != nil {
+			return err
+		}
 	}
 	if digestNode := zookeeperNode.SelectElement("digest"); digestNode != nil {
 		if err = conn.AddAuth("digest", []byte(digestNode.InnerText())); err != nil {
