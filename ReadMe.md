@@ -635,7 +635,7 @@ Display a list of all operations from start of API server: `curl -s localhost:71
 - [How to back up object disks to s3 with s3:CopyObject](Examples.md#how-to-back-up-object-disks-to-s3-with-s3copyobject)
 - [How to restore object disks to s3 with s3:CopyObject](Examples.md#how-to-restore-object-disks-to-s3-with-s3copyobject)
 - [How to use AWS IRSA and IAM to allow S3 backup without Explicit credentials](Examples.md#how-to-use-aws-irsa-and-iam-to-allow-s3-backup-without-explicit-credentials)
-- [How to do incremental backups work to remote storage](Examples.md#how-incremental-backups-work-with-remote-storage)
+- [How incremental backups work with remote storage](Examples.md#how-incremental-backups-work-with-remote-storage)
 - [How to watch backups work](Examples.md#how-to-watch-backups-work)
 - [How to track operation status with operation_id](Examples.md#How-to-track-operation-status-with-operation_id)
 
