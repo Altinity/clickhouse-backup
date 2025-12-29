@@ -500,7 +500,7 @@ func (b *Backuper) restoreRBAC(ctx context.Context, backupName string, disks []c
 	replicatedUserDirectories := make([]clickhouse.UserDirectory, 0)
 	if err = b.ch.SelectContext(ctx, &replicatedUserDirectories, "SELECT name FROM system.user_directories WHERE type='replicated'"); err == nil && len(replicatedUserDirectories) > 0 {
 		k = &keeper.Keeper{}
-		if connErr := k.Connect(ctx, b.ch, b.cfg); connErr != nil {
+		if connErr := k.Connect(ctx, b.ch); connErr != nil {
 			return errors.Wrap(connErr, "but can't connect to keeper")
 		}
 		defer k.Close()

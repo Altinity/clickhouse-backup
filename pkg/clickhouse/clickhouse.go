@@ -86,7 +86,7 @@ func (ch *ClickHouse) Connect() error {
 	}
 
 	if ch.Config.Secure {
-		tlsConfig, err := utils.NewTLSConfig(ch.Config.TLSCa, ch.Config.TLSCert, ch.Config.TLSKey, ch.Config.SkipVerify)
+		tlsConfig, err := utils.NewTLSConfig(ch.Config.TLSCa, ch.Config.TLSCert, ch.Config.TLSKey, ch.Config.SkipVerify, true)
 		if err != nil {
 			return err
 		}

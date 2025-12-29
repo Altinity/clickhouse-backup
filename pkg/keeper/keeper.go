@@ -20,7 +20,6 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"github.com/go-zookeeper/zk"
 )
@@ -62,8 +61,48 @@ type Keeper struct {
 	xmlConfigFile string
 }
 
+// https://clickhouse.com/docs/operations/ssl-zookeeper - parse TLS configuration from ClickHouse's config.xml */openSSL/client/* section
+func parseClientTLSConfig(doc *xmlquery.Node, configFile string) (caPath, certPath, keyPath string, skipVerify, loadDefaultCAFile bool) {
+	clientNode := xmlquery.FindOne(doc, "//openSSL/client")
+	if clientNode == nil {
+		log.Warn().Msgf("no /openSSL/client in %s, using empty TLS config", configFile)
+		return "", "", "", true, true
+	}
+
+	getText := func(selector string) string {
+		if n := clientNode.SelectElement(selector); n != nil {
+			return n.InnerText()
+		}
+		return ""
+	}
+
+	certPath = getText("certificateFile")
+	keyPath = getText("privateKeyFile")
+	caPath = getText("caConfig")
+	loadDefaultCAFile = true
+	if val := getText("loadDefaultCAFile"); val != "" {
+		if useDefault, err := strconv.ParseBool(val); err == nil {
+			loadDefaultCAFile = useDefault
+		}
+	}
+	if !loadDefaultCAFile && caPath == "" {
+		log.Warn().Msgf("//openSSL/client/loadDefaultCAFile=false provided in %s but caConfig is empty; system CAs will NOT be loaded", configFile)
+	}
+
+	if mode := getText("verificationMode"); mode == "none" {
+		skipVerify = true
+	}
+	// invalidCertificateHandler is alternative way to disable verification
+	if handler := getText("invalidCertificateHandler/name"); handler == "AcceptCertificateHandler" {
+		skipVerify = true
+	}
+
+	log.Debug().Msgf("parsed TLS config from %s: certPath=%s, keyPath=%s, caPath=%s, skipVerify=%v, loadDefaultCAFile=%v", configFile, certPath, keyPath, caPath, skipVerify, loadDefaultCAFile)
+	return caPath, certPath, keyPath, skipVerify, loadDefaultCAFile
+}
+
 // Connect - connect to any zookeeper server from /var/lib/clickhouse/preprocessed_configs/config.xml
-func (k *Keeper) Connect(ctx context.Context, ch *clickhouse.ClickHouse, cfg *config.Config) error {
+func (k *Keeper) Connect(ctx context.Context, ch *clickhouse.ClickHouse) error {
 	configFile, doc, err := ch.ParseXML(ctx, "config.xml")
 	if err != nil {
 		return errors.Wrapf(err, "can't parse config.xml from %s, error", configFile)
@@ -106,10 +145,13 @@ func (k *Keeper) Connect(ctx context.Context, ch *clickhouse.ClickHouse, cfg *co
 	}
 	var conn *zk.Conn
 	if isSecure {
-		log.Info().Msgf("isSecure=%v, keeperHosts=%v, caPath=%v, certPath=%v, keyPath=%v, skipVerify=%v, use TLS for keeper connection", isSecure, keeperHosts, cfg.ClickHouse.TLSCa, cfg.ClickHouse.TLSCert, cfg.ClickHouse.TLSKey, cfg.ClickHouse.SkipVerify)
-		tlsConfig, err := utils.NewTLSConfig(cfg.ClickHouse.TLSCa, cfg.ClickHouse.TLSCert, cfg.ClickHouse.TLSKey, cfg.ClickHouse.SkipVerify)
+		// Parse TLS config from ClickHouse's config.xml /openSSL/client/* section
+		// according to https://clickhouse.com/docs/operations/ssl-zookeeper
+		caPath, certPath, keyPath, skipVerify, loadDefaultCAFile := parseClientTLSConfig(doc, configFile)
+		log.Info().Msgf("isSecure=%v, keeperHosts=%v, caPath=%v, certPath=%v, keyPath=%v, skipVerify=%v, loadDefaultCAFile=%v, use TLS for keeper connection (from config.xml /openSSL/client/*)", isSecure, keeperHosts, caPath, certPath, keyPath, skipVerify, loadDefaultCAFile)
+		tlsConfig, err := utils.NewTLSConfig(caPath, certPath, keyPath, skipVerify, loadDefaultCAFile)
 		if err != nil {
-			return errors.Wrap(err, "can't create TLS config")
+			return errors.Wrap(err, "can't create TLS config from config.xml /openSSL/client/* settings")
 		}
 		conn, _, err = zk.Connect(keeperHosts, sessionTimeout, zk.WithLogger(newKeeperLogger()), zk.WithDialer(func(network, address string, timeout time.Duration) (net.Conn, error) {
 			tlsConn, dialErr := tls.DialWithDialer(&net.Dialer{Timeout: timeout}, network, address, tlsConfig)

@@ -77,7 +77,7 @@ func ExecCmdOut(ctx context.Context, timeout time.Duration, cmd string, args ...
 	return string(out), err
 }
 
-func NewTLSConfig(caPath, certPath, keyPath string, skipVerify bool) (*tls.Config, error) {
+func NewTLSConfig(caPath, certPath, keyPath string, skipVerify, loadSystemCAs bool) (*tls.Config, error) {
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: skipVerify,
 	}
@@ -98,6 +98,9 @@ func NewTLSConfig(caPath, certPath, keyPath string, skipVerify bool) (*tls.Confi
 			return nil, fmt.Errorf("AppendCertsFromPEM %s return false", caPath)
 		}
 		tlsConfig.RootCAs = caCertPool
+	} else if !loadSystemCAs {
+		// If RootCAs is nil, TLS uses the host's root CA set
+		tlsConfig.RootCAs = x509.NewCertPool()
 	}
 	return tlsConfig, nil
 }
