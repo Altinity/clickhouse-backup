@@ -134,6 +134,9 @@ services:
     hostname: zookeeper
     volumes:
       - ./clickhouse-keeper.xml:/etc/clickhouse-keeper/conf.d/clickhouse-keeper.xml
+      - ./server.crt:/etc/clickhouse-keeper/server.crt
+      - ./server.key:/etc/clickhouse-keeper/server.key
+      - ./server.crt:/etc/clickhouse-keeper/rootCA.crt
       - /var/lib/clickhouse
       - /var/lib/clickhouse-keeper
     environment:
@@ -207,6 +210,7 @@ services:
     user: root
     environment:
       CLICKHOUSE_VERSION: ${CLICKHOUSE_VERSION:-19.17}
+      KEEPER_TLS_ENABLED: "${KEEPER_TLS_ENABLED:-false}"
       CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS: "true"
       CLICKHOUSE_SKIP_USER_SETUP: "1"
       TZ: UTC
@@ -287,6 +291,7 @@ services:
       - ./dhparam.pem:/etc/clickhouse-server/dhparam.pem
       - ./ssl.xml:/etc/clickhouse-server/config.d/ssl.xml
       - ./clickhouse-config.xml:/etc/clickhouse-server/config.d/clickhouse-config.xml
+      - ./server.crt:/etc/clickhouse-server/rootCA.crt
       - /var/lib/clickhouse
       - /hdd1_data
       - /hdd2_data

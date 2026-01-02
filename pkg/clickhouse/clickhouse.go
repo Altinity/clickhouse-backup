@@ -2,8 +2,6 @@ package clickhouse
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"database/sql"
 	"fmt"
 	"os"
@@ -18,6 +16,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
+	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/antchfx/xmlquery"
@@ -87,31 +86,9 @@ func (ch *ClickHouse) Connect() error {
 	}
 
 	if ch.Config.Secure {
-		tlsConfig := &tls.Config{
-			InsecureSkipVerify: ch.Config.SkipVerify,
-		}
-		if ch.Config.TLSKey != "" || ch.Config.TLSCert != "" || ch.Config.TLSCa != "" {
-			if ch.Config.TLSCert != "" || ch.Config.TLSKey != "" {
-				cert, err := tls.LoadX509KeyPair(ch.Config.TLSCert, ch.Config.TLSKey)
-				if err != nil {
-					log.Error().Msgf("tls.LoadX509KeyPair error: %v", err)
-					return err
-				}
-				tlsConfig.Certificates = []tls.Certificate{cert}
-			}
-			if ch.Config.TLSCa != "" {
-				caCert, err := os.ReadFile(ch.Config.TLSCa)
-				if err != nil {
-					log.Error().Msgf("read `tls_ca` file %s return error: %v ", ch.Config.TLSCa, err)
-					return err
-				}
-				caCertPool := x509.NewCertPool()
-				if caCertPool.AppendCertsFromPEM(caCert) != true {
-					log.Error().Msgf("AppendCertsFromPEM %s return false", ch.Config.TLSCa)
-					return fmt.Errorf("AppendCertsFromPEM %s return false", ch.Config.TLSCa)
-				}
-				tlsConfig.RootCAs = caCertPool
-			}
+		tlsConfig, err := utils.NewTLSConfig(ch.Config.TLSCa, ch.Config.TLSCert, ch.Config.TLSKey, ch.Config.SkipVerify, true)
+		if err != nil {
+			return err
 		}
 		opt.TLS = tlsConfig
 	}

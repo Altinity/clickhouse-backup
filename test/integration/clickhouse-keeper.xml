@@ -3,7 +3,30 @@
     <logger>
         <console>1</console>
     </logger>
+    <openSSL>
+        <server>
+            <certificateFile>/etc/clickhouse-keeper/server.crt</certificateFile>
+            <privateKeyFile>/etc/clickhouse-keeper/server.key</privateKeyFile>
+            <verificationMode>none</verificationMode>
+            <loadDefaultCAFile>true</loadDefaultCAFile>
+            <cacheSessions>true</cacheSessions>
+            <disableProtocols>sslv2,sslv3</disableProtocols>
+            <preferServerCiphers>true</preferServerCiphers>
+        </server>
+        <client>
+            <caConfig>/etc/clickhouse-keeper/rootCA.crt</caConfig>
+            <loadDefaultCAFile>true</loadDefaultCAFile>
+            <cacheSessions>true</cacheSessions>
+            <disableProtocols>sslv2,sslv3</disableProtocols>
+            <preferServerCiphers>true</preferServerCiphers>
+            <verificationMode>strict</verificationMode>
+            <invalidCertificateHandler>
+                <name>RejectCertificateHandler</name>
+            </invalidCertificateHandler>
+        </client>
+    </openSSL>
     <keeper_server>
         <tcp_port>2181</tcp_port>
+        <tcp_port_secure>2281</tcp_port_secure>
     </keeper_server>
 </clickhouse>

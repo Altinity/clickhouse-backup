@@ -476,6 +476,36 @@ EOT
 
 fi
 
+# Keeper TLS configuration - available from 21.9, when KEEPER_TLS_ENABLED is set
+if [[ "${KEEPER_TLS_ENABLED:-}" == "1" ]] && [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.9 || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9] || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
+
+cat <<EOT > /etc/clickhouse-server/config.d/keeper_tls.xml
+<yandex>
+  <openSSL>
+    <client>
+      <caConfig>/etc/clickhouse-server/rootCA.crt</caConfig>
+      <loadDefaultCAFile>true</loadDefaultCAFile>
+      <cacheSessions>true</cacheSessions>
+      <disableProtocols>sslv2,sslv3</disableProtocols>
+      <preferServerCiphers>true</preferServerCiphers>
+      <verificationMode>strict</verificationMode>
+      <invalidCertificateHandler>
+        <name>RejectCertificateHandler</name>
+      </invalidCertificateHandler>
+    </client>
+  </openSSL>
+  <zookeeper>
+    <node>
+      <host>zookeeper</host>
+      <port>2281</port>
+      <secure>1</secure>
+    </node>
+  </zookeeper>
+</yandex>
+EOT
+
+fi
+
 # @todo LIVE VIEW deprecated, available 21.3+
 if [[ "${CLICKHOUSE_VERSION}" == "head" || "${CLICKHOUSE_VERSION}" =~ ^21\.[3-9] || "${CLICKHOUSE_VERSION}" =~ ^21\.1[0-9] || "${CLICKHOUSE_VERSION}" =~ ^2[2-9]\.[1-9] || "${CLICKHOUSE_VERSION}" =~ ^[3-9] ]]; then
 
