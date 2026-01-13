@@ -113,6 +113,9 @@ type GCSConfig struct {
 	// 			UploadConcurrency or DownloadConcurrency in each upload and download case
 	ClientPoolSize int `yaml:"client_pool_size" envconfig:"GCS_CLIENT_POOL_SIZE"`
 	ChunkSize      int `yaml:"chunk_size" envconfig:"GCS_CHUNK_SIZE"`
+	// EncryptionKey is a base64-encoded 256-bit customer-supplied encryption key (CSEK)
+	// for client-side encryption of objects. Use `openssl rand -base64 32` to generate.
+	EncryptionKey string `yaml:"encryption_key" envconfig:"GCS_ENCRYPTION_KEY"`
 }
 
 // AzureBlobConfig - Azure Blob settings section
