@@ -857,12 +857,12 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 		fullCommand += " " + where
 	}
 	commandId, ctx := status.Current.Start(fullCommand)
-	defer status.Current.Stop(commandId, err)
 	b := backup.NewBackuper(cfg)
 	if where == "local" || !wherePresent {
 		var localBackups []backup.LocalBackup
 		localBackups, _, err = b.GetLocalBackups(ctx, nil)
 		if err != nil && !os.IsNotExist(err) {
+			status.Current.Stop(commandId, err)
 			api.writeError(w, http.StatusInternalServerError, "list", err)
 			return
 		}
@@ -897,9 +897,10 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if cfg.General.RemoteStorage != "none" && (where == "remote" || !wherePresent) {
 		brokenBackups := 0
-		remoteBackups, err := b.GetRemoteBackups(ctx, true)
-		if err != nil {
-			api.writeError(w, http.StatusInternalServerError, "list", err)
+		remoteBackups, listErr := b.GetRemoteBackups(ctx, true)
+		if listErr != nil {
+			status.Current.Stop(commandId, listErr)
+			api.writeError(w, http.StatusInternalServerError, "list", listErr)
 			return
 		}
 		for i, item := range remoteBackups {
@@ -938,6 +939,7 @@ func (api *APIServer) httpListHandler(w http.ResponseWriter, r *http.Request) {
 		api.metrics.NumberBackupsRemote.Set(float64(len(remoteBackups)))
 	}
 	api.sendJSONEachRow(w, http.StatusOK, backupsJSON)
+	status.Current.Stop(commandId, nil)
 }
 
 // httpCreateHandler - create a backup
