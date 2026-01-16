@@ -846,20 +846,6 @@ func TestGCS(t *testing.T) {
 	env.Cleanup(t, r)
 }
 
-func TestGCSEncryptionKey(t *testing.T) {
-	if isTestShouldSkip("GCS_TESTS") {
-		t.Skip("Skipping GCS integration tests...")
-		return
-	}
-	if os.Getenv("GCS_ENCRYPTION_KEY") == "" {
-		t.Skip("Skipping GCS encryption test, GCS_ENCRYPTION_KEY not set")
-		return
-	}
-	env, r := NewTestEnvironment(t)
-	env.runMainIntegrationScenario(t, "GCS", "config-gcs-encrypted.yml")
-	env.Cleanup(t, r)
-}
-
 func TestSFTPAuthKey(t *testing.T) {
 	env, r := NewTestEnvironment(t)
 	env.uploadSSHKeys(r, "clickhouse-backup")

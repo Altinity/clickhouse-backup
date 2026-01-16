@@ -282,7 +282,9 @@ jobs:
           set -xe
           echo "CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION}"
           echo "GCS_TESTS=${GCS_TESTS}"
-
+          GCS_ENCRYPTION_KEY=$(openssl rand -base64 32)
+          export GCS_ENCRYPTION_KEY
+          
           chmod +x $(pwd)/clickhouse-backup/clickhouse-backup*
 
           if [[ "${CLICKHOUSE_VERSION}" =~ 2[2-9]+ ]]; then

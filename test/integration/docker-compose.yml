@@ -118,8 +118,8 @@ services:
       GCS_DEBUG: "${GCS_DEBUG:-false}"
       FTP_DEBUG: "${FTP_DEBUG:-false}"
       SFTP_DEBUG: "${SFTP_DEBUG:-false}"
-      AZBLOB_DEBUG: "${AZBLOB_DEBUG:-false}"
       COS_DEBUG: "${COS_DEBUG:-false}"
+      AZBLOB_DEBUG: "${AZBLOB_DEBUG:-false}"
       CLICKHOUSE_DEBUG: "${CLICKHOUSE_DEBUG:-false}"
       GOCOVERDIR: "/tmp/_coverage_/"
 # FIPS
@@ -131,15 +131,17 @@ services:
       QA_GCS_OVER_S3_ACCESS_KEY: "${QA_GCS_OVER_S3_ACCESS_KEY}"
       QA_GCS_OVER_S3_SECRET_KEY: "${QA_GCS_OVER_S3_SECRET_KEY}"
       QA_GCS_OVER_S3_BUCKET: "${QA_GCS_OVER_S3_BUCKET}"
-      # AlibabaCloud over S3
+# AlibabaCloud over S3
       QA_ALIBABA_ACCESS_KEY: "${QA_ALIBABA_ACCESS_KEY:-}"
       QA_ALIBABA_SECRET_KEY: "${QA_ALIBABA_SECRET_KEY:-}"
-      # Tencent Cloud Object Storage
+# Tencent Cloud Object Storage
       QA_TENCENT_SECRET_ID: "${QA_TENCENT_SECRET_ID:-}"
       QA_TENCENT_SECRET_KEY: "${QA_TENCENT_SECRET_KEY:-}"
 # https://github.com/Altinity/clickhouse-backup/issues/691:
       AWS_ACCESS_KEY_ID: access_key
       AWS_SECRET_ACCESS_KEY: it_is_my_super_secret_key
+# GCS encryption key
+      GCS_ENCRYPTION_KEY: "${GCS_ENCRYPTION_KEY:-}"
     volumes_from:
       - clickhouse
     ports:
@@ -181,13 +183,15 @@ services:
       QA_GCS_OVER_S3_ACCESS_KEY: "${QA_GCS_OVER_S3_ACCESS_KEY}"
       QA_GCS_OVER_S3_SECRET_KEY: "${QA_GCS_OVER_S3_SECRET_KEY}"
       QA_GCS_OVER_S3_BUCKET: "${QA_GCS_OVER_S3_BUCKET}"
-      #     AlibabaCloud over S3
+#     AlibabaCloud over S3
       QA_ALIBABA_ACCESS_KEY: "${QA_ALIBABA_ACCESS_KEY:-}"
       QA_ALIBABA_SECRET_KEY: "${QA_ALIBABA_SECRET_KEY:-}"
-      #     Tencent Cloud Object Storage
+#     Tencent Cloud Object Storage
       QA_TENCENT_SECRET_ID: "${QA_TENCENT_SECRET_ID:-}"
       QA_TENCENT_SECRET_KEY: "${QA_TENCENT_SECRET_KEY:-}"
-
+# GCS encryption key
+      GCS_ENCRYPTION_KEY: "${GCS_ENCRYPTION_KEY:-}"
+# fix failures during try to IMDS initialization inside clickhouse
       AWS_EC2_METADATA_DISABLED: "true"
     volumes:
 # clickhouse-backup related files requires for some tests
