@@ -304,6 +304,10 @@ gcs:
   custom_storage_class_map: {}
   debug: false                 # GCS_DEBUG
   force_http: false            # GCS_FORCE_HTTP
+  # GCS_ENCRYPTION_KEY, base64-encoded 256-bit key for customer-supplied encryption (CSEK)
+  # This encrypts backup data at rest using a key you control. Generate with: `openssl rand -base64 32`
+  # See https://cloud.google.com/storage/docs/encryption/customer-supplied-keys
+  encryption_key: ""
 cos:
   url: ""                      # COS_URL
   timeout: 2m                  # COS_TIMEOUT

@@ -796,10 +796,6 @@ func TestAzure(t *testing.T) {
 }
 
 func TestGCSWithCustomEndpoint(t *testing.T) {
-	if isTestShouldSkip("GCS_TESTS") {
-		t.Skip("Skipping GCS_EMULATOR integration tests...")
-		return
-	}
 	env, r := NewTestEnvironment(t)
 	env.runMainIntegrationScenario(t, "GCS_EMULATOR", "config-gcs-custom-endpoint.yml")
 	env.Cleanup(t, r)

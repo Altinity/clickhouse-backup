@@ -20,6 +20,9 @@ export CLICKHOUSE_BACKUP_BIN
 export LOG_LEVEL=${LOG_LEVEL:-info}
 export TEST_LOG_LEVEL=${TEST_LOG_LEVEL:-info}
 
+GCS_ENCRYPTION_KEY=$(openssl rand -base64 32)
+export GCS_ENCRYPTION_KEY
+
 if [[ -f "${CUR_DIR}/credentials.json" ]]; then
   export GCS_TESTS=${GCS_TESTS:-1}
 else

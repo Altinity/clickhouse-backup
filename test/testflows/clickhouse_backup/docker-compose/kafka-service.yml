@@ -1,6 +1,6 @@
 services:
   kafka:
-    image: confluentinc/cp-kafka:5.2.0
+    image: confluentinc/cp-kafka:7.7.7
     expose:
       - "9092"
     environment:

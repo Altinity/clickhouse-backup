@@ -26,9 +26,10 @@ import (
 
 // GCS - presents methods for manipulate data on GCS
 type GCS struct {
-	client     *storage.Client
-	Config     *config.GCSConfig
-	clientPool *pool.ObjectPool
+	client        *storage.Client
+	Config        *config.GCSConfig
+	clientPool    *pool.ObjectPool
+	encryptionKey []byte // Customer-Supplied Encryption Key (CSEK)
 }
 
 type debugGCSTransport struct {
@@ -188,12 +189,37 @@ func (gcs *GCS) Connect(ctx context.Context) error {
 	gcs.clientPool = pool.NewObjectPoolWithDefaultConfig(ctx, factory)
 	gcs.clientPool.Config.MaxTotal = gcs.Config.ClientPoolSize * 3
 	gcs.client, err = storage.NewClient(ctx, storageClientOptions...)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Validate and decode the encryption key if provided
+	if gcs.Config.EncryptionKey != "" {
+		key, err := base64.StdEncoding.DecodeString(gcs.Config.EncryptionKey)
+		if err != nil {
+			return errors.Wrap(err, "gcs: malformed encryption_key, must be base64-encoded 256-bit key")
+		}
+		if len(key) != 32 {
+			return fmt.Errorf("gcs: malformed encryption_key, must be base64-encoded 256-bit key (got %d bytes)", len(key))
+		}
+		gcs.encryptionKey = key
+		log.Info().Msg("GCS: Customer-Supplied Encryption Key (CSEK) configured")
+	}
+
+	return nil
 }
 
 func (gcs *GCS) Close(ctx context.Context) error {
 	gcs.clientPool.Close(ctx)
 	return gcs.client.Close()
+}
+
+// applyEncryption returns an ObjectHandle with encryption key applied if configured
+func (gcs *GCS) applyEncryption(obj *storage.ObjectHandle) *storage.ObjectHandle {
+	if gcs.encryptionKey != nil {
+		return obj.Key(gcs.encryptionKey)
+	}
+	return obj
 }
 
 func (gcs *GCS) Walk(ctx context.Context, gcsPath string, recursive bool, process func(ctx context.Context, r RemoteFile) error) error {
@@ -252,7 +278,7 @@ func (gcs *GCS) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadC
 		return nil, err
 	}
 	pClient := pClientObj.(*clientObject).Client
-	obj := pClient.Bucket(gcs.Config.Bucket).Object(key)
+	obj := gcs.applyEncryption(pClient.Bucket(gcs.Config.Bucket).Object(key))
 	reader, err := obj.NewReader(ctx)
 	if err != nil {
 		if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
@@ -281,7 +307,7 @@ func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser
 		return err
 	}
 	pClient := pClientObj.(*clientObject).Client
-	obj := pClient.Bucket(gcs.Config.Bucket).Object(key)
+	obj := gcs.applyEncryption(pClient.Bucket(gcs.Config.Bucket).Object(key))
 	// always retry transient errors to mitigate retry logic bugs.
 	obj = obj.Retryer(storage.WithPolicy(storage.RetryAlways))
 	writer := obj.NewWriter(ctx)
@@ -314,7 +340,8 @@ func (gcs *GCS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 }
 
 func (gcs *GCS) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, error) {
-	objAttr, err := gcs.client.Bucket(gcs.Config.Bucket).Object(key).Attrs(ctx)
+	obj := gcs.applyEncryption(gcs.client.Bucket(gcs.Config.Bucket).Object(key))
+	objAttr, err := obj.Attrs(ctx)
 	if err != nil {
 		if errors.Is(err, storage.ErrObjectNotExist) {
 			return nil, ErrNotFound
@@ -369,7 +396,7 @@ func (gcs *GCS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey
 	}
 	pClient := pClientObj.(*clientObject).Client
 	src := pClient.Bucket(srcBucket).Object(srcKey)
-	dst := pClient.Bucket(gcs.Config.Bucket).Object(dstKey)
+	dst := gcs.applyEncryption(pClient.Bucket(gcs.Config.Bucket).Object(dstKey))
 	// always retry transient errors to mitigate retry logic bugs.
 	dst = dst.Retryer(storage.WithPolicy(storage.RetryAlways))
 	attrs, err := src.Attrs(ctx)
@@ -379,7 +406,10 @@ func (gcs *GCS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey
 		}
 		return 0, err
 	}
-	if _, err = dst.CopierFrom(src).Run(ctx); err != nil {
+	copier := dst.CopierFrom(src)
+	// If encryption is enabled, the destination will be encrypted
+	// Note: source objects from object disks are not encrypted by clickhouse-backup
+	if _, err = copier.Run(ctx); err != nil {
 		if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
 			log.Warn().Msgf("gcs.CopyObject: gcs.clientPool.InvalidateObject error: %+v", pErr)
 		}
