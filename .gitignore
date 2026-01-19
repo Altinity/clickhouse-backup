@@ -1,5 +1,6 @@
 .vscode/
 *.exe
+qodana.yaml
 debug
 /clickhouse-backup
 credentials.json
@@ -11,6 +12,7 @@ build/
 vendor/
 .aider*
 AGENTS.md
+CLAUDE.md
 .qwen/
 .claude/
 .crush/

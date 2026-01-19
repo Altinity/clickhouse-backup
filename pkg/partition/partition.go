@@ -165,18 +165,17 @@ func getPartitionIdWithFunction(ctx context.Context, ch *clickhouse.ClickHouse, 
 		return "", "", fmt.Errorf("partition values count (%d) doesn't match components count (%d)", len(partitionValues), len(partitionComponents))
 	}
 
-	directId, directName, directErr := tryDirectPartitionId(ctx, ch, partitionValues)
 	evaluatedId, evaluatedName, evaluatedErr := tryEvaluatedPartitionId(ctx, ch, createQuery, partitionExpr, partitionComponents, partitionValues)
-
 	if evaluatedErr == nil {
 		return evaluatedId, evaluatedName, nil
 	}
 
+	directId, directName, directErr := tryDirectPartitionId(ctx, ch, partitionValues)
 	if directErr == nil {
 		return directId, directName, nil
 	}
 
-	return "", "", fmt.Errorf("both approaches failed: direct=%v, evaluated=%v", directErr, evaluatedErr)
+	return "", "", fmt.Errorf("both approaches failed: evaluated=%v, direct=%v", evaluatedErr, directErr)
 }
 
 func tryDirectPartitionId(ctx context.Context, ch *clickhouse.ClickHouse, partitionValues []interface{}) (string, string, error) {
@@ -227,20 +226,23 @@ func tryEvaluatedPartitionId(ctx context.Context, ch *clickhouse.ClickHouse, cre
 	}
 
 	var args []interface{}
-	selectItems := make([]string, len(columns))
+	withItems := make([]string, len(columns))
 	for i, col := range columns {
 		columnType := inferColumnType(createQuery, col.Name, partitionValues[i])
-		selectItems[i] = fmt.Sprintf("CAST(? AS %s) AS %s", columnType, col.Name)
+		withItems[i] = fmt.Sprintf("CAST(? AS %s) AS %s", columnType, col.Name)
 		args = append(args, partitionValues[i])
 	}
 
 	partitionIdArgs := partitionExpr
-	if len(partitionComponents) > 0 {
+	if len(partitionComponents) > 1 {
 		partitionIdArgs = strings.Join(partitionComponents, ", ")
 	}
 
-	sql := fmt.Sprintf("SELECT partitionId(%s) AS partition_id, toString(%s) AS partition_name FROM (SELECT %s)",
-		partitionIdArgs, partitionExpr, strings.Join(selectItems, ", "))
+	// Use ClickHouse's native partition formatting by calling toString() on the full expression
+	partitionNameExpr := fmt.Sprintf("toString(%s)", partitionExpr)
+
+	sql := fmt.Sprintf("WITH %s SELECT partitionId(%s) AS partition_id, %s AS partition_name",
+		strings.Join(withItems, ", "), partitionIdArgs, partitionNameExpr)
 
 	var result []struct {
 		PartitionId   string `ch:"partition_id"`

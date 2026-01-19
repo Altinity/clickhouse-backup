@@ -2,12 +2,13 @@ package storage
 
 import (
 	"fmt"
-	"github.com/klauspost/compress/zstd"
-	"github.com/mholt/archiver/v4"
-	"github.com/rs/zerolog/log"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/klauspost/compress/zstd"
+	"github.com/mholt/archiver/v4"
+	"github.com/rs/zerolog/log"
 )
 
 func GetBackupsToDeleteRemote(backups []Backup, keep int) []Backup {
@@ -105,26 +106,18 @@ func getArchiveReader(format string) (*archiver.CompressedArchive, error) {
 }
 
 func checkArchiveExtension(ext, format string) bool {
-	if (format == "gz" || format == "gzip") && ext != ".gz" && ext != ".gzip" {
-		return false
-	}
-	if (format == "bz2" || format == "bzip2") && ext != ".bz2" && ext != ".bzip2" {
-		return false
-	}
-	if (format == "br" || format == "brotli") && ext != ".br" && ext != ".brotli" {
-		return false
-	}
 	if strings.HasSuffix(ext, format) {
 		return true
 	}
-	if (format == "gz" || format == "gzip") && (ext == ".gz" || ext == ".gzip") {
-		return true
+	if format == "gz" || format == "gzip" {
+		return ext == ".gz" || ext == ".gzip"
 	}
-	if (format == "bz2" || format == "bzip2") && (ext == ".bz2" || ext == ".bzip2") {
-		return true
+	if format == "bz2" || format == "bzip2" {
+		return ext == ".bz2" || ext == ".bzip2"
 	}
-	if (format == "br" || format == "brotli") && (ext == ".br" || ext == ".brotli") {
-		return true
+
+	if format == "br" || format == "brotli" {
+		return ext == ".br" || ext == ".brotli"
 	}
 	return false
 }

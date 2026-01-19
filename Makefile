@@ -138,7 +138,7 @@ $(NAME)/$(NAME)-race-fips:
 
 # run `docker buildx create --use` first time
 build-race-docker:
-	bash -xce 'docker buildx build --build-arg CLICKHOUSE_VERSION=$${CLICKHOUSE_VERSION:-latest} --build-arg CLICKHOUSE_IMAGE=$${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server} --build-arg VERSION=$(VERSION) \
+	bash -xce 'docker buildx build --platform=linux/amd64 --build-arg CLICKHOUSE_VERSION=$${CLICKHOUSE_VERSION:-latest} --build-arg CLICKHOUSE_IMAGE=$${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server} --build-arg VERSION=$(VERSION) \
 			--tag $(NAME):build-race --target make-build-race --progress plain --load . && \
 		mkdir -pv ./$(NAME) && \
 		DOCKER_ID=$$(docker create $(NAME):build-race) && \
@@ -147,7 +147,7 @@ build-race-docker:
 		cp -fl ./$(NAME)/$(NAME)-race ./$(NAME)/$(NAME)-race-docker'
 
 build-race-fips-docker:
-	bash -xce 'docker buildx build --build-arg CLICKHOUSE_VERSION=$${CLICKHOUSE_VERSION:-latest} --build-arg CLICKHOUSE_IMAGE=$${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server} --build-arg VERSION=$(VERSION) \
+	bash -xce 'docker buildx build --platform=linux/amd64 --build-arg CLICKHOUSE_VERSION=$${CLICKHOUSE_VERSION:-latest} --build-arg CLICKHOUSE_IMAGE=$${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server} --build-arg VERSION=$(VERSION) \
 			--tag $(NAME):build-race-fips --target make-build-race-fips --progress plain --load . && \
 		mkdir -pv ./$(NAME) && \
 		DOCKER_ID=$$(docker create $(NAME):build-race-fips) && \

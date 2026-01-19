@@ -2851,12 +2851,18 @@ func TestGetPartitionId(t *testing.T) {
 		testCases[0].CreateTableSQL = strings.Replace(testCases[0].CreateTableSQL, "UUID 'b45e751f-6c06-42a3-ab4a-f5bb9ac3716e'", "", 1)
 	}
 	for _, tc := range testCases {
+		// Skip new test cases for ClickHouse < 21.8
+		if (tc.Table == "test_part_id_6" || tc.Table == "test_part_id_7" || tc.Table == "test_part_id_8" || tc.Table == "test_part_id_9") &&
+			compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") < 0 {
+			t.Logf("Skipping %s.%s - test requires ClickHouse 21.8+", tc.Database, tc.Table)
+			continue
+		}
+
 		partitionId, partitionName, err := partition.GetPartitionIdAndName(t.Context(), env.ch, tc.Database, tc.Table, tc.CreateTableSQL, tc.Partition)
 		assert.NoError(t, err)
 		if tc.ExpectedId != "" {
 			assert.Equal(t, tc.ExpectedId, partitionId)
 		} else {
-			// For new test cases without expected values, just log the result
 			t.Logf("Test %s.%s with partition %s: partitionId=%s, partitionName=%s", tc.Database, tc.Table, tc.Partition, partitionId, partitionName)
 		}
 		if tc.ExpectedName != "" {
