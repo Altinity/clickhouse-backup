@@ -258,7 +258,7 @@ func (b *Backuper) skipIfTheSameRemoteBackupPresent(ctx context.Context, backupN
 		} else {
 			for _, remoteBackup := range remoteList {
 				if remoteBackup.BackupName == backupName {
-					if tags == "" || (tags != "" && strings.Contains(remoteBackup.Tags, tags)) {
+					if tags == "" || strings.Contains(remoteBackup.Tags, tags) {
 						return true, nil
 					}
 				}

@@ -66,7 +66,7 @@ func copyFromReader(ctx context.Context, from io.Reader, to blockWriter, o azb.U
 		}
 	}
 	// If the error is not EOF, then we have a problem.
-	if err != nil && !errors.Is(err, io.EOF) {
+	if !errors.Is(err, io.EOF) {
 		return nil, err
 	}
 
@@ -145,7 +145,7 @@ func (c *copier) sendChunk() error {
 			id:     c.id.next(),
 		}
 		return nil
-	case err != nil && (err == io.EOF || errors.Is(err, io.ErrUnexpectedEOF)) && n == 0:
+	case (err == io.EOF || errors.Is(err, io.ErrUnexpectedEOF)) && n == 0:
 		return io.EOF
 	}
 

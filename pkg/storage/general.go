@@ -304,9 +304,9 @@ func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remot
 		compressionFormat = strings.Replace(path.Ext(remotePath), ".", "", -1)
 	}
 	downloadedBytes := int64(0)
-	z, getArchieveReaderErr := getArchiveReader(compressionFormat)
-	if getArchieveReaderErr != nil {
-		return 0, getArchieveReaderErr
+	z, getArchiveReaderErr := getArchiveReader(compressionFormat)
+	if getArchiveReaderErr != nil {
+		return 0, getArchiveReaderErr
 	}
 	if extractErr := z.Extract(ctx, bufReader, nil, func(ctx context.Context, file archiver.File) error {
 		src, openErr := file.Open()

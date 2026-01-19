@@ -167,7 +167,7 @@ func newReplicaDeterminer(q querier, sf shardFunc) *replicaDeterminer {
 
 // getReplicaState obtains the local replication state through a query to `system.replicas`
 func (rd *replicaDeterminer) getReplicaState(ctx context.Context) ([]tableReplicaMetadata, error) {
-	md := []tableReplicaMetadata{}
+	var md []tableReplicaMetadata
 	// TODO: Change query to pull replica_is_active after upgrading to clickhouse-go v2
 	query := "SELECT t.database, t.name AS table, r.replica_name, arraySort(mapKeys(mapFilter((replica, active) -> (active == 1), r.replica_is_active))) AS active_replicas FROM system.tables t LEFT JOIN system.replicas r ON t.database = r.database AND t.name = r.table"
 	if err := rd.q.SelectContext(ctx, &md, query); err != nil {

@@ -119,7 +119,7 @@ func (w *CustomWriter) Write(p []byte) (n int, err error) {
 
 	// Iterate over all fields to find custom fields - zero allocations
 	hasCustomFields := false
-	jsonparser.ObjectEach(p, func(key []byte, value []byte, dataType jsonparser.ValueType, offset int) error {
+	_ = jsonparser.ObjectEach(p, func(key []byte, value []byte, dataType jsonparser.ValueType, offset int) error {
 		keyStr := string(key)
 		if !systemFields[keyStr] {
 			if !hasCustomFields {

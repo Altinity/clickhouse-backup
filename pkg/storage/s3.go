@@ -405,7 +405,7 @@ func (s *S3) getObjectAllVersions(ctx context.Context, key string) ([]string, er
 	if s.Config.RequestPayer != "" {
 		listParams.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
 	}
-	versions := []string{}
+	var versions []string
 	pager := s3.NewListObjectVersionsPaginator(s.client, listParams)
 	for pager.HasMorePages() {
 		page, err := pager.NextPage(ctx)
