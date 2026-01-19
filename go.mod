@@ -4,9 +4,9 @@ module github.com/Altinity/clickhouse-backup/v2
 replace github.com/mholt/archiver/v4 => github.com/mholt/archiver/v4 v4.0.0-alpha.8
 
 require (
-	cloud.google.com/go/storage v1.58.0
+	cloud.google.com/go/storage v1.59.1
 	github.com/Azure/azure-pipeline-go v0.2.3
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.20.0
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.21.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.13.1
 	github.com/Azure/azure-storage-blob-go v0.15.0
 	github.com/ClickHouse/clickhouse-go/v2 v2.42.0
@@ -30,7 +30,7 @@ require (
 	github.com/jlaffaye/ftp v0.2.0
 	github.com/jolestar/go-commons-pool/v2 v2.1.2
 	github.com/kelseyhightower/envconfig v1.4.0
-	github.com/klauspost/compress v1.18.2
+	github.com/klauspost/compress v1.18.3
 	github.com/mattn/go-shellwords v1.0.12
 	github.com/mholt/archiver/v4 v4.0.0-alpha.9
 	github.com/otiai10/copy v1.14.1
@@ -42,23 +42,23 @@ require (
 	github.com/rs/zerolog v1.34.0
 	github.com/shirou/gopsutil/v3 v3.24.5
 	github.com/stretchr/testify v1.11.1
-	github.com/tencentyun/cos-go-sdk-v5 v0.7.71
+	github.com/tencentyun/cos-go-sdk-v5 v0.7.72
 	github.com/urfave/cli v1.22.17
 	github.com/xyproto/gionice v1.3.0
 	github.com/yargevad/filepathx v1.0.0
 	go.etcd.io/bbolt v1.4.3
-	golang.org/x/crypto v0.46.0
-	golang.org/x/mod v0.31.0
+	golang.org/x/crypto v0.47.0
+	golang.org/x/mod v0.32.0
 	golang.org/x/sync v0.19.0
-	golang.org/x/text v0.32.0
-	google.golang.org/api v0.258.0
+	golang.org/x/text v0.33.0
+	google.golang.org/api v0.260.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
 	cel.dev/expr v0.25.1 // indirect
 	cloud.google.com/go v0.123.0 // indirect
-	cloud.google.com/go/auth v0.17.0 // indirect
+	cloud.google.com/go/auth v0.18.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	cloud.google.com/go/iam v1.5.3 // indirect
@@ -110,8 +110,8 @@ require (
 	github.com/golang/snappy v1.0.0 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
-	github.com/googleapis/enterprise-certificate-proxy v0.3.7 // indirect
-	github.com/googleapis/gax-go/v2 v2.15.0 // indirect
+	github.com/googleapis/enterprise-certificate-proxy v0.3.9 // indirect
+	github.com/googleapis/gax-go/v2 v2.16.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
@@ -128,7 +128,7 @@ require (
 	github.com/nwaples/rardecode/v2 v2.2.1 // indirect
 	github.com/otiai10/mint v1.6.3 // indirect
 	github.com/paulmach/orb v0.12.0 // indirect
-	github.com/pierrec/lz4/v4 v4.1.22 // indirect
+	github.com/pierrec/lz4/v4 v4.1.25 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
@@ -159,14 +159,14 @@ require (
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	go4.org v0.0.0-20230225012048-214862532bf5 // indirect
-	golang.org/x/net v0.48.0 // indirect
+	golang.org/x/net v0.49.0 // indirect
 	golang.org/x/oauth2 v0.34.0 // indirect
-	golang.org/x/sys v0.39.0 // indirect
+	golang.org/x/sys v0.40.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
-	google.golang.org/genproto v0.0.0-20251111163417-95abcf5c77ba // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20251111163417-95abcf5c77ba // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20251213004720-97cd9d5aeac2 // indirect
-	google.golang.org/grpc v1.77.0 // indirect
+	google.golang.org/genproto v0.0.0-20251202230838-ff82c1b0f217 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20251202230838-ff82c1b0f217 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20251222181119-0a764e51fe1b // indirect
+	google.golang.org/grpc v1.78.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
 
