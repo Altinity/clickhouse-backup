@@ -156,19 +156,40 @@ services:
       - minio
 
   ftp_server:
-    image: stilliard/pure-ftpd
+    image: gists/pure-ftpd:latest
     hostname: ftp_server
     environment:
       - FTP_USER_NAME=test
       - FTP_USER_PASS=test
-      - FTP_USER_HOME=/home/test
+      - FTP_USER_HOME=/home/ftpuser/test
       - PUBLICHOST=ftp_server
+      - MIN_PASV_PORT=30000
+      - MAX_PASV_PORT=31000
+
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        mkdir -p /etc/pureftpd
+        mkdir -p "$$FTP_USER_HOME"
+        chown -R 1000:1000 /home/ftpuser
+        
+        touch /etc/pureftpd/pureftpd.passwd
+        
+        printf '%s\n%s\n' "$$FTP_USER_PASS" "$$FTP_USER_PASS" | pure-pw useradd "$$FTP_USER_NAME" -u 1000 -g 1000 -d "$$FTP_USER_HOME" -f /etc/pureftpd/pureftpd.passwd
+        
+        pure-pw mkdb /etc/pureftpd/pureftpd.pdb -f /etc/pureftpd/pureftpd.passwd
+        
+        exec /usr/sbin/pure-ftpd \
+          -l puredb:/etc/pureftpd/pureftpd.pdb \
+          -E -j -R \
+          -P "$$PUBLICHOST" \
+          -p "$$MIN_PASV_PORT:$$MAX_PASV_PORT"
     healthcheck:
-      test: echo 1
-      interval: 3s
-      timeout: 2s
-      retries: 20
-      start_period: 10s
+      test: ["CMD-SHELL", "nc -z localhost 21"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
 
   sftp_server:
     image: panubo/sshd:latest
