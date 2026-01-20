@@ -295,14 +295,23 @@ func (gcs *GCS) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadC
 	}
 	reader, err := obj.NewReader(ctx)
 	if err != nil {
+		// Close reader if it was partially initialized
+		if reader != nil {
+			_ = reader.Close()
+			reader = nil
+		}
 		// If the object is not encrypted but we tried to read it with encryption key,
 		// retry without encryption (for backward compatibility with old backups)
 		if !isObjectDiskPath && gcs.isNotEncryptedError(err) && gcs.encryptionKey != nil {
-			log.Debug().Msgf("gcs.GetFileReader: object %s not encrypted, retrying without encryption key", key)
+			log.Warn().Msgf("gcs.GetFileReader: object %s not encrypted, retrying without encryption key", key)
 			obj = pClient.Bucket(gcs.Config.Bucket).Object(key)
 			reader, err = obj.NewReader(ctx)
 		}
 		if err != nil {
+			// Close reader from retry if it failed
+			if reader != nil {
+				_ = reader.Close()
+			}
 			if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
 				log.Warn().Msgf("gcs.GetFileReader: gcs.clientPool.InvalidateObject error: %v ", pErr)
 			}
@@ -380,7 +389,7 @@ func (gcs *GCS) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, e
 		// If the object is not encrypted but we tried to read it with encryption key,
 		// retry without encryption (for backward compatibility with old backups)
 		if !isObjectDiskPath && gcs.isNotEncryptedError(err) && gcs.encryptionKey != nil {
-			log.Debug().Msgf("gcs.StatFile: object %s not encrypted, retrying without encryption key", key)
+			log.Warn().Msgf("gcs.StatFile: object %s not encrypted, retrying without encryption key", key)
 			obj = gcs.client.Bucket(gcs.Config.Bucket).Object(key)
 			objAttr, err = obj.Attrs(ctx)
 		}
