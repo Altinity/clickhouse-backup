@@ -222,6 +222,14 @@ func (gcs *GCS) applyEncryption(obj *storage.ObjectHandle) *storage.ObjectHandle
 	return obj
 }
 
+// isNotEncryptedError checks if the error is "ResourceNotEncryptedWithCustomerEncryptionKey"
+func (gcs *GCS) isNotEncryptedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "ResourceNotEncryptedWithCustomerEncryptionKey")
+}
+
 func (gcs *GCS) Walk(ctx context.Context, gcsPath string, recursive bool, process func(ctx context.Context, r RemoteFile) error) error {
 	rootPath := path.Join(gcs.Config.Path, gcsPath)
 	return gcs.WalkAbsolute(ctx, rootPath, recursive, process)
@@ -278,13 +286,28 @@ func (gcs *GCS) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadC
 		return nil, err
 	}
 	pClient := pClientObj.(*clientObject).Client
-	obj := gcs.applyEncryption(pClient.Bucket(gcs.Config.Bucket).Object(key))
+	obj := pClient.Bucket(gcs.Config.Bucket).Object(key)
+	// Do NOT apply encryption for object_disks files - they are not encrypted
+	// because ClickHouse needs to read them directly without encryption key
+	isObjectDiskPath := gcs.Config.ObjectDiskPath != "" && strings.HasPrefix(key, gcs.Config.ObjectDiskPath)
+	if !isObjectDiskPath {
+		obj = gcs.applyEncryption(obj)
+	}
 	reader, err := obj.NewReader(ctx)
 	if err != nil {
-		if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
-			log.Warn().Msgf("gcs.GetFileReader: gcs.clientPool.InvalidateObject error: %v ", pErr)
+		// If the object is not encrypted but we tried to read it with encryption key,
+		// retry without encryption (for backward compatibility with old backups)
+		if !isObjectDiskPath && gcs.isNotEncryptedError(err) && gcs.encryptionKey != nil {
+			log.Debug().Msgf("gcs.GetFileReader: object %s not encrypted, retrying without encryption key", key)
+			obj = pClient.Bucket(gcs.Config.Bucket).Object(key)
+			reader, err = obj.NewReader(ctx)
 		}
-		return nil, err
+		if err != nil {
+			if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
+				log.Warn().Msgf("gcs.GetFileReader: gcs.clientPool.InvalidateObject error: %v ", pErr)
+			}
+			return nil, err
+		}
 	}
 	if pErr := gcs.clientPool.ReturnObject(ctx, pClientObj); pErr != nil {
 		log.Warn().Msgf("gcs.GetFileReader: gcs.clientPool.ReturnObject error: %v ", pErr)
@@ -307,7 +330,12 @@ func (gcs *GCS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser
 		return err
 	}
 	pClient := pClientObj.(*clientObject).Client
-	obj := gcs.applyEncryption(pClient.Bucket(gcs.Config.Bucket).Object(key))
+	obj := pClient.Bucket(gcs.Config.Bucket).Object(key)
+	// Do NOT apply encryption for object_disks files - they must be readable by ClickHouse
+	// which doesn't have access to the encryption key
+	if gcs.Config.ObjectDiskPath == "" || !strings.HasPrefix(key, gcs.Config.ObjectDiskPath) {
+		obj = gcs.applyEncryption(obj)
+	}
 	// always retry transient errors to mitigate retry logic bugs.
 	obj = obj.Retryer(storage.WithPolicy(storage.RetryAlways))
 	writer := obj.NewWriter(ctx)
@@ -340,13 +368,28 @@ func (gcs *GCS) StatFile(ctx context.Context, key string) (RemoteFile, error) {
 }
 
 func (gcs *GCS) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, error) {
-	obj := gcs.applyEncryption(gcs.client.Bucket(gcs.Config.Bucket).Object(key))
+	obj := gcs.client.Bucket(gcs.Config.Bucket).Object(key)
+	// Do NOT apply encryption for object_disks files - they are not encrypted
+	// because ClickHouse needs to read them directly without encryption key
+	isObjectDiskPath := gcs.Config.ObjectDiskPath != "" && strings.HasPrefix(key, gcs.Config.ObjectDiskPath)
+	if !isObjectDiskPath {
+		obj = gcs.applyEncryption(obj)
+	}
 	objAttr, err := obj.Attrs(ctx)
 	if err != nil {
-		if errors.Is(err, storage.ErrObjectNotExist) {
-			return nil, ErrNotFound
+		// If the object is not encrypted but we tried to read it with encryption key,
+		// retry without encryption (for backward compatibility with old backups)
+		if !isObjectDiskPath && gcs.isNotEncryptedError(err) && gcs.encryptionKey != nil {
+			log.Debug().Msgf("gcs.StatFile: object %s not encrypted, retrying without encryption key", key)
+			obj = gcs.client.Bucket(gcs.Config.Bucket).Object(key)
+			objAttr, err = obj.Attrs(ctx)
 		}
-		return nil, err
+		if err != nil {
+			if errors.Is(err, storage.ErrObjectNotExist) {
+				return nil, ErrNotFound
+			}
+			return nil, err
+		}
 	}
 	return &gcsFile{
 		size:         objAttr.Size,
@@ -396,7 +439,9 @@ func (gcs *GCS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey
 	}
 	pClient := pClientObj.(*clientObject).Client
 	src := pClient.Bucket(srcBucket).Object(srcKey)
-	dst := gcs.applyEncryption(pClient.Bucket(gcs.Config.Bucket).Object(dstKey))
+	// Do NOT apply encryption for object_disks files - they must be readable by ClickHouse
+	// which doesn't have access to the encryption key
+	dst := pClient.Bucket(gcs.Config.Bucket).Object(dstKey)
 	// always retry transient errors to mitigate retry logic bugs.
 	dst = dst.Retryer(storage.WithPolicy(storage.RetryAlways))
 	attrs, err := src.Attrs(ctx)
@@ -407,8 +452,8 @@ func (gcs *GCS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey
 		return 0, err
 	}
 	copier := dst.CopierFrom(src)
-	// If encryption is enabled, the destination will be encrypted
-	// Note: source objects from object disks are not encrypted by clickhouse-backup
+	// Note: source and destination objects for object disks are not encrypted
+	// because ClickHouse needs to read them directly without encryption key
 	if _, err = copier.Run(ctx); err != nil {
 		if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
 			log.Warn().Msgf("gcs.CopyObject: gcs.clientPool.InvalidateObject error: %+v", pErr)

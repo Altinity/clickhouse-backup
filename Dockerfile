@@ -2,7 +2,7 @@
 ARG CLICKHOUSE_VERSION=latest
 ARG CLICKHOUSE_IMAGE=clickhouse/clickhouse-server
 
-FROM --platform=$BUILDPLATFORM ${CLICKHOUSE_IMAGE}:${CLICKHOUSE_VERSION} AS builder-base
+FROM --platform=${TARGETPLATFORM} ${CLICKHOUSE_IMAGE}:${CLICKHOUSE_VERSION} AS builder-base
 USER root
 # TODO remove ugly workaround for musl, https://www.perplexity.ai/search/2ead4c04-060a-4d78-a75f-f26835238438
 RUN rm -fv /etc/apt/sources.list.d/clickhouse.list && \

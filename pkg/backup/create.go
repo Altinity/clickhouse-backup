@@ -263,6 +263,10 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 		if err = config.ValidateObjectDiskConfig(b.cfg); err != nil {
 			return err
 		}
+		// Warn if encryption key is set for GCS - object disk files won't be encrypted
+		if b.cfg.General.RemoteStorage == "gcs" && b.cfg.GCS.EncryptionKey != "" {
+			log.Warn().Msg("GCS_ENCRYPTION_KEY is configured, but files in object_disk path will NOT be encrypted. ClickHouse needs direct unencrypted access to these files for BACKUP/RESTORE operations.")
+		}
 	}
 
 	if isObjectDiskContainsTables || (diffFromRemote != "" && b.cfg.General.RemoteStorage != "custom") {
@@ -433,6 +437,10 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 		if b.cfg.ClickHouse.EmbeddedBackupDisk == "" {
 			if err := config.ValidateObjectDiskConfig(b.cfg); err != nil {
 				return err
+			}
+			// Warn if encryption key is set for GCS - object disk files won't be encrypted
+			if b.cfg.General.RemoteStorage == "gcs" && b.cfg.GCS.EncryptionKey != "" {
+				log.Warn().Msg("GCS_ENCRYPTION_KEY is configured, but files in object_disk path will NOT be encrypted. ClickHouse needs direct unencrypted access to these files for BACKUP/RESTORE operations.")
 			}
 		}
 
