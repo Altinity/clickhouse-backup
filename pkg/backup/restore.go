@@ -1999,10 +1999,19 @@ func (b *Backuper) restoreDataRegular(ctx context.Context, backupName string, ba
 }
 
 func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, table metadata.TableMetadata, diskMap, diskTypes map[string]string, disks []clickhouse.Disk, dstTable clickhouse.Table, skipProjections []string, logger zerolog.Logger, replicatedCopyToDetached bool) error {
-	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, table, disks, diskMap, dstTable.DataPaths, skipProjections, b.ch, false); err != nil {
+	// For Replicated*MergeTree tables with replicatedCopyToDetached, copy parts to detached folder
+	copyToDetached := replicatedCopyToDetached && strings.Contains(dstTable.Engine, "Replicated")
+	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, table, disks, diskMap, dstTable.DataPaths, skipProjections, b.ch, copyToDetached); err != nil {
+		if copyToDetached {
+			return errors.Wrapf(err, "can't copy data to detached '%s.%s'", table.Database, table.Table)
+		}
 		return errors.Wrapf(err, "can't copy data to storage '%s.%s'", table.Database, table.Table)
 	}
-	logger.Debug().Msg("data to 'storage' copied")
+	if copyToDetached {
+		logger.Debug().Msg("data to 'detached' copied")
+	} else {
+		logger.Debug().Msg("data to 'storage' copied")
+	}
 	var size int64
 	var err error
 	start := time.Now()
