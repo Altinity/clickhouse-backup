@@ -267,6 +267,7 @@ jobs:
           # S3_DEBUG: "true"
           CGO_ENABLED: 0
           GCS_TESTS: ${{ needs.build.outputs.GCS_TESTS }}
+          KEEPER_TLS_ENABLED: 1
           RUN_ADVANCED_TESTS: 1
           AZURE_TESTS: 1
           # need for FIPS
