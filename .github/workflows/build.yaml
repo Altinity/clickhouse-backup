@@ -49,7 +49,7 @@ jobs:
       - name: Build clickhouse-backup binary
         id: make-race
         env:
-          GOROOT: ${{ env.GOROOT_1_24_X64 }}
+          GOROOT: ${{ env.GOROOT_1_25_X64 }}
         run: |
           make build/linux/amd64/clickhouse-backup build/linux/arm64/clickhouse-backup
           make build/linux/amd64/clickhouse-backup-fips build/linux/arm64/clickhouse-backup-fips 
@@ -171,7 +171,7 @@ jobs:
           sudo chmod -Rv +rx test/testflows/clickhouse_backup/_instances
       - name: Format testflows coverage
         env:
-          GOROOT: ${{ env.GOROOT_1_24_X64 }}
+          GOROOT: ${{ env.GOROOT_1_25_X64 }}
         run: |
           sudo chmod -Rv a+rw test/testflows/_coverage_/
           ls -la test/testflows/_coverage_
@@ -254,7 +254,7 @@ jobs:
       - name: Running integration tests
         env:
           RUN_PARALLEL: 4
-          GOROOT: ${{ env.GOROOT_1_24_X64 }}
+          GOROOT: ${{ env.GOROOT_1_25_X64 }}
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
           # options for advanced debug CI/CD
           # RUN_TESTS: "^TestSkipDisk$"
@@ -342,7 +342,7 @@ jobs:
 
       - name: Format integration coverage
         env:
-          GOROOT: ${{ env.GOROOT_1_24_X64 }}
+          GOROOT: ${{ env.GOROOT_1_25_X64 }}
         run: |
           sudo chmod -Rv a+rw test/integration/_coverage_/
           ls -la test/integration/_coverage_ 
