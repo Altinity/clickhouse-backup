@@ -2978,16 +2978,16 @@ func TestRestoreDistributedCluster(t *testing.T) {
 
 		// remove cluster and wait configuration reload
 		env.DockerExecNoError(r, "clickhouse", "bash", "-c", "rm -rfv /etc/clickhouse-server/config.d/new-cluster.xml")
-		env.queryWithNoError(r, "SYSTEM RELOAD CONFIG")
 		newClusterExists := uint64(1)
 		for i := 0; i < 60 && newClusterExists == 1; i++ {
+			env.queryWithNoError(r, "SYSTEM RELOAD CONFIG")
 			r.NoError(env.ch.SelectSingleRowNoCtx(&newClusterExists, "SELECT count() FROM system.clusters WHERE cluster='new_cluster'"))
 			if newClusterExists == 0 {
 				break
 			}
 			time.Sleep(1 * time.Second)
 		}
-		r.Equal(uint64(0), newClusterExists)
+		r.Equal(uint64(0), newClusterExists, "new_cluster shall not present in system.clusters")
 
 		// Restore using `CLICKHOUSE_RESTORE_DISTRIBUTED_CLUSTER` and `RESTORE_SCHEMA_ON_CLUSTER`
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-c", fmt.Sprintf("RESTORE_SCHEMA_ON_CLUSTER='%s' CLICKHOUSE_RESTORE_DISTRIBUTED_CLUSTER='%s' clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml restore %s", tc.RestoreSchemaOnCluster, tc.RestoreDistributedCluster, backupName))
