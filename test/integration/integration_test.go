@@ -1199,6 +1199,8 @@ func TestServerAPI(t *testing.T) {
 
 	testAPIDeleteLocalDownloadRestore(r, env)
 
+	testAPISkipEmptyTables(r, env)
+
 	testAPIMetrics(r, env)
 
 	testAPIWatchAndKill(r, env)
@@ -1454,6 +1456,112 @@ func testAPIDeleteLocalDownloadRestore(r *require.Assertions, env *TestEnvironme
 	r.Contains(out, "clickhouse_backup_last_delete_status 1")
 	r.Contains(out, "clickhouse_backup_last_download_status 1")
 	r.Contains(out, "clickhouse_backup_last_restore_status 1")
+}
+
+// testAPISkipEmptyTables tests the skip-empty-tables query parameter for restore and restore_remote API endpoints
+// https://github.com/Altinity/clickhouse-backup/issues/1265
+func testAPISkipEmptyTables(r *require.Assertions, env *TestEnvironment) {
+	log.Debug().Msg("Check /backup/restore and /backup/restore_remote with skip-empty-tables parameter")
+
+	backupName := "api_skip_empty_backup"
+
+	// Helper function to wait for operation to complete
+	waitForOperation := func(operationName string, timeout time.Duration) {
+		startTime := time.Now()
+		for {
+			if time.Since(startTime) > timeout {
+				r.Fail("timeout waiting for " + operationName)
+			}
+			statusOut, err := env.DockerExecOut("clickhouse-backup", "curl", "-sL", "http://localhost:7171/backup/status")
+			r.NoError(err)
+
+			var lastFoundAction *status.ActionRowStatus
+			scanner := bufio.NewScanner(strings.NewReader(statusOut))
+			for scanner.Scan() {
+				line := scanner.Bytes()
+				if len(line) == 0 {
+					continue
+				}
+				var action status.ActionRowStatus
+				if unmarshalErr := json.Unmarshal(line, &action); unmarshalErr != nil {
+					continue
+				}
+				// Check if command contains the backup name and starts with the operation name
+				if strings.Contains(action.Command, backupName) && strings.HasPrefix(action.Command, operationName) {
+					currentAction := action
+					lastFoundAction = &currentAction
+				}
+			}
+
+			if lastFoundAction != nil && lastFoundAction.Status != status.InProgressStatus {
+				r.Equal(status.SuccessStatus, lastFoundAction.Status, "command '%s' failed with error: %s", lastFoundAction.Command, lastFoundAction.Error)
+				return
+			}
+			time.Sleep(1 * time.Second)
+		}
+	}
+
+	// Create test database with tables - one with data and one empty
+	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS test_api_skip_empty")
+	env.queryWithNoError(r, "CREATE TABLE IF NOT EXISTS test_api_skip_empty.table_with_data (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(r, "CREATE TABLE IF NOT EXISTS test_api_skip_empty.empty_table (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(r, "INSERT INTO test_api_skip_empty.table_with_data SELECT number FROM numbers(50)")
+
+	// Create and upload backup via API
+	out, err := env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/create?name=%s'", backupName))
+	r.NoError(err, "%s\nunexpected POST /backup/create error: %v", out, err)
+	r.Contains(out, "acknowledged")
+	waitForOperation("create", 60*time.Second)
+
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/upload/%s'", backupName))
+	r.NoError(err, "%s\nunexpected POST /backup/upload error: %v", out, err)
+	r.Contains(out, "acknowledged")
+	waitForOperation("upload", 60*time.Second)
+
+	// Drop database
+	env.queryWithNoError(r, "DROP DATABASE IF EXISTS test_api_skip_empty")
+
+	// Test restore with skip-empty-tables parameter
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/restore/%s?rm=1&drop=true&skip-empty-tables=true'", backupName))
+	r.NoError(err, "%s\nunexpected POST /backup/restore error: %v", out, err)
+	r.Contains(out, "acknowledged")
+	waitForOperation("restore", 60*time.Second)
+
+	// Verify only non-empty table exists (empty table should be skipped entirely)
+	var tableCount uint64
+	r.NoError(env.ch.SelectSingleRowNoCtx(&tableCount, "SELECT count() FROM system.tables WHERE database='test_api_skip_empty'"))
+	r.Equal(uint64(1), tableCount, "Only table_with_data should be restored with --skip-empty-tables")
+
+	// Verify data in table_with_data
+	var dataCount uint64
+	r.NoError(env.ch.SelectSingleRowNoCtx(&dataCount, "SELECT count() FROM test_api_skip_empty.table_with_data"))
+	r.Equal(uint64(50), dataCount, "table_with_data should have 50 rows")
+
+	// Test restore_remote with skip_empty_tables parameter (underscore version)
+	env.queryWithNoError(r, "DROP DATABASE IF EXISTS test_api_skip_empty")
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/delete/local/%s'", backupName))
+	r.NoError(err, "%s\nunexpected POST /backup/delete/local error: %v", out, err)
+	time.Sleep(2 * time.Second)
+
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/restore_remote/%s?rm=1&drop=true&skip_empty_tables=true'", backupName))
+	r.NoError(err, "%s\nunexpected POST /backup/restore_remote error: %v", out, err)
+	r.Contains(out, "acknowledged")
+	waitForOperation("restore_remote", 60*time.Second)
+
+	// Verify only non-empty table exists
+	r.NoError(env.ch.SelectSingleRowNoCtx(&tableCount, "SELECT count() FROM system.tables WHERE database='test_api_skip_empty'"))
+	r.Equal(uint64(1), tableCount, "Only table_with_data should be restored with restore_remote --skip-empty-tables")
+
+	// Verify data in table_with_data
+	r.NoError(env.ch.SelectSingleRowNoCtx(&dataCount, "SELECT count() FROM test_api_skip_empty.table_with_data"))
+	r.Equal(uint64(50), dataCount, "table_with_data should have 50 rows with restore_remote")
+
+	// Clean up
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/delete/local/%s'", backupName))
+	r.NoError(err, "%s\nunexpected POST /backup/delete/local error: %v", out, err)
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/delete/remote/%s'", backupName))
+	r.NoError(err, "%s\nunexpected POST /backup/delete/remote error: %v", out, err)
+	env.queryWithNoError(r, "DROP DATABASE IF EXISTS test_api_skip_empty")
 }
 
 func testAPIBackupList(t *testing.T, r *require.Assertions, env *TestEnvironment) {
@@ -2330,6 +2438,82 @@ func TestSkipTablesAndSkipTableEngines(t *testing.T) {
 	r.NoError(env.dropDatabase("test_skip_tables", false))
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete local test_skip_full_backup")
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-xec", "clickhouse-backup -c /etc/clickhouse-backup/config-s3.yml delete remote test_skip_full_backup")
+	env.Cleanup(t, r)
+}
+
+// TestSkipEmptyTables tests the --skip-empty-tables flag for restore and restore_remote commands
+// https://github.com/Altinity/clickhouse-backup/issues/1265
+func TestSkipEmptyTables(t *testing.T) {
+	env, r := NewTestEnvironment(t)
+	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
+
+	// Create test database with tables - one with data and one empty
+	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS test_skip_empty")
+	env.queryWithNoError(r, "CREATE TABLE IF NOT EXISTS test_skip_empty.table_with_data (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(r, "CREATE TABLE IF NOT EXISTS test_skip_empty.empty_table (id UInt64) ENGINE=MergeTree() ORDER BY id")
+	env.queryWithNoError(r, "INSERT INTO test_skip_empty.table_with_data SELECT number FROM numbers(100)")
+
+	// Create backup
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "test_skip_empty_backup")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "upload", "test_skip_empty_backup")
+
+	// Drop tables
+	r.NoError(env.dropDatabase("test_skip_empty", false))
+
+	// Test restore without --skip-empty-tables (should restore both tables)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--rm", "test_skip_empty_backup")
+
+	// Verify both tables exist
+	var tableCount uint64
+	r.NoError(env.ch.SelectSingleRowNoCtx(&tableCount, "SELECT count() FROM system.tables WHERE database='test_skip_empty'"))
+	r.Equal(uint64(2), tableCount, "Both tables should be restored without --skip-empty-tables")
+
+	// Verify data in table_with_data
+	var dataCount uint64
+	r.NoError(env.ch.SelectSingleRowNoCtx(&dataCount, "SELECT count() FROM test_skip_empty.table_with_data"))
+	r.Equal(uint64(100), dataCount, "table_with_data should have 100 rows")
+
+	// Verify empty_table is empty
+	var emptyCount uint64
+	r.NoError(env.ch.SelectSingleRowNoCtx(&emptyCount, "SELECT count() FROM test_skip_empty.empty_table"))
+	r.Equal(uint64(0), emptyCount, "empty_table should have 0 rows")
+
+	// Drop tables and test with --skip-empty-tables
+	r.NoError(env.dropDatabase("test_skip_empty", false))
+
+	// Test restore with --skip-empty-tables (should skip empty_table completely - both schema and data)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--rm", "--skip-empty-tables", "test_skip_empty_backup")
+
+	// Verify only non-empty table exists (empty table should be skipped entirely)
+	r.NoError(env.ch.SelectSingleRowNoCtx(&tableCount, "SELECT count() FROM system.tables WHERE database='test_skip_empty'"))
+	r.Equal(uint64(1), tableCount, "Only table_with_data should be created with --skip-empty-tables")
+
+	// Verify data in table_with_data
+	r.NoError(env.ch.SelectSingleRowNoCtx(&dataCount, "SELECT count() FROM test_skip_empty.table_with_data"))
+	r.Equal(uint64(100), dataCount, "table_with_data should have 100 rows with --skip-empty-tables")
+
+	// Verify empty_table does NOT exist
+	r.NoError(env.ch.SelectSingleRowNoCtx(&tableCount, "SELECT count() FROM system.tables WHERE database='test_skip_empty' AND name='empty_table'"))
+	r.Equal(uint64(0), tableCount, "empty_table should NOT exist with --skip-empty-tables")
+
+	// Test restore_remote with --skip-empty-tables
+	r.NoError(env.dropDatabase("test_skip_empty", false))
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_skip_empty_backup")
+
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore_remote", "--rm", "--skip-empty-tables", "test_skip_empty_backup")
+
+	// Verify only non-empty table exists
+	r.NoError(env.ch.SelectSingleRowNoCtx(&tableCount, "SELECT count() FROM system.tables WHERE database='test_skip_empty'"))
+	r.Equal(uint64(1), tableCount, "Only table_with_data should be created with restore_remote --skip-empty-tables")
+
+	// Verify data in table_with_data
+	r.NoError(env.ch.SelectSingleRowNoCtx(&dataCount, "SELECT count() FROM test_skip_empty.table_with_data"))
+	r.Equal(uint64(100), dataCount, "table_with_data should have 100 rows with restore_remote --skip-empty-tables")
+
+	// Clean up
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_skip_empty_backup")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "remote", "test_skip_empty_backup")
+	r.NoError(env.dropDatabase("test_skip_empty", false))
 	env.Cleanup(t, r)
 }
 

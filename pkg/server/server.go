@@ -1698,6 +1698,21 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// Handle skip-empty-tables parameter
+	// https://github.com/Altinity/clickhouse-backup/issues/1265
+	skipEmptyTables := false
+	skipEmptyTablesParamName := "skip_empty_tables"
+	skipEmptyTablesParamNames := []string{
+		strings.Replace(skipEmptyTablesParamName, "_", "-", -1),
+		strings.Replace(skipEmptyTablesParamName, "-", "_", -1),
+	}
+	for _, paramName := range skipEmptyTablesParamNames {
+		if _, exist := api.getQueryParameter(query, paramName); exist {
+			skipEmptyTables = true
+			fullCommand += " --skip-empty-tables"
+		}
+	}
+
 	name := utils.CleanBackupNameRE.ReplaceAllString(vars["name"], "")
 	fullCommand += fmt.Sprintf(" %s", name)
 
@@ -1712,7 +1727,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore", 0, func() error {
 			b := backup.NewBackuper(api.config)
-			return b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, api.cliApp.Version, commandId)
+			return b.Restore(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, api.cliApp.Version, commandId)
 		})
 		go func() {
 			if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {
@@ -1917,6 +1932,21 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 		fullCommand += " --hardlink-exists-files"
 	}
 
+	// Handle skip-empty-tables parameter
+	// https://github.com/Altinity/clickhouse-backup/issues/1265
+	skipEmptyTables := false
+	skipEmptyTablesParamName := "skip_empty_tables"
+	skipEmptyTablesParamNames := []string{
+		strings.Replace(skipEmptyTablesParamName, "_", "-", -1),
+		strings.Replace(skipEmptyTablesParamName, "-", "_", -1),
+	}
+	for _, paramName := range skipEmptyTablesParamNames {
+		if _, exist := api.getQueryParameter(query, paramName); exist {
+			skipEmptyTables = true
+			fullCommand += " --skip-empty-tables"
+		}
+	}
+
 	name := utils.CleanBackupNameRE.ReplaceAllString(vars["name"], "")
 	fullCommand += fmt.Sprintf(" %s", name)
 
@@ -1931,7 +1961,7 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 	go func() {
 		err, _ := api.metrics.ExecuteWithMetrics("restore_remote", 0, func() error {
 			b := backup.NewBackuper(cfg)
-			return b.RestoreFromRemote(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, hardlinkExistsFiles, api.cliApp.Version, commandId)
+			return b.RestoreFromRemote(name, tablePattern, databaseMappingToRestore, tableMappingToRestore, partitionsToBackup, skipProjections, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, restoreSchemaAsAttach, replicatedCopyToDetached, skipEmptyTables, hardlinkExistsFiles, api.cliApp.Version, commandId)
 		})
 		go func() {
 			if metricsErr := api.UpdateBackupMetrics(context.Background(), true); metricsErr != nil {

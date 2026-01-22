@@ -506,6 +506,55 @@ func (b *Backuper) filterPartsAndFilesByDisk(tables ListOfTables, disks []clickh
 	}
 }
 
+// filterEmptyTables - https://github.com/Altinity/clickhouse-backup/issues/1265
+func (b *Backuper) filterEmptyTables(tables ListOfTables) ListOfTables {
+	filteredTables := make(ListOfTables, 0, len(tables))
+	for _, table := range tables {
+		if table == nil {
+			continue
+		}
+		// Check if table has any parts or files (data)
+		hasParts := false
+		for _, parts := range table.Parts {
+			if len(parts) > 0 {
+				hasParts = true
+				break
+			}
+		}
+		hasFiles := false
+		for _, files := range table.Files {
+			if len(files) > 0 {
+				hasFiles = true
+				break
+			}
+		}
+		if hasParts || hasFiles {
+			filteredTables = append(filteredTables, table)
+		} else {
+			log.Info().Str("database", table.Database).Str("table", table.Table).Msg("skipped empty table with --skip-empty-tables")
+		}
+	}
+	return filteredTables
+}
+
+// filterTablesWithoutPartitions - filter out tables that don't have any matching partitions
+// https://github.com/Altinity/clickhouse-backup/issues/1265
+func (b *Backuper) filterTablesWithoutPartitions(tables ListOfTables, partitionsNames map[metadata.TableTitle][]string) ListOfTables {
+	filteredTables := make(ListOfTables, 0, len(tables))
+	for _, table := range tables {
+		if table == nil {
+			continue
+		}
+		tableTitle := metadata.TableTitle{Database: table.Database, Table: table.Table}
+		if partitions, exists := partitionsNames[tableTitle]; exists && len(partitions) > 0 {
+			filteredTables = append(filteredTables, table)
+		} else {
+			log.Info().Str("database", table.Database).Str("table", table.Table).Msg("skipped table without matching partitions")
+		}
+	}
+	return filteredTables
+}
+
 // https://github.com/Altinity/clickhouse-backup/issues/1127
 var dbEngineRE = regexp.MustCompile(`(?m)ENGINE\s*=\s*(\w+\([^)]*\))`)
 

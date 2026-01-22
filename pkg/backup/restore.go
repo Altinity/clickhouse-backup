@@ -50,7 +50,7 @@ import (
 )
 
 // Restore - restore tables matched by tablePattern from backupName
-func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tableMapping, partitions, skipProjections []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, schemaAsAttach, replicatedCopyToDetached bool, backupVersion string, commandId int) error {
+func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tableMapping, partitions, skipProjections []string, schemaOnly, dataOnly, dropExists, ignoreDependencies, restoreRBAC, rbacOnly, restoreConfigs, configsOnly, restoreNamedCollections, namedCollectionsOnly, resume, schemaAsAttach, replicatedCopyToDetached, skipEmptyTables bool, backupVersion string, commandId int) error {
 	if pidCheckErr := pidlock.CheckAndCreatePidFile(backupName, "restore"); pidCheckErr != nil {
 		return pidCheckErr
 	}
@@ -238,6 +238,25 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 	if err != nil {
 		return err
 	}
+
+	// Filter tables based on skip-empty-tables and partitions
+	// https://github.com/Altinity/clickhouse-backup/issues/1265
+	if skipEmptyTables {
+		tablesForRestore = b.filterEmptyTables(tablesForRestore)
+		if len(tablesForRestore) == 0 {
+			log.Info().Msg("all tables are empty, nothing to restore with --skip-empty-tables")
+			return nil
+		}
+	}
+	// After partition filtering, skip tables that don't have any selected partitions
+	if len(partitions) > 0 {
+		tablesForRestore = b.filterTablesWithoutPartitions(tablesForRestore, partitionsNames)
+		if len(tablesForRestore) == 0 {
+			log.Info().Msg("no tables have matching partitions, nothing to restore")
+			return nil
+		}
+	}
+
 	if schemaOnly || dropExists || (schemaOnly == dataOnly) {
 		if err = b.RestoreSchema(ctx, backupName, backupMetadata, disks, tablesForRestore, ignoreDependencies, version, schemaAsAttach); err != nil {
 			return err
@@ -251,7 +270,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 
 	}
 	if dataOnly || (schemaOnly == dataOnly) {
-		if err := b.RestoreData(ctx, backupName, backupMetadata, dataOnly, metadataPath, tablePattern, partitions, skipProjections, disks, version, replicatedCopyToDetached); err != nil {
+		if err := b.RestoreData(ctx, backupName, backupMetadata, dataOnly, metadataPath, tablePattern, partitions, skipProjections, disks, version, replicatedCopyToDetached, tablesForRestore); err != nil {
 			return err
 		}
 	}
@@ -1837,7 +1856,7 @@ func (b *Backuper) dropExistsTables(tablesForDrop ListOfTables, databaseEngines 
 }
 
 // RestoreData - restore data for tables matched by tablePattern from backupName
-func (b *Backuper) RestoreData(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, dataOnly bool, metadataPath, tablePattern string, partitions, skipProjections []string, disks []clickhouse.Disk, version int, replicatedCopyToDetached bool) error {
+func (b *Backuper) RestoreData(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, dataOnly bool, metadataPath, tablePattern string, partitions, skipProjections []string, disks []clickhouse.Disk, version int, replicatedCopyToDetached bool, filteredTables ListOfTables) error {
 	var err error
 	startRestoreData := time.Now()
 	diskMap := make(map[string]string, len(disks))
@@ -1853,14 +1872,25 @@ func (b *Backuper) RestoreData(ctx context.Context, backupName string, backupMet
 	}
 	var tablesForRestore ListOfTables
 	var partitionsNameList map[metadata.TableTitle][]string
-	tablesForRestore, partitionsNameList, err = b.getTableListByPatternLocal(ctx, metadataPath, tablePattern, false, partitions)
-	if err != nil {
-		// fix https://github.com/Altinity/clickhouse-backup/issues/832
-		if b.cfg.General.AllowEmptyBackups && os.IsNotExist(err) {
-			log.Warn().Msgf("b.getTableListByPatternLocal return error: %v", err)
-			return nil
+
+	// Use pre-filtered tables if provided (e.g., when --skip-empty-tables was used)
+	if filteredTables != nil && len(filteredTables) > 0 {
+		tablesForRestore = filteredTables
+		// Still need to get partitionsNameList
+		_, partitionsNameList, err = b.getTableListByPatternLocal(ctx, metadataPath, tablePattern, false, partitions)
+		if err != nil && !os.IsNotExist(err) {
+			return err
 		}
-		return err
+	} else {
+		tablesForRestore, partitionsNameList, err = b.getTableListByPatternLocal(ctx, metadataPath, tablePattern, false, partitions)
+		if err != nil {
+			// fix https://github.com/Altinity/clickhouse-backup/issues/832
+			if b.cfg.General.AllowEmptyBackups && os.IsNotExist(err) {
+				log.Warn().Msgf("b.getTableListByPatternLocal return error: %v", err)
+				return nil
+			}
+			return err
+		}
 	}
 	if len(tablesForRestore) == 0 {
 		if b.cfg.General.AllowEmptyBackups {
