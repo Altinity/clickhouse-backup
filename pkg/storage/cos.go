@@ -243,8 +243,6 @@ func (c *COS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, 
 		}
 	}()
 
-	var parts []cos.Object // To store parts for completion
-
 	partsCh := make(chan partUpload)
 	uploadedCh := make(chan uploadedPart)
 	uploadPartErrGroup, ctx := errgroup.WithContext(ctx)
@@ -291,11 +289,16 @@ func (c *COS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, 
 	})
 
 	// Collector goroutine: collect uploaded parts
+	// NOTE: This runs OUTSIDE the errgroup to avoid deadlock - it must wait for uploadedCh to close,
+	// which happens after errgroup.Wait() returns
 	var (
 		uploadedParts []cos.Object
 		mu            sync.Mutex
+		collectorWg   sync.WaitGroup
 	)
-	uploadPartErrGroup.Go(func() error {
+	collectorWg.Add(1)
+	go func() {
+		defer collectorWg.Done()
 		for up := range uploadedCh {
 			mu.Lock()
 			uploadedParts = append(uploadedParts, cos.Object{
@@ -304,9 +307,11 @@ func (c *COS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, 
 			})
 			mu.Unlock()
 		}
-		return nil
-	})
+	}()
+
 	if wgWaitErr := uploadPartErrGroup.Wait(); wgWaitErr != nil {
+		close(uploadedCh)
+		collectorWg.Wait()
 		if _, abortErr := c.client.Object.AbortMultipartUpload(ctx, key, uploadID); abortErr != nil {
 			return errors.Wrapf(wgWaitErr, "COS Multipart upload %s abort error: %v, original error was", key, abortErr)
 		}
@@ -314,10 +319,11 @@ func (c *COS) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, 
 	}
 
 	close(uploadedCh)
+	collectorWg.Wait()
 	sort.Slice(uploadedParts, func(i, j int) bool { return uploadedParts[i].PartNumber < uploadedParts[j].PartNumber })
 
 	// Step 3: Complete Multipart Upload
-	_, _, completeErr := c.client.Object.CompleteMultipartUpload(ctx, key, uploadID, &cos.CompleteMultipartUploadOptions{Parts: parts})
+	_, _, completeErr := c.client.Object.CompleteMultipartUpload(ctx, key, uploadID, &cos.CompleteMultipartUploadOptions{Parts: uploadedParts})
 	if completeErr != nil {
 		return errors.Wrapf(completeErr, "COS Multipart upload complete %s error", key)
 	}
