@@ -3852,6 +3852,62 @@ func TestRestoreMapping(t *testing.T) {
 
 	fullCleanup(t, r, env, []string{testBackupName6}, []string{"local"}, databaseList6, false, true, true, "config-database-mapping.yml")
 
+	// Corner case 6: Object disk tables with mapping - verify key rewriting
+	// https://github.com/Altinity/clickhouse-backup/issues/1265
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.8") >= 0 && (os.Getenv("COMPOSE_FILE") != "docker-compose.yml") {
+		log.Debug().Msg("Corner case 6: Object disk tables with restore mapping - verify object keys are rewritten")
+		testBackupName7 := "test_object_disk_mapping"
+		databaseList7 := []string{"db_object_src", "db_object_dst"}
+		fullCleanup(t, r, env, []string{testBackupName7}, []string{"local", "remote"}, databaseList7, false, false, false, "config-s3.yml")
+
+		env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS `db_object_src`")
+		env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS `db_object_dst`")
+
+		// Create table with object disk (S3)
+		env.queryWithNoError(r, "CREATE TABLE `db_object_src`.table_s3 (id UInt64, dt DateTime) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY id SETTINGS storage_policy='s3_only'")
+		env.queryWithNoError(r, "INSERT INTO `db_object_src`.table_s3 SELECT number, '2024-01-01 00:00:00' FROM numbers(100)")
+
+		// Create target table that already exists (simulating the conflict scenario)
+		env.queryWithNoError(r, "CREATE TABLE `db_object_dst`.table_s3_mapped (id UInt64, dt DateTime) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY id SETTINGS storage_policy='s3_only'")
+		env.queryWithNoError(r, "INSERT INTO `db_object_dst`.table_s3_mapped SELECT number+1000, '2024-02-01 00:00:00' FROM numbers(50)")
+
+		// Create backup
+		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", testBackupName7)
+		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "upload", testBackupName7)
+
+		// Restore with mapping - should trigger key rewriting
+		out, restoreErr := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--rm", 
+			"--restore-database-mapping", "db_object_src:db_object_dst", 
+			"--restore-table-mapping", "table_s3:table_s3_mapped",
+			"--tables", "db_object_src.table_s3", testBackupName7)
+		log.Debug().Msg(out)
+		r.NoError(restoreErr)
+
+		// Verify warning message about key rewriting
+		r.Contains(out, "we found existing table `db_object_dst`.`table_s3_mapped` with object disk data")
+		r.Contains(out, "so restoring object disk data keys for `db_object_src`.`table_s3` will be changed to avoid data corruption")
+
+		// Verify both tables exist and have correct data
+		var srcCount, dstCount uint64
+		r.NoError(env.ch.SelectSingleRowNoCtx(&dstCount, "SELECT count() FROM `db_object_dst`.table_s3_mapped"))
+		r.Equal(uint64(100), dstCount, "Restored table should have 100 rows from backup")
+
+		// Verify original target table data is preserved (no corruption)
+		// Drop the restored table and check if we can still read the original data
+		env.queryWithNoError(r, "DROP TABLE `db_object_dst`.table_s3_mapped SYNC")
+		
+		// Recreate original target table and verify its object keys are intact
+		env.queryWithNoError(r, "CREATE TABLE `db_object_dst`.table_s3_original (id UInt64, dt DateTime) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY id SETTINGS storage_policy='s3_only'")
+		env.queryWithNoError(r, "INSERT INTO `db_object_dst`.table_s3_original SELECT number+2000, '2024-03-01 00:00:00' FROM numbers(75)")
+		
+		// This insert should work - verifying object storage is not corrupted
+		r.NoError(env.ch.SelectSingleRowNoCtx(&srcCount, "SELECT count() FROM `db_object_dst`.table_s3_original"))
+		r.Equal(uint64(75), srcCount, "New table should work with object disk after previous operations")
+
+		// Clean up
+		fullCleanup(t, r, env, []string{testBackupName7}, []string{"local", "remote"}, databaseList7, false, true, true, "config-s3.yml")
+	}
+
 	env.Cleanup(t, r)
 }
 
