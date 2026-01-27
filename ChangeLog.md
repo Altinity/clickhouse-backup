@@ -1,6 +1,31 @@
 # v2.6.42
+
+NEW FEATURES
+- apply object disk key rewriting for remapped tables during restore to prevent data corruption when using `--restore-database-mapping` or `--restore-table-mapping` with object disks (S3/GCS/Azure), fix [1278](https://github.com/Altinity/clickhouse-backup/issues/1278)
+- add GCS customer-supplied encryption key (CSEK) support for client-side encryption where the encryption key is controlled by the user, not Google. Use `GCS_ENCRYPTION_KEY` environment variable or `gcs.encryption_key` config option with base64-encoded 256-bit key, fix [1316](https://github.com/Altinity/clickhouse-backup/pull/1316)
+- add TLS support for Keeper connections, allows secure connections to ClickHouse Keeper with SSL/TLS certificates, fix [1312](https://github.com/Altinity/clickhouse-backup/pull/1312)
+- add `--skip-empty-tables` option to `restore` and `restore_remote` commands to skip tables with no data during restore, available in CLI, API handlers, and server mode, fix [1265](https://github.com/Altinity/clickhouse-backup/issues/1265)
+
+IMPROVEMENTS
+- add ClickHouse 25.12 to test matrix
+- add example for minimal grants for backup user in Examples.md
+- improve GCS connection handling: properly close readers on error to prevent goroutine leaks, change retry logging from Debug to Warn level
+- use partitionId directly instead of INSERT INTO temp table for ClickHouse 21.8+, improves partition handling performance, fix [1315](https://github.com/Altinity/clickhouse-backup/issues/1315)
+- refactor table column type checking to use single query before freeze operation instead of per-table queries fix [1194](https://github.com/Altinity/clickhouse-backup/issues/1194)
+- add KEEPER_TLS_ENABLES=1 by default in integration tests
+- improve TestKeeperTLS, TestReplicatedCopyToDetached, and TestRestoreDistributedCluster test stability
+- update GitHub Actions workflows and GOROOT configuration
+- explain S3_FORCE_PATH_STYLE configuration option in documentation
+
 BUG FIXES
 - fix S3 multipart operations (upload, download, copy) to respect `S3_MAX_PARTS_COUNT` instead of hardcoded 10000 value, allows S3-compatible backends with stricter limits
+- fix GCS credential conflicts when multiple authentication options are provided, refactor GCS Connect to avoid conflicting client options
+- fix COS upload for large files, fix [1318](https://github.com/Altinity/clickhouse-backup/issues/1318)
+- fix list status update in server mode, fix [1317](https://github.com/Altinity/clickhouse-backup/discussions/1317)
+- fix TestServerAPI and TestReplicatedCopyToDetached test failures in CI/CD
+- fix OpenSSL/client config parsing for Keeper TLS connections, add comprehensive integration tests
+- fix partition filtering when using `--restore-database-mapping`, `--restore-table-mapping` together with `--partitions` option
+- security: update dependencies to fix CVE-2025-61729, CVE-2025-61727
 
 # v2.6.41
 BUG FIXES

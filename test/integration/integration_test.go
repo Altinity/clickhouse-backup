@@ -3876,12 +3876,12 @@ func TestRestoreMapping(t *testing.T) {
 		env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "upload", testBackupName7)
 
 		// Restore with mapping - should trigger key rewriting
-		out, restoreErr := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--rm", 
-			"--restore-database-mapping", "db_object_src:db_object_dst", 
+		out, restoreErr := env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--rm",
+			"--restore-database-mapping", "db_object_src:db_object_dst",
 			"--restore-table-mapping", "table_s3:table_s3_mapped",
 			"--tables", "db_object_src.table_s3", testBackupName7)
 		log.Debug().Msg(out)
-		r.NoError(restoreErr)
+		r.NoError(restoreErr, out)
 
 		// Verify warning message about key rewriting
 		r.Contains(out, "we found existing table `db_object_dst`.`table_s3_mapped` with object disk data")
@@ -3895,11 +3895,11 @@ func TestRestoreMapping(t *testing.T) {
 		// Verify original target table data is preserved (no corruption)
 		// Drop the restored table and check if we can still read the original data
 		env.queryWithNoError(r, "DROP TABLE `db_object_dst`.table_s3_mapped SYNC")
-		
+
 		// Recreate original target table and verify its object keys are intact
 		env.queryWithNoError(r, "CREATE TABLE `db_object_dst`.table_s3_original (id UInt64, dt DateTime) ENGINE=MergeTree() PARTITION BY toYYYYMM(dt) ORDER BY id SETTINGS storage_policy='s3_only'")
 		env.queryWithNoError(r, "INSERT INTO `db_object_dst`.table_s3_original SELECT number+2000, '2024-03-01 00:00:00' FROM numbers(75)")
-		
+
 		// This insert should work - verifying object storage is not corrupted
 		r.NoError(env.ch.SelectSingleRowNoCtx(&srcCount, "SELECT count() FROM `db_object_dst`.table_s3_original"))
 		r.Equal(uint64(75), srcCount, "New table should work with object disk after previous operations")

@@ -2081,7 +2081,7 @@ func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName st
 	backupTable := filteredTableMetadata
 	backupTable.Database = origDatabase
 	backupTable.Table = origTable
-	
+
 	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, backupTable, disks, diskMap, dstTable.DataPaths, skipProjections, b.ch, copyToDetached); err != nil {
 		if copyToDetached {
 			return errors.Wrapf(err, "can't copy data to detached '%s.%s'", backupTable.Database, backupTable.Table)
@@ -2124,7 +2124,7 @@ func (b *Backuper) restoreDataRegularByParts(ctx context.Context, backupName str
 	backupTable := filteredTableMetadata
 	backupTable.Database = origDatabase
 	backupTable.Table = origTable
-	
+
 	if err := filesystemhelper.HardlinkBackupPartsToStorage(backupName, backupTable, disks, diskMap, dstTable.DataPaths, skipProjections, b.ch, true); err != nil {
 		return errors.Wrapf(err, "can't copy data to detached `%s`.`%s`", dstTable.Database, dstTable.Name)
 	}
@@ -2319,6 +2319,9 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 							if objectDiskPathErr != nil {
 								return objectDiskPathErr
 							}
+							// Save original full path BEFORE modification for lookup in originalToRewrittenPath map
+							originalFullPath := storageObject.ObjectPath
+
 							// 25.10+ contains full path, need make it relative again after rewrite, for properly copy, https://github.com/Altinity/clickhouse-backup/issues/1290
 							if storageObject.IsAbsolute {
 								objPathParts := strings.Split(storageObject.ObjectPath, "/")
@@ -2338,9 +2341,18 @@ func (b *Backuper) downloadObjectDiskParts(ctx context.Context, backupName strin
 							}
 
 							// Determine destination path - use rewritten path if key rewriting is needed
+							// Look up using original full path, not the modified relative path
 							dstObjectPath := storageObject.ObjectPath
-							if rewrittenPath, shouldRewrite := capturedOriginalToRewrittenPath[storageObject.ObjectPath]; shouldRewrite {
-								dstObjectPath = rewrittenPath
+							if rewrittenPath, shouldRewrite := capturedOriginalToRewrittenPath[originalFullPath]; shouldRewrite {
+								// Extract relative path from rewritten full path
+								if storageObject.IsAbsolute {
+									objPathParts := strings.Split(rewrittenPath, "/")
+									if len(objPathParts) >= 2 {
+										dstObjectPath = strings.Join(objPathParts[len(objPathParts)-2:], "/")
+									}
+								} else {
+									dstObjectPath = rewrittenPath
+								}
 							}
 
 							copiedSize := int64(0)
