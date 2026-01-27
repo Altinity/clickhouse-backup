@@ -1519,7 +1519,7 @@ func testAPISkipEmptyTables(r *require.Assertions, env *TestEnvironment) {
 	waitForOperation("upload", 60*time.Second)
 
 	// Drop database
-	env.queryWithNoError(r, "DROP DATABASE IF EXISTS test_api_skip_empty")
+	r.NoError(env.dropDatabase("test_api_skip_empty", true))
 
 	// Test restore with skip-empty-tables parameter
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/restore/%s?rm=1&drop=true&skip-empty-tables=true'", backupName))
@@ -1538,7 +1538,7 @@ func testAPISkipEmptyTables(r *require.Assertions, env *TestEnvironment) {
 	r.Equal(uint64(50), dataCount, "table_with_data should have 50 rows")
 
 	// Test restore_remote with skip_empty_tables parameter (underscore version)
-	env.queryWithNoError(r, "DROP DATABASE IF EXISTS test_api_skip_empty")
+	r.NoError(env.dropDatabase("test_api_skip_empty", true))
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/delete/local/%s'", backupName))
 	r.NoError(err, "%s\nunexpected POST /backup/delete/local error: %v", out, err)
 	time.Sleep(2 * time.Second)
@@ -1561,7 +1561,7 @@ func testAPISkipEmptyTables(r *require.Assertions, env *TestEnvironment) {
 	r.NoError(err, "%s\nunexpected POST /backup/delete/local error: %v", out, err)
 	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", fmt.Sprintf("curl -sfL -XPOST 'http://localhost:7171/backup/delete/remote/%s'", backupName))
 	r.NoError(err, "%s\nunexpected POST /backup/delete/remote error: %v", out, err)
-	env.queryWithNoError(r, "DROP DATABASE IF EXISTS test_api_skip_empty")
+	r.NoError(env.dropDatabase("test_api_skip_empty", true))
 }
 
 func testAPIBackupList(t *testing.T, r *require.Assertions, env *TestEnvironment) {
