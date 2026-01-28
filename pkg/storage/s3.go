@@ -387,6 +387,142 @@ func (s *S3) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) err
 	return s.deleteKey(ctx, key)
 }
 
+// DeleteKeys implements BatchDeleter interface for S3
+// Uses DeleteObjects API to delete up to 1000 keys per request
+func (s *S3) DeleteKeys(ctx context.Context, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	// Prepend path to all keys
+	fullKeys := make([]string, len(keys))
+	for i, key := range keys {
+		fullKeys[i] = path.Join(s.Config.Path, key)
+	}
+	return s.deleteKeys(ctx, fullKeys)
+}
+
+// DeleteKeysFromObjectDiskBackup implements BatchDeleter interface for S3
+func (s *S3) DeleteKeysFromObjectDiskBackup(ctx context.Context, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	// Prepend object disk path to all keys
+	fullKeys := make([]string, len(keys))
+	for i, key := range keys {
+		fullKeys[i] = path.Join(s.Config.ObjectDiskPath, key)
+	}
+	return s.deleteKeys(ctx, fullKeys)
+}
+
+// deleteKeys performs batch deletion using DeleteObjects API
+func (s *S3) deleteKeys(ctx context.Context, keys []string) error {
+	const maxBatchSize = 1000 // AWS S3 limit
+
+	// Build list of objects to delete, handling versioning
+	var objectsToDelete []s3types.ObjectIdentifier
+	if s.versioning {
+		// For versioned buckets, we need to get all versions of each key
+		for _, key := range keys {
+			versions, err := s.getObjectAllVersions(ctx, key)
+			if err != nil {
+				// If we can't list versions, try deleting without version ID
+				log.Warn().Msgf("S3 deleteKeys: can't get versions for %s: %v, will try without version", key, err)
+				objectsToDelete = append(objectsToDelete, s3types.ObjectIdentifier{
+					Key: aws.String(key),
+				})
+				continue
+			}
+			if len(versions) == 0 {
+				// No versions found, delete without version ID
+				objectsToDelete = append(objectsToDelete, s3types.ObjectIdentifier{
+					Key: aws.String(key),
+				})
+			} else {
+				// Add each version as a separate object to delete
+				for _, version := range versions {
+					objectsToDelete = append(objectsToDelete, s3types.ObjectIdentifier{
+						Key:       aws.String(key),
+						VersionId: aws.String(version),
+					})
+				}
+			}
+		}
+	} else {
+		// Non-versioned: simple key list
+		for _, key := range keys {
+			objectsToDelete = append(objectsToDelete, s3types.ObjectIdentifier{
+				Key: aws.String(key),
+			})
+		}
+	}
+
+	if len(objectsToDelete) == 0 {
+		return nil
+	}
+
+	// Process in batches of maxBatchSize
+	var allFailures []KeyError
+	for i := 0; i < len(objectsToDelete); i += maxBatchSize {
+		end := i + maxBatchSize
+		if end > len(objectsToDelete) {
+			end = len(objectsToDelete)
+		}
+		batch := objectsToDelete[i:end]
+
+		failures, err := s.executeBatchDelete(ctx, batch)
+		if err != nil {
+			// Entire batch failed
+			return errors.Wrapf(err, "S3 batch delete failed for batch starting at index %d", i)
+		}
+		allFailures = append(allFailures, failures...)
+	}
+
+	if len(allFailures) > 0 {
+		return &BatchDeleteError{
+			Message:  fmt.Sprintf("S3 batch delete: %d keys deleted, %d failed", len(objectsToDelete)-len(allFailures), len(allFailures)),
+			Failures: allFailures,
+		}
+	}
+
+	log.Debug().Msgf("S3 batch delete: successfully deleted %d objects", len(objectsToDelete))
+	return nil
+}
+
+// executeBatchDelete executes a single batch delete operation
+func (s *S3) executeBatchDelete(ctx context.Context, objects []s3types.ObjectIdentifier) ([]KeyError, error) {
+	params := &s3.DeleteObjectsInput{
+		Bucket: aws.String(s.Config.Bucket),
+		Delete: &s3types.Delete{
+			Objects: objects,
+			Quiet:   aws.Bool(true), // Only return errors, not successes
+		},
+	}
+
+	if s.Config.RequestPayer != "" {
+		params.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
+	}
+
+	output, err := s.client.DeleteObjects(ctx, params)
+	if err != nil {
+		return nil, errors.Wrap(err, "DeleteObjects API call failed")
+	}
+
+	// Parse per-object failures
+	var failures []KeyError
+	for _, delErr := range output.Errors {
+		key := aws.ToString(delErr.Key)
+		code := aws.ToString(delErr.Code)
+		message := aws.ToString(delErr.Message)
+		log.Warn().Msgf("S3 batch delete: failed to delete %s: %s - %s", key, code, message)
+		failures = append(failures, KeyError{
+			Key: key,
+			Err: fmt.Errorf("%s: %s", code, message),
+		})
+	}
+
+	return failures, nil
+}
+
 func (s *S3) isVersioningEnabled(ctx context.Context) bool {
 	output, err := s.client.GetBucketVersioning(ctx, &s3.GetBucketVersioningInput{
 		Bucket: aws.String(s.Config.Bucket),

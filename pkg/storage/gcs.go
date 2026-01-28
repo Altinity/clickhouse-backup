@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
@@ -18,6 +19,7 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/rs/zerolog/log"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/api/impersonate"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
@@ -436,6 +438,107 @@ func (gcs *GCS) DeleteFile(ctx context.Context, key string) error {
 func (gcs *GCS) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) error {
 	key = path.Join(gcs.Config.ObjectDiskPath, key)
 	return gcs.deleteKey(ctx, key)
+}
+
+// DeleteKeys implements BatchDeleter interface for GCS
+// Uses concurrent deletion with connection pool since GCS doesn't have batch delete API
+func (gcs *GCS) DeleteKeys(ctx context.Context, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	// Prepend path to all keys
+	fullKeys := make([]string, len(keys))
+	for i, key := range keys {
+		fullKeys[i] = path.Join(gcs.Config.Path, key)
+	}
+	return gcs.deleteKeysConcurrent(ctx, fullKeys)
+}
+
+// DeleteKeysFromObjectDiskBackup implements BatchDeleter interface for GCS
+func (gcs *GCS) DeleteKeysFromObjectDiskBackup(ctx context.Context, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	// Prepend object disk path to all keys
+	fullKeys := make([]string, len(keys))
+	for i, key := range keys {
+		fullKeys[i] = path.Join(gcs.Config.ObjectDiskPath, key)
+	}
+	return gcs.deleteKeysConcurrent(ctx, fullKeys)
+}
+
+// deleteKeysConcurrent performs concurrent deletion using connection pool
+func (gcs *GCS) deleteKeysConcurrent(ctx context.Context, keys []string) error {
+	// Use ClientPoolSize as concurrency limit (pool has 3x this capacity)
+	concurrency := gcs.Config.ClientPoolSize
+	if concurrency < 1 {
+		concurrency = 10 // Default concurrency
+	}
+
+	log.Debug().Msgf("GCS batch delete: deleting %d keys with concurrency %d", len(keys), concurrency)
+
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(concurrency)
+
+	var mu sync.Mutex
+	var failures []KeyError
+	deletedCount := 0
+
+	for _, key := range keys {
+		key := key // capture for goroutine
+		g.Go(func() error {
+			pClientObj, err := gcs.clientPool.BorrowObject(ctx)
+			if err != nil {
+				mu.Lock()
+				failures = append(failures, KeyError{Key: key, Err: fmt.Errorf("failed to borrow client: %w", err)})
+				mu.Unlock()
+				return nil // Don't fail the entire group
+			}
+			pClient := pClientObj.(*clientObject).Client
+			object := pClient.Bucket(gcs.Config.Bucket).Object(key)
+			err = object.Delete(ctx)
+			if err != nil {
+				// Check if it's a "not found" error - that's OK
+				if errors.Is(err, storage.ErrObjectNotExist) {
+					if pErr := gcs.clientPool.ReturnObject(ctx, pClientObj); pErr != nil {
+						log.Warn().Msgf("gcs.deleteKeysConcurrent: gcs.clientPool.ReturnObject error: %+v", pErr)
+					}
+					mu.Lock()
+					deletedCount++
+					mu.Unlock()
+					return nil
+				}
+				if pErr := gcs.clientPool.InvalidateObject(ctx, pClientObj); pErr != nil {
+					log.Warn().Msgf("gcs.deleteKeysConcurrent: gcs.clientPool.InvalidateObject error: %+v", pErr)
+				}
+				mu.Lock()
+				failures = append(failures, KeyError{Key: key, Err: err})
+				mu.Unlock()
+				return nil
+			}
+			if pErr := gcs.clientPool.ReturnObject(ctx, pClientObj); pErr != nil {
+				log.Warn().Msgf("gcs.deleteKeysConcurrent: gcs.clientPool.ReturnObject error: %+v", pErr)
+			}
+			mu.Lock()
+			deletedCount++
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return errors.Wrap(err, "GCS concurrent delete failed")
+	}
+
+	if len(failures) > 0 {
+		return &BatchDeleteError{
+			Message:  fmt.Sprintf("GCS batch delete: %d keys deleted, %d failed", deletedCount, len(failures)),
+			Failures: failures,
+		}
+	}
+
+	log.Debug().Msgf("GCS batch delete: successfully deleted %d keys", deletedCount)
+	return nil
 }
 
 func (gcs *GCS) CopyObject(ctx context.Context, srcSize int64, srcBucket, srcKey, dstKey string) (int64, error) {

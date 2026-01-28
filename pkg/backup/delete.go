@@ -395,7 +395,42 @@ func (b *Backuper) cleanBackupObjectDisks(ctx context.Context, backupName string
 	if err != nil {
 		return 0, err
 	}
-	//walk absolute path, delete relative
+
+	// Check if storage supports batch deletion
+	if batchDeleter, ok := b.dst.RemoteStorage.(storage.BatchDeleter); ok {
+		// Collect all keys to delete
+		var keysToDelete []string
+		walkErr := b.dst.WalkAbsolute(ctx, path.Join(objectDiskPath, backupName), true, func(ctx context.Context, f storage.RemoteFile) error {
+			// Azure: filter out empty objects (existing logic)
+			if b.dst.Kind() == "azblob" {
+				if f.Size() == 0 && f.LastModified().IsZero() {
+					return nil
+				}
+			}
+			keysToDelete = append(keysToDelete, path.Join(backupName, f.Name()))
+			return nil
+		})
+		if walkErr != nil {
+			return 0, walkErr
+		}
+
+		if len(keysToDelete) == 0 {
+			log.Debug().Msgf("cleanBackupObjectDisks: no files to delete for backup %s", backupName)
+			return 0, nil
+		}
+
+		log.Info().Msgf("cleanBackupObjectDisks: batch deleting %d files from object disk backup %s using %s", len(keysToDelete), backupName, b.dst.Kind())
+
+		// Execute batch delete
+		deleteErr := batchDeleter.DeleteKeysFromObjectDiskBackup(ctx, keysToDelete)
+		if deleteErr != nil {
+			return 0, deleteErr
+		}
+		return uint(len(keysToDelete)), nil
+	}
+
+	// Fallback: one-by-one deletion (should not happen if all storage types implement BatchDeleter)
+	log.Warn().Msgf("cleanBackupObjectDisks: %s does not implement BatchDeleter, falling back to one-by-one deletion", b.dst.Kind())
 	deletedKeys := uint(0)
 	walkErr := b.dst.WalkAbsolute(ctx, path.Join(objectDiskPath, backupName), true, func(ctx context.Context, f storage.RemoteFile) error {
 		if b.dst.Kind() == "azblob" {

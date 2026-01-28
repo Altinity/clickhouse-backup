@@ -340,6 +340,89 @@ func (c *COS) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) er
 	return err
 }
 
+// DeleteKeys implements BatchDeleter interface for COS
+// Uses concurrent deletion with configurable concurrency
+func (c *COS) DeleteKeys(ctx context.Context, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	// Prepend path to all keys
+	fullKeys := make([]string, len(keys))
+	for i, key := range keys {
+		fullKeys[i] = path.Join(c.Config.Path, key)
+	}
+	return c.deleteKeysConcurrent(ctx, fullKeys)
+}
+
+// DeleteKeysFromObjectDiskBackup implements BatchDeleter interface for COS
+func (c *COS) DeleteKeysFromObjectDiskBackup(ctx context.Context, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	// Prepend object disk path to all keys
+	fullKeys := make([]string, len(keys))
+	for i, key := range keys {
+		fullKeys[i] = path.Join(c.Config.ObjectDiskPath, key)
+	}
+	return c.deleteKeysConcurrent(ctx, fullKeys)
+}
+
+// deleteKeysConcurrent performs concurrent deletion of keys
+func (c *COS) deleteKeysConcurrent(ctx context.Context, keys []string) error {
+	concurrency := c.Config.Concurrency
+	if concurrency < 1 {
+		concurrency = 10 // Default concurrency
+	}
+
+	log.Debug().Msgf("COS batch delete: deleting %d keys with concurrency %d", len(keys), concurrency)
+
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(concurrency)
+
+	var mu sync.Mutex
+	var failures []KeyError
+	deletedCount := 0
+
+	for _, key := range keys {
+		key := key // capture for goroutine
+		g.Go(func() error {
+			_, err := c.client.Object.Delete(ctx, key)
+			if err != nil {
+				// Check if it's a "not found" error - that's OK
+				var cosErr *cos.ErrorResponse
+				if errors.As(err, &cosErr) && cosErr.Code == "NoSuchKey" {
+					mu.Lock()
+					deletedCount++
+					mu.Unlock()
+					return nil
+				}
+				mu.Lock()
+				failures = append(failures, KeyError{Key: key, Err: err})
+				mu.Unlock()
+				return nil // Don't fail the entire group
+			}
+			mu.Lock()
+			deletedCount++
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return errors.Wrap(err, "COS concurrent delete failed")
+	}
+
+	if len(failures) > 0 {
+		return &BatchDeleteError{
+			Message:  fmt.Sprintf("COS batch delete: %d keys deleted, %d failed", deletedCount, len(failures)),
+			Failures: failures,
+		}
+	}
+
+	log.Debug().Msgf("COS batch delete: successfully deleted %d keys", deletedCount)
+	return nil
+}
+
 type cosFile struct {
 	size         int64
 	lastModified time.Time

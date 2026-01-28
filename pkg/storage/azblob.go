@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
@@ -21,6 +22,7 @@ import (
 	"github.com/Azure/azure-storage-blob-go/azblob"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
+	"golang.org/x/sync/errgroup"
 )
 
 // AzureBlob - presents methods for manipulate data on Azure
@@ -226,6 +228,79 @@ func (a *AzureBlob) DeleteFileFromObjectDiskBackup(ctx context.Context, key stri
 	blob := a.Container.NewBlockBlobURL(path.Join(a.Config.ObjectDiskPath, key))
 	_, err := blob.Delete(ctx, azblob.DeleteSnapshotsOptionInclude, azblob.BlobAccessConditions{})
 	return err
+}
+
+// DeleteKeys implements BatchDeleter interface for Azure Blob
+// Uses concurrent deletion since Azure SDK doesn't expose batch delete API
+func (a *AzureBlob) DeleteKeys(ctx context.Context, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	return a.deleteKeysConcurrent(ctx, keys, a.Config.Path)
+}
+
+// DeleteKeysFromObjectDiskBackup implements BatchDeleter interface for Azure Blob
+func (a *AzureBlob) DeleteKeysFromObjectDiskBackup(ctx context.Context, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	return a.deleteKeysConcurrent(ctx, keys, a.Config.ObjectDiskPath)
+}
+
+// deleteKeysConcurrent performs concurrent deletion of keys
+func (a *AzureBlob) deleteKeysConcurrent(ctx context.Context, keys []string, basePath string) error {
+	const concurrency = 50 // Number of concurrent delete workers
+
+	a.logf("AZBLOB->deleteKeysConcurrent: deleting %d keys with concurrency %d", len(keys), concurrency)
+
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(concurrency)
+
+	var mu sync.Mutex
+	var failures []KeyError
+	deletedCount := 0
+
+	for _, key := range keys {
+		key := key // capture for goroutine
+		g.Go(func() error {
+			fullKey := path.Join(basePath, key)
+			blob := a.Container.NewBlockBlobURL(fullKey)
+			_, err := blob.Delete(ctx, azblob.DeleteSnapshotsOptionInclude, azblob.BlobAccessConditions{})
+			if err != nil {
+				// Check if it's a "not found" error - that's OK, key is already deleted
+				var se azblob.StorageError
+				if errors.As(err, &se) && se.ServiceCode() == azblob.ServiceCodeBlobNotFound {
+					// Already deleted, count as success
+					mu.Lock()
+					deletedCount++
+					mu.Unlock()
+					return nil
+				}
+				mu.Lock()
+				failures = append(failures, KeyError{Key: key, Err: err})
+				mu.Unlock()
+				return nil // Don't fail the entire group
+			}
+			mu.Lock()
+			deletedCount++
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return errors.Wrap(err, "Azure Blob concurrent delete failed")
+	}
+
+	if len(failures) > 0 {
+		return &BatchDeleteError{
+			Message:  fmt.Sprintf("Azure Blob batch delete: %d keys deleted, %d failed", deletedCount, len(failures)),
+			Failures: failures,
+		}
+	}
+
+	log.Debug().Msgf("Azure Blob batch delete: successfully deleted %d keys", deletedCount)
+	return nil
 }
 
 func (a *AzureBlob) StatFile(ctx context.Context, key string) (RemoteFile, error) {

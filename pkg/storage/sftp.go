@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"io"
 	"os"
 	"path"
@@ -13,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	libSFTP "github.com/pkg/sftp"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/ssh"
@@ -266,6 +266,105 @@ func (sftp *SFTP) DeleteFileFromObjectDiskBackup(ctx context.Context, key string
 	} else {
 		return sftp.sftpClient.Remove(filePath)
 	}
+}
+
+// DeleteKeys implements BatchDeleter interface for SFTP
+// SFTP uses sequential deletion due to protocol limitations (single connection)
+func (sftp *SFTP) DeleteKeys(ctx context.Context, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+
+	sftp.Debug("[SFTP_DEBUG] DeleteKeys: deleting %d keys sequentially", len(keys))
+
+	var failures []KeyError
+	deletedCount := 0
+
+	for _, key := range keys {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		filePath := path.Join(sftp.Config.Path, key)
+		err := sftp.deleteKeyInternal(ctx, filePath)
+		if err != nil {
+			// Check if it's a "not found" error - that's OK
+			if strings.Contains(err.Error(), "not exist") {
+				deletedCount++
+				continue
+			}
+			failures = append(failures, KeyError{Key: key, Err: err})
+			continue
+		}
+		deletedCount++
+	}
+
+	if len(failures) > 0 {
+		return &BatchDeleteError{
+			Message:  fmt.Sprintf("SFTP batch delete: %d keys deleted, %d failed", deletedCount, len(failures)),
+			Failures: failures,
+		}
+	}
+
+	log.Debug().Msgf("SFTP batch delete: successfully deleted %d keys", deletedCount)
+	return nil
+}
+
+// DeleteKeysFromObjectDiskBackup implements BatchDeleter interface for SFTP
+func (sftp *SFTP) DeleteKeysFromObjectDiskBackup(ctx context.Context, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+
+	sftp.Debug("[SFTP_DEBUG] DeleteKeysFromObjectDiskBackup: deleting %d keys sequentially", len(keys))
+
+	var failures []KeyError
+	deletedCount := 0
+
+	for _, key := range keys {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		filePath := path.Join(sftp.Config.ObjectDiskPath, key)
+		err := sftp.deleteKeyInternal(ctx, filePath)
+		if err != nil {
+			// Check if it's a "not found" error - that's OK
+			if strings.Contains(err.Error(), "not exist") {
+				deletedCount++
+				continue
+			}
+			failures = append(failures, KeyError{Key: key, Err: err})
+			continue
+		}
+		deletedCount++
+	}
+
+	if len(failures) > 0 {
+		return &BatchDeleteError{
+			Message:  fmt.Sprintf("SFTP batch delete: %d keys deleted, %d failed", deletedCount, len(failures)),
+			Failures: failures,
+		}
+	}
+
+	log.Debug().Msgf("SFTP batch delete: successfully deleted %d keys", deletedCount)
+	return nil
+}
+
+// deleteKeyInternal deletes a single key (file or directory)
+func (sftp *SFTP) deleteKeyInternal(ctx context.Context, filePath string) error {
+	fileStat, err := sftp.sftpClient.Stat(filePath)
+	if err != nil {
+		return err
+	}
+	if fileStat.IsDir() {
+		return sftp.DeleteDirectory(ctx, filePath)
+	}
+	return sftp.sftpClient.Remove(filePath)
 }
 
 // Implement RemoteFile

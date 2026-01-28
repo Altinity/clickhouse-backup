@@ -56,11 +56,47 @@ var metadataCacheLock sync.RWMutex
 
 func (bd *BackupDestination) RemoveBackupRemote(ctx context.Context, backup Backup, cfg *config.Config, retrierClassifier retrier.Classifier) error {
 	retry := retrier.New(retrier.ExponentialBackoff(cfg.General.RetriesOnFailure, common.AddRandomJitter(cfg.General.RetriesDuration, cfg.General.RetriesJitter)), retrierClassifier)
+
+	// SFTP/FTP: Use DeleteFile which handles directory deletion
 	if bd.Kind() == "SFTP" || bd.Kind() == "FTP" {
 		return retry.RunCtx(ctx, func(ctx context.Context) error {
 			return bd.DeleteFile(ctx, backup.BackupName)
 		})
 	}
+
+	// Check if storage supports batch deletion
+	if batchDeleter, ok := bd.RemoteStorage.(BatchDeleter); ok {
+		// Collect all keys to delete
+		var keysToDelete []string
+		walkErr := bd.Walk(ctx, backup.BackupName+"/", true, func(ctx context.Context, f RemoteFile) error {
+			// Azure: filter out empty objects (existing logic)
+			if bd.Kind() == "azblob" {
+				if f.Size() == 0 && f.LastModified().IsZero() {
+					return nil
+				}
+			}
+			keysToDelete = append(keysToDelete, path.Join(backup.BackupName, f.Name()))
+			return nil
+		})
+		if walkErr != nil {
+			return walkErr
+		}
+
+		if len(keysToDelete) == 0 {
+			log.Debug().Msgf("RemoveBackupRemote: no files to delete for backup %s", backup.BackupName)
+			return nil
+		}
+
+		log.Info().Msgf("RemoveBackupRemote: batch deleting %d files from backup %s using %s", len(keysToDelete), backup.BackupName, bd.Kind())
+
+		// Execute batch delete with retry
+		return retry.RunCtx(ctx, func(ctx context.Context) error {
+			return batchDeleter.DeleteKeys(ctx, keysToDelete)
+		})
+	}
+
+	// Fallback: one-by-one deletion (should not happen if all storage types implement BatchDeleter)
+	log.Warn().Msgf("RemoveBackupRemote: %s does not implement BatchDeleter, falling back to one-by-one deletion", bd.Kind())
 	return bd.Walk(ctx, backup.BackupName+"/", true, func(ctx context.Context, f RemoteFile) error {
 		if bd.Kind() == "azblob" {
 			if f.Size() > 0 || !f.LastModified().IsZero() {
