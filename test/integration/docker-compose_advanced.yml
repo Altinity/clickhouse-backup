@@ -28,7 +28,8 @@ services:
       FTP_MASQUERADEADDRESS: "yes"
       FTP_PASSIVE_PORTS: "21100 31100"
       FTP_MAX_CONNECTIONS: 255
-
+    volumes:
+    - ./proftpd_arm64_fix.sh:/run.sh
   minio:
     image: docker.io/minio/minio:${MINIO_VERSION:-latest}
     hostname: minio
