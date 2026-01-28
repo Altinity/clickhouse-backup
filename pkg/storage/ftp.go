@@ -445,6 +445,12 @@ func (f *ftpPoolFactory) ValidateObject(ctx context.Context, object *pool.Pooled
 	// Validate connection by sending NOOP command
 	conn := object.Object.(*ftp.ServerConn)
 	if err := conn.NoOp(); err != nil {
+		// Some FTP servers (like pure-ftpd) don't support NOOP command and return "500 Unknown command"
+		// This still means the connection is alive (server received and responded to command)
+		if strings.HasPrefix(err.Error(), "500") {
+			log.Debug().Msgf("ftpPoolFactory->ValidateObject NoOp returned 500 (command not supported), connection still valid")
+			return true
+		}
 		log.Debug().Msgf("ftpPoolFactory->ValidateObject NoOp failed: %v", err)
 		return false
 	}
