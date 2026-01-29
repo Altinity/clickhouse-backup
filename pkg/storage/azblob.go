@@ -230,17 +230,17 @@ func (a *AzureBlob) DeleteFileFromObjectDiskBackup(ctx context.Context, key stri
 	return err
 }
 
-// DeleteKeys implements BatchDeleter interface for Azure Blob
+// DeleteKeysBatch implements BatchDeleter interface for Azure Blob
 // Uses concurrent deletion since Azure SDK doesn't expose batch delete API
-func (a *AzureBlob) DeleteKeys(ctx context.Context, keys []string) error {
+func (a *AzureBlob) DeleteKeysBatch(ctx context.Context, keys []string) error {
 	if len(keys) == 0 {
 		return nil
 	}
 	return a.deleteKeysConcurrent(ctx, keys, a.Config.Path)
 }
 
-// DeleteKeysFromObjectDiskBackup implements BatchDeleter interface for Azure Blob
-func (a *AzureBlob) DeleteKeysFromObjectDiskBackup(ctx context.Context, keys []string) error {
+// DeleteKeysFromObjectDiskBackupBatch implements BatchDeleter interface for Azure Blob
+func (a *AzureBlob) DeleteKeysFromObjectDiskBackupBatch(ctx context.Context, keys []string) error {
 	if len(keys) == 0 {
 		return nil
 	}
@@ -249,7 +249,7 @@ func (a *AzureBlob) DeleteKeysFromObjectDiskBackup(ctx context.Context, keys []s
 
 // deleteKeysConcurrent performs concurrent deletion of keys
 func (a *AzureBlob) deleteKeysConcurrent(ctx context.Context, keys []string, basePath string) error {
-	const concurrency = 50 // Number of concurrent delete workers
+	concurrency := a.Config.DeleteConcurrency
 
 	a.logf("AZBLOB->deleteKeysConcurrent: deleting %d keys with concurrency %d", len(keys), concurrency)
 

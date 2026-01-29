@@ -66,8 +66,13 @@ func (bd *BackupDestination) RemoveBackupRemote(ctx context.Context, backup Back
 
 	// Check if storage supports batch deletion
 	if batchDeleter, ok := bd.RemoteStorage.(BatchDeleter); ok {
-		// Collect all keys to delete
+		batchSize := cfg.General.DeleteBatchSize
+
+		// Process deletion in batches to avoid loading all keys in memory
+		log.Info().Msgf("RemoveBackupRemote: starting batch deletion for backup %s using %s (batch_size=%d)", backup.BackupName, bd.Kind(), batchSize)
+
 		var keysToDelete []string
+		var totalDeleted uint
 		walkErr := bd.Walk(ctx, backup.BackupName+"/", true, func(ctx context.Context, f RemoteFile) error {
 			// Azure: filter out empty objects (existing logic)
 			if bd.Kind() == "azblob" {
@@ -76,23 +81,38 @@ func (bd *BackupDestination) RemoveBackupRemote(ctx context.Context, backup Back
 				}
 			}
 			keysToDelete = append(keysToDelete, path.Join(backup.BackupName, f.Name()))
+
+			// When we've collected enough keys, delete them as a batch
+			if len(keysToDelete) >= batchSize {
+				deleteErr := retry.RunCtx(ctx, func(ctx context.Context) error {
+					return batchDeleter.DeleteKeysBatch(ctx, keysToDelete)
+				})
+				if deleteErr != nil {
+					return deleteErr
+				}
+				totalDeleted += uint(len(keysToDelete))
+				log.Debug().Msgf("RemoveBackupRemote: deleted batch of %d keys (total: %d)", len(keysToDelete), totalDeleted)
+				keysToDelete = keysToDelete[:0] // Reset slice but keep capacity
+			}
 			return nil
 		})
 		if walkErr != nil {
 			return walkErr
 		}
 
-		if len(keysToDelete) == 0 {
-			log.Debug().Msgf("RemoveBackupRemote: no files to delete for backup %s", backup.BackupName)
-			return nil
+		// Delete remaining keys
+		if len(keysToDelete) > 0 {
+			deleteErr := retry.RunCtx(ctx, func(ctx context.Context) error {
+				return batchDeleter.DeleteKeysBatch(ctx, keysToDelete)
+			})
+			if deleteErr != nil {
+				return deleteErr
+			}
+			totalDeleted += uint(len(keysToDelete))
 		}
 
-		log.Info().Msgf("RemoveBackupRemote: batch deleting %d files from backup %s using %s", len(keysToDelete), backup.BackupName, bd.Kind())
-
-		// Execute batch delete with retry
-		return retry.RunCtx(ctx, func(ctx context.Context) error {
-			return batchDeleter.DeleteKeys(ctx, keysToDelete)
-		})
+		log.Info().Msgf("RemoveBackupRemote: batch deleted %d files from backup %s", totalDeleted, backup.BackupName)
+		return nil
 	}
 
 	// Fallback: one-by-one deletion (should not happen if all storage types implement BatchDeleter)

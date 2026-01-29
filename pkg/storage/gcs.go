@@ -440,9 +440,9 @@ func (gcs *GCS) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) 
 	return gcs.deleteKey(ctx, key)
 }
 
-// DeleteKeys implements BatchDeleter interface for GCS
+// DeleteKeysBatch implements BatchDeleter interface for GCS
 // Uses concurrent deletion with connection pool since GCS doesn't have batch delete API
-func (gcs *GCS) DeleteKeys(ctx context.Context, keys []string) error {
+func (gcs *GCS) DeleteKeysBatch(ctx context.Context, keys []string) error {
 	if len(keys) == 0 {
 		return nil
 	}
@@ -454,8 +454,8 @@ func (gcs *GCS) DeleteKeys(ctx context.Context, keys []string) error {
 	return gcs.deleteKeysConcurrent(ctx, fullKeys)
 }
 
-// DeleteKeysFromObjectDiskBackup implements BatchDeleter interface for GCS
-func (gcs *GCS) DeleteKeysFromObjectDiskBackup(ctx context.Context, keys []string) error {
+// DeleteKeysFromObjectDiskBackupBatch implements BatchDeleter interface for GCS
+func (gcs *GCS) DeleteKeysFromObjectDiskBackupBatch(ctx context.Context, keys []string) error {
 	if len(keys) == 0 {
 		return nil
 	}
@@ -469,11 +469,7 @@ func (gcs *GCS) DeleteKeysFromObjectDiskBackup(ctx context.Context, keys []strin
 
 // deleteKeysConcurrent performs concurrent deletion using connection pool
 func (gcs *GCS) deleteKeysConcurrent(ctx context.Context, keys []string) error {
-	// Use ClientPoolSize as concurrency limit (pool has 3x this capacity)
-	concurrency := gcs.Config.ClientPoolSize
-	if concurrency < 1 {
-		concurrency = 10 // Default concurrency
-	}
+	concurrency := gcs.Config.DeleteConcurrency
 
 	log.Debug().Msgf("GCS batch delete: deleting %d keys with concurrency %d", len(keys), concurrency)
 

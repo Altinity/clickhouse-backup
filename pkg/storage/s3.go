@@ -387,9 +387,9 @@ func (s *S3) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) err
 	return s.deleteKey(ctx, key)
 }
 
-// DeleteKeys implements BatchDeleter interface for S3
+// DeleteKeysBatch implements BatchDeleter interface for S3
 // Uses DeleteObjects API to delete up to 1000 keys per request
-func (s *S3) DeleteKeys(ctx context.Context, keys []string) error {
+func (s *S3) DeleteKeysBatch(ctx context.Context, keys []string) error {
 	if len(keys) == 0 {
 		return nil
 	}
@@ -401,8 +401,8 @@ func (s *S3) DeleteKeys(ctx context.Context, keys []string) error {
 	return s.deleteKeys(ctx, fullKeys)
 }
 
-// DeleteKeysFromObjectDiskBackup implements BatchDeleter interface for S3
-func (s *S3) DeleteKeysFromObjectDiskBackup(ctx context.Context, keys []string) error {
+// DeleteKeysFromObjectDiskBackupBatch implements BatchDeleter interface for S3
+func (s *S3) DeleteKeysFromObjectDiskBackupBatch(ctx context.Context, keys []string) error {
 	if len(keys) == 0 {
 		return nil
 	}
@@ -415,37 +415,56 @@ func (s *S3) DeleteKeysFromObjectDiskBackup(ctx context.Context, keys []string) 
 }
 
 // deleteKeys performs batch deletion using DeleteObjects API
+// Uses S3Config.DeleteConcurrency for parallel version listing (for versioned buckets)
+// AWS S3 DeleteObjects API limit is 1000 keys per request
 func (s *S3) deleteKeys(ctx context.Context, keys []string) error {
 	const maxBatchSize = 1000 // AWS S3 limit
+	concurrency := s.Config.DeleteConcurrency
 
 	// Build list of objects to delete, handling versioning
 	var objectsToDelete []s3types.ObjectIdentifier
 	if s.versioning {
 		// For versioned buckets, we need to get all versions of each key
+		// Use concurrency for version listing
+		g, ctx := errgroup.WithContext(ctx)
+		g.SetLimit(concurrency)
+		var mu sync.Mutex
+
 		for _, key := range keys {
-			versions, err := s.getObjectAllVersions(ctx, key)
-			if err != nil {
-				// If we can't list versions, try deleting without version ID
-				log.Warn().Msgf("S3 deleteKeys: can't get versions for %s: %v, will try without version", key, err)
-				objectsToDelete = append(objectsToDelete, s3types.ObjectIdentifier{
-					Key: aws.String(key),
-				})
-				continue
-			}
-			if len(versions) == 0 {
-				// No versions found, delete without version ID
-				objectsToDelete = append(objectsToDelete, s3types.ObjectIdentifier{
-					Key: aws.String(key),
-				})
-			} else {
-				// Add each version as a separate object to delete
-				for _, version := range versions {
+			key := key
+			g.Go(func() error {
+				versions, err := s.getObjectAllVersions(ctx, key)
+				if err != nil {
+					// If we can't list versions, try deleting without version ID
+					log.Warn().Msgf("S3 deleteKeys: can't get versions for %s: %v, will try without version", key, err)
+					mu.Lock()
 					objectsToDelete = append(objectsToDelete, s3types.ObjectIdentifier{
-						Key:       aws.String(key),
-						VersionId: aws.String(version),
+						Key: aws.String(key),
 					})
+					mu.Unlock()
+					return nil
 				}
-			}
+				mu.Lock()
+				if len(versions) == 0 {
+					// No versions found, delete without version ID
+					objectsToDelete = append(objectsToDelete, s3types.ObjectIdentifier{
+						Key: aws.String(key),
+					})
+				} else {
+					// Add each version as a separate object to delete
+					for _, version := range versions {
+						objectsToDelete = append(objectsToDelete, s3types.ObjectIdentifier{
+							Key:       aws.String(key),
+							VersionId: aws.String(version),
+						})
+					}
+				}
+				mu.Unlock()
+				return nil
+			})
+		}
+		if err := g.Wait(); err != nil {
+			return err
 		}
 	} else {
 		// Non-versioned: simple key list
@@ -460,7 +479,7 @@ func (s *S3) deleteKeys(ctx context.Context, keys []string) error {
 		return nil
 	}
 
-	// Process in batches of maxBatchSize
+	// Process in batches of maxBatchSize (AWS limit)
 	var allFailures []KeyError
 	for i := 0; i < len(objectsToDelete); i += maxBatchSize {
 		end := i + maxBatchSize

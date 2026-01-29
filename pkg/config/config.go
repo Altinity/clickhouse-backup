@@ -84,6 +84,7 @@ type GeneralConfig struct {
 	RBACConflictResolution              string            `yaml:"rbac_conflict_resolution" envconfig:"RBAC_CONFLICT_RESOLUTION"`
 	ConfigBackupAlways                  bool              `yaml:"config_backup_always" envconfig:"CONFIG_BACKUP_ALWAYS"`
 	NamedCollectionsBackupAlways        bool              `yaml:"named_collections_backup_always" envconfig:"NAMED_COLLECTIONS_BACKUP_ALWAYS"`
+	DeleteBatchSize                     int               `yaml:"delete_batch_size" envconfig:"DELETE_BATCH_SIZE"`
 	RetriesDuration                     time.Duration
 	WatchDuration                       time.Duration
 	FullDuration                        time.Duration
@@ -111,8 +112,9 @@ type GCSConfig struct {
 	CustomStorageClassMap  map[string]string `yaml:"custom_storage_class_map" envconfig:"GCS_CUSTOM_STORAGE_CLASS_MAP"`
 	// NOTE: ClientPoolSize should be at least 2 times bigger than
 	// 			UploadConcurrency or DownloadConcurrency in each upload and download case
-	ClientPoolSize int `yaml:"client_pool_size" envconfig:"GCS_CLIENT_POOL_SIZE"`
-	ChunkSize      int `yaml:"chunk_size" envconfig:"GCS_CHUNK_SIZE"`
+	ClientPoolSize    int `yaml:"client_pool_size" envconfig:"GCS_CLIENT_POOL_SIZE"`
+	ChunkSize         int `yaml:"chunk_size" envconfig:"GCS_CHUNK_SIZE"`
+	DeleteConcurrency int `yaml:"delete_concurrency" envconfig:"GCS_DELETE_CONCURRENCY"`
 	// EncryptionKey is a base64-encoded 256-bit customer-supplied encryption key (CSEK)
 	// for client-side encryption of objects. Use `openssl rand -base64 32` to generate.
 	EncryptionKey string `yaml:"encryption_key" envconfig:"GCS_ENCRYPTION_KEY"`
@@ -136,6 +138,7 @@ type AzureBlobConfig struct {
 	MaxBuffers            int    `yaml:"buffer_count" envconfig:"AZBLOB_MAX_BUFFERS"`
 	MaxPartsCount         int64  `yaml:"max_parts_count" envconfig:"AZBLOB_MAX_PARTS_COUNT"`
 	Timeout               string `yaml:"timeout" envconfig:"AZBLOB_TIMEOUT"`
+	DeleteConcurrency     int    `yaml:"delete_concurrency" envconfig:"AZBLOB_DELETE_CONCURRENCY"`
 	Debug                 bool   `yaml:"debug" envconfig:"AZBLOB_DEBUG"`
 }
 
@@ -172,6 +175,7 @@ type S3Config struct {
 	CheckSumAlgorithm       string            `yaml:"check_sum_algorithm" envconfig:"S3_CHECKSUM_ALGORITHM"`
 	RetryMode               string            `yaml:"retry_mode" envconfig:"S3_RETRY_MODE"`
 	ChunkSize               int64             `yaml:"chunk_size" envconfig:"S3_CHUNK_SIZE"`
+	DeleteConcurrency       int               `yaml:"delete_concurrency" envconfig:"S3_DELETE_CONCURRENCY"`
 	Debug                   bool              `yaml:"debug" envconfig:"S3_DEBUG"`
 }
 
@@ -188,6 +192,7 @@ type COSConfig struct {
 	Concurrency            int    `yaml:"concurrency" envconfig:"COS_CONCURRENCY"`
 	AllowMultipartDownload bool   `yaml:"allow_multipart_download" envconfig:"COS_ALLOW_MULTIPART_DOWNLOAD"`
 	MaxPartsCount          int64  `yaml:"max_parts_count" envconfig:"COS_MAX_PARTS_COUNT"`
+	DeleteConcurrency      int    `yaml:"delete_concurrency" envconfig:"COS_DELETE_CONCURRENCY"`
 	Debug                  bool   `yaml:"debug" envconfig:"COS_DEBUG"`
 }
 
@@ -594,6 +599,7 @@ func DefaultConfig() *Config {
 			RBACBackupAlways:                    true,
 			RBACConflictResolution:              "recreate",
 			NamedCollectionsBackupAlways:        false,
+			DeleteBatchSize:                     1000,
 		},
 		ClickHouse: ClickHouseConfig{
 			Username: "default",
@@ -629,6 +635,7 @@ func DefaultConfig() *Config {
 			MaxBuffers:        3,
 			MaxPartsCount:     256,
 			Timeout:           "4h",
+			DeleteConcurrency: 50,
 		},
 		S3: S3Config{
 			Region:                  "us-east-1",
@@ -644,6 +651,7 @@ func DefaultConfig() *Config {
 			MaxPartsCount:           4000,
 			RetryMode:               string(aws.RetryModeStandard),
 			ChunkSize:               5 * 1024 * 1024,
+			DeleteConcurrency:       10,
 		},
 		GCS: GCSConfig{
 			CompressionLevel:  1,
@@ -651,7 +659,8 @@ func DefaultConfig() *Config {
 			StorageClass:      "STANDARD",
 			ClientPoolSize:    int(max(uploadConcurrency*3, downloadConcurrency*3, objectDiskServerSideCopyConcurrency)),
 			// 16Mb default chunk size, fix https://github.com/Altinity/clickhouse-backup/issues/1292
-			ChunkSize: 16 * 1024 * 1024,
+			ChunkSize:         16 * 1024 * 1024,
+			DeleteConcurrency: 50,
 		},
 		COS: COSConfig{
 			RowURL:                 "",
@@ -664,6 +673,7 @@ func DefaultConfig() *Config {
 			Concurrency:            int(downloadConcurrency + 1),
 			AllowMultipartDownload: false,
 			MaxPartsCount:          1000,
+			DeleteConcurrency:      50,
 		},
 		API: APIConfig{
 			ListenAddr:                    "localhost:7171",

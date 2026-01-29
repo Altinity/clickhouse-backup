@@ -398,8 +398,13 @@ func (b *Backuper) cleanBackupObjectDisks(ctx context.Context, backupName string
 
 	// Check if storage supports batch deletion
 	if batchDeleter, ok := b.dst.RemoteStorage.(storage.BatchDeleter); ok {
-		// Collect all keys to delete
+		batchSize := b.cfg.General.DeleteBatchSize
+
+		log.Info().Msgf("cleanBackupObjectDisks: starting batch deletion for object disk backup %s using %s (batch_size=%d)", backupName, b.dst.Kind(), batchSize)
+
+		// Process deletion in batches to avoid loading all keys in memory
 		var keysToDelete []string
+		var totalDeleted uint
 		walkErr := b.dst.WalkAbsolute(ctx, path.Join(objectDiskPath, backupName), true, func(ctx context.Context, f storage.RemoteFile) error {
 			// Azure: filter out empty objects (existing logic)
 			if b.dst.Kind() == "azblob" {
@@ -408,25 +413,34 @@ func (b *Backuper) cleanBackupObjectDisks(ctx context.Context, backupName string
 				}
 			}
 			keysToDelete = append(keysToDelete, path.Join(backupName, f.Name()))
+
+			// When we've collected enough keys, delete them as a batch
+			if len(keysToDelete) >= batchSize {
+				deleteErr := batchDeleter.DeleteKeysFromObjectDiskBackupBatch(ctx, keysToDelete)
+				if deleteErr != nil {
+					return deleteErr
+				}
+				totalDeleted += uint(len(keysToDelete))
+				log.Debug().Msgf("cleanBackupObjectDisks: deleted batch of %d keys (total: %d)", len(keysToDelete), totalDeleted)
+				keysToDelete = keysToDelete[:0] // Reset slice but keep capacity
+			}
 			return nil
 		})
 		if walkErr != nil {
-			return 0, walkErr
+			return totalDeleted, walkErr
 		}
 
-		if len(keysToDelete) == 0 {
-			log.Debug().Msgf("cleanBackupObjectDisks: no files to delete for backup %s", backupName)
-			return 0, nil
+		// Delete remaining keys
+		if len(keysToDelete) > 0 {
+			deleteErr := batchDeleter.DeleteKeysFromObjectDiskBackupBatch(ctx, keysToDelete)
+			if deleteErr != nil {
+				return totalDeleted, deleteErr
+			}
+			totalDeleted += uint(len(keysToDelete))
 		}
 
-		log.Info().Msgf("cleanBackupObjectDisks: batch deleting %d files from object disk backup %s using %s", len(keysToDelete), backupName, b.dst.Kind())
-
-		// Execute batch delete
-		deleteErr := batchDeleter.DeleteKeysFromObjectDiskBackup(ctx, keysToDelete)
-		if deleteErr != nil {
-			return 0, deleteErr
-		}
-		return uint(len(keysToDelete)), nil
+		log.Info().Msgf("cleanBackupObjectDisks: batch deleted %d files from object disk backup %s", totalDeleted, backupName)
+		return totalDeleted, nil
 	}
 
 	// Fallback: one-by-one deletion (should not happen if all storage types implement BatchDeleter)

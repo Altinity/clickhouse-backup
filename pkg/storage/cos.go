@@ -340,9 +340,9 @@ func (c *COS) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) er
 	return err
 }
 
-// DeleteKeys implements BatchDeleter interface for COS
+// DeleteKeysBatch implements BatchDeleter interface for COS
 // Uses concurrent deletion with configurable concurrency
-func (c *COS) DeleteKeys(ctx context.Context, keys []string) error {
+func (c *COS) DeleteKeysBatch(ctx context.Context, keys []string) error {
 	if len(keys) == 0 {
 		return nil
 	}
@@ -354,8 +354,8 @@ func (c *COS) DeleteKeys(ctx context.Context, keys []string) error {
 	return c.deleteKeysConcurrent(ctx, fullKeys)
 }
 
-// DeleteKeysFromObjectDiskBackup implements BatchDeleter interface for COS
-func (c *COS) DeleteKeysFromObjectDiskBackup(ctx context.Context, keys []string) error {
+// DeleteKeysFromObjectDiskBackupBatch implements BatchDeleter interface for COS
+func (c *COS) DeleteKeysFromObjectDiskBackupBatch(ctx context.Context, keys []string) error {
 	if len(keys) == 0 {
 		return nil
 	}
@@ -369,10 +369,7 @@ func (c *COS) DeleteKeysFromObjectDiskBackup(ctx context.Context, keys []string)
 
 // deleteKeysConcurrent performs concurrent deletion of keys
 func (c *COS) deleteKeysConcurrent(ctx context.Context, keys []string) error {
-	concurrency := c.Config.Concurrency
-	if concurrency < 1 {
-		concurrency = 10 // Default concurrency
-	}
+	concurrency := c.Config.DeleteConcurrency
 
 	log.Debug().Msgf("COS batch delete: deleting %d keys with concurrency %d", len(keys), concurrency)
 

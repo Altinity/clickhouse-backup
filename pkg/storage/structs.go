@@ -54,13 +54,14 @@ func (e *BatchDeleteError) Error() string {
 // BatchDeleter is an optional interface that storage backends can implement
 // to support batch deletion of keys for improved performance
 type BatchDeleter interface {
-	// DeleteKeys deletes multiple keys in a single batch operation
+	// DeleteKeysBatch deletes a batch of keys
+	// Batching (collecting keys up to DeleteBatchSize) should be done by the caller
 	// Returns nil if all keys were deleted successfully
 	// Returns BatchDeleteError if some keys failed to delete
-	DeleteKeys(ctx context.Context, keys []string) error
+	DeleteKeysBatch(ctx context.Context, keys []string) error
 
-	// DeleteKeysFromObjectDiskBackup deletes multiple keys from object disk backup path
-	DeleteKeysFromObjectDiskBackup(ctx context.Context, keys []string) error
+	// DeleteKeysFromObjectDiskBackupBatch deletes a batch of keys from object disk backup path
+	DeleteKeysFromObjectDiskBackupBatch(ctx context.Context, keys []string) error
 }
 
 // RemoteFile - interface describe file on remote storage
