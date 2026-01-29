@@ -7,6 +7,7 @@ NEW FEATURES
 - add `--skip-empty-tables` option to `restore` and `restore_remote` commands to skip tables with no data during restore, available in CLI, API handlers, and server mode, fix [1265](https://github.com/Altinity/clickhouse-backup/issues/1265)
 
 IMPROVEMENTS
+- implements batching keys deletions to improve speed of delete old backups during backup retention, fix [1066](https://github.com/Altinity/clickhouse-backup/issues/1066)
 - add ClickHouse 25.12 to test matrix
 - add example for minimal grants for backup user in Examples.md
 - improve GCS connection handling: properly close readers on error to prevent goroutine leaks, change retry logging from Debug to Warn level
