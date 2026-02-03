@@ -278,9 +278,9 @@ func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath stri
 			return nil, err
 		}
 		return writer, nil
-	} else {
-		return s.GetFileReader(ctx, key)
 	}
+
+	return s.GetFileReader(ctx, key)
 }
 
 func (s *S3) PutFile(ctx context.Context, key string, r io.ReadCloser, localSize int64) error {
@@ -514,10 +514,10 @@ func (s *S3) deleteKeys(ctx context.Context, keys []string) error {
 // See https://github.com/aws/aws-sdk-go-v2/discussions/2960
 func withContentMD5(o *s3.Options) {
 	o.APIOptions = append(o.APIOptions, func(stack *middleware.Stack) error {
-		stack.Initialize.Remove("AWSChecksum:SetupInputContext")
-		stack.Build.Remove("AWSChecksum:RequestMetricsTracking")
-		stack.Finalize.Remove("AWSChecksum:ComputeInputPayloadChecksum")
-		stack.Finalize.Remove("addInputChecksumTrailer")
+		_, _ = stack.Initialize.Remove("AWSChecksum:SetupInputContext")
+		_, _ = stack.Build.Remove("AWSChecksum:RequestMetricsTracking")
+		_, _ = stack.Finalize.Remove("AWSChecksum:ComputeInputPayloadChecksum")
+		_, _ = stack.Finalize.Remove("addInputChecksumTrailer")
 		return smithyhttp.AddContentChecksumMiddleware(stack)
 	})
 }
