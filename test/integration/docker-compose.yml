@@ -35,7 +35,7 @@ services:
       interval: 1s
       retries: 60
     volumes:
-      - ./minio_nodelete.sh:/bin/minio_nodelete.sh
+      - ./configs/minio_nodelete.sh:/bin/minio_nodelete.sh
       # go install github.com/minio/certgen@latest
       # ~/go/bin/certgen -host "127.0.0.1,localhost,minio" -duration 876000h
       # mv private.key ./test/integration/minio.key
@@ -198,40 +198,40 @@ services:
       - ${CLICKHOUSE_BACKUP_BIN:-../../clickhouse-backup/clickhouse-backup-race}:/usr/bin/clickhouse-backup
       - ${CLICKHOUSE_BACKUP_BIN_FIPS:-../../clickhouse-backup/clickhouse-backup-race-fips}:/usr/bin/clickhouse-backup-fips
       - ./credentials.json:/etc/clickhouse-backup/credentials.json
-      - ./config-azblob.yml:/etc/clickhouse-backup/config-azblob.yml
-      - ./config-azblob-sas.yml:/etc/clickhouse-backup/config-azblob-sas.yml.template
-      - ./config-azblob-embedded.yml:/etc/clickhouse-backup/config-azblob-embedded.yml
-      - ./config-azblob-embedded-url.yml:/etc/clickhouse-backup/config-azblob-embedded-url.yml
-      - ./config-custom-kopia.yml:/etc/clickhouse-backup/config-custom-kopia.yml
-      - ./config-custom-restic.yml:/etc/clickhouse-backup/config-custom-restic.yml
-      - ./config-custom-rsync.yml:/etc/clickhouse-backup/config-custom-rsync.yml
-      - ./config-database-mapping.yml:/etc/clickhouse-backup/config-database-mapping.yml
-      - ./config-cos.yml:/etc/clickhouse-backup/config-cos.yml.template
-      - ./config-ftp.yaml:/etc/clickhouse-backup/config-ftp.yaml
-      - ./config-ftp-old.yaml:/etc/clickhouse-backup/config-ftp-old.yaml
-      - ./config-gcs.yml:/etc/clickhouse-backup/config-gcs.yml
-      - ./config-gcs-embedded-url.yml:/etc/clickhouse-backup/config-gcs-embedded-url.yml.template
-      - ./config-gcs-custom-endpoint.yml:/etc/clickhouse-backup/config-gcs-custom-endpoint.yml
-      - ./config-s3.yml:/etc/clickhouse-backup/config-s3.yml
-      - ./config-s3-embedded.yml:/etc/clickhouse-backup/config-s3-embedded.yml
-      - ./config-s3-embedded-url.yml:/etc/clickhouse-backup/config-s3-embedded-url.yml
-      - ./config-s3-embedded-local.yml:/etc/clickhouse-backup/config-s3-embedded-local.yml
-      - ./config-s3-fips.yml:/etc/clickhouse-backup/config-s3-fips.yml.template
-      - ./config-s3-alibabacloud.yml:/etc/clickhouse-backup/config-s3-alibabacloud.yml.template
-      - ./config-s3-nodelete.yml:/etc/clickhouse-backup/config-s3-nodelete.yml
-      - ./config-s3-plain-embedded.yml:/etc/clickhouse-backup/config-s3-plain-embedded.yml
-      - ./config-sftp-auth-key.yaml:/etc/clickhouse-backup/config-sftp-auth-key.yaml
-      - ./config-sftp-auth-password.yaml:/etc/clickhouse-backup/config-sftp-auth-password.yaml
+      - ./configs/config-azblob.yml:/etc/clickhouse-backup/config-azblob.yml
+      - ./configs/config-azblob-sas.yml:/etc/clickhouse-backup/config-azblob-sas.yml.template
+      - ./configs/config-azblob-embedded.yml:/etc/clickhouse-backup/config-azblob-embedded.yml
+      - ./configs/config-azblob-embedded-url.yml:/etc/clickhouse-backup/config-azblob-embedded-url.yml
+      - ./configs/config-custom-kopia.yml:/etc/clickhouse-backup/config-custom-kopia.yml
+      - ./configs/config-custom-restic.yml:/etc/clickhouse-backup/config-custom-restic.yml
+      - ./configs/config-custom-rsync.yml:/etc/clickhouse-backup/config-custom-rsync.yml
+      - ./configs/config-database-mapping.yml:/etc/clickhouse-backup/config-database-mapping.yml
+      - ./configs/config-cos.yml:/etc/clickhouse-backup/config-cos.yml.template
+      - ./configs/config-ftp.yaml:/etc/clickhouse-backup/config-ftp.yaml
+      - ./configs/config-ftp-old.yaml:/etc/clickhouse-backup/config-ftp-old.yaml
+      - ./configs/config-gcs.yml:/etc/clickhouse-backup/config-gcs.yml
+      - ./configs/config-gcs-embedded-url.yml:/etc/clickhouse-backup/config-gcs-embedded-url.yml.template
+      - ./configs/config-gcs-custom-endpoint.yml:/etc/clickhouse-backup/config-gcs-custom-endpoint.yml
+      - ./configs/config-s3.yml:/etc/clickhouse-backup/config-s3.yml
+      - ./configs/config-s3-embedded.yml:/etc/clickhouse-backup/config-s3-embedded.yml
+      - ./configs/config-s3-embedded-url.yml:/etc/clickhouse-backup/config-s3-embedded-url.yml
+      - ./configs/config-s3-embedded-local.yml:/etc/clickhouse-backup/config-s3-embedded-local.yml
+      - ./configs/config-s3-fips.yml:/etc/clickhouse-backup/config-s3-fips.yml.template
+      - ./configs/config-s3-alibabacloud.yml:/etc/clickhouse-backup/config-s3-alibabacloud.yml.template
+      - ./configs/config-s3-nodelete.yml:/etc/clickhouse-backup/config-s3-nodelete.yml
+      - ./configs/config-s3-plain-embedded.yml:/etc/clickhouse-backup/config-s3-plain-embedded.yml
+      - ./configs/config-sftp-auth-key.yaml:/etc/clickhouse-backup/config-sftp-auth-key.yaml
+      - ./configs/config-sftp-auth-password.yaml:/etc/clickhouse-backup/config-sftp-auth-password.yaml
       - ./_coverage_/:/tmp/_coverage_/
 # for local debug
-      - ./install_delve.sh:/tmp/install_delve.sh
+      - ./configs/install_delve.sh:/tmp/install_delve.sh
 # clickhouse configuration
-      - ./backup-user.xml:/etc/clickhouse-server/users.d/backup-user.xml
+      - ./configs/backup-user.xml:/etc/clickhouse-server/users.d/backup-user.xml
       - ./server.crt:/etc/clickhouse-server/server.crt
       - ./server.key:/etc/clickhouse-server/server.key
       - ./dhparam.pem:/etc/clickhouse-server/dhparam.pem
-      - ./ssl.xml:/etc/clickhouse-server/config.d/ssl.xml
-      - ./clickhouse-config.xml:/etc/clickhouse-server/config.d/clickhouse-config.xml
+      - ./configs/ssl.xml:/etc/clickhouse-server/config.d/ssl.xml
+      - ./configs/clickhouse-config.xml:/etc/clickhouse-server/config.d/clickhouse-config.xml
       - /var/lib/clickhouse
       - /hdd1_data
       - /hdd2_data

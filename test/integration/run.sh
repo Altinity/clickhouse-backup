@@ -101,7 +101,7 @@ for index in "${!pids[@]}"; do
 done
 
 set +e
-go test -parallel "${RUN_PARALLEL}" -race -timeout "${TEST_TIMEOUT:-60m}" -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v "${CUR_DIR}/integration_test.go"
+go test -parallel "${RUN_PARALLEL}" -race -timeout "${TEST_TIMEOUT:-60m}" -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v "${CUR_DIR}/..."
 TEST_FAILED=$?
 set -e
 
