@@ -328,7 +328,8 @@ jobs:
             fi
           done
           set +e
-          go test -parallel "${RUN_PARALLEL}" -race -timeout 90m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v ./test/integration/...
+          ls -la ./test/integration/*_test.go
+          go test -parallel "${RUN_PARALLEL}" -race -timeout 90m                    -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v "./test/integration/..."
           TEST_FAILED=$?
           set -e
           if [[ "0" != "${TEST_FAILED}" ]]; then
