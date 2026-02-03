@@ -270,6 +270,7 @@ s3:
   max_parts_count: 4000            # S3_MAX_PARTS_COUNT, number of parts for S3 multipart uploads and downloads
   allow_multipart_download: false  # S3_ALLOW_MULTIPART_DOWNLOAD, allow faster multipart download speed, but will require additional disk space, download_concurrency * part size in worst case
   checksum_algorithm: ""           # S3_CHECKSUM_ALGORITHM, use it when you use object lock which allow to avoid delete keys from bucket until some timeout after creation, use CRC32 as fastest
+  request_content_md5: false       # S3_REQUEST_CONTENT_MD5, set to true for S3-compatible storage that requires Content-MD5 header for DeleteObjects API (e.g., some MinIO configurations), see https://github.com/aws/aws-sdk-go-v2/discussions/2960
 
   # S3_OBJECT_LABELS, allow setup metadata for each object during upload, use {macro_name} from system.macros and {backupName} for current backup name
   # The format for this env variable is "key1:value1,key2:value2". For YAML please continue using map syntax

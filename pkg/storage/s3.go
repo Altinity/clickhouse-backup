@@ -26,7 +26,8 @@ import (
 	"github.com/aws/smithy-go"
 	smithyendpoints "github.com/aws/smithy-go/endpoints"
 	awsV2Logging "github.com/aws/smithy-go/logging"
-	awsV2http "github.com/aws/smithy-go/transport/http"
+	"github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -205,7 +206,7 @@ func (s *S3) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadClos
 	if err != nil {
 		var opError *smithy.OperationError
 		if errors.As(err, &opError) {
-			var httpErr *awsV2http.ResponseError
+			var httpErr *smithyhttp.ResponseError
 			if errors.As(opError.Err, &httpErr) {
 				var stateErr *s3types.InvalidObjectState
 				if errors.As(httpErr, &stateErr) {
@@ -507,6 +508,20 @@ func (s *S3) deleteKeys(ctx context.Context, keys []string) error {
 	return nil
 }
 
+// withContentMD5 removes all flexible checksum procedures from an operation,
+// instead computing an MD5 checksum for the request payload.
+// This is needed for S3-compatible storage that requires Content-MD5 header.
+// See https://github.com/aws/aws-sdk-go-v2/discussions/2960
+func withContentMD5(o *s3.Options) {
+	o.APIOptions = append(o.APIOptions, func(stack *middleware.Stack) error {
+		stack.Initialize.Remove("AWSChecksum:SetupInputContext")
+		stack.Build.Remove("AWSChecksum:RequestMetricsTracking")
+		stack.Finalize.Remove("AWSChecksum:ComputeInputPayloadChecksum")
+		stack.Finalize.Remove("addInputChecksumTrailer")
+		return smithyhttp.AddContentChecksumMiddleware(stack)
+	})
+}
+
 // executeBatchDelete executes a single batch delete operation
 func (s *S3) executeBatchDelete(ctx context.Context, objects []s3types.ObjectIdentifier) ([]KeyError, error) {
 	params := &s3.DeleteObjectsInput{
@@ -520,8 +535,17 @@ func (s *S3) executeBatchDelete(ctx context.Context, objects []s3types.ObjectIde
 	if s.Config.RequestPayer != "" {
 		params.RequestPayer = s3types.RequestPayer(s.Config.RequestPayer)
 	}
+	if s.Config.CheckSumAlgorithm != "" {
+		params.ChecksumAlgorithm = s3types.ChecksumAlgorithm(s.Config.CheckSumAlgorithm)
+	}
 
-	output, err := s.client.DeleteObjects(ctx, params)
+	var output *s3.DeleteObjectsOutput
+	var err error
+	if s.Config.RequestContentMD5 {
+		output, err = s.client.DeleteObjects(ctx, params, withContentMD5)
+	} else {
+		output, err = s.client.DeleteObjects(ctx, params)
+	}
 	if err != nil {
 		return nil, errors.Wrap(err, "DeleteObjects API call failed")
 	}
@@ -590,7 +614,7 @@ func (s *S3) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, erro
 	if err != nil {
 		var opError *smithy.OperationError
 		if errors.As(err, &opError) {
-			var httpErr *awsV2http.ResponseError
+			var httpErr *smithyhttp.ResponseError
 			if errors.As(opError.Err, &httpErr) {
 				if httpErr.Response.StatusCode == http.StatusNotFound {
 					return nil, ErrNotFound

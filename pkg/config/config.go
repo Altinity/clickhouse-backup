@@ -173,6 +173,7 @@ type S3Config struct {
 	ObjectLabels            map[string]string `yaml:"object_labels" envconfig:"S3_OBJECT_LABELS"`
 	RequestPayer            string            `yaml:"request_payer" envconfig:"S3_REQUEST_PAYER"`
 	CheckSumAlgorithm       string            `yaml:"check_sum_algorithm" envconfig:"S3_CHECKSUM_ALGORITHM"`
+	RequestContentMD5       bool              `yaml:"request_content_md5" envconfig:"S3_REQUEST_CONTENT_MD5"`
 	RetryMode               string            `yaml:"retry_mode" envconfig:"S3_RETRY_MODE"`
 	ChunkSize               int64             `yaml:"chunk_size" envconfig:"S3_CHUNK_SIZE"`
 	DeleteConcurrency       int               `yaml:"delete_concurrency" envconfig:"S3_DELETE_CONCURRENCY"`
