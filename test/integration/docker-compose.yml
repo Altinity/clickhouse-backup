@@ -43,10 +43,10 @@ services:
       # ~/go/bin/certgen -host "127.0.0.1,localhost,minio" -duration 876000h
       # mv private.key ./test/integration/minio.key
       # mv public.crt ./test/integration/minio.crt
-      - ./minio.crt:/root/.minio/certs/CAs/public.crt
-      - ./minio.crt:/root/.mc/certs/CAs/public.crt
-      - ./minio.crt:/root/.minio/certs/public.crt
-      - ./minio.key:/root/.minio/certs/private.key
+      - ./configs/minio.crt:/root/.minio/certs/CAs/public.crt
+      - ./configs/minio.crt:/root/.mc/certs/CAs/public.crt
+      - ./configs/minio.crt:/root/.minio/certs/public.crt
+      - ./configs/minio.key:/root/.minio/certs/private.key
 
   gcs:
     image: fsouza/fake-gcs-server:latest
@@ -230,9 +230,9 @@ services:
       - ./configs/install_delve.sh:/tmp/install_delve.sh
 # clickhouse configuration
       - ./configs/backup-user.xml:/etc/clickhouse-server/users.d/backup-user.xml
-      - ./server.crt:/etc/clickhouse-server/server.crt
-      - ./server.key:/etc/clickhouse-server/server.key
-      - ./dhparam.pem:/etc/clickhouse-server/dhparam.pem
+      - ./configs/server.crt:/etc/clickhouse-server/server.crt
+      - ./configs/server.key:/etc/clickhouse-server/server.key
+      - ./configs/dhparam.pem:/etc/clickhouse-server/dhparam.pem
       - ./configs/ssl.xml:/etc/clickhouse-server/config.d/ssl.xml
       - ./configs/clickhouse-config.xml:/etc/clickhouse-server/config.d/clickhouse-config.xml
       - /var/lib/clickhouse
