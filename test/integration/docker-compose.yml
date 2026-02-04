@@ -8,11 +8,14 @@ services:
     command: sh -c 'echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && echo "LogLevel DEBUG3" >> /etc/ssh/sshd_config && echo "root:JFzMHfVpvTgEd74XXPq6wARA2Qg3AutJ" | chpasswd && /usr/sbin/sshd -D -e -f /etc/ssh/sshd_config'
 
   ftp:
-    image: docker.io/fauria/vsftpd:latest
+    image: docker.io/instantlinux/vsftpd:latest
     hostname: ftp
+    volumes:
+      - ./configs/vsftpd_secret:/run/secrets/test_backup
+      - ./configs/vsftpd_chroot.conf:/etc/vsftpd.d/chroot.conf
     environment:
-      FTP_USER: test_backup
-      FTP_PASS: test_backup
+      FTPUSER_NAME: test_backup
+      FTPUSER_PASSWORD_SECRET: test_backup
       PASV_ENABLE: "YES"
       PASV_ADDRESS: "ftp"
       PASV_ADDR_RESOLVE: "YES"

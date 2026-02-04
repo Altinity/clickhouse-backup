@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo ">>> Applying OrbStack/Apple Silicon Fixes..."
+echo ">>> Applying ARM64 Fixes..."
 
 # 1. DISABLE PROBLEMATIC MODULES (Mod Shaper causes segfaults on M1/OrbStack)
 # Comment out LoadModule lines in the modules config

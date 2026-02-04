@@ -966,7 +966,7 @@ func (env *TestEnvironment) checkObjectStorageIsEmpty(t *testing.T, r *require.A
 		if strings.Contains(os.Getenv("COMPOSE_FILE"), "advanced") {
 			checkRemoteDir("total 0", "ftp", "bash", "-c", "ls -lh /home/ftpusers/test_backup/backup/")
 		} else {
-			checkRemoteDir("total 0", "ftp", "bash", "-c", "ls -lh /home/vsftpd/test_backup/backup/")
+			checkRemoteDir("total 0", "ftp", "sh", "-c", "ls -lh /home/test_backup/backup/")
 		}
 	}
 	if remoteStorageType == "GCS_EMULATOR" {
@@ -1365,57 +1365,108 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	}
 	// embedded storage without embedded disks doesn't contain `shadow` and contain only `metadata`
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && strings.HasSuffix(remoteStorageType, "_URL") {
-		expectedLines = "3"
+		expectedLines = "2"
 	}
 	r.Equal(expectedLines, strings.Trim(out, "\r\n\t "))
-	env.queryWithNoError(r, "DROP TABLE IF EXISTS "+dbName+".t1")
-	env.queryWithNoError(r, "DROP TABLE IF EXISTS "+dbName+".t2")
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--schema", fullBackupName)
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--data", "--partitions="+dbName+".t?:(0,'2022-01-02'),(0,'2022-01-03')", fullBackupName)
-
-	checkPartialRestoredT1 := func(useLocalBackup bool) {
-		expectedCount = 20
-		r.NoError(env.ch.SelectSingleRowNoCtx(&result, "SELECT count() FROM "+dbName+".t1"))
-		r.Equal(expectedCount, result, "expect count=%d", expectedCount)
-		r.NoError(env.ch.SelectSingleRowNoCtx(&result, "SELECT count() FROM "+dbName+".t2"))
+	checkRestoredDataWithPartitions := func(expectedCount uint64) {
+		result = 0
+		r.NoError(env.ch.SelectSingleRowNoCtx(&result, "SELECT sum(c) FROM (SELECT count() AS c FROM "+dbName+".t1 UNION ALL SELECT count() AS c FROM "+dbName+".t2)"))
 		r.Equal(expectedCount, result, "expect count=%d", expectedCount)
 	}
-	checkPartialRestoredT1(true)
+
+	if remoteStorageType == "FTP" && !strings.Contains(backupConfig, "old") {
+		// during DROP PARTITION, we create empty covered part, and cant restore via ATTACH TABLE properly, https://github.com/Altinity/clickhouse-backup/issues/756
+		out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" restore --data --partitions=\"(0,'2022-01-02'),(0,'2022-01-03')\" "+fullBackupName)
+		r.Error(err)
+		out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "CLICKHOUSE_RESTORE_AS_ATTACH=0 clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" restore --data --partitions=\"(0,'2022-01-02'),(0,'2022-01-03')\" "+fullBackupName)
+	} else {
+		out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" restore --data --partitions=\"(0,'2022-01-02'),(0,'2022-01-03')\" "+fullBackupName)
+	}
+	log.Debug().Msg(out)
+	r.NoError(err, "%s\nunexpected error: %v", out, err)
+	r.Contains(out, "DROP PARTITION")
+	// we just replace partition in exists table, and have incremented data in 2 tables
+	checkRestoredDataWithPartitions(100)
+
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" restore_remote --partitions=\"(0,'2022-01-01')\" "+incrementBackupName)
+	log.Debug().Msg(out)
+	r.NoError(err)
+	r.NotContains(out, "DROP PARTITION")
+	// we recreate tables, and have ONLY one partition in two tables
+	checkRestoredDataWithPartitions(20)
+
+	log.Debug().Msg("delete local > download > restore --partitions > restore")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "download", fullBackupName)
+
+	expectedLines = "17"
+	fullBackupDir = "/var/lib/clickhouse/backup/" + fullBackupName + "/shadow/" + dbName + "/t?/default/"
+	// embedded storage with embedded disks contains hardLink files and will download additional data parts
+	if strings.HasPrefix(remoteStorageType, "EMBEDDED") {
+		fullBackupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED")) + "/" + fullBackupName + "/data/" + dbName + "/t?"
+	}
+	// embedded storage without embedded disks doesn't contain `shadow` and contain only `metadata`
+	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && strings.HasSuffix(remoteStorageType, "_URL") {
+		fullBackupDir = "/var/lib/clickhouse/backup/" + fullBackupName + "/metadata/" + dbName + "/t?.json"
+		expectedLines = "2"
+	}
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-c", "ls -la "+fullBackupDir+"| wc -l")
+	r.NoError(err)
+	r.Equal(expectedLines, strings.Trim(out, "\r\n\t "))
+
+	out, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", "--partitions=(0,'2022-01-02'),(0,'2022-01-03')", fullBackupName)
+	r.NoError(err, "%s\nunexpected error: %v", out, err)
+	r.NotContains(out, "DROP PARTITION")
+	checkRestoredDataWithPartitions(40)
+
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", fullBackupName)
+	checkRestoredDataWithPartitions(80)
+
+	log.Debug().Msg("check delete remote > delete local")
+
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", fullBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", fullBackupName)
 
-	// restore increment with --partitions
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore_remote", "--partitions="+dbName+".t?:(0,'2022-01-05')", incrementBackupName)
-	expectedCount = 30
-	r.NoError(env.ch.SelectSingleRowNoCtx(&result, "SELECT count() FROM "+dbName+".t1"))
-	r.Equal(expectedCount, result, "expect count=%d", expectedCount)
-	r.NoError(env.ch.SelectSingleRowNoCtx(&result, "SELECT count() FROM "+dbName+".t2"))
-	r.Equal(expectedCount, result, "expect count=%d", expectedCount)
-
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", incrementBackupName)
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", fullBackupName)
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", incrementBackupName)
-
-	log.Debug().Msg("check create --partitions > upload > delete local > download >restore --partitions")
-	createAndFillTables()
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables="+dbName+".t?", "--partitions="+dbName+".t?:(0,'2022-01-02'),(0,'2022-01-03')", partitionBackupName)
-	partitionBackupDir := "/var/lib/clickhouse/backup/" + partitionBackupName + "/shadow/" + dbName + "/t?/default/"
+	log.Debug().Msg("check create --partitions > upload > delete local > restore_remote")
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "create", "--tables="+dbName+".t1", "--partitions=(0,'2022-01-02'),(0,'2022-01-03')", partitionBackupName)
 	expectedLines = "5"
+	partitionBackupDir := "/var/lib/clickhouse/backup/" + partitionBackupName + "/shadow/" + dbName + "/t1/default/"
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && !strings.HasSuffix(remoteStorageType, "_URL") {
-		partitionBackupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED")) + "/" + partitionBackupName + "/data/" + dbName + "/t?"
+		partitionBackupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED")) + "/" + partitionBackupName + "/data/" + dbName + "/t1"
 	}
+	//embedded backup without a disk has only local metadata
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && strings.HasSuffix(remoteStorageType, "_URL") {
 		partitionBackupDir = "/var/lib/clickhouse/backup/" + partitionBackupName + "/metadata/" + dbName + "/t?.json"
-		expectedLines = "3"
+		expectedLines = "1"
 	}
-	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-c", "ls -la "+partitionBackupDir+" | wc -l")
+	out, err = env.DockerExecOut("clickhouse-backup", "bash", "-c", "ls -la "+partitionBackupDir+"| wc -l")
 	r.NoError(err)
 	r.Equal(expectedLines, strings.Trim(out, "\r\n\t "))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "upload", partitionBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", partitionBackupName)
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "download", partitionBackupName)
-	env.queryWithNoError(r, "DROP TABLE IF EXISTS "+dbName+".t1")
-	env.queryWithNoError(r, "DROP TABLE IF EXISTS "+dbName+".t2")
-	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore", partitionBackupName)
+	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "restore_remote", partitionBackupName)
+	checkPartialRestoredT1 := func(createPartial bool) {
+		log.Debug().Msg("Check partial restored t1")
+		result = 0
+		r.NoError(env.ch.SelectSingleRowNoCtx(&result, "SELECT count() FROM "+dbName+".t1"))
+
+		expectedCount = 20
+		// custom and embedded doesn't support --partitions in upload and download
+		if !createPartial && (remoteStorageType == "CUSTOM" || strings.HasPrefix(remoteStorageType, "EMBEDDED")) {
+			expectedCount = 40
+		}
+		r.Equal(expectedCount, result, fmt.Sprintf("expect count=%d", expectedCount))
+
+		log.Debug().Msg("Check only selected partitions restored")
+		result = 0
+		r.NoError(env.ch.SelectSingleRowNoCtx(&result, "SELECT count() FROM "+dbName+".t1 WHERE dt NOT IN ('2022-01-02','2022-01-03')"))
+		expectedCount = 0
+		// custom and embedded doesn't support --partitions in upload and download
+		if !createPartial && (remoteStorageType == "CUSTOM" || strings.HasPrefix(remoteStorageType, "EMBEDDED")) {
+			expectedCount = 20
+		}
+		r.Equal(expectedCount, result, "expect count=%s", expectedCount)
+	}
 	checkPartialRestoredT1(true)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "local", partitionBackupName)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "delete", "remote", partitionBackupName)

@@ -328,7 +328,6 @@ jobs:
             fi
           done
           set +e
-          ls -la ./test/integration/*_test.go
           go test -parallel "${RUN_PARALLEL}" -timeout 90m -failfast -tags=integration -run "${RUN_TESTS:-.+}" -v "./test/integration/..."
           TEST_FAILED=$?
           set -e
