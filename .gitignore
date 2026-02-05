@@ -7,7 +7,8 @@ credentials.json
 .idea/
 *.iml
 build/
-.env
+.env/
+.venv/
 *.log
 vendor/
 .aider*
@@ -16,6 +17,7 @@ CLAUDE.md
 .qwen/
 .claude/
 .crush/
+.mcp.json
 # TestFlows tests artifacts that shall not be stored in Git
 _instances/
 _coverage_/

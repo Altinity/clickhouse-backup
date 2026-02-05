@@ -725,9 +725,8 @@ func (b *Backuper) backupSQLFiles(fromPath, toPath string) (uint64, error) {
 			if strings.HasSuffix(src, ".sql") {
 				copySize += uint64(srcinfo.Size())
 				return false, nil
-			} else {
-				return true, nil
 			}
+			return true, nil
 		},
 	})
 	return copySize, copyErr

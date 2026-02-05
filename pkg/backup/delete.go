@@ -132,49 +132,53 @@ func (b *Backuper) RemoveBackupLocal(ctx context.Context, backupName string, dis
 		return err
 	}
 	hasObjectDisks := b.hasObjectDisksLocal(backupList, backupName, disks)
-
-	for _, backup := range backupList {
-		if backup.BackupName == backupName {
-			b.isEmbedded = strings.Contains(backup.Tags, "embedded")
-			if hasObjectDisks || (b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk == "") {
-				bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, backupName)
-				if err != nil {
-					return err
-				}
-				err = bd.Connect(ctx)
-				if err != nil {
-					return errors.Wrap(err, "can't connect to remote storage")
-				}
-				defer func() {
-					if err := bd.Close(ctx); err != nil {
-						log.Warn().Msgf("can't close BackupDestination error: %v", err)
-					}
-				}()
-				b.dst = bd
-			}
-			err = b.cleanEmbeddedAndObjectDiskLocalIfSameRemoteNotPresent(ctx, backupName, disks, backup, hasObjectDisks)
-			if err != nil {
-				return err
-			}
-			for _, disk := range disks {
-				backupPath := path.Join(disk.Path, "backup", backupName)
-				if disk.IsBackup {
-					backupPath = path.Join(disk.Path, backupName)
-				}
-				log.Info().Msgf("remove '%s'", backupPath)
-				if err = os.RemoveAll(backupPath); err != nil {
-					return err
-				}
-			}
-			log.Info().Str("operation", "delete").
-				Str("location", "local").
-				Str("backup", backupName).
-				Str("duration", utils.HumanizeDuration(time.Since(start))).
-				Msg("done")
-			return nil
+	var backup *LocalBackup
+	for _, item := range backupList {
+		if item.BackupName == backupName {
+			backup = &item
+			break
 		}
 	}
-	return fmt.Errorf("'%s' is not found on local storage", backupName)
+	if backup == nil {
+		return fmt.Errorf("'%s' is not found on local storage", backupName)
+	}
+	b.isEmbedded = strings.Contains(backup.Tags, "embedded")
+	if hasObjectDisks || (b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk == "") {
+		bd, err := storage.NewBackupDestination(ctx, b.cfg, b.ch, backupName)
+		if err != nil {
+			return err
+		}
+		err = bd.Connect(ctx)
+		if err != nil {
+			return errors.Wrap(err, "can't connect to remote storage")
+		}
+		defer func() {
+			if err := bd.Close(ctx); err != nil {
+				log.Warn().Msgf("can't close BackupDestination error: %v", err)
+			}
+		}()
+		b.dst = bd
+	}
+	err = b.cleanEmbeddedAndObjectDiskLocalIfSameRemoteNotPresent(ctx, backupName, disks, *backup, hasObjectDisks)
+	if err != nil {
+		return err
+	}
+	for _, disk := range disks {
+		backupPath := path.Join(disk.Path, "backup", backupName)
+		if disk.IsBackup {
+			backupPath = path.Join(disk.Path, backupName)
+		}
+		log.Info().Msgf("remove '%s'", backupPath)
+		if err = os.RemoveAll(backupPath); err != nil {
+			return err
+		}
+	}
+	log.Info().Str("operation", "delete").
+		Str("location", "local").
+		Str("backup", backupName).
+		Str("duration", utils.HumanizeDuration(time.Since(start))).
+		Msg("done")
+	return nil
 }
 
 func (b *Backuper) cleanEmbeddedAndObjectDiskLocalIfSameRemoteNotPresent(ctx context.Context, backupName string, disks []clickhouse.Disk, backup LocalBackup, hasObjectDisks bool) error {
@@ -451,9 +455,9 @@ func (b *Backuper) cleanBackupObjectDisks(ctx context.Context, backupName string
 			if f.Size() > 0 || !f.LastModified().IsZero() {
 				deletedKeys += 1
 				return b.dst.DeleteFileFromObjectDiskBackup(ctx, path.Join(backupName, f.Name()))
-			} else {
-				return nil
 			}
+
+			return nil
 		}
 		deletedKeys += 1
 		return b.dst.DeleteFileFromObjectDiskBackup(ctx, path.Join(backupName, f.Name()))
@@ -524,9 +528,9 @@ func (b *Backuper) cleanPartialRequiredBackup(ctx context.Context, disks []click
 			if localBackup.BackupName != currentBackupName && localBackup.DataSize+localBackup.CompressedSize+localBackup.MetadataSize+localBackup.RBACSize == 0 {
 				if err = b.RemoveBackupLocal(ctx, localBackup.BackupName, disks); err != nil {
 					return errors.Wrapf(err, "CleanPartialRequiredBackups %s -> RemoveBackupLocal cleaning error", localBackup.BackupName)
-				} else {
-					log.Info().Msgf("CleanPartialRequiredBackups %s deleted", localBackup.BackupName)
 				}
+
+				log.Info().Msgf("CleanPartialRequiredBackups %s deleted", localBackup.BackupName)
 			}
 		}
 	} else {
