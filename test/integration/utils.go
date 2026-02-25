@@ -485,7 +485,6 @@ var defaultIncrementData = []TestDataStruct{
 	},
 }
 
-var listTimeMsRE = regexp.MustCompile(`list_duration=(\d+.\d+)`)
 var dockerExecTimeout = 900 * time.Second
 var mergeTreeOldSyntax = regexp.MustCompile(`(?m)MergeTree\(([^,]+),([\w\s,)(]+),(\s*\d+\s*)\)`)
 
@@ -1375,12 +1374,25 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	}
 
 	if remoteStorageType == "FTP" && !strings.Contains(backupConfig, "old") {
-		// during DROP PARTITION, we create empty covered part, and cant restore via ATTACH TABLE properly, https://github.com/Altinity/clickhouse-backup/issues/756
+		// during DROP PARTITION, we create empty covered part, and cant restore via ATTACH TABLE properly, https://github.com/Altinity/clickhouse-backup/issues/756, look config-ftp.yml
 		out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" restore --data --partitions=\"(0,'2022-01-02'),(0,'2022-01-03')\" "+fullBackupName)
 		r.Error(err)
+		// tuple partitions
 		out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "CLICKHOUSE_RESTORE_AS_ATTACH=0 clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" restore --data --partitions=\"(0,'2022-01-02'),(0,'2022-01-03')\" "+fullBackupName)
+		log.Debug().Msg(out)
+		r.NoError(err, "%s\nunexpected error: %v", out, err)
+		r.Contains(out, "DROP PARTITION")
+		// partition id
+		out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "CLICKHOUSE_RESTORE_AS_ATTACH=0 clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" restore --data --partitions=\"0-20220102,0-20220103,65d2b11ed3a1df2c72701c09f027947e,435ef8e8df48e77cefdcc330dc8b8d8c\" "+fullBackupName)
+
 	} else {
+		// tuple partitions
 		out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" restore --data --partitions=\"(0,'2022-01-02'),(0,'2022-01-03')\" "+fullBackupName)
+		log.Debug().Msg(out)
+		r.NoError(err, "%s\nunexpected error: %v", out, err)
+		r.Contains(out, "DROP PARTITION")
+		// partition id
+		out, err = env.DockerExecOut("clickhouse-backup", "bash", "-ce", "clickhouse-backup -c /etc/clickhouse-backup/"+backupConfig+" restore --data --partitions=\"0-20220102,0-20220103,65d2b11ed3a1df2c72701c09f027947e,435ef8e8df48e77cefdcc330dc8b8d8c\" "+fullBackupName)
 	}
 	log.Debug().Msg(out)
 	r.NoError(err, "%s\nunexpected error: %v", out, err)

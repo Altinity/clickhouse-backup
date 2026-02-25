@@ -1434,7 +1434,18 @@ func (b *Backuper) dropExistPartitions(ctx context.Context, tablesForRestore Lis
 		if !isExists {
 			return fmt.Errorf("`%s`.`%s` doesn't contains %#v partitions", table.Database, table.Table, partitions)
 		}
-		partitionsSQL := fmt.Sprintf("DROP PARTITION %s", strings.Join(partitionsIds, ", DROP PARTITION "))
+		partitionsSQL := ""
+		for i, id := range partitionsIds {
+			idSQL := fmt.Sprintf("DROP PARTITION ID '%s'", id)
+			if strings.HasPrefix(id, "(") {
+				idSQL = fmt.Sprintf("DROP PARTITION %s", id)
+			}
+			partitionsSQL += idSQL
+			if i < len(partitionsIds)-1 {
+				partitionsSQL += ", "
+			}
+		}
+
 		settings := ""
 		if version >= 19017000 {
 			settings = "SETTINGS mutations_sync=2"

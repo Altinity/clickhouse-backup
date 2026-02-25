@@ -57,6 +57,7 @@ var FieldsNamesRE = regexp.MustCompile("(?i)\\w+|`[^`]+`\\.`[^`]+`|\"[^\"]+\"")
 
 func extractPartitionComponents(partitionExpr string) []string {
 	partitionExpr = strings.TrimSpace(partitionExpr)
+	log.Debug().Msgf("extractPartitionComponents(partitionExpr=%s)", partitionExpr)
 	if strings.HasPrefix(partitionExpr, "(") && strings.HasSuffix(partitionExpr, ")") {
 		inner := strings.TrimSpace(partitionExpr[1 : len(partitionExpr)-1])
 		return splitPartitionTuple(inner)
@@ -139,6 +140,10 @@ func GetPartitionIdAndName(ctx context.Context, ch *clickhouse.ClickHouse, datab
 		return "", "", nil
 	}
 	partitionExpr := strings.TrimSpace(partitionByMatches[1])
+	s := partitionExpr
+	s = SettingsRE.ReplaceAllString(s, "")
+	s = OrderByRE.ReplaceAllString(s, "")
+	partitionExpr = s
 
 	version, err := ch.GetVersion(ctx)
 	if err != nil {
@@ -228,7 +233,7 @@ func tryEvaluatedPartitionId(ctx context.Context, ch *clickhouse.ClickHouse, cre
 	var args []interface{}
 	withItems := make([]string, len(columns))
 	for i, col := range columns {
-		columnType := inferColumnType(createQuery, col.Name, partitionValues[i])
+		columnType := extractFieldType(createQuery, col.Name, partitionValues[i])
 		withItems[i] = fmt.Sprintf("CAST(? AS %s) AS %s", columnType, col.Name)
 		args = append(args, partitionValues[i])
 	}
@@ -260,10 +265,74 @@ func tryEvaluatedPartitionId(ctx context.Context, ch *clickhouse.ClickHouse, cre
 	return result[0].PartitionId, result[0].PartitionName, nil
 }
 
-func inferColumnType(createQuery, columnName string, value interface{}) string {
-	re := regexp.MustCompile(fmt.Sprintf(`(?i)[\s,\(]%s\s+([a-zA-Z0-9\(\)]+)`, regexp.QuoteMeta(columnName)))
-	if matches := re.FindStringSubmatch(createQuery); len(matches) >= 2 {
-		return matches[1]
+func extractFieldType(createQuery, columnName string, value interface{}) string {
+	fieldNamePattern := fmt.Sprintf(`(?:[\s,\(])\x60?%s\x60?\s+`, regexp.QuoteMeta(columnName))
+	re := regexp.MustCompile(fieldNamePattern)
+
+	loc := re.FindStringIndex(createQuery)
+	if loc != nil {
+		remaining := createQuery[loc[1]:]
+
+		var parsedType strings.Builder
+		nesting := 0
+		inQuotes := false
+
+		for _, ch := range remaining {
+			// We process strings inside the type (for example, DateTime('Europe/Moscow'))
+			if ch == '\'' {
+				inQuotes = !inQuotes
+				parsedType.WriteRune(ch)
+				continue
+			}
+
+			// If we are inside quotes, we just take everything as it is
+			if inQuotes {
+				parsedType.WriteRune(ch)
+				continue
+			}
+
+			// Accounting for nesting of parentheses
+			if ch == '(' {
+				nesting++
+				parsedType.WriteRune(ch)
+				continue
+			}
+			if ch == ')' {
+				if nesting == 0 {
+					break // Дошли до закрывающей скобки списка колонок (конец таблицы)
+				}
+				nesting--
+				parsedType.WriteRune(ch)
+				continue
+			}
+
+			// A comma OUTSIDE parentheses means the end of the current column definition
+			if ch == ',' {
+				if nesting == 0 {
+					break
+				}
+				parsedType.WriteRune(ch)
+				continue
+			}
+
+			// A space OUTSIDE the parentheses means the end of the type and the beginning of the properties (e.g. DEFAULT, COMMENT)
+			// Spaces INSIDE parentheses (e.g. Decimal(64, 3)) are preserved
+			if ch == ' ' || ch == '\t' || ch == '\n' {
+				if nesting == 0 {
+					if parsedType.Len() > 0 {
+						break // Space after type
+					}
+					continue // Skip leading spaces if present
+				}
+				parsedType.WriteRune(ch)
+				continue
+			}
+
+			// Any other character is added to the result
+			parsedType.WriteRune(ch)
+		}
+
+		return parsedType.String()
 	}
 
 	switch value.(type) {
