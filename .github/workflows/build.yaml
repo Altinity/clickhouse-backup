@@ -58,6 +58,7 @@ jobs:
       - name: Report unittest coverage
         uses: coverallsapp/github-action@v2
         with:
+          fail-on-error: false
           file: _coverage_/coverage.out
           parallel: true
           format: golang
@@ -180,6 +181,7 @@ jobs:
       - name: Report testflows coverage
         uses: coverallsapp/github-action@v2
         with:
+          fail-on-error: false
           base-path: ./
           file: test/testflows/_coverage_/coverage.out
           parallel: true
@@ -351,6 +353,7 @@ jobs:
       - name: Report integration coverage
         uses: coverallsapp/github-action@v2
         with:
+          fail-on-error: false
           base-path: ./
           file: test/integration/_coverage_/coverage.out
           parallel: true
@@ -366,6 +369,7 @@ jobs:
         - name: Coveralls Finished
           uses: coverallsapp/github-action@v2
           with:
+            fail-on-error: false
             base-path: ./
             parallel-finished: true
   docker:
