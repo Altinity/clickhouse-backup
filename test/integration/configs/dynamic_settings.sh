@@ -339,10 +339,6 @@ EOT
 mkdir -p /var/lib/clickhouse/disks/backups_azure/
 chown -R clickhouse /var/lib/clickhouse/disks/
 
-if [[ -f /var/lib/clickhouse/storage_configuration_azblob.xml ]]; then
-  cp -fv /var/lib/clickhouse/storage_configuration_azblob.xml /etc/clickhouse-server/config.d/backup_storage_configuration_azblob.xml
-else
-
 cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_azblob.xml
 <?xml version="1.0"?>
 <clickhouse>
@@ -387,7 +383,6 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_azblob.xml
   </backups>
 </clickhouse>
 EOT
-fi
 
 fi
 

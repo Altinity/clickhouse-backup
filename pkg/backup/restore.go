@@ -2765,8 +2765,8 @@ func (b *Backuper) restoreEmbedded(ctx context.Context, backupName string, schem
 			if kind == "TABLE" && len(partitionsNameList) > 0 {
 				if tablePartitions, exists := partitionsNameList[metadata.TableTitle{Table: t.Table, Database: t.Database}]; exists && len(tablePartitions) > 0 {
 					if tablePartitions[0] != "*" {
-						partitionsSQL := fmt.Sprintf("'%s'", strings.Join(tablePartitions, "','"))
-						if strings.HasPrefix(partitionsSQL, "'(") {
+						partitionsSQL := fmt.Sprintf("ID '%s'", strings.Join(tablePartitions, "',ID '"))
+						if strings.HasPrefix(partitionsSQL, "ID '(") {
 							partitionsSQL = strings.Join(tablePartitions, ",")
 						}
 						tablesSQL += fmt.Sprintf(" PARTITIONS %s", partitionsSQL)
