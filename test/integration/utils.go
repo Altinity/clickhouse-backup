@@ -941,7 +941,12 @@ func (env *TestEnvironment) dropDatabase(database string, ifExists bool) (err er
 	} else if isAtomicOrReplicated {
 		dropDatabaseSQL += " SYNC"
 	}
-	return env.ch.Query(dropDatabaseSQL)
+	dropErr := env.ch.Query(dropDatabaseSQL)
+	// On ClickHouse < 20.10 with Ordinary engine, DROP DATABASE may not be fully synchronous
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.10") < 0 {
+		time.Sleep(1 * time.Second)
+	}
+	return dropErr
 }
 
 // Validation methods
