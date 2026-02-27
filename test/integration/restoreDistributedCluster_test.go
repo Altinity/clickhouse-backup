@@ -70,8 +70,9 @@ func TestRestoreDistributedCluster(t *testing.T) {
 		// Drop table and database
 		r.NoError(env.dropDatabase(dbName, false))
 
-		// remove cluster and wait configuration reload
-		env.DockerExecNoError(r, "clickhouse", "bash", "-c", "rm -rfv /etc/clickhouse-server/config.d/new-cluster.xml")
+		// remove cluster and wait configuration reload, overwrite with empty config instead of deleting
+		// because some ClickHouse versions don't properly detect deleted config files during SYSTEM RELOAD CONFIG
+		env.DockerExecNoError(r, "clickhouse", "bash", "-c", "echo '<yandex><remote_servers></remote_servers></yandex>' > /etc/clickhouse-server/config.d/new-cluster.xml")
 		newClusterExists := uint64(1)
 		for i := 0; i < 60 && newClusterExists == 1; i++ {
 			env.queryWithNoError(r, "SYSTEM RELOAD CONFIG")
@@ -98,6 +99,7 @@ func TestRestoreDistributedCluster(t *testing.T) {
 	// Clean up
 	r.NoError(env.dropDatabase(dbName, false))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", backupName)
+	env.DockerExecNoError(r, "clickhouse", "bash", "-c", "rm -fv /etc/clickhouse-server/config.d/new-cluster.xml")
 
 	env.Cleanup(t, r)
 }
