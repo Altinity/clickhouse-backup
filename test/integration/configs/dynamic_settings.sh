@@ -339,6 +339,11 @@ EOT
 mkdir -p /var/lib/clickhouse/disks/backups_azure/
 chown -R clickhouse /var/lib/clickhouse/disks/
 
+# temporary file, need for TestAzure
+if [[ -f /var/lib/clickhouse/storage_configuration_azblob.xml ]]; then
+  cp -fv /var/lib/clickhouse/storage_configuration_azblob.xml /etc/clickhouse-server/config.d/backup_storage_configuration_azblob.xml
+else
+
 cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_azblob.xml
 <?xml version="1.0"?>
 <clickhouse>
@@ -383,6 +388,7 @@ cat <<EOT > /etc/clickhouse-server/config.d/storage_configuration_azblob.xml
   </backups>
 </clickhouse>
 EOT
+fi
 
 fi
 
@@ -562,7 +568,7 @@ EOT
 fi
 
 
-if [[ "$CLICKHOUSE_VERSION" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[3]\.[4-9] || "${CLICKHOUSE_VERSION}" =~ ^2[4-9]\.[1-9] ]]; then
+if [[ "$CLICKHOUSE_VERSION" == "head" || "${CLICKHOUSE_VERSION}" =~ ^2[3]\.[8-9] || "${CLICKHOUSE_VERSION}" =~ ^2[4-9]\.[1-9] ]]; then
 
 cat <<EOT > /etc/clickhouse-server/config.d/merge_tree_low_memory_23.8.xml
 <yandex>
