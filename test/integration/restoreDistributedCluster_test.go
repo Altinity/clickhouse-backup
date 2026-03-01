@@ -73,6 +73,11 @@ func TestRestoreDistributedCluster(t *testing.T) {
 		// remove cluster and wait configuration reload, overwrite with empty config instead of deleting
 		// because some ClickHouse versions don't properly detect deleted config files during SYSTEM RELOAD CONFIG
 		env.DockerExecNoError(r, "clickhouse", "bash", "-c", "echo '<yandex><remote_servers></remote_servers></yandex>' > /etc/clickhouse-server/config.d/new-cluster.xml")
+		// reload config multiple times to ensure ClickHouse picks up the change
+		for j := 0; j < 3; j++ {
+			env.queryWithNoError(r, "SYSTEM RELOAD CONFIG")
+			time.Sleep(1 * time.Second)
+		}
 		newClusterExists := uint64(1)
 		for i := 0; i < 60 && newClusterExists == 1; i++ {
 			env.queryWithNoError(r, "SYSTEM RELOAD CONFIG")
@@ -80,7 +85,7 @@ func TestRestoreDistributedCluster(t *testing.T) {
 			if newClusterExists == 0 {
 				break
 			}
-			time.Sleep(1 * time.Second)
+			time.Sleep(3 * time.Second)
 		}
 		r.Equal(uint64(0), newClusterExists, "new_cluster shall not present in system.clusters")
 
