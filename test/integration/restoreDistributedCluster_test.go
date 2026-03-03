@@ -87,6 +87,9 @@ func TestRestoreDistributedCluster(t *testing.T) {
 			}
 			time.Sleep(3 * time.Second)
 		}
+		out, err := env.DockerExecOut("clickhouse", "grep", "-A10", "new_cluster", "/var/lib/clickhouse/preprocessed_configs/config.xml")
+		r.NotContains(out, "<new_cluster>")
+		r.NoError(err)
 		r.Equal(uint64(0), newClusterExists, "new_cluster shall not present in system.clusters")
 
 		// Restore using `CLICKHOUSE_RESTORE_DISTRIBUTED_CLUSTER` and `RESTORE_SCHEMA_ON_CLUSTER`
