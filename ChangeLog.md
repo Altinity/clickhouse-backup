@@ -1,3 +1,17 @@
+# v2.6.43
+
+NEW FEATURES
+- add `S3_REQUEST_CONTENT_MD5` option for S3-compatible storage backends that require `Content-MD5` header on uploads (e.g. Huawei S3), fix [1324](https://github.com/Altinity/clickhouse-backup/issues/1324), fix [1329](https://github.com/Altinity/clickhouse-backup/issues/1329)
+
+IMPROVEMENTS
+- add ClickHouse 26.1, 26.2 to test matrix
+- refactor integration tests: split monolithic test file and reorganize configs for better maintainability
+
+BUG FIXES
+- fix GCS upload performance regression by letting SDK manage transport instead of custom HTTP client
+- fix restore `--partitions` option error related to Embedded backup
+- fix [1328](https://github.com/Altinity/clickhouse-backup/issues/1328), `restore --data --partitions` now correctly uses `DROP PARTITION ID '<id>'` for partition IDs and `DROP PARTITION (<tuple>)` for tuple-format partitions instead of always using `DROP PARTITION`, also fix the same issue for Embedded backup/restore
+
 # v2.6.42
 
 NEW FEATURES
