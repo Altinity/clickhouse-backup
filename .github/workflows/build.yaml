@@ -109,7 +109,7 @@ jobs:
           - '24.8'
           - '25.3'
           - '25.8'
-          - '26.2'
+          - '26.1'
     steps:
       - name: Checkout project
         uses: actions/checkout@v6
@@ -222,7 +222,7 @@ jobs:
           - '24.8'
           - '25.3'
           - '25.8'
-          - '26.2'
+          - '26.1'
     steps:
       - name: Checkout project
         uses: actions/checkout@v6
