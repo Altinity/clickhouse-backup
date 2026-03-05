@@ -522,9 +522,10 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 	env.ch.Close()
 
-	if t.Name() == "TestS3" || t.Name() == "TestEmbeddedS3" || t.Name() == "TestSkipDisk" || t.Name() == "TestRestoreMapping" {
-		env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/disk_s3")
-	}
+	// Always clean disk_s3 from minio — it's ClickHouse table storage (s3_only policy)
+	// created by runMainIntegrationScenario and must be wiped between test runs.
+	// Ignore error: minio may not be present in non-S3 test setups.
+	env.DockerExec("minio", "rm", "-rf", "/minio/data/clickhouse/disk_s3")
 
 	if t.Name() == "TestRBAC" || t.Name() == "TestConfigs" || strings.HasPrefix(t.Name(), "TestEmbedded") {
 		env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/backups_s3")
