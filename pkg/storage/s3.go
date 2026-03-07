@@ -522,6 +522,14 @@ func withContentMD5(o *s3.Options) {
 	})
 }
 
+func isDeleteObjectsMissingContentMD5Error(err error) bool {
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.ErrorCode() == "InvalidRequest" && strings.Contains(apiErr.ErrorMessage(), "Content-MD5")
+	}
+	return strings.Contains(err.Error(), "Missing required header for this request: Content-MD5")
+}
+
 // executeBatchDelete executes a single batch delete operation
 func (s *S3) executeBatchDelete(ctx context.Context, objects []s3types.ObjectIdentifier) ([]KeyError, error) {
 	params := &s3.DeleteObjectsInput{
@@ -539,15 +547,24 @@ func (s *S3) executeBatchDelete(ctx context.Context, objects []s3types.ObjectIde
 		params.ChecksumAlgorithm = s3types.ChecksumAlgorithm(s.Config.CheckSumAlgorithm)
 	}
 
-	var output *s3.DeleteObjectsOutput
-	var err error
-	if s.Config.RequestContentMD5 {
-		output, err = s.client.DeleteObjects(ctx, params, withContentMD5)
-	} else {
-		output, err = s.client.DeleteObjects(ctx, params)
+	callDeleteObjects := func(requestContentMD5 bool) (*s3.DeleteObjectsOutput, error) {
+		if requestContentMD5 {
+			return s.client.DeleteObjects(ctx, params, withContentMD5)
+		}
+		return s.client.DeleteObjects(ctx, params)
 	}
+
+	output, err := callDeleteObjects(s.Config.RequestContentMD5)
 	if err != nil {
-		return nil, errors.Wrap(err, "DeleteObjects API call failed")
+		// Some S3-compatible providers require Content-MD5 for DeleteObjects.
+		// Retry once with MD5 middleware even when request_content_md5 is disabled.
+		if !s.Config.RequestContentMD5 && isDeleteObjectsMissingContentMD5Error(err) {
+			log.Info().Msg("S3 DeleteObjects returned missing Content-MD5, retrying batch delete with Content-MD5")
+			output, err = callDeleteObjects(true)
+		}
+		if err != nil {
+			return nil, errors.Wrap(err, "DeleteObjects API call failed")
+		}
 	}
 
 	// Parse per-object failures
