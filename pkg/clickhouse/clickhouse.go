@@ -1106,7 +1106,7 @@ func (ch *ClickHouse) enrichQueryWithOnCluster(query string, onCluster string, v
 }
 
 func (ch *ClickHouse) TurnAnalyzerOnIfNecessary(version int, query string, allowExperimentalAnalyzer string) error {
-	if version > 24003000 && (strings.HasPrefix(query, "CREATE LIVE VIEW") || strings.HasPrefix(query, "ATTACH LIVE VIEW") || strings.HasPrefix(query, "CREATE WINDOW VIEW") || strings.HasPrefix(query, "ATTACH WINDOW VIEW")) && allowExperimentalAnalyzer == "1" {
+	if version >= 24003000 && (strings.HasPrefix(query, "CREATE LIVE VIEW") || strings.HasPrefix(query, "ATTACH LIVE VIEW") || strings.HasPrefix(query, "CREATE WINDOW VIEW") || strings.HasPrefix(query, "ATTACH WINDOW VIEW")) && allowExperimentalAnalyzer == "1" {
 		if err := ch.Query("SET allow_experimental_analyzer=1"); err != nil {
 			return err
 		}
@@ -1115,7 +1115,7 @@ func (ch *ClickHouse) TurnAnalyzerOnIfNecessary(version int, query string, allow
 }
 
 func (ch *ClickHouse) TurnAnalyzerOffIfNecessary(version int, query string, allowExperimentalAnalyzer string) (string, error) {
-	if version > 24003000 && (strings.HasPrefix(query, "CREATE LIVE VIEW") || strings.HasPrefix(query, "ATTACH LIVE VIEW") || strings.HasPrefix(query, "CREATE WINDOW VIEW") || strings.HasPrefix(query, "ATTACH WINDOW VIEW")) {
+	if version >= 24003000 && (strings.HasPrefix(query, "CREATE LIVE VIEW") || strings.HasPrefix(query, "ATTACH LIVE VIEW") || strings.HasPrefix(query, "CREATE WINDOW VIEW") || strings.HasPrefix(query, "ATTACH WINDOW VIEW")) {
 		if err := ch.SelectSingleRowNoCtx(&allowExperimentalAnalyzer, "SELECT value FROM system.settings WHERE name='allow_experimental_analyzer'"); err != nil {
 			return "", err
 		}
