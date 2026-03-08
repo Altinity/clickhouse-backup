@@ -2107,11 +2107,23 @@ func (b *Backuper) restoreDataRegularByAttach(ctx context.Context, backupName st
 	var size int64
 	var err error
 	start := time.Now()
+	logger.
+		Info().
+		Str("size", utils.FormatBytes(uint64(size))).
+		Str("database", backupTable.Database).
+		Str("table", backupTable.Table).
+		Msg("download object_disks start")
 	if size, err = b.downloadObjectDiskParts(ctx, backupName, backupMetadata, backupTable, diskMap, diskTypes, disks, needsKeyRewrite); err != nil {
 		return errors.Wrapf(err, "can't restore object_disk server-side copy data parts '%s.%s'", backupTable.Database, backupTable.Table)
 	}
 	if size > 0 {
-		logger.Info().Str("duration", utils.HumanizeDuration(time.Since(start))).Str("size", utils.FormatBytes(uint64(size))).Str("database", backupTable.Database).Str("table", backupTable.Table).Msg("download object_disks finish")
+		logger.
+			Info().
+			Str("duration", utils.HumanizeDuration(time.Since(start))).
+			Str("size", utils.FormatBytes(uint64(size))).
+			Str("database", backupTable.Database).
+			Str("table", backupTable.Table).
+			Msg("download object_disks finish")
 	}
 	// Skip ATTACH TABLE for Replicated*MergeTree tables if replicatedCopyToDetached is true
 	if !replicatedCopyToDetached || !strings.Contains(dstTable.Engine, "Replicated") {

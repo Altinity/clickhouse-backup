@@ -214,6 +214,12 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 			idx := i
 			dataGroup.Go(func() error {
 				start := time.Now()
+				log.Info().Fields(map[string]interface{}{
+					"backup_name": backupName,
+					"table":       fmt.Sprintf("%s.%s", tableMetadataAfterDownload[idx].Database, tableMetadataAfterDownload[idx].Table),
+					"progress":    fmt.Sprintf("%d/%d", idx+1, len(tableMetadataAfterDownload)),
+					"version":     backupVersion,
+				}).Msg("download table start")
 				var downloadDataErr error
 				var downloadDataSize uint64
 				downloadDataSize, downloadDataErr = b.downloadTableData(dataCtx, remoteBackup.BackupMetadata, *tableMetadataAfterDownload[idx], disks, hardlinkExistsFiles)
@@ -224,13 +230,12 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 				tableMetadataAfterDownload[idx].TotalBytes = downloadDataSize
 				log.Info().Fields(map[string]interface{}{
 					"backup_name": backupName,
-					"operation":   "download_data",
 					"table":       fmt.Sprintf("%s.%s", tableMetadataAfterDownload[idx].Database, tableMetadataAfterDownload[idx].Table),
 					"progress":    fmt.Sprintf("%d/%d", idx+1, len(tableMetadataAfterDownload)),
 					"duration":    utils.HumanizeDuration(time.Since(start)),
 					"size":        utils.FormatBytes(tableMetadataAfterDownload[idx].TotalBytes),
 					"version":     backupVersion,
-				}).Msg("done")
+				}).Msg("download table finish")
 				return nil
 			})
 		}

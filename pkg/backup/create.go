@@ -968,12 +968,17 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 			logger.Debug().Str("disk", disk.Name).Str("duration", utils.HumanizeDuration(time.Since(start))).Msg("shadow moved")
 			if len(parts) > 0 && (b.isDiskTypeObject(disk.Type) || b.isDiskTypeEncryptedObject(disk, diskList)) {
 				start = time.Now()
+				log.Info().
+					Str("database", table.Database).Str("table", table.Name).
+					Str("disk", disk.Name).Str("size", utils.FormatBytes(uint64(size))).
+					Msg("upload object_disk start")
 				if size, err = b.uploadObjectDiskParts(ctx, backupName, diffTableMetadata, backupShadowPath, disk); err != nil {
 					return nil, nil, nil, nil, err
 				}
 				objectDiskSize[disk.Name] = size
 				if size > 0 {
-					log.Info().Str("duration", utils.HumanizeDuration(time.Since(start))).
+					log.Info().
+						Str("duration", utils.HumanizeDuration(time.Since(start))).
 						Str("database", table.Database).Str("table", table.Name).
 						Str("disk", disk.Name).Str("size", utils.FormatBytes(uint64(size))).
 						Msg("upload object_disk finish")

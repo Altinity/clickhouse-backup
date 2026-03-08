@@ -160,6 +160,11 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 		}
 		idx := i
 		uploadGroup.Go(func() error {
+			log.Info().Fields(map[string]interface{}{
+				"table":    fmt.Sprintf("%s.%s", tablesForUpload[idx].Database, tablesForUpload[idx].Table),
+				"progress": fmt.Sprintf("%d/%d", idx+1, len(tablesForUpload)),
+				"version":  backupVersion,
+			}).Msg("upload table start")
 			var uploadedBytes int64
 			var uploadTableErr error
 			//skip upload data for embedded backup with empty embedded_backup_disk
@@ -183,14 +188,13 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 				atomic.AddInt64(&metadataSize, tableMetadataSize)
 			}
 			log.Info().Fields(map[string]interface{}{
-				"operation":     "upload_table",
 				"table":         fmt.Sprintf("%s.%s", tablesForUpload[idx].Database, tablesForUpload[idx].Table),
 				"progress":      fmt.Sprintf("%d/%d", idx+1, len(tablesForUpload)),
 				"duration":      utils.HumanizeDuration(time.Since(start)),
 				"data_size":     utils.FormatBytes(uint64(uploadedBytes)),
 				"metadata_size": utils.FormatBytes(uint64(tableMetadataSize)),
 				"version":       backupVersion,
-			}).Msg("done")
+			}).Msg("upload table finish")
 			return nil
 		})
 	}
