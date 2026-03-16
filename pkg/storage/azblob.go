@@ -69,16 +69,16 @@ func (a *AzureBlob) Kind() string {
 // Connect - connect to Azure
 func (a *AzureBlob) Connect(ctx context.Context) error {
 	if a.Config.EndpointSuffix == "" {
-		return fmt.Errorf("azblob endpoint suffix not set")
+		return errors.New("azblob endpoint suffix not set")
 	}
 	if a.Config.Container == "" {
-		return fmt.Errorf("azblob container name not set")
+		return errors.New("azblob container name not set")
 	}
 	if a.Config.AccountName == "" {
-		return fmt.Errorf("azblob account name not set")
+		return errors.New("azblob account name not set")
 	}
 	if a.Config.AccountKey == "" && a.Config.SharedAccessSignature == "" && !a.Config.UseManagedIdentity {
-		return fmt.Errorf("azblob account key or SAS or use_managed_identity must be set")
+		return errors.New("azblob account key or SAS or use_managed_identity must be set")
 	}
 	var (
 		err        error
@@ -87,12 +87,12 @@ func (a *AzureBlob) Connect(ctx context.Context) error {
 	)
 	timeout, err := time.ParseDuration(a.Config.Timeout)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "AzureBlob Connect ParseDuration")
 	}
 	if a.Config.AccountKey != "" {
 		credential, err = azblob.NewSharedKeyCredential(a.Config.AccountName, a.Config.AccountKey)
 		if err != nil {
-			return err
+			return errors.WithMessage(err, "AzureBlob Connect NewSharedKeyCredential")
 		}
 		urlString = fmt.Sprintf("%s://%s.blob.%s", a.Config.EndpointSchema, a.Config.AccountName, a.Config.EndpointSuffix)
 	} else if a.Config.SharedAccessSignature != "" {
@@ -129,7 +129,7 @@ func (a *AzureBlob) Connect(ctx context.Context) error {
 
 	u, err := url.Parse(urlString)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "AzureBlob Connect url.Parse")
 	}
 	// don't pollute syslog with expected 404'a and other garbage logs
 	pipeline.SetForceLogEnabled(false)
@@ -156,7 +156,7 @@ func (a *AzureBlob) Connect(ctx context.Context) error {
 		if !a.Config.AssumeContainerExists {
 			_, err = a.Container.Create(ctx, azblob.Metadata{}, azblob.PublicAccessNone)
 			if err != nil && !isContainerAlreadyExists(err) {
-				return err
+				return errors.WithMessage(err, "AzureBlob Connect Container.Create")
 			}
 		}
 		if a.Config.SSEKey != "" {
@@ -165,7 +165,7 @@ func (a *AzureBlob) Connect(ctx context.Context) error {
 				return errors.Wrapf(err, "malformed SSE key, must be base64-encoded 256-bit key")
 			}
 			if len(key) != 32 {
-				return fmt.Errorf("malformed SSE key, must be base64-encoded 256-bit key")
+				return errors.New("malformed SSE key, must be base64-encoded 256-bit key")
 			}
 			b64key := a.Config.SSEKey
 			shakey := sha256.Sum256(key)
@@ -189,7 +189,7 @@ func (a *AzureBlob) GetFileReaderAbsolute(ctx context.Context, key string) (io.R
 	blob := a.Container.NewBlockBlobURL(key)
 	r, err := blob.Download(ctx, 0, azblob.CountToEnd, azblob.BlobAccessConditions{}, false, a.CPK)
 	if err != nil {
-		return nil, err
+		return nil, errors.WithMessage(err, "AzureBlob GetFileReaderAbsolute Download")
 	}
 	return r.Body(azblob.RetryReaderOptions{}), nil
 }
@@ -212,22 +212,28 @@ func (a *AzureBlob) PutFileAbsolute(ctx context.Context, key string, r io.ReadCl
 	}
 	bufferSize = AdjustValueByRange(bufferSize, 2*1024*1024, 10*1024*1024)
 
-	_, err := x.UploadStreamToBlockBlob(ctx, r, blob, azblob.UploadStreamToBlockBlobOptions{BufferSize: int(bufferSize), MaxBuffers: a.Config.MaxBuffers}, a.CPK)
-	return err
+	if _, err := x.UploadStreamToBlockBlob(ctx, r, blob, azblob.UploadStreamToBlockBlobOptions{BufferSize: int(bufferSize), MaxBuffers: a.Config.MaxBuffers}, a.CPK); err != nil {
+		return errors.WithMessage(err, "AzureBlob PutFileAbsolute UploadStreamToBlockBlob")
+	}
+	return nil
 }
 
 func (a *AzureBlob) DeleteFile(ctx context.Context, key string) error {
 	a.logf("AZBLOB->DeleteFile %s", key)
 	blob := a.Container.NewBlockBlobURL(path.Join(a.Config.Path, key))
-	_, err := blob.Delete(ctx, azblob.DeleteSnapshotsOptionInclude, azblob.BlobAccessConditions{})
-	return err
+	if _, err := blob.Delete(ctx, azblob.DeleteSnapshotsOptionInclude, azblob.BlobAccessConditions{}); err != nil {
+		return errors.WithMessage(err, "AzureBlob DeleteFile")
+	}
+	return nil
 }
 
 func (a *AzureBlob) DeleteFileFromObjectDiskBackup(ctx context.Context, key string) error {
 	a.logf("AZBLOB->DeleteFileFromObjectDiskBackup %s", key)
 	blob := a.Container.NewBlockBlobURL(path.Join(a.Config.ObjectDiskPath, key))
-	_, err := blob.Delete(ctx, azblob.DeleteSnapshotsOptionInclude, azblob.BlobAccessConditions{})
-	return err
+	if _, err := blob.Delete(ctx, azblob.DeleteSnapshotsOptionInclude, azblob.BlobAccessConditions{}); err != nil {
+		return errors.WithMessage(err, "AzureBlob DeleteFileFromObjectDiskBackup")
+	}
+	return nil
 }
 
 // DeleteKeysBatch implements BatchDeleter interface for Azure Blob
@@ -314,7 +320,7 @@ func (a *AzureBlob) StatFileAbsolute(ctx context.Context, key string) (RemoteFil
 	if err != nil {
 		var se azblob.StorageError
 		if !errors.As(err, &se) || se.ServiceCode() != azblob.ServiceCodeBlobNotFound {
-			return nil, err
+			return nil, errors.WithMessage(err, "AzureBlob StatFileAbsolute GetProperties")
 		}
 		return nil, ErrNotFound
 	}
@@ -349,13 +355,13 @@ func (a *AzureBlob) WalkAbsolute(ctx context.Context, prefix string, recursive b
 		if !recursive {
 			r, err := a.Container.ListBlobsHierarchySegment(ctx, mrk, delimiter, opt)
 			if err != nil {
-				return err
+				return errors.WithMessage(err, "AzureBlob WalkAbsolute ListBlobsHierarchySegment")
 			}
 			for _, p := range r.Segment.BlobPrefixes {
 				if err := process(ctx, &azureBlobFile{
 					name: strings.TrimPrefix(p.Name, prefix),
 				}); err != nil {
-					return err
+					return errors.WithMessage(err, "AzureBlob WalkAbsolute process prefix")
 				}
 			}
 			for _, blob := range r.Segment.BlobItems {
@@ -370,14 +376,14 @@ func (a *AzureBlob) WalkAbsolute(ctx context.Context, prefix string, recursive b
 					size:         size,
 					lastModified: blob.Properties.LastModified,
 				}); err != nil {
-					return err
+					return errors.WithMessage(err, "AzureBlob WalkAbsolute process blob")
 				}
 			}
 			mrk = r.NextMarker
 		} else {
 			r, err := a.Container.ListBlobsFlatSegment(ctx, mrk, opt)
 			if err != nil {
-				return err
+				return errors.WithMessage(err, "AzureBlob WalkAbsolute ListBlobsFlatSegment")
 			}
 			for _, blob := range r.Segment.BlobItems {
 				var size int64
@@ -391,7 +397,7 @@ func (a *AzureBlob) WalkAbsolute(ctx context.Context, prefix string, recursive b
 					size:         size,
 					lastModified: blob.Properties.LastModified,
 				}); err != nil {
-					return err
+					return errors.WithMessage(err, "AzureBlob WalkAbsolute process flat blob")
 				}
 			}
 			mrk = r.NextMarker
@@ -411,7 +417,7 @@ func (a *AzureBlob) CopyObject(ctx context.Context, srcSize int64, srcBucket, sr
 	srcURLString := fmt.Sprintf("%s://%s.%s/%s/%s", a.Config.EndpointSchema, a.Config.AccountName, endpoint, strings.Trim(srcBucket, "/"), strings.Trim(srcKey, "/"))
 	srcURL, err := url.Parse(srcURLString)
 	if err != nil {
-		return 0, err
+		return 0, errors.WithMessage(err, "AzureBlob CopyObject url.Parse")
 	}
 
 	sourceBlobURL := azblob.NewBlobURL(*srcURL, a.Pipeline)
@@ -441,7 +447,7 @@ func (a *AzureBlob) CopyObject(ctx context.Context, srcSize int64, srcBucket, sr
 		}
 	}
 	if copyStatus == azblob.CopyStatusFailed {
-		return 0, fmt.Errorf("azblob->CopyObject got CopyStatusFailed %s", copyStatusDesc)
+		return 0, errors.Errorf("azblob->CopyObject got CopyStatusFailed %s", copyStatusDesc)
 	}
 	return size, nil
 }

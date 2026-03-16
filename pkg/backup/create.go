@@ -66,7 +66,7 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	defer pidlock.RemovePidFile(backupName)
 	ctx, cancel, err := status.Current.GetContextWithCancel(commandId)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "status.Current.GetContextWithCancel")
 	}
 	ctx, cancel = context.WithCancel(ctx)
 	defer cancel()
@@ -84,7 +84,7 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 
 	clickHouseVersion, versionErr := b.ch.GetVersion(ctx)
 	if versionErr != nil {
-		return versionErr
+		return errors.WithMessage(versionErr, "b.ch.GetVersion")
 	}
 	if clickHouseVersion < 24003000 && skipProjections != nil && len(skipProjections) > 0 {
 		log.Warn().Msg("backup with skip-projections can restore only in 24.3+")
@@ -114,7 +114,7 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	}
 
 	if b.CalculateNonSkipTables(tables) == 0 && !b.cfg.General.AllowEmptyBackups {
-		return fmt.Errorf("no tables for backup")
+		return errors.New("no tables for backup")
 	}
 
 	allFunctions, err := b.ch.GetUserDefinedFunctions(ctx)
@@ -124,12 +124,12 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 
 	disks, err := b.ch.GetDisks(ctx, false)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "b.ch.GetDisks")
 	}
 
 	b.DefaultDataPath, err = b.ch.GetDefaultPath(disks)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "b.ch.GetDefaultPath")
 	}
 
 	diskMap := make(map[string]string, len(disks))
@@ -142,7 +142,7 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 	doBackupData := !schemaOnly && !rbacOnly && !configsOnly && !namedCollectionsOnly
 	backupRBACSize, backupConfigSize, backupNamedCollectionsSize, rbacConfigsNamedCollectionsErr := b.createConfigsNamedCollectionsAndRBACIfNecessary(ctx, backupName, createRBAC, rbacOnly, createConfigs, configsOnly, createNamedCollections, namedCollectionsOnly, disks, diskMap)
 	if rbacConfigsNamedCollectionsErr != nil {
-		return rbacConfigsNamedCollectionsErr
+		return errors.WithMessage(rbacConfigsNamedCollectionsErr, "createConfigsNamedCollectionsAndRBACIfNecessary")
 	}
 	if b.cfg.ClickHouse.UseEmbeddedBackupRestore {
 		err = b.createBackupEmbedded(ctx, backupName, diffFromRemote, doBackupData, schemaOnly, backupVersion, tablePattern, partitionsNameList, partitionsIdMap, tables, allDatabases, allFunctions, disks, diskMap, diskTypes, backupRBACSize, backupConfigSize, backupNamedCollectionsSize, startBackup, clickHouseVersion)
@@ -159,12 +159,12 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 		if cleanShadowErr := b.Clean(ctx); cleanShadowErr != nil {
 			log.Error().Msgf("creating failed -> b.Clean error: %v", cleanShadowErr)
 		}
-		return err
+		return errors.WithMessage(err, "createBackup failed")
 	}
 
 	// Clean
 	if err := b.RemoveOldBackupsLocal(ctx, true, disks); err != nil {
-		return err
+		return errors.WithMessage(err, "b.RemoveOldBackupsLocal")
 	}
 	return nil
 }
@@ -223,20 +223,20 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 	// Create backup dir on all clickhouse disks
 	for _, disk := range disks {
 		if err := filesystemhelper.Mkdir(path.Join(disk.Path, "backup"), b.ch, disks); err != nil {
-			return err
+			return errors.WithMessage(err, "filesystemhelper.Mkdir")
 		}
 	}
 	backupPath := path.Join(b.DefaultDataPath, "backup", backupName)
 	if _, err := os.Stat(path.Join(backupPath, "metadata.json")); err == nil || !os.IsNotExist(err) {
 		if !b.resume {
-			return fmt.Errorf("'%s' medatata.json already exists", backupName)
+			return errors.Errorf("'%s' medatata.json already exists", backupName)
 		}
 		log.Warn().Msgf("'%s' medatata.json already exists, will overwrite and resume object disk data upload", backupName)
 	}
 	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
 		if err = filesystemhelper.Mkdir(backupPath, b.ch, disks); err != nil {
 			log.Error().Msgf("can't create directory %s: %v", backupPath, err)
-			return err
+			return errors.WithMessage(err, "filesystemhelper.Mkdir backupPath")
 		}
 	}
 	isObjectDiskContainsTables := false
@@ -261,7 +261,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 	// https://github.com/Altinity/clickhouse-backup/issues/910
 	if isObjectDiskContainsTables {
 		if err = config.ValidateObjectDiskConfig(b.cfg); err != nil {
-			return err
+			return errors.WithMessage(err, "config.ValidateObjectDiskConfig")
 		}
 		// Warn if encryption key is set for GCS - object disk files won't be encrypted
 		if b.cfg.General.RemoteStorage == "gcs" && b.cfg.GCS.EncryptionKey != "" {
@@ -271,11 +271,11 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 
 	if isObjectDiskContainsTables || (diffFromRemote != "" && b.cfg.General.RemoteStorage != "custom") {
 		if err = b.CalculateMaxSize(ctx); err != nil {
-			return err
+			return errors.WithMessage(err, "b.CalculateMaxSize")
 		}
 		b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, backupName)
 		if err != nil {
-			return err
+			return errors.WithMessage(err, "storage.NewBackupDestination")
 		}
 		if err = b.dst.Connect(ctx); err != nil {
 			return errors.Wrapf(err, "can't connect to %s", b.dst.Kind())
@@ -343,7 +343,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 				disksToPartsMap, realSize, objectDiskSize, checksums, addTableToBackupErr = b.AddTableToLocalBackup(createCtx, backupName, tablesDiffFromRemote, shadowBackupUUID, disks, &table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}], skipProjections, version)
 				if addTableToBackupErr != nil {
 					logger.Error().Msgf("b.AddTableToLocalBackup error: %v", addTableToBackupErr)
-					return addTableToBackupErr
+					return errors.WithMessage(addTableToBackupErr, "b.AddTableToLocalBackup")
 				}
 				// more precise data size calculation
 				for _, size := range realSize {
@@ -361,7 +361,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 				inProgressMutations, inProgressMutationsErr = b.ch.GetInProgressMutations(createCtx, table.Database, table.Name)
 				if inProgressMutationsErr != nil {
 					logger.Error().Msgf("b.ch.GetInProgressMutations error: %v", inProgressMutationsErr)
-					return inProgressMutationsErr
+					return errors.WithMessage(inProgressMutationsErr, "b.ch.GetInProgressMutations")
 				}
 			}
 			logger.Debug().Msg("create metadata")
@@ -380,7 +380,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 				}, disks)
 				if createTableMetadataErr != nil {
 					logger.Error().Msgf("b.createTableMetadata error: %v", createTableMetadataErr)
-					return createTableMetadataErr
+					return errors.WithMessage(createTableMetadataErr, "b.createTableMetadata")
 				}
 				atomic.AddUint64(&backupMetadataSize, metadataSize)
 				metaMutex.Lock()
@@ -409,7 +409,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBackup string, doBackupData, schemaOnly bool, backupVersion, tablePattern string, partitionsNameList map[metadata.TableTitle][]string, partitionsIdMap map[metadata.TableTitle]common.EmptyMap, tables []clickhouse.Table, allDatabases []clickhouse.Database, allFunctions []clickhouse.Function, disks []clickhouse.Disk, diskMap, diskTypes map[string]string, backupRBACSize, backupConfigSize, backupNamedCollectionsSize uint64, startBackup time.Time, version int) error {
 	// TODO: Implement sharded backup operations for embedded backups
 	if doesShard(b.cfg.General.ShardedOperationMode) {
-		return fmt.Errorf("cannot perform embedded backup: %w", errShardOperationUnsupported)
+		return errors.Wrap(errShardOperationUnsupported, "cannot perform embedded backup")
 	}
 	backupPath := path.Join(b.DefaultDataPath, "backup")
 	if b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
@@ -427,16 +427,16 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 	if schemaOnly || doBackupData {
 		l := b.CalculateNonSkipTables(tables)
 		if l == 0 {
-			return fmt.Errorf("`use_embedded_backup_restore: true` not found tables for backup, check your parameter --tables=%v", tablePattern)
+			return errors.Errorf("`use_embedded_backup_restore: true` not found tables for backup, check your parameter --tables=%v", tablePattern)
 		}
 		tablesTitle = make([]metadata.TableTitle, l)
 
 		if _, isBackupDiskExists := diskMap[b.cfg.ClickHouse.EmbeddedBackupDisk]; b.cfg.ClickHouse.EmbeddedBackupDisk != "" && !isBackupDiskExists {
-			return fmt.Errorf("backup disk `%s` not exists in system.disks", b.cfg.ClickHouse.EmbeddedBackupDisk)
+			return errors.Errorf("backup disk `%s` not exists in system.disks", b.cfg.ClickHouse.EmbeddedBackupDisk)
 		}
 		if b.cfg.ClickHouse.EmbeddedBackupDisk == "" {
 			if err := config.ValidateObjectDiskConfig(b.cfg); err != nil {
-				return err
+				return errors.WithMessage(err, "config.ValidateObjectDiskConfig")
 			}
 			// Warn if encryption key is set for GCS - object disk files won't be encrypted
 			if b.cfg.General.RemoteStorage == "gcs" && b.cfg.GCS.EncryptionKey != "" {
@@ -446,14 +446,14 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 
 		backupSQL, tablesSizeSQL, err := b.generateEmbeddedBackupSQL(ctx, backupName, schemaOnly, tables, tablesTitle, partitionsNameList, l, baseBackup, version)
 		if err != nil {
-			return err
+			return errors.WithMessage(err, "b.generateEmbeddedBackupSQL")
 		}
 		backupResult := make([]clickhouse.SystemBackups, 0)
 		if err := b.ch.SelectContext(ctx, &backupResult, backupSQL); err != nil {
 			return errors.Wrap(err, "backup error")
 		}
 		if len(backupResult) != 1 || (backupResult[0].Status != "BACKUP_COMPLETE" && backupResult[0].Status != "BACKUP_CREATED") {
-			return fmt.Errorf("backup return wrong results: %+v", backupResult)
+			return errors.Errorf("backup return wrong results: %+v", backupResult)
 		}
 
 		if schemaOnly {
@@ -463,10 +463,10 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 				systemBackupResult := make([]clickhouse.SystemBackups, 0)
 				backupSizeSQL := fmt.Sprintf("SELECT * FROM system.backups WHERE id='%s'", backupResult[0].Id)
 				if sizeErr := b.ch.SelectContext(ctx, &systemBackupResult, backupSizeSQL); sizeErr != nil {
-					return sizeErr
+					return errors.WithMessage(sizeErr, "system.backups query")
 				}
 				if len(systemBackupResult) == 0 && len(systemBackupResult) > 1 {
-					return fmt.Errorf("wrong system.backup results: %v", systemBackupResult)
+					return errors.Errorf("wrong system.backup results: %v", systemBackupResult)
 				}
 				backupDataSize = append(backupDataSize, clickhouse.BackupDataSize{Size: systemBackupResult[0].CompressedSize})
 			} else if backupResult[0].CompressedSize == 0 {
@@ -482,7 +482,7 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 				}
 				backupSizeSQL = backupSizeSQL[:len(backupSizeSQL)-4] + ")"
 				if sizeErr := b.ch.SelectContext(ctx, &backupDataSize, backupSizeSQL); sizeErr != nil {
-					return sizeErr
+					return errors.WithMessage(sizeErr, "backup size query")
 				}
 			} else {
 				backupDataSize = append(backupDataSize, clickhouse.BackupDataSize{Size: backupResult[0].CompressedSize})
@@ -492,7 +492,7 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 		if doBackupData && b.cfg.ClickHouse.EmbeddedBackupDisk == "" {
 			var err error
 			if b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, backupName); err != nil {
-				return err
+				return errors.WithMessage(err, "storage.NewBackupDestination")
 			}
 			if err = b.dst.Connect(ctx); err != nil {
 				return errors.Wrapf(err, "createBackupEmbedded: can't connect to %s", b.dst.Kind())
@@ -523,7 +523,7 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 					}
 				}
 				if err != nil {
-					return err
+					return errors.WithMessage(err, "getPartsFromEmbeddedBackup")
 				}
 				if schemaOnly || doBackupData {
 					metadataSize, err := b.createTableMetadata(path.Join(backupPath, "metadata"), metadata.TableMetadata{
@@ -537,7 +537,7 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 						MetadataOnly: schemaOnly,
 					}, disks)
 					if err != nil {
-						return err
+						return errors.WithMessage(err, "b.createTableMetadata")
 					}
 					backupMetadataSize += metadataSize
 				}
@@ -546,7 +546,7 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 	}
 	backupMetaFile := path.Join(backupPath, "metadata.json")
 	if err := b.createBackupMetadata(ctx, backupMetaFile, backupName, baseBackup, backupVersion, "embedded", diskMap, diskTypes, disks, backupDataSize[0].Size, 0, backupMetadataSize, backupRBACSize, backupConfigSize, backupNamedCollectionsSize, tablesTitle, allDatabases, allFunctions); err != nil {
-		return err
+		return errors.WithMessage(err, "b.createBackupMetadata")
 	}
 
 	log.Info().Fields(map[string]interface{}{
@@ -608,7 +608,7 @@ func (b *Backuper) generateEmbeddedBackupSQL(ctx context.Context, backupName str
 	backupSettings := b.getEmbeddedBackupSettings(version)
 	embeddedBackupLocation, err := b.getEmbeddedBackupLocation(ctx, backupName)
 	if err != nil {
-		return "", nil, err
+		return "", nil, errors.WithMessage(err, "b.getEmbeddedBackupLocation")
 	}
 	backupSQL := fmt.Sprintf("BACKUP %s TO %s", tablesSQL, embeddedBackupLocation)
 	if schemaOnly {
@@ -618,7 +618,7 @@ func (b *Backuper) generateEmbeddedBackupSQL(ctx context.Context, backupName str
 	if baseBackup != "" {
 		baseBackup, err = b.getEmbeddedBackupLocation(ctx, baseBackup)
 		if err != nil {
-			return "", nil, err
+			return "", nil, errors.WithMessage(err, "b.getEmbeddedBackupLocation baseBackup")
 		}
 		backupSettings = append(backupSettings, "base_backup="+baseBackup)
 	}
@@ -632,14 +632,14 @@ func (b *Backuper) getPartsFromRemoteEmbeddedBackup(ctx context.Context, backupN
 	dirListStr := make([]string, 0)
 	remoteEmbeddedBackupPath, err := b.getObjectDiskPath()
 	if err != nil {
-		return nil, err
+		return nil, errors.WithMessage(err, "b.getObjectDiskPath")
 	}
 	remoteEmbeddedBackupPath = path.Join(remoteEmbeddedBackupPath, backupName, "data", common.TablePathEncode(table.Database), common.TablePathEncode(table.Name))
 	if walkErr := b.dst.WalkAbsolute(ctx, remoteEmbeddedBackupPath, false, func(ctx context.Context, fInfo storage.RemoteFile) error {
 		dirListStr = append(dirListStr, fInfo.Name())
 		return nil
 	}); walkErr != nil {
-		return nil, walkErr
+		return nil, errors.WithMessage(walkErr, "b.dst.WalkAbsolute")
 	}
 	log.Debug().Msgf("getPartsFromRemoteEmbeddedBackup from %s found %d parts", remoteEmbeddedBackupPath, len(dirListStr))
 	return b.fillEmbeddedPartsFromDirList(partitionsIdsMap, dirListStr, "default")
@@ -651,7 +651,7 @@ func (b *Backuper) getPartsFromLocalEmbeddedBackupDisk(backupPath string, table 
 		if os.IsNotExist(err) {
 			return map[string][]metadata.Part{}, nil
 		}
-		return nil, err
+		return nil, errors.WithMessage(err, "os.ReadDir")
 	}
 	dirListStr := make([]string, len(dirList))
 	for i, d := range dirList {
@@ -749,21 +749,21 @@ func (b *Backuper) createBackupRBAC(ctx context.Context, backupPath string, disk
 		}
 		accessPathInfo, err := os.Stat(accessPath)
 		if err != nil && !os.IsNotExist(err) {
-			return rbacDataSize + replicatedRBACDataSize, err
+			return rbacDataSize + replicatedRBACDataSize, errors.WithMessage(err, "os.Stat accessPath")
 		}
 		if err == nil && !accessPathInfo.IsDir() {
-			return rbacDataSize + replicatedRBACDataSize, fmt.Errorf("%s is not directory", accessPath)
+			return rbacDataSize + replicatedRBACDataSize, errors.Errorf("%s is not directory", accessPath)
 		}
 		if os.IsNotExist(err) {
 			return rbacDataSize + replicatedRBACDataSize, nil
 		}
 		rbacSQLFiles, err := filepath.Glob(path.Join(accessPath, "*.sql"))
 		if err != nil {
-			return rbacDataSize + replicatedRBACDataSize, err
+			return rbacDataSize + replicatedRBACDataSize, errors.WithMessage(err, "filepath.Glob accessPath")
 		}
 		if len(rbacSQLFiles) != 0 {
 			if copySize, copyErr := b.backupSQLFiles(accessPath, rbacBackup); copyErr != nil {
-				return 0, copyErr
+				return 0, errors.WithMessage(copyErr, "backupSQLFiles rbac")
 			} else {
 				rbacDataSize += copySize
 			}
@@ -795,13 +795,13 @@ func (b *Backuper) createBackupNamedCollections(ctx context.Context, backupPath 
 		settingsFile := path.Join(namedCollectionsBackup, "settings.json")
 		settingsJSON, marshalErr := json.Marshal(settings)
 		if marshalErr != nil {
-			return 0, marshalErr
+			return 0, errors.WithMessage(marshalErr, "json.Marshal namedCollections settings")
 		}
 		if mkDirErr := os.MkdirAll(namedCollectionsBackup, 0755); mkDirErr != nil {
-			return 0, mkDirErr
+			return 0, errors.WithMessage(mkDirErr, "os.MkdirAll namedCollectionsBackup")
 		}
 		if writeErr := os.WriteFile(settingsFile, settingsJSON, 0644); writeErr != nil {
-			return 0, writeErr
+			return 0, errors.WithMessage(writeErr, "os.WriteFile namedCollections settings")
 		}
 
 		// Check if type contains "keeper"
@@ -815,7 +815,7 @@ func (b *Backuper) createBackupNamedCollections(ctx context.Context, backupPath 
 
 			k := keeper.Keeper{}
 			if err = k.Connect(ctx, b.ch); err != nil {
-				return 0, err
+				return 0, errors.WithMessage(err, "keeper.Connect")
 			}
 			defer k.Close()
 
@@ -823,7 +823,7 @@ func (b *Backuper) createBackupNamedCollections(ctx context.Context, backupPath 
 			log.Info().Str("logger", "createBackupNamedCollections").Msgf("keeper.Dump %s -> %s", keeperPath, dumpFile)
 			dumpSize, dumpErr := k.Dump(keeperPath, dumpFile)
 			if dumpErr != nil {
-				return 0, dumpErr
+				return 0, errors.WithMessage(dumpErr, "keeper.Dump namedCollections")
 			}
 			namedCollectionsDataSize += uint64(dumpSize)
 		} else {
@@ -831,10 +831,10 @@ func (b *Backuper) createBackupNamedCollections(ctx context.Context, backupPath 
 			namedCollectionsPath := path.Join(b.DefaultDataPath, "named_collections")
 			namedCollectionsPathInfo, err := os.Stat(namedCollectionsPath)
 			if err != nil && !os.IsNotExist(err) {
-				return 0, err
+				return 0, errors.WithMessage(err, "os.Stat namedCollectionsPath")
 			}
 			if err == nil && !namedCollectionsPathInfo.IsDir() {
-				return 0, fmt.Errorf("%s is not directory", namedCollectionsPath)
+				return 0, errors.Errorf("%s is not directory", namedCollectionsPath)
 			}
 			if os.IsNotExist(err) {
 				return 0, nil
@@ -842,7 +842,7 @@ func (b *Backuper) createBackupNamedCollections(ctx context.Context, backupPath 
 
 			namedCollectionsSQLFiles, err := filepath.Glob(path.Join(namedCollectionsPath, "*.sql"))
 			if err != nil {
-				return 0, err
+				return 0, errors.WithMessage(err, "filepath.Glob namedCollections")
 			}
 
 			if len(namedCollectionsSQLFiles) != 0 {
@@ -865,7 +865,7 @@ func (b *Backuper) createBackupRBACReplicated(ctx context.Context, rbacBackup st
 	if err = b.ch.SelectContext(ctx, &replicatedRBAC, "SELECT name FROM system.user_directories WHERE type='replicated'"); err == nil && len(replicatedRBAC) > 0 {
 		k := keeper.Keeper{}
 		if err = k.Connect(ctx, b.ch); err != nil {
-			return 0, err
+			return 0, errors.WithMessage(err, "keeper.Connect")
 		}
 		defer k.Close()
 		for _, userDirectory := range replicatedRBAC {
@@ -875,20 +875,20 @@ func (b *Backuper) createBackupRBACReplicated(ctx context.Context, rbacBackup st
 			}
 			rbacUUIDObjectsCount, err := k.ChildCount(replicatedAccessPath, "uuid")
 			if err != nil {
-				return 0, err
+				return 0, errors.WithMessage(err, "keeper.ChildCount")
 			}
 			if rbacUUIDObjectsCount == 0 {
 				log.Warn().Str("logger", "createBackupRBACReplicated").Msgf("%s/%s have no children, skip Dump", replicatedAccessPath, "uuid")
 				continue
 			}
 			if err = os.MkdirAll(rbacBackup, 0755); err != nil {
-				return 0, err
+				return 0, errors.WithMessage(err, "os.MkdirAll rbacBackup")
 			}
 			dumpFile := path.Join(rbacBackup, userDirectory.Name+".jsonl")
 			log.Info().Str("logger", "createBackupRBACReplicated").Msgf("keeper.Dump %s -> %s", replicatedAccessPath, dumpFile)
 			dumpRBACSize, dumpErr := k.Dump(replicatedAccessPath, dumpFile)
 			if dumpErr != nil {
-				return 0, dumpErr
+				return 0, errors.WithMessage(dumpErr, "keeper.Dump rbac")
 			}
 			rbacDataSize += uint64(dumpRBACSize)
 		}
@@ -903,7 +903,7 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 		"table":     fmt.Sprintf("%s.%s", table.Database, table.Name),
 	}).Logger()
 	if backupName == "" {
-		return nil, nil, nil, nil, fmt.Errorf("backupName is not defined")
+		return nil, nil, nil, nil, errors.New("backupName is not defined")
 	}
 
 	if !strings.HasSuffix(table.Engine, "MergeTree") && table.Engine != "MaterializedMySQL" && table.Engine != "MaterializedPostgreSQL" {
@@ -913,7 +913,7 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 		return nil, nil, nil, nil, nil
 	}
 	if err := b.ch.FreezeTable(ctx, table, shadowBackupUUID); err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, errors.WithMessage(err, "b.ch.FreezeTable")
 	}
 	log.Debug().Str("database", table.Database).Str("table", table.Name).Msg("frozen")
 	realSize := map[string]int64{}
@@ -941,12 +941,12 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 				if dir, err := os.Lstat(backupShadowPath); err == nil && dir.IsDir() {
 					log.Warn().Msgf("%s will clean to properly handle resume parameter", backupShadowPath)
 					if err = os.RemoveAll(backupShadowPath); err != nil {
-						return nil, nil, nil, nil, err
+						return nil, nil, nil, nil, errors.WithMessage(err, "os.RemoveAll backupShadowPath")
 					}
 				}
 			}
 			if err := filesystemhelper.MkdirAll(backupShadowPath, b.ch, diskList); err != nil && !os.IsExist(err) {
-				return nil, nil, nil, nil, err
+				return nil, nil, nil, nil, errors.WithMessage(err, "filesystemhelper.MkdirAll backupShadowPath")
 			}
 			var diffTableMetadata metadata.TableMetadata
 			if tablesDiffFromRemote != nil {
@@ -956,7 +956,7 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 			start := time.Now()
 			parts, size, newChecksums, err := filesystemhelper.MoveShadowToBackup(shadowPath, backupShadowPath, partitionsIdsMap, table, diffTableMetadata, disk, skipProjections, version)
 			if err != nil {
-				return nil, nil, nil, nil, err
+				return nil, nil, nil, nil, errors.WithMessage(err, "filesystemhelper.MoveShadowToBackup")
 			}
 			realSize[disk.Name] = size
 
@@ -973,7 +973,7 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 					Str("disk", disk.Name).Str("size", utils.FormatBytes(uint64(size))).
 					Msg("upload object_disk start")
 				if size, err = b.uploadObjectDiskParts(ctx, backupName, diffTableMetadata, backupShadowPath, disk); err != nil {
-					return nil, nil, nil, nil, err
+					return nil, nil, nil, nil, errors.WithMessage(err, "b.uploadObjectDiskParts")
 				}
 				objectDiskSize[disk.Name] = size
 				if size > 0 {
@@ -987,7 +987,7 @@ func (b *Backuper) AddTableToLocalBackup(ctx context.Context, backupName string,
 			// Clean all the files under the shadowPath, cause UNFREEZE unavailable
 			if version < 21004000 {
 				if err := os.RemoveAll(shadowPath); err != nil {
-					return nil, nil, nil, nil, err
+					return nil, nil, nil, nil, errors.WithMessage(err, "os.RemoveAll shadowPath")
 				}
 			}
 		}
@@ -1013,7 +1013,7 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 	var size int64
 	var err error
 	if err = object_disk.InitCredentialsAndConnections(ctx, b.ch, b.cfg, disk.Name); err != nil {
-		return 0, err
+		return 0, errors.WithMessage(err, "object_disk.InitCredentialsAndConnections")
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -1021,12 +1021,12 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 	uploadObjectDiskPartsWorkingGroup.SetLimit(int(b.cfg.General.ObjectDiskServerSideCopyConcurrency))
 	srcDiskConnection, exists := object_disk.DisksConnections.Load(disk.Name)
 	if !exists {
-		return 0, fmt.Errorf("uploadObjectDiskParts: %s not present in object_disk.DisksConnections", disk.Name)
+		return 0, errors.Errorf("uploadObjectDiskParts: %s not present in object_disk.DisksConnections", disk.Name)
 	}
 	srcBucket := srcDiskConnection.GetRemoteBucket()
 	var objectDiskPath string
 	if objectDiskPath, err = b.getObjectDiskPath(); err != nil {
-		return 0, err
+		return 0, errors.WithMessage(err, "b.getObjectDiskPath")
 	}
 	var isCopyFailed atomic.Bool
 	isCopyFailed.Store(false)
@@ -1055,7 +1055,7 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 		uploadObjectDiskPartsWorkingGroup.Go(func() error {
 			objMeta, readMetadataErr := object_disk.ReadMetadataFromFile(fPath)
 			if readMetadataErr != nil {
-				return readMetadataErr
+				return errors.WithMessage(readMetadataErr, "object_disk.ReadMetadataFromFile")
 			}
 			for _, storageObject := range objMeta.StorageObjects {
 				if storageObject.ObjectSize == 0 {
@@ -1118,7 +1118,7 @@ func (b *Backuper) uploadObjectDiskParts(ctx context.Context, backupName string,
 		return nil
 	})
 	if walkErr != nil {
-		return 0, err
+		return 0, errors.WithMessage(walkErr, "filepath.Walk backupShadowPath")
 	}
 
 	if wgWaitErr := uploadObjectDiskPartsWorkingGroup.Wait(); wgWaitErr != nil {
@@ -1162,7 +1162,7 @@ func (b *Backuper) createBackupMetadata(ctx context.Context, backupMetaFile, bac
 			return errors.Wrap(err, "can't marshal backup metafile json")
 		}
 		if err := os.WriteFile(backupMetaFile, content, 0640); err != nil {
-			return err
+			return errors.WithMessage(err, "os.WriteFile backupMetaFile")
 		}
 		if err := filesystemhelper.Chown(backupMetaFile, b.ch, disks, false); err != nil {
 			log.Warn().Msgf("can't chown %s: %v", backupMetaFile, err)
@@ -1174,11 +1174,11 @@ func (b *Backuper) createBackupMetadata(ctx context.Context, backupMetaFile, bac
 
 func (b *Backuper) createTableMetadata(metadataPath string, table metadata.TableMetadata, disks []clickhouse.Disk) (uint64, error) {
 	if err := filesystemhelper.Mkdir(metadataPath, b.ch, disks); err != nil {
-		return 0, err
+		return 0, errors.WithMessage(err, "filesystemhelper.Mkdir metadataPath")
 	}
 	metadataDatabasePath := path.Join(metadataPath, common.TablePathEncode(table.Database))
 	if err := filesystemhelper.Mkdir(metadataDatabasePath, b.ch, disks); err != nil {
-		return 0, err
+		return 0, errors.WithMessage(err, "filesystemhelper.Mkdir metadataDatabasePath")
 	}
 	metadataFile := path.Join(metadataDatabasePath, fmt.Sprintf("%s.json", common.TablePathEncode(table.Table)))
 	metadataBody, err := json.MarshalIndent(&table, "", " ")
@@ -1189,7 +1189,7 @@ func (b *Backuper) createTableMetadata(metadataPath string, table metadata.Table
 		return 0, errors.Wrapf(err, "can't create %s", MetaFileName)
 	}
 	if err := filesystemhelper.Chown(metadataFile, b.ch, disks, false); err != nil {
-		return 0, err
+		return 0, errors.WithMessage(err, "filesystemhelper.Chown metadataFile")
 	}
 	log.Debug().Msgf("%s created", metadataFile)
 	return uint64(len(metadataBody)), nil

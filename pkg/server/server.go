@@ -180,7 +180,7 @@ func (api *APIServer) Stop() error {
 func (api *APIServer) Restart() error {
 	_, err := api.ReloadConfig(nil, "restart")
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "Restart ReloadConfig")
 	}
 	if api.GetConfig().API.CreateIntegrationTables {
 		if createErr := api.CreateIntegrationTables(); createErr != nil {
@@ -224,10 +224,10 @@ func (api *APIServer) registerHTTPHandlers() *http.Server {
 	r := mux.NewRouter()
 	r.Use(api.basicAuthMiddleware)
 	r.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		api.writeError(w, http.StatusNotFound, r.URL.Path, fmt.Errorf("%s %s 404 Not Found", r.Method, r.URL))
+		api.writeError(w, http.StatusNotFound, r.URL.Path, errors.Errorf("%s %s 404 Not Found", r.Method, r.URL))
 	})
 	r.MethodNotAllowedHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		api.writeError(w, http.StatusMethodNotAllowed, r.URL.Path, fmt.Errorf("405 Method %s Not Allowed", r.Method))
+		api.writeError(w, http.StatusMethodNotAllowed, r.URL.Path, errors.Errorf("405 Method %s Not Allowed", r.Method))
 	})
 
 	r.HandleFunc("/", api.httpRootHandler).Methods("GET", "HEAD")
@@ -259,7 +259,7 @@ func (api *APIServer) registerHTTPHandlers() *http.Server {
 	if err := r.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
 		t, err := route.GetPathTemplate()
 		if err != nil {
-			return err
+			return errors.WithMessage(err, "registerHTTPHandlers GetPathTemplate")
 		}
 		routes = append(routes, t)
 		return nil
@@ -333,7 +333,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(body) == 0 {
-		api.writeError(w, http.StatusBadRequest, "", fmt.Errorf("empty request"))
+		api.writeError(w, http.StatusBadRequest, "", errors.New("empty request"))
 		return
 	}
 	lines := bytes.Split(body, []byte("\n"))
@@ -399,7 +399,7 @@ func (api *APIServer) actions(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		default:
-			api.writeError(w, http.StatusBadRequest, row.Command, fmt.Errorf("unknown command"))
+			api.writeError(w, http.StatusBadRequest, row.Command, errors.New("unknown command"))
 			return
 		}
 	}
@@ -463,7 +463,7 @@ func (api *APIServer) actionsKillHandler(row status.ActionRow, args []string, ac
 		killCommand = args[1]
 	}
 	commandId, _ := status.Current.Start(row.Command)
-	err := status.Current.Cancel(killCommand, fmt.Errorf("canceled from API /backup/actions"))
+	err := status.Current.Cancel(killCommand, errors.New("canceled from API /backup/actions"))
 	defer status.Current.Stop(commandId, err)
 	if err != nil {
 		return actionsResults, err
@@ -748,9 +748,9 @@ func (api *APIServer) httpKillHandler(w http.ResponseWriter, r *http.Request) {
 	var err error
 	command, exists := r.URL.Query()["command"]
 	if exists && len(command) > 0 {
-		err = status.Current.Cancel(command[0], fmt.Errorf("canceled from API /backup/kill"))
+		err = status.Current.Cancel(command[0], errors.New("canceled from API /backup/kill"))
 	} else {
-		err = status.Current.Cancel("", fmt.Errorf("canceled from API /backup/kill"))
+		err = status.Current.Cancel("", errors.New("canceled from API /backup/kill"))
 	}
 	if err != nil {
 		api.sendJSONEachRow(w, http.StatusInternalServerError, struct {
@@ -1576,7 +1576,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 				mappingItems := strings.Split(databaseMapping, ",")
 				for _, m := range mappingItems {
 					if strings.Count(m, ":") != 1 || !databaseMappingRE.MatchString(m) {
-						api.writeError(w, http.StatusInternalServerError, "restore", fmt.Errorf("invalid values in restore_database_mapping %s", m))
+						api.writeError(w, http.StatusInternalServerError, "restore", errors.Errorf("invalid values in restore_database_mapping %s", m))
 						return
 
 					}
@@ -1600,7 +1600,7 @@ func (api *APIServer) httpRestoreHandler(w http.ResponseWriter, r *http.Request)
 				mappingItems := strings.Split(tableMapping, ",")
 				for _, m := range mappingItems {
 					if strings.Count(m, ":") != 1 || !tableMappingRE.MatchString(m) {
-						api.writeError(w, http.StatusInternalServerError, "restore", fmt.Errorf("invalid values in restore_table_mapping %s", m))
+						api.writeError(w, http.StatusInternalServerError, "restore", errors.Errorf("invalid values in restore_table_mapping %s", m))
 						return
 					}
 				}
@@ -1805,7 +1805,7 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 				mappingItems := strings.Split(databaseMapping, ",")
 				for _, m := range mappingItems {
 					if strings.Count(m, ":") != 1 || !databaseMappingRE.MatchString(m) {
-						api.writeError(w, http.StatusInternalServerError, "restore_remote", fmt.Errorf("invalid values in restore_database_mapping %s", m))
+						api.writeError(w, http.StatusInternalServerError, "restore_remote", errors.Errorf("invalid values in restore_database_mapping %s", m))
 						return
 
 					}
@@ -1829,7 +1829,7 @@ func (api *APIServer) httpRestoreRemoteHandler(w http.ResponseWriter, r *http.Re
 				mappingItems := strings.Split(tableMapping, ",")
 				for _, m := range mappingItems {
 					if strings.Count(m, ":") != 1 || !tableMappingRE.MatchString(m) {
-						api.writeError(w, http.StatusInternalServerError, "restore_remote", fmt.Errorf("invalid values in restore_table_mapping %s", m))
+						api.writeError(w, http.StatusInternalServerError, "restore_remote", errors.Errorf("invalid values in restore_table_mapping %s", m))
 						return
 					}
 				}
@@ -2116,7 +2116,7 @@ func (api *APIServer) httpDeleteHandler(w http.ResponseWriter, r *http.Request) 
 	case "remote":
 		err = b.RemoveBackupRemote(ctx, vars["name"])
 	default:
-		err = fmt.Errorf("backup location must be 'local' or 'remote'")
+		err = errors.New("backup location must be 'local' or 'remote'")
 	}
 	status.Current.Stop(commandId, err)
 	if err != nil {
@@ -2168,7 +2168,7 @@ func (api *APIServer) UpdateBackupMetrics(ctx context.Context, onlyLocal bool) e
 
 	localBackups, _, err := b.GetLocalBackups(ctx, nil)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "UpdateBackupMetrics GetLocalBackups")
 	}
 	if len(localBackups) > 0 {
 		numberBackupsLocal = len(localBackups)
@@ -2182,7 +2182,7 @@ func (api *APIServer) UpdateBackupMetrics(ctx context.Context, onlyLocal bool) e
 		api.metrics.NumberBackupsLocal.Set(0)
 	}
 	if localDataSize, err = b.GetLocalDataSize(ctx); err != nil {
-		return err
+		return errors.WithMessage(err, "UpdateBackupMetrics GetLocalDataSize")
 	}
 	if localDataSize > 0 {
 		api.metrics.LocalDataSize.Set(localDataSize)
@@ -2313,30 +2313,30 @@ func (api *APIServer) CreateIntegrationTables() error {
 	settings := ""
 	version, err := ch.GetVersion(context.Background())
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "CreateIntegrationTables GetVersion")
 	}
 	if version >= 21001000 {
 		settings = "SETTINGS input_format_skip_unknown_fields=1"
 	}
 	disks, err := ch.GetDisks(context.Background(), true)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "CreateIntegrationTables GetDisks")
 	}
 	defaultDataPath, err := ch.GetDefaultPath(disks)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "CreateIntegrationTables GetDefaultPath")
 	}
 	query := fmt.Sprintf("CREATE TABLE system.backup_actions (command String, start DateTime, finish DateTime, status String, error String, operation_id String) ENGINE=URL('%s://%s:%s/backup/actions%s', JSONEachRow) %s", schema, host, port, auth, settings)
 	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_actions"}, query, true, false, "", 0, defaultDataPath, false, ""); err != nil {
-		return err
+		return errors.WithMessage(err, "CreateIntegrationTables backup_actions")
 	}
 	query = fmt.Sprintf("CREATE TABLE system.backup_list (name String, created DateTime, size UInt64, data_size UInt64, object_disk_size UInt64,metadata_size UInt64,rbac_size UInt64,config_size UInt64, named_collection_size UInt64, compressed_size UInt64, location String, required String, desc String) ENGINE=URL('%s://%s:%s/backup/list%s', JSONEachRow) %s", schema, host, port, auth, settings)
 	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_list"}, query, true, false, "", 0, defaultDataPath, false, ""); err != nil {
-		return err
+		return errors.WithMessage(err, "CreateIntegrationTables backup_list")
 	}
 	query = fmt.Sprintf("CREATE TABLE system.backup_version (version String) ENGINE=URL('%s://%s:%s/backup/version%s', JSONEachRow) %s", schema, host, port, auth, settings)
 	if err := ch.CreateTable(clickhouse.Table{Database: "system", Name: "backup_version"}, query, true, false, "", 0, defaultDataPath, false, ""); err != nil {
-		return err
+		return errors.WithMessage(err, "CreateIntegrationTables backup_version")
 	}
 	return nil
 }
@@ -2400,7 +2400,7 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 				params := state.GetParams()
 				state.Close()
 				if !api.GetConfig().API.AllowParallel && status.Current.InProgress() {
-					return fmt.Errorf("another commands in progress")
+					return errors.New("another commands in progress")
 				}
 				switch command {
 				case "download":
@@ -2448,7 +2448,7 @@ func (api *APIServer) ResumeOperationsAfterRestart() error {
 						log.Warn().Str("operation", "ResumeOperationsAfterRestart").Msgf("remove %s return error: ", err)
 					}
 				default:
-					return errors.WithStack(fmt.Errorf("unkown command for state file %s", stateFile))
+					return errors.Errorf("unkown command for state file %s", stateFile)
 				}
 			}
 		}

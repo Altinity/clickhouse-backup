@@ -109,7 +109,7 @@ func (s *S3) ResolveEndpoint(ctx context.Context, params s3.EndpointParameters) 
 
 	resolvedEndpoint, err := baseResolver.ResolveEndpoint(ctx, params)
 	if err != nil {
-		return resolvedEndpoint, err
+		return resolvedEndpoint, errors.WithMessage(err, "S3 ResolveEndpoint")
 	}
 	return resolvedEndpoint, nil
 }
@@ -123,7 +123,7 @@ func (s *S3) Connect(ctx context.Context) error {
 		awsV2Config.WithRetryMode(aws.RetryModeStandard),
 	)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "S3 Connect LoadDefaultConfig")
 	}
 	if s.Config.Region != "" {
 		awsConfig.Region = s.Config.Region
@@ -214,19 +214,19 @@ func (s *S3) GetFileReaderAbsolute(ctx context.Context, key string) (io.ReadClos
 						log.Warn().Msgf("GetFileReader %s, storageClass %s receive error: %s", key, stateErr.StorageClass, stateErr.Error())
 						if restoreErr := s.restoreObject(ctx, key); restoreErr != nil {
 							log.Warn().Msgf("restoreObject %s, return error: %v", key, restoreErr)
-							return nil, err
+							return nil, errors.WithMessage(err, "S3 GetFileReaderAbsolute GLACIER restore")
 						}
 						if resp, err = s.client.GetObject(ctx, params); err != nil {
 							log.Warn().Msgf("second GetObject %s, return error: %v", key, err)
-							return nil, err
+							return nil, errors.WithMessage(err, "S3 GetFileReaderAbsolute second GetObject")
 						}
 						return resp.Body, nil
 					}
 				}
 			}
-			return nil, err
+			return nil, errors.WithMessage(err, "S3 GetFileReaderAbsolute")
 		}
-		return nil, err
+		return nil, errors.WithMessage(err, "S3 GetFileReaderAbsolute")
 	}
 	return resp.Body, nil
 }
@@ -252,7 +252,7 @@ func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath stri
 	if s.Config.AllowMultipartDownload {
 		writer, err := os.CreateTemp(localPath, strings.ReplaceAll(key, "/", "_"))
 		if err != nil {
-			return nil, err
+			return nil, errors.WithMessage(err, "S3 GetFileReaderWithLocalPath CreateTemp")
 		}
 
 		downloader := s3manager.NewDownloader(s.client)
@@ -275,7 +275,7 @@ func (s *S3) GetFileReaderWithLocalPath(ctx context.Context, key, localPath stri
 			Key:    aws.String(path.Join(s.Config.Path, key)),
 		})
 		if err != nil {
-			return nil, err
+			return nil, errors.WithMessage(err, "S3 GetFileReaderWithLocalPath Download")
 		}
 		return writer, nil
 	}
@@ -345,8 +345,10 @@ func (s *S3) PutFileAbsolute(ctx context.Context, key string, r io.ReadCloser, l
 	}
 	uploader.PartSize = AdjustValueByRange(partSize, 5*1024*1024, 5*1024*1024*1024)
 
-	_, err := uploader.Upload(ctx, &params)
-	return err
+	if _, err := uploader.Upload(ctx, &params); err != nil {
+		return errors.WithMessage(err, "S3 PutFileAbsolute Upload")
+	}
+	return nil
 }
 
 func (s *S3) deleteKey(ctx context.Context, key string) error {
@@ -465,7 +467,7 @@ func (s *S3) deleteKeys(ctx context.Context, keys []string) error {
 			})
 		}
 		if err := g.Wait(); err != nil {
-			return err
+			return errors.WithMessage(err, "S3 deleteKeys version listing")
 		}
 	} else {
 		// Non-versioned: simple key list
@@ -576,7 +578,7 @@ func (s *S3) executeBatchDelete(ctx context.Context, objects []s3types.ObjectIde
 		log.Warn().Msgf("S3 batch delete: failed to delete %s: %s - %s", key, code, message)
 		failures = append(failures, KeyError{
 			Key: key,
-			Err: fmt.Errorf("%s: %s", code, message),
+			Err: errors.Errorf("%s: %s", code, message),
 		})
 	}
 
@@ -638,7 +640,7 @@ func (s *S3) StatFileAbsolute(ctx context.Context, key string) (RemoteFile, erro
 				}
 			}
 		}
-		return nil, err
+		return nil, errors.WithMessage(err, "S3 StatFileAbsolute HeadObject")
 	}
 	return &s3File{*head.ContentLength, *head.LastModified, string(head.StorageClass), key}, nil
 }
@@ -676,7 +678,10 @@ func (s *S3) WalkAbsolute(ctx context.Context, prefix string, recursive bool, pr
 				err = process(ctx, s3FileItem)
 			}
 		}
-		return err
+		if err != nil {
+			return errors.WithMessage(err, "S3 WalkAbsolute process")
+		}
+		return nil
 	})
 	return g.Wait()
 }
@@ -700,7 +705,7 @@ func (s *S3) remotePager(ctx context.Context, s3Path string, recursive bool, pro
 	for pager.HasMorePages() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			return err
+			return errors.WithMessage(err, "S3 remotePager NextPage")
 		}
 		process(page)
 	}
@@ -929,7 +934,7 @@ func (s *S3) restoreObject(ctx context.Context, key string) error {
 	}
 	_, err := s.client.RestoreObject(ctx, restoreRequest)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "S3 restoreObject RestoreObject")
 	}
 	i := 0
 	for {
@@ -940,7 +945,7 @@ func (s *S3) restoreObject(ctx context.Context, key string) error {
 		s.enrichHeadParams(restoreHeadParams)
 		res, err := s.client.HeadObject(ctx, restoreHeadParams)
 		if err != nil {
-			return fmt.Errorf("restoreObject: failed to head %s object metadata, %v", path.Join(s.Config.Path, key), err)
+			return errors.Wrapf(err, "restoreObject: failed to head %s object metadata", path.Join(s.Config.Path, key))
 		}
 
 		if res.Restore != nil && *res.Restore == "ongoing-request=\"true\"" {

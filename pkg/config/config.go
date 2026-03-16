@@ -359,7 +359,7 @@ func LoadConfig(configLocation string) (*Config, error) {
 		return nil, errors.Wrap(err, "can't parse config file")
 	}
 	if err := envconfig.Process("", cfg); err != nil {
-		return nil, err
+		return nil, errors.WithMessage(err, "LoadConfig envconfig.Process")
 	}
 
 	// auto-tuning upload_concurrency for storage types which not have SDK level concurrency, https://github.com/Altinity/clickhouse-backup/issues/658
@@ -368,7 +368,7 @@ func LoadConfig(configLocation string) (*Config, error) {
 		return nil, errors.Wrap(err, "can't parse config file")
 	}
 	if err := envconfig.Process("", cfgWithoutDefault); err != nil {
-		return nil, err
+		return nil, errors.WithMessage(err, "LoadConfig envconfig.Process cfgWithoutDefault")
 	}
 	if (cfg.General.RemoteStorage == "gcs" || cfg.General.RemoteStorage == "azblob" || cfg.General.RemoteStorage == "cos") && cfgWithoutDefault.General.UploadConcurrency == 0 {
 		cfg.General.UploadConcurrency = uint8(runtime.NumCPU() / 2)
@@ -400,10 +400,10 @@ func LoadConfig(configLocation string) (*Config, error) {
 		cfg.S3.StorageClass = string(s3types.StorageClassStandard)
 	}
 	if err = ValidateConfig(cfg); err != nil {
-		return cfg, err
+		return cfg, errors.WithMessage(err, "LoadConfig ValidateConfig")
 	}
 	if err = cfg.SetPriority(); err != nil {
-		return cfg, err
+		return cfg, errors.WithMessage(err, "LoadConfig SetPriority")
 	}
 	return cfg, nil
 }
@@ -411,33 +411,33 @@ func LoadConfig(configLocation string) (*Config, error) {
 func ValidateConfig(cfg *Config) error {
 	if cfg.General.RemoteStorage == "s3" {
 		if _, err := aws.ParseRetryMode(cfg.S3.RetryMode); err != nil {
-			return err
+			return errors.WithMessage(err, "ValidateConfig ParseRetryMode")
 		}
 	}
 	if cfg.GetCompressionFormat() == "unknown" {
-		return fmt.Errorf("'%s' is unknown remote storage", cfg.General.RemoteStorage)
+		return errors.Errorf("'%s' is unknown remote storage", cfg.General.RemoteStorage)
 	}
 	if cfg.General.RemoteStorage == "ftp" && (cfg.FTP.Concurrency < cfg.General.DownloadConcurrency || cfg.FTP.Concurrency < cfg.General.UploadConcurrency) {
-		return fmt.Errorf(
+		return errors.Errorf(
 			"FTP_CONCURRENCY=%d should be great or equal than DOWNLOAD_CONCURRENCY=%d and UPLOAD_CONCURRENCY=%d",
 			cfg.FTP.Concurrency, cfg.General.DownloadConcurrency, cfg.General.UploadConcurrency,
 		)
 	}
 	if cfg.GetCompressionFormat() == "lz4" {
-		return fmt.Errorf("clickhouse already compressed data by lz4")
+		return errors.New("clickhouse already compressed data by lz4")
 	}
 	if _, ok := ArchiveExtensions[cfg.GetCompressionFormat()]; !ok && cfg.GetCompressionFormat() != "none" {
-		return fmt.Errorf("'%s' is unsupported compression format", cfg.GetCompressionFormat())
+		return errors.Errorf("'%s' is unsupported compression format", cfg.GetCompressionFormat())
 	}
 	if timeout, err := time.ParseDuration(cfg.ClickHouse.Timeout); err != nil {
 		return errors.Wrap(err, "invalid clickhouse timeout")
 	} else {
 		if cfg.ClickHouse.UseEmbeddedBackupRestore && timeout < 240*time.Minute {
-			return fmt.Errorf("clickhouse `timeout: %v`, not enough for `use_embedded_backup_restore: true`", cfg.ClickHouse.Timeout)
+			return errors.Errorf("clickhouse `timeout: %v`, not enough for `use_embedded_backup_restore: true`", cfg.ClickHouse.Timeout)
 		}
 	}
 	if cfg.ClickHouse.FreezeByPart && cfg.ClickHouse.UseEmbeddedBackupRestore {
-		return fmt.Errorf("`freeze_by_part: %v` is not compatible with `use_embedded_backup_restore: %v`", cfg.ClickHouse.FreezeByPart, cfg.ClickHouse.UseEmbeddedBackupRestore)
+		return errors.Errorf("`freeze_by_part: %v` is not compatible with `use_embedded_backup_restore: %v`", cfg.ClickHouse.FreezeByPart, cfg.ClickHouse.UseEmbeddedBackupRestore)
 	}
 	if _, err := time.ParseDuration(cfg.COS.Timeout); err != nil {
 		return errors.Wrap(err, "invalid cos timeout")
@@ -464,25 +464,25 @@ func ValidateConfig(cfg *Config) error {
 		}
 	}
 	if !storageClassOk {
-		return fmt.Errorf("'%s' is bad S3_STORAGE_CLASS, select one of: %#v",
+		return errors.Errorf("'%s' is bad S3_STORAGE_CLASS, select one of: %#v",
 			cfg.S3.StorageClass, allStorageClasses.Values())
 	}
 	if cfg.S3.AllowMultipartDownload && cfg.S3.Concurrency == 1 {
-		return fmt.Errorf(
+		return errors.Errorf(
 			"`allow_multipart_download` require `concurrency` in `s3` section more than 1 (3-4 recommends) current value: %d",
 			cfg.S3.Concurrency,
 		)
 	}
 	if cfg.API.Secure {
 		if cfg.API.CertificateFile == "" {
-			return fmt.Errorf("api.certificate_file must be defined")
+			return errors.New("api.certificate_file must be defined")
 		}
 		if cfg.API.PrivateKeyFile == "" {
-			return fmt.Errorf("api.private_key_file must be defined")
+			return errors.New("api.private_key_file must be defined")
 		}
 		_, err := tls.LoadX509KeyPair(cfg.API.CertificateFile, cfg.API.PrivateKeyFile)
 		if err != nil {
-			return err
+			return errors.WithMessage(err, "ValidateConfig LoadX509KeyPair")
 		}
 	}
 	if cfg.Custom.CommandTimeout != "" {
@@ -492,7 +492,7 @@ func ValidateConfig(cfg *Config) error {
 			cfg.Custom.CommandTimeoutDuration = duration
 		}
 	} else {
-		return fmt.Errorf("empty custom command timeout")
+		return errors.New("empty custom command timeout")
 	}
 	if cfg.General.RetriesPause != "" {
 		if duration, err := time.ParseDuration(cfg.General.RetriesPause); err != nil {
@@ -501,7 +501,7 @@ func ValidateConfig(cfg *Config) error {
 			cfg.General.RetriesDuration = duration
 		}
 	} else {
-		return fmt.Errorf("empty retries pause")
+		return errors.New("empty retries pause")
 	}
 	if cfg.General.WatchInterval != "" {
 		if duration, err := time.ParseDuration(cfg.General.WatchInterval); err != nil {
@@ -523,22 +523,22 @@ func ValidateConfig(cfg *Config) error {
 func ValidateObjectDiskConfig(cfg *Config) error {
 	if !cfg.ClickHouse.UseEmbeddedBackupRestore {
 		if cfg.General.RemoteStorage == "s3" && ((cfg.S3.ObjectDiskPath == "" && cfg.S3.Path == "") || (cfg.S3.ObjectDiskPath != "" && cfg.S3.Path == "") || (cfg.S3.Path != "" && strings.HasPrefix(cfg.S3.Path, cfg.S3.ObjectDiskPath))) {
-			return fmt.Errorf("data in objects disks, invalid s3->object_disk_path config section, shall be not empty and shall not be prefix for s3->path, shall not inside s3->path if s3->path empty")
+			return errors.New("data in objects disks, invalid s3->object_disk_path config section, shall be not empty and shall not be prefix for s3->path, shall not inside s3->path if s3->path empty")
 		}
 		if cfg.General.RemoteStorage == "gcs" && ((cfg.GCS.ObjectDiskPath == "" && cfg.GCS.Path == "") || (cfg.GCS.ObjectDiskPath != "" && cfg.GCS.Path == "") || (cfg.GCS.Path != "" && strings.HasPrefix(cfg.GCS.Path, cfg.GCS.ObjectDiskPath))) {
-			return fmt.Errorf("data in objects disks, invalid gcs->object_disk_path config section, shall be not empty and shall not be prefix for gcs->path, shall not inside gcs->path if gcs->path empty")
+			return errors.New("data in objects disks, invalid gcs->object_disk_path config section, shall be not empty and shall not be prefix for gcs->path, shall not inside gcs->path if gcs->path empty")
 		}
 		if cfg.General.RemoteStorage == "azblob" && ((cfg.AzureBlob.ObjectDiskPath == "" && cfg.AzureBlob.Path == "") || (cfg.AzureBlob.ObjectDiskPath != "" && cfg.AzureBlob.Path == "") || (cfg.AzureBlob.Path != "" && strings.HasPrefix(cfg.AzureBlob.Path, cfg.AzureBlob.ObjectDiskPath))) {
-			return fmt.Errorf("data in objects disks, invalid azblob->object_disk_path config section, shall be not empty and shall not be prefix for azblob->path, shall not inside azblob->path if azblob->path empty")
+			return errors.New("data in objects disks, invalid azblob->object_disk_path config section, shall be not empty and shall not be prefix for azblob->path, shall not inside azblob->path if azblob->path empty")
 		}
 		if cfg.General.RemoteStorage == "cos" && ((cfg.COS.ObjectDiskPath == "" && cfg.COS.Path == "") || (cfg.COS.ObjectDiskPath != "" && cfg.COS.Path == "") || (cfg.COS.Path != "" && strings.HasPrefix(cfg.COS.Path, cfg.COS.ObjectDiskPath))) {
-			return fmt.Errorf("data in objects disks, invalid cos->object_disk_path config section, shall be not empty and shall not be prefix for cos->path, shall not inside cos->path if cos->path empty")
+			return errors.New("data in objects disks, invalid cos->object_disk_path config section, shall be not empty and shall not be prefix for cos->path, shall not inside cos->path if cos->path empty")
 		}
 		if cfg.General.RemoteStorage == "ftp" && ((cfg.FTP.ObjectDiskPath == "" && cfg.FTP.Path == "") || (cfg.FTP.ObjectDiskPath != "" && cfg.FTP.Path == "") || (cfg.FTP.Path != "" && strings.HasPrefix(cfg.FTP.Path, cfg.FTP.ObjectDiskPath))) {
-			return fmt.Errorf("data in objects disks, invalid ftp->object_disk_path config section, shall be not empty and shall not be prefix for ftp->path, shall not inside ftp->path if ftp->path empty")
+			return errors.New("data in objects disks, invalid ftp->object_disk_path config section, shall be not empty and shall not be prefix for ftp->path, shall not inside ftp->path if ftp->path empty")
 		}
 		if cfg.General.RemoteStorage == "sftp" && ((cfg.SFTP.ObjectDiskPath == "" && cfg.SFTP.Path == "") || (cfg.SFTP.ObjectDiskPath != "" && cfg.SFTP.Path == "") || (cfg.SFTP.Path != "" && strings.HasPrefix(cfg.SFTP.Path, cfg.SFTP.ObjectDiskPath))) {
-			return fmt.Errorf("data in objects disks, invalid sftp->object_disk_path config section, shall be not empty and shall not be prefix for sftp->path, shall not inside sftp->path if sftp->path empty")
+			return errors.New("data in objects disks, invalid sftp->object_disk_path config section, shall be not empty and shall not be prefix for sftp->path, shall not inside sftp->path if sftp->path empty")
 		}
 	}
 	return nil

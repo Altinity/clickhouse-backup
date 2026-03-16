@@ -163,13 +163,13 @@ func (k *Keeper) Connect(ctx context.Context, ch *clickhouse.ClickHouse) error {
 		}))
 		if err != nil {
 			log.Error().Msgf("zk.Connect with TLS failed: %v", err)
-			return err
+			return errors.Wrap(err, "zk.Connect with TLS")
 		}
 	} else {
 		log.Info().Msgf("isSecure=%v, keeperHosts=%v", isSecure, keeperHosts)
 		conn, _, err = zk.Connect(keeperHosts, sessionTimeout, zk.WithLogger(newKeeperLogger()))
 		if err != nil {
-			return err
+			return errors.Wrap(err, "zk.Connect")
 		}
 	}
 	if digestNode := zookeeperNode.SelectElement("digest"); digestNode != nil {
@@ -224,25 +224,28 @@ func (k *Keeper) ChildCount(prefix, nodePath string) (int, error) {
 	}
 	log.Debug().Str("prefix", prefix).Str("nodePath", nodePath).Msg("k->ChildCount")
 	childrenNodes, _, err := k.conn.Children(path.Join(prefix, nodePath))
-	return len(childrenNodes), err
+	if err != nil {
+		return 0, errors.WithMessage(err, "ChildCount conn.Children")
+	}
+	return len(childrenNodes), nil
 }
 
 func (k *Keeper) dumpNodeRecursive(prefix, nodePath string, f *os.File) (int, error) {
 	value, _, err := k.conn.Get(path.Join(prefix, nodePath))
 	if err != nil {
-		return 0, err
+		return 0, errors.WithMessage(err, "dumpNodeRecursive conn.Get")
 	}
 	bytes, err := k.writeJsonString(f, DumpNode{Path: strings.TrimPrefix(nodePath, k.root), Value: value})
 	if err != nil {
-		return 0, err
+		return 0, errors.WithMessage(err, "dumpNodeRecursive writeJsonString")
 	}
 	children, _, err := k.conn.Children(path.Join(prefix, nodePath))
 	if err != nil {
-		return 0, err
+		return 0, errors.WithMessage(err, "dumpNodeRecursive conn.Children")
 	}
 	for _, childPath := range children {
 		if childBytes, err := k.dumpNodeRecursive(prefix, path.Join(nodePath, childPath), f); err != nil {
-			return 0, err
+			return 0, errors.WithMessage(err, "dumpNodeRecursive child")
 		} else {
 			bytes += childBytes
 		}
@@ -253,14 +256,17 @@ func (k *Keeper) dumpNodeRecursive(prefix, nodePath string, f *os.File) (int, er
 func (k *Keeper) writeJsonString(f *os.File, node DumpNode) (int, error) {
 	jsonLine, err := json.Marshal(node)
 	if err != nil {
-		return 0, err
+		return 0, errors.WithMessage(err, "writeJsonString json.Marshal")
 	}
 	bytes, err := f.Write(jsonLine)
 	if err != nil {
-		return bytes, err
+		return bytes, errors.WithMessage(err, "writeJsonString file.Write jsonLine")
 	}
 	lnBytes, err := f.Write([]byte("\n"))
-	return bytes + lnBytes, err
+	if err != nil {
+		return bytes + lnBytes, errors.WithMessage(err, "writeJsonString file.Write newline")
+	}
+	return bytes + lnBytes, nil
 }
 
 func (k *Keeper) Restore(dumpFile, prefix string) error {

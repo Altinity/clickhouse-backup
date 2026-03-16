@@ -2,7 +2,8 @@ package clickhouse
 
 import (
 	"context"
-	"errors"
+
+	"github.com/pkg/errors"
 )
 
 const (
@@ -21,7 +22,7 @@ type versionGetter interface {
 func canShardOperation(ctx context.Context, v versionGetter) error {
 	version, err := v.GetVersion(ctx)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "canShardOperation GetVersion")
 	}
 	if version < minVersShardOp {
 		return ErrShardOperationVers

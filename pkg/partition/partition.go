@@ -167,7 +167,7 @@ func getPartitionIdWithFunction(ctx context.Context, ch *clickhouse.ClickHouse, 
 	partitionComponents := extractPartitionComponents(partitionExpr)
 
 	if len(partitionValues) != len(partitionComponents) {
-		return "", "", fmt.Errorf("partition values count (%d) doesn't match components count (%d)", len(partitionValues), len(partitionComponents))
+		return "", "", errors.Errorf("partition values count (%d) doesn't match components count (%d)", len(partitionValues), len(partitionComponents))
 	}
 
 	evaluatedId, evaluatedName, evaluatedErr := tryEvaluatedPartitionId(ctx, ch, createQuery, partitionExpr, partitionComponents, partitionValues)
@@ -180,7 +180,7 @@ func getPartitionIdWithFunction(ctx context.Context, ch *clickhouse.ClickHouse, 
 		return directId, directName, nil
 	}
 
-	return "", "", fmt.Errorf("both approaches failed: evaluated=%v, direct=%v", evaluatedErr, directErr)
+	return "", "", errors.Errorf("both approaches failed: evaluated=%v, direct=%v", evaluatedErr, directErr)
 }
 
 func tryDirectPartitionId(ctx context.Context, ch *clickhouse.ClickHouse, partitionValues []interface{}) (string, string, error) {
@@ -210,11 +210,11 @@ func tryDirectPartitionId(ctx context.Context, ch *clickhouse.ClickHouse, partit
 	}
 
 	if err := ch.SelectContext(ctx, &result, sql, args...); err != nil {
-		return "", "", err
+		return "", "", errors.WithMessage(err, "tryDirectPartitionId SelectContext")
 	}
 
 	if len(result) != 1 {
-		return "", "", fmt.Errorf("unexpected result count: %d", len(result))
+		return "", "", errors.Errorf("unexpected result count: %d", len(result))
 	}
 
 	return result[0].PartitionId, result[0].PartitionName, nil
@@ -223,11 +223,11 @@ func tryDirectPartitionId(ctx context.Context, ch *clickhouse.ClickHouse, partit
 func tryEvaluatedPartitionId(ctx context.Context, ch *clickhouse.ClickHouse, createQuery, partitionExpr string, partitionComponents []string, partitionValues []interface{}) (string, string, error) {
 	columns := extractPartitionByFieldNames(partitionExpr)
 	if len(columns) == 0 {
-		return "", "", fmt.Errorf("can't extract column names from partition expression: %s", partitionExpr)
+		return "", "", errors.Errorf("can't extract column names from partition expression: %s", partitionExpr)
 	}
 
 	if len(partitionValues) != len(columns) {
-		return "", "", fmt.Errorf("partition values count (%d) doesn't match columns count (%d)", len(partitionValues), len(columns))
+		return "", "", errors.Errorf("partition values count (%d) doesn't match columns count (%d)", len(partitionValues), len(columns))
 	}
 
 	var args []interface{}
@@ -259,7 +259,7 @@ func tryEvaluatedPartitionId(ctx context.Context, ch *clickhouse.ClickHouse, cre
 	}
 
 	if len(result) != 1 {
-		return "", "", fmt.Errorf("unexpected result: %#v", result)
+		return "", "", errors.Errorf("unexpected result: %#v", result)
 	}
 
 	return result[0].PartitionId, result[0].PartitionName, nil
@@ -361,7 +361,7 @@ func getPartitionIdWithTempTable(ctx context.Context, ch *clickhouse.ClickHouse,
 	partitionIdTable := "__partition_id_" + table
 	createQuery = dbAndTableNameRE.ReplaceAllString(createQuery, fmt.Sprintf("`%s`.`%s`", database, partitionIdTable))
 	if err := ch.Query(createQuery); err != nil {
-		return "", "", err
+		return "", "", errors.WithMessage(err, "getPartitionIdWithTempTable ch.Query createQuery")
 	}
 	columns := make([]struct {
 		Name string `ch:"name"`
@@ -423,7 +423,7 @@ func getPartitionIdWithTempTable(ctx context.Context, ch *clickhouse.ClickHouse,
 		}
 	}
 	if err != nil {
-		return "", "", err
+		return "", "", errors.WithMessage(err, "getPartitionIdWithTempTable insert partition")
 	}
 	partitions := make([]struct {
 		Id   string `ch:"partition_id"`
@@ -434,7 +434,7 @@ func getPartitionIdWithTempTable(ctx context.Context, ch *clickhouse.ClickHouse,
 		return "", "", errors.Wrapf(err, "can't SELECT partition_id for PARTITION BY fields(%#v) FROM `%s`.`%s`", partitionInsert, database, partitionIdTable)
 	}
 	if len(partitions) != 1 {
-		return "", "", fmt.Errorf("wrong partitionsIds=%#v found system.parts for table `%s`.`%s`", partitions, database, partitionIdTable)
+		return "", "", errors.Errorf("wrong partitionsIds=%#v found system.parts for table `%s`.`%s`", partitions, database, partitionIdTable)
 	}
 
 	return partitions[0].Id, partitions[0].Name, nil
@@ -445,10 +445,10 @@ func dropPartitionIdTable(ch *clickhouse.ClickHouse, database string, partitionI
 	if isAtomicOrReplicated, err := ch.IsDbAtomicOrReplicated(database); isAtomicOrReplicated {
 		sql += " SYNC"
 	} else if err != nil {
-		return err
+		return errors.WithMessage(err, "dropPartitionIdTable IsDbAtomicOrReplicated")
 	}
 	if err := ch.Query(sql); err != nil {
-		return err
+		return errors.WithMessage(err, "dropPartitionIdTable ch.Query")
 	}
 	return nil
 }

@@ -1,7 +1,6 @@
 package filesystemhelper
 
 import (
-	"fmt"
 	"io/fs"
 	"net/url"
 	"os"
@@ -39,11 +38,11 @@ func Chown(fPath string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk, rec
 	chownLock.Lock()
 	if uid == nil {
 		if dataPath, err = ch.GetDefaultPath(disks); err != nil {
-			return err
+			return errors.WithMessage(err, "Chown GetDefaultPath")
 		}
 		info, err := os.Stat(dataPath)
 		if err != nil {
-			return err
+			return errors.WithMessage(err, "Chown os.Stat")
 		}
 		stat := info.Sys().(*syscall.Stat_t)
 		intUid := int(stat.Uid)
@@ -65,10 +64,10 @@ func Chown(fPath string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk, rec
 
 func Mkdir(name string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk) error {
 	if err := os.MkdirAll(name, 0750); err != nil && !os.IsExist(err) {
-		return err
+		return errors.WithMessage(err, "Mkdir MkdirAll")
 	}
 	if err := Chown(name, ch, disks, false); err != nil {
-		return err
+		return errors.WithMessage(err, "Mkdir Chown")
 	}
 	return nil
 }
@@ -98,7 +97,7 @@ func MkdirAll(path string, ch *clickhouse.ClickHouse, disks []clickhouse.Disk) e
 		// Create parent.
 		err = MkdirAll(path[:j-1], ch, disks)
 		if err != nil {
-			return err
+			return errors.WithMessage(err, "MkdirAll create parent")
 		}
 	}
 
@@ -128,11 +127,11 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 				// avoid to restore to non-empty to avoid attach in already dropped partitions, corner case
 				existsFiles, err := os.ReadDir(dstParentDir)
 				if err != nil && !os.IsNotExist(err) {
-					return err
+					return errors.WithMessage(err, "HardlinkBackupPartsToStorage ReadDir")
 				}
 				for _, f := range existsFiles {
 					if f.Name() != "detached" && !strings.HasSuffix(f.Name(), ".txt") {
-						return fmt.Errorf("%s contains exists data %v, we can't restore directly via ATTACH TABLE, use `clickhouse->restore_as_attach=false` in your config", dstParentDir, existsFiles)
+						return errors.Errorf("%s contains exists data %v, we can't restore directly via ATTACH TABLE, use `clickhouse->restore_as_attach=false` in your config", dstParentDir, existsFiles)
 					}
 				}
 			}
@@ -142,13 +141,13 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 		for _, part := range backupTable.Parts[backupDiskName] {
 			dstParentDir, dstParentDirExists := dstDataPaths[backupDiskName]
 			if !dstParentDirExists && part.RebalancedDisk == "" {
-				return fmt.Errorf("dstDataPaths=%#v, not contains %s", dstDataPaths, backupDiskName)
+				return errors.Errorf("dstDataPaths=%#v, not contains %s", dstDataPaths, backupDiskName)
 			}
 			if part.RebalancedDisk != "" {
 				backupDiskName = part.RebalancedDisk
 				dstParentDir, dstParentDirExists = dstDataPaths[part.RebalancedDisk]
 				if !dstParentDirExists {
-					return fmt.Errorf("dstDataPaths=%#v, not contains rebalanced %s", dstDataPaths, part.RebalancedDisk)
+					return errors.Errorf("dstDataPaths=%#v, not contains rebalanced %s", dstDataPaths, part.RebalancedDisk)
 				}
 			}
 			backupDiskPath := diskMap[backupDiskName]
@@ -167,7 +166,7 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 					return err
 				}
 			} else if !info.IsDir() {
-				return fmt.Errorf("'%s' should be directory or absent", dstPartPath)
+				return errors.Errorf("'%s' should be directory or absent", dstPartPath)
 			}
 			srcPartPath := path.Join(backupDiskPath, "backup", backupName, "shadow", dbAndTableDir, backupDiskName, part.Name)
 			if err := filepath.Walk(srcPartPath, func(filePath string, info os.FileInfo, err error) error {
@@ -291,7 +290,7 @@ func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap 
 			if isRequiredPartFound && !partExists {
 				c, checksumErr := common.CalculateChecksum(filePath, "checksums.txt")
 				if checksumErr != nil {
-					return fmt.Errorf("common.CalculateChecksum(isRequiredPartFound=true) return error %v", checksumErr)
+					return errors.Wrapf(checksumErr, "common.CalculateChecksum(isRequiredPartFound=true)")
 				}
 				checksums[pathParts[3]] = c
 			}
@@ -307,7 +306,7 @@ func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap 
 				})
 				c, checksumErr := common.CalculateChecksum(filePath, "checksums.txt")
 				if checksumErr != nil {
-					return fmt.Errorf("common.CalculateChecksum return error %v", checksumErr)
+					return errors.Wrapf(checksumErr, "common.CalculateChecksum")
 				}
 				checksums[pathParts[3]] = c
 			}
@@ -420,7 +419,7 @@ func addRequiredPartIfNotExists(parts []metadata.Part, relativePath string, tabl
 func IsDuplicatedParts(part1, part2 string) error {
 	p1, err := os.Open(part1)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "IsDuplicatedParts open part1")
 	}
 	defer func() {
 		if err = p1.Close(); err != nil {
@@ -429,7 +428,7 @@ func IsDuplicatedParts(part1, part2 string) error {
 	}()
 	p2, err := os.Open(part2)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "IsDuplicatedParts open part2")
 	}
 	defer func() {
 		if err = p2.Close(); err != nil {
@@ -438,26 +437,26 @@ func IsDuplicatedParts(part1, part2 string) error {
 	}()
 	pf1, err := p1.Readdirnames(-1)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "IsDuplicatedParts Readdirnames part1")
 	}
 	pf2, err := p2.Readdirnames(-1)
 	if err != nil {
-		return err
+		return errors.WithMessage(err, "IsDuplicatedParts Readdirnames part2")
 	}
 	if len(pf1) != len(pf2) {
-		return fmt.Errorf("files count in parts is different")
+		return errors.New("files count in parts is different")
 	}
 	for _, f := range pf1 {
 		part1File, err := os.Stat(path.Join(part1, f))
 		if err != nil {
-			return err
+			return errors.WithMessage(err, "IsDuplicatedParts stat part1 file")
 		}
 		part2File, err := os.Stat(path.Join(part2, f))
 		if err != nil {
-			return err
+			return errors.WithMessage(err, "IsDuplicatedParts stat part2 file")
 		}
 		if !os.SameFile(part1File, part2File) {
-			return fmt.Errorf("file '%s' is different", f)
+			return errors.Errorf("file '%s' is different", f)
 		}
 	}
 	return nil
