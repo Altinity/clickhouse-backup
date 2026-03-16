@@ -130,7 +130,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 		return fmt.Errorf("'%s' is empty backup", backupName)
 	}
 	// if using hardlink then disable this check, if not use then check disk size
-	if !hardlinkExistsFiles {
+	if !hardlinkExistsFiles && !schemaOnly && !rbacOnly && !configsOnly {
 		// https://github.com/Altinity/clickhouse-backup/issues/878
 		if freeSizeErr := b.CheckDisksUsage(remoteBackup, disks, isResumeExists, tablePattern); freeSizeErr != nil {
 			return freeSizeErr
