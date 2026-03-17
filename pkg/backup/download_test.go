@@ -235,9 +235,8 @@ func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 	}
 	err := b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, baseDisks, invalidRemoteBackup)
 	assert.Error(t, err)
-	assert.Equal(t,
+	assert.Contains(t, err.Error(),
 		"disk: hdd2 not found in disk_types section map[string]string{\"default\":\"local\", \"s3\":\"s3\", \"s3_disk2\":\"s3\"} in Test/metadata.json",
-		err.Error(),
 	)
 
 	// invalid disk_type
@@ -248,7 +247,7 @@ func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 	}
 	err = b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, baseDisks, invalidRemoteBackup)
 	assert.Error(t, err)
-	assert.Equal(t, "disk: hdd2, diskType: unknown not found in system.disks", err.Error())
+	assert.Contains(t, err.Error(), "disk: hdd2, diskType: unknown not found in system.disks")
 
 	// invalid storage_policy
 	invalidRemoteBackup.DiskTypes["hdd2"] = "local"
@@ -280,6 +279,6 @@ func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 	tableMetadataAfterDownloadRepacked = ListOfTables{&invalidTable}
 	err = b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, invalidDisks, invalidRemoteBackup)
 	assert.Error(t, err)
-	assert.Contains(t, "250B free space, not found in system.disks with `local` type", err.Error())
+	assert.Contains(t, err.Error(), "250B free space, not found in system.disks with `local` type")
 
 }

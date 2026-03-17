@@ -1,9 +1,9 @@
 package clickhouse
 
 import (
-	"fmt"
 	"testing"
 
+	"github.com/go-faster/errors"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -13,7 +13,7 @@ func TestCheckTypesConsistency(t *testing.T) {
 		Database: "mydb",
 		Name:     "mytable",
 	}
-	expectedErr := fmt.Errorf("`mydb`.`mytable` have inconsistent data types for active data part in system.parts_columns")
+	expectedErr := errors.Errorf("`mydb`.`mytable` have inconsistent data types for active data part in system.parts_columns")
 
 	testCases := []struct {
 		Name            string
@@ -101,7 +101,11 @@ func TestCheckTypesConsistency(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.Name, func(t *testing.T) {
 			err := ch.CheckTypesConsistency(table, tc.PartColumnsData)
-			assert.Equal(t, tc.ExpectedError, err)
+			if tc.ExpectedError == nil {
+				assert.NoError(t, err)
+			} else {
+				assert.EqualError(t, err, tc.ExpectedError.Error())
+			}
 		})
 	}
 }
