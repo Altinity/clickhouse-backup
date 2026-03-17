@@ -135,6 +135,11 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 		return errors.WithMessage(err, "unmarshal backup metadata")
 	}
 	b.isEmbedded = strings.Contains(backupMetadata.Tags, "embedded")
+	if b.isEmbedded {
+		if err = b.resolveEmbeddedClusterShardReplica(ctx); err != nil {
+			return errors.WithMessage(err, "resolveEmbeddedClusterShardReplica")
+		}
+	}
 
 	if schemaOnly || doRestoreData {
 		for _, database := range backupMetadata.Databases {
@@ -1517,7 +1522,7 @@ func (b *Backuper) fixEmbeddedMetadataRemote(ctx context.Context, backupName str
 	if err != nil {
 		return errors.WithMessage(err, "getObjectDiskPath")
 	}
-	if walkErr := b.dst.WalkAbsolute(ctx, path.Join(objectDiskPath, backupName, "metadata"), true, func(ctx context.Context, fInfo storage.RemoteFile) error {
+	if walkErr := b.dst.WalkAbsolute(ctx, path.Join(objectDiskPath, backupName, b.embeddedClusterPrefix, "metadata"), true, func(ctx context.Context, fInfo storage.RemoteFile) error {
 		if err != nil {
 			return errors.WithMessage(err, "previous walk iteration")
 		}
@@ -1525,9 +1530,9 @@ func (b *Backuper) fixEmbeddedMetadataRemote(ctx context.Context, backupName str
 			return nil
 		}
 		var fReader io.ReadCloser
-		remoteFilePath := path.Join(objectDiskPath, backupName, "metadata", fInfo.Name())
+		remoteFilePath := path.Join(objectDiskPath, backupName, b.embeddedClusterPrefix, "metadata", fInfo.Name())
 		log.Debug().Msgf("read %s", remoteFilePath)
-		fReader, err = b.dst.GetFileReaderAbsolute(ctx, path.Join(objectDiskPath, backupName, "metadata", fInfo.Name()))
+		fReader, err = b.dst.GetFileReaderAbsolute(ctx, path.Join(objectDiskPath, backupName, b.embeddedClusterPrefix, "metadata", fInfo.Name()))
 		if err != nil {
 			return errors.WithMessage(err, "GetFileReaderAbsolute")
 		}
@@ -1555,7 +1560,11 @@ func (b *Backuper) fixEmbeddedMetadataRemote(ctx context.Context, backupName str
 }
 
 func (b *Backuper) fixEmbeddedMetadataLocal(ctx context.Context, backupName string, backupMetadata metadata.BackupMetadata, disks []clickhouse.Disk, chVersion int) error {
-	metadataPath := path.Join(b.EmbeddedBackupDataPath, backupName, "metadata")
+	metadataPath := path.Join(b.EmbeddedBackupDataPath, backupName, b.embeddedClusterPrefix, "metadata")
+	if _, statErr := os.Stat(metadataPath); os.IsNotExist(statErr) {
+		log.Debug().Msgf("fixEmbeddedMetadataLocal: %s not found, skip", metadataPath)
+		return nil
+	}
 	if walkErr := filepath.Walk(metadataPath, func(filePath string, info fs.FileInfo, err error) error {
 		if err != nil {
 			return errors.WithMessage(err, "walk metadata path")
@@ -2809,7 +2818,11 @@ func (b *Backuper) restoreEmbedded(ctx context.Context, backupName string, schem
 	if len(settings) > 0 {
 		settingsStr = "SETTINGS " + strings.Join(settings, ", ")
 	}
-	restoreSQL := fmt.Sprintf("RESTORE %s FROM %s %s", tablesSQL, embeddedBackupLocation, settingsStr)
+	onCluster := ""
+	if b.cfg.ClickHouse.UseEmbeddedBackupRestoreCluster != "" {
+		onCluster = " ON CLUSTER '" + b.cfg.ClickHouse.UseEmbeddedBackupRestoreCluster + "'"
+	}
+	restoreSQL := fmt.Sprintf("RESTORE %s %s FROM %s %s", tablesSQL, onCluster, embeddedBackupLocation, settingsStr)
 	restoreResults := make([]clickhouse.SystemBackups, 0)
 	if err := b.ch.SelectContext(ctx, &restoreResults, restoreSQL); err != nil {
 		return errors.Wrap(err, "restore error")

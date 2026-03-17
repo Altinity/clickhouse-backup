@@ -8,6 +8,7 @@ clickhouse:
   port: 9000
   restart_command: bash -c 'echo "FAKE RESTART"'
   use_embedded_backup_restore: true
+  use_embedded_backup_restore_cluster: "{cluster}"
   timeout: 4h
 gcs:
   bucket: "${QA_GCS_OVER_S3_BUCKET}"

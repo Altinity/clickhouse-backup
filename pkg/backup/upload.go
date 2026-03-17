@@ -100,6 +100,11 @@ func (b *Backuper) Upload(backupName string, deleteSource bool, diffFrom, diffFr
 	}
 	var tablesForUpload ListOfTables
 	b.isEmbedded = strings.Contains(backupMetadata.Tags, "embedded")
+	if b.isEmbedded {
+		if err = b.resolveEmbeddedClusterShardReplica(ctx); err != nil {
+			return errors.WithMessage(err, "resolveEmbeddedClusterShardReplica")
+		}
+	}
 	// will ignore partitions cause can't manipulate .backup
 	if b.isEmbedded {
 		partitions = make([]string, 0)
@@ -707,13 +712,13 @@ func (b *Backuper) uploadTableMetadataEmbedded(ctx context.Context, backupName s
 	if b.cfg.ClickHouse.EmbeddedBackupDisk == "" {
 		return 0, nil
 	}
-	remoteTableMetaFile := path.Join(backupName, "metadata", common.TablePathEncode(tableMetadata.Database), fmt.Sprintf("%s.sql", common.TablePathEncode(tableMetadata.Table)))
+	remoteTableMetaFile := path.Join(backupName, b.embeddedClusterPrefix, "metadata", common.TablePathEncode(tableMetadata.Database), fmt.Sprintf("%s.sql", common.TablePathEncode(tableMetadata.Table)))
 	if b.resume {
 		if isProcessed, processedSize := b.resumableState.IsAlreadyProcessed(remoteTableMetaFile); isProcessed {
 			return processedSize, nil
 		}
 	}
-	localTableMetaFile := path.Join(b.EmbeddedBackupDataPath, backupName, "metadata", common.TablePathEncode(tableMetadata.Database), fmt.Sprintf("%s.sql", common.TablePathEncode(tableMetadata.Table)))
+	localTableMetaFile := path.Join(b.EmbeddedBackupDataPath, backupName, b.embeddedClusterPrefix, "metadata", common.TablePathEncode(tableMetadata.Database), fmt.Sprintf("%s.sql", common.TablePathEncode(tableMetadata.Table)))
 	var info os.FileInfo
 	var localReader *os.File
 	var err error

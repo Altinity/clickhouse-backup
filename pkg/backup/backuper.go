@@ -44,6 +44,7 @@ type Backuper struct {
 	DiskToPathMap          map[string]string
 	DefaultDataPath        string
 	EmbeddedBackupDataPath string
+	embeddedClusterPrefix  string // "shards/{shard_num}/replicas/{replica_num}" when UseEmbeddedBackupRestoreCluster is set, otherwise ""
 	isEmbedded             bool
 	resume                 bool
 	resumableState         *resumable.State
@@ -140,9 +141,38 @@ func (b *Backuper) CalculateMaxSize(ctx context.Context) error {
 func (b *Backuper) getLocalBackupDataPathForTable(backupName string, disk string, dbAndTablePath string) string {
 	backupPath := path.Join(b.DiskToPathMap[disk], "backup", backupName, "shadow", dbAndTablePath, disk)
 	if b.isEmbedded {
-		backupPath = path.Join(b.DiskToPathMap[disk], backupName, "data", dbAndTablePath)
+		backupPath = path.Join(b.DiskToPathMap[disk], backupName, b.embeddedClusterPrefix, "data", dbAndTablePath)
 	}
 	return backupPath
+}
+
+// resolveEmbeddedClusterShardReplica resolves the shard/replica prefix for embedded backups with ON CLUSTER mode.
+// When UseEmbeddedBackupRestoreCluster is set, ClickHouse stores backup content under
+// backup_name/shards/{shard_num}/replicas/{replica_num}/ instead of directly under backup_name/.
+func (b *Backuper) resolveEmbeddedClusterShardReplica(ctx context.Context) error {
+	if b.cfg.ClickHouse.UseEmbeddedBackupRestoreCluster == "" {
+		b.embeddedClusterPrefix = ""
+		return nil
+	}
+	clusterName, err := b.ch.ApplyMacros(ctx, b.cfg.ClickHouse.UseEmbeddedBackupRestoreCluster)
+	if err != nil {
+		return errors.WithMessage(err, "ApplyMacros for UseEmbeddedBackupRestoreCluster")
+	}
+	type clusterReplica struct {
+		ShardNum   uint32 `ch:"shard_num"`
+		ReplicaNum uint32 `ch:"replica_num"`
+	}
+	var result []clusterReplica
+	query := fmt.Sprintf("SELECT shard_num, replica_num FROM system.clusters WHERE is_local AND cluster='%s' LIMIT 1", clusterName)
+	if err := b.ch.SelectContext(ctx, &result, query); err != nil {
+		return errors.WithMessage(err, "resolve shard_num and replica_num from system.clusters")
+	}
+	if len(result) == 0 {
+		return errors.Errorf("no local replica found in system.clusters for cluster '%s'", clusterName)
+	}
+	b.embeddedClusterPrefix = path.Join("shards", fmt.Sprintf("%d", result[0].ShardNum), "replicas", fmt.Sprintf("%d", result[0].ReplicaNum))
+	log.Debug().Msgf("resolved embedded cluster prefix: %s", b.embeddedClusterPrefix)
+	return nil
 }
 
 // populateBackupShardField populates the BackupShard field for a slice of Table structs

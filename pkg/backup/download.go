@@ -148,6 +148,11 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	dataSize := uint64(0)
 	metadataSize := uint64(0)
 	b.isEmbedded = strings.Contains(remoteBackup.Tags, "embedded")
+	if b.isEmbedded {
+		if err = b.resolveEmbeddedClusterShardReplica(ctx); err != nil {
+			return errors.WithMessage(err, "resolveEmbeddedClusterShardReplica")
+		}
+	}
 	localBackupDir := path.Join(b.DefaultDataPath, "backup", backupName)
 	if b.isEmbedded {
 		// will ignore partitions cause can't manipulate .backup
@@ -435,7 +440,8 @@ func (b *Backuper) downloadTableMetadata(ctx context.Context, backupName string,
 	metadataFiles[fmt.Sprintf("%s.json", remoteMedataPrefix)] = path.Join(b.DefaultDataPath, "backup", backupName, "metadata", common.TablePathEncode(tableTitle.Database), fmt.Sprintf("%s.json", common.TablePathEncode(tableTitle.Table)))
 	partitionsIdMap := make(map[metadata.TableTitle]common.EmptyMap)
 	if b.isEmbedded && b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
-		metadataFiles[fmt.Sprintf("%s.sql", remoteMedataPrefix)] = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata", common.TablePathEncode(tableTitle.Database), fmt.Sprintf("%s.sql", common.TablePathEncode(tableTitle.Table)))
+		remoteSqlPrefix := path.Join(backupName, b.embeddedClusterPrefix, "metadata", common.TablePathEncode(tableTitle.Database), common.TablePathEncode(tableTitle.Table))
+		metadataFiles[fmt.Sprintf("%s.sql", remoteSqlPrefix)] = path.Join(b.EmbeddedBackupDataPath, backupName, b.embeddedClusterPrefix, "metadata", common.TablePathEncode(tableTitle.Database), fmt.Sprintf("%s.sql", common.TablePathEncode(tableTitle.Table)))
 		metadataFiles[fmt.Sprintf("%s.json", remoteMedataPrefix)] = path.Join(b.EmbeddedBackupDataPath, backupName, "metadata", common.TablePathEncode(tableTitle.Database), fmt.Sprintf("%s.json", common.TablePathEncode(tableTitle.Table)))
 	}
 	var tableMetadata metadata.TableMetadata
@@ -740,7 +746,7 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 			diskPath, diskExists := b.DiskToPathMap[disk]
 			tableLocalPath := path.Join(diskPath, "backup", remoteBackup.BackupName, "shadow", dbAndTableDir, disk)
 			if b.isEmbedded {
-				tableLocalPath = path.Join(diskPath, remoteBackup.BackupName, "data", dbAndTableDir)
+				tableLocalPath = path.Join(diskPath, remoteBackup.BackupName, b.embeddedClusterPrefix, "data", dbAndTableDir)
 			}
 			for i, part := range parts {
 				if part.Required {

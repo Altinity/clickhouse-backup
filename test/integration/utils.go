@@ -525,7 +525,7 @@ func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 	// Always clean disk_s3 from minio — it's ClickHouse table storage (s3_only policy)
 	// created by runMainIntegrationScenario and must be wiped between test runs.
 	// Ignore error: minio may not be present in non-S3 test setups.
-	env.DockerExec("minio", "rm", "-rf", "/minio/data/clickhouse/disk_s3")
+	_ = env.DockerExec("minio", "rm", "-rf", "/minio/data/clickhouse/disk_s3")
 
 	if t.Name() == "TestRBAC" || t.Name() == "TestConfigs" || strings.HasPrefix(t.Name(), "TestEmbedded") {
 		env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/backups_s3")
@@ -1353,8 +1353,9 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/"+backupConfig, "download", "--partitions="+dbName+".t?:(0,'2022-01-02'),(0,'2022-01-03')", fullBackupName)
 	fullBackupDir := "/var/lib/clickhouse/backup/" + fullBackupName + "/shadow/" + dbName + "/t?/default/"
 	// embedded storage with embedded disks contains object disk files and will download additional data parts
+	// when use_embedded_backup_restore_cluster is set, ClickHouse stores data under shards/{shard_num}/replicas/{replica_num}/
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") {
-		fullBackupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED")) + "/" + fullBackupName + "/data/" + dbName + "/t?"
+		fullBackupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED")) + "/" + fullBackupName + "/shards/1/replicas/1/data/" + dbName + "/t?"
 	}
 	// embedded storage without embedded disks doesn't contain `shadow` and contain only `metadata`
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && strings.HasSuffix(remoteStorageType, "_URL") {
@@ -1420,8 +1421,9 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	expectedLines = "17"
 	fullBackupDir = "/var/lib/clickhouse/backup/" + fullBackupName + "/shadow/" + dbName + "/t?/default/"
 	// embedded storage with embedded disks contains hardLink files and will download additional data parts
+	// when use_embedded_backup_restore_cluster is set, ClickHouse stores data under shards/{shard_num}/replicas/{replica_num}/
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") {
-		fullBackupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED")) + "/" + fullBackupName + "/data/" + dbName + "/t?"
+		fullBackupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED")) + "/" + fullBackupName + "/shards/1/replicas/1/data/" + dbName + "/t?"
 	}
 	// embedded storage without embedded disks doesn't contain `shadow` and contain only `metadata`
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && strings.HasSuffix(remoteStorageType, "_URL") {
@@ -1450,7 +1452,7 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	expectedLines = "5"
 	partitionBackupDir := "/var/lib/clickhouse/backup/" + partitionBackupName + "/shadow/" + dbName + "/t1/default/"
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && !strings.HasSuffix(remoteStorageType, "_URL") {
-		partitionBackupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED")) + "/" + partitionBackupName + "/data/" + dbName + "/t1"
+		partitionBackupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED")) + "/" + partitionBackupName + "/shards/1/replicas/1/data/" + dbName + "/t1"
 	}
 	//embedded backup without a disk has only local metadata
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && strings.HasSuffix(remoteStorageType, "_URL") {
@@ -1495,7 +1497,7 @@ func testBackupSpecifiedPartitions(t *testing.T, r *require.Assertions, env *Tes
 	partitionBackupDir = "/var/lib/clickhouse/backup/" + partitionBackupName + "/shadow/" + dbName + "/t1/default/"
 	expectedLines = "7"
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && !strings.HasSuffix(remoteStorageType, "_URL") {
-		partitionBackupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED")) + "/" + partitionBackupName + "/data/" + dbName + "/t1"
+		partitionBackupDir = "/var/lib/clickhouse/disks/backups" + strings.ToLower(strings.TrimPrefix(remoteStorageType, "EMBEDDED")) + "/" + partitionBackupName + "/shards/1/replicas/1/data/" + dbName + "/t1"
 	}
 	//embedded backup without a disk has only local metadata
 	if strings.HasPrefix(remoteStorageType, "EMBEDDED") && strings.HasSuffix(remoteStorageType, "_URL") {
