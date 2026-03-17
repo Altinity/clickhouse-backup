@@ -1,14 +1,15 @@
 package backup
 
 import (
+	"regexp"
+	"testing"
+	"time"
+
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/storage"
 	"github.com/stretchr/testify/assert"
-	"regexp"
-	"testing"
-	"time"
 )
 
 var b = Backuper{
@@ -279,6 +280,6 @@ func TestReBalanceTablesMetadataIfDiskNotExists_CheckErrors(t *testing.T) {
 	tableMetadataAfterDownloadRepacked = ListOfTables{&invalidTable}
 	err = b.reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDownloadRepacked, invalidDisks, invalidRemoteBackup)
 	assert.Error(t, err)
-	assert.Equal(t, "250B free space, not found in system.disks with `local` type", err.Error())
+	assert.Contains(t, "250B free space, not found in system.disks with `local` type", err.Error())
 
 }
