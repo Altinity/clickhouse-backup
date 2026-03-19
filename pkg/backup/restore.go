@@ -1963,24 +1963,20 @@ func (b *Backuper) RestoreData(ctx context.Context, backupName string, backupMet
 // waitForObjectStorageCleanup waits for ClickHouse 26.2+ BlobKillerThread to drain the in-memory blob removal queue.
 // In 26.2+, DROP TABLE only marks metadata as deleted synchronously; actual blob deletion is always async via BlobKillerThread.
 // See: https://gist.github.com/Slach/05a00a72d2fb453bd84cd4b54522f596,
-// Tries SYSTEM WAIT BLOBS CLEANUP first (available when ClickHouse adds it); falls back to a fixed sleep.
+// Tries `SYSTEM WAIT BLOBS CLEANUP` first (available when ClickHouse will release it)
 func (b *Backuper) waitForObjectStorageCleanup(ctx context.Context, disks []clickhouse.Disk, version int) error {
-	if version < 26002000 {
+	if version < 26003000 {
 		return nil
 	}
-	hasObjectDisks := false
 	for _, disk := range disks {
 		if b.isDiskTypeObject(disk.Type) {
-			hasObjectDisks = true
-			break
+			log.Warn().Str("disk", disk.Name).Str("type", disk.Type).Msg("ClickHouse >= 26.2: waiting for BlobKillerThread to drain async object storage deletion queue after DROP TABLE, look details https://github.com/ClickHouse/ClickHouse/issues/99996")
+			if err := b.ch.QueryContext(ctx, "SYSTEM WAIT BLOBS CLEANUP ?", disk.Name); err != nil {
+				if !strings.Contains(err.Error(), "is not an object storage disk") {
+					return errors.Wrap(err, fmt.Sprintf("SYSTEM WAIT BLOBS CLEANUP '%s', failed", disk.Name))
+				}
+			}
 		}
-	}
-	if !hasObjectDisks {
-		return nil
-	}
-	log.Warn().Msg("ClickHouse >= 26.2: waiting for BlobKillerThread to drain async object storage deletion queue after DROP TABLE, look details https://github.com/ClickHouse/ClickHouse/issues/99996")
-	if err := b.ch.QueryContext(ctx, "SYSTEM WAIT BLOBS CLEANUP"); err != nil {
-		return errors.Wrap(err, "SYSTEM WAIT BLOBS CLEANUP, failed")
 	}
 	return nil
 }
