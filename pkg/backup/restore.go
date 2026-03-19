@@ -293,6 +293,7 @@ func (b *Backuper) Restore(backupName, tablePattern string, databaseMapping, tab
 
 	}
 	if dataOnly || (schemaOnly == dataOnly) {
+		b.waitForObjectStorageCleanup(ctx, disks, version)
 		if err := b.RestoreData(ctx, backupName, backupMetadata, dataOnly, metadataPath, tablePattern, partitions, skipProjections, disks, version, replicatedCopyToDetached, tablesForRestore, existingTablesSnapshot); err != nil {
 			return errors.WithMessage(err, "RestoreData")
 		}
@@ -1955,6 +1956,36 @@ func (b *Backuper) RestoreData(ctx context.Context, backupName string, backupMet
 		"operation": "restore_data",
 	}).Str("duration", utils.HumanizeDuration(time.Since(startRestoreData))).Msg("done")
 	return nil
+}
+
+// waitForObjectStorageCleanup waits for ClickHouse 26.2+ BlobKillerThread to drain the in-memory blob removal queue.
+// In 26.2+, DROP TABLE only marks metadata as deleted synchronously; actual blob deletion is always async via BlobKillerThread.
+// See: https://gist.github.com/Slach/05a00a72d2fb453bd84cd4b54522f596
+// Tries SYSTEM WAIT BLOBS CLEANUP first (available when ClickHouse adds it); falls back to a fixed sleep.
+func (b *Backuper) waitForObjectStorageCleanup(ctx context.Context, disks []clickhouse.Disk, version int) {
+	if version < 26002000 {
+		return
+	}
+	hasObjectDisks := false
+	for _, disk := range disks {
+		if b.isDiskTypeObject(disk.Type) {
+			hasObjectDisks = true
+			break
+		}
+	}
+	if !hasObjectDisks {
+		return
+	}
+	log.Info().Msg("ClickHouse >= 26.2: waiting for BlobKillerThread to drain async object storage deletion queue after DROP TABLE")
+	if err := b.ch.QueryContext(ctx, "SYSTEM WAIT BLOBS CLEANUP"); err == nil {
+		return
+	}
+	// SYSTEM WAIT BLOBS CLEANUP not yet available — fall back to fixed delay
+	log.Info().Msg("SYSTEM WAIT BLOBS CLEANUP not supported, using 15s delay as fallback")
+	select {
+	case <-ctx.Done():
+	case <-time.After(15 * time.Second):
+	}
 }
 
 func (b *Backuper) restoreDataEmbedded(ctx context.Context, backupName string, dataOnly bool, version int, tablesForRestore ListOfTables, partitionsNameList map[metadata.TableTitle][]string) error {
