@@ -2,5 +2,7 @@
 .idea
 .vscode
 .aider*
+.claude
+.venv
 test
 

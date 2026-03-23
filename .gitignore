@@ -7,7 +7,6 @@ credentials.json
 .idea/
 *.iml
 build/
-.env/
 .venv/
 *.log
 vendor/
@@ -24,3 +23,4 @@ _coverage_/
 __pycache__/
 *.py[cod]
 .agents/
+pyrightconfig.json
