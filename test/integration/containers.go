@@ -1,0 +1,781 @@
+//go:build integration
+
+package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	osExec "os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/docker/docker/api/types/container"
+	dockerImage "github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/api/types/network"
+	dockerClient "github.com/docker/docker/client"
+	"github.com/docker/go-connections/nat"
+	"github.com/rs/zerolog/log"
+)
+
+// ContainerInfo holds runtime info for a started container.
+type ContainerInfo struct {
+	ID       string
+	Name     string
+	Hostname string
+}
+
+// TestContainers manages all Docker containers for integration tests.
+type TestContainers struct {
+	client        *dockerClient.Client
+	networkID     string
+	networkName   string
+	containers    map[string]*ContainerInfo // service name -> info
+	sharedVolumes []string                 // named volume names for cleanup
+	isAdvanced    bool
+	envID         int
+}
+
+// NewTestContainers creates a new container manager.
+func NewTestContainers(envID int) (*TestContainers, error) {
+	cli, err := dockerClient.NewClientWithOpts(dockerClient.FromEnv, dockerClient.WithAPIVersionNegotiation())
+	if err != nil {
+		return nil, fmt.Errorf("docker client: %w", err)
+	}
+	tc := &TestContainers{
+		client:     cli,
+		containers: make(map[string]*ContainerInfo),
+		isAdvanced: isAdvancedMode(),
+		envID:      envID,
+	}
+	return tc, nil
+}
+
+func isAdvancedMode() bool {
+	v := os.Getenv("CLICKHOUSE_VERSION")
+	if v == "" || v == "head" {
+		return true
+	}
+	return compareVersion(v, "22.0") >= 0
+}
+
+// StartAll creates the network and starts all containers.
+func (tc *TestContainers) StartAll(ctx context.Context) error {
+	var err error
+
+	tc.networkName = fmt.Sprintf("tc_integration_%d", tc.envID)
+	resp, err := tc.client.NetworkCreate(ctx, tc.networkName, network.CreateOptions{Driver: "bridge"})
+	if err != nil {
+		return fmt.Errorf("create network: %w", err)
+	}
+	tc.networkID = resp.ID
+
+	curDir := os.Getenv("CUR_DIR")
+	if curDir == "" {
+		curDir, _ = os.Getwd()
+		curDir = filepath.Join(curDir, "test", "integration")
+	}
+	configsDir := filepath.Join(curDir, "configs")
+
+	// Shared named volumes for clickhouse <-> clickhouse-backup
+	prefix := fmt.Sprintf("tc_%d_", tc.envID)
+	tc.sharedVolumes = []string{
+		prefix + "ch_data",
+		prefix + "hdd1",
+		prefix + "hdd2",
+		prefix + "hdd3",
+	}
+
+	// 1. SSHD
+	if err = tc.startSSHD(ctx); err != nil {
+		return err
+	}
+
+	// 2. FTP
+	if err = tc.startFTP(ctx, curDir); err != nil {
+		return err
+	}
+
+	// 3. MinIO
+	if err = tc.startMinio(ctx, configsDir); err != nil {
+		return err
+	}
+
+	// 4. GCS
+	if err = tc.startGCS(ctx); err != nil {
+		return err
+	}
+
+	// 5. Azure
+	if err = tc.startAzure(ctx); err != nil {
+		return err
+	}
+
+	// 6. ZooKeeper
+	if err = tc.startZookeeper(ctx, configsDir); err != nil {
+		return err
+	}
+
+	// 7. MySQL + PostgreSQL (advanced only)
+	if tc.isAdvanced {
+		if err = tc.startMySQL(ctx); err != nil {
+			return err
+		}
+		if err = tc.startPgSQL(ctx); err != nil {
+			return err
+		}
+	}
+
+	// Wait for support services
+	for _, svc := range []string{"sshd", "ftp", "minio", "gcs", "azure", "zookeeper"} {
+		if err = tc.waitHealthy(ctx, svc, 90*time.Second); err != nil {
+			return fmt.Errorf("wait %s: %w", svc, err)
+		}
+	}
+	if tc.isAdvanced {
+		for _, svc := range []string{"mysql", "pgsql"} {
+			if err = tc.waitHealthy(ctx, svc, 120*time.Second); err != nil {
+				return fmt.Errorf("wait %s: %w", svc, err)
+			}
+		}
+	}
+
+	// 8. ClickHouse
+	if err = tc.startClickHouse(ctx, curDir, configsDir); err != nil {
+		return err
+	}
+	if err = tc.waitHealthy(ctx, "clickhouse", 120*time.Second); err != nil {
+		return fmt.Errorf("wait clickhouse: %w", err)
+	}
+
+	// 9. clickhouse-backup
+	if err = tc.startClickHouseBackup(ctx, curDir, configsDir); err != nil {
+		return err
+	}
+	if err = tc.waitHealthy(ctx, "clickhouse-backup", 60*time.Second); err != nil {
+		return fmt.Errorf("wait clickhouse-backup: %w", err)
+	}
+
+	return nil
+}
+
+// StopAll stops and removes all containers, volumes, and network.
+func (tc *TestContainers) StopAll(ctx context.Context) {
+	timeout := 10
+	for name, info := range tc.containers {
+		if err := tc.client.ContainerStop(ctx, info.ID, container.StopOptions{Timeout: &timeout}); err != nil {
+			log.Debug().Err(err).Msgf("stop %s", name)
+		}
+		if err := tc.client.ContainerRemove(ctx, info.ID, container.RemoveOptions{Force: true, RemoveVolumes: true}); err != nil {
+			log.Debug().Err(err).Msgf("remove %s", name)
+		}
+	}
+	tc.containers = make(map[string]*ContainerInfo)
+
+	for _, vol := range tc.sharedVolumes {
+		if err := tc.client.VolumeRemove(ctx, vol, true); err != nil {
+			log.Debug().Err(err).Msgf("remove volume %s", vol)
+		}
+	}
+	if tc.networkID != "" {
+		if err := tc.client.NetworkRemove(ctx, tc.networkID); err != nil {
+			log.Debug().Err(err).Msgf("remove network %s", tc.networkName)
+		}
+		tc.networkID = ""
+	}
+}
+
+// GetContainerID returns the container ID for a service name.
+func (tc *TestContainers) GetContainerID(name string) string {
+	if info, ok := tc.containers[name]; ok {
+		return info.ID
+	}
+	return ""
+}
+
+// GetMappedPort returns the host-mapped port for a container's internal port.
+func (tc *TestContainers) GetMappedPort(ctx context.Context, name string, containerPort string) (string, uint16, error) {
+	info := tc.containers[name]
+	if info == nil {
+		return "", 0, fmt.Errorf("no container %s", name)
+	}
+	inspect, err := tc.client.ContainerInspect(ctx, info.ID)
+	if err != nil {
+		return "", 0, err
+	}
+	portKey := nat.Port(containerPort + "/tcp")
+	bindings := inspect.NetworkSettings.Ports[portKey]
+	if len(bindings) == 0 {
+		return "", 0, fmt.Errorf("no binding for %s on %s", containerPort, name)
+	}
+	host := bindings[0].HostIP
+	if host == "" || host == "0.0.0.0" {
+		host = "127.0.0.1"
+	}
+	var port uint16
+	_, _ = fmt.Sscanf(bindings[0].HostPort, "%d", &port)
+	return host, port, nil
+}
+
+// RestartContainer restarts a container by name.
+func (tc *TestContainers) RestartContainer(ctx context.Context, name string) error {
+	info := tc.containers[name]
+	if info == nil {
+		return fmt.Errorf("no container %s", name)
+	}
+	timeout := 30
+	return tc.client.ContainerRestart(ctx, info.ID, container.StopOptions{Timeout: &timeout})
+}
+
+func (tc *TestContainers) waitHealthy(ctx context.Context, name string, timeout time.Duration) error {
+	info := tc.containers[name]
+	if info == nil {
+		return fmt.Errorf("no container %s", name)
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		inspect, err := tc.client.ContainerInspect(ctx, info.ID)
+		if err == nil && inspect.State != nil && inspect.State.Health != nil {
+			if inspect.State.Health.Status == "healthy" {
+				return nil
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("container %s not healthy after %v", name, timeout)
+}
+
+func (tc *TestContainers) startContainer(ctx context.Context, name string, cfg *container.Config, hostCfg *container.HostConfig, hostname string) error {
+	// Connect to network
+	networkCfg := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			tc.networkName: {
+				Aliases: []string{hostname},
+			},
+		},
+	}
+	cfg.Hostname = hostname
+
+	resp, err := tc.client.ContainerCreate(ctx, cfg, hostCfg, networkCfg, nil, fmt.Sprintf("tc_%d_%s", tc.envID, name))
+	if err != nil {
+		return fmt.Errorf("create %s: %w", name, err)
+	}
+	if err = tc.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		return fmt.Errorf("start %s: %w", name, err)
+	}
+	tc.containers[name] = &ContainerInfo{ID: resp.ID, Name: name, Hostname: hostname}
+	return nil
+}
+
+func (tc *TestContainers) pullImageIfNeeded(ctx context.Context, imageName string) {
+	reader, err := tc.client.ImagePull(ctx, imageName, dockerImage.PullOptions{})
+	if err != nil {
+		log.Debug().Err(err).Msgf("pull %s (may already exist)", imageName)
+		return
+	}
+	if reader != nil {
+		defer reader.Close()
+		_, _ = io.Copy(io.Discard, reader)
+	}
+}
+
+func envMap(m map[string]string) []string {
+	var result []string
+	for k, v := range m {
+		result = append(result, k+"="+v)
+	}
+	return result
+}
+
+func getEnvDefault(key, defaultVal string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return defaultVal
+}
+
+// Container start methods
+
+func (tc *TestContainers) startSSHD(ctx context.Context) error {
+	return tc.startContainer(ctx, "sshd",
+		&container.Config{
+			Image: "docker.io/panubo/sshd:latest",
+			Env: envMap(map[string]string{
+				"SSH_ENABLE_ROOT":          "true",
+				"SSH_ENABLE_PASSWORD_AUTH": "true",
+			}),
+			Cmd: []string{"sh", "-c", `echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && echo "LogLevel DEBUG3" >> /etc/ssh/sshd_config && echo "root:JFzMHfVpvTgEd74XXPq6wARA2Qg3AutJ" | chpasswd && /usr/sbin/sshd -D -e -f /etc/ssh/sshd_config`},
+			Healthcheck: &container.HealthConfig{
+				Test:     []string{"CMD-SHELL", "echo 1"},
+				Interval: 1 * time.Second,
+				Retries:  30,
+			},
+		},
+		&container.HostConfig{SecurityOpt: []string{"label:disable"}},
+		"sshd",
+	)
+}
+
+func (tc *TestContainers) startFTP(ctx context.Context, curDir string) error {
+	if tc.isAdvanced {
+		return tc.startContainer(ctx, "ftp",
+			&container.Config{
+				Image: "docker.io/iradu/proftpd:latest",
+				Env: envMap(map[string]string{
+					"FTP_USER_NAME":          "test_backup",
+					"FTP_USER_PASS":          "test_backup",
+					"FTP_MASQUERADEADDRESS":   "yes",
+					"FTP_PASSIVE_PORTS":       "21100 31100",
+					"FTP_MAX_CONNECTIONS":     "255",
+				}),
+				Healthcheck: &container.HealthConfig{
+					Test:     []string{"CMD-SHELL", "echo 1"},
+					Interval: 1 * time.Second,
+					Retries:  30,
+				},
+			},
+			&container.HostConfig{
+				Binds:       []string{filepath.Join(curDir, "configs/proftpd_arm64_fix.sh") + ":/run.sh"},
+				SecurityOpt: []string{"label:disable"},
+			},
+			"ftp",
+		)
+	}
+	return tc.startContainer(ctx, "ftp",
+		&container.Config{
+			Image: "docker.io/instantlinux/vsftpd:latest",
+			Env: envMap(map[string]string{
+				"FTPUSER_NAME":            "test_backup",
+				"FTPUSER_PASSWORD_SECRET": "test_backup",
+				"PASV_ENABLE":             "YES",
+				"PASV_ADDRESS":            "ftp",
+				"PASV_ADDR_RESOLVE":       "YES",
+				"PASV_MIN_PORT":           "20000",
+				"PASV_MAX_PORT":           "21000",
+			}),
+			Healthcheck: &container.HealthConfig{
+				Test:     []string{"CMD-SHELL", "echo 1"},
+				Interval: 1 * time.Second,
+				Retries:  30,
+			},
+		},
+		&container.HostConfig{
+			Binds: []string{
+				filepath.Join(curDir, "configs/vsftpd_secret") + ":/run/secrets/test_backup",
+				filepath.Join(curDir, "configs/vsftpd_chroot.conf") + ":/etc/vsftpd.d/chroot.conf",
+			},
+			SecurityOpt: []string{"label:disable"},
+		},
+		"ftp",
+	)
+}
+
+func (tc *TestContainers) startMinio(ctx context.Context, configsDir string) error {
+	return tc.startContainer(ctx, "minio",
+		&container.Config{
+			Image:      fmt.Sprintf("docker.io/minio/minio:%s", getEnvDefault("MINIO_VERSION", "latest")),
+			Entrypoint: []string{"/bin/bash"},
+			Cmd:        []string{"-c", "mkdir -p /minio/data/clickhouse && minio server /minio/data"},
+			Env: envMap(map[string]string{
+				"MINIO_ROOT_USER":     "access_key",
+				"MINIO_ROOT_PASSWORD": "it_is_my_super_secret_key",
+				"MC_CONFIG_DIR":       "/root/.mc",
+			}),
+			Healthcheck: &container.HealthConfig{
+				Test:     []string{"CMD-SHELL", "ls -lah /minio/data/clickhouse/ && curl -skL https://localhost:9000/"},
+				Interval: 1 * time.Second,
+				Retries:  60,
+			},
+		},
+		&container.HostConfig{
+			Binds: []string{
+				filepath.Join(configsDir, "minio_nodelete.sh") + ":/bin/minio_nodelete.sh",
+				filepath.Join(configsDir, "minio.crt") + ":/root/.minio/certs/CAs/public.crt",
+				filepath.Join(configsDir, "minio.crt") + ":/root/.mc/certs/CAs/public.crt",
+				filepath.Join(configsDir, "minio.crt") + ":/root/.minio/certs/public.crt",
+				filepath.Join(configsDir, "minio.key") + ":/root/.minio/certs/private.key",
+			},
+			SecurityOpt: []string{"label:disable"},
+		},
+		"minio",
+	)
+}
+
+func (tc *TestContainers) startGCS(ctx context.Context) error {
+	gcsBucket := getEnvDefault("QA_GCS_OVER_S3_BUCKET", "")
+	cmd := fmt.Sprintf("mkdir -p /data/altinity-qa-test && mkdir -p /data/%s && fake-gcs-server -data /data -scheme http -port 8080 -public-host gcs:8080", gcsBucket)
+	return tc.startContainer(ctx, "gcs",
+		&container.Config{
+			Image:      "fsouza/fake-gcs-server:latest",
+			Entrypoint: []string{"/bin/sh"},
+			Cmd:        []string{"-c", cmd},
+			Env: envMap(map[string]string{
+				"QA_GCS_OVER_S3_BUCKET": gcsBucket,
+			}),
+			Healthcheck: &container.HealthConfig{
+				Test:     []string{"CMD-SHELL", "nc 127.0.0.1 8080 -z"},
+				Interval: 1 * time.Second,
+				Retries:  30,
+			},
+		},
+		&container.HostConfig{SecurityOpt: []string{"label:disable"}},
+		"gcs",
+	)
+}
+
+func (tc *TestContainers) startAzure(ctx context.Context) error {
+	return tc.startContainer(ctx, "azure",
+		&container.Config{
+			Image: "mcr.microsoft.com/azure-storage/azurite:latest",
+			Cmd:   []string{"azurite", "--debug", "/dev/stderr", "-l", "/data", "--blobHost", "0.0.0.0", "--blobKeepAliveTimeout", "600", "--disableTelemetry"},
+			Healthcheck: &container.HealthConfig{
+				Test:     []string{"CMD-SHELL", "nc 127.0.0.1 10000 -z"},
+				Interval: 1 * time.Second,
+				Retries:  30,
+			},
+		},
+		&container.HostConfig{
+			Mounts: []mount.Mount{
+				{Type: mount.TypeTmpfs, Target: "/data", TmpfsOptions: &mount.TmpfsOptions{SizeBytes: 60 * 1024 * 1024}},
+			},
+			SecurityOpt: []string{"label:disable"},
+		},
+		"devstoreaccount1.blob.azure",
+	)
+}
+
+func (tc *TestContainers) startZookeeper(ctx context.Context, configsDir string) error {
+	if tc.isAdvanced {
+		return tc.startContainer(ctx, "zookeeper",
+			&container.Config{
+				Image: fmt.Sprintf("docker.io/clickhouse/clickhouse-keeper:%s", getEnvDefault("CLICKHOUSE_KEEPER_VERSION", "latest-alpine")),
+				Env: envMap(map[string]string{
+					"CLICKHOUSE_RUN_AS_ROOT": "1",
+				}),
+				Healthcheck: &container.HealthConfig{
+					Test:        []string{"CMD-SHELL", `echo ruok | nc 127.0.0.1 2181 | grep imok`},
+					Interval:    1 * time.Second,
+					Timeout:     2 * time.Second,
+					Retries:     10,
+					StartPeriod: 1 * time.Second,
+				},
+			},
+			&container.HostConfig{
+				Binds: []string{
+					filepath.Join(configsDir, "clickhouse-keeper.xml") + ":/etc/clickhouse-keeper/conf.d/clickhouse-keeper.xml",
+					filepath.Join(configsDir, "server.crt") + ":/etc/clickhouse-keeper/server.crt",
+					filepath.Join(configsDir, "server.key") + ":/etc/clickhouse-keeper/server.key",
+					filepath.Join(configsDir, "server.crt") + ":/etc/clickhouse-keeper/rootCA.crt",
+				},
+				SecurityOpt: []string{"label:disable"},
+			},
+			"zookeeper",
+		)
+	}
+	return tc.startContainer(ctx, "zookeeper",
+		&container.Config{
+			Image: fmt.Sprintf("%s:%s", getEnvDefault("ZOOKEEPER_IMAGE", "docker.io/zookeeper"), getEnvDefault("ZOOKEEPER_VERSION", "3.8.4")),
+			Env: envMap(map[string]string{
+				"ZOO_4LW_COMMANDS_WHITELIST": "*",
+			}),
+			Healthcheck: &container.HealthConfig{
+				Test:        []string{"CMD-SHELL", `echo ruok | nc 127.0.0.1 2181 | grep imok`},
+				Interval:    1 * time.Second,
+				Timeout:     2 * time.Second,
+				Retries:     10,
+				StartPeriod: 1 * time.Second,
+			},
+		},
+		&container.HostConfig{SecurityOpt: []string{"label:disable"}},
+		"zookeeper",
+	)
+}
+
+func (tc *TestContainers) startMySQL(ctx context.Context) error {
+	return tc.startContainer(ctx, "mysql",
+		&container.Config{
+			Image: fmt.Sprintf("docker.io/mysql:%s", getEnvDefault("MYSQL_VERSION", "latest")),
+			Cmd:   []string{"--gtid_mode=on", "--enforce_gtid_consistency=ON"},
+			Env: envMap(map[string]string{
+				"MYSQL_ROOT_PASSWORD": "root",
+			}),
+			ExposedPorts: nat.PortSet{"3306/tcp": {}},
+			Healthcheck: &container.HealthConfig{
+				Test:     []string{"CMD-SHELL", "mysqladmin -p=root ping -h localhost"},
+				Timeout:  10 * time.Second,
+				Interval: 1 * time.Second,
+				Retries:  100,
+			},
+		},
+		&container.HostConfig{
+			Mounts: []mount.Mount{
+				{Type: mount.TypeTmpfs, Target: "/var/lib/mysql", TmpfsOptions: &mount.TmpfsOptions{SizeBytes: 250 * 1024 * 1024}},
+			},
+			SecurityOpt: []string{"label:disable"},
+		},
+		"mysql",
+	)
+}
+
+func (tc *TestContainers) startPgSQL(ctx context.Context) error {
+	return tc.startContainer(ctx, "pgsql",
+		&container.Config{
+			Image: fmt.Sprintf("docker.io/postgres:%s", getEnvDefault("PGSQL_VERSION", "latest")),
+			Cmd:   []string{"postgres", "-c", "wal_level=logical"},
+			Env: envMap(map[string]string{
+				"POSTGRES_USER":             "root",
+				"POSTGRES_PASSWORD":         "root",
+				"POSTGRES_HOST_AUTH_METHOD": "md5",
+			}),
+			ExposedPorts: nat.PortSet{"5432/tcp": {}},
+			Healthcheck: &container.HealthConfig{
+				Test:     []string{"CMD-SHELL", "pg_isready"},
+				Timeout:  10 * time.Second,
+				Interval: 1 * time.Second,
+				Retries:  60,
+			},
+		},
+		&container.HostConfig{
+			Mounts: []mount.Mount{
+				{Type: mount.TypeTmpfs, Target: "/var/lib/postgresql", TmpfsOptions: &mount.TmpfsOptions{SizeBytes: 60 * 1024 * 1024}},
+			},
+			SecurityOpt: []string{"label:disable"},
+		},
+		"pgsql",
+	)
+}
+
+func (tc *TestContainers) commonClickHouseEnv() map[string]string {
+	return map[string]string{
+		"CLICKHOUSE_VERSION":                  getEnvDefault("CLICKHOUSE_VERSION", "25.8"),
+		"CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS": "true",
+		"CLICKHOUSE_SKIP_USER_SETUP":           "1",
+		"TZ":                                   "UTC",
+		"LOG_LEVEL":                             getEnvDefault("LOG_LEVEL", "info"),
+		"S3_DEBUG":                              getEnvDefault("S3_DEBUG", "false"),
+		"GCS_DEBUG":                             getEnvDefault("GCS_DEBUG", "false"),
+		"FTP_DEBUG":                             getEnvDefault("FTP_DEBUG", "false"),
+		"SFTP_DEBUG":                            getEnvDefault("SFTP_DEBUG", "false"),
+		"AZBLOB_DEBUG":                          getEnvDefault("AZBLOB_DEBUG", "false"),
+		"COS_DEBUG":                             getEnvDefault("COS_DEBUG", "false"),
+		"CLICKHOUSE_DEBUG":                      getEnvDefault("CLICKHOUSE_DEBUG", "false"),
+		"GOCOVERDIR":                            "/tmp/_coverage_/",
+		"QA_AWS_ACCESS_KEY":                     os.Getenv("QA_AWS_ACCESS_KEY"),
+		"QA_AWS_SECRET_KEY":                     os.Getenv("QA_AWS_SECRET_KEY"),
+		"QA_AWS_BUCKET":                         os.Getenv("QA_AWS_BUCKET"),
+		"QA_AWS_REGION":                         os.Getenv("QA_AWS_REGION"),
+		"AWS_ACCESS_KEY_ID":                     "access_key",
+		"AWS_SECRET_ACCESS_KEY":                 "it_is_my_super_secret_key",
+		"QA_GCS_OVER_S3_ACCESS_KEY":             os.Getenv("QA_GCS_OVER_S3_ACCESS_KEY"),
+		"QA_GCS_OVER_S3_SECRET_KEY":             os.Getenv("QA_GCS_OVER_S3_SECRET_KEY"),
+		"QA_GCS_OVER_S3_BUCKET":                 os.Getenv("QA_GCS_OVER_S3_BUCKET"),
+		"QA_ALIBABA_ACCESS_KEY":                 os.Getenv("QA_ALIBABA_ACCESS_KEY"),
+		"QA_ALIBABA_SECRET_KEY":                 os.Getenv("QA_ALIBABA_SECRET_KEY"),
+		"QA_TENCENT_SECRET_ID":                  os.Getenv("QA_TENCENT_SECRET_ID"),
+		"QA_TENCENT_SECRET_KEY":                 os.Getenv("QA_TENCENT_SECRET_KEY"),
+		"GCS_ENCRYPTION_KEY":                    os.Getenv("GCS_ENCRYPTION_KEY"),
+		"AWS_EC2_METADATA_DISABLED":             "true",
+	}
+}
+
+func (tc *TestContainers) clickHouseBinds(curDir, configsDir string) []string {
+	backupBin := getEnvDefault("CLICKHOUSE_BACKUP_BIN", filepath.Join(curDir, "../../clickhouse-backup/clickhouse-backup-race"))
+	backupBinFips := getEnvDefault("CLICKHOUSE_BACKUP_BIN_FIPS", filepath.Join(curDir, "../../clickhouse-backup/clickhouse-backup-race-fips"))
+	coverageDir := filepath.Join(curDir, "_coverage_")
+	_ = os.MkdirAll(coverageDir, 0o755)
+
+	binds := []string{
+		backupBin + ":/usr/bin/clickhouse-backup",
+		backupBinFips + ":/usr/bin/clickhouse-backup-fips",
+		filepath.Join(curDir, "credentials.json") + ":/etc/clickhouse-backup/credentials.json",
+		coverageDir + ":/tmp/_coverage_/",
+		filepath.Join(configsDir, "install_delve.sh") + ":/tmp/install_delve.sh",
+	}
+
+	// backup config files
+	configFiles := []string{
+		"config-azblob.yml", "config-azblob-embedded.yml", "config-azblob-embedded-url.yml",
+		"config-custom-kopia.yml", "config-custom-restic.yml", "config-custom-rsync.yml",
+		"config-database-mapping.yml",
+		"config-ftp.yaml", "config-ftp-old.yaml",
+		"config-gcs.yml", "config-gcs-custom-endpoint.yml",
+		"config-s3.yml", "config-s3-embedded.yml", "config-s3-embedded-url.yml",
+		"config-s3-embedded-local.yml", "config-s3-nodelete.yml", "config-s3-plain-embedded.yml",
+		"config-sftp-auth-key.yaml", "config-sftp-auth-password.yaml",
+	}
+	// template files (copied with .template suffix)
+	templateFiles := []string{
+		"config-azblob-sas.yml",
+		"config-cos.yml",
+		"config-gcs-embedded-url.yml",
+		"config-s3-fips.yml",
+		"config-s3-alibabacloud.yml",
+		"config-s3-glacier.yml",
+	}
+
+	for _, f := range configFiles {
+		binds = append(binds, filepath.Join(configsDir, f)+":/etc/clickhouse-backup/"+f)
+	}
+	for _, f := range templateFiles {
+		binds = append(binds, filepath.Join(configsDir, f)+":/etc/clickhouse-backup/"+f+".template")
+	}
+
+	// ClickHouse server configs
+	serverConfigs := map[string]string{
+		"enable-access_management.xml": "/etc/clickhouse-server/users.d/enable-access_management.xml",
+		"backup-user.xml":              "/etc/clickhouse-server/users.d/backup-user.xml",
+		"server.crt":                   "/etc/clickhouse-server/server.crt",
+		"server.key":                   "/etc/clickhouse-server/server.key",
+		"dhparam.pem":                  "/etc/clickhouse-server/dhparam.pem",
+		"ssl.xml":                      "/etc/clickhouse-server/config.d/ssl.xml",
+		"clickhouse-config.xml":        "/etc/clickhouse-server/config.d/clickhouse-config.xml",
+	}
+	for src, dst := range serverConfigs {
+		binds = append(binds, filepath.Join(configsDir, src)+":"+dst)
+	}
+
+	// rootCA cert
+	binds = append(binds, filepath.Join(configsDir, "server.crt")+":/etc/clickhouse-server/rootCA.crt")
+
+	if tc.isAdvanced {
+		binds = append(binds,
+			filepath.Join(configsDir, "custom_entrypoint.sh")+":/custom_entrypoint.sh",
+			filepath.Join(configsDir, "dynamic_settings.sh")+":/docker-entrypoint-initdb.d/dynamic_settings.sh",
+		)
+	}
+
+	return binds
+}
+
+func (tc *TestContainers) startClickHouse(ctx context.Context, curDir, configsDir string) error {
+	chImage := fmt.Sprintf("docker.io/%s:%s",
+		getEnvDefault("CLICKHOUSE_IMAGE", "clickhouse/clickhouse-server"),
+		getEnvDefault("CLICKHOUSE_VERSION", "25.8"))
+
+	env := tc.commonClickHouseEnv()
+	if tc.isAdvanced {
+		env["KEEPER_TLS_ENABLED"] = getEnvDefault("KEEPER_TLS_ENABLED", "false")
+	}
+
+	binds := tc.clickHouseBinds(curDir, configsDir)
+
+	// Add shared volume mounts
+	for i, vol := range tc.sharedVolumes {
+		targets := []string{"/var/lib/clickhouse", "/hdd1_data", "/hdd2_data", "/hdd3_data"}
+		binds = append(binds, vol+":"+targets[i])
+	}
+
+	cfg := &container.Config{
+		Image:        chImage,
+		User:         "root",
+		Env:          envMap(env),
+		ExposedPorts: nat.PortSet{"8123/tcp": {}, "9000/tcp": {}},
+		Healthcheck: &container.HealthConfig{
+			Test:        []string{"CMD-SHELL", "clickhouse client -q 'SELECT 1'"},
+			Interval:    1 * time.Second,
+			Retries:     60,
+			StartPeriod: 2 * time.Second,
+		},
+	}
+	if tc.isAdvanced {
+		cfg.Entrypoint = []string{"/custom_entrypoint.sh"}
+	}
+
+	hostCfg := &container.HostConfig{
+		Binds: binds,
+		PortBindings: nat.PortMap{
+			"9000/tcp": {nat.PortBinding{HostIP: "0.0.0.0"}},
+			"8123/tcp": {nat.PortBinding{HostIP: "0.0.0.0"}},
+		},
+		CapAdd:      []string{"SYS_PTRACE", "SYS_NICE"},
+		SecurityOpt: []string{"label:disable"},
+		RestartPolicy: container.RestartPolicy{Name: "always"},
+	}
+
+	return tc.startContainer(ctx, "clickhouse", cfg, hostCfg, "clickhouse")
+}
+
+func (tc *TestContainers) startClickHouseBackup(ctx context.Context, curDir, configsDir string) error {
+	chImage := fmt.Sprintf("docker.io/%s:%s",
+		getEnvDefault("CLICKHOUSE_IMAGE", "clickhouse/clickhouse-server"),
+		getEnvDefault("CLICKHOUSE_VERSION", "25.8"))
+
+	env := tc.commonClickHouseEnv()
+
+	// Mount shared volumes from clickhouse
+	var binds []string
+	for i, vol := range tc.sharedVolumes {
+		targets := []string{"/var/lib/clickhouse", "/hdd1_data", "/hdd2_data", "/hdd3_data"}
+		binds = append(binds, vol+":"+targets[i])
+	}
+
+	// Also mount backup binary and configs (same as clickhouse)
+	binds = append(binds, tc.clickHouseBinds(curDir, configsDir)...)
+
+	cfg := &container.Config{
+		Image:      chImage,
+		User:       "root",
+		Entrypoint: []string{"/bin/bash", "-xce", "sleep infinity"},
+		Env:        envMap(env),
+		ExposedPorts: nat.PortSet{
+			"7171/tcp":  {},
+			"40001/tcp": {},
+		},
+		Healthcheck: &container.HealthConfig{
+			Test:        []string{"CMD-SHELL", `bash -c "exit 0"`},
+			Interval:    1 * time.Second,
+			Timeout:     1 * time.Second,
+			Retries:     5,
+			StartPeriod: 1 * time.Second,
+		},
+	}
+
+	hostCfg := &container.HostConfig{
+		Binds: binds,
+		PortBindings: nat.PortMap{
+			"7171/tcp": {nat.PortBinding{HostIP: "0.0.0.0"}},
+		},
+		CapAdd:      []string{"SYS_PTRACE", "SYS_NICE"},
+		SecurityOpt: []string{"label:disable"},
+	}
+
+	return tc.startContainer(ctx, "clickhouse-backup", cfg, hostCfg, "clickhouse-backup")
+}
+
+// CopyToContainer copies a file from the host into a container.
+func (tc *TestContainers) CopyToContainer(ctx context.Context, containerName, srcPath, dstPath string) error {
+	info := tc.containers[containerName]
+	if info == nil {
+		return fmt.Errorf("no container %s", containerName)
+	}
+	// Use docker cp via exec since the API is complex with tar archives
+	args := []string{"cp", srcPath, info.ID + ":" + dstPath}
+	cmd := strings.Join(append([]string{"docker"}, args...), " ")
+	log.Debug().Msg(cmd)
+	return execDockerCmd(ctx, 180*time.Second, args...)
+}
+
+// CopyFromContainer copies a file from a container to the host.
+func (tc *TestContainers) CopyFromContainer(ctx context.Context, containerName, srcPath, dstPath string) error {
+	info := tc.containers[containerName]
+	if info == nil {
+		return fmt.Errorf("no container %s", containerName)
+	}
+	args := []string{"cp", info.ID + ":" + srcPath, dstPath}
+	return execDockerCmd(ctx, 180*time.Second, args...)
+}
+
+func execDockerCmd(ctx context.Context, timeout time.Duration, args ...string) error {
+	ctx2, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	log.Debug().Msgf("docker %s", strings.Join(args, " "))
+	cmd := osExec.CommandContext(ctx2, "docker", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Debug().Msgf("docker %s: %s %v", strings.Join(args, " "), string(output), err)
+	}
+	return err
+}

@@ -50,7 +50,11 @@ func TestChangeReplicationPathIfReplicaExists(t *testing.T) {
 		r.NoError(env.DockerExec("clickhouse", "rm", "-rfv", fmt.Sprintf("/var/lib/clickhouse/store/%s/%s", createUUID.String()[:3], createUUID.String())))
 	}
 	env.ch.Close()
-	r.NoError(utils.ExecCmd(t.Context(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "clickhouse")...))
+	if env.tc != nil {
+		r.NoError(env.tc.RestartContainer(t.Context(), "clickhouse"))
+	} else {
+		r.NoError(utils.ExecCmd(t.Context(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "clickhouse")...))
+	}
 	env.connectWithWait(t, r, 10*time.Second, 1*time.Second, 1*time.Minute)
 
 	var restoreOut string

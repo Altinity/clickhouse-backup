@@ -10,6 +10,10 @@ from testflows.connect import Shell as ShellBase
 from testflows.core import *
 from testflows.uexpect import ExpectTimeoutError
 
+import docker
+from testcontainers.core.container import DockerContainer
+from testcontainers.core.network import Network
+
 MESSAGES_TO_RETRY = [
     "DB::Exception: ZooKeeper session has been expired",
     "DB::Exception: Connection loss",
@@ -34,7 +38,7 @@ class Shell(ShellBase):
         # to terminate any open shell commands.
         # This is needed for example
         # to solve a problem with
-        # 'docker compose exec {name} bash --noediting'
+        # 'docker exec {name} bash --noediting'
         # that does not clean up open bash processes
         # if not exited normally
         for i in range(10):
@@ -80,7 +84,7 @@ class Node(object):
         self.close_bashes()
 
         for _ in range(num_retries):
-            r = self.cluster.command(None, f'{self.cluster.docker_compose} restart {self.name}', timeout=timeout)
+            r = self.cluster.command(None, f'docker restart {self.cluster.get_container_id(self.name)}', timeout=timeout)
             if r.exitcode == 0:
                 break
 
@@ -88,7 +92,7 @@ class Node(object):
         """Start node.
         """
         for _ in range(num_retries):
-            r = self.cluster.command(None, f'{self.cluster.docker_compose} start {self.name}', timeout=timeout)
+            r = self.cluster.command(None, f'docker start {self.cluster.get_container_id(self.name)}', timeout=timeout)
             if r.exitcode == 0:
                 break
 
@@ -98,7 +102,7 @@ class Node(object):
         self.close_bashes()
 
         for _ in range(num_retries):
-            r = self.cluster.command(None, f'{self.cluster.docker_compose} stop {self.name}', timeout=timeout)
+            r = self.cluster.command(None, f'docker stop {self.cluster.get_container_id(self.name)}', timeout=timeout)
             if r.exitcode == 0:
                 break
 
@@ -163,7 +167,7 @@ class ClickHouseNode(Node):
         self.close_bashes()
 
         for _ in range(num_retries):
-            r = self.cluster.command(None, f'{self.cluster.docker_compose} stop {self.name}', timeout=timeout)
+            r = self.cluster.command(None, f'docker stop {self.cluster.get_container_id(self.name)}', timeout=timeout)
             if r.exitcode == 0:
                 break
 
@@ -171,7 +175,7 @@ class ClickHouseNode(Node):
         """Start node.
         """
         for _ in range(num_retries):
-            r = self.cluster.command(None, f'{self.cluster.docker_compose} start {self.name}', timeout=timeout)
+            r = self.cluster.command(None, f'docker start {self.cluster.get_container_id(self.name)}', timeout=timeout)
             if r.exitcode == 0:
                 break
 
@@ -193,7 +197,7 @@ class ClickHouseNode(Node):
         self.close_bashes()
 
         for _ in range(num_retries):
-            r = self.cluster.command(None, f'{self.cluster.docker_compose} restart {self.name}', timeout=timeout)
+            r = self.cluster.command(None, f'docker restart {self.cluster.get_container_id(self.name)}', timeout=timeout)
             if r.exitcode == 0:
                 break
 
@@ -225,7 +229,7 @@ class ClickHouseNode(Node):
             with tempfile.NamedTemporaryFile("w", encoding="utf-8") as query:
                 query.write(sql)
                 query.flush()
-                command = f"set -o pipefail && cat \"{query.name}\" | {self.cluster.docker_compose} exec -T {self.name} {client} | {hash_utility}"
+                command = f"set -o pipefail && cat \"{query.name}\" | {self.cluster.docker_exec(self.name)} {client} | {hash_utility}"
                 for setting in query_settings:
                     setting_name, setting_value = setting
                     command += f" --{setting_name} \"{setting_value}\""
@@ -285,7 +289,7 @@ class ClickHouseNode(Node):
             with tempfile.NamedTemporaryFile("w", encoding="utf-8") as query:
                 query.write(sql)
                 query.flush()
-                command = f"diff <(cat \"{query.name}\" | {self.cluster.docker_compose} exec -T {self.name} {client}) {expected_output}"
+                command = f"diff <(cat \"{query.name}\" | {self.cluster.docker_exec(self.name)} {client}) {expected_output}"
                 for setting in query_settings:
                     setting_name, setting_value = setting
                     command += f" --{setting_name} \"{setting_value}\""
@@ -299,7 +303,7 @@ class ClickHouseNode(Node):
                     except ExpectTimeoutError:
                         self.cluster.close_bash(None)
         else:
-            command = f"diff <(echo -e \"{sql}\" | {self.cluster.docker_compose} exec -T {self.name} {client}) {expected_output}"
+            command = f"diff <(echo -e \"{sql}\" | {self.cluster.docker_exec(self.name)} {client}) {expected_output}"
             for setting in query_settings:
                 setting_name, setting_value = setting
                 command += f" --{setting_name} \"{setting_value}\""
@@ -351,7 +355,7 @@ class ClickHouseNode(Node):
             with tempfile.NamedTemporaryFile("w", encoding="utf-8") as query:
                 query.write(sql)
                 query.flush()
-                command = f"cat \"{query.name}\" | {self.cluster.docker_compose} exec -T {self.name} {client}"
+                command = f"cat \"{query.name}\" | {self.cluster.docker_exec(self.name)} {client}"
                 for setting in query_settings:
                     setting_name, setting_value = setting
                     command += f" --{setting_name} \"{setting_value}\""
@@ -406,15 +410,59 @@ class ClickHouseNode(Node):
         return r
 
 
+def _create_container(image, hostname, network, env=None, volumes=None, ports=None,
+                      entrypoint=None, command=None, cap_add=None, healthcheck=None):
+    """Helper to create a DockerContainer with common settings."""
+    container = DockerContainer(image)
+    container.with_network(network)
+    container.with_kwargs(
+        hostname=hostname,
+        network_aliases={network.name: [hostname]} if hasattr(network, 'name') else {},
+    )
+    if env:
+        for k, v in env.items():
+            container.with_env(k, v)
+    if volumes:
+        for host_path, container_path in volumes:
+            container.with_volume_mapping(host_path, container_path)
+    if ports:
+        for port in ports:
+            container.with_exposed_ports(port)
+    if entrypoint is not None:
+        container.with_kwargs(entrypoint=entrypoint)
+    if command is not None:
+        container.with_command(command)
+    if cap_add:
+        container.with_kwargs(cap_add=cap_add)
+    if healthcheck:
+        container.with_kwargs(healthcheck=healthcheck)
+    return container
+
+
+def _wait_for_container_healthy(docker_client, container_id, timeout=120, poll_interval=3):
+    """Wait until a container's health check reports 'healthy'."""
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            info = docker_client.api.inspect_container(container_id)
+            health = info.get("State", {}).get("Health", {})
+            status = health.get("Status", "none")
+            if status == "healthy":
+                return True
+        except Exception:
+            pass
+        time.sleep(poll_interval)
+    raise RuntimeError(f"Container {container_id} did not become healthy within {timeout}s")
+
+
 class Cluster(object):
-    """Simple object around docker compose cluster.
-    """
+    """Cluster managed by testcontainers-python."""
 
     def __init__(self, local=False,
                  configs_dir=None,
                  nodes=None,
-                 docker_compose="docker compose", docker_compose_project_dir=None,
-                 docker_compose_file="docker-compose.yml",
+                 docker_compose=None, docker_compose_project_dir=None,
+                 docker_compose_file=None,
                  environ=None):
 
         self.shells = {}
@@ -423,7 +471,12 @@ class Cluster(object):
         self.configs_dir = configs_dir
         self.local = local
         self.nodes = nodes or {}
-        self.docker_compose = docker_compose
+        self._containers = {}      # name -> started DockerContainer
+        self._container_ids = {}   # name -> container_id string
+        self._network = None
+        self._network_name = None
+        self._docker_client = None
+        self._shared_volumes = []  # named volume names for cleanup
 
         frame = inspect.currentframe().f_back
         caller_dir = os.path.dirname(os.path.abspath(frame.f_globals["__file__"]))
@@ -437,18 +490,26 @@ class Cluster(object):
         if not os.path.exists(self.configs_dir):
             raise TypeError(f"configs directory '{self.configs_dir}' does not exist")
 
+        # docker-compose dir is still useful for locating scripts like custom_entrypoint.sh
         if docker_compose_project_dir is None:
             caller_project_dir = os.path.join(caller_dir, "docker-compose")
             if os.path.exists(caller_project_dir):
                 docker_compose_project_dir = caller_project_dir
+        self._compose_dir = docker_compose_project_dir
 
-        docker_compose_file_path = os.path.join(docker_compose_project_dir or "", docker_compose_file)
-
-        if not os.path.exists(docker_compose_file_path):
-            raise TypeError(f"docker compose file '{docker_compose_file_path}' does not exist")
-
-        self.docker_compose += f" --ansi never --progress plain --project-directory \"{docker_compose_project_dir}\" --file \"{docker_compose_file_path}\""
         self.lock = threading.Lock()
+
+    def docker_exec(self, node_name):
+        """Return a 'docker exec <container_id>' prefix string for piping commands."""
+        container_id = self.get_container_id(node_name)
+        return f"docker exec -i {container_id}"
+
+    def get_container_id(self, node_name):
+        """Get Docker container ID for a node."""
+        cid = self._container_ids.get(node_name)
+        if cid:
+            return cid
+        raise RuntimeError(f"No container found for node '{node_name}'")
 
     @property
     def control_shell(self, timeout=300):
@@ -483,12 +544,15 @@ class Cluster(object):
         shell.__exit__(None, None, None)
 
     def node_container_id(self, node, timeout=300):
-        """Must be called with `self.lock` acquired.
-        """
+        """Get container ID for a node. Uses cached ID from testcontainers."""
+        cid = self._container_ids.get(node)
+        if cid:
+            return cid
+        # Fallback: try docker inspect
         time_start = time.time()
         while True:
             try:
-                c = self.control_shell(f"{self.docker_compose} ps -q {node}", timeout=timeout)
+                c = self.control_shell(f"docker inspect --format '{{{{.Id}}}}' {node}", timeout=timeout)
                 container_id = c.output.strip()
                 if c.exitcode == 0 and len(container_id) > 1:
                     return container_id
@@ -501,13 +565,17 @@ class Cluster(object):
                     raise RuntimeError(f"failed to get docker container id for the {node} service")
 
     def node_wait_healthy(self, node, timeout=300):
-        """Must be called with `self.lock` acquired.
-        """
+        """Wait for a container to become healthy."""
+        container_id = self._container_ids.get(node)
+        if container_id and self._docker_client:
+            _wait_for_container_healthy(self._docker_client, container_id, timeout=timeout)
+            return
+        # Fallback via shell
         time_start = time.time()
         while True:
             try:
-                c = self.control_shell(f"{self.docker_compose} ps {node} | grep {node}", timeout=timeout)
-                if c.exitcode == 0 and '(healthy)' in c.output:
+                c = self.control_shell(f"docker inspect --format '{{{{.State.Health.Status}}}}' {self.get_container_id(node)}", timeout=timeout)
+                if c.exitcode == 0 and 'healthy' in c.output:
                     return
             except IOError:
                 raise
@@ -611,7 +679,7 @@ class Cluster(object):
             del self.shells[shell_id]
 
     def __enter__(self):
-        with Given("docker compose cluster"):
+        with Given("testcontainers cluster"):
             self.up()
         return self
 
@@ -632,45 +700,109 @@ class Cluster(object):
             return ClickHouseNode(self, node_name)
         return Node(self, node_name)
 
-    def down(self, timeout=300):
-        """Bring cluster down by executing docker compose down."""
+    def _create_network(self):
+        """Create a Docker network for inter-container communication."""
+        self._docker_client = docker.from_env()
+        self._network_name = f"testflows_{os.getpid()}"
+        self._docker_client.networks.create(self._network_name, driver="bridge")
 
-        # add message to each clickhouse-server.log
-        if settings.debug:
-            for node in self.nodes["clickhouse"]:
-                self.command(node=node, command=f"echo -e \"\n-- sending stop to: {node} --\n\" >> /var/log/clickhouse-server/clickhouse-server.log")
-        bash = self.bash(None)
-        try:
-            with self.lock:
-                # remove and close all not None node terminals
-                for shell_id in list(self.shells.keys()):
-                    shell = self.shells.pop(shell_id)
-                    if shell is not bash:
-                        shell.__exit__(None, None, None)
-                    else:
-                        self.shells[shell_id] = shell
-        finally:
-            if not self.local:
-                self.command(
-                    None, f"{self.docker_compose} down --remove-orphans --timeout 1", bash=bash, timeout=timeout
-                )
-            with self.lock:
-                if self._control_shell:
-                    self._control_shell.__exit__(None, None, None)
-                    self._control_shell = None
+    def _remove_network(self):
+        """Remove the Docker network."""
+        if self._docker_client and self._network_name:
+            try:
+                net = self._docker_client.networks.get(self._network_name)
+                net.remove()
+            except Exception:
+                pass
 
-    def temp_path(self):
-        """Return temporary folder path.
-        """
-        p = f"{self.environ['CLICKHOUSE_TESTS_DIR']}/_temp"
-        if not os.path.exists(p):
-            os.mkdir(p)
-        return p
+    def _start_container(self, name, image, hostname=None, env=None, volumes=None,
+                         ports=None, entrypoint=None, command=None, cap_add=None,
+                         healthcheck=None, volumes_from_name=None):
+        """Start a single container via Docker SDK and connect to network."""
+        hostname = hostname or name
+        docker_volumes = {}
+        binds = []
 
-    def temp_file(self, file_name):
-        """Return absolute temporary file path.
-        """
-        return f"{os.path.join(self.temp_path(), file_name)}"
+        if volumes:
+            for host_path, container_path in volumes:
+                binds.append(f"{host_path}:{container_path}")
+
+        # Handle shared named volumes
+        if volumes_from_name and volumes_from_name in self._containers:
+            source_info = self._docker_client.api.inspect_container(
+                self._container_ids[volumes_from_name]
+            )
+            for mount in source_info.get("Mounts", []):
+                if mount["Type"] == "volume":
+                    binds.append(f"{mount['Name']}:{mount['Destination']}")
+
+        host_config_kwargs = {
+            "binds": binds,
+            "cap_add": cap_add or [],
+            "security_opt": ["label:disable"],
+        }
+        if ports:
+            port_bindings = {}
+            exposed_ports = {}
+            for p in ports:
+                if isinstance(p, str) and ":" in p:
+                    host_port, container_port = p.split(":")
+                    port_bindings[f"{container_port}/tcp"] = int(host_port)
+                    exposed_ports[f"{container_port}/tcp"] = {}
+                else:
+                    port_str = str(p)
+                    port_bindings[f"{port_str}/tcp"] = None
+                    exposed_ports[f"{port_str}/tcp"] = {}
+            host_config_kwargs["port_bindings"] = port_bindings
+        else:
+            exposed_ports = {}
+
+        host_config = self._docker_client.api.create_host_config(**host_config_kwargs)
+
+        container_config = {
+            "image": image,
+            "hostname": hostname,
+            "environment": env or {},
+            "host_config": host_config,
+            "detach": True,
+            "ports": exposed_ports if exposed_ports else None,
+        }
+        if entrypoint is not None:
+            container_config["entrypoint"] = entrypoint
+        if command is not None:
+            container_config["command"] = command
+        if healthcheck is not None:
+            container_config["healthcheck"] = healthcheck
+
+        container = self._docker_client.api.create_container(**container_config)
+        container_id = container["Id"]
+
+        # Connect to network before starting
+        self._docker_client.api.connect_container_to_network(
+            container_id, self._network_name,
+            aliases=[hostname]
+        )
+
+        self._docker_client.api.start(container_id)
+
+        self._containers[name] = container
+        self._container_ids[name] = container_id
+        return container_id
+
+    def _stop_container(self, name):
+        """Stop and remove a container."""
+        container_id = self._container_ids.get(name)
+        if container_id:
+            try:
+                self._docker_client.api.stop(container_id, timeout=5)
+            except Exception:
+                pass
+            try:
+                self._docker_client.api.remove_container(container_id, force=True, v=True)
+            except Exception:
+                pass
+            self._container_ids.pop(name, None)
+            self._containers.pop(name, None)
 
     def up(self, timeout=120):
         if self.local:
@@ -690,49 +822,433 @@ class Cluster(object):
             with And("I list environment variables to show their values"):
                 self.command(None, "env | grep CLICKHOUSE")
 
-        with Given("docker compose"):
-            max_attempts = 5
-            max_up_attempts = 1
+        clickhouse_version = os.environ.get("CLICKHOUSE_VERSION", "23.3")
+        clickhouse_image = os.environ.get("CLICKHOUSE_IMAGE", "clickhouse/clickhouse-server")
+        zookeeper_version = os.environ.get("ZOOKEEPER_VERSION", "3.8.4")
+        zookeeper_image = os.environ.get("ZOOKEEPER_IMAGE", "docker.io/zookeeper")
+        mysql_version = os.environ.get("MYSQL_VERSION", "8.0")
+        pgsql_version = os.environ.get("PGSQL_VERSION", "latest")
+        minio_version = os.environ.get("MINIO_VERSION", "latest")
+        tests_dir = os.environ.get("CLICKHOUSE_TESTS_DIR", self.configs_dir)
+        log_level = os.environ.get("LOG_LEVEL", "info")
+        gcs_cred_json = os.environ.get("QA_GCS_CRED_JSON", "")
+        gcs_cred_json_encoded = os.environ.get("QA_GCS_CRED_JSON_ENCODED", "")
 
+        with Given("testcontainers cluster"):
+            max_attempts = 5
             for attempt in range(max_attempts):
                 with When(f"attempt {attempt}/{max_attempts}"):
-                    with By("checking if any containers are already running"):
-                        self.command(None, f"{self.docker_compose} ps | tee")
-
-                    with And("executing docker compose down just in case it is up"):
-                        cmd = self.command(
-                            None, f"{self.docker_compose} down --timeout=1 2>&1 | tee", exitcode=None, timeout=timeout
+                    try:
+                        self._do_up(
+                            clickhouse_image=clickhouse_image,
+                            clickhouse_version=clickhouse_version,
+                            zookeeper_image=zookeeper_image,
+                            zookeeper_version=zookeeper_version,
+                            mysql_version=mysql_version,
+                            pgsql_version=pgsql_version,
+                            minio_version=minio_version,
+                            tests_dir=tests_dir,
+                            log_level=log_level,
+                            gcs_cred_json=gcs_cred_json,
+                            gcs_cred_json_encoded=gcs_cred_json_encoded,
+                            timeout=timeout,
                         )
-                        if cmd.exitcode != 0:
-                            continue
-
-                    with And("checking if any containers are still left running"):
-                        self.command(None, f"{self.docker_compose} ps | tee")
-
-                    with And("executing docker compose up"):
-                        for up_attempt in range(max_up_attempts):
-                            with By(f"attempt {up_attempt}/{max_up_attempts}"):
-                                cmd = self.command(
-                                    None, f"{self.docker_compose} up --timeout 120 -d 2>&1 | tee", timeout=timeout
-                                )
-                                if "is unhealthy" not in cmd.output:
-                                    break
-
-                    with Then("check there are no unhealthy containers"):
-                        ps_cmd = self.command(None, f"{self.docker_compose} ps | tee | grep -v \"Exit 0\"")
-                        if "is unhealthy" in cmd.output or "Exit" in ps_cmd.output:
-                            self.command(None, f"{self.docker_compose} logs | tee")
-                            continue
-
-                    if cmd.exitcode == 0 and "is unhealthy" not in cmd.output and "Exit" not in ps_cmd.output:
                         break
-
-            if cmd.exitcode != 0 or "is unhealthy" in cmd.output or "Exit" in ps_cmd.output:
-                fail("could not bring up docker compose cluster")
+                    except Exception as e:
+                        note(f"Attempt {attempt} failed: {e}")
+                        self._do_down()
+                        if attempt >= max_attempts - 1:
+                            fail(f"could not bring up testcontainers cluster after {max_attempts} attempts")
 
         with Then("wait all nodes report healthy"):
             for node_name in self.nodes["clickhouse"]:
                 self.node(node_name).wait_healthy()
+
+    def _do_up(self, clickhouse_image, clickhouse_version, zookeeper_image, zookeeper_version,
+               mysql_version, pgsql_version, minio_version, tests_dir, log_level,
+               gcs_cred_json, gcs_cred_json_encoded, timeout):
+        """Internal: create network and start all containers in dependency order."""
+        # Clean up any leftover containers from previous runs
+        self._do_down()
+        self._create_network()
+
+        compose_dir = self._compose_dir
+
+        # Ensure log directories exist
+        for node in self.nodes.get("clickhouse", ()):
+            logs_dir = os.path.join(tests_dir, f"_instances/{node}/logs")
+            os.makedirs(logs_dir, exist_ok=True)
+
+        # 1. ZooKeeper
+        with By("starting zookeeper"):
+            self._start_container(
+                name="zookeeper",
+                image=f"{zookeeper_image}:{zookeeper_version}",
+                hostname="zookeeper",
+                env={
+                    "ZOO_TICK_TIME": "500",
+                    "ZOO_MY_ID": "1",
+                    "ZOO_4LW_COMMANDS_WHITELIST": "*",
+                },
+                healthcheck={
+                    "Test": ["CMD-SHELL", "echo ruok | nc 127.0.0.1 2181 | grep imok"],
+                    "Interval": 3 * 1_000_000_000,
+                    "Timeout": 2 * 1_000_000_000,
+                    "Retries": 5,
+                    "StartPeriod": 2 * 1_000_000_000,
+                },
+            )
+            _wait_for_container_healthy(self._docker_client, self._container_ids["zookeeper"], timeout=60)
+
+        # 2. MySQL, PostgreSQL, RabbitMQ, FTP, SFTP, MinIO (parallel-ish, sequential for simplicity)
+        with And("starting mysql"):
+            self._start_container(
+                name="mysql",
+                image=f"mysql:{mysql_version}",
+                hostname="mysql",
+                env={
+                    "MYSQL_ALLOW_EMPTY_PASSWORD": "True",
+                    "MYSQL_ROOT_PASSWORD": "qwerty",
+                },
+                command=["--gtid_mode=on", "--enforce_gtid_consistency=ON"],
+                healthcheck={
+                    "Test": ["CMD-SHELL", "mysqladmin -p=qwerty ping -h localhost"],
+                    "Timeout": 20 * 1_000_000_000,
+                    "Retries": 10,
+                },
+            )
+
+        with And("starting postgres"):
+            self._start_container(
+                name="postgres",
+                image=f"postgres:{pgsql_version}",
+                hostname="postgres",
+                env={
+                    "POSTGRES_PASSWORD": "qwerty",
+                    "POSTGRES_USER": "test",
+                },
+                command=["postgres", "-c", "wal_level=logical"],
+                healthcheck={
+                    "Test": ["CMD-SHELL", "pg_isready -U test"],
+                    "Timeout": 20 * 1_000_000_000,
+                    "Retries": 10,
+                },
+            )
+
+        with And("starting rabbitmq"):
+            self._start_container(
+                name="rabbitmq",
+                image="docker.io/rabbitmq:alpine",
+                hostname="rabbitmq",
+                env={
+                    "RABBITMQ_DEFAULT_USER": "test",
+                    "RABBITMQ_DEFAULT_PASS": "qwerty",
+                },
+                healthcheck={
+                    "Test": ["CMD-SHELL", "rabbitmq-diagnostics -q ping"],
+                    "Interval": 10 * 1_000_000_000,
+                    "Timeout": 15 * 1_000_000_000,
+                    "Retries": 20,
+                    "StartPeriod": 15 * 1_000_000_000,
+                },
+            )
+
+        with And("starting ftp_server"):
+            self._start_container(
+                name="ftp_server",
+                image="gists/pure-ftpd:latest",
+                hostname="ftp_server",
+                env={
+                    "FTP_USER_NAME": "test",
+                    "FTP_USER_PASS": "test",
+                    "FTP_USER_HOME": "/home/ftpuser/test",
+                    "PUBLICHOST": "ftp_server",
+                    "MIN_PASV_PORT": "30000",
+                    "MAX_PASV_PORT": "31000",
+                },
+                entrypoint=["/bin/sh", "-c"],
+                command=[
+                    'mkdir -p /etc/pureftpd && '
+                    'mkdir -p "$FTP_USER_HOME" && '
+                    'chown -R 1000:1000 /home/ftpuser && '
+                    'touch /etc/pureftpd/pureftpd.passwd && '
+                    'printf \'%s\\n%s\\n\' "$FTP_USER_PASS" "$FTP_USER_PASS" | '
+                    'pure-pw useradd "$FTP_USER_NAME" -u 1000 -g 1000 -d "$FTP_USER_HOME" -f /etc/pureftpd/pureftpd.passwd && '
+                    'pure-pw mkdb /etc/pureftpd/pureftpd.pdb -f /etc/pureftpd/pureftpd.passwd && '
+                    'exec /usr/sbin/pure-ftpd '
+                    '-l puredb:/etc/pureftpd/pureftpd.pdb '
+                    '-E -j -R '
+                    '-P "$PUBLICHOST" '
+                    '-p "$MIN_PASV_PORT:$MAX_PASV_PORT"'
+                ],
+                healthcheck={
+                    "Test": ["CMD-SHELL", "nc -z localhost 21"],
+                    "Interval": 10 * 1_000_000_000,
+                    "Timeout": 3 * 1_000_000_000,
+                    "Retries": 10,
+                    "StartPeriod": 5 * 1_000_000_000,
+                },
+            )
+
+        with And("starting sftp_server"):
+            self._start_container(
+                name="sftp_server",
+                image="panubo/sshd:latest",
+                hostname="sftp_server",
+                env={
+                    "SSH_ENABLE_ROOT": "true",
+                    "SSH_ENABLE_PASSWORD_AUTH": "true",
+                },
+                command=[
+                    "sh", "-c",
+                    'echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && '
+                    'echo "root:JFzMHfVpvTgEd74XXPq6wARA2Qg3AutJ" | chpasswd && '
+                    '/usr/sbin/sshd -D -e -f /etc/ssh/sshd_config'
+                ],
+                healthcheck={
+                    "Test": ["CMD-SHELL", "echo 1"],
+                    "Interval": 3 * 1_000_000_000,
+                    "Timeout": 2 * 1_000_000_000,
+                    "Retries": 20,
+                    "StartPeriod": 10 * 1_000_000_000,
+                },
+            )
+
+        with And("starting minio"):
+            self._start_container(
+                name="minio",
+                image=f"minio/minio:{minio_version}",
+                hostname="minio",
+                env={
+                    "MINIO_ACCESS_KEY": "access_key",
+                    "MINIO_SECRET_KEY": "it_is_my_super_secret_key",
+                },
+                entrypoint=["sh"],
+                command=["-c", "mkdir -p doc_gen_minio/export/clickhouse && minio server doc_gen_minio/export"],
+                healthcheck={
+                    "Test": ["CMD-SHELL", "echo 1"],
+                    "Interval": 3 * 1_000_000_000,
+                    "Timeout": 2 * 1_000_000_000,
+                    "Retries": 20,
+                    "StartPeriod": 10 * 1_000_000_000,
+                },
+            )
+
+        # Wait for tier-2 services
+        for svc in ["mysql", "postgres", "rabbitmq", "ftp_server", "sftp_server", "minio"]:
+            if svc in self._container_ids:
+                _wait_for_container_healthy(self._docker_client, self._container_ids[svc], timeout=120)
+
+        # 3. Kafka (depends on zookeeper)
+        with And("starting kafka"):
+            self._start_container(
+                name="kafka",
+                image="confluentinc/cp-kafka:7.7.7",
+                hostname="kafka",
+                env={
+                    "KAFKA_LISTENERS": "PLAINTEXT://0.0.0.0:9092",
+                    "KAFKA_ZOOKEEPER_CONNECT": "zookeeper:2181",
+                    "ZOOKEEPER": "zookeeper:2181",
+                    "KAFKA_ADVERTISED_LISTENERS": "PLAINTEXT://kafka:9092",
+                    "KAFKA_BROKER_ID": "1",
+                    "BOOTSTRAP_SERVERS": "kafka:9092",
+                    "KAFKA_LOG4J_LOGGERS": "kafka.controller=INFO,kafka.producer.async.DefaultEventHandler=INFO,state.change.logger=INFO",
+                },
+                healthcheck={
+                    "Test": ["CMD-SHELL", "echo dump | nc zookeeper 2181 | grep '/brokers/ids/1'"],
+                    "Interval": 10 * 1_000_000_000,
+                    "Timeout": 2 * 1_000_000_000,
+                    "Retries": 40,
+                    "StartPeriod": 10 * 1_000_000_000,
+                },
+            )
+            _wait_for_container_healthy(self._docker_client, self._container_ids["kafka"], timeout=120)
+
+        # 4. ClickHouse nodes
+        ch_base_volumes = [
+            (os.path.join(compose_dir, "custom_entrypoint.sh"), "/custom_entrypoint.sh"),
+            (os.path.join(compose_dir, "dynamic_settings.sh"), "/docker-entrypoint-initdb.d/dynamic_settings.sh"),
+            (os.path.join(tests_dir, "configs/clickhouse/ssl"), "/etc/clickhouse-server/ssl"),
+            (os.path.join(tests_dir, "configs/clickhouse/config.d/common.xml"), "/etc/clickhouse-server/config.d/common.xml"),
+            (os.path.join(tests_dir, "configs/clickhouse/config.d/graphite_rollup.xml"), "/etc/clickhouse-server/config.d/graphite_rollup.xml"),
+            (os.path.join(tests_dir, "configs/clickhouse/config.d/logs.xml"), "/etc/clickhouse-server/config.d/logs.xml"),
+            (os.path.join(tests_dir, "configs/clickhouse/config.d/postgres.xml"), "/etc/clickhouse-server/config.d/postgres.xml"),
+            (os.path.join(tests_dir, "configs/clickhouse/config.d/remote.xml"), "/etc/clickhouse-server/config.d/remote.xml"),
+            (os.path.join(tests_dir, "configs/clickhouse/config.d/replication.xml"), "/etc/clickhouse-server/config.d/replication.xml"),
+            (os.path.join(tests_dir, "configs/clickhouse/config.d/zookeeper.xml"), "/etc/clickhouse-server/config.d/zookeeper.xml"),
+            (os.path.join(tests_dir, "configs/clickhouse/users.d/default.xml"), "/etc/clickhouse-server/users.d/default.xml"),
+        ]
+
+        ch_image = f"{clickhouse_image}:{clickhouse_version}"
+
+        # Find the install_delve.sh path
+        install_delve_path = os.path.normpath(os.path.join(tests_dir, "../../../test/integration/install_delve.sh"))
+
+        with And("starting clickhouse2"):
+            ch2_volumes = ch_base_volumes + [
+                (os.path.join(tests_dir, "_instances/clickhouse2/logs"), "/var/log/clickhouse-server"),
+                (os.path.join(tests_dir, "configs/clickhouse2/config.d/macros.xml"), "/etc/clickhouse-server/config.d/macros.xml"),
+            ]
+            self._start_container(
+                name="clickhouse2",
+                image=ch_image,
+                hostname="clickhouse2",
+                env={
+                    "CLICKHOUSE_VERSION": clickhouse_version,
+                    "CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS": "true",
+                    "CLICKHOUSE_SKIP_USER_SETUP": "1",
+                },
+                volumes=ch2_volumes,
+                entrypoint=["/custom_entrypoint.sh"],
+                cap_add=["SYS_PTRACE", "SYS_NICE"],
+                healthcheck={
+                    "Test": ["CMD-SHELL", "wget http://localhost:8123/ping"],
+                    "Interval": 3 * 1_000_000_000,
+                    "Timeout": 2 * 1_000_000_000,
+                    "Retries": 30,
+                    "StartPeriod": 5 * 1_000_000_000,
+                },
+            )
+
+        with And("starting clickhouse1"):
+            ch1_volumes = ch_base_volumes + [
+                (os.path.join(tests_dir, "configs/clickhouse1/storage_configuration.sh"), "/docker-entrypoint-initdb.d/storage_configuration.sh"),
+                (os.path.join(tests_dir, "files"), "/var/lib/clickhouse/user_files"),
+                (os.path.join(tests_dir, "_instances/clickhouse1/logs"), "/var/log/clickhouse-server"),
+                (os.path.join(tests_dir, "configs/clickhouse1/config.d/macros.xml"), "/etc/clickhouse-server/config.d/macros.xml"),
+                (os.path.join(tests_dir, "configs/clickhouse1/config.d/rabbitmq.xml"), "/etc/clickhouse-server/config.d/rabbitmq.xml"),
+            ]
+            if os.path.exists(install_delve_path):
+                ch1_volumes.append((install_delve_path, "/tmp/install_delve.sh"))
+
+            self._start_container(
+                name="clickhouse1",
+                image=ch_image,
+                hostname="clickhouse1",
+                env={
+                    "CLICKHOUSE_VERSION": clickhouse_version,
+                    "CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS": "true",
+                    "CLICKHOUSE_SKIP_USER_SETUP": "1",
+                },
+                volumes=ch1_volumes,
+                entrypoint=["/custom_entrypoint.sh"],
+                cap_add=["SYS_PTRACE", "SYS_NICE"],
+                healthcheck={
+                    "Test": ["CMD-SHELL", "wget http://localhost:8123/ping"],
+                    "Interval": 3 * 1_000_000_000,
+                    "Timeout": 2 * 1_000_000_000,
+                    "Retries": 30,
+                    "StartPeriod": 5 * 1_000_000_000,
+                },
+            )
+
+        # Wait for both ClickHouse nodes
+        _wait_for_container_healthy(self._docker_client, self._container_ids["clickhouse2"], timeout=120)
+        _wait_for_container_healthy(self._docker_client, self._container_ids["clickhouse1"], timeout=120)
+
+        # 5. clickhouse_backup (shares volumes from clickhouse1)
+        with And("starting clickhouse_backup"):
+            # Find the backup binary
+            backup_binary = os.path.normpath(os.path.join(tests_dir, "../../../clickhouse-backup/clickhouse-backup-race"))
+            coverage_dir = os.path.normpath(os.path.join(tests_dir, "../_coverage_"))
+            os.makedirs(coverage_dir, exist_ok=True)
+
+            backup_volumes = [
+                (backup_binary, "/bin/clickhouse-backup"),
+                (os.path.join(tests_dir, "configs/backup"), "/etc/clickhouse-backup"),
+                (coverage_dir, "/tmp/_coverage_"),
+            ]
+
+            self._start_container(
+                name="clickhouse_backup",
+                image="ubuntu:latest",
+                hostname="backup",
+                env={
+                    "DEBIAN_FRONTEND": "noninteractive",
+                    "LOG_LEVEL": log_level,
+                    "GCS_CREDENTIALS_JSON": gcs_cred_json,
+                    "GCS_CREDENTIALS_JSON_ENCODED": gcs_cred_json_encoded,
+                    "CLICKHOUSE_HOST": "clickhouse1",
+                    "CLICKHOUSE_BACKUP_CONFIG": "/etc/clickhouse-backup/config.yml",
+                    "TZ": "Europe/Moscow",
+                    "GOCOVERDIR": "/tmp/_coverage_/",
+                },
+                volumes=backup_volumes,
+                volumes_from_name="clickhouse1",
+                ports=["7171:7171", "40002"],
+                entrypoint=["/bin/bash"],
+                command=[
+                    "-c",
+                    "set -x && "
+                    "apt-get update && "
+                    "apt-get install -y ca-certificates tzdata bash curl && "
+                    "update-ca-certificates && "
+                    "clickhouse-backup server"
+                ],
+                cap_add=["SYS_NICE"],
+                healthcheck={
+                    "Test": ["CMD-SHELL", "curl http://backup:7171/backup/status"],
+                    "Interval": 5 * 1_000_000_000,
+                    "Timeout": 5 * 1_000_000_000,
+                    "Retries": 40,
+                    "StartPeriod": 10 * 1_000_000_000,
+                },
+            )
+            _wait_for_container_healthy(self._docker_client, self._container_ids["clickhouse_backup"], timeout=300)
+
+    def _do_down(self):
+        """Internal: stop all containers and remove network."""
+        for name in list(self._containers.keys()):
+            self._stop_container(name)
+        # Remove shared volumes
+        if self._docker_client:
+            for vol_name in self._shared_volumes:
+                try:
+                    vol = self._docker_client.volumes.get(vol_name)
+                    vol.remove(force=True)
+                except Exception:
+                    pass
+        self._shared_volumes = []
+        self._remove_network()
+
+    def down(self, timeout=300):
+        """Bring cluster down."""
+
+        # add message to each clickhouse-server.log
+        if settings.debug:
+            for node in self.nodes.get("clickhouse", ()):
+                if node in self._container_ids:
+                    self.command(node=node, command=f"echo -e \"\n-- sending stop to: {node} --\n\" >> /var/log/clickhouse-server/clickhouse-server.log")
+        bash = self.bash(None)
+        try:
+            with self.lock:
+                # remove and close all not None node terminals
+                for shell_id in list(self.shells.keys()):
+                    shell = self.shells.pop(shell_id)
+                    if shell is not bash:
+                        shell.__exit__(None, None, None)
+                    else:
+                        self.shells[shell_id] = shell
+        finally:
+            if not self.local:
+                self._do_down()
+            with self.lock:
+                if self._control_shell:
+                    self._control_shell.__exit__(None, None, None)
+                    self._control_shell = None
+
+    def temp_path(self):
+        """Return temporary folder path.
+        """
+        p = f"{self.environ['CLICKHOUSE_TESTS_DIR']}/_temp"
+        if not os.path.exists(p):
+            os.mkdir(p)
+        return p
+
+    def temp_file(self, file_name):
+        """Return absolute temporary file path.
+        """
+        return f"{os.path.join(self.temp_path(), file_name)}"
 
     def command(self, node, command, expect_message=None, exitcode=None, steps=True, bash=None, *nargs, **kwargs):
         """Execute and check command.
