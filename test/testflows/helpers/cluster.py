@@ -12,7 +12,6 @@ from testflows.uexpect import ExpectTimeoutError
 
 import docker
 from testcontainers.core.container import DockerContainer
-from testcontainers.core.network import Network
 
 MESSAGES_TO_RETRY = [
     "DB::Exception: ZooKeeper session has been expired",
@@ -786,6 +785,13 @@ class Cluster(object):
             container_config["command"] = command
         if healthcheck is not None:
             container_config["healthcheck"] = healthcheck
+
+        # Pull image if not present locally
+        try:
+            self._docker_client.api.inspect_image(image)
+        except Exception:
+            note(f"pulling image {image}")
+            self._docker_client.api.pull(image)
 
         container = self._docker_client.api.create_container(**container_config)
         container_id = container["Id"]

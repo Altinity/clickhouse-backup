@@ -31,7 +31,11 @@ func cleanupStaleTestContainers(ctx context.Context) {
 		log.Warn().Err(err).Msg("cleanup: can't create docker client")
 		return
 	}
-	defer cli.Close()
+	defer func() {
+		if closeErr := cli.Close(); closeErr != nil {
+			log.Warn().Err(err).Msg("can't close cli")
+		}
+	}()
 
 	// Remove containers with name prefix "tc_"
 	containers, err := cli.ContainerList(ctx, container.ListOptions{
@@ -83,7 +87,7 @@ type TestContainers struct {
 	networkID     string
 	networkName   string
 	containers    map[string]*ContainerInfo // service name -> info
-	sharedVolumes []string                 // named volume names for cleanup
+	sharedVolumes []string                  // named volume names for cleanup
 	isAdvanced    bool
 	envID         int
 }
@@ -314,6 +318,8 @@ func (tc *TestContainers) startContainer(ctx context.Context, name string, cfg *
 	}
 	cfg.Hostname = hostname
 
+	tc.pullImageIfNeeded(ctx, cfg.Image)
+
 	resp, err := tc.client.ContainerCreate(ctx, cfg, hostCfg, networkCfg, nil, fmt.Sprintf("tc_%d_%s", tc.envID, name))
 	if err != nil {
 		return fmt.Errorf("create %s: %w", name, err)
@@ -332,7 +338,11 @@ func (tc *TestContainers) pullImageIfNeeded(ctx context.Context, imageName strin
 		return
 	}
 	if reader != nil {
-		defer reader.Close()
+		defer func() {
+			if closeErr := reader.Close(); closeErr != nil {
+				log.Warn().Err(closeErr).Msg("can't close ImagePull reader")
+			}
+		}()
 		_, _ = io.Copy(io.Discard, reader)
 	}
 }
@@ -380,11 +390,11 @@ func (tc *TestContainers) startFTP(ctx context.Context, curDir string) error {
 			&container.Config{
 				Image: "docker.io/iradu/proftpd:latest",
 				Env: envMap(map[string]string{
-					"FTP_USER_NAME":          "test_backup",
-					"FTP_USER_PASS":          "test_backup",
-					"FTP_MASQUERADEADDRESS":   "yes",
-					"FTP_PASSIVE_PORTS":       "21100 31100",
-					"FTP_MAX_CONNECTIONS":     "255",
+					"FTP_USER_NAME":         "test_backup",
+					"FTP_USER_PASS":         "test_backup",
+					"FTP_MASQUERADEADDRESS": "yes",
+					"FTP_PASSIVE_PORTS":     "21100 31100",
+					"FTP_MAX_CONNECTIONS":   "255",
 				}),
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD-SHELL", "echo 1"},
@@ -606,34 +616,34 @@ func (tc *TestContainers) startPgSQL(ctx context.Context) error {
 
 func (tc *TestContainers) commonClickHouseEnv() map[string]string {
 	return map[string]string{
-		"CLICKHOUSE_VERSION":                  getEnvDefault("CLICKHOUSE_VERSION", "25.8"),
+		"CLICKHOUSE_VERSION":                   getEnvDefault("CLICKHOUSE_VERSION", "25.8"),
 		"CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS": "true",
 		"CLICKHOUSE_SKIP_USER_SETUP":           "1",
 		"TZ":                                   "UTC",
-		"LOG_LEVEL":                             getEnvDefault("LOG_LEVEL", "info"),
-		"S3_DEBUG":                              getEnvDefault("S3_DEBUG", "false"),
-		"GCS_DEBUG":                             getEnvDefault("GCS_DEBUG", "false"),
-		"FTP_DEBUG":                             getEnvDefault("FTP_DEBUG", "false"),
-		"SFTP_DEBUG":                            getEnvDefault("SFTP_DEBUG", "false"),
-		"AZBLOB_DEBUG":                          getEnvDefault("AZBLOB_DEBUG", "false"),
-		"COS_DEBUG":                             getEnvDefault("COS_DEBUG", "false"),
-		"CLICKHOUSE_DEBUG":                      getEnvDefault("CLICKHOUSE_DEBUG", "false"),
-		"GOCOVERDIR":                            "/tmp/_coverage_/",
-		"QA_AWS_ACCESS_KEY":                     os.Getenv("QA_AWS_ACCESS_KEY"),
-		"QA_AWS_SECRET_KEY":                     os.Getenv("QA_AWS_SECRET_KEY"),
-		"QA_AWS_BUCKET":                         os.Getenv("QA_AWS_BUCKET"),
-		"QA_AWS_REGION":                         os.Getenv("QA_AWS_REGION"),
-		"AWS_ACCESS_KEY_ID":                     "access_key",
-		"AWS_SECRET_ACCESS_KEY":                 "it_is_my_super_secret_key",
-		"QA_GCS_OVER_S3_ACCESS_KEY":             os.Getenv("QA_GCS_OVER_S3_ACCESS_KEY"),
-		"QA_GCS_OVER_S3_SECRET_KEY":             os.Getenv("QA_GCS_OVER_S3_SECRET_KEY"),
-		"QA_GCS_OVER_S3_BUCKET":                 os.Getenv("QA_GCS_OVER_S3_BUCKET"),
-		"QA_ALIBABA_ACCESS_KEY":                 os.Getenv("QA_ALIBABA_ACCESS_KEY"),
-		"QA_ALIBABA_SECRET_KEY":                 os.Getenv("QA_ALIBABA_SECRET_KEY"),
-		"QA_TENCENT_SECRET_ID":                  os.Getenv("QA_TENCENT_SECRET_ID"),
-		"QA_TENCENT_SECRET_KEY":                 os.Getenv("QA_TENCENT_SECRET_KEY"),
-		"GCS_ENCRYPTION_KEY":                    os.Getenv("GCS_ENCRYPTION_KEY"),
-		"AWS_EC2_METADATA_DISABLED":             "true",
+		"LOG_LEVEL":                            getEnvDefault("LOG_LEVEL", "info"),
+		"S3_DEBUG":                             getEnvDefault("S3_DEBUG", "false"),
+		"GCS_DEBUG":                            getEnvDefault("GCS_DEBUG", "false"),
+		"FTP_DEBUG":                            getEnvDefault("FTP_DEBUG", "false"),
+		"SFTP_DEBUG":                           getEnvDefault("SFTP_DEBUG", "false"),
+		"AZBLOB_DEBUG":                         getEnvDefault("AZBLOB_DEBUG", "false"),
+		"COS_DEBUG":                            getEnvDefault("COS_DEBUG", "false"),
+		"CLICKHOUSE_DEBUG":                     getEnvDefault("CLICKHOUSE_DEBUG", "false"),
+		"GOCOVERDIR":                           "/tmp/_coverage_/",
+		"QA_AWS_ACCESS_KEY":                    os.Getenv("QA_AWS_ACCESS_KEY"),
+		"QA_AWS_SECRET_KEY":                    os.Getenv("QA_AWS_SECRET_KEY"),
+		"QA_AWS_BUCKET":                        os.Getenv("QA_AWS_BUCKET"),
+		"QA_AWS_REGION":                        os.Getenv("QA_AWS_REGION"),
+		"AWS_ACCESS_KEY_ID":                    "access_key",
+		"AWS_SECRET_ACCESS_KEY":                "it_is_my_super_secret_key",
+		"QA_GCS_OVER_S3_ACCESS_KEY":            os.Getenv("QA_GCS_OVER_S3_ACCESS_KEY"),
+		"QA_GCS_OVER_S3_SECRET_KEY":            os.Getenv("QA_GCS_OVER_S3_SECRET_KEY"),
+		"QA_GCS_OVER_S3_BUCKET":                os.Getenv("QA_GCS_OVER_S3_BUCKET"),
+		"QA_ALIBABA_ACCESS_KEY":                os.Getenv("QA_ALIBABA_ACCESS_KEY"),
+		"QA_ALIBABA_SECRET_KEY":                os.Getenv("QA_ALIBABA_SECRET_KEY"),
+		"QA_TENCENT_SECRET_ID":                 os.Getenv("QA_TENCENT_SECRET_ID"),
+		"QA_TENCENT_SECRET_KEY":                os.Getenv("QA_TENCENT_SECRET_KEY"),
+		"GCS_ENCRYPTION_KEY":                   os.Getenv("GCS_ENCRYPTION_KEY"),
+		"AWS_EC2_METADATA_DISABLED":            "true",
 	}
 }
 
@@ -746,8 +756,8 @@ func (tc *TestContainers) startClickHouse(ctx context.Context, curDir, configsDi
 			"9000/tcp": {nat.PortBinding{HostIP: "0.0.0.0"}},
 			"8123/tcp": {nat.PortBinding{HostIP: "0.0.0.0"}},
 		},
-		CapAdd:      []string{"SYS_PTRACE", "SYS_NICE"},
-		SecurityOpt: []string{"label:disable"},
+		CapAdd:        []string{"SYS_PTRACE", "SYS_NICE"},
+		SecurityOpt:   []string{"label:disable"},
 		RestartPolicy: container.RestartPolicy{Name: "always"},
 	}
 
