@@ -13,13 +13,62 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	dockerImage "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/volume"
 	dockerClient "github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 	"github.com/rs/zerolog/log"
 )
+
+// cleanupStaleTestContainers removes any leftover tc_ containers, networks, and volumes
+// from a previous interrupted test run.
+func cleanupStaleTestContainers(ctx context.Context) {
+	cli, err := dockerClient.NewClientWithOpts(dockerClient.FromEnv, dockerClient.WithAPIVersionNegotiation())
+	if err != nil {
+		log.Warn().Err(err).Msg("cleanup: can't create docker client")
+		return
+	}
+	defer cli.Close()
+
+	// Remove containers with name prefix "tc_"
+	containers, err := cli.ContainerList(ctx, container.ListOptions{
+		All:     true,
+		Filters: filters.NewArgs(filters.Arg("name", "tc_")),
+	})
+	if err == nil {
+		timeout := 5
+		for _, cn := range containers {
+			log.Info().Msgf("cleanup: removing stale container %s (%s)", cn.Names, cn.ID[:12])
+			_ = cli.ContainerStop(ctx, cn.ID, container.StopOptions{Timeout: &timeout})
+			_ = cli.ContainerRemove(ctx, cn.ID, container.RemoveOptions{Force: true, RemoveVolumes: true})
+		}
+	}
+
+	// Remove networks with name prefix "tc_"
+	networks, err := cli.NetworkList(ctx, network.ListOptions{
+		Filters: filters.NewArgs(filters.Arg("name", "tc_")),
+	})
+	if err == nil {
+		for _, n := range networks {
+			log.Info().Msgf("cleanup: removing stale network %s", n.Name)
+			_ = cli.NetworkRemove(ctx, n.ID)
+		}
+	}
+
+	// Remove volumes with name prefix "tc_"
+	volList, err := cli.VolumeList(ctx, volume.ListOptions{
+		Filters: filters.NewArgs(filters.Arg("name", "tc_")),
+	})
+	if err == nil {
+		for _, v := range volList.Volumes {
+			log.Info().Msgf("cleanup: removing stale volume %s", v.Name)
+			_ = cli.VolumeRemove(ctx, v.Name, true)
+		}
+	}
+}
 
 // ContainerInfo holds runtime info for a started container.
 type ContainerInfo struct {
@@ -87,6 +136,11 @@ func (tc *TestContainers) StartAll(ctx context.Context) error {
 		prefix + "hdd1",
 		prefix + "hdd2",
 		prefix + "hdd3",
+	}
+	for _, vol := range tc.sharedVolumes {
+		if _, err = tc.client.VolumeCreate(ctx, volume.CreateOptions{Name: vol}); err != nil {
+			return fmt.Errorf("create volume %s: %w", vol, err)
+		}
 	}
 
 	// 1. SSHD
@@ -248,12 +302,13 @@ func (tc *TestContainers) waitHealthy(ctx context.Context, name string, timeout 
 	return fmt.Errorf("container %s not healthy after %v", name, timeout)
 }
 
-func (tc *TestContainers) startContainer(ctx context.Context, name string, cfg *container.Config, hostCfg *container.HostConfig, hostname string) error {
+func (tc *TestContainers) startContainer(ctx context.Context, name string, cfg *container.Config, hostCfg *container.HostConfig, hostname string, extraAliases ...string) error {
 	// Connect to network
+	aliases := append([]string{hostname}, extraAliases...)
 	networkCfg := &network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
 			tc.networkName: {
-				Aliases: []string{hostname},
+				Aliases: aliases,
 			},
 		},
 	}
@@ -444,6 +499,7 @@ func (tc *TestContainers) startAzure(ctx context.Context) error {
 			SecurityOpt: []string{"label:disable"},
 		},
 		"devstoreaccount1.blob.azure",
+		"azure",
 	)
 }
 

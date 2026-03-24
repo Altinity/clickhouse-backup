@@ -40,6 +40,7 @@ import (
 
 var projectId atomic.Uint32
 var dockerPool *pool.ObjectPool
+var allTestContainers []*TestContainers
 
 var dbNameAtomic = "_test#$.ДБ_atomic_/issue\\_1091"
 var dbNameOrdinary = "_test#$.ДБ_ordinary_/issue\\_1091"
@@ -82,11 +83,24 @@ func init() {
 	if err != nil {
 		log.Fatal().Stack().Msgf("invalid RUN_PARALLEL environment variable value %s", runParallel)
 	}
+	useTestContainers := os.Getenv("USE_TESTCONTAINERS") == "1"
 	ctx := context.Background()
 	factory := pool.NewPooledObjectFactorySimple(func(context.Context) (interface{}, error) {
 		id := projectId.Add(1)
 		env := TestEnvironment{
 			ProjectName: fmt.Sprintf("project%d", id%uint32(runParallelInt)),
+		}
+		if useTestContainers {
+			tc, err := NewTestContainers(int(id))
+			if err != nil {
+				return nil, fmt.Errorf("NewTestContainers: %w", err)
+			}
+			if err = tc.StartAll(ctx); err != nil {
+				tc.StopAll(ctx)
+				return nil, fmt.Errorf("TestContainers.StartAll: %w", err)
+			}
+			env.tc = tc
+			allTestContainers = append(allTestContainers, tc)
 		}
 		return &env, nil
 	})
@@ -491,10 +505,8 @@ var mergeTreeOldSyntax = regexp.MustCompile(`(?m)MergeTree\(([^,]+),([\w\s,)(]+)
 
 func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 	isParallel := os.Getenv("RUN_PARALLEL") != "1"
-	// COMPOSE_FILE and CUR_DIR are still needed for legacy compose mode
-	// With testcontainers (env.tc != nil), CUR_DIR is still used for config paths
-	if os.Getenv("COMPOSE_FILE") == "" && os.Getenv("USE_TESTCONTAINERS") == "" {
-		if os.Getenv("CUR_DIR") == "" {
+	if os.Getenv("USE_TESTCONTAINERS") != "1" {
+		if os.Getenv("COMPOSE_FILE") == "" || os.Getenv("CUR_DIR") == "" {
 			t.Fatal("please setup COMPOSE_FILE and CUR_DIR environment variables, or set USE_TESTCONTAINERS=1")
 		}
 	}
