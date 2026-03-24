@@ -138,6 +138,7 @@ func (s *S3) Connect(ctx context.Context) error {
 		)
 		// inherit IRSA and try assume role https://github.com/Altinity/clickhouse-backup/issues/1191
 		if s.Config.AssumeRoleARN != "" && s.Config.AssumeRoleARN != awsRoleARN {
+			awsConfig.Credentials = aws.NewCredentialsCache(awsConfig.Credentials)
 			stsClient = sts.NewFromConfig(awsConfig)
 			awsConfig.Credentials = stscreds.NewAssumeRoleProvider(stsClient, s.Config.AssumeRoleARN)
 		}
@@ -155,6 +156,10 @@ func (s *S3) Connect(ctx context.Context) error {
 				SecretAccessKey: s.Config.SecretKey,
 			},
 		}
+	}
+
+	if awsConfig.Credentials != nil {
+		awsConfig.Credentials = aws.NewCredentialsCache(awsConfig.Credentials)
 	}
 
 	if s.Config.Debug {
