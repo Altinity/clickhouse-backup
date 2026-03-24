@@ -6,7 +6,9 @@
 #  reproduction of this material is strictly forbidden unless
 #  prior written permission is obtained from Altinity LTD.
 import os
+import shutil
 import sys
+import yaml
 from testflows.core import *
 
 append_path(sys.path, "..")
@@ -45,36 +47,57 @@ def regression(self, local):
         "postgres": ("postgres",),
     }
 
-    with Cluster(local, nodes=nodes) as cluster:
-        cwd = os.environ.get('CLICKHOUSE_TESTS_DIR') if os.environ.get('CLICKHOUSE_TESTS_DIR') else os.getcwd()
-        self.context.backup_config_origin = f"{cwd}/configs/backup/config.yml.origin"
-        self.context.backup_config_file = f"{cwd}/configs/backup/config.yml"
-        self.context.cluster = cluster
-        self.context.nodes = [self.context.cluster.node(n) for n in ["clickhouse1", "clickhouse2"]]
-        self.context.backup = self.context.cluster.node("clickhouse_backup")
-        self.context.kafka = self.context.cluster.node("kafka")
-        self.context.mysql = self.context.cluster.node("mysql")
-        self.context.postgres = self.context.cluster.node("postgres")
+    # Create per-process backup config dir to avoid races in parallel runs
+    cwd = os.environ.get('CLICKHOUSE_TESTS_DIR') if os.environ.get('CLICKHOUSE_TESTS_DIR') else os.getcwd()
+    base_config_dir = f"{cwd}/configs/backup"
+    config_dir = f"{cwd}/configs/backup_{os.getpid()}"
+    shutil.copytree(base_config_dir, config_dir, dirs_exist_ok=True)
 
-        self.context.backup_api_port = cluster.get_mapped_port("clickhouse_backup", 7171)
+    storage_prefix = f"testflows_{os.getpid()}"
+    origin_path = f"{config_dir}/config.yml.origin"
+    config_path = f"{config_dir}/config.yml"
+    with open(origin_path) as f:
+        cfg = yaml.safe_load(f)
+    for section in ("s3", "gcs", "azblob", "ftp", "sftp", "cos"):
+        if section in cfg:
+            cfg[section]["path"] = storage_prefix
+    with open(origin_path, "w") as f:
+        yaml.dump(cfg, f, default_flow_style=False)
+    with open(config_path, "w") as f:
+        yaml.dump(cfg, f, default_flow_style=False)
 
-        self.context.database_engines_names = {"Atomic": "atmc", "Ordinary": "ordn"}
-        self.context.table_engines = ["MergeTree", "ReplacingMergeTree", "SummingMergeTree", "CollapsingMergeTree",
-                                      "VersionedCollapsingMergeTree"]
+    try:
+        with Cluster(local, nodes=nodes, backup_config_dir=config_dir) as cluster:
+            self.context.backup_config_origin = origin_path
+            self.context.backup_config_file = config_path
+            self.context.cluster = cluster
+            self.context.nodes = [self.context.cluster.node(n) for n in ["clickhouse1", "clickhouse2"]]
+            self.context.backup = self.context.cluster.node("clickhouse_backup")
+            self.context.kafka = self.context.cluster.node("kafka")
+            self.context.mysql = self.context.cluster.node("mysql")
+            self.context.postgres = self.context.cluster.node("postgres")
 
-        self.context.columns = simple_data_types_columns["misc"]
+            self.context.backup_api_port = cluster.get_mapped_port("clickhouse_backup", 7171)
 
-        self.context.all_columns = simple_data_types_columns
+            self.context.database_engines_names = {"Atomic": "atmc", "Ordinary": "ordn"}
+            self.context.table_engines = ["MergeTree", "ReplacingMergeTree", "SummingMergeTree", "CollapsingMergeTree",
+                                          "VersionedCollapsingMergeTree"]
 
-        Scenario(run=load("clickhouse_backup.tests.smoke", "smoke"), flags=TE)
+            self.context.columns = simple_data_types_columns["misc"]
 
-        Scenario(run=load("clickhouse_backup.tests.cloud_storage", "cloud_storage"))
-        Scenario(run=load("clickhouse_backup.tests.other_engines", "other_engines"))
-        Scenario(run=load("clickhouse_backup.tests.api", "api"))
-        Scenario(run=load("clickhouse_backup.tests.cli", "cli"))
-        Scenario(run=load("clickhouse_backup.tests.generic", "generic"))
-        Scenario(run=load("clickhouse_backup.tests.views", "views"))
-        Scenario(run=load("clickhouse_backup.tests.config_rbac", "config_rbac"))
+            self.context.all_columns = simple_data_types_columns
+
+            Scenario(run=load("clickhouse_backup.tests.smoke", "smoke"), flags=TE)
+
+            Scenario(run=load("clickhouse_backup.tests.cloud_storage", "cloud_storage"))
+            Scenario(run=load("clickhouse_backup.tests.other_engines", "other_engines"))
+            Scenario(run=load("clickhouse_backup.tests.api", "api"))
+            Scenario(run=load("clickhouse_backup.tests.cli", "cli"))
+            Scenario(run=load("clickhouse_backup.tests.generic", "generic"))
+            Scenario(run=load("clickhouse_backup.tests.views", "views"))
+            Scenario(run=load("clickhouse_backup.tests.config_rbac", "config_rbac"))
+    finally:
+        shutil.rmtree(config_dir, ignore_errors=True)
 
 
 if main():

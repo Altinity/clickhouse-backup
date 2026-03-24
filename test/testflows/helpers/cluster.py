@@ -462,6 +462,7 @@ class Cluster(object):
                  configs_dir=None,
                  nodes=None,
                  docker_dir=None,
+                 backup_config_dir=None,
                  environ=None):
 
         self.shells = {}
@@ -476,6 +477,7 @@ class Cluster(object):
         self._network_name = None
         self._docker_client = None
         self._shared_volumes = []  # named volume names for cleanup
+        self._backup_config_dir = backup_config_dir
 
         frame = inspect.currentframe().f_back
         caller_dir = os.path.dirname(os.path.abspath(frame.f_globals["__file__"]))
@@ -1164,9 +1166,10 @@ class Cluster(object):
             coverage_dir = os.path.normpath(os.path.join(tests_dir, "../_coverage_"))
             os.makedirs(coverage_dir, exist_ok=True)
 
+            backup_config_mount = self._backup_config_dir or os.path.join(tests_dir, "configs/backup")
             backup_volumes = [
                 (backup_binary, "/bin/clickhouse-backup"),
-                (os.path.join(tests_dir, "configs/backup"), "/etc/clickhouse-backup"),
+                (backup_config_mount, "/etc/clickhouse-backup"),
                 (coverage_dir, "/tmp/_coverage_"),
             ]
 
