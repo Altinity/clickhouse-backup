@@ -10,6 +10,10 @@ else
   export CLICKHOUSE_IMAGE=${CLICKHOUSE_IMAGE:-yandex/clickhouse-server}
 fi
 make clean build-race-docker
-python3 "${CUR_DIR}/clickhouse_backup/regression.py" --debug --no-colors --only="${RUN_TESTS:-*}"
+DEBUG_FLAG=""
+if [[ -n "${TESTFLOWS_DEBUG}" ]]; then
+  DEBUG_FLAG="--debug"
+fi
+python3 "${CUR_DIR}/clickhouse_backup/regression.py" ${DEBUG_FLAG} --no-colors --only="${RUN_TESTS:-*}"
 go tool covdata textfmt -i "${CUR_DIR}/_coverage_/" -o "${CUR_DIR}/_coverage_/coverage.out"
 docker buildx prune -f --filter=until=30m --max-used-space=1G

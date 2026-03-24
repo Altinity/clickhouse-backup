@@ -1,5 +1,6 @@
 import glob
 import inspect
+import logging
 import os
 import tempfile
 import testflows.settings as settings
@@ -461,8 +462,7 @@ class Cluster(object):
     def __init__(self, local=False,
                  configs_dir=None,
                  nodes=None,
-                 docker_compose=None, docker_compose_project_dir=None,
-                 docker_compose_file=None,
+                 docker_dir=None,
                  environ=None):
 
         self.shells = {}
@@ -490,12 +490,12 @@ class Cluster(object):
         if not os.path.exists(self.configs_dir):
             raise TypeError(f"configs directory '{self.configs_dir}' does not exist")
 
-        # docker-compose dir is still useful for locating scripts like custom_entrypoint.sh
-        if docker_compose_project_dir is None:
-            caller_project_dir = os.path.join(caller_dir, "docker-compose")
-            if os.path.exists(caller_project_dir):
-                docker_compose_project_dir = caller_project_dir
-        self._compose_dir = docker_compose_project_dir
+        # docker dir contains scripts like custom_entrypoint.sh
+        if docker_dir is None:
+            caller_docker_dir = os.path.join(caller_dir, "docker")
+            if os.path.exists(caller_docker_dir):
+                docker_dir = caller_docker_dir
+        self._docker_dir = docker_dir
 
         self.lock = threading.Lock()
 
@@ -727,14 +727,16 @@ class Cluster(object):
             for host_path, container_path in volumes:
                 binds.append(f"{host_path}:{container_path}")
 
-        # Handle shared named volumes
+        # Handle volumes_from: replicate all mounts (volumes and bind mounts) from source container
         if volumes_from_name and volumes_from_name in self._containers:
             source_info = self._docker_client.api.inspect_container(
                 self._container_ids[volumes_from_name]
             )
-            for mount in source_info.get("Mounts", []):
-                if mount["Type"] == "volume":
-                    binds.append(f"{mount['Name']}:{mount['Destination']}")
+            for m in source_info.get("Mounts", []):
+                if m["Type"] == "volume":
+                    binds.append(f"{m['Name']}:{m['Destination']}")
+                elif m["Type"] == "bind":
+                    binds.append(f"{m['Source']}:{m['Destination']}")
 
         host_config_kwargs = {
             "binds": binds,
@@ -872,7 +874,7 @@ class Cluster(object):
         self._do_down()
         self._create_network()
 
-        compose_dir = self._compose_dir
+        docker_dir = self._docker_dir
 
         # Ensure log directories exist
         for node in self.nodes.get("clickhouse", ()):
@@ -1066,8 +1068,8 @@ class Cluster(object):
 
         # 4. ClickHouse nodes
         ch_base_volumes = [
-            (os.path.join(compose_dir, "custom_entrypoint.sh"), "/custom_entrypoint.sh"),
-            (os.path.join(compose_dir, "dynamic_settings.sh"), "/docker-entrypoint-initdb.d/dynamic_settings.sh"),
+            (os.path.join(docker_dir, "custom_entrypoint.sh"), "/custom_entrypoint.sh"),
+            (os.path.join(docker_dir, "dynamic_settings.sh"), "/docker-entrypoint-initdb.d/dynamic_settings.sh"),
             (os.path.join(tests_dir, "configs/clickhouse/ssl"), "/etc/clickhouse-server/ssl"),
             (os.path.join(tests_dir, "configs/clickhouse/config.d/common.xml"), "/etc/clickhouse-server/config.d/common.xml"),
             (os.path.join(tests_dir, "configs/clickhouse/config.d/graphite_rollup.xml"), "/etc/clickhouse-server/config.d/graphite_rollup.xml"),
@@ -1198,6 +1200,20 @@ class Cluster(object):
 
     def _do_down(self):
         """Internal: stop all containers and remove network."""
+        # Kill any leftover container from a previous run holding our fixed ports
+        if self._docker_client:
+            for cn in self._docker_client.api.containers(all=True):
+                ports = cn.get("Ports", [])
+                for p in ports:
+                    if p.get("PublicPort") == 7171:
+                        cn_id = cn["Id"][:12]
+                        cn_names = cn.get("Names", [])
+                        logging.warning(f"port 7171 conflict: removing leftover container {cn_id} {cn_names}")
+                        try:
+                            self._docker_client.api.remove_container(cn["Id"], force=True)
+                        except Exception as e:
+                            logging.error(f"failed to remove leftover container {cn_id}: {e}")
+                        break
         for name in list(self._containers.keys()):
             self._stop_container(name)
         # Remove shared volumes
