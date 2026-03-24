@@ -56,6 +56,8 @@ def regression(self, local):
         self.context.mysql = self.context.cluster.node("mysql")
         self.context.postgres = self.context.cluster.node("postgres")
 
+        self.context.backup_api_port = cluster.get_mapped_port("clickhouse_backup", 7171)
+
         self.context.database_engines_names = {"Atomic": "atmc", "Ordinary": "ordn"}
         self.context.table_engines = ["MergeTree", "ReplacingMergeTree", "SummingMergeTree", "CollapsingMergeTree",
                                       "VersionedCollapsingMergeTree"]

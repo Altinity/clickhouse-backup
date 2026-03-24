@@ -1,6 +1,5 @@
 import glob
 import inspect
-import logging
 import os
 import tempfile
 import testflows.settings as settings
@@ -510,6 +509,16 @@ class Cluster(object):
         if cid:
             return cid
         raise RuntimeError(f"No container found for node '{node_name}'")
+
+    def get_mapped_port(self, node_name, container_port):
+        """Get the host port mapped to a container port."""
+        cid = self.get_container_id(node_name)
+        info = self._docker_client.api.inspect_container(cid)
+        port_key = f"{container_port}/tcp"
+        bindings = info.get("NetworkSettings", {}).get("Ports", {}).get(port_key)
+        if bindings and len(bindings) > 0:
+            return int(bindings[0]["HostPort"])
+        raise RuntimeError(f"No host port mapped for {node_name}:{container_port}")
 
     @property
     def control_shell(self, timeout=300):
@@ -1177,7 +1186,7 @@ class Cluster(object):
                 },
                 volumes=backup_volumes,
                 volumes_from_name="clickhouse1",
-                ports=["7171:7171", "40002"],
+                ports=["7171", "40002"],
                 entrypoint=["/bin/bash"],
                 command=[
                     "-c",
@@ -1200,20 +1209,6 @@ class Cluster(object):
 
     def _do_down(self):
         """Internal: stop all containers and remove network."""
-        # Kill any leftover container from a previous run holding our fixed ports
-        if self._docker_client:
-            for cn in self._docker_client.api.containers(all=True):
-                ports = cn.get("Ports", [])
-                for p in ports:
-                    if p.get("PublicPort") == 7171:
-                        cn_id = cn["Id"][:12]
-                        cn_names = cn.get("Names", [])
-                        logging.warning(f"port 7171 conflict: removing leftover container {cn_id} {cn_names}")
-                        try:
-                            self._docker_client.api.remove_container(cn["Id"], force=True)
-                        except Exception as e:
-                            logging.error(f"failed to remove leftover container {cn_id}: {e}")
-                        break
         for name in list(self._containers.keys()):
             self._stop_container(name)
         # Remove shared volumes
@@ -1246,8 +1241,7 @@ class Cluster(object):
                     else:
                         self.shells[shell_id] = shell
         finally:
-            if not self.local:
-                self._do_down()
+            self._do_down()
             with self.lock:
                 if self._control_shell:
                     self._control_shell.__exit__(None, None, None)
