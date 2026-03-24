@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 	"github.com/rs/zerolog/log"
 )
 
@@ -23,11 +22,7 @@ func TestLongListRemote(t *testing.T) {
 		env.DockerExecNoError(r, "clickhouse-backup", "bash", "-ce", fmt.Sprintf("CLICKHOUSE_BACKUP_CONFIG=/etc/clickhouse-backup/config-s3.yml ALLOW_EMPTY_BACKUPS=true RBAC_BACKUP_ALWAYS=false clickhouse-backup create_remote %s_%d", testBackupName, i))
 	}
 
-	if env.tc != nil {
-		r.NoError(env.tc.RestartContainer(t.Context(), "minio"))
-	} else {
-		r.NoError(utils.ExecCmd(t.Context(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "minio")...))
-	}
+	r.NoError(env.tc.RestartContainer(t.Context(), "minio"))
 	time.Sleep(2 * time.Second)
 
 	var err error

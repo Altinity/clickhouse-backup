@@ -9,7 +9,6 @@ import (
 	"math/rand"
 	"os"
 	"os/exec"
-	"path"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -83,25 +82,22 @@ func init() {
 	if err != nil {
 		log.Fatal().Stack().Msgf("invalid RUN_PARALLEL environment variable value %s", runParallel)
 	}
-	useTestContainers := os.Getenv("USE_TESTCONTAINERS") == "1"
 	ctx := context.Background()
 	factory := pool.NewPooledObjectFactorySimple(func(context.Context) (interface{}, error) {
 		id := projectId.Add(1)
+		tc, err := NewTestContainers(int(id))
+		if err != nil {
+			return nil, fmt.Errorf("NewTestContainers: %w", err)
+		}
+		if err = tc.StartAll(ctx); err != nil {
+			tc.StopAll(ctx)
+			return nil, fmt.Errorf("TestContainers.StartAll: %w", err)
+		}
 		env := TestEnvironment{
 			ProjectName: fmt.Sprintf("project%d", id%uint32(runParallelInt)),
+			tc:          tc,
 		}
-		if useTestContainers {
-			tc, err := NewTestContainers(int(id))
-			if err != nil {
-				return nil, fmt.Errorf("NewTestContainers: %w", err)
-			}
-			if err = tc.StartAll(ctx); err != nil {
-				tc.StopAll(ctx)
-				return nil, fmt.Errorf("TestContainers.StartAll: %w", err)
-			}
-			env.tc = tc
-			allTestContainers = append(allTestContainers, tc)
-		}
+		allTestContainers = append(allTestContainers, tc)
 		return &env, nil
 	})
 	dockerPool = pool.NewObjectPoolWithDefaultConfig(ctx, factory)
@@ -127,7 +123,7 @@ type TestDataStruct struct {
 type TestEnvironment struct {
 	ch          *clickhouse.ClickHouse
 	ProjectName string
-	tc          *TestContainers // testcontainers manager, nil when using legacy compose
+	tc          *TestContainers
 }
 
 var defaultTestData = []TestDataStruct{
@@ -505,11 +501,6 @@ var mergeTreeOldSyntax = regexp.MustCompile(`(?m)MergeTree\(([^,]+),([\w\s,)(]+)
 
 func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 	isParallel := os.Getenv("RUN_PARALLEL") != "1"
-	if os.Getenv("USE_TESTCONTAINERS") != "1" {
-		if os.Getenv("COMPOSE_FILE") == "" || os.Getenv("CUR_DIR") == "" {
-			t.Fatal("please setup COMPOSE_FILE and CUR_DIR environment variables, or set USE_TESTCONTAINERS=1")
-		}
-	}
 	t.Helper()
 	if isParallel {
 		t.Parallel()
@@ -565,18 +556,12 @@ func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 
 // Docker execution methods
 
-func (env *TestEnvironment) GetDefaultComposeCommand() []string {
-	return []string{"compose", "-f", path.Join(os.Getenv("CUR_DIR"), os.Getenv("COMPOSE_FILE")), "--progress", "plain", "--project-name", env.ProjectName}
-}
-
 func (env *TestEnvironment) GetExecDockerCommand(container string) []string {
-	if env.tc != nil {
-		cid := env.tc.GetContainerID(container)
-		if cid != "" {
-			return []string{"exec", cid}
-		}
+	cid := env.tc.GetContainerID(container)
+	if cid != "" {
+		return []string{"exec", cid}
 	}
-	return []string{"exec", fmt.Sprintf("%s-%s-1", env.ProjectName, container)}
+	return []string{"exec", container}
 }
 
 func (env *TestEnvironment) DockerExecNoError(r *require.Assertions, container string, cmd ...string) {
@@ -610,43 +595,32 @@ func (env *TestEnvironment) DockerExecBackground(container string, cmd ...string
 }
 
 func (env *TestEnvironment) DockerExecBackgroundOut(container string, cmd ...string) (string, error) {
-	if env.tc != nil {
-		// Use docker exec with -d flag for background execution
-		cid := env.tc.GetContainerID(container)
-		if cid != "" {
-			dcmd := append([]string{"exec", "-d", cid}, cmd...)
-			return utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", dcmd...)
-		}
+	cid := env.tc.GetContainerID(container)
+	if cid != "" {
+		dcmd := append([]string{"exec", "-d", cid}, cmd...)
+		return utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", dcmd...)
 	}
-	dcmd := append(env.GetDefaultComposeCommand(), "exec", "-d", container)
-	dcmd = append(dcmd, cmd...)
+	dcmd := append([]string{"exec", "-d", container}, cmd...)
 	return utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", dcmd...)
 }
 
 func (env *TestEnvironment) DockerCP(src, dst string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
-	if env.tc != nil {
-		// Translate compose-style "container:path" to "containerID:path" for docker cp
-		translatePath := func(p string) string {
-			parts := strings.SplitN(p, ":", 2)
-			if len(parts) == 2 {
-				cid := env.tc.GetContainerID(parts[0])
-				if cid != "" {
-					return cid + ":" + parts[1]
-				}
+	// Translate "container:path" to "containerID:path" for docker cp
+	translatePath := func(p string) string {
+		parts := strings.SplitN(p, ":", 2)
+		if len(parts) == 2 {
+			cid := env.tc.GetContainerID(parts[0])
+			if cid != "" {
+				return cid + ":" + parts[1]
 			}
-			return p
 		}
-		src = translatePath(src)
-		dst = translatePath(dst)
-		dcmd := []string{"cp", src, dst}
-		log.Debug().Msgf("docker %s", strings.Join(dcmd, " "))
-		out, err := exec.CommandContext(ctx, "docker", dcmd...).CombinedOutput()
-		log.Debug().Msg(string(out))
-		return err
+		return p
 	}
-	dcmd := append(env.GetDefaultComposeCommand(), "cp", src, dst)
+	src = translatePath(src)
+	dst = translatePath(dst)
+	dcmd := []string{"cp", src, dst}
 	log.Debug().Msgf("docker %s", strings.Join(dcmd, " "))
 	out, err := exec.CommandContext(ctx, "docker", dcmd...).CombinedOutput()
 	log.Debug().Msg(string(out))
@@ -673,9 +647,6 @@ func (env *TestEnvironment) connectWithWait(t *testing.T, r *require.Assertions,
 	for i := 1; i <= maxTry; i++ {
 		err := env.connect(t, timeOut.String())
 		if i == maxTry {
-			if env.tc == nil {
-				r.NoError(utils.ExecCmd(t.Context(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "ps", "clickhouse")...))
-			}
 			out, dockerErr := env.DockerExecOut("clickhouse", "clickhouse", "client", "--echo", "-q", "'SELECT version()'")
 			log.Info().Msg(out)
 			r.NoError(dockerErr)
@@ -711,78 +682,24 @@ func (env *TestEnvironment) connectWithWait(t *testing.T, r *require.Assertions,
 
 func (env *TestEnvironment) connect(t *testing.T, timeOut string) error {
 	env.ch = clickhouse.NewClickHouse(&config.ClickHouseConfig{})
-
-	if env.tc != nil {
-		// Use testcontainers to get mapped port directly
-		portMaxTry := 10
-		for i := 1; i <= portMaxTry; i++ {
-			host, port, err := env.tc.GetMappedPort(t.Context(), "clickhouse", "9000")
-			if err != nil {
-				if i == portMaxTry {
-					log.Fatal().Msgf("%s: can't get port for clickhouse: %v", t.Name(), err)
-				}
-				time.Sleep(500 * time.Millisecond)
-				continue
-			}
-			env.ch.Config.Host = host
-			env.ch.Config.Port = uint(port)
-			env.ch.Config.Timeout = timeOut
-			env.ch.Config.MaxConnections = 1
-			env.ch.BreakConnectOnError = true
-			if err = env.ch.Connect(); err == nil {
-				return nil
-			}
-			if i == portMaxTry {
-				return err
-			}
-			time.Sleep(500 * time.Millisecond)
-		}
-		return nil
-	}
-
-	// Legacy compose path
-	for i := 0; i < 10; i++ {
-		statusOut, statusErr := utils.ExecCmdOut(t.Context(), 10*time.Second, "docker", append(env.GetDefaultComposeCommand(), "ps", "--status", "running", "clickhouse")...)
-		if statusErr == nil {
-			break
-		}
-		log.Warn().Msg(statusOut)
-		level := zerolog.WarnLevel
-		if i == 9 {
-			level = zerolog.FatalLevel
-		}
-		log.WithLevel(level).Msgf("can't ps --status running clickhouse: %v", statusErr)
-		time.Sleep(1 * time.Second)
-	}
 	portMaxTry := 10
 	for i := 1; i <= portMaxTry; i++ {
-		portOut, portErr := utils.ExecCmdOut(t.Context(), 10*time.Second, "docker", append(env.GetDefaultComposeCommand(), "port", "clickhouse", "9000")...)
-		if portErr != nil {
-			log.Error().Msg(portOut)
+		host, port, err := env.tc.GetMappedPort(t.Context(), "clickhouse", "9000")
+		if err != nil {
 			if i == portMaxTry {
-				log.Fatal().Msgf("%s: %s can't get port for clickhouse: %v", t.Name(), env.ProjectName, portErr)
+				log.Fatal().Msgf("%s: can't get port for clickhouse: %v", t.Name(), err)
 			}
 			time.Sleep(500 * time.Millisecond)
 			continue
 		}
-		hostAndPort := strings.Split(strings.Trim(portOut, " \r\n\t"), ":")
-		if len(hostAndPort) < 1 {
-			log.Fatal().Msgf("%s: %s invalid port for clickhouse: %v", t.Name(), env.ProjectName, portOut)
-		}
-		port, err := strconv.Atoi(hostAndPort[1])
-		if err != nil {
-			return err
-		}
-		env.ch.Config.Host = hostAndPort[0]
+		env.ch.Config.Host = host
 		env.ch.Config.Port = uint(port)
 		env.ch.Config.Timeout = timeOut
 		env.ch.Config.MaxConnections = 1
 		env.ch.BreakConnectOnError = true
-		err = env.ch.Connect()
-		if err == nil {
+		if err = env.ch.Connect(); err == nil {
 			return nil
 		}
-
 		if i == portMaxTry {
 			return err
 		}
@@ -1395,11 +1312,7 @@ func replaceStorageDiskNameForReBalance(t *testing.T, r *require.Assertions, env
 		env.DockerExecNoError(r, "clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/"+oldDisk+"")
 	}
 	env.ch.Close()
-	if env.tc != nil {
-		r.NoError(env.tc.RestartContainer(t.Context(), "clickhouse"))
-	} else {
-		r.NoError(utils.ExecCmd(t.Context(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "clickhouse")...))
-	}
+	r.NoError(env.tc.RestartContainer(t.Context(), "clickhouse"))
 	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
 }
 

@@ -12,15 +12,11 @@ import (
 
 func TestMain(m *testing.M) {
 	ctx := context.Background()
-	if os.Getenv("USE_TESTCONTAINERS") == "1" {
-		cleanupStaleTestContainers(ctx)
-	}
+	cleanupStaleTestContainers(ctx)
 	code := m.Run()
-	if len(allTestContainers) > 0 {
-		for _, tc := range allTestContainers {
-			log.Info().Msgf("stopping testcontainers env %d", tc.envID)
-			tc.StopAll(ctx)
-		}
+	for _, tc := range allTestContainers {
+		log.Info().Msgf("stopping testcontainers env %d", tc.envID)
+		tc.StopAll(ctx)
 	}
 	os.Exit(code)
 }

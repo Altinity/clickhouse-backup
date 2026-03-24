@@ -159,12 +159,9 @@ jobs:
         run: |
           set -xe
           export CLICKHOUSE_TESTS_DIR=$(pwd)/test/testflows/clickhouse_backup
-
-          docker compose -f ${CLICKHOUSE_TESTS_DIR}/docker-compose/docker-compose.yml pull
-          
           chmod +x $(pwd)/clickhouse-backup/clickhouse-backup*
           source ~/venv/qa/bin/activate
-          ~/venv/qa/bin/python3 ./test/testflows/clickhouse_backup/regression.py --debug --only="${RUN_TESTS:-*}" --no-colors --log ./test/testflows/raw.log 
+          ~/venv/qa/bin/python3 ./test/testflows/clickhouse_backup/regression.py --debug --only="${RUN_TESTS:-*}" --no-colors --log ./test/testflows/raw.log
           tfs --debug --no-colors transform compact ./test/testflows/raw.log ./test/testflows/compact.log
           tfs --debug --no-colors transform nice ./test/testflows/raw.log ./test/testflows/nice.log.txt
           tfs --debug --no-colors transform short ./test/testflows/raw.log ./test/testflows/short.log.txt
@@ -287,61 +284,25 @@ jobs:
           echo "GCS_TESTS=${GCS_TESTS}"
           GCS_ENCRYPTION_KEY=$(openssl rand -base64 32)
           export GCS_ENCRYPTION_KEY
-          
+
           chmod +x $(pwd)/clickhouse-backup/clickhouse-backup*
 
-          if [[ "${CLICKHOUSE_VERSION}" =~ 2[2-9]+ ]]; then
+          if [[ "${CLICKHOUSE_VERSION}" =~ ^2[1-9]+ || "${CLICKHOUSE_VERSION}" == "head" ]]; then
             export CLICKHOUSE_IMAGE=clickhouse/clickhouse-server
           else
             export CLICKHOUSE_IMAGE=yandex/clickhouse-server
           fi
 
-          if [[ "${CLICKHOUSE_VERSION}" == 2* ]]; then
-            export COMPOSE_FILE=docker-compose_advanced.yml
-          else
-            export COMPOSE_FILE=docker-compose.yml
-          fi
-
           export CUR_DIR="$(pwd)/test/integration"
           export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup-race"
-          docker compose -f "${CUR_DIR}/${COMPOSE_FILE}" --progress=quiet pull
-          
-          pids=()
-          project_ids=()
-          for ((i = 0; i < RUN_PARALLEL; i++)); do
-            docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name project${i} --progress plain up -d &
-            pids+=($!)
-            project_ids+=("project${i}")
-          done
-          
-          
-          for index in "${!pids[@]}"; do
-            pid=${pids[index]}
-            project_id=${project_ids[index]}
-            if wait "$pid"; then
-                echo "$pid docker compose up successful"
-            else
-                echo "=== docker ${project_id} state ==="
-                docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project_id} --progress plain ps -a
-                echo "=== docker ${project_id} logs ==="
-                docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project_id} --progress plain logs
-                echo "$pid the docker compose up failed."
-                exit 1  # Exit with an error code if any command fails
-            fi
-          done
+
           set +e
-          go test -parallel "${RUN_PARALLEL}" -timeout 90m -failfast -tags=integration -shuffle=$(date +%Y%m%d) -run "${RUN_TESTS:-.+}" -v "./test/integration/..."
+          go test -count=1 -parallel "${RUN_PARALLEL}" -race -timeout 90m -failfast -tags=integration -shuffle=$(date +%Y%m%d) -run "${RUN_TESTS:-.+}" -v "./test/integration/..."
           TEST_FAILED=$?
           set -e
           if [[ "0" != "${TEST_FAILED}" ]]; then
-            for project_id in "${project_ids[@]}"; do
-                echo "=== docker ${project_id} state ==="
-                docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project_id} --progress plain ps -a
-                echo "=== docker ${project_id} logs ==="
-                docker compose -f ${CUR_DIR}/${COMPOSE_FILE} --project-name ${project_id} --progress plain logs
-            done
             exit 1
-          fi      
+          fi
 
       - name: Format integration coverage
         env:
