@@ -1426,12 +1426,12 @@ func (ch *ClickHouse) CheckSystemPartsColumnsForTables(ctx context.Context, tabl
 	}
 
 	partColumnsDataTypes := make([]ColumnDataTypesWithTable, 0)
-	partsColumnsSQL := "SELECT database, table, column, groupUniqArray(type) AS uniq_types " +
+	partsColumnsSQL := "SELECT database, table, column, min(type) AS min_type, max(type) AS max_type " +
 		"FROM system.parts_columns " +
 		"WHERE active AND (" + strings.Join(conditions, " OR ") + ") " +
 		"AND type NOT LIKE 'Enum%(%' AND type NOT LIKE 'Tuple(%' AND type NOT LIKE 'Nullable(Enum%(%' " +
 		"AND type NOT LIKE 'Nullable(Tuple(%' AND type NOT LIKE 'Array(Tuple(%' AND type NOT LIKE 'Nullable(Array(Tuple(%' " +
-		"GROUP BY database, table, column HAVING length(uniq_types) > 1"
+		"GROUP BY database, table, column HAVING min_type != max_type"
 
 	if err := ch.SelectContext(ctx, &partColumnsDataTypes, partsColumnsSQL); err != nil {
 		return errors.WithMessage(err, "CheckSystemPartsColumnsForTables: select parts columns")
