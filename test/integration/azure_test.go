@@ -16,6 +16,7 @@ func TestAzure(t *testing.T) {
 		return
 	}
 	env, r := NewTestEnvironment(t)
+	env.tc.pullImageIfNeeded(t.Context(), "mcr.microsoft.com/azure-cli:latest")
 	sasCmd := []string{
 		"run", "--rm",
 		"--network", env.tc.networkName,
