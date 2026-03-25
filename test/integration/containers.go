@@ -304,7 +304,44 @@ func (tc *TestContainers) waitHealthy(ctx context.Context, name string, timeout 
 		}
 		time.Sleep(2 * time.Second)
 	}
+	tc.dumpContainerInfo(ctx, name)
 	return fmt.Errorf("container %s not healthy after %v", name, timeout)
+}
+
+func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {
+	info := tc.containers[name]
+	if info == nil {
+		return
+	}
+	inspect, err := tc.client.ContainerInspect(ctx, info.ID)
+	if err != nil {
+		log.Error().Err(err).Msgf("can't inspect container %s (%s)", name, info.ID[:12])
+		return
+	}
+	state := "unknown"
+	if inspect.State != nil {
+		state = inspect.State.Status
+		if inspect.State.Health != nil {
+			state += ", health=" + inspect.State.Health.Status
+		}
+		if inspect.State.ExitCode != 0 {
+			state += fmt.Sprintf(", exitCode=%d", inspect.State.ExitCode)
+		}
+		if inspect.State.OOMKilled {
+			state += ", OOMKilled"
+		}
+	}
+	log.Error().Msgf("=== container %s (%s) state: %s ===", name, info.ID[:12], state)
+
+	logOpts := container.LogsOptions{ShowStdout: true, ShowStderr: true, Tail: "50"}
+	reader, logErr := tc.client.ContainerLogs(ctx, info.ID, logOpts)
+	if logErr != nil {
+		log.Error().Err(logErr).Msgf("can't get logs for %s", name)
+		return
+	}
+	defer reader.Close()
+	logBytes, _ := io.ReadAll(reader)
+	log.Error().Msgf("=== last 50 lines of %s logs ===\n%s", name, string(logBytes))
 }
 
 func (tc *TestContainers) startContainer(ctx context.Context, name string, cfg *container.Config, hostCfg *container.HostConfig, hostname string, extraAliases ...string) error {
