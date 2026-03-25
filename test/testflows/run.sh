@@ -10,7 +10,9 @@ if [[ "${CLICKHOUSE_VERSION}" =~ ^2[1-9]+ || "${CLICKHOUSE_VERSION}" == "head" ]
 else
   export CLICKHOUSE_IMAGE=${CLICKHOUSE_IMAGE:-yandex/clickhouse-server}
 fi
-make clean build-race-docker
+if [[ -z "${GITHUB_ACTIONS}" ]]; then
+  make clean build-race-docker
+fi
 
 # Flags passed through to regression.py
 EXTRA_FLAGS=""
