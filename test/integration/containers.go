@@ -112,7 +112,8 @@ func isAdvancedMode() bool {
 	if v == "" || v == "head" {
 		return true
 	}
-	return compareVersion(v, "22.0") >= 0
+	// Match old run.sh behavior: CLICKHOUSE_VERSION == 2* → advanced mode
+	return compareVersion(v, "20.0") >= 0
 }
 
 // StartAll creates the network and starts all containers.
