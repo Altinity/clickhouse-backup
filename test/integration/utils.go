@@ -19,7 +19,6 @@ import (
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
-	pool "github.com/jolestar/go-commons-pool/v2"
 
 	stdlog "log"
 
@@ -37,9 +36,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 )
 
-var projectId atomic.Uint32
-var dockerPool *pool.ObjectPool
-var allTestContainers []*TestContainers
+var envCounter atomic.Int32
 
 var dbNameAtomic = "_test#$.ДБ_atomic_/issue\\_1091"
 var dbNameOrdinary = "_test#$.ДБ_ordinary_/issue\\_1091"
@@ -73,35 +70,6 @@ func init() {
 		logLevel = os.Getenv("TEST_LOG_LEVEL")
 	}
 	log_helper.SetLogLevelFromString(logLevel)
-
-	runParallel, isExists := os.LookupEnv("RUN_PARALLEL")
-	if !isExists {
-		runParallel = "1"
-	}
-	runParallelInt, err := strconv.Atoi(runParallel)
-	if err != nil {
-		log.Fatal().Stack().Msgf("invalid RUN_PARALLEL environment variable value %s", runParallel)
-	}
-	ctx := context.Background()
-	factory := pool.NewPooledObjectFactorySimple(func(context.Context) (interface{}, error) {
-		id := projectId.Add(1)
-		tc, err := NewTestContainers(int(id))
-		if err != nil {
-			return nil, fmt.Errorf("NewTestContainers: %w", err)
-		}
-		if err = tc.StartAll(ctx); err != nil {
-			tc.StopAll(ctx)
-			return nil, fmt.Errorf("TestContainers.StartAll: %w", err)
-		}
-		env := TestEnvironment{
-			ProjectName: fmt.Sprintf("project%d", id%uint32(runParallelInt)),
-			tc:          tc,
-		}
-		allTestContainers = append(allTestContainers, tc)
-		return &env, nil
-	})
-	dockerPool = pool.NewObjectPoolWithDefaultConfig(ctx, factory)
-	dockerPool.Config.MaxTotal = runParallelInt
 }
 
 type TestDataStruct struct {
@@ -500,23 +468,24 @@ var dockerExecTimeout = 900 * time.Second
 var mergeTreeOldSyntax = regexp.MustCompile(`(?m)MergeTree\(([^,]+),([\w\s,)(]+),(\s*\d+\s*)\)`)
 
 func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
-	isParallel := os.Getenv("RUN_PARALLEL") != "1"
 	t.Helper()
-	if isParallel {
-		t.Parallel()
-	}
+	t.Parallel()
 
 	r := require.New(t)
-	envObj, err := dockerPool.BorrowObject(t.Context())
-	if err != nil {
-		t.Fatalf("dockerPool.BorrowObject retrun error: %v", err)
-	}
-	env := envObj.(*TestEnvironment)
+	envID := int(envCounter.Add(1))
+	t.Logf("%s starting testcontainers env %d", t.Name(), envID)
 
-	if isParallel {
-		t.Logf("%s run in parallel mode project=%s", t.Name(), env.ProjectName)
-	} else {
-		t.Logf("%s run in sequence mode project=%s", t.Name(), env.ProjectName)
+	tc, err := NewTestContainers(envID)
+	if err != nil {
+		t.Fatalf("NewTestContainers(%d): %v", envID, err)
+	}
+	if err = tc.StartAll(t.Context()); err != nil {
+		tc.StopAll(t.Context())
+		t.Fatalf("TestContainers(%d).StartAll: %v", envID, err)
+	}
+	env := &TestEnvironment{
+		ProjectName: fmt.Sprintf("project%d", envID),
+		tc:          tc,
 	}
 
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "1.1.54394") <= 0 {
@@ -529,29 +498,8 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 
 func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 	env.ch.Close()
-
-	// Always clean disk_s3 from minio — it's ClickHouse table storage (s3_only policy)
-	// created by runMainIntegrationScenario and must be wiped between test runs.
-	// Ignore error: minio may not be present in non-S3 test setups.
-	_ = env.DockerExec("minio", "rm", "-rf", "/minio/data/clickhouse/disk_s3")
-
-	if t.Name() == "TestRBAC" || t.Name() == "TestConfigs" || strings.HasPrefix(t.Name(), "TestEmbedded") {
-		env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/backups_s3")
-	}
-	if t.Name() == "TestCustomRsync" {
-		env.DockerExecNoError(r, "sshd", "rm", "-rf", "/root/rsync_backups")
-	}
-	if t.Name() == "TestCustomRestic" {
-		env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/restic")
-	}
-	if t.Name() == "TestCustomKopia" {
-		env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/kopia")
-	}
-
-	if err := dockerPool.ReturnObject(t.Context(), env); err != nil {
-		t.Fatalf("dockerPool.ReturnObject error: %+v", err)
-	}
-
+	t.Logf("%s stopping testcontainers env %s", t.Name(), env.ProjectName)
+	env.tc.StopAll(context.Background())
 }
 
 // Docker execution methods
