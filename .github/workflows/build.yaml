@@ -34,7 +34,7 @@ jobs:
 
 #      - name: Cache golang
 #        id: cache-golang
-#        uses: actions/cache@v4
+#        uses: actions/cache@v5
 #        with:
 #          path: |
 #            ~/go/pkg/mod
@@ -116,7 +116,7 @@ jobs:
 
       - name: Setup golang
         id: setup-go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '^${{ matrix.golang-version }}'
 
@@ -132,7 +132,7 @@ jobs:
           python3 -m venv ~/venv/qa
 
       - name: Cache python
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         id: cache-python
         with:
           path: ~/venv/qa
@@ -232,7 +232,7 @@ jobs:
 
 #      - name: Cache golang
 #        id: cache-golang
-#        uses: actions/cache@v4
+#        uses: actions/cache@v5
 #        with:
 #          path: |
 #            ~/go/pkg/mod
