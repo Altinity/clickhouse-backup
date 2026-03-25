@@ -630,14 +630,16 @@ func (env *TestEnvironment) connectWithWait(t *testing.T, r *require.Assertions,
 
 func (env *TestEnvironment) connect(t *testing.T, timeOut string) error {
 	env.ch = clickhouse.NewClickHouse(&config.ClickHouseConfig{})
-	portMaxTry := 10
+	portMaxTry := 30
+	var lastErr error
 	for i := 1; i <= portMaxTry; i++ {
 		host, port, err := env.tc.GetMappedPort(t.Context(), "clickhouse", "9000")
 		if err != nil {
+			lastErr = fmt.Errorf("can't get port for clickhouse: %w", err)
 			if i == portMaxTry {
-				log.Fatal().Msgf("%s: can't get port for clickhouse: %v", t.Name(), err)
+				return lastErr
 			}
-			time.Sleep(500 * time.Millisecond)
+			time.Sleep(1 * time.Second)
 			continue
 		}
 		env.ch.Config.Host = host
@@ -648,12 +650,13 @@ func (env *TestEnvironment) connect(t *testing.T, timeOut string) error {
 		if err = env.ch.Connect(); err == nil {
 			return nil
 		}
+		lastErr = err
 		if i == portMaxTry {
-			return err
+			return lastErr
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(1 * time.Second)
 	}
-	return nil
+	return lastErr
 }
 
 // Query and data methods
