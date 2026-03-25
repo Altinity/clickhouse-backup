@@ -38,9 +38,12 @@ for m in re.finditer(r'Scenario\(run=load\(\"clickhouse_backup\.tests\.\w+\",\s*
 }
 
 TEST_FAILED=0
+START_TIME=${SECONDS}
 if [[ -n "${RUN_TESTS}" ]]; then
   # Single suite mode — run exactly what was requested
   python3 "${REGRESSION_PY}" ${EXTRA_FLAGS} --only="${RUN_TESTS}" --log "${RAW_LOG}" || TEST_FAILED=1
+  ELAPSED=$(( SECONDS - START_TIME ))
+  echo "=== Total time: $(( ELAPSED / 60 ))m$(( ELAPSED % 60 ))s ==="
 else
   SUITES=()
   while IFS= read -r line; do
@@ -59,16 +62,20 @@ else
     suite="$1"
     log_file="'"${CUR_DIR}"'/_logs_/${suite// /_}.log"
     echo "=== Starting suite: ${suite} ==="
+    suite_start=${SECONDS}
     python3 "'"${REGRESSION_PY}"'" \
       '"${EXTRA_FLAGS}"' \
       --only="/clickhouse backup/${suite}*" \
       --log "${log_file}" \
       > "${log_file}.stdout" 2>&1
     rc=$?
+    suite_elapsed=$(( SECONDS - suite_start ))
+    suite_min=$(( suite_elapsed / 60 ))
+    suite_sec=$(( suite_elapsed % 60 ))
     if [[ ${rc} -ne 0 ]]; then
-      echo "=== FAIL: ${suite} (exit code ${rc}), see ${log_file} ==="
+      echo "=== FAIL: ${suite} (${suite_min}m${suite_sec}s, exit code ${rc}), see ${log_file} ==="
     else
-      echo "=== PASS: ${suite} ==="
+      echo "=== PASS: ${suite} (${suite_min}m${suite_sec}s) ==="
     fi
     exit ${rc}
   ' _ {}
@@ -88,7 +95,8 @@ else
       echo "  PASS: ${suite}"
     fi
   done
-  echo "=== Failures: ${FAIL_COUNT}/${#SUITES[@]} ==="
+  ELAPSED=$(( SECONDS - START_TIME ))
+  echo "=== Failures: ${FAIL_COUNT}/${#SUITES[@]}, total time: $(( ELAPSED / 60 ))m$(( ELAPSED % 60 ))s ==="
   if [[ "${FAIL_COUNT}" -gt 0 ]]; then
     TEST_FAILED=1
   fi
