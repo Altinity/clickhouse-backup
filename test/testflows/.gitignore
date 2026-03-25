@@ -1,3 +1,4 @@
 ﻿.env
 _logs_/
 clickhouse_backup/configs/config.yml
+*.log.txt

@@ -1392,10 +1392,11 @@ func (ch *ClickHouse) CheckReplicationInProgress(table metadata.TableMetadata) (
 }
 
 type ColumnDataTypesWithTable struct {
-	Database string   `ch:"database"`
-	Table    string   `ch:"table"`
-	Column   string   `ch:"column"`
-	Types    []string `ch:"uniq_types"`
+	Database string `ch:"database"`
+	Table    string `ch:"table"`
+	Column   string `ch:"column"`
+	MinType  string `ch:"min_type"`
+	MaxType  string `ch:"max_type"`
 }
 
 func (ch *ClickHouse) CheckSystemPartsColumns(ctx context.Context, table *Table) error {
@@ -1443,7 +1444,7 @@ func (ch *ClickHouse) CheckSystemPartsColumnsForTables(ctx context.Context, tabl
 		key := fmt.Sprintf("%s.%s", colData.Database, colData.Table)
 		tableDataTypes[key] = append(tableDataTypes[key], ColumnDataTypes{
 			Column: colData.Column,
-			Types:  colData.Types,
+			Types:  []string{colData.MinType, colData.MaxType},
 		})
 	}
 
