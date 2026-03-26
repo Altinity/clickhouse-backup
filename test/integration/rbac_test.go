@@ -88,7 +88,7 @@ func TestRBAC(t *testing.T) {
 		env.DockerExecNoError(r, "clickhouse", "ls", "-lah", "/var/lib/clickhouse/access")
 
 		env.ch.Close()
-		// r.NoError(utils.ExecCmd(t.Context(), 180*time.Second, append(env.GetDefaultComposeCommand(), "restart", "clickhouse")))
+		r.NoError(env.tc.RestartContainer(t.Context(), "clickhouse"))
 		env.connectWithWait(t, r, 2*time.Second, 2*time.Second, 1*time.Minute)
 
 		env.DockerExecNoError(r, "clickhouse", "ls", "-lah", "/var/lib/clickhouse/access")
