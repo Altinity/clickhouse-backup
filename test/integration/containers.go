@@ -10,6 +10,7 @@ import (
 	osExec "os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -86,6 +87,7 @@ type TestContainers struct {
 	client        *dockerClient.Client
 	networkID     string
 	networkName   string
+	mu            sync.Mutex
 	containers    map[string]*ContainerInfo // service name -> info
 	sharedVolumes []string                  // named volume names for cleanup
 	isAdvanced    bool
@@ -117,6 +119,7 @@ func isAdvancedMode() bool {
 }
 
 // StartAll creates the network and starts all containers.
+// Independent support services start in parallel to reduce startup time.
 func (tc *TestContainers) StartAll(ctx context.Context) error {
 	var err error
 
@@ -148,61 +151,83 @@ func (tc *TestContainers) StartAll(ctx context.Context) error {
 		}
 	}
 
-	// 1. SSHD
-	if err = tc.startSSHD(ctx); err != nil {
-		return err
+	// Start all independent support services in parallel
+	type startResult struct {
+		name string
+		err  error
+	}
+	var wg sync.WaitGroup
+	resultCh := make(chan startResult, 10)
+
+	startAsync := func(name string, fn func() error) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resultCh <- startResult{name: name, err: fn()}
+		}()
 	}
 
-	// 2. FTP
-	if err = tc.startFTP(ctx, curDir); err != nil {
-		return err
-	}
-
-	// 3. MinIO
-	if err = tc.startMinio(ctx, configsDir); err != nil {
-		return err
-	}
-
-	// 4. GCS
-	if err = tc.startGCS(ctx); err != nil {
-		return err
-	}
-
-	// 5. Azure
-	if err = tc.startAzure(ctx); err != nil {
-		return err
-	}
-
-	// 6. ZooKeeper
-	if err = tc.startZookeeper(ctx, configsDir); err != nil {
-		return err
-	}
-
-	// 7. MySQL + PostgreSQL (advanced only)
+	startAsync("sshd", func() error { return tc.startSSHD(ctx) })
+	startAsync("ftp", func() error { return tc.startFTP(ctx, curDir) })
+	startAsync("minio", func() error { return tc.startMinio(ctx, configsDir) })
+	startAsync("gcs", func() error { return tc.startGCS(ctx) })
+	startAsync("azure", func() error { return tc.startAzure(ctx) })
+	startAsync("zookeeper", func() error { return tc.startZookeeper(ctx, configsDir) })
 	if tc.isAdvanced {
-		if err = tc.startMySQL(ctx); err != nil {
-			return err
-		}
-		if err = tc.startPgSQL(ctx); err != nil {
-			return err
+		startAsync("mysql", func() error { return tc.startMySQL(ctx) })
+		startAsync("pgsql", func() error { return tc.startPgSQL(ctx) })
+	}
+
+	go func() {
+		wg.Wait()
+		close(resultCh)
+	}()
+
+	for res := range resultCh {
+		if res.err != nil {
+			return fmt.Errorf("start %s: %w", res.name, res.err)
 		}
 	}
 
-	// Wait for support services
-	for _, svc := range []string{"sshd", "ftp", "minio", "gcs", "azure", "zookeeper"} {
-		if err = tc.waitHealthy(ctx, svc, 90*time.Second); err != nil {
-			return fmt.Errorf("wait %s: %w", svc, err)
-		}
+	// Wait for all support services health in parallel
+	healthServices := []struct {
+		name    string
+		timeout time.Duration
+	}{
+		{"sshd", 90 * time.Second},
+		{"ftp", 90 * time.Second},
+		{"minio", 90 * time.Second},
+		{"gcs", 90 * time.Second},
+		{"azure", 90 * time.Second},
+		{"zookeeper", 90 * time.Second},
 	}
 	if tc.isAdvanced {
-		for _, svc := range []string{"mysql", "pgsql"} {
-			if err = tc.waitHealthy(ctx, svc, 120*time.Second); err != nil {
-				return fmt.Errorf("wait %s: %w", svc, err)
-			}
+		healthServices = append(healthServices,
+			struct {
+				name    string
+				timeout time.Duration
+			}{"mysql", 120 * time.Second},
+			struct {
+				name    string
+				timeout time.Duration
+			}{"pgsql", 120 * time.Second},
+		)
+	}
+
+	healthCh := make(chan startResult, len(healthServices))
+	for _, svc := range healthServices {
+		go func(name string, timeout time.Duration) {
+			healthCh <- startResult{name: name, err: tc.waitHealthy(ctx, name, timeout)}
+		}(svc.name, svc.timeout)
+	}
+	for range healthServices {
+		res := <-healthCh
+		if res.err != nil {
+			return fmt.Errorf("wait %s: %w", res.name, res.err)
 		}
 	}
 
-	// 8. ClickHouse
+	// ClickHouse depends on ZooKeeper, so start after support services are healthy
 	if err = tc.startClickHouse(ctx, curDir, configsDir); err != nil {
 		return err
 	}
@@ -210,7 +235,7 @@ func (tc *TestContainers) StartAll(ctx context.Context) error {
 		return fmt.Errorf("wait clickhouse: %w", err)
 	}
 
-	// 9. clickhouse-backup
+	// clickhouse-backup depends on ClickHouse
 	if err = tc.startClickHouseBackup(ctx, curDir, configsDir); err != nil {
 		return err
 	}
@@ -365,11 +390,19 @@ func (tc *TestContainers) startContainer(ctx context.Context, name string, cfg *
 	if err = tc.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		return fmt.Errorf("start %s: %w", name, err)
 	}
+	tc.mu.Lock()
 	tc.containers[name] = &ContainerInfo{ID: resp.ID, Name: name, Hostname: hostname}
+	tc.mu.Unlock()
 	return nil
 }
 
 func (tc *TestContainers) pullImageIfNeeded(ctx context.Context, imageName string) {
+	// Check if image already exists locally to avoid unnecessary pull overhead
+	_, _, inspectErr := tc.client.ImageInspectWithRaw(ctx, imageName)
+	if inspectErr == nil {
+		log.Debug().Msgf("image %s already exists locally, skipping pull", imageName)
+		return
+	}
 	reader, err := tc.client.ImagePull(ctx, imageName, dockerImage.PullOptions{})
 	if err != nil {
 		log.Debug().Err(err).Msgf("pull %s (may already exist)", imageName)
