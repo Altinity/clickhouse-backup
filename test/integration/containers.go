@@ -206,7 +206,7 @@ func (tc *TestContainers) StartAll(ctx context.Context) error {
 	if err = tc.startClickHouse(ctx, curDir, configsDir); err != nil {
 		return err
 	}
-	if err = tc.waitHealthy(ctx, "clickhouse", 120*time.Second); err != nil {
+	if err = tc.waitHealthy(ctx, "clickhouse", 300*time.Second); err != nil {
 		return fmt.Errorf("wait clickhouse: %w", err)
 	}
 
@@ -779,9 +779,9 @@ func (tc *TestContainers) startClickHouse(ctx context.Context, curDir, configsDi
 		ExposedPorts: nat.PortSet{"8123/tcp": {}, "9000/tcp": {}},
 		Healthcheck: &container.HealthConfig{
 			Test:        []string{"CMD-SHELL", "clickhouse client -q 'SELECT 1'"},
-			Interval:    1 * time.Second,
+			Interval:    3 * time.Second,
 			Retries:     60,
-			StartPeriod: 2 * time.Second,
+			StartPeriod: 120 * time.Second,
 		},
 	}
 	if tc.isAdvanced {
