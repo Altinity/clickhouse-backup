@@ -333,6 +333,20 @@ func (tc *TestContainers) waitHealthy(ctx context.Context, name string, timeout 
 	return fmt.Errorf("container %s not healthy after %v", name, timeout)
 }
 
+// DumpAllContainerLogs dumps state and last 50 log lines for all containers.
+// Called when a test fails to aid debugging.
+func (tc *TestContainers) DumpAllContainerLogs(ctx context.Context) {
+	tc.mu.Lock()
+	names := make([]string, 0, len(tc.containers))
+	for name := range tc.containers {
+		names = append(names, name)
+	}
+	tc.mu.Unlock()
+	for _, name := range names {
+		tc.dumpContainerInfo(ctx, name)
+	}
+}
+
 func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {
 	info := tc.containers[name]
 	if info == nil {

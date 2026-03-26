@@ -483,6 +483,12 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 }
 
 func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
+	// Dump container logs when test fails to aid debugging
+	if t.Failed() {
+		t.Logf("=== %s FAILED, dumping container logs ===", t.Name())
+		env.tc.DumpAllContainerLogs(t.Context())
+	}
+
 	env.ch.Close()
 
 	// Clean shared state between test runs so the next test gets a fresh environment
