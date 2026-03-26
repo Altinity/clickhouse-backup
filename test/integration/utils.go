@@ -13,7 +13,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,7 +35,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 )
 
-var envCounter atomic.Int32
+var envPool chan *TestEnvironment
 
 var dbNameAtomic = "_test#$.ДБ_atomic_/issue\\_1091"
 var dbNameOrdinary = "_test#$.ДБ_ordinary_/issue\\_1091"
@@ -472,21 +471,8 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 	t.Parallel()
 
 	r := require.New(t)
-	envID := int(envCounter.Add(1))
-	t.Logf("%s starting testcontainers env %d", t.Name(), envID)
-
-	tc, err := NewTestContainers(envID)
-	if err != nil {
-		t.Fatalf("NewTestContainers(%d): %v", envID, err)
-	}
-	if err = tc.StartAll(t.Context()); err != nil {
-		tc.StopAll(t.Context())
-		t.Fatalf("TestContainers(%d).StartAll: %v", envID, err)
-	}
-	env := &TestEnvironment{
-		ProjectName: fmt.Sprintf("project%d", envID),
-		tc:          tc,
-	}
+	env := <-envPool
+	t.Logf("%s acquired env %s", t.Name(), env.ProjectName)
 
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "1.1.54394") <= 0 {
 		r := require.New(&testing.T{})
@@ -498,8 +484,25 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 
 func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 	env.ch.Close()
-	t.Logf("%s stopping testcontainers env %s", t.Name(), env.ProjectName)
-	env.tc.StopAll(context.Background())
+
+	// Clean shared state between test runs so the next test gets a fresh environment
+	_ = env.DockerExec("minio", "rm", "-rf", "/minio/data/clickhouse/disk_s3")
+
+	if t.Name() == "TestRBAC" || t.Name() == "TestConfigs" || strings.HasPrefix(t.Name(), "TestEmbedded") {
+		env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/backups_s3")
+	}
+	if t.Name() == "TestCustomRsync" {
+		env.DockerExecNoError(r, "sshd", "rm", "-rf", "/root/rsync_backups")
+	}
+	if t.Name() == "TestCustomRestic" {
+		env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/restic")
+	}
+	if t.Name() == "TestCustomKopia" {
+		env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/kopia")
+	}
+
+	t.Logf("%s returning env %s to pool", t.Name(), env.ProjectName)
+	envPool <- env
 }
 
 // Docker execution methods

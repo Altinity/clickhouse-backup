@@ -7,15 +7,47 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/rs/zerolog/log"
 )
 
 func TestMain(m *testing.M) {
-	cleanupStaleTestContainers(context.Background())
+	ctx := context.Background()
+	cleanupStaleTestContainers(ctx)
 	prePullImages()
-	os.Exit(m.Run())
+
+	runParallel := 1
+	if v, err := strconv.Atoi(os.Getenv("RUN_PARALLEL")); err == nil && v > 0 {
+		runParallel = v
+	}
+
+	envPool = make(chan *TestEnvironment, runParallel)
+	var allContainers []*TestContainers
+	for i := 1; i <= runParallel; i++ {
+		tc, err := NewTestContainers(i)
+		if err != nil {
+			log.Fatal().Err(err).Msgf("NewTestContainers(%d) failed", i)
+		}
+		if err = tc.StartAll(ctx); err != nil {
+			tc.StopAll(ctx)
+			log.Fatal().Err(err).Msgf("TestContainers(%d).StartAll failed", i)
+		}
+		allContainers = append(allContainers, tc)
+		envPool <- &TestEnvironment{
+			ProjectName: fmt.Sprintf("project%d", i),
+			tc:          tc,
+		}
+		log.Info().Msgf("started testcontainers env %d", i)
+	}
+
+	code := m.Run()
+
+	for _, tc := range allContainers {
+		tc.StopAll(ctx)
+	}
+	os.Exit(code)
 }
 
 // prePullImages pulls all Docker images once before tests start,
@@ -35,7 +67,7 @@ func prePullImages() {
 		fmt.Sprintf("docker.io/minio/minio:%s", getEnvDefault("MINIO_VERSION", "latest")),
 		"fsouza/fake-gcs-server:latest",
 		"mcr.microsoft.com/azure-storage/azurite:latest",
-		chImage, // used for both clickhouse and clickhouse-backup containers
+		chImage,
 	}
 
 	if isAdvancedMode() {
@@ -44,7 +76,6 @@ func prePullImages() {
 			fmt.Sprintf("docker.io/mysql:%s", getEnvDefault("MYSQL_VERSION", "latest")),
 			fmt.Sprintf("docker.io/postgres:%s", getEnvDefault("PGSQL_VERSION", "latest")),
 		)
-		// FTP image for advanced mode
 		images = append(images, "docker.io/iradu/proftpd:latest")
 	} else {
 		images = append(images, zkImage)
@@ -66,7 +97,6 @@ func prePullImages() {
 		tc.pullImageIfNeeded(ctx, img)
 	}
 
-	// Also pre-pull the clickhouse-backup binary config dir to verify paths
 	curDir := os.Getenv("CUR_DIR")
 	if curDir == "" {
 		curDir, _ = os.Getwd()
