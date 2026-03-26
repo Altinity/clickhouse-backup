@@ -893,6 +893,9 @@ func (env *TestEnvironment) dropDatabase(database string, ifExists bool) (err er
 	if isAtomicOrReplicated, err = env.ch.IsDbAtomicOrReplicated(database); err != nil {
 		return err
 	} else if isAtomicOrReplicated {
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.1") >= 0 {
+			dropDatabaseSQL += " ON CLUSTER '{cluster}'"
+		}
 		dropDatabaseSQL += " SYNC"
 	}
 	dropErr := env.ch.Query(dropDatabaseSQL)
