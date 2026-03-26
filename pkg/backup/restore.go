@@ -421,6 +421,9 @@ func (b *Backuper) restartClickHouse(ctx context.Context, backupName string) err
 	closeCtx, cancel := context.WithTimeout(ctx, 180*time.Second)
 	defer cancel()
 
+	// Wait for ClickHouse to fully stop before attempting reconnect
+	time.Sleep(5 * time.Second)
+
 breakByReconnect:
 	for i := 1; i <= 60; i++ {
 		select {
@@ -428,7 +431,12 @@ breakByReconnect:
 			return errors.Errorf("reconnect after '%s' timeout exceeded", b.ch.Config.RestartCommand)
 		default:
 			if err := b.ch.Connect(); err == nil {
-				break breakByReconnect
+				// Verify ClickHouse is truly ready, not just accepting TCP during shutdown
+				if err = b.ch.QueryContext(closeCtx, "SELECT 1"); err == nil {
+					break breakByReconnect
+				}
+				b.ch.Close()
+				log.Warn().Msgf("reconnect: SELECT 1 failed after connect: %v", err)
 			}
 			log.Info().Msg("wait 3 seconds")
 			time.Sleep(3 * time.Second)
