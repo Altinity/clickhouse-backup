@@ -3,7 +3,9 @@ set -o pipefail
 CUR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 mkdir -p "${CUR_DIR}/_coverage_/"
 rm -rf "${CUR_DIR}/_coverage_/*"
-source "${CUR_DIR}/.env"
+if [[ -f "${CUR_DIR}/.env" ]]; then
+  source "${CUR_DIR}/.env"
+fi
 export CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION:-25.8}
 if [[ "${CLICKHOUSE_VERSION}" =~ ^2[1-9]+ || "${CLICKHOUSE_VERSION}" == "head" ]]; then
   export CLICKHOUSE_IMAGE=${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server}
@@ -41,7 +43,7 @@ for m in re.finditer(r'Scenario\(run=load\(\"clickhouse_backup\.tests\.\w+\",\s*
 
 TEST_FAILED=0
 START_TIME=${SECONDS}
-if [[ -n "${RUN_TESTS}" ]]; then
+if [[ -n "${RUN_TESTS}" && "${RUN_TESTS}" != "*" ]]; then
   # Single suite mode — run exactly what was requested
   python3 "${REGRESSION_PY}" ${EXTRA_FLAGS} --only="${RUN_TESTS}" --log "${RAW_LOG}" || TEST_FAILED=1
   ELAPSED=$(( SECONDS - START_TIME ))
