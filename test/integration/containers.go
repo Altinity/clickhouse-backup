@@ -781,7 +781,7 @@ func (tc *TestContainers) startClickHouse(ctx context.Context, curDir, configsDi
 			Test:        []string{"CMD-SHELL", "clickhouse client -q 'SELECT 1'"},
 			Interval:    3 * time.Second,
 			Retries:     60,
-			StartPeriod: 120 * time.Second,
+			StartPeriod: 10 * time.Second,
 		},
 	}
 	if tc.isAdvanced {
