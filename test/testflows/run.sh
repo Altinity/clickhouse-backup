@@ -6,7 +6,7 @@ rm -rf "${CUR_DIR}/_coverage_/*"
 if [[ -f "${CUR_DIR}/.env" ]]; then
   source "${CUR_DIR}/.env"
 fi
-export CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION:-25.8}
+export CLICKHOUSE_VERSION=${CLICKHOUSE_VERSION:-26.3}
 if [[ "${CLICKHOUSE_VERSION}" =~ ^2[1-9]+ || "${CLICKHOUSE_VERSION}" == "head" ]]; then
   export CLICKHOUSE_IMAGE=${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server}
 else

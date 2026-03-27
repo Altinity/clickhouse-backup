@@ -97,6 +97,7 @@ jobs:
     name: Testflows
     runs-on: ubuntu-22.04
     strategy:
+      fail-fast: false
       matrix:
         golang-version:
           - "1.25"
@@ -109,7 +110,7 @@ jobs:
           - '24.8'
           - '25.3'
           - '25.8'
-          - '26.1'
+          - '26.3'
     steps:
       - name: Checkout project
         uses: actions/checkout@v6
@@ -193,6 +194,7 @@ jobs:
     name: Test
     runs-on: ubuntu-24.04
     strategy:
+      fail-fast: false
       matrix:
         golang-version:
           - "1.25"
@@ -211,7 +213,7 @@ jobs:
           - '24.8'
           - '25.3'
           - '25.8'
-          - '26.1'
+          - '26.3'
     steps:
       - name: Checkout project
         uses: actions/checkout@v6
@@ -289,7 +291,7 @@ jobs:
           export CLICKHOUSE_BACKUP_BIN="$(pwd)/clickhouse-backup/clickhouse-backup-race"
 
           set +e
-          go test -count=1 -parallel "${RUN_PARALLEL}" -race -timeout 90m -failfast -tags=integration -shuffle=$(date +%Y%m%d) -run "${RUN_TESTS:-.+}" -v "./test/integration/..."
+          go test -count=1 -parallel "${RUN_PARALLEL}" -race -timeout "${TEST_TIMEOUT:-120m}" -failfast -tags=integration -shuffle=$(date +%Y%m%d) -run "${RUN_TESTS:-.+}" -v "./test/integration/..."
           TEST_FAILED=$?
           set -e
           if [[ "0" != "${TEST_FAILED}" ]]; then
