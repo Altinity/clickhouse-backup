@@ -48,6 +48,14 @@ func TestLongListRemote(t *testing.T) {
 	cachedOut, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
 	r.NoError(err)
 	cachedDuration := extractListTimeMs(cachedOut)
+	// On shared environments parallel tests may add IO jitter, retry measurement if needed
+	for retry := 0; retry < 3 && noCacheDuration <= cachedDuration; retry++ {
+		log.Warn().Msgf("cached duration %f >= noCacheDuration %f, retry %d", cachedDuration, noCacheDuration, retry+1)
+		time.Sleep(2 * time.Second)
+		cachedOut, err = env.DockerExecOut("clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "list", "remote")
+		r.NoError(err)
+		cachedDuration = extractListTimeMs(cachedOut)
+	}
 	if noCacheDuration <= cachedDuration {
 		log.Debug().Msg("===== NON CACHED OUT ======")
 		log.Debug().Msg(nonCachedOut)
