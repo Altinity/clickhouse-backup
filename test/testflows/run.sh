@@ -59,12 +59,15 @@ else
   fi
 
   mkdir -p "${CUR_DIR}/_logs_"
+  rm -f "${CUR_DIR}/_logs_"/*.rc
   echo "Discovered ${#SUITES[@]} suites: ${SUITES[*]}"
   echo "Running with parallelism=${RUN_PARALLEL}"
 
   printf '%s\n' "${SUITES[@]}" | xargs -P "${RUN_PARALLEL}" -I{} bash -c '
     suite="$1"
-    log_file="'"${CUR_DIR}"'/_logs_/${suite// /_}.log"
+    suite_slug="${suite// /_}"
+    log_file="'"${CUR_DIR}"'/_logs_/${suite_slug}.log"
+    rc_file="'"${CUR_DIR}"'/_logs_/${suite_slug}.rc"
     echo "=== Starting suite: ${suite} ==="
     suite_start=${SECONDS}
     python3 "'"${REGRESSION_PY}"'" \
@@ -73,11 +76,15 @@ else
       --log "${log_file}" \
       > "${log_file}.stdout" 2>&1
     rc=$?
+    echo "${rc}" > "${rc_file}"
     suite_elapsed=$(( SECONDS - suite_start ))
     suite_min=$(( suite_elapsed / 60 ))
     suite_sec=$(( suite_elapsed % 60 ))
     if [[ ${rc} -ne 0 ]]; then
-      echo "=== FAIL: ${suite} (${suite_min}m${suite_sec}s, exit code ${rc}), see ${log_file} ==="
+      echo "=== FAIL: ${suite} (${suite_min}m${suite_sec}s, exit code ${rc}) ==="
+      echo "=== stdout ==="
+      cat "${log_file}.stdout"
+      echo "=== end stdout ==="
     else
       echo "=== PASS: ${suite} (${suite_min}m${suite_sec}s) ==="
     fi
@@ -91,9 +98,18 @@ else
   echo "=== Results ==="
   FAIL_COUNT=0
   for suite in "${SUITES[@]}"; do
-    log_file="${CUR_DIR}/_logs_/${suite// /_}.log"
-    if grep -q "Failing" "${log_file}" 2>/dev/null; then
-      echo "  FAIL: ${suite}"
+    suite_slug="${suite// /_}"
+    log_file="${CUR_DIR}/_logs_/${suite_slug}.log"
+    rc_file="${CUR_DIR}/_logs_/${suite_slug}.rc"
+    suite_rc=0
+    if [[ -f "${rc_file}" ]]; then
+      suite_rc=$(cat "${rc_file}")
+    else
+      # rc file missing means suite never ran or was killed
+      suite_rc=1
+    fi
+    if [[ "${suite_rc}" -ne 0 ]] || grep -q "Failing" "${log_file}" 2>/dev/null; then
+      echo "  FAIL: ${suite} (exit code ${suite_rc})"
       FAIL_COUNT=$((FAIL_COUNT + 1))
     else
       echo "  PASS: ${suite}"
