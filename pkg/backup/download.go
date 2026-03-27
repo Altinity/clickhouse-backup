@@ -924,6 +924,16 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 	diffRemoteFilesLock := &sync.Mutex{}
 	isRebalancedAfterHardLinks := false
 
+	requiredBackup, err := b.ReadBackupMetadataRemote(ctx, remoteBackup.RequiredBackup)
+	if err != nil {
+		return 0, errors.WithMessage(err, "ReadBackupMetadataRemote")
+	}
+	requiredTable, err := b.downloadTableMetadataIfNotExists(ctx, requiredBackup.BackupName, metadata.TableTitle{Database: table.Database, Table: table.Table})
+	if err != nil {
+		log.Warn().Msgf("downloadTableMetadataIfNotExists %s / %s.%s return error", requiredBackup.BackupName, table.Database, table.Table)
+		return 0, errors.WithMessage(err, "downloadTableMetadataIfNotExists")
+	}
+
 	for disk, parts := range table.Parts {
 		diskPath, diskExists := b.DiskToPathMap[disk]
 		for i, part := range parts {
@@ -994,7 +1004,7 @@ func (b *Backuper) downloadDiffParts(ctx context.Context, remoteBackup metadata.
 							return nil
 						}
 					}
-					tableRemoteFiles, findErr := b.findDiffBackupFilesRemote(downloadDiffCtx, remoteBackup, table, diskForDownload, partForDownload)
+					tableRemoteFiles, findErr := b.findDiffBackupFilesRemote(downloadDiffCtx, remoteBackup, requiredBackup, requiredTable, table, diskForDownload, partForDownload)
 					if findErr != nil {
 						return errors.WithMessage(findErr, "findDiffBackupFilesRemote")
 					}
@@ -1124,17 +1134,21 @@ func (b *Backuper) checkNewPath(newPath string, part metadata.Part) error {
 	return nil
 }
 
-func (b *Backuper) findDiffBackupFilesRemote(ctx context.Context, backup metadata.BackupMetadata, table metadata.TableMetadata, disk string, part metadata.Part) (map[string]string, error) {
-	var requiredTable *metadata.TableMetadata
+func (b *Backuper) findDiffBackupFilesRemote(ctx context.Context, backup metadata.BackupMetadata, requiredBackup *metadata.BackupMetadata, requiredTable *metadata.TableMetadata, table metadata.TableMetadata, disk string, part metadata.Part) (map[string]string, error) {
 	log.Debug().Fields(map[string]interface{}{"database": table.Database, "table": table.Table, "part": part.Name, "logger": "findDiffBackupFilesRemote"}).Msg("start")
-	requiredBackup, err := b.ReadBackupMetadataRemote(ctx, backup.RequiredBackup)
-	if err != nil {
-		return nil, errors.WithMessage(err, "ReadBackupMetadataRemote")
+	var err error
+	if requiredBackup == nil {
+		requiredBackup, err = b.ReadBackupMetadataRemote(ctx, backup.RequiredBackup)
+		if err != nil {
+			return nil, errors.WithMessage(err, "ReadBackupMetadataRemote")
+		}
 	}
-	requiredTable, err = b.downloadTableMetadataIfNotExists(ctx, requiredBackup.BackupName, metadata.TableTitle{Database: table.Database, Table: table.Table})
-	if err != nil {
-		log.Warn().Msgf("downloadTableMetadataIfNotExists %s / %s.%s return error", requiredBackup.BackupName, table.Database, table.Table)
-		return nil, errors.WithMessage(err, "downloadTableMetadataIfNotExists")
+	if requiredTable == nil {
+		requiredTable, err = b.downloadTableMetadataIfNotExists(ctx, requiredBackup.BackupName, metadata.TableTitle{Database: table.Database, Table: table.Table})
+		if err != nil {
+			log.Warn().Msgf("downloadTableMetadataIfNotExists %s / %s.%s return error", requiredBackup.BackupName, table.Database, table.Table)
+			return nil, errors.WithMessage(err, "downloadTableMetadataIfNotExists")
+		}
 	}
 
 	// recursive find if part in RequiredBackup also Required
@@ -1187,7 +1201,8 @@ func (b *Backuper) findDiffRecursive(ctx context.Context, requiredBackup *metada
 			if requiredPart.Name == part.Name {
 				found = true
 				if requiredPart.Required {
-					tableRemoteFiles, err := b.findDiffBackupFilesRemote(ctx, *requiredBackup, table, disk, part)
+					// pass nil, nil to fetch the next level of the backup chain (requiredBackup.RequiredBackup)
+					tableRemoteFiles, err := b.findDiffBackupFilesRemote(ctx, *requiredBackup, nil, nil, table, disk, part)
 					if err != nil {
 						found = false
 						log.Warn().Msgf("try find %s.%s %s recursive return err: %v", table.Database, table.Table, part.Name, err)
