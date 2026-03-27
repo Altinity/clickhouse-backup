@@ -252,6 +252,29 @@ func (tc *TestContainers) StartAll(ctx context.Context) error {
 
 // StopAll stops and removes all containers, volumes, and network.
 func (tc *TestContainers) StopAll(ctx context.Context) {
+	// Clean shared dirs via a running container (files owned by root inside container)
+	if chInfo, ok := tc.containers["clickhouse"]; ok {
+		for _, dir := range tc.sharedVolumes {
+			target := ""
+			switch {
+			case strings.HasSuffix(dir, "ch_data"):
+				target = "/var/lib/clickhouse"
+			case strings.HasSuffix(dir, "hdd1"):
+				target = "/hdd1_data"
+			case strings.HasSuffix(dir, "hdd2"):
+				target = "/hdd2_data"
+			case strings.HasSuffix(dir, "hdd3"):
+				target = "/hdd3_data"
+			}
+			if target != "" {
+				execCfg := container.ExecOptions{Cmd: []string{"rm", "-rf", target}}
+				if execID, err := tc.client.ContainerExecCreate(ctx, chInfo.ID, execCfg); err == nil {
+					_ = tc.client.ContainerExecStart(ctx, execID.ID, container.ExecStartOptions{})
+				}
+			}
+		}
+	}
+
 	timeout := 10
 	for name, info := range tc.containers {
 		if err := tc.client.ContainerStop(ctx, info.ID, container.StopOptions{Timeout: &timeout}); err != nil {
