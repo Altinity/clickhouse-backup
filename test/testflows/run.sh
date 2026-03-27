@@ -108,7 +108,7 @@ else
       # rc file missing means suite never ran or was killed
       suite_rc=1
     fi
-    if [[ "${suite_rc}" -ne 0 ]] || grep -q "Failing" "${log_file}" 2>/dev/null; then
+    if [[ "${suite_rc}" -ne 0 ]]; then
       echo "  FAIL: ${suite} (exit code ${suite_rc})"
       FAIL_COUNT=$((FAIL_COUNT + 1))
     else

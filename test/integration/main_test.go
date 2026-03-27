@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/rs/zerolog/log"
@@ -24,29 +26,56 @@ func TestMain(m *testing.M) {
 	}
 
 	envPool = make(chan *TestEnvironment, runParallel)
-	var allContainers []*TestContainers
+	allContainers := make([]*TestContainers, runParallel)
+
+	// Start all envs in parallel
+	var startWg sync.WaitGroup
+	var startErr atomic.Value
 	for i := 1; i <= runParallel; i++ {
-		tc, err := NewTestContainers(i)
-		if err != nil {
-			log.Fatal().Err(err).Msgf("NewTestContainers(%d) failed", i)
+		startWg.Add(1)
+		go func(idx int) {
+			defer startWg.Done()
+			tc, err := NewTestContainers(idx)
+			if err != nil {
+				startErr.Store(fmt.Errorf("NewTestContainers(%d): %w", idx, err))
+				return
+			}
+			if err = tc.StartAll(ctx); err != nil {
+				tc.StopAll(ctx)
+				startErr.Store(fmt.Errorf("TestContainers(%d).StartAll: %w", idx, err))
+				return
+			}
+			allContainers[idx-1] = tc
+			envPool <- &TestEnvironment{
+				ProjectName: fmt.Sprintf("project%d", idx),
+				tc:          tc,
+			}
+			log.Info().Msgf("started testcontainers env %d", idx)
+		}(i)
+	}
+	startWg.Wait()
+	if v := startErr.Load(); v != nil {
+		// Stop any envs that did start before failing
+		for _, tc := range allContainers {
+			if tc != nil {
+				tc.StopAll(ctx)
+			}
 		}
-		if err = tc.StartAll(ctx); err != nil {
-			tc.StopAll(ctx)
-			log.Fatal().Err(err).Msgf("TestContainers(%d).StartAll failed", i)
-		}
-		allContainers = append(allContainers, tc)
-		envPool <- &TestEnvironment{
-			ProjectName: fmt.Sprintf("project%d", i),
-			tc:          tc,
-		}
-		log.Info().Msgf("started testcontainers env %d", i)
+		log.Fatal().Err(v.(error)).Msg("failed to start test environments")
 	}
 
 	code := m.Run()
 
+	// Stop all envs in parallel
+	var stopWg sync.WaitGroup
 	for _, tc := range allContainers {
-		tc.StopAll(ctx)
+		stopWg.Add(1)
+		go func(tc *TestContainers) {
+			defer stopWg.Done()
+			tc.StopAll(ctx)
+		}(tc)
 	}
+	stopWg.Wait()
 	os.Exit(code)
 }
 

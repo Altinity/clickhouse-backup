@@ -276,14 +276,20 @@ func (tc *TestContainers) StopAll(ctx context.Context) {
 	}
 
 	timeout := 1
+	var stopWg sync.WaitGroup
 	for name, info := range tc.containers {
-		if err := tc.client.ContainerStop(ctx, info.ID, container.StopOptions{Timeout: &timeout}); err != nil {
-			log.Debug().Err(err).Msgf("stop %s", name)
-		}
-		if err := tc.client.ContainerRemove(ctx, info.ID, container.RemoveOptions{Force: true, RemoveVolumes: true}); err != nil {
-			log.Debug().Err(err).Msgf("remove %s", name)
-		}
+		stopWg.Add(1)
+		go func(name string, id string) {
+			defer stopWg.Done()
+			if err := tc.client.ContainerStop(ctx, id, container.StopOptions{Timeout: &timeout}); err != nil {
+				log.Debug().Err(err).Msgf("stop %s", name)
+			}
+			if err := tc.client.ContainerRemove(ctx, id, container.RemoveOptions{Force: true, RemoveVolumes: true}); err != nil {
+				log.Debug().Err(err).Msgf("remove %s", name)
+			}
+		}(name, info.ID)
 	}
+	stopWg.Wait()
 	tc.containers = make(map[string]*ContainerInfo)
 
 	for _, dir := range tc.sharedVolumes {
