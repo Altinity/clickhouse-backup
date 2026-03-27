@@ -43,7 +43,7 @@ func cleanupStaleTestContainers(ctx context.Context) {
 		Filters: filters.NewArgs(filters.Arg("name", "tc_")),
 	})
 	if err == nil {
-		timeout := 5
+		timeout := 1
 		for _, cn := range containers {
 			log.Info().Msgf("cleanup: removing stale container %s (%s)", cn.Names, cn.ID[:12])
 			_ = cli.ContainerStop(ctx, cn.ID, container.StopOptions{Timeout: &timeout})
@@ -275,7 +275,7 @@ func (tc *TestContainers) StopAll(ctx context.Context) {
 		}
 	}
 
-	timeout := 10
+	timeout := 1
 	for name, info := range tc.containers {
 		if err := tc.client.ContainerStop(ctx, info.ID, container.StopOptions{Timeout: &timeout}); err != nil {
 			log.Debug().Err(err).Msgf("stop %s", name)
