@@ -18,6 +18,7 @@ import (
 	dockerImage "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/volume"
 	dockerClient "github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 	"github.com/rs/zerolog/log"
@@ -62,16 +63,14 @@ func cleanupStaleTestContainers(ctx context.Context) {
 		}
 	}
 
-	// Remove stale shared directories with prefix "tc_"
-	tmpDir := os.TempDir()
-	entries, err := os.ReadDir(tmpDir)
+	// Remove volumes with name prefix "tc_"
+	volList, err := cli.VolumeList(ctx, volume.ListOptions{
+		Filters: filters.NewArgs(filters.Arg("name", "tc_")),
+	})
 	if err == nil {
-		for _, e := range entries {
-			if e.IsDir() && strings.HasPrefix(e.Name(), "tc_") {
-				dirPath := filepath.Join(tmpDir, e.Name())
-				log.Info().Msgf("cleanup: removing stale shared dir %s", dirPath)
-				_ = os.RemoveAll(dirPath)
-			}
+		for _, v := range volList.Volumes {
+			log.Info().Msgf("cleanup: removing stale volume %s", v.Name)
+			_ = cli.VolumeRemove(ctx, v.Name, true)
 		}
 	}
 }
@@ -134,24 +133,20 @@ func (tc *TestContainers) StartAll(ctx context.Context) error {
 	curDir := os.Getenv("CUR_DIR")
 	if curDir == "" {
 		curDir, _ = os.Getwd()
-		curDir = filepath.Join(curDir, "test", "integration")
 	}
 	configsDir := filepath.Join(curDir, "configs")
 
-	// Shared bind-mount directories for clickhouse <-> clickhouse-backup
-	// Using host directories instead of named volumes for native filesystem speed
-	// (named volumes have significant overhead for file-heavy operations like delete local)
+	// Shared named volumes for clickhouse <-> clickhouse-backup
 	prefix := fmt.Sprintf("tc_%d_", tc.envID)
-	baseDir := os.TempDir()
 	tc.sharedVolumes = []string{
-		filepath.Join(baseDir, prefix+"ch_data"),
-		filepath.Join(baseDir, prefix+"hdd1"),
-		filepath.Join(baseDir, prefix+"hdd2"),
-		filepath.Join(baseDir, prefix+"hdd3"),
+		prefix + "ch_data",
+		prefix + "hdd1",
+		prefix + "hdd2",
+		prefix + "hdd3",
 	}
-	for _, dir := range tc.sharedVolumes {
-		if err = os.MkdirAll(dir, 0o777); err != nil {
-			return fmt.Errorf("create shared dir %s: %w", dir, err)
+	for _, vol := range tc.sharedVolumes {
+		if _, err = tc.client.VolumeCreate(ctx, volume.CreateOptions{Name: vol}); err != nil {
+			return fmt.Errorf("create volume %s: %w", vol, err)
 		}
 	}
 
@@ -252,29 +247,6 @@ func (tc *TestContainers) StartAll(ctx context.Context) error {
 
 // StopAll stops and removes all containers, volumes, and network.
 func (tc *TestContainers) StopAll(ctx context.Context) {
-	// Clean shared dirs via a running container (files owned by root inside container)
-	if chInfo, ok := tc.containers["clickhouse"]; ok {
-		for _, dir := range tc.sharedVolumes {
-			target := ""
-			switch {
-			case strings.HasSuffix(dir, "ch_data"):
-				target = "/var/lib/clickhouse"
-			case strings.HasSuffix(dir, "hdd1"):
-				target = "/hdd1_data"
-			case strings.HasSuffix(dir, "hdd2"):
-				target = "/hdd2_data"
-			case strings.HasSuffix(dir, "hdd3"):
-				target = "/hdd3_data"
-			}
-			if target != "" {
-				execCfg := container.ExecOptions{Cmd: []string{"rm", "-rf", target}}
-				if execID, err := tc.client.ContainerExecCreate(ctx, chInfo.ID, execCfg); err == nil {
-					_ = tc.client.ContainerExecStart(ctx, execID.ID, container.ExecStartOptions{})
-				}
-			}
-		}
-	}
-
 	timeout := 1
 	var stopWg sync.WaitGroup
 	for name, info := range tc.containers {
@@ -292,9 +264,9 @@ func (tc *TestContainers) StopAll(ctx context.Context) {
 	stopWg.Wait()
 	tc.containers = make(map[string]*ContainerInfo)
 
-	for _, dir := range tc.sharedVolumes {
-		if err := os.RemoveAll(dir); err != nil {
-			log.Debug().Err(err).Msgf("remove shared dir %s", dir)
+	for _, vol := range tc.sharedVolumes {
+		if err := tc.client.VolumeRemove(ctx, vol, true); err != nil {
+			log.Debug().Err(err).Msgf("remove volume %s", vol)
 		}
 	}
 	if tc.networkID != "" {
@@ -861,7 +833,7 @@ func (tc *TestContainers) startClickHouse(ctx context.Context, curDir, configsDi
 			Test:        []string{"CMD-SHELL", "clickhouse client -q 'SELECT 1'"},
 			Interval:    3 * time.Second,
 			Retries:     60,
-			StartPeriod: 10 * time.Second,
+			StartPeriod: 120 * time.Second,
 		},
 	}
 	if tc.isAdvanced {

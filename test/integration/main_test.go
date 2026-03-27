@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -129,7 +128,6 @@ func prePullImages() {
 	curDir := os.Getenv("CUR_DIR")
 	if curDir == "" {
 		curDir, _ = os.Getwd()
-		curDir = filepath.Join(curDir, "test", "integration")
 	}
 	log.Info().Msgf("pre-pull complete, CUR_DIR=%s", curDir)
 }
