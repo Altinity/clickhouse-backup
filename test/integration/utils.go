@@ -918,6 +918,12 @@ func (env *TestEnvironment) checkObjectStorageIsEmpty(t *testing.T, r *require.A
 	if remoteStorageType == "AZBLOB" || remoteStorageType == "AZBLOB_EMBEDDED_URL" {
 		t.Log("wait when resolve https://github.com/Azure/Azurite/issues/2362, todo try to use mysql as azurite storage")
 	}
+	// CH 26.2+ uses async object storage deletion (BlobKillerThread), wait for it to drain
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "26.2") >= 0 {
+		for _, disk := range []string{"disk_s3", "disk_s3_encrypted", "disk_azblob"} {
+			_ = env.ch.Query(fmt.Sprintf("SYSTEM WAIT BLOBS CLEANUP '%s'", disk))
+		}
+	}
 	checkRemoteDir := func(expected string, container string, cmd ...string) {
 		out, err := env.DockerExecOut(container, cmd...)
 		r.NoError(err, "%s\nunexpected checkRemoteDir error: %v", out, err)
