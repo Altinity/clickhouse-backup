@@ -268,7 +268,8 @@ func testRestoreSkipDisk(t *testing.T, r *require.Assertions, env *TestEnvironme
 		var tableS3Exists uint64
 		r.NoError(env.ch.SelectSingleRowNoCtx(&tableS3Exists, "SELECT count() FROM system.tables WHERE database='test_skip_disks' AND name='table_s3'"))
 		r.Equal(uint64(1), tableS3Exists, "table_s3 shall exists in system.tables")
-		r.NoError(env.ch.SelectSingleRowNoCtx(&tableS3Exists, "SELECT count() FROM system.parts WHERE active AND disk_name='disk_s3' AND database='test_skip_disks' AND name='table_s3'"))
+		tableS3Exists = 0
+		r.NoError(env.ch.SelectSingleRowNoCtx(&tableS3Exists, "SELECT count() FROM system.parts WHERE active AND database='test_skip_disks' AND table='table_s3' AND disk_name='disk_s3'"))
 		r.Equal(uint64(0), tableS3Exists, "table_s3 shall not exists in system.parts")
 	}
 
