@@ -418,17 +418,28 @@ func (b *Backuper) restartClickHouse(ctx context.Context, backupName string) err
 		}
 	}
 	b.ch.Close()
-	closeCtx, cancel := context.WithTimeout(ctx, 180*time.Second)
+	closeCtx, cancel := context.WithTimeout(ctx, 300*time.Second)
 	defer cancel()
 
+	// Wait for ClickHouse to fully stop before attempting reconnect
+	time.Sleep(5 * time.Second)
+
 breakByReconnect:
-	for i := 1; i <= 60; i++ {
+	for i := 1; i <= 120; i++ {
 		select {
 		case <-closeCtx.Done():
 			return errors.Errorf("reconnect after '%s' timeout exceeded", b.ch.Config.RestartCommand)
 		default:
 			if err := b.ch.Connect(); err == nil {
-				break breakByReconnect
+				// Use a short per-query timeout, not the outer closeCtx which may be nearly expired
+				selectCtx, selectCancel := context.WithTimeout(ctx, 5*time.Second)
+				err = b.ch.QueryContext(selectCtx, "SELECT 1")
+				selectCancel()
+				if err == nil {
+					break breakByReconnect
+				}
+				b.ch.Close()
+				log.Warn().Msgf("reconnect: SELECT 1 failed after connect: %v", err)
 			}
 			log.Info().Msg("wait 3 seconds")
 			time.Sleep(3 * time.Second)

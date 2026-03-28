@@ -153,9 +153,9 @@ def kafka_engine(self):
             )
 
         with And("I copy table data to topic"):
-            command = (f"{cluster.docker_compose} exec -T clickhouse1 clickhouse client "
+            command = (f"{cluster.docker_exec('clickhouse1')} clickhouse client "
                        "--query='SELECT * FROM source_table FORMAT JSONEachRow' | "
-                       f"{cluster.docker_compose} exec -T kafka kafka-console-producer "
+                       f"{cluster.docker_exec('kafka')} kafka-console-producer "
                        f"--broker-list kafka:9092 --topic {topic} > /dev/null")
             cluster.command(None, command, exitcode=None)
 
@@ -181,9 +181,9 @@ def kafka_engine(self):
             assert f"{name_prefix}" in r, error()
 
     finally:
-        with Finally("I bring up docker compose to restore all services"):
-            command = f'{cluster.docker_compose} up -d --no-recreate 2>&1 | tee'
-            cluster.command(None, command)
+        with Finally("I bring up containers to restore all services"):
+            # With testcontainers, containers are already running; this is a no-op safety check
+            pass
 
         with And("I cleanup tables"):
             sql = f"""

@@ -3,8 +3,6 @@
 package main
 
 import (
-	"os"
-	"path"
 	"strings"
 	"testing"
 	"time"
@@ -18,11 +16,12 @@ func TestAzure(t *testing.T) {
 		return
 	}
 	env, r := NewTestEnvironment(t)
+	env.tc.pullImageIfNeeded(t.Context(), "mcr.microsoft.com/azure-cli:latest")
 	sasCmd := []string{
-		"compose", "--project-name", env.ProjectName,
-		"-f", path.Join(os.Getenv("CUR_DIR"), os.Getenv("COMPOSE_FILE")),
-		"--profile", "azure-cli", "--progress", "none",
-		"run", "--rm", "azure-cli",
+		"run", "--rm",
+		"--network", env.tc.networkName,
+		"-e", "AZURE_STORAGE_CONNECTION_STRING=DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://devstoreaccount1.blob.azure:10000/devstoreaccount1;",
+		"mcr.microsoft.com/azure-cli:latest",
 		"sh", "-c",
 		"az storage account generate-sas --account-name=devcontainer1 " +
 			"--resource-types=sco --services=b --permissions=cdlruwap --output=tsv " +
