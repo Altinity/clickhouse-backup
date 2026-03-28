@@ -24,7 +24,7 @@ clickhouse:
   restart_command: "sql:SYSTEM RELOAD USERS; sql:SYSTEM RELOAD CONFIG; exec:ls -la /var/lib/clickhouse/access; sql:SYSTEM SHUTDOWN"
   # restart_command: bash -c 'echo "FAKE RESTART"'
   backup_mutations: true
-  timeout: 60s
+  timeout: 10m
 s3:
   access_key: "${QA_ALIBABA_ACCESS_KEY}"
   secret_key: "${QA_ALIBABA_SECRET_KEY}"

@@ -17,7 +17,7 @@ clickhouse:
   password: meow=& 123?*%# МЯУ
   sync_replicated_tables: true
   restart_command: "sql:SYSTEM RELOAD USERS; sql:SYSTEM RELOAD CONFIG; sql:SYSTEM SHUTDOWN"
-  timeout: 60s
+  timeout: 10m
 custom:
   upload_command: /custom/rsync/upload.sh {{ .backupName }} {{ .diffFromRemote }}
   download_command: /custom/rsync/download.sh {{ .backupName }}

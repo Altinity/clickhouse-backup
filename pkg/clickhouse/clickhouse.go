@@ -1051,25 +1051,17 @@ func (ch *ClickHouse) CreateTable(table Table, query string, dropTable, ignoreDe
 		return errors.Wrap(err, "ch.cleanUUIDForReplicatedDatabase return error")
 	}
 
-	// WINDOW VIEW unavailable after 24.3
-	allowExperimentalAnalyzer := ""
-	if allowExperimentalAnalyzer, err = ch.TurnAnalyzerOffIfNecessary(version, query, allowExperimentalAnalyzer); err != nil {
-		return errors.WithMessage(err, "CreateTable: turn analyzer off")
-	}
 	// MATERIALIZED VIEW ... REFRESH shall be restored as EMPTY to avoid data inconsistency
 	// https://github.com/Altinity/clickhouse-backup/issues/1237
 	// https://github.com/Altinity/clickhouse-backup/issues/1271
 	if (strings.HasPrefix(query, "CREATE MATERIALIZED VIEW") || strings.HasPrefix(query, "ATTACH MATERIALIZED VIEW")) && strings.Contains(query, " REFRESH ") && !strings.Contains(query, " EMPTY ") {
 		query = strings.Replace(query, "DEFINER", "EMPTY DEFINER", 1)
 	}
-	// CREATE
-	if err := ch.Query(query); err != nil {
+	// WINDOW VIEW / LIVE VIEW unavailable with analyzer after 24.3
+	// Use per-query settings via clickhouse.Context to avoid connection pool race
+	ctx := ch.AnalyzerOffContextIfNecessary(version, query)
+	if err := ch.QueryContext(ctx, query); err != nil {
 		return errors.WithMessage(err, "CreateTable: execute create query")
-	}
-
-	// WINDOW VIEW unavailable after 24.3
-	if err = ch.TurnAnalyzerOnIfNecessary(version, query, allowExperimentalAnalyzer); err != nil {
-		return errors.WithMessage(err, "CreateTable: turn analyzer on")
 	}
 	return nil
 }
@@ -1119,28 +1111,27 @@ func (ch *ClickHouse) enrichQueryWithOnCluster(query string, onCluster string, v
 	return query
 }
 
+// Deprecated: use AnalyzerOffContextIfNecessary + QueryContext instead.
 func (ch *ClickHouse) TurnAnalyzerOnIfNecessary(version int, query string, allowExperimentalAnalyzer string) error {
-	if version >= 24003000 && (strings.HasPrefix(query, "CREATE LIVE VIEW") || strings.HasPrefix(query, "ATTACH LIVE VIEW") || strings.HasPrefix(query, "CREATE WINDOW VIEW") || strings.HasPrefix(query, "ATTACH WINDOW VIEW")) && allowExperimentalAnalyzer == "1" {
-		if err := ch.Query("SET allow_experimental_analyzer=1"); err != nil {
-			return errors.WithMessage(err, "TurnAnalyzerOnIfNecessary")
-		}
-	}
 	return nil
 }
 
+// Deprecated: use AnalyzerOffContextIfNecessary + QueryContext instead.
 func (ch *ClickHouse) TurnAnalyzerOffIfNecessary(version int, query string, allowExperimentalAnalyzer string) (string, error) {
-	if version >= 24003000 && (strings.HasPrefix(query, "CREATE LIVE VIEW") || strings.HasPrefix(query, "ATTACH LIVE VIEW") || strings.HasPrefix(query, "CREATE WINDOW VIEW") || strings.HasPrefix(query, "ATTACH WINDOW VIEW")) {
-		if err := ch.SelectSingleRowNoCtx(&allowExperimentalAnalyzer, "SELECT value FROM system.settings WHERE name='allow_experimental_analyzer'"); err != nil {
-			return "", errors.WithMessage(err, "TurnAnalyzerOffIfNecessary: query analyzer setting")
-		}
-		if allowExperimentalAnalyzer == "1" {
-			if err := ch.Query("SET allow_experimental_analyzer=0"); err != nil {
-				return "", errors.WithMessage(err, "TurnAnalyzerOffIfNecessary: set analyzer off")
-			}
-		}
-		return allowExperimentalAnalyzer, nil
-	}
 	return "", nil
+}
+
+// AnalyzerOffContextIfNecessary returns a context with allow_experimental_analyzer=0 setting
+// attached via clickhouse.Context+WithSettings, so the setting is sent in the same packet
+// as the query. This avoids the race condition where SET on a pooled connection may not
+// affect the connection used by the subsequent query.
+func (ch *ClickHouse) AnalyzerOffContextIfNecessary(version int, query string) context.Context {
+	if version >= 24003000 && (strings.HasPrefix(query, "CREATE LIVE VIEW") || strings.HasPrefix(query, "ATTACH LIVE VIEW") || strings.HasPrefix(query, "CREATE WINDOW VIEW") || strings.HasPrefix(query, "ATTACH WINDOW VIEW")) {
+		return clickhouse.Context(context.Background(), clickhouse.WithSettings(clickhouse.Settings{
+			"allow_experimental_analyzer": 0,
+		}))
+	}
+	return context.Background()
 }
 
 // GetConn - return current connection
