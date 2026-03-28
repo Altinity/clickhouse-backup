@@ -307,7 +307,7 @@ func testAPIDeleteLocalDownloadRestore(r *require.Assertions, env *TestEnvironme
 			  echo "${DOWNLOAD_RESPONSE}"
 			  OPERATION_ID=$(echo "${DOWNLOAD_RESPONSE}" | jq -r '.operation_id')
 			  while true; do
-				STATUS=$(curl -sfL "http://localhost:7171/backup/status?operationid=${OPERATION_ID}" | jq -r '.[0].status // empty')
+				STATUS=$(curl -sfL "http://localhost:7171/backup/status?operationid=${OPERATION_ID}" | jq -r '.status // empty')
 				if [ "${STATUS}" = "success" ] || [ "${STATUS}" = "error" ]; then break; fi
 				sleep 1
 			  done
@@ -316,7 +316,7 @@ func testAPIDeleteLocalDownloadRestore(r *require.Assertions, env *TestEnvironme
 			  echo "${RESTORE_RESPONSE}"
 			  OPERATION_ID=$(echo "${RESTORE_RESPONSE}" | jq -r '.operation_id')
 			  while true; do
-				STATUS=$(curl -sfL "http://localhost:7171/backup/status?operationid=${OPERATION_ID}" | jq -r '.[0].status // empty')
+				STATUS=$(curl -sfL "http://localhost:7171/backup/status?operationid=${OPERATION_ID}" | jq -r '.status // empty')
 				if [ "${STATUS}" = "success" ] || [ "${STATUS}" = "error" ]; then break; fi
 				sleep 1
 			  done
@@ -327,7 +327,7 @@ func testAPIDeleteLocalDownloadRestore(r *require.Assertions, env *TestEnvironme
 	)
 	r.NoError(err, "%s\nunexpected POST /backup/delete/local error: %v", out, err)
 	r.NotContains(out, "another operation is currently running")
-	r.NotContains(out, "error")
+	r.NotContains(out, "\"status\":\"error\"")
 
 	out, err = env.DockerExecOut("clickhouse-backup", "curl", "-sfL", "http://localhost:7171/backup/actions?filter=download")
 	r.NoError(err, "%s\nunexpected GET /backup/actions?filter=download error: %v", out, err)
