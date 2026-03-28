@@ -51,10 +51,11 @@ func TestKeeperTLS(t *testing.T) {
 	// clean and restore
 	r.NoError(env.dropDatabase(dbName, false))
 	env.queryWithNoError(r, fmt.Sprintf("DROP USER IF EXISTS %s %s", rbacUser, onCluster))
+	env.ch.Close()
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--rbac", backupName)
 
 	// wait for restart after RBAC restore and check
-	env.connectWithWait(t, r, 500*time.Millisecond, 1*time.Second, 2*time.Minute)
+	env.connectWithWait(t, r, 5*time.Second, 1*time.Second, 2*time.Minute)
 	var rowCount, userCount uint64
 	r.NoError(env.ch.SelectSingleRowNoCtx(&rowCount, fmt.Sprintf("SELECT count() FROM %s.%s", dbName, tableName)))
 	r.Equal(uint64(100), rowCount)
