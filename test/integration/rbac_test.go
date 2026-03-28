@@ -88,7 +88,7 @@ func TestRBAC(t *testing.T) {
 		env.DockerExecNoError(r, "clickhouse", "ls", "-lah", "/var/lib/clickhouse/access")
 
 		env.ch.Close()
-		// r.NoError(utils.ExecCmd(t.Context(), 180*time.Second, append(env.GetDefaultComposeCommand(), "restart", "clickhouse")))
+		r.NoError(env.tc.RestartContainer(t.Context(), "clickhouse"))
 		env.connectWithWait(t, r, 2*time.Second, 2*time.Second, 1*time.Minute)
 
 		env.DockerExecNoError(r, "clickhouse", "ls", "-lah", "/var/lib/clickhouse/access")
@@ -104,7 +104,21 @@ func TestRBAC(t *testing.T) {
 			var rbacRows []struct {
 				Name string `ch:"name"`
 			}
-			err := env.ch.Select(&rbacRows, fmt.Sprintf("SHOW %s", rbacType))
+			// ClickHouse may still be loading RBAC objects after restart, retry with backoff
+			var err error
+			for attempt := 1; attempt <= 10; attempt++ {
+				rbacRows = nil
+				err = env.ch.Select(&rbacRows, fmt.Sprintf("SHOW %s", rbacType))
+				if err == nil {
+					break
+				}
+				log.Warn().Msgf("SHOW %s attempt %d failed: %v, retrying in %ds", rbacType, attempt, err, attempt)
+				time.Sleep(time.Duration(attempt) * time.Second)
+				env.ch.Close()
+				if connErr := env.connect(t, "60s"); connErr != nil {
+					log.Warn().Msgf("reconnect after SHOW %s failure: %v", rbacType, connErr)
+				}
+			}
 			r.NoError(err)
 			found := false
 			for _, row := range rbacRows {

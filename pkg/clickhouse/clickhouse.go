@@ -1392,10 +1392,11 @@ func (ch *ClickHouse) CheckReplicationInProgress(table metadata.TableMetadata) (
 }
 
 type ColumnDataTypesWithTable struct {
-	Database string   `ch:"database"`
-	Table    string   `ch:"table"`
-	Column   string   `ch:"column"`
-	Types    []string `ch:"uniq_types"`
+	Database string `ch:"database"`
+	Table    string `ch:"table"`
+	Column   string `ch:"column"`
+	MinType  string `ch:"min_type"`
+	MaxType  string `ch:"max_type"`
 }
 
 func (ch *ClickHouse) CheckSystemPartsColumns(ctx context.Context, table *Table) error {
@@ -1426,12 +1427,12 @@ func (ch *ClickHouse) CheckSystemPartsColumnsForTables(ctx context.Context, tabl
 	}
 
 	partColumnsDataTypes := make([]ColumnDataTypesWithTable, 0)
-	partsColumnsSQL := "SELECT database, table, column, groupUniqArray(type) AS uniq_types " +
+	partsColumnsSQL := "SELECT database, table, column, min(type) AS min_type, max(type) AS max_type " +
 		"FROM system.parts_columns " +
 		"WHERE active AND (" + strings.Join(conditions, " OR ") + ") " +
 		"AND type NOT LIKE 'Enum%(%' AND type NOT LIKE 'Tuple(%' AND type NOT LIKE 'Nullable(Enum%(%' " +
 		"AND type NOT LIKE 'Nullable(Tuple(%' AND type NOT LIKE 'Array(Tuple(%' AND type NOT LIKE 'Nullable(Array(Tuple(%' " +
-		"GROUP BY database, table, column HAVING length(uniq_types) > 1"
+		"GROUP BY database, table, column HAVING min_type != max_type"
 
 	if err := ch.SelectContext(ctx, &partColumnsDataTypes, partsColumnsSQL); err != nil {
 		return errors.WithMessage(err, "CheckSystemPartsColumnsForTables: select parts columns")
@@ -1443,7 +1444,7 @@ func (ch *ClickHouse) CheckSystemPartsColumnsForTables(ctx context.Context, tabl
 		key := fmt.Sprintf("%s.%s", colData.Database, colData.Table)
 		tableDataTypes[key] = append(tableDataTypes[key], ColumnDataTypes{
 			Column: colData.Column,
-			Types:  colData.Types,
+			Types:  []string{colData.MinType, colData.MaxType},
 		})
 	}
 

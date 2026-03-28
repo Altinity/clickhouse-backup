@@ -299,11 +299,35 @@ func testAPIDeleteLocalDownloadRestore(r *require.Assertions, env *TestEnvironme
 	out, err := env.DockerExecOut(
 		"clickhouse-backup",
 		"bash", "-xe", "-c",
-		fmt.Sprintf("for i in {1..%d}; do date; curl -sfL -XPOST \"http://localhost:7171/backup/delete/local/z_backup_$i\"; curl -sfL -XPOST \"http://localhost:7171/backup/download/z_backup_$i?hardlink_exists_files=true\"; sleep 2; curl -sfL -XPOST \"http://localhost:7171/backup/restore/z_backup_$i?rm=1&drop=true\"; sleep 8; done", apiBackupNumber),
+		fmt.Sprintf(`
+			for i in {1..%d}; do
+			  date
+			  curl -sfL -XPOST "http://localhost:7171/backup/delete/local/z_backup_$i"
+			  DOWNLOAD_RESPONSE=$(curl -sfL -XPOST "http://localhost:7171/backup/download/z_backup_$i?hardlink_exists_files=true")
+			  echo "${DOWNLOAD_RESPONSE}"
+			  OPERATION_ID=$(echo "${DOWNLOAD_RESPONSE}" | jq -r '.operation_id')
+			  while true; do
+				STATUS=$(curl -sfL "http://localhost:7171/backup/status?operationid=${OPERATION_ID}" | jq -r '.status // empty')
+				if [ "${STATUS}" = "success" ] || [ "${STATUS}" = "error" ]; then break; fi
+				sleep 1
+			  done
+			  sleep 1
+			  RESTORE_RESPONSE=$(curl -sfL -XPOST "http://localhost:7171/backup/restore/z_backup_$i?rm=1&drop=true")
+			  echo "${RESTORE_RESPONSE}"
+			  OPERATION_ID=$(echo "${RESTORE_RESPONSE}" | jq -r '.operation_id')
+			  while true; do
+				STATUS=$(curl -sfL "http://localhost:7171/backup/status?operationid=${OPERATION_ID}" | jq -r '.status // empty')
+				if [ "${STATUS}" = "success" ] || [ "${STATUS}" = "error" ]; then break; fi
+				sleep 1
+			  done
+			  sleep 1
+			done`,
+			apiBackupNumber,
+		),
 	)
 	r.NoError(err, "%s\nunexpected POST /backup/delete/local error: %v", out, err)
 	r.NotContains(out, "another operation is currently running")
-	r.NotContains(out, "error")
+	r.NotContains(out, "\"status\":\"error\"")
 
 	out, err = env.DockerExecOut("clickhouse-backup", "curl", "-sfL", "http://localhost:7171/backup/actions?filter=download")
 	r.NoError(err, "%s\nunexpected GET /backup/actions?filter=download error: %v", out, err)

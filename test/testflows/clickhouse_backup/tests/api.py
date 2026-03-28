@@ -389,7 +389,7 @@ def post_get_actions(self):
 def api(self):
     """Test API server
     """
-    self.context.url = "http://localhost:7171"
+    self.context.url = f"http://localhost:{self.context.backup_api_port}"
     clickhouse = self.context.nodes[0]
     self.context.api_base_table_name = "api_base"
 

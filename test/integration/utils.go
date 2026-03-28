@@ -9,18 +9,15 @@ import (
 	"math/rand"
 	"os"
 	"os/exec"
-	"path"
 	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/clickhouse"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
-	pool "github.com/jolestar/go-commons-pool/v2"
 
 	stdlog "log"
 
@@ -38,8 +35,7 @@ import (
 	"github.com/Altinity/clickhouse-backup/v2/pkg/utils"
 )
 
-var projectId atomic.Uint32
-var dockerPool *pool.ObjectPool
+var envPool chan *TestEnvironment
 
 var dbNameAtomic = "_test#$.ДБ_atomic_/issue\\_1091"
 var dbNameOrdinary = "_test#$.ДБ_ordinary_/issue\\_1091"
@@ -73,25 +69,6 @@ func init() {
 		logLevel = os.Getenv("TEST_LOG_LEVEL")
 	}
 	log_helper.SetLogLevelFromString(logLevel)
-
-	runParallel, isExists := os.LookupEnv("RUN_PARALLEL")
-	if !isExists {
-		runParallel = "1"
-	}
-	runParallelInt, err := strconv.Atoi(runParallel)
-	if err != nil {
-		log.Fatal().Stack().Msgf("invalid RUN_PARALLEL environment variable value %s", runParallel)
-	}
-	ctx := context.Background()
-	factory := pool.NewPooledObjectFactorySimple(func(context.Context) (interface{}, error) {
-		id := projectId.Add(1)
-		env := TestEnvironment{
-			ProjectName: fmt.Sprintf("project%d", id%uint32(runParallelInt)),
-		}
-		return &env, nil
-	})
-	dockerPool = pool.NewObjectPoolWithDefaultConfig(ctx, factory)
-	dockerPool.Config.MaxTotal = runParallelInt
 }
 
 type TestDataStruct struct {
@@ -113,6 +90,7 @@ type TestDataStruct struct {
 type TestEnvironment struct {
 	ch          *clickhouse.ClickHouse
 	ProjectName string
+	tc          *TestContainers
 }
 
 var defaultTestData = []TestDataStruct{
@@ -489,27 +467,12 @@ var dockerExecTimeout = 900 * time.Second
 var mergeTreeOldSyntax = regexp.MustCompile(`(?m)MergeTree\(([^,]+),([\w\s,)(]+),(\s*\d+\s*)\)`)
 
 func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
-	isParallel := os.Getenv("RUN_PARALLEL") != "1"
-	if os.Getenv("COMPOSE_FILE") == "" || os.Getenv("CUR_DIR") == "" {
-		t.Fatal("please setup COMPOSE_FILE and CUR_DIR environment variables")
-	}
 	t.Helper()
-	if isParallel {
-		t.Parallel()
-	}
+	t.Parallel()
 
 	r := require.New(t)
-	envObj, err := dockerPool.BorrowObject(t.Context())
-	if err != nil {
-		t.Fatalf("dockerPool.BorrowObject retrun error: %v", err)
-	}
-	env := envObj.(*TestEnvironment)
-
-	if isParallel {
-		t.Logf("%s run in parallel mode project=%s", t.Name(), env.ProjectName)
-	} else {
-		t.Logf("%s run in sequence mode project=%s", t.Name(), env.ProjectName)
-	}
+	env := <-envPool
+	t.Logf("%s acquired env %s", t.Name(), env.ProjectName)
 
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "1.1.54394") <= 0 {
 		r := require.New(&testing.T{})
@@ -520,11 +483,15 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 }
 
 func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
+	// Dump container logs when test fails to aid debugging
+	if t.Failed() {
+		t.Logf("=== %s FAILED, dumping container logs ===", t.Name())
+		env.tc.DumpAllContainerLogs(t.Context())
+	}
+
 	env.ch.Close()
 
-	// Always clean disk_s3 from minio — it's ClickHouse table storage (s3_only policy)
-	// created by runMainIntegrationScenario and must be wiped between test runs.
-	// Ignore error: minio may not be present in non-S3 test setups.
+	// Clean shared state between test runs so the next test gets a fresh environment
 	_ = env.DockerExec("minio", "rm", "-rf", "/minio/data/clickhouse/disk_s3")
 
 	if t.Name() == "TestRBAC" || t.Name() == "TestConfigs" || strings.HasPrefix(t.Name(), "TestEmbedded") {
@@ -540,20 +507,18 @@ func (env *TestEnvironment) Cleanup(t *testing.T, r *require.Assertions) {
 		env.DockerExecNoError(r, "minio", "rm", "-rf", "/minio/data/clickhouse/kopia")
 	}
 
-	if err := dockerPool.ReturnObject(t.Context(), env); err != nil {
-		t.Fatalf("dockerPool.ReturnObject error: %+v", err)
-	}
-
+	t.Logf("%s returning env %s to pool", t.Name(), env.ProjectName)
+	envPool <- env
 }
 
 // Docker execution methods
 
-func (env *TestEnvironment) GetDefaultComposeCommand() []string {
-	return []string{"compose", "-f", path.Join(os.Getenv("CUR_DIR"), os.Getenv("COMPOSE_FILE")), "--progress", "plain", "--project-name", env.ProjectName}
-}
-
 func (env *TestEnvironment) GetExecDockerCommand(container string) []string {
-	return []string{"exec", fmt.Sprintf("%s-%s-1", env.ProjectName, container)}
+	cid := env.tc.GetContainerID(container)
+	if cid != "" {
+		return []string{"exec", cid}
+	}
+	return []string{"exec", container}
 }
 
 func (env *TestEnvironment) DockerExecNoError(r *require.Assertions, container string, cmd ...string) {
@@ -577,7 +542,7 @@ func (env *TestEnvironment) DockerExecOut(container string, cmd ...string) (stri
 
 func (env *TestEnvironment) DockerExecBackgroundNoError(r *require.Assertions, container string, cmd ...string) {
 	out, err := env.DockerExecBackgroundOut(container, cmd...)
-	r.NoError(err, "%s\n\n%s\n[ERROR]\n%v", strings.Join(append(append(env.GetDefaultComposeCommand(), "exec", "-d", container), cmd...), " "), out, err)
+	r.NoError(err, "%s\n\n%s\n[ERROR]\n%v", strings.Join(append(env.GetExecDockerCommand(container), cmd...), " "), out, err)
 }
 
 func (env *TestEnvironment) DockerExecBackground(container string, cmd ...string) error {
@@ -587,19 +552,35 @@ func (env *TestEnvironment) DockerExecBackground(container string, cmd ...string
 }
 
 func (env *TestEnvironment) DockerExecBackgroundOut(container string, cmd ...string) (string, error) {
-	dcmd := append(env.GetDefaultComposeCommand(), "exec", "-d", container)
-	dcmd = append(dcmd, cmd...)
+	cid := env.tc.GetContainerID(container)
+	if cid != "" {
+		dcmd := append([]string{"exec", "-d", cid}, cmd...)
+		return utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", dcmd...)
+	}
+	dcmd := append([]string{"exec", "-d", container}, cmd...)
 	return utils.ExecCmdOut(context.Background(), dockerExecTimeout, "docker", dcmd...)
 }
 
 func (env *TestEnvironment) DockerCP(src, dst string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
-	dcmd := append(env.GetDefaultComposeCommand(), "cp", src, dst)
-
+	defer cancel()
+	// Translate "container:path" to "containerID:path" for docker cp
+	translatePath := func(p string) string {
+		parts := strings.SplitN(p, ":", 2)
+		if len(parts) == 2 {
+			cid := env.tc.GetContainerID(parts[0])
+			if cid != "" {
+				return cid + ":" + parts[1]
+			}
+		}
+		return p
+	}
+	src = translatePath(src)
+	dst = translatePath(dst)
+	dcmd := []string{"cp", src, dst}
 	log.Debug().Msgf("docker %s", strings.Join(dcmd, " "))
 	out, err := exec.CommandContext(ctx, "docker", dcmd...).CombinedOutput()
 	log.Debug().Msg(string(out))
-	cancel()
 	return err
 }
 
@@ -623,7 +604,6 @@ func (env *TestEnvironment) connectWithWait(t *testing.T, r *require.Assertions,
 	for i := 1; i <= maxTry; i++ {
 		err := env.connect(t, timeOut.String())
 		if i == maxTry {
-			r.NoError(utils.ExecCmd(t.Context(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "ps", "clickhouse")...))
 			out, dockerErr := env.DockerExecOut("clickhouse", "clickhouse", "client", "--echo", "-q", "'SELECT version()'")
 			log.Info().Msg(out)
 			r.NoError(dockerErr)
@@ -658,55 +638,34 @@ func (env *TestEnvironment) connectWithWait(t *testing.T, r *require.Assertions,
 }
 
 func (env *TestEnvironment) connect(t *testing.T, timeOut string) error {
-	for i := 0; i < 10; i++ {
-		statusOut, statusErr := utils.ExecCmdOut(t.Context(), 10*time.Second, "docker", append(env.GetDefaultComposeCommand(), "ps", "--status", "running", "clickhouse")...)
-		if statusErr == nil {
-			break
-		}
-		log.Warn().Msg(statusOut)
-		level := zerolog.WarnLevel
-		if i == 9 {
-			level = zerolog.FatalLevel
-		}
-		log.WithLevel(level).Msgf("can't ps --status running clickhouse: %v", statusErr)
-		time.Sleep(1 * time.Second)
-	}
 	env.ch = clickhouse.NewClickHouse(&config.ClickHouseConfig{})
-	portMaxTry := 10
+	portMaxTry := 30
+	var lastErr error
 	for i := 1; i <= portMaxTry; i++ {
-		portOut, portErr := utils.ExecCmdOut(t.Context(), 10*time.Second, "docker", append(env.GetDefaultComposeCommand(), "port", "clickhouse", "9000")...)
-		if portErr != nil {
-			log.Error().Msg(portOut)
+		host, port, err := env.tc.GetMappedPort(t.Context(), "clickhouse", "9000")
+		if err != nil {
+			lastErr = fmt.Errorf("can't get port for clickhouse: %w", err)
 			if i == portMaxTry {
-				log.Fatal().Msgf("%s: %s can't get port for clickhouse: %v", t.Name(), env.ProjectName, portErr)
+				return lastErr
 			}
-			time.Sleep(500 * time.Millisecond)
+			time.Sleep(1 * time.Second)
 			continue
 		}
-		hostAndPort := strings.Split(strings.Trim(portOut, " \r\n\t"), ":")
-		if len(hostAndPort) < 1 {
-			log.Fatal().Msgf("%s: %s invalid port for clickhouse: %v", t.Name(), env.ProjectName, portOut)
-		}
-		port, err := strconv.Atoi(hostAndPort[1])
-		if err != nil {
-			return err
-		}
-		env.ch.Config.Host = hostAndPort[0]
+		env.ch.Config.Host = host
 		env.ch.Config.Port = uint(port)
 		env.ch.Config.Timeout = timeOut
 		env.ch.Config.MaxConnections = 1
 		env.ch.BreakConnectOnError = true
-		err = env.ch.Connect()
-		if err == nil {
+		if err = env.ch.Connect(); err == nil {
 			return nil
 		}
-
+		lastErr = err
 		if i == portMaxTry {
-			return err
+			return lastErr
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(1 * time.Second)
 	}
-	return nil
+	return lastErr
 }
 
 // Query and data methods
@@ -940,6 +899,9 @@ func (env *TestEnvironment) dropDatabase(database string, ifExists bool) (err er
 	if isAtomicOrReplicated, err = env.ch.IsDbAtomicOrReplicated(database); err != nil {
 		return err
 	} else if isAtomicOrReplicated {
+		if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.1") >= 0 {
+			dropDatabaseSQL += " ON CLUSTER '{cluster}'"
+		}
 		dropDatabaseSQL += " SYNC"
 	}
 	dropErr := env.ch.Query(dropDatabaseSQL)
@@ -956,6 +918,17 @@ func (env *TestEnvironment) checkObjectStorageIsEmpty(t *testing.T, r *require.A
 	if remoteStorageType == "AZBLOB" || remoteStorageType == "AZBLOB_EMBEDDED_URL" {
 		t.Log("wait when resolve https://github.com/Azure/Azurite/issues/2362, todo try to use mysql as azurite storage")
 	}
+	// CH 26.3+ uses async object storage deletion (BlobKillerThread), wait for it to drain
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "26.2") > 0 {
+		if err := env.connect(t, "3m"); err != nil {
+			t.Logf("checkObjectStorageIsEmpty: failed to connect for SYSTEM WAIT BLOBS CLEANUP: %v", err)
+		} else {
+			for _, disk := range []string{"disk_s3", "disk_s3_encrypted", "disk_azblob"} {
+				_ = env.ch.Query(fmt.Sprintf("SYSTEM WAIT BLOBS CLEANUP '%s'", disk))
+			}
+			env.ch.Close()
+		}
+	}
 	checkRemoteDir := func(expected string, container string, cmd ...string) {
 		out, err := env.DockerExecOut(container, cmd...)
 		r.NoError(err, "%s\nunexpected checkRemoteDir error: %v", out, err)
@@ -968,7 +941,7 @@ func (env *TestEnvironment) checkObjectStorageIsEmpty(t *testing.T, r *require.A
 		checkRemoteDir("total 0", "sshd", "bash", "-c", "ls -lh /root/")
 	}
 	if remoteStorageType == "FTP" {
-		if strings.Contains(os.Getenv("COMPOSE_FILE"), "advanced") {
+		if isAdvancedMode() {
 			checkRemoteDir("total 0", "ftp", "bash", "-c", "ls -lh /home/ftpusers/test_backup/backup/")
 		} else {
 			checkRemoteDir("total 0", "ftp", "sh", "-c", "ls -lh /home/test_backup/backup/")
@@ -1037,7 +1010,8 @@ func isTableSkip(ch *TestEnvironment, data TestDataStruct, dataExists bool) bool
 	if strings.Contains(data.DatabaseEngine, "PostgreSQL") && compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "21.3") <= 0 {
 		return true
 	}
-	if data.IsDictionary && os.Getenv("COMPOSE_FILE") != "docker-compose.yml" && dataExists {
+	isAdvanced := isAdvancedMode() || (ch.tc != nil && ch.tc.isAdvanced)
+	if data.IsDictionary && isAdvanced && dataExists {
 		var dictEngines []struct {
 			Engine string `ch:"engine"`
 		}
@@ -1048,7 +1022,8 @@ func isTableSkip(ch *TestEnvironment, data TestDataStruct, dataExists bool) bool
 		_ = ch.ch.Select(&dictEngines, dictSQL)
 		return len(dictEngines) == 0
 	}
-	isSkipDictionaryOrJBOD := os.Getenv("COMPOSE_FILE") == "docker-compose.yml" && (strings.Contains(data.Name, "jbod#$_table") || data.IsDictionary)
+	isStandard := !isAdvanced
+	isSkipDictionaryOrJBOD := isStandard && (strings.Contains(data.Name, "jbod#$_table") || data.IsDictionary)
 	isSkipEmptyReplicatedMergeTree := compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.9") < 0 && strings.Contains(data.Schema, "ReplicatedMergeTree()")
 	return isSkipDictionaryOrJBOD || isSkipEmptyReplicatedMergeTree
 }
@@ -1311,7 +1286,7 @@ func replaceStorageDiskNameForReBalance(t *testing.T, r *require.Assertions, env
 		env.DockerExecNoError(r, "clickhouse", "rm", "-rf", "/var/lib/clickhouse/disks/"+oldDisk+"")
 	}
 	env.ch.Close()
-	r.NoError(utils.ExecCmd(t.Context(), 180*time.Second, "docker", append(env.GetDefaultComposeCommand(), "restart", "clickhouse")...))
+	r.NoError(env.tc.RestartContainer(t.Context(), "clickhouse"))
 	env.connectWithWait(t, r, 3*time.Second, 1500*time.Millisecond, 3*time.Minute)
 }
 
