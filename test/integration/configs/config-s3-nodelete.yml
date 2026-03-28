@@ -18,7 +18,7 @@ clickhouse:
   skip_verify: true
   sync_replicated_tables: true
   restart_command: bash -c 'echo "FAKE RESTART"'
-  timeout: 60s
+  timeout: 10m
 s3:
   access_key: nodelete
   secret_key: nodelete_password
