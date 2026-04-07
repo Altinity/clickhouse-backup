@@ -429,123 +429,129 @@ func (b *Backuper) createBackupEmbedded(ctx context.Context, backupName, baseBac
 
 	if schemaOnly || doBackupData {
 		l := b.CalculateNonSkipTables(tables)
-		if l == 0 {
+		if l == 0 && !b.cfg.General.AllowEmptyBackups {
 			return errors.Errorf("`use_embedded_backup_restore: true` not found tables for backup, check your parameter --tables=%v", tablePattern)
 		}
 		tablesTitle = make([]metadata.TableTitle, l)
-
-		if _, isBackupDiskExists := diskMap[b.cfg.ClickHouse.EmbeddedBackupDisk]; b.cfg.ClickHouse.EmbeddedBackupDisk != "" && !isBackupDiskExists {
-			return errors.Errorf("backup disk `%s` not exists in system.disks", b.cfg.ClickHouse.EmbeddedBackupDisk)
-		}
-		if b.cfg.ClickHouse.EmbeddedBackupDisk == "" {
-			if err := config.ValidateObjectDiskConfig(b.cfg); err != nil {
-				return errors.WithMessage(err, "config.ValidateObjectDiskConfig")
-			}
-			// Warn if encryption key is set for GCS - object disk files won't be encrypted
-			if b.cfg.General.RemoteStorage == "gcs" && b.cfg.GCS.EncryptionKey != "" {
-				log.Warn().Msg("GCS_ENCRYPTION_KEY is configured, but files in object_disk path will NOT be encrypted. ClickHouse needs direct unencrypted access to these files for BACKUP/RESTORE operations.")
-			}
-		}
-
-		backupSQL, tablesSizeSQL, err := b.generateEmbeddedBackupSQL(ctx, backupName, schemaOnly, tables, tablesTitle, partitionsNameList, l, baseBackup, version)
-		if err != nil {
-			return errors.WithMessage(err, "b.generateEmbeddedBackupSQL")
-		}
-		backupResult := make([]clickhouse.SystemBackups, 0)
-		if err := b.ch.SelectContext(ctx, &backupResult, backupSQL); err != nil {
-			return errors.Wrap(err, "backup error")
-		}
-		if len(backupResult) != 1 || (backupResult[0].Status != "BACKUP_COMPLETE" && backupResult[0].Status != "BACKUP_CREATED") {
-			return errors.Errorf("backup return wrong results: %+v", backupResult)
-		}
-
-		if schemaOnly {
+		if l == 0 {
+			log.Warn().Msg("empty backup: no tables found, skip embedded backup SQL generation")
 			backupDataSize = append(backupDataSize, clickhouse.BackupDataSize{Size: 0})
-		} else {
-			if backupResult[0].CompressedSize == 0 && backupResult[0].Id != "" {
-				systemBackupResult := make([]clickhouse.SystemBackups, 0)
-				backupSizeSQL := fmt.Sprintf("SELECT * FROM system.backups WHERE id='%s'", backupResult[0].Id)
-				if sizeErr := b.ch.SelectContext(ctx, &systemBackupResult, backupSizeSQL); sizeErr != nil {
-					return errors.WithMessage(sizeErr, "system.backups query")
+		}
+
+		if l > 0 {
+			if _, isBackupDiskExists := diskMap[b.cfg.ClickHouse.EmbeddedBackupDisk]; b.cfg.ClickHouse.EmbeddedBackupDisk != "" && !isBackupDiskExists {
+				return errors.Errorf("backup disk `%s` not exists in system.disks", b.cfg.ClickHouse.EmbeddedBackupDisk)
+			}
+			if b.cfg.ClickHouse.EmbeddedBackupDisk == "" {
+				if err := config.ValidateObjectDiskConfig(b.cfg); err != nil {
+					return errors.WithMessage(err, "config.ValidateObjectDiskConfig")
 				}
-				if len(systemBackupResult) == 0 && len(systemBackupResult) > 1 {
-					return errors.Errorf("wrong system.backup results: %v", systemBackupResult)
+				// Warn if encryption key is set for GCS - object disk files won't be encrypted
+				if b.cfg.General.RemoteStorage == "gcs" && b.cfg.GCS.EncryptionKey != "" {
+					log.Warn().Msg("GCS_ENCRYPTION_KEY is configured, but files in object_disk path will NOT be encrypted. ClickHouse needs direct unencrypted access to these files for BACKUP/RESTORE operations.")
 				}
-				backupDataSize = append(backupDataSize, clickhouse.BackupDataSize{Size: systemBackupResult[0].CompressedSize})
-			} else if backupResult[0].CompressedSize == 0 {
-				backupSizeSQL := "SELECT sum(bytes_on_disk) AS backup_data_size FROM system.parts WHERE active AND ("
-				for _, t := range tables {
-					if oneTableSizeSQL, exists := tablesSizeSQL[metadata.TableTitle{Database: t.Database, Table: t.Name}]; exists {
-						if strings.HasPrefix(oneTableSizeSQL, fmt.Sprintf("'%s::%s::", t.Database, t.Name)) {
-							backupSizeSQL += fmt.Sprintf(" concat(database,'::',table,'::',partition) IN (%s) OR ", oneTableSizeSQL)
-						} else {
-							backupSizeSQL += fmt.Sprintf(" concat(database,'::',table) IN (%s) OR ", tablesSizeSQL[metadata.TableTitle{Database: t.Database, Table: t.Name}])
+			}
+
+			backupSQL, tablesSizeSQL, err := b.generateEmbeddedBackupSQL(ctx, backupName, schemaOnly, tables, tablesTitle, partitionsNameList, l, baseBackup, version)
+			if err != nil {
+				return errors.WithMessage(err, "b.generateEmbeddedBackupSQL")
+			}
+			backupResult := make([]clickhouse.SystemBackups, 0)
+			if err := b.ch.SelectContext(ctx, &backupResult, backupSQL); err != nil {
+				return errors.Wrap(err, "backup error")
+			}
+			if len(backupResult) != 1 || (backupResult[0].Status != "BACKUP_COMPLETE" && backupResult[0].Status != "BACKUP_CREATED") {
+				return errors.Errorf("backup return wrong results: %+v", backupResult)
+			}
+
+			if schemaOnly {
+				backupDataSize = append(backupDataSize, clickhouse.BackupDataSize{Size: 0})
+			} else {
+				if backupResult[0].CompressedSize == 0 && backupResult[0].Id != "" {
+					systemBackupResult := make([]clickhouse.SystemBackups, 0)
+					backupSizeSQL := fmt.Sprintf("SELECT * FROM system.backups WHERE id='%s'", backupResult[0].Id)
+					if sizeErr := b.ch.SelectContext(ctx, &systemBackupResult, backupSizeSQL); sizeErr != nil {
+						return errors.WithMessage(sizeErr, "system.backups query")
+					}
+					if len(systemBackupResult) == 0 && len(systemBackupResult) > 1 {
+						return errors.Errorf("wrong system.backup results: %v", systemBackupResult)
+					}
+					backupDataSize = append(backupDataSize, clickhouse.BackupDataSize{Size: systemBackupResult[0].CompressedSize})
+				} else if backupResult[0].CompressedSize == 0 {
+					backupSizeSQL := "SELECT sum(bytes_on_disk) AS backup_data_size FROM system.parts WHERE active AND ("
+					for _, t := range tables {
+						if oneTableSizeSQL, exists := tablesSizeSQL[metadata.TableTitle{Database: t.Database, Table: t.Name}]; exists {
+							if strings.HasPrefix(oneTableSizeSQL, fmt.Sprintf("'%s::%s::", t.Database, t.Name)) {
+								backupSizeSQL += fmt.Sprintf(" concat(database,'::',table,'::',partition) IN (%s) OR ", oneTableSizeSQL)
+							} else {
+								backupSizeSQL += fmt.Sprintf(" concat(database,'::',table) IN (%s) OR ", tablesSizeSQL[metadata.TableTitle{Database: t.Database, Table: t.Name}])
+							}
 						}
 					}
-				}
-				backupSizeSQL = backupSizeSQL[:len(backupSizeSQL)-4] + ")"
-				if sizeErr := b.ch.SelectContext(ctx, &backupDataSize, backupSizeSQL); sizeErr != nil {
-					return errors.WithMessage(sizeErr, "backup size query")
-				}
-			} else {
-				backupDataSize = append(backupDataSize, clickhouse.BackupDataSize{Size: backupResult[0].CompressedSize})
-			}
-		}
-
-		if doBackupData && b.cfg.ClickHouse.EmbeddedBackupDisk == "" {
-			var err error
-			if b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, backupName); err != nil {
-				return errors.WithMessage(err, "storage.NewBackupDestination")
-			}
-			if err = b.dst.Connect(ctx); err != nil {
-				return errors.Wrapf(err, "createBackupEmbedded: can't connect to %s", b.dst.Kind())
-			}
-			defer func() {
-				if closeErr := b.dst.Close(ctx); closeErr != nil {
-					log.Warn().Msgf("createBackupEmbedded: can't close connection to %s: %v", b.dst.Kind(), closeErr)
-				}
-			}()
-		}
-
-		for _, table := range tables {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-				if table.Skip {
-					continue
-				}
-				var disksToPartsMap map[string][]metadata.Part
-				if doBackupData {
-					if b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
-						log.Debug().Msgf("calculate parts list `%s`.`%s` from embedded backup disk `%s`", table.Database, table.Name, b.cfg.ClickHouse.EmbeddedBackupDisk)
-						disksToPartsMap, err = b.getPartsFromLocalEmbeddedBackupDisk(path.Join(backupPath, b.embeddedClusterPrefix), table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}])
-					} else {
-						log.Debug().Msgf("calculate parts list `%s`.`%s` from embedded backup remote destination", table.Database, table.Name)
-						disksToPartsMap, err = b.getPartsFromRemoteEmbeddedBackup(ctx, backupName, table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}])
+					backupSizeSQL = backupSizeSQL[:len(backupSizeSQL)-4] + ")"
+					if sizeErr := b.ch.SelectContext(ctx, &backupDataSize, backupSizeSQL); sizeErr != nil {
+						return errors.WithMessage(sizeErr, "backup size query")
 					}
+				} else {
+					backupDataSize = append(backupDataSize, clickhouse.BackupDataSize{Size: backupResult[0].CompressedSize})
 				}
-				if err != nil {
-					return errors.WithMessage(err, "getPartsFromEmbeddedBackup")
+			}
+
+			if doBackupData && b.cfg.ClickHouse.EmbeddedBackupDisk == "" {
+				var err error
+				if b.dst, err = storage.NewBackupDestination(ctx, b.cfg, b.ch, backupName); err != nil {
+					return errors.WithMessage(err, "storage.NewBackupDestination")
 				}
-				if schemaOnly || doBackupData {
-					metadataSize, err := b.createTableMetadata(path.Join(backupPath, "metadata"), metadata.TableMetadata{
-						Table:        table.Name,
-						Database:     table.Database,
-						UUID:         table.UUID,
-						Query:        table.CreateTableQuery,
-						TotalBytes:   table.TotalBytes,
-						Size:         map[string]int64{b.cfg.ClickHouse.EmbeddedBackupDisk: 0},
-						Parts:        disksToPartsMap,
-						MetadataOnly: schemaOnly,
-					}, disks)
+				if err = b.dst.Connect(ctx); err != nil {
+					return errors.Wrapf(err, "createBackupEmbedded: can't connect to %s", b.dst.Kind())
+				}
+				defer func() {
+					if closeErr := b.dst.Close(ctx); closeErr != nil {
+						log.Warn().Msgf("createBackupEmbedded: can't close connection to %s: %v", b.dst.Kind(), closeErr)
+					}
+				}()
+			}
+
+			for _, table := range tables {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+					if table.Skip {
+						continue
+					}
+					var disksToPartsMap map[string][]metadata.Part
+					if doBackupData {
+						if b.cfg.ClickHouse.EmbeddedBackupDisk != "" {
+							log.Debug().Msgf("calculate parts list `%s`.`%s` from embedded backup disk `%s`", table.Database, table.Name, b.cfg.ClickHouse.EmbeddedBackupDisk)
+							disksToPartsMap, err = b.getPartsFromLocalEmbeddedBackupDisk(path.Join(backupPath, b.embeddedClusterPrefix), table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}])
+						} else {
+							log.Debug().Msgf("calculate parts list `%s`.`%s` from embedded backup remote destination", table.Database, table.Name)
+							disksToPartsMap, err = b.getPartsFromRemoteEmbeddedBackup(ctx, backupName, table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}])
+						}
+					}
 					if err != nil {
-						return errors.WithMessage(err, "b.createTableMetadata")
+						return errors.WithMessage(err, "getPartsFromEmbeddedBackup")
 					}
-					backupMetadataSize += metadataSize
+					if schemaOnly || doBackupData {
+						metadataSize, err := b.createTableMetadata(path.Join(backupPath, "metadata"), metadata.TableMetadata{
+							Table:        table.Name,
+							Database:     table.Database,
+							UUID:         table.UUID,
+							Query:        table.CreateTableQuery,
+							TotalBytes:   table.TotalBytes,
+							Size:         map[string]int64{b.cfg.ClickHouse.EmbeddedBackupDisk: 0},
+							Parts:        disksToPartsMap,
+							MetadataOnly: schemaOnly,
+						}, disks)
+						if err != nil {
+							return errors.WithMessage(err, "b.createTableMetadata")
+						}
+						backupMetadataSize += metadataSize
+					}
 				}
 			}
-		}
+		} // end if l > 0
 	}
 	backupMetaFile := path.Join(backupPath, "metadata.json")
 	if err := b.createBackupMetadata(ctx, backupMetaFile, backupName, baseBackup, backupVersion, "embedded", diskMap, diskTypes, disks, backupDataSize[0].Size, 0, backupMetadataSize, backupRBACSize, backupConfigSize, backupNamedCollectionsSize, tablesTitle, allDatabases, allFunctions); err != nil {
