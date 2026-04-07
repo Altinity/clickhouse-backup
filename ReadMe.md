@@ -111,8 +111,8 @@ general:
   allow_empty_backups: false     # ALLOW_EMPTY_BACKUPS
   # Concurrency means parallel tables and parallel parts inside tables
   # For example, 4 means max 4 parallel tables and 4 parallel parts inside one table, so equals 16 concurrent streams
-  download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255, by default, the value is round(sqrt(AVAILABLE_CPU_CORES / 2))
-  upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255, by default, the value is round(sqrt(AVAILABLE_CPU_CORES / 2))
+  download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255, by default, the value is floor(AVAILABLE_CPU_CORES / 2). If result is > 1, then 1.
+  upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255, by default, the value is round(sqrt(AVAILABLE_CPU_CORES / 2)). If result is > 1, then 1.
   
   # Throttling speed for upload and download, calculates on part level, not the socket level, it means short period for high traffic values and then time to sleep 
   download_max_bytes_per_second: 0  # DOWNLOAD_MAX_BYTES_PER_SECOND, 0 means no throttling 
@@ -266,7 +266,7 @@ s3:
   disable_cert_verification: false # S3_DISABLE_CERT_VERIFICATION
   use_custom_storage_class: false  # S3_USE_CUSTOM_STORAGE_CLASS
   storage_class: STANDARD          # S3_STORAGE_CLASS, by default allow only from list https://github.com/aws/aws-sdk-go-v2/blob/main/service/s3/types/enums.go#L787-L799
-  concurrency: 1                   # S3_CONCURRENCY
+  concurrency: 1                   # S3_CONCURRENCY, default: (download_concurrency + 1)
   chunk_size: 0                    # S3_CHUNK_SIZE, default 0: remoteSize / max_part_count
   max_parts_count: 4000            # S3_MAX_PARTS_COUNT, number of parts for S3 multipart uploads and downloads
   allow_multipart_download: false  # S3_ALLOW_MULTIPART_DOWNLOAD, allow faster multipart download speed, but will require additional disk space, download_concurrency * part size in worst case
@@ -320,7 +320,7 @@ cos:
   compression_format: tar      # COS_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   compression_level: 1         # COS_COMPRESSION_LEVEL
   max_parts_count: 1000        # COS_MAX_PARTS_COUNT, number of parts for COS multipart uploads and downloads
-  concurrency: 1               # COS_CONCURRENCY, concurrency for multipart upload and download
+  concurrency: 1               # COS_CONCURRENCY, concurrency for multipart upload and download, default: (download_concurrency + 1)
   allow_multipart_download: false  # COS_ALLOW_MULTIPART_DOWNLOAD, allow faster multipart download speed, but will require additional disk space, download_concurrency * part size in worst case
 ftp:
   address: ""                  # FTP_ADDRESS in format `host:port`
@@ -331,6 +331,7 @@ ftp:
   tls_skip_verify: false       # FTP_TLS_SKIP_VERIFY
   path: ""                     # FTP_PATH, `system.macros` values can be applied as {macro_name}
   object_disk_path: ""         # FTP_OBJECT_DISK_PATH, path for backup of part from clickhouse object disks, if object disks present in clickhouse, then shall not be zero and shall not be prefixed by `path`
+  concurrency: 1               # FTP_CONCURRENCY, default: (download_concurrency * 3)
   compression_format: tar      # FTP_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   compression_level: 1         # FTP_COMPRESSION_LEVEL
   debug: false                 # FTP_DEBUG
@@ -342,7 +343,7 @@ sftp:
   key: ""                      # SFTP_KEY
   path: ""                     # SFTP_PATH, `system.macros` values can be applied as {macro_name}
   object_disk_path: ""         # SFTP_OBJECT_DISK_PATH, path for backup of part from clickhouse object disks, if object disks present in clickhouse, then shall not be zero and shall not be prefixed by `path`
-  concurrency: 1               # SFTP_CONCURRENCY
+  concurrency: 1               # SFTP_CONCURRENCY, default: (download_concurrency * 3)
   compression_format: tar      # SFTP_COMPRESSION_FORMAT, allowed values tar, lz4, bzip2, gzip, sz, xz, brortli, zstd, `none` for upload data part folders as is
   compression_level: 1         # SFTP_COMPRESSION_LEVEL
   debug: false                 # SFTP_DEBUG
