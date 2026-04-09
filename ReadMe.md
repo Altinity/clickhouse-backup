@@ -200,6 +200,13 @@ clickhouse:
   tls_ca: ""                   # CLICKHOUSE_TLS_CA, filename with TLS custom authority file
   log_sql_queries: true        # CLICKHOUSE_LOG_SQL_QUERIES, logging `clickhouse-backup` SQL queries on `info` level, when true, `debug` level when false
   debug: false                 # CLICKHOUSE_DEBUG
+  # CLICKHOUSE_FORCE_REBALANCE, when true, forces disk rebalancing during download even when the backup's disk
+  # name exists on the target server. This is useful when restoring a backup taken on a single-disk machine
+  # to a target with multiple JBOD disks under the same storage policy (e.g. both named "default").
+  # Without this option, all data lands on the built-in "default" disk because the rebalancing logic
+  # only triggers when the disk name is missing. With force_rebalance, parts are distributed across
+  # all disks in the matching storage policy using the "least_used" strategy.
+  force_rebalance: false       # CLICKHOUSE_FORCE_REBALANCE
   config_dir:      "/etc/clickhouse-server"              # CLICKHOUSE_CONFIG_DIR
   # CLICKHOUSE_RESTART_COMMAND, use this command when restoring with --rbac, --rbac-only or --configs, --configs-only options
   # will split command by ; and execute one by one, all errors will logged and ignore
