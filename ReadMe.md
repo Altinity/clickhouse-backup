@@ -111,8 +111,8 @@ general:
   allow_empty_backups: false     # ALLOW_EMPTY_BACKUPS
   # Concurrency means parallel tables and parallel parts inside tables
   # For example, 4 means max 4 parallel tables and 4 parallel parts inside one table, so equals 16 concurrent streams
-  download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255, by default, the value is floor(AVAILABLE_CPU_CORES / 2). If result is > 1, then 1.
-  upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255, by default, the value is round(sqrt(AVAILABLE_CPU_CORES / 2)). If result is > 1, then 1.
+  download_concurrency: 1        # DOWNLOAD_CONCURRENCY, max 255, by default, the value is floor(AVAILABLE_CPU_CORES / 2). If result is < 1, then 1.
+  upload_concurrency: 1          # UPLOAD_CONCURRENCY, max 255, by default, the value is round(sqrt(AVAILABLE_CPU_CORES / 2)). If result is < 1, then 1.
   
   # Throttling speed for upload and download, calculates on part level, not the socket level, it means short period for high traffic values and then time to sleep 
   download_max_bytes_per_second: 0  # DOWNLOAD_MAX_BYTES_PER_SECOND, 0 means no throttling 
