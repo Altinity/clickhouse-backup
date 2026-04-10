@@ -139,18 +139,29 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 	}
 	for backupDiskName := range backupTable.Parts {
 		for _, part := range backupTable.Parts[backupDiskName] {
-			dstParentDir, dstParentDirExists := dstDataPaths[backupDiskName]
+			// Use a per-iteration variable to avoid corrupting backupDiskName
+			// across inner loop iterations when RebalancedDisk differs per part
+			activeDisk := backupDiskName
+			dstParentDir, dstParentDirExists := dstDataPaths[activeDisk]
 			if !dstParentDirExists && part.RebalancedDisk == "" {
-				return errors.Errorf("dstDataPaths=%#v, not contains %s", dstDataPaths, backupDiskName)
+				return errors.Errorf("dstDataPaths=%#v, not contains %s", dstDataPaths, activeDisk)
 			}
 			if part.RebalancedDisk != "" {
-				backupDiskName = part.RebalancedDisk
+				activeDisk = part.RebalancedDisk
 				dstParentDir, dstParentDirExists = dstDataPaths[part.RebalancedDisk]
 				if !dstParentDirExists {
-					return errors.Errorf("dstDataPaths=%#v, not contains rebalanced %s", dstDataPaths, part.RebalancedDisk)
+					// ClickHouse creates store/{uuid}/detached/ on ALL disks of the
+					// storage policy at table load time (MergeTreeData constructor).
+					// Build the path directly so hardlinks stay on the same filesystem.
+					if rebalancedDiskPath, hasDisk := diskMap[part.RebalancedDisk]; hasDisk && backupTable.UUID != "" {
+						dstParentDir = filepath.Join(rebalancedDiskPath, "store", backupTable.UUID[:3], backupTable.UUID)
+						dstParentDirExists = true
+					} else {
+						return errors.Errorf("can't build store path for rebalanced disk %s (uuid=%s)", part.RebalancedDisk, backupTable.UUID)
+					}
 				}
 			}
-			backupDiskPath := diskMap[backupDiskName]
+			backupDiskPath := diskMap[activeDisk]
 			if toDetached {
 				dstParentDir = filepath.Join(dstParentDir, "detached")
 			}
@@ -168,7 +179,9 @@ func HardlinkBackupPartsToStorage(backupName string, backupTable metadata.TableM
 			} else if !info.IsDir() {
 				return errors.Errorf("'%s' should be directory or absent", dstPartPath)
 			}
-			srcPartPath := path.Join(backupDiskPath, "backup", backupName, "shadow", dbAndTableDir, backupDiskName, part.Name)
+			// activeDisk is the rebalanced disk name when RebalancedDisk is set,
+			// matching the directory structure created by download
+			srcPartPath := path.Join(backupDiskPath, "backup", backupName, "shadow", dbAndTableDir, activeDisk, part.Name)
 			if err := filepath.Walk(srcPartPath, func(filePath string, info os.FileInfo, err error) error {
 				if err != nil {
 					return err
@@ -461,3 +474,4 @@ func IsDuplicatedParts(part1, part2 string) error {
 	}
 	return nil
 }
+
