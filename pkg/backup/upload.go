@@ -817,7 +817,7 @@ bodyRead:
 		if err := json.Unmarshal(backupMetadataBody, &backupMetadata); err != nil {
 			return nil, errors.WithMessage(err, "json.Unmarshal")
 		}
-		if len(backupMetadata.Tables) == 0 && !b.cfg.General.AllowEmptyBackups {
+		if len(backupMetadata.Tables) == 0 && backupMetadata.RBACSize == 0 && backupMetadata.ConfigSize == 0 && backupMetadata.NamedCollectionsSize == 0 && !b.cfg.General.AllowEmptyBackups {
 			return nil, errors.Errorf("'%s' is empty backup", backupName)
 		}
 		return &backupMetadata, nil

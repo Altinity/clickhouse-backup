@@ -126,7 +126,7 @@ func (b *Backuper) Download(backupName string, tablePattern string, partitions [
 	if !found {
 		return errors.Errorf("'%s' is not found on remote storage", backupName)
 	}
-	if len(remoteBackup.Tables) == 0 && !b.cfg.General.AllowEmptyBackups {
+	if len(remoteBackup.Tables) == 0 && remoteBackup.RBACSize == 0 && remoteBackup.ConfigSize == 0 && remoteBackup.NamedCollectionsSize == 0 && !b.cfg.General.AllowEmptyBackups {
 		return errors.Errorf("'%s' is empty backup", backupName)
 	}
 	// if using hardlink then disable this check, if not use then check disk size
