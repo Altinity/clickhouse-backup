@@ -1383,8 +1383,8 @@ func (ch *ClickHouse) ApplyMacrosToObjectLabels(ctx context.Context, objectLabel
 }
 
 func (ch *ClickHouse) ApplyMutation(ctx context.Context, tableMetadata metadata.TableMetadata, mutation metadata.MutationMetadata) error {
-	applyMutatoinSQL := fmt.Sprintf("ALTER TABLE `%s`.`%s` %s", tableMetadata.Database, tableMetadata.Table, mutation.Command)
-	if err := ch.QueryContext(ctx, applyMutatoinSQL); err != nil {
+	applyMutationSQL := fmt.Sprintf("ALTER TABLE `%s`.`%s` %s", tableMetadata.Database, tableMetadata.Table, mutation.Command)
+	if err := ch.QueryContext(ctx, applyMutationSQL); err != nil {
 		return errors.WithMessage(err, "ApplyMutation")
 	}
 	return nil
