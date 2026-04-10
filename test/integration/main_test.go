@@ -65,16 +65,26 @@ func TestMain(m *testing.M) {
 
 	code := m.Run()
 
-	// Stop all envs in parallel
-	var stopWg sync.WaitGroup
-	for _, tc := range allContainers {
-		stopWg.Add(1)
-		go func(tc *TestContainers) {
-			defer stopWg.Done()
-			tc.StopAll(ctx)
-		}(tc)
+	cleanupOnFail := os.Getenv("CLEANUP_ON_FAIL") != "0"
+	if code == 0 || cleanupOnFail {
+		// Stop all envs in parallel
+		var stopWg sync.WaitGroup
+		for _, tc := range allContainers {
+			stopWg.Add(1)
+			go func(tc *TestContainers) {
+				defer stopWg.Done()
+				tc.StopAll(ctx)
+			}(tc)
+		}
+		stopWg.Wait()
+	} else {
+		log.Warn().Msg("tests failed and CLEANUP_ON_FAIL=0, keeping containers running for debugging")
+		for _, tc := range allContainers {
+			for name, info := range tc.containers {
+				log.Warn().Msgf("  container %s id=%s still running", name, info.ID[:12])
+			}
+		}
 	}
-	stopWg.Wait()
 	os.Exit(code)
 }
 

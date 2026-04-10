@@ -44,6 +44,7 @@ export COS_DEBUG=${COS_DEBUG:-false}
 export CLICKHOUSE_DEBUG=${CLICKHOUSE_DEBUG:-false}
 
 export RUN_PARALLEL=${RUN_PARALLEL:-1}
+export CLEANUP_ON_FAIL=${CLEANUP_ON_FAIL:-1}
 
 make clean build-race-docker build-race-fips-docker
 
