@@ -16,6 +16,7 @@ CLAUDE.md
 .qwen/
 .claude/
 .crush/
+.omc/
 .mcp.json
 # TestFlows tests artifacts that shall not be stored in Git
 _instances/
