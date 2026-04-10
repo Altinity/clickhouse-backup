@@ -371,7 +371,9 @@ func (b *Backuper) reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDown
 		partSize := t.TotalBytes / uint64(totalParts)
 		//re-balance parts
 		for disk := range t.Parts {
-			if _, diskExists := b.DiskToPathMap[disk]; !diskExists && disk != b.cfg.ClickHouse.EmbeddedBackupDisk {
+			// force_rebalance allows rebalancing even when the disk exists (e.g. "default"),
+			// enabling distribution across JBOD disks under the same storage policy
+			if _, diskExists := b.DiskToPathMap[disk]; (!diskExists || b.cfg.ClickHouse.ForceRebalance) && disk != b.cfg.ClickHouse.EmbeddedBackupDisk {
 				diskType := remoteBackup.DiskTypes[disk]
 				storagePolicy, filteredDisks, err := filterDisksByTypeAndStoragePolicies(disk, diskType, disks, remoteBackup, *t)
 				if err != nil {
@@ -379,6 +381,25 @@ func (b *Backuper) reBalanceTablesMetadataIfDiskNotExists(tableMetadataAfterDown
 				}
 				rebalancedDisks := common.EmptyMap{}
 				for j := range t.Parts[disk] {
+					// When resuming, keep the RebalancedDisk from the previous run
+					// to avoid mismatch between metadata and already-downloaded files
+					if t.Parts[disk][j].RebalancedDisk != "" {
+						existingDisk := t.Parts[disk][j].RebalancedDisk
+						rebalancedDisks[existingDisk] = struct{}{}
+						isRebalanced = true
+						// Rebuild RebalancedFiles map for already-rebalanced parts
+						if t.Files != nil && len(t.Files[disk]) > 0 {
+							for _, fileName := range t.Files[disk] {
+								if strings.HasPrefix(fileName, disk+"_"+t.Parts[disk][j].Name+".") {
+									if tableMetadataAfterDownload[i].RebalancedFiles == nil {
+										tableMetadataAfterDownload[i].RebalancedFiles = map[string]string{}
+									}
+									tableMetadataAfterDownload[i].RebalancedFiles[fileName] = existingDisk
+								}
+							}
+						}
+						continue
+					}
 					isObjectDisk, downloadDisk, newFreeSpace, reBalanceErr := b.getDownloadDiskForNonExistsDisk(diskType, filteredDisks, partSize)
 					if reBalanceErr != nil {
 						return errors.WithMessage(reBalanceErr, "getDownloadDiskForNonExistsDisk")
@@ -752,11 +773,20 @@ func (b *Backuper) downloadTableData(ctx context.Context, remoteBackup metadata.
 				if part.Required {
 					continue
 				}
-				if !diskExists {
+				// When RebalancedDisk is set, always use it to determine the local path,
+				// even if the original disk exists — this ensures data lands on the
+				// rebalanced target disk instead of the original one
+				if part.RebalancedDisk != "" {
 					diskPath, diskExists = b.DiskToPathMap[part.RebalancedDisk]
 					if !diskExists {
 						return 0, errors.Errorf("downloadTableData: table: `%s`.`%s`, disk: %s, part.Name: %s, part.RebalancedDisk: %s not rebalanced", table.Table, table.Database, disk, part.Name, part.RebalancedDisk)
 					}
+					tableLocalPath = path.Join(diskPath, "backup", remoteBackup.BackupName, "shadow", dbAndTableDir, part.RebalancedDisk)
+					if b.isEmbedded {
+						tableLocalPath = path.Join(diskPath, remoteBackup.BackupName, b.embeddedClusterPrefix, "data", dbAndTableDir)
+					}
+				} else if !diskExists {
+					return 0, errors.Errorf("downloadTableData: table: `%s`.`%s`, disk: %s, part.Name: %s not found and not rebalanced", table.Table, table.Database, disk, part.Name)
 				}
 				partRemotePath := path.Join(tableRemotePath, part.Name)
 				partLocalPath := path.Join(tableLocalPath, part.Name)
@@ -1262,12 +1292,16 @@ func (b *Backuper) findDiffFileExist(ctx context.Context, requiredBackup *metada
 		return "", "", errors.WithMessage(err, "StatFile")
 	}
 	tableLocalDir, diskExists := b.DiskToPathMap[localDisk]
-	if !diskExists {
+	// Prioritize RebalancedDisk when set, so incremental diff files also
+	// land on the correct rebalanced disk
+	if part.RebalancedDisk != "" {
 		tableLocalDir, diskExists = b.DiskToPathMap[part.RebalancedDisk]
 		if !diskExists {
 			return "", "", errors.Errorf("localDisk:%s, part.Name: %s, part.RebalancedDisk: %s is not found in system.disks", localDisk, part.Name, part.RebalancedDisk)
 		}
 		localDisk = part.RebalancedDisk
+	} else if !diskExists {
+		return "", "", errors.Errorf("localDisk:%s, part.Name: %s is not found in system.disks and not rebalanced", localDisk, part.Name)
 	}
 
 	if path.Ext(tableRemoteFile) == ".txt" {
