@@ -10,6 +10,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/Altinity/clickhouse-backup/v2/pkg/common"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/metadata"
@@ -48,6 +49,8 @@ type Backuper struct {
 	isEmbedded             bool
 	resume                 bool
 	resumableState         *resumable.State
+	shadowBackupUUIDs      []string
+	shadowBackupUUIDsMutex sync.Mutex
 }
 
 func NewBackuper(cfg *config.Config, opts ...BackuperOpt) *Backuper {
@@ -486,6 +489,12 @@ func (b *Backuper) adjustResumeFlag(resume bool) {
 		resume = true
 	}
 	b.resume = resume
+}
+
+func (b *Backuper) addShadowBackupUUID(uuid string) {
+	b.shadowBackupUUIDsMutex.Lock()
+	b.shadowBackupUUIDs = append(b.shadowBackupUUIDs, uuid)
+	b.shadowBackupUUIDsMutex.Unlock()
 }
 
 // CheckDisksUsage - https://github.com/Altinity/clickhouse-backup/issues/878

@@ -159,12 +159,17 @@ func (b *Backuper) CreateBackup(backupName, diffFromRemote, tablePattern string,
 			log.Error().Msgf("creating failed -> b.RemoveBackupLocal error: %v", removeBackupErr)
 		}
 		// fix corner cases after https://github.com/Altinity/clickhouse-backup/issues/379
-		if cleanShadowErr := b.Clean(ctx); cleanShadowErr != nil {
-			log.Error().Msgf("creating failed -> b.Clean error: %v", cleanShadowErr)
+		// fix https://github.com/Altinity/clickhouse-backup/issues/1345 only clean shadow UUIDs created by this backup, don't touch other shadows
+		if cleanShadowErr := b.CleanShadowUUIDs(disks); cleanShadowErr != nil {
+			log.Error().Msgf("creating failed -> b.CleanShadowUUIDs error: %v", cleanShadowErr)
 		}
 		return errors.WithMessage(err, "createBackup failed")
 	}
 
+	// fix https://github.com/Altinity/clickhouse-backup/issues/1345 clean only shadow UUIDs created by this backup
+	if cleanShadowErr := b.CleanShadowUUIDs(disks); cleanShadowErr != nil {
+		log.Warn().Msgf("b.CleanShadowUUIDs error: %v", cleanShadowErr)
+	}
 	// Clean
 	if err := b.RemoveOldBackupsLocal(ctx, true, disks); err != nil {
 		return errors.WithMessage(err, "b.RemoveOldBackupsLocal")
@@ -343,6 +348,7 @@ func (b *Backuper) createBackupLocal(ctx context.Context, backupName, diffFromRe
 			if doBackupData && table.BackupType == clickhouse.ShardBackupFull {
 				logger.Debug().Msg("begin data backup")
 				shadowBackupUUID := strings.ReplaceAll(uuid.New().String(), "-", "")
+				b.addShadowBackupUUID(shadowBackupUUID)
 				disksToPartsMap, realSize, objectDiskSize, checksums, addTableToBackupErr = b.AddTableToLocalBackup(createCtx, backupName, tablesDiffFromRemote, shadowBackupUUID, disks, &table, partitionsIdMap[metadata.TableTitle{Database: table.Database, Table: table.Name}], skipProjections, version)
 				if addTableToBackupErr != nil {
 					logger.Error().Msgf("b.AddTableToLocalBackup error: %v", addTableToBackupErr)

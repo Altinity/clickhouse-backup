@@ -57,3 +57,5 @@ if [[ "0" == "${TEST_FAILED}" ]]; then
 fi
 
 docker buildx prune -f --filter=until=30m --max-used-space=1G
+
+exit ${TEST_FAILED}

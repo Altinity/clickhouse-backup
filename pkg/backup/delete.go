@@ -48,6 +48,35 @@ func (b *Backuper) Clean(ctx context.Context) error {
 	return nil
 }
 
+// CleanShadowUUIDs - remove only specific shadow backup UUID directories, don't touch other shadows
+// https://github.com/Altinity/clickhouse-backup/issues/1345
+func (b *Backuper) CleanShadowUUIDs(disks []clickhouse.Disk) error {
+	b.shadowBackupUUIDsMutex.Lock()
+	uuids := make([]string, len(b.shadowBackupUUIDs))
+	copy(uuids, b.shadowBackupUUIDs)
+	b.shadowBackupUUIDsMutex.Unlock()
+
+	if len(uuids) == 0 {
+		return nil
+	}
+	for _, disk := range disks {
+		if disk.IsBackup {
+			continue
+		}
+		for _, shadowUUID := range uuids {
+			shadowDir := path.Join(disk.Path, "shadow", shadowUUID)
+			if _, statErr := os.Stat(shadowDir); statErr != nil && os.IsNotExist(statErr) {
+				continue
+			}
+			if err := os.RemoveAll(shadowDir); err != nil {
+				return errors.Wrapf(err, "can't clean shadow '%s'", shadowDir)
+			}
+			log.Info().Msgf("cleaned shadow %s", shadowDir)
+		}
+	}
+	return nil
+}
+
 func (b *Backuper) cleanDir(dirName string) error {
 	items, err := os.ReadDir(dirName)
 	if err != nil {
