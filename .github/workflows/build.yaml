@@ -249,10 +249,11 @@ jobs:
           RUN_PARALLEL: 4
           GOROOT: ${{ env.GOROOT_1_25_X64 }}
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
-          LOG_LEVEL: "info"
-          TEST_LOG_LEVEL: "debug"
+          # LOG_LEVEL: "info"
+          # TEST_LOG_LEVEL: "debug"
           # options for advanced debug CI/CD
           # RUN_TESTS: "^TestSkipDisk$"
+          # CLICKHOUSE_DEBUG: "true"
           # GCS_DEBUG: "true"
           # SFTP_DEBUG: "true"
           # AZBLOB_DEBUG: "true"
