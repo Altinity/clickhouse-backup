@@ -13,12 +13,14 @@ define DESC =
  Most efficient AWS S3/GCS uploading and downloading with streaming compression
  Support of incremental backups on remote storages'
 endef
-GO_BUILD = go build -trimpath -buildvcs=false -ldflags "-X 'main.version=$(VERSION)' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)'"
-GO_BUILD_STATIC = go build -trimpath -buildvcs=false -ldflags "-X 'main.version=$(VERSION)' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)' -linkmode=external -extldflags '-static'"
-GO_BUILD_STATIC_FIPS = go build -trimpath -buildvcs=false -ldflags "-X 'main.version=$(VERSION)-fips' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)' -linkmode=external -extldflags '-static'"
-PKG_FILES = build/$(NAME)_$(VERSION).amd64.deb build/$(NAME)_$(VERSION).arm64.deb build/$(NAME)-$(VERSION)-1.amd64.rpm build/$(NAME)-$(VERSION)-1.arm64.rpm
 HOST_OS = $(shell bash -c 'source <(go env) && echo $$GOHOSTOS')
 HOST_ARCH = $(shell bash -c 'source <(go env) && echo $$GOHOSTARCH')
+GO_BUILD = go build -trimpath -buildvcs=false -tags netgo,osusergo -ldflags "-X 'main.version=$(VERSION)' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)' -X 'main.buildArch=$(HOST_OS)/$(HOST_ARCH)'"
+# GO_BUILD_STATIC = go build -trimpath -buildvcs=false -tags netgo,osusergo -ldflags "-X 'main.version=$(VERSION)' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)' -X 'main.buildArch=$(HOST_OS)/$(HOST_ARCH)' -linkmode=external -extldflags '-static'"
+GO_BUILD_STATIC = go build -trimpath -buildvcs=false -tags netgo,osusergo -ldflags "-X 'main.version=$(VERSION)' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)' -X 'main.buildArch=$(HOST_OS)/$(HOST_ARCH)'"
+# GO_BUILD_STATIC_FIPS = go build -trimpath -buildvcs=false -tags netgo,osusergo -a -ldflags "-X 'main.version=$(VERSION)-fips' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)' -X 'main.buildArch=$(HOST_OS)/$(HOST_ARCH)' -linkmode=external -extldflags '-static'"
+GO_BUILD_STATIC_FIPS = go build -trimpath -buildvcs=false -tags netgo,osusergo -a -ldflags "-X 'main.version=$(VERSION)-fips' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)' -X 'main.buildArch=$(HOST_OS)/$(HOST_ARCH)'"
+PKG_FILES = build/$(NAME)_$(VERSION).amd64.deb build/$(NAME)_$(VERSION).arm64.deb build/$(NAME)-$(VERSION)-1.amd64.rpm build/$(NAME)-$(VERSION)-1.arm64.rpm
 
 .PHONY: clean all version test
 
@@ -55,29 +57,17 @@ build/linux/amd64/$(NAME)-fips build/darwin/amd64/$(NAME)-fips: GOARCH = amd64
 build/linux/arm64/$(NAME)-fips build/darwin/arm64/$(NAME)-fips: GOARCH = arm64
 build/linux/amd64/$(NAME)-fips build/linux/arm64/$(NAME)-fips: GOOS = linux
 build/darwin/amd64/$(NAME)-fips build/darwin/arm64/$(NAME)-fips: GOOS = darwin
-build/linux/amd64/$(NAME)-fips build/darwin/amd64/$(NAME)-fips:
-	CC=musl-gcc GOEXPERIMENT=boringcrypto CGO_ENABLED=1 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO_BUILD_STATIC_FIPS) -o $@ ./cmd/$(NAME) && \
-	go tool nm $@ > /tmp/$(NAME)-fips-tags.txt && \
-	grep '_Cfunc__goboringcrypto_' /tmp/$(NAME)-fips-tags.txt 1> /dev/null && \
-	rm -fv /tmp/$(NAME)-fips-tags.txt
 
-# @TODO remove ugly workaround, https://www.perplexity.ai/search/2ead4c04-060a-4d78-a75f-f26835238438
-# @todo ugly fix for ugly fix, musl.cc is not available from github runner
-#	bash -xce 'if [[ ! -f ~/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc ]]; then wget -nv -P ~ https://musl.cc/aarch64-linux-musl-cross.tgz; tar -xvf ~/aarch64-linux-musl-cross.tgz -C ~; fi' && \
-#   bash -xce 'if [[ ! -f ~/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc ]]; then rm -rf ~/aarch64-linux-musl-cross; wget -nv -O /tmp/megacmd.deb https://mega.nz/linux/repo/xUbuntu_$(shell bash -c 'cat /etc/lsb-release | grep DISTRIB_RELEASE | cut -d "=" -f 2')/amd64/megacmd-xUbuntu_$(shell bash -c 'cat /etc/lsb-release | grep DISTRIB_RELEASE | cut -d "=" -f 2')_amd64.deb; if command -v sudo >/dev/null 2>&1; then sudo apt install -y /tmp/megacmd.deb; else apt install -y /tmp/megacmd.deb; fi; mega-get https://mega.nz/file/zQwVHSYb#8WqqMUCTbbEVKDW55NPrRnM2-4SC-numNCLDKoTWtwQ ~/; tar -xvf ~/aarch64-linux-musl-cross.tgz -C ~; fi' && \
-
-build/linux/arm64/$(NAME)-fips build/darwin/arm64/$(NAME)-fips:
-	bash -xce 'if [[ ! -f ~/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc ]]; then rm -rf ~/aarch64-linux-musl-cross; wget -nv -O /tmp/megacmd.deb https://mega.nz/linux/repo/xUbuntu_$(shell bash -c 'cat /etc/lsb-release | grep DISTRIB_RELEASE | cut -d "=" -f 2')/amd64/megacmd-xUbuntu_$(shell bash -c 'cat /etc/lsb-release | grep DISTRIB_RELEASE | cut -d "=" -f 2')_amd64.deb; if command -v sudo >/dev/null 2>&1; then sudo apt install -y /tmp/megacmd.deb; else apt install -y /tmp/megacmd.deb; fi; mega-get https://mega.nz/file/zQwVHSYb#8WqqMUCTbbEVKDW55NPrRnM2-4SC-numNCLDKoTWtwQ ~/; tar -xvf ~/aarch64-linux-musl-cross.tgz -C ~; fi' && \
-	CC=~/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc GOEXPERIMENT=boringcrypto CGO_ENABLED=1 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO_BUILD_STATIC_FIPS) -o $@ ./cmd/$(NAME) && \
+build/linux/amd64/$(NAME)-fips build/darwin/amd64/$(NAME)-fips build/linux/arm64/$(NAME)-fips build/darwin/arm64/$(NAME)-fips:
+	GOFIPS140=latest CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO_BUILD_STATIC_FIPS) -o $@ ./cmd/$(NAME) && \
 	go tool nm $@ > /tmp/$(NAME)-fips-tags.txt && \
-	grep '_Cfunc__goboringcrypto_' /tmp/$(NAME)-fips-tags.txt 1> /dev/null && \
+	grep 'fips140' /tmp/$(NAME)-fips-tags.txt 1> /dev/null && \
 	rm -fv /tmp/$(NAME)-fips-tags.txt
 
 config: $(NAME)/config.yml
 
-$(NAME)/$(NAME): build/$(HOST_OS)/amd64/$(NAME)
+$(NAME)/$(NAME): build/$(HOST_OS)/$(HOST_ARCH)/$(NAME)
 	mkdir -p $(NAME)
-	cp -lv ./build/linux/amd64/$(NAME) ./$(NAME)/$(NAME)
 
 $(NAME)/config.yml: $(NAME)/$(NAME) build/$(HOST_OS)/$(HOST_ARCH)/$(NAME)
 	./build/$(HOST_OS)/$(HOST_ARCH)/$(NAME) default-config > $@
@@ -89,12 +79,11 @@ packages: $(PKG_FILES)
 
 build/linux/amd64/pkg: ARCH = amd64
 build/linux/arm64/pkg: ARCH = arm64
-.ONESHELL:
 build/linux/amd64/pkg build/linux/arm64/pkg: build config
-	cd ./build/linux/$(ARCH)
-	mkdir -pv pkg/etc/$(NAME)
-	mkdir -pv pkg/usr/bin
-	cp -lv $(NAME) pkg/usr/bin/
+	cd ./build/linux/$(ARCH) && \
+	mkdir -pv pkg/etc/$(NAME) && \
+	mkdir -pv pkg/usr/bin && \
+	cp -lv $(NAME) pkg/usr/bin/ && \
 	cp -lv ../../../$(NAME)/config.yml pkg/etc/$(NAME)/config.yml.example
 
 
@@ -128,17 +117,17 @@ $(PKG_FILES): build/linux/amd64/pkg build/linux/arm64/pkg
 build-race: $(NAME)/$(NAME)-race
 
 $(NAME)/$(NAME)-race:
-	CC=musl-gcc CGO_ENABLED=1 $(GO_BUILD_STATIC) -cover -gcflags "all=-N -l" -race -o $@ ./cmd/$(NAME)
+	CGO_ENABLED=1 $(GO_BUILD_STATIC) -cover -gcflags "all=-N -l" -race -o $@ ./cmd/$(NAME)
 
 build-race-fips: $(NAME)/$(NAME)-race-fips
 
 $(NAME)/$(NAME)-race-fips:
-	CC=musl-gcc GOEXPERIMENT=boringcrypto CGO_ENABLED=1 $(GO_BUILD_STATIC_FIPS) -cover -gcflags "all=-N -l" -race -o $@ ./cmd/$(NAME)
+	GOFIPS140=latest CGO_ENABLED=1 $(GO_BUILD_STATIC_FIPS) -cover -gcflags "all=-N -l" -race -o $@ ./cmd/$(NAME)
 
 
 # run `docker buildx create --use` first time
 build-race-docker:
-	bash -xce 'docker buildx build --platform=linux/amd64 --build-arg CLICKHOUSE_VERSION=$${CLICKHOUSE_VERSION:-latest} --build-arg CLICKHOUSE_IMAGE=$${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server} --build-arg VERSION=$(VERSION) \
+	bash -xce 'docker buildx build --build-arg CLICKHOUSE_VERSION=$${CLICKHOUSE_VERSION:-latest} --build-arg CLICKHOUSE_IMAGE=$${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server} --build-arg VERSION=$(VERSION) \
 			--tag $(NAME):build-race --target make-build-race --progress plain --load . && \
 		mkdir -pv ./$(NAME) && \
 		DOCKER_ID=$$(docker create $(NAME):build-race) && \
@@ -147,7 +136,7 @@ build-race-docker:
 		cp -fl ./$(NAME)/$(NAME)-race ./$(NAME)/$(NAME)-race-docker'
 
 build-race-fips-docker:
-	bash -xce 'docker buildx build --platform=linux/amd64 --build-arg CLICKHOUSE_VERSION=$${CLICKHOUSE_VERSION:-latest} --build-arg CLICKHOUSE_IMAGE=$${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server} --build-arg VERSION=$(VERSION) \
+	bash -xce 'docker buildx build --build-arg CLICKHOUSE_VERSION=$${CLICKHOUSE_VERSION:-latest} --build-arg CLICKHOUSE_IMAGE=$${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server} --build-arg VERSION=$(VERSION) \
 			--tag $(NAME):build-race-fips --target make-build-race-fips --progress plain --load . && \
 		mkdir -pv ./$(NAME) && \
 		DOCKER_ID=$$(docker create $(NAME):build-race-fips) && \

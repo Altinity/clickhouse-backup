@@ -4,7 +4,6 @@ ARG CLICKHOUSE_IMAGE=clickhouse/clickhouse-server
 
 FROM --platform=${TARGETPLATFORM} ${CLICKHOUSE_IMAGE}:${CLICKHOUSE_VERSION} AS builder-base
 USER root
-# TODO remove ugly workaround for musl, https://www.perplexity.ai/search/2ead4c04-060a-4d78-a75f-f26835238438
 RUN rm -fv /etc/apt/sources.list.d/clickhouse.list && \
     find /etc/apt/ -type f -name *.list -exec sed -i 's/ru.archive.ubuntu.com/archive.ubuntu.com/g' {} + && \
     ( apt-get update || true ) && \
@@ -15,22 +14,23 @@ RUN rm -fv /etc/apt/sources.list.d/clickhouse.list && \
     echo "deb https://ppa.launchpadcontent.net/longsleep/golang-backports/ubuntu ${DISTRIB_CODENAME} main" > /etc/apt/sources.list.d/golang.list && \
     echo "deb-src https://ppa.launchpadcontent.net/longsleep/golang-backports/ubuntu ${DISTRIB_CODENAME} main" >> /etc/apt/sources.list.d/golang.list && \
     ( apt-get update || true ) && \
-    apt-get install -y --no-install-recommends libc-dev golang-1.25 make git gcc musl-dev musl-tools && \
-# todo ugly fix for ugly fix, musl.cc is not available from github runner \
-    DISTRIB_RELEASE=$(cat /etc/lsb-release | grep DISTRIB_RELEASE | cut -d "=" -f 2) && \
-    echo ${DISTRIB_RELEASE} && \
+    apt-get install -y --no-install-recommends libc-dev golang-1.26 make git gcc && \
+# TODO remove ugly workaround for musl, https://www.perplexity.ai/search/2ead4c04-060a-4d78-a75f-f26835238438 \
+#    apt-get install -y --no-install-recommends musl-dev musl-tools && \
+#    DISTRIB_RELEASE=$(cat /etc/lsb-release | grep DISTRIB_RELEASE | cut -d "=" -f 2) && \
+#    echo ${DISTRIB_RELEASE} && \
 #    wget -nv -O /tmp/megacmd.deb https://mega.nz/linux/repo/xUbuntu_${DISTRIB_RELEASE}/amd64/megacmd-xUbuntu_${DISTRIB_RELEASE}_amd64.deb && \
 #    apt install -y "/tmp/megacmd.deb" && \
 #    mega-get https://mega.nz/file/zQwVHSYb#8WqqMUCTbbEVKDW55NPrRnM2-4SC-numNCLDKoTWtwQ /root/ && \
-    wget -nv -P /root/ https://musl.cc/aarch64-linux-musl-cross.tgz && \
-    tar -xvf /root/aarch64-linux-musl-cross.tgz -C /root/ && \
+#    wget -nv -P /root/ https://musl.cc/aarch64-linux-musl-cross.tgz && \
+#    tar -xvf /root/aarch64-linux-musl-cross.tgz -C /root/ && \
     mkdir -p /root/go/
 
-RUN ln -nsfv /usr/lib/go-1.25/bin/go /usr/bin/go
+RUN ln -nsfv /usr/lib/go-1.26/bin/go /usr/bin/go
 VOLUME /root/.cache/go
 ENV GOCACHE=/root/.cache/go
 ENV GOPATH=/root/go/
-ENV GOROOT=/usr/lib/go-1.25/
+ENV GOROOT=/usr/lib/go-1.26/
 RUN go env
 WORKDIR /src/
 # cache modules when go.mod go.sum changed
@@ -41,9 +41,9 @@ FROM builder-base AS builder-race
 ARG TARGETPLATFORM
 COPY ./ /src/
 RUN mkdir -p ./clickhouse-backup/
-RUN --mount=type=cache,id=clickhouse-backup-gobuild,target=/root/ GOOS=$( echo ${TARGETPLATFORM} | cut -d "/" -f 1) GOARCH=$( echo ${TARGETPLATFORM} | cut -d "/" -f 2) CC=musl-gcc CGO_ENABLED=1 go build -trimpath -cover -buildvcs=false -ldflags "-X 'main.version=race' -linkmode=external -extldflags '-static'" -race -o ./clickhouse-backup/clickhouse-backup-race ./cmd/clickhouse-backup
+RUN --mount=type=cache,id=clickhouse-backup-gobuild,target=/root/ GOOS=$( echo ${TARGETPLATFORM} | cut -d "/" -f 1) GOARCH=$( echo ${TARGETPLATFORM} | cut -d "/" -f 2) CGO_ENABLED=1 go build -trimpath -cover -buildvcs=false -tags netgo,osusergo -ldflags "-X 'main.version=race' -linkmode=external -extldflags '-static'" -race -o ./clickhouse-backup/clickhouse-backup-race ./cmd/clickhouse-backup
 RUN cp -l ./clickhouse-backup/clickhouse-backup-race /bin/clickhouse-backup && echo "$(ldd ./clickhouse-backup/clickhouse-backup-race 2>&1 || true)" | grep -c "not a dynamic executable"
-RUN --mount=type=cache,id=clickhouse-backup-gobuild,target=/root/ GOOS=$( echo ${TARGETPLATFORM} | cut -d "/" -f 1) GOARCH=$( echo ${TARGETPLATFORM} | cut -d "/" -f 2) GOEXPERIMENT=boringcrypto CC=musl-gcc CGO_ENABLED=1 go build -trimpath -cover -buildvcs=false -ldflags "-X 'main.version=race-fips' -linkmode=external -extldflags '-static'" -race -o ./clickhouse-backup/clickhouse-backup-race-fips ./cmd/clickhouse-backup
+RUN --mount=type=cache,id=clickhouse-backup-gobuild,target=/root/ GOOS=$( echo ${TARGETPLATFORM} | cut -d "/" -f 1) GOARCH=$( echo ${TARGETPLATFORM} | cut -d "/" -f 2) GOFIPS140=latest CGO_ENABLED=1 go build -trimpath -cover -buildvcs=false -tags netgo,osusergo -ldflags "-X 'main.version=race-fips' -linkmode=external -extldflags '-static'" -race -o ./clickhouse-backup/clickhouse-backup-race-fips ./cmd/clickhouse-backup
 RUN cp -l ./clickhouse-backup/clickhouse-backup-race-fips /bin/clickhouse-backup-fips && echo "$(ldd ./clickhouse-backup/clickhouse-backup-race-fips 2>&1 || true)" | grep -c "not a dynamic executable"
 COPY entrypoint.sh /entrypoint.sh
 
@@ -117,7 +117,7 @@ LABEL "org.opencontainers.image.title"="Altinity Backup for ClickHouse"
 LABEL "org.opencontainers.image.description"="A tool for easy ClickHouse backup and restore with support for many cloud and non-cloud storage types."
 LABEL "org.opencontainers.image.source"="https://github.com/Altinity/clickhouse-backup"
 LABEL "org.opencontainers.image.documentation"="https://github.com/Altinity/clickhouse-backup/blob/master/Manual.md"
-
+ENV GODEBUG="fips140=on"
 MAINTAINER Eugene Klimov <eklimov@altinity.com>
 COPY build/${TARGETPLATFORM}/clickhouse-backup-fips /bin/clickhouse-backup
 RUN chmod +x /bin/clickhouse-backup

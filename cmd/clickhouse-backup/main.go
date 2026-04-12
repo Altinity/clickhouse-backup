@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/fips140"
 	"fmt"
 	stdlog "log"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/rs/zerolog/log"
@@ -21,6 +23,7 @@ var (
 	version   = "unknown"
 	gitCommit = "unknown"
 	buildDate = "unknown"
+	buildArch = "unknown"
 )
 
 func main() {
@@ -67,6 +70,9 @@ func main() {
 		fmt.Println("Version:\t", c.App.Version)
 		fmt.Println("Git Commit:\t", gitCommit)
 		fmt.Println("Build Date:\t", buildDate)
+		fmt.Println("Runtime Architecture:\t", runtime.GOOS, "/", runtime.GOARCH)
+		fmt.Println("Build Architecture:\t", buildArch)
+		fmt.Println("FIPS 140-3:\t", fips140.Enabled())
 	}
 
 	cliapp.Commands = []cli.Command{

@@ -12,7 +12,7 @@ jobs:
     strategy:
       matrix:
         golang-version:
-          - "1.25"
+          - "1.26"
 
     steps:
       - name: Checkout project
@@ -55,7 +55,7 @@ jobs:
       - name: Prepare binaries
         id: make
         env:
-          GOROOT: ${{ env.GOROOT_1_25_X64 }}
+          GOROOT: ${{ env.GOROOT_1_26_X64 }}
         run: |
           make build build-fips config test
           #make build-fips-darwin
