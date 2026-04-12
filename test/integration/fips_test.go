@@ -27,7 +27,7 @@ func TestFIPS(t *testing.T) {
 	env.connectWithWait(t, r, 1*time.Second, 1*time.Second, 1*time.Minute)
 	fipsBackupName := fmt.Sprintf("fips_backup_%d", rand.Int())
 	env.DockerExecNoError(r, "clickhouse", "rm", "-fv", "/etc/apt/sources.list.d/clickhouse.list")
-	env.InstallDebIfNotExists(r, "clickhouse", "ca-certificates", "curl", "gettext-base", "bsdmainutils", "dnsutils", "git")
+	env.InstallDebIfNotExists(r, "clickhouse", "ca-certificates", "curl", "gettext-base", "binutils", "bsdmainutils", "dnsutils", "git")
 	env.DockerExecNoError(r, "clickhouse", "update-ca-certificates")
 	r.NoError(env.DockerCP("configs/config-s3-fips.yml", "clickhouse:/etc/clickhouse-backup/config.yml.fips-template"))
 	env.DockerExecNoError(r, "clickhouse", "git", "clone", "--depth", "1", "--branch", "v3.2rc3", "https://github.com/drwetter/testssl.sh.git", "/opt/testssl")

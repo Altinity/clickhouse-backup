@@ -27,10 +27,11 @@ jobs:
         with:
           go-version: '^${{ matrix.golang-version }}'
 
-      - name: Setup musl
-        id: setup-musl
-        run: |
-          sudo apt-get install -y musl-tools musl-dev
+# we don't need musl after switch go 1.26
+#      - name: Setup musl
+#        id: setup-musl
+#        run: |
+#          sudo apt-get install -y musl-tools musl-dev
 
 #      - name: Cache golang
 #        id: cache-golang
