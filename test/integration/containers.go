@@ -383,7 +383,11 @@ func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {
 		log.Error().Err(logErr).Msgf("can't get logs for %s", name)
 		return
 	}
-	defer reader.Close()
+	defer func() {
+		if closeErr := reader.Close(); closeErr != nil {
+			log.Error().Err(closeErr).Msg("can't close dumpContainerInfo reader")
+		}
+	}()
 	logBytes, _ := io.ReadAll(reader)
 	log.Error().Msgf("=== last 50 lines of %s logs ===\n%s", name, string(logBytes))
 }
@@ -633,7 +637,7 @@ func (tc *TestContainers) startZookeeper(ctx context.Context, configsDir string)
 	}
 	return tc.startContainer(ctx, "zookeeper",
 		&container.Config{
-			Image: fmt.Sprintf("%s:%s", getEnvDefault("ZOOKEEPER_IMAGE", "docker.io/zookeeper"), getEnvDefault("ZOOKEEPER_VERSION", "3.8.4")),
+			Image: fmt.Sprintf("%s:%s", getEnvDefault("ZOOKEEPER_IMAGE", "docker.io/zookeeper"), getEnvDefault("ZOOKEEPER_VERSION", "3.9.5")),
 			Env: envMap(map[string]string{
 				"ZOO_4LW_COMMANDS_WHITELIST": "*",
 			}),
@@ -706,7 +710,7 @@ func (tc *TestContainers) startPgSQL(ctx context.Context) error {
 
 func (tc *TestContainers) commonClickHouseEnv() map[string]string {
 	return map[string]string{
-		"CLICKHOUSE_VERSION":                   getEnvDefault("CLICKHOUSE_VERSION", "25.8"),
+		"CLICKHOUSE_VERSION":                   getEnvDefault("CLICKHOUSE_VERSION", "26.3"),
 		"CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS": "true",
 		"CLICKHOUSE_SKIP_USER_SETUP":           "1",
 		"TZ":                                   "UTC",
@@ -809,7 +813,7 @@ func (tc *TestContainers) clickHouseBinds(curDir, configsDir string) []string {
 func (tc *TestContainers) startClickHouse(ctx context.Context, curDir, configsDir string) error {
 	chImage := fmt.Sprintf("docker.io/%s:%s",
 		getEnvDefault("CLICKHOUSE_IMAGE", "clickhouse/clickhouse-server"),
-		getEnvDefault("CLICKHOUSE_VERSION", "25.8"))
+		getEnvDefault("CLICKHOUSE_VERSION", "26.3"))
 
 	env := tc.commonClickHouseEnv()
 	if tc.isAdvanced {
@@ -857,7 +861,7 @@ func (tc *TestContainers) startClickHouse(ctx context.Context, curDir, configsDi
 func (tc *TestContainers) startClickHouseBackup(ctx context.Context, curDir, configsDir string) error {
 	chImage := fmt.Sprintf("docker.io/%s:%s",
 		getEnvDefault("CLICKHOUSE_IMAGE", "clickhouse/clickhouse-server"),
-		getEnvDefault("CLICKHOUSE_VERSION", "25.8"))
+		getEnvDefault("CLICKHOUSE_VERSION", "26.3"))
 
 	env := tc.commonClickHouseEnv()
 

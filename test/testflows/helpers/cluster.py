@@ -841,11 +841,11 @@ class Cluster(object):
             with And("I list environment variables to show their values"):
                 self.command(None, "env | grep CLICKHOUSE")
 
-        clickhouse_version = os.environ.get("CLICKHOUSE_VERSION", "23.3")
+        clickhouse_version = os.environ.get("CLICKHOUSE_VERSION", "26.3")
         clickhouse_image = os.environ.get("CLICKHOUSE_IMAGE", "clickhouse/clickhouse-server")
-        zookeeper_version = os.environ.get("ZOOKEEPER_VERSION", "3.8.4")
+        zookeeper_version = os.environ.get("ZOOKEEPER_VERSION", "3.9.5")
         zookeeper_image = os.environ.get("ZOOKEEPER_IMAGE", "docker.io/zookeeper")
-        mysql_version = os.environ.get("MYSQL_VERSION", "8.0")
+        mysql_version = os.environ.get("MYSQL_VERSION", "latest")
         pgsql_version = os.environ.get("PGSQL_VERSION", "latest")
         minio_version = os.environ.get("MINIO_VERSION", "latest")
         tests_dir = os.environ.get("CLICKHOUSE_TESTS_DIR", self.configs_dir)
@@ -1101,7 +1101,7 @@ class Cluster(object):
         ch_image = f"{clickhouse_image}:{clickhouse_version}"
 
         # Find the install_delve.sh path
-        install_delve_path = os.path.normpath(os.path.join(tests_dir, "../../../test/integration/install_delve.sh"))
+        install_delve_path = os.path.normpath(os.path.join(tests_dir, "../../../test/integration/configs/install_delve.sh"))
 
         with And("starting clickhouse2"):
             ch2_volumes = ch_base_volumes + [

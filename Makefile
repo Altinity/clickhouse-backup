@@ -15,11 +15,13 @@ define DESC =
 endef
 HOST_OS = $(shell bash -c 'source <(go env) && echo $$GOHOSTOS')
 HOST_ARCH = $(shell bash -c 'source <(go env) && echo $$GOHOSTARCH')
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Linux)
+    LDFLAGS += -linkmode=external -extldflags '-static'
+endif
 GO_BUILD = go build -trimpath -buildvcs=false -tags netgo,osusergo -ldflags "-X 'main.version=$(VERSION)' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)' -X 'main.buildArch=$(HOST_OS)/$(HOST_ARCH)'"
-# GO_BUILD_STATIC = go build -trimpath -buildvcs=false -tags netgo,osusergo -ldflags "-X 'main.version=$(VERSION)' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)' -X 'main.buildArch=$(HOST_OS)/$(HOST_ARCH)' -linkmode=external -extldflags '-static'"
-GO_BUILD_STATIC = go build -trimpath -buildvcs=false -tags netgo,osusergo -ldflags "-X 'main.version=$(VERSION)' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)' -X 'main.buildArch=$(HOST_OS)/$(HOST_ARCH)'"
-# GO_BUILD_STATIC_FIPS = go build -trimpath -buildvcs=false -tags netgo,osusergo -a -ldflags "-X 'main.version=$(VERSION)-fips' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)' -X 'main.buildArch=$(HOST_OS)/$(HOST_ARCH)' -linkmode=external -extldflags '-static'"
-GO_BUILD_STATIC_FIPS = go build -trimpath -buildvcs=false -tags netgo,osusergo -a -ldflags "-X 'main.version=$(VERSION)-fips' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)' -X 'main.buildArch=$(HOST_OS)/$(HOST_ARCH)'"
+GO_BUILD_STATIC = go build -trimpath -buildvcs=false -tags netgo,osusergo -ldflags "-X 'main.version=$(VERSION)' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)' -X 'main.buildArch=$(HOST_OS)/$(HOST_ARCH)' $(LDFLAGS)"
+GO_BUILD_STATIC_FIPS = go build -trimpath -buildvcs=false -tags netgo,osusergo -a -ldflags "-X 'main.version=$(VERSION)-fips' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)' -X 'main.buildArch=$(HOST_OS)/$(HOST_ARCH)' $(LDFLAGS)"
 PKG_FILES = build/$(NAME)_$(VERSION).amd64.deb build/$(NAME)_$(VERSION).arm64.deb build/$(NAME)-$(VERSION)-1.amd64.rpm build/$(NAME)-$(VERSION)-1.arm64.rpm
 
 .PHONY: clean all version test
