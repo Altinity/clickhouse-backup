@@ -438,6 +438,31 @@ def _create_container(image, hostname, network, env=None, volumes=None, ports=No
     return container
 
 
+def _get_container_diagnostic(docker_client, container_id):
+    """Collect diagnostic info for an unhealthy container: health log, state, and tail of container logs."""
+    diag_lines = []
+    try:
+        info = docker_client.api.inspect_container(container_id)
+        name = info.get("Name", container_id)
+        state = info.get("State", {})
+        health = state.get("Health", {})
+        status = health.get("Status", "unknown")
+        diag_lines.append(f"--- Diagnostic for container {name} ({container_id[:12]}) ---")
+        diag_lines.append(f"State: Status={state.get('Status')}, Running={state.get('Running')}, "
+                          f"ExitCode={state.get('ExitCode')}, OOMKilled={state.get('OOMKilled')}")
+        diag_lines.append(f"Health: Status={status}")
+        for entry in health.get("Log", [])[-5:]:
+            diag_lines.append(f"  HealthCheck: ExitCode={entry.get('ExitCode')} Output={entry.get('Output', '').strip()}")
+    except Exception as e:
+        diag_lines.append(f"Failed to inspect container {container_id}: {e}")
+    try:
+        logs = docker_client.api.logs(container_id, tail=30, timestamps=True).decode("utf-8", errors="replace")
+        diag_lines.append(f"Container logs (last 30 lines):\n{logs}")
+    except Exception as e:
+        diag_lines.append(f"Failed to get container logs: {e}")
+    return "\n".join(diag_lines)
+
+
 def _wait_for_container_healthy(docker_client, container_id, timeout=120, poll_interval=3):
     """Wait until a container's health check reports 'healthy'."""
     start = time.time()
@@ -451,7 +476,8 @@ def _wait_for_container_healthy(docker_client, container_id, timeout=120, poll_i
         except Exception:
             pass
         time.sleep(poll_interval)
-    raise RuntimeError(f"Container {container_id} did not become healthy within {timeout}s")
+    diag = _get_container_diagnostic(docker_client, container_id)
+    raise RuntimeError(f"Container {container_id} did not become healthy within {timeout}s\n{diag}")
 
 
 class Cluster(object):
@@ -593,7 +619,36 @@ class Cluster(object):
                 self.close_control_shell()
                 timeout = timeout - (time.time() - time_start)
                 if timeout <= 0:
+                    self._dump_container_logs_shell(node)
                     raise RuntimeError(f"failed to get docker container healthy status for the {node} service")
+
+    def _dump_container_logs_shell(self, node):
+        """Dump container logs and health status via shell when docker client is not available."""
+        try:
+            cid = self.get_container_id(node)
+            note(f"--- Diagnostic for {node} (shell fallback) ---")
+            c = self.control_shell(f"docker inspect --format '{{{{.State.Status}}}} Health={{{{.State.Health.Status}}}}' {cid}", timeout=30)
+            if c.exitcode == 0:
+                note(f"Container state: {c.output.strip()}")
+            c = self.control_shell(f"docker logs --tail 30 --timestamps {cid}", timeout=30)
+            if c.exitcode == 0:
+                note(f"Container logs (last 30 lines):\n{c.output}")
+        except Exception as e:
+            note(f"Failed to collect diagnostic for {node}: {e}")
+
+    def _dump_all_container_diagnostics(self):
+        """Dump diagnostic info for all tracked containers on cluster startup failure."""
+        if not self._docker_client:
+            note("Docker client not available, skipping container diagnostics")
+            return
+        note("=== Container diagnostics for all tracked containers ===")
+        for name, cid in self._container_ids.items():
+            try:
+                diag = _get_container_diagnostic(self._docker_client, cid)
+                note(diag)
+            except Exception as e:
+                note(f"Failed to get diagnostic for {name}: {e}")
+        note("=== End container diagnostics ===")
 
     def shell(self, node, timeout=300):
         """Returns unique shell terminal to be used.
@@ -875,6 +930,7 @@ class Cluster(object):
                         break
                     except Exception as e:
                         note(f"Attempt {attempt} failed: {e}")
+                        self._dump_all_container_diagnostics()
                         self._do_down()
                         if attempt >= max_attempts - 1:
                             fail(f"could not bring up testcontainers cluster after {max_attempts} attempts")

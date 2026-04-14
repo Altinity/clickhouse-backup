@@ -48,7 +48,7 @@ def regression(self, local):
     }
 
     # Create per-process backup config dir to avoid races in parallel runs
-    cwd = os.environ.get('CLICKHOUSE_TESTS_DIR') if os.environ.get('CLICKHOUSE_TESTS_DIR') else os.getcwd()
+    cwd = os.environ.get('CLICKHOUSE_TESTS_DIR') if os.environ.get('CLICKHOUSE_TESTS_DIR') else os.path.dirname(os.path.abspath(__file__))
     base_config_dir = f"{cwd}/configs/backup"
     config_dir = f"{cwd}/configs/backup_{os.getpid()}"
     shutil.copytree(base_config_dir, config_dir, dirs_exist_ok=True)

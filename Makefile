@@ -21,7 +21,6 @@ ifeq ($(UNAME_S),Linux)
 endif
 GO_BUILD = go build -trimpath -buildvcs=false -tags netgo,osusergo -ldflags "-X 'main.version=$(VERSION)' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)' -X 'main.buildArch=$(HOST_OS)/$(HOST_ARCH)'"
 GO_BUILD_STATIC = go build -trimpath -buildvcs=false -tags netgo,osusergo -ldflags "-X 'main.version=$(VERSION)' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)' -X 'main.buildArch=$(HOST_OS)/$(HOST_ARCH)' $(LDFLAGS)"
-GO_BUILD_STATIC_FIPS = go build -trimpath -buildvcs=false -tags netgo,osusergo -a -ldflags "-X 'main.version=$(VERSION)-fips' -X 'main.gitCommit=$(GIT_COMMIT)' -X 'main.buildDate=$(DATE)' -X 'main.buildArch=$(HOST_OS)/$(HOST_ARCH)' $(LDFLAGS)"
 PKG_FILES = build/$(NAME)_$(VERSION).amd64.deb build/$(NAME)_$(VERSION).arm64.deb build/$(NAME)-$(VERSION)-1.amd64.rpm build/$(NAME)-$(VERSION)-1.arm64.rpm
 
 .PHONY: clean all version test
@@ -61,7 +60,7 @@ build/linux/amd64/$(NAME)-fips build/linux/arm64/$(NAME)-fips: GOOS = linux
 build/darwin/amd64/$(NAME)-fips build/darwin/arm64/$(NAME)-fips: GOOS = darwin
 
 build/linux/amd64/$(NAME)-fips build/darwin/amd64/$(NAME)-fips build/linux/arm64/$(NAME)-fips build/darwin/arm64/$(NAME)-fips:
-	GOFIPS140=latest CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO_BUILD_STATIC_FIPS) -o $@ ./cmd/$(NAME) && \
+	GOFIPS140=latest CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO_BUILD) -o $@ ./cmd/$(NAME) && \
 	go tool nm $@ > /tmp/$(NAME)-fips-tags.txt && \
 	grep 'fips140' /tmp/$(NAME)-fips-tags.txt 1> /dev/null && \
 	rm -fv /tmp/$(NAME)-fips-tags.txt
@@ -124,7 +123,7 @@ $(NAME)/$(NAME)-race:
 build-race-fips: $(NAME)/$(NAME)-race-fips
 
 $(NAME)/$(NAME)-race-fips:
-	GOFIPS140=latest CGO_ENABLED=1 $(GO_BUILD_STATIC_FIPS) -cover -gcflags "all=-N -l" -race -o $@ ./cmd/$(NAME)
+	GOFIPS140=latest CGO_ENABLED=1 $(GO_BUILD_STATIC) -cover -gcflags "all=-N -l" -race -o $@ ./cmd/$(NAME)
 
 
 # run `docker buildx create --use` first time
