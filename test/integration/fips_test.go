@@ -36,7 +36,7 @@ func TestFIPS(t *testing.T) {
 	// P0: Verify binary version contains -fips suffix
 	fipsVersion, err := env.DockerExecOut("clickhouse", "bash", "-ce", "clickhouse-backup-fips --version 2>&1")
 	r.NoError(err, "unexpected clickhouse-backup-fips --version error: %v", err)
-	r.Contains(fipsVersion, "-fips", "FIPS binary version should contain -fips suffix, got: %s", fipsVersion)
+	r.Contains(fipsVersion, "FIPS 140-3:\t true", "FIPS binary version should contain 'FIPS 140-3: true' suffix, got: %s", fipsVersion)
 
 	// P0: Integrity self-check — binary starts without panic in FIPS mode
 	fipsSelfCheck, err := env.DockerExecOut("clickhouse", "bash", "-ce", "GODEBUG=fips140=on clickhouse-backup-fips --version 2>&1")
