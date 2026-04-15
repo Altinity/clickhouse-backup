@@ -53,7 +53,7 @@ func TestFIPS(t *testing.T) {
 	r.Contains(fipsOnlyCheck, "FIPS 140-3:\t true", "FIPS 140-3 should be enabled in fips140=only mode, got: %s", fipsOnlyCheck)
 
 	// P2: Verify binary contains fips140 symbols
-	fipsSymbols, err := env.DockerExecOut("clickhouse", "bash", "-ce", "strings /bin/clickhouse-backup-fips | grep -c 'crypto/internal/fips140'")
+	fipsSymbols, err := env.DockerExecOut("clickhouse", "bash", "-ce", "strings /usr/bin/clickhouse-backup-fips | grep -c 'crypto/internal/fips140'")
 	r.NoError(err, "unexpected strings/grep error: %v", err)
 	fipsSymbolCount, convErr := strconv.Atoi(strings.TrimSpace(fipsSymbols))
 	r.NoError(convErr, "unexpected Atoi error for fipsSymbols=%q: %v", fipsSymbols, convErr)
