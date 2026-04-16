@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
@@ -35,6 +36,50 @@ type ClickHouse struct {
 	version             int
 	IsOpen              bool
 	BreakConnectOnError bool
+}
+
+// zerologSlogHandler adapts slog.Handler interface to write through zerolog.
+// Used to bridge clickhouse-go v2 Logger (*slog.Logger) to zerolog.
+type zerologSlogHandler struct {
+	attrs []slog.Attr
+}
+
+func (h *zerologSlogHandler) Enabled(_ context.Context, level slog.Level) bool {
+	return zerolog.GlobalLevel() <= slogToZerologLevel(level)
+}
+
+func (h *zerologSlogHandler) Handle(_ context.Context, record slog.Record) error {
+	event := log.WithLevel(slogToZerologLevel(record.Level))
+	for _, attr := range h.attrs {
+		event = event.Str(attr.Key, attr.Value.String())
+	}
+	record.Attrs(func(attr slog.Attr) bool {
+		event = event.Str(attr.Key, attr.Value.String())
+		return true
+	})
+	event.Msg(record.Message)
+	return nil
+}
+
+func (h *zerologSlogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return &zerologSlogHandler{attrs: append(h.attrs, attrs...)}
+}
+
+func (h *zerologSlogHandler) WithGroup(_ string) slog.Handler {
+	return h
+}
+
+func slogToZerologLevel(level slog.Level) zerolog.Level {
+	switch {
+	case level >= slog.LevelError:
+		return zerolog.ErrorLevel
+	case level >= slog.LevelWarn:
+		return zerolog.WarnLevel
+	case level >= slog.LevelInfo:
+		return zerolog.InfoLevel
+	default:
+		return zerolog.DebugLevel
+	}
 }
 
 func NewClickHouse(cfg *config.ClickHouseConfig) *ClickHouse {
@@ -82,7 +127,7 @@ func (ch *ClickHouse) Connect() error {
 	}
 
 	if ch.Config.Debug {
-		opt.Debug = true
+		opt.Logger = slog.New(&zerologSlogHandler{})
 	}
 
 	if ch.Config.Secure {
@@ -1111,16 +1156,6 @@ func (ch *ClickHouse) enrichQueryWithOnCluster(query string, onCluster string, v
 	return query
 }
 
-// Deprecated: use AnalyzerOffContextIfNecessary + QueryContext instead.
-func (ch *ClickHouse) TurnAnalyzerOnIfNecessary(version int, query string, allowExperimentalAnalyzer string) error {
-	return nil
-}
-
-// Deprecated: use AnalyzerOffContextIfNecessary + QueryContext instead.
-func (ch *ClickHouse) TurnAnalyzerOffIfNecessary(version int, query string, allowExperimentalAnalyzer string) (string, error) {
-	return "", nil
-}
-
 // AnalyzerOffContextIfNecessary returns a context with allow_experimental_analyzer=0 setting
 // attached via clickhouse.Context+WithSettings, so the setting is sent in the same packet
 // as the query. This avoids the race condition where SET on a pooled connection may not
@@ -1348,8 +1383,8 @@ func (ch *ClickHouse) ApplyMacrosToObjectLabels(ctx context.Context, objectLabel
 }
 
 func (ch *ClickHouse) ApplyMutation(ctx context.Context, tableMetadata metadata.TableMetadata, mutation metadata.MutationMetadata) error {
-	applyMutatoinSQL := fmt.Sprintf("ALTER TABLE `%s`.`%s` %s", tableMetadata.Database, tableMetadata.Table, mutation.Command)
-	if err := ch.QueryContext(ctx, applyMutatoinSQL); err != nil {
+	applyMutationSQL := fmt.Sprintf("ALTER TABLE `%s`.`%s` %s", tableMetadata.Database, tableMetadata.Table, mutation.Command)
+	if err := ch.QueryContext(ctx, applyMutationSQL); err != nil {
 		return errors.WithMessage(err, "ApplyMutation")
 	}
 	return nil

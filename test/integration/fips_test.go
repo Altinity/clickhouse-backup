@@ -18,7 +18,7 @@ import (
 
 func TestFIPS(t *testing.T) {
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "19.17") <= 0 {
-		t.Skip("go 1.25 with boringcrypto stop works for 19.17, works only for 20.1+")
+		t.Skip("go 1.26 with boringcrypto stop works for 19.17, works only for 20.1+")
 	}
 	if os.Getenv("QA_AWS_ACCESS_KEY") == "" {
 		t.Skip("QA_AWS_ACCESS_KEY is empty, TestFIPS will skip")
@@ -27,11 +27,37 @@ func TestFIPS(t *testing.T) {
 	env.connectWithWait(t, r, 1*time.Second, 1*time.Second, 1*time.Minute)
 	fipsBackupName := fmt.Sprintf("fips_backup_%d", rand.Int())
 	env.DockerExecNoError(r, "clickhouse", "rm", "-fv", "/etc/apt/sources.list.d/clickhouse.list")
-	env.InstallDebIfNotExists(r, "clickhouse", "ca-certificates", "curl", "gettext-base", "bsdmainutils", "dnsutils", "git")
+	env.InstallDebIfNotExists(r, "clickhouse", "ca-certificates", "curl", "gettext-base", "binutils", "bsdmainutils", "dnsutils", "git")
 	env.DockerExecNoError(r, "clickhouse", "update-ca-certificates")
 	r.NoError(env.DockerCP("configs/config-s3-fips.yml", "clickhouse:/etc/clickhouse-backup/config.yml.fips-template"))
 	env.DockerExecNoError(r, "clickhouse", "git", "clone", "--depth", "1", "--branch", "v3.2rc3", "https://github.com/drwetter/testssl.sh.git", "/opt/testssl")
 	env.DockerExecNoError(r, "clickhouse", "chmod", "+x", "/opt/testssl/testssl.sh")
+
+	// P0: Verify binary version contains -fips suffix
+	fipsVersion, err := env.DockerExecOut("clickhouse", "bash", "-ce", "clickhouse-backup-fips --version 2>&1")
+	r.NoError(err, "unexpected clickhouse-backup-fips --version error: %v", err)
+	r.Contains(fipsVersion, "FIPS 140-3:\t true", "FIPS binary version should contain 'FIPS 140-3: true' suffix, got: %s", fipsVersion)
+
+	// P0: Integrity self-check — binary starts without panic in FIPS mode
+	fipsSelfCheck, err := env.DockerExecOut("clickhouse", "bash", "-ce", "GODEBUG=fips140=on clickhouse-backup-fips --version 2>&1")
+	r.NoError(err, "unexpected FIPS self-check error: %v", err)
+	r.NotContains(fipsSelfCheck, "panic", "FIPS binary should not panic during integrity self-check")
+
+	// P0: Verify crypto/fips140.Enabled() reports true via version output
+	r.Contains(fipsSelfCheck, "FIPS 140-3:\t true", "FIPS 140-3 should be enabled when GODEBUG=fips140=on, got: %s", fipsSelfCheck)
+
+	// P1: Verify GODEBUG=fips140=only (strict mode) — non-FIPS crypto returns errors
+	fipsOnlyCheck, err := env.DockerExecOut("clickhouse", "bash", "-ce", "GODEBUG=fips140=only clickhouse-backup-fips --version 2>&1")
+	r.NoError(err, "unexpected FIPS only mode error: %v", err)
+	r.NotContains(fipsOnlyCheck, "panic", "FIPS binary should not panic in fips140=only mode")
+	r.Contains(fipsOnlyCheck, "FIPS 140-3:\t true", "FIPS 140-3 should be enabled in fips140=only mode, got: %s", fipsOnlyCheck)
+
+	// P2: Verify binary contains fips140 symbols
+	fipsSymbols, err := env.DockerExecOut("clickhouse", "bash", "-ce", "strings /usr/bin/clickhouse-backup-fips | grep -c 'crypto/internal/fips140'")
+	r.NoError(err, "unexpected strings/grep error: %v", err)
+	fipsSymbolCount, convErr := strconv.Atoi(strings.TrimSpace(fipsSymbols))
+	r.NoError(convErr, "unexpected Atoi error for fipsSymbols=%q: %v", fipsSymbols, convErr)
+	r.Greater(fipsSymbolCount, 0, "binary should contain crypto/internal/fips140 symbols")
 
 	generateCerts := func(certType, keyLength, curveType string) {
 		env.DockerExecNoError(r, "clickhouse", "bash", "-xce", "openssl rand -out /root/.rnd 2048")
@@ -93,6 +119,12 @@ func TestFIPS(t *testing.T) {
 		r.NoError(err, "%s\nunexpected grep testssl.csv error: %v", out, err)
 		r.Equal(strconv.Itoa(len(cipherList)), strings.Trim(out, " \t\r\n"))
 
+		// P1: Negative test — non-FIPS ciphers (RC4, DES, 3DES, CHACHA, NULL) should NOT be offered
+		nonFipsOut, nonFipsErr := env.DockerExecOut("clickhouse", "bash", "-ce", "grep -v 'not offered' /tmp/testssl.csv | grep -c -i -E '(RC4|TRIPLEDES|DES-CBC|CHACHA|NULL)' || true")
+		r.NoError(nonFipsErr, "%s\nunexpected grep non-FIPS ciphers error: %v", nonFipsOut, nonFipsErr)
+		nonFipsCount, _ := strconv.Atoi(strings.TrimSpace(nonFipsOut))
+		r.Equal(0, nonFipsCount, "non-FIPS ciphers (RC4/DES/3DES/CHACHA/NULL) should not be offered by FIPS server, found %d matches", nonFipsCount)
+
 		inProgressActions := make([]struct {
 			Command string `ch:"command"`
 			Status  string `ch:"status"`
@@ -104,6 +136,15 @@ func TestFIPS(t *testing.T) {
 		r.Equal(0, len(inProgressActions), "inProgressActions=%+v", inProgressActions)
 		env.DockerExecNoError(r, "clickhouse", "pkill", "-n", "-f", "clickhouse-backup-fips")
 	}
+	// P1: Test create_remote + restore_remote in strict GODEBUG=fips140=only mode
+	// @todo think about FIPS clickhouse-server, which not supported by GODEBUG=fips140=only
+	// fipsOnlyBackupName := fmt.Sprintf("fips_only_backup_%d", rand.Int())
+	//env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "GODEBUG=fips140=only clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml create_remote --tables="+t.Name()+".fips_table "+fipsOnlyBackupName)
+	//env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "GODEBUG=fips140=only clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml delete local "+fipsOnlyBackupName)
+	//env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "GODEBUG=fips140=only clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml restore_remote --tables="+t.Name()+".fips_table "+fipsOnlyBackupName)
+	//env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "GODEBUG=fips140=only clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml delete local "+fipsOnlyBackupName)
+	//env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "GODEBUG=fips140=only clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml delete remote "+fipsOnlyBackupName)
+
 	// https://www.perplexity.ai/search/0920f1e8-59ec-4e14-b779-ba7b2e037196
 	testTLSCerts("rsa", "4096", "", "ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-AES256-GCM-SHA384", "AES_128_GCM_SHA256", "AES_256_GCM_SHA384")
 	testTLSCerts("ecdsa", "", "prime256v1", "ECDHE-ECDSA-AES128-GCM-SHA256", "ECDHE-ECDSA-AES256-GCM-SHA384")

@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -55,7 +56,11 @@ func TestShadowCleanup(t *testing.T) {
 	r.Empty(strings.TrimSpace(out), "explicit clean should remove all shadows, but found: %s", out)
 
 	log.Debug().Msg("Cleanup")
-	env.queryWithNoError(r, "DROP TABLE IF EXISTS default.shadow_test NO DELAY")
+	dropQuery := "DROP TABLE IF EXISTS default.shadow_test"
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.3") > 0 {
+		dropQuery += " NO DELAY"
+	}
+	env.queryWithNoError(r, dropQuery)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "delete", "local", backupName)
 }
 
@@ -97,7 +102,11 @@ func TestShadowCleanupOnFailure(t *testing.T) {
 	r.Empty(filtered, "only foreign_shadow_fail and increment.txt should remain in shadow after failed backup, but found: %s", filtered)
 
 	log.Debug().Msg("Cleanup")
-	env.queryWithNoError(r, "DROP TABLE IF EXISTS default.shadow_fail_test NO DELAY")
+	dropQuery := "DROP TABLE IF EXISTS default.shadow_fail_test"
+	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "20.3") > 0 {
+		dropQuery += " NO DELAY"
+	}
+	env.queryWithNoError(r, dropQuery)
 	env.DockerExecNoError(r, "clickhouse-backup", "bash", "-c", fmt.Sprintf("rm -f /var/lib/clickhouse/backup/%s", failBackupName))
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "clean")
 }

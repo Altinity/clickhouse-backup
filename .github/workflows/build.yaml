@@ -16,7 +16,7 @@ jobs:
     strategy:
       matrix:
         golang-version:
-          - "1.25"
+          - "1.26"
     steps:
       - name: Checkout project
         uses: actions/checkout@v6
@@ -27,10 +27,11 @@ jobs:
         with:
           go-version: '^${{ matrix.golang-version }}'
 
-      - name: Setup musl
-        id: setup-musl
-        run: |
-          sudo apt-get install -y musl-tools musl-dev
+# we don't need musl after switch go 1.26
+#      - name: Setup musl
+#        id: setup-musl
+#        run: |
+#          sudo apt-get install -y musl-tools musl-dev
 
 #      - name: Cache golang
 #        id: cache-golang
@@ -49,7 +50,7 @@ jobs:
       - name: Build clickhouse-backup binary
         id: make-race
         env:
-          GOROOT: ${{ env.GOROOT_1_25_X64 }}
+          GOROOT: ${{ env.GOROOT_1_26_X64 }}
         run: |
           make build/linux/amd64/clickhouse-backup build/linux/arm64/clickhouse-backup
           make build/linux/amd64/clickhouse-backup-fips build/linux/arm64/clickhouse-backup-fips 
@@ -100,7 +101,7 @@ jobs:
       fail-fast: false
       matrix:
         golang-version:
-          - "1.25"
+          - "1.26"
         clickhouse:
           - '22.3'
           - '22.8'
@@ -158,7 +159,7 @@ jobs:
           RUN_PARALLEL: 3
           DEBUG: 1
           NO_COLORS: 1
-          GOROOT: ${{ env.GOROOT_1_25_X64 }}
+          GOROOT: ${{ env.GOROOT_1_26_X64 }}
           # don't change it to avoid not working CI/CD
           RUN_TESTS: "*"
         run: |
@@ -197,7 +198,7 @@ jobs:
       fail-fast: false
       matrix:
         golang-version:
-          - "1.25"
+          - "1.26"
         clickhouse:
           - '1.1.54394'
           - '19.17'
@@ -247,12 +248,13 @@ jobs:
       - name: Running integration tests
         env:
           RUN_PARALLEL: 4
-          GOROOT: ${{ env.GOROOT_1_25_X64 }}
+          GOROOT: ${{ env.GOROOT_1_26_X64 }}
           CLICKHOUSE_VERSION: ${{ matrix.clickhouse }}
-          LOG_LEVEL: "info"
-          TEST_LOG_LEVEL: "debug"
+          # LOG_LEVEL: "info"
+          # TEST_LOG_LEVEL: "debug"
           # options for advanced debug CI/CD
           # RUN_TESTS: "^TestSkipDisk$"
+          # CLICKHOUSE_DEBUG: "true"
           # GCS_DEBUG: "true"
           # SFTP_DEBUG: "true"
           # AZBLOB_DEBUG: "true"
@@ -300,7 +302,7 @@ jobs:
 
       - name: Format integration coverage
         env:
-          GOROOT: ${{ env.GOROOT_1_25_X64 }}
+          GOROOT: ${{ env.GOROOT_1_26_X64 }}
         run: |
           sudo chmod -Rv a+rw test/integration/_coverage_/
           ls -la test/integration/_coverage_ 

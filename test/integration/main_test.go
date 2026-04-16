@@ -65,16 +65,26 @@ func TestMain(m *testing.M) {
 
 	code := m.Run()
 
-	// Stop all envs in parallel
-	var stopWg sync.WaitGroup
-	for _, tc := range allContainers {
-		stopWg.Add(1)
-		go func(tc *TestContainers) {
-			defer stopWg.Done()
-			tc.StopAll(ctx)
-		}(tc)
+	cleanupOnFail := os.Getenv("CLEANUP_ON_FAIL") != "0"
+	if code == 0 || cleanupOnFail {
+		// Stop all envs in parallel
+		var stopWg sync.WaitGroup
+		for _, tc := range allContainers {
+			stopWg.Add(1)
+			go func(tc *TestContainers) {
+				defer stopWg.Done()
+				tc.StopAll(ctx)
+			}(tc)
+		}
+		stopWg.Wait()
+	} else {
+		log.Warn().Msg("tests failed and CLEANUP_ON_FAIL=0, keeping containers running for debugging")
+		for _, tc := range allContainers {
+			for name, info := range tc.containers {
+				log.Warn().Msgf("  container %s id=%s still running", name, info.ID[:12])
+			}
+		}
 	}
-	stopWg.Wait()
 	os.Exit(code)
 }
 
@@ -83,12 +93,12 @@ func TestMain(m *testing.M) {
 func prePullImages() {
 	chImage := fmt.Sprintf("docker.io/%s:%s",
 		getEnvDefault("CLICKHOUSE_IMAGE", "clickhouse/clickhouse-server"),
-		getEnvDefault("CLICKHOUSE_VERSION", "25.8"))
+		getEnvDefault("CLICKHOUSE_VERSION", "26.3"))
 	keeperImage := fmt.Sprintf("docker.io/clickhouse/clickhouse-keeper:%s",
 		getEnvDefault("CLICKHOUSE_KEEPER_VERSION", "latest-alpine"))
 	zkImage := fmt.Sprintf("%s:%s",
 		getEnvDefault("ZOOKEEPER_IMAGE", "docker.io/zookeeper"),
-		getEnvDefault("ZOOKEEPER_VERSION", "3.8.4"))
+		getEnvDefault("ZOOKEEPER_VERSION", "3.9.5"))
 
 	images := []string{
 		"docker.io/panubo/sshd:latest",
