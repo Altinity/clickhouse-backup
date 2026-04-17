@@ -53,6 +53,8 @@ type BackupDestination struct {
 }
 
 var metadataCacheLock sync.RWMutex
+var backupListCache = make(map[string][]Backup)
+var backupListCacheLock sync.RWMutex
 
 func (bd *BackupDestination) RemoveBackupRemote(ctx context.Context, backup Backup, cfg *config.Config, retrierClassifier retrier.Classifier) error {
 	retry := retrier.New(retrier.ExponentialBackoff(cfg.General.RetriesOnFailure, common.AddRandomJitter(cfg.General.RetriesDuration, cfg.General.RetriesJitter)), retrierClassifier)
@@ -218,6 +220,19 @@ func (bd *BackupDestination) saveMetadataCache(ctx context.Context, listCache ma
 
 func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool, parseMetadataOnly string) ([]Backup, error) {
 	backupListStart := time.Now()
+
+	// Check in-memory cache first for single backup requests
+	if parseMetadataOnly != "" {
+		backupListCacheLock.RLock()
+		cacheKey := bd.Kind() + ":" + parseMetadataOnly
+		if cachedList, ok := backupListCache[cacheKey]; ok {
+			backupListCacheLock.RUnlock()
+			log.Debug().Str("backup", parseMetadataOnly).Msg("BackupList: using in-memory cache")
+			return cachedList, nil
+		}
+		backupListCacheLock.RUnlock()
+	}
+
 	defer func() {
 		log.Info().Dur("list_duration", time.Since(backupListStart)).Send()
 	}()
@@ -322,7 +337,23 @@ func (bd *BackupDestination) BackupList(ctx context.Context, parseMetadata bool,
 			return nil, errors.Wrap(err, "bd.saveMetadataCache return error")
 		}
 	}
+
+	// Save to in-memory cache for single backup requests
+	if parseMetadataOnly != "" && len(result) > 0 {
+		backupListCacheLock.Lock()
+		cacheKey := bd.Kind() + ":" + parseMetadataOnly
+		backupListCache[cacheKey] = result
+		backupListCacheLock.Unlock()
+	}
+
 	return result, nil
+}
+
+// ClearBackupListCache clears the in-memory cache of backup lists
+func ClearBackupListCache() {
+	backupListCacheLock.Lock()
+	defer backupListCacheLock.Unlock()
+	backupListCache = make(map[string][]Backup)
 }
 
 func (bd *BackupDestination) DownloadCompressedStream(ctx context.Context, remotePath string, localPath string, maxSpeed uint64) (int64, error) {
