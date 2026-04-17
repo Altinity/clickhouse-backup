@@ -88,7 +88,23 @@ func TestFIPS(t *testing.T) {
 
 	log.Debug().Msg("Run `clickhouse-backup-fips server` in background")
 	env.DockerExecBackgroundNoError(r, "clickhouse", "bash", "-ce", "AWS_USE_FIPS_ENDPOINT=true clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml server &>>/tmp/clickhouse-backup-server-fips.log")
-	time.Sleep(1 * time.Second)
+
+	// Wait until the API server is fully ready: HTTP listener on :7172 is up AND
+	// `system.backup_actions` integration table has been registered. Otherwise the
+	// client `INSERT INTO system.backup_actions` below races the server startup and
+	// fails with `Code 60: UNKNOWN_TABLE`.
+	fipsReadyDeadline := time.Now().Add(30 * time.Second)
+	for {
+		httpOut, _ := env.DockerExecOut("clickhouse", "bash", "-ce", "curl -sf -o /dev/null -w '%{http_code}' http://localhost:7172/backup/actions || true")
+		tblOut, _ := env.DockerExecOut("clickhouse", "bash", "-ce", "clickhouse client -q 'EXISTS TABLE system.backup_actions' 2>/dev/null || true")
+		if strings.HasPrefix(strings.TrimSpace(httpOut), "2") && strings.TrimSpace(tblOut) == "1" {
+			break
+		}
+		if time.Now().After(fipsReadyDeadline) {
+			r.FailNow("clickhouse-backup-fips server did not become ready in 30s", "http=%q table_exists=%q", httpOut, tblOut)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 
 	runClickHouseClientInsertSystemBackupActions(r, env, []string{fmt.Sprintf("create_remote --tables="+t.Name()+".fips_table %s", fipsBackupName)}, true)
 	runClickHouseClientInsertSystemBackupActions(r, env, []string{fmt.Sprintf("delete local %s", fipsBackupName)}, false)
