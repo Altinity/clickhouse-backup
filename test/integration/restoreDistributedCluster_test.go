@@ -32,13 +32,19 @@ func TestRestoreDistributedCluster(t *testing.T) {
 `
 
 	env.DockerExecNoError(r, "clickhouse", "bash", "-c", fmt.Sprintf("echo -n '%s' > /etc/clickhouse-server/config.d/new-cluster.xml", xml))
+	// auto-detection of config.d/*.xml is unreliable across ClickHouse versions (esp. 26.x), trigger explicit reload
+	for j := 0; j < 3; j++ {
+		env.queryWithNoError(r, "SYSTEM RELOAD CONFIG")
+		time.Sleep(1 * time.Second)
+	}
 	var clusterExists string
-	for i := 0; i < 10 && clusterExists == ""; i++ {
+	for i := 0; i < 60 && clusterExists != "new_cluster"; i++ {
+		env.queryWithNoError(r, "SYSTEM RELOAD CONFIG")
 		r.NoError(env.ch.SelectSingleRowNoCtx(&clusterExists, "SELECT cluster FROM system.clusters WHERE cluster='new_cluster'"))
 		if clusterExists == "new_cluster" {
 			break
 		}
-		time.Sleep(1 * time.Second)
+		time.Sleep(3 * time.Second)
 	}
 	r.Equal("new_cluster", clusterExists)
 
