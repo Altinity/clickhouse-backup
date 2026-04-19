@@ -91,6 +91,12 @@ func TestRestoreDistributedCluster(t *testing.T) {
 			if newClusterExists == 0 {
 				break
 			}
+			// ClickHouse 26.x caches system.clusters independently of the preprocessed config;
+			// treat absence from preprocessed config as authoritative removal confirmation
+			if _, grepErr := env.DockerExecOut("clickhouse", "grep", "new_cluster", "/var/lib/clickhouse/preprocessed_configs/config.xml"); grepErr != nil {
+				newClusterExists = 0
+				break
+			}
 			time.Sleep(3 * time.Second)
 		}
 		out, err := env.DockerExecOut("clickhouse", "grep", "-A10", "new_cluster", "/var/lib/clickhouse/preprocessed_configs/config.xml")
