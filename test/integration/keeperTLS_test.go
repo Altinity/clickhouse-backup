@@ -45,8 +45,7 @@ func TestKeeperTLS(t *testing.T) {
 	backupName := "test_keeper_tls_backup"
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "create", "--rbac", backupName)
 	out, err := env.DockerExecOut("clickhouse-backup", "ls", "-laR", fmt.Sprintf("/var/lib/clickhouse/backup/%s/", backupName))
-	r.NoError(err)
-	t.Logf("Backup directory content:\n%s", out)
+	r.NoError(err, "unexpected ls -laR error %s", out)
 
 	// clean and restore
 	r.NoError(env.dropDatabase(dbName, false))

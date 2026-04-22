@@ -316,6 +316,10 @@ func MoveShadowToBackup(shadowPath, backupPartsPath string, partitionsBackupMap 
 		}
 		dstFilePath := filepath.Join(backupPartsPath, pathParts[3])
 		if info.IsDir() {
+			// skip detached directory - it is not a data part
+			if pathParts[3] == "detached" {
+				return filepath.SkipDir
+			}
 			if !strings.HasSuffix(pathParts[3], ".proj") && !isRequiredPartFound && !partExists {
 				parts = append(parts, metadata.Part{
 					Name: pathParts[3],

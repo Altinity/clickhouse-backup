@@ -11,7 +11,11 @@ import (
 // https://github.com/Altinity/clickhouse-backup/issues/1265
 func TestSkipEmptyTables(t *testing.T) {
 	env, r := NewTestEnvironment(t)
+	defer env.Cleanup(t, r)
 	env.connectWithWait(t, r, 0*time.Second, 1*time.Second, 1*time.Minute)
+
+	// Clean up any leftover state from previous failed runs
+	_ = env.dropDatabase("test_skip_empty", true)
 
 	// Create test database with tables - one with data and one empty
 	env.queryWithNoError(r, "CREATE DATABASE IF NOT EXISTS test_skip_empty")
@@ -25,6 +29,16 @@ func TestSkipEmptyTables(t *testing.T) {
 
 	// Drop tables
 	r.NoError(env.dropDatabase("test_skip_empty", false))
+	// Wait for all ON CLUSTER DDL tasks to finish before recreating the database,
+	// to prevent stale CREATE TABLE tasks from replaying when the DB is recreated.
+	// Break immediately on error (table may not exist on older ClickHouse versions).
+	for attempt := 0; attempt < 30; attempt++ {
+		var pendingDDL uint64
+		if err := env.ch.SelectSingleRowNoCtx(&pendingDDL, "SELECT count() FROM system.distributed_ddl_queue WHERE status!='Finished'"); err != nil || pendingDDL == 0 {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 
 	// Test restore without --skip-empty-tables (should restore both tables)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--rm", "test_skip_empty_backup")
@@ -46,6 +60,16 @@ func TestSkipEmptyTables(t *testing.T) {
 
 	// Drop tables and test with --skip-empty-tables
 	r.NoError(env.dropDatabase("test_skip_empty", false))
+	// Wait for all ON CLUSTER DDL tasks to finish before recreating the database,
+	// to prevent stale CREATE TABLE tasks from replaying when the DB is recreated.
+	// Break immediately on error (table may not exist on older ClickHouse versions).
+	for attempt := 0; attempt < 30; attempt++ {
+		var pendingDDL uint64
+		if err := env.ch.SelectSingleRowNoCtx(&pendingDDL, "SELECT count() FROM system.distributed_ddl_queue WHERE status!='Finished'"); err != nil || pendingDDL == 0 {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 
 	// Test restore with --skip-empty-tables (should skip empty_table completely - both schema and data)
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore", "--rm", "--skip-empty-tables", "test_skip_empty_backup")
@@ -64,6 +88,16 @@ func TestSkipEmptyTables(t *testing.T) {
 
 	// Test restore_remote with --skip-empty-tables
 	r.NoError(env.dropDatabase("test_skip_empty", false))
+	// Wait for all ON CLUSTER DDL tasks to finish before recreating the database,
+	// to prevent stale CREATE TABLE tasks from replaying when the DB is recreated.
+	// Break immediately on error (table may not exist on older ClickHouse versions).
+	for attempt := 0; attempt < 30; attempt++ {
+		var pendingDDL uint64
+		if err := env.ch.SelectSingleRowNoCtx(&pendingDDL, "SELECT count() FROM system.distributed_ddl_queue WHERE status!='Finished'"); err != nil || pendingDDL == 0 {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_skip_empty_backup")
 
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "restore_remote", "--rm", "--skip-empty-tables", "test_skip_empty_backup")
@@ -80,5 +114,4 @@ func TestSkipEmptyTables(t *testing.T) {
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "local", "test_skip_empty_backup")
 	env.DockerExecNoError(r, "clickhouse-backup", "clickhouse-backup", "-c", "/etc/clickhouse-backup/config-s3.yml", "delete", "remote", "test_skip_empty_backup")
 	r.NoError(env.dropDatabase("test_skip_empty", false))
-	env.Cleanup(t, r)
 }
