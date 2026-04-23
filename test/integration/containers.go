@@ -377,7 +377,7 @@ func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {
 	}
 	log.Error().Msgf("=== container %s (%s) state: %s ===", name, info.ID[:12], state)
 
-	logOpts := container.LogsOptions{ShowStdout: true, ShowStderr: true, Tail: "50"}
+	logOpts := container.LogsOptions{ShowStdout: true, ShowStderr: true, Tail: "500"}
 	reader, logErr := tc.client.ContainerLogs(ctx, info.ID, logOpts)
 	if logErr != nil {
 		log.Error().Err(logErr).Msgf("can't get logs for %s", name)
@@ -389,7 +389,7 @@ func (tc *TestContainers) dumpContainerInfo(ctx context.Context, name string) {
 		}
 	}()
 	logBytes, _ := io.ReadAll(reader)
-	log.Error().Msgf("=== last 50 lines of %s logs ===\n%s", name, string(logBytes))
+	log.Error().Msgf("=== last 500 lines of %s logs ===\n%s", name, string(logBytes))
 }
 
 func (tc *TestContainers) startContainer(ctx context.Context, name string, cfg *container.Config, hostCfg *container.HostConfig, hostname string, extraAliases ...string) error {
@@ -421,7 +421,7 @@ func (tc *TestContainers) startContainer(ctx context.Context, name string, cfg *
 
 func (tc *TestContainers) pullImageIfNeeded(ctx context.Context, imageName string) {
 	// Check if image already exists locally to avoid unnecessary pull overhead
-	_, _, inspectErr := tc.client.ImageInspectWithRaw(ctx, imageName)
+	_, inspectErr := tc.client.ImageInspect(ctx, imageName)
 	if inspectErr == nil {
 		log.Debug().Msgf("image %s already exists locally, skipping pull", imageName)
 		return
