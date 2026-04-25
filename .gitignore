@@ -13,6 +13,7 @@ vendor/
 .aider*
 AGENTS.md
 CLAUDE.md
+GEMINI.md
 .qwen/
 .claude/
 .crush/
