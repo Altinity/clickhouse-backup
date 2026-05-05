@@ -6,12 +6,14 @@ import (
 	"fmt"
 	stdlog "log"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 
 	"github.com/rs/zerolog/log"
 	"github.com/urfave/cli"
 
+	"github.com/Altinity/clickhouse-backup/v2/pkg/acvpwrapper"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/backup"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/config"
 	"github.com/Altinity/clickhouse-backup/v2/pkg/log_helper"
@@ -30,6 +32,12 @@ func main() {
 	log.Logger = log_helper.SetupLogger(os.Stderr)
 	//log.Logger = zerolog.New(os.Stdout).With().Timestamp().Caller().Logger()
 	stdlog.SetOutput(log.Logger)
+	if filepath.Base(os.Args[0]) == "clickhouse-backup-acvp" {
+		if err := acvpwrapper.Run(os.Stdin, os.Stdout); err != nil {
+			log.Fatal().Stack().Err(err).Send()
+		}
+		return
+	}
 	cliapp := cli.NewApp()
 	cliapp.Name = "clickhouse-backup"
 	cliapp.Usage = "Tool for easy backup of ClickHouse with cloud support"
@@ -787,6 +795,14 @@ func main() {
 					Usage:  "explicitly delete local backup during upload",
 				},
 			),
+		},
+		{
+			Name:      "acvp",
+			Usage:     "Run ACVP wrapper protocol over stdin/stdout",
+			UsageText: "clickhouse-backup acvp",
+			Action: func(*cli.Context) error {
+				return acvpwrapper.Run(os.Stdin, os.Stdout)
+			},
 		},
 		{
 			Name:  "server",
