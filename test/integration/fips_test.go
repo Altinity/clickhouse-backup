@@ -155,14 +155,12 @@ func TestFIPS(t *testing.T) {
 		r.Equal(0, len(inProgressActions), "inProgressActions=%+v", inProgressActions)
 		env.DockerExecNoError(r, "clickhouse", "pkill", "-n", "-f", "clickhouse-backup-fips")
 	}
-	// P1: Test create_remote + restore_remote in strict GODEBUG=fips140=only mode
-	// @todo think about FIPS clickhouse-server, which not supported by GODEBUG=fips140=only
-	// fipsOnlyBackupName := fmt.Sprintf("fips_only_backup_%d", rand.Int())
-	//env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "GODEBUG=fips140=only clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml create_remote --tables="+t.Name()+".fips_table "+fipsOnlyBackupName)
-	//env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "GODEBUG=fips140=only clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml delete local "+fipsOnlyBackupName)
-	//env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "GODEBUG=fips140=only clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml restore_remote --tables="+t.Name()+".fips_table "+fipsOnlyBackupName)
-	//env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "GODEBUG=fips140=only clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml delete local "+fipsOnlyBackupName)
-	//env.DockerExecNoError(r, "clickhouse", "bash", "-ce", "GODEBUG=fips140=only clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml delete remote "+fipsOnlyBackupName)
+	// P1: Test create_remote doesn't work with clickhouse-server which not compatible with FIPS
+	fipsOnlyBackupName := fmt.Sprintf("fips_only_backup_%d", rand.Int())
+	out, err := env.DockerExecOut("clickhouse", "bash", "-ce", "GODEBUG=fips140=only clickhouse-backup-fips -c /etc/clickhouse-backup/config-s3-fips.yml create_remote --tables="+t.Name()+".fips_table "+fipsOnlyBackupName)
+	r.Error(err)
+	r.Contains(out, "is not allowed in FIPS 140-only mode")
+	log.Debug().Msg(out)
 
 	// https://www.perplexity.ai/search/0920f1e8-59ec-4e14-b779-ba7b2e037196
 	testTLSCerts("rsa", "4096", "", "ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-AES256-GCM-SHA384", "AES_128_GCM_SHA256", "AES_256_GCM_SHA384")

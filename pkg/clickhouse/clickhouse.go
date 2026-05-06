@@ -166,7 +166,7 @@ func (ch *ClickHouse) Connect() error {
 			ch.IsOpen = true
 			break
 		}
-		if ch.BreakConnectOnError {
+		if ch.BreakConnectOnError || strings.Contains(err.Error(), "FIPS 140-only") {
 			return errors.WithStack(err)
 		}
 		log.Warn().Msgf("clickhouse connection ping: %s return error: %v, will wait 5 second to reconnect", fmt.Sprintf("tcp://%v:%v", ch.Config.Host, ch.Config.Port), err)
