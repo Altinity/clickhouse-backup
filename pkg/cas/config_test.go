@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -17,14 +19,40 @@ func TestDefaultConfig(t *testing.T) {
 	if c.InlineThreshold != 524288 {
 		t.Errorf("InlineThreshold: got %d", c.InlineThreshold)
 	}
-	if c.GraceBlob != 24*time.Hour {
-		t.Errorf("GraceBlob: got %v", c.GraceBlob)
+	if c.GraceBlob != "24h" {
+		t.Errorf("GraceBlob: got %q want \"24h\"", c.GraceBlob)
 	}
-	if c.AbandonThreshold != 7*24*time.Hour {
-		t.Errorf("AbandonThreshold: got %v", c.AbandonThreshold)
+	if c.AbandonThreshold != "168h" {
+		t.Errorf("AbandonThreshold: got %q want \"168h\"", c.AbandonThreshold)
 	}
 	if err := c.Validate(); err != nil {
 		t.Errorf("disabled default must validate: %v", err)
+	}
+}
+
+func TestValidate_PopulatesParsedDurations(t *testing.T) {
+	c := validEnabled()
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if c.GraceBlobDuration() != 24*time.Hour {
+		t.Errorf("GraceBlobDuration: got %v want 24h", c.GraceBlobDuration())
+	}
+	if c.AbandonThresholdDuration() != 7*24*time.Hour {
+		t.Errorf("AbandonThresholdDuration: got %v want 168h", c.AbandonThresholdDuration())
+	}
+}
+
+func TestValidate_RejectsUnparseableDuration(t *testing.T) {
+	c := validEnabled()
+	c.GraceBlob = "not-a-duration"
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "grace_blob") {
+		t.Fatalf("want grace_blob parse error, got %v", err)
+	}
+	c = validEnabled()
+	c.AbandonThreshold = "8 days" // ParseDuration doesn't accept this
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "abandon_threshold") {
+		t.Fatalf("want abandon_threshold parse error, got %v", err)
 	}
 }
 
@@ -36,7 +64,8 @@ func validEnabled() Config {
 }
 
 func TestValidate_HappyPath(t *testing.T) {
-	if err := validEnabled().Validate(); err != nil {
+	c := validEnabled()
+	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -83,14 +112,58 @@ func TestValidate_RejectsBadInlineThreshold(t *testing.T) {
 
 func TestValidate_RejectsBadDurations(t *testing.T) {
 	c := validEnabled()
-	c.GraceBlob = 0
+	c.GraceBlob = "0s"
 	if err := c.Validate(); err == nil {
 		t.Error("zero grace must fail")
 	}
 	c = validEnabled()
-	c.AbandonThreshold = 0
+	c.AbandonThreshold = "0s"
 	if err := c.Validate(); err == nil {
 		t.Error("zero abandon must fail")
+	}
+	c = validEnabled()
+	c.GraceBlob = "-1h"
+	if err := c.Validate(); err == nil {
+		t.Error("negative grace must fail")
+	}
+}
+
+// TestCASConfig_DurationYAML pins the requirement that yaml.v3 can parse
+// human-readable strings like "24h" into the duration fields. With the
+// previous time.Duration type, yaml deserialized as raw nanoseconds and
+// any operator following the documented "grace_blob: 24h" syntax would
+// silently get the wrong value (or a parse error).
+func TestCASConfig_DurationYAML(t *testing.T) {
+	type Outer struct {
+		CAS Config `yaml:"cas"`
+	}
+	src := []byte(`
+cas:
+  enabled: true
+  cluster_id: test
+  root_prefix: cas/
+  inline_threshold: 524288
+  grace_blob: "12h"
+  abandon_threshold: "72h"
+`)
+	var got Outer
+	if err := yaml.Unmarshal(src, &got); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v", err)
+	}
+	if got.CAS.GraceBlob != "12h" {
+		t.Errorf("GraceBlob: got %q want \"12h\"", got.CAS.GraceBlob)
+	}
+	if got.CAS.AbandonThreshold != "72h" {
+		t.Errorf("AbandonThreshold: got %q want \"72h\"", got.CAS.AbandonThreshold)
+	}
+	if err := got.CAS.Validate(); err != nil {
+		t.Fatalf("Validate after yaml unmarshal: %v", err)
+	}
+	if got.CAS.GraceBlobDuration() != 12*time.Hour {
+		t.Errorf("parsed grace: got %v want 12h", got.CAS.GraceBlobDuration())
+	}
+	if got.CAS.AbandonThresholdDuration() != 72*time.Hour {
+		t.Errorf("parsed abandon: got %v want 72h", got.CAS.AbandonThresholdDuration())
 	}
 }
 

@@ -92,7 +92,10 @@ func TestStatus_DetectsPruneMarker(t *testing.T) {
 func TestStatus_ClassifiesInProgressByAge(t *testing.T) {
 	f := fakedst.New()
 	cfg := testCfg(100)
-	cfg.AbandonThreshold = time.Hour
+	cfg.AbandonThreshold = "1h"
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 
 	// fresh marker — just written, age ~ 0

@@ -121,7 +121,7 @@ func Status(ctx context.Context, b Backend, cfg Config) (*StatusReport, error) {
 			ModTime: f.ModTime,
 			Age:     age,
 		}
-		if age >= cfg.AbandonThreshold {
+		if age >= cfg.AbandonThresholdDuration() {
 			r.InProgressAbandoned = append(r.InProgressAbandoned, info)
 		} else {
 			r.InProgressFresh = append(r.InProgressFresh, info)

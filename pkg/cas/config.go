@@ -9,14 +9,34 @@ import (
 
 // Config holds CAS-specific configuration. Embedded in pkg/config.Config under
 // the `cas` key. See docs/cas-design.md §6.11.
+//
+// GraceBlob and AbandonThreshold are typed string (not time.Duration) because
+// gopkg.in/yaml.v3 deserializes time.Duration as raw nanoseconds, not as
+// human-readable durations like "24h". Operators expect to write
+// `grace_blob: "24h"` in config.yml. Validate() parses these strings via
+// time.ParseDuration and stores the result in unexported fields; runtime
+// callers MUST use GraceBlobDuration() / AbandonThresholdDuration() instead
+// of reading the string fields directly.
 type Config struct {
-	Enabled          bool          `yaml:"enabled" envconfig:"CAS_ENABLED"`
-	ClusterID        string        `yaml:"cluster_id" envconfig:"CAS_CLUSTER_ID"`
-	RootPrefix       string        `yaml:"root_prefix" envconfig:"CAS_ROOT_PREFIX"`
-	InlineThreshold  uint64        `yaml:"inline_threshold" envconfig:"CAS_INLINE_THRESHOLD"`
-	GraceBlob        time.Duration `yaml:"grace_blob" envconfig:"CAS_GRACE_BLOB"`
-	AbandonThreshold time.Duration `yaml:"abandon_threshold" envconfig:"CAS_ABANDON_THRESHOLD"`
+	Enabled          bool   `yaml:"enabled" envconfig:"CAS_ENABLED"`
+	ClusterID        string `yaml:"cluster_id" envconfig:"CAS_CLUSTER_ID"`
+	RootPrefix       string `yaml:"root_prefix" envconfig:"CAS_ROOT_PREFIX"`
+	InlineThreshold  uint64 `yaml:"inline_threshold" envconfig:"CAS_INLINE_THRESHOLD"`
+	GraceBlob        string `yaml:"grace_blob" envconfig:"CAS_GRACE_BLOB"`
+	AbandonThreshold string `yaml:"abandon_threshold" envconfig:"CAS_ABANDON_THRESHOLD"`
+
+	// Parsed by Validate(). Zero until Validate() runs.
+	graceBlobDur        time.Duration
+	abandonThresholdDur time.Duration
 }
+
+// GraceBlobDuration returns the parsed grace_blob value. Returns 0 if
+// Validate() has not been called.
+func (c Config) GraceBlobDuration() time.Duration { return c.graceBlobDur }
+
+// AbandonThresholdDuration returns the parsed abandon_threshold value.
+// Returns 0 if Validate() has not been called.
+func (c Config) AbandonThresholdDuration() time.Duration { return c.abandonThresholdDur }
 
 // DefaultConfig returns the safe defaults. Enabled is false by default; CAS
 // is opt-in. ClusterID has no default — operators MUST set it explicitly when
@@ -27,8 +47,8 @@ func DefaultConfig() Config {
 		ClusterID:        "",
 		RootPrefix:       "cas/",
 		InlineThreshold:  524288, // 512 KiB
-		GraceBlob:        24 * time.Hour,
-		AbandonThreshold: 7 * 24 * time.Hour,
+		GraceBlob:        "24h",
+		AbandonThreshold: "168h", // 7 days
 	}
 }
 
@@ -76,8 +96,14 @@ func (c Config) ClusterPrefix() string {
 // Validate returns nil if disabled. When enabled, enforces:
 //   - ClusterID is non-empty and contains no whitespace or path separators.
 //   - InlineThreshold is in (0, MaxInline].
-//   - GraceBlob and AbandonThreshold are strictly positive.
-func (c Config) Validate() error {
+//   - GraceBlob and AbandonThreshold parse via time.ParseDuration and are
+//     strictly positive. Parsed values are stored on the receiver; callers
+//     access them via GraceBlobDuration() and AbandonThresholdDuration().
+//
+// Pointer receiver: parsed durations need to persist on the embedded
+// pkg/config.Config.CAS field after pkg/config.ValidateConfig calls
+// cfg.CAS.Validate().
+func (c *Config) Validate() error {
 	if !c.Enabled {
 		return nil
 	}
@@ -99,11 +125,21 @@ func (c Config) Validate() error {
 	if c.InlineThreshold == 0 || c.InlineThreshold > MaxInline {
 		return fmt.Errorf("cas.inline_threshold must be in (0, %d], got %d", MaxInline, c.InlineThreshold)
 	}
-	if c.GraceBlob <= 0 {
-		return errors.New("cas.grace_blob must be > 0")
+	gb, err := time.ParseDuration(c.GraceBlob)
+	if err != nil {
+		return fmt.Errorf("cas.grace_blob %q: %w", c.GraceBlob, err)
 	}
-	if c.AbandonThreshold <= 0 {
-		return errors.New("cas.abandon_threshold must be > 0")
+	if gb <= 0 {
+		return fmt.Errorf("cas.grace_blob must be > 0, got %v", gb)
 	}
+	at, err := time.ParseDuration(c.AbandonThreshold)
+	if err != nil {
+		return fmt.Errorf("cas.abandon_threshold %q: %w", c.AbandonThreshold, err)
+	}
+	if at <= 0 {
+		return fmt.Errorf("cas.abandon_threshold must be > 0, got %v", at)
+	}
+	c.graceBlobDur = gb
+	c.abandonThresholdDur = at
 	return nil
 }

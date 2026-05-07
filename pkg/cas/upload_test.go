@@ -21,14 +21,19 @@ import (
 // it on Validate(). Threshold 100 keeps small files inline and pushes
 // 1024-byte files to blob.
 func testCfg(threshold uint64) cas.Config {
-	return cas.Config{
+	c := cas.Config{
 		Enabled:          true,
 		ClusterID:        "c1",
 		RootPrefix:       "cas/",
 		InlineThreshold:  threshold,
-		GraceBlob:        24 * time.Hour,
-		AbandonThreshold: 7 * 24 * time.Hour,
+		GraceBlob:        "24h",
+		AbandonThreshold: "168h",
 	}
+	// Populate parsed durations on the (now pointer-receiver) Validate.
+	if err := c.Validate(); err != nil {
+		panic(err)
+	}
+	return c
 }
 
 func smallPart(name string, hashLow uint64) testfixtures.PartSpec {
