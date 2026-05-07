@@ -472,6 +472,9 @@ func NewTestEnvironment(t *testing.T) (*TestEnvironment, *require.Assertions) {
 
 	r := require.New(t)
 	env := <-envPool
+	if env.ch == nil {
+		env.ch = clickhouse.NewClickHouse(&config.ClickHouseConfig{})
+	}
 	t.Logf("%s acquired env %s", t.Name(), env.ProjectName)
 
 	if compareVersion(os.Getenv("CLICKHOUSE_VERSION"), "1.1.54394") <= 0 {
